@@ -5,9 +5,12 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  BusyDbError,
   CURRENT_SCHEMA_VERSION,
   ForeignDbError,
+  GenieDbError,
   MalformedDbError,
+  isBusyError,
   openDb,
   resolveDbPath,
   resolveRepoRoot,
@@ -101,6 +104,74 @@ describe('openDb refusal', () => {
     db.close();
     expect(userVersion(path)).toBe(CURRENT_SCHEMA_VERSION);
   });
+});
+
+// ---------------------------------------------------------------------------
+// Busy classification: a contended write lock is transient, not corruption. The
+// production bug was openDb wrapping SQLITE_BUSY into MalformedDbError under
+// multi-process contention. These lock the classifier and the typed error so a
+// "database is locked" failure can never masquerade as a malformed DB again.
+// ---------------------------------------------------------------------------
+describe('busy classification', () => {
+  test('isBusyError matches SQLite busy codes and locked-message text', () => {
+    // bun:sqlite surfaces a `code` field on contended locks.
+    expect(isBusyError(Object.assign(new Error('boom'), { code: 'SQLITE_BUSY' }))).toBe(true);
+    expect(isBusyError(Object.assign(new Error('boom'), { code: 'SQLITE_BUSY_SNAPSHOT' }))).toBe(true);
+    expect(isBusyError(Object.assign(new Error('boom'), { code: 'SQLITE_LOCKED' }))).toBe(true);
+    // The raw text SQLite emits when busy_timeout is exhausted.
+    expect(isBusyError(new Error('database is locked'))).toBe(true);
+    expect(isBusyError(new Error('SQLITE_BUSY: database is locked'))).toBe(true);
+    expect(isBusyError(new Error('database table is locked'))).toBe(true);
+  });
+
+  test('isBusyError rejects unrelated and non-error inputs', () => {
+    expect(isBusyError(new Error('file is not a database'))).toBe(false);
+    expect(isBusyError(Object.assign(new Error('x'), { code: 'SQLITE_CORRUPT' }))).toBe(false);
+    expect(isBusyError('database is locked')).toBe(false);
+    expect(isBusyError(null)).toBe(false);
+    expect(isBusyError(undefined)).toBe(false);
+  });
+
+  test('BusyDbError is a GenieDbError distinct from MalformedDbError', () => {
+    const busy = new BusyDbError('/tmp/genie.db', new Error('database is locked'));
+    expect(busy).toBeInstanceOf(GenieDbError);
+    expect(busy).not.toBeInstanceOf(MalformedDbError);
+    expect(busy.name).toBe('BusyDbError');
+    expect(busy.path).toBe('/tmp/genie.db');
+    // Message must read as retryable contention, not corruption, and name the path.
+    expect(busy.message).toContain('/tmp/genie.db');
+    expect(busy.message.toLowerCase()).toContain('retry');
+    expect(busy.message.toLowerCase()).not.toContain('malformed');
+  });
+
+  test('a real EXCLUSIVE-locked DB opens as BusyDbError, never MalformedDbError', () => {
+    const path = join(dir, 'contended.db');
+    // Seed a healthy, current genie DB, then hold an EXCLUSIVE write lock on it.
+    openDb({ path }).close();
+    const holder = new Database(path);
+    holder.exec('PRAGMA busy_timeout = 0');
+    holder.exec('BEGIN EXCLUSIVE');
+    try {
+      // ensureSchema is skipped (schema is current), but the WAL-mode probe still
+      // contends the write lock — the open must surface a typed, retryable busy,
+      // NOT a corruption claim.
+      let thrown: unknown;
+      try {
+        openDb({ path }).close();
+      } catch (e) {
+        thrown = e;
+      }
+      // Depending on lock timing the open may win outright; if it throws it MUST
+      // be a BusyDbError and never a MalformedDbError.
+      if (thrown !== undefined) {
+        expect(thrown).toBeInstanceOf(BusyDbError);
+        expect(thrown).not.toBeInstanceOf(MalformedDbError);
+      }
+    } finally {
+      holder.exec('ROLLBACK');
+      holder.close();
+    }
+  }, 60_000);
 });
 
 // ---------------------------------------------------------------------------
