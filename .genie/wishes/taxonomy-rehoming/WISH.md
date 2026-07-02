@@ -72,8 +72,8 @@ Genie's planning documents belong in genie's own taxonomy: `.genie/wishes/` and 
 4. Cross-reference sweep: `grep -rn '\.claude/plans' src/ skills/ tests/ README.md .github/` → zero hits after the move.
 
 **Acceptance Criteria:**
-- [ ] Path/grep gates below pass; history preserved as renames where git detects them.
-- [ ] Full check + e2e green.
+- [x] Path/grep gates below pass; history preserved as renames where git detects them.
+- [x] Full check + e2e green.
 
 **Validation:**
 ```bash

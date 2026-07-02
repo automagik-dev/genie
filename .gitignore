@@ -59,9 +59,10 @@ yarn-error.log*
 .claude/worktrees/
 .worktrees/
 
-# In v5, .genie/ holds runtime-only state (SQLite engine, worker registry,
-# mailbox, chat). Planning history (wishes/brainstorms/reports) is no longer
-# tracked here — it lives in git history and the v4 branch.
+# In v5, .genie/ follows documents-in-git / state-in-sqlite: planning documents
+# (INDEX.md, wishes/, brainstorms/) are genie's own taxonomy — tracked and
+# reviewed in PRs. Runtime state is never git-versioned: the SQLite engine
+# (genie.db + sidecars) plus the legacy v4 state paths listed below.
 
 # Worker registry (contains session IDs)
 .genie/workers.json
@@ -74,12 +75,6 @@ yarn-error.log*
 # Local genie state (not part of the package)
 .genie/agents.json
 .genie/teams/
-.genie/brainstorms/**
-!.genie/brainstorms/*/
-!.genie/brainstorms/*/DESIGN.md
-!.genie/brainstorms/*/DRAFT.md
-!.genie/brainstorms/*/COUNCIL.md
-!.genie/brainstorms/README.md
 
 # Team runtime state
 .genie/mailbox/

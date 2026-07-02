@@ -8,7 +8,7 @@
 | **Author** | Felipe + Genie |
 | **Appetite** | ~1.5 weeks |
 | **Branch** | `v5` (continues from v5-foundation; final group opens the PR to `dev`) |
-| **Design** | [DESIGN.md](../genie-v5-lightweight-body/DESIGN.md) — umbrella Group 6, pulled forward per D8 |
+| **Design** | [DESIGN.md](../../brainstorms/genie-v5-lightweight-body/DESIGN.md) — umbrella Group 6, pulled forward per D8 |
 | **Depends on** | wish `v5-foundation` (DONE) |
 
 ## Summary
@@ -90,7 +90,7 @@ Delete the v4 harness from the `v5` branch — pgserve/Postgres, tmux orchestrat
 **Validation:**
 ```bash
 set -euo pipefail
-cd /Users/feliperosa/workspace/genie
+cd "$(git rev-parse --show-toplevel)"
 bun run build
 if grep -rn 'genie v5' skills/; then echo "FAIL: genie v5 references remain in skills/"; exit 1; fi
 V5_E2E_BUILD=1 bash tests/e2e/v5-lifecycle.sh
@@ -120,7 +120,7 @@ bun run skills:lint
 **Validation:**
 ```bash
 set -euo pipefail
-cd /Users/feliperosa/workspace/genie
+cd "$(git rev-parse --show-toplevel)"
 bun run typecheck
 GENIE_TEST_SKIP_PGSERVE=1 bun test src/hooks/
 bun run build
@@ -148,7 +148,7 @@ bun run skills:lint
 **Validation:**
 ```bash
 set -euo pipefail
-cd /Users/feliperosa/workspace/genie
+cd "$(git rev-parse --show-toplevel)"
 test ! -d src/db
 test ! -d src/term-commands/task
 test ! -d src/tui
@@ -177,7 +177,7 @@ V5_E2E_BUILD=1 bash tests/e2e/v5-lifecycle.sh
 **Validation:**
 ```bash
 set -euo pipefail
-cd /Users/feliperosa/workspace/genie
+cd "$(git rev-parse --show-toplevel)"
 test ! -d packages/genie-app && test ! -d packages/genie-tokens && test ! -d packages/watchdog
 test ! -d scripts/tmux
 if ls scripts/sec-*.cjs 2>/dev/null; then echo "FAIL: sec scripts remain"; exit 1; fi
@@ -207,7 +207,7 @@ bun run typecheck
 **Validation:**
 ```bash
 set -euo pipefail
-cd /Users/feliperosa/workspace/genie
+cd "$(git rev-parse --show-toplevel)"
 if grep -nE '"(postgres|nats|react|react-dom|@opentui/|@tauri-apps/|@xterm/|@khal-os/|@anthropic-ai/claude-agent-sdk|systeminformation)"' package.json; then echo "FAIL: dead dep remains"; exit 1; fi
 bun install
 bun run check
@@ -241,7 +241,7 @@ V5_E2E_BUILD=1 bash tests/e2e/v5-lifecycle.sh
 **Validation:**
 ```bash
 set -euo pipefail
-cd /Users/feliperosa/workspace/genie
+cd "$(git rev-parse --show-toplevel)"
 git ls-remote --exit-code origin refs/heads/v4
 gh pr view --json state,baseRefName -q '.baseRefName' | grep -qx dev
 if grep -nE 'PostgreSQL \+ LISTEN/NOTIFY|terminal UI|cockpit|[Kk]nowledge brain|Postgres-backed|genie-tokens' README.md; then echo "FAIL: stale v4 claims"; exit 1; fi

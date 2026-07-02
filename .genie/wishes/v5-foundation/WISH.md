@@ -8,7 +8,7 @@
 | **Author** | Felipe + Genie |
 | **Appetite** | ~1.5 weeks |
 | **Branch** | `v5` (bootstrapped from `dev` by this wish; groups land as PRs into `v5`) |
-| **Design** | [DESIGN.md](../genie-v5-lightweight-body/DESIGN.md) |
+| **Design** | [DESIGN.md](../../brainstorms/genie-v5-lightweight-body/DESIGN.md) |
 | **Umbrella** | genie-v5-lightweight-body — seed Groups 1+2 of 8 (revised for D2: genie.db) |
 
 ## Summary
@@ -92,7 +92,7 @@ Lay the foundation of Genie v5 "lightweight body": operational state (tasks, dep
 **Validation:**
 ```bash
 set -euo pipefail
-cd /Users/feliperosa/workspace/genie
+cd "$(git rev-parse --show-toplevel)"
 test -d src/lib/v5
 test -f src/lib/v5/TAXONOMY.md
 bun test src/lib/v5/
@@ -130,7 +130,7 @@ grep -q "^\.genie/genie\.db$" .gitignore
 **Validation:**
 ```bash
 set -euo pipefail
-cd /Users/feliperosa/workspace/genie
+cd "$(git rev-parse --show-toplevel)"
 bun test src/term-commands/v5-task.test.ts
 bun test src/term-commands/v5-board.test.ts
 bun run typecheck
@@ -162,7 +162,7 @@ fi
 **Validation:**
 ```bash
 set -euo pipefail
-cd /Users/feliperosa/workspace/genie
+cd "$(git rev-parse --show-toplevel)"
 for f in skills/brainstorm/SKILL.md skills/wish/SKILL.md skills/work/SKILL.md skills/review/SKILL.md; do
   test -f "$f"
   if grep -nE 'genie (agent|spawn|run|wish|dispatch)\b' "$f"; then echo "FAIL: $f calls v4 runtime CLI"; exit 1; fi
@@ -181,7 +181,7 @@ bun run skills:lint
 
 **Deliverables:**
 1. `tests/e2e/v5-lifecycle.sh` — fixture git repo in tmpdir; drives the lifecycle (brainstorm artifacts → WISH.md → tasks transitioning via `genie v5 task` → board render → review artifacts); asserts (a) expected documents/DB rows exist at each stage, (b) no `pgserve`/`postgres` process was spawned during the run, (c) task state visible from a second worktree, (d) `genie v5 task export` JSON matches the driven state, (e) run leaves zero background processes, (f) `genie.db` and its WAL/SHM sidecars never appear in `git status` of the fixture repo.
-2. `.claude/plans/v5-foundation/qa.md` — QA report: assertions exercised, failure inventory, gaps (real-agent smoke run is manual/opt-in via `V5_E2E_LIVE=1` running `claude -p`).
+2. `.genie/wishes/v5-foundation/qa.md` — QA report: assertions exercised, failure inventory, gaps (real-agent smoke run is manual/opt-in via `V5_E2E_LIVE=1` running `claude -p`).
 
 **Acceptance Criteria:**
 - [x] Script exits non-zero with a named assertion on any failure (no `|| true` swallowing).
@@ -191,8 +191,8 @@ bun run skills:lint
 **Validation:**
 ```bash
 set -euo pipefail
-cd /Users/feliperosa/workspace/genie
-test -f .claude/plans/v5-foundation/qa.md
+cd "$(git rev-parse --show-toplevel)"
+test -f .genie/wishes/v5-foundation/qa.md
 bash tests/e2e/v5-lifecycle.sh
 ```
 

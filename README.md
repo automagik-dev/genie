@@ -43,7 +43,7 @@ Re-run `genie board` any time for a current snapshot of task state on the kanban
 ## What's inside
 
 - **Skills** carry the methodology — `/brainstorm → /wish → /work → /review`, authored once, running natively in Claude Code.
-- **Documents in git.** Wishes, designs, and brainstorms are plain markdown under `.claude/plans/<slug>/`; you diff, review, and version them like any other code.
+- **Documents in git.** Wishes, designs, and brainstorms are plain markdown under `.genie/wishes/<slug>/` and `.genie/brainstorms/<slug>/`; you diff, review, and version them like any other code.
 - **One file of state.** Tasks, boards, dependency edges, and wish-group execution state live in a single per-repo SQLite file (`.genie/genie.db`), on Bun's built-in engine.
 - **Small.** 10 CLI commands, 3 runtime dependencies (`@inquirer/prompts`, `commander`, `zod`), a ~0.9 MB single-file bundle. Bun-powered.
 - **Zero daemons, no Postgres.** Nothing runs in the background between invocations.

@@ -8,7 +8,7 @@
 | **Author** | Felipe + Genie |
 | **Appetite** | ~2-3 days |
 | **Branch** | `v5` (rides ahead of PR #2499; commits land per group) |
-| **Design** | [DESIGN.md](../genie-v5-lightweight-body/DESIGN.md) — lightweight-body follow-through |
+| **Design** | [DESIGN.md](../../brainstorms/genie-v5-lightweight-body/DESIGN.md) — lightweight-body follow-through |
 | **Depends on** | wish `v5-demolition` (DONE, PR #2499 open) |
 
 ## Summary
@@ -80,7 +80,7 @@ The demolition removed the harness but left the shell: unreferenced root files (
 **Validation:**
 ```bash
 set -euo pipefail
-cd /Users/feliperosa/workspace/genie
+cd "$(git rev-parse --show-toplevel)"
 for p in UPGRADING-pgserve-v3.md VELOCITY.md cliff.toml Makefile .npmrc .npmignore .rlmx tools test-fixtures assets test; do
   if [ -e "$p" ]; then echo "FAIL: $p still exists"; exit 1; fi
 done
@@ -110,7 +110,7 @@ V5_E2E_BUILD=1 bash tests/e2e/v5-lifecycle.sh
 **Validation:**
 ```bash
 set -euo pipefail
-cd /Users/feliperosa/workspace/genie
+cd "$(git rev-parse --show-toplevel)"
 if [ -n "$(git ls-files .genie/)" ]; then echo "FAIL: tracked files remain under .genie/"; git ls-files .genie/; exit 1; fi
 if grep -rnE 'metrics-updater|commits-30d|METRICS:START|VELOCITY' src/ scripts/ .github/ plugins/ skills/ 2>/dev/null; then echo "FAIL: metrics refs remain"; exit 1; fi
 # README.md deliberately excluded — its METRICS block is Group 3's rewrite target (wave 2)
@@ -137,7 +137,7 @@ bun run check
 **Validation:**
 ```bash
 set -euo pipefail
-cd /Users/feliperosa/workspace/genie
+cd "$(git rev-parse --show-toplevel)"
 if grep -nE 'pgserve|tmux|tauri|PostgreSQL|terminal UI|[Kk]nowledge brain|METRICS:START|VELOCITY' README.md; then echo "FAIL: stale claims"; exit 1; fi
 bun run build
 # Verify every `genie <cmd>` the README names appears in the real --help command
