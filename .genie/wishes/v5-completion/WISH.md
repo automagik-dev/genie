@@ -66,9 +66,9 @@ Close out the v5 lightweight body with the three remaining independent tracks, b
 2. Drift-guard: a test or e2e grep gate asserting `CLAUDE.md` contains none of the retired-fossil tokens.
 
 **Acceptance Criteria:**
-- [ ] Zero stale-v4 fossils (grep gate incl. the native-teams tokens); real 12-command surface + genie.db + in-process hooks documented; still-true sections preserved; OTel relay reference (if any) untouched.
-- [ ] Drift-guard gate fails hard if a fossil returns.
-- [ ] `bun run check` green.
+- [x] Zero stale-v4 fossils (grep gate incl. the native-teams tokens); real 12-command surface + genie.db + in-process hooks documented; still-true sections preserved; OTel relay reference (if any) untouched.
+- [x] Drift-guard gate fails hard if a fossil returns.
+- [x] `bun run check` green.
 
 **Validation:**
 ```bash
