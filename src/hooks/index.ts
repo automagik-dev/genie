@@ -208,8 +208,8 @@ function buildDenyResponse(
  * for these tools as "the hook handled the call" and short-circuits the
  * tool's interactive UI (rendering nothing instead of the inline picker).
  *
- * Empirically traced on 2026-05-09 — see
- * .genie/wishes/spawn-compounding-defects/evidence/bug3-mechanism.md.
+ * Empirically traced on 2026-05-09 (the AskUserQuestion inline-picker
+ * regression).
  *
  * Specifically: when the dispatcher returns
  *   { hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: '...' } }

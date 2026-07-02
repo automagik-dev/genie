@@ -53,8 +53,7 @@
       ".claude",
       "plugins/genie/scripts",
       ".docs-vendor",
-      "docs",
-      "test-fixtures/symlink-cycle/real/cycle"
+      "docs"
     ]
   },
   "overrides": [
