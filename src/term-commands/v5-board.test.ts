@@ -1,5 +1,5 @@
 /**
- * genie v5 board — CLI-level tests. The board is derived purely by query with
+ * genie board — CLI-level tests. The board is derived purely by query with
  * NO stored view state, so these assert that status transitions are reflected
  * on the next render with nothing persisted. Exit codes AND stderr are checked.
  */
@@ -37,7 +37,7 @@ interface CliResult {
 }
 
 async function board(cwd: string, ...args: string[]): Promise<CliResult> {
-  const proc = Bun.spawn(['bun', GENIE, 'v5', 'board', ...args], {
+  const proc = Bun.spawn(['bun', GENIE, 'board', ...args], {
     cwd,
     stdout: 'pipe',
     stderr: 'pipe',

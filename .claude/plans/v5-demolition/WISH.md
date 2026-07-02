@@ -83,9 +83,9 @@ Delete the v4 harness from the `v5` branch — pgserve/Postgres, tmux orchestrat
 4. `tests/e2e/v5-lifecycle.sh` drives bare names.
 
 **Acceptance Criteria:**
-- [ ] `bun dist/genie.js task list` and `bun dist/genie.js board` are sqlite-backed (fresh build).
-- [ ] No `genie v5` reference remains under skills/.
-- [ ] E2E passes with bare names.
+- [x] `bun dist/genie.js task list` and `bun dist/genie.js board` are sqlite-backed (fresh build).
+- [x] No `genie v5` reference remains under skills/.
+- [x] E2E passes with bare names.
 
 **Validation:**
 ```bash

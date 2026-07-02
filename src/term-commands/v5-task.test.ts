@@ -1,5 +1,5 @@
 /**
- * genie v5 task — CLI-level tests. Each case invokes the real `genie.ts` entry
+ * genie task — CLI-level tests. Each case invokes the real `genie.ts` entry
  * as a user would (subprocess), against a throwaway git-repo fixture, and
  * asserts exit code AND stderr, not just stdout.
  */
@@ -38,7 +38,7 @@ interface CliResult {
 }
 
 async function cli(cwd: string, ...args: string[]): Promise<CliResult> {
-  const proc = Bun.spawn(['bun', GENIE, 'v5', 'task', ...args], {
+  const proc = Bun.spawn(['bun', GENIE, 'task', ...args], {
     cwd,
     stdout: 'pipe',
     stderr: 'pipe',

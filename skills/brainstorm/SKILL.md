@@ -197,16 +197,16 @@ On crystallize, create a tracking task in the zero-daemon state DB so the brains
 ### On crystallize (WRS = 100)
 ```bash
 # Create a tracking task for the crystallized idea (title is the anchor)
-genie v5 task create --title "<brainstorm title>"
+genie task create --title "<brainstorm title>"
 ```
 
 | Event | Command |
 |-------|---------|
-| Crystallize | `genie v5 task create --title "<brainstorm title>"` |
+| Crystallize | `genie task create --title "<brainstorm title>"` |
 
 The DESIGN.md and DRAFT.md paths are recorded in the DESIGN.md header and the brainstorm jar — the task row is a board pointer, not a second source of truth.
 
-**Graceful degradation:** If `genie v5 task create` fails (no `.genie/genie.db` yet, or the CLI is unavailable), warn but do not block crystallize. The DESIGN.md and brainstorm jar in git are the source of truth — the task row is an optional tracking enhancement.
+**Graceful degradation:** If `genie task create` fails (no `.genie/genie.db` yet, or the CLI is unavailable), warn but do not block crystallize. The DESIGN.md and brainstorm jar in git are the source of truth — the task row is an optional tracking enhancement.
 
 ## Rules
 - One question per message. Never batch questions.

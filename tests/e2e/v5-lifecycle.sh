@@ -4,7 +4,7 @@
 # the full wish lifecycle runs on git documents + `.genie/genie.db` alone,
 # with NO resident genie process and NO Postgres.
 #
-# The script drives the real CLI (`bun <repo>/dist/genie.js v5 ...`) against a
+# The script drives the real CLI (`bun <repo>/dist/genie.js task/board ...`) against a
 # throwaway git fixture, asserting at each stage that the expected documents and
 # database rows exist, that nothing daemon-like was spawned, that a second
 # worktree observes the same state, and that the operational DB never leaks into
@@ -102,7 +102,7 @@ json_board_count() {
 # Parse the `Created task <id> ...` line into just the id.
 task_id_from() { printf '%s\n' "$1" | sed -E 's/^Created task ([^ ]+).*/\1/'; }
 
-cli() { bun "$DIST" v5 "$@"; }
+cli() { bun "$DIST" "$@"; }
 
 # ============================================================================
 # 0. Build (or accept a prebuilt dist) and record baselines.
@@ -257,7 +257,7 @@ done
 step "second-worktree visibility"
 git -C "$FIXTURE" worktree add -q "$WT" -b e2e-worktree
 assert worktree-sees-same-three-tasks
-WT_COUNT="$(cd "$WT" && bun "$DIST" v5 task list --wish "$SLUG" --json | json_task_count)"
+WT_COUNT="$(cd "$WT" && bun "$DIST" task list --wish "$SLUG" --json | json_task_count)"
 [ "$WT_COUNT" -eq 3 ] || die "second worktree saw $WT_COUNT tasks, expected 3"
 
 assert worktree-does-not-create-second-db

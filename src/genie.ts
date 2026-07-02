@@ -49,7 +49,6 @@ import {
 import { registerAppCommand } from './term-commands/app.js';
 import { registerApprovalCommands } from './term-commands/approval.js';
 import { registerEventsCommands } from './term-commands/audit-events.js';
-import { registerBoardCommands } from './term-commands/board.js';
 import { registerBrainCommands } from './term-commands/brain.js';
 import { registerBriefCommands } from './term-commands/brief.js';
 import { registerDaemonCommands } from './term-commands/daemon.js';
@@ -87,7 +86,6 @@ import { registerSessionsCommands } from './term-commands/sessions.js';
 import { registerStateCommands } from './term-commands/state.js';
 import { type StatusOptions, statusCommand as systemStatusCommand } from './term-commands/status.js';
 import { registerTagCommands } from './term-commands/tag.js';
-import { registerTaskCommands } from './term-commands/task.js';
 import { registerTeamNamespace } from './term-commands/team.js';
 import { registerTemplateCommands } from './term-commands/template.js';
 import { registerTypeCommands } from './term-commands/type.js';
@@ -293,9 +291,7 @@ registerHookNamespace(program);
 registerDbCommands(program);
 registerScheduleCommands(program);
 registerDaemonCommands(program);
-registerTaskCommands(program);
 registerTypeCommands(program);
-registerBoardCommands(program);
 registerTagCommands(program);
 registerReleaseCommands(program);
 registerSecCommands(program);
@@ -312,10 +308,9 @@ registerBrainCommands(program);
 registerBriefCommands(program);
 registerApprovalCommands(program);
 
-// v5 namespace — thin commands over the zero-daemon SQLite state engine.
-const v5 = program.command('v5').description('Genie v5 — zero-daemon SQLite state (task/board)');
-registerV5TaskCommands(v5);
-registerV5BoardCommands(v5);
+// Bare task/board — thin commands over the zero-daemon SQLite state engine.
+registerV5TaskCommands(program);
+registerV5BoardCommands(program);
 
 // ============================================================================
 // Turn-close verbs — genie done / blocked / failed

@@ -5,7 +5,7 @@ description: "Execute an approved wish plan — orchestrate subagents per task g
 
 # /work — Execute Wish Plan
 
-The orchestrator's skill: execute an approved wish from `.genie/wishes/<slug>/WISH.md` by dispatching subagents (Claude Code native team) per execution group in waves. The orchestrator never executes group work directly — always dispatch via the **Agent tool** (see Dispatch). Per-group execution state is tracked in the zero-daemon state DB via `genie v5 task`; documents (WISH.md, review notes) stay in git.
+The orchestrator's skill: execute an approved wish from `.genie/wishes/<slug>/WISH.md` by dispatching subagents (Claude Code native team) per execution group in waves. The orchestrator never executes group work directly — always dispatch via the **Agent tool** (see Dispatch). Per-group execution state is tracked in the zero-daemon state DB via `genie task`; documents (WISH.md, review notes) stay in git.
 
 ## Context Injection
 
@@ -17,20 +17,20 @@ When you are spawned as a subagent for a group, the dispatching agent curates yo
 If context is injected, use it directly. Do not re-parse the wish for information already provided.
 
 ## Flow
-1. **Load wish:** read `.genie/wishes/<slug>/WISH.md` from the shared worktree, confirm scope. Read current group state with `genie v5 task list --wish <slug>` (or `genie v5 board --wish <slug>`).
+1. **Load wish:** read `.genie/wishes/<slug>/WISH.md` from the shared worktree, confirm scope. Read current group state with `genie task list --wish <slug>` (or `genie board --wish <slug>`).
 2. **Pick the wave:** select the set of ready (unblocked) execution groups per the wish's Execution Strategy — a wave is every group whose `depends-on` groups are already done.
 3. **Dispatch the wave (parallel):** for each group in the wave, in ONE message issue an **Agent tool** call spawning an engineer subagent with curated context (see Dispatch and Context Curation). As part of each engineer's brief, have it claim its task first:
    ```bash
-   genie v5 task checkout <task-id> --worker <engineer-name>
+   genie task checkout <task-id> --worker <engineer-name>
    ```
    The claim is atomic — if two agents race the same task, exactly one wins and the loser gets a conflict error and stands down.
-4. **Await completion (do not poll):** background subagents notify you when they finish — wait for the notification, never `sleep`-loop against the board. On demand you may read `genie v5 board --wish <slug>` to inspect state, but completion is push, not poll.
+4. **Await completion (do not poll):** background subagents notify you when they finish — wait for the notification, never `sleep`-loop against the board. On demand you may read `genie board --wish <slug>` to inspect state, but completion is push, not poll.
 5. **Local review:** for each finished group, dispatch a reviewer subagent (see Dispatch — reviewer ≠ engineer) to run `/review` against that group's acceptance criteria. On FIX-FIRST, dispatch a fix subagent (max 2 loops).
 6. **Quality review:** dispatch a reviewer subagent for a quality pass (security, maintainability, perf). On FIX-FIRST, dispatch a fix subagent (max 1 loop).
 7. **Validate:** run the group's validation command yourself (Bash), record evidence.
 8. **Group done:** once review is clean and validation passes, complete the task:
    ```bash
-   genie v5 task done <task-id>
+   genie task done <task-id>
    ```
 9. **Next wave:** derive the next wave from the WISH.md Execution Strategy (the dependency DAG lives in the document, not in task rows — see State Management), then repeat steps 2-8 until all groups are done.
 10. **Handoff:** when every group's task is `done`, `All work groups complete. Run /review.`
@@ -92,10 +92,10 @@ Depends-on: <group refs or "none">
 
 ## State Management
 
-- **Engineers claim** their group by running `genie v5 task checkout <task-id> --worker <name>` as the first step of their brief — the atomic claim is what prevents two agents working the same group.
+- **Engineers claim** their group by running `genie task checkout <task-id> --worker <name>` as the first step of their brief — the atomic claim is what prevents two agents working the same group.
 - **Engineers signal** completion in their final message; the native team notifies the orchestrator (no manual send required).
-- **Orchestrator tracks** wave state via `genie v5 task list --wish <slug>` / `genie v5 board --wish <slug>` (read on demand) and completes each verified group with `genie v5 task done <task-id>`.
-- Engineers do NOT call `genie v5 task done` — completing a group is the orchestrator's responsibility, only after review is clean and the validation command passes.
+- **Orchestrator tracks** wave state via `genie task list --wish <slug>` / `genie board --wish <slug>` (read on demand) and completes each verified group with `genie task done <task-id>`.
+- Engineers do NOT call `genie task done` — completing a group is the orchestrator's responsibility, only after review is clean and the validation command passes.
 - **The dependency DAG is doc-only.** The v5 CLI has no dependency-edge commands, so every CLI-created task is `ready` from birth — DB status is NOT a dependency signal. The orchestrator sequences waves from the WISH.md Execution Strategy alone; never dispatch a group just because its task shows `ready`.
 
 ## Escalation
@@ -112,11 +112,11 @@ Per-group execution state lives in the zero-daemon state DB. The state machine i
 
 | Event | Command | Who |
 |-------|---------|-----|
-| Claim a ready group | `genie v5 task checkout <task-id> --worker <name>` | engineer (first step of brief) |
-| Inspect progress | `genie v5 task list --wish <slug>` / `genie v5 board --wish <slug>` | orchestrator, on demand |
-| Group verified complete | `genie v5 task done <task-id>` | orchestrator, after review + validation |
+| Claim a ready group | `genie task checkout <task-id> --worker <name>` | engineer (first step of brief) |
+| Inspect progress | `genie task list --wish <slug>` / `genie board --wish <slug>` | orchestrator, on demand |
+| Group verified complete | `genie task done <task-id>` | orchestrator, after review + validation |
 
-**Graceful degradation:** If no task exists for a group (e.g. the wish predates the state DB, or `.genie/genie.db` is unavailable), skip the `genie v5 task` calls and drive the wave off the WISH.md document directly. Task tracking is an enhancement — the core dispatch/review/validate flow must never break due to a missing task row.
+**Graceful degradation:** If no task exists for a group (e.g. the wish predates the state DB, or `.genie/genie.db` is unavailable), skip the `genie task` calls and drive the wave off the WISH.md document directly. Task tracking is an enhancement — the core dispatch/review/validate flow must never break due to a missing task row.
 
 ## Example: Full Dispatch Cycle
 
@@ -124,20 +124,20 @@ Wish `fix-dispatch-initial-prompt` has 1 execution group (task id `7`). The orch
 
 1. **Dispatch the wave.** In one message, issue an Agent tool call spawning an engineer subagent with curated context. The brief opens with the claim:
    ```bash
-   genie v5 task checkout 7 --worker engineer-1
+   genie task checkout 7 --worker engineer-1
    ```
    The engineer implements the group, then reports completion in its final message.
 
 2. **Await notification (no polling).** The native team notifies the orchestrator when the engineer finishes. Inspect on demand if needed:
    ```bash
-   genie v5 board --wish fix-dispatch-initial-prompt
+   genie board --wish fix-dispatch-initial-prompt
    ```
 
 3. **Review (reviewer ≠ engineer).** Spawn a reviewer subagent via the Agent tool, briefed to run `/review` against the group's acceptance criteria (run `bun test`, check all 5 call sites). Reviewer returns SHIP.
 
 4. **Validate + complete.** Run the group's validation command yourself, then:
    ```bash
-   genie v5 task done 7
+   genie task done 7
    ```
 
 5. **PR.**
@@ -147,7 +147,7 @@ Wish `fix-dispatch-initial-prompt` has 1 execution group (task id `7`). The orch
    gh pr create --base dev --title "fix: pass initialPrompt to dispatch" --body "Fixes #745. Wish: fix-dispatch-initial-prompt"
    ```
 
-For multi-wave wishes, mark the wave's tasks `genie v5 task done`, then read the WISH.md Execution Strategy to pick the next wave's groups and dispatch them the same way.
+For multi-wave wishes, mark the wave's tasks `genie task done`, then read the WISH.md Execution Strategy to pick the next wave's groups and dispatch them the same way.
 
 ## Rules
 - Never execute group work directly — always dispatch subagents via the Agent tool.
@@ -155,7 +155,7 @@ For multi-wave wishes, mark the wave's tasks `genie v5 task done`, then read the
 - Never skip validation commands.
 - Never overwrite WISH.md from a subagent's output — curated/refined prompts are runtime context only; the WISH.md in git is the source of truth.
 - Reviewer ≠ engineer, always — never let an agent review its own work.
-- Complete a group's task (`genie v5 task done`) only after review is clean and validation passes.
+- Complete a group's task (`genie task done`) only after review is clean and validation passes.
 - Keep work auditable: capture commands + outcomes.
 
 ## Session close (required)

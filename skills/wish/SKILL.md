@@ -16,7 +16,7 @@ Convert a validated idea into an executable wish document at `.genie/wishes/<slu
 
 This skill is collaborative and operates on the shared worktree:
 - All wish artifacts live in `.genie/wishes/` within the shared worktree
-- Execution-group definitions are written into WISH.md (git) so other agents and skills can read them; per-group execution state lives in the zero-daemon state DB via `genie v5 task`
+- Execution-group definitions are written into WISH.md (git) so other agents and skills can read them; per-group execution state lives in the zero-daemon state DB via `genie task`
 - When spawned as a native-team subagent, the dispatching agent curates the seed context into your prompt (brainstorm design, file path + extracted section) — use it directly
 
 ## Pre-flight check
@@ -81,17 +81,17 @@ After writing WISH.md, create one task per execution group in the zero-daemon st
 
 ### Per execution group
 ```bash
-genie v5 task create --title "<group title>" --wish <slug> --group <group-name>
+genie task create --title "<group title>" --wish <slug> --group <group-name>
 ```
 
 ### Summary
 
 | Event | Command |
 |-------|---------|
-| Per execution group | `genie v5 task create --title "<group title>" --wish <slug> --group <group-name>` |
-| Inspect what was created | `genie v5 task list --wish <slug>` |
+| Per execution group | `genie task create --title "<group title>" --wish <slug> --group <group-name>` |
+| Inspect what was created | `genie task list --wish <slug>` |
 
-**Graceful degradation:** If `genie v5 task create` fails (no `.genie/genie.db` yet, or the CLI is unavailable), warn but do not block the wish flow. The WISH.md file in git is the source of truth — the task rows are an optional tracking/dispatch enhancement. The wish must still be usable by `/work` even if no tasks were created.
+**Graceful degradation:** If `genie task create` fails (no `.genie/genie.db` yet, or the CLI is unavailable), warn but do not block the wish flow. The WISH.md file in git is the source of truth — the task rows are an optional tracking/dispatch enhancement. The wish must still be usable by `/work` even if no tasks were created.
 
 ## Rules
 - Never write WISH.md from scratch — always `cp templates/wish-template.md` then edit. The template guarantees structural correctness by construction; ad-hoc wishes regularly fail `bun run wishes:lint`.

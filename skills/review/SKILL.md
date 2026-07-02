@@ -113,11 +113,11 @@ The verdict and its severity-tagged gaps are the review output — report them i
 
 | Verdict | What happens next |
 |---------|-------------------|
-| **SHIP** | Orchestrator proceeds — for execution review, it completes the group with `genie v5 task done <task-id>`; for plan review, it advances to the next lifecycle stage. |
+| **SHIP** | Orchestrator proceeds — for execution review, it completes the group with `genie task done <task-id>`; for plan review, it advances to the next lifecycle stage. |
 | **FIX-FIRST** | Orchestrator auto-invokes `/fix` with the gap list; the group's task stays `in_progress` until a clean re-review. |
 | **BLOCKED** | Orchestrator escalates to a human; the task stays `in_progress`. |
 
-The reviewer never calls `genie v5 task done` — completing a group belongs to the orchestrator, after a clean verdict.
+The reviewer never calls `genie task done` — completing a group belongs to the orchestrator, after a clean verdict.
 
 ## Example
 
