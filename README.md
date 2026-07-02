@@ -45,7 +45,8 @@ Re-run `genie board` any time for a current snapshot of task state on the kanban
 - **Skills** carry the methodology — `/brainstorm → /wish → /work → /review`, authored once, running natively in Claude Code.
 - **Documents in git.** Wishes, designs, and brainstorms are plain markdown under `.genie/wishes/<slug>/` and `.genie/brainstorms/<slug>/`; you diff, review, and version them like any other code.
 - **One file of state.** Tasks, boards, dependency edges, and wish-group execution state live in a single per-repo SQLite file (`.genie/genie.db`), on Bun's built-in engine.
-- **Small.** 10 CLI commands, 3 runtime dependencies (`@inquirer/prompts`, `commander`, `zod`), a ~0.9 MB single-file bundle. Bun-powered.
+- **Small.** 11 CLI commands, 3 runtime dependencies (`@inquirer/prompts`, `commander`, `zod`), a ~0.9 MB single-file bundle. Bun-powered.
+- **Warp cockpit (optional).** `genie launch <slug>` turns a wish's ready groups into a Warp window — one pane per group, each in its own git worktree running that group's agent on a kickoff prompt. Emitting the launch config works on any platform; opening it needs Warp (macOS/Linux). Everywhere else the config is still written for you to open by hand.
 - **Zero daemons, no Postgres.** Nothing runs in the background between invocations.
 
 ## Commands
@@ -56,6 +57,8 @@ genie --help
 
 | Command | What it does |
 |---------|-------------|
+| `genie init` | Scaffold the per-repo genie state (`.genie/INDEX.md` + `.gitignore` rules) |
+| `genie launch` | Open a Warp cockpit for a wish — one pane per ready group, each in its own worktree |
 | `genie board` | Kanban view of task state, derived live by query |
 | `genie task` | Inspect and drive task state (SQLite, zero-daemon) |
 | `genie setup` | Configure Genie and wire up its Claude Code hooks |
@@ -63,7 +66,6 @@ genie --help
 | `genie hook` | Hook middleware for Claude Code integration |
 | `genie shortcuts` | Manage terminal keyboard shortcuts |
 | `genie update` | Update Genie to the latest GitHub release |
-| `genie install` | No-op on v5 (state lives in `genie.db`); reserved for managed installs |
 | `genie uninstall` | Remove Genie and clean up its hooks |
 | `genie help` | Show help for any command |
 
@@ -93,7 +95,7 @@ All linked worktrees of a repository share one `genie.db`, resolved from the git
 
 No dates — direction, not promises:
 
-- **Warp integration.** Emit Warp Launch Configurations so `/work` drives a multi-session cockpit instead of individual panes.
+- **Deeper Warp integration.** A Tab Config upgrade and richer pane orchestration on top of today's `genie launch`.
 - **Omni channel runner.** Port the channel runner forward so agents can be wired to external channels again.
 - **More emit targets.** Codex and Hermes as skill targets alongside Claude Code.
 - **CDN distribution.** Serve signed releases from a CDN for faster, wider installs.

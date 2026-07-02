@@ -119,23 +119,31 @@ JOBS_BASELINE="$(jobs -p || true)"
 printf 'pgserve/postgres baseline pids: [%s]\n' "$(printf '%s' "$PG_BASELINE" | tr '\n' ' ')"
 
 # ============================================================================
-# 1. Create the fixture git repo (real git init + initial commit) and mirror
-#    the repo's genie.db ignore rules — exactly what `genie init` will do.
+# 1. Create the fixture git repo (real git init) and scaffold it with the real
+#    `genie init` command — the same idempotent bootstrap an operator runs. init
+#    writes `.genie/INDEX.md` and the three genie.db ignore rules into
+#    `.gitignore`; we assert both landed, then commit the scaffold so the tree
+#    stays clean for the git-cleanliness audit later.
 # ============================================================================
-step "fixture repo setup"
+step "fixture repo setup (genie init)"
 git -C "$FIXTURE" init -q
 git -C "$FIXTURE" config user.email "e2e@genie.test"
 git -C "$FIXTURE" config user.name "genie-e2e"
 
-# Copy the three genie.db ignore lines verbatim from the real repo .gitignore.
-IGNORE_LINES="$(grep -E '^\.genie/genie\.db' "$REPO_ROOT/.gitignore")"
-[ -n "$IGNORE_LINES" ] || die "could not find .genie/genie.db ignore lines in $REPO_ROOT/.gitignore"
-printf '%s\n' "$IGNORE_LINES" > "$FIXTURE/.gitignore"
-git -C "$FIXTURE" add .gitignore
-git -C "$FIXTURE" commit -q -m "chore: init fixture with genie.db ignore rules"
+# Run as a condition so `set -e` doesn't abort before we assert the exit code.
+if ( cd "$FIXTURE" && bun "$DIST" init ); then INIT_RC=0; else INIT_RC=$?; fi
+assert genie-init-exit-0
+[ "$INIT_RC" -eq 0 ] || die "genie init exited $INIT_RC"
+
+assert genie-init-created-index
+[ -f "$FIXTURE/.genie/INDEX.md" ] || die "genie init did not create .genie/INDEX.md"
 
 assert gitignore-has-three-genie-db-lines
-[ "$(grep -c 'genie\.db' "$FIXTURE/.gitignore")" -eq 3 ] || die ".gitignore did not receive all 3 genie.db lines"
+[ -f "$FIXTURE/.gitignore" ] || die "genie init did not create .gitignore"
+[ "$(grep -c '^\.genie/genie\.db' "$FIXTURE/.gitignore")" -eq 3 ] || die "genie init did not write all 3 genie.db ignore rules"
+
+git -C "$FIXTURE" add .gitignore .genie/INDEX.md
+git -C "$FIXTURE" commit -q -m "chore: genie init scaffold"
 
 # ============================================================================
 # 2. Author the lifecycle documents as the skills would — brainstorm + wish
@@ -186,6 +194,52 @@ CREATED_COUNT="$(cli task list --wish "$SLUG" --json | json_task_count)"
 [ "$CREATED_COUNT" -eq 3 ] || die "expected 3 tasks after create, got $CREATED_COUNT"
 READY_COUNT="$(cli task list --wish "$SLUG" --status ready --json | json_task_count)"
 [ "$READY_COUNT" -eq 3 ] || die "expected 3 ready tasks after create, got $READY_COUNT"
+
+# ============================================================================
+# 3b. `genie launch --dry-run` — plan one Warp pane per ready group while all 3
+#     are ready, touching NOTHING. Isolation: GENIE_WORKTREES_DIR points at a
+#     fixture-scoped dir the command has never created; HOME is redirected into
+#     the fixture so the platform Warp config dir (macOS: $HOME/.warp/...,
+#     Linux: $HOME/.local/share/warp-terminal/...) also resolves under the
+#     fixture and can be proven untouched — the real user Warp dir is never
+#     read or written. dry-run must plan 3 panes with absolute cwds, then leave
+#     the worktrees dir empty and write no launch config anywhere.
+# ============================================================================
+step "launch --dry-run (plan-only, no materialization)"
+LAUNCH_WT="$SCRATCH/launch-worktrees"
+LAUNCH_HOME="$SCRATCH/launch-home"
+LAUNCH_OUT="$SCRATCH/launch-dry.out"
+mkdir -p "$LAUNCH_HOME"
+
+if HOME="$LAUNCH_HOME" GENIE_WORKTREES_DIR="$LAUNCH_WT" bun "$DIST" launch "$SLUG" --dry-run > "$LAUNCH_OUT" 2>&1; then
+  LAUNCH_RC=0
+else
+  LAUNCH_RC=$?
+fi
+cat "$LAUNCH_OUT"
+
+assert launch-dry-run-exit-0
+[ "$LAUNCH_RC" -eq 0 ] || die "launch --dry-run exited $LAUNCH_RC"
+
+assert launch-dry-run-plans-three-groups
+grep -q '3 group(s)' "$LAUNCH_OUT" || die "launch --dry-run did not report 3 groups"
+
+assert launch-dry-run-one-absolute-worktree-per-group
+WT_LINES="$(grep -c "worktree: $LAUNCH_WT/" "$LAUNCH_OUT" || true)"
+[ "$WT_LINES" -eq 3 ] || die "expected 3 absolute worktree paths under $LAUNCH_WT, got $WT_LINES"
+
+assert launch-dry-run-panes-have-absolute-cwd
+CWD_ABS="$(grep -oE 'cwd: /' "$LAUNCH_OUT" | wc -l | tr -d ' ')"
+[ "$CWD_ABS" -eq 3 ] || die "expected 3 absolute pane cwds in the YAML, got $CWD_ABS"
+
+assert launch-dry-run-materialized-no-worktrees
+if [ -d "$LAUNCH_WT" ] && [ -n "$(ls -A "$LAUNCH_WT" 2>/dev/null)" ]; then
+  die "launch --dry-run materialized worktree content under $LAUNCH_WT"
+fi
+
+assert launch-dry-run-wrote-no-config
+FOUND_CFG="$(find "$LAUNCH_HOME" -name "genie-$SLUG.yaml" 2>/dev/null)"
+[ -z "$FOUND_CFG" ] || die "launch --dry-run wrote a launch config under $LAUNCH_HOME: $FOUND_CFG"
 
 # ============================================================================
 # 4. Render the board (pure query, no stored view state).

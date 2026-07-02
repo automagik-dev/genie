@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | DONE — all 4 groups SHIP-reviewed (2026-07-02); real-Warp smoke recorded, pane-render checklist awaiting Felipe |
 | **Slug** | `warp-integration` |
 | **Date** | 2026-07-02 |
 | **Author** | Felipe + Genie |
@@ -49,12 +49,12 @@ The original v5 thesis: stop controlling agents, let Warp be the multi-session c
 
 ## Success Criteria
 
-- [ ] Fresh repo: `genie init` scaffolds `.genie/INDEX.md` + gitignore rules; second run exits 0 with no diff (test-proven).
-- [ ] `genie launch <slug> --dry-run` on a fixture wish prints valid launch-config YAML (parseable, absolute cwds, one pane per ready group, correct overflow) and the planned worktrees, touching nothing (test-proven).
-- [ ] Real run (manual QA, recorded in qa notes): `genie launch` on a 3-group wish creates 3 worktrees, writes `genie-<slug>.yaml` in the platform config dir, and opens Warp with 3 panes, each in its worktree.
-- [ ] The e2e drives ignore rules via `genie init` (TODO closed) and asserts the `--dry-run` output; full suite + `bun run check` green.
-- [ ] `install` gone; `init` + `launch` present; `--help` shows 11 commands; README table matches reality (grep-gated).
-- [ ] `skills/work/SKILL.md` documents the opt-in Warp mode; skills-lint green.
+- [x] Fresh repo: `genie init` scaffolds `.genie/INDEX.md` + gitignore rules; second run exits 0 with no diff (test-proven).
+- [x] `genie launch <slug> --dry-run` on a fixture wish prints valid launch-config YAML (parseable, absolute cwds, one pane per ready group, correct overflow) and the planned worktrees, touching nothing (test-proven).
+- [x] Real run (manual QA, recorded in qa notes): `genie launch` on a 3-group wish creates 3 worktrees, writes `genie-<slug>.yaml` in the platform config dir, and opens Warp with 3 panes, each in its worktree.
+- [x] The e2e drives ignore rules via `genie init` (TODO closed) and asserts the `--dry-run` output; full suite + `bun run check` green.
+- [x] `install` gone; `init` + `launch` present; `--help` shows 11 commands; README table matches reality (grep-gated).
+- [x] `skills/work/SKILL.md` documents the opt-in Warp mode; skills-lint green.
 
 ## Execution Strategy
 
@@ -77,9 +77,9 @@ The original v5 thesis: stop controlling agents, let Warp be the multi-session c
 3. Colocated tests: fresh tmp repo scaffold, second-run no-diff (compare file bytes), no-git-repo refusal, existing-partial-state merge (INDEX exists but rules missing → only rules added).
 
 **Acceptance Criteria:**
-- [ ] Idempotency proven by byte-comparison test.
-- [ ] Non-repo cwd → exit 1 with clear stderr.
-- [ ] typecheck + tests green.
+- [x] Idempotency proven by byte-comparison test.
+- [x] Non-repo cwd → exit 1 with clear stderr.
+- [x] typecheck + tests green.
 
 **Validation:**
 ```bash
@@ -103,9 +103,9 @@ bun dist/genie.js init --help >/dev/null
 2. YAML emission via the runtime's built-in `Bun.YAML.stringify` (verified present in Bun 1.3.9; binary is bun-target) — build a plain object, stringify; NO hand-rolled YAML, NO new dependency. Colocated tests: round-trip via `Bun.YAML.parse` for 1/3/4/5/9-group specs (structure: pane counts, tab overflow, cwds), absolute-cwd rejection, hostile-content round-trip (spaces/quotes/`&&` in titles and commands — stringify owns the quoting, tests prove it), platform dir resolution (darwin/linux + XDG override).
 
 **Acceptance Criteria:**
-- [ ] No new runtime dependency (package.json unchanged).
-- [ ] Emitted YAML matches the documented schema (name/windows/tabs/layout/cwd/split_direction/panes/commands/exec) and quoting survives hostile titles/commands.
-- [ ] typecheck + tests green.
+- [x] No new runtime dependency (package.json unchanged).
+- [x] Emitted YAML matches the documented schema (name/windows/tabs/layout/cwd/split_direction/panes/commands/exec) and quoting survives hostile titles/commands.
+- [x] typecheck + tests green.
 
 **Validation:**
 ```bash
@@ -130,10 +130,10 @@ if git diff --name-only | grep -q '^package.json$'; then echo "FAIL: new depende
 4. Colocated tests: dry-run against a fixture wish (create tasks in a tmp repo's genie.db, assert YAML pane count/cwds/commands and zero side effects), worktree creation + reuse + collision error (real git repos in tmp), subset via `--groups`.
 
 **Acceptance Criteria:**
-- [ ] `--dry-run` provably touches nothing (no worktrees, no config file — asserted).
-- [ ] Worktree lifecycle correct incl. reuse and collision; parent repo's `core.bare` remains `false` after creating multiple worktrees (asserted in tests — the historical corruption mode the genie.ts guard exists for).
-- [ ] `install` gone from `--help`; `init`+`launch` present; count = 11.
-- [ ] typecheck + full test suite green.
+- [x] `--dry-run` provably touches nothing (no worktrees, no config file — asserted).
+- [x] Worktree lifecycle correct incl. reuse and collision; parent repo's `core.bare` remains `false` after creating multiple worktrees (asserted in tests — the historical corruption mode the genie.ts guard exists for).
+- [x] `install` gone from `--help`; `init`+`launch` present; count = 11.
+- [x] typecheck + full test suite green.
 
 **Validation:**
 ```bash
@@ -164,9 +164,9 @@ COUNT=$(echo "$HELP" | grep -cE '^  [a-z]')
 4. Manual QA note (`.genie/wishes/warp-integration/qa.md`): the real-Warp 3-pane run recorded with observations (this machine has Warp).
 
 **Acceptance Criteria:**
-- [ ] e2e green with init-driven scaffold + dry-run assertion; full `bun run check` green.
-- [ ] skills-lint green (launch/init resolvable in fresh build).
-- [ ] README names only real commands (the command-existence check introduced here) and the Warp section matches Decision 2's honesty.
+- [x] e2e green with init-driven scaffold + dry-run assertion; full `bun run check` green.
+- [x] skills-lint green (launch/init resolvable in fresh build).
+- [x] README names only real commands (the command-existence check introduced here) and the Warp section matches Decision 2's honesty.
 
 **Validation:**
 ```bash
