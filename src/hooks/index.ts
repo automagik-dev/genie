@@ -225,6 +225,44 @@ function buildDenyResponse(
  */
 const NON_INTERCEPTABLE_PRE_TOOL_USE_TOOLS: ReadonlyArray<string> = ['AskUserQuestion'];
 
+/**
+ * Fail-CLOSED envelope for the CLI entry (dispatch-command.ts) when a payload
+ * can't be parsed or `dispatch()` throws unexpectedly.
+ *
+ * Why non-empty: CC reads empty PreToolUse stdout as allow-by-default, so a
+ * corrupt or exploding payload that produced empty stdout would silently bypass
+ * every guard. We emit a NON-EMPTY, non-allow response so the tool call cannot
+ * auto-approve.
+ *
+ * Shape selection:
+ *  - Known, interceptable PreToolUse tool (a post-parse throw where event/tool
+ *    are known) → the event-appropriate PreToolUse deny, same format
+ *    `buildDenyResponse` emits for a handler deny.
+ *  - Unknown tool (truly-unparseable stdin) OR a NON_INTERCEPTABLE tool
+ *    (AskUserQuestion) → the neutral `{ decision: 'block' }` form. We MUST NOT
+ *    emit a PreToolUse `hookSpecificOutput` here: CC treats any such envelope
+ *    for the carve-out tools as "hook handled it" and suppresses the inline
+ *    picker, and on unparseable input we can't rule out that the tool IS the
+ *    carve-out. `{ decision: 'block' }` is non-empty, non-allow, and does not
+ *    carry a `hookSpecificOutput` envelope.
+ */
+export function buildFailClosedResponse(event: string | undefined, tool: string | undefined, reason: string): string {
+  const interceptablePreToolUse =
+    event === 'PreToolUse' && typeof tool === 'string' && !NON_INTERCEPTABLE_PRE_TOOL_USE_TOOLS.includes(tool);
+
+  if (interceptablePreToolUse) {
+    return JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason: reason,
+      },
+    });
+  }
+
+  return JSON.stringify({ decision: 'block', reason });
+}
+
 function buildBlockingResponse(
   hookEventName: string,
   contextMessages: string[],

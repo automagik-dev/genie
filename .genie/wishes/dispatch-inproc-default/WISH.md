@@ -74,10 +74,10 @@ The v5 demolition deleted the hook daemon (`src/serve/`) but left `src/hooks/dis
 4. Tests: entry-level fail-closed (unparseable stdin → non-allow, not empty; injected dispatch throw → non-allow) + the `AskUserQuestion` carve-out still returns its empty-picker response; existing `bun test src/hooks/` green on the now-default path.
 
 **Acceptance Criteria:**
-- [ ] dispatch-client.ts + genie-hook-binary.test.ts gone; no build target; no FORCE_INPROC/SKIP_DB_BOOT in src/ or tests/.
-- [ ] redaction.ts resolved; knip clean.
-- [ ] Unparseable-stdin + injected-throw fail CLOSED (tested); AskUserQuestion carve-out intact.
-- [ ] typecheck + `bun test src/hooks/` + build green.
+- [x] dispatch-client.ts + genie-hook-binary.test.ts gone; no build target; no FORCE_INPROC/SKIP_DB_BOOT in src/ or tests/.
+- [x] redaction.ts resolved; knip clean.
+- [x] Unparseable-stdin + injected-throw fail CLOSED (tested); AskUserQuestion carve-out intact.
+- [x] typecheck + `bun test src/hooks/` + build green.
 
 **Validation:**
 ```bash
