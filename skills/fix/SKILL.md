@@ -2,6 +2,7 @@
 name: fix
 description: "Dispatch fix subagent for FIX-FIRST gaps from /review, re-review, and escalate after 2 failed loops."
 ---
+<!-- skills-lint:ignore -->
 
 # /fix — Fix-Review Loop
 

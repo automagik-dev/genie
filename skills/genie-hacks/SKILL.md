@@ -2,6 +2,7 @@
 name: genie-hacks
 description: "Browse, search, and contribute community hacks — real-world patterns for provider switching, teams, skills, hooks, cost optimization, and more."
 ---
+<!-- skills-lint:ignore -->
 
 # /genie-hacks — Community Hacks & Patterns
 

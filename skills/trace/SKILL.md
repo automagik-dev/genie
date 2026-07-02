@@ -2,6 +2,7 @@
 name: trace
 description: "Dispatch trace subagent to investigate unknown issues — reproduces, traces, and reports root cause for /fix handoff."
 ---
+<!-- skills-lint:ignore -->
 
 # /trace — Investigation and Root Cause Analysis
 

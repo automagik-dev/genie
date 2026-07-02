@@ -53,6 +53,14 @@ const WORKSPACE_EXEMPT = new Set([
   'version',
   'help',
   'hook',
+  // `task` / `board` are the v5 sqlite-backed commands. They self-resolve their
+  // shared `.genie/genie.db` from the git common-dir (see src/lib/v5/genie-db.ts)
+  // and never read the v4 `.genie/workspace.json`, so gating them on the legacy
+  // workspace concept is wrong — it made `genie task create` in a fresh repo
+  // exit 2. This whole workspace gate is v4-legacy and dies with the harness in
+  // Group 3/5; exempting the v5 commands is the interim correct behavior.
+  'task',
+  'board',
 ]);
 
 /**

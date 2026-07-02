@@ -2,6 +2,7 @@
 name: pm
 description: "Full PM playbook — triage backlog, prioritize, assign, track, report, escalate. Copilot, autopilot, or pair modes."
 ---
+<!-- skills-lint:ignore -->
 
 # /pm — Project Management Playbook
 

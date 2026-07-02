@@ -103,37 +103,6 @@
       }
     },
     {
-      "include": ["packages/**"],
-      "linter": {
-        "rules": {
-          "suspicious": {
-            "noConsole": "off",
-            "noExplicitAny": "warn",
-            "noArrayIndexKey": "warn"
-          },
-          "complexity": {
-            "noExcessiveCognitiveComplexity": {
-              "level": "warn",
-              "options": { "maxAllowedComplexity": 25 }
-            },
-            "noForEach": "warn"
-          },
-          "style": {
-            "noNonNullAssertion": "warn"
-          },
-          "correctness": {
-            "noUnusedVariables": "warn"
-          },
-          "a11y": {
-            "useKeyWithClickEvents": "warn",
-            "useSemanticElements": "warn",
-            "noLabelWithoutControl": "warn",
-            "noSvgWithoutTitle": "warn"
-          }
-        }
-      }
-    },
-    {
       "include": ["plugins/**"],
       "linter": {
         "rules": {

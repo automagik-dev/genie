@@ -161,6 +161,5 @@ export const GenieConfigSchema = z.object({
 });
 
 // Inferred types
-export type TerminalConfig = z.infer<typeof TerminalConfigSchema>;
 export type ShortcutsConfig = z.infer<typeof ShortcutsConfigSchema>;
 export type GenieConfig = z.infer<typeof GenieConfigSchema>;

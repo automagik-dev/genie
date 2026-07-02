@@ -37,7 +37,7 @@ Then, in Claude Code, Codex, or any AI coding agent, run the onboarding wizard:
 /wizard
 ```
 
-It interviews you, scaffolds the project, and walks you through your first wish. Prefer the cockpit? `genie` opens the terminal UI; `genie doctor` checks your install.
+It interviews you, scaffolds the project, and walks you through your first wish. Run `genie doctor` any time to check your install.
 
 ## What you get
 
@@ -55,21 +55,15 @@ It interviews you, scaffolds the project, and walks you through your first wish.
    Pull Request ─── You approve. You merge. Ship it.
 ```
 
-**Parallel agents.** Multiple agents working at once in isolated worktrees. No conflicts, no re-explaining context.
+**Parallel agents.** Multiple agents working at once in isolated worktrees, dispatched through Claude Code's native teams. No conflicts, no re-explaining context.
 
-**Teams.** Spin up a coordinated team of agents — shared mailbox and chat, with native Claude Code teammate UI.
+**Automated review.** Specialist critics (architecture, security, DX, performance, ops…) review every change. Severity-tagged. CRITICAL blocks the merge.
 
-**Automated review.** A council of specialist critics (architecture, security, DX, performance, ops…) reviews every change. Severity-tagged. CRITICAL blocks the merge.
+**Documents in git.** Wishes, designs, and brainstorms are plain markdown — you diff them, review them, and version them like any other code.
 
-**Overnight mode.** `/dream` — queue wishes before bed, wake up to reviewed PRs.
+**One file of state.** Tasks, boards, and wish-group state live in a single per-repo SQLite file (`.genie/genie.db`), Bun's built-in engine. No server, no daemon, nothing resident.
 
-**Persistent memory.** A git-versioned knowledge brain — agents search it before answering and write back what they learn, so context compounds instead of resetting every session.
-
-**Postgres-backed.** Tasks, events, and messages live in PostgreSQL — queryable, durable, real-time via LISTEN/NOTIFY. Your identity, skills, and memory stay as markdown in your repo.
-
-**Self-healing.** Built-in detectors catch and recover from zombie teams, orphaned sessions, and drift automatically.
-
-**Claude or Codex.** Bring your own agent — Genie drives either under the hood.
+**Claude today, more on the way.** Skills run natively in Claude Code now; Codex and Hermes emit targets are planned.
 
 ## Why Genie?
 
@@ -83,7 +77,7 @@ It interviews you, scaffolds the project, and walks you through your first wish.
 - One agent, one file at a time
 - Copy-paste PR descriptions by hand
 - Review AI code yourself, line by line
-- No memory between sessions
+- Plans and decisions live in your head
 
 </td>
 <td width="50%">
@@ -93,8 +87,8 @@ It interviews you, scaffolds the project, and walks you through your first wish.
 - Context captured once, inherited by every agent
 - Parallel agents in isolated worktrees
 - Automated severity-gated review
-- Queue wishes overnight, wake to PRs
-- Persistent memory across sessions
+- Wishes, designs, and brainstorms versioned in git
+- One SQLite file of state — zero daemons, no Postgres
 
 </td>
 </tr>
@@ -102,7 +96,7 @@ It interviews you, scaffolds the project, and walks you through your first wish.
 
 ## Skills
 
-17 built-in skills that compose into workflows:
+Skills carry the methodology. These compose into the core workflow and run natively in Claude Code today:
 
 | Skill | What it does |
 |-------|-------------|
@@ -110,38 +104,29 @@ It interviews you, scaffolds the project, and walks you through your first wish.
 | `/wish` | Turn an idea into a scoped plan with acceptance criteria |
 | `/work` | Execute a wish with parallel agents |
 | `/review` | Severity-gated code review (SHIP or FIX-FIRST) |
-| `/council` | Multi-agent architectural deliberation (smart-routed) |
-| `/dream` | Batch-execute SHIP-ready wishes overnight |
-| `/trace` | Reproduce, isolate, and root-cause bugs |
-| `/fix` | Minimal targeted bug fixes |
-| `/report` | Deep bug investigation → issue |
 | `/refine` | Turn rough briefs into structured prompts |
 | `/learn` | Correct agent behavior from mistakes |
-| `/docs` | Audit and generate documentation |
-| `/pm` | Full project-management playbook |
-| `/omni` | Wire a Genie agent to an Omni channel |
-| `/genie` | Auto-router — natural language to the right skill |
-| `/genie-hacks` | Community patterns and real-world workflows |
-| `/wizard` | Guided first-run onboarding |
 
-## What's new in v4
+Several more skills — `/council`, `/dream`, `/trace`, `/fix`, `/report`, `/docs`, `/pm`, `/omni`, `/genie` (the auto-router), `/genie-hacks`, and `/wizard` — shipped in v4 and are being ported to the v5 body. They're coming back.
 
-A ground-up rewrite.
+## What's new in v5
 
-| | v3 | v4 |
-|---|---|---|
-| **State** | JSON files + NATS | PostgreSQL + LISTEN/NOTIFY (+ git-versioned markdown) |
-| **UI** | CLI only | Full terminal UI |
-| **Memory** | None | Knowledge brain |
-| **Tasks** | Basic | Kanban boards, templates, projects |
-| **Review** | Single pass | Critic-council deliberation |
-| **Stability** | Best effort | Advisory locks, spawn watchdog, self-healing detectors |
+v5 is a **lightweight body**. The v4 harness — Postgres, tmux orchestration, executor registries, the telemetry spine, the full-screen TUI and the desktop app — is gone. What remains is the part that always did the work: the skills and the `.genie` taxonomy.
+
+- **Skills are the product.** brainstorm → wish → work → review, authored once, running natively in Claude Code.
+- **Documents in git.** Wishes, designs, and brainstorms are markdown you diff and review.
+- **State is one file.** Tasks, boards, and wish-group state live in a single per-repo SQLite file at `.genie/genie.db` — Bun's built-in engine, no server, no daemon.
+- **Zero daemons, no Postgres.** Nothing resident.
+- **Small.** 10 CLI commands, 3 runtime dependencies, a ~0.9 MB single-file binary.
+- **Native dispatch.** `/work` fans agents out through Claude Code's native teams, each in its own worktree.
+
+**On the way:** Warp as the multi-session driver (Genie emits Warp Launch Configurations — planned), the Omni channel integration (its state is being ported to `genie.db`; temporarily offline on the v5 line), and Codex and Hermes as additional emit targets (planned).
 
 [Full release notes →](https://github.com/automagik-dev/genie/releases/latest)
 
 ## Design
 
-A single dark-only palette from one source of truth (`packages/genie-tokens/`), shared by three consumers (TUI, desktop app, tmux).
+Fewer moving parts, not fewer lines. Content plus glue: skills carry the methodology, git carries the documents, one SQLite file carries the state, and your coding agent carries the execution.
 
 ---
 

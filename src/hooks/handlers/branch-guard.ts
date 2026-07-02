@@ -16,7 +16,7 @@ import { spawnSync } from 'node:child_process';
 import type { HandlerResult, HookPayload } from '../types.js';
 
 /** Branches that agents are allowed to merge PRs into. */
-const ALLOWED_MERGE_BASES = new Set(['dev']);
+const ALLOWED_MERGE_BASES = new Set(['dev', 'v5']);
 
 interface SyncDenyPattern {
   test: (command: string) => boolean;

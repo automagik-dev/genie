@@ -21,25 +21,11 @@
  *   Fire-and-forget — all handlers run, output is ignored.
  */
 
-import { endSpan, startSpan } from '../lib/emit.js';
-import { isWideEmitEnabled } from '../lib/observability-flag.js';
-import { getAmbient as getTraceContext } from '../lib/trace-context.js';
 import { auditContext } from './handlers/audit-context.js';
-import { autoSpawn } from './handlers/auto-spawn.js';
-import { brainInject } from './handlers/brain-inject.js';
 import { branchGuard } from './handlers/branch-guard.js';
-import { codexInboxDeliver } from './handlers/codex-inbox-deliver.js';
 import { freshness } from './handlers/freshness.js';
 import { identityInject } from './handlers/identity-inject.js';
 import { orchestrationGuard } from './handlers/orchestration-guard.js';
-import {
-  emitAssistantResponseEvent,
-  emitMessageEvent,
-  emitToolCallEvent,
-  emitUserPromptEvent,
-} from './handlers/runtime-emit.js';
-import { sessionSync } from './handlers/session-sync.js';
-import { resolveAgentName, resolveTeamName } from './resolve-agent-name.js';
 import type { Handler, HandlerResult, HookPayload } from './types.js';
 import { isBlockingEvent } from './types.js';
 
@@ -82,16 +68,6 @@ const builtinHandlers: ReadonlyArray<Handler> = [
     version: '1',
     source: 'builtin',
     manifest_path: BUILTIN_MANIFEST_PATH,
-    name: 'brain-inject',
-    event: 'PreToolUse',
-    matcher: /.*/,
-    priority: 5,
-    fn: brainInject,
-  },
-  {
-    version: '1',
-    source: 'builtin',
-    manifest_path: BUILTIN_MANIFEST_PATH,
     name: 'freshness',
     event: 'PreToolUse',
     matcher: /^Read$/,
@@ -117,82 +93,6 @@ const builtinHandlers: ReadonlyArray<Handler> = [
     matcher: /^SendMessage$/,
     priority: 10,
     fn: identityInject,
-  },
-  {
-    version: '1',
-    source: 'builtin',
-    manifest_path: BUILTIN_MANIFEST_PATH,
-    name: 'auto-spawn',
-    event: 'PreToolUse',
-    matcher: /^SendMessage$/,
-    priority: 20,
-    fn: autoSpawn,
-  },
-  {
-    version: '1',
-    source: 'builtin',
-    manifest_path: BUILTIN_MANIFEST_PATH,
-    name: 'runtime-emit-tool',
-    event: 'PreToolUse',
-    matcher: /.*/,
-    priority: 30,
-    fn: emitToolCallEvent,
-  },
-  {
-    version: '1',
-    source: 'builtin',
-    manifest_path: BUILTIN_MANIFEST_PATH,
-    name: 'runtime-emit-msg',
-    event: 'PostToolUse',
-    matcher: /^SendMessage$/,
-    priority: 30,
-    fn: emitMessageEvent,
-  },
-  {
-    version: '1',
-    source: 'builtin',
-    manifest_path: BUILTIN_MANIFEST_PATH,
-    name: 'codex-inbox-deliver',
-    event: 'UserPromptSubmit',
-    priority: 25,
-    fn: codexInboxDeliver,
-  },
-  {
-    version: '1',
-    source: 'builtin',
-    manifest_path: BUILTIN_MANIFEST_PATH,
-    name: 'runtime-emit-user-prompt',
-    event: 'UserPromptSubmit',
-    priority: 30,
-    fn: emitUserPromptEvent,
-  },
-  {
-    version: '1',
-    source: 'builtin',
-    manifest_path: BUILTIN_MANIFEST_PATH,
-    name: 'runtime-emit-assistant-response',
-    event: 'Stop',
-    priority: 30,
-    fn: emitAssistantResponseEvent,
-  },
-  {
-    version: '1',
-    source: 'builtin',
-    manifest_path: BUILTIN_MANIFEST_PATH,
-    name: 'session-sync-tool',
-    event: 'PreToolUse',
-    matcher: /.*/,
-    priority: 35,
-    fn: sessionSync,
-  },
-  {
-    version: '1',
-    source: 'builtin',
-    manifest_path: BUILTIN_MANIFEST_PATH,
-    name: 'session-sync-prompt',
-    event: 'UserPromptSubmit',
-    priority: 35,
-    fn: sessionSync,
   },
 ];
 
@@ -265,21 +165,6 @@ export async function runHandler(
   const handlerPayload: HookPayload = { ...payload };
   if (currentInput) handlerPayload.tool_input = currentInput;
   const start = Date.now();
-  // Resolve agent identity from payload + executor env + session context, falling
-  // back to 'harness' for non-agent hook activity (CLI, daemon, tests). Avoids
-  // the previous `'unknown'` bucket that masked both unknown agents and harness
-  // work — wish observability-signal-normalization Group 3.
-  const agentId = resolveAgentName(handlerPayload);
-  const teamId = resolveTeamName(handlerPayload);
-  const span = isWideEmitEnabled()
-    ? startSpan(
-        'hook.delivery',
-        // event included so hook_perf_baseline view can group by it (Group 4 of
-        // hookify-perf-foundation). tool may be undefined for UserPromptSubmit / Stop.
-        { hook_name: handler.name, agent_id: agentId, tool: payload.tool_name, event: payload.hook_event_name },
-        { source_subsystem: 'hooks', ctx: getTraceContext() ?? undefined, agent: agentId, team: teamId },
-      )
-    : null;
   try {
     const result = await handler.fn(handlerPayload);
     hookDebug(
@@ -287,24 +172,10 @@ export async function runHandler(
       result?.decision ?? result?.hookSpecificOutput?.permissionDecision ?? 'allow',
       Date.now() - start,
     );
-    if (span) {
-      endSpan(
-        span,
-        { hook_name: handler.name, agent_id: agentId, status: result?.decision === 'deny' ? 'rejected' : 'ok' },
-        { source_subsystem: 'hooks', agent: agentId, team: teamId },
-      );
-    }
     return result;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[genie-hook] Handler "${handler.name}" threw: ${msg}`);
-    if (span) {
-      endSpan(
-        span,
-        { hook_name: handler.name, agent_id: agentId, status: 'error', stderr_excerpt: msg.slice(0, 1024) },
-        { source_subsystem: 'hooks', agent: agentId, team: teamId },
-      );
-    }
     if (isBlocking) {
       hookDebug(handler.name, 'deny (crash)', Date.now() - start);
       return { decision: 'deny', reason: `handler crashed: ${msg}` };
@@ -391,10 +262,12 @@ function buildBlockingResponse(
     response.hookSpecificOutput = output;
   }
 
-  // UserPromptSubmit (claude + codex) accepts hookSpecificOutput.additionalContext
-  // to inject context into the model input for the upcoming turn. Pre-PR-B the
-  // dispatcher dropped this for non-PreToolUse blocking events; the codex
-  // inbox-deliver handler depends on it (see src/hooks/handlers/codex-inbox-deliver.ts).
+  // UserPromptSubmit accepts hookSpecificOutput.additionalContext to inject
+  // context into the model input for the upcoming turn. Pre-PR-B the dispatcher
+  // dropped this for non-PreToolUse blocking events. No builtin handler emits
+  // UserPromptSubmit context today (the codex inbox-deliver handler that once
+  // relied on it is no longer registered), but externally loaded handlers can,
+  // so the passthrough stays.
   if (hookEventName === 'UserPromptSubmit' && hasContext) {
     response.hookSpecificOutput = {
       hookEventName: 'UserPromptSubmit',

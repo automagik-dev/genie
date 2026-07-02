@@ -147,7 +147,7 @@ jobs:
       - name: Format versioned JSON (Biome)
         if: steps.context.outputs.should_bump == 'true'
         run: |
-          bunx biome format --write package.json openclaw.plugin.json plugins/genie/.claude-plugin/plugin.json plugins/genie/package.json .claude-plugin/marketplace.json 2>/dev/null || true
+          bunx biome format --write package.json plugins/genie/.claude-plugin/plugin.json plugins/genie/package.json .claude-plugin/marketplace.json 2>/dev/null || true
 
       - name: Commit and tag
         if: steps.context.outputs.should_bump == 'true'
@@ -206,7 +206,7 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           TAG="refs/tags/v${VERSION}"
           # Canonical channel taxonomy (Felipe directive 2026-05-12,
-          # unified across pgserve/omni/genie):
+          # unified across the automagik sibling projects):
           #   main    → stable  → .well-known/latest.json
           #   homolog → homolog → .well-known/homolog.json
           #   dev/*   → dev     → .well-known/dev.json

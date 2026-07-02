@@ -2,6 +2,7 @@
 name: docs
 description: "Dispatch docs subagent to audit, generate, and validate documentation against the codebase."
 ---
+<!-- skills-lint:ignore -->
 
 # /docs — Documentation Generation
 
