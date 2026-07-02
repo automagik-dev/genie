@@ -99,7 +99,10 @@ jobs:
               echo "should_bump=true" >> "$GITHUB_OUTPUT"
               ;;
           esac
-          echo "prefix=4" >> "$GITHUB_OUTPUT"
+          # v5 version scheme: 5.YYMMDD.N (daily counter preserved from v4;
+          # only the leading major moved). Must stay in sync with the local
+          # generator in scripts/version.ts and the v5.<date>.* tag glob below.
+          echo "prefix=5" >> "$GITHUB_OUTPUT"
           echo "Resolved: branch=${BRANCH}"
 
       - uses: actions/checkout@v5

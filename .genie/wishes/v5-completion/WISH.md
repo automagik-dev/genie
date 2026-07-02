@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | DONE — all 3 groups SHIP-reviewed (2026-07-02); 3 commits |
 | **Slug** | `v5-completion` |
 | **Date** | 2026-07-02 |
 | **Author** | Felipe + Genie |
@@ -44,10 +44,10 @@ Close out the v5 lightweight body with the three remaining independent tracks, b
 
 ## Success Criteria
 
-- [ ] G1: `CLAUDE.md` has zero references to the retired v4 surface (`genie agent`/`genie team`/`genie exec` namespaces, pgserve/PostgreSQL, `GENIE_OTEL_PORT`, tmux orchestration, native-teams/`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`/`workers.json`/`GENIE_IDLE_TIMEOUT_MS`/mailbox, "~305KB" bundle); it documents the real 12 commands + genie.db + in-process hooks; a drift-guard grep gate fails if any fossil returns; the still-true sections are preserved; `bun run check` green.
-- [ ] G2: `genie launch <slug> --agent codex --dry-run` emits a pane command of the form `codex exec "$(cat …)"` against the worktree prompt (asserted in the YAML); `--agent claude` (default) output is byte-identical to today; an invalid `--agent` value → typed error; the Hermes decision doc exists under `.genie/` with a clear recommendation; launch tests green.
-- [ ] G3: `package.json` version is 5.x; `genie --version` reports it (not `0.0.0-unknown`); `scripts/version.ts` generates 5.x (no `4.`/`v4.` hardcodes); the npm vestiges (`publishConfig`, npm-only `prepack`, dead plugin-sync/npm scripts) are REMOVED; `npm pack --dry-run` succeeds and the tarball contains exactly the intended files (no stale/vestigial entries); the release workflows are audited (each v4-assumption fixed or deferred-with-note in `.genie/wishes/v5-completion/release-checklist.md`); nothing published/tagged.
-- [ ] Full `bun run check` + build + e2e green; CI green on the PR.
+- [x] G1: `CLAUDE.md` has zero references to the retired v4 surface (`genie agent`/`genie team`/`genie exec` namespaces, pgserve/PostgreSQL, `GENIE_OTEL_PORT`, tmux orchestration, native-teams/`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`/`workers.json`/`GENIE_IDLE_TIMEOUT_MS`/mailbox, "~305KB" bundle); it documents the real 12 commands + genie.db + in-process hooks; a drift-guard grep gate fails if any fossil returns; the still-true sections are preserved; `bun run check` green.
+- [x] G2: `genie launch <slug> --agent codex --dry-run` emits a pane command of the form `codex exec "$(cat …)"` against the worktree prompt (asserted in the YAML); `--agent claude` (default) output is byte-identical to today; an invalid `--agent` value → typed error; the Hermes decision doc exists under `.genie/` with a clear recommendation; launch tests green.
+- [x] G3: `package.json` version is 5.x; `genie --version` reports it (not `0.0.0-unknown`); `scripts/version.ts` generates 5.x (no `4.`/`v4.` hardcodes); the npm vestiges (`publishConfig`, npm-only `prepack`, dead plugin-sync/npm scripts) are REMOVED; `npm pack --dry-run` succeeds and the tarball contains exactly the intended files (no stale/vestigial entries); the release workflows are audited (each v4-assumption fixed or deferred-with-note in `.genie/wishes/v5-completion/release-checklist.md`); nothing published/tagged.
+- [x] Full `bun run check` + build + e2e green; CI green on the PR.
 
 ## Execution Strategy
 
@@ -132,11 +132,11 @@ grep -qiE 'recommend|decision' .genie/wishes/v5-completion/hermes-integration.md
 6. Do NOT publish, do NOT tag, do NOT revive npm.
 
 **Acceptance Criteria:**
-- [ ] `package.json` version is 5.x; `scripts/version.ts` generates 5.x (no `4.`/`v4.` hardcodes); `genie --version` reports the 5.x version (not `0.0.0-unknown`).
-- [ ] npm vestiges removed (`publishConfig`, dead `prepack`/plugin-sync/npm scripts); `files` allowlist honest for the signed tarball.
-- [ ] `npm pack --dry-run` succeeds (packs+lists only, no registry/auth); tarball contains exactly the intended files, no stale entries.
-- [ ] Release workflows audited; each v4-assumption fixed or deferred-with-note; release-bot/branch-guard interaction documented — all in `.genie/wishes/v5-completion/release-checklist.md`.
-- [ ] `bun run check` + build green; nothing published/tagged.
+- [x] `package.json` version is 5.x; `scripts/version.ts` generates 5.x (no `4.`/`v4.` hardcodes); `genie --version` reports the 5.x version (not `0.0.0-unknown`).
+- [x] npm vestiges removed (`publishConfig`, dead `prepack`/plugin-sync/npm scripts); `files` allowlist honest for the signed tarball.
+- [x] `npm pack --dry-run` succeeds (packs+lists only, no registry/auth); tarball contains exactly the intended files, no stale entries.
+- [x] Release workflows audited; each v4-assumption fixed or deferred-with-note; release-bot/branch-guard interaction documented — all in `.genie/wishes/v5-completion/release-checklist.md`.
+- [x] `bun run check` + build green; nothing published/tagged.
 
 **Validation:**
 ```bash

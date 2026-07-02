@@ -24,7 +24,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version (e.g. 4.260510.6 — no v prefix)'
+        description: 'Version (e.g. 5.260702.1 — no v prefix)'
         required: true
         type: string
       channel:
