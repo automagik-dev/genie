@@ -23,7 +23,6 @@ import {
   decideVerify,
   downloadAndVerifyTarball,
   ensureCanonicalInstall,
-  extractPgserveSocketDirFromStatus,
   fetchLatestManifest,
   formatVerifyBanner,
   isGenieProcessSnapshotLine,
@@ -894,18 +893,6 @@ describe('Diagnostics schema (G5)', () => {
       ),
     ).toBe(false);
     expect(isGenieProcessSnapshotLine('2588570 1 2588570 S postgres -D /home/genie/.genie/data/pgserve')).toBe(false);
-  });
-
-  test('diagnostics derives pgserve socket dir from live pgserve runtime status json', () => {
-    const liveStatus = JSON.stringify({
-      installed: true,
-      status: 'online',
-      port: 8432,
-      socketDir: '/run/user/1000/pgserve',
-      runtime: { socketDir: '/run/user/1000/pgserve', port: 8432, live: true },
-    });
-
-    expect(extractPgserveSocketDirFromStatus(liveStatus)).toBe('/run/user/1000/pgserve');
   });
 
   test('NO_COLOR honored via colorEnabled() helper', () => {

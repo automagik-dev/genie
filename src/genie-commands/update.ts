@@ -1069,20 +1069,6 @@ export function isGenieProcessSnapshotLine(line: string): boolean {
   );
 }
 
-export function extractPgserveSocketDirFromStatus(output: string): string | null {
-  try {
-    const parsed = JSON.parse(output) as {
-      socketDir?: unknown;
-      runtime?: { socketDir?: unknown };
-    };
-    const rawSocketDir = parsed.runtime?.socketDir ?? parsed.socketDir;
-    if (typeof rawSocketDir === 'string' && rawSocketDir.trim()) return rawSocketDir.trim();
-  } catch {
-    // best-effort diagnostics only; callers fall back to null.
-  }
-  return null;
-}
-
 function collectGenieProcessSnapshot(): string | null {
   const snapshot = safeExec('ps -axo pid,ppid,pgid,stat,pcpu,pmem,etime,command -r', 2000)
     .split(/\r?\n/)

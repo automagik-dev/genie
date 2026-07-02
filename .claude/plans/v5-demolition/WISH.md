@@ -172,7 +172,7 @@ V5_E2E_BUILD=1 bash tests/e2e/v5-lifecycle.sh
 4. Prune `plugins/genie/` of references to deleted commands (keep skills symlink + branch-guard hooks.json).
 
 **Acceptance Criteria:**
-- [ ] Deleted paths gone; no dangling source references to the deleted packages.
+- [x] Deleted paths gone; no dangling source references to the deleted packages.
 
 **Validation:**
 ```bash
@@ -193,13 +193,16 @@ bun run typecheck
 **Goal:** Purge package.json and tool configs; enforce the measurable demolition gates.
 
 **Deliverables:**
-1. package.json: remove dead deps/devDeps, dead `scripts` entries, prune `files`/`binarySha256`/`pgserve` fields; `check` kept meaningful.
+1. package.json: remove dead deps/devDeps, dead `scripts` entries (incl. `test:parallel`, `lint:emit`, `check:perf`, `test:visual`, postinstall pieces), prune `files`/`binarySha256`/`pgserve` fields; `check` kept meaningful.
 2. `knip.json`, `biome.json`, `tsconfig.json`, `.npmignore`, commitlint/husky config updated.
-3. Fresh-clone sanity documented: `bun install && bun run check && bun run build && V5_E2E_BUILD=1 bash tests/e2e/v5-lifecycle.sh`.
+3. **CI workflows purge (carried from G4 review, HIGH):** `.github/workflows/ci.yml` still runs `bun test test/visual/` (deleted), `scripts/list-tests.ts` (deleted), a 4-shard pg-tests matrix installing pgserve for 0 remaining PG tests, a pgserve v2 socket smoke, and a tmux theme-regeneration step (scripts/tmux deleted) — rewrite ci.yml for the survivor suite (typecheck, lint, bun test, skills:lint, build, e2e) and sweep every other workflow for references to deleted paths/systems. G6's PR cannot go green without this.
+4. **Deferred deletions (carried from G4 review):** `scripts/lint-emit-discipline.ts` + `tools/lint/` (vacuous — subject died with the emit spine), `plugins/genie/scripts/genie.cjs` + `term.cjs` (~1.9MB stale v3 bundles referencing deleted commands; keep statusline.sh), `scripts/genie-wipe.ts` (subject = deleted pgserve/tmux state), and a judgment pass on `skills-audit.ts`/`audit-next-tag-pinning.sh`/`check-fingerprint-pinning.sh`.
+5. Fresh-clone sanity documented: `bun install && bun run check && bun run build && V5_E2E_BUILD=1 bash tests/e2e/v5-lifecycle.sh`.
 
 **Acceptance Criteria:**
 - [ ] Forbidden deps absent; `bun run check` green end-to-end; knip clean.
 - [ ] Command count within bounds with task/board present.
+- [ ] No workflow in .github/workflows/ references a deleted path (grep gate over test/visual, list-tests, scripts/tmux, pg-tests matrix).
 
 **Validation:**
 ```bash
