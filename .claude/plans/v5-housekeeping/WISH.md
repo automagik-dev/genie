@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | DONE — all 3 groups SHIP-reviewed (2026-07-02) |
 | **Slug** | `v5-housekeeping` |
 | **Date** | 2026-07-02 |
 | **Author** | Felipe + Genie |
@@ -46,11 +46,11 @@ The demolition removed the harness but left the shell: unreferenced root files (
 
 ## Success Criteria
 
-- [ ] Root contains no unreferenced/stale files: `UPGRADING-pgserve-v3.md`, `VELOCITY.md`, `cliff.toml`, `Makefile`, `.npmrc`, `.npmignore`, `.rlmx/`, `tools/`, `test-fixtures/`, `assets/`, `test/` all gone (path asserts).
-- [ ] `.genie/` tracked content is empty except runtime db files are ignored (git ls-files gate).
-- [ ] Repo-wide grep finds no reference to VELOCITY, commits-30d, metrics-updater, or METRICS:START markers.
-- [ ] `tests/` is the single test root; full `bun run check` + e2e green; CI green on push.
-- [ ] README: markdownlint passes (docs-lint config); stale-claims grep clean (pgserve|tmux|tauri|PostgreSQL|terminal UI|knowledge brain|METRICS); quickstart commands verified to exist (`genie task`, `genie board`, skill names); roadmap items phrased as upcoming.
+- [x] Root contains no unreferenced/stale files: `UPGRADING-pgserve-v3.md`, `VELOCITY.md`, `cliff.toml`, `Makefile`, `.npmrc`, `.npmignore`, `.rlmx/`, `tools/`, `test-fixtures/`, `assets/`, `test/` all gone (path asserts).
+- [x] `.genie/` tracked content is empty except runtime db files are ignored (git ls-files gate).
+- [x] Repo-wide grep finds no reference to VELOCITY, commits-30d, metrics-updater, or METRICS:START markers.
+- [x] `tests/` is the single test root; full `bun run check` + e2e green; CI green on push.
+- [x] README: markdownlint passes (docs-lint config); stale-claims grep clean (pgserve|tmux|tauri|PostgreSQL|terminal UI|knowledge brain|METRICS); quickstart commands verified to exist (`genie task`, `genie board`, skill names); roadmap items phrased as upcoming.
 
 ## Execution Strategy
 
@@ -130,9 +130,9 @@ bun run check
 3. Markdownlint clean with the surviving config.
 
 **Acceptance Criteria:**
-- [ ] Stale-claims grep clean; no METRICS markers; no unbuilt feature phrased as present.
-- [ ] Quickstart commands exist (`bun dist/genie.js <cmd> --help` exit 0 for each `genie` command named).
-- [ ] Lint + check green.
+- [x] Stale-claims grep clean; no METRICS markers; no unbuilt feature phrased as present.
+- [x] Quickstart commands exist (`bun dist/genie.js <cmd> --help` exit 0 for each `genie` command named).
+- [x] Lint + check green.
 
 **Validation:**
 ```bash

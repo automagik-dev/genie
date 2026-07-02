@@ -1,8 +1,7 @@
 /**
  * AskUserQuestion non-interception — Bug 3 (#1710 Group 2).
  *
- * Empirical trace (see .genie/wishes/spawn-compounding-defects/evidence/
- * bug3-mechanism.md) confirmed that the load-bearing field for CC's
+ * Empirical tracing confirmed that the load-bearing field for CC's
  * "headless-handle" interpretation of AskUserQuestion is the presence of a
  * `hookSpecificOutput` envelope in the dispatcher response — specifically,
  * `hookSpecificOutput.additionalContext` propagates through the

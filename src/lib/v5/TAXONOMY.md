@@ -8,7 +8,7 @@ invocation opens the SQLite file, runs one transaction, and exits.
 
 | Concern | Home | Rationale |
 |---------|------|-----------|
-| Wishes, designs, skills, runbooks (`.md`) | git (`.genie/wishes/**`, `.genie/**/*.md`) | Human-authored, review-worthy, diffable, mergeable. Belong in PRs. |
+| Wishes, designs, brainstorms (`.md`) | git (`.claude/plans/<slug>/`) | Human-authored, review-worthy, diffable, mergeable. Belong in PRs. |
 | Task rows, dependency edges, checkout claims, stage log, board membership, wish-group execution state | `.genie/genie.db` (SQLite, WAL) | High-churn operational state. Would create merge conflicts and noisy diffs if versioned. Never committed. |
 
 The database is **never** git-versioned. `.gitignore` excludes `genie.db`,
@@ -23,9 +23,12 @@ from the committed documents.
   genie.db              # SQLite state engine (WAL) — gitignored
   genie.db-wal          # WAL sidecar — gitignored
   genie.db-shm          # shared-memory index — gitignored
-  wishes/<slug>/WISH.md  # committed documents (git)
-  ...                    # other committed docs
+  ...                    # untracked runtime scratch only — no committed docs
 ```
+
+`.genie/` holds runtime state exclusively. Planning documents (wishes, designs,
+brainstorms) are **not** stored here — they live in git under
+`.claude/plans/<slug>/`.
 
 ### Worktree sharing
 
