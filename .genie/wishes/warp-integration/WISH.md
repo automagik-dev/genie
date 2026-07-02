@@ -77,9 +77,9 @@ The original v5 thesis: stop controlling agents, let Warp be the multi-session c
 3. Colocated tests: fresh tmp repo scaffold, second-run no-diff (compare file bytes), no-git-repo refusal, existing-partial-state merge (INDEX exists but rules missing → only rules added).
 
 **Acceptance Criteria:**
-- [ ] Idempotency proven by byte-comparison test.
-- [ ] Non-repo cwd → exit 1 with clear stderr.
-- [ ] typecheck + tests green.
+- [x] Idempotency proven by byte-comparison test.
+- [x] Non-repo cwd → exit 1 with clear stderr.
+- [x] typecheck + tests green.
 
 **Validation:**
 ```bash
@@ -103,9 +103,9 @@ bun dist/genie.js init --help >/dev/null
 2. YAML emission via the runtime's built-in `Bun.YAML.stringify` (verified present in Bun 1.3.9; binary is bun-target) — build a plain object, stringify; NO hand-rolled YAML, NO new dependency. Colocated tests: round-trip via `Bun.YAML.parse` for 1/3/4/5/9-group specs (structure: pane counts, tab overflow, cwds), absolute-cwd rejection, hostile-content round-trip (spaces/quotes/`&&` in titles and commands — stringify owns the quoting, tests prove it), platform dir resolution (darwin/linux + XDG override).
 
 **Acceptance Criteria:**
-- [ ] No new runtime dependency (package.json unchanged).
-- [ ] Emitted YAML matches the documented schema (name/windows/tabs/layout/cwd/split_direction/panes/commands/exec) and quoting survives hostile titles/commands.
-- [ ] typecheck + tests green.
+- [x] No new runtime dependency (package.json unchanged).
+- [x] Emitted YAML matches the documented schema (name/windows/tabs/layout/cwd/split_direction/panes/commands/exec) and quoting survives hostile titles/commands.
+- [x] typecheck + tests green.
 
 **Validation:**
 ```bash

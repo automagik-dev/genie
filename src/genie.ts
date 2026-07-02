@@ -23,6 +23,7 @@ import { updateCommand } from './genie-commands/update.js';
 import { registerHookNamespace } from './hooks/dispatch-command.js';
 import { installWorkspaceCheck } from './lib/interactivity.js';
 import { VERSION } from './lib/version.js';
+import { registerInitCommand } from './term-commands/init.js';
 import { registerV5BoardCommands } from './term-commands/v5-board.js';
 import { registerV5TaskCommands } from './term-commands/v5-task.js';
 
@@ -128,6 +129,7 @@ registerHookNamespace(program);
 // Bare task/board — thin commands over the zero-daemon SQLite state engine.
 // ============================================================================
 
+registerInitCommand(program);
 registerV5TaskCommands(program);
 registerV5BoardCommands(program);
 
