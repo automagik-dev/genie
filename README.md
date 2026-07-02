@@ -45,7 +45,7 @@ Re-run `genie board` any time for a current snapshot of task state on the kanban
 - **Skills** carry the methodology — `/brainstorm → /wish → /work → /review`, authored once, running natively in Claude Code.
 - **Documents in git.** Wishes, designs, and brainstorms are plain markdown under `.genie/wishes/<slug>/` and `.genie/brainstorms/<slug>/`; you diff, review, and version them like any other code.
 - **One file of state.** Tasks, boards, dependency edges, and wish-group execution state live in a single per-repo SQLite file (`.genie/genie.db`), on Bun's built-in engine.
-- **Small.** 11 CLI commands, 3 runtime dependencies (`@inquirer/prompts`, `commander`, `zod`), a ~0.9 MB single-file bundle. Bun-powered.
+- **Small.** 12 CLI commands, 4 runtime dependencies (`@inquirer/prompts`, `commander`, `zod`, `nats`) — `nats` initializes only when the omni runner starts. A ~0.9 MB single-file bundle. Bun-powered.
 - **Warp cockpit (optional).** `genie launch <slug>` turns a wish's ready groups into a Warp window — one pane per group, each in its own git worktree running that group's agent on a kickoff prompt. Emitting the launch config works on any platform; opening it needs Warp (macOS/Linux). Everywhere else the config is still written for you to open by hand.
 - **Zero daemons, no Postgres.** Nothing runs in the background between invocations.
 
@@ -61,6 +61,7 @@ genie --help
 | `genie launch` | Open a Warp cockpit for a wish — one pane per ready group, each in its own worktree |
 | `genie board` | Kanban view of task state, derived live by query |
 | `genie task` | Inspect and drive task state (SQLite, zero-daemon) |
+| `genie omni` | Bridge agents to WhatsApp via Omni — remote approvals + inbound one-shots (`serve`, `status`, `inbox`, `handshake`) |
 | `genie setup` | Configure Genie and wire up its Claude Code hooks |
 | `genie doctor` | Run diagnostic checks on the installation |
 | `genie hook` | Hook middleware for Claude Code integration |
@@ -83,7 +84,7 @@ Skills are the product. The four core skills are rewritten for the v5 body and r
 The rest of the v4 skill library survives and is being ported onto the new body — mostly mechanical re-plumbing of dispatch and state:
 
 - **Being ported:** `/genie` (natural-language router), `/wizard` (onboarding), `/learn`, `/refine`, `/fix`, `/trace`, `/council`, `/docs`, `/genie-hacks`.
-- **Deferred:** `/report` waits on a new observability data path; `/omni` waits on the channel-runner port; `/pm` and `/dream` (overnight batch execution) need a background-execution capability the zero-daemon body doesn't yet ship.
+- **Deferred:** `/report` waits on a new observability data path; `/omni` (the natural-language skill) waits on the runner API settling, though its `genie omni` runner has landed; `/pm` and `/dream` (overnight batch execution) need a background-execution capability the zero-daemon body doesn't yet ship.
 
 ## How it works
 
@@ -91,12 +92,27 @@ Documents live in git; operational state lives in one SQLite file. `/work` fans 
 
 All linked worktrees of a repository share one `genie.db`, resolved from the git common directory, so a task created in one worktree is immediately visible in another with no sync step.
 
+## Omni (WhatsApp bridge)
+
+`genie omni` wires a running agent to WhatsApp through an [Omni](https://automagik.dev) hub, so you can drive approvals and short tasks from your phone.
+
+**How it works** (verified by the test suite against a fake transport; the live WhatsApp round-trip is a documented manual-QA step — see `.genie/wishes/omni-runner-port/qa.md`):
+
+- **Remote approvals.** When an approval-gated agent hits a permission request, the runner forwards it to your WhatsApp. Reply `y`/`n` (or `sim`/`nao`) or react 👍/👎 to approve or deny — the decision resolves the agent's pending request. Nothing is decided? The request times out to a safe `ask`.
+- **Inbound one-shots.** A WhatsApp message on a *mapped* chat reaches a bounded `claude -p` in that chat's repo; the reply comes back to the same chat. Unmapped chats are stored, not answered — read them with `genie omni inbox`.
+
+**What it needs:**
+
+- An **Omni hub** plus a connected **WhatsApp instance** — Genie speaks to Omni over NATS; the hub owns the WhatsApp session.
+- `genie omni handshake` once per host — registers an ed25519 keypair so outbound sends are signed.
+- Approval-gated agents launched with `--permission-mode default`. Under `auto` mode a passthrough `ask` can auto-resolve to allow, which defeats the timeout→ask fail-safe.
+- `genie omni serve` running as the one resident process. It is the *only* NATS client — `--help`, `task`, `board`, and every other command stay transport-free (`nats` never initializes on those paths).
+
 ## Roadmap
 
 No dates — direction, not promises:
 
 - **Deeper Warp integration.** A Tab Config upgrade and richer pane orchestration on top of today's `genie launch`.
-- **Omni channel runner.** Port the channel runner forward so agents can be wired to external channels again.
 - **More emit targets.** Codex and Hermes as skill targets alongside Claude Code.
 - **CDN distribution.** Serve signed releases from a CDN for faster, wider installs.
 

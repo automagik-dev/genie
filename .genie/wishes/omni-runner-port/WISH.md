@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | DONE — all 5 groups SHIP-reviewed (2026-07-02); live WhatsApp QA blocked-with-runbook (needs Felipe Omni instance) |
 | **Slug** | `omni-runner-port` |
 | **Date** | 2026-07-02 |
 | **Author** | Felipe + Genie |
@@ -61,13 +61,13 @@ The approval-capture spike returned **GO**, proven live against Claude Code 2.1.
 
 ## Success Criteria
 
-- [ ] Spike verdict documented in `.genie/wishes/omni-runner-port/SPIKE.md` with reproducible evidence (GO: a PermissionRequest hook blocked, was resolved externally, returned `allow`, and Claude Code proceeded; plus deny and timeout→ask runs). NO-GO → wish rescoped via escalation, not silently.
-- [ ] Queue lib: multi-process resolution race test (one resolver wins; hook observes it) and expiry test green.
-- [ ] Runner round-trip integration tests green with fake transport (+ fake HTTP for registration only): token-approve, reaction-approve, deny, timeout→ask, inbound→one-shot→reply (all outbound asserted on recorded publishes).
-- [ ] With omni disabled (default), `genie --help`/`task`/`board` complete without INITIALIZING the transport (runtime marker/spy test — nats is bundled by bun regardless, so module absence is not the claim), and the hook registry contains no omni-approval handler; dispatcher output for all events is byte-identical to today (regression-tested).
-- [ ] `genie omni serve|status|inbox` exist; 12 top-level commands; README table + dependency count honest.
-- [ ] Real-WhatsApp manual QA recorded in qa.md (what was proven live vs what needs eyes).
-- [ ] Full `bun run check` + e2e green; CI green on the PR.
+- [x] Spike verdict documented in `.genie/wishes/omni-runner-port/SPIKE.md` with reproducible evidence (GO: a PermissionRequest hook blocked, was resolved externally, returned `allow`, and Claude Code proceeded; plus deny and timeout→ask runs). NO-GO → wish rescoped via escalation, not silently.
+- [x] Queue lib: multi-process resolution race test (one resolver wins; hook observes it) and expiry test green.
+- [x] Runner round-trip integration tests green with fake transport (+ fake HTTP for registration only): token-approve, reaction-approve, deny, timeout→ask, inbound→one-shot→reply (all outbound asserted on recorded publishes).
+- [x] With omni disabled (default), `genie --help`/`task`/`board` complete without INITIALIZING the transport (runtime marker/spy test — nats is bundled by bun regardless, so module absence is not the claim), and the hook registry contains no omni-approval handler; dispatcher output for all events is byte-identical to today (regression-tested).
+- [x] `genie omni serve|status|inbox` exist; 12 top-level commands; README table + dependency count honest.
+- [x] Real-WhatsApp manual QA recorded in qa.md (what was proven live vs what needs eyes).
+- [x] Full `bun run check` + e2e green; CI green on the PR.
 
 ## Execution Strategy
 
@@ -202,9 +202,9 @@ GENIE_TEST_SKIP_PGSERVE=1 bun test
 3. Real-WhatsApp manual QA on this machine against Felipe's Omni instance: runner up, real approval round-trip from a phone (approve, deny, reaction), inbound one-shot round-trip. Recorded in `.genie/wishes/omni-runner-port/qa.md` — what was proven live, what config was used (secrets redacted), what remains open.
 
 **Acceptance Criteria:**
-- [ ] README gates green (command-existence loop, stale-claims grep, dependency-count claim matches package.json).
-- [ ] e2e + full `bun run check` green.
-- [ ] qa.md records the live session honestly (or documents exactly why live QA was blocked and what Felipe must run).
+- [x] README gates green (command-existence loop, stale-claims grep, dependency-count claim matches package.json).
+- [x] e2e + full `bun run check` green.
+- [x] qa.md records the live session honestly (or documents exactly why live QA was blocked and what Felipe must run).
 
 **Validation:**
 ```bash
