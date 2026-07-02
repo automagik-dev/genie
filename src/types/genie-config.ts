@@ -102,6 +102,25 @@ const OmniConfigSchema = z.object({
   instance: z.string().optional(),
   /** Chat/JID the approval-request messages are sent to and replies read from. */
   approvalChat: z.string().optional(),
+  /**
+   * Inbound one-shot routes. Each maps a specific (instance, chat) pair to an
+   * absolute repo dir; a mapped chat spawns a bounded `claude -p` in that dir
+   * and replies with the result. Unmapped chats are store-only (never spawn).
+   */
+  routes: z
+    .array(
+      z.object({
+        instance: z.string(),
+        chat: z.string(),
+        /** Absolute directory the one-shot runs in (cwd of `claude -p`). */
+        repo: z.string(),
+      }),
+    )
+    .optional(),
+  /** Wall-clock budget for a single inbound one-shot `claude -p` run (ms). */
+  inboundTimeoutMs: z.number().optional(),
+  /** Max chars of one-shot stdout returned as a reply (truncated past this). */
+  inboundMaxReplyChars: z.number().optional(),
   /** Remote-approval gate settings. */
   approvals: OmniApprovalsConfigSchema.optional(),
 });

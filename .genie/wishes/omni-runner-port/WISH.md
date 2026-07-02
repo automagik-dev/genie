@@ -177,8 +177,8 @@ GENIE_TEST_SKIP_PGSERVE=1 bun test
 3. Tests with a fake `claude` executable (injectable spawn path): mapped round-trip (message → fake claude → reply sent to fake API → handled), unmapped store-only, child-timeout path, child-crash isolation.
 
 **Acceptance Criteria:**
-- [ ] Round-trip + isolation tests green; runner survives child failures.
-- [ ] Unmapped messages never spawn anything.
+- [x] Round-trip + isolation tests green; runner survives child failures.
+- [x] Unmapped messages never spawn anything.
 
 **Validation:**
 ```bash

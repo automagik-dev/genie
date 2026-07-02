@@ -25,8 +25,22 @@ const DEFAULT_NATS_URL = 'localhost:4222';
 const DEFAULT_TOOL_MATCHER = '^(Bash|Write|Edit|NotebookEdit)$';
 const DEFAULT_POLL_BUDGET_MS = 110_000;
 const DEFAULT_POLL_INTERVAL_MS = 400;
+const DEFAULT_INBOUND_TIMEOUT_MS = 120_000;
+const DEFAULT_INBOUND_MAX_REPLY_CHARS = 4_000;
 
-/** Fully-resolved omni runtime config. `null`-free — every field has a value. */
+/** A single inbound one-shot route: (instance, chat) → absolute repo dir. */
+export interface OmniRoute {
+  instance: string;
+  chat: string;
+  repo: string;
+}
+
+/**
+ * Fully-resolved omni runtime config. The resolver populates every field, so
+ * `resolveOmniRuntimeConfig` never returns a hole. `routes` and the two
+ * `inbound*` fields are typed optional only so hand-built literals (tests that
+ * predate one-shot inbound) still satisfy the shape; the runner defaults them.
+ */
 export interface OmniRuntimeConfig {
   apiUrl?: string;
   apiKey?: string;
@@ -37,6 +51,12 @@ export interface OmniRuntimeConfig {
   denyTokens: string[];
   approveReactions: string[];
   denyReactions: string[];
+  /** Inbound one-shot routes; unmapped (instance, chat) pairs are store-only. */
+  routes?: OmniRoute[];
+  /** Wall-clock budget for one inbound one-shot `claude -p` run (ms). */
+  inboundTimeoutMs?: number;
+  /** Max chars of one-shot stdout returned as a reply (truncated past this). */
+  inboundMaxReplyChars?: number;
   approvals: {
     enabled: boolean;
     toolMatcher: string;
@@ -84,6 +104,9 @@ export async function resolveOmniRuntimeConfig(config?: { omni?: OmniConfig }): 
     denyTokens: parseList(process.env.OMNI_DENY_TOKENS) ?? appr?.denyTokens ?? DEFAULT_DENY_TOKENS,
     approveReactions: appr?.approveReactions ?? DEFAULT_APPROVE_REACTIONS,
     denyReactions: appr?.denyReactions ?? DEFAULT_DENY_REACTIONS,
+    routes: omni?.routes ?? [],
+    inboundTimeoutMs: omni?.inboundTimeoutMs ?? DEFAULT_INBOUND_TIMEOUT_MS,
+    inboundMaxReplyChars: omni?.inboundMaxReplyChars ?? DEFAULT_INBOUND_MAX_REPLY_CHARS,
     approvals: {
       enabled,
       toolMatcher: appr?.tools ?? DEFAULT_TOOL_MATCHER,

@@ -23,7 +23,7 @@
  */
 
 import type { Database } from 'bun:sqlite';
-import type { OmniRuntimeConfig } from './omni-config.js';
+import type { OmniRoute, OmniRuntimeConfig } from './omni-config.js';
 import { matchReaction, matchTextToken } from './omni-matching.js';
 import {
   ApprovalConflictError,
@@ -31,6 +31,7 @@ import {
   attachOmniMessageId,
   expireStale,
   listPendingApprovals,
+  markHandled,
   recordInbound,
   resolveApproval,
 } from './v5/omni-queue.js';
@@ -62,6 +63,47 @@ let natsConnections = 0;
 export function natsConnectionCount(): number {
   return natsConnections;
 }
+
+// ============================================================================
+// Injectable one-shot `claude -p` spawn surface
+// ============================================================================
+
+export interface SpawnClaudeOpts {
+  /** The inbound message text, passed as the `claude -p "<message>"` prompt. */
+  message: string;
+  /** Working directory of the child — the mapped route's absolute repo dir. */
+  cwd: string;
+  /** Aborted when the run exceeds its budget; the child MUST be killed on abort. */
+  signal: AbortSignal;
+}
+
+export interface SpawnClaudeResult {
+  /** Captured stdout of the run (truncated to the reply cap before publishing). */
+  stdout: string;
+  /** Process exit code; non-zero is surfaced as a bounded error notice. */
+  exitCode: number;
+}
+
+/** Bounded one-shot `claude -p` executor. Injectable so tests never fork claude. */
+export type SpawnClaude = (opts: SpawnClaudeOpts) => Promise<SpawnClaudeResult>;
+
+/**
+ * Default executor — a real `claude -p "<message>"` bounded by the caller's
+ * abort signal. Never imported at module top-level cost; only invoked once an
+ * inbound message actually matches a configured route.
+ */
+export const defaultSpawnClaude: SpawnClaude = async ({ message, cwd, signal }) => {
+  const proc = Bun.spawn(['claude', '-p', message], {
+    cwd,
+    stdout: 'pipe',
+    stderr: 'pipe',
+    // Bun forwards the AbortSignal: aborting SIGKILLs the child, freeing the route.
+    signal,
+  });
+  const stdout = await new Response(proc.stdout).text();
+  const exitCode = await proc.exited;
+  return { stdout, exitCode };
+};
 
 /** Default factory — dynamically imports `nats`. Only invoked by `omni serve`. */
 export const defaultNatsFactory: NatsFactory = async ({ servers }) => {
@@ -119,6 +161,11 @@ export interface OmniRunnerDeps {
   now?: () => number;
   /** Injectable correlation-id generator (tagged onto the outbound request). */
   genCorrelationId?: () => string;
+  /**
+   * Injectable one-shot executor. Defaults to a real `claude -p`; tests pass a
+   * fake so no real claude is ever forked.
+   */
+  spawnClaude?: SpawnClaude;
 }
 
 export interface OmniRunner {
@@ -128,6 +175,12 @@ export interface OmniRunner {
   handleMessage(subject: string, data: string): void;
   /** Handle one inbound `omni.event.*` frame (reactions). */
   handleEvent(subject: string, data: string): void;
+  /**
+   * Resolve once every in-flight one-shot run has settled. Test seam — the serve
+   * loop never awaits it (runs are fire-and-forget), but tests use it to observe
+   * the mapped round-trip deterministically.
+   */
+  whenIdle(): Promise<void>;
 }
 
 function formatApprovalMessage(tool: string, inputSummary: string, correlationId: string): string {
@@ -168,18 +221,139 @@ function chatIdFromSubject(subject: string): string | undefined {
   return parts.length >= 4 ? parts.slice(3).join('.') : undefined;
 }
 
+/**
+ * Outbound reply payload for a routed one-shot, addressed at the exact
+ * (instance, chat) the inbound arrived on (NOT the approval chat). Same shape as
+ * {@link buildOutboundPayload} so the omni side deserializes replies uniformly.
+ */
+function buildRoutedReplyPayload(
+  instance: string,
+  chat: string,
+  content: string,
+  correlationId: string,
+  nowMs: number,
+): string {
+  return JSON.stringify({
+    content,
+    agent: 'genie',
+    chat_id: chat,
+    instance_id: instance,
+    request_id: correlationId,
+    timestamp: new Date(nowMs).toISOString(),
+  });
+}
+
+/** Cap a reply to `max` chars, replacing the tail with a single ellipsis. */
+function truncateReply(text: string, max: number): string {
+  if (max <= 0) return '';
+  if (text.length <= max) return text;
+  return `${text.slice(0, max - 1)}…`;
+}
+
+/** Dropped-because-busy notice (Decision 10 — one in-flight run per route). */
+const BUSY_NOTICE = '\u{1F6D1} busy — one at a time. Your message was stored; try again shortly.';
+/** Fired when a one-shot exceeds its budget and is killed. */
+const timeoutNotice = (ms: number): string => `\u{23F1}\u{FE0F} timed out after ${ms}ms — the run was cancelled.`;
+/** Fired on a non-zero exit or a child crash; the underlying error is bounded. */
+const errorNotice = (detail: string): string => `\u{26A0}\u{FE0F} agent run failed: ${truncateReply(detail, 200)}`;
+
+/** Compact message for an unknown thrown value. */
+const errText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+/** Distinguishes a budget-driven abort from a genuine child crash in the catch. */
+class OneShotTimeoutError extends Error {
+  constructor() {
+    super('one-shot timed out');
+    this.name = 'OneShotTimeoutError';
+  }
+}
+
 export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
   const { db, config, publish } = deps;
   const log = deps.log ?? (() => {});
   const now = deps.now ?? (() => Date.now());
   const genId =
     deps.genCorrelationId ?? (() => `req_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`);
+  const spawnClaude = deps.spawnClaude ?? defaultSpawnClaude;
   const vocab = {
     approveTokens: config.approveTokens,
     denyTokens: config.denyTokens,
     approveReactions: config.approveReactions,
     denyReactions: config.denyReactions,
   };
+
+  // Inbound one-shot routing state (Decision 10 — one in-flight run per route).
+  const routes = config.routes ?? [];
+  const timeoutMs = config.inboundTimeoutMs ?? 120_000;
+  const maxReplyChars = config.inboundMaxReplyChars ?? 4_000;
+  /** Routes with a run currently in flight — a second message on one is dropped. */
+  const inFlight = new Set<string>();
+  /** Live one-shot promises, so `whenIdle` (tests) can await completion. */
+  const pending = new Set<Promise<void>>();
+  const routeKey = (instance: string, chat: string): string => `${instance} ${chat}`;
+  const findRoute = (instance: string, chat: string): OmniRoute | undefined =>
+    routes.find((r) => r.instance === instance && r.chat === chat);
+
+  /**
+   * Drive one bounded `claude -p` for a mapped inbound. Owns the timeout (races
+   * the spawn against an abort), the output cap, and the reply publish. Every
+   * exit path publishes exactly one reply, marks the inbound handled, and clears
+   * the in-flight flag — a child crash NEVER escapes this function.
+   */
+  async function runOneShot(route: OmniRoute, inboundId: string, message: string, replySubject: string): Promise<void> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const aborted = new Promise<never>((_, reject) => {
+      controller.signal.addEventListener('abort', () => reject(new OneShotTimeoutError()), { once: true });
+    });
+    try {
+      // Wrap so a SYNCHRONOUS throw from the executor becomes a rejection the
+      // race can observe — and so `aborted` always gets a handler attached
+      // (else a late finally-abort would surface as an unhandled rejection).
+      const spawned = Promise.resolve().then(() =>
+        spawnClaude({ message, cwd: route.repo, signal: controller.signal }),
+      );
+      const result = await Promise.race([spawned, aborted]);
+      const content =
+        result.exitCode === 0
+          ? truncateReply(result.stdout, maxReplyChars)
+          : errorNotice(`exit code ${result.exitCode}`);
+      publish(replySubject, buildRoutedReplyPayload(route.instance, route.chat, content, genId(), now()));
+    } catch (err) {
+      const content = err instanceof OneShotTimeoutError ? timeoutNotice(timeoutMs) : errorNotice(errText(err));
+      publish(replySubject, buildRoutedReplyPayload(route.instance, route.chat, content, genId(), now()));
+    } finally {
+      clearTimeout(timer);
+      controller.abort(); // ensure a still-running child is killed on every path
+      try {
+        markHandled(db, inboundId, now());
+      } catch (err) {
+        log(`[omni] markHandled failed for ${inboundId}: ${errText(err)}`);
+      }
+      inFlight.delete(routeKey(route.instance, route.chat));
+    }
+  }
+
+  /**
+   * Spawn (or drop-with-notice) a one-shot for a mapped inbound. Adds the route
+   * to `inFlight` SYNCHRONOUSLY before any await so a second message racing the
+   * first sees it busy. Fire-and-forget: the serve loop never awaits the run.
+   */
+  function startRoutedRun(route: OmniRoute, inboundId: string, message: string): void {
+    const replySubject = `omni.reply.${route.instance}.${route.chat}`;
+    const key = routeKey(route.instance, route.chat);
+    if (inFlight.has(key)) {
+      // Busy: reply, leave the inbound stored (already recorded) and unhandled.
+      publish(replySubject, buildRoutedReplyPayload(route.instance, route.chat, BUSY_NOTICE, genId(), now()));
+      log(`[omni] route ${key} busy — dropped inbound ${inboundId} with notice`);
+      return;
+    }
+    inFlight.add(key);
+    const run = runOneShot(route, inboundId, message, replySubject)
+      .catch((err) => log(`[omni] one-shot crashed unexpectedly: ${errText(err)}`))
+      .finally(() => pending.delete(run));
+    pending.add(run);
+  }
 
   function announce(): void {
     for (const appr of listPendingApprovals(db)) {
@@ -228,15 +402,16 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
       }
       const chatId = msg.chatId ?? chatIdFromSubject(subject);
       const sender = msg.sender ?? 'whatsapp-user';
+      const instance = msg.instanceId ?? config.instance ?? 'unknown';
+      const chat = chatId ?? 'unknown';
+      const body = msg.content ?? '';
 
-      // Store every inbound message to the inbox (Group 4 will spawn from it).
-      recordInbound(db, {
-        instance: msg.instanceId ?? config.instance ?? 'unknown',
-        chat: chatId ?? 'unknown',
-        sender,
-        body: msg.content ?? '',
-        now: now(),
-      });
+      // Store every inbound message to the inbox — mapped or not.
+      const inboundId = recordInbound(db, { instance, chat, sender, body, now: now() });
+
+      // Mapped (instance, chat) → spawn a bounded one-shot; unmapped is store-only.
+      const route = findRoute(instance, chat);
+      if (route) startRoutedRun(route, inboundId, body);
 
       // Only the approval chat can resolve approvals.
       if (!chatId || chatId !== config.approvalChat) return;
@@ -269,6 +444,12 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
         }
       }
       resolveOldest(decision, sender, `reaction ${evt.emoji} (fallback)`);
+    },
+
+    async whenIdle(): Promise<void> {
+      // Drain in a loop: a settling run must not add new work, but snapshot-await
+      // is cheap insurance against future callers that fan out mid-drain.
+      while (pending.size > 0) await Promise.allSettled([...pending]);
     },
   };
 }
