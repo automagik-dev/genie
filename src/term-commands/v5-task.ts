@@ -240,7 +240,7 @@ function handleExport(): void {
 // ============================================================================
 
 export function registerV5TaskCommands(v5: Command): void {
-  const task = v5.command('task').description('v5 task state (SQLite, zero-daemon)');
+  const task = v5.command('task').description('task state (SQLite, zero-daemon)');
 
   task
     .command('create')

@@ -33,10 +33,7 @@ import { updateCommand } from './genie-commands/update.js';
 import { VERSION } from './lib/version.js';
 
 import { registerHookNamespace } from './hooks/dispatch-command.js';
-import { getActor, recordAuditEvent } from './lib/audit.js';
-import { shutdown as shutdownDb } from './lib/db.js';
 import { installWorkspaceCheck } from './lib/interactivity.js';
-import { stopOtelReceiver } from './lib/otel-receiver.js';
 import { registerAgentCommands } from './term-commands/agent/index.js';
 import {
   type SpawnOptions,
@@ -189,8 +186,9 @@ program
 
 program
   .command('install')
-  .description('Register genie-serve under pm2 with hardened defaults (canonical-pgserve-pm2-supervision wave 2)')
-  .option('--skip-pgserve', "Don't run `pgserve install` first (operators who manage pgserve themselves)")
+  .description(
+    'No-op in zero-daemon v5 (state lives in .genie/genie.db); managed install returns with Warp integration',
+  )
   .action(async (options: InstallOptions) => {
     await installCommand(options);
   });
@@ -198,22 +196,7 @@ program
 program
   .command('doctor')
   .description('Run diagnostic checks on genie installation')
-  .option('--fix', 'Auto-fix: kill zombie postgres, clean shared memory, restart daemon')
-  .option('--observability', 'Report partition health + GENIE_WIDE_EMIT flag state')
-  .option(
-    '--perf',
-    'Report rolling per-handler P50/P99 from hook_perf_baseline + flag P99 regressions and recent fallback-log entries',
-  )
-  .option(
-    '--fix-team-orphans',
-    'Archive stale Claude-team config dirs missing config.json (paired with invincible-genie wish migration 050)',
-  )
-  .option('--dry-run', 'Pair with --fix-team-orphans to preview archive moves without mutating')
-  .option(
-    '--connection-identity',
-    'Read-only: report the dedicated-role cutover identity (role, rolsuper, database, grants, fallback, sentinel)',
-  )
-  .option('--json', 'Emit JSON instead of human output (pairs with --observability)')
+  .option('--json', 'Emit JSON instead of human output')
   .action(doctorCommand);
 program
   .command('recover-orphans')
@@ -234,11 +217,9 @@ program
   .option('--next', 'Deprecated alias for --dev (will be removed in a future release)')
   .option('--stable', 'Switch to stable channel (.well-known/latest.json)')
   .option('-y, --yes', 'Skip the TTY confirmation prompt (or set GENIE_UPDATE_YES=1)')
-  .option('--no-restart', 'Skip post-update maintenance AND the verify probe')
-  .option('--no-verify', 'Run maintenance but skip the post-restart verify probe')
-  .option('--skip-maintenance', 'Skip post-update maintenance (or set GENIE_UPDATE_SKIP_MAINTENANCE=1)')
-  .option('--skip-cleanup <names>', 'Comma-separated legacy-artifact cleanup names to skip')
-  .option('--no-sidecar-cleanup', 'Accepted for cross-CLI portability with omni (no-op for genie)')
+  .option('--no-restart', 'Skip the post-update binary verify probe')
+  .option('--no-verify', 'Skip the post-update binary verify probe')
+  .option('--skip-maintenance', 'Skip the post-update binary verify probe (or set GENIE_UPDATE_SKIP_MAINTENANCE=1)')
   .option('--rollback', 'Restore the most recent ~/.genie/bin/.previous binary backup')
   .action(updateCommand);
 program
@@ -365,103 +346,10 @@ program
 
 installWorkspaceCheck(program);
 
-// ============================================================================
-// CLI audit hooks — record every command execution to audit_events
-// ============================================================================
-
-const auditTimers = new Map<string, number>();
-const auditSpans = new Map<string, import('./lib/emit.js').SpanHandle>();
-
-program.hook('preAction', (_thisCommand, actionCommand) => {
-  const name = actionCommand.name();
-  auditTimers.set(name, Date.now());
-  // Only record audit if DB is already connected — never trigger independent startup
-  import('./lib/db.js')
-    .then(({ isConnected }) => {
-      if (!isConnected()) return;
-      recordAuditEvent('command', name, 'command_start', getActor(), {
-        args: actionCommand.args,
-      }).catch(() => {});
-    })
-    .catch(() => {});
-
-  // Wide-emit: open a cli.command span so command_success demotes to the debug
-  // sibling table via severity='debug' routing in emit.ts.
-  void (async () => {
-    try {
-      const { isWideEmitEnabled } = await import('./lib/observability-flag.js');
-      if (!isWideEmitEnabled()) return;
-      const { startSpan } = await import('./lib/emit.js');
-      const { getAmbient } = await import('./lib/trace-context.js');
-      const handle = startSpan(
-        'cli.command',
-        {
-          command: name,
-          args: (actionCommand.args ?? []) as string[],
-          cwd: process.cwd(),
-        },
-        { severity: 'debug', source_subsystem: 'cli', ctx: getAmbient() ?? undefined, agent: getActor() },
-      );
-      auditSpans.set(name, handle);
-    } catch {
-      /* best effort */
-    }
-  })();
-});
-
-// postAction audit is a blocking hook so the audit write completes before
-// shutdownDb destroys the connection. Without await, the fire-and-forget
-// promise creates a new connection AFTER shutdown, adding 1s idle_timeout.
-program.hook('postAction', async (_thisCommand, actionCommand) => {
-  const name = actionCommand.name();
-  const startMs = auditTimers.get(name);
-  const durationMs = startMs ? Date.now() - startMs : undefined;
-  auditTimers.delete(name);
-  try {
-    const { isConnected } = await import('./lib/db.js');
-    if (!isConnected()) return;
-    await recordAuditEvent('command', name, 'command_success', getActor(), {
-      args: actionCommand.args,
-      duration_ms: durationMs,
-    });
-  } catch {
-    /* best effort */
-  }
-
-  // Wide-emit: close the cli.command span with severity='debug' so 99/100 go
-  // to genie_runtime_events_debug and 1/100 land in the main table. Gated on
-  // GENIE_WIDE_EMIT because the span itself is a wide-emit-only row.
-  const handle = auditSpans.get(name);
-  auditSpans.delete(name);
-  try {
-    if (handle) {
-      const { isWideEmitEnabled } = await import('./lib/observability-flag.js');
-      if (isWideEmitEnabled()) {
-        const { endSpan } = await import('./lib/emit.js');
-        endSpan(
-          handle,
-          { exit_code: 0, duration_ms: durationMs ?? 0 },
-          { severity: 'debug', source_subsystem: 'cli', agent: getActor() },
-        );
-      }
-    }
-  } catch {
-    /* best effort */
-  }
-
-  // Always drain the emit queue on CLI exit, regardless of the wide-emit
-  // flag. Short-lived verbs (genie done, genie spawn, etc.) would otherwise
-  // lose every event emitted during execution: the flush timer is `.unref()`
-  // so the process exits between ticks. Events already enqueued represent
-  // real telemetry the caller intended to persist — dropping them is always
-  // wrong. See `.genie/wishes/fix-emit-queue-flush-on-cli-exit/WISH.md`.
-  try {
-    const { flushNow } = await import('./lib/emit.js');
-    await flushNow();
-  } catch {
-    /* best effort */
-  }
-});
+// CLI audit + wide-emit hooks were removed in the v5 demolition: they wrote to
+// the doomed PostgreSQL audit_events table and the observability emit spine
+// (lib/db, lib/emit, lib/observability-flag, lib/trace-context), all of which
+// die with the v4 runtime. Zero-daemon v5 has no CLI telemetry backend.
 
 // ============================================================================
 // Top-level aliases — shortcuts for genie agent <command>
@@ -935,22 +823,10 @@ if (sessionIdx !== -1 && sessionIdx + 1 < args.length) {
       process.exit(1);
     }
   } else {
-    try {
-      await program.parseAsync(process.argv);
-    } finally {
-      await stopOtelReceiver().catch(() => {});
-      await shutdownDb().catch(() => {});
-    }
+    await program.parseAsync(process.argv);
   }
 } else {
-  try {
-    const _cmdStart = Date.now();
-    await program.parseAsync(process.argv);
-    if (process.env.GENIE_PROFILE_DB) console.error(`[profile] parseAsync=${Date.now() - _cmdStart}ms`);
-  } finally {
-    const _shutStart = Date.now();
-    await stopOtelReceiver().catch(() => {});
-    await shutdownDb().catch(() => {});
-    if (process.env.GENIE_PROFILE_DB) console.error(`[profile] shutdown=${Date.now() - _shutStart}ms`);
-  }
+  const _cmdStart = Date.now();
+  await program.parseAsync(process.argv);
+  if (process.env.GENIE_PROFILE_DB) console.error(`[profile] parseAsync=${Date.now() - _cmdStart}ms`);
 }

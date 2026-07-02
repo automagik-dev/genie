@@ -2,6 +2,7 @@
 name: dream
 description: "Batch-execute SHIP-ready wishes overnight — pick wishes, orchestrate workers, review PRs, wake up to results."
 ---
+<!-- skills-lint:ignore -->
 
 # /dream — Overnight Batch Execution
 

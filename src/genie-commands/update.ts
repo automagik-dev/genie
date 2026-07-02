@@ -10,7 +10,6 @@ import {
   readFileSync,
   readSync,
   readdirSync,
-  readlinkSync,
   realpathSync,
   renameSync,
   rmSync,
@@ -20,10 +19,7 @@ import {
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { genieConfigExists, loadGenieConfig, saveGenieConfig } from '../lib/genie-config.js';
-import { extractPgservePortFromStatus } from '../lib/pgserve-status.js';
 import { VERSION } from '../lib/version.js';
-import { pm2ProcessNameCandidates, regenerateEcosystemConfig } from './install.js';
-import { type CleanupReport, cleanupLegacyArtifacts, parseSkipCleanupFlag } from './legacy-cleanup.js';
 
 const GENIE_HOME = process.env.GENIE_HOME || join(homedir(), '.genie');
 const GENIE_BIN = join(GENIE_HOME, 'bin');
@@ -37,17 +33,13 @@ const TRUTHY = new Set(['1', 'true', 'yes', 'on']);
  *
  * - v1 (pre-update-unify-stages): `update`, `runtime`, `paths`, `processSnapshot`,
  *   `maintenance`, `recentLogSignals`.
- * - v2 (update-unify-stages): adds `verify: VerifyResult` and `cleanups: CleanupReport`.
+ * - v2 (update-unify-stages): adds `verify: VerifyResult`.
  * - v3 (genie-distribution-cutover G5): hard-cutover to GitHub Releases. Replaces
  *   the npm/bun-add code path with `gh release download` + atomic binary swap.
  *   Adds `delivery: { channel, manifest, tarball, attestation }`.
  */
 const UPDATE_DIAGNOSTIC_SCHEMA_VERSION = 3;
 
-/** Verify probe deadline. 15s — genie's daemon stack (pgserve + scheduler +
- *  tmux) takes longer to bounce than pm2-managed processes. */
-const VERIFY_PROBE_DEADLINE_MS = 15_000;
-const VERIFY_PROBE_POLL_INTERVAL_MS = 500;
 const FETCH_LATEST_TIMEOUT_MS = 5_000;
 
 /** GitHub repo coordinates for the GH-Releases distribution cutover. */
@@ -59,46 +51,35 @@ const EXPECTED_COSIGN_IDENTITY = `^https://github.com/${RELEASES_SLUG}/.github/w
 const EXPECTED_COSIGN_ISSUER = 'https://token.actions.githubusercontent.com';
 
 // ============================================================================
-// Verify decision shape — shared with omni#update-unify-stages (SHARED-DESIGN §4.3).
-// `decideVerify` is a pure function so the tagged-union outcome can be unit-tested
-// in isolation from the daemon-probe side effects.
+// Verify decision shape. v5 is zero-daemon — the atomic binary swap IS the
+// update, so "verified" means the freshly-installed binary executes and
+// reports the version we intended to install. `decideVerify` is a pure
+// function so the tagged-union outcome can be unit-tested without spawning
+// a real binary.
 // ============================================================================
 
-export type VerifySkipReason = 'no-restart' | 'no-running-services' | 'no-verify-flag';
+export type VerifySkipReason = 'no-restart' | 'no-verify-flag';
 
 export type VerifyResult =
-  /** Daemon's running inode matches disk; `version` is the on-disk
-   *  package version (what the next CLI invocation reads). */
-  | { kind: 'ok'; version: string | null; pid: number | null }
-  | { kind: 'health-unreachable'; endpoint: string }
-  /** Daemon is on a deleted directory inode (post-swap state on Linux).
-   *  `diskVersion` is what the daemon WILL run after pm2 restart. */
-  | { kind: 'daemon-stale-inode'; diskVersion: string | null; pid: number; cwd: string }
-  | { kind: 'auth-invalid' }
+  /** The installed binary ran and reported `version` (already normalized).
+   *  When a target version was known it equals that. `path` is the probed
+   *  binary, surfaced in the banner. */
+  | { kind: 'ok'; version: string | null; path: string | null }
+  /** The binary could not be executed, emitted no parsable version, or
+   *  reported a version other than the one we just installed. `reason` is
+   *  operator-facing. */
+  | { kind: 'verify-failed'; reason: string; path: string | null }
   | { kind: 'skipped'; reason: VerifySkipReason };
 
-export interface ServerHealthBody {
-  /** On-disk version at probe time. Canonical truth — what the next CLI
-   *  invocation reads, and (modulo a fresh inode) what the daemon is running. */
-  version?: string | null;
-  /**
-   * Linux-only. `true` when `/proc/<pid>/cwd` ends with the kernel `(deleted)`
-   * marker — a swap of the binary directory unlinked the directory the pm2
-   * daemon process was launched from. The daemon is still serving pre-update
-   * bytes from the open inode and needs `pm2 restart Genie` to pick up the
-   * new code.
-   *
-   * Non-Linux: always `false` (no `/proc` to probe). On those platforms the
-   * verify probe optimistically reports `ok` with the disk version.
-   */
-  daemonInodeStale?: boolean;
-  daemonPid?: number;
-  daemonCwd?: string;
-}
-
 export interface DecideVerifyArgs {
-  serverHealthBody: ServerHealthBody | null;
-  endpoint: string;
+  /** Version string the installed binary reported, or null when it did not
+   *  run / emitted nothing parsable. Raw — decideVerify normalizes it. */
+  reportedVersion: string | null;
+  /** Version the update intended to install (manifest.version), or null when
+   *  unknown. When null, any parsable reportedVersion is accepted as `ok`. */
+  targetVersion: string | null;
+  /** Path to the binary that was probed (for operator-facing messages). */
+  binaryPath: string | null;
   skipReason?: VerifySkipReason | null;
 }
 
@@ -116,21 +97,19 @@ export function decideVerify(args: DecideVerifyArgs): VerifyResult {
   if (args.skipReason) {
     return { kind: 'skipped', reason: args.skipReason };
   }
-  if (args.serverHealthBody === null) {
-    return { kind: 'health-unreachable', endpoint: args.endpoint };
+  const label = args.binaryPath ?? 'installed binary';
+  if (args.reportedVersion === null) {
+    return { kind: 'verify-failed', reason: `${label} did not report a version`, path: args.binaryPath };
   }
-  const rawServerVersion = args.serverHealthBody.version ?? null;
-  const diskVersion = rawServerVersion === null ? null : normalizeVersion(rawServerVersion);
-  const pid = args.serverHealthBody.daemonPid ?? null;
-  if (args.serverHealthBody.daemonInodeStale === true) {
+  const reported = normalizeVersion(args.reportedVersion);
+  if (args.targetVersion !== null && normalizeVersion(args.targetVersion) !== reported) {
     return {
-      kind: 'daemon-stale-inode',
-      diskVersion,
-      pid: pid ?? 0,
-      cwd: args.serverHealthBody.daemonCwd ?? '',
+      kind: 'verify-failed',
+      reason: `expected v${normalizeVersion(args.targetVersion)}, but ${label} reports v${reported}`,
+      path: args.binaryPath,
     };
   }
-  return { kind: 'ok', version: diskVersion, pid };
+  return { kind: 'ok', version: reported, path: args.binaryPath };
 }
 
 /**
@@ -844,36 +823,22 @@ export function rollbackBinary(): { restored: string; from: string } {
 }
 
 // ============================================================================
-// Verify probe — Group 4 / inode-stale detector. Pure I/O wrapper around
-// `decideVerify`. The synchronous read of /proc/<pid>/cwd lives below.
+// Verify probe — zero-daemon post-update check. v5 has no daemon to poll; the
+// atomic binary swap IS the update, so "verified" means the freshly-installed
+// binary executes and reports the version we intended to install. Pure I/O
+// wrapper around `decideVerify` — no polling, no /proc reads, no pm2.
 // ============================================================================
-
-const VERIFY_PROBE_ENDPOINT = 'pgserve status --json + ~/.genie/serve.pid';
 
 interface VerifyProbeOptions {
   skipReason?: VerifySkipReason | null;
-  /** Test seam: synchronous read of the probe result. */
-  readHealth?: () => Promise<ServerHealthBody | null>;
-  /** Test seam: shorten the poll deadline. */
-  deadlineMs?: number;
-  /** Test seam: shorten the poll interval. */
-  intervalMs?: number;
-}
-
-/**
- * Linux-only daemon-inode probe. After the binary swap, the pm2 daemon
- * keeps running from a deleted directory inode; the kernel reports the cwd
- * readlink as `<path> (deleted)`. That's the canonical signal that the
- * daemon needs `pm2 restart Genie`.
- */
-function readDaemonCwd(pid: number): { cwd: string; staleInode: boolean } | null {
-  if (process.platform !== 'linux') return null;
-  try {
-    const cwd = readlinkSync(`/proc/${pid}/cwd`);
-    return { cwd, staleInode: cwd.endsWith(' (deleted)') };
-  } catch {
-    return null;
-  }
+  /** Version the update intended to install (manifest.version). Compared
+   *  against the binary's reported `--version`. Null skips the equality
+   *  check — any parsable version counts as verified. */
+  targetVersion?: string | null;
+  /** Path to the installed binary. Defaults to ~/.genie/bin/genie. */
+  binaryPath?: string;
+  /** Test seam: replaces the `execFileSync(binary, ['--version'])` probe. */
+  readVersion?: (binaryPath: string) => string | null;
 }
 
 /**
@@ -906,178 +871,55 @@ function readInstalledPackageVersion(): string | null {
   return null;
 }
 
-async function readServerHealth(): Promise<ServerHealthBody | null> {
-  const pgServeStatus = await runCommandSilent('pgserve', ['status', '--json'], undefined, 3000);
-  if (!pgServeStatus.success) return null;
-
-  const pidPath = join(GENIE_HOME, 'serve.pid');
-  const rawPid = safeRead(pidPath, 32);
-  if (!rawPid) return null;
-  const pid = Number.parseInt(rawPid.trim(), 10);
-  if (!Number.isFinite(pid) || pid <= 0) return null;
+/**
+ * Execute the freshly-installed binary's `--version` and return the parsed
+ * version, or null when the binary can't run or emits nothing parsable.
+ */
+function readBinaryVersion(binaryPath: string): string | null {
   try {
-    process.kill(pid, 0);
+    const out = execFileSync(binaryPath, ['--version'], { encoding: 'utf-8', timeout: 3000 }).toString();
+    return out.trim().match(/\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)*/)?.[0] ?? null;
   } catch {
     return null;
   }
-
-  const cwdInfo = readDaemonCwd(pid);
-  const diskVersion = readInstalledPackageVersion() ?? VERSION;
-  return {
-    version: diskVersion,
-    daemonInodeStale: cwdInfo?.staleInode ?? false,
-    daemonPid: pid,
-    daemonCwd: cwdInfo?.cwd,
-  };
 }
 
-async function pollHealth(
-  readHealth: () => Promise<ServerHealthBody | null>,
-  deadlineMs: number,
-  intervalMs: number,
-): Promise<ServerHealthBody | null> {
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < deadlineMs) {
-    let body: ServerHealthBody | null = null;
-    try {
-      body = await readHealth();
-    } catch {
-      // null read — same as unreachable.
-    }
-    if (body !== null) return body;
-    await new Promise((r) => setTimeout(r, intervalMs));
-  }
-  return null;
-}
-
-export async function runVerifyProbe(opts: VerifyProbeOptions = {}): Promise<VerifyResult> {
+export function runVerifyProbe(opts: VerifyProbeOptions = {}): VerifyResult {
+  const binaryPath = opts.binaryPath ?? join(GENIE_BIN, 'genie');
   if (opts.skipReason) {
     return decideVerify({
-      serverHealthBody: null,
-      endpoint: VERIFY_PROBE_ENDPOINT,
+      reportedVersion: null,
+      targetVersion: opts.targetVersion ?? null,
+      binaryPath,
       skipReason: opts.skipReason,
     });
   }
-  const reader = opts.readHealth ?? readServerHealth;
-  const deadline = opts.deadlineMs ?? VERIFY_PROBE_DEADLINE_MS;
-  const interval = opts.intervalMs ?? VERIFY_PROBE_POLL_INTERVAL_MS;
-  const body = await pollHealth(reader, deadline, interval);
+  const reader = opts.readVersion ?? readBinaryVersion;
   return decideVerify({
-    serverHealthBody: body,
-    endpoint: VERIFY_PROBE_ENDPOINT,
+    reportedVersion: reader(binaryPath),
+    targetVersion: opts.targetVersion ?? null,
+    binaryPath,
   });
 }
 
-// ============================================================================
-// pm2 daemon restart on stale inode (Group 6 follow-up).
-// After the binary swap, the daemon is mapped to the old (deleted) directory.
-// The restart goes through the regenerated ecosystem config so the
-// post-update `version` field lands in pm2's metadata.
-// ============================================================================
-
-interface Pm2GenieServe {
-  name: string;
-  pid: number;
-  restartCount: number;
-}
-
-async function pm2GenieServe(): Promise<Pm2GenieServe | null> {
-  const result = await runCommandSilent('pm2', ['jlist'], undefined, 3000);
-  if (!result.success) return null;
-  try {
-    const list = JSON.parse(result.output) as Array<{
-      name?: string;
-      pid?: number;
-      pm2_env?: { restart_time?: number; status?: string };
-    }>;
-    const candidates = pm2ProcessNameCandidates();
-    for (const name of candidates) {
-      const entry = list.find((p) => p.name === name);
-      if (!entry) continue;
-      if (typeof entry.pid !== 'number' || entry.pid <= 0) continue;
-      if (entry.pm2_env?.status !== 'online') continue;
-      return { name, pid: entry.pid, restartCount: entry.pm2_env?.restart_time ?? 0 };
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-export async function restartServeIfStale(): Promise<{ oldPid: number; newPid: number } | null> {
-  const before = await pm2GenieServe();
-  if (!before) return null;
-  // A successful binary swap means the pm2-managed daemon is still
-  // executing the OLD process image (open inode / mmap), whether or not
-  // the swap also unlinked its cwd. The restart must therefore be
-  // unconditional whenever a pm2 daemon exists — the previous
-  // `staleInode`-only gate left the common file-rename swap serving
-  // pre-update bytes forever (daemon stuck on its boot version, every
-  // `genie update` re-offering the same upgrade). `--no-restart` is
-  // honored upstream before this is ever reached.
-  const cwdInfo = readDaemonCwd(before.pid);
-  const reason = cwdInfo?.staleInode ? `stale inode: ${cwdInfo.cwd}` : 'binary swapped under running daemon';
-  log(`Restarting pm2 ${before.name} (${reason})`);
-  let configPath: string | null = null;
-  try {
-    configPath = regenerateEcosystemConfig();
-  } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
-    error(`Could not regenerate pm2 ecosystem config (${reason}); falling back to plain restart`);
-  }
-  const restartArgs = configPath
-    ? ['startOrReload', configPath, '--update-env']
-    : ['restart', before.name, '--update-env'];
-  const restartResult = await runCommandSilent('pm2', restartArgs, undefined, 10_000);
-  if (!restartResult.success) {
-    error(
-      `pm2 ${restartArgs[0]} ${before.name} failed; daemon will keep serving pre-update bytes until manually restarted`,
-    );
-    return null;
-  }
-  const deadline = Date.now() + 10_000;
-  while (Date.now() < deadline) {
-    const after = await pm2GenieServe();
-    if (after && (after.pid !== before.pid || after.restartCount > before.restartCount)) {
-      success(`pm2 ${after.name} restarted (pid ${before.pid} → ${after.pid})`);
-      return { oldPid: before.pid, newPid: after.pid };
-    }
-    await new Promise((r) => setTimeout(r, 500));
-  }
-  error('pm2 restart did not produce a new pid within 10s — verify probe will surface the stale state');
-  return null;
-}
-
-/** Format the post-restart verify banner. Operator's primary signal that
- *  the update succeeded. Single primary line on happy paths; follow-up
- *  lines for actionable failures. */
+/** Format the post-update verify banner. Operator's primary signal that the
+ *  update succeeded. Single primary line on the happy path; a follow-up line
+ *  with the binary path on failure. */
 export function formatVerifyBanner(result: VerifyResult): string[] {
   const lines: string[] = [];
   switch (result.kind) {
     case 'ok': {
       const versionLabel = result.version ? `v${result.version}` : 'version unknown';
-      const pidSuffix = result.pid ? ` (pid ${result.pid}, healthy)` : ' (healthy)';
-      lines.push(`${colorize('\x1b[32m', '\x1b[0m', '✔')} Genie ${versionLabel}${pidSuffix}`);
+      lines.push(`${colorize('\x1b[32m', '\x1b[0m', '✔')} Genie ${versionLabel} verified`);
       break;
     }
-    case 'health-unreachable':
-      lines.push(`${colorize('\x1b[31m', '\x1b[0m', '✖')} Genie server unreachable (probe: ${result.endpoint})`);
-      lines.push(
-        `${colorize('\x1b[2m', '\x1b[0m', '  fix: pm2 restart Genie --update-env  (if PM2 says "waiting restart": pm2 delete Genie && genie install)')}`,
-      );
-      break;
-    case 'daemon-stale-inode': {
-      const versionLabel = result.diskVersion ? `v${result.diskVersion}` : 'version unknown';
-      lines.push(
-        `${colorize('\x1b[31m', '\x1b[0m', '✖')} Genie ${versionLabel} — daemon serving stale bytes (pid ${result.pid})`,
-      );
-      lines.push(`${colorize('\x1b[2m', '\x1b[0m', `  cwd: ${result.cwd}`)}`);
-      lines.push(`${colorize('\x1b[2m', '\x1b[0m', '  fix: pm2 restart Genie --update-env')}`);
+    case 'verify-failed': {
+      lines.push(`${colorize('\x1b[31m', '\x1b[0m', '✖')} Genie update verification failed: ${result.reason}`);
+      if (result.path) {
+        lines.push(`${colorize('\x1b[2m', '\x1b[0m', `  binary: ${result.path}`)}`);
+      }
       break;
     }
-    case 'auth-invalid':
-      lines.push(`${colorize('\x1b[31m', '\x1b[0m', '✖')} Auth: invalid`);
-      break;
     case 'skipped':
       lines.push(
         `${colorize('\x1b[2m', '\x1b[0m', `· Genie verify skipped: ${result.reason} (CLI in-process v${VERSION})`)}`,
@@ -1113,27 +955,8 @@ function error(message: string): void {
   console.log(`${colorize('\x1b[31m', '\x1b[0m', '✖')} ${message}`);
 }
 
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  return `${(ms / 1000).toFixed(1)}s`;
-}
-
 function isTruthyEnv(value: string | undefined): boolean {
   return value !== undefined && TRUTHY.has(value.trim().toLowerCase());
-}
-
-async function withTemporaryEnv<T>(key: string, value: string, fn: () => Promise<T>): Promise<T> {
-  const previous = process.env[key];
-  process.env[key] = value;
-  try {
-    return await fn();
-  } finally {
-    if (previous === undefined) {
-      delete process.env[key];
-    } else {
-      process.env[key] = previous;
-    }
-  }
 }
 
 // ============================================================================
@@ -1260,11 +1083,6 @@ export function extractPgserveSocketDirFromStatus(output: string): string | null
   return null;
 }
 
-// Moved to ../lib/pgserve-status.js so migration 002 can share the same
-// nested-shape-tolerant parser. Re-exported here to preserve the public API
-// (and existing update.test.ts import path).
-export { extractPgservePortFromStatus };
-
 function collectGenieProcessSnapshot(): string | null {
   const snapshot = safeExec('ps -axo pid,ppid,pgid,stat,pcpu,pmem,etime,command -r', 2000)
     .split(/\r?\n/)
@@ -1277,7 +1095,6 @@ function collectGenieProcessSnapshot(): string | null {
 
 interface UpdateDiagnosticsExtras {
   verify: VerifyResult;
-  cleanups: CleanupReport;
 }
 
 async function collectUpdateDiagnostics(
@@ -1296,7 +1113,7 @@ async function collectUpdateDiagnostics(
   const pgservePortFromFile = safeRead(join(GENIE_HOME, 'pgserve.port'), 200);
   const pgserveStatusJson = (await runCommandSilent('pgserve', ['status', '--json'], undefined, 2000)).output.trim();
   const pgserveSocketDir = extractPgserveSocketDirFromStatus(pgserveStatusJson);
-  const pgservePort = pgservePortFromFile ?? extractPgservePortFromStatus(pgserveStatusJson);
+  const pgservePort = pgservePortFromFile;
   const pgserveTransport = pgserveSocketDir ? 'unix-socket' : pgservePort ? 'tcp' : null;
 
   const diagnostics = {
@@ -1304,7 +1121,6 @@ async function collectUpdateDiagnostics(
     cli: 'genie',
     generatedAt,
     verify: extras.verify,
-    cleanups: extras.cleanups,
     update: {
       channel: ctx.channel,
       latestVersion: ctx.latestVersion,
@@ -1538,18 +1354,15 @@ export interface UpdateCommandOptions {
   next?: boolean;
   /** `--stable`. Switch back to the stable channel (.well-known/latest.json). */
   stable?: boolean;
+  /** `--skip-maintenance`. Retained for compatibility; v5 has no maintenance
+   *  pass, so it now just skips the post-update binary verify probe. */
   skipMaintenance?: boolean;
-  skipCleanup?: string;
-  /**
-   * Mirrors commander's `--no-sidecar-cleanup` convention. Accepted for
-   * cross-CLI portability with omni; genie's day-one registry is empty.
-   */
-  sidecarCleanup?: boolean;
   /** `--yes` / `-y`. Skips the TTY confirmation. */
   yes?: boolean;
-  /** `--no-restart`. Skips post-update maintenance AND the verify probe. */
+  /** `--no-restart`. Retained for compatibility; v5 is zero-daemon so there is
+   *  nothing to restart — it now just skips the post-update verify probe. */
   restart?: boolean;
-  /** `--no-verify`. Runs maintenance but skips the post-restart probe. */
+  /** `--no-verify`. Skips the post-update binary verify probe. */
   verify?: boolean;
   /** `--rollback`. Restore the most recent ~/.genie/bin/.previous backup. */
   rollback?: boolean;
@@ -1566,7 +1379,6 @@ export async function updateCommand(options: UpdateCommandOptions = {}): Promise
     return;
   }
 
-  const cleanupSkipList = buildCleanupSkipList(options);
   const noRestart = options.restart === false || isTruthyEnv(process.env.GENIE_UPDATE_NO_RESTART);
   const noVerify = options.verify === false || isTruthyEnv(process.env.GENIE_UPDATE_NO_VERIFY);
   const channel = await resolveChannel(options);
@@ -1650,8 +1462,7 @@ export async function updateCommand(options: UpdateCommandOptions = {}): Promise
     process.exit(1);
   }
 
-  const cleanupReport = await runLegacyCleanupSafe(cleanupSkipList);
-  await runPostUpdateMaintenanceSafe({ ...options, noRestart, noVerify }, diagnosticsCtx, cleanupReport);
+  await runPostUpdateVerifySafe({ ...options, noRestart, noVerify }, diagnosticsCtx);
 }
 
 /**
@@ -1883,48 +1694,6 @@ function shouldAutoConfirm(opts: { yes?: boolean }): boolean {
 // Post-update maintenance + verify orchestration.
 // ============================================================================
 
-function buildCleanupSkipList(options: UpdateCommandOptions): Set<string> {
-  const skipList = parseSkipCleanupFlag(options.skipCleanup);
-  if (options.sidecarCleanup === false) {
-    skipList.add('nats-reply-sidecar');
-    log('--no-sidecar-cleanup (no-op for genie, retained for cross-CLI portability)');
-  }
-  return skipList;
-}
-
-async function runLegacyCleanupSafe(skipList: Set<string>): Promise<CleanupReport> {
-  try {
-    return await cleanupLegacyArtifacts(skipList);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log(`Legacy artifact cleanup failed (non-fatal): ${msg}`);
-    return { entries: [] };
-  }
-}
-
-function printPostUpdateMaintenanceIntro(): void {
-  console.log();
-  log('Running post-update maintenance...');
-  console.log('  Purpose: make first launch after update fast and collect upgrade health signals.');
-  console.log(
-    '  Checks: runtime partitions, watchdog status, session backfill drift, zombie rows, team config orphans.',
-  );
-  console.log('  PG policy: read-only; uses an already-running pgserve when available and will not auto-start it.');
-  console.log('  Legend: [ok]=healthy, [fix]=fixed, [--]=skipped/non-blocking, [!!]=operator action needed.');
-}
-
-async function runMaintenanceWithCapturedLines(maintenanceLines: string[]): Promise<void> {
-  const { runPostUpdateMaintenance } = await import('./doctor.js');
-  await withTemporaryEnv('GENIE_PG_NO_AUTOSTART', '1', () =>
-    runPostUpdateMaintenance({
-      log: (line) => {
-        maintenanceLines.push(line);
-        console.log(line);
-      },
-    }),
-  );
-}
-
 function printDiagnosticsSummary(diagnostics: { path: string; signals: RecentLogSignal[] }): void {
   log('Post-update diagnostics captured.');
   console.log(`  Report: ${diagnostics.path}`);
@@ -1965,74 +1734,36 @@ interface MaintenanceOptions {
   noVerify?: boolean;
 }
 
-async function runPostUpdateMaintenanceSafe(
+/**
+ * Post-delivery verify + diagnostics.
+ *
+ * v5 is zero-daemon: there is no post-update maintenance pass, pm2 restart, or
+ * legacy-artifact cleanup — the atomic binary swap IS the update. Verification
+ * re-executes the freshly-installed binary and confirms its `--version` matches
+ * the release we just installed; a mismatch (or a binary that won't run) is a
+ * real failure and exits non-zero. We also capture a diagnostics report for
+ * issue triage.
+ */
+async function runPostUpdateVerifySafe(
   options: MaintenanceOptions,
   diagnosticsCtx: UpdateDiagnosticsContext,
-  cleanupReport: CleanupReport,
 ): Promise<void> {
-  if (options.noRestart) {
-    log('--no-restart: skipping maintenance and verify probe.');
-    const verify = await runVerifyProbe({ skipReason: 'no-restart' });
-    printVerifyBanner(verify);
-    await capturePostUpdateDiagnostics(
-      diagnosticsCtx,
-      { outcome: 'completed', durationMs: 0, lines: [] },
-      { verify, cleanups: cleanupReport },
-    );
-    return;
+  let skipReason: VerifySkipReason | undefined;
+  if (options.noRestart || options.skipMaintenance || isTruthyEnv(process.env.GENIE_UPDATE_SKIP_MAINTENANCE)) {
+    skipReason = 'no-restart';
+  } else if (options.noVerify) {
+    skipReason = 'no-verify-flag';
   }
 
-  if (options.skipMaintenance || isTruthyEnv(process.env.GENIE_UPDATE_SKIP_MAINTENANCE)) {
-    log('Skipping post-update maintenance (requested).');
-    const verify = await runVerifyProbe({ skipReason: 'no-restart' });
-    printVerifyBanner(verify);
-    await capturePostUpdateDiagnostics(
-      diagnosticsCtx,
-      { outcome: 'completed', durationMs: 0, lines: [] },
-      { verify, cleanups: cleanupReport },
-    );
-    return;
-  }
-  const startedAt = Date.now();
-  const maintenanceLines: string[] = [];
-  let outcome: 'completed' | 'failed' = 'completed';
-  let maintenanceError: string | undefined;
-  try {
-    printPostUpdateMaintenanceIntro();
-    await runMaintenanceWithCapturedLines(maintenanceLines);
-    success(`Post-update maintenance complete (${formatDuration(Date.now() - startedAt)}).`);
-  } catch (err) {
-    outcome = 'failed';
-    maintenanceError = err instanceof Error ? err.message : String(err);
-    error(`Post-update maintenance skipped: ${maintenanceError}`);
-  }
-
-  await restartServeIfStaleSafe();
-
-  const verify = options.noVerify ? await runVerifyProbe({ skipReason: 'no-verify-flag' }) : await runVerifyProbe();
+  const verify = runVerifyProbe({
+    skipReason: skipReason ?? null,
+    targetVersion: diagnosticsCtx.latestVersion,
+  });
   printVerifyBanner(verify);
 
-  await capturePostUpdateDiagnostics(
-    diagnosticsCtx,
-    {
-      outcome,
-      durationMs: Date.now() - startedAt,
-      lines: maintenanceLines,
-      error: maintenanceError,
-    },
-    { verify, cleanups: cleanupReport },
-  );
+  await capturePostUpdateDiagnostics(diagnosticsCtx, { outcome: 'completed', durationMs: 0, lines: [] }, { verify });
 
-  if ((verify.kind === 'health-unreachable' || verify.kind === 'daemon-stale-inode') && !options.noVerify) {
+  if (verify.kind === 'verify-failed') {
     process.exitCode = 1;
-  }
-}
-
-async function restartServeIfStaleSafe(): Promise<void> {
-  try {
-    await restartServeIfStale();
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log(`Stale-serve restart skipped (non-fatal): ${msg}`);
   }
 }

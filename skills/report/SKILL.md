@@ -2,6 +2,7 @@
 name: report
 description: "Investigate bugs comprehensively — cascade through /trace, capture browser evidence, extract observability data, and auto-create a GitHub issue with all findings."
 ---
+<!-- skills-lint:ignore -->
 
 # /report — Comprehensive Bug Report and GitHub Issue Creation
 

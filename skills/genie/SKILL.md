@@ -3,6 +3,7 @@ name: genie
 description: "Entry point for all genie operations — auto-routes natural language to the right skill, detects lifecycle state, and handles operational commands. Use when planning features, reporting bugs, managing teams, or asking about genie."
 argument-hint: "[what you want to build, fix, or do]"
 ---
+<!-- skills-lint:ignore -->
 
 # /genie — Auto-Router
 

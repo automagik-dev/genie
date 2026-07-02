@@ -4,6 +4,7 @@ description: "Convene real AI agents for multi-perspective deliberation on archi
 argument-hint: "[topic or question]"
 effort: high
 ---
+<!-- skills-lint:ignore -->
 
 # /council -- Multi-Agent Deliberation
 

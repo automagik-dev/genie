@@ -113,9 +113,9 @@ bun run skills:lint
 5. `setup`/`install` reduced to what still exists (pm2/pgserve supervision severed).
 
 **Acceptance Criteria:**
-- [ ] No surviving module imports any file slated for Group 3/4 deletion (verified by deleting nothing yet but grepping the import graph of survivors).
-- [ ] `genie doctor` runs green on a healthy v5 checkout; `genie update --help` works.
-- [ ] skills:lint green with ignore markers (and still fails on a genuinely bogus top-level command — spot-check).
+- [x] No surviving module imports any file slated for Group 3/4 deletion (verified by deleting nothing yet but grepping the import graph of survivors).
+- [x] `genie doctor` runs green on a healthy v5 checkout; `genie update --help` works.
+- [x] skills:lint green with ignore markers (and still fails on a genuinely bogus top-level command — spot-check).
 
 **Validation:**
 ```bash

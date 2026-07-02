@@ -2,6 +2,7 @@
 name: wizard
 description: "Guided onboarding — scaffold workspace, shape agent identity, create first wish, execute, and celebrate."
 ---
+<!-- skills-lint:ignore -->
 
 # /wizard — First-Run Onboarding
 

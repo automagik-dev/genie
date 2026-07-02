@@ -23,7 +23,6 @@ import {
   decideVerify,
   downloadAndVerifyTarball,
   ensureCanonicalInstall,
-  extractPgservePortFromStatus,
   extractPgserveSocketDirFromStatus,
   fetchLatestManifest,
   formatVerifyBanner,
@@ -75,8 +74,9 @@ describe('normalizeVersion', () => {
 describe('decideVerify', () => {
   test('skipReason "no-restart" returns skipped variant regardless of other inputs', () => {
     const result = decideVerify({
-      serverHealthBody: { version: '1.0.0' },
-      endpoint: 'genie doctor --json',
+      reportedVersion: '1.0.0',
+      targetVersion: '1.0.0',
+      binaryPath: '/home/.genie/bin/genie',
       skipReason: 'no-restart',
     });
     expect(result).toEqual({ kind: 'skipped', reason: 'no-restart' });
@@ -84,58 +84,67 @@ describe('decideVerify', () => {
 
   test('skipReason "no-verify-flag" returns skipped variant', () => {
     const result = decideVerify({
-      serverHealthBody: null,
-      endpoint: 'genie doctor --json',
+      reportedVersion: null,
+      targetVersion: null,
+      binaryPath: null,
       skipReason: 'no-verify-flag',
     });
     expect(result).toEqual({ kind: 'skipped', reason: 'no-verify-flag' });
   });
 
-  test('null serverHealthBody (no skipReason) returns health-unreachable with endpoint', () => {
+  test('null reportedVersion (binary would not run) → verify-failed naming the binary path', () => {
     const result = decideVerify({
-      serverHealthBody: null,
-      endpoint: 'genie doctor --json',
+      reportedVersion: null,
+      targetVersion: '4.260507.2',
+      binaryPath: '/home/.genie/bin/genie',
     });
-    expect(result).toEqual({ kind: 'health-unreachable', endpoint: 'genie doctor --json' });
+    expect(result.kind).toBe('verify-failed');
+    if (result.kind === 'verify-failed') {
+      expect(result.reason).toContain('did not report a version');
+      expect(result.reason).toContain('/home/.genie/bin/genie');
+      expect(result.path).toBe('/home/.genie/bin/genie');
+    }
   });
 
-  test('healthy daemon returns ok carrying disk version + pid', () => {
+  test('reported version matches target → ok carrying normalized version + path', () => {
     const result = decideVerify({
-      serverHealthBody: { version: '4.260507.2+abc1234', daemonInodeStale: false, daemonPid: 851758 },
-      endpoint: 'pgserve status --json + ~/.genie/serve.pid',
+      reportedVersion: '4.260507.2+abc1234',
+      targetVersion: '4.260507.2',
+      binaryPath: '/home/.genie/bin/genie',
     });
-    expect(result).toEqual({ kind: 'ok', version: '4.260507.2', pid: 851758 });
+    expect(result).toEqual({ kind: 'ok', version: '4.260507.2', path: '/home/.genie/bin/genie' });
+  });
+
+  test('reported version differs from target → verify-failed carrying both versions', () => {
+    const result = decideVerify({
+      reportedVersion: '4.260520.3',
+      targetVersion: '4.260522.2',
+      binaryPath: '/home/.genie/bin/genie',
+    });
+    expect(result.kind).toBe('verify-failed');
+    if (result.kind === 'verify-failed') {
+      expect(result.reason).toContain('4.260522.2');
+      expect(result.reason).toContain('4.260520.3');
+    }
+  });
+
+  test('null targetVersion accepts any parsable reported version as ok', () => {
+    const result = decideVerify({
+      reportedVersion: '4.260507.2',
+      targetVersion: null,
+      binaryPath: '/home/.genie/bin/genie',
+    });
+    expect(result).toEqual({ kind: 'ok', version: '4.260507.2', path: '/home/.genie/bin/genie' });
   });
 
   test('VerifyResult tagged-union shape is exhaustive', () => {
     const variants: VerifyResult[] = [
-      { kind: 'ok', version: '1.0.0', pid: 1234 },
-      { kind: 'health-unreachable', endpoint: 'x' },
-      { kind: 'daemon-stale-inode', diskVersion: '1.0.0', pid: 1234, cwd: '/tmp/old (deleted)' },
-      { kind: 'auth-invalid' },
+      { kind: 'ok', version: '1.0.0', path: '/home/.genie/bin/genie' },
+      { kind: 'verify-failed', reason: 'boom', path: '/home/.genie/bin/genie' },
       { kind: 'skipped', reason: 'no-restart' },
-      { kind: 'skipped', reason: 'no-running-services' },
       { kind: 'skipped', reason: 'no-verify-flag' },
     ];
-    expect(variants).toHaveLength(7);
-  });
-
-  test('daemonInodeStale=true returns daemon-stale-inode with pid + cwd', () => {
-    const result = decideVerify({
-      serverHealthBody: {
-        version: '4.260507.2',
-        daemonInodeStale: true,
-        daemonPid: 2831346,
-        daemonCwd: '/home/genie/.genie/bin/.old (deleted)',
-      },
-      endpoint: 'pgserve status --json + ~/.genie/serve.pid',
-    });
-    expect(result).toEqual({
-      kind: 'daemon-stale-inode',
-      diskVersion: '4.260507.2',
-      pid: 2831346,
-      cwd: '/home/genie/.genie/bin/.old (deleted)',
-    });
+    expect(variants).toHaveLength(4);
   });
 });
 
@@ -221,74 +230,78 @@ describe('updateCommand wiring', () => {
 });
 
 // ============================================================================
-// Group 4 — verify probe + banner. Probe I/O is exercised via the
-// `readHealth` test seam so the suite never depends on a live daemon.
+// Verify probe + banner (zero-daemon v5). The probe re-executes the installed
+// binary and compares its --version to the target; I/O is exercised via the
+// `readVersion` test seam so the suite never spawns a real binary.
 // ============================================================================
 
 describe('runVerifyProbe', () => {
-  test('skipReason "no-restart" returns skipped without polling', async () => {
+  test('skipReason "no-restart" returns skipped without probing the binary', () => {
     let calls = 0;
-    const result = await runVerifyProbe({
+    const result = runVerifyProbe({
       skipReason: 'no-restart',
-      readHealth: async () => {
+      targetVersion: '1.0.0',
+      readVersion: () => {
         calls++;
-        return { version: '1.0.0' };
+        return '1.0.0';
       },
     });
     expect(result).toEqual({ kind: 'skipped', reason: 'no-restart' });
     expect(calls).toBe(0);
   });
 
-  test('reader returns body on first poll → ok', async () => {
-    const result = await runVerifyProbe({
-      readHealth: async () => ({ version: '4.260507.2+abc', daemonInodeStale: false, daemonPid: 851758 }),
+  test('binary reports the target version → ok (build metadata normalized)', () => {
+    const result = runVerifyProbe({
+      targetVersion: '4.260507.2',
+      binaryPath: '/home/.genie/bin/genie',
+      readVersion: () => '4.260507.2+abc',
     });
-    expect(result).toEqual({ kind: 'ok', version: '4.260507.2', pid: 851758 });
+    expect(result).toEqual({ kind: 'ok', version: '4.260507.2', path: '/home/.genie/bin/genie' });
   });
 
-  test('reader returns null until deadline → health-unreachable', async () => {
-    let calls = 0;
-    const result = await runVerifyProbe({
-      readHealth: async () => {
-        calls++;
-        return null;
-      },
-      deadlineMs: 50,
-      intervalMs: 10,
+  test('binary that will not run (reader returns null) → verify-failed', () => {
+    const result = runVerifyProbe({
+      targetVersion: '4.260507.2',
+      binaryPath: '/home/.genie/bin/genie',
+      readVersion: () => null,
     });
-    expect(result.kind).toBe('health-unreachable');
-    expect(calls).toBeGreaterThan(0);
+    expect(result.kind).toBe('verify-failed');
   });
 
-  test('reader exception is caught and treated as null read', async () => {
-    let firstCall = true;
-    const result = await runVerifyProbe({
-      readHealth: async () => {
-        if (firstCall) {
-          firstCall = false;
-          throw new Error('connection refused');
-        }
-        return { version: '1.0.0', daemonInodeStale: false, daemonPid: 1 };
-      },
-      deadlineMs: 200,
-      intervalMs: 10,
+  test('binary reports a different version than the target → verify-failed', () => {
+    const result = runVerifyProbe({
+      targetVersion: '4.260522.2',
+      binaryPath: '/home/.genie/bin/genie',
+      readVersion: () => '4.260520.3',
     });
-    expect(result.kind).toBe('ok');
+    expect(result.kind).toBe('verify-failed');
+  });
+
+  test('passes the resolved binaryPath through to the reader seam', () => {
+    const seen: string[] = [];
+    runVerifyProbe({
+      binaryPath: '/custom/genie',
+      targetVersion: null,
+      readVersion: (p) => {
+        seen.push(p);
+        return '1.2.3';
+      },
+    });
+    expect(seen).toEqual(['/custom/genie']);
   });
 });
 
 describe('formatVerifyBanner', () => {
-  test('ok variant emits a single Genie line with version + pid + healthy marker', () => {
-    const lines = formatVerifyBanner({ kind: 'ok', version: '4.260507.2', pid: 851758 });
+  test('ok variant emits a single verified line carrying the version', () => {
+    const lines = formatVerifyBanner({ kind: 'ok', version: '4.260507.2', path: '/home/.genie/bin/genie' });
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain('Genie');
     expect(lines[0]).toContain('4.260507.2');
-    expect(lines[0]).toContain('851758');
-    expect(lines[0]).toContain('healthy');
+    expect(lines[0]).toContain('verified');
   });
 
   test('ok variant with null version falls back to "version unknown"', () => {
-    const lines = formatVerifyBanner({ kind: 'ok', version: null, pid: 851758 });
+    const lines = formatVerifyBanner({ kind: 'ok', version: null, path: null });
     expect(lines[0]).toContain('version unknown');
   });
 
@@ -299,25 +312,21 @@ describe('formatVerifyBanner', () => {
     expect(lines.some((l) => l.includes('no-restart'))).toBe(true);
   });
 
-  test('health-unreachable surfaces probe endpoint + PM2 recreate fix', () => {
-    const lines = formatVerifyBanner({ kind: 'health-unreachable', endpoint: 'doctor --json' });
-    expect(lines.some((l) => l.includes('unreachable'))).toBe(true);
-    expect(lines.some((l) => l.includes('pm2 restart Genie --update-env'))).toBe(true);
-    expect(lines.some((l) => l.includes('pm2 delete Genie && genie install'))).toBe(true);
+  test('verify-failed surfaces the reason and the offending binary path', () => {
+    const lines = formatVerifyBanner({
+      kind: 'verify-failed',
+      reason: 'expected v4.260522.2, but /home/.genie/bin/genie reports v4.260520.3',
+      path: '/home/.genie/bin/genie',
+    });
+    expect(lines.some((l) => l.includes('verification failed'))).toBe(true);
+    expect(lines.some((l) => l.includes('4.260522.2'))).toBe(true);
+    expect(lines.some((l) => l.includes('/home/.genie/bin/genie'))).toBe(true);
   });
 
-  test('daemon-stale-inode banner surfaces pid, cwd, and pm2 restart remediation', () => {
-    const lines = formatVerifyBanner({
-      kind: 'daemon-stale-inode',
-      diskVersion: '4.260507.2',
-      pid: 2831346,
-      cwd: '/home/genie/.genie/bin/.old (deleted)',
-    });
-    expect(lines.some((l) => l.includes('4.260507.2'))).toBe(true);
-    expect(lines.some((l) => l.includes('2831346'))).toBe(true);
-    expect(lines.some((l) => l.includes('stale'))).toBe(true);
-    expect(lines.some((l) => l.includes('(deleted)'))).toBe(true);
-    expect(lines.some((l) => l.includes('pm2 restart Genie'))).toBe(true);
+  test('verify-failed with null path omits the binary follow-up line', () => {
+    const lines = formatVerifyBanner({ kind: 'verify-failed', reason: 'boom', path: null });
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('boom');
   });
 });
 
@@ -862,10 +871,9 @@ describe('Diagnostics schema (G5)', () => {
     expect(source).toContain('UPDATE_DIAGNOSTIC_SCHEMA_VERSION = 3');
   });
 
-  test('diagnostics object includes verify, cleanups, and delivery blocks', () => {
+  test('diagnostics object includes verify and delivery blocks', () => {
     const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
     expect(source).toContain('verify: extras.verify');
-    expect(source).toContain('cleanups: extras.cleanups');
     // G5 delivery block names the new artifacts: manifest, tarballPath, attestation, previousBackup.
     expect(source).toContain('delivery:');
     expect(source).toContain('manifest: ctx.manifest');
@@ -888,12 +896,6 @@ describe('Diagnostics schema (G5)', () => {
     expect(isGenieProcessSnapshotLine('2588570 1 2588570 S postgres -D /home/genie/.genie/data/pgserve')).toBe(false);
   });
 
-  test('diagnostics derives pgserve port from status json when port file is absent', () => {
-    expect(extractPgservePortFromStatus('{"port":8432,"status":"running"}')).toBe('8432');
-    expect(extractPgservePortFromStatus('{"instance":{"port":"8432"}}')).toBe('8432');
-    expect(extractPgservePortFromStatus('not-json')).toBe(null);
-  });
-
   test('diagnostics derives pgserve socket dir from live pgserve runtime status json', () => {
     const liveStatus = JSON.stringify({
       installed: true,
@@ -904,17 +906,6 @@ describe('Diagnostics schema (G5)', () => {
     });
 
     expect(extractPgserveSocketDirFromStatus(liveStatus)).toBe('/run/user/1000/pgserve');
-  });
-
-  test('diagnostics derives pgserve port from live pgserve runtime status json', () => {
-    const liveStatus = JSON.stringify({
-      installed: true,
-      status: 'online',
-      port: null,
-      runtime: { port: 8432, live: true },
-    });
-
-    expect(extractPgservePortFromStatus(liveStatus)).toBe('8432');
   });
 
   test('serve status reports pgserve transport from resolver instead of stale active port', () => {
@@ -937,42 +928,24 @@ describe('Diagnostics schema (G5)', () => {
 });
 
 // ============================================================================
-// pm2 daemon restart wiring (Group 6 follow-up — preserved through G5).
+// Post-update verify wiring (zero-daemon v5 — pm2 restart + legacy cleanup removed).
 // ============================================================================
 
-describe('restartServeIfStale wiring', () => {
-  test('runPostUpdateMaintenanceSafe calls restartServeIfStaleSafe before runVerifyProbe', () => {
+describe('post-update verify wiring', () => {
+  test('exit-code 1 path fires on verify-failed', () => {
     const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
-    const restartIdx = source.indexOf('await restartServeIfStaleSafe()');
-    const verifyIdx = source.indexOf('await runVerifyProbe()');
-    expect(restartIdx).toBeGreaterThan(-1);
-    expect(verifyIdx).toBeGreaterThan(-1);
-    expect(restartIdx).toBeLessThan(verifyIdx);
-  });
-
-  test('exit-code 1 path includes daemon-stale-inode', () => {
-    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
-    expect(source).toContain("verify.kind === 'daemon-stale-inode'");
+    expect(source).toContain("verify.kind === 'verify-failed'");
     expect(source).toContain('process.exitCode = 1');
   });
 
-  test('readDaemonCwd is Linux-gated', () => {
+  test('verify keys off the installed binary version — no daemon/pgserve/pm2 poll', () => {
     const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
-    expect(source).toContain("process.platform !== 'linux'");
-    expect(source).toContain('readlinkSync(`/proc/${pid}/cwd`)');
-  });
-
-  test('pm2GenieServe matches both canonical and legacy names via candidates list', () => {
-    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
-    expect(source).toContain("'pm2', ['jlist']");
-    expect(source).toContain('pm2ProcessNameCandidates()');
-    expect(source).toContain("status !== 'online'");
-  });
-
-  test('restartServeIfStale uses pm2 startOrReload with regenerated ecosystem config', () => {
-    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
-    expect(source).toContain('regenerateEcosystemConfig()');
-    expect(source).toContain("'startOrReload'");
+    // Zero-daemon: the pgserve status + serve.pid poll is gone entirely.
+    expect(source).not.toContain('readServerHealth');
+    expect(source).not.toContain('pgserve status --json + ~/.genie/serve.pid');
+    // The probe re-executes the swapped binary and compares to the target.
+    expect(source).toContain("execFileSync(binaryPath, ['--version']");
+    expect(source).toContain('targetVersion: diagnosticsCtx.latestVersion');
   });
 });
 
