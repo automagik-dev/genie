@@ -4,14 +4,14 @@
  * genie — Single entrypoint CLI (zero-daemon v5).
  *
  * Surviving surface after the v4 runtime demolition:
- *   Utilities:  setup, install, doctor, update, uninstall, shortcuts
+ *   Utilities:  setup, doctor, update, uninstall, shortcuts
+ *   Lifecycle:  init (scaffold), launch (Warp cockpit)
  *   State:      task, board  (SQLite-backed, .genie/genie.db)
  *   Hooks:      hook namespace + git hook dispatch
  */
 
 import { Command } from 'commander';
 import { doctorCommand } from './genie-commands/doctor.js';
-import { type InstallOptions, installCommand } from './genie-commands/install.js';
 import { type SetupOptions, setupCommand } from './genie-commands/setup.js';
 import {
   shortcutsInstallCommand,
@@ -24,6 +24,7 @@ import { registerHookNamespace } from './hooks/dispatch-command.js';
 import { installWorkspaceCheck } from './lib/interactivity.js';
 import { VERSION } from './lib/version.js';
 import { registerInitCommand } from './term-commands/init.js';
+import { registerLaunchCommand } from './term-commands/launch.js';
 import { registerV5BoardCommands } from './term-commands/v5-board.js';
 import { registerV5TaskCommands } from './term-commands/v5-task.js';
 
@@ -80,15 +81,6 @@ program
   });
 
 program
-  .command('install')
-  .description(
-    'No-op in zero-daemon v5 (state lives in .genie/genie.db); managed install returns with Warp integration',
-  )
-  .action(async (options: InstallOptions) => {
-    await installCommand(options);
-  });
-
-program
   .command('doctor')
   .description('Run diagnostic checks on genie installation')
   .option('--json', 'Emit JSON instead of human output')
@@ -130,6 +122,7 @@ registerHookNamespace(program);
 // ============================================================================
 
 registerInitCommand(program);
+registerLaunchCommand(program);
 registerV5TaskCommands(program);
 registerV5BoardCommands(program);
 

@@ -276,7 +276,12 @@ export function writeLaunchConfig(spec: LaunchSpec, opts: WriteOptions = {}): st
   return path;
 }
 
-/** Build the `warp://launch/<abs-path>` URI that opens a written config. */
+/**
+ * Build the `warp://launch/<abs-path>` URI that opens a written config.
+ * The path is percent-encoded with `encodeURI`, which preserves `/` (and other
+ * reserved delimiters) while escaping spaces and other characters that would
+ * otherwise truncate or malform the URI when handed to `open`/`xdg-open`.
+ */
 export function launchUri(absPath: string): string {
-  return `warp://launch/${absPath}`;
+  return `warp://launch/${encodeURI(absPath)}`;
 }

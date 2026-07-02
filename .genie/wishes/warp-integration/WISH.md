@@ -130,10 +130,10 @@ if git diff --name-only | grep -q '^package.json$'; then echo "FAIL: new depende
 4. Colocated tests: dry-run against a fixture wish (create tasks in a tmp repo's genie.db, assert YAML pane count/cwds/commands and zero side effects), worktree creation + reuse + collision error (real git repos in tmp), subset via `--groups`.
 
 **Acceptance Criteria:**
-- [ ] `--dry-run` provably touches nothing (no worktrees, no config file — asserted).
-- [ ] Worktree lifecycle correct incl. reuse and collision; parent repo's `core.bare` remains `false` after creating multiple worktrees (asserted in tests — the historical corruption mode the genie.ts guard exists for).
-- [ ] `install` gone from `--help`; `init`+`launch` present; count = 11.
-- [ ] typecheck + full test suite green.
+- [x] `--dry-run` provably touches nothing (no worktrees, no config file — asserted).
+- [x] Worktree lifecycle correct incl. reuse and collision; parent repo's `core.bare` remains `false` after creating multiple worktrees (asserted in tests — the historical corruption mode the genie.ts guard exists for).
+- [x] `install` gone from `--help`; `init`+`launch` present; count = 11.
+- [x] typecheck + full test suite green.
 
 **Validation:**
 ```bash

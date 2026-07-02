@@ -278,4 +278,10 @@ describe('launchUri', () => {
       'warp://launch//Users/me/.warp/launch_configurations/genie-x.yaml',
     );
   });
+
+  test('percent-encodes spaces while preserving path slashes', () => {
+    expect(launchUri('/Users/me/My Repo/.warp/genie-x.yaml')).toBe(
+      'warp://launch//Users/me/My%20Repo/.warp/genie-x.yaml',
+    );
+  });
 });
