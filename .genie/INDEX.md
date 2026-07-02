@@ -7,6 +7,7 @@
 ## Ready
 
 
+- [WISH: dispatch-inproc-default](wishes/dispatch-inproc-default/WISH.md) — HIGH discovered defect: v5 hooks fall open by default (daemon deleted in demolition); re-arm branch-guard + unblock omni approvals (drafted 2026-07-02)
 - [WISH: omni-runner-port](wishes/omni-runner-port/WISH.md) — umbrella Group 5: approval-capture spike, global genie.db queue, genie omni serve, inbound one-shot (drafted 2026-07-02)
 - [WISH: warp-integration](wishes/warp-integration/WISH.md) — umbrella Group 3: genie init, Warp launch-config emitter, genie launch, /work multi-session opt-in (drafted 2026-07-02)
 
