@@ -6,6 +6,9 @@
 
 ## Ready
 
+
+- [WISH: warp-integration](wishes/warp-integration/WISH.md) — umbrella Group 3: genie init, Warp launch-config emitter, genie launch, /work multi-session opt-in (drafted 2026-07-02)
+
 ## Poured
 
 - [Genie v5 — lightweight body](brainstorms/genie-v5-lightweight-body/DESIGN.md) — skills+files+stock Warp replace the v4 harness; CC/Codex/Hermes targets; omni keeps one runner; crystallized 2026-07-01, umbrella-scale (8 seed groups)
