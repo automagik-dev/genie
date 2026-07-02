@@ -1110,11 +1110,6 @@ async function collectUpdateDiagnostics(
   const schedulerLog = join(logsDir, 'scheduler.log');
   const tuiCrashLog = join(logsDir, 'tui-crash.log');
   const signals = summarizeJsonlSignals(schedulerLog);
-  const pgservePortFromFile = safeRead(join(GENIE_HOME, 'pgserve.port'), 200);
-  const pgserveStatusJson = (await runCommandSilent('pgserve', ['status', '--json'], undefined, 2000)).output.trim();
-  const pgserveSocketDir = extractPgserveSocketDirFromStatus(pgserveStatusJson);
-  const pgservePort = pgservePortFromFile;
-  const pgserveTransport = pgserveSocketDir ? 'unix-socket' : pgservePort ? 'tcp' : null;
 
   const diagnostics = {
     schemaVersion: UPDATE_DIAGNOSTIC_SCHEMA_VERSION,
@@ -1153,9 +1148,6 @@ async function collectUpdateDiagnostics(
       genieBinPrevious: GENIE_BIN_PREVIOUS,
       logsDir,
       servePid: safeRead(join(GENIE_HOME, 'serve.pid'), 200),
-      pgserveTransport,
-      pgserveSocketDir,
-      pgservePort,
       schedulerLog,
       tuiCrashLog,
     },

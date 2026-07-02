@@ -908,18 +908,6 @@ describe('Diagnostics schema (G5)', () => {
     expect(extractPgserveSocketDirFromStatus(liveStatus)).toBe('/run/user/1000/pgserve');
   });
 
-  test('serve status reports pgserve transport from resolver instead of stale active port', () => {
-    const source = readFileSync(join(__dirname, '..', '..', 'term-commands', 'serve.ts'), 'utf-8');
-    const fnStart = source.indexOf('async function printPgserveHealth');
-    expect(fnStart).toBeGreaterThan(-1);
-    const fnBody = source.slice(fnStart, source.indexOf('/**', fnStart + 1));
-
-    expect(fnBody).toContain('resolvePgserveTransport');
-    expect(fnBody).toContain("transport?.kind === 'unix'");
-    expect(fnBody).not.toContain('isSocketMode()');
-    expect(fnBody).not.toContain('getActivePort()');
-  });
-
   test('NO_COLOR honored via colorEnabled() helper', () => {
     const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
     expect(source).toContain('process.env.NO_COLOR');

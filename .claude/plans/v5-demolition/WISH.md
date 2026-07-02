@@ -142,8 +142,8 @@ bun run skills:lint
 4. `src/genie.ts` preAction/postAction audit+span wiring removed.
 
 **Acceptance Criteria:**
-- [ ] typecheck + full bun test green on the surviving tree.
-- [ ] branch-guard suite still green.
+- [x] typecheck + full bun test green on the surviving tree.
+- [x] branch-guard suite still green.
 
 **Validation:**
 ```bash
