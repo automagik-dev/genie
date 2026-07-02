@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | EXECUTED — groups 1-4 SHIP-reviewed; final wish review pending |
+| **Status** | DONE — all 4 groups + final whole-wish review SHIP (2026-07-02) |
 | **Slug** | `v5-foundation` |
 | **Date** | 2026-07-01 |
 | **Author** | Felipe + Genie |
