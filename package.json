@@ -33,6 +33,7 @@
   "dependencies": {
     "@inquirer/prompts": "7.10.1",
     "commander": "12.1.0",
+    "nats": "2.29.3",
     "zod": "3.25.76"
   },
   "devDependencies": {

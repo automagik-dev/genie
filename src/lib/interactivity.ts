@@ -66,6 +66,10 @@ const WORKSPACE_EXEMPT = new Set([
   'task',
   'board',
   'launch',
+  // `omni` is the resident runner + its status/inbox/handshake helpers. Like
+  // `task`/`board` it self-resolves the global genie.db and never reads the
+  // v4 workspace.json, so gating it on the legacy workspace concept is wrong.
+  'omni',
 ]);
 
 /**

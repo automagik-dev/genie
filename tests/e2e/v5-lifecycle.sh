@@ -348,6 +348,81 @@ JOBS_AFTER="$(jobs -p || true)"
 [ "$JOBS_BASELINE" = "$JOBS_AFTER" ] || die "shell background jobs changed: before=[$JOBS_BASELINE] after=[$JOBS_AFTER]"
 
 # ============================================================================
+# 9b. Zero-omni guard — the omni runner is the ONLY code path that touches the
+#     NATS transport. Prove the everyday commands (`--help`, `task`, `board`)
+#     work with NO omni config present and never initialize the transport.
+#
+#     Two complementary proofs:
+#       (a) Black-box: run each command under a fresh, empty GENIE_HOME (so no
+#           ~/.genie/config.json omni section and no OMNI_* state can leak in)
+#           and assert exit 0. `omni status --json` is included as a read-only
+#           omni-namespace command that opens the global DB but must report
+#           disabled and stay transport-free.
+#       (b) White-box marker: the runner exports natsConnectionCount(), a
+#           process-lifetime counter incremented ONLY inside the real NATS
+#           factory (i.e. only when `omni serve` runs). We can't read the
+#           dist CLI's in-process counter across a process boundary from bash,
+#           so we import the source module directly and assert the marker is 0
+#           after loading it — proving that merely loading/using the runner
+#           never opens a connection; only `runOmniServe` does. A static grep
+#           backs this up: `nats` is a *dynamic* import inside the factory, not
+#           a top-level import.
+# ============================================================================
+step "zero-omni guard (no omni config, transport never initialized)"
+NO_OMNI_HOME="$SCRATCH/no-omni-home"
+mkdir -p "$NO_OMNI_HOME"
+
+# (a) Black-box: everyday commands succeed with a clean, omni-free GENIE_HOME.
+#     Unset any inherited OMNI_* env so the guard reflects a truly empty config.
+run_no_omni() { env -u OMNI_API_URL -u OMNI_API_KEY -u OMNI_INSTANCE -u OMNI_APPROVAL_CHAT \
+  -u OMNI_APPROVALS_ENABLED -u OMNI_NATS_URL GENIE_HOME="$NO_OMNI_HOME" bun "$DIST" "$@"; }
+
+assert help-works-without-omni-config
+run_no_omni --help >/dev/null 2>&1 || die "genie --help failed with no omni config"
+
+assert help-lists-omni-task-board
+NO_OMNI_HELP="$(run_no_omni --help 2>&1)"
+for c in omni task board; do
+  printf '%s\n' "$NO_OMNI_HELP" | grep -qE "^  $c( |\$)" || die "genie --help missing '$c' with no omni config"
+done
+
+assert task-list-works-without-omni-config
+( cd "$FIXTURE" && run_no_omni task list --wish "$SLUG" --json >/dev/null 2>&1 ) \
+  || die "genie task list failed with no omni config"
+
+assert board-works-without-omni-config
+( cd "$FIXTURE" && run_no_omni board --wish "$SLUG" --json >/dev/null 2>&1 ) \
+  || die "genie board failed with no omni config"
+
+# `omni status` is a read-only omni-namespace command: it opens the global DB
+# but must NOT touch NATS. With no config it reports disabled — a transport-free
+# proof that even entering the omni namespace doesn't initialize the runner.
+assert omni-status-disabled-without-config
+OMNI_STATUS_JSON="$( cd "$FIXTURE" && run_no_omni omni status --json 2>&1 )" \
+  || die "genie omni status failed with no omni config"
+printf '%s' "$OMNI_STATUS_JSON" \
+  | bun -e 'const s=JSON.parse(require("fs").readFileSync(0,"utf8")); process.exit(s.enabled===false?0:1)' \
+  || die "omni status reported enabled with no config (expected disabled)"
+
+# (b) White-box marker: loading the runner module never opens a connection.
+assert nats-connection-count-zero-on-load
+RUNNER_SRC="$REPO_ROOT/src/lib/omni-runner.ts"
+[ -f "$RUNNER_SRC" ] || die "omni-runner source not found at $RUNNER_SRC"
+bun -e '
+  const m = await import(process.argv[1]);
+  const n = m.natsConnectionCount();
+  if (n !== 0) { process.stderr.write("natsConnectionCount()="+n+" after import\n"); process.exit(1); }
+' "$RUNNER_SRC" || die "natsConnectionCount() was non-zero just from loading the runner module"
+
+# Static backstop: `nats` is dynamically imported inside the factory only — never
+# a top-level static import — so the module has zero transport cost until serve.
+assert nats-import-is-dynamic-only
+grep -qE "await import\('nats'\)" "$RUNNER_SRC" || die "expected a dynamic import('nats') in the runner"
+if grep -nE "^import[^\n]*['\"]nats['\"]" "$RUNNER_SRC"; then
+  die "runner has a top-level static 'nats' import — transport would load eagerly"
+fi
+
+# ============================================================================
 # 10. Optional live-agent smoke — documented, never required.
 # ============================================================================
 if [ "${V5_E2E_LIVE:-0}" = "1" ]; then

@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | DONE — all 5 groups SHIP-reviewed (2026-07-02); live WhatsApp QA blocked-with-runbook (needs Felipe Omni instance) |
 | **Slug** | `omni-runner-port` |
 | **Date** | 2026-07-02 |
 | **Author** | Felipe + Genie |
@@ -18,11 +18,11 @@ Exit the omni-dark window: rebuild the WhatsApp/channel integration from the `or
 ## Scope
 
 ### IN
-- **Spike (gates everything downstream):** prove stock-Claude-Code approval capture end-to-end locally — a `PermissionRequest` handler in genie's hook registry that enqueues an approval, blocks polling for resolution (bounded by the hook timeout), and returns `allow`/`deny` when another process resolves the row; `ask` passthrough on timeout (fail-safe: never auto-allow). Written verdict GO / NO-GO with evidence. NO-GO → the named fallback (approvals only for SDK-launched agents) or rescope — escalated, not silently absorbed.
+- **Spike (gates everything downstream):** prove stock-Claude-Code approval capture end-to-end locally — a PreToolUse handler (per the spike; NOT PermissionRequest) in genie's hook registry that enqueues an approval, blocks polling for resolution (bounded by the hook timeout), and returns `allow`/`deny` when another process resolves the row; `ask` passthrough on timeout (fail-safe: never auto-allow). Written verdict GO / NO-GO with evidence. NO-GO → the named fallback (approvals only for SDK-launched agents) or rescope — escalated, not silently absorbed.
 - **Global state DB:** `~/.genie/genie.db` (bun:sqlite, WAL, same engine/patterns as the per-repo DB — busy-retry, typed errors, `PRAGMA user_version`) with a minimal omni schema: `approvals` (id, repo, session hint, tool + input summary, status pending→approved|denied|expired, `omni_message_id` nullable, requested_by/resolved_by, timestamps) and `inbound_messages` (id, instance, chat, sender, body, received_at, handled_at nullable). Typed queue API: enqueue/resolve/listPending/expireStale — multi-process safe.
 - **The runner** — `genie omni serve`: the ONE resident process (design D3). Ports from `origin/v4` — full reference set: `src/lib/omni-approval-handler.ts` (inbound matching), `src/lib/providers/claude-sdk-remote-approval.ts` (queue semantics, waitForResolution/poll, sendApprovalToOmni), `src/services/omni-queue.ts` + `src/services/omni-bridge.ts` (send/reply paths), `src/lib/omni-registration.ts` + `omni-signature.ts` (signed HTTP registration), migrations `032/033/034_approvals*.sql` (queue shape) — port semantics, don't import. NATS subscriptions `omni.message.{instance}.>` + `omni.event.>`, approve/deny token matching (y/yes/approve/sim, n/no/deny/nao, configurable) + reaction matching (👍✅👌 / 👎❌🚫) correlated via `omni_message_id`. **Outbound sends (approval requests, replies) go via NATS publish, mirroring v4's omni-bridge reply path — NOT an invented signed-HTTP send endpoint (v4 has none; its only signed HTTP is registration).** ed25519-signed registration against `OMNI_API_URL`; `genie omni handshake` ports the keypair provisioner from `origin/v4:src/term-commands/omni/handshake.ts` (signing needs `~/.genie/keys/*`). `genie omni status` (runner liveness + queue counts) and `genie omni inbox` round out the namespace.
 - **Inbound → agent (v1 minimal, honest):** configured mapping instance/chat → repo directory; the runner stores every inbound message, and for mapped chats spawns a bounded one-shot `claude -p "<message>"` in that repo dir, replying with the (truncated) result via NATS publish (Decision 9). No resident agent state, no session resumption in v1.
-- **Approval end-to-end wiring — including dispatcher-layer changes:** the current dispatch pipeline DROPS permission decisions (`executeBlockingChain` collects only additionalContext/updatedInput; `buildBlockingResponse` returns `{}` for PermissionRequest; `buildDenyResponse` emits the wrong envelope for non-PreToolUse). Group 3 therefore includes: PermissionRequest-aware response builders (proper `hookSpecificOutput.permissionDecision` envelope for allow AND deny), chain propagation of the decision, dispatcher tests — plus the omni handler itself, registered ONLY when omni is enabled via a config-gated registry build at dispatch boot (`setRegistry` on the existing frozen-registry structure — the literal cannot be edited conditionally). Zero behavior change when omni is off: handler absent from the registry entirely. Hook timeout guidance documented.
+- **Approval end-to-end wiring — including dispatcher-layer changes:** the current dispatch pipeline drops/omits the PreToolUse permission-decision envelope on the omni path (PreToolUse deny ALREADY emits the correct permissionDecision envelope (`buildDenyResponse`); the real gap is that `executeBlockingChain` has NO path to emit a handler-driven ALLOW or ASK — G3 must add allow/ask emission + propagation. `{decision:"block"}` is only the non-PreToolUse branch.). Group 3 therefore includes: PreToolUse permission-decision response builders (proper `hookSpecificOutput.permissionDecision` envelope for allow AND deny), chain propagation of the decision, dispatcher tests — plus the omni handler itself, registered ONLY when omni is enabled via a config-gated registry build at dispatch boot (`setRegistry` on the existing frozen-registry structure — the literal cannot be edited conditionally). Zero behavior change when omni is off: handler absent from the registry entirely. Hook timeout guidance documented.
 - **NATS dependency returns, scoped:** `nats` re-added to package.json (pin v4's major: 2.29.x), dynamic-imported ONLY inside the runner module. NOTE: bun bundles the dep into dist regardless — the testable claim is runtime INITIALIZATION, not module absence: a transport-module marker/spy test asserts `genie --help`/`task`/`board` complete without initializing the transport, and README words it as "nats initializes only when the omni runner starts" (count 3 → 4).
 - **Command surface:** `omni` namespace registers top-level (12 commands total); README table + count updated; `omni` added to WORKSPACE_EXEMPT (global-scope command, no repo workspace needed — the launch lesson applied proactively).
 - **Tests:** queue lib unit tests (multi-process resolution race, expiry); runner integration tests with an injectable transport (fake NATS) + fake Omni HTTP endpoint — full round-trips: enqueue→outbound-send→simulated reply→resolve→hook returns allow; reaction path; deny path; timeout→ask path; inbound→store→(mocked) claude -p→reply. Real-WhatsApp manual QA recorded in qa.md with a needs-Felipe's-eyes checklist.
@@ -34,6 +34,15 @@ Exit the omni-dark window: rebuild the WhatsApp/channel integration from the `or
 - Approval UI beyond WhatsApp text/reactions; claude.ai/mobile push paths.
 - Any per-repo genie.db schema change (the global DB is separate; per-repo stays at user_version 1).
 - Version scheme, CDN, Codex/Hermes emit (later umbrella groups).
+
+## Spike Outcome (Group 1 — GO, 2026-07-02)
+
+The approval-capture spike returned **GO**, proven live against Claude Code 2.1.198 (allow/deny/timeout→ask all obeyed). It corrected the wish's central hypothesis — Group 3 MUST follow the spike contract, not the pre-spike guesses below:
+
+- **Intercept on `PreToolUse`, NOT `PermissionRequest`.** The `hookSpecificOutput.permissionDecision: allow|deny|ask` envelope belongs to PreToolUse, which fires in BOTH headless `claude -p` (omni inbound, Group 4) and interactive panes. PermissionRequest uses a different shape (`decision.behavior`, no `ask`) and does NOT fire under headless `-p` — unusable for v5's dual-mode agents. Timeout fallback = `ask` (never `defer`; defer is print-mode-only).
+- **Operational gotcha (flag in G3 + G5), mechanism corrected by Wave-1 review:** PreToolUse hooks DO still fire under `"defaultMode":"auto"` (verified: this machine's RTK PreToolUse hook fires every session under auto). The real risk is that an `ask`/passthrough decision may auto-RESOLVE to allow under auto mode, silently breaking the timeout→ask fail-safe. Approval-gated agents MUST be launched with `--permission-mode default` (fail-safe proven live only there); G3 must TEST whether `ask`-under-auto refuses or auto-allows before relying on the fail-safe outside default mode.
+- **Timing budget:** pure polling (sqlite has no LISTEN/NOTIFY); resolution→decision ≤ one poll interval. Poll interval 250–500ms; hook `timeout` sized to the phone-answer SLA (~120s; field is SECONDS); poll budget STRICTLY < timeout (~110s) so CC doesn't kill the hook mid-poll; expire the pending row on self-timeout.
+- Full input-payload fields + literal envelopes are in SPIKE.md — the Group-3 contract.
 
 ## Decisions
 
@@ -52,13 +61,13 @@ Exit the omni-dark window: rebuild the WhatsApp/channel integration from the `or
 
 ## Success Criteria
 
-- [ ] Spike verdict documented in `.genie/wishes/omni-runner-port/SPIKE.md` with reproducible evidence (GO: a PermissionRequest hook blocked, was resolved externally, returned `allow`, and Claude Code proceeded; plus deny and timeout→ask runs). NO-GO → wish rescoped via escalation, not silently.
-- [ ] Queue lib: multi-process resolution race test (one resolver wins; hook observes it) and expiry test green.
-- [ ] Runner round-trip integration tests green with fake transport (+ fake HTTP for registration only): token-approve, reaction-approve, deny, timeout→ask, inbound→one-shot→reply (all outbound asserted on recorded publishes).
-- [ ] With omni disabled (default), `genie --help`/`task`/`board` complete without INITIALIZING the transport (runtime marker/spy test — nats is bundled by bun regardless, so module absence is not the claim), and the hook registry contains no PermissionRequest handler; dispatcher output for all events is byte-identical to today (regression-tested).
-- [ ] `genie omni serve|status|inbox` exist; 12 top-level commands; README table + dependency count honest.
-- [ ] Real-WhatsApp manual QA recorded in qa.md (what was proven live vs what needs eyes).
-- [ ] Full `bun run check` + e2e green; CI green on the PR.
+- [x] Spike verdict documented in `.genie/wishes/omni-runner-port/SPIKE.md` with reproducible evidence (GO: a PermissionRequest hook blocked, was resolved externally, returned `allow`, and Claude Code proceeded; plus deny and timeout→ask runs). NO-GO → wish rescoped via escalation, not silently.
+- [x] Queue lib: multi-process resolution race test (one resolver wins; hook observes it) and expiry test green.
+- [x] Runner round-trip integration tests green with fake transport (+ fake HTTP for registration only): token-approve, reaction-approve, deny, timeout→ask, inbound→one-shot→reply (all outbound asserted on recorded publishes).
+- [x] With omni disabled (default), `genie --help`/`task`/`board` complete without INITIALIZING the transport (runtime marker/spy test — nats is bundled by bun regardless, so module absence is not the claim), and the hook registry contains no omni-approval handler; dispatcher output for all events is byte-identical to today (regression-tested).
+- [x] `genie omni serve|status|inbox` exist; 12 top-level commands; README table + dependency count honest.
+- [x] Real-WhatsApp manual QA recorded in qa.md (what was proven live vs what needs eyes).
+- [x] Full `bun run check` + e2e green; CI green on the PR.
 
 ## Execution Strategy
 
@@ -82,8 +91,8 @@ Exit the omni-dark window: rebuild the WhatsApp/channel integration from the `or
 3. `SPIKE.md`: verdict GO/NO-GO, evidence transcript, the exact contract Group 3 must implement (payload fields available in the hook input, the literal `hookSpecificOutput.permissionDecision` response JSON, timing: max hook-block observed, chosen poll interval vs hook-timeout budget — the sqlite port has no LISTEN/NOTIFY, so latency comes from polling), and risks (does blocking a PermissionRequest hook freeze the session UI — observed behavior).
 
 **Acceptance Criteria:**
-- [ ] All three runs (allow, deny, timeout→ask) documented with observed CC behavior.
-- [ ] Verdict + Group-3 contract written; NO-GO path names the fallback explicitly.
+- [x] All three runs (allow, deny, timeout→ask) documented with observed CC behavior.
+- [x] Verdict + Group-3 contract written; NO-GO path names the fallback explicitly.
 
 **Validation:**
 ```bash
@@ -110,9 +119,9 @@ grep -qi 'timeout' .genie/wishes/omni-runner-port/SPIKE.md
 4. Colocated tests: schema init/idempotency, per-repo genie-db suite still green post-extraction, multi-PROCESS resolution race (N resolvers, one winner — reuse the task-state race-test pattern), expiry, inbox round-trip; `GENIE_HOME` isolation so tests never touch the real `~/.genie`.
 
 **Acceptance Criteria:**
-- [ ] Race test: exactly one resolver wins; losers get a typed conflict.
-- [ ] No import from the per-repo genie-db path constants (separate DB, shared patterns only).
-- [ ] typecheck + tests green.
+- [x] Race test: exactly one resolver wins; losers get a typed conflict.
+- [x] No import from the per-repo genie-db path constants (separate DB, shared patterns only).
+- [x] typecheck + tests green.
 
 **Validation:**
 ```bash
@@ -132,14 +141,14 @@ bun run typecheck
 **Deliverables:**
 1. Port from `origin/v4` (reference files: `omni-approval-handler.ts`, `providers/claude-sdk-remote-approval.ts`, `services/omni-bridge.ts`, `services/omni-queue.ts`, `omni-registration.ts`, `omni-signature.ts`, `term-commands/omni/handshake.ts` — faithful semantics, new storage): token + reaction matching, `omni_message_id` correlation, ed25519 signing + keypair handshake, registration against `OMNI_API_URL`; outbound sends via NATS publish per Decision 9 (port the bridge's subject/payload shapes).
 2. `src/term-commands/omni.ts` — namespace: `omni serve` (foreground runner: dynamic-`import('nats')`, subscribes, matches, resolves via omni-queue; on new pending approvals PUBLISHES the approval-request message via NATS and records `omni_message_id` from the flow the bridge used), `omni status` (queue counts + config sanity), `omni inbox` (list inbound), `omni handshake` (keypair provisioning to `~/.genie/keys/`, ported). Config via `~/.genie/config.json` omni section + env (`OMNI_API_URL`, instance, token lists) — Zod-validated.
-3. Dispatcher-layer support (review H3 — currently the pipeline DROPS permission decisions): PermissionRequest-aware `buildBlockingResponse`/`buildDenyResponse` emitting the `hookSpecificOutput.permissionDecision` envelope, decision propagation through `executeBlockingChain`, dispatcher unit tests. Then the PermissionRequest handler itself (`src/hooks/handlers/omni-approval.ts`) implementing the spike's written contract — added to the registry via a config-gated build at dispatch boot (`setRegistry`; the frozen builtin literal cannot be conditionally edited). Disabled default: handler absent, dispatcher emits today's responses byte-for-byte (regression-tested); timeout → `ask`; never auto-allow.
+3. Dispatcher-layer support: PreToolUse `buildBlockingResponse`/`buildDenyResponse` emitting the `hookSpecificOutput.permissionDecision` envelope (allow + deny), decision propagation through `executeBlockingChain`, dispatcher unit tests. Then the PreToolUse omni-approval handler itself (`src/hooks/handlers/omni-approval.ts`) — matcher scoped to tools that need gating; poll interval 250–500ms, budget < hook timeout, timeout→ask, expire the row implementing the spike's written contract — added to the registry via a config-gated build at dispatch boot (`setRegistry`; the frozen builtin literal cannot be conditionally edited). Disabled default: handler absent, dispatcher emits today's responses byte-for-byte (regression-tested); timeout → `ask`; never auto-allow.
 4. `nats` re-added to package.json; `omni` added to WORKSPACE_EXEMPT; registration in genie.ts.
 5. Integration tests with injectable transport (fake NATS stub satisfying the narrow subscribe/publish interface the runner uses — outbound sends assert on recorded publishes) + fake Omni HTTP server (Bun.serve, ephemeral port) for REGISTRATION only (the one real signed-HTTP path — signature headers verified there): the five round-trips (token-approve, reaction-approve, deny, timeout→ask, registration-signature); hook-registry test proving absence when disabled / presence when enabled.
 
 **Acceptance Criteria:**
-- [ ] Five round-trip tests green without any real NATS/Omni/network.
-- [ ] Omni-disabled default: no PermissionRequest handler registered; transport not INITIALIZED by `genie --help`/`task`/`board` (runtime marker/spy probe — nats is bundled regardless).
-- [ ] typecheck + full suite green; `--help` shows 12 commands incl. `omni`.
+- [x] Five round-trip tests green without any real NATS/Omni/network.
+- [x] Omni-disabled default: no PermissionRequest handler registered; transport not INITIALIZED by `genie --help`/`task`/`board` (runtime marker/spy probe — nats is bundled regardless).
+- [x] typecheck + full suite green; `--help` shows 12 commands incl. `omni`.
 
 **Validation:**
 ```bash
@@ -168,8 +177,8 @@ GENIE_TEST_SKIP_PGSERVE=1 bun test
 3. Tests with a fake `claude` executable (injectable spawn path): mapped round-trip (message → fake claude → reply sent to fake API → handled), unmapped store-only, child-timeout path, child-crash isolation.
 
 **Acceptance Criteria:**
-- [ ] Round-trip + isolation tests green; runner survives child failures.
-- [ ] Unmapped messages never spawn anything.
+- [x] Round-trip + isolation tests green; runner survives child failures.
+- [x] Unmapped messages never spawn anything.
 
 **Validation:**
 ```bash
@@ -193,9 +202,9 @@ GENIE_TEST_SKIP_PGSERVE=1 bun test
 3. Real-WhatsApp manual QA on this machine against Felipe's Omni instance: runner up, real approval round-trip from a phone (approve, deny, reaction), inbound one-shot round-trip. Recorded in `.genie/wishes/omni-runner-port/qa.md` — what was proven live, what config was used (secrets redacted), what remains open.
 
 **Acceptance Criteria:**
-- [ ] README gates green (command-existence loop, stale-claims grep, dependency-count claim matches package.json).
-- [ ] e2e + full `bun run check` green.
-- [ ] qa.md records the live session honestly (or documents exactly why live QA was blocked and what Felipe must run).
+- [x] README gates green (command-existence loop, stale-claims grep, dependency-count claim matches package.json).
+- [x] e2e + full `bun run check` green.
+- [x] qa.md records the live session honestly (or documents exactly why live QA was blocked and what Felipe must run).
 
 **Validation:**
 ```bash
@@ -222,3 +231,8 @@ test -f .genie/wishes/omni-runner-port/qa.md
 - **Follows:** warp-integration (merged). **Exits** the omni-dark window opened by v5-demolition (D8).
 - **Enables:** `skills/omni` port (follow-up wish once the runner API settles).
 - **Hands to distribution wish:** runner supervision/auto-start, if ever wanted.
+
+## Discovered Issues (during execution)
+
+- **HIGH (pre-existing, separate wish) — hook dispatch falls open in v5.** The demolition deleted the hook daemon (`src/serve/`), but `src/hooks/dispatch-command.ts` still defaults to `runDispatchClient()` (daemon socket) unless `GENIE_HOOK_FORCE_INPROC=1`. On the absent socket it F1-falls-open (empty stdout = allow-by-default). Confirmed on `origin/dev` too — so **branch-guard and ALL hooks are non-functional in the real default path today**, and the omni-approval handler (wired via `installDispatchRegistry`, in-process seam only) inherits this. Extra wrinkle: `dispatch-client.ts` `DEFAULT_TIMEOUT_MS=5000` fails OPEN, so naively restoring the daemon makes a 110s approval block auto-ALLOW, not ask. A separate wish must fix the dispatch default (default to in-process now the daemon is gone, OR rebuild a daemon that calls installDispatchRegistry at boot and fails to `ask` not empty). Until then omni approvals cannot gate in production.
+- **LOW (follow-up) — reaction correlation resolves oldest-pending under concurrent approvals.** Outbound NATS publish is fire-and-forget; genie never learns omni's real message id, so WhatsApp reactions fall back to oldest-pending. Correct for one pending approval; wrong-row under concurrency. Needs omni to publish a "sent" event carrying its message id.
