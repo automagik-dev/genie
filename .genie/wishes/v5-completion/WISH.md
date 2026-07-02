@@ -99,10 +99,10 @@ bun run check
 4. Hermes integration-model decision: `.genie/wishes/v5-completion/hermes-integration.md` (under `.genie/`, NOT `docs/` — that is a submodule symlink) — state that Hermes is an HTTP/API agent (per hermes-agent.nousresearch.com developer guide) with no launchable terminal CLI, so it does not fit the worktree-pane launch model; recommend the integration shape (runner like omni / emit-to-API / defer) with rationale and a rough sketch. NO Hermes launcher code in this group.
 
 **Acceptance Criteria:**
-- [ ] `--agent codex --dry-run` emits `codex exec "$(cat …)"` (asserted); `--agent claude` byte-identical to today; bad `--agent` → typed error.
-- [ ] Agent-command mapping is a single extensible seam (a third target = a data entry, not a rewrite).
-- [ ] Hermes decision doc exists under `.genie/` with a clear recommendation; no half-built Hermes launcher.
-- [ ] launch tests + typecheck + build green.
+- [x] `--agent codex --dry-run` emits `codex exec "$(cat …)"` (asserted); `--agent claude` byte-identical to today; bad `--agent` → typed error.
+- [x] Agent-command mapping is a single extensible seam (a third target = a data entry, not a rewrite).
+- [x] Hermes decision doc exists under `.genie/` with a clear recommendation; no half-built Hermes launcher.
+- [x] launch tests + typecheck + build green.
 
 **Validation:**
 ```bash

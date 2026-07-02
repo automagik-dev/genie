@@ -9,6 +9,7 @@ import { createTask } from '../lib/v5/task-state.js';
 import {
   BareRepoError,
   EmptyReadySetError,
+  InvalidAgentError,
   InvalidGroupNameError,
   InvalidSlugError,
   type LaunchDeps,
@@ -131,6 +132,63 @@ function flattenLeaves(layout: unknown): Array<Record<string, unknown>> {
   if (Array.isArray(node.panes)) return (node.panes as unknown[]).flatMap(flattenLeaves);
   return [node];
 }
+
+/** Extract each pane's first command `exec` string from a plan's emitted YAML, left-to-right. */
+function paneCommands(yaml: string): string[] {
+  const config = Bun.YAML.parse(yaml) as { windows: Array<{ tabs: Array<{ layout: unknown }> }> };
+  const leaves = flattenLeaves(config.windows[0].tabs[0].layout);
+  return leaves.map((l) => (l.commands as Array<{ exec: string }>)[0].exec);
+}
+
+// ----------------------------------------------------------------------------
+// --agent: the pane command is chosen from the agent→command mapping
+// ----------------------------------------------------------------------------
+
+describe('genie launch --agent', () => {
+  test('--agent codex emits `codex exec "$(cat …)"` pane commands for every group', () => {
+    const slug = 'codex-run';
+    createTask(fx.db, { title: 'build the api', wish: slug, group: 'api' });
+    createTask(fx.db, { title: 'build the ui', wish: slug, group: 'ui' });
+
+    const plan = executeLaunch(slug, { dryRun: true, agent: 'codex' }, deps());
+    expect(paneCommands(plan.yaml)).toEqual([
+      `codex exec "$(cat "${join(worktreeFor(slug, 'api'), '.genie', 'launch', 'api.prompt')}")"`,
+      `codex exec "$(cat "${join(worktreeFor(slug, 'ui'), '.genie', 'launch', 'ui.prompt')}")"`,
+    ]);
+  });
+
+  test('default (no --agent) and --agent claude both emit byte-identical claude pane commands', () => {
+    const slug = 'claude-run';
+    createTask(fx.db, { title: 'a task', wish: slug, group: 'main' });
+    const expected = [`claude "$(cat "${join(worktreeFor(slug, 'main'), '.genie', 'launch', 'main.prompt')}")"`];
+
+    const byDefault = executeLaunch(slug, { dryRun: true }, deps());
+    const explicit = executeLaunch(slug, { dryRun: true, agent: 'claude' }, deps());
+    expect(paneCommands(byDefault.yaml)).toEqual(expected);
+    expect(paneCommands(explicit.yaml)).toEqual(expected);
+    // Default and explicit claude produce identical YAML — no perturbation.
+    expect(explicit.yaml).toBe(byDefault.yaml);
+  });
+
+  test('an unknown --agent value raises InvalidAgentError before anything is materialized', () => {
+    const slug = 'bad-agent';
+    createTask(fx.db, { title: 'a task', wish: slug, group: 'main' });
+
+    let caught: unknown;
+    try {
+      executeLaunch(slug, { open: false, agent: 'xyz' }, deps());
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(InvalidAgentError);
+    expect((caught as InvalidAgentError).agent).toBe('xyz');
+
+    // Validation precedes materialize, so nothing landed on disk.
+    expect(existsSync(fx.worktrees)).toBe(false);
+    expect(existsSync(worktreeFor(slug, 'main'))).toBe(false);
+    expect(existsSync(fx.warp)).toBe(false);
+  });
+});
 
 // ----------------------------------------------------------------------------
 // Real run (--no-open): worktrees, prompts, config, core.bare intact
