@@ -27,7 +27,7 @@
 
 import type { Command } from 'commander';
 import { registerHookTrustCommand } from '../term-commands/hook/trust.js';
-import { buildFailClosedResponse, dispatch } from './index.js';
+import { buildFailClosedResponse, dispatch, installDispatchRegistry } from './index.js';
 
 async function readStdin(): Promise<string> {
   // Bun-native stdin read
@@ -102,6 +102,12 @@ async function dispatchAction(): Promise<void> {
     // No payload (e.g. TTY / empty pipe) → nothing to dispatch, allow cleanly.
     process.exit(0);
   }
+
+  // Config-gated registry install at dispatch boot: swaps in the omni-approval
+  // handler only when the feature is enabled. No-op (byte-identical output)
+  // otherwise. Must run before computeDispatchOutput so the registry the
+  // fail-closed wrapper dispatches against already includes the omni handler.
+  await installDispatchRegistry();
 
   const output = await computeDispatchOutput(stdin);
   if (output) {

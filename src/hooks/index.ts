@@ -21,10 +21,12 @@
  *   Fire-and-forget — all handlers run, output is ignored.
  */
 
+import { isOmniApprovalEnabled, resolveOmniRuntimeConfig } from '../lib/omni-config.js';
 import { auditContext } from './handlers/audit-context.js';
 import { branchGuard } from './handlers/branch-guard.js';
 import { freshness } from './handlers/freshness.js';
 import { identityInject } from './handlers/identity-inject.js';
+import { omniApproval } from './handlers/omni-approval.js';
 import { orchestrationGuard } from './handlers/orchestration-guard.js';
 import type { Handler, HandlerResult, HookPayload } from './types.js';
 import { isBlockingEvent } from './types.js';
@@ -95,6 +97,63 @@ const builtinHandlers: ReadonlyArray<Handler> = [
     fn: identityInject,
   },
 ];
+
+/**
+ * Default tool matcher for the config-gated `omni-approval` handler. Gates the
+ * state-changing / executing tools by default; overridable via config
+ * (`omni.approvals.tools`) resolved in {@link buildOmniRegistry}.
+ */
+const DEFAULT_OMNI_APPROVAL_MATCHER = /^(Bash|Write|Edit|NotebookEdit)$/;
+
+/**
+ * Build the `omni-approval` handler descriptor. Priority 5 keeps it AFTER the
+ * branch/orchestration deny-guards (1, 2) — so a guard deny short-circuits
+ * before we ever bother the phone — and before the context-adding handlers (8).
+ */
+function omniApprovalHandler(matcher: RegExp): Handler {
+  return {
+    version: '1',
+    source: 'builtin',
+    manifest_path: 'src/hooks/handlers/omni-approval.ts',
+    name: 'omni-approval',
+    event: 'PreToolUse',
+    matcher,
+    priority: 5,
+    fn: omniApproval,
+  };
+}
+
+/**
+ * Build the registry for a given feature state. When Omni approvals are OFF
+ * (default) this returns exactly the builtin set, so the dispatcher output is
+ * byte-identical to a build with no Omni. When ON, the `omni-approval` handler
+ * is appended (a fresh frozen array — the builtin literal stays frozen).
+ */
+export function buildOmniRegistry(
+  omniEnabled: boolean,
+  toolMatcher: RegExp = DEFAULT_OMNI_APPROVAL_MATCHER,
+): ReadonlyArray<Handler> {
+  if (!omniEnabled) return Object.freeze([...builtinHandlers]);
+  return Object.freeze([...builtinHandlers, omniApprovalHandler(toolMatcher)]);
+}
+
+/**
+ * Config-gated registry install, run once at dispatch boot. Reads the omni
+ * runtime config; only when `isOmniApprovalEnabled` does it swap in a registry
+ * carrying the `omni-approval` handler. A no-op (leaving the frozen builtin
+ * registry untouched) when the feature is off — the byte-identical guarantee.
+ */
+export async function installDispatchRegistry(): Promise<void> {
+  const rt = await resolveOmniRuntimeConfig();
+  if (!isOmniApprovalEnabled(rt)) return;
+  let matcher = DEFAULT_OMNI_APPROVAL_MATCHER;
+  try {
+    matcher = new RegExp(rt.approvals.toolMatcher);
+  } catch {
+    // Bad user regex — fall back to the safe default rather than crash dispatch.
+  }
+  setRegistry(buildOmniRegistry(true, matcher));
+}
 
 /**
  * Live handler registry — read at dispatch time so `setRegistry()` swaps
@@ -263,17 +322,29 @@ export function buildFailClosedResponse(event: string | undefined, tool: string 
   return JSON.stringify({ decision: 'block', reason });
 }
 
+/**
+ * An explicit terminal decision emitted by a handler (as opposed to the
+ * implicit allow of an empty result). Carried out of the chain into the final
+ * response builder so a handler-driven `allow` propagates to CC.
+ */
+interface ExplicitDecision {
+  permissionDecision: 'allow';
+  reason?: string;
+}
+
 function buildBlockingResponse(
   hookEventName: string,
   contextMessages: string[],
   currentInput: Record<string, unknown> | undefined,
   originalInput: Record<string, unknown> | undefined,
   toolName: string | undefined,
+  explicit?: ExplicitDecision,
 ): Record<string, unknown> {
   const response: Record<string, unknown> = {};
   const hasContext = contextMessages.length > 0;
   const hasInputChange =
     currentInput && originalInput && JSON.stringify(currentInput) !== JSON.stringify(originalInput);
+  const wantAllow = explicit?.permissionDecision === 'allow';
 
   // AskUserQuestion + similar interactive tools — empty response, period.
   // ANY hookSpecificOutput envelope (even bare additionalContext) is
@@ -290,12 +361,17 @@ function buildBlockingResponse(
     response.updatedInput = currentInput;
   }
 
-  if (hookEventName === 'PreToolUse' && (hasContext || hasInputChange)) {
+  if (hookEventName === 'PreToolUse' && (hasContext || hasInputChange || wantAllow)) {
     const output: Record<string, unknown> = { hookEventName: 'PreToolUse' };
     if (hasContext) output.additionalContext = contextMessages.join('\n');
     if (hasInputChange) {
       output.permissionDecision = 'allow';
       output.updatedInput = currentInput;
+    } else if (wantAllow) {
+      // Handler-driven allow with no input rewrite (e.g. a resolved remote
+      // approval). Surface the allow so CC runs the tool without prompting.
+      output.permissionDecision = 'allow';
+      if (explicit?.reason) output.permissionDecisionReason = explicit.reason;
     }
     response.hookSpecificOutput = output;
   }
@@ -316,17 +392,93 @@ function buildBlockingResponse(
   return response;
 }
 
+/**
+ * The effective terminal decision of a handler result — normalized across the
+ * canonical `hookSpecificOutput.permissionDecision` and the deprecated
+ * top-level `decision`. Returns undefined for context-only / input-only
+ * results (which are not terminal — the chain continues).
+ */
+function effectiveDecision(result: HandlerResult): 'allow' | 'deny' | 'ask' | undefined {
+  return result?.hookSpecificOutput?.permissionDecision ?? result?.decision;
+}
+
+/** Reason a handler attached to its terminal decision, from either channel. */
+function decisionReason(result: HandlerResult): string | undefined {
+  return result?.hookSpecificOutput?.permissionDecisionReason ?? result?.reason;
+}
+
+/**
+ * Whether a handler result's `allow` is an *intentional standalone* decision —
+ * the handler explicitly asking to permit the tool — as opposed to a default
+ * `allow` field riding alongside context injection or an input rewrite.
+ *
+ * The remote-approval handler emits a bare allow envelope (permissionDecision
+ * only, no additionalContext / updatedInput); that intent MUST surface to CC so
+ * a resolved approval runs the tool without a redundant local prompt.
+ *
+ * The context-carrying builtins (orchestration-guard, audit-context, freshness)
+ * attach `permissionDecision: 'allow'` next to their `additionalContext`. That
+ * allow is incidental — pre-omni the dispatcher never read it, surfacing only
+ * the context and deferring the permission decision to CC. Treating it as
+ * intentional would silently auto-allow those handlers' matched tools (most
+ * dangerously audit-context's Write/Edit on any tracked file with git history),
+ * widening the permission surface. Byte-identical output when omni is off
+ * depends on keeping that allow incidental. An `updatedInput` rewrite already
+ * carries its own allow via the input-change path in buildBlockingResponse, so
+ * it is likewise not an intentional standalone decision here.
+ */
+function isIntentionalAllow(result: HandlerResult): boolean {
+  const hso = result?.hookSpecificOutput;
+  if (hso?.permissionDecision === 'allow') {
+    return hso.additionalContext === undefined && hso.updatedInput === undefined;
+  }
+  // Deprecated top-level channel: a bare `decision: 'allow'` with no envelope is
+  // likewise a standalone decision. No builtin uses it today; kept for external
+  // handlers.
+  return result?.decision === 'allow' && hso === undefined;
+}
+
+/** PreToolUse `ask` envelope — the approval fail-safe (force the local prompt). */
+function buildAskResponse(reason: string | undefined): Record<string, unknown> {
+  const output: Record<string, unknown> = { hookEventName: 'PreToolUse', permissionDecision: 'ask' };
+  if (reason) output.permissionDecisionReason = reason;
+  return { hookSpecificOutput: output };
+}
+
 async function executeBlockingChain(matched: Handler[], payload: HookPayload): Promise<Record<string, unknown>> {
   let currentInput = payload.tool_input ? { ...payload.tool_input } : undefined;
   const contextMessages: string[] = [];
   const hookEventName = payload.hook_event_name;
+  let explicit: ExplicitDecision | undefined;
 
   for (const handler of matched) {
     const result = await runHandler(handler, payload, currentInput, true);
     if (!result) continue;
 
-    if (result.decision === 'deny') {
-      return buildDenyResponse(handler, result.reason, hookEventName);
+    const decision = effectiveDecision(result);
+
+    if (decision === 'deny') {
+      return buildDenyResponse(handler, decisionReason(result), hookEventName);
+    }
+
+    // `ask` is the remote-approval fail-safe: defer to the local prompt
+    // (interactive) or refuse (headless), never auto-allow. It short-circuits —
+    // once we've decided to hand the call back to the human, no later handler
+    // should keep processing it. Only PreToolUse carries the ask envelope.
+    if (decision === 'ask' && hookEventName === 'PreToolUse') {
+      return buildAskResponse(decisionReason(result));
+    }
+
+    // An *intentional standalone* `allow` is recorded and propagated, but does
+    // NOT short-circuit: a later-priority handler may still add context or deny.
+    // The deny-guards run first (priority 1–2), so by the time an allow lands the
+    // guards have already passed — recording it lets a resolved remote approval
+    // surface to CC as an explicit allow. A context-carrying allow (a builtin's
+    // `additionalContext` with a default `allow` field) is NOT recorded: its
+    // permission decision stays deferred to CC, preserving byte-identical output
+    // when omni is off. See {@link isIntentionalAllow}.
+    if (decision === 'allow' && hookEventName === 'PreToolUse' && isIntentionalAllow(result)) {
+      explicit = { permissionDecision: 'allow', reason: decisionReason(result) ?? explicit?.reason };
     }
 
     if (result.hookSpecificOutput?.additionalContext) {
@@ -339,7 +491,14 @@ async function executeBlockingChain(matched: Handler[], payload: HookPayload): P
     }
   }
 
-  return buildBlockingResponse(hookEventName, contextMessages, currentInput, payload.tool_input, payload.tool_name);
+  return buildBlockingResponse(
+    hookEventName,
+    contextMessages,
+    currentInput,
+    payload.tool_input,
+    payload.tool_name,
+    explicit,
+  );
 }
 
 async function executeNonBlockingHandlers(matched: Handler[], payload: HookPayload): Promise<void> {

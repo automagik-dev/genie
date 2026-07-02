@@ -146,9 +146,9 @@ bun run typecheck
 5. Integration tests with injectable transport (fake NATS stub satisfying the narrow subscribe/publish interface the runner uses — outbound sends assert on recorded publishes) + fake Omni HTTP server (Bun.serve, ephemeral port) for REGISTRATION only (the one real signed-HTTP path — signature headers verified there): the five round-trips (token-approve, reaction-approve, deny, timeout→ask, registration-signature); hook-registry test proving absence when disabled / presence when enabled.
 
 **Acceptance Criteria:**
-- [ ] Five round-trip tests green without any real NATS/Omni/network.
-- [ ] Omni-disabled default: no PermissionRequest handler registered; transport not INITIALIZED by `genie --help`/`task`/`board` (runtime marker/spy probe — nats is bundled regardless).
-- [ ] typecheck + full suite green; `--help` shows 12 commands incl. `omni`.
+- [x] Five round-trip tests green without any real NATS/Omni/network.
+- [x] Omni-disabled default: no PermissionRequest handler registered; transport not INITIALIZED by `genie --help`/`task`/`board` (runtime marker/spy probe — nats is bundled regardless).
+- [x] typecheck + full suite green; `--help` shows 12 commands incl. `omni`.
 
 **Validation:**
 ```bash
@@ -231,3 +231,8 @@ test -f .genie/wishes/omni-runner-port/qa.md
 - **Follows:** warp-integration (merged). **Exits** the omni-dark window opened by v5-demolition (D8).
 - **Enables:** `skills/omni` port (follow-up wish once the runner API settles).
 - **Hands to distribution wish:** runner supervision/auto-start, if ever wanted.
+
+## Discovered Issues (during execution)
+
+- **HIGH (pre-existing, separate wish) — hook dispatch falls open in v5.** The demolition deleted the hook daemon (`src/serve/`), but `src/hooks/dispatch-command.ts` still defaults to `runDispatchClient()` (daemon socket) unless `GENIE_HOOK_FORCE_INPROC=1`. On the absent socket it F1-falls-open (empty stdout = allow-by-default). Confirmed on `origin/dev` too — so **branch-guard and ALL hooks are non-functional in the real default path today**, and the omni-approval handler (wired via `installDispatchRegistry`, in-process seam only) inherits this. Extra wrinkle: `dispatch-client.ts` `DEFAULT_TIMEOUT_MS=5000` fails OPEN, so naively restoring the daemon makes a 110s approval block auto-ALLOW, not ask. A separate wish must fix the dispatch default (default to in-process now the daemon is gone, OR rebuild a daemon that calls installDispatchRegistry at boot and fails to `ask` not empty). Until then omni approvals cannot gate in production.
+- **LOW (follow-up) — reaction correlation resolves oldest-pending under concurrent approvals.** Outbound NATS publish is fire-and-forget; genie never learns omni's real message id, so WhatsApp reactions fall back to oldest-pending. Correct for one pending approval; wrong-row under concurrency. Needs omni to publish a "sent" event carrying its message id.
