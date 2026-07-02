@@ -284,16 +284,30 @@ try {
       });
       return (async () => {
         const out = await new Response(proc.stdout).text();
+        const err = await new Response(proc.stderr).text();
         const code = await proc.exited;
-        return { out, code };
+        return { out, err, code };
       })();
     });
 
     const settled = await Promise.allSettled(runs);
-    const outcomes = settled.map((s) => (s.status === 'fulfilled' ? s.value.out : `REJECTED:${s.reason}`));
+    const outcomes = settled.map((s) =>
+      s.status === 'fulfilled' ? `${s.value.out}(exit ${s.value.code})` : `REJECTED:${s.reason}`,
+    );
 
-    const wins = outcomes.filter((o) => o === 'WON').length;
-    const conflicts = outcomes.filter((o) => o === 'CONFLICT').length;
+    const wins = outcomes.filter((o) => o.startsWith('WON')).length;
+    const conflicts = outcomes.filter((o) => o.startsWith('CONFLICT')).length;
+
+    // On mismatch, the raw outcomes are the only way to diagnose a CI-only
+    // straggler (empty stdout = child died before writing; ERR:* = typed leak).
+    if (wins !== 1 || conflicts !== N - 1) {
+      console.error('race outcomes:', JSON.stringify(outcomes));
+      for (const s of settled) {
+        if (s.status === 'fulfilled' && !s.value.out.startsWith('WON') && !s.value.out.startsWith('CONFLICT')) {
+          console.error('straggler stderr:', s.value.err);
+        }
+      }
+    }
 
     expect(wins).toBe(1);
     expect(conflicts).toBe(N - 1);
