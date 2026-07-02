@@ -74,8 +74,8 @@ The demolition removed the harness but left the shell: unreferenced root files (
 5. Note: README's link to VELOCITY.md dangles between this group and Group 3's rewrite — accepted same-branch transient, resolved in wave 2.
 
 **Acceptance Criteria:**
-- [ ] Path asserts for every deletion pass.
-- [ ] Full `bun run check` + build + e2e green; hooks tests still discovered and passing from `tests/hooks/`.
+- [x] Path asserts for every deletion pass.
+- [x] Full `bun run check` + build + e2e green; hooks tests still discovered and passing from `tests/hooks/`.
 
 **Validation:**
 ```bash
@@ -103,9 +103,9 @@ V5_E2E_BUILD=1 bash tests/e2e/v5-lifecycle.sh
 3. `.gitignore` sanity: `.genie/genie.db*` rules remain; add `.genie/` runtime-only guidance comment if helpful (no functional change).
 
 **Acceptance Criteria:**
-- [ ] `git ls-files .genie/` returns empty after the group's commit.
-- [ ] Metrics grep clean repo-wide (excluding .claude/plans history and the v4 branch).
-- [ ] Gates green.
+- [x] `git ls-files .genie/` returns empty after the group's commit.
+- [x] Metrics grep clean repo-wide (excluding .claude/plans history and the v4 branch).
+- [x] Gates green.
 
 **Validation:**
 ```bash

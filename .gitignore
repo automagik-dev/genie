@@ -59,6 +59,10 @@ yarn-error.log*
 .claude/worktrees/
 .worktrees/
 
+# In v5, .genie/ holds runtime-only state (SQLite engine, worker registry,
+# mailbox, chat). Planning history (wishes/brainstorms/reports) is no longer
+# tracked here — it lives in git history and the v4 branch.
+
 # Worker registry (contains session IDs)
 .genie/workers.json
 
