@@ -9,4 +9,5 @@
 ## Poured
 
 - [Genie v5 — lightweight body](genie-v5-lightweight-body/DESIGN.md) — skills+files+stock Warp replace the v4 harness; CC/Codex/Hermes targets; omni keeps one runner; crystallized 2026-07-01, umbrella-scale (8 seed groups)
-  - [WISH: v5-foundation](v5-foundation/WISH.md) — umbrella Groups 1+2: file taxonomy + CLI-independent core skills (drafted 2026-07-01)
+  - [WISH: v5-foundation](v5-foundation/WISH.md) — umbrella Groups 1+2: genie.db engine + CLI + core skills — DONE 2026-07-02, all groups SHIP
+  - [WISH: v5-demolition](v5-demolition/WISH.md) — umbrella Group 6 pulled forward (D8): harness deletion, bare-name cutover, v4 branch, PR to dev (drafted 2026-07-02)
