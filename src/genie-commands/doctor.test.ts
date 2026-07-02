@@ -1,5 +1,5 @@
 import { Database } from 'bun:sqlite';
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -94,6 +94,15 @@ describe('doctorCommand — genie.db check branches', () => {
     process.chdir(priorCwd);
     process.exitCode = undefined;
     rmSync(tmp, { recursive: true, force: true });
+  });
+
+  // The schema-version test drives doctorCommand to set `process.exitCode = 1`.
+  // bun treats `process.exitCode = undefined` as a no-op (it does not clear a
+  // previously-set code), so the per-test resets above cannot undo it — the 1
+  // would leak and make the entire `bun test` run exit non-zero despite every
+  // test passing. Clear it to 0 once, after this file's tests complete.
+  afterAll(() => {
+    process.exitCode = 0;
   });
 
   test('absent genie.db → pass ("absent"), no failing exit code', async () => {

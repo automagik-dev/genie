@@ -202,15 +202,6 @@ export function createBoard(db: Database, name: string): BoardRow {
   return { id, name, createdAt };
 }
 
-export function listBoards(db: Database): BoardRow[] {
-  const rows = db.query('SELECT id, name, created_at FROM boards ORDER BY created_at').all() as Array<{
-    id: string;
-    name: string;
-    created_at: number;
-  }>;
-  return rows.map((r) => ({ id: r.id, name: r.name, createdAt: r.created_at }));
-}
-
 export function getBoard(db: Database, id: string): BoardRow | null {
   const row = db.query('SELECT id, name, created_at FROM boards WHERE id = ?').get(id) as {
     id: string;

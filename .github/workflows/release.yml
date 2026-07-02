@@ -33,7 +33,7 @@ on:
         type: choice
         default: stable
         # Canonical channel taxonomy (Felipe directive 2026-05-12,
-        # unified across pgserve/omni/genie):
+        # unified across the automagik sibling projects):
         #   stable  → main branch    → .well-known/latest.json
         #   homolog → homolog branch → .well-known/homolog.json
         #   dev     → dev branch     → .well-known/dev.json

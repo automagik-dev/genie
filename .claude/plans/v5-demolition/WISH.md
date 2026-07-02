@@ -200,9 +200,9 @@ bun run typecheck
 5. Fresh-clone sanity documented: `bun install && bun run check && bun run build && V5_E2E_BUILD=1 bash tests/e2e/v5-lifecycle.sh`.
 
 **Acceptance Criteria:**
-- [ ] Forbidden deps absent; `bun run check` green end-to-end; knip clean.
-- [ ] Command count within bounds with task/board present.
-- [ ] No workflow in .github/workflows/ references a deleted path (grep gate over test/visual, list-tests, scripts/tmux, pg-tests matrix).
+- [x] Forbidden deps absent; `bun run check` green end-to-end; knip clean.
+- [x] Command count within bounds with task/board present.
+- [x] No workflow in .github/workflows/ references a deleted path (grep gate over test/visual, list-tests, scripts/tmux, pg-tests matrix).
 
 **Validation:**
 ```bash

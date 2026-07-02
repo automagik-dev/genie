@@ -6,88 +6,45 @@
   "bin": {
     "genie": "./dist/genie.js"
   },
-  "files": [
-    "dist/",
-    "skills/",
-    "plugins/genie/",
-    "scripts/postinstall-tmux.js",
-    "scripts/postinstall-hook-binary.js",
-    "scripts/postinstall-migrations.js",
-    "scripts/sec-scan.cjs",
-    "scripts/sec-remediate.cjs",
-    "scripts/sec-fix.cjs",
-    "scripts/tmux/",
-    "src/db/migrations/",
-    "src/migrations/",
-    "templates/",
-    "README.md",
-    "LICENSE"
-  ],
+  "files": ["dist/", "skills/", "plugins/genie/", "templates/", "README.md", "LICENSE"],
   "scripts": {
     "prepare": "test \"$CI\" = true || husky",
     "version": "bun run scripts/version.ts",
-    "build": "bun build src/genie.ts --outdir dist --target bun --minify-syntax --minify-whitespace --external bun --external pgserve --external @khal-os/brain --external @anthropic-ai/claude-agent-sdk && bun build src/hooks/dispatch-client.ts --outdir dist --target bun --minify-syntax --minify-whitespace --external bun && chmod +x dist/*.js",
-    "build:app": "bun run scripts/build-app.ts",
+    "build": "bun build src/genie.ts --outdir dist --target bun --minify-syntax --minify-whitespace --external bun && bun build src/hooks/dispatch-client.ts --outdir dist --target bun --minify-syntax --minify-whitespace --external bun && chmod +x dist/*.js",
     "build:binary": "bash scripts/build-binary.sh",
     "build:plugin": "node scripts/build.js",
     "sync": "node scripts/sync.js",
     "build-and-sync": "npm run build:plugin && npm run sync",
-    "postinstall": "node scripts/postinstall-tmux.js && node scripts/postinstall-hook-binary.js && node scripts/postinstall-migrations.js",
     "prepack": "bun run build",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
     "test": "bun test",
-    "test:visual": "GENIE_TEST_SKIP_PGSERVE=1 bun test test/visual/",
-    "test:parallel": "bun run scripts/test-parallel.ts",
     "typecheck": "tsc --noEmit",
     "dead-code": "bunx knip",
     "skills:lint": "bun run scripts/skills-lint.ts",
     "wishes:lint": "bun run scripts/wishes-lint.ts",
     "skills:audit": "bun run scripts/skills-audit.ts",
-    "lint:emit": "bun run scripts/lint-emit-discipline.ts",
     "lint:complexity-budget": "bun run scripts/complexity-budget.ts",
-    "check:perf": "bun run test/perf/observability/gate.ts --duration=30000",
-    "check": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint && bun run lint:emit && bun test",
-    "check:fast": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint && bun run lint:emit",
+    "check": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint && bun test",
+    "check:fast": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint",
     "verify:release": "scripts/verify-release.sh"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.2.119",
     "@inquirer/prompts": "7.10.1",
-    "@opentui/core": "0.2.6",
-    "@opentui/keymap": "0.2.6",
-    "@opentui/react": "0.2.6",
-    "@tauri-apps/api": "2.10.1",
-    "@xterm/headless": "^5.5.0",
-    "chokidar": "^5.0.0",
     "commander": "12.1.0",
-    "ignore": "7.0.5",
-    "js-yaml": "4.1.1",
-    "nats": "2.29.3",
-    "postgres": "3.4.9",
-    "react": "19.2.5",
-    "react-dom": "19.2.5",
-    "systeminformation": "5.31.6",
-    "uuid": "14.0.0",
     "zod": "3.25.76"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
     "@commitlint/cli": "^20.4.1",
     "@commitlint/config-conventional": "^20.4.1",
-    "@tauri-apps/cli": "^2.10.1",
     "@types/bun": "^1.3.10",
-    "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.0.0",
-    "@types/react": "^19.2.14",
-    "@types/react-dom": "^19.0.0",
-    "@vitejs/plugin-react": "^4.5.2",
     "esbuild": "^0.27.3",
     "husky": "^9.1.7",
     "knip": "^5.86.0",
-    "typescript": "^5.8.0",
-    "vite": "^6.3.5"
+    "typescript": "^5.8.0"
   },
   "repository": {
     "type": "git",
@@ -99,15 +56,5 @@
   "publishConfig": {
     "access": "public"
   },
-  "trustedDependencies": ["@biomejs/biome", "bun"],
-  "binarySha256": {
-    "_comment": "SHA-256 pins for postinstall-downloaded binaries. Keys = exact tarball filename. Bootstrap procedure: docs/_internal/binary-sha-bootstrap.md. Drift detection: .github/workflows/binary-sha-drift.yml.",
-    "tmux-3.6a-linux-x86_64.tar.gz": "c0a772a5e6ca8f129b0111d10029a52e02bcbc8352d5a8c0d3de8466a1e59c2e",
-    "tmux-3.6a-linux-arm64.tar.gz": "bb5afd9d646df54a7d7c66e198aa22c7d293c7453534f1670f7c540534db8b5e",
-    "tmux-3.6a-macos-arm64.tar.gz": "12b5b9f8696e1286897d946649c0a80d0169dd76e018d34476a1fbd34de89a0f",
-    "tmux-3.6a-macos-x86_64.tar.gz": "b9b12eaeba43acf5671acf3857d947525440b544185a8db34ea557199a090251"
-  },
-  "pgserve": {
-    "persist": true
-  }
+  "trustedDependencies": ["@biomejs/biome", "bun"]
 }

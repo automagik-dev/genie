@@ -18,7 +18,7 @@ name: Build Tarballs
 # the same source commit must produce binaries that pass the same smoke
 # test, with size delta ≤1 MB.
 #
-# Mirror of pgserve/.github/workflows/build-tarballs.yml. Decision 9: LIFTED
+# Mirror of the shared automagik tarball-build workflow. Decision 9: LIFTED
 # (copied + adapted), not REFERENCED via composite action — drift is fine,
 # cross-repo coupling is not.
 

@@ -1,8 +1,8 @@
 /**
  * Tests for claude-settings: ensureBaselineAllowedTools (#1688 baseline merge).
  *
- * The file-I/O wrapper `ensureClaudeSettingsSafe` binds to the cached
- * `~/.claude/settings.json` path at module load. Pivoting HOME at runtime
+ * The merge helper binds to the cached `~/.claude/settings.json` path at
+ * module load. Pivoting HOME at runtime
  * would clobber other tests that hard-reset HOME in their teardown
  * (team-lead-command.test.ts is one such case), so the merge logic is
  * exposed via `ensureBaselineAllowedTools` and tested directly.

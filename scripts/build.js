@@ -14,8 +14,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.join(__dirname, '..');
 
 const TARGETS = [
-  // CLI binaries (use bun runtime)
-  { name: 'genie', source: 'src/genie.ts', runtime: 'bun' },
   // Hook scripts (pure Node.js - no bun dependency)
   { name: 'validate-wish', source: 'plugins/genie/scripts/src/validate-wish.ts', runtime: 'node' },
   { name: 'validate-completion', source: 'plugins/genie/scripts/src/validate-completion.ts', runtime: 'node' },

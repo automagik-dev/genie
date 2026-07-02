@@ -10,7 +10,7 @@ name: Release Publish
 # is free, maintained by GitHub, and `gh attestation verify` reads cosign
 # signatures from Sigstore Rekor without any custom verification server.
 #
-# Trigger chain (lifted from pgserve, adapted for Sign + Attest upstream):
+# Trigger chain (adapted for Sign + Attest upstream):
 #   tag push v* → Build Tarballs → Sign + Attest Tarballs → THIS workflow
 #                                  (workflow_run, success only)
 #
@@ -70,7 +70,7 @@ on:
         type: choice
         default: stable
         # Canonical channel taxonomy (Felipe directive 2026-05-12,
-        # unified across pgserve/omni/genie). beta + canary retired.
+        # unified across the automagik sibling projects). beta + canary retired.
         options:
           - stable
           - homolog
