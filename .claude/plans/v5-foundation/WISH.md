@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | EXECUTED — groups 1-4 SHIP-reviewed; final wish review pending |
 | **Slug** | `v5-foundation` |
 | **Date** | 2026-07-01 |
 | **Author** | Felipe + Genie |
@@ -50,13 +50,13 @@ Lay the foundation of Genie v5 "lightweight body": operational state (tasks, dep
 
 ## Success Criteria
 
-- [ ] Full brainstorm→wish→work→review lifecycle completes on a fixture repo with zero resident genie processes and no Postgres/pgserve (asserted by the e2e script; the only DB artifact is `.genie/genie.db`).
-- [ ] `skills/{brainstorm,wish,work,review}/SKILL.md` contain no v4 runtime invocations — `genie agent`, `genie spawn`, `genie run`, `genie wish`, `genie dispatch`, or bare `genie task`/`genie board` (word-boundary grep gate exits non-zero on any hit; `genie v5 …` is allowed).
-- [ ] A task created in one worktree is visible in a second worktree of the same repo (bun test using two real worktrees sharing genie.db via common-dir).
-- [ ] N concurrent `checkout` attempts on one ready task yield exactly one winner (multi-process race test, `Promise.allSettled` pattern).
-- [ ] `genie v5 task export` emits the complete state as JSON (round-trip covered by test).
-- [ ] `bun test src/lib/v5/` and `bun run typecheck` green; `src/lib/v5/` imports nothing from db.ts/pgserve/nats/postgres.
-- [ ] `bun run skills:lint` passes on the rewritten skills.
+- [x] Full brainstorm→wish→work→review lifecycle completes on a fixture repo with zero resident genie processes and no Postgres/pgserve (asserted by the e2e script; the only DB artifact is `.genie/genie.db`).
+- [x] `skills/{brainstorm,wish,work,review}/SKILL.md` contain no v4 runtime invocations — `genie agent`, `genie spawn`, `genie run`, `genie wish`, `genie dispatch`, or bare `genie task`/`genie board` (word-boundary grep gate exits non-zero on any hit; `genie v5 …` is allowed).
+- [x] A task created in one worktree is visible in a second worktree of the same repo (bun test using two real worktrees sharing genie.db via common-dir).
+- [x] N concurrent `checkout` attempts on one ready task yield exactly one winner (multi-process race test, `Promise.allSettled` pattern).
+- [x] `genie v5 task export` emits the complete state as JSON (round-trip covered by test).
+- [x] `bun test src/lib/v5/` and `bun run typecheck` green; `src/lib/v5/` imports nothing from db.ts/pgserve/nats/postgres.
+- [x] `bun run skills:lint` passes on the rewritten skills.
 
 ## Execution Strategy
 
@@ -184,9 +184,9 @@ bun run skills:lint
 2. `.claude/plans/v5-foundation/qa.md` — QA report: assertions exercised, failure inventory, gaps (real-agent smoke run is manual/opt-in via `V5_E2E_LIVE=1` running `claude -p`).
 
 **Acceptance Criteria:**
-- [ ] Script exits non-zero with a named assertion on any failure (no `|| true` swallowing).
-- [ ] Run leaves zero background processes (asserted before exit).
-- [ ] QA report lists every assertion and any manual-only path.
+- [x] Script exits non-zero with a named assertion on any failure (no `|| true` swallowing).
+- [x] Run leaves zero background processes (asserted before exit).
+- [x] QA report lists every assertion and any manual-only path.
 
 **Validation:**
 ```bash
