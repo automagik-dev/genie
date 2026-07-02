@@ -65,6 +65,16 @@ export class InvalidCwdError extends WarpLaunchError {
   }
 }
 
+/** A slug carried a path fragment that could escape the launch-config directory. */
+export class UnsafeSlugError extends WarpLaunchError {
+  readonly slug: string;
+  constructor(slug: string) {
+    super(`Unsafe launch slug ${JSON.stringify(slug)}: must not contain '/', '\\', or '..'.`);
+    this.name = 'UnsafeSlugError';
+    this.slug = slug;
+  }
+}
+
 /** The target platform has no known Warp launch-configuration directory. */
 export class UnsupportedPlatformError extends WarpLaunchError {
   readonly platform: string;
@@ -134,6 +144,20 @@ const MAX_PANES_PER_TAB = 4;
 function assertAbsoluteCwd(cwd: string): void {
   if (cwd.length === 0 || cwd.startsWith('~') || !isAbsolute(cwd)) {
     throw new InvalidCwdError(cwd);
+  }
+}
+
+/** Path fragments that would let a slug traverse out of the config dir via the `genie-<slug>.yaml` filename. */
+const UNSAFE_SLUG_FRAGMENTS = ['/', '\\', '..'];
+
+/**
+ * Reject a slug that could escape the launch-config directory when woven into
+ * the `genie-<slug>.yaml` filename. Callers inside genie already validate slugs,
+ * but this guards standalone/library use of {@link writeLaunchConfig}.
+ */
+function assertSafeSlug(slug: string): void {
+  if (UNSAFE_SLUG_FRAGMENTS.some((fragment) => slug.includes(fragment))) {
+    throw new UnsafeSlugError(slug);
   }
 }
 
@@ -265,9 +289,13 @@ export interface WriteOptions extends ResolveDirOptions {
 /**
  * Write `spec` to `genie-<slug>.yaml` in the Warp config dir (created if absent).
  * Returns the absolute path written. Validation happens before any IO, so an
- * invalid cwd throws without leaving a partial file.
+ * unsafe slug or invalid cwd throws without creating the dir or a partial file.
+ *
+ * @throws {UnsafeSlugError} if the slug contains `/`, `\`, or `..`.
+ * @throws {InvalidCwdError} if any pane cwd is relative or `~`-prefixed.
  */
 export function writeLaunchConfig(spec: LaunchSpec, opts: WriteOptions = {}): string {
+  assertSafeSlug(spec.slug);
   const yaml = buildLaunchConfigYaml(spec);
   const dir = opts.dir ?? resolveWarpConfigDir(opts);
   mkdirSync(dir, { recursive: true });
@@ -278,10 +306,14 @@ export function writeLaunchConfig(spec: LaunchSpec, opts: WriteOptions = {}): st
 
 /**
  * Build the `warp://launch/<abs-path>` URI that opens a written config.
- * The path is percent-encoded with `encodeURI`, which preserves `/` (and other
- * reserved delimiters) while escaping spaces and other characters that would
- * otherwise truncate or malform the URI when handed to `open`/`xdg-open`.
+ * The path is encoded per segment: each `/`-delimited component is passed
+ * through `encodeURIComponent` and the slashes are rejoined. This preserves the
+ * path separators while escaping every other reserved character inside a
+ * segment — including `#` (which `encodeURI` leaves intact, letting it be
+ * mistaken for a URI fragment and truncate the path) as well as spaces — so the
+ * URI survives being handed to `open`/`xdg-open` intact.
  */
 export function launchUri(absPath: string): string {
-  return `warp://launch/${encodeURI(absPath)}`;
+  const encoded = absPath.split('/').map(encodeURIComponent).join('/');
+  return `warp://launch/${encoded}`;
 }

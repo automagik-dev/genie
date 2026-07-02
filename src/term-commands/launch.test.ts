@@ -10,7 +10,9 @@ import {
   BareRepoError,
   EmptyReadySetError,
   InvalidGroupNameError,
+  InvalidSlugError,
   type LaunchDeps,
+  LaunchError,
   WorktreeCollisionError,
   executeLaunch,
 } from './launch.js';
@@ -105,7 +107,7 @@ describe('genie launch --dry-run', () => {
     expect(leaves.map((l) => l.title)).toEqual(['api', 'ui']);
     expect(leaves.map((l) => l.cwd)).toEqual([worktreeFor(slug, 'api'), worktreeFor(slug, 'ui')]);
     expect((leaves[0].commands as Array<{ exec: string }>)[0].exec).toBe(
-      `claude "$(cat ${join(worktreeFor(slug, 'api'), '.genie', 'launch', 'api.prompt')})"`,
+      `claude "$(cat "${join(worktreeFor(slug, 'api'), '.genie', 'launch', 'api.prompt')}")"`,
     );
 
     // Prompt content lists both tasks' ids (verified via the plan, not disk).
@@ -309,6 +311,89 @@ describe('genie launch stale-branch attach', () => {
       /\[attach] wish\/attachy-main at [0-9a-f]+ \(existing branch; not recreated from HEAD\)/,
     );
     expect(existsSync(wt)).toBe(true);
+  });
+});
+
+// ----------------------------------------------------------------------------
+// Slug validation: reject unsafe wish slugs before ANY side effect
+// ----------------------------------------------------------------------------
+
+describe('genie launch slug validation', () => {
+  test('a slug with a slash is rejected up front, creating nothing', () => {
+    let caught: unknown;
+    try {
+      executeLaunch('a/b', { open: false }, deps());
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(InvalidSlugError);
+    expect((caught as InvalidSlugError).slug).toBe('a/b');
+
+    // Validation precedes the DB read + git call, so nothing lands on disk.
+    expect(existsSync(fx.worktrees)).toBe(false);
+    expect(existsSync(fx.warp)).toBe(false);
+  });
+
+  test('a slug with a space is rejected up front, creating nothing', () => {
+    let caught: unknown;
+    try {
+      executeLaunch('bad slug', { open: false }, deps());
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(InvalidSlugError);
+    expect(existsSync(fx.worktrees)).toBe(false);
+    expect(existsSync(fx.warp)).toBe(false);
+  });
+});
+
+// ----------------------------------------------------------------------------
+// Non-git cwd: resolveRepoRoot surfaces a typed error, not a subprocess trace
+// ----------------------------------------------------------------------------
+
+describe('genie launch outside a git repository', () => {
+  test('a non-git cwd raises a typed LaunchError, not a raw git failure', () => {
+    const nonGit = mkdtempSync(join(tmpdir(), 'genie-launch-nogit-'));
+    try {
+      let caught: unknown;
+      try {
+        executeLaunch('some-slug', { open: false }, deps({ cwd: nonGit }));
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(LaunchError);
+      expect((caught as Error).message).toBe('genie launch must be run inside a git repository.');
+    } finally {
+      rmSync(nonGit, { recursive: true, force: true });
+    }
+  });
+});
+
+// ----------------------------------------------------------------------------
+// Stale worktree prune: an rm-rfed worktree dir is pruned + recreated next run
+// ----------------------------------------------------------------------------
+
+describe('genie launch stale-worktree prune', () => {
+  test('a manually rm-rfed worktree dir is pruned so the next run re-attaches its branch', () => {
+    const slug = 'prune-me';
+    createTask(fx.db, { title: 'a task', wish: slug, group: 'main' });
+
+    executeLaunch(slug, { open: false }, deps());
+    const wt = worktreeFor(slug, 'main');
+    expect(existsSync(wt)).toBe(true);
+
+    // Delete the worktree dir out-of-band, leaving git's stale registration behind.
+    // Without a `git worktree prune`, the next `git worktree add` refuses the branch.
+    rmSync(wt, { recursive: true, force: true });
+    expect(existsSync(wt)).toBe(false);
+
+    const lines: string[] = [];
+    expect(() => executeLaunch(slug, { open: false }, deps({ write: (l) => lines.push(l) }))).not.toThrow();
+
+    // Prune cleared the stale registration; the surviving branch drives the attach path.
+    expect(existsSync(wt)).toBe(true);
+    expect(lines.join('\n')).toContain('[attach]');
+    expect(git(fx.repo, ['config', '--get', 'core.bare'])).toBe('false');
   });
 });
 

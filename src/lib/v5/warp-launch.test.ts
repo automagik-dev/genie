@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   InvalidCwdError,
   type LaunchSpec,
   type PaneSpec,
+  UnsafeSlugError,
   UnsupportedPlatformError,
   WarpLaunchError,
   buildLaunchConfig,
@@ -270,6 +271,20 @@ describe('writeLaunchConfig', () => {
     expect(() => writeLaunchConfig({ slug: 's', panes: [{ cwd: 'nope' }] }, { dir: target })).toThrow(InvalidCwdError);
     expect(() => readFileSync(join(target, 'genie-s.yaml'), 'utf-8')).toThrow();
   });
+
+  test.each([['a/b'], ['a\\b'], ['..'], ['../evil'], ['nested/../escape']])(
+    'rejects slug %j containing a path fragment with UnsafeSlugError, creating nothing',
+    (slug) => {
+      const target = join(dir, 'should-stay-empty');
+      expect(() => writeLaunchConfig({ slug, panes: [{ cwd: '/abs' }] }, { dir: target })).toThrow(UnsafeSlugError);
+      // Guard fires before mkdirSync, so the target dir is never even created.
+      expect(existsSync(target)).toBe(false);
+    },
+  );
+
+  test('an unsafe slug is a WarpLaunchError (shared base for the emitter taxonomy)', () => {
+    expect(() => writeLaunchConfig({ slug: '..', panes: [{ cwd: '/abs' }] }, { dir })).toThrow(WarpLaunchError);
+  });
 });
 
 describe('launchUri', () => {
@@ -282,6 +297,12 @@ describe('launchUri', () => {
   test('percent-encodes spaces while preserving path slashes', () => {
     expect(launchUri('/Users/me/My Repo/.warp/genie-x.yaml')).toBe(
       'warp://launch//Users/me/My%20Repo/.warp/genie-x.yaml',
+    );
+  });
+
+  test('percent-encodes a "#" (which encodeURI would leave to truncate the path) per segment', () => {
+    expect(launchUri('/Users/me/My#Repo/.warp/genie-x.yaml')).toBe(
+      'warp://launch//Users/me/My%23Repo/.warp/genie-x.yaml',
     );
   });
 });

@@ -57,6 +57,26 @@ export class EmptyReadySetError extends LaunchError {
  */
 const GROUP_NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
 
+/**
+ * Allowed charset for the wish slug, which is woven into the same worktree dirs
+ * (`<repo>-<slug>-<group>`) and branch refs (`wish/<slug>-<group>`) as the group
+ * name — so it carries the identical filesystem/branch-safety constraint.
+ */
+const SLUG_PATTERN = /^[A-Za-z0-9._-]+$/;
+
+/** The wish slug is not a safe filesystem/branch component. */
+export class InvalidSlugError extends LaunchError {
+  readonly slug: string;
+  constructor(slug: string) {
+    super(
+      `Invalid wish slug ${JSON.stringify(slug)}. ` +
+        `Slugs must match ${SLUG_PATTERN.source} (letters, digits, '.', '_', '-').`,
+    );
+    this.name = 'InvalidSlugError';
+    this.slug = slug;
+  }
+}
+
 /** One or more selected group names are not safe filesystem/branch components. */
 export class InvalidGroupNameError extends LaunchError {
   readonly names: string[];
@@ -167,13 +187,22 @@ function sanitize(value: string): string {
   return value.replace(/[^A-Za-z0-9._-]/g, '-');
 }
 
-/** Absolute repo root that owns the shared `.genie/` (git working-tree root). */
+/**
+ * Absolute repo root that owns the shared `.genie/` (git working-tree root).
+ * Run outside a git repository, `git rev-parse` exits non-zero and `execFileSync`
+ * throws a raw subprocess error; catch it and surface a typed, actionable
+ * {@link LaunchError} instead of leaking the subprocess trace.
+ */
 function resolveRepoRoot(cwd: string): string {
-  return execFileSync('git', ['rev-parse', '--show-toplevel'], {
-    encoding: 'utf-8',
-    stdio: ['pipe', 'pipe', 'pipe'],
-    cwd,
-  }).trim();
+  try {
+    return execFileSync('git', ['rev-parse', '--show-toplevel'], {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      cwd,
+    }).trim();
+  } catch {
+    throw new LaunchError('genie launch must be run inside a git repository.');
+  }
 }
 
 /** Base dir for worktrees: explicit override, else `<GENIE_HOME>/worktrees`. */
@@ -224,12 +253,15 @@ function buildPrompt(slug: string, group: string, tasks: TaskRow[]): string {
  * filesystem — reads the DB and git, writes nothing. `--dry-run` prints exactly
  * this.
  *
+ * @throws {InvalidSlugError} if the wish slug is not a safe filesystem/branch
+ *   component (validated first, before any DB read or git call).
  * @throws {EmptyReadySetError} if the wish has no ready tasks.
  * @throws {LaunchError} if `--groups` selects no ready group.
  * @throws {InvalidGroupNameError} if any selected group name is not a safe
  *   filesystem/branch component (validated before anything is created).
  */
 export function buildLaunchPlan(db: Database, slug: string, deps: LaunchDeps, opts: LaunchOptions): LaunchPlan {
+  if (!SLUG_PATTERN.test(slug)) throw new InvalidSlugError(slug);
   const cwd = deps.cwd ?? process.cwd();
   const repoRoot = resolveRepoRoot(cwd);
   const repoBase = basename(repoRoot);
@@ -255,7 +287,7 @@ export function buildLaunchPlan(db: Database, slug: string, deps: LaunchDeps, op
       prompt: buildPrompt(slug, name, tasks),
       tasks,
     });
-    panes.push({ title: name, cwd: worktree, command: `claude "$(cat ${promptPath})"` });
+    panes.push({ title: name, cwd: worktree, command: `claude "$(cat "${promptPath}")"` });
   }
 
   return { slug, repoRoot, groups, panes, yaml: buildLaunchConfigYaml({ slug, panes }) };
@@ -418,9 +450,26 @@ export function executeLaunch(slug: string, opts: LaunchOptions, deps: LaunchDep
   }
 }
 
+/**
+ * Best-effort `git worktree prune`: drops registrations left dangling by a
+ * worktree directory that was deleted out-of-band (`rm -rf`) without
+ * `git worktree remove`. A stale registration makes `git worktree add` refuse
+ * to re-attach the branch; pruning first clears it so the attach path recreates
+ * the worktree. Pruning is a cleanup convenience — a failure must never block a
+ * launch, so it is swallowed.
+ */
+function pruneWorktrees(repoRoot: string): void {
+  try {
+    execFileSync('git', ['worktree', 'prune'], { stdio: 'ignore', cwd: repoRoot });
+  } catch {
+    // Intentionally ignored — see the doc comment.
+  }
+}
+
 /** Create worktrees + prompts, write the config, and open it. */
 function materialize(plan: LaunchPlan, deps: LaunchDeps, write: (line: string) => void, openEnabled: boolean): void {
   const platform = deps.platform ?? process.platform;
+  pruneWorktrees(plan.repoRoot);
   write(`Launching wish "${plan.slug}" — ${plan.groups.length} group(s):`);
   for (const group of plan.groups) {
     const action = ensureWorktree(plan.repoRoot, group, write);
