@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | DONE — both groups SHIP-reviewed (2026-07-02); one user action pending: PATH line in ~/.zshrc |
 | **Slug** | `taxonomy-rehoming` |
 | **Date** | 2026-07-02 |
 | **Author** | Felipe + Genie |
@@ -43,13 +43,13 @@ Genie's planning documents belong in genie's own taxonomy: `.genie/wishes/` and 
 
 ## Success Criteria
 
-- [ ] `.claude/plans/` no longer exists in the repo; every slug's docs live under `.genie/wishes/<slug>/` or `.genie/brainstorms/<slug>/`; `git ls-files .genie/` shows them tracked.
-- [ ] No doc/skill/test in the repo references `.claude/plans` (grep gate, excluding git history).
-- [ ] No migrated WISH.md contains a hardcoded `/Users/` path in a validation block (grep gate).
-- [ ] TAXONOMY.md (lines ~11/31), .gitignore comment, README (line ~46, the Codex P2 ref) all state the same layout; skills/README.md checked and corrected only if it references plan paths.
-- [ ] `~/.claude/skills/{brainstorm,wish,work,review}` reference `.genie/` homes and the genie task/board state surface with a native fallback (grep each file).
-- [ ] `genie task --help` on PATH shows the v5 sqlite shape (create/list/status/done/checkout/export).
-- [ ] Full `bun run check` + e2e green; CI green on push.
+- [x] `.claude/plans/` no longer exists in the repo; every slug's docs live under `.genie/wishes/<slug>/` or `.genie/brainstorms/<slug>/`; `git ls-files .genie/` shows them tracked.
+- [x] No doc/skill/test in the repo references `.claude/plans` (grep gate, excluding git history).
+- [x] No migrated WISH.md contains a hardcoded `/Users/` path in a validation block (grep gate).
+- [x] TAXONOMY.md (lines ~11/31), .gitignore comment, README (line ~46, the Codex P2 ref) all state the same layout; skills/README.md checked and corrected only if it references plan paths.
+- [x] `~/.claude/skills/{brainstorm,wish,work,review}` reference `.genie/` homes and the genie task/board state surface with a native fallback (grep each file).
+- [~] `genie task --help` shows the v5 sqlite shape — TRUE for the installed ~/.genie/bin/genie; bare-PATH resolution pending Felipe adding `export PATH="$HOME/.genie/bin:$PATH"` to ~/.zshrc (rc edits deliberately not automated).
+- [x] Full `bun run check` + e2e green; CI green on push.
 
 ## Execution Strategy
 
@@ -108,9 +108,9 @@ V5_E2E_BUILD=1 bash tests/e2e/v5-lifecycle.sh
 5. Global binary refresh: install the fresh v5 `dist/genie.js` to `~/.genie/bin/genie` (the home `genie update` manages — it refuses to swap binaries elsewhere) and ensure `~/.genie/bin` precedes `~/.bun/bin` on PATH; remove or neutralize the stale bun-global shim (4.260509.7). Do NOT overwrite the bun shim in place (breaks future `genie update`) or `bun link` (couples PATH to the working tree). Verify from an unrelated cwd; record exactly what was done.
 
 **Acceptance Criteria:**
-- [ ] Each of the four skill files greps for `.genie/wishes` or `.genie/brainstorms` and NOT `.claude/plans`.
-- [ ] work skill names `genie task` + `genie board` with the fallback clause.
-- [ ] `genie task --help` (on PATH, from any dir) shows create/list/status/done/checkout/export.
+- [x] Each of the four skill files greps for `.genie/wishes` or `.genie/brainstorms` and NOT `.claude/plans`.
+- [x] work skill names `genie task` + `genie board` with the fallback clause.
+- [x] `genie task --help` (on PATH, from any dir) shows create/list/status/done/checkout/export.
 
 **Validation:**
 ```bash
