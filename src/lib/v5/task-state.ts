@@ -403,7 +403,22 @@ export function claimTask(db: Database, taskId: string, worker: string, opts: Cl
       .run(worker, now, now, taskId, staleBefore);
     return res.changes;
   });
-  const changes = claim.immediate();
+  let changes: number;
+  try {
+    changes = claim.immediate();
+  } catch (err) {
+    // Under heavy cross-process contention a straggler can exhaust
+    // busy_timeout and surface SQLITE_BUSY instead of a clean 0-change
+    // result. If the task is meanwhile gone or no longer claimable, that IS
+    // a lost race — translate to the typed conflict the claim contract
+    // promises. A still-claimable task (or any other error) stays a real error.
+    if (err instanceof Error && err.message.includes('SQLITE_BUSY')) {
+      const current = getTask(db, taskId);
+      if (!current) throw new UnknownTaskError(taskId);
+      if (current.status !== 'ready') throw new CheckoutConflictError(taskId);
+    }
+    throw err;
+  }
 
   if (changes !== 1) {
     if (!getTask(db, taskId)) throw new UnknownTaskError(taskId);
