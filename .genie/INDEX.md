@@ -7,6 +7,7 @@
 ## Ready
 
 
+- [WISH: omni-runner-port](wishes/omni-runner-port/WISH.md) — umbrella Group 5: approval-capture spike, global genie.db queue, genie omni serve, inbound one-shot (drafted 2026-07-02)
 - [WISH: warp-integration](wishes/warp-integration/WISH.md) — umbrella Group 3: genie init, Warp launch-config emitter, genie launch, /work multi-session opt-in (drafted 2026-07-02)
 
 ## Poured
