@@ -2,12 +2,16 @@
 
 /**
  * Pre-build script: generates date-based version and updates ALL version files
- * Format: 4.YYMMDD.N (e.g., 4.260201.1 = Feb 1, 2026, first publish of the day)
+ * Format: 5.YYMMDD.N (e.g., 5.260201.1 = Feb 1, 2026, first publish of the day)
  * N increments per day: .1, .2, .3, etc.
+ *
+ * v5 kept the daily-counter scheme from v4 — only the leading major moved
+ * 4.→5.. The counter is derived by counting existing `v5.<date>.*` git tags,
+ * so the first v5 build of a day is .1 regardless of how many v4 builds
+ * preceded it.
  *
  * Syncs versions across:
  * - package.json (root)
- * - src/lib/version.ts
  * - plugins/genie/.claude-plugin/plugin.json (Claude Code)
  * - plugins/genie/package.json (smart-install version checks)
  * - .claude-plugin/marketplace.json (marketplace listing)
@@ -21,7 +25,7 @@ import { dirname, join } from 'node:path';
 // Count existing versions for today from git tags
 function getTodayPublishCount(datePrefix: string): number {
   try {
-    const output = execSync(`git tag --list "v4.${datePrefix}.*"`, {
+    const output = execSync(`git tag --list "v5.${datePrefix}.*"`, {
       encoding: 'utf-8',
       timeout: 5000,
     });
@@ -31,7 +35,7 @@ function getTodayPublishCount(datePrefix: string): number {
   }
 }
 
-// Generate version: 4.YYMMDD.N where N = daily publish counter
+// Generate version: 5.YYMMDD.N where N = daily publish counter
 function generateVersion(): string {
   const now = new Date();
   const yy = String(now.getFullYear()).slice(-2);
@@ -42,7 +46,7 @@ function generateVersion(): string {
   const existing = getTodayPublishCount(datePrefix);
   const n = existing + 1;
 
-  return `4.${datePrefix}.${n}`;
+  return `5.${datePrefix}.${n}`;
 }
 
 async function updateJsonVersion(filePath: string, version: string): Promise<boolean> {
@@ -69,28 +73,19 @@ async function main() {
   console.log(`Version: ${version}`);
   console.log('Updating files:');
 
-  // 1. Update package.json (root)
+  // 1. Update package.json (root). src/lib/version.ts is NOT stamped here —
+  // it resolves the version at runtime from package.json (see that file's
+  // header). The old `export const VERSION = '...'` literal it used to
+  // rewrite no longer exists, so the former stamp step was a dead no-op.
   await updateJsonVersion(join(rootDir, 'package.json'), version);
 
-  // 2. Update src/lib/version.ts
-  const versionPath = join(rootDir, 'src/lib/version.ts');
-  if (existsSync(versionPath)) {
-    const versionContent = await readFile(versionPath, 'utf-8');
-    const updatedContent = versionContent.replace(
-      /export const VERSION = '[^']+';/,
-      `export const VERSION = '${version}';`,
-    );
-    await writeFile(versionPath, updatedContent);
-    console.log(`  ✓ ${versionPath}`);
-  }
-
-  // 3. Update Claude Code plugin manifest
+  // 2. Update Claude Code plugin manifest
   await updateJsonVersion(join(rootDir, 'plugins/genie/.claude-plugin/plugin.json'), version);
 
-  // 4. Update plugin package.json (used by smart-install.js for version checks)
+  // 3. Update plugin package.json (used by smart-install.js for version checks)
   await updateJsonVersion(join(rootDir, 'plugins/genie/package.json'), version);
 
-  // 5. Update marketplace.json plugin version
+  // 4. Update marketplace.json plugin version
   const marketplacePath = join(rootDir, '.claude-plugin/marketplace.json');
   if (existsSync(marketplacePath)) {
     try {

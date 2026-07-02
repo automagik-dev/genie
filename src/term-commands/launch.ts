@@ -112,6 +112,50 @@ export class BareRepoError extends LaunchError {
   }
 }
 
+/** The `--agent` value is not a known launch target. */
+export class InvalidAgentError extends LaunchError {
+  readonly agent: string;
+  constructor(agent: string) {
+    super(
+      `Invalid launch agent ${JSON.stringify(agent)}. ` + `Known agents: ${Object.keys(AGENT_COMMANDS).join(', ')}.`,
+    );
+    this.name = 'InvalidAgentError';
+    this.agent = agent;
+  }
+}
+
+// ============================================================================
+// Agent → pane-command mapping
+// ============================================================================
+
+/**
+ * Data table mapping each agent to the pane command that runs its
+ * non-interactive CLI against the kickoff prompt file. Each entry takes the
+ * absolute prompt path and returns the exact shell command the pane executes;
+ * `$(cat "…")` inlines the prompt so the pane needs no extra plumbing.
+ *
+ * - `claude` — the historical default; MUST stay byte-identical.
+ * - `codex`  — OpenAI Codex's non-interactive `codex exec [PROMPT]` subcommand
+ *   (prompt passed as the positional arg).
+ */
+const AGENT_COMMANDS = {
+  claude: (promptPath: string) => `claude "$(cat "${promptPath}")"`,
+  codex: (promptPath: string) => `codex exec "$(cat "${promptPath}")"`,
+} as const;
+
+/**
+ * Resolve the pane-command builder for an agent name, defaulting to `claude`.
+ * Rejects any unknown name with a typed {@link InvalidAgentError} so the CLI
+ * exits non-zero before a single worktree, branch, or prompt is materialized.
+ */
+function resolveAgentCommand(agent: string | undefined): (promptPath: string) => string {
+  const name = agent ?? 'claude';
+  if (name in AGENT_COMMANDS) {
+    return AGENT_COMMANDS[name as keyof typeof AGENT_COMMANDS];
+  }
+  throw new InvalidAgentError(name);
+}
+
 // ============================================================================
 // Plan types
 // ============================================================================
@@ -169,6 +213,8 @@ export interface LaunchOptions {
   open?: boolean;
   /** Subset of group names to launch. Absent ⇒ all groups with ready tasks. */
   groups?: string[];
+  /** Terminal agent that drives each pane. Absent ⇒ 'claude'. */
+  agent?: string;
 }
 
 // ============================================================================
@@ -259,9 +305,12 @@ function buildPrompt(slug: string, group: string, tasks: TaskRow[]): string {
  * @throws {LaunchError} if `--groups` selects no ready group.
  * @throws {InvalidGroupNameError} if any selected group name is not a safe
  *   filesystem/branch component (validated before anything is created).
+ * @throws {InvalidAgentError} if `opts.agent` is not a known launch target
+ *   (validated before any DB read or git call).
  */
 export function buildLaunchPlan(db: Database, slug: string, deps: LaunchDeps, opts: LaunchOptions): LaunchPlan {
   if (!SLUG_PATTERN.test(slug)) throw new InvalidSlugError(slug);
+  const buildCommand = resolveAgentCommand(opts.agent);
   const cwd = deps.cwd ?? process.cwd();
   const repoRoot = resolveRepoRoot(cwd);
   const repoBase = basename(repoRoot);
@@ -287,7 +336,7 @@ export function buildLaunchPlan(db: Database, slug: string, deps: LaunchDeps, op
       prompt: buildPrompt(slug, name, tasks),
       tasks,
     });
-    panes.push({ title: name, cwd: worktree, command: `claude "$(cat "${promptPath}")"` });
+    panes.push({ title: name, cwd: worktree, command: buildCommand(promptPath) });
   }
 
   return { slug, repoRoot, groups, panes, yaml: buildLaunchConfigYaml({ slug, panes }) };
@@ -515,12 +564,14 @@ interface LaunchCliOptions {
   dryRun?: boolean;
   open?: boolean;
   groups?: string;
+  agent?: string;
 }
 
 function handleLaunch(slug: string, cli: LaunchCliOptions): void {
   const opts: LaunchOptions = {
     dryRun: cli.dryRun,
     open: cli.open,
+    agent: cli.agent,
     groups: cli.groups
       ? cli.groups
           .split(',')
@@ -543,5 +594,6 @@ export function registerLaunchCommand(program: Command): void {
     .option('--dry-run', 'Print the plan (YAML, worktrees, prompts) without touching anything')
     .option('--no-open', 'Emit the launch config but do not open Warp')
     .option('--groups <csv>', 'Launch only these comma-separated group names')
+    .option('--agent <name>', 'Terminal agent to drive each pane (claude|codex)', 'claude')
     .action((slug: string, opts: LaunchCliOptions) => handleLaunch(slug, opts));
 }
