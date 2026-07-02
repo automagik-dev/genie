@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DONE — both groups SHIP-reviewed (2026-07-02); branch-guard re-armed, regression-gated |
+| **Status** | DRAFT |
 | **Slug** | `dispatch-inproc-default` |
 | **Date** | 2026-07-02 |
 | **Author** | Felipe + Genie |
@@ -47,12 +47,12 @@ The v5 demolition deleted the hook daemon (`src/serve/`) but left `src/hooks/dis
 
 ## Success Criteria
 
-- [x] On the DEFAULT dispatch path (built dist, no FORCE_INPROC), a `git push origin main` PreToolUse Bash payload returns branch-guard's DENY envelope (`permissionDecision:"deny"`); a benign command does not.
-- [x] `src/hooks/dispatch-client.ts` and `tests/hooks/genie-hook-binary.test.ts` deleted; no `dispatch-client` build target; no `hook-fallback.log` writer; no `GENIE_HOOK_FORCE_INPROC` or `GENIE_SKIP_DB_BOOT` anywhere in `src/` or `tests/`.
-- [x] `src/hooks/redaction.ts` resolved (deleted with its test, or kept with a stated live consumer); `bun run dead-code` (knip) clean.
-- [x] Entry-level failure fails CLOSED: unparseable stdin and an injected dispatch throw both produce a non-allow response (not empty), and the `AskUserQuestion` carve-out still yields its empty-picker response — tested.
-- [x] dispatch-command.ts doc carries no PG/#1574/daemon/pool references.
-- [x] Full `bun run check` + build + e2e green; CI green on the PR.
+- [ ] On the DEFAULT dispatch path (built dist, no FORCE_INPROC), a `git push origin main` PreToolUse Bash payload returns branch-guard's DENY envelope (`permissionDecision:"deny"`); a benign command does not.
+- [ ] `src/hooks/dispatch-client.ts` and `tests/hooks/genie-hook-binary.test.ts` deleted; no `dispatch-client` build target; no `hook-fallback.log` writer; no `GENIE_HOOK_FORCE_INPROC` or `GENIE_SKIP_DB_BOOT` anywhere in `src/` or `tests/`.
+- [ ] `src/hooks/redaction.ts` resolved (deleted with its test, or kept with a stated live consumer); `bun run dead-code` (knip) clean.
+- [ ] Entry-level failure fails CLOSED: unparseable stdin and an injected dispatch throw both produce a non-allow response (not empty), and the `AskUserQuestion` carve-out still yields its empty-picker response — tested.
+- [ ] dispatch-command.ts doc carries no PG/#1574/daemon/pool references.
+- [ ] Full `bun run check` + build + e2e green; CI green on the PR.
 
 ## Execution Strategy
 
@@ -74,10 +74,10 @@ The v5 demolition deleted the hook daemon (`src/serve/`) but left `src/hooks/dis
 4. Tests: entry-level fail-closed (unparseable stdin → non-allow, not empty; injected dispatch throw → non-allow) + the `AskUserQuestion` carve-out still returns its empty-picker response; existing `bun test src/hooks/` green on the now-default path.
 
 **Acceptance Criteria:**
-- [x] dispatch-client.ts + genie-hook-binary.test.ts gone; no build target; no FORCE_INPROC/SKIP_DB_BOOT in src/ or tests/.
-- [x] redaction.ts resolved; knip clean.
-- [x] Unparseable-stdin + injected-throw fail CLOSED (tested); AskUserQuestion carve-out intact.
-- [x] typecheck + `bun test src/hooks/` + build green.
+- [ ] dispatch-client.ts + genie-hook-binary.test.ts gone; no build target; no FORCE_INPROC/SKIP_DB_BOOT in src/ or tests/.
+- [ ] redaction.ts resolved; knip clean.
+- [ ] Unparseable-stdin + injected-throw fail CLOSED (tested); AskUserQuestion carve-out intact.
+- [ ] typecheck + `bun test src/hooks/` + build green.
 
 **Validation:**
 ```bash
@@ -107,9 +107,9 @@ bun run build
 3. Coordination note (not a code change): `wish/omni-runner-port` Group 3 also rewrote `buildDenyResponse`/`buildBlockingResponse` in index.ts; record in this wish's handoff that the two index.ts changes must merge deliberately (whichever lands second rebases). Do NOT reference an omni Discovered-Issues note here — that note lives on the omni branch, not dev.
 
 **Acceptance Criteria:**
-- [x] Regression gate: default-path `git push origin main` → DENY; benign → no deny. Fails hard if the default ever falls open again.
-- [x] Docs carry no daemon/FORCE_INPROC/hook.sock/PG-leak references.
-- [x] Full `bun run check` + e2e green.
+- [ ] Regression gate: default-path `git push origin main` → DENY; benign → no deny. Fails hard if the default ever falls open again.
+- [ ] Docs carry no daemon/FORCE_INPROC/hook.sock/PG-leak references.
+- [ ] Full `bun run check` + e2e green.
 
 **Validation:**
 ```bash

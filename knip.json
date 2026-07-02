@@ -1,6 +1,6 @@
 {
   "$schema": "https://unpkg.com/knip@5.85.0/schema.json",
-  "entry": ["src/genie.ts", "src/hooks/dispatch-command.ts"],
+  "entry": ["src/genie.ts", "src/hooks/dispatch-command.ts", "src/hooks/dispatch-client.ts"],
   "project": ["src/**/*.ts"],
   "ignoreBinaries": ["which", "scripts/verify-release.sh"],
   "ignoreExportsUsedInFile": true

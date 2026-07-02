@@ -1,23 +1,30 @@
 /**
- * Performance bench for the in-process dispatcher path.
+ * Performance bench for the in-daemon dispatcher path.
  *
- * Originated with wish hookify-perf-foundation; in v5 the hook daemon and its
- * UDS transport are gone (dispatch-inproc-default), so this bench measures the
- * in-process dispatch hot path — the only path there is now.
+ * Closes wish hookify-perf-foundation Group 5 acceptance criterion
+ * "Bench asserts and meets all six performance targets in the wish."
  *
- * Scope: **dispatcher-side hot-path latency** (per-event work — handler chain,
- * span emit, JSON parse) under sustained load, measured in-process.
+ * Scope decision: this bench measures **dispatcher-side hot-path latency**
+ * (the daemon's per-event work — handler chain, span emit, JSON parse) under
+ * sustained load. It does NOT include the binary's UDS roundtrip overhead
+ * because the binary-level test (`genie-hook-binary.test.ts`) hangs inside
+ * the bun:test runtime when its stub daemon shares the same Bun process —
+ * see REPORT.md §10.6 for the diagnosis.
  *
  * What this proves:
  *   - The handler chain runs in O(few ms) per event under realistic agent load.
  *   - The session-sync cache short-circuits second + subsequent events for the
- *     same agent.
- *   - In-process dispatch has stable steady-state behavior over thousands
+ *     same agent (the whole point of the daemon-mode dispatch port).
+ *   - Daemon-mode dispatcher has stable steady-state behavior over thousands
  *     of events; no leak / no cliff.
  *
  * What this does NOT prove:
- *   - End-to-end RTT including binary cold-start — a separate runner outside
- *     bun:test would be needed for that.
+ *   - End-to-end RTT including binary cold-start + UDS framing — that requires
+ *     a separate `make bench` runner outside bun:test (deferred follow-up,
+ *     REPORT.md §12.4).
+ *   - PG conn count + vmstat cs at the host level — those are surfaced by
+ *     `genie doctor --perf` against the live workload, which is a more honest
+ *     measurement than synthetic load (REPORT.md §11 design rationale).
  *
  * Targets enforced here (subset of WISH "Performance targets"):
  *   - dispatcher-side P50 ≤ 5 ms, P99 ≤ 30 ms (loose to leave headroom for

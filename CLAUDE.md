@@ -182,7 +182,7 @@ Biome's `noExcessiveCognitiveComplexity` is set to `maxAllowedComplexity: 25` (w
 ## Gotchas
 
 - **File lock timeout force-removes are intentional** — prevents permanent deadlocks from crashed processes. The `open('wx')` after unlink is still atomic, so only one process wins.
-- **Hook dispatch is in-process, fail-closed, and bounded by Claude Code's per-hook `timeout`** — each hook event is a short-lived `genie hook dispatch` fork that runs the handler chain in-process and exits (no daemon, no socket, no DB). There is no genie-managed dispatch timeout; the ceiling is the `timeout` field on the hook's entry in Claude Code's `settings.json` (CC default if unset). A dispatch that can't parse its payload or throws emits a NON-empty deny/block envelope instead of empty stdout, because CC reads empty PreToolUse stdout as allow-by-default — see `buildFailClosedResponse` in `src/hooks/index.ts`. The fail-closed default is locked by `src/hooks/__tests__/dispatch-fail-closed-regression.test.ts`, which drives the shipped `dist/genie.js`.
+- **Hook dispatch has a 15s hard timeout** — handlers that take longer silently timeout, blocking the tool use. No retry.
 - **tmux is required for agent spawn** — no fallback. `hasBinary()` checks PATH before launch.
 - **System prompt injection can fail silently** — `buildTeamLeadCommand()` writes to `~/.genie/prompts/<team>.md`. If write fails, the command still generates but Claude Code dies on startup trying to read the missing file.
 - **Mailbox delivery is best-effort** — message is persisted to disk (durable), but tmux pane injection is not retried. Dead pane = message stays `deliveredAt: null` forever.
