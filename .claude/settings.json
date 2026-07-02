@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "genie hook dispatch",
+            "command": "\"$HOME/.genie/bin/genie\" hook dispatch",
             "timeout": 5
           }
         ]
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "genie hook dispatch",
+            "command": "\"$HOME/.genie/bin/genie\" hook dispatch",
             "timeout": 5
           }
         ]
@@ -39,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "genie hook dispatch",
+            "command": "\"$HOME/.genie/bin/genie\" hook dispatch",
             "timeout": 5
           }
         ]
@@ -50,7 +50,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "genie hook dispatch",
+            "command": "\"$HOME/.genie/bin/genie\" hook dispatch",
             "timeout": 5
           }
         ]
