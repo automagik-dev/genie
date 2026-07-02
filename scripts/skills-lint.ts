@@ -109,7 +109,6 @@ interface Report {
 
 function main() {
   const genieCmds = getGenieCommands();
-  const omniCmds = getOmniCommands();
 
   if (genieCmds.size === 0) {
     console.error('skills-lint: failed to load `genie --help` output');
@@ -119,20 +118,35 @@ function main() {
   const files = walk(SKILLS_DIR);
   const reports: Report[] = [];
 
+  // First pass: collect all invocations from non-ignored skills. The omni CLI
+  // is only probed when some scanned skill actually references it — every
+  // omni-referencing skill is currently behind skills-lint:ignore, and CI
+  // runners don't have the omni binary installed, so an unconditional probe
+  // hard-fails the gate for commands nobody validates.
+  const scanned: Array<{ file: string; genie: string[]; omni: string[] }> = [];
   for (const file of files) {
     const text = readFileSync(file, 'utf8');
     if (text.includes('<!-- skills-lint:ignore -->')) continue;
-    const fences = extractBashFences(text);
+    const genie: string[] = [];
+    const omni: string[] = [];
+    for (const fence of extractBashFences(text)) {
+      genie.push(...extractInvocations(fence, 'genie'));
+      omni.push(...extractInvocations(fence, 'omni'));
+    }
+    scanned.push({ file, genie, omni });
+  }
+
+  const omniNeeded = scanned.some((s) => s.omni.length > 0);
+  const omniCmds = omniNeeded ? getOmniCommands() : new Set<string>();
+
+  for (const { file, genie, omni } of scanned) {
     const missing: Report['missingCommands'] = [];
-    for (const fence of fences) {
-      for (const cmd of extractInvocations(fence, 'genie')) {
-        if (!genieCmds.has(cmd)) missing.push({ tool: 'genie', command: cmd });
-      }
-      // Only check omni if we managed to load its commands
-      if (omniCmds.size > 0) {
-        for (const cmd of extractInvocations(fence, 'omni')) {
-          if (!omniCmds.has(cmd)) missing.push({ tool: 'omni', command: cmd });
-        }
+    for (const cmd of genie) {
+      if (!genieCmds.has(cmd)) missing.push({ tool: 'genie', command: cmd });
+    }
+    if (omniCmds.size > 0) {
+      for (const cmd of omni) {
+        if (!omniCmds.has(cmd)) missing.push({ tool: 'omni', command: cmd });
       }
     }
     reports.push({ skill: relative(ROOT, file), missingCommands: missing });

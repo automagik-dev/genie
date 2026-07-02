@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | EXECUTED — all 6 groups SHIP-reviewed; PR #2499 open; final wish review pending |
 | **Slug** | `v5-demolition` |
 | **Date** | 2026-07-02 |
 | **Author** | Felipe + Genie |
@@ -48,15 +48,15 @@ Delete the v4 harness from the `v5` branch — pgserve/Postgres, tmux orchestrat
 
 ## Success Criteria
 
-- [ ] Bare `genie task` and `genie board` are the sqlite implementations; `genie v5` namespace gone; core skills, skills/README.md, and the e2e drive bare names (grep gate: no `genie v5` under skills/).
-- [ ] `V5_E2E_BUILD=1 bash tests/e2e/v5-lifecycle.sh` passes driving bare names.
-- [ ] Top-level CLI command count ≥ 2 and ≤ 10, with `task` and `board` present (asserted from `--help`).
-- [ ] `package.json` contains none of: postgres, nats, react, react-dom, @opentui/*, @tauri-apps/*, @xterm/headless, @khal-os/brain, @anthropic-ai/claude-agent-sdk, systeminformation.
-- [ ] `src/db/`, `packages/genie-app/`, `packages/genie-tokens/`, `packages/watchdog/`, `scripts/tmux/`, `scripts/sec-*.cjs` no longer exist.
-- [ ] Full `bun run check` green on the final tree (skills:lint passing via ignore markers on deferred skills); knip clean against updated config.
-- [ ] `v4` branch exists on origin, cut from pre-merge `dev`.
-- [ ] PR from `v5` to `dev` open with deletion-dominated diffstat, omni-dark note, and links to this WISH + DESIGN.
-- [ ] README carries no claims about deleted subsystems (PostgreSQL/LISTEN-NOTIFY, terminal UI, knowledge brain, Postgres-backed, genie-tokens/desktop).
+- [x] Bare `genie task` and `genie board` are the sqlite implementations; `genie v5` namespace gone; core skills, skills/README.md, and the e2e drive bare names (grep gate: no `genie v5` under skills/).
+- [x] `V5_E2E_BUILD=1 bash tests/e2e/v5-lifecycle.sh` passes driving bare names.
+- [x] Top-level CLI command count ≥ 2 and ≤ 10, with `task` and `board` present (asserted from `--help`).
+- [x] `package.json` contains none of: postgres, nats, react, react-dom, @opentui/*, @tauri-apps/*, @xterm/headless, @khal-os/brain, @anthropic-ai/claude-agent-sdk, systeminformation.
+- [x] `src/db/`, `packages/genie-app/`, `packages/genie-tokens/`, `packages/watchdog/`, `scripts/tmux/`, `scripts/sec-*.cjs` no longer exist.
+- [x] Full `bun run check` green on the final tree (skills:lint passing via ignore markers on deferred skills); knip clean against updated config.
+- [x] `v4` branch exists on origin, cut from pre-merge `dev`.
+- [x] PR from `v5` to `dev` open with deletion-dominated diffstat, omni-dark note, and links to this WISH + DESIGN.
+- [x] README carries no claims about deleted subsystems (PostgreSQL/LISTEN-NOTIFY, terminal UI, knowledge brain, Postgres-backed, genie-tokens/desktop).
 
 ## Execution Strategy
 
@@ -234,9 +234,9 @@ V5_E2E_BUILD=1 bash tests/e2e/v5-lifecycle.sh
 3. PR `v5` → `dev`: title `feat!: genie v5 — lightweight body (harness demolition)`, body links WISH + DESIGN, diffstat, survivor command list, omni-dark note naming the follow-up wish. Merge left to Felipe.
 
 **Acceptance Criteria:**
-- [ ] `origin/v4` exists and matches pre-merge dev.
-- [ ] PR open, base `dev`, deletion-dominated diffstat.
-- [ ] README stale-claim grep clean.
+- [x] `origin/v4` exists and matches pre-merge dev.
+- [x] PR open, base `dev`, deletion-dominated diffstat.
+- [x] README stale-claim grep clean.
 
 **Validation:**
 ```bash
