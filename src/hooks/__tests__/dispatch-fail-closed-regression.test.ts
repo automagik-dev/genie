@@ -19,6 +19,16 @@
  * `beforeAll` rebuilds the bundle so the gate always reflects current source
  * (the build is ~50ms), mirroring the V5_E2E_BUILD contract in
  * tests/e2e/v5-lifecycle.sh.
+ *
+ * SCOPE: this validates the DISPATCHER's decision (branch-guard fires when
+ * `genie hook dispatch` is invoked with a Bash payload), NOT whether a given
+ * host wires Bash → dispatch. The genie repo's own `.claude/settings.json`
+ * routes all tools to dispatch via its `*` PreToolUse matcher, so branch-guard
+ * (genie's §19 dev-only-merge law) protects agents working here. The genie
+ * PLUGIN deliberately registers dispatch only on SendMessage — it must NOT
+ * impose genie's internal merge policy on arbitrary end-user repos. Whether/how
+ * the plugin should route additional events is a separate registration concern,
+ * not this gate's subject.
  */
 import { beforeAll, describe, expect, test } from 'bun:test';
 import { existsSync } from 'node:fs';
@@ -48,13 +58,14 @@ async function driveDispatch(payload: unknown): Promise<{ stdout: string; stderr
 }
 
 describe('hook dispatch default path — fail-closed regression gate', () => {
-  beforeAll(async () => {
+  beforeAll(() => {
     // Always rebuild so the gate tests current source, never a stale bundle.
-    const build = Bun.spawn(['bun', 'run', 'build'], { cwd: REPO_ROOT, stdout: 'pipe', stderr: 'pipe' });
-    const code = await build.exited;
-    if (code !== 0) {
-      const err = await new Response(build.stderr).text();
-      throw new Error(`build failed (exit ${code}): ${err}`);
+    // spawnSync buffers output — awaiting exited before draining piped streams
+    // can deadlock if the build writes past the OS pipe buffer (~64KB).
+    const build = Bun.spawnSync(['bun', 'run', 'build'], { cwd: REPO_ROOT });
+    if (!build.success) {
+      const err = build.stderr?.toString() ?? 'unknown error';
+      throw new Error(`build failed (exit ${build.exitCode}): ${err}`);
     }
     if (!existsSync(DIST)) throw new Error(`build did not produce ${DIST}`);
   });
