@@ -16,8 +16,8 @@ Collaborate on fuzzy ideas until they are concrete enough for `/wish`.
 
 This skill is multi-agent aware and operates on the shared worktree:
 - All brainstorm artifacts live in `.genie/` within the shared worktree (not the repo root)
-- When invoked via dispatch, acknowledges injected context (file path + extracted section) and uses it as seed
-- Multiple agents can read brainstorm state concurrently; writes are coordinated by the orchestrator
+- When spawned as a subagent (Claude Code native team), the dispatching agent curates the seed context into your prompt (file path + extracted section) — use it directly as seed, do not re-read what was already provided
+- Multiple agents can read brainstorm state concurrently; writes are coordinated by the dispatching agent
 
 ## Flow
 1. **Read context:** scan current code, docs, conventions. Check `.genie/brainstorm.md` in the shared worktree for an existing entry matching this slug/topic — use as seed if found. If context was injected from dispatch, use it directly.
@@ -190,25 +190,23 @@ Chosen approach with rationale. Reference alternatives considered.
 - [ ] Testable criterion 2
 ```
 
-## Task Lifecycle Integration (v4)
+## Task Lifecycle Integration
 
-On crystallize, create a draft task in PG so the brainstorm is tracked in `genie task list`:
+On crystallize, create a tracking task in the zero-daemon state DB so the brainstorm surfaces on the board:
 
 ### On crystallize (WRS = 100)
 ```bash
-# Create draft task (starts at draft stage by default)
-genie task create "<brainstorm title>" --type software
-
-# Link to the design draft
-genie task comment #<seq> "Draft: .genie/brainstorms/<slug>/DRAFT.md"
+# Create a tracking task for the crystallized idea (title is the anchor)
+genie v5 task create --title "<brainstorm title>"
 ```
 
 | Event | Command |
 |-------|---------|
-| Crystallize | `genie task create "<brainstorm title>" --type software` |
-| Link draft | `genie task comment #<seq> "Draft: .genie/brainstorms/<slug>/DRAFT.md"` |
+| Crystallize | `genie v5 task create --title "<brainstorm title>"` |
 
-**Graceful degradation:** If PG is unavailable or `genie task` commands fail, warn but do not block the crystallize flow. The DESIGN.md and brainstorm jar are the source of truth — PG tasks are an optional tracking enhancement.
+The DESIGN.md and DRAFT.md paths are recorded in the DESIGN.md header and the brainstorm jar — the task row is a board pointer, not a second source of truth.
+
+**Graceful degradation:** If `genie v5 task create` fails (no `.genie/genie.db` yet, or the CLI is unavailable), warn but do not block crystallize. The DESIGN.md and brainstorm jar in git are the source of truth — the task row is an optional tracking enhancement.
 
 ## Rules
 - One question per message. Never batch questions.
@@ -219,15 +217,14 @@ genie task comment #<seq> "Draft: .genie/brainstorms/<slug>/DRAFT.md"
 - Persist early and often — do not wait until the end.
 - Always `git add` both `DESIGN.md` and `DRAFT.md` on crystallize — the `wishes-lint` linter will fail CI on any wish that links to an uncommitted brainstorm.
 
-## Turn close (required)
+## Session close (required)
 
-Every session MUST end by writing a terminal outcome to the turn-session contract. This is how the orchestrator reconciles executor state — skipping it leaves the row open and blocks auto-resume.
+When spawned as a native-team subagent, your final message IS the completion signal — the dispatching agent is notified when you finish; do not poll or emit a separate contract call. End every session with one explicit terminal outcome in that final message so the dispatcher can reconcile:
 
-- `genie done` — work completed, acceptance criteria met
-- `genie blocked --reason "<why>"` — stuck, needs human input or an unblocking signal
-- `genie failed --reason "<why>"` — aborted, irrecoverable error, or cannot proceed
+- **done** — WRS reached 100, DESIGN.md written and staged, `/review` handed off. Report the DESIGN.md path.
+- **blocked** — stuck, needs human input or an unblocking signal. State exactly what you need.
+- **failed** — aborted, irrecoverable error, or cannot proceed. State why.
 
 Rules:
-- Call exactly one close verb as the last action of the session.
-- `blocked` / `failed` require `--reason`.
-- `genie done` inside an agent session (GENIE_AGENT_NAME set) closes the current executor; it does not require a wish ref.
+- State exactly one outcome as the last thing you say.
+- `blocked` / `failed` must include a one-line reason.

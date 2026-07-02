@@ -155,9 +155,9 @@ fi
 3. `bun run skills:lint` kept green (update `scripts/skills-lint.ts` expectations only if the linter hardcodes v4 assumptions — flag such changes in the PR). Executor note: the linter shells out to the on-PATH `genie` binary, so run `bun run build` (and use the fresh dist) before validating — Group 2's `v5` namespace must exist in the binary the linter sees.
 
 **Acceptance Criteria:**
-- [ ] No rewritten skill invokes `genie agent`, `genie spawn`, `genie run`, `genie wish`, `genie dispatch`, or bare `genie task `/`genie board ` (the v4 PG-backed commands). `genie v5 task`/`genie v5 board` are the permitted state surface.
-- [ ] `/work` skill instructs native-team dispatch (Agent tool) with state transitions via `genie v5 task checkout/done`.
-- [ ] Kept-siblings list exists and covers every current `skills/` entry with keep/drop.
+- [x] No rewritten skill invokes `genie agent`, `genie spawn`, `genie run`, `genie wish`, `genie dispatch`, or bare `genie task `/`genie board ` (the v4 PG-backed commands). `genie v5 task`/`genie v5 board` are the permitted state surface.
+- [x] `/work` skill instructs native-team dispatch (Agent tool) with state transitions via `genie v5 task checkout/done`.
+- [x] Kept-siblings list exists and covers every current `skills/` entry with keep/drop.
 
 **Validation:**
 ```bash

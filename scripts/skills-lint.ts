@@ -9,7 +9,7 @@
  */
 
 import { execSync } from 'node:child_process';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
 const ROOT = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
@@ -33,7 +33,18 @@ function collectSubcommands(helpText: string): Set<string> {
 }
 
 function getGenieCommands(): Set<string> {
-  const out = execSync('genie --help', { encoding: 'utf8' });
+  // Validate against the repo's own freshly-built binary when present, not
+  // whatever `genie` happens to be on PATH — a stale global install can lag
+  // the source (e.g. missing the `v5` namespace) and produce false failures.
+  // Run `bun run build` before linting so `dist/genie.js` reflects source.
+  //
+  // LIMITATION: only the FIRST token after `genie` is validated. `genie v5 task`
+  // resolves to `v5`, so bogus subcommands under a valid namespace (e.g.
+  // `genie v5 bogus-verb`) pass this lint. Command honesty below the namespace
+  // level must be verified in review, not assumed from a green lint.
+  const distBin = join(ROOT, 'dist', 'genie.js');
+  const cmd = existsSync(distBin) ? `bun ${distBin} --help` : 'genie --help';
+  const out = execSync(cmd, { encoding: 'utf8' });
   return collectSubcommands(out);
 }
 
