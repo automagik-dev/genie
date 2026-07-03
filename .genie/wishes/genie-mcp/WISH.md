@@ -128,9 +128,9 @@ echo "$OUT" | grep -q '"result"' || { echo "FAIL: mcp initialize no result"; exi
 3. Tests: idempotent merge test — empty case AND a pre-populated `.mcp.json` with ANOTHER server (assert the other server survives + byte-identical rerun); `genie init` in a fixture repo registers `genie mcp` in both files.
 
 **Acceptance Criteria:**
-- [ ] `genie init` writes/merges both files registering `genie mcp`; a pre-existing MCP server is preserved; rerun is byte-identical.
-- [ ] Docs updated; the tab-info limitation stated honestly.
-- [ ] Full `bun run check` green.
+- [x] `genie init` writes/merges both files registering `genie mcp`; a pre-existing MCP server is preserved; rerun is byte-identical.
+- [x] Docs updated; the tab-info limitation stated honestly.
+- [x] Full `bun run check` green.
 
 **Validation:**
 ```bash
