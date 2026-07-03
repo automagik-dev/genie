@@ -58,7 +58,6 @@ mkdir -p "$STAGE"
 echo "==> [${PLATFORM}] bun build --compile --target=${TARGET}  (v${VERSION})"
 bun build --compile \
   --target="${TARGET}" \
-  --define GENIE_BUILD_VERSION="'${VERSION}'" \
   "${ENTRY_POINT}" \
   --outfile "${STAGE}/genie"
 
