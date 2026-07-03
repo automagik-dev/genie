@@ -72,8 +72,8 @@ The v5 omni approval bridge is live-proven (a PreToolUse hook → WhatsApp 🔔 
 2. `.genie/wishes/omni-approval-ux/SPIKE.md`: the inbound reaction subject + payload, the id-returning send path, the outbound set-reaction GO/NO-GO + swap-or-fallback mechanism, the text quoted-id finding, and a GO recommendation for G2/G3 with the exact fields genie must store/match.
 
 **Acceptance Criteria:**
-- [ ] SPIKE.md documents the inbound reaction subject + payload, the correlatable-send decision, the outbound set-reaction GO/NO-GO (+ fallback if NO-GO), and the text quoted-id finding — evidence-backed.
-- [ ] No spam: at most one or two clearly-labelled messages between Felipe's own numbers.
+- [x] SPIKE.md documents the inbound reaction subject + payload, the correlatable-send decision, the outbound set-reaction GO/NO-GO (+ fallback if NO-GO), and the text quoted-id finding — evidence-backed.
+- [x] No spam: at most one or two clearly-labelled messages between Felipe's own numbers.
 
 **Validation:**
 ```bash
