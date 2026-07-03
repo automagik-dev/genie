@@ -146,3 +146,7 @@ bun dist/genie.js omni test-approval 2>&1 | grep -qiE 'approved|allow|round-trip
 
 - **Builds on** the live-validated `omni-runner-port` bridge + the `omni-hardening` (PR #2507) instance-scope + approval-budget-doc fixes.
 - **Records** the 2026-07-03 live QA outcome (allow path proven end-to-end; deny code-verified; personal instance offline; reactions unconfirmed) — this wish closes the reaction + correlation + feedback gaps that QA exposed.
+
+## Known residual (LOW)
+
+- A row that is still *pending* at the exact instant of the one-time `last_status_glyph` upgrade keeps its bogus self-ref `omni_message_id`; after it resolves, the reconciliation pass makes a few failed reaction attempts to a non-existent stanza id until the 24h recency window ages it out. Self-limiting and harmless — `emitStatusReaction` never throws, records the glyph only on confirmed success, and a bogus id matches no real message (nothing wrong resolves, nothing is spammed). Blast radius: the 0–few approvals outstanding during the ~110s upgrade window. Noted in the `ensureApprovalColumns` code comment.
