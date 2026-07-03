@@ -331,6 +331,111 @@ describe('mcp absent-db degrade', () => {
     expect(payload.counts.total).toBe(0);
     expect(payload.tasks).toEqual([]);
   });
+
+  test('reopens a db created AFTER the server started (no stale empty board)', async () => {
+    // Server starts against a repo with no genie.db (null handle), THEN the db
+    // is created mid-session — a per-call reopen must pick it up, not serve empty.
+    const proc = Bun.spawn(['bun', GENIE, 'mcp'], {
+      cwd: repo,
+      stdin: 'pipe',
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: { ...process.env, NO_COLOR: '1', GENIE_TEST_SKIP_PGSERVE: '1' },
+    });
+    const reader = proc.stdout.getReader();
+    const decoder = new TextDecoder();
+    let out = '';
+    // Synchronize: wait for the initialize reply BEFORE seeding, which proves the
+    // server's startup read-only open already ran against an absent db (null) —
+    // otherwise the test could seed first and pass without exercising the reopen.
+    proc.stdin.write(`${JSON.stringify(INIT)}\n`);
+    while (!out.includes('"serverInfo"')) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      out += decoder.decode(value, { stream: true });
+    }
+    seed(repo); // create .genie/genie.db + tasks AFTER the startup open saw nothing
+    proc.stdin.write(
+      `${JSON.stringify({ jsonrpc: '2.0', id: 20, method: 'tools/call', params: { name: 'genie_board', arguments: {} } })}\n`,
+    );
+    await proc.stdin.end();
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      out += decoder.decode(value, { stream: true });
+    }
+    await proc.exited;
+    const responses = out
+      .split('\n')
+      .filter((l) => l.trim().length > 0)
+      .map((l) => JSON.parse(l) as RpcResponse);
+    const res = responses.find((r) => r.id === 20);
+    const payload = toolPayload<{ counts: { total: number } }>(res!);
+    expect(payload.counts.total).toBeGreaterThan(0); // saw the db created mid-session
+  });
+});
+
+describe('mcp worktree branch resolution', () => {
+  test('disambiguates a hyphenated wish slug against known wishes', async () => {
+    seed(repo); // wish 'genie-mcp' (slug has a hyphen), groups g1/g2, a task in g2
+    // Top-level `wish/genie-mcp` must resolve to the genie-mcp wish (group null),
+    // NOT a mis-split `genie` wish with an `mcp` group.
+    const top = await driveMcp(repo, [
+      INIT,
+      INITIALIZED,
+      {
+        jsonrpc: '2.0',
+        id: 30,
+        method: 'tools/call',
+        params: { name: 'genie_worktree_context', arguments: { branch: 'wish/genie-mcp' } },
+      },
+    ]);
+    const topP = toolPayload<{ resolved: boolean; wish: string; group: string | null }>(top.find((r) => r.id === 30)!);
+    expect(topP.resolved).toBe(true);
+    expect(topP.wish).toBe('genie-mcp');
+    expect(topP.group).toBeNull();
+
+    // A group branch `wish/genie-mcp-g2` → genie-mcp / g2 (last-dash is correct here).
+    const grp = await driveMcp(repo, [
+      INIT,
+      INITIALIZED,
+      {
+        jsonrpc: '2.0',
+        id: 31,
+        method: 'tools/call',
+        params: { name: 'genie_worktree_context', arguments: { branch: 'wish/genie-mcp-g2' } },
+      },
+    ]);
+    const grpP = toolPayload<{ wish: string; group: string | null }>(grp.find((r) => r.id === 31)!);
+    expect(grpP.wish).toBe('genie-mcp');
+    expect(grpP.group).toBe('g2');
+  });
+
+  test('a launch group branch beats a same-named top-level wish slug', async () => {
+    // Ambiguous collision: a `genie` wish WITH a real `mcp` group, AND a separate
+    // `genie-mcp` wish. `wish/genie-mcp` must resolve to the verified launch
+    // worktree (genie / mcp), not the exact-slug top-level `genie-mcp` wish.
+    const db = openDb({ cwd: repo });
+    const board = createBoard(db, 'repo');
+    createTask(db, { title: 'a', boardId: board.id, wish: 'genie', group: 'mcp' });
+    createWishGroups(db, 'genie', [{ name: 'mcp' }]);
+    createTask(db, { title: 'b', boardId: board.id, wish: 'genie-mcp', group: 'g1' });
+    createWishGroups(db, 'genie-mcp', [{ name: 'g1' }]);
+    db.close();
+    const res = await driveMcp(repo, [
+      INIT,
+      INITIALIZED,
+      {
+        jsonrpc: '2.0',
+        id: 32,
+        method: 'tools/call',
+        params: { name: 'genie_worktree_context', arguments: { branch: 'wish/genie-mcp' } },
+      },
+    ]);
+    const p = toolPayload<{ wish: string; group: string | null }>(res.find((r) => r.id === 32)!);
+    expect(p.wish).toBe('genie');
+    expect(p.group).toBe('mcp');
+  });
 });
 
 // ============================================================================

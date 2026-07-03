@@ -74,8 +74,10 @@ export async function runMcpServer(): Promise<void> {
   // Lazy: the read-only bun:sqlite open + tools load here, not at genie startup.
   const { MCP_TOOLS, openReadonlyDb } = await import('../lib/v5/mcp-tools.js');
   const cwd = process.cwd();
-  const db = openReadonlyDb(cwd);
-  const ctx: ToolContext = { db, cwd };
+  // Single source of truth for the handle: the per-call reopen below writes back
+  // to ctx.db, and close() reads ctx.db — so a mid-session reopen is always the
+  // one that gets closed (no stale/leaked handle).
+  const ctx: ToolContext = { db: openReadonlyDb(cwd), cwd };
 
   const toolByName = new Map(MCP_TOOLS.map((t) => [t.name, t] as const));
 
@@ -91,6 +93,10 @@ export async function runMcpServer(): Promise<void> {
       });
       return;
     }
+    // The db may have been absent when the server started (null handle → empty
+    // board). Re-attempt the read-only open per call so a db created mid-session
+    // (e.g. a fresh `genie init`) is picked up instead of serving empty forever.
+    if (!ctx.db) ctx.db = openReadonlyDb(cwd);
     const payload = tool.handler(ctx, args);
     ok(id, {
       content: [{ type: 'text', text: JSON.stringify(payload) }],
@@ -162,7 +168,7 @@ export async function runMcpServer(): Promise<void> {
 
   await new Promise<void>((resolve) => {
     rl.on('close', () => {
-      db?.close();
+      ctx.db?.close();
       // Flush stdout BEFORE exiting: the empty-write callback fires after the
       // stream's buffer (including all prior response writes) drains to the OS,
       // so the final response is never truncated. See SPIKE.md flush note.
