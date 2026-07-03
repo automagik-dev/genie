@@ -619,10 +619,11 @@ export function getWishGroups(db: Database, wish: string): WishGroupRow[] {
 export function listWishSlugs(db: Database): string[] {
   const rows = db
     .query(
+      // UNION already de-duplicates; order longest-first for prefix disambiguation.
       `SELECT wish FROM (
          SELECT wish FROM tasks WHERE wish IS NOT NULL
          UNION SELECT wish FROM wish_groups WHERE wish IS NOT NULL
-       ) GROUP BY wish ORDER BY LENGTH(wish) DESC`,
+       ) ORDER BY LENGTH(wish) DESC`,
     )
     .all() as Array<{ wish: string }>;
   return rows.map((r) => r.wish);
