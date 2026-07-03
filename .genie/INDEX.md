@@ -14,7 +14,7 @@
 - [WISH: warp-integration](wishes/warp-integration/WISH.md) — umbrella Group 3: genie init, Warp launch-config emitter, genie launch, /work multi-session opt-in (drafted 2026-07-02)
 
 ## Poured
-- [genie-mcp](brainstorms/genie-mcp/DESIGN.md) — genie MCP server: Warp/Claude Code/Codex consume genie.db state read-only; stdio, auto-registered; spike-first (2026-07-03)
+- [genie-mcp](brainstorms/genie-mcp/DESIGN.md) · [WISH](wishes/genie-mcp/WISH.md) — genie MCP server: Warp/Claude Code/Codex consume genie.db state read-only; stdio, auto-registered; spike-first (2026-07-03)
 
 - [Genie v5 — lightweight body](brainstorms/genie-v5-lightweight-body/DESIGN.md) — skills+files+stock Warp replace the v4 harness; CC/Codex/Hermes targets; omni keeps one runner; crystallized 2026-07-01, umbrella-scale (8 seed groups)
   - [WISH: v5-foundation](wishes/v5-foundation/WISH.md) — umbrella Groups 1+2: genie.db engine + CLI + core skills — DONE 2026-07-02, all groups SHIP
