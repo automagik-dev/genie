@@ -429,6 +429,11 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
         return;
       }
       if (evt.type !== 'reaction' || !evt.emoji) return;
+      // Scope to our own instance — text replies are already subject-scoped to
+      // `omni.message.${config.instance}.>`, but reactions arrive on a shared
+      // `omni.event.>` bus where approvalChat JIDs can repeat across instances.
+      // Without this, another instance's 👍/👎 could resolve our approval.
+      if (evt.instanceId && config.instance && evt.instanceId !== config.instance) return;
       const chatId = evt.chatId ?? chatIdFromSubject(subject);
       if (!chatId || chatId !== config.approvalChat) return;
       const decision = matchReaction(evt.emoji, vocab);

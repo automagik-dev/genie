@@ -132,6 +132,16 @@ export class CheckoutConflictError extends Error {
   }
 }
 
+/** A `blocked` task (unmet dependencies) cannot be completed. */
+export class TaskNotReadyError extends Error {
+  readonly taskId: string;
+  constructor(taskId: string) {
+    super(`Task ${taskId} is blocked — its dependencies are not all done; cannot complete`);
+    this.name = 'TaskNotReadyError';
+    this.taskId = taskId;
+  }
+}
+
 /** An invalid wish-group transition was attempted. */
 export class WishGroupStateError extends Error {
   constructor(message: string) {
@@ -431,6 +441,11 @@ export function claimTask(db: Database, taskId: string, worker: string, opts: Cl
 export function completeTask(db: Database, taskId: string): TaskRow {
   const task = getTask(db, taskId);
   if (!task) throw new UnknownTaskError(taskId);
+  // A `blocked` task's dependencies are not all `done`; completing it would let
+  // recomputeReady() promote downstream tasks whose real prerequisites were
+  // skipped. Reject so a mistaken id can't bypass the dependency gate. Ready
+  // and in_progress remain completable (direct completion + the checkout path).
+  if (task.status === 'blocked') throw new TaskNotReadyError(taskId);
   const now = Date.now();
   const done = db.transaction(() => {
     db.query("UPDATE tasks SET status = 'done', updated_at = ? WHERE id = ?").run(now, taskId);
