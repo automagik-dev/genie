@@ -17,11 +17,26 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'n
 import { homedir, hostname as osHostname } from 'node:os';
 import { dirname, join, resolve as resolvePath } from 'node:path';
 import type { Command } from 'commander';
-import { isOmniApprovalEnabled, resolveOmniRuntimeConfig } from '../lib/omni-config.js';
+import {
+  DEFAULT_APPROVE_REACTIONS,
+  DEFAULT_APPROVE_TOKENS,
+  DEFAULT_DENY_REACTIONS,
+  DEFAULT_DENY_TOKENS,
+  type OmniRuntimeConfig,
+  isOmniApprovalEnabled,
+  resolveOmniRuntimeConfig,
+} from '../lib/omni-config.js';
 import { resolveOmniApiKey, resolveOmniApiUrl } from '../lib/omni-registration.js';
-import { runOmniServe } from '../lib/omni-runner.js';
+import {
+  type OmniSend,
+  type OmniSetReaction,
+  createOmniRunner,
+  makeDefaultOmniSend,
+  makeDefaultOmniSetReaction,
+  runOmniServe,
+} from '../lib/omni-runner.js';
 import { openGlobalDb } from '../lib/v5/global-db.js';
-import { listInbox } from '../lib/v5/omni-queue.js';
+import { type ApprovalRow, enqueueApproval, getApproval, listInbox } from '../lib/v5/omni-queue.js';
 
 function out(line = ''): void {
   process.stdout.write(`${line}\n`);
@@ -154,6 +169,136 @@ async function inboxCommand(opts: {
       const state = r.handledAt ? 'handled' : 'new';
       out(`[${state}] ${when} ${r.instance}/${r.chat} <${r.sender}>: ${r.body}`);
     }
+  } finally {
+    db.close();
+  }
+}
+
+// ============================================================================
+// omni test-approval — one deliberate approval round-trip (fake by default)
+// ============================================================================
+
+const TEST_STANZA_ID = 'test-approval-stanza';
+const THUMBS_UP = '\u{1F44D}';
+
+/** A minimal fully-populated runtime config for the CI-safe fake round-trip. */
+function fakeApprovalConfig(): OmniRuntimeConfig {
+  return {
+    natsUrl: 'localhost:4222',
+    instance: 'test-instance',
+    approvalChat: 'test-chat',
+    approveTokens: DEFAULT_APPROVE_TOKENS,
+    denyTokens: DEFAULT_DENY_TOKENS,
+    approveReactions: DEFAULT_APPROVE_REACTIONS,
+    denyReactions: DEFAULT_DENY_REACTIONS,
+    approvals: { enabled: true, toolMatcher: '^Bash$', pollBudgetMs: 60_000, pollIntervalMs: 400 },
+  };
+}
+
+/**
+ * Drive ONE approval round-trip against the given transport: enqueue → announce
+ * (send + ⏳) → a 👍 reaction on the stored stanza id → resolve (✅). Shared by
+ * the fake and `--live` paths; the only difference is which `sendApproval` /
+ * `setReaction` are injected. Returns the resolved row so the caller can report.
+ */
+async function driveApprovalRoundTrip(
+  db: ReturnType<typeof openGlobalDb>,
+  config: OmniRuntimeConfig,
+  sendApproval: OmniSend,
+  setReaction: OmniSetReaction,
+): Promise<ApprovalRow | null> {
+  const runner = createOmniRunner({ db, config, publish: () => {}, sendApproval, setReaction });
+  const id = enqueueApproval(db, {
+    repo: process.cwd(),
+    tool: 'TestApproval',
+    inputSummary: 'genie omni test-approval',
+  });
+
+  runner.tick(); // announce → send returns the stanza id → ⏳ status reaction
+  await runner.whenIdle();
+
+  const stanza = getApproval(db, id)?.omniMessageId;
+  if (stanza) {
+    // Simulate the human's 👍 on the approval message (correlated by stanza id).
+    runner.handleMessage(
+      `omni.message.${config.instance}.${config.approvalChat}`,
+      JSON.stringify({
+        content: `[Reaction: ${THUMBS_UP} on message ${stanza}]`,
+        messageId: stanza,
+        chatId: config.approvalChat,
+        instanceId: config.instance,
+        sender: 'test-approval',
+      }),
+    );
+    await runner.whenIdle(); // let the ✅ swap fire
+  }
+  return getApproval(db, id);
+}
+
+async function testApprovalCommand(opts: { live?: boolean }): Promise<void> {
+  if (opts.live) {
+    await runLiveTestApproval();
+    return;
+  }
+
+  // Fake, CI-safe path: in-memory DB + recording transports, zero network.
+  const db = openGlobalDb({ path: ':memory:' });
+  try {
+    const reactions: Array<{ messageId: string; emoji: string }> = [];
+    const sent: string[] = [];
+    const sendApproval: OmniSend = async ({ text }) => {
+      sent.push(text);
+      return { success: true, messageId: TEST_STANZA_ID };
+    };
+    const setReaction: OmniSetReaction = async ({ messageId, emoji }) => {
+      reactions.push({ messageId, emoji });
+      return { success: true };
+    };
+    const row = await driveApprovalRoundTrip(db, fakeApprovalConfig(), sendApproval, setReaction);
+
+    const pending = reactions.find((r) => r.emoji === '\u{23F3}');
+    const approved = reactions.find((r) => r.emoji === '\u{2705}');
+    const ok = row?.status === 'approved' && Boolean(pending) && Boolean(approved) && sent.length === 1;
+    if (!ok) {
+      fail(
+        `test-approval round-trip did not complete cleanly (status=${row?.status ?? 'none'}, ` +
+          `sends=${sent.length}, ⏳=${Boolean(pending)}, ✅=${Boolean(approved)})`,
+      );
+    }
+    out('genie omni test-approval (fake transport, no network)');
+    out(`  send:     1 approval message → stanza ${TEST_STANZA_ID}`);
+    out('  status:   ⏳ set on announce → ✅ swapped on approve');
+    out('  resolved: approved — round-trip OK');
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * ONE real approval round-trip against the configured instance/approvalChat.
+ * Emits exactly ONE real WhatsApp message plus its ⏳→✅ status reactions, then
+ * resolves it locally so the operator can eyeball the in-place swap (the sole
+ * SPIKE-c empirical unknown). Deliberate manual escape hatch — NEVER called by
+ * tests.
+ */
+async function runLiveTestApproval(): Promise<void> {
+  const rt = await resolveOmniRuntimeConfig();
+  if (!isOmniApprovalEnabled(rt)) {
+    fail(
+      'Omni approvals are not enabled. `--live` needs omni.approvals.enabled=true + omni.instance + omni.approvalChat.',
+    );
+  }
+  out('genie omni test-approval --live — sending ONE real WhatsApp approval message.');
+  const db = openGlobalDb();
+  try {
+    const row = await driveApprovalRoundTrip(db, rt, makeDefaultOmniSend(rt), makeDefaultOmniSetReaction(rt));
+    if (row?.status !== 'approved') {
+      fail(
+        `live round-trip did not resolve to approved (status=${row?.status ?? 'none'}, omniId=${row?.omniMessageId ?? 'none'})`,
+      );
+    }
+    out(`  sent + resolved on instance ${rt.instance} chat ${rt.approvalChat} (omni id ${row?.omniMessageId ?? '?'})`);
+    out('  Check WhatsApp: the approval message should show ⏳ swapped to ✅ in place.');
   } finally {
     db.close();
   }
@@ -375,6 +520,14 @@ export function registerOmniCommands(program: Command): void {
     });
 
   omni
+    .command('test-approval')
+    .description('Drive one approval round-trip (enqueue → ⏳ → approve → ✅). Fake transport by default.')
+    .option('--live', 'Send ONE real WhatsApp approval to the configured instance/approvalChat (deliberate)')
+    .action(async (opts: { live?: boolean }) => {
+      await testApprovalCommand(opts);
+    });
+
+  omni
     .command('handshake')
     .description('Register this genie host with the omni server (ed25519 keypair, idempotent)')
     .option('--rotate', 'Issue a new keypair and revoke the existing host record')
@@ -396,4 +549,5 @@ export const __test__ = {
   loadHostJson,
   writeHostJson,
   generateAndPersistKeypair,
+  testApprovalCommand,
 };

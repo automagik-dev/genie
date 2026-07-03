@@ -108,6 +108,27 @@ All linked worktrees of a repository share one `genie.db`, resolved from the git
 - Approval-gated agents launched with `--permission-mode default`. Under `auto` mode a passthrough `ask` can auto-resolve to allow, which defeats the timeout→ask fail-safe.
 - `genie omni serve` running as the one resident process. It is the *only* NATS client — `--help`, `task`, `board`, and every other command stay transport-free (`nats` never initializes on those paths).
 
+## MCP server (Warp + Claude Code)
+
+`genie mcp` is a zero-dependency, read-only [MCP](https://modelcontextprotocol.io) server over stdio. It lets the AI agent inside a Warp pane or Claude Code session query live board and wish state without shelling out to the CLI.
+
+**How it gets picked up.** `genie init` registers the server into two project-scope config files, and `genie launch` writes the same pair into every worktree it opens:
+
+- `.mcp.json` — Claude Code's project MCP config. Project-scope servers are *pending approval* until you trust the workspace (accept the trust dialog in an interactive `claude` session) — expected, not a bug.
+- `.warp/.mcp.json` — Warp auto-detects this on save (no restart) and lists `genie` under Settings → AI/Agents → MCP servers.
+
+Both files use the identical `mcpServers` shape and are merged idempotently: re-running `genie init` preserves every other server and top-level key and rewrites byte-identical. The registered `command` is the **absolute path to the running genie binary** (resolved from `process.execPath`), not bare `genie` — genie is not reliably on PATH (on macOS it lives only at `~/.genie/bin/genie`). Because `genie init`/`launch` run on the box that owns the repo, the recorded path is correct even under Warp's SSH-remote feature, where Warp spawns the server on that same box.
+
+**What it exposes** — five read-only tools backed by the per-repo `.genie/genie.db`:
+
+- `genie_board` — board counts + tasks (optional wish filter)
+- `genie_wish_status` — a wish's group/DAG progress
+- `genie_worktree_context` — resolves the pane's `wish/<slug>-<group>` branch to its wish, group, and tasks (the per-pane "what am I here for")
+- `genie_task` — full task detail by id
+- `genie_active` — every in-progress task and who claimed it
+
+**Honest limitation — genie does not push into your tabs.** Warp exposes no external tab-push API, so genie cannot inject state into a pane. The flow is pull, not push: the pane's agent *asks* genie over MCP (`genie_worktree_context`, `genie_board`, …) when it wants to know the board state. `genie launch` still seeds each pane with a kickoff prompt at open time, but ongoing awareness is the agent querying the MCP server, not genie writing into the tab.
+
 ## Roadmap
 
 No dates — direction, not promises:

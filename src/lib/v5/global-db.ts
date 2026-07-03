@@ -29,6 +29,16 @@ export { BusyDbError, ForeignDbError, GenieDbError, isBusyError, MalformedDbErro
 export const GLOBAL_SCHEMA_VERSION = 1;
 
 /**
+ * Sentinel written into `last_status_glyph` for pre-existing closed approvals at
+ * the moment the column is first added (the one-time upgrade backfill). It is
+ * NOT a real reaction emoji, so it can never collide with a live status glyph;
+ * `listApprovalsNeedingStatusAck` treats it as terminal so the runner's
+ * reconciliation pass NEVER touches historical rows on the first post-upgrade
+ * tick (which would otherwise fire a reaction HTTP POST for the entire history).
+ */
+export const MIGRATED_STATUS_SENTINEL = 'migrated';
+
+/**
  * Base directory for all machine-scope genie state. Read from `GENIE_HOME` on
  * every call (not cached) so env overrides in tests take effect.
  */
@@ -76,7 +86,10 @@ function schemaIsCurrent(db: Database): boolean {
     ).map((r) => r.name),
   );
   for (const t of EXPECTED_TABLES) if (!tables.has(t)) return false;
-  return true;
+  // A pre-column v1 DB (missing the additive last_status_glyph) returns false so
+  // ensureSchema runs and backfills — mirrors genie-db.ts's ensureTaskColumns.
+  const cols = new Set((db.query('PRAGMA table_info(approvals)').all() as Array<{ name: string }>).map((c) => c.name));
+  return cols.has('last_status_glyph');
 }
 
 const SCHEMA_SQL = `
@@ -91,7 +104,8 @@ CREATE TABLE IF NOT EXISTS approvals (
   requested_by  TEXT,
   resolved_by   TEXT,
   created_at    INTEGER NOT NULL,
-  resolved_at   INTEGER
+  resolved_at   INTEGER,
+  last_status_glyph TEXT
 );
 
 CREATE TABLE IF NOT EXISTS inbound_messages (
@@ -111,4 +125,25 @@ CREATE INDEX IF NOT EXISTS idx_inbound_handled ON inbound_messages(handled_at);
 /** Create every table/index if absent. Idempotent — pure `IF NOT EXISTS`. */
 export function ensureSchema(db: Database): void {
   db.exec(SCHEMA_SQL);
+  ensureApprovalColumns(db);
+}
+
+/**
+ * Additive, in-place column backfill for `approvals`. `CREATE TABLE IF NOT
+ * EXISTS` never alters an existing table, so a DB stamped by an earlier build
+ * (which lacked `last_status_glyph`) needs the column added. It is nullable, so
+ * this stays within `user_version = 1` — no destructive migration, no version
+ * bump (mirrors genie-db.ts's ensureTaskColumns). Idempotent: a table that
+ * already has the column is left untouched.
+ */
+function ensureApprovalColumns(db: Database): void {
+  const cols = new Set((db.query('PRAGMA table_info(approvals)').all() as Array<{ name: string }>).map((c) => c.name));
+  if (!cols.has('last_status_glyph')) {
+    db.exec('ALTER TABLE approvals ADD COLUMN last_status_glyph TEXT');
+    // One-time upgrade backfill: stamp every already-closed approval as MIGRATED
+    // so the runner's reconciliation pass never re-acks pre-upgrade history
+    // (whose omni_message_id may be a bogus self-ref, or a real days-old stanza
+    // id we must not spam). Runs ONLY when the column is first added.
+    db.query(`UPDATE approvals SET last_status_glyph = ? WHERE status != 'pending'`).run(MIGRATED_STATUS_SENTINEL);
+  }
 }

@@ -154,4 +154,85 @@ describe('genie init', () => {
     expect(second.gitignore).toBe('skipped');
     expect(second.rulesAdded).toEqual([]);
   });
+
+  describe('MCP server registration', () => {
+    const mcpPath = (root: string) => join(root, '.mcp.json');
+    const warpMcpPath = (root: string) => join(root, '.warp', '.mcp.json');
+
+    test('fresh repo: writes both .mcp.json and .warp/.mcp.json with the genie entry', () => {
+      initGitRepo(dir);
+      expect(runInit(dir).code).toBe(0);
+
+      for (const path of [mcpPath(dir), warpMcpPath(dir)]) {
+        expect(existsSync(path)).toBe(true);
+        const servers = JSON.parse(readFileSync(path, 'utf-8')).mcpServers;
+        expect(servers.genie).toBeDefined();
+        expect(servers.genie.args).toEqual(['mcp']);
+        // Absolute command resolved from the running executable — never bare "genie".
+        expect(servers.genie.command).not.toBe('genie');
+        expect(servers.genie.command.startsWith('/')).toBe(true);
+      }
+    });
+
+    test('pre-populated .mcp.json: preserves the other server and adds genie', () => {
+      initGitRepo(dir);
+      writeFileSync(mcpPath(dir), '{"mcpServers":{"other":{"command":"x"}}}');
+
+      expect(runInit(dir).code).toBe(0);
+
+      const servers = JSON.parse(readFileSync(mcpPath(dir), 'utf-8')).mcpServers;
+      expect(servers.other).toEqual({ command: 'x' });
+      expect(servers.genie).toBeDefined();
+      expect(servers.genie.args).toEqual(['mcp']);
+    });
+
+    test('preserves other top-level keys and an alternate wrapper key', () => {
+      initGitRepo(dir);
+      // Existing file uses the `servers` wrapper + carries an unrelated top-level key.
+      writeFileSync(mcpPath(dir), '{"$schema":"./s.json","servers":{"other":{"command":"x"}}}');
+
+      expect(runInit(dir).code).toBe(0);
+
+      const parsed = JSON.parse(readFileSync(mcpPath(dir), 'utf-8'));
+      expect(parsed.$schema).toBe('./s.json');
+      // Whichever wrapper key already held servers is preserved — no new mcpServers key.
+      expect(parsed.mcpServers).toBeUndefined();
+      expect(parsed.servers.other).toEqual({ command: 'x' });
+      expect(parsed.servers.genie).toBeDefined();
+    });
+
+    test('rerun is byte-identical for both fresh and pre-populated configs', () => {
+      initGitRepo(dir);
+      writeFileSync(mcpPath(dir), '{"mcpServers":{"other":{"command":"x"}}}');
+      expect(runInit(dir).code).toBe(0);
+
+      const mcpBefore = readFileSync(mcpPath(dir));
+      const warpBefore = readFileSync(warpMcpPath(dir));
+
+      expect(runInit(dir).code).toBe(0);
+
+      expect(readFileSync(mcpPath(dir)).equals(mcpBefore)).toBe(true);
+      expect(readFileSync(warpMcpPath(dir)).equals(warpBefore)).toBe(true);
+    });
+
+    test('--json reports the mcp config writes as created then skipped', () => {
+      initGitRepo(dir);
+      const first = JSON.parse(runInit(dir, ['--json']).stdout);
+      const actions = first.mcp.map((c: { path: string; action: string }) => c.action);
+      expect(actions).toEqual(['created', 'created']);
+
+      const second = JSON.parse(runInit(dir, ['--json']).stdout);
+      expect(second.mcp.map((c: { action: string }) => c.action)).toEqual(['skipped', 'skipped']);
+    });
+
+    test('malformed .mcp.json is surfaced, not clobbered', () => {
+      initGitRepo(dir);
+      writeFileSync(mcpPath(dir), 'not json {');
+      const { code, stderr } = runInit(dir);
+      expect(code).toBe(1);
+      expect(stderr).toContain('.mcp.json');
+      // The bad file is left untouched.
+      expect(readFileSync(mcpPath(dir), 'utf-8')).toBe('not json {');
+    });
+  });
 });

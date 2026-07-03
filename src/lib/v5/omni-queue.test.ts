@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { openGlobalDb } from './global-db.js';
+import { MIGRATED_STATUS_SENTINEL, openGlobalDb } from './global-db.js';
 import {
   ApprovalConflictError,
   UnknownApprovalError,
@@ -12,12 +12,22 @@ import {
   enqueueApproval,
   expireStale,
   getApproval,
+  listApprovalsNeedingStatusAck,
   listInbox,
   listPendingApprovals,
   markHandled,
   recordInbound,
+  recordStatusGlyph,
   resolveApproval,
 } from './omni-queue.js';
+
+const HOURGLASS = '\u{23F3}'; // ⏳
+const CHECK = '\u{2705}'; // ✅
+const CROSS = '\u{274C}'; // ❌
+const TERMINAL = [CHECK, CROSS];
+// Deterministic clock + recency window for the reconciliation-query tests.
+const NOW_Q = 5_000_000;
+const WINDOW = 1_000_000;
 
 let dir: string;
 let db: Database;
@@ -119,6 +129,90 @@ describe('approvals', () => {
     resolveApproval(db, b, 'approved', 'x');
     const pending = listPendingApprovals(db);
     expect(pending.map((p) => p.id)).toEqual([a, c]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Status-ack bookkeeping + reconciliation query
+// ---------------------------------------------------------------------------
+describe('status-ack glyph + listApprovalsNeedingStatusAck', () => {
+  test('enqueue defaults lastStatusGlyph to null', () => {
+    const id = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'x' });
+    expect(getApproval(db, id)?.lastStatusGlyph).toBeNull();
+  });
+
+  test('recordStatusGlyph sets the glyph keyed by omni_message_id; no-op for an unknown id', () => {
+    const id = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'x' });
+    attachOmniMessageId(db, id, 'stanza-1');
+    recordStatusGlyph(db, 'stanza-1', HOURGLASS);
+    expect(getApproval(db, id)?.lastStatusGlyph).toBe(HOURGLASS);
+    // No row carries this message id → silent no-op, never throws.
+    expect(() => recordStatusGlyph(db, 'stanza-absent', CHECK)).not.toThrow();
+    expect(getApproval(db, id)?.lastStatusGlyph).toBe(HOURGLASS);
+  });
+
+  test('reconciliation query returns only done + announced + non-terminal + recent rows', () => {
+    // (1) pending + announced → excluded (still awaiting a decision)
+    const pending = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'p', now: 1 });
+    attachOmniMessageId(db, pending, 'stanza-p');
+
+    // (2) resolved but NEVER announced (no omni_message_id) → excluded
+    const noId = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'n', now: 2 });
+    resolveApproval(db, noId, 'approved', 'x', NOW_Q);
+
+    // (3) approved + announced + still ⏳ → INCLUDED (needs ✅ swap)
+    const stuck = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 's', now: 3 });
+    attachOmniMessageId(db, stuck, 'stanza-s');
+    recordStatusGlyph(db, 'stanza-s', HOURGLASS);
+    resolveApproval(db, stuck, 'approved', 'x', NOW_Q);
+
+    // (4) expired + announced + glyph NULL (hook-fork race) → INCLUDED (needs ❌).
+    // Faithful to the hook's single-row expireOwnRow: expire ONLY this row, no
+    // status glyph — so the runner never acked it and a ⏳ would be stuck.
+    const raced = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'r', now: 4 });
+    attachOmniMessageId(db, raced, 'stanza-r');
+    db.query("UPDATE approvals SET status = 'expired', resolved_at = ? WHERE id = ?").run(NOW_Q, raced);
+
+    // (5) denied + announced + already ❌ → excluded (terminal)
+    const done = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'd', now: 6 });
+    attachOmniMessageId(db, done, 'stanza-d');
+    recordStatusGlyph(db, 'stanza-d', CROSS);
+    resolveApproval(db, done, 'denied', 'x', NOW_Q);
+
+    const need = listApprovalsNeedingStatusAck(db, TERMINAL, NOW_Q, WINDOW);
+    expect(need.map((r) => r.id).sort()).toEqual([stuck, raced].sort());
+  });
+
+  test('the migration sentinel is treated as terminal — historical rows are excluded', () => {
+    const migrated = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'h', now: 1 });
+    attachOmniMessageId(db, migrated, 'stanza-h');
+    resolveApproval(db, migrated, 'approved', 'x', NOW_Q);
+    recordStatusGlyph(db, 'stanza-h', MIGRATED_STATUS_SENTINEL); // as the upgrade backfill stamps
+    expect(listApprovalsNeedingStatusAck(db, TERMINAL, NOW_Q, WINDOW)).toEqual([]);
+  });
+
+  test('recency window: a row resolved before the window is excluded, a recent one included', () => {
+    // Resolved WELL before the window → excluded even though its glyph is ⏳.
+    const old = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'old', now: 1 });
+    attachOmniMessageId(db, old, 'stanza-old');
+    recordStatusGlyph(db, 'stanza-old', HOURGLASS);
+    resolveApproval(db, old, 'approved', 'x', NOW_Q - WINDOW - 1);
+
+    // Resolved just inside the window → included.
+    const recent = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'new', now: 2 });
+    attachOmniMessageId(db, recent, 'stanza-new');
+    recordStatusGlyph(db, 'stanza-new', HOURGLASS);
+    resolveApproval(db, recent, 'approved', 'x', NOW_Q - WINDOW + 1);
+
+    const need = listApprovalsNeedingStatusAck(db, TERMINAL, NOW_Q, WINDOW);
+    expect(need.map((r) => r.id)).toEqual([recent]);
+  });
+
+  test('empty terminal set returns nothing (guard against invalid NOT IN ())', () => {
+    const id = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'x' });
+    attachOmniMessageId(db, id, 'stanza-x');
+    resolveApproval(db, id, 'approved', 'x', NOW_Q);
+    expect(listApprovalsNeedingStatusAck(db, [], NOW_Q, WINDOW)).toEqual([]);
   });
 });
 
