@@ -79,6 +79,25 @@ async function driveMcp(cwd: string, requests: Record<string, unknown>[]): Promi
     .map((l) => JSON.parse(l) as RpcResponse);
 }
 
+/** Like driveMcp but sends raw (already-serialized) lines — for malformed input. */
+async function driveMcpRaw(cwd: string, rawLines: string[]): Promise<RpcResponse[]> {
+  const proc = Bun.spawn(['bun', GENIE, 'mcp'], {
+    cwd,
+    stdin: 'pipe',
+    stdout: 'pipe',
+    stderr: 'pipe',
+    env: { ...process.env, NO_COLOR: '1', GENIE_TEST_SKIP_PGSERVE: '1' },
+  });
+  proc.stdin.write(`${rawLines.join('\n')}\n`);
+  await proc.stdin.end();
+  const stdout = await new Response(proc.stdout).text();
+  await proc.exited;
+  return stdout
+    .split('\n')
+    .filter((l) => l.trim().length > 0)
+    .map((l) => JSON.parse(l) as RpcResponse);
+}
+
 const INIT = {
   jsonrpc: '2.0',
   id: 1,
@@ -108,6 +127,14 @@ function seed(cwd: string): { taskId: string } {
 // ============================================================================
 
 describe('mcp handshake', () => {
+  test('a bare `null` / primitive line is dropped and does not crash the server', async () => {
+    // `JSON.parse('null')` is valid JSON but not a JSON-RPC object; without the
+    // non-object guard, dispatch(null) throws on null.id and the server crashes.
+    const res = await driveMcpRaw(repo, ['null', '5', 'true', '"str"', JSON.stringify(INIT)]);
+    // The malformed lines are silently dropped; the server survives + answers initialize.
+    expect(res.some((r) => r.id === 1 && (r.result as { serverInfo?: unknown })?.serverInfo)).toBe(true);
+  });
+
   test('initialize replies with protocolVersion, tools capability, and serverInfo', async () => {
     const [res] = await driveMcp(repo, [INIT]);
     expect(res.id).toBe(1);
