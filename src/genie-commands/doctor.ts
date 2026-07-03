@@ -235,8 +235,10 @@ export function evaluateOmniHookTimeout(params: {
   timeoutSec: number | null;
 }): CheckResult | null {
   if (!params.enabled) return null;
-  const name = 'omni hook timeout ≥ pollBudget';
-  const needSec = Math.ceil(params.pollBudgetMs / 1000);
+  const name = 'omni hook timeout > pollBudget';
+  // pollBudgetMs MUST stay STRICTLY below the hook timeout (genie-config.ts), so
+  // the smallest safe whole-second timeout is the first that exceeds pollBudgetMs.
+  const needSec = Math.floor(params.pollBudgetMs / 1000) + 1;
   if (params.timeoutSec === null) {
     return {
       name,
@@ -246,15 +248,21 @@ export function evaluateOmniHookTimeout(params: {
     };
   }
   const timeoutMs = params.timeoutSec * 1000;
-  if (timeoutMs < params.pollBudgetMs) {
+  // At timeoutMs === pollBudgetMs there is no margin — CC can kill the hook the
+  // instant the poll budget expires — so the strict contract warns on equal too.
+  if (timeoutMs <= params.pollBudgetMs) {
     return {
       name,
       status: 'warn',
-      detail: `hook timeout ${params.timeoutSec}s (${timeoutMs}ms) < pollBudget ${params.pollBudgetMs}ms — CC will kill the hook before it can allow/deny or reach its ask fail-safe`,
+      detail: `hook timeout ${params.timeoutSec}s (${timeoutMs}ms) ≤ pollBudget ${params.pollBudgetMs}ms — CC may kill the hook before it can allow/deny or reach its ask fail-safe`,
       suggestion: `Raise the PreToolUse \`genie hook dispatch\` timeout to ≥ ${needSec}s (e.g. 120) in ~/.claude/settings.json.`,
     };
   }
-  return { name, status: 'pass', detail: `hook timeout ${params.timeoutSec}s ≥ pollBudget ${params.pollBudgetMs}ms` };
+  return {
+    name,
+    status: 'pass',
+    detail: `hook timeout ${params.timeoutSec}s (${timeoutMs}ms) > pollBudget ${params.pollBudgetMs}ms`,
+  };
 }
 
 async function checkOmniHookTimeout(): Promise<CheckResult[]> {

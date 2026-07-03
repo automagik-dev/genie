@@ -102,8 +102,16 @@ describe('omni hook-timeout guardrail', () => {
   test('warns when the hook timeout is below pollBudgetMs', () => {
     const res = evaluateOmniHookTimeout({ enabled: true, pollBudgetMs: 110_000, timeoutSec: 5 });
     expect(res?.status).toBe('warn');
-    expect(res?.detail).toContain('< pollBudget');
+    expect(res?.detail).toContain('≤ pollBudget');
     expect(res?.suggestion).toContain('120');
+  });
+
+  test('warns at the exact boundary (timeoutMs === pollBudgetMs — strictly-below contract)', () => {
+    // 110s → 110_000ms === pollBudget: no margin, so the strict contract must warn.
+    const res = evaluateOmniHookTimeout({ enabled: true, pollBudgetMs: 110_000, timeoutSec: 110 });
+    expect(res?.status).toBe('warn');
+    // smallest safe whole-second timeout strictly exceeds the budget → 111s.
+    expect(res?.suggestion).toContain('111');
   });
 
   test('warns when approvals are enabled but no dispatch timeout is found', () => {
@@ -112,9 +120,10 @@ describe('omni hook-timeout guardrail', () => {
     expect(res?.detail).toContain('no `genie hook dispatch`');
   });
 
-  test('passes when the hook timeout meets or exceeds pollBudgetMs', () => {
+  test('passes when the hook timeout strictly exceeds pollBudgetMs', () => {
     const res = evaluateOmniHookTimeout({ enabled: true, pollBudgetMs: 110_000, timeoutSec: 120 });
     expect(res?.status).toBe('pass');
+    expect(res?.detail).toContain('> pollBudget');
   });
 
   test('emits no check when omni approvals are disabled', () => {
