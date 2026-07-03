@@ -24,6 +24,7 @@ import {
   getTask,
   getWishGroups,
   listTasks,
+  listWishSlugs,
 } from './task-state.js';
 
 // ============================================================================
@@ -97,17 +98,30 @@ function currentBranch(cwd: string): string | null {
 }
 
 /**
- * Parse a `wish/<slug>-<group>` branch into `{ wish, group }`. The group is the
- * final `-`-delimited segment; the slug is everything before it (slugs may
- * themselves contain hyphens, e.g. `wish/genie-mcp-g2` → `genie-mcp` / `g2`).
- * Returns `null` when the branch is not a wish worktree branch.
+ * Resolve a `wish/<slug>[-<group>]` branch into `{ wish, group }`. Both slug and
+ * group may contain hyphens, so a raw last-dash split is ambiguous
+ * (`wish/genie-mcp` is the `genie-mcp` wish with no group, NOT a `genie` wish
+ * with an `mcp` group). Disambiguate against the KNOWN wish slugs in the db:
+ *   1. exact match → top-level branch, group = null;
+ *   2. longest known slug that is a prefix followed by `-<group>`;
+ *   3. no known wish (e.g. a brand-new branch with no tasks yet) → best-effort
+ *      last-dash split, else the whole rest as the wish.
+ * Returns `null` only when the branch is not a `wish/…` branch.
  */
-function parseWishBranch(branch: string): { wish: string; group: string } | null {
+function resolveWishBranch(db: Database | null, branch: string): { wish: string; group: string | null } | null {
   const rest = branch.startsWith('wish/') ? branch.slice('wish/'.length) : null;
   if (!rest) return null;
+  const known = db ? listWishSlugs(db) : []; // longest-first
+  if (known.includes(rest)) return { wish: rest, group: null };
+  for (const slug of known) {
+    if (rest.startsWith(`${slug}-`)) {
+      const group = rest.slice(slug.length + 1);
+      if (group) return { wish: slug, group };
+    }
+  }
   const dash = rest.lastIndexOf('-');
-  if (dash <= 0 || dash === rest.length - 1) return null;
-  return { wish: rest.slice(0, dash), group: rest.slice(dash + 1) };
+  if (dash > 0 && dash < rest.length - 1) return { wish: rest.slice(0, dash), group: rest.slice(dash + 1) };
+  return { wish: rest, group: null };
 }
 
 // ============================================================================
@@ -190,10 +204,12 @@ interface WorktreeContextPayload {
 
 function genieWorktreeContext(ctx: ToolContext, args: Record<string, unknown>): WorktreeContextPayload {
   const branch = argString(args, 'branch') ?? currentBranch(ctx.cwd);
-  const parsed = branch ? parseWishBranch(branch) : null;
+  const parsed = branch ? resolveWishBranch(ctx.db, branch) : null;
 
   if (parsed) {
-    const tasks = ctx.db ? listTasks(ctx.db, { wish: parsed.wish }).filter((t) => t.group === parsed.group) : [];
+    const wishTasks = ctx.db ? listTasks(ctx.db, { wish: parsed.wish }) : [];
+    // Top-level wish branch (no group) → all of the wish's tasks; a group branch → just that group.
+    const tasks = parsed.group === null ? wishTasks : wishTasks.filter((t) => t.group === parsed.group);
     return { branch, resolved: true, wish: parsed.wish, group: parsed.group, tasks: tasks.map(toSummary) };
   }
 

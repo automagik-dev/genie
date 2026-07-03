@@ -611,6 +611,23 @@ export function getWishGroups(db: Database, wish: string): WishGroupRow[] {
   return rows.map(mapWishGroup);
 }
 
+/**
+ * Distinct known wish slugs (from tasks + wish_groups), longest first. Used to
+ * disambiguate a `wish/<slug>-<group>` branch when the slug itself contains
+ * hyphens (`genie-mcp` vs a `genie` wish with an `mcp` group).
+ */
+export function listWishSlugs(db: Database): string[] {
+  const rows = db
+    .query(
+      `SELECT wish FROM (
+         SELECT wish FROM tasks WHERE wish IS NOT NULL
+         UNION SELECT wish FROM wish_groups WHERE wish IS NOT NULL
+       ) GROUP BY wish ORDER BY LENGTH(wish) DESC`,
+    )
+    .all() as Array<{ wish: string }>;
+  return rows.map((r) => r.wish);
+}
+
 function getWishGroup(db: Database, wish: string, name: string): WishGroupRow | null {
   const row = db.query('SELECT * FROM wish_groups WHERE wish = ? AND name = ?').get(wish, name) as
     | Parameters<typeof mapWishGroup>[0]

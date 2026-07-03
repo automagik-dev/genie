@@ -91,6 +91,10 @@ export async function runMcpServer(): Promise<void> {
       });
       return;
     }
+    // The db may have been absent when the server started (null handle → empty
+    // board). Re-attempt the read-only open per call so a db created mid-session
+    // (e.g. a fresh `genie init`) is picked up instead of serving empty forever.
+    if (!ctx.db) ctx.db = openReadonlyDb(cwd);
     const payload = tool.handler(ctx, args);
     ok(id, {
       content: [{ type: 'text', text: JSON.stringify(payload) }],
