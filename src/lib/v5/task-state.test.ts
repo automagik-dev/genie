@@ -8,6 +8,7 @@ import {
   CheckoutConflictError,
   CycleError,
   DEFAULT_STALE_MS,
+  TaskNotReadyError,
   UnknownTaskError,
   WishGroupDriftError,
   WishGroupStateError,
@@ -139,6 +140,19 @@ describe('ready-set recompute (idempotent + monotonic)', () => {
     const a = createTask(db, { title: 'a' });
     createTask(db, { title: 'b', dependsOn: [a.id] });
     expect(readyTasks(db).map((t) => t.title)).toEqual(['a']);
+  });
+
+  test('completing a blocked task is rejected (no dependency-gate bypass)', () => {
+    const a = createTask(db, { title: 'a' });
+    const b = createTask(db, { title: 'b', dependsOn: [a.id] });
+    expect(getTask(db, b.id)!.status).toBe('blocked');
+    expect(() => completeTask(db, b.id)).toThrow(TaskNotReadyError);
+    // a's dependency gate is intact — b never went done, nothing downstream moved.
+    expect(getTask(db, b.id)!.status).toBe('blocked');
+    // Once the dep is done, b promotes to ready and completes normally.
+    completeTask(db, a.id);
+    expect(getTask(db, b.id)!.status).toBe('ready');
+    expect(completeTask(db, b.id).status).toBe('done');
   });
 });
 
