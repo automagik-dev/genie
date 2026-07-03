@@ -37,9 +37,11 @@ import {
   type ApprovalDecision,
   attachOmniMessageId,
   expireStale,
+  listApprovalsNeedingStatusAck,
   listPendingApprovals,
   markHandled,
   recordInbound,
+  recordStatusGlyph,
   resolveApproval,
 } from './v5/omni-queue.js';
 
@@ -179,6 +181,71 @@ export function makeDefaultOmniSend(config: OmniRuntimeConfig): OmniSend {
   };
 }
 
+// ============================================================================
+// Injectable outbound set-reaction (⏳→✅/❌ status ack)
+// ============================================================================
+
+export interface OmniSetReactionResult {
+  success?: boolean;
+  error?: string;
+}
+
+export interface OmniSetReactionOpts {
+  instance: string;
+  chat: string;
+  /** The WhatsApp stanza id of the message to react to (genie's own approval). */
+  messageId: string;
+  /** The status emoji to set (⏳/✅/❌). A new emoji SWAPS the prior one in place. */
+  emoji: string;
+}
+
+/**
+ * Set (or swap) genie's OWN status reaction on a message it sent. Injectable so
+ * tests drive a fake (zero network); the default POSTs the Omni `--reaction`
+ * HTTP path. WhatsApp allows one reaction per sender per message, so setting a
+ * new emoji on the same stanza id replaces the prior one — that is how the
+ * ⏳→✅/❌ ack swaps in place.
+ *
+ * This is the seam the SPIKE-documented fallback swaps behind: if a later
+ * `--live` QA shows the in-place reaction swap does not RENDER, replace this
+ * default impl with a message-edit (prepend a status glyph) or a status-reply
+ * variant — the runner calls this one seam, so the fallback is an impl swap, not
+ * a rewrite.
+ */
+export type OmniSetReaction = (opts: OmniSetReactionOpts) => Promise<OmniSetReactionResult>;
+
+/**
+ * Default set-reaction — POSTs to Omni's HTTP reaction route, signed exactly
+ * like {@link makeDefaultOmniSend}. Uses the `--reaction` path (correct
+ * `fromMe` for genie's own message), NOT the bare `react` verb. Degrades to an
+ * error result (never a throw) when the Omni API URL is unconfigured.
+ *
+ * NOTE: like {@link makeDefaultOmniSend}, the exact reaction-route body shape is
+ * documented in SPIKE (c) but not yet exercised against the live hub — the
+ * injectable seam above is what the test suite proves; G3's `--live` round-trip
+ * confirms this default's wire format (and whether the in-place swap renders).
+ */
+export function makeDefaultOmniSetReaction(config: OmniRuntimeConfig): OmniSetReaction {
+  return async ({ instance, chat, messageId, emoji }) => {
+    const apiUrl = config.apiUrl;
+    if (!apiUrl) return { success: false, error: 'omni apiUrl not configured' };
+    const path = '/api/v2/messages';
+    const bodyJson = JSON.stringify({ instanceId: instance, chatId: chat, reaction: emoji, messageId });
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (config.apiKey) headers.Authorization = `Bearer ${config.apiKey}`;
+    const sig = signOmniRequest('POST', path, bodyJson);
+    if (sig) Object.assign(headers, sig);
+    const res = await fetch(`${apiUrl.replace(/\/+$/, '')}${path}`, {
+      method: 'POST',
+      headers,
+      body: bodyJson,
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) return { success: false, error: `HTTP ${res.status}` };
+    return { success: true };
+  };
+}
+
 /** Default factory — dynamically imports `nats`. Only invoked by `omni serve`. */
 export const defaultNatsFactory: NatsFactory = async ({ servers }) => {
   const nats = await import('nats');
@@ -243,6 +310,14 @@ export interface OmniRunnerDeps {
    * id so `announce()` is exercised with zero network.
    */
   sendApproval?: OmniSend;
+  /**
+   * Injectable outbound set-reaction for the ⏳→✅/❌ status ack. Defaults to the
+   * Omni HTTP reaction path ({@link makeDefaultOmniSetReaction}); tests pass a
+   * fake that records the (target id, emoji) so the status lifecycle is asserted
+   * with zero network. The seam the SPIKE fallback (message-edit / status-reply)
+   * swaps behind if the in-place reaction swap does not render live.
+   */
+  setReaction?: OmniSetReaction;
 }
 
 export interface OmniRunner {
@@ -333,6 +408,29 @@ const errorNotice = (detail: string): string => `\u{26A0}\u{FE0F} agent run fail
 /** Compact message for an unknown thrown value. */
 const errText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
+/**
+ * Status-ack glyphs for genie's OWN swapping reaction on the approval message.
+ * ⏳ on announce (awaiting you), ✅ once approved, ❌ once denied or expired. All
+ * three are outside the approve/deny vocab and are set with `fromMe=true`, so
+ * they never dual-emit and never self-resolve an approval (SPIKE c).
+ */
+const STATUS_PENDING = '\u{23F3}'; // ⏳
+const STATUS_APPROVED = '\u{2705}'; // ✅
+const STATUS_DENIED = '\u{274C}'; // ❌ (denied and expired both land here)
+/** The two glyphs that mean "done" — a row whose recorded glyph is one of these
+ *  needs no further status ack (the reconciliation pass skips it). */
+const TERMINAL_STATUS_GLYPHS = [STATUS_APPROVED, STATUS_DENIED];
+
+/**
+ * How far back the reconciliation pass looks for a row still needing a terminal
+ * ack (24h). Generous on purpose: a row resolved/expired while `omni serve` was
+ * briefly down must still get its ✅/❌ when serve returns, so this must exceed
+ * any realistic downtime — it is ~785× the default 110s pollBudget. Older closed
+ * rows are presumed already acked (or too stale to matter) and are left alone, so
+ * per-tick reconciliation work is bounded and history is never swept.
+ */
+const RECONCILE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 /** Distinguishes a budget-driven abort from a genuine child crash in the catch. */
 class OneShotTimeoutError extends Error {
   constructor() {
@@ -349,6 +447,7 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
     deps.genCorrelationId ?? (() => `req_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`);
   const spawnClaude = deps.spawnClaude ?? defaultSpawnClaude;
   const sendApproval = deps.sendApproval ?? makeDefaultOmniSend(config);
+  const setReaction = deps.setReaction ?? makeDefaultOmniSetReaction(config);
   const vocab = {
     approveTokens: config.approveTokens,
     denyTokens: config.denyTokens,
@@ -369,6 +468,12 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
   const announcing = new Set<string>();
   /** Live announce-send promises, drained by `whenIdle` alongside `pending`. */
   const inFlightSends = new Set<Promise<void>>();
+  /** Live status-reaction promises (⏳→✅/❌), also drained by `whenIdle`. */
+  const inFlightReactions = new Set<Promise<void>>();
+  /** Omni message ids with a status-ack HTTP call currently in flight — guards
+   *  the reconciliation pass (every tick) from double-firing an ack whose glyph
+   *  the prior emit has not yet recorded. Keyed by the stanza id. */
+  const ackInFlight = new Set<string>();
   const routeKey = (instance: string, chat: string): string => `${instance} ${chat}`;
   const findRoute = (instance: string, chat: string): OmniRoute | undefined =>
     routes.find((r) => r.instance === instance && r.chat === chat);
@@ -435,11 +540,49 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
   }
 
   /**
+   * Set (or swap) genie's OWN status reaction (⏳/✅/❌) on the approval message.
+   * Fire-and-forget behind the injectable {@link setReaction} seam and drained by
+   * `whenIdle`, so the resolve/announce hot paths never block on the HTTP call. A
+   * missing target id (send failed → row un-tagged) is a no-op, as is a target
+   * whose ack is already in flight (the reconciliation guard).
+   *
+   * The glyph is recorded (via {@link recordStatusGlyph}) ONLY on a confirmed
+   * successful set: a dropped/failed react leaves `last_status_glyph` unchanged so
+   * the reconciliation pass retries it next tick. Never throws — a failed status
+   * reaction is logged and the approval decision still stands.
+   */
+  function emitStatusReaction(targetId: string | null | undefined, emoji: string): void {
+    if (!targetId || ackInFlight.has(targetId)) return;
+    ackInFlight.add(targetId);
+    const react = setReaction({
+      instance: config.instance ?? '',
+      chat: config.approvalChat ?? '',
+      messageId: targetId,
+      emoji,
+    })
+      .then((res) => {
+        if (res && res.success === false) {
+          log(`[omni] status ${emoji} on ${targetId} failed${res.error ? ` (${res.error})` : ''}`);
+          return;
+        }
+        recordStatusGlyph(db, targetId, emoji); // persist only on confirmed success
+      })
+      .catch((err) => log(`[omni] status ${emoji} on ${targetId} failed: ${errText(err)}`))
+      .finally(() => {
+        ackInFlight.delete(targetId);
+        inFlightReactions.delete(react);
+      });
+    inFlightReactions.add(react);
+  }
+
+  /**
    * Announce a single pending approval via the id-returning send and tag the row
    * with the REAL Omni message id (the stanza id) the send returns — so an
    * inbound reaction correlates to THIS approval. Tags only on a successful send;
    * a failed/id-less send leaves the row un-tagged so the next tick retries
-   * (mirrors the old tag-after-publish semantics). Never throws.
+   * (mirrors the old tag-after-publish semantics). On a successful tag it sets the
+   * ⏳ status reaction on the sent message (SPIKE c) — the first half of the
+   * ⏳→✅/❌ ack. Never throws.
    */
   async function sendAnnounce(appr: { id: string; tool: string; inputSummary: string }): Promise<void> {
     const text = formatApprovalMessage(appr.tool, appr.inputSummary);
@@ -453,6 +596,7 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
       }
       attachOmniMessageId(db, appr.id, result.messageId);
       log(`[omni] announced approval ${appr.id} (omni ${result.messageId})`);
+      emitStatusReaction(result.messageId, STATUS_PENDING); // ⏳ awaiting you
     } catch (err) {
       log(`[omni] announce ${appr.id} failed: ${errText(err)}`);
     }
@@ -484,8 +628,13 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
 
   function tryResolve(id: string, decision: ApprovalDecision, resolvedBy: string, note: string): boolean {
     try {
-      resolveApproval(db, id, decision, resolvedBy);
+      // Stamp resolved_at with the runner clock so the reconciliation recency
+      // window (which reads now() from the same dep) lines up deterministically.
+      const row = resolveApproval(db, id, decision, resolvedBy, now());
       log(`[omni] resolved ${id} → ${decision} by ${resolvedBy} (${note})`);
+      // Swap the ⏳ status reaction to ✅ (approved) / ❌ (denied) — the row is
+      // now closed, so this is the second half of the ⏳→✅/❌ ack.
+      emitStatusReaction(row.omniMessageId, decision === 'approved' ? STATUS_APPROVED : STATUS_DENIED);
       return true;
     } catch (err) {
       // Lost the race to another resolver — benign under concurrency.
@@ -497,8 +646,12 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
   /**
    * Resolve an approval from an inbound reaction. Correlates by the stored real
    * Omni message id (the reaction's target stanza id, from the `[Reaction: … on
-   * message <id>]` content or the top-level `messageId`); falls back to oldest
-   * only when no pending row carries that id. Non-vocabulary emoji are ignored.
+   * message <id>]` content or the top-level `messageId`). An EXPLICIT target that
+   * matches no pending row is a NO-OP (logged, ignored) — NOT an oldest fallback:
+   * a reaction on an already-resolved / unknown message must never resolve some
+   * unrelated pending approval (the concurrency hazard this wish exists to kill).
+   * Oldest fallback is reserved for the no-target-id case; reactions always carry
+   * a target id, so this branch is defensive. Non-vocabulary emoji are ignored.
    */
   function resolveReaction(emoji: string, targetId: string | undefined, sender: string): void {
     const decision = matchReaction(emoji, vocab);
@@ -507,15 +660,37 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
       const match = listPendingApprovals(db).find((a) => a.omniMessageId === targetId);
       if (match) {
         tryResolve(match.id, decision, sender, `reaction ${emoji}`);
-        return;
+      } else {
+        log(`[omni] reaction ${emoji} targets unknown/resolved id ${targetId} — ignored (no oldest fallback)`);
       }
+      return;
     }
     resolveOldest(decision, sender, `reaction ${emoji} (fallback)`);
   }
 
+  /**
+   * Reconcile the status reaction on every DONE-but-not-terminally-acked row:
+   * swap its ⏳ (or missing) glyph to ✅ (approved) / ❌ (denied or expired). This
+   * makes the RUNNER the authoritative acker regardless of WHO closed the row —
+   * closing the hook-fork-expiry race (the hook's `expireOwnRow` expires the row
+   * but sets no reaction, so a ⏳ would otherwise stick on the phone forever) AND
+   * any transport-dropped swap (a failed resolve/announce react left the glyph
+   * non-terminal). Idempotent: {@link emitStatusReaction} records the terminal
+   * glyph on success, so the next tick's query no longer returns the row; the
+   * `ackInFlight` guard stops a slow ack re-firing before its glyph is recorded.
+   */
+  function reconcileStatusAcks(): void {
+    for (const row of listApprovalsNeedingStatusAck(db, TERMINAL_STATUS_GLYPHS, now(), RECONCILE_WINDOW_MS)) {
+      emitStatusReaction(row.omniMessageId, row.status === 'approved' ? STATUS_APPROVED : STATUS_DENIED);
+    }
+  }
+
   return {
     tick(): void {
+      // Expire stale rows, then let reconciliation set the terminal ✅/❌ on any
+      // row closed here OR by the hook fork's own self-timeout expiry.
       expireStale(db, config.approvals.pollBudgetMs, now());
+      reconcileStatusAcks();
       announce();
     },
 
@@ -563,11 +738,12 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
     },
 
     async whenIdle(): Promise<void> {
-      // Drain both one-shot runs and announce sends in a loop: a settling task
-      // must not add new work, but snapshot-await is cheap insurance against
-      // future callers that fan out mid-drain.
-      while (pending.size > 0 || inFlightSends.size > 0) {
-        await Promise.allSettled([...pending, ...inFlightSends]);
+      // Drain one-shot runs, announce sends, AND status reactions in a loop: a
+      // send settles by firing the ⏳ status reaction (adds to inFlightReactions
+      // mid-drain), and a resolve fires ✅/❌, so the loop must keep going until
+      // every set has quiesced.
+      while (pending.size > 0 || inFlightSends.size > 0 || inFlightReactions.size > 0) {
+        await Promise.allSettled([...pending, ...inFlightSends, ...inFlightReactions]);
       }
     },
   };

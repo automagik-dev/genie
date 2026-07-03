@@ -16,6 +16,11 @@ import { loadGenieConfig } from './genie-config.js';
 // Ported verbatim from origin/v4:src/lib/omni-approval-handler.ts so remote
 // operators keep the exact token/reaction vocabulary they trained their muscle
 // memory on. `sim`/`nao` are Portuguese yes/no (the original omni deployment).
+//
+// Vocabulary split: TEXT words (`OMNI_APPROVE_TOKENS`/`approveTokens`) vs
+// REACTION emoji (`approveReactions`/`denyReactions`). Keep emoji OUT of the
+// token lists — WhatsApp's bare-emoji dual-emit would echo them back and could
+// double-resolve an approval.
 export const DEFAULT_APPROVE_TOKENS = ['y', 'yes', 'approve', 'sim'];
 export const DEFAULT_DENY_TOKENS = ['n', 'no', 'deny', 'nao'];
 export const DEFAULT_APPROVE_REACTIONS = ['\u{1F44D}', '\u{2705}', '\u{1F44C}']; // 👍 ✅ 👌

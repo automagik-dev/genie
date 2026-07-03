@@ -280,6 +280,32 @@ describe('transport is not initialized without `omni serve`', () => {
   });
 });
 
+describe('omni test-approval — fake round-trip (no network)', () => {
+  /** Capture stdout during `fn`, restoring the real writer afterwards. */
+  async function captureStdout(fn: () => Promise<void>): Promise<string> {
+    const realWrite = process.stdout.write.bind(process.stdout);
+    let buffer = '';
+    process.stdout.write = ((chunk: string) => {
+      buffer += chunk;
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      await fn();
+      return buffer;
+    } finally {
+      process.stdout.write = realWrite;
+    }
+  }
+
+  test('drives one clean ⏳→✅ round-trip and prints a success line', async () => {
+    const output = await captureStdout(() => omniTest.testApprovalCommand({}));
+    expect(output).toMatch(/round-trip OK/);
+    expect(output).toMatch(/approved/);
+    // The fake path is fully offline — no NATS transport ever opened.
+    expect(natsConnectionCount()).toBe(0);
+  });
+});
+
 describe('omni handshake keypair provisioning', () => {
   test('generateAndPersistKeypair writes a 0600 private key and a raw base64url pubkey', () => {
     const home = mkdtempSync(join(tmpdir(), 'omni-hs-'));

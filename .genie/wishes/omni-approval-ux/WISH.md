@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | DONE — G1 spike + G2 correlation + G3 ⏳→✅ lifecycle all SHIP-reviewed (2 HIGHs found+fixed); ⏳→✅ in-place render awaits one Felipe-approved live round-trip (2026-07-03) |
 | **Slug** | `omni-approval-ux` |
 | **Date** | 2026-07-03 |
 | **Author** | Felipe + Genie |
@@ -45,12 +45,12 @@ The v5 omni approval bridge is live-proven (a PreToolUse hook → WhatsApp 🔔 
 
 ## Success Criteria
 
-- [ ] **G1 spike:** `.genie/wishes/omni-approval-ux/SPIKE.md` documents (evidence from the real hub) the inbound reaction NATS subject + payload, the send path that yields a correlatable message id, the outbound set-reaction capability (GO/NO-GO + the swap mechanism or the fallback), AND whether inbound text replies carry a quoted-message id — with the exact fields genie stores/matches.
-- [ ] **⏳→✅ ack lifecycle:** on announce, the approval message carries a ⏳ status (reaction, or the NO-GO fallback); on approve it becomes ✅; on deny/expire ❌. Verified with a fake transport asserting the set-reaction/edit calls + target id.
-- [ ] **Correlated resolution:** two concurrent pending approvals — a reaction/quoted reply answering the 2nd resolves the 2nd (not the 1st); `omni_message_id` holds the REAL send id. Tested. (Bare unquoted text still resolves oldest — documented fallback, also tested.)
-- [ ] **Reaction approve/deny** resolves on the verified subject, correlated to the right approval; instance-scoped (PR #2507 guard). Text fallback still works. Tested.
-- [ ] `genie omni test-approval` drives one clean round-trip (fake transport in CI; `--live` documented); `genie doctor`/handshake warns when the CC hook timeout < pollBudgetMs.
-- [ ] Full `bun run check` green; NO live messages sent by the automated suite.
+- [x] **G1 spike:** `.genie/wishes/omni-approval-ux/SPIKE.md` documents (evidence from the real hub) the inbound reaction NATS subject + payload, the send path that yields a correlatable message id, the outbound set-reaction capability (GO/NO-GO + the swap mechanism or the fallback), AND whether inbound text replies carry a quoted-message id — with the exact fields genie stores/matches.
+- [x] **⏳→✅ ack lifecycle:** on announce, the approval message carries a ⏳ status (reaction, or the NO-GO fallback); on approve it becomes ✅; on deny/expire ❌. Verified with a fake transport asserting the set-reaction/edit calls + target id.
+- [x] **Correlated resolution:** two concurrent pending approvals — a reaction/quoted reply answering the 2nd resolves the 2nd (not the 1st); `omni_message_id` holds the REAL send id. Tested. (Bare unquoted text still resolves oldest — documented fallback, also tested.)
+- [x] **Reaction approve/deny** resolves on the verified subject, correlated to the right approval; instance-scoped (PR #2507 guard). Text fallback still works. Tested.
+- [x] `genie omni test-approval` drives one clean round-trip (fake transport in CI; `--live` documented); `genie doctor`/handshake warns when the CC hook timeout < pollBudgetMs.
+- [x] Full `bun run check` green; NO live messages sent by the automated suite.
 
 ## Execution Strategy
 
@@ -123,10 +123,10 @@ bun run typecheck
 4. Tests (fake transport): ⏳ set on announce with the right target id; swapped to ✅ on approve, ❌ on deny/expire; row closed; `test-approval` fake path green; doctor warning fires on a too-low timeout.
 
 **Acceptance Criteria:**
-- [ ] Announce sets ⏳ on the approval message (real id); approve→✅, deny/expire→❌; row closed; no lingering prompt (tested with a fake transport asserting the set-reaction/edit calls + target).
-- [ ] `genie omni test-approval` (fake) green in CI; `--live` documented.
-- [ ] doctor/handshake warns on an inadequate hook timeout.
-- [ ] Full `bun run check` green.
+- [x] Announce sets ⏳ on the approval message (real id); approve→✅, deny/expire→❌; row closed; no lingering prompt (tested with a fake transport asserting the set-reaction/edit calls + target).
+- [x] `genie omni test-approval` (fake) green in CI; `--live` documented.
+- [x] doctor/handshake warns on an inadequate hook timeout.
+- [x] Full `bun run check` green.
 
 **Validation:**
 ```bash

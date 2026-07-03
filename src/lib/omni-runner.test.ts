@@ -373,3 +373,229 @@ describe('omni runner — correlated approval identity + reactions', () => {
     expect(getApproval(db, a)?.status).toBe('pending');
   });
 });
+
+// ---------------------------------------------------------------------------
+// ⏳→✅/❌ status-reaction lifecycle + the explicit-non-matching-target no-op
+// (Group 3). Every test injects a FAKE `setReaction` recorder — zero network —
+// and asserts the (target id, emoji) genie sets on its OWN approval message.
+// ---------------------------------------------------------------------------
+const HOURGLASS = '\u{23F3}'; // ⏳
+const CHECK = '\u{2705}'; // ✅
+const CROSS = '\u{274C}'; // ❌
+const THUMBS_DOWN = '\u{1F44E}'; // 👎 (in rt() denyReactions)
+
+interface ReactionCall {
+  messageId: string;
+  emoji: string;
+}
+
+/** A status runner with a fake set-reaction recorder and a mutable clock. */
+function statusRunner(db: Database, reactions: ReactionCall[], clock: { now: number }) {
+  return createOmniRunner({
+    db,
+    config: rt(),
+    publish: () => {},
+    sendApproval,
+    setReaction: async ({ messageId, emoji }) => {
+      reactions.push({ messageId, emoji });
+      return { success: true };
+    },
+    now: () => clock.now,
+  });
+}
+
+describe('omni runner — ⏳→✅/❌ status-reaction lifecycle', () => {
+  test('announce sets ⏳ on the stored stanza id', async () => {
+    const db = freshDb();
+    const reactions: ReactionCall[] = [];
+    const runner = statusRunner(db, reactions, { now: NOW });
+    enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
+    runner.tick();
+    await runner.whenIdle();
+    expect(reactions).toEqual([{ messageId: 'stanza-A', emoji: HOURGLASS }]);
+  });
+
+  test('approve swaps ⏳→✅ on the same stanza id and closes the row', async () => {
+    const db = freshDb();
+    const reactions: ReactionCall[] = [];
+    const runner = statusRunner(db, reactions, { now: NOW });
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
+    runner.tick();
+    await runner.whenIdle();
+
+    runner.handleMessage(
+      ...approvalInbound({ content: reactionContent(THUMBS_UP, 'stanza-A'), messageId: 'stanza-A' }),
+    );
+    await runner.whenIdle();
+
+    expect(getApproval(db, a)?.status).toBe('approved'); // row closed
+    expect(reactions).toEqual([
+      { messageId: 'stanza-A', emoji: HOURGLASS },
+      { messageId: 'stanza-A', emoji: CHECK },
+    ]);
+  });
+
+  test('deny swaps ⏳→❌', async () => {
+    const db = freshDb();
+    const reactions: ReactionCall[] = [];
+    const runner = statusRunner(db, reactions, { now: NOW });
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
+    runner.tick();
+    await runner.whenIdle();
+
+    runner.handleMessage(
+      ...approvalInbound({ content: reactionContent(THUMBS_DOWN, 'stanza-A'), messageId: 'stanza-A' }),
+    );
+    await runner.whenIdle();
+
+    expect(getApproval(db, a)?.status).toBe('denied');
+    expect(reactions[reactions.length - 1]).toEqual({ messageId: 'stanza-A', emoji: CROSS });
+  });
+
+  test('expiry swaps ⏳→❌ and closes the row', async () => {
+    const db = freshDb();
+    const reactions: ReactionCall[] = [];
+    const clock = { now: NOW };
+    const runner = statusRunner(db, reactions, clock);
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
+    runner.tick(); // announce + ⏳
+    await runner.whenIdle();
+
+    // Advance past pollBudgetMs (10_000) so the row is stale, then tick to expire.
+    clock.now = NOW + 20_000;
+    runner.tick();
+    await runner.whenIdle();
+
+    expect(getApproval(db, a)?.status).toBe('expired'); // row closed
+    expect(reactions[reactions.length - 1]).toEqual({ messageId: 'stanza-A', emoji: CROSS });
+  });
+
+  test('reaction with an explicit non-matching target NO-OPs (does not resolve oldest)', async () => {
+    const db = freshDb();
+    const reactions: ReactionCall[] = [];
+    const runner = statusRunner(db, reactions, { now: NOW });
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
+    const b = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-B', now: NOW - 1000 });
+    runner.tick();
+    await runner.whenIdle();
+
+    // A 👍 targeting a stanza id no pending approval carries (already-resolved or
+    // unknown) must NOT fall back to resolving the oldest — the MEDIUM fix.
+    runner.handleMessage(
+      ...approvalInbound({ content: reactionContent(THUMBS_UP, 'stanza-UNKNOWN'), messageId: 'stanza-UNKNOWN' }),
+    );
+    await runner.whenIdle();
+
+    expect(getApproval(db, a)?.status).toBe('pending');
+    expect(getApproval(db, b)?.status).toBe('pending');
+    // No ✅ was set — only the two ⏳ announces happened.
+    expect(reactions.filter((r) => r.emoji === CHECK)).toEqual([]);
+  });
+
+  test('records the glyph on each successful ack (⏳ on announce, ✅ on approve)', async () => {
+    const db = freshDb();
+    const reactions: ReactionCall[] = [];
+    const runner = statusRunner(db, reactions, { now: NOW });
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
+    runner.tick();
+    await runner.whenIdle();
+    expect(getApproval(db, a)?.lastStatusGlyph).toBe(HOURGLASS); // recorded ⏳
+
+    runner.handleMessage(
+      ...approvalInbound({ content: reactionContent(THUMBS_UP, 'stanza-A'), messageId: 'stanza-A' }),
+    );
+    await runner.whenIdle();
+    expect(getApproval(db, a)?.lastStatusGlyph).toBe(CHECK); // recorded ✅ (terminal)
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Reconciliation: the RUNNER is the authoritative acker even when the hook fork
+// wins the expiry race (expires the row but sets NO reaction). Without this, the
+// ⏳ set on announce would stick on the phone forever (the G3-review HIGH).
+// ---------------------------------------------------------------------------
+describe('omni runner — status-ack reconciliation (hook-fork-expiry race)', () => {
+  /** Faithful to the hook's expireOwnRow: expire ONE row, no status glyph. */
+  function hookForkExpire(db: Database, id: string): void {
+    db.query("UPDATE approvals SET status = 'expired', resolved_at = ? WHERE id = ? AND status = 'pending'").run(
+      NOW,
+      id,
+    );
+  }
+
+  test('hook fork expires the row (no ack) → runner tick reconciles a ❌', async () => {
+    const db = freshDb();
+    const reactions: ReactionCall[] = [];
+    const runner = statusRunner(db, reactions, { now: NOW });
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
+    runner.tick(); // announce + ⏳
+    await runner.whenIdle();
+    expect(getApproval(db, a)?.lastStatusGlyph).toBe(HOURGLASS);
+
+    // The hook fork wins the expiry race — row is expired with a stuck ⏳.
+    hookForkExpire(db, a);
+    expect(getApproval(db, a)?.status).toBe('expired');
+    expect(getApproval(db, a)?.lastStatusGlyph).toBe(HOURGLASS); // still ⏳ — no ack
+
+    // The runner's next tick reconciles the stuck ⏳ to ❌.
+    runner.tick();
+    await runner.whenIdle();
+    expect(reactions[reactions.length - 1]).toEqual({ messageId: 'stanza-A', emoji: CROSS });
+    expect(getApproval(db, a)?.lastStatusGlyph).toBe(CROSS);
+  });
+
+  test('reconciliation is idempotent — a second tick does not re-emit ❌', async () => {
+    const db = freshDb();
+    const reactions: ReactionCall[] = [];
+    const runner = statusRunner(db, reactions, { now: NOW });
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
+    runner.tick();
+    await runner.whenIdle();
+    hookForkExpire(db, a);
+
+    runner.tick(); // reconciles → ❌ recorded
+    await runner.whenIdle();
+    const countAfterFirst = reactions.length;
+
+    runner.tick(); // glyph now terminal → nothing to reconcile
+    await runner.whenIdle();
+    expect(reactions.length).toBe(countAfterFirst);
+    // Exactly one ❌ ever emitted for this row.
+    expect(reactions.filter((r) => r.emoji === CROSS).length).toBe(1);
+  });
+
+  test('a transport-dropped resolve ack is retried by reconciliation', async () => {
+    const db = freshDb();
+    const reactions: ReactionCall[] = [];
+    // setReaction FAILS the first call (the ⏳ or the ✅), succeeds afterwards —
+    // so the terminal glyph is not recorded until reconciliation retries it.
+    let calls = 0;
+    const runner = createOmniRunner({
+      db,
+      config: rt(),
+      publish: () => {},
+      sendApproval,
+      setReaction: async ({ messageId, emoji }) => {
+        calls++;
+        reactions.push({ messageId, emoji });
+        return calls === 2 ? { success: false, error: 'dropped' } : { success: true };
+      },
+      now: () => NOW,
+    });
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
+    runner.tick(); // announce ⏳ (call 1, ok → recorded)
+    await runner.whenIdle();
+
+    runner.handleMessage(
+      ...approvalInbound({ content: reactionContent(THUMBS_UP, 'stanza-A'), messageId: 'stanza-A' }),
+    );
+    await runner.whenIdle(); // resolve ✅ (call 2, DROPPED → glyph stays ⏳)
+    expect(getApproval(db, a)?.status).toBe('approved');
+    expect(getApproval(db, a)?.lastStatusGlyph).toBe(HOURGLASS); // not recorded — drop
+
+    runner.tick(); // reconciliation retries ✅ (call 3, ok → recorded)
+    await runner.whenIdle();
+    expect(getApproval(db, a)?.lastStatusGlyph).toBe(CHECK);
+    expect(reactions[reactions.length - 1]).toEqual({ messageId: 'stanza-A', emoji: CHECK });
+  });
+});
