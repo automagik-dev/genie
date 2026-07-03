@@ -72,22 +72,36 @@ interface Published {
   payload: string;
 }
 
+interface Sent {
+  instance: string;
+  chat: string;
+  text: string;
+}
+
+/** The stanza id the fake id-returning send returns; the real Omni message id
+ *  `announce()` stores and a reaction correlates against. */
+const STANZA_ID = 'stanza-fixed-1';
+
 /**
  * Run the real handler↔runner loop once. The handler enqueues + polls; on its
- * first `sleep` we play the runner (announce + phone action), then the handler's
- * next poll observes the resolution.
+ * first `sleep` we play the runner (announce via a FAKE id-returning send, then
+ * the phone action), and the handler's next poll observes the resolution.
  */
 async function driveRoundTrip(
   db: Database,
   config: OmniRuntimeConfig,
-  phone: (runner: ReturnType<typeof createOmniRunner>, published: Published[]) => void,
+  phone: (runner: ReturnType<typeof createOmniRunner>, published: Published[], sent: Sent[]) => void,
 ): Promise<HandlerResult> {
   const published: Published[] = [];
+  const sent: Sent[] = [];
   const runner = createOmniRunner({
     db,
     config,
     publish: (subject, payload) => published.push({ subject, payload }),
-    genCorrelationId: () => 'ref-fixed-1',
+    sendApproval: async (opts) => {
+      sent.push(opts);
+      return { success: true, messageId: STANZA_ID };
+    },
   });
   let phoned = false;
   return omniApproval(PAYLOAD, {
@@ -96,8 +110,9 @@ async function driveRoundTrip(
     sleep: async () => {
       if (phoned) return;
       phoned = true;
-      runner.tick(); // announce the pending approval (records a publish)
-      phone(runner, published);
+      runner.tick(); // announce the pending approval (fires the id-returning send)
+      await runner.whenIdle(); // wait for the send to store the real stanza id
+      phone(runner, published, sent);
     },
   });
 }
@@ -106,36 +121,37 @@ describe('omni runner — five round-trips (no network)', () => {
   test('1. token-approve: inbound "yes" → allow, request announced, message stored', async () => {
     const config = rt();
     const db = freshDb();
-    let publishedRef: Published[] = [];
-    const res = await driveRoundTrip(db, config, (runner, published) => {
-      publishedRef = published;
+    let sentRef: Sent[] = [];
+    const res = await driveRoundTrip(db, config, (runner, _published, sent) => {
+      sentRef = sent;
       runner.handleMessage(
         `omni.message.${config.instance}.${config.approvalChat}`,
         JSON.stringify({ content: 'yes', chatId: config.approvalChat, sender: 'boss', instanceId: config.instance }),
       );
     });
     expect(res?.hookSpecificOutput?.permissionDecision).toBe('allow');
-    // Outbound approval-request published to the reply subject.
-    expect(publishedRef.length).toBe(1);
-    expect(publishedRef[0].subject).toBe(`omni.reply.${config.instance}.${config.approvalChat}`);
-    expect(publishedRef[0].payload).toContain('Approval Required');
+    // Approval-request sent via the id-returning send, addressed at the approval chat.
+    expect(sentRef.length).toBe(1);
+    expect(sentRef[0].chat).toBe(config.approvalChat as string);
+    expect(sentRef[0].text).toContain('Approval Required');
     // Inbound reply stored to the inbox.
     const inbox = listInbox(db);
     expect(inbox.length).toBe(1);
     expect(inbox[0].body).toBe('yes');
   });
 
-  test('2. reaction-approve: 👍 correlated by ref → allow', async () => {
+  test('2. reaction-approve: 👍 correlated by the stored stanza id → allow', async () => {
     const config = rt();
     const db = freshDb();
     const res = await driveRoundTrip(db, config, (runner) => {
-      // The runner tagged the row with genCorrelationId() = 'ref-fixed-1'.
-      runner.handleEvent(
-        'omni.event.reaction',
+      // announce() stored the REAL stanza id (STANZA_ID) the send returned; a
+      // reaction referencing it (on `omni.message.*`, not the retired
+      // `omni.event.*`) resolves this exact approval.
+      runner.handleMessage(
+        `omni.message.${config.instance}.${config.approvalChat}`,
         JSON.stringify({
-          type: 'reaction',
-          emoji: '\u{1F44D}',
-          messageId: 'ref-fixed-1',
+          content: `[Reaction: \u{1F44D} on message ${STANZA_ID}]`,
+          messageId: STANZA_ID,
           chatId: config.approvalChat,
           instanceId: config.instance,
           sender: 'boss',
@@ -260,6 +276,32 @@ describe('transport is not initialized without `omni serve`', () => {
     const runner = createOmniRunner({ db, config: rt(), publish: () => {} });
     runner.tick();
     listInbox(db);
+    expect(natsConnectionCount()).toBe(0);
+  });
+});
+
+describe('omni test-approval — fake round-trip (no network)', () => {
+  /** Capture stdout during `fn`, restoring the real writer afterwards. */
+  async function captureStdout(fn: () => Promise<void>): Promise<string> {
+    const realWrite = process.stdout.write.bind(process.stdout);
+    let buffer = '';
+    process.stdout.write = ((chunk: string) => {
+      buffer += chunk;
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      await fn();
+      return buffer;
+    } finally {
+      process.stdout.write = realWrite;
+    }
+  }
+
+  test('drives one clean ⏳→✅ round-trip and prints a success line', async () => {
+    const output = await captureStdout(() => omniTest.testApprovalCommand({}));
+    expect(output).toMatch(/round-trip OK/);
+    expect(output).toMatch(/approved/);
+    // The fake path is fully offline — no NATS transport ever opened.
     expect(natsConnectionCount()).toBe(0);
   });
 });

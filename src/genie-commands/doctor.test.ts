@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { doctorCommand } from './doctor.js';
+import { doctorCommand, evaluateOmniHookTimeout, findDispatchHookTimeoutSec } from './doctor.js';
 
 /**
  * Capture everything written to stdout during `fn`, restoring the real
@@ -73,6 +73,52 @@ describe('doctorCommand', () => {
     const { output } = await captureDoctor(() => doctorCommand());
     expect(output).toContain('genie doctor');
     expect(output).toContain('All checks passed.');
+  });
+});
+
+describe('omni hook-timeout guardrail', () => {
+  const DISPATCH = '"$HOME/.genie/bin/genie" hook dispatch';
+
+  test('finds the smallest dispatch timeout across PreToolUse entries', () => {
+    const settings = {
+      hooks: {
+        PreToolUse: [
+          { matcher: 'Bash', hooks: [{ command: 'bash git-safety.sh', timeout: 5 }] },
+          { matcher: '*', hooks: [{ command: DISPATCH, timeout: 30 }] },
+          { matcher: 'Write', hooks: [{ command: DISPATCH, timeout: 15 }] },
+        ],
+      },
+    };
+    expect(findDispatchHookTimeoutSec(settings)).toBe(15);
+  });
+
+  test('returns null when no dispatch hook is present', () => {
+    expect(
+      findDispatchHookTimeoutSec({ hooks: { PreToolUse: [{ hooks: [{ command: 'other', timeout: 9 }] }] } }),
+    ).toBeNull();
+    expect(findDispatchHookTimeoutSec({})).toBeNull();
+  });
+
+  test('warns when the hook timeout is below pollBudgetMs', () => {
+    const res = evaluateOmniHookTimeout({ enabled: true, pollBudgetMs: 110_000, timeoutSec: 5 });
+    expect(res?.status).toBe('warn');
+    expect(res?.detail).toContain('< pollBudget');
+    expect(res?.suggestion).toContain('120');
+  });
+
+  test('warns when approvals are enabled but no dispatch timeout is found', () => {
+    const res = evaluateOmniHookTimeout({ enabled: true, pollBudgetMs: 110_000, timeoutSec: null });
+    expect(res?.status).toBe('warn');
+    expect(res?.detail).toContain('no `genie hook dispatch`');
+  });
+
+  test('passes when the hook timeout meets or exceeds pollBudgetMs', () => {
+    const res = evaluateOmniHookTimeout({ enabled: true, pollBudgetMs: 110_000, timeoutSec: 120 });
+    expect(res?.status).toBe('pass');
+  });
+
+  test('emits no check when omni approvals are disabled', () => {
+    expect(evaluateOmniHookTimeout({ enabled: false, pollBudgetMs: 110_000, timeoutSec: 1 })).toBeNull();
   });
 });
 

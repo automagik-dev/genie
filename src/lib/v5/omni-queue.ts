@@ -22,6 +22,7 @@
 
 import type { Database } from 'bun:sqlite';
 import { randomBytes } from 'node:crypto';
+import { MIGRATED_STATUS_SENTINEL } from './global-db.js';
 
 // ============================================================================
 // Types
@@ -38,6 +39,10 @@ export interface ApprovalRow {
   inputSummary: string;
   status: ApprovalStatus;
   omniMessageId: string | null;
+  /** Last status-ack glyph the runner successfully set on the Omni message
+   *  (⏳ on announce, ✅/❌ once terminal). null until the first ack lands. Drives
+   *  the runner's reconciliation pass so a stuck ⏳ is never left on the phone. */
+  lastStatusGlyph: string | null;
   requestedBy: string | null;
   resolvedBy: string | null;
   createdAt: number;
@@ -141,6 +146,7 @@ interface RawApproval {
   input_summary: string;
   status: string;
   omni_message_id: string | null;
+  last_status_glyph: string | null;
   requested_by: string | null;
   resolved_by: string | null;
   created_at: number;
@@ -156,6 +162,7 @@ function mapApproval(r: RawApproval): ApprovalRow {
     inputSummary: r.input_summary,
     status: r.status as ApprovalStatus,
     omniMessageId: r.omni_message_id,
+    lastStatusGlyph: r.last_status_glyph,
     requestedBy: r.requested_by,
     resolvedBy: r.resolved_by,
     createdAt: r.created_at,
@@ -217,6 +224,61 @@ export function enqueueApproval(db: Database, fields: EnqueueApprovalFields): st
 export function attachOmniMessageId(db: Database, id: string, omniMessageId: string): void {
   const res = db.query('UPDATE approvals SET omni_message_id = ? WHERE id = ?').run(omniMessageId, id);
   if (res.changes !== 1) throw new UnknownApprovalError(id);
+}
+
+/**
+ * Record the status-ack glyph the runner just SUCCESSFULLY set on an approval's
+ * Omni message, keyed by the message id (the stanza id both the ack and inbound
+ * reactions correlate on). Advisory bookkeeping — a no-op when no row carries
+ * that message id (e.g. the row was pruned), so it never throws and never wedges
+ * the runner. This is what makes the reconciliation query
+ * ({@link listApprovalsNeedingStatusAck}) idempotent: a recorded terminal glyph
+ * stops the pass re-firing every tick.
+ */
+export function recordStatusGlyph(db: Database, omniMessageId: string, glyph: string): void {
+  db.query('UPDATE approvals SET last_status_glyph = ? WHERE omni_message_id = ?').run(glyph, omniMessageId);
+}
+
+/**
+ * Rows whose status-ack is stale: RESOLVED or EXPIRED (no longer pending),
+ * already ANNOUNCED (an omni_message_id to react on), yet whose last recorded
+ * glyph is not terminal (still ⏳, or never acked). These are the rows the runner
+ * must swap to a terminal ✅/❌ — the hook-fork-expiry race and any
+ * transport-dropped swap both land here. Oldest first.
+ *
+ * Two bounds keep this from ever sweeping history:
+ *   - the `MIGRATED_STATUS_SENTINEL` is always excluded, so the one-time upgrade
+ *     backfill's pre-upgrade closed rows are ignored;
+ *   - `resolved_at >= now - windowMs` caps the pass to RECENTLY-closed rows, so
+ *     per-tick work is bounded and long-dead history is never re-acked. The
+ *     window is deliberately generous (see the runner) so a legitimately recent
+ *     row is not dropped just because `omni serve` was briefly down.
+ *
+ * `terminalGlyphs` must be non-empty (the runner passes [✅, ❌]).
+ */
+export function listApprovalsNeedingStatusAck(
+  db: Database,
+  terminalGlyphs: string[],
+  now: number,
+  windowMs: number,
+): ApprovalRow[] {
+  if (terminalGlyphs.length === 0) return [];
+  // The migration sentinel is terminal for reconciliation purposes — a pre-upgrade
+  // closed row must never be re-acked, regardless of what the runner passes.
+  const excluded = [...terminalGlyphs, MIGRATED_STATUS_SENTINEL];
+  const placeholders = excluded.map(() => '?').join(', ');
+  const cutoff = now - windowMs;
+  const rows = db
+    .query(
+      `SELECT * FROM approvals
+       WHERE status != 'pending'
+         AND omni_message_id IS NOT NULL
+         AND (last_status_glyph IS NULL OR last_status_glyph NOT IN (${placeholders}))
+         AND resolved_at >= ?
+       ORDER BY created_at ASC`,
+    )
+    .all(...excluded, cutoff) as RawApproval[];
+  return rows.map(mapApproval);
 }
 
 /**

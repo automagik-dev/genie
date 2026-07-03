@@ -90,10 +90,16 @@ const OmniApprovalsConfigSchema = z.object({
   pollBudgetMs: z.number().default(110_000),
   /** Poll interval while waiting for a resolution (ms). */
   pollIntervalMs: z.number().default(400),
-  /** Approve/deny text tokens (case-insensitive). Empty → runner defaults. */
+  /**
+   * Approve/deny TEXT tokens (case-insensitive). Empty → runner defaults.
+   * Put words here (`y`, `sim`), NOT emoji — an emoji placed in a token list
+   * would be echoed back by WhatsApp's bare-emoji dual-emit and could
+   * double-resolve. Emoji belong in `approveReactions`/`denyReactions` below.
+   */
   approveTokens: z.array(z.string()).optional(),
   denyTokens: z.array(z.string()).optional(),
-  /** Approve/deny reaction emoji. Empty → runner defaults. */
+  /** Approve/deny REACTION emoji (👍/👎). Empty → runner defaults. Emoji go
+   *  here, never in the `*Tokens` lists above. */
   approveReactions: z.array(z.string()).optional(),
   denyReactions: z.array(z.string()).optional(),
 });
