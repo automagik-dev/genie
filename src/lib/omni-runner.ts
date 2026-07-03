@@ -3,13 +3,19 @@
  *
  * Owns the NATS transport and the two-way bridge between the phone and the
  * global approval queue:
- *   - subscribes `omni.message.{instance}.>` (text replies) and `omni.event.>`
- *     (reactions);
- *   - on each new pending approval row, PUBLISHES an approval-request to
- *     `omni.reply.{instance}.{chat}` (outbound send subject, mirroring v4's
- *     omni-bridge) and tags the row with a correlation id;
+ *   - subscribes `omni.message.{instance}.>` — both text replies AND reactions
+ *     arrive here. A WhatsApp reaction reaches genie as a `message.received`
+ *     whose content is `[Reaction: <emoji> on message <targetId>]` (the target
+ *     id is also the top-level `messageId`); the legacy `omni.event.>` subject
+ *     has zero publishers in this Omni build, so it is retired (SPIKE finding a);
+ *   - on each new pending approval row, SENDS an approval-request over the Omni
+ *     HTTP API (an id-returning send) and tags the row with the REAL Omni
+ *     message id (the WhatsApp stanza id) the send returns — so an inbound
+ *     reaction can be correlated to the exact approval it targets, rather than
+ *     the old self-referential `genId()` ref that matched nothing (SPIKE b);
  *   - matches inbound replies/reactions against the approve/deny vocabulary and
- *     resolves the oldest pending approval (or the reaction-correlated one);
+ *     resolves the correlated approval (reaction → the stored stanza id; bare
+ *     text → oldest-pending fallback);
  *   - records every inbound message to the inbox (`recordInbound`). One-shot
  *     agent spawning on inbound is Group 4 — this group only stores.
  *
@@ -25,6 +31,7 @@
 import type { Database } from 'bun:sqlite';
 import type { OmniRoute, OmniRuntimeConfig } from './omni-config.js';
 import { matchReaction, matchTextToken } from './omni-matching.js';
+import { signOmniRequest } from './omni-signature.js';
 import {
   ApprovalConflictError,
   type ApprovalDecision,
@@ -105,6 +112,73 @@ export const defaultSpawnClaude: SpawnClaude = async ({ message, cwd, signal }) 
   return { stdout, exitCode };
 };
 
+// ============================================================================
+// Injectable id-returning Omni send (approval announce)
+// ============================================================================
+
+/**
+ * Result of an id-returning Omni send. `messageId` is the correlatable id — the
+ * WhatsApp stanza id / externalId (SPIKE finding (b)) — that an inbound reaction
+ * later references. Absent on a failed send (the row stays un-tagged and is
+ * retried on the next tick).
+ */
+export interface OmniSendResult {
+  messageId?: string;
+  success?: boolean;
+  error?: string;
+}
+
+export interface OmniSendOpts {
+  instance: string;
+  chat: string;
+  text: string;
+}
+
+/**
+ * Send an approval-request message and RETURN the id it was assigned. Injectable
+ * so tests drive a fake (zero network); the default posts to the Omni HTTP send
+ * API. This replaces the fire-and-forget NATS `omni.reply.*` publish whose id
+ * Omni's `onReply` discarded — capturing the real Omni message id is what makes
+ * a reaction correlatable to the exact approval it targets.
+ */
+export type OmniSend = (opts: OmniSendOpts) => Promise<OmniSendResult>;
+
+/**
+ * Default id-returning send — POSTs the approval message to Omni's HTTP send
+ * route, signed exactly like {@link registerAgentInOmni} (bearer + optional
+ * ed25519). Returns the message id from the response so `announce()` can store
+ * the correlatable stanza id. Degrades to an error result (silent retry, never a
+ * throw) when the Omni API URL is unconfigured.
+ *
+ * NOTE: the exact send route + response field that surface the WhatsApp *stanza
+ * id* (vs the persisted Omni UUID) are documented in SPIKE (b) but not yet
+ * exercised against the live hub — the injectable seam above is what the test
+ * suite proves; G3's `--live` round-trip confirms this default's wire format.
+ */
+export function makeDefaultOmniSend(config: OmniRuntimeConfig): OmniSend {
+  return async ({ instance, chat, text }) => {
+    const apiUrl = config.apiUrl;
+    if (!apiUrl) return { success: false, error: 'omni apiUrl not configured' };
+    const path = '/api/v2/messages';
+    const bodyJson = JSON.stringify({ instanceId: instance, chatId: chat, text });
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (config.apiKey) headers.Authorization = `Bearer ${config.apiKey}`;
+    const sig = signOmniRequest('POST', path, bodyJson);
+    if (sig) Object.assign(headers, sig);
+    const res = await fetch(`${apiUrl.replace(/\/+$/, '')}${path}`, {
+      method: 'POST',
+      headers,
+      body: bodyJson,
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) return { success: false, error: `HTTP ${res.status}` };
+    // SendResult ({ success, messageId, ... }) may be top-level or `{ data }`-wrapped.
+    const json = (await res.json()) as { messageId?: string; data?: { messageId?: string } };
+    const messageId = json.messageId ?? json.data?.messageId;
+    return { success: Boolean(messageId), messageId };
+  };
+}
+
 /** Default factory — dynamically imports `nats`. Only invoked by `omni serve`. */
 export const defaultNatsFactory: NatsFactory = async ({ servers }) => {
   const nats = await import('nats');
@@ -135,15 +209,12 @@ interface InboundMessagePayload {
   sender?: string;
   instanceId?: string;
   chatId?: string;
-}
-
-interface ReactionEventPayload {
-  type?: string;
-  emoji?: string;
+  /**
+   * For a reaction `message.received`, the reacted-to message's stanza id (also
+   * embedded in `content` as `[Reaction: <emoji> on message <messageId>]`). Used
+   * to correlate the reaction to the exact approval it targets (SPIKE a).
+   */
   messageId?: string;
-  chatId?: string;
-  instanceId?: string;
-  sender?: string;
 }
 
 // ============================================================================
@@ -159,22 +230,29 @@ export interface OmniRunnerDeps {
   log?: (line: string) => void;
   /** Injectable clock. */
   now?: () => number;
-  /** Injectable correlation-id generator (tagged onto the outbound request). */
+  /** Injectable correlation-id generator (tagged onto routed one-shot replies). */
   genCorrelationId?: () => string;
   /**
    * Injectable one-shot executor. Defaults to a real `claude -p`; tests pass a
    * fake so no real claude is ever forked.
    */
   spawnClaude?: SpawnClaude;
+  /**
+   * Injectable id-returning approval send. Defaults to the Omni HTTP send
+   * ({@link makeDefaultOmniSend}); tests pass a fake that returns a known stanza
+   * id so `announce()` is exercised with zero network.
+   */
+  sendApproval?: OmniSend;
 }
 
 export interface OmniRunner {
-  /** Publish any un-announced pending approvals + expire stale rows. */
+  /** Send any un-announced pending approvals + expire stale rows. */
   tick(): void;
-  /** Handle one inbound `omni.message.*` frame. */
+  /**
+   * Handle one inbound `omni.message.*` frame — a text reply OR a reaction (both
+   * arrive on this subject in this Omni build).
+   */
   handleMessage(subject: string, data: string): void;
-  /** Handle one inbound `omni.event.*` frame (reactions). */
-  handleEvent(subject: string, data: string): void;
   /**
    * Resolve once every in-flight one-shot run has settled. Test seam — the serve
    * loop never awaits it (runs are fire-and-forget), but tests use it to observe
@@ -183,7 +261,7 @@ export interface OmniRunner {
   whenIdle(): Promise<void>;
 }
 
-function formatApprovalMessage(tool: string, inputSummary: string, correlationId: string): string {
+function formatApprovalMessage(tool: string, inputSummary: string): string {
   const preview = inputSummary.length > 200 ? `${inputSummary.slice(0, 197)}...` : inputSummary;
   return [
     '\u{1F514} *Approval Required*',
@@ -193,26 +271,21 @@ function formatApprovalMessage(tool: string, inputSummary: string, correlationId
     '',
     'Reply *y* to approve or *n* to deny',
     'Or react \u{1F44D} / \u{1F44E}',
-    '',
-    `_ref: ${correlationId}_`,
   ].join('\n');
 }
 
-/** Outbound reply payload shape — mirrors origin/v4 omni-bridge replies. */
-function buildOutboundPayload(
-  config: OmniRuntimeConfig,
-  content: string,
-  correlationId: string,
-  nowMs: number,
-): string {
-  return JSON.stringify({
-    content,
-    agent: 'genie',
-    chat_id: config.approvalChat,
-    instance_id: config.instance,
-    request_id: correlationId,
-    timestamp: new Date(nowMs).toISOString(),
-  });
+/**
+ * Parse a reaction `message.received` content — `[Reaction: <emoji> on message
+ * <id>]`, optionally prefixed by `[<displayName>]: ` — into its emoji + target
+ * stanza id. Returns null for ordinary text so the caller falls through to the
+ * text-token path. This is the sole reaction shape genie treats as a decision;
+ * the dual-emit bare-emoji echo (SPIKE a) is deliberately NOT matched here, so
+ * it can never double-resolve.
+ */
+const REACTION_RE = /\[Reaction:\s*(.+?)\s+on message\s+(.+?)\]/;
+function parseReaction(content: string): { emoji: string; targetId: string } | null {
+  const m = REACTION_RE.exec(content);
+  return m ? { emoji: m[1].trim(), targetId: m[2].trim() } : null;
 }
 
 /** chat id from payload, else parsed from `omni.message.{instance}.{chat...}`. */
@@ -223,8 +296,8 @@ function chatIdFromSubject(subject: string): string | undefined {
 
 /**
  * Outbound reply payload for a routed one-shot, addressed at the exact
- * (instance, chat) the inbound arrived on (NOT the approval chat). Same shape as
- * {@link buildOutboundPayload} so the omni side deserializes replies uniformly.
+ * (instance, chat) the inbound arrived on (NOT the approval chat). Mirrors the
+ * origin/v4 omni-bridge reply shape so the omni side deserializes it uniformly.
  */
 function buildRoutedReplyPayload(
   instance: string,
@@ -275,6 +348,7 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
   const genId =
     deps.genCorrelationId ?? (() => `req_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`);
   const spawnClaude = deps.spawnClaude ?? defaultSpawnClaude;
+  const sendApproval = deps.sendApproval ?? makeDefaultOmniSend(config);
   const vocab = {
     approveTokens: config.approveTokens,
     denyTokens: config.denyTokens,
@@ -290,6 +364,11 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
   const inFlight = new Set<string>();
   /** Live one-shot promises, so `whenIdle` (tests) can await completion. */
   const pending = new Set<Promise<void>>();
+  /** Approval ids with an announce send in flight — guards against a second tick
+   *  re-sending a row whose `omni_message_id` is not yet stored. */
+  const announcing = new Set<string>();
+  /** Live announce-send promises, drained by `whenIdle` alongside `pending`. */
+  const inFlightSends = new Set<Promise<void>>();
   const routeKey = (instance: string, chat: string): string => `${instance} ${chat}`;
   const findRoute = (instance: string, chat: string): OmniRoute | undefined =>
     routes.find((r) => r.instance === instance && r.chat === chat);
@@ -355,17 +434,45 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
     pending.add(run);
   }
 
+  /**
+   * Announce a single pending approval via the id-returning send and tag the row
+   * with the REAL Omni message id (the stanza id) the send returns — so an
+   * inbound reaction correlates to THIS approval. Tags only on a successful send;
+   * a failed/id-less send leaves the row un-tagged so the next tick retries
+   * (mirrors the old tag-after-publish semantics). Never throws.
+   */
+  async function sendAnnounce(appr: { id: string; tool: string; inputSummary: string }): Promise<void> {
+    const text = formatApprovalMessage(appr.tool, appr.inputSummary);
+    try {
+      const result = await sendApproval({ instance: config.instance ?? '', chat: config.approvalChat ?? '', text });
+      if (!result.messageId) {
+        log(
+          `[omni] announce ${appr.id}: send returned no messageId${result.error ? ` (${result.error})` : ''} — will retry`,
+        );
+        return;
+      }
+      attachOmniMessageId(db, appr.id, result.messageId);
+      log(`[omni] announced approval ${appr.id} (omni ${result.messageId})`);
+    } catch (err) {
+      log(`[omni] announce ${appr.id} failed: ${errText(err)}`);
+    }
+  }
+
+  /**
+   * Send every un-announced pending approval. Fire-and-forget per row (the tick
+   * loop never blocks on a slow HTTP send), guarded by `announcing` so a second
+   * tick before the first send settles does not double-send.
+   */
   function announce(): void {
     for (const appr of listPendingApprovals(db)) {
       if (appr.omniMessageId) continue; // already announced
-      const correlationId = genId();
-      const text = formatApprovalMessage(appr.tool, appr.inputSummary, correlationId);
-      const subject = `omni.reply.${config.instance}.${config.approvalChat}`;
-      publish(subject, buildOutboundPayload(config, text, correlationId, now()));
-      // Tag AFTER publishing so a crash mid-publish re-announces rather than
-      // silently dropping the request.
-      attachOmniMessageId(db, appr.id, correlationId);
-      log(`[omni] announced approval ${appr.id} (ref ${correlationId})`);
+      if (announcing.has(appr.id)) continue; // send in flight
+      announcing.add(appr.id);
+      const send = sendAnnounce(appr).finally(() => {
+        announcing.delete(appr.id);
+        inFlightSends.delete(send);
+      });
+      inFlightSends.add(send);
     }
   }
 
@@ -385,6 +492,25 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
       if (err instanceof ApprovalConflictError) return false;
       throw err;
     }
+  }
+
+  /**
+   * Resolve an approval from an inbound reaction. Correlates by the stored real
+   * Omni message id (the reaction's target stanza id, from the `[Reaction: … on
+   * message <id>]` content or the top-level `messageId`); falls back to oldest
+   * only when no pending row carries that id. Non-vocabulary emoji are ignored.
+   */
+  function resolveReaction(emoji: string, targetId: string | undefined, sender: string): void {
+    const decision = matchReaction(emoji, vocab);
+    if (!decision) return;
+    if (targetId) {
+      const match = listPendingApprovals(db).find((a) => a.omniMessageId === targetId);
+      if (match) {
+        tryResolve(match.id, decision, sender, `reaction ${emoji}`);
+        return;
+      }
+    }
+    resolveOldest(decision, sender, `reaction ${emoji} (fallback)`);
   }
 
   return {
@@ -415,46 +541,34 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
 
       // Only the approval chat can resolve approvals.
       if (!chatId || chatId !== config.approvalChat) return;
-      if (!msg.content) return;
-      const decision = matchTextToken(msg.content, vocab);
-      if (!decision) return;
-      resolveOldest(decision, sender, `text:"${msg.content.trim().toLowerCase()}"`);
-    },
+      // Instance-scope guard (PR #2507): another instance's reply/reaction must
+      // never resolve our approval, even if the approvalChat JID repeats.
+      if (msg.instanceId && config.instance && msg.instanceId !== config.instance) return;
+      if (!body) return;
 
-    handleEvent(subject: string, data: string): void {
-      let evt: ReactionEventPayload;
-      try {
-        evt = JSON.parse(data) as ReactionEventPayload;
-      } catch {
+      // A reaction reaches genie on THIS subject (SPIKE a) as
+      // `[Reaction: <emoji> on message <id>]`; the target id is also the
+      // top-level `messageId`. Only this form is a reaction — the dual-emit
+      // bare-emoji echo matches neither branch below, so it never double-resolves.
+      const reaction = parseReaction(body);
+      if (reaction) {
+        resolveReaction(reaction.emoji, reaction.targetId || msg.messageId, sender);
         return;
       }
-      if (evt.type !== 'reaction' || !evt.emoji) return;
-      // Scope to our own instance — text replies are already subject-scoped to
-      // `omni.message.${config.instance}.>`, but reactions arrive on a shared
-      // `omni.event.>` bus where approvalChat JIDs can repeat across instances.
-      // Without this, another instance's 👍/👎 could resolve our approval.
-      if (evt.instanceId && config.instance && evt.instanceId !== config.instance) return;
-      const chatId = evt.chatId ?? chatIdFromSubject(subject);
-      if (!chatId || chatId !== config.approvalChat) return;
-      const decision = matchReaction(evt.emoji, vocab);
-      if (!decision) return;
-      const sender = evt.sender ?? 'whatsapp-user';
 
-      // Correlate by the ref we tagged onto the row, else fall back to oldest.
-      if (evt.messageId) {
-        const match = listPendingApprovals(db).find((a) => a.omniMessageId === evt.messageId);
-        if (match) {
-          tryResolve(match.id, decision, sender, `reaction ${evt.emoji}`);
-          return;
-        }
-      }
-      resolveOldest(decision, sender, `reaction ${evt.emoji} (fallback)`);
+      // Bare text reply → oldest-pending fallback (no quoted id in this build).
+      const decision = matchTextToken(body, vocab);
+      if (!decision) return;
+      resolveOldest(decision, sender, `text:"${body.trim().toLowerCase()}"`);
     },
 
     async whenIdle(): Promise<void> {
-      // Drain in a loop: a settling run must not add new work, but snapshot-await
-      // is cheap insurance against future callers that fan out mid-drain.
-      while (pending.size > 0) await Promise.allSettled([...pending]);
+      // Drain both one-shot runs and announce sends in a loop: a settling task
+      // must not add new work, but snapshot-await is cheap insurance against
+      // future callers that fan out mid-drain.
+      while (pending.size > 0 || inFlightSends.size > 0) {
+        await Promise.allSettled([...pending, ...inFlightSends]);
+      }
     },
   };
 }
@@ -502,10 +616,11 @@ export async function runOmniServe(opts: RunOmniServeOptions): Promise<void> {
   const nc = await factory({ servers: config.natsUrl });
   const runner = createOmniRunner({ db, config, publish: nc.publish, log });
 
+  // Both text replies AND reactions arrive on `omni.message.{instance}.>` in this
+  // Omni build; the legacy `omni.event.>` subject has no publishers (SPIKE a), so
+  // it is no longer subscribed.
   const msgSub = nc.subscribe(`omni.message.${config.instance}.>`);
-  const evtSub = nc.subscribe('omni.event.>');
   void consume(msgSub, runner.handleMessage, log);
-  void consume(evtSub, runner.handleEvent, log);
 
   const timer = setInterval(() => {
     try {
@@ -526,7 +641,6 @@ export async function runOmniServe(opts: RunOmniServeOptions): Promise<void> {
 
   clearInterval(timer);
   msgSub.unsubscribe();
-  evtSub.unsubscribe();
   await nc.close();
   log('[omni] stopped');
 }

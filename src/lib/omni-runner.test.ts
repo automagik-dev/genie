@@ -10,9 +10,9 @@
 import type { Database } from 'bun:sqlite';
 import { afterEach, describe, expect, test } from 'bun:test';
 import type { OmniRuntimeConfig } from './omni-config.js';
-import { type SpawnClaude, type SpawnClaudeResult, createOmniRunner } from './omni-runner.js';
+import { type OmniSend, type SpawnClaude, type SpawnClaudeResult, createOmniRunner } from './omni-runner.js';
 import { openGlobalDb } from './v5/global-db.js';
-import { listInbox } from './v5/omni-queue.js';
+import { enqueueApproval, getApproval, listInbox } from './v5/omni-queue.js';
 
 const INSTANCE = 'inst-A';
 const ROUTE_CHAT = 'chat-42';
@@ -249,5 +249,127 @@ describe('omni runner — inbound one-shot routing', () => {
     const reply = content(published[0]);
     expect(reply.length).toBe(10);
     expect(reply.endsWith('…')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Correlated approval identity + inbound reaction resolve (Group 2).
+//
+// `announce()` sends each approval via the injectable id-returning send and
+// stores the REAL stanza id it returns; an inbound reaction (on `omni.message.*`,
+// NOT the retired `omni.event.*`) resolves the approval whose stored id it
+// targets, falling back to oldest only for bare text. Every test drives a FAKE
+// `sendApproval` — zero network.
+// ---------------------------------------------------------------------------
+const APPROVAL_CHAT = 'approval-chat'; // matches rt() above
+
+/** Fake id-returning send: assigns each approval a stanza id derived from its
+ *  input-summary marker (embedded in the formatted message), so correlation is
+ *  order-independent. `summary-A` → `stanza-A`, `summary-B` → `stanza-B`. */
+const sendApproval: OmniSend = async ({ text }) => {
+  const marker = text.includes('summary-B') ? 'B' : 'A';
+  return { success: true, messageId: `stanza-${marker}` };
+};
+
+/** An inbound frame on the approval chat, as omni would publish it. */
+function approvalInbound(payload: Record<string, unknown>): [string, string] {
+  return [
+    `omni.message.${INSTANCE}.${APPROVAL_CHAT}`,
+    JSON.stringify({ chatId: APPROVAL_CHAT, instanceId: INSTANCE, sender: 'boss', ...payload }),
+  ];
+}
+
+const reactionContent = (emoji: string, targetId: string): string => `[Reaction: ${emoji} on message ${targetId}]`;
+const THUMBS_UP = '\u{1F44D}';
+
+// A fixed clock so the runner's `expireStale` (pollBudgetMs = 10_000) never
+// expires a just-enqueued row: rows are stamped a second or two before NOW.
+const NOW = 1_000_000;
+const approvalRunner = (db: Database) =>
+  createOmniRunner({ db, config: rt(), publish: () => {}, sendApproval, now: () => NOW });
+
+describe('omni runner — correlated approval identity + reactions', () => {
+  test('announce stores the REAL stanza id returned by the send (not a genId ref)', async () => {
+    const db = freshDb();
+    const runner = approvalRunner(db);
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
+    runner.tick();
+    await runner.whenIdle();
+    expect(getApproval(db, a)?.omniMessageId).toBe('stanza-A');
+  });
+
+  test('reaction resolves the exact approval by stored stanza id, not the oldest', async () => {
+    const db = freshDb();
+    const runner = approvalRunner(db);
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
+    const b = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-B', now: NOW - 1000 });
+    runner.tick();
+    await runner.whenIdle();
+    // Both rows tagged with their own real stanza ids.
+    expect(getApproval(db, a)?.omniMessageId).toBe('stanza-A');
+    expect(getApproval(db, b)?.omniMessageId).toBe('stanza-B');
+
+    // A 👍 reaction on B's stanza id resolves B — NOT the older A.
+    runner.handleMessage(
+      ...approvalInbound({ content: reactionContent(THUMBS_UP, 'stanza-B'), messageId: 'stanza-B' }),
+    );
+    expect(getApproval(db, b)?.status).toBe('approved');
+    expect(getApproval(db, a)?.status).toBe('pending');
+  });
+
+  test('dual-emit bare-emoji echo does not double-resolve a second approval', async () => {
+    const db = freshDb();
+    const runner = approvalRunner(db);
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
+    const b = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-B', now: NOW - 1000 });
+    runner.tick();
+    await runner.whenIdle();
+
+    // A human 👍 reaches genie twice (SPIKE dual-emit): the id-bearing reaction
+    // form resolves A...
+    runner.handleMessage(
+      ...approvalInbound({ content: reactionContent(THUMBS_UP, 'stanza-A'), messageId: 'stanza-A' }),
+    );
+    // ...and a bare-emoji echo, which must be ignored (not treated as a reaction,
+    // not a text token) so it can't fall through to resolve the oldest (now B).
+    runner.handleMessage(...approvalInbound({ content: THUMBS_UP, messageId: 'stanza-A' }));
+
+    expect(getApproval(db, a)?.status).toBe('approved');
+    expect(getApproval(db, b)?.status).toBe('pending');
+  });
+
+  test('bare text reply still resolves the oldest pending approval (documented fallback)', async () => {
+    const db = freshDb();
+    const runner = approvalRunner(db);
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
+    const b = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-B', now: NOW - 1000 });
+    runner.tick();
+    await runner.whenIdle();
+
+    runner.handleMessage(...approvalInbound({ content: 'y' }));
+    // Oldest (A) resolves; B untouched — bare text carries no quoted id here.
+    expect(getApproval(db, a)?.status).toBe('approved');
+    expect(getApproval(db, b)?.status).toBe('pending');
+  });
+
+  test('a reaction from another instance is ignored (PR #2507 instance-scope guard)', async () => {
+    const db = freshDb();
+    const runner = approvalRunner(db);
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
+    runner.tick();
+    await runner.whenIdle();
+
+    // Same emoji + same stored stanza id, but a DIFFERENT instanceId → dropped.
+    runner.handleMessage(
+      `omni.message.other-instance.${APPROVAL_CHAT}`,
+      JSON.stringify({
+        content: reactionContent(THUMBS_UP, 'stanza-A'),
+        messageId: 'stanza-A',
+        chatId: APPROVAL_CHAT,
+        instanceId: 'other-instance',
+        sender: 'stranger',
+      }),
+    );
+    expect(getApproval(db, a)?.status).toBe('pending');
   });
 });

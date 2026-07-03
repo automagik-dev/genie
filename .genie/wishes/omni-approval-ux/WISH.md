@@ -98,8 +98,8 @@ grep -qiE 'set.?reaction|outbound react|GO/NO-GO|fallback' .genie/wishes/omni-ap
 3. Tests (fake transport): two concurrent pending approvals resolved to the correct one by the real id; reaction on the verified subject resolves the correlated approval; a quoted reply resolves the correlated approval; bare text still resolves oldest.
 
 **Acceptance Criteria:**
-- [ ] Concurrent approvals resolve by the real id (reaction/quoted reply), not oldest; reactions resolve on the verified subject; bare text = oldest fallback; instance-scoped.
-- [ ] typecheck + `bun test src/lib/omni-runner.test.ts src/lib/v5/omni-queue.test.ts` green.
+- [x] Concurrent approvals resolve by the real id (reaction/quoted reply), not oldest; reactions resolve on the verified subject; bare text = oldest fallback; instance-scoped.
+- [x] typecheck + `bun test src/lib/omni-runner.test.ts src/lib/v5/omni-queue.test.ts` green.
 
 **Validation:**
 ```bash
