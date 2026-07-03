@@ -255,7 +255,7 @@ export function evaluateOmniHookTimeout(params: {
       name,
       status: 'warn',
       detail: `hook timeout ${params.timeoutSec}s (${timeoutMs}ms) ≤ pollBudget ${params.pollBudgetMs}ms — CC may kill the hook before it can allow/deny or reach its ask fail-safe`,
-      suggestion: `Raise the PreToolUse \`genie hook dispatch\` timeout to ≥ ${needSec}s (e.g. 120) in ~/.claude/settings.json.`,
+      suggestion: `Raise the PreToolUse \`genie hook dispatch\` timeout to ≥ ${needSec}s in ~/.claude/settings.json.`,
     };
   }
   return {

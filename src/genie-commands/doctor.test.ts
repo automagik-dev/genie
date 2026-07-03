@@ -103,7 +103,7 @@ describe('omni hook-timeout guardrail', () => {
     const res = evaluateOmniHookTimeout({ enabled: true, pollBudgetMs: 110_000, timeoutSec: 5 });
     expect(res?.status).toBe('warn');
     expect(res?.detail).toContain('≤ pollBudget');
-    expect(res?.suggestion).toContain('120');
+    expect(res?.suggestion).toContain('111'); // floor(110_000/1000)+1 — strictly above the budget
   });
 
   test('warns at the exact boundary (timeoutMs === pollBudgetMs — strictly-below contract)', () => {
