@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | DONE — G1 spike (hand-rolled) + G2 server + G3 auto-register all SHIP-reviewed (2026-07-03); Warp live-UI QA awaits Felipe |
 | **Slug** | `genie-mcp` |
 | **Date** | 2026-07-03 |
 | **Author** | Felipe + Genie |
@@ -44,11 +44,11 @@ Genie's live state (wishes, tasks, board, what each worktree/pane is working on)
 
 ## Success Criteria
 
-- [ ] `genie mcp` answers MCP `initialize` + `tools/list` + `tools/call` over stdio and returns real genie.db state (board / wish_status / worktree_context) — automated protocol test; opens the db read-only and degrades to an empty board when absent.
-- [ ] `genie init` JSON-merge-writes idempotent `<repo>/.warp/.mcp.json` + `<repo>/.mcp.json` registering `genie mcp` (byte-identical on rerun; a pre-existing MCP server is preserved).
+- [x] `genie mcp` answers MCP `initialize` + `tools/list` + `tools/call` over stdio and returns real genie.db state (board / wish_status / worktree_context) — automated protocol test; opens the db read-only and degrades to an empty board when absent.
+- [x] `genie init` JSON-merge-writes idempotent `<repo>/.warp/.mcp.json` + `<repo>/.mcp.json` registering `genie mcp` (byte-identical on rerun; a pre-existing MCP server is preserved).
 - [ ] A real Warp AND a real Claude Code session connect to `genie mcp` and read genie state (manual QA recorded in qa.md).
-- [ ] Non-mcp paths (`genie board`/`task`/`--help`) do not initialize the MCP transport/dep (startup probe).
-- [ ] Full `bun run check` + build green; CI green on the PR.
+- [x] Non-mcp paths (`genie board`/`task`/`--help`) do not initialize the MCP transport/dep (startup probe).
+- [x] Full `bun run check` + build green; CI green on the PR.
 
 ## Execution Strategy
 
@@ -67,8 +67,8 @@ Genie's live state (wishes, tasks, board, what each worktree/pane is working on)
 2. `.genie/wishes/genie-mcp/SPIKE.md`: verdict (hand-rolled | SDK), the exact `.warp/.mcp.json` + `.mcp.json` schema (keys, the `command`/`args` shape, project vs global location), the spawn `command` form that actually runs on this install (global `genie` vs the dist/bun path), and the tools/resources JSON contract Group 2 must implement.
 
 **Acceptance Criteria:**
-- [ ] SPIKE.md documents the transport verdict + the confirmed config schema + command form, with evidence from BOTH real clients.
-- [ ] The scratch config uses the PROJECT `<repo>/.warp/.mcp.json` (confirmed distinct from the global `~/.warp/launch_configurations/`).
+- [x] SPIKE.md documents the transport verdict + the confirmed config schema + command form, with evidence from BOTH real clients.
+- [x] The scratch config uses the PROJECT `<repo>/.warp/.mcp.json` (confirmed distinct from the global `~/.warp/launch_configurations/`).
 
 **Validation:**
 ```bash
@@ -94,9 +94,9 @@ grep -qiE 'command' .genie/wishes/genie-mcp/SPIKE.md
 4. Tests: an MCP-protocol test (spawn `genie mcp`, drive initialize → tools/list → tools/call, assert real genie.db state); a readonly + absent-db test; a non-mcp init probe (the MCP transport/dep is NOT loaded on `board`/`task`/`--help`).
 
 **Acceptance Criteria:**
-- [ ] `genie mcp` answers initialize/tools/list/tools/call over stdio with real genie.db state; opens read-only; degrades to empty board on absent db.
-- [ ] Non-mcp paths don't initialize the MCP transport/dep (probe test).
-- [ ] typecheck + `bun test` for the mcp module + build green; `--help` lists `mcp`.
+- [x] `genie mcp` answers initialize/tools/list/tools/call over stdio with real genie.db state; opens read-only; degrades to empty board on absent db.
+- [x] Non-mcp paths don't initialize the MCP transport/dep (probe test).
+- [x] typecheck + `bun test` for the mcp module + build green; `--help` lists `mcp`.
 
 **Validation:**
 ```bash
@@ -128,9 +128,9 @@ echo "$OUT" | grep -q '"result"' || { echo "FAIL: mcp initialize no result"; exi
 3. Tests: idempotent merge test — empty case AND a pre-populated `.mcp.json` with ANOTHER server (assert the other server survives + byte-identical rerun); `genie init` in a fixture repo registers `genie mcp` in both files.
 
 **Acceptance Criteria:**
-- [ ] `genie init` writes/merges both files registering `genie mcp`; a pre-existing MCP server is preserved; rerun is byte-identical.
-- [ ] Docs updated; the tab-info limitation stated honestly.
-- [ ] Full `bun run check` green.
+- [x] `genie init` writes/merges both files registering `genie mcp`; a pre-existing MCP server is preserved; rerun is byte-identical.
+- [x] Docs updated; the tab-info limitation stated honestly.
+- [x] Full `bun run check` green.
 
 **Validation:**
 ```bash
