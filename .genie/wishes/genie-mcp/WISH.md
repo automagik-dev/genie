@@ -67,8 +67,8 @@ Genie's live state (wishes, tasks, board, what each worktree/pane is working on)
 2. `.genie/wishes/genie-mcp/SPIKE.md`: verdict (hand-rolled | SDK), the exact `.warp/.mcp.json` + `.mcp.json` schema (keys, the `command`/`args` shape, project vs global location), the spawn `command` form that actually runs on this install (global `genie` vs the dist/bun path), and the tools/resources JSON contract Group 2 must implement.
 
 **Acceptance Criteria:**
-- [ ] SPIKE.md documents the transport verdict + the confirmed config schema + command form, with evidence from BOTH real clients.
-- [ ] The scratch config uses the PROJECT `<repo>/.warp/.mcp.json` (confirmed distinct from the global `~/.warp/launch_configurations/`).
+- [x] SPIKE.md documents the transport verdict + the confirmed config schema + command form, with evidence from BOTH real clients.
+- [x] The scratch config uses the PROJECT `<repo>/.warp/.mcp.json` (confirmed distinct from the global `~/.warp/launch_configurations/`).
 
 **Validation:**
 ```bash
