@@ -144,6 +144,11 @@ export async function runMcpServer(): Promise<void> {
       // Unparseable line → cannot attribute an id; drop it (no id to reply to).
       return;
     }
+    // A JSON-RPC request must be a non-null object. `JSON.parse('null')` and bare
+    // primitives are valid JSON but carry no id to attribute — drop them like an
+    // unparseable line. Without this, `dispatch(null)` (and the catch below) throw
+    // on `null.id`, and the uncaught error crashes the server on a `null` line.
+    if (req === null || typeof req !== 'object') return;
     try {
       dispatch(req);
     } catch (e) {
