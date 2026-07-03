@@ -5,7 +5,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const CLI = join(import.meta.dir, '..', 'genie.ts');
-const GITIGNORE_RULES = ['.genie/genie.db', '.genie/genie.db-wal', '.genie/genie.db-shm'];
+const GITIGNORE_RULES = [
+  '.genie/genie.db',
+  '.genie/genie.db-wal',
+  '.genie/genie.db-shm',
+  '.mcp.json',
+  '.warp/.mcp.json',
+];
 
 let dir: string;
 
@@ -233,6 +239,39 @@ describe('genie init', () => {
       expect(stderr).toContain('.mcp.json');
       // The bad file is left untouched.
       expect(readFileSync(mcpPath(dir), 'utf-8')).toBe('not json {');
+    });
+
+    /** True when `git check-ignore <path>` exits 0 (i.e. the path is ignored) in `cwd`. */
+    function isIgnored(cwd: string, path: string): boolean {
+      const res = Bun.spawnSync(['git', 'check-ignore', path], { cwd, stdout: 'pipe', stderr: 'pipe' });
+      return res.exitCode === 0;
+    }
+
+    test('the machine-specific MCP configs genie writes are actually gitignored', () => {
+      initGitRepo(dir);
+      expect(runInit(dir).code).toBe(0);
+
+      // The rules are present in .gitignore...
+      const gitignore = readFileSync(join(dir, '.gitignore'), 'utf-8');
+      expect(gitignore).toContain('.mcp.json');
+      expect(gitignore).toContain('.warp/.mcp.json');
+
+      // ...and git agrees the files genie generated are ignored (never committable).
+      expect(existsSync(mcpPath(dir))).toBe(true);
+      expect(existsSync(warpMcpPath(dir))).toBe(true);
+      expect(isIgnored(dir, '.mcp.json')).toBe(true);
+      expect(isIgnored(dir, '.warp/.mcp.json')).toBe(true);
+    });
+
+    test('rerun does not duplicate the MCP ignore rules', () => {
+      initGitRepo(dir);
+      expect(runInit(dir).code).toBe(0);
+      expect(runInit(dir).code).toBe(0);
+
+      const gitignore = readFileSync(join(dir, '.gitignore'), 'utf-8');
+      const count = (rule: string) => gitignore.split('\n').filter((l) => l.trim() === rule).length;
+      expect(count('.mcp.json')).toBe(1);
+      expect(count('.warp/.mcp.json')).toBe(1);
     });
   });
 });

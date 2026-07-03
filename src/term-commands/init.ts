@@ -62,8 +62,25 @@ const INDEX_SKELETON = `# Plans Index
 ## Poured
 `;
 
-/** SQLite state artifacts that must never be committed. */
-const GITIGNORE_RULES = ['.genie/genie.db', '.genie/genie.db-wal', '.genie/genie.db-shm'];
+/**
+ * Machine-local artifacts that must never be committed, grouped into blocks so a
+ * block can carry an explanatory comment. The SQLite state files are
+ * self-evident (no comment); the MCP configs get one because they embed a
+ * machine-specific absolute path (see {@link genieMcpEntry}) that is wrong on
+ * every other checkout — exactly the footgun the ignore rules exist to prevent.
+ */
+interface GitignoreBlock {
+  comment?: string;
+  rules: string[];
+}
+
+const GITIGNORE_BLOCKS: GitignoreBlock[] = [
+  { rules: ['.genie/genie.db', '.genie/genie.db-wal', '.genie/genie.db-shm'] },
+  {
+    comment: '# genie MCP server registration (machine-specific absolute path)',
+    rules: ['.mcp.json', '.warp/.mcp.json'],
+  },
+];
 
 // ============================================================================
 // Git repo resolution
@@ -119,14 +136,25 @@ function scaffoldGitignore(root: string): { action: ArtifactAction; added: strin
   const exists = existsSync(gitignorePath);
   const existing = exists ? readFileSync(gitignorePath, 'utf-8') : '';
   const present = new Set(existing.split('\n').map((l) => l.trim()));
-  const missing = GITIGNORE_RULES.filter((rule) => !present.has(rule));
 
-  if (missing.length === 0) return { action: 'skipped', added: [] };
+  // Append each block's missing rules (and, when the block has new rules, its
+  // comment) — never a rule already present, so a second run writes nothing.
+  const added: string[] = [];
+  const lines: string[] = [];
+  for (const block of GITIGNORE_BLOCKS) {
+    const missing = block.rules.filter((rule) => !present.has(rule));
+    if (missing.length === 0) continue;
+    if (block.comment && !present.has(block.comment)) lines.push(block.comment);
+    lines.push(...missing);
+    added.push(...missing);
+  }
+
+  if (added.length === 0) return { action: 'skipped', added: [] };
 
   // Preserve existing content; ensure a newline boundary before appending.
   const prefix = existing.length > 0 && !existing.endsWith('\n') ? `${existing}\n` : existing;
-  writeFileSync(gitignorePath, `${prefix}${missing.join('\n')}\n`);
-  return { action: exists ? 'updated' : 'created', added: missing };
+  writeFileSync(gitignorePath, `${prefix}${lines.join('\n')}\n`);
+  return { action: exists ? 'updated' : 'created', added };
 }
 
 // ============================================================================
