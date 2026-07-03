@@ -1,20 +1,15 @@
 /**
- * Omni Auto-Registration — register genie agents in Omni's agent directory.
+ * Omni auto-registration — register a genie agent in Omni's directory over
+ * SIGNED HTTP (the only signed-HTTP path in the runner; all other omni traffic
+ * is NATS publish).
  *
- * When `OMNI_API_URL` env var or `config.omni.apiUrl` is set, agents are
- * auto-registered in Omni for identity reconciliation + A2A reachability.
- *
- * Graceful no-op when Omni is not configured. Omni API failure warns but
- * does not block local registration.
+ * Ported from origin/v4:src/lib/omni-registration.ts, trimmed of the v4 audit
+ * pipeline (no `audit.ts` in v5). Graceful no-op when Omni is unconfigured;
+ * omni-side failures warn (to stderr) but never throw.
  */
 
-import { generateTraceId, getActor, recordAuditEvent } from './audit.js';
 import { loadGenieConfig } from './genie-config.js';
 import { signOmniRequest } from './omni-signature.js';
-
-// ============================================================================
-// Types
-// ============================================================================
 
 interface OmniAgentRegistration {
   name: string;
@@ -36,58 +31,36 @@ interface OmniAgentResponse {
   updatedAt: string;
 }
 
-// ============================================================================
-// Configuration
-// ============================================================================
-
-/**
- * Resolve the Omni API URL from env var or genie config.
- * Returns null if Omni is not configured.
- */
+/** Resolve the Omni API URL from env var or genie config; null when unset. */
 export async function resolveOmniApiUrl(): Promise<string | null> {
-  // Env var takes precedence
   const envUrl = process.env.OMNI_API_URL;
   if (envUrl) return envUrl;
-
-  // Fall back to genie config
   const config = await loadGenieConfig();
   return config.omni?.apiUrl ?? null;
 }
 
-/**
- * Resolve the Omni API key from env var or genie config.
- */
-async function resolveOmniApiKey(): Promise<string | undefined> {
+/** Resolve the Omni API key from env var or genie config. */
+export async function resolveOmniApiKey(): Promise<string | undefined> {
   const envKey = process.env.OMNI_API_KEY;
   if (envKey) return envKey;
-
   const config = await loadGenieConfig();
   return config.omni?.apiKey;
 }
 
-// ============================================================================
-// Public API
-// ============================================================================
-
 /**
- * Register an agent in Omni's directory.
+ * Register an agent in Omni's directory via `POST /api/v2/agents`. Attaches the
+ * ed25519 signature headers when this host has run `genie omni handshake`;
+ * bearer stays the auth source until omni's verifier flips on.
  *
- * Creates the agent via POST /api/v2/agents with session isolation metadata
- * (separate sessions per person + per channel).
- *
- * @returns The Omni agent ID on success, null if Omni is not configured or unreachable.
+ * @returns The Omni agent id on success, null when unconfigured or unreachable.
  */
 export async function registerAgentInOmni(
   agentName: string,
-  options?: {
-    model?: string;
-    roles?: string[];
-  },
+  options?: { model?: string; roles?: string[]; apiUrl?: string; apiKey?: string },
 ): Promise<string | null> {
-  const apiUrl = await resolveOmniApiUrl();
+  const apiUrl = options?.apiUrl ?? (await resolveOmniApiUrl());
   if (!apiUrl) return null;
-
-  const apiKey = await resolveOmniApiKey();
+  const apiKey = options?.apiKey ?? (await resolveOmniApiKey());
 
   const body: OmniAgentRegistration = {
     name: agentName,
@@ -97,108 +70,37 @@ export async function registerAgentInOmni(
     capabilities: options?.roles ?? [],
     metadata: {
       source: 'genie',
-      sessionIsolation: {
-        perPerson: true,
-        perChannel: true,
-      },
+      sessionIsolation: { perPerson: true, perChannel: true },
       registeredAt: new Date().toISOString(),
     },
   };
 
-  const traceId = generateTraceId();
-
   try {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      'X-Trace-Id': traceId,
-    };
-    if (apiKey) {
-      headers.Authorization = `Bearer ${apiKey}`;
-    }
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
 
-    // Per omni-host-fingerprint-trust wish (Group 3): if this host has
-    // registered via `genie omni handshake`, attach the ed25519 signature
-    // headers so omni can verify the request came from a known host. Bearer
-    // stays as the auth source until Group 6's --require-genie-signature
-    // flag is on; the signature is informational/audit until then.
     const bodyJson = JSON.stringify(body);
     const sig = signOmniRequest('POST', '/api/v2/agents', bodyJson);
     if (sig) Object.assign(headers, sig);
 
-    const response = await fetch(`${apiUrl}/api/v2/agents`, {
+    const response = await fetch(`${apiUrl.replace(/\/+$/, '')}/api/v2/agents`, {
       method: 'POST',
       headers,
       body: bodyJson,
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(10_000),
     });
 
     if (!response.ok) {
       const text = await response.text().catch(() => '');
-      console.warn(`Warning: Omni registration failed (HTTP ${response.status}): ${text}`);
-      recordAuditEvent('omni', agentName, 'registration_error', getActor(), {
-        traceId,
-        status: response.status,
-        error: text.slice(0, 200),
-      }).catch(() => {});
+      process.stderr.write(`[omni-registration] failed (HTTP ${response.status}): ${text.slice(0, 200)}\n`);
       return null;
     }
 
     const result = (await response.json()) as { data: OmniAgentResponse };
-    recordAuditEvent('omni', agentName, 'registration_success', getActor(), {
-      traceId,
-      omniAgentId: result.data.id,
-    }).catch(() => {});
     return result.data.id;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.warn(`Warning: Omni registration failed: ${message}`);
-    recordAuditEvent('omni', agentName, 'registration_error', getActor(), {
-      traceId,
-      error: message.slice(0, 200),
-    }).catch(() => {});
-    return null;
-  }
-}
-
-/**
- * Check if an agent already exists in Omni by name.
- *
- * @returns The Omni agent ID if found, null otherwise.
- */
-export async function findOmniAgent(agentName: string): Promise<string | null> {
-  const apiUrl = await resolveOmniApiUrl();
-  if (!apiUrl) return null;
-
-  const apiKey = await resolveOmniApiKey();
-
-  const traceId = generateTraceId();
-
-  try {
-    const headers: Record<string, string> = {
-      'X-Trace-Id': traceId,
-    };
-    if (apiKey) {
-      headers.Authorization = `Bearer ${apiKey}`;
-    }
-
-    // Sign the GET as well — empty body, but the path includes the query
-    // string so the verifier sees the same canonical input we sign here.
-    const path = `/api/v2/agents?name=${encodeURIComponent(agentName)}`;
-    const sig = signOmniRequest('GET', path, '');
-    if (sig) Object.assign(headers, sig);
-
-    const response = await fetch(`${apiUrl}${path}`, {
-      method: 'GET',
-      headers,
-      signal: AbortSignal.timeout(10000),
-    });
-
-    if (!response.ok) return null;
-
-    const result = (await response.json()) as { data: OmniAgentResponse[] };
-    const match = result.data?.find((a) => a.name === agentName && a.isActive);
-    return match?.id ?? null;
-  } catch {
+    process.stderr.write(`[omni-registration] failed: ${message}\n`);
     return null;
   }
 }

@@ -189,6 +189,30 @@ describe('branch-guard', () => {
     }
   });
 
+  describe('allows gh pr merge when PR targets v5 (v5-foundation branch)', () => {
+    const allowed = [
+      'gh pr merge 200',
+      'gh pr merge 201 --squash',
+      'gh pr merge 202 --auto --delete-branch',
+      'gh pr merge 203 --repo automagik-dev/genie',
+    ];
+
+    for (const cmd of allowed) {
+      test(`allows: ${cmd}`, async () => {
+        const result = await branchGuard(makePayload(cmd), mockDeps('v5'));
+        expect(result).toBeUndefined();
+      });
+    }
+  });
+
+  test('still denies gh pr merge when PR targets main even after v5 allowlist', async () => {
+    const result = await branchGuard(makePayload('gh pr merge 210 --squash'), mockDeps('main'));
+    expect(result).toBeDefined();
+    expect(result!.decision).toBe('deny');
+    expect(result!.reason).toContain('main');
+    expect(result!.reason).toContain('§19');
+  });
+
   // Regression: multi-repo workstation — the hook's `gh pr view` subprocess
   // inherits a cwd whose git remote points at a different fork/clone than
   // the PR being merged, so default gh resolution lands on the wrong repo

@@ -65,6 +65,39 @@ const OtelConfigSchema = z.object({
   logPrompts: z.boolean().default(true),
 });
 
+// Omni remote-approval configuration — the human-in-the-loop gate that lets a
+// tool call be approved/denied from a phone via the Omni (WhatsApp) runner.
+const OmniApprovalsConfigSchema = z.object({
+  /**
+   * Master switch for the PreToolUse approval handler. When false (default) the
+   * `omni-approval` hook handler is NOT registered and the dispatcher output is
+   * byte-identical to a build without Omni. When true, gated tool calls block
+   * on a global-DB approval row resolved by the `omni serve` runner.
+   */
+  enabled: z.boolean().default(false),
+  /** Regex source matched against tool_name to decide which calls to gate. */
+  tools: z.string().default('^(Bash|Write|Edit|NotebookEdit)$'),
+  /**
+   * Hook self-timeout budget (ms) — how long the PreToolUse handler polls for a
+   * remote resolution before falling back to `ask`. MUST stay strictly below the
+   * Claude Code hook `timeout` (SECONDS) wherever `genie hook dispatch` is
+   * installed, or CC kills the hook before it can allow/deny OR reach its
+   * timeout→ask fail-safe. The shipped dispatch entries default to 5s/15s, which
+   * is far below this 110s default: enabling approvals REQUIRES raising the hook
+   * `timeout` (e.g. 120s) on the PreToolUse dispatch entry — see
+   * `.claude/settings.json` / `plugins/genie/hooks/hooks.json`.
+   */
+  pollBudgetMs: z.number().default(110_000),
+  /** Poll interval while waiting for a resolution (ms). */
+  pollIntervalMs: z.number().default(400),
+  /** Approve/deny text tokens (case-insensitive). Empty → runner defaults. */
+  approveTokens: z.array(z.string()).optional(),
+  denyTokens: z.array(z.string()).optional(),
+  /** Approve/deny reaction emoji. Empty → runner defaults. */
+  approveReactions: z.array(z.string()).optional(),
+  denyReactions: z.array(z.string()).optional(),
+});
+
 // Omni integration configuration
 const OmniConfigSchema = z.object({
   apiUrl: z.string(),
@@ -72,6 +105,33 @@ const OmniConfigSchema = z.object({
   defaultInstanceId: z.string().optional(),
   /** Executor type for the omni bridge: 'tmux' (default) or 'sdk'. */
   executor: z.enum(['tmux', 'sdk']).optional(),
+  /** NATS server URL the `omni serve` runner connects to. */
+  natsUrl: z.string().optional(),
+  /** Omni instance id whose chat carries approval traffic. */
+  instance: z.string().optional(),
+  /** Chat/JID the approval-request messages are sent to and replies read from. */
+  approvalChat: z.string().optional(),
+  /**
+   * Inbound one-shot routes. Each maps a specific (instance, chat) pair to an
+   * absolute repo dir; a mapped chat spawns a bounded `claude -p` in that dir
+   * and replies with the result. Unmapped chats are store-only (never spawn).
+   */
+  routes: z
+    .array(
+      z.object({
+        instance: z.string(),
+        chat: z.string(),
+        /** Absolute directory the one-shot runs in (cwd of `claude -p`). */
+        repo: z.string(),
+      }),
+    )
+    .optional(),
+  /** Wall-clock budget for a single inbound one-shot `claude -p` run (ms). */
+  inboundTimeoutMs: z.number().optional(),
+  /** Max chars of one-shot stdout returned as a reply (truncated past this). */
+  inboundMaxReplyChars: z.number().optional(),
+  /** Remote-approval gate settings. */
+  approvals: OmniApprovalsConfigSchema.optional(),
 });
 
 // Brain integration configuration (@khal-os/brain, enterprise)
@@ -161,6 +221,6 @@ export const GenieConfigSchema = z.object({
 });
 
 // Inferred types
-export type TerminalConfig = z.infer<typeof TerminalConfigSchema>;
 export type ShortcutsConfig = z.infer<typeof ShortcutsConfigSchema>;
 export type GenieConfig = z.infer<typeof GenieConfigSchema>;
+export type OmniConfig = z.infer<typeof OmniConfigSchema>;

@@ -59,18 +59,22 @@ yarn-error.log*
 .claude/worktrees/
 .worktrees/
 
+# In v5, .genie/ follows documents-in-git / state-in-sqlite: planning documents
+# (INDEX.md, wishes/, brainstorms/) are genie's own taxonomy — tracked and
+# reviewed in PRs. Runtime state is never git-versioned: the SQLite engine
+# (genie.db + sidecars) plus the legacy v4 state paths listed below.
+
 # Worker registry (contains session IDs)
 .genie/workers.json
+
+# Genie v5 operational state — SQLite state engine, never git-versioned
+.genie/genie.db
+.genie/genie.db-wal
+.genie/genie.db-shm
 
 # Local genie state (not part of the package)
 .genie/agents.json
 .genie/teams/
-.genie/brainstorms/**
-!.genie/brainstorms/*/
-!.genie/brainstorms/*/DESIGN.md
-!.genie/brainstorms/*/DRAFT.md
-!.genie/brainstorms/*/COUNCIL.md
-!.genie/brainstorms/README.md
 
 # Team runtime state
 .genie/mailbox/

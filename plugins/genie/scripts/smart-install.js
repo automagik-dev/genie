@@ -414,24 +414,25 @@ function configureTmux() {
 }
 
 /**
- * Install or upgrade genie CLI globally via bun
+ * genie CLI is missing — advise the canonical v5 install path.
+ *
+ * v5 ships as cosign/SLSA-signed tarballs via GitHub Releases + install.sh.
+ * The old npm/bun-global path (`bun add -g` of the @automagik package) was
+ * discontinued 2026-05-09 and no longer resolves a current build.
+ *
+ * We deliberately do NOT run the network installer from this SessionStart hook:
+ * `curl | bash` downloads, cosign-verifies, extracts, and rewrites the user's
+ * shell rc — too heavy and intrusive to do silently while a Claude Code session
+ * is starting, and it would block startup on the network. Instead we print the
+ * one canonical command and let the user run it deliberately. The hook stays
+ * fast and never hard-fails on a missing CLI.
  */
-function installGenieCli() {
-  const bunPath = getBunPath();
-  if (!bunPath) {
-    throw new Error('Bun executable not found — cannot install genie CLI');
-  }
-
-  console.error('Installing genie CLI globally via bun...');
-
-  const bunCmd = IS_WINDOWS && bunPath.includes(' ') ? `"${bunPath}"` : bunPath;
-  execSync(`${bunCmd} add -g @automagik/genie@latest`, { stdio: ['pipe', 'pipe', 'pipe'], shell: IS_WINDOWS });
-
-  const newVersion = getGenieVersion();
-  if (!newVersion) {
-    throw new Error('genie CLI installation completed but binary not found. Restart your terminal.');
-  }
-  console.error(`genie CLI ${newVersion} installed`);
+function adviseGenieCliInstall() {
+  console.error('');
+  console.error('genie CLI is not installed.');
+  console.error('Install it (cosign + SLSA verified) with:');
+  console.error('  curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash');
+  console.error('');
 }
 
 // Main execution
@@ -503,14 +504,9 @@ try {
     console.error(`Warning: Could not configure tmux TUI: ${e.message}`);
   }
 
-  // 4. Install or upgrade genie CLI via bun global (non-fatal)
+  // 4. Advise on genie CLI install if missing (non-fatal, no network in-hook)
   if (genieCliNeedsInstall()) {
-    try {
-      installGenieCli();
-    } catch (e) {
-      console.error(`Warning: genie CLI install/upgrade failed: ${e.message}`);
-      console.error('The plugin will still work. Install genie CLI manually later.');
-    }
+    adviseGenieCliInstall();
   }
 } catch (e) {
   // Only Bun install failure reaches here — everything else is graceful.

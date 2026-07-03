@@ -1,12 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import {
-  type GenieConfig,
-  GenieConfigSchema,
-  type ShortcutsConfig,
-  type TerminalConfig,
-} from '../types/genie-config.js';
+import { type GenieConfig, GenieConfigSchema, type ShortcutsConfig } from '../types/genie-config.js';
 
 const GENIE_DIR = join(homedir(), '.genie');
 const GENIE_CONFIG_FILE = join(GENIE_DIR, 'config.json');
@@ -84,23 +79,6 @@ function getDefaultGenieConfig(): GenieConfig {
 }
 
 /**
- * Load genie config synchronously, returning defaults if not found
- */
-export function loadGenieConfigSync(): GenieConfig {
-  if (!existsSync(GENIE_CONFIG_FILE)) {
-    return GenieConfigSchema.parse({});
-  }
-
-  try {
-    const content = readFileSync(GENIE_CONFIG_FILE, 'utf-8');
-    const data = JSON.parse(content);
-    return GenieConfigSchema.parse(data);
-  } catch {
-    return GenieConfigSchema.parse({});
-  }
-}
-
-/**
  * Contract home directory to ~ in a path (for display)
  */
 export function contractPath(path: string): string {
@@ -117,23 +95,6 @@ export function contractPath(path: string): string {
 // ============================================================================
 // New helper functions for v2 config
 // ============================================================================
-
-/**
- * Get terminal configuration
- */
-export function getTerminalConfig(): TerminalConfig {
-  const config = loadGenieConfigSync();
-  return config.terminal;
-}
-
-/**
- * Check if setup has been completed
- */
-export function isSetupComplete(): boolean {
-  if (!genieConfigExists()) return false;
-  const config = loadGenieConfigSync();
-  return config.setupComplete ?? false;
-}
 
 /**
  * Mark setup as complete

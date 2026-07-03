@@ -1,65 +1,157 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { scaffoldAgentFiles } from '../templates/index.js';
-import { scaffoldAgentInWorkspace } from './init.js';
 
-let testDir: string;
+const CLI = join(import.meta.dir, '..', 'genie.ts');
+const GITIGNORE_RULES = ['.genie/genie.db', '.genie/genie.db-wal', '.genie/genie.db-shm'];
+
+let dir: string;
+
+function initGitRepo(root: string): void {
+  execFileSync('git', ['init', '-q'], { cwd: root, stdio: ['pipe', 'pipe', 'pipe'] });
+}
+
+/** Run `genie init` in `cwd`. Returns { code, stdout, stderr }. */
+function runInit(cwd: string, args: string[] = []): { code: number; stdout: string; stderr: string } {
+  const res = Bun.spawnSync(['bun', CLI, 'init', ...args], { cwd, stdout: 'pipe', stderr: 'pipe' });
+  return {
+    code: res.exitCode,
+    stdout: res.stdout.toString(),
+    stderr: res.stderr.toString(),
+  };
+}
 
 beforeEach(() => {
-  testDir = join(tmpdir(), `genie-init-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-  mkdirSync(testDir, { recursive: true });
+  dir = mkdtempSync(join(tmpdir(), 'genie-init-'));
 });
 
 afterEach(() => {
-  rmSync(testDir, { recursive: true, force: true });
+  rmSync(dir, { recursive: true, force: true });
 });
 
-describe('scaffoldAgentFiles', () => {
-  test('creates AGENTS.md, SOUL.md, HEARTBEAT.md', () => {
-    scaffoldAgentFiles(testDir);
-    expect(existsSync(join(testDir, 'AGENTS.md'))).toBe(true);
-    expect(existsSync(join(testDir, 'SOUL.md'))).toBe(true);
-    expect(existsSync(join(testDir, 'HEARTBEAT.md'))).toBe(true);
+describe('genie init', () => {
+  test('fresh repo: scaffolds INDEX.md and appends all ignore rules', () => {
+    initGitRepo(dir);
+    const { code, stdout } = runInit(dir);
+
+    expect(code).toBe(0);
+    const indexPath = join(dir, '.genie', 'INDEX.md');
+    expect(existsSync(indexPath)).toBe(true);
+    const index = readFileSync(indexPath, 'utf-8');
+    expect(index).toContain('# Plans Index');
+    for (const section of ['## Raw', '## Simmering', '## Ready', '## Poured']) {
+      expect(index).toContain(section);
+    }
+
+    const gitignore = readFileSync(join(dir, '.gitignore'), 'utf-8');
+    for (const rule of GITIGNORE_RULES) {
+      expect(gitignore).toContain(rule);
+    }
+    expect(stdout).toContain('/brainstorm');
+    expect(stdout).toContain('genie board');
   });
 
-  test('substitutes agent name in AGENTS.md frontmatter', () => {
-    scaffoldAgentFiles(testDir, 'atlas');
-    const content = readFileSync(join(testDir, 'AGENTS.md'), 'utf-8');
-    expect(content).toContain('name: atlas');
-    expect(content).not.toContain('name: my-agent');
+  test('second run is a no-op: .gitignore and INDEX.md are byte-identical', () => {
+    initGitRepo(dir);
+    expect(runInit(dir).code).toBe(0);
+
+    const indexPath = join(dir, '.genie', 'INDEX.md');
+    const gitignorePath = join(dir, '.gitignore');
+    const indexBefore = readFileSync(indexPath);
+    const gitignoreBefore = readFileSync(gitignorePath);
+
+    expect(runInit(dir).code).toBe(0);
+
+    expect(readFileSync(indexPath).equals(indexBefore)).toBe(true);
+    expect(readFileSync(gitignorePath).equals(gitignoreBefore)).toBe(true);
   });
 
-  test('no active name field when no agent name provided', () => {
-    scaffoldAgentFiles(testDir);
-    const content = readFileSync(join(testDir, 'AGENTS.md'), 'utf-8');
-    // With the new template, name derives from directory — no active name: field
-    expect(content).not.toMatch(/^name:/m);
+  test('non-git directory: refuses with exit 1 and clear stderr', () => {
+    const { code, stderr } = runInit(dir);
+    expect(code).toBe(1);
+    expect(stderr.toLowerCase()).toContain('git repository');
+    expect(existsSync(join(dir, '.genie', 'INDEX.md'))).toBe(false);
+    expect(existsSync(join(dir, '.gitignore'))).toBe(false);
   });
-});
 
-describe('scaffoldAgentInWorkspace', () => {
-  test('writes settings.local.json with auto-memory enabled and seeds MEMORY.md', () => {
-    // Minimal workspace.json so getWorkspaceConfig doesn't crash
-    mkdirSync(join(testDir, '.genie'), { recursive: true });
-    writeFileSync(join(testDir, '.genie', 'workspace.json'), `${JSON.stringify({ name: 'test-ws' }, null, 2)}\n`);
+  test('partial state: INDEX exists, rules missing → only rules appended, INDEX untouched', () => {
+    initGitRepo(dir);
+    const indexPath = join(dir, '.genie', 'INDEX.md');
+    mkdirSync(join(dir, '.genie'), { recursive: true });
+    writeFileSync(indexPath, '# Plans Index\n\ncustom content\n');
+    const indexBefore = readFileSync(indexPath);
 
-    scaffoldAgentInWorkspace(testDir, 'atlas');
+    const { code } = runInit(dir);
+    expect(code).toBe(0);
 
-    const settingsPath = join(testDir, 'agents', 'atlas', '.claude', 'settings.local.json');
-    expect(existsSync(settingsPath)).toBe(true);
-    const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
-    expect(settings).toEqual({
-      agentName: 'atlas',
-      autoMemoryEnabled: true,
-      autoMemoryDirectory: './brain/memory',
-    });
+    // INDEX preserved (not overwritten with skeleton).
+    expect(readFileSync(indexPath).equals(indexBefore)).toBe(true);
+    const gitignore = readFileSync(join(dir, '.gitignore'), 'utf-8');
+    for (const rule of GITIGNORE_RULES) {
+      expect(gitignore).toContain(rule);
+    }
+  });
 
-    const memoryPath = join(testDir, 'agents', 'atlas', 'brain', 'memory', 'MEMORY.md');
-    expect(existsSync(memoryPath)).toBe(true);
-    const memory = readFileSync(memoryPath, 'utf-8');
-    expect(memory).toContain('# Memory Index');
-    expect(memory).toContain('auto-memory system');
+  test('partial state: rules exist, INDEX missing → only INDEX created, .gitignore untouched', () => {
+    initGitRepo(dir);
+    const gitignorePath = join(dir, '.gitignore');
+    writeFileSync(gitignorePath, `node_modules\n${GITIGNORE_RULES.join('\n')}\n`);
+    const gitignoreBefore = readFileSync(gitignorePath);
+
+    const { code } = runInit(dir);
+    expect(code).toBe(0);
+
+    expect(readFileSync(gitignorePath).equals(gitignoreBefore)).toBe(true);
+    expect(existsSync(join(dir, '.genie', 'INDEX.md'))).toBe(true);
+  });
+
+  test('existing .gitignore content is preserved and rules appended after it', () => {
+    initGitRepo(dir);
+    const gitignorePath = join(dir, '.gitignore');
+    writeFileSync(gitignorePath, 'node_modules\ndist\n');
+
+    const { code } = runInit(dir);
+    expect(code).toBe(0);
+
+    const gitignore = readFileSync(gitignorePath, 'utf-8');
+    expect(gitignore).toContain('node_modules');
+    expect(gitignore).toContain('dist');
+    for (const rule of GITIGNORE_RULES) {
+      expect(gitignore).toContain(rule);
+    }
+    // Rules appended after existing content.
+    expect(gitignore.indexOf('node_modules')).toBeLessThan(gitignore.indexOf('.genie/genie.db'));
+  });
+
+  test('existing .gitignore without trailing newline still yields well-formed rules', () => {
+    initGitRepo(dir);
+    const gitignorePath = join(dir, '.gitignore');
+    writeFileSync(gitignorePath, 'dist'); // no trailing newline
+    expect(runInit(dir).code).toBe(0);
+
+    const gitignore = readFileSync(gitignorePath, 'utf-8');
+    expect(gitignore).toContain('dist\n.genie/genie.db\n');
+    // Idempotent despite the awkward starting state.
+    const after = readFileSync(gitignorePath);
+    expect(runInit(dir).code).toBe(0);
+    expect(readFileSync(gitignorePath).equals(after)).toBe(true);
+  });
+
+  test('--json emits per-artifact actions', () => {
+    initGitRepo(dir);
+    const { code, stdout } = runInit(dir, ['--json']);
+    expect(code).toBe(0);
+    const parsed = JSON.parse(stdout);
+    expect(parsed.index).toBe('created');
+    expect(parsed.gitignore).toBe('created');
+    expect(parsed.rulesAdded).toEqual(GITIGNORE_RULES);
+
+    // Second run: everything skipped.
+    const second = JSON.parse(runInit(dir, ['--json']).stdout);
+    expect(second.index).toBe('skipped');
+    expect(second.gitignore).toBe('skipped');
+    expect(second.rulesAdded).toEqual([]);
   });
 });

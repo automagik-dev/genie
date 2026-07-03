@@ -16,8 +16,8 @@ Convert a validated idea into an executable wish document at `.genie/wishes/<slu
 
 This skill is collaborative and operates on the shared worktree:
 - All wish artifacts live in `.genie/wishes/` within the shared worktree
-- State group definitions are written to the shared worktree so other agents and skills can read them
-- When invoked via dispatch, acknowledges injected context (brainstorm design, file path + extracted section)
+- Execution-group definitions are written into WISH.md (git) so other agents and skills can read them; per-group execution state lives in the zero-daemon state DB via `genie task`
+- When spawned as a native-team subagent, the dispatching agent curates the seed context into your prompt (brainstorm design, file path + extracted section) — use it directly
 
 ## Pre-flight check
 
@@ -37,10 +37,15 @@ The linter (`scripts/wishes-lint.ts`) treats the literal stub text as valid and 
 2. **Align intent:** ask one question at a time until success criteria are clear.
 3. **Define scope:** explicit IN and OUT lists. OUT scope cannot be empty.
 4. **Decompose into groups:** split into small, loosely coupled execution groups.
-5. **Scaffold the wish:** run `genie wish new <slug>` to create `.genie/wishes/<slug>/WISH.md` from `templates/wish-template.md`. Never hand-write the file — the scaffold guarantees the structural skeleton the parser and linter expect.
-6. **Fill the scaffold:** replace every `<TODO: …>` marker with real content. Add verification to each group: acceptance criteria + a validation command.
-7. **Declare dependencies:** declare `depends-on` between execution groups and cross-wish dependencies.
-8. **Handoff:** run `genie wish lint <slug>` first. If the linter reports any error violations (fixable or not), surface them to the user and stop — do **not** hand off to `/review` with a structurally broken wish. Only after lint passes, auto-invoke `/review` (plan review) on the WISH.md. Do not suggest `/work` directly — the review gate must pass first.
+5. **Scaffold the wish:** copy the template to materialize `.genie/wishes/<slug>/WISH.md`, then replace the `{{slug}}`/`{{date}}` tokens:
+   ```bash
+   mkdir -p .genie/wishes/<slug>
+   cp templates/wish-template.md .genie/wishes/<slug>/WISH.md
+   ```
+   Never hand-write the file from scratch — the template guarantees the structural skeleton the parser and linter expect.
+6. **Fill the scaffold:** replace every `<TODO: …>` marker (and the `{{slug}}`/`{{date}}` tokens) with real content. Add verification to each group: acceptance criteria + a validation command.
+7. **Declare dependencies:** declare `depends-on` between execution groups and cross-wish dependencies in the WISH.md document — the DAG is a planning artifact in git.
+8. **Handoff:** run `bun run wishes:lint` first. If the linter reports any error violations (fixable or not), surface them to the user and stop — do **not** hand off to `/review` with a structurally broken wish. Only after lint passes, auto-invoke `/review` (plan review) on the WISH.md. Do not suggest `/work` directly — the review gate must pass first.
 
 ## Wish Document Sections
 
@@ -59,44 +64,38 @@ The linter (`scripts/wishes-lint.ts`) treats the literal stub text as valid and 
 
 ## Scaffold
 
-The wish scaffold lives at `templates/wish-template.md` in the genie repo — a single source of truth shared by `genie wish new` and `genie wish lint`.
+The wish scaffold lives at `templates/wish-template.md` in the genie repo — the single source of truth for wish structure. It is a plain git document; there is no runtime scaffolder to depend on.
 
-Run `genie wish new <slug>` to materialize `.genie/wishes/<slug>/WISH.md`. The command substitutes `{{slug}}` and `{{date}}` tokens and leaves every other field as a `<TODO: …>` placeholder for you to fill in.
+Copy it into place, then substitute the `{{slug}}` and `{{date}}` tokens and fill every `<TODO: …>` placeholder:
 
-Never write WISH.md by hand. The scaffold guarantees structural correctness by construction; handwritten wishes regularly fail `genie wish lint`.
-
-## Task Lifecycle Integration (v4)
-
-After writing WISH.md, create corresponding PG tasks so the wish is visible in `genie task list`:
-
-### Step 1: Create parent task
 ```bash
-genie task create "<wish title>" --type software
+mkdir -p .genie/wishes/<slug>
+cp templates/wish-template.md .genie/wishes/<slug>/WISH.md
 ```
 
-### Step 2: Create child tasks per execution group
-```bash
-genie task create "<group title>" --parent #<parent-seq>
-```
+Never write WISH.md from scratch. Copying the template guarantees structural correctness by construction; ad-hoc wishes regularly fail `bun run wishes:lint`.
 
-### Step 3: Add dependencies between groups
+## Task Lifecycle Integration
+
+After writing WISH.md, create one task per execution group in the zero-daemon state DB so `/work` can claim and complete each group and the board reflects progress. Tasks carry the `--wish <slug>` and `--group <name>` linkage; the dependency DAG stays declared in the WISH.md document (git), not in the task rows.
+
+### Per execution group
 ```bash
-genie task dep #<child-seq> --depends-on #<dep-seq>
+genie task create --title "<group title>" --wish <slug> --group <group-name>
 ```
 
 ### Summary
 
 | Event | Command |
 |-------|---------|
-| Wish crystallized | `genie task create "<wish title>" --type software` |
-| Per execution group | `genie task create "<group title>" --parent #<parent-seq>` |
-| Group has dependency | `genie task dep #<child-seq> --depends-on #<dep-seq>` |
+| Per execution group | `genie task create --title "<group title>" --wish <slug> --group <group-name>` |
+| Inspect what was created | `genie task list --wish <slug>` |
 
-**Graceful degradation:** If PG is unavailable or `genie task` commands fail, warn but do not block the wish flow. The WISH.md file is the source of truth — PG tasks are an optional tracking enhancement. The wish must still be usable by `/work` even if no PG tasks were created.
+**Graceful degradation:** If `genie task create` fails (no `.genie/genie.db` yet, or the CLI is unavailable), warn but do not block the wish flow. The WISH.md file in git is the source of truth — the task rows are an optional tracking/dispatch enhancement. The wish must still be usable by `/work` even if no tasks were created.
 
 ## Rules
-- Never write WISH.md by hand — always `genie wish new <slug>` then edit. The scaffold guarantees structural correctness by construction; handwritten wishes regularly fail `genie wish lint`.
-- Always run `genie wish lint <slug>` before handing off to `/review`. If lint reports errors, fix them (or run `--fix` for deterministic violations) before the handoff — never hand a structurally broken wish to `/review`.
+- Never write WISH.md from scratch — always `cp templates/wish-template.md` then edit. The template guarantees structural correctness by construction; ad-hoc wishes regularly fail `bun run wishes:lint`.
+- Always run `bun run wishes:lint` before handing off to `/review`. If lint reports errors, fix them before the handoff — never hand a structurally broken wish to `/review`.
 - Pre-flight the Design link — never emit a bracket-link to a non-existent brainstorm file. Fall back to the `_No brainstorm — direct wish_` stub text.
 - No implementation during `/wish` — planning only.
 - No vague tasks ("improve everything"). Every task must be testable.

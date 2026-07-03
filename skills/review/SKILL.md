@@ -9,7 +9,7 @@ Validate any artifact against its wish criteria. Dispatch as a subagent — neve
 
 ## Context Injection
 
-This skill receives its scope from the dispatch layer:
+When you are spawned as a reviewer subagent (Claude Code native team), the dispatching agent curates your scope into the prompt:
 - **Target** — what is being reviewed (wish draft, completed work, or PR diff)
 - **Wish path** — `.genie/wishes/<slug>/WISH.md` in the shared worktree
 - **Injected criteria** — acceptance criteria extracted from the wish
@@ -33,7 +33,7 @@ If context is injected, use it directly. Do not re-parse for information already
 ## Council Participation
 
 When a council team is active, the review can incorporate council perspectives:
-- Post review findings to team chat for council input via `genie chat post --team <team>`
+- Share review findings with council members via the **SendMessage** tool (or a team broadcast) for their input
 - Council members may surface risks or blind spots missed by the standard checklist
 - Council input is advisory — the verdict is still determined by the checklist
 
@@ -105,37 +105,31 @@ When a failure is found but the root cause is unclear:
 
 ## Dispatch
 
-**The reviewer must not be the engineer.** Always dispatch review as a separate subagent.
+**The reviewer must not be the engineer.** The orchestrator dispatches review as a separate subagent via the **Agent tool** (Claude Code native team) — an agent never reviews its own work. Follow-ups to a running reviewer go through the **SendMessage** tool.
 
-```bash
-# Spawn a reviewer subagent
-genie agent spawn reviewer
-```
+## Verdict Reporting
 
-## Task Lifecycle Integration (v4)
+The verdict and its severity-tagged gaps are the review output — report them in your final message (and, for a plan/PR, in the review notes committed to git). The reviewer does not mutate task state directly:
 
-When a PG task exists for the reviewed work, log the verdict as a task comment:
+| Verdict | What happens next |
+|---------|-------------------|
+| **SHIP** | Orchestrator proceeds — for execution review, it completes the group with `genie task done <task-id>`; for plan review, it advances to the next lifecycle stage. |
+| **FIX-FIRST** | Orchestrator auto-invokes `/fix` with the gap list; the group's task stays `in_progress` until a clean re-review. |
+| **BLOCKED** | Orchestrator escalates to a human; the task stays `in_progress`. |
 
-| Verdict | Task Action |
-|---------|-------------|
-| **SHIP** | `genie task comment #<seq> "SHIP — all criteria passed"` |
-| **FIX-FIRST** | `genie task comment #<seq> "FIX-FIRST: [gap list]"` then `genie task move #<seq> --to build` |
-| **BLOCKED** | `genie task block #<seq> --reason "<reason>"` |
-
-**Graceful degradation:** If no PG task exists for the reviewed work, skip all `genie task` commands. Verdict logging is an enhancement — the review flow must never fail due to missing tasks.
+The reviewer never calls `genie task done` — completing a group belongs to the orchestrator, after a clean verdict.
 
 ## Example
 
-After `/work` completes wish `fix-dispatch-initial-prompt`, the orchestrator dispatches `/review`:
+After `/work` completes wish `fix-dispatch-initial-prompt`, the orchestrator spawns a reviewer subagent via the Agent tool, briefed with the acceptance criteria:
 
-```bash
-genie agent spawn reviewer
-genie agent send 'Review wish fix-dispatch-initial-prompt execution. Criteria:
+```
+Review wish fix-dispatch-initial-prompt execution. Criteria:
 1. initialPrompt added to all 5 dispatch call sites
 2. protocolRouter.sendMessage kept as backup with warning logging
 3. bun test passes
 4. bun run typecheck clean
-Check: gh pr diff 746, then run validations.' --to reviewer
+Check: gh pr diff 746, then run validations.
 ```
 
 Reviewer output:
@@ -164,15 +158,14 @@ Next: create PR targeting dev
 - Every FAIL includes actionable fix (file, command, what to change).
 - Keep output concise, severity-ordered, and executable.
 
-## Turn close (required)
+## Session close (required)
 
-Every session MUST end by writing a terminal outcome to the turn-session contract. This is how the orchestrator reconciles executor state — skipping it leaves the row open and blocks auto-resume.
+When spawned as a native-team subagent, your final message IS the completion signal — the orchestrator is notified when you finish; do not poll or emit a separate contract call. End every session with the verdict and one explicit terminal outcome in that final message:
 
-- `genie done` — work completed, acceptance criteria met
-- `genie blocked --reason "<why>"` — stuck, needs human input or an unblocking signal
-- `genie failed --reason "<why>"` — aborted, irrecoverable error, or cannot proceed
+- **done** — the review completed and the verdict (SHIP / FIX-FIRST / BLOCKED) plus severity-tagged gaps are stated.
+- **blocked** — you could not complete the review (missing artifact, unrunnable validation). State exactly what you need.
+- **failed** — aborted or irrecoverable error. State why.
 
 Rules:
-- Call exactly one close verb as the last action of the session.
-- `blocked` / `failed` require `--reason`.
-- `genie done` inside an agent session (GENIE_AGENT_NAME set) closes the current executor; it does not require a wish ref.
+- State the verdict and exactly one outcome as the last thing you say.
+- `blocked` / `failed` must include a one-line reason.

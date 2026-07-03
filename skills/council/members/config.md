@@ -1,3 +1,4 @@
+<!-- skills-lint:ignore -->
 # Council Member LLM Configuration
 
 Per-member default provider and model settings. These defaults can be overridden at spawn time via `--provider` and `--model` flags.

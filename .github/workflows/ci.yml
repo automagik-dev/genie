@@ -6,27 +6,11 @@ on:
   pull_request:
     branches: [main, dev]
 
-# Group all three CI jobs (unit-tests, pg-tests, quality-gate umbrella) under a
-# single ref-scoped key so a new push cancels the full gate in one sweep rather
-# than leaving a half-finished pg-tests running while unit-tests has already
-# been replaced by the next push.
+# Group the CI jobs under a single ref-scoped key so a new push cancels the
+# full gate in one sweep rather than leaving a stale job running.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
-
-# Pin terminal width for the test process. test/visual/tui-snapshot.test.tsx
-# (and any future visual regression test) renders OpenTUI components without
-# forcing an explicit width — OpenTUI auto-detects from $COLUMNS. Local
-# developer terminals default to 80 cols (snapshots were captured at 80);
-# Blacksmith CI runners default to ~100+ cols, which produces wider card
-# borders and breaks every visual snapshot.
-#
-# Pin COLUMNS=80 at the workflow level so every job/step inherits the same
-# render width as the snapshots. Both `unit-tests > Visual regression` and
-# `pg-tests > Test` run test/visual/* and need the same value, so a single
-# workflow-level env is the right scope.
-env:
-  COLUMNS: "80"
 
 jobs:
   secrets-scan:
@@ -48,12 +32,13 @@ jobs:
           GITHUB_DEFAULT_BRANCH: main
           GITGUARDIAN_API_KEY: ${{ secrets.GITGUARDIAN_API_KEY }}
 
-  # Short critical path: static checks + the 135 non-PG test files. Runs on a
-  # 4-vCPU runner because typecheck/lint/dead-code dominate and don't benefit
-  # from extra cores. GENIE_TEST_SKIP_PGSERVE=1 plus an explicit non-PG file
-  # list guarantees pgserve never boots on this runner.
-  unit-tests:
-    name: Unit Tests (typecheck + lint + non-PG tests)
+  # The survivor gate — the same battery `bun run check` runs locally, plus a
+  # build. v5 is a zero-daemon CLI over `.genie/genie.db`; there is no resident
+  # database daemon, no TUI, and no generated tmux theme, so the whole suite
+  # runs in one process with a plain `bun test` — no skip flag, no file
+  # sharding, because the test harness no longer boots a database.
+  unit:
+    name: Unit (build + typecheck + lint + dead-code + test)
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
 
@@ -80,149 +65,25 @@ jobs:
       - name: Lint
         run: bunx biome check .
 
-      - name: Tmux theme up-to-date (regenerate + assert clean diff)
-        run: |
-          bash scripts/tmux/generate-theme.sh
-          if ! git diff --exit-code scripts/tmux/.generated.theme.conf; then
-            echo "::error::scripts/tmux/.generated.theme.conf is stale. Run 'bash scripts/tmux/generate-theme.sh' and commit." >&2
-            exit 1
-          fi
-
-      # Visual regression — TUI snapshots locked to the petrol/mint
-      # palette. Any palette
-      # token change without a matching `bun test test/visual/ -u` rerun
-      # produces a snapshot diff and fails the build. Runs before knip so a
-      # palette regression surfaces with a clean error rather than after
-      # full dead-code analysis.
-      - name: Visual regression (TUI snapshots)
-        env:
-          GENIE_TEST_SKIP_PGSERVE: "1"
-        run: bun test test/visual/
-
       - name: Dead code check (knip)
         run: bunx knip
 
-      # `GENIE_TEST_SKIP_PGSERVE=1` alone is not enough — a PG-dependent file
-      # loaded by bun would still open admin connections that time out against
-      # a missing daemon. We therefore hand bun an explicit non-PG file list;
-      # scripts/list-tests.ts classifies by the same markers test-setup.ts
-      # uses for its lazy-skip heuristic.
-      # Retry-once — same rationale as the pg-tests step (see #1335).
-      # Non-PG tests still flake on fs-timing / fixture-order edges (e.g.
-      # team-auto-spawn executor-reuse fast-fails). Unit Tests runs in ~14s,
-      # so a single retry costs ~15s worst-case and masks the noise.
-      - name: Test (non-PG files, no pgserve)
-        env:
-          GENIE_TEST_SKIP_PGSERVE: "1"
-          BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache-${{ github.run_id }}-${{ github.run_attempt }}
-        run: |
-          set -uo pipefail
-          FILES=$(bun run scripts/list-tests.ts --non-pg)
-          if [ -z "$FILES" ]; then
-            echo "No non-PG test files discovered — refusing to run bare 'bun test'" >&2
-            exit 1
-          fi
-          echo "$FILES" | xargs bun test || echo "$FILES" | xargs bun test
+      - name: Skills lint
+        run: bun run skills:lint
 
-  # PG-dependent test files split across K=4 shards via GitHub Actions matrix.
-  # Each shard runs on its own 4-vCPU runner with its own pgserve daemon; no
-  # in-process parallelism = no risk of the moveTask() / sql.begin(tx) reentry
-  # deadlock that gates `scripts/test-parallel.ts` from CI use today (see
-  # .genie/wishes/pg-ci-v2-socket-leverage/WISH.md for the path-A rationale).
-  #
-  # Wall-clock target: ~K-fold reduction vs the previous serial 8-vCPU job.
-  # File-to-shard assignment is LPT-packed when `.genie/state/test-durations.json`
-  # is present, else round-robin. See `scripts/list-tests.ts --shard i/K`.
-  pg-tests:
-    name: PG Tests (matrix shard ${{ matrix.shard }}/4)
+      - name: Wishes lint
+        run: bun run wishes:lint
+
+      - name: Test
+        run: bun test
+
+  # End-to-end proof of the v5 thesis: the full wish lifecycle runs on git
+  # documents + `.genie/genie.db` alone, with no resident process and no
+  # Postgres. V5_E2E_BUILD=1 forces a fresh bundle before the assertions run.
+  e2e:
+    name: E2E (v5 lifecycle)
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3, 4]
-
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          submodules: recursive
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: "1.3.11"
-
-      # Per-run scratch cache dir. Prior config used a persistent
-      # ~/.bun/install/cache restored via actions/cache, which cross-
-      # polluted runs on the self-hosted Blacksmith runner and was
-      # suspected of serving stale transpile artifacts on flaky runs.
-      # Scoping to ${{ runner.temp }}/<run-id>/<run-attempt>/<shard> gives
-      # every attempt a clean cache without sacrificing dep download
-      # speed (Blacksmith has fast registry access).
-      - name: Install dependencies
-        env:
-          BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.shard }}
-        run: bun install
-
-      # pgserve was dropped from genie's runtime npm deps in
-      # chore/drop-pgserve-sdk-runtime-dep — it's no longer at
-      # ./node_modules/.bin/pgserve. The test harness (bun preload via
-      # test-setup.ts) starts a pgserve daemon for fingerprint routing, so
-      # the binary must be on PATH. Install globally — this matches the
-      # canonical install path operators use in production
-      # (`bun add -g pgserve@^2.1.0`).
-      - name: Install pgserve globally (test harness needs the binary)
-        run: bun add -g pgserve@2.3.0
-
-      # Serial bun test inside this shard, with the file list pre-filtered to
-      # this shard's portion. The retry-once wrapper that the previous
-      # serial-on-8vCPU job carried was justified by pgserve@<2.0.5
-      # backend imperfections (NOTIFY delivery gaps + post-INSERT read
-      # visibility under load). Those flakes are now caught by 2.0.5+
-      # supervision/recovery code (see pgserve#45 and the matching genie
-      # daemon-recovery code in src/lib/db.ts). Dropped here so a real
-      # regression surfaces red on first attempt instead of being papered
-      # over. Re-add as a feature-flagged opt-in if a new flake category
-      # emerges post-merge.
-      - name: Test (shard ${{ matrix.shard }}/4)
-        env:
-          BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.shard }}
-          GENIE_HOME: ${{ runner.temp }}/genie-pg-home-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.shard }}
-        run: |
-          set -euo pipefail
-          FILES=$(bun run scripts/list-tests.ts --pg --shard ${{ matrix.shard }}/4)
-          if [ -z "$FILES" ]; then
-            echo "::warning::No PG test files in shard ${{ matrix.shard }}/4 — skipping"
-            exit 0
-          fi
-          echo "Shard ${{ matrix.shard }}/4 — $(echo "$FILES" | wc -l) files"
-          echo "$FILES" | xargs bun test --timeout 15000
-
-  # Aggregate the matrix shards into a single status check so the umbrella
-  # `quality-gate` job can `needs: [unit-tests, pg-tests-aggregate]` instead
-  # of awkwardly listing every matrix combination.
-  pg-tests-aggregate:
-    name: PG Tests (matrix aggregate)
-    needs: pg-tests
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    if: always()
-    timeout-minutes: 2
-    steps:
-      - name: Verify all shards passed
-        run: |
-          R="${{ needs.pg-tests.result }}"
-          echo "pg-tests matrix result: $R"
-          if [ "$R" = "success" ]; then exit 0; fi
-          echo "One or more pg-tests matrix shards did not succeed" >&2
-          exit 1
-
-  # Group 7 of the pgserve-v2 wish: smoke-test the v2 Unix-socket consumer
-  # path. Spawns pgserve daemon, runs `genie task list` against it, asserts
-  # the round-trip succeeds and the routed DB is auto-fingerprinted (named
-  # from the sanitized package name, e.g. `app__automagik_genie_<12hex>`).
-  pgserve-v2-smoke:
-    name: pgserve v2 smoke (Unix socket round-trip)
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    timeout-minutes: 5
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@v5
@@ -238,58 +99,8 @@ jobs:
           BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache-${{ github.run_id }}-${{ github.run_attempt }}
         run: bun install
 
-      # pgserve was dropped from genie's runtime npm deps in chore/drop-pgserve-sdk-runtime-dep
-      # — it's no longer at ./node_modules/.bin/pgserve. Install it globally for
-      # the smoke test so it lives at ~/.bun/bin/pgserve, matching the canonical
-      # install path operators use in production (`bun add -g pgserve@^2.1.0`).
-      - name: Install pgserve globally (canonical install path)
-        run: bun add -g pgserve@2.3.0
-
-      - name: Build
-        run: bun run build
-
-      - name: Start pgserve v2 daemon
-        run: |
-          set -eo pipefail
-          export XDG_RUNTIME_DIR="${RUNNER_TEMP}/xdg"
-          mkdir -p "$XDG_RUNTIME_DIR"
-          echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
-          # `bun add -g` puts pgserve in ~/.bun/bin/. Use the absolute path so
-          # we don't depend on PATH ordering on the runner.
-          "$HOME/.bun/bin/pgserve" daemon --data "${RUNNER_TEMP}/pgserve-data" --log warn &
-          # Wait up to 30s for the libpq socket to appear.
-          for i in $(seq 1 60); do
-            if [ -S "$XDG_RUNTIME_DIR/pgserve/.s.PGSQL.5432" ]; then
-              echo "pgserve daemon ready"
-              exit 0
-            fi
-            sleep 0.5
-          done
-          echo "::error::pgserve daemon did not bind libpq socket within 30s"
-          exit 1
-
-      - name: Smoke — genie task list round-trip
-        env:
-          GENIE_NO_BANNER: ""
-          # Wish G9 (PR #1685): the `[pgserve] connected to <db>` banner is
-          # silent by default to keep operator stderr clean on every CLI
-          # invocation. The smoke continues to assert the connection round-trip
-          # by enabling the debug banner explicitly — same coverage, opt-in.
-          DEBUG: pgserve
-        run: |
-          set -eo pipefail
-          mkdir -p .genie
-          printf '{"name":"ci-smoke"}\n' > .genie/workspace.json
-          # Capture stderr to assert the banner printed the resolved DB.
-          # Post #1585 (direct-postmaster bypass), the banner reports the bare
-          # `postgres` database — we connect to the postmaster's own socket via
-          # admin.json discovery, skipping the daemon-control router and its
-          # auto-fingerprinted `app_<name>_<fp>` tenant routing. Accept either
-          # form so the smoke survives both old and new daemons during rollout.
-          OUT=$(./dist/genie.js task list 2>&1)
-          echo "$OUT"
-          echo "$OUT" | grep -E '\[pgserve\] connected to (postgres|app__automagik_genie_[0-9a-f]{12})' \
-            || (echo "::error::Banner did not print a recognized resolved DB name"; exit 1)
+      - name: v5 lifecycle e2e
+        run: V5_E2E_BUILD=1 bash tests/e2e/v5-lifecycle.sh
 
   # Umbrella status check. Branch protection is configured to require
   # "Quality Gate (typecheck + lint + test)" as a required status, so the
@@ -299,7 +110,7 @@ jobs:
   # branch-protection configs silently accept.
   quality-gate:
     name: Quality Gate (typecheck + lint + test)
-    needs: [unit-tests, pg-tests-aggregate]
+    needs: [unit, e2e]
     runs-on: blacksmith-4vcpu-ubuntu-2404
     if: always()
     timeout-minutes: 2
@@ -307,19 +118,13 @@ jobs:
     steps:
       - name: Verify sub-jobs
         run: |
-          UNIT="${{ needs.unit-tests.result }}"
-          PG="${{ needs.pg-tests-aggregate.result }}"
-          echo "unit-tests:         $UNIT"
-          echo "pg-tests-aggregate: $PG"
-          if [ "$UNIT" = "success" ] && [ "$PG" = "success" ]; then
+          UNIT="${{ needs.unit.result }}"
+          E2E="${{ needs.e2e.result }}"
+          echo "unit: $UNIT"
+          echo "e2e:  $E2E"
+          if [ "$UNIT" = "success" ] && [ "$E2E" = "success" ]; then
             echo "All sub-jobs passed"
             exit 0
           fi
           echo "One or more sub-jobs did not succeed" >&2
           exit 1
-
-  # Publishing moved out of this workflow. `version.yml` triggers via
-  # workflow_run when CI completes on dev, derives the next version,
-  # bumps + tags, and publishes via OIDC. Keeping a second publish
-  # path here required a second npm Trusted Publisher entry for
-  # `ci.yml` and kept tripping 404s. One publish pipeline is simpler.

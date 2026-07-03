@@ -1,3 +1,4 @@
+<!-- skills-lint:ignore -->
 # Genie Wish Lifecycle
 
 Every piece of work follows this flow:

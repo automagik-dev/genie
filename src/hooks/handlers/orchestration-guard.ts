@@ -23,15 +23,15 @@ const NUDGE_PATTERNS: NudgePattern[] = [
     test: /tmux\s+capture-pane/,
     message:
       "If you're checking genie agent progress, use structured monitoring instead:\n" +
-      '  genie task status <slug>   — wish progress from PG\n' +
+      '  genie task status <slug>   — wish progress\n' +
       '  genie agent list --json    — executor state machine\n' +
       '  genie events timeline <id> — structured event log\n' +
-      '  genie agent send --to <a>  — PG-backed messaging',
+      '  genie agent send --to <a>  — direct messaging',
   },
   {
     test: /sleep\s+\d+\s*&&\s*tmux/,
     message:
-      'Workers report via PG events — polling terminals is not needed.\n' +
+      'Workers report via structured events — polling terminals is not needed.\n' +
       '  genie task status <slug>   — check progress\n' +
       '  genie agent send --to <a>  — communicate directly',
   },

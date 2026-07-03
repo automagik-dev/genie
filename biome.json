@@ -53,8 +53,7 @@
       ".claude",
       "plugins/genie/scripts",
       ".docs-vendor",
-      "docs",
-      "test-fixtures/symlink-cycle/real/cycle"
+      "docs"
     ]
   },
   "overrides": [
@@ -98,37 +97,6 @@
           "complexity": {
             "noExcessiveCognitiveComplexity": "off",
             "noForEach": "off"
-          }
-        }
-      }
-    },
-    {
-      "include": ["packages/**"],
-      "linter": {
-        "rules": {
-          "suspicious": {
-            "noConsole": "off",
-            "noExplicitAny": "warn",
-            "noArrayIndexKey": "warn"
-          },
-          "complexity": {
-            "noExcessiveCognitiveComplexity": {
-              "level": "warn",
-              "options": { "maxAllowedComplexity": 25 }
-            },
-            "noForEach": "warn"
-          },
-          "style": {
-            "noNonNullAssertion": "warn"
-          },
-          "correctness": {
-            "noUnusedVariables": "warn"
-          },
-          "a11y": {
-            "useKeyWithClickEvents": "warn",
-            "useSemanticElements": "warn",
-            "noLabelWithoutControl": "warn",
-            "noSvgWithoutTitle": "warn"
           }
         }
       }

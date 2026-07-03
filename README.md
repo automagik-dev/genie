@@ -13,15 +13,9 @@
 
 <br />
 
-<!-- METRICS:START -->
-**🚀 14 commits** this week · **0 releases** · **-54 LoC** · **4 contributors**
+Genie is a planning-and-execution layer for AI coding agents. You describe what you want in one sentence; Genie interviews you into a plan, dispatches agents to build it in parallel, reviews the result against acceptance criteria, and hands you something ready to merge.
 
-![Commits per day (30d, all branches)](.genie/assets/commits-30d.svg)
-
-[📊 Full velocity dashboard →](VELOCITY.md)
-<!-- METRICS:END -->
-
-Genie is a CLI that turns one sentence into a finished pull request. You describe what you want — Genie interviews you, writes a plan, spawns parallel agents in isolated worktrees, reviews the code, and opens a PR. You approve. You merge. That's it.
+The whole thing is a lightweight body: a set of skills, plain-markdown documents in git, and a single per-repo SQLite file. No daemons, no Postgres, nothing resident. A command opens the database, runs one transaction, and exits.
 
 ## Install
 
@@ -29,119 +23,104 @@ Genie is a CLI that turns one sentence into a finished pull request. You describ
 curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash
 ```
 
-Every release is cosign-signed with SLSA provenance — the installer verifies the binary before it runs.
+Every release is cosign-signed (keyless OIDC) with SLSA provenance; the installer verifies the binary — via `gh attestation verify`, falling back to `cosign verify-blob` — before it runs.
 
-Then, in Claude Code, Codex, or any AI coding agent, run the onboarding wizard:
+Then, from inside your repo, run `genie setup` to configure Genie and wire up its Claude Code hooks. `genie doctor` checks the install at any time.
+
+## Quickstart
+
+The lifecycle runs as Claude Code skills. Open your repository in Claude Code and go:
 
 ```text
-/wizard
+1. /brainstorm   an idea → a concrete DESIGN.md
+2. /wish         DESIGN.md → a WISH.md with scoped execution groups
+3. /work         dispatches agents wave by wave to build each group
+4. /review       a severity-gated verdict: SHIP, FIX-FIRST, or BLOCKED
 ```
 
-It interviews you, scaffolds the project, and walks you through your first wish. Prefer the cockpit? `genie` opens the terminal UI; `genie doctor` checks your install.
+Re-run `genie board` any time for a current snapshot of task state on the kanban. The plan documents land in git as you go; the operational state lives in `.genie/genie.db`.
 
-## What you get
+## What's inside
 
+- **Skills** carry the methodology — `/brainstorm → /wish → /work → /review`, authored once, running natively in Claude Code.
+- **Documents in git.** Wishes, designs, and brainstorms are plain markdown under `.genie/wishes/<slug>/` and `.genie/brainstorms/<slug>/`; you diff, review, and version them like any other code.
+- **One file of state.** Tasks, boards, dependency edges, and wish-group execution state live in a single per-repo SQLite file (`.genie/genie.db`), on Bun's built-in engine.
+- **Small.** 12 CLI commands, 4 runtime dependencies (`@inquirer/prompts`, `commander`, `zod`, `nats`) — `nats` initializes only when the omni runner starts. A ~0.9 MB single-file bundle. Bun-powered.
+- **Warp cockpit (optional).** `genie launch <slug>` turns a wish's ready groups into a Warp window — one pane per group, each in its own git worktree running that group's agent on a kickoff prompt. Emitting the launch config works on any platform; opening it needs Warp (macOS/Linux). Everywhere else the config is still written for you to open by hand.
+- **Zero daemons, no Postgres.** Nothing runs in the background between invocations.
+
+## Commands
+
+```bash
+genie --help
 ```
-  "Add dark mode"
-       |
-   /brainstorm ──── Genie asks questions until the idea is concrete
-       |
-   /wish ────────── Turns it into a plan: scope, criteria, task groups
-       |
-   /work ────────── Agents spawn in parallel worktrees, each on its own branch
-       |
-   /review ──────── A council of critics reviews. Severity-tagged. Nothing ships dirty.
-       |
-   Pull Request ─── You approve. You merge. Ship it.
-```
 
-**Parallel agents.** Multiple agents working at once in isolated worktrees. No conflicts, no re-explaining context.
-
-**Teams.** Spin up a coordinated team of agents — shared mailbox and chat, with native Claude Code teammate UI.
-
-**Automated review.** A council of specialist critics (architecture, security, DX, performance, ops…) reviews every change. Severity-tagged. CRITICAL blocks the merge.
-
-**Overnight mode.** `/dream` — queue wishes before bed, wake up to reviewed PRs.
-
-**Persistent memory.** A git-versioned knowledge brain — agents search it before answering and write back what they learn, so context compounds instead of resetting every session.
-
-**Postgres-backed.** Tasks, events, and messages live in PostgreSQL — queryable, durable, real-time via LISTEN/NOTIFY. Your identity, skills, and memory stay as markdown in your repo.
-
-**Self-healing.** Built-in detectors catch and recover from zombie teams, orphaned sessions, and drift automatically.
-
-**Claude or Codex.** Bring your own agent — Genie drives either under the hood.
-
-## Why Genie?
-
-<table>
-<tr>
-<td width="50%">
-
-### Without Genie
-
-- Re-explain context every new chat
-- One agent, one file at a time
-- Copy-paste PR descriptions by hand
-- Review AI code yourself, line by line
-- No memory between sessions
-
-</td>
-<td width="50%">
-
-### With Genie
-
-- Context captured once, inherited by every agent
-- Parallel agents in isolated worktrees
-- Automated severity-gated review
-- Queue wishes overnight, wake to PRs
-- Persistent memory across sessions
-
-</td>
-</tr>
-</table>
+| Command | What it does |
+|---------|-------------|
+| `genie init` | Scaffold the per-repo genie state (`.genie/INDEX.md` + `.gitignore` rules) |
+| `genie launch` | Open a Warp cockpit for a wish — one pane per ready group, each in its own worktree |
+| `genie board` | Kanban view of task state, derived live by query |
+| `genie task` | Inspect and drive task state (SQLite, zero-daemon) |
+| `genie omni` | Bridge agents to WhatsApp via Omni — remote approvals + inbound one-shots (`serve`, `status`, `inbox`, `handshake`) |
+| `genie setup` | Configure Genie and wire up its Claude Code hooks |
+| `genie doctor` | Run diagnostic checks on the installation |
+| `genie hook` | Hook middleware for Claude Code integration |
+| `genie shortcuts` | Manage terminal keyboard shortcuts |
+| `genie update` | Update Genie to the latest GitHub release |
+| `genie uninstall` | Remove Genie and clean up its hooks |
+| `genie help` | Show help for any command |
 
 ## Skills
 
-17 built-in skills that compose into workflows:
+Skills are the product. The four core skills are rewritten for the v5 body and run natively in Claude Code today:
 
 | Skill | What it does |
 |-------|-------------|
-| `/brainstorm` | Explore vague ideas until they're concrete |
-| `/wish` | Turn an idea into a scoped plan with acceptance criteria |
-| `/work` | Execute a wish with parallel agents |
-| `/review` | Severity-gated code review (SHIP or FIX-FIRST) |
-| `/council` | Multi-agent architectural deliberation (smart-routed) |
-| `/dream` | Batch-execute SHIP-ready wishes overnight |
-| `/trace` | Reproduce, isolate, and root-cause bugs |
-| `/fix` | Minimal targeted bug fixes |
-| `/report` | Deep bug investigation → issue |
-| `/refine` | Turn rough briefs into structured prompts |
-| `/learn` | Correct agent behavior from mistakes |
-| `/docs` | Audit and generate documentation |
-| `/pm` | Full project-management playbook |
-| `/omni` | Wire a Genie agent to an Omni channel |
-| `/genie` | Auto-router — natural language to the right skill |
-| `/genie-hacks` | Community patterns and real-world workflows |
-| `/wizard` | Guided first-run onboarding |
+| `/brainstorm` | Explore a vague idea until it's a concrete DESIGN.md |
+| `/wish` | Turn a design into a scoped WISH.md with execution groups |
+| `/work` | Dispatch subagents wave by wave to execute a wish |
+| `/review` | Severity-gated verdict — SHIP, FIX-FIRST, or BLOCKED |
 
-## What's new in v4
+The rest of the v4 skill library survives and is being ported onto the new body — mostly mechanical re-plumbing of dispatch and state:
 
-A ground-up rewrite.
+- **Being ported:** `/genie` (natural-language router), `/wizard` (onboarding), `/learn`, `/refine`, `/fix`, `/trace`, `/council`, `/docs`, `/genie-hacks`.
+- **Deferred:** `/report` waits on a new observability data path; `/omni` (the natural-language skill) waits on the runner API settling, though its `genie omni` runner has landed; `/pm` and `/dream` (overnight batch execution) need a background-execution capability the zero-daemon body doesn't yet ship.
 
-| | v3 | v4 |
-|---|---|---|
-| **State** | JSON files + NATS | PostgreSQL + LISTEN/NOTIFY (+ git-versioned markdown) |
-| **UI** | CLI only | Full terminal UI |
-| **Memory** | None | Knowledge brain |
-| **Tasks** | Basic | Kanban boards, templates, projects |
-| **Review** | Single pass | Critic-council deliberation |
-| **Stability** | Best effort | Advisory locks, spawn watchdog, self-healing detectors |
+## How it works
 
-[Full release notes →](https://github.com/automagik-dev/genie/releases/latest)
+Documents live in git; operational state lives in one SQLite file. `/work` fans agents out through Claude Code's native teams — each subagent gets its own task to claim, build, and mark done, with state changes serialized through `genie.db` rather than a coordinator. Review runs as a separate subagent from the one that wrote the code (reviewer ≠ engineer), so the verdict is an independent read of the diff against the wish's acceptance criteria, not the author grading their own work.
 
-## Design
+All linked worktrees of a repository share one `genie.db`, resolved from the git common directory, so a task created in one worktree is immediately visible in another with no sync step.
 
-A single dark-only palette from one source of truth (`packages/genie-tokens/`), shared by three consumers (TUI, desktop app, tmux).
+## Omni (WhatsApp bridge)
+
+`genie omni` wires a running agent to WhatsApp through an [Omni](https://automagik.dev) hub, so you can drive approvals and short tasks from your phone.
+
+**How it works** (verified by the test suite against a fake transport; the live WhatsApp round-trip is a documented manual-QA step — see `.genie/wishes/omni-runner-port/qa.md`):
+
+- **Remote approvals.** When an approval-gated agent hits a permission request, the runner forwards it to your WhatsApp. Reply `y`/`n` (or `sim`/`nao`) or react 👍/👎 to approve or deny — the decision resolves the agent's pending request. Nothing is decided? The request times out to a safe `ask`.
+- **Inbound one-shots.** A WhatsApp message on a *mapped* chat reaches a bounded `claude -p` in that chat's repo; the reply comes back to the same chat. Unmapped chats are stored, not answered — read them with `genie omni inbox`.
+
+**What it needs:**
+
+- An **Omni hub** plus a connected **WhatsApp instance** — Genie speaks to Omni over NATS; the hub owns the WhatsApp session.
+- `genie omni handshake` once per host — registers an ed25519 keypair so outbound sends are signed.
+- Approval-gated agents launched with `--permission-mode default`. Under `auto` mode a passthrough `ask` can auto-resolve to allow, which defeats the timeout→ask fail-safe.
+- `genie omni serve` running as the one resident process. It is the *only* NATS client — `--help`, `task`, `board`, and every other command stay transport-free (`nats` never initializes on those paths).
+
+## Roadmap
+
+No dates — direction, not promises:
+
+- **Deeper Warp integration.** A Tab Config upgrade and richer pane orchestration on top of today's `genie launch`.
+- **More emit targets.** Codex and Hermes as skill targets alongside Claude Code.
+- **CDN distribution.** Serve signed releases from a CDN for faster, wider installs.
+
+## Coming from v4?
+
+v4 is preserved on the [`v4` branch](https://github.com/automagik-dev/genie/tree/v4), and its final npm release stays published for existing v4 users — nothing you're running today disappears.
+
+v5 is a deliberate cutover to a lightweight body. The v4 harness — a Postgres backend, pane-based process orchestration, executor registries, the telemetry spine, the full-screen console, and the desktop app — is gone. What remains is the part that always did the work: the skills, the documents, and one SQLite file of state.
 
 ---
 
@@ -152,4 +131,4 @@ A single dark-only palette from one source of truth (`packages/genie-tokens/`), 
   <a href="LICENSE"><strong>MIT License</strong></a>
 </p>
 
-<p align="center"><sub>You describe the problem. Genie does everything else.</sub></p>
+<p align="center"><sub>You describe the problem. Genie does the rest.</sub></p>

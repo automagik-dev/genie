@@ -46,107 +46,90 @@ CI in `automagik-dev/genie` runs `actions/checkout@v4` with `submodules: recursi
 
 ```
 src/genie.ts                    CLI entry point (commander)
-src/lib/                        Core modules (state, registry, locking, messaging, providers)
+src/lib/                        Core modules (transcript, codex/claude logs, paths, config)
 src/lib/transcript.ts           Provider-agnostic transcript abstraction (Claude + Codex)
 src/lib/codex-logs.ts           Codex JSONL parsing + SQLite discovery
+src/lib/codex-config.ts         Codex config.toml + OTel relay wiring (state detection)
 src/lib/claude-logs.ts          Claude log parsing + transcript adapter
-src/term-commands/              CLI command handlers
-  agent/                        genie agent — spawn, stop, resume, kill, list, show, log, send, answer, register, directory, inbox, brief
-  task/                         genie task — extends core CRUD with status, reset, board, project, releases, type
-  team/                         genie team — create, hire, fire, list, disband
-  exec/                         genie exec — list, show, terminate (debug)
-src/hooks/                      Git hook system (branch-guard, auto-spawn, identity-inject)
-src/genie-commands/             Setup/utility commands (setup, doctor, update, session)
-src/types/                      Shared types (genie-config Zod schema)
+src/lib/v5/                     v5 state engine — SQLite, zero-daemon ("lightweight body")
+  genie-db.ts                   Per-repo .genie/genie.db open/init (worktree-aware, WAL)
+  global-db.ts                  Global ~/.genie/genie.db — omni approval queue + inbox
+  sqlite-open.ts                Shared bun:sqlite open primitive (WAL, busy_timeout, typed errors)
+  task-state.ts                 Task / dependency / ready-set state machine
+  omni-queue.ts                 Approval-queue + inbox persistence for the Omni runner
+  warp-launch.ts                Warp cockpit planner — one worktree per ready group
+  TAXONOMY.md                   The docs-in-git / state-in-SQLite contract
+src/hooks/                      In-process Claude Code hook dispatch (fail-closed)
+  index.ts                      Handler chain + fail-closed envelope (buildFailClosedResponse)
+  dispatch-command.ts           CLI entry: genie hook dispatch
+  handlers/                     branch-guard, freshness, identity-inject, omni-approval, orchestration-guard, audit-context
+src/term-commands/              CLI command handlers (board, init, launch, omni, shortcuts, task, ...)
 skills/                         Skill prompt files (brainstorm, wish, work, review, etc.)
+.genie/                         Per-repo state: git-tracked wishes/brainstorms/INDEX.md + genie.db (gitignored)
 ```
 
-## CLI Namespaces
+## CLI Commands
 
-Top-level aliases (`genie spawn`, `genie kill`, etc.) are shortcuts for the `genie agent` namespace. Both forms work identically.
+Twelve top-level commands (run `genie <command> --help` for detail):
 
-### Agent Commands
+| Command | Purpose |
+|---------|---------|
+| `board` | Kanban view derived by query (no stored view state); `--board`, `--wish`, `--json` |
+| `doctor` | Diagnostic checks on the genie installation |
+| `hook` | Hook middleware for Claude Code (`genie hook dispatch` runs in-process) |
+| `init` | Scaffold per-repo state — `.genie/INDEX.md` + `.gitignore` rules (idempotent) |
+| `launch <slug>` | Open a Warp cockpit for a wish: one pane per ready group, each in its own worktree |
+| `omni` | Omni integration — `serve`, `status`, `inbox`, `handshake` |
+| `setup` | Configure genie settings |
+| `shortcuts` | Manage tmux keyboard shortcuts |
+| `task` | Task state (SQLite, zero-daemon) |
+| `uninstall` | Remove Genie CLI and clean up hooks |
+| `update` | Update Genie CLI to the latest GitHub Release |
+| `help` | `genie help [command]` |
+
+### Task subcommands
 ```bash
-# Top-level aliases (shortcuts)
-genie spawn <name>                    # Alias for: genie agent spawn <name>
-genie kill <name>                     # Alias for: genie agent kill <name>
-genie stop <name>                     # Alias for: genie agent stop <name>
-genie resume [name]                   # Alias for: genie agent resume [name]
-genie ls                              # Alias for: genie agent list
-genie log [agent]                     # Alias for: genie agent log [agent]
-genie read <name>                     # Read terminal output from agent pane
-genie history <name>                  # Show compressed session history
-genie answer <name> <choice>          # Alias for: genie agent answer <name> <choice>
-
-# Full namespace commands
-genie agent spawn <name>              # Spawn agent (resolves from directory or built-ins)
-genie agent list                      # List agents with runtime status
-genie agent log <name>                # Unified log (default)
-genie agent log <name> --raw          # Pane capture
-genie agent log <name> --transcript   # Compressed transcript
-genie agent send '<msg>' --to <name>  # Direct message (hierarchy-enforced)
-genie agent send '<msg>' --broadcast  # Team broadcast
-genie agent inbox                     # View inbox
-genie agent brief --team <name>       # Cold-start summary
-genie agent answer <name> <choice>    # Answer prompt
-genie agent show <name>               # Agent + executor detail
-genie agent stop/kill/resume <name>   # Lifecycle management
-genie agent register <name>           # Register agent locally + Omni
-genie agent directory [name]          # List/show directory entries
+genie task create --title 'x'         # Create a task
+genie task list                       # List tasks (with filters)
+genie task checkout <id> --worker w   # Atomically claim a ready task for a worker
+genie task status <id>                # Task detail, dependencies, stage log
+genie task done <id>                  # Mark done + recompute the ready set
+genie task export                     # Emit the complete DB state as JSON
 ```
 
-### Task Commands
+### Omni subcommands
 ```bash
-genie task create --title 'x'         # Create task
-genie task list                       # List tasks
-genie task status <slug>              # Wish group status
-genie task done <ref>                 # Mark group done
-genie task board/project/releases/type  # Planning hierarchy
+genie omni handshake                  # Register this host with the omni server (ed25519, idempotent)
+genie omni serve                      # Resident runner: NATS bridge → approval queue (foreground)
+genie omni status                     # Approval-queue counts + config sanity (no network)
+genie omni inbox                      # List stored inbound Omni messages (no network)
 ```
 
-### Team Commands
-```bash
-genie team create/hire/fire/list/disband  # Team lifecycle
-```
-
-### Other
-```bash
-genie exec list/show/terminate           # Executor debug
-genie run <spec>                         # Wish/spec runner (top-level)
-```
-
-## State File Locations (CRITICAL — fragmented across 4 scopes)
+## State File Locations (SQLite + git-tracked docs)
 
 | State | Location | Scope | Format |
 |-------|----------|-------|--------|
-| Wish state | `<repo>/.genie/state/<slug>.json` | Per-repo CWD, shared across worktrees | JSON |
-| Worker registry | `~/.genie/workers.json` | Global | JSON |
-| Team configs | `~/.genie/teams/<name>.json` | Global | JSON |
-| Mailbox | `<repo>/.genie/mailbox/<worker>.json` | Per-repo | JSON |
-| Team chat | `<repo>/.genie/chat/<team>.jsonl` | Per-repo worktree | JSONL |
-| Session store | `~/.genie/sessions.json` | Global | JSON |
-| Native teams | `~/.claude/teams/<team>/` | Global (Claude Code) | JSON |
+| Task / board / wish state | `<repo>/.genie/genie.db` | Per-repo, shared across worktrees | SQLite (bun:sqlite) |
+| Omni approvals + inbox | `~/.genie/genie.db` | Global (machine-wide) | SQLite (bun:sqlite) |
+| Wishes / brainstorms / INDEX | `<repo>/.genie/{wishes,brainstorms,INDEX.md}` | Per-repo, git-tracked | Markdown |
 
-Worktrees share the main repo's `.genie/` via `git rev-parse --git-common-dir`. Worker registry is global, not per-worktree.
+Worktrees share the main repo's `.genie/genie.db` via `git rev-parse --git-common-dir`. The two `genie.db` files are wholly separate databases: different paths, different schemas, independent `PRAGMA user_version` — `global-db.ts` deliberately imports NONE of `genie-db.ts`'s path constants; the only shared code is the open primitive in `sqlite-open.ts`. Both use WAL. Documents live in git; operational state lives in SQLite.
 
 ## Environment Variables
 
 | Var | Effect |
 |-----|--------|
-| `GENIE_HOME` | Relocates ALL global state from `~/.genie` |
-| `GENIE_AGENT_NAME` | Agent identity for hook dispatch. MUST be set for auto-spawn to work. |
+| `GENIE_HOME` | Relocates ALL global state from `~/.genie` (the global `genie.db` and `worktrees/`) |
+| `GENIE_AGENT_NAME` | Agent identity for hook dispatch |
+| `GENIE_AGENT_ID` | Agent id used by hook identity injection |
 | `GENIE_TEAM` | Default team when `--team` not provided |
-| `CLAUDECODE=1` | Enables Claude Code features (set in team-lead command) |
-| `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` | Enables native teammate UI |
-| `GENIE_IDLE_TIMEOUT_MS` | Auto-suspend idle workers after N ms |
-| `GENIE_OTEL_PORT` | Pins the Claude OTel receiver to one explicit port; if busy, genie skips telemetry injection instead of probing |
-| `GENIE_OTEL_PORT_PROBE_MAX` | Number of receiver ports to probe in default mode, starting at pgserve port + 1; defaults to 8 |
-
-`GENIE_AGENT_NAME` and the 5 native team CLI flags must stay in sync — if any are missing, Claude Code won't recognize the agent as a team member.
+| `GENIE_WORKTREES_DIR` | Override where `launch` creates per-group worktrees (default `<GENIE_HOME>/worktrees`) |
+| `GENIE_CONFIG_FILE` | Override the resolved genie config path |
+| `OMNI_*` | Omni runner config — `OMNI_APPROVALS_ENABLED`, `OMNI_API_URL`, `OMNI_API_KEY`, `OMNI_NATS_URL`, `OMNI_APPROVAL_CHAT`, `OMNI_INSTANCE`, `OMNI_APPROVE_TOKENS`/`OMNI_DENY_TOKENS` |
 
 ## Build
 
-Single-file bundle: `bun build` inlines all dependencies into `dist/genie.js` (~305KB minified). No runtime deps to co-locate. The shebang `#!/usr/bin/env bun` makes it executable. `chmod +x` is applied after build.
+Single-file bundle: `bun build src/genie.ts --outdir dist --target bun --minify-syntax --minify-whitespace --external bun` inlines all four runtime deps (`commander`, `@inquirer/prompts`, `nats`, `zod`) into `dist/genie.js` (~1.3MB). Only the `bun` builtin is external. The shebang `#!/usr/bin/env bun` makes it executable; `chmod +x` is applied after build.
 
 ## Testing
 
@@ -155,13 +138,8 @@ Single-file bundle: `bun build` inlines all dependencies into `dist/genie.js` (~
 - Fixtures: tmpdir with cleanup in afterEach
 - Git tests: real git repos in `/tmp`, not mocks
 - Concurrency tests: `Promise.allSettled()` pattern
-- Isolation: set `process.env.GENIE_HOME` to tmpdir to isolate global state
-- macOS RAM-disk (opt-in): `GENIE_TEST_MAC_RAM=1 bun test` mounts a 1 GiB
-  hdiutil-backed volume at `/Volumes/genie-test-ram` and points pgserve at
-  `/Volumes/genie-test-ram/pgserve`. Matches Linux `/dev/shm` throughput for
-  the pgserve test harness. Unset = ephemeral temp dir (no change). The volume
-  is detached on daemon reap; a manual `hdiutil detach /Volumes/genie-test-ram`
-  is safe — the next run recreates it.
+- Isolation: set `process.env.GENIE_HOME` to tmpdir to isolate global state (both `genie.db` files resolve under it)
+- SQLite tests: `sqlite-open.ts` uses WAL + `busy_timeout`, so concurrent-writer tests surface clean claim-conflicts, not `SQLITE_BUSY` flake
 
 ## Code Style
 
@@ -181,11 +159,11 @@ Biome's `noExcessiveCognitiveComplexity` is set to `maxAllowedComplexity: 25` (w
 
 ## Gotchas
 
-- **File lock timeout force-removes are intentional** — prevents permanent deadlocks from crashed processes. The `open('wx')` after unlink is still atomic, so only one process wins.
-- **Hook dispatch has a 15s hard timeout** — handlers that take longer silently timeout, blocking the tool use. No retry.
-- **tmux is required for agent spawn** — no fallback. `hasBinary()` checks PATH before launch.
-- **System prompt injection can fail silently** — `buildTeamLeadCommand()` writes to `~/.genie/prompts/<team>.md`. If write fails, the command still generates but Claude Code dies on startup trying to read the missing file.
-- **Mailbox delivery is best-effort** — message is persisted to disk (durable), but tmux pane injection is not retried. Dead pane = message stays `deliveredAt: null` forever.
+- **Hook dispatch is in-process, fail-closed, and bounded by Claude Code's per-hook `timeout`** — each hook event is a short-lived `genie hook dispatch` fork that runs the handler chain in-process and exits (no daemon, no socket, no DB). There is no genie-managed dispatch timeout; the ceiling is the `timeout` field on the hook's entry in Claude Code's `settings.json` (CC default if unset). A dispatch that can't parse its payload or throws emits a NON-empty deny/block envelope instead of empty stdout, because CC reads empty PreToolUse stdout as allow-by-default — see `buildFailClosedResponse` in `src/hooks/index.ts`. The fail-closed default is locked by `src/hooks/__tests__/dispatch-fail-closed-regression.test.ts`, which drives the shipped `dist/genie.js`.
+- **`AskUserQuestion` is the one PreToolUse carve-out** — it is in `NON_INTERCEPTABLE_PRE_TOOL_USE_TOOLS` and MUST get an EMPTY response, not the neutral `{ decision: 'block' }` block form. Empirically CC consumes any additionalContext as the synthesized answer, so a fail-closed block would corrupt the inline picker. The fail-closed envelope special-cases this tool.
+- **Two `genie.db` files, never cross-import** — per-repo `.genie/genie.db` (`genie-db.ts`, task/board/wish) and global `~/.genie/genie.db` (`global-db.ts`, omni queue + inbox) are independent databases with their own schemas and `user_version`. `global-db.ts` shares only `sqlite-open.ts` with the per-repo one — do not reach across for path constants.
+- **Codex OTel relay is real v5, not the deleted receiver** — `src/lib/codex-config.ts` wires Codex's `config.toml` to a fixed OTel relay on `127.0.0.1:14318` (`OTEL_RELAY_PORT`) for state detection. This is live; only the v4 receiver-probing env vars are gone. Do not blanket-purge "OTel" from docs — this relay is load-bearing.
+- **The Omni runner (`genie omni serve`) is the only optional daemon** — a foreground NATS bridge that drains the global approval queue. Everything else is fork-and-exit; no resident processes.
 - **`bun run dead-code`** (knip) has pre-existing false positives for biome/commitlint/husky devDeps — not regressions.
 
 ## PR Review Rules

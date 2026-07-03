@@ -1,34 +1,33 @@
 /**
  * CLI command: genie hook dispatch
  *
- * Reads CC hook payload from stdin, dispatches to handlers,
- * writes result to stdout. Designed for minimal startup time.
+ * Reads a CC hook payload from stdin, runs the handler chain in-process, and
+ * writes the decision to stdout. Designed for minimal startup time.
  *
- * **Hot-path strategy** (issue #1574):
+ * **Dispatch model (v5):**
  *
- * The bun-fork hot path used to dispatch in-process — every hook event opened
- * its own PG connection (max: 50 client-side pool) and `process.exit(0)`'d
- * without `shutdown()`, leaking server-side backends until pgserve hit
- * `max_connections=1000`. Operators saw "FATAL: sorry, too many clients
- * already" at steady state.
+ * In-process dispatch is the only path. Each hook event is a short-lived bun
+ * fork that reads stdin, calls `dispatch()` against the module-level handler
+ * registry, writes the JSON decision, drains stdout, and exits. The fork does
+ * NO database work — the old hook daemon (and the PG-connection indirection it
+ * existed to contain) is gone, so there is no pool to leak and nothing to boot.
  *
- * Now: bun fork connects to `~/.genie/hook.sock` (the daemon's UDS) FIRST.
- * The daemon owns the PG pool; the fork stays stateless and never opens a
- * connection of its own. Only when the socket is missing/refused/timed-out
- * does the fork fall back to "fail-open" (empty stdout = allow-by-default,
- * audit entry to ~/.genie/hook-fallback.log) — operations never block on a
- * daemon outage. The legacy in-process fallback (which DOES open a PG pool)
- * is preserved behind GENIE_HOOK_FORCE_INPROC=1 for tests + debugging only.
+ * **Fail-closed at the entry:**
  *
- * This is a strict perf improvement on the existing path AND a fix for the
- * #1574 PG leak — every "happy path" hook now does a 4-byte UDS roundtrip
- * with zero PG state in the fork.
+ * CC reads empty PreToolUse stdout as allow-by-default. A payload we cannot
+ * parse, or a `dispatch()` that throws unexpectedly, must therefore NOT produce
+ * empty stdout — that would silently bypass every guard (branch-guard,
+ * orchestration-guard, ...). `computeDispatchOutput` wraps the dispatch flow so
+ * both cases emit a NON-EMPTY, non-allow envelope instead (see
+ * `buildFailClosedResponse` in ./index.ts for the exact shape and the
+ * AskUserQuestion inline-picker carve-out). A legitimate empty result from
+ * `dispatch()` (unmatched event, allow, or the AskUserQuestion carve-out) still
+ * passes through untouched.
  */
 
 import type { Command } from 'commander';
 import { registerHookTrustCommand } from '../term-commands/hook/trust.js';
-import { runDispatchClient } from './dispatch-client.js';
-import { dispatch } from './index.js';
+import { buildFailClosedResponse, dispatch, installDispatchRegistry } from './index.js';
 
 async function readStdin(): Promise<string> {
   // Bun-native stdin read
@@ -39,44 +38,80 @@ async function readStdin(): Promise<string> {
   return Buffer.concat(chunks).toString('utf-8');
 }
 
-async function dispatchAction(): Promise<void> {
-  // Mac-CPU fix C — short-circuit DB boot for hook dispatch forks. Only the
-  // legacy in-process fallback below pays the cost; the default daemon path
-  // never opens PG in this fork at all.
-  process.env.GENIE_SKIP_DB_BOOT = '1';
+interface ParsedEntry {
+  ok: boolean;
+  event?: string;
+  tool?: string;
+}
 
-  // Issue #1574 fix — default path: hand off to the daemon socket via
-  // runDispatchClient(). On socket miss the client emits the F1 fallback
-  // (empty stdout, allow-by-default, audit log entry) and returns 0 itself.
-  // Either way the fork stays stateless, no PG connection, no shutdown leak.
-  //
-  // Set GENIE_HOOK_FORCE_INPROC=1 to bypass the daemon and run handlers
-  // in-process (legacy behavior, kept for tests/debugging — DOES open a
-  // PG pool that won't be cleanly shut down on process.exit, so don't
-  // enable in production).
-  if (process.env.GENIE_HOOK_FORCE_INPROC !== '1') {
-    const code = await runDispatchClient();
-    // Drain stdout BEFORE process.exit so the daemon's decision payload is
-    // fully delivered to CC. Calling process.exit() with stdout still
-    // buffered can truncate the write under load and silently downgrade
-    // `deny` decisions to allow-by-default — a real security gap caught
-    // in PR review (codex P1 finding on dispatch-command.ts). Drain is a
-    // no-op when the buffer is already empty (typical case), so this
-    // costs <1ms on the hot path.
-    await drainStdout();
-    process.exit(code);
+/**
+ * Best-effort parse at the entry — independent of `dispatch()`'s own parse so
+ * that a post-parse `dispatch()` throw can still name the event/tool when it
+ * builds the fail-closed envelope. `dispatch()` re-parses the same string; the
+ * double parse costs nothing measurable and keeps `dispatch()`'s contract
+ * (returns '' on malformed JSON) unchanged.
+ */
+function parseEntry(stdin: string): ParsedEntry {
+  try {
+    const obj = JSON.parse(stdin) as Record<string, unknown>;
+    return {
+      ok: true,
+      event: typeof obj.hook_event_name === 'string' ? obj.hook_event_name : undefined,
+      tool: typeof obj.tool_name === 'string' ? obj.tool_name : undefined,
+    };
+  } catch {
+    return { ok: false };
+  }
+}
+
+/**
+ * Compute the stdout payload for one hook event, failing CLOSED on both
+ * unparseable input and an unexpected `dispatch()` throw.
+ *
+ * `dispatch` is injectable so tests can stub a throwing dispatcher without
+ * mutating the real handler registry; production always uses the real one.
+ */
+export async function computeDispatchOutput(
+  stdin: string,
+  dispatchFn: (input: string) => Promise<string> = dispatch,
+): Promise<string> {
+  const parsed = parseEntry(stdin);
+
+  if (!parsed.ok) {
+    // Truly-unparseable stdin — near-impossible in practice (CC always emits
+    // valid JSON). Event/tool are unknown, so we cannot rule out the
+    // AskUserQuestion carve-out; buildFailClosedResponse emits the neutral,
+    // carve-out-safe form for undefined event/tool.
+    return buildFailClosedResponse(undefined, undefined, 'genie hook: unparseable payload on stdin');
   }
 
-  // Legacy in-process path — opt-in only. Reads stdin, dispatches against
-  // the local handler registry, writes stdout.
+  try {
+    return await dispatchFn(stdin);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[genie-hook] dispatch threw: ${msg}`);
+    // Event/tool are known from the entry parse, so this can be the
+    // event-appropriate deny/ask envelope (except for carve-out tools).
+    return buildFailClosedResponse(parsed.event, parsed.tool, `genie hook: dispatch error: ${msg}`);
+  }
+}
+
+async function dispatchAction(): Promise<void> {
   const stdin = await readStdin();
   if (!stdin.trim()) {
+    // No payload (e.g. TTY / empty pipe) → nothing to dispatch, allow cleanly.
     process.exit(0);
   }
 
-  const result = await dispatch(stdin);
-  if (result) {
-    process.stdout.write(result);
+  // Config-gated registry install at dispatch boot: swaps in the omni-approval
+  // handler only when the feature is enabled. No-op (byte-identical output)
+  // otherwise. Must run before computeDispatchOutput so the registry the
+  // fail-closed wrapper dispatches against already includes the omni handler.
+  await installDispatchRegistry();
+
+  const output = await computeDispatchOutput(stdin);
+  if (output) {
+    process.stdout.write(output);
   }
   await drainStdout();
   process.exit(0);

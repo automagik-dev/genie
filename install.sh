@@ -308,10 +308,56 @@ detect_legacy_install() {
   fi
 }
 
-handoff_to_subcommand() {
-  log "handing off to: genie install (shell-rc + completions wiring)"
-  rm -rf "$TMP_DIR"
-  exec "$LOCAL_BIN/genie" install
+# Post-install PATH wiring. v5 exposes no install subcommand on the genie CLI —
+# the shell-rc PATH wiring lives here in the installer (mirroring how `genie init`
+# idempotently manages .gitignore). If $LOCAL_BIN is already resolvable on PATH
+# there is nothing to do; otherwise append a single export line to the login
+# shell's rc file, guarded so re-runs never duplicate it.
+path_contains_local_bin() {
+  case ":${PATH}:" in
+    *":${LOCAL_BIN}:"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Pick the rc file for the user's login shell. Fall back to ~/.profile, which
+# POSIX login shells source.
+shell_rc_file() {
+  case "$(basename "${SHELL:-}")" in
+    zsh) echo "$HOME/.zshrc" ;;
+    bash)
+      # macOS bash login shells read ~/.bash_profile; Linux reads ~/.bashrc.
+      # Prefer an existing file, else default per-OS.
+      if [[ -f "$HOME/.bashrc" ]]; then echo "$HOME/.bashrc"
+      elif [[ -f "$HOME/.bash_profile" ]]; then echo "$HOME/.bash_profile"
+      elif [[ "$(uname -s)" == "Darwin" ]]; then echo "$HOME/.bash_profile"
+      else echo "$HOME/.bashrc"; fi ;;
+    *) echo "$HOME/.profile" ;;
+  esac
+}
+
+ensure_path_wired() {
+  if path_contains_local_bin; then
+    log "PATH already includes $LOCAL_BIN — genie is ready"
+    return 0
+  fi
+  local rc
+  rc="$(shell_rc_file)"
+  # Idempotent: if any line already puts ~/.local/bin on PATH (ours or the
+  # user's own), don't append a duplicate. The written line uses the literal
+  # $HOME form, so match on the shared ".local/bin" substring.
+  if [[ -f "$rc" ]] && grep -qF '.local/bin' "$rc" 2>/dev/null; then
+    log "PATH wiring already present in ${rc/#$HOME/\~}"
+  else
+    mkdir -p "$(dirname "$rc")"
+    {
+      printf '\n# genie: put ~/.local/bin on PATH\n'
+      printf 'export PATH="$HOME/.local/bin:$PATH"\n'
+    } >> "$rc"
+    log "added $LOCAL_BIN to PATH in ${rc/#$HOME/\~}"
+  fi
+  warn "genie is installed but $LOCAL_BIN is not on your PATH yet."
+  warn "  open a new shell, or run:  export PATH=\"$LOCAL_BIN:\$PATH\" && hash -r"
 }
 
 main() {
@@ -329,7 +375,8 @@ main() {
   tarball="$(download_and_verify "$version" "$platform" "$tarball_base")"
   extract_and_link "$tarball"
   detect_legacy_install
-  handoff_to_subcommand
+  ensure_path_wired
+  log "genie v${version} installed"
 }
 
 main "$@"

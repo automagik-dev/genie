@@ -21,7 +21,6 @@ on:
       # a new docs commit.
       - '.docs-vendor'
       - '.gitmodules'
-      - '.markdownlint.json'
       - '.markdownlint-cli2.jsonc'
       - '.github/markdown-link-check.json'
       - '.github/workflows/docs-lint.yml'
@@ -31,7 +30,6 @@ on:
       - 'SECURITY.md'
       - '.docs-vendor'
       - '.gitmodules'
-      - '.markdownlint.json'
       - '.markdownlint-cli2.jsonc'
       - '.github/markdown-link-check.json'
       - '.github/workflows/docs-lint.yml'

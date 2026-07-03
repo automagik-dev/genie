@@ -1,2 +1,4 @@
 [test]
-preload = ["./src/lib/test-setup.ts"]
+# Preload removed in the v5 demolition: ./src/lib/test-setup.ts booted a pgserve
+# daemon for the v4 harness (now deleted). Zero-daemon v5 tests are SQLite-backed
+# and need no global preload.
