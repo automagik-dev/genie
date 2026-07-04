@@ -256,12 +256,15 @@ export type RawClaudeSpawn = (args: string[], opts: { cwd: string; signal: Abort
 
 /**
  * Does this stderr mean "the session id you tried to resume does not exist"? Claude
- * 2.1.201 says `No conversation found with session ID: <id>` (NOTE: not the "not
- * found" substring the review assumed — verified live), older/other phrasings say
- * `No such session` / `session not found`. Only a missing session triggers the
- * create fallback; any other resume failure is surfaced as-is.
+ * 2.1.201 says `No conversation found with session ID: <id>` (verified live);
+ * older/other phrasings say `No such session` / `session not found`. Each
+ * alternative is SESSION-scoped on purpose — a bare `not found` would also match an
+ * unrelated failure (e.g. "model not found", an MCP "… not found") on a turn whose
+ * session actually exists, wasting a `--session-id` create that then errors
+ * "already in use". Only a genuinely missing session triggers the create fallback;
+ * any other resume failure is surfaced as-is.
  */
-const NO_SESSION_RE = /no conversation found|no such session|session not found|not found/i;
+const NO_SESSION_RE = /no conversation found|no such session|session not found/i;
 
 function toSpawnResult(run: RawClaudeRun): SpawnClaudeResult {
   const { reply, isError } = extractStreamJsonReply(run.stdout);
