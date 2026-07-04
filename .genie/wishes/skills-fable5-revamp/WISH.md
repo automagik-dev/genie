@@ -33,7 +33,7 @@ Revamp all 36 agent-facing prompt surfaces of the genie plugin (17 skills, 4,185
 ### OUT
 
 - No renames, moves, or deletions of existing skill/command/agent files — namespaces (`omni:automate`), hooks, and muscle memory stay intact. Converting omni `commands/` into `skills/` is a possible follow-up wish, not this one.
-- No CLI/source-code changes in either repo (`src/**`, `packages/**`, `scripts/**` untouched; `.md` prompt surfaces only, plus new sibling `.md` files) — **except Group 8's enumerated surface**: a new legacy-paths module + v4-cleanup step under `src/genie-commands/` (with colocated tests), the cleanup call wired into `src/genie-commands/install.ts`, `src/genie-commands/uninstall.ts` refactored to consume the shared manifest, and `install.sh` only if a flag pass-through (`--skip-v4-cleanup`) is needed. No broader refactor of `install.ts` / `scripts/smart-install.js`.
+- No CLI/source-code changes in either repo (`src/**`, `packages/**`, `scripts/**` untouched; `.md` prompt surfaces only, plus new sibling `.md` files) — **except Group 8's enumerated surface**: a new legacy-paths module + v4-cleanup step under `src/genie-commands/` (with colocated tests), the cleanup call wired into `src/genie-commands/install.ts`, a guarded one-line post-delivery call in `src/genie-commands/update.ts` (adjudicated expansion — upgrade path must clean too), `src/genie-commands/uninstall.ts` refactored to consume the shared manifest, minimal command registration (`src/genie.ts`, `src/lib/interactivity.ts` exemption), and `install.sh` only for the restored handoff + flag pass-through. No broader refactor of `install.ts` / `update.ts` / `scripts/smart-install.js`.
 - No new skills, no removed skills.
 - No docs-site changes (`docs/` submodule untouched).
 - Other plugins (workit, token-optimizer, brain) untouched.
@@ -273,25 +273,25 @@ cd "$(git rev-parse --show-toplevel)" && bun run skills:lint && bun run wishes:l
 
 **Repo:** `/home/feliperosa/vm-home/workspace/repos/genie` — branch `wish/skills-fable5-revamp`. Source surface only: new legacy-paths module + cleanup step under `src/genie-commands/` (+ colocated tests), cleanup call wired into `src/genie-commands/install.ts`, `src/genie-commands/uninstall.ts` consuming the shared manifest, `install.sh` only for flag pass-through. This group touches NO skill files — fully disjoint from Groups 1–4.
 
-**Goal:** A v4→v5 install/upgrade detects and properly cleans v4 trash — today only full `genie uninstall` knows the legacy paths, so upgraded machines keep a stale, actively misleading `~/.claude/rules/genie-orchestration.md` and orphaned `4.x` plugin caches. Architecture fact: `install.sh` is a curl-pipe bootstrap ending in `exec genie install`, so cleanup lives in TypeScript inside the `genie install` flow — never duplicated in bash.
+**Goal:** A v4→v5 install/upgrade detects and properly cleans v4 trash — today only full `genie uninstall` knows the legacy paths, so upgraded machines keep a stale, actively misleading `~/.claude/rules/genie-orchestration.md` and orphaned `4.x` plugin caches. Architecture fact (dev reality, adapted during execution): dev's v5 cutover deleted the old `genie install` command and install.sh's handoff entirely, so G8 recreates a thin TS `genie install` finisher (bootstrap hands off via a plain non-exec call) and wires the same cleanup into `genie update` post-delivery — the upgrade path real machines actually use. Cleanup lives in TypeScript, never duplicated in bash.
 
 **Deliverables:**
 1. v4-footprint inventory in the group report, grounded in the v4 plugin cache (`~/.claude/plugins/cache/automagik/genie/4.260509.9/` ships `rules/`, `agents/`, `hooks/`, `references/`, `scripts/`) and repo history: every artifact classified keep / rewrite / delete with evidence. Known targets: the rules file (verdict: delete per Decision 10), orphaned `automagik/genie/4.*` caches (`.orphaned_at`-marked), any `~/.claude/settings.json` hook entry invoking dead v4 genie commands (audit `genie hook dispatch` liveness before touching — it looks live in v5).
-2. One shared legacy-path manifest (extend `uninstall.ts`'s `ORCHESTRATION_RULES_PATH` into a reusable list/module) consumed by both uninstall and the new cleanup, with tests following the `installer-resolution.test.ts` pattern.
-3. A `detectV4Install()` + cleanup step in TypeScript, wired into the `genie install` flow (`install.ts`): content-marker check on the rules file (only delete if it matches known v4 content markers, e.g. `genie spawn`/`genie team create`), backup to `~/.genie/state-backups/v4-cleanup-<timestamp>/`, removal log to stdout + `~/.genie/logs/`, idempotent on re-run, and a `--skip-v4-cleanup` opt-out on `genie install` (forwarded by `install.sh` if the bootstrap accepts flags).
+2. One shared legacy-path manifest (extend `uninstall.ts`'s `ORCHESTRATION_RULES_PATH` into a reusable list/module) consumed by both uninstall and the new cleanup, with colocated pgserve-free bun tests (tmpdir fixture pattern).
+3. A `detectV4Install()` + cleanup step in TypeScript, wired into the `genie install` flow (`install.ts`) AND — adjudicated expansion after review — a guarded post-delivery `cleanupV4()` call in `genie update` (update.ts, try/catch, never fails the update): content-marker check on the rules file (only delete if it matches known v4 content markers, e.g. `genie spawn`/`genie team create`), backup to `~/.genie/state-backups/v4-cleanup-<timestamp>/`, removal log to stdout + `~/.genie/logs/`, idempotent on re-run, and a `--skip-v4-cleanup` opt-out on `genie install` (forwarded by `install.sh`'s restored handoff).
 4. If the rules file was user-modified (marker mismatch): do not delete — warn and leave it, listing it in the log.
 
 **Acceptance Criteria:**
 - [ ] Re-running the install flow on an already-clean machine is a no-op (idempotent); `bash -n install.sh` clean if the bootstrap is touched.
 - [ ] Tests prove: marker-matched rules file → backed up + removed; user-modified rules file → left in place with warning; non-genie files in `~/.claude/rules/` → never touched; v4 cache dirs → removed only under `automagik/genie/4.*` AND only when `.orphaned_at`-marked (unmarked/live versions untouched); settings.json hook entries → live `genie hook dispatch` kept as a no-op, removal only for provably-dead commands.
-- [ ] `bun test src/genie-commands/` green in a pgserve-capable environment (CI runs it; some tests in that dir spawn pgserve and die with exit 144 in restricted sandboxes — fall back to the G8-owned test files + `installer-resolution.test.ts`, which run pgserve-free); `bun run check:fast` shows no new failures beyond the pre-existing skills:lint baseline (owned by Groups 1–4/7).
+- [ ] `bun test src/genie-commands/` green in a pgserve-capable environment (CI runs it; some tests in that dir spawn pgserve and die with exit 144 in restricted sandboxes — fall back to the G8-owned test files (`*v4*.test.ts`, `install.test.ts`), which run pgserve-free); `bun run check:fast` shows no new failures beyond the pre-existing skills:lint baseline (owned by Groups 1–4/7).
 - [ ] `genie uninstall` and install-time cleanup consume the same path manifest — zero duplicated path literals (no legacy path appears in both bash and TS, nor twice in TS).
 
 **Validation:**
 ```bash
 cd "$(git rev-parse --show-toplevel)" && bash -n install.sh && \
   grep -rqE 'detectV4|v4[A-Za-z]*[Cc]lean' src/genie-commands/ && \
-  bun test src/genie-commands/installer-resolution.test.ts $(ls src/genie-commands/*v4* 2>/dev/null | grep '\.test\.ts$') && echo G8-OK
+  bun test $(ls src/genie-commands/*v4*.test.ts src/genie-commands/install.test.ts 2>/dev/null) && echo G8-OK
 ```
 
 **depends-on:** none
@@ -379,8 +379,9 @@ skills/omni-ops/references/<domain>.md
 # genie repo — Group 8 source surface (modify/create)
 src/genie-commands/install.ts                (wire v4-cleanup call + --skip-v4-cleanup flag)
 src/genie-commands/uninstall.ts              (consume shared legacy-path manifest)
-src/genie-commands/<legacy-paths module + v4-cleanup + tests>   (create, installer-resolution.test.ts pattern)
-install.sh                                   (bootstrap: flag pass-through only, if needed)
+src/genie-commands/<legacy-paths module + v4-cleanup + tests>   (create, colocated pgserve-free tests)
+src/genie-commands/update.ts                 (adjudicated: guarded post-delivery cleanupV4 call + test)
+install.sh                                   (bootstrap: restored non-exec handoff + flag pass-through)
 
 # machine-side targets of G8's cleanup (NOT repo files — removed at install/upgrade time)
 ~/.claude/rules/genie-orchestration.md       (delete if v4 content-marker matches; backup first)

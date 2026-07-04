@@ -308,9 +308,10 @@ detect_legacy_install() {
   fi
 }
 
-# Post-install PATH wiring. v5 exposes no install subcommand on the genie CLI —
-# the shell-rc PATH wiring lives here in the installer (mirroring how `genie init`
-# idempotently manages .gitignore). If $LOCAL_BIN is already resolvable on PATH
+# Post-install PATH wiring. The shell-rc PATH wiring lives here in the
+# installer (mirroring how `genie init` idempotently manages .gitignore) — the
+# `genie install` subcommand only runs TypeScript-side finishers (v4 legacy
+# cleanup), never PATH edits. If $LOCAL_BIN is already resolvable on PATH
 # there is nothing to do; otherwise append a single export line to the login
 # shell's rc file, guarded so re-runs never duplicate it.
 path_contains_local_bin() {
@@ -360,6 +361,20 @@ ensure_path_wired() {
   warn "  open a new shell, or run:  export PATH=\"$LOCAL_BIN:\$PATH\" && hash -r"
 }
 
+# Post-install handoff: run the TypeScript-side finishing step on the binary
+# we just linked. The v4 legacy cleanup (stale ~/.claude/rules orchestration
+# file, orphaned automagik/genie/4.* plugin caches) lives there — see
+# src/genie-commands/install.ts + legacy-v4.ts; it is never duplicated in
+# bash. Installer args are forwarded so `curl ... | bash -s -- --skip-v4-cleanup`
+# reaches the subcommand. Non-fatal on purpose: the binary is installed either
+# way, and an older binary without the `install` subcommand must not fail the
+# bootstrap. Not `exec` — exec would skip the EXIT trap and leak $TMP_DIR.
+handoff_to_subcommand() {
+  log "handing off to: genie install (post-install finishing)"
+  "$LOCAL_BIN/genie" install "$@" \
+    || warn "genie install (post-install finishing) failed — binary is installed; run '$LOCAL_BIN/genie install' manually"
+}
+
 main() {
   need curl; need tar; need uname
   local platform channel payload version tarball_base tarball
@@ -376,6 +391,7 @@ main() {
   extract_and_link "$tarball"
   detect_legacy_install
   ensure_path_wired
+  handoff_to_subcommand "$@"
   log "genie v${version} installed"
 }
 

@@ -4,7 +4,7 @@
  * genie — Single entrypoint CLI (zero-daemon v5).
  *
  * Surviving surface after the v4 runtime demolition:
- *   Utilities:  setup, doctor, update, uninstall, shortcuts
+ *   Utilities:  setup, doctor, update, install, uninstall, shortcuts
  *   Lifecycle:  init (scaffold), launch (Warp cockpit)
  *   State:      task, board  (SQLite-backed, .genie/genie.db)
  *   Hooks:      hook namespace + git hook dispatch
@@ -12,6 +12,7 @@
 
 import { Command } from 'commander';
 import { doctorCommand } from './genie-commands/doctor.js';
+import { type InstallOptions, installCommand } from './genie-commands/install.js';
 import { type SetupOptions, setupCommand } from './genie-commands/setup.js';
 import {
   shortcutsInstallCommand,
@@ -101,6 +102,12 @@ program
   .option('--skip-maintenance', 'Skip the post-update binary verify probe (or set GENIE_UPDATE_SKIP_MAINTENANCE=1)')
   .option('--rollback', 'Restore the most recent ~/.genie/bin/.previous binary backup')
   .action(updateCommand);
+
+program
+  .command('install')
+  .description('Post-install finishing step — invoked by install.sh after the binary is linked')
+  .option('--skip-v4-cleanup', 'Leave v4-era leftovers in place (orchestration rules, orphaned plugin caches)')
+  .action((options: InstallOptions) => installCommand(options));
 
 program.command('uninstall').description('Remove Genie CLI and clean up hooks').action(uninstallCommand);
 

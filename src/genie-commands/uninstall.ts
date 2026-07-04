@@ -10,11 +10,13 @@
 import { existsSync, lstatSync, rmSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-
-const ORCHESTRATION_RULES_PATH = join(homedir(), '.claude', 'rules', 'genie-orchestration.md');
 import { confirm } from '@inquirer/prompts';
 import { hookScriptExists, removeHookScript } from '../lib/claude-settings.js';
 import { contractPath, getGenieDir } from '../lib/genie-config.js';
+import { orchestrationRulesPath } from './legacy-v4.js';
+
+// Shared v4 legacy manifest owns this path — see legacy-v4.ts.
+const ORCHESTRATION_RULES_PATH = orchestrationRulesPath();
 
 const LOCAL_BIN = join(homedir(), '.local', 'bin');
 
@@ -93,7 +95,7 @@ function performUninstall(
   if (existsSync(ORCHESTRATION_RULES_PATH)) {
     tryRemoveStep(
       'Removing orchestration rules...',
-      'Orchestration rules removed (~/.claude/rules/genie-orchestration.md)',
+      `Orchestration rules removed (${contractPath(ORCHESTRATION_RULES_PATH)})`,
       () => unlinkSync(ORCHESTRATION_RULES_PATH),
     );
   }
@@ -119,7 +121,7 @@ export async function uninstallCommand(): Promise<void> {
   console.log('\x1b[2mThis will remove:\x1b[0m');
   if (hasHookScript) console.log('  \x1b[31m-\x1b[0m Hook script (~/.claude/hooks/genie-bash-hook.sh)');
   if (hasOrchestrationRules)
-    console.log('  \x1b[31m-\x1b[0m Orchestration rules (~/.claude/rules/genie-orchestration.md)');
+    console.log(`  \x1b[31m-\x1b[0m Orchestration rules (${contractPath(ORCHESTRATION_RULES_PATH)})`);
   if (hasGenieDir) console.log(`  \x1b[31m-\x1b[0m Genie directory (${contractPath(genieDir)})`);
   if (existingSymlinks.length > 0)
     console.log(`  \x1b[31m-\x1b[0m Symlinks from ~/.local/bin: ${existingSymlinks.join(', ')}`);
