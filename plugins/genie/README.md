@@ -51,3 +51,7 @@ Smoke-test the core commands:
 - `/wish`
 - `/work`
 - `/review`
+
+## Sibling surface: Hermes
+
+This Claude Code plugin and the Hermes-native plugin ([`plugins/hermes-genie/`](../hermes-genie/README.md)) are sibling surfaces of the same Genie substrate. This one carries the workflow skills into Claude Code; the Hermes plugin exposes read-only Genie state (status, board, wish/task queries, dry-run plans) inside Hermes sessions — Hermes acts as the chat/reasoning cockpit while Genie remains the execution system and source of task truth.
