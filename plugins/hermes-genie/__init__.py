@@ -1,10 +1,10 @@
 """Genie native surface for Hermes.
 
 Registers seven read-only tools that bridge Hermes to the Genie CLI through a
-safe subprocess layer (argv lists only, mutation always "none"). Hooks, slash
-commands, CLI commands, and skills are declared in plugin.yaml and are
-implemented by a later group; ``register()`` therefore only requires
-``ctx.register_tool``.
+safe subprocess layer (argv lists only, mutation always "none"), plus slash
+commands, advisory hooks, skills, and a CLI command tree. Only
+``ctx.register_tool`` is required; every other registration is guarded with
+``hasattr`` so a tool-only context still gets the full read-only tool surface.
 """
 
 from __future__ import annotations
@@ -210,11 +210,66 @@ def _genie_review_plan(args: dict, **kwargs: Any) -> str:
     )
 
 
-def register(ctx) -> None:
-    """Register Genie's native Hermes tool surface.
+# Imported after the tool handlers on purpose: commands.py imports those
+# handlers back from this module, so importing it any earlier would hit a
+# partially-initialized module in package mode.
+try:  # package import (Hermes loads plugins as packages)
+    from . import commands, hooks
+except ImportError:  # flat import (module loaded from a file location)
+    import sys
 
-    Only ``ctx.register_tool`` is required here — commands, hooks, and skills
-    are declared in plugin.yaml and registered by a later execution group.
+    _HERE = str(Path(__file__).resolve().parent)
+    if _HERE not in sys.path:
+        sys.path.insert(0, _HERE)
+    import commands  # type: ignore[no-redef]
+    import hooks  # type: ignore[no-redef]
+
+
+def _register_commands(ctx) -> None:
+    """Slash commands: /genie dispatcher plus per-subcommand aliases."""
+    command_defs: list[tuple[str, Any, str, str]] = [
+        (
+            "genie",
+            commands.slash_genie,
+            "Operate Genie status, board, wishes, work plans, and review plans (read-only)",
+            "[status|board [wish]|wish <slug>|work-plan <slug> [groups]|review-plan <slug>|help]",
+        ),
+        ("genie-board", commands.slash_genie_board, "Show the Genie task board", "[wish]"),
+        ("genie-wish", commands.slash_genie_wish, "Show Genie wish status (board plus tasks)", "<slug>"),
+        (
+            "genie-work-plan",
+            commands.slash_genie_work_plan,
+            "Prepare a non-mutating Genie work plan (launch --dry-run)",
+            "<slug> [groups]",
+        ),
+        ("genie-review-plan", commands.slash_genie_review_plan, "Prepare a non-mutating Genie review plan", "<slug>"),
+    ]
+    for name, handler, description, args_hint in command_defs:
+        ctx.register_command(name, handler=handler, description=description, args_hint=args_hint)
+
+
+def _register_skills(ctx) -> None:
+    """Skills: path-based SKILL.md registration relative to the plugin dir."""
+    plugin_dir = Path(__file__).resolve().parent
+    skill_defs: list[tuple[str, str]] = [
+        ("genie", "Genie cockpit contract — structured tools first, human-gated mutations, outcome-first evidence"),
+        ("genie-work", "Genie work discipline — dry-run work plans first, Genie/Claude Code dispatch, independent review"),
+        ("genie-review", "Genie review discipline — SHIP / FIX-FIRST / BLOCKED verdicts with evidence"),
+        ("genie-khaw-bridge", "Genie/KHAW bridge — KHAW stays canonical for purpose, Genie owns execution detail"),
+    ]
+    for name, description in skill_defs:
+        skill_path = plugin_dir / "skills" / name / "SKILL.md"
+        if skill_path.exists():
+            ctx.register_skill(name, skill_path, description=description)
+
+
+def register(ctx) -> None:
+    """Register Genie's native Hermes surface.
+
+    ``ctx.register_tool`` is the only required capability. Slash commands,
+    hooks, skills, and the CLI tree are registered only when the running
+    Hermes context exposes the matching ``register_*`` method, so a
+    tool-only context still completes cleanly.
     """
     tool_defs: list[tuple[dict[str, Any], Any, str]] = [
         (schemas.GENIE_STATUS_SCHEMA, _genie_status, "🧞"),
@@ -234,3 +289,27 @@ def register(ctx) -> None:
             description=schema["description"],
             emoji=emoji,
         )
+
+    if hasattr(ctx, "register_command"):
+        _register_commands(ctx)
+
+    if hasattr(ctx, "register_hook"):
+        hook_defs: list[tuple[str, Any]] = [
+            ("on_session_start", hooks.on_session_start),
+            ("pre_tool_call", hooks.pre_tool_call),
+            ("post_tool_call", hooks.post_tool_call),
+        ]
+        for event, handler in hook_defs:
+            ctx.register_hook(event, handler)
+
+    if hasattr(ctx, "register_cli_command"):
+        ctx.register_cli_command(
+            name="genie",
+            help="Genie read-only commands (status, board, wish, work-plan, review-plan)",
+            setup_fn=commands.setup_cli,
+            handler_fn=commands.cli_handler,
+            description="Operate Genie from the Hermes CLI without mutations",
+        )
+
+    if hasattr(ctx, "register_skill"):
+        _register_skills(ctx)

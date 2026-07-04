@@ -284,3 +284,131 @@ def test_review_plan_extracts_criteria_sections(tmp_path):
     assert "gamma verified" in criteria["qa_criteria"]
     assert "ignored" not in criteria["qa_criteria"]
     assert data["source"].endswith("WISH.md")
+
+
+# --- Group 2: slash commands, advisory hooks, skills, CLI surface -----------
+
+SLASH_COMMANDS = ["genie", "genie-board", "genie-wish", "genie-work-plan", "genie-review-plan"]
+HOOK_EVENTS = ["on_session_start", "pre_tool_call", "post_tool_call"]
+SKILL_NAMES = ["genie", "genie-work", "genie-review", "genie-khaw-bridge"]
+BLOCKING_KEYS = {"block", "blocked", "deny", "denied", "decision", "stop", "abort", "error"}
+
+
+def _hook_handlers(ctx: FakeCtx) -> dict[str, Any]:
+    return {event: handler for event, handler, _kwargs in ctx.hooks}
+
+
+def test_register_adds_slash_commands():
+    module = load_plugin_module()
+    ctx = FakeCtx()
+    module.register(ctx)
+    for name in SLASH_COMMANDS:
+        assert name in ctx.commands, f"slash command {name} not registered"
+        entry = ctx.commands[name]
+        assert callable(entry["handler"])
+        assert entry["description"]
+
+
+def test_register_adds_advisory_hooks():
+    module = load_plugin_module()
+    ctx = FakeCtx()
+    module.register(ctx)
+    events = {event for event, _handler, _kwargs in ctx.hooks}
+    for event in HOOK_EVENTS:
+        assert event in events, f"hook {event} not registered"
+    for _event, handler, _kwargs in ctx.hooks:
+        assert callable(handler)
+
+
+def test_register_adds_skills():
+    module = load_plugin_module()
+    ctx = FakeCtx()
+    module.register(ctx)
+    for name in SKILL_NAMES:
+        assert name in ctx.skills, f"skill {name} not registered"
+        args, kwargs = ctx.skills[name]
+        skill_path = Path(str(args[0]))
+        assert skill_path.name == "SKILL.md"
+        assert skill_path.is_file()
+        assert kwargs.get("description")
+
+
+def test_register_adds_cli_command_when_supported():
+    module = load_plugin_module()
+    ctx = FakeCtx()
+    module.register(ctx)
+    assert "genie" in ctx.cli_commands
+    entry = ctx.cli_commands["genie"]
+    assert callable(entry["setup_fn"])
+    assert callable(entry["handler_fn"])
+
+
+def test_hooks_are_advisory_and_never_blocking(tmp_path):
+    module = load_plugin_module()
+    ctx = FakeCtx()
+    module.register(ctx)
+    handlers = _hook_handlers(ctx)
+
+    genie_repo = tmp_path / "repo"
+    (genie_repo / ".genie").mkdir(parents=True)
+    started = handlers["on_session_start"]({"cwd": str(genie_repo)})
+    assert started["mutation"] == "none"
+    assert "genie_status" in started["message"]
+
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    bare = handlers["on_session_start"]({"cwd": str(plain)})
+    assert bare == {"mutation": "none"}
+
+    scrape = handlers["pre_tool_call"]({"command": "tmux capture-pane -t genie-worker -p"})
+    assert scrape["mutation"] == "none"
+    assert scrape["advice"]
+    poll = handlers["pre_tool_call"]({"command": "sleep 5 && genie ls --json"})
+    assert poll["mutation"] == "none"
+    assert poll["advice"]
+    normal = handlers["pre_tool_call"]({"command": "ls -la"})
+    assert normal == {"mutation": "none"}
+
+    post = handlers["post_tool_call"]({"command": "tmux capture-pane -t genie-worker -p"})
+    assert post == {"mutation": "none"}
+
+    for result in [started, bare, scrape, poll, normal, post]:
+        assert result["mutation"] == "none"
+        assert not (set(result) & BLOCKING_KEYS), f"blocking directive in {result}"
+        assert set(result) <= {"message", "advice", "mutation"}
+
+
+def test_hooks_tolerate_missing_and_object_events(tmp_path):
+    module = load_plugin_module()
+    ctx = FakeCtx()
+    module.register(ctx)
+    handlers = _hook_handlers(ctx)
+    for event in HOOK_EVENTS:
+        result = handlers[event]()  # no event at all
+        assert result["mutation"] == "none"
+
+    class Event:
+        def __init__(self, **fields: Any) -> None:
+            for key, value in fields.items():
+                setattr(self, key, value)
+
+    genie_repo = tmp_path / "repo"
+    (genie_repo / ".genie").mkdir(parents=True)
+    started = handlers["on_session_start"](Event(cwd=str(genie_repo)))
+    assert started["mutation"] == "none"
+    assert "genie_board" in started["message"]
+    scrape = handlers["pre_tool_call"](Event(command="tmux capture-pane -t w"))
+    assert scrape["mutation"] == "none"
+    assert scrape["advice"]
+
+
+def test_skill_files_have_frontmatter_and_body():
+    for name in SKILL_NAMES:
+        path = PLUGIN / "skills" / name / "SKILL.md"
+        assert path.is_file(), path
+        text = path.read_text(encoding="utf-8")
+        assert text.startswith("---"), f"{path} must start with --- at byte zero"
+        head, body = text[3:].split("\n---\n", 1)
+        assert "name:" in head and "description:" in head, path
+        assert f"name: {name}" in head, path
+        assert body.strip(), f"{path} has an empty body"
