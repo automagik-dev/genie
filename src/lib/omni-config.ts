@@ -38,6 +38,12 @@ export interface OmniRoute {
   instance: string;
   chat: string;
   repo: string;
+  /**
+   * Absolute path to a persona / AGENTS.md file appended to the agent's system
+   * prompt for this route's runs. Omitted → the runner falls back to
+   * `<repo>/AGENTS.md` if it exists, else no persona.
+   */
+  persona?: string;
 }
 
 /**
