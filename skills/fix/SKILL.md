@@ -2,20 +2,19 @@
 name: fix
 description: "Dispatch fix subagent for FIX-FIRST gaps from /review, re-review, and escalate after 2 failed loops."
 ---
-<!-- skills-lint:ignore -->
 
 # /fix — Fix-Review Loop
 
-Resolve FIX-FIRST gaps from `/review`. Dispatch a fix subagent, re-review, repeat up to 2 loops, then escalate.
+Resolve FIX-FIRST gaps from `/review`: dispatch a fix subagent, re-review, repeat up to 2 loops, then escalate.
 
 ## When to Use
 - `/review` returned a **FIX-FIRST** verdict with CRITICAL or HIGH gaps
 - Orchestrator hands off unresolved gaps after execution review
 
 ## Flow
-1. **Parse gaps:** extract gap list from FIX-FIRST verdict — severity, files, failing checks.
-2. **Dispatch fixer:** send gaps + original wish criteria to fix subagent.
-3. **Re-review:** dispatch review subagent to validate the fix against the same pipeline.
+1. **Parse gaps:** severity, files, failing checks from the FIX-FIRST verdict.
+2. **Dispatch fixer:** Agent tool → fix subagent, briefed with the gap list, the original wish criteria, and any `/trace` diagnosis.
+3. **Re-review:** Agent tool → a separate reviewer subagent (never the fixer) running `/review` on the same pipeline.
 4. **Evaluate verdict:**
 
 | Verdict | Condition | Action |
@@ -25,7 +24,17 @@ Resolve FIX-FIRST gaps from `/review`. Dispatch a fix subagent, re-review, repea
 | FIX-FIRST | loop = 2 | Escalate — max loops reached. |
 | BLOCKED | — | Escalate immediately. |
 
-5. **Escalate (if needed):** mark task BLOCKED, report remaining gaps with exact files and failing checks.
+5. **Escalate (if needed):** report the remaining gaps with exact files and failing checks; the group's task stays `in_progress`.
+
+## Dispatch
+
+Fix and re-review are **separate Agent-tool dispatches** — never combined in one subagent, and the re-reviewer is never the fixer. Subagents notify on completion — no polling. Follow-ups to a running fixer go through SendMessage.
+
+The fixer's brief must carry: the severity-tagged gaps (file:line), the original wish acceptance criteria, the validation command(s) to re-run, and stop conditions — fix only the listed gaps; report blocked rather than expand scope.
+
+## Task State
+
+The fix loop never mutates task state. The group's task stays `in_progress` through every loop; the orchestrator calls `genie task done <task-id>` only after a clean re-review. On escalation the task remains `in_progress` with the remaining gaps recorded in the wish notes/handoff. If no task row exists for the work, proceed — the loop runs off the review verdict alone.
 
 ## Escalation Format
 
@@ -36,77 +45,31 @@ Remaining gaps:
 - [HIGH] <gap description> — <file>
 ```
 
-## Dispatch
-
-Fix and re-review must be **separate dispatches** — never combine them in one subagent.
-
-```bash
-# Spawn a fixer subagent
-genie agent spawn fixer
-
-# Spawn a reviewer subagent (separate from fixer)
-genie agent spawn reviewer
-```
-
-## Task Lifecycle Integration (v4)
-
-When a PG task exists for the work being fixed, log each fix attempt as a task comment:
-
-| Event | Command |
-|-------|---------|
-| Fix attempt start | `genie task comment #<seq> "Fix loop 1/2: [gap summary]"` |
-| Fix attempt result | `genie task comment #<seq> "Fix loop 1/2: [changes made]"` |
-| Fix success | `genie task comment #<seq> "Fix complete — [summary of all changes]"` |
-| Escalation (max loops) | `genie task block #<seq> --reason "Fix loop exceeded (2/2)"` |
-| Escalation (no progress) | `genie task block #<seq> --reason "No progress — identical gaps across loops"` |
-
-**Graceful degradation:** If no PG task exists for the work being fixed, skip all `genie task` commands. Fix loop logging is an enhancement — the fix flow must never fail due to missing tasks.
-
 ## Example
 
-`/review` returned FIX-FIRST with 2 gaps:
+`/review` returned FIX-FIRST with:
 
 ```
 - [CRITICAL] workDispatchCommand missing initialPrompt — dispatch.ts:532
-- [HIGH] protocolRouter.sendMessage result not checked — dispatch.ts:541
+- [HIGH] sendMessage result not checked — dispatch.ts:541
 ```
 
-The orchestrator runs `/fix`:
-
-```bash
-# Loop 1: dispatch fixer with gaps
-genie agent spawn fixer
-genie agent send 'Fix these gaps from /review on wish fix-dispatch-initial-prompt:
-- [CRITICAL] dispatch.ts:532 — add initialPrompt to handleWorkerSpawn
-- [HIGH] dispatch.ts:541 — check protocolRouter.sendMessage result, log warning on failure
-Reference: qa-runner.ts:334 shows correct pattern.' --to fixer
-
-# Wait for fixer to complete
-sleep 60 && genie agent log fixer --raw
-
-# Re-review (separate subagent — never the same as fixer)
-genie agent spawn reviewer
-genie agent send 'Review wish fix-dispatch-initial-prompt. Check the fixer changes against acceptance criteria. Run bun test.' --to reviewer
-
-# Reviewer returns SHIP → done
-# If FIX-FIRST again → loop 2 (max 2 loops, then escalate)
-```
+Loop 1: Agent tool → fixer briefed with both gaps, the wish criteria, and `bun test` as validation. The fixer edits, runs the validation, reports its changes with outcomes, and ends `done`. Then Agent tool → a fresh reviewer briefed to re-run `/review` against the same criteria. SHIP → report success to the orchestrator. FIX-FIRST again → loop 2; after that, escalate.
 
 ## Rules
+- Tight scope: fix exactly the tagged gaps — no unrequested refactors, features, or drive-by cleanups.
 - Never fix and review in the same session — always separate subagents.
 - Never exceed 2 fix loops — escalate, don't spin.
-- Include original wish criteria in every fix dispatch.
-- If identical gaps persist across loops, escalate immediately — no progress means BLOCKED.
+- Include the original wish criteria in every fix dispatch.
+- Identical gaps across loops = no progress = escalate immediately as BLOCKED.
+- Grounded progress: report only what tool output from this session verifies — state what was fixed, what failed, what was skipped. Never report an attempted fix as complete.
 
-## Turn close (required)
+## Session close (required)
 
-Every session MUST end by writing a terminal outcome to the turn-session contract. This is how the orchestrator reconciles executor state — skipping it leaves the row open and blocks auto-resume.
+When spawned as a native-team subagent, your final message IS the completion signal — the orchestrator is notified when you finish; do not poll or emit a separate contract call. End with exactly one terminal outcome as the last word:
 
-- `genie done` — work completed, acceptance criteria met
-- `genie blocked --reason "<why>"` — stuck, needs human input or an unblocking signal
-- `genie failed --reason "<why>"` — aborted, irrecoverable error, or cannot proceed
+- **done** — gaps resolved and re-review returned SHIP. Report evidence (validation output, loop count).
+- **blocked** — needs human input or an unblocking signal (including max loops exceeded). State exactly what.
+- **failed** — aborted or irrecoverable. State why.
 
-Rules:
-- Call exactly one close verb as the last action of the session.
-- `blocked` / `failed` require `--reason`.
-- `genie done` inside an agent session (GENIE_AGENT_NAME set) closes the current executor; it does not require a wish ref.
+`blocked` / `failed` must include a one-line reason.
