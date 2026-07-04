@@ -754,6 +754,20 @@ describe('runClaudeSession — resume-first session continuity', () => {
     expect(res.exitCode).toBe(1);
     expect(calls.length).toBe(1); // never fell back to create
   });
+
+  test('a generic "… not found" resume failure is NOT treated as a missing session', async () => {
+    // The session EXISTS; some other resource is missing. A bare "not found" must
+    // not trigger a --session-id create (which would then error "already in use").
+    const calls: string[][] = [];
+    const rawSpawn: RawClaudeSpawn = async (args) => {
+      calls.push(args);
+      return { stdout: '', stderr: 'Error: model "sonnet-99" not found', exitCode: 1 };
+    };
+    const res = await runClaudeSession({ ...base, signal: noSignal() }, rawSpawn);
+    expect(res.exitCode).toBe(1);
+    expect(calls.length).toBe(1); // resume only — no spurious create
+    expect(calls[0]).toContain('--resume');
+  });
 });
 
 describe('deterministicSessionId — stable per conversation', () => {
