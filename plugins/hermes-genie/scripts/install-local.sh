@@ -42,9 +42,17 @@ hermes_home="${HERMES_HOME:-$HOME/.hermes}"
 target="$hermes_home/plugins/genie"
 
 mkdir -p "$hermes_home/plugins"
-# Replace whatever is there. Without a trailing slash this removes a stale
-# symlink itself, never the checkout it points to.
-rm -rf "$target"
+# Replace a previous install only (a symlink, or a dir that looks like this
+# plugin). Refuse to wipe unrelated content. Without a trailing slash the rm
+# removes a stale symlink itself, never the checkout it points to.
+if [ -e "$target" ] || [ -L "$target" ]; then
+  if [ -L "$target" ] || [ -f "$target/plugin.yaml" ]; then
+    rm -rf "$target"
+  else
+    echo "refusing to replace $target: exists but does not look like a genie plugin install (no plugin.yaml)" >&2
+    exit 1
+  fi
+fi
 
 if [ "$mode" = "copy" ]; then
   cp -R "$plugin_src" "$target"

@@ -1,6 +1,6 @@
 # Native Surface Reference
 
-What the Genie Hermes plugin exposes, layer by layer, and the exact contract every layer honors. Grounded against the genie v5 CLI (flags verified 2026-07-04 on genie 5.260703.5).
+What the Genie Hermes plugin exposes, layer by layer, and the exact contract every layer honors. Grounded against the genie v5 CLI (flag surface verified 2026-07-04 and pinned by the plugin's contract tests; re-verify with `genie --help` after major CLI updates).
 
 ## Layer map
 

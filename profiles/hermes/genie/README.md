@@ -32,11 +32,11 @@ bun run build
 
 # 3. Materialize the Genie workspace/profile seed
 mkdir -p ~/workspace/agents/genie
-cp profiles/hermes/genie/{AGENTS.md,SOUL.md,HEARTBEAT.md,agent.yaml,hermes-profile.yaml} ~/workspace/agents/genie/
+cp profiles/hermes/genie/{AGENTS.md,SOUL.md,HEARTBEAT.md,CLAUDE_CODE_PILOT.md,agent.yaml,hermes-profile.yaml} ~/workspace/agents/genie/
 ln -sfn ~/workspace/repos ~/workspace/agents/genie/repos
 
 # 4. Optional: create/use a Hermes profile named genie
-hermes profile create genie --clone default || true
+hermes profile create genie --clone default  # re-runs: skip this line if the profile already exists
 hermes -p genie chat -q 'Read ~/workspace/agents/genie/AGENTS.md and explain how you will operate Genie.'
 ```
 
