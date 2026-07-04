@@ -6,11 +6,11 @@
 
 ## Council Composition
 
-| Member | Lens | Provider | Model |
-|--------|------|----------|-------|
-| questioner | Challenge assumptions | claude | opus |
-| architect | Systems thinking | claude | sonnet |
-| simplifier | Complexity reduction | claude | haiku |
+| Member | Lens | Model |
+|--------|------|-------|
+| questioner | Challenge assumptions | opus |
+| architect | Systems thinking | sonnet |
+| simplifier | Complexity reduction | haiku |
 
 ## Situation Analysis
 
@@ -68,4 +68,4 @@
 
 ---
 
-*Council session: <team-name> | Members: <count> | Round 1: <responded>/<total> | Round 2: <responded>/<total>*
+*Council session: <date> | Members: <count> | Round 1: <responded>/<total> | Round 2: <responded>/<total>*

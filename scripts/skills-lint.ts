@@ -48,16 +48,30 @@ function getGenieCommands(): Set<string> {
   return collectSubcommands(out);
 }
 
-function getOmniCommands(): Set<string> {
+/**
+ * Probe the omni CLI surface. Contract: a missing/broken omni binary is NOT a
+ * lint failure by default — CI runners don't ship omni, so the probe degrades
+ * to a loud stderr warning and returns null, and the caller skips ONLY the
+ * omni-invocation checks (genie-command validation stays fully strict). Set
+ * SKILLS_LINT_REQUIRE_OMNI=1 to restore the hard failure (exit 2) where omni
+ * checks must be enforced. The old "never silently swallow" intent survives
+ * as the warning + env knob — a skip is always visible in the output.
+ */
+function getOmniCommands(): Set<string> | null {
   let out: string;
   try {
     out = execSync('omni --help --all 2>/dev/null || omni --help', { encoding: 'utf8' });
   } catch (err) {
-    // Never silently swallow: CI must catch a missing or broken omni binary.
-    const detail = err instanceof Error ? err.message : String(err);
-    console.error(`[skills-lint] failed to probe \`omni --help\`: ${detail}`);
-    console.error('[skills-lint] install the omni CLI or unset skills linting before running.');
-    process.exit(2);
+    if (process.env.SKILLS_LINT_REQUIRE_OMNI === '1') {
+      const detail = err instanceof Error ? err.message : String(err);
+      console.error(`[skills-lint] failed to probe \`omni --help\`: ${detail}`);
+      console.error('[skills-lint] install the omni CLI or unset skills linting before running.');
+      process.exit(2);
+    }
+    console.error(
+      '[skills-lint] omni CLI not found — skipping omni-invocation validation (set SKILLS_LINT_REQUIRE_OMNI=1 to enforce)',
+    );
+    return null;
   }
   // omni uses section headers (Core:, Management:, System:); strip them.
   const cmds = new Set<string>();
@@ -119,10 +133,9 @@ function main() {
   const reports: Report[] = [];
 
   // First pass: collect all invocations from non-ignored skills. The omni CLI
-  // is only probed when some scanned skill actually references it — every
-  // omni-referencing skill is currently behind skills-lint:ignore, and CI
-  // runners don't have the omni binary installed, so an unconditional probe
-  // hard-fails the gate for commands nobody validates.
+  // is only probed when some scanned skill actually references it; when the
+  // probe fails, getOmniCommands() returns null and omni checks are skipped
+  // (loudly) instead of failing the gate — see its contract comment.
   const scanned: Array<{ file: string; genie: string[]; omni: string[] }> = [];
   for (const file of files) {
     const text = readFileSync(file, 'utf8');
@@ -138,13 +151,14 @@ function main() {
 
   const omniNeeded = scanned.some((s) => s.omni.length > 0);
   const omniCmds = omniNeeded ? getOmniCommands() : new Set<string>();
+  const omniSkipped = omniCmds === null;
 
   for (const { file, genie, omni } of scanned) {
     const missing: Report['missingCommands'] = [];
     for (const cmd of genie) {
       if (!genieCmds.has(cmd)) missing.push({ tool: 'genie', command: cmd });
     }
-    if (omniCmds.size > 0) {
+    if (omniCmds !== null && omniCmds.size > 0) {
       for (const cmd of omni) {
         if (!omniCmds.has(cmd)) missing.push({ tool: 'omni', command: cmd });
       }
@@ -159,7 +173,8 @@ function main() {
     console.error(`\nskills-lint: ${failed.length} skill(s) reference missing commands`);
     process.exit(1);
   }
-  console.error(`skills-lint: OK (${reports.length} files scanned, 0 missing)`);
+  const omniNote = omniSkipped ? ', omni checks skipped' : '';
+  console.error(`skills-lint: OK (${reports.length} files scanned, 0 missing${omniNote})`);
 }
 
 main();

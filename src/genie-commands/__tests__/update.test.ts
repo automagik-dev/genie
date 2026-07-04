@@ -33,6 +33,7 @@ import {
   resolveLiveBinaryPath,
   resolvePlatformId,
   rollbackBinary,
+  runV4CleanupSafe,
   runVerifyProbe,
   shortCircuitIfCurrent,
   shouldEmitPathDivergenceWarning,
@@ -1371,5 +1372,51 @@ describe('shouldEmitPathDivergenceWarning (self-symlink suppression)', () => {
         intendedVersion: '4.260522.2',
       }),
     ).toBe(false);
+  });
+});
+
+// ============================================================================
+// Post-swap v4 legacy cleanup wiring (G8 fix). v5 machines upgrade through
+// `genie update`, never by re-running install.sh, so the upgrade path must
+// invoke the same cleanup seam the installer does — and a cleanup failure
+// must never fail a completed update.
+// ============================================================================
+
+describe('runV4CleanupSafe', () => {
+  const stubResult = {
+    report: { rulesFile: { path: '/fixture', status: 'absent' as const }, cacheDirs: [], hasRelics: false },
+    actions: [],
+    backupDir: null,
+    logFile: null,
+    noOp: true,
+  };
+
+  test('invokes the injected v4 cleanup runner exactly once', () => {
+    let calls = 0;
+    runV4CleanupSafe(() => {
+      calls += 1;
+      return stubResult;
+    });
+    expect(calls).toBe(1);
+  });
+
+  test('a cleanup throw does not fail the update', () => {
+    expect(() =>
+      runV4CleanupSafe(() => {
+        throw new Error('boom');
+      }),
+    ).not.toThrow();
+  });
+
+  test('updateCommand calls the cleanup seam before the post-update verify', () => {
+    // Wiring lock: the seam runs after a successful delivery and before
+    // runPostUpdateVerifySafe. Source-level assertion — running the real
+    // updateCommand would hit the network.
+    const source = readFileSync(join(import.meta.dir, '..', 'update.ts'), 'utf-8');
+    const callIdx = source.indexOf('runV4CleanupSafe();');
+    const verifyIdx = source.indexOf('await runPostUpdateVerifySafe(');
+    expect(callIdx).toBeGreaterThan(-1);
+    expect(verifyIdx).toBeGreaterThan(-1);
+    expect(callIdx).toBeLessThan(verifyIdx);
   });
 });

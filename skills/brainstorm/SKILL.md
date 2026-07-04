@@ -12,56 +12,20 @@ Collaborate on fuzzy ideas until they are concrete enough for `/wish`.
 - Requirements are ambiguous and need interactive refinement
 - User explicitly invokes `/brainstorm`
 
-## Context Injection
-
-This skill is multi-agent aware and operates on the shared worktree:
-- All brainstorm artifacts live in `.genie/` within the shared worktree (not the repo root)
-- When spawned as a subagent (Claude Code native team), the dispatching agent curates the seed context into your prompt (file path + extracted section) — use it directly as seed, do not re-read what was already provided
-- Multiple agents can read brainstorm state concurrently; writes are coordinated by the dispatching agent
+All artifacts live in `.genie/` within the shared worktree. When spawned as a native-team subagent, the dispatcher curates seed context (file path + extracted section) into your prompt — use it directly; do not re-read what was already provided.
 
 ## Flow
-1. **Read context:** scan current code, docs, conventions. Check `.genie/brainstorm.md` in the shared worktree for an existing entry matching this slug/topic — use as seed if found. If context was injected from dispatch, use it directly.
-2. **Init persistence:** create `.genie/brainstorms/<slug>/DRAFT.md` immediately in the shared worktree. Create `.genie/brainstorm.md` if missing (see Jar).
-3. **Scope-size check:** if the request touches multiple independent subsystems, flag for decomposition before refining details (see Scope-Size Detection).
-4. **Clarify intent:** one question at a time, prefer multiple-choice.
-5. **Show WRS bar** after every exchange (see WRS).
-6. **Persist draft** when WRS changes OR every 2 minutes — whichever comes first.
-7. **Propose approaches:** 2-3 options with trade-offs. Apply Design-for-Isolation principles. Recommend one.
-8. **Crystallize** when WRS = 100: write `DESIGN.md`, spec self-review, update jar, hand off.
-
-## Scope-Size Detection
-
-Before refining any details, assess whether the request is a single cohesive project or multiple independent ones. Multi-subsystem requests waste brainstorm cycles because refinement assumptions for subsystem A may not hold for subsystem B.
-
-**Signs the request needs decomposition:**
-- Touches 3+ unrelated directories or modules
-- Requires changes to both infrastructure and application layers
-- Combines UI + API + data model changes with no shared interface
-- Different parts could ship independently without blocking each other
-- Different parts would naturally be assigned to different engineers
-
-**When detected:**
-1. Stop refining details immediately.
-2. Tell the user: "This looks like it spans multiple independent subsystems. Refining them together risks a wish that's too broad to execute cleanly."
-3. Help decompose into sub-projects, each getting its own brainstorm → wish → work cycle.
-4. For each sub-project, identify: purpose, rough scope, and dependencies on other sub-projects.
-5. Start a fresh brainstorm for the first sub-project (or let the user pick).
-
-## Design-for-Isolation
-
-When proposing approaches and writing the Approach section of DESIGN.md, apply these principles:
-
-- **Single purpose per unit** — each module, file, or component should do one thing well. If you can't describe its purpose in one sentence, it's doing too much.
-- **Well-defined interfaces** — units communicate through explicit contracts (function signatures, event schemas, API endpoints), not shared mutable state or implicit conventions.
-- **Independent testability** — each unit can be understood and tested without loading the full system. If testing requires spinning up 5 other services, the boundaries are wrong.
-- **File size as complexity signal** — when a file grows large, that's a signal it's doing too much. Propose splits before the file becomes unmanageable, not after.
-- **Explicit dependencies** — every dependency between units should be visible in the interface, not hidden in implementation details.
-
-These principles apply to the design itself, not just the code that implements it. A design that produces isolated, testable units is easier to execute, review, and maintain.
+1. **Read context:** scan relevant code, docs, conventions. Check `.genie/brainstorm.md` for an existing entry matching this slug/topic — seed from it if found.
+2. **Init persistence:** create `.genie/brainstorms/<slug>/DRAFT.md` immediately; create `.genie/brainstorm.md` if missing (see Jar).
+3. **Scope-size check:** if the request spans multiple independent subsystems, decompose before refining (see Scope Size).
+4. **Refine:** fill WRS dimensions. Ask only what an unfilled dimension needs — when the request or context already settles a dimension, mark it filled and move on; never re-litigate decisions the user already made. Prefer concrete options over open questions.
+5. **Show the WRS bar** after every exchange; persist DRAFT.md whenever WRS changes.
+6. **Propose approaches:** 2-3 options with trade-offs, applying Design for Isolation. Recommend one and proceed when the choice follows from the request.
+7. **Crystallize** when WRS = 100 (see Crystallize).
 
 ## WRS — Wish Readiness Score
 
-Five dimensions, 20 points each. Show the bar after every exchange.
+Five dimensions, 20 points each:
 
 | Dimension | Filled when… |
 |-----------|-------------|
@@ -71,23 +35,28 @@ Five dimensions, 20 points each. Show the bar after every exchange.
 | **Risks** | Assumptions, constraints, failure modes identified |
 | **Criteria** | At least one testable acceptance criterion exists |
 
-### Display Format
-
 ```
 WRS: ██████░░░░ 60/100
  Problem ✅ | Scope ✅ | Decisions ✅ | Risks ░ | Criteria ░
 ```
 
-- ✅ = filled (20 pts) — enough info to write that section of a wish
-- ░ = unfilled (0 pts) — still needs discussion
-- **< 100:** keep refining
-- **= 100:** auto-crystallize
+✅ = enough info to write that section of a wish; ░ = still needs discussion. Below 100: keep refining. At 100: auto-crystallize. If **Decisions** stays unfilled after 2+ exchanges, suggest `/council` for specialist perspectives on the tradeoffs.
+
+## Scope Size
+
+Multi-subsystem requests waste refinement — assumptions for subsystem A rarely hold for B. Signs: 3+ unrelated modules, infrastructure + application layers together, UI + API + data model with no shared interface, parts that could ship or be staffed independently. When detected: stop refining, tell the user the request spans independent subsystems, decompose into sub-projects (purpose, rough scope, dependencies for each), and start a fresh brainstorm for the first one.
+
+## Design for Isolation
+
+Apply to proposed approaches and the DESIGN.md Approach section:
+- Single purpose per unit — describable in one sentence.
+- Explicit interfaces and dependencies — contracts, not shared mutable state or hidden coupling.
+- Independent testability — each unit understandable without loading the whole system.
+- File size is a complexity signal — propose splits before a unit becomes unmanageable.
 
 ## Jar
 
-Brainstorm index at `.genie/brainstorm.md`. Tracks all topics across sessions.
-
-**On start:** create if missing. Prefer `templates/brainstorm.md`; otherwise auto-create with sections:
+Brainstorm index at `.genie/brainstorm.md`; auto-create if missing with sections:
 
 ```markdown
 # Brainstorm Jar
@@ -99,36 +68,35 @@ Brainstorm index at `.genie/brainstorm.md`. Tracks all topics across sessions.
 
 | Event | Action |
 |-------|--------|
-| Start | Look up slug/topic (fuzzy match) — use as seed context |
-| WRS change | Update entry to reflect current section (Raw/Simmering/Ready) |
-| Crystallize | Move entry to Poured, link resulting wish |
+| Start | Fuzzy-match slug/topic — use as seed context |
+| WRS change | Move entry to the matching section (Raw/Simmering/Ready) |
+| Crystallize | Move entry to Poured, link the resulting wish |
 
 ## Crystallize
 
-Triggered automatically when WRS = 100.
+At WRS = 100:
 
-1. Write `.genie/brainstorms/<slug>/DESIGN.md` from `DRAFT.md` using the Design Template below.
-2. **Spec self-review** — before invoking /review, run this 4-point checklist on the DESIGN.md:
-   1. **Placeholder scan** — any TBD, TODO, or incomplete sections? Fill them or mark as explicit OUT-of-scope.
-   2. **Internal consistency** — do sections contradict each other? (e.g., scope says X is OUT but success criteria tests X)
-   3. **Scope check** — focused enough for a single wish? If it spans multiple independent subsystems, split before proceeding.
-   4. **Ambiguity check** — could any requirement be interpreted two different ways? Tighten the language.
-   Fix issues inline in the DESIGN.md, then continue.
-3. **Stage both files for commit:**
+1. Write `.genie/brainstorms/<slug>/DESIGN.md` from DRAFT.md using `references/design-template.md` (in this skill dir) — fill every placeholder.
+2. **Spec self-review** — fix inline before handing off: no TBD/TODO leftovers (fill or mark explicit OUT), no contradictions between sections, scope fits a single wish (split if not), no requirement readable two different ways.
+3. Stage both files:
    ```bash
    git add .genie/brainstorms/<slug>/DESIGN.md .genie/brainstorms/<slug>/DRAFT.md
    ```
-   Per `.gitignore`, only `DESIGN.md` and `DRAFT.md` are trackable under `.genie/brainstorms/*/` — no force-add needed. Other brainstorm artifacts (session notes, transcripts, scratchpads) remain workspace-local.
-4. Update `.genie/brainstorm.md` — move item to Poured with wish link.
-5. Auto-invoke `/review` (plan review) on the `DESIGN.md`.
+   Stage exactly these two; other brainstorm artifacts stay untracked. `bun run wishes:lint` fails any wish whose design link doesn't resolve to a real file — uncommitted brainstorms are missing in CI and sibling worktrees, so never skip the stage.
+4. Update the jar — move the entry to Poured with the wish link.
+5. Create a board pointer; if this fails (no `.genie/genie.db` yet, CLI unavailable), warn and continue — DESIGN.md and the jar in git are the source of truth:
+   ```bash
+   genie task create --title "<brainstorm title>"
+   ```
+6. Auto-invoke `/review` (plan review) on the DESIGN.md.
 
 ## Output Options
 
 | Complexity | Output |
 |-----------|--------|
-| Standard | Write `DESIGN.md`, auto-invoke `/review` (plan review) |
+| Standard | Write DESIGN.md, auto-invoke `/review` (plan review) |
 | Small but non-trivial | Write design, ask whether to implement directly |
-| Trivial | Add one-liner to jar (Raw section), no file needed |
+| Trivial | One-liner in the jar (Raw), no file |
 
 ## Handoff
 
@@ -138,93 +106,20 @@ After `/review` returns SHIP on the design:
 Design reviewed and validated (WRS {score}/100). Proceeding to /wish.
 ```
 
-Note any cross-repo or cross-agent dependencies — these become `depends-on`/`blocks` fields in the wish.
-
-## Stuck Decisions
-
-If the **Decisions** dimension stays ░ (unfilled) after 2+ exchanges, suggest:
-
-```
-Decisions seem stuck. Consider running /council to get specialist perspectives on the tradeoffs.
-```
-
-## Design Template
-
-Use this structure when writing `DESIGN.md` at crystallize:
-
-```markdown
-# Design: <Title>
-
-| Field | Value |
-|-------|-------|
-| **Slug** | `<slug>` |
-| **Date** | YYYY-MM-DD |
-| **WRS** | 100/100 |
-
-## Problem
-One-sentence problem statement.
-
-## Scope
-### IN
-- Concrete deliverable 1
-- Concrete deliverable 2
-
-### OUT
-- Explicit exclusion 1
-
-## Approach
-Chosen approach with rationale. Reference alternatives considered.
-
-## Decisions
-| Decision | Rationale |
-|----------|-----------|
-| Choice 1 | Why this over alternatives |
-
-## Risks & Assumptions
-| Risk | Severity | Mitigation |
-|------|----------|------------|
-| Risk 1 | Low/Medium/High | How to handle |
-
-## Success Criteria
-- [ ] Testable criterion 1
-- [ ] Testable criterion 2
-```
-
-## Task Lifecycle Integration
-
-On crystallize, create a tracking task in the zero-daemon state DB so the brainstorm surfaces on the board:
-
-### On crystallize (WRS = 100)
-```bash
-# Create a tracking task for the crystallized idea (title is the anchor)
-genie task create --title "<brainstorm title>"
-```
-
-| Event | Command |
-|-------|---------|
-| Crystallize | `genie task create --title "<brainstorm title>"` |
-
-The DESIGN.md and DRAFT.md paths are recorded in the DESIGN.md header and the brainstorm jar — the task row is a board pointer, not a second source of truth.
-
-**Graceful degradation:** If `genie task create` fails (no `.genie/genie.db` yet, or the CLI is unavailable), warn but do not block crystallize. The DESIGN.md and brainstorm jar in git are the source of truth — the task row is an optional tracking enhancement.
+Note cross-repo or cross-agent dependencies — they become `depends-on`/`blocks` fields in the wish.
 
 ## Rules
-- One question per message. Never batch questions.
-- YAGNI and simplicity first.
-- Always propose alternatives before recommending.
-- Never assume requirements without confirmation.
+- YAGNI and simplicity first; propose alternatives before recommending.
 - No implementation during brainstorm.
-- Persist early and often — do not wait until the end.
-- Always `git add` both `DESIGN.md` and `DRAFT.md` on crystallize — the `wishes-lint` linter will fail CI on any wish that links to an uncommitted brainstorm.
+- Persist early and often — never wait until the end.
+- Never present an unconfirmed assumption as a settled decision — confirm it or list it under Risks.
 
 ## Session close (required)
 
-When spawned as a native-team subagent, your final message IS the completion signal — the dispatching agent is notified when you finish; do not poll or emit a separate contract call. End every session with one explicit terminal outcome in that final message so the dispatcher can reconcile:
+When spawned as a native-team subagent, your final message IS the completion signal — the dispatcher is notified when you finish; do not poll or emit a separate contract call. End with exactly one terminal outcome as the last word:
 
-- **done** — WRS reached 100, DESIGN.md written and staged, `/review` handed off. Report the DESIGN.md path.
-- **blocked** — stuck, needs human input or an unblocking signal. State exactly what you need.
-- **failed** — aborted, irrecoverable error, or cannot proceed. State why.
+- **done** — WRS hit 100, DESIGN.md written and staged, `/review` handed off. Report the DESIGN.md path.
+- **blocked** — needs human input or an unblocking signal. State exactly what.
+- **failed** — aborted or irrecoverable. State why.
 
-Rules:
-- State exactly one outcome as the last thing you say.
-- `blocked` / `failed` must include a one-line reason.
+`blocked` / `failed` must include a one-line reason.
