@@ -437,8 +437,8 @@ export function makeDefaultOmniSetReaction(config: OmniRuntimeConfig): OmniSetRe
   return async ({ instance, chat, messageId, emoji }) => {
     const apiUrl = config.apiUrl;
     if (!apiUrl) return { success: false, error: 'omni apiUrl not configured' };
-    const path = '/api/v2/messages';
-    const bodyJson = JSON.stringify({ instanceId: instance, chatId: chat, reaction: emoji, messageId });
+    const path = '/api/v2/messages/send/reaction';
+    const bodyJson = JSON.stringify({ instanceId: instance, to: chat, messageId, emoji });
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (config.apiKey) headers.Authorization = `Bearer ${config.apiKey}`;
     const sig = signOmniRequest('POST', path, bodyJson);
