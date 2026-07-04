@@ -9,8 +9,19 @@
  */
 import type { Database } from 'bun:sqlite';
 import { afterEach, describe, expect, test } from 'bun:test';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { OmniRuntimeConfig } from './omni-config.js';
-import { type OmniSend, type SpawnClaude, type SpawnClaudeResult, createOmniRunner } from './omni-runner.js';
+import {
+  type OmniSend,
+  type SpawnClaude,
+  type SpawnClaudeResult,
+  buildClaudeArgs,
+  createOmniRunner,
+  deterministicSessionId,
+  extractStreamJsonReply,
+} from './omni-runner.js';
 import { openGlobalDb } from './v5/global-db.js';
 import { enqueueApproval, getApproval, listInbox } from './v5/omni-queue.js';
 
@@ -597,5 +608,284 @@ describe('omni runner — status-ack reconciliation (hook-fork-expiry race)', ()
     await runner.whenIdle();
     expect(getApproval(db, a)?.lastStatusGlyph).toBe(CHECK);
     expect(reactions[reactions.length - 1]).toEqual({ messageId: 'stanza-A', emoji: CHECK });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Model A pure helpers — argv contract, stream-json parsing, and the stable
+// session-id derivation. Pure functions, no runner / fork / HTTP.
+// ---------------------------------------------------------------------------
+describe('buildClaudeArgs — Model A argv contract', () => {
+  test('streams stream-json under a session id, appends the persona when present', () => {
+    const args = buildClaudeArgs({ message: 'hi', sessionId: 'sess-1', personaFile: '/repo/AGENTS.md' });
+    expect(args).toEqual([
+      '-p',
+      '--output-format',
+      'stream-json',
+      '--verbose',
+      '--session-id',
+      'sess-1',
+      '--append-system-prompt-file',
+      '/repo/AGENTS.md',
+      'hi',
+    ]);
+  });
+
+  test('omits the persona flag when no persona file is resolved; message stays last', () => {
+    const args = buildClaudeArgs({ message: 'hello there', sessionId: 'sess-2' });
+    expect(args).not.toContain('--append-system-prompt-file');
+    expect(args).toContain('--session-id');
+    expect(args).toContain('stream-json');
+    expect(args[args.length - 1]).toBe('hello there');
+  });
+});
+
+describe('extractStreamJsonReply — stream-json parsing', () => {
+  test('prefers the terminal result success text over partial assistant deltas', () => {
+    const nd = [
+      JSON.stringify({ type: 'system', subtype: 'init', session_id: 'x' }),
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'thinking…' }] } }),
+      JSON.stringify({ type: 'result', subtype: 'success', result: 'THE FINAL ANSWER' }),
+    ].join('\n');
+    expect(extractStreamJsonReply(nd)).toBe('THE FINAL ANSWER');
+  });
+
+  test('falls back to concatenated assistant text when there is no success result', () => {
+    const nd = [
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Hello ' }] } }),
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'world' }] } }),
+    ].join('\n');
+    expect(extractStreamJsonReply(nd)).toBe('Hello world');
+  });
+
+  test('falls back to the raw stdout when the output is not stream-json at all', () => {
+    expect(extractStreamJsonReply('plain non-json output')).toBe('plain non-json output');
+  });
+});
+
+describe('deterministicSessionId — stable per conversation', () => {
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+  test('is stable for the same (instance, chat) and a valid v5-shaped uuid', () => {
+    const a = deterministicSessionId(INSTANCE, ROUTE_CHAT);
+    expect(a).toBe(deterministicSessionId(INSTANCE, ROUTE_CHAT));
+    expect(a).toMatch(UUID_RE);
+  });
+
+  test('differs when the chat (or instance) differs', () => {
+    const base = deterministicSessionId(INSTANCE, ROUTE_CHAT);
+    expect(deterministicSessionId(INSTANCE, 'other-chat')).not.toBe(base);
+    expect(deterministicSessionId('other-instance', ROUTE_CHAT)).not.toBe(base);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Model A route-scoped run acks (⏳→✅/❌) + persona / session threading. Every
+// test injects a FAKE spawnClaude AND a FAKE setReaction — zero fork, zero HTTP.
+// ---------------------------------------------------------------------------
+interface RouteReactionCall {
+  instance: string;
+  chat: string;
+  messageId: string;
+  emoji: string;
+}
+
+/** An inbound frame on the mapped route carrying a WhatsApp stanza id. */
+function mappedInboundWithId(body: string, messageId: string, chat = ROUTE_CHAT): [string, string] {
+  return [
+    `omni.message.${INSTANCE}.${chat}`,
+    JSON.stringify({ content: body, chatId: chat, sender: 'boss', instanceId: INSTANCE, messageId }),
+  ];
+}
+
+describe('omni runner — Model A route-scoped run acks (⏳→✅/❌)', () => {
+  test('sets ⏳ before the spawn and ✅ after a successful reply, route-scoped to the inbound id', async () => {
+    const db = freshDb();
+    const reactions: RouteReactionCall[] = [];
+    const order: string[] = [];
+    const runner = createOmniRunner({
+      db,
+      config: rt(),
+      publish: () => order.push('publish'),
+      spawnClaude: async () => {
+        order.push('spawn');
+        return { stdout: 'agent reply', exitCode: 0 };
+      },
+      setReaction: async ({ instance, chat, messageId, emoji }) => {
+        reactions.push({ instance, chat, messageId, emoji });
+        order.push(`react:${emoji}`);
+        return { success: true };
+      },
+    });
+
+    runner.handleMessage(...mappedInboundWithId('do it', 'wamid-1'));
+    await runner.whenIdle();
+
+    // ⏳ then ✅, both on the INBOUND stanza id and the ROUTE's (instance, chat).
+    expect(reactions.map((r) => r.emoji)).toEqual([HOURGLASS, CHECK]);
+    for (const r of reactions) {
+      expect(r.instance).toBe(INSTANCE);
+      expect(r.chat).toBe(ROUTE_CHAT);
+      expect(r.messageId).toBe('wamid-1');
+    }
+    // ⏳ strictly before the spawn; ✅ strictly after the reply is published.
+    expect(order.indexOf(`react:${HOURGLASS}`)).toBeLessThan(order.indexOf('spawn'));
+    expect(order.indexOf(`react:${CHECK}`)).toBeGreaterThan(order.indexOf('publish'));
+  });
+
+  test('sets ❌ on a non-zero exit', async () => {
+    const db = freshDb();
+    const reactions: RouteReactionCall[] = [];
+    const runner = createOmniRunner({
+      db,
+      config: rt(),
+      publish: () => {},
+      spawnClaude: async () => ({ stdout: 'ignored', exitCode: 2 }),
+      setReaction: async ({ instance, chat, messageId, emoji }) => {
+        reactions.push({ instance, chat, messageId, emoji });
+        return { success: true };
+      },
+    });
+
+    runner.handleMessage(...mappedInboundWithId('bad run', 'wamid-2'));
+    await runner.whenIdle();
+
+    expect(reactions.map((r) => r.emoji)).toEqual([HOURGLASS, CROSS]);
+    expect(reactions[reactions.length - 1].messageId).toBe('wamid-2');
+  });
+
+  test('sets ❌ on a timeout', async () => {
+    const db = freshDb();
+    const reactions: RouteReactionCall[] = [];
+    const runner = createOmniRunner({
+      db,
+      config: rt({ inboundTimeoutMs: 10 }),
+      publish: () => {},
+      // Honour the abort so the timeout wins cleanly.
+      spawnClaude: ({ signal }) =>
+        new Promise<SpawnClaudeResult>((_, reject) => {
+          signal.addEventListener('abort', () => reject(new Error('killed')), { once: true });
+        }),
+      setReaction: async ({ instance, chat, messageId, emoji }) => {
+        reactions.push({ instance, chat, messageId, emoji });
+        return { success: true };
+      },
+    });
+
+    runner.handleMessage(...mappedInboundWithId('slow', 'wamid-3'));
+    await runner.whenIdle();
+
+    expect(reactions.map((r) => r.emoji)).toEqual([HOURGLASS, CROSS]);
+  });
+
+  test('sets NO reaction when the inbound carries no messageId', async () => {
+    const db = freshDb();
+    const reactions: RouteReactionCall[] = [];
+    const runner = createOmniRunner({
+      db,
+      config: rt(),
+      publish: () => {},
+      spawnClaude: async () => ({ stdout: 'ok', exitCode: 0 }),
+      setReaction: async ({ instance, chat, messageId, emoji }) => {
+        reactions.push({ instance, chat, messageId, emoji });
+        return { success: true };
+      },
+    });
+
+    // mappedInbound (no messageId) still spawns + replies, but never reacts.
+    runner.handleMessage(...mappedInbound('no stanza id'));
+    await runner.whenIdle();
+
+    expect(reactions).toEqual([]);
+  });
+
+  test('a failed status reaction never throws or blocks the run/publish', async () => {
+    const db = freshDb();
+    const published: Published[] = [];
+    const runner = createOmniRunner({
+      db,
+      config: rt(),
+      publish: (subject, payload) => published.push({ subject, payload }),
+      spawnClaude: async () => ({ stdout: 'still replies', exitCode: 0 }),
+      setReaction: async () => ({ success: false, error: 'boom' }),
+    });
+
+    runner.handleMessage(...mappedInboundWithId('react-fails', 'wamid-4'));
+    await runner.whenIdle();
+
+    // The reply is published regardless of the reaction outcome.
+    expect(published.length).toBe(1);
+    expect(content(published[0])).toBe('still replies');
+  });
+});
+
+describe('omni runner — Model A persona + session threading', () => {
+  interface SeenSpawn {
+    cwd: string;
+    sessionId?: string;
+    personaFile?: string;
+  }
+
+  function threadingRunner(db: Database, seen: SeenSpawn[], routes?: OmniRuntimeConfig['routes']) {
+    return createOmniRunner({
+      db,
+      config: rt(routes ? { routes } : {}),
+      publish: () => {},
+      spawnClaude: async ({ cwd, sessionId, personaFile }) => {
+        seen.push({ cwd, sessionId, personaFile });
+        return { stdout: 'ok', exitCode: 0 };
+      },
+    });
+  }
+
+  test('threads a stable session id (same across messages) and the explicit route persona', async () => {
+    const db = freshDb();
+    const seen: SeenSpawn[] = [];
+    const persona = '/tmp/persona-A.md';
+    const runner = threadingRunner(db, seen, [{ instance: INSTANCE, chat: ROUTE_CHAT, repo: ROUTE_REPO, persona }]);
+
+    runner.handleMessage(...mappedInboundWithId('m1', 'id1'));
+    await runner.whenIdle();
+    runner.handleMessage(...mappedInboundWithId('m2', 'id2'));
+    await runner.whenIdle();
+
+    expect(seen.length).toBe(2);
+    expect(seen[0].personaFile).toBe(persona);
+    expect(seen[0].sessionId).toBe(deterministicSessionId(INSTANCE, ROUTE_CHAT));
+    // Stable session id ⇒ the conversation resumes across messages.
+    expect(seen[1].sessionId).toBe(seen[0].sessionId);
+  });
+
+  test('falls back to <repo>/AGENTS.md when route.persona is unset', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'genie-omni-persona-'));
+    try {
+      writeFileSync(join(dir, 'AGENTS.md'), '# persona');
+      const db = freshDb();
+      const seen: SeenSpawn[] = [];
+      const runner = threadingRunner(db, seen, [{ instance: INSTANCE, chat: ROUTE_CHAT, repo: dir }]);
+
+      runner.handleMessage(...mappedInboundWithId('m', 'id'));
+      await runner.whenIdle();
+
+      expect(seen[0].personaFile).toBe(join(dir, 'AGENTS.md'));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('resolves no persona when neither route.persona nor <repo>/AGENTS.md exists', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'genie-omni-nopersona-'));
+    try {
+      const db = freshDb();
+      const seen: SeenSpawn[] = [];
+      const runner = threadingRunner(db, seen, [{ instance: INSTANCE, chat: ROUTE_CHAT, repo: dir }]);
+
+      runner.handleMessage(...mappedInboundWithId('m', 'id'));
+      await runner.whenIdle();
+
+      expect(seen[0].personaFile).toBeUndefined();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
