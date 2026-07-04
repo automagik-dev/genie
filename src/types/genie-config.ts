@@ -129,6 +129,12 @@ const OmniConfigSchema = z.object({
         chat: z.string(),
         /** Absolute directory the one-shot runs in (cwd of `claude -p`). */
         repo: z.string(),
+        /**
+         * Absolute path to a persona / AGENTS.md file appended to the agent's
+         * system prompt for this route. Omitted → the runner falls back to
+         * `<repo>/AGENTS.md` if present, else no persona.
+         */
+        persona: z.string().optional(),
       }),
     )
     .optional(),

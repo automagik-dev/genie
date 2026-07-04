@@ -29,6 +29,9 @@
  */
 
 import type { Database } from 'bun:sqlite';
+import { createHash, randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import type { OmniRoute, OmniRuntimeConfig } from './omni-config.js';
 import { matchReaction, matchTextToken } from './omni-matching.js';
 import { signOmniRequest } from './omni-signature.js';
@@ -84,10 +87,25 @@ export interface SpawnClaudeOpts {
   cwd: string;
   /** Aborted when the run exceeds its budget; the child MUST be killed on abort. */
   signal: AbortSignal;
+  /**
+   * Absolute path to a persona / AGENTS.md file appended to Claude Code's system
+   * prompt (`--append-system-prompt-file`). Absent → no persona is appended.
+   */
+  personaFile?: string;
+  /**
+   * Stable `--session-id` (UUID) so a conversation RESUMES across messages. The
+   * runner derives it deterministically from (instance, chat); if a caller omits
+   * it the executor generates a fresh one defensively.
+   */
+  sessionId?: string;
 }
 
 export interface SpawnClaudeResult {
-  /** Captured stdout of the run (truncated to the reply cap before publishing). */
+  /**
+   * The FINAL assistant reply text — already parsed out of Claude's stream-json
+   * stdout (truncated to the reply cap before publishing). See
+   * {@link extractStreamJsonReply}.
+   */
   stdout: string;
   /** Process exit code; non-zero is surfaced as a bounded error notice. */
   exitCode: number;
@@ -97,21 +115,93 @@ export interface SpawnClaudeResult {
 export type SpawnClaude = (opts: SpawnClaudeOpts) => Promise<SpawnClaudeResult>;
 
 /**
- * Default executor — a real `claude -p "<message>"` bounded by the caller's
- * abort signal. Never imported at module top-level cost; only invoked once an
- * inbound message actually matches a configured route.
+ * Build the `claude` argv for one bounded one-shot run (Model A). Streams the
+ * turn as NDJSON (`--output-format stream-json`, which requires `-p`/`--print`
+ * AND `--verbose`) under a stable `--session-id` so the conversation resumes,
+ * and appends the persona to the system prompt when one is resolved. Pure +
+ * exported so the arg contract is unit-tested without forking claude.
  */
-export const defaultSpawnClaude: SpawnClaude = async ({ message, cwd, signal }) => {
-  const proc = Bun.spawn(['claude', '-p', message], {
+export function buildClaudeArgs(opts: { message: string; sessionId: string; personaFile?: string }): string[] {
+  return [
+    '-p',
+    '--output-format',
+    'stream-json',
+    '--verbose',
+    '--session-id',
+    opts.sessionId,
+    ...(opts.personaFile ? ['--append-system-prompt-file', opts.personaFile] : []),
+    opts.message,
+  ];
+}
+
+/**
+ * Extract the final assistant reply from Claude's `stream-json` stdout (NDJSON,
+ * one JSON event per line). Preference order:
+ *   1. the terminal `{"type":"result","subtype":"success","result":"<text>"}`
+ *      event — the canonical final answer;
+ *   2. otherwise the concatenation of `assistant` message text blocks (a partial
+ *      or non-success turn still yields the text it produced);
+ *   3. on total parse failure (stdout is not stream-json at all), the raw stdout
+ *      verbatim — never lose the reply just because the wire format shifted.
+ */
+export function extractStreamJsonReply(raw: string): string {
+  let assistantText = '';
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let evt: unknown;
+    try {
+      evt = JSON.parse(trimmed);
+    } catch {
+      continue; // skip a non-JSON line (log noise / partial frame)
+    }
+    if (!evt || typeof evt !== 'object') continue;
+    const o = evt as { type?: string; subtype?: string; result?: unknown; message?: { content?: unknown } };
+    if (o.type === 'result' && o.subtype === 'success' && typeof o.result === 'string' && o.result.length > 0) {
+      return o.result;
+    }
+    if (o.type === 'assistant' && o.message && Array.isArray(o.message.content)) {
+      for (const block of o.message.content as Array<{ type?: string; text?: string }>) {
+        if (block && block.type === 'text' && typeof block.text === 'string') assistantText += block.text;
+      }
+    }
+  }
+  return assistantText || raw;
+}
+
+/**
+ * Derive a STABLE session-id UUID from (instance, chat) so every message on a
+ * conversation resumes the same Claude session. Deterministic (sha256 of the
+ * pair, shaped into a v5-style UUID) — no state to persist, and two hosts
+ * serving the same route converge on the same id.
+ */
+export function deterministicSessionId(instance: string, chat: string): string {
+  const h = createHash('sha256').update(`omni-session:${instance}:${chat}`).digest('hex').slice(0, 32).split('');
+  h[12] = '5'; // version 5 (name-based)
+  h[16] = ((Number.parseInt(h[16], 16) & 0x3) | 0x8).toString(16); // variant 10xx → 8/9/a/b
+  const s = h.join('');
+  return `${s.slice(0, 8)}-${s.slice(8, 12)}-${s.slice(12, 16)}-${s.slice(16, 20)}-${s.slice(20, 32)}`;
+}
+
+/**
+ * Default executor — a real Model A `claude -p` run bounded by the caller's
+ * abort signal, streaming stream-json and parsing out the final reply. Never
+ * imported at module top-level cost; only invoked once an inbound message
+ * actually matches a configured route. A missing `sessionId` is generated
+ * defensively (callers always pass a stable one).
+ */
+export const defaultSpawnClaude: SpawnClaude = async ({ message, cwd, signal, personaFile, sessionId }) => {
+  const args = buildClaudeArgs({ message, sessionId: sessionId ?? randomUUID(), personaFile });
+  const proc = Bun.spawn(['claude', ...args], {
     cwd,
     stdout: 'pipe',
     stderr: 'pipe',
     // Bun forwards the AbortSignal: aborting SIGKILLs the child, freeing the route.
     signal,
   });
-  const stdout = await new Response(proc.stdout).text();
+  const raw = await new Response(proc.stdout).text();
   const exitCode = await proc.exited;
-  return { stdout, exitCode };
+  return { stdout: extractStreamJsonReply(raw), exitCode };
 };
 
 // ============================================================================
@@ -484,28 +574,44 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
    * exit path publishes exactly one reply, marks the inbound handled, and clears
    * the in-flight flag — a child crash NEVER escapes this function.
    */
-  async function runOneShot(route: OmniRoute, inboundId: string, message: string, replySubject: string): Promise<void> {
+  async function runOneShot(
+    route: OmniRoute,
+    inboundId: string,
+    message: string,
+    replySubject: string,
+    messageId?: string,
+  ): Promise<void> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     const aborted = new Promise<never>((_, reject) => {
       controller.signal.addEventListener('abort', () => reject(new OneShotTimeoutError()), { once: true });
     });
+    // ⏳ on the inbound message right before the spawn (route-scoped, no-op if the
+    // inbound carried no stanza id) — the first half of the run's ⏳→✅/❌ ack.
+    emitRouteReaction(route, messageId, STATUS_PENDING);
     try {
       // Wrap so a SYNCHRONOUS throw from the executor becomes a rejection the
       // race can observe — and so `aborted` always gets a handler attached
       // (else a late finally-abort would surface as an unhandled rejection).
       const spawned = Promise.resolve().then(() =>
-        spawnClaude({ message, cwd: route.repo, signal: controller.signal }),
+        spawnClaude({
+          message,
+          cwd: route.repo,
+          signal: controller.signal,
+          personaFile: resolvePersonaFile(route),
+          sessionId: deterministicSessionId(route.instance, route.chat),
+        }),
       );
       const result = await Promise.race([spawned, aborted]);
-      const content =
-        result.exitCode === 0
-          ? truncateReply(result.stdout, maxReplyChars)
-          : errorNotice(`exit code ${result.exitCode}`);
+      const ok = result.exitCode === 0;
+      const content = ok ? truncateReply(result.stdout, maxReplyChars) : errorNotice(`exit code ${result.exitCode}`);
       publish(replySubject, buildRoutedReplyPayload(route.instance, route.chat, content, genId(), now()));
+      // ✅ once a genuine reply is published; ❌ when the run exited non-zero.
+      emitRouteReaction(route, messageId, ok ? STATUS_APPROVED : STATUS_DENIED);
     } catch (err) {
       const content = err instanceof OneShotTimeoutError ? timeoutNotice(timeoutMs) : errorNotice(errText(err));
       publish(replySubject, buildRoutedReplyPayload(route.instance, route.chat, content, genId(), now()));
+      emitRouteReaction(route, messageId, STATUS_DENIED); // ❌ on timeout / crash
     } finally {
       clearTimeout(timer);
       controller.abort(); // ensure a still-running child is killed on every path
@@ -523,7 +629,7 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
    * to `inFlight` SYNCHRONOUSLY before any await so a second message racing the
    * first sees it busy. Fire-and-forget: the serve loop never awaits the run.
    */
-  function startRoutedRun(route: OmniRoute, inboundId: string, message: string): void {
+  function startRoutedRun(route: OmniRoute, inboundId: string, message: string, messageId?: string): void {
     const replySubject = `omni.reply.${route.instance}.${route.chat}`;
     const key = routeKey(route.instance, route.chat);
     if (inFlight.has(key)) {
@@ -533,7 +639,7 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
       return;
     }
     inFlight.add(key);
-    const run = runOneShot(route, inboundId, message, replySubject)
+    const run = runOneShot(route, inboundId, message, replySubject, messageId)
       .catch((err) => log(`[omni] one-shot crashed unexpectedly: ${errText(err)}`))
       .finally(() => pending.delete(run));
     pending.add(run);
@@ -551,28 +657,76 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
    * the reconciliation pass retries it next tick. Never throws — a failed status
    * reaction is logged and the approval decision still stands.
    */
-  function emitStatusReaction(targetId: string | null | undefined, emoji: string): void {
-    if (!targetId || ackInFlight.has(targetId)) return;
-    ackInFlight.add(targetId);
-    const react = setReaction({
-      instance: config.instance ?? '',
-      chat: config.approvalChat ?? '',
-      messageId: targetId,
-      emoji,
-    })
+  function emitReaction(params: {
+    instance: string;
+    chat: string;
+    targetId: string | null | undefined;
+    emoji: string;
+    /** Persist the glyph on `last_status_glyph` (approval rows only). */
+    recordGlyph: boolean;
+    /** Apply the `ackInFlight` double-fire guard (approval reconciliation only). */
+    guard: boolean;
+  }): void {
+    const { instance, chat, targetId, emoji, recordGlyph, guard } = params;
+    if (!targetId) return;
+    if (guard && ackInFlight.has(targetId)) return;
+    if (guard) ackInFlight.add(targetId);
+    const react = setReaction({ instance, chat, messageId: targetId, emoji })
       .then((res) => {
         if (res && res.success === false) {
           log(`[omni] status ${emoji} on ${targetId} failed${res.error ? ` (${res.error})` : ''}`);
           return;
         }
-        recordStatusGlyph(db, targetId, emoji); // persist only on confirmed success
+        if (recordGlyph) recordStatusGlyph(db, targetId, emoji); // persist only on confirmed success
       })
       .catch((err) => log(`[omni] status ${emoji} on ${targetId} failed: ${errText(err)}`))
       .finally(() => {
-        ackInFlight.delete(targetId);
+        if (guard) ackInFlight.delete(targetId);
         inFlightReactions.delete(react);
       });
     inFlightReactions.add(react);
+  }
+
+  /** Approval-scoped ⏳/✅/❌ ack: scoped to the approval chat, glyph-recorded and
+   *  reconciliation-guarded. Unchanged behaviour from before the route path. */
+  function emitStatusReaction(targetId: string | null | undefined, emoji: string): void {
+    emitReaction({
+      instance: config.instance ?? '',
+      chat: config.approvalChat ?? '',
+      targetId,
+      emoji,
+      recordGlyph: true,
+      guard: true,
+    });
+  }
+
+  /**
+   * Route-scoped run ack: ⏳ before the spawn, ✅ once a reply is published, ❌ on
+   * failure/timeout — set on the INBOUND user message (`messageId`), scoped to the
+   * route's own (instance, chat), NOT the approval chat. No glyph is recorded (a
+   * plain inbound has no approval row) and no reconciliation guard applies (the
+   * ⏳→✅/❌ pair fires exactly once, sequentially, per run). A missing messageId is
+   * a no-op. Fire-and-forget, drained by `whenIdle`; never blocks the run.
+   */
+  function emitRouteReaction(route: OmniRoute, messageId: string | undefined, emoji: string): void {
+    emitReaction({
+      instance: route.instance,
+      chat: route.chat,
+      targetId: messageId,
+      emoji,
+      recordGlyph: false,
+      guard: false,
+    });
+  }
+
+  /**
+   * Resolve the persona file for a route: the explicit `route.persona` if set,
+   * else `<repo>/AGENTS.md` when it exists, else none.
+   */
+  function resolvePersonaFile(route: OmniRoute): string | undefined {
+    if (route.persona) return route.persona;
+    const agents = join(route.repo, 'AGENTS.md');
+    return existsSync(agents) ? agents : undefined;
   }
 
   /**
@@ -711,8 +865,9 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
       const inboundId = recordInbound(db, { instance, chat, sender, body, now: now() });
 
       // Mapped (instance, chat) → spawn a bounded one-shot; unmapped is store-only.
+      // Thread the inbound WhatsApp stanza id so the run can ⏳→✅/❌ react on it.
       const route = findRoute(instance, chat);
-      if (route) startRoutedRun(route, inboundId, body);
+      if (route) startRoutedRun(route, inboundId, body, msg.messageId);
 
       // Only the approval chat can resolve approvals.
       if (!chatId || chatId !== config.approvalChat) return;
