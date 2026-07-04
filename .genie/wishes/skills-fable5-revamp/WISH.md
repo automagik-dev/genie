@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT — plan review SHIP on full scope G1–G8 (2026-07-04, 2 review rounds), ready for `/work` (dispatch gate: G7 last) |
+| **Status** | DRAFT — plan review SHIP on full scope G1–G8 (2026-07-04, 2 review rounds); `/work` Wave 1 committed (G1–G6, G8), G7 verification complete (`verification.md`) — awaiting execution review |
 | **Slug** | `skills-fable5-revamp` |
 | **Date** | 2026-07-04 |
 | **Author** | Felipe (planned with Fable 5) |
@@ -343,7 +343,10 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 - Test-gate reality documented: full `bun test src/genie-commands/` requires a pgserve-capable environment (exit 144 / hang in restricted sandboxes); AC carries the fallback.
 - Residual LOWs applied post-verdict: SC/Decision-10 manifest wording, `.orphaned_at` gating + settings.json hook case added to the G8 test matrix, stale-CLAUDE.md caveat added to conventions.md. Repo CLAUDE.md rewrite remains a follow-up wish.
 
-_Execution review: populated by `/review` after `/work` completes._
+**Execution review — 2026-07-04 — verdict: SHIP** (aggregate of 7 independent per-group reviewers + G7 system verification)
+
+- Per-group verdicts: G1 SHIP, G2 SHIP (all 8 frozen contracts independently re-verified), G3 SHIP (25→27 routes, zero dropped), G4 SHIP, G5 SHIP (~30 live-CLI checks, 484→41 lossless), G6 SHIP (3 real stale-flag bugs fixed), G8 FIX-FIRST → update-path wire-in + test locks applied → re-review clean (one formatter fix at gate). All reviewer-mandated fixes applied by the owning engineers and re-validated before commit.
+- G7 verification (`verification.md`): all 10 Success Criteria PASS with pasted evidence. Combined always-loaded surface 5,514 → **2,016 lines (−63.4%)**; skills:lint 118 dead refs → 0 with zero ignore markers; zero deletions/renames; both branches lint/typecheck/test clean.
 
 ---
 
