@@ -2,281 +2,100 @@
 name: report
 description: "Investigate bugs comprehensively — cascade through /trace, capture browser evidence, extract observability data, and auto-create a GitHub issue with all findings."
 ---
-<!-- skills-lint:ignore -->
 
 # /report — Comprehensive Bug Report and GitHub Issue Creation
 
-Investigate bugs end-to-end: collect symptoms, run `/trace` for root cause analysis, capture browser evidence when available, pull observability data from project-configured tools, and auto-create a GitHub issue with all findings attached.
+Investigate a bug end-to-end: collect symptoms, run `/trace` for root cause, capture browser evidence when available, pull observability data from project-configured tools, and create a GitHub issue with all findings attached. Investigation only — the deliverable is findings, never fixes; `/report` must not modify source code.
 
 ## When to Use
 - A bug needs a thorough, documented investigation before fixing
 - A GitHub issue is needed with reproduction steps, root cause, and evidence
-- Multiple evidence sources (code, browser, observability) should be combined into one report
-- Orchestrator or user wants a self-contained bug report that someone can act on without reproducing
-- During QA loop: test failures against wish acceptance criteria need investigation
-
-## Dependencies
-
-- **`agent-browser`** — required for browser-based evidence capture (screenshots, console logs, network requests). Install separately: `agent-browser` must be on PATH for Phase 3 to work. If unavailable, Phase 3 degrades gracefully.
+- A self-contained report is wanted that someone can act on without reproducing
+- QA-loop failures against wish acceptance criteria need investigation
 
 ## QA Loop Integration
 
-When invoked during the QA loop (after merge to dev), link findings to wish acceptance criteria:
-
-1. Read the wish's success criteria from `.genie/wishes/<slug>/WISH.md`.
-2. For each QA failure, map it to the specific acceptance criterion it violates.
-3. Include the criterion reference in the report: `Criterion: "<criterion text>" — FAIL`.
-
-**Auto-invocation chain for QA failures:**
-```
-QA failure → /report (investigate + document) → /trace (root cause) → /fix (correct) → retest
-```
+When invoked during the QA loop (after merge to dev):
+1. Read the wish's criteria from `.genie/wishes/<slug>/WISH.md`.
+2. Map each failure to the criterion it violates: `Criterion: "<text>" — FAIL`.
+3. Chain: QA failure → `/report` → `/trace` → `/fix` → retest.
 
 ## Flow
 
 ### Phase 1: Collect Symptoms
+Gather bug description (required), plus URL, error messages, and expected-vs-actual behavior when offered. If detail is missing, ask clarifying questions one at a time via AskUserQuestion — minimum viable input is a bug description.
 
-Accept user input for the bug investigation:
-- **Bug description:** what's going wrong
-- **URL (optional):** page or endpoint where the bug manifests
-- **Error messages:** any error text, stack traces, or console output
-- **Expected vs actual behavior:** what should happen vs what does happen
+### Phase 2: Run /trace (always)
+The backbone of every report. Dispatch a trace subagent via the **Agent tool** with a read-only brief: the symptoms, relevant files, and the expected deliverable (the `/trace` report format — root cause file:line, evidence, causal chain, recommended correction, affected scope, confidence). The subagent notifies you with its findings as its final message; follow-ups go through **SendMessage**. If root cause cannot be determined, note "Code investigation incomplete — /trace could not determine root cause" and continue.
 
-If no details are provided, ask clarifying questions **one at a time** via AskUserQuestion. Never batch questions. Minimum viable input: a bug description.
-
-### Phase 2: Run /trace (Code-Level Investigation)
-
-This phase is **ALWAYS** run — it is the foundation of every report.
-
-1. Dispatch the `/trace` skill with the collected symptoms.
-2. `/trace` performs: source analysis, reproduction, root cause hypothesis, causal chain construction.
-3. Collect the trace report:
-   - **Root cause:** file, line, condition
-   - **Evidence:** reproduction steps, traces, proof
-   - **Causal chain:** root cause -> intermediate effects -> observed symptom
-   - **Recommended correction:** what to change, where, why
-   - **Affected scope:** other files or features impacted
-   - **Confidence:** high / medium / low
-
-If `/trace` fails or cannot determine root cause, note in the report: "Code investigation incomplete — /trace could not determine root cause." Continue with remaining phases.
-
-### Phase 3: Browser Investigation (Opportunistic)
-
-**Detection — check if browser investigation is possible:**
-- User provided a URL
-- A dev server is running on common ports: 3000, 3001, 4200, 5173, 5174, 8080, 8000
-- `package.json` has a `dev` or `start` script that could be started
-
-**If browser is available**, use agent-browser capabilities:
+### Phase 3: Browser Evidence (opportunistic)
+Requires the `agent-browser` CLI on PATH. Attempt when a URL was provided, a dev server is on a common port (3000, 3001, 4200, 5173, 5174, 8080, 8000), or `package.json` has a startable `dev`/`start` script.
 
 | Command | Purpose |
 |---------|---------|
-| `agent-browser screenshot <url>` | Screenshot of affected page |
-| `agent-browser screenshot <url> --full` | Full page screenshot |
-| `agent-browser screenshot <url> --annotate` | Annotated with element labels |
-| `agent-browser record start <file>` | Video recording of reproduction steps |
-| `agent-browser profiler start` / `agent-browser profiler stop` | Performance profile (if perf-related) |
+| `agent-browser screenshot <url> [--full\|--annotate]` | Page evidence |
+| `agent-browser record start <file>` | Video, only for multi-step reproduction |
+| `agent-browser profiler start` / `stop` | Performance profile (perf bugs only) |
 
-Also capture:
-- **Console logs:** errors and warnings from the page
-- **Network requests:** failed requests, slow requests, error responses
+Also capture console errors/warnings and failed or slow network requests. Prefer screenshots over video. Unavailable → skip with note: "Browser evidence not available — no URL provided and no dev server detected."
 
-Prefer screenshots over video — smaller, easier to embed in issues. Only record video when reproduction requires multi-step interaction.
+### Phase 4: Observability Data (project-dependent)
+Detect configured tools, pull recent related errors from each; integrations are independent — one failing never blocks the others.
 
-**If browser is NOT available**, skip this phase and note in report:
-> "Browser evidence not available — no URL provided and no dev server detected."
+| Tool | Detection | Pull via |
+|------|-----------|----------|
+| Sentry | `SENTRY_DSN`, `sentry.client.config.*`, `@sentry/*` in package.json | `sentry-cli issues list` or API |
+| PostHog | `POSTHOG_KEY`, `posthog` dep | recent error events |
+| DataDog | `DD_API_KEY`, `dd-trace` dep | APM traces |
+| LogRocket | `LOGROCKET_APP_ID`, `logrocket` dep | session logs |
+| Generic logs | `*.log`, `logs/` | grep recent entries |
 
-### Phase 4: Observability Data (Project-Dependent)
-
-**Detection — check project for configured observability tools:**
-
-| Tool | Detection signals |
-|------|------------------|
-| **Sentry** | `SENTRY_DSN` env var, `sentry.client.config.*` files, `@sentry/*` in package.json |
-| **PostHog** | `POSTHOG_KEY` env var, `posthog` in package.json |
-| **DataDog** | `DD_API_KEY` env var, `dd-trace` in package.json |
-| **LogRocket** | `LOGROCKET_APP_ID` env var, `logrocket` in package.json |
-| **Generic logs** | `*.log` files, `logs/` directory |
-
-**If found**, use available CLI/API to pull recent errors:
-- Sentry: `sentry-cli issues list --project <project>` or API via curl
-- PostHog: query recent error events
-- DataDog: query APM traces
-- Generic logs: search recent entries for related error patterns
-
-Each integration is independent — if one fails, continue with others.
-
-**If nothing found**, skip this phase and note in report:
-> "No observability integrations detected in this project."
+Nothing found → skip with note: "No observability integrations detected in this project."
 
 ### Phase 5: Compile Report
-
-Merge all evidence into a structured GitHub issue body using this template:
-
-```markdown
-## Bug Report: <title>
-
-### Summary
-<1-2 sentence description of the bug>
-
-### Reproduction Steps
-1. <step 1>
-2. <step 2>
-3. <step 3>
-
-### Expected Behavior
-<what should happen>
-
-### Actual Behavior
-<what happens instead>
-
-### Root Cause Analysis
-**Source:** `/trace` investigation
-**File:** `<path>:<line>`
-**Cause:** <description>
-**Causal chain:** <root cause> -> <intermediate effects> -> <observed symptom>
-**Confidence:** <high/medium/low>
-
-### Evidence
-
-#### Screenshots
-<embedded screenshots from agent-browser, if captured>
-
-#### Console Logs
-<captured console errors/warnings, if available>
-
-#### Network
-<failed requests, timing issues, error responses, if captured>
-
-#### Performance
-<performance anomalies, if profiled>
-
-#### Observability
-<Sentry errors, PostHog events, DataDog traces, if available>
-
-### Environment
-- **OS:** <detected via process.platform>
-- **Runtime:** <node/bun version>
-- **Browser:** <if applicable>
-- **Key dependencies:** <relevant package versions>
-
-### Suggested Fix
-<from /trace recommendation>
-
----
-*Generated by genie `/report`*
-```
-
-For each evidence section that was skipped, include a note explaining why (e.g., "No dev server detected", "Sentry not configured in this project"). This helps the fixer know what to investigate further.
+Merge all evidence into the issue body per `references/issue-template.md`. Grounded evidence rule: every statement in the report traces to tool output from this investigation — trace findings, captured artifacts, command output. State per evidence source whether it was **captured**, **failed**, or **skipped** (and why); never present a planned capture as evidence.
 
 ### Phase 6: Create GitHub Issue
-
-1. Check `gh auth status` — verify GitHub CLI is authenticated.
-2. If authenticated: run `gh issue create --title '<title>' --body '<report body>'` with labels. Always use single quotes and escape internal single quotes to prevent shell injection from user-provided text.
-3. **Labels:** `bug` + auto-detected area labels based on affected files:
-   - Files in `src/auth/` or `lib/auth/` -> `area:auth`
-   - Files in `src/ui/` or `components/` -> `area:ui`
-   - Files in `src/api/` or `routes/` -> `area:api`
-   - Files in `tests/` or `__tests__/` -> `area:tests`
-   - Derive area from the top-level directory of affected files
-4. If `gh` is not authenticated or issue creation fails, print the full report as markdown to stdout with:
-   > "Could not create GitHub issue. Here is the report for manual submission."
+1. `gh auth status` — verify authentication.
+2. `gh issue create --title '<title>' --body '<report>'` — single-quote and escape user-provided text to prevent shell injection.
+3. Labels: `bug` + area labels derived from the top-level directory of affected files (`src/auth/` → `area:auth`, `components/` → `area:ui`, `routes/` → `area:api`, `__tests__/` → `area:tests`).
+4. Not authenticated or creation fails → print the full report to stdout: "Could not create GitHub issue. Here is the report for manual submission."
+5. If an identical open issue exists, link to it instead of creating a duplicate.
 
 ## Degradation Rules
 
-Each phase is independent — failure in one **never** blocks the others.
+Each phase is independent — failure in one never blocks the others. The report is always produced; the only question is how rich the evidence is.
 
 | Condition | Behavior |
 |-----------|----------|
-| No browser / no URL / no dev server | Skip Phase 3, add note |
-| No observability tools configured | Skip Phase 4, add note |
-| No `gh` auth | Print report to stdout as fallback |
-| `/trace` fails | Still produce report with available evidence, note "Code investigation incomplete" |
-| Individual observability tool fails | Skip that tool, continue with others |
+| No browser / URL / dev server | Skip Phase 3, note why |
+| No observability tooling | Skip Phase 4, note why |
+| `/trace` inconclusive | Report with remaining evidence, note "investigation incomplete" |
+| No `gh` auth | Print report to stdout |
 
-The report must always be produced. The only question is how rich the evidence is.
+## Board Tracking (optional)
 
-## Dispatch
-
-Report orchestrates multiple tools but must **never modify source code** — investigation only.
+The GitHub issue is the primary artifact. If the bug should also appear on the genie board:
 
 ```bash
-# Spawn a tracer subagent for investigation
-genie agent spawn trace
+genie task create --title "bug: <title> (gh#<issue-number>)"
 ```
 
-Browser dispatch uses direct `agent-browser` commands alongside the trace subagent.
-
-## Task Lifecycle Integration (v4)
-
-After creating the GitHub issue, also create a PG task to track the bug in the task system:
-
-| Event | Command |
-|-------|---------|
-| Bug task creation | `genie task create "<bug title>" --type software --tags bug --priority <severity>` |
-| Link GitHub issue | `genie task comment #<seq> "GitHub: <issue-url>"` |
-| Link trace findings | `genie task comment #<seq> "Root cause: <summary> — <file:line>"` |
-| QA criterion failure | `genie task comment #<seq> "Criterion FAIL: <criterion text>"` |
-
-Priority mapping from severity:
-
-| Severity | Priority |
-|----------|----------|
-| CRITICAL | `--priority critical` |
-| HIGH | `--priority high` |
-| MEDIUM | `--priority medium` |
-| LOW | `--priority low` |
-
-**Graceful degradation:** If PG is unavailable, skip `genie task` commands. The GitHub issue is the primary artifact — PG task tracking is an enhancement. The report must always be produced regardless of PG availability.
+If task creation fails (no `.genie/genie.db`), skip it — board tracking never blocks the report.
 
 ## Example
 
-User reports: "genie work dispatches engineers but they sit idle."
+User reports: "dispatched engineers sit idle at an empty prompt."
 
-The report agent:
-
-```bash
-# 1. Collect symptoms (one question at a time)
-# Agent asks: "What command did you run?" → "genie team create rlmx --wish tauri-docs-agent"
-# Agent asks: "What did you see?" → "Engineers show welcome screen but empty prompt"
-
-# 2. Run /trace
-genie agent spawn trace
-genie agent send 'Trace: genie work dispatches engineers but they start idle. Check dispatch.ts and protocol-router.ts.' --to tracer
-# Wait for diagnosis...
-
-# 3. Capture evidence
-# Screenshot of idle engineer pane showing empty ❯ prompt
-# Output of: genie wish status <slug> showing "in_progress" but no actual progress
-
-# 4. Create GitHub issue with all findings
-gh issue create --title "bug: genie work dispatch — engineers spawn idle without initial task prompt" --body "$(cat <<'EOF'
-## Summary
-Engineers dispatched by genie work start idle because initialPrompt is missing from handleWorkerSpawn.
-
-## Root Cause (from /trace)
-dispatch.ts:532 — handleWorkerSpawn called without initialPrompt.
-protocolRouter.sendMessage fails silently under concurrent dispatch (4/6 engineers got no message).
-
-## Evidence
-- [Screenshot: idle engineer pane]
-- genie wish status shows in_progress but engineers at empty prompt
-- Native inbox files: engineer-1 through engineer-4 have no dispatch message
-
-## Steps to Reproduce
-1. genie team create test --wish <any-wish-with-2+-groups>
-2. Team-lead runs genie work <slug>
-3. Check engineer panes — they show empty ❯ prompt
-EOF
-)"
-```
+1. Symptoms collected: command run, observed behavior (empty prompt, no task received).
+2. Trace subagent dispatched (Agent tool, read-only) → returns: `dispatch.ts:532 — handleWorkerSpawn called without initialPrompt; 4/6 engineers received no message. Confidence: high.`
+3. Evidence captured: screenshot of the idle pane; `genie task list --json` showing the group `in_progress` with no progress.
+4. Issue created: `gh issue create --title "bug: dispatch spawns engineers idle without initial task prompt" --body ...` — body carries root cause, causal chain, reproduction steps, and both artifacts.
 
 ## Rules
 - Always run `/trace` first — it is the backbone of every report.
-- One question at a time when collecting symptoms — never batch questions.
-- Never modify source code — investigation only.
-- Screenshots and videos are evidence, not decoration — only capture when relevant to the bug.
-- Prefer screenshots over video (smaller, easier to embed in issues).
-- Be specific about what was not captured and why — this helps the fixer know what to investigate further.
-- The report must be self-contained — someone reading it should understand the bug without needing to reproduce it.
-- If identical to an existing open issue, link to it instead of creating a duplicate.
+- One question at a time when collecting symptoms.
+- Never modify source code — investigation only; hand corrections to `/fix`.
+- Screenshots and video are evidence, not decoration — capture only what is relevant.
+- Be explicit about what was not captured and why.
+- The report must be self-contained — readable and actionable without reproducing the bug.
