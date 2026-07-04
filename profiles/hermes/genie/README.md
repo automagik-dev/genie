@@ -42,6 +42,16 @@ hermes -p genie chat -q 'Read ~/workspace/agents/genie/AGENTS.md and explain how
 
 If the VM should run Genie through Hermes permanently, configure secrets and providers in the VM's Hermes profile (`~/.hermes/profiles/genie/.env` / `config.yaml`) rather than committing them here.
 
+## Hermes-native plugin
+
+Beyond this profile seed, the genie repo ships a Hermes-native Genie plugin at `plugins/hermes-genie/` — seven read-only tools plus `/genie` slash commands, advisory hooks, and skills that surface Genie status/board/wish/task state directly inside Hermes. One-line install from the repo root (symlinks `$HERMES_HOME/plugins/genie`, with `HERMES_HOME` defaulting to `~/.hermes`; add `--copy` for a detached copy):
+
+```bash
+plugins/hermes-genie/scripts/install-local.sh
+```
+
+See `plugins/hermes-genie/README.md` for smoke tests and the cockpit boundary (Hermes reasons; Genie executes and owns task truth).
+
 ## Canonical lane for Claude Code work
 
 The house lane is **native Claude Code CLI through Genie**, not the Claude SDK provider:
