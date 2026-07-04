@@ -1,59 +1,46 @@
 # Design: <Title>
 
-**Status:** VALIDATED
-**Slug:** `<slug>`
-**Date:** YYYY-MM-DD
+| Field | Value |
+|-------|-------|
+| **Slug** | `<slug>` |
+| **Date** | YYYY-MM-DD |
+| **WRS** | 100/100 |
 
----
+<!-- Sections cover the five WRS dimensions plus the chosen approach. -->
 
 ## Problem
 
-<What problem are we solving? Why does it matter? 2-3 sentences.>
-
----
-
-## Solution
-
-<What are we building? How does it work at a high level? 3-5 sentences.>
-
----
+<One-sentence problem statement, plus 1-2 sentences on why it matters.>
 
 ## Scope
 
 ### IN
-- <What we're doing>
-- <Specific deliverables>
+- <Concrete deliverable>
+- <Concrete deliverable>
 
 ### OUT
-- <What we're explicitly not doing>
-- <Boundaries to prevent scope creep>
+- <Explicit exclusion — a boundary that prevents scope creep>
 
----
+## Approach
 
-## Key Decisions
+<Chosen approach with rationale. Name the alternatives considered and why they lost.>
+
+## Decisions
 
 | # | Decision | Rationale |
 |---|----------|-----------|
-| 1 | <decision> | <why> |
-| 2 | <decision> | <why> |
+| 1 | <decision> | <why this over the alternatives> |
 
----
+## Risks & Assumptions
 
-## Risks
+| # | Risk | Severity | Mitigation |
+|---|------|----------|------------|
+| 1 | <risk> | Low/Medium/High | <how we handle it> |
 
-| # | Risk | Impact | Mitigation |
-|---|------|--------|------------|
-| 1 | <risk> | <what happens> | <how we handle it> |
+## Success Criteria
 
----
-
-## Success Definition
-
-- <How do we know this worked?>
-- <What does "done" look like?>
-- <What can the user do after this ships?>
-
----
+- [ ] <Testable criterion — how we know this worked>
+- [ ] <Testable criterion — what "done" looks like>
 
 ## Next Step
 

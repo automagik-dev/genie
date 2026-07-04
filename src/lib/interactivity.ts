@@ -47,6 +47,7 @@ const WORKSPACE_EXEMPT = new Set([
   'setup',
   'doctor',
   'update',
+  'install', // post-install finisher — invoked by install.sh from arbitrary cwd, before any workspace exists
   'uninstall',
   'shortcuts',
   'team',

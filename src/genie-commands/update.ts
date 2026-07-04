@@ -20,6 +20,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { genieConfigExists, loadGenieConfig, saveGenieConfig } from '../lib/genie-config.js';
 import { VERSION } from '../lib/version.js';
+import { cleanupV4 } from './legacy-v4.js';
 
 const GENIE_HOME = process.env.GENIE_HOME || join(homedir(), '.genie');
 const GENIE_BIN = join(GENIE_HOME, 'bin');
@@ -1440,7 +1441,23 @@ export async function updateCommand(options: UpdateCommandOptions = {}): Promise
     process.exit(1);
   }
 
+  runV4CleanupSafe();
   await runPostUpdateVerifySafe({ ...options, noRestart, noVerify }, diagnosticsCtx);
+}
+
+/**
+ * Post-swap v4 legacy cleanup (see legacy-v4.ts). v5 machines upgrade through
+ * this command — never by re-running install.sh — so the upgrade path must
+ * run the same cleanup the installer does. Non-fatal by contract: a cleanup
+ * failure must never fail a completed update. `runner` is an injection seam
+ * for tests (mirrors installCommand).
+ */
+export function runV4CleanupSafe(runner: typeof cleanupV4 = cleanupV4): void {
+  try {
+    runner();
+  } catch {
+    /* post-swap must never fail the update */
+  }
 }
 
 /**
