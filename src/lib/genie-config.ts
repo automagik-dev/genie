@@ -2,37 +2,38 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { type GenieConfig, GenieConfigSchema, type ShortcutsConfig } from '../types/genie-config.js';
-
-const GENIE_DIR = join(homedir(), '.genie');
-const GENIE_CONFIG_FILE = join(GENIE_DIR, 'config.json');
+import { genieHome } from './workspace.js';
 
 /**
- * Get the path to the genie config directory
+ * Get the path to the genie config directory.
+ * Honors GENIE_HOME (which relocates ALL global state) and resolves lazily so
+ * env overrides in tests and spawned subprocesses take effect.
  */
 export function getGenieDir(): string {
-  return GENIE_DIR;
+  return genieHome();
 }
 
 /**
  * Get the path to the genie config file
  */
 export function getGenieConfigPath(): string {
-  return GENIE_CONFIG_FILE;
+  return join(genieHome(), 'config.json');
 }
 
 /**
  * Check if genie config exists
  */
 export function genieConfigExists(): boolean {
-  return existsSync(GENIE_CONFIG_FILE);
+  return existsSync(getGenieConfigPath());
 }
 
 /**
  * Ensure the genie config directory exists
  */
 function ensureGenieDir(): void {
-  if (!existsSync(GENIE_DIR)) {
-    mkdirSync(GENIE_DIR, { recursive: true });
+  const dir = getGenieDir();
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
   }
 }
 
@@ -40,12 +41,13 @@ function ensureGenieDir(): void {
  * Load genie config, returning defaults if not found
  */
 export async function loadGenieConfig(): Promise<GenieConfig> {
-  if (!existsSync(GENIE_CONFIG_FILE)) {
+  const configPath = getGenieConfigPath();
+  if (!existsSync(configPath)) {
     return GenieConfigSchema.parse({});
   }
 
   try {
-    const content = readFileSync(GENIE_CONFIG_FILE, 'utf-8');
+    const content = readFileSync(configPath, 'utf-8');
     const data = JSON.parse(content);
     return GenieConfigSchema.parse(data);
   } catch (error) {
@@ -64,7 +66,7 @@ export async function saveGenieConfig(config: GenieConfig): Promise<void> {
   try {
     const validated = GenieConfigSchema.parse(config);
     const content = JSON.stringify(validated, null, 2);
-    writeFileSync(GENIE_CONFIG_FILE, content, 'utf-8');
+    writeFileSync(getGenieConfigPath(), content, 'utf-8');
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to save genie config: ${message}`);
