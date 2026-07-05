@@ -30,21 +30,30 @@
  * the plugin should route additional events is a separate registration concern,
  * not this gate's subject.
  */
-import { beforeAll, describe, expect, test } from 'bun:test';
-import { existsSync } from 'node:fs';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const REPO_ROOT = join(import.meta.dir, '..', '..', '..');
 const DIST = join(REPO_ROOT, 'dist', 'genie.js');
 
+// Isolated global state so "default path" means default CONFIG on every host —
+// a real ~/.genie/config.json (e.g. omni approvals enabled) would otherwise
+// change the dispatcher's registry and this gate would no longer test the default.
+const ISOLATED_HOME = mkdtempSync(join(tmpdir(), 'genie-dispatch-regression-'));
+afterAll(() => rmSync(ISOLATED_HOME, { recursive: true, force: true }));
+
 /**
  * Drive the built CLI's real hook-dispatch entry point as a subprocess and
- * return its stdout. No GENIE_* flags are set — this is the default path CC
+ * return its stdout. No behavior flags are set — this is the default path CC
  * uses, so a fall-open default would show up here as an empty (allow) decision.
+ * GENIE_HOME only relocates global state, keeping the run host-independent.
  */
 async function driveDispatch(payload: unknown): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   const proc = Bun.spawn(['bun', DIST, 'hook', 'dispatch'], {
     cwd: REPO_ROOT,
+    env: { ...process.env, GENIE_HOME: ISOLATED_HOME },
     stdin: Buffer.from(JSON.stringify(payload)),
     stdout: 'pipe',
     stderr: 'pipe',
