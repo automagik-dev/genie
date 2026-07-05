@@ -70,7 +70,7 @@ skills/                         Skill prompt files (brainstorm, wish, work, revi
 
 ## CLI Commands
 
-Twelve top-level commands (run `genie <command> --help` for detail):
+Fourteen top-level commands (run `genie <command> --help` for detail):
 
 | Command | Purpose |
 |---------|---------|
@@ -78,7 +78,9 @@ Twelve top-level commands (run `genie <command> --help` for detail):
 | `doctor` | Diagnostic checks on the genie installation |
 | `hook` | Hook middleware for Claude Code (`genie hook dispatch` runs in-process) |
 | `init` | Scaffold per-repo state — `.genie/INDEX.md` + `.gitignore` rules (idempotent) |
+| `install` | Post-install finisher — v4 legacy cleanup (`--skip-v4-cleanup`) |
 | `launch <slug>` | Open a Warp cockpit for a wish: one pane per ready group, each in its own worktree |
+| `mcp` | Read-only stdio MCP server exposing genie.db task/board state |
 | `omni` | Omni integration — `serve`, `status`, `inbox`, `handshake` |
 | `setup` | Configure genie settings |
 | `shortcuts` | Manage tmux keyboard shortcuts |
