@@ -1009,6 +1009,60 @@ describe('omni runner — Model A route-scoped run acks (⏳→✅/❌)', () => 
     expect(published.length).toBe(1);
     expect(content(published[0])).toBe('still replies');
   });
+
+  test('the ✅ HTTP call is not dispatched until the ⏳ call settles, even when the run finishes first', async () => {
+    const db = freshDb();
+    const dispatched: string[] = []; // emojis in HTTP-dispatch order
+    let releasePending: (() => void) | undefined;
+    const runner = createOmniRunner({
+      db,
+      config: rt(),
+      publish: () => {},
+      // The run completes instantly — long before the ⏳ HTTP call lands.
+      spawnClaude: async () => ({ stdout: 'instant', exitCode: 0 }),
+      setReaction: ({ emoji }) => {
+        dispatched.push(emoji);
+        if (emoji === HOURGLASS) {
+          // Hold the ⏳ call open until the test releases it.
+          return new Promise((resolve) => {
+            releasePending = () => resolve({ success: true });
+          });
+        }
+        return Promise.resolve({ success: true });
+      },
+    });
+
+    runner.handleMessage(...mappedInboundWithId('fast run, slow ack', 'wamid-seq'));
+    // Give the run every chance to finish while the ⏳ call is still in flight.
+    await new Promise((r) => setTimeout(r, 20));
+    expect(dispatched).toEqual([HOURGLASS]); // ✅ must wait for the ⏳ to settle
+
+    releasePending?.();
+    await runner.whenIdle();
+    expect(dispatched).toEqual([HOURGLASS, CHECK]); // ⏳ strictly before ✅ at the API
+  });
+
+  test('the final ✅ is still dispatched when the ⏳ emit REJECTS', async () => {
+    const db = freshDb();
+    const dispatched: string[] = [];
+    const runner = createOmniRunner({
+      db,
+      config: rt(),
+      publish: () => {},
+      spawnClaude: async () => ({ stdout: 'ok', exitCode: 0 }),
+      setReaction: async ({ emoji }) => {
+        dispatched.push(emoji);
+        if (emoji === HOURGLASS) throw new Error('network down');
+        return { success: true };
+      },
+    });
+
+    runner.handleMessage(...mappedInboundWithId('resilient', 'wamid-rej'));
+    await runner.whenIdle();
+
+    // The chain survives a rejected ⏳ — the final ack still goes out.
+    expect(dispatched).toEqual([HOURGLASS, CHECK]);
+  });
 });
 
 // ---------------------------------------------------------------------------
