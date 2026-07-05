@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | DONE — all 5 groups SHIP-reviewed; #2517 (dev) + #2516 (promotion) merged; live dogfood on Hermes 0.18 (2026-07-05) |
 | **Slug** | `hermes-khaw-native-surface` |
 | **Date** | 2026-07-04 |
 | **Author** | Felipe (via Hermes plan) |
@@ -58,15 +58,15 @@ Source plan: `/home/feliperosa/vm-home/.hermes/plans/2026-07-04_173507-genie-her
 
 ## Success Criteria
 
-- [ ] `uv run --with pytest --with pyyaml --no-project python -m pytest plugins/hermes-genie/tests -q` passes in the genie repo
-- [ ] Contract test proves all 7 read-only tools register via a FakeCtx and every handler returns a JSON string containing `success`, `mutation: "none"`, and `cwd`
-- [ ] Bridge safety test proves shell metacharacters are rejected with `ValueError`, and `grep -rn 'shell=True' plugins/hermes-genie/` finds nothing
-- [ ] Disposable install works: `export HERMES_HOME="$(mktemp -d)" && plugins/hermes-genie/scripts/install-local.sh && test -e "$HERMES_HOME/plugins/genie/plugin.yaml"`
-- [ ] Live smoke: `hermes plugins list` shows the genie plugin, or the exact Hermes version and limitation are documented in the evidence file with a direct-handler fallback run
-- [ ] KHAW: `uv run --with pytest --with pyyaml --no-project python -m pytest tests/contract/test_khaw_genie_bridge.py tests/contract/test_khaw_harness.py -q` passes in the KHAW repo
-- [ ] `manifest/khaw-additions.yaml` declares the `khaw-genie-bridge` extension point with owns/verification/forbidden lists
-- [ ] All four SKILL.md files pass frontmatter validation (byte-zero `---`, `name:` + `description:`, non-empty body)
-- [ ] `bun test` in the genie repo stays green (any pre-existing unrelated failures documented with exact output)
+- [x] `uv run --with pytest --with pyyaml --no-project python -m pytest plugins/hermes-genie/tests -q` passes in the genie repo
+- [x] Contract test proves all 7 read-only tools register via a FakeCtx and every handler returns a JSON string containing `success`, `mutation: "none"`, and `cwd`
+- [x] Bridge safety test proves shell metacharacters are rejected with `ValueError`, and `grep -rn 'shell=True' plugins/hermes-genie/` finds nothing
+- [x] Disposable install works: `export HERMES_HOME="$(mktemp -d)" && plugins/hermes-genie/scripts/install-local.sh && test -e "$HERMES_HOME/plugins/genie/plugin.yaml"`
+- [x] Live smoke: `hermes plugins list` shows the genie plugin, or the exact Hermes version and limitation are documented in the evidence file with a direct-handler fallback run
+- [x] KHAW: `uv run --with pytest --with pyyaml --no-project python -m pytest tests/contract/test_khaw_genie_bridge.py tests/contract/test_khaw_harness.py -q` passes in the KHAW repo
+- [x] `manifest/khaw-additions.yaml` declares the `khaw-genie-bridge` extension point with owns/verification/forbidden lists
+- [x] All four SKILL.md files pass frontmatter validation (byte-zero `---`, `name:` + `description:`, non-empty body)
+- [x] `bun test` in the genie repo stays green (any pre-existing unrelated failures documented with exact output)
 
 ## Execution Strategy
 
@@ -105,10 +105,10 @@ Source plan: `/home/feliperosa/vm-home/.hermes/plans/2026-07-04_173507-genie-her
 6. `plugins/hermes-genie/tests/test_plugin_contract.py` and `tests/test_genie_bridge.py`, TDD-first per source plan Tasks 2–4 (manifest assertions, FakeCtx registration, argv safety, payload fields)
 
 **Acceptance Criteria:**
-- [ ] FakeCtx registration test passes: all 7 tools present with callable handlers
-- [ ] `build_genie_argv` rejects semicolons, `&&`, `||`, backticks, `$(`, and newline characters with `ValueError`
-- [ ] Every handler returns a JSON string with `success`/`mutation`/`cwd`/`command`; `mutation` is always `"none"`
-- [ ] No shell-string execution anywhere in the plugin (subprocess argv only, no `shell=True`)
+- [x] FakeCtx registration test passes: all 7 tools present with callable handlers
+- [x] `build_genie_argv` rejects semicolons, `&&`, `||`, backticks, `$(`, and newline characters with `ValueError`
+- [x] Every handler returns a JSON string with `success`/`mutation`/`cwd`/`command`; `mutation` is always `"none"`
+- [x] No shell-string execution anywhere in the plugin (subprocess argv only, no `shell=True`)
 
 **Validation:**
 ```bash
@@ -133,10 +133,10 @@ cd /home/feliperosa/vm-home/workspace/repos/genie \
 5. `plugins/hermes-genie/tests/test_commands.py` plus contract-test extensions for hooks, skills, and CLI registration (source plan Tasks 5–8)
 
 **Acceptance Criteria:**
-- [ ] `/genie help` lists all subcommands; unknown subcommand output contains "Unknown" and points to `/genie help`
-- [ ] Hooks registered for all three events; no handler returns a blocking directive
-- [ ] All SKILL.md files start with byte-zero `---` frontmatter carrying `name:` and `description:` and have a non-empty body
-- [ ] `register(ctx)` completes cleanly on a ctx missing `register_cli_command`/`register_skill`/`register_hook` (guard test)
+- [x] `/genie help` lists all subcommands; unknown subcommand output contains "Unknown" and points to `/genie help`
+- [x] Hooks registered for all three events; no handler returns a blocking directive
+- [x] All SKILL.md files start with byte-zero `---` frontmatter carrying `name:` and `description:` and have a non-empty body
+- [x] `register(ctx)` completes cleanly on a ctx missing `register_cli_command`/`register_skill`/`register_hook` (guard test)
 
 **Validation:**
 ```bash
@@ -172,9 +172,9 @@ PY
 6. `profiles/hermes/genie/README.md` — MODIFY the existing profile seed on `origin/main` (7 committed files, "Genie Hermes Profile Seed"): preserve the seed content, add the plugin install path and a "Hermes-native" cross-link. The source plan's "modify" is correct against main — this planning checkout simply predates `profiles/`. `SOUL.md` stays untouched (OUT)
 
 **Acceptance Criteria:**
-- [ ] `bash -n` passes on both scripts and both are executable
-- [ ] Disposable install into `HERMES_HOME="$(mktemp -d)"` yields a readable `plugin.yaml` with `name: genie`
-- [ ] `grep -R "Hermes-native"` hits root README, `plugins/genie/README.md`, and the profile seed
+- [x] `bash -n` passes on both scripts and both are executable
+- [x] Disposable install into `HERMES_HOME="$(mktemp -d)"` yields a readable `plugin.yaml` with `name: genie`
+- [x] `grep -R "Hermes-native"` hits root README, `plugins/genie/README.md`, and the profile seed
 
 **Validation:**
 ```bash
@@ -203,11 +203,11 @@ cd /home/feliperosa/vm-home/workspace/repos/genie \
 5. `tests/contract/test_khaw_genie_bridge.py` (read-only payload assertions, link-plan no-mutation, manifest extension-point assertions) and a new assertion in `tests/contract/test_khaw_harness.py` that `plugin.yaml` exposes the bridge tools and command (source plan Tasks 10–12)
 
 **Acceptance Criteria:**
-- [ ] Every bridge tool returns `mutation: "none"`; `khaw_genie_link_plan` proposes paths without writing any file
-- [ ] `khaw_genie_status` reports Genie installed/missing without crashing when the binary is absent
-- [ ] Harness test asserts the 4 tools + `khaw-genie` command in `plugin.yaml`
-- [ ] Extension-point test asserts id/kind/owns for `khaw-genie-bridge`
-- [ ] Existing KHAW contract tests still pass (no regression to `khaw_status`, `/wish`, `/brainstorm`)
+- [x] Every bridge tool returns `mutation: "none"`; `khaw_genie_link_plan` proposes paths without writing any file
+- [x] `khaw_genie_status` reports Genie installed/missing without crashing when the binary is absent
+- [x] Harness test asserts the 4 tools + `khaw-genie` command in `plugin.yaml`
+- [x] Extension-point test asserts id/kind/owns for `khaw-genie-bridge`
+- [x] Existing KHAW contract tests still pass (no regression to `khaw_status`, `/wish`, `/brainstorm`)
 
 **Validation:**
 ```bash
@@ -232,9 +232,9 @@ cd /home/feliperosa/vm-home/prod/khaw \
 6. Evidence file `docs/evidence/genie-hermes-khaw-native-surface-smoke-<date>.md` in the KHAW repo with exact commands and outputs
 
 **Acceptance Criteria:**
-- [ ] Both repo suites pass, or unrelated pre-existing failures are documented with exact output
-- [ ] Live integration is claimed only if visible through `hermes plugins list`; otherwise the limitation is recorded with the Hermes version string
-- [ ] Evidence file exists and contains command transcripts for the Hermes smoke, KHAW bridge smoke, and disposable install
+- [x] Both repo suites pass, or unrelated pre-existing failures are documented with exact output
+- [x] Live integration is claimed only if visible through `hermes plugins list`; otherwise the limitation is recorded with the Hermes version string
+- [x] Evidence file exists and contains command transcripts for the Hermes smoke, KHAW bridge smoke, and disposable install
 
 **Validation:**
 ```bash
@@ -254,10 +254,10 @@ cd /home/feliperosa/vm-home/workspace/repos/genie \
 
 _What must be verified on dev after merge. The QA agent tests each criterion._
 
-- [ ] Functional: in a live Hermes session, `/genie help`, `/genie status`, and `/genie board` return non-error, outcome-first output grounded in `genie` CLI evidence
-- [ ] Integration: `/khaw-genie status` returns JSON with `mutation: "none"` and both KHAW and Genie evidence sources; `khaw_genie_link_plan` proposes a mapping for a real Purpose Session slug without writing files
-- [ ] Integration: starting a Hermes session in a repo containing `.genie/` surfaces the advisory reminder from `on_session_start`
-- [ ] Regression: existing KHAW tools (`khaw_status`, `khaw_work_registry`, `/wish`, `/brainstorm`) behave unchanged; `bun test` in the genie repo unaffected
+- [x] Functional: in a live Hermes session, `/genie help`, `/genie status`, and `/genie board` return non-error, outcome-first output grounded in `genie` CLI evidence
+- [x] Integration: `/khaw-genie status` returns JSON with `mutation: "none"` and both KHAW and Genie evidence sources; `khaw_genie_link_plan` proposes a mapping for a real Purpose Session slug without writing files
+- [x] Integration: starting a Hermes session in a repo containing `.genie/` surfaces the advisory reminder from `on_session_start`
+- [x] Regression: existing KHAW tools (`khaw_status`, `khaw_work_registry`, `/wish`, `/brainstorm`) behave unchanged; `bun test` in the genie repo unaffected
 
 ---
 
@@ -277,7 +277,17 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 
 ## Review Results
 
-_Populated by `/review` after execution completes._
+| Scope | Verdict | Notes |
+|-------|---------|-------|
+| Plan review (pre-execution) | FIX-FIRST → SHIP | profiles/ grounding corrected (seed exists on main), env-var scoping + validation fixes |
+| Group 1 plugin-core | FIX-FIRST → SHIP | reviewer proved a path-traversal exploit; fixed with `validate_ref` + in-bounds WISH.md read incl. symlink-escape defense; 28 tests |
+| Group 2 plugin-surface | SHIP | 3 LOWs applied (tilde-cwd degrade, list-argv advisory); 46 tests |
+| Group 3 plugin-docs | SHIP | 2 LOW doc fixes applied (`ln -sfn`, payload wording); both install modes verified |
+| Group 4 khaw-bridge | SHIP | read-only invariant proven (grep + tests + before/after snapshots); 15+29 tests green in KHAW |
+| Group 5 validation-e2e | PASS | live Hermes smoke native (`/genie help/status` in `hermes chat`); evidence in KHAW `docs/evidence/genie-hermes-khaw-native-surface-smoke-2026-07-04.md` |
+| Promotion #2516 (dev→main) | MERGE (×2 independent) | merge-integrity proof (1 conflict, superset resolution, 0 reversions); 6 bot findings verified — follow-ups fixed in #2520 (reaction guard, `--`, stderr) and follow-up branches |
+
+Shipped: genie stable ≥ 5.260704.3 (plugin synced to `~/.genie/plugins/hermes-genie` on update); KHAW dev `7658d93`.
 
 ---
 
