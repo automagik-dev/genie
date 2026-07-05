@@ -10,6 +10,9 @@
  *      byte-identical to a build with no Omni.
  */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { orchestrationGuard } from '../handlers/orchestration-guard.js';
 import { buildOmniRegistry, dispatch, getRegistry, installDispatchRegistry, setRegistry } from '../index.js';
 import type { Handler, HandlerResult } from '../types.js';
@@ -67,19 +70,27 @@ describe('config-gated omni-approval registry', () => {
 describe('installDispatchRegistry — config-gated boot seam', () => {
   let original: ReadonlyArray<Handler>;
   let prev: Record<string, string | undefined>;
+  let isolatedHome: string;
   beforeEach(() => {
     original = getRegistry();
     prev = {
       enabled: process.env.OMNI_APPROVALS_ENABLED,
       instance: process.env.OMNI_INSTANCE,
       chat: process.env.OMNI_APPROVAL_CHAT,
+      home: process.env.GENIE_HOME,
     };
+    // Isolate global state: "default config" must not mean the host's real
+    // ~/.genie/config.json, which may have omni approvals enabled.
+    isolatedHome = mkdtempSync(join(tmpdir(), 'genie-omni-dispatch-'));
+    process.env.GENIE_HOME = isolatedHome;
   });
   afterEach(() => {
     setRegistry(original);
     restoreEnv('OMNI_APPROVALS_ENABLED', prev.enabled);
     restoreEnv('OMNI_INSTANCE', prev.instance);
     restoreEnv('OMNI_APPROVAL_CHAT', prev.chat);
+    restoreEnv('GENIE_HOME', prev.home);
+    rmSync(isolatedHome, { recursive: true, force: true });
   });
 
   test('disabled (no env, default config) → registry has NO omni-approval handler', async () => {

@@ -18,59 +18,59 @@ brainstorm → wish → work → review → ship
 
 ## Genie Commands Reference
 
-### Agent Management
+### Worker Dispatch (native teams)
+Workers are not CLI processes. Spawn them with the **Agent tool** — they run in
+the background and notify you on completion. Send follow-ups with **SendMessage**;
+each worker's final report comes back as its Agent tool result. Worker state
+lives in the task engine:
 ```bash
-genie spawn <name>              # Start an agent (resolves from directory or built-ins)
-genie kill <name>               # Force kill an agent
-genie stop <name>               # Stop (preserves session for resume)
-genie resume [name]             # Resume a suspended agent
-genie ls                        # List agents with runtime status
-genie log [agent]               # Unified observability feed
-genie read <name>               # Read terminal output from agent pane
-genie history <name>            # Compressed session history
-genie answer <name> <choice>    # Answer a prompt for an agent
+genie task list --json                # Worker/task state
+genie task status <id>                # One task's detail + stage log
+genie launch <slug> [--groups <csv>]  # Multi-session cockpit: one pane per ready group
 ```
 
 ### Agent Communication
+Direct teammate messaging is native, not a CLI verb: use the **SendMessage tool**
+with the agent's ID or name (context preserved); each agent's final report returns
+to you as its Agent tool result. For state visibility, use the task engine:
 ```bash
-genie agent send '<msg>' --to <name>    # Direct message
-genie agent send '<msg>' --broadcast    # Team broadcast
-genie agent inbox                       # View inbox
-genie agent brief --team <name>         # Cold-start summary
+genie task list --json            # Task state across workers
+genie board --wish <slug> --json  # Wish progress board
 ```
 
-### Team Orchestration
+### Wave Orchestration
+Execution follows /work's wave model: one Agent-tool call per execution group,
+all in a single message, so groups run in parallel. The task DB keeps everyone
+honest:
 ```bash
-genie team create <name> --repo <path> --wish <slug>   # Launch autonomous team
-genie team hire <name> --team <team>                    # Add agent to team
-genie team fire <name> --team <team>                    # Remove agent from team
-genie team list                                         # List teams
-genie team disband <name>                               # Disband team
+genie task checkout <id> --worker <name>  # Worker atomically claims its task
+genie task done <id>                      # Orchestrator marks done after review + validation
 ```
 
-### Task & Wish Management
+### Task & Wish State
 ```bash
-genie task create --title 'x'     # Create task
-genie task list                   # List tasks
-genie task status <slug>          # Wish group status
-genie task done <ref>             # Mark done
-genie task board                  # Planning board
+genie task create --title 'x'     # Create a task
+genie task list                   # List tasks (filters available)
+genie task status <id>            # Task detail, dependencies, stage log
+genie board --wish <slug> --json  # Kanban view of wish progress
 ```
+Plans themselves are born through the skills: /wish structures them, /work runs them.
 
 ### Workspace
 ```bash
-genie init                        # Initialize workspace
-genie init agent <name>           # Scaffold new agent
-genie serve                       # Start infrastructure (pgserve + tmux + scheduler)
+genie init                        # Initialize per-repo state (idempotent)
 genie doctor                      # Diagnostic checks
 ```
+There is no infrastructure daemon to start — genie is zero-daemon. The only
+optional resident is `genie omni serve` (Omni channel bridge). Agent identity
+scaffolding is guided, not a CLI verb: use the /wizard skill.
 
 ## Concierge → Orchestrator Transition
 
 Detect workspace maturity and adapt:
 
 **Concierge mode** activates when:
-- Workspace has 0-1 agents (just the default genie agent)
+- Workspace has 0-1 agents (just the default genie itself)
 - No wishes exist yet
 - User appears new to genie (asking "how do I..." questions)
 
@@ -117,6 +117,6 @@ Missing:
   - [ ] HEARTBEAT.md — autonomous checklist
   - [ ] frontmatter.model — which model to use
 Suggestions:
-  - Run `genie init agent <name>` to scaffold missing files
+  - Run the /wizard skill to scaffold missing files
   - Run mini-wizard to complete frontmatter
 ```
