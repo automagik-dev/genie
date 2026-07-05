@@ -740,8 +740,11 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
       controller.signal.addEventListener('abort', () => reject(new OneShotTimeoutError()), { once: true });
     });
     // ⏳ on the inbound message right before the spawn (route-scoped, no-op if the
-    // inbound carried no stanza id) — the first half of the run's ⏳→✅/❌ ack.
-    emitRouteReaction(route, messageId, STATUS_PENDING);
+    // inbound carried no stanza id) — the first half of the run's ⏳→✅/❌ ack. The
+    // settlement promise (always fulfilled — emit errors are swallowed inside) is
+    // kept so the final ✅/❌ can be chained AFTER the ⏳ HTTP call has landed: a run
+    // that finishes before the ⏳ reaches the API must never leave ✅→⏳ reordered.
+    const pendingAck = emitRouteReaction(route, messageId, STATUS_PENDING);
     try {
       // Wrap so a SYNCHRONOUS throw from the executor becomes a rejection the
       // race can observe — and so `aborted` always gets a handler attached
@@ -768,11 +771,14 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
           );
       publish(replySubject, buildRoutedReplyPayload(route.instance, route.chat, content, genId(), now()));
       // ✅ once a genuine reply is published; ❌ on a non-zero exit or soft error.
-      emitRouteReaction(route, messageId, ok ? STATUS_APPROVED : STATUS_DENIED);
+      // Chained on the ⏳ emit's settlement (fulfilled even when it failed) so the
+      // pair reaches the API in order; still fire-and-forget for this run.
+      pendingAck.finally(() => emitRouteReaction(route, messageId, ok ? STATUS_APPROVED : STATUS_DENIED));
     } catch (err) {
       const content = err instanceof OneShotTimeoutError ? timeoutNotice(timeoutMs) : errorNotice(errText(err));
       publish(replySubject, buildRoutedReplyPayload(route.instance, route.chat, content, genId(), now()));
-      emitRouteReaction(route, messageId, STATUS_DENIED); // ❌ on timeout / crash
+      // ❌ on timeout / crash — same ordering chain as the success path.
+      pendingAck.finally(() => emitRouteReaction(route, messageId, STATUS_DENIED));
     } finally {
       clearTimeout(timer);
       controller.abort(); // ensure a still-running child is killed on every path
@@ -817,6 +823,10 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
    * successful set: a dropped/failed react leaves `last_status_glyph` unchanged so
    * the reconciliation pass retries it next tick. Never throws — a failed status
    * reaction is logged and the approval decision still stands.
+   *
+   * Returns the emit's SETTLEMENT promise (always fulfilled — rejections are
+   * swallowed above; no-op emits resolve immediately) so a caller can sequence a
+   * follow-up ack after this one without ever awaiting it on the hot path.
    */
   function emitReaction(params: {
     instance: string;
@@ -827,10 +837,10 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
     recordGlyph: boolean;
     /** Apply the `ackInFlight` double-fire guard (approval reconciliation only). */
     guard: boolean;
-  }): void {
+  }): Promise<void> {
     const { instance, chat, targetId, emoji, recordGlyph, guard } = params;
-    if (!targetId) return;
-    if (guard && ackInFlight.has(targetId)) return;
+    if (!targetId) return Promise.resolve();
+    if (guard && ackInFlight.has(targetId)) return Promise.resolve();
     if (guard) ackInFlight.add(targetId);
     const react = setReaction({ instance, chat, messageId: targetId, emoji })
       .then((res) => {
@@ -846,6 +856,7 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
         inFlightReactions.delete(react);
       });
     inFlightReactions.add(react);
+    return react;
   }
 
   /** Approval-scoped ⏳/✅/❌ ack: scoped to the approval chat, glyph-recorded and
@@ -867,10 +878,12 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
    * route's own (instance, chat), NOT the approval chat. No glyph is recorded (a
    * plain inbound has no approval row) and no reconciliation guard applies (the
    * ⏳→✅/❌ pair fires exactly once, sequentially, per run). A missing messageId is
-   * a no-op. Fire-and-forget, drained by `whenIdle`; never blocks the run.
+   * a no-op. Fire-and-forget, drained by `whenIdle`; never blocks the run. Returns
+   * the emit's settlement promise so {@link runOneShot} can chain the final ✅/❌
+   * after the ⏳ has landed (else a fast run could get its acks reordered at the API).
    */
-  function emitRouteReaction(route: OmniRoute, messageId: string | undefined, emoji: string): void {
-    emitReaction({
+  function emitRouteReaction(route: OmniRoute, messageId: string | undefined, emoji: string): Promise<void> {
+    return emitReaction({
       instance: route.instance,
       chat: route.chat,
       targetId: messageId,
