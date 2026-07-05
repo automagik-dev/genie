@@ -17,6 +17,8 @@ mkdir -p "${HERMES_HOME:-$HOME/.hermes}/plugins" && ln -sfn "$(pwd)/plugins/herm
 plugins/hermes-genie/scripts/install-local.sh --copy
 ```
 
+Hermes hosts running a sticky profile (`$HERMES_HOME/active_profile`) load plugins from `$HERMES_HOME/profiles/<name>/plugins/` — the script detects that and installs there as well. Pass `--no-profile` to skip the profile install. Note that Hermes plugins are opt-in: run `hermes plugins enable genie` after the first install.
+
 ## Smoke Test
 
 ```bash
