@@ -1,0 +1,1 @@
+{"timestamp":"2026-07-05T07:00:00Z","duration_ms":45000,"api_calls":3,"tools_used":["mcp__github__list_releases","mcp__github__search_pull_requests"],"errors":[],"metrics":{"releases_24h":11,"prs_merged_7d":34,"avg_merge_time_hours":0.5,"ship_rate_pct":26}}
