@@ -107,6 +107,13 @@ export interface SpawnClaudeResult {
    * {@link extractStreamJsonReply}.
    */
   stdout: string;
+  /**
+   * The child's captured stderr, verbatim. Surfaced (tail-bounded) in the
+   * failure notice on a non-zero exit — a claude crash explains itself on
+   * stderr, not in the stream-json stdout. Optional so fake executors that
+   * never fail can omit it.
+   */
+  stderr?: string;
   /** Process exit code; non-zero is surfaced as a bounded error notice. */
   exitCode: number;
   /**
@@ -135,7 +142,11 @@ export type ClaudeSessionMode = 'create' | 'resume';
  * turn as NDJSON (`--output-format stream-json`, which requires `-p`/`--print`
  * AND `--verbose`), binds the stable session id via `--resume` (continue) or
  * `--session-id` (create), and appends the persona to the system prompt when one
- * is resolved. Pure + exported so the arg contract is unit-tested without forking.
+ * is resolved. The message positional is always preceded by `--` (commander's
+ * option terminator, verified live against `claude -p -- '-ping'`) so a
+ * hyphen-leading inbound (e.g. `--version`) is passed as the prompt, never
+ * parsed as a flag. Pure + exported so the arg contract is unit-tested without
+ * forking.
  */
 export function buildClaudeArgs(opts: {
   message: string;
@@ -151,6 +162,7 @@ export function buildClaudeArgs(opts: {
     '--verbose',
     ...sessionFlag,
     ...(opts.personaFile ? ['--append-system-prompt-file', opts.personaFile] : []),
+    '--',
     opts.message,
   ];
 }
@@ -268,7 +280,7 @@ const NO_SESSION_RE = /no conversation found|no such session|session not found/i
 
 function toSpawnResult(run: RawClaudeRun): SpawnClaudeResult {
   const { reply, isError } = extractStreamJsonReply(run.stdout);
-  return { stdout: reply, exitCode: run.exitCode, isError };
+  return { stdout: reply, stderr: run.stderr, exitCode: run.exitCode, isError };
 }
 
 /**
@@ -606,12 +618,35 @@ function truncateReply(text: string, max: number): string {
   return `${text.slice(0, max - 1)}…`;
 }
 
+/** Keep the LAST `max` chars of a diagnostic, replacing the head with a single
+ *  ellipsis — the inverse of {@link truncateReply}, because a crashing child's
+ *  cause is at the END of its stderr, not the start. */
+function tailOf(text: string, max: number): string {
+  if (max <= 0) return '';
+  if (text.length <= max) return text;
+  return `…${text.slice(-(max - 1))}`;
+}
+
 /** Dropped-because-busy notice (Decision 10 — one in-flight run per route). */
 const BUSY_NOTICE = '\u{1F6D1} busy — one at a time. Your message was stored; try again shortly.';
 /** Fired when a one-shot exceeds its budget and is killed. */
 const timeoutNotice = (ms: number): string => `\u{23F1}\u{FE0F} timed out after ${ms}ms — the run was cancelled.`;
+/** Max chars of failure detail carried into an error notice — wide enough for
+ *  the {@link exitDetail} exit-code prefix plus its full stderr tail. */
+const ERROR_DETAIL_MAX = 600;
 /** Fired on a non-zero exit or a child crash; the underlying error is bounded. */
-const errorNotice = (detail: string): string => `\u{26A0}\u{FE0F} agent run failed: ${truncateReply(detail, 200)}`;
+const errorNotice = (detail: string): string =>
+  `\u{26A0}\u{FE0F} agent run failed: ${truncateReply(detail, ERROR_DETAIL_MAX)}`;
+
+/** Max chars of child stderr/stdout tail surfaced in the exit-code detail. */
+const EXIT_DIAG_TAIL_CHARS = 500;
+/** Failure detail for a non-zero exit: the code plus the TAIL of the child's
+ *  stderr (a crash explains itself at the end of the stream), falling back to
+ *  stdout when stderr is empty. Bare `exit code N` only when both are blank. */
+const exitDetail = (code: number, stderr: string | undefined, stdout: string): string => {
+  const diag = tailOf((stderr ?? '').trim() || stdout.trim(), EXIT_DIAG_TAIL_CHARS);
+  return diag ? `exit code ${code} — ${diag}` : `exit code ${code}`;
+};
 
 /** Compact message for an unknown thrown value. */
 const errText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
@@ -727,7 +762,9 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
       const content = ok
         ? truncateReply(result.stdout, maxReplyChars)
         : errorNotice(
-            result.exitCode !== 0 ? `exit code ${result.exitCode}` : result.stdout || 'agent returned an error',
+            result.exitCode !== 0
+              ? exitDetail(result.exitCode, result.stderr, result.stdout)
+              : result.stdout || 'agent returned an error',
           );
       publish(replySubject, buildRoutedReplyPayload(route.instance, route.chat, content, genId(), now()));
       // ✅ once a genuine reply is published; ❌ on a non-zero exit or soft error.
@@ -993,8 +1030,15 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
 
       // Mapped (instance, chat) → spawn a bounded one-shot; unmapped is store-only.
       // Thread the inbound WhatsApp stanza id so the run can ⏳→✅/❌ react on it.
+      // A reaction frame must NOT start a run: its body is `[Reaction: …]` (a
+      // nonsense prompt) and its `messageId` is the REACTED-TO message, so the
+      // run's ⏳→✅/❌ ack would mutate that prior message. Skip it — and an
+      // empty/whitespace body — with no ack and no reply (the inbound is already
+      // stored above, and the approval-chat reaction path below still runs).
       const route = findRoute(instance, chat);
-      if (route) startRoutedRun(route, inboundId, body, msg.messageId);
+      if (route && !parseReaction(body) && body.trim().length > 0) {
+        startRoutedRun(route, inboundId, body, msg.messageId);
+      }
 
       // Only the approval chat can resolve approvals.
       if (!chatId || chatId !== config.approvalChat) return;

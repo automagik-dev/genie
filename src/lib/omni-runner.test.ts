@@ -246,6 +246,60 @@ describe('omni runner — inbound one-shot routing', () => {
     expect(listInbox(db).every((m) => m.handledAt !== null)).toBe(true);
   });
 
+  test('non-zero exit: the error notice carries the exit code AND the stderr text', async () => {
+    const db = freshDb();
+    const published: Published[] = [];
+    const runner = createOmniRunner({
+      db,
+      config: rt(),
+      publish: (subject, payload) => published.push({ subject, payload }),
+      spawnClaude: async () => ({ stdout: '', stderr: 'FATAL: credential expired\nrun `claude login`', exitCode: 1 }),
+    });
+
+    runner.handleMessage(...mappedInbound('doomed'));
+    await runner.whenIdle();
+
+    const notice = content(published[0]);
+    expect(notice).toContain('exit code 1');
+    expect(notice).toContain('run `claude login`'); // stderr surfaced, not dropped
+  });
+
+  test('non-zero exit with empty stderr: the notice falls back to stdout', async () => {
+    const db = freshDb();
+    const published: Published[] = [];
+    const runner = createOmniRunner({
+      db,
+      config: rt(),
+      publish: (subject, payload) => published.push({ subject, payload }),
+      spawnClaude: async () => ({ stdout: 'partial stdout clue', stderr: '', exitCode: 7 }),
+    });
+
+    runner.handleMessage(...mappedInbound('doomed too'));
+    await runner.whenIdle();
+
+    const notice = content(published[0]);
+    expect(notice).toContain('exit code 7');
+    expect(notice).toContain('partial stdout clue');
+  });
+
+  test('non-zero exit: a long stderr is TAIL-bounded — the notice keeps the end of the stream', async () => {
+    const db = freshDb();
+    const published: Published[] = [];
+    const runner = createOmniRunner({
+      db,
+      config: rt(),
+      publish: (subject, payload) => published.push({ subject, payload }),
+      spawnClaude: async () => ({ stdout: '', stderr: `${'x'.repeat(2000)}THE-ACTUAL-CAUSE`, exitCode: 1 }),
+    });
+
+    runner.handleMessage(...mappedInbound('noisy failure'));
+    await runner.whenIdle();
+
+    const notice = content(published[0]);
+    expect(notice).toContain('THE-ACTUAL-CAUSE'); // the end survives the bound
+    expect(notice.length).toBeLessThan(700); // bounded, never the whole stream
+  });
+
   test('output cap: an over-long reply is truncated to the configured max', async () => {
     const db = freshDb();
     const published: Published[] = [];
@@ -634,6 +688,7 @@ describe('buildClaudeArgs — Model A argv contract', () => {
       'sess-1',
       '--append-system-prompt-file',
       '/repo/AGENTS.md',
+      '--',
       'hi',
     ]);
   });
@@ -651,6 +706,13 @@ describe('buildClaudeArgs — Model A argv contract', () => {
     expect(args).toContain('--session-id');
     expect(args).toContain('stream-json');
     expect(args[args.length - 1]).toBe('hello there');
+  });
+
+  test('terminates options with -- so a hyphen-leading message is a prompt, never a flag', () => {
+    // Verified live: `claude -p -- '-ping'` accepts the token as the prompt.
+    const args = buildClaudeArgs({ message: '--version', sessionId: 'sess-3', mode: 'resume' });
+    expect(args[args.length - 2]).toBe('--');
+    expect(args[args.length - 1]).toBe('--version');
   });
 });
 
@@ -705,7 +767,7 @@ describe('runClaudeSession — resume-first session continuity', () => {
       return { stdout: successNd('RESUMED'), stderr: '', exitCode: 0 };
     };
     const res = await runClaudeSession({ ...base, signal: noSignal() }, rawSpawn);
-    expect(res).toEqual({ stdout: 'RESUMED', exitCode: 0, isError: false });
+    expect(res).toEqual({ stdout: 'RESUMED', stderr: '', exitCode: 0, isError: false });
     expect(calls.length).toBe(1);
     expect(calls[0]).toContain('--resume');
   });
@@ -946,6 +1008,98 @@ describe('omni runner — Model A route-scoped run acks (⏳→✅/❌)', () => 
     // The reply is published regardless of the reaction outcome.
     expect(published.length).toBe(1);
     expect(content(published[0])).toBe('still replies');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Routed-run reaction/empty guard: a reaction frame (or blank body) on a MAPPED
+// chat must never start a run. Its `messageId` is the REACTED-TO message — a
+// spawn would prompt claude with `[Reaction: …]`, publish a reply to the chat,
+// and swap the ⏳/✅ ack on the referenced message. The prior tests never caught
+// this because they only send reactions to the (distinct) approval chat.
+// ---------------------------------------------------------------------------
+describe('omni runner — routed-run reaction/empty guard', () => {
+  test('a reaction frame on a mapped route never spawns, replies, or acks', async () => {
+    const db = freshDb();
+    const published: Published[] = [];
+    const reactions: RouteReactionCall[] = [];
+    let spawns = 0;
+    const runner = createOmniRunner({
+      db,
+      config: rt(),
+      publish: (subject, payload) => published.push({ subject, payload }),
+      spawnClaude: async () => {
+        spawns++;
+        return { stdout: 'never', exitCode: 0 };
+      },
+      setReaction: async ({ instance, chat, messageId, emoji }) => {
+        reactions.push({ instance, chat, messageId, emoji });
+        return { success: true };
+      },
+    });
+
+    // A 👍 reaction in the ROUTE chat — messageId is the REACTED-TO message.
+    runner.handleMessage(...mappedInboundWithId(reactionContent(THUMBS_UP, 'wamid-prior'), 'wamid-prior'));
+    await runner.whenIdle();
+
+    expect(spawns).toBe(0);
+    expect(published).toEqual([]); // no spurious reply to the chat
+    expect(reactions).toEqual([]); // no ⏳/✅/❌ mutation on the reacted-to message
+    // Still stored to the inbox (store-only), untouched.
+    const inbox = listInbox(db);
+    expect(inbox.length).toBe(1);
+    expect(inbox[0].handledAt).toBeNull();
+  });
+
+  test('an empty / whitespace-only inbound on a mapped route never spawns or replies', async () => {
+    const db = freshDb();
+    const published: Published[] = [];
+    let spawns = 0;
+    const runner = createOmniRunner({
+      db,
+      config: rt(),
+      publish: (subject, payload) => published.push({ subject, payload }),
+      spawnClaude: async () => {
+        spawns++;
+        return { stdout: 'never', exitCode: 0 };
+      },
+    });
+
+    runner.handleMessage(...mappedInbound(''));
+    runner.handleMessage(...mappedInbound('   \n\t'));
+    await runner.whenIdle();
+
+    expect(spawns).toBe(0);
+    expect(published).toEqual([]);
+    expect(listInbox(db).length).toBe(2); // both stored, neither run
+  });
+
+  test('when the route chat IS the approval chat, a reaction skips the run but still resolves', async () => {
+    const db = freshDb();
+    let spawns = 0;
+    const runner = createOmniRunner({
+      db,
+      // Map the approval chat itself — both paths now see the same inbound.
+      config: rt({ routes: [{ instance: INSTANCE, chat: APPROVAL_CHAT, repo: ROUTE_REPO }] }),
+      publish: () => {},
+      sendApproval,
+      spawnClaude: async () => {
+        spawns++;
+        return { stdout: 'never', exitCode: 0 };
+      },
+      now: () => NOW,
+    });
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
+    runner.tick();
+    await runner.whenIdle();
+
+    runner.handleMessage(
+      ...approvalInbound({ content: reactionContent(THUMBS_UP, 'stanza-A'), messageId: 'stanza-A' }),
+    );
+    await runner.whenIdle();
+
+    expect(spawns).toBe(0); // guard: the reaction never became a prompt
+    expect(getApproval(db, a)?.status).toBe('approved'); // approval path intact
   });
 });
 
