@@ -18,21 +18,48 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 5
     steps:
-      - name: Check/Create Rolling PR
+      - name: Guard — RELEASE_PLEASE_TOKEN must be valid
         env:
-          # GITHUB_TOKEN cannot create PRs (org restriction).
-          # Use a PAT with contents:read + pull-requests:write scopes.
           GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+        run: |
+          # Fail loudly up front instead of hourly-cryptically at create time:
+          # observed 2026-07-05, the secret was PRESENT but returned HTTP 401
+          # Bad credentials (expired/revoked PAT). Cheap read-only probe; the
+          # PAT itself is only needed for PR creation (see the create step).
+          if [ -z "$GH_TOKEN" ] || ! gh api user >/dev/null 2>&1; then
+            echo "::error::RELEASE_PLEASE_TOKEN missing or invalid (HTTP 401) — mint a PAT with contents:read + pull-requests:write and add it to repo secrets"
+            exit 1
+          fi
+
+      - name: Check for existing Rolling PR
+        id: check
+        env:
+          # Read path is PAT-free: listing PRs needs only read access, which
+          # github.token retains even under this repo's Actions policy
+          # (workflow permissions read-only, "create and approve pull
+          # requests" disabled).
+          GH_TOKEN: ${{ github.token }}
         run: |
           # Check if open PR exists (dev -> main)
           PR=$(gh pr list --repo ${{ github.repository }} --base main --head dev --state open --json number --jq '.[0].number')
+          echo "pr=$PR" >> "$GITHUB_OUTPUT"
+          if [ -n "$PR" ]; then
+            echo "Rolling PR #$PR exists and is up to date"
+          fi
 
-          if [ -z "$PR" ]; then
-            # Create new rolling PR
-            gh pr create --repo ${{ github.repository }} \
-              --base main --head dev \
-              --title "chore: rolling promotion dev -> main" \
-              --body "$(cat <<'BODY'
+      - name: Create Rolling PR
+        if: steps.check.outputs.pr == ''
+        env:
+          # Creation is the ONLY step that needs the PAT: verified repo policy
+          # is read-only workflow permissions with "create and approve pull
+          # requests" disabled, so github.token cannot create PRs.
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+        run: |
+          # Create new rolling PR
+          gh pr create --repo ${{ github.repository }} \
+            --base main --head dev \
+            --title "chore: rolling promotion dev -> main" \
+            --body "$(cat <<'BODY'
           ## Rolling Promotion PR
 
           Auto-maintained rolling promotion PR from `dev` to `main`.
@@ -49,7 +76,4 @@ jobs:
           > Human approval required for merge to production.
           BODY
           )"
-            echo "Created new rolling PR"
-          else
-            echo "Rolling PR #$PR exists and is up to date"
-          fi
+          echo "Created new rolling PR"
