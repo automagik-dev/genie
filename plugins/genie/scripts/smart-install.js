@@ -239,60 +239,10 @@ function genieCliNeedsInstall() {
 }
 
 
-/**
- * Read the current marker version (before installDeps overwrites it).
- * Returns the version string or null if not found.
- */
-function getMarkerVersion() {
-  try {
-    if (existsSync(MARKER)) {
-      const marker = JSON.parse(readFileSync(MARKER, 'utf-8'));
-      return marker.version || null;
-    }
-  } catch {
-    // Ignore
-  }
-  return null;
-}
-
-/**
- * Inject the orchestration prompt into ~/.claude/rules/genie-orchestration.md
- * Reads from the rules file in the plugin directory.
- * Only writes/rewrites if the plugin version changed.
- * @param {string|null} oldVersion - marker version captured before installDeps ran
- */
-function injectOrchestrationPrompt(oldVersion) {
-  const rulesDir = join(homedir(), '.claude', 'rules');
-  const destFile = join(rulesDir, 'genie-orchestration.md');
-
-  if (!existsSync(rulesDir)) {
-    mkdirSync(rulesDir, { recursive: true });
-  }
-
-  let pluginVersion = null;
-  try {
-    const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf-8'));
-    pluginVersion = pkg.version || null;
-  } catch {
-    // Ignore
-  }
-
-  const fileExists = existsSync(destFile);
-  const versionChanged = !fileExists || oldVersion !== pluginVersion;
-
-  if (versionChanged) {
-    const sourceFile = join(ROOT, 'rules', 'genie-orchestration.md');
-    if (existsSync(sourceFile)) {
-      const content = readFileSync(sourceFile, 'utf-8');
-      writeFileSync(destFile, content, 'utf-8');
-      console.error(`Orchestration rules installed: ${destFile}`);
-    } else {
-      // Fallback: write minimal inline message
-      writeFileSync(destFile, '# Genie CLI\n\nUse `genie` CLI for all agent operations. Never use native Agent/SendMessage tools.\n', 'utf-8');
-      console.error(`Orchestration rules installed (fallback): ${destFile}`);
-    }
-  }
-}
+// NOTE: this script used to copy rules/genie-orchestration.md into
+// ~/.claude/rules/ on version change. That injection is gone: the rules file
+// is plugin-native (loaded from the plugin itself), and the copy kept
+// resurrecting a file that `genie install`'s v4 cleanup deletes.
 
 /**
  * Create default ~/.genie/config.json with schema v2 defaults if missing.
@@ -456,7 +406,7 @@ try {
   if (!isTmuxInstalled()) {
     console.error('');
     console.error('WARNING: tmux is not installed.');
-    console.error('tmux is required for agent orchestration (genie spawn, teams, etc.).');
+    console.error('tmux is required for the genie launch cockpit and TUI integration.');
     console.error('Non-interactive features still work without it.');
     console.error('');
     console.error('Install tmux:');
@@ -474,30 +424,20 @@ try {
     // Don't exit — let the rest of the chain run
   }
 
-  // Capture marker version BEFORE installDeps overwrites it
-  const oldVersion = getMarkerVersion();
-
   // 3. Install plugin dependencies if needed
   if (needsInstall()) {
     installDeps();
     console.error('Dependencies installed');
   }
 
-  // 3a. Inject orchestration prompt (idempotent — checks version marker)
-  try {
-    injectOrchestrationPrompt(oldVersion);
-  } catch (e) {
-    console.error(`Warning: Could not write orchestration prompt: ${e.message}`);
-  }
-
-  // 3b. Create default config if missing (idempotent — never overwrites)
+  // 3a. Create default config if missing (idempotent — never overwrites)
   try {
     createDefaultConfig();
   } catch (e) {
     console.error(`Warning: Could not create default config: ${e.message}`);
   }
 
-  // 3c. Configure tmux TUI (scripts + config on first run)
+  // 3b. Configure tmux TUI (scripts + config on first run)
   try {
     configureTmux();
   } catch (e) {

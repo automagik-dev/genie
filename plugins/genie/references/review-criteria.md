@@ -60,8 +60,8 @@ For PASS criteria, evidence includes:
 
 ```
 /wish → creates plan
-/plan-review → validates plan structure
-/make → executes plan
+/review (plan mode) → validates plan structure
+/work → executes plan
 /review → final validation → SHIP / FIX-FIRST / BLOCKED
 ```
 
