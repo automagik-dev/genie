@@ -1039,25 +1039,69 @@ function tailLines(path: string, maxBytes = 64_000, maxLines = 200): string[] {
   }
 }
 
-function summarizeJsonlSignals(path: string): RecentLogSignal[] {
-  const signals = new Map<string, RecentLogSignal>();
-  for (const line of tailLines(path)) {
-    try {
-      const event = JSON.parse(line) as { level?: unknown; event?: unknown; timestamp?: unknown; error?: unknown };
-      const level = typeof event.level === 'string' ? event.level : 'unknown';
-      if (level !== 'error' && level !== 'warn') continue;
-      const name = typeof event.event === 'string' ? event.event : 'unknown';
-      const key = `${level}:${name}`;
-      const existing = signals.get(key) ?? { level, event: name, count: 0 };
-      existing.count++;
-      if (typeof event.timestamp === 'string') existing.lastTimestamp = event.timestamp;
-      if (typeof event.error === 'string') existing.lastError = event.error;
-      signals.set(key, existing);
-    } catch {
-      // non-JSON lines kept in the raw tail, not summarized.
-    }
+/** Signals older than this are noise from a previous era, not "recent". */
+const SCHEDULER_SIGNAL_MAX_AGE_MS = 48 * 60 * 60 * 1000;
+
+export interface JsonlSignalSummary {
+  signals: RecentLogSignal[];
+  /** Newest timestamp among age-excluded entries — null when nothing was excluded. */
+  newestStaleTimestamp: string | null;
+}
+
+/**
+ * Age-filtered (48h default): scheduler.log is a dead v4 artifact on upgraded
+ * machines, and without the filter a June disk-full incident resurfaced as
+ * "Recent scheduler signals" weeks later on a healthy machine. Entries with an
+ * unparseable/missing timestamp are kept — staleness must be proven, not
+ * assumed. Exported (with injectable clock) for boundary tests.
+ */
+interface ParsedSignalLine {
+  level: string;
+  event: string;
+  ts: string | null;
+  tsMs: number;
+  error?: string;
+}
+
+/** Parse one JSONL line into a warn/error signal — null for non-JSON or info-level lines. */
+function parseSignalLine(line: string): ParsedSignalLine | null {
+  try {
+    const event = JSON.parse(line) as { level?: unknown; event?: unknown; timestamp?: unknown; error?: unknown };
+    const level = typeof event.level === 'string' ? event.level : 'unknown';
+    if (level !== 'error' && level !== 'warn') return null;
+    const ts = typeof event.timestamp === 'string' ? event.timestamp : null;
+    return {
+      level,
+      event: typeof event.event === 'string' ? event.event : 'unknown',
+      ts,
+      tsMs: ts ? Date.parse(ts) : Number.NaN,
+      error: typeof event.error === 'string' ? event.error : undefined,
+    };
+  } catch {
+    return null; // non-JSON lines kept in the raw tail, not summarized.
   }
-  return [...signals.values()].sort((a, b) => b.count - a.count).slice(0, 10);
+}
+
+export function summarizeJsonlSignals(path: string, nowMs: number = Date.now()): JsonlSignalSummary {
+  const signals = new Map<string, RecentLogSignal>();
+  let newestStaleTimestamp: string | null = null;
+  for (const line of tailLines(path)) {
+    const parsed = parseSignalLine(line);
+    if (!parsed) continue;
+    if (parsed.ts && !Number.isNaN(parsed.tsMs) && nowMs - parsed.tsMs > SCHEDULER_SIGNAL_MAX_AGE_MS) {
+      if (newestStaleTimestamp === null || Date.parse(newestStaleTimestamp) < parsed.tsMs) {
+        newestStaleTimestamp = parsed.ts;
+      }
+      continue;
+    }
+    const key = `${parsed.level}:${parsed.event}`;
+    const existing = signals.get(key) ?? { level: parsed.level, event: parsed.event, count: 0 };
+    existing.count++;
+    if (parsed.ts) existing.lastTimestamp = parsed.ts;
+    if (parsed.error) existing.lastError = parsed.error;
+    signals.set(key, existing);
+  }
+  return { signals: [...signals.values()].sort((a, b) => b.count - a.count).slice(0, 10), newestStaleTimestamp };
 }
 
 export function isGenieProcessSnapshotLine(line: string): boolean {
@@ -1088,7 +1132,7 @@ async function collectUpdateDiagnostics(
   ctx: UpdateDiagnosticsContext,
   maintenance: { outcome: 'completed' | 'failed'; durationMs: number; lines: string[]; error?: string },
   extras: UpdateDiagnosticsExtras,
-): Promise<{ path: string; signals: RecentLogSignal[] }> {
+): Promise<{ path: string; signals: RecentLogSignal[]; newestStaleTimestamp: string | null }> {
   const logsDir = join(GENIE_HOME, 'logs');
   mkdirSync(logsDir, { recursive: true });
   const generatedAt = new Date().toISOString();
@@ -1096,7 +1140,8 @@ async function collectUpdateDiagnostics(
   const path = join(logsDir, `update-diagnostics-${safeStamp}.json`);
   const schedulerLog = join(logsDir, 'scheduler.log');
   const tuiCrashLog = join(logsDir, 'tui-crash.log');
-  const signals = summarizeJsonlSignals(schedulerLog);
+  const schedulerSummary = summarizeJsonlSignals(schedulerLog);
+  const signals = schedulerSummary.signals;
 
   const diagnostics = {
     schemaVersion: UPDATE_DIAGNOSTIC_SCHEMA_VERSION,
@@ -1160,7 +1205,7 @@ async function collectUpdateDiagnostics(
   };
 
   writeFileSync(path, `${JSON.stringify(diagnostics, null, 2)}\n`);
-  return { path, signals };
+  return { path, signals, newestStaleTimestamp: schedulerSummary.newestStaleTimestamp };
 }
 
 // ============================================================================
@@ -1689,12 +1734,21 @@ function shouldAutoConfirm(opts: { yes?: boolean }): boolean {
 // Post-update maintenance + verify orchestration.
 // ============================================================================
 
-function printDiagnosticsSummary(diagnostics: { path: string; signals: RecentLogSignal[] }): void {
+function printDiagnosticsSummary(diagnostics: {
+  path: string;
+  signals: RecentLogSignal[];
+  newestStaleTimestamp?: string | null;
+}): void {
   log('Post-update diagnostics captured.');
   console.log(`  Report: ${diagnostics.path}`);
   console.log('  Include this file when opening a GitHub issue; it contains install metadata, step output,');
   console.log('  local process state, and recent scheduler/TUI log signals.');
-  if (diagnostics.signals.length === 0) return;
+  if (diagnostics.signals.length === 0) {
+    if (diagnostics.newestStaleTimestamp) {
+      console.log(`  No recent scheduler signals; last entry ${diagnostics.newestStaleTimestamp}`);
+    }
+    return;
+  }
   console.log('  Recent scheduler signals:');
   for (const signal of diagnostics.signals.slice(0, 3)) {
     const errorDetail = signal.lastError ? ` — ${signal.lastError}` : '';

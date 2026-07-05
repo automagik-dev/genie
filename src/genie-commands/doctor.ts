@@ -20,6 +20,14 @@ import { join } from 'node:path';
 import { resolveOmniRuntimeConfig } from '../lib/omni-config.js';
 import { CURRENT_SCHEMA_VERSION, GenieDbError, openDb, resolveDbPath, resolveRepoRoot } from '../lib/v5/genie-db.js';
 import { VERSION } from '../lib/version.js';
+import {
+  cleanupV4,
+  detectUncertainKeeps,
+  detectV4HomeResidue,
+  detectV4Install,
+  resolveGenieHome,
+  sizeOfPathTree,
+} from './legacy-v4.js';
 
 type CheckStatus = 'pass' | 'warn' | 'fail';
 
@@ -188,6 +196,94 @@ function checkBun(): CheckResult[] {
 }
 
 // ============================================================================
+// v4 residue check (detect-only; --fix runs the backup-first cleanup)
+// ============================================================================
+
+function prettyBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${bytes} B`;
+}
+
+function safeSizeOf(path: string): number {
+  try {
+    return sizeOfPathTree(path);
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Detect v4 daemon-era residue (genie home + ~/.claude rules/caches). Pure
+ * read — doctor without --fix must mutate nothing. Exported for tests with an
+ * injectable home pair.
+ *
+ * Accounting contract: "reclaimable" counts and bytes cover ONLY what --fix
+ * would actually remove (home residue + marker-matched rules + orphaned
+ * caches). A user-modified rules file is reported as kept, never counted.
+ * Uncertain-keeps are report-only lines (Decision 2) — absent from the
+ * manifest, unreachable by --fix.
+ */
+export function checkV4Residue(home?: string, genieHome?: string): CheckResult[] {
+  const gh = genieHome ?? resolveGenieHome(home ?? homedir());
+  const residue = detectV4HomeResidue(gh);
+  const claude = detectV4Install(home ?? homedir());
+  const orphanedCaches = claude.cacheDirs.filter((d) => d.orphaned);
+  const rulesReclaimable = claude.rulesFile.status === 'v4-markers';
+  const rulesKeptUserModified = claude.rulesFile.status === 'user-modified';
+  const uncertainKeeps = detectUncertainKeeps(gh);
+
+  const results: CheckResult[] = [];
+  const claudeCount = orphanedCaches.length + (rulesReclaimable ? 1 : 0);
+  if (residue.length === 0 && claudeCount === 0 && !rulesKeptUserModified) {
+    results.push({ name: 'v4 residue', status: 'pass', detail: 'none found' });
+  } else if (residue.length + claudeCount > 0) {
+    const totalBytes =
+      residue.reduce((sum, r) => sum + r.sizeBytes, 0) +
+      (rulesReclaimable ? safeSizeOf(claude.rulesFile.path) : 0) +
+      orphanedCaches.reduce((sum, d) => sum + safeSizeOf(d.path), 0);
+    results.push({
+      name: 'v4 residue',
+      status: 'warn',
+      detail: `${residue.length + claudeCount} reclaimable item(s) (${residue.length} genie-home, ${claudeCount} claude), ${prettyBytes(totalBytes)}`,
+      suggestion: 'Run `genie doctor --fix` to back up and remove (backups: ~/.genie/state-backups/).',
+    });
+  }
+  for (const relic of residue) {
+    results.push({ name: `v4 residue: ${relic.relPath}`, status: 'warn', detail: prettyBytes(relic.sizeBytes) });
+  }
+  if (rulesReclaimable) {
+    results.push({
+      name: 'v4 residue: ~/.claude rules file',
+      status: 'warn',
+      detail: prettyBytes(safeSizeOf(claude.rulesFile.path)),
+    });
+  } else if (rulesKeptUserModified) {
+    results.push({
+      name: 'v4 residue: ~/.claude rules file',
+      status: 'warn',
+      detail: 'kept (user-modified) — not counted as reclaimable; --fix will not touch it',
+    });
+  }
+  for (const dir of orphanedCaches) {
+    results.push({
+      name: `v4 residue: plugin cache ${dir.version}`,
+      status: 'warn',
+      detail: `orphaned, ${prettyBytes(safeSizeOf(dir.path))}`,
+    });
+  }
+  // Report-only (Decision 2): uncertain names we deliberately never touch.
+  for (const name of uncertainKeeps) {
+    results.push({
+      name: `kept (uncertain): ${name}`,
+      status: 'pass',
+      detail: 'not provably v4 — never touched by --fix',
+    });
+  }
+  return results;
+}
+
+// ============================================================================
 // Omni approval hook-timeout guardrail
 // ============================================================================
 
@@ -285,13 +381,22 @@ async function checkOmniHookTimeout(): Promise<CheckResult[]> {
 // Entry point
 // ============================================================================
 
-export async function doctorCommand(options?: { json?: boolean }): Promise<void> {
+export async function doctorCommand(options?: { json?: boolean; fix?: boolean }): Promise<void> {
+  // --fix: run the backup-first v4 cleanup BEFORE the checks so the report
+  // below reflects the post-fix state. Without --fix, detection only — the
+  // residue check is a pure read and nothing on disk changes. In --json mode
+  // stdout belongs to the JSON document, so cleanup chatter goes to stderr.
+  if (options?.fix) {
+    cleanupV4(options.json ? { logSink: (line) => process.stderr.write(`${line}\n`) } : {});
+  }
+
   const results: CheckResult[] = [
     ...checkGenieBinary(),
     ...checkGit(),
     ...checkDatabase(),
     ...checkSkills(),
     ...checkBun(),
+    ...checkV4Residue(),
     ...(await checkOmniHookTimeout()),
   ];
 

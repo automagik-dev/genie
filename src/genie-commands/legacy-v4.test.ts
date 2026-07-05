@@ -7,12 +7,22 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
   V4_LEGACY_MANIFEST,
   cleanupV4,
+  detectV4HomeResidue,
   detectV4Install,
   orchestrationRulesPath,
   v4PluginCacheRoot,
@@ -288,5 +298,108 @@ describe('shared manifest — no duplicated legacy-path literals', () => {
     const source = readFileSync(join(import.meta.dir, '..', '..', 'install.sh'), 'utf-8');
     expect(source).toContain('"$LOCAL_BIN/genie" install');
     expect(source).not.toContain('genie-orchestration.md');
+  });
+});
+
+// ============================================================================
+// Genie-home residue (wish v4-home-residue-doctor)
+// ============================================================================
+
+/** Seed a genie home with manifest residue AND known-live files. */
+function seedResidueHome(): { residue: string[]; live: string[] } {
+  mkdirSync(join(genieHome, 'relay', 'nested'), { recursive: true });
+  mkdirSync(join(genieHome, 'logs'), { recursive: true });
+  mkdirSync(join(genieHome, 'bin'), { recursive: true });
+  writeFileSync(join(genieHome, 'serve.pid'), '12345\n', 'utf-8');
+  writeFileSync(join(genieHome, 'hook-fallback.log'), 'x'.repeat(2048), 'utf-8');
+  writeFileSync(join(genieHome, '.role-cutover-abc123.json'), '{}', 'utf-8');
+  writeFileSync(join(genieHome, 'relay', 'nested', 'payload.txt'), 'relay payload\n', 'utf-8');
+  writeFileSync(join(genieHome, 'logs', 'scheduler.log'), '{"level":"error"}\n', 'utf-8');
+  const live = [
+    join(genieHome, 'genie.db'),
+    join(genieHome, 'config.json'),
+    join(genieHome, 'bin', 'genie'),
+    join(genieHome, 'logs', 'update-diagnostics.json'),
+    join(genieHome, 'tmux.conf.bak'), // KNOWN LIVE per constraint: tmux*/tui-* stay
+    join(genieHome, 'role-cutover-other.txt'), // near-miss for the glob
+  ];
+  for (const f of live) writeFileSync(f, `live ${f}\n`, 'utf-8');
+  return {
+    residue: [
+      join(genieHome, 'serve.pid'),
+      join(genieHome, 'hook-fallback.log'),
+      join(genieHome, '.role-cutover-abc123.json'),
+      join(genieHome, 'relay'),
+      join(genieHome, 'logs', 'scheduler.log'),
+    ],
+    live,
+  };
+}
+
+describe('detectV4HomeResidue', () => {
+  test('absent genie home → no residue', () => {
+    expect(detectV4HomeResidue(genieHome)).toHaveLength(0);
+  });
+
+  test('detects exactly the manifest residue, never live files', () => {
+    const { residue } = seedResidueHome();
+    const found = detectV4HomeResidue(genieHome);
+    expect(found.map((r) => r.path).sort()).toEqual([...residue].sort());
+    // per-relic metadata: sizes populated, dir flagged as dir
+    const relay = found.find((r) => r.relPath === 'relay');
+    expect(relay?.kind).toBe('dir');
+    expect(relay?.sizeBytes).toBeGreaterThan(0);
+    expect(found.find((r) => r.relPath === 'hook-fallback.log')?.sizeBytes).toBe(2048);
+    for (const r of found) expect(r.evidence.length).toBeGreaterThan(0);
+  });
+
+  test('kind mismatch is kept: `state` existing as a FILE is not ours', () => {
+    mkdirSync(genieHome, { recursive: true });
+    writeFileSync(join(genieHome, 'state'), 'not a dir\n', 'utf-8');
+    expect(detectV4HomeResidue(genieHome)).toHaveLength(0);
+  });
+
+  test('symlinked residue name is skipped — never follows a link', () => {
+    const outside = join(home, 'outside-target');
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, 'precious.txt'), 'keep me\n', 'utf-8');
+    mkdirSync(genieHome, { recursive: true });
+    symlinkSync(outside, join(genieHome, 'model-a'));
+    expect(detectV4HomeResidue(genieHome)).toHaveLength(0);
+    cleanupV4({ home, genieHome });
+    expect(readFileSync(join(outside, 'precious.txt'), 'utf-8')).toBe('keep me\n');
+  });
+});
+
+describe('cleanupV4 — genie-home residue', () => {
+  test('backs up full content, removes residue, leaves live files byte-identical', () => {
+    const { residue, live } = seedResidueHome();
+    const liveContents = live.map((f) => readFileSync(f, 'utf-8'));
+
+    const result = cleanupV4({ home, genieHome });
+
+    for (const path of residue) expect(existsSync(path)).toBe(false);
+    live.forEach((f, i) => expect(readFileSync(f, 'utf-8')).toBe(liveContents[i]));
+
+    // Full-content backup under <backupDir>/genie-home/<relPath>
+    const backup = result.backupDir as string;
+    expect(readFileSync(join(backup, 'genie-home', 'serve.pid'), 'utf-8')).toBe('12345\n');
+    expect(readFileSync(join(backup, 'genie-home', 'relay', 'nested', 'payload.txt'), 'utf-8')).toBe('relay payload\n');
+    expect(readFileSync(join(backup, 'genie-home', 'logs', 'scheduler.log'), 'utf-8')).toBe('{"level":"error"}\n');
+
+    const kinds = result.actions.map((a) => a.kind);
+    expect(kinds.filter((k) => k === 'removed-home-residue')).toHaveLength(5);
+    expect(result.homeResidue).toHaveLength(5);
+    expect(readFileSync(result.logFile as string, 'utf-8')).toContain('removed-home-residue');
+  });
+
+  test('second run is a no-op', () => {
+    seedResidueHome();
+    const first = cleanupV4({ home, genieHome });
+    expect(first.noOp).toBe(false);
+    const second = cleanupV4({ home, genieHome });
+    expect(second.noOp).toBe(true);
+    expect(second.homeResidue).toHaveLength(0);
+    expect(second.actions).toHaveLength(0);
   });
 });

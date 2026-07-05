@@ -39,6 +39,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { cpSync, lstatSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { contractPath } from '../lib/genie-config.js';
@@ -46,6 +47,21 @@ import { contractPath } from '../lib/genie-config.js';
 // ============================================================================
 // Manifest — the shared source of truth for every v4 legacy path
 // ============================================================================
+
+export type HomeResidueKind = 'file' | 'dir' | 'glob';
+
+/**
+ * A provably-dead v4 artifact under the genie home dir (GENIE_HOME / ~/.genie).
+ * Entries are EXACT paths (or a single-`*` glob over direct children of the
+ * parent dir) — never recursive guesses. Every entry carries its src-proof.
+ */
+export interface HomeResidueEntry {
+  /** Path segments relative to the genie home dir. For `glob`, the last segment holds one `*`. */
+  relPath: readonly string[];
+  kind: HomeResidueKind;
+  /** src-proof: why v5 provably never reads/writes this path. */
+  evidence: string;
+}
 
 export interface V4LegacyManifest {
   /** Home-relative path segments of the v4 global orchestration rules file. */
@@ -58,7 +74,49 @@ export interface V4LegacyManifest {
   orphanMarkerFile: string;
   /** The rules file is provably genie-installed v4 iff its content contains at least one marker. */
   rulesContentMarkers: readonly string[];
+  /** Daemon-era residue under the genie home dir. See each entry's src-proof. */
+  homeResidue: readonly HomeResidueEntry[];
 }
+
+// src-proof method (2026-07-05): `grep -rn <name> src/ scripts/ plugins/genie/scripts/`
+// on the v5 tree. "no refs" = zero hits outside tests. Deliberately EXCLUDED as
+// live or uncertain: bin/, worktrees/, state-backups/, logs/* (except
+// scheduler.log), genie.db*, config.json, keys/, plugins/, skills/, templates/,
+// scripts/, tmux.conf (written by setup.ts:437), tmux*.conf.bak + tui-* +
+// .generated.theme.conf (TUI/smart-install surface — uncertain, KEEP).
+const HOME_RESIDUE: readonly HomeResidueEntry[] = [
+  {
+    relPath: ['serve.pid'],
+    kind: 'file',
+    evidence:
+      'written only by the deleted v4 serve daemon; sole v5 ref is a tolerant diagnostic safeRead (update.ts) whose absent-path is the fresh-install norm',
+  },
+  { relPath: ['genie-serve.config.cjs'], kind: 'file', evidence: 'v4 pm2 serve config; no refs in v5 src' },
+  { relPath: ['Genie.config.cjs'], kind: 'file', evidence: 'v4 daemon config; no refs in v5 src' },
+  { relPath: ['hook-fallback.log'], kind: 'file', evidence: 'v4 hook-fallback writer deleted; no refs in v5 src' },
+  { relPath: ['role-cutover-events.jsonl'], kind: 'file', evidence: 'v4 role-cutover log; no refs in v5 src' },
+  { relPath: ['.role-cutover-*.json'], kind: 'glob', evidence: 'v4 role-cutover state stamps; no refs in v5 src' },
+  {
+    relPath: ['config.json.bak-pre-omni'],
+    kind: 'file',
+    evidence: 'one-shot migration backup of config.json; no refs in v5 src',
+  },
+  {
+    relPath: ['logs', 'scheduler.log'],
+    kind: 'file',
+    evidence:
+      'v4 scheduler daemon log; sole v5 ref is the update diagnostics tail (tolerant of absence, now age-filtered)',
+  },
+  {
+    relPath: ['relay'],
+    kind: 'dir',
+    evidence: 'v4 relay artifacts; v5 OTel relay is port-only (codex-config.ts), no dir',
+  },
+  { relPath: ['spawn-scripts'], kind: 'dir', evidence: 'v4 spawn machinery; no refs in v5 src' },
+  { relPath: ['state'], kind: 'dir', evidence: 'v4 wish-state JSONs; v5 state lives in genie.db (TAXONOMY.md)' },
+  { relPath: ['model-a'], kind: 'dir', evidence: 'v4 experiment dir; no refs in v5 src' },
+  { relPath: ['data'], kind: 'dir', evidence: 'v4 data dir; no refs in v5 src' },
+];
 
 export const V4_LEGACY_MANIFEST: V4LegacyManifest = {
   orchestrationRulesRelPath: ['.claude', 'rules', 'genie-orchestration.md'],
@@ -66,7 +124,13 @@ export const V4_LEGACY_MANIFEST: V4LegacyManifest = {
   v4CacheVersionPrefix: '4.',
   orphanMarkerFile: '.orphaned_at',
   rulesContentMarkers: ['genie spawn', 'genie team create'],
+  homeResidue: HOME_RESIDUE,
 };
+
+/** Resolve the genie home dir the way the cleanup does everywhere. */
+export function resolveGenieHome(home: string = homedir()): string {
+  return process.env.GENIE_HOME ?? join(home, '.genie');
+}
 
 /** Absolute path of the v4 orchestration rules file for the given home dir. */
 export function orchestrationRulesPath(home: string = homedir()): string {
@@ -146,6 +210,108 @@ export function detectV4Install(home: string = homedir()): V4DetectionReport {
 }
 
 // ============================================================================
+// Home-residue detection (GENIE_HOME / ~/.genie)
+// ============================================================================
+
+export interface V4HomeResidueRelic {
+  /** Absolute path of the found artifact. */
+  path: string;
+  /** Genie-home-relative display path, e.g. `logs/scheduler.log`. */
+  relPath: string;
+  kind: 'file' | 'dir';
+  /** Bytes on disk (recursive for dirs; symlinks never followed). */
+  sizeBytes: number;
+  /** The manifest entry's src-proof. */
+  evidence: string;
+}
+
+/** Bytes on disk for a file or tree (recursive; symlinks contribute 0, never followed). */
+export function sizeOfPathTree(path: string): number {
+  const stat = lstatSync(path);
+  if (stat.isSymbolicLink()) return 0;
+  if (!stat.isDirectory()) return stat.size;
+  let total = 0;
+  for (const entry of readdirSync(path, { withFileTypes: true })) {
+    total += sizeOfPathTree(join(path, entry.name));
+  }
+  return total;
+}
+
+/** Expand a single-`*` glob entry against the DIRECT children of its parent dir. */
+function expandGlobEntry(genieHome: string, entry: HomeResidueEntry): string[] {
+  const parent = join(genieHome, ...entry.relPath.slice(0, -1));
+  const pattern = entry.relPath[entry.relPath.length - 1];
+  const [prefix, suffix] = pattern.split('*');
+  try {
+    if (!statSync(parent).isDirectory()) return [];
+  } catch {
+    return []; // parent absent or unreadable — nothing to expand
+  }
+  return readdirSync(parent)
+    .filter((name) => name.startsWith(prefix) && name.endsWith(suffix) && name.length >= prefix.length + suffix.length)
+    .map((name) => join(parent, name));
+}
+
+/**
+ * Detect v4 daemon-era residue under the genie home dir. Read-only — never
+ * creates, writes, or logs anything (doctor without --fix relies on this).
+ */
+export function detectV4HomeResidue(genieHome: string = resolveGenieHome()): V4HomeResidueRelic[] {
+  const relics: V4HomeResidueRelic[] = [];
+  try {
+    if (!statSync(genieHome).isDirectory()) return relics; // absent or not a dir — nothing to scan
+  } catch {
+    return relics;
+  }
+  for (const entry of V4_LEGACY_MANIFEST.homeResidue) {
+    const paths = entry.kind === 'glob' ? expandGlobEntry(genieHome, entry) : [join(genieHome, ...entry.relPath)];
+    for (const path of paths) {
+      let stat: ReturnType<typeof lstatSync>;
+      try {
+        stat = lstatSync(path);
+      } catch {
+        continue; // absent — the v5-normal case
+      }
+      if (stat.isSymbolicLink()) continue; // never follow a link out of the home
+      const isDir = stat.isDirectory();
+      if (entry.kind === 'dir' && !isDir) continue; // shape mismatch → not ours, keep
+      if (entry.kind === 'file' && isDir) continue;
+      relics.push({
+        path,
+        relPath: relative(genieHome, path),
+        kind: isDir ? 'dir' : 'file',
+        sizeBytes: sizeOfPathTree(path),
+        evidence: entry.evidence,
+      });
+    }
+  }
+  return relics;
+}
+
+// ============================================================================
+// Uncertain keeps — observed v4-era names we deliberately NEVER touch
+// (Decision 2: uncertain → KEEP, log-only report). Listed here so doctor can
+// surface them; absent from the residue manifest so --fix cannot reach them.
+// ============================================================================
+
+export const HOME_UNCERTAIN_KEEPS: readonly string[] = [
+  'tmux.conf.bak', // tmux*.conf surface is smart-install/TUI-managed
+  'tui-tmux.conf.bak', // tui-* surface is TUI-managed
+  '.generated.theme.conf', // theme artifact of unknown ownership
+  '.genie', // nested ~/.genie/.genie oddity (possible GENIE_HOME misresolution)
+];
+
+/** Report-only: which uncertain-keep names exist under the genie home. Pure read. */
+export function detectUncertainKeeps(genieHome: string = resolveGenieHome()): string[] {
+  try {
+    if (!statSync(genieHome).isDirectory()) return [];
+  } catch {
+    return [];
+  }
+  return HOME_UNCERTAIN_KEEPS.filter((name) => existsSync(join(genieHome, name)));
+}
+
+// ============================================================================
 // Cleanup
 // ============================================================================
 
@@ -154,6 +320,11 @@ export interface V4CleanupOptions {
   home?: string;
   /** Genie state dir for backups + logs. Default: $GENIE_HOME, else `<home>/.genie`. */
   genieHome?: string;
+  /**
+   * Where progress chatter goes. Default: stdout (console.log). Callers that
+   * own stdout for a document (e.g. `doctor --fix --json`) pass a stderr sink.
+   */
+  logSink?: (line: string) => void;
 }
 
 export type V4CleanupActionKind =
@@ -161,6 +332,7 @@ export type V4CleanupActionKind =
   | 'kept-rules-user-modified'
   | 'removed-cache'
   | 'kept-cache-unmarked'
+  | 'removed-home-residue'
   | 'error';
 
 export interface V4CleanupAction {
@@ -172,6 +344,8 @@ export interface V4CleanupAction {
 
 export interface V4CleanupResult {
   report: V4DetectionReport;
+  /** v4 residue found under the genie home dir this run (removed unless errored). */
+  homeResidue: V4HomeResidueRelic[];
   actions: V4CleanupAction[];
   /** Backup dir for this run, or null when nothing was removed. */
   backupDir: string | null;
@@ -187,6 +361,7 @@ interface CleanupContext {
   backupDirUsed: boolean;
   actions: V4CleanupAction[];
   logLines: string[];
+  emit: (line: string) => void;
 }
 
 function recordAction(ctx: CleanupContext, action: V4CleanupAction): void {
@@ -198,7 +373,7 @@ function recordAction(ctx: CleanupContext, action: V4CleanupAction): void {
 
 function warnFailure(ctx: CleanupContext, path: string, error: unknown): void {
   const message = error instanceof Error ? error.message : String(error);
-  console.log(`  \x1b[33m!\x1b[0m Failed to clean ${contractPath(path)}: ${message}`);
+  ctx.emit(`  \x1b[33m!\x1b[0m Failed to clean ${contractPath(path)}: ${message}`);
   recordAction(ctx, { kind: 'error', path, detail: message });
 }
 
@@ -253,7 +428,7 @@ function cleanupRulesFile(ctx: CleanupContext, relic: RulesFileRelic): void {
   const display = contractPath(relic.path);
 
   if (relic.status === 'user-modified') {
-    console.log(`  \x1b[33m!\x1b[0m Kept ${display} — no v4 markers found (user-modified?); not removing`);
+    ctx.emit(`  \x1b[33m!\x1b[0m Kept ${display} — no v4 markers found (user-modified?); not removing`);
     recordAction(ctx, { kind: 'kept-rules-user-modified', path: relic.path });
     return;
   }
@@ -261,7 +436,7 @@ function cleanupRulesFile(ctx: CleanupContext, relic: RulesFileRelic): void {
   try {
     const backupPath = backupFile(ctx, relic.path);
     unlinkSync(relic.path);
-    console.log(`  \x1b[32m+\x1b[0m Removed ${display} (v4 orchestration rules)`);
+    ctx.emit(`  \x1b[32m+\x1b[0m Removed ${display} (v4 orchestration rules)`);
     recordAction(ctx, { kind: 'removed-rules', path: relic.path, backupPath });
   } catch (error) {
     warnFailure(ctx, relic.path, error);
@@ -272,7 +447,7 @@ function cleanupCacheDirs(ctx: CleanupContext, relics: V4CacheRelic[]): void {
   for (const relic of relics) {
     const display = contractPath(relic.path);
     if (!relic.orphaned) {
-      console.log(
+      ctx.emit(
         `  \x1b[2mKept ${display} — no ${V4_LEGACY_MANIFEST.orphanMarkerFile} marker (not provably orphaned)\x1b[0m`,
       );
       recordAction(ctx, { kind: 'kept-cache-unmarked', path: relic.path });
@@ -281,8 +456,29 @@ function cleanupCacheDirs(ctx: CleanupContext, relics: V4CacheRelic[]): void {
     try {
       const backupPath = backupCacheManifest(ctx, relic);
       rmSync(relic.path, { recursive: true, force: true });
-      console.log(`  \x1b[32m+\x1b[0m Removed orphaned v4 plugin cache ${relic.version}`);
+      ctx.emit(`  \x1b[32m+\x1b[0m Removed orphaned v4 plugin cache ${relic.version}`);
       recordAction(ctx, { kind: 'removed-cache', path: relic.path, backupPath });
+    } catch (error) {
+      warnFailure(ctx, relic.path, error);
+    }
+  }
+}
+
+/**
+ * Remove genie-home residue, backup-first. Unlike plugin caches (re-downloadable,
+ * manifest-only backup), home residue is machine-unique — the FULL content is
+ * copied to `<backupRoot>/genie-home/<relPath>` before removal.
+ */
+function cleanupHomeResidue(ctx: CleanupContext, relics: V4HomeResidueRelic[]): void {
+  for (const relic of relics) {
+    try {
+      const backupPath = join(ctx.backupRoot, 'genie-home', relic.relPath);
+      mkdirSync(dirname(backupPath), { recursive: true });
+      cpSync(relic.path, backupPath, { recursive: true });
+      ctx.backupDirUsed = true;
+      rmSync(relic.path, { recursive: true, force: true });
+      ctx.emit(`  \x1b[32m+\x1b[0m Removed v4 residue ${contractPath(relic.path)}`);
+      recordAction(ctx, { kind: 'removed-home-residue', path: relic.path, backupPath });
     } catch (error) {
       warnFailure(ctx, relic.path, error);
     }
@@ -307,8 +503,9 @@ export function cleanupV4(options: V4CleanupOptions = {}): V4CleanupResult {
   const home = options.home ?? homedir();
   const genieHome = options.genieHome ?? process.env.GENIE_HOME ?? join(home, '.genie');
   const report = detectV4Install(home);
-  if (!report.hasRelics) {
-    return { report, actions: [], backupDir: null, logFile: null, noOp: true };
+  const homeResidue = detectV4HomeResidue(genieHome);
+  if (!report.hasRelics && homeResidue.length === 0) {
+    return { report, homeResidue, actions: [], backupDir: null, logFile: null, noOp: true };
   }
 
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -318,11 +515,13 @@ export function cleanupV4(options: V4CleanupOptions = {}): V4CleanupResult {
     backupDirUsed: false,
     actions: [],
     logLines: [],
+    emit: options.logSink ?? ((line: string) => console.log(line)),
   };
 
-  console.log('\x1b[2mCleaning up v4 leftovers...\x1b[0m');
+  ctx.emit('\x1b[2mCleaning up v4 leftovers...\x1b[0m');
   cleanupRulesFile(ctx, report.rulesFile);
   cleanupCacheDirs(ctx, report.cacheDirs);
+  cleanupHomeResidue(ctx, homeResidue);
 
   // An unwritable GENIE_HOME must degrade gracefully (stderr warning, no raw
   // stack) — the cleanup step still reports its actions and exits 0.
@@ -334,14 +533,15 @@ export function cleanupV4(options: V4CleanupOptions = {}): V4CleanupResult {
     console.error(`  \x1b[33m!\x1b[0m Could not write v4-cleanup log under ${contractPath(genieHome)}: ${message}`);
   }
   if (ctx.backupDirUsed) {
-    console.log(`  \x1b[2mBackups: ${contractPath(ctx.backupRoot)}\x1b[0m`);
+    ctx.emit(`  \x1b[2mBackups: ${contractPath(ctx.backupRoot)}\x1b[0m`);
   }
   if (logFile) {
-    console.log(`  \x1b[2mLog: ${contractPath(logFile)}\x1b[0m`);
+    ctx.emit(`  \x1b[2mLog: ${contractPath(logFile)}\x1b[0m`);
   }
 
   return {
     report,
+    homeResidue,
     actions: ctx.actions,
     backupDir: ctx.backupDirUsed ? ctx.backupRoot : null,
     logFile,

@@ -1,10 +1,20 @@
 import { Database } from 'bun:sqlite';
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { doctorCommand, evaluateOmniHookTimeout, findDispatchHookTimeoutSec } from './doctor.js';
+import { checkV4Residue, doctorCommand, evaluateOmniHookTimeout, findDispatchHookTimeoutSec } from './doctor.js';
+import { cleanupV4 } from './legacy-v4.js';
 
 /**
  * Capture everything written to stdout during `fn`, restoring the real
@@ -187,5 +197,195 @@ describe('doctorCommand — genie.db check branches', () => {
     expect(db?.status).toBe('fail');
     expect(json.ok).toBe(false);
     expect(exitCode).toBe(1);
+  });
+});
+
+// ============================================================================
+// v4 residue check (wish v4-home-residue-doctor)
+// ============================================================================
+
+describe('checkV4Residue', () => {
+  let residueHome: string;
+  let residueGenieHome: string;
+  let savedGenieHomeEnv: string | undefined;
+
+  beforeEach(() => {
+    residueHome = mkdtempSync(join(tmpdir(), 'doctor-v4-'));
+    residueGenieHome = join(residueHome, '.genie');
+    savedGenieHomeEnv = process.env.GENIE_HOME;
+  });
+
+  afterEach(() => {
+    rmSync(residueHome, { recursive: true, force: true });
+    if (savedGenieHomeEnv === undefined) {
+      // biome-ignore lint/performance/noDelete: process.env assignment coerces undefined→"undefined"; delete is the only correct unset
+      delete process.env.GENIE_HOME;
+    } else process.env.GENIE_HOME = savedGenieHomeEnv;
+  });
+
+  function seed(): string[] {
+    mkdirSync(join(residueGenieHome, 'spawn-scripts'), { recursive: true });
+    writeFileSync(join(residueGenieHome, 'spawn-scripts', 'run.sh'), '#!/bin/sh\n', 'utf-8');
+    writeFileSync(join(residueGenieHome, 'serve.pid'), '999\n', 'utf-8');
+    writeFileSync(join(residueGenieHome, 'config.json'), '{"version":2}\n', 'utf-8'); // live
+    return [join(residueGenieHome, 'spawn-scripts'), join(residueGenieHome, 'serve.pid')];
+  }
+
+  /** Recursive (path, size, mtimeMs) snapshot — proves detection mutates nothing. */
+  function snapshot(dir: string): string[] {
+    const out: string[] = [];
+    const walk = (d: string): void => {
+      for (const entry of readdirSync(d, { withFileTypes: true })) {
+        const p = join(d, entry.name);
+        const s = statSync(p);
+        out.push(`${p}|${s.size}|${s.mtimeMs}`);
+        if (entry.isDirectory()) walk(p);
+      }
+    };
+    walk(dir);
+    return out.sort();
+  }
+
+  test('clean home → single pass line', () => {
+    const results = checkV4Residue(residueHome, residueGenieHome);
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ name: 'v4 residue', status: 'pass' });
+  });
+
+  test('residue → warn summary (count + size) plus per-path list; detection is a pure read', () => {
+    seed();
+    const before = snapshot(residueHome);
+
+    const results = checkV4Residue(residueHome, residueGenieHome);
+
+    expect(snapshot(residueHome)).toEqual(before); // zero mutation
+    const summary = results[0];
+    expect(summary.status).toBe('warn');
+    expect(summary.detail).toContain('2 reclaimable item(s) (2 genie-home, 0 claude)');
+    expect(summary.suggestion).toContain('--fix');
+    const paths = results
+      .slice(1)
+      .map((r) => r.name)
+      .sort();
+    expect(paths).toEqual(['v4 residue: serve.pid', 'v4 residue: spawn-scripts']);
+  });
+
+  test('--fix path (cleanupV4) clears the check; live config.json untouched', () => {
+    seed();
+    expect(checkV4Residue(residueHome, residueGenieHome)[0].status).toBe('warn');
+
+    cleanupV4({ home: residueHome, genieHome: residueGenieHome });
+
+    const after = checkV4Residue(residueHome, residueGenieHome);
+    expect(after).toHaveLength(1);
+    expect(after[0].status).toBe('pass');
+    expect(readFileSync(join(residueGenieHome, 'config.json'), 'utf-8')).toBe('{"version":2}\n');
+  });
+
+  test('doctorCommand without --fix mutates nothing (GENIE_HOME fixture)', async () => {
+    seed();
+    process.env.GENIE_HOME = residueGenieHome;
+    const before = snapshot(residueHome);
+
+    const { output } = await captureDoctor(() => doctorCommand({ json: true }));
+
+    expect(snapshot(residueHome)).toEqual(before); // no fix flag → zero disk change
+    const parsed = JSON.parse(output) as { checks: Array<{ name: string; status: string }> };
+    const relicChecks = parsed.checks.filter((c) => c.name.startsWith('v4 residue:'));
+    expect(relicChecks.map((c) => c.name)).toContain('v4 residue: serve.pid');
+  });
+
+  test('doctorCommand wires cleanup strictly behind the fix flag (source lock)', () => {
+    const source = readFileSync(join(import.meta.dir, 'doctor.ts'), 'utf-8');
+    expect(source).toMatch(/if \(options\?\.fix\) \{\s*\n\s*cleanupV4\(/);
+  });
+});
+
+describe('checkV4Residue — accounting + uncertain keeps + json fix', () => {
+  let fxHome: string;
+  let fxGenieHome: string;
+  let savedGenieHomeEnv: string | undefined;
+  let savedHomeEnv: string | undefined;
+
+  beforeEach(() => {
+    fxHome = mkdtempSync(join(tmpdir(), 'doctor-v4b-'));
+    fxGenieHome = join(fxHome, '.genie');
+    savedGenieHomeEnv = process.env.GENIE_HOME;
+    savedHomeEnv = process.env.HOME;
+  });
+
+  afterEach(() => {
+    if (savedHomeEnv === undefined) {
+      // biome-ignore lint/performance/noDelete: process.env assignment coerces undefined→"undefined"; delete is the only correct unset
+      delete process.env.HOME;
+    } else process.env.HOME = savedHomeEnv;
+    if (savedGenieHomeEnv === undefined) {
+      // biome-ignore lint/performance/noDelete: same env-unset contract as above
+      delete process.env.GENIE_HOME;
+    } else process.env.GENIE_HOME = savedGenieHomeEnv;
+    rmSync(fxHome, { recursive: true, force: true });
+  });
+
+  test('user-modified rules file: kept, labeled, never counted as reclaimable', () => {
+    mkdirSync(join(fxHome, '.claude', 'rules'), { recursive: true });
+    writeFileSync(join(fxHome, '.claude', 'rules', 'genie-orchestration.md'), '# my own rules\n', 'utf-8');
+    mkdirSync(fxGenieHome, { recursive: true });
+    writeFileSync(join(fxGenieHome, 'serve.pid'), '1\n', 'utf-8');
+
+    const results = checkV4Residue(fxHome, fxGenieHome);
+
+    const summary = results[0];
+    expect(summary.detail).toContain('1 reclaimable item(s) (1 genie-home, 0 claude)');
+    const rulesRow = results.find((r) => r.name === 'v4 residue: ~/.claude rules file');
+    expect(rulesRow?.detail).toContain('kept (user-modified)');
+    // still kept on disk after a fix run
+    cleanupV4({ home: fxHome, genieHome: fxGenieHome });
+    expect(readFileSync(join(fxHome, '.claude', 'rules', 'genie-orchestration.md'), 'utf-8')).toBe('# my own rules\n');
+  });
+
+  test('marker rules file is counted and byte-sized in the claude bucket', () => {
+    mkdirSync(join(fxHome, '.claude', 'rules'), { recursive: true });
+    writeFileSync(join(fxHome, '.claude', 'rules', 'genie-orchestration.md'), 'genie spawn everything\n', 'utf-8');
+
+    const results = checkV4Residue(fxHome, fxGenieHome);
+
+    expect(results[0].detail).toContain('1 reclaimable item(s) (0 genie-home, 1 claude)');
+    expect(results.find((r) => r.name === 'v4 residue: ~/.claude rules file')?.detail).toMatch(/\d+ B/);
+  });
+
+  test('uncertain keeps are report-only rows and survive --fix', () => {
+    mkdirSync(join(fxGenieHome, '.genie'), { recursive: true });
+    writeFileSync(join(fxGenieHome, 'tmux.conf.bak'), 'old tmux\n', 'utf-8');
+    writeFileSync(join(fxGenieHome, 'serve.pid'), '1\n', 'utf-8');
+
+    const results = checkV4Residue(fxHome, fxGenieHome);
+    const keptNames = results.filter((r) => r.name.startsWith('kept (uncertain):')).map((r) => r.name);
+    expect(keptNames.sort()).toEqual(['kept (uncertain): .genie', 'kept (uncertain): tmux.conf.bak']);
+    for (const r of results.filter((x) => x.name.startsWith('kept (uncertain):'))) expect(r.status).toBe('pass');
+
+    cleanupV4({ home: fxHome, genieHome: fxGenieHome });
+    expect(existsSync(join(fxGenieHome, 'tmux.conf.bak'))).toBe(true);
+    expect(existsSync(join(fxGenieHome, '.genie'))).toBe(true);
+    expect(existsSync(join(fxGenieHome, 'serve.pid'))).toBe(false);
+  });
+
+  test('doctor --fix --json: stdout is valid JSON, relic removed (chatter on stderr)', () => {
+    // Subprocess drive: bun's homedir() does not re-read a runtime HOME change,
+    // so the fixture home must be injected at process spawn — which also tests
+    // the CLI exactly as a user invokes it.
+    mkdirSync(fxGenieHome, { recursive: true });
+    writeFileSync(join(fxGenieHome, 'serve.pid'), '77\n', 'utf-8');
+    const repoRoot = join(import.meta.dir, '..', '..');
+
+    const proc = Bun.spawnSync([process.execPath, join(repoRoot, 'src', 'genie.ts'), 'doctor', '--fix', '--json'], {
+      cwd: repoRoot,
+      env: { ...process.env, HOME: fxHome, GENIE_HOME: fxGenieHome },
+    });
+
+    const stdout = proc.stdout.toString();
+    const parsed = JSON.parse(stdout) as { checks: Array<{ name: string; status: string }> }; // whole stdout is the document
+    expect(existsSync(join(fxGenieHome, 'serve.pid'))).toBe(false);
+    expect(parsed.checks.find((c) => c.name === 'v4 residue')?.status).toBe('pass'); // post-fix state
+    expect(proc.stderr.toString()).toContain('Removed v4 residue'); // chatter rerouted, not lost
   });
 });

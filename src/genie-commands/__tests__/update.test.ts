@@ -37,6 +37,7 @@ import {
   runVerifyProbe,
   shortCircuitIfCurrent,
   shouldEmitPathDivergenceWarning,
+  summarizeJsonlSignals,
   syncBinaryVersionStamp,
   verifySwappedBinary,
 } from '../update.js';
@@ -1385,6 +1386,7 @@ describe('shouldEmitPathDivergenceWarning (self-symlink suppression)', () => {
 describe('runV4CleanupSafe', () => {
   const stubResult = {
     report: { rulesFile: { path: '/fixture', status: 'absent' as const }, cacheDirs: [], hasRelics: false },
+    homeResidue: [],
     actions: [],
     backupDir: null,
     logFile: null,
@@ -1418,5 +1420,70 @@ describe('runV4CleanupSafe', () => {
     expect(callIdx).toBeGreaterThan(-1);
     expect(verifyIdx).toBeGreaterThan(-1);
     expect(callIdx).toBeLessThan(verifyIdx);
+  });
+});
+
+// ============================================================================
+// Scheduler-signal age filter (wish v4-home-residue-doctor): a June disk-full
+// incident must not resurface as "Recent scheduler signals" weeks later.
+// ============================================================================
+
+describe('summarizeJsonlSignals age filter', () => {
+  const HOUR = 60 * 60 * 1000;
+  const NOW = Date.parse('2026-07-05T12:00:00.000Z');
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'sched-age-'));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function writeLog(entries: Array<{ level: string; event: string; ageHours?: number; error?: string }>): string {
+    const path = join(dir, 'scheduler.log');
+    const lines = entries.map((e) => {
+      const timestamp = e.ageHours === undefined ? undefined : new Date(NOW - e.ageHours * HOUR).toISOString();
+      return JSON.stringify({ level: e.level, event: e.event, timestamp, error: e.error });
+    });
+    writeFileSync(path, `${lines.join('\n')}\n`, 'utf-8');
+    return path;
+  }
+
+  test('only-stale log → zero signals, newest stale timestamp reported', () => {
+    const path = writeLog([
+      { level: 'error', event: 'disk.full', ageHours: 320, error: 'ENOSPC' },
+      { level: 'error', event: 'disk.full', ageHours: 313, error: 'ENOSPC' },
+    ]);
+    const summary = summarizeJsonlSignals(path, NOW);
+    expect(summary.signals).toHaveLength(0);
+    expect(summary.newestStaleTimestamp).toBe(new Date(NOW - 313 * HOUR).toISOString());
+  });
+
+  test('mixed log → only fresh entries summarized', () => {
+    const path = writeLog([
+      { level: 'error', event: 'disk.full', ageHours: 320, error: 'ENOSPC' },
+      { level: 'warn', event: 'queue.slow', ageHours: 3 },
+    ]);
+    const summary = summarizeJsonlSignals(path, NOW);
+    expect(summary.signals.map((s) => s.event)).toEqual(['queue.slow']);
+    expect(summary.newestStaleTimestamp).toBe(new Date(NOW - 320 * HOUR).toISOString());
+  });
+
+  test('48h boundary: exactly 48h kept, just past excluded', () => {
+    const path = writeLog([
+      { level: 'error', event: 'at.boundary', ageHours: 48 },
+      { level: 'error', event: 'past.boundary', ageHours: 48.001 },
+    ]);
+    const summary = summarizeJsonlSignals(path, NOW);
+    expect(summary.signals.map((s) => s.event)).toEqual(['at.boundary']);
+    expect(summary.newestStaleTimestamp).not.toBeNull();
+  });
+
+  test('entries without a parseable timestamp are kept — staleness must be proven', () => {
+    const path = writeLog([{ level: 'error', event: 'no.timestamp' }]);
+    const summary = summarizeJsonlSignals(path, NOW);
+    expect(summary.signals.map((s) => s.event)).toEqual(['no.timestamp']);
+    expect(summary.newestStaleTimestamp).toBeNull();
   });
 });
