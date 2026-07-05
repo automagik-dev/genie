@@ -87,6 +87,7 @@ program
   .command('doctor')
   .description('Run diagnostic checks on genie installation')
   .option('--json', 'Emit JSON instead of human output')
+  .option('--fix', 'Back up and remove detected v4 residue (backup-first, idempotent)')
   .action(doctorCommand);
 
 program
