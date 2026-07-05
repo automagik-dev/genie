@@ -17,6 +17,7 @@ function makeCleanupSpy(): { runner: typeof cleanupV4; calls: () => number } {
     count += 1;
     return {
       report: { rulesFile: { path: '/fixture', status: 'absent' }, cacheDirs: [], hasRelics: false },
+      homeResidue: [],
       actions: [],
       backupDir: null,
       logFile: null,
