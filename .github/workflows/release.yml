@@ -28,15 +28,18 @@ on:
         required: true
         type: string
       channel:
-        description: 'Release channel — stable publishes to @latest; homolog + dev are prereleases with their own .well-known/<channel>.json pointer'
+        description: 'Release channel — stable publishes to @latest; homolog + dev are prereleases. All channel manifests live on MAIN (.well-known/); the channel only selects which file is written'
         required: false
         type: choice
         default: stable
         # Canonical channel taxonomy (Felipe directive 2026-05-12,
         # unified across the automagik sibling projects):
-        #   stable  → main branch    → .well-known/latest.json
-        #   homolog → homolog branch → .well-known/homolog.json
-        #   dev     → dev branch     → .well-known/dev.json
+        # ALL channel manifests are committed to MAIN — matching
+        # install.sh's MANIFEST_BASE=.../main/.well-known for every
+        # channel. The channel selects WHICH file, never the branch:
+        #   stable  → main:.well-known/latest.json
+        #   homolog → main:.well-known/homolog.json
+        #   dev     → main:.well-known/dev.json
         # beta + canary retired. genie may not have an active homolog
         # branch yet (omni does); the channel surface is kept for
         # cross-repo taxonomy parity + future operator dispatch.

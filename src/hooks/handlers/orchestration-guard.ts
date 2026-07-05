@@ -22,25 +22,25 @@ const NUDGE_PATTERNS: NudgePattern[] = [
   {
     test: /tmux\s+capture-pane/,
     message:
-      "If you're checking genie agent progress, use structured monitoring instead:\n" +
-      '  genie task status <slug>   — wish progress\n' +
-      '  genie agent list --json    — executor state machine\n' +
-      '  genie events timeline <id> — structured event log\n' +
-      '  genie agent send --to <a>  — direct messaging',
+      "If you're checking genie worker progress, use structured monitoring instead:\n" +
+      '  genie board --wish <slug> --json — wish progress\n' +
+      '  genie task list --json           — task state\n' +
+      '  genie task status <id>           — structured task detail + stage log\n' +
+      '  SendMessage tool (native team)   — direct messaging',
   },
   {
     test: /sleep\s+\d+\s*&&\s*tmux/,
     message:
-      'Workers report via structured events — polling terminals is not needed.\n' +
-      '  genie task status <slug>   — check progress\n' +
-      '  genie agent send --to <a>  — communicate directly',
+      'Workers report via structured task state — polling terminals is not needed.\n' +
+      '  genie task status <id>          — check progress\n' +
+      '  SendMessage tool (native team)  — communicate directly',
   },
   {
     test: /sleep\s+\d+\s*&&\s*.*(?:capture-pane|tmux\s+list)/,
     message:
       'Consider using genie primitives instead of terminal polling:\n' +
-      '  genie task status <slug>\n' +
-      '  genie events list --since 5m',
+      '  genie task status <id>\n' +
+      '  genie task list --json',
   },
 ];
 

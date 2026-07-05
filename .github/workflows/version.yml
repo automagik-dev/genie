@@ -24,9 +24,9 @@ name: Version
 #
 # SHA-pin invariant (Invariant A — correctness over completeness):
 # Version always tags the commit that passed CI, never branch HEAD.
-# Per-branch concurrency with cancel-in-progress means older runs
-# supersede when dev advances during a Version run (back-to-back
-# merges). When dev advances past the SHA we checked out, the
+# Concurrent runs QUEUE per branch+event (no cancellation — see the
+# concurrency block below). When dev advances past the SHA a queued
+# run checked out, the
 # `git push --atomic` rejects rather than mis-tag — emitting
 # `release-race.next-tag-pin-skipped.detected` in the CI log. The
 # next merge's run catches up.
@@ -42,9 +42,15 @@ permissions:
   contents: write          # commit + push version bump + tag
   actions: write           # `gh workflow run` to dispatch Build Tarballs after tag push
 
+# RACE (observed 2026-07-04T23:11:46Z, missed dev release): CI completes twice
+# per dev merge (push-event run + pull_request-event run); both trigger this
+# workflow. The PR-event run always fails the job `if` (event=='push') and shows
+# "skipped" — but in a shared group with cancel-in-progress it CANCELLED the
+# in-flight push-event bump. Scope the group by triggering event, and never
+# cancel: killing a version bump mid-tag-push is unsafe regardless — queue instead.
 concurrency:
-  group: version-${{ github.event.workflow_run.head_branch || 'manual' }}
-  cancel-in-progress: true
+  group: version-${{ github.event.workflow_run.head_branch || 'manual' }}-${{ github.event.workflow_run.event || 'dispatch' }}
+  cancel-in-progress: false
 
 jobs:
   auto-version:
