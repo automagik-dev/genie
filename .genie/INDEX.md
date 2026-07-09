@@ -2,7 +2,16 @@
 
 ## Raw
 
+- [control-plane-contract](brainstorms/control-plane-contract/DRAFT.md) — single executable dispatch+routing contract; global↔repo lifecycle convergence by layer; work/review policy refactor (umbrella G2+G3, 2026-07-09)
+- [skill-absorbs](brainstorms/skill-absorbs/DRAFT.md) — trace→fix, wizard→genie, pm→work-ref, council→lens library+thin route, report→LangWatch (umbrella G4, 2026-07-09)
+- [always-on-genie](brainstorms/always-on-genie/DRAFT.md) — SessionStart identity/state inject, hook contract w/ fixtures, worktree isolation policy (umbrella G5+G10, 2026-07-09)
+- [genie-spend](brainstorms/genie-spend/DRAFT.md) — LangWatch-backed spend report + decision-level cost join (umbrella G7, 2026-07-09)
+- [dream-replatform](brainstorms/dream-replatform/DRAFT.md) — scheduler adapter + genie.db ledger; cron = trigger never authority; omni approval gates (umbrella G9, 2026-07-09)
+
 ## Simmering
+- [intent-to-wish-compiler](brainstorms/intent-to-wish-compiler/DRAFT.md) — WRS 92; Shape Up spine + Working Backwards intake + Impact Mapping roadmap + Genie proof compiler; invisible Incident/Patch/Small/Standard/Program/Spike routing; breaker contract RATIFIED ("cut breadth/attempts, never proof; only humans cut payout"; autonomous flex cuts, human-only partial-ship) — program-scale, splits at pour time (2026-07-09)
+- [brainstorm-domain-map](brainstorms/brainstorm-domain-map/DRAFT.md) — WRS 80; executable-specification compiler: stakeholder intent → requirement/oracle graph → bounded execution → proof packet → residual-risk review; open boundary is ownership of irreducibly subjective truth (umbrella G8, resumed 2026-07-09)
+- [cross-agent-delegate](brainstorms/cross-agent-delegate/DRAFT.md) — delegate skill (Codex+Hermes), wish companion sessions, refine style cards, auto plan-gate counter-read (umbrella G6, 2026-07-09)
 
 ## Ready
 
@@ -14,6 +23,9 @@
 - [WISH: warp-integration](wishes/warp-integration/WISH.md) — umbrella Group 3: genie init, Warp launch-config emitter, genie launch, /work multi-session opt-in (drafted 2026-07-02)
 
 ## Poured
+- [plugin-resource-shipping](brainstorms/plugin-resource-shipping/DRAFT.md) · [WISH](wishes/plugin-resource-shipping/WISH.md) — in-skill template via ${CLAUDE_SKILL_DIR}, probe-guarded lint refs, resource-shipping lint, fresh-install CI smoke — plan review SHIP (2 fix loops), /work user-gated, G1 dep on routing-matrix:3 (2026-07-09)
+- [routing-matrix](brainstorms/routing-matrix/DRAFT.md) · [WISH](wishes/routing-matrix/WISH.md) — pinned role agents (Fable gates / Opus ladder / Haiku scouts), stage pins + pane flags, complexity columns + lint, escalation caps — executed; execution review SHIP, final gate 719 pass / 1 skip / 0 fail; live LangWatch pin QA pending (2026-07-09)
+- [genie-token-efficiency-program](brainstorms/genie-token-efficiency-program/DESIGN.md) — umbrella (WRS 100, independent review SHIP; 9 seed groups): genie → control-plane thesis; routing matrix (Fable gates, Opus ladder, no Sonnet, $17.9k/21d baseline); 17-skill dispositions; always-on identity; cross-agent delegate (Codex/Hermes companion sessions); genie spend; brainstorm domain-map upgrade — crystallized 2026-07-09
 - [genie-mcp](brainstorms/genie-mcp/DESIGN.md) · [WISH](wishes/genie-mcp/WISH.md) — genie MCP server: Warp/Claude Code/Codex consume genie.db state read-only; stdio, auto-registered; spike-first (2026-07-03)
 
 - [Genie v5 — lightweight body](brainstorms/genie-v5-lightweight-body/DESIGN.md) — skills+files+stock Warp replace the v4 harness; CC/Codex/Hermes targets; omni keeps one runner; crystallized 2026-07-01, umbrella-scale (8 seed groups)

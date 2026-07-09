@@ -1,13 +1,14 @@
 import type { Database } from 'bun:sqlite';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { openDb } from '../lib/v5/genie-db.js';
 import { createTask } from '../lib/v5/task-state.js';
 import {
   BareRepoError,
+  DEFAULT_LAUNCH_MODEL,
   EmptyReadySetError,
   InvalidAgentError,
   InvalidGroupNameError,
@@ -16,6 +17,7 @@ import {
   LaunchError,
   WorktreeCollisionError,
   executeLaunch,
+  resolveLaunchModel,
 } from './launch.js';
 
 // ----------------------------------------------------------------------------
@@ -108,7 +110,7 @@ describe('genie launch --dry-run', () => {
     expect(leaves.map((l) => l.title)).toEqual(['api', 'ui']);
     expect(leaves.map((l) => l.cwd)).toEqual([worktreeFor(slug, 'api'), worktreeFor(slug, 'ui')]);
     expect((leaves[0].commands as Array<{ exec: string }>)[0].exec).toBe(
-      `claude "$(cat "${join(worktreeFor(slug, 'api'), '.genie', 'launch', 'api.prompt')}")"`,
+      `claude --model opus "$(cat "${join(worktreeFor(slug, 'api'), '.genie', 'launch', 'api.prompt')}")"`,
     );
 
     // Prompt content lists both tasks' ids (verified via the plan, not disk).
@@ -160,7 +162,9 @@ describe('genie launch --agent', () => {
   test('default (no --agent) and --agent claude both emit byte-identical claude pane commands', () => {
     const slug = 'claude-run';
     createTask(fx.db, { title: 'a task', wish: slug, group: 'main' });
-    const expected = [`claude "$(cat "${join(worktreeFor(slug, 'main'), '.genie', 'launch', 'main.prompt')}")"`];
+    const expected = [
+      `claude --model opus "$(cat "${join(worktreeFor(slug, 'main'), '.genie', 'launch', 'main.prompt')}")"`,
+    ];
 
     const byDefault = executeLaunch(slug, { dryRun: true }, deps());
     const explicit = executeLaunch(slug, { dryRun: true, agent: 'claude' }, deps());
@@ -187,6 +191,44 @@ describe('genie launch --agent', () => {
     expect(existsSync(fx.worktrees)).toBe(false);
     expect(existsSync(worktreeFor(slug, 'main'))).toBe(false);
     expect(existsSync(fx.warp)).toBe(false);
+  });
+});
+
+describe('resolveLaunchModel', () => {
+  test('accepts split and equals model flags from the selected profile', () => {
+    expect(
+      resolveLaunchModel({
+        defaultWorkerProfile: 'split',
+        workerProfiles: { split: { launcher: 'claude', claudeArgs: ['--model', 'sonnet'] } },
+      }),
+    ).toBe('sonnet');
+    expect(
+      resolveLaunchModel({
+        defaultWorkerProfile: 'equals',
+        workerProfiles: { equals: { launcher: 'claude', claudeArgs: ['--model=claude-opus-4-1'] } },
+      }),
+    ).toBe('claude-opus-4-1');
+  });
+
+  test('rejects option-looking split values and falls back', () => {
+    expect(
+      resolveLaunchModel({
+        defaultWorkerProfile: 'malformed',
+        workerProfiles: {
+          malformed: { launcher: 'claude', claudeArgs: ['--model', '--permission-mode', 'default'] },
+        },
+      }),
+    ).toBe(DEFAULT_LAUNCH_MODEL);
+  });
+
+  test('falls back when the selected profile is missing or contains an invalid model', () => {
+    expect(resolveLaunchModel({ defaultWorkerProfile: 'missing', workerProfiles: {} })).toBe(DEFAULT_LAUNCH_MODEL);
+    expect(
+      resolveLaunchModel({
+        defaultWorkerProfile: 'invalid',
+        workerProfiles: { invalid: { launcher: 'claude', claudeArgs: ['--model=not safe'] } },
+      }),
+    ).toBe(DEFAULT_LAUNCH_MODEL);
   });
 });
 
@@ -225,6 +267,14 @@ describe('genie launch (real run, --no-open)', () => {
 
     // Config file written.
     expect(existsSync(configPath(slug))).toBe(true);
+    const emitted = Bun.YAML.parse(readFileSync(configPath(slug), 'utf-8')) as {
+      windows: Array<{ tabs: Array<{ layout: unknown }> }>;
+    };
+    const emittedCommands = flattenLeaves(emitted.windows[0].tabs[0].layout).map(
+      (leaf) => (leaf.commands as Array<{ exec: string }>)[0].exec,
+    );
+    expect(emittedCommands).toHaveLength(2);
+    expect(emittedCommands.every((command) => command.startsWith('claude --model opus '))).toBe(true);
 
     // Parent repo did NOT flip to bare.
     expect(git(fx.repo, ['config', '--get', 'core.bare'])).toBe('false');
@@ -528,6 +578,25 @@ describe('genie launch (built CLI, workspace-guard inclusive)', () => {
     expect(launch.stdout).toContain('DRY RUN');
     expect(launch.stdout).toContain('Launch config YAML:');
     expect(launch.stdout).toContain('api');
+  });
+
+  test('launch sources the pane model from the configured default worker profile', () => {
+    writeFileSync(
+      join(cliHome, 'config.json'),
+      JSON.stringify({
+        workerProfiles: {
+          routed: { launcher: 'claude', claudeArgs: ['--dangerously-skip-permissions', '--model', 'sonnet'] },
+        },
+        defaultWorkerProfile: 'routed',
+      }),
+      'utf-8',
+    );
+    expect(runCli(['task', 'create', '--title', 'build api', '--wish', 'configured', '--group', 'api']).status).toBe(0);
+
+    const launch = runCli(['launch', 'configured', '--dry-run']);
+
+    expect(launch.status).toBe(0);
+    expect(launch.stdout).toContain('claude --model sonnet');
   });
 });
 

@@ -195,6 +195,19 @@ function checkBun(): CheckResult[] {
   ];
 }
 
+/** Warn only when Claude Code's global subagent-model override is present. */
+export function checkSubagentModelOverride(env: NodeJS.ProcessEnv = process.env): CheckResult[] {
+  if (env.CLAUDE_CODE_SUBAGENT_MODEL === undefined) return [];
+  return [
+    {
+      name: 'CLAUDE_CODE_SUBAGENT_MODEL override',
+      status: 'warn',
+      detail: 'set globally; it overrides per-agent model pins',
+      suggestion: 'Unset CLAUDE_CODE_SUBAGENT_MODEL to let Genie role and stage model pins take effect.',
+    },
+  ];
+}
+
 // ============================================================================
 // v4 residue check (detect-only; --fix runs the backup-first cleanup)
 // ============================================================================
@@ -396,6 +409,7 @@ export async function doctorCommand(options?: { json?: boolean; fix?: boolean })
     ...checkDatabase(),
     ...checkSkills(),
     ...checkBun(),
+    ...checkSubagentModelOverride(),
     ...checkV4Residue(),
     ...(await checkOmniHookTimeout()),
   ];

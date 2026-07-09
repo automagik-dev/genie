@@ -41,9 +41,17 @@
 
 ### Wave 1 (sequential)
 
-| Group | Agent | Description |
-|-------|-------|-------------|
-| 1 | engineer | <TODO: task description> |
+| Group | Agent | Complexity | Model | Description |
+|-------|-------|------------|-------|-------------|
+| 1 | engineer | <TODO: score + rationale> | <TODO: route> | <TODO: task description> |
+
+Complexity scoring rubric: score each group independently and record the total plus a short rationale in **Complexity**. Add:
+
+- **+2** each for orchestration / agent-lifecycle / routing; cost / model / escalation; stateful work; subjective acceptance.
+- **+1** each for multi-package work; OTel-label dependency; no deterministic test; prior rework; prompt-skill change; CI / release work.
+
+Route the total in **Model**: **0–1** → `opus-low` (Haiku only for a non-code chore); **2–3** →
+`opus-medium/high`; **4–6** → `opus-xhigh`; **7+** → `opus-xhigh` + Fable gate.
 
 ## Execution Groups
 

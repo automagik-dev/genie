@@ -1,6 +1,8 @@
 ---
 name: brainstorm
 description: "Explore ambiguous or early-stage ideas interactively — tracks wish-readiness and crystallizes into a design for /wish."
+model: fable
+effort: high
 ---
 
 # /brainstorm — Explore Before Planning

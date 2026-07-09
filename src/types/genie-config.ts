@@ -27,6 +27,18 @@ const LoggingConfigSchema = z.object({
   verbose: z.boolean().default(false),
 });
 
+// Routing-matrix budget configuration
+const BudgetsConfigSchema = z.object({
+  maxFableCallsPerWish: z.number().int().nonnegative().default(3),
+  maxEscalationsPerGroup: z.number().int().nonnegative().default(2),
+});
+
+// Routing-matrix effort configuration
+const RoutingConfigSchema = z.object({
+  maxAutoEffort: z.enum(['low', 'medium', 'high', 'xhigh']).default('xhigh'),
+  fableGateMaxAt: z.number().int().nonnegative().default(7),
+});
+
 // Shell configuration
 const ShellConfigSchema = z.object({
   preference: z.enum(['auto', 'zsh', 'bash', 'fish']).default('auto'),
@@ -189,6 +201,8 @@ export const GenieConfigSchema = z.object({
   session: SessionConfigSchema.default({}),
   terminal: TerminalConfigSchema.default({}),
   logging: LoggingConfigSchema.default({}),
+  budgets: BudgetsConfigSchema.default({}),
+  routing: RoutingConfigSchema.default({}),
   shell: ShellConfigSchema.default({}),
   shortcuts: ShortcutsConfigSchema.default({}),
   codex: CodexConfigSchema.optional(),

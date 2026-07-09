@@ -24,6 +24,25 @@ When spawned as a reviewer subagent, your dispatch prompt carries the curated sc
 5. **Tag gaps** — classify every unmet criterion by severity.
 6. **Return verdict** — SHIP, FIX-FIRST, or BLOCKED, with exact fixes (files, commands, what to change) for each gap.
 
+## Escalation Diagnosis
+
+Use this policy before any model or effort change; keep this contract identical in `/fix`, `/review`, and `/work`.
+
+| Cause | Diagnostic evidence | Corrective route |
+|-------|---------------------|------------------|
+| `model-capacity` | The supplied context is complete, the spec is decidable, the environment works, and attempt output shows the assigned model or effort still cannot perform the reasoning. | May raise model or effort one step, but only with new evidence and available caps. |
+| `missing-context` | The attempt identifies absent files, history, criteria, logs, or other inputs needed to decide. | Supply the missing context and retry at the same model and effort; MUST NOT escalate model or effort. |
+| `ambiguous-spec` | Two or more materially different behaviors remain consistent with the stated criteria. | Request a human decision or wish clarification; MUST NOT escalate model or effort. |
+| `env-tool-failure` | A reproducible environment, dependency, permission, timeout, or tool error prevents valid execution. | Repair or retry the environment/tool, or report blocked with the error; MUST NOT escalate model or effort. |
+
+Escalation eligibility requires **new evidence** produced since the previous attempt: attach the new failing output or diagnostic result, the correction already tried, and why it rules out the other three causes. A repeated verdict or unchanged failure is not new evidence and cannot authorize a model or effort change.
+
+Automatic routing is bounded by both config caps: `budgets.maxFableCallsPerWish` (default `3`) limits total Fable gate calls for one wish, and `budgets.maxEscalationsPerGroup` (default `2`) limits model/effort raises for one group. Reaching either cap stops automatic escalation. A human may override a cap only through an explicit log entry in this form: `Human override: approver=<name>; wish/group=<id>; cap=<key>; old=<value>; new=<value>; reason=<reason>; timestamp=<time>`.
+
+Automatic routing may select `max` effort only for a Fable `final-gate` when group complexity is at least `routing.fableGateMaxAt` (default `7`). Every other automatic route is capped at `routing.maxAutoEffort` (default `xhigh`), even for `model-capacity`; the Fable-call and group-escalation caps still apply.
+
+If an ordinary reviewer and the `final-gate` disagree, log an appeal with the wish/group, both verdicts and evidence, the contested criterion, and the human resolution. Neither verdict silently overrides the other, and the group remains `in_progress` until the appeal is resolved.
+
 ## Pipelines
 
 ### Plan Review (before `/work`)
@@ -62,7 +81,7 @@ When spawned as a reviewer subagent, your dispatch prompt carries the curated sc
 |---------|-----------|-----------|
 | **SHIP** | Zero CRITICAL/HIGH gaps, validations pass | See SHIP next-steps |
 | **FIX-FIRST** | Any CRITICAL/HIGH gap or failing validation | Auto-invoke `/fix` |
-| **BLOCKED** | Scope or architecture issue requiring wish revision | Escalate to human |
+| **BLOCKED** | Scope, architecture, or execution issue prevents a valid verdict | Diagnose the cause and take its corrective route |
 
 ### SHIP next-steps
 
@@ -76,9 +95,9 @@ When spawned as a reviewer subagent, your dispatch prompt carries the curated sc
 ### FIX-FIRST loop
 1. Auto-invoke `/fix` with the severity-tagged gap list.
 2. After `/fix` completes, re-run `/review` (max 2 fix loops).
-3. Still FIX-FIRST after 2 loops → escalate as BLOCKED.
+3. Still FIX-FIRST after 2 loops → return BLOCKED with an Escalation Diagnosis; never raise model or effort automatically.
 
-When a failure's root cause is unclear, invoke `/trace` for a diagnosis before dispatching `/fix` — `/fix` then applies the correction from the trace report.
+When a failure's root cause is unclear, invoke `/trace` before dispatching `/fix` — `/fix` then applies the cause-specific correction from the trace report. An unclear cause is not evidence of `model-capacity`.
 
 ## Dispatch
 
@@ -92,7 +111,7 @@ The verdict plus severity-tagged gaps ARE the review output — deliver them in 
 |---------|-------------------------|
 | **SHIP** | Execution review → complete the group with `genie task done <task-id>`; plan review → advance to the next lifecycle stage |
 | **FIX-FIRST** | Auto-invoke `/fix` with the gap list; the task stays `in_progress` until a clean re-review |
-| **BLOCKED** | Escalate to a human; the task stays `in_progress` |
+| **BLOCKED** | Take the diagnosed corrective route; the task stays `in_progress` |
 
 `genie task done` belongs to the orchestrator, after a clean verdict — never to the reviewer.
 
