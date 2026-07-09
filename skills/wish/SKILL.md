@@ -1,6 +1,8 @@
 ---
 name: wish
 description: "Convert an idea into a structured wish plan with scope, acceptance criteria, and execution groups for /work."
+model: fable
+effort: high
 ---
 
 # /wish — Plan Before You Build

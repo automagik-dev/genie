@@ -13,6 +13,17 @@
 
 <br />
 
+<!-- METRICS:START -->
+| Metric | Value | Window |
+|--------|-------|--------|
+| Releases shipped | 1/day | last 24h |
+| PRs merged | 34 | last 7d |
+| Avg merge time | 0.5h | last 7d |
+| SHIP rate | 26% | last 7d |
+
+*Updated 2026-07-09 by metrics-updater agent.*
+<!-- METRICS:END -->
+
 Genie is a planning-and-execution layer for AI coding agents. You describe what you want in one sentence; Genie interviews you into a plan, dispatches agents to build it in parallel, reviews the result against acceptance criteria, and hands you something ready to merge.
 
 The whole thing is a lightweight body: a set of skills, plain-markdown documents in git, and a single per-repo SQLite file. No daemons, no Postgres, nothing resident. A command opens the database, runs one transaction, and exits.
