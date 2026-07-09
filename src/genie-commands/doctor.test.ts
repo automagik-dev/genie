@@ -13,7 +13,13 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { checkV4Residue, doctorCommand, evaluateOmniHookTimeout, findDispatchHookTimeoutSec } from './doctor.js';
+import {
+  checkSubagentModelOverride,
+  checkV4Residue,
+  doctorCommand,
+  evaluateOmniHookTimeout,
+  findDispatchHookTimeoutSec,
+} from './doctor.js';
 import { cleanupV4 } from './legacy-v4.js';
 
 /**
@@ -83,6 +89,49 @@ describe('doctorCommand', () => {
     const { output } = await captureDoctor(() => doctorCommand());
     expect(output).toContain('genie doctor');
     expect(output).toContain('All checks passed.');
+  });
+});
+
+describe('CLAUDE_CODE_SUBAGENT_MODEL override warning', () => {
+  const key = 'CLAUDE_CODE_SUBAGENT_MODEL';
+  let hadValue: boolean;
+  let savedValue: string | undefined;
+
+  beforeEach(() => {
+    hadValue = process.env[key] !== undefined;
+    savedValue = process.env[key];
+  });
+
+  afterEach(() => {
+    if (hadValue) process.env[key] = savedValue;
+    else {
+      delete process.env[key];
+    }
+  });
+
+  test('warns non-fatally when set and explains that per-agent pins are overridden', async () => {
+    process.env[key] = 'sonnet';
+
+    const { output, exitCode } = await captureDoctor(() => doctorCommand({ json: true }));
+    const json = JSON.parse(output) as {
+      ok: boolean;
+      checks: Array<{ name: string; status: string; detail?: string }>;
+    };
+    const warning = json.checks.find((check) => check.name.includes(key));
+
+    expect(warning?.status).toBe('warn');
+    expect(warning?.detail).toContain('overrides per-agent model pins');
+    expect(json.ok).toBe(true);
+    expect(exitCode).toBeUndefined();
+  });
+
+  test('is silent when unset, including in the doctor output', async () => {
+    delete process.env[key];
+
+    expect(checkSubagentModelOverride()).toEqual([]);
+    const { output } = await captureDoctor(() => doctorCommand({ json: true }));
+
+    expect(output).not.toContain(key);
   });
 });
 

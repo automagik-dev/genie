@@ -1,11 +1,11 @@
 ---
 name: fix
-description: "Dispatch fix subagent for FIX-FIRST gaps from /review, re-review, and escalate after 2 failed loops."
+description: "Dispatch fix subagent for FIX-FIRST gaps from /review, re-review, then diagnose unresolved failures after 2 loops."
 ---
 
 # /fix — Fix-Review Loop
 
-Resolve FIX-FIRST gaps from `/review`: dispatch a fix subagent, re-review, repeat up to 2 loops, then escalate.
+Resolve FIX-FIRST gaps from `/review`: dispatch a fix subagent, re-review, repeat up to 2 loops, then diagnose and route any unresolved failure.
 
 ## When to Use
 - `/review` returned a **FIX-FIRST** verdict with CRITICAL or HIGH gaps
@@ -21,10 +21,10 @@ Resolve FIX-FIRST gaps from `/review`: dispatch a fix subagent, re-review, repea
 |---------|-----------|--------|
 | SHIP | — | Done. Return to orchestrator. |
 | FIX-FIRST | loop < 2 | Increment loop, go to step 2. |
-| FIX-FIRST | loop = 2 | Escalate — max loops reached. |
-| BLOCKED | — | Escalate immediately. |
+| FIX-FIRST | loop = 2 | Stop fixing and run Escalation Diagnosis; max loops reached. |
+| BLOCKED | — | Run Escalation Diagnosis and take the cause-specific route. |
 
-5. **Escalate (if needed):** report the remaining gaps with exact files and failing checks; the group's task stays `in_progress`.
+5. **Route the diagnosis:** report the remaining gaps with exact files, failing checks, cause class, and corrective route; the group's task stays `in_progress`.
 
 ## Dispatch
 
@@ -32,17 +32,41 @@ Fix and re-review are **separate Agent-tool dispatches** — never combined in o
 
 The fixer's brief must carry: the severity-tagged gaps (file:line), the original wish acceptance criteria, the validation command(s) to re-run, and stop conditions — fix only the listed gaps; report blocked rather than expand scope.
 
+## Escalation Diagnosis
+
+Use this policy before any model or effort change; keep this contract identical in `/fix`, `/review`, and `/work`.
+
+| Cause | Diagnostic evidence | Corrective route |
+|-------|---------------------|------------------|
+| `model-capacity` | The supplied context is complete, the spec is decidable, the environment works, and attempt output shows the assigned model or effort still cannot perform the reasoning. | May raise model or effort one step, but only with new evidence and available caps. |
+| `missing-context` | The attempt identifies absent files, history, criteria, logs, or other inputs needed to decide. | Supply the missing context and retry at the same model and effort; MUST NOT escalate model or effort. |
+| `ambiguous-spec` | Two or more materially different behaviors remain consistent with the stated criteria. | Request a human decision or wish clarification; MUST NOT escalate model or effort. |
+| `env-tool-failure` | A reproducible environment, dependency, permission, timeout, or tool error prevents valid execution. | Repair or retry the environment/tool, or report blocked with the error; MUST NOT escalate model or effort. |
+
+Escalation eligibility requires **new evidence** produced since the previous attempt: attach the new failing output or diagnostic result, the correction already tried, and why it rules out the other three causes. A repeated verdict or unchanged failure is not new evidence and cannot authorize a model or effort change.
+
+Automatic routing is bounded by both config caps: `budgets.maxFableCallsPerWish` (default `3`) limits total Fable gate calls for one wish, and `budgets.maxEscalationsPerGroup` (default `2`) limits model/effort raises for one group. Reaching either cap stops automatic escalation. A human may override a cap only through an explicit log entry in this form: `Human override: approver=<name>; wish/group=<id>; cap=<key>; old=<value>; new=<value>; reason=<reason>; timestamp=<time>`.
+
+Automatic routing may select `max` effort only for a Fable `final-gate` when group complexity is at least `routing.fableGateMaxAt` (default `7`). Every other automatic route is capped at `routing.maxAutoEffort` (default `xhigh`), even for `model-capacity`; the Fable-call and group-escalation caps still apply.
+
+If an ordinary reviewer and the `final-gate` disagree, log an appeal with the wish/group, both verdicts and evidence, the contested criterion, and the human resolution. Neither verdict silently overrides the other, and the group remains `in_progress` until the appeal is resolved.
+
 ## Task State
 
-The fix loop never mutates task state. The group's task stays `in_progress` through every loop; the orchestrator calls `genie task done <task-id>` only after a clean re-review. On escalation the task remains `in_progress` with the remaining gaps recorded in the wish notes/handoff. If no task row exists for the work, proceed — the loop runs off the review verdict alone.
+The fix loop never mutates task state. The group's task stays `in_progress` through every loop; the orchestrator calls `genie task done <task-id>` only after a clean re-review. During any diagnosed route or appeal, the task remains `in_progress` with the remaining gaps recorded in the wish notes/handoff. If no task row exists for the work, proceed — the loop runs off the review verdict alone.
 
-## Escalation Format
+## Diagnosis / Appeal Format
 
 ```
-Fix loop exceeded (2/2). Escalating to human.
+Fix loop exhausted (2/2). Group remains in progress.
 Remaining gaps:
 - [CRITICAL] <gap description> — <file>
 - [HIGH] <gap description> — <file>
+Cause: <model-capacity|missing-context|ambiguous-spec|env-tool-failure>
+New evidence: <new output/diagnosis, or "none — model/effort escalation prohibited">
+Corrective route: <one cause-specific next step>
+Budget: maxFableCallsPerWish=<used>/3; maxEscalationsPerGroup=<used>/2
+Appeal: <reviewer/final-gate disagreement record, or "none">
 ```
 
 ## Example
@@ -54,14 +78,14 @@ Remaining gaps:
 - [HIGH] sendMessage result not checked — dispatch.ts:541
 ```
 
-Loop 1: Agent tool → fixer briefed with both gaps, the wish criteria, and `bun test` as validation. The fixer edits, runs the validation, reports its changes with outcomes, and ends `done`. Then Agent tool → a fresh reviewer briefed to re-run `/review` against the same criteria. SHIP → report success to the orchestrator. FIX-FIRST again → loop 2; after that, escalate.
+Loop 1: Agent tool → fixer briefed with both gaps, the wish criteria, and `bun test` as validation. The fixer edits, runs the validation, reports its changes with outcomes, and ends `done`. Then Agent tool → a fresh reviewer briefed to re-run `/review` against the same criteria. SHIP → report success to the orchestrator. FIX-FIRST again → loop 2; after that, classify the cause and take its corrective route. A model or effort raise is permitted only for evidenced `model-capacity` within both caps.
 
 ## Rules
 - Tight scope: fix exactly the tagged gaps — no unrequested refactors, features, or drive-by cleanups.
 - Never fix and review in the same session — always separate subagents.
-- Never exceed 2 fix loops — escalate, don't spin.
+- Never exceed 2 fix loops — stop, diagnose, and take the cause-specific route.
 - Include the original wish criteria in every fix dispatch.
-- Identical gaps across loops = no progress = escalate immediately as BLOCKED.
+- Identical gaps across loops = no progress; classify the cause. Repetition is not new evidence and never authorizes a model or effort raise.
 - Grounded progress: report only what tool output from this session verifies — state what was fixed, what failed, what was skipped. Never report an attempted fix as complete.
 
 ## Session close (required)

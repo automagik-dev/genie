@@ -24,7 +24,7 @@
 
 ## Poured
 - [plugin-resource-shipping](brainstorms/plugin-resource-shipping/DRAFT.md) · [WISH](wishes/plugin-resource-shipping/WISH.md) — in-skill template via ${CLAUDE_SKILL_DIR}, probe-guarded lint refs, resource-shipping lint, fresh-install CI smoke — plan review SHIP (2 fix loops), /work user-gated, G1 dep on routing-matrix:3 (2026-07-09)
-- [routing-matrix](brainstorms/routing-matrix/DRAFT.md) · [WISH](wishes/routing-matrix/WISH.md) — pinned role agents (Fable gates / Opus ladder / Haiku scouts), stage pins + pane flags, complexity columns + lint, escalation caps — plan review SHIP (1 fix loop), /work user-gated (2026-07-09)
+- [routing-matrix](brainstorms/routing-matrix/DRAFT.md) · [WISH](wishes/routing-matrix/WISH.md) — pinned role agents (Fable gates / Opus ladder / Haiku scouts), stage pins + pane flags, complexity columns + lint, escalation caps — executed; execution review SHIP, final gate 719 pass / 1 skip / 0 fail; live LangWatch pin QA pending (2026-07-09)
 - [genie-token-efficiency-program](brainstorms/genie-token-efficiency-program/DESIGN.md) — umbrella (WRS 100, independent review SHIP; 9 seed groups): genie → control-plane thesis; routing matrix (Fable gates, Opus ladder, no Sonnet, $17.9k/21d baseline); 17-skill dispositions; always-on identity; cross-agent delegate (Codex/Hermes companion sessions); genie spend; brainstorm domain-map upgrade — crystallized 2026-07-09
 - [genie-mcp](brainstorms/genie-mcp/DESIGN.md) · [WISH](wishes/genie-mcp/WISH.md) — genie MCP server: Warp/Claude Code/Codex consume genie.db state read-only; stdio, auto-registered; spike-first (2026-07-03)
 

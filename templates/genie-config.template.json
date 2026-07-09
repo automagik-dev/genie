@@ -21,6 +21,14 @@
     "tmuxInstalled": false,
     "shellInstalled": false
   },
+  "budgets": {
+    "maxFableCallsPerWish": 3,
+    "maxEscalationsPerGroup": 2
+  },
+  "routing": {
+    "maxAutoEffort": "xhigh",
+    "fableGateMaxAt": 7
+  },
   "workerProfiles": {
     "coding-fast": {
       "launcher": "claude",

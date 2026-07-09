@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT — plan review SHIP (2026-07-09, 1 fix loop; Hermes counter-read unavailable — logged, retry next gate) |
+| **Status** | EXECUTED — execution review SHIP (2026-07-09; live LangWatch QA pending) |
 | **Slug** | `routing-matrix` |
 | **Date** | 2026-07-09 |
 | **Author** | Felipe (planned with Fable 5 + Hermes counter-read) |
@@ -221,7 +221,7 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 
 **Plan review (2026-07-09): SHIP** after 1 fix loop. Round 1 FIX-FIRST: 3 HIGH (G3 validation false-pass — empirically confirmed; lint column contract underspecified; G2 stale-dist + env leak), 2 MEDIUM (G4 under-coverage; doctor/dist paths), 4 LOW. All fixed; re-review verified deltas against the live repo, including the grandfather boundary (this wish is the only post-threshold wish and passes its own lint). Residual LOWs folded into G3 spec (no-table vacuous pass guard; lint dir parameterization). **Hermes counter-read: UNAVAILABLE** (cegonha unreachable at gate time) — per degradation policy: gate proceeded on internal reviewer, logged here, retry at execution review.
 
-_Execution review: populated by `/review` after execution completes._
+**Execution review (2026-07-09): SHIP.** Groups 1, 2, and 4 passed their first independent execution reviews. Group 3 returned FIX-FIRST because its template guidance did not literally label the complexity section as a rubric; the minimal wording fix passed re-review. The aggregate gate returned FIX-FIRST once: the new `budgets`/`routing` template keys were being stripped by `GenieConfigSchema`, and launch model parsing accepted option-looking values. Fix loop 1 added typed/defaulted config schemas with load/save round-trip tests and hardened model-token validation; aggregate re-review returned SHIP with no remaining findings. Final gate: `bun run check` passed outside the socket-restricted sandbox — **719 pass, 1 skip, 0 fail**. Task rows for all four groups and both fix loops are done. Post-merge live QA still needs to confirm that Claude Code honors agent-frontmatter `effort` and that LangWatch attributes the routed model/effort as expected.
 
 ---
 

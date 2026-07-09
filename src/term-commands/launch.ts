@@ -6,7 +6,7 @@
  * ONE Warp pane. Each group gets its own git worktree
  * (`<worktreesBase>/<repo>-<slug>-<group>/`, branch `wish/<slug>-<group>`),
  * a kickoff prompt written into that worktree, and a pane that runs
- * `claude "$(cat <prompt>)"`. The panes are emitted as a Warp Launch
+ * `claude --model <model> "$(cat <prompt>)"`. The panes are emitted as a Warp Launch
  * Configuration (see {@link ./../lib/v5/warp-launch}) and opened best-effort.
  *
  * Emitting the config is the contract; opening is a convenience. A platform with
@@ -22,10 +22,12 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import type { Command } from 'commander';
+import { loadGenieConfig } from '../lib/genie-config.js';
 import { openDb } from '../lib/v5/genie-db.js';
 import { type TaskRow, listTasks } from '../lib/v5/task-state.js';
 import { type PaneSpec, buildLaunchConfigYaml, launchUri, writeLaunchConfig } from '../lib/v5/warp-launch.js';
 import { genieHome } from '../lib/workspace.js';
+import type { GenieConfig } from '../types/genie-config.js';
 import { registerMcpConfigs } from './init.js';
 
 // ============================================================================
@@ -135,21 +137,50 @@ export class InvalidAgentError extends LaunchError {
  * absolute prompt path and returns the exact shell command the pane executes;
  * `$(cat "…")` inlines the prompt so the pane needs no extra plumbing.
  *
- * - `claude` — the historical default; MUST stay byte-identical.
+ * - `claude` — the historical default, pinned per pane to the execution model.
  * - `codex`  — OpenAI Codex's non-interactive `codex exec [PROMPT]` subcommand
  *   (prompt passed as the positional arg).
  */
 const AGENT_COMMANDS = {
-  claude: (promptPath: string) => `claude "$(cat "${promptPath}")"`,
-  codex: (promptPath: string) => `codex exec "$(cat "${promptPath}")"`,
+  claude: (promptPath: string, model: string) => `claude --model ${model} "$(cat "${promptPath}")"`,
+  codex: (promptPath: string, _model: string) => `codex exec "$(cat "${promptPath}")"`,
 } as const;
+
+/** Routing-matrix default for execution panes when the selected profile has no model pin. */
+export const DEFAULT_LAUNCH_MODEL = 'opus';
+
+/** Claude model aliases/ids are shell-safe tokens; reject anything requiring shell quoting. */
+const MODEL_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/+-]*$/;
+
+/** Accept a configured model token only when it is non-empty and safe to embed in the pane command. */
+function validModel(model: string | undefined): model is string {
+  return model !== undefined && MODEL_NAME_PATTERN.test(model);
+}
+
+/**
+ * Resolve the execution model from the existing selected worker profile. Only
+ * the profile's `--model value` / `--model=value` argument is consumed; all
+ * other Claude arguments remain outside `genie launch`'s contract. When the
+ * selected profile has no usable pin, the routing matrix defaults to Opus.
+ */
+export function resolveLaunchModel(config: Pick<GenieConfig, 'defaultWorkerProfile' | 'workerProfiles'>): string {
+  const profileName = config.defaultWorkerProfile;
+  const args = profileName ? config.workerProfiles?.[profileName]?.claudeArgs : undefined;
+  let configured: string | undefined;
+  for (let index = 0; index < (args?.length ?? 0); index += 1) {
+    const arg = args?.[index];
+    if (arg === '--model') configured = args?.[index + 1];
+    else if (arg?.startsWith('--model=')) configured = arg.slice('--model='.length);
+  }
+  return validModel(configured) ? configured : DEFAULT_LAUNCH_MODEL;
+}
 
 /**
  * Resolve the pane-command builder for an agent name, defaulting to `claude`.
  * Rejects any unknown name with a typed {@link InvalidAgentError} so the CLI
  * exits non-zero before a single worktree, branch, or prompt is materialized.
  */
-function resolveAgentCommand(agent: string | undefined): (promptPath: string) => string {
+function resolveAgentCommand(agent: string | undefined): (promptPath: string, model: string) => string {
   const name = agent ?? 'claude';
   if (name in AGENT_COMMANDS) {
     return AGENT_COMMANDS[name as keyof typeof AGENT_COMMANDS];
@@ -216,6 +247,8 @@ export interface LaunchOptions {
   groups?: string[];
   /** Terminal agent that drives each pane. Absent ⇒ 'claude'. */
   agent?: string;
+  /** Claude execution model pinned per pane. Absent ⇒ routing-matrix default (`opus`). */
+  model?: string;
 }
 
 // ============================================================================
@@ -312,6 +345,7 @@ function buildPrompt(slug: string, group: string, tasks: TaskRow[]): string {
 export function buildLaunchPlan(db: Database, slug: string, deps: LaunchDeps, opts: LaunchOptions): LaunchPlan {
   if (!SLUG_PATTERN.test(slug)) throw new InvalidSlugError(slug);
   const buildCommand = resolveAgentCommand(opts.agent);
+  const model = validModel(opts.model) ? opts.model : DEFAULT_LAUNCH_MODEL;
   const cwd = deps.cwd ?? process.cwd();
   const repoRoot = resolveRepoRoot(cwd);
   const repoBase = basename(repoRoot);
@@ -337,7 +371,7 @@ export function buildLaunchPlan(db: Database, slug: string, deps: LaunchDeps, op
       prompt: buildPrompt(slug, name, tasks),
       tasks,
     });
-    panes.push({ title: name, cwd: worktree, command: buildCommand(promptPath) });
+    panes.push({ title: name, cwd: worktree, command: buildCommand(promptPath, model) });
   }
 
   return { slug, repoRoot, groups, panes, yaml: buildLaunchConfigYaml({ slug, panes }) };
@@ -571,11 +605,13 @@ interface LaunchCliOptions {
   agent?: string;
 }
 
-function handleLaunch(slug: string, cli: LaunchCliOptions): void {
+async function handleLaunch(slug: string, cli: LaunchCliOptions): Promise<void> {
+  const config = await loadGenieConfig();
   const opts: LaunchOptions = {
     dryRun: cli.dryRun,
     open: cli.open,
     agent: cli.agent,
+    model: resolveLaunchModel(config),
     groups: cli.groups
       ? cli.groups
           .split(',')
