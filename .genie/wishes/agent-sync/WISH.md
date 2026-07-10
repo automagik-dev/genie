@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED — plan designed in-session and approved by Felipe via /plan → ExitPlanMode (2026-07-10); execution authorized |
+| **Status** | EXECUTED — G1/G2/G3 all SHIP (G1 after 1 fix loop; G2/G3 with orchestrator follow-ups), final execution review SHIP (2026-07-10, gates green, 806 pass / 1 skip); remaining: user-gated live ritual + PR-topology decision |
 | **Slug** | `agent-sync` |
 | **Date** | 2026-07-10 |
 | **Author** | Felipe (planned with Fable 5) |
@@ -49,13 +49,13 @@
 
 ## Success Criteria
 
-- [ ] `bun test src/lib/agent-sync.test.ts` green: fresh-create / idempotent re-run all-unchanged / source-change→updated / adopt-with-backup (backup exists under state-backups) / managed-orphan removed+backed-up / unmanaged-never-shipped untouched / missing-agent → skip with note / digest stable under file order + excludes manifest / stale `.new` staging pre-cleaned / hermes symlink + real-dir adopt + foreign-symlink left / codex `.curated` placement / stamp parity TS === `.cjs`
-- [ ] `git grep -n 'GENIE_UPDATE_SYNC_ONLY' src/genie-commands/update.ts src/genie.ts` shows the env honored, and the short-circuit path calls the sync phase (structural greps in g2 gate)
-- [ ] `scripts/smart-install.js` no longer exists; `scripts/build.js` has no smart-install copy block; `plugins/genie/scripts/smart-install.js` delegates to `genie update` and stamps only as CLI-less fallback via `resolveStampInputs`
-- [ ] `skills/review/SKILL.md` + `skills/brainstorm/SKILL.md` carry the `$GENIE_HOME/plugins/genie` lens-root anchor; `validate/g4-consumers.sh` asserts it; council-workflow gates still green
-- [ ] doctor prints a per-agent freshness section; uninstall removes manifest-verified managed assets (unit-tested seams)
-- [ ] `bun run check` green (baseline 725 pass / 1 skip + new tests)
-- [ ] Live (post-release, Felipe's ritual): `genie update` twice on the reference machine → `~/.claude/skills` current + `workflows/council.js` present, `~/.codex/skills/.curated/` populated, `~/.hermes/plugins/genie` linked; evidence in `qa/`
+- [x] `bun test src/lib/agent-sync.test.ts` green: fresh-create / idempotent re-run all-unchanged / source-change→updated / adopt-with-backup (backup exists under state-backups) / managed-orphan removed+backed-up / unmanaged-never-shipped untouched / missing-agent → skip with note / digest stable under file order + excludes manifest / stale `.new` staging pre-cleaned / hermes symlink + real-dir adopt + foreign-symlink left / codex `.curated` placement / stamp parity TS === `.cjs`
+- [x] `git grep -n 'GENIE_UPDATE_SYNC_ONLY' src/genie-commands/update.ts src/genie.ts` shows the env honored, and the short-circuit path calls the sync phase (structural greps in g2 gate)
+- [x] `scripts/smart-install.js` no longer exists; `scripts/build.js` has no smart-install copy block; `plugins/genie/scripts/smart-install.js` delegates to `genie update` and stamps only as CLI-less fallback via `resolveStampInputs`
+- [x] `skills/review/SKILL.md` + `skills/brainstorm/SKILL.md` carry the `$GENIE_HOME/plugins/genie` lens-root anchor; `validate/g4-consumers.sh` asserts it; council-workflow gates still green
+- [x] doctor prints a per-agent freshness section; uninstall removes manifest-verified managed assets (unit-tested seams)
+- [x] `bun run check` green (baseline 725 pass / 1 skip → 806 pass / 1 skip with new tests)
+- [ ] **USER-GATED (post-release)** — Live (Felipe's ritual): `genie update` twice on the reference machine → `~/.claude/skills` current + `workflows/council.js` present, `~/.codex/skills/.curated/` populated, `~/.hermes/plugins/genie` linked; evidence in `qa/`
 
 ## Execution Strategy
 
