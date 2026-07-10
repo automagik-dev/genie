@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT — design review SHIP + plan review SHIP (2026-07-09, same independent reviewer, 1 fix pass each); `/work` user-gated |
+| **Status** | EXECUTED (2026-07-10) — G1–G5 all SHIP (see INDEX poured entry); design + plan reviews SHIP (2026-07-09, same independent reviewer, 1 fix pass each). **Live-QA ritual (Felipe: `/council "revisar tudo"`) and the final execution review remain pending post-stable-release** — the g5-gate parks in `qa/` until then. First real dogfood tonight surfaced and fixed a string-args defect (`ec68cd8f`): see [qa/overnight-observations-20260710.md](qa/overnight-observations-20260710.md) |
 | **Slug** | `council-workflow` |
 | **Date** | 2026-07-09 |
 | **Author** | Felipe (planned with Fable 5) |
