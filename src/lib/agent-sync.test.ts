@@ -406,7 +406,7 @@ describe('claude council exclusion', () => {
     expect(existsSync(join(fixture.claudeDir, 'skills', 'council'))).toBe(false);
     expect(skillAction(claude, 'alpha')).toBe('created');
     expect(skillAction(codex, 'council')).toBe('created');
-    expect(existsSync(join(fixture.codexDir, 'skills', '.curated', 'council', 'SKILL.md'))).toBe(true);
+    expect(existsSync(join(fixture.agentsSkillsDir, 'council', 'SKILL.md'))).toBe(true);
   });
 
   test('a managed council already synced to claude (pre-exclusion release) is backed up and removed', () => {
