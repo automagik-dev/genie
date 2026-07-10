@@ -26,8 +26,16 @@ import { runAgentSyncSafe } from './update.js';
 
 const GENIE_HOME = process.env.GENIE_HOME || join(homedir(), '.genie');
 
-/** Auxiliary trees managed by `genie update`'s syncAuxiliaryContent. */
-const AUX_LAYOUT_DIRS = ['plugins', 'skills', 'templates'] as const;
+/**
+ * Auxiliary trees moved from `bin/` to the GENIE_HOME root. plugins/skills/
+ * templates are the trees `genie update`'s syncAuxiliaryContent also manages.
+ * `.agents` + `.claude-plugin` carry the marketplace manifests, whose plugin
+ * entries reference `./plugins/genie` RELATIVE to the manifest location — they
+ * must live beside plugins/ so `plugin marketplace add <GENIE_HOME>` points at
+ * a root that truly contains what the manifests reference (left in bin/, the
+ * manifests would dangle once plugins/ moves out).
+ */
+const AUX_LAYOUT_DIRS = ['plugins', 'skills', 'templates', '.agents', '.claude-plugin'] as const;
 
 export interface InstallOptions {
   /** Set by --skip-v4-cleanup: leave v4-era artifacts in place. */
@@ -58,8 +66,10 @@ type IntegrationRunner = (options?: InstallIntegrationsOptions) => ReturnType<ty
  * the fresh tree is swapped in atomically unless it is provably identical:
  * the extracted `bin/VERSION` vs the canonical `<home>/VERSION` stamp when
  * both exist, per-tree content digest otherwise. A same-version reinstall
- * therefore stays an idempotent no-op. After adopting fresh trees the
- * canonical VERSION stamp is refreshed so the next run short-circuits.
+ * therefore stays an idempotent no-op. After adopting fresh trees — and only
+ * when NO tree failed — the canonical VERSION stamp is refreshed so the next
+ * run short-circuits; a partial adoption leaves the stamp stale so the next
+ * reinstall retries the failed tree via the digest compare.
  *
  * Best-effort per directory: a failure on one never aborts the rest or the
  * install.
@@ -69,6 +79,7 @@ export function normalizeAuxLayout(genieHome: string): void {
   const homeVersion = readVersionStamp(join(genieHome, 'VERSION'));
   const sameVersion = binVersion !== null && homeVersion !== null ? binVersion === homeVersion : null;
   let adoptedFresh = false;
+  let anyTreeFailed = false;
   for (const name of AUX_LAYOUT_DIRS) {
     try {
       const binPath = join(genieHome, 'bin', name);
@@ -87,9 +98,13 @@ export function normalizeAuxLayout(genieHome: string): void {
       adoptedFresh = true;
     } catch {
       // layout normalization is best-effort; never fail the install over it.
+      // But a failed tree MUST keep the VERSION stamp stale (below) — stamping
+      // a partial adoption would make same-version reinstalls no-op forever
+      // and the failed tree permanently stale.
+      anyTreeFailed = true;
     }
   }
-  if (adoptedFresh && binVersion !== null) {
+  if (adoptedFresh && !anyTreeFailed && binVersion !== null) {
     try {
       // Fresh trees adopted — refresh the canonical VERSION stamp so
       // resolveGenieSource/doctor report the just-installed version and the
