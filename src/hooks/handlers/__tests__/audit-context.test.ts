@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { HookPayload } from '../../types.js';
@@ -110,5 +110,22 @@ describe('audit-context handler', () => {
     const result = await auditContext(payload);
     expect(result).toBeUndefined();
     execSync(`rm -rf ${nonGitDir}`);
+  });
+
+  test('does not execute a shell-injection file_path (no shell, execFileSync)', async () => {
+    // A file_path crafted to run `touch PWNED` under a shell. audit-context has
+    // no on-disk existence gate — it hands the path straight to git — so this is
+    // the primary injection vector. execFileSync passes the path literally to git
+    // with no shell, so `$(...)` is never evaluated and PWNED is never created.
+    const payload: HookPayload = {
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Edit',
+      tool_input: { file_path: '$(touch PWNED)' },
+      cwd: repoDir,
+    };
+
+    await auditContext(payload);
+
+    expect(existsSync(join(repoDir, 'PWNED'))).toBe(false);
   });
 });
