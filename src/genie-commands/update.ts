@@ -1391,14 +1391,24 @@ export interface UpdateCommandOptions {
   verify?: boolean;
   /** `--rollback`. Restore the most recent ~/.genie/bin/.previous backup. */
   rollback?: boolean;
+  /** `--sync-only`. Converge agent integrations and return — no manifest
+   *  fetch, no binary swap. Equivalent to GENIE_UPDATE_SYNC_ONLY=1; the flag
+   *  form is the SessionStart hook's hard guard: a pre-contract binary rejects
+   *  the unknown flag and exits immediately (zero network) instead of silently
+   *  running a full unattended update. */
+  syncOnly?: boolean;
 }
 
 export async function updateCommand(options: UpdateCommandOptions = {}): Promise<void> {
-  // Sync-only fast path — the ONLY internal re-entry contract (no user-facing
-  // flag). The freshly-swapped binary (runFreshBinaryAgentSync) and the CC
-  // SessionStart hook both re-invoke `genie update` with GENIE_UPDATE_SYNC_ONLY=1
-  // to converge agents with no network, manifest fetch, or channel persistence.
-  if (process.env.GENIE_UPDATE_SYNC_ONLY === '1') {
+  // Sync-only fast path — the internal re-entry contract. Two equivalent
+  // triggers: the freshly-swapped binary (runFreshBinaryAgentSync) re-invokes
+  // `genie update` with GENIE_UPDATE_SYNC_ONLY=1, and the CC SessionStart hook
+  // invokes `genie update --sync-only` (the flag is a hard guard — old
+  // commander binaries reject unknown flags and exit non-zero with zero
+  // network, so a pre-contract binary can never misread the delegation as a
+  // full update). Both converge agents with no network, manifest fetch, or
+  // channel persistence.
+  if (options.syncOnly === true || process.env.GENIE_UPDATE_SYNC_ONLY === '1') {
     runAgentSyncSafe();
     return;
   }
@@ -1563,6 +1573,7 @@ function formatAgentSyncSummary(report: AgentSyncReport): string[] {
   if (report.source.pluginRoot === null) {
     return ['agent-sync: no genie plugin source found (plugins/genie); skipped'];
   }
+  if (report.skipped) return [`agent-sync: ${report.skipped}`];
   const lines: string[] = [];
   for (const agent of report.agents) {
     if (!agent.detected) {
