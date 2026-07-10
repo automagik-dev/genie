@@ -544,6 +544,24 @@ describe('checkAgentSync', () => {
     expect(hermes?.detail).toContain('linked');
   });
 
+  test('claude excludes council: expected set is source minus exclusions → pass, no advisory (BUG C)', () => {
+    // `council` is a source skill the native /council workflow owns, so claude
+    // legitimately never receives it. Doctor must subtract it from claude's
+    // expected source set — otherwise it reports "2/3 current" and advises
+    // `genie update` forever even though claude is fully converged.
+    writeSourceSkill('council', '# council\n');
+    seedManaged(join(pluginRoot, 'skills', 'wish'), join(claudeDir, 'skills', 'wish'));
+    seedManaged(join(pluginRoot, 'skills', 'review'), join(claudeDir, 'skills', 'review'));
+    stampCouncil(pluginRoot);
+
+    const claude = find(checkAgentSync(paths()), 'agent sync: claude');
+    expect(claude?.status).toBe('pass');
+    // 3 source skills, council excluded → expected 2, both present → 2/2 current.
+    expect(claude?.detail).toContain('2/2 source skills current');
+    expect(claude?.detail).toContain('council.js current');
+    expect(claude?.suggestion).toBeUndefined();
+  });
+
   test('stale managed skill + wrong council stamp → warn + genie-update advice', () => {
     seedManaged(join(pluginRoot, 'skills', 'wish'), join(claudeDir, 'skills', 'wish'));
     seedManaged(join(pluginRoot, 'skills', 'review'), join(claudeDir, 'skills', 'review'), 'deadbeef');
