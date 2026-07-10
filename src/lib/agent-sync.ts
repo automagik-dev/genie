@@ -23,10 +23,12 @@ import { createHash } from 'node:crypto';
 import {
   type Dirent,
   type Stats,
+  closeSync,
   cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
+  openSync,
   readFileSync,
   readdirSync,
   readlinkSync,
@@ -35,6 +37,7 @@ import {
   statSync,
   symlinkSync,
   writeFileSync,
+  writeSync,
 } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { resolveClaudeDir, resolveCodexDir, resolveGenieHome, resolveHermesHome } from './genie-home.js';
@@ -61,6 +64,16 @@ const WRITE_ACTIONS = new Set<SkillAction>(['created', 'updated', 'adopted', 're
  */
 const STAGING_SUFFIX = '.genie-sync.staging';
 const PREV_SUFFIX = '.genie-sync.prev';
+/** Cross-process mutual-exclusion lockfile under genieHome — one sync writer per GENIE_HOME. */
+const LOCK_NAME = '.agent-sync.lock';
+/** A lock older than this is a crashed run's debris and may be stolen. */
+const LOCK_STALE_MS = 10 * 60 * 1000;
+/**
+ * SessionStart-hook throttle marker. The engine writes it at sync START (not
+ * completion), so N simultaneous session starts back off immediately instead of
+ * queueing behind the lock after the first run releases it.
+ */
+const MARKER_NAME = '.last-agent-sync';
 
 // ============================================================================
 // Public types
@@ -106,6 +119,11 @@ export interface AgentSyncReport {
   source: GenieSource;
   agents: AgentReport[];
   backupsDir: string | null;
+  /**
+   * Set when a concurrent sync held the cross-process lock and this run skipped
+   * entirely (advisory, not an error — the holder converges the same targets).
+   */
+  skipped?: string;
 }
 
 export interface GenieSource {
@@ -506,7 +524,9 @@ function runHermesEnable(opts: AgentSyncOptions, binary: string, report: AgentRe
   const exec =
     opts.execHermesEnable ??
     ((args: string[]) => {
-      execFileSync(binary, args, { stdio: 'ignore' });
+      // Bounded: a wedged hermes must not hang the 45s-budgeted session-start
+      // delegation (or a terminal `genie update`) indefinitely.
+      execFileSync(binary, args, { stdio: 'ignore', timeout: 10_000 });
     });
   try {
     exec(['plugins', 'enable', 'genie']);
@@ -529,12 +549,57 @@ function detectHermesBinary(opts: AgentSyncOptions): string | null {
 }
 
 // ============================================================================
+// Cross-process lock
+// ============================================================================
+
+/**
+ * Acquire the per-GENIE_HOME sync lock via O_EXCL create. Returns a release
+ * handle, or null when another live sync holds the lock (the caller must skip).
+ * A lock whose mtime is older than {@link LOCK_STALE_MS} is a crashed run's
+ * debris: it is stolen (removed + one re-acquire attempt). If the lockfile
+ * cannot be created for any reason other than contention (EACCES, EROFS, ...),
+ * the sync proceeds UNLOCKED — locking is a safety net, never an availability
+ * gate.
+ */
+function acquireSyncLock(lockPath: string): { release: () => void } | null {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const fd = openSync(lockPath, 'wx');
+      try {
+        writeSync(fd, `${process.pid}\n`);
+      } finally {
+        closeSync(fd);
+      }
+      return { release: () => rmSyncSafe(lockPath) };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') return { release: () => undefined };
+      const stat = statSafe(lockPath);
+      if (stat === null) continue; // holder released between open and stat — retry once
+      if (Date.now() - stat.mtimeMs <= LOCK_STALE_MS) return null; // live holder
+      rmSyncSafe(lockPath); // stale crashed-run debris — steal and retry once
+    }
+  }
+  return null; // lost the steal race to another process whose lock is now fresh
+}
+
+/** Best-effort start-of-sync refresh of the SessionStart-hook throttle marker. */
+function touchMarkerSafe(markerPath: string, now: Date): void {
+  try {
+    writeFileSync(markerPath, `${now.toISOString()}\n`, 'utf8');
+  } catch {
+    // the marker only optimizes the hook throttle; never fail the sync over it.
+  }
+}
+
+// ============================================================================
 // Orchestration
 // ============================================================================
 
 /**
  * Converge every detected agent from the resolved source. Never throws for
- * agent-level failures; a null pluginRoot yields an empty report.
+ * agent-level failures; a null pluginRoot yields an empty report. Exactly one
+ * run per GENIE_HOME may write at a time: a concurrent run returns a report
+ * with `skipped` set and performs zero writes.
  */
 export function runAgentSync(opts: AgentSyncOptions = {}): AgentSyncReport {
   const genieHome = opts.genieHome ?? resolveGenieHome();
@@ -544,13 +609,24 @@ export function runAgentSync(opts: AgentSyncOptions = {}): AgentSyncReport {
     log('agent-sync: no genie plugin source found (looked for plugins/genie); skipping');
     return { source, agents: [], backupsDir: null };
   }
-  const ctx = createRunContext(genieHome, source.pluginRoot, source, opts);
-  const agents: AgentReport[] = [
-    runAgentSafe('claude', (report) => syncClaude(ctx, report)),
-    runAgentSafe('codex', (report) => syncCodex(ctx, report)),
-    runAgentSafe('hermes', (report) => syncHermes(ctx, opts, report)),
-  ];
-  return { source, agents, backupsDir: ctx.backupsDirIfCreated() };
+  const lock = acquireSyncLock(join(genieHome, LOCK_NAME));
+  if (lock === null) {
+    const skipped = 'another agent-sync run holds the lock; skipped (the holder converges the same targets)';
+    log(`agent-sync: ${skipped}`);
+    return { source, agents: [], backupsDir: null, skipped };
+  }
+  try {
+    const ctx = createRunContext(genieHome, source.pluginRoot, source, opts);
+    touchMarkerSafe(join(genieHome, MARKER_NAME), ctx.now());
+    const agents: AgentReport[] = [
+      runAgentSafe('claude', (report) => syncClaude(ctx, report)),
+      runAgentSafe('codex', (report) => syncCodex(ctx, report)),
+      runAgentSafe('hermes', (report) => syncHermes(ctx, opts, report)),
+    ];
+    return { source, agents, backupsDir: ctx.backupsDirIfCreated() };
+  } finally {
+    lock.release();
+  }
 }
 
 function createRunContext(
@@ -617,6 +693,22 @@ function lstatSafe(path: string): Stats | null {
     return lstatSync(path);
   } catch {
     return null;
+  }
+}
+
+function statSafe(path: string): Stats | null {
+  try {
+    return statSync(path);
+  } catch {
+    return null;
+  }
+}
+
+function rmSyncSafe(path: string): void {
+  try {
+    rmSync(path, { force: true });
+  } catch {
+    // best-effort: a leftover lock ages out via LOCK_STALE_MS anyway.
   }
 }
 
