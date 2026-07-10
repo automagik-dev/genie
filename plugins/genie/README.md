@@ -46,7 +46,7 @@ The multi-perspective engine ships as a native dynamic workflow, not a skill:
 | Agent | Target | What lands |
 |-------|--------|------------|
 | Claude Code | `~/.claude/skills/` + `~/.claude/workflows/council.js` | all genie skills + the stamped `/council` workflow |
-| Codex | `~/.codex/skills/.curated/` | genie skills as Agent-Skills folders (`.system` is OpenAI's, never touched) |
+| Codex | `~/.agents/skills/` | genie skills as Agent-Skills folders in the shared user tier codex-rs loads (detection stays keyed on `~/.codex`; the retired `~/.codex/skills/.curated/` lane is migrated away with backups; `.system` is OpenAI's, never touched) |
 | Hermes | `~/.hermes/plugins/genie` | symlink into `~/.genie/plugins/hermes-genie` |
 
 - **One-time caveat on the delivering update**: the "on every run" guarantee starts one release late. The `genie update` that first brings agent-sync is still executed by the *old* binary, which only swaps the binary and has no sync phase — that run converges nothing. Run `genie update` once more, or let the SessionStart hook converge within its ~6h throttle window. Every update after that is self-syncing.

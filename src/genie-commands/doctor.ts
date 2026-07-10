@@ -23,6 +23,7 @@ import {
   MANIFEST_NAME,
   TARGET_NAME,
   computeDirDigest,
+  resolveAgentsSkillsDir,
   resolveGenieSource,
 } from '../lib/agent-sync.js';
 import { DEAD_GENIE_OTEL_EXPORTER, getCodexConfigPath, getCodexHome } from '../lib/codex-config.js';
@@ -315,12 +316,19 @@ async function checkCodexIntegration(): Promise<CheckResult[]> {
         : 'plugin unavailable',
   });
   if (state.installed) {
-    const manifest = join(resolveBundleRoot(), 'plugins', 'genie', '.codex-plugin', 'plugin.json');
-    const declared = existsSync(manifest) && readFileSync(manifest, 'utf8').includes('"genie"');
+    // resolveBundleRoot is null when no installed/checkout root carries the
+    // plugin payload — report that distinctly instead of probing a junk path.
+    const bundleRoot = resolveBundleRoot();
+    const manifest = bundleRoot === null ? null : join(bundleRoot, 'plugins', 'genie', '.codex-plugin', 'plugin.json');
+    const declared = manifest !== null && existsSync(manifest) && readFileSync(manifest, 'utf8').includes('"genie"');
     results.push({
       name: 'Codex Genie MCP capability',
       status: declared ? 'pass' : 'warn',
-      detail: declared ? 'stdio server declared' : 'manifest declaration missing',
+      detail: declared
+        ? 'stdio server declared'
+        : bundleRoot === null
+          ? 'genie bundle root not found (reinstall genie or set GENIE_BUNDLE_ROOT)'
+          : 'manifest declaration missing',
     });
     results.push(probeGenieMcp());
     results.push({
@@ -546,6 +554,8 @@ interface AgentSyncPaths {
   genieHome?: string;
   claudeDir?: string;
   codexDir?: string;
+  /** Shared `~/.agents/skills` tier codex skills are synced into (detection root stays `codexDir`). */
+  agentsSkillsDir?: string;
   hermesHome?: string;
   settingsPath?: string;
 }
@@ -669,9 +679,15 @@ function checkClaudeSync(pluginRoot: string, claudeDir: string): CheckResult[] {
   ];
 }
 
-function checkCodexSync(pluginRoot: string, codexDir: string): CheckResult[] {
+/**
+ * Codex detection stays keyed on `~/.codex` (the CODEX_HOME root), but the
+ * skills agent-sync writes live in the shared `~/.agents/skills` tier — the
+ * only user tier codex-rs actually loads (the legacy `.curated` lane is
+ * retired and migrated away on sync; see agent-sync.ts).
+ */
+function checkCodexSync(pluginRoot: string, codexDir: string, agentsSkillsDir: string): CheckResult[] {
   if (!existsSync(codexDir)) return [{ name: 'agent sync: codex', status: 'pass', detail: 'not detected' }];
-  const summary = summarizeManagedSkills(pluginRoot, join(codexDir, 'skills', '.curated'));
+  const summary = summarizeManagedSkills(pluginRoot, agentsSkillsDir);
   const populated = summary.current + summary.stale > 0;
   const skills = skillsFreshness(summary);
   const stale = skills.stale || !populated;
@@ -679,7 +695,7 @@ function checkCodexSync(pluginRoot: string, codexDir: string): CheckResult[] {
     {
       name: 'agent sync: codex',
       status: stale ? 'warn' : 'pass',
-      detail: populated ? skills.detail : '.curated not populated',
+      detail: populated ? skills.detail : '~/.agents/skills not populated',
       suggestion: stale ? SYNC_SUGGESTION : undefined,
     },
   ];
@@ -768,6 +784,7 @@ export function checkAgentSync(paths: AgentSyncPaths = {}): CheckResult[] {
   const genieHome = paths.genieHome ?? resolveGlobalGenieHome();
   const claudeDir = paths.claudeDir ?? resolveClaudeDir();
   const codexDir = paths.codexDir ?? resolveCodexDir();
+  const agentsSkillsDir = paths.agentsSkillsDir ?? resolveAgentsSkillsDir();
   const hermesHome = paths.hermesHome ?? resolveHermesHome();
   const settingsPath = paths.settingsPath ?? join(claudeDir, 'settings.json');
   const source = resolveGenieSource(genieHome);
@@ -783,7 +800,7 @@ export function checkAgentSync(paths: AgentSyncPaths = {}): CheckResult[] {
   const pluginRoot = source.pluginRoot;
   return [
     ...safeAgentChecks('claude', () => checkClaudeSync(pluginRoot, claudeDir)),
-    ...safeAgentChecks('codex', () => checkCodexSync(pluginRoot, codexDir)),
+    ...safeAgentChecks('codex', () => checkCodexSync(pluginRoot, codexDir, agentsSkillsDir)),
     ...safeAgentChecks('hermes', () => checkHermesSync(source.hermesRoot, hermesHome)),
     ...safeAgentChecks('marketplace', () => checkMarketplacePlugin(settingsPath)),
   ];

@@ -39,6 +39,7 @@ import {
   writeFileSync,
   writeSync,
 } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { resolveClaudeDir, resolveCodexDir, resolveGenieHome, resolveHermesHome } from './genie-home.js';
 
@@ -89,6 +90,27 @@ const LOCK_STALE_MS = 10 * 60 * 1000;
  */
 const MARKER_NAME = '.last-agent-sync';
 
+/**
+ * Live Codex user-skills tier — codex-rs loads `~/.agents/skills/<name>`
+ * top-level. Exported so doctor/uninstall share the exact target agent-sync
+ * writes. The env override exists for tests (all-tmpdir isolation), mirroring
+ * the genie-home resolvers.
+ */
+export function resolveAgentsSkillsDir(): string {
+  return process.env.GENIE_AGENTS_SKILLS_DIR || join(homedir(), '.agents', 'skills');
+}
+
+/**
+ * Retired codex lane (pre-migration): `<codexDir>/skills/.curated`. Codex
+ * provably never loaded it — codex-rs prunes hidden dirs from skill discovery
+ * (`HiddenDirectoryPolicy::Skip`) and marks `$CODEX_HOME/skills` itself
+ * deprecated. Exported so doctor/uninstall can keep checking/cleaning the
+ * legacy location on machines that have not synced since the migration.
+ */
+export function codexLegacyCuratedDir(codexDir: string): string {
+  return join(codexDir, 'skills', '.curated');
+}
+
 // ============================================================================
 // Public types
 // ============================================================================
@@ -96,8 +118,12 @@ const MARKER_NAME = '.last-agent-sync';
 export interface AgentSyncOptions {
   /** Global genie root; defaults to {@link resolveGenieHome}. */
   genieHome?: string;
-  /** Per-agent target dir overrides (tests inject tmpdirs here). */
-  targets?: { claude?: string; codex?: string; hermes?: string };
+  /**
+   * Per-agent target dir overrides (tests inject tmpdirs here). `agentsSkills`
+   * is the shared `~/.agents/skills` tier codex skills are synced INTO;
+   * `codex` (`~/.codex`) stays the detection root + legacy-lane parent.
+   */
+  targets?: { claude?: string; codex?: string; hermes?: string; agentsSkills?: string };
   /**
    * Hermes binary override for enable-exec detection. A non-null string forces
    * "detected"; `null` explicitly skips exec; `undefined` probes PATH.
@@ -162,7 +188,7 @@ interface RunContext {
   hermesRoot: string | null;
   version: string | null;
   now: () => Date;
-  targets: { claude: string; codex: string; hermes: string };
+  targets: { claude: string; codex: string; hermes: string; agentsSkills: string };
   /** Copy `existingDir` into the run's backup root and return the backup path. */
   backupInto: (agent: string, name: string, existingDir: string) => string;
   /** The backup root path, or null when nothing has been backed up this run. */
@@ -464,10 +490,46 @@ function syncCodex(ctx: RunContext, report: AgentReport): void {
   const codexDir = ctx.targets.codex;
   if (!existsSync(codexDir)) return;
   report.detected = true;
-  // `.curated/` is genie's lane; `.system/` is OpenAI's and is never enumerated.
-  syncSkillDirsInto(ctx, 'codex', join(codexDir, 'skills', '.curated'), report);
+  migrateLegacyCodexCurated(ctx, codexDir, report);
+  // Codex loads user skills from the top-level `~/.agents/skills/<name>` tier.
+  // Everything under `<codexDir>/skills/` (incl. OpenAI's `.system/`) is left
+  // alone: hidden dirs are pruned by codex and were never genie's to manage.
+  syncSkillDirsInto(ctx, 'codex', ctx.targets.agentsSkills, report);
   if (report.skills.some((skill) => WRITE_ACTIONS.has(skill.action))) {
     report.advisories.push('restart Codex to pick up updated skills');
+  }
+}
+
+/**
+ * One-time cleanup of the retired `<codexDir>/skills/.curated` lane (see
+ * {@link codexLegacyCuratedDir}): every manifest-managed dir there is a
+ * stranded orphan codex never loaded — back it up, then remove it, so the move
+ * to `~/.agents/skills` strands nothing. Unmanaged entries are never touched
+ * (genie only removes what it provably shipped); the lane dir itself goes only
+ * once it is empty. Genie's own crashed-run staging debris is swept unbacked.
+ */
+function migrateLegacyCodexCurated(ctx: RunContext, codexDir: string, report: AgentReport): void {
+  const legacyDir = codexLegacyCuratedDir(codexDir);
+  if (!existsSync(legacyDir)) return;
+  let kept = 0;
+  for (const entry of readdirSync(legacyDir, { withFileTypes: true })) {
+    const dir = join(legacyDir, entry.name);
+    if (entry.name.endsWith(STAGING_SUFFIX) || entry.name.endsWith(PREV_SUFFIX)) {
+      rmSync(dir, { recursive: true, force: true });
+      continue;
+    }
+    if (classifyEntry(dir, entry) !== 'dir' || readManifest(dir) === null) {
+      kept += 1;
+      continue;
+    }
+    ctx.backupInto('codex-legacy-curated', entry.name, dir);
+    rmSync(dir, { recursive: true, force: true });
+    report.extras.push({ kind: 'legacy-curated', action: 'removed', detail: dir });
+  }
+  if (kept === 0) {
+    rmSync(legacyDir, { recursive: true, force: true });
+  } else {
+    report.advisories.push(`legacy codex lane ${legacyDir} contains unmanaged entries; left in place`);
   }
 }
 
@@ -576,13 +638,13 @@ function detectHermesBinary(opts: AgentSyncOptions): string | null {
  * Acquire the per-GENIE_HOME sync lock via O_EXCL create. Returns a release
  * handle, or null when another live sync holds the lock (the caller must skip).
  * A lock whose mtime is older than {@link LOCK_STALE_MS} is a crashed run's
- * debris: it is stolen (removed + one re-acquire attempt). If the lockfile
- * cannot be created for any reason other than contention (EACCES, EROFS, ...),
- * the sync proceeds UNLOCKED — locking is a safety net, never an availability
- * gate.
+ * debris: it is stolen via {@link stealStaleLock} and the exclusive create is
+ * retried. If the lockfile cannot be created for any reason other than
+ * contention (EACCES, EROFS, ...), the sync proceeds UNLOCKED — locking is a
+ * safety net, never an availability gate.
  */
 function acquireSyncLock(lockPath: string): { release: () => void } | null {
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       const fd = openSync(lockPath, 'wx');
       try {
@@ -594,12 +656,51 @@ function acquireSyncLock(lockPath: string): { release: () => void } | null {
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') return { release: () => undefined };
       const stat = statSafe(lockPath);
-      if (stat === null) continue; // holder released between open and stat — retry once
+      if (stat === null) continue; // holder released between open and stat — retry
       if (Date.now() - stat.mtimeMs <= LOCK_STALE_MS) return null; // live holder
-      rmSyncSafe(lockPath); // stale crashed-run debris — steal and retry once
+      if (stealStaleLock(lockPath) === 'contended') return null; // live steal/holder race
+      // 'cleared' — the stale debris is gone; loop and retry the exclusive create
     }
   }
   return null; // lost the steal race to another process whose lock is now fresh
+}
+
+/**
+ * Clear a stale lock safely under a `.steal` guard file. The previous
+ * unlink-then-retry steal let two processes both "win": between one stealer's
+ * unlink and its re-create, a second stealer's unlink silently removed the
+ * first's FRESH lock (observed as two concurrent writers in the regression
+ * test). The guard closes that hole with two properties: (a) the O_EXCL guard
+ * admits exactly one stealer at a time, and (b) the lock's staleness is
+ * RE-verified while holding the guard, so a fresh lock created after the
+ * caller's first observation is never removed. A guard left by a crashed
+ * stealer ages out via {@link LOCK_STALE_MS} like the lock itself.
+ */
+function stealStaleLock(lockPath: string): 'cleared' | 'contended' {
+  const guardPath = `${lockPath}.steal`;
+  if (!tryCreateExclusive(guardPath)) {
+    const guardStat = statSafe(guardPath);
+    if (guardStat !== null && Date.now() - guardStat.mtimeMs > LOCK_STALE_MS) rmSyncSafe(guardPath);
+    return 'contended'; // another stealer holds the guard — back off like a live lock
+  }
+  try {
+    const stat = statSafe(lockPath);
+    if (stat !== null && Date.now() - stat.mtimeMs <= LOCK_STALE_MS) return 'contended'; // refreshed under us — live
+    rmSyncSafe(lockPath); // re-verified stale (or already gone) under the guard
+    return 'cleared';
+  } finally {
+    rmSyncSafe(guardPath);
+  }
+}
+
+/** O_EXCL create-and-close; false on any failure (EEXIST or otherwise). */
+function tryCreateExclusive(path: string): boolean {
+  try {
+    closeSync(openSync(path, 'wx'));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Best-effort start-of-sync refresh of the SessionStart-hook throttle marker. */
@@ -660,6 +761,7 @@ function createRunContext(
     claude: opts.targets?.claude ?? resolveClaudeDir(),
     codex: opts.targets?.codex ?? resolveCodexDir(),
     hermes: opts.targets?.hermes ?? resolveHermesHome(),
+    agentsSkills: opts.targets?.agentsSkills ?? resolveAgentsSkillsDir(),
   };
   const stamp = now().toISOString();
   let backupsDir: string | null = null;
