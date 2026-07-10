@@ -21,6 +21,7 @@ import {
   readlinkSync,
   rmSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -651,6 +652,146 @@ describe('stampWorkflow parity with council-stamp.cjs', () => {
     expect(existsSync(join(fixture.claudeDir, 'workflows', 'council.js'))).toBe(false);
     expect(skillAction(claude, 'alpha')).toBe('created'); // skills still synced
   });
+});
+
+// ---------------------------------------------------------------------------
+// Cross-process lock + start-of-sync throttle marker
+// ---------------------------------------------------------------------------
+
+const LOCK_NAME = '.agent-sync.lock';
+const MARKER_NAME = '.last-agent-sync';
+
+describe('cross-process sync lock', () => {
+  test('a fresh lock held elsewhere skips the whole sync with an advisory — zero writes, lock untouched', () => {
+    present(fixture.claudeDir);
+    const lockPath = join(fixture.genieHome, LOCK_NAME);
+    writeFile(lockPath, '12345\n'); // fresh mtime → live holder
+    const lines: string[] = [];
+
+    const report = run({ log: (line) => lines.push(line) });
+
+    expect(report.skipped).toContain('holds the lock');
+    expect(report.agents).toHaveLength(0);
+    expect(report.backupsDir).toBeNull();
+    expect(existsSync(join(fixture.claudeDir, 'skills'))).toBe(false); // no writes at all
+    expect(existsSync(join(fixture.genieHome, MARKER_NAME))).toBe(false); // marker not stolen either
+    expect(lines.some((line) => line.includes('holds the lock'))).toBe(true);
+    expect(existsSync(lockPath)).toBe(true); // never releases someone else's live lock
+  });
+
+  test('a stale lock (older than the age-out) is stolen and the sync proceeds', () => {
+    present(fixture.claudeDir);
+    const lockPath = join(fixture.genieHome, LOCK_NAME);
+    writeFile(lockPath, '999\n');
+    const staleSec = (Date.now() - 11 * 60 * 1000) / 1000; // 11 min > 10 min age-out
+    utimesSync(lockPath, staleSec, staleSec);
+
+    const report = run();
+
+    expect(report.skipped).toBeUndefined();
+    expect(skillAction(agentReport(report, 'claude'), 'alpha')).toBe('created');
+    expect(existsSync(lockPath)).toBe(false); // released after the run
+  });
+
+  test('the lock is released after a run, so a sequential re-run proceeds normally', () => {
+    present(fixture.claudeDir);
+    run();
+    expect(existsSync(join(fixture.genieHome, LOCK_NAME))).toBe(false);
+
+    const second = run();
+    expect(second.skipped).toBeUndefined();
+    expect(skillAction(agentReport(second, 'claude'), 'alpha')).toBe('unchanged');
+  });
+
+  test('the throttle marker is written from the injected clock', () => {
+    present(fixture.claudeDir);
+    run();
+    expect(readFileSync(join(fixture.genieHome, MARKER_NAME), 'utf8')).toBe('2026-07-10T12:00:00.000Z\n');
+  });
+
+  test('two simultaneous runs: exactly one writes, the other reports the skip advisory, target never half-written', async () => {
+    present(fixture.claudeDir);
+    present(fixture.codexDir);
+    present(fixture.hermesHome);
+    // Out-of-process runner: real concurrency (runAgentSync is synchronous, so
+    // two in-process calls would serialize). The holder sleeps INSIDE the sync
+    // (in the hermes-enable exec seam, i.e. while the lock is held) so the
+    // contender's whole run deterministically overlaps it.
+    const runnerPath = join(fixture.root, 'sync-runner.ts');
+    writeFileSync(
+      runnerPath,
+      [
+        `import { runAgentSync } from ${JSON.stringify(join(import.meta.dir, 'agent-sync.ts'))};`,
+        `const sleepMs = Number(process.env.SYNC_TEST_ENABLE_SLEEP_MS ?? '0');`,
+        'const report = runAgentSync({',
+        '  genieHome: process.env.SYNC_TEST_GENIE_HOME as string,',
+        '  targets: {',
+        '    claude: process.env.SYNC_TEST_CLAUDE as string,',
+        '    codex: process.env.SYNC_TEST_CODEX as string,',
+        '    hermes: process.env.SYNC_TEST_HERMES as string,',
+        '  },',
+        `  hermesBinary: '/fake/bin/hermes',`,
+        '  execHermesEnable: () => {',
+        '    if (sleepMs > 0) Bun.sleepSync(sleepMs);',
+        '  },',
+        '  log: () => undefined,',
+        '});',
+        'process.stdout.write(JSON.stringify(report));',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    const baseEnv = {
+      ...process.env,
+      SYNC_TEST_GENIE_HOME: fixture.genieHome,
+      SYNC_TEST_CLAUDE: fixture.claudeDir,
+      SYNC_TEST_CODEX: fixture.codexDir,
+      SYNC_TEST_HERMES: fixture.hermesHome,
+    };
+    const spawnRunner = async (sleepMs: number): Promise<AgentSyncReport> => {
+      const proc = Bun.spawn(['bun', runnerPath], {
+        env: { ...baseEnv, SYNC_TEST_ENABLE_SLEEP_MS: String(sleepMs) },
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+      const [out, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+      expect(code).toBe(0);
+      return JSON.parse(out) as AgentSyncReport;
+    };
+
+    const holder = spawnRunner(2000);
+    // The engine writes the throttle marker at sync START (right after lock
+    // acquisition), so its appearance proves the holder is mid-sync — the
+    // deterministic gate for launching the contender.
+    const markerPath = join(fixture.genieHome, MARKER_NAME);
+    const deadline = Date.now() + 10_000;
+    while (!existsSync(markerPath) && Date.now() < deadline) await Bun.sleep(20);
+    expect(existsSync(markerPath)).toBe(true); // marker at START, not completion
+
+    const contender = spawnRunner(0);
+    const contenderReport = await contender; // resolves while the holder still sleeps in-lock
+    expect(contenderReport.skipped).toContain('holds the lock');
+    expect(contenderReport.agents).toHaveLength(0);
+    // Mid-run observation point: the holder wrote claude/codex before its
+    // hermes sleep — the managed target is fully present, never half-written.
+    const alphaDir = join(fixture.claudeDir, 'skills', 'alpha');
+    expect(readFileSync(join(alphaDir, 'SKILL.md'), 'utf8')).toBe('# alpha\n');
+    expect(readManifest(alphaDir).managedBy).toBe('genie-agent-sync');
+    expect(existsSync(`${alphaDir}.genie-sync.staging`)).toBe(false);
+    expect(existsSync(`${alphaDir}.genie-sync.prev`)).toBe(false);
+
+    const settled = await Promise.allSettled([holder, contender]);
+    const reports = settled.map((res) => {
+      if (res.status !== 'fulfilled') throw new Error(`runner failed: ${res.reason}`);
+      return res.value;
+    });
+    const wrote = reports.filter((report) => report.skipped === undefined);
+    const skippedRuns = reports.filter((report) => report.skipped !== undefined);
+    expect(wrote).toHaveLength(1); // exactly one performed the sync
+    expect(skippedRuns).toHaveLength(1); // the other skipped with the advisory
+    expect(skillAction(agentReport(wrote[0] as AgentSyncReport, 'claude'), 'alpha')).toBe('created');
+    expect(existsSync(join(fixture.genieHome, LOCK_NAME))).toBe(false); // holder released
+  }, 20_000);
 });
 
 // ---------------------------------------------------------------------------
