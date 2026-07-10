@@ -82,7 +82,7 @@ const builtinHandlers: ReadonlyArray<Handler> = [
     manifest_path: BUILTIN_MANIFEST_PATH,
     name: 'audit-context',
     event: 'PreToolUse',
-    matcher: /^(Write|Edit)$/,
+    matcher: /^(Write|Edit|apply_patch)$/,
     priority: 8,
     fn: auditContext,
   },

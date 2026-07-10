@@ -15,6 +15,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { Command } from 'commander';
+import { codexPluginState } from '../lib/runtime-integrations.js';
 
 // ============================================================================
 // Output helpers (process.stdout/stderr — no console.* in source)
@@ -234,6 +235,44 @@ interface McpConfigResult {
   action: ArtifactAction;
 }
 
+function codexHasGeniePlugin(): boolean {
+  if (!Bun.which('codex')) return false;
+  const result = Bun.spawnSync(['codex', 'plugin', 'list', '--json'], { stdout: 'pipe', stderr: 'pipe' });
+  return result.exitCode === 0 && codexPluginState(result.stdout.toString()).installed;
+}
+
+export function mergeCodexMcpFallback(configPath: string, entry: McpServerEntry): ArtifactAction {
+  const raw = existsSync(configPath) ? readFileSync(configPath, 'utf8') : '';
+  const begin = '# BEGIN GENIE MCP FALLBACK';
+  const end = '# END GENIE MCP FALLBACK';
+  if (raw.includes('[mcp_servers.genie]') && !raw.includes(begin)) return 'skipped';
+  const block = `${begin}\n[mcp_servers.genie]\ncommand = ${JSON.stringify(entry.command)}\nargs = ["mcp"]\n${end}`;
+  const start = raw.indexOf(begin);
+  const finish = start >= 0 ? raw.indexOf(end, start) : -1;
+  const updated =
+    start >= 0 && finish >= 0
+      ? `${raw.slice(0, start)}${block}${raw.slice(finish + end.length)}`
+      : `${raw}${raw.length > 0 && !raw.endsWith('\n') ? '\n' : ''}\n${block}\n`;
+  if (updated === raw) return 'skipped';
+  mkdirSync(dirname(configPath), { recursive: true });
+  writeFileSync(configPath, updated);
+  return raw.length === 0 ? 'created' : 'updated';
+}
+
+export function removeCodexMcpFallback(configPath: string): ArtifactAction {
+  if (!existsSync(configPath)) return 'skipped';
+  const raw = readFileSync(configPath, 'utf8');
+  const begin = '# BEGIN GENIE MCP FALLBACK';
+  const end = '# END GENIE MCP FALLBACK';
+  const start = raw.indexOf(begin);
+  const finish = start >= 0 ? raw.indexOf(end, start) : -1;
+  if (start < 0 || finish < 0) return 'skipped';
+  const after = finish + end.length;
+  const updated = `${raw.slice(0, start).trimEnd()}\n${raw.slice(after).trimStart()}`;
+  writeFileSync(configPath, updated, 'utf8');
+  return 'updated';
+}
+
 /**
  * Register the `genie mcp` server into both project-scope config files under
  * `root`: `<root>/.mcp.json` (Claude Code) and `<root>/.warp/.mcp.json` (Warp).
@@ -243,7 +282,12 @@ interface McpConfigResult {
 export function registerMcpConfigs(root: string): McpConfigResult[] {
   const entry = genieMcpEntry();
   const targets = [join(root, '.mcp.json'), join(root, '.warp', '.mcp.json')];
-  return targets.map((path) => ({ path, action: mergeMcpConfig(path, entry) }));
+  const results = targets.map((path) => ({ path, action: mergeMcpConfig(path, entry) }));
+  if (Bun.which('codex') && !codexHasGeniePlugin()) {
+    const path = join(root, '.codex', 'config.toml');
+    results.push({ path, action: mergeCodexMcpFallback(path, entry) });
+  }
+  return results;
 }
 
 // ============================================================================
@@ -256,6 +300,7 @@ function actionLabel(action: ArtifactAction): string {
 
 /** Short, repo-relative label for an MCP config path (`.mcp.json`, `.warp/.mcp.json`). */
 function mcpConfigLabel(configPath: string): string {
+  if (configPath.endsWith(join('.codex', 'config.toml'))) return '.codex/config.toml';
   return configPath.endsWith(join('.warp', '.mcp.json')) ? '.warp/.mcp.json' : '.mcp.json';
 }
 
@@ -272,13 +317,13 @@ function printHumanReport(result: InitResult): void {
     out(`  ${mcpConfigLabel(cfg.path)}        ${actionLabel(cfg.action)}`);
   }
   out('');
-  out('Warp + Claude Code will discover the read-only `genie mcp` server from those files.');
+  out('Warp, Claude Code, and Codex will discover the read-only `genie mcp` server.');
   out('');
-  out('Next steps — the plan/work lifecycle (run inside Claude Code):');
-  out('  /brainstorm   Explore a fuzzy idea into a DESIGN.md');
-  out('  /wish         Turn the design into an executable wish plan');
-  out('  /work         Execute the wish plan in dispatched waves');
-  out('  /review       Validate the result against its acceptance criteria');
+  out('Next steps — use slash skills in Claude or $skills/natural language in Codex:');
+  out('  brainstorm   Explore a fuzzy idea into a DESIGN.md');
+  out('  wish         Turn the design into an executable wish plan');
+  out('  work         Execute the wish plan in dispatched waves');
+  out('  review       Validate the result against its acceptance criteria');
   out('');
   out('Track progress any time with:  genie board');
 }

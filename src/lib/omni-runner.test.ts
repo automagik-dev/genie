@@ -19,10 +19,13 @@ import {
   type SpawnClaude,
   type SpawnClaudeResult,
   buildClaudeArgs,
+  buildCodexArgs,
   createOmniRunner,
   deterministicSessionId,
+  extractCodexJsonlReply,
   extractStreamJsonReply,
   runClaudeSession,
+  runCodexSession,
 } from './omni-runner.js';
 import { openGlobalDb } from './v5/global-db.js';
 import { enqueueApproval, getApproval, listInbox } from './v5/omni-queue.js';
@@ -751,6 +754,57 @@ describe('extractStreamJsonReply — stream-json parsing', () => {
   test('flags an empty success result as an error (no happy blank reply)', () => {
     const nd = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '' });
     expect(extractStreamJsonReply(nd).isError).toBe(true);
+  });
+});
+
+describe('Codex executor JSONL and resume', () => {
+  test('extracts the thread id and final agent message', () => {
+    const jsonl = [
+      JSON.stringify({ type: 'thread.started', thread_id: 'thread-1' }),
+      JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'first' } }),
+      JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'final' } }),
+    ].join('\n');
+    expect(extractCodexJsonlReply(jsonl)).toEqual({
+      stdout: 'final',
+      exitCode: 0,
+      isError: false,
+      threadId: 'thread-1',
+    });
+  });
+
+  test('builds a new turn and a resumed turn with workspace-write', () => {
+    expect(buildCodexArgs({ message: 'hello' })).toEqual(['exec', '--json', '--sandbox', 'workspace-write', 'hello']);
+    const resumed = buildCodexArgs({ message: 'again', threadId: 'thread-1' });
+    expect(resumed.slice(0, 3)).toEqual(['exec', 'resume', '--json']);
+    expect(resumed).toContain('thread-1');
+    expect(resumed[resumed.length - 1]).toBe('again');
+  });
+
+  test('runs codex exec resume and parses its final response', async () => {
+    const calls: string[][] = [];
+    const result = await runCodexSession(
+      {
+        provider: 'codex',
+        message: 'again',
+        cwd: '/repo',
+        signal: new AbortController().signal,
+        threadId: 'thread-1',
+      },
+      async (args) => {
+        calls.push(args);
+        return {
+          stdout: `${JSON.stringify({ type: 'thread.started', thread_id: 'thread-1' })}\n${JSON.stringify({
+            type: 'item.completed',
+            item: { type: 'agent_message', text: 'resumed' },
+          })}`,
+          stderr: '',
+          exitCode: 0,
+        };
+      },
+    );
+    expect(calls[0].slice(0, 3)).toEqual(['exec', 'resume', '--json']);
+    expect(result.stdout).toBe('resumed');
+    expect(result.threadId).toBe('thread-1');
   });
 });
 

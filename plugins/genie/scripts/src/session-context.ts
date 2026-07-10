@@ -15,6 +15,16 @@ import { readdirSync, readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { parseArgs as _parseArgs } from "util";
 
+let hookEventName = "SessionStart";
+if (!process.stdin.isTTY) {
+  try {
+    const payload = JSON.parse(readFileSync(0, "utf8")) as { hook_event_name?: string };
+    if (payload.hook_event_name === "UserPromptSubmit") hookEventName = "UserPromptSubmit";
+  } catch {
+    // Manual execution or an empty hook payload keeps the SessionStart default.
+  }
+}
+
 // Parse CLI args - util.parseArgs requires Node 18.3+, fallback for older versions
 let values: Record<string, unknown> = {};
 try {
@@ -125,7 +135,8 @@ function scanWishes(baseDir: string): WishContext[] {
       .map((d) => d.name);
 
     for (const slug of slugs) {
-      const wishFile = join(wishesDir, slug, "wish.md");
+      const uppercase = join(wishesDir, slug, "WISH.md");
+      const wishFile = existsSync(uppercase) ? uppercase : join(wishesDir, slug, "wish.md");
       if (!existsSync(wishFile)) continue;
 
       const content = readFileSync(wishFile, "utf-8");
@@ -170,13 +181,11 @@ const wishes = scanWishes(cwd);
 
 if (wishes.length === 0) {
   // No active wishes, nothing to output
+  if (process.env.PLUGIN_ROOT) process.stdout.write("{}");
   process.exit(0);
 }
 
-// Output context to stderr (Claude Code shows stderr from hooks)
-console.error("");
-console.error("\u2728 Genie Session Context");
-console.error("=".repeat(40));
+const lines = ["", "\u2728 Genie Session Context", "=".repeat(40)];
 
 for (const wish of wishes) {
   const progress =
@@ -184,22 +193,30 @@ for (const wish of wishes) {
       ? `${wish.completedCriteria}/${wish.totalCriteria} criteria met`
       : "no criteria tracked";
 
-  console.error("");
-  console.error(`\u{1F4DC} Wish: ${wish.title}`);
-  console.error(`   Status: ${wish.status} | ${progress}`);
-  console.error(`   Groups: ${wish.totalGroups}`);
+  lines.push("");
+  lines.push(`\u{1F4DC} Wish: ${wish.title}`);
+  lines.push(`   Status: ${wish.status} | ${progress}`);
+  lines.push(`   Groups: ${wish.totalGroups}`);
 
   if (wish.currentGroup) {
-    console.error(`   Current: ${wish.currentGroup}`);
+    lines.push(`   Current: ${wish.currentGroup}`);
   }
 
   if (wish.hasBlocked) {
-    console.error(`   \u26A0 Has BLOCKED items`);
+    lines.push(`   \u26A0 Has BLOCKED items`);
   }
 
-  console.error(`   File: .genie/wishes/${wish.slug}/wish.md`);
+  lines.push(`   File: .genie/wishes/${wish.slug}/WISH.md`);
 }
 
-console.error("");
-console.error("=".repeat(40));
+lines.push("");
+lines.push("=".repeat(40));
+const context = lines.join("\n");
+if (process.env.PLUGIN_ROOT) {
+  process.stdout.write(
+    JSON.stringify({ hookSpecificOutput: { hookEventName, additionalContext: context } })
+  );
+} else {
+  console.error(context);
+}
 process.exit(0);

@@ -27,7 +27,9 @@
 
 import type { Command } from 'commander';
 import { registerHookTrustCommand } from '../term-commands/hook/trust.js';
+import { adaptCodexPreToolUseOutput, dispatchCodexPermissionRequest } from './codex-adapter.js';
 import { buildFailClosedResponse, dispatch, installDispatchRegistry } from './index.js';
+import type { HookPayload } from './types.js';
 
 async function readStdin(): Promise<string> {
   // Bun-native stdin read
@@ -74,6 +76,7 @@ function parseEntry(stdin: string): ParsedEntry {
 export async function computeDispatchOutput(
   stdin: string,
   dispatchFn: (input: string) => Promise<string> = dispatch,
+  runtime: 'claude' | 'codex' = 'claude',
 ): Promise<string> {
   const parsed = parseEntry(stdin);
 
@@ -86,7 +89,11 @@ export async function computeDispatchOutput(
   }
 
   try {
-    return await dispatchFn(stdin);
+    if (runtime === 'codex' && parsed.event === 'PermissionRequest') {
+      return await dispatchCodexPermissionRequest(JSON.parse(stdin) as HookPayload);
+    }
+    const output = await dispatchFn(stdin);
+    return runtime === 'codex' ? adaptCodexPreToolUseOutput(output) : output;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[genie-hook] dispatch threw: ${msg}`);
@@ -96,7 +103,11 @@ export async function computeDispatchOutput(
   }
 }
 
-async function dispatchAction(): Promise<void> {
+interface DispatchOptions {
+  runtime?: 'auto' | 'claude' | 'codex';
+}
+
+async function dispatchAction(options: DispatchOptions): Promise<void> {
   const stdin = await readStdin();
   if (!stdin.trim()) {
     // No payload (e.g. TTY / empty pipe) → nothing to dispatch, allow cleanly.
@@ -109,7 +120,9 @@ async function dispatchAction(): Promise<void> {
   // fail-closed wrapper dispatches against already includes the omni handler.
   await installDispatchRegistry();
 
-  const output = await computeDispatchOutput(stdin);
+  const runtime =
+    options.runtime === 'codex' || (options.runtime !== 'claude' && process.env.PLUGIN_ROOT) ? 'codex' : 'claude';
+  const output = await computeDispatchOutput(stdin, dispatch, runtime);
   if (output) {
     process.stdout.write(output);
   }
@@ -133,11 +146,12 @@ function drainStdout(): Promise<void> {
 }
 
 export function registerHookNamespace(program: Command): void {
-  const hook = program.command('hook').description('Hook middleware for Claude Code integration');
+  const hook = program.command('hook').description('Hook middleware for Claude Code and Codex integrations');
 
   hook
     .command('dispatch')
-    .description('Dispatch a CC hook event (reads JSON from stdin, writes decision to stdout)')
+    .description('Dispatch a lifecycle hook event (reads JSON from stdin, writes decision to stdout)')
+    .option('--runtime <runtime>', 'Wire protocol: auto, claude, or codex', 'auto')
     .action(dispatchAction);
 
   // Group 1 of hookify-third-party-absorption: trust subcommand. Subsequent

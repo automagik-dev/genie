@@ -94,9 +94,15 @@ program
   .command('install')
   .description('Post-install finishing step — invoked by install.sh after the binary is linked')
   .option('--skip-v4-cleanup', 'Leave v4-era leftovers in place (orchestration rules, orphaned plugin caches)')
+  .option('--integrations <mode>', 'Install client integrations: auto, codex, claude, all, or none', 'auto')
+  .option('--skip-integrations', 'Alias for --integrations none')
   .action((options: InstallOptions) => installCommand(options));
 
-program.command('uninstall').description('Remove Genie CLI and clean up hooks').action(uninstallCommand);
+program
+  .command('uninstall')
+  .description('Remove Genie CLI, plugins, marker-owned agents, and hooks')
+  .option('--remove-marketplace', 'Also remove the shared Automagik marketplace registrations')
+  .action(uninstallCommand);
 
 const shortcuts = program.command('shortcuts').description('Manage tmux keyboard shortcuts');
 shortcuts.action(shortcutsShowCommand);

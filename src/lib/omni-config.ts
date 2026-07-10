@@ -44,6 +44,8 @@ export interface OmniRoute {
    * `<repo>/AGENTS.md` if it exists, else no persona.
    */
   persona?: string;
+  /** Provider for inbound execution. Omitted preserves historical Claude behavior. */
+  agent?: 'claude' | 'codex';
 }
 
 /**

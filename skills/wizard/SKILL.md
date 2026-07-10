@@ -39,7 +39,7 @@ Ask what to build or fix first. Fuzzy → `/brainstorm`; concrete → `/wish` (c
 
 ## Phase 4 — Execute
 
-State what's about to run (wish slug, group count), then run `/work` — it dispatches native-team subagents per execution group, tracks per-group state via `genie task`, and runs fix loops. When it finishes, `/review` for final verification. Terminal-first alternative: `genie launch <slug>` opens a Warp cockpit with one pane per ready group, each in its own worktree.
+State what's about to run (wish slug, group count), then run `/work` — it dispatches native subagents per execution group, tracks per-group state via `genie task`, and runs fix loops. When it finishes, `/review` for final verification. Terminal-first alternative: `genie launch <slug>` opens a Warp cockpit with one pane per ready group, each in its own worktree.
 
 ## Phase 5 — Celebrate
 

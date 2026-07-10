@@ -48,7 +48,9 @@ export async function loadGenieConfig(): Promise<GenieConfig> {
 
   try {
     const content = readFileSync(configPath, 'utf-8');
-    const data = JSON.parse(content);
+    const data = JSON.parse(content) as Record<string, unknown>;
+    // Configs written before runtime selection launched Claude implicitly.
+    if (data.runtime === undefined) data.runtime = { defaultAgent: 'claude' };
     return GenieConfigSchema.parse(data);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
