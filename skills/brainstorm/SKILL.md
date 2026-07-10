@@ -48,6 +48,8 @@ WRS: ██████░░░░ 60/100
 
 If **Decisions** stays unfilled after 2+ exchanges, convene **domain experts**: dispatch 2-3 lens subagents in parallel (Agent tool), each reading a distinct lens — a deliberation card from `plugins/genie/references/lenses/` (questioner, simplifier, operator, …) plus, when the tradeoff is technical, the matching lane skill at `skills/<lane>/SKILL.md`. Present their perspectives to the user, then keep refining. Escalate to the full `/council` workflow when the decision deserves a durable deliberation record.
 
+Lens root: `$GENIE_HOME/plugins/genie` (default `~/.genie/plugins/genie`); inside the genie repo itself, resolve `references/lenses/` cards and `skills/<lane>/SKILL.md` lanes relative to `plugins/genie/` and the repo root.
+
 ## Scope Size
 
 Multi-subsystem requests waste refinement — assumptions for subsystem A rarely hold for B. Signs: 3+ unrelated modules, infrastructure + application layers together, UI + API + data model with no shared interface, parts that could ship or be staffed independently. When detected: stop refining, tell the user the request spans independent subsystems, decompose into sub-projects (purpose, rough scope, dependencies for each), and start a fresh brainstorm for the first one.

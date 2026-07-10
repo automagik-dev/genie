@@ -11,6 +11,11 @@ grep -q 'references/lenses' skills/review/SKILL.md || { echo "FAIL: review skill
 grep -qiE 'domain[ -]experts?' skills/brainstorm/SKILL.md || { echo "FAIL: brainstorm skill lacks a domain-experts step"; exit 1; }
 grep -q 'references/lenses' skills/brainstorm/SKILL.md || { echo "FAIL: brainstorm skill lacks lens-library reference"; exit 1; }
 
+# --- lens-root anchor (agent-sync): both skills must name GENIE_HOME so synced
+# copies resolve the lens root in any repo, not just the genie checkout
+grep -q 'GENIE_HOME' skills/review/SKILL.md || { echo "FAIL: review skill lacks the lens-root GENIE_HOME anchor"; exit 1; }
+grep -q 'GENIE_HOME' skills/brainstorm/SKILL.md || { echo "FAIL: brainstorm skill lacks the lens-root GENIE_HOME anchor"; exit 1; }
+
 for f in skills/review/SKILL.md skills/brainstorm/SKILL.md; do
   # every cited lens-card path resolves
   while IFS= read -r p; do

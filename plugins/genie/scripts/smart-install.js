@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { execSync, spawnSync } from 'node:child_process';
+import { execFileSync, execSync, spawnSync } from 'node:child_process';
 /**
  * Smart Install Script for genie
  *
@@ -22,8 +22,15 @@ import { join } from 'node:path';
 const requireCjs = createRequire(import.meta.url);
 
 const ROOT = process.env.CLAUDE_PLUGIN_ROOT || join(homedir(), '.claude', 'plugins', 'genie');
-const GENIE_DIR = join(homedir(), '.genie');
+// GENIE_HOME relocates all global genie state; the CLI honors it, so the hook
+// must too or the throttle marker below would never match the CLI's writes.
+const GENIE_DIR = process.env.GENIE_HOME || join(homedir(), '.genie');
 const MARKER = join(GENIE_DIR, '.install-version');
+// Throttle marker the canonical agent-sync engine refreshes (ISO string). We
+// delegate a session-start sync only when it is absent or older than 6h, so
+// session starts stay cheap.
+const AGENT_SYNC_MARKER = join(GENIE_DIR, '.last-agent-sync');
+const AGENT_SYNC_THROTTLE_MS = 6 * 60 * 60 * 1000;
 const IS_WINDOWS = process.platform === 'win32';
 
 // Common installation paths (handles fresh installs before PATH reload)
@@ -390,19 +397,72 @@ function adviseGenieCliInstall() {
   console.error('');
 }
 
-// Main execution
-try {
-  // Stamp the /council workflow template into ~/.claude/workflows on every session
-  // start. This runs BEFORE the early-exit guards below (worker fast-path and
-  // deps-already-present) so a plugin update re-stamps LENS_ROOT even on machines
-  // that would otherwise skip all install work. The stamp is idempotent — it only
-  // writes when the stamped output would differ — and is fully sandboxed in
-  // try/catch so it can never break session start.
+/**
+ * Resolve a genie binary path for agent-sync delegation. Prefers the canonical
+ * v5 location (~/.genie/bin/genie), then a `genie` on PATH. Returns null when no
+ * CLI is installed (plugin-only machine) so the caller falls back to the in-hook
+ * /council stamp.
+ */
+function findGenieBinary() {
+  const canonical = join(GENIE_DIR, 'bin', 'genie');
+  if (existsSync(canonical)) return canonical;
   try {
-    const { stampCouncilWorkflow } = requireCjs('./council-stamp.cjs');
+    const result = spawnSync('genie', ['--version'], {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      shell: IS_WINDOWS,
+      timeout: 5000,
+    });
+    if (result.status === 0) return 'genie';
+  } catch {
+    // not on PATH
+  }
+  return null;
+}
+
+/**
+ * Allow a delegated sync only when the last one is absent or older than 6h. The
+ * CLI refreshes AGENT_SYNC_MARKER (ISO string) on every sync phase.
+ */
+function agentSyncThrottleAllows() {
+  try {
+    const last = Date.parse(readFileSync(AGENT_SYNC_MARKER, 'utf-8').trim());
+    if (Number.isNaN(last)) return true;
+    return Date.now() - last > AGENT_SYNC_THROTTLE_MS;
+  } catch {
+    return true; // no marker / unreadable → allowed
+  }
+}
+
+/**
+ * Delegate ALL syncing (skills + /council stamp for every detected agent) to the
+ * canonical engine via `genie update` with the internal sync-only env. Quiet,
+ * time-bounded, and fully sandboxed — a failure never breaks session start.
+ */
+function delegateAgentSync(geniePath) {
+  try {
+    execFileSync(geniePath, ['update'], {
+      env: { ...process.env, GENIE_UPDATE_SYNC_ONLY: '1' },
+      stdio: 'ignore',
+      timeout: 45000,
+    });
+  } catch (e) {
+    console.error(`Warning: agent sync via genie update failed: ${e.message}`);
+  }
+}
+
+/**
+ * CLI-less fallback: stamp the /council workflow so plugin-only machines still
+ * get it. resolveStampInputs prefers the stable ~/.genie/plugins/genie root,
+ * falling back to CLAUDE_PLUGIN_ROOT.
+ */
+function stampCouncilFallback() {
+  try {
+    const { stampCouncilWorkflow, resolveStampInputs } = requireCjs('./council-stamp.cjs');
+    const { pluginRoot, templatePath } = resolveStampInputs({ claudePluginRoot: ROOT, genieHome: GENIE_DIR });
     const stampResult = stampCouncilWorkflow({
-      templatePath: join(ROOT, 'workflows', 'council.js'),
-      pluginRoot: ROOT,
+      templatePath,
+      pluginRoot,
       targetDir: join(homedir(), '.claude', 'workflows'),
     });
     if (stampResult.action === 'written') {
@@ -411,10 +471,34 @@ try {
   } catch (e) {
     console.error(`Warning: could not stamp /council workflow: ${e.message}`);
   }
+}
 
-  // Workers inherit parent's deps — skip all checks to reduce spawn latency (#712)
+// Main execution
+try {
+  // Workers inherit parent's deps AND the parent session's already-converged
+  // agents — skip everything to keep spawn latency flat (#712). The delegation
+  // below therefore only ever runs in top-level sessions.
   if (process.env.GENIE_WORKER === '1') {
     process.exit(0);
+  }
+
+  // Converge coding agents on session start. This runs BEFORE the remaining
+  // early-exit guard (deps-already-present) so a plugin update refreshes skills
+  // + the /council stamp even on machines that would otherwise skip all install
+  // work. Prefer the canonical CLI engine: `genie update` with the internal
+  // sync-only env syncs skills AND stamps /council for every detected agent
+  // (claude/codex/hermes) from one source root — throttled to 6h so session
+  // starts stay cheap and no sync logic is duplicated in the hook. Only when NO
+  // genie CLI is installed do we fall back to an in-hook /council stamp so
+  // plugin-only machines still get the workflow. Fully sandboxed — nothing here
+  // can break session start.
+  const geniePath = findGenieBinary();
+  if (geniePath) {
+    if (agentSyncThrottleAllows()) {
+      delegateAgentSync(geniePath);
+    }
+  } else {
+    stampCouncilFallback();
   }
 
   // Quick check: if everything is already installed, exit silently
