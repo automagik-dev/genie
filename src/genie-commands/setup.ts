@@ -231,6 +231,30 @@ async function configureCodex(config: GenieConfig, quick: boolean): Promise<Geni
   return config;
 }
 
+type DefaultAgent = GenieConfig['runtime']['defaultAgent'];
+
+/**
+ * Decide `runtime.defaultAgent` after a successful codex configure.
+ *
+ * Only an `auto` selection (the schema default — what a machine with no prior
+ * choice carries) is flipped to `codex`. An explicit existing setting is never
+ * overridden: `claude` stays `claude` (this includes legacy pre-runtime
+ * configs, which `loadGenieConfig` backfills to `claude` because those users
+ * were implicitly launching Claude) and the caller prints `hint` instead so
+ * the user knows codex is one config edit away.
+ */
+export function resolveDefaultAgentAfterCodex(current: DefaultAgent): { agent: DefaultAgent; hint?: string } {
+  if (current === 'auto') return { agent: 'codex' };
+  if (current === 'claude') {
+    const configPath = contractPath(getGenieConfigPath());
+    return {
+      agent: 'claude',
+      hint: `runtime.defaultAgent stays 'claude' (explicit setting). Codex available: set "runtime": { "defaultAgent": "codex" } in ${configPath} to switch.`,
+    };
+  }
+  return { agent: current };
+}
+
 // ============================================================================
 // Debug Options
 // ============================================================================
@@ -393,7 +417,11 @@ export async function setupCommand(options: SetupOptions = {}): Promise<void> {
   if (options.codex) {
     printHeader();
     config = await configureCodex(config, options.quick ?? false);
-    if (config.codex?.configured) config.runtime.defaultAgent = 'codex';
+    if (config.codex?.configured) {
+      const decision = resolveDefaultAgentAfterCodex(config.runtime.defaultAgent);
+      config.runtime.defaultAgent = decision.agent;
+      if (decision.hint) console.log(`  \x1b[2m${decision.hint}\x1b[0m`);
+    }
     await saveGenieConfig(config);
     if (config.codex?.configured) {
       console.log('\x1b[32m\u2713 Codex configuration saved.\x1b[0m');
