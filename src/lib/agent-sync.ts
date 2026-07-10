@@ -54,6 +54,16 @@ export const TARGET_NAME = 'council.js';
 export const MANIFEST_NAME = '.genie-sync.json';
 /** `managedBy` value that certifies a dir as one this engine owns. Exported: single source of truth. */
 export const MANAGED_BY = 'genie-agent-sync';
+/**
+ * Skills NOT synced to Claude Code. On CC, `/council` is the stamped native
+ * WORKFLOW (council.js); the portable `council` SKILL exists for runtimes
+ * without the workflow engine (Codex, Hermes). Shipping both to CC would
+ * register a skill and a workflow under one name — undocumented precedence,
+ * the exact collision council-workflow Decision 8 forbids. Excluded names are
+ * also dropped from the orphan-protection set, so an already-synced managed
+ * copy is backed up and removed on the next sync.
+ */
+const CLAUDE_EXCLUDED_SKILLS = new Set(['council']);
 /** Skill actions that represent an actual write to the target. */
 const WRITE_ACTIONS = new Set<SkillAction>(['created', 'updated', 'adopted', 'removed']);
 /**
@@ -323,8 +333,14 @@ function enumerateSourceSkills(pluginRoot: string): SourceSkill[] {
  * Sync every source skill into `targetParent`, then remove managed orphans.
  * Each skill is guarded independently so one failure cannot sink the rest.
  */
-function syncSkillDirsInto(ctx: RunContext, agent: string, targetParent: string, report: AgentReport): void {
-  const sourceSkills = enumerateSourceSkills(ctx.pluginRoot);
+function syncSkillDirsInto(
+  ctx: RunContext,
+  agent: string,
+  targetParent: string,
+  report: AgentReport,
+  exclude?: Set<string>,
+): void {
+  const sourceSkills = enumerateSourceSkills(ctx.pluginRoot).filter((skill) => !exclude?.has(skill.name));
   const sourceNames = new Set(sourceSkills.map((skill) => skill.name));
   mkdirSync(targetParent, { recursive: true });
   for (const skill of sourceSkills) {
@@ -426,7 +442,7 @@ function syncClaude(ctx: RunContext, report: AgentReport): void {
   const claudeDir = ctx.targets.claude;
   if (!existsSync(claudeDir)) return;
   report.detected = true;
-  syncSkillDirsInto(ctx, 'claude', join(claudeDir, 'skills'), report);
+  syncSkillDirsInto(ctx, 'claude', join(claudeDir, 'skills'), report, CLAUDE_EXCLUDED_SKILLS);
   stampClaudeWorkflow(ctx, claudeDir, report);
 }
 
