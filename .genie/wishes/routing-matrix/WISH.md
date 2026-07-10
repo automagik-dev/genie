@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | EXECUTED — execution review SHIP (2026-07-09; live LangWatch QA pending) |
+| **Status** | EXECUTED — execution review SHIP (2026-07-09); day-1 live pin QA recorded 2026-07-10 — **inconclusive by delivery gap** (Fable share rose on every measure, but the 7 pinned role agents did NOT appear as subagent types under plugin cache 5.260710.2, so pins were applied by hand, not mechanically; properly-pinned wish ran ~11% Fable). Re-test after next stable release carrying agent-sync + `genie update` ×2 — see [qa/routing-pin-qa-20260710.md](qa/routing-pin-qa-20260710.md) |
 | **Slug** | `routing-matrix` |
 | **Date** | 2026-07-09 |
 | **Author** | Felipe (planned with Fable 5 + Hermes counter-read) |

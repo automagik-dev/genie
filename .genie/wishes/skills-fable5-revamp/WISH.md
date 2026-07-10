@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT — plan review SHIP on full scope G1–G8 (2026-07-04, 2 review rounds); `/work` Wave 1 committed (G1–G6, G8), G7 verification complete (`verification.md`) — awaiting execution review |
+| **Status** | EXECUTED — execution review **SHIP** (2026-07-10, HIGH 0 / MEDIUM 0 / 3 LOW observations; genie side independently re-verified, omni G5/G6 attested via `verification.md`) — [reports/execution-review-20260710.md](reports/execution-review-20260710.md). Merged PR #2518 (merge `1308e4c6`); plan review SHIP on full scope G1–G8 (2026-07-04, 2 rounds); G7 verification complete (`verification.md`). LOW follow-ups: omni-side confirm of G5/G6 numbers, `verification.md` diff-count one commit stale (cosmetic), and a "superseded by later wishes" note for `learn`/`council` (both since removed by other wishes) |
 | **Slug** | `skills-fable5-revamp` |
 | **Date** | 2026-07-04 |
 | **Author** | Felipe (planned with Fable 5) |
