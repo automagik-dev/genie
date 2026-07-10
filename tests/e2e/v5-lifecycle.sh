@@ -153,7 +153,7 @@ step "author wish documents"
 WISH_DIR="$FIXTURE/.genie/wishes/$SLUG"
 mkdir -p "$WISH_DIR"
 # Render a WISH.md from the repo template (skills copy this template verbatim).
-sed "s/{{slug}}/$SLUG/g; s/{{date}}/$(date +%F)/g" "$REPO_ROOT/templates/wish-template.md" > "$WISH_DIR/WISH.md"
+sed "s/{{slug}}/$SLUG/g; s/{{date}}/$(date +%F)/g" "$REPO_ROOT/skills/wish/templates/wish-template.md" > "$WISH_DIR/WISH.md"
 # A brainstorm design note (the skills' upstream artifact).
 printf '# Design: %s\n\nZero-daemon lifecycle proof.\n' "$SLUG" > "$WISH_DIR/DESIGN.md"
 git -C "$FIXTURE" add ".genie/wishes/$SLUG/WISH.md" ".genie/wishes/$SLUG/DESIGN.md"

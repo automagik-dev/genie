@@ -39,6 +39,19 @@ The multi-perspective engine ships as a native dynamic workflow, not a skill:
 - **Requirements**: Claude Code ≥ 2.1.154 with dynamic workflows available (paid plans; an org-level `disableWorkflows` setting turns the command off).
 - **Override**: a project-level `.claude/workflows/council.js` takes precedence over the personal stamped copy.
 
+## Release lag: pinned versions and update cadence
+
+Installed plugin versions **pin to GitHub Releases** — a `/plugin install` snapshots
+whatever release is current and stays there until you update. It does **not** track
+`dev` or `main`. The update cadence is manual: run `/plugin update` to advance a
+machine to the latest published release.
+
+Because the pin is sticky, a machine can drift well behind the source tree. Observed
+example: a machine sat pinned at `5.260703.5` for a week while `dev` moved on — the
+plugin kept working, but none of the intervening fixes reached it until someone ran
+`/plugin update`. Treat `/plugin update` as a periodic hygiene step, not a one-time
+setup action.
+
 ## Directory Structure
 
 ```text

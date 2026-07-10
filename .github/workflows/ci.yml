@@ -74,6 +74,9 @@ jobs:
       - name: Wishes lint
         run: bun run wishes:lint
 
+      - name: Fresh-install smoke
+        run: bun run scripts/fresh-install-smoke.ts
+
       - name: Test
         run: bun test
 

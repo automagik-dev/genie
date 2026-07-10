@@ -88,7 +88,7 @@ At WRS = 100:
    ```bash
    git add .genie/brainstorms/<slug>/DESIGN.md .genie/brainstorms/<slug>/DRAFT.md
    ```
-   Stage exactly these two; other brainstorm artifacts stay untracked. `bun run wishes:lint` fails any wish whose design link doesn't resolve to a real file — uncommitted brainstorms are missing in CI and sibling worktrees, so never skip the stage.
+   Stage exactly these two; other brainstorm artifacts stay untracked. The genie repo's wish linter fails any wish whose design link doesn't resolve to a real file — uncommitted brainstorms are missing in CI and sibling worktrees, so never skip the stage.
 4. Update the jar — move the entry to Poured with the wish link.
 5. Create a board pointer; if this fails (no `.genie/genie.db` yet, CLI unavailable), warn and continue — DESIGN.md and the jar in git are the source of truth:
    ```bash
