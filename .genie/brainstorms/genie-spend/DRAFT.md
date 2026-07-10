@@ -6,7 +6,7 @@
 - Baseline: $17,857 / 95.77M billable tokens / 11.79B cache-read tokens / 1097 traces in 21d (~1000 in last 4 days). Fable $13.8k · Opus $7.1k · Haiku $1.2k · Sonnet $0.5k (span-attributed shares).
 - Working analytics recipes (archived in parent DRAFT): tokens+cost by model (groupBy metadata.model), top sessions (groupBy metadata.thread_id), by effort (filter-loop on gen_ai.request.reasoning_effort — no effort groupBy exists), top-N traces (trace/search + client sort, scrollId pagination).
 - `metadata.labels` groupBy EXISTS but CC's OTel export emits no genie labels; thread_id = whole CC session (no per-subagent split); model lives on spans, not traces.
-- LangWatch CLI (`npm i -g langwatch`) wraps the same endpoints, `--format json`, designed to be agent-driven.
+- LangWatch CLI (`npm i -g langwatch`) wraps the same endpoints, `--format json`, designed to be agent-driven. **Access proven 2026-07-10: the existing OTLP-ingest key authenticates fine through the CLI; hand-rolled REST `POST /api/analytics` + `/api/trace/search` returned 403 (payload/route shape, not the key). Phase 1 should shell out to the `langwatch` CLI, NOT hand-roll REST.** Substrate + recipes archived in [genie-spend-calibration-20260710.md](genie-spend-calibration-20260710.md).
 - Hermes north star: **cost per group accepted without reopening** — measure decisions, not calls.
 
 ## 7-DAY BURN ANALYSIS (run 2026-07-09 — first real analysis pass)
@@ -55,8 +55,28 @@ Totals: **$18,175 · 1,113 traces · 63 sessions.** Token buckets: prompt (fresh
 3. Fewer tool calls per turn (batching, scripts over call-chains): every call re-reads full context — new guidance item for work/dispatch contract.
 4. Stable prompt prefixes so cache writes stay linear (constraint on always-on-genie inject: deterministic, session-start-only).
 
+## CALIBRATION — 2026-07-10 (day-1 pin-QA window, partial ~6.85h) — [full file](genie-spend-calibration-20260710.md)
+
+Measured via the `langwatch` CLI during the routing-pin day-1 QA. This window is a gate/review-heavy overnight dogfood — good for **shape/recipe** calibration, not a representative full day. Cross-ref [routing-matrix/qa/routing-pin-qa-20260710.md](../../wishes/routing-matrix/qa/routing-pin-qa-20260710.md).
+
+**$/day trend point (span-level `performance.total_cost`):** 07-08 full **$4,352** · 07-09 full **$1,230** (pins merged 21:51Z) · 07-10 00:00–06:51Z **$1,613** partial → **~$5,650/day run-rate** (upper-ish bound, not typical). The 21-day baseline averages ~$850/day, but recent dogfood days sit well above — the exact heavy-spend spike `genie spend` needs to surface.
+
+**$/model split (07-10, billable `cost_billed`):** Fable $956 (**57%**) · Opus $562 (34%) · Haiku $159 (9%) — Fable share rose on every measure this window (see the pin-QA file).
+
+**Per-effort cost-per-trace (SOLID — from trace search's per-trace `reasoning_effort` + `total_cost`):** this is the cleanest per-lane number available and a good basis for a `genie spend --by-effort` view / per-lane budget alerts.
+| Effort | n | p50 | p90 | mean |
+|---|---:|---:|---:|---:|
+| xhigh | 37 | $5.39 | $26.23 | $9.74 |
+| high | 27 | $5.00 | $20.81 | $7.83 |
+| max | 20 | $18.76 | $43.56 | $23.85 |
+| **all** | 84 | **$6.76** | **$32.33** | $12.49 |
+
+`max` is the expensive deep-reasoning/gate tier (~3–4× the p50 of xhigh/high).
+
+**Phase-1 query shapes that proved WORKABLE (all via the CLI, existing key):** cost-by-model, cost-by-day (per-day windows; each query returns the prior period free), token-volume-by-model, trace-count-by-model, top-sessions-by-cost (`--group-by metadata.thread_id`), effort histogram + per-effort cost percentiles. **BROKEN/blocked tonight:** (1) direct REST 403 → use the CLI; (2) **effort-filtered analytics** unavailable (`analytics query` has no `--filter`; underlying effort-filter silently broken) → **effort splits must be computed client-side from trace search**; (3) **per-model p50/p90 NOT derivable** — trace search returns no per-trace model (spans empty; model lives only at span level in analytics) → **parked**; per-effort percentiles are the usable substitute, or span-level export the CLI doesn't expose; (4) **cache-read + `--group-by metadata.model`** hits a known ClickHouse bug → avoid (query cache-read without the model groupBy). Net: a CLI-backed Phase-1 covering model/day/thread/effort splits is achievable now; per-model percentiles and effort-filtered analytics are the two gaps to design around.
+
 ## GAPS
-- [ ] Key/endpoint source for `genie spend`: read from CC settings env (OTEL_EXPORTER_OTLP_*), from genie config, or both with precedence? (Machine-portability: teammates' machines have the same settings?)
+- [ ] Key/endpoint source for `genie spend`: read from CC settings env (OTEL_EXPORTER_OTLP_*), from genie config, or both with precedence? (Machine-portability: teammates' machines have the same settings?) — **2026-07-10 evidence: the OTLP-ingest key from `OTEL_EXPORTER_OTLP_HEADERS` in `~/.claude/settings.json` authenticates the CLI; endpoint `https://langwatch.khal.ai`.**
 - [ ] Cadence: on-demand only, or a scheduled snapshot (e.g. daily line into .genie/ or omni message)? You already run "live metrics" commits — integrate or keep separate?
 - [ ] Consumers: just you, or team/omni-channel reporting?
 - [ ] Should `genie doctor` warn when burn-rate exceeds a threshold (needs a threshold from you)?
