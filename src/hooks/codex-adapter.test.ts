@@ -26,6 +26,39 @@ describe('Codex hook adapter', () => {
     ).toContain('"behavior":"deny"');
   });
 
+  test('deny carries the documented optional message so denial reasons surface in Codex', () => {
+    const denied = JSON.parse(
+      codexPermissionDecision({
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'deny',
+          permissionDecisionReason: 'denied via omni approval',
+        },
+      }),
+    );
+    expect(denied.hookSpecificOutput.decision).toEqual({ behavior: 'deny', message: 'denied via omni approval' });
+
+    // Legacy decision/reason form maps too.
+    const legacy = JSON.parse(codexPermissionDecision({ decision: 'deny', reason: 'branch guard' }));
+    expect(legacy.hookSpecificOutput.decision).toEqual({ behavior: 'deny', message: 'branch guard' });
+
+    // Allow never grows a message; deny without a reason stays bare.
+    const allow = JSON.parse(
+      codexPermissionDecision({
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'allow',
+          permissionDecisionReason: 'auto-approved',
+        },
+      }),
+    );
+    expect(allow.hookSpecificOutput.decision).toEqual({ behavior: 'allow' });
+    const bareDeny = JSON.parse(
+      codexPermissionDecision({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny' } }),
+    );
+    expect(bareDeny.hookSpecificOutput.decision).toEqual({ behavior: 'deny' });
+  });
+
   test('timeout ask returns no decision', async () => {
     const output = await dispatchCodexPermissionRequest(
       { hook_event_name: 'PermissionRequest', tool_name: 'Bash' },

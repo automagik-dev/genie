@@ -1,0 +1,97 @@
+{
+  "description": "Genie lifecycle hooks for Codex. Matchers use canonical Codex tool names only (Bash, apply_patch + Edit/Write aliases, mcp__server__tool) — see plugins/genie/references/codex-integration-map.md.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${PLUGIN_ROOT}/scripts/smart-install.js",
+            "timeout": 60
+          },
+          {
+            "type": "command",
+            "command": "node ${PLUGIN_ROOT}/scripts/first-run-check.cjs",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "node ${PLUGIN_ROOT}/scripts/session-context.cjs",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Write|Edit|apply_patch|mcp__genie__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "env GENIE_HOOK_RUNTIME=codex genie hook dispatch",
+            "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|apply_patch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${PLUGIN_ROOT}/scripts/validate-wish.cjs",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "env GENIE_HOOK_RUNTIME=codex genie hook dispatch",
+            "timeout": 120
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|apply_patch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${PLUGIN_ROOT}/scripts/validate-wish.cjs",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${PLUGIN_ROOT}/scripts/session-context.cjs",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${PLUGIN_ROOT}/scripts/validate-completion.cjs",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

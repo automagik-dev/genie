@@ -40,8 +40,10 @@ function fakeGenieScript(label: string): string {
   return [
     '#!/bin/sh',
     `echo "${label} env=\${GENIE_UPDATE_SYNC_ONLY:-} $@" >> "$FAKE_GENIE_LOG"`,
+    // Default fake version sits ABOVE the flag-aware threshold (versions are
+    // 5.YYMMDD.N — the minor is a date, so "999" would sort BEFORE 260710).
     'if [ "$1" = "--version" ]; then',
-    '  echo "5.999.0"',
+    '  echo "${FAKE_GENIE_VERSION:-5.999999.0}"',
     '  exit 0',
     'fi',
     'exit "${FAKE_GENIE_EXIT:-0}"',
@@ -104,7 +106,7 @@ function readLog(fx: Fixture): string {
   }
 }
 
-function runHook(fx: Fixture, opts: { fakeGenieExit?: number } = {}) {
+function runHook(fx: Fixture, opts: { fakeGenieExit?: number; fakeGenieVersion?: string } = {}) {
   const env: Record<string, string> = {
     HOME: fx.home,
     PATH: `${fx.fakeBin}:${CLEAN_PATH}`,
@@ -113,7 +115,15 @@ function runHook(fx: Fixture, opts: { fakeGenieExit?: number } = {}) {
     FAKE_GENIE_LOG: fx.logPath,
   };
   if (opts.fakeGenieExit !== undefined) env.FAKE_GENIE_EXIT = String(opts.fakeGenieExit);
+  if (opts.fakeGenieVersion !== undefined) env.FAKE_GENIE_VERSION = opts.fakeGenieVersion;
   return spawnSync(NODE_BIN as string, [SCRIPT_PATH], { env, encoding: 'utf-8', timeout: 30_000 });
+}
+
+/** Log lines for `update` invocations only (the fake also logs --version probes). */
+function updateInvocations(fx: Fixture): string[] {
+  return readLog(fx)
+    .split('\n')
+    .filter((l) => / update( |$)/.test(l));
 }
 
 let fx: Fixture;
@@ -221,6 +231,60 @@ describe('delegateAgentSync', () => {
       .filter((l) => l.includes('update --sync-only'));
     expect(attempts).toHaveLength(1); // second run throttled by the retry-window marker
     expect(second.stderr).not.toContain('agent sync via genie update failed');
+  });
+});
+
+describe('delegateAgentSync version tiers (old-binary-safe invocation)', () => {
+  test('flag-aware binary (future default 5.999999.0) → `update --sync-only` + env', () => {
+    installFakeGenie(fx, 'canonical', 'CANONICAL');
+    const res = runHook(fx);
+    expect(res.status).toBe(0);
+    expect(updateInvocations(fx)).toEqual(['CANONICAL env=1 update --sync-only']);
+  });
+
+  test('env-aware, flag-unaware binary (5.260710.5) → env-only `update`, NO --sync-only', () => {
+    installFakeGenie(fx, 'canonical', 'CANONICAL');
+    const res = runHook(fx, { fakeGenieVersion: '5.260710.5' });
+    expect(res.status).toBe(0);
+    // commander in .5–.9 rejects the unknown flag before the env is honored —
+    // the invocation must be `genie update` with GENIE_UPDATE_SYNC_ONLY=1 only.
+    expect(updateInvocations(fx)).toEqual(['CANONICAL env=1 update']);
+  });
+
+  test('env-aware, flag-unaware binary (5.260710.9, last flag-unaware release) → env-only `update`', () => {
+    installFakeGenie(fx, 'canonical', 'CANONICAL');
+    const res = runHook(fx, { fakeGenieVersion: '5.260710.9' });
+    expect(res.status).toBe(0);
+    expect(updateInvocations(fx)).toEqual(['CANONICAL env=1 update']);
+  });
+
+  test('pre-contract binary (5.260710.4) → delegation skipped entirely, retry marker + /council fallback', () => {
+    installFakeGenie(fx, 'canonical', 'CANONICAL');
+    const res = runHook(fx, { fakeGenieVersion: '5.260710.4' });
+    expect(res.status).toBe(0);
+    // A pre-contract binary ignores GENIE_UPDATE_SYNC_ONLY — invoking `update`
+    // would run a full unattended download + binary swap mid-session. Never call it.
+    expect(updateInvocations(fx)).toEqual([]);
+    expect(res.stderr).toContain('predates the agent-sync contract');
+
+    // Backdated retry-window marker, same shape as a failed delegation.
+    const ts = Date.parse(readFileSync(fx.markerPath, 'utf8').trim());
+    const delta = Date.now() - ts;
+    expect(delta).toBeLessThan(THROTTLE_MS);
+    expect(delta).toBeGreaterThan(THROTTLE_MS - RETRY_MS - 60_000);
+
+    // /council still stamped in-hook on exactly these machines.
+    const stamped = join(fx.home, '.claude', 'workflows', 'council.js');
+    expect(existsSync(stamped)).toBe(true);
+    expect(readFileSync(stamped, 'utf8')).toContain(fx.pluginRoot);
+  });
+
+  test('unprobeable version output → treated as pre-contract (skip, no update invocation)', () => {
+    installFakeGenie(fx, 'canonical', 'CANONICAL');
+    const res = runHook(fx, { fakeGenieVersion: 'not-a-version' });
+    expect(res.status).toBe(0);
+    expect(updateInvocations(fx)).toEqual([]);
+    expect(existsSync(join(fx.home, '.claude', 'workflows', 'council.js'))).toBe(true);
   });
 });
 
