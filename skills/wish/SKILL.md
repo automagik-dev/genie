@@ -35,9 +35,9 @@ test -f .genie/brainstorms/<slug>/DESIGN.md
 5. **Scaffold** — always copy the template, never hand-write WISH.md:
    ```bash
    mkdir -p .genie/wishes/<slug>
-   cp templates/wish-template.md .genie/wishes/<slug>/WISH.md
+   cp "${CLAUDE_SKILL_DIR}/templates/wish-template.md" .genie/wishes/<slug>/WISH.md
    ```
-   `templates/wish-template.md` (genie repo) is the single source of truth for wish structure — a plain git document, no runtime scaffolder. Copying guarantees the skeleton the parser and linter expect; ad-hoc wishes regularly fail `bun run wishes:lint`.
+   The template ships inside this skill as the single source of truth for wish structure — a plain document, no runtime scaffolder. Copying guarantees the skeleton the parser and linter expect; ad-hoc wishes regularly fail structural lint.
 6. **Fill:** replace the `{{slug}}`/`{{date}}` tokens and every `<TODO: …>` marker with real content. Every group gets acceptance criteria plus a validation command.
 7. **Declare dependencies:** `depends-on` between execution groups and cross-wish `depends-on`/`blocks` in the WISH.md — the DAG is a planning artifact in git.
 8. **Create tasks** — one per execution group, so `/work` can claim and complete each group and the board reflects progress:
@@ -46,7 +46,7 @@ test -f .genie/brainstorms/<slug>/DESIGN.md
    genie task list --wish <slug>   # inspect what was created
    ```
    Tasks carry the `--wish`/`--group` linkage; the dependency DAG stays in the WISH.md document, not in task rows. If creation fails (no `.genie/genie.db` yet, CLI unavailable), warn and continue — WISH.md in git is the source of truth and must remain usable by `/work` without task rows.
-9. **Handoff:** run `bun run wishes:lint`. If it reports any error, surface it and stop — never hand a structurally broken wish onward. Only after lint passes, auto-invoke `/review` (plan review) on the WISH.md. Never suggest `/work` directly — the review gate comes first.
+9. **Handoff:** run the wish linter — inside the genie repo, `grep -q '"wishes:lint"' package.json 2>/dev/null && bun run wishes:lint`. If it reports any error, surface it and stop — never hand a structurally broken wish onward. Only after lint passes, auto-invoke `/review` (plan review) on the WISH.md. Never suggest `/work` directly — the review gate comes first.
 
 ## Wish Document Sections
 
@@ -64,8 +64,8 @@ test -f .genie/brainstorms/<slug>/DESIGN.md
 | Assumptions / Risks | No | What could invalidate the plan |
 
 ## Rules
-- Never write WISH.md from scratch — always `cp templates/wish-template.md`, then edit.
-- Lint before handoff: `bun run wishes:lint` must pass before `/review` sees the wish.
+- Never write WISH.md from scratch — always copy the in-skill template, then edit.
+- Lint before handoff: the genie repo's wish linter must pass before `/review` sees the wish.
 - Never emit a bracket-link to a non-existent brainstorm — use the `_No brainstorm — direct wish_` stub.
 - No implementation during `/wish` — planning only.
 - Every group testable, bite-sized, and independently shippable; no vague tasks ("improve everything").
