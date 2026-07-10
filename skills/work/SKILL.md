@@ -38,19 +38,19 @@ When you are spawned as a subagent for a group, your dispatch prompt carries the
 
 ## Dispatch
 
-Spawn subagents with the **native delegation surface**; never execute group work directly. Dispatch a wave together so independent groups can run concurrently. Subagents notify you on completion. Every dispatch selects one named role below; implicit or unnamed roles are forbidden.
+Spawn subagents with the **native delegation surface** — on Claude Code the Agent tool (the role is the `subagent_type`), on Codex the matching `genie_*` custom agent; never execute group work directly. Dispatch a wave together so independent groups can run concurrently. Subagents notify you on completion. Every dispatch selects one named role below; implicit or unnamed roles are forbidden.
 
-| Need | Role (Codex name) |
-|------|----------------------------|
-| Deterministic implementation, complexity 0-1 | `engineer-trivial` (`genie_engineer_trivial`) |
-| Moderately coupled implementation, complexity 2-3 | `engineer-standard` (`genie_engineer_standard`) |
-| High-coupling or stateful implementation, complexity 4+ | `engineer-complex` (`genie_engineer_complex`) |
-| Review | `reviewer` (`genie_reviewer`; never the group's engineer) |
-| Fix | `fixer` (`genie_fixer`; separate from the reviewer) |
-| Final plan or execution gate | `final-gate` (`genie_final_gate`) |
-| Bounded read-only discovery | `scout` (`genie_scout`) |
-| Quick validation | Bash directly — no subagent |
-| Follow-up to a running subagent | **native follow-up messaging** (keeps its context) |
+| Need | Claude `subagent_type` | Codex agent name |
+|------|------------------------|------------------|
+| Deterministic implementation, complexity 0-1 | `engineer-trivial` | `genie_engineer_trivial` |
+| Moderately coupled implementation, complexity 2-3 | `engineer-standard` | `genie_engineer_standard` |
+| High-coupling or stateful implementation, complexity 4+ | `engineer-complex` | `genie_engineer_complex` |
+| Review (never the group's engineer) | `reviewer` | `genie_reviewer` |
+| Fix (separate from the reviewer) | `fixer` | `genie_fixer` |
+| Final plan or execution gate | `final-gate` | `genie_final_gate` |
+| Bounded read-only discovery | `scout` | `genie_scout` |
+| Quick validation | Bash directly — no subagent | Bash directly — no subagent |
+| Follow-up to a running subagent | **SendMessage** (keeps its context) | undocumented — verify live, else re-dispatch with curated context (see `native-surfaces.md`) |
 
 Reviewer ≠ engineer is a hard rule — an agent never reviews its own work.
 
