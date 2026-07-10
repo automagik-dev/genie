@@ -20,8 +20,12 @@
 ## Degradation policy (learned live, 2026-07-09)
 First real invocation of the auto plan-gate counter-read hit cegonha unreachable (network path down; host fine an hour earlier). Decided behavior to encode in the delegate skill: **counter-read fails OPEN** — the gate proceeds on the internal reviewer alone, logs "counter-read unavailable (host unreachable)" in the review record, and the next gate retries. Never block a plan gate on external-agent availability; never silently pretend the counter-read happened.
 
+## RECONCILE (2026-07-10 — agent-sync shipped, PR #2541 merged to dev)
+
+**The Codex *plumbing* is now built and owned by agent-sync — this track consumes it, does not rebuild it.** `genie update` (and `genie install`) now fan the canonical `~/.genie/plugins/genie` source into every DETECTED coding agent on every invocation, including a **Codex adapter that ships genie skills to `~/.codex/skills/.curated/`** (managed manifest + adopt-with-backup + orphan removal). So the "one delegate skill + per-agent adapter references" decision is unchanged, but its Codex prerequisite — *getting genie's skills onto the Codex side* — is solved for free: the delegate skill can assume the curated genie skills are present on any machine that has run `genie update`. What remains this track's own work is the **delegation runtime** (companion `codex exec` / `hermes chat -q` sessions, JSON hand-back, background+poll, the `wish-<slug>` session persistence on the genie.db row), not the skill distribution. The Codex-install/auth GAP below narrows accordingly to *auth + which roles first*, since "are genie's skills installed on Codex" is answered by agent-sync.
+
 ## GAPS
-- [ ] Codex reality on your machines: installed? auth method (API key vs OAuth)? Which lifecycle roles do you want Codex for first — engineer on suitable groups, PR review dissent, or both?
+- [ ] Codex reality on your machines: installed? auth method (API key vs OAuth)? Which lifecycle roles do you want Codex for first — engineer on suitable groups, PR review dissent, or both? (Skill distribution to `~/.codex/skills/.curated/` is now handled by agent-sync — see RECONCILE above; this GAP is now auth + role-scoping only.)
 - [ ] Hermes canonical vs alias: confirm `-z` is a cegonha alias (helper works today; adapter should document canonical `hermes chat -q` + fallback).
 - [ ] Budget/limits for external agents: max concurrent companion sessions? Hermes host load limits (cegonha is shared infra — benchmarks run there)?
 - [ ] Session lifecycle: when a wish ships, are its companion sessions retired (hermes sessions delete is gated on shared infra) or kept as history?
