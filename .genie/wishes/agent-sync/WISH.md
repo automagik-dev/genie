@@ -78,9 +78,11 @@
 3. `src/lib/agent-sync.test.ts` — the behavior matrix from Success Criteria, tmpdir-isolated (GENIE_HOME + injected agent target dirs), real files, afterEach cleanup.
 
 **Acceptance Criteria:**
-- [ ] Behavior matrix covered and green; typecheck + biome clean
-- [ ] No wiring into commands (G2); no user-facing surface
-- [ ] Transient knip warnings for not-yet-wired exports are acceptable and reported (G2 resolves)
+- [x] Behavior matrix covered and green; typecheck + biome clean
+- [x] No wiring into commands (G2); no user-facing surface
+- [x] Transient knip warnings for not-yet-wired exports are acceptable and reported (none occurred — knip clean)
+
+**Status:** DONE (2026-07-10) — gate `G1 PASS` (orchestrator-run, 31 tests), execution review FIX-FIRST → fixer → re-review SHIP (loop 1). HIGH closed with empirical re-proof: staging suffixes were `.new`/`.old` and a user's manual-backup sibling dir (`review.old`) was silently destroyed by the pre-clean — now collision-proof `.genie-sync.staging`/`.genie-sync.prev` constants shared by writer + orphan filter, locked by on-disk survival tests. LOWs: hermes enable also fires on the adopt transition; late adapter throws preserve the partial report. 27→31 tests, watched-fail-first on every fix.
 
 **Validation:**
 ```bash
