@@ -92,7 +92,11 @@ test ! -e templates/wish-template.md || { echo "repo-root template still present
 grep -q 'CLAUDE_SKILL_DIR}/templates/wish-template.md' skills/wish/SKILL.md || { echo "scaffold not CLAUDE_SKILL_DIR-addressed"; exit 1; }
 grep -nE '^\s*(bash )?bun run wishes:lint' skills/wish/SKILL.md skills/brainstorm/SKILL.md skills/README.md | grep -v 'grep -q' && { echo "unguarded executable lint invocation remains"; exit 1; }
 grep -q 'cp templates/wish-template.md' skills/wish/SKILL.md && { echo "old bare cp form survives in wish skill"; exit 1; }
-grep -rn 'templates/wish-template.md' . 2>/dev/null | grep -v 'skills/wish/templates/wish-template.md' | grep -v 'CLAUDE_SKILL_DIR}/templates/wish-template.md' | grep -v '^\./\.genie/' | grep -v '^\./node_modules/' | grep -v '^\./\.docs-vendor/' | grep -v '^\./\.git/' && { echo "stale old-path reference (any extension)"; exit 1; }
+# git grep is tracked-only (auto-skips node_modules/.git and the .docs-vendor submodule);
+# :(exclude) drops .genie history docs and the lint rule's own negative fixtures
+# (skills-lint.test.ts intentionally ships bare `cp templates/...` strings) so the
+# sweep stays replay-safe post-G2 while still catching a real stale old-path reference.
+git grep -In 'templates/wish-template\.md' -- ':(exclude).genie/' ':(exclude)scripts/skills-lint.test.ts' | grep -v 'skills/wish/templates/wish-template.md' | grep -v 'CLAUDE_SKILL_DIR}/templates/wish-template.md' && { echo "stale old-path reference (any extension)"; exit 1; }
 grep -rn 'REPO_ROOT/templates' tests/ && { echo "e2e still reads repo-root template"; exit 1; }
 bun run wishes:lint || exit 1
 bun run check || exit 1

@@ -34,6 +34,26 @@ describe('checkResourceLine — imperative discriminators', () => {
     expect(checkResourceLine(guarded)).toEqual([]);
   });
 
+  test('passes other short-circuit package.json probe shapes', () => {
+    expect(checkResourceLine('test -f package.json && bun run skills:lint')).toEqual([]);
+    expect(checkResourceLine('[ -f package.json ] && bun run wishes:lint')).toEqual([]);
+  });
+
+  test('flags a line that only mentions package.json incidentally', () => {
+    // Trailing comment — the probe does not gate the command.
+    expect(checkResourceLine('bun run skills:lint  # regenerates package.json entries').map((v) => v.rule)).toEqual([
+      'unguarded-repo-lint',
+    ]);
+    // package.json referenced AFTER the command — no short-circuit guard.
+    expect(checkResourceLine('bun run wishes:lint && cat package.json').map((v) => v.rule)).toEqual([
+      'unguarded-repo-lint',
+    ]);
+    // Mention in a `;`-joined prose segment is not a short-circuit guard.
+    expect(checkResourceLine('echo "see package.json"; bun run skills:lint').map((v) => v.rule)).toEqual([
+      'unguarded-repo-lint',
+    ]);
+  });
+
   test('flags an imperative repo-script invocation but not a descriptive mention', () => {
     expect(checkResourceLine('bun run scripts/skills-lint.ts').map((v) => v.rule)).toEqual(['repo-script-invocation']);
     expect(checkResourceLine('node scripts/foo.ts').map((v) => v.rule)).toEqual(['repo-script-invocation']);
