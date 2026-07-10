@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { computeDispatchOutput } from '../dispatch-command.js';
+import { computeDispatchOutput, resolveDispatchRuntime } from '../dispatch-command.js';
 
 /**
  * Entry-level fail-closed contract for `genie hook dispatch`.
@@ -68,5 +68,39 @@ describe('computeDispatchOutput fail-closed', () => {
   test('legitimate allow (unmatched event) still passes through as empty', async () => {
     const out = await computeDispatchOutput(JSON.stringify({ hook_event_name: 'PreCompact' }));
     expect(out).toBe('');
+  });
+});
+
+/**
+ * Runtime selection contract. The shipped hooks files use the env prefix
+ * (`env GENIE_HOOK_RUNTIME=... genie hook dispatch`) so the command line stays
+ * parseable by OLD deployed binaries — a `--runtime` flag on the command line
+ * would make every pre-flag binary error at parse time and fail-closed deny
+ * tools fleet-wide on plugin-first rollouts. The flag remains supported and
+ * wins over the env for manual/forward-compat use.
+ */
+describe('resolveDispatchRuntime', () => {
+  test('defaults to claude with no flag, no env — exactly what old binaries did', () => {
+    expect(resolveDispatchRuntime(undefined, {})).toBe('claude');
+    expect(resolveDispatchRuntime('auto', {})).toBe('claude');
+  });
+
+  test('GENIE_HOOK_RUNTIME env selects the runtime (the hooks-file mechanism)', () => {
+    expect(resolveDispatchRuntime('auto', { GENIE_HOOK_RUNTIME: 'codex' })).toBe('codex');
+    expect(resolveDispatchRuntime(undefined, { GENIE_HOOK_RUNTIME: 'claude', PLUGIN_ROOT: '/p' })).toBe('claude');
+  });
+
+  test('explicit --runtime flag wins over the env', () => {
+    expect(resolveDispatchRuntime('claude', { GENIE_HOOK_RUNTIME: 'codex' })).toBe('claude');
+    expect(resolveDispatchRuntime('codex', { GENIE_HOOK_RUNTIME: 'claude' })).toBe('codex');
+  });
+
+  test('auto falls back to PLUGIN_ROOT detection (Codex plugin hosts export it)', () => {
+    expect(resolveDispatchRuntime('auto', { PLUGIN_ROOT: '/plugin' })).toBe('codex');
+    expect(resolveDispatchRuntime(undefined, { PLUGIN_ROOT: '/plugin' })).toBe('codex');
+  });
+
+  test('garbage env value is ignored, not trusted', () => {
+    expect(resolveDispatchRuntime('auto', { GENIE_HOOK_RUNTIME: 'weird' })).toBe('claude');
   });
 });

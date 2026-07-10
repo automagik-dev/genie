@@ -75,7 +75,7 @@ for required in \
   "plugins/genie/.codex-plugin/plugin.json" \
   "plugins/genie/.claude-plugin/plugin.json" \
   "plugins/genie/hooks/hooks.json" \
-  "plugins/genie/hooks/claude-hooks.json"; do
+  "plugins/genie/hooks/codex-hooks.json"; do
   [[ -f "${STAGE}/${required}" ]] || { echo "error: release payload missing ${required}" >&2; exit 1; }
 done
 

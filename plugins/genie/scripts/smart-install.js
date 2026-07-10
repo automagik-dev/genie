@@ -461,24 +461,83 @@ function writeAgentSyncMarker(date) {
   }
 }
 
+// --- agent-sync delegation contract tiers -----------------------------------
+// The installed binary decides HOW (and whether) we may delegate. Probed once
+// per delegation with `genie --version` (cheap, zero network).
+//
+// - >= SYNC_FLAG_AWARE_MIN: binary registers `update --sync-only` → invoke the
+//   flag form (plus the env, belt-and-suspenders).
+// - >= SYNC_ENV_AWARE_MIN (5.260710.5, first release honoring the
+//   GENIE_UPDATE_SYNC_ONLY=1 fast path): env-aware but FLAG-UNAWARE — commander
+//   rejects the unknown `--sync-only` before the env is ever read, so these
+//   binaries must be invoked env-only (`genie update` + GENIE_UPDATE_SYNC_ONLY=1).
+// - older (pre-contract): the env is ignored and `genie update` would run a
+//   full unattended download + binary swap mid-session → never delegate; the
+//   caller falls back to the in-hook /council stamp.
+//
+// SYNC_FLAG_AWARE_MIN is the first release cut AFTER 5.260710.9 (the flag lands
+// with this plugin version; auto-versioning bumps past .9 on release). A dev
+// build still reporting .9 takes the env-only path, which flag-aware binaries
+// honor identically.
+const SYNC_ENV_AWARE_MIN = [5, 260710, 5];
+const SYNC_FLAG_AWARE_MIN = [5, 260710, 10];
+
+/** Extract [major, minor, patch] from `genie --version` output, or null. */
+function parseGenieVersion(raw) {
+  const m = /(\d+)\.(\d+)\.(\d+)/.exec(raw || '');
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+
+/** Numeric triple compare: negative when a < b, 0 when equal, positive when a > b. */
+function compareVersions(a, b) {
+  for (let i = 0; i < 3; i++) {
+    if (a[i] !== b[i]) return a[i] - b[i];
+  }
+  return 0;
+}
+
+/** Probe the resolved binary's version (5s cap, no network). Null on any failure. */
+function probeGenieVersion(geniePath) {
+  try {
+    const result = spawnSync(geniePath, ['--version'], {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      shell: IS_WINDOWS,
+      timeout: 5000,
+    });
+    return result.status === 0 ? parseGenieVersion(result.stdout) : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Delegate ALL syncing (skills + /council stamp for every detected agent) to
- * the canonical engine. The invocation is `genie update --sync-only` with the
- * GENIE_UPDATE_SYNC_ONLY=1 env as belt-and-suspenders: contract-aware binaries
- * honor either form, while a PRE-CONTRACT binary (which ignores the env and
- * would otherwise run a full unattended download + binary swap mid-session)
- * rejects the unknown flag and exits non-zero immediately with zero network.
+ * the canonical engine, choosing the invocation the INSTALLED binary can parse
+ * (see the contract tiers above). Pre-contract or unprobeable binaries are
+ * never invoked — delegating there would trigger a full unattended update.
  * Quiet, time-bounded, and fully sandboxed — a failure never breaks session
- * start. Returns true when the delegated sync succeeded.
+ * start. Returns true when the delegated sync succeeded; on false the caller
+ * stamps /council in-hook.
  */
 function delegateAgentSync(geniePath) {
+  const version = probeGenieVersion(geniePath);
+  if (!version || compareVersions(version, SYNC_ENV_AWARE_MIN) < 0) {
+    console.error('Warning: installed genie CLI predates the agent-sync contract — skipping delegated sync');
+    // Backdated marker: throttled right now, retries after AGENT_SYNC_RETRY_MS
+    // (e.g. once the user updates) rather than warning on every session start.
+    writeAgentSyncMarker(new Date(Date.now() - (AGENT_SYNC_THROTTLE_MS - AGENT_SYNC_RETRY_MS)));
+    return false;
+  }
+  const args =
+    compareVersions(version, SYNC_FLAG_AWARE_MIN) >= 0 ? ['update', '--sync-only'] : ['update'];
   // shell: IS_WINDOWS matches this file's own probes — Node >=18.20 EINVAL
   // hardening refuses to spawn .cmd shims without a shell, and the shell-based
   // probe above may have resolved exactly such a shim. Quote a path containing
   // spaces when it goes through the shell (same pattern as installDeps).
   const genieCmd = IS_WINDOWS && geniePath.includes(' ') ? `"${geniePath}"` : geniePath;
   try {
-    execFileSync(genieCmd, ['update', '--sync-only'], {
+    execFileSync(genieCmd, args, {
       env: { ...process.env, GENIE_UPDATE_SYNC_ONLY: '1' },
       stdio: 'ignore',
       timeout: 45000,
@@ -533,8 +592,8 @@ try {
   // skills AND stamps /council for every detected agent (claude/codex/hermes)
   // from one source root — throttled to 6h so session starts stay cheap and no
   // sync logic is duplicated in the hook. When NO genie CLI is installed, or
-  // the delegation FAILS (pre-contract binary rejecting the flag, .cmd shim
-  // spawn errors, timeout), we fall back to an in-hook /council stamp so the
+  // the delegation FAILS (pre-contract binary skipped by the version probe,
+  // .cmd shim spawn errors, timeout), we fall back to an in-hook /council stamp so the
   // workflow stays available on exactly the machines the fallback exists for.
   // Fully sandboxed — nothing here can break session start.
   const geniePath = findGenieBinary();

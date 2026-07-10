@@ -1,83 +1,33 @@
 {
-  "description": "Genie lifecycle hooks for Codex",
+  "description": "Genie lifecycle hooks for Claude Code",
   "hooks": {
     "SessionStart": [
       {
         "matcher": "*",
         "hooks": [
-          {
-            "type": "command",
-            "command": "node ${PLUGIN_ROOT}/scripts/smart-install.js",
-            "timeout": 60
-          },
-          {
-            "type": "command",
-            "command": "node ${PLUGIN_ROOT}/scripts/first-run-check.cjs",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "node ${PLUGIN_ROOT}/scripts/session-context.cjs",
-            "timeout": 10
-          }
+          { "type": "command", "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/smart-install.js", "timeout": 60 },
+          { "type": "command", "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/first-run-check.cjs", "timeout": 5 },
+          { "type": "command", "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/session-context.cjs", "timeout": 10 }
         ]
       }
     ],
     "PreToolUse": [
       {
-        "matcher": "Bash|Read|Write|Edit|apply_patch|SendMessage|mcp__genie__.*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "genie hook dispatch",
-            "timeout": 15
-          }
-        ]
+        "matcher": "Bash|Read|Write|Edit|SendMessage",
+        "hooks": [{ "type": "command", "command": "env GENIE_HOOK_RUNTIME=claude genie hook dispatch", "timeout": 120 }]
       },
       {
-        "matcher": "Write|Edit|apply_patch",
+        "matcher": "Write|Edit",
         "hooks": [
-          {
-            "type": "command",
-            "command": "node ${PLUGIN_ROOT}/scripts/validate-wish.cjs",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "PermissionRequest": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "genie hook dispatch --runtime codex",
-            "timeout": 120
-          }
+          { "type": "command", "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/validate-wish.cjs", "timeout": 5 }
         ]
       }
     ],
     "PostToolUse": [
       {
-        "matcher": "Write|Edit|apply_patch",
+        "matcher": "Write|Edit",
         "hooks": [
-          {
-            "type": "command",
-            "command": "node ${PLUGIN_ROOT}/scripts/validate-wish.cjs",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node ${PLUGIN_ROOT}/scripts/session-context.cjs",
-            "timeout": 10
-          }
+          { "type": "command", "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/validate-wish.cjs", "timeout": 5 }
         ]
       }
     ],
@@ -87,7 +37,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${PLUGIN_ROOT}/scripts/validate-completion.cjs",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/validate-completion.cjs",
             "timeout": 10
           }
         ]
