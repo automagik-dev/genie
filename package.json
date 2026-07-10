@@ -1,6 +1,6 @@
 {
   "name": "@automagik/genie",
-  "version": "5.260710.1",
+  "version": "5.260710.2",
   "description": "Collaborative terminal toolkit for human + AI workflows. NOTE: npm distribution discontinued 2026-05-09 — install via `curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash` (cosign + SLSA verified). See https://automagik.dev/genie/release-process",
   "type": "module",
   "bin": {
@@ -25,7 +25,8 @@
     "wishes:lint": "bun run scripts/wishes-lint.ts",
     "skills:audit": "bun run scripts/skills-audit.ts",
     "lint:complexity-budget": "bun run scripts/complexity-budget.ts",
-    "check": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint && bun test",
+    "lint:council-workflow": "bun scripts/council-workflow-lint.ts",
+    "check": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint && bun run lint:council-workflow && bun test",
     "check:fast": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint",
     "verify:release": "scripts/verify-release.sh"
   },

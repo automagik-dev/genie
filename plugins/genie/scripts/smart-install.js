@@ -13,8 +13,13 @@ import { execSync, spawnSync } from 'node:child_process';
  * - Version marker management
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+
+// This file is ESM (plugin package.json is type:module), so load the CommonJS
+// council-stamp helper through createRequire rather than a bare require.
+const requireCjs = createRequire(import.meta.url);
 
 const ROOT = process.env.CLAUDE_PLUGIN_ROOT || join(homedir(), '.claude', 'plugins', 'genie');
 const GENIE_DIR = join(homedir(), '.genie');
@@ -387,6 +392,26 @@ function adviseGenieCliInstall() {
 
 // Main execution
 try {
+  // Stamp the /council workflow template into ~/.claude/workflows on every session
+  // start. This runs BEFORE the early-exit guards below (worker fast-path and
+  // deps-already-present) so a plugin update re-stamps LENS_ROOT even on machines
+  // that would otherwise skip all install work. The stamp is idempotent — it only
+  // writes when the stamped output would differ — and is fully sandboxed in
+  // try/catch so it can never break session start.
+  try {
+    const { stampCouncilWorkflow } = requireCjs('./council-stamp.cjs');
+    const stampResult = stampCouncilWorkflow({
+      templatePath: join(ROOT, 'workflows', 'council.js'),
+      pluginRoot: ROOT,
+      targetDir: join(homedir(), '.claude', 'workflows'),
+    });
+    if (stampResult.action === 'written') {
+      console.error(`Stamped /council workflow to ${stampResult.targetPath}`);
+    }
+  } catch (e) {
+    console.error(`Warning: could not stamp /council workflow: ${e.message}`);
+  }
+
   // Workers inherit parent's deps — skip all checks to reduce spawn latency (#712)
   if (process.env.GENIE_WORKER === '1') {
     process.exit(0);
