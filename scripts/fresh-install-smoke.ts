@@ -26,9 +26,14 @@ import { dirname, join, resolve, sep } from 'node:path';
 
 const REPO_ROOT = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
 
+// A checked smoke violation. Thrown (not process.exit'd) so any `finally`
+// cleanup on the call stack — notably the tmp-dir removal in
+// runWishScaffoldSmoke — runs before we translate it to the exit-1 contract in
+// main(). process.exit() would skip those finalizers and orphan the temp dir.
+class SmokeFailure extends Error {}
+
 function fail(message: string): never {
-  console.error(`fresh-install-smoke: FAIL — ${message}`);
-  process.exit(1);
+  throw new SmokeFailure(message);
 }
 
 function parseArgs(argv: string[]): { skillsDir: string } {
@@ -143,12 +148,20 @@ function runWishScaffoldSmoke(skillsDir: string): void {
 }
 
 function main(): void {
-  const { skillsDir } = parseArgs(process.argv.slice(2));
-  if (!existsSync(skillsDir)) fail(`skills dir not found: ${skillsDir}`);
-  const refs = checkSkillDirReferences(skillsDir);
-  runWishScaffoldSmoke(skillsDir);
-  const summary = `${refs} \${CLAUDE_SKILL_DIR} reference(s) resolved, wish scaffold works with no genie on PATH`;
-  console.log(`fresh-install-smoke: OK (${summary})`);
+  try {
+    const { skillsDir } = parseArgs(process.argv.slice(2));
+    if (!existsSync(skillsDir)) fail(`skills dir not found: ${skillsDir}`);
+    const refs = checkSkillDirReferences(skillsDir);
+    runWishScaffoldSmoke(skillsDir);
+    const summary = `${refs} \${CLAUDE_SKILL_DIR} reference(s) resolved, wish scaffold works with no genie on PATH`;
+    console.log(`fresh-install-smoke: OK (${summary})`);
+  } catch (err) {
+    // Checked violations become the exit-1 contract CI depends on; any other
+    // error propagates untouched (non-zero exit + stack trace).
+    if (!(err instanceof SmokeFailure)) throw err;
+    console.error(`fresh-install-smoke: FAIL — ${err.message}`);
+    process.exit(1);
+  }
 }
 
-main();
+if (import.meta.main) main();

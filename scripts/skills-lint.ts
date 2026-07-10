@@ -170,10 +170,18 @@ export function checkResourceLine(line: string): ResourceViolation[] {
   }
 
   // (b) Repo-only lint invocation without the SAME-LINE package.json guard.
-  // A split-line guard (probe on the previous line) does not count — the probe
-  // must sit on the same line as the command it protects.
-  if (/\bbun run (?:wishes|skills):lint\b/.test(line) && !line.includes('package.json')) {
-    violations.push({ rule: 'unguarded-repo-lint', snippet });
+  // The guard must be a package.json probe that short-circuits (`&&`) INTO the
+  // command, e.g. `grep -q '"wishes:lint"' package.json 2>/dev/null && bun run
+  // wishes:lint` or `test -f package.json && bun run skills:lint`. A bare
+  // mention of package.json elsewhere on the line — a trailing comment, an echo
+  // arg, or a reference AFTER the command — does not gate the run, so it must
+  // NOT exempt it. A split-line guard (probe on the previous line) also fails:
+  // the probe must sit on the same line, ahead of the command it protects.
+  const lintMatch = /\bbun run (?:wishes|skills):lint\b/.exec(line);
+  if (lintMatch) {
+    const guard = line.slice(0, lintMatch.index);
+    const guarded = /\bpackage\.json\b[^&|;]*&&/.test(guard);
+    if (!guarded) violations.push({ rule: 'unguarded-repo-lint', snippet });
   }
 
   // (c) Imperative execution of a repo-root script — scripts/*.ts is repo-only.
