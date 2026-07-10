@@ -9,7 +9,7 @@
  * Priority: 8 (runs early, informational only)
  */
 
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { statSync } from 'node:fs';
 import { readEnvAgentId, readEnvAgentName } from '../env-identity.js';
 import type { HandlerResult, HookPayload } from '../types.js';
@@ -21,7 +21,7 @@ const STALENESS_THRESHOLD_SECS = 120; // 2 minutes
 function getLastCommitInfo(filePath: string, cwd: string): { author: string; age: number; message: string } | null {
   try {
     // Get last commit timestamp, author, and subject for the file
-    const output = execSync(`git log -1 --format="%at|%an|%s" -- ${JSON.stringify(filePath)}`, {
+    const output = execFileSync('git', ['log', '-1', '--format=%at|%an|%s', '--', filePath], {
       encoding: 'utf-8',
       timeout: 5000,
       cwd,
@@ -69,7 +69,7 @@ function buildCommitWarning(
 /** Check for uncommitted changes and return a warning result if any exist. */
 function checkUncommittedChanges(filePath: string, cwd: string, diskAge: number): HandlerResult {
   try {
-    const status = execSync(`git status --porcelain -- ${JSON.stringify(filePath)}`, {
+    const status = execFileSync('git', ['status', '--porcelain', '--', filePath], {
       encoding: 'utf-8',
       timeout: 5000,
       cwd,

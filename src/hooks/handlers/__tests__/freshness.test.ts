@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execSync } from 'node:child_process';
 // CI-tolerant: handler assertions are conditional (git log/status may return empty in CI)
-import { mkdtempSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, realpathSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { HookPayload } from '../../types.js';
@@ -187,5 +187,104 @@ describe('freshness handler', () => {
     const result = await freshness(payload);
     // Should not warn because the current agent made the commit
     expect(result).toBeUndefined();
+  });
+
+  test('does not execute injection via committed file_path (getLastCommitInfo, no shell)', async () => {
+    // A file whose literal name is a shell-injection payload. When getLastCommitInfo
+    // runs `git log` against it, a shell would evaluate `$(touch PWNED)`;
+    // execFileSync hands the path to git literally, so it never runs. The OLD
+    // vulnerable execSync form would run `$(touch PWNED)` via the shell BEFORE git
+    // is even invoked, so this assertion is meaningful even when git is absent — no
+    // repoReady gate (mirrors audit-context's injection test).
+    const evilPath = join(repoDir, '$(touch PWNED)');
+    writeFileSync(evilPath, 'const x = 1;\n');
+    // Best-effort commit so getLastCommitInfo has a commit to read; its failure
+    // must NOT skip the sentinel assertion below.
+    try {
+      execSync('git add . && git commit -m "add evil"', { cwd: repoDir, stdio: 'pipe' });
+    } catch {
+      // git unavailable/failed — the injection assertion still runs below
+    }
+    // Fresh mtime (set regardless of git) so freshness passes the disk-age gate
+    // into the injectable git call.
+    const now = new Date();
+    utimesSync(evilPath, now, now);
+
+    const payload: HookPayload = {
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Read',
+      tool_input: { file_path: evilPath },
+      cwd: repoDir,
+    };
+
+    await freshness(payload);
+
+    expect(existsSync(join(repoDir, 'PWNED'))).toBe(false);
+  });
+
+  test('does not execute injection via uncommitted file_path (checkUncommittedChanges, no shell)', async () => {
+    // GENIE_AGENT_NAME is set in beforeEach. The file is left UNCOMMITTED so
+    // getLastCommitInfo returns null and the currentAgent branch falls through to
+    // checkUncommittedChanges (`git status`). A shell would evaluate the name; the
+    // de-shelled execFileSync passes it to git literally. The OLD vulnerable
+    // execSync form would run `$(touch PWNED2)` via the shell before git is
+    // invoked, so this assertion is meaningful even when git is absent — no
+    // repoReady gate (mirrors audit-context's injection test).
+    const evilPath = join(repoDir, '$(touch PWNED2)');
+    writeFileSync(evilPath, 'const x = 1;\n');
+    // Fresh mtime so freshness passes the disk-age gate.
+    const now = new Date();
+    utimesSync(evilPath, now, now);
+
+    const payload: HookPayload = {
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Read',
+      tool_input: { file_path: evilPath },
+      cwd: repoDir,
+    };
+
+    await freshness(payload);
+
+    expect(existsSync(join(repoDir, 'PWNED2'))).toBe(false);
+  });
+
+  test('still warns for a recent commit by another agent (--format parse intact after de-shell)', async () => {
+    if (!repoReady) return; // Skip in CI when git setup fails
+
+    // Canonicalize the repo path so `git log -- <abs path>` matches git's own
+    // canonical view (macOS /var -> /private/var). This removes the one confound
+    // that could make this STRICT assertion flake for a reason unrelated to parsing.
+    const realRepo = realpathSync(repoDir);
+    const testFile = join(realRepo, 'recent.ts');
+    writeFileSync(testFile, 'const y = 1;\n');
+    try {
+      execSync('git add . && git commit -m "recent change"', { cwd: realRepo, stdio: 'pipe' });
+    } catch {
+      return; // git commit failed in CI — skip test
+    }
+    // Fresh mtime so the disk-age gate passes.
+    const now = new Date();
+    utimesSync(testFile, now, now);
+
+    const payload: HookPayload = {
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Read',
+      tool_input: { file_path: testFile },
+      cwd: realRepo,
+    };
+
+    const result = await freshness(payload);
+
+    // STRICT: the commit is < 120s old and authored by "other-agent" (not the
+    // "test-agent" in GENIE_AGENT_NAME), so a warning MUST fire. If the `--format`
+    // element had kept its shell quotes, git would emit a leading `"`, the
+    // timestamp would parse to NaN, getLastCommitInfo would return null, and this
+    // would be undefined. A passing warning proves the de-shell kept the parse.
+    expect(result).toBeDefined();
+    expect(result!.hookSpecificOutput).toBeDefined();
+    expect(result!.hookSpecificOutput!.additionalContext).toContain('[freshness]');
+    expect(result!.hookSpecificOutput!.additionalContext).toContain('was modified');
+    expect(result!.hookSpecificOutput!.additionalContext).toContain('other-agent');
+    expect(result!.hookSpecificOutput!.permissionDecision).toBe('allow');
   });
 });

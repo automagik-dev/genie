@@ -31,20 +31,6 @@ import { registerOmniCommands } from './term-commands/omni.js';
 import { registerV5BoardCommands } from './term-commands/v5-board.js';
 import { registerV5TaskCommands } from './term-commands/v5-task.js';
 
-// Safety net: ensure git repo is never in bare mode.
-// This should no longer trigger now that we use `git clone --shared` instead of
-// `git worktree` (which could flip core.bare=true on the parent repo). Kept as
-// a last-resort guard for repos previously corrupted by the old worktree approach.
-try {
-  const { execSync: execSyncStartup } = require('node:child_process');
-  const isBare = execSyncStartup('git config core.bare', { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
-  if (isBare === 'true') {
-    execSyncStartup('git config core.bare false', { stdio: ['pipe', 'pipe', 'pipe'] });
-  }
-} catch {
-  // Not in a git repo — that's fine
-}
-
 const program = new Command();
 
 program.name('genie').description('Genie CLI - AI-assisted development').version(VERSION);

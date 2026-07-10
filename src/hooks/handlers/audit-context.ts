@@ -8,7 +8,7 @@
  * Priority: 8 (runs before identity-inject, after brain-inject)
  */
 
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import type { HandlerResult, HookPayload } from '../types.js';
 
 /** Max number of recent commits to show per file. */
@@ -17,7 +17,7 @@ const MAX_COMMITS = 5;
 /** Get recent git log for a specific file. Returns null if git is unavailable or file is untracked. */
 function getRecentGitHistory(filePath: string, cwd: string): string | null {
   try {
-    const log = execSync(`git log --oneline -n ${MAX_COMMITS} -- ${JSON.stringify(filePath)}`, {
+    const log = execFileSync('git', ['log', '--oneline', '-n', String(MAX_COMMITS), '--', filePath], {
       encoding: 'utf-8',
       timeout: 5000,
       cwd,
