@@ -16,7 +16,7 @@ Decision legend:
 | Skill | Decision | Rationale |
 |-------|----------|-----------|
 | `brainstorm` | Keep — core (rewritten here) | Ideation → DESIGN.md. WRS scoring and crystallize are pure methodology; only the tracking-task call moved to `genie task`, artifacts stay in `.genie/`. |
-| `wish` | Keep — core (rewritten here) | DESIGN.md → WISH.md with groups + DAG. Scaffold is now a `cp` of `templates/wish-template.md`; per-group tasks via `genie task`; lint via `bun run wishes:lint`. |
+| `wish` | Keep — core (rewritten here) | DESIGN.md → WISH.md with groups + DAG. Scaffold is now a `cp` of `skills/wish/templates/wish-template.md`; per-group tasks via `genie task`; lint via `grep -q '"wishes:lint"' package.json 2>/dev/null && bun run wishes:lint`. |
 | `work` | Keep — core (rewritten here) | Wave dispatch + fix loops + validation. Dispatch is now the Agent tool (native team), state via `genie task checkout/done`, completion by notification (no polling). |
 | `review` | Keep — core (rewritten here) | SHIP/FIX-FIRST/BLOCKED gate. Verdict is the output (reported, not a task mutation); dispatched as a separate subagent (reviewer ≠ engineer) via the Agent tool. |
 | `genie` | Keep — portable now | Natural-language router into the other skills. Routing logic is runtime-agnostic; any command hand-offs re-point to the `genie` namespace during its own port. |
