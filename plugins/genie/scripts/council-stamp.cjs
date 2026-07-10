@@ -50,4 +50,31 @@ function stampCouncilWorkflow({ templatePath, pluginRoot, targetDir } = {}) {
   return { action: 'written', targetPath };
 }
 
-module.exports = { stampCouncilWorkflow, PLACEHOLDER, TARGET_NAME };
+/**
+ * Resolve which plugin root to stamp from. Prefers the STABLE canonical source
+ * `<genieHome>/plugins/genie` whenever it actually carries the workflow template
+ * (`workflows/council.js`), because that path never changes across plugin
+ * versions — using it kills the stale-cache downgrade ping-pong where the
+ * marketplace `CLAUDE_PLUGIN_ROOT` (which changes on every plugin update) stamps
+ * an older-then-newer LENS_ROOT. Falls back to `claudePluginRoot` when the
+ * stable template is absent (plugin-only machines with no genie CLI install).
+ *
+ * `exists` is injectable (default fs.existsSync) so the preference logic is
+ * unit-testable without touching the real filesystem.
+ *
+ * @param {{claudePluginRoot: string, genieHome: string, exists?: (p: string) => boolean}} opts
+ * @returns {{pluginRoot: string, templatePath: string}}
+ */
+function resolveStampInputs({ claudePluginRoot, genieHome, exists = fs.existsSync } = {}) {
+  const stableRoot = path.join(genieHome, 'plugins', 'genie');
+  const stableTemplate = path.join(stableRoot, 'workflows', TARGET_NAME);
+  if (exists(stableTemplate)) {
+    return { pluginRoot: stableRoot, templatePath: stableTemplate };
+  }
+  return {
+    pluginRoot: claudePluginRoot,
+    templatePath: path.join(claudePluginRoot, 'workflows', TARGET_NAME),
+  };
+}
+
+module.exports = { stampCouncilWorkflow, resolveStampInputs, PLACEHOLDER, TARGET_NAME };

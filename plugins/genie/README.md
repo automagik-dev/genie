@@ -32,14 +32,31 @@ Universal review gate (plan, execution, PR) returning `SHIP`, `FIX-FIRST`, or `B
 The multi-perspective engine ships as a native dynamic workflow, not a skill:
 
 - **What ships**: `workflows/council.js` (the engine template), `references/lenses/` (6 deliberation cards), and the 7 lane skills (`repo-hygiene`, `architecture`, `code-quality`, `qa`, `perf`, `supply-chain`, `dx-docs`) doubling as audit lenses.
-- **Distribution**: the SessionStart hook stamps `LENS_ROOT` with the installed plugin path and copies the template to `~/.claude/workflows/council.js` — idempotent, and re-stamped on the first session after a plugin update.
+- **Distribution**: `genie update` is the canonical updater — it stamps `LENS_ROOT` with the stable source root (`~/.genie/plugins/genie`) and writes `~/.claude/workflows/council.js`; the SessionStart hook is only a throttled trigger that delegates to it, with a CLI-less fallback stamp on plugin-only machines. See [Agent sync](#agent-sync) below.
 - **Modes**:
   - `/council <topic>` — deliberation: 3-4 lenses routed by topic, 2-round Socratic exchange, dissent preserved verbatim.
   - `/council audit [focus]` — lane audit: assess-only, evidence-backed findings that route to `/wish`, profile updates merged single-writer into `.genie/repo-profile.md`.
 - **Requirements**: Claude Code ≥ 2.1.154 with dynamic workflows available (paid plans; an org-level `disableWorkflows` setting turns the command off).
 - **Override**: a project-level `.claude/workflows/council.js` takes precedence over the personal stamped copy.
 
+## Agent sync
+
+`genie update` is the canonical updater. On every run — even when the binary is already at the latest release — it converges every **detected** coding agent from the single source root `~/.genie/plugins/genie`:
+
+| Agent | Target | What lands |
+|-------|--------|------------|
+| Claude Code | `~/.claude/skills/` + `~/.claude/workflows/council.js` | all genie skills + the stamped `/council` workflow |
+| Codex | `~/.codex/skills/.curated/` | genie skills as Agent-Skills folders (`.system` is OpenAI's, never touched) |
+| Hermes | `~/.hermes/plugins/genie` | symlink into `~/.genie/plugins/hermes-genie` |
+
+- **Managed and reversible**: every synced skill dir carries a `.genie-sync.json` manifest, so a re-run can tell "unchanged" from "you edited this" from "genie never shipped this name". Any dir genie replaces or removes is backed up first under `~/.genie/state-backups/` — nothing is ever lost, and dirs genie never shipped are left untouched.
+- **The SessionStart hook is only a trigger**: when the genie CLI is on PATH it delegates to `genie update` (throttled ~6h via `~/.genie/.last-agent-sync`) and duplicates no sync logic. On a plugin-only machine with no CLI it falls back to stamping `~/.claude/workflows/council.js` directly.
+- **The marketplace plugin is optional on CLI machines**: because `genie update` converges skills directly, the `genie@automagik` marketplace plugin is not required where the CLI is installed. `genie doctor` reports its state but never re-enables it.
+- **Visibility and removal**: `genie doctor` prints a per-agent freshness line (current vs stale skills, council-stamp state, hermes link), advising `genie update` when anything is stale; `genie uninstall` removes only what genie provably shipped (skill dirs by manifest; council.js by its stamp signature; the hermes link only when it resolves into the genie home).
+
 ## Release lag: pinned versions and update cadence
+
+On a machine **with the genie CLI installed**, `genie update` is the convergence path described in [Agent sync](#agent-sync) — it refreshes all detected agents directly, so the marketplace pin below matters mainly for plugin-only machines.
 
 Installed plugin versions **pin to GitHub Releases** — a `/plugin install` snapshots
 whatever release is current and stays there until you update. It does **not** track

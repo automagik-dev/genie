@@ -533,19 +533,40 @@ function renderAudit(focus, notConvened, silentRound1, synth, persist) {
   ].join('\n');
 }
 
-if (!args || typeof args !== 'object') {
+// The Workflow runtime delivers saved-workflow args as a STRING (even JSON-object
+// input arrives stringified — observed live 2026-07-10). Coerce before validating:
+// JSON that parses to an object wins; an `audit …` prefix selects audit mode with
+// the remainder as focus; anything else is the deliberation topic.
+let input = args;
+if (typeof input === 'string') {
+  const raw = input.trim();
+  let parsed = null;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    parsed = null;
+  }
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    input = parsed;
+  } else if (/^audit(\s|$)/i.test(raw)) {
+    input = { mode: 'audit', focus: raw.replace(/^audit\s*/i, '') };
+  } else {
+    input = { topic: raw };
+  }
+}
+if (!input || typeof input !== 'object') {
   return failure('No input received. Try /council <topic> to deliberate, or /council audit [focus] to audit.');
 }
 
-const mode = args.mode === 'audit' ? 'audit' : 'deliberation';
-const topic = typeof args.topic === 'string' ? args.topic.trim() : '';
-const focus = typeof args.focus === 'string' ? args.focus.trim() : '';
+const mode = input.mode === 'audit' ? 'audit' : 'deliberation';
+const topic = typeof input.topic === 'string' ? input.topic.trim() : '';
+const focus = typeof input.focus === 'string' ? input.focus.trim() : '';
 
 if (mode === 'deliberation' && !topic) {
   return failure('No topic to deliberate. Try /council <topic>.');
 }
 
-const roster = selectRoster(mode, topic, args.members);
+const roster = selectRoster(mode, topic, input.members);
 if (!roster.length) {
   return failure('No lenses selected. Provide --members, or a topic that routes to a lens.');
 }

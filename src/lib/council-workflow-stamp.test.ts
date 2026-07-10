@@ -16,13 +16,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const require = createRequire(import.meta.url);
-const { stampCouncilWorkflow, PLACEHOLDER } = require('../../plugins/genie/scripts/council-stamp.cjs') as {
-  stampCouncilWorkflow: (opts: { templatePath: string; pluginRoot: string; targetDir: string }) => {
-    action: 'written' | 'skipped';
-    targetPath: string;
+const { stampCouncilWorkflow, resolveStampInputs, PLACEHOLDER } =
+  require('../../plugins/genie/scripts/council-stamp.cjs') as {
+    stampCouncilWorkflow: (opts: { templatePath: string; pluginRoot: string; targetDir: string }) => {
+      action: 'written' | 'skipped';
+      targetPath: string;
+    };
+    resolveStampInputs: (opts: { claudePluginRoot: string; genieHome: string; exists?: (p: string) => boolean }) => {
+      pluginRoot: string;
+      templatePath: string;
+    };
+    PLACEHOLDER: string;
   };
-  PLACEHOLDER: string;
-};
 
 const TEMPLATE_BODY = [
   "export const meta = { name: 'council' };",
@@ -98,5 +103,45 @@ describe('stampCouncilWorkflow', () => {
   test('throws when a required path argument is missing', () => {
     // @ts-expect-error — intentionally omitting required args to prove the guard fires
     expect(() => stampCouncilWorkflow({ templatePath, pluginRoot: '/x' })).toThrow(/requires/);
+  });
+});
+
+describe('resolveStampInputs (stable-root preference)', () => {
+  const claudePluginRoot = '/home/user/.claude/plugins/genie';
+  const genieHome = '/home/user/.genie';
+  const stableRoot = join(genieHome, 'plugins', 'genie');
+  const stableTemplate = join(stableRoot, 'workflows', 'council.js');
+
+  test('prefers the stable ~/.genie/plugins/genie root when it carries the template', () => {
+    const res = resolveStampInputs({
+      claudePluginRoot,
+      genieHome,
+      exists: (p) => p === stableTemplate,
+    });
+    expect(res.pluginRoot).toBe(stableRoot);
+    expect(res.templatePath).toBe(stableTemplate);
+  });
+
+  test('falls back to claudePluginRoot when the stable template is absent', () => {
+    const res = resolveStampInputs({
+      claudePluginRoot,
+      genieHome,
+      exists: () => false,
+    });
+    expect(res.pluginRoot).toBe(claudePluginRoot);
+    expect(res.templatePath).toBe(join(claudePluginRoot, 'workflows', 'council.js'));
+  });
+
+  test('exists() is injectable — the preference probes the stable template path', () => {
+    const probed: string[] = [];
+    resolveStampInputs({
+      claudePluginRoot,
+      genieHome,
+      exists: (p) => {
+        probed.push(p);
+        return false;
+      },
+    });
+    expect(probed).toContain(stableTemplate);
   });
 });

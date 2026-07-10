@@ -116,6 +116,8 @@ When the change-type warrants it, the orchestrator dispatches **lens reviewers**
 | Test-strategy changes | `skills/qa/SKILL.md` |
 | Plan / wish reviews | `plugins/genie/references/lenses/questioner.md` |
 
+Lens root: `$GENIE_HOME/plugins/genie` (default `~/.genie/plugins/genie`); inside the genie repo itself, resolve `references/lenses/` cards and `skills/<lane>/SKILL.md` lanes relative to `plugins/genie/` and the repo root.
+
 ## Verdict Reporting
 
 The verdict plus severity-tagged gaps ARE the review output — deliver them in your final message (and, for a plan/PR, in review notes committed to git). The reviewer never mutates task state:
