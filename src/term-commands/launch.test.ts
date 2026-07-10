@@ -17,6 +17,7 @@ import {
   LaunchError,
   WorktreeCollisionError,
   executeLaunch,
+  resolveLaunchAgent,
   resolveLaunchModel,
 } from './launch.js';
 
@@ -174,6 +175,45 @@ describe('genie launch --agent', () => {
     expect(explicit.yaml).toBe(byDefault.yaml);
   });
 
+  test('--agent codex omits the Claude-flavored default model pin (no -m; Codex default applies)', () => {
+    const slug = 'codex-default-model';
+    createTask(fx.db, { title: 'a task', wish: slug, group: 'main' });
+
+    // No opts.model ⇒ resolveLaunchModel default 'opus', a Claude token — must NOT reach codex.
+    const plan = executeLaunch(slug, { dryRun: true, agent: 'codex' }, deps());
+    const [command] = paneCommands(plan.yaml);
+    expect(command.startsWith('codex --sandbox workspace-write ')).toBe(true);
+    expect(command).not.toContain(' -m ');
+    expect(command).not.toContain('opus');
+  });
+
+  test('--agent codex omits explicit claude-* model ids but passes non-Claude pins via -m', () => {
+    const slug = 'codex-model-pin';
+    createTask(fx.db, { title: 'a task', wish: slug, group: 'main' });
+
+    const claudePinned = executeLaunch(slug, { dryRun: true, agent: 'codex', model: 'claude-opus-4-1' }, deps());
+    expect(paneCommands(claudePinned.yaml)[0]).toBe(
+      `codex --sandbox workspace-write "$(cat '${join(worktreeFor(slug, 'main'), '.genie', 'launch', 'main.prompt')}')"`,
+    );
+
+    const codexPinned = executeLaunch(slug, { dryRun: true, agent: 'codex', model: 'gpt-5-codex' }, deps());
+    expect(paneCommands(codexPinned.yaml)[0]).toBe(
+      `codex -m 'gpt-5-codex' --sandbox workspace-write "$(cat '${join(
+        worktreeFor(slug, 'main'),
+        '.genie',
+        'launch',
+        'main.prompt',
+      )}')"`,
+    );
+  });
+
+  test('claude panes always receive the resolved model via --model', () => {
+    const slug = 'claude-model-pin';
+    createTask(fx.db, { title: 'a task', wish: slug, group: 'main' });
+    const plan = executeLaunch(slug, { dryRun: true, agent: 'claude', model: 'claude-opus-4-1' }, deps());
+    expect(paneCommands(plan.yaml)[0].startsWith("claude --model 'claude-opus-4-1' ")).toBe(true);
+  });
+
   test('an unknown --agent value raises InvalidAgentError before anything is materialized', () => {
     const slug = 'bad-agent';
     createTask(fx.db, { title: 'a task', wish: slug, group: 'main' });
@@ -191,6 +231,27 @@ describe('genie launch --agent', () => {
     expect(existsSync(fx.worktrees)).toBe(false);
     expect(existsSync(worktreeFor(slug, 'main'))).toBe(false);
     expect(existsSync(fx.warp)).toBe(false);
+  });
+});
+
+describe('resolveLaunchAgent', () => {
+  const which = (available: string[]) => (bin: string) => (available.includes(bin) ? `/usr/bin/${bin}` : null);
+
+  test("'auto' prefers claude when both binaries are installed (codex is opt-in)", () => {
+    expect(resolveLaunchAgent('auto', which(['claude', 'codex']))).toBe('claude');
+  });
+
+  test("'auto' falls back to codex only when claude is absent", () => {
+    expect(resolveLaunchAgent('auto', which(['codex']))).toBe('codex');
+  });
+
+  test("'auto' with neither binary resolves to claude (fails loudly in the pane)", () => {
+    expect(resolveLaunchAgent('auto', which([]))).toBe('claude');
+  });
+
+  test('an explicit setting always wins, regardless of installed binaries', () => {
+    expect(resolveLaunchAgent('claude', which(['codex']))).toBe('claude');
+    expect(resolveLaunchAgent('codex', which(['claude']))).toBe('codex');
   });
 });
 
