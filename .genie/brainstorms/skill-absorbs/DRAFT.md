@@ -13,6 +13,7 @@
 - pm → ABSORB: triage guidance → work reference; autopilot → dream successor (with human-gate policy).
 - council → lens LIBRARY (consumed by review panels + brainstorm domain-experts) + THIN /council route preserved (strategy pre-artifact, dissent preservation, appeal court for reviewer↔gate disagreements).
   - **2026-07-09 UPDATE — implemented via [council-workflow](../council-workflow/DESIGN.md) (poured):** /council = native saved workflow (deliberation + audit modes); lens library = 7 lane skills (renamed personas) + 6 deliberation cards; "thin route" superseded — the route IS the workflow command. GAP "/council name?" closed (name kept). Consumer rewiring (/review panels + /brainstorm domain-experts) moved INTO that wish's scope.
+  - **2026-07-10 — DONE.** council-workflow EXECUTED (G1–G5 all SHIP, merged to dev) and **dogfooded for the first time tonight** (a 3-lens / 2-round `/council` deliberation, plus the string-args fix `ec68cd8f` found in live QA). The council disposition of this umbrella is now delivered; only the council-workflow live-QA ritual + final execution review remain, tracked in that wish, not here.
 - report → REFACTOR: observability re-sourced to LangWatch + portable local markdown/JSON fallback; keep gh-issue intake.
 - refine → re-scoped to cross-LLM prompt adapter (OWN track: cross-agent-delegate).
 - learn → PARKED at .genie/attic/skills/learn/ (brain transfer pending; not this wish).
