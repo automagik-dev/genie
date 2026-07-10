@@ -88,6 +88,10 @@ program
   .option('--no-verify', 'Skip the post-update binary verify probe')
   .option('--skip-maintenance', 'Skip the post-update binary verify probe (or set GENIE_UPDATE_SKIP_MAINTENANCE=1)')
   .option('--rollback', 'Restore the most recent ~/.genie/bin/.previous binary backup')
+  .option(
+    '--sync-only',
+    'Converge agent integrations only — no manifest fetch or binary swap (GENIE_UPDATE_SYNC_ONLY=1)',
+  )
   .action(updateCommand);
 
 program

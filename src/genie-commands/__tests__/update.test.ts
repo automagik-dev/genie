@@ -1430,8 +1430,9 @@ describe('runV4CleanupSafe', () => {
 // Agent-sync wiring (agent-sync wish G2). `genie update` is the ONE canonical
 // updater: the sync phase runs on the sync-only fast path, on the already-
 // current short-circuit, and via a post-swap re-exec of the fresh binary. The
-// internal env GENIE_UPDATE_SYNC_ONLY=1 is the only re-entry contract — no new
-// user-facing command or flag. Engine failures are non-fatal advisories.
+// re-entry contract is the internal env GENIE_UPDATE_SYNC_ONLY=1 plus the
+// internal --sync-only flag (the hook's hard guard against pre-contract
+// binaries) — no new user-facing command. Engine failures are non-fatal.
 // ============================================================================
 
 describe('runAgentSyncSafe (agent-sync phase)', () => {
