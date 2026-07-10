@@ -21,7 +21,13 @@ import {
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { confirm } from '@inquirer/prompts';
-import { MANAGED_BY, MANIFEST_NAME, computeDirDigest } from '../lib/agent-sync.js';
+import {
+  MANAGED_BY,
+  MANIFEST_NAME,
+  codexLegacyCuratedDir,
+  computeDirDigest,
+  resolveAgentsSkillsDir,
+} from '../lib/agent-sync.js';
 import { hookScriptExists, removeHookScript } from '../lib/claude-settings.js';
 import { contractPath, getGenieDir } from '../lib/genie-config.js';
 import { resolveClaudeDir, resolveCodexDir, resolveGenieHome, resolveHermesHome } from '../lib/genie-home.js';
@@ -86,6 +92,8 @@ const SYNC_MANAGED_BY = MANAGED_BY;
 interface AgentSyncRemovalTargets {
   claudeDir?: string;
   codexDir?: string;
+  /** Shared `~/.agents/skills` tier codex skills are synced into (detection root stays `codexDir`). */
+  agentsSkillsDir?: string;
   hermesHome?: string;
   genieHome?: string;
 }
@@ -189,7 +197,11 @@ export function collectAgentSyncAssets(targets: AgentSyncRemovalTargets = {}): A
   const genieHome = targets.genieHome ?? resolveGenieHome();
   const out: AgentSyncAsset[] = [];
   collectManagedSkillDirs(join(claudeDir, 'skills'), 'claude', out);
-  collectManagedSkillDirs(join(codexDir, 'skills', '.curated'), 'codex', out);
+  // Live codex tier + the retired `.curated` lane (machines that never synced
+  // post-migration still carry managed dirs there). Manifest-gated either way —
+  // unmanaged siblings in the shared ~/.agents/skills tier are invisible.
+  collectManagedSkillDirs(targets.agentsSkillsDir ?? resolveAgentsSkillsDir(), 'codex', out);
+  collectManagedSkillDirs(codexLegacyCuratedDir(codexDir), 'codex', out);
   collectStampedCouncil(claudeDir, out);
   collectHermesLink(hermesHome, genieHome, out);
   return out;

@@ -20,6 +20,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { type AgentSyncReport, runAgentSync } from '../lib/agent-sync.js';
 import { genieConfigExists, loadGenieConfig, saveGenieConfig } from '../lib/genie-config.js';
+import { type CodexAgentInstallResult, installCodexAgents, resolveBundleRoot } from '../lib/runtime-integrations.js';
 import { VERSION } from '../lib/version.js';
 import { cleanupV4 } from './legacy-v4.js';
 
@@ -1555,6 +1556,12 @@ export interface RunAgentSyncSafeOptions {
   markerPath?: string;
   /** Injectable clock for the marker timestamp. */
   now?: () => Date;
+  /**
+   * Test seam: replaces the codex role-agent TOML refresh. Contract of the
+   * default ({@link refreshCodexRoleAgents}): returns the install result, or
+   * null when no bundle root resolves / it carries no codex-agents staging dir.
+   */
+  codexRefresh?: () => CodexAgentInstallResult | null;
 }
 
 export function runAgentSyncSafe(opts: RunAgentSyncSafeOptions = {}): void {
@@ -1562,10 +1569,49 @@ export function runAgentSyncSafe(opts: RunAgentSyncSafeOptions = {}): void {
   try {
     const report = (opts.sync ?? runAgentSync)();
     for (const line of formatAgentSyncSummary(report)) emit(line);
+    refreshCodexIntegrationsSafe(report, emit, opts.codexRefresh);
   } catch (err) {
     emit(`agent sync failed: ${errMsg(err)} — will retry on the next genie update`);
   }
   touchAgentSyncMarker(opts.markerPath ?? join(GENIE_HOME, '.last-agent-sync'), (opts.now ?? (() => new Date()))());
+}
+
+/**
+ * Codex convergence beyond skills: the role-agent TOMLs under
+ * `~/.codex/agents/` were install/setup-time copies only, so `genie update`
+ * left them drifting from the shipped bundle — contradicting the convergence
+ * contract ("update converges every detected agent"). Runs only when the sync
+ * engine actually detected codex (and did not skip for the lock), and only
+ * when the resolved bundle root carries the `plugins/genie/codex-agents`
+ * staging dir. Plugin REGISTRATION (`codex plugin marketplace add` / `plugin
+ * add`) is deliberately NOT refreshed here: it spawns the codex CLI, hits the
+ * marketplace, and must replay the preserved-disabled dance — neither cheap
+ * nor guaranteed idempotent inside the 45s-budgeted SessionStart delegation.
+ * TOMLs only; registration stays install/setup-owned. Non-fatal by contract.
+ */
+function refreshCodexIntegrationsSafe(
+  report: AgentSyncReport,
+  emit: (line: string) => void,
+  refresh?: () => CodexAgentInstallResult | null,
+): void {
+  if (report.skipped || !report.agents.some((agent) => agent.agent === 'codex' && agent.detected)) return;
+  try {
+    const result = (refresh ?? refreshCodexRoleAgents)();
+    if (result === null) return;
+    const parts = [`${result.installed} role-agent TOMLs refreshed`];
+    if (result.backedUp.length > 0) parts.push(`${result.backedUp.length} user-tuned backed up`);
+    if (result.skippedUserOwned.length > 0) parts.push(`${result.skippedUserOwned.length} user-owned kept`);
+    emit(`agent-sync: codex — ${parts.join(', ')}`);
+  } catch (err) {
+    emit(`agent-sync: codex role-agent refresh failed: ${errMsg(err)} — will retry on the next genie update`);
+  }
+}
+
+/** Default codex TOML refresh: no-op (null) when no bundle root resolves or it lacks codex-agents. */
+function refreshCodexRoleAgents(): CodexAgentInstallResult | null {
+  const bundleRoot = resolveBundleRoot();
+  if (bundleRoot === null || !existsSync(join(bundleRoot, 'plugins', 'genie', 'codex-agents'))) return null;
+  return installCodexAgents(bundleRoot);
 }
 
 /** Compact per-agent summary: detected + counts by action + advisories. */
@@ -1766,19 +1812,25 @@ function cleanupStagingArtifacts(extractDir: string, tarballPath: string): void 
 }
 
 /**
- * Mirror plugins/, skills/, templates/ from the extracted tarball into
- * `~/.genie/`. Stage to a sibling `<dest>.new` directory and `renameSync`
- * over the live target so concurrent readers (Claude Code's plugin loader)
- * never observe an empty directory mid-update. The previous live tree
- * moves to `<dest>.old` and is deleted last.
+ * Mirror plugins/, skills/, templates/ plus the marketplace-manifest dirs
+ * (`.agents/`, `.claude-plugin/` — must sit beside plugins/ so their relative
+ * `./plugins/genie` payload references stay truthful; mirrors AUX_LAYOUT_DIRS
+ * in install.ts) from the extracted tarball into `~/.genie/`. Stage to a
+ * sibling `<dest>.new` directory and `renameSync` over the live target so
+ * concurrent readers (Claude Code's plugin loader) never observe an empty
+ * directory mid-update. The previous live tree moves to `<dest>.old` and is
+ * deleted last.
  *
- * Best-effort — failures are logged but never block the update.
+ * Best-effort — failures are logged but never block the update. Tarballs
+ * predating a tree simply skip it (existsSync guard).
  */
 function syncAuxiliaryContent(extractDir: string): void {
   const targets: Array<{ src: string; dest: string; label: string }> = [
     { src: join(extractDir, 'plugins'), dest: join(GENIE_HOME, 'plugins'), label: 'plugins' },
     { src: join(extractDir, 'skills'), dest: join(GENIE_HOME, 'skills'), label: 'skills' },
     { src: join(extractDir, 'templates'), dest: join(GENIE_HOME, 'templates'), label: 'templates' },
+    { src: join(extractDir, '.agents'), dest: join(GENIE_HOME, '.agents'), label: '.agents' },
+    { src: join(extractDir, '.claude-plugin'), dest: join(GENIE_HOME, '.claude-plugin'), label: '.claude-plugin' },
   ];
   for (const target of targets) {
     if (!existsSync(target.src)) continue;
