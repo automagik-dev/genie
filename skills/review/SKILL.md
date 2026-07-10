@@ -101,7 +101,20 @@ When a failure's root cause is unclear, invoke `/trace` before dispatching `/fix
 
 ## Dispatch
 
-**Reviewer ≠ engineer.** The orchestrator dispatches review as a separate subagent via the Agent tool — an agent never reviews its own work. Follow-ups to a running reviewer go through SendMessage. When a council team is active, findings may be shared with council members for advisory input; the verdict is still determined by the checklist.
+**Reviewer ≠ engineer.** The orchestrator dispatches review as a separate subagent via the Agent tool — an agent never reviews its own work. Follow-ups to a running reviewer go through SendMessage. For change-types that warrant deeper scrutiny, the orchestrator also convenes a **Lens Panel** (below); those lenses advise, but the checklist still owns the verdict.
+
+## Lens Panels
+
+When the change-type warrants it, the orchestrator dispatches **lens reviewers** alongside the standard reviewer — each a separate subagent whose prompt carries its lens file (path + content) and the curated review scope. Convene a lens only when the change actually touches its surface; lenses advise, but the verdict still comes from the checklist above — never from a lens.
+
+| Change-type | Advisory lens |
+|-------------|---------------|
+| Auth / secrets / dependency changes | `skills/supply-chain/SKILL.md` |
+| Hot-path or latency-sensitive code | `skills/perf/SKILL.md` |
+| Public API / CLI surface | `skills/dx-docs/SKILL.md` |
+| Module-boundary / architecture moves | `skills/architecture/SKILL.md` |
+| Test-strategy changes | `skills/qa/SKILL.md` |
+| Plan / wish reviews | `plugins/genie/references/lenses/questioner.md` |
 
 ## Verdict Reporting
 

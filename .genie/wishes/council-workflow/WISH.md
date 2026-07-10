@@ -148,10 +148,12 @@ bash .genie/wishes/council-workflow/validate/g3-cutover.sh
 2. `skills/brainstorm/SKILL.md` — gains a Decisions-stuck domain-experts step that dispatches 2-3 lens subagents reading `references/lenses/` cards (step is NEW to the repo skill; pattern mirrors the global brainstorm skill's lens-subagent step).
 
 **Acceptance Criteria:**
-- [ ] `skills/review/SKILL.md` has a lens-panel section with change-type → lens mapping (structural grep markers: `lens panel`, `change-type`)
-- [ ] `skills/brainstorm/SKILL.md` has a domain-experts step (structural grep marker: `domain-expert`)
-- [ ] Both skills reference lens-library paths (cards and lane skills) that exist on disk
-- [ ] No duplicated lens definitions inline in either skill — no `voice:`/`modes:` frontmatter blocks outside the library (single source: the library)
+- [x] `skills/review/SKILL.md` has a lens-panel section with change-type → lens mapping (structural grep markers: `lens panel`, `change-type`)
+- [x] `skills/brainstorm/SKILL.md` has a domain-experts step (structural grep marker: `domain-expert`)
+- [x] Both skills reference lens-library paths (cards and lane skills) that exist on disk
+- [x] No duplicated lens definitions inline in either skill — no `voice:`/`modes:` frontmatter blocks outside the library (single source: the library)
+
+**Status:** DONE (2026-07-10) — gate `G4 PASS` (orchestrator-run), execution review SHIP (0 gaps ≥MEDIUM; LOW: intended pointer→section trigger redundancy in brainstorm; observation: mapping covers 5 lanes + questioner per spec, code-quality already in the base checklist). "council" fully purged from the review skill; brainstorm's single `/council` mention is the escalation to the surviving workflow. `bun run check` at baseline (725 pass / 1 skip).
 
 **Validation:**
 ```bash
