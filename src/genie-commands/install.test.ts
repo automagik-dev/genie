@@ -202,4 +202,39 @@ describe('normalizeAuxLayout', () => {
     expect(() => normalizeAuxLayout(home)).not.toThrow();
     expect(existsSync(join(home, 'plugins'))).toBe(false);
   });
+
+  test('marketplace manifest dirs (.agents, .claude-plugin) move next to plugins/ under GENIE_HOME', () => {
+    write(join(home, 'bin', 'plugins', 'genie', 'codex-agents', 'genie-reviewer.toml'), '# Managed by Genie.\n');
+    write(join(home, 'bin', '.agents', 'plugins', 'marketplace.json'), '{"name":"automagik"}');
+    write(join(home, 'bin', '.claude-plugin', 'marketplace.json'), '{"name":"automagik"}');
+
+    normalizeAuxLayout(home);
+
+    // GENIE_HOME is now a self-consistent `plugin marketplace add` root: the
+    // manifests' relative `./plugins/genie` reference resolves under it.
+    expect(existsSync(join(home, '.agents', 'plugins', 'marketplace.json'))).toBe(true);
+    expect(existsSync(join(home, '.claude-plugin', 'marketplace.json'))).toBe(true);
+    expect(existsSync(join(home, 'plugins', 'genie', 'codex-agents', 'genie-reviewer.toml'))).toBe(true);
+    expect(existsSync(join(home, 'bin', '.agents'))).toBe(false);
+    expect(existsSync(join(home, 'bin', '.claude-plugin'))).toBe(false);
+  });
+
+  test('a failed tree suppresses the VERSION stamp so a same-version reinstall retries it', () => {
+    write(join(home, 'bin', 'VERSION'), '5.2.0\n');
+    // No home VERSION → per-tree digest compare. plugins adopts fine…
+    write(join(home, 'bin', 'plugins', 'genie', 'SKILL.md'), 'fresh plugin');
+    write(join(home, 'plugins', 'genie', 'SKILL.md'), 'stale plugin');
+    // …but skills fails: a FILE squats where the tree should be, so the digest
+    // compare throws and this tree cannot converge.
+    write(join(home, 'bin', 'skills', 'wish', 'SKILL.md'), 'fresh skill');
+    writeFileSync(join(home, 'skills'), 'not a directory');
+
+    normalizeAuxLayout(home);
+
+    // The healthy tree was adopted…
+    expect(readFileSync(join(home, 'plugins', 'genie', 'SKILL.md'), 'utf8')).toBe('fresh plugin');
+    // …but the stamp MUST stay absent: stamping a partial adoption would make
+    // same-version reinstalls no-op forever while skills/ stays stale.
+    expect(existsSync(join(home, 'VERSION'))).toBe(false);
+  });
 });
