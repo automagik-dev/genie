@@ -14,9 +14,16 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readdirSync, readlinkSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { MANAGED_BY, MANIFEST_NAME, TARGET_NAME, computeDirDigest, resolveGenieSource } from '../lib/agent-sync.js';
+import {
+  resolveClaudeDir,
+  resolveCodexDir,
+  resolveGenieHome as resolveGlobalGenieHome,
+  resolveHermesHome,
+} from '../lib/genie-home.js';
 import { resolveOmniRuntimeConfig } from '../lib/omni-config.js';
 import { CURRENT_SCHEMA_VERSION, GenieDbError, openDb, resolveDbPath, resolveRepoRoot } from '../lib/v5/genie-db.js';
 import { VERSION } from '../lib/version.js';
@@ -391,6 +398,253 @@ async function checkOmniHookTimeout(): Promise<CheckResult[]> {
 }
 
 // ============================================================================
+// agent-sync freshness (READ-ONLY — never writes; converging is `genie update`'s job)
+// ============================================================================
+
+// The managed-dir contract mirrored from src/lib/agent-sync.ts. Kept as local
+// Protocol identifiers come from the engine (single source of truth) so a
+// rename there can never silently desync this read-only surface.
+const SYNC_MANIFEST_NAME = MANIFEST_NAME;
+const SYNC_MANAGED_BY = MANAGED_BY;
+const COUNCIL_WORKFLOW_FILE = TARGET_NAME;
+const SYNC_SUGGESTION = 'Run `genie update` to converge all detected coding agents.';
+
+interface AgentSyncPaths {
+  genieHome?: string;
+  claudeDir?: string;
+  codexDir?: string;
+  hermesHome?: string;
+  settingsPath?: string;
+}
+
+interface ManagedSkillsSummary {
+  sourceCount: number;
+  current: number;
+  stale: number;
+}
+
+/** Immediate subdirectories of `parent` (following symlinks); [] when unreadable. */
+function listSubdirs(parent: string): string[] {
+  try {
+    return readdirSync(parent).filter((name) => {
+      try {
+        return statSync(join(parent, name)).isDirectory();
+      } catch {
+        return false;
+      }
+    });
+  } catch {
+    return [];
+  }
+}
+
+/** Content digest recorded in a dir's `.genie-sync.json`, or null when not genie-managed. */
+function readManagedDigest(dir: string): string | null {
+  try {
+    const parsed = JSON.parse(readFileSync(join(dir, SYNC_MANIFEST_NAME), 'utf8')) as {
+      managedBy?: string;
+      digest?: unknown;
+    };
+    if (parsed.managedBy === SYNC_MANAGED_BY && typeof parsed.digest === 'string') return parsed.digest;
+  } catch {
+    /* absent / unreadable / not ours */
+  }
+  return null;
+}
+
+/** Source skills = dirs under `<pluginRoot>/skills` carrying a SKILL.md → name → digest. */
+function sourceSkillDigests(pluginRoot: string): Map<string, string> {
+  const out = new Map<string, string>();
+  const skillsRoot = join(pluginRoot, 'skills');
+  for (const name of listSubdirs(skillsRoot)) {
+    const dir = join(skillsRoot, name);
+    if (existsSync(join(dir, 'SKILL.md'))) out.set(name, computeDirDigest(dir));
+  }
+  return out;
+}
+
+/**
+ * Count managed skill dirs under `targetParent` that a `genie update` would leave
+ * untouched (current) vs rewrite (stale). "Current" == a next sync reports
+ * `unchanged`: manifest present, on-disk content matches its manifest, and the
+ * manifest matches the current source digest. Unmanaged dirs are ignored — genie
+ * only speaks for what it provably shipped.
+ */
+function summarizeManagedSkills(pluginRoot: string, targetParent: string): ManagedSkillsSummary {
+  const source = sourceSkillDigests(pluginRoot);
+  let current = 0;
+  let stale = 0;
+  for (const name of listSubdirs(targetParent)) {
+    const dir = join(targetParent, name);
+    const managedDigest = readManagedDigest(dir);
+    if (managedDigest === null) continue;
+    const sourceDigest = source.get(name);
+    if (sourceDigest !== undefined && sourceDigest === managedDigest && computeDirDigest(dir) === managedDigest) {
+      current += 1;
+    } else {
+      stale += 1;
+    }
+  }
+  return { sourceCount: source.size, current, stale };
+}
+
+function skillsFreshness(summary: ManagedSkillsSummary): { detail: string; stale: boolean } {
+  const missing = summary.current < summary.sourceCount;
+  const stale = summary.stale > 0 || missing;
+  const staleNote = summary.stale > 0 ? `, ${summary.stale} stale` : '';
+  return { detail: `${summary.current}/${summary.sourceCount} source skills current${staleNote}`, stale };
+}
+
+/** Whether `<claudeDir>/workflows/council.js` is stamped for the current stable source root. */
+function councilStampState(councilPath: string, pluginRoot: string): { stale: boolean; label: string } {
+  let content: string;
+  try {
+    content = readFileSync(councilPath, 'utf8');
+  } catch {
+    return { stale: true, label: 'absent' };
+  }
+  const match = content.match(/const LENS_ROOT = '([^']*)'/);
+  const root = match ? match[1] : null;
+  if (root === pluginRoot) return { stale: false, label: 'current' };
+  return { stale: true, label: `stale (LENS_ROOT ${root ?? 'unreadable'})` };
+}
+
+function checkClaudeSync(pluginRoot: string, claudeDir: string): CheckResult[] {
+  if (!existsSync(claudeDir)) return [{ name: 'agent sync: claude', status: 'pass', detail: 'not detected' }];
+  const skills = skillsFreshness(summarizeManagedSkills(pluginRoot, join(claudeDir, 'skills')));
+  const council = councilStampState(join(claudeDir, 'workflows', COUNCIL_WORKFLOW_FILE), pluginRoot);
+  const stale = skills.stale || council.stale;
+  return [
+    {
+      name: 'agent sync: claude',
+      status: stale ? 'warn' : 'pass',
+      detail: `${skills.detail}; council.js ${council.label}`,
+      suggestion: stale ? SYNC_SUGGESTION : undefined,
+    },
+  ];
+}
+
+function checkCodexSync(pluginRoot: string, codexDir: string): CheckResult[] {
+  if (!existsSync(codexDir)) return [{ name: 'agent sync: codex', status: 'pass', detail: 'not detected' }];
+  const summary = summarizeManagedSkills(pluginRoot, join(codexDir, 'skills', '.curated'));
+  const populated = summary.current + summary.stale > 0;
+  const skills = skillsFreshness(summary);
+  const stale = skills.stale || !populated;
+  return [
+    {
+      name: 'agent sync: codex',
+      status: stale ? 'warn' : 'pass',
+      detail: populated ? skills.detail : '.curated not populated',
+      suggestion: stale ? SYNC_SUGGESTION : undefined,
+    },
+  ];
+}
+
+function checkHermesSync(hermesRoot: string | null, hermesHome: string): CheckResult[] {
+  if (!existsSync(hermesHome)) return [{ name: 'agent sync: hermes', status: 'pass', detail: 'not detected' }];
+  if (hermesRoot === null) {
+    return [{ name: 'agent sync: hermes', status: 'pass', detail: 'hermes-genie source absent — link check skipped' }];
+  }
+  const link = hermesLinkState(join(hermesHome, 'plugins', 'genie'), hermesRoot);
+  return [
+    {
+      name: 'agent sync: hermes',
+      status: link.ok ? 'pass' : 'warn',
+      detail: link.detail,
+      suggestion: link.ok ? undefined : SYNC_SUGGESTION,
+    },
+  ];
+}
+
+function hermesLinkState(linkPath: string, hermesRoot: string): { ok: boolean; detail: string } {
+  let stat: ReturnType<typeof lstatSync>;
+  try {
+    stat = lstatSync(linkPath);
+  } catch {
+    return { ok: false, detail: 'plugins/genie link absent' };
+  }
+  if (!stat.isSymbolicLink()) return { ok: false, detail: 'plugins/genie present but not a symlink' };
+  try {
+    const target = readlinkSync(linkPath);
+    if (resolve(dirname(linkPath), target) === resolve(hermesRoot))
+      return { ok: true, detail: `linked → ${hermesRoot}` };
+    return { ok: false, detail: `points elsewhere (${target})` };
+  } catch {
+    return { ok: false, detail: 'plugins/genie symlink unreadable' };
+  }
+}
+
+/**
+ * Report the optional `genie@automagik` marketplace plugin — never mutate it.
+ * Enabled → silent; disabled/absent → one optional-note line; settings
+ * unreadable → an unknown line. `enabledPlugins` maps `<plugin>@<marketplace>`
+ * to a boolean in Claude Code's settings.json.
+ */
+function checkMarketplacePlugin(settingsPath: string): CheckResult[] {
+  const name = 'agent sync: marketplace plugin';
+  let enabled: boolean | null;
+  try {
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as { enabledPlugins?: Record<string, boolean> };
+    const value = settings.enabledPlugins?.['genie@automagik'];
+    enabled = typeof value === 'boolean' ? value : false;
+  } catch {
+    enabled = null;
+  }
+  if (enabled === true) return [];
+  if (enabled === null)
+    return [{ name, status: 'pass', detail: 'genie@automagik state unknown (settings.json unreadable)' }];
+  return [
+    {
+      name,
+      status: 'pass',
+      detail:
+        'genie@automagik not enabled — optional; `genie update` converges skills directly (never auto-re-enabled)',
+    },
+  ];
+}
+
+function safeAgentChecks(agent: string, fn: () => CheckResult[]): CheckResult[] {
+  try {
+    return fn();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return [{ name: `agent sync: ${agent}`, status: 'warn', detail: `check failed: ${message}` }];
+  }
+}
+
+/**
+ * Per-agent agent-sync freshness. Pure read: reports whether each detected agent
+ * (claude/codex/hermes) carries current genie-managed skills, whether Claude's
+ * council.js is stamped for the current source root, and whether the Hermes link
+ * is correct — advising `genie update` when anything is stale. Exported with
+ * injectable paths so tests never touch the real HOME.
+ */
+export function checkAgentSync(paths: AgentSyncPaths = {}): CheckResult[] {
+  const genieHome = paths.genieHome ?? resolveGlobalGenieHome();
+  const claudeDir = paths.claudeDir ?? resolveClaudeDir();
+  const codexDir = paths.codexDir ?? resolveCodexDir();
+  const hermesHome = paths.hermesHome ?? resolveHermesHome();
+  const settingsPath = paths.settingsPath ?? join(claudeDir, 'settings.json');
+  const source = resolveGenieSource(genieHome);
+  if (source.pluginRoot === null) {
+    return [
+      {
+        name: 'agent sync',
+        status: 'pass',
+        detail: `no genie plugin source at ${join(genieHome, 'plugins', 'genie')} — run \`genie update\` after install`,
+      },
+    ];
+  }
+  const pluginRoot = source.pluginRoot;
+  return [
+    ...safeAgentChecks('claude', () => checkClaudeSync(pluginRoot, claudeDir)),
+    ...safeAgentChecks('codex', () => checkCodexSync(pluginRoot, codexDir)),
+    ...safeAgentChecks('hermes', () => checkHermesSync(source.hermesRoot, hermesHome)),
+    ...safeAgentChecks('marketplace', () => checkMarketplacePlugin(settingsPath)),
+  ];
+}
+
+// ============================================================================
 // Entry point
 // ============================================================================
 
@@ -411,6 +665,7 @@ export async function doctorCommand(options?: { json?: boolean; fix?: boolean })
     ...checkBun(),
     ...checkSubagentModelOverride(),
     ...checkV4Residue(),
+    ...checkAgentSync(),
     ...(await checkOmniHookTimeout()),
   ];
 
