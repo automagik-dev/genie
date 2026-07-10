@@ -23,11 +23,12 @@ describe('agent-sync managed-asset removal', () => {
   let tmp: string;
   let claudeDir: string;
   let codexDir: string;
+  let agentsSkillsDir: string;
   let hermesHome: string;
   let genieHome: string;
 
   function targets() {
-    return { claudeDir, codexDir, hermesHome, genieHome };
+    return { claudeDir, codexDir, agentsSkillsDir, hermesHome, genieHome };
   }
 
   /** A managed dir exactly as agent-sync ships it: manifest digest matches content. */
@@ -58,6 +59,7 @@ describe('agent-sync managed-asset removal', () => {
     tmp = mkdtempSync(join(tmpdir(), 'uninstall-agentsync-'));
     claudeDir = join(tmp, 'claude');
     codexDir = join(tmp, 'codex');
+    agentsSkillsDir = join(tmp, 'agents', 'skills');
     hermesHome = join(tmp, 'hermes');
     genieHome = join(tmp, 'genie');
     mkdirSync(join(genieHome, 'plugins', 'hermes-genie'), { recursive: true });
@@ -70,12 +72,18 @@ describe('agent-sync managed-asset removal', () => {
   test('collects only genie-managed skill dirs; unmanaged ones are invisible', () => {
     const managed = managedSkill(join(claudeDir, 'skills'), 'wish');
     const mine = unmanagedSkill(join(claudeDir, 'skills'), 'my-own');
-    const codexManaged = managedSkill(join(codexDir, 'skills', '.curated'), 'review');
+    // Codex: live shared tier AND the retired `.curated` lane are both collected;
+    // foreign siblings in the shared tier stay invisible (manifest-gated).
+    const codexManaged = managedSkill(agentsSkillsDir, 'review');
+    const codexLegacy = managedSkill(join(codexDir, 'skills', '.curated'), 'wish');
+    const foreign = unmanagedSkill(agentsSkillsDir, 'someone-elses-skill');
 
     const paths = collectAgentSyncAssets(targets()).map((a) => a.path);
     expect(paths).toContain(managed);
     expect(paths).toContain(codexManaged);
+    expect(paths).toContain(codexLegacy);
     expect(paths).not.toContain(mine);
+    expect(paths).not.toContain(foreign);
   });
 
   test('collect flags digest-diverged managed dirs as modified, digest-clean ones as not', () => {

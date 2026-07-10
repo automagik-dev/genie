@@ -67,9 +67,9 @@ Status legend: **used** = PR exercises it per spec · **partial** = exercised wi
 
 | Surface | Doc | PR status |
 |---|---|---|
-| User tier `~/.agents/skills`; repo `.agents/skills` (scanned CWD→root); admin `/etc/codex/skills` | https://developers.openai.com/codex/skills | **unused** — PR ships skills only via the plugin component and the `.curated` lane (below) |
+| User tier `~/.agents/skills`; repo `.agents/skills` (scanned CWD→root); admin `/etc/codex/skills` | https://developers.openai.com/codex/skills | **used** — agent-sync targets the user tier `~/.agents/skills` (manifest-managed; the invented `.curated` lane below is retired and migrated away on sync) |
 | `$CODEX_HOME/skills` root | codex-rs `core-skills/src/loader.rs` | **partial/deprecated** — source marks it "Deprecated user skills location … kept for backward compatibility"; hidden subdirectories are pruned (`HiddenDirectoryPolicy::Skip`, regression test `skips_hidden_and_invalid`) |
-| `~/.codex/skills/.curated/` as a discovery path | — none — | **INVENTED** (see §2) |
+| `~/.codex/skills/.curated/` as a discovery path | — none — | **INVENTED** (see §2) — fixed: retired legacy lane, one-time backup+migration to `~/.agents/skills` on sync |
 | Skill `agents/openai.yaml` (`dependencies.tools`, `policy.allow_implicit_invocation`) | https://developers.openai.com/codex/skills | **unused** |
 | Custom prompts `~/.codex/prompts/*.md` | https://developers.openai.com/codex/custom-prompts (**deprecated** — use skills; breakage ≥0.117.0: openai/codex#15941) | **correctly unused** |
 
