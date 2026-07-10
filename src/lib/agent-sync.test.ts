@@ -376,6 +376,64 @@ describe('managed orphan handling', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Claude council exclusion (skill-vs-workflow collision, Decision 8)
+// ---------------------------------------------------------------------------
+
+describe('claude council exclusion', () => {
+  const councilFiles = { 'SKILL.md': '# council (portable, non-workflow runtimes)\n' };
+
+  test('council is synced to codex but never to claude (workflow owns the name there)', () => {
+    rmSync(fixture.root, { recursive: true, force: true });
+    fixture = setup({ skills: { alpha: { 'SKILL.md': '# alpha\n' }, council: councilFiles } });
+    present(fixture.claudeDir);
+    present(fixture.codexDir);
+
+    const report = run();
+    const claude = agentReport(report, 'claude');
+    const codex = agentReport(report, 'codex');
+    expect(skillAction(claude, 'council')).toBeUndefined();
+    expect(existsSync(join(fixture.claudeDir, 'skills', 'council'))).toBe(false);
+    expect(skillAction(claude, 'alpha')).toBe('created');
+    expect(skillAction(codex, 'council')).toBe('created');
+    expect(existsSync(join(fixture.codexDir, 'skills', '.curated', 'council', 'SKILL.md'))).toBe(true);
+  });
+
+  test('a managed council already synced to claude (pre-exclusion release) is backed up and removed', () => {
+    rmSync(fixture.root, { recursive: true, force: true });
+    fixture = setup({ skills: { alpha: { 'SKILL.md': '# alpha\n' }, council: councilFiles } });
+    present(fixture.claudeDir);
+    // Simulate the pre-exclusion release: a digest-clean managed council in the claude target.
+    const destDir = join(fixture.claudeDir, 'skills', 'council');
+    writeFile(join(destDir, 'SKILL.md'), councilFiles['SKILL.md']);
+    const digest = computeDirDigest(destDir);
+    writeFile(
+      join(destDir, MANIFEST_NAME),
+      JSON.stringify({ managedBy: 'genie-agent-sync', version: '9.9.8', digest, syncedAt: '2026-07-10T00:00:00.000Z' }),
+    );
+
+    const report = run();
+    const claude = agentReport(report, 'claude');
+    expect(skillAction(claude, 'council')).toBe('removed');
+    expect(existsSync(destDir)).toBe(false);
+    const backup = join(report.backupsDir as string, 'claude', 'council', 'SKILL.md');
+    expect(readFileSync(backup, 'utf8')).toBe(councilFiles['SKILL.md']);
+  });
+
+  test('a user-created unmanaged council dir in claude is never touched', () => {
+    rmSync(fixture.root, { recursive: true, force: true });
+    fixture = setup({ skills: { alpha: { 'SKILL.md': '# alpha\n' }, council: councilFiles } });
+    present(fixture.claudeDir);
+    const userDir = join(fixture.claudeDir, 'skills', 'council');
+    writeFile(join(userDir, 'SKILL.md'), '# my own council launcher\n');
+
+    const report = run();
+    const claude = agentReport(report, 'claude');
+    expect(skillAction(claude, 'council')).toBeUndefined();
+    expect(readFileSync(join(userDir, 'SKILL.md'), 'utf8')).toBe('# my own council launcher\n');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Missing agents
 // ---------------------------------------------------------------------------
 
