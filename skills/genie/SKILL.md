@@ -25,7 +25,7 @@ Classify `$ARGUMENTS` into exactly one category:
 
 | Category | Signal | Route |
 |----------|--------|-------|
-| **explicit** | Names a skill: "brainstorm X", "wish X", "review X", "work X", "council X", "refine X", "fix X", "trace X", "docs X", "report X", "dream", "learn X", "pm", "wizard", "wire omni", "hacks" | Invoke the named skill via the Skill tool, rest as args |
+| **explicit** | Names a skill: "brainstorm X", "wish X", "review X", "work X", "council X", "refine X", "fix X", "trace X", "docs X", "report X", "dream", "learn X", "pm", "wizard", "wire omni", "hacks" | Invoke the named skill via the Skill tool, rest as args — except **council**, which launches the saved workflow via the Workflow tool (workflow `council`, args mediated from the user's text) |
 | **concrete** | Clear feature/change: "add X", "implement Y", "build a..." | `/wish` |
 | **fuzzy** | Exploratory: "I'm not sure how to...", "what if we...", "how should I handle..." | `/brainstorm` |
 | **bug** | "X is broken", "error when...", "something's wrong with..." | `/report` |

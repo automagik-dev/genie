@@ -16,7 +16,7 @@ Every piece of work follows this flow:
 | `/review` | Universal quality gate — SHIP / FIX-FIRST / BLOCKED with severity-tagged gaps | Before and after `/work`, or any plan/PR |
 | `/work` | Execute an approved wish — dispatch native-team subagents per group in waves, fix loops, validation | Wish is SHIP-approved |
 | `/fix` | Resolve FIX-FIRST gaps, re-review, escalate after 2 failed loops | Review returned FIX-FIRST |
-| `/council` | Multi-perspective deliberation with specialist viewpoints | Major design decisions, tradeoffs |
+| `/council` | Multi-perspective deliberation with specialist viewpoints (native workflow) | Major design decisions, tradeoffs |
 | `/refine` | Transform a brief into a production-ready prompt | Prompt needs sharpening |
 | `/report` | Investigate bugs — trace, capture evidence, open a GitHub issue | Bug reports |
 | `/trace` | Reproduce and isolate root cause without patching | Unknown issues needing investigation |

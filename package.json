@@ -25,7 +25,8 @@
     "wishes:lint": "bun run scripts/wishes-lint.ts",
     "skills:audit": "bun run scripts/skills-audit.ts",
     "lint:complexity-budget": "bun run scripts/complexity-budget.ts",
-    "check": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint && bun test",
+    "lint:council-workflow": "bun scripts/council-workflow-lint.ts",
+    "check": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint && bun run lint:council-workflow && bun test",
     "check:fast": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint",
     "verify:release": "scripts/verify-release.sh"
   },

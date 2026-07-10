@@ -52,6 +52,7 @@
       ".worktrees",
       ".claude",
       "plugins/genie/scripts",
+      "plugins/genie/workflows",
       ".docs-vendor",
       "docs"
     ]

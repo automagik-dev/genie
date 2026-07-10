@@ -42,7 +42,11 @@ WRS: ██████░░░░ 60/100
  Problem ✅ | Scope ✅ | Decisions ✅ | Risks ░ | Criteria ░
 ```
 
-✅ = enough info to write that section of a wish; ░ = still needs discussion. Below 100: keep refining. At 100: auto-crystallize. If **Decisions** stays unfilled after 2+ exchanges, suggest `/council` for specialist perspectives on the tradeoffs.
+✅ = enough info to write that section of a wish; ░ = still needs discussion. Below 100: keep refining. At 100: auto-crystallize. If **Decisions** won't fill, convene domain experts (see Stuck Decisions).
+
+## Stuck Decisions
+
+If **Decisions** stays unfilled after 2+ exchanges, convene **domain experts**: dispatch 2-3 lens subagents in parallel (Agent tool), each reading a distinct lens — a deliberation card from `plugins/genie/references/lenses/` (questioner, simplifier, operator, …) plus, when the tradeoff is technical, the matching lane skill at `skills/<lane>/SKILL.md`. Present their perspectives to the user, then keep refining. Escalate to the full `/council` workflow when the decision deserves a durable deliberation record.
 
 ## Scope Size
 
