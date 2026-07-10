@@ -13,6 +13,7 @@
  * Syncs versions across:
  * - package.json (root)
  * - plugins/genie/.claude-plugin/plugin.json (Claude Code)
+ * - plugins/genie/.codex-plugin/plugin.json (Codex)
  * - plugins/genie/package.json (smart-install version checks)
  * - .claude-plugin/marketplace.json (marketplace listing)
  */
@@ -81,6 +82,9 @@ async function main() {
 
   // 2. Update Claude Code plugin manifest
   await updateJsonVersion(join(rootDir, 'plugins/genie/.claude-plugin/plugin.json'), version);
+
+  // 2b. Update Codex plugin manifest — must track .claude-plugin/plugin.json exactly
+  await updateJsonVersion(join(rootDir, 'plugins/genie/.codex-plugin/plugin.json'), version);
 
   // 3. Update plugin package.json (used by smart-install.js for version checks)
   await updateJsonVersion(join(rootDir, 'plugins/genie/package.json'), version);
