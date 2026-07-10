@@ -104,13 +104,23 @@ async function buildPlugin() {
     // copy-from-scripts step was removed — it was one `bun run build:plugin` away
     // from clobbering the shipped hook's council stamp.
 
-    // Update plugin.json version
-    const pluginJsonPath = path.join(rootDir, 'plugins/genie/.claude-plugin/plugin.json');
-    if (fs.existsSync(pluginJsonPath)) {
+    // Keep both runtime manifests version-matched to the binary.
+    for (const manifest of ['.claude-plugin/plugin.json', '.codex-plugin/plugin.json']) {
+      const pluginJsonPath = path.join(rootDir, 'plugins/genie', manifest);
+      if (!fs.existsSync(pluginJsonPath)) continue;
       const pluginJson = JSON.parse(fs.readFileSync(pluginJsonPath, 'utf-8'));
       pluginJson.version = version;
       fs.writeFileSync(pluginJsonPath, `${JSON.stringify(pluginJson, null, 2)}\n`);
-      console.log('Updated plugin.json version');
+      console.log(`Updated ${manifest} version`);
+    }
+
+    const claudeMarketplacePath = path.join(rootDir, '.claude-plugin', 'marketplace.json');
+    if (fs.existsSync(claudeMarketplacePath)) {
+      const marketplace = JSON.parse(fs.readFileSync(claudeMarketplacePath, 'utf-8'));
+      const genie = marketplace.plugins?.find((plugin) => plugin.name === 'genie');
+      if (genie) genie.version = version;
+      fs.writeFileSync(claudeMarketplacePath, `${JSON.stringify(marketplace, null, 2)}\n`);
+      console.log('Updated Claude marketplace version');
     }
 
     console.log('\nBuild complete!');

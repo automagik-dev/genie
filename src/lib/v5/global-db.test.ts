@@ -8,8 +8,10 @@ import {
   GLOBAL_SCHEMA_VERSION,
   MIGRATED_STATUS_SENTINEL,
   MalformedDbError,
+  getAgentSession,
   openGlobalDb,
   resolveGlobalDbPath,
+  upsertAgentSession,
 } from './global-db.js';
 import { listApprovalsNeedingStatusAck } from './omni-queue.js';
 
@@ -62,7 +64,7 @@ describe('openGlobalDb schema init', () => {
     db2.close();
 
     expect(userVersion(path)).toBe(GLOBAL_SCHEMA_VERSION);
-    expect(tables).toEqual(['approvals', 'inbound_messages']);
+    expect(tables).toEqual(['agent_sessions', 'approvals', 'inbound_messages']);
   });
 
   test('WAL journal mode is enabled', () => {
@@ -77,6 +79,22 @@ describe('openGlobalDb schema init', () => {
     const db = openGlobalDb({ path });
     db.close();
     expect(existsSync(path)).toBe(true);
+  });
+});
+
+describe('provider session persistence', () => {
+  test('stores and replaces a Codex thread by provider, instance, and chat', () => {
+    const db = openGlobalDb();
+    try {
+      expect(getAgentSession(db, 'codex', 'i', 'c')).toBeUndefined();
+      upsertAgentSession(db, 'codex', 'i', 'c', 'thread-1', 1);
+      expect(getAgentSession(db, 'codex', 'i', 'c')).toBe('thread-1');
+      upsertAgentSession(db, 'codex', 'i', 'c', 'thread-2', 2);
+      expect(getAgentSession(db, 'codex', 'i', 'c')).toBe('thread-2');
+      expect(getAgentSession(db, 'claude', 'i', 'c')).toBeUndefined();
+    } finally {
+      db.close();
+    }
   });
 });
 

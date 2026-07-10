@@ -15,6 +15,7 @@ import { MANAGED_BY, MANIFEST_NAME } from '../lib/agent-sync.js';
 import { hookScriptExists, removeHookScript } from '../lib/claude-settings.js';
 import { contractPath, getGenieDir } from '../lib/genie-config.js';
 import { resolveClaudeDir, resolveCodexDir, resolveGenieHome, resolveHermesHome } from '../lib/genie-home.js';
+import { removeRuntimeIntegrations } from '../lib/runtime-integrations.js';
 import { orchestrationRulesPath } from './legacy-v4.js';
 
 // Shared v4 legacy manifest owns this path — see legacy-v4.ts.
@@ -199,6 +200,7 @@ function performUninstall(
   genieDir: string,
   hasGenieDir: boolean,
   hasAgentAssets: boolean,
+  removeMarketplace: boolean,
 ): void {
   if (hasHookScript) {
     tryRemoveStep('Removing hook script...', 'Hook script removed', () => removeHookScript());
@@ -228,6 +230,8 @@ function performUninstall(
     console.log(`  \x1b[32m+\x1b[0m Removed ${removed.length} managed asset(s) (skills / council.js / hermes link)`);
   }
 
+  removeRuntimeIntegrations(removeMarketplace);
+
   if (hasGenieDir) {
     tryRemoveStep('Removing genie directory...', 'Directory removed', () =>
       rmSync(genieDir, { recursive: true, force: true }),
@@ -235,7 +239,7 @@ function performUninstall(
   }
 }
 
-export async function uninstallCommand(): Promise<void> {
+export async function uninstallCommand(options: { removeMarketplace?: boolean } = {}): Promise<void> {
   console.log();
   console.log('\x1b[1m\x1b[33m Uninstall Genie CLI\x1b[0m');
   console.log();
@@ -249,6 +253,8 @@ export async function uninstallCommand(): Promise<void> {
   const hasAgentAssets = agentAssets.length > 0;
 
   console.log('\x1b[2mThis will remove:\x1b[0m');
+  console.log('  \x1b[31m-\x1b[0m Genie plugins and marker-owned Codex role agents');
+  if (options.removeMarketplace) console.log('  \x1b[31m-\x1b[0m Automagik client marketplace registrations');
   if (hasHookScript) console.log('  \x1b[31m-\x1b[0m Hook script (~/.claude/hooks/genie-bash-hook.sh)');
   if (hasOrchestrationRules)
     console.log(`  \x1b[31m-\x1b[0m Orchestration rules (${contractPath(ORCHESTRATION_RULES_PATH)})`);
@@ -276,7 +282,14 @@ export async function uninstallCommand(): Promise<void> {
   }
 
   console.log();
-  performUninstall(hasHookScript, existingSymlinks, genieDir, hasGenieDir, hasAgentAssets);
+  performUninstall(
+    hasHookScript,
+    existingSymlinks,
+    genieDir,
+    hasGenieDir,
+    hasAgentAssets,
+    options.removeMarketplace ?? false,
+  );
 
   console.log();
   console.log('\x1b[32m+\x1b[0m Genie CLI uninstalled.');

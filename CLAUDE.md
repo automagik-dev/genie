@@ -1,5 +1,7 @@
 # Genie CLI
 
+Claude Code overlay: read and follow the canonical shared repository contract in `AGENTS.md` first. This file adds Claude-specific command and operational detail; shared rules belong in `AGENTS.md`.
+
 ## Commands
 
 ```bash
@@ -49,7 +51,7 @@ src/genie.ts                    CLI entry point (commander)
 src/lib/                        Core modules (transcript, codex/claude logs, paths, config)
 src/lib/transcript.ts           Provider-agnostic transcript abstraction (Claude + Codex)
 src/lib/codex-logs.ts           Codex JSONL parsing + SQLite discovery
-src/lib/codex-config.ts         Codex config.toml + OTel relay wiring (state detection)
+src/lib/codex-config.ts         Backup-first removal of the obsolete Genie loopback OTel exporter
 src/lib/claude-logs.ts          Claude log parsing + transcript adapter
 src/lib/v5/                     v5 state engine — SQLite, zero-daemon ("lightweight body")
   genie-db.ts                   Per-repo .genie/genie.db open/init (worktree-aware, WAL)
@@ -164,7 +166,7 @@ Biome's `noExcessiveCognitiveComplexity` is set to `maxAllowedComplexity: 25` (w
 - **Hook dispatch is in-process, fail-closed, and bounded by Claude Code's per-hook `timeout`** — each hook event is a short-lived `genie hook dispatch` fork that runs the handler chain in-process and exits (no daemon, no socket, no DB). There is no genie-managed dispatch timeout; the ceiling is the `timeout` field on the hook's entry in Claude Code's `settings.json` (CC default if unset). A dispatch that can't parse its payload or throws emits a NON-empty deny/block envelope instead of empty stdout, because CC reads empty PreToolUse stdout as allow-by-default — see `buildFailClosedResponse` in `src/hooks/index.ts`. The fail-closed default is locked by `src/hooks/__tests__/dispatch-fail-closed-regression.test.ts`, which drives the shipped `dist/genie.js`.
 - **`AskUserQuestion` is the one PreToolUse carve-out** — it is in `NON_INTERCEPTABLE_PRE_TOOL_USE_TOOLS` and MUST get an EMPTY response, not the neutral `{ decision: 'block' }` block form. Empirically CC consumes any additionalContext as the synthesized answer, so a fail-closed block would corrupt the inline picker. The fail-closed envelope special-cases this tool.
 - **Two `genie.db` files, never cross-import** — per-repo `.genie/genie.db` (`genie-db.ts`, task/board/wish) and global `~/.genie/genie.db` (`global-db.ts`, omni queue + inbox) are independent databases with their own schemas and `user_version`. `global-db.ts` shares only `sqlite-open.ts` with the per-repo one — do not reach across for path constants.
-- **Codex OTel relay is real v5, not the deleted receiver** — `src/lib/codex-config.ts` wires Codex's `config.toml` to a fixed OTel relay on `127.0.0.1:14318` (`OTEL_RELAY_PORT`) for state detection. This is live; only the v4 receiver-probing env vars are gone. Do not blanket-purge "OTel" from docs — this relay is load-bearing.
+- **Codex integration health is native state, not OTel** — the old Genie exporter at `127.0.0.1:14318` has no relay and is removed by an exact-match, backup-first migration. Preserve unrelated OTel settings and `disable_paste_burst`.
 - **The Omni runner (`genie omni serve`) is the only optional daemon** — a foreground NATS bridge that drains the global approval queue. Everything else is fork-and-exit; no resident processes.
 - **`bun run dead-code`** (knip) has pre-existing false positives for biome/commitlint/husky devDeps — not regressions.
 - **agent-sync converges every detected coding agent** — `genie update` and `genie install` fan the canonical source `~/.genie/plugins/genie` into every DETECTED agent (Claude Code skills + `~/.claude/workflows/council.js`; Codex `~/.codex/skills/.curated/`; the Hermes `~/.hermes/plugins/genie` symlink) via `src/lib/agent-sync.ts`. There is NO new command or flag — the internal env `GENIE_UPDATE_SYNC_ONLY=1` is the ONLY re-entry contract (the post-swap exec and the SessionStart-hook trigger both set it). Managed skill dirs carry `.genie-sync.json` (`managedBy: genie-agent-sync`); every replacement or removal is backed up first under `~/.genie/state-backups/`, so `genie doctor`/`genie uninstall` only ever touch what genie provably shipped.

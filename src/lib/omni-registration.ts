@@ -31,6 +31,8 @@ interface OmniAgentResponse {
   updatedAt: string;
 }
 
+type OmniFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+
 /** Resolve the Omni API URL from env var or genie config; null when unset. */
 export async function resolveOmniApiUrl(): Promise<string | null> {
   const envUrl = process.env.OMNI_API_URL;
@@ -56,7 +58,7 @@ export async function resolveOmniApiKey(): Promise<string | undefined> {
  */
 export async function registerAgentInOmni(
   agentName: string,
-  options?: { model?: string; roles?: string[]; apiUrl?: string; apiKey?: string },
+  options?: { model?: string; roles?: string[]; apiUrl?: string; apiKey?: string; fetchImpl?: OmniFetch },
 ): Promise<string | null> {
   const apiUrl = options?.apiUrl ?? (await resolveOmniApiUrl());
   if (!apiUrl) return null;
@@ -83,7 +85,7 @@ export async function registerAgentInOmni(
     const sig = signOmniRequest('POST', '/api/v2/agents', bodyJson);
     if (sig) Object.assign(headers, sig);
 
-    const response = await fetch(`${apiUrl.replace(/\/+$/, '')}/api/v2/agents`, {
+    const response = await (options?.fetchImpl ?? fetch)(`${apiUrl.replace(/\/+$/, '')}/api/v2/agents`, {
       method: 'POST',
       headers,
       body: bodyJson,

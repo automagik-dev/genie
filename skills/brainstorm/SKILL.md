@@ -14,7 +14,7 @@ Collaborate on fuzzy ideas until they are concrete enough for `/wish`.
 - Requirements are ambiguous and need interactive refinement
 - User explicitly invokes `/brainstorm`
 
-All artifacts live in `.genie/` within the shared worktree. When spawned as a native-team subagent, the dispatcher curates seed context (file path + extracted section) into your prompt — use it directly; do not re-read what was already provided.
+All artifacts live in `.genie/` within the shared worktree. When spawned as a native subagent, the dispatcher curates seed context (file path + extracted section) into your prompt — use it directly; do not re-read what was already provided.
 
 ## Flow
 1. **Read context:** scan relevant code, docs, conventions. Check `.genie/brainstorm.md` for an existing entry matching this slug/topic — seed from it if found.
@@ -46,7 +46,7 @@ WRS: ██████░░░░ 60/100
 
 ## Stuck Decisions
 
-If **Decisions** stays unfilled after 2+ exchanges, convene **domain experts**: dispatch 2-3 lens subagents in parallel (Agent tool), each reading a distinct lens — a deliberation card from `plugins/genie/references/lenses/` (questioner, simplifier, operator, …) plus, when the tradeoff is technical, the matching lane skill at `skills/<lane>/SKILL.md`. Present their perspectives to the user, then keep refining. Escalate to the full `/council` workflow when the decision deserves a durable deliberation record.
+If **Decisions** stays unfilled after 2+ exchanges, convene **domain experts**: dispatch 2-3 lens subagents in parallel (native delegation surface), each reading a distinct lens — a deliberation card from `plugins/genie/references/lenses/` (questioner, simplifier, operator, …) plus, when the tradeoff is technical, the matching lane skill at `skills/<lane>/SKILL.md`. Present their perspectives to the user, then keep refining. Escalate to the full `/council` workflow when the decision deserves a durable deliberation record.
 
 Lens root: `$GENIE_HOME/plugins/genie` (default `~/.genie/plugins/genie`); inside the genie repo itself, resolve `references/lenses/` cards and `skills/<lane>/SKILL.md` lanes relative to `plugins/genie/` and the repo root.
 
@@ -124,7 +124,7 @@ Note cross-repo or cross-agent dependencies — they become `depends-on`/`blocks
 
 ## Session close (required)
 
-When spawned as a native-team subagent, your final message IS the completion signal — the dispatcher is notified when you finish; do not poll or emit a separate contract call. End with exactly one terminal outcome as the last word:
+When spawned as a native subagent, your final message IS the completion signal — the dispatcher is notified when you finish; do not poll or emit a separate contract call. End with exactly one terminal outcome as the last word:
 
 - **done** — WRS hit 100, DESIGN.md written and staged, `/review` handed off. Report the DESIGN.md path.
 - **blocked** — needs human input or an unblocking signal. State exactly what.

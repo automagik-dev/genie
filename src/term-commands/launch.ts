@@ -6,7 +6,7 @@
  * ONE Warp pane. Each group gets its own git worktree
  * (`<worktreesBase>/<repo>-<slug>-<group>/`, branch `wish/<slug>-<group>`),
  * a kickoff prompt written into that worktree, and a pane that runs
- * `claude --model <model> "$(cat <prompt>)"`. The panes are emitted as a Warp Launch
+ * the selected interactive client with the kickoff prompt. The panes are emitted as a Warp Launch
  * Configuration (see {@link ./../lib/v5/warp-launch}) and opened best-effort.
  *
  * Emitting the config is the contract; opening is a convenience. A platform with
@@ -132,18 +132,22 @@ export class InvalidAgentError extends LaunchError {
 // ============================================================================
 
 /**
- * Data table mapping each agent to the pane command that runs its
- * non-interactive CLI against the kickoff prompt file. Each entry takes the
+ * Data table mapping each agent to the pane command that runs its interactive
+ * CLI against the kickoff prompt file. Each entry takes the
  * absolute prompt path and returns the exact shell command the pane executes;
  * `$(cat "…")` inlines the prompt so the pane needs no extra plumbing.
  *
  * - `claude` — the historical default, pinned per pane to the execution model.
- * - `codex`  — OpenAI Codex's non-interactive `codex exec [PROMPT]` subcommand
- *   (prompt passed as the positional arg).
+ * - `codex`  — interactive Codex with an explicit workspace-write sandbox.
  */
+export function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
 const AGENT_COMMANDS = {
-  claude: (promptPath: string, model: string) => `claude --model ${model} "$(cat "${promptPath}")"`,
-  codex: (promptPath: string, _model: string) => `codex exec "$(cat "${promptPath}")"`,
+  claude: (promptPath: string, model: string) =>
+    `claude --model ${shellQuote(model)} "$(cat ${shellQuote(promptPath)})"`,
+  codex: (promptPath: string, _model: string) => `codex --sandbox workspace-write "$(cat ${shellQuote(promptPath)})"`,
 } as const;
 
 /** Routing-matrix default for execution panes when the selected profile has no model pin. */
@@ -607,10 +611,12 @@ interface LaunchCliOptions {
 
 async function handleLaunch(slug: string, cli: LaunchCliOptions): Promise<void> {
   const config = await loadGenieConfig();
+  const configured = config.runtime.defaultAgent;
+  const agent = cli.agent ?? (configured === 'auto' ? (Bun.which('codex') ? 'codex' : 'claude') : configured);
   const opts: LaunchOptions = {
     dryRun: cli.dryRun,
     open: cli.open,
-    agent: cli.agent,
+    agent,
     model: resolveLaunchModel(config),
     groups: cli.groups
       ? cli.groups
@@ -634,6 +640,6 @@ export function registerLaunchCommand(program: Command): void {
     .option('--dry-run', 'Print the plan (YAML, worktrees, prompts) without touching anything')
     .option('--no-open', 'Emit the launch config but do not open Warp')
     .option('--groups <csv>', 'Launch only these comma-separated group names')
-    .option('--agent <name>', 'Terminal agent to drive each pane (claude|codex)', 'claude')
+    .option('--agent <name>', 'Terminal agent to drive each pane (claude|codex); overrides runtime.defaultAgent')
     .action((slug: string, opts: LaunchCliOptions) => handleLaunch(slug, opts));
 }

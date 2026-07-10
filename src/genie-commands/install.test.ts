@@ -45,6 +45,7 @@ describe('installCommand', () => {
       () => {
         syncCalls += 1;
       },
+      () => [],
     );
     expect(spy.calls()).toBe(1);
     expect(normalizeCalls).toBe(1);
@@ -64,10 +65,58 @@ describe('installCommand', () => {
       () => {
         syncCalls += 1;
       },
+      () => [],
     );
     expect(spy.calls()).toBe(0);
     expect(normalizeCalls).toBe(1);
     expect(syncCalls).toBe(1);
+  });
+
+  test('--skip-integrations maps to none', () => {
+    let selection = '';
+    installCommand(
+      {},
+      makeCleanupSpy().runner,
+      () => {},
+      () => {},
+      (options) => {
+        selection = options?.selection ?? '';
+        return [];
+      },
+    );
+    installCommand(
+      { skipIntegrations: true },
+      makeCleanupSpy().runner,
+      () => {},
+      () => {},
+      (options) => {
+        selection = options?.selection ?? '';
+        return [];
+      },
+    );
+    expect(selection).toBe('none');
+  });
+
+  test('explicit integration failures are fatal while auto failures warn', () => {
+    const failing = () => [{ runtime: 'codex' as const, ok: false, detail: 'missing' }];
+    expect(() =>
+      installCommand(
+        {},
+        makeCleanupSpy().runner,
+        () => {},
+        () => {},
+        failing,
+      ),
+    ).not.toThrow();
+    expect(() =>
+      installCommand(
+        { integrations: 'codex' },
+        makeCleanupSpy().runner,
+        () => {},
+        () => {},
+        failing,
+      ),
+    ).toThrow('Requested integration failed');
   });
 });
 

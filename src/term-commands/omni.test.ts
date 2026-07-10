@@ -210,31 +210,28 @@ describe('omni runner — five round-trips (no network)', () => {
     });
 
     const captured: { verified: boolean; hostId: string | null } = { verified: false, hostId: null };
-    const server = Bun.serve({
-      port: 0,
-      async fetch(req) {
-        const url = new URL(req.url);
-        const body = await req.text();
-        const ts = req.headers.get('X-Genie-Timestamp') ?? '';
-        const sig = req.headers.get('X-Genie-Signature') ?? '';
-        captured.hostId = req.headers.get('X-Genie-Host-Id');
-        const bodyHash = createHash('sha256').update(body, 'utf-8').digest('hex');
-        const canonical = `${ts}\nPOST\n${url.pathname}\n${bodyHash}`;
-        captured.verified = verify(null, Buffer.from(canonical, 'utf-8'), pub, Buffer.from(sig, 'base64url'));
-        return new Response(JSON.stringify({ data: { id: 'agent-1' } }), {
-          headers: { 'Content-Type': 'application/json' },
-        });
-      },
-    });
-    process.env.OMNI_API_URL = `http://localhost:${server.port}`;
+    const fetchImpl = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const url = new URL(String(input));
+      const body = String(init?.body ?? '');
+      const headers = new Headers(init?.headers);
+      const ts = headers.get('X-Genie-Timestamp') ?? '';
+      const sig = headers.get('X-Genie-Signature') ?? '';
+      captured.hostId = headers.get('X-Genie-Host-Id');
+      const bodyHash = createHash('sha256').update(body, 'utf-8').digest('hex');
+      const canonical = `${ts}\nPOST\n${url.pathname}\n${bodyHash}`;
+      captured.verified = verify(null, Buffer.from(canonical, 'utf-8'), pub, Buffer.from(sig, 'base64url'));
+      return new Response(JSON.stringify({ data: { id: 'agent-1' } }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    };
+    process.env.OMNI_API_URL = 'http://omni.test';
 
     try {
-      const id = await registerAgentInOmni('genie-agent', { roles: ['dev'] });
+      const id = await registerAgentInOmni('genie-agent', { roles: ['dev'], fetchImpl });
       expect(id).toBe('agent-1');
       expect(captured.verified).toBe(true);
       expect(captured.hostId).toBe('host-123');
     } finally {
-      server.stop(true);
       rmSync(home, { recursive: true, force: true });
       sigTest.resetState();
       restoreEnv('GENIE_HOME', prevHome);

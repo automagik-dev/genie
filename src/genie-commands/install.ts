@@ -15,6 +15,11 @@
 import { existsSync, mkdirSync, renameSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import {
+  type InstallIntegrationsOptions,
+  type IntegrationSelection,
+  installRuntimeIntegrations,
+} from '../lib/runtime-integrations.js';
 import { cleanupV4 } from './legacy-v4.js';
 import { runAgentSyncSafe } from './update.js';
 
@@ -26,11 +31,16 @@ const AUX_LAYOUT_DIRS = ['plugins', 'skills', 'templates'] as const;
 export interface InstallOptions {
   /** Set by --skip-v4-cleanup: leave v4-era artifacts in place. */
   skipV4Cleanup?: boolean;
+  /** Which detected client integrations to install. Default: auto. */
+  integrations?: IntegrationSelection;
+  /** Alias for --integrations none. */
+  skipIntegrations?: boolean;
 }
 
 type V4CleanupRunner = typeof cleanupV4;
 type NormalizeAuxLayoutFn = (genieHome: string) => void;
 type AgentSyncRunner = () => void;
+type IntegrationRunner = (options?: InstallIntegrationsOptions) => ReturnType<typeof installRuntimeIntegrations>;
 
 /**
  * Migrate the legacy `<home>/bin/{plugins,skills,templates}` layout (install.sh
@@ -66,6 +76,7 @@ export function installCommand(
   runV4Cleanup: V4CleanupRunner = cleanupV4,
   normalizeLayout: NormalizeAuxLayoutFn = normalizeAuxLayout,
   runSync: AgentSyncRunner = runAgentSyncSafe,
+  runIntegrations: IntegrationRunner = installRuntimeIntegrations,
 ): void {
   if (options.skipV4Cleanup) {
     console.log('\x1b[2mSkipping v4 legacy cleanup (--skip-v4-cleanup).\x1b[0m');
@@ -76,4 +87,22 @@ export function installCommand(
   // (the freshly-linked binary is already this version, so no re-exec needed).
   normalizeLayout(GENIE_HOME);
   runSync();
+
+  const selection = options.skipIntegrations ? 'none' : (options.integrations ?? 'auto');
+  if (!['auto', 'codex', 'claude', 'all', 'none'].includes(selection)) {
+    throw new Error(`Invalid --integrations value: ${selection}`);
+  }
+  const results = runIntegrations({ selection });
+  for (const result of results) {
+    const glyph = result.ok ? '\x1b[32m+\x1b[0m' : '\x1b[33m!\x1b[0m';
+    const disabled = result.preservedDisabled ? '; disabled state preserved' : '';
+    console.log(`  ${glyph} ${result.runtime}: ${result.detail}${disabled}`);
+  }
+  if (selection !== 'auto' && selection !== 'none') {
+    const failed = results.filter((result) => !result.ok);
+    if (failed.length > 0) throw new Error(`Requested integration failed: ${failed.map((r) => r.runtime).join(', ')}`);
+  }
+  if (results.some((result) => result.runtime === 'codex' && result.ok)) {
+    console.log('  \x1b[33m!\x1b[0m Review Genie hooks with /hooks, then start a new Codex task.');
+  }
 }

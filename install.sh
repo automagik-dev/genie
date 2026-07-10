@@ -371,8 +371,20 @@ ensure_path_wired() {
 # bootstrap. Not `exec` — exec would skip the EXIT trap and leak $TMP_DIR.
 handoff_to_subcommand() {
   log "handing off to: genie install (post-install finishing)"
-  "$LOCAL_BIN/genie" install "$@" \
-    || warn "genie install (post-install finishing) failed — binary is installed; run '$LOCAL_BIN/genie install' manually"
+  local explicit=0 previous=""
+  for arg in "$@"; do
+    case "$arg" in
+      --integrations=codex|--integrations=claude|--integrations=all) explicit=1 ;;
+      codex|claude|all) [[ "$previous" == "--integrations" ]] && explicit=1 ;;
+    esac
+    previous="$arg"
+  done
+  if ! "$LOCAL_BIN/genie" install "$@"; then
+    if [[ "$explicit" -eq 1 ]]; then
+      die "explicitly requested integration installation failed" 1
+    fi
+    warn "genie install finishing failed — binary is installed; run '$LOCAL_BIN/genie install' manually"
+  fi
 }
 
 main() {

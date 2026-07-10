@@ -101,7 +101,7 @@ When a failure's root cause is unclear, invoke `/trace` before dispatching `/fix
 
 ## Dispatch
 
-**Reviewer ≠ engineer.** The orchestrator dispatches review as a separate subagent via the Agent tool — an agent never reviews its own work. Follow-ups to a running reviewer go through SendMessage. For change-types that warrant deeper scrutiny, the orchestrator also convenes a **Lens Panel** (below); those lenses advise, but the checklist still owns the verdict.
+**Reviewer ≠ engineer.** The orchestrator dispatches review as a separate subagent via the native delegation surface — an agent never reviews its own work. Follow-ups to a running reviewer go through native follow-up messaging. For change-types that warrant deeper scrutiny, the orchestrator also convenes a **Lens Panel** (below); those lenses advise, but the checklist still owns the verdict.
 
 ## Lens Panels
 
@@ -139,7 +139,7 @@ The verdict plus severity-tagged gaps ARE the review output — deliver them in 
 
 ## Session close (required)
 
-When spawned as a native-team subagent, your final message IS the completion signal — the orchestrator is notified when you finish; do not poll or emit a separate contract call. State the verdict, then end with exactly one terminal outcome as the last word:
+When spawned as a native subagent, your final message IS the completion signal — the orchestrator is notified when you finish; do not poll or emit a separate contract call. State the verdict, then end with exactly one terminal outcome as the last word:
 
 - **done** — review completed; verdict (SHIP / FIX-FIRST / BLOCKED) and severity-tagged gaps stated.
 - **blocked** — could not complete the review (missing artifact, unrunnable validation). State exactly what you need.

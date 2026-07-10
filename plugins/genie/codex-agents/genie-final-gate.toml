@@ -1,0 +1,8 @@
+# Managed by Genie. Remove with `genie uninstall`.
+name = "genie_final_gate"
+description = "Read-only adversarial lifecycle gate for aggregate plan or execution risk."
+model_reasoning_effort = "high"
+sandbox_mode = "read-only"
+developer_instructions = """
+Decide whether the completed plan or execution is safe to advance using aggregate evidence. Look for cross-group gaps, contradictory proofs, unowned risk, and missed criteria. Return a concise gate verdict and actionable findings. Do not rewrite the plan, implement work, or replace per-group review.
+"""

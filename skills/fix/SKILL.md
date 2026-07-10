@@ -13,8 +13,8 @@ Resolve FIX-FIRST gaps from `/review`: dispatch a fix subagent, re-review, repea
 
 ## Flow
 1. **Parse gaps:** severity, files, failing checks from the FIX-FIRST verdict.
-2. **Dispatch fixer:** Agent tool → fix subagent, briefed with the gap list, the original wish criteria, and any `/trace` diagnosis.
-3. **Re-review:** Agent tool → a separate reviewer subagent (never the fixer) running `/review` on the same pipeline.
+2. **Dispatch fixer:** native delegation surface → fix subagent, briefed with the gap list, the original wish criteria, and any `/trace` diagnosis.
+3. **Re-review:** native delegation surface → a separate reviewer subagent (never the fixer) running `/review` on the same pipeline.
 4. **Evaluate verdict:**
 
 | Verdict | Condition | Action |
@@ -28,7 +28,7 @@ Resolve FIX-FIRST gaps from `/review`: dispatch a fix subagent, re-review, repea
 
 ## Dispatch
 
-Fix and re-review are **separate Agent-tool dispatches** — never combined in one subagent, and the re-reviewer is never the fixer. Subagents notify on completion — no polling. Follow-ups to a running fixer go through SendMessage.
+Fix and re-review are **separate native-dispatch dispatches** — never combined in one subagent, and the re-reviewer is never the fixer. Subagents notify on completion — no polling. Follow-ups to a running fixer go through native follow-up messaging.
 
 The fixer's brief must carry: the severity-tagged gaps (file:line), the original wish acceptance criteria, the validation command(s) to re-run, and stop conditions — fix only the listed gaps; report blocked rather than expand scope.
 
@@ -78,7 +78,7 @@ Appeal: <reviewer/final-gate disagreement record, or "none">
 - [HIGH] sendMessage result not checked — dispatch.ts:541
 ```
 
-Loop 1: Agent tool → fixer briefed with both gaps, the wish criteria, and `bun test` as validation. The fixer edits, runs the validation, reports its changes with outcomes, and ends `done`. Then Agent tool → a fresh reviewer briefed to re-run `/review` against the same criteria. SHIP → report success to the orchestrator. FIX-FIRST again → loop 2; after that, classify the cause and take its corrective route. A model or effort raise is permitted only for evidenced `model-capacity` within both caps.
+Loop 1: native delegation surface → fixer briefed with both gaps, the wish criteria, and `bun test` as validation. The fixer edits, runs the validation, reports its changes with outcomes, and ends `done`. Then native delegation surface → a fresh reviewer briefed to re-run `/review` against the same criteria. SHIP → report success to the orchestrator. FIX-FIRST again → loop 2; after that, classify the cause and take its corrective route. A model or effort raise is permitted only for evidenced `model-capacity` within both caps.
 
 ## Rules
 - Tight scope: fix exactly the tagged gaps — no unrequested refactors, features, or drive-by cleanups.
@@ -90,7 +90,7 @@ Loop 1: Agent tool → fixer briefed with both gaps, the wish criteria, and `bun
 
 ## Session close (required)
 
-When spawned as a native-team subagent, your final message IS the completion signal — the orchestrator is notified when you finish; do not poll or emit a separate contract call. End with exactly one terminal outcome as the last word:
+When spawned as a native subagent, your final message IS the completion signal — the orchestrator is notified when you finish; do not poll or emit a separate contract call. End with exactly one terminal outcome as the last word:
 
 - **done** — gaps resolved and re-review returned SHIP. Report evidence (validation output, loop count).
 - **blocked** — needs human input or an unblocking signal (including max loops exceeded). State exactly what.

@@ -110,7 +110,7 @@ describe('genie launch --dry-run', () => {
     expect(leaves.map((l) => l.title)).toEqual(['api', 'ui']);
     expect(leaves.map((l) => l.cwd)).toEqual([worktreeFor(slug, 'api'), worktreeFor(slug, 'ui')]);
     expect((leaves[0].commands as Array<{ exec: string }>)[0].exec).toBe(
-      `claude --model opus "$(cat "${join(worktreeFor(slug, 'api'), '.genie', 'launch', 'api.prompt')}")"`,
+      `claude --model 'opus' "$(cat '${join(worktreeFor(slug, 'api'), '.genie', 'launch', 'api.prompt')}')"`,
     );
 
     // Prompt content lists both tasks' ids (verified via the plan, not disk).
@@ -147,15 +147,15 @@ function paneCommands(yaml: string): string[] {
 // ----------------------------------------------------------------------------
 
 describe('genie launch --agent', () => {
-  test('--agent codex emits `codex exec "$(cat …)"` pane commands for every group', () => {
+  test('--agent codex emits interactive workspace-write pane commands for every group', () => {
     const slug = 'codex-run';
     createTask(fx.db, { title: 'build the api', wish: slug, group: 'api' });
     createTask(fx.db, { title: 'build the ui', wish: slug, group: 'ui' });
 
     const plan = executeLaunch(slug, { dryRun: true, agent: 'codex' }, deps());
     expect(paneCommands(plan.yaml)).toEqual([
-      `codex exec "$(cat "${join(worktreeFor(slug, 'api'), '.genie', 'launch', 'api.prompt')}")"`,
-      `codex exec "$(cat "${join(worktreeFor(slug, 'ui'), '.genie', 'launch', 'ui.prompt')}")"`,
+      `codex --sandbox workspace-write "$(cat '${join(worktreeFor(slug, 'api'), '.genie', 'launch', 'api.prompt')}')"`,
+      `codex --sandbox workspace-write "$(cat '${join(worktreeFor(slug, 'ui'), '.genie', 'launch', 'ui.prompt')}')"`,
     ]);
   });
 
@@ -163,7 +163,7 @@ describe('genie launch --agent', () => {
     const slug = 'claude-run';
     createTask(fx.db, { title: 'a task', wish: slug, group: 'main' });
     const expected = [
-      `claude --model opus "$(cat "${join(worktreeFor(slug, 'main'), '.genie', 'launch', 'main.prompt')}")"`,
+      `claude --model 'opus' "$(cat '${join(worktreeFor(slug, 'main'), '.genie', 'launch', 'main.prompt')}')"`,
     ];
 
     const byDefault = executeLaunch(slug, { dryRun: true }, deps());
@@ -274,7 +274,7 @@ describe('genie launch (real run, --no-open)', () => {
       (leaf) => (leaf.commands as Array<{ exec: string }>)[0].exec,
     );
     expect(emittedCommands).toHaveLength(2);
-    expect(emittedCommands.every((command) => command.startsWith('claude --model opus '))).toBe(true);
+    expect(emittedCommands.every((command) => command.startsWith("claude --model 'opus' "))).toBe(true);
 
     // Parent repo did NOT flip to bare.
     expect(git(fx.repo, ['config', '--get', 'core.bare'])).toBe('false');
@@ -596,7 +596,7 @@ describe('genie launch (built CLI, workspace-guard inclusive)', () => {
     const launch = runCli(['launch', 'configured', '--dry-run']);
 
     expect(launch.status).toBe(0);
-    expect(launch.stdout).toContain('claude --model sonnet');
+    expect(launch.stdout).toContain("claude --model 'sonnet'");
   });
 });
 

@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 /**
- * Drift guard for CLAUDE.md — the instruction set every agent loads.
+ * Drift guard for the canonical AGENTS.md contract and Claude-specific overlay.
  *
  * CLAUDE.md must describe v5 reality, not the demolished v4 harness. This test
  * fails hard if any retired-v4 fossil string reappears (a stale edit or a bad
@@ -12,6 +12,7 @@ import { join } from 'node:path';
  */
 
 const CLAUDE_MD = join(import.meta.dir, '..', '..', 'CLAUDE.md');
+const AGENTS_MD = join(import.meta.dir, '..', '..', 'AGENTS.md');
 
 // Substrings that MUST NOT appear anywhere in CLAUDE.md. Each is a v4 fossil:
 // a demolished subsystem, a deleted env var, or a retired command namespace.
@@ -50,6 +51,18 @@ const REQUIRED_V5_COMMANDS: ReadonlyArray<string> = [
 
 describe('CLAUDE.md v5 drift guard', () => {
   const content = readFileSync(CLAUDE_MD, 'utf8');
+  const shared = readFileSync(AGENTS_MD, 'utf8');
+
+  test('keeps AGENTS.md canonical and CLAUDE.md as an overlay', () => {
+    expect(content).toContain('canonical shared repository contract in `AGENTS.md`');
+    expect(shared).toContain('runtime-neutral contributor contract');
+    expect(shared).toContain('plugins/genie/references/native-surfaces.md');
+  });
+
+  test('does not resurrect the dead Genie loopback relay', () => {
+    expect(content).not.toContain('relay is load-bearing');
+    expect(shared).toContain('Do not use telemetry presence as integration health');
+  });
 
   for (const fossil of RETIRED_FOSSILS) {
     test(`does not contain retired v4 fossil: ${JSON.stringify(fossil)}`, () => {

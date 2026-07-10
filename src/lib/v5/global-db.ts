@@ -71,7 +71,7 @@ export function openGlobalDb(opts: OpenGlobalOptions = {}): Database {
 }
 
 /** Tables a fully-initialized `user_version = 1` global DB must carry. */
-const EXPECTED_TABLES = ['approvals', 'inbound_messages'] as const;
+const EXPECTED_TABLES = ['approvals', 'inbound_messages', 'agent_sessions'] as const;
 
 /**
  * True when the DB already holds every expected table. Pure reads (no write
@@ -118,9 +118,48 @@ CREATE TABLE IF NOT EXISTS inbound_messages (
   handled_at  INTEGER
 );
 
+CREATE TABLE IF NOT EXISTS agent_sessions (
+  provider   TEXT NOT NULL CHECK (provider IN ('claude', 'codex')),
+  instance   TEXT NOT NULL,
+  chat       TEXT NOT NULL,
+  thread_id  TEXT NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (provider, instance, chat)
+);
+
 CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status);
 CREATE INDEX IF NOT EXISTS idx_inbound_handled ON inbound_messages(handled_at);
 `;
+
+export type AgentProvider = 'claude' | 'codex';
+
+export function getAgentSession(
+  db: Database,
+  provider: AgentProvider,
+  instance: string,
+  chat: string,
+): string | undefined {
+  const row = db
+    .query('SELECT thread_id AS threadId FROM agent_sessions WHERE provider = ? AND instance = ? AND chat = ?')
+    .get(provider, instance, chat) as { threadId: string } | null;
+  return row?.threadId;
+}
+
+export function upsertAgentSession(
+  db: Database,
+  provider: AgentProvider,
+  instance: string,
+  chat: string,
+  threadId: string,
+  now = Date.now(),
+): void {
+  db.query(
+    `INSERT INTO agent_sessions(provider, instance, chat, thread_id, updated_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(provider, instance, chat)
+     DO UPDATE SET thread_id = excluded.thread_id, updated_at = excluded.updated_at`,
+  ).run(provider, instance, chat, threadId, now);
+}
 
 /** Create every table/index if absent. Idempotent — pure `IF NOT EXISTS`. */
 export function ensureSchema(db: Database): void {
