@@ -127,8 +127,10 @@ bash .genie/wishes/agent-sync/validate/g2-wiring.sh
 4. council-workflow WISH G5 ritual + Decision 6 note amended (CLI primary; delivery-release caveat: `genie update` twice, once ever).
 
 **Acceptance Criteria:**
-- [ ] g3 gate green including full `bun run check`
-- [ ] Docs match the shipped behavior exactly (no aspirational claims)
+- [x] g3 gate green including full `bun run check`
+- [x] Docs match the shipped behavior exactly (no aspirational claims)
+
+**Status:** DONE (2026-07-10) — gate `G3 PASS` (orchestrator-run, 807 tests incl. full check), execution review SHIP (0 CRITICAL/HIGH). Destructive-path audit clean: uninstall removal is manifest/signature/target-verified and fails safe (corrupt manifest ⇒ skip); doctor structurally read-only (no write primitive in import scope). Orchestrator follow-up pass applied per review: M1 — protocol constants (`MANIFEST_NAME`/`MANAGED_BY`/`TARGET_NAME`) now exported from the engine and imported by doctor/uninstall (single source of truth on the safety identifiers); L1 ritual wording ("the first only swaps the binary — the old code has no agent-sync"); L2 README removal-claims precision. L3 test pins accepted as debt (invariants correct by inspection + adjacent coverage). Marketplace-note-as-pass adjudicated acceptable.
 
 **Validation:**
 ```bash

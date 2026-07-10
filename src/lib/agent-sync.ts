@@ -45,12 +45,12 @@ import { resolveClaudeDir, resolveCodexDir, resolveGenieHome, resolveHermesHome 
 
 /** Placeholder the /council template carries for its lens-card root. */
 const PLACEHOLDER = '__GENIE_LENS_ROOT__';
-/** Stamped/synced workflow filename. */
-const TARGET_NAME = 'council.js';
-/** Manifest marker written into every managed skill dir. */
-const MANIFEST_NAME = '.genie-sync.json';
-/** `managedBy` value that certifies a dir as one this engine owns. */
-const MANAGED_BY = 'genie-agent-sync';
+/** Stamped/synced workflow filename. Exported: doctor/uninstall key their checks on it. */
+export const TARGET_NAME = 'council.js';
+/** Manifest marker written into every managed skill dir. Exported: single source of truth. */
+export const MANIFEST_NAME = '.genie-sync.json';
+/** `managedBy` value that certifies a dir as one this engine owns. Exported: single source of truth. */
+export const MANAGED_BY = 'genie-agent-sync';
 /** Skill actions that represent an actual write to the target. */
 const WRITE_ACTIONS = new Set<SkillAction>(['created', 'updated', 'adopted', 'removed']);
 /**

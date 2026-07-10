@@ -7,12 +7,14 @@
  * - Remove symlinks from ~/.local/bin
  */
 
-import { existsSync, lstatSync, rmSync, unlinkSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readdirSync, readlinkSync, rmSync, statSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { confirm } from '@inquirer/prompts';
+import { MANAGED_BY, MANIFEST_NAME } from '../lib/agent-sync.js';
 import { hookScriptExists, removeHookScript } from '../lib/claude-settings.js';
 import { contractPath, getGenieDir } from '../lib/genie-config.js';
+import { resolveClaudeDir, resolveCodexDir, resolveGenieHome, resolveHermesHome } from '../lib/genie-home.js';
 import { orchestrationRulesPath } from './legacy-v4.js';
 
 // Shared v4 legacy manifest owns this path — see legacy-v4.ts.
@@ -59,6 +61,123 @@ function removeSymlinks(): string[] {
   return removed;
 }
 
+// ============================================================================
+// agent-sync managed assets (wish agent-sync) — removed only when provably ours
+// ============================================================================
+
+// The managed-dir contract mirrored from src/lib/agent-sync.ts. Uninstall only
+// removes what genie provably shipped: skill dirs carrying this manifest, the
+// stamped council.js, and the hermes symlink that resolves into the genie home.
+// Protocol identifiers imported from the engine — single source of truth.
+const SYNC_MANIFEST_NAME = MANIFEST_NAME;
+const SYNC_MANAGED_BY = MANAGED_BY;
+
+interface AgentSyncRemovalTargets {
+  claudeDir?: string;
+  codexDir?: string;
+  hermesHome?: string;
+  genieHome?: string;
+}
+
+interface AgentSyncAsset {
+  agent: 'claude' | 'codex' | 'hermes';
+  kind: 'skill' | 'workflow' | 'link';
+  path: string;
+}
+
+/** True only when `dir` carries a genie-agent-sync manifest — i.e. we shipped it. */
+function isManagedSkillDir(dir: string): boolean {
+  try {
+    const parsed = JSON.parse(readFileSync(join(dir, SYNC_MANIFEST_NAME), 'utf8')) as { managedBy?: string };
+    return parsed.managedBy === SYNC_MANAGED_BY;
+  } catch {
+    return false;
+  }
+}
+
+function collectManagedSkillDirs(parent: string, agent: AgentSyncAsset['agent'], out: AgentSyncAsset[]): void {
+  let names: string[];
+  try {
+    names = readdirSync(parent);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    const dir = join(parent, name);
+    let isDir = false;
+    try {
+      isDir = statSync(dir).isDirectory();
+    } catch {
+      isDir = false;
+    }
+    if (isDir && isManagedSkillDir(dir)) out.push({ agent, kind: 'skill', path: dir });
+  }
+}
+
+/** The stamped council.js carries `const LENS_ROOT = '…'` plus the `name: 'council'` meta. */
+function isStampedCouncil(councilPath: string): boolean {
+  try {
+    const content = readFileSync(councilPath, 'utf8');
+    return content.includes('const LENS_ROOT =') && /name:\s*'council'/.test(content);
+  } catch {
+    return false;
+  }
+}
+
+function collectStampedCouncil(claudeDir: string, out: AgentSyncAsset[]): void {
+  const councilPath = join(claudeDir, 'workflows', 'council.js');
+  if (isStampedCouncil(councilPath)) out.push({ agent: 'claude', kind: 'workflow', path: councilPath });
+}
+
+/** The hermes plugin link is ours only when the symlink resolves into the genie home. */
+function collectHermesLink(hermesHome: string, genieHome: string, out: AgentSyncAsset[]): void {
+  const linkPath = join(hermesHome, 'plugins', 'genie');
+  let stat: ReturnType<typeof lstatSync>;
+  try {
+    stat = lstatSync(linkPath);
+  } catch {
+    return;
+  }
+  if (!stat.isSymbolicLink()) return;
+  try {
+    const resolved = resolve(join(hermesHome, 'plugins'), readlinkSync(linkPath));
+    const home = resolve(genieHome);
+    if (resolved === home || resolved.startsWith(`${home}/`))
+      out.push({ agent: 'hermes', kind: 'link', path: linkPath });
+  } catch {
+    /* unreadable symlink → leave it */
+  }
+}
+
+/** Read-only scan for genie-managed agent assets (skills, stamped council.js, hermes link). */
+export function collectAgentSyncAssets(targets: AgentSyncRemovalTargets = {}): AgentSyncAsset[] {
+  const claudeDir = targets.claudeDir ?? resolveClaudeDir();
+  const codexDir = targets.codexDir ?? resolveCodexDir();
+  const hermesHome = targets.hermesHome ?? resolveHermesHome();
+  const genieHome = targets.genieHome ?? resolveGenieHome();
+  const out: AgentSyncAsset[] = [];
+  collectManagedSkillDirs(join(claudeDir, 'skills'), 'claude', out);
+  collectManagedSkillDirs(join(codexDir, 'skills', '.curated'), 'codex', out);
+  collectStampedCouncil(claudeDir, out);
+  collectHermesLink(hermesHome, genieHome, out);
+  return out;
+}
+
+/** Remove every asset {@link collectAgentSyncAssets} finds; returns the removed paths. */
+export function removeAgentSyncAssets(targets: AgentSyncRemovalTargets = {}): string[] {
+  const removed: string[] = [];
+  for (const asset of collectAgentSyncAssets(targets)) {
+    try {
+      if (asset.kind === 'skill') rmSync(asset.path, { recursive: true, force: true });
+      else unlinkSync(asset.path);
+      removed.push(asset.path);
+    } catch {
+      // best-effort — a failed asset removal never blocks the rest of uninstall
+    }
+  }
+  return removed;
+}
+
 /** Try an uninstall step, logging success or warning on failure. */
 function tryRemoveStep(label: string, successMsg: string, fn: () => void): void {
   console.log(`\x1b[2m${label}\x1b[0m`);
@@ -79,6 +198,7 @@ function performUninstall(
   existingSymlinks: string[],
   genieDir: string,
   hasGenieDir: boolean,
+  hasAgentAssets: boolean,
 ): void {
   if (hasHookScript) {
     tryRemoveStep('Removing hook script...', 'Hook script removed', () => removeHookScript());
@@ -100,6 +220,14 @@ function performUninstall(
     );
   }
 
+  // Managed agent assets live OUTSIDE the genie home (~/.claude, ~/.codex,
+  // ~/.hermes), so removing them is a distinct step from deleting ~/.genie.
+  if (hasAgentAssets) {
+    console.log('\x1b[2mRemoving synced agent assets...\x1b[0m');
+    const removed = removeAgentSyncAssets();
+    console.log(`  \x1b[32m+\x1b[0m Removed ${removed.length} managed asset(s) (skills / council.js / hermes link)`);
+  }
+
   if (hasGenieDir) {
     tryRemoveStep('Removing genie directory...', 'Directory removed', () =>
       rmSync(genieDir, { recursive: true, force: true }),
@@ -117,6 +245,8 @@ export async function uninstallCommand(): Promise<void> {
   const hasHookScript = hookScriptExists();
   const hasOrchestrationRules = existsSync(ORCHESTRATION_RULES_PATH);
   const existingSymlinks = SYMLINKS.filter((name) => isGenieSymlink(join(LOCAL_BIN, name)));
+  const agentAssets = collectAgentSyncAssets();
+  const hasAgentAssets = agentAssets.length > 0;
 
   console.log('\x1b[2mThis will remove:\x1b[0m');
   if (hasHookScript) console.log('  \x1b[31m-\x1b[0m Hook script (~/.claude/hooks/genie-bash-hook.sh)');
@@ -125,9 +255,13 @@ export async function uninstallCommand(): Promise<void> {
   if (hasGenieDir) console.log(`  \x1b[31m-\x1b[0m Genie directory (${contractPath(genieDir)})`);
   if (existingSymlinks.length > 0)
     console.log(`  \x1b[31m-\x1b[0m Symlinks from ~/.local/bin: ${existingSymlinks.join(', ')}`);
+  if (hasAgentAssets)
+    console.log(
+      `  \x1b[31m-\x1b[0m Synced agent assets: ${agentAssets.length} managed skill dir(s)/council.js/hermes link across claude/codex/hermes`,
+    );
   console.log();
 
-  if (!hasGenieDir && !hasHookScript && !hasOrchestrationRules && existingSymlinks.length === 0) {
+  if (!hasGenieDir && !hasHookScript && !hasOrchestrationRules && existingSymlinks.length === 0 && !hasAgentAssets) {
     console.log('\x1b[33mNothing to uninstall.\x1b[0m');
     console.log();
     return;
@@ -142,7 +276,7 @@ export async function uninstallCommand(): Promise<void> {
   }
 
   console.log();
-  performUninstall(hasHookScript, existingSymlinks, genieDir, hasGenieDir);
+  performUninstall(hasHookScript, existingSymlinks, genieDir, hasGenieDir, hasAgentAssets);
 
   console.log();
   console.log('\x1b[32m+\x1b[0m Genie CLI uninstalled.');

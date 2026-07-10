@@ -6,7 +6,10 @@ test -f src/lib/genie-home.ts || { echo "FAIL: missing src/lib/genie-home.ts"; e
 test -e src/lib/agent-sync.ts || test -d src/lib/agent-sync || { echo "FAIL: missing agent-sync module"; exit 1; }
 test -f src/lib/agent-sync.test.ts || { echo "FAIL: missing src/lib/agent-sync.test.ts"; exit 1; }
 
-grep -rq 'GENIE_UPDATE_SYNC_ONLY' src/genie-commands/ && { echo "FAIL: G1 must not wire commands (G2 scope)"; exit 1; } || true
+# (retired) This line asserted src/genie-commands/ carried NO GENIE_UPDATE_SYNC_ONLY
+# wiring — a G1-phase guard. G2 landed that wiring by design (update.ts sync-only
+# fast path), so the assertion is obsolete and intentionally removed. Kept as a
+# note so the gate stays re-runnable and the history of the check is legible.
 
 bun test src/lib/agent-sync.test.ts
 bun run typecheck

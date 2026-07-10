@@ -2,6 +2,7 @@ import { Database } from 'bun:sqlite';
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import {
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -9,11 +10,14 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { computeDirDigest } from '../lib/agent-sync.js';
 import {
+  checkAgentSync,
   checkSubagentModelOverride,
   checkV4Residue,
   doctorCommand,
@@ -436,5 +440,163 @@ describe('checkV4Residue — accounting + uncertain keeps + json fix', () => {
     expect(existsSync(join(fxGenieHome, 'serve.pid'))).toBe(false);
     expect(parsed.checks.find((c) => c.name === 'v4 residue')?.status).toBe('pass'); // post-fix state
     expect(proc.stderr.toString()).toContain('Removed v4 residue'); // chatter rerouted, not lost
+  });
+});
+
+// ============================================================================
+// agent-sync freshness (wish agent-sync, Group 3) — read-only, path-injected
+// ============================================================================
+
+describe('checkAgentSync', () => {
+  let tmp: string;
+  let genieHome: string;
+  let pluginRoot: string;
+  let claudeDir: string;
+  let codexDir: string;
+  let hermesHome: string;
+
+  function writeSourceSkill(name: string, body: string): void {
+    mkdirSync(join(pluginRoot, 'skills', name), { recursive: true });
+    writeFileSync(join(pluginRoot, 'skills', name, 'SKILL.md'), body, 'utf8');
+  }
+
+  /** Copy a source skill into a target parent + stamp a manifest (current unless a digest is forced). */
+  function seedManaged(sourceDir: string, destDir: string, digest?: string): void {
+    cpSync(sourceDir, destDir, { recursive: true });
+    writeFileSync(
+      join(destDir, '.genie-sync.json'),
+      JSON.stringify({
+        managedBy: 'genie-agent-sync',
+        version: '1',
+        digest: digest ?? computeDirDigest(sourceDir),
+        syncedAt: '2026-01-01T00:00:00.000Z',
+      }),
+      'utf8',
+    );
+  }
+
+  function stampCouncil(lensRoot: string): void {
+    mkdirSync(join(claudeDir, 'workflows'), { recursive: true });
+    writeFileSync(
+      join(claudeDir, 'workflows', 'council.js'),
+      `export const meta = { name: 'council' };\nconst LENS_ROOT = '${lensRoot}';\n`,
+      'utf8',
+    );
+  }
+
+  function paths() {
+    return { genieHome, claudeDir, codexDir, hermesHome, settingsPath: join(claudeDir, 'settings.json') };
+  }
+
+  const find = (results: ReturnType<typeof checkAgentSync>, name: string) => results.find((r) => r.name === name);
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), 'doctor-agentsync-'));
+    genieHome = join(tmp, 'genie');
+    pluginRoot = join(genieHome, 'plugins', 'genie');
+    claudeDir = join(tmp, 'claude');
+    codexDir = join(tmp, 'codex');
+    hermesHome = join(tmp, 'hermes');
+    mkdirSync(join(pluginRoot, 'skills'), { recursive: true });
+    mkdirSync(join(genieHome, 'plugins', 'hermes-genie'), { recursive: true });
+    writeFileSync(join(genieHome, 'VERSION'), '5.0.0\n', 'utf8');
+    writeSourceSkill('wish', '# wish\n');
+    writeSourceSkill('review', '# review\n');
+  });
+
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  test('no plugin source → one pass advisory pointing at genie update', () => {
+    const results = checkAgentSync({ genieHome: join(tmp, 'absent'), claudeDir, codexDir, hermesHome });
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ name: 'agent sync', status: 'pass' });
+    expect(results[0].detail).toContain('genie update');
+  });
+
+  test('undetected agents each report "not detected", never a failure', () => {
+    const results = checkAgentSync(paths());
+    expect(find(results, 'agent sync: claude')?.detail).toBe('not detected');
+    expect(find(results, 'agent sync: codex')?.detail).toBe('not detected');
+    expect(find(results, 'agent sync: hermes')?.detail).toBe('not detected');
+    expect(results.every((r) => r.status !== 'fail')).toBe(true);
+  });
+
+  test('all-current skills + correct council stamp + correct hermes link → pass, no advice', () => {
+    seedManaged(join(pluginRoot, 'skills', 'wish'), join(claudeDir, 'skills', 'wish'));
+    seedManaged(join(pluginRoot, 'skills', 'review'), join(claudeDir, 'skills', 'review'));
+    stampCouncil(pluginRoot);
+    seedManaged(join(pluginRoot, 'skills', 'wish'), join(codexDir, 'skills', '.curated', 'wish'));
+    seedManaged(join(pluginRoot, 'skills', 'review'), join(codexDir, 'skills', '.curated', 'review'));
+    mkdirSync(join(hermesHome, 'plugins'), { recursive: true });
+    symlinkSync(join(genieHome, 'plugins', 'hermes-genie'), join(hermesHome, 'plugins', 'genie'));
+
+    const results = checkAgentSync(paths());
+    const claude = find(results, 'agent sync: claude');
+    expect(claude?.status).toBe('pass');
+    expect(claude?.detail).toContain('2/2 source skills current');
+    expect(claude?.detail).toContain('council.js current');
+    expect(claude?.suggestion).toBeUndefined();
+    expect(find(results, 'agent sync: codex')?.status).toBe('pass');
+    const hermes = find(results, 'agent sync: hermes');
+    expect(hermes?.status).toBe('pass');
+    expect(hermes?.detail).toContain('linked');
+  });
+
+  test('stale managed skill + wrong council stamp → warn + genie-update advice', () => {
+    seedManaged(join(pluginRoot, 'skills', 'wish'), join(claudeDir, 'skills', 'wish'));
+    seedManaged(join(pluginRoot, 'skills', 'review'), join(claudeDir, 'skills', 'review'), 'deadbeef');
+    stampCouncil('/old/plugin/root');
+
+    const claude = find(checkAgentSync(paths()), 'agent sync: claude');
+    expect(claude?.status).toBe('warn');
+    expect(claude?.detail).toContain('1 stale');
+    expect(claude?.detail).toContain('council.js stale');
+    expect(claude?.suggestion).toContain('genie update');
+  });
+
+  test('unmanaged skill dirs are never counted (genie only speaks for what it shipped)', () => {
+    mkdirSync(join(claudeDir, 'skills', 'my-own'), { recursive: true });
+    writeFileSync(join(claudeDir, 'skills', 'my-own', 'SKILL.md'), '# mine\n', 'utf8');
+    stampCouncil(pluginRoot);
+
+    const claude = find(checkAgentSync(paths()), 'agent sync: claude');
+    expect(claude?.detail).toContain('0/2 source skills current');
+  });
+
+  test('hermes link pointing elsewhere → warn', () => {
+    mkdirSync(join(hermesHome, 'plugins'), { recursive: true });
+    symlinkSync(join(tmp, 'somewhere-else'), join(hermesHome, 'plugins', 'genie'));
+    const hermes = find(checkAgentSync(paths()), 'agent sync: hermes');
+    expect(hermes?.status).toBe('warn');
+    expect(hermes?.detail).toContain('points elsewhere');
+  });
+
+  test('codex detected but .curated empty → warn (not populated)', () => {
+    mkdirSync(codexDir, { recursive: true });
+    const codex = find(checkAgentSync(paths()), 'agent sync: codex');
+    expect(codex?.status).toBe('warn');
+    expect(codex?.detail).toContain('.curated not populated');
+  });
+
+  test('marketplace plugin: disabled/absent → optional pass note; enabled → silent', () => {
+    mkdirSync(claudeDir, { recursive: true });
+    writeFileSync(
+      join(claudeDir, 'settings.json'),
+      JSON.stringify({ enabledPlugins: { 'genie@automagik': false } }),
+      'utf8',
+    );
+    let mkt = find(checkAgentSync(paths()), 'agent sync: marketplace plugin');
+    expect(mkt?.status).toBe('pass');
+    expect(mkt?.detail).toContain('not enabled');
+
+    writeFileSync(
+      join(claudeDir, 'settings.json'),
+      JSON.stringify({ enabledPlugins: { 'genie@automagik': true } }),
+      'utf8',
+    );
+    mkt = find(checkAgentSync(paths()), 'agent sync: marketplace plugin');
+    expect(mkt).toBeUndefined();
   });
 });
