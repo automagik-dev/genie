@@ -107,6 +107,32 @@ interface DispatchOptions {
   runtime?: 'auto' | 'claude' | 'codex';
 }
 
+/**
+ * Resolve the wire protocol for this dispatch.
+ *
+ * Precedence: explicit `--runtime` flag → `GENIE_HOOK_RUNTIME` env →
+ * auto-detect (Codex plugin hosts export `PLUGIN_ROOT`; Claude Code does not)
+ * → 'claude'.
+ *
+ * The shipped hooks files select the runtime via the env prefix
+ * (`env GENIE_HOOK_RUNTIME=codex genie hook dispatch`), NOT the flag: hook
+ * command lines must stay OLD-BINARY-COMPATIBLE. A deployed binary that
+ * predates `--runtime` rejects the unknown flag at parse time — on a
+ * plugin-first rollout every PreToolUse fork would error and the fail-closed
+ * envelope would deny tools fleet-wide. Old binaries ignore the env var and
+ * parse `hook dispatch` fine. The flag is kept for forward compat and manual
+ * invocation only.
+ */
+export function resolveDispatchRuntime(
+  flag: DispatchOptions['runtime'],
+  env: NodeJS.ProcessEnv = process.env,
+): 'claude' | 'codex' {
+  if (flag === 'claude' || flag === 'codex') return flag;
+  const envRuntime = env.GENIE_HOOK_RUNTIME;
+  if (envRuntime === 'claude' || envRuntime === 'codex') return envRuntime;
+  return env.PLUGIN_ROOT ? 'codex' : 'claude';
+}
+
 async function dispatchAction(options: DispatchOptions): Promise<void> {
   const stdin = await readStdin();
   if (!stdin.trim()) {
@@ -120,8 +146,7 @@ async function dispatchAction(options: DispatchOptions): Promise<void> {
   // fail-closed wrapper dispatches against already includes the omni handler.
   await installDispatchRegistry();
 
-  const runtime =
-    options.runtime === 'codex' || (options.runtime !== 'claude' && process.env.PLUGIN_ROOT) ? 'codex' : 'claude';
+  const runtime = resolveDispatchRuntime(options.runtime);
   const output = await computeDispatchOutput(stdin, dispatch, runtime);
   if (output) {
     process.stdout.write(output);

@@ -22,10 +22,14 @@ export function adaptCodexPreToolUseOutput(output: string): string {
 export function codexPermissionDecision(result: HandlerResult): string {
   const decision = result?.hookSpecificOutput?.permissionDecision ?? result?.decision;
   if (decision !== 'allow' && decision !== 'deny') return '';
+  // Codex documents an optional `message` on deny decisions — without it, omni
+  // phone denials surface in the Codex UI with no reason at all.
+  const reason = result?.hookSpecificOutput?.permissionDecisionReason ?? result?.reason;
+  const behavior = decision === 'deny' && reason ? { behavior: decision, message: reason } : { behavior: decision };
   return JSON.stringify({
     hookSpecificOutput: {
       hookEventName: 'PermissionRequest',
-      decision: { behavior: decision },
+      decision: behavior,
     },
   });
 }

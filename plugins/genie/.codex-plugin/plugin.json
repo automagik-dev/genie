@@ -11,6 +11,7 @@
   "license": "MIT",
   "keywords": ["workflow", "orchestration", "codex", "skills", "agents"],
   "skills": "./skills/",
+  "hooks": "./hooks/codex-hooks.json",
   "mcpServers": {
     "genie": {
       "command": "genie",
