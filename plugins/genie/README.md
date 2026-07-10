@@ -27,6 +27,18 @@ Execute wish tasks with bounded fix loops and per-group validation evidence.
 ### 4) `/review`
 Universal review gate (plan, execution, PR) returning `SHIP`, `FIX-FIRST`, or `BLOCKED`.
 
+## `/council` workflow
+
+The multi-perspective engine ships as a native dynamic workflow, not a skill:
+
+- **What ships**: `workflows/council.js` (the engine template), `references/lenses/` (6 deliberation cards), and the 7 lane skills (`repo-hygiene`, `architecture`, `code-quality`, `qa`, `perf`, `supply-chain`, `dx-docs`) doubling as audit lenses.
+- **Distribution**: the SessionStart hook stamps `LENS_ROOT` with the installed plugin path and copies the template to `~/.claude/workflows/council.js` — idempotent, and re-stamped on the first session after a plugin update.
+- **Modes**:
+  - `/council <topic>` — deliberation: 3-4 lenses routed by topic, 2-round Socratic exchange, dissent preserved verbatim.
+  - `/council audit [focus]` — lane audit: assess-only, evidence-backed findings that route to `/wish`, profile updates merged single-writer into `.genie/repo-profile.md`.
+- **Requirements**: Claude Code ≥ 2.1.154 with dynamic workflows available (paid plans; an org-level `disableWorkflows` setting turns the command off).
+- **Override**: a project-level `.claude/workflows/council.js` takes precedence over the personal stamped copy.
+
 ## Directory Structure
 
 ```text
@@ -37,6 +49,7 @@ genie/
 ├── agents/
 ├── hooks/
 ├── scripts/
+├── workflows/
 └── references/
 ```
 

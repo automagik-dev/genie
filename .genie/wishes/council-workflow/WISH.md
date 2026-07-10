@@ -169,11 +169,13 @@ bash .genie/wishes/council-workflow/validate/g4-consumers.sh
 **Deliverables:**
 1. `lint:council-workflow` wired into `bun run check` (package.json).
 2. Docs: skills/README.md, plugin README/docs notes, workflow requirements (CC ≥ 2.1.154, paid plans, `disableWorkflows`).
-3. Live QA evidence: `.genie/wishes/council-workflow/qa/deliberation-run.md` + `qa/audit-run.md` (real runs on the genie repo, with `/workflows` token totals captured).
+3. Live QA evidence: `.genie/wishes/council-workflow/qa/deliberation-run.md` + `qa/audit-run.md` — **USER-GATED, post-release (Felipe's ruling 2026-07-10):** the real test is the shipped surface, not a scriptPath simulation. Ritual: merge → release → plugin update lands on Felipe's machine → SessionStart stamp installs `~/.claude/workflows/council.js` → Felipe runs `/council` himself ("revisar tudo") to validate; the run outputs become the qa/ evidence files. `validate/g5-gate.sh` deliberately keeps failing at the qa/ assertions until then — that pending tail is the designed state, not a defect.
 
 **Acceptance Criteria:**
-- [ ] `bun run check` green AND its output proves `lint:council-workflow` actually ran (behavioral wiring check, not just script existence)
-- [ ] Both QA evidence files present with real run output
+- [x] `bun run check` green AND its output proves `lint:council-workflow` actually ran (behavioral wiring check, not just script existence)
+- [ ] Both QA evidence files present with real run output — post-release, from Felipe's own `/council` runs
+
+**Status:** PARTIAL (2026-07-10) — engineering half DONE by the orchestrator inline (Felipe stopped agent dispatch for this wave): `lint:council-workflow` wired into `check` after `wishes:lint` (behavioral proof: check output shows it running, exit 0, 725 pass / 1 skip), plugin README gained the `/council` workflow section (ships/distribution/modes/requirements/override) + `workflows/` in the tree. Live-QA half USER-GATED post-release per Felipe's ruling — `validate/g5-gate.sh` correctly halts at the qa/ assertions until his `/council` runs land. Stamp path pre-validated: the shipped `council-stamp.cjs` stamped a scratchpad copy (placeholder → absolute `LENS_ROOT`, action "written").
 
 **Validation:**
 ```bash
