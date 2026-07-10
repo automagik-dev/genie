@@ -40,7 +40,7 @@ const LENSES = {
   tracer: 'references/lenses/tracer.md',
 };
 
-// Keyword routing for deliberation, absorbed from the old council members/routing.md.
+// Keyword routing for deliberation, absorbed from the old council's routing table.
 // The four retired council lenses are remapped onto lanes: benchmarker -> perf,
 // sentinel -> supply-chain, ergonomist -> dx-docs, architect -> architecture.
 const ROUTING = [

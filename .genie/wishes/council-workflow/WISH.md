@@ -59,12 +59,13 @@ Genie's multi-perspective reasoning is split across two model-driven orchestrato
 
 ## Execution Strategy
 
-| Wave | Groups | Notes |
-|------|--------|-------|
-| 1 | G1 (lane skills) ∥ G2 (engine + lenses + stamp) | New files only — zero collision with the pending skills-fable5-revamp execution review |
-| 2 | G3 (cutover) | Gated on G1+G2 AND skills-fable5-revamp MERGED to its base (review-closed insufficient); rebase `wish/council-workflow` onto the post-merge base first |
-| 3 | G4 (consumers) | Edits review/brainstorm skills — behind the same fable5 merged-gate |
-| 4 | G5 (lints in check + docs + live QA) | Final gate |
+| Wave | Group | Agent | Complexity | Model | Notes |
+|------|-------|-------|------------|-------|-------|
+| 1 | G1 lane skills | engineer | 2 (md migration) | inherit (fable·max) | New dirs only — zero collision with skills-fable5-revamp |
+| 1 | G2 engine + lenses + stamp | engineer | 4 (workflow engine + install wiring) | inherit (fable·max) | New files only; runs parallel to G1 |
+| 2 | G3 cutover | engineer | 2 (deletion + purge) | inherit (fable·max) | Gated on G1+G2 AND skills-fable5-revamp MERGED to base — satisfied: PR #2518 (1308e4c6) is an ancestor of this branch |
+| 3 | G4 consumers | engineer | 3 (prompt surfaces) | inherit (fable·max) | Edits review/brainstorm skills — behind the same fable5 merged-gate |
+| 4 | G5 lints in check + docs + live QA | engineer | 2 (wiring + docs + QA evidence) | inherit (fable·max) | Final gate |
 
 ---
 
@@ -124,10 +125,12 @@ bash .genie/wishes/council-workflow/validate/g2-engine.sh
 3. skills/README.md council row updated to point at the workflow.
 
 **Acceptance Criteria:**
-- [ ] `skills/council/` gone; no references to `members/routing.md`, `members/config.md`, or the council skill remain in live surfaces
-- [ ] `bun run lint:council-workflow` green — first point where full 13-lens on-disk integrity is assertable (G1+G2 both done)
-- [ ] `git grep -il 'specialist-panel'` → 0 hits outside `.genie/attic/`, `CHANGELOG.md`, this wish's artifacts
-- [ ] **Process gate:** skills-fable5-revamp MERGED to its base branch (review-closed is not enough — its Wave 1 rewrote these same skill files in place), and `wish/council-workflow` rebased onto the post-merge base before this group starts (checked by the worker, recorded in the group log)
+- [x] `skills/council/` gone; no references to `members/routing.md`, `members/config.md`, or the council skill remain in live surfaces
+- [x] `bun run lint:council-workflow` green — first point where full 13-lens on-disk integrity is assertable (G1+G2 both done)
+- [x] `git grep -il 'specialist-panel'` → 0 hits outside `.genie/attic/`, `CHANGELOG.md`, this wish's artifacts
+- [x] **Process gate:** skills-fable5-revamp MERGED to its base branch — satisfied by ancestry: PR #2518 merge `1308e4c6` is an ancestor of this branch (no rebase needed; the edited/deleted skill files were the post-fable5 versions)
+
+**Status:** DONE (2026-07-10) — engineer died mid-report (API drop) with the work complete in-tree; orchestrator verified diffs + gate, independent review SHIP (0 gaps ≥MEDIUM; 2 LOW notes trace to G2's accepted design: config.md model-defaults have no workflow analog beyond inherit, deliberation report is distilled rather than per-member — dissent preserved). Extra: router row in skills/genie/SKILL.md now launches the saved workflow via the Workflow tool for council; one comment in council.js reworded to satisfy the purge grep. `bun run check` green (725 pass / 1 skip).
 
 **Validation:**
 ```bash
