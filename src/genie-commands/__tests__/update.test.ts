@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { AgentSyncReport } from '../../lib/agent-sync';
 import {
   type LatestManifest,
   type VerifyResult,
@@ -33,6 +34,8 @@ import {
   resolveLiveBinaryPath,
   resolvePlatformId,
   rollbackBinary,
+  runAgentSyncSafe,
+  runFreshBinaryAgentSync,
   runV4CleanupSafe,
   runVerifyProbe,
   shortCircuitIfCurrent,
@@ -1420,6 +1423,158 @@ describe('runV4CleanupSafe', () => {
     expect(callIdx).toBeGreaterThan(-1);
     expect(verifyIdx).toBeGreaterThan(-1);
     expect(callIdx).toBeLessThan(verifyIdx);
+  });
+});
+
+// ============================================================================
+// Agent-sync wiring (agent-sync wish G2). `genie update` is the ONE canonical
+// updater: the sync phase runs on the sync-only fast path, on the already-
+// current short-circuit, and via a post-swap re-exec of the fresh binary. The
+// internal env GENIE_UPDATE_SYNC_ONLY=1 is the only re-entry contract — no new
+// user-facing command or flag. Engine failures are non-fatal advisories.
+// ============================================================================
+
+describe('runAgentSyncSafe (agent-sync phase)', () => {
+  function makeReport(): AgentSyncReport {
+    return {
+      source: { pluginRoot: '/home/.genie/plugins/genie', hermesRoot: null, version: '5.0.0' },
+      agents: [
+        {
+          agent: 'claude',
+          detected: true,
+          skills: [
+            { name: 'wish', action: 'created' },
+            { name: 'work', action: 'updated' },
+            { name: 'review', action: 'created' },
+          ],
+          extras: [{ kind: 'stamp', action: 'written', detail: '/x/council.js' }],
+          advisories: [],
+        },
+        { agent: 'codex', detected: false, skills: [], extras: [], advisories: [] },
+        {
+          agent: 'hermes',
+          detected: true,
+          skills: [],
+          extras: [{ kind: 'symlink', action: 'created' }],
+          advisories: ['hermes plugins enable genie failed: boom'],
+        },
+      ],
+      backupsDir: null,
+    };
+  }
+
+  test('runs the injected engine and prints a compact per-agent summary', () => {
+    const lines: string[] = [];
+    const marker = join(mkdtempSync(join(tmpdir(), 'genie-asm-')), '.last-agent-sync');
+    runAgentSyncSafe({ sync: makeReport, log: (l) => lines.push(l), markerPath: marker });
+    const joined = lines.join('\n');
+    expect(joined).toContain('claude');
+    expect(joined).toContain('created 2');
+    expect(joined).toContain('updated 1');
+    expect(joined).toContain('codex not detected');
+    expect(joined).toContain('hermes plugins enable genie failed'); // advisory surfaced
+  });
+
+  test('an engine throw is non-fatal and reported as an advisory', () => {
+    const lines: string[] = [];
+    const marker = join(mkdtempSync(join(tmpdir(), 'genie-asm-')), '.last-agent-sync');
+    expect(() =>
+      runAgentSyncSafe({
+        sync: () => {
+          throw new Error('boom');
+        },
+        log: (l) => lines.push(l),
+        markerPath: marker,
+      }),
+    ).not.toThrow();
+    expect(lines.join('\n')).toContain('agent sync failed: boom');
+  });
+
+  test('refreshes the ~/.genie/.last-agent-sync marker with an ISO timestamp', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'genie-asm-'));
+    const marker = join(dir, '.last-agent-sync');
+    try {
+      runAgentSyncSafe({
+        sync: makeReport,
+        log: () => {},
+        markerPath: marker,
+        now: () => new Date('2026-07-10T00:00:00.000Z'),
+      });
+      expect(readFileSync(marker, 'utf-8').trim()).toBe('2026-07-10T00:00:00.000Z');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('marker is refreshed even when the engine throws (the sync phase ran)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'genie-asm-'));
+    const marker = join(dir, '.last-agent-sync');
+    try {
+      runAgentSyncSafe({
+        sync: () => {
+          throw new Error('x');
+        },
+        log: () => {},
+        markerPath: marker,
+      });
+      expect(existsSync(marker)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('updateCommand runs the sync-only fast path before any network/delivery', () => {
+    const source = readFileSync(join(import.meta.dir, '..', 'update.ts'), 'utf-8');
+    const cmdStart = source.indexOf('export async function updateCommand');
+    const cmdBody = source.slice(cmdStart);
+    const fastPathIdx = cmdBody.indexOf("process.env.GENIE_UPDATE_SYNC_ONLY === '1'");
+    const fetchIdx = cmdBody.indexOf('await fetchLatestManifest(');
+    const deliveryIdx = cmdBody.indexOf('await runDelivery(');
+    expect(fastPathIdx).toBeGreaterThan(-1);
+    expect(fastPathIdx).toBeLessThan(fetchIdx);
+    expect(fastPathIdx).toBeLessThan(deliveryIdx);
+    // The fast-path block calls the sync phase (and only that path does, pre-fetch).
+    expect(cmdBody.slice(fastPathIdx, fetchIdx)).toContain('runAgentSyncSafe()');
+  });
+
+  test('short-circuit (already-current) path calls the sync phase before returning', () => {
+    const source = readFileSync(join(import.meta.dir, '..', 'update.ts'), 'utf-8');
+    const scIdx = source.indexOf('shortCircuitIfCurrent(installedVersion, latestVersion)');
+    expect(scIdx).toBeGreaterThan(-1);
+    expect(source.slice(scIdx, scIdx + 400)).toContain('runAgentSyncSafe()');
+  });
+});
+
+describe('runFreshBinaryAgentSync (post-swap re-exec)', () => {
+  test('execs the freshly installed binary with `update` + GENIE_UPDATE_SYNC_ONLY=1', () => {
+    const calls: Array<{ bin: string; env: NodeJS.ProcessEnv }> = [];
+    runFreshBinaryAgentSync({
+      exec: (bin, env) => {
+        calls.push({ bin, env });
+      },
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].bin).toContain('genie');
+    expect(calls[0].env.GENIE_UPDATE_SYNC_ONLY).toBe('1');
+  });
+
+  test('a failed re-exec is non-fatal', () => {
+    expect(() =>
+      runFreshBinaryAgentSync({
+        exec: () => {
+          throw new Error('spawn failed');
+        },
+      }),
+    ).not.toThrow();
+  });
+
+  test('updateCommand re-execs the fresh binary after the post-update verify', () => {
+    const source = readFileSync(join(import.meta.dir, '..', 'update.ts'), 'utf-8');
+    const verifyIdx = source.indexOf('await runPostUpdateVerifySafe(');
+    const freshIdx = source.indexOf('runFreshBinaryAgentSync();');
+    expect(freshIdx).toBeGreaterThan(-1);
+    expect(verifyIdx).toBeGreaterThan(-1);
+    expect(verifyIdx).toBeLessThan(freshIdx);
   });
 });
 

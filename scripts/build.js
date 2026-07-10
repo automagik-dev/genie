@@ -99,13 +99,10 @@ async function buildPlugin() {
       console.log(`  ${target.name}.cjs (${(stats.size / 1024).toFixed(2)} KB)`);
     }
 
-    // Copy smart-install.js (stays as Node.js, not bundled)
-    const smartInstallSrc = path.join(rootDir, 'scripts/smart-install.js');
-    const smartInstallDest = path.join(scriptsDir, 'smart-install.js');
-    if (fs.existsSync(smartInstallSrc)) {
-      fs.copyFileSync(smartInstallSrc, smartInstallDest);
-      console.log('\nCopied smart-install.js');
-    }
+    // NOTE: the shipped SessionStart hook under plugins/genie/scripts/ is now the
+    // single committed source of truth (agent-sync wish, Decision 8). The old
+    // copy-from-scripts step was removed — it was one `bun run build:plugin` away
+    // from clobbering the shipped hook's council stamp.
 
     // Update plugin.json version
     const pluginJsonPath = path.join(rootDir, 'plugins/genie/.claude-plugin/plugin.json');

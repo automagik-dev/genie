@@ -18,6 +18,7 @@ import {
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { type AgentSyncReport, runAgentSync } from '../lib/agent-sync.js';
 import { genieConfigExists, loadGenieConfig, saveGenieConfig } from '../lib/genie-config.js';
 import { VERSION } from '../lib/version.js';
 import { cleanupV4 } from './legacy-v4.js';
@@ -1393,6 +1394,15 @@ export interface UpdateCommandOptions {
 }
 
 export async function updateCommand(options: UpdateCommandOptions = {}): Promise<void> {
+  // Sync-only fast path — the ONLY internal re-entry contract (no user-facing
+  // flag). The freshly-swapped binary (runFreshBinaryAgentSync) and the CC
+  // SessionStart hook both re-invoke `genie update` with GENIE_UPDATE_SYNC_ONLY=1
+  // to converge agents with no network, manifest fetch, or channel persistence.
+  if (process.env.GENIE_UPDATE_SYNC_ONLY === '1') {
+    runAgentSyncSafe();
+    return;
+  }
+
   console.log();
   console.log(`${colorize('\x1b[1m', '\x1b[0m', '🧞 Genie CLI Update')}`);
   console.log(`${colorize('\x1b[2m', '\x1b[0m', '────────────────────────────────────')}`);
@@ -1423,6 +1433,9 @@ export async function updateCommand(options: UpdateCommandOptions = {}): Promise
   const installedVersion = resolveInstalledVersion();
   if (shortCircuitIfCurrent(installedVersion, latestVersion)) {
     success(`Already up to date (v${normalizeVersion(installedVersion)}, channel ${channel})`);
+    // Update = converge everything, not just the binary: sync agents even when
+    // the installed binary is already at the latest version.
+    runAgentSyncSafe();
     console.log();
     return;
   }
@@ -1488,6 +1501,9 @@ export async function updateCommand(options: UpdateCommandOptions = {}): Promise
 
   runV4CleanupSafe();
   await runPostUpdateVerifySafe({ ...options, noRestart, noVerify }, diagnosticsCtx);
+  // Re-exec the freshly installed binary so the NEW version's agent-sync logic
+  // runs (this process is still the old binary). Non-fatal.
+  runFreshBinaryAgentSync();
 }
 
 /**
@@ -1503,6 +1519,104 @@ export function runV4CleanupSafe(runner: typeof cleanupV4 = cleanupV4): void {
   } catch {
     /* post-swap must never fail the update */
   }
+}
+
+/**
+ * Agent-sync phase — converge the genie skill set + the /council stamp into
+ * every detected coding agent (claude/codex/hermes) from the canonical source
+ * root. This is the ONE printer: the sync-only fast path, the already-current
+ * short-circuit, and `genie install` all funnel through here.
+ *
+ * Non-fatal by contract — an engine failure becomes a single advisory line,
+ * never a thrown error — and it always refreshes the `~/.genie/.last-agent-sync`
+ * throttle marker the SessionStart hook reads, so the marker records that the
+ * sync phase ran regardless of outcome.
+ *
+ * `sync` / `log` / `markerPath` / `now` are injection seams (mirrors
+ * runV4CleanupSafe + verifySwappedBinary) so the wiring is unit-testable without
+ * touching a real home directory.
+ */
+export interface RunAgentSyncSafeOptions {
+  /** Test seam: replaces the real agent-sync engine call. */
+  sync?: typeof runAgentSync;
+  /** Test seam: sink for the compact summary; defaults to the module `log`. */
+  log?: (line: string) => void;
+  /** Throttle marker path; defaults to `<GENIE_HOME>/.last-agent-sync`. */
+  markerPath?: string;
+  /** Injectable clock for the marker timestamp. */
+  now?: () => Date;
+}
+
+export function runAgentSyncSafe(opts: RunAgentSyncSafeOptions = {}): void {
+  const emit = opts.log ?? log;
+  try {
+    const report = (opts.sync ?? runAgentSync)();
+    for (const line of formatAgentSyncSummary(report)) emit(line);
+  } catch (err) {
+    emit(`agent sync failed: ${errMsg(err)} — will retry on the next genie update`);
+  }
+  touchAgentSyncMarker(opts.markerPath ?? join(GENIE_HOME, '.last-agent-sync'), (opts.now ?? (() => new Date()))());
+}
+
+/** Compact per-agent summary: detected + counts by action + advisories. */
+function formatAgentSyncSummary(report: AgentSyncReport): string[] {
+  if (report.source.pluginRoot === null) {
+    return ['agent-sync: no genie plugin source found (plugins/genie); skipped'];
+  }
+  const lines: string[] = [];
+  for (const agent of report.agents) {
+    if (!agent.detected) {
+      lines.push(`agent-sync: ${agent.agent} not detected — skipped`);
+      continue;
+    }
+    const counts = new Map<string, number>();
+    for (const skill of agent.skills) counts.set(skill.action, (counts.get(skill.action) ?? 0) + 1);
+    const parts = [...counts.entries()].map(([action, n]) => `${action} ${n}`);
+    for (const extra of agent.extras) parts.push(`${extra.kind} ${extra.action}`);
+    lines.push(`agent-sync: ${agent.agent} — ${parts.join(', ') || 'no changes'}`);
+    for (const advisory of agent.advisories) lines.push(`  ${agent.agent}: ${advisory}`);
+  }
+  if (report.backupsDir !== null) lines.push(`agent-sync: backups saved to ${report.backupsDir}`);
+  return lines;
+}
+
+/** Best-effort refresh of the SessionStart-hook throttle marker (ISO string). */
+function touchAgentSyncMarker(markerPath: string, now: Date): void {
+  try {
+    writeFileSync(markerPath, `${now.toISOString()}\n`);
+  } catch {
+    // the marker only optimizes the hook throttle; never fail the sync over it.
+  }
+}
+
+/**
+ * After a real binary swap, re-exec the FRESHLY installed binary so the NEW
+ * version's agent-sync logic runs — the current process is still the OLD binary.
+ * Established pattern (see the `--version` probes at resolveInstalledVersion /
+ * verifySwappedBinary). The child hits the sync-only fast path via
+ * GENIE_UPDATE_SYNC_ONLY=1 and returns without any network. Non-fatal: a failed
+ * re-exec is a one-line advisory. `exec` is an injection seam so the wiring is
+ * unit-testable without spawning a binary.
+ */
+export interface FreshBinaryAgentSyncOptions {
+  exec?: (binaryPath: string, env: NodeJS.ProcessEnv) => void;
+}
+
+export function runFreshBinaryAgentSync(opts: FreshBinaryAgentSyncOptions = {}): void {
+  const exec =
+    opts.exec ??
+    ((binaryPath: string, env: NodeJS.ProcessEnv) => {
+      execFileSync(binaryPath, ['update'], { env, stdio: 'inherit', timeout: 120_000 });
+    });
+  try {
+    exec(join(GENIE_BIN, 'genie'), { ...process.env, GENIE_UPDATE_SYNC_ONLY: '1' });
+  } catch (err) {
+    log(`agent sync (post-update) skipped: ${errMsg(err)}`);
+  }
+}
+
+function errMsg(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 /**

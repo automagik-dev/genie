@@ -103,9 +103,11 @@ bash .genie/wishes/agent-sync/validate/g1-engine.sh
 5. `skills/review/SKILL.md` + `skills/brainstorm/SKILL.md`: identical lens-root anchor sentence; `.genie/wishes/council-workflow/validate/g4-consumers.sh` gains the GENIE_HOME assertion.
 
 **Acceptance Criteria:**
-- [ ] g2 structural greps all pass; update/install tests extended and green
-- [ ] council-workflow gates (g2-engine, g4-consumers) still green
-- [ ] Coordinated with concurrent uncommitted edits to the same skill files (no clobber — rebase/merge textually at dispatch time)
+- [x] g2 structural greps all pass; update/install tests extended and green
+- [x] council-workflow gates (g2-engine, g4-consumers) still green
+- [x] Coordinated with concurrent uncommitted edits to the same skill files (their session committed first; tree was clean at dispatch)
+
+**Status:** DONE (2026-07-10) — gate `G2 PASS` (orchestrator-run), execution review SHIP (0 CRITICAL/HIGH; MEDIUMs adjudicated). Orchestrator hardening pass applied post-review per reviewer recommendation: `findGenieBinary` PATH probe got `timeout: 5000`; delegation moved AFTER the `GENIE_WORKER` guard (workers never pay the ≤45s delegation — parent session converges for them); hook `GENIE_DIR` honors `GENIE_HOME` (throttle marker now matches the CLI's writes under relocation). Deviations accepted: one-line `.js` import-extension fix in the G1 engine (mcp lazy-load probe requires it once reachable from genie.ts); marker write lives inside `runAgentSyncSafe` (fires on all paths). Known debts recorded: g1-engine.sh line 9 inverse assertion now stale (G3 amends); hook throttle/delegation logic untested (fail-safe by construction — bad marker ⇒ allow; accepted); 3 duplicate plugin-resource-shipping commits on the branch vs dev (resolve before merge). `bun run check` 792 pass / 1 skip.
 
 **Validation:**
 ```bash
