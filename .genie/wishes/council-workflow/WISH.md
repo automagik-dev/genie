@@ -49,7 +49,7 @@ Genie's multi-perspective reasoning is split across two model-driven orchestrato
 
 ## Success Criteria
 
-- [ ] `bun run lint:council-workflow` passes (exercised from G3 onward, once G1's lanes exist, and permanently via `bun run check`): template parses as ESM, `meta.name === 'council'`, zero banned APIs — `Date.now`, `Math.random`, `new Date(` (the Workflow tool spec: the determinism trio throws in scripts because it would break resume; `new Date(` banned broader-than-spec deliberately) plus `require(`, `import `, `process.`, `fs.` (workflows.md + tool spec: scripts are self-contained, no filesystem or Node.js API access) — every ROUTING member resolves to an existing lens file on disk (all 13), every lens file has required frontmatter
+- [ ] `bun run lint:council-workflow` passes (exercised from G3 onward, once G1's lanes exist, and permanently via `bun run check`): template parses as a workflow async-body — the runtime shape: sole `export const meta` + top-level await/return, `export default` banned (module-legal ESM is the wrong contract; biome ignores `plugins/genie/workflows` for the same reason) — `meta.name === 'council'`, zero banned APIs — `Date.now`, `Math.random`, `new Date(` (the Workflow tool spec: the determinism trio throws in scripts because it would break resume; `new Date(` banned broader-than-spec deliberately) plus `require(`, `import `, `process.`, `fs.` (workflows.md + tool spec: scripts are self-contained, no filesystem or Node.js API access) — every ROUTING member resolves to an existing lens file on disk (all 13), every lens file has required frontmatter
 - [ ] All 7 lane skills exist with domain names; no real person's name in any `name:` field under `skills/` (grep denylist: chacon, ousterhout, hejlsberg, beck, gregg, lorenc, procida); inspiration line present in each
 - [ ] Stamp unit test green: installer function replaces `LENS_ROOT` placeholder with an absolute path and output lands at the expected `~/.claude/workflows/council.js` target (tmpdir-isolated via `GENIE_HOME`-style env override)
 - [ ] `skills/council/` no longer exists; `git grep -il 'specialist-panel'` returns 0 hits outside `.genie/attic/`, `CHANGELOG.md`, and this wish's artifacts
@@ -77,9 +77,11 @@ Genie's multi-perspective reasoning is split across two model-driven orchestrato
 1. `skills/{repo-hygiene,architecture,code-quality,qa,perf,supply-chain,dx-docs}/SKILL.md` — methodology preserved from the personal persona skills, frontmatter `name:` = lane name, body cites "inspired by the work of <expert>", assess/fix contract kept per skill.
 
 **Acceptance Criteria:**
-- [ ] All 7 SKILL.md files exist with lane-named frontmatter
-- [ ] No real person's name in any `name:` field under `skills/`
-- [ ] Each body contains an inspiration attribution line
+- [x] All 7 SKILL.md files exist with lane-named frontmatter
+- [x] No real person's name in any `name:` field under `skills/`
+- [x] Each body contains an inspiration attribution line
+
+**Status:** DONE (2026-07-09) — gate `G1 PASS` (orchestrator-run), execution review SHIP (0 gaps ≥MEDIUM; LOW: handoff pointer was normalized across all 7 files — "specialist skill"→"lane skill under skills/" — an improvement over the 2 reported; NIT: unquoted YAML descriptions, house-cosmetic). Methodology bodies byte-identical to sources. Commit `0b222e17`.
 
 **Validation:**
 ```bash
@@ -95,13 +97,15 @@ bash .genie/wishes/council-workflow/validate/g1-lane-skills.sh
 **Deliverables:**
 1. `plugins/genie/workflows/council.js` — meta + Resolve/Round 1/Round 2/Synthesis/Persist phases, ROUTING table (absorbed from `members/routing.md`, incl. default trio + members override), LENSES map (`LENS_ROOT`-relative), deliberation and audit stage contracts, ≥2-members failure rule.
 2. `plugins/genie/references/lenses/{questioner,simplifier,operator,deployer,measurer,tracer}.md` — frontmatter: name, modes, voice.
-3. Stamp function as `src/lib/council-workflow-stamp.ts` (+ colocated `council-workflow-stamp.test.ts`, tmpdir-isolated): replaces the `LENS_ROOT` placeholder with the absolute installed-plugin path and writes `~/.claude/workflows/council.js`. **Call site pinned: the SessionStart hook (`plugins/genie/scripts/smart-install.js`, where `CLAUDE_PLUGIN_ROOT` is set), placed BEFORE its early-exit guards (deps-present, `GENIE_WORKER=1`) and idempotent via drift-check (rewrite only when stamped `LENS_ROOT` ≠ current `CLAUDE_PLUGIN_ROOT` or template hash changed). Re-stamp is therefore driven by the first session start after `claude plugin update` — the `genie update` CLI does not own it.**
+3. Stamp function as `plugins/genie/scripts/council-stamp.cjs` (pure, dependency-injectable; loaded via `createRequire` from the ESM SessionStart hook — it must ship with the plugin, not the bundled CLI; deviation from the originally drafted `src/lib/*.ts` path, gate-tested via `src/lib/council-workflow-stamp.test.ts` importing the `.cjs`): replaces the `LENS_ROOT` placeholder with the absolute installed-plugin path and writes `~/.claude/workflows/council.js`. **Call site pinned: the SessionStart hook (`plugins/genie/scripts/smart-install.js`, where `CLAUDE_PLUGIN_ROOT` is set), placed BEFORE its early-exit guards (deps-present, `GENIE_WORKER=1`) and idempotent via drift-check (rewrite only when stamped `LENS_ROOT` ≠ current `CLAUDE_PLUGIN_ROOT` or template hash changed). Re-stamp is therefore driven by the first session start after `claude plugin update` — the `genie update` CLI does not own it.**
 4. `scripts/council-workflow-lint.ts` + `package.json` script `lint:council-workflow`.
 
 **Acceptance Criteria:**
-- [ ] Template parses as ESM (self-contained `bun build --no-bundle` check); `meta.name === 'council'`; zero banned APIs
-- [ ] Every ROUTING member maps to a known lens NAME; the 6 deliberation cards exist with required frontmatter (full on-disk 13-lens resolution — including G1's lane skills — is asserted by `lint:council-workflow` from G3 onward, keeping G2 validatable in parallel with G1)
-- [ ] Stamp unit test green in tmpdir isolation
+- [x] Template parses as a workflow async-body (self-contained `lint:council-workflow --parse-only` check — runtime shape, not module-legal ESM); `meta.name === 'council'`; zero banned APIs; `export default` banned
+- [x] Every ROUTING member maps to a known lens NAME; the 6 deliberation cards exist with required frontmatter (full on-disk 13-lens resolution — including G1's lane skills — is asserted by `lint:council-workflow` from G3 onward, keeping G2 validatable in parallel with G1)
+- [x] Stamp unit test green in tmpdir isolation
+
+**Status:** DONE (2026-07-10) — gate `G2 PASS` (orchestrator-run), execution review FIX-FIRST → fixer → re-review SHIP (loop 1). CRITICAL fixed: engine unwrapped from `export default` to the runtime's body-style (sole `export const meta`, top-level await/return; ground-truth anchor: official Anthropic plugin workflows share this shape). HIGH fixed: parse checks validate the runtime shape (`--parse-only` mode, `export default` banned with verified negative proofs). MEDIUM fixed: silent lanes + unconvened lenses surface in synthesis and the Not Fully Audited section. Deviations (review-adjudicated): stamp lives at `plugins/genie/scripts/council-stamp.cjs`; `biome.json` ignores `plugins/genie/workflows` (biome can't parse body-style; necessary + minimally scoped). Residual NITs accepted: ROUTING row 4 drops `api` (deterministic-scorer double-match), `.cjs` outside biome globs (unit-tested). Full lint 13/13, biome 117 files clean, typecheck 0, stamp test 6/6.
 
 **Validation:**
 ```bash

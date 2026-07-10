@@ -12,10 +12,12 @@ for banned in 'Date\.now' 'Math\.random' 'new Date\(' 'require\(' '^import ' 'pr
   if grep -Eq "$banned" "$t"; then echo "FAIL: banned API matching '$banned' in $t"; exit 1; fi
 done
 
-# ESM parse check, self-contained (no cross-group deps): transpile fails on syntax errors.
-tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
-bun build "$t" --no-bundle --outdir "$tmp" > /dev/null || { echo "FAIL: $t does not parse as ESM"; exit 1; }
+# Parse check against the workflow RUNTIME shape, NOT module-legal ESM. The dynamic-workflow
+# runtime runs the script as an async function body (top-level await/return are the contract)
+# after extracting `export const meta` statically — so a plain ESM parse would REJECT the correct
+# shape. --parse-only strips meta, forbids any other export (incl. `export default`), and
+# transpiles the remainder as an async body; it fails on any syntax error.
+bun scripts/council-workflow-lint.ts --parse-only "$t" || { echo "FAIL: $t does not parse as a workflow body"; exit 1; }
 
 for card in questioner simplifier operator deployer measurer tracer; do
   c="plugins/genie/references/lenses/$card.md"
