@@ -62,8 +62,12 @@ export const MANAGED_BY = 'genie-agent-sync';
  * the exact collision council-workflow Decision 8 forbids. Excluded names are
  * also dropped from the orphan-protection set, so an already-synced managed
  * copy is backed up and removed on the next sync.
+ *
+ * Exported as the single source of truth for the excluded set: doctor's
+ * freshness check subtracts these from Claude's expected source skills so it
+ * never reports a legitimately-excluded skill as "missing/stale".
  */
-const CLAUDE_EXCLUDED_SKILLS = new Set(['council']);
+export const CLAUDE_EXCLUDED_SKILLS = new Set(['council']);
 /** Skill actions that represent an actual write to the target. */
 const WRITE_ACTIONS = new Set<SkillAction>(['created', 'updated', 'adopted', 'removed']);
 /**

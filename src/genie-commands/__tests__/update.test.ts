@@ -21,6 +21,8 @@ import {
   type VerifyResult,
   _resetNextDeprecationLatchForTest,
   atomicBinarySwap,
+  compareVersions,
+  decideDowngrade,
   decideVerify,
   downloadAndVerifyTarball,
   ensureCanonicalInstall,
@@ -173,6 +175,123 @@ describe('shortCircuitIfCurrent', () => {
 
   test('different versions return false', () => {
     expect(shortCircuitIfCurrent('1.0.0', '1.0.1')).toBe(false);
+  });
+});
+
+// ============================================================================
+// Downgrade guard (BUG B) — numeric version comparison + the pure decision
+// function that refuses a silent backward swap. `shortCircuitIfCurrent` only
+// covers the EQUAL case; these cover installed > latest.
+// ============================================================================
+
+describe('compareVersions', () => {
+  test('older < newer across each MAJOR.YYMMDD.N component', () => {
+    expect(compareVersions('5.260710.2', '5.260710.10')).toBe(-1);
+    expect(compareVersions('5.260709.9', '5.260710.1')).toBe(-1);
+    expect(compareVersions('4.999999.9', '5.000000.0')).toBe(-1);
+  });
+
+  test('newer > older is the inverse', () => {
+    expect(compareVersions('5.260710.10', '5.260710.2')).toBe(1);
+    expect(compareVersions('5.260710.1', '5.260709.9')).toBe(1);
+  });
+
+  test('equal versions compare 0', () => {
+    expect(compareVersions('5.260710.11', '5.260710.11')).toBe(0);
+  });
+
+  test('build metadata is stripped before comparing', () => {
+    expect(compareVersions('5.260710.11+abc1234', '5.260710.11')).toBe(0);
+    expect(compareVersions('5.260710.10+deadbee', '5.260710.2')).toBe(1);
+  });
+
+  test('N is compared numerically, not lexically (10 > 2)', () => {
+    // The core of the live bug: string compare would rank "2" above "10".
+    expect(compareVersions('5.260710.10', '5.260710.2')).toBe(1);
+  });
+
+  test('missing / non-numeric components degrade to 0 (never spuriously newer)', () => {
+    expect(compareVersions('5.260710', '5.260710.0')).toBe(0);
+    expect(compareVersions('garbage', '5.260710.1')).toBe(-1);
+    expect(compareVersions('5.260710.1', '')).toBe(1);
+  });
+});
+
+describe('decideDowngrade', () => {
+  test('installed older → upgrade (proceed normally)', () => {
+    expect(
+      decideDowngrade({ installedVersion: '5.260710.2', latestVersion: '5.260710.10', explicitChannel: false }).kind,
+    ).toBe('upgrade');
+  });
+
+  test('installed equal → current (short-circuit)', () => {
+    expect(
+      decideDowngrade({ installedVersion: '5.260710.11', latestVersion: '5.260710.11', explicitChannel: false }).kind,
+    ).toBe('current');
+  });
+
+  test('installed newer + NO explicit flag → block-downgrade with both versions', () => {
+    const d = decideDowngrade({
+      installedVersion: '5.260710.10',
+      latestVersion: '5.260710.2',
+      explicitChannel: false,
+    });
+    expect(d.kind).toBe('block-downgrade');
+    if (d.kind === 'block-downgrade') {
+      expect(d.installed).toBe('5.260710.10');
+      expect(d.latest).toBe('5.260710.2');
+    }
+  });
+
+  test('installed newer + explicit channel flag → allow-downgrade (operator intent)', () => {
+    const d = decideDowngrade({
+      installedVersion: '5.260710.10',
+      latestVersion: '5.260710.2',
+      explicitChannel: true,
+    });
+    expect(d.kind).toBe('allow-downgrade');
+    if (d.kind === 'allow-downgrade') {
+      expect(d.installed).toBe('5.260710.10');
+      expect(d.latest).toBe('5.260710.2');
+    }
+  });
+
+  test('null/undefined latest → upgrade (defers to the manifest-unavailable abort)', () => {
+    expect(decideDowngrade({ installedVersion: '5.260710.10', latestVersion: null, explicitChannel: false }).kind).toBe(
+      'upgrade',
+    );
+    expect(
+      decideDowngrade({ installedVersion: '5.260710.10', latestVersion: undefined, explicitChannel: true }).kind,
+    ).toBe('upgrade');
+  });
+});
+
+describe('updateCommand downgrade wiring (BUG B source-shape lock)', () => {
+  test('updateCommand runs the downgrade guard before download', () => {
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    const cmdStart = source.indexOf('export async function updateCommand');
+    const cmdBody = source.slice(cmdStart);
+    const guardIdx = cmdBody.indexOf('applyDowngradeGuard(');
+    const downloadIdx = cmdBody.indexOf('await downloadAndVerifyTarball(');
+    // The guard must run BEFORE any tarball is fetched.
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(guardIdx).toBeLessThan(downloadIdx);
+    // A refused downgrade still converges agents (parity with already-current).
+    const afterGuard = cmdBody.slice(guardIdx);
+    expect(afterGuard).toContain('runAgentSyncSafe()');
+  });
+
+  test('the guard consults decideDowngrade and honors both refusal and explicit-intent paths', () => {
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    expect(source).toContain('decideDowngrade({');
+    // block-downgrade path: refuse loudly.
+    expect(source).toContain("downgrade.kind === 'block-downgrade'");
+    expect(source).toContain('refusing automatic downgrade');
+    // allow-downgrade path: loud one-liner honoring explicit operator intent.
+    expect(source).toContain("downgrade.kind === 'allow-downgrade'");
+    expect(source).toContain('DOWNGRADE v');
+    // An explicit channel flag is what authorizes the backward move.
+    expect(source).toContain('const explicitChannel = Boolean(');
   });
 });
 
@@ -501,6 +620,118 @@ describe('persistChannel — sticky channel persistence (release-channel-dev)', 
 
   test('persistChannel("stable") does not throw', async () => {
     await expect(persistChannel('stable')).resolves.toBeUndefined();
+  });
+});
+
+// ============================================================================
+// Channel persistence never clobbers the config (BUG A). A transient config
+// read failure between two `genie update` runs must NOT (a) silently reset a
+// persisted channel to stable, nor (b) rewrite the whole file from defaults.
+// Isolated under a tmp GENIE_HOME so a real ~/.genie/config.json is never read
+// or written; stderr is captured so the advisory lines are asserted, not leaked.
+// ============================================================================
+
+describe('resolveChannel + persistChannel — config preservation (BUG A)', () => {
+  let dir: string;
+  let configPath: string;
+  let prevGenieHome: string | undefined;
+  let stderrCapture: string;
+  const realStderrWrite = process.stderr.write.bind(process.stderr);
+
+  beforeEach(() => {
+    prevGenieHome = process.env.GENIE_HOME;
+    dir = mkdtempSync(join(tmpdir(), 'update-channel-'));
+    process.env.GENIE_HOME = dir;
+    configPath = join(dir, 'config.json');
+    stderrCapture = '';
+    (process.stderr.write as unknown) = ((chunk: string | Uint8Array): boolean => {
+      stderrCapture += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf-8');
+      return true;
+    }) as typeof process.stderr.write;
+  });
+
+  afterEach(() => {
+    (process.stderr.write as unknown) = realStderrWrite as typeof process.stderr.write;
+    if (prevGenieHome === undefined) {
+      Reflect.deleteProperty(process.env, 'GENIE_HOME');
+    } else {
+      process.env.GENIE_HOME = prevGenieHome;
+    }
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('valid persisted channel resolves back and persist preserves sibling keys', async () => {
+    writeFileSync(configPath, JSON.stringify({ updateChannel: 'homolog', setupComplete: true }, null, 2), 'utf-8');
+    expect(await resolveChannel({})).toBe('homolog');
+    expect(stderrCapture).toBe(''); // happy path is silent
+    await persistChannel('homolog');
+    const saved = JSON.parse(readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
+    expect(saved.updateChannel).toBe('homolog');
+    expect(saved.setupComplete).toBe(true);
+  });
+
+  test('valid config with unknown/extra fields survives persistChannel byte-for-byte except updateChannel', async () => {
+    // Unknown keys (myTool) are stripped by the schema on parse — proving that even
+    // the happy path must NOT round-trip through saveGenieConfig, or they vanish.
+    const original = {
+      updateChannel: 'dev',
+      setupComplete: true,
+      promptMode: 'system',
+      myTool: { foo: 1, list: ['a', 'b'] },
+    };
+    writeFileSync(configPath, JSON.stringify(original, null, 2), 'utf-8');
+
+    await persistChannel('stable'); // dev → latest
+
+    const after = readFileSync(configPath, 'utf-8');
+    // Byte-for-byte identical except updateChannel flipped to its canonical token.
+    expect(after).toBe(JSON.stringify({ ...original, updateChannel: 'latest' }, null, 2));
+    const saved = JSON.parse(after) as Record<string, unknown>;
+    expect(saved.updateChannel).toBe('latest');
+    expect(saved.setupComplete).toBe(true);
+    expect(saved.promptMode).toBe('system');
+    expect(saved.myTool).toEqual({ foo: 1, list: ['a', 'b'] });
+    expect(stderrCapture).toBe('');
+  });
+
+  test('schema-invalid-but-parseable config keeps its channel on resolve and is NOT clobbered on persist', async () => {
+    // omni present but missing its required apiUrl → the full schema rejects this,
+    // but the file is valid JSON, so the channel is still recoverable.
+    const invalid = { updateChannel: 'dev', setupComplete: true, omni: { instance: 'x' } };
+    writeFileSync(configPath, JSON.stringify(invalid, null, 2), 'utf-8');
+
+    // resolve: recovers 'dev' from the raw key rather than silently → stable.
+    expect(await resolveChannel({})).toBe('dev');
+    expect(stderrCapture).toContain('keeping channel dev');
+
+    // persist: raw read-modify-write; the invalid-but-present siblings survive.
+    await persistChannel('dev');
+    const saved = JSON.parse(readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
+    expect(saved.updateChannel).toBe('dev');
+    expect(saved.setupComplete).toBe(true); // NOT reset to the default (false)
+    expect(saved.omni).toEqual({ instance: 'x' }); // NOT dropped
+  });
+
+  test('unparseable config → advisory + no write on persist, stated stable fallback on resolve', async () => {
+    const garbage = '{ this is not valid json ,,, ';
+    writeFileSync(configPath, garbage, 'utf-8');
+
+    // resolve: falls back to stable, and says so.
+    expect(await resolveChannel({})).toBe('stable');
+    expect(stderrCapture).toContain('could not read');
+    expect(stderrCapture).toContain('falling back to stable channel');
+
+    // persist: leaves the file untouched rather than clobbering it.
+    await persistChannel('dev');
+    expect(readFileSync(configPath, 'utf-8')).toBe(garbage);
+    expect(stderrCapture).toContain('unparseable');
+    expect(stderrCapture).toContain('not persisted');
+  });
+
+  test('valid config with no updateChannel key resolves to stable silently (schema default)', async () => {
+    writeFileSync(configPath, JSON.stringify({ setupComplete: true }, null, 2), 'utf-8');
+    expect(await resolveChannel({})).toBe('stable');
+    expect(stderrCapture).toBe('');
   });
 });
 

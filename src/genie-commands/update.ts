@@ -19,8 +19,9 @@ import {
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { type AgentSyncReport, runAgentSync } from '../lib/agent-sync.js';
-import { genieConfigExists, loadGenieConfig, saveGenieConfig } from '../lib/genie-config.js';
+import { contractPath, genieConfigExists, getGenieConfigPath, saveGenieConfig } from '../lib/genie-config.js';
 import { VERSION } from '../lib/version.js';
+import { GenieConfigSchema } from '../types/genie-config.js';
 import { cleanupV4 } from './legacy-v4.js';
 
 const GENIE_HOME = process.env.GENIE_HOME || join(homedir(), '.genie');
@@ -123,6 +124,61 @@ export function decideVerify(args: DecideVerifyArgs): VerifyResult {
 export function shortCircuitIfCurrent(currentVersion: string, latestVersion: string | null | undefined): boolean {
   if (!latestVersion) return false;
   return normalizeVersion(currentVersion) === normalizeVersion(latestVersion);
+}
+
+/**
+ * Compare two genie versions (`MAJOR.YYMMDD.N`, build metadata stripped) numerically,
+ * component by component. Returns -1 when `a` is older than `b`, 0 when equal, 1 when
+ * `a` is newer. Missing or non-numeric components are treated as 0 so a malformed
+ * version string degrades to "older-or-equal" and never spuriously blocks an update.
+ */
+export function compareVersions(a: string, b: string): number {
+  const pa = normalizeVersion(a).split('.');
+  const pb = normalizeVersion(b).split('.');
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const x = Number.parseInt(pa[i] ?? '', 10);
+    const y = Number.parseInt(pb[i] ?? '', 10);
+    const xv = Number.isNaN(x) ? 0 : x;
+    const yv = Number.isNaN(y) ? 0 : y;
+    if (xv < yv) return -1;
+    if (xv > yv) return 1;
+  }
+  return 0;
+}
+
+/**
+ * Direction of a resolved update relative to the installed binary.
+ * - `upgrade`         — installed is older (or the manifest version is unknown); proceed.
+ * - `current`         — installed equals the manifest version; short-circuit.
+ * - `block-downgrade` — installed is NEWER and no explicit channel flag authorized it; refuse.
+ * - `allow-downgrade` — installed is NEWER but an explicit `--stable/--dev/--homolog`
+ *   signalled operator intent; proceed with a loud notice.
+ */
+export type DowngradeDecision =
+  | { kind: 'upgrade' }
+  | { kind: 'current' }
+  | { kind: 'block-downgrade'; installed: string; latest: string }
+  | { kind: 'allow-downgrade'; installed: string; latest: string };
+
+/**
+ * Decide whether `genie update` should proceed, short-circuit, refuse, or force a
+ * version move. Pure so the operator-facing branch is unit-tested without any network
+ * or binary swap. A null/empty `latestVersion` yields `upgrade` so the caller's
+ * existing "manifest unavailable" abort runs unchanged.
+ */
+export function decideDowngrade(args: {
+  installedVersion: string;
+  latestVersion: string | null | undefined;
+  explicitChannel: boolean;
+}): DowngradeDecision {
+  if (!args.latestVersion) return { kind: 'upgrade' };
+  const cmp = compareVersions(args.installedVersion, args.latestVersion);
+  if (cmp === 0) return { kind: 'current' };
+  if (cmp < 0) return { kind: 'upgrade' };
+  return args.explicitChannel
+    ? { kind: 'allow-downgrade', installed: args.installedVersion, latest: args.latestVersion }
+    : { kind: 'block-downgrade', installed: args.installedVersion, latest: args.latestVersion };
 }
 
 // ============================================================================
@@ -1298,6 +1354,60 @@ export function _resetNextDeprecationLatchForTest(): void {
   nextDeprecationEmitted = false;
 }
 
+/** Map a raw `updateChannel` token (including the legacy 'next' alias) to a
+ *  ReleaseChannel, or null when the token is absent or unrecognized. */
+function channelFromToken(token: unknown): ReleaseChannel | null {
+  if (token === 'dev' || token === 'next') return 'dev';
+  if (token === 'homolog') return 'homolog';
+  if (token === 'latest') return 'stable';
+  return null;
+}
+
+/** Map a ReleaseChannel back to its canonical persisted token. We always write
+ *  one of the three canonical tokens ('latest' / 'homolog' / 'dev'); the legacy
+ *  'next' alias is read-only and never round-trips to disk. */
+function channelToken(channel: ReleaseChannel): 'latest' | 'homolog' | 'dev' {
+  if (channel === 'dev') return 'dev';
+  if (channel === 'homolog') return 'homolog';
+  return 'latest';
+}
+
+/** Outcome of a tolerant config read. `ok` means the file parsed as a JSON
+ *  object (recoverable — the updateChannel key is readable even when the full
+ *  schema rejects the config); `unreadable` means it could not be parsed at all. */
+type RawConfigRead =
+  | { kind: 'ok'; raw: Record<string, unknown>; schemaValid: boolean }
+  | { kind: 'unreadable'; reason: string };
+
+/**
+ * Read the genie config leniently — never throws, never returns defaults. Unlike
+ * `loadGenieConfig`, this distinguishes a JSON-parseable-but-schema-invalid file
+ * (from which the channel can still be recovered) from a truly unparseable one, and
+ * it never manufactures a defaults object that a caller could mistake for the real
+ * config and persist over the top of it. `schemaValid` is true only when the WHOLE
+ * config satisfies GenieConfigSchema.
+ */
+function readConfigTolerant(): RawConfigRead {
+  const path = getGenieConfigPath();
+  let text: string;
+  try {
+    text = readFileSync(path, 'utf-8');
+  } catch (err) {
+    return { kind: 'unreadable', reason: err instanceof Error ? err.message : String(err) };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (err) {
+    return { kind: 'unreadable', reason: err instanceof Error ? err.message : String(err) };
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { kind: 'unreadable', reason: 'config root is not a JSON object' };
+  }
+  const raw = parsed as Record<string, unknown>;
+  return { kind: 'ok', raw, schemaValid: GenieConfigSchema.safeParse(raw).success };
+}
+
 export async function resolveChannel(options: {
   dev?: boolean;
   homolog?: boolean;
@@ -1327,37 +1437,76 @@ export async function resolveChannel(options: {
     emitNextDeprecationOnce();
     return 'dev';
   }
-  if (genieConfigExists()) {
-    try {
-      const config = await loadGenieConfig();
-      // The zod schema's `.transform` already normalizes the legacy 'next'
-      // token to 'dev' at parse time. Post-2026-05-12 the schema also
-      // accepts 'homolog'; only 'latest' | 'homolog' | 'dev' can land here.
-      if (config.updateChannel === 'dev') return 'dev';
-      if (config.updateChannel === 'homolog') return 'homolog';
-      if (config.updateChannel === 'latest') return 'stable';
-    } catch {
-      // ignore
-    }
+  if (genieConfigExists()) return resolveChannelFromConfig();
+  return 'stable';
+}
+
+/**
+ * Resolve the sticky channel from an EXISTING config file, degrading loudly — never
+ * silently — when the file can't be fully read. A transient corruption (a truncated
+ * concurrent write, or a schema-rejecting field written by another session) must NOT
+ * silently reset a persisted 'dev'/'homolog' channel to stable: we recover the channel
+ * from the raw updateChannel key first, and only fall back to stable when even that is
+ * impossible — saying so on stderr either way.
+ */
+function resolveChannelFromConfig(): ReleaseChannel {
+  const path = getGenieConfigPath();
+  const read = readConfigTolerant();
+  if (read.kind === 'unreadable') {
+    process.stderr.write(
+      `warning: could not read ${contractPath(path)} (${read.reason}); falling back to stable channel\n`,
+    );
+    return 'stable';
   }
+  const channel = channelFromToken(read.raw.updateChannel);
+  if (read.schemaValid) {
+    // Valid config; an absent updateChannel means the schema default (stable).
+    return channel ?? 'stable';
+  }
+  // JSON-parseable but schema-invalid — recover the channel from the raw key
+  // rather than silently resetting to stable.
+  if (channel) {
+    process.stderr.write(
+      `warning: could not fully read ${contractPath(path)} (invalid config); keeping channel ${channel} from updateChannel\n`,
+    );
+    return channel;
+  }
+  process.stderr.write(
+    `warning: could not fully read ${contractPath(path)} (invalid config, no usable updateChannel); falling back to stable channel\n`,
+  );
   return 'stable';
 }
 
 export async function persistChannel(channel: ReleaseChannel): Promise<void> {
-  try {
-    const config = await loadGenieConfig();
-    // Map ReleaseChannel → genie-config schema enum. The schema accepts
-    // 'next' as a read-time alias but we always write a canonical token
-    // ('latest' / 'homolog' / 'dev') so the user's config converges to
-    // the current naming on their next update.
-    if (channel === 'dev') {
-      config.updateChannel = 'dev';
-    } else if (channel === 'homolog') {
-      config.updateChannel = 'homolog';
-    } else {
-      config.updateChannel = 'latest';
+  const token = channelToken(channel);
+  // Fresh install (no config yet): write a proper default config carrying the
+  // channel. There is nothing on disk to preserve.
+  if (!genieConfigExists()) {
+    try {
+      const config = GenieConfigSchema.parse({});
+      config.updateChannel = token;
+      await saveGenieConfig(config);
+    } catch {
+      // non-fatal — channel preference lost but update still works.
     }
-    await saveGenieConfig(config);
+    return;
+  }
+  // Existing config: NEVER round-trip through the schema. `saveGenieConfig` strips
+  // unknown keys and, when the load fails, `loadGenieConfig` returns DEFAULTS — so
+  // the old load→save path rewrote the whole file from defaults on any transient
+  // read failure, the exact side effect that silently reset users' configs during
+  // `genie update`. A tolerant raw read-modify-write touches only updateChannel and
+  // preserves every other key verbatim; an unparseable file is left untouched.
+  const read = readConfigTolerant();
+  if (read.kind === 'unreadable') {
+    process.stderr.write(
+      `warning: ${contractPath(getGenieConfigPath())} is unparseable (${read.reason}); leaving it untouched — channel ${channel} not persisted\n`,
+    );
+    return;
+  }
+  read.raw.updateChannel = token;
+  try {
+    writeFileSync(getGenieConfigPath(), JSON.stringify(read.raw, null, 2), 'utf-8');
   } catch {
     // non-fatal — channel preference lost but update still works.
   }
@@ -1397,6 +1546,36 @@ export interface UpdateCommandOptions {
    *  the unknown flag and exits immediately (zero network) instead of silently
    *  running a full unattended update. */
   syncOnly?: boolean;
+}
+
+/**
+ * Downgrade policy gate. Returns true when the caller MUST short-circuit — a
+ * backward-pointing manifest with no explicit operator intent — after emitting the
+ * refusal line. Returns false to proceed with the swap: for an explicitly-authorized
+ * downgrade it first prints a loud one-line notice so the backward move is never
+ * silent. An explicit `--stable/--homolog/--dev/--next` on the command line is what
+ * counts as operator intent.
+ */
+function applyDowngradeGuard(
+  installedVersion: string,
+  latestVersion: string | null,
+  channel: ReleaseChannel,
+  options: UpdateCommandOptions,
+): boolean {
+  const explicitChannel = Boolean(options.stable || options.homolog || options.dev || options.next);
+  const downgrade = decideDowngrade({ installedVersion, latestVersion, explicitChannel });
+  if (downgrade.kind === 'block-downgrade') {
+    log(
+      `Installed v${normalizeVersion(downgrade.installed)} is NEWER than ${channel} manifest v${normalizeVersion(downgrade.latest)} — refusing automatic downgrade (switch channels or reinstall explicitly to downgrade)`,
+    );
+    return true;
+  }
+  if (downgrade.kind === 'allow-downgrade') {
+    log(
+      `DOWNGRADE v${normalizeVersion(downgrade.installed)} → v${normalizeVersion(downgrade.latest)} (channel ${channel})`,
+    );
+  }
+  return false;
 }
 
 export async function updateCommand(options: UpdateCommandOptions = {}): Promise<void> {
@@ -1445,6 +1624,17 @@ export async function updateCommand(options: UpdateCommandOptions = {}): Promise
     success(`Already up to date (v${normalizeVersion(installedVersion)}, channel ${channel})`);
     // Update = converge everything, not just the binary: sync agents even when
     // the installed binary is already at the latest version.
+    runAgentSyncSafe();
+    console.log();
+    return;
+  }
+
+  // Downgrade guard. `shortCircuitIfCurrent` only catches the EQUAL case; without
+  // this a manifest that points BACKWARD (a channel rollback, or a stale
+  // .well-known pin) would swap the binary to an OLDER build via the normal
+  // "Update available" flow.
+  if (applyDowngradeGuard(installedVersion, latestVersion, channel, options)) {
+    // Refused downgrade — still converge agents, exactly like the already-current path.
     runAgentSyncSafe();
     console.log();
     return;
