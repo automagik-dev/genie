@@ -60,3 +60,45 @@ Five parallel fix lanes in one worktree on the PR #2546 head, exclusive file own
 | wish/docs | B7 + this document | 1 (docs only) | inherit (fable·max) | `plugins/genie/README.md`, this WISH, `.genie/INDEX.md` |
 
 **Validation:** targeted `bun test <file>` per lane; the integrator runs the single full `bun run check` (parallel full gates collide) and commits.
+
+## Review results (ultracode wave 2, 2026-07-10)
+
+Second ultracode pass on the PR #2546 head (`f7629a5f` = B1–B7 landed + codex first-class integration). Three review dimensions (codex-core, hardening-fixes, release-blast); HIGH/MEDIUM findings went through 2-skeptic adversarial verification; LOWs shipped unverified by design. Result: **9 confirmed findings + 1 invented-surface finding + 7 LOWs.** Fix wave 2 dispatched as five parallel lanes (A–E) on 2026-07-10, exclusive file ownership per lane; the integrator fills the fix-commit column at commit time.
+
+### Revision of Decision 1 (B1) — formally acknowledged
+
+W2-6 proves the B1 flag-only hard guard has a gap tier: binaries **v5.260710.5–.9** are env-aware but flag-unaware — they honor `GENIE_UPDATE_SYNC_ONLY=1`, but commander rejects the unknown `--sync-only` flag *before* the env var is ever read, so delegation errors out and those machines lose hook-driven sync until a manual `genie update`. Decision 1 is hereby revised: **version-probe tiering replaces the flag-only guard** — probe the binary version, pass `--sync-only` to contract binaries, invoke env-only (no flag) for the .5–.9 tier, and skip invocation entirely for pre-env binaries. The original rationale (an old binary must be *unable* to misread the contract) is preserved; only the mechanism widens.
+
+### Confirmed findings (9)
+
+W2-1 and W2-2 share one root cause, found independently by two review dimensions; both rows kept, cross-referenced.
+
+| # | Sev | Finding | Anchor | Lane | Fix commit |
+|---|-----|---------|--------|------|------------|
+| W2-1 | HIGH | resolveBundleRoot never finds installed payload on released binaries — codex+claude integration legs fail on every real install; doctor manifest check warns forever (same root cause as W2-2) | `src/lib/runtime-integrations.ts:29-35` | A | (integrator fills) |
+| W2-2 | HIGH | Same root cause as W2-1, independently e2e-proven: normalizeAuxLayout moves bin/plugins away before resolveBundleRoot runs; manifests torn from payload across two roots | `src/lib/runtime-integrations.ts` + `src/genie-commands/install.ts` | A | (integrator fills) |
+| W2-3 | HIGH | claude-hooks.json invokes `genie hook dispatch --runtime claude`; every deployed binary rejects the unknown flag → fleet-wide hook dispatch breakage on plugin-first rollout (fail-closed = tool denials) | `plugins/genie/hooks/claude-hooks.json` | B | (integrator fills) |
+| W2-4 | MEDIUM | setup --codex force-flips runtime.defaultAgent to codex; launch 'auto' prefers codex over claude; codex pane drops the resolved model pin | `src/genie-commands/setup.ts:396`, `src/term-commands/launch.ts:614` | D | (integrator fills) |
+| W2-5 | MEDIUM | installCodexAgents unconditionally clobbers user-modified `~/.codex/agents/genie-*.toml` — no digest check, no backup (B4 data-loss class reintroduced on a new surface) | `src/lib/runtime-integrations.ts:76-88` | A | (integrator fills) |
+| W2-6 | MEDIUM | --sync-only hard guard breaks delegation for env-aware flag-unaware binaries v5.260710.5–.9 — commander rejects before env is honored; those machines lose hook sync until manual update (formal revision of B1 Decision 1, above) | `plugins/genie/scripts/smart-install.js:481` | B | (integrator fills) |
+| W2-7 | MEDIUM | plugins/genie/.codex-plugin/plugin.json version outside the auto-version pipeline — goes permanently stale one bump after merge | `scripts/version.ts` | E | (integrator fills) |
+| W2-8 | MEDIUM | Claude's conventional hooks path (hooks/hooks.json) contains the CODEX hooks — safety rests on every deployed Claude Code honoring the plugin.json redirect exclusively | `plugins/genie/hooks/hooks.json` | B | (integrator fills) |
+| W2-9 | MEDIUM | genie update never refreshes the new Codex surfaces (role-agent TOMLs + plugin registration are install/setup-only) — contradicts the agent-sync convergence contract | `src/genie-commands/update.ts` | C | (integrator fills) |
+
+### Invented surface (from the codex integration map, fixed this wave)
+
+| # | Sev | Finding | Anchor | Lane | Fix commit |
+|---|-----|---------|--------|------|------------|
+| W2-INV-1 | HIGH-impact | `~/.codex/skills/.curated/` is not a Codex discovery path (codex-rs prunes hidden dirs, regression-tested; parent root deprecated — live tier is `~/.agents/skills`). agent-sync's codex adapter ships skills nowhere; fix = `~/.agents/skills/<name>` + one-time managed migration | `src/lib/agent-sync.ts` | C | (integrator fills) |
+
+### LOW findings (7)
+
+| # | Sev | Finding | Anchor | Lane | Fix commit |
+|---|-----|---------|--------|------|------------|
+| W2-L1 | LOW | Codex PermissionRequest deny omits the documented optional message — omni phone denials surface reasonless | `src/hooks/codex-adapter.ts` | B | (integrator fills) |
+| W2-L2 | LOW | Dead Codex PreToolUse matcher tokens (Read, SendMessage not Codex tool names); native-surfaces.md claims an undocumented follow-up-messaging surface | `plugins/genie/hooks` (codex file) + `references/native-surfaces.md` | B (matchers) / E (docs) | (integrator fills) |
+| W2-L3 | LOW | Lock stale-steal uses unlink-then-open — two processes can steal the same stale lock and sync concurrently | `src/lib/agent-sync.ts` | C | (integrator fills) |
+| W2-L4 | LOW | --sync-only flag registration untested end-to-end — removing the .option() would break fleet hook delegation with all gates green | `src/genie.ts` | E | (integrator fills) |
+| W2-L5 | LOW | Partial aux-tree adoption still refreshes VERSION stamp — failed-swap tree goes permanently stale on same-version reinstalls | `src/genie-commands/install.ts` | A | (integrator fills) |
+| W2-L6 | LOW | native-surfaces.md instructs nonexistent `genie task claim` (real: `genie task checkout`); genie-* vs genie_* agent-name drift | `plugins/genie/references/native-surfaces.md` | E | (integrator fills) |
+| W2-L7 | LOW | work SKILL role table 'Role (Codex name)' with genie_* names creates Claude-side subagent_type ambiguity; fix/review skills lost concrete tool anchors (anchors in skills/fix + skills/review are outside lane E's files — parked for a follow-up) | `skills/work/SKILL.md` | E | (integrator fills) |
