@@ -9,9 +9,9 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { installCommand, normalizeAuxLayout } from './install.js';
 import type { cleanupV4 } from './legacy-v4.js';
 
@@ -130,6 +130,11 @@ describe('normalizeAuxLayout', () => {
     rmSync(home, { recursive: true, force: true });
   });
 
+  function write(path: string, content: string): void {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, content);
+  }
+
   test('moves bin/<dir> to the canonical <dir> when the target is absent', () => {
     mkdirSync(join(home, 'bin', 'plugins', 'genie'), { recursive: true });
     normalizeAuxLayout(home);
@@ -137,12 +142,60 @@ describe('normalizeAuxLayout', () => {
     expect(existsSync(join(home, 'bin', 'plugins'))).toBe(false);
   });
 
-  test('leaves the bin/ copy untouched when the canonical target already exists', () => {
-    mkdirSync(join(home, 'bin', 'skills'), { recursive: true });
-    mkdirSync(join(home, 'skills', 'existing'), { recursive: true });
+  test('reinstall over an existing install swaps the fresh trees in — no bin/ residue, no swap debris', () => {
+    write(join(home, 'bin', 'VERSION'), '5.2.0\n');
+    write(join(home, 'VERSION'), '5.1.0\n');
+    write(join(home, 'bin', 'plugins', 'genie', 'SKILL.md'), 'fresh plugin');
+    write(join(home, 'plugins', 'genie', 'SKILL.md'), 'stale plugin');
+    write(join(home, 'bin', 'skills', 'wish', 'SKILL.md'), 'fresh skill');
+    write(join(home, 'skills', 'wish', 'SKILL.md'), 'stale skill');
+
     normalizeAuxLayout(home);
-    expect(existsSync(join(home, 'bin', 'skills'))).toBe(true);
-    expect(existsSync(join(home, 'skills', 'existing'))).toBe(true);
+
+    expect(readFileSync(join(home, 'plugins', 'genie', 'SKILL.md'), 'utf8')).toBe('fresh plugin');
+    expect(readFileSync(join(home, 'skills', 'wish', 'SKILL.md'), 'utf8')).toBe('fresh skill');
+    expect(existsSync(join(home, 'bin', 'plugins'))).toBe(false);
+    expect(existsSync(join(home, 'bin', 'skills'))).toBe(false);
+    for (const name of ['plugins', 'skills']) {
+      expect(existsSync(join(home, `${name}.new`))).toBe(false);
+      expect(existsSync(join(home, `${name}.old`))).toBe(false);
+    }
+    // canonical VERSION stamp refreshed so the next run short-circuits
+    expect(readFileSync(join(home, 'VERSION'), 'utf8').trim()).toBe('5.2.0');
+  });
+
+  test('same-version reinstall is an idempotent no-op — canonical trees are left alone', () => {
+    write(join(home, 'bin', 'VERSION'), '5.2.0\n');
+    write(join(home, 'VERSION'), '5.2.0\n');
+    // bin content deliberately differs so a wrongful swap would be visible
+    write(join(home, 'bin', 'plugins', 'genie', 'SKILL.md'), 'reextracted');
+    write(join(home, 'plugins', 'genie', 'SKILL.md'), 'canonical');
+
+    normalizeAuxLayout(home);
+    normalizeAuxLayout(home);
+
+    expect(readFileSync(join(home, 'plugins', 'genie', 'SKILL.md'), 'utf8')).toBe('canonical');
+    expect(readFileSync(join(home, 'VERSION'), 'utf8').trim()).toBe('5.2.0');
+  });
+
+  test('without VERSION stamps a differing tree is swapped in via the digest fallback', () => {
+    write(join(home, 'bin', 'skills', 'wish', 'SKILL.md'), 'fresh skill');
+    write(join(home, 'skills', 'wish', 'SKILL.md'), 'stale skill');
+
+    normalizeAuxLayout(home);
+
+    expect(readFileSync(join(home, 'skills', 'wish', 'SKILL.md'), 'utf8')).toBe('fresh skill');
+    expect(existsSync(join(home, 'bin', 'skills'))).toBe(false);
+  });
+
+  test('without VERSION stamps a digest-identical tree is a no-op', () => {
+    write(join(home, 'bin', 'skills', 'wish', 'SKILL.md'), 'same content');
+    write(join(home, 'skills', 'wish', 'SKILL.md'), 'same content');
+
+    normalizeAuxLayout(home);
+
+    expect(readFileSync(join(home, 'skills', 'wish', 'SKILL.md'), 'utf8')).toBe('same content');
+    expect(existsSync(join(home, 'bin', 'skills', 'wish', 'SKILL.md'))).toBe(true);
   });
 
   test('is a non-throwing no-op when neither layout is present', () => {
