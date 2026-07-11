@@ -5,7 +5,7 @@
 # Local equivalent of one matrix leg of .github/workflows/build-tarballs.yml.
 # Produces dist/genie-<version>-<platform>.tar.gz containing:
 #   genie (bun --compile static executable),
-#   plugins/, skills/, templates/, VERSION
+#   plugins/, skills/, templates/, runtime marketplaces, VERSION
 #
 # Size budget: each tarball ≤80 MB compressed; the script fails if exceeded.
 # Platforms: linux-x64-glibc, linux-x64-musl, linux-arm64, darwin-arm64.
@@ -64,7 +64,20 @@ bun build --compile \
 cp -RL "${REPO_ROOT}/plugins"   "${STAGE}/plugins"
 cp -RL "${REPO_ROOT}/skills"    "${STAGE}/skills"
 cp -RL "${REPO_ROOT}/templates" "${STAGE}/templates"
+mkdir -p "${STAGE}/.agents/plugins" "${STAGE}/.claude-plugin"
+cp "${REPO_ROOT}/.agents/plugins/marketplace.json" "${STAGE}/.agents/plugins/marketplace.json"
+cp "${REPO_ROOT}/.claude-plugin/marketplace.json" "${STAGE}/.claude-plugin/marketplace.json"
 echo "${VERSION}" > "${STAGE}/VERSION"
+
+for required in \
+  ".agents/plugins/marketplace.json" \
+  ".claude-plugin/marketplace.json" \
+  "plugins/genie/.codex-plugin/plugin.json" \
+  "plugins/genie/.claude-plugin/plugin.json" \
+  "plugins/genie/hooks/hooks.json" \
+  "plugins/genie/hooks/codex-hooks.json"; do
+  [[ -f "${STAGE}/${required}" ]] || { echo "error: release payload missing ${required}" >&2; exit 1; }
+done
 
 tar czf "${TARBALL}" -C "${STAGE}" .
 

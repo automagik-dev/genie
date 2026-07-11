@@ -14,7 +14,7 @@ Convert a validated idea into an executable wish document at `.genie/wishes/<slu
 - User wants to scope, decompose, or formalize a feature/change.
 - Prior `/brainstorm` output exists and needs to become actionable.
 
-Wish artifacts live in `.genie/wishes/` in the shared worktree. Execution-group definitions go in WISH.md (git) so other agents and skills can read them; per-group execution state lives in the state DB via `genie task` (see the `work` skill for how groups are claimed and completed). When spawned as a native-team subagent, use the curated context from your dispatch prompt directly.
+Wish artifacts live in `.genie/wishes/` in the shared worktree. Execution-group definitions go in WISH.md (git) so other agents and skills can read them; per-group execution state lives in the state DB via `genie task` (see the `work` skill for how groups are claimed and completed). When spawned as a native subagent, use the curated context from your dispatch prompt directly.
 
 ## Design link pre-flight
 

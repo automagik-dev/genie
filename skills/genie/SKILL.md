@@ -50,12 +50,12 @@ Tell the user: "Found an existing [wish/brainstorm] for '[topic]' ([STATUS]) —
 
 ## Operational Command Mapping
 
-v5 is zero-daemon: documents live in git, per-group execution state in the task DB (`.genie/genie.db`), and execution happens in Claude Code native teams (Agent tool + SendMessage) or `genie launch` worktree panes. Map natural language to live verbs:
+v5 is zero-daemon: documents live in git, per-group execution state in the task DB (`.genie/genie.db`), and execution happens in Claude and Codex native subagents or `genie launch` worktree panes. Runtime mapping follows `plugins/genie/references/native-surfaces.md`. Map natural language to live verbs:
 
 | User says | Route |
 |-----------|-------|
 | "how's the team" / "check progress" | `genie board` (kanban; `--wish <slug>` to scope). Background subagents notify on completion — don't poll |
-| "spawn an engineer" / "start a worker" | Dispatch a subagent via the Agent tool — normally through `/work` |
+| "spawn an engineer" / "start a worker" | Dispatch a subagent via the native delegation surface — normally through `/work` |
 | "list agents" / "who's working" | Team roster is in-session (native); active claims: `genie task list --status in_progress` |
 | "status of [slug]" / "wish progress" | `genie board --wish <slug>` or `genie task list --wish <slug>` |
 | "mark task done" / "mark group done" | `genie task done <id>` (per-group state is a task row; recomputes the ready set) |
@@ -64,7 +64,7 @@ v5 is zero-daemon: documents live in git, per-group execution state in the task 
 | "show my tasks" / "backlog" | `genie task list` (`--status`, `--wish`, `--board`, `--json`) |
 | "claim a task" / "start on <id>" | `genie task checkout <id> --worker <name>` — atomic; a racing claimant gets a conflict error and stands down |
 | "stop agent X" / "kill X" | Native team: stop the background subagent in-session — no CLI verb |
-| "message agent X" | SendMessage tool (native team IPC) |
+| "message agent X" | The runtime's native follow-up surface |
 | "create a team for X" | `/work` on the wish, or `genie launch <slug>` — Warp cockpit, one pane per ready group, each in its own worktree |
 | "show logs for X" | `genie task status <id>` (detail, dependencies, stage log) |
 | "open the cockpit" | `genie launch <slug>` (`--dry-run` to preview, `--groups <csv>` to scope) |

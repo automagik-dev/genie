@@ -8,7 +8,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { confirm, input, select } from '@inquirer/prompts';
-import { ensureCodexOtelConfig, getCodexConfigPath, isCodexConfigured } from '../lib/codex-config.js';
+import { getCodexConfigPath } from '../lib/codex-config.js';
 import {
   contractPath,
   getGenieConfigPath,
@@ -18,7 +18,9 @@ import {
   saveGenieConfig,
   updateShortcutsConfig,
 } from '../lib/genie-config.js';
+import { installRuntimeIntegrations } from '../lib/runtime-integrations.js';
 import { checkCommand } from '../lib/system-detect.js';
+import { removeCodexMcpFallback } from '../term-commands/init.js';
 import { installShortcuts, isShortcutsInstalled } from '../term-commands/shortcuts.js';
 import type { GenieConfig } from '../types/genie-config.js';
 
@@ -184,10 +186,17 @@ async function configureShortcuts(config: GenieConfig, quick: boolean): Promise<
 // Codex Integration
 // ============================================================================
 
-function printCodexResult(result: 'changed' | 'unchanged' | 'error'): void {
-  if (result === 'changed') console.log('  \x1b[32m\u2713\x1b[0m Codex config updated');
-  else if (result === 'unchanged') console.log('  \x1b[32m\u2713\x1b[0m Codex config already up to date');
-  else console.log('  \x1b[31m\u2717\x1b[0m Failed to update codex config');
+function repairCodexIntegration(): boolean {
+  const result = installRuntimeIntegrations({ selection: 'codex' })[0];
+  if (!result?.ok) {
+    console.log(`  \x1b[31m\u2717\x1b[0m ${result?.detail ?? 'Codex integration failed'}`);
+    return false;
+  }
+  console.log(`  \x1b[32m\u2713\x1b[0m ${result.detail}`);
+  removeCodexMcpFallback(join(process.cwd(), '.codex', 'config.toml'));
+  if (result.preservedDisabled) console.log('  \x1b[2mExisting disabled plugin state was preserved.\x1b[0m');
+  console.log('  \x1b[33m!\x1b[0m Review Genie hooks with /hooks, then start a new Codex task.');
+  return true;
 }
 
 async function configureCodex(config: GenieConfig, quick: boolean): Promise<GenieConfig> {
@@ -201,36 +210,49 @@ async function configureCodex(config: GenieConfig, quick: boolean): Promise<Geni
 
   console.log(`  \x1b[32m\u2713\x1b[0m Codex CLI found (${codexCheck.version ?? 'unknown version'})`);
 
-  if (isCodexConfigured()) {
-    console.log('  \x1b[32m\u2713\x1b[0m Codex config already configured');
-    config.codex = { configured: true };
-    return config;
-  }
-
   console.log();
-  console.log('  Genie needs to configure codex for agent communication:');
-  console.log('    \x1b[36mdisable_paste_burst\x1b[0m \u2192 Reliable tmux command injection');
-  console.log('    \x1b[36mOTel exporter\x1b[0m       \u2192 Telemetry relay for state detection');
+  console.log('  Genie installs or repairs the native Codex plugin, MCP server, and role agents.');
+  console.log('  The obsolete Genie loopback OTel exporter is removed with a backup when present.');
   console.log(`  Config: \x1b[2m${contractPath(getCodexConfigPath())}\x1b[0m`);
   console.log();
 
   if (quick) {
-    const result = ensureCodexOtelConfig();
-    printCodexResult(result);
-    config.codex = { configured: result !== 'error' };
+    config.codex = { configured: repairCodexIntegration() };
     return config;
   }
 
-  const enableCodex = await confirm({ message: 'Configure Codex for genie agent integration?', default: true });
+  const enableCodex = await confirm({ message: 'Install or repair the Genie Codex integration?', default: true });
   if (enableCodex) {
-    const result = ensureCodexOtelConfig();
-    printCodexResult(result);
-    config.codex = { configured: result !== 'error' };
+    config.codex = { configured: repairCodexIntegration() };
   } else {
     console.log('  Skipped. Run \x1b[36mgenie setup --codex\x1b[0m later.');
   }
 
   return config;
+}
+
+type DefaultAgent = GenieConfig['runtime']['defaultAgent'];
+
+/**
+ * Decide `runtime.defaultAgent` after a successful codex configure.
+ *
+ * Only an `auto` selection (the schema default — what a machine with no prior
+ * choice carries) is flipped to `codex`. An explicit existing setting is never
+ * overridden: `claude` stays `claude` (this includes legacy pre-runtime
+ * configs, which `loadGenieConfig` backfills to `claude` because those users
+ * were implicitly launching Claude) and the caller prints `hint` instead so
+ * the user knows codex is one config edit away.
+ */
+export function resolveDefaultAgentAfterCodex(current: DefaultAgent): { agent: DefaultAgent; hint?: string } {
+  if (current === 'auto') return { agent: 'codex' };
+  if (current === 'claude') {
+    const configPath = contractPath(getGenieConfigPath());
+    return {
+      agent: 'claude',
+      hint: `runtime.defaultAgent stays 'claude' (explicit setting). Codex available: set "runtime": { "defaultAgent": "codex" } in ${configPath} to switch.`,
+    };
+  }
+  return { agent: current };
 }
 
 // ============================================================================
@@ -394,7 +416,12 @@ export async function setupCommand(options: SetupOptions = {}): Promise<void> {
 
   if (options.codex) {
     printHeader();
-    config = await configureCodex(config, false);
+    config = await configureCodex(config, options.quick ?? false);
+    if (config.codex?.configured) {
+      const decision = resolveDefaultAgentAfterCodex(config.runtime.defaultAgent);
+      config.runtime.defaultAgent = decision.agent;
+      if (decision.hint) console.log(`  \x1b[2m${decision.hint}\x1b[0m`);
+    }
     await saveGenieConfig(config);
     if (config.codex?.configured) {
       console.log('\x1b[32m\u2713 Codex configuration saved.\x1b[0m');

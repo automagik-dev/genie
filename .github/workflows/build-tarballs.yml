@@ -8,7 +8,8 @@ name: Build Tarballs
 #
 # Tarball contents (per wish G1 deliverable 3):
 #   genie       — bun --compile static executable
-#   plugins/    — plugins/genie/{agents,rules,...} copied verbatim
+#   plugins/    — shared Genie payload with Claude + Codex manifests and hooks
+#   .agents/ + .claude-plugin/ — runtime marketplace manifests
 #   skills/     — skills/<name>/AGENT.md copied verbatim
 #   templates/  — wish-template, genie-config.template.json
 #   VERSION     — plain-text stamp consumed by src/lib/version.ts
@@ -45,6 +46,9 @@ on:
   pull_request:
     paths:
       - 'scripts/build-binary.sh'
+      - '.agents/plugins/marketplace.json'
+      - '.claude-plugin/marketplace.json'
+      - 'plugins/genie/**'
       - '.github/workflows/build-tarballs.yml'
 
 concurrency:

@@ -17,6 +17,7 @@ import {
   LaunchError,
   WorktreeCollisionError,
   executeLaunch,
+  resolveLaunchAgent,
   resolveLaunchModel,
 } from './launch.js';
 
@@ -110,7 +111,7 @@ describe('genie launch --dry-run', () => {
     expect(leaves.map((l) => l.title)).toEqual(['api', 'ui']);
     expect(leaves.map((l) => l.cwd)).toEqual([worktreeFor(slug, 'api'), worktreeFor(slug, 'ui')]);
     expect((leaves[0].commands as Array<{ exec: string }>)[0].exec).toBe(
-      `claude --model opus "$(cat "${join(worktreeFor(slug, 'api'), '.genie', 'launch', 'api.prompt')}")"`,
+      `claude --model 'opus' "$(cat '${join(worktreeFor(slug, 'api'), '.genie', 'launch', 'api.prompt')}')"`,
     );
 
     // Prompt content lists both tasks' ids (verified via the plan, not disk).
@@ -147,15 +148,15 @@ function paneCommands(yaml: string): string[] {
 // ----------------------------------------------------------------------------
 
 describe('genie launch --agent', () => {
-  test('--agent codex emits `codex exec "$(cat …)"` pane commands for every group', () => {
+  test('--agent codex emits interactive workspace-write pane commands for every group', () => {
     const slug = 'codex-run';
     createTask(fx.db, { title: 'build the api', wish: slug, group: 'api' });
     createTask(fx.db, { title: 'build the ui', wish: slug, group: 'ui' });
 
     const plan = executeLaunch(slug, { dryRun: true, agent: 'codex' }, deps());
     expect(paneCommands(plan.yaml)).toEqual([
-      `codex exec "$(cat "${join(worktreeFor(slug, 'api'), '.genie', 'launch', 'api.prompt')}")"`,
-      `codex exec "$(cat "${join(worktreeFor(slug, 'ui'), '.genie', 'launch', 'ui.prompt')}")"`,
+      `codex --sandbox workspace-write "$(cat '${join(worktreeFor(slug, 'api'), '.genie', 'launch', 'api.prompt')}')"`,
+      `codex --sandbox workspace-write "$(cat '${join(worktreeFor(slug, 'ui'), '.genie', 'launch', 'ui.prompt')}')"`,
     ]);
   });
 
@@ -163,7 +164,7 @@ describe('genie launch --agent', () => {
     const slug = 'claude-run';
     createTask(fx.db, { title: 'a task', wish: slug, group: 'main' });
     const expected = [
-      `claude --model opus "$(cat "${join(worktreeFor(slug, 'main'), '.genie', 'launch', 'main.prompt')}")"`,
+      `claude --model 'opus' "$(cat '${join(worktreeFor(slug, 'main'), '.genie', 'launch', 'main.prompt')}')"`,
     ];
 
     const byDefault = executeLaunch(slug, { dryRun: true }, deps());
@@ -172,6 +173,45 @@ describe('genie launch --agent', () => {
     expect(paneCommands(explicit.yaml)).toEqual(expected);
     // Default and explicit claude produce identical YAML — no perturbation.
     expect(explicit.yaml).toBe(byDefault.yaml);
+  });
+
+  test('--agent codex omits the Claude-flavored default model pin (no -m; Codex default applies)', () => {
+    const slug = 'codex-default-model';
+    createTask(fx.db, { title: 'a task', wish: slug, group: 'main' });
+
+    // No opts.model ⇒ resolveLaunchModel default 'opus', a Claude token — must NOT reach codex.
+    const plan = executeLaunch(slug, { dryRun: true, agent: 'codex' }, deps());
+    const [command] = paneCommands(plan.yaml);
+    expect(command.startsWith('codex --sandbox workspace-write ')).toBe(true);
+    expect(command).not.toContain(' -m ');
+    expect(command).not.toContain('opus');
+  });
+
+  test('--agent codex omits explicit claude-* model ids but passes non-Claude pins via -m', () => {
+    const slug = 'codex-model-pin';
+    createTask(fx.db, { title: 'a task', wish: slug, group: 'main' });
+
+    const claudePinned = executeLaunch(slug, { dryRun: true, agent: 'codex', model: 'claude-opus-4-1' }, deps());
+    expect(paneCommands(claudePinned.yaml)[0]).toBe(
+      `codex --sandbox workspace-write "$(cat '${join(worktreeFor(slug, 'main'), '.genie', 'launch', 'main.prompt')}')"`,
+    );
+
+    const codexPinned = executeLaunch(slug, { dryRun: true, agent: 'codex', model: 'gpt-5-codex' }, deps());
+    expect(paneCommands(codexPinned.yaml)[0]).toBe(
+      `codex -m 'gpt-5-codex' --sandbox workspace-write "$(cat '${join(
+        worktreeFor(slug, 'main'),
+        '.genie',
+        'launch',
+        'main.prompt',
+      )}')"`,
+    );
+  });
+
+  test('claude panes always receive the resolved model via --model', () => {
+    const slug = 'claude-model-pin';
+    createTask(fx.db, { title: 'a task', wish: slug, group: 'main' });
+    const plan = executeLaunch(slug, { dryRun: true, agent: 'claude', model: 'claude-opus-4-1' }, deps());
+    expect(paneCommands(plan.yaml)[0].startsWith("claude --model 'claude-opus-4-1' ")).toBe(true);
   });
 
   test('an unknown --agent value raises InvalidAgentError before anything is materialized', () => {
@@ -191,6 +231,27 @@ describe('genie launch --agent', () => {
     expect(existsSync(fx.worktrees)).toBe(false);
     expect(existsSync(worktreeFor(slug, 'main'))).toBe(false);
     expect(existsSync(fx.warp)).toBe(false);
+  });
+});
+
+describe('resolveLaunchAgent', () => {
+  const which = (available: string[]) => (bin: string) => (available.includes(bin) ? `/usr/bin/${bin}` : null);
+
+  test("'auto' prefers claude when both binaries are installed (codex is opt-in)", () => {
+    expect(resolveLaunchAgent('auto', which(['claude', 'codex']))).toBe('claude');
+  });
+
+  test("'auto' falls back to codex only when claude is absent", () => {
+    expect(resolveLaunchAgent('auto', which(['codex']))).toBe('codex');
+  });
+
+  test("'auto' with neither binary resolves to claude (fails loudly in the pane)", () => {
+    expect(resolveLaunchAgent('auto', which([]))).toBe('claude');
+  });
+
+  test('an explicit setting always wins, regardless of installed binaries', () => {
+    expect(resolveLaunchAgent('claude', which(['codex']))).toBe('claude');
+    expect(resolveLaunchAgent('codex', which(['claude']))).toBe('codex');
   });
 });
 
@@ -274,7 +335,7 @@ describe('genie launch (real run, --no-open)', () => {
       (leaf) => (leaf.commands as Array<{ exec: string }>)[0].exec,
     );
     expect(emittedCommands).toHaveLength(2);
-    expect(emittedCommands.every((command) => command.startsWith('claude --model opus '))).toBe(true);
+    expect(emittedCommands.every((command) => command.startsWith("claude --model 'opus' "))).toBe(true);
 
     // Parent repo did NOT flip to bare.
     expect(git(fx.repo, ['config', '--get', 'core.bare'])).toBe('false');
@@ -596,7 +657,7 @@ describe('genie launch (built CLI, workspace-guard inclusive)', () => {
     const launch = runCli(['launch', 'configured', '--dry-run']);
 
     expect(launch.status).toBe(0);
-    expect(launch.stdout).toContain('claude --model sonnet');
+    expect(launch.stdout).toContain("claude --model 'sonnet'");
   });
 });
 

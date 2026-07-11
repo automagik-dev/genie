@@ -13,6 +13,7 @@
  * Syncs versions across:
  * - package.json (root)
  * - plugins/genie/.claude-plugin/plugin.json (Claude Code)
+ * - plugins/genie/.codex-plugin/plugin.json (Codex)
  * - plugins/genie/package.json (smart-install version checks)
  * - .claude-plugin/marketplace.json (marketplace listing)
  */
@@ -66,6 +67,27 @@ async function updateJsonVersion(filePath: string, version: string): Promise<boo
   }
 }
 
+// JSON.stringify(_, null, 2) expands short arrays that Biome (120 width)
+// collapses, so a raw stamp leaves the tree lint-red until the next manual
+// format. Re-format every stamped file so a version bump can never break
+// `biome check`. Non-fatal: without Biome the stamp still lands.
+function formatStampedFiles(rootDir: string, files: string[]): void {
+  const targets = files.filter((file) => existsSync(file));
+  if (targets.length === 0) {
+    return;
+  }
+  try {
+    execSync(`bunx biome format --write ${targets.map((file) => `"${file}"`).join(' ')}`, {
+      cwd: rootDir,
+      stdio: 'pipe',
+      timeout: 60000,
+    });
+    console.log('  ✓ biome format applied to stamped files');
+  } catch {
+    console.warn('  ⚠ biome format unavailable — run `bunx biome format --write` on the stamped files');
+  }
+}
+
 async function main() {
   const version = generateVersion();
   const rootDir = join(dirname(import.meta.path), '..');
@@ -81,6 +103,9 @@ async function main() {
 
   // 2. Update Claude Code plugin manifest
   await updateJsonVersion(join(rootDir, 'plugins/genie/.claude-plugin/plugin.json'), version);
+
+  // 2b. Update Codex plugin manifest — must track .claude-plugin/plugin.json exactly
+  await updateJsonVersion(join(rootDir, 'plugins/genie/.codex-plugin/plugin.json'), version);
 
   // 3. Update plugin package.json (used by smart-install.js for version checks)
   await updateJsonVersion(join(rootDir, 'plugins/genie/package.json'), version);
@@ -99,6 +124,14 @@ async function main() {
       console.error(`  ✗ Failed: ${marketplacePath}`, err);
     }
   }
+
+  formatStampedFiles(rootDir, [
+    join(rootDir, 'package.json'),
+    join(rootDir, 'plugins/genie/.claude-plugin/plugin.json'),
+    join(rootDir, 'plugins/genie/.codex-plugin/plugin.json'),
+    join(rootDir, 'plugins/genie/package.json'),
+    marketplacePath,
+  ]);
 
   console.log('\n✅ All versions synchronized');
 }

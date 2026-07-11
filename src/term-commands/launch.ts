@@ -6,7 +6,7 @@
  * ONE Warp pane. Each group gets its own git worktree
  * (`<worktreesBase>/<repo>-<slug>-<group>/`, branch `wish/<slug>-<group>`),
  * a kickoff prompt written into that worktree, and a pane that runs
- * `claude --model <model> "$(cat <prompt>)"`. The panes are emitted as a Warp Launch
+ * the selected interactive client with the kickoff prompt. The panes are emitted as a Warp Launch
  * Configuration (see {@link ./../lib/v5/warp-launch}) and opened best-effort.
  *
  * Emitting the config is the contract; opening is a convenience. A platform with
@@ -132,18 +132,37 @@ export class InvalidAgentError extends LaunchError {
 // ============================================================================
 
 /**
- * Data table mapping each agent to the pane command that runs its
- * non-interactive CLI against the kickoff prompt file. Each entry takes the
+ * Data table mapping each agent to the pane command that runs its interactive
+ * CLI against the kickoff prompt file. Each entry takes the
  * absolute prompt path and returns the exact shell command the pane executes;
  * `$(cat "…")` inlines the prompt so the pane needs no extra plumbing.
  *
  * - `claude` — the historical default, pinned per pane to the execution model.
- * - `codex`  — OpenAI Codex's non-interactive `codex exec [PROMPT]` subcommand
- *   (prompt passed as the positional arg).
+ * - `codex`  — interactive Codex with an explicit workspace-write sandbox.
  */
+export function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+/**
+ * Model tokens that name a Claude model (aliases `opus`/`sonnet`/`haiku` or
+ * full `claude-*` ids). Genie ships NO claude→codex model mapping (the
+ * `plugins/genie/codex-agents/*.toml` role files pin only
+ * `model_reasoning_effort`, never a model id), so a Claude-flavored pin is
+ * OMITTED for codex panes — Codex's own configured default model applies —
+ * instead of sending a Claude id that Codex would reject. Any other token
+ * (e.g. an explicit `gpt-5-codex` pin in the worker profile) passes through
+ * via `-m` (documented Codex CLI flag).
+ */
+const CLAUDE_MODEL_TOKEN = /^(claude|opus|sonnet|haiku)\b/i;
+
 const AGENT_COMMANDS = {
-  claude: (promptPath: string, model: string) => `claude --model ${model} "$(cat "${promptPath}")"`,
-  codex: (promptPath: string, _model: string) => `codex exec "$(cat "${promptPath}")"`,
+  claude: (promptPath: string, model: string) =>
+    `claude --model ${shellQuote(model)} "$(cat ${shellQuote(promptPath)})"`,
+  codex: (promptPath: string, model: string) => {
+    const modelArg = CLAUDE_MODEL_TOKEN.test(model) ? '' : `-m ${shellQuote(model)} `;
+    return `codex ${modelArg}--sandbox workspace-write "$(cat ${shellQuote(promptPath)})"`;
+  },
 } as const;
 
 /** Routing-matrix default for execution panes when the selected profile has no model pin. */
@@ -173,6 +192,24 @@ export function resolveLaunchModel(config: Pick<GenieConfig, 'defaultWorkerProfi
     else if (arg?.startsWith('--model=')) configured = arg.slice('--model='.length);
   }
   return validModel(configured) ? configured : DEFAULT_LAUNCH_MODEL;
+}
+
+/**
+ * Resolve the effective pane agent from `runtime.defaultAgent`. `auto` (the
+ * schema default, i.e. what a machine with NO config file gets) prefers
+ * `claude` — the incumbent daily driver — and falls back to `codex` only when
+ * the claude binary is absent and codex is present. Codex-first is strictly
+ * opt-in: `--agent codex` or an explicit `runtime.defaultAgent = "codex"`.
+ * An explicit `claude`/`codex` setting always wins, binary or not (a missing
+ * binary then fails loudly in the pane instead of being silently rerouted).
+ */
+export function resolveLaunchAgent(
+  configured: 'auto' | 'claude' | 'codex',
+  which: (bin: string) => string | null = (bin) => Bun.which(bin),
+): 'claude' | 'codex' {
+  if (configured !== 'auto') return configured;
+  if (which('claude')) return 'claude';
+  return which('codex') ? 'codex' : 'claude';
 }
 
 /**
@@ -247,7 +284,12 @@ export interface LaunchOptions {
   groups?: string[];
   /** Terminal agent that drives each pane. Absent ⇒ 'claude'. */
   agent?: string;
-  /** Claude execution model pinned per pane. Absent ⇒ routing-matrix default (`opus`). */
+  /**
+   * Execution model pinned per pane. Absent ⇒ routing-matrix default (`opus`).
+   * Claude panes receive it via `--model`; codex panes receive it via `-m`
+   * UNLESS it is a Claude-flavored token (see {@link CLAUDE_MODEL_TOKEN}),
+   * which is omitted so Codex falls back to its own configured model.
+   */
   model?: string;
 }
 
@@ -607,10 +649,11 @@ interface LaunchCliOptions {
 
 async function handleLaunch(slug: string, cli: LaunchCliOptions): Promise<void> {
   const config = await loadGenieConfig();
+  const agent = cli.agent ?? resolveLaunchAgent(config.runtime.defaultAgent);
   const opts: LaunchOptions = {
     dryRun: cli.dryRun,
     open: cli.open,
-    agent: cli.agent,
+    agent,
     model: resolveLaunchModel(config),
     groups: cli.groups
       ? cli.groups
@@ -634,6 +677,6 @@ export function registerLaunchCommand(program: Command): void {
     .option('--dry-run', 'Print the plan (YAML, worktrees, prompts) without touching anything')
     .option('--no-open', 'Emit the launch config but do not open Warp')
     .option('--groups <csv>', 'Launch only these comma-separated group names')
-    .option('--agent <name>', 'Terminal agent to drive each pane (claude|codex)', 'claude')
+    .option('--agent <name>', 'Terminal agent to drive each pane (claude|codex); overrides runtime.defaultAgent')
     .action((slug: string, opts: LaunchCliOptions) => handleLaunch(slug, opts));
 }

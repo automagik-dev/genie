@@ -33,9 +33,9 @@ Pick SHIP-ready wishes, build a dependency-ordered plan, dispatch one worker sub
 ## Phase 1: Execute
 
 For each `merge_order` layer, in order:
-- Spawn one worker subagent per wish via the **Agent tool** — all of the layer's spawns in ONE message so they run in parallel (background; each notifies you with its final message).
+- Spawn one worker subagent per wish via the **native delegation surface** — all of the layer's spawns in ONE message so they run in parallel (background; each notifies you with its final message).
 - Every brief carries the Worker Contract below plus curated wish context (goal, groups, acceptance criteria, validation commands — see `/work` § Context Curation).
-- Follow-ups to a running worker go through **SendMessage**; completion is push (the final-message notification), never a sleep-poll.
+- Follow-ups to a running worker go through **native follow-up messaging**; completion is push (the final-message notification), never a sleep-poll.
 - Inspect state on demand: `genie board --wish <slug>` / `genie task list --wish <slug>`. If a wish has no task rows, drive it off WISH.md directly — task tracking is an enhancement, never a blocker.
 - The layer is done when every worker has reported; then dispatch the next layer.
 
@@ -55,7 +55,7 @@ Each worker, independently:
 
 **Trigger:** all workers in the layer reported done or blocked.
 
-1. Dispatch one reviewer subagent per PR via the Agent tool (reviewer ≠ worker) to run `/review` against the wish's acceptance criteria.
+1. Dispatch one reviewer subagent per PR via the native delegation surface (reviewer ≠ worker) to run `/review` against the wish's acceptance criteria.
 2. Read bot comments critically — never blindly accept automated findings.
 3. On FIX-FIRST: dispatch `/fix` for valid gaps (max 2 loops per PR). On an architectural issue: escalate in the report, no fix attempt.
 4. CI must be green before proceeding — poll status, do not sleep.

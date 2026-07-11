@@ -7,14 +7,31 @@
  * - Remove symlinks from ~/.local/bin
  */
 
-import { existsSync, lstatSync, readFileSync, readdirSync, readlinkSync, rmSync, statSync, unlinkSync } from 'node:fs';
+import {
+  existsSync,
+  lstatSync,
+  readFileSync,
+  readdirSync,
+  readlinkSync,
+  renameSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+} from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { confirm } from '@inquirer/prompts';
-import { MANAGED_BY, MANIFEST_NAME } from '../lib/agent-sync.js';
+import {
+  MANAGED_BY,
+  MANIFEST_NAME,
+  codexLegacyCuratedDir,
+  computeDirDigest,
+  resolveAgentsSkillsDir,
+} from '../lib/agent-sync.js';
 import { hookScriptExists, removeHookScript } from '../lib/claude-settings.js';
 import { contractPath, getGenieDir } from '../lib/genie-config.js';
 import { resolveClaudeDir, resolveCodexDir, resolveGenieHome, resolveHermesHome } from '../lib/genie-home.js';
+import { removeRuntimeIntegrations } from '../lib/runtime-integrations.js';
 import { orchestrationRulesPath } from './legacy-v4.js';
 
 // Shared v4 legacy manifest owns this path — see legacy-v4.ts.
@@ -75,23 +92,42 @@ const SYNC_MANAGED_BY = MANAGED_BY;
 interface AgentSyncRemovalTargets {
   claudeDir?: string;
   codexDir?: string;
+  /** Shared `~/.agents/skills` tier codex skills are synced into (detection root stays `codexDir`). */
+  agentsSkillsDir?: string;
   hermesHome?: string;
   genieHome?: string;
 }
+
+/** Suffix a modified managed skill dir gets on uninstall — stops it loading, keeps the user's content. */
+const KEPT_SUFFIX = '.genie-kept';
 
 interface AgentSyncAsset {
   agent: 'claude' | 'codex' | 'hermes';
   kind: 'skill' | 'workflow' | 'link';
   path: string;
+  /** Skills only: true when the dir's digest no longer matches its manifest (user edited it). */
+  modified?: boolean;
 }
 
-/** True only when `dir` carries a genie-agent-sync manifest — i.e. we shipped it. */
-function isManagedSkillDir(dir: string): boolean {
+/**
+ * Classify a skill dir against the agent-sync ownership contract:
+ * - `null` — no genie-agent-sync manifest → not ours, invisible to uninstall.
+ * - `'clean'` — manifest present AND `computeDirDigest(dir)` matches its digest → provably shipped by genie.
+ * - `'modified'` — manifest present but content diverged (or digest missing/uncomputable) → user data lives here.
+ */
+function classifyManagedSkillDir(dir: string): 'clean' | 'modified' | null {
+  let parsed: { managedBy?: string; digest?: string };
   try {
-    const parsed = JSON.parse(readFileSync(join(dir, SYNC_MANIFEST_NAME), 'utf8')) as { managedBy?: string };
-    return parsed.managedBy === SYNC_MANAGED_BY;
+    parsed = JSON.parse(readFileSync(join(dir, SYNC_MANIFEST_NAME), 'utf8')) as { managedBy?: string; digest?: string };
   } catch {
-    return false;
+    return null;
+  }
+  if (parsed.managedBy !== SYNC_MANAGED_BY) return null;
+  if (typeof parsed.digest !== 'string') return 'modified';
+  try {
+    return computeDirDigest(dir) === parsed.digest ? 'clean' : 'modified';
+  } catch {
+    return 'modified';
   }
 }
 
@@ -103,6 +139,8 @@ function collectManagedSkillDirs(parent: string, agent: AgentSyncAsset['agent'],
     return;
   }
   for (const name of names) {
+    // Dirs a previous uninstall already relinquished are the user's now — never re-collect.
+    if (name.endsWith(KEPT_SUFFIX)) continue;
     const dir = join(parent, name);
     let isDir = false;
     try {
@@ -110,7 +148,9 @@ function collectManagedSkillDirs(parent: string, agent: AgentSyncAsset['agent'],
     } catch {
       isDir = false;
     }
-    if (isDir && isManagedSkillDir(dir)) out.push({ agent, kind: 'skill', path: dir });
+    if (!isDir) continue;
+    const disposition = classifyManagedSkillDir(dir);
+    if (disposition) out.push({ agent, kind: 'skill', path: dir, modified: disposition === 'modified' });
   }
 }
 
@@ -157,25 +197,61 @@ export function collectAgentSyncAssets(targets: AgentSyncRemovalTargets = {}): A
   const genieHome = targets.genieHome ?? resolveGenieHome();
   const out: AgentSyncAsset[] = [];
   collectManagedSkillDirs(join(claudeDir, 'skills'), 'claude', out);
-  collectManagedSkillDirs(join(codexDir, 'skills', '.curated'), 'codex', out);
+  // Live codex tier + the retired `.curated` lane (machines that never synced
+  // post-migration still carry managed dirs there). Manifest-gated either way —
+  // unmanaged siblings in the shared ~/.agents/skills tier are invisible.
+  collectManagedSkillDirs(targets.agentsSkillsDir ?? resolveAgentsSkillsDir(), 'codex', out);
+  collectManagedSkillDirs(codexLegacyCuratedDir(codexDir), 'codex', out);
   collectStampedCouncil(claudeDir, out);
   collectHermesLink(hermesHome, genieHome, out);
   return out;
 }
 
-/** Remove every asset {@link collectAgentSyncAssets} finds; returns the removed paths. */
-export function removeAgentSyncAssets(targets: AgentSyncRemovalTargets = {}): string[] {
+export interface AgentSyncRemovalResult {
+  /** Assets deleted outright (digest-clean skills, stamped council.js, hermes link). */
+  removed: string[];
+  /** User-modified managed skill dirs preserved on disk — the kept path each dir now lives at. */
+  kept: string[];
+}
+
+/** Park a modified managed dir at `<dir>.genie-kept` and relinquish ownership; returns the kept path. */
+function keepModifiedSkillDir(dir: string): string {
+  let keptPath = `${dir}${KEPT_SUFFIX}`;
+  // Never clobber content parked by an earlier uninstall — pick a fresh name instead.
+  if (existsSync(keptPath)) keptPath = `${dir}${KEPT_SUFFIX}-${Date.now()}`;
+  renameSync(dir, keptPath);
+  try {
+    // Drop the manifest: the dir is the user's now, no genie tool may claim it again.
+    unlinkSync(join(keptPath, SYNC_MANIFEST_NAME));
+  } catch {
+    // manifest already gone — ownership is relinquished either way
+  }
+  return keptPath;
+}
+
+/**
+ * Remove every asset {@link collectAgentSyncAssets} finds — except managed skill
+ * dirs whose digest diverged from their manifest: those hold user edits, so they
+ * are kept on disk, renamed to `<name>.genie-kept` (the rename stops the agent
+ * loading them while the content survives uninstall).
+ */
+export function removeAgentSyncAssets(targets: AgentSyncRemovalTargets = {}): AgentSyncRemovalResult {
   const removed: string[] = [];
+  const kept: string[] = [];
   for (const asset of collectAgentSyncAssets(targets)) {
     try {
-      if (asset.kind === 'skill') rmSync(asset.path, { recursive: true, force: true });
-      else unlinkSync(asset.path);
-      removed.push(asset.path);
+      if (asset.kind === 'skill' && asset.modified) {
+        kept.push(keepModifiedSkillDir(asset.path));
+      } else {
+        if (asset.kind === 'skill') rmSync(asset.path, { recursive: true, force: true });
+        else unlinkSync(asset.path);
+        removed.push(asset.path);
+      }
     } catch {
       // best-effort — a failed asset removal never blocks the rest of uninstall
     }
   }
-  return removed;
+  return { removed, kept };
 }
 
 /** Try an uninstall step, logging success or warning on failure. */
@@ -199,6 +275,7 @@ function performUninstall(
   genieDir: string,
   hasGenieDir: boolean,
   hasAgentAssets: boolean,
+  removeMarketplace: boolean,
 ): void {
   if (hasHookScript) {
     tryRemoveStep('Removing hook script...', 'Hook script removed', () => removeHookScript());
@@ -224,9 +301,15 @@ function performUninstall(
   // ~/.hermes), so removing them is a distinct step from deleting ~/.genie.
   if (hasAgentAssets) {
     console.log('\x1b[2mRemoving synced agent assets...\x1b[0m');
-    const removed = removeAgentSyncAssets();
+    const { removed, kept } = removeAgentSyncAssets();
     console.log(`  \x1b[32m+\x1b[0m Removed ${removed.length} managed asset(s) (skills / council.js / hermes link)`);
+    if (kept.length > 0) {
+      console.log(`  \x1b[33m!\x1b[0m Kept ${kept.length} skill dir(s) with your edits (renamed, no longer loaded):`);
+      for (const path of kept) console.log(`      \x1b[33m${contractPath(path)}\x1b[0m`);
+    }
   }
+
+  removeRuntimeIntegrations(removeMarketplace);
 
   if (hasGenieDir) {
     tryRemoveStep('Removing genie directory...', 'Directory removed', () =>
@@ -235,7 +318,7 @@ function performUninstall(
   }
 }
 
-export async function uninstallCommand(): Promise<void> {
+export async function uninstallCommand(options: { removeMarketplace?: boolean } = {}): Promise<void> {
   console.log();
   console.log('\x1b[1m\x1b[33m Uninstall Genie CLI\x1b[0m');
   console.log();
@@ -249,16 +332,26 @@ export async function uninstallCommand(): Promise<void> {
   const hasAgentAssets = agentAssets.length > 0;
 
   console.log('\x1b[2mThis will remove:\x1b[0m');
+  console.log('  \x1b[31m-\x1b[0m Genie plugins and marker-owned Codex role agents');
+  if (options.removeMarketplace) console.log('  \x1b[31m-\x1b[0m Automagik client marketplace registrations');
   if (hasHookScript) console.log('  \x1b[31m-\x1b[0m Hook script (~/.claude/hooks/genie-bash-hook.sh)');
   if (hasOrchestrationRules)
     console.log(`  \x1b[31m-\x1b[0m Orchestration rules (${contractPath(ORCHESTRATION_RULES_PATH)})`);
   if (hasGenieDir) console.log(`  \x1b[31m-\x1b[0m Genie directory (${contractPath(genieDir)})`);
   if (existingSymlinks.length > 0)
     console.log(`  \x1b[31m-\x1b[0m Symlinks from ~/.local/bin: ${existingSymlinks.join(', ')}`);
-  if (hasAgentAssets)
+  const keptSkills = agentAssets.filter((a) => a.kind === 'skill' && a.modified);
+  const removableAssets = agentAssets.length - keptSkills.length;
+  if (removableAssets > 0)
     console.log(
-      `  \x1b[31m-\x1b[0m Synced agent assets: ${agentAssets.length} managed skill dir(s)/council.js/hermes link across claude/codex/hermes`,
+      `  \x1b[31m-\x1b[0m Synced agent assets: ${removableAssets} unmodified managed skill dir(s)/council.js/hermes link across claude/codex/hermes`,
     );
+  if (keptSkills.length > 0) {
+    console.log(
+      `  \x1b[33m~\x1b[0m KEPT (you modified these): ${keptSkills.length} managed skill dir(s) will be renamed to *${KEPT_SUFFIX} — content preserved, no longer loaded:`,
+    );
+    for (const asset of keptSkills) console.log(`      \x1b[33m${contractPath(asset.path)}\x1b[0m`);
+  }
   console.log();
 
   if (!hasGenieDir && !hasHookScript && !hasOrchestrationRules && existingSymlinks.length === 0 && !hasAgentAssets) {
@@ -276,7 +369,14 @@ export async function uninstallCommand(): Promise<void> {
   }
 
   console.log();
-  performUninstall(hasHookScript, existingSymlinks, genieDir, hasGenieDir, hasAgentAssets);
+  performUninstall(
+    hasHookScript,
+    existingSymlinks,
+    genieDir,
+    hasGenieDir,
+    hasAgentAssets,
+    options.removeMarketplace ?? false,
+  );
 
   console.log();
   console.log('\x1b[32m+\x1b[0m Genie CLI uninstalled.');

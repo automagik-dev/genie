@@ -26,11 +26,15 @@ const ROOT = process.env.CLAUDE_PLUGIN_ROOT || join(homedir(), '.claude', 'plugi
 // must too or the throttle marker below would never match the CLI's writes.
 const GENIE_DIR = process.env.GENIE_HOME || join(homedir(), '.genie');
 const MARKER = join(GENIE_DIR, '.install-version');
-// Throttle marker the canonical agent-sync engine refreshes (ISO string). We
-// delegate a session-start sync only when it is absent or older than 6h, so
-// session starts stay cheap.
+// Throttle marker (ISO string) refreshed by BOTH the canonical agent-sync
+// engine (runAgentSyncSafe) and this hook around delegation. We delegate a
+// session-start sync only when it is absent or older than 6h, so session
+// starts stay cheap. On a FAILED delegation the hook writes a backdated marker
+// that re-allows a retry after 30 minutes instead of retrying (and re-warning)
+// on every single session start.
 const AGENT_SYNC_MARKER = join(GENIE_DIR, '.last-agent-sync');
 const AGENT_SYNC_THROTTLE_MS = 6 * 60 * 60 * 1000;
+const AGENT_SYNC_RETRY_MS = 30 * 60 * 1000;
 const IS_WINDOWS = process.platform === 'win32';
 
 // Common installation paths (handles fresh installs before PATH reload)
@@ -422,32 +426,131 @@ function findGenieBinary() {
 
 /**
  * Allow a delegated sync only when the last one is absent or older than 6h. The
- * CLI refreshes AGENT_SYNC_MARKER (ISO string) on every sync phase.
+ * CLI refreshes AGENT_SYNC_MARKER (ISO string) on every sync phase, and this
+ * hook refreshes it around delegation (see delegateAgentSync). A marker dated
+ * in the FUTURE (clock skew, corruption) is treated as stale — a negative
+ * delta must never read as "fresh", or sync would be suppressed forever.
  */
 function agentSyncThrottleAllows() {
   try {
     const last = Date.parse(readFileSync(AGENT_SYNC_MARKER, 'utf-8').trim());
     if (Number.isNaN(last)) return true;
-    return Date.now() - last > AGENT_SYNC_THROTTLE_MS;
+    const delta = Date.now() - last;
+    if (delta < 0) return true; // future-dated marker → stale
+    return delta > AGENT_SYNC_THROTTLE_MS;
   } catch {
     return true; // no marker / unreadable → allowed
   }
 }
 
 /**
- * Delegate ALL syncing (skills + /council stamp for every detected agent) to the
- * canonical engine via `genie update` with the internal sync-only env. Quiet,
- * time-bounded, and fully sandboxed — a failure never breaks session start.
+ * Best-effort hook-side write of the throttle marker. The CLI writes it too on
+ * a successful sync; writing from the hook as well guarantees a FAILING
+ * delegation (pre-contract binary, spawn error, timeout) cannot retry on every
+ * session start — failures get a backdated marker that re-allows a retry after
+ * AGENT_SYNC_RETRY_MS instead of the full throttle window.
+ */
+function writeAgentSyncMarker(date) {
+  try {
+    if (!existsSync(GENIE_DIR)) {
+      mkdirSync(GENIE_DIR, { recursive: true });
+    }
+    writeFileSync(AGENT_SYNC_MARKER, `${date.toISOString()}\n`);
+  } catch {
+    // the marker only optimizes throttling — never break session start over it
+  }
+}
+
+// --- agent-sync delegation contract tiers -----------------------------------
+// The installed binary decides HOW (and whether) we may delegate. Probed once
+// per delegation with `genie --version` (cheap, zero network).
+//
+// - >= SYNC_FLAG_AWARE_MIN: binary registers `update --sync-only` → invoke the
+//   flag form (plus the env, belt-and-suspenders).
+// - >= SYNC_ENV_AWARE_MIN (5.260710.5, first release honoring the
+//   GENIE_UPDATE_SYNC_ONLY=1 fast path): env-aware but FLAG-UNAWARE — commander
+//   rejects the unknown `--sync-only` before the env is ever read, so these
+//   binaries must be invoked env-only (`genie update` + GENIE_UPDATE_SYNC_ONLY=1).
+// - older (pre-contract): the env is ignored and `genie update` would run a
+//   full unattended download + binary swap mid-session → never delegate; the
+//   caller falls back to the in-hook /council stamp.
+//
+// SYNC_FLAG_AWARE_MIN is the first release cut AFTER 5.260710.9 (the flag lands
+// with this plugin version; auto-versioning bumps past .9 on release). A dev
+// build still reporting .9 takes the env-only path, which flag-aware binaries
+// honor identically.
+const SYNC_ENV_AWARE_MIN = [5, 260710, 5];
+const SYNC_FLAG_AWARE_MIN = [5, 260710, 10];
+
+/** Extract [major, minor, patch] from `genie --version` output, or null. */
+function parseGenieVersion(raw) {
+  const m = /(\d+)\.(\d+)\.(\d+)/.exec(raw || '');
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+
+/** Numeric triple compare: negative when a < b, 0 when equal, positive when a > b. */
+function compareVersions(a, b) {
+  for (let i = 0; i < 3; i++) {
+    if (a[i] !== b[i]) return a[i] - b[i];
+  }
+  return 0;
+}
+
+/** Probe the resolved binary's version (5s cap, no network). Null on any failure. */
+function probeGenieVersion(geniePath) {
+  try {
+    const result = spawnSync(geniePath, ['--version'], {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      shell: IS_WINDOWS,
+      timeout: 5000,
+    });
+    return result.status === 0 ? parseGenieVersion(result.stdout) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Delegate ALL syncing (skills + /council stamp for every detected agent) to
+ * the canonical engine, choosing the invocation the INSTALLED binary can parse
+ * (see the contract tiers above). Pre-contract or unprobeable binaries are
+ * never invoked — delegating there would trigger a full unattended update.
+ * Quiet, time-bounded, and fully sandboxed — a failure never breaks session
+ * start. Returns true when the delegated sync succeeded; on false the caller
+ * stamps /council in-hook.
  */
 function delegateAgentSync(geniePath) {
+  const version = probeGenieVersion(geniePath);
+  if (!version || compareVersions(version, SYNC_ENV_AWARE_MIN) < 0) {
+    console.error('Warning: installed genie CLI predates the agent-sync contract — skipping delegated sync');
+    // Backdated marker: throttled right now, retries after AGENT_SYNC_RETRY_MS
+    // (e.g. once the user updates) rather than warning on every session start.
+    writeAgentSyncMarker(new Date(Date.now() - (AGENT_SYNC_THROTTLE_MS - AGENT_SYNC_RETRY_MS)));
+    return false;
+  }
+  const args =
+    compareVersions(version, SYNC_FLAG_AWARE_MIN) >= 0 ? ['update', '--sync-only'] : ['update'];
+  // shell: IS_WINDOWS matches this file's own probes — Node >=18.20 EINVAL
+  // hardening refuses to spawn .cmd shims without a shell, and the shell-based
+  // probe above may have resolved exactly such a shim. Quote a path containing
+  // spaces when it goes through the shell (same pattern as installDeps).
+  const genieCmd = IS_WINDOWS && geniePath.includes(' ') ? `"${geniePath}"` : geniePath;
   try {
-    execFileSync(geniePath, ['update'], {
+    execFileSync(genieCmd, args, {
       env: { ...process.env, GENIE_UPDATE_SYNC_ONLY: '1' },
       stdio: 'ignore',
       timeout: 45000,
+      shell: IS_WINDOWS,
     });
+    writeAgentSyncMarker(new Date());
+    return true;
   } catch (e) {
     console.error(`Warning: agent sync via genie update failed: ${e.message}`);
+    // Backdated marker: throttled right now, retries after AGENT_SYNC_RETRY_MS
+    // rather than warning on every session start (or never retrying at all).
+    writeAgentSyncMarker(new Date(Date.now() - (AGENT_SYNC_THROTTLE_MS - AGENT_SYNC_RETRY_MS)));
+    return false;
   }
 }
 
@@ -485,17 +588,18 @@ try {
   // Converge coding agents on session start. This runs BEFORE the remaining
   // early-exit guard (deps-already-present) so a plugin update refreshes skills
   // + the /council stamp even on machines that would otherwise skip all install
-  // work. Prefer the canonical CLI engine: `genie update` with the internal
-  // sync-only env syncs skills AND stamps /council for every detected agent
-  // (claude/codex/hermes) from one source root — throttled to 6h so session
-  // starts stay cheap and no sync logic is duplicated in the hook. Only when NO
-  // genie CLI is installed do we fall back to an in-hook /council stamp so
-  // plugin-only machines still get the workflow. Fully sandboxed — nothing here
-  // can break session start.
+  // work. Prefer the canonical CLI engine: `genie update --sync-only` syncs
+  // skills AND stamps /council for every detected agent (claude/codex/hermes)
+  // from one source root — throttled to 6h so session starts stay cheap and no
+  // sync logic is duplicated in the hook. When NO genie CLI is installed, or
+  // the delegation FAILS (pre-contract binary skipped by the version probe,
+  // .cmd shim spawn errors, timeout), we fall back to an in-hook /council stamp so the
+  // workflow stays available on exactly the machines the fallback exists for.
+  // Fully sandboxed — nothing here can break session start.
   const geniePath = findGenieBinary();
   if (geniePath) {
-    if (agentSyncThrottleAllows()) {
-      delegateAgentSync(geniePath);
+    if (agentSyncThrottleAllows() && !delegateAgentSync(geniePath)) {
+      stampCouncilFallback();
     }
   } else {
     stampCouncilFallback();

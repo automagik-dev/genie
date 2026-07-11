@@ -46,9 +46,10 @@ The multi-perspective engine ships as a native dynamic workflow, not a skill:
 | Agent | Target | What lands |
 |-------|--------|------------|
 | Claude Code | `~/.claude/skills/` + `~/.claude/workflows/council.js` | all genie skills + the stamped `/council` workflow |
-| Codex | `~/.codex/skills/.curated/` | genie skills as Agent-Skills folders (`.system` is OpenAI's, never touched) |
+| Codex | `~/.agents/skills/` | genie skills as Agent-Skills folders in the shared user tier codex-rs loads (detection stays keyed on `~/.codex`; the retired `~/.codex/skills/.curated/` lane is migrated away with backups; `.system` is OpenAI's, never touched) |
 | Hermes | `~/.hermes/plugins/genie` | symlink into `~/.genie/plugins/hermes-genie` |
 
+- **One-time caveat on the delivering update**: the "on every run" guarantee starts one release late. The `genie update` that first brings agent-sync is still executed by the *old* binary, which only swaps the binary and has no sync phase — that run converges nothing. Run `genie update` once more, or let the SessionStart hook converge within its ~6h throttle window. Every update after that is self-syncing.
 - **Managed and reversible**: every synced skill dir carries a `.genie-sync.json` manifest, so a re-run can tell "unchanged" from "you edited this" from "genie never shipped this name". Any dir genie replaces or removes is backed up first under `~/.genie/state-backups/` — nothing is ever lost, and dirs genie never shipped are left untouched.
 - **The SessionStart hook is only a trigger**: when the genie CLI is on PATH it delegates to `genie update` (throttled ~6h via `~/.genie/.last-agent-sync`) and duplicates no sync logic. On a plugin-only machine with no CLI it falls back to stamping `~/.claude/workflows/council.js` directly.
 - **The marketplace plugin is optional on CLI machines**: because `genie update` converges skills directly, the `genie@automagik` marketplace plugin is not required where the CLI is installed. `genie doctor` reports its state but never re-enables it.

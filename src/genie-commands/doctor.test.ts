@@ -453,6 +453,7 @@ describe('checkAgentSync', () => {
   let pluginRoot: string;
   let claudeDir: string;
   let codexDir: string;
+  let agentsSkillsDir: string;
   let hermesHome: string;
 
   function writeSourceSkill(name: string, body: string): void {
@@ -485,7 +486,14 @@ describe('checkAgentSync', () => {
   }
 
   function paths() {
-    return { genieHome, claudeDir, codexDir, hermesHome, settingsPath: join(claudeDir, 'settings.json') };
+    return {
+      genieHome,
+      claudeDir,
+      codexDir,
+      agentsSkillsDir,
+      hermesHome,
+      settingsPath: join(claudeDir, 'settings.json'),
+    };
   }
 
   const find = (results: ReturnType<typeof checkAgentSync>, name: string) => results.find((r) => r.name === name);
@@ -496,6 +504,7 @@ describe('checkAgentSync', () => {
     pluginRoot = join(genieHome, 'plugins', 'genie');
     claudeDir = join(tmp, 'claude');
     codexDir = join(tmp, 'codex');
+    agentsSkillsDir = join(tmp, 'agents', 'skills');
     hermesHome = join(tmp, 'hermes');
     mkdirSync(join(pluginRoot, 'skills'), { recursive: true });
     mkdirSync(join(genieHome, 'plugins', 'hermes-genie'), { recursive: true });
@@ -527,8 +536,8 @@ describe('checkAgentSync', () => {
     seedManaged(join(pluginRoot, 'skills', 'wish'), join(claudeDir, 'skills', 'wish'));
     seedManaged(join(pluginRoot, 'skills', 'review'), join(claudeDir, 'skills', 'review'));
     stampCouncil(pluginRoot);
-    seedManaged(join(pluginRoot, 'skills', 'wish'), join(codexDir, 'skills', '.curated', 'wish'));
-    seedManaged(join(pluginRoot, 'skills', 'review'), join(codexDir, 'skills', '.curated', 'review'));
+    seedManaged(join(pluginRoot, 'skills', 'wish'), join(agentsSkillsDir, 'wish'));
+    seedManaged(join(pluginRoot, 'skills', 'review'), join(agentsSkillsDir, 'review'));
     mkdirSync(join(hermesHome, 'plugins'), { recursive: true });
     symlinkSync(join(genieHome, 'plugins', 'hermes-genie'), join(hermesHome, 'plugins', 'genie'));
 
@@ -542,6 +551,24 @@ describe('checkAgentSync', () => {
     const hermes = find(results, 'agent sync: hermes');
     expect(hermes?.status).toBe('pass');
     expect(hermes?.detail).toContain('linked');
+  });
+
+  test('claude excludes council: expected set is source minus exclusions → pass, no advisory (BUG C)', () => {
+    // `council` is a source skill the native /council workflow owns, so claude
+    // legitimately never receives it. Doctor must subtract it from claude's
+    // expected source set — otherwise it reports "2/3 current" and advises
+    // `genie update` forever even though claude is fully converged.
+    writeSourceSkill('council', '# council\n');
+    seedManaged(join(pluginRoot, 'skills', 'wish'), join(claudeDir, 'skills', 'wish'));
+    seedManaged(join(pluginRoot, 'skills', 'review'), join(claudeDir, 'skills', 'review'));
+    stampCouncil(pluginRoot);
+
+    const claude = find(checkAgentSync(paths()), 'agent sync: claude');
+    expect(claude?.status).toBe('pass');
+    // 3 source skills, council excluded → expected 2, both present → 2/2 current.
+    expect(claude?.detail).toContain('2/2 source skills current');
+    expect(claude?.detail).toContain('council.js current');
+    expect(claude?.suggestion).toBeUndefined();
   });
 
   test('stale managed skill + wrong council stamp → warn + genie-update advice', () => {
@@ -573,11 +600,11 @@ describe('checkAgentSync', () => {
     expect(hermes?.detail).toContain('points elsewhere');
   });
 
-  test('codex detected but .curated empty → warn (not populated)', () => {
+  test('codex detected but ~/.agents/skills tier empty → warn (not populated)', () => {
     mkdirSync(codexDir, { recursive: true });
     const codex = find(checkAgentSync(paths()), 'agent sync: codex');
     expect(codex?.status).toBe('warn');
-    expect(codex?.detail).toContain('.curated not populated');
+    expect(codex?.detail).toContain('.agents/skills not populated');
   });
 
   test('marketplace plugin: disabled/absent → optional pass note; enabled → silent', () => {

@@ -88,15 +88,25 @@ program
   .option('--no-verify', 'Skip the post-update binary verify probe')
   .option('--skip-maintenance', 'Skip the post-update binary verify probe (or set GENIE_UPDATE_SKIP_MAINTENANCE=1)')
   .option('--rollback', 'Restore the most recent ~/.genie/bin/.previous binary backup')
+  .option(
+    '--sync-only',
+    'Converge agent integrations only — no manifest fetch or binary swap (GENIE_UPDATE_SYNC_ONLY=1)',
+  )
   .action(updateCommand);
 
 program
   .command('install')
   .description('Post-install finishing step — invoked by install.sh after the binary is linked')
   .option('--skip-v4-cleanup', 'Leave v4-era leftovers in place (orchestration rules, orphaned plugin caches)')
+  .option('--integrations <mode>', 'Install client integrations: auto, codex, claude, all, or none', 'auto')
+  .option('--skip-integrations', 'Alias for --integrations none')
   .action((options: InstallOptions) => installCommand(options));
 
-program.command('uninstall').description('Remove Genie CLI and clean up hooks').action(uninstallCommand);
+program
+  .command('uninstall')
+  .description('Remove Genie CLI, plugins, marker-owned agents, and hooks')
+  .option('--remove-marketplace', 'Also remove the shared Automagik marketplace registrations')
+  .action(uninstallCommand);
 
 const shortcuts = program.command('shortcuts').description('Manage tmux keyboard shortcuts');
 shortcuts.action(shortcutsShowCommand);

@@ -21,11 +21,13 @@ import {
   readlinkSync,
   rmSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { runAgentSyncSafe } from '../genie-commands/update';
 import {
   type AgentReport,
   type AgentSyncOptions,
@@ -59,6 +61,8 @@ interface Fixture {
   pluginRoot: string;
   claudeDir: string;
   codexDir: string;
+  /** Live codex skills tier (`~/.agents/skills` in production). */
+  agentsSkillsDir: string;
   hermesHome: string;
   hermesSource: string;
 }
@@ -109,6 +113,7 @@ function setup(opts: SetupOptions = {}): Fixture {
     pluginRoot,
     claudeDir: join(root, 'claude'),
     codexDir: join(root, 'codex'),
+    agentsSkillsDir: join(root, 'agents', 'skills'),
     hermesHome: join(root, 'hermes'),
     hermesSource,
   };
@@ -122,7 +127,12 @@ function present(dir: string): void {
 function run(extra: Partial<AgentSyncOptions> = {}): AgentSyncReport {
   return runAgentSync({
     genieHome: fixture.genieHome,
-    targets: { claude: fixture.claudeDir, codex: fixture.codexDir, hermes: fixture.hermesHome },
+    targets: {
+      claude: fixture.claudeDir,
+      codex: fixture.codexDir,
+      hermes: fixture.hermesHome,
+      agentsSkills: fixture.agentsSkillsDir,
+    },
     hermesBinary: null,
     now: FIXED_NOW,
     log: () => undefined,
@@ -182,13 +192,15 @@ describe('fresh create', () => {
     expect(council).not.toContain(PLACEHOLDER);
   });
 
-  test('codex: skills land under skills/.curated with a restart advisory', () => {
+  test('codex: skills land top-level under the agents skills tier with a restart advisory', () => {
     present(fixture.codexDir);
     const report = agentReport(run(), 'codex');
 
     expect(report.detected).toBe(true);
-    expect(existsSync(join(fixture.codexDir, 'skills', '.curated', 'alpha', 'SKILL.md'))).toBe(true);
-    expect(readManifest(join(fixture.codexDir, 'skills', '.curated', 'alpha')).managedBy).toBe('genie-agent-sync');
+    expect(existsSync(join(fixture.agentsSkillsDir, 'alpha', 'SKILL.md'))).toBe(true);
+    expect(readManifest(join(fixture.agentsSkillsDir, 'alpha')).managedBy).toBe('genie-agent-sync');
+    // nothing is ever written into the retired `<codexDir>/skills/.curated` lane
+    expect(existsSync(join(fixture.codexDir, 'skills', '.curated'))).toBe(false);
     expect(report.advisories).toContain('restart Codex to pick up updated skills');
   });
 
@@ -371,6 +383,64 @@ describe('managed orphan handling', () => {
     expect(skillAction(claude, 'beta')).toBe('kept-modified-orphan');
     expect(existsSync(join(betaDir, 'SKILL.md'))).toBe(true);
     expect(claude.advisories.some((line) => line.includes('kept modified orphan beta'))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Claude council exclusion (skill-vs-workflow collision, Decision 8)
+// ---------------------------------------------------------------------------
+
+describe('claude council exclusion', () => {
+  const councilFiles = { 'SKILL.md': '# council (portable, non-workflow runtimes)\n' };
+
+  test('council is synced to codex but never to claude (workflow owns the name there)', () => {
+    rmSync(fixture.root, { recursive: true, force: true });
+    fixture = setup({ skills: { alpha: { 'SKILL.md': '# alpha\n' }, council: councilFiles } });
+    present(fixture.claudeDir);
+    present(fixture.codexDir);
+
+    const report = run();
+    const claude = agentReport(report, 'claude');
+    const codex = agentReport(report, 'codex');
+    expect(skillAction(claude, 'council')).toBeUndefined();
+    expect(existsSync(join(fixture.claudeDir, 'skills', 'council'))).toBe(false);
+    expect(skillAction(claude, 'alpha')).toBe('created');
+    expect(skillAction(codex, 'council')).toBe('created');
+    expect(existsSync(join(fixture.agentsSkillsDir, 'council', 'SKILL.md'))).toBe(true);
+  });
+
+  test('a managed council already synced to claude (pre-exclusion release) is backed up and removed', () => {
+    rmSync(fixture.root, { recursive: true, force: true });
+    fixture = setup({ skills: { alpha: { 'SKILL.md': '# alpha\n' }, council: councilFiles } });
+    present(fixture.claudeDir);
+    // Simulate the pre-exclusion release: a digest-clean managed council in the claude target.
+    const destDir = join(fixture.claudeDir, 'skills', 'council');
+    writeFile(join(destDir, 'SKILL.md'), councilFiles['SKILL.md']);
+    const digest = computeDirDigest(destDir);
+    writeFile(
+      join(destDir, MANIFEST_NAME),
+      JSON.stringify({ managedBy: 'genie-agent-sync', version: '9.9.8', digest, syncedAt: '2026-07-10T00:00:00.000Z' }),
+    );
+
+    const report = run();
+    const claude = agentReport(report, 'claude');
+    expect(skillAction(claude, 'council')).toBe('removed');
+    expect(existsSync(destDir)).toBe(false);
+    const backup = join(report.backupsDir as string, 'claude', 'council', 'SKILL.md');
+    expect(readFileSync(backup, 'utf8')).toBe(councilFiles['SKILL.md']);
+  });
+
+  test('a user-created unmanaged council dir in claude is never touched', () => {
+    rmSync(fixture.root, { recursive: true, force: true });
+    fixture = setup({ skills: { alpha: { 'SKILL.md': '# alpha\n' }, council: councilFiles } });
+    present(fixture.claudeDir);
+    const userDir = join(fixture.claudeDir, 'skills', 'council');
+    writeFile(join(userDir, 'SKILL.md'), '# my own council launcher\n');
+
+    const report = run();
+    const claude = agentReport(report, 'claude');
+    expect(skillAction(claude, 'council')).toBeUndefined();
+    expect(readFileSync(join(userDir, 'SKILL.md'), 'utf8')).toBe('# my own council launcher\n');
   });
 });
 
@@ -577,8 +647,20 @@ describe('hermes linking', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Codex .system protection
+// Codex: .system protection + one-time .curated → ~/.agents/skills migration
 // ---------------------------------------------------------------------------
+
+/** Materialize a dir that looks exactly like one agent-sync shipped (manifest incl. matching digest). */
+function seedManagedDir(dir: string, files: Record<string, string>): void {
+  for (const [rel, content] of Object.entries(files)) writeFile(join(dir, rel), content);
+  const manifest = {
+    managedBy: 'genie-agent-sync',
+    version: '9.9.8',
+    digest: computeDirDigest(dir),
+    syncedAt: '2026-01-01T00:00:00.000Z',
+  };
+  writeFile(join(dir, MANIFEST_NAME), `${JSON.stringify(manifest, null, 2)}\n`);
+}
 
 describe('codex .system', () => {
   test('the OpenAI-owned .system tree is never enumerated or touched', () => {
@@ -590,6 +672,76 @@ describe('codex .system', () => {
     expect(skillAction(report, 'openai-builtin')).toBeUndefined();
     expect(readFileSync(systemSkill, 'utf8')).toBe('# openai builtin\n');
     expect(existsSync(join(systemSkill, '..', MANIFEST_NAME))).toBe(false);
+  });
+});
+
+describe('codex legacy .curated migration', () => {
+  test('manifest-managed legacy dirs are backed up then removed; the empty lane dir goes too', () => {
+    present(fixture.codexDir);
+    const legacyDir = join(fixture.codexDir, 'skills', '.curated');
+    seedManagedDir(join(legacyDir, 'alpha'), { 'SKILL.md': '# legacy alpha\n' });
+    seedManagedDir(join(legacyDir, 'zombie'), { 'SKILL.md': '# legacy zombie\n' });
+
+    const report = run();
+    const codex = agentReport(report, 'codex');
+
+    expect(existsSync(legacyDir)).toBe(false); // lane fully retired
+    // both legacy dirs were backed up before removal
+    const backupRoot = join(report.backupsDir as string, 'codex-legacy-curated');
+    expect(readFileSync(join(backupRoot, 'alpha', 'SKILL.md'), 'utf8')).toBe('# legacy alpha\n');
+    expect(readFileSync(join(backupRoot, 'zombie', 'SKILL.md'), 'utf8')).toBe('# legacy zombie\n');
+    const removed = codex.extras.filter((entry) => entry.kind === 'legacy-curated' && entry.action === 'removed');
+    expect(removed).toHaveLength(2);
+    // and the live tier got the current source skills
+    expect(readFileSync(join(fixture.agentsSkillsDir, 'alpha', 'SKILL.md'), 'utf8')).toBe('# alpha\n');
+  });
+
+  test('a user-modified managed legacy dir is still removed, but its edits survive in the backup', () => {
+    present(fixture.codexDir);
+    const legacyAlpha = join(fixture.codexDir, 'skills', '.curated', 'alpha');
+    seedManagedDir(legacyAlpha, { 'SKILL.md': '# legacy alpha\n' });
+    writeFile(join(legacyAlpha, 'SKILL.md'), '# hand-edited legacy\n'); // digest now diverges
+
+    const report = run();
+    expect(existsSync(legacyAlpha)).toBe(false);
+    const backup = join(report.backupsDir as string, 'codex-legacy-curated', 'alpha', 'SKILL.md');
+    expect(readFileSync(backup, 'utf8')).toBe('# hand-edited legacy\n');
+  });
+
+  test('unmanaged legacy entries are kept (with an advisory) and keep the lane dir alive', () => {
+    present(fixture.codexDir);
+    const legacyDir = join(fixture.codexDir, 'skills', '.curated');
+    seedManagedDir(join(legacyDir, 'alpha'), { 'SKILL.md': '# legacy alpha\n' });
+    const userSkill = join(legacyDir, 'my-own-thing', 'SKILL.md');
+    writeFile(userSkill, '# not genie-managed\n'); // no manifest
+
+    const codex = agentReport(run(), 'codex');
+
+    expect(existsSync(join(legacyDir, 'alpha'))).toBe(false); // managed dir migrated out
+    expect(readFileSync(userSkill, 'utf8')).toBe('# not genie-managed\n'); // user content untouched
+    expect(codex.advisories.some((line) => line.includes('unmanaged entries'))).toBe(true);
+  });
+
+  test('the migration is one-time: a second run sees no legacy lane and reports no legacy extras', () => {
+    present(fixture.codexDir);
+    seedManagedDir(join(fixture.codexDir, 'skills', '.curated', 'alpha'), { 'SKILL.md': '# legacy alpha\n' });
+    run();
+
+    const second = agentReport(run(), 'codex');
+    expect(second.extras.filter((entry) => entry.kind === 'legacy-curated')).toHaveLength(0);
+    expect(skillAction(second, 'alpha')).toBe('unchanged'); // live tier already converged
+  });
+
+  test('unmanaged siblings already in the shared agents skills tier are never touched', () => {
+    present(fixture.codexDir);
+    const foreign = join(fixture.agentsSkillsDir, 'somebody-elses-skill');
+    writeFile(join(foreign, 'SKILL.md'), '# installed by another tool\n');
+
+    const report = run();
+    const codex = agentReport(report, 'codex');
+    expect(skillAction(codex, 'somebody-elses-skill')).toBeUndefined();
+    expect(readFileSync(join(foreign, 'SKILL.md'), 'utf8')).toBe('# installed by another tool\n');
+    expect(existsSync(join(foreign, MANIFEST_NAME))).toBe(false);
   });
 });
 
@@ -650,6 +802,307 @@ describe('stampWorkflow parity with council-stamp.cjs', () => {
     expect(extraAction(claude, 'stamp')).toBe('unavailable');
     expect(existsSync(join(fixture.claudeDir, 'workflows', 'council.js'))).toBe(false);
     expect(skillAction(claude, 'alpha')).toBe('created'); // skills still synced
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cross-process lock + start-of-sync throttle marker
+// ---------------------------------------------------------------------------
+
+const LOCK_NAME = '.agent-sync.lock';
+const MARKER_NAME = '.last-agent-sync';
+
+describe('cross-process sync lock', () => {
+  test('a fresh lock held elsewhere skips the whole sync with an advisory — zero writes, lock untouched', () => {
+    present(fixture.claudeDir);
+    const lockPath = join(fixture.genieHome, LOCK_NAME);
+    writeFile(lockPath, '12345\n'); // fresh mtime → live holder
+    const lines: string[] = [];
+
+    const report = run({ log: (line) => lines.push(line) });
+
+    expect(report.skipped).toContain('holds the lock');
+    expect(report.agents).toHaveLength(0);
+    expect(report.backupsDir).toBeNull();
+    expect(existsSync(join(fixture.claudeDir, 'skills'))).toBe(false); // no writes at all
+    expect(existsSync(join(fixture.genieHome, MARKER_NAME))).toBe(false); // marker not stolen either
+    expect(lines.some((line) => line.includes('holds the lock'))).toBe(true);
+    expect(existsSync(lockPath)).toBe(true); // never releases someone else's live lock
+  });
+
+  test('a stale lock (older than the age-out) is stolen and the sync proceeds', () => {
+    present(fixture.claudeDir);
+    const lockPath = join(fixture.genieHome, LOCK_NAME);
+    writeFile(lockPath, '999\n');
+    const staleSec = (Date.now() - 11 * 60 * 1000) / 1000; // 11 min > 10 min age-out
+    utimesSync(lockPath, staleSec, staleSec);
+
+    const report = run();
+
+    expect(report.skipped).toBeUndefined();
+    expect(skillAction(agentReport(report, 'claude'), 'alpha')).toBe('created');
+    expect(existsSync(lockPath)).toBe(false); // released after the run
+  });
+
+  test('the lock is released after a run, so a sequential re-run proceeds normally', () => {
+    present(fixture.claudeDir);
+    run();
+    expect(existsSync(join(fixture.genieHome, LOCK_NAME))).toBe(false);
+
+    const second = run();
+    expect(second.skipped).toBeUndefined();
+    expect(skillAction(agentReport(second, 'claude'), 'alpha')).toBe('unchanged');
+  });
+
+  test('the throttle marker is written from the injected clock', () => {
+    present(fixture.claudeDir);
+    run();
+    expect(readFileSync(join(fixture.genieHome, MARKER_NAME), 'utf8')).toBe('2026-07-10T12:00:00.000Z\n');
+  });
+
+  /**
+   * Out-of-process runner harness: real concurrency (runAgentSync is
+   * synchronous, so two in-process calls would serialize). SYNC_TEST_GO_FILE
+   * (optional) is a start barrier — the runner spins until the file exists, so
+   * N pre-spawned runners can be released into runAgentSync near-simultaneously.
+   * SYNC_TEST_ENABLE_SLEEP_MS sleeps INSIDE the sync (in the hermes-enable exec
+   * seam, i.e. while the lock is held) so contenders deterministically overlap
+   * the holder.
+   */
+  function writeSyncRunner(): string {
+    const runnerPath = join(fixture.root, 'sync-runner.ts');
+    writeFileSync(
+      runnerPath,
+      [
+        `import { existsSync } from 'node:fs';`,
+        `import { runAgentSync } from ${JSON.stringify(join(import.meta.dir, 'agent-sync.ts'))};`,
+        `const sleepMs = Number(process.env.SYNC_TEST_ENABLE_SLEEP_MS ?? '0');`,
+        'const goFile = process.env.SYNC_TEST_GO_FILE;',
+        'if (goFile) {',
+        '  while (!existsSync(goFile)) Bun.sleepSync(2);',
+        '}',
+        'const report = runAgentSync({',
+        '  genieHome: process.env.SYNC_TEST_GENIE_HOME as string,',
+        '  targets: {',
+        '    claude: process.env.SYNC_TEST_CLAUDE as string,',
+        '    codex: process.env.SYNC_TEST_CODEX as string,',
+        '    hermes: process.env.SYNC_TEST_HERMES as string,',
+        '    agentsSkills: process.env.SYNC_TEST_AGENTS_SKILLS as string,',
+        '  },',
+        `  hermesBinary: '/fake/bin/hermes',`,
+        '  execHermesEnable: () => {',
+        '    if (sleepMs > 0) Bun.sleepSync(sleepMs);',
+        '  },',
+        '  log: () => undefined,',
+        '});',
+        'process.stdout.write(JSON.stringify(report));',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    return runnerPath;
+  }
+
+  function runnerEnv(extra: Record<string, string>): Record<string, string | undefined> {
+    return {
+      ...process.env,
+      SYNC_TEST_GENIE_HOME: fixture.genieHome,
+      SYNC_TEST_CLAUDE: fixture.claudeDir,
+      SYNC_TEST_CODEX: fixture.codexDir,
+      SYNC_TEST_HERMES: fixture.hermesHome,
+      SYNC_TEST_AGENTS_SKILLS: fixture.agentsSkillsDir,
+      ...extra,
+    };
+  }
+
+  async function spawnRunner(runnerPath: string, extraEnv: Record<string, string>): Promise<AgentSyncReport> {
+    const proc = Bun.spawn(['bun', runnerPath], {
+      env: runnerEnv(extraEnv),
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const [out, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+    expect(code).toBe(0);
+    return JSON.parse(out) as AgentSyncReport;
+  }
+
+  test('two simultaneous runs: exactly one writes, the other reports the skip advisory, target never half-written', async () => {
+    present(fixture.claudeDir);
+    present(fixture.codexDir);
+    present(fixture.hermesHome);
+    const runnerPath = writeSyncRunner();
+
+    const holder = spawnRunner(runnerPath, { SYNC_TEST_ENABLE_SLEEP_MS: '2000' });
+    // The engine writes the throttle marker at sync START (right after lock
+    // acquisition), so its appearance proves the holder is mid-sync — the
+    // deterministic gate for launching the contender.
+    const markerPath = join(fixture.genieHome, MARKER_NAME);
+    const deadline = Date.now() + 10_000;
+    while (!existsSync(markerPath) && Date.now() < deadline) await Bun.sleep(20);
+    expect(existsSync(markerPath)).toBe(true); // marker at START, not completion
+
+    const contender = spawnRunner(runnerPath, { SYNC_TEST_ENABLE_SLEEP_MS: '0' });
+    const contenderReport = await contender; // resolves while the holder still sleeps in-lock
+    expect(contenderReport.skipped).toContain('holds the lock');
+    expect(contenderReport.agents).toHaveLength(0);
+    // Mid-run observation point: the holder wrote claude/codex before its
+    // hermes sleep — the managed target is fully present, never half-written.
+    const alphaDir = join(fixture.claudeDir, 'skills', 'alpha');
+    expect(readFileSync(join(alphaDir, 'SKILL.md'), 'utf8')).toBe('# alpha\n');
+    expect(readManifest(alphaDir).managedBy).toBe('genie-agent-sync');
+    expect(existsSync(`${alphaDir}.genie-sync.staging`)).toBe(false);
+    expect(existsSync(`${alphaDir}.genie-sync.prev`)).toBe(false);
+
+    const settled = await Promise.allSettled([holder, contender]);
+    const reports = settled.map((res) => {
+      if (res.status !== 'fulfilled') throw new Error(`runner failed: ${res.reason}`);
+      return res.value;
+    });
+    const wrote = reports.filter((report) => report.skipped === undefined);
+    const skippedRuns = reports.filter((report) => report.skipped !== undefined);
+    expect(wrote).toHaveLength(1); // exactly one performed the sync
+    expect(skippedRuns).toHaveLength(1); // the other skipped with the advisory
+    expect(skillAction(agentReport(wrote[0] as AgentSyncReport, 'claude'), 'alpha')).toBe('created');
+    expect(existsSync(join(fixture.genieHome, LOCK_NAME))).toBe(false); // holder released
+  }, 20_000);
+
+  test('simultaneous stale-lock steals: at most one run wins, the rest skip', async () => {
+    present(fixture.claudeDir);
+    present(fixture.codexDir);
+    present(fixture.hermesHome);
+    const runnerPath = writeSyncRunner();
+    // A crashed run's stale lock that every racer will try to steal.
+    const lockPath = join(fixture.genieHome, LOCK_NAME);
+    writeFile(lockPath, '999\n');
+    const staleSec = (Date.now() - 11 * 60 * 1000) / 1000; // 11 min > 10 min age-out
+    utimesSync(lockPath, staleSec, staleSec);
+
+    // Pre-spawn four runners parked on the go-file barrier, then release them
+    // together so the steal attempts overlap. The winner sleeps 2s INSIDE the
+    // lock (hermes-enable seam), so every loser's full acquire+steal attempt
+    // lands while the winner's fresh lock is live. The old unlink-then-create
+    // steal fails this: a second stealer's unlink removes the first stealer's
+    // FRESH lock and both proceed as writers.
+    const goFile = join(fixture.root, 'go');
+    const racers = [1, 2, 3, 4].map(() =>
+      spawnRunner(runnerPath, { SYNC_TEST_ENABLE_SLEEP_MS: '2000', SYNC_TEST_GO_FILE: goFile }),
+    );
+    await Bun.sleep(300); // let all four park on the barrier
+    writeFile(goFile, 'go\n');
+
+    const settled = await Promise.allSettled(racers);
+    const reports = settled.map((res) => {
+      if (res.status !== 'fulfilled') throw new Error(`runner failed: ${res.reason}`);
+      return res.value;
+    });
+    const wrote = reports.filter((report) => report.skipped === undefined);
+    const skippedRuns = reports.filter((report) => report.skipped !== undefined);
+    expect(wrote.length).toBeLessThanOrEqual(1); // mutual exclusion under steal contention
+    expect(wrote.length + skippedRuns.length).toBe(4);
+    if (wrote.length === 1) {
+      expect(skillAction(agentReport(wrote[0] as AgentSyncReport, 'claude'), 'alpha')).toBe('created');
+    }
+    expect(existsSync(lockPath)).toBe(false); // stale lock is gone; any winner released its own
+  }, 30_000);
+});
+
+// ---------------------------------------------------------------------------
+// Codex role-agent TOML refresh wiring (update.ts runAgentSyncSafe). Lives
+// here rather than __tests__/update.test.ts only because that file is owned by
+// a concurrent lane — the integrator may relocate this block verbatim.
+// ---------------------------------------------------------------------------
+
+describe('runAgentSyncSafe codex role-agent refresh wiring', () => {
+  function fakeReport(overrides: Partial<AgentSyncReport> = {}, codexDetected = true): AgentSyncReport {
+    return {
+      source: { pluginRoot: '/home/.genie/plugins/genie', hermesRoot: null, version: '5.0.0' },
+      agents: [
+        { agent: 'claude', detected: true, skills: [], extras: [], advisories: [] },
+        { agent: 'codex', detected: codexDetected, skills: [], extras: [], advisories: [] },
+        { agent: 'hermes', detected: false, skills: [], extras: [], advisories: [] },
+      ],
+      backupsDir: null,
+      ...overrides,
+    };
+  }
+
+  function markerPath(): string {
+    return join(fixture.root, '.last-agent-sync');
+  }
+
+  test('codex detected → the refresh seam runs once and the summary reports counts', () => {
+    const lines: string[] = [];
+    let calls = 0;
+    runAgentSyncSafe({
+      sync: () => fakeReport(),
+      codexRefresh: () => {
+        calls += 1;
+        return { installed: 7, skippedUserOwned: ['genie-reviewer.toml'], backedUp: ['genie-wish.toml'] };
+      },
+      log: (line) => lines.push(line),
+      markerPath: markerPath(),
+    });
+    expect(calls).toBe(1);
+    const joined = lines.join('\n');
+    expect(joined).toContain('codex — 7 role-agent TOMLs refreshed');
+    expect(joined).toContain('1 user-tuned backed up');
+    expect(joined).toContain('1 user-owned kept');
+  });
+
+  test('codex not detected → the refresh never runs', () => {
+    let calls = 0;
+    runAgentSyncSafe({
+      sync: () => fakeReport({}, false),
+      codexRefresh: () => {
+        calls += 1;
+        return { installed: 7, skippedUserOwned: [], backedUp: [] };
+      },
+      log: () => undefined,
+      markerPath: markerPath(),
+    });
+    expect(calls).toBe(0);
+  });
+
+  test('a lock-skipped sync run → the refresh never runs (the lock holder converges TOMLs too)', () => {
+    let calls = 0;
+    runAgentSyncSafe({
+      sync: () => fakeReport({ agents: [], skipped: 'another agent-sync run holds the lock' }),
+      codexRefresh: () => {
+        calls += 1;
+        return { installed: 7, skippedUserOwned: [], backedUp: [] };
+      },
+      log: () => undefined,
+      markerPath: markerPath(),
+    });
+    expect(calls).toBe(0);
+  });
+
+  test('a refresh returning null (bundle lacks codex-agents) emits no refresh line', () => {
+    const lines: string[] = [];
+    runAgentSyncSafe({
+      sync: () => fakeReport(),
+      codexRefresh: () => null,
+      log: (line) => lines.push(line),
+      markerPath: markerPath(),
+    });
+    expect(lines.join('\n')).not.toContain('role-agent TOMLs');
+  });
+
+  test('a refresh throw is non-fatal: advisory line, skill summary intact, marker still touched', () => {
+    const lines: string[] = [];
+    const marker = markerPath();
+    expect(() =>
+      runAgentSyncSafe({
+        sync: () => fakeReport(),
+        codexRefresh: () => {
+          throw new Error('toml copy exploded');
+        },
+        log: (line) => lines.push(line),
+        markerPath: marker,
+      }),
+    ).not.toThrow();
+    expect(lines.join('\n')).toContain('codex role-agent refresh failed: toml copy exploded');
+    expect(existsSync(marker)).toBe(true);
   });
 });
 

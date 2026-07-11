@@ -17,7 +17,17 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, lstatSync, readFileSync, readdirSync, readlinkSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { MANAGED_BY, MANIFEST_NAME, TARGET_NAME, computeDirDigest, resolveGenieSource } from '../lib/agent-sync.js';
+import {
+  CLAUDE_EXCLUDED_SKILLS,
+  MANAGED_BY,
+  MANIFEST_NAME,
+  TARGET_NAME,
+  computeDirDigest,
+  resolveAgentsSkillsDir,
+  resolveGenieSource,
+} from '../lib/agent-sync.js';
+import { DEAD_GENIE_OTEL_EXPORTER, getCodexConfigPath, getCodexHome } from '../lib/codex-config.js';
+import { loadGenieConfig } from '../lib/genie-config.js';
 import {
   resolveClaudeDir,
   resolveCodexDir,
@@ -25,6 +35,7 @@ import {
   resolveHermesHome,
 } from '../lib/genie-home.js';
 import { resolveOmniRuntimeConfig } from '../lib/omni-config.js';
+import { codexPluginState, resolveBundleRoot } from '../lib/runtime-integrations.js';
 import { CURRENT_SCHEMA_VERSION, GenieDbError, openDb, resolveDbPath, resolveRepoRoot } from '../lib/v5/genie-db.js';
 import { VERSION } from '../lib/version.js';
 import {
@@ -200,6 +211,136 @@ function checkBun(): CheckResult[] {
       suggestion: 'Install bun (https://bun.sh) — genie is a bun single-file binary.',
     },
   ];
+}
+
+function readCodexPluginState(results: CheckResult[]): ReturnType<typeof codexPluginState> {
+  try {
+    return codexPluginState(
+      execFileSync('codex', ['plugin', 'list', '--json'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }),
+    );
+  } catch {
+    results.push({ name: 'Codex plugin query', status: 'warn', detail: 'codex plugin list failed' });
+    return { installed: false };
+  }
+}
+
+function codexPluginCheck(state: ReturnType<typeof codexPluginState>): CheckResult {
+  if (!state.installed) {
+    return {
+      name: 'Codex Genie plugin',
+      status: 'warn',
+      detail: 'not installed',
+      suggestion: 'Run `genie setup --codex` to install or repair it.',
+    };
+  }
+  const current = state.version === VERSION;
+  return {
+    name: 'Codex Genie plugin',
+    status: current ? 'pass' : 'warn',
+    detail: `v${state.version ?? 'unknown'}; ${state.enabled ? 'enabled' : 'disabled'} (CLI v${VERSION})`,
+    suggestion: current ? undefined : 'Run `genie setup --codex` to refresh the version-matched plugin.',
+  };
+}
+
+function codexAgentCheck(): CheckResult {
+  const agentsDir = join(getCodexHome(), 'agents');
+  const count = existsSync(agentsDir)
+    ? readdirSync(agentsDir).filter((name) => /^genie-.+\.toml$/.test(name)).length
+    : 0;
+  return {
+    name: 'Codex Genie role agents',
+    status: count === 7 ? 'pass' : 'warn',
+    detail: `${count}/7 installed`,
+    suggestion: count === 7 ? undefined : 'Run `genie setup --codex` to repair marker-owned role agents.',
+  };
+}
+
+function probeGenieMcp(): CheckResult {
+  const genie = whichBinary('genie');
+  if (!genie) return { name: 'Genie MCP connectivity', status: 'warn', detail: 'genie executable not on PATH' };
+  const requests = [
+    { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} },
+    { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
+    { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'genie_board', arguments: {} } },
+  ];
+  try {
+    const stdout = execFileSync(genie, ['mcp'], {
+      encoding: 'utf8',
+      input: `${requests.map((request) => JSON.stringify(request)).join('\n')}\n`,
+      stdio: ['pipe', 'pipe', 'ignore'],
+      timeout: 5_000,
+    });
+    const replies = stdout
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as { id?: number; result?: unknown; error?: unknown });
+    const healthy = [1, 2, 3].every((id) => replies.some((reply) => reply.id === id && reply.result && !reply.error));
+    return {
+      name: 'Genie MCP connectivity',
+      status: healthy ? 'pass' : 'warn',
+      detail: healthy ? 'initialize, tools/list, and genie_board succeeded' : 'incomplete JSON-RPC response',
+    };
+  } catch (error) {
+    return {
+      name: 'Genie MCP connectivity',
+      status: 'warn',
+      detail: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function checkCodexIntegration(): Promise<CheckResult[]> {
+  const codex = whichBinary('codex');
+  if (!codex) return [{ name: 'Codex CLI', status: 'warn', detail: 'not installed (Claude-only mode available)' }];
+  const results: CheckResult[] = [{ name: 'Codex CLI', status: 'pass', detail: codex }];
+  const state = readCodexPluginState(results);
+  results.push(codexPluginCheck(state), codexAgentCheck());
+  const configPath = getCodexConfigPath();
+  const obsolete = existsSync(configPath) && readFileSync(configPath, 'utf8').includes(DEAD_GENIE_OTEL_EXPORTER);
+  results.push({
+    name: 'obsolete Genie OTel exporter',
+    status: obsolete ? 'warn' : 'pass',
+    detail: obsolete ? 'present' : 'absent',
+    suggestion: obsolete ? 'Run `genie setup --codex` for backup-first removal.' : undefined,
+  });
+  const fallback = join(process.cwd(), '.codex', 'config.toml');
+  const duplicate =
+    state.installed && existsSync(fallback) && readFileSync(fallback, 'utf8').includes('# BEGIN GENIE MCP FALLBACK');
+  results.push({
+    name: 'Codex Genie MCP registration',
+    status: duplicate ? 'warn' : state.installed ? 'pass' : 'warn',
+    detail: duplicate
+      ? 'plugin plus project fallback (duplicate)'
+      : state.installed
+        ? 'plugin-bundled'
+        : 'plugin unavailable',
+  });
+  if (state.installed) {
+    // resolveBundleRoot is null when no installed/checkout root carries the
+    // plugin payload — report that distinctly instead of probing a junk path.
+    const bundleRoot = resolveBundleRoot();
+    const manifest = bundleRoot === null ? null : join(bundleRoot, 'plugins', 'genie', '.codex-plugin', 'plugin.json');
+    const declared = manifest !== null && existsSync(manifest) && readFileSync(manifest, 'utf8').includes('"genie"');
+    results.push({
+      name: 'Codex Genie MCP capability',
+      status: declared ? 'pass' : 'warn',
+      detail: declared
+        ? 'stdio server declared'
+        : bundleRoot === null
+          ? 'genie bundle root not found (reinstall genie or set GENIE_BUNDLE_ROOT)'
+          : 'manifest declaration missing',
+    });
+    results.push(probeGenieMcp());
+    results.push({
+      name: 'Codex hook review',
+      status: 'warn',
+      detail: 'trust is a user decision and cannot be inferred safely',
+      suggestion: 'Open /hooks, review Genie commands, then start a new Codex task.',
+    });
+  }
+  const config = await loadGenieConfig();
+  results.push({ name: 'preferred agent runtime', status: 'pass', detail: config.runtime.defaultAgent });
+  return results;
 }
 
 /** Warn only when Claude Code's global subagent-model override is present. */
@@ -413,6 +554,8 @@ interface AgentSyncPaths {
   genieHome?: string;
   claudeDir?: string;
   codexDir?: string;
+  /** Shared `~/.agents/skills` tier codex skills are synced into (detection root stays `codexDir`). */
+  agentsSkillsDir?: string;
   hermesHome?: string;
   settingsPath?: string;
 }
@@ -469,9 +612,18 @@ function sourceSkillDigests(pluginRoot: string): Map<string, string> {
  * `unchanged`: manifest present, on-disk content matches its manifest, and the
  * manifest matches the current source digest. Unmanaged dirs are ignored — genie
  * only speaks for what it provably shipped.
+ *
+ * `excluded` names are dropped from the EXPECTED source set so an agent that
+ * legitimately never receives a skill (e.g. Claude excludes `council`, whose name
+ * the native /council workflow owns) is not reported as one skill short of source.
  */
-function summarizeManagedSkills(pluginRoot: string, targetParent: string): ManagedSkillsSummary {
+function summarizeManagedSkills(
+  pluginRoot: string,
+  targetParent: string,
+  excluded?: Set<string>,
+): ManagedSkillsSummary {
   const source = sourceSkillDigests(pluginRoot);
+  if (excluded) for (const name of excluded) source.delete(name);
   let current = 0;
   let stale = 0;
   for (const name of listSubdirs(targetParent)) {
@@ -511,7 +663,10 @@ function councilStampState(councilPath: string, pluginRoot: string): { stale: bo
 
 function checkClaudeSync(pluginRoot: string, claudeDir: string): CheckResult[] {
   if (!existsSync(claudeDir)) return [{ name: 'agent sync: claude', status: 'pass', detail: 'not detected' }];
-  const skills = skillsFreshness(summarizeManagedSkills(pluginRoot, join(claudeDir, 'skills')));
+  // Claude legitimately excludes `council` (the /council native workflow owns
+  // that name), so its expected source set is source minus CLAUDE_EXCLUDED_SKILLS
+  // — otherwise doctor reports "N-1/N current" and advises `genie update` forever.
+  const skills = skillsFreshness(summarizeManagedSkills(pluginRoot, join(claudeDir, 'skills'), CLAUDE_EXCLUDED_SKILLS));
   const council = councilStampState(join(claudeDir, 'workflows', COUNCIL_WORKFLOW_FILE), pluginRoot);
   const stale = skills.stale || council.stale;
   return [
@@ -524,9 +679,15 @@ function checkClaudeSync(pluginRoot: string, claudeDir: string): CheckResult[] {
   ];
 }
 
-function checkCodexSync(pluginRoot: string, codexDir: string): CheckResult[] {
+/**
+ * Codex detection stays keyed on `~/.codex` (the CODEX_HOME root), but the
+ * skills agent-sync writes live in the shared `~/.agents/skills` tier — the
+ * only user tier codex-rs actually loads (the legacy `.curated` lane is
+ * retired and migrated away on sync; see agent-sync.ts).
+ */
+function checkCodexSync(pluginRoot: string, codexDir: string, agentsSkillsDir: string): CheckResult[] {
   if (!existsSync(codexDir)) return [{ name: 'agent sync: codex', status: 'pass', detail: 'not detected' }];
-  const summary = summarizeManagedSkills(pluginRoot, join(codexDir, 'skills', '.curated'));
+  const summary = summarizeManagedSkills(pluginRoot, agentsSkillsDir);
   const populated = summary.current + summary.stale > 0;
   const skills = skillsFreshness(summary);
   const stale = skills.stale || !populated;
@@ -534,7 +695,7 @@ function checkCodexSync(pluginRoot: string, codexDir: string): CheckResult[] {
     {
       name: 'agent sync: codex',
       status: stale ? 'warn' : 'pass',
-      detail: populated ? skills.detail : '.curated not populated',
+      detail: populated ? skills.detail : '~/.agents/skills not populated',
       suggestion: stale ? SYNC_SUGGESTION : undefined,
     },
   ];
@@ -623,6 +784,7 @@ export function checkAgentSync(paths: AgentSyncPaths = {}): CheckResult[] {
   const genieHome = paths.genieHome ?? resolveGlobalGenieHome();
   const claudeDir = paths.claudeDir ?? resolveClaudeDir();
   const codexDir = paths.codexDir ?? resolveCodexDir();
+  const agentsSkillsDir = paths.agentsSkillsDir ?? resolveAgentsSkillsDir();
   const hermesHome = paths.hermesHome ?? resolveHermesHome();
   const settingsPath = paths.settingsPath ?? join(claudeDir, 'settings.json');
   const source = resolveGenieSource(genieHome);
@@ -638,7 +800,7 @@ export function checkAgentSync(paths: AgentSyncPaths = {}): CheckResult[] {
   const pluginRoot = source.pluginRoot;
   return [
     ...safeAgentChecks('claude', () => checkClaudeSync(pluginRoot, claudeDir)),
-    ...safeAgentChecks('codex', () => checkCodexSync(pluginRoot, codexDir)),
+    ...safeAgentChecks('codex', () => checkCodexSync(pluginRoot, codexDir, agentsSkillsDir)),
     ...safeAgentChecks('hermes', () => checkHermesSync(source.hermesRoot, hermesHome)),
     ...safeAgentChecks('marketplace', () => checkMarketplacePlugin(settingsPath)),
   ];
@@ -664,6 +826,7 @@ export async function doctorCommand(options?: { json?: boolean; fix?: boolean })
     ...checkSkills(),
     ...checkBun(),
     ...checkSubagentModelOverride(),
+    ...(await checkCodexIntegration()),
     ...checkV4Residue(),
     ...checkAgentSync(),
     ...(await checkOmniHookTimeout()),

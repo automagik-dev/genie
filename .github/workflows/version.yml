@@ -63,16 +63,16 @@ jobs:
        github.event.workflow_run.event == 'push' &&
        !contains(github.event.workflow_run.head_commit.message, '[auto-version]') &&
        (
-         (github.event.workflow_run.head_branch == 'main' &&
-          startsWith(github.event.workflow_run.head_commit.message, 'Merge pull request') &&
-          contains(github.event.workflow_run.head_commit.message, '/dev'))
-         ||
-         (github.event.workflow_run.head_branch == 'homolog' &&
-          startsWith(github.event.workflow_run.head_commit.message, 'Merge pull request') &&
-          contains(github.event.workflow_run.head_commit.message, '/dev'))
-         ||
+         (github.event.workflow_run.head_branch == 'main') ||
+         (github.event.workflow_run.head_branch == 'homolog') ||
          (github.event.workflow_run.head_branch == 'dev')
        ))
+    # main/homolog promotion is verified by the "Verify dev promotion" STEP
+    # below (merge-commit message OR content match against dev), not by a
+    # message-only expression here. Message-only gating silently skipped the
+    # stable release whenever a dev→main PR was rebase- or squash-merged
+    # (observed #2537 2026-07-09 and #2542 2026-07-10: main advanced, stable
+    # .well-known stayed stale, clients downgraded).
 
     steps:
       - name: Determine branch and version prefix
@@ -121,6 +121,40 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      # Promotion gate for the no-bump (main/homolog) path. A promotion is a
+      # push whose head commit is a dev merge commit ("Merge pull request …
+      # /dev") OR whose content equals dev's tip — the latter is what a
+      # rebase- or squash-merged dev→main PR produces (no merge commit, so
+      # message checks can never see it). `.well-known` is excluded from the
+      # content diff: release-publish commits channel manifests to main only,
+      # so a rebased promotion's tree always differs from dev exactly there.
+      # If dev advanced past the PR head before this runs, the content check
+      # misses and we skip with a notice — the next promotion catches up
+      # (same posture as the atomic tag-push race below).
+      - name: Verify dev promotion (main/homolog no-bump path)
+        id: promotion
+        if: steps.context.outputs.should_bump == 'false'
+        run: |
+          SUBJECT="$(git show -s --format=%s HEAD)"
+          PROMOTED=false
+          REASON="not a dev promotion"
+          if printf '%s' "${SUBJECT}" | grep -q '^Merge pull request' && printf '%s' "${SUBJECT}" | grep -q '/dev'; then
+            PROMOTED=true
+            REASON="dev merge commit"
+          else
+            git fetch origin dev --quiet
+            if git diff --quiet origin/dev HEAD -- ':(exclude).well-known'; then
+              PROMOTED=true
+              REASON="content matches dev tip (rebase/squash promotion)"
+            fi
+          fi
+          echo "promoted=${PROMOTED}" >> "$GITHUB_OUTPUT"
+          if [ "${PROMOTED}" = "true" ]; then
+            echo "Promotion verified: ${REASON}"
+          else
+            echo "::notice ::release-trigger.promotion_unverified head commit is neither a dev merge commit nor content-identical to dev — stable/homolog dispatch skipped"
+          fi
+
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.10"
@@ -156,7 +190,7 @@ jobs:
       - name: Format versioned JSON (Biome)
         if: steps.context.outputs.should_bump == 'true'
         run: |
-          bunx biome format --write package.json plugins/genie/.claude-plugin/plugin.json plugins/genie/package.json .claude-plugin/marketplace.json 2>/dev/null || true
+          bunx biome format --write package.json plugins/genie/.claude-plugin/plugin.json plugins/genie/.codex-plugin/plugin.json plugins/genie/package.json .claude-plugin/marketplace.json 2>/dev/null || true
 
       - name: Commit and tag
         if: steps.context.outputs.should_bump == 'true'
@@ -249,7 +283,7 @@ jobs:
       # advances. This is the ONLY code path that publishes the stable
       # channel; without it a main merge produces no stable release.
       - name: Trigger release pipeline for the promoted tag (stable/homolog)
-        if: steps.context.outputs.should_bump == 'false'
+        if: steps.context.outputs.should_bump == 'false' && steps.promotion.outputs.promoted == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

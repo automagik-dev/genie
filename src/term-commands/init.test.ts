@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { mergeCodexMcpFallback, removeCodexMcpFallback } from './init.js';
 
 const CLI = join(import.meta.dir, '..', 'genie.ts');
 const GITIGNORE_RULES = ['.genie/genie.db', '.genie/genie.db-wal', '.genie/genie.db-shm'];
@@ -49,7 +50,7 @@ describe('genie init', () => {
     for (const rule of GITIGNORE_RULES) {
       expect(gitignore).toContain(rule);
     }
-    expect(stdout).toContain('/brainstorm');
+    expect(stdout).toContain('brainstorm');
     expect(stdout).toContain('genie board');
   });
 
@@ -219,10 +220,10 @@ describe('genie init', () => {
       initGitRepo(dir);
       const first = JSON.parse(runInit(dir, ['--json']).stdout);
       const actions = first.mcp.map((c: { path: string; action: string }) => c.action);
-      expect(actions).toEqual(['created', 'created']);
+      expect(actions.slice(0, 2)).toEqual(['created', 'created']);
 
       const second = JSON.parse(runInit(dir, ['--json']).stdout);
-      expect(second.mcp.map((c: { action: string }) => c.action)).toEqual(['skipped', 'skipped']);
+      expect(second.mcp.map((c: { action: string }) => c.action).slice(0, 2)).toEqual(['skipped', 'skipped']);
     });
 
     test('malformed .mcp.json is surfaced, not clobbered', () => {
@@ -234,5 +235,29 @@ describe('genie init', () => {
       // The bad file is left untouched.
       expect(readFileSync(mcpPath(dir), 'utf-8')).toBe('not json {');
     });
+  });
+});
+
+describe('Codex MCP fallback merge', () => {
+  test('does not duplicate an existing unowned genie server', () => {
+    const path = join(dir, '.codex', 'config.toml');
+    mkdirSync(join(dir, '.codex'), { recursive: true });
+    const original = '[mcp_servers.genie]\ncommand = "/existing/genie"\nargs = ["mcp"]\n';
+    writeFileSync(path, original);
+    expect(mergeCodexMcpFallback(path, { command: '/new/genie', args: ['mcp'] })).toBe('skipped');
+    expect(readFileSync(path, 'utf8')).toBe(original);
+  });
+
+  test('removes only the marker-owned fallback', () => {
+    const path = join(dir, '.codex', 'config.toml');
+    mkdirSync(join(dir, '.codex'), { recursive: true });
+    writeFileSync(
+      path,
+      'model = "x"\n\n# BEGIN GENIE MCP FALLBACK\n[mcp_servers.genie]\ncommand = "/g"\nargs = ["mcp"]\n# END GENIE MCP FALLBACK\n\n[mcp_servers.other]\ncommand = "x"\n',
+    );
+    expect(removeCodexMcpFallback(path)).toBe('updated');
+    const updated = readFileSync(path, 'utf8');
+    expect(updated).not.toContain('GENIE MCP FALLBACK');
+    expect(updated).toContain('[mcp_servers.other]');
   });
 });

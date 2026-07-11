@@ -7,7 +7,7 @@ effort: xhigh
 
 # /work — Execute Wish Plan
 
-The orchestrator's skill: execute an approved wish from `.genie/wishes/<slug>/WISH.md` by dispatching native-team subagents per execution group, in waves. The orchestrator never executes group work directly. Per-group execution state lives in the state DB via `genie task`; documents (WISH.md, review notes) stay in git.
+The orchestrator's skill: execute an approved wish from `.genie/wishes/<slug>/WISH.md` by dispatching native subagents per execution group, in waves. The orchestrator never executes group work directly. Per-group execution state lives in the state DB via `genie task`; documents (WISH.md, review notes) stay in git. Map coordination to the active client with `plugins/genie/references/native-surfaces.md`.
 
 ## Context Injection
 
@@ -20,7 +20,7 @@ When you are spawned as a subagent for a group, your dispatch prompt carries the
 ## Flow
 1. **Load wish:** read `.genie/wishes/<slug>/WISH.md`; read group state with `genie task list --wish <slug>` (or `genie board --wish <slug>`).
 2. **Pick the wave:** every group whose `depends-on` groups are done, per the wish's Execution Strategy.
-3. **Dispatch the wave in ONE message** — one Agent tool call per group, each using the named engineer role selected from the WISH's Complexity and Model columns with curated context (see Dispatch, Context Curation). Each engineer's brief opens with the atomic claim:
+3. **Dispatch the wave in ONE message** — one native delegation surface call per group, each using the named engineer role selected from the WISH's Complexity and Model columns with curated context (see Dispatch, Context Curation). Each engineer's brief opens with the atomic claim:
    ```bash
    genie task checkout <task-id> --worker <engineer-name>
    ```
@@ -38,25 +38,25 @@ When you are spawned as a subagent for a group, your dispatch prompt carries the
 
 ## Dispatch
 
-Native team: spawn subagents with the **Agent tool**; never execute group work directly. Issue all of a wave's Agent calls in a single message so they run concurrently. Subagents run in the background and notify you on completion. Every Agent call sets one of the named role agents below as its `subagent_type`; implicit or unnamed subagent types are forbidden.
+Spawn subagents with the **native delegation surface** — on Claude Code the Agent tool (the role is the `subagent_type`), on Codex the matching `genie_*` custom agent; never execute group work directly. Dispatch a wave together so independent groups can run concurrently. Subagents notify you on completion. Every dispatch selects one named role below; implicit or unnamed roles are forbidden.
 
-| Need | Agent tool `subagent_type` |
-|------|----------------------------|
-| Deterministic implementation, complexity 0-1 | `engineer-trivial` |
-| Moderately coupled implementation, complexity 2-3 | `engineer-standard` |
-| High-coupling or stateful implementation, complexity 4+ | `engineer-complex` |
-| Review | `reviewer` (never the group's engineer) |
-| Fix | `fixer` (separate from the reviewer) |
-| Final plan or execution gate | `final-gate` (after ordinary reviews and validations) |
-| Bounded read-only discovery | `scout` |
-| Quick validation | Bash directly — no subagent |
-| Follow-up to a running subagent | **SendMessage** (keeps its context) |
+| Need | Claude `subagent_type` | Codex agent name |
+|------|------------------------|------------------|
+| Deterministic implementation, complexity 0-1 | `engineer-trivial` | `genie_engineer_trivial` |
+| Moderately coupled implementation, complexity 2-3 | `engineer-standard` | `genie_engineer_standard` |
+| High-coupling or stateful implementation, complexity 4+ | `engineer-complex` | `genie_engineer_complex` |
+| Review (never the group's engineer) | `reviewer` | `genie_reviewer` |
+| Fix (separate from the reviewer) | `fixer` | `genie_fixer` |
+| Final plan or execution gate | `final-gate` | `genie_final_gate` |
+| Bounded read-only discovery | `scout` | `genie_scout` |
+| Quick validation | Bash directly — no subagent | Bash directly — no subagent |
+| Follow-up to a running subagent | **SendMessage** (keeps its context) | undocumented — verify live, else re-dispatch with curated context (see `native-surfaces.md`) |
 
 Reviewer ≠ engineer is a hard rule — an agent never reviews its own work.
 
 ### Multi-session dispatch (Warp)
 
-Native Agent-tool dispatch is the default. When the user wants parallel Warp sessions they can supervise interactively — typically a large wave — hand the wave to Warp after its tasks exist:
+Native subagent dispatch is the default. When the user wants parallel Warp sessions they can supervise interactively — typically a large wave — hand the wave to Warp after its tasks exist:
 
 ```bash
 genie launch <slug> [--groups <csv>]
@@ -105,7 +105,7 @@ If an ordinary reviewer and the `final-gate` disagree, log an appeal with the wi
 When a subagent fails or a fix-loop limit is exhausted, the orchestrator records the cause, evidence, selected route, and current cap counters before another dispatch. It leaves the task `in_progress`, keeps dispatching ready groups that do not depend on the blocked one, and includes unresolved diagnoses and appeals in the final handoff.
 
 ## Rules
-- Never execute group work directly — always dispatch via the Agent tool.
+- Never execute group work directly — always dispatch via the native delegation surface.
 - Never expand scope during execution; never skip validation commands.
 - Never overwrite WISH.md from subagent output — curated prompts are runtime context; the WISH.md in git is the source of truth.
 - Reviewer ≠ engineer, always.
@@ -114,7 +114,7 @@ When a subagent fails or a fix-loop limit is exhausted, the orchestrator records
 
 ## Session close (required)
 
-When spawned as a native-team subagent, your final message IS the completion signal — the orchestrator is notified when you finish; do not poll or emit a separate contract call. End with exactly one terminal outcome as the last word:
+When spawned as a native subagent, your final message IS the completion signal — the orchestrator is notified when you finish; do not poll or emit a separate contract call. End with exactly one terminal outcome as the last word:
 
 - **done** — acceptance criteria met and the validation command passes. Report evidence (commands + outcomes) and the task id.
 - **blocked** — needs human input or an unblocking signal. State exactly what; leave the task `in_progress`.

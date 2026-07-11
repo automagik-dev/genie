@@ -77,7 +77,8 @@ function findWishes(baseDir: string): WishStatus[] {
       .map((d) => d.name);
 
     for (const slug of slugs) {
-      const wishFile = join(wishesDir, slug, "wish.md");
+      const uppercase = join(wishesDir, slug, "WISH.md");
+      const wishFile = existsSync(uppercase) ? uppercase : join(wishesDir, slug, "wish.md");
       if (!existsSync(wishFile)) continue;
 
       const content = readFileSync(wishFile, "utf-8");
@@ -123,6 +124,7 @@ const wishes = findWishes(cwd);
 const activeWishes = wishes.filter((w) => w.status === "IN_PROGRESS");
 
 if (activeWishes.length === 0) {
+  if (process.env.PLUGIN_ROOT) process.stdout.write("{}");
   process.exit(0);
 }
 
@@ -151,6 +153,9 @@ for (const wish of activeWishes) {
 if (hasWarnings) {
   console.error("");
 }
+
+// Codex hooks require valid JSON on stdout. Completion warnings remain advisory.
+if (process.env.PLUGIN_ROOT) process.stdout.write("{}");
 
 // Always exit 0 (advisory only)
 process.exit(0);

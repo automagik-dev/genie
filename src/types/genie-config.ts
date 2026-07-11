@@ -55,6 +55,10 @@ const CodexConfigSchema = z.object({
   configured: z.boolean().default(false),
 });
 
+const RuntimeConfigSchema = z.object({
+  defaultAgent: z.enum(['auto', 'claude', 'codex']).default('auto'),
+});
+
 // Worker profile configuration
 // Defines how to launch a Claude worker
 // Uses preprocess to migrate legacy "claudio" launcher values to "claude"
@@ -147,6 +151,8 @@ const OmniConfigSchema = z.object({
          * `<repo>/AGENTS.md` if present, else no persona.
          */
         persona: z.string().optional(),
+        /** Agent provider for this route. Omitted preserves historical Claude behavior. */
+        agent: z.enum(['claude', 'codex']).default('claude'),
       }),
     )
     .optional(),
@@ -206,6 +212,7 @@ export const GenieConfigSchema = z.object({
   shell: ShellConfigSchema.default({}),
   shortcuts: ShortcutsConfigSchema.default({}),
   codex: CodexConfigSchema.optional(),
+  runtime: RuntimeConfigSchema.default({}),
   installMethod: z.enum(['source', 'npm', 'bun']).optional(),
   // Release channel preference. Canonical values: 'latest' (stable),
   // 'homolog' (staging — middle tier in dev→homolog→stable promotion),

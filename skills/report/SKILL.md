@@ -23,10 +23,10 @@ When invoked during the QA loop (after merge to dev):
 ## Flow
 
 ### Phase 1: Collect Symptoms
-Gather bug description (required), plus URL, error messages, and expected-vs-actual behavior when offered. If detail is missing, ask clarifying questions one at a time via AskUserQuestion — minimum viable input is a bug description.
+Gather bug description (required), plus URL, error messages, and expected-vs-actual behavior when offered. If detail is missing, ask clarifying questions one at a time via native user-input surface — minimum viable input is a bug description.
 
 ### Phase 2: Run /trace (always)
-The backbone of every report. Dispatch a trace subagent via the **Agent tool** with a read-only brief: the symptoms, relevant files, and the expected deliverable (the `/trace` report format — root cause file:line, evidence, causal chain, recommended correction, affected scope, confidence). The subagent notifies you with its findings as its final message; follow-ups go through **SendMessage**. If root cause cannot be determined, note "Code investigation incomplete — /trace could not determine root cause" and continue.
+The backbone of every report. Dispatch a trace subagent via the **native delegation surface** with a read-only brief: the symptoms, relevant files, and the expected deliverable (the `/trace` report format — root cause file:line, evidence, causal chain, recommended correction, affected scope, confidence). The subagent notifies you with its findings as its final message; follow-ups go through **native follow-up messaging**. If root cause cannot be determined, note "Code investigation incomplete — /trace could not determine root cause" and continue.
 
 ### Phase 3: Browser Evidence (opportunistic)
 Requires the `agent-browser` CLI on PATH. Attempt when a URL was provided, a dev server is on a common port (3000, 3001, 4200, 5173, 5174, 8080, 8000), or `package.json` has a startable `dev`/`start` script.
@@ -88,7 +88,7 @@ If task creation fails (no `.genie/genie.db`), skip it — board tracking never 
 User reports: "dispatched engineers sit idle at an empty prompt."
 
 1. Symptoms collected: command run, observed behavior (empty prompt, no task received).
-2. Trace subagent dispatched (Agent tool, read-only) → returns: `dispatch.ts:532 — handleWorkerSpawn called without initialPrompt; 4/6 engineers received no message. Confidence: high.`
+2. Trace subagent dispatched (native delegation surface, read-only) → returns: `dispatch.ts:532 — handleWorkerSpawn called without initialPrompt; 4/6 engineers received no message. Confidence: high.`
 3. Evidence captured: screenshot of the idle pane; `genie task list --json` showing the group `in_progress` with no progress.
 4. Issue created: `gh issue create --title "bug: dispatch spawns engineers idle without initial task prompt" --body ...` — body carries root cause, causal chain, reproduction steps, and both artifacts.
 

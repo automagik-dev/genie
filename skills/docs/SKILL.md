@@ -33,7 +33,7 @@ CLAUDE.md is a first-class surface: when commands or conventions change, it must
 
 ## Dispatch
 
-Runs as a subagent (Claude Code native team): the dispatching agent issues an Agent tool call with a curated brief — scope (which docs, which change triggered the audit), the code areas to validate against, and the expected report shape.
+Runs as a subagent (native runtime): the dispatching agent issues an native delegation surface call with a curated brief — scope (which docs, which change triggered the audit), the code areas to validate against, and the expected report shape.
 
 Example brief: "Audit README.md, CLAUDE.md, and skills/work/SKILL.md after PR #746 — verify dispatch examples match current code, fix stale references, report per-file verdicts with evidence."
 

@@ -30,11 +30,12 @@
 
 import type { Database } from 'bun:sqlite';
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { OmniRoute, OmniRuntimeConfig } from './omni-config.js';
 import { matchReaction, matchTextToken } from './omni-matching.js';
 import { signOmniRequest } from './omni-signature.js';
+import { getAgentSession, upsertAgentSession } from './v5/global-db.js';
 import {
   ApprovalConflictError,
   type ApprovalDecision,
@@ -335,6 +336,92 @@ const defaultRawSpawn: RawClaudeSpawn = async (args, { cwd, signal }) => {
 export const defaultSpawnClaude: SpawnClaude = (opts) => runClaudeSession(opts, defaultRawSpawn);
 
 // ============================================================================
+// Provider-neutral execution + Codex JSONL
+// ============================================================================
+
+export type AgentProvider = 'claude' | 'codex';
+
+export interface AgentExecutionOpts extends SpawnClaudeOpts {
+  provider: AgentProvider;
+  /** Persisted Codex thread id. Claude continues to use sessionId. */
+  threadId?: string;
+}
+
+export interface AgentExecutionResult extends SpawnClaudeResult {
+  threadId?: string;
+}
+
+export type AgentExecutor = (opts: AgentExecutionOpts) => Promise<AgentExecutionResult>;
+
+export function buildCodexArgs(opts: { message: string; threadId?: string }): string[] {
+  if (opts.threadId) {
+    return ['exec', 'resume', '--json', '-c', 'sandbox_mode="workspace-write"', opts.threadId, opts.message];
+  }
+  return ['exec', '--json', '--sandbox', 'workspace-write', opts.message];
+}
+
+type CodexJsonEvent = {
+  type?: string;
+  thread_id?: string;
+  message?: string;
+  item?: { type?: string; text?: string };
+};
+
+export function extractCodexJsonlReply(raw: string): AgentExecutionResult {
+  let threadId: string | undefined;
+  let reply = '';
+  let isError = false;
+  let parsed = false;
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const event = JSON.parse(line) as CodexJsonEvent;
+      parsed = true;
+      if (event.type === 'thread.started' && event.thread_id) threadId = event.thread_id;
+      if (event.type === 'item.completed' && event.item?.type === 'agent_message' && event.item.text) {
+        reply = event.item.text;
+      }
+      if (event.type === 'turn.failed' || event.type === 'error') {
+        isError = true;
+        if (!reply && event.message) reply = event.message;
+      }
+    } catch {
+      // Ignore non-JSON process noise; a fully non-JSON stream falls back below.
+    }
+  }
+  return { stdout: reply || (parsed ? '' : raw), exitCode: 0, isError, threadId };
+}
+
+export type RawCodexSpawn = RawClaudeSpawn;
+
+export async function runCodexSession(
+  opts: AgentExecutionOpts,
+  rawSpawn: RawCodexSpawn,
+): Promise<AgentExecutionResult> {
+  const persona = opts.personaFile && existsSync(opts.personaFile) ? readFileSync(opts.personaFile, 'utf8') : '';
+  const message = persona ? `<persona>\n${persona}\n</persona>\n\n${opts.message}` : opts.message;
+  const run = await rawSpawn(buildCodexArgs({ message, threadId: opts.threadId }), {
+    cwd: opts.cwd,
+    signal: opts.signal,
+  });
+  const parsed = extractCodexJsonlReply(run.stdout);
+  return { ...parsed, stderr: run.stderr, exitCode: run.exitCode, isError: parsed.isError || run.exitCode !== 0 };
+}
+
+const defaultRawCodexSpawn: RawCodexSpawn = async (args, { cwd, signal }) => {
+  const proc = Bun.spawn(['codex', ...args], { cwd, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', signal });
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  return { stdout, stderr, exitCode };
+};
+
+export const defaultAgentExecutor: AgentExecutor = (opts) =>
+  opts.provider === 'codex' ? runCodexSession(opts, defaultRawCodexSpawn) : defaultSpawnClaude(opts);
+
+// ============================================================================
 // Injectable id-returning Omni send (approval announce)
 // ============================================================================
 
@@ -524,6 +611,8 @@ export interface OmniRunnerDeps {
    * fake so no real claude is ever forked.
    */
   spawnClaude?: SpawnClaude;
+  /** Provider-neutral executor. When absent, legacy spawnClaude remains valid for Claude routes. */
+  spawnAgent?: AgentExecutor;
   /**
    * Injectable id-returning approval send. Defaults to the Omni HTTP send
    * ({@link makeDefaultOmniSend}); tests pass a fake that returns a known stanza
@@ -689,6 +778,8 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
   const genId =
     deps.genCorrelationId ?? (() => `req_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`);
   const spawnClaude = deps.spawnClaude ?? defaultSpawnClaude;
+  const spawnAgent: AgentExecutor =
+    deps.spawnAgent ?? ((opts) => (opts.provider === 'claude' ? spawnClaude(opts) : defaultAgentExecutor(opts)));
   const sendApproval = deps.sendApproval ?? makeDefaultOmniSend(config);
   const setReaction = deps.setReaction ?? makeDefaultOmniSetReaction(config);
   const vocab = {
@@ -750,15 +841,23 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
       // race can observe — and so `aborted` always gets a handler attached
       // (else a late finally-abort would surface as an unhandled rejection).
       const spawned = Promise.resolve().then(() =>
-        spawnClaude({
+        spawnAgent({
+          provider: route.agent ?? 'claude',
           message,
           cwd: route.repo,
           signal: controller.signal,
           personaFile: resolvePersonaFile(route),
           sessionId: deterministicSessionId(route.instance, route.chat),
+          threadId:
+            (route.agent ?? 'claude') === 'codex'
+              ? getAgentSession(db, 'codex', route.instance, route.chat)
+              : undefined,
         }),
       );
       const result = await Promise.race([spawned, aborted]);
+      if ((route.agent ?? 'claude') === 'codex' && result.threadId) {
+        upsertAgentSession(db, 'codex', route.instance, route.chat, result.threadId, now());
+      }
       // A non-zero exit OR a soft-error terminal result (is_error / non-success /
       // empty) is a failure — never publish the raw NDJSON blob as a happy reply.
       const ok = result.exitCode === 0 && !result.isError;
