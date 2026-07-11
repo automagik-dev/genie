@@ -1,4 +1,4 @@
 interface:
   display_name: "Genie Hacks"
   short_description: "Find grounded Genie workflow patterns and recipes"
-  default_prompt: "Use $genie-hacks to find a grounded pattern for this workflow problem."
+  default_prompt: "Use $genie:genie-hacks (or $genie-hacks only for a separately installed personal copy) to find a grounded pattern for this workflow problem."

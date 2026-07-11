@@ -18,11 +18,12 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { confirm } from '@inquirer/prompts';
 import {
   MANAGED_BY,
   MANIFEST_NAME,
+  acquireLifecycleLease,
   codexLegacyCuratedDir,
   computeDirDigest,
   inspectManagedWorkflow,
@@ -31,7 +32,11 @@ import {
 import { hookScriptExists, removeHookScript } from '../lib/claude-settings.js';
 import { contractPath, getGenieDir } from '../lib/genie-config.js';
 import { resolveClaudeDir, resolveCodexDir, resolveGenieHome, resolveHermesHome } from '../lib/genie-home.js';
-import { inspectCodexAgentOwnership, removeRuntimeIntegrations } from '../lib/runtime-integrations.js';
+import {
+  inspectCodexAgentOwnership,
+  inspectRuntimeIntegrationEvidence,
+  removeRuntimeIntegrations,
+} from '../lib/runtime-integrations.js';
 import { orchestrationRulesPath } from './legacy-v4.js';
 
 // Shared v4 legacy manifest owns this path — see legacy-v4.ts.
@@ -42,16 +47,37 @@ const LOCAL_BIN = join(homedir(), '.local', 'bin');
 // Symlinks that may have been created by source install
 const SYMLINKS = ['genie', 'term'];
 
-/**
- * Check if a path is a symlink pointing to genie bin
- */
-function isGenieSymlink(path: string): boolean {
+export interface PathContainmentApi {
+  resolve: (...paths: string[]) => string;
+  relative: (from: string, to: string) => string;
+  isAbsolute: (path: string) => boolean;
+  sep: string;
+}
+
+const HOST_PATH_CONTAINMENT_API: PathContainmentApi = { resolve, relative, isAbsolute, sep };
+
+/** Return true only when `candidate` is the same path as `parent` or canonically beneath it. */
+export function isSameOrContainedPath(
+  parent: string,
+  candidate: string,
+  pathApi: PathContainmentApi = HOST_PATH_CONTAINMENT_API,
+): boolean {
+  const relativePath = pathApi.relative(pathApi.resolve(parent), pathApi.resolve(candidate));
+  return (
+    relativePath === '' ||
+    (relativePath !== '..' && !relativePath.startsWith(`..${pathApi.sep}`) && !pathApi.isAbsolute(relativePath))
+  );
+}
+
+/** Prove a named link resolves to the corresponding canonical Genie binary, including dangling links. */
+export function isGenieSymlink(path: string, genieDir = getGenieDir()): boolean {
   try {
-    if (!existsSync(path)) return false;
     const stat = lstatSync(path);
     if (!stat.isSymbolicLink()) return false;
-    // We don't need to check target - if it's our binary name, remove it
-    return true;
+    const name = path.slice(path.lastIndexOf(sep) + 1);
+    if (!SYMLINKS.includes(name)) return false;
+    const resolvedTarget = resolve(dirname(path), readlinkSync(path));
+    return resolvedTarget === resolve(genieDir, 'bin', name);
   } catch {
     return false;
   }
@@ -60,22 +86,26 @@ function isGenieSymlink(path: string): boolean {
 /**
  * Remove genie symlinks from ~/.local/bin
  */
-function removeSymlinks(): string[] {
+export function removeSymlinks(
+  localBin = LOCAL_BIN,
+  genieDir = getGenieDir(),
+): { removed: string[]; failures: Array<{ path: string; detail: string }> } {
   const removed: string[] = [];
+  const failures: Array<{ path: string; detail: string }> = [];
 
   for (const name of SYMLINKS) {
-    const symlinkPath = join(LOCAL_BIN, name);
-    if (isGenieSymlink(symlinkPath)) {
+    const symlinkPath = join(localBin, name);
+    if (isGenieSymlink(symlinkPath, genieDir)) {
       try {
         unlinkSync(symlinkPath);
         removed.push(name);
-      } catch {
-        // Ignore errors - may not have permission
+      } catch (error) {
+        failures.push({ path: symlinkPath, detail: error instanceof Error ? error.message : String(error) });
       }
     }
   }
 
-  return removed;
+  return { removed, failures };
 }
 
 // ============================================================================
@@ -169,8 +199,7 @@ function collectManagedCouncil(claudeDir: string, out: AgentSyncAsset[]): void {
 }
 
 /** The hermes plugin link is ours only when the symlink resolves into the genie home. */
-function collectHermesLink(hermesHome: string, genieHome: string, out: AgentSyncAsset[]): void {
-  const linkPath = join(hermesHome, 'plugins', 'genie');
+function collectHermesLinkPath(linkPath: string, genieHome: string, out: AgentSyncAsset[]): void {
   let stat: ReturnType<typeof lstatSync>;
   try {
     stat = lstatSync(linkPath);
@@ -179,12 +208,33 @@ function collectHermesLink(hermesHome: string, genieHome: string, out: AgentSync
   }
   if (!stat.isSymbolicLink()) return;
   try {
-    const resolved = resolve(join(hermesHome, 'plugins'), readlinkSync(linkPath));
+    const resolved = resolve(dirname(linkPath), readlinkSync(linkPath));
     const home = resolve(genieHome);
-    if (resolved === home || resolved.startsWith(`${home}/`))
-      out.push({ agent: 'hermes', kind: 'link', path: linkPath });
+    if (isSameOrContainedPath(home, resolved)) out.push({ agent: 'hermes', kind: 'link', path: linkPath });
   } catch {
     /* unreadable symlink → leave it */
+  }
+}
+
+function collectHermesLinks(hermesHome: string, genieHome: string, out: AgentSyncAsset[]): void {
+  collectHermesLinkPath(join(hermesHome, 'plugins', 'genie'), genieHome, out);
+  const profilesRoot = join(hermesHome, 'profiles');
+  let entries: ReturnType<typeof readdirSync>;
+  try {
+    entries = readdirSync(profilesRoot, { withFileTypes: true }) as never;
+  } catch {
+    return;
+  }
+  for (const entry of entries as unknown as Array<{
+    name: string;
+    isDirectory: () => boolean;
+    isSymbolicLink: () => boolean;
+  }>) {
+    if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(entry.name) || entry.name === '.' || entry.name === '..') continue;
+    const profileRoot = resolve(profilesRoot, entry.name);
+    if (!isSameOrContainedPath(profilesRoot, profileRoot)) continue;
+    collectHermesLinkPath(join(profileRoot, 'plugins', 'genie'), genieHome, out);
   }
 }
 
@@ -202,7 +252,7 @@ export function collectAgentSyncAssets(targets: AgentSyncRemovalTargets = {}): A
   collectManagedSkillDirs(targets.agentsSkillsDir ?? resolveAgentsSkillsDir(), 'codex', out);
   collectManagedSkillDirs(codexLegacyCuratedDir(codexDir), 'codex', out);
   collectManagedCouncil(claudeDir, out);
-  collectHermesLink(hermesHome, genieHome, out);
+  collectHermesLinks(hermesHome, genieHome, out);
   return out;
 }
 
@@ -248,8 +298,16 @@ export function removeAgentSyncAssets(targets: AgentSyncRemovalTargets = {}): Ag
         }
         removed.push(asset.path);
       } else {
-        if (asset.kind === 'skill') rmSync(asset.path, { recursive: true, force: true });
-        else unlinkSync(asset.path);
+        if (asset.kind === 'skill') {
+          // Revalidate immediately before the destructive step. The initial
+          // scan is only a preview; user edits that land before confirmation
+          // revoke Genie's deletion authority.
+          if (classifyManagedSkillDir(asset.path) !== 'clean') {
+            kept.push(asset.path);
+            continue;
+          }
+          rmSync(asset.path, { recursive: true, force: true });
+        } else unlinkSync(asset.path);
         removed.push(asset.path);
       }
     } catch (error) {
@@ -266,6 +324,31 @@ interface UninstallFailure {
 
 interface UninstallResult {
   failures: UninstallFailure[];
+}
+
+export interface UninstallWorkSnapshot {
+  hasGenieDir: boolean;
+  hasHookScript: boolean;
+  hasOrchestrationRules: boolean;
+  symlinkCount: number;
+  hasAgentAssets: boolean;
+  codexRoleInventoryStatus: 'missing' | 'valid' | 'corrupt';
+  runtimeEvidence: { codex: boolean; claude: boolean };
+  removeMarketplace: boolean;
+}
+
+export function hasUninstallWork(snapshot: UninstallWorkSnapshot): boolean {
+  return (
+    snapshot.hasGenieDir ||
+    snapshot.hasHookScript ||
+    snapshot.hasOrchestrationRules ||
+    snapshot.symlinkCount > 0 ||
+    snapshot.hasAgentAssets ||
+    snapshot.codexRoleInventoryStatus !== 'missing' ||
+    snapshot.runtimeEvidence.codex ||
+    snapshot.runtimeEvidence.claude ||
+    snapshot.removeMarketplace
+  );
 }
 
 function removeSyncedAgentAssets(hasAgentAssets: boolean, failures: UninstallFailure[]): void {
@@ -330,9 +413,13 @@ function performUninstall(
 
   if (existingSymlinks.length > 0) {
     console.log('\x1b[2mRemoving symlinks...\x1b[0m');
-    const removed = removeSymlinks();
+    const symlinks = removeSymlinks(LOCAL_BIN, genieDir);
+    const removed = symlinks.removed;
     if (removed.length > 0) {
       console.log(`  \x1b[32m+\x1b[0m Removed: ${removed.join(', ')}`);
+    }
+    for (const failure of symlinks.failures) {
+      failures.push({ step: `Removing symlink ${contractPath(failure.path)}`, detail: failure.detail });
     }
   }
 
@@ -361,101 +448,113 @@ function performUninstall(
 }
 
 export async function uninstallCommand(options: { removeMarketplace?: boolean } = {}): Promise<void> {
-  console.log();
-  console.log('\x1b[1m\x1b[33m Uninstall Genie CLI\x1b[0m');
-  console.log();
-
-  const genieDir = getGenieDir();
-  const hasGenieDir = existsSync(genieDir);
-  const hasHookScript = hookScriptExists();
-  const hasOrchestrationRules = existsSync(ORCHESTRATION_RULES_PATH);
-  const existingSymlinks = SYMLINKS.filter((name) => isGenieSymlink(join(LOCAL_BIN, name)));
-  const agentAssets = collectAgentSyncAssets();
-  const hasAgentAssets = agentAssets.length > 0;
-  const codexRoleAgents = inspectCodexAgentOwnership();
-  const managedRoleAgents = codexRoleAgents.entries.filter((entry) => entry.ownership.startsWith('managed-'));
-
-  console.log('\x1b[2mThis will remove:\x1b[0m');
-  console.log('  \x1b[31m-\x1b[0m Genie plugins and digest-owned Codex role agents');
-  if (options.removeMarketplace) console.log('  \x1b[31m-\x1b[0m Automagik client marketplace registrations');
-  if (hasHookScript) console.log('  \x1b[31m-\x1b[0m Hook script (~/.claude/hooks/genie-bash-hook.sh)');
-  if (hasOrchestrationRules)
-    console.log(`  \x1b[31m-\x1b[0m Orchestration rules (${contractPath(ORCHESTRATION_RULES_PATH)})`);
-  if (hasGenieDir) console.log(`  \x1b[31m-\x1b[0m Genie directory (${contractPath(genieDir)})`);
-  if (existingSymlinks.length > 0)
-    console.log(`  \x1b[31m-\x1b[0m Symlinks from ~/.local/bin: ${existingSymlinks.join(', ')}`);
-  const keptAssets = agentAssets.filter((asset) => asset.modified);
-  const removableAssets = agentAssets.length - keptAssets.length;
-  if (removableAssets > 0)
-    console.log(
-      `  \x1b[31m-\x1b[0m Synced agent assets: ${removableAssets} unmodified managed skill dir(s)/council.js/hermes link across claude/codex/hermes`,
-    );
-  if (keptAssets.length > 0) {
-    console.log(
-      `  \x1b[33m~\x1b[0m KEPT byte-identical (modified or ownership metadata needs review): ${keptAssets.length} managed asset(s):`,
-    );
-    for (const asset of keptAssets) console.log(`      \x1b[33m${contractPath(asset.path)}\x1b[0m`);
-  }
-  if (managedRoleAgents.length > 0) {
-    const modified = managedRoleAgents.filter((entry) => entry.ownership === 'managed-modified').length;
-    console.log(
-      `  \x1b[31m-\x1b[0m Codex role agents: ${managedRoleAgents.length - modified} clean; ${modified} modified will be kept byte-identical`,
-    );
-  }
-  if (codexRoleAgents.status === 'corrupt') {
-    console.log('  \x1b[33m!\x1b[0m Codex role-agent ownership inventory is corrupt and requires review');
-  }
-  console.log();
-
-  if (
-    !hasGenieDir &&
-    !hasHookScript &&
-    !hasOrchestrationRules &&
-    existingSymlinks.length === 0 &&
-    !hasAgentAssets &&
-    codexRoleAgents.status === 'missing'
-  ) {
-    console.log('\x1b[33mNothing to uninstall.\x1b[0m');
+  const lifecycleLease = acquireLifecycleLease(getGenieDir());
+  if ('skipped' in lifecycleLease)
+    throw new Error(`Another Genie lifecycle command is active: ${lifecycleLease.skipped}`);
+  try {
     console.log();
-    return;
-  }
-
-  const proceed = await confirm({ message: 'Are you sure you want to uninstall Genie CLI?', default: false });
-  if (!proceed) {
+    console.log('\x1b[1m\x1b[33m Uninstall Genie CLI\x1b[0m');
     console.log();
-    console.log('\x1b[2mUninstall cancelled.\x1b[0m');
-    console.log();
-    return;
-  }
 
-  console.log();
-  const result = performUninstall(
-    hasHookScript,
-    existingSymlinks,
-    genieDir,
-    hasGenieDir,
-    hasAgentAssets,
-    options.removeMarketplace ?? false,
-  );
+    const genieDir = getGenieDir();
+    const hasGenieDir = existsSync(genieDir);
+    const hasHookScript = hookScriptExists();
+    const hasOrchestrationRules = existsSync(ORCHESTRATION_RULES_PATH);
+    const existingSymlinks = SYMLINKS.filter((name) => isGenieSymlink(join(LOCAL_BIN, name), genieDir));
+    const agentAssets = collectAgentSyncAssets();
+    const hasAgentAssets = agentAssets.length > 0;
+    const codexRoleAgents = inspectCodexAgentOwnership();
+    const managedRoleAgents = codexRoleAgents.entries.filter((entry) => entry.ownership.startsWith('managed-'));
+    const runtimeEvidence = inspectRuntimeIntegrationEvidence();
 
-  console.log();
-  if (result.failures.length > 0) {
-    process.exitCode = 1;
-    console.log('\x1b[31m!\x1b[0m Genie CLI uninstall is incomplete; no success was reported.');
-    for (const failure of result.failures) {
-      console.log(`  \x1b[31m-\x1b[0m ${failure.step}: ${failure.detail}`);
+    console.log('\x1b[2mThis will remove:\x1b[0m');
+    console.log('  \x1b[31m-\x1b[0m Genie plugins and digest-owned Codex role agents');
+    if (options.removeMarketplace) console.log('  \x1b[31m-\x1b[0m Automagik client marketplace registrations');
+    if (hasHookScript) console.log('  \x1b[31m-\x1b[0m Hook script (~/.claude/hooks/genie-bash-hook.sh)');
+    if (hasOrchestrationRules)
+      console.log(`  \x1b[31m-\x1b[0m Orchestration rules (${contractPath(ORCHESTRATION_RULES_PATH)})`);
+    if (hasGenieDir) console.log(`  \x1b[31m-\x1b[0m Genie directory (${contractPath(genieDir)})`);
+    if (existingSymlinks.length > 0)
+      console.log(`  \x1b[31m-\x1b[0m Symlinks from ~/.local/bin: ${existingSymlinks.join(', ')}`);
+    const keptAssets = agentAssets.filter((asset) => asset.modified);
+    const removableAssets = agentAssets.length - keptAssets.length;
+    if (removableAssets > 0)
+      console.log(
+        `  \x1b[31m-\x1b[0m Synced agent assets: ${removableAssets} unmodified managed skill dir(s)/council.js/hermes link across claude/codex/hermes`,
+      );
+    if (keptAssets.length > 0) {
+      console.log(
+        `  \x1b[33m~\x1b[0m KEPT byte-identical (modified or ownership metadata needs review): ${keptAssets.length} managed asset(s):`,
+      );
+      for (const asset of keptAssets) console.log(`      \x1b[33m${contractPath(asset.path)}\x1b[0m`);
     }
-    if (hasGenieDir && existsSync(genieDir)) {
-      console.log(`  \x1b[33m!\x1b[0m Kept ${contractPath(genieDir)} so you can retry \`genie uninstall\`.`);
+    if (managedRoleAgents.length > 0) {
+      const modified = managedRoleAgents.filter((entry) => entry.ownership === 'managed-modified').length;
+      console.log(
+        `  \x1b[31m-\x1b[0m Codex role agents: ${managedRoleAgents.length - modified} clean; ${modified} modified will be kept byte-identical`,
+      );
+    }
+    if (codexRoleAgents.status === 'corrupt') {
+      console.log('  \x1b[33m!\x1b[0m Codex role-agent ownership inventory is corrupt and requires review');
     }
     console.log();
-    return;
+
+    if (
+      !hasUninstallWork({
+        hasGenieDir,
+        hasHookScript,
+        hasOrchestrationRules,
+        symlinkCount: existingSymlinks.length,
+        hasAgentAssets,
+        codexRoleInventoryStatus: codexRoleAgents.status,
+        runtimeEvidence,
+        removeMarketplace: options.removeMarketplace ?? false,
+      })
+    ) {
+      console.log('\x1b[33mNothing to uninstall.\x1b[0m');
+      console.log();
+      return;
+    }
+
+    const proceed = await confirm({ message: 'Are you sure you want to uninstall Genie CLI?', default: false });
+    if (!proceed) {
+      console.log();
+      console.log('\x1b[2mUninstall cancelled.\x1b[0m');
+      console.log();
+      return;
+    }
+
+    console.log();
+    const result = performUninstall(
+      hasHookScript,
+      existingSymlinks,
+      genieDir,
+      hasGenieDir,
+      hasAgentAssets,
+      options.removeMarketplace ?? false,
+    );
+
+    console.log();
+    if (result.failures.length > 0) {
+      process.exitCode = 1;
+      console.log('\x1b[31m!\x1b[0m Genie CLI uninstall is incomplete; no success was reported.');
+      for (const failure of result.failures) {
+        console.log(`  \x1b[31m-\x1b[0m ${failure.step}: ${failure.detail}`);
+      }
+      if (hasGenieDir && existsSync(genieDir)) {
+        console.log(`  \x1b[33m!\x1b[0m Kept ${contractPath(genieDir)} so you can retry \`genie uninstall\`.`);
+      }
+      console.log();
+      return;
+    }
+    console.log('\x1b[32m+\x1b[0m Genie CLI uninstalled.');
+    console.log();
+    console.log('\x1b[2mNote: If you installed via npm/bun, also run:\x1b[0m');
+    console.log('  \x1b[36mbun remove -g @automagik/genie\x1b[0m');
+    console.log('  \x1b[2mor\x1b[0m');
+    console.log('  \x1b[36mnpm uninstall -g @automagik/genie\x1b[0m');
+    console.log();
+  } finally {
+    lifecycleLease.release();
   }
-  console.log('\x1b[32m+\x1b[0m Genie CLI uninstalled.');
-  console.log();
-  console.log('\x1b[2mNote: If you installed via npm/bun, also run:\x1b[0m');
-  console.log('  \x1b[36mbun remove -g @automagik/genie\x1b[0m');
-  console.log('  \x1b[2mor\x1b[0m');
-  console.log('  \x1b[36mnpm uninstall -g @automagik/genie\x1b[0m');
-  console.log();
 }

@@ -5,7 +5,7 @@ description: "Batch-execute SHIP-ready wishes overnight — pick wishes, orchest
 
 # dream — Overnight Batch Execution
 
-**Runtime syntax:** invoke named skills as `$name` in Codex and `/name` in Claude Code or Hermes. This body uses bare skill names so the workflow stays portable.
+**Runtime syntax:** in Codex, invoke the plugin copy with the owner-qualified `$genie:<skill>` selector; use bare `$<skill>` only for a separately installed personal copy. Claude Code and Hermes use `/<skill>`. Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active tier.
 
 Pick SHIP-ready wishes, build a dependency-ordered plan, dispatch one worker subagent per wish, review PRs, merge to dev, run the QA loop, and write a wake-up report. The dream orchestrator dispatches — it never executes wish work directly.
 
@@ -13,7 +13,7 @@ This is a high-impact, explicit-only workflow. The user must approve the selecte
 
 ## When to Use
 - Human wants to queue multiple wishes for autonomous overnight execution
-- Multiple SHIP-ready wishes sit under `Poured` in `.genie/brainstorm.md`
+- Multiple WISH.md files have persisted status `APPROVED`
 
 ## Flow
 1. **Pick wishes** (Picker below); human confirms the selection.
@@ -24,8 +24,8 @@ This is a high-impact, explicit-only workflow. The user must approve the selecte
 6. **Phase 4 — Report:** write `.genie/DREAM-REPORT.md`, the wake-up artifact.
 
 ## Picker
-1. Read `.genie/brainstorm.md`, locate the `Poured` section. No entries → print `No SHIP-ready wishes found in .genie/brainstorm.md` and stop.
-2. List entries numbered in original order: `1. <slug> — <one-line description>`.
+1. Read `.genie/wishes/*/WISH.md` and select only wishes whose Status field is exactly `APPROVED`. The brainstorm jar is historical/discovery context, never readiness authority. A Poured entry without an existing approved WISH.md is skipped and reported as drift. No matches → print `No APPROVED wishes found under .genie/wishes/` and stop.
+2. List matches numbered by slug: `1. <slug> — <one-line description>`.
 3. Human picks by number (`1 3 5`) or `all`.
 
 ## DREAM.md

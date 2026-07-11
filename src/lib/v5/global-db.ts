@@ -161,6 +161,59 @@ export function upsertAgentSession(
   ).run(provider, instance, chat, threadId, now);
 }
 
+/** Insert only when no route session exists. False means a concurrent owner won. */
+export function insertAgentSessionIfAbsent(
+  db: Database,
+  provider: AgentProvider,
+  instance: string,
+  chat: string,
+  threadId: string,
+  now = Date.now(),
+): boolean {
+  const result = db
+    .query(
+      `INSERT INTO agent_sessions(provider, instance, chat, thread_id, updated_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(provider, instance, chat) DO NOTHING`,
+    )
+    .run(provider, instance, chat, threadId, now);
+  return result.changes === 1;
+}
+
+/** Compare-and-swap a route session. False means the expected id is stale. */
+export function replaceAgentSessionIfCurrent(
+  db: Database,
+  provider: AgentProvider,
+  instance: string,
+  chat: string,
+  expectedThreadId: string,
+  replacementThreadId: string,
+  now = Date.now(),
+): boolean {
+  const result = db
+    .query(
+      `UPDATE agent_sessions
+       SET thread_id = ?, updated_at = ?
+       WHERE provider = ? AND instance = ? AND chat = ? AND thread_id = ?`,
+    )
+    .run(replacementThreadId, now, provider, instance, chat, expectedThreadId);
+  return result.changes === 1;
+}
+
+/** Delete only the exact stale route session observed by a recovery attempt. */
+export function clearAgentSessionIfCurrent(
+  db: Database,
+  provider: AgentProvider,
+  instance: string,
+  chat: string,
+  expectedThreadId: string,
+): boolean {
+  const result = db
+    .query('DELETE FROM agent_sessions WHERE provider = ? AND instance = ? AND chat = ? AND thread_id = ?')
+    .run(provider, instance, chat, expectedThreadId);
+  return result.changes === 1;
+}
+
 /** Create every table/index if absent. Idempotent — pure `IF NOT EXISTS`. */
 export function ensureSchema(db: Database): void {
   db.exec(SCHEMA_SQL);

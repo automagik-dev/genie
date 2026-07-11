@@ -14,7 +14,7 @@
 
 ## Summary
 
-Make the Codex integration introduced by PR #2545 safe to install, update, review, and trust. The original PR has since merged; this branch is a bounded follow-up on current `dev`, not a retroactive claim that the reviewed PR passed its blocked gates. Implementation has replaced the nine-command hook set, physicalized the skill payload, and hardened ownership/lifecycle paths, while aggregate validation, exact-final-SHA GitHub CI, human approval, and stable-release authorization remain open.
+Make the Codex integration introduced by PR #2545 safe to install, update, review, and trust. The original PR has since merged; this branch is a bounded follow-up targeting `dev`, not a retroactive claim that the reviewed PR passed its blocked gates. Implementation has replaced the nine-command hook set, physicalized the skill payload, and hardened ownership/lifecycle paths. The final local aggregate and repository-controlled docs/runtime/lifecycle cross-reviews now pass; exact-final-SHA supported-Bun CI, independent human approval, the final seven-lane replay, the final live baseline comparison, merge-tree evidence, and stable-release authorization remain open.
 
 The review ledger is [`REVIEW-DISPOSITION.md`](./REVIEW-DISPOSITION.md), the exact nine-command audit is [`HOOK-AUDIT.md`](./HOOK-AUDIT.md), and the read-only user-asset baseline is [`USER-ASSET-BASELINE.md`](./USER-ASSET-BASELINE.md). Every implementation claim must close against those artifacts rather than a prose-only “remaining issues” bucket.
 
@@ -337,7 +337,7 @@ git merge-tree --write-tree origin/dev HEAD
 | Hook tests accidentally execute mutating legacy commands | High | Test manifest structure and fake launchers in isolated HOME; keep live hooks untrusted. |
 | Parallel writers overlap ownership/lifecycle files | High | Every group has an explicit exclusive file list; D1/D2/D3 start only after A–C independent reviews. |
 | Personal skill migration is overwritten by the current updater | High | Do not run live `genie update`; test with isolated homes until Group C lands. |
-| Local Bun is 1.3.9, below the repository minimum | Medium | Treat current results as provisional; require supported Bun/CI evidence before ship. |
+| Local Bun is 1.3.9, below the repository minimum | Medium | Record the green local aggregate as local evidence; still require exact-final-SHA CI on supported Bun before ship. |
 | Scope expands into inherited release security debt | Medium | Keep it OUT, track it in the blocking stable-release wish, and do not authorize stable release until remediated. |
 
 ---
@@ -348,7 +348,25 @@ Seven-lane specialist panel at the starting head: Repository hygiene BLOCKED; se
 
 Plan review rounds 1 and 2 returned FIX-FIRST. Round 3 returned SHIP after the plan added the canonical skill source/mirror contract, exact file ownership, complete finding and hook ledgers, a live-asset digest baseline, split lifecycle groups, and a separate inherited stable-release blocker.
 
-Execution update 2026-07-11: PR #2545 merged via `6f682e2b` from source `10ceb2c0`. Remediation commit `a2e3155a` was rebased onto `dev` `5101fd35`; Group E continues as an uncommitted follow-up. `WISH.md` stays IN_PROGRESS until the aggregate suite, exact-final-SHA GitHub jobs, final post-test baseline comparison, and independent approval are recorded. Rows F16–F18/F31 remain stable-release blockers regardless of the follow-up verdict.
+Execution update 2026-07-11: PR #2545 merged via `6f682e2b` from source `10ceb2c0`. The follow-up branch targets `dev` and its integrated repository-controlled docs/runtime/lifecycle reviews returned SHIP after their fixes. The final stable local `bun run check` passed with 1,169 tests, 1 pre-existing skip, 0 failures across 60 files; its complexity gate reported 2/7 warnings, a 35/42 maximum score, and 0/8 explicit suppressions. A Darwin ARM64 release tarball built and extracted with source/package parity at 21 MB. The product payload contains 23 skills and 19 reference files; the physical plugin mirror contains 64 files totaling 209,675 logical bytes.
+
+`WISH.md` stays IN_PROGRESS. The final seven-lane replay is still pending, as are exact-final-SHA supported-Bun GitHub CI, independent human approval, the final read-only live baseline comparison, and the final merge-tree simulation. The outer bare-Node hook/MCP startup probe is **BLOCKED-UPSTREAM** by the current Codex schema, and the installed hook hashes remain untrusted; neither condition is represented as a local repository pass. Rows F16–F18/F31 remain stable-release blockers regardless of the follow-up verdict.
+
+### Current release-gate evidence
+
+| Gate | Evidence | State |
+|------|----------|-------|
+| Local aggregate | `bun run check`: 1,169 pass, 1 pre-existing skip, 0 fail across 60 files | PASS (local Bun 1.3.9) |
+| Complexity ratchet | 2/7 warnings; max 35/42; 0/8 explicit suppressions | PASS |
+| Darwin ARM64 package | Build and extraction parity; 21 MB tarball | PASS |
+| Product/plugin payload | 23 skills + 19 reference files; physical plugin mirror 64 files / 209,675 logical bytes | PASS |
+| Repository cross-review | Docs, runtime, and lifecycle reviews returned SHIP after fixes | SHIP |
+| Outer host startup | Bare-Node hook/MCP startup cannot be completed under the current Codex schema | BLOCKED-UPSTREAM |
+| Final specialist replay | Seven-lane Ultra replay on the final tree | PENDING |
+| Live user assets | Final read-only comparison against 36 skills / 14 agent TOMLs | PENDING |
+| Mergeability | Final `git merge-tree --write-tree origin/dev HEAD` | PENDING |
+| External gates | Exact-final-SHA supported-Bun GitHub CI and independent human approval | PENDING |
+| Stable promotion | Inherited F16–F18/F31 in `stable-release-security-gate` | BLOCKING |
 
 ---
 

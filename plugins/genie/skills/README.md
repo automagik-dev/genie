@@ -3,9 +3,10 @@
 `skills/` is the canonical, runtime-neutral source for Genie's 23 product skills. Each directory contains a
 `SKILL.md`, optional bundled resources, and `agents/openai.yaml` for Codex UI metadata.
 
-Shared skill bodies name other skills without a host-specific prefix. Invoke them through the active client:
+Shared skill bodies name semantic routes without a host-specific prefix. Invoke them through the active owner tier:
 
-- Codex: `$brainstorm`, `$wish`, `$review`, `$work`
+- Codex plugin: `$genie:brainstorm`, `$genie:wish`, `$genie:review`, `$genie:work`
+- Separately installed Codex personal copies: `$brainstorm`, `$wish`, `$review`, `$work`
 - Claude Code and Hermes: `/brainstorm`, `/wish`, `/review`, `/work`
 
 The lifecycle is:

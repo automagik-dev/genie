@@ -1,4 +1,4 @@
 interface:
   display_name: "Bug Report"
   short_description: "Investigate bugs and prepare grounded issue reports"
-  default_prompt: "Use $report to investigate this bug and prepare a grounded issue report."
+  default_prompt: "Use $genie:report (or $report only for a separately installed personal copy) to investigate this bug and prepare a grounded issue report."

@@ -13,31 +13,17 @@ interface ReviewerProfile {
   default_permissions?: unknown;
   sandbox_mode?: unknown;
   sandbox_workspace_write?: unknown;
-  permissions?: Record<string, { extends?: unknown; filesystem?: Record<string, unknown>; workspace_roots?: unknown }>;
+  permissions?: Record<string, unknown>;
 }
 
 function reviewerPermissionViolations(profile: ReviewerProfile): string[] {
   const violations: string[] = [];
   if (profile.approval_policy !== 'never') violations.push('approval policy must be never');
-  if (profile.default_permissions !== 'genie-reviewer-temp') violations.push('named profile must be selected');
+  if (profile.default_permissions !== ':read-only') violations.push('built-in read-only permissions must be selected');
   if (profile.sandbox_mode !== undefined) violations.push('legacy sandbox mode must not override the named profile');
   if (profile.sandbox_workspace_write !== undefined) violations.push('legacy workspace-write grants are forbidden');
-  const names = Object.keys(profile.permissions ?? {});
-  if (names.length !== 1 || names[0] !== 'genie-reviewer-temp') violations.push('unexpected permission profile');
-  const selected = profile.permissions?.['genie-reviewer-temp'];
-  if (selected?.extends !== ':read-only') violations.push('profile must extend :read-only');
-  if (selected?.workspace_roots !== undefined) violations.push('workspace roots are forbidden');
-  const filesystem = selected?.filesystem ?? {};
-  const entries = Object.entries(filesystem).sort(([left], [right]) => left.localeCompare(right));
-  if (
-    JSON.stringify(entries) !==
-    JSON.stringify([
-      [':slash_tmp', 'write'],
-      [':tmpdir', 'write'],
-    ])
-  ) {
-    violations.push('only :tmpdir and :slash_tmp may be writable');
-  }
+  if (Object.keys(profile.permissions ?? {}).length > 0)
+    violations.push('custom writable permission profiles are forbidden');
   return violations;
 }
 
@@ -67,8 +53,11 @@ describe('Group E release and documentation contracts', () => {
       "'plugins/**'",
       "'package.json'",
       "'bun.lock'",
+      "'bunfig.toml'",
       "'tsconfig.json'",
       "'scripts/build-binary.sh'",
+      "'scripts/build.js'",
+      "'scripts/hook-bundle-parity.ts'",
       "'scripts/sync-plugin-skills.ts'",
       "'scripts/fresh-install-smoke.ts'",
       "'scripts/skills-lint.ts'",
@@ -87,10 +76,33 @@ describe('Group E release and documentation contracts', () => {
 
   test('release create and promotion paths retain the one-time convergence caveat', () => {
     const workflow = read('.github/workflows/release-publish.yml');
-    expect(workflow).toContain('genie-agent-sync-migration-v1');
-    expect(workflow).toContain('append_migration_note');
-    expect(workflow).toContain('gh release create');
-    expect(workflow).toContain('gh release edit');
+    const helper = read('scripts/reconcile-release-note.sh');
+    expect(workflow).toContain('bash scripts/reconcile-release-note.sh');
+    expect(helper).toContain('genie-agent-sync-migration-v1');
+    expect(helper).toContain('older than `5.260711.6`');
+    expect(helper).toContain('create_args=(release create');
+    expect(helper).toContain('gh release edit');
+  });
+
+  test('release packaging validates generated hooks and the extracted archive payload', () => {
+    const build = read('scripts/build-binary.sh');
+    expect(build).toContain('scripts/hook-bundle-parity.ts');
+    const archive = build.indexOf('tar czf "${TARBALL}"');
+    const extract = build.indexOf('tar -xzf "${TARBALL}"');
+    const postExtractSmoke = build.lastIndexOf('scripts/fresh-install-smoke.ts');
+    const postExtractVersion = build.lastIndexOf('scripts/release-payload-version.ts');
+    expect(archive).toBeGreaterThan(-1);
+    expect(extract).toBeGreaterThan(archive);
+    expect(build).toContain('assert_release_tree_equal "${STAGE}" "${VERIFY_ROOT}"');
+    expect(build).toContain('cmp -- "${source_file}" "${extracted_file}"');
+    expect(postExtractSmoke).toBeGreaterThan(extract);
+    expect(postExtractVersion).toBeGreaterThan(extract);
+  });
+
+  test('committed CI reproduces the council and generated-hook parts of the local gate', () => {
+    const workflow = read('.github/workflows/ci.yml');
+    expect(workflow).toContain('bun run lint:council-workflow');
+    expect(workflow).toContain('bun run lint:hook-bundles');
   });
 
   test('resurrected metrics bot and incompatible generated state stay retired', () => {
@@ -100,15 +112,16 @@ describe('Group E release and documentation contracts', () => {
     }
   });
 
-  test('reviewer permission profile grants writes only to Codex special temporary roots', () => {
+  test('reviewer permission profile remains read-only even for temporary-hosted worktrees', () => {
     const profile = Bun.TOML.parse(read('plugins/genie/codex-agents/genie-reviewer.toml')) as ReviewerProfile;
     expect(reviewerPermissionViolations(profile)).toEqual([]);
 
-    for (const forbiddenFilesystem of [{ ':workspace_roots': 'write' }, { '/repo': 'write' }, { '~/': 'write' }]) {
-      const broadened = structuredClone(profile);
-      Object.assign(broadened.permissions?.['genie-reviewer-temp']?.filesystem ?? {}, forbiddenFilesystem);
-      expect(reviewerPermissionViolations(broadened)).toContain('only :tmpdir and :slash_tmp may be writable');
-    }
+    expect(reviewerPermissionViolations({ ...profile, permissions: { unsafe: {} } })).toContain(
+      'custom writable permission profiles are forbidden',
+    );
+    expect(reviewerPermissionViolations({ ...profile, default_permissions: 'genie-reviewer-temp' })).toContain(
+      'built-in read-only permissions must be selected',
+    );
     expect(reviewerPermissionViolations({ ...profile, sandbox_mode: 'workspace-write' })).toContain(
       'legacy sandbox mode must not override the named profile',
     );
@@ -159,5 +172,34 @@ describe('Group E release and documentation contracts', () => {
     ]) {
       expect(docs).toContain(statement);
     }
+  });
+
+  test('plugin docs and cards use owner-qualified selectors with an explicit personal fallback', () => {
+    const docs = `${read('README.md')}\n${read('plugins/genie/README.md')}\n${read('skills/README.md')}`;
+    for (const skill of ['brainstorm', 'wish', 'review', 'work']) {
+      expect(docs).toContain(`$genie:${skill}`);
+    }
+    expect(docs).toContain('separately installed personal');
+    const manifest = read('plugins/genie/.codex-plugin/plugin.json');
+    for (const skill of ['wish', 'work', 'review']) expect(manifest).toContain(`$genie:${skill}`);
+  });
+
+  test('lifecycle skills share persisted WISH state and keep reviewers read-only', () => {
+    const lifecycle = read('skills/genie/reference/lifecycle.md');
+    for (const status of ['`DRAFT`', '`FIX-FIRST`', '`APPROVED`', '`IN_PROGRESS`', '`BLOCKED`', '`SHIPPED`']) {
+      expect(lifecycle).toContain(status);
+    }
+    expect(read('skills/dream/SKILL.md')).toContain('Status field is exactly `APPROVED`');
+    expect(read('skills/brainstorm/SKILL.md')).toContain('Do not move it to Poured before a WISH.md exists');
+    expect(read('skills/review/SKILL.md')).toContain('The reviewer is read-only');
+  });
+
+  test('Omni and MCP operator instructions expose provider and fallback policy', () => {
+    const omni = read('skills/omni/SKILL.md');
+    expect(omni).toContain('{instance, chat, repo, agent, persona?}');
+    expect(omni).toContain('"agent": "codex"');
+    const readme = read('README.md');
+    expect(readme).toContain('no installed, enabled, usable Genie plugin route');
+    for (const path of ['.mcp.json', '.warp/.mcp.json', '.codex/config.toml']) expect(readme).toContain(path);
   });
 });

@@ -26,8 +26,9 @@
     "skills:audit": "bun run scripts/skills-audit.ts",
     "lint:complexity-budget": "bun run scripts/complexity-budget.ts",
     "lint:council-workflow": "bun scripts/council-workflow-lint.ts",
-    "check": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint && bun run lint:council-workflow && bun test",
-    "check:fast": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint",
+    "lint:hook-bundles": "bun scripts/hook-bundle-parity.ts --check",
+    "check": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint && bun run lint:council-workflow && bun run lint:hook-bundles && bun test",
+    "check:fast": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint && bun run lint:council-workflow && bun run lint:hook-bundles",
     "verify:release": "scripts/verify-release.sh"
   },
   "dependencies": {

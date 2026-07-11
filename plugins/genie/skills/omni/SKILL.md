@@ -5,7 +5,7 @@ description: "Wire a Genie agent to an Omni channel in one canonical flow — re
 
 # Omni — Canonical Genie ↔ Omni Wiring
 
-**Runtime syntax:** invoke named skills as `$name` in Codex and `/name` in Claude Code or Hermes. This body uses bare skill names so the workflow stays portable.
+**Runtime syntax:** in Codex, invoke the plugin copy with the owner-qualified `$genie:<skill>` selector; use bare `$<skill>` only for a separately installed personal copy. Claude Code and Hermes use `/<skill>`. Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active tier.
 
 Take an operator from "channel connected in Omni" to "messages in that channel reach a Genie agent and get replies". This skill owns the wiring flow. If separate Omni setup, messaging, or administration skills are installed, invoke them through the active runtime's skill surface; otherwise use current `omni --help` output and stop when a required capability is unavailable.
 
@@ -50,9 +50,24 @@ Configuration lives in the `omni` section of `~/.genie/config.json`; env vars ov
 | `omni.instance` | `OMNI_INSTANCE` | Instance carrying approval traffic |
 | `omni.approvalChat` | `OMNI_APPROVAL_CHAT` | Chat that receives approval requests |
 | `omni.approvals.enabled` | `OMNI_APPROVALS_ENABLED=1` | Feature gate (also needs instance + approvalChat) |
-| `omni.routes[]` | — | Inbound one-shot routes: `{instance, chat, repo, persona?}` |
+| `omni.routes[]` | — | Inbound one-shot routes: `{instance, chat, repo, agent, persona?}` where `agent` is `claude` or `codex` |
 
-A route maps an `(instance, chat)` pair to an absolute repo path; the run's persona defaults to `<repo>/AGENTS.md` when `persona` is omitted. Unrouted chats are store-only — they land in the inbox with no agent run.
+A route maps an `(instance, chat)` pair to an absolute repo path and an explicit provider. Do not omit `agent`: the compatibility default is `claude`, which can silently route a message to the wrong client when the operator intended Codex. The run's persona defaults to `<repo>/AGENTS.md` when `persona` is omitted. Unrouted chats are store-only — they land in the inbox with no agent run.
+
+```json
+{
+  "omni": {
+    "routes": [
+      {
+        "instance": "<instance-id>",
+        "chat": "<chat-id>",
+        "repo": "/absolute/path/to/repo",
+        "agent": "codex"
+      }
+    ]
+  }
+}
+```
 
 ## Phase 4 — Run and verify
 
@@ -64,7 +79,7 @@ genie omni test-approval --live     # ONE real approval to the configured chat (
 genie omni inbox --unhandled        # inbound messages awaiting handling
 ```
 
-Finish with a real round-trip: the operator sends a message in the wired chat and confirms the agent's reply arrives. Report the verified topology — instance id, chat, repo, persona source — with the evidence for each, not intentions.
+Finish with a real round-trip: the operator sends a message in the wired chat and confirms the selected provider's reply arrives. Report the verified topology — instance id, chat, repo, `agent`, persisted provider/thread key, and persona source — with the evidence for each, not intentions.
 
 ## Rules
 

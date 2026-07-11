@@ -1,4 +1,4 @@
 interface:
   display_name: "Code Quality"
   short_description: "Run code gates and audit type discipline"
-  default_prompt: "Use $code-quality to run the real gates and identify correctness risks."
+  default_prompt: "Use $genie:code-quality (or $code-quality only for a separately installed personal copy) to run the real gates and identify correctness risks."

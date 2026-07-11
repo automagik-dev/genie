@@ -23,6 +23,11 @@ Official references:
 | CLI-only user-tier fallback | `~/.agents/skills/<name>` | Explicit install/update may manage only digest-proven Genie copies; unmanaged, malformed, symlinked, or modified collisions are preserved |
 | Personal migration | 36 adapted skills and 14 custom agents in the maintainer's user tier | Separate user-owned installation; not part of the 23-skill product payload |
 
+Codex invokes plugin skills with the owner-qualified `$genie:<skill>` selector.
+Bare `$<skill>` selectors are reserved for separately installed personal
+copies; this distinction prevents a same-name personal workflow from silently
+winning manual plugin invocation.
+
 ## Hook contract
 
 Codex hook trust is hash-specific and commands run outside the model tool sandbox. Repository or plugin edits do not update an installed cache. After explicit setup/update, operators inspect `/hooks` and start a new task; until then all changed definitions remain untrusted.
@@ -39,7 +44,7 @@ PreToolUse cannot intercept every possible mutation. It is defense in depth, not
 
 `genie install --integrations codex`, `genie setup --codex`, and `genie update` are the only installation/update paths. SessionStart performs no setup, update, plugin refresh, skill synchronization, or project write.
 
-An update launched by a pre-convergence binary can deliver the new payload without knowing the new convergence phase. Run one explicit `genie update` after that first command returns; the newly installed binary then converges product integrations. Current update code performs post-swap convergence inside the already-reviewed parent process and never re-enters a freshly installed older binary as `genie update`.
+An update crossing from a release older than `5.260711.6` to `5.260711.6` or later can deliver the new payload without the old process knowing the new convergence phase. Run one explicit `genie update` after that first command returns; the newly installed binary then converges product integrations. Current update code performs post-swap convergence inside the already-reviewed parent process and never re-enters a freshly installed older binary as `genie update`.
 
 The 2026-07-11 dogfood incident demonstrated the failure mode: `5.260710.13` selected stale stable `5.260710.2`; an environment-only sync request was misread by the fresh old child as another full update to `5.260711.3`; legacy adoption then replaced 22 same-name personal skills and created a duplicate `review`. Automatic backups restored all 22 adapted directories, both recreated review copies were quarantined, old hook trust was removed, and the 36 skill plus 14 agent baselines matched exactly. The follow-up prevents adoption of user-owned collisions and leaves final post-test baseline comparison as a release-gate action.
 
@@ -49,9 +54,14 @@ The active client supplies its native spawn/follow-up/wait/interrupt tools; shar
 
 Each engineer claims with `genie task checkout <task-id> --worker <name>`, reports completion, and remains `in_progress`. An independent reviewer validates the group. Only the orchestrator calls `genie task done` after SHIP and passing evidence.
 
+Reviewer verdicts and WISH status are distinct. Reviewers return read-only
+SHIP/FIX-FIRST/BLOCKED evidence; the invoking orchestrator appends it and owns
+durable `DRAFT` → `FIX-FIRST`/`APPROVED` → `IN_PROGRESS` → `SHIPPED`
+transitions (with `BLOCKED` only for a recorded blocker).
+
 ## Automation boundary
 
-The review workflow uses isolated Git worktrees and can use `codex exec --ephemeral --json --output-schema` for schema-checked, non-interactive specialist lanes. Reviewers stay read-only against the repository and live home; tests may write only operating-system temporary fixtures and dependency caches. App-server and SDK surfaces are not required by the shipped plugin and should not be claimed as current product behavior.
+The review workflow uses isolated Git worktrees and can use `codex exec --ephemeral --json --output-schema` for schema-checked, non-interactive specialist lanes. Reviewers use built-in `:read-only` permissions against the repository, temporary-hosted worktrees, temporary directories, caches, and live homes; a write-requiring test is reported as blocked and may rely on separately captured exact-tree CI evidence. App-server and SDK surfaces are not required by the shipped plugin and should not be claimed as current product behavior.
 
 ## Known release boundary
 

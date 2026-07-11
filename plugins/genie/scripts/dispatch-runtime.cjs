@@ -12,7 +12,7 @@
  */
 
 const { spawn } = require('node:child_process');
-const { existsSync, readFileSync } = require('node:fs');
+const { existsSync } = require('node:fs');
 const { homedir } = require('node:os');
 const path = require('node:path');
 
@@ -180,8 +180,16 @@ async function launch(runtime, raw, deps = {}) {
   const spawnImpl = deps.spawn || spawn;
   let child;
   try {
+    const childEnv = { ...process.env, GENIE_HOOK_RUNTIME: runtime };
+    // Plugin-first rollout compatibility: the canonical binary can be one
+    // release behind this launcher. Older dispatchers registered Omni on
+    // PreToolUse, so explicitly disable it for H4. PermissionRequest remains
+    // the only phase allowed to inherit the operator's Omni setting.
+    if (runtime === 'codex' && entry.event === 'PreToolUse') {
+      childEnv.OMNI_APPROVALS_ENABLED = '0';
+    }
     child = spawnImpl(resolved.command, ['hook', 'dispatch'], {
-      env: { ...process.env, GENIE_HOOK_RUNTIME: runtime },
+      env: childEnv,
       shell: resolved.shell,
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
@@ -201,8 +209,8 @@ async function launch(runtime, raw, deps = {}) {
   let timedOut = false;
   let settled = false;
   let forceTimer;
-  const terminateChild = () => {
-    child.kill('SIGTERM');
+  const terminateChild = (signal = 'SIGTERM') => {
+    child.kill(signal);
     if (!forceTimer) {
       forceTimer = setTimeout(() => {
         if (!settled) child.kill('SIGKILL');
@@ -216,8 +224,13 @@ async function launch(runtime, raw, deps = {}) {
   }, childTimeoutMs(entry.event, runtime));
   if (typeof timer.unref === 'function') timer.unref();
 
+  let forwardedSignal = null;
   const forwardedSignals = ['SIGINT', 'SIGTERM'].map((signal) => {
-    const listener = () => child.kill(signal);
+    const listener = () => {
+      if (forwardedSignal) return;
+      forwardedSignal = signal;
+      terminateChild(signal);
+    };
     process.once(signal, listener);
     return { signal, listener };
   });
@@ -263,19 +276,53 @@ async function launch(runtime, raw, deps = {}) {
           writeStdout(codexFailureOutput(raw, 'Genie hook dispatcher returned an invalid Codex response'));
         } else writeStdout(stdout);
         resolve(0);
+        if (forwardedSignal) process.kill(process.pid, forwardedSignal);
         return;
       }
 
       writeStdout(stdout);
       resolve(typeof code === 'number' ? code : signal ? 1 : 1);
+      if (forwardedSignal) process.kill(process.pid, forwardedSignal);
     };
     child.once('error', (error) => finish(null, null, error));
     child.once('close', (code, signal) => finish(code, signal, null));
   });
 }
 
+async function readBoundedStdin(stream = process.stdin, maxBytes = MAX_STDIN_BYTES) {
+  const chunks = [];
+  let retained = 0;
+  let overflow = false;
+  for await (const chunk of stream) {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    const remaining = maxBytes + 1 - retained;
+    if (remaining > 0) {
+      const kept = bytes.subarray(0, remaining);
+      chunks.push(kept);
+      retained += kept.byteLength;
+    }
+    if (retained > maxBytes || bytes.byteLength > Math.max(remaining, 0)) {
+      overflow = true;
+      if (typeof stream.destroy === 'function') stream.destroy();
+      break;
+    }
+  }
+  return { raw: Buffer.concat(chunks).toString('utf8'), overflow };
+}
+
 async function main() {
-  const raw = readFileSync(0, 'utf8');
+  const { raw, overflow } = await readBoundedStdin();
+  if (overflow) {
+    const message = 'genie hook launcher: input exceeded the safety limit';
+    if (process.argv[2] === 'codex') {
+      process.stdout.write(codexFailureOutput(raw, message));
+      process.exitCode = 0;
+    } else {
+      process.stderr.write(`${message}\n`);
+      process.exitCode = 1;
+    }
+    return;
+  }
   process.exitCode = await launch(process.argv[2], raw);
 }
 
@@ -284,6 +331,7 @@ module.exports = {
   codexFailureOutput,
   launch,
   parseEntry,
+  readBoundedStdin,
   resolveGenieCommand,
   validCodexOutput,
 };

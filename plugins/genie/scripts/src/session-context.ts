@@ -10,14 +10,17 @@
  * or global synchronization.
  */
 
-import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, lstatSync, opendirSync, readFileSync, readSync, realpathSync } from 'node:fs';
+import { dirname, isAbsolute, join } from 'node:path';
 
 const MAX_WISHES = 8;
 const MAX_CONTEXT_BYTES = 2_048;
-const MAX_WISH_BYTES = 256 * 1_024;
+const MAX_TOTAL_WISH_BYTES = 256 * 1_024;
+const MAX_CANDIDATE_ENTRIES = 64;
+const MAX_PARENT_LEVELS = 32;
+const MAX_HOOK_INPUT_BYTES = 64 * 1_024;
 const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
-const ACTIVE_STATUSES = new Set(['DRAFT', 'IN_PROGRESS', 'EXECUTING', 'BLOCKED']);
+const ACTIVE_STATUSES = new Set(['DRAFT', 'FIX-FIRST', 'APPROVED', 'IN_PROGRESS', 'BLOCKED']);
 
 interface WishContext {
   slug: string;
@@ -28,16 +31,37 @@ interface WishContext {
   hasBlocked: boolean;
 }
 
-function readHookEventName(): string {
+interface HookInput {
+  hookEventName: string;
+  cwd?: string;
+}
+
+function readHookInput(): HookInput {
   try {
-    const raw = readFileSync(0, 'utf8').trim();
-    if (!raw) return 'SessionStart';
+    const chunks: Buffer[] = [];
+    let total = 0;
+    while (total <= MAX_HOOK_INPUT_BYTES) {
+      const buffer = Buffer.allocUnsafe(Math.min(16 * 1_024, MAX_HOOK_INPUT_BYTES + 1 - total));
+      const count = readSync(0, buffer, 0, buffer.byteLength, null);
+      if (count === 0) break;
+      chunks.push(buffer.subarray(0, count));
+      total += count;
+    }
+    if (total > MAX_HOOK_INPUT_BYTES) return { hookEventName: 'SessionStart' };
+    const raw = Buffer.concat(chunks).toString('utf8').trim();
+    if (!raw) return { hookEventName: 'SessionStart' };
     const value: unknown = JSON.parse(raw);
-    if (typeof value !== 'object' || value === null || Array.isArray(value)) return 'SessionStart';
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+      return { hookEventName: 'SessionStart' };
+    }
     const event = (value as Record<string, unknown>).hook_event_name;
-    return event === 'SessionStart' ? event : 'SessionStart';
+    const cwd = (value as Record<string, unknown>).cwd;
+    return {
+      hookEventName: event === 'SessionStart' ? event : 'SessionStart',
+      cwd: typeof cwd === 'string' && isAbsolute(cwd) ? cwd : undefined,
+    };
   } catch {
-    return 'SessionStart';
+    return { hookEventName: 'SessionStart' };
   }
 }
 
@@ -48,16 +72,67 @@ function extractStatus(content: string): string | null {
   return status && ACTIVE_STATUSES.has(status) ? status : null;
 }
 
+function physicalDirectory(path: string): boolean {
+  try {
+    const stat = lstatSync(path);
+    return stat.isDirectory() && !stat.isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+function hasPhysicalWishes(root: string): boolean {
+  return physicalDirectory(join(root, '.genie')) && physicalDirectory(join(root, '.genie', 'wishes'));
+}
+
+/** Resolve a nested session cwd without spawning Git or following repo symlinks. */
+function resolveRepositoryRoot(start: string): string {
+  let current: string;
+  try {
+    current = realpathSync(start);
+  } catch {
+    current = realpathSync(process.cwd());
+  }
+  const resolvedStart = current;
+  let nearestWishes: string | undefined;
+  for (let level = 0; level < MAX_PARENT_LEVELS; level++) {
+    if (!nearestWishes && hasPhysicalWishes(current)) nearestWishes = current;
+    try {
+      const git = lstatSync(join(current, '.git'));
+      if (!git.isSymbolicLink() && (git.isDirectory() || git.isFile())) return current;
+    } catch {
+      // Continue toward the bounded filesystem root.
+    }
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return nearestWishes ?? resolvedStart;
+}
+
 function scanWishes(baseDir: string): WishContext[] {
   const wishesDir = join(baseDir, '.genie', 'wishes');
-  if (!existsSync(wishesDir)) return [];
+  if (!hasPhysicalWishes(baseDir)) return [];
 
   const results: WishContext[] = [];
   try {
-    const slugs = readdirSync(wishesDir, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory() && SLUG_PATTERN.test(entry.name))
-      .map((entry) => entry.name)
-      .sort();
+    const slugs: string[] = [];
+    const directory = opendirSync(wishesDir);
+    try {
+      for (let examined = 0; examined < MAX_CANDIDATE_ENTRIES; examined++) {
+        const entry = directory.readSync();
+        if (!entry) break;
+        if (entry.isDirectory() && !entry.isSymbolicLink() && SLUG_PATTERN.test(entry.name)) slugs.push(entry.name);
+      }
+    } finally {
+      try {
+        directory.closeSync();
+      } catch {
+        // Some Node versions close automatically after the final read.
+      }
+    }
+    slugs.sort();
+    let totalWishBytes = 0;
 
     for (const slug of slugs) {
       if (results.length >= MAX_WISHES) break;
@@ -68,8 +143,9 @@ function scanWishes(baseDir: string): WishContext[] {
       let content: string;
       try {
         const stats = lstatSync(wishFile);
-        if (!stats.isFile() || stats.size > MAX_WISH_BYTES) continue;
+        if (!stats.isFile() || stats.isSymbolicLink() || stats.size > MAX_TOTAL_WISH_BYTES - totalWishBytes) continue;
         content = readFileSync(wishFile, 'utf8');
+        totalWishBytes += stats.size;
       } catch {
         continue;
       }
@@ -108,15 +184,15 @@ function buildContext(wishes: WishContext[]): string {
     : Buffer.from(context, 'utf8').subarray(0, MAX_CONTEXT_BYTES).toString('utf8');
 }
 
-const hookEventName = readHookEventName();
+const hookInput = readHookInput();
 if (process.env.GENIE_WORKER === '1') {
   process.stdout.write('{}');
   process.exit(0);
 }
 
-const context = buildContext(scanWishes(process.cwd()));
+const context = buildContext(scanWishes(resolveRepositoryRoot(hookInput.cwd ?? process.cwd())));
 process.stdout.write(
   context
-    ? JSON.stringify({ hookSpecificOutput: { hookEventName, additionalContext: context } })
+    ? JSON.stringify({ hookSpecificOutput: { hookEventName: hookInput.hookEventName, additionalContext: context } })
     : '{}',
 );

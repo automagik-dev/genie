@@ -5,7 +5,7 @@ description: "Convert an idea into a structured wish plan with scope, acceptance
 
 # wish — Plan Before You Build
 
-**Runtime syntax:** invoke named skills as `$name` in Codex and `/name` in Claude Code or Hermes. This body uses bare skill names so the workflow stays portable.
+**Runtime syntax:** in Codex, invoke the plugin copy with the owner-qualified `$genie:<skill>` selector; use bare `$<skill>` only for a separately installed personal copy. Claude Code and Hermes use `/<skill>`. Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active tier.
 
 Convert a validated idea into an executable wish document at `.genie/wishes/<slug>/WISH.md`.
 
@@ -62,6 +62,7 @@ test -f .genie/brainstorms/<slug>/DESIGN.md
    ```
    Tasks carry the `--wish`/`--group` linkage; the dependency DAG stays in the WISH.md document, not in task rows. If creation fails (no `.genie/genie.db` yet, CLI unavailable), warn and continue — WISH.md in git is the source of truth and must remain usable by `work` without task rows.
 9. **Handoff:** run the wish linter — inside the genie repo, `grep -q '"wishes:lint"' package.json 2>/dev/null && bun run wishes:lint`. If it reports any error, surface it and stop — never hand a structurally broken wish onward. Only after lint passes, auto-invoke `review` (plan review) on the WISH.md. Never suggest `work` directly — the review gate comes first.
+10. **Persist the verdict:** the reviewer only returns evidence. The invoking orchestrator appends that evidence under `## Review Results` and sets the WISH status to `APPROVED` on SHIP, `FIX-FIRST` on FIX-FIRST, or `BLOCKED` on BLOCKED. Do not route to `work` until the `APPROVED` status is on disk.
 
 ## Wish Document Sections
 

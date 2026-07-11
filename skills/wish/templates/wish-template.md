@@ -100,7 +100,7 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 
 ## Review Results
 
-_Populated by `review` after execution completes._
+_The read-only reviewer returns evidence; the invoking orchestrator appends a timestamped block here after plan, execution, and PR reviews._
 
 ---
 

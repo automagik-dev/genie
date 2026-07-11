@@ -15,6 +15,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { type LifecycleLease, acquireLifecycleLease } from '../lib/agent-sync.js';
 import {
   type InstallIntegrationsOptions,
   type IntegrationSelection,
@@ -48,8 +49,9 @@ export interface InstallOptions {
 
 type V4CleanupRunner = typeof cleanupV4;
 type NormalizeAuxLayoutFn = (genieHome: string) => unknown;
-type AgentSyncRunner = () => void;
+type AgentSyncRunner = (selection: IntegrationSelection) => void;
 type IntegrationRunner = (options?: InstallIntegrationsOptions) => ReturnType<typeof installRuntimeIntegrations>;
+type LifecycleLeaseAcquirer = () => LifecycleLease | { skipped: string };
 
 /**
  * Converge the extracted `<home>/bin/{plugins,skills,templates}` trees into
@@ -112,40 +114,48 @@ export function installCommand(
   options: InstallOptions = {},
   runV4Cleanup: V4CleanupRunner = cleanupV4,
   normalizeLayout: NormalizeAuxLayoutFn = normalizeAuxLayout,
-  runSync: AgentSyncRunner = runAgentSyncSafe,
+  runSync: AgentSyncRunner = (selection) => runAgentSyncSafe({ strict: true, selection }),
   runIntegrations: IntegrationRunner = installRuntimeIntegrations,
+  acquireLease: LifecycleLeaseAcquirer = () => acquireLifecycleLease(GENIE_HOME),
 ): void {
-  const selection = resolveIntegrationSelection(options);
-  if (options.skipV4Cleanup) {
-    console.log('\x1b[2mSkipping v4 legacy cleanup (--skip-v4-cleanup).\x1b[0m');
-  } else {
-    runV4Cleanup();
-  }
-  // Always converge agents: fix the bin/ layout mismatch, then sync in-process
-  // (the freshly-linked binary is already this version, so no re-exec needed).
-  const normalized = normalizeLayout(GENIE_HOME);
-  if (Array.isArray(normalized)) {
-    const outcomes = normalized as AuxiliaryTreeOutcome[];
-    for (const outcome of outcomes) printAuxiliaryOutcome(outcome);
-    const failed = outcomes.filter((outcome) => outcome.status === 'failed');
-    if (failed.length > 0) {
-      throw new Error(`Install payload convergence failed: ${failed.map((outcome) => outcome.label).join(', ')}`);
+  const lease = acquireLease();
+  if ('skipped' in lease) throw new Error(`Another Genie lifecycle command is active: ${lease.skipped}`);
+  try {
+    const selection = resolveIntegrationSelection(options);
+    if (options.skipV4Cleanup) {
+      console.log('\x1b[2mSkipping v4 legacy cleanup (--skip-v4-cleanup).\x1b[0m');
+    } else {
+      runV4Cleanup();
     }
-  }
-  runSync();
+    // Converge only selected agent homes: fix the bin/ layout mismatch, then sync in-process
+    // (the freshly-linked binary is already this version, so no re-exec needed).
+    const normalized = normalizeLayout(GENIE_HOME);
+    if (Array.isArray(normalized)) {
+      const outcomes = normalized as AuxiliaryTreeOutcome[];
+      for (const outcome of outcomes) printAuxiliaryOutcome(outcome);
+      const failed = outcomes.filter((outcome) => outcome.status === 'failed');
+      if (failed.length > 0) {
+        throw new Error(`Install payload convergence failed: ${failed.map((outcome) => outcome.label).join(', ')}`);
+      }
+    }
+    if (selection !== 'none') runSync(selection);
 
-  const results = runIntegrations({ selection });
-  for (const result of results) {
-    const glyph = result.ok ? '\x1b[32m+\x1b[0m' : '\x1b[33m!\x1b[0m';
-    const disabled = result.preservedDisabled ? '; disabled state preserved' : '';
-    console.log(`  ${glyph} ${result.runtime}: ${result.detail}${disabled}`);
-  }
-  if (selection !== 'auto' && selection !== 'none') {
-    const failed = results.filter((result) => !result.ok);
-    if (failed.length > 0) throw new Error(`Requested integration failed: ${failed.map((r) => r.runtime).join(', ')}`);
-  }
-  if (results.some((result) => result.runtime === 'codex' && result.ok)) {
-    console.log('  \x1b[33m!\x1b[0m Review Genie hooks with /hooks, then start a new Codex task.');
+    const results = runIntegrations({ selection });
+    for (const result of results) {
+      const glyph = result.ok ? '\x1b[32m+\x1b[0m' : '\x1b[33m!\x1b[0m';
+      const disabled = result.preservedDisabled ? '; disabled state preserved' : '';
+      console.log(`  ${glyph} ${result.runtime}: ${result.detail}${disabled}`);
+    }
+    if (selection !== 'auto' && selection !== 'none') {
+      const failed = results.filter((result) => !result.ok);
+      if (failed.length > 0)
+        throw new Error(`Requested integration failed: ${failed.map((r) => r.runtime).join(', ')}`);
+    }
+    if (results.some((result) => result.runtime === 'codex' && result.ok)) {
+      console.log('  \x1b[33m!\x1b[0m Review Genie hooks with /hooks, then start a new Codex task.');
+    }
+  } finally {
+    lease.release();
   }
 }
 

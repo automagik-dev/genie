@@ -22,8 +22,8 @@ export const meta = {
 
 const LENS_ROOT = '__GENIE_LENS_ROOT__';
 
-// Lens name -> path relative to LENS_ROOT. Seven audit lanes (persona skills,
-// reached through the plugin's `skills` symlink) plus six deliberation cards.
+// Lens name -> path relative to LENS_ROOT. Seven audit lanes from the committed,
+// byte-checked physical skill mirror plus six deliberation cards.
 const LENSES = {
   'repo-hygiene': 'skills/repo-hygiene/SKILL.md',
   architecture: 'skills/architecture/SKILL.md',

@@ -10,6 +10,7 @@ import {
   UnknownInboundError,
   attachOmniMessageId,
   enqueueApproval,
+  expireApprovalIfPending,
   expireStale,
   getApproval,
   listApprovalsNeedingStatusAck,
@@ -220,6 +221,16 @@ describe('status-ack glyph + listApprovalsNeedingStatusAck', () => {
 // Expiry
 // ---------------------------------------------------------------------------
 describe('expireStale', () => {
+  test('expires only the exact owned pending row', () => {
+    const owned = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'owned', now: 1 });
+    const other = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'other', now: 2 });
+    expect(expireApprovalIfPending(db, owned, 50)).toBe(true);
+    expect(expireApprovalIfPending(db, owned, 60)).toBe(false);
+    expect(getApproval(db, owned)?.status).toBe('expired');
+    expect(getApproval(db, owned)?.resolvedAt).toBe(50);
+    expect(getApproval(db, other)?.status).toBe('pending');
+  });
+
   test('expires only pending rows older than the horizon', () => {
     const old1 = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'old1', now: 1000 });
     const old2 = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'old2', now: 1500 });

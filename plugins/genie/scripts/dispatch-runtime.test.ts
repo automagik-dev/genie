@@ -3,6 +3,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
+import { Readable } from 'node:stream';
 
 const require = createRequire(import.meta.url);
 interface LaunchDeps {
@@ -27,6 +28,10 @@ const launcher = require('./dispatch-runtime.cjs') as {
     exists: (path: string) => boolean,
   ) => { command: string; shell: false; error?: never } | { error: string; command?: never; shell?: never };
   validCodexOutput: (raw: string, event: string) => boolean;
+  readBoundedStdin: (
+    stream: NodeJS.ReadableStream,
+    maxBytes?: number,
+  ) => Promise<{ raw: string; overflow: boolean }>;
 };
 
 let root: string;
@@ -47,6 +52,7 @@ beforeEach(() => {
     fakeLog: process.env.FAKE_LOG,
     fakeReady: process.env.FAKE_READY,
     fakeSignal: process.env.FAKE_SIGNAL,
+    omniEnabled: process.env.OMNI_APPROVALS_ENABLED,
   };
 });
 
@@ -58,6 +64,7 @@ afterEach(() => {
   restoreEnv('FAKE_LOG', previous.fakeLog);
   restoreEnv('FAKE_READY', previous.fakeReady);
   restoreEnv('FAKE_SIGNAL', previous.fakeSignal);
+  restoreEnv('OMNI_APPROVALS_ENABLED', previous.omniEnabled);
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -110,7 +117,7 @@ describe('dispatch-runtime launcher', () => {
     fakeGenie(
       [
         "const input = fs.readFileSync(0, 'utf8');",
-        "fs.writeFileSync(process.env.FAKE_LOG, JSON.stringify({ argv: process.argv.slice(2), runtime: process.env.GENIE_HOOK_RUNTIME, input }));",
+        "fs.writeFileSync(process.env.FAKE_LOG, JSON.stringify({ argv: process.argv.slice(2), runtime: process.env.GENIE_HOOK_RUNTIME, omni: process.env.OMNI_APPROVALS_ENABLED, input }));",
       ].join('\n'),
     );
     const raw = payload();
@@ -119,7 +126,43 @@ describe('dispatch-runtime launcher', () => {
     const call = JSON.parse(await Bun.file(log).text());
     expect(call.argv).toEqual(['hook', 'dispatch']);
     expect(call.runtime).toBe('codex');
+    expect(call.omni).toBe('0');
     expect(call.input).toBe(raw);
+  });
+
+  test('disables previous-binary Omni only for H4 and preserves H6 approval consent', async () => {
+    const log = join(root, 'compatibility.jsonl');
+    process.env.FAKE_LOG = log;
+    process.env.OMNI_APPROVALS_ENABLED = '1';
+    fakeGenie(
+      [
+        "const input = JSON.parse(fs.readFileSync(0, 'utf8'));",
+        "fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ event: input.hook_event_name, omni: process.env.OMNI_APPROVALS_ENABLED, leaked: process.env.OMNI_APPROVALS_ENABLED === '1' ? input.tool_input.command : undefined }) + '\\n');",
+        "const permission = input.hook_event_name === 'PermissionRequest';",
+        "process.stdout.write(permission ? JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: 'fixture' } } }) : '');",
+      ].join('\n'),
+    );
+
+    expect((await run('codex', payload('PreToolUse'))).stdout).toBe('');
+    expect(JSON.parse((await run('codex', payload('PermissionRequest'))).stdout).hookSpecificOutput.decision.behavior).toBe(
+      'deny',
+    );
+    const calls = (await Bun.file(log).text())
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    expect(calls).toEqual([
+      { event: 'PreToolUse', omni: '0' },
+      { event: 'PermissionRequest', omni: '1', leaked: 'echo hi' },
+    ]);
+  });
+
+  test('retains at most the bounded stdin prefix before rejecting an oversized pipe', async () => {
+    const chunk = Buffer.alloc(64 * 1024, 'x');
+    const chunks = Array.from({ length: 64 }, () => chunk);
+    const result = await launcher.readBoundedStdin(Readable.from(chunks), 128 * 1024);
+    expect(result.overflow).toBe(true);
+    expect(Buffer.byteLength(result.raw)).toBe(128 * 1024 + 1);
   });
 
   test('rejects malformed and structurally invalid Codex input before spawning', async () => {
@@ -202,8 +245,8 @@ describe('dispatch-runtime launcher', () => {
     process.env.FAKE_SIGNAL = signalLog;
     fakeGenie(
       [
-        "fs.writeFileSync(process.env.FAKE_READY, 'ready');",
         "process.on('SIGTERM', () => { fs.writeFileSync(process.env.FAKE_SIGNAL, 'SIGTERM'); process.exit(0); });",
+        "fs.writeFileSync(process.env.FAKE_READY, 'ready');",
         'setInterval(() => {}, 10_000);',
       ].join('\n'),
     );
@@ -216,8 +259,33 @@ describe('dispatch-runtime launcher', () => {
     for (let attempt = 0; attempt < 100 && !existsSync(ready); attempt += 1) await Bun.sleep(10);
     expect(existsSync(ready)).toBe(true);
     proc.kill('SIGTERM');
-    expect(await proc.exited).toBe(0);
+    expect(await proc.exited).not.toBe(0);
     expect(await Bun.file(signalLog).text()).toBe('SIGTERM');
+  });
+
+  test('external termination starts the kill grace even when the child ignores the signal', async () => {
+    if (process.platform === 'win32') return;
+    const ready = join(root, 'ignored-ready');
+    process.env.FAKE_READY = ready;
+    process.env.GENIE_HOOK_KILL_GRACE_MS = '40';
+    fakeGenie(
+      [
+        "fs.writeFileSync(process.env.FAKE_READY, 'ready');",
+        "process.on('SIGTERM', () => {});",
+        'setInterval(() => {}, 10_000);',
+      ].join('\n'),
+    );
+    const proc = Bun.spawn(['node', join(import.meta.dir, 'dispatch-runtime.cjs'), 'codex'], {
+      env: { ...process.env, GENIE_HOME: join(root, 'genie-home') },
+      stdin: Buffer.from(payload()),
+      stdout: 'ignore',
+      stderr: 'ignore',
+    });
+    for (let attempt = 0; attempt < 100 && !existsSync(ready); attempt += 1) await Bun.sleep(10);
+    const started = performance.now();
+    proc.kill('SIGTERM');
+    expect(await proc.exited).not.toBe(0);
+    expect(performance.now() - started).toBeLessThan(1_000);
   });
 
   test('keeps Claude approval polling inside the shared launcher budget', () => {

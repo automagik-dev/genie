@@ -7,6 +7,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -103,13 +104,64 @@ describe('resolveGitWorktreeRoot', () => {
     expect(resolveGitWorktreeRoot(linked)).toBe(linked);
     expect(resolveGitProjectRoots(linked)).toEqual({ worktreeRoot: linked, commonRoot: repo });
   });
+
+  test('nested init binds the resolved host git and rejects a repo-root PATH decoy', () => {
+    const repo = join(root, 'nested-init');
+    const nested = join(repo, 'packages', 'app');
+    mkdirSync(nested, { recursive: true });
+    git(repo, ['init', '-q']);
+
+    const trustedGit = Bun.which('git');
+    if (!trustedGit) throw new Error('git is required');
+    let invoked = '';
+    const fakeExec = ((command: string) => {
+      invoked = command;
+      return `${repo}\n${join(repo, '.git')}\n`;
+    }) as typeof execFileSync;
+    expect(resolveGitProjectRoots(nested, fakeExec, 1_000, () => trustedGit)).toEqual({
+      worktreeRoot: repo,
+      commonRoot: repo,
+    });
+    expect(invoked).toBe(realpathSync(trustedGit));
+
+    const decoy = join(repo, 'bin', process.platform === 'win32' ? 'git.exe' : 'git');
+    mkdirSync(dirname(decoy), { recursive: true });
+    writeFileSync(decoy, 'repo-controlled decoy');
+    chmodSync(decoy, 0o755);
+    invoked = '';
+    expect(resolveGitProjectRoots(nested, fakeExec, 1_000, () => decoy)).toBeNull();
+    expect(invoked).toBe('');
+  });
 });
 
 describe('probeCodexGeniePlugin', () => {
+  test('nested init rejects a Codex executable selected from the enclosing repository root', () => {
+    const repo = join(root, 'codex-decoy-repo');
+    const nested = join(repo, 'packages', 'app');
+    const decoy = join(repo, 'bin', process.platform === 'win32' ? 'codex.exe' : 'codex');
+    mkdirSync(join(repo, '.git'), { recursive: true });
+    mkdirSync(nested, { recursive: true });
+    mkdirSync(dirname(decoy), { recursive: true });
+    writeFileSync(decoy, 'repo-controlled decoy');
+    chmodSync(decoy, 0o755);
+    let calls = 0;
+    const probe = probeCodexGeniePlugin({
+      cwd: nested,
+      which: () => decoy,
+      run: () => {
+        calls += 1;
+        return { exitCode: 0, stdout: '{"installed":[]}', stderr: '' };
+      },
+    });
+    expect(calls).toBe(0);
+    expect(probe.status).toBe('error');
+    expect(probe.detail).toContain('repository-local');
+  });
+
   test('queries once with a deadline and reports a timeout actionably', () => {
     let calls = 0;
     const probe = probeCodexGeniePlugin({
-      which: () => '/bin/codex',
+      which: () => process.execPath,
       timeoutMs: 17,
       run: (_command, _args, timeoutMs) => {
         calls += 1;
@@ -125,17 +177,41 @@ describe('probeCodexGeniePlugin', () => {
 
   test('wrong-shaped valid JSON becomes a structured error, not a throw', () => {
     const probe = probeCodexGeniePlugin({
-      which: () => '/bin/codex',
+      which: () => process.execPath,
       run: () => ({ exitCode: 0, stdout: '{"installed":{}}', stderr: '' }),
     });
     expect(probe.status).toBe('error');
     expect(probe.detail).toContain('invalid Codex plugin response');
   });
 
+  test('duplicate Genie plugin snapshots fail closed and retain the fallback', () => {
+    let command = '';
+    const probe = probeCodexGeniePlugin({
+      which: () => process.execPath,
+      run: (resolved) => {
+        command = resolved;
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            installed: [
+              { pluginId: 'genie@automagik', enabled: true, version: '1' },
+              { pluginId: 'genie@automagik', enabled: false, version: '1' },
+            ],
+          }),
+          stderr: '',
+        };
+      },
+    });
+    expect(command).toBe(realpathSync(process.execPath));
+    expect(probe).toMatchObject({ status: 'error', installed: false });
+    expect(probe.detail).toContain('expected exactly one');
+    expect(reconcileCodexProjectMcp(root, probe, { command: '/absolute/genie', args: ['mcp'] }).route).toBe('fallback');
+  });
+
   test('enabled metadata is usable only when the launcher and canonical binary inspection passes', () => {
     const fixture = seedActivePlugin('1');
     const probe = probeCodexGeniePlugin({
-      which: () => '/bin/codex',
+      which: () => process.execPath,
       codexHome: fixture.codexHome,
       run: () => ({
         exitCode: 0,
@@ -169,7 +245,7 @@ describe('probeCodexGeniePlugin', () => {
     expect(existsSync(join(sourceRoot, 'plugins', 'genie', 'scripts', 'mcp-launcher.cjs'))).toBe(true);
     let inspected = false;
     const probe = probeCodexGeniePlugin({
-      which: () => '/bin/codex',
+      which: () => process.execPath,
       codexHome: join(root, 'codex-home'),
       run: () => ({
         exitCode: 0,
@@ -201,7 +277,7 @@ describe('probeCodexGeniePlugin', () => {
     ]) {
       let inspected = false;
       const probe = probeCodexGeniePlugin({
-        which: () => '/bin/codex',
+        which: () => process.execPath,
         codexHome: fixture.codexHome,
         run: () => ({ exitCode: 0, stdout: JSON.stringify({ installed: [entry] }), stderr: '' }),
         inspectUsability: () => {
@@ -228,7 +304,7 @@ describe('probeCodexGeniePlugin', () => {
       });
     const probe = (path: string) =>
       probeCodexGeniePlugin({
-        which: () => '/bin/codex',
+        which: () => process.execPath,
         codexHome: fixture.codexHome,
         run: () => ({ exitCode: 0, stdout: snapshot(path), stderr: '' }),
         inspectUsability: (options) =>
@@ -374,7 +450,7 @@ describe('Codex plugin/fallback reconciliation', () => {
     const fixture = seedActivePlugin('4.5.6');
     rmSync(join(fixture.pluginRoot, 'scripts', 'mcp-launcher.cjs'));
     const probe = probeCodexGeniePlugin({
-      which: () => '/bin/codex',
+      which: () => process.execPath,
       codexHome: fixture.codexHome,
       run: () => ({
         exitCode: 0,
@@ -412,6 +488,16 @@ describe('Codex plugin/fallback reconciliation', () => {
     expect(result).toMatchObject({ ok: false, route: 'conflict', action: 'skipped' });
     expect(readFileSync(configPath(), 'utf8')).toBe(original);
     expect(preflightCodexPluginMutation(root)).toMatchObject({ ok: false, path: configPath() });
+  });
+
+  test('quoted TOML keys are recognized as the same unmanaged Genie fallback', () => {
+    mkdirSync(join(root, '.codex'), { recursive: true });
+    const original = '[mcp_servers."genie"]\ncommand = "/personal"\nargs = ["mcp"]\n';
+    writeFileSync(configPath(), original);
+    const result = reconcileCodexProjectMcp(root, enabled, { command: '/g', args: ['mcp'] });
+    expect(result).toMatchObject({ ok: false, route: 'conflict', action: 'skipped' });
+    expect(readFileSync(configPath(), 'utf8')).toBe(original);
+    expect(preflightCodexPluginMutation(root).ok).toBe(false);
   });
 
   test('an unmanaged fallback is preserved byte-for-byte but remains unverified when plugin health is unknown', () => {
@@ -469,5 +555,40 @@ describe('registerProjectMcpConfigs', () => {
     expect(readFileSync(join(root, '.codex', 'config.toml'), 'utf8')).toBe(original);
     expect(existsSync(join(root, '.mcp.json'))).toBe(false);
     expect(existsSync(join(root, '.warp', '.mcp.json'))).toBe(false);
+  });
+
+  test('rejects file and parent-directory symlinks for every project MCP target', () => {
+    if (process.platform === 'win32') return;
+    const cases = [
+      { target: '.mcp.json', parentLink: false },
+      { target: join('.warp', '.mcp.json'), parentLink: false },
+      { target: join('.warp', '.mcp.json'), parentLink: true },
+      { target: join('.codex', 'config.toml'), parentLink: false },
+      { target: join('.codex', 'config.toml'), parentLink: true },
+    ];
+    for (const [index, fixture] of cases.entries()) {
+      const project = join(root, `symlink-case-${index}`);
+      const external = join(root, `external-${index}`);
+      mkdirSync(project, { recursive: true });
+      mkdirSync(external, { recursive: true });
+      const target = join(project, fixture.target);
+      if (fixture.parentLink) {
+        symlinkSync(external, dirname(target), 'dir');
+      } else {
+        mkdirSync(dirname(target), { recursive: true });
+        const externalFile = join(external, 'config');
+        writeFileSync(externalFile, 'external-safe');
+        symlinkSync(externalFile, target);
+      }
+
+      expect(() =>
+        registerProjectMcpConfigs(project, {
+          pluginProbe: disabled,
+          entry: { command: '/g', args: ['mcp'] },
+        }),
+      ).toThrow(/physical|unsafe|symlink/i);
+      expect(existsSync(join(project, '.mcp.json')) && !fixture.target.endsWith('.mcp.json')).toBe(false);
+      if (!fixture.parentLink) expect(readFileSync(join(external, 'config'), 'utf8')).toBe('external-safe');
+    }
   });
 });

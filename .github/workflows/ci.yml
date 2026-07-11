@@ -74,6 +74,12 @@ jobs:
       - name: Wishes lint
         run: bun run wishes:lint
 
+      - name: Council workflow lint
+        run: bun run lint:council-workflow
+
+      - name: Generated hook bundle parity
+        run: bun run lint:hook-bundles
+
       - name: Fresh-install smoke
         run: bun run scripts/fresh-install-smoke.ts
 

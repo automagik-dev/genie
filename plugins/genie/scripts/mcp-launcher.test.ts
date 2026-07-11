@@ -1,5 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { chmodSync, cpSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -95,5 +105,37 @@ describe('plugin-local MCP launcher', () => {
     expect(result.stdout.toString()).not.toContain('PATH FALLBACK RAN');
     expect(result.stderr.toString()).toContain('launcher refused startup');
     expect(result.stderr.toString()).toContain(join('missing-home', 'bin', process.platform === 'win32' ? 'genie.exe' : 'genie'));
+  });
+
+  test('termination escalates and the wrapper exits when the MCP child ignores SIGTERM', async () => {
+    if (process.platform === 'win32') return;
+    const genieHome = join(root, 'genie-home');
+    const binary = join(genieHome, 'bin', 'genie');
+    const ready = join(root, 'ready');
+    mkdirSync(join(genieHome, 'bin'), { recursive: true });
+    writeFileSync(
+      binary,
+      `#!${NODE_BIN}\nrequire('node:fs').writeFileSync(process.env.FAKE_READY, 'ready');\nprocess.on('SIGTERM', () => {});\nsetInterval(() => {}, 10000);\n`,
+    );
+    chmodSync(binary, 0o755);
+    const proc = Bun.spawn(['node', './scripts/mcp-launcher.cjs'], {
+      cwd: SOURCE_PLUGIN,
+      env: {
+        ...process.env,
+        GENIE_HOME: genieHome,
+        GENIE_MCP_KILL_GRACE_MS: '40',
+        FAKE_READY: ready,
+        PATH: controlledNodePath(),
+      },
+      stdin: 'ignore',
+      stdout: 'ignore',
+      stderr: 'ignore',
+    });
+    for (let attempt = 0; attempt < 100 && !existsSync(ready); attempt += 1) await Bun.sleep(10);
+    expect(existsSync(ready)).toBe(true);
+    const started = performance.now();
+    proc.kill('SIGTERM');
+    expect(await proc.exited).not.toBe(0);
+    expect(performance.now() - started).toBeLessThan(1_000);
   });
 });

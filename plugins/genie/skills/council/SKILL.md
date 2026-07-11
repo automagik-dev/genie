@@ -5,13 +5,13 @@ description: "Assess a proposal through independent technical, product, risk, an
 
 # Council
 
-**Runtime syntax:** invoke named skills as `$name` in Codex and `/name` in Claude Code or Hermes. This body uses bare skill names so the workflow stays portable.
+**Runtime syntax:** in Codex, invoke the plugin copy with the owner-qualified `$genie:<skill>` selector; use bare `$<skill>` only for a separately installed personal copy. Claude Code and Hermes use `/<skill>`. Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active tier.
 
 Use a council when a consequential decision benefits from independent scrutiny. The council assesses by default; it does not edit files, change configuration, or execute a proposed plan unless the user explicitly asks it to mutate.
 
 ## Dispatch
 
-Read `plugins/genie/references/native-surfaces.md` when available and use the active runtime's native delegation surface. Dispatch these lenses independently and in parallel when supported:
+Read `references/native-surfaces.md` relative to the directory containing this loaded `SKILL.md` and use the active runtime's native delegation surface. Dispatch these lenses independently and in parallel when supported:
 
 1. **Architecture** — contracts, coupling, failure modes, operability, and long-term cost.
 2. **Delivery** — sequencing, testability, migration, rollback, and evidence required to ship.

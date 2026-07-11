@@ -5,7 +5,7 @@ description: "Validate plans, execution, or PRs against wish criteria — return
 
 # review — Universal Review Gate
 
-**Runtime syntax:** invoke named skills as `$name` in Codex and `/name` in Claude Code or Hermes. This body uses bare skill names so the workflow stays portable.
+**Runtime syntax:** in Codex, invoke the plugin copy with the owner-qualified `$genie:<skill>` selector; use bare `$<skill>` only for a separately installed personal copy. Claude Code and Hermes use `/<skill>`. Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active tier.
 
 Validate any artifact against its wish criteria. Dispatch as a subagent — never review your own work inline. The deliverable is findings plus a verdict: report and stop — never implement fixes, however small.
 
@@ -83,6 +83,20 @@ If an ordinary reviewer and the `final-gate` disagree, log an appeal with the wi
 | **FIX-FIRST** | Any CRITICAL/HIGH gap or failing validation | Auto-invoke `fix` |
 | **BLOCKED** | Scope, architecture, or execution issue prevents a valid verdict | Diagnose the cause and take its corrective route |
 
+### Persistence handoff
+
+The reviewer is read-only. Return a timestampable evidence block containing
+the review context, target SHA/path, commands and outcomes, verdict, and gaps.
+The invoking orchestrator appends that block under the wish's
+`## Review Results` and owns every durable transition:
+
+- plan SHIP → `APPROVED`; plan FIX-FIRST → `FIX-FIRST`; plan BLOCKED → `BLOCKED`;
+- execution and PR verdicts are appended while the wish remains `IN_PROGRESS`;
+- only an authorized merge plus required QA changes the wish to `SHIPPED`.
+
+Do not claim the next stage is active until the orchestrator confirms the
+write. Never edit WISH.md, the brainstorm jar, or task state as the reviewer.
+
 ### SHIP next-steps
 
 | Review context | On SHIP |
@@ -109,18 +123,22 @@ When the change-type warrants it, the orchestrator dispatches **lens reviewers**
 
 | Change-type | Advisory lens |
 |-------------|---------------|
-| Auth / secrets / dependency changes | `skills/supply-chain/SKILL.md` |
-| Hot-path or latency-sensitive code | `skills/perf/SKILL.md` |
-| Public API / CLI surface | `skills/dx-docs/SKILL.md` |
-| Module-boundary / architecture moves | `skills/architecture/SKILL.md` |
-| Test-strategy changes | `skills/qa/SKILL.md` |
-| Plan / wish reviews | `plugins/genie/references/lenses/questioner.md` |
+| Auth / secrets / dependency changes | sibling `supply-chain/SKILL.md` |
+| Hot-path or latency-sensitive code | sibling `perf/SKILL.md` |
+| Public API / CLI surface | sibling `dx-docs/SKILL.md` |
+| Module-boundary / architecture moves | sibling `architecture/SKILL.md` |
+| Test-strategy changes | sibling `qa/SKILL.md` |
+| Plan / wish reviews | `references/lenses/questioner.md` |
 
-Lens root: `$GENIE_HOME/plugins/genie` (default `~/.genie/plugins/genie`); inside the genie repo itself, resolve `references/lenses/` cards and `skills/<lane>/SKILL.md` lanes relative to `plugins/genie/` and the repo root.
+Resolve `references/lenses/questioner.md` from the directory containing this
+loaded `SKILL.md`. Resolve a sibling lane from that skill directory's parent
+(for example `../supply-chain/SKILL.md`). If a separately installed skill is
+missing a sibling, mark that advisory lane unavailable instead of guessing a
+source-checkout or global plugin path.
 
 ## Verdict Reporting
 
-The verdict plus severity-tagged gaps ARE the review output — deliver them in your final message (and, for a plan/PR, in review notes committed to git). The reviewer never mutates task state:
+The verdict plus severity-tagged gaps ARE the review output — deliver them in your final message. For a plan or PR, the invoking orchestrator persists the returned block in git. The reviewer never mutates files or task state:
 
 | Verdict | Orchestrator's next move |
 |---------|-------------------------|

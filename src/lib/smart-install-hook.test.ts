@@ -18,10 +18,10 @@ import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { acquireLifecycleLease, lifecycleLockPath } from './agent-sync';
 
 const SCRIPT_PATH = join(import.meta.dir, '..', '..', 'plugins', 'genie', 'scripts', 'smart-install.js');
 const THROTTLE_MS = 6 * 60 * 60 * 1000;
-const RETRY_MS = 30 * 60 * 1000;
 
 const NODE_BIN = Bun.which('node');
 if (!NODE_BIN) throw new Error('node binary is required for smart-install hook tests');
@@ -45,6 +45,20 @@ function fakeGenieScript(label: string): string {
     'if [ "$1" = "--version" ]; then',
     '  echo "${FAKE_GENIE_VERSION:-5.999999.0}"',
     '  exit 0',
+    'fi',
+    'if [ "${FAKE_FAIL_IF_LIFECYCLE_LOCKED:-}" = "1" ] && [ -e "$FAKE_LIFECYCLE_LOCK_PATH" ]; then',
+    `  echo "${label} SELF_CONTENTION" >> "$FAKE_GENIE_LOG"`,
+    '  exit 97',
+    'fi',
+    'if [ "${FAKE_GENIE_WRITE_MARKER:-}" = "1" ] && [ "$1" = "update" ]; then',
+    '  mkdir -p "$GENIE_HOME"',
+    '  "$FAKE_NODE_BIN" -e \'process.stdout.write(new Date().toISOString())\' > "$GENIE_HOME/.last-agent-sync"',
+    '  printf "\\n" >> "$GENIE_HOME/.last-agent-sync"',
+    'fi',
+    'if [ "${FAKE_CONCURRENT_SUCCESS_AFTER_RELEASE:-}" = "1" ] && [ "$1" = "update" ]; then',
+    '  "$FAKE_NODE_BIN" -e \'process.stdout.write(new Date().toISOString())\' > "$GENIE_HOME/.last-agent-sync"',
+    '  printf "\\n" >> "$GENIE_HOME/.last-agent-sync"',
+    `  echo "${label} CONCURRENT_SUCCESS_AFTER_RELEASE" >> "$FAKE_GENIE_LOG"`,
     'fi',
     'exit "${FAKE_GENIE_EXIT:-0}"',
     '',
@@ -106,7 +120,16 @@ function readLog(fx: Fixture): string {
   }
 }
 
-function runHook(fx: Fixture, opts: { fakeGenieExit?: number; fakeGenieVersion?: string } = {}) {
+function runHook(
+  fx: Fixture,
+  opts: {
+    fakeGenieExit?: number;
+    fakeGenieVersion?: string;
+    fakeGenieWritesFreshMarker?: boolean;
+    failIfLifecycleLocked?: boolean;
+    concurrentSuccessAfterRelease?: boolean;
+  } = {},
+) {
   const env: Record<string, string> = {
     HOME: fx.home,
     PATH: `${fx.fakeBin}:${CLEAN_PATH}`,
@@ -116,6 +139,18 @@ function runHook(fx: Fixture, opts: { fakeGenieExit?: number; fakeGenieVersion?:
   };
   if (opts.fakeGenieExit !== undefined) env.FAKE_GENIE_EXIT = String(opts.fakeGenieExit);
   if (opts.fakeGenieVersion !== undefined) env.FAKE_GENIE_VERSION = opts.fakeGenieVersion;
+  if (opts.fakeGenieWritesFreshMarker) {
+    env.FAKE_GENIE_WRITE_MARKER = '1';
+    env.FAKE_NODE_BIN = NODE_BIN as string;
+  }
+  if (opts.failIfLifecycleLocked) {
+    env.FAKE_FAIL_IF_LIFECYCLE_LOCKED = '1';
+    env.FAKE_LIFECYCLE_LOCK_PATH = lifecycleLockPath(fx.genieHome);
+  }
+  if (opts.concurrentSuccessAfterRelease) {
+    env.FAKE_CONCURRENT_SUCCESS_AFTER_RELEASE = '1';
+    env.FAKE_NODE_BIN = NODE_BIN as string;
+  }
   return spawnSync(NODE_BIN as string, [SCRIPT_PATH], { env, encoding: 'utf-8', timeout: 30_000 });
 }
 
@@ -188,30 +223,20 @@ describe('delegateAgentSync', () => {
     expect(updateLines[0]).toBe('CANONICAL env=1 update --sync-only');
   });
 
-  test('success writes the throttle marker hook-side (~now)', () => {
+  test('the hook never marks a delegated process successful on exit status alone', () => {
     installFakeGenie(fx, 'canonical', 'CANONICAL');
-    const before = Date.now();
     const res = runHook(fx);
     expect(res.status).toBe(0);
-    expect(existsSync(fx.markerPath)).toBe(true);
-    const ts = Date.parse(readFileSync(fx.markerPath, 'utf8').trim());
-    expect(Number.isNaN(ts)).toBe(false);
-    expect(ts).toBeGreaterThanOrEqual(before - 1000);
-    expect(ts).toBeLessThanOrEqual(Date.now() + 1000);
+    expect(existsSync(fx.markerPath)).toBe(false);
   });
 
-  test('failure warns, writes a retry-window marker, and falls back to the in-hook /council stamp', () => {
+  test('failure warns, leaves the success marker absent, and falls back to the in-hook /council stamp', () => {
     installFakeGenie(fx, 'canonical', 'CANONICAL');
     const res = runHook(fx, { fakeGenieExit: 1 });
     expect(res.status).toBe(0); // a failed delegation never breaks session start
     expect(res.stderr).toContain('agent sync via genie update failed');
 
-    // Backdated marker: throttled right now, but stale again after ~RETRY_MS
-    // instead of the full 6h window (and instead of retrying every session).
-    const ts = Date.parse(readFileSync(fx.markerPath, 'utf8').trim());
-    const delta = Date.now() - ts;
-    expect(delta).toBeLessThan(THROTTLE_MS);
-    expect(delta).toBeGreaterThan(THROTTLE_MS - RETRY_MS - 60_000);
+    expect(existsSync(fx.markerPath)).toBe(false);
 
     // /council still gets stamped on the machines where delegation fails.
     const stamped = join(fx.home, '.claude', 'workflows', 'council.js');
@@ -220,7 +245,7 @@ describe('delegateAgentSync', () => {
     expect(readFileSync(stamped, 'utf8')).not.toContain('__GENIE_LENS_ROOT__');
   });
 
-  test('a failed delegation does not retry on the very next session start', () => {
+  test('a failed delegation remains immediately retryable', () => {
     installFakeGenie(fx, 'canonical', 'CANONICAL');
     const first = runHook(fx, { fakeGenieExit: 1 });
     expect(first.status).toBe(0);
@@ -229,8 +254,8 @@ describe('delegateAgentSync', () => {
     const attempts = readLog(fx)
       .split('\n')
       .filter((l) => l.includes('update --sync-only'));
-    expect(attempts).toHaveLength(1); // second run throttled by the retry-window marker
-    expect(second.stderr).not.toContain('agent sync via genie update failed');
+    expect(attempts).toHaveLength(2);
+    expect(second.stderr).toContain('agent sync via genie update failed');
   });
 });
 
@@ -258,7 +283,104 @@ describe('delegateAgentSync version tiers (old-binary-safe invocation)', () => {
     expect(updateInvocations(fx)).toEqual(['CANONICAL env=1 update']);
   });
 
-  test('pre-contract binary (5.260710.4) → delegation skipped entirely, retry marker + /council fallback', () => {
+  test('failed 5.260710.9 child marker is removed so the next SessionStart retries', () => {
+    installFakeGenie(fx, 'canonical', 'CANONICAL');
+    const legacyFailure = {
+      fakeGenieVersion: '5.260710.9',
+      fakeGenieExit: 1,
+      fakeGenieWritesFreshMarker: true,
+    };
+
+    const first = runHook(fx, legacyFailure);
+    expect(first.status).toBe(0);
+    expect(first.stderr).toContain('agent sync via genie update failed');
+    expect(existsSync(fx.markerPath)).toBe(false);
+
+    const second = runHook(fx, legacyFailure);
+    expect(second.status).toBe(0);
+    expect(second.stderr).toContain('agent sync via genie update failed');
+    expect(updateInvocations(fx)).toEqual(['CANONICAL env=1 update', 'CANONICAL env=1 update']);
+    expect(existsSync(fx.markerPath)).toBe(false);
+  });
+
+  test('failed 5.260710.10 flag-aware child marker is removed so the next SessionStart retries', () => {
+    installFakeGenie(fx, 'canonical', 'CANONICAL');
+    const flagAwareFailure = {
+      fakeGenieVersion: '5.260710.10',
+      fakeGenieExit: 1,
+      fakeGenieWritesFreshMarker: true,
+    };
+
+    const first = runHook(fx, flagAwareFailure);
+    expect(first.status).toBe(0);
+    expect(first.stderr).toContain('agent sync via genie update failed');
+    expect(existsSync(fx.markerPath)).toBe(false);
+
+    const second = runHook(fx, flagAwareFailure);
+    expect(second.status).toBe(0);
+    expect(second.stderr).toContain('agent sync via genie update failed');
+    expect(updateInvocations(fx)).toEqual(['CANONICAL env=1 update --sync-only', 'CANONICAL env=1 update --sync-only']);
+    expect(existsSync(fx.markerPath)).toBe(false);
+  });
+
+  test('current/new child self-serializes without parent-lease contention and failed marker remains retryable', () => {
+    installFakeGenie(fx, 'canonical', 'CANONICAL');
+    const currentFailure = {
+      fakeGenieVersion: '5.260711.6',
+      fakeGenieExit: 1,
+      failIfLifecycleLocked: true,
+    };
+
+    const first = runHook(fx, currentFailure);
+    expect(first.status).toBe(0);
+    expect(readLog(fx)).not.toContain('SELF_CONTENTION');
+    expect(existsSync(fx.markerPath)).toBe(false);
+
+    const second = runHook(fx, currentFailure);
+    expect(second.status).toBe(0);
+    expect(readLog(fx)).not.toContain('SELF_CONTENTION');
+    expect(updateInvocations(fx)).toEqual(['CANONICAL env=1 update --sync-only', 'CANONICAL env=1 update --sync-only']);
+    expect(existsSync(fx.markerPath)).toBe(false);
+  });
+
+  test('5.260711.6+ failure preserves a concurrent success marker written after child lease release', () => {
+    installFakeGenie(fx, 'canonical', 'CANONICAL');
+    const concurrentFailure = {
+      fakeGenieVersion: '5.260711.6',
+      fakeGenieExit: 1,
+      failIfLifecycleLocked: true,
+      concurrentSuccessAfterRelease: true,
+    };
+
+    const first = runHook(fx, concurrentFailure);
+    expect(first.status).toBe(0);
+    expect(readLog(fx)).not.toContain('SELF_CONTENTION');
+    expect(readLog(fx)).toContain('CONCURRENT_SUCCESS_AFTER_RELEASE');
+    expect(existsSync(fx.markerPath)).toBe(true);
+    const concurrentMarker = readFileSync(fx.markerPath, 'utf8');
+
+    const second = runHook(fx, concurrentFailure);
+    expect(second.status).toBe(0);
+    expect(updateInvocations(fx)).toEqual(['CANONICAL env=1 update --sync-only']);
+    expect(readFileSync(fx.markerPath, 'utf8')).toBe(concurrentMarker);
+  });
+
+  test('failed-child cleanup restores a pre-existing stale marker', () => {
+    installFakeGenie(fx, 'canonical', 'CANONICAL');
+    const stale = new Date(Date.now() - THROTTLE_MS - 60_000).toISOString();
+    writeMarker(fx, stale);
+
+    const res = runHook(fx, {
+      fakeGenieVersion: '5.260710.9',
+      fakeGenieExit: 1,
+      fakeGenieWritesFreshMarker: true,
+    });
+
+    expect(res.status).toBe(0);
+    expect(readFileSync(fx.markerPath, 'utf8')).toBe(`${stale}\n`);
+  });
+
+  test('pre-contract binary (5.260710.4) → delegation skipped entirely, no success marker + /council fallback', () => {
     installFakeGenie(fx, 'canonical', 'CANONICAL');
     const res = runHook(fx, { fakeGenieVersion: '5.260710.4' });
     expect(res.status).toBe(0);
@@ -267,11 +389,7 @@ describe('delegateAgentSync version tiers (old-binary-safe invocation)', () => {
     expect(updateInvocations(fx)).toEqual([]);
     expect(res.stderr).toContain('predates the agent-sync contract');
 
-    // Backdated retry-window marker, same shape as a failed delegation.
-    const ts = Date.parse(readFileSync(fx.markerPath, 'utf8').trim());
-    const delta = Date.now() - ts;
-    expect(delta).toBeLessThan(THROTTLE_MS);
-    expect(delta).toBeGreaterThan(THROTTLE_MS - RETRY_MS - 60_000);
+    expect(existsSync(fx.markerPath)).toBe(false);
 
     // /council still stamped in-hook on exactly these machines.
     const stamped = join(fx.home, '.claude', 'workflows', 'council.js');
@@ -312,5 +430,29 @@ describe('findGenieBinary', () => {
     const stamped = join(fx.home, '.claude', 'workflows', 'council.js');
     expect(existsSync(stamped)).toBe(true);
     expect(readFileSync(stamped, 'utf8')).toContain(fx.pluginRoot);
+  });
+});
+
+describe('CJS council fallback lifecycle lease', () => {
+  test('defers without recovery or writes while a TS lifecycle writer owns GENIE_HOME', () => {
+    const lease = acquireLifecycleLease(fx.genieHome);
+    expect('skipped' in lease).toBe(false);
+    if ('skipped' in lease) throw new Error(lease.skipped);
+    const lockPath = lifecycleLockPath(fx.genieHome);
+    const ownerRecord = readFileSync(lockPath, 'utf8');
+    try {
+      const blocked = runHook(fx);
+      expect(blocked.status).toBe(0);
+      expect(blocked.stderr).toContain('another Genie lifecycle writer holds the lease');
+      expect(existsSync(join(fx.home, '.claude', 'workflows', 'council.js'))).toBe(false);
+      expect(readFileSync(lockPath, 'utf8')).toBe(ownerRecord);
+    } finally {
+      lease.release();
+    }
+
+    const retry = runHook(fx);
+    expect(retry.status).toBe(0);
+    expect(existsSync(join(fx.home, '.claude', 'workflows', 'council.js'))).toBe(true);
+    expect(existsSync(lockPath)).toBe(false);
   });
 });

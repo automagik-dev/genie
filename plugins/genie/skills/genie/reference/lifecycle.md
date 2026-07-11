@@ -7,6 +7,30 @@ Every piece of work follows this flow:
          (explore)    (plan)   (gate)   (build)  (verify)
 ```
 
+## Persisted lifecycle state
+
+A review verdict and a wish status are different things. `SHIP`, `FIX-FIRST`,
+and `BLOCKED` are evidence returned by a reviewer. The `Status` field in
+`WISH.md` is the durable routing state consumed after a restart:
+
+| WISH status | Meaning | Next route |
+|-------------|---------|------------|
+| `DRAFT` | Plan exists but has not passed plan review | `wish`, then plan `review` |
+| `FIX-FIRST` | Plan review found blocking gaps | `fix`, then plan `review` |
+| `APPROVED` | Plan review returned SHIP and the plan is ready | `work` or `genie launch <slug>` |
+| `IN_PROGRESS` | At least one execution group has started; execution/PR gates are not complete | resume `work` or the recorded corrective route |
+| `BLOCKED` | A recorded external, environment, or specification blocker prevents progress | resolve the recorded blocker, then resume the prior stage |
+| `SHIPPED` | The authorized merge and required QA/release gate completed | terminal/history only |
+
+The invoking orchestrator is the single mutation owner. After a reviewer sends
+its final evidence, the orchestrator appends a timestamped entry under
+`## Review Results` and applies the transition: plan SHIP → `APPROVED`; plan
+FIX-FIRST → `FIX-FIRST`; plan BLOCKED → `BLOCKED`; beginning execution →
+`IN_PROGRESS`; execution FIX-FIRST/BLOCKED stays `IN_PROGRESS` unless a real
+external blocker is recorded; authorized merge plus required QA → `SHIPPED`.
+The reviewer remains read-only and never edits WISH.md or task state. A chat
+verdict that was not persisted does not advance the lifecycle.
+
 ## Skill Catalog
 
 | Skill | Purpose | When to use |

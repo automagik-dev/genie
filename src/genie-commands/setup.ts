@@ -8,6 +8,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { confirm, input, select } from '@inquirer/prompts';
+import { acquireLifecycleLease } from '../lib/agent-sync.js';
 import { getCodexConfigPath } from '../lib/codex-config.js';
 import {
   preflightCodexPluginMutation,
@@ -24,6 +25,7 @@ import {
   saveGenieConfig,
   updateShortcutsConfig,
 } from '../lib/genie-config.js';
+import { resolveGenieHome } from '../lib/genie-home.js';
 import { installRuntimeIntegrations } from '../lib/runtime-integrations.js';
 import { checkCommand } from '../lib/system-detect.js';
 import { installShortcuts, isShortcutsInstalled } from '../term-commands/shortcuts.js';
@@ -44,6 +46,7 @@ export interface SetupDeps {
   installRuntimeIntegrations?: typeof installRuntimeIntegrations;
   /** One bounded post-install snapshot; tests inject this to avoid live Codex state. */
   probeCodexGeniePlugin?: typeof probeCodexGeniePlugin;
+  acquireLifecycleLease?: typeof acquireLifecycleLease;
   cwd?: string;
 }
 
@@ -504,12 +507,30 @@ async function runSetupCommand(options: SetupOptions, deps: SetupDeps): Promise<
 
 /** Run setup with clean, actionable failure semantics and no false success banner. */
 export async function setupCommand(options: SetupOptions = {}, deps: SetupDeps = {}): Promise<void> {
+  if (options.show) {
+    try {
+      await runSetupCommand(options, deps);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      console.error(`Error: Genie setup failed: ${detail}`);
+      process.exitCode = 1;
+    }
+    return;
+  }
+  const lifecycleLease = (deps.acquireLifecycleLease ?? acquireLifecycleLease)(resolveGenieHome());
+  if ('skipped' in lifecycleLease) {
+    console.error(`Error: Genie setup failed: ${lifecycleLease.skipped}`);
+    process.exitCode = 1;
+    return;
+  }
   try {
     await runSetupCommand(options, deps);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     console.error(`Error: Genie setup failed: ${detail}`);
     process.exitCode = 1;
+  } finally {
+    lifecycleLease.release();
   }
 }
 

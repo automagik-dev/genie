@@ -30,7 +30,7 @@ Task completion notifications are push-based. Do not poll a running subagent. Us
 | Normal implementation | `genie_engineer_standard` | Workspace write, claimed task |
 | Cross-module/stateful work | `genie_engineer_complex` | Workspace write, claimed task |
 | Discovery | `genie_scout` | Read-only |
-| Review | `genie_reviewer` | Read-only; temp/cache test writes only |
+| Review | `genie_reviewer` | Built-in `:read-only`; report write-requiring checks as blocked |
 | Surgical correction | `genie_fixer` | Workspace write; never self-review |
 | Aggregate gate | `genie_final_gate` | Read-only |
 

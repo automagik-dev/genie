@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync, execSync, spawnSync } from 'node:child_process';
+import { createHash, randomBytes } from 'node:crypto';
 /**
  * Smart Install Script for genie
  *
@@ -12,10 +13,21 @@ import { execFileSync, execSync, spawnSync } from 'node:child_process';
  * - Dependency installation when version changes
  * - Version marker management
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  closeSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+  writeSync,
+} from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 // This file is ESM (plugin package.json is type:module), so load the CommonJS
 // council-stamp helper through createRequire rather than a bare require.
@@ -26,15 +38,11 @@ const ROOT = process.env.CLAUDE_PLUGIN_ROOT || join(homedir(), '.claude', 'plugi
 // must too or the throttle marker below would never match the CLI's writes.
 const GENIE_DIR = process.env.GENIE_HOME || join(homedir(), '.genie');
 const MARKER = join(GENIE_DIR, '.install-version');
-// Throttle marker (ISO string) refreshed by BOTH the canonical agent-sync
-// engine (runAgentSyncSafe) and this hook around delegation. We delegate a
-// session-start sync only when it is absent or older than 6h, so session
-// starts stay cheap. On a FAILED delegation the hook writes a backdated marker
-// that re-allows a retry after 30 minutes instead of retrying (and re-warning)
-// on every single session start.
+// Throttle marker (ISO string) is owned exclusively by runAgentSyncSafe after
+// both agent skills and role agents converge successfully. The hook only reads
+// it: failed, partial, and pre-contract runs remain immediately retryable.
 const AGENT_SYNC_MARKER = join(GENIE_DIR, '.last-agent-sync');
 const AGENT_SYNC_THROTTLE_MS = 6 * 60 * 60 * 1000;
-const AGENT_SYNC_RETRY_MS = 30 * 60 * 1000;
 const IS_WINDOWS = process.platform === 'win32';
 
 // Common installation paths (handles fresh installs before PATH reload)
@@ -426,10 +434,11 @@ function findGenieBinary() {
 
 /**
  * Allow a delegated sync only when the last one is absent or older than 6h. The
- * CLI refreshes AGENT_SYNC_MARKER (ISO string) on every sync phase, and this
- * hook refreshes it around delegation (see delegateAgentSync). A marker dated
- * in the FUTURE (clock skew, corruption) is treated as stale — a negative
- * delta must never read as "fresh", or sync would be suppressed forever.
+ * Current CLIs refresh AGENT_SYNC_MARKER (ISO string) only after full
+ * convergence; failed-child compatibility cleanup below repairs markers from
+ * older CLIs. A marker dated in the FUTURE (clock skew, corruption) is treated
+ * as stale — a negative delta must never read as "fresh", or sync would be
+ * suppressed forever.
  */
 function agentSyncThrottleAllows() {
   try {
@@ -444,21 +453,121 @@ function agentSyncThrottleAllows() {
 }
 
 /**
- * Best-effort hook-side write of the throttle marker. The CLI writes it too on
- * a successful sync; writing from the hook as well guarantees a FAILING
- * delegation (pre-contract binary, spawn error, timeout) cannot retry on every
- * session start — failures get a backdated marker that re-allows a retry after
- * AGENT_SYNC_RETRY_MS instead of the full throttle window.
+ * Capture enough marker identity to distinguish a legacy child's write from a
+ * pre-existing marker and from a replacement that races failure cleanup. A
+ * non-regular or unstable path is deliberately opaque: cleanup then fails
+ * closed and leaves it untouched.
  */
-function writeAgentSyncMarker(date) {
+function captureAgentSyncMarker(path = AGENT_SYNC_MARKER) {
   try {
-    if (!existsSync(GENIE_DIR)) {
-      mkdirSync(GENIE_DIR, { recursive: true });
+    const before = lstatSync(path);
+    if (!before.isFile()) return { kind: 'opaque' };
+    const content = readFileSync(path, 'utf8');
+    const after = lstatSync(path);
+    if (
+      !after.isFile() ||
+      before.dev !== after.dev ||
+      before.ino !== after.ino ||
+      before.size !== after.size ||
+      before.mtimeMs !== after.mtimeMs
+    ) {
+      return { kind: 'opaque' };
     }
-    writeFileSync(AGENT_SYNC_MARKER, `${date.toISOString()}\n`);
-  } catch {
-    // the marker only optimizes throttling — never break session start over it
+    return {
+      kind: 'regular',
+      content,
+      dev: after.dev,
+      ino: after.ino,
+      size: after.size,
+      mtimeMs: after.mtimeMs,
+    };
+  } catch (error) {
+    return error?.code === 'ENOENT' ? { kind: 'absent' } : { kind: 'opaque' };
   }
+}
+
+function sameAgentSyncMarker(a, b) {
+  return (
+    a.kind === 'regular' &&
+    b.kind === 'regular' &&
+    a.content === b.content &&
+    a.dev === b.dev &&
+    a.ino === b.ino &&
+    a.size === b.size &&
+    a.mtimeMs === b.mtimeMs
+  );
+}
+
+/** Restore bytes only when no concurrent writer has recreated the marker. */
+function restoreAgentSyncMarkerIfAbsent(content) {
+  let fd;
+  try {
+    fd = openSync(AGENT_SYNC_MARKER, 'wx', 0o600);
+    writeSync(fd, content);
+  } catch {
+    // Existing marker belongs to a concurrent writer; never overwrite it.
+  } finally {
+    if (fd !== undefined) {
+      try {
+        closeSync(fd);
+      } catch {
+        // best effort; marker bytes were already written
+      }
+    }
+  }
+}
+
+/**
+ * Releases before the success-only marker contract wrote the throttle marker
+ * even when their sync later failed. Remove only a canonical fresh ISO marker
+ * created during THIS child invocation. The lifecycle lease excludes current
+ * cooperative writers; an atomic quarantine plus an identity re-check ensures
+ * a replacement racing the cleanup remains at the canonical path. Any older
+ * marker is restored with create-if-absent semantics, so it cannot clobber a
+ * concurrent success.
+ */
+function discardFailedLegacySyncMarker(before, startedAt, finishedAt) {
+  if (before.kind === 'opaque') return;
+  const candidate = captureAgentSyncMarker();
+  if (candidate.kind !== 'regular' || sameAgentSyncMarker(before, candidate)) return;
+
+  const timestamp = Date.parse(candidate.content.trim());
+  const mtimeSlopMs = 2000; // accommodate coarse filesystem mtime resolution
+  if (
+    Number.isNaN(timestamp) ||
+    new Date(timestamp).toISOString() !== candidate.content.trim() ||
+    timestamp < startedAt ||
+    timestamp > finishedAt ||
+    candidate.mtimeMs < startedAt - mtimeSlopMs ||
+    candidate.mtimeMs > finishedAt + mtimeSlopMs
+  ) {
+    return;
+  }
+
+  const quarantine = `${AGENT_SYNC_MARKER}.failed-${process.pid}-${randomBytes(8).toString('hex')}`;
+  try {
+    renameSync(AGENT_SYNC_MARKER, quarantine);
+  } catch {
+    return;
+  }
+
+  const quarantined = captureAgentSyncMarker(quarantine);
+  if (!sameAgentSyncMarker(candidate, quarantined)) {
+    if (quarantined.kind === 'regular') restoreAgentSyncMarkerIfAbsent(quarantined.content);
+    try {
+      rmSync(quarantine, { force: true });
+    } catch {
+      // quarantine is harmless; never risk the canonical marker to clean it
+    }
+    return;
+  }
+
+  try {
+    rmSync(quarantine, { force: true });
+  } catch {
+    // quarantine no longer throttles SessionStart; leave best-effort debris
+  }
+  if (before.kind === 'regular') restoreAgentSyncMarkerIfAbsent(before.content);
 }
 
 // --- agent-sync delegation contract tiers -----------------------------------
@@ -481,6 +590,11 @@ function writeAgentSyncMarker(date) {
 // honor identically.
 const SYNC_ENV_AWARE_MIN = [5, 260710, 5];
 const SYNC_FLAG_AWARE_MIN = [5, 260710, 10];
+// 5.260711.6 is the first release where BOTH sides of this handoff share the
+// lifecycle lease and the child writes .last-agent-sync only after complete
+// convergence. Published .10–.14 and 5.260711.1–.5 remain parent-serialized;
+// current/new children must acquire the lease themselves to avoid self-deadlock.
+const SYNC_SUCCESS_ONLY_AND_SELF_SERIALIZING_MIN = [5, 260711, 6];
 
 /** Extract [major, minor, patch] from `genie --version` output, or null. */
 function parseGenieVersion(raw) {
@@ -524,13 +638,22 @@ function delegateAgentSync(geniePath) {
   const version = probeGenieVersion(geniePath);
   if (!version || compareVersions(version, SYNC_ENV_AWARE_MIN) < 0) {
     console.error('Warning: installed genie CLI predates the agent-sync contract — skipping delegated sync');
-    // Backdated marker: throttled right now, retries after AGENT_SYNC_RETRY_MS
-    // (e.g. once the user updates) rather than warning on every session start.
-    writeAgentSyncMarker(new Date(Date.now() - (AGENT_SYNC_THROTTLE_MS - AGENT_SYNC_RETRY_MS)));
     return false;
   }
-  const args =
-    compareVersions(version, SYNC_FLAG_AWARE_MIN) >= 0 ? ['update', '--sync-only'] : ['update'];
+  const flagAware = compareVersions(version, SYNC_FLAG_AWARE_MIN) >= 0;
+  const selfSerializing = compareVersions(version, SYNC_SUCCESS_ONLY_AND_SELF_SERIALIZING_MIN) >= 0;
+  const args = flagAware ? ['update', '--sync-only'] : ['update'];
+  // Pre-5.260711.6 children do not acquire the shared lifecycle lease, so the
+  // hook holds it across their run. Current/new children self-acquire; holding
+  // it here would deadlock them. Their success-only marker contract also means
+  // no parent-side failure cleanup is safe or necessary.
+  const releaseParentLease = selfSerializing ? undefined : acquireFallbackLifecycleLease();
+  if (!selfSerializing && releaseParentLease === null) {
+    console.error('Agent sync deferred: another Genie lifecycle writer holds the lease');
+    return false;
+  }
+  const markerBefore = selfSerializing ? undefined : captureAgentSyncMarker();
+  const startedAt = Date.now();
   // shell: IS_WINDOWS matches this file's own probes — Node >=18.20 EINVAL
   // hardening refuses to spawn .cmd shims without a shell, and the shell-based
   // probe above may have resolved exactly such a shim. Quote a path containing
@@ -543,15 +666,102 @@ function delegateAgentSync(geniePath) {
       timeout: 45000,
       shell: IS_WINDOWS,
     });
-    writeAgentSyncMarker(new Date());
     return true;
   } catch (e) {
+    // Success-only 5.260711.6+ children never stamp on failure. If a marker
+    // exists after they release their own lease, it belongs to another
+    // successful owner and the hook must not touch it. Legacy children are
+    // still under the parent lease here, so their attributable false-success
+    // marker can be removed without racing another lifecycle writer.
+    if (!selfSerializing && markerBefore !== undefined) {
+      discardFailedLegacySyncMarker(markerBefore, startedAt, Date.now());
+    }
     console.error(`Warning: agent sync via genie update failed: ${e.message}`);
-    // Backdated marker: throttled right now, retries after AGENT_SYNC_RETRY_MS
-    // rather than warning on every session start (or never retrying at all).
-    writeAgentSyncMarker(new Date(Date.now() - (AGENT_SYNC_THROTTLE_MS - AGENT_SYNC_RETRY_MS)));
     return false;
+  } finally {
+    releaseParentLease?.();
   }
+}
+
+function lifecycleLockPath(genieHome) {
+  const canonical = resolve(genieHome);
+  const suffix = createHash('sha256').update(canonical).digest('hex').slice(0, 16);
+  return join(dirname(canonical), `.genie-lifecycle-${suffix}.lock`);
+}
+
+function processStartIdentity(pid) {
+  let marker;
+  try {
+    if (process.platform === 'linux') {
+      const raw = readFileSync(`/proc/${pid}/stat`, 'utf8');
+      const closeParen = raw.lastIndexOf(')');
+      const fields = raw
+        .slice(closeParen + 2)
+        .trim()
+        .split(/\s+/);
+      marker = `linux:${fields[19] || ''}`;
+    } else if (process.platform === 'win32') {
+      marker = `windows:${execFileSync(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-Command', `(Get-Process -Id ${pid}).StartTime.ToFileTimeUtc()`],
+        { encoding: 'utf8', timeout: 1000 },
+      ).trim()}`;
+    } else {
+      marker = `ps:${execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
+        encoding: 'utf8',
+        timeout: 1000,
+      }).trim()}`;
+    }
+    if (marker.endsWith(':')) return null;
+    return createHash('sha256').update(marker).digest('hex');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Minimal CommonJS-fallback lease compatible with the canonical TS lifecycle
+ * lease. It never steals: a live, stale, malformed, or unreadable owner all
+ * cause safe deferral, so fallback recovery cannot touch a live transaction.
+ */
+function acquireFallbackLifecycleLease() {
+  const lockPath = lifecycleLockPath(GENIE_DIR);
+  const ownerRecord = `${process.pid}:${randomBytes(16).toString('hex')}:${processStartIdentity(process.pid) || 'unknown'}`;
+  let fd;
+  try {
+    fd = openSync(lockPath, 'wx', 0o600);
+    writeSync(fd, `${ownerRecord}\n`);
+    closeSync(fd);
+  } catch {
+    if (fd !== undefined) {
+      try {
+        closeSync(fd);
+      } catch {
+        // best effort; exact-record cleanup below remains ownership-safe
+      }
+    }
+    try {
+      if (readFileSync(lockPath, 'utf8').trim() === ownerRecord) rmSync(lockPath, { force: true });
+    } catch {
+      // another owner or unreadable state: fail closed
+    }
+    return null;
+  }
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    try {
+      if (readFileSync(lockPath, 'utf8').trim() === ownerRecord) rmSync(lockPath, { force: true });
+    } catch {
+      // never unlink a pathname without exact token ownership
+    }
+  };
+  process.once('exit', release);
+  return () => {
+    process.removeListener('exit', release);
+    release();
+  };
 }
 
 /**
@@ -560,6 +770,11 @@ function delegateAgentSync(geniePath) {
  * falling back to CLAUDE_PLUGIN_ROOT.
  */
 function stampCouncilFallback() {
+  const releaseLease = acquireFallbackLifecycleLease();
+  if (releaseLease === null) {
+    console.error('Council workflow convergence deferred: another Genie lifecycle writer holds the lease');
+    return;
+  }
   try {
     const { stampCouncilWorkflow, resolveStampInputs } = requireCjs('./council-stamp.cjs');
     const { pluginRoot, templatePath } = resolveStampInputs({ claudePluginRoot: ROOT, genieHome: GENIE_DIR });
@@ -573,6 +788,8 @@ function stampCouncilFallback() {
     }
   } catch (e) {
     console.error(`Warning: could not stamp /council workflow: ${e.message}`);
+  } finally {
+    releaseLease();
   }
 }
 

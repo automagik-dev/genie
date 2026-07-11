@@ -67,7 +67,7 @@ function writeOpenAiMetadata(skillDir: string, name: string): void {
       'interface:',
       `  display_name: "${name}"`,
       `  short_description: "Run the ${name} workflow safely"`,
-      `  default_prompt: "Use $${name} for this task."`,
+      `  default_prompt: "Use $genie:${name} (or $${name} only for a separately installed personal copy) for this task."`,
       '',
     ].join('\n'),
   );
@@ -195,7 +195,9 @@ describe('fresh-install-smoke', () => {
         JSON.stringify({
           name: 'fixture',
           skills: './skills/',
-          interface: { defaultPrompt: ['Use $wish for this request.', 'Use $work.', 'Use $review.'] },
+          interface: {
+            defaultPrompt: ['Use $genie:wish for this request.', 'Use $genie:work.', 'Use $genie:review.'],
+          },
         }),
       );
       symlinkSync('../skills', join(pluginRoot, 'skills'));
@@ -230,7 +232,9 @@ describe('fresh-install-smoke', () => {
         JSON.stringify({
           name: 'fixture',
           skills: './skills/',
-          interface: { defaultPrompt: ['Use $wish for this request.', 'Use $work.', 'Use $review.'] },
+          interface: {
+            defaultPrompt: ['Use $genie:wish for this request.', 'Use $genie:work.', 'Use $genie:review.'],
+          },
         }),
       );
 

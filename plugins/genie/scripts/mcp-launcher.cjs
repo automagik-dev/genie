@@ -49,17 +49,36 @@ function launchMcp(options = {}) {
     windowsHide: true,
   });
 
-  const forwardedSignals = ['SIGINT', 'SIGTERM'];
-  for (const signal of forwardedSignals) {
-    process.once(signal, () => {
-      if (!child.killed) child.kill(signal);
-    });
-  }
+  const graceOverride = Number((options.env ?? process.env).GENIE_MCP_KILL_GRACE_MS);
+  const killGraceMs = Number.isFinite(graceOverride) && graceOverride > 0 ? Math.min(graceOverride, 1_000) : 1_000;
+  let forwardedSignal = null;
+  let forceTimer;
+  const listeners = ['SIGINT', 'SIGTERM'].map((signal) => {
+    const listener = () => {
+      if (forwardedSignal) return;
+      forwardedSignal = signal;
+      child.kill(signal);
+      forceTimer = setTimeout(() => child.kill('SIGKILL'), killGraceMs);
+      if (typeof forceTimer.unref === 'function') forceTimer.unref();
+    };
+    process.once(signal, listener);
+    return { signal, listener };
+  });
+  const cleanup = () => {
+    if (forceTimer) clearTimeout(forceTimer);
+    for (const { signal, listener } of listeners) process.off(signal, listener);
+  };
   child.once('error', (error) => {
+    cleanup();
     process.stderr.write(`genie MCP launcher failed: ${error.message}\n`);
     process.exitCode = 1;
   });
   child.once('exit', (code, signal) => {
+    cleanup();
+    if (forwardedSignal) {
+      process.kill(process.pid, forwardedSignal);
+      return;
+    }
     if (signal) {
       process.stderr.write(`genie MCP exited on ${signal}\n`);
       process.exitCode = 1;

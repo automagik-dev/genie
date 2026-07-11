@@ -140,7 +140,10 @@ describe('omniApproval handler', () => {
         expect(pending.tool).toBe('Bash');
         expect(pending.repo).toBe('/repo');
         expect(pending.sessionHint).toBe('sess-1');
-        expect(getApproval(db, pending.id)?.inputSummary).toContain('rm -rf build');
+        const summary = getApproval(db, pending.id)?.inputSummary ?? '';
+        expect(summary).toContain('"executable":"rm"');
+        expect(summary).toContain('"options":["-r"]');
+        expect(summary).not.toContain('build');
         resolveApproval(db, pending.id, 'approved', 'boss');
       },
     });
@@ -162,13 +165,21 @@ describe('omniApproval handler', () => {
       'quoted-cookie-secret',
       'set-cookie-secret',
       'plain-secret',
+      'short-user-secret',
+      'short-password-secret',
+      'url-user-secret',
+      'url-password-secret',
+      'signed-url-secret',
+      'sas-signature-secret',
+      'authorization-file-secret',
+      'heredoc-secret',
     ];
     await omniApproval(
       {
         ...PAYLOAD,
         tool_input: {
           command:
-            'API_KEY=super-secret AWS_SECRET_ACCESS_KEY=aws-secret tool --token cli-secret ' +
+            'API_KEY=super-secret AWS_SECRET_ACCESS_KEY=aws-secret curl --token cli-secret ' +
             '-H "Authorization: Bearer bearer-secret" ' +
             "-H 'Authorization: Basic basic-secret' " +
             '--header="Authorization: Digest digest-secret" ' +
@@ -176,7 +187,10 @@ describe('omniApproval handler', () => {
             '-H "Proxy-Authorization: Custom proxy-secret" ' +
             '-H "Cookie: session=session-secret" ' +
             "-H 'Cookie: session=quoted-cookie-secret; theme=dark' " +
-            '-H "Set-Cookie: session=set-cookie-secret; HttpOnly" example.test',
+            '-H "Set-Cookie: session=set-cookie-secret; HttpOnly" ' +
+            '-u short-user-secret:short-password-secret ' +
+            'https://url-user-secret:url-password-secret@example.test/file?X-Amz-Signature=signed-url-secret&sig=sas-signature-secret ' +
+            '--config authorization-file-secret && tool -pplain-secret <<EOF\nheredoc-secret\nEOF',
           password: 'plain-secret',
         },
       },
@@ -187,7 +201,10 @@ describe('omniApproval handler', () => {
           const [pending] = listPendingApprovals(db);
           const summary = getApproval(db, pending.id)?.inputSummary ?? '';
           for (const secret of secrets) expect(summary).not.toContain(secret);
-          expect(summary).toContain('[REDACTED]');
+          expect(summary).toContain('"executable":"curl"');
+          expect(summary).toContain('"executable":"tool"');
+          expect(summary).toContain('"options"');
+          expect(summary).not.toContain('https://');
           resolveApproval(db, pending.id, 'approved', 'boss');
         },
       },

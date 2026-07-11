@@ -41,7 +41,7 @@ import {
   writeSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join, relative, resolve } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { resolveClaudeDir, resolveCodexDir, resolveGenieHome, resolveHermesHome } from './genie-home.js';
 
 // ============================================================================
@@ -87,13 +87,6 @@ const LOCK_NAME = '.agent-sync.lock';
 /** A lock older than this is a crashed run's debris and may be stolen. */
 const LOCK_STALE_MS = 10 * 60 * 1000;
 /**
- * SessionStart-hook throttle marker. The engine writes it at sync START (not
- * completion), so N simultaneous session starts back off immediately instead of
- * queueing behind the lock after the first run releases it.
- */
-const MARKER_NAME = '.last-agent-sync';
-
-/**
  * Live Codex user-skills tier — codex-rs loads `~/.agents/skills/<name>`
  * top-level. Exported so doctor/uninstall share the exact target agent-sync
  * writes. The env override exists for tests (all-tmpdir isolation), mirroring
@@ -138,7 +131,11 @@ export interface AgentSyncOptions {
   log?: (line: string) => void;
   /** Injectable clock for manifest + backup timestamps. */
   now?: () => Date;
+  /** Bound client homes for explicit lifecycle commands. */
+  selection?: AgentSyncSelection;
 }
+
+export type AgentSyncSelection = 'auto' | 'codex' | 'claude' | 'all' | 'none';
 
 export type SkillAction =
   | 'created'
@@ -158,6 +155,8 @@ export interface AgentReport {
   /** Non-skill outcomes: stamp / symlink / enable lines. */
   extras: Array<{ kind: string; action: string; detail?: string }>;
   advisories: string[];
+  /** Adapter failures, distinct from preservation/restart advisories. */
+  failures?: string[];
 }
 
 export interface AgentSyncReport {
@@ -511,6 +510,7 @@ function regularFileDigest(path: string): string | null {
 
 /** Classify council.js using only its sidecar ownership grant and recorded digest. */
 export function inspectManagedWorkflow(targetDir: string): ManagedWorkflowReport {
+  recoverWorkflowTransactions(targetDir);
   const targetPath = join(targetDir, TARGET_NAME);
   const manifestPath = join(targetDir, WORKFLOW_MANIFEST_NAME);
   const ownership = readWorkflowManifest(manifestPath);
@@ -538,12 +538,13 @@ export function stampWorkflow(opts: {
   version?: string | null;
   now?: () => Date;
 }): {
-  action: 'written' | 'skipped' | 'kept-unmanaged' | 'kept-modified' | 'metadata-corrupt';
+  action: 'written' | 'skipped' | 'kept-unmanaged' | 'kept-modified' | 'metadata-corrupt' | 'adopted-legacy';
   targetPath: string;
 } {
   const { templatePath, pluginRoot, targetDir } = opts;
   const template = readFileSync(templatePath, 'utf8');
-  const stamped = template.split(PLACEHOLDER).join(pluginRoot);
+  const stamped = stampWorkflowTemplate(template, pluginRoot);
+  const legacyStamped = template.split(PLACEHOLDER).join(pluginRoot);
   const ownership = inspectManagedWorkflow(targetDir);
   const targetExists = lstatSafe(ownership.targetPath) !== null;
   if (ownership.state === 'corrupt-metadata') {
@@ -553,23 +554,144 @@ export function stampWorkflow(opts: {
     return { action: 'kept-modified', targetPath: ownership.targetPath };
   }
   if (ownership.state === 'unmanaged' && targetExists) {
-    return { action: 'kept-unmanaged', targetPath: ownership.targetPath };
+    if (regularFileDigest(ownership.targetPath) === createHash('sha256').update(legacyStamped).digest('hex')) {
+      backupLegacyWorkflow(targetDir, ownership.targetPath);
+    } else {
+      return { action: 'kept-unmanaged', targetPath: ownership.targetPath };
+    }
   }
   if (ownership.state === 'managed-clean' && readFileSync(ownership.targetPath, 'utf8') === stamped) {
     return { action: 'skipped', targetPath: ownership.targetPath };
   }
-  mkdirSync(targetDir, { recursive: true });
-  writeFileSync(ownership.targetPath, stamped, 'utf8');
   const manifest: SyncManifest = {
     managedBy: MANAGED_BY,
     version: opts.version ?? null,
     digest: createHash('sha256').update(stamped).digest('hex'),
     syncedAt: (opts.now ?? (() => new Date()))().toISOString(),
   };
-  const staging = `${ownership.manifestPath}.staging-${process.pid}`;
-  writeFileSync(staging, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
-  renameSync(staging, ownership.manifestPath);
-  return { action: 'written', targetPath: ownership.targetPath };
+  publishWorkflowTransaction(targetDir, stamped, manifest);
+  return {
+    action: ownership.state === 'unmanaged' && targetExists ? 'adopted-legacy' : 'written',
+    targetPath: ownership.targetPath,
+  };
+}
+
+const WORKFLOW_TRANSACTION_PREFIX = '.council.genie-txn-';
+
+function stampWorkflowTemplate(template: string, pluginRoot: string): string {
+  const quotedPlaceholder = `'${PLACEHOLDER}'`;
+  if (!template.includes(quotedPlaceholder)) {
+    throw new Error(`council workflow template is missing quoted placeholder ${quotedPlaceholder}`);
+  }
+  return template.split(quotedPlaceholder).join(JSON.stringify(pluginRoot));
+}
+
+function backupLegacyWorkflow(targetDir: string, targetPath: string): void {
+  const recovery = join(dirname(targetDir), '.genie-recovery', 'council-bootstrap');
+  mkdirSync(recovery, { recursive: true });
+  const digest = regularFileDigest(targetPath);
+  if (digest === null) throw new Error(`legacy council workflow is not a physical file: ${targetPath}`);
+  const destination = join(recovery, `${TARGET_NAME}.${digest}`);
+  if (!existsSync(destination)) cpSync(targetPath, destination);
+}
+
+function publishWorkflowTransaction(targetDir: string, stamped: string, manifest: SyncManifest): void {
+  mkdirSync(targetDir, { recursive: true });
+  const targetPath = join(targetDir, TARGET_NAME);
+  const manifestPath = join(targetDir, WORKFLOW_MANIFEST_NAME);
+  const targetDigest = createHash('sha256').update(stamped).digest('hex');
+  const manifestContent = `${JSON.stringify(manifest, null, 2)}\n`;
+  const manifestDigest = createHash('sha256').update(manifestContent).digest('hex');
+  const transactionDir = join(
+    targetDir,
+    `${WORKFLOW_TRANSACTION_PREFIX}${process.pid}-${Date.now()}-${randomBytes(6).toString('hex')}`,
+  );
+  const staged = join(transactionDir, 'staged');
+  const before = join(transactionDir, 'before');
+  mkdirSync(staged, { recursive: true });
+  mkdirSync(before, { recursive: true });
+  writeFileSync(join(staged, TARGET_NAME), stamped, 'utf8');
+  writeFileSync(join(staged, WORKFLOW_MANIFEST_NAME), manifestContent, 'utf8');
+  writeFileSync(
+    join(transactionDir, 'journal.json'),
+    `${JSON.stringify({ version: 1, targetDigest, manifestDigest, hadTarget: existsSync(targetPath), hadManifest: existsSync(manifestPath) })}\n`,
+    'utf8',
+  );
+  try {
+    if (lstatSafe(targetPath) !== null) renameSync(targetPath, join(before, TARGET_NAME));
+    if (lstatSafe(manifestPath) !== null) renameSync(manifestPath, join(before, WORKFLOW_MANIFEST_NAME));
+    renameSync(join(staged, TARGET_NAME), targetPath);
+    renameSync(join(staged, WORKFLOW_MANIFEST_NAME), manifestPath);
+    writeFileSync(join(transactionDir, 'COMMITTED'), 'ok\n');
+    rmSync(transactionDir, { recursive: true, force: true });
+  } catch (error) {
+    rollbackWorkflowTransaction(targetDir, transactionDir);
+    throw error;
+  }
+}
+
+function recoverWorkflowTransactions(targetDir: string): void {
+  if (!existsSync(targetDir)) return;
+  for (const name of readdirSync(targetDir).filter((entry) => entry.startsWith(WORKFLOW_TRANSACTION_PREFIX))) {
+    const transactionDir = join(targetDir, name);
+    const journal = readWorkflowTransactionJournal(transactionDir);
+    if (existsSync(join(transactionDir, 'COMMITTED'))) {
+      if (
+        regularFileDigest(join(targetDir, TARGET_NAME)) !== journal.targetDigest ||
+        regularFileDigest(join(targetDir, WORKFLOW_MANIFEST_NAME)) !== journal.manifestDigest
+      ) {
+        throw new Error(`committed council workflow transaction is inconsistent: ${transactionDir}`);
+      }
+      rmSync(transactionDir, { recursive: true, force: true });
+    } else {
+      rollbackWorkflowTransaction(targetDir, transactionDir);
+    }
+  }
+}
+
+function readWorkflowTransactionJournal(transactionDir: string): {
+  targetDigest: string;
+  manifestDigest: string;
+  hadTarget: boolean;
+  hadManifest: boolean;
+} {
+  const parsed = JSON.parse(readFileSync(join(transactionDir, 'journal.json'), 'utf8')) as Record<string, unknown>;
+  if (
+    parsed.version !== 1 ||
+    typeof parsed.targetDigest !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(parsed.targetDigest) ||
+    typeof parsed.manifestDigest !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(parsed.manifestDigest) ||
+    typeof parsed.hadTarget !== 'boolean' ||
+    typeof parsed.hadManifest !== 'boolean'
+  ) {
+    throw new Error(`invalid council workflow transaction: ${transactionDir}`);
+  }
+  return parsed as ReturnType<typeof readWorkflowTransactionJournal>;
+}
+
+function rollbackWorkflowTransaction(targetDir: string, transactionDir: string): void {
+  const journal = readWorkflowTransactionJournal(transactionDir);
+  for (const [name, digest, had] of [
+    [TARGET_NAME, journal.targetDigest, journal.hadTarget],
+    [WORKFLOW_MANIFEST_NAME, journal.manifestDigest, journal.hadManifest],
+  ] as const) {
+    const target = join(targetDir, name);
+    const before = join(transactionDir, 'before', name);
+    if (lstatSafe(before) !== null) {
+      if (lstatSafe(target) !== null) {
+        if (regularFileDigest(target) !== digest) throw new Error(`council transaction target changed: ${target}`);
+        rmSync(target, { force: true });
+      }
+      renameSync(before, target);
+    } else if (!had && lstatSafe(target) !== null) {
+      if (regularFileDigest(target) !== digest) throw new Error(`council transaction target changed: ${target}`);
+      rmSync(target, { force: true });
+    } else if (had && lstatSafe(target) === null) {
+      throw new Error(`council transaction lost prior target: ${target}`);
+    }
+  }
+  rmSync(transactionDir, { recursive: true, force: true });
 }
 
 // ============================================================================
@@ -724,7 +846,19 @@ function reconcileExistingSymlink(linkPath: string, hermesRoot: string, report: 
 function ensureStickyProfileLink(ctx: RunContext, hermesHome: string, hermesRoot: string, report: AgentReport): void {
   const active = readTrimmed(join(hermesHome, 'active_profile'));
   if (active === null || active === '') return;
-  const linkPath = join(hermesHome, 'profiles', active, 'plugins', 'genie');
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(active) || active === '.' || active === '..') {
+    report.advisories.push(`invalid Hermes active_profile ${JSON.stringify(active)}; sticky link skipped safely`);
+    report.failures = [`invalid Hermes active_profile ${JSON.stringify(active)}`];
+    return;
+  }
+  const profilesRoot = resolve(hermesHome, 'profiles');
+  const profileRoot = resolve(profilesRoot, active);
+  if (!profileRoot.startsWith(`${profilesRoot}${sep}`)) {
+    report.advisories.push('Hermes active_profile escaped profiles root; sticky link skipped safely');
+    report.failures = ['Hermes active_profile escaped profiles root'];
+    return;
+  }
+  const linkPath = join(profileRoot, 'plugins', 'genie');
   ensureHermesLink(ctx, linkPath, hermesRoot, `profiles-${active}-plugins-genie`, report);
 }
 
@@ -742,6 +876,7 @@ function runHermesEnable(opts: AgentSyncOptions, binary: string, report: AgentRe
   } catch (err) {
     report.extras.push({ kind: 'enable', action: 'failed', detail: errMsg(err) });
     report.advisories.push(`hermes plugins enable genie failed: ${errMsg(err)}`);
+    report.failures = [`hermes plugins enable genie failed: ${errMsg(err)}`];
   }
 }
 
@@ -793,6 +928,8 @@ type LockCreateAttempt =
 function tryInitializeSyncLock(lockPath: string): LockCreateAttempt {
   let fd: number;
   const token = randomBytes(16).toString('hex');
+  const processIdentity = processStartIdentity(process.pid) ?? 'unknown';
+  const ownerRecord = `${process.pid}:${token}:${processIdentity}`;
   try {
     fd = openSync(lockPath, 'wx');
   } catch (error) {
@@ -803,7 +940,7 @@ function tryInitializeSyncLock(lockPath: string): LockCreateAttempt {
   }
   let failure: unknown;
   try {
-    writeSync(fd, `${process.pid}:${token}\n`);
+    writeSync(fd, `${ownerRecord}\n`);
   } catch (error) {
     failure = error;
   }
@@ -813,12 +950,12 @@ function tryInitializeSyncLock(lockPath: string): LockCreateAttempt {
     failure ??= error;
   }
   if (failure === undefined) {
-    return { status: 'acquired', lock: { release: () => releaseOwnedLock(lockPath, token) } };
+    return { status: 'acquired', lock: { release: () => releaseOwnedLock(lockPath, ownerRecord) } };
   }
   // A failed initializer never unlinks by pathname alone: if another process
   // replaced the record, only our token may release it. Partial debris safely
   // fails closed and is handled by the stale-lock path later.
-  releaseOwnedLock(lockPath, token);
+  releaseOwnedLock(lockPath, ownerRecord);
   const code = (failure as NodeJS.ErrnoException).code ?? 'unknown';
   return { status: 'failed', reason: `could not initialize agent-sync lock (${code}); skipped safely` };
 }
@@ -833,31 +970,123 @@ function isStaleOrInvalidLockTime(mtimeMs: number, nowMs = Date.now()): boolean 
   return ageMs > LOCK_STALE_MS || ageMs < -LOCK_STALE_MS;
 }
 
-/** Parse both current `pid:token` locks and the legacy pid-only lock format. */
-function lockOwnerPid(lockPath: string): number | null {
+/** Parse current pid/token/start locks plus legacy pid/token and pid-only records. */
+function lockOwner(lockPath: string): { pid: number; processIdentity: string | null } | null {
   const raw = readTrimmed(lockPath);
-  const match = raw?.match(/^(\d+)(?::[a-f0-9]{32})?$/);
+  const match = raw?.match(/^(\d+)(?::[a-f0-9]{32})?(?::([a-f0-9]{64}|unknown))?$/);
   if (!match) return null;
   const pid = Number(match[1]);
-  return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
+  return Number.isSafeInteger(pid) && pid > 0 ? { pid, processIdentity: match[2] ?? null } : null;
 }
 
-/** Never steal an old or future-dated lock from a demonstrably live owner. */
+/** Never steal a live lock; PID reuse is rejected by the process-start identity. */
 function lockHasLiveOwner(lockPath: string): boolean {
-  const pid = lockOwnerPid(lockPath);
-  if (pid === null) return false;
+  const owner = lockOwner(lockPath);
+  if (owner === null) return false;
   try {
-    process.kill(pid, 0);
-    return true;
+    process.kill(owner.pid, 0);
   } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'EPERM';
+    if ((error as NodeJS.ErrnoException).code !== 'EPERM') return false;
+  }
+  if (owner.processIdentity === null || owner.processIdentity === 'unknown') return true;
+  const currentIdentity = processStartIdentity(owner.pid);
+  return currentIdentity === null || currentIdentity === owner.processIdentity;
+}
+
+/** Release only the exact owner record created by this acquisition. */
+function releaseOwnedLock(lockPath: string, ownerRecord: string): void {
+  if (readTrimmed(lockPath) !== ownerRecord) return;
+  rmSyncSafe(lockPath);
+}
+
+function processStartIdentity(pid: number): string | null {
+  let marker: string;
+  try {
+    if (process.platform === 'linux') {
+      const raw = readFileSync(`/proc/${pid}/stat`, 'utf8');
+      const closeParen = raw.lastIndexOf(')');
+      const fields = raw
+        .slice(closeParen + 2)
+        .trim()
+        .split(/\s+/);
+      marker = `linux:${fields[19] ?? ''}`;
+    } else if (process.platform === 'win32') {
+      marker = `windows:${execFileSync(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-Command', `(Get-Process -Id ${pid}).StartTime.ToFileTimeUtc()`],
+        { encoding: 'utf8', timeout: 1_000 },
+      ).trim()}`;
+    } else {
+      marker = `ps:${execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
+        encoding: 'utf8',
+        timeout: 1_000,
+      }).trim()}`;
+    }
+    if (marker.endsWith(':')) return null;
+    return createHash('sha256').update(marker).digest('hex');
+  } catch {
+    return null;
   }
 }
 
-/** Release only the lock record carrying this acquisition's unguessable token. */
-function releaseOwnedLock(lockPath: string, token: string): void {
-  if (readTrimmed(lockPath) !== `${process.pid}:${token}`) return;
-  rmSyncSafe(lockPath);
+export interface LifecycleLease {
+  path: string;
+  release: () => void;
+}
+
+const ACTIVE_LIFECYCLE_LEASES = new Map<string, { count: number; releaseUnderlying: () => void }>();
+
+/** Stable sibling-of-GENIE_HOME lease shared by lifecycle commands. */
+export function lifecycleLockPath(genieHome = resolveGenieHome()): string {
+  const canonical = resolve(genieHome);
+  const suffix = createHash('sha256').update(canonical).digest('hex').slice(0, 16);
+  return join(dirname(canonical), `.genie-lifecycle-${suffix}.lock`);
+}
+
+export function acquireLifecycleLease(genieHome = resolveGenieHome()): LifecycleLease | { skipped: string } {
+  const path = lifecycleLockPath(genieHome);
+  const active = ACTIVE_LIFECYCLE_LEASES.get(path);
+  if (active) {
+    active.count += 1;
+    let released = false;
+    return {
+      path,
+      release: () => {
+        if (released) return;
+        released = true;
+        active.count -= 1;
+        if (active.count === 0) {
+          ACTIVE_LIFECYCLE_LEASES.delete(path);
+          active.releaseUnderlying();
+        }
+      },
+    };
+  }
+  const acquired = acquireSyncLock(path);
+  if ('skipped' in acquired) return acquired;
+  const releaseOnExit = () => acquired.release();
+  process.once('exit', releaseOnExit);
+  const state = {
+    count: 1,
+    releaseUnderlying: () => {
+      process.removeListener('exit', releaseOnExit);
+      acquired.release();
+    },
+  };
+  ACTIVE_LIFECYCLE_LEASES.set(path, state);
+  let released = false;
+  return {
+    path,
+    release: () => {
+      if (released) return;
+      released = true;
+      state.count -= 1;
+      if (state.count === 0) {
+        ACTIVE_LIFECYCLE_LEASES.delete(path);
+        state.releaseUnderlying();
+      }
+    },
+  };
 }
 
 /**
@@ -892,15 +1121,6 @@ function stealStaleLock(lockPath: string): 'cleared' | 'contended' {
   }
 }
 
-/** Best-effort start-of-sync refresh of the SessionStart-hook throttle marker. */
-function touchMarkerSafe(markerPath: string, now: Date): void {
-  try {
-    writeFileSync(markerPath, `${now.toISOString()}\n`, 'utf8');
-  } catch {
-    // the marker only optimizes the hook throttle; never fail the sync over it.
-  }
-}
-
 // ============================================================================
 // Orchestration
 // ============================================================================
@@ -926,12 +1146,17 @@ export function runAgentSync(opts: AgentSyncOptions = {}): AgentSyncReport {
   }
   try {
     const ctx = createRunContext(genieHome, source.pluginRoot, source, opts);
-    touchMarkerSafe(join(genieHome, MARKER_NAME), ctx.now());
-    const agents: AgentReport[] = [
-      runAgentSafe('claude', (report) => syncClaude(ctx, report)),
-      runAgentSafe('codex', (report) => syncCodex(ctx, report)),
-      runAgentSafe('hermes', (report) => syncHermes(ctx, opts, report)),
-    ];
+    const selection = opts.selection ?? 'auto';
+    const agents: AgentReport[] = [];
+    if (selection === 'auto' || selection === 'all' || selection === 'claude') {
+      agents.push(runAgentSafe('claude', (report) => syncClaude(ctx, report)));
+    }
+    if (selection === 'auto' || selection === 'all' || selection === 'codex') {
+      agents.push(runAgentSafe('codex', (report) => syncCodex(ctx, report)));
+    }
+    if (selection === 'auto' || selection === 'all') {
+      agents.push(runAgentSafe('hermes', (report) => syncHermes(ctx, opts, report)));
+    }
     return { source, agents, backupsDir: ctx.backupsDirIfCreated() };
   } finally {
     lock.release();
@@ -990,7 +1215,9 @@ function runAgentSafe(agent: AgentReport['agent'], run: (report: AgentReport) =>
   try {
     run(report);
   } catch (err) {
-    report.advisories.push(`${agent} sync failed: ${errMsg(err)}`);
+    const failure = `${agent} sync failed: ${errMsg(err)}`;
+    report.advisories.push(failure);
+    report.failures = [failure];
   }
   return report;
 }

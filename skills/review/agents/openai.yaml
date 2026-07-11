@@ -1,4 +1,4 @@
 interface:
   display_name: "Genie Review Gate"
   short_description: "Gate plans, implementations, and pull requests"
-  default_prompt: "Use $review to validate this work against its acceptance criteria."
+  default_prompt: "Use $genie:review (or $review only for a separately installed personal copy) to validate this work against its acceptance criteria."

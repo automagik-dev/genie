@@ -223,4 +223,108 @@ describe('Codex hook manifest', () => {
     expect(await proc.exited).toBe(0);
     expect(JSON.parse(stdout)).toEqual({});
   });
+
+  test('SessionStart resolves a nested cwd to a linked-worktree-style root', async () => {
+    writeFileSync(join(root, '.git'), 'gitdir: /tmp/fixture-common/worktrees/linked\n');
+    const wish = join(root, '.genie', 'wishes', 'nested-context', 'WISH.md');
+    const nested = join(root, 'packages', 'feature', 'src');
+    mkdirSync(dirname(wish), { recursive: true });
+    mkdirSync(nested, { recursive: true });
+    writeFileSync(wish, '| **Status** | APPROVED |\n\n### Group A: work\n- [ ] pending\n');
+
+    const proc = Bun.spawn(['node', SESSION_CONTEXT], {
+      cwd: nested,
+      env: { ...process.env, HOME: join(root, 'home'), GENIE_HOME: join(root, 'genie-home') },
+      stdin: Buffer.from(JSON.stringify({ hook_event_name: 'SessionStart', source: 'startup', cwd: nested })),
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const output = JSON.parse(await new Response(proc.stdout).text());
+    expect(await proc.exited).toBe(0);
+    expect(output.hookSpecificOutput.additionalContext).toContain(
+      'slug=nested-context status=APPROVED groups=1 criteria=0/1',
+    );
+  });
+
+  test('SessionStart includes every nonterminal lifecycle state and excludes SHIPPED wishes', async () => {
+    const fixtures = [
+      ['draft-wish', 'DRAFT'],
+      ['fix-first-wish', 'FIX-FIRST'],
+      ['approved-wish', 'APPROVED'],
+      ['in-progress-wish', 'IN_PROGRESS'],
+      ['blocked-wish', 'BLOCKED'],
+      ['shipped-wish', 'SHIPPED'],
+    ] as const;
+    for (const [slug, status] of fixtures) {
+      const wish = join(root, '.genie', 'wishes', slug, 'WISH.md');
+      mkdirSync(dirname(wish), { recursive: true });
+      writeFileSync(wish, `| **Status** | ${status} |\n`);
+    }
+
+    const proc = Bun.spawn(['node', SESSION_CONTEXT], {
+      cwd: root,
+      env: { ...process.env, HOME: join(root, 'home'), GENIE_HOME: join(root, 'genie-home') },
+      stdin: Buffer.from(JSON.stringify({ hook_event_name: 'SessionStart', source: 'startup', cwd: root })),
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe('');
+    const context = JSON.parse(stdout).hookSpecificOutput.additionalContext as string;
+    for (const [slug, status] of fixtures.slice(0, -1)) {
+      expect(context).toContain(`slug=${slug} status=${status}`);
+    }
+    expect(context).not.toContain('slug=shipped-wish');
+    expect(context).not.toContain('status=SHIPPED');
+  });
+
+  test('SessionStart bounds candidate enumeration and cumulative wish bytes', async () => {
+    const byteRoot = join(root, 'byte-budget');
+    mkdirSync(byteRoot, { recursive: true });
+    writeFileSync(join(byteRoot, '.git'), '', { flag: 'w' });
+    for (const slug of ['active-one', 'active-two']) {
+      const wish = join(byteRoot, '.genie', 'wishes', slug, 'WISH.md');
+      mkdirSync(dirname(wish), { recursive: true });
+      writeFileSync(wish, `| **Status** | IN_PROGRESS |\n${'x'.repeat(140_000)}`);
+    }
+    const byteRun = Bun.spawn(['node', SESSION_CONTEXT], {
+      cwd: byteRoot,
+      stdin: Buffer.from(JSON.stringify({ hook_event_name: 'SessionStart', cwd: byteRoot })),
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const byteOutput = JSON.parse(await new Response(byteRun.stdout).text());
+    expect(await byteRun.exited).toBe(0);
+    expect(byteOutput.hookSpecificOutput.additionalContext).toContain('slug=active-one');
+    expect(byteOutput.hookSpecificOutput.additionalContext).not.toContain('slug=active-two');
+
+    const candidateRoot = join(root, 'candidate-budget');
+    mkdirSync(candidateRoot, { recursive: true });
+    writeFileSync(join(candidateRoot, '.git'), '');
+    for (let index = 0; index < 64; index++) {
+      const wish = join(candidateRoot, '.genie', 'wishes', `inactive-${String(index).padStart(2, '0')}`, 'WISH.md');
+      mkdirSync(dirname(wish), { recursive: true });
+      writeFileSync(wish, '| **Status** | COMPLETE |\n');
+    }
+    const late = join(candidateRoot, '.genie', 'wishes', 'late-active', 'WISH.md');
+    mkdirSync(dirname(late), { recursive: true });
+    writeFileSync(late, '| **Status** | IN_PROGRESS |\n');
+    const candidateStarted = performance.now();
+    const candidateRun = Bun.spawn(['node', SESSION_CONTEXT], {
+      cwd: candidateRoot,
+      stdin: Buffer.from(JSON.stringify({ hook_event_name: 'SessionStart', cwd: candidateRoot })),
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const candidateOutput = JSON.parse(await new Response(candidateRun.stdout).text());
+    expect(await candidateRun.exited).toBe(0);
+    expect(performance.now() - candidateStarted).toBeLessThan(2_000);
+    const candidateContext = candidateOutput.hookSpecificOutput?.additionalContext ?? '';
+    expect(candidateContext.match(/^- slug=/gm)?.length ?? 0).toBeLessThanOrEqual(8);
+  });
 });

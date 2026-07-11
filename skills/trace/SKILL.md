@@ -5,7 +5,7 @@ description: "Dispatch trace subagent to investigate unknown issues — reproduc
 
 # trace — Investigation and Root Cause Analysis
 
-**Runtime syntax:** invoke named skills as `$name` in Codex and `/name` in Claude Code or Hermes. This body uses bare skill names so the workflow stays portable.
+**Runtime syntax:** in Codex, invoke the plugin copy with the owner-qualified `$genie:<skill>` selector; use bare `$<skill>` only for a separately installed personal copy. Claude Code and Hermes use `/<skill>`. Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active tier.
 
 Investigate unknown failures: dispatch a trace subagent to reproduce, trace, and isolate root cause, then hand the report to `fix`. The deliverable is findings only — report and stop; never apply fixes, however obvious.
 

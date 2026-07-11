@@ -5,9 +5,9 @@ description: "Execute an approved wish plan — orchestrate subagents per task g
 
 # work — Execute Wish Plan
 
-**Runtime syntax:** invoke named skills as `$name` in Codex and `/name` in Claude Code or Hermes. This body uses bare skill names so the workflow stays portable.
+**Runtime syntax:** in Codex, invoke the plugin copy with the owner-qualified `$genie:<skill>` selector; use bare `$<skill>` only for a separately installed personal copy. Claude Code and Hermes use `/<skill>`. Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active tier.
 
-The orchestrator's skill: execute an approved wish from `.genie/wishes/<slug>/WISH.md` by dispatching native subagents per execution group, in waves. The orchestrator never executes group work directly. Per-group execution state lives in the state DB via `genie task`; documents (WISH.md, review notes) stay in git. Map coordination to the active client with `plugins/genie/references/native-surfaces.md`.
+The orchestrator's skill: execute an approved wish from `.genie/wishes/<slug>/WISH.md` by dispatching native subagents per execution group, in waves. The orchestrator never executes group work directly. Per-group execution state lives in the state DB via `genie task`; documents (WISH.md, review notes) stay in git. Map coordination to the active client with `references/native-surfaces.md`, resolved relative to the directory containing this loaded `SKILL.md`.
 
 ## Context Injection
 
@@ -18,7 +18,7 @@ When you are spawned as a subagent for a group, your dispatch prompt carries the
 - Orchestrator needs to dispatch implementation to subagents
 
 ## Flow
-1. **Load wish:** read `.genie/wishes/<slug>/WISH.md`; read group state with `genie task list --wish <slug>` (or `genie board --wish <slug>`).
+1. **Load and enter execution:** read `.genie/wishes/<slug>/WISH.md` and require persisted status `APPROVED` (or `IN_PROGRESS` when resuming). Before the first dispatch, the orchestrator sets `APPROVED` → `IN_PROGRESS`; read group state with `genie task list --wish <slug>` (or `genie board --wish <slug>`).
 2. **Pick the wave:** every group whose `depends-on` groups are done, per the wish's Execution Strategy.
 3. **Dispatch the wave in ONE message** — one native delegation surface call per group, each using the named engineer role selected from the WISH's Complexity and Model columns with curated context (see Dispatch, Context Curation). Each engineer's brief opens with the atomic claim:
    ```bash
@@ -26,7 +26,7 @@ When you are spawned as a subagent for a group, your dispatch prompt carries the
    ```
    If two agents race one task, exactly one wins; the loser gets a conflict error and stands down.
 4. **Await completion — never poll:** background subagents notify you when they finish. Inspect `genie board --wish <slug>` on demand; completion is push, not poll.
-5. **Local review:** per finished group, dispatch a reviewer subagent (reviewer ≠ engineer) to run `review` against that group's acceptance criteria. On FIX-FIRST, dispatch a fix subagent (max 2 loops); if unresolved, apply Escalation Diagnosis instead of automatically changing model or effort.
+5. **Local review:** per finished group, dispatch a reviewer subagent (reviewer ≠ engineer) to run `review` against that group's acceptance criteria. The orchestrator appends each returned evidence block under `## Review Results`; the reviewer never edits it. On FIX-FIRST, dispatch a fix subagent (max 2 loops); if unresolved, apply Escalation Diagnosis instead of automatically changing model or effort.
 6. **Quality review:** dispatch a reviewer for a quality pass (security, maintainability, perf). On FIX-FIRST, one fix loop.
 7. **Validate:** run the group's validation command yourself (Bash); record the output as evidence.
 8. **Group done** — only after clean review AND passing validation:
@@ -34,7 +34,7 @@ When you are spawned as a subagent for a group, your dispatch prompt carries the
    genie task done <task-id>
    ```
 9. **Next wave:** re-derive from the WISH.md Execution Strategy (the DAG lives in the document, not in task rows — see State Management); repeat 2-8 until all groups are done.
-10. **Handoff:** when every group's task is done: `All work groups complete. Run review.`
+10. **Handoff:** when every group's task is done: `All work groups complete. Run review.` Keep status `IN_PROGRESS` through execution review, PR review, and CI. Only the authorized merge plus required QA may transition it to `SHIPPED`.
 
 ## Dispatch
 

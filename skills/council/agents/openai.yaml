@@ -1,4 +1,4 @@
 interface:
   display_name: "Council"
   short_description: "Pressure-test decisions through independent lenses"
-  default_prompt: "Use $council to pressure-test this decision from independent perspectives."
+  default_prompt: "Use $genie:council (or $council only for a separately installed personal copy) to pressure-test this decision from independent perspectives."

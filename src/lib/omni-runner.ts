@@ -35,7 +35,13 @@ import { join } from 'node:path';
 import type { OmniRoute, OmniRuntimeConfig } from './omni-config.js';
 import { matchReaction, matchTextToken } from './omni-matching.js';
 import { signOmniRequest } from './omni-signature.js';
-import { getAgentSession } from './v5/global-db.js';
+import { resolveTrustedExecutable } from './trusted-executable.js';
+import {
+  clearAgentSessionIfCurrent,
+  getAgentSession,
+  insertAgentSessionIfAbsent,
+  replaceAgentSessionIfCurrent,
+} from './v5/global-db.js';
 import {
   ApprovalConflictError,
   type ApprovalDecision,
@@ -311,7 +317,8 @@ export async function runClaudeSession(opts: SpawnClaudeOpts, rawSpawn: RawClaud
 /** Default raw fork of one `claude` process. stdin is closed (`ignore`) so claude
  *  never waits ~3s for piped input in headless one-shot mode. */
 const defaultRawSpawn: RawClaudeSpawn = async (args, { cwd, signal }) => {
-  const proc = Bun.spawn(['claude', ...args], {
+  const command = resolveTrustedHostExecutable('claude', cwd);
+  const proc = Bun.spawn([command, ...args], {
     cwd,
     stdin: 'ignore',
     stdout: 'pipe',
@@ -367,9 +374,22 @@ export interface AgentExecutionResult extends SpawnClaudeResult {
 
 export type AgentExecutor = (opts: AgentExecutionOpts) => Promise<AgentExecutionResult>;
 
+export function resolveTrustedHostExecutable(
+  name: string,
+  childCwd: string,
+  which: (command: string) => string | null = (command) => Bun.which(command),
+): string {
+  return resolveTrustedExecutable(name, childCwd, which);
+}
+
+export function isSafeCodexThreadId(value: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/.test(value);
+}
+
 export function buildCodexArgs(opts: { message: string; threadId?: string }): string[] {
   if (opts.threadId) {
-    return ['exec', 'resume', '--json', '-c', 'sandbox_mode="workspace-write"', opts.threadId, '--', opts.message];
+    if (!isSafeCodexThreadId(opts.threadId)) throw new Error('Refusing unsafe persisted Codex thread id');
+    return ['exec', 'resume', '--json', '-c', 'sandbox_mode="workspace-write"', '--', opts.threadId, opts.message];
   }
   return ['exec', '--json', '--sandbox', 'workspace-write', '--', opts.message];
 }
@@ -420,6 +440,7 @@ function consumeCodexEvent(value: unknown, lineNumber: number, state: CodexJsonl
     case 'thread.started': {
       const startedThread = nonEmptyString(value.thread_id);
       if (!startedThread) return 'thread.started has no thread_id';
+      if (!isSafeCodexThreadId(startedThread)) return 'thread.started emitted an unsafe thread_id';
       if (state.threadId && state.threadId !== startedThread) return 'multiple different thread ids were emitted';
       state.threadId = startedThread;
       return undefined;
@@ -601,7 +622,11 @@ interface BoundedText {
   truncated: boolean;
 }
 
-async function readBoundedText(stream: ReadableStream<Uint8Array>, maxBytes: number): Promise<BoundedText> {
+export async function readBoundedText(
+  stream: ReadableStream<Uint8Array>,
+  maxBytes: number,
+  onOverflow?: () => void,
+): Promise<BoundedText> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let text = '';
@@ -616,19 +641,33 @@ async function readBoundedText(stream: ReadableStream<Uint8Array>, maxBytes: num
       retained += kept.byteLength;
       text += decoder.decode(kept, { stream: true });
     }
-    if (value.byteLength > Math.max(remaining, 0)) truncated = true;
+    if (value.byteLength > Math.max(remaining, 0)) {
+      truncated = true;
+      onOverflow?.();
+      await reader.cancel();
+      break;
+    }
   }
   text += decoder.decode();
   return { text, truncated };
 }
 
 const defaultRawCodexSpawn: RawCodexSpawn = async (args, { cwd, signal }) => {
-  const proc = Bun.spawn(['codex', ...args], { cwd, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', signal });
+  const command = resolveTrustedHostExecutable('codex', cwd);
+  const proc = Bun.spawn([command, ...args], { cwd, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', signal });
+  let forceTimer: ReturnType<typeof setTimeout> | undefined;
+  const abortOverflow = () => {
+    if (forceTimer) return;
+    proc.kill('SIGTERM');
+    forceTimer = setTimeout(() => proc.kill('SIGKILL'), 1_000);
+    if (typeof forceTimer.unref === 'function') forceTimer.unref();
+  };
   const [stdout, stderr, exitCode] = await Promise.all([
-    readBoundedText(proc.stdout, CODEX_STDOUT_MAX_BYTES),
+    readBoundedText(proc.stdout, CODEX_STDOUT_MAX_BYTES, abortOverflow),
     readBoundedText(proc.stderr, CODEX_STDERR_MAX_BYTES),
     proc.exited,
   ]);
+  if (forceTimer) clearTimeout(forceTimer);
   return {
     stdout: stdout.text,
     stderr: stderr.text,
@@ -863,10 +902,48 @@ export interface OmniRunner {
    * the mapped round-trip deterministically.
    */
   whenIdle(): Promise<void>;
+  /** Stop intake, abort active route children, and drain all owned work. */
+  stop(): Promise<void>;
+}
+
+function safeApprovalPreview(tool: string, inputSummary: string): string {
+  if (tool !== 'Bash') return inputSummary.length > 200 ? `${inputSummary.slice(0, 197)}...` : inputSummary;
+  try {
+    const parsed: unknown = JSON.parse(inputSummary);
+    if (!isRecord(parsed) || parsed.kind !== 'Bash' || !Array.isArray(parsed.commands)) {
+      return '{"kind":"Bash","commands":[],"legacyPreviewOmitted":true}';
+    }
+    const commands = parsed.commands.slice(0, 8).flatMap((value) => {
+      if (!isRecord(value) || typeof value.executable !== 'string') return [];
+      const executable = /^[A-Za-z][A-Za-z0-9._+-]{0,63}$/.test(value.executable) ? value.executable : '[command]';
+      const options = Array.isArray(value.options)
+        ? value.options
+            .filter(
+              (option): option is string =>
+                typeof option === 'string' && /^--?[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(option),
+            )
+            .slice(0, 12)
+        : [];
+      const env = Array.isArray(value.env)
+        ? value.env
+            .filter((name): name is string => typeof name === 'string' && /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(name))
+            .slice(0, 12)
+        : [];
+      const argumentCount =
+        typeof value.argumentCount === 'number' && Number.isSafeInteger(value.argumentCount) && value.argumentCount >= 0
+          ? Math.min(value.argumentCount, 10_000)
+          : 0;
+      return [{ executable, options, env, argumentCount }];
+    });
+    const preview = JSON.stringify({ kind: 'Bash', commands, truncated: parsed.truncated === true });
+    return preview.length > 200 ? `${preview.slice(0, 197)}...` : preview;
+  } catch {
+    return '{"kind":"Bash","commands":[],"legacyPreviewOmitted":true}';
+  }
 }
 
 function formatApprovalMessage(tool: string, inputSummary: string): string {
-  const preview = inputSummary.length > 200 ? `${inputSummary.slice(0, 197)}...` : inputSummary;
+  const preview = safeApprovalPreview(tool, inputSummary);
   return [
     '\u{1F514} *Approval Required*',
     '',
@@ -976,36 +1053,29 @@ function persistCodexSessionResult(
       if (current !== undefined) {
         throw new Error('Codex session state changed during execution; the reply was not acknowledged. Retry.');
       }
-      const inserted = db
-        .query(
-          `INSERT INTO agent_sessions(provider, instance, chat, thread_id, updated_at)
-           VALUES ('codex', ?, ?, ?, ?)
-           ON CONFLICT(provider, instance, chat) DO NOTHING`,
-        )
-        .run(route.instance, route.chat, result.threadId, nowMs);
-      if (inserted.changes !== 1) {
+      if (!insertAgentSessionIfAbsent(db, 'codex', route.instance, route.chat, result.threadId, nowMs)) {
         throw new Error('Codex session state changed during execution; the reply was not acknowledged. Retry.');
       }
       return;
     }
-    const replaced = db
-      .query(
-        `UPDATE agent_sessions
-         SET thread_id = ?, updated_at = ?
-         WHERE provider = 'codex' AND instance = ? AND chat = ? AND thread_id = ?`,
+    if (
+      !replaceAgentSessionIfCurrent(
+        db,
+        'codex',
+        route.instance,
+        route.chat,
+        result.replacesThreadId,
+        result.threadId,
+        nowMs,
       )
-      .run(result.threadId, nowMs, route.instance, route.chat, result.replacesThreadId);
-    if (replaced.changes !== 1) {
+    ) {
       throw new Error('Codex session state changed during recovery; the reply was not acknowledged. Retry.');
     }
     return;
   }
   if (!result.clearThreadId) return;
   try {
-    db.query(
-      `DELETE FROM agent_sessions
-       WHERE provider = 'codex' AND instance = ? AND chat = ? AND thread_id = ?`,
-    ).run(route.instance, route.chat, result.clearThreadId);
+    clearAgentSessionIfCurrent(db, 'codex', route.instance, route.chat, result.clearThreadId);
   } catch (err) {
     // Retaining the stale id is safe (the next message performs the same bounded
     // recovery) and preferable to hiding the actionable child failure behind a
@@ -1042,6 +1112,13 @@ class OneShotTimeoutError extends Error {
   constructor() {
     super('one-shot timed out');
     this.name = 'OneShotTimeoutError';
+  }
+}
+
+class OneShotStoppedError extends Error {
+  constructor() {
+    super('omni serve stopped');
+    this.name = 'OneShotStoppedError';
   }
 }
 
@@ -1082,6 +1159,8 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
    *  the reconciliation pass (every tick) from double-firing an ack whose glyph
    *  the prior emit has not yet recorded. Keyed by the stanza id. */
   const ackInFlight = new Set<string>();
+  const activeControllers = new Set<AbortController>();
+  let stopped = false;
   const routeKey = (instance: string, chat: string): string => `${instance} ${chat}`;
   const findRoute = (instance: string, chat: string): OmniRoute | undefined =>
     routes.find((r) => r.instance === instance && r.chat === chat);
@@ -1100,9 +1179,14 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
     messageId?: string,
   ): Promise<void> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    activeControllers.add(controller);
+    const timer = setTimeout(() => controller.abort(new OneShotTimeoutError()), timeoutMs);
     const aborted = new Promise<never>((_, reject) => {
-      controller.signal.addEventListener('abort', () => reject(new OneShotTimeoutError()), { once: true });
+      controller.signal.addEventListener(
+        'abort',
+        () => reject(controller.signal.reason instanceof Error ? controller.signal.reason : new OneShotTimeoutError()),
+        { once: true },
+      );
     });
     // ⏳ on the inbound message right before the spawn (route-scoped, no-op if the
     // inbound carried no stanza id) — the first half of the run's ⏳→✅/❌ ack. The
@@ -1110,11 +1194,12 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
     // kept so the final ✅/❌ can be chained AFTER the ⏳ HTTP call has landed: a run
     // that finishes before the ⏳ reaches the API must never leave ✅→⏳ reordered.
     const pendingAck = emitRouteReaction(route, messageId, STATUS_PENDING);
+    let spawned: Promise<AgentExecutionResult> | undefined;
     try {
       // Wrap so a SYNCHRONOUS throw from the executor becomes a rejection the
       // race can observe — and so `aborted` always gets a handler attached
       // (else a late finally-abort would surface as an unhandled rejection).
-      const spawned = Promise.resolve().then(() =>
+      spawned = Promise.resolve().then(() =>
         spawnAgent({
           provider: route.agent ?? 'claude',
           message,
@@ -1146,13 +1231,22 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
       // pair reaches the API in order; still fire-and-forget for this run.
       pendingAck.finally(() => emitRouteReaction(route, messageId, ok ? STATUS_APPROVED : STATUS_DENIED));
     } catch (err) {
-      const content = err instanceof OneShotTimeoutError ? timeoutNotice(timeoutMs) : errorNotice(errText(err));
+      const content =
+        err instanceof OneShotTimeoutError
+          ? timeoutNotice(timeoutMs)
+          : err instanceof OneShotStoppedError
+            ? '⏹️ cancelled because Omni serve stopped.'
+            : errorNotice(errText(err));
       publish(replySubject, buildRoutedReplyPayload(route.instance, route.chat, content, genId(), now()));
       // ❌ on timeout / crash — same ordering chain as the success path.
       pendingAck.finally(() => emitRouteReaction(route, messageId, STATUS_DENIED));
     } finally {
       clearTimeout(timer);
-      controller.abort(); // ensure a still-running child is killed on every path
+      if (!controller.signal.aborted) controller.abort(new OneShotStoppedError());
+      // The executor contract requires abort to settle the child. Wait for that
+      // cleanup before any DB/NATS owner is allowed to close.
+      if (spawned) await Promise.allSettled([spawned]);
+      activeControllers.delete(controller);
       try {
         markHandled(db, inboundId, now());
       } catch (err) {
@@ -1168,6 +1262,7 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
    * first sees it busy. Fire-and-forget: the serve loop never awaits the run.
    */
   function startRoutedRun(route: OmniRoute, inboundId: string, message: string, messageId?: string): void {
+    if (stopped) return;
     const replySubject = `omni.reply.${route.instance}.${route.chat}`;
     const key = routeKey(route.instance, route.chat);
     if (inFlight.has(key)) {
@@ -1387,8 +1482,15 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
     }
   }
 
+  async function drain(): Promise<void> {
+    while (pending.size > 0 || inFlightSends.size > 0 || inFlightReactions.size > 0) {
+      await Promise.allSettled([...pending, ...inFlightSends, ...inFlightReactions]);
+    }
+  }
+
   return {
     tick(): void {
+      if (stopped) return;
       // Expire stale rows, then let reconciliation set the terminal ✅/❌ on any
       // row closed here OR by the hook fork's own self-timeout expiry.
       expireStale(db, config.approvals.pollBudgetMs, now());
@@ -1397,6 +1499,7 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
     },
 
     handleMessage(subject: string, data: string): void {
+      if (stopped) return;
       let msg: InboundMessagePayload;
       try {
         msg = JSON.parse(data) as InboundMessagePayload;
@@ -1452,9 +1555,15 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
       // send settles by firing the ⏳ status reaction (adds to inFlightReactions
       // mid-drain), and a resolve fires ✅/❌, so the loop must keep going until
       // every set has quiesced.
-      while (pending.size > 0 || inFlightSends.size > 0 || inFlightReactions.size > 0) {
-        await Promise.allSettled([...pending, ...inFlightSends, ...inFlightReactions]);
+      await drain();
+    },
+
+    async stop(): Promise<void> {
+      if (!stopped) {
+        stopped = true;
+        for (const controller of activeControllers) controller.abort(new OneShotStoppedError());
       }
+      await drain();
     },
   };
 }
@@ -1472,6 +1581,8 @@ export interface RunOmniServeOptions {
   /** Fired once subscriptions + tick loop are live (tests await this). */
   onReady?: () => void;
   log?: (line: string) => void;
+  /** Focused test seam for child/transport side effects; production omits it. */
+  runnerDeps?: Omit<OmniRunnerDeps, 'db' | 'config' | 'publish'>;
 }
 
 /** Drain one subscription into a handler, tolerating per-message failures. */
@@ -1500,13 +1611,13 @@ export async function runOmniServe(opts: RunOmniServeOptions): Promise<void> {
   const factory = opts.natsFactory ?? defaultNatsFactory;
 
   const nc = await factory({ servers: config.natsUrl });
-  const runner = createOmniRunner({ db, config, publish: nc.publish, log });
+  const runner = createOmniRunner({ ...opts.runnerDeps, db, config, publish: nc.publish, log });
 
   // Both text replies AND reactions arrive on `omni.message.{instance}.>` in this
   // Omni build; the legacy `omni.event.>` subject has no publishers (SPIKE a), so
   // it is no longer subscribed.
   const msgSub = nc.subscribe(`omni.message.${config.instance}.>`);
-  void consume(msgSub, runner.handleMessage, log);
+  const consumeTask = consume(msgSub, runner.handleMessage, log);
 
   const timer = setInterval(() => {
     try {
@@ -1526,7 +1637,10 @@ export async function runOmniServe(opts: RunOmniServeOptions): Promise<void> {
   });
 
   clearInterval(timer);
+  const stopping = runner.stop();
   msgSub.unsubscribe();
+  await consumeTask;
+  await stopping;
   await nc.close();
   log('[omni] stopped');
 }

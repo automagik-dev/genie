@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execSync } from 'node:child_process';
-import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { HookPayload } from '../../types.js';
@@ -58,7 +58,7 @@ describe('audit-context handler', () => {
 
       const context = result.hookSpecificOutput!.additionalContext!;
       expect(context).toContain('[audit-context]');
-      expect(context).toMatch(/file\[1\] commits=[0-9a-f]+(?:,[0-9a-f]+)*/);
+      expect(context).toMatch(/files=1 recent_commits=[0-9a-f]+(?:,[0-9a-f]+)*/);
       expect(context).not.toContain('example.ts');
       expect(context).not.toContain('update x to 2');
       expect(context).not.toContain('initial commit');
@@ -103,7 +103,7 @@ describe('audit-context handler', () => {
     };
 
     const result = await auditContext(payload);
-    expect(result?.hookSpecificOutput?.additionalContext).toMatch(/file\[1\] commits=[0-9a-f]+/);
+    expect(result?.hookSpecificOutput?.additionalContext).toMatch(/files=2 recent_commits=[0-9a-f]+/);
     expect(result?.hookSpecificOutput?.additionalContext).not.toContain('example.ts');
     expect(result?.hookSpecificOutput?.additionalContext).not.toContain('new.ts');
   });
@@ -116,6 +116,62 @@ describe('audit-context handler', () => {
 
     const result = await auditContext(payload);
     expect(result).toBeUndefined();
+  });
+
+  test('batches the maximum patch fan-out under one aggregate deadline', async () => {
+    const calls: Array<{ command: string; args: string[]; timeout?: number }> = [];
+    const payload: HookPayload = {
+      hook_event_name: 'PreToolUse',
+      tool_name: 'apply_patch',
+      tool_input: {
+        command: 'fixture',
+        file_paths: ['one.ts', 'two.ts', 'three.ts', 'four.ts', 'five.ts', 'ignored.ts'],
+      },
+      cwd: repoDir,
+    };
+    const result = await auditContext(payload, {
+      resolveGit: () => '/trusted/git',
+      exec: ((command: string, args: string[], options: { timeout?: number }) => {
+        calls.push({ command, args, timeout: options.timeout });
+        return 'abc123\ndef456\n';
+      }) as typeof import('node:child_process').execFileSync,
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].command).toBe('/trusted/git');
+    expect(calls[0].args.slice(-5)).toEqual(['one.ts', 'two.ts', 'three.ts', 'four.ts', 'five.ts']);
+    expect(calls[0].args).not.toContain('ignored.ts');
+    expect(calls[0].timeout).toBe(3_000);
+    expect(result?.hookSpecificOutput?.additionalContext).toContain('files=5 recent_commits=abc123,def456');
+  });
+
+  test('nested audit binds host git and never invokes a repo-root PATH decoy', async () => {
+    const nested = join(repoDir, 'packages', 'app');
+    mkdirSync(nested, { recursive: true });
+    const payload: HookPayload = {
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Edit',
+      tool_input: { file_path: 'example.ts' },
+      cwd: nested,
+    };
+    const trustedGit = Bun.which('git');
+    if (!trustedGit) throw new Error('git is required');
+    const commands: string[] = [];
+    const exec = ((command: string) => {
+      commands.push(command);
+      return 'abc123\n';
+    }) as typeof import('node:child_process').execFileSync;
+    const result = await auditContext(payload, { which: () => trustedGit, exec });
+    expect(commands).toEqual([realpathSync(trustedGit)]);
+    expect(result?.hookSpecificOutput?.additionalContext).toContain('recent_commits=abc123');
+
+    const decoy = join(repoDir, 'bin', process.platform === 'win32' ? 'git.exe' : 'git');
+    mkdirSync(join(repoDir, 'bin'), { recursive: true });
+    writeFileSync(decoy, 'repo-controlled decoy');
+    chmodSync(decoy, 0o755);
+    commands.length = 0;
+    expect(await auditContext(payload, { which: () => decoy, exec })).toBeUndefined();
+    expect(commands).toEqual([]);
   });
 
   test('returns undefined for non-git directory', async () => {

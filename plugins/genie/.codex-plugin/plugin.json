@@ -22,9 +22,9 @@
     "capabilities": ["Skills", "Hooks", "MCP"],
     "websiteURL": "https://github.com/automagik-dev/genie",
     "defaultPrompt": [
-      "Use $wish to turn this request into an executable plan.",
-      "Use $work to implement the active Genie wish.",
-      "Use $review to validate the current work independently."
+      "Use $genie:wish to turn this request into an executable plan.",
+      "Use $genie:work to implement the active Genie wish.",
+      "Use $genie:review to validate the current work independently."
     ]
   }
 }

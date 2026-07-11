@@ -8,8 +8,11 @@ import {
   GLOBAL_SCHEMA_VERSION,
   MIGRATED_STATUS_SENTINEL,
   MalformedDbError,
+  clearAgentSessionIfCurrent,
   getAgentSession,
+  insertAgentSessionIfAbsent,
   openGlobalDb,
+  replaceAgentSessionIfCurrent,
   resolveGlobalDbPath,
   upsertAgentSession,
 } from './global-db.js';
@@ -92,6 +95,22 @@ describe('provider session persistence', () => {
       upsertAgentSession(db, 'codex', 'i', 'c', 'thread-2', 2);
       expect(getAgentSession(db, 'codex', 'i', 'c')).toBe('thread-2');
       expect(getAgentSession(db, 'claude', 'i', 'c')).toBeUndefined();
+    } finally {
+      db.close();
+    }
+  });
+
+  test('owns conditional insert, replace, and clear operations behind typed outcomes', () => {
+    const db = openGlobalDb();
+    try {
+      expect(insertAgentSessionIfAbsent(db, 'codex', 'i', 'c', 'thread-1', 1)).toBe(true);
+      expect(insertAgentSessionIfAbsent(db, 'codex', 'i', 'c', 'racer', 2)).toBe(false);
+      expect(replaceAgentSessionIfCurrent(db, 'codex', 'i', 'c', 'stale', 'bad', 3)).toBe(false);
+      expect(replaceAgentSessionIfCurrent(db, 'codex', 'i', 'c', 'thread-1', 'thread-2', 4)).toBe(true);
+      expect(getAgentSession(db, 'codex', 'i', 'c')).toBe('thread-2');
+      expect(clearAgentSessionIfCurrent(db, 'codex', 'i', 'c', 'thread-1')).toBe(false);
+      expect(clearAgentSessionIfCurrent(db, 'codex', 'i', 'c', 'thread-2')).toBe(true);
+      expect(getAgentSession(db, 'codex', 'i', 'c')).toBeUndefined();
     } finally {
       db.close();
     }

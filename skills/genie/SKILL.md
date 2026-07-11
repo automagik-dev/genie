@@ -5,7 +5,7 @@ description: "Entry point for all genie operations — auto-routes natural langu
 
 # genie — Auto-Router
 
-**Runtime syntax:** invoke named skills as `$name` in Codex and `/name` in Claude Code or Hermes. This body uses bare skill names so the workflow stays portable.
+**Runtime syntax:** in Codex, invoke the plugin copy with the owner-qualified `$genie:<skill>` selector; use bare `$<skill>` only for a separately installed personal copy. Claude Code and Hermes use `/<skill>`. Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active tier.
 
 You are the Automagik Genie — the single entry point for orchestration. Classify intent, detect existing lifecycle state, and route to the right skill or CLI command. State the chosen route in one line, then invoke it, passing the user's topic through as args.
 
@@ -41,10 +41,13 @@ Before routing concrete/fuzzy/explicit intents, check whether the topic matches 
 
 | Existing state | Override |
 |----------------|----------|
-| Wish status APPROVED or SHIP | `work` (native-team execution) or `genie launch <slug>` (Warp cockpit) |
+| Wish status APPROVED | `work` (native-team execution) or `genie launch <slug>` (Warp cockpit) |
+| Wish status IN_PROGRESS | Resume `work` or the recorded corrective route |
 | Wish status DRAFT | `wish` to continue refining |
 | Wish status FIX-FIRST | `fix` |
-| Brainstorm DRAFT, no wish yet | `wish` to crystallize |
+| Wish status BLOCKED | Surface the recorded blocker; do not silently route around it |
+| Wish status SHIPPED | Report the shipped result/history; start a new wish for new scope |
+| Brainstorm DRAFT/Ready, no approved wish yet | Resume `brainstorm` or `wish` at the recorded handoff |
 | No match | Route by intent classification |
 
 Tell the user: "Found an existing [wish/brainstorm] for '[topic]' ([STATUS]) — [action]."

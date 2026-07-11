@@ -27,19 +27,20 @@ Every release is cosign-signed (keyless OIDC) with SLSA provenance; the installe
 
 The installer detects Claude Code and Codex and installs the version-matched Genie plugin for each. Control this with `--integrations auto|codex|claude|all|none` or `--skip-integrations`. Automatic integration failures warn after the verified binary succeeds; explicitly requested failures are fatal.
 
-From inside a repo, run `genie init`. Use `genie setup --codex` to explicitly install or repair the Codex plugin, seven optional role-agent profiles, MCP routing, and the backup-first dead-OTel migration. `genie update` is the explicit update/convergence path. No Codex hook installs software, refreshes plugins, synchronizes personal skills, or writes project instructions.
+From inside a repo, run `genie init`. Use `genie setup --codex` to explicitly install or repair the Codex plugin, seven optional role-agent profiles, MCP routing, and the backup-first dead-OTel migration. `genie update` is the explicit update/convergence path. When crossing from a release older than `5.260711.6` to `5.260711.6` or later, let the first update finish and run `genie update` one more time: the first process may only deliver the new binary/payload, while the second runs the new convergence contract. Verify that the plugin exposes exactly H3/H4/H6, then review their hashes with `/hooks` and start a new task. Later updates converge in one operator-driven path. No Codex hook installs software, refreshes plugins, synchronizes personal skills, or writes project instructions.
 
 Codex never auto-trusts plugin hooks. After setup or update, inspect the three Genie definitions with `/hooks`, approve only the hashes you understand, and start a new task so the reviewed definitions take effect. Until then they remain untrusted and do not run.
 
 ## Quickstart
 
-The lifecycle is shared by Claude Code and Codex. Claude uses slash skills; Codex uses `$skill` or natural language:
+The lifecycle is shared by Claude Code and Codex. Claude uses slash skills. A Codex plugin install uses the owner-qualified `$genie:<skill>` selector; bare `$<skill>` is only for a separately installed personal copy:
 
 ```text
-1. /brainstorm or $brainstorm   an idea → a concrete DESIGN.md
-2. /wish or $wish               DESIGN.md → a scoped WISH.md
-3. /work or $work               native role agents build each group
-4. /review or $review           SHIP, FIX-FIRST, or BLOCKED
+1. /brainstorm or $genie:brainstorm   an idea → a concrete DESIGN.md
+2. /wish or $genie:wish               DESIGN.md → a scoped WISH.md
+3. /review or $genie:review           persist an APPROVED plan or concrete gaps
+4. /work or $genie:work               native role agents build each group
+5. /review or $genie:review           SHIP, FIX-FIRST, or BLOCKED evidence
 ```
 
 Re-run `genie board` any time for a current snapshot of task state on the kanban. The plan documents land in git as you go; the operational state lives in `.genie/genie.db`.
@@ -61,7 +62,7 @@ genie --help
 
 | Command | What it does |
 |---------|-------------|
-| `genie init` | Scaffold the per-repo genie state (`.genie/INDEX.md` + `.gitignore` rules) |
+| `genie init` | Scaffold per-repo state and reconcile project MCP files (`.mcp.json`, `.warp/.mcp.json`, and a marker-owned `.codex/config.toml` fallback when no installed, enabled, usable Genie plugin route is proven) |
 | `genie launch` | Open a Warp cockpit for a wish — one pane per ready group, each in its own worktree |
 | `genie board` | Kanban view of task state, derived live by query |
 | `genie task` | Inspect and drive task state (SQLite, zero-daemon) |
@@ -78,7 +79,7 @@ genie --help
 
 ## Skills
 
-Skills are the product. Invoke them as `/name` in Claude or `$name`/natural language in Codex:
+Skills are the product. Invoke them as `/name` in Claude, `$genie:name` from the Codex plugin, or `$name` only from a separately installed personal copy:
 
 | Skill | What it does |
 |-------|-------------|
@@ -137,15 +138,15 @@ All linked worktrees of a repository share one `genie.db`, resolved from the git
 
 ## MCP server (Warp + Claude Code + Codex)
 
-`genie mcp` is a zero-dependency, read-only [MCP](https://modelcontextprotocol.io) server over stdio. The Codex plugin bundles a declaration and a small launcher, not another Genie binary. The launcher resolves only `$GENIE_HOME/bin/genie` (default `~/.genie/bin/genie`); missing, symlinked, or path-escaped executables fail closed. When the plugin is absent or unusable, `genie init` merges an absolute-path fallback into project `.codex/config.toml` without duplicating the server.
+`genie mcp` is a zero-dependency, read-only [MCP](https://modelcontextprotocol.io) server over stdio. The Codex plugin bundles a declaration and a small launcher, not another Genie binary. The launcher resolves only `$GENIE_HOME/bin/genie` (default `~/.genie/bin/genie`); missing, symlinked, or path-escaped executables fail closed. When no installed, enabled, usable Genie plugin route can be proven, `genie init` merges an absolute-path, marker-owned fallback into project `.codex/config.toml` without duplicating the server.
 
-**How it gets picked up.** `genie init` registers Claude and Warp project configs. Codex normally gets MCP from the plugin; only a plugin-less Codex installation receives the project fallback. `genie launch` applies the same policy to its worktrees:
+**How it gets picked up.** `genie init` reconciles Claude and Warp project configs and may change the three project files named below; review those project-scoped commands before trusting the workspace. Codex normally gets MCP from the plugin. The marker-owned project fallback is retained whenever Genie's probe cannot prove one installed, enabled, usable plugin route — including absent, disabled, malformed, timed-out, or unsafe plugin state. `genie launch` applies the same policy to its worktrees:
 
 - `.mcp.json` — Claude Code's project MCP config. Project-scope servers are *pending approval* until you trust the workspace (accept the trust dialog in an interactive `claude` session) — expected, not a bug.
 - `.warp/.mcp.json` — Warp auto-detects this on save (no restart) and lists `genie` under Settings → AI/Agents → MCP servers.
-- `.codex/config.toml` — marker-owned absolute-path fallback, written only when the native Genie plugin is absent.
+- `.codex/config.toml` — marker-owned absolute-path fallback, written whenever no installed, enabled, usable native Genie plugin route is proven.
 
-Both files use the identical `mcpServers` shape and are merged idempotently: re-running `genie init` preserves every other server and top-level key and rewrites byte-identical. The registered `command` is the **absolute path to the running genie binary** (resolved from `process.execPath`), not bare `genie` — genie is not reliably on PATH (on macOS it lives only at `~/.genie/bin/genie`). Because `genie init`/`launch` run on the box that owns the repo, the recorded path is correct even under Warp's SSH-remote feature, where Warp spawns the server on that same box.
+The Claude and Warp JSON files use the identical `mcpServers` shape and are merged idempotently; the Codex TOML fallback is separately marker-owned. Re-running `genie init` preserves every other server and top-level key and rewrites byte-identical. The registered `command` is the **absolute path to the running genie binary** (resolved from `process.execPath`), not bare `genie` — genie is not reliably on PATH (on macOS it lives only at `~/.genie/bin/genie`). Because `genie init`/`launch` run on the box that owns the repo, the recorded path is correct even under Warp's SSH-remote feature, where Warp spawns the server on that same box.
 
 **What it exposes** — five read-only tools backed by the per-repo `.genie/genie.db`:
 

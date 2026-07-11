@@ -32,7 +32,7 @@ import {
   resolveOmniRuntimeConfig,
 } from '../../lib/omni-config.js';
 import { openGlobalDb } from '../../lib/v5/global-db.js';
-import { enqueueApproval, getApproval } from '../../lib/v5/omni-queue.js';
+import { enqueueApproval, expireApprovalIfPending, getApproval } from '../../lib/v5/omni-queue.js';
 import type { HandlerResult, HookPayload } from '../types.js';
 
 export interface OmniApprovalDeps {
@@ -96,6 +96,110 @@ function patchPaths(command: string): string[] {
   return boundedPaths(values);
 }
 
+const SHELL_OPERATORS = new Set(['|', '||', '&&', ';', '\n']);
+
+/** Minimal lexer used only to discard values and retain structural Bash shape. */
+function shellTokens(command: string): string[] {
+  const tokens: string[] = [];
+  let token = '';
+  let quote: '"' | "'" | null = null;
+  const flush = () => {
+    if (token) tokens.push(token);
+    token = '';
+  };
+  for (let index = 0; index < Math.min(command.length, 8_192); index++) {
+    const char = command[index];
+    if (quote) {
+      if (char === quote) quote = null;
+      else if (char === '\\' && quote === '"' && index + 1 < command.length) token += command[++index];
+      else token += char;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (char === '\\' && index + 1 < command.length) {
+      token += command[++index];
+      continue;
+    }
+    if (/\s/.test(char)) {
+      flush();
+      if (char === '\n') tokens.push('\n');
+      continue;
+    }
+    const pair = command.slice(index, index + 2);
+    if (pair === '&&' || pair === '||') {
+      flush();
+      tokens.push(pair);
+      index++;
+      continue;
+    }
+    if (char === '|' || char === ';') {
+      flush();
+      tokens.push(char);
+      continue;
+    }
+    token += char;
+  }
+  flush();
+  return tokens.slice(0, 128);
+}
+
+function safeExecutable(token: string): string {
+  const leaf = token.replace(/\\/g, '/').split('/').pop() ?? '';
+  return /^[A-Za-z][A-Za-z0-9._+-]{0,63}$/.test(leaf) ? leaf : '[command]';
+}
+
+function safeOption(token: string): string | undefined {
+  const long = token.match(/^(--[A-Za-z][A-Za-z0-9_-]{0,63})/);
+  if (long) return long[1];
+  const short = token.match(/^-([A-Za-z0-9])/);
+  return short ? `-${short[1]}` : undefined;
+}
+
+/** Never persist Bash values: only command names, option names, and counts. */
+function bashStructuralPreview(command: string): Record<string, unknown> {
+  const commands: Array<{ executable: string; options: string[]; env: string[]; argumentCount: number }> = [];
+  let current: { executable?: string; options: string[]; env: string[]; argumentCount: number } = {
+    options: [],
+    env: [],
+    argumentCount: 0,
+  };
+  const flush = () => {
+    if (current.executable && commands.length < 8) {
+      commands.push({
+        executable: current.executable,
+        options: current.options,
+        env: current.env,
+        argumentCount: current.argumentCount,
+      });
+    }
+    current = { options: [], env: [], argumentCount: 0 };
+  };
+  for (const token of shellTokens(command)) {
+    if (SHELL_OPERATORS.has(token)) {
+      flush();
+      continue;
+    }
+    if (token.startsWith('<<')) break;
+    if (!current.executable) {
+      const assignment = token.match(/^([A-Za-z_][A-Za-z0-9_]*)=/);
+      if (assignment) {
+        if (current.env.length < 12) current.env.push(assignment[1]);
+        continue;
+      }
+      current.executable = safeExecutable(token);
+      continue;
+    }
+    const option = safeOption(token);
+    if (option && current.options.length < 12 && !current.options.includes(option)) current.options.push(option);
+    else current.argumentCount++;
+  }
+  flush();
+  return { kind: 'Bash', commands, truncated: command.length > 8_192 };
+}
+
 /**
  * Build an allowlisted, tool-shaped preview. File-content and arbitrary object
  * values never cross the approval boundary: Bash gets only its sanitized
@@ -106,10 +210,10 @@ function summarizeInput(tool: string, input: Record<string, unknown> | undefined
   if (!input) return '';
   let summary: Record<string, unknown>;
   if (tool === 'Bash') {
-    summary = {
-      kind: 'Bash',
-      command: typeof input.command === 'string' ? redactString(input.command) : '[invalid command]',
-    };
+    summary =
+      typeof input.command === 'string'
+        ? bashStructuralPreview(input.command)
+        : { kind: 'Bash', commands: [], invalidCommand: true };
   } else if (tool === 'apply_patch') {
     const command = typeof input.command === 'string' ? input.command : '';
     summary = { kind: 'apply_patch', paths: patchPaths(command) };
@@ -149,20 +253,6 @@ function ask(reason: string): HandlerResult {
   return {
     hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: reason },
   };
-}
-
-/**
- * Expire this handler's own pending row on self-timeout. Targeted, idempotent
- * `pending → expired` transition. omni-queue.ts (a committed Wave-1 module) has
- * no single-row expire and is out of this group's edit scope, so the one-line
- * UPDATE lives here rather than reaching for the age-based `expireStale`, which
- * would wrongly sweep other agents' fresh pending rows.
- */
-function expireOwnRow(db: Database, id: string, nowMs: number): void {
-  db.query("UPDATE approvals SET status = 'expired', resolved_at = ? WHERE id = ? AND status = 'pending'").run(
-    nowMs,
-    id,
-  );
 }
 
 function registerProcessInterruptCleanup(cleanup: () => void): () => void {
@@ -216,7 +306,7 @@ async function pollForResolution(
     await sleep(Math.min(safeInterval, Math.max(1, deadline - now())));
   }
   // Self-timeout — expire the row and fall through to the local prompt.
-  expireOwnRow(db, id, now());
+  expireApprovalIfPending(db, id, now());
   return ask('Remote approval timed out — falling back to local prompt');
 }
 
@@ -246,7 +336,7 @@ export async function omniApproval(payload: HookPayload, deps: OmniApprovalDeps 
         now: now(),
       });
       const unregisterInterrupt = (deps.registerInterruptCleanup ?? registerProcessInterruptCleanup)(() =>
-        expireOwnRow(db, id, now()),
+        expireApprovalIfPending(db, id, now()),
       );
       try {
         return await pollForResolution(db, id, rt.approvals.pollBudgetMs, rt.approvals.pollIntervalMs, now, sleep);
@@ -254,7 +344,7 @@ export async function omniApproval(payload: HookPayload, deps: OmniApprovalDeps 
         unregisterInterrupt();
         // Handler errors and external cancellation must not strand a request.
         // The guarded UPDATE is a no-op for approved/denied/expired rows.
-        expireOwnRow(db, id, now());
+        expireApprovalIfPending(db, id, now());
       }
     } finally {
       if (ownsDb) db.close();

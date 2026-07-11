@@ -42,7 +42,7 @@ genie setup --codex                 # install or repair Codex plugin, role agent
 genie update                        # explicit binary/payload/integration convergence
 ```
 
-The update that first crosses from a pre-convergence binary may only deliver the new binary/payload because the already-running old process does not yet know the new convergence phase. After that command returns, run `genie update` once more explicitly. The second invocation runs the newly installed contract; later updates converge in one operator-driven path. Do not rely on SessionStart for this compatibility hop.
+When crossing from a release older than `5.260711.6` to `5.260711.6` or later, the first update may only deliver the new binary/payload because the already-running old process does not yet know the new convergence phase. After that command returns, run `genie update` once more explicitly. The second invocation runs the newly installed contract; confirm the plugin exposes exactly H3/H4/H6, review hashes with `/hooks`, and start a new task. Later updates converge in one operator-driven path. Do not rely on SessionStart for this compatibility hop.
 
 ### 2026-07-11 update incident
 
@@ -58,7 +58,7 @@ The lifecycle is shared across clients:
 brainstorm -> wish -> review -> work -> review
 ```
 
-Codex invokes `$brainstorm`, `$wish`, `$review`, and `$work`; Claude Code uses the equivalent slash skills. Native subagents do not imply separate worktrees. Every engineer first claims its assigned task with `genie task checkout <id> --worker <name>`, reports completion without mutating task state, and is reviewed by a different agent. Only the orchestrator calls `genie task done <id>` after a SHIP verdict and passing validation. Use `genie launch` when separate worktrees or a human-supervised Warp cockpit are required.
+Codex invokes the plugin copies as `$genie:brainstorm`, `$genie:wish`, `$genie:review`, and `$genie:work`; bare selectors are reserved for separately installed personal copies. Claude Code uses the equivalent slash skills. Native subagents do not imply separate worktrees. Every engineer first claims its assigned task with `genie task checkout <id> --worker <name>`, reports completion without mutating task state, and is reviewed by a different agent. Only the orchestrator calls `genie task done <id>` after a SHIP verdict and passing validation. Use `genie launch` when separate worktrees or a human-supervised Warp cockpit are required.
 
 The seven optional Codex profiles are `genie_engineer_trivial`, `genie_engineer_standard`, `genie_engineer_complex`, `genie_scout`, `genie_fixer`, `genie_reviewer`, and `genie_final_gate`. A plugin-only install falls back to the client's available generic roles.
 
@@ -72,7 +72,7 @@ bun run skills:lint
 bun scripts/fresh-install-smoke.ts
 ```
 
-Release tarballs contain the compiled `genie` executable, the complete `plugins/` tree (including hooks, MCP launcher, role-agent staging, and the 23-skill mirror), root `skills/`, `templates/`, both runtime marketplace manifests, and `VERSION`. Build/version paths verify source-to-plugin parity, required component inventory, and version equality before packaging.
+Release tarballs contain the compiled `genie` executable, the complete `plugins/` tree (including hooks, MCP launcher, role-agent staging, and the 23-skill mirror), root `skills/`, `templates/`, both runtime marketplace manifests, and `VERSION`. Build/version paths verify source-to-plugin parity, required component inventory, generated-hook parity, and version equality before packaging, then extract the finished archive and repeat the inventory/mode/resource/version checks against the extracted payload.
 
 ## Claude Code and Hermes
 

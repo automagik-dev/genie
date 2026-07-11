@@ -17,12 +17,12 @@
  *   (e) every LENSES path resolves on disk relative to plugins/genie/ (all 13)
  *   (f) every references/lenses/*.md card has name/modes/voice frontmatter
  *
- * NOTE: check (e) intentionally fails for the seven lane skills until Group 1
- * lands them under skills/ (reached via the plugins/genie/skills symlink). The
- * six deliberation cards resolve as soon as this group creates them.
+ * The seven lane skills resolve through the committed physical plugin mirror;
+ * `bun scripts/sync-plugin-skills.ts --check` enforces byte and mode parity.
+ * The six deliberation cards resolve from the plugin reference tree.
  *
- * Exit 0 when every check passes, 1 otherwise. Not wired into `bun run check`
- * here — Group 5 owns that.
+ * Exit 0 when every check passes, 1 otherwise. `bun run check` executes this
+ * gate after wish lint and before tests.
  */
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs';

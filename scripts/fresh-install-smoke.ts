@@ -86,19 +86,23 @@ function checkMetadata(skillsDir: string, names: string[]): void {
   }
 }
 
-/** Verify literal bundled-resource references against the skill or plugin root. */
-function checkBundledReferences(skillsDir: string, names: string[], pluginRoot?: string): number {
+/** Verify literal bundled resources resolve from the loaded skill package. */
+function checkBundledReferences(skillsDir: string, names: string[]): number {
   let checked = 0;
   const resourcePattern = /\b((?:templates|references?|prompts|assets)\/[A-Za-z0-9._/-]+)/g;
   for (const name of names) {
     const skillDir = join(skillsDir, name);
     const text = readFileSync(join(skillDir, 'SKILL.md'), 'utf8');
+    for (const forbidden of ['plugins/genie/references/', '$GENIE_HOME/plugins/genie']) {
+      if (text.includes(forbidden)) {
+        fail(`${name}/SKILL.md depends on a source-checkout/global plugin path: ${forbidden}`);
+      }
+    }
     let match: RegExpExecArray | null = resourcePattern.exec(text);
     while (match !== null) {
       const resource = match[1].replace(/[.,;:)]+$/, '');
-      const candidates = [join(skillDir, resource), ...names.map((candidate) => join(skillsDir, candidate, resource))];
-      if (pluginRoot) candidates.push(join(pluginRoot, resource));
-      if (!candidates.some((candidate) => existsSync(candidate))) {
+      const candidate = resolve(skillDir, resource);
+      if (!isWithin(resolve(skillDir), candidate) || !existsSync(candidate)) {
         fail(`${name}/SKILL.md references missing bundled resource: ${resource}`);
       }
       checked++;
@@ -106,6 +110,18 @@ function checkBundledReferences(skillsDir: string, names: string[], pluginRoot?:
     }
   }
   return checked;
+}
+
+function checkSkillStarterPrompts(skillsDir: string, names: string[]): void {
+  for (const name of names) {
+    const metadata = readFileSync(join(skillsDir, name, 'agents', 'openai.yaml'), 'utf8');
+    if (!metadata.includes(`$genie:${name}`)) {
+      fail(`${name}/agents/openai.yaml must name the owner-qualified $genie:${name} selector`);
+    }
+    if (metadata.includes(`$${name}`) && !metadata.includes('separately installed personal copy')) {
+      fail(`${name}/agents/openai.yaml uses an ambiguous bare selector without a personal-tier qualifier`);
+    }
+  }
 }
 
 const WISH_SCAFFOLD_START = '<!-- wish-scaffold-command:start -->';
@@ -177,8 +193,8 @@ function checkStarterPrompts(manifest: Record<string, unknown>, names: string[])
     fail('Codex plugin interface.defaultPrompt must be an array of strings');
   }
   for (const required of ['wish', 'work', 'review']) {
-    if (!names.includes(required) || !prompts.some((prompt) => prompt.includes(`$${required}`))) {
-      fail(`Codex plugin starter prompts must name $${required}`);
+    if (!names.includes(required) || !prompts.some((prompt) => prompt.includes(`$genie:${required}`))) {
+      fail(`Codex plugin starter prompts must name $genie:${required}`);
     }
   }
 }
@@ -318,7 +334,8 @@ function main(): void {
       fail(`expected ${SHIPPED_SKILL_NAMES.length} shipped skills, got ${names.length}`);
     }
     checkMetadata(args.skillsDir, names);
-    const refs = checkBundledReferences(args.skillsDir, names, args.pluginRoot);
+    checkSkillStarterPrompts(args.skillsDir, names);
+    const refs = checkBundledReferences(args.skillsDir, names);
     runWishScaffoldSmoke(args.skillsDir);
     if (args.pluginRoot) {
       checkPluginLayout(args.pluginRoot, args.skillsDir, names);

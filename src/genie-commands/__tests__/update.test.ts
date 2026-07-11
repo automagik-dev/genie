@@ -18,7 +18,10 @@ import { join } from 'node:path';
 import type { AgentSyncReport } from '../../lib/agent-sync';
 import type { CommandRunner } from '../../lib/runtime-integrations';
 import type { AuxiliaryTreeOutcome, AuxiliaryTreeStage } from '../auxiliary-trees.js';
-import { refreshUpdatePlugins } from '../update-integrations.js';
+import {
+  type RefreshUpdatePluginsOptions,
+  refreshUpdatePlugins as refreshUpdatePluginsWithPhysicalVerification,
+} from '../update-integrations.js';
 import {
   type LatestManifest,
   type VerifyResult,
@@ -36,9 +39,11 @@ import {
   manifestUrlForChannel,
   normalizeVersion,
   persistChannel,
+  recordPendingDelivery,
   resolveChannel,
   resolveLiveBinaryPath,
   resolvePlatformId,
+  resumePendingDelivery,
   rollbackBinary,
   runAgentSyncSafe,
   runManualUpdateConvergence,
@@ -51,6 +56,13 @@ import {
   syncBinaryVersionStamp,
   verifySwappedBinary,
 } from '../update.js';
+
+function refreshUpdatePlugins(options: RefreshUpdatePluginsOptions) {
+  return refreshUpdatePluginsWithPhysicalVerification({
+    ...options,
+    verifyCodexPayload: options.verifyCodexPayload ?? (() => undefined),
+  });
+}
 
 // ============================================================================
 // Pure-helper coverage — `decideVerify`, `normalizeVersion`,
@@ -180,6 +192,15 @@ describe('shortCircuitIfCurrent', () => {
 
   test('different versions return false', () => {
     expect(shortCircuitIfCurrent('1.0.0', '1.0.1')).toBe(false);
+  });
+});
+
+describe('numeric prerelease comparator laws', () => {
+  test('equal numeric identifiers with leading zeroes remain symmetric', () => {
+    const a = '5.260711.1-rc.01';
+    const b = '5.260711.1-rc.1';
+    expect(compareVersions(a, b)).toBe(0);
+    expect(compareVersions(b, a)).toBe(0);
   });
 });
 
@@ -1114,6 +1135,34 @@ describe('atomicBinarySwap (G5)', () => {
       rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  test('an interruption before promotion leaves the old canonical binary runnable', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'genie-swap-interrupt-'));
+    try {
+      const stagedBin = join(tmp, 'staged', 'genie');
+      const targetBin = join(tmp, 'bin', 'genie');
+      const previousDir = join(tmp, 'bin', '.previous');
+      mkdirSync(join(tmp, 'staged'), { recursive: true });
+      mkdirSync(join(tmp, 'bin'), { recursive: true });
+      writeFileSync(stagedBin, 'NEW_BINARY');
+      writeFileSync(targetBin, 'OLD_BINARY');
+
+      expect(() =>
+        atomicBinarySwap(stagedBin, targetBin, previousDir, '4.260507.0', {
+          beforePromote: () => {
+            expect(readFileSync(targetBin, 'utf8')).toBe('OLD_BINARY');
+            throw new Error('power loss injected');
+          },
+        }),
+      ).toThrow('power loss injected');
+
+      expect(readFileSync(targetBin, 'utf8')).toBe('OLD_BINARY');
+      expect(readFileSync(stagedBin, 'utf8')).toBe('NEW_BINARY');
+      expect(readFileSync(join(previousDir, 'genie-4.260507.0'), 'utf8')).toBe('OLD_BINARY');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('rollbackBinary (G5)', () => {
@@ -1240,46 +1289,27 @@ describe('Plugin sync — .orphaned_at filter (skills regression 2026-05-06)', (
 // Pinning the bug fixes so a future regression can't slip them back in.
 // ============================================================================
 
-describe('atomicBinarySwap cross-device temp-file pattern (review fix 0b/4)', () => {
-  // We can't easily simulate two filesystems in a unit test. Instead, exercise
-  // the source-shape lock: the function must emit a `.tmp` write before the
-  // final rename, never write directly to targetBinPath in the cross-device
-  // branch. This catches the regression even when the test is on one fs.
-  test('cross-device branch writes to <target>.tmp then renameSync to target', () => {
+describe('atomicBinarySwap canonical-path safety', () => {
+  test('promotes a complete target-directory replacement with one rename-over-live', () => {
     const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
     const fnStart = source.indexOf('export function atomicBinarySwap');
     const fnEnd = source.indexOf('\nexport function ', fnStart + 1);
     const body = source.slice(fnStart, fnEnd === -1 ? undefined : fnEnd);
-    // The `else` branch (cross-device fallback) must use `<targetBinPath>.tmp`.
-    expect(body).toContain('${targetBinPath}.tmp');
-    // It must call renameSync from tmp → target after fsync.
-    expect(body).toMatch(/renameSync\(tmpTarget,\s*targetBinPath\)/);
-    // It must NOT write copyFileSync directly to targetBinPath in the
-    // cross-device branch (fsync would be after corruption).
-    const elseBranchStart = body.indexOf('} else {');
-    expect(elseBranchStart).toBeGreaterThan(-1);
-    const elseBranch = body.slice(elseBranchStart);
-    expect(elseBranch).not.toMatch(/copyFileSync\(stagedBinPath,\s*targetBinPath\)/);
+    expect(body).toContain('.genie-replacement-');
+    expect(body).toContain('fsyncFile(replacementPath)');
+    expect(body).toContain('renameSync(replacementPath, targetBinPath)');
+    expect(body).not.toContain('rmSync(targetBinPath');
+    expect(body).not.toContain('renameSync(targetBinPath');
   });
 
-  test('backup move always uses renameSync (target+backup are same-fs by construction)', () => {
+  test('backs up by copy so the old canonical path remains live before promotion', () => {
     const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
     const fnStart = source.indexOf('export function atomicBinarySwap');
     const fnEnd = source.indexOf('\nexport function ', fnStart + 1);
     const body = source.slice(fnStart, fnEnd === -1 ? undefined : fnEnd);
-    // The previous bug branched on sameFs (staging-vs-target) for the backup
-    // move, which is irrelevant — backup is target → target/.previous, both
-    // inside GENIE_BIN. Lock the unconditional renameSync.
-    const backupBlockStart = body.indexOf('if (existsSync(targetBinPath)) {');
-    expect(backupBlockStart).toBeGreaterThan(-1);
-    const innerStartFromBlock = body.slice(backupBlockStart);
-    // After the rmSync stale-cleanup, the next renameSync IS the backup move
-    // and must NOT be wrapped in `if (sameFs)` for the backup leg.
-    const renameInBlock = innerStartFromBlock.indexOf('renameSync(targetBinPath, oldBackup)');
-    expect(renameInBlock).toBeGreaterThan(-1);
-    const beforeRename = innerStartFromBlock.slice(0, renameInBlock);
-    // No conditional branch on sameFs gating the backup move.
-    expect(beforeRename).not.toMatch(/if\s*\(\s*sameFs\s*\)\s*\{[^}]*renameSync\(targetBinPath/);
+    expect(body).toContain('copyFileSync(targetBinPath, backupStaging');
+    expect(body).toContain('renameSync(backupStaging, oldBackup)');
+    expect(body).not.toContain('renameSync(targetBinPath, oldBackup)');
   });
 });
 
@@ -1436,6 +1466,119 @@ describe('auxiliary VERSION and extraction finalization gate', () => {
       },
     );
     expect(calls).toEqual(['version', 'cleanup']);
+  });
+});
+
+describe('durable pending delivery recovery', () => {
+  test('resumes local auxiliary convergence before clearing the journal', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-pending-delivery-'));
+    const home = join(root, 'home');
+    const staging = join(home, 'bin', '.staging');
+    const extract = join(staging, 'extract-5.260711.7');
+    const tarball = join(staging, 'genie.tar.gz');
+    const journal = join(home, '.pending-delivery.json');
+    mkdirSync(join(extract, 'plugins', 'genie'), { recursive: true });
+    writeFileSync(join(extract, 'genie'), 'verified binary');
+    writeFileSync(join(extract, 'plugins', 'genie', 'payload.txt'), 'fresh');
+    writeFileSync(tarball, 'verified');
+    try {
+      recordPendingDelivery({ version: '5.260711.7', extractDir: extract, tarballPath: tarball }, journal, staging);
+      let binaryChecks = 0;
+      expect(
+        resumePendingDelivery({
+          genieHome: home,
+          stagingRoot: staging,
+          pendingPath: journal,
+          ensureBinary: () => {
+            binaryChecks += 1;
+          },
+        }),
+      ).toBe(true);
+      expect(binaryChecks).toBe(1);
+      expect(readFileSync(join(home, 'plugins', 'genie', 'payload.txt'), 'utf8')).toBe('fresh');
+      expect(readFileSync(join(home, 'VERSION'), 'utf8')).toBe('5.260711.7\n');
+      expect(existsSync(journal)).toBe(false);
+      expect(resumePendingDelivery({ genieHome: home, stagingRoot: staging, pendingPath: journal })).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a failed resume retains the verified journal and succeeds on a normal retry', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-pending-retry-'));
+    const home = join(root, 'home');
+    const staging = join(home, 'bin', '.staging');
+    const extract = join(staging, 'extract-5.260711.7');
+    const tarball = join(staging, 'genie.tar.gz');
+    const journal = join(home, '.pending-delivery.json');
+    mkdirSync(join(extract, 'plugins', 'genie'), { recursive: true });
+    writeFileSync(join(extract, 'genie'), 'verified binary');
+    writeFileSync(join(extract, 'plugins', 'genie', 'payload.txt'), 'fresh');
+    writeFileSync(tarball, 'verified');
+    recordPendingDelivery({ version: '5.260711.7', extractDir: extract, tarballPath: tarball }, journal, staging);
+    try {
+      expect(() =>
+        resumePendingDelivery({
+          genieHome: home,
+          stagingRoot: staging,
+          pendingPath: journal,
+          ensureBinary: () => undefined,
+          operations: {
+            rename() {
+              throw new Error('promotion unavailable');
+            },
+          },
+        }),
+      ).toThrow('auxiliary payload convergence failed');
+      expect(existsSync(journal)).toBe(true);
+      expect(
+        resumePendingDelivery({
+          genieHome: home,
+          stagingRoot: staging,
+          pendingPath: journal,
+          ensureBinary: () => undefined,
+        }),
+      ).toBe(true);
+      expect(existsSync(journal)).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects binary and auxiliary tampering before any live mutation', () => {
+    for (const tamper of ['binary', 'auxiliary'] as const) {
+      const root = mkdtempSync(join(tmpdir(), `genie-pending-tamper-${tamper}-`));
+      const home = join(root, 'home');
+      const staging = join(home, 'bin', '.staging');
+      const extract = join(staging, 'extract-5.260711.7');
+      const tarball = join(staging, 'genie.tar.gz');
+      const journal = join(home, '.pending-delivery.json');
+      mkdirSync(join(extract, 'plugins', 'genie'), { recursive: true });
+      writeFileSync(join(extract, 'genie'), 'verified binary');
+      writeFileSync(join(extract, 'plugins', 'genie', 'payload.txt'), 'verified auxiliary');
+      writeFileSync(tarball, 'verified tarball');
+      try {
+        recordPendingDelivery({ version: '5.260711.7', extractDir: extract, tarballPath: tarball }, journal, staging);
+        if (tamper === 'binary') writeFileSync(join(extract, 'genie'), 'substituted binary');
+        else writeFileSync(join(extract, 'plugins', 'genie', 'payload.txt'), 'substituted auxiliary');
+        let binaryChecks = 0;
+        expect(() =>
+          resumePendingDelivery({
+            genieHome: home,
+            stagingRoot: staging,
+            pendingPath: journal,
+            ensureBinary: () => {
+              binaryChecks += 1;
+            },
+          }),
+        ).toThrow('pending delivery payload fingerprint mismatch');
+        expect(binaryChecks).toBe(0);
+        expect(existsSync(join(home, 'plugins'))).toBe(false);
+        expect(existsSync(journal)).toBe(true);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
   });
 });
 
@@ -1893,7 +2036,7 @@ describe('runAgentSyncSafe (agent-sync phase)', () => {
     }
   });
 
-  test('marker is refreshed even when the engine throws (the sync phase ran)', () => {
+  test('marker is not refreshed when convergence fails so the retry remains immediate', () => {
     const dir = mkdtempSync(join(tmpdir(), 'genie-asm-'));
     const marker = join(dir, '.last-agent-sync');
     try {
@@ -1904,7 +2047,7 @@ describe('runAgentSyncSafe (agent-sync phase)', () => {
         log: () => {},
         markerPath: marker,
       });
-      expect(existsSync(marker)).toBe(true);
+      expect(existsSync(marker)).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -1922,7 +2065,7 @@ describe('runAgentSyncSafe (agent-sync phase)', () => {
     expect(fastPathIdx).toBeLessThan(deliveryIdx);
     // The fast-path block calls the sync phase (and only that path does, pre-fetch).
     const fastPath = cmdBody.slice(fastPathIdx, fetchIdx);
-    expect(fastPath).toContain('runAgentSyncSafe()');
+    expect(fastPath).toContain("runAgentSyncSafe({ strict: true, selection: 'auto' })");
     expect(fastPath).not.toContain('runTrackedManualUpdateConvergence(');
     expect(fastPath).not.toContain('refreshUpdatePlugins(');
   });
@@ -1967,11 +2110,22 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
 });
 
 describe('operator-driven plugin refresh', () => {
+  let pluginStateDir: string;
+
+  beforeEach(() => {
+    pluginStateDir = mkdtempSync(join(tmpdir(), 'genie-update-plugin-state-'));
+  });
+
+  afterEach(() => {
+    rmSync(pluginStateDir, { recursive: true, force: true });
+  });
+
   test('CLI detection is not consent: validly absent integrations remain absent', () => {
     const calls: string[] = [];
     const results = refreshUpdatePlugins({
       bundleRoot: '/tmp/fixture-bundle',
       expectedVersion: '5.260711.3',
+      stateDir: pluginStateDir,
       detected: { codex: true, claude: true },
       runner(command, args) {
         calls.push(`${command} ${args.join(' ')}`);
@@ -1989,6 +2143,7 @@ describe('operator-driven plugin refresh', () => {
     const results = refreshUpdatePlugins({
       bundleRoot: '/tmp/fixture-bundle',
       expectedVersion: '5.260711.3',
+      stateDir: pluginStateDir,
       detected: { codex: true, claude: true },
       runner(command, args) {
         calls.push(`${command} ${args.join(' ')}`);
@@ -2017,7 +2172,7 @@ describe('operator-driven plugin refresh', () => {
             installed: [
               {
                 pluginId: 'genie@automagik',
-                enabled: lists !== 1,
+                enabled: lists === 2,
                 version: lists === 1 ? '5.260710.2' : '5.260711.3',
               },
             ],
@@ -2031,6 +2186,7 @@ describe('operator-driven plugin refresh', () => {
       const results = refreshUpdatePlugins({
         bundleRoot: root,
         expectedVersion: '5.260711.3',
+        stateDir: pluginStateDir,
         detected: { codex: true, claude: false },
         codexConfigPath: configPath,
         runner,
@@ -2044,7 +2200,6 @@ describe('operator-driven plugin refresh', () => {
         },
       ]);
       expect(calls).toContain(`codex plugin marketplace add ${root} --json`);
-      expect(calls).toContain('codex plugin remove genie@automagik --json');
       expect(calls).toContain('codex plugin add genie@automagik --json');
       expect(readFileSync(configPath, 'utf8')).toContain('enabled = false');
     } finally {
@@ -2056,6 +2211,7 @@ describe('operator-driven plugin refresh', () => {
     const results = refreshUpdatePlugins({
       bundleRoot: '/tmp/fixture-bundle',
       expectedVersion: '5.260711.3',
+      stateDir: pluginStateDir,
       detected: { codex: true, claude: false },
       runner: () => ({ exitCode: 1, stdout: '', stderr: '', timedOut: true }),
     });
@@ -2072,6 +2228,7 @@ describe('operator-driven plugin refresh', () => {
       const results = refreshUpdatePlugins({
         bundleRoot: root,
         expectedVersion: '5.260711.3',
+        stateDir: pluginStateDir,
         detected: { codex: true, claude: false },
         codexConfigPath: configPath,
         runner(_command, args) {
@@ -2091,8 +2248,65 @@ describe('operator-driven plugin refresh', () => {
       });
 
       expect(results[0]).toMatchObject({ runtime: 'codex', ok: false });
-      expect(results[0]?.detail).toMatch(/malformed JSON.*after plugin reinstall/);
+      expect(results[0]?.detail).toMatch(/malformed JSON.*after plugin add/);
       expect(readFileSync(configPath, 'utf8')).toContain('enabled = false');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a failed Codex re-add remains durable and converges on the next invocation', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-update-plugin-retry-'));
+    let installed = true;
+    let version = '5.260710.2';
+    let addCalls = 0;
+    const runner: CommandRunner = (_command, args) => {
+      const command = args.join(' ');
+      if (command === 'plugin list --json') {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            installed: installed ? [{ pluginId: 'genie@automagik', enabled: true, version }] : [],
+          }),
+          stderr: '',
+        };
+      }
+      if (command === 'plugin remove genie@automagik --json') {
+        installed = false;
+        return { exitCode: 0, stdout: '', stderr: '' };
+      }
+      if (command === 'plugin add genie@automagik --json') {
+        addCalls += 1;
+        if (addCalls === 2) return { exitCode: 7, stdout: '', stderr: 'transient cache failure' };
+        if (!installed) {
+          installed = true;
+          version = '5.260711.3';
+        }
+      }
+      return { exitCode: 0, stdout: '', stderr: '' };
+    };
+    try {
+      const first = refreshUpdatePlugins({
+        bundleRoot: root,
+        expectedVersion: '5.260711.3',
+        stateDir: pluginStateDir,
+        detected: { codex: true, claude: false },
+        runner,
+      });
+      expect(first[0]).toMatchObject({ runtime: 'codex', ok: false });
+      expect(installed).toBe(false);
+      expect(existsSync(join(pluginStateDir, '.integration-refresh-codex.json'))).toBe(true);
+
+      const second = refreshUpdatePlugins({
+        bundleRoot: root,
+        expectedVersion: '5.260711.3',
+        stateDir: pluginStateDir,
+        detected: { codex: true, claude: false },
+        runner,
+      });
+      expect(second[0]).toMatchObject({ runtime: 'codex', ok: true });
+      expect(installed).toBe(true);
+      expect(existsSync(join(pluginStateDir, '.integration-refresh-codex.json'))).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -2105,6 +2319,7 @@ describe('operator-driven plugin refresh', () => {
     const results = refreshUpdatePlugins({
       bundleRoot: '/tmp/fixture-bundle',
       expectedVersion: '5.260711.3',
+      stateDir: pluginStateDir,
       detected: { codex: false, claude: true },
       timeoutMs: 777,
       runner(command, args, options) {
@@ -2152,6 +2367,7 @@ describe('operator-driven plugin refresh', () => {
     const results = refreshUpdatePlugins({
       bundleRoot: '/tmp/fixture-bundle',
       expectedVersion: '5.260711.3',
+      stateDir: pluginStateDir,
       detected: { codex: false, claude: true },
       runner(_command, args) {
         if (args.join(' ') === 'plugin list --json') {
@@ -2185,6 +2401,7 @@ describe('operator-driven plugin refresh', () => {
     const results = refreshUpdatePlugins({
       bundleRoot: '/tmp/fixture-bundle',
       expectedVersion: '5.260711.3',
+      stateDir: pluginStateDir,
       detected: { codex: false, claude: true },
       runner(_command, args) {
         if (args.join(' ') === 'plugin list --json') {

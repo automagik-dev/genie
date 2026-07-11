@@ -9,11 +9,14 @@
  */
 import type { Database } from 'bun:sqlite';
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { OmniRuntimeConfig } from './omni-config.js';
 import {
+  type NatsInboundMsg,
+  type NatsLike,
+  type NatsSubscription,
   type OmniSend,
   type RawClaudeSpawn,
   type SpawnClaude,
@@ -24,8 +27,12 @@ import {
   deterministicSessionId,
   extractCodexJsonlReply,
   extractStreamJsonReply,
+  isSafeCodexThreadId,
+  readBoundedText,
+  resolveTrustedHostExecutable,
   runClaudeSession,
   runCodexSession,
+  runOmniServe,
 } from './omni-runner.js';
 import { getAgentSession, openGlobalDb, upsertAgentSession } from './v5/global-db.js';
 import { enqueueApproval, getApproval, listInbox } from './v5/omni-queue.js';
@@ -333,11 +340,16 @@ describe('omni runner — inbound one-shot routing', () => {
 // ---------------------------------------------------------------------------
 const APPROVAL_CHAT = 'approval-chat'; // matches rt() above
 
+const approvalSummary = (marker: 'A' | 'B'): string =>
+  JSON.stringify({
+    kind: 'Bash',
+    commands: [{ executable: `summary-${marker.toLowerCase()}`, options: [], env: [], argumentCount: 0 }],
+  });
+
 /** Fake id-returning send: assigns each approval a stanza id derived from its
- *  input-summary marker (embedded in the formatted message), so correlation is
- *  order-independent. `summary-A` → `stanza-A`, `summary-B` → `stanza-B`. */
+ *  structural command marker, so correlation is order-independent. */
 const sendApproval: OmniSend = async ({ text }) => {
-  const marker = text.includes('summary-B') ? 'B' : 'A';
+  const marker = text.includes('summary-b') ? 'B' : 'A';
   return { success: true, messageId: `stanza-${marker}` };
 };
 
@@ -359,10 +371,39 @@ const approvalRunner = (db: Database) =>
   createOmniRunner({ db, config: rt(), publish: () => {}, sendApproval, now: () => NOW });
 
 describe('omni runner — correlated approval identity + reactions', () => {
+  test('never transmits a legacy raw Bash preview to the approval channel', async () => {
+    const db = freshDb();
+    const texts: string[] = [];
+    const runner = createOmniRunner({
+      db,
+      config: rt(),
+      publish: () => {},
+      sendApproval: async ({ text }) => {
+        texts.push(text);
+        return { success: true, messageId: 'stanza-safe' };
+      },
+      now: () => NOW,
+    });
+    enqueueApproval(db, {
+      repo: '/r',
+      tool: 'Bash',
+      inputSummary:
+        'curl -u user:password https://user:password@example.test/?X-Amz-Signature=signed-secret&sig=sas-secret',
+      now: NOW - 1,
+    });
+    runner.tick();
+    await runner.whenIdle();
+    expect(texts).toHaveLength(1);
+    for (const secret of ['password', 'signed-secret', 'sas-secret', 'https://']) {
+      expect(texts[0]).not.toContain(secret);
+    }
+    expect(texts[0]).toContain('legacyPreviewOmitted');
+  });
+
   test('announce stores the REAL stanza id returned by the send (not a genId ref)', async () => {
     const db = freshDb();
     const runner = approvalRunner(db);
-    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('A'), now: NOW - 2000 });
     runner.tick();
     await runner.whenIdle();
     expect(getApproval(db, a)?.omniMessageId).toBe('stanza-A');
@@ -371,8 +412,8 @@ describe('omni runner — correlated approval identity + reactions', () => {
   test('reaction resolves the exact approval by stored stanza id, not the oldest', async () => {
     const db = freshDb();
     const runner = approvalRunner(db);
-    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
-    const b = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-B', now: NOW - 1000 });
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('A'), now: NOW - 2000 });
+    const b = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('B'), now: NOW - 1000 });
     runner.tick();
     await runner.whenIdle();
     // Both rows tagged with their own real stanza ids.
@@ -390,8 +431,8 @@ describe('omni runner — correlated approval identity + reactions', () => {
   test('dual-emit bare-emoji echo does not double-resolve a second approval', async () => {
     const db = freshDb();
     const runner = approvalRunner(db);
-    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
-    const b = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-B', now: NOW - 1000 });
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('A'), now: NOW - 2000 });
+    const b = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('B'), now: NOW - 1000 });
     runner.tick();
     await runner.whenIdle();
 
@@ -411,8 +452,8 @@ describe('omni runner — correlated approval identity + reactions', () => {
   test('bare text reply still resolves the oldest pending approval (documented fallback)', async () => {
     const db = freshDb();
     const runner = approvalRunner(db);
-    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
-    const b = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-B', now: NOW - 1000 });
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('A'), now: NOW - 2000 });
+    const b = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('B'), now: NOW - 1000 });
     runner.tick();
     await runner.whenIdle();
 
@@ -425,7 +466,7 @@ describe('omni runner — correlated approval identity + reactions', () => {
   test('a reaction from another instance is ignored (PR #2507 instance-scope guard)', async () => {
     const db = freshDb();
     const runner = approvalRunner(db);
-    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('A'), now: NOW - 2000 });
     runner.tick();
     await runner.whenIdle();
 
@@ -479,7 +520,7 @@ describe('omni runner — ⏳→✅/❌ status-reaction lifecycle', () => {
     const db = freshDb();
     const reactions: ReactionCall[] = [];
     const runner = statusRunner(db, reactions, { now: NOW });
-    enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
+    enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('A'), now: NOW - 2000 });
     runner.tick();
     await runner.whenIdle();
     expect(reactions).toEqual([{ messageId: 'stanza-A', emoji: HOURGLASS }]);
@@ -489,7 +530,7 @@ describe('omni runner — ⏳→✅/❌ status-reaction lifecycle', () => {
     const db = freshDb();
     const reactions: ReactionCall[] = [];
     const runner = statusRunner(db, reactions, { now: NOW });
-    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('A'), now: NOW - 2000 });
     runner.tick();
     await runner.whenIdle();
 
@@ -509,7 +550,7 @@ describe('omni runner — ⏳→✅/❌ status-reaction lifecycle', () => {
     const db = freshDb();
     const reactions: ReactionCall[] = [];
     const runner = statusRunner(db, reactions, { now: NOW });
-    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('A'), now: NOW - 2000 });
     runner.tick();
     await runner.whenIdle();
 
@@ -527,7 +568,7 @@ describe('omni runner — ⏳→✅/❌ status-reaction lifecycle', () => {
     const reactions: ReactionCall[] = [];
     const clock = { now: NOW };
     const runner = statusRunner(db, reactions, clock);
-    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('A'), now: NOW - 2000 });
     runner.tick(); // announce + ⏳
     await runner.whenIdle();
 
@@ -544,8 +585,8 @@ describe('omni runner — ⏳→✅/❌ status-reaction lifecycle', () => {
     const db = freshDb();
     const reactions: ReactionCall[] = [];
     const runner = statusRunner(db, reactions, { now: NOW });
-    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
-    const b = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-B', now: NOW - 1000 });
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('A'), now: NOW - 2000 });
+    const b = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('B'), now: NOW - 1000 });
     runner.tick();
     await runner.whenIdle();
 
@@ -566,7 +607,7 @@ describe('omni runner — ⏳→✅/❌ status-reaction lifecycle', () => {
     const db = freshDb();
     const reactions: ReactionCall[] = [];
     const runner = statusRunner(db, reactions, { now: NOW });
-    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('A'), now: NOW - 2000 });
     runner.tick();
     await runner.whenIdle();
     expect(getApproval(db, a)?.lastStatusGlyph).toBe(HOURGLASS); // recorded ⏳
@@ -597,7 +638,7 @@ describe('omni runner — status-ack reconciliation (hook-fork-expiry race)', ()
     const db = freshDb();
     const reactions: ReactionCall[] = [];
     const runner = statusRunner(db, reactions, { now: NOW });
-    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('A'), now: NOW - 2000 });
     runner.tick(); // announce + ⏳
     await runner.whenIdle();
     expect(getApproval(db, a)?.lastStatusGlyph).toBe(HOURGLASS);
@@ -618,7 +659,7 @@ describe('omni runner — status-ack reconciliation (hook-fork-expiry race)', ()
     const db = freshDb();
     const reactions: ReactionCall[] = [];
     const runner = statusRunner(db, reactions, { now: NOW });
-    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('A'), now: NOW - 2000 });
     runner.tick();
     await runner.whenIdle();
     hookForkExpire(db, a);
@@ -652,7 +693,7 @@ describe('omni runner — status-ack reconciliation (hook-fork-expiry race)', ()
       },
       now: () => NOW,
     });
-    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('A'), now: NOW - 2000 });
     runner.tick(); // announce ⏳ (call 1, ok → recorded)
     await runner.whenIdle();
 
@@ -792,8 +833,24 @@ describe('Codex executor JSONL and resume', () => {
       const resumed = buildCodexArgs({ message, threadId: 'thread-1' });
       expect(resumed.slice(0, 3)).toEqual(['exec', 'resume', '--json']);
       expect(resumed).toContain('thread-1');
-      expect(resumed.slice(-2)).toEqual(['--', message]);
+      expect(resumed.slice(-3)).toEqual(['--', 'thread-1', message]);
     }
+  });
+
+  test('rejects option-like, control-character, and oversized persisted thread ids', () => {
+    for (const unsafe of ['--last', '-m', 'thread\nnext', 'x'.repeat(257)]) {
+      expect(isSafeCodexThreadId(unsafe)).toBe(false);
+      expect(() => buildCodexArgs({ message: 'hello', threadId: unsafe })).toThrow('unsafe persisted Codex thread id');
+    }
+    expect(isSafeCodexThreadId('0190abcd-1234-7abc-8def-0123456789ab')).toBe(true);
+    const emitted = extractCodexJsonlReply(
+      [
+        JSON.stringify({ type: 'thread.started', thread_id: '--dangerously-bypass-approvals-and-sandbox' }),
+        JSON.stringify({ type: 'turn.started' }),
+      ].join('\n'),
+    );
+    expect(emitted.isError).toBe(true);
+    expect(emitted.stdout).toContain('unsafe thread_id');
   });
 
   test('rejects blank, unrelated, malformed, unknown, and valid-but-incomplete JSONL', () => {
@@ -869,7 +926,7 @@ describe('Codex executor JSONL and resume', () => {
       },
     );
     expect(calls[0].slice(0, 3)).toEqual(['exec', 'resume', '--json']);
-    expect(calls[0].slice(-2)).toEqual(['--', 'again']);
+    expect(calls[0].slice(-3)).toEqual(['--', 'thread-1', 'again']);
     expect(result.stdout).toBe('resumed');
     expect(result.threadId).toBe('thread-1');
   });
@@ -898,7 +955,7 @@ describe('Codex executor JSONL and resume', () => {
     );
 
     expect(calls.length).toBe(2);
-    expect(calls[0].slice(-2)).toEqual(['--', '--help']);
+    expect(calls[0].slice(-3)).toEqual(['--', 'stale-thread', '--help']);
     expect(calls[1]).not.toContain('resume');
     expect(calls[1].slice(-2)).toEqual(['--', '--help']);
     expect(result).toMatchObject({
@@ -1025,6 +1082,163 @@ describe('Codex executor JSONL and resume', () => {
     expect(calls[4]).not.toContain('resume');
     expect(getAgentSession(db, 'codex', INSTANCE, ROUTE_CHAT)).toBe('retry-thread');
     expect(content(published[2])).toBe('retry succeeded');
+  });
+});
+
+describe('Codex host process boundaries', () => {
+  test('stdout overflow cancels the stream immediately without waiting for EOF', async () => {
+    let cancelled = false;
+    let overflowed = false;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('123456789'));
+        // Deliberately never close: bounded reading must cancel after byte 9.
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const started = performance.now();
+    const result = await readBoundedText(stream, 8, () => {
+      overflowed = true;
+    });
+    expect(result).toEqual({ text: '12345678', truncated: true });
+    expect(overflowed).toBe(true);
+    expect(cancelled).toBe(true);
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
+  test('uses an absolute host executable and rejects nested-route and common-repo decoys', () => {
+    const route = mkdtempSync(join(tmpdir(), 'genie-codex-route-'));
+    try {
+      const trustedNode = Bun.which('node');
+      if (!trustedNode) throw new Error('Node is required');
+      const repo = join(route, 'repo');
+      const nested = join(repo, 'packages', 'app');
+      mkdirSync(join(repo, '.git'), { recursive: true });
+      mkdirSync(nested, { recursive: true });
+      expect(resolveTrustedHostExecutable('codex', nested, () => trustedNode)).toBe(realpathSync(trustedNode));
+
+      const decoy = join(repo, 'bin', process.platform === 'win32' ? 'codex.exe' : 'codex');
+      mkdirSync(join(repo, 'bin'), { recursive: true });
+      writeFileSync(decoy, 'decoy');
+      chmodSync(decoy, 0o755);
+      expect(() => resolveTrustedHostExecutable('codex', nested, () => decoy)).toThrow('repository-local');
+
+      const main = join(route, 'main');
+      const linked = join(route, 'linked');
+      const linkedGitDir = join(main, '.git', 'worktrees', 'linked');
+      const linkedNested = join(linked, 'src', 'nested');
+      mkdirSync(linkedGitDir, { recursive: true });
+      mkdirSync(linkedNested, { recursive: true });
+      writeFileSync(join(linked, '.git'), `gitdir: ${linkedGitDir}\n`);
+      writeFileSync(join(linkedGitDir, 'commondir'), '../..\n');
+      const commonDecoy = join(main, 'bin', process.platform === 'win32' ? 'claude.exe' : 'claude');
+      mkdirSync(join(main, 'bin'), { recursive: true });
+      writeFileSync(commonDecoy, 'common repo decoy');
+      chmodSync(commonDecoy, 0o755);
+      expect(() => resolveTrustedHostExecutable('claude', linkedNested, () => commonDecoy)).toThrow('repository-local');
+    } finally {
+      rmSync(route, { recursive: true, force: true });
+    }
+  });
+
+  test('fails closed when repository trust metadata points at a missing git directory', () => {
+    const route = mkdtempSync(join(tmpdir(), 'genie-broken-git-route-'));
+    try {
+      const trustedNode = Bun.which('node');
+      if (!trustedNode) throw new Error('Node is required');
+      const nested = join(route, 'src', 'nested');
+      mkdirSync(nested, { recursive: true });
+      writeFileSync(join(route, '.git'), `gitdir: ${join(route, 'missing-git-dir')}\n`);
+      expect(() => resolveTrustedHostExecutable('codex', nested, () => trustedNode)).toThrow();
+    } finally {
+      rmSync(route, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('Omni serve shutdown ownership', () => {
+  test('aborts and drains an in-flight route before closing NATS or SQLite ownership returns', async () => {
+    const db = freshDb();
+    const order: string[] = [];
+    const queue: NatsInboundMsg[] = [];
+    let closed = false;
+    let wake: (() => void) | undefined;
+    const subscription: NatsSubscription = {
+      unsubscribe() {
+        closed = true;
+        wake?.();
+      },
+      async *[Symbol.asyncIterator]() {
+        while (!closed) {
+          const next = queue.shift();
+          if (next) {
+            yield next;
+            continue;
+          }
+          await new Promise<void>((resolve) => {
+            wake = resolve;
+          });
+          wake = undefined;
+        }
+      },
+    };
+    const nats: NatsLike = {
+      subscribe: () => subscription,
+      publish: () => order.push('publish'),
+      close: async () => {
+        order.push('nats-close');
+      },
+    };
+    const serveAbort = new AbortController();
+    let ready!: () => void;
+    const readyPromise = new Promise<void>((resolve) => {
+      ready = resolve;
+    });
+    let childStarted!: () => void;
+    const childStartedPromise = new Promise<void>((resolve) => {
+      childStarted = resolve;
+    });
+    const serve = runOmniServe({
+      db,
+      config: rt(),
+      natsFactory: async () => nats,
+      signal: serveAbort.signal,
+      onReady: ready,
+      runnerDeps: {
+        spawnAgent: ({ signal }) =>
+          new Promise((resolve) => {
+            childStarted();
+            signal.addEventListener(
+              'abort',
+              () => {
+                setTimeout(() => {
+                  order.push('child-settled');
+                  resolve({ stdout: 'cancelled', exitCode: 1, isError: true });
+                }, 20);
+              },
+              { once: true },
+            );
+          }),
+      },
+    });
+    await readyPromise;
+    queue.push({
+      subject: `omni.message.${INSTANCE}.${ROUTE_CHAT}`,
+      data: new TextEncoder().encode(
+        JSON.stringify({ content: 'in flight', chatId: ROUTE_CHAT, sender: 'boss', instanceId: INSTANCE }),
+      ),
+    });
+    wake?.();
+    await childStartedPromise;
+    serveAbort.abort();
+    await serve;
+
+    expect(order.indexOf('child-settled')).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf('child-settled')).toBeLessThan(order.indexOf('nats-close'));
+    expect(listInbox(db, { handled: true })).toHaveLength(1);
+    expect(() => db.query('SELECT 1').get()).not.toThrow();
   });
 });
 
@@ -1417,7 +1631,7 @@ describe('omni runner — routed-run reaction/empty guard', () => {
       },
       now: () => NOW,
     });
-    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('A'), now: NOW - 2000 });
     runner.tick();
     await runner.whenIdle();
 

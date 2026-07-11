@@ -5,7 +5,7 @@ description: "Dispatch fix subagent for FIX-FIRST gaps from review, re-review, t
 
 # fix — Fix-Review Loop
 
-**Runtime syntax:** invoke named skills as `$name` in Codex and `/name` in Claude Code or Hermes. This body uses bare skill names so the workflow stays portable.
+**Runtime syntax:** in Codex, invoke the plugin copy with the owner-qualified `$genie:<skill>` selector; use bare `$<skill>` only for a separately installed personal copy. Claude Code and Hermes use `/<skill>`. Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active tier.
 
 Resolve FIX-FIRST gaps from `review`: dispatch a fix subagent, re-review, repeat up to 2 loops, then diagnose and route any unresolved failure.
 

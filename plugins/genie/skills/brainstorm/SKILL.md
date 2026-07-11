@@ -5,7 +5,7 @@ description: "Explore ambiguous or early-stage ideas interactively — tracks wi
 
 # brainstorm — Explore Before Planning
 
-**Runtime syntax:** invoke named skills as `$name` in Codex and `/name` in Claude Code or Hermes. This body uses bare skill names so the workflow stays portable.
+**Runtime syntax:** in Codex, invoke the plugin copy with the owner-qualified `$genie:<skill>` selector; use bare `$<skill>` only for a separately installed personal copy. Claude Code and Hermes use `/<skill>`. Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active tier.
 
 Collaborate on fuzzy ideas until they are concrete enough for `wish`.
 
@@ -46,9 +46,7 @@ WRS: ██████░░░░ 60/100
 
 ## Stuck Decisions
 
-If **Decisions** stays unfilled after 2+ exchanges, convene **domain experts**: dispatch 2-3 lens subagents in parallel (native delegation surface), each reading a distinct lens — a deliberation card from `plugins/genie/references/lenses/` (questioner, simplifier, operator, …) plus, when the tradeoff is technical, the matching lane skill at `skills/<lane>/SKILL.md`. Present their perspectives to the user, then keep refining. Escalate to the full `council` workflow when the decision deserves a durable deliberation record.
-
-Lens root: `$GENIE_HOME/plugins/genie` (default `~/.genie/plugins/genie`); inside the genie repo itself, resolve `references/lenses/` cards and `skills/<lane>/SKILL.md` lanes relative to `plugins/genie/` and the repo root.
+If **Decisions** stays unfilled after 2+ exchanges, convene **domain experts**: dispatch 2-3 lens subagents in parallel (native delegation surface), each reading a distinct deliberation card from `references/lenses/` relative to the directory containing this loaded `SKILL.md`. When the tradeoff is technical, also read the matching sibling lane skill (`../<lane>/SKILL.md`, resolved from this skill directory) when present. Present their perspectives to the user, then keep refining. Escalate to the full `council` workflow when the decision deserves a durable deliberation record.
 
 ## Scope Size
 
@@ -78,7 +76,8 @@ Brainstorm index at `.genie/brainstorm.md`; auto-create if missing with sections
 |-------|--------|
 | Start | Fuzzy-match slug/topic — use as seed context |
 | WRS change | Move entry to the matching section (Raw/Simmering/Ready) |
-| Crystallize | Move entry to Poured, link the resulting wish |
+| Design review SHIP | Keep the entry in Ready and invoke `wish` |
+| Wish plan review SHIP | Move entry to Poured and link the existing approved wish |
 
 ## Crystallize
 
@@ -91,12 +90,12 @@ At WRS = 100:
    git add .genie/brainstorms/<slug>/DESIGN.md .genie/brainstorms/<slug>/DRAFT.md
    ```
    Stage exactly these two; other brainstorm artifacts stay untracked. The genie repo's wish linter fails any wish whose design link doesn't resolve to a real file — uncommitted brainstorms are missing in CI and sibling worktrees, so never skip the stage.
-4. Update the jar — move the entry to Poured with the wish link.
+4. Update the jar — keep the entry under Ready and link the staged DESIGN.md. Do not move it to Poured before a WISH.md exists and its plan review is persisted as `APPROVED`.
 5. Create a board pointer; if this fails (no `.genie/genie.db` yet, CLI unavailable), warn and continue — DESIGN.md and the jar in git are the source of truth:
    ```bash
    genie task create --title "<brainstorm title>"
    ```
-6. Auto-invoke `review` (plan review) on the DESIGN.md.
+6. Auto-invoke `review` (design review) on the DESIGN.md. The invoking orchestrator receives the verdict; the reviewer remains read-only.
 
 ## Output Options
 
@@ -113,6 +112,11 @@ After `review` returns SHIP on the design:
 ```
 Design reviewed and validated (WRS {score}/100). Proceeding to wish.
 ```
+
+Invoke `wish` to create and review `.genie/wishes/<slug>/WISH.md`. Only after
+the invoking orchestrator has persisted plan SHIP as WISH status `APPROVED`
+may it move the jar entry to Poured and link that existing wish. FIX-FIRST or
+BLOCKED leaves the brainstorm in Ready with the current design/wish link.
 
 Note cross-repo or cross-agent dependencies — they become `depends-on`/`blocks` fields in the wish.
 

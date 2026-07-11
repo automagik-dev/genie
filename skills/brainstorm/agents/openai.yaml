@@ -1,4 +1,4 @@
 interface:
   display_name: "Brainstorm"
   short_description: "Explore fuzzy ideas into a testable design"
-  default_prompt: "Use $brainstorm to turn this early idea into a concrete design."
+  default_prompt: "Use $genie:brainstorm (or $brainstorm only for a separately installed personal copy) to turn this early idea into a concrete design."

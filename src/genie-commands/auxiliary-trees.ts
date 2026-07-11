@@ -1,15 +1,5 @@
 import { createHash } from 'node:crypto';
-import {
-  copyFileSync,
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  renameSync,
-  rmSync,
-  statSync,
-} from 'node:fs';
+import { chmodSync, copyFileSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 
 export type AuxiliaryTreeStage =
@@ -77,8 +67,8 @@ export interface ConvergeAuxiliaryTreeOptions {
 let transactionSequence = 0;
 
 const DEFAULT_OPERATIONS: AuxiliaryTreeOperations = {
-  exists: existsSync,
-  digest: digestTree,
+  exists: pathExists,
+  digest: fingerprintAuxiliaryTree,
   copyTree,
   rename: renameSync,
   remove: (path) => rmSync(path, { recursive: true, force: true }),
@@ -272,6 +262,9 @@ function restorePreviousTree(ops: AuxiliaryTreeOperations, previous: string, des
     return {};
   } catch (renameError) {
     try {
+      if (ops.exists(destination)) {
+        throw new Error(`rollback destination is occupied at ${destination}`);
+      }
       // A rename seam or unexpected filesystem boundary must not strand the
       // prior tree. Copying keeps the parked artifact as an extra recovery path.
       ops.copyTree(previous, destination, NO_EXCLUSIONS);
@@ -322,50 +315,93 @@ function verifiedArtifact(
   }
 }
 
-function digestTree(root: string, excludedEntryNames: ReadonlySet<string>): string {
-  const files: Array<{ path: string; digest: string }> = [];
-  collectTreeFiles(root, root, excludedEntryNames, files);
-  files.sort((a, b) => a.path.localeCompare(b.path));
+/**
+ * Physical fingerprint shared by auxiliary convergence and the durable update
+ * journal. Symlinks and unsupported entries are rejected; executable identity
+ * participates alongside relative paths and file bytes.
+ */
+export function fingerprintAuxiliaryTree(
+  root: string,
+  excludedEntryNames: ReadonlySet<string> = NO_EXCLUSIONS,
+): string {
+  const entries: Array<{ path: string; kind: 'directory' | 'file'; executable: boolean; digest?: string }> = [];
+  const rootStat = lstatSync(root);
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+    throw new Error(`managed auxiliary tree must be a physical directory: ${root}`);
+  }
+  collectTreeEntries(root, root, excludedEntryNames, entries);
+  entries.sort((a, b) => a.path.localeCompare(b.path));
   const digest = createHash('sha256');
-  for (const file of files) {
-    digest.update(file.path);
+  for (const entry of entries) {
+    digest.update(entry.kind);
     digest.update('\0');
-    digest.update(file.digest);
+    digest.update(entry.path);
+    digest.update('\0');
+    digest.update(entry.executable ? 'x' : '-');
+    digest.update('\0');
+    if (entry.digest) digest.update(entry.digest);
     digest.update('\0');
   }
   return digest.digest('hex');
 }
 
-function collectTreeFiles(
+function collectTreeEntries(
   root: string,
   current: string,
   excludedEntryNames: ReadonlySet<string>,
-  files: Array<{ path: string; digest: string }>,
+  entries: Array<{ path: string; kind: 'directory' | 'file'; executable: boolean; digest?: string }>,
 ): void {
   for (const entry of readdirSync(current, { withFileTypes: true })) {
     if (excludedEntryNames.has(entry.name)) continue;
     const absolute = join(current, entry.name);
-    const stat = entry.isSymbolicLink() ? statSync(absolute) : lstatSync(absolute);
+    const stat = lstatSync(absolute);
+    if (stat.isSymbolicLink()) throw new Error(`managed auxiliary tree contains a symlink: ${absolute}`);
+    const path = relative(root, absolute);
     if (stat.isDirectory()) {
-      collectTreeFiles(root, absolute, excludedEntryNames, files);
+      entries.push({ path, kind: 'directory', executable: (stat.mode & 0o111) !== 0 });
+      collectTreeEntries(root, absolute, excludedEntryNames, entries);
     } else if (stat.isFile()) {
-      files.push({
-        path: relative(root, absolute),
+      entries.push({
+        path,
+        kind: 'file',
+        executable: (stat.mode & 0o111) !== 0,
         digest: createHash('sha256').update(readFileSync(absolute)).digest('hex'),
       });
+    } else {
+      throw new Error(`managed auxiliary tree contains an unsupported entry: ${absolute}`);
     }
   }
 }
 
 function copyTree(source: string, destination: string, excludedEntryNames: ReadonlySet<string>): void {
-  mkdirSync(destination, { recursive: true });
+  const sourceStat = lstatSync(source);
+  if (sourceStat.isSymbolicLink() || !sourceStat.isDirectory()) {
+    throw new Error(`managed auxiliary tree must be a physical directory: ${source}`);
+  }
+  mkdirSync(destination, { recursive: true, mode: sourceStat.mode & 0o777 });
+  chmodSync(destination, sourceStat.mode & 0o777);
   for (const entry of readdirSync(source, { withFileTypes: true })) {
     if (excludedEntryNames.has(entry.name)) continue;
     const sourcePath = join(source, entry.name);
     const destinationPath = join(destination, entry.name);
-    const stat = entry.isSymbolicLink() ? statSync(sourcePath) : lstatSync(sourcePath);
+    const stat = lstatSync(sourcePath);
+    if (stat.isSymbolicLink()) throw new Error(`managed auxiliary tree contains a symlink: ${sourcePath}`);
     if (stat.isDirectory()) copyTree(sourcePath, destinationPath, excludedEntryNames);
-    else if (stat.isFile()) copyFileSync(sourcePath, destinationPath);
+    else if (stat.isFile()) {
+      copyFileSync(sourcePath, destinationPath);
+      chmodSync(destinationPath, stat.mode & 0o777);
+    } else {
+      throw new Error(`managed auxiliary tree contains an unsupported entry: ${sourcePath}`);
+    }
+  }
+}
+
+function pathExists(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch {
+    return false;
   }
 }
 

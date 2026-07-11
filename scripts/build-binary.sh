@@ -56,6 +56,7 @@ TARGET="$(bun_target_for "$PLATFORM")" || { echo "error: unsupported platform: $
 # packager silently repairs. Fail before compiling if source and mirror drift.
 bun "${REPO_ROOT}/scripts/sync-plugin-skills.ts" --check
 bun "${REPO_ROOT}/scripts/fresh-install-smoke.ts"
+bun "${REPO_ROOT}/scripts/hook-bundle-parity.ts" --check
 
 STAGE="${DIST_DIR}/${PLATFORM}"
 TARBALL="${DIST_DIR}/genie-${VERSION}-${PLATFORM}.tar.gz"
@@ -107,6 +108,46 @@ bun "${REPO_ROOT}/scripts/fresh-install-smoke.ts" \
 bun "${REPO_ROOT}/scripts/release-payload-version.ts" --verify "${STAGE}" "${VERSION}"
 
 tar czf "${TARBALL}" -C "${STAGE}" .
+
+# Archive boundaries can lose files, modes, or paths even when the staging
+# tree was valid. Extract the produced artifact and rerun the release payload
+# contract before size checks or upload.
+VERIFY_ROOT="$(mktemp -d "${DIST_DIR}/.verify-${PLATFORM}.XXXXXX")"
+trap 'rm -rf "${VERIFY_ROOT}"' EXIT
+tar -xzf "${TARBALL}" -C "${VERIFY_ROOT}"
+
+assert_release_tree_equal() {
+  local source_root="$1"
+  local extracted_root="$2"
+  if find "${source_root}" "${extracted_root}" -type l -print -quit | grep -q .; then
+    echo "error: release staging/extracted trees must not contain symlinks" >&2
+    return 1
+  fi
+  while IFS= read -r -d '' source_file; do
+    local rel="${source_file#"${source_root}/"}"
+    local extracted_file="${extracted_root}/${rel}"
+    [[ -f "${extracted_file}" ]] || { echo "error: extracted release missing ${rel}" >&2; return 1; }
+    cmp -- "${source_file}" "${extracted_file}" \
+      || { echo "error: extracted release content differs for ${rel}" >&2; return 1; }
+    local source_mode extracted_mode
+    source_mode="$(stat -c '%a' "${source_file}" 2>/dev/null || stat -f '%Lp' "${source_file}")"
+    extracted_mode="$(stat -c '%a' "${extracted_file}" 2>/dev/null || stat -f '%Lp' "${extracted_file}")"
+    [[ "${source_mode}" == "${extracted_mode}" ]] \
+      || { echo "error: extracted release mode differs for ${rel}: ${source_mode} != ${extracted_mode}" >&2; return 1; }
+  done < <(find "${source_root}" -type f -print0)
+  while IFS= read -r -d '' extracted_file; do
+    local rel="${extracted_file#"${extracted_root}/"}"
+    [[ -f "${source_root}/${rel}" ]] || { echo "error: extracted release has unexpected ${rel}" >&2; return 1; }
+  done < <(find "${extracted_root}" -type f -print0)
+}
+
+assert_release_tree_equal "${STAGE}" "${VERIFY_ROOT}"
+bun "${REPO_ROOT}/scripts/fresh-install-smoke.ts" \
+  --skills-dir "${VERIFY_ROOT}/skills" \
+  --plugin-root "${VERIFY_ROOT}/plugins/genie"
+bun "${REPO_ROOT}/scripts/release-payload-version.ts" --verify "${VERIFY_ROOT}" "${VERSION}"
+rm -rf "${VERIFY_ROOT}"
+trap - EXIT
 
 SIZE_MB=$(( $(stat -c '%s' "${TARBALL}" 2>/dev/null || stat -f '%z' "${TARBALL}") / 1024 / 1024 ))
 echo "==> ${TARBALL}  (${SIZE_MB} MB)"

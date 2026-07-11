@@ -365,6 +365,14 @@ export function expireStale(db: Database, olderThanMs: number, now?: number): nu
   return expire.immediate();
 }
 
+/** Expire exactly one still-pending approval owned by a hook invocation. */
+export function expireApprovalIfPending(db: Database, id: string, now = Date.now()): boolean {
+  const result = db
+    .query("UPDATE approvals SET status = 'expired', resolved_at = ? WHERE id = ? AND status = 'pending'")
+    .run(now, id);
+  return result.changes === 1;
+}
+
 // ============================================================================
 // Inbox
 // ============================================================================

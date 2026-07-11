@@ -5,7 +5,7 @@ description: "Full PM playbook — triage backlog, prioritize, assign, track, re
 
 # pm — Project Management Playbook
 
-**Runtime syntax:** invoke named skills as `$name` in Codex and `/name` in Claude Code or Hermes. This body uses bare skill names so the workflow stays portable.
+**Runtime syntax:** in Codex, invoke the plugin copy with the owner-qualified `$genie:<skill>` selector; use bare `$<skill>` only for a separately installed personal copy. Claude Code and Hermes use `/<skill>`. Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active tier.
 
 Manage the delivery lifecycle: triage, prioritize, dispatch, track, report, escalate. The PM orchestrates — it never writes code. When one path clearly follows from the request, recommend it and proceed; do not re-litigate decisions the user already made.
 
@@ -40,7 +40,7 @@ The lifecycle is owned by its skills — route to them, never restate them here:
 | Investigate | `trace`, `report` | Unknown failure: diagnose before fixing |
 | Ship | PR to `dev` | Merge when CI green + review SHIP |
 
-Document status (WISH.md DRAFT/SHIP/…) tracks lifecycle phase; the task DB tracks per-group execution state.
+Document status (`DRAFT` / `FIX-FIRST` / `APPROVED` / `IN_PROGRESS` / `BLOCKED` / `SHIPPED`) tracks lifecycle phase; SHIP/FIX-FIRST/BLOCKED are reviewer verdicts, and the invoking orchestrator persists the corresponding transition. The task DB tracks per-group execution state.
 
 ## Specialist Routing
 

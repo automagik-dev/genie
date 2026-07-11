@@ -170,67 +170,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.meta.outputs.version }}
           CHANNEL: ${{ steps.meta.outputs.channel }}
-          DRAFT_FLAG: ${{ inputs.draft && '--draft' || '' }}
+          DRAFT: ${{ inputs.draft }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
         shell: bash
         run: |
           set -euo pipefail
-          PRERELEASE_FLAG=""
-          if [[ "${CHANNEL}" != "stable" ]]; then
-            PRERELEASE_FLAG="--prerelease"
-          fi
-
-          # One-release compatibility note: the process performing the first
-          # upgrade from a pre-convergence release is itself old and may only
-          # deliver the new binary/payload. The operator runs one explicit
-          # second update after the first returns; lifecycle hooks never do it.
-          MIGRATION_MARKER="<!-- genie-agent-sync-migration-v1 -->"
-          MIGRATION_NOTE=$'<!-- genie-agent-sync-migration-v1 -->\n**One-time integration convergence:** if this is your first upgrade from a pre-convergence Genie release, let the command finish and then run `genie update` once more explicitly. The newly installed binary will preserve user-owned skills/agents and converge the plugin, hooks, and optional role agents. Do not rely on SessionStart for this hop; review changed hooks with `/hooks` and start a new Codex task.'
-          append_migration_note() {
-            local body
-            body=$(gh release view "v${VERSION}" --repo "${{ github.repository }}" --json body --jq '.body // ""')
-            if [[ "${body}" == *"${MIGRATION_MARKER}"* ]]; then
-              return
-            fi
-            if [[ -n "${body}" ]]; then
-              body+=$'\n\n'
-            fi
-            body+="${MIGRATION_NOTE}"
-            gh release edit "v${VERSION}" --repo "${{ github.repository }}" --notes "${body}"
-          }
-
-          if ! gh release view "v${VERSION}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            RELEASE_NOTES="Release v${VERSION} (channel: ${CHANNEL})"
-            RELEASE_NOTES+=$'\n\n'
-            RELEASE_NOTES+="${MIGRATION_NOTE}"
-            # shellcheck disable=SC2086 # intentional word-split on optional flags
-            gh release create "v${VERSION}" \
-              --repo "${{ github.repository }}" \
-              --title "v${VERSION}" \
-              --notes "${RELEASE_NOTES}" \
-              ${DRAFT_FLAG} ${PRERELEASE_FLAG}
-          fi
-          # Existing draft/prerelease promotion paths receive the same note
-          # without replacing human-authored release text.
-          append_migration_note
-
-          # Reconcile release flags to the channel — idempotent, and the
-          # whole point on the stable re-dispatch path: the dev chain
-          # creates v${VERSION} as --prerelease, then a dev→main merge
-          # re-dispatches this workflow with channel=stable. The release
-          # already exists, so the `gh release create` branch above is
-          # skipped and the prerelease flag would never flip. Without this
-          # block, .well-known/latest.json advances but GitHub's "Latest"
-          # badge stays stuck on the old stable tag (the v4.260511.5
-          # symptom). Drafts can't be marked latest, so skip when drafting.
-          if [[ -z "${DRAFT_FLAG}" ]]; then
-            if [[ "${CHANNEL}" == "stable" ]]; then
-              gh release edit "v${VERSION}" --repo "${{ github.repository }}" \
-                --prerelease=false --latest
-            else
-              gh release edit "v${VERSION}" --repo "${{ github.repository }}" \
-                --prerelease=true --latest=false
-            fi
-          fi
+          # Testable/idempotent create, migration-note, and promotion logic.
+          # The helper preserves human-authored bodies and propagates gh errors.
+          bash scripts/reconcile-release-note.sh
 
           if [[ -d dist && -n "$(ls -A dist 2>/dev/null)" ]]; then
             gh release upload "v${VERSION}" \

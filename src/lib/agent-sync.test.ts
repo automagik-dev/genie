@@ -34,7 +34,9 @@ import {
   type AgentSyncOptions,
   type AgentSyncReport,
   WORKFLOW_MANIFEST_NAME,
+  acquireLifecycleLease,
   computeDirDigest,
+  lifecycleLockPath,
   resolveGenieSource,
   runAgentSync,
   stampWorkflow,
@@ -196,7 +198,7 @@ describe('fresh create', () => {
 
     expect(extraAction(report, 'stamp')).toBe('written');
     const council = readFileSync(join(fixture.claudeDir, 'workflows', 'council.js'), 'utf8');
-    expect(council).toContain(`const LENS_ROOT = '${fixture.pluginRoot}';`);
+    expect(council).toContain(`const LENS_ROOT = ${JSON.stringify(fixture.pluginRoot)};`);
     expect(council).not.toContain(PLACEHOLDER);
     const workflowManifest = JSON.parse(
       readFileSync(join(fixture.claudeDir, 'workflows', WORKFLOW_MANIFEST_NAME), 'utf8'),
@@ -494,6 +496,30 @@ describe('undetected agents', () => {
   });
 });
 
+describe('explicit client selection', () => {
+  test('codex selection leaves Claude and Hermes homes byte-identical', () => {
+    present(fixture.claudeDir);
+    present(fixture.codexDir);
+    present(fixture.hermesHome);
+    const report = run({ selection: 'codex' });
+    expect(report.agents.map((agent) => agent.agent)).toEqual(['codex']);
+    expect(existsSync(join(fixture.agentsSkillsDir, 'alpha', 'SKILL.md'))).toBe(true);
+    expect(existsSync(join(fixture.claudeDir, 'skills'))).toBe(false);
+    expect(existsSync(join(fixture.hermesHome, 'plugins', 'genie'))).toBe(false);
+  });
+
+  test('none selection mutates no client home', () => {
+    present(fixture.claudeDir);
+    present(fixture.codexDir);
+    present(fixture.hermesHome);
+    const report = run({ selection: 'none' });
+    expect(report.agents).toEqual([]);
+    expect(existsSync(join(fixture.claudeDir, 'skills'))).toBe(false);
+    expect(existsSync(join(fixture.agentsSkillsDir, 'alpha'))).toBe(false);
+    expect(existsSync(join(fixture.hermesHome, 'plugins', 'genie'))).toBe(false);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Report fidelity on a late adapter failure
 // ---------------------------------------------------------------------------
@@ -654,6 +680,18 @@ describe('hermes linking', () => {
     const profileLink = join(fixture.hermesHome, 'profiles', 'work', 'plugins', 'genie');
     expect(lstatSync(profileLink).isSymbolicLink()).toBe(true);
     expect(readlinkSync(profileLink)).toBe(fixture.hermesSource);
+  });
+
+  test('an unsafe active_profile cannot escape the Hermes profiles root', () => {
+    present(fixture.hermesHome);
+    writeFile(join(fixture.hermesHome, 'active_profile'), '../../outside');
+    const outside = join(fixture.root, 'outside', 'plugins', 'genie');
+
+    const report = run({ hermesBinary: null });
+
+    expect(existsSync(outside)).toBe(false);
+    const hermes = agentReport(report, 'hermes');
+    expect(hermes.failures?.join('\n')).toContain('invalid Hermes active_profile');
   });
 
   test('detection via binary alone creates the link under a fresh hermes home', () => {
@@ -849,7 +887,7 @@ describe('stampWorkflow parity with council-stamp.cjs', () => {
     expect(stampCouncilWorkflow({ templatePath, pluginRoot, targetDir: cjsDir }).action).toBe('skipped');
   });
 
-  test('an inventory-missing workflow is never adopted, even when it looks stamped', () => {
+  test('an inventory-missing exact legacy workflow is adopted only after a recovery backup', () => {
     const templatePath = join(fixture.root, 'council.template.js');
     const targetDir = join(fixture.root, 'user-workflows');
     const targetPath = join(targetDir, 'council.js');
@@ -857,11 +895,12 @@ describe('stampWorkflow parity with council-stamp.cjs', () => {
     writeFile(targetPath, TEMPLATE_BODY.split(PLACEHOLDER).join('/personal/plugin'));
     const before = readFileSync(targetPath, 'utf8');
 
-    const result = stampWorkflow({ templatePath, pluginRoot: '/new/genie/plugin', targetDir });
+    const result = stampWorkflow({ templatePath, pluginRoot: '/personal/plugin', targetDir });
 
-    expect(result.action).toBe('kept-unmanaged');
-    expect(readFileSync(targetPath, 'utf8')).toBe(before);
-    expect(existsSync(join(targetDir, WORKFLOW_MANIFEST_NAME))).toBe(false);
+    expect(result.action).toBe('adopted-legacy');
+    expect(readFileSync(targetPath, 'utf8')).not.toBe(before);
+    expect(existsSync(join(targetDir, WORKFLOW_MANIFEST_NAME))).toBe(true);
+    expect(existsSync(join(dirname(targetDir), '.genie-recovery', 'council-bootstrap'))).toBe(true);
   });
 
   test('a clean digest-owned workflow updates, while a modified one is preserved', () => {
@@ -871,7 +910,7 @@ describe('stampWorkflow parity with council-stamp.cjs', () => {
     writeFileSync(templatePath, TEMPLATE_BODY, 'utf8');
     expect(stampWorkflow({ templatePath, pluginRoot: '/old/plugin', targetDir }).action).toBe('written');
     expect(stampWorkflow({ templatePath, pluginRoot: '/new/plugin', targetDir }).action).toBe('written');
-    expect(readFileSync(targetPath, 'utf8')).toContain("const LENS_ROOT = '/new/plugin';");
+    expect(readFileSync(targetPath, 'utf8')).toContain('const LENS_ROOT = "/new/plugin";');
 
     writeFileSync(targetPath, `${readFileSync(targetPath, 'utf8')}\n// personal edit\n`, 'utf8');
     const modified = readFileSync(targetPath, 'utf8');
@@ -890,6 +929,22 @@ describe('stampWorkflow parity with council-stamp.cjs', () => {
     expect(stampWorkflow({ templatePath, pluginRoot: '/new/plugin', targetDir }).action).toBe('metadata-corrupt');
     expect(readFileSync(targetPath, 'utf8')).toBe('// mine\n');
     expect(readFileSync(join(targetDir, WORKFLOW_MANIFEST_NAME), 'utf8')).toBe('{broken');
+  });
+
+  test('workflow paths are emitted as valid escaped JavaScript literals in both stampers', () => {
+    const templatePath = join(fixture.root, 'council.template.js');
+    writeFileSync(templatePath, TEMPLATE_BODY, 'utf8');
+    for (const pluginRoot of ["/opt/O'Brien/genie", 'C:\\Users\\genie', '/tmp/line\nbreak']) {
+      const tsDir = join(fixture.root, `escaped-ts-${Buffer.from(pluginRoot).toString('hex')}`);
+      const cjsDir = join(fixture.root, `escaped-cjs-${Buffer.from(pluginRoot).toString('hex')}`);
+      stampWorkflow({ templatePath, pluginRoot, targetDir: tsDir });
+      stampCouncilWorkflow({ templatePath, pluginRoot, targetDir: cjsDir });
+      const ts = readFileSync(join(tsDir, 'council.js'), 'utf8');
+      const cjs = readFileSync(join(cjsDir, 'council.js'), 'utf8');
+      expect(ts).toBe(cjs);
+      expect(ts).toContain(`const LENS_ROOT = ${JSON.stringify(pluginRoot)};`);
+      expect(() => new Function(ts.replace('export const meta', 'const meta'))).not.toThrow();
+    }
   });
 
   test('claude stamp reports unavailable (never throws) when the template is missing', () => {
@@ -957,6 +1012,20 @@ describe('cross-process sync lock', () => {
     expect(readFileSync(lockPath, 'utf8')).toContain(`${process.pid}:`);
   });
 
+  test('a stale lock with a reused live PID but mismatched start identity is stealable', () => {
+    present(fixture.claudeDir);
+    const lockPath = join(fixture.genieHome, LOCK_NAME);
+    writeFile(lockPath, `${process.pid}:0123456789abcdef0123456789abcdef:${'0'.repeat(64)}\n`);
+    const staleSec = (Date.now() - 11 * 60 * 1000) / 1000;
+    utimesSync(lockPath, staleSec, staleSec);
+
+    const report = run();
+
+    expect(report.skipped).toBeUndefined();
+    expect(skillAction(agentReport(report, 'claude'), 'alpha')).toBe('created');
+    expect(existsSync(lockPath)).toBe(false);
+  });
+
   test('a far-future lock timestamp is treated as invalid debris rather than suppressing sync indefinitely', () => {
     present(fixture.claudeDir);
     const lockPath = join(fixture.genieHome, LOCK_NAME);
@@ -1022,10 +1091,10 @@ describe('cross-process sync lock', () => {
     expect(readFileSync(lockPath, 'utf8')).toBe(replacement);
   });
 
-  test('the throttle marker is written from the injected clock', () => {
+  test('the raw engine never marks convergence complete', () => {
     present(fixture.claudeDir);
     run();
-    expect(readFileSync(join(fixture.genieHome, MARKER_NAME), 'utf8')).toBe('2026-07-10T12:00:00.000Z\n');
+    expect(existsSync(join(fixture.genieHome, MARKER_NAME))).toBe(false);
   });
 
   /**
@@ -1042,7 +1111,7 @@ describe('cross-process sync lock', () => {
     writeFileSync(
       runnerPath,
       [
-        `import { existsSync } from 'node:fs';`,
+        `import { existsSync, writeFileSync } from 'node:fs';`,
         `import { runAgentSync } from ${JSON.stringify(join(import.meta.dir, 'agent-sync.ts'))};`,
         `const sleepMs = Number(process.env.SYNC_TEST_ENABLE_SLEEP_MS ?? '0');`,
         'const goFile = process.env.SYNC_TEST_GO_FILE;',
@@ -1059,6 +1128,8 @@ describe('cross-process sync lock', () => {
         '  },',
         `  hermesBinary: '/fake/bin/hermes',`,
         '  execHermesEnable: () => {',
+        '    const readyFile = process.env.SYNC_TEST_READY_FILE;',
+        "    if (readyFile) writeFileSync(readyFile, 'ready\\n');",
         '    if (sleepMs > 0) Bun.sleepSync(sleepMs);',
         '  },',
         '  log: () => undefined,',
@@ -1099,15 +1170,21 @@ describe('cross-process sync lock', () => {
     present(fixture.codexDir);
     present(fixture.hermesHome);
     const runnerPath = writeSyncRunner();
+    const readyPath = join(fixture.root, 'holder-ready');
 
-    const holder = spawnRunner(runnerPath, { SYNC_TEST_ENABLE_SLEEP_MS: '2000' });
-    // The engine writes the throttle marker at sync START (right after lock
-    // acquisition), so its appearance proves the holder is mid-sync — the
-    // deterministic gate for launching the contender.
+    const holder = spawnRunner(runnerPath, {
+      SYNC_TEST_ENABLE_SLEEP_MS: '2000',
+      SYNC_TEST_READY_FILE: readyPath,
+    });
+    // The injected Hermes seam runs while the holder owns the lifecycle lock.
+    // Its explicit ready file is the deterministic overlap barrier; the
+    // convergence marker must remain absent until the safe outer wrapper has
+    // also completed role convergence.
     const markerPath = join(fixture.genieHome, MARKER_NAME);
     const deadline = Date.now() + 10_000;
-    while (!existsSync(markerPath) && Date.now() < deadline) await Bun.sleep(20);
-    expect(existsSync(markerPath)).toBe(true); // marker at START, not completion
+    while (!existsSync(readyPath) && Date.now() < deadline) await Bun.sleep(20);
+    expect(existsSync(readyPath)).toBe(true);
+    expect(existsSync(markerPath)).toBe(false);
 
     const contender = spawnRunner(runnerPath, { SYNC_TEST_ENABLE_SLEEP_MS: '0' });
     const contenderReport = await contender; // resolves while the holder still sleeps in-lock
@@ -1131,6 +1208,7 @@ describe('cross-process sync lock', () => {
     expect(wrote).toHaveLength(1); // exactly one performed the sync
     expect(skippedRuns).toHaveLength(1); // the other skipped with the advisory
     expect(skillAction(agentReport(wrote[0] as AgentSyncReport, 'claude'), 'alpha')).toBe('created');
+    expect(existsSync(markerPath)).toBe(false);
     expect(existsSync(join(fixture.genieHome, LOCK_NAME))).toBe(false); // holder released
   }, 20_000);
 
@@ -1172,6 +1250,25 @@ describe('cross-process sync lock', () => {
     }
     expect(existsSync(lockPath)).toBe(false); // stale lock is gone; any winner released its own
   }, 30_000);
+});
+
+describe('shared lifecycle lease', () => {
+  test('lives beside GENIE_HOME and is reentrant within one lifecycle process', () => {
+    const path = lifecycleLockPath(fixture.genieHome);
+    expect(dirname(path)).toBe(dirname(fixture.genieHome));
+    expect(path.startsWith(`${fixture.genieHome}/`)).toBe(false);
+    const first = acquireLifecycleLease(fixture.genieHome);
+    expect('skipped' in first).toBe(false);
+    if ('skipped' in first) throw new Error(first.skipped);
+    const second = acquireLifecycleLease(fixture.genieHome);
+    expect('skipped' in second).toBe(false);
+    if ('skipped' in second) throw new Error(second.skipped);
+    expect(existsSync(path)).toBe(true);
+    second.release();
+    expect(existsSync(path)).toBe(true);
+    first.release();
+    expect(existsSync(path)).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1262,7 +1359,7 @@ describe('runAgentSyncSafe codex role-agent refresh wiring', () => {
     expect(lines.join('\n')).not.toContain('role-agent TOMLs');
   });
 
-  test('a refresh throw is non-fatal: advisory line, skill summary intact, marker still touched', () => {
+  test('a best-effort refresh throw is advisory and leaves the retry marker untouched', () => {
     const lines: string[] = [];
     const marker = markerPath();
     expect(() =>
@@ -1276,7 +1373,23 @@ describe('runAgentSyncSafe codex role-agent refresh wiring', () => {
       }),
     ).not.toThrow();
     expect(lines.join('\n')).toContain('codex role-agent refresh failed: toml copy exploded');
-    expect(existsSync(marker)).toBe(true);
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  test('strict explicit convergence propagates a role-agent failure', () => {
+    const marker = markerPath();
+    expect(() =>
+      runAgentSyncSafe({
+        sync: () => fakeReport(),
+        codexRefresh: () => {
+          throw new Error('inventory unavailable');
+        },
+        strict: true,
+        log: () => undefined,
+        markerPath: marker,
+      }),
+    ).toThrow('inventory unavailable');
+    expect(existsSync(marker)).toBe(false);
   });
 });
 

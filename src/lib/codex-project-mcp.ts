@@ -11,19 +11,25 @@
  */
 
 import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import {
   constants,
   accessSync,
+  closeSync,
   existsSync,
+  fsyncSync,
   lstatSync,
   mkdirSync,
+  openSync,
   readFileSync,
   realpathSync,
-  statSync,
+  renameSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
 import { resolveCodexDir, resolveGenieHome } from './genie-home.js';
+import { resolveTrustedExecutable, validateTrustedExecutablePath } from './trusted-executable.js';
 
 export type ArtifactAction = 'created' | 'updated' | 'skipped';
 
@@ -81,6 +87,8 @@ export interface CodexPluginProbeDeps {
   which?: (name: string) => string | null;
   run?: (command: string, args: string[], timeoutMs: number) => CodexProbeCommandResult;
   timeoutMs?: number;
+  /** Repository directory whose enclosing worktree/common roots are untrusted. */
+  cwd?: string;
   inspectUsability?: (options: CodexPluginMcpUsabilityOptions) => CodexPluginMcpUsability;
   codexHome?: string;
 }
@@ -156,10 +164,14 @@ function parseCodexPluginSnapshot(raw: string): CodexPluginSnapshotEntry | null 
   if (!isJsonObject(parsed) || !Array.isArray(parsed.installed)) {
     throw new Error('response field "installed" must be an array');
   }
-  const candidate = parsed.installed.find(
+  const candidates = parsed.installed.filter(
     (entry): entry is JsonObject => isJsonObject(entry) && entry.pluginId === GENIE_PLUGIN_ID,
   );
-  if (candidate === undefined) return null;
+  if (candidates.length === 0) return null;
+  if (candidates.length !== 1) {
+    throw new Error(`response contained ${candidates.length} entries for ${GENIE_PLUGIN_ID}; expected exactly one`);
+  }
+  const candidate = candidates[0];
   if ('enabled' in candidate && typeof candidate.enabled !== 'boolean') {
     throw new Error(`${GENIE_PLUGIN_ID} field "enabled" must be boolean when present`);
   }
@@ -189,6 +201,55 @@ function isContainedPath(parent: string, child: string): boolean {
     !pathFromParent.startsWith(`..${sep}`) &&
     !isAbsolute(pathFromParent)
   );
+}
+
+function isSameOrContainedPath(parent: string, child: string): boolean {
+  return normalize(parent) === normalize(child) || isContainedPath(parent, child);
+}
+
+function configProjectRoot(configPath: string): string {
+  const parent = dirname(configPath);
+  return ['.codex', '.warp'].includes(basename(parent)) ? dirname(parent) : parent;
+}
+
+/** Reject repository-controlled links before reading or replacing project config. */
+function assertSafeProjectConfigPath(root: string, configPath: string): void {
+  const absoluteRoot = resolve(root);
+  const absoluteTarget = resolve(configPath);
+  if (!isContainedPath(absoluteRoot, absoluteTarget)) {
+    throw new Error(`Refusing MCP config outside the project root: ${absoluteTarget}`);
+  }
+  const rootStat = lstatSync(absoluteRoot);
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
+    throw new Error(`Project root is not a physical directory: ${absoluteRoot}`);
+  }
+  const canonicalRoot = normalizeGitPath(realpathSync(absoluteRoot));
+  const parentRelative = relative(absoluteRoot, dirname(absoluteTarget));
+  let current = absoluteRoot;
+  for (const segment of parentRelative.split(sep).filter(Boolean)) {
+    current = join(current, segment);
+    try {
+      const stat = lstatSync(current);
+      if (stat.isSymbolicLink() || !stat.isDirectory()) {
+        throw new Error(`MCP config parent is not a physical directory: ${current}`);
+      }
+      const canonical = normalizeGitPath(realpathSync(current));
+      if (!isSameOrContainedPath(canonicalRoot, canonical)) {
+        throw new Error(`MCP config parent escapes the project root: ${current}`);
+      }
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') break;
+      throw error;
+    }
+  }
+  try {
+    const targetStat = lstatSync(absoluteTarget);
+    if (targetStat.isSymbolicLink() || !targetStat.isFile()) {
+      throw new Error(`MCP config target is not a physical file: ${absoluteTarget}`);
+    }
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+  }
 }
 
 /**
@@ -274,16 +335,19 @@ function defaultProbeRunner(command: string, args: string[], timeoutMs: number):
   };
 }
 
+function resolveTrustedProbeCommand(command: string, cwd = process.cwd()): string {
+  return validateTrustedExecutablePath('Codex CLI', command, cwd);
+}
+
 function resolveConfiguredNodeCommand(options: CodexPluginMcpUsabilityOptions): string {
   const commandPath = (options.resolveCommand ?? ((command: string) => Bun.which(command)))('node');
   if (!commandPath) throw new Error('configured plugin MCP command "node" is not available on PATH');
-  if (!isAbsolute(commandPath) || !statSync(commandPath).isFile()) {
-    throw new Error(
-      `configured plugin MCP command "node" did not resolve to an absolute executable file: ${commandPath}`,
-    );
-  }
-  accessSync(commandPath, (options.platform ?? process.platform) === 'win32' ? constants.F_OK : constants.X_OK);
-  return realpathSync(commandPath);
+  return validateTrustedExecutablePath(
+    'configured plugin MCP command "node"',
+    commandPath,
+    options.pluginRoot ?? process.cwd(),
+    options.platform ?? process.platform,
+  );
 }
 
 function activeManifestError(manifest: unknown, expectedName: string, expectedVersion: string): string | null {
@@ -305,9 +369,11 @@ export function resolveGitProjectRoots(
   cwd = process.cwd(),
   exec: typeof execFileSync = execFileSync,
   timeoutMs = DEFAULT_PROBE_TIMEOUT_MS,
+  which: (name: string) => string | null = (name) => Bun.which(name),
 ): GitProjectRoots | null {
   try {
-    const output = exec('git', ['rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir'], {
+    const gitCommand = resolveTrustedExecutable('git', cwd, which);
+    const output = exec(gitCommand, ['rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir'], {
       cwd,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -439,7 +505,8 @@ export function inspectCodexPluginMcpUsability(options: CodexPluginMcpUsabilityO
 /** Query Codex plugin state once, with a hard deadline and schema-safe errors. */
 export function probeCodexGeniePlugin(deps: CodexPluginProbeDeps = {}): CodexPluginProbe {
   const which = deps.which ?? ((name: string) => Bun.which(name));
-  if (!which('codex')) {
+  const codexCommand = which('codex');
+  if (!codexCommand) {
     return {
       cliAvailable: false,
       status: 'unavailable',
@@ -447,10 +514,19 @@ export function probeCodexGeniePlugin(deps: CodexPluginProbeDeps = {}): CodexPlu
       detail: 'Codex CLI not found',
     };
   }
+  if (!isAbsolute(codexCommand)) {
+    return {
+      cliAvailable: true,
+      status: 'error',
+      installed: false,
+      detail: `Codex CLI resolved to a non-absolute command (${codexCommand}); retaining the project fallback`,
+    };
+  }
 
   const timeoutMs = deps.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
   try {
-    const result = (deps.run ?? defaultProbeRunner)('codex', ['plugin', 'list', '--json'], timeoutMs);
+    const command = resolveTrustedProbeCommand(codexCommand, deps.cwd ?? process.cwd());
+    const result = (deps.run ?? defaultProbeRunner)(command, ['plugin', 'list', '--json'], timeoutMs);
     if (result.timedOut) {
       return {
         cliAvailable: true,
@@ -572,6 +648,7 @@ function locateServerMap(config: JsonObject, path: string): JsonObject {
 }
 
 function prepareJsonMcpConfig(configPath: string, entry: McpServerEntry): PreparedWrite {
+  assertSafeProjectConfigPath(configProjectRoot(configPath), configPath);
   const raw = existsSync(configPath) ? readFileSync(configPath, 'utf8') : null;
   const config = parseMcpConfig(raw, configPath);
   locateServerMap(config, configPath).genie = entry;
@@ -580,10 +657,32 @@ function prepareJsonMcpConfig(configPath: string, entry: McpServerEntry): Prepar
   return { path: configPath, action: raw === null ? 'created' : 'updated', content };
 }
 
-function applyPreparedWrite(prepared: PreparedWrite): McpConfigResult {
+function applyPreparedWrite(prepared: PreparedWrite, root = configProjectRoot(prepared.path)): McpConfigResult {
   if (prepared.content === undefined) return { path: prepared.path, action: prepared.action, detail: prepared.detail };
+  assertSafeProjectConfigPath(root, prepared.path);
   mkdirSync(dirname(prepared.path), { recursive: true });
-  writeFileSync(prepared.path, prepared.content, 'utf8');
+  assertSafeProjectConfigPath(root, prepared.path);
+  const tempPath = join(dirname(prepared.path), `.genie-mcp-${randomUUID()}.tmp`);
+  const noFollow = typeof constants.O_NOFOLLOW === 'number' ? constants.O_NOFOLLOW : 0;
+  let fd: number | undefined;
+  try {
+    fd = openSync(tempPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | noFollow, 0o600);
+    writeFileSync(fd, prepared.content, 'utf8');
+    fsyncSync(fd);
+    closeSync(fd);
+    fd = undefined;
+    // Revalidate immediately before the atomic same-directory replacement.
+    assertSafeProjectConfigPath(root, prepared.path);
+    renameSync(tempPath, prepared.path);
+  } catch (error) {
+    if (fd !== undefined) closeSync(fd);
+    try {
+      unlinkSync(tempPath);
+    } catch {
+      // The temp may not have been created or may already have been promoted.
+    }
+    throw error;
+  }
   return { path: prepared.path, action: prepared.action, detail: prepared.detail };
 }
 
@@ -600,7 +699,17 @@ function fallbackBounds(raw: string, path: string): { start: number; end: number
 
 function hasUnmanagedFallback(raw: string, owned: { start: number; end: number } | null): boolean {
   const withoutOwned = owned === null ? raw : `${raw.slice(0, owned.start)}${raw.slice(owned.end)}`;
-  return /^\s*\[mcp_servers\.genie\]\s*$/m.test(withoutOwned);
+  if (withoutOwned.trim() === '') return false;
+  let parsed: unknown;
+  try {
+    parsed = Bun.TOML.parse(withoutOwned);
+  } catch (error) {
+    throw new Error(
+      `Cannot inspect Codex MCP fallback because config TOML is invalid: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (!isJsonObject(parsed)) return false;
+  return isJsonObject(parsed.mcp_servers) && Object.hasOwn(parsed.mcp_servers, GENIE_PLUGIN_NAME);
 }
 
 function fallbackBlock(entry: McpServerEntry): string {
@@ -614,6 +723,7 @@ function prepareCodexFallback(
 ): CodexProjectMcpResult & {
   content?: string;
 } {
+  assertSafeProjectConfigPath(configProjectRoot(configPath), configPath);
   const exists = existsSync(configPath);
   const raw = exists ? readFileSync(configPath, 'utf8') : '';
   const owned = fallbackBounds(raw, configPath);
@@ -697,9 +807,23 @@ export function removeCodexMcpFallback(configPath: string): ArtifactAction {
 export function inspectCodexProjectMcp(root: string, plugin: CodexPluginProbe): CodexProjectMcpResult {
   const path = join(root, '.codex', 'config.toml');
   const effectivePlugin = isUsableCodexPlugin(plugin);
-  const raw = existsSync(path) ? readFileSync(path, 'utf8') : '';
-  const owned = fallbackBounds(raw, path);
-  const unmanaged = hasUnmanagedFallback(raw, owned);
+  let raw: string;
+  let owned: { start: number; end: number } | null;
+  let unmanaged: boolean;
+  try {
+    assertSafeProjectConfigPath(root, path);
+    raw = existsSync(path) ? readFileSync(path, 'utf8') : '';
+    owned = fallbackBounds(raw, path);
+    unmanaged = hasUnmanagedFallback(raw, owned);
+  } catch (error) {
+    return {
+      path,
+      action: 'skipped',
+      ok: false,
+      route: 'none',
+      detail: `unsafe or invalid Codex project MCP config: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
   if (effectivePlugin && (owned !== null || unmanaged)) {
     return {
       path,
@@ -741,6 +865,7 @@ export function inspectCodexProjectMcp(root: string, plugin: CodexPluginProbe): 
 export function preflightCodexPluginMutation(root: string): { ok: boolean; path: string; detail: string } {
   const path = join(root, '.codex', 'config.toml');
   try {
+    assertSafeProjectConfigPath(root, path);
     const raw = existsSync(path) ? readFileSync(path, 'utf8') : '';
     const owned = fallbackBounds(raw, path);
     if (hasUnmanagedFallback(raw, owned)) {
@@ -793,7 +918,7 @@ export function registerProjectMcpConfigs(root: string, options: RegisterProject
   }
 
   // Parsing/planning above is intentionally complete before the first write.
-  const results = preparedJson.map(applyPreparedWrite);
+  const results = preparedJson.map((prepared) => applyPreparedWrite(prepared, root));
   if (preparedCodex !== null) {
     if ('content' in preparedCodex && preparedCodex.content !== undefined) applyPreparedWrite(preparedCodex);
     results.push({ path: preparedCodex.path, action: preparedCodex.action, detail: preparedCodex.detail });

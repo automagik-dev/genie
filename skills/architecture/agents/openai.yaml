@@ -1,4 +1,4 @@
 interface:
   display_name: "Architecture Review"
   short_description: "Audit module boundaries and design depth"
-  default_prompt: "Use $architecture to assess module boundaries and change amplification."
+  default_prompt: "Use $genie:architecture (or $architecture only for a separately installed personal copy) to assess module boundaries and change amplification."

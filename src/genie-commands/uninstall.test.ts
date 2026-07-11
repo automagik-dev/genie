@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -24,9 +25,27 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, win32 } from 'node:path';
 import { MANAGED_BY, WORKFLOW_MANIFEST_NAME, computeDirDigest, stampWorkflow } from '../lib/agent-sync.js';
-import { collectAgentSyncAssets, removeAgentSyncAssets } from './uninstall.js';
+import {
+  collectAgentSyncAssets,
+  hasUninstallWork,
+  isGenieSymlink,
+  isSameOrContainedPath,
+  removeAgentSyncAssets,
+  removeSymlinks,
+} from './uninstall.js';
+
+describe('path containment', () => {
+  test('uses Windows path semantics without accepting sibling prefixes or cross-drive paths', () => {
+    const genieHome = 'C:\\Users\\genie\\.genie';
+
+    expect(isSameOrContainedPath(genieHome, genieHome, win32)).toBe(true);
+    expect(isSameOrContainedPath(genieHome, 'C:\\Users\\genie\\.genie\\plugins\\hermes-genie', win32)).toBe(true);
+    expect(isSameOrContainedPath(genieHome, 'C:\\Users\\genie\\.genie-foreign\\payload', win32)).toBe(false);
+    expect(isSameOrContainedPath(genieHome, 'D:\\Users\\genie\\.genie\\payload', win32)).toBe(false);
+  });
+});
 
 describe('agent-sync managed-asset removal', () => {
   let tmp: string;
@@ -220,6 +239,17 @@ describe('agent-sync managed-asset removal', () => {
     expect(existsSync(link)).toBe(true);
   });
 
+  test('all owned Hermes profile links are removed, not only the main link', () => {
+    const profileLink = join(hermesHome, 'profiles', 'work', 'plugins', 'genie');
+    mkdirSync(join(hermesHome, 'profiles', 'work', 'plugins'), { recursive: true });
+    symlinkSync(join(genieHome, 'plugins', 'hermes-genie'), profileLink);
+
+    const result = removeAgentSyncAssets(targets());
+
+    expect(result.removed).toContain(profileLink);
+    expect(existsSync(profileLink)).toBe(false);
+  });
+
   test('a real (non-symlink) dir at hermes plugins/genie is never removed', () => {
     const link = join(hermesHome, 'plugins', 'genie');
     mkdirSync(link, { recursive: true });
@@ -232,5 +262,46 @@ describe('agent-sync managed-asset removal', () => {
   test('empty / agentless home → nothing collected, nothing removed', () => {
     expect(collectAgentSyncAssets(targets())).toEqual([]);
     expect(removeAgentSyncAssets(targets())).toEqual({ removed: [], kept: [], failures: [] });
+  });
+});
+
+describe('uninstall ownership and work detection', () => {
+  let root: string;
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'uninstall-links-'));
+  });
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  test('only canonical Genie symlinks are classified and removed, including dangling owned links', () => {
+    const genieHome = join(root, 'genie');
+    const localBin = join(root, 'bin');
+    mkdirSync(localBin, { recursive: true });
+    const owned = join(localBin, 'genie');
+    const foreign = join(localBin, 'term');
+    symlinkSync(join(genieHome, 'bin', 'genie'), owned);
+    symlinkSync(join(root, 'foreign-term'), foreign);
+
+    expect(isGenieSymlink(owned, genieHome)).toBe(true);
+    expect(isGenieSymlink(foreign, genieHome)).toBe(false);
+    const result = removeSymlinks(localBin, genieHome);
+    expect(result).toEqual({ removed: ['genie'], failures: [] });
+    expect(lstatSync(foreign).isSymbolicLink()).toBe(true);
+    expect(isGenieSymlink(foreign, genieHome)).toBe(false);
+  });
+
+  test('runtime evidence and an explicit marketplace request both prevent false nothing-to-uninstall', () => {
+    const base = {
+      hasGenieDir: false,
+      hasHookScript: false,
+      hasOrchestrationRules: false,
+      symlinkCount: 0,
+      hasAgentAssets: false,
+      codexRoleInventoryStatus: 'missing' as const,
+      runtimeEvidence: { codex: false, claude: false },
+      removeMarketplace: false,
+    };
+    expect(hasUninstallWork(base)).toBe(false);
+    expect(hasUninstallWork({ ...base, runtimeEvidence: { codex: true, claude: false } })).toBe(true);
+    expect(hasUninstallWork({ ...base, removeMarketplace: true })).toBe(true);
   });
 });

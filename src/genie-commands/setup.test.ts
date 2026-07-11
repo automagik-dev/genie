@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { acquireLifecycleLease, lifecycleLockPath } from '../lib/agent-sync.js';
 import { loadGenieConfig, saveGenieConfig } from '../lib/genie-config.js';
 import { installRuntimeIntegrations } from '../lib/runtime-integrations.js';
 import { VERSION } from '../lib/version.js';
@@ -264,5 +265,36 @@ describe('setup runtime and failure semantics', () => {
     }
     expect(await Bun.file(join(root, 'repo', '.codex', 'config.toml')).text()).toContain('# BEGIN GENIE MCP FALLBACK');
     expect(lines.join('\n')).toContain('"node" is not available on PATH');
+  });
+
+  test('source-checkout setup performs zero writes while another process owns the GENIE_HOME lease', () => {
+    const genieHome = process.env.GENIE_HOME as string;
+    const lease = acquireLifecycleLease(genieHome);
+    expect('skipped' in lease).toBe(false);
+    if ('skipped' in lease) throw new Error(lease.skipped);
+    const lockPath = lifecycleLockPath(genieHome);
+    const ownerRecord = readFileSync(lockPath, 'utf8');
+    const runnerPath = join(root, 'setup-contender.ts');
+    writeFileSync(
+      runnerPath,
+      [
+        `import { setupCommand } from ${JSON.stringify(join(import.meta.dir, 'setup.ts'))};`,
+        'await setupCommand({ reset: true });',
+      ].join('\n'),
+    );
+    try {
+      const child = Bun.spawnSync(['bun', runnerPath], {
+        env: { ...process.env, GENIE_HOME: genieHome },
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+      expect(child.exitCode).toBe(1);
+      expect(child.stderr.toString()).toContain('holds the lock');
+      expect(existsSync(genieHome)).toBe(false);
+      expect(readFileSync(lockPath, 'utf8')).toBe(ownerRecord);
+    } finally {
+      lease.release();
+    }
+    expect(existsSync(lockPath)).toBe(false);
   });
 });

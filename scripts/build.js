@@ -114,6 +114,10 @@ export async function buildPlugin() {
       console.log(`  ${target.name}.cjs (${(stats.size / 1024).toFixed(2)} KB)`);
     }
 
+    // Generated hook bundles are committed release inputs. Prove the exact
+    // SessionStart source/output contract before version metadata is updated.
+    execFileSync('bun', [path.join(rootDir, 'scripts/hook-bundle-parity.ts'), '--check'], { stdio: 'inherit' });
+
     // NOTE: the shipped SessionStart hook under plugins/genie/scripts/ is now the
     // single committed source of truth (agent-sync wish, Decision 8). The old
     // copy-from-scripts step was removed — it was one `bun run build:plugin` away

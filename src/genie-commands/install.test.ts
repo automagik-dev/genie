@@ -9,7 +9,18 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { convergeAuxiliaryTree } from './auxiliary-trees.js';
@@ -32,6 +43,8 @@ function makeCleanupSpy(): { runner: typeof cleanupV4; calls: () => number } {
   return { runner, calls: () => count };
 }
 
+const noopLease = () => ({ path: '/tmp/test-lifecycle.lock', release: () => undefined });
+
 describe('installCommand', () => {
   test('runs v4 cleanup + layout normalize + agent sync by default', () => {
     const spy = makeCleanupSpy();
@@ -47,6 +60,7 @@ describe('installCommand', () => {
         syncCalls += 1;
       },
       () => [],
+      noopLease,
     );
     expect(spy.calls()).toBe(1);
     expect(normalizeCalls).toBe(1);
@@ -67,6 +81,7 @@ describe('installCommand', () => {
         syncCalls += 1;
       },
       () => [],
+      noopLease,
     );
     expect(spy.calls()).toBe(0);
     expect(normalizeCalls).toBe(1);
@@ -84,6 +99,7 @@ describe('installCommand', () => {
         selection = options?.selection ?? '';
         return [];
       },
+      noopLease,
     );
     installCommand(
       { skipIntegrations: true },
@@ -94,8 +110,30 @@ describe('installCommand', () => {
         selection = options?.selection ?? '';
         return [];
       },
+      noopLease,
     );
     expect(selection).toBe('none');
+  });
+
+  test('selection bounds agent-sync homes and none performs no client sync', () => {
+    const observed: string[] = [];
+    installCommand(
+      { integrations: 'codex' },
+      makeCleanupSpy().runner,
+      () => {},
+      (selection) => observed.push(selection),
+      () => [],
+      noopLease,
+    );
+    installCommand(
+      { integrations: 'none' },
+      makeCleanupSpy().runner,
+      () => {},
+      (selection) => observed.push(selection),
+      () => [],
+      noopLease,
+    );
+    expect(observed).toEqual(['codex']);
   });
 
   test('explicit integration failures are fatal while auto failures warn', () => {
@@ -107,6 +145,7 @@ describe('installCommand', () => {
         () => {},
         () => {},
         failing,
+        noopLease,
       ),
     ).not.toThrow();
     expect(() =>
@@ -116,6 +155,7 @@ describe('installCommand', () => {
         () => {},
         () => {},
         failing,
+        noopLease,
       ),
     ).toThrow('Requested integration failed');
   });
@@ -137,6 +177,7 @@ describe('installCommand', () => {
           calls.push('integrations');
           return [];
         },
+        noopLease,
       ),
     ).toThrow('Invalid --integrations value: codxe');
     expect(calls).toEqual([]);
@@ -564,5 +605,43 @@ describe('transactional auxiliary-tree convergence', () => {
     expect(readFileSync(join(destination, 'payload.txt'), 'utf8')).toBe('fresh');
     expect(existsSync(source)).toBe(false);
     expect(renameSources.some((path) => path === source || path.startsWith(`${source}/`))).toBe(false);
+  });
+
+  test('symlinks are rejected even when they resolve to byte-identical content', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-aux-symlink-'));
+    const source = join(root, 'source');
+    const destination = join(root, 'destination');
+    writeFileSync(join(root, 'outside.txt'), 'same');
+    mkdirSync(source, { recursive: true });
+    mkdirSync(destination, { recursive: true });
+    writeFileSync(join(destination, 'payload.txt'), 'same');
+    symlinkSync(join(root, 'outside.txt'), join(source, 'payload.txt'));
+    try {
+      const outcome = convergeAuxiliaryTree({ label: 'plugins', source, destination });
+      expect(outcome).toMatchObject({ status: 'failed', stage: 'inspect' });
+      expect(outcome.status === 'failed' ? outcome.error : '').toContain('contains a symlink');
+      expect(readFileSync(join(destination, 'payload.txt'), 'utf8')).toBe('same');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('mode-only drift converges and preserves the executable bit', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-aux-mode-'));
+    const source = join(root, 'source');
+    const destination = join(root, 'destination');
+    mkdirSync(source, { recursive: true });
+    mkdirSync(destination, { recursive: true });
+    writeFileSync(join(source, 'launcher'), '#!/bin/sh\n');
+    writeFileSync(join(destination, 'launcher'), '#!/bin/sh\n');
+    chmodSync(join(source, 'launcher'), 0o755);
+    chmodSync(join(destination, 'launcher'), 0o644);
+    try {
+      const outcome = convergeAuxiliaryTree({ label: 'plugins', source, destination });
+      expect(outcome.status).toBe('refreshed');
+      expect(statSync(join(destination, 'launcher')).mode & 0o111).toBe(0o111);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

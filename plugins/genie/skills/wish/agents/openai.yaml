@@ -1,4 +1,4 @@
 interface:
   display_name: "Wish Planner"
   short_description: "Turn an accepted design into an executable plan"
-  default_prompt: "Use $wish to turn this accepted design into an executable Genie plan."
+  default_prompt: "Use $genie:wish (or $wish only for a separately installed personal copy) to turn this accepted design into an executable Genie plan."

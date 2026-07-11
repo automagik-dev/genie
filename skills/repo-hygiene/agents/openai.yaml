@@ -1,4 +1,4 @@
 interface:
   display_name: "Repository Hygiene"
   short_description: "Audit repository and contributor readiness"
-  default_prompt: "Use $repo-hygiene to audit this repository as a contributor-facing product."
+  default_prompt: "Use $genie:repo-hygiene (or $repo-hygiene only for a separately installed personal copy) to audit this repository as a contributor-facing product."
