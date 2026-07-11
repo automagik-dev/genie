@@ -47,7 +47,7 @@ For each `merge_order` layer, in order:
 
 Each worker, independently:
 1. Work in a dedicated branch and worktree for `feat/<slug>`; never let parallel writers share one checkout. Use Codex-managed or ordinary Git worktrees according to the active environment.
-2. Execute the wish per `work` (its dispatch, review-gate, and task-state rules govern): dispatched engineers claim via `genie task checkout`; the worker marks `genie task done` only after clean review and passing validation.
+2. Execute the wish per `work` (its dispatch, review-gate, and task-state rules govern): dispatched engineers claim via `genie task checkout`; the worker leaves task state `in_progress` and reports evidence. Only the dream PM/orchestrator runs `genie task done` after clean review and passing validation.
 3. Run `review` per group against acceptance criteria.
 4. Run CI; on failure fix and retry (max 3 attempts; poll CI status, never sleep-loop). After 3 failures → blocked.
 5. Only after CI green and authorized PR creation: create a PR targeting `dev`, preferring the GitHub connector.

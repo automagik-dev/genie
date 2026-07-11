@@ -50,13 +50,45 @@ async function captureDoctor(fn: () => Promise<void>): Promise<{ output: string;
   }
 }
 
+const NO_CODEX = { cliAvailable: false, status: 'unavailable' as const, installed: false, detail: 'fixture absent' };
+const ISOLATED_ENV_KEYS = ['HOME', 'GENIE_HOME', 'CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'HERMES_HOME'] as const;
+let isolatedHome: string;
+let savedIsolatedEnv: Partial<Record<(typeof ISOLATED_ENV_KEYS)[number], string>>;
+
+beforeEach(() => {
+  isolatedHome = mkdtempSync(join(tmpdir(), 'genie-doctor-home-'));
+  savedIsolatedEnv = {};
+  for (const key of ISOLATED_ENV_KEYS) {
+    if (process.env[key] !== undefined) savedIsolatedEnv[key] = process.env[key];
+  }
+  process.env.HOME = isolatedHome;
+  process.env.GENIE_HOME = join(isolatedHome, 'genie');
+  process.env.CODEX_HOME = join(isolatedHome, 'codex');
+  process.env.CLAUDE_CONFIG_DIR = join(isolatedHome, 'claude');
+  process.env.HERMES_HOME = join(isolatedHome, 'hermes');
+  mkdirSync(join(isolatedHome, 'repo'), { recursive: true });
+});
+
+afterEach(() => {
+  for (const key of ISOLATED_ENV_KEYS) {
+    const saved = savedIsolatedEnv[key];
+    if (saved === undefined) Reflect.deleteProperty(process.env, key);
+    else process.env[key] = saved;
+  }
+  rmSync(isolatedHome, { recursive: true, force: true });
+});
+
+function isolatedDoctorDeps(root = join(isolatedHome, 'repo')) {
+  return { root, databaseRoot: root, pluginProbe: NO_CODEX };
+}
+
 describe('doctorCommand', () => {
   // The suite runs from within the genie repo — a healthy checkout with git,
   // bun, and skills/ present. Every check should therefore pass.
   let json: { ok: boolean; checks: Array<{ name: string; status: string }> };
 
   beforeEach(async () => {
-    const { output } = await captureDoctor(() => doctorCommand({ json: true }));
+    const { output } = await captureDoctor(() => doctorCommand({ json: true }, isolatedDoctorDeps()));
     json = JSON.parse(output);
   });
 
@@ -87,12 +119,12 @@ describe('doctorCommand', () => {
   });
 
   test('does not set a failing exit code when all checks pass', async () => {
-    const { exitCode } = await captureDoctor(() => doctorCommand({ json: true }));
+    const { exitCode } = await captureDoctor(() => doctorCommand({ json: true }, isolatedDoctorDeps()));
     expect(exitCode).toBeUndefined();
   });
 
   test('human output renders a header and a summary line', async () => {
-    const { output } = await captureDoctor(() => doctorCommand());
+    const { output } = await captureDoctor(() => doctorCommand({}, isolatedDoctorDeps()));
     expect(output).toContain('genie doctor');
     expect(output).toContain('All checks passed.');
   });
@@ -137,6 +169,40 @@ describe('Codex doctor lifecycle results', () => {
       expect(route?.detail).toContain('fallback');
       expect(readFileSync(join(root, '.codex', 'config.toml'), 'utf8')).toContain('/absolute/genie');
     } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('healthy source bundle cannot make an unproven active plugin capability pass', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'doctor-active-plugin-'));
+    const priorCodexHome = process.env.CODEX_HOME;
+    process.env.CODEX_HOME = join(root, 'codex-home');
+    try {
+      expect(existsSync(join(import.meta.dir, '..', '..', 'plugins', 'genie', '.codex-plugin', 'plugin.json'))).toBe(
+        true,
+      );
+      const probe = {
+        cliAvailable: true,
+        status: 'ok' as const,
+        installed: true,
+        enabled: true,
+        usable: false,
+        usabilityDetail: 'active plugin cache root is missing',
+        detail: 'active plugin cache root is missing',
+      };
+      reconcileCodexProjectMcp(root, probe, { command: '/absolute/genie', args: ['mcp'] });
+      const checks = await checkCodexIntegration(root, probe);
+      const plugin = checks.find((check) => check.name === 'Codex Genie plugin');
+      const capability = checks.find((check) => check.name === 'Codex Genie MCP capability');
+      const route = checks.find((check) => check.name === 'Codex Genie MCP registration');
+      expect(plugin).toMatchObject({ status: 'warn' });
+      expect(capability).toMatchObject({ status: 'warn' });
+      expect(capability?.detail).toContain('source-bundle declarations do not establish runtime health');
+      expect(route).toMatchObject({ status: 'pass' });
+      expect(route?.detail).toContain('fallback');
+    } finally {
+      if (priorCodexHome === undefined) Reflect.deleteProperty(process.env, 'CODEX_HOME');
+      else process.env.CODEX_HOME = priorCodexHome;
       rmSync(root, { recursive: true, force: true });
     }
   });
@@ -222,7 +288,7 @@ describe('CLAUDE_CODE_SUBAGENT_MODEL override warning', () => {
   test('warns non-fatally when set and explains that per-agent pins are overridden', async () => {
     process.env[key] = 'sonnet';
 
-    const { output, exitCode } = await captureDoctor(() => doctorCommand({ json: true }));
+    const { output, exitCode } = await captureDoctor(() => doctorCommand({ json: true }, isolatedDoctorDeps()));
     const json = JSON.parse(output) as {
       ok: boolean;
       checks: Array<{ name: string; status: string; detail?: string }>;
@@ -239,7 +305,7 @@ describe('CLAUDE_CODE_SUBAGENT_MODEL override warning', () => {
     delete process.env[key];
 
     expect(checkSubagentModelOverride()).toEqual([]);
-    const { output } = await captureDoctor(() => doctorCommand({ json: true }));
+    const { output } = await captureDoctor(() => doctorCommand({ json: true }, isolatedDoctorDeps()));
 
     expect(output).not.toContain(key);
   });
@@ -333,7 +399,7 @@ describe('doctorCommand — genie.db check branches', () => {
     const dbCandidate = join(tmp, '.genie', 'genie.db');
     expect(existsSync(dbCandidate)).toBe(false);
 
-    const { output, exitCode } = await captureDoctor(() => doctorCommand({ json: true }));
+    const { output, exitCode } = await captureDoctor(() => doctorCommand({ json: true }, isolatedDoctorDeps(tmp)));
     const json = JSON.parse(output) as { checks: Array<{ name: string; status: string; detail?: string }> };
     const db = json.checks.find((c) => c.name === 'genie.db');
     expect(db?.status).toBe('pass');
@@ -350,7 +416,7 @@ describe('doctorCommand — genie.db check branches', () => {
     seed.exec('PRAGMA user_version = 99');
     seed.close();
 
-    const { output, exitCode } = await captureDoctor(() => doctorCommand({ json: true }));
+    const { output, exitCode } = await captureDoctor(() => doctorCommand({ json: true }, isolatedDoctorDeps(tmp)));
     const json = JSON.parse(output) as { ok: boolean; checks: Array<{ name: string; status: string }> };
     const db = json.checks.find((c) => c.name === 'genie.db');
     expect(db?.status).toBe('fail');
@@ -446,7 +512,7 @@ describe('checkV4Residue', () => {
     process.env.GENIE_HOME = residueGenieHome;
     const before = snapshot(residueHome);
 
-    const { output } = await captureDoctor(() => doctorCommand({ json: true }));
+    const { output } = await captureDoctor(() => doctorCommand({ json: true }, isolatedDoctorDeps()));
 
     expect(snapshot(residueHome)).toEqual(before); // no fix flag → zero disk change
     const parsed = JSON.parse(output) as { checks: Array<{ name: string; status: string }> };

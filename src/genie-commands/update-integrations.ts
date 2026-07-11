@@ -5,8 +5,8 @@ import {
   type CommandRunner,
   type IntegrationResult,
   type RuntimeName,
-  claudePluginState,
-  codexPluginState,
+  parseClaudePluginState,
+  parseCodexPluginState,
   setCodexPluginEnabled,
 } from '../lib/runtime-integrations.js';
 
@@ -16,6 +16,7 @@ export interface RefreshUpdatePluginsOptions {
   bundleRoot: string;
   expectedVersion: string;
   runner?: CommandRunner;
+  /** CLI availability only. Installed state is queried separately and is the consent boundary. */
   detected?: Partial<Record<RuntimeName, boolean>>;
   codexConfigPath?: string;
   timeoutMs?: number;
@@ -35,8 +36,14 @@ export function refreshUpdatePlugins(options: RefreshUpdatePluginsOptions): Inte
     claude: options.detected?.claude ?? Boolean(Bun.which('claude')),
   };
   const results: IntegrationResult[] = [];
-  if (detected.codex) results.push(refreshCodexPlugin(runner, options, timeoutMs));
-  if (detected.claude) results.push(refreshClaudePlugin(runner, options, timeoutMs));
+  if (detected.codex) {
+    const result = refreshCodexPlugin(runner, options, timeoutMs);
+    if (result !== null) results.push(result);
+  }
+  if (detected.claude) {
+    const result = refreshClaudePlugin(runner, options, timeoutMs);
+    if (result !== null) results.push(result);
+  }
   return results;
 }
 
@@ -44,31 +51,39 @@ function refreshCodexPlugin(
   runner: CommandRunner,
   options: RefreshUpdatePluginsOptions,
   timeoutMs: number,
-): IntegrationResult {
+): IntegrationResult | null {
+  let preserveDisabled = false;
   try {
-    const before = codexPluginState(runChecked(runner, 'codex', ['plugin', 'list', '--json'], timeoutMs).stdout);
+    const beforeResult = parseCodexPluginState(
+      runChecked(runner, 'codex', ['plugin', 'list', '--json'], timeoutMs).stdout,
+    );
+    if (!beforeResult.ok) throw new Error(beforeResult.detail);
+    const before = beforeResult.state;
+    if (!before.installed) return null;
+    preserveDisabled = before.enabled === false;
     addCodexMarketplace(runner, options.bundleRoot, timeoutMs);
-    if (before.installed) {
-      runChecked(runner, 'codex', ['plugin', 'remove', 'genie@automagik', '--json'], timeoutMs, true);
-    }
+    runChecked(runner, 'codex', ['plugin', 'remove', 'genie@automagik', '--json'], timeoutMs, true);
     runChecked(runner, 'codex', ['plugin', 'add', 'genie@automagik', '--json'], timeoutMs);
-    const after = codexPluginState(runChecked(runner, 'codex', ['plugin', 'list', '--json'], timeoutMs).stdout);
+    const afterResult = parseCodexPluginState(
+      runChecked(runner, 'codex', ['plugin', 'list', '--json'], timeoutMs).stdout,
+    );
+    if (!afterResult.ok) throw new Error(`${afterResult.detail} after plugin reinstall`);
+    const after = afterResult.state;
     if (!after.installed || after.version !== options.expectedVersion) {
       throw new Error(
         `Codex plugin refresh reported v${after.version || 'missing'}; expected v${options.expectedVersion}`,
       );
     }
-    if (before.installed && before.enabled === false) {
-      setCodexPluginEnabled(false, options.codexConfigPath ?? getCodexConfigPath());
-    }
     return {
       runtime: 'codex',
       ok: true,
       detail: `plugin/hooks refreshed to v${options.expectedVersion}`,
-      preservedDisabled: before.installed && before.enabled === false,
+      preservedDisabled: preserveDisabled,
     };
   } catch (error) {
     return integrationFailure('codex', error);
+  } finally {
+    if (preserveDisabled) setCodexPluginEnabled(false, options.codexConfigPath ?? getCodexConfigPath());
   }
 }
 
@@ -89,27 +104,45 @@ function refreshClaudePlugin(
   runner: CommandRunner,
   options: RefreshUpdatePluginsOptions,
   timeoutMs: number,
-): IntegrationResult {
+): IntegrationResult | null {
   try {
-    const before = claudePluginState(runChecked(runner, 'claude', ['plugin', 'list', '--json'], timeoutMs).stdout);
-    runChecked(runner, 'claude', ['plugin', 'marketplace', 'add', options.bundleRoot], timeoutMs, true);
-    runChecked(
-      runner,
-      'claude',
-      before.installed ? ['plugin', 'update', 'genie@automagik'] : ['plugin', 'install', 'genie@automagik'],
-      timeoutMs,
+    const beforeResult = parseClaudePluginState(
+      runChecked(runner, 'claude', ['plugin', 'list', '--json'], timeoutMs).stdout,
     );
-    const after = claudePluginState(runChecked(runner, 'claude', ['plugin', 'list', '--json'], timeoutMs).stdout);
-    if (!after.installed || (after.version && after.version !== options.expectedVersion)) {
+    if (!beforeResult.ok) throw new Error(beforeResult.detail);
+    const before = beforeResult.state;
+    if (!before.installed) return null;
+    runChecked(runner, 'claude', ['plugin', 'marketplace', 'add', options.bundleRoot], timeoutMs, true);
+    runChecked(runner, 'claude', ['plugin', 'update', 'genie@automagik'], timeoutMs);
+    const afterResult = parseClaudePluginState(
+      runChecked(runner, 'claude', ['plugin', 'list', '--json'], timeoutMs).stdout,
+    );
+    if (!afterResult.ok) throw new Error(`${afterResult.detail} after plugin update`);
+    const after = afterResult.state;
+    if (!after.installed || after.version !== options.expectedVersion) {
       throw new Error(
         `Claude plugin refresh reported v${after.version || 'missing'}; expected v${options.expectedVersion}`,
       );
+    }
+    const preserveDisabled = before.enabled === false;
+    if (preserveDisabled) {
+      runChecked(runner, 'claude', ['plugin', 'disable', 'genie@automagik'], timeoutMs);
+      const restoredResult = parseClaudePluginState(
+        runChecked(runner, 'claude', ['plugin', 'list', '--json'], timeoutMs).stdout,
+      );
+      if (!restoredResult.ok) throw new Error(`${restoredResult.detail} after restoring disabled state`);
+      const restored = restoredResult.state;
+      if (!restored.installed || restored.version !== options.expectedVersion || restored.enabled !== false) {
+        throw new Error(
+          `Claude disabled-state restore verification failed (installed=${restored.installed}, enabled=${String(restored.enabled)}, version=${restored.version || 'missing'}; expected disabled v${options.expectedVersion})`,
+        );
+      }
     }
     return {
       runtime: 'claude',
       ok: true,
       detail: `plugin/hooks refreshed${after.version ? ` to v${after.version}` : ''}`,
-      preservedDisabled: before.installed && before.enabled === false,
+      preservedDisabled: preserveDisabled,
     };
   } catch (error) {
     return integrationFailure('claude', error);

@@ -40,7 +40,7 @@ import {
   resolveHermesHome,
 } from '../lib/genie-home.js';
 import { resolveOmniRuntimeConfig } from '../lib/omni-config.js';
-import { inspectCodexAgentOwnership, resolveBundleRoot } from '../lib/runtime-integrations.js';
+import { inspectCodexAgentOwnership } from '../lib/runtime-integrations.js';
 import { CURRENT_SCHEMA_VERSION, GenieDbError, openDb } from '../lib/v5/genie-db.js';
 import { VERSION } from '../lib/version.js';
 import {
@@ -283,18 +283,30 @@ function codexProjectRouteCheck(root: string | null, probe: CodexPluginProbe): C
 
 function codexPluginSurfaceChecks(probe: CodexPluginProbe): CheckResult[] {
   if (!probe.installed) return [];
-  const bundleRoot = resolveBundleRoot();
-  const manifest = bundleRoot === null ? null : join(bundleRoot, 'plugins', 'genie', '.codex-plugin', 'plugin.json');
-  const declared = manifest !== null && existsSync(manifest) && readFileSync(manifest, 'utf8').includes('"genie"');
+  const manifest = probe.activePluginRoot ? join(probe.activePluginRoot, '.codex-plugin', 'plugin.json') : null;
+  let declared = false;
+  if (manifest !== null && existsSync(manifest)) {
+    try {
+      const parsed = JSON.parse(readFileSync(manifest, 'utf8')) as unknown;
+      declared =
+        typeof parsed === 'object' &&
+        parsed !== null &&
+        !Array.isArray(parsed) &&
+        (parsed as Record<string, unknown>).mcpServers === './.mcp.json';
+    } catch {
+      declared = false;
+    }
+  }
   return [
     {
       name: 'Codex Genie MCP capability',
       status: declared ? 'pass' : 'warn',
       detail: declared
-        ? 'stdio server declared'
-        : bundleRoot === null
-          ? 'genie bundle root not found (reinstall genie or set GENIE_BUNDLE_ROOT)'
-          : 'manifest declaration missing',
+        ? `stdio server declared by active plugin at ${probe.activePluginRoot}`
+        : manifest === null
+          ? 'active installed plugin root is unproven; source-bundle declarations do not establish runtime health'
+          : `active plugin manifest is missing, corrupt, or does not declare ./.mcp.json: ${manifest}`,
+      suggestion: declared ? undefined : 'Run `genie setup --codex` to refresh the active plugin cache.',
     },
     {
       name: 'Codex hook review',
@@ -309,9 +321,9 @@ export async function checkCodexIntegration(
   root: string | null,
   probe: CodexPluginProbe = probeCodexGeniePlugin(),
 ): Promise<CheckResult[]> {
-  const codex = whichBinary('codex');
   if (!probe.cliAvailable)
     return [{ name: 'Codex CLI', status: 'warn', detail: 'not installed (Claude-only mode available)' }];
+  const codex = whichBinary('codex');
   const results: CheckResult[] = [{ name: 'Codex CLI', status: 'pass', detail: codex ?? 'detected by bounded probe' }];
   results.push(codexPluginCheck(probe), codexAgentCheck());
   const configPath = getCodexConfigPath();

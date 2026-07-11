@@ -2,7 +2,7 @@
 
 The reviewed PR head defines all nine commands in `plugins/genie/hooks/codex-hooks.json`, selected explicitly by `plugins/genie/.codex-plugin/plugin.json`. The user-facing prompt came from the installed Automagik Genie v5.260710.9 plugin: that older manifest has no explicit `hooks` field, so Codex loads its default `hooks/hooks.json` from the marketplace source/cache, which contains the same nine Codex commands. They are not random workspace hooks.
 
-Installed source: `/Users/feliperosa/.codex/worktrees/79e0/genie`. Installed cache: `/Users/feliperosa/.codex/plugins/cache/automagik/genie/5.260710.9`. Repository edits do not alter that cache. After fixes land, an explicit plugin refresh must install the new definitions; only then may the user inspect the changed hashes in `/hooks` and start a new task. Codex runs trusted commands on the host, outside the model tool sandbox.
+The original installed source/cache paths were recorded during provenance review but are intentionally omitted from operator documentation. Repository edits do not alter an installed cache. Containment removed the old hook trust after the 2026-07-11 update incident. After the follow-up lands, an explicit `genie setup --codex` or `genie update` must install the new definitions; only then may the user inspect the changed hashes in `/hooks` and start a new task. Codex runs trusted commands on the host, outside the model tool sandbox.
 
 | # | Event | Original command | Outside-sandbox behavior/problem | Disposition | Replacement contract | Trust state |
 |---|-------|------------------|----------------------------------|-------------|----------------------|-------------|
@@ -26,3 +26,17 @@ Installed source: `/Users/feliperosa/.codex/worktrees/79e0/genie`. Installed cac
 - PreToolUse never performs remote approval and is documented as incomplete interception; server-side branch protection and sandbox permissions remain the hard controls.
 - After install, `/hooks` must show only H3/H4/H6. The user reviews each changed hash, starts a new task, and never uses a trust-bypass flag.
 - Group A reports evidence to the PM. Only Group E/PM updates this audit and the disposition ledger, preserving exclusive file ownership.
+
+## Follow-up evidence (2026-07-11)
+
+| Criterion | Repository evidence | Status |
+|-----------|---------------------|--------|
+| Exactly H3/H4/H6 | `plugins/genie/hooks/codex-hooks.json`; `src/hooks/__tests__/codex-manifest.test.ts` asserts three events/commands and forbids the six removed targets | Implemented; installed hashes remain untrusted |
+| Previous-binary/portable launch | `plugins/genie/scripts/dispatch-runtime.test.ts` covers env-selected wire compatibility, absolute canonical binary selection, POSIX/Windows paths, stdin/stdout, signal forwarding, timeout and SIGKILL | Implemented |
+| Malformed/structurally invalid input | `dispatch-runtime.test.ts`, `src/hooks/__tests__/dispatch-command.test.ts`, and `src/hooks/codex-adapter.test.ts` require valid event-specific deny/block JSON | Implemented |
+| Canonical inputs/matcher privacy | `src/hooks/codex-adapter.test.ts`, `src/hooks/__tests__/omni-approval.test.ts`, and `src/hooks/__tests__/omni-dispatch.test.ts` cover `apply_patch` command decoding, matcher narrowing, preview caps/redaction, and exactly one Omni invocation | Implemented |
+| Timeout/failure/interruption cleanup | `omni-approval.test.ts`, `omni-dispatch.test.ts`, and `codex-manifest.test.ts` couple the 110s poll, 115s child, and 125s host budgets; denial/timeout/SIGTERM cleanup is regression-tested | Implemented |
+| H3 bounded/read-only | `plugins/genie/scripts/src/session-context.ts` caps 8 records, 256 KiB per input, and 2 KiB output; manifest tests reject free-form context and lifecycle writes | Implemented |
+| Guardrail limitation documented | `README.md`, `plugins/genie/README.md`, and `plugins/genie/references/codex-integration-map.md` state that H4 is incomplete defense in depth and that sandbox/branch protection remain authoritative | Implemented |
+| Cold-fork/payload measurement | Starting nine-hook medians were 36.889–49.508 ms per process (panel, 21 runs); retained H3 now measures 19.486 ms median/21.348 ms p95 over 21 local runs. Lifecycle entries fall 9→3, SessionStart forks 3→1, and per-prompt forks 1→0. The plugin skill payload is 23 skills/55 files/191,726 logical bytes | Recorded |
+| Live trust | Old trust removed during containment. No follow-up hook was trusted or executed from the installed cache; `/hooks` review plus a new task is still a user gate | Pending after release |

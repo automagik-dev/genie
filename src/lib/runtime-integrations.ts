@@ -117,20 +117,74 @@ function jsonPayload(raw: string): unknown {
   }
 }
 
-export function codexPluginState(raw: string): { installed: boolean; enabled?: boolean; version?: string } {
-  const payload = jsonPayload(raw) as { installed?: Array<Record<string, unknown>> } | undefined;
-  const plugin = payload?.installed?.find((entry) => entry.pluginId === 'genie@automagik');
-  return plugin
-    ? { installed: true, enabled: plugin.enabled === true, version: String(plugin.version ?? '') }
-    : { installed: false };
+export interface RuntimePluginState {
+  installed: boolean;
+  enabled?: boolean;
+  version?: string;
 }
 
-export function claudePluginState(raw: string): { installed: boolean; enabled?: boolean; version?: string } {
-  const payload = jsonPayload(raw) as Array<Record<string, unknown>> | undefined;
-  const plugin = Array.isArray(payload) ? payload.find((entry) => entry.id === 'genie@automagik') : undefined;
-  return plugin
-    ? { installed: true, enabled: plugin.enabled === true, version: String(plugin.version ?? '') }
-    : { installed: false };
+export type RuntimePluginStateParseResult = { ok: true; state: RuntimePluginState } | { ok: false; detail: string };
+
+const SAFE_PLUGIN_VERSION_RE = /^[0-9A-Za-z][0-9A-Za-z.+-]{0,127}$/;
+
+function validateInstalledPluginEntry(
+  runtime: 'Codex' | 'Claude',
+  plugin: Record<string, unknown>,
+): RuntimePluginStateParseResult {
+  if (typeof plugin.enabled !== 'boolean') {
+    return { ok: false, detail: `${runtime} plugin list returned malformed JSON (enabled must be boolean)` };
+  }
+  if (typeof plugin.version !== 'string' || !SAFE_PLUGIN_VERSION_RE.test(plugin.version)) {
+    return {
+      ok: false,
+      detail: `${runtime} plugin list returned malformed JSON (version must be a safe non-empty string)`,
+    };
+  }
+  return { ok: true, state: { installed: true, enabled: plugin.enabled, version: plugin.version } };
+}
+
+export function parseCodexPluginState(raw: string): RuntimePluginStateParseResult {
+  const payload = jsonPayload(raw);
+  if (typeof payload !== 'object' || payload === null || !Array.isArray(Reflect.get(payload, 'installed'))) {
+    return { ok: false, detail: 'Codex plugin list returned malformed JSON (expected an installed array)' };
+  }
+  const plugins = (Reflect.get(payload, 'installed') as unknown[]).filter(
+    (entry): entry is Record<string, unknown> =>
+      typeof entry === 'object' && entry !== null && Reflect.get(entry, 'pluginId') === 'genie@automagik',
+  );
+  if (plugins.length > 1) {
+    return { ok: false, detail: 'Codex plugin list returned malformed JSON (duplicate Genie entries)' };
+  }
+  const plugin = plugins[0];
+  return plugin ? validateInstalledPluginEntry('Codex', plugin) : { ok: true, state: { installed: false } };
+}
+
+export function parseClaudePluginState(raw: string): RuntimePluginStateParseResult {
+  const payload = jsonPayload(raw);
+  if (!Array.isArray(payload)) {
+    return { ok: false, detail: 'Claude plugin list returned malformed JSON (expected an array)' };
+  }
+  const plugins = (payload as unknown[]).filter(
+    (entry): entry is Record<string, unknown> =>
+      typeof entry === 'object' && entry !== null && Reflect.get(entry, 'id') === 'genie@automagik',
+  );
+  if (plugins.length > 1) {
+    return { ok: false, detail: 'Claude plugin list returned malformed JSON (duplicate Genie entries)' };
+  }
+  const plugin = plugins[0];
+  return plugin ? validateInstalledPluginEntry('Claude', plugin) : { ok: true, state: { installed: false } };
+}
+
+/** Compatibility parser for read-only callers that treat invalid output as unavailable. */
+export function codexPluginState(raw: string): RuntimePluginState {
+  const parsed = parseCodexPluginState(raw);
+  return parsed.ok ? parsed.state : { installed: false };
+}
+
+/** Compatibility parser for read-only callers that treat invalid output as unavailable. */
+export function claudePluginState(raw: string): RuntimePluginState {
+  const parsed = parseClaudePluginState(raw);
+  return parsed.ok ? parsed.state : { installed: false };
 }
 
 function runChecked(
@@ -454,15 +508,33 @@ function addCodexMarketplace(runner: CommandRunner, bundleRoot: string, timeoutM
  * marketplace payload. Reinstall once when its reported version differs from
  * the running CLI, then fail loudly if the registry still reports stale state.
  */
+function requireCodexPluginState(raw: string, phase: string): RuntimePluginState {
+  const parsed = parseCodexPluginState(raw);
+  if (!parsed.ok) throw new IntegrationCommandError(`${parsed.detail} ${phase}`);
+  return parsed.state;
+}
+
 function verifyCodexPluginCurrent(runner: CommandRunner, timeoutMs: number): void {
-  let state = codexPluginState(runChecked(runner, 'codex', ['plugin', 'list', '--json'], false, timeoutMs).stdout);
-  if (!state.installed || state.version === VERSION) return;
+  let state = requireCodexPluginState(
+    runChecked(runner, 'codex', ['plugin', 'list', '--json'], false, timeoutMs).stdout,
+    'after plugin add',
+  );
+  if (!state.installed) {
+    throw new IntegrationCommandError('Codex plugin is missing after plugin add');
+  }
+  if (state.version === VERSION) return;
   runChecked(runner, 'codex', ['plugin', 'remove', 'genie@automagik', '--json'], true, timeoutMs);
   runChecked(runner, 'codex', ['plugin', 'add', 'genie@automagik', '--json'], false, timeoutMs);
-  state = codexPluginState(runChecked(runner, 'codex', ['plugin', 'list', '--json'], false, timeoutMs).stdout);
-  if (state.installed && state.version !== VERSION) {
+  state = requireCodexPluginState(
+    runChecked(runner, 'codex', ['plugin', 'list', '--json'], false, timeoutMs).stdout,
+    'after plugin reinstall',
+  );
+  if (!state.installed) {
+    throw new IntegrationCommandError('Codex plugin is missing after plugin reinstall');
+  }
+  if (state.version !== VERSION) {
     throw new IntegrationCommandError(
-      `codex plugin stuck at v${state.version} (CLI v${VERSION}) — marketplace root may be stale`,
+      `codex plugin stuck at v${state.version || 'missing'} (CLI v${VERSION}) — marketplace root may be stale`,
     );
   }
 }
@@ -477,11 +549,17 @@ function installCodexIntegration(
   const migration = migrateDeadGenieOtel(configPath);
   if (migration.status === 'error') throw new Error(`Codex config migration failed: ${migration.error}`);
   const agents = installCodexAgents(bundleRoot, codexHome);
-  const before = codexPluginState(runChecked(runner, 'codex', ['plugin', 'list', '--json'], false, timeoutMs).stdout);
-  addCodexMarketplace(runner, bundleRoot, timeoutMs);
-  runChecked(runner, 'codex', ['plugin', 'add', 'genie@automagik', '--json'], false, timeoutMs);
-  verifyCodexPluginCurrent(runner, timeoutMs);
-  if (before.installed && before.enabled === false) setCodexPluginEnabled(false, configPath);
+  const before = requireCodexPluginState(
+    runChecked(runner, 'codex', ['plugin', 'list', '--json'], false, timeoutMs).stdout,
+    'before plugin install',
+  );
+  try {
+    addCodexMarketplace(runner, bundleRoot, timeoutMs);
+    runChecked(runner, 'codex', ['plugin', 'add', 'genie@automagik', '--json'], false, timeoutMs);
+    verifyCodexPluginCurrent(runner, timeoutMs);
+  } finally {
+    if (before.installed && before.enabled === false) setCodexPluginEnabled(false, configPath);
+  }
   const notes = [`${agents.installed} role agents installed`];
   if (agents.removed.length > 0) notes.push(`removed obsolete: ${agents.removed.join(', ')}`);
   if (agents.keptModified.length > 0) notes.push(`kept modified: ${agents.keptModified.join(', ')}`);

@@ -4,58 +4,70 @@ This ledger deduplicates every finding from the seven specialist lanes and the n
 
 | ID | Source findings | Origin | Disposition / owner | Acceptance evidence | Final evidence |
 |----|-----------------|--------|---------------------|---------------------|----------------|
-| F01 | RH1 | External gate | E records; GitHub/human action required | Repository CI jobs run and pass on exact final SHA | Pending |
-| F02 | RH2 | External gate | OUT of code; human approval required | Independent APPROVED review on final SHA | Pending |
-| F03 | RH3, DX4 | PR/exposed | E | Migration caveat in create and promotion/edit notes; hardening criteria mapped | Pending |
-| F04 | RH4, SEC10, DX9 | Mixed | Current version-parity/build checks in B/D1/E; inherited verifier contract to stable-release wish | Extracted payload parity passes; inherited verifier remains explicitly blocked | Pending |
-| F05 | RH5 | PR | E | Retired metrics state/README marker removed or superseding decision + schema test | Pending |
-| F06 | RH6, AR1, DX1, DX6, NR9 | PR/exposed | B | Source copy and extracted plugin contain all valid in-root skills; parity test | Pending |
-| F07 | RH7, DX8 | PR | E | Contributor/plugin docs match final CLI, skills, hooks, and agents | Pending |
-| F08 | RH8 | PR | E | Build Tarballs PR filters cover all artifact inputs | Pending |
-| F09 | AR2, NR2 | PR | A | Portable launcher fixtures preserve stdin/stdout/exit/signals on POSIX/Windows paths | Pending |
-| F10 | AR3, SEC4, QA1, PERF1, NR1, NR6 | PR | A | Omni only on PermissionRequest, matched exactly once; timeout/failure deny | Pending |
-| F11 | AR4, QA2, QA10, NR4 | PR | A | Canonical apply_patch paths decoded or file-policy hook removed; fixtures prove behavior | Pending |
-| F12 | AR5, QA8 | PR | D1 using C API | Manual update refreshes plugin/hooks/agents; sync-only stays bounded | Pending |
-| F13 | AR6, SEC9, CQ4, QA3 | PR | C | One digest-backed classifier; modified role artifacts survive refresh/uninstall | Pending |
-| F14 | AR7, DX5 | PR | D2 | Root/nested/worktree fixtures keep exactly one usable plugin/fallback MCP route | Pending |
-| F15 | AR8 | PR/exposed | A + D2 | Hook config writer removed; TypeScript config owner and runtime choice are consistent | Pending |
+| F01 | RH1 | External gate | E records; GitHub/human action required | Repository CI jobs run and pass on exact final SHA | **PENDING:** follow-up has no exact-final-SHA GitHub CI result yet |
+| F02 | RH2 | External gate | OUT of code; human approval required | Independent APPROVED review on final SHA | **PENDING:** human APPROVED review must target the final follow-up SHA |
+| F03 | RH3, DX4 | PR/exposed | E | Migration caveat in create and promotion/edit notes; hardening criteria mapped | `release-publish.yml` idempotently appends marker `genie-agent-sync-migration-v1` on create and existing-release promotion; plugin docs and the B1–B7 map describe the operator-run second hop |
+| F04 | RH4, SEC10, DX9 | Mixed | Current version-parity/build checks in B/D1/E; inherited verifier contract to stable-release wish | `release-payload-version.test.ts`, build staging verification, and source/extracted smoke own current parity; inherited publication/verifier redesign remains BLOCKING in the stable-release wish |
+| F05 | RH5 | PR | E | Retired metrics state/README marker removed or superseding decision + schema test | Removed README marker and `.genie/agents/metrics-updater/**`; prior JSONL mixed `errors: []`/`tools_used` with `errors: 0`/`tools_generated`. `release-docs.test.ts` prevents resurrection |
+| F06 | RH6, AR1, DX1, DX6, NR9 | PR/exposed | B | Source copy and extracted plugin contain all valid in-root skills; parity test | 23 canonical + 23 physical mirror skills; `sync-plugin-skills`, `skills-lint`, `fresh-install-smoke`, and release inventory tests reject escapes/drift/missing metadata |
+| F07 | RH7, DX8 | PR | E | Contributor/plugin docs match final CLI, skills, hooks, and agents | README/CLAUDE/plugin references now distinguish 23 plugin skills, 7 optional CLI role agents, 36 personal adapted skills, MCP launcher, H3/H4/H6, and orchestrator-only completion |
+| F08 | RH8 | PR | E | Build Tarballs PR filters cover all artifact inputs | PR paths now cover `src`, `skills`, `templates`, all `plugins`, metadata/lock/tsconfig, the build script and every direct/transitive TypeScript helper (including `skills-lint.ts`), both marketplaces, and the workflow; `release-docs.test.ts` derives and locks the helper graph |
+| F09 | AR2, NR2 | PR | A | Portable launcher fixtures preserve stdin/stdout/exit/signals on POSIX/Windows paths | `dispatch-runtime.test.ts` covers canonical absolute selection, Windows/POSIX, stdin/stdout, nonzero/spawn failure, timeout, SIGTERM→SIGKILL, and signal forwarding |
+| F10 | AR3, SEC4, QA1, PERF1, NR1, NR6 | PR | A | Omni only on PermissionRequest, matched exactly once; timeout/failure deny | H4 registry excludes Omni; H6 applies configured matcher once. `omni-approval`, `omni-dispatch`, and manifest tests require reasoned deny and 110s<115s<125s budgets |
+| F11 | AR4, QA2, QA10, NR4 | PR | A | Canonical apply_patch paths decoded or file-policy hook removed; fixtures prove behavior | H5/H7 removed; adapter/approval fixtures parse Codex `tool_input.command`, bound extracted paths, and reject malformed shapes |
+| F12 | AR5, QA8 | PR | D1 using C API | Manual update refreshes plugin/hooks/agents; sync-only stays bounded | `update-integrations.ts` and update tests cover parent-process convergence, plugin/hook refresh, preserved disabled state, ownership-safe role refresh, and no-network `--sync-only` |
+| F13 | AR6, SEC9, CQ4, QA3 | PR | C | One digest-backed classifier; modified role artifacts survive refresh/uninstall | `inspectCodexAgentOwnership` is shared by runtime integration paths; `runtime-integrations.test.ts` covers clean refresh/remove plus user-owned/modified/corrupt/symlink preservation |
+| F14 | AR7, DX5 | PR | D2 | Root/nested/worktree fixtures keep exactly one usable plugin/fallback MCP route | `codex-project-mcp.test.ts` covers root discovery, nested/linked worktrees, disabled/unusable plugin fallback, exact config ownership, and one usable route |
+| F15 | AR8 | PR/exposed | A + D2 | Hook config writer removed; TypeScript config owner and runtime choice are consistent | Codex manifest owns only H3/H4/H6; setup/init/launch use `codex-project-mcp.ts`, preserve explicit runtime choice, and do not scaffold hook/project instruction files |
 | F16 | SEC1 | Inherited CRITICAL | OUT → stable-release-security-gate | Arbitrary-ref stable publish eliminated/protected | Blocking |
 | F17 | SEC2 | Inherited HIGH | OUT → stable-release-security-gate | Inputs validated and artifacts bound to approved workflow/ref/SHA | Blocking |
 | F18 | SEC3 | Inherited HIGH | OUT → stable-release-security-gate | Third-party actions pinned, frozen installs, least privilege | Blocking |
-| F19 | SEC5, SEC7, QA7, PERF2, PERF3, DX7 | PR/exposed | A | H1/H2/H8 removed; H3 bounded; no lifecycle install/config/workspace mutation | Pending |
-| F20 | SEC6 | PR/exposed | C | All 36 live skill digests unchanged after isolated fixture tests and read-only comparison | Pending |
-| F21 | SEC8, QA11, QA12 | PR | A | Event-specific valid envelopes, previous-binary compatibility, malformed-input fail closed | Pending |
-| F22 | CQ1, QA5, DX3, NR3 | PR | B | Manifest formatted; build/version rewrites preserve formatting; full gate green | Pending |
-| F23 | CQ2 | PR | D1 | Final/RC/malformed comparison tests pass | Pending |
-| F24 | CQ3 | PR | D3 | Non-empty reply invariant rejects unrelated/empty/truncated JSONL | Pending |
-| F25 | CQ5, QA4, DX2 | PR | C owns removal results; D1/D2 propagate them through install/update/setup/doctor/init/launch | Failure is nonzero, actionable, retryable; no caller prints false success | Pending |
-| F26 | CQ6, NR8 | PR | C | Lock I/O/race/future-time tests never sync without ownership | Pending |
-| F27 | CQ7, QA8, QA9, NR7 | PR | D1 | Each tree-swap failure preserves old/fresh artifacts; identical residue removed; digest comparison | Pending |
-| F28 | CQ8 | PR | C (uninstall) + D2 (init) | Wrong-shaped valid JSON returns typed/actionable failure, not crash | Pending |
-| F29 | CQ9 | PR | D1 | Invalid integration option rejected before cleanup/sync/install finishers | Pending |
-| F30 | CQ10 | PR | D2 | One Codex-home resolver with explicit empty-override test | Pending |
+| F19 | SEC5, SEC7, QA7, PERF2, PERF3, DX7 | PR/exposed | A | H1/H2/H8 removed; H3 bounded; no lifecycle install/config/workspace mutation | Manifest has 3 commands; H1/H2/H5/H7/H8/H9 removed. H3 caps 8 records/256 KiB input/2 KiB output and performs no install, network, update, config, or workspace write |
+| F20 | SEC6 | PR/exposed | C | All 36 live skill digests unchanged after isolated fixture tests and read-only comparison | **CONTAINED/PENDING FINAL:** backup restored 22 affected dirs, duplicate `review` quarantined, old trust removed, 36/36 skills + 14/14 TOMLs matched and no sync marker remained; repeat read-only comparison after final tests |
+| F21 | SEC8, QA11, QA12 | PR | A | Event-specific valid envelopes, previous-binary compatibility, malformed-input fail closed | Launcher/dispatcher/adapter tests cover previous-binary env wire, empty/malformed/structurally invalid input, schema-checked output, and event-specific fail-closed responses |
+| F22 | CQ1, QA5, DX3, NR3 | PR | B | Manifest formatted; build/version rewrites preserve formatting; full gate green | `plugin.json` is Biome-formatted; `version-format.test.ts` proves token-only rewrites and build/version parity. **Aggregate `bun run check` remains pending** |
+| F23 | CQ2 | PR | D1 | Final/RC/malformed comparison tests pass | Update tests cover final>RC, RC<final, prerelease ordering, malformed versions, downgrade rejection, and explicit-channel selection |
+| F24 | CQ3 | PR | D3 | Non-empty reply invariant rejects unrelated/empty/truncated JSONL | `omni-runner.test.ts` requires a non-empty agent reply and rejects empty, unrelated, unknown-shape, and truncated JSONL |
+| F25 | CQ5, QA4, DX2 | PR | C owns removal results; D1/D2 propagate them through install/update/setup/doctor/init/launch | Failure is nonzero, actionable, retryable; no caller prints false success | Structured integration/removal results carry deadlines/failures; install/setup/update/uninstall tests reject false success and preserve retryability; aggregate integration rerun pending |
+| F26 | CQ6, NR8 | PR | C | Lock I/O/race/future-time tests never sync without ownership | Agent-sync fixtures cover O_EXCL contention, lock I/O failure, stale/future timestamps, ownership loss, and no destructive sync without the lock |
+| F27 | CQ7, QA8, QA9, NR7 | PR | D1 | Each tree-swap failure preserves old/fresh artifacts; identical residue removed; digest comparison | `auxiliary-trees.ts` plus install/update failure-injection tests cover content digests, identical cleanup, same/cross-filesystem swap, rollback, and preserved verified fresh artifacts |
+| F28 | CQ8 | PR | C (uninstall) + D2 (init) | Wrong-shaped valid JSON returns typed/actionable failure, not crash | Config/init/uninstall fixtures reject arrays/scalars/wrong-shaped valid JSON with typed outcomes and no destructive continuation |
+| F29 | CQ9 | PR | D1 | Invalid integration option rejected before cleanup/sync/install finishers | `resolveIntegrationSelection` validates before v4 cleanup, layout normalization, sync, or runtime integration; invalid-option test asserts zero side effects |
+| F30 | CQ10 | PR | D2 | One Codex-home resolver with explicit empty-override test | `getCodexHome` is the shared resolver; codex-config/genie-home tests cover missing, explicit, and empty override behavior |
 | F31 | QA6 | Inherited HIGH | OUT → stable-release-security-gate; D1 covers only the distinct PR-added auxiliary-tree swap | Transactional live-binary/promotion design independently reviewed in the separate wish | Blocking |
-| F32 | PERF4 | PR | D2 | Doctor external probes queried once, timed out, and benchmarked against budget | Pending |
-| F33 | PERF5 | PR | C | Every runtime integration subprocess has a deadline and structured failure result | Pending |
-| F34 | DX10 | PR process | E owns `plugins/genie/codex-agents/genie-reviewer.toml` + tests | Reviewer profile permits temp/cache fixture writes but not repo/live-home mutation | Pending |
-| F35 | NR5 | PR | D3 | `--version`, `--help`, `-m` delivered as prompt text via `--` separator | Pending |
-| F36 | NR10 | PR | D3 | Missing resume retries fresh once and atomically replaces/clears stale thread state | Pending |
-| F37 | Panel detail: interrupted pending Omni request | PR | A | SIGTERM/interruption fixture expires/clears request and emits deny | Pending |
-| F38 | Panel detail: review-thread setup/doctor/init/launch gaps | PR | D2 | Timeout, git-root fallback, merge fallback create/update, shellQuote and agent-choice tests | Pending |
-| F39 | Panel detail: hook/skill cold-fork and payload measurements | PR | A/B | Reduced hook count; before/after benchmark and payload inventory recorded | Pending |
-| F40 | Panel detail: release notes/index/wish drift | PR | E | PR body/docs/wishes/index name exact final version, SHA, disposition, and still-blocked gates | Pending |
+| F32 | PERF4 | PR | D2 | Doctor external probes queried once, timed out, and benchmarked against budget | Doctor tests inject hanging Codex/MCP probes, enforce deadlines/structured diagnostics, and avoid duplicate role inventory work; final supported-Bun aggregate timing remains pending |
+| F33 | PERF5 | PR | C | Every runtime integration subprocess has a deadline and structured failure result | Runtime integration runner applies per-command deadlines and structured timeout errors; hanging-runner fixtures cover Codex/Claude operations and cleanup |
+| F34 | DX10 | PR process | E owns `plugins/genie/codex-agents/genie-reviewer.toml` + tests | Reviewer profile permits temp/cache fixture writes but not repo/live-home mutation | Installed Codex 0.144.1 schema-backed profile selects `default_permissions = "genie-reviewer-temp"`, extends `:read-only`, grants write only to `:tmpdir`/`:slash_tmp`, and sets `approval_policy = "never"`; parsed structural tests reject workspace/repo/home or legacy workspace-write grants |
+| F35 | NR5 | PR | D3 | `--version`, `--help`, `-m` delivered as prompt text via `--` separator | `omni-runner.test.ts` asserts `--` before all user prompts and verifies option-like strings arrive as prompt content |
+| F36 | NR10 | PR | D3 | Missing resume retries fresh once and atomically replaces/clears stale thread state | Omni runner detects missing sessions, retries fresh once, replaces the stored thread id only on success, and leaves retryable state on failure; fixtures cover both paths |
+| F37 | Panel detail: interrupted pending Omni request | PR | A | SIGTERM/interruption fixture expires/clears request and emits deny | Approval/dispatch tests trigger SIGTERM cleanup, expire only the owned pending row, remove listeners, and return a reasoned Codex deny |
+| F38 | Panel detail: review-thread setup/doctor/init/launch gaps | PR | D2 | Timeout, git-root fallback, merge fallback create/update, shellQuote and agent-choice tests | Setup/doctor/init/launch and codex-project-mcp suites cover deadlines, git/worktree root, fallback create/update/remove, quoting, preserved disabled plugin, and explicit agent choice |
+| F39 | Panel detail: hook/skill cold-fork and payload measurements | PR | A/B | Reduced hook count; before/after benchmark and payload inventory recorded | Nine→three commands; SessionStart 3→1; prompt 1→0. Original 21-run process medians 36.889–49.508 ms; retained H3 19.486 ms median/21.348 ms p95. Plugin: 23 skills, 55 files, 191,726 bytes |
+| F40 | Panel detail: release notes/index/wish drift | PR | E | PR body/docs/wishes/index name exact final version, SHA, disposition, and still-blocked gates | WISH/index record merge `6f682e2b` from source `10ceb2c0`, follow-up base `5101fd35`, IN_PROGRESS state, and F16–F18/F31 blockers. **Final follow-up SHA/version/PR body remain pending** |
 
 ## Agent-sync hardening supersession map
 
 The existing `.genie/wishes/agent-sync-hardening/WISH.md` remains authoritative history. It is not marked complete wholesale.
 
-| Existing criterion | New evidence owner | Status rule |
-|--------------------|--------------------|-------------|
-| B1/B3/B6 SessionStart delegation and compatibility | A, H1/H4/H6, F09/F10/F19/F21/F37 | Supersede only after manifest fixtures and previous-binary tests pass |
-| B2 sync lock | C, F26 | Supersede only after race, I/O, stale, and future-time tests pass |
-| B4 user-data preservation | C, F13/F20/F25 | Supersede only after fixture and live read-only digest evidence |
-| B5 fresh reinstall convergence | D1, F27 | Supersede only after every injected failure/identical-residue test passes |
-| B7 release caveat | E, F03/F40 | Supersede only after create/edit notes and final documentation evidence |
-| Wave-2 plugin/skills/runtime items | B/C/D2, F06/F12–F15/F22/F30/F32/F33 | Close individually; never infer completion from version equality |
+| Existing criterion | New evidence owner | Status rule | Current state |
+|--------------------|--------------------|-------------|---------------|
+| B1/B3/B6 SessionStart delegation and compatibility | A, H1/H4/H6, F09/F10/F19/F21/F37 | Supersede only after manifest fixtures and previous-binary tests pass | **SUPERSEDED:** unattended SessionStart delegation removed; portable launcher/protocol/compatibility fixtures implemented |
+| B2 sync lock | C, F26 | Supersede only after race, I/O, stale, and future-time tests pass | **SUPERSEDED:** lock ownership, contention, I/O, stale, and future-time fixtures implemented |
+| B4 user-data preservation | C, F13/F20/F25 | Supersede only after fixture and live read-only digest evidence | **PARTIAL:** fixtures plus post-incident 36/36 + 14/14 containment comparison pass; final post-test live comparison pending |
+| B5 fresh reinstall convergence | D1, F27 | Supersede only after every injected failure/identical-residue test passes | **SUPERSEDED LOCALLY:** auxiliary-tree digest/identical/failure/rollback fixtures implemented; aggregate gate pending |
+| B7 release caveat | E, F03/F40 | Supersede only after create/edit notes and final documentation evidence | **SUPERSEDED LOCALLY:** create/promotion note and operator docs updated; exact final release/CI evidence pending |
+| Wave-2 plugin/skills/runtime items | B/C/D2, F06/F12–F15/F22/F30/F32/F33 | Close individually; never infer completion from version equality | **PARTIAL:** each row above names focused proof; F22 aggregate and external gates remain open |
 
 PR-remediation SHIP closes only non-blocking rows with concrete evidence. Rows F16–F18 and F31 continue to block stable promotion through the separate wish even if this PR-scope review later returns SHIP.
+
+## Group E validation snapshot
+
+Run on the follow-up worktree on 2026-07-11; this is focused lane evidence, not the final aggregate/CI gate:
+
+- `bun test scripts/release-docs.test.ts scripts/version-format.test.ts scripts/release-payload-version.test.ts scripts/sync-plugin-skills.test.ts scripts/fresh-install-smoke.test.ts scripts/skills-lint.test.ts` — 47 pass, 0 fail.
+- `bun run typecheck` — pass.
+- `bunx biome check scripts/release-docs.test.ts plugins/genie/.codex-plugin/plugin.json` — pass, no writes.
+- `bun run wishes:lint` — 42 files, 0 broken links.
+- `git diff --check` — pass.
+
+The local Bun is 1.3.9 while the repository declares Bun >=1.3.10. Supported-runtime aggregate `bun run check`, full `bun test`, exact-final-SHA GitHub jobs, final merge-tree simulation, human approval, and the final post-test live baseline comparison remain pending.

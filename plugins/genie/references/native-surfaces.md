@@ -1,11 +1,19 @@
 # Native runtime surfaces
 
-Genie skills describe roles and coordination without binding themselves to one client.
+Genie skills describe roles and coordination without inventing a cross-client tool API.
 
-- Claude Code dispatches roles with its Agent tool (`subagent_type: engineer-standard`, ...) and sends follow-ups to a running subagent with SendMessage.
-- Codex dispatches the matching `genie_*` custom agent (installed under `~/.codex/agents/`). Follow-up messaging to a running Codex subagent is **undocumented — verify live**: `features.multi_agent` exposes spawn/send/resume/wait/close tools, but their contracts are not in the public Codex docs. If a follow-up surface is unavailable, re-dispatch with curated context instead.
-- Every implementation brief opens with the atomic claim `genie task checkout <task-id> --worker <name>`. A task claim, not the client, owns file scope in a shared workspace.
-- Native Codex subagents do not imply separate worktrees. Use `genie launch` when worktree isolation or a human-supervised cockpit is required.
-- User decisions use the runtime's native input or permission surface; shared workflows do not hardcode a client-specific tool name.
+| Runtime | Dispatch | Isolation | Follow-up |
+|---------|----------|-----------|-----------|
+| Claude Code | Use its current native Agent surface and an available named role | Use the runtime's supported isolation/worktree option when present | Use the runtime's documented messaging surface when available; otherwise re-dispatch with curated context |
+| Codex | Use the matching `genie_*` custom agent when the CLI-installed profiles are present; otherwise use an available generic subagent | Native subagents share the caller's workspace by default | Use the active native follow-up tool exposed in the session; do not hardcode an undocumented function name into a skill |
+| Warp cockpit | `genie launch <slug>` emits one pane per ready group | Dedicated Git worktree per pane | Human-supervised; panes are not awaitable native subagents |
 
-The role names and lifecycle contracts are stable across clients. Runtime syntax is an adapter detail.
+Every implementation brief opens with the atomic claim:
+
+```bash
+genie task checkout <task-id> --worker <name>
+```
+
+The claim owns file scope in a shared workspace. Engineers and fixers report completion but never call `genie task done`. A different reviewer validates the group; only the orchestrator marks it done after a SHIP verdict and passing evidence. Native client completion notifications replace polling.
+
+User decisions use the runtime's native input or permission surface. Shared workflows name the semantic action—dispatch, follow up, interrupt, wait—while the active client supplies the concrete tool.

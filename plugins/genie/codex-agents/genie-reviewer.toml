@@ -2,7 +2,18 @@
 name = "genie_reviewer"
 description = "Independent evidence-first review role for completed execution groups."
 model_reasoning_effort = "xhigh"
-sandbox_mode = "read-only"
+approval_policy = "never"
+default_permissions = "genie-reviewer-temp"
 developer_instructions = """
-Independently test the completed group against every criterion and inspect the focused change for functional, security, performance, and maintainability defects. Trace control flow, distinguish regressions from pre-existing behavior, and return an evidence-backed verdict. Never review work you engineered, implement fixes, or mark the task done.
+Independently test the completed group against every criterion and inspect the focused change for functional, security, performance, and maintainability defects. Trace control flow, distinguish regressions from pre-existing behavior, and return an evidence-backed verdict.
+
+Remain read-only against the repository and every live user home, including HOME, CODEX_HOME, and GENIE_HOME. Run a check only when its writes are confined to operating-system temporary fixtures or dependency caches; redirect caches to temporary storage when necessary. Never run an installer, updater, uninstaller, hook, formatter in write mode, generated-output build, Git mutation, or command that can modify the repository or live home. If valid evidence requires broader writes, report the exact blocked check instead of requesting or bypassing permission. Never review work you engineered, implement fixes, or mark the task done.
 """
+
+[permissions.genie-reviewer-temp]
+description = "Read-only review with writes limited to operating-system temporary directories."
+extends = ":read-only"
+
+[permissions.genie-reviewer-temp.filesystem]
+":tmpdir" = "write"
+":slash_tmp" = "write"

@@ -10,10 +10,8 @@ import { join } from 'node:path';
 import { confirm, input, select } from '@inquirer/prompts';
 import { getCodexConfigPath } from '../lib/codex-config.js';
 import {
-  type CodexPluginMcpUsability,
-  type CodexPluginProbe,
-  inspectCodexPluginMcpUsability,
   preflightCodexPluginMutation,
+  probeCodexGeniePlugin,
   reconcileCodexProjectMcp,
   resolveGitWorktreeRoot,
 } from '../lib/codex-project-mcp.js';
@@ -44,7 +42,8 @@ export interface SetupOptions {
 export interface SetupDeps {
   checkCommand?: typeof checkCommand;
   installRuntimeIntegrations?: typeof installRuntimeIntegrations;
-  inspectPluginUsability?: () => CodexPluginMcpUsability;
+  /** One bounded post-install snapshot; tests inject this to avoid live Codex state. */
+  probeCodexGeniePlugin?: typeof probeCodexGeniePlugin;
   cwd?: string;
 }
 
@@ -220,26 +219,15 @@ function repairCodexIntegration(deps: SetupDeps): void {
     throw new SetupIntegrationError(detail);
   }
   console.log(`  \x1b[32m\u2713\x1b[0m ${result.detail}`);
+  const plugin = (deps.probeCodexGeniePlugin ?? probeCodexGeniePlugin)();
 
   if (root !== null) {
-    const usability = result.preservedDisabled
-      ? { usable: false, detail: 'installed plugin remains disabled' }
-      : (deps.inspectPluginUsability ?? inspectCodexPluginMcpUsability)();
-    const plugin: CodexPluginProbe = {
-      cliAvailable: true,
-      status: 'ok',
-      installed: true,
-      enabled: result.preservedDisabled !== true,
-      usable: usability.usable,
-      usabilityDetail: usability.detail,
-      detail: `${result.preservedDisabled ? 'installed plugin remains disabled' : 'installed plugin enabled'}; ${usability.detail}`,
-    };
     const project = reconcileCodexProjectMcp(root, plugin);
     if (!project.ok) throw new SetupIntegrationError(project.detail ?? 'Codex project MCP reconciliation failed');
     console.log(`  \x1b[32m\u2713\x1b[0m Project MCP route: ${project.route} (${project.detail ?? project.action})`);
-    if (!usability.usable && result.preservedDisabled !== true) {
+    if (!plugin.usable && plugin.enabled === true) {
       console.log(
-        `  \x1b[33m!\x1b[0m Plugin MCP is not usable (${usability.detail}); kept the absolute project fallback.`,
+        `  \x1b[33m!\x1b[0m Plugin MCP is not usable (${plugin.usabilityDetail ?? plugin.detail}); kept the absolute project fallback.`,
       );
     }
   } else {

@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadGenieConfig, saveGenieConfig } from '../lib/genie-config.js';
+import { installRuntimeIntegrations } from '../lib/runtime-integrations.js';
+import { VERSION } from '../lib/version.js';
 import { type SetupDeps, resolveDefaultAgentAfterCodex, setupCommand } from './setup.js';
 
 // resolveDefaultAgentAfterCodex is the single decision point `genie setup
@@ -60,7 +62,17 @@ describe('setup runtime and failure semantics', () => {
     return {
       cwd: join(root, 'repo'),
       checkCommand: async () => ({ exists: true, version: 'fixture' }),
-      inspectPluginUsability: () => ({ usable: true, detail: 'fixture launcher usable' }),
+      probeCodexGeniePlugin: () => ({
+        cliAvailable: true,
+        status: 'ok',
+        installed: true,
+        enabled: !preservedDisabled,
+        version: VERSION,
+        activePluginRoot: join(root, 'codex-home', 'plugins', 'cache', 'automagik', 'genie', VERSION),
+        usable: !preservedDisabled,
+        usabilityDetail: preservedDisabled ? 'installed plugin remains disabled' : 'fixture launcher usable',
+        detail: preservedDisabled ? 'installed plugin remains disabled' : 'fixture launcher usable',
+      }),
       installRuntimeIntegrations: (() => [
         {
           runtime: 'codex',
@@ -96,7 +108,31 @@ describe('setup runtime and failure semantics', () => {
     expect(fallback).toContain('[mcp_servers.genie]');
   });
 
-  test('explicit integration failure is actionable, nonzero, and does not save false success', async () => {
+  test('setup uses one complete post-install probe and a healthy active plugin removes the fallback', async () => {
+    const fallbackPath = join(root, 'repo', '.codex', 'config.toml');
+    mkdirSync(join(root, 'repo', '.codex'), { recursive: true });
+    writeFileSync(
+      fallbackPath,
+      '# BEGIN GENIE MCP FALLBACK\n[mcp_servers.genie]\ncommand = "/old/genie"\nargs = ["mcp"]\n# END GENIE MCP FALLBACK\n',
+    );
+    let probes = 0;
+    const healthy = deps();
+    const postInstall = healthy.probeCodexGeniePlugin;
+    healthy.probeCodexGeniePlugin = () => {
+      probes += 1;
+      return postInstall?.() ?? { cliAvailable: false, status: 'unavailable', installed: false, detail: 'missing' };
+    };
+    await setupCommand({ codex: true, quick: true }, healthy);
+    expect(probes).toBe(1);
+    expect(readFileSync(fallbackPath, 'utf8')).not.toContain('GENIE MCP FALLBACK');
+  });
+
+  test('explicit integration failure is actionable, nonzero, preserves fallback, and does not save false success', async () => {
+    const fallbackPath = join(root, 'repo', '.codex', 'config.toml');
+    const fallback =
+      '# BEGIN GENIE MCP FALLBACK\n[mcp_servers.genie]\ncommand = "/fixture/genie"\nargs = ["mcp"]\n# END GENIE MCP FALLBACK\n';
+    mkdirSync(join(root, 'repo', '.codex'), { recursive: true });
+    writeFileSync(fallbackPath, fallback);
     const errors: string[] = [];
     const original = console.error;
     console.error = (...args: unknown[]) => errors.push(args.map(String).join(' '));
@@ -108,6 +144,54 @@ describe('setup runtime and failure semantics', () => {
     expect(process.exitCode).toBe(1);
     expect(errors.join('\n')).toContain('fixture integration failed');
     expect((await loadGenieConfig()).codex?.configured).not.toBe(true);
+    expect(readFileSync(fallbackPath, 'utf8')).toBe(fallback);
+  });
+
+  test('string enabled in exact-version Codex post-state fails full setup and preserves fallback', async () => {
+    const fallbackPath = join(root, 'repo', '.codex', 'config.toml');
+    const fallback =
+      '# BEGIN GENIE MCP FALLBACK\n[mcp_servers.genie]\ncommand = "/fixture/genie"\nargs = ["mcp"]\n# END GENIE MCP FALLBACK\n';
+    mkdirSync(join(root, 'repo', '.codex'), { recursive: true });
+    writeFileSync(fallbackPath, fallback);
+    let lists = 0;
+    const strict = deps();
+    strict.installRuntimeIntegrations = (() =>
+      installRuntimeIntegrations({
+        selection: 'codex',
+        bundleRoot: join(import.meta.dir, '..', '..'),
+        codexHome: process.env.CODEX_HOME,
+        detected: { codex: true },
+        runner(_command, args) {
+          if (args.join(' ') === 'plugin list --json') {
+            lists += 1;
+            return {
+              exitCode: 0,
+              stdout:
+                lists === 1
+                  ? '{"installed":[]}'
+                  : JSON.stringify({
+                      installed: [{ pluginId: 'genie@automagik', enabled: 'false', version: VERSION }],
+                    }),
+              stderr: '',
+            };
+          }
+          return { exitCode: 0, stdout: '{}', stderr: '' };
+        },
+      })) as SetupDeps['installRuntimeIntegrations'];
+    const errors: string[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => errors.push(args.map(String).join(' '));
+    try {
+      await setupCommand({ codex: true, quick: true }, strict);
+    } finally {
+      console.error = original;
+    }
+
+    expect(lists).toBe(2);
+    expect(process.exitCode).toBe(1);
+    expect(errors.join('\n')).toContain('enabled must be boolean');
+    expect((await loadGenieConfig()).codex?.configured).not.toBe(true);
+    expect(readFileSync(fallbackPath, 'utf8')).toBe(fallback);
   });
 
   test('an unmanaged project fallback blocks integration mutation and stays byte-identical', async () => {
@@ -160,8 +244,14 @@ describe('setup runtime and failure semantics', () => {
 
   test('missing configured Node keeps fallback and reports the actionable reason', async () => {
     const unavailable = deps();
-    unavailable.inspectPluginUsability = () => ({
+    unavailable.probeCodexGeniePlugin = () => ({
+      cliAvailable: true,
+      status: 'ok',
+      installed: true,
+      enabled: true,
+      version: VERSION,
       usable: false,
+      usabilityDetail: 'configured plugin MCP command "node" is not available on PATH',
       detail: 'configured plugin MCP command "node" is not available on PATH',
     });
     const lines: string[] = [];

@@ -1921,7 +1921,10 @@ describe('runAgentSyncSafe (agent-sync phase)', () => {
     expect(fastPathIdx).toBeLessThan(fetchIdx);
     expect(fastPathIdx).toBeLessThan(deliveryIdx);
     // The fast-path block calls the sync phase (and only that path does, pre-fetch).
-    expect(cmdBody.slice(fastPathIdx, fetchIdx)).toContain('runAgentSyncSafe()');
+    const fastPath = cmdBody.slice(fastPathIdx, fetchIdx);
+    expect(fastPath).toContain('runAgentSyncSafe()');
+    expect(fastPath).not.toContain('runTrackedManualUpdateConvergence(');
+    expect(fastPath).not.toContain('refreshUpdatePlugins(');
   });
 
   test('short-circuit (already-current) path calls the sync phase before returning', () => {
@@ -1964,6 +1967,40 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
 });
 
 describe('operator-driven plugin refresh', () => {
+  test('CLI detection is not consent: validly absent integrations remain absent', () => {
+    const calls: string[] = [];
+    const results = refreshUpdatePlugins({
+      bundleRoot: '/tmp/fixture-bundle',
+      expectedVersion: '5.260711.3',
+      detected: { codex: true, claude: true },
+      runner(command, args) {
+        calls.push(`${command} ${args.join(' ')}`);
+        if (command === 'codex') return { exitCode: 0, stdout: '{"installed":[]}', stderr: '' };
+        return { exitCode: 0, stdout: '[]', stderr: '' };
+      },
+    });
+
+    expect(results).toEqual([]);
+    expect(calls).toEqual(['codex plugin list --json', 'claude plugin list --json']);
+  });
+
+  test('indeterminate pre-update state fails closed without installing either integration', () => {
+    const calls: string[] = [];
+    const results = refreshUpdatePlugins({
+      bundleRoot: '/tmp/fixture-bundle',
+      expectedVersion: '5.260711.3',
+      detected: { codex: true, claude: true },
+      runner(command, args) {
+        calls.push(`${command} ${args.join(' ')}`);
+        return { exitCode: 0, stdout: '{}', stderr: '' };
+      },
+    });
+
+    expect(results).toHaveLength(2);
+    expect(results.every((result) => !result.ok && result.detail.includes('malformed JSON'))).toBe(true);
+    expect(calls).toEqual(['codex plugin list --json', 'claude plugin list --json']);
+  });
+
   test('recaches Codex plugin/hooks from the local bundle and preserves disabled state', () => {
     const root = mkdtempSync(join(tmpdir(), 'genie-update-plugin-refresh-'));
     const configPath = join(root, 'config.toml');
@@ -2024,6 +2061,154 @@ describe('operator-driven plugin refresh', () => {
     });
     expect(results[0]).toMatchObject({ runtime: 'codex', ok: false, timedOut: true });
     expect(results[0].detail).toContain('timed out');
+  });
+
+  test('malformed Codex post-refresh state fails and still restores the prior disabled state', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-update-plugin-failed-refresh-'));
+    const configPath = join(root, 'config.toml');
+    writeFileSync(configPath, '[plugins."genie@automagik"]\nenabled = true\n');
+    let lists = 0;
+    try {
+      const results = refreshUpdatePlugins({
+        bundleRoot: root,
+        expectedVersion: '5.260711.3',
+        detected: { codex: true, claude: false },
+        codexConfigPath: configPath,
+        runner(_command, args) {
+          if (args.join(' ') === 'plugin list --json') {
+            lists += 1;
+            return {
+              exitCode: 0,
+              stdout:
+                lists === 1
+                  ? '{"installed":[{"pluginId":"genie@automagik","enabled":false,"version":"5.260710.2"}]}'
+                  : '{"unexpected":[]}',
+              stderr: '',
+            };
+          }
+          return { exitCode: 0, stdout: '', stderr: '' };
+        },
+      });
+
+      expect(results[0]).toMatchObject({ runtime: 'codex', ok: false });
+      expect(results[0]?.detail).toMatch(/malformed JSON.*after plugin reinstall/);
+      expect(readFileSync(configPath, 'utf8')).toContain('enabled = false');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('actively restores and verifies a disabled Claude plugin after refresh', () => {
+    const calls: string[] = [];
+    const timeouts: Array<number | undefined> = [];
+    let lists = 0;
+    const results = refreshUpdatePlugins({
+      bundleRoot: '/tmp/fixture-bundle',
+      expectedVersion: '5.260711.3',
+      detected: { codex: false, claude: true },
+      timeoutMs: 777,
+      runner(command, args, options) {
+        calls.push(`${command} ${args.join(' ')}`);
+        timeouts.push(options?.timeoutMs);
+        if (args.join(' ') === 'plugin list --json') {
+          lists += 1;
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify([
+              {
+                id: 'genie@automagik',
+                enabled: lists === 1 ? false : lists === 2,
+                version: lists === 1 ? '5.260710.2' : '5.260711.3',
+              },
+            ]),
+            stderr: '',
+          };
+        }
+        return { exitCode: 0, stdout: '', stderr: '' };
+      },
+    });
+
+    expect(results).toEqual([
+      {
+        runtime: 'claude',
+        ok: true,
+        detail: 'plugin/hooks refreshed to v5.260711.3',
+        preservedDisabled: true,
+      },
+    ]);
+    expect(calls).toEqual([
+      'claude plugin list --json',
+      'claude plugin marketplace add /tmp/fixture-bundle',
+      'claude plugin update genie@automagik',
+      'claude plugin list --json',
+      'claude plugin disable genie@automagik',
+      'claude plugin list --json',
+    ]);
+    expect(timeouts.every((timeout) => timeout === 777)).toBe(true);
+  });
+
+  test('Claude disable command failure is a structured refresh failure, not preservation fiction', () => {
+    let lists = 0;
+    const results = refreshUpdatePlugins({
+      bundleRoot: '/tmp/fixture-bundle',
+      expectedVersion: '5.260711.3',
+      detected: { codex: false, claude: true },
+      runner(_command, args) {
+        if (args.join(' ') === 'plugin list --json') {
+          lists += 1;
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify([
+              {
+                id: 'genie@automagik',
+                enabled: lists !== 1,
+                version: lists === 1 ? '5.260710.2' : '5.260711.3',
+              },
+            ]),
+            stderr: '',
+          };
+        }
+        if (args.join(' ') === 'plugin disable genie@automagik') {
+          return { exitCode: 1, stdout: '', stderr: 'disable refused' };
+        }
+        return { exitCode: 0, stdout: '', stderr: '' };
+      },
+    });
+
+    expect(results[0]).toMatchObject({ runtime: 'claude', ok: false });
+    expect(results[0]?.detail).toContain('disable refused');
+    expect(results[0]?.preservedDisabled).not.toBe(true);
+  });
+
+  test('Claude post-disable state must verify disabled before preservation is reported', () => {
+    let lists = 0;
+    const results = refreshUpdatePlugins({
+      bundleRoot: '/tmp/fixture-bundle',
+      expectedVersion: '5.260711.3',
+      detected: { codex: false, claude: true },
+      runner(_command, args) {
+        if (args.join(' ') === 'plugin list --json') {
+          lists += 1;
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify([
+              {
+                id: 'genie@automagik',
+                enabled: lists !== 1,
+                version: lists === 1 ? '5.260710.2' : '5.260711.3',
+              },
+            ]),
+            stderr: '',
+          };
+        }
+        return { exitCode: 0, stdout: '', stderr: '' };
+      },
+    });
+
+    expect(lists).toBe(3);
+    expect(results[0]).toMatchObject({ runtime: 'claude', ok: false });
+    expect(results[0]?.detail).toContain('disabled-state restore verification failed');
+    expect(results[0]?.preservedDisabled).not.toBe(true);
   });
 });
 

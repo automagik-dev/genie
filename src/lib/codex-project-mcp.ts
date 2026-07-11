@@ -22,9 +22,8 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, isAbsolute, join } from 'node:path';
-import { resolveGenieHome } from './genie-home.js';
-import { codexPluginState, resolveBundleRoot } from './runtime-integrations.js';
+import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
+import { resolveCodexDir, resolveGenieHome } from './genie-home.js';
 
 export type ArtifactAction = 'created' | 'updated' | 'skipped';
 
@@ -45,6 +44,8 @@ export interface CodexPluginProbe {
   installed: boolean;
   enabled?: boolean;
   version?: string;
+  /** Exact installed/cache payload proven from the one-shot Codex snapshot. */
+  activePluginRoot?: string;
   /** Enabled is insufficient: the official in-plugin launcher and canonical binary must both be usable. */
   usable?: boolean;
   usabilityDetail?: string;
@@ -80,7 +81,8 @@ export interface CodexPluginProbeDeps {
   which?: (name: string) => string | null;
   run?: (command: string, args: string[], timeoutMs: number) => CodexProbeCommandResult;
   timeoutMs?: number;
-  inspectUsability?: () => CodexPluginMcpUsability;
+  inspectUsability?: (options: CodexPluginMcpUsabilityOptions) => CodexPluginMcpUsability;
+  codexHome?: string;
 }
 
 export interface CodexPluginMcpUsability {
@@ -93,7 +95,11 @@ export interface CodexPluginMcpUsability {
 }
 
 export interface CodexPluginMcpUsabilityOptions {
-  bundleRoot?: string | null;
+  /** Exact active installed/cache root. Source-bundle roots are not evidence of runtime health. */
+  pluginRoot?: string | null;
+  /** Snapshot identity that the active manifest must exactly match. */
+  expectedPluginName?: string;
+  expectedVersion?: string;
   genieHome?: string;
   platform?: NodeJS.Platform;
   /** Resolve the exact bare command declared by .mcp.json under the active PATH. */
@@ -118,11 +124,140 @@ const DEFAULT_PROBE_TIMEOUT_MS = 3_000;
 const MCP_WRAPPER_KEYS = ['mcpServers', 'mcp_servers', 'servers'] as const;
 const FALLBACK_BEGIN = '# BEGIN GENIE MCP FALLBACK';
 const FALLBACK_END = '# END GENIE MCP FALLBACK';
+const GENIE_PLUGIN_ID = 'genie@automagik';
+const GENIE_PLUGIN_NAME = 'genie';
+const GENIE_MARKETPLACE_NAME = 'automagik';
+const SAFE_CACHE_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/;
+
+interface CodexPluginSnapshotEntry extends JsonObject {
+  pluginId: typeof GENIE_PLUGIN_ID;
+  enabled?: boolean;
+  version?: string;
+  installedPath?: string;
+  name?: string;
+  marketplaceName?: string;
+}
+
+interface ActivePluginRootResult {
+  root?: string;
+  detail: string;
+}
 
 function normalizeGitPath(path: string): string {
   if (process.platform !== 'darwin' || !path.startsWith('/private/')) return path;
   const logical = path.slice('/private'.length);
   return existsSync(logical) ? logical : path;
+}
+
+function parseCodexPluginSnapshot(raw: string): CodexPluginSnapshotEntry | null {
+  const objectStart = raw.indexOf('{');
+  if (objectStart < 0) throw new Error('response did not contain a JSON object');
+  const parsed = JSON.parse(raw.slice(objectStart)) as unknown;
+  if (!isJsonObject(parsed) || !Array.isArray(parsed.installed)) {
+    throw new Error('response field "installed" must be an array');
+  }
+  const candidate = parsed.installed.find(
+    (entry): entry is JsonObject => isJsonObject(entry) && entry.pluginId === GENIE_PLUGIN_ID,
+  );
+  if (candidate === undefined) return null;
+  if ('enabled' in candidate && typeof candidate.enabled !== 'boolean') {
+    throw new Error(`${GENIE_PLUGIN_ID} field "enabled" must be boolean when present`);
+  }
+  for (const key of ['version', 'installedPath', 'name', 'marketplaceName'] as const) {
+    if (key in candidate && typeof candidate[key] !== 'string') {
+      throw new Error(`${GENIE_PLUGIN_ID} field ${JSON.stringify(key)} must be a string when present`);
+    }
+  }
+  if (candidate.name !== undefined && candidate.name !== GENIE_PLUGIN_NAME) {
+    throw new Error(`${GENIE_PLUGIN_ID} reports unexpected plugin name ${JSON.stringify(candidate.name)}`);
+  }
+  if (candidate.marketplaceName !== undefined && candidate.marketplaceName !== GENIE_MARKETPLACE_NAME) {
+    throw new Error(`${GENIE_PLUGIN_ID} reports unexpected marketplace ${JSON.stringify(candidate.marketplaceName)}`);
+  }
+  return candidate as CodexPluginSnapshotEntry;
+}
+
+function isSafeCacheSegment(value: string): boolean {
+  return value !== '.' && value !== '..' && SAFE_CACHE_SEGMENT.test(value);
+}
+
+function isContainedPath(parent: string, child: string): boolean {
+  const pathFromParent = relative(parent, child);
+  return (
+    pathFromParent !== '' &&
+    pathFromParent !== '..' &&
+    !pathFromParent.startsWith(`..${sep}`) &&
+    !isAbsolute(pathFromParent)
+  );
+}
+
+/**
+ * Resolve only the payload Codex says is installed. The CLI's current list
+ * snapshot omits `installedPath`, so the documented cache layout is the sole
+ * fallback: CODEX_HOME/plugins/cache/<marketplace>/<plugin>/<version>.
+ */
+function resolveReportedPluginRoot(reportedRoot: string): ActivePluginRootResult {
+  if (!isAbsolute(reportedRoot)) {
+    return { detail: `active plugin root is unproven because installedPath is not absolute: ${reportedRoot}` };
+  }
+  if (normalize(reportedRoot) !== reportedRoot) {
+    return { detail: `active plugin installedPath is not normalized or contains traversal: ${reportedRoot}` };
+  }
+  try {
+    const reportedStat = lstatSync(reportedRoot);
+    if (!reportedStat.isDirectory() || reportedStat.isSymbolicLink()) {
+      return { detail: `active plugin installedPath is not a physical directory: ${reportedRoot}` };
+    }
+    const canonicalReported = normalizeGitPath(realpathSync(reportedRoot));
+    if (canonicalReported !== normalizeGitPath(reportedRoot)) {
+      return { detail: `active plugin installedPath resolves through a symlink or outside itself: ${reportedRoot}` };
+    }
+    return { root: canonicalReported, detail: 'physical absolute installedPath reported by the Codex snapshot' };
+  } catch (error) {
+    return {
+      detail: `active plugin installedPath is unavailable or incomplete at ${reportedRoot}: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
+function resolveDerivedPluginRoot(codexHome: string, version: string): ActivePluginRootResult {
+  if (!isAbsolute(codexHome)) {
+    return { detail: `active plugin root is unproven because CODEX_HOME is not absolute: ${codexHome}` };
+  }
+  const cacheRoot = join(resolve(codexHome), 'plugins', 'cache');
+  const expectedRoot = join(cacheRoot, GENIE_MARKETPLACE_NAME, GENIE_PLUGIN_NAME, version);
+  try {
+    const cacheStat = lstatSync(cacheRoot);
+    if (!cacheStat.isDirectory() || cacheStat.isSymbolicLink()) {
+      return { detail: `active plugin cache root is not a physical directory: ${cacheRoot}` };
+    }
+    const candidateStat = lstatSync(expectedRoot);
+    if (!candidateStat.isDirectory() || candidateStat.isSymbolicLink()) {
+      return { detail: `active plugin root is not a physical directory: ${expectedRoot}` };
+    }
+    const canonicalCache = normalizeGitPath(realpathSync(cacheRoot));
+    const canonicalExpected = normalizeGitPath(realpathSync(expectedRoot));
+    if (!isContainedPath(canonicalCache, canonicalExpected)) {
+      return { detail: `derived active plugin root escapes the Codex plugin cache: ${expectedRoot}` };
+    }
+    return { root: canonicalExpected, detail: 'derived from the contained Codex plugin cache' };
+  } catch (error) {
+    return {
+      detail: `active plugin root is unavailable or incomplete at ${expectedRoot}: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
+function resolveActivePluginRoot(entry: CodexPluginSnapshotEntry, codexHome: string): ActivePluginRootResult {
+  const version = entry.version;
+  if (version === undefined || !isSafeCacheSegment(version)) {
+    return {
+      detail: `active plugin root is unproven because the Codex snapshot has no safe version for ${GENIE_PLUGIN_ID}`,
+    };
+  }
+  return entry.installedPath === undefined
+    ? resolveDerivedPluginRoot(codexHome, version)
+    : resolveReportedPluginRoot(entry.installedPath);
 }
 
 function defaultProbeRunner(command: string, args: string[], timeoutMs: number): CodexProbeCommandResult {
@@ -149,6 +284,14 @@ function resolveConfiguredNodeCommand(options: CodexPluginMcpUsabilityOptions): 
   }
   accessSync(commandPath, (options.platform ?? process.platform) === 'win32' ? constants.F_OK : constants.X_OK);
   return realpathSync(commandPath);
+}
+
+function activeManifestError(manifest: unknown, expectedName: string, expectedVersion: string): string | null {
+  if (!isJsonObject(manifest)) return 'plugin manifest must contain an object';
+  if (manifest.name !== expectedName || manifest.version !== expectedVersion) {
+    return `active plugin manifest identity/version mismatch (expected ${expectedName}@${expectedVersion})`;
+  }
+  return manifest.mcpServers === './.mcp.json' ? null : 'plugin manifest does not point mcpServers to ./.mcp.json';
 }
 
 /**
@@ -193,23 +336,37 @@ export function resolveGitWorktreeRoot(
 }
 
 /**
- * Verify the exact official plugin MCP indirection plus the only binary the
+ * Verify the exact active plugin MCP indirection plus the only binary the
  * plugin-local launcher is permitted to execute. This is a read-only check;
- * enabled plugin metadata alone never removes the absolute project fallback.
+ * enabled metadata or a healthy source bundle never removes the absolute
+ * project fallback.
  */
 export function inspectCodexPluginMcpUsability(options: CodexPluginMcpUsabilityOptions = {}): CodexPluginMcpUsability {
+  const pluginRoot = options.pluginRoot;
+  if (!pluginRoot) {
+    return {
+      usable: false,
+      detail: 'active installed Codex plugin root was not proven by the plugin snapshot',
+    };
+  }
+  if (options.expectedPluginName !== GENIE_PLUGIN_NAME || options.expectedVersion === undefined) {
+    return {
+      usable: false,
+      detail: 'active plugin manifest identity/version was not bound to the Codex snapshot',
+      pluginRoot,
+    };
+  }
   try {
-    const bundleRoot = options.bundleRoot === undefined ? resolveBundleRoot() : options.bundleRoot;
-    if (bundleRoot === null) return { usable: false, detail: 'Genie bundle root is unavailable' };
-    const pluginRoot = join(bundleRoot, 'plugins', 'genie');
     const manifestPath = join(pluginRoot, '.codex-plugin', 'plugin.json');
-    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { mcpServers?: unknown };
-    if (manifest.mcpServers !== './.mcp.json') {
-      return { usable: false, detail: 'plugin manifest does not point mcpServers to ./.mcp.json', pluginRoot };
-    }
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as unknown;
+    const manifestError = activeManifestError(manifest, options.expectedPluginName, options.expectedVersion);
+    if (manifestError !== null) return { usable: false, detail: manifestError, pluginRoot };
 
     const configPath = join(pluginRoot, '.mcp.json');
-    const config = JSON.parse(readFileSync(configPath, 'utf8')) as Record<string, unknown>;
+    const config = JSON.parse(readFileSync(configPath, 'utf8')) as unknown;
+    if (!isJsonObject(config)) {
+      return { usable: false, detail: 'plugin .mcp.json must contain an object', pluginRoot };
+    }
     if ('mcpServers' in config) {
       return { usable: false, detail: 'plugin .mcp.json uses unsupported camelCase mcpServers', pluginRoot };
     }
@@ -275,7 +432,7 @@ export function inspectCodexPluginMcpUsability(options: CodexPluginMcpUsabilityO
       commandPath,
     };
   } catch (error) {
-    return { usable: false, detail: error instanceof Error ? error.message : String(error) };
+    return { usable: false, detail: error instanceof Error ? error.message : String(error), pluginRoot };
   }
 }
 
@@ -312,25 +469,42 @@ export function probeCodexGeniePlugin(deps: CodexPluginProbeDeps = {}): CodexPlu
         detail: `codex plugin list failed: ${detail}; retaining the project fallback`,
       };
     }
-    // codexPluginState is shared with install/update. Keep this boundary
-    // fail-safe even if an external Codex version returns valid JSON with an
-    // unexpected shape.
-    const state = codexPluginState(result.stdout);
+    const snapshot = parseCodexPluginSnapshot(result.stdout);
+    if (snapshot === null) {
+      return {
+        cliAvailable: true,
+        status: 'ok',
+        installed: false,
+        usable: false,
+        usabilityDetail: 'plugin is not installed',
+        detail: `${GENIE_PLUGIN_ID} is not installed; plugin is not installed`,
+      };
+    }
+    const activeRoot = resolveActivePluginRoot(snapshot, deps.codexHome ?? resolveCodexDir());
     const usability =
-      state.installed && state.enabled === true
-        ? (deps.inspectUsability ?? inspectCodexPluginMcpUsability)()
-        : { usable: false, detail: 'plugin is not both installed and enabled' };
+      snapshot.enabled === true && activeRoot.root !== undefined
+        ? (deps.inspectUsability ?? inspectCodexPluginMcpUsability)({
+            pluginRoot: activeRoot.root,
+            expectedPluginName: GENIE_PLUGIN_NAME,
+            expectedVersion: snapshot.version,
+          })
+        : {
+            usable: false,
+            detail:
+              snapshot.enabled === true
+                ? activeRoot.detail
+                : 'plugin is installed but disabled or its enabled state is unknown',
+          };
     return {
       cliAvailable: true,
       status: 'ok',
-      installed: state.installed,
-      enabled: state.enabled,
-      version: state.version,
+      installed: true,
+      enabled: snapshot.enabled,
+      version: snapshot.version,
+      activePluginRoot: activeRoot.root,
       usable: usability.usable,
       usabilityDetail: usability.detail,
-      detail: state.installed
-        ? `genie@automagik is ${state.enabled === true ? 'enabled' : 'disabled or unknown'}; ${usability.detail}`
-        : `genie@automagik is not installed; ${usability.detail}`,
+      detail: `${GENIE_PLUGIN_ID} is ${snapshot.enabled === true ? 'enabled' : 'disabled or unknown'}; ${activeRoot.detail}; ${usability.detail}`,
     };
   } catch (error) {
     return {
@@ -476,9 +650,10 @@ function prepareCodexFallback(
     return {
       path: configPath,
       action: 'skipped',
-      ok: true,
+      ok: false,
       route: 'unmanaged-fallback',
-      detail: 'preserved existing unmanaged [mcp_servers.genie] fallback',
+      detail:
+        'preserved user-owned [mcp_servers.genie] fallback byte-for-byte, but its command is unverified; cannot claim a usable Genie MCP route',
     };
   }
 
@@ -544,9 +719,9 @@ export function inspectCodexProjectMcp(root: string, plugin: CodexPluginProbe): 
     return {
       path,
       action: 'skipped',
-      ok: true,
+      ok: false,
       route: 'unmanaged-fallback',
-      detail: `unmanaged project fallback; ${plugin.detail}`,
+      detail: `user-owned project fallback preserved but unverified; ${plugin.detail}`,
     };
   }
   return {

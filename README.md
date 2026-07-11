@@ -13,17 +13,6 @@
 
 <br />
 
-<!-- METRICS:START -->
-| Metric | Value | Window |
-|--------|-------|--------|
-| Releases shipped | 12/day | last 24h |
-| PRs merged | 40 | last 7d |
-| Avg merge time | 3.5h | last 7d |
-| SHIP rate | 18% | last 7d |
-
-*Updated 2026-07-11 by metrics-updater agent.*
-<!-- METRICS:END -->
-
 Genie is a planning-and-execution layer for AI coding agents. You describe what you want in one sentence; Genie interviews you into a plan, dispatches agents to build it in parallel, reviews the result against acceptance criteria, and hands you something ready to merge.
 
 The whole thing is a lightweight body: a set of skills, plain-markdown documents in git, and a single per-repo SQLite file. No daemons, no Postgres, nothing resident. A command opens the database, runs one transaction, and exits.
@@ -38,7 +27,9 @@ Every release is cosign-signed (keyless OIDC) with SLSA provenance; the installe
 
 The installer detects Claude Code and Codex and installs the version-matched Genie plugin for each. Control this with `--integrations auto|codex|claude|all|none` or `--skip-integrations`. Automatic integration failures warn after the verified binary succeeds; explicitly requested failures are fatal.
 
-From inside a repo, run `genie init`. Use `genie setup --codex` to install or repair the Codex plugin, role agents, MCP fallback, and backup-first dead-OTel migration. Codex never auto-trusts hooks: review them with `/hooks`, then start a new task.
+From inside a repo, run `genie init`. Use `genie setup --codex` to explicitly install or repair the Codex plugin, seven optional role-agent profiles, MCP routing, and the backup-first dead-OTel migration. `genie update` is the explicit update/convergence path. No Codex hook installs software, refreshes plugins, synchronizes personal skills, or writes project instructions.
+
+Codex never auto-trusts plugin hooks. After setup or update, inspect the three Genie definitions with `/hooks`, approve only the hashes you understand, and start a new task so the reviewed definitions take effect. Until then they remain untrusted and do not run.
 
 ## Quickstart
 
@@ -58,7 +49,7 @@ Re-run `genie board` any time for a current snapshot of task state on the kanban
 - **Skills** carry the methodology — `brainstorm → wish → work → review`, authored once for native Claude and Codex surfaces.
 - **Documents in git.** Wishes, designs, and brainstorms are plain markdown under `.genie/wishes/<slug>/` and `.genie/brainstorms/<slug>/`; you diff, review, and version them like any other code.
 - **One file of state.** Tasks, boards, dependency edges, and wish-group execution state live in a single per-repo SQLite file (`.genie/genie.db`), on Bun's built-in engine.
-- **Small.** 12 CLI commands, 4 runtime dependencies (`@inquirer/prompts`, `commander`, `zod`, `nats`) — `nats` initializes only when the omni runner starts. A ~0.9 MB single-file bundle. Bun-powered.
+- **Small.** 14 CLI commands, 4 runtime dependencies (`@inquirer/prompts`, `commander`, `zod`, `nats`) — `nats` initializes only when the omni runner starts. A ~0.9 MB single-file bundle. Bun-powered.
 - **Warp cockpit (optional).** `genie launch <slug>` turns a wish's ready groups into a Warp window — one pane per group, each in its own git worktree running that group's agent on a kickoff prompt. Emitting the launch config works on any platform; opening it needs Warp (macOS/Linux). Everywhere else the config is still written for you to open by hand.
 - **Zero daemons, no Postgres.** Nothing runs in the background between invocations.
 
@@ -74,6 +65,8 @@ genie --help
 | `genie launch` | Open a Warp cockpit for a wish — one pane per ready group, each in its own worktree |
 | `genie board` | Kanban view of task state, derived live by query |
 | `genie task` | Inspect and drive task state (SQLite, zero-daemon) |
+| `genie install` | Run the installer-owned finishing step and explicitly install selected runtime integrations |
+| `genie mcp` | Serve read-only Genie task/board state over stdio MCP |
 | `genie omni` | Bridge agents to WhatsApp via Omni — remote approvals + inbound one-shots (`serve`, `status`, `inbox`, `handshake`) |
 | `genie setup` | Configure Genie and install/repair runtime integrations |
 | `genie doctor` | Run diagnostic checks on the installation |
@@ -95,7 +88,30 @@ Skills are the product. Invoke them as `/name` in Claude or `$name`/natural lang
 | `review` | Severity-gated verdict — SHIP, FIX-FIRST, or BLOCKED |
 | `council` | Independent architecture, delivery, product, security, and dissent assessment |
 
-Shared skill bodies use a runtime-neutral delegation contract. Claude maps it to Agent/SendMessage; Codex maps it to namespaced `genie-*` custom subagents and native follow-ups. Codex subagents share a workspace, so task claims own scope; use `genie launch` when worktree isolation is required. `/level-up` remains Claude-only because it evaluates Claude Code mastery.
+Shared skill bodies use a runtime-neutral delegation contract. Codex maps it to the optional `genie_*` custom-agent profiles installed by the CLI; a plugin-only install still has skills but no custom agents. Codex subagents share a workspace, so task claims own scope; use `genie launch` when worktree isolation is required. The engineer reports completion, an independent reviewer returns a verdict, and only the orchestrator runs `genie task done`. `/level-up` remains Claude-only because it evaluates Claude Code mastery.
+
+### Codex surface boundaries
+
+These four inventories are intentionally separate:
+
+| Surface | What ships | Ownership |
+|---------|------------|-----------|
+| Codex plugin | 23 physical, in-root product skills with `agents/openai.yaml`; three untrusted hooks; MCP declaration | Versioned release payload; works without copying skills into the user tier |
+| CLI integration | Seven optional `genie_*` role-agent TOMLs under `~/.codex/agents/` | Installed/repaired by `genie install` or `genie setup --codex`; clean managed copies refresh on explicit update |
+| Personal skills | This maintainer currently has 36 separately adapted skills under `~/.agents/skills` | User-owned; not bundled with Genie and never implied by plugin installation |
+| MCP launcher | Plugin-local Node launcher for `genie mcp` | Resolves only the canonical executable under `$GENIE_HOME/bin` (default `~/.genie/bin`) and fails closed if it is missing or unsafe |
+
+The product's 23 skills and a user's personal 36-skill library can overlap by name without becoming the same asset. Genie preserves unmanaged and modified user copies instead of adopting them.
+
+### Codex hooks: three reviewed behaviors
+
+| Event | Behavior | Side effects |
+|-------|----------|--------------|
+| `SessionStart` (H3) | Reads at most eight small local wish records and emits validated slug/status/count context, capped at 2 KiB | Read-only; no titles, free-form repository text, network, install, update, or writes |
+| `PreToolUse` (H4) | Runs local deterministic branch/freshness/identity guardrails for documented Bash/edit inputs | May read repository and Git/GitHub state; never calls Omni and never installs or synchronizes anything. It is a guardrail, not a substitute for sandbox policy or branch protection |
+| `PermissionRequest` (H6) | Applies the configured matcher and, only when Omni approvals are explicitly enabled, queues one bounded/redacted remote decision | The only retained hook allowed to write approval-queue state; failure, timeout, malformed output, or interruption denies with a reason |
+
+The removed hooks were the startup installer, first-run `AGENTS.md` writer, pre/post wish validators, per-prompt context reinjection, and inert completion validator. Setup and updates are operator commands, never lifecycle side effects.
 
 ## How it works
 
@@ -109,7 +125,7 @@ All linked worktrees of a repository share one `genie.db`, resolved from the git
 
 **How it works** (verified by the test suite against a fake transport; the live WhatsApp round-trip is a documented manual-QA step — see `.genie/wishes/omni-runner-port/qa.md`):
 
-- **Remote approvals.** Reply `y`/`n` (or `sim`/`nao`) or react 👍/👎. Claude times out to local `ask`; Codex returns no `PermissionRequest` decision, so normal local approval continues. Codex remote approval remains off by default until the interactive allow/deny/timeout spike passes.
+- **Remote approvals.** Reply `y`/`n` (or `sim`/`nao`) or react 👍/👎. The feature is off by default. When explicitly enabled, Codex evaluates Omni exactly once on a matching `PermissionRequest`; approval allows, denial denies, and timeout/transport/interruption returns a reasoned deny rather than silently allowing the tool. `PreToolUse` never waits on Omni.
 - **Inbound one-shots.** Each mapped chat selects `agent: claude|codex`. Codex JSONL thread ids persist per provider/instance/chat and resume on later messages. Unmapped chats are stored, not answered.
 
 **What it needs:**
@@ -121,7 +137,7 @@ All linked worktrees of a repository share one `genie.db`, resolved from the git
 
 ## MCP server (Warp + Claude Code + Codex)
 
-`genie mcp` is a zero-dependency, read-only [MCP](https://modelcontextprotocol.io) server over stdio. The Codex plugin bundles it; when the plugin is absent, `genie init` merges an absolute-path fallback into project `.codex/config.toml` without duplicating the server.
+`genie mcp` is a zero-dependency, read-only [MCP](https://modelcontextprotocol.io) server over stdio. The Codex plugin bundles a declaration and a small launcher, not another Genie binary. The launcher resolves only `$GENIE_HOME/bin/genie` (default `~/.genie/bin/genie`); missing, symlinked, or path-escaped executables fail closed. When the plugin is absent or unusable, `genie init` merges an absolute-path fallback into project `.codex/config.toml` without duplicating the server.
 
 **How it gets picked up.** `genie init` registers Claude and Warp project configs. Codex normally gets MCP from the plugin; only a plugin-less Codex installation receives the project fallback. `genie launch` applies the same policy to its worktrees:
 

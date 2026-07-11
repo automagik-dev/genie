@@ -17,6 +17,8 @@ import {
   inspectCodexAgentOwnership,
   installCodexAgents,
   installRuntimeIntegrations,
+  parseClaudePluginState,
+  parseCodexPluginState,
   removeCodexAgents,
   removeRuntimeIntegrations,
   resolveBundleRoot,
@@ -69,6 +71,25 @@ describe('runtime plugin state', () => {
       enabled: true,
       version: '1.2.3',
     });
+    expect(parseCodexPluginState('{}')).toMatchObject({ ok: false });
+    expect(parseClaudePluginState('{}')).toMatchObject({ ok: false });
+  });
+
+  for (const [label, entry] of [
+    ['missing enabled', { pluginId: 'genie@automagik', version: VERSION }],
+    ['string enabled', { pluginId: 'genie@automagik', enabled: 'false', version: VERSION }],
+    ['missing version', { pluginId: 'genie@automagik', enabled: false }],
+    ['non-string version', { pluginId: 'genie@automagik', enabled: false, version: 123 }],
+    ['unsafe version', { pluginId: 'genie@automagik', enabled: false, version: '5.0.0\nforged' }],
+  ] as const) {
+    test(`rejects a Codex matching entry with ${label}`, () => {
+      expect(parseCodexPluginState(JSON.stringify({ installed: [entry] }))).toMatchObject({ ok: false });
+    });
+  }
+
+  test('rejects duplicate Codex matching entries instead of trusting the first', () => {
+    const entry = { pluginId: 'genie@automagik', enabled: true, version: VERSION };
+    expect(parseCodexPluginState(JSON.stringify({ installed: [entry, entry] }))).toMatchObject({ ok: false });
   });
 
   test('restores an explicit Codex disabled state without touching other plugins', () => {
@@ -89,6 +110,7 @@ describe('runtime plugin state', () => {
       'disable_paste_burst = true\n[otel]\nexporter = { otlp-http = { endpoint = "http://127.0.0.1:14318/v1/traces", protocol = "binary" } }\n',
     );
     const calls: string[] = [];
+    let lists = 0;
     const results = installRuntimeIntegrations({
       selection: 'codex',
       bundleRoot: join(import.meta.dir, '..', '..'),
@@ -96,9 +118,22 @@ describe('runtime plugin state', () => {
       detected: { codex: true },
       runner(command, args) {
         calls.push([command, ...args].join(' '));
+        if (args.join(' ') === 'plugin list --json') {
+          lists += 1;
+          return {
+            exitCode: 0,
+            stdout:
+              lists === 1
+                ? '{"installed":[]}'
+                : JSON.stringify({
+                    installed: [{ pluginId: 'genie@automagik', enabled: true, version: VERSION }],
+                  }),
+            stderr: '',
+          };
+        }
         return {
           exitCode: 0,
-          stdout: args.join(' ') === 'plugin list --json' ? '{"installed":[]}' : '{}',
+          stdout: '{}',
           stderr: '',
         };
       },
@@ -272,6 +307,62 @@ describe('codex repair convergence (stale marketplace root / stale installed plu
     expect(results[0]?.ok).toBe(false);
     expect(results[0]?.detail).toMatch(/stuck at v5\.260710\.9/);
   });
+
+  for (const [label, postState, expected] of [
+    ['missing', '{"installed":[]}', /missing after plugin add/],
+    ['malformed', '{"unexpected":[]}', /malformed JSON.*after plugin add/],
+  ] as const) {
+    test(`${label} post-add state is a failure, never a false refreshed result`, () => {
+      const bundleRoot = join(import.meta.dir, '..', '..');
+      let lists = 0;
+      const result = installRuntimeIntegrations({
+        selection: 'codex',
+        bundleRoot,
+        codexHome: makeCodexHome(),
+        detected: { codex: true },
+        runner(_command, args) {
+          if (args.join(' ') === 'plugin list --json') {
+            lists += 1;
+            return { exitCode: 0, stdout: lists === 1 ? '{"installed":[]}' : postState, stderr: '' };
+          }
+          return { exitCode: 0, stdout: '{}', stderr: '' };
+        },
+      })[0];
+
+      expect(result?.ok).toBe(false);
+      expect(result?.detail).toMatch(expected);
+    });
+  }
+
+  for (const [label, repairedState, expected] of [
+    ['missing', '{"installed":[]}', /missing after plugin reinstall/],
+    ['malformed', '{"unexpected":[]}', /malformed JSON.*after plugin reinstall/],
+  ] as const) {
+    test(`${label} post-reinstall state is a failure`, () => {
+      const bundleRoot = join(import.meta.dir, '..', '..');
+      let lists = 0;
+      const result = installRuntimeIntegrations({
+        selection: 'codex',
+        bundleRoot,
+        codexHome: makeCodexHome(),
+        detected: { codex: true },
+        runner(_command, args) {
+          if (args.join(' ') === 'plugin list --json') {
+            lists += 1;
+            return {
+              exitCode: 0,
+              stdout: lists === 1 ? currentList : lists === 2 ? staleList : repairedState,
+              stderr: '',
+            };
+          }
+          return { exitCode: 0, stdout: '{}', stderr: '' };
+        },
+      })[0];
+
+      expect(result?.ok).toBe(false);
+      expect(result?.detail).toMatch(expected);
+    });
+  }
 });
 
 describe('installed-layout integration (no explicit bundleRoot)', () => {
@@ -287,15 +378,29 @@ describe('installed-layout integration (no explicit bundleRoot)', () => {
     process.env.GENIE_HOME = home;
     const codexHome = mkdtempSync(join(tmpdir(), 'genie-codex-home-'));
     const calls: string[] = [];
+    let lists = 0;
     const results = installRuntimeIntegrations({
       selection: 'codex',
       codexHome,
       detected: { codex: true },
       runner(command, args) {
         calls.push([command, ...args].join(' '));
+        if (args.join(' ') === 'plugin list --json') {
+          lists += 1;
+          return {
+            exitCode: 0,
+            stdout:
+              lists === 1
+                ? '{"installed":[]}'
+                : JSON.stringify({
+                    installed: [{ pluginId: 'genie@automagik', enabled: true, version: VERSION }],
+                  }),
+            stderr: '',
+          };
+        }
         return {
           exitCode: 0,
-          stdout: args.join(' ') === 'plugin list --json' ? '{"installed":[]}' : '{}',
+          stdout: '{}',
           stderr: '',
         };
       },

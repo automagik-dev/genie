@@ -1,8 +1,18 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
   type CodexPluginProbe,
   inspectCodexPluginMcpUsability,
@@ -44,6 +54,37 @@ afterEach(() => {
 
 function git(cwd: string, args: string[]): string {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+}
+
+function seedActivePlugin(version = '1.2.3'): {
+  codexHome: string;
+  pluginRoot: string;
+  genieHome: string;
+  nodePath: string;
+  version: string;
+} {
+  const codexHome = join(root, 'codex-home');
+  const pluginRoot = join(codexHome, 'plugins', 'cache', 'automagik', 'genie', version);
+  mkdirSync(dirname(pluginRoot), { recursive: true });
+  cpSync(join(import.meta.dir, '..', '..', 'plugins', 'genie'), pluginRoot, {
+    recursive: true,
+    dereference: false,
+    verbatimSymlinks: true,
+  });
+  const manifestPath = join(pluginRoot, '.codex-plugin', 'plugin.json');
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
+  manifest.version = version;
+  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  const genieHome = join(root, 'genie-home');
+  const binary = join(genieHome, 'bin', process.platform === 'win32' ? 'genie.exe' : 'genie');
+  const nodePath = join(root, 'controlled-bin', 'node');
+  mkdirSync(dirname(binary), { recursive: true });
+  mkdirSync(dirname(nodePath), { recursive: true });
+  writeFileSync(binary, 'fixture binary');
+  writeFileSync(nodePath, 'fixture node');
+  chmodSync(binary, 0o755);
+  chmodSync(nodePath, 0o755);
+  return { codexHome, pluginRoot, genieHome, nodePath, version };
 }
 
 describe('resolveGitWorktreeRoot', () => {
@@ -92,33 +133,136 @@ describe('probeCodexGeniePlugin', () => {
   });
 
   test('enabled metadata is usable only when the launcher and canonical binary inspection passes', () => {
+    const fixture = seedActivePlugin('1');
     const probe = probeCodexGeniePlugin({
       which: () => '/bin/codex',
+      codexHome: fixture.codexHome,
       run: () => ({
         exitCode: 0,
-        stdout: '{"installed":[{"pluginId":"genie@automagik","enabled":true,"version":"1"}]}',
+        stdout:
+          '{"installed":[{"pluginId":"genie@automagik","name":"genie","marketplaceName":"automagik","enabled":true,"version":"1"}]}',
         stderr: '',
       }),
-      inspectUsability: () => ({ usable: true, detail: 'fixture launcher usable' }),
+      inspectUsability: (options) => {
+        expect(options.pluginRoot).toBe(fixture.pluginRoot);
+        return { usable: true, detail: 'fixture launcher usable', pluginRoot: options.pluginRoot ?? undefined };
+      },
     });
-    expect(probe).toMatchObject({ status: 'ok', installed: true, enabled: true, usable: true });
+    expect(probe).toMatchObject({
+      status: 'ok',
+      installed: true,
+      enabled: true,
+      usable: true,
+      activePluginRoot: fixture.pluginRoot,
+    });
     expect(probe.detail).toContain('fixture launcher usable');
+  });
+
+  test('missing active cache is unproven even when an enabled source plugin is healthy', () => {
+    const sourceRoot = join(root, 'source');
+    mkdirSync(join(sourceRoot, 'plugins'), { recursive: true });
+    cpSync(join(import.meta.dir, '..', '..', 'plugins', 'genie'), join(sourceRoot, 'plugins', 'genie'), {
+      recursive: true,
+      dereference: false,
+      verbatimSymlinks: true,
+    });
+    expect(existsSync(join(sourceRoot, 'plugins', 'genie', 'scripts', 'mcp-launcher.cjs'))).toBe(true);
+    let inspected = false;
+    const probe = probeCodexGeniePlugin({
+      which: () => '/bin/codex',
+      codexHome: join(root, 'codex-home'),
+      run: () => ({
+        exitCode: 0,
+        stdout: '{"installed":[{"pluginId":"genie@automagik","enabled":true,"version":"9.9.9"}]}',
+        stderr: '',
+      }),
+      inspectUsability: () => {
+        inspected = true;
+        return { usable: true, detail: 'must not inspect source' };
+      },
+    });
+    expect(inspected).toBe(false);
+    expect(probe).toMatchObject({ status: 'ok', installed: true, enabled: true, usable: false });
+    expect(probe.activePluginRoot).toBeUndefined();
+    expect(probe.usabilityDetail).toContain('active plugin root is unavailable or incomplete');
+  });
+
+  test('unsafe snapshot version and escaped installedPath both fail closed before inspection', () => {
+    const fixture = seedActivePlugin('1.2.3');
+    mkdirSync(join(root, 'source', 'plugins', 'genie'), { recursive: true });
+    for (const entry of [
+      { pluginId: 'genie@automagik', enabled: true, version: '../../source' },
+      {
+        pluginId: 'genie@automagik',
+        enabled: true,
+        version: '1.2.3',
+        installedPath: `${root}/source/../source/plugins/genie`,
+      },
+    ]) {
+      let inspected = false;
+      const probe = probeCodexGeniePlugin({
+        which: () => '/bin/codex',
+        codexHome: fixture.codexHome,
+        run: () => ({ exitCode: 0, stdout: JSON.stringify({ installed: [entry] }), stderr: '' }),
+        inspectUsability: () => {
+          inspected = true;
+          return { usable: true, detail: 'unexpected' };
+        },
+      });
+      expect(inspected).toBe(false);
+      expect(probe.usable).toBe(false);
+      expect(probe.activePluginRoot).toBeUndefined();
+      expect(probe.usabilityDetail).toMatch(/no safe version|traversal/);
+    }
+  });
+
+  test('a physical absolute installedPath is accepted, but manifest mismatch and symlink roots fail closed', () => {
+    const fixture = seedActivePlugin('7.8.9');
+    const installedPath = join(root, 'reported-plugin');
+    cpSync(fixture.pluginRoot, installedPath, { recursive: true, dereference: false, verbatimSymlinks: true });
+    const snapshot = (path: string) =>
+      JSON.stringify({
+        installed: [
+          { pluginId: 'genie@automagik', name: 'genie', enabled: true, version: fixture.version, installedPath: path },
+        ],
+      });
+    const probe = (path: string) =>
+      probeCodexGeniePlugin({
+        which: () => '/bin/codex',
+        codexHome: fixture.codexHome,
+        run: () => ({ exitCode: 0, stdout: snapshot(path), stderr: '' }),
+        inspectUsability: (options) =>
+          inspectCodexPluginMcpUsability({
+            ...options,
+            genieHome: fixture.genieHome,
+            resolveCommand: () => fixture.nodePath,
+          }),
+      });
+    expect(probe(installedPath)).toMatchObject({ usable: true, activePluginRoot: installedPath });
+
+    const manifestPath = join(installedPath, '.codex-plugin', 'plugin.json');
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
+    manifest.version = 'wrong';
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+    expect(probe(installedPath).usabilityDetail).toContain('identity/version mismatch');
+
+    const symlinkPath = join(root, 'reported-link');
+    symlinkSync(installedPath, symlinkPath, 'dir');
+    expect(probe(symlinkPath).usabilityDetail).toContain('not a physical directory');
   });
 });
 
 describe('official plugin MCP usability', () => {
-  test('requires the committed launcher plus an executable canonical GENIE_HOME binary', () => {
-    const genieHome = join(root, 'genie-home');
-    const binary = join(genieHome, 'bin', process.platform === 'win32' ? 'genie.exe' : 'genie');
-    const nodePath = join(root, 'controlled-bin', 'node');
-    mkdirSync(join(genieHome, 'bin'), { recursive: true });
-    mkdirSync(join(root, 'controlled-bin'), { recursive: true });
-    writeFileSync(binary, 'fixture binary');
-    writeFileSync(nodePath, 'fixture node');
-    chmodSync(binary, 0o755);
-    chmodSync(nodePath, 0o755);
-    const bundleRoot = join(import.meta.dir, '..', '..');
-    const options = { bundleRoot, genieHome, resolveCommand: () => nodePath };
+  test('requires the active cached launcher plus an executable canonical GENIE_HOME binary', () => {
+    const fixture = seedActivePlugin();
+    const binary = join(fixture.genieHome, 'bin', process.platform === 'win32' ? 'genie.exe' : 'genie');
+    const options = {
+      pluginRoot: fixture.pluginRoot,
+      expectedPluginName: 'genie',
+      expectedVersion: fixture.version,
+      genieHome: fixture.genieHome,
+      resolveCommand: () => fixture.nodePath,
+    };
     expect(inspectCodexPluginMcpUsability(options).usable).toBe(true);
     rmSync(binary);
     const missing = inspectCodexPluginMcpUsability(options);
@@ -127,14 +271,12 @@ describe('official plugin MCP usability', () => {
   });
 
   test('missing configured Node command keeps the absolute project fallback', () => {
-    const genieHome = join(root, 'genie-home');
-    const binary = join(genieHome, 'bin', process.platform === 'win32' ? 'genie.exe' : 'genie');
-    mkdirSync(join(genieHome, 'bin'), { recursive: true });
-    writeFileSync(binary, 'fixture binary');
-    chmodSync(binary, 0o755);
+    const fixture = seedActivePlugin();
     const usability = inspectCodexPluginMcpUsability({
-      bundleRoot: join(import.meta.dir, '..', '..'),
-      genieHome,
+      pluginRoot: fixture.pluginRoot,
+      expectedPluginName: 'genie',
+      expectedVersion: fixture.version,
+      genieHome: fixture.genieHome,
       resolveCommand: () => null,
     });
     expect(usability.usable).toBe(false);
@@ -155,25 +297,41 @@ describe('official plugin MCP usability', () => {
   });
 
   test('unsupported camelCase plugin MCP config fails closed', () => {
-    const bundleRoot = join(root, 'bundle');
-    const pluginRoot = join(bundleRoot, 'plugins', 'genie');
-    mkdirSync(join(bundleRoot, 'plugins'), { recursive: true });
-    cpSync(join(import.meta.dir, '..', '..', 'plugins', 'genie'), pluginRoot, {
-      recursive: true,
-      dereference: false,
-      verbatimSymlinks: true,
-    });
+    const fixture = seedActivePlugin();
     writeFileSync(
-      join(pluginRoot, '.mcp.json'),
+      join(fixture.pluginRoot, '.mcp.json'),
       JSON.stringify({
         mcpServers: {
           genie: { command: 'node', args: ['./scripts/mcp-launcher.cjs'], cwd: '.' },
         },
       }),
     );
-    const result = inspectCodexPluginMcpUsability({ bundleRoot, genieHome: join(root, 'genie-home') });
+    const result = inspectCodexPluginMcpUsability({
+      pluginRoot: fixture.pluginRoot,
+      expectedPluginName: 'genie',
+      expectedVersion: fixture.version,
+      genieHome: fixture.genieHome,
+      resolveCommand: () => fixture.nodePath,
+    });
     expect(result.usable).toBe(false);
     expect(result.detail).toContain('unsupported camelCase mcpServers');
+  });
+
+  test('healthy source does not mask a missing launcher in the active cached payload', () => {
+    const fixture = seedActivePlugin();
+    const sourceLauncher = join(import.meta.dir, '..', '..', 'plugins', 'genie', 'scripts', 'mcp-launcher.cjs');
+    expect(existsSync(sourceLauncher)).toBe(true);
+    rmSync(join(fixture.pluginRoot, 'scripts', 'mcp-launcher.cjs'));
+    const result = inspectCodexPluginMcpUsability({
+      pluginRoot: fixture.pluginRoot,
+      expectedPluginName: 'genie',
+      expectedVersion: fixture.version,
+      genieHome: fixture.genieHome,
+      resolveCommand: () => fixture.nodePath,
+    });
+    expect(result.usable).toBe(false);
+    expect(result.pluginRoot).toBe(fixture.pluginRoot);
+    expect(result.detail).toMatch(/no such file|ENOENT/);
   });
 });
 
@@ -212,6 +370,31 @@ describe('Codex plugin/fallback reconciliation', () => {
     expect(reconcileCodexProjectMcp(root, failed, { command: '/g', args: ['mcp'] }).action).toBe('skipped');
   });
 
+  test('enabled plugin with an incomplete active cache retains the marker-owned absolute fallback', () => {
+    const fixture = seedActivePlugin('4.5.6');
+    rmSync(join(fixture.pluginRoot, 'scripts', 'mcp-launcher.cjs'));
+    const probe = probeCodexGeniePlugin({
+      which: () => '/bin/codex',
+      codexHome: fixture.codexHome,
+      run: () => ({
+        exitCode: 0,
+        stdout: '{"installed":[{"pluginId":"genie@automagik","enabled":true,"version":"4.5.6"}]}',
+        stderr: '',
+      }),
+      inspectUsability: (options) =>
+        inspectCodexPluginMcpUsability({
+          ...options,
+          genieHome: fixture.genieHome,
+          resolveCommand: () => fixture.nodePath,
+        }),
+    });
+    expect(probe).toMatchObject({ installed: true, enabled: true, usable: false });
+    expect(probe.usabilityDetail).toMatch(/no such file|ENOENT/);
+    const result = reconcileCodexProjectMcp(root, probe, { command: '/absolute/genie', args: ['mcp'] });
+    expect(result).toMatchObject({ ok: true, route: 'fallback', action: 'created' });
+    expect(readFileSync(configPath(), 'utf8')).toContain('command = "/absolute/genie"');
+  });
+
   test('marker-owned fallback updates its canonical absolute command without duplication', () => {
     expect(reconcileCodexProjectMcp(root, disabled, { command: '/old/genie', args: ['mcp'] }).action).toBe('created');
     expect(reconcileCodexProjectMcp(root, disabled, { command: '/new/genie', args: ['mcp'] }).action).toBe('updated');
@@ -229,6 +412,25 @@ describe('Codex plugin/fallback reconciliation', () => {
     expect(result).toMatchObject({ ok: false, route: 'conflict', action: 'skipped' });
     expect(readFileSync(configPath(), 'utf8')).toBe(original);
     expect(preflightCodexPluginMutation(root)).toMatchObject({ ok: false, path: configPath() });
+  });
+
+  test('an unmanaged fallback is preserved byte-for-byte but remains unverified when plugin health is unknown', () => {
+    mkdirSync(join(root, '.codex'), { recursive: true });
+    const original = '# personal route\n[mcp_servers.genie]\ncommand = "/personal"\nargs = ["mcp"]\n';
+    writeFileSync(configPath(), original);
+    const unproven: CodexPluginProbe = {
+      cliAvailable: true,
+      status: 'ok',
+      installed: true,
+      enabled: true,
+      usable: false,
+      detail: 'active plugin cache missing',
+    };
+    const result = reconcileCodexProjectMcp(root, unproven, { command: '/absolute/genie', args: ['mcp'] });
+    expect(result).toMatchObject({ ok: false, route: 'unmanaged-fallback', action: 'skipped' });
+    expect(result.detail).toContain('unverified');
+    expect(readFileSync(configPath(), 'utf8')).toBe(original);
+    expect(inspectCodexProjectMcp(root, unproven)).toMatchObject({ ok: false, route: 'unmanaged-fallback' });
   });
 });
 
@@ -252,5 +454,20 @@ describe('registerProjectMcpConfigs', () => {
     registerProjectMcpConfigs(root, { pluginProbe: enabled, entry: { command: '/g', args: ['mcp'] } });
     expect(inspectCodexProjectMcp(root, enabled).route).toBe('plugin');
     expect(readFileSync(join(root, '.codex', 'config.toml'), 'utf8')).not.toContain('GENIE MCP FALLBACK');
+  });
+
+  test('unverified unmanaged fallback aborts planning before any sibling config is written', () => {
+    mkdirSync(join(root, '.codex'), { recursive: true });
+    const original = '[mcp_servers.genie]\ncommand = "/personal"\nargs = ["mcp"]\n';
+    writeFileSync(join(root, '.codex', 'config.toml'), original);
+    expect(() =>
+      registerProjectMcpConfigs(root, {
+        pluginProbe: disabled,
+        entry: { command: '/absolute/genie', args: ['mcp'] },
+      }),
+    ).toThrow(/preserved.*unverified|unverified.*usable/i);
+    expect(readFileSync(join(root, '.codex', 'config.toml'), 'utf8')).toBe(original);
+    expect(existsSync(join(root, '.mcp.json'))).toBe(false);
+    expect(existsSync(join(root, '.warp', '.mcp.json'))).toBe(false);
   });
 });

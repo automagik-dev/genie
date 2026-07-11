@@ -9,11 +9,12 @@
 | **Appetite** | medium — bounded release hardening, not a redesign |
 | **Branch** | `fix/pr2545-ultra-gate` |
 | **Repos touched** | `automagik-dev/genie` |
-| **Design** | Seven Ultra specialist lanes plus native Codex review of PR #2545 at `42c11eeb` |
+| **Design** | Seven Ultra specialist lanes plus native Codex review of PR #2545 at `42c11eeb`; follow-up rebased onto `dev` `5101fd35` |
+| **Promotion state** | PR #2545 merged via `6f682e2b` from promoted source `10ceb2c0`; this wish now ships as a follow-up targeting `dev` |
 
 ## Summary
 
-Make the Codex integration in PR #2545 safe to install, update, review, and trust. The reviewed head is merge-conflict-free, but promotion is blocked by unsafe lifecycle hooks, a missing source-plugin skill payload, personal-data ownership failures, a red required gate, and confirmed install/update/Omni regressions.
+Make the Codex integration introduced by PR #2545 safe to install, update, review, and trust. The original PR has since merged; this branch is a bounded follow-up on current `dev`, not a retroactive claim that the reviewed PR passed its blocked gates. Implementation has replaced the nine-command hook set, physicalized the skill payload, and hardened ownership/lifecycle paths, while aggregate validation, exact-final-SHA GitHub CI, human approval, and stable-release authorization remain open.
 
 The review ledger is [`REVIEW-DISPOSITION.md`](./REVIEW-DISPOSITION.md), the exact nine-command audit is [`HOOK-AUDIT.md`](./HOOK-AUDIT.md), and the read-only user-asset baseline is [`USER-ASSET-BASELINE.md`](./USER-ASSET-BASELINE.md). Every implementation claim must close against those artifacts rather than a prose-only “remaining issues” bucket.
 
@@ -54,7 +55,7 @@ The review ledger is [`REVIEW-DISPOSITION.md`](./REVIEW-DISPOSITION.md), the exa
 - [ ] A source marketplace install and an extracted release plugin both contain every declared Codex skill inside the plugin root, with valid Codex skill metadata.
 - [ ] `genie update` and uninstall leave the 36 installed adapted user skills and modified role TOMLs byte-identical; Genie-owned clean artifacts still update/remove normally.
 - [ ] Final-versus-prerelease ordering, identical/stale auxiliary trees, every PR-added auxiliary-tree swap stage, future-dated locks, lost Codex resume threads, blank JSONL output, and option-like prompts have regression coverage.
-- [ ] `bun run check`, `bun test`, targeted lifecycle/hook/package tests, and `git merge-tree --write-tree origin/main HEAD` pass on the final head.
+- [ ] `bun run check`, `bun test`, targeted lifecycle/hook/package tests, and `git merge-tree --write-tree origin/dev HEAD` pass on the final follow-up head.
 - [ ] The final review returns SHIP for the implemented scope; hooks remain untrusted until the installed cache is refreshed and the user reviews each retained hash in a new task.
 - [ ] `REVIEW-DISPOSITION.md` has final evidence for every panel/native finding, and no inherited stable-release blocker is mislabeled as closed by this PR.
 - [ ] `USER-ASSET-BASELINE.md` is unchanged after isolated fixture tests and a final read-only live comparison.
@@ -310,7 +311,7 @@ bun test src/lib/omni-runner.test.ts
 bun run check
 bun test
 git diff --check
-git merge-tree --write-tree origin/main HEAD
+git merge-tree --write-tree origin/dev HEAD
 ```
 
 **depends-on:** A, B, C, D1, D2, D3
@@ -345,7 +346,9 @@ git merge-tree --write-tree origin/main HEAD
 
 Seven-lane specialist panel at the starting head: Repository hygiene BLOCKED; security/supply-chain BLOCKED; architecture, code quality, QA, performance, and DX/docs FIX-FIRST. Native Codex review added ten diff-local findings. No lane returned SHIP.
 
-Plan review round 1 returned FIX-FIRST. This revision adds the canonical skill source/mirror contract, exact file ownership, complete finding and hook ledgers, a live-asset digest baseline, split lifecycle groups, and a separate inherited stable-release blocker.
+Plan review rounds 1 and 2 returned FIX-FIRST. Round 3 returned SHIP after the plan added the canonical skill source/mirror contract, exact file ownership, complete finding and hook ledgers, a live-asset digest baseline, split lifecycle groups, and a separate inherited stable-release blocker.
+
+Execution update 2026-07-11: PR #2545 merged via `6f682e2b` from source `10ceb2c0`. Remediation commit `a2e3155a` was rebased onto `dev` `5101fd35`; Group E continues as an uncommitted follow-up. `WISH.md` stays IN_PROGRESS until the aggregate suite, exact-final-SHA GitHub jobs, final post-test baseline comparison, and independent approval are recorded. Rows F16–F18/F31 remain stable-release blockers regardless of the follow-up verdict.
 
 ---
 
