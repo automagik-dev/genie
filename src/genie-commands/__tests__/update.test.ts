@@ -12,7 +12,18 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AgentSyncReport } from '../../lib/agent-sync';
@@ -35,14 +46,18 @@ import {
   fetchLatestManifest,
   finalizeAuxiliaryDelivery,
   formatVerifyBanner,
+  hashPhysicalFileIncrementally,
   isGenieProcessSnapshotLine,
   manifestUrlForChannel,
   normalizeVersion,
   persistChannel,
+  pruneSameVersionBackups,
+  quarantinePendingDelivery,
   recordPendingDelivery,
   resolveChannel,
   resolveLiveBinaryPath,
   resolvePlatformId,
+  resolveUpdateExecutionMode,
   resumePendingDelivery,
   rollbackBinary,
   runAgentSyncSafe,
@@ -60,7 +75,9 @@ import {
 function refreshUpdatePlugins(options: RefreshUpdatePluginsOptions) {
   return refreshUpdatePluginsWithPhysicalVerification({
     ...options,
+    resolveExecutable: options.resolveExecutable ?? ((name) => name),
     verifyCodexPayload: options.verifyCodexPayload ?? (() => undefined),
+    verifyClaudePayload: options.verifyClaudePayload ?? (() => undefined),
   });
 }
 
@@ -407,7 +424,7 @@ describe('updateCommand wiring', () => {
     const cmdStart = source.indexOf('export async function updateCommand');
     expect(cmdStart).toBeGreaterThan(-1);
     const cmdBody = source.slice(cmdStart);
-    const rollbackIdx = cmdBody.indexOf('options.rollback');
+    const rollbackIdx = cmdBody.indexOf("mode === 'rollback'");
     const downloadIdx = cmdBody.indexOf('await downloadAndVerifyTarball(');
     expect(rollbackIdx).toBeGreaterThan(-1);
     expect(downloadIdx).toBeGreaterThan(-1);
@@ -1113,6 +1130,26 @@ describe('atomicBinarySwap (G5)', () => {
 
       const result = atomicBinarySwap(stagedBin, targetBin, previousDir, '4.260507.0');
       expect(readFileSync(result.oldVersionBackup as string, 'utf-8')).toBe('CURRENT');
+      expect(readdirSync(previousDir)).toHaveLength(2);
+      expect(pruneSameVersionBackups(previousDir, '4.260507.0', result.oldVersionBackup as string)).toHaveLength(1);
+      expect(readdirSync(previousDir)).toEqual([expect.stringMatching(/^genie-4\.260507\.0(?:\.|$)/)]);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('preserves a journal-bound source while removing the redundant swap copy', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'genie-swap-journal-source-'));
+    try {
+      const stagedBin = join(tmp, 'staged', 'genie');
+      const targetBin = join(tmp, 'bin', 'genie');
+      mkdirSync(join(tmp, 'staged'), { recursive: true });
+      writeFileSync(stagedBin, 'NEW');
+      atomicBinarySwap(stagedBin, targetBin, join(tmp, 'bin', '.previous'), '4.260507.0', {
+        preserveSource: true,
+      });
+      expect(readFileSync(stagedBin, 'utf8')).toBe('NEW');
+      expect(readFileSync(targetBin, 'utf8')).toBe('NEW');
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
@@ -1470,6 +1507,43 @@ describe('auxiliary VERSION and extraction finalization gate', () => {
 });
 
 describe('durable pending delivery recovery', () => {
+  test('incremental hashing matches SHA-256 across multiple fixed-size reads', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-incremental-hash-'));
+    const path = join(root, 'payload');
+    const bytes = Buffer.alloc(3 * 1024 * 1024 + 17, 0x5a);
+    try {
+      writeFileSync(path, bytes);
+      expect(hashPhysicalFileIncrementally(path, 64 * 1024)).toBe(createHash('sha256').update(bytes).digest('hex'));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('explicit update modes are resolved before recovery and cannot conflict', () => {
+    expect(resolveUpdateExecutionMode({}, undefined)).toBe('normal');
+    expect(resolveUpdateExecutionMode({ syncOnly: true }, undefined)).toBe('sync-only');
+    expect(resolveUpdateExecutionMode({}, '1')).toBe('sync-only');
+    expect(resolveUpdateExecutionMode({ rollback: true }, '1')).toBe('rollback');
+    expect(() => resolveUpdateExecutionMode({ rollback: true, syncOnly: true }, undefined)).toThrow(
+      '--rollback and --sync-only cannot be used together',
+    );
+  });
+
+  test('rollback quarantine atomically removes a pending journal from the recovery path', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-pending-cancel-'));
+    const journal = join(root, '.pending-delivery.json');
+    writeFileSync(journal, '{"schemaVersion":2}\n', { mode: 0o600 });
+    try {
+      const quarantined = quarantinePendingDelivery(journal);
+      expect(quarantined).not.toBeNull();
+      expect(existsSync(journal)).toBe(false);
+      expect(quarantined && existsSync(quarantined)).toBe(true);
+      expect(quarantinePendingDelivery(journal)).toBeNull();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('resumes local auxiliary convergence before clearing the journal', () => {
     const root = mkdtempSync(join(tmpdir(), 'genie-pending-delivery-'));
     const home = join(root, 'home');
@@ -2057,7 +2131,7 @@ describe('runAgentSyncSafe (agent-sync phase)', () => {
     const source = readFileSync(join(import.meta.dir, '..', 'update.ts'), 'utf-8');
     const cmdStart = source.indexOf('export async function updateCommand');
     const cmdBody = source.slice(cmdStart);
-    const fastPathIdx = cmdBody.indexOf("process.env.GENIE_UPDATE_SYNC_ONLY === '1'");
+    const fastPathIdx = cmdBody.indexOf("mode !== 'normal'");
     const fetchIdx = cmdBody.indexOf('await fetchLatestManifest(');
     const deliveryIdx = cmdBody.indexOf('await runDelivery(');
     expect(fastPathIdx).toBeGreaterThan(-1);
@@ -2065,7 +2139,7 @@ describe('runAgentSyncSafe (agent-sync phase)', () => {
     expect(fastPathIdx).toBeLessThan(deliveryIdx);
     // The fast-path block calls the sync phase (and only that path does, pre-fetch).
     const fastPath = cmdBody.slice(fastPathIdx, fetchIdx);
-    expect(fastPath).toContain("runAgentSyncSafe({ strict: true, selection: 'auto' })");
+    expect(fastPath).toContain('runAgentSyncSafe({ strict: true, selection })');
     expect(fastPath).not.toContain('runTrackedManualUpdateConvergence(');
     expect(fastPath).not.toContain('refreshUpdatePlugins(');
   });

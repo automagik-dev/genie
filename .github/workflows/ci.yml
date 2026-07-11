@@ -74,6 +74,9 @@ jobs:
       - name: Wishes lint
         run: bun run wishes:lint
 
+      - name: Complexity budget
+        run: bun run lint:complexity-budget
+
       - name: Council workflow lint
         run: bun run lint:council-workflow
 

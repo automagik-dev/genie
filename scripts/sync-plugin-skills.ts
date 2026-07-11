@@ -24,8 +24,13 @@ import {
   rmSync,
 } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const REPO_ROOT = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
+export function repositoryRootFromModuleUrl(moduleUrl: string): string {
+  return resolve(dirname(fileURLToPath(moduleUrl)), '..');
+}
+
+const REPO_ROOT = repositoryRootFromModuleUrl(import.meta.url);
 const DEFAULT_PLUGIN_ROOT = join(REPO_ROOT, 'plugins', 'genie');
 
 export const SHIPPED_SKILL_NAMES = [

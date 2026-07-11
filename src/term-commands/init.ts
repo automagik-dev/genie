@@ -166,11 +166,12 @@ function printHumanReport(result: InitResult): void {
   out('');
   out('Warp, Claude Code, and Codex will discover the read-only `genie mcp` server.');
   out('');
-  out('Next steps — use slash skills in Claude or $skills/natural language in Codex:');
-  out('  brainstorm   Explore a fuzzy idea into a DESIGN.md');
-  out('  wish         Turn the design into an executable wish plan');
-  out('  work         Execute the wish plan in dispatched waves');
-  out('  review       Validate the result against its acceptance criteria');
+  out('Next steps — Claude uses /<skill>; the Codex plugin uses owner-qualified $genie:<skill>:');
+  out('  1. /brainstorm or $genie:brainstorm   Explore a fuzzy idea into a DESIGN.md');
+  out('  2. /wish or $genie:wish               Turn the design into an executable wish plan');
+  out('  3. /review or $genie:review           Validate and persist an APPROVED plan');
+  out('  4. /work or $genie:work               Execute the approved plan in dispatched waves');
+  out('  5. /review or $genie:review           Validate the implementation against its criteria');
   out('');
   out('Track progress any time with:  genie board');
 }
@@ -211,7 +212,9 @@ function handleInit(opts: InitOptions): void {
 export function registerInitCommand(program: Command): void {
   program
     .command('init')
-    .description('Scaffold the per-repo genie state (idempotent): .genie/INDEX.md + .gitignore rules')
+    .description(
+      'Initialize Genie state and reconcile project MCP routing (.mcp.json, .warp/.mcp.json, optional .codex/config.toml)',
+    )
     .option('--json', 'Emit the created/skipped result as JSON')
     .action((opts: InitOptions) => handleInit(opts));
 }

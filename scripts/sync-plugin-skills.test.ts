@@ -11,10 +11,12 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import {
   type SkillMirrorOptions,
   assertPluginSkillsInSync,
   assertShippedSkillInventory,
+  repositoryRootFromModuleUrl,
   syncPluginSkills,
 } from './sync-plugin-skills.ts';
 
@@ -46,6 +48,13 @@ describe('sync-plugin-skills', () => {
 
   afterEach(() => {
     rmSync(root, { recursive: true, force: true });
+  });
+
+  test('decodes escaped characters when resolving the checkout root', () => {
+    const checkout = join(tmpdir(), 'genie checkout');
+    const moduleUrl = pathToFileURL(join(checkout, 'scripts', 'sync-plugin-skills.ts')).href;
+    expect(moduleUrl).toContain('%20');
+    expect(repositoryRootFromModuleUrl(moduleUrl)).toBe(checkout);
   });
 
   test('rejects an escaping/source-equal destination symlink before removal', () => {

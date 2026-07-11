@@ -29,9 +29,9 @@ This is a high-impact, explicit-only workflow. The user must approve the selecte
 3. Human picks by number (`1 3 5`) or `all`.
 
 ## DREAM.md
-1. Read `depends_on` from each selected wish's WISH.md.
+1. Read the wish-level `**depends-on:**` value from each selected WISH.md's `## Dependencies` section (`none` means no edge).
 2. Topologically sort into `merge_order` layers `1..N` — layer 1 has no selected dependencies; same-layer wishes are parallel.
-3. Per-wish entry: `slug`, `branch: feat/<slug>`, `wish_path: .genie/wishes/<slug>/WISH.md`, `depends_on`, `merge_order`.
+3. Per-wish entry: `slug`, `branch: feat/<slug>`, `wish-path: .genie/wishes/<slug>/WISH.md`, `depends-on`, `merge-order`. Keep the canonical hyphenated keys so the plan can be checked directly against each wish.
 4. Write `.genie/DREAM.md` in the shared worktree; present for human confirmation before executing.
 
 ## Phase 1: Execute

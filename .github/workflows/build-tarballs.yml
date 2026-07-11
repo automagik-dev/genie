@@ -51,6 +51,7 @@ on:
       - 'templates/**'
       - 'plugins/**'
       - 'package.json'
+      - 'LICENSE'
       - 'bun.lock'
       - 'bunfig.toml'
       - 'tsconfig.json'

@@ -211,6 +211,34 @@ describe('omniApproval handler', () => {
     );
   });
 
+  test('redacts secret-shaped executable tokens after every shell operator', async () => {
+    const db = freshDb();
+    const secrets = [
+      'github_pat_AAAAAAAAAAAAAAAAAAAA',
+      'sk-AAAAAAAAAAAAAAAAAAAA',
+      'npm_AAAAAAAAAAAAAAAAAAAA',
+      'tokenSecretCommand',
+    ];
+    await omniApproval(
+      {
+        ...PAYLOAD,
+        tool_input: { command: `${secrets[0]} && ${secrets[1]} | ${secrets[2]}; ${secrets[3]}` },
+      },
+      {
+        openDb: () => db,
+        loadConfig: async () => rt(),
+        sleep: async () => {
+          const [pending] = listPendingApprovals(db);
+          const summary = getApproval(db, pending.id)?.inputSummary ?? '';
+          expect(summary).toContain('"version":1');
+          expect(summary.match(/\[command\]/g)).toHaveLength(4);
+          for (const secret of secrets) expect(summary).not.toContain(secret);
+          resolveApproval(db, pending.id, 'approved', 'boss');
+        },
+      },
+    );
+  });
+
   test('uses allowlisted structural previews instead of serializing edit content or unknown values', async () => {
     const cases = [
       {

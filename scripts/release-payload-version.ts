@@ -18,6 +18,8 @@ const TOP_LEVEL_VERSION_FILES = [
   'plugins/genie/.codex-plugin/plugin.json',
 ] as const;
 
+const COMMITTED_VERSION_FILES = ['package.json', ...TOP_LEVEL_VERSION_FILES] as const;
+
 interface JsonObject {
   [key: string]: unknown;
 }
@@ -78,6 +80,36 @@ function verifyCodexMarketplaceEntry(path: string, expectedVersion: string): voi
   }
 }
 
+/**
+ * Verify the checkout's authoritative metadata before a workflow override is
+ * allowed to stamp a staged payload. This prevents packaging from repairing
+ * and thereby concealing a partially committed version bump.
+ */
+export function verifyCommittedReleaseVersions(repoRoot: string): string {
+  const packagePath = join(repoRoot, 'package.json');
+  const expectedVersion = readObject(packagePath).version;
+  if (typeof expectedVersion !== 'string') throw new Error(`metadata has no top-level string version: ${packagePath}`);
+  assertVersion(expectedVersion);
+
+  for (const relativePath of COMMITTED_VERSION_FILES) {
+    const path = join(repoRoot, relativePath);
+    const actual = readObject(path).version;
+    if (actual !== expectedVersion) {
+      throw new Error(`committed version mismatch in ${path}: expected ${expectedVersion}, got ${actual}`);
+    }
+  }
+
+  const claudeMarketplacePath = join(repoRoot, '.claude-plugin', 'marketplace.json');
+  const claudeVersion = marketplaceEntry(claudeMarketplacePath).entry.version;
+  if (claudeVersion !== expectedVersion) {
+    throw new Error(
+      `committed version mismatch in ${claudeMarketplacePath}: expected ${expectedVersion}, got ${claudeVersion}`,
+    );
+  }
+  verifyCodexMarketplaceEntry(join(repoRoot, '.agents', 'plugins', 'marketplace.json'), expectedVersion);
+  return expectedVersion;
+}
+
 /** Stamp every version-bearing file in an already-copied release payload. */
 export function stampReleasePayloadVersion(payloadRoot: string, version: string): void {
   assertVersion(version);
@@ -131,12 +163,21 @@ export function verifyReleasePayloadVersion(payloadRoot: string, expectedVersion
 }
 
 function usage(): never {
-  throw new Error('usage: bun scripts/release-payload-version.ts --stamp|--verify <payload-root> <version>');
+  throw new Error(
+    'usage: bun scripts/release-payload-version.ts --verify-source <repo-root> | --stamp|--verify <payload-root> <version>',
+  );
 }
 
 function main(): void {
   const [operation, payloadRoot, version, ...extra] = process.argv.slice(2);
-  if (!operation || !payloadRoot || !version || extra.length > 0) usage();
+  if (!operation || !payloadRoot || extra.length > 0) usage();
+  if (operation === '--verify-source') {
+    if (version !== undefined) usage();
+    const sourceVersion = verifyCommittedReleaseVersions(payloadRoot);
+    console.log(`release-payload-version: OK (verify-source ${sourceVersion})`);
+    return;
+  }
+  if (!version) usage();
   if (operation === '--stamp') stampReleasePayloadVersion(payloadRoot, version);
   else if (operation === '--verify') verifyReleasePayloadVersion(payloadRoot, version);
   else usage();

@@ -9,7 +9,7 @@
  */
 import type { Database } from 'bun:sqlite';
 import { afterEach, describe, expect, test } from 'bun:test';
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { OmniRuntimeConfig } from './omni-config.js';
@@ -23,16 +23,19 @@ import {
   type SpawnClaudeResult,
   buildClaudeArgs,
   buildCodexArgs,
+  buildMappedAgentEnv,
   createOmniRunner,
   deterministicSessionId,
   extractCodexJsonlReply,
   extractStreamJsonReply,
   isSafeCodexThreadId,
   readBoundedText,
+  redactOmniOutbound,
   resolveTrustedHostExecutable,
   runClaudeSession,
   runCodexSession,
   runOmniServe,
+  superviseChild,
 } from './omni-runner.js';
 import { getAgentSession, openGlobalDb, upsertAgentSession } from './v5/global-db.js';
 import { enqueueApproval, getApproval, listInbox } from './v5/omni-queue.js';
@@ -90,6 +93,53 @@ function mappedInbound(body: string, chat = ROUTE_CHAT): [string, string] {
 }
 
 describe('omni runner — inbound one-shot routing', () => {
+  test('mapped execution is disabled unless explicitly opted in', async () => {
+    const db = freshDb();
+    const published: Published[] = [];
+    let spawns = 0;
+    const runner = createOmniRunner({
+      db,
+      config: rt(),
+      publish: (subject, payload) => published.push({ subject, payload }),
+      allowMappedAgentExecution: false,
+      spawnAgent: async () => {
+        spawns++;
+        return { stdout: 'must not run', exitCode: 0 };
+      },
+    });
+    runner.handleMessage(...mappedInbound('attempt exfiltration'));
+    await runner.whenIdle();
+    expect(spawns).toBe(0);
+    expect(published).toHaveLength(0);
+    expect(listInbox(db)).toHaveLength(1);
+  });
+
+  test('subject identity is authoritative and mismatched payload identity has zero side effects', async () => {
+    const db = freshDb();
+    let spawns = 0;
+    const runner = createOmniRunner({
+      db,
+      config: rt(),
+      publish: () => {},
+      spawnAgent: async () => {
+        spawns++;
+        return { stdout: 'must not run', exitCode: 0 };
+      },
+    });
+    runner.handleMessage(
+      `omni.message.${INSTANCE}.${ROUTE_CHAT}`,
+      JSON.stringify({ content: 'spoof', instanceId: INSTANCE, chatId: 'other-chat' }),
+    );
+    runner.handleMessage(
+      `omni.message.${INSTANCE}.${ROUTE_CHAT}`,
+      JSON.stringify({ content: 'spoof', instanceId: 'other-instance', chatId: ROUTE_CHAT }),
+    );
+    runner.handleMessage(`omni.message.other-instance.${ROUTE_CHAT}`, JSON.stringify({ content: 'spoof' }));
+    await runner.whenIdle();
+    expect(spawns).toBe(0);
+    expect(listInbox(db)).toHaveLength(0);
+  });
+
   test('mapped round-trip: inbound → claude → truncated reply published + markHandled', async () => {
     const db = freshDb();
     const published: Published[] = [];
@@ -310,6 +360,44 @@ describe('omni runner — inbound one-shot routing', () => {
     expect(notice.length).toBeLessThan(700); // bounded, never the whole stream
   });
 
+  test('redacts ambient and secret-shaped values from successful and failed child output', async () => {
+    const secret = 'SENTINEL_AMBIENT_SECRET_123456';
+    const previous = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = secret;
+    try {
+      const successDb = freshDb();
+      const successPublished: Published[] = [];
+      const success = createOmniRunner({
+        db: successDb,
+        config: rt(),
+        publish: (subject, payload) => successPublished.push({ subject, payload }),
+        spawnClaude: async () => ({ stdout: `reply ${secret} github_pat_AAAAAAAAAAAA`, exitCode: 0 }),
+      });
+      success.handleMessage(...mappedInbound('success'));
+      await success.whenIdle();
+
+      const failureDb = freshDb();
+      const failurePublished: Published[] = [];
+      const failure = createOmniRunner({
+        db: failureDb,
+        config: rt(),
+        publish: (subject, payload) => failurePublished.push({ subject, payload }),
+        spawnClaude: async () => ({ stdout: '', stderr: `crash ${secret} sk-AAAAAAAAAAAAAAAA`, exitCode: 7 }),
+      });
+      failure.handleMessage(...mappedInbound('failure'));
+      await failure.whenIdle();
+
+      for (const item of [...successPublished, ...failurePublished]) {
+        expect(content(item)).not.toContain(secret);
+        expect(content(item)).not.toMatch(/github_pat_|sk-AAAA/);
+        expect(content(item)).toContain('[REDACTED]');
+      }
+    } finally {
+      if (previous === undefined) Reflect.deleteProperty(process.env, 'GITHUB_TOKEN');
+      else process.env.GITHUB_TOKEN = previous;
+    }
+  });
+
   test('output cap: an over-long reply is truncated to the configured max', async () => {
     const db = freshDb();
     const published: Published[] = [];
@@ -342,6 +430,7 @@ const APPROVAL_CHAT = 'approval-chat'; // matches rt() above
 
 const approvalSummary = (marker: 'A' | 'B'): string =>
   JSON.stringify({
+    version: 1,
     kind: 'Bash',
     commands: [{ executable: `summary-${marker.toLowerCase()}`, options: [], env: [], argumentCount: 0 }],
   });
@@ -398,6 +487,37 @@ describe('omni runner — correlated approval identity + reactions', () => {
       expect(texts[0]).not.toContain(secret);
     }
     expect(texts[0]).toContain('legacyPreviewOmitted');
+  });
+
+  test('never transmits legacy non-Bash or unknown durable input summaries', async () => {
+    const db = freshDb();
+    const texts: string[] = [];
+    const runner = createOmniRunner({
+      db,
+      config: rt(),
+      publish: () => {},
+      sendApproval: async ({ text }) => {
+        texts.push(text);
+        return { success: true, messageId: `stanza-${texts.length}` };
+      },
+      now: () => NOW,
+    });
+    for (const tool of ['Write', 'Edit', 'NotebookEdit', 'mcp__legacy__unknown']) {
+      enqueueApproval(db, {
+        repo: '/r',
+        tool,
+        inputSummary: JSON.stringify({ content: 'LEGACY_DURABLE_SECRET', token: 'LEGACY_TOKEN_SECRET' }),
+        now: NOW - 1,
+      });
+    }
+    runner.tick();
+    await runner.whenIdle();
+    expect(texts).toHaveLength(4);
+    for (const text of texts) {
+      expect(text).toContain('legacyPreviewOmitted');
+      expect(text).not.toContain('LEGACY_DURABLE_SECRET');
+      expect(text).not.toContain('LEGACY_TOKEN_SECRET');
+    }
   });
 
   test('announce stores the REAL stanza id returned by the send (not a genId ref)', async () => {
@@ -967,6 +1087,61 @@ describe('Codex executor JSONL and resume', () => {
     });
   });
 
+  test('unrelated Codex errors never replay a workspace-writing prompt or mutate session state', async () => {
+    const diagnostics = [
+      'Thread execution failed: unknown model alias',
+      'Unknown tool: mcp__missing',
+      'Authentication failed for current account',
+      'Quota exceeded for this workspace',
+      'Workspace not found: project-alpha',
+    ];
+    for (const diagnostic of diagnostics) {
+      let calls = 0;
+      const result = await runCodexSession(
+        {
+          provider: 'codex',
+          message: 'mutating prompt',
+          cwd: '/repo',
+          signal: new AbortController().signal,
+          threadId: 'live-thread',
+        },
+        async () => {
+          calls++;
+          return { stdout: JSON.stringify({ type: 'error', message: diagnostic }), stderr: '', exitCode: 1 };
+        },
+      );
+      expect(calls).toBe(1);
+      expect(result.replacesThreadId).toBeUndefined();
+      expect(result.clearThreadId).toBeUndefined();
+    }
+  });
+
+  test('structured missing-thread code permits exactly one fresh retry', async () => {
+    let calls = 0;
+    const result = await runCodexSession(
+      {
+        provider: 'codex',
+        message: 'retry',
+        cwd: '/repo',
+        signal: new AbortController().signal,
+        threadId: 'stale-thread',
+      },
+      async (args) => {
+        calls++;
+        if (args.includes('resume')) {
+          return {
+            stdout: JSON.stringify({ type: 'error', error: { code: 'thread_not_found', message: 'gone' } }),
+            stderr: '',
+            exitCode: 1,
+          };
+        }
+        return { stdout: successJsonl('recovered', 'fresh-thread'), stderr: '', exitCode: 0 };
+      },
+    );
+    expect(calls).toBe(2);
+    expect(result).toMatchObject({ threadId: 'fresh-thread', replacesThreadId: 'stale-thread' });
+  });
+
   test('never treats a truncated agent reply containing "thread not found" as a recovery signal', async () => {
     const db = freshDb();
     const published: Published[] = [];
@@ -1086,6 +1261,56 @@ describe('Codex executor JSONL and resume', () => {
 });
 
 describe('Codex host process boundaries', () => {
+  test('mapped-agent environment excludes Omni and unrelated credentials', () => {
+    const env = buildMappedAgentEnv({
+      HOME: '/home/test',
+      PATH: '/bin',
+      LANG: 'C',
+      OMNI_API_KEY: 'omni-secret',
+      OMNI_NATS_URL: 'nats://secret',
+      GITHUB_TOKEN: 'github-secret',
+      ANTHROPIC_API_KEY: 'provider-secret',
+      AWS_SECRET_ACCESS_KEY: 'aws-secret',
+    });
+    expect(env).toEqual({ HOME: '/home/test', PATH: '/bin', LANG: 'C' });
+  });
+
+  test('outbound redaction covers success/failure credential shapes and known ambient values', () => {
+    const text =
+      'GITHUB_TOKEN=ambient-secret github_pat_AAAAAAAAAAAA Bearer abc.def.ghi https://user:password@example.test';
+    const redacted = redactOmniOutbound(text, { GITHUB_TOKEN: 'ambient-secret' });
+    for (const secret of ['ambient-secret', 'github_pat_AAAAAAAAAAAA', 'abc.def.ghi', 'password']) {
+      expect(redacted).not.toContain(secret);
+    }
+    expect(redacted).toContain('[REDACTED]');
+  });
+
+  test('TERM-resistant mapped child is escalated to KILL within the bounded grace', async () => {
+    if (process.platform === 'win32') return;
+    const fixture = mkdtempSync(join(tmpdir(), 'genie-omni-supervision-'));
+    const ready = join(fixture, 'ready');
+    try {
+      const controller = new AbortController();
+      const proc = Bun.spawn(
+        [
+          process.execPath,
+          '-e',
+          `require('node:fs').writeFileSync(${JSON.stringify(ready)}, 'ready'); process.on('SIGTERM', () => {}); setInterval(() => {}, 10000);`,
+        ],
+        { stdin: 'ignore', stdout: 'ignore', stderr: 'ignore' },
+      );
+      const running = superviseChild(proc, controller.signal, 50).exited;
+      for (let attempt = 0; attempt < 100 && !existsSync(ready); attempt++) await Bun.sleep(10);
+      expect(existsSync(ready)).toBe(true);
+      const started = performance.now();
+      controller.abort();
+      await running;
+      expect(performance.now() - started).toBeLessThan(500);
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
   test('stdout overflow cancels the stream immediately without waiting for EOF', async () => {
     let cancelled = false;
     let overflowed = false;
@@ -1159,6 +1384,48 @@ describe('Codex host process boundaries', () => {
 });
 
 describe('Omni serve shutdown ownership', () => {
+  test('startup failure preserves the primary error while independently closing NATS', async () => {
+    const db = freshDb();
+    const logs: string[] = [];
+    let closes = 0;
+    const nats: NatsLike = {
+      subscribe: () => {
+        throw new Error('subscribe-primary');
+      },
+      publish: () => {},
+      close: async () => {
+        closes++;
+        throw new Error('close-secondary');
+      },
+    };
+    await expect(
+      runOmniServe({ db, config: rt(), natsFactory: async () => nats, log: (line) => logs.push(line) }),
+    ).rejects.toThrow('subscribe-primary');
+    expect(closes).toBe(1);
+    expect(logs.some((line) => line.includes('close-secondary'))).toBe(true);
+  });
+
+  test('runner stop is bounded even when an injected child ignores abort', async () => {
+    const db = freshDb();
+    let settle!: (value: SpawnClaudeResult) => void;
+    const runner = createOmniRunner({
+      db,
+      config: rt(),
+      publish: () => {},
+      drainTimeoutMs: 25,
+      spawnAgent: () =>
+        new Promise((resolve) => {
+          settle = resolve;
+        }),
+    });
+    runner.handleMessage(...mappedInbound('hang'));
+    const started = performance.now();
+    await expect(runner.stop()).rejects.toThrow('drain exceeded');
+    expect(performance.now() - started).toBeLessThan(500);
+    settle({ stdout: 'settled', exitCode: 1, isError: true });
+    await runner.whenIdle();
+  });
+
   test('aborts and drains an in-flight route before closing NATS or SQLite ownership returns', async () => {
     const db = freshDb();
     const order: string[] = [];

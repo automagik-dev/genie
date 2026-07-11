@@ -52,6 +52,7 @@ describe('Group E release and documentation contracts', () => {
       "'templates/**'",
       "'plugins/**'",
       "'package.json'",
+      "'LICENSE'",
       "'bun.lock'",
       "'bunfig.toml'",
       "'tsconfig.json'",
@@ -94,13 +95,26 @@ describe('Group E release and documentation contracts', () => {
     expect(archive).toBeGreaterThan(-1);
     expect(extract).toBeGreaterThan(archive);
     expect(build).toContain('assert_release_tree_equal "${STAGE}" "${VERIFY_ROOT}"');
-    expect(build).toContain('cmp -- "${source_file}" "${extracted_file}"');
+    expect(build).toContain('cmp -- "${expected_entry}" "${actual_entry}"');
+    expect(build).toContain('cp "${REPO_ROOT}/LICENSE"');
+    expect(build).toContain("-name '*.test.*'");
+    expect(build).toContain('! -type f ! -type d');
+    expect(build).toContain('find "${expected_root}" -mindepth 1');
     expect(postExtractSmoke).toBeGreaterThan(extract);
     expect(postExtractVersion).toBeGreaterThan(extract);
+
+    const rootPackage = JSON.parse(read('package.json')) as { license?: unknown };
+    const pluginPackage = JSON.parse(read('plugins/genie/package.json')) as { license?: unknown };
+    expect(rootPackage.license).toBe('MIT');
+    expect(pluginPackage.license).toBe('MIT');
   });
 
   test('committed CI reproduces the council and generated-hook parts of the local gate', () => {
     const workflow = read('.github/workflows/ci.yml');
+    const pkg = JSON.parse(read('package.json')) as { scripts: Record<string, string> };
+    expect(pkg.scripts.check).toContain('bun run lint:complexity-budget');
+    expect(pkg.scripts['check:fast']).toContain('bun run lint:complexity-budget');
+    expect(workflow).toContain('bun run lint:complexity-budget');
     expect(workflow).toContain('bun run lint:council-workflow');
     expect(workflow).toContain('bun run lint:hook-bundles');
   });
@@ -189,9 +203,30 @@ describe('Group E release and documentation contracts', () => {
     for (const status of ['`DRAFT`', '`FIX-FIRST`', '`APPROVED`', '`IN_PROGRESS`', '`BLOCKED`', '`SHIPPED`']) {
       expect(lifecycle).toContain(status);
     }
-    expect(read('skills/dream/SKILL.md')).toContain('Status field is exactly `APPROVED`');
-    expect(read('skills/brainstorm/SKILL.md')).toContain('Do not move it to Poured before a WISH.md exists');
-    expect(read('skills/review/SKILL.md')).toContain('The reviewer is read-only');
+    const brainstorm = read('skills/brainstorm/SKILL.md');
+    const review = read('skills/review/SKILL.md');
+    const dream = read('skills/dream/SKILL.md');
+    const wish = read('skills/wish/templates/wish-template.md');
+    const pm = read('skills/pm/SKILL.md');
+    expect(dream).toContain('Status field is exactly `APPROVED`');
+    expect(brainstorm).toContain('Do not move it to Poured before a WISH.md exists');
+    expect(brainstorm).toContain('single brainstorm/planning index is `.genie/INDEX.md`');
+    expect(brainstorm).toContain('Legacy migration is idempotent');
+    expect(review).toContain('### Design Review (after `brainstorm`)');
+    expect(review).toContain('The reviewer is read-only');
+    expect(wish).toContain('## Dependencies');
+    expect(wish).toContain('**depends-on:** none');
+    expect(dream).toContain('wish-level `**depends-on:**`');
+    expect(dream).not.toContain('depends_on');
+    expect(pm).toContain('Explicit task-scoped grant');
+    expect(pm).toMatch(/Selecting Autopilot\s+does not itself authorize external repository writes/);
+  });
+
+  test('wizard discloses init MCP writes and owner-qualified lifecycle order', () => {
+    const wizard = read('skills/wizard/SKILL.md');
+    for (const path of ['.mcp.json', '.warp/.mcp.json', '.codex/config.toml']) expect(wizard).toContain(path);
+    for (const skill of ['brainstorm', 'wish', 'review', 'work']) expect(wizard).toContain(`$genie:${skill}`);
+    expect(wizard.indexOf('$genie:review')).toBeLessThan(wizard.indexOf('$genie:work'));
   });
 
   test('Omni and MCP operator instructions expose provider and fallback policy', () => {

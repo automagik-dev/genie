@@ -94,6 +94,22 @@ describe('computeDispatchOutput fail-closed', () => {
     expect(parsed.hookSpecificOutput.decision.message).toContain('tool_name');
   });
 
+  test('whitespace, control-character, and overlong Codex tool names fail closed', async () => {
+    for (const tool_name of ['   ', 'Bad\nTool', 'x'.repeat(129)]) {
+      let dispatched = false;
+      const out = await computeDispatchOutput(
+        JSON.stringify({ hook_event_name: 'PermissionRequest', tool_name, tool_input: {} }),
+        async () => {
+          dispatched = true;
+          return '';
+        },
+        'codex',
+      );
+      expect(JSON.parse(out).hookSpecificOutput.decision.behavior).toBe('deny');
+      expect(dispatched).toBe(false);
+    }
+  });
+
   test('Codex apply_patch reaches the dispatcher with normalized affected paths', async () => {
     let seen: Record<string, unknown> | undefined;
     const out = await computeDispatchOutput(

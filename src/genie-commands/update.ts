@@ -31,7 +31,9 @@ import { contractPath, genieConfigExists, getGenieConfigPath, saveGenieConfig } 
 import {
   type CodexAgentInstallResult,
   type IntegrationResult,
+  type IntegrationSelection,
   installCodexAgents,
+  readIntegrationConsent,
   resolveBundleRoot,
 } from '../lib/runtime-integrations.js';
 import { VERSION } from '../lib/version.js';
@@ -675,6 +677,8 @@ interface AtomicSwapResult {
 export interface AtomicBinarySwapOptions {
   /** Failure-injection seam immediately before rename-over-live. */
   beforePromote?: (replacementPath: string, targetPath: string) => void;
+  /** Keep a journal-bound source until the surrounding delivery commits. */
+  preserveSource?: boolean;
 }
 
 function fsyncFile(path: string): void {
@@ -770,11 +774,12 @@ export function atomicBinarySwap(
     // it dies after, the complete replacement is already live.
     renameSync(replacementPath, targetBinPath);
     fsyncDirectory(targetDir);
-    try {
-      rmSync(stagedBinPath);
-    } catch {
-      // The journal-bound source may survive a successful promotion; resume
-      // verifies the live binary and cleans retained staging later.
+    if (!options.preserveSource) {
+      try {
+        rmSync(stagedBinPath);
+      } catch {
+        // A disposable staging source may survive a successful promotion.
+      }
     }
     return { oldVersionBackup: oldBackup, swapped: true, fallbackUsed: !sameFs };
   } catch (error) {
@@ -782,6 +787,30 @@ export function atomicBinarySwap(
     if (backupStaging !== null) rmSync(backupStaging, { force: true });
     throw error;
   }
+}
+
+/**
+ * Keep only the backup created by the verified promotion for one old version.
+ * Pruning happens after live-binary verification, never before the new binary
+ * is known-good, so a failed promotion retains every rollback candidate.
+ */
+export function pruneSameVersionBackups(previousDir: string, oldVersion: string, retainedPath: string): string[] {
+  const canonicalPrefix = `genie-${oldVersion}`;
+  const retained = resolve(retainedPath);
+  const removed: string[] = [];
+  for (const entry of readdirSync(previousDir)) {
+    if (entry !== canonicalPrefix && !entry.startsWith(`${canonicalPrefix}.`)) continue;
+    const path = join(previousDir, entry);
+    if (resolve(path) === retained) continue;
+    const stat = lstatSync(path);
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      throw new Error(`refusing to prune non-physical binary backup: ${path}`);
+    }
+    rmSync(path);
+    removed.push(path);
+  }
+  if (removed.length > 0) fsyncDirectory(previousDir);
+  return removed;
 }
 
 /**
@@ -1641,6 +1670,21 @@ export interface UpdateCommandOptions {
   syncOnly?: boolean;
 }
 
+export type UpdateExecutionMode = 'normal' | 'rollback' | 'sync-only';
+
+/** Resolve one mutually-exclusive mode before any recovery or other mutation. */
+export function resolveUpdateExecutionMode(
+  options: UpdateCommandOptions,
+  syncOnlyEnvironment = process.env.GENIE_UPDATE_SYNC_ONLY,
+): UpdateExecutionMode {
+  if (options.rollback && options.syncOnly) {
+    throw new Error('--rollback and --sync-only cannot be used together');
+  }
+  if (options.rollback) return 'rollback';
+  if (options.syncOnly === true || syncOnlyEnvironment === '1') return 'sync-only';
+  return 'normal';
+}
+
 /**
  * Downgrade policy gate. Returns true when the caller MUST short-circuit — a
  * backward-pointing manifest with no explicit operator intent — after emitting the
@@ -1704,112 +1748,112 @@ function requireCanonicalInstallOrExit(): void {
 }
 
 export async function updateCommand(options: UpdateCommandOptions = {}): Promise<void> {
+  const mode = resolveUpdateExecutionMode(options);
+  if (mode !== 'normal') {
+    const lifecycleLease = acquireLifecycleLease(GENIE_HOME);
+    if ('skipped' in lifecycleLease) {
+      throw new Error(`Another Genie lifecycle command is active: ${lifecycleLease.skipped}`);
+    }
+    try {
+      if (mode === 'rollback') await runRollback();
+      else {
+        // Consent is re-read under the lease so a concurrent lifecycle command
+        // cannot change the selected client-home scope between plan and write.
+        const selection = readIntegrationConsent(GENIE_HOME);
+        runAgentSyncSafe({ strict: true, selection });
+      }
+    } finally {
+      lifecycleLease.release();
+    }
+    return;
+  }
+
+  console.log();
+  console.log(`${colorize('\x1b[1m', '\x1b[0m', '🧞 Genie CLI Update')}`);
+  console.log(`${colorize('\x1b[2m', '\x1b[0m', '────────────────────────────────────')}`);
+  console.log();
+
+  const noRestart = options.restart === false || isTruthyEnv(process.env.GENIE_UPDATE_NO_RESTART);
+  const noVerify = options.verify === false || isTruthyEnv(process.env.GENIE_UPDATE_NO_VERIFY);
+  const channel = await resolveChannel(options);
+
+  // Planning is read-only and deliberately happens before lifecycle lease
+  // acquisition. Interactive users can consider the prompt without blocking
+  // install/setup/uninstall in another process.
+  const manifest = await fetchLatestManifest(channel);
+  const latestVersion = manifest?.version ?? null;
+  const plannedInstalledVersion = resolveInstalledVersion();
+  const platform = resolveUpdatePlatformOrExit();
+
+  log(`Channel: ${channel}${channel === 'stable' ? ' (stable)' : ` (${channel})`}`);
+  log(`Platform: ${platform}`);
+  if (latestVersion) {
+    if (normalizeVersion(plannedInstalledVersion) !== normalizeVersion(latestVersion)) {
+      log(`Update available: ${normalizeVersion(plannedInstalledVersion)} → ${normalizeVersion(latestVersion)}`);
+    }
+  } else {
+    log(`Channel manifest unavailable (.well-known/${channel === 'stable' ? 'latest' : channel}.json missing)`);
+    error(`Cannot resolve target version for channel "${channel}". Aborting.`);
+    process.exit(1);
+  }
+  console.log();
+
+  const plannedDecision = decideDowngrade({
+    installedVersion: plannedInstalledVersion,
+    latestVersion,
+    explicitChannel: Boolean(options.stable || options.homolog || options.dev || options.next),
+  });
+  const plannedNeedsDelivery =
+    normalizeVersion(plannedInstalledVersion) !== normalizeVersion(latestVersion as string) &&
+    plannedDecision.kind !== 'block-downgrade';
+  if (plannedNeedsDelivery && !shouldAutoConfirm(options)) {
+    const proceedQuestion = `Update v${normalizeVersion(plannedInstalledVersion)} → v${normalizeVersion(latestVersion as string)}?`;
+    const proceed = await promptConfirm(proceedQuestion);
+    if (!proceed) {
+      console.log();
+      log('Update declined.');
+      console.log();
+      return;
+    }
+  }
+
   const lifecycleLease = acquireLifecycleLease(GENIE_HOME);
   if ('skipped' in lifecycleLease) {
     throw new Error(`Another Genie lifecycle command is active: ${lifecycleLease.skipped}`);
   }
   try {
-    // A verified release transaction can outlive the process that started it.
-    // Resume it before any current-version decision so a swapped binary can
-    // never strand mixed-version auxiliary content behind the short circuit.
-    if (!options.rollback) {
-      try {
-        resumePendingDelivery();
-      } catch (err) {
-        error(`Pending update recovery failed: ${errMsg(err)}`);
-        process.exitCode = 1;
-        return;
-      }
-    }
-    // Sync-only fast path — bounded local convergence only. Two equivalent
-    // triggers remain for compatibility: an explicit `--sync-only` flag and the
-    // legacy GENIE_UPDATE_SYNC_ONLY environment marker. The flag is the hard
-    // guard for external delegation — old
-    // commander binaries reject unknown flags and exit non-zero with zero
-    // network, so a pre-contract binary can never misread the delegation as a
-    // full update). Both converge agents with no network, manifest fetch, or
-    // channel persistence.
-    if (options.syncOnly === true || process.env.GENIE_UPDATE_SYNC_ONLY === '1') {
-      runAgentSyncSafe({ strict: true, selection: 'auto' });
+    // Revalidate durable recovery and the installed binary immediately after
+    // acquiring the lease, before the first mutation owned by this plan.
+    try {
+      resumePendingDelivery();
+    } catch (err) {
+      error(`Pending update recovery failed: ${errMsg(err)}`);
+      process.exitCode = 1;
       return;
     }
+    const installedVersion = resolveInstalledVersion();
 
-    console.log();
-    console.log(`${colorize('\x1b[1m', '\x1b[0m', '🧞 Genie CLI Update')}`);
-    console.log(`${colorize('\x1b[2m', '\x1b[0m', '────────────────────────────────────')}`);
-    console.log();
-
-    if (options.rollback) {
-      await runRollback();
-      return;
-    }
-
-    const noRestart = options.restart === false || isTruthyEnv(process.env.GENIE_UPDATE_NO_RESTART);
-    const noVerify = options.verify === false || isTruthyEnv(process.env.GENIE_UPDATE_NO_VERIFY);
-    const channel = await resolveChannel(options);
-
-    // Persist on every run, not just explicit channel flips. This makes the
-    // sticky behavior bulletproof: a one-time `genie update --dev` writes the
-    // channel to config, and every subsequent bare `genie update` re-resolves
-    // and re-persists the same channel. The only way to leave the dev channel
-    // is an explicit `--stable`. (See wish release-channel-dev, decision #4.)
+    // Channel persistence is now inside the mutation lease and follows local
+    // state revalidation; the prompt itself never owns the lease.
     await persistChannel(channel);
 
-    // Pre-flight: fetch the channel manifest. Single canonical source of truth.
-    const manifest = await fetchLatestManifest(channel);
-    const latestVersion = manifest?.version ?? null;
-    // Key the decision off the installed binary, NOT this process's
-    // compile-time VERSION — a stale shadowing binary on $PATH would
-    // otherwise re-offer the same update on every invocation.
-    const installedVersion = resolveInstalledVersion();
     if (shortCircuitIfCurrent(installedVersion, latestVersion)) {
       success(`Already up to date (v${normalizeVersion(installedVersion)}, channel ${channel})`);
-      // Operator-driven update converges plugin registration/hooks plus
-      // ownership-safe skills and role agents even when the binary is current.
       runTrackedManualUpdateConvergence(latestVersion ?? normalizeVersion(installedVersion));
       console.log();
       return;
     }
 
-    // Downgrade guard. `shortCircuitIfCurrent` only catches the EQUAL case; without
-    // this a manifest that points BACKWARD (a channel rollback, or a stale
-    // .well-known pin) would swap the binary to an OLDER build via the normal
-    // "Update available" flow.
     if (applyDowngradeGuard(installedVersion, latestVersion, channel, options)) {
-      // Refused downgrade — still converge the installed version's integrations.
       runTrackedManualUpdateConvergence(normalizeVersion(installedVersion));
       console.log();
       return;
     }
 
-    const platform = resolveUpdatePlatformOrExit();
-
-    // Refuse to swap when the live binary is outside ~/.genie/bin/. Silently
-    // updating a different file would mask the regression on bun/npm-installed
-    // hosts where $PATH still points at the old binary.
+    // A concurrent lifecycle operation may have moved or replaced the live
+    // binary while this process was prompting. Re-check canonical ownership
+    // under the lease immediately before delivery.
     requireCanonicalInstallOrExit();
-
-    log(`Channel: ${channel}${channel === 'stable' ? ' (stable)' : ` (${channel})`}`);
-    log(`Platform: ${platform}`);
-    if (latestVersion) {
-      log(`Update available: ${normalizeVersion(installedVersion)} → ${normalizeVersion(latestVersion)}`);
-    } else {
-      log(`Channel manifest unavailable (.well-known/${channel === 'stable' ? 'latest' : channel}.json missing)`);
-      error(`Cannot resolve target version for channel "${channel}". Aborting.`);
-      process.exit(1);
-    }
-    console.log();
-
-    if (!shouldAutoConfirm(options)) {
-      const proceedQuestion = `Update v${normalizeVersion(installedVersion)} → v${normalizeVersion(latestVersion as string)}?`;
-      const proceed = await promptConfirm(proceedQuestion);
-      if (!proceed) {
-        console.log();
-        log('Update declined.');
-        console.log();
-        return;
-      }
-    }
 
     const diagnosticsCtx: UpdateDiagnosticsContext = {
       channel,
@@ -1999,6 +2043,8 @@ export interface ManualUpdateConvergenceOptions {
   runSync?: () => void;
   refreshPlugins?: (options: RefreshUpdatePluginsOptions) => IntegrationResult[];
   log?: (line: string) => void;
+  /** Persisted operator scope; defaults to the install-time consent record. */
+  selection?: IntegrationSelection;
 }
 
 export interface ManualUpdateConvergenceResult {
@@ -2007,10 +2053,13 @@ export interface ManualUpdateConvergenceResult {
 
 export function runManualUpdateConvergence(options: ManualUpdateConvergenceOptions): ManualUpdateConvergenceResult {
   const emit = options.log ?? log;
-  (options.runSync ?? (() => runAgentSyncSafe({ strict: true, selection: 'auto' })))();
+  const selection = options.selection ?? readIntegrationConsent(GENIE_HOME);
+  if (selection === 'none') return { integrations: [] };
+  (options.runSync ?? (() => runAgentSyncSafe({ strict: true, selection })))();
   const integrations = (options.refreshPlugins ?? refreshUpdatePlugins)({
     bundleRoot: options.bundleRoot ?? GENIE_HOME,
     expectedVersion: options.expectedVersion,
+    selection,
   });
   for (const result of integrations) {
     const disabled = result.preservedDisabled ? '; disabled state preserved' : '';
@@ -2063,10 +2112,10 @@ async function runDelivery(
 
   log('Atomically swapping binary...');
   const targetBin = join(GENIE_BIN, 'genie');
-  const swapCandidate = `${stagedBin}.swap-${process.pid}`;
-  copyFileSync(stagedBin, swapCandidate);
-  chmodSync(swapCandidate, 0o755);
-  const swapResult = atomicBinarySwap(swapCandidate, targetBin, GENIE_BIN_PREVIOUS, normalizeVersion(VERSION));
+  const oldVersion = normalizeVersion(VERSION);
+  const swapResult = atomicBinarySwap(stagedBin, targetBin, GENIE_BIN_PREVIOUS, oldVersion, {
+    preserveSource: true,
+  });
   diagnosticsCtx.previousBackup = swapResult.oldVersionBackup;
 
   // Sync the per-binary VERSION stamp BEFORE verifying. The compiled binary
@@ -2091,6 +2140,13 @@ async function runDelivery(
     stagingDir: GENIE_BIN_STAGING,
     previousDir: GENIE_BIN_PREVIOUS,
   });
+  if (swapResult.oldVersionBackup !== null) {
+    try {
+      pruneSameVersionBackups(GENIE_BIN_PREVIOUS, oldVersion, swapResult.oldVersionBackup);
+    } catch (pruneError) {
+      log(`Backup retention cleanup deferred: ${errMsg(pruneError)}`);
+    }
+  }
 
   success(`Genie binary updated → v${manifest.version}${swapResult.fallbackUsed ? ' (cross-device fallback)' : ''}`);
 
@@ -2278,10 +2334,9 @@ export function resumePendingDelivery(options: ResumePendingDeliveryOptions = {}
           throw new Error(`pending delivery binary is missing at ${stagedBin}`);
         }
         chmodSync(stagedBin, 0o755);
-        const swapCandidate = `${stagedBin}.swap-${process.pid}`;
-        copyFileSync(stagedBin, swapCandidate);
-        chmodSync(swapCandidate, 0o755);
-        atomicBinarySwap(swapCandidate, targetBin, join(genieBin, '.previous'), normalizeVersion(VERSION));
+        atomicBinarySwap(stagedBin, targetBin, join(genieBin, '.previous'), normalizeVersion(VERSION), {
+          preserveSource: true,
+        });
         syncBinaryVersionStamp(record.extractDir, genieBin, record.version);
         verifySwappedBinary(targetBin, record.version, {
           stagingDir: stagingRoot,
@@ -2300,6 +2355,38 @@ export function resumePendingDelivery(options: ResumePendingDeliveryOptions = {}
     },
   });
   return true;
+}
+
+/**
+ * An explicit rollback supersedes any forward-delivery journal. Quarantine the
+ * journal atomically before touching the live binary so a crash cannot replay
+ * the superseded release on the next update.
+ */
+export function quarantinePendingDelivery(pendingPath = join(GENIE_HOME, PENDING_DELIVERY_NAME)): string | null {
+  let stat: ReturnType<typeof lstatSync>;
+  try {
+    stat = lstatSync(pendingPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
+  if (!stat.isFile() || stat.isSymbolicLink()) {
+    throw new Error(`pending delivery journal is not a physical file: ${pendingPath}`);
+  }
+  const quarantined = `${pendingPath}.cancelled-${Date.now()}-${process.pid}`;
+  renameSync(pendingPath, quarantined);
+  try {
+    const directoryFd = openSync(dirname(pendingPath), 'r');
+    try {
+      fsyncSync(directoryFd);
+    } finally {
+      closeSync(directoryFd);
+    }
+  } catch {
+    // Directory fsync is unavailable on some supported platforms; rename still
+    // prevents ordinary recovery from observing the superseded journal.
+  }
+  return quarantined;
 }
 
 function readPendingDelivery(path: string, stagingRoot: string): PendingDeliveryRecord | null {
@@ -2369,6 +2456,28 @@ function assertPendingDeliveryPaths(pending: PendingDeliveryPaths, stagingRoot: 
   }
 }
 
+const PENDING_FILE_HASH_BUFFER_BYTES = 1024 * 1024;
+
+/** Hash a physical file with a fixed-size buffer instead of retaining release-sized bytes in RSS. */
+export function hashPhysicalFileIncrementally(path: string, bufferBytes = PENDING_FILE_HASH_BUFFER_BYTES): string {
+  if (!Number.isSafeInteger(bufferBytes) || bufferBytes < 1 || bufferBytes > 8 * 1024 * 1024) {
+    throw new Error(`invalid incremental hash buffer size: ${bufferBytes}`);
+  }
+  const hash = createHash('sha256');
+  const buffer = Buffer.allocUnsafe(bufferBytes);
+  const fd = openSync(path, 'r');
+  try {
+    for (;;) {
+      const bytesRead = readSync(fd, buffer, 0, buffer.length, null);
+      if (bytesRead === 0) break;
+      hash.update(buffer.subarray(0, bytesRead));
+    }
+  } finally {
+    closeSync(fd);
+  }
+  return hash.digest('hex');
+}
+
 function fingerprintPhysicalFile(path: string, label: string): PendingFileFingerprint {
   let stat: ReturnType<typeof lstatSync>;
   try {
@@ -2380,7 +2489,7 @@ function fingerprintPhysicalFile(path: string, label: string): PendingFileFinger
     throw new Error(`pending delivery ${label} is not a physical file: ${path}`);
   }
   return {
-    sha256: createHash('sha256').update(readFileSync(path)).digest('hex'),
+    sha256: hashPhysicalFileIncrementally(path),
     mode: stat.mode & 0o7777,
   };
 }
@@ -2535,10 +2644,11 @@ function cleanupStagingArtifacts(extractDir: string, tarballPath: string): void 
  * (`.agents/`, `.claude-plugin/` — must sit beside plugins/ so their relative
  * `./plugins/genie` payload references stay truthful; mirrors AUX_LAYOUT_DIRS
  * in install.ts) from the extracted tarball into `~/.genie/`. Stage to a
- * sibling `<dest>.new` directory and `renameSync` over the live target so
- * concurrent readers (Claude Code's plugin loader) never observe an empty
- * directory mid-update. The previous live tree moves to `<dest>.old` and is
- * deleted last.
+ * sibling `<dest>.new` directory and promote it with same-filesystem renames.
+ * The previous live tree is retained until the fresh tree is verified. Portable
+ * Node filesystem APIs do not provide an atomic non-empty directory exchange;
+ * the pending-delivery journal therefore preserves retry/recovery evidence but
+ * does not claim cross-process generation atomicity.
  *
  * Every present tree returns a structured outcome. A failed outcome blocks
  * VERSION stamping and extraction cleanup so the verified source remains
@@ -2587,8 +2697,10 @@ function printAuxiliaryOutcome(outcome: AuxiliaryTreeOutcome): void {
 async function runRollback(): Promise<void> {
   log('Rolling back to previous binary...');
   try {
+    const quarantined = quarantinePendingDelivery();
     const result = rollbackBinary();
     success(`Restored ${result.from} → ${result.restored}`);
+    if (quarantined) log(`Superseded pending delivery quarantined at ${quarantined}`);
     console.log();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

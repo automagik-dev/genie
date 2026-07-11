@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { cpSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { repositoryRootFromModuleUrl } from './fresh-install-smoke.ts';
 
 const SMOKE_SCRIPT = join(import.meta.dir, 'fresh-install-smoke.ts');
 const REPO_ROOT = join(import.meta.dir, '..');
@@ -74,6 +76,13 @@ function writeOpenAiMetadata(skillDir: string, name: string): void {
 }
 
 describe('fresh-install-smoke', () => {
+  test('decodes escaped characters when resolving the checkout root', () => {
+    const checkout = join(tmpdir(), 'genie checkout');
+    const moduleUrl = pathToFileURL(join(checkout, 'scripts', 'fresh-install-smoke.ts')).href;
+    expect(moduleUrl).toContain('%20');
+    expect(repositoryRootFromModuleUrl(moduleUrl)).toBe(checkout);
+  });
+
   test('exits 0 against the real repository skills tree', () => {
     const result = runSmoke();
     // Surface the failure reason if this ever regresses.
@@ -138,6 +147,7 @@ describe('fresh-install-smoke', () => {
       '## Scope',
       '### IN',
       '### OUT',
+      '## Dependencies',
       '## Success Criteria',
       '## Execution Strategy',
     ];
@@ -184,7 +194,7 @@ describe('fresh-install-smoke', () => {
       writeFileSync(join(wishDir, 'SKILL.md'), wishSkillBody());
       writeFileSync(
         join(wishDir, 'templates', 'wish-template.md'),
-        '## Summary\n## Scope\n### IN\n### OUT\n## Success Criteria\n## Execution Strategy\n## Execution Groups\n',
+        '## Summary\n## Scope\n### IN\n### OUT\n## Dependencies\n## Success Criteria\n## Execution Strategy\n## Execution Groups\n',
       );
       writeOpenAiMetadata(wishDir, 'wish');
 
@@ -219,7 +229,7 @@ describe('fresh-install-smoke', () => {
       writeFileSync(join(wishDir, 'SKILL.md'), wishSkillBody());
       writeFileSync(
         join(wishDir, 'templates', 'wish-template.md'),
-        '## Summary\n## Scope\n### IN\n### OUT\n## Success Criteria\n## Execution Strategy\n## Execution Groups\n',
+        '## Summary\n## Scope\n### IN\n### OUT\n## Dependencies\n## Success Criteria\n## Execution Strategy\n## Execution Groups\n',
       );
       writeOpenAiMetadata(wishDir, 'wish');
 
@@ -281,7 +291,7 @@ describe('fresh-install-smoke', () => {
       writeFileSync(join(wishDir, 'SKILL.md'), wishSkillBody());
       writeFileSync(
         join(wishDir, 'templates', 'wish-template.md'),
-        '## Summary\n## Scope\n### IN\n### OUT\n## Success Criteria\n## Execution Strategy\n## Execution Groups\n',
+        '## Summary\n## Scope\n### IN\n### OUT\n## Dependencies\n## Success Criteria\n## Execution Strategy\n## Execution Groups\n',
       );
       writeOpenAiMetadata(wishDir, 'wish');
 

@@ -32,6 +32,11 @@
 |---|----------|-----------|
 | 1 | <TODO: decision> | <TODO: why this over alternatives> |
 
+## Dependencies
+
+**depends-on:** none
+**blocks:** none
+
 ## Success Criteria
 
 - [ ] <TODO: testable criterion 1>

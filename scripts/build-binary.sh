@@ -57,6 +57,7 @@ TARGET="$(bun_target_for "$PLATFORM")" || { echo "error: unsupported platform: $
 bun "${REPO_ROOT}/scripts/sync-plugin-skills.ts" --check
 bun "${REPO_ROOT}/scripts/fresh-install-smoke.ts"
 bun "${REPO_ROOT}/scripts/hook-bundle-parity.ts" --check
+bun "${REPO_ROOT}/scripts/release-payload-version.ts" --verify-source "${REPO_ROOT}"
 
 STAGE="${DIST_DIR}/${PLATFORM}"
 TARBALL="${DIST_DIR}/genie-${VERSION}-${PLATFORM}.tar.gz"
@@ -72,6 +73,10 @@ bun build --compile \
 cp -R "${REPO_ROOT}/plugins"   "${STAGE}/plugins"
 cp -R "${REPO_ROOT}/skills"    "${STAGE}/skills"
 cp -R "${REPO_ROOT}/templates" "${STAGE}/templates"
+cp "${REPO_ROOT}/LICENSE"       "${STAGE}/LICENSE"
+# Plugin tests validate the source checkout; they are not runtime payload and
+# must not change test discovery merely because a contributor built a release.
+find "${STAGE}/plugins" -type f \( -name '*.test.*' -o -name '*.spec.*' \) -delete
 mkdir -p "${STAGE}/.agents/plugins" "${STAGE}/.claude-plugin"
 cp "${REPO_ROOT}/.agents/plugins/marketplace.json" "${STAGE}/.agents/plugins/marketplace.json"
 cp "${REPO_ROOT}/.claude-plugin/marketplace.json" "${STAGE}/.claude-plugin/marketplace.json"
@@ -82,6 +87,7 @@ cp "${REPO_ROOT}/.claude-plugin/marketplace.json" "${STAGE}/.claude-plugin/marke
 bun "${REPO_ROOT}/scripts/release-payload-version.ts" --stamp "${STAGE}" "${VERSION}"
 
 for required in \
+  "LICENSE" \
   ".agents/plugins/marketplace.json" \
   ".claude-plugin/marketplace.json" \
   "plugins/genie/.codex-plugin/plugin.json" \
@@ -123,22 +129,38 @@ assert_release_tree_equal() {
     echo "error: release staging/extracted trees must not contain symlinks" >&2
     return 1
   fi
-  while IFS= read -r -d '' source_file; do
-    local rel="${source_file#"${source_root}/"}"
-    local extracted_file="${extracted_root}/${rel}"
-    [[ -f "${extracted_file}" ]] || { echo "error: extracted release missing ${rel}" >&2; return 1; }
-    cmp -- "${source_file}" "${extracted_file}" \
-      || { echo "error: extracted release content differs for ${rel}" >&2; return 1; }
-    local source_mode extracted_mode
-    source_mode="$(stat -c '%a' "${source_file}" 2>/dev/null || stat -f '%Lp' "${source_file}")"
-    extracted_mode="$(stat -c '%a' "${extracted_file}" 2>/dev/null || stat -f '%Lp' "${extracted_file}")"
-    [[ "${source_mode}" == "${extracted_mode}" ]] \
-      || { echo "error: extracted release mode differs for ${rel}: ${source_mode} != ${extracted_mode}" >&2; return 1; }
-  done < <(find "${source_root}" -type f -print0)
-  while IFS= read -r -d '' extracted_file; do
-    local rel="${extracted_file#"${extracted_root}/"}"
-    [[ -f "${source_root}/${rel}" ]] || { echo "error: extracted release has unexpected ${rel}" >&2; return 1; }
-  done < <(find "${extracted_root}" -type f -print0)
+  if find "${source_root}" "${extracted_root}" ! -type f ! -type d -print -quit | grep -q .; then
+    echo "error: release staging/extracted trees contain an unsupported entry type" >&2
+    return 1
+  fi
+  assert_tree_direction() {
+    local expected_root="$1"
+    local actual_root="$2"
+    local direction="$3"
+    while IFS= read -r -d '' expected_entry; do
+      local rel="${expected_entry#"${expected_root}/"}"
+      local actual_entry="${actual_root}/${rel}"
+      local kind
+      if [[ -f "${expected_entry}" ]]; then
+        kind="file"
+        [[ -f "${actual_entry}" ]] \
+          || { echo "error: ${direction} release missing file ${rel}" >&2; return 1; }
+        cmp -- "${expected_entry}" "${actual_entry}" \
+          || { echo "error: ${direction} release content differs for ${rel}" >&2; return 1; }
+      else
+        kind="directory"
+        [[ -d "${actual_entry}" ]] \
+          || { echo "error: ${direction} release missing directory ${rel}" >&2; return 1; }
+      fi
+      local expected_mode actual_mode
+      expected_mode="$(stat -c '%a' "${expected_entry}" 2>/dev/null || stat -f '%Lp' "${expected_entry}")"
+      actual_mode="$(stat -c '%a' "${actual_entry}" 2>/dev/null || stat -f '%Lp' "${actual_entry}")"
+      [[ "${expected_mode}" == "${actual_mode}" ]] \
+        || { echo "error: ${direction} release ${kind} mode differs for ${rel}: ${expected_mode} != ${actual_mode}" >&2; return 1; }
+    done < <(find "${expected_root}" -mindepth 1 -print0)
+  }
+  assert_tree_direction "${source_root}" "${extracted_root}" "extracted"
+  assert_tree_direction "${extracted_root}" "${source_root}" "staging"
 }
 
 assert_release_tree_equal "${STAGE}" "${VERIFY_ROOT}"

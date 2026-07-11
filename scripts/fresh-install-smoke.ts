@@ -17,11 +17,16 @@ import {
   rmSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, relative, resolve, sep } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { validateSkillMetadata } from './skills-lint.ts';
 import { SHIPPED_SKILL_NAMES, assertPluginSkillsInSync } from './sync-plugin-skills.ts';
 
-const REPO_ROOT = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
+export function repositoryRootFromModuleUrl(moduleUrl: string): string {
+  return resolve(dirname(fileURLToPath(moduleUrl)), '..');
+}
+
+const REPO_ROOT = repositoryRootFromModuleUrl(import.meta.url);
 
 class SmokeFailure extends Error {}
 
@@ -315,6 +320,7 @@ function runWishScaffoldSmoke(skillsDir: string): void {
       '## Scope',
       '### IN',
       '### OUT',
+      '## Dependencies',
       '## Success Criteria',
       '## Execution Strategy',
       '## Execution Groups',

@@ -273,6 +273,107 @@ export interface RawClaudeRun {
  *  orchestration in {@link runClaudeSession} is tested without a real fork. */
 export type RawClaudeSpawn = (args: string[], opts: { cwd: string; signal: AbortSignal }) => Promise<RawClaudeRun>;
 
+const CHILD_TERM_GRACE_MS = 1_000;
+const AGENT_STDOUT_MAX_BYTES = 1024 * 1024;
+const AGENT_STDERR_MAX_BYTES = 64 * 1024;
+const SAFE_AGENT_ENV_KEYS = new Set([
+  'HOME',
+  'USER',
+  'LOGNAME',
+  'SHELL',
+  'PATH',
+  'TMPDIR',
+  'TMP',
+  'TEMP',
+  'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
+  'TERM',
+  'NO_COLOR',
+  'FORCE_COLOR',
+  'XDG_CONFIG_HOME',
+  'XDG_CACHE_HOME',
+  'XDG_DATA_HOME',
+  'SystemRoot',
+  'COMSPEC',
+  'PATHEXT',
+]);
+
+/** Minimal environment for mapped route agents. Omni/provider/cloud secrets are
+ * never inherited. File-backed credentials still make full isolation
+ * impossible, which is why production mapped execution is separately opt-in. */
+export function buildMappedAgentEnv(source: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const safe: Record<string, string> = {};
+  for (const key of SAFE_AGENT_ENV_KEYS) {
+    const value = source[key];
+    if (typeof value === 'string' && !value.includes('\0')) safe[key] = value;
+  }
+  return safe;
+}
+
+const SENSITIVE_ENV_NAME =
+  /(?:PASSWORD|PASSWD|SECRET|TOKEN|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|AUTHORIZATION|CREDENTIAL|SESSION|COOKIE)/i;
+
+/** Redact known ambient secret values plus common credential shapes before any
+ * child-controlled success or failure text crosses the Omni transport. */
+export function redactOmniOutbound(text: string, env: NodeJS.ProcessEnv = process.env): string {
+  let safe = text;
+  const values = Object.entries(env)
+    .filter(([name, value]) => SENSITIVE_ENV_NAME.test(name) && typeof value === 'string' && value.length >= 8)
+    .map(([, value]) => value as string)
+    .sort((a, b) => b.length - a.length);
+  for (const value of values) safe = safe.split(value).join('[REDACTED]');
+  return safe
+    .replace(/-----BEGIN [^-\r\n]*PRIVATE KEY-----[\s\S]*?-----END [^-\r\n]*PRIVATE KEY-----/gi, '[REDACTED]')
+    .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, 'Bearer [REDACTED]')
+    .replace(/\b(?:gh[pousr]_|github_pat_|sk-|xox[baprs]-|npm_)[A-Za-z0-9._-]{8,}/gi, '[REDACTED]')
+    .replace(/\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g, '[REDACTED]')
+    .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, '[REDACTED]')
+    .replace(
+      /(\b[A-Z0-9_]*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY)[A-Z0-9_]*\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
+      '$1[REDACTED]',
+    )
+    .replace(/(https?:\/\/[^\s/:@]+:)[^\s/@]+@/gi, '$1[REDACTED]@');
+}
+
+interface KillableChild {
+  kill(signal: 'SIGTERM' | 'SIGKILL'): void;
+  exited: Promise<number>;
+}
+
+/** Own abort semantics instead of relying on Bun's soft SIGTERM-only signal. */
+export function superviseChild(child: KillableChild, signal: AbortSignal, graceMs = CHILD_TERM_GRACE_MS) {
+  let exited = false;
+  let forceTimer: ReturnType<typeof setTimeout> | undefined;
+  const terminate = () => {
+    if (exited || forceTimer) return;
+    try {
+      child.kill('SIGTERM');
+    } catch {
+      // The child may have exited between the guard and kill.
+    }
+    forceTimer = setTimeout(() => {
+      if (!exited) {
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          // Already gone.
+        }
+      }
+    }, graceMs);
+    if (typeof forceTimer.unref === 'function') forceTimer.unref();
+  };
+  const abort = () => terminate();
+  if (signal.aborted) terminate();
+  else signal.addEventListener('abort', abort, { once: true });
+  const exitedPromise = child.exited.finally(() => {
+    exited = true;
+    if (forceTimer) clearTimeout(forceTimer);
+    signal.removeEventListener('abort', abort);
+  });
+  return { exited: exitedPromise, terminate };
+}
+
 /**
  * Does this stderr mean "the session id you tried to resume does not exist"? Claude
  * 2.1.201 says `No conversation found with session ID: <id>` (verified live);
@@ -320,18 +421,18 @@ const defaultRawSpawn: RawClaudeSpawn = async (args, { cwd, signal }) => {
   const command = resolveTrustedHostExecutable('claude', cwd);
   const proc = Bun.spawn([command, ...args], {
     cwd,
+    env: buildMappedAgentEnv(),
     stdin: 'ignore',
     stdout: 'pipe',
     stderr: 'pipe',
-    // Bun forwards the AbortSignal: aborting SIGKILLs the child, freeing the route.
-    signal,
   });
+  const supervised = superviseChild(proc, signal);
   const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
+    readBoundedText(proc.stdout, AGENT_STDOUT_MAX_BYTES, supervised.terminate, signal),
+    readBoundedText(proc.stderr, AGENT_STDERR_MAX_BYTES, undefined, signal),
+    supervised.exited,
   ]);
-  return { stdout, stderr, exitCode };
+  return { stdout: stdout.text, stderr: stderr.text, exitCode };
 };
 
 /**
@@ -358,6 +459,8 @@ export interface AgentExecutionResult extends SpawnClaudeResult {
   threadId?: string;
   /** Validated message from a top-level Codex `error` / `turn.failed` event. */
   codexErrorDetail?: string;
+  /** Stable machine-readable code from a top-level Codex failure event. */
+  codexErrorCode?: string;
   /**
    * A successful fresh turn created this thread after the persisted thread was
    * confirmed missing. The runner conditionally replaces only this exact stale
@@ -424,11 +527,19 @@ function codexEventError(event: Record<string, unknown>): string | undefined {
   return undefined;
 }
 
+function codexEventErrorCode(event: Record<string, unknown>): string | undefined {
+  const direct = nonEmptyString(event.code);
+  if (direct) return direct;
+  if (isRecord(event.error)) return nonEmptyString(event.error.code);
+  return undefined;
+}
+
 interface CodexJsonlState {
   threadId?: string;
   reply: string;
   sawTurnCompleted: boolean;
   failure?: string;
+  failureCode?: string;
 }
 
 function consumeCodexEvent(value: unknown, lineNumber: number, state: CodexJsonlState): string | undefined {
@@ -465,6 +576,7 @@ function consumeCodexEvent(value: unknown, lineNumber: number, state: CodexJsonl
     case 'turn.failed':
     case 'error':
       state.failure = boundedCodexDetail(codexEventError(value) ?? `${type} did not include an error message`);
+      state.failureCode = codexEventErrorCode(value);
       return undefined;
     default:
       return `unknown event type ${JSON.stringify(type)}`;
@@ -509,6 +621,7 @@ export function extractCodexJsonlReply(raw: string): AgentExecutionResult {
         isError: true,
         threadId: state.threadId,
         codexErrorDetail: state.failure,
+        codexErrorCode: state.failureCode,
       };
     }
   }
@@ -525,8 +638,12 @@ export interface RawCodexRun extends RawClaudeRun {
 
 export type RawCodexSpawn = (args: string[], opts: { cwd: string; signal: AbortSignal }) => Promise<RawCodexRun>;
 
-const MISSING_CODEX_THREAD_RE =
-  /(?:thread|session|conversation)(?:\s+id)?[^\n]{0,100}(?:not found|does not exist|no longer exists|expired|unknown)|no\s+(?:saved\s+)?(?:thread|session|conversation)|no\s+rollout[^\n]{0,60}(?:thread|session|conversation)|(?:missing|expired)\s+(?:thread|session|conversation)/i;
+const MISSING_CODEX_THREAD_CODES = new Set([
+  'thread_not_found',
+  'session_not_found',
+  'conversation_not_found',
+  'rollout_not_found',
+]);
 
 function parseCodexRun(run: RawCodexRun): AgentExecutionResult {
   const stderrWasTruncated = run.stderrTruncated || run.stderr.length > CODEX_STDERR_MAX_BYTES;
@@ -543,8 +660,29 @@ function parseCodexRun(run: RawCodexRun): AgentExecutionResult {
   return { ...parsed, stderr, exitCode: run.exitCode, isError: parsed.isError || run.exitCode !== 0 };
 }
 
-const codexThreadIsMissing = (parsed: AgentExecutionResult): boolean =>
-  MISSING_CODEX_THREAD_RE.test(`${parsed.stderr ?? ''}\n${parsed.codexErrorDetail ?? ''}`);
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Retry only stable machine codes or exact, whole-line CLI diagnostics. Broad
+ * proximity matching can replay a mutating prompt after an unrelated error. */
+const codexThreadIsMissing = (parsed: AgentExecutionResult, staleThreadId: string): boolean => {
+  if (parsed.codexErrorCode && MISSING_CODEX_THREAD_CODES.has(parsed.codexErrorCode.toLowerCase())) return true;
+  const stale = escapeRegExp(staleThreadId);
+  const exact = [
+    new RegExp(`^Thread not found(?::\\s*${stale})?$`, 'i'),
+    new RegExp(`^Conversation not found(?::\\s*${stale})?$`, 'i'),
+    new RegExp(`^No conversation found with (?:session|thread) ID:\\s*${stale}$`, 'i'),
+    new RegExp(`^No such (?:thread|session|conversation)(?::\\s*${stale})?$`, 'i'),
+    /^Session expired$/i,
+    /^No saved (?:thread|session|conversation)$/i,
+  ];
+  const lines = `${parsed.stderr ?? ''}\n${parsed.codexErrorDetail ?? ''}`
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return lines.some((line) => exact.some((pattern) => pattern.test(line)));
+};
 
 function freshCodexFailure(result: AgentExecutionResult, staleThreadId: string): AgentExecutionResult {
   const detail = boundedCodexDetail(result.stderr?.trim() || result.stdout.trim() || `exit code ${result.exitCode}`);
@@ -596,7 +734,7 @@ export async function runCodexSession(
     }
     return { ...parsed, threadId: opts.threadId };
   }
-  if (opts.signal.aborted || run.stdoutTruncated || !codexThreadIsMissing(parsed)) return parsed;
+  if (opts.signal.aborted || run.stdoutTruncated || !codexThreadIsMissing(parsed, opts.threadId)) return parsed;
 
   // A confirmed missing resume gets exactly one fresh attempt. The caller
   // conditionally swaps the persisted id only after this attempt has a complete,
@@ -626,27 +764,37 @@ export async function readBoundedText(
   stream: ReadableStream<Uint8Array>,
   maxBytes: number,
   onOverflow?: () => void,
+  signal?: AbortSignal,
 ): Promise<BoundedText> {
   const reader = stream.getReader();
+  const cancel = () => {
+    void reader.cancel().catch(() => {});
+  };
+  if (signal?.aborted) cancel();
+  else signal?.addEventListener('abort', cancel, { once: true });
   const decoder = new TextDecoder();
   let text = '';
   let retained = 0;
   let truncated = false;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    const remaining = maxBytes - retained;
-    if (remaining > 0) {
-      const kept = value.subarray(0, remaining);
-      retained += kept.byteLength;
-      text += decoder.decode(kept, { stream: true });
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const remaining = maxBytes - retained;
+      if (remaining > 0) {
+        const kept = value.subarray(0, remaining);
+        retained += kept.byteLength;
+        text += decoder.decode(kept, { stream: true });
+      }
+      if (value.byteLength > Math.max(remaining, 0)) {
+        truncated = true;
+        onOverflow?.();
+        await reader.cancel();
+        break;
+      }
     }
-    if (value.byteLength > Math.max(remaining, 0)) {
-      truncated = true;
-      onOverflow?.();
-      await reader.cancel();
-      break;
-    }
+  } finally {
+    signal?.removeEventListener('abort', cancel);
   }
   text += decoder.decode();
   return { text, truncated };
@@ -654,20 +802,19 @@ export async function readBoundedText(
 
 const defaultRawCodexSpawn: RawCodexSpawn = async (args, { cwd, signal }) => {
   const command = resolveTrustedHostExecutable('codex', cwd);
-  const proc = Bun.spawn([command, ...args], { cwd, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', signal });
-  let forceTimer: ReturnType<typeof setTimeout> | undefined;
-  const abortOverflow = () => {
-    if (forceTimer) return;
-    proc.kill('SIGTERM');
-    forceTimer = setTimeout(() => proc.kill('SIGKILL'), 1_000);
-    if (typeof forceTimer.unref === 'function') forceTimer.unref();
-  };
+  const proc = Bun.spawn([command, ...args], {
+    cwd,
+    env: buildMappedAgentEnv(),
+    stdin: 'ignore',
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+  const supervised = superviseChild(proc, signal);
   const [stdout, stderr, exitCode] = await Promise.all([
-    readBoundedText(proc.stdout, CODEX_STDOUT_MAX_BYTES, abortOverflow),
-    readBoundedText(proc.stderr, CODEX_STDERR_MAX_BYTES),
-    proc.exited,
+    readBoundedText(proc.stdout, CODEX_STDOUT_MAX_BYTES, supervised.terminate, signal),
+    readBoundedText(proc.stderr, CODEX_STDERR_MAX_BYTES, undefined, signal),
+    supervised.exited,
   ]);
-  if (forceTimer) clearTimeout(forceTimer);
   return {
     stdout: stdout.text,
     stderr: stderr.text,
@@ -886,6 +1033,11 @@ export interface OmniRunnerDeps {
    * swaps behind if the in-place reaction swap does not render live.
    */
   setReaction?: OmniSetReaction;
+  /** Explicitly enable mapped workspace-writing agent runs. Production defaults
+   * off because child authentication may remain file-backed outside env control. */
+  allowMappedAgentExecution?: boolean;
+  /** Maximum time shutdown/idle drains may wait on injected network/child work. */
+  drainTimeoutMs?: number;
 }
 
 export interface OmniRunner {
@@ -906,48 +1058,110 @@ export interface OmniRunner {
   stop(): Promise<void>;
 }
 
+const OMITTED_APPROVAL_PREVIEW = JSON.stringify({ version: 1, legacyPreviewOmitted: true });
+const SAFE_APPROVAL_TOOL = /^[A-Za-z0-9_.:-]{1,128}$/;
+const hasControlCharacter = (value: string): boolean =>
+  [...value].some((character) => {
+    const code = character.charCodeAt(0);
+    return code <= 0x1f || code === 0x7f;
+  });
+
+function safeSummaryPath(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 240 || hasControlCharacter(value)) {
+    return undefined;
+  }
+  return redactOmniOutbound(value);
+}
+
+function boundedApprovalPreview(value: Record<string, unknown>): string {
+  const preview = JSON.stringify(value);
+  return preview.length > 200 ? JSON.stringify({ version: 1, kind: value.kind, previewTruncated: true }) : preview;
+}
+
+/** Every durable row is compatibility input, not trusted producer output. Only
+ * the current version and allowlisted fields are reconstructed for transport. */
 function safeApprovalPreview(tool: string, inputSummary: string): string {
-  if (tool !== 'Bash') return inputSummary.length > 200 ? `${inputSummary.slice(0, 197)}...` : inputSummary;
   try {
     const parsed: unknown = JSON.parse(inputSummary);
-    if (!isRecord(parsed) || parsed.kind !== 'Bash' || !Array.isArray(parsed.commands)) {
-      return '{"kind":"Bash","commands":[],"legacyPreviewOmitted":true}';
+    if (!isRecord(parsed) || parsed.version !== 1) return OMITTED_APPROVAL_PREVIEW;
+    if (parsed.kind === 'empty') return JSON.stringify({ version: 1, kind: 'empty' });
+    if (tool === 'Bash' && parsed.kind === 'Bash' && Array.isArray(parsed.commands)) {
+      const commands = parsed.commands.slice(0, 8).flatMap((value) => {
+        if (!isRecord(value) || typeof value.executable !== 'string') return [];
+        const executable =
+          /^[A-Za-z][A-Za-z0-9._+-]{0,63}$/.test(value.executable) &&
+          !/(?:password|passwd|secret|token|api[_-]?key|private[_-]?key)/i.test(value.executable) &&
+          !/^(?:gh[pousr]_|github_pat_|sk-|xox[baprs]-|npm_|AKIA|ASIA|AIza)/i.test(value.executable)
+            ? value.executable
+            : '[command]';
+        const options = Array.isArray(value.options)
+          ? value.options
+              .filter(
+                (option): option is string =>
+                  typeof option === 'string' && /^--?[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(option),
+              )
+              .slice(0, 12)
+          : [];
+        const env = Array.isArray(value.env)
+          ? value.env
+              .filter((name): name is string => typeof name === 'string' && /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(name))
+              .slice(0, 12)
+          : [];
+        const argumentCount =
+          typeof value.argumentCount === 'number' &&
+          Number.isSafeInteger(value.argumentCount) &&
+          value.argumentCount >= 0
+            ? Math.min(value.argumentCount, 10_000)
+            : 0;
+        return [{ executable, options, env, argumentCount }];
+      });
+      return boundedApprovalPreview({ version: 1, kind: 'Bash', commands, truncated: parsed.truncated === true });
     }
-    const commands = parsed.commands.slice(0, 8).flatMap((value) => {
-      if (!isRecord(value) || typeof value.executable !== 'string') return [];
-      const executable = /^[A-Za-z][A-Za-z0-9._+-]{0,63}$/.test(value.executable) ? value.executable : '[command]';
-      const options = Array.isArray(value.options)
-        ? value.options
-            .filter(
-              (option): option is string =>
-                typeof option === 'string' && /^--?[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(option),
-            )
-            .slice(0, 12)
+    if ((tool === 'Write' || tool === 'Edit' || tool === 'apply_patch') && parsed.kind === tool) {
+      const paths = Array.isArray(parsed.paths)
+        ? parsed.paths
+            .flatMap((value) => {
+              const safe = safeSummaryPath(value);
+              return safe ? [safe] : [];
+            })
+            .slice(0, 10)
         : [];
-      const env = Array.isArray(value.env)
-        ? value.env
-            .filter((name): name is string => typeof name === 'string' && /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(name))
-            .slice(0, 12)
+      return boundedApprovalPreview({ version: 1, kind: tool, paths });
+    }
+    if (tool === 'NotebookEdit' && parsed.kind === 'NotebookEdit') {
+      const paths = Array.isArray(parsed.paths)
+        ? parsed.paths
+            .flatMap((value) => {
+              const safe = safeSummaryPath(value);
+              return safe ? [safe] : [];
+            })
+            .slice(0, 10)
         : [];
-      const argumentCount =
-        typeof value.argumentCount === 'number' && Number.isSafeInteger(value.argumentCount) && value.argumentCount >= 0
-          ? Math.min(value.argumentCount, 10_000)
-          : 0;
-      return [{ executable, options, env, argumentCount }];
-    });
-    const preview = JSON.stringify({ kind: 'Bash', commands, truncated: parsed.truncated === true });
-    return preview.length > 200 ? `${preview.slice(0, 197)}...` : preview;
+      const cellId = safeSummaryPath(parsed.cellId);
+      return boundedApprovalPreview({ version: 1, kind: 'NotebookEdit', paths, ...(cellId ? { cellId } : {}) });
+    }
+    if (parsed.kind === 'other' && typeof parsed.inputFieldCount === 'number') {
+      const inputFieldCount = Number.isSafeInteger(parsed.inputFieldCount)
+        ? Math.max(0, Math.min(parsed.inputFieldCount, 10_000))
+        : 0;
+      return JSON.stringify({ version: 1, kind: 'other', inputFieldCount });
+    }
+    if (parsed.previewTruncated === true && typeof parsed.kind === 'string') {
+      return JSON.stringify({ version: 1, kind: parsed.kind.slice(0, 40), previewTruncated: true });
+    }
+    return OMITTED_APPROVAL_PREVIEW;
   } catch {
-    return '{"kind":"Bash","commands":[],"legacyPreviewOmitted":true}';
+    return OMITTED_APPROVAL_PREVIEW;
   }
 }
 
 function formatApprovalMessage(tool: string, inputSummary: string): string {
-  const preview = safeApprovalPreview(tool, inputSummary);
+  const safeTool = SAFE_APPROVAL_TOOL.test(tool) ? tool : 'unknown';
+  const preview = safeApprovalPreview(safeTool, inputSummary);
   return [
     '\u{1F514} *Approval Required*',
     '',
-    `Tool: \`${tool}\``,
+    `Tool: \`${safeTool}\``,
     `Preview: ${preview}`,
     '',
     'Reply *y* to approve or *n* to deny',
@@ -969,10 +1183,12 @@ function parseReaction(content: string): { emoji: string; targetId: string } | n
   return m ? { emoji: m[1].trim(), targetId: m[2].trim() } : null;
 }
 
-/** chat id from payload, else parsed from `omni.message.{instance}.{chat...}`. */
-function chatIdFromSubject(subject: string): string | undefined {
+/** Authoritative identity carried by `omni.message.{instance}.{chat...}`. */
+function identityFromSubject(subject: string): { instance: string; chat: string } | undefined {
   const parts = subject.split('.');
-  return parts.length >= 4 ? parts.slice(3).join('.') : undefined;
+  if (parts.length < 4 || parts[0] !== 'omni' || parts[1] !== 'message' || !parts[2]) return undefined;
+  const chat = parts.slice(3).join('.');
+  return chat ? { instance: parts[2], chat } : undefined;
 }
 
 /**
@@ -1131,6 +1347,12 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
   const spawnClaude = deps.spawnClaude ?? defaultSpawnClaude;
   const spawnAgent: AgentExecutor =
     deps.spawnAgent ?? ((opts) => (opts.provider === 'claude' ? spawnClaude(opts) : defaultAgentExecutor(opts)));
+  const allowMappedAgentExecution =
+    deps.allowMappedAgentExecution ??
+    (deps.spawnAgent !== undefined ||
+      deps.spawnClaude !== undefined ||
+      /^(?:1|true|yes|on)$/i.test(process.env.GENIE_OMNI_MAPPED_AGENT_EXECUTION?.trim() ?? ''));
+  const drainTimeoutMs = Math.max(1, Math.min(deps.drainTimeoutMs ?? 5_000, 30_000));
   const sendApproval = deps.sendApproval ?? makeDefaultOmniSend(config);
   const setReaction = deps.setReaction ?? makeDefaultOmniSetReaction(config);
   const vocab = {
@@ -1219,11 +1441,13 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
       const ok = result.exitCode === 0 && !result.isError;
       persistCodexSessionResult(db, route, result, ok, now(), log);
       const content = ok
-        ? truncateReply(result.stdout, maxReplyChars)
+        ? truncateReply(redactOmniOutbound(result.stdout), maxReplyChars)
         : errorNotice(
-            result.exitCode !== 0
-              ? exitDetail(result.exitCode, result.stderr, result.stdout)
-              : result.stdout || 'agent returned an error',
+            redactOmniOutbound(
+              result.exitCode !== 0
+                ? exitDetail(result.exitCode, result.stderr, result.stdout)
+                : result.stdout || 'agent returned an error',
+            ),
           );
       publish(replySubject, buildRoutedReplyPayload(route.instance, route.chat, content, genId(), now()));
       // ✅ once a genuine reply is published; ❌ on a non-zero exit or soft error.
@@ -1236,7 +1460,7 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
           ? timeoutNotice(timeoutMs)
           : err instanceof OneShotStoppedError
             ? '⏹️ cancelled because Omni serve stopped.'
-            : errorNotice(errText(err));
+            : errorNotice(redactOmniOutbound(errText(err)));
       publish(replySubject, buildRoutedReplyPayload(route.instance, route.chat, content, genId(), now()));
       // ❌ on timeout / crash — same ordering chain as the success path.
       pendingAck.finally(() => emitRouteReaction(route, messageId, STATUS_DENIED));
@@ -1483,8 +1707,23 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
   }
 
   async function drain(): Promise<void> {
+    const deadline = Date.now() + drainTimeoutMs;
     while (pending.size > 0 || inFlightSends.size > 0 || inFlightReactions.size > 0) {
-      await Promise.allSettled([...pending, ...inFlightSends, ...inFlightReactions]);
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new Error(`Omni drain exceeded ${drainTimeoutMs}ms`);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const timedOut = await Promise.race([
+          Promise.allSettled([...pending, ...inFlightSends, ...inFlightReactions]).then(() => false),
+          new Promise<true>((resolve) => {
+            timer = setTimeout(() => resolve(true), remaining);
+            if (typeof timer.unref === 'function') timer.unref();
+          }),
+        ]);
+        if (timedOut) throw new Error(`Omni drain exceeded ${drainTimeoutMs}ms`);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
     }
   }
 
@@ -1500,16 +1739,28 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
 
     handleMessage(subject: string, data: string): void {
       if (stopped) return;
+      const subjectIdentity = identityFromSubject(subject);
+      if (!subjectIdentity || (config.instance && subjectIdentity.instance !== config.instance)) {
+        log(`[omni] rejected inbound with out-of-scope subject ${subject}`);
+        return;
+      }
       let msg: InboundMessagePayload;
       try {
         msg = JSON.parse(data) as InboundMessagePayload;
       } catch {
         return; // skip malformed
       }
-      const chatId = msg.chatId ?? chatIdFromSubject(subject);
+      if (
+        (msg.instanceId !== undefined && msg.instanceId !== subjectIdentity.instance) ||
+        (msg.chatId !== undefined && msg.chatId !== subjectIdentity.chat)
+      ) {
+        log(`[omni] rejected inbound identity mismatch on ${subject}`);
+        return;
+      }
+      const chatId = subjectIdentity.chat;
       const sender = msg.sender ?? 'whatsapp-user';
-      const instance = msg.instanceId ?? config.instance ?? 'unknown';
-      const chat = chatId ?? 'unknown';
+      const instance = subjectIdentity.instance;
+      const chat = subjectIdentity.chat;
       const body = msg.content ?? '';
 
       // Store every inbound message to the inbox — mapped or not.
@@ -1523,15 +1774,16 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
       // empty/whitespace body — with no ack and no reply (the inbound is already
       // stored above, and the approval-chat reaction path below still runs).
       const route = findRoute(instance, chat);
-      if (route && !parseReaction(body) && body.trim().length > 0) {
+      if (route && allowMappedAgentExecution && !parseReaction(body) && body.trim().length > 0) {
         startRoutedRun(route, inboundId, body, msg.messageId);
+      } else if (route && !allowMappedAgentExecution && !parseReaction(body) && body.trim().length > 0) {
+        log(
+          `[omni] mapped execution disabled for ${routeKey(instance, chat)}; set GENIE_OMNI_MAPPED_AGENT_EXECUTION=1 only after accepting the credential boundary`,
+        );
       }
 
       // Only the approval chat can resolve approvals.
-      if (!chatId || chatId !== config.approvalChat) return;
-      // Instance-scope guard (PR #2507): another instance's reply/reaction must
-      // never resolve our approval, even if the approvalChat JID repeats.
-      if (msg.instanceId && config.instance && msg.instanceId !== config.instance) return;
+      if (chatId !== config.approvalChat) return;
       if (!body) return;
 
       // A reaction reaches genie on THIS subject (SPIKE a) as
@@ -1609,38 +1861,84 @@ export async function runOmniServe(opts: RunOmniServeOptions): Promise<void> {
   const { db, config } = opts;
   const log = opts.log ?? (() => {});
   const factory = opts.natsFactory ?? defaultNatsFactory;
+  const cleanupTimeoutMs = Math.max(1, Math.min((opts.runnerDeps?.drainTimeoutMs ?? 5_000) + 1_000, 31_000));
+  let nc: NatsLike | undefined;
+  let runner: OmniRunner | undefined;
+  let msgSub: NatsSubscription | undefined;
+  let consumeTask: Promise<void> | undefined;
+  let timer: ReturnType<typeof setInterval> | undefined;
+  let hasPrimaryError = false;
+  let primaryError: unknown;
 
-  const nc = await factory({ servers: config.natsUrl });
-  const runner = createOmniRunner({ ...opts.runnerDeps, db, config, publish: nc.publish, log });
-
-  // Both text replies AND reactions arrive on `omni.message.{instance}.>` in this
-  // Omni build; the legacy `omni.event.>` subject has no publishers (SPIKE a), so
-  // it is no longer subscribed.
-  const msgSub = nc.subscribe(`omni.message.${config.instance}.>`);
-  const consumeTask = consume(msgSub, runner.handleMessage, log);
-
-  const timer = setInterval(() => {
+  const cleanupErrors: Error[] = [];
+  const settleCleanup = async (label: string, action: () => void | Promise<void>): Promise<boolean> => {
+    let deadline: ReturnType<typeof setTimeout> | undefined;
     try {
-      runner.tick();
-    } catch (err) {
-      log(`[omni] tick error: ${err instanceof Error ? err.message : String(err)}`);
+      await Promise.race([
+        Promise.resolve().then(action),
+        new Promise<never>((_, reject) => {
+          deadline = setTimeout(() => reject(new Error(`${label} exceeded ${cleanupTimeoutMs}ms`)), cleanupTimeoutMs);
+          if (typeof deadline.unref === 'function') deadline.unref();
+        }),
+      ]);
+      return true;
+    } catch (error) {
+      cleanupErrors.push(error instanceof Error ? error : new Error(`${label}: ${String(error)}`));
+      return false;
+    } finally {
+      if (deadline) clearTimeout(deadline);
     }
-  }, config.approvals.pollIntervalMs);
+  };
 
-  runner.tick(); // announce anything already queued
-  log(`[omni] serving — instance=${config.instance} chat=${config.approvalChat} nats=${config.natsUrl}`);
-  opts.onReady?.();
+  try {
+    nc = await factory({ servers: config.natsUrl });
+    runner = createOmniRunner({ ...opts.runnerDeps, db, config, publish: nc.publish, log });
 
-  await new Promise<void>((resolve) => {
-    if (opts.signal?.aborted) return resolve();
-    opts.signal?.addEventListener('abort', () => resolve(), { once: true });
-  });
+    // Both text replies AND reactions arrive on this instance-bound subject.
+    msgSub = nc.subscribe(`omni.message.${config.instance}.>`);
+    consumeTask = consume(msgSub, runner.handleMessage, log);
 
-  clearInterval(timer);
-  const stopping = runner.stop();
-  msgSub.unsubscribe();
-  await consumeTask;
-  await stopping;
-  await nc.close();
-  log('[omni] stopped');
+    timer = setInterval(() => {
+      try {
+        runner?.tick();
+      } catch (err) {
+        log(`[omni] tick error: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }, config.approvals.pollIntervalMs);
+
+    runner.tick();
+    log(`[omni] serving — instance=${config.instance} chat=${config.approvalChat} nats=${config.natsUrl}`);
+    opts.onReady?.();
+
+    await new Promise<void>((resolve) => {
+      if (opts.signal?.aborted) return resolve();
+      opts.signal?.addEventListener('abort', () => resolve(), { once: true });
+    });
+  } catch (error) {
+    hasPrimaryError = true;
+    primaryError = error;
+  } finally {
+    if (timer) clearInterval(timer);
+
+    const stopping = runner?.stop();
+    // Attach immediately so a synchronous async rejection cannot become
+    // unhandled while unsubscribe cleanup is still running.
+    void stopping?.catch(() => {});
+    const unsubscribed = msgSub
+      ? await settleCleanup('Omni subscription unsubscribe', () => msgSub?.unsubscribe())
+      : true;
+    if (stopping) await settleCleanup('Omni runner stop', () => stopping);
+
+    // A failed unsubscribe may require closing NATS before the consumer can end.
+    if (!unsubscribed && nc) await settleCleanup('Omni NATS close', () => nc?.close() ?? Promise.resolve());
+    if (consumeTask) await settleCleanup('Omni subscription drain', () => consumeTask ?? Promise.resolve());
+    if (unsubscribed && nc) await settleCleanup('Omni NATS close', () => nc?.close() ?? Promise.resolve());
+
+    if (cleanupErrors.length > 0 && hasPrimaryError) {
+      for (const error of cleanupErrors) log(`[omni] cleanup error after primary failure: ${error.message}`);
+    }
+    if (nc) log('[omni] stopped');
+  }
+  if (hasPrimaryError) throw primaryError;
+  if (cleanupErrors.length > 0) throw new AggregateError(cleanupErrors, 'Omni shutdown failed');
 }

@@ -372,6 +372,40 @@ describe('official plugin MCP usability', () => {
     expect(readFileSync(join(root, '.codex', 'config.toml'), 'utf8')).toContain('/absolute/genie');
   });
 
+  test('rejects configured Node from the active project or linked-worktree common checkout', () => {
+    const fixture = seedActivePlugin();
+    const inspect = (cwd: string, nodePath: string) =>
+      inspectCodexPluginMcpUsability({
+        pluginRoot: fixture.pluginRoot,
+        expectedPluginName: 'genie',
+        expectedVersion: fixture.version,
+        genieHome: fixture.genieHome,
+        cwd,
+        resolveCommand: () => nodePath,
+      });
+
+    const project = join(root, 'active-project');
+    mkdirSync(join(project, '.git'), { recursive: true });
+    const projectNode = join(project, 'bin', 'node');
+    mkdirSync(dirname(projectNode), { recursive: true });
+    writeFileSync(projectNode, 'decoy');
+    chmodSync(projectNode, 0o755);
+    expect(inspect(project, projectNode).detail).toContain('repository-local');
+
+    const main = join(root, 'main');
+    const linked = join(root, 'linked');
+    const linkedGitDir = join(main, '.git', 'worktrees', 'linked');
+    mkdirSync(linkedGitDir, { recursive: true });
+    mkdirSync(linked, { recursive: true });
+    writeFileSync(join(linked, '.git'), `gitdir: ${linkedGitDir}\n`);
+    writeFileSync(join(linkedGitDir, 'commondir'), '../..\n');
+    const commonNode = join(main, 'bin', 'node');
+    mkdirSync(dirname(commonNode), { recursive: true });
+    writeFileSync(commonNode, 'decoy');
+    chmodSync(commonNode, 0o755);
+    expect(inspect(linked, commonNode).detail).toContain('repository-local');
+  });
+
   test('unsupported camelCase plugin MCP config fails closed', () => {
     const fixture = seedActivePlugin();
     writeFileSync(
@@ -521,6 +555,23 @@ describe('Codex plugin/fallback reconciliation', () => {
 });
 
 describe('registerProjectMcpConfigs', () => {
+  test('explicit init creates the marker-owned Codex fallback when the CLI is absent', () => {
+    const unavailable: CodexPluginProbe = {
+      cliAvailable: false,
+      status: 'unavailable',
+      installed: false,
+      detail: 'Codex CLI not found',
+    };
+    const results = registerProjectMcpConfigs(root, {
+      pluginProbe: unavailable,
+      entry: { command: '/absolute/genie', args: ['mcp'] },
+    });
+    const codexPath = join(root, '.codex', 'config.toml');
+    expect(results.some((result) => result.path === codexPath && result.action === 'created')).toBe(true);
+    expect(readFileSync(codexPath, 'utf8')).toContain('# BEGIN GENIE MCP FALLBACK');
+    expect(readFileSync(codexPath, 'utf8')).toContain('/absolute/genie');
+  });
+
   test('preflights both JSON files and rejects wrong-shaped valid JSON before any sibling write', () => {
     mkdirSync(join(root, '.warp'), { recursive: true });
     writeFileSync(join(root, '.warp', '.mcp.json'), '{"mcpServers":[]}');

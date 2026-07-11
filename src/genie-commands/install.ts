@@ -20,6 +20,7 @@ import {
   type InstallIntegrationsOptions,
   type IntegrationSelection,
   installRuntimeIntegrations,
+  persistIntegrationConsent,
 } from '../lib/runtime-integrations.js';
 import { type AuxiliaryTreeOperations, type AuxiliaryTreeOutcome, convergeAuxiliaryTree } from './auxiliary-trees.js';
 import { cleanupV4 } from './legacy-v4.js';
@@ -52,6 +53,7 @@ type NormalizeAuxLayoutFn = (genieHome: string) => unknown;
 type AgentSyncRunner = (selection: IntegrationSelection) => void;
 type IntegrationRunner = (options?: InstallIntegrationsOptions) => ReturnType<typeof installRuntimeIntegrations>;
 type LifecycleLeaseAcquirer = () => LifecycleLease | { skipped: string };
+type ConsentWriter = (selection: IntegrationSelection) => void;
 
 /**
  * Converge the extracted `<home>/bin/{plugins,skills,templates}` trees into
@@ -117,11 +119,13 @@ export function installCommand(
   runSync: AgentSyncRunner = (selection) => runAgentSyncSafe({ strict: true, selection }),
   runIntegrations: IntegrationRunner = installRuntimeIntegrations,
   acquireLease: LifecycleLeaseAcquirer = () => acquireLifecycleLease(GENIE_HOME),
+  writeConsent: ConsentWriter = (selection) => persistIntegrationConsent(selection, GENIE_HOME),
 ): void {
   const lease = acquireLease();
   if ('skipped' in lease) throw new Error(`Another Genie lifecycle command is active: ${lease.skipped}`);
   try {
     const selection = resolveIntegrationSelection(options);
+    writeConsent(selection);
     if (options.skipV4Cleanup) {
       console.log('\x1b[2mSkipping v4 legacy cleanup (--skip-v4-cleanup).\x1b[0m');
     } else {

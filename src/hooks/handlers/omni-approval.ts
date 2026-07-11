@@ -53,6 +53,7 @@ const SUMMARY_PATH_CAP = 10;
 const SUMMARY_PATH_CHARS = 240;
 const PATCH_PATH_HEADER = /^\*\*\* (?:Add|Update|Delete) File: (.+)$/gm;
 const PATCH_MOVE_HEADER = /^\*\*\* Move to: (.+)$/gm;
+const APPROVAL_SUMMARY_VERSION = 1;
 
 function redactString(value: string): string {
   return value
@@ -148,7 +149,15 @@ function shellTokens(command: string): string[] {
 
 function safeExecutable(token: string): string {
   const leaf = token.replace(/\\/g, '/').split('/').pop() ?? '';
-  return /^[A-Za-z][A-Za-z0-9._+-]{0,63}$/.test(leaf) ? leaf : '[command]';
+  if (!/^[A-Za-z][A-Za-z0-9._+-]{0,63}$/.test(leaf)) return '[command]';
+  if (
+    /(?:password|passwd|secret|token|api[_-]?key|private[_-]?key)/i.test(leaf) ||
+    /^(?:gh[pousr]_|github_pat_|sk-[A-Za-z0-9]|xox[baprs]-|npm_|AKIA|ASIA|AIza)/i.test(leaf) ||
+    (leaf.length >= 32 && /[A-Z]/.test(leaf) && /[a-z]/.test(leaf) && /\d/.test(leaf))
+  ) {
+    return '[command]';
+  }
+  return leaf;
 }
 
 function safeOption(token: string): string | undefined {
@@ -207,7 +216,7 @@ function bashStructuralPreview(command: string): Record<string, unknown> {
  * input fields exist. This is deliberately not a generic JSON serializer.
  */
 function summarizeInput(tool: string, input: Record<string, unknown> | undefined): string {
-  if (!input) return '';
+  if (!input) return JSON.stringify({ version: APPROVAL_SUMMARY_VERSION, kind: 'empty' });
   let summary: Record<string, unknown>;
   if (tool === 'Bash') {
     summary =
@@ -229,14 +238,17 @@ function summarizeInput(tool: string, input: Record<string, unknown> | undefined
     summary = { kind: 'other', inputFieldCount: Object.keys(input).length };
   }
 
-  const json = JSON.stringify(summary);
+  const versioned = { version: APPROVAL_SUMMARY_VERSION, ...summary };
+  const json = JSON.stringify(versioned);
   const encoded = Buffer.from(json, 'utf8');
   if (encoded.byteLength <= INPUT_SUMMARY_CAP) return json;
-  const prefix = encoded
-    .subarray(0, INPUT_SUMMARY_CAP - 3)
-    .toString('utf8')
-    .replace(/\uFFFD$/, '');
-  return `${prefix}...`;
+  // Durable summaries must remain valid JSON so the send boundary can validate
+  // them after upgrades. Never byte-truncate into an unparsable legacy blob.
+  return JSON.stringify({
+    version: APPROVAL_SUMMARY_VERSION,
+    kind: typeof summary.kind === 'string' ? summary.kind : 'other',
+    previewTruncated: true,
+  });
 }
 
 function allow(): HandlerResult {

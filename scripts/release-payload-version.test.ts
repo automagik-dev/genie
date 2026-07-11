@@ -2,7 +2,11 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { stampReleasePayloadVersion, verifyReleasePayloadVersion } from './release-payload-version.ts';
+import {
+  stampReleasePayloadVersion,
+  verifyCommittedReleaseVersions,
+  verifyReleasePayloadVersion,
+} from './release-payload-version.ts';
 
 describe('release payload version contract', () => {
   const roots: string[] = [];
@@ -20,6 +24,7 @@ describe('release payload version contract', () => {
   function fixture(): string {
     const root = mkdtempSync(join(tmpdir(), 'genie-release-payload-version-'));
     roots.push(root);
+    writeJson(root, 'package.json', { name: '@automagik/genie', version: '5.000000.0' });
     for (const path of [
       'plugins/genie/package.json',
       'plugins/genie/.claude-plugin/plugin.json',
@@ -72,6 +77,14 @@ describe('release payload version contract', () => {
     expect(() => verifyReleasePayloadVersion(root, version)).toThrow('.codex-plugin/plugin.json');
   });
 
+  test('source preflight rejects committed drift before a staged override can hide it', () => {
+    const root = fixture();
+    expect(verifyCommittedReleaseVersions(root)).toBe('5.000000.0');
+
+    writeJson(root, 'plugins/genie/.codex-plugin/plugin.json', { name: 'genie', version: '5.999999.1' });
+    expect(() => verifyCommittedReleaseVersions(root)).toThrow('committed version mismatch');
+  });
+
   test('fails closed on missing metadata, malformed versions, and an invalid Codex marketplace target', () => {
     const root = fixture();
     rmSync(join(root, 'plugins/genie/package.json'));
@@ -90,6 +103,10 @@ describe('release payload version contract', () => {
 
   test('build-binary wires both stage stamping and post-copy verification', () => {
     const buildScript = readFileSync(join(import.meta.dir, 'build-binary.sh'), 'utf8');
+    const sourcePreflight = buildScript.indexOf('release-payload-version.ts" --verify-source');
+    const stageStamp = buildScript.indexOf('release-payload-version.ts" --stamp');
+    expect(sourcePreflight).toBeGreaterThan(-1);
+    expect(sourcePreflight).toBeLessThan(stageStamp);
     expect(buildScript).toContain('release-payload-version.ts" --stamp');
     expect(buildScript).toContain('release-payload-version.ts" --verify');
   });

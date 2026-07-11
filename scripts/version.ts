@@ -72,6 +72,89 @@ export async function updateJsonVersion(filePath: string, version: string): Prom
   }
 }
 
+export async function updateClaudeMarketplaceVersion(filePath: string, version: string): Promise<boolean> {
+  if (!existsSync(filePath)) {
+    console.warn(`  ⚠ Skipped (not found): ${filePath}`);
+    return false;
+  }
+  try {
+    const parsed: unknown = JSON.parse(await readFile(filePath, 'utf-8'));
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+      throw new Error('marketplace must be an object');
+    const plugins = Reflect.get(parsed, 'plugins');
+    if (!Array.isArray(plugins)) throw new Error('marketplace must contain a plugins array');
+    const matches = plugins.filter((entry): entry is Record<string, unknown> =>
+      Boolean(entry && typeof entry === 'object' && !Array.isArray(entry) && Reflect.get(entry, 'name') === 'genie'),
+    );
+    if (matches.length !== 1) throw new Error('marketplace must contain exactly one genie entry');
+    if (typeof matches[0].version !== 'string') throw new Error('genie entry version must be a string');
+    matches[0].version = version;
+    await writeFile(filePath, `${JSON.stringify(parsed, null, 2)}\n`);
+    console.log(`  ✓ ${filePath}`);
+    return true;
+  } catch (err) {
+    console.error(`  ✗ Failed: ${filePath}`, err);
+    return false;
+  }
+}
+
+async function assertVersionFileShape(filePath: string): Promise<void> {
+  if (!existsSync(filePath)) throw new Error('file is missing');
+  const source = await readFile(filePath, 'utf-8');
+  const parsed: unknown = JSON.parse(source);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('metadata must be an object');
+  if (typeof Reflect.get(parsed, 'version') !== 'string') throw new Error('top-level version must be a string');
+  if (!/("version"\s*:\s*)"[^"]*"/.test(source)) throw new Error('could not locate top-level version field');
+}
+
+async function assertClaudeMarketplaceShape(filePath: string): Promise<void> {
+  if (!existsSync(filePath)) throw new Error('file is missing');
+  const parsed: unknown = JSON.parse(await readFile(filePath, 'utf-8'));
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('marketplace must be an object');
+  const plugins = Reflect.get(parsed, 'plugins');
+  if (!Array.isArray(plugins)) throw new Error('marketplace must contain a plugins array');
+  const matches = plugins.filter(
+    (entry) => entry && typeof entry === 'object' && !Array.isArray(entry) && Reflect.get(entry, 'name') === 'genie',
+  );
+  if (matches.length !== 1 || typeof Reflect.get(matches[0], 'version') !== 'string') {
+    throw new Error('marketplace must contain exactly one versioned genie entry');
+  }
+}
+
+/** Update every authoritative version file and fail the command on any partial write. */
+export async function synchronizeVersionFiles(rootDir: string, version: string): Promise<void> {
+  const paths = [
+    join(rootDir, 'package.json'),
+    join(rootDir, 'plugins/genie/.claude-plugin/plugin.json'),
+    join(rootDir, 'plugins/genie/.codex-plugin/plugin.json'),
+    join(rootDir, 'plugins/genie/package.json'),
+  ];
+  const marketplacePath = join(rootDir, '.claude-plugin/marketplace.json');
+  const preflightFailures: string[] = [];
+  for (const path of paths) {
+    try {
+      await assertVersionFileShape(path);
+    } catch (error) {
+      preflightFailures.push(`${path}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  try {
+    await assertClaudeMarketplaceShape(marketplacePath);
+  } catch (error) {
+    preflightFailures.push(`${marketplacePath}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (preflightFailures.length > 0) {
+    throw new Error(`version synchronization preflight failed for: ${preflightFailures.join('; ')}`);
+  }
+
+  const outcomes: Array<{ path: string; ok: boolean }> = [];
+  for (const path of paths) outcomes.push({ path, ok: await updateJsonVersion(path, version) });
+
+  outcomes.push({ path: marketplacePath, ok: await updateClaudeMarketplaceVersion(marketplacePath, version) });
+  const failed = outcomes.filter((outcome) => !outcome.ok).map((outcome) => outcome.path);
+  if (failed.length > 0) throw new Error(`version synchronization failed for: ${failed.join(', ')}`);
+}
+
 async function main() {
   assertPluginSkillsInSync();
   const version = generateVersion();
@@ -80,35 +163,7 @@ async function main() {
   console.log(`Version: ${version}`);
   console.log('Updating files:');
 
-  // 1. Update package.json (root). src/lib/version.ts is NOT stamped here —
-  // it resolves the version at runtime from package.json (see that file's
-  // header). The old `export const VERSION = '...'` literal it used to
-  // rewrite no longer exists, so the former stamp step was a dead no-op.
-  await updateJsonVersion(join(rootDir, 'package.json'), version);
-
-  // 2. Update Claude Code plugin manifest
-  await updateJsonVersion(join(rootDir, 'plugins/genie/.claude-plugin/plugin.json'), version);
-
-  // 2b. Update Codex plugin manifest — must track .claude-plugin/plugin.json exactly
-  await updateJsonVersion(join(rootDir, 'plugins/genie/.codex-plugin/plugin.json'), version);
-
-  // 3. Update plugin package.json (used by smart-install.js for version checks)
-  await updateJsonVersion(join(rootDir, 'plugins/genie/package.json'), version);
-
-  // 4. Update marketplace.json plugin version
-  const marketplacePath = join(rootDir, '.claude-plugin/marketplace.json');
-  if (existsSync(marketplacePath)) {
-    try {
-      const json = JSON.parse(await readFile(marketplacePath, 'utf-8'));
-      if (json.plugins?.[0]) {
-        json.plugins[0].version = version;
-      }
-      await writeFile(marketplacePath, `${JSON.stringify(json, null, 2)}\n`);
-      console.log(`  ✓ ${marketplacePath}`);
-    } catch (err) {
-      console.error(`  ✗ Failed: ${marketplacePath}`, err);
-    }
-  }
+  await synchronizeVersionFiles(rootDir, version);
 
   console.log('\n✅ All versions synchronized');
 }

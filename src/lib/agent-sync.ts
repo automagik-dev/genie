@@ -82,6 +82,10 @@ const WRITE_ACTIONS = new Set<SkillAction>(['created', 'updated', 'removed']);
  */
 const STAGING_SUFFIX = '.genie-sync.staging';
 const PREV_SUFFIX = '.genie-sync.prev';
+/** Hidden transaction root; agent skill discovery never sees staged SKILL.md files. */
+const SKILL_TRANSACTION_ROOT = '.genie-sync-transactions';
+const SKILL_TRANSACTION_STAGING_PREFIX = '.staging-';
+const SKILL_TRANSACTION_PREFIX = 'txn-';
 /** Cross-process mutual-exclusion lockfile under genieHome — one sync writer per GENIE_HOME. */
 const LOCK_NAME = '.agent-sync.lock';
 /** A lock older than this is a crashed run's debris and may be stolen. */
@@ -133,6 +137,8 @@ export interface AgentSyncOptions {
   now?: () => Date;
   /** Bound client homes for explicit lifecycle commands. */
   selection?: AgentSyncSelection;
+  /** Test seam for managed-directory promotion failures. Recovery always uses the real filesystem primitive. */
+  renameManagedDir?: typeof renameSync;
 }
 
 export type AgentSyncSelection = 'auto' | 'codex' | 'claude' | 'all' | 'none';
@@ -197,6 +203,7 @@ interface RunContext {
   backupInto: (agent: string, name: string, existingDir: string) => string;
   /** The backup root path, or null when nothing has been backed up this run. */
   backupsDirIfCreated: () => string | null;
+  renameManagedDir: typeof renameSync;
 }
 
 interface SourceSkill {
@@ -331,24 +338,187 @@ function buildManifest(ctx: RunContext, digest: string): SyncManifest {
   return { managedBy: MANAGED_BY, version: ctx.version, digest, syncedAt: ctx.now().toISOString() };
 }
 
+interface ManagedDirTransactionJournal {
+  version: 1;
+  destName: string;
+  hadLive: boolean;
+  beforeContentDigest: string | null;
+  beforeManifestDigest: string | null;
+  stagedContentDigest: string;
+  stagedManifestDigest: string;
+}
+
 /**
- * Copy `sourceDir` into `destDir` and stamp a fresh manifest, atomically. Stage
- * to `<dest>.genie-sync.staging`, rename the live tree to `<dest>.genie-sync.prev`,
- * rename staging into place, then delete the prev tree. The suffixes are
- * collision-proof (see {@link STAGING_SUFFIX}), so the pre-clean rmSync only ever
- * removes genie's own crashed-run debris — never a user's sibling backup dir.
- * Mirrors update.ts's swapAuxiliaryTree (reimplemented, not imported).
+ * Copy `sourceDir` into `destDir` through a journaled transaction. The complete
+ * staged tree and journal are first built below a hidden working name; an
+ * atomic rename publishes that transaction before the live tree is touched.
+ * A crash therefore leaves either undiscoverable pre-journal debris or enough
+ * information to restore the previous live tree on the next sync.
  */
-function writeManagedDir(sourceDir: string, destDir: string, manifest: SyncManifest): void {
+function writeManagedDir(ctx: RunContext, sourceDir: string, destDir: string, manifest: SyncManifest): void {
+  const targetParent = dirname(destDir);
+  const destName = relative(targetParent, destDir);
+  if (!isSafeEntryName(destName)) throw new Error(`invalid managed skill target name: ${destName}`);
+  const transactionRoot = join(targetParent, SKILL_TRANSACTION_ROOT);
+  const token = `${Buffer.from(destName).toString('hex')}-${process.pid}-${Date.now()}-${randomBytes(6).toString('hex')}`;
+  const working = createExclusiveTransactionDir(transactionRoot, `${SKILL_TRANSACTION_STAGING_PREFIX}${token}`);
+  const published = join(transactionRoot, `${SKILL_TRANSACTION_PREFIX}${token}`);
+  const staged = join(working, 'staged');
+  const before = join(published, 'before');
+  try {
+    cpSync(sourceDir, staged, { recursive: true });
+    writeManifest(staged, manifest);
+    const prior = lstatSafe(destDir) === null ? null : managedDirIdentity(destDir);
+    const stagedIdentity = managedDirIdentity(staged);
+    const journal: ManagedDirTransactionJournal = {
+      version: 1,
+      destName,
+      hadLive: prior !== null,
+      beforeContentDigest: prior?.contentDigest ?? null,
+      beforeManifestDigest: prior?.manifestDigest ?? null,
+      stagedContentDigest: stagedIdentity.contentDigest,
+      stagedManifestDigest: stagedIdentity.manifestDigest,
+    };
+    writeFileSync(join(working, 'journal.json'), `${JSON.stringify(journal)}\n`, 'utf8');
+    renameSync(working, published);
+    try {
+      if (prior !== null) ctx.renameManagedDir(destDir, before);
+      ctx.renameManagedDir(join(published, 'staged'), destDir);
+      writeFileSync(join(published, 'COMMITTED'), 'ok\n', 'utf8');
+      rmSync(published, { recursive: true, force: true });
+      removeEmptyDirSafe(transactionRoot);
+    } catch (error) {
+      try {
+        rollbackManagedDirTransaction(targetParent, published, journal);
+      } catch (rollbackError) {
+        throw new Error(`${errMsg(error)}; managed skill rollback failed: ${errMsg(rollbackError)}`);
+      }
+      throw error;
+    }
+  } catch (error) {
+    if (lstatSafe(working) !== null) rmSync(working, { recursive: true, force: true });
+    removeEmptyDirSafe(transactionRoot);
+    throw error;
+  }
+}
+
+function managedDirIdentity(dir: string): { contentDigest: string; manifestDigest: string } {
+  const stat = lstatSafe(dir);
+  if (stat === null || !stat.isDirectory() || stat.isSymbolicLink()) {
+    throw new Error(`managed skill tree is not a physical directory: ${dir}`);
+  }
+  const manifestDigest = regularFileDigest(join(dir, MANIFEST_NAME));
+  if (manifestDigest === null) throw new Error(`managed skill manifest is not a physical file: ${dir}`);
+  return { contentDigest: computeDirDigest(dir), manifestDigest };
+}
+
+function matchesManagedDirIdentity(dir: string, contentDigest: string | null, manifestDigest: string | null): boolean {
+  if (contentDigest === null || manifestDigest === null) return false;
+  try {
+    const identity = managedDirIdentity(dir);
+    return identity.contentDigest === contentDigest && identity.manifestDigest === manifestDigest;
+  } catch {
+    return false;
+  }
+}
+
+function readManagedDirTransactionJournal(transactionDir: string): ManagedDirTransactionJournal {
+  const parsed = JSON.parse(
+    readFileSync(join(transactionDir, 'journal.json'), 'utf8'),
+  ) as Partial<ManagedDirTransactionJournal>;
+  if (
+    parsed.version !== 1 ||
+    typeof parsed.destName !== 'string' ||
+    !isSafeEntryName(parsed.destName) ||
+    typeof parsed.hadLive !== 'boolean' ||
+    !isOptionalDigest(parsed.beforeContentDigest) ||
+    !isOptionalDigest(parsed.beforeManifestDigest) ||
+    !isDigest(parsed.stagedContentDigest) ||
+    !isDigest(parsed.stagedManifestDigest) ||
+    (parsed.hadLive && (parsed.beforeContentDigest === null || parsed.beforeManifestDigest === null)) ||
+    (!parsed.hadLive && (parsed.beforeContentDigest !== null || parsed.beforeManifestDigest !== null))
+  ) {
+    throw new Error(`invalid managed skill transaction: ${transactionDir}`);
+  }
+  return parsed as ManagedDirTransactionJournal;
+}
+
+function rollbackManagedDirTransaction(
+  targetParent: string,
+  transactionDir: string,
+  journal: ManagedDirTransactionJournal,
+): void {
+  const destDir = join(targetParent, journal.destName);
+  const before = join(transactionDir, 'before');
+  if (lstatSafe(before) !== null) {
+    if (!matchesManagedDirIdentity(before, journal.beforeContentDigest, journal.beforeManifestDigest)) {
+      throw new Error(`managed skill prior tree changed: ${before}`);
+    }
+    if (lstatSafe(destDir) !== null) {
+      if (!matchesManagedDirIdentity(destDir, journal.stagedContentDigest, journal.stagedManifestDigest)) {
+        throw new Error(`managed skill transaction target changed: ${destDir}`);
+      }
+      rmSync(destDir, { recursive: true, force: true });
+    }
+    renameSync(before, destDir);
+  } else if (journal.hadLive) {
+    if (!matchesManagedDirIdentity(destDir, journal.beforeContentDigest, journal.beforeManifestDigest)) {
+      throw new Error(`managed skill transaction lost prior tree: ${destDir}`);
+    }
+  } else if (lstatSafe(destDir) !== null) {
+    if (!matchesManagedDirIdentity(destDir, journal.stagedContentDigest, journal.stagedManifestDigest)) {
+      throw new Error(`managed skill transaction target changed: ${destDir}`);
+    }
+    rmSync(destDir, { recursive: true, force: true });
+  }
+  rmSync(transactionDir, { recursive: true, force: true });
+  removeEmptyDirSafe(join(targetParent, SKILL_TRANSACTION_ROOT));
+}
+
+/** Recover every journaled managed-skill promotion before classifying ownership. */
+function recoverManagedDirTransactions(targetParent: string, report: AgentReport): Set<string> {
+  const blocked = new Set<string>();
+  const transactionRoot = join(targetParent, SKILL_TRANSACTION_ROOT);
+  const rootStat = lstatSafe(transactionRoot);
+  if (rootStat === null) return blocked;
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
+    recordFailure(report, `managed skill transaction root is not a physical directory: ${transactionRoot}`);
+    blocked.add('*');
+    return blocked;
+  }
+  for (const entry of readdirSync(transactionRoot, { withFileTypes: true })) {
+    const transactionDir = join(transactionRoot, entry.name);
+    if (entry.name.startsWith(SKILL_TRANSACTION_STAGING_PREFIX)) {
+      quarantineTransactionDebris(transactionRoot, transactionDir);
+      continue;
+    }
+    if (!entry.name.startsWith(SKILL_TRANSACTION_PREFIX)) continue;
+    let journal: ManagedDirTransactionJournal | null = null;
+    try {
+      journal = readManagedDirTransactionJournal(transactionDir);
+      if (existsSync(join(transactionDir, 'COMMITTED'))) {
+        const destDir = join(targetParent, journal.destName);
+        if (!matchesManagedDirIdentity(destDir, journal.stagedContentDigest, journal.stagedManifestDigest)) {
+          throw new Error(`committed managed skill transaction is inconsistent: ${transactionDir}`);
+        }
+        rmSync(transactionDir, { recursive: true, force: true });
+      } else {
+        rollbackManagedDirTransaction(targetParent, transactionDir, journal);
+      }
+    } catch (error) {
+      blocked.add(journal?.destName ?? '*');
+      recordFailure(report, `managed skill recovery failed: ${errMsg(error)}`);
+    }
+  }
+  removeEmptyDirSafe(transactionRoot);
+  return blocked;
+}
+
+function recoverLegacyManagedDirSwap(destDir: string): void {
   const stageDir = `${destDir}${STAGING_SUFFIX}`;
   const oldDir = `${destDir}${PREV_SUFFIX}`;
-  if (existsSync(stageDir)) rmSync(stageDir, { recursive: true, force: true });
-  if (existsSync(oldDir)) rmSync(oldDir, { recursive: true, force: true });
-  cpSync(sourceDir, stageDir, { recursive: true });
-  writeManifest(stageDir, manifest);
-  if (existsSync(destDir)) renameSync(destDir, oldDir);
-  renameSync(stageDir, destDir);
-  if (existsSync(oldDir)) rmSync(oldDir, { recursive: true, force: true });
+  if (lstatSafe(stageDir) !== null) quarantineTransactionDebris(dirname(destDir), stageDir);
+  if (lstatSafe(oldDir) !== null && lstatSafe(destDir) === null) renameSync(oldDir, destDir);
 }
 
 // ============================================================================
@@ -382,14 +552,18 @@ function syncSkillDirsInto(
   const sourceSkills = enumerateSourceSkills(ctx.pluginRoot).filter((skill) => !exclude?.has(skill.name));
   const sourceNames = new Set(sourceSkills.map((skill) => skill.name));
   mkdirSync(targetParent, { recursive: true });
+  const recoveryBlocked = recoverManagedDirTransactions(targetParent, report);
   for (const skill of sourceSkills) {
+    if (recoveryBlocked.has('*') || recoveryBlocked.has(skill.name)) continue;
     try {
       report.skills.push({ name: skill.name, ...syncOneSkill(ctx, skill, targetParent) });
     } catch (err) {
-      report.advisories.push(`skill ${skill.name} (${agent}) failed: ${errMsg(err)}`);
+      const failure = `skill ${skill.name} (${agent}) failed: ${errMsg(err)}`;
+      report.advisories.push(failure);
+      recordFailure(report, failure);
     }
   }
-  removeManagedOrphans(ctx, agent, targetParent, sourceNames, report);
+  removeManagedOrphans(ctx, agent, targetParent, sourceNames, recoveryBlocked, report);
 }
 
 /**
@@ -402,10 +576,11 @@ function syncSkillDirsInto(
  */
 function syncOneSkill(ctx: RunContext, skill: SourceSkill, targetParent: string): SkillOutcome {
   const destDir = join(targetParent, skill.name);
+  recoverLegacyManagedDirSwap(destDir);
   const sourceDigest = computeDirDigest(skill.dir);
   const manifest = buildManifest(ctx, sourceDigest);
   if (!existsSync(destDir)) {
-    writeManagedDir(skill.dir, destDir, manifest);
+    writeManagedDir(ctx, skill.dir, destDir, manifest);
     return { action: 'created' };
   }
   if (lstatSafe(destDir)?.isSymbolicLink()) {
@@ -419,7 +594,7 @@ function syncOneSkill(ctx: RunContext, skill: SourceSkill, targetParent: string)
   const currentDigest = computeDirDigest(destDir);
   if (currentDigest === existing.digest) {
     if (sourceDigest === existing.digest) return { action: 'unchanged' };
-    writeManagedDir(skill.dir, destDir, manifest);
+    writeManagedDir(ctx, skill.dir, destDir, manifest);
     return { action: 'updated' };
   }
   return {
@@ -438,10 +613,19 @@ function removeManagedOrphans(
   agent: string,
   targetParent: string,
   sourceNames: Set<string>,
+  recoveryBlocked: Set<string>,
   report: AgentReport,
 ): void {
   for (const entry of readdirSync(targetParent, { withFileTypes: true })) {
-    if (entry.name.endsWith(STAGING_SUFFIX) || entry.name.endsWith(PREV_SUFFIX)) continue;
+    if (
+      entry.name === SKILL_TRANSACTION_ROOT ||
+      entry.name.endsWith(STAGING_SUFFIX) ||
+      entry.name.endsWith(PREV_SUFFIX) ||
+      recoveryBlocked.has('*') ||
+      recoveryBlocked.has(entry.name)
+    ) {
+      continue;
+    }
     const dir = join(targetParent, entry.name);
     if (classifyEntry(dir, entry) !== 'dir' || sourceNames.has(entry.name)) continue;
     const manifest = readManifest(dir);
@@ -510,7 +694,6 @@ function regularFileDigest(path: string): string | null {
 
 /** Classify council.js using only its sidecar ownership grant and recorded digest. */
 export function inspectManagedWorkflow(targetDir: string): ManagedWorkflowReport {
-  recoverWorkflowTransactions(targetDir);
   const targetPath = join(targetDir, TARGET_NAME);
   const manifestPath = join(targetDir, WORKFLOW_MANIFEST_NAME);
   const ownership = readWorkflowManifest(manifestPath);
@@ -538,13 +721,13 @@ export function stampWorkflow(opts: {
   version?: string | null;
   now?: () => Date;
 }): {
-  action: 'written' | 'skipped' | 'kept-unmanaged' | 'kept-modified' | 'metadata-corrupt' | 'adopted-legacy';
+  action: 'written' | 'skipped' | 'kept-unmanaged' | 'kept-modified' | 'metadata-corrupt';
   targetPath: string;
 } {
   const { templatePath, pluginRoot, targetDir } = opts;
   const template = readFileSync(templatePath, 'utf8');
   const stamped = stampWorkflowTemplate(template, pluginRoot);
-  const legacyStamped = template.split(PLACEHOLDER).join(pluginRoot);
+  recoverManagedWorkflowTransactions(targetDir);
   const ownership = inspectManagedWorkflow(targetDir);
   const targetExists = lstatSafe(ownership.targetPath) !== null;
   if (ownership.state === 'corrupt-metadata') {
@@ -554,11 +737,7 @@ export function stampWorkflow(opts: {
     return { action: 'kept-modified', targetPath: ownership.targetPath };
   }
   if (ownership.state === 'unmanaged' && targetExists) {
-    if (regularFileDigest(ownership.targetPath) === createHash('sha256').update(legacyStamped).digest('hex')) {
-      backupLegacyWorkflow(targetDir, ownership.targetPath);
-    } else {
-      return { action: 'kept-unmanaged', targetPath: ownership.targetPath };
-    }
+    return { action: 'kept-unmanaged', targetPath: ownership.targetPath };
   }
   if (ownership.state === 'managed-clean' && readFileSync(ownership.targetPath, 'utf8') === stamped) {
     return { action: 'skipped', targetPath: ownership.targetPath };
@@ -570,13 +749,11 @@ export function stampWorkflow(opts: {
     syncedAt: (opts.now ?? (() => new Date()))().toISOString(),
   };
   publishWorkflowTransaction(targetDir, stamped, manifest);
-  return {
-    action: ownership.state === 'unmanaged' && targetExists ? 'adopted-legacy' : 'written',
-    targetPath: ownership.targetPath,
-  };
+  return { action: 'written', targetPath: ownership.targetPath };
 }
 
 const WORKFLOW_TRANSACTION_PREFIX = '.council.genie-txn-';
+const WORKFLOW_TRANSACTION_STAGING_PREFIX = '.council.genie-txn-staging-';
 
 function stampWorkflowTemplate(template: string, pluginRoot: string): string {
   const quotedPlaceholder = `'${PLACEHOLDER}'`;
@@ -586,15 +763,6 @@ function stampWorkflowTemplate(template: string, pluginRoot: string): string {
   return template.split(quotedPlaceholder).join(JSON.stringify(pluginRoot));
 }
 
-function backupLegacyWorkflow(targetDir: string, targetPath: string): void {
-  const recovery = join(dirname(targetDir), '.genie-recovery', 'council-bootstrap');
-  mkdirSync(recovery, { recursive: true });
-  const digest = regularFileDigest(targetPath);
-  if (digest === null) throw new Error(`legacy council workflow is not a physical file: ${targetPath}`);
-  const destination = join(recovery, `${TARGET_NAME}.${digest}`);
-  if (!existsSync(destination)) cpSync(targetPath, destination);
-}
-
 function publishWorkflowTransaction(targetDir: string, stamped: string, manifest: SyncManifest): void {
   mkdirSync(targetDir, { recursive: true });
   const targetPath = join(targetDir, TARGET_NAME);
@@ -602,37 +770,58 @@ function publishWorkflowTransaction(targetDir: string, stamped: string, manifest
   const targetDigest = createHash('sha256').update(stamped).digest('hex');
   const manifestContent = `${JSON.stringify(manifest, null, 2)}\n`;
   const manifestDigest = createHash('sha256').update(manifestContent).digest('hex');
-  const transactionDir = join(
-    targetDir,
-    `${WORKFLOW_TRANSACTION_PREFIX}${process.pid}-${Date.now()}-${randomBytes(6).toString('hex')}`,
-  );
-  const staged = join(transactionDir, 'staged');
-  const before = join(transactionDir, 'before');
+  const token = `${process.pid}-${Date.now()}-${randomBytes(6).toString('hex')}`;
+  const working = createExclusiveTransactionDir(targetDir, `${WORKFLOW_TRANSACTION_STAGING_PREFIX}${token}`);
+  const transactionDir = join(targetDir, `${WORKFLOW_TRANSACTION_PREFIX}${token}`);
+  const staged = join(working, 'staged');
   mkdirSync(staged, { recursive: true });
-  mkdirSync(before, { recursive: true });
   writeFileSync(join(staged, TARGET_NAME), stamped, 'utf8');
   writeFileSync(join(staged, WORKFLOW_MANIFEST_NAME), manifestContent, 'utf8');
+  const beforeTargetDigest = regularFileDigest(targetPath);
+  const beforeManifestDigest = regularFileDigest(manifestPath);
   writeFileSync(
-    join(transactionDir, 'journal.json'),
-    `${JSON.stringify({ version: 1, targetDigest, manifestDigest, hadTarget: existsSync(targetPath), hadManifest: existsSync(manifestPath) })}\n`,
+    join(working, 'journal.json'),
+    `${JSON.stringify({
+      version: 2,
+      targetDigest,
+      manifestDigest,
+      hadTarget: beforeTargetDigest !== null,
+      hadManifest: beforeManifestDigest !== null,
+      beforeTargetDigest,
+      beforeManifestDigest,
+    })}\n`,
     'utf8',
   );
+  renameSync(working, transactionDir);
+  const before = join(transactionDir, 'before');
+  const publishedStaged = join(transactionDir, 'staged');
+  mkdirSync(before, { recursive: true });
   try {
     if (lstatSafe(targetPath) !== null) renameSync(targetPath, join(before, TARGET_NAME));
     if (lstatSafe(manifestPath) !== null) renameSync(manifestPath, join(before, WORKFLOW_MANIFEST_NAME));
-    renameSync(join(staged, TARGET_NAME), targetPath);
-    renameSync(join(staged, WORKFLOW_MANIFEST_NAME), manifestPath);
+    renameSync(join(publishedStaged, TARGET_NAME), targetPath);
+    renameSync(join(publishedStaged, WORKFLOW_MANIFEST_NAME), manifestPath);
     writeFileSync(join(transactionDir, 'COMMITTED'), 'ok\n');
     rmSync(transactionDir, { recursive: true, force: true });
   } catch (error) {
-    rollbackWorkflowTransaction(targetDir, transactionDir);
+    try {
+      rollbackWorkflowTransaction(targetDir, transactionDir);
+    } catch (rollbackError) {
+      throw new Error(`${errMsg(error)}; council workflow rollback failed: ${errMsg(rollbackError)}`);
+    }
     throw error;
   }
 }
 
-function recoverWorkflowTransactions(targetDir: string): void {
+/** Recover published council transactions. Pure callers should use inspectManagedWorkflow instead. */
+export function recoverManagedWorkflowTransactions(targetDir: string): void {
   if (!existsSync(targetDir)) return;
-  for (const name of readdirSync(targetDir).filter((entry) => entry.startsWith(WORKFLOW_TRANSACTION_PREFIX))) {
+  for (const name of readdirSync(targetDir)) {
+    if (name.startsWith(WORKFLOW_TRANSACTION_STAGING_PREFIX)) {
+      quarantineTransactionDebris(targetDir, join(targetDir, name));
+      continue;
+    }
+    if (!name.startsWith(WORKFLOW_TRANSACTION_PREFIX)) continue;
     const transactionDir = join(targetDir, name);
     const journal = readWorkflowTransactionJournal(transactionDir);
     if (existsSync(join(transactionDir, 'COMMITTED'))) {
@@ -654,16 +843,22 @@ function readWorkflowTransactionJournal(transactionDir: string): {
   manifestDigest: string;
   hadTarget: boolean;
   hadManifest: boolean;
+  beforeTargetDigest: string | null;
+  beforeManifestDigest: string | null;
 } {
   const parsed = JSON.parse(readFileSync(join(transactionDir, 'journal.json'), 'utf8')) as Record<string, unknown>;
   if (
-    parsed.version !== 1 ||
+    parsed.version !== 2 ||
     typeof parsed.targetDigest !== 'string' ||
     !/^[a-f0-9]{64}$/.test(parsed.targetDigest) ||
     typeof parsed.manifestDigest !== 'string' ||
     !/^[a-f0-9]{64}$/.test(parsed.manifestDigest) ||
     typeof parsed.hadTarget !== 'boolean' ||
-    typeof parsed.hadManifest !== 'boolean'
+    typeof parsed.hadManifest !== 'boolean' ||
+    !isOptionalDigest(parsed.beforeTargetDigest) ||
+    !isOptionalDigest(parsed.beforeManifestDigest) ||
+    parsed.hadTarget !== (parsed.beforeTargetDigest !== null) ||
+    parsed.hadManifest !== (parsed.beforeManifestDigest !== null)
   ) {
     throw new Error(`invalid council workflow transaction: ${transactionDir}`);
   }
@@ -672,13 +867,15 @@ function readWorkflowTransactionJournal(transactionDir: string): {
 
 function rollbackWorkflowTransaction(targetDir: string, transactionDir: string): void {
   const journal = readWorkflowTransactionJournal(transactionDir);
-  for (const [name, digest, had] of [
-    [TARGET_NAME, journal.targetDigest, journal.hadTarget],
-    [WORKFLOW_MANIFEST_NAME, journal.manifestDigest, journal.hadManifest],
+  for (const [name, digest, had, beforeDigest] of [
+    [TARGET_NAME, journal.targetDigest, journal.hadTarget, journal.beforeTargetDigest],
+    [WORKFLOW_MANIFEST_NAME, journal.manifestDigest, journal.hadManifest, journal.beforeManifestDigest],
   ] as const) {
     const target = join(targetDir, name);
     const before = join(transactionDir, 'before', name);
     if (lstatSafe(before) !== null) {
+      if (regularFileDigest(before) !== beforeDigest)
+        throw new Error(`council transaction prior target changed: ${before}`);
       if (lstatSafe(target) !== null) {
         if (regularFileDigest(target) !== digest) throw new Error(`council transaction target changed: ${target}`);
         rmSync(target, { force: true });
@@ -687,8 +884,9 @@ function rollbackWorkflowTransaction(targetDir: string, transactionDir: string):
     } else if (!had && lstatSafe(target) !== null) {
       if (regularFileDigest(target) !== digest) throw new Error(`council transaction target changed: ${target}`);
       rmSync(target, { force: true });
-    } else if (had && lstatSafe(target) === null) {
-      throw new Error(`council transaction lost prior target: ${target}`);
+    } else if (had) {
+      if (regularFileDigest(target) !== beforeDigest)
+        throw new Error(`council transaction lost prior target: ${target}`);
     }
   }
   rmSync(transactionDir, { recursive: true, force: true });
@@ -1201,6 +1399,7 @@ function createRunContext(
     targets,
     backupInto,
     backupsDirIfCreated: () => backupsDir,
+    renameManagedDir: opts.renameManagedDir ?? renameSync,
   };
 }
 
@@ -1228,6 +1427,57 @@ function runAgentSafe(agent: AgentReport['agent'], run: (report: AgentReport) =>
 
 function emptyReport(agent: AgentReport['agent']): AgentReport {
   return { agent, detected: false, skills: [], extras: [], advisories: [] };
+}
+
+function recordFailure(report: AgentReport, failure: string): void {
+  if (report.failures === undefined) report.failures = [];
+  report.failures.push(failure);
+}
+
+function isDigest(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
+}
+
+function isOptionalDigest(value: unknown): value is string | null {
+  return value === null || isDigest(value);
+}
+
+function isSafeEntryName(value: string): boolean {
+  return value !== '' && value !== '.' && value !== '..' && !value.includes('/') && !value.includes('\\');
+}
+
+function createExclusiveTransactionDir(parent: string, preferredName: string): string {
+  mkdirSync(parent, { recursive: true });
+  for (let attempt = 0; attempt < 16; attempt += 1) {
+    const path = join(parent, attempt === 0 ? preferredName : `${preferredName}-${randomBytes(4).toString('hex')}`);
+    try {
+      mkdirSync(path);
+      return path;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    }
+  }
+  throw new Error(`could not allocate collision-free transaction directory under ${parent}`);
+}
+
+function quarantineTransactionDebris(parent: string, path: string): void {
+  const stat = lstatSafe(path);
+  if (stat === null) return;
+  const quarantineRoot = join(parent, '.genie-sync-quarantine');
+  mkdirSync(quarantineRoot, { recursive: true });
+  const destination = join(
+    quarantineRoot,
+    `${path.split(sep).at(-1) ?? 'transaction'}-${randomBytes(6).toString('hex')}`,
+  );
+  renameSync(path, destination);
+}
+
+function removeEmptyDirSafe(path: string): void {
+  try {
+    if (readdirSync(path).length === 0) rmSync(path, { recursive: true, force: true });
+  } catch {
+    // Already absent, non-directory, or concurrently populated: leave it fail-safe.
+  }
 }
 
 function lstatSafe(path: string): Stats | null {

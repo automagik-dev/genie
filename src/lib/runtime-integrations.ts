@@ -17,10 +17,50 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { acquireLifecycleLease } from './agent-sync.js';
 import { getCodexConfigPath, getCodexHome, migrateDeadGenieOtel } from './codex-config.js';
 import { resolveClaudeDir, resolveGenieHome } from './genie-home.js';
+import { validateTrustedExecutablePath } from './trusted-executable.js';
 import { VERSION } from './version.js';
 
 export type IntegrationSelection = 'auto' | 'codex' | 'claude' | 'all' | 'none';
 export type RuntimeName = 'codex' | 'claude';
+export type RuntimeExecutableResolver = (name: RuntimeName, cwd: string) => string | null;
+
+export const INTEGRATION_CONSENT_NAME = '.integration-consent.json';
+
+/** Persist the operator's explicit client-home scope for later updates. */
+export function persistIntegrationConsent(selection: IntegrationSelection, genieHome = resolveGenieHome()): void {
+  const path = join(genieHome, INTEGRATION_CONSENT_NAME);
+  mkdirSync(genieHome, { recursive: true });
+  const staging = `${path}.staging-${process.pid}`;
+  writeFileSync(
+    staging,
+    `${JSON.stringify({ schemaVersion: 1, selection, updatedAt: new Date().toISOString() }, null, 2)}\n`,
+    { encoding: 'utf8', mode: 0o600 },
+  );
+  renameSync(staging, path);
+}
+
+/** Missing state means a pre-consent release and retains the legacy auto policy. */
+export function readIntegrationConsent(genieHome = resolveGenieHome()): IntegrationSelection {
+  const path = join(genieHome, INTEGRATION_CONSENT_NAME);
+  let stat: ReturnType<typeof lstatSync>;
+  try {
+    stat = lstatSync(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 'auto';
+    throw error;
+  }
+  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`integration consent is not a physical file: ${path}`);
+  const parsed = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+  const selection = parsed.selection;
+  if (
+    parsed.schemaVersion !== 1 ||
+    typeof selection !== 'string' ||
+    !['auto', 'codex', 'claude', 'all', 'none'].includes(selection)
+  ) {
+    throw new Error(`integration consent has an invalid schema: ${path}`);
+  }
+  return selection as IntegrationSelection;
+}
 
 export interface CommandResult {
   exitCode: number;
@@ -57,8 +97,15 @@ const defaultRunner: CommandRunner = (command, args, options) => {
   };
 };
 
-function commandExists(command: string): boolean {
-  return Boolean(Bun.which(command));
+export function resolveRuntimeExecutable(
+  name: RuntimeName,
+  cwd: string,
+  resolver?: RuntimeExecutableResolver,
+): string | null {
+  if (resolver) return resolver(name, cwd);
+  const candidate = Bun.which(name);
+  if (candidate === null) return null;
+  return validateTrustedExecutablePath(`${name} CLI`, candidate, cwd);
 }
 
 /**
@@ -364,15 +411,7 @@ interface CodexAgentTransactionJournal {
 }
 
 const CODEX_AGENT_TRANSACTION_PREFIX = '.genie-role-agents.txn-';
-const LEGACY_CODEX_AGENT_DIGESTS: Readonly<Record<string, readonly string[]>> = {
-  'genie-engineer-complex.toml': ['62ecc570f1d77783511a9e7f0aa67b3a65d8bba292963409a02c7712c93ebc3b'],
-  'genie-engineer-standard.toml': ['dc746813b9b4b6aa984c17fa2fd75d4dbe34eba08494a174c0715da07aa9dd30'],
-  'genie-engineer-trivial.toml': ['249deced5a02eb2cbe3303db566992d1336c75d853967f851bf1d0e85b6b0f47'],
-  'genie-final-gate.toml': ['10ef070db8aace75bd80ef9e060a6ec601e3768f177fdd843f4db11035738f7e'],
-  'genie-fixer.toml': ['b3c1f407d4a3a2cfe204dee7b4a9c038e1a8f4644c446fcfa23f4a681bf0c7b3'],
-  'genie-reviewer.toml': ['91f40a07905834716311419375581e3245544a77eac3d93d082842652c6452bf'],
-  'genie-scout.toml': ['03a9fb3ca0e5f36c69c8f934d37adce1bae736e4c3895b144a0001ad31b1ba59'],
-};
+const CODEX_AGENT_PREPARATION_PREFIX = '.genie-role-agents.prepare-';
 
 function digestBytes(content: Buffer | string): string {
   return createHash('sha256').update(content).digest('hex');
@@ -478,13 +517,6 @@ function recoverRoleAgentTransactions(agentsDir: string): void {
   }
 }
 
-function backupLegacyRoleAgent(codexHome: string, name: string, source: string): void {
-  const root = join(dirname(resolve(codexHome)), '.genie-recovery', 'role-agent-bootstrap');
-  mkdirSync(root, { recursive: true });
-  const destination = join(root, `${name}.${fileDigest(source)}`);
-  if (!pathExists(destination)) copyFileSync(source, destination);
-}
-
 function publishRoleAgentTransaction(
   agentsDir: string,
   writes: Map<string, Buffer>,
@@ -508,29 +540,34 @@ function publishRoleAgentTransaction(
     inventoryDigest: inventoryContent === null ? null : digestBytes(inventoryContent),
     inventoryHadTarget: pathExists(join(agentsDir, CODEX_AGENT_INVENTORY_NAME)),
   };
-  const transactionDir = join(
-    agentsDir,
-    `${CODEX_AGENT_TRANSACTION_PREFIX}${process.pid}-${Date.now()}-${randomTransactionSuffix()}`,
-  );
-  const stagedDir = join(transactionDir, 'staged');
-  const beforeDir = join(transactionDir, 'before');
+  const transactionName = `${process.pid}-${Date.now()}-${randomTransactionSuffix()}`;
+  const preparationDir = join(agentsDir, `${CODEX_AGENT_PREPARATION_PREFIX}${transactionName}`);
+  const transactionDir = join(agentsDir, `${CODEX_AGENT_TRANSACTION_PREFIX}${transactionName}`);
+  const stagedDir = join(preparationDir, 'staged');
+  const beforeDir = join(preparationDir, 'before');
   mkdirSync(stagedDir, { recursive: true });
   mkdirSync(beforeDir, { recursive: true });
   for (const [name, content] of writes) writeFileSync(join(stagedDir, name), content);
   if (inventoryContent !== null) writeFileSync(join(stagedDir, CODEX_AGENT_INVENTORY_NAME), inventoryContent);
-  writeFileSync(join(transactionDir, 'journal.json'), `${JSON.stringify(journal, null, 2)}\n`);
+  writeFileSync(join(preparationDir, 'journal.json'), `${JSON.stringify(journal, null, 2)}\n`);
+  // Recovery only discovers the transaction after every staged artifact and the
+  // complete journal exist. A crash before this rename leaves inert preparation
+  // debris rather than a transaction that poisons every future lifecycle run.
+  renameSync(preparationDir, transactionDir);
+  const publishedStagedDir = join(transactionDir, 'staged');
+  const publishedBeforeDir = join(transactionDir, 'before');
 
   try {
     for (const operation of operations) {
       options.beforePromotion?.(`payload:${operation.name}`);
       const target = join(agentsDir, operation.name);
-      if (pathExists(target)) renameSync(target, join(beforeDir, operation.name));
-      if (operation.nextDigest !== null) renameSync(join(stagedDir, operation.name), target);
+      if (pathExists(target)) renameSync(target, join(publishedBeforeDir, operation.name));
+      if (operation.nextDigest !== null) renameSync(join(publishedStagedDir, operation.name), target);
     }
     options.beforePromotion?.('inventory');
     const targetInventory = join(agentsDir, CODEX_AGENT_INVENTORY_NAME);
-    if (pathExists(targetInventory)) renameSync(targetInventory, join(beforeDir, CODEX_AGENT_INVENTORY_NAME));
-    if (inventoryContent !== null) renameSync(join(stagedDir, CODEX_AGENT_INVENTORY_NAME), targetInventory);
+    if (pathExists(targetInventory)) renameSync(targetInventory, join(publishedBeforeDir, CODEX_AGENT_INVENTORY_NAME));
+    if (inventoryContent !== null) renameSync(join(publishedStagedDir, CODEX_AGENT_INVENTORY_NAME), targetInventory);
     writeFileSync(join(transactionDir, 'COMMITTED'), 'ok\n');
     rmSync(transactionDir, { recursive: true, force: true });
   } catch (error) {
@@ -587,19 +624,13 @@ export function installCodexAgents(
     }
     const sourceDigest = fileDigest(sourcePath);
     if (sourceDigest === null) throw new Error(`Codex role-agent source is not a regular readable file: ${sourcePath}`);
-    let ownership = classifyCodexAgentFile(targetPath, inventory.files[name]);
+    const ownership = classifyCodexAgentFile(targetPath, inventory.files[name]);
     if (ownership === 'user-owned') {
-      const targetDigest = fileDigest(targetPath);
-      const legacyDigests = new Set([sourceDigest, ...(LEGACY_CODEX_AGENT_DIGESTS[name] ?? [])]);
-      if (targetDigest !== null && legacyDigests.has(targetDigest)) {
-        backupLegacyRoleAgent(codexHome, name, targetPath);
-        result.adoptedLegacy ??= [];
-        result.adoptedLegacy.push(name);
-        ownership = 'managed-clean';
-      } else {
-        result.skippedUserOwned.push(name);
-        continue;
-      }
+      // Bytes are not an ownership capability. An inventory-free file remains
+      // personal even when it exactly matches a current or historical Genie
+      // payload; update/uninstall must never silently acquire deletion authority.
+      result.skippedUserOwned.push(name);
+      continue;
     }
     if (ownership === 'managed-modified') {
       result.keptModified.push(name);
@@ -691,6 +722,7 @@ export interface InstallIntegrationsOptions {
   runner?: CommandRunner;
   detected?: Partial<Record<RuntimeName, boolean>>;
   codexHome?: string;
+  claudeHome?: string;
   timeoutMs?: number;
   /** Durable refresh intent root. Production defaults to GENIE_HOME. */
   stateDir?: string;
@@ -698,6 +730,12 @@ export interface InstallIntegrationsOptions {
   genieHome?: string;
   /** Deterministic test seam; production verifies the installed cache bytes. */
   verifyCodexPayload?: CodexPayloadVerifier;
+  /** Deterministic test seam; production binds Claude marketplace source and cache bytes. */
+  verifyClaudePayload?: ClaudePayloadVerifier;
+  /** Active project used to reject repository/worktree/common-root PATH decoys. */
+  cwd?: string;
+  /** Deterministic test seam; production resolves and validates PATH once. */
+  resolveExecutable?: RuntimeExecutableResolver;
 }
 
 export function installRuntimeIntegrations(options: InstallIntegrationsOptions = {}): IntegrationResult[] {
@@ -711,20 +749,19 @@ export function installRuntimeIntegrations(options: InstallIntegrationsOptions =
     return [{ runtime: selection === 'claude' ? 'claude' : 'codex', ok: false, detail: lifecycleLease.skipped }];
   }
   try {
-    const detected = {
-      codex: options.detected?.codex ?? commandExists('codex'),
-      claude: options.detected?.claude ?? commandExists('claude'),
-    };
+    const cwd = options.cwd ?? process.cwd();
     const targets: RuntimeName[] =
       selection === 'all'
         ? ['codex', 'claude']
         : selection === 'auto'
-          ? (Object.keys(detected) as RuntimeName[]).filter((runtime) => detected[runtime])
+          ? (['codex', 'claude'] as RuntimeName[]).filter((runtime) => options.detected?.[runtime] !== false)
           : [selection];
 
     return targets.map((runtime) => {
-      if (!detected[runtime]) return { runtime, ok: false, detail: `${runtime} CLI not found` };
+      if (options.detected?.[runtime] === false) return { runtime, ok: false, detail: `${runtime} CLI not found` };
       try {
+        const command = resolveRuntimeExecutable(runtime, cwd, options.resolveExecutable);
+        if (command === null) return { runtime, ok: false, detail: `${runtime} CLI not found` };
         if (bundleRoot === null) {
           throw new Error(
             'genie bundle root not found — expected plugins/genie under $GENIE_HOME (~/.genie) or beside the genie binary; set GENIE_BUNDLE_ROOT to override',
@@ -733,13 +770,22 @@ export function installRuntimeIntegrations(options: InstallIntegrationsOptions =
         return runtime === 'codex'
           ? installCodexIntegration(
               runner,
+              command,
               bundleRoot,
               options.codexHome,
               options.timeoutMs,
               options.stateDir ?? genieHome,
               options.verifyCodexPayload,
             )
-          : installClaudeIntegration(runner, bundleRoot, options.timeoutMs, options.stateDir ?? genieHome);
+          : installClaudeIntegration(
+              runner,
+              command,
+              bundleRoot,
+              options.timeoutMs,
+              options.stateDir ?? genieHome,
+              options.claudeHome,
+              options.verifyClaudePayload,
+            );
       } catch (error) {
         return {
           runtime,
@@ -759,17 +805,17 @@ export function installRuntimeIntegrations(options: InstallIntegrationsOptions =
  * marketplace name points at a different source; remove only that registration,
  * add the requested root again, and keep every subprocess deadline-bounded.
  */
-function addCodexMarketplace(runner: CommandRunner, bundleRoot: string, timeoutMs: number): void {
+function addCodexMarketplace(runner: CommandRunner, command: string, bundleRoot: string, timeoutMs: number): void {
   const args = ['plugin', 'marketplace', 'add', bundleRoot, '--json'];
-  const result = runner('codex', args, { timeoutMs });
+  const result = runner(command, args, { timeoutMs });
   if (result.timedOut) {
     throw new IntegrationCommandError(`codex ${args.join(' ')} timed out after ${timeoutMs}ms`, true);
   }
   if (result.exitCode === 0) return;
   const output = `${result.stdout}\n${result.stderr}`;
   if (/different source/i.test(output)) {
-    runChecked(runner, 'codex', ['plugin', 'marketplace', 'remove', 'automagik', '--json'], true, timeoutMs);
-    runChecked(runner, 'codex', args, false, timeoutMs);
+    runChecked(runner, command, ['plugin', 'marketplace', 'remove', 'automagik', '--json'], true, timeoutMs);
+    runChecked(runner, command, args, false, timeoutMs);
     return;
   }
   if (!/already|exists|configured/i.test(output)) {
@@ -784,15 +830,19 @@ function requireCodexPluginState(raw: string, phase: string): RuntimePluginState
 }
 
 interface RefreshIntent {
-  schemaVersion: 1;
+  schemaVersion: 2;
   runtime: RuntimeName;
   installed: true;
   enabled: boolean;
   createdAt: string;
+  /** Only `removed` authorizes recovery of an absent plugin. */
+  phase: 'planned' | 'removed';
 }
 
 export interface ConvergePluginOptions {
   runner: CommandRunner;
+  /** Once-bound executable retained through every convergence subprocess. */
+  command: string;
   bundleRoot: string;
   expectedVersion: string;
   /** Explicit install/setup may create an absent registration; update may not. */
@@ -801,7 +851,9 @@ export interface ConvergePluginOptions {
   timeoutMs?: number;
   configPath?: string;
   codexHome?: string;
+  claudeHome?: string;
   verifyCodexPayload?: CodexPayloadVerifier;
+  verifyClaudePayload?: ClaudePayloadVerifier;
 }
 
 export interface CodexPayloadVerificationInput {
@@ -811,6 +863,14 @@ export interface CodexPayloadVerificationInput {
 }
 
 export type CodexPayloadVerifier = (input: CodexPayloadVerificationInput) => void;
+
+export interface ClaudePayloadVerificationInput {
+  bundleRoot: string;
+  claudeHome: string;
+  expectedVersion: string;
+}
+
+export type ClaudePayloadVerifier = (input: ClaudePayloadVerificationInput) => void;
 
 /**
  * Bind a reported Codex version to the physical plugin bytes installed from
@@ -839,6 +899,69 @@ export function verifyCodexPhysicalPayload(input: CodexPayloadVerificationInput)
   if (installedDigest !== sourceDigest) {
     throw new IntegrationCommandError(
       `installed Codex plugin payload identity mismatch at ${installed} (expected canonical source ${source})`,
+    );
+  }
+}
+
+function readClaudeMarketplaceSource(marketplacePath: string): { sourcePath: string; installLocation: string } {
+  let marketplace: unknown;
+  try {
+    const stat = lstatSync(marketplacePath);
+    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('registry is not a physical file');
+    marketplace = JSON.parse(readFileSync(marketplacePath, 'utf8')) as unknown;
+  } catch (error) {
+    throw new IntegrationCommandError(
+      `Claude marketplace registry is unreadable at ${marketplacePath}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  const entry =
+    typeof marketplace === 'object' && marketplace !== null && !Array.isArray(marketplace)
+      ? Reflect.get(marketplace, 'automagik')
+      : undefined;
+  const source = typeof entry === 'object' && entry !== null ? Reflect.get(entry, 'source') : undefined;
+  const sourceKind = typeof source === 'object' && source !== null ? Reflect.get(source, 'source') : undefined;
+  const sourcePath = typeof source === 'object' && source !== null ? Reflect.get(source, 'path') : undefined;
+  const installLocation =
+    typeof entry === 'object' && entry !== null ? Reflect.get(entry, 'installLocation') : undefined;
+  if (sourceKind !== 'directory' || typeof sourcePath !== 'string' || typeof installLocation !== 'string') {
+    throw new IntegrationCommandError(
+      'Claude marketplace automagik is not registered from the canonical directory bundle',
+    );
+  }
+  return { sourcePath, installLocation };
+}
+
+/** Bind Claude's named marketplace and installed cache to the verified bundle. */
+export function verifyClaudePhysicalPayload(input: ClaudePayloadVerificationInput): void {
+  const marketplacePath = join(input.claudeHome, 'plugins', 'known_marketplaces.json');
+  const { sourcePath, installLocation } = readClaudeMarketplaceSource(marketplacePath);
+  let canonicalBundle: string;
+  try {
+    canonicalBundle = realpathSync(input.bundleRoot);
+    if (realpathSync(sourcePath) !== canonicalBundle || realpathSync(installLocation) !== canonicalBundle) {
+      throw new Error(`registered source ${sourcePath} / ${installLocation} does not match ${canonicalBundle}`);
+    }
+  } catch (error) {
+    throw new IntegrationCommandError(
+      `Claude marketplace source identity mismatch: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  const sourceRoot = join(canonicalBundle, 'plugins', 'genie');
+  const installedRoot = join(input.claudeHome, 'plugins', 'cache', 'automagik', 'genie', input.expectedVersion);
+  let sourceDigest: string;
+  let installedDigest: string;
+  try {
+    sourceDigest = fingerprintPhysicalPluginTree(sourceRoot);
+    installedDigest = fingerprintPhysicalPluginTree(installedRoot);
+  } catch (error) {
+    throw new IntegrationCommandError(
+      `Claude plugin payload is unreadable: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (sourceDigest !== installedDigest) {
+    throw new IntegrationCommandError(
+      `installed Claude plugin payload identity mismatch at ${installedRoot} (expected canonical source ${sourceRoot})`,
     );
   }
 }
@@ -897,15 +1020,27 @@ function readRefreshIntent(path: string, runtime: RuntimeName): RefreshIntent | 
   if (
     typeof parsed !== 'object' ||
     parsed === null ||
-    Reflect.get(parsed, 'schemaVersion') !== 1 ||
+    ![1, 2].includes(Number(Reflect.get(parsed, 'schemaVersion'))) ||
     Reflect.get(parsed, 'runtime') !== runtime ||
     Reflect.get(parsed, 'installed') !== true ||
     typeof Reflect.get(parsed, 'enabled') !== 'boolean' ||
-    typeof Reflect.get(parsed, 'createdAt') !== 'string'
+    typeof Reflect.get(parsed, 'createdAt') !== 'string' ||
+    (Reflect.get(parsed, 'schemaVersion') === 2 &&
+      !['planned', 'removed'].includes(String(Reflect.get(parsed, 'phase'))))
   ) {
     throw new Error(`refresh intent has an invalid schema: ${path}`);
   }
-  return parsed as RefreshIntent;
+  return {
+    schemaVersion: 2,
+    runtime,
+    installed: true,
+    enabled: Reflect.get(parsed, 'enabled') as boolean,
+    createdAt: Reflect.get(parsed, 'createdAt') as string,
+    // Legacy intents predate mutation-phase evidence and must never authorize a
+    // reinstall of an absent plugin.
+    phase:
+      Reflect.get(parsed, 'schemaVersion') === 2 ? (Reflect.get(parsed, 'phase') as RefreshIntent['phase']) : 'planned',
+  };
 }
 
 function writeRefreshIntent(path: string, intent: RefreshIntent): void {
@@ -917,6 +1052,23 @@ function writeRefreshIntent(path: string, intent: RefreshIntent): void {
 
 function clearRefreshIntent(path: string): void {
   rmSync(path, { force: true });
+}
+
+function plannedRefreshIntent(runtime: RuntimeName, enabled: boolean): RefreshIntent {
+  return {
+    schemaVersion: 2,
+    runtime,
+    installed: true,
+    enabled,
+    createdAt: new Date().toISOString(),
+    phase: 'planned',
+  };
+}
+
+function markRefreshRemoved(path: string, intent: RefreshIntent): RefreshIntent {
+  const removed = { ...intent, phase: 'removed' as const };
+  writeRefreshIntent(path, removed);
+  return removed;
 }
 
 function integrationFailure(runtime: RuntimeName, error: unknown): IntegrationResult {
@@ -946,6 +1098,7 @@ function convergeCodexPayloadIdentity(
   options: ConvergePluginOptions,
   installed: RuntimePluginState,
   timeoutMs: number,
+  markRemoved: () => void,
 ): RuntimePluginState {
   const verifyPayload = options.verifyCodexPayload ?? verifyCodexPhysicalPayload;
   const verificationInput = {
@@ -960,12 +1113,19 @@ function convergeCodexPayloadIdentity(
     // Same-version caches can still originate from the wrong marketplace.
     // Force one canonical source re-registration and reinstall, then require
     // physical identity again before clearing the durable intent.
-    runChecked(options.runner, 'codex', ['plugin', 'remove', 'genie@automagik', '--json'], true, timeoutMs);
-    runChecked(options.runner, 'codex', ['plugin', 'marketplace', 'remove', 'automagik', '--json'], true, timeoutMs);
-    addCodexMarketplace(options.runner, options.bundleRoot, timeoutMs);
-    runChecked(options.runner, 'codex', ['plugin', 'add', 'genie@automagik', '--json'], false, timeoutMs);
+    runChecked(options.runner, options.command, ['plugin', 'remove', 'genie@automagik', '--json'], true, timeoutMs);
+    markRemoved();
+    runChecked(
+      options.runner,
+      options.command,
+      ['plugin', 'marketplace', 'remove', 'automagik', '--json'],
+      true,
+      timeoutMs,
+    );
+    addCodexMarketplace(options.runner, options.command, options.bundleRoot, timeoutMs);
+    runChecked(options.runner, options.command, ['plugin', 'add', 'genie@automagik', '--json'], false, timeoutMs);
     const repaired = requireCodexPluginState(
-      runChecked(options.runner, 'codex', ['plugin', 'list', '--json'], false, timeoutMs).stdout,
+      runChecked(options.runner, options.command, ['plugin', 'list', '--json'], false, timeoutMs).stdout,
       'after payload-identity reinstall',
     );
     if (!repaired.installed || repaired.version !== options.expectedVersion) {
@@ -996,31 +1156,29 @@ export function convergeCodexPlugin(options: ConvergePluginOptions): Integration
   try {
     intent = readRefreshIntent(options.statePath, 'codex');
     const before = requireCodexPluginState(
-      runChecked(options.runner, 'codex', ['plugin', 'list', '--json'], false, timeoutMs).stdout,
+      runChecked(options.runner, options.command, ['plugin', 'list', '--json'], false, timeoutMs).stdout,
       'before plugin convergence',
     );
-    if (!before.installed && intent === null && !options.installIfAbsent) return null;
-    intent ??= {
-      schemaVersion: 1,
-      runtime: 'codex',
-      installed: true,
-      enabled: before.installed ? before.enabled === true : true,
-      createdAt: new Date().toISOString(),
-    };
+    if (!before.installed && !options.installIfAbsent && intent?.phase !== 'removed') {
+      if (intent !== null) clearRefreshIntent(options.statePath);
+      return null;
+    }
+    intent ??= plannedRefreshIntent('codex', before.installed ? before.enabled === true : true);
     writeRefreshIntent(options.statePath, intent);
 
-    addCodexMarketplace(options.runner, options.bundleRoot, timeoutMs);
-    runChecked(options.runner, 'codex', ['plugin', 'add', 'genie@automagik', '--json'], false, timeoutMs);
+    addCodexMarketplace(options.runner, options.command, options.bundleRoot, timeoutMs);
+    runChecked(options.runner, options.command, ['plugin', 'add', 'genie@automagik', '--json'], false, timeoutMs);
     let installed = requireCodexPluginState(
-      runChecked(options.runner, 'codex', ['plugin', 'list', '--json'], false, timeoutMs).stdout,
+      runChecked(options.runner, options.command, ['plugin', 'list', '--json'], false, timeoutMs).stdout,
       'after plugin add',
     );
     if (!installed.installed) throw new IntegrationCommandError('Codex plugin is missing after plugin add');
     if (installed.installed && installed.version !== options.expectedVersion) {
-      runChecked(options.runner, 'codex', ['plugin', 'remove', 'genie@automagik', '--json'], true, timeoutMs);
-      runChecked(options.runner, 'codex', ['plugin', 'add', 'genie@automagik', '--json'], false, timeoutMs);
+      runChecked(options.runner, options.command, ['plugin', 'remove', 'genie@automagik', '--json'], true, timeoutMs);
+      intent = markRefreshRemoved(options.statePath, intent);
+      runChecked(options.runner, options.command, ['plugin', 'add', 'genie@automagik', '--json'], false, timeoutMs);
       installed = requireCodexPluginState(
-        runChecked(options.runner, 'codex', ['plugin', 'list', '--json'], false, timeoutMs).stdout,
+        runChecked(options.runner, options.command, ['plugin', 'list', '--json'], false, timeoutMs).stdout,
         'after plugin reinstall',
       );
       if (!installed.installed) throw new IntegrationCommandError('Codex plugin is missing after plugin reinstall');
@@ -1030,7 +1188,9 @@ export function convergeCodexPlugin(options: ConvergePluginOptions): Integration
         `codex plugin stuck at v${installed.version || 'missing'} (expected v${options.expectedVersion}) — marketplace root may be stale`,
       );
     }
-    installed = convergeCodexPayloadIdentity(options, installed, timeoutMs);
+    installed = convergeCodexPayloadIdentity(options, installed, timeoutMs, () => {
+      intent = markRefreshRemoved(options.statePath, intent as RefreshIntent);
+    });
     if (intent.enabled) {
       requireExpectedState('codex', installed, options.expectedVersion, true, 'enabled-state');
     }
@@ -1043,7 +1203,7 @@ export function convergeCodexPlugin(options: ConvergePluginOptions): Integration
       const restored = setCodexPluginEnabled(false, options.configPath ?? getCodexConfigPath());
       if (!restored.ok) throw new IntegrationCommandError(restored.detail);
       const state = requireCodexPluginState(
-        runChecked(options.runner, 'codex', ['plugin', 'list', '--json'], false, timeoutMs).stdout,
+        runChecked(options.runner, options.command, ['plugin', 'list', '--json'], false, timeoutMs).stdout,
         'after restoring disabled state',
       );
       requireExpectedState('codex', state, options.expectedVersion, false, 'disabled-state restore');
@@ -1067,6 +1227,61 @@ function requireClaudePluginState(raw: string, phase: string): RuntimePluginStat
   return parsed.state;
 }
 
+function addClaudeMarketplace(runner: CommandRunner, command: string, bundleRoot: string, timeoutMs: number): void {
+  const args = ['plugin', 'marketplace', 'add', bundleRoot];
+  const result = runner(command, args, { timeoutMs });
+  if (result.timedOut)
+    throw new IntegrationCommandError(`claude ${args.join(' ')} timed out after ${timeoutMs}ms`, true);
+  if (result.exitCode === 0) return;
+  const output = `${result.stdout}\n${result.stderr}`;
+  if (!/already|exists|configured|different source/i.test(output)) {
+    throw new IntegrationCommandError(`claude ${args.join(' ')} failed: ${(result.stderr || result.stdout).trim()}`);
+  }
+  runChecked(runner, command, ['plugin', 'marketplace', 'remove', 'automagik'], true, timeoutMs);
+  runChecked(runner, command, args, false, timeoutMs);
+}
+
+function convergeClaudePayloadIdentity(
+  options: ConvergePluginOptions,
+  installed: RuntimePluginState,
+  timeoutMs: number,
+  markRemoved: () => void,
+): RuntimePluginState {
+  const verifyPayload = options.verifyClaudePayload ?? verifyClaudePhysicalPayload;
+  const verificationInput = {
+    bundleRoot: options.bundleRoot,
+    claudeHome: options.claudeHome ?? resolveClaudeDir(),
+    expectedVersion: options.expectedVersion,
+  };
+  try {
+    verifyPayload(verificationInput);
+    return installed;
+  } catch (firstVerificationError) {
+    runChecked(options.runner, options.command, ['plugin', 'uninstall', 'genie@automagik'], true, timeoutMs);
+    markRemoved();
+    runChecked(options.runner, options.command, ['plugin', 'marketplace', 'remove', 'automagik'], true, timeoutMs);
+    addClaudeMarketplace(options.runner, options.command, options.bundleRoot, timeoutMs);
+    runChecked(options.runner, options.command, ['plugin', 'install', 'genie@automagik'], false, timeoutMs);
+    const repaired = requireClaudePluginState(
+      runChecked(options.runner, options.command, ['plugin', 'list', '--json'], false, timeoutMs).stdout,
+      'after payload-identity reinstall',
+    );
+    if (!repaired.installed || repaired.version !== options.expectedVersion) {
+      throw new IntegrationCommandError(
+        `Claude payload-identity repair did not restore v${options.expectedVersion}: installed=${repaired.installed}, version=${repaired.version || 'missing'}`,
+      );
+    }
+    try {
+      verifyPayload(verificationInput);
+      return repaired;
+    } catch (finalVerificationError) {
+      throw new IntegrationCommandError(
+        `Claude plugin payload identity did not converge after canonical reinstall: ${finalVerificationError instanceof Error ? finalVerificationError.message : String(finalVerificationError)}; initial verification: ${firstVerificationError instanceof Error ? firstVerificationError.message : String(firstVerificationError)}`,
+      );
+    }
+  }
+}
+
 /** Durable Claude convergence with disabled-state restoration in all mutation outcomes. */
 export function convergeClaudePlugin(options: ConvergePluginOptions): IntegrationResult | null {
   const timeoutMs = options.timeoutMs ?? INTEGRATION_TIMEOUT_MS;
@@ -1075,29 +1290,26 @@ export function convergeClaudePlugin(options: ConvergePluginOptions): Integratio
   try {
     intent = readRefreshIntent(options.statePath, 'claude');
     const before = requireClaudePluginState(
-      runChecked(options.runner, 'claude', ['plugin', 'list', '--json'], false, timeoutMs).stdout,
+      runChecked(options.runner, options.command, ['plugin', 'list', '--json'], false, timeoutMs).stdout,
       'before plugin convergence',
     );
-    if (!before.installed && intent === null && !options.installIfAbsent) return null;
-    intent ??= {
-      schemaVersion: 1,
-      runtime: 'claude',
-      installed: true,
-      enabled: before.installed ? before.enabled === true : true,
-      createdAt: new Date().toISOString(),
-    };
+    if (!before.installed && !options.installIfAbsent && intent?.phase !== 'removed') {
+      if (intent !== null) clearRefreshIntent(options.statePath);
+      return null;
+    }
+    intent ??= plannedRefreshIntent('claude', before.installed ? before.enabled === true : true);
     writeRefreshIntent(options.statePath, intent);
 
-    runChecked(options.runner, 'claude', ['plugin', 'marketplace', 'add', options.bundleRoot], true, timeoutMs);
+    addClaudeMarketplace(options.runner, options.command, options.bundleRoot, timeoutMs);
     runChecked(
       options.runner,
-      'claude',
+      options.command,
       ['plugin', before.installed ? 'update' : 'install', 'genie@automagik'],
       false,
       timeoutMs,
     );
-    const installed = requireClaudePluginState(
-      runChecked(options.runner, 'claude', ['plugin', 'list', '--json'], false, timeoutMs).stdout,
+    let installed = requireClaudePluginState(
+      runChecked(options.runner, options.command, ['plugin', 'list', '--json'], false, timeoutMs).stdout,
       'after plugin refresh',
     );
     if (!installed.installed || installed.version !== options.expectedVersion) {
@@ -1105,6 +1317,9 @@ export function convergeClaudePlugin(options: ConvergePluginOptions): Integratio
         `Claude plugin refresh reported v${installed.version || 'missing'}; expected v${options.expectedVersion}`,
       );
     }
+    installed = convergeClaudePayloadIdentity(options, installed, timeoutMs, () => {
+      intent = markRefreshRemoved(options.statePath, intent as RefreshIntent);
+    });
     if (intent.enabled) requireExpectedState('claude', installed, options.expectedVersion, true, 'enabled-state');
   } catch (error) {
     primaryError = error;
@@ -1112,9 +1327,9 @@ export function convergeClaudePlugin(options: ConvergePluginOptions): Integratio
 
   if (intent?.enabled === false) {
     try {
-      runChecked(options.runner, 'claude', ['plugin', 'disable', 'genie@automagik'], false, timeoutMs);
+      runChecked(options.runner, options.command, ['plugin', 'disable', 'genie@automagik'], false, timeoutMs);
       const restored = requireClaudePluginState(
-        runChecked(options.runner, 'claude', ['plugin', 'list', '--json'], false, timeoutMs).stdout,
+        runChecked(options.runner, options.command, ['plugin', 'list', '--json'], false, timeoutMs).stdout,
         'after restoring disabled state',
       );
       requireExpectedState('claude', restored, options.expectedVersion, false, 'disabled-state restore');
@@ -1134,6 +1349,7 @@ export function convergeClaudePlugin(options: ConvergePluginOptions): Integratio
 
 function installCodexIntegration(
   runner: CommandRunner,
+  command: string,
   bundleRoot: string,
   codexHome?: string,
   timeoutMs = INTEGRATION_TIMEOUT_MS,
@@ -1146,6 +1362,7 @@ function installCodexIntegration(
   const agents = installCodexAgents(bundleRoot, codexHome);
   const plugin = convergeCodexPlugin({
     runner,
+    command,
     bundleRoot,
     expectedVersion: VERSION,
     installIfAbsent: true,
@@ -1171,17 +1388,23 @@ function installCodexIntegration(
 
 function installClaudeIntegration(
   runner: CommandRunner,
+  command: string,
   bundleRoot: string,
   timeoutMs = INTEGRATION_TIMEOUT_MS,
   stateDir = resolveGenieHome(),
+  claudeHome = resolveClaudeDir(),
+  verifyClaudePayload?: ClaudePayloadVerifier,
 ): IntegrationResult {
   const plugin = convergeClaudePlugin({
     runner,
+    command,
     bundleRoot,
     expectedVersion: VERSION,
     installIfAbsent: true,
     statePath: join(stateDir, '.integration-refresh-claude.json'),
     timeoutMs,
+    claudeHome,
+    verifyClaudePayload,
   });
   if (plugin === null) throw new Error('Claude plugin convergence returned no result for explicit install');
   if (!plugin.ok) throw new IntegrationCommandError(plugin.detail, plugin.timedOut);
@@ -1198,6 +1421,16 @@ export interface CodexAgentRemovalResult {
 /** Remove only digest-clean inventory-owned role agents; modified/user files stay byte-identical. */
 export function removeCodexAgents(codexHome = getCodexHome()): CodexAgentRemovalResult {
   const result: CodexAgentRemovalResult = { removed: [], keptModified: [], missing: [], failures: [] };
+  const agentsDir = join(codexHome, 'agents');
+  try {
+    recoverRoleAgentTransactions(agentsDir);
+  } catch (error) {
+    result.failures.push({
+      name: CODEX_AGENT_INVENTORY_NAME,
+      detail: `pending role-agent transaction could not be recovered; no role agents were removed: ${error instanceof Error ? error.message : String(error)}`,
+    });
+    return result;
+  }
   const state = readCodexAgentInventory(codexHome);
   if (state.status === 'corrupt') {
     result.failures.push({
@@ -1261,6 +1494,10 @@ export interface RemoveRuntimeIntegrationsOptions {
   /** Explicit state evidence seam for isolated command tests. */
   installedEvidence?: Partial<Record<RuntimeName, boolean>>;
   timeoutMs?: number;
+  /** Active project used to reject repository/worktree/common-root PATH decoys. */
+  cwd?: string;
+  /** Deterministic test seam; production resolves and validates PATH once. */
+  resolveExecutable?: RuntimeExecutableResolver;
 }
 
 export interface RuntimeIntegrationEvidence {
@@ -1336,10 +1573,20 @@ export function inspectRuntimeIntegrationEvidence(
   const claudeHome = options.claudeHome ?? resolveClaudeDir();
   const errors: Record<RuntimeName, string[]> = { codex: [], claude: [] };
   let codexConfig = '';
+  const codexConfigPath = join(codexHome, 'config.toml');
   try {
-    codexConfig = readFileSync(join(codexHome, 'config.toml'), 'utf8');
-  } catch {
-    // Cache evidence below remains authoritative when config is absent.
+    const stat = lstatSync(codexConfigPath);
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      errors.codex.push(`Codex config is not a physical file: ${codexConfigPath}`);
+    } else {
+      codexConfig = readFileSync(codexConfigPath, 'utf8');
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      errors.codex.push(
+        `Codex config is unreadable at ${codexConfigPath}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
   const settings = readOwnedJson(join(claudeHome, 'settings.json'), 'Claude settings', inspectClaudeSettings);
   if (settings.error) errors.claude.push(settings.error);
@@ -1366,13 +1613,14 @@ export function inspectRuntimeIntegrationEvidence(
 
 function removalStep(
   runner: CommandRunner,
+  command: string,
   runtime: RuntimeName,
   operation: IntegrationRemovalStep['operation'],
   args: string[],
   timeoutMs: number,
 ): IntegrationRemovalStep {
   try {
-    const result = runner(runtime, args, { timeoutMs });
+    const result = runner(command, args, { timeoutMs });
     if (result.timedOut) {
       return {
         runtime,
@@ -1426,10 +1674,22 @@ export function removeRuntimeIntegrations(
   const options: RemoveRuntimeIntegrationsOptions = typeof input === 'boolean' ? { removeMarketplace: input } : input;
   const runner = options.runner ?? defaultRunner;
   const timeoutMs = options.timeoutMs ?? INTEGRATION_TIMEOUT_MS;
-  const detected = {
-    codex: options.detected?.codex ?? commandExists('codex'),
-    claude: options.detected?.claude ?? commandExists('claude'),
-  };
+  const cwd = options.cwd ?? process.cwd();
+  const commands: Partial<Record<RuntimeName, string>> = {};
+  const resolutionErrors: Record<RuntimeName, string[]> = { codex: [], claude: [] };
+  const detected: Record<RuntimeName, boolean> = { codex: false, claude: false };
+  for (const runtime of ['codex', 'claude'] as const) {
+    if (options.detected?.[runtime] === false) continue;
+    try {
+      const command = resolveRuntimeExecutable(runtime, cwd, options.resolveExecutable);
+      if (command !== null) {
+        commands[runtime] = command;
+        detected[runtime] = true;
+      }
+    } catch (error) {
+      resolutionErrors[runtime].push(error instanceof Error ? error.message : String(error));
+    }
+  }
   const inspectedEvidence = inspectRuntimeIntegrationEvidence({
     codexHome: options.codexHome,
     claudeHome: options.claudeHome,
@@ -1437,12 +1697,24 @@ export function removeRuntimeIntegrations(
   const evidence = {
     codex: options.installedEvidence?.codex ?? inspectedEvidence.codex,
     claude: options.installedEvidence?.claude ?? inspectedEvidence.claude,
-    errors: inspectedEvidence.errors,
+    errors: {
+      codex: [...inspectedEvidence.errors.codex, ...resolutionErrors.codex],
+      claude: [...inspectedEvidence.errors.claude, ...resolutionErrors.claude],
+    },
   };
   const agents = removeCodexAgents(options.codexHome);
   const steps: IntegrationRemovalStep[] = [];
   if (detected.codex) {
-    steps.push(removalStep(runner, 'codex', 'plugin', ['plugin', 'remove', 'genie@automagik'], timeoutMs));
+    steps.push(
+      removalStep(
+        runner,
+        commands.codex as string,
+        'codex',
+        'plugin',
+        ['plugin', 'remove', 'genie@automagik'],
+        timeoutMs,
+      ),
+    );
   }
   if (!detected.codex) {
     const unavailable = unavailableRemovalStep(
@@ -1454,7 +1726,16 @@ export function removeRuntimeIntegrations(
     if (unavailable) steps.push(unavailable);
   }
   if (detected.claude) {
-    steps.push(removalStep(runner, 'claude', 'plugin', ['plugin', 'uninstall', 'genie@automagik'], timeoutMs));
+    steps.push(
+      removalStep(
+        runner,
+        commands.claude as string,
+        'claude',
+        'plugin',
+        ['plugin', 'uninstall', 'genie@automagik'],
+        timeoutMs,
+      ),
+    );
   }
   if (!detected.claude) {
     const unavailable = unavailableRemovalStep(
@@ -1468,12 +1749,26 @@ export function removeRuntimeIntegrations(
   if (options.removeMarketplace) {
     if (detected.codex) {
       steps.push(
-        removalStep(runner, 'codex', 'marketplace', ['plugin', 'marketplace', 'remove', 'automagik'], timeoutMs),
+        removalStep(
+          runner,
+          commands.codex as string,
+          'codex',
+          'marketplace',
+          ['plugin', 'marketplace', 'remove', 'automagik'],
+          timeoutMs,
+        ),
       );
     }
     if (detected.claude) {
       steps.push(
-        removalStep(runner, 'claude', 'marketplace', ['plugin', 'marketplace', 'remove', 'automagik'], timeoutMs),
+        removalStep(
+          runner,
+          commands.claude as string,
+          'claude',
+          'marketplace',
+          ['plugin', 'marketplace', 'remove', 'automagik'],
+          timeoutMs,
+        ),
       );
     }
   }

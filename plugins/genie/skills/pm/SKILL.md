@@ -38,7 +38,7 @@ The lifecycle is owned by its skills — route to them, never restate them here:
 | Execute | `work` | Dispatch orchestration; waves come from WISH.md |
 | Validate | `review` | Gate every group; FIX-FIRST → `fix` (max 2 loops) |
 | Investigate | `trace`, `report` | Unknown failure: diagnose before fixing |
-| Ship | PR to `dev` | Merge when CI green + review SHIP |
+| Ship | PR to `dev` | Request or consume task-scoped PR/merge authority; merge only when CI green + review SHIP |
 
 Document status (`DRAFT` / `FIX-FIRST` / `APPROVED` / `IN_PROGRESS` / `BLOCKED` / `SHIPPED`) tracks lifecycle phase; SHIP/FIX-FIRST/BLOCKED are reviewer verdicts, and the invoking orchestrator persists the corresponding transition. The task DB tracks per-group execution state.
 
@@ -86,21 +86,31 @@ Next: <planned actions>
 
 ## Authority Boundaries
 
-Apply in every mode; exceeding one escalates to the human.
+Apply in every mode; exceeding one escalates to the human. Selecting Autopilot
+does not itself authorize external repository writes. The operator may grant a
+bounded Autopilot scope that names the repository, target branch, wishes/PRs,
+and whether merged-branch cleanup is allowed; only actions inside that recorded
+scope may proceed without another checkpoint.
 
 | Action | Authority |
 |--------|-----------|
 | Create/claim/complete tasks | Autonomous |
 | Dispatch subagents (engineer, reviewer, qa, fix, docs, trace) | Autonomous |
-| PR targeting `dev`; merge to `dev` when CI green + review SHIP | Autonomous |
-| Delete feature branches | Autonomous |
+| Prepare commits and a proposed PR targeting `dev` | Autonomous inside the assigned repository/worktree |
+| Create or publish a PR | Explicit task-scoped grant, or a bounded Autopilot grant that names the repository and target branch |
+| Merge to `dev` | Separate explicit task-scoped merge grant, or a bounded Autopilot grant that names the eligible wishes/PRs |
+| Delete feature branches | Explicit cleanup grant; only after the associated merge is verified |
 | Merge to `main`/`master` | **Human only** |
 | Client communication; budget/spending | **Human only** |
 | Scope changes (add/remove features) | Human approval required |
 
 ## Checkpoints
 
-Pause for a human decision only when an action is destructive or irreversible, scope genuinely changes, credentials are involved, or an ambiguity changes what is safe to do. Everything else: decide, act, report.
+Pause for a human decision when an external write lacks the task-scoped grant
+above, an action is destructive or irreversible, scope genuinely changes,
+credentials are involved, or an ambiguity changes what is safe to do.
+Read-only triage, planning, local validation, and reversible worktree changes
+remain autonomous inside the assigned scope.
 
 ## Rules
 - Never write code — dispatch engineers.

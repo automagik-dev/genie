@@ -7,19 +7,20 @@ description: "Validate plans, execution, or PRs against wish criteria — return
 
 **Runtime syntax:** in Codex, invoke the plugin copy with the owner-qualified `$genie:<skill>` selector; use bare `$<skill>` only for a separately installed personal copy. Claude Code and Hermes use `/<skill>`. Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active tier.
 
-Validate any artifact against its wish criteria. Dispatch as a subagent — never review your own work inline. The deliverable is findings plus a verdict: report and stop — never implement fixes, however small.
+Validate a design, wish plan, completed execution, or PR against its governing criteria. Dispatch as a subagent — never review your own work inline. The deliverable is findings plus a verdict: report and stop — never implement fixes, however small.
 
 ## Context Injection
 
-When spawned as a reviewer subagent, your dispatch prompt carries the curated scope: the target (wish draft, completed work, or PR diff), the wish path (`.genie/wishes/<slug>/WISH.md`), and the extracted acceptance criteria. Use it directly — do not re-parse for information already provided.
+When spawned as a reviewer subagent, your dispatch prompt carries the curated scope: the target (DESIGN.md, wish draft, completed work, or PR diff), its exact path, and the extracted design or acceptance criteria. A design review does not require a wish path; later pipelines include `.genie/wishes/<slug>/WISH.md`. Use the supplied context directly — do not re-parse information already provided.
 
 ## When to Use
+- After `brainstorm` — validate DESIGN.md before converting it into a wish
 - Before `work` — validate a wish plan is ready for execution
 - After `work` — verify implementation meets acceptance criteria
 - Before merge — check a PR diff against wish scope
 
 ## Flow
-1. **Detect target** — wish draft, completed work, or PR diff.
+1. **Detect target** — DESIGN.md, wish draft, completed work, or PR diff.
 2. **Select pipeline** — the matching checklist below.
 3. **Run checklist** — evaluate each criterion, collecting evidence.
 4. **Run validations** — execute validation commands; capture pass/fail output.
@@ -44,6 +45,15 @@ Model and reasoning effort belong in the active runtime's session or named-agent
 If an ordinary reviewer and the `final-gate` disagree, log an appeal with the wish/group, both verdicts and evidence, the contested criterion, and the human resolution. Neither verdict silently overrides the other, and the group remains `in_progress` until the appeal is resolved.
 
 ## Pipelines
+
+### Design Review (after `brainstorm`)
+- [ ] Problem is explicit, consequential, and readable one way
+- [ ] Scope has concrete IN and OUT boundaries that fit one wish
+- [ ] Chosen approach names its rationale and rejected alternatives
+- [ ] Decisions are consistent with the approach and repository constraints
+- [ ] Risks and assumptions name mitigations or explicit acceptance
+- [ ] Success criteria are testable without requiring execution-group details
+- [ ] Next step is `wish`; DESIGN.md contains no TODO/TBD placeholders
 
 ### Plan Review (before `work`)
 - [ ] Problem statement is one sentence and testable
@@ -101,7 +111,7 @@ write. Never edit WISH.md, the brainstorm jar, or task state as the reviewer.
 
 | Review context | On SHIP |
 |---------------|---------|
-| Plan review (after `brainstorm`) | Proceed to `wish` to create the executable plan |
+| Design review (after `brainstorm`) | Proceed to `wish` to create the executable plan |
 | Plan review (after `wish`) | Proceed to `work` to execute the plan |
 | Execution review (after `work`) | Create PR targeting `dev` |
 | PR review (before merge) | Merge to `dev` (agents) or approve for human merge |

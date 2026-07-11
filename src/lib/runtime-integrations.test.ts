@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  rmSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -15,16 +16,20 @@ import {
   type InstallIntegrationsOptions,
   claudePluginState,
   codexPluginState,
+  convergeClaudePlugin,
   inspectCodexAgentOwnership,
   inspectRuntimeIntegrationEvidence,
   installCodexAgents,
   installRuntimeIntegrations as installRuntimeIntegrationsWithPhysicalVerification,
   parseClaudePluginState,
   parseCodexPluginState,
+  persistIntegrationConsent,
+  readIntegrationConsent,
   removeCodexAgents,
-  removeRuntimeIntegrations,
+  removeRuntimeIntegrations as removeRuntimeIntegrationsWithTrustedResolution,
   resolveBundleRoot,
   setCodexPluginEnabled,
+  verifyClaudePhysicalPayload,
 } from './runtime-integrations.js';
 import { VERSION } from './version.js';
 
@@ -33,7 +38,19 @@ const MANAGED_TOML = '# Managed by Genie. Remove with `genie uninstall`.\nname =
 function installRuntimeIntegrations(options: InstallIntegrationsOptions) {
   return installRuntimeIntegrationsWithPhysicalVerification({
     ...options,
+    resolveExecutable: options.resolveExecutable ?? ((name) => name),
     verifyCodexPayload: options.verifyCodexPayload ?? (() => undefined),
+    verifyClaudePayload: options.verifyClaudePayload ?? (() => undefined),
+  });
+}
+
+function removeRuntimeIntegrations(
+  options: Exclude<Parameters<typeof removeRuntimeIntegrationsWithTrustedResolution>[0], undefined>,
+) {
+  if (typeof options === 'boolean') return removeRuntimeIntegrationsWithTrustedResolution(options);
+  return removeRuntimeIntegrationsWithTrustedResolution({
+    ...options,
+    resolveExecutable: options.resolveExecutable ?? ((name) => name),
   });
 }
 
@@ -206,6 +223,78 @@ describe('resolveBundleRoot', () => {
   });
 });
 
+describe('durable integration consent and Claude payload provenance', () => {
+  test('integration consent round-trips explicit selections and rejects non-files', () => {
+    const home = mkdtempSync(join(tmpdir(), 'genie-integration-consent-'));
+    for (const selection of ['none', 'codex', 'claude', 'all', 'auto'] as const) {
+      persistIntegrationConsent(selection, home);
+      expect(readIntegrationConsent(home)).toBe(selection);
+    }
+    const path = join(home, '.integration-consent.json');
+    rmSync(path);
+    mkdirSync(path);
+    expect(() => readIntegrationConsent(home)).toThrow('not a physical file');
+  });
+
+  test('Claude verification binds both directory marketplace source and installed bytes', () => {
+    const bundleRoot = mkdtempSync(join(tmpdir(), 'genie-claude-bundle-'));
+    const claudeHome = mkdtempSync(join(tmpdir(), 'genie-claude-home-'));
+    const source = join(bundleRoot, 'plugins', 'genie');
+    const installed = join(claudeHome, 'plugins', 'cache', 'automagik', 'genie', VERSION);
+    write(join(source, 'package.json'), '{"name":"genie"}\n');
+    write(join(installed, 'package.json'), '{"name":"genie"}\n');
+    write(
+      join(claudeHome, 'plugins', 'known_marketplaces.json'),
+      JSON.stringify({
+        automagik: { source: { source: 'directory', path: bundleRoot }, installLocation: bundleRoot },
+      }),
+    );
+    const input = { bundleRoot, claudeHome, expectedVersion: VERSION };
+    expect(() => verifyClaudePhysicalPayload(input)).not.toThrow();
+    writeFileSync(join(installed, 'package.json'), '{"name":"substituted"}\n');
+    expect(() => verifyClaudePhysicalPayload(input)).toThrow('payload identity mismatch');
+  });
+
+  test('a planned refresh intent never authorizes reinstall after manual removal', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-claude-intent-'));
+    const statePath = join(root, 'refresh.json');
+    const current = JSON.stringify([{ id: 'genie@automagik', enabled: true, version: VERSION }]);
+    const calls: string[] = [];
+    const first = convergeClaudePlugin({
+      command: 'claude',
+      runner(command, args) {
+        calls.push([command, ...args].join(' '));
+        if (args.join(' ') === 'plugin list --json') return { exitCode: 0, stdout: current, stderr: '' };
+        return { exitCode: 7, stdout: '', stderr: 'permission denied' };
+      },
+      bundleRoot: root,
+      expectedVersion: VERSION,
+      installIfAbsent: false,
+      statePath,
+      verifyClaudePayload: () => undefined,
+    });
+    expect(first?.ok).toBe(false);
+    expect(existsSync(statePath)).toBe(true);
+
+    calls.length = 0;
+    const afterManualRemoval = convergeClaudePlugin({
+      command: 'claude',
+      runner(command, args) {
+        calls.push([command, ...args].join(' '));
+        return { exitCode: 0, stdout: '[]', stderr: '' };
+      },
+      bundleRoot: root,
+      expectedVersion: VERSION,
+      installIfAbsent: false,
+      statePath,
+      verifyClaudePayload: () => undefined,
+    });
+    expect(afterManualRemoval).toBeNull();
+    expect(calls).toEqual(['claude plugin list --json']);
+    expect(existsSync(statePath)).toBe(false);
+  });
+});
+
 describe('codex repair convergence (stale marketplace root / stale installed plugin)', () => {
   const staleList = JSON.stringify({
     installed: [{ pluginId: 'genie@automagik', enabled: true, version: '5.260710.9' }],
@@ -231,6 +320,7 @@ describe('codex repair convergence (stale marketplace root / stale installed plu
       bundleRoot,
       codexHome,
       detected: { codex: true },
+      resolveExecutable: (name) => name,
       runner(command, args) {
         calls.push([command, ...args].join(' '));
         return { exitCode: 0, stdout: args.join(' ') === 'plugin list --json' ? currentList : '{}', stderr: '' };
@@ -482,7 +572,7 @@ describe('installCodexAgents overwrite discipline', () => {
     expect(existsSync(join(codexHome, 'agents', 'genie-reviewer.toml.genie-backup'))).toBe(false);
   });
 
-  test('a byte-identical known Genie copy without inventory is backup-first adopted', () => {
+  test('a byte-identical known Genie copy without inventory remains user-owned', () => {
     const bundleRoot = makeBundle();
     const codexHome = mkdtempSync(join(tmpdir(), 'genie-codex-'));
     const target = join(codexHome, 'agents', 'genie-reviewer.toml');
@@ -490,14 +580,13 @@ describe('installCodexAgents overwrite discipline', () => {
 
     const result = installCodexAgents(bundleRoot, codexHome);
 
-    expect(result.installed).toBe(1);
-    expect(result.skippedUserOwned).toEqual([]);
-    expect(result.adoptedLegacy).toEqual(['genie-reviewer.toml']);
+    expect(result.installed).toBe(0);
+    expect(result.skippedUserOwned).toEqual(['genie-reviewer.toml']);
+    expect(result.adoptedLegacy).toBeUndefined();
     expect(readFileSync(target, 'utf8')).toBe(MANAGED_TOML);
-    expect(inspectCodexAgentOwnership(codexHome).entries[0]?.ownership).toBe('managed-clean');
-    expect(existsSync(join(dirname(codexHome), '.genie-recovery', 'role-agent-bootstrap'))).toBe(true);
-    expect(removeCodexAgents(codexHome).removed).toEqual(['genie-reviewer.toml']);
-    expect(existsSync(target)).toBe(false);
+    expect(inspectCodexAgentOwnership(codexHome).entries[0]?.ownership).toBe('user-owned');
+    expect(removeCodexAgents(codexHome).removed).toEqual([]);
+    expect(existsSync(target)).toBe(true);
   });
 
   test('a differing file WITHOUT the sentinel is user-owned: skipped, never overwritten', () => {
@@ -643,6 +732,31 @@ describe('installCodexAgents overwrite discipline', () => {
     expect(inspectCodexAgentOwnership(codexHome).entries[0]?.ownership).toBe('managed-clean');
   });
 
+  test('pre-journal preparation debris is inert and cannot poison a retry', () => {
+    const bundleRoot = makeBundle();
+    const codexHome = mkdtempSync(join(tmpdir(), 'genie-codex-prepare-debris-'));
+    const debris = join(codexHome, 'agents', '.genie-role-agents.prepare-crashed', 'staged');
+    mkdirSync(debris, { recursive: true });
+    writeFileSync(join(debris, 'partial.toml'), 'partial');
+
+    expect(installCodexAgents(bundleRoot, codexHome).installed).toBe(1);
+    expect(readFileSync(join(codexHome, 'agents', 'genie-reviewer.toml'), 'utf8')).toBe(MANAGED_TOML);
+  });
+
+  test('uninstall fails closed when a published role transaction cannot be recovered', () => {
+    const bundleRoot = makeBundle();
+    const codexHome = mkdtempSync(join(tmpdir(), 'genie-codex-broken-transaction-'));
+    installCodexAgents(bundleRoot, codexHome);
+    const target = join(codexHome, 'agents', 'genie-reviewer.toml');
+    const before = readFileSync(target, 'utf8');
+    mkdirSync(join(codexHome, 'agents', '.genie-role-agents.txn-crashed'), { recursive: true });
+
+    const removal = removeCodexAgents(codexHome);
+    expect(removal.removed).toEqual([]);
+    expect(removal.failures[0]?.detail).toContain('pending role-agent transaction could not be recovered');
+    expect(readFileSync(target, 'utf8')).toBe(before);
+  });
+
   test('inventory filenames cannot escape the Codex agents directory', () => {
     const bundleRoot = makeBundle();
     const codexHome = mkdtempSync(join(tmpdir(), 'genie-codex-'));
@@ -661,6 +775,25 @@ describe('installCodexAgents overwrite discipline', () => {
 });
 
 describe('runtime integration removal reporting', () => {
+  test('unavailable Codex CLI fails closed when config state is non-physical', () => {
+    const codexHome = mkdtempSync(join(tmpdir(), 'genie-codex-evidence-nonphysical-'));
+    mkdirSync(join(codexHome, 'config.toml'), { recursive: true });
+    const result = removeRuntimeIntegrations({
+      codexHome,
+      claudeHome: mkdtempSync(join(tmpdir(), 'genie-claude-remove-')),
+      detected: { codex: false, claude: false },
+      installedEvidence: { claude: false },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.steps).toEqual([
+      expect.objectContaining({
+        runtime: 'codex',
+        ok: false,
+        detail: expect.stringContaining('removal cannot be proven'),
+      }),
+    ]);
+  });
+
   test('Claude settings evidence includes both enabled and explicitly disabled registrations', () => {
     for (const enabled of [true, false]) {
       const claudeHome = mkdtempSync(join(tmpdir(), 'genie-claude-evidence-'));

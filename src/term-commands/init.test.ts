@@ -57,7 +57,16 @@ describe('genie init', () => {
       expect(gitignore).toContain(rule);
     }
     expect(stdout).toContain('brainstorm');
+    expect(stdout).toContain('$genie:brainstorm');
+    expect(stdout).toContain('$genie:review');
+    expect(stdout.indexOf('$genie:review')).toBeLessThan(stdout.indexOf('$genie:work'));
     expect(stdout).toContain('genie board');
+  });
+
+  test('--help discloses every project MCP file class init may reconcile', () => {
+    const { code, stdout } = runInit(dir, ['--help']);
+    expect(code).toBe(0);
+    for (const path of ['.mcp.json', '.warp/.mcp.json', '.codex/config.toml']) expect(stdout).toContain(path);
   });
 
   test('second run is a no-op: .gitignore and INDEX.md are byte-identical', () => {

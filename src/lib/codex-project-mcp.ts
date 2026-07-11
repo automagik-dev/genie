@@ -112,6 +112,8 @@ export interface CodexPluginMcpUsabilityOptions {
   platform?: NodeJS.Platform;
   /** Resolve the exact bare command declared by .mcp.json under the active PATH. */
   resolveCommand?: (command: string) => string | null;
+  /** Active project directory whose worktree/common checkout roots are untrusted. */
+  cwd?: string;
 }
 
 export interface RegisterProjectMcpOptions {
@@ -345,7 +347,7 @@ function resolveConfiguredNodeCommand(options: CodexPluginMcpUsabilityOptions): 
   return validateTrustedExecutablePath(
     'configured plugin MCP command "node"',
     commandPath,
-    options.pluginRoot ?? process.cwd(),
+    options.cwd ?? process.cwd(),
     options.platform ?? process.platform,
   );
 }
@@ -563,6 +565,7 @@ export function probeCodexGeniePlugin(deps: CodexPluginProbeDeps = {}): CodexPlu
             pluginRoot: activeRoot.root,
             expectedPluginName: GENIE_PLUGIN_NAME,
             expectedVersion: snapshot.version,
+            cwd: deps.cwd ?? process.cwd(),
           })
         : {
             usable: false,
@@ -909,19 +912,18 @@ export function registerProjectMcpConfigs(root: string, options: RegisterProject
   const preparedJson = [join(root, '.mcp.json'), join(root, '.warp', '.mcp.json')].map((path) =>
     prepareJsonMcpConfig(path, entry),
   );
-  const preparedCodex = plugin.cliAvailable
-    ? prepareCodexFallback(join(root, '.codex', 'config.toml'), entry, !isUsableCodexPlugin(plugin))
-    : null;
+  // Explicit init must leave a discoverable route even before the Codex CLI is
+  // installed. The marker-owned fallback is lifecycle-owned and can later be
+  // removed atomically when a usable plugin is proven.
+  const preparedCodex = prepareCodexFallback(join(root, '.codex', 'config.toml'), entry, !isUsableCodexPlugin(plugin));
 
-  if (preparedCodex !== null && !preparedCodex.ok) {
+  if (!preparedCodex.ok) {
     throw new Error(`Cannot reconcile Codex project MCP at ${preparedCodex.path}: ${preparedCodex.detail}`);
   }
 
   // Parsing/planning above is intentionally complete before the first write.
   const results = preparedJson.map((prepared) => applyPreparedWrite(prepared, root));
-  if (preparedCodex !== null) {
-    if ('content' in preparedCodex && preparedCodex.content !== undefined) applyPreparedWrite(preparedCodex);
-    results.push({ path: preparedCodex.path, action: preparedCodex.action, detail: preparedCodex.detail });
-  }
+  if ('content' in preparedCodex && preparedCodex.content !== undefined) applyPreparedWrite(preparedCodex);
+  results.push({ path: preparedCodex.path, action: preparedCodex.action, detail: preparedCodex.detail });
   return results;
 }

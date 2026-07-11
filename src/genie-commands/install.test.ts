@@ -44,6 +44,7 @@ function makeCleanupSpy(): { runner: typeof cleanupV4; calls: () => number } {
 }
 
 const noopLease = () => ({ path: '/tmp/test-lifecycle.lock', release: () => undefined });
+const noopConsent = () => undefined;
 
 describe('installCommand', () => {
   test('runs v4 cleanup + layout normalize + agent sync by default', () => {
@@ -61,6 +62,7 @@ describe('installCommand', () => {
       },
       () => [],
       noopLease,
+      noopConsent,
     );
     expect(spy.calls()).toBe(1);
     expect(normalizeCalls).toBe(1);
@@ -82,6 +84,7 @@ describe('installCommand', () => {
       },
       () => [],
       noopLease,
+      noopConsent,
     );
     expect(spy.calls()).toBe(0);
     expect(normalizeCalls).toBe(1);
@@ -100,6 +103,7 @@ describe('installCommand', () => {
         return [];
       },
       noopLease,
+      noopConsent,
     );
     installCommand(
       { skipIntegrations: true },
@@ -111,6 +115,7 @@ describe('installCommand', () => {
         return [];
       },
       noopLease,
+      noopConsent,
     );
     expect(selection).toBe('none');
   });
@@ -124,6 +129,7 @@ describe('installCommand', () => {
       (selection) => observed.push(selection),
       () => [],
       noopLease,
+      noopConsent,
     );
     installCommand(
       { integrations: 'none' },
@@ -132,6 +138,7 @@ describe('installCommand', () => {
       (selection) => observed.push(selection),
       () => [],
       noopLease,
+      noopConsent,
     );
     expect(observed).toEqual(['codex']);
   });
@@ -146,6 +153,7 @@ describe('installCommand', () => {
         () => {},
         failing,
         noopLease,
+        noopConsent,
       ),
     ).not.toThrow();
     expect(() =>
@@ -156,6 +164,7 @@ describe('installCommand', () => {
         () => {},
         failing,
         noopLease,
+        noopConsent,
       ),
     ).toThrow('Requested integration failed');
   });
@@ -178,6 +187,7 @@ describe('installCommand', () => {
           return [];
         },
         noopLease,
+        noopConsent,
       ),
     ).toThrow('Invalid --integrations value: codxe');
     expect(calls).toEqual([]);

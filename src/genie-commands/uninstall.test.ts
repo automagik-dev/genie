@@ -224,6 +224,18 @@ describe('agent-sync managed-asset removal', () => {
     expect(readFileSync(sidecar, 'utf8')).toBe('{broken');
   });
 
+  test('published council transaction recovery failure blocks every destructive asset removal', () => {
+    const skill = managedSkill(join(claudeDir, 'skills'), 'wish');
+    const transaction = join(claudeDir, 'workflows', '.council.genie-txn-crashed');
+    mkdirSync(transaction, { recursive: true });
+
+    const result = removeAgentSyncAssets(targets());
+
+    expect(result.removed).toEqual([]);
+    expect(result.failures[0]?.detail).toContain('pending council workflow transaction could not be recovered');
+    expect(existsSync(skill)).toBe(true);
+  });
+
   test('hermes symlink into the genie home is removed; one pointing elsewhere is kept', () => {
     mkdirSync(join(hermesHome, 'plugins'), { recursive: true });
     const link = join(hermesHome, 'plugins', 'genie');

@@ -52,6 +52,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+const hasControlCharacter = (value: string): boolean =>
+  [...value].some((character) => {
+    const code = character.charCodeAt(0);
+    return code <= 0x1f || code === 0x7f;
+  });
+
 /**
  * Best-effort parse at the entry — independent of `dispatch()`'s own parse so
  * that a post-parse `dispatch()` throw can still name the event/tool when it
@@ -82,6 +88,10 @@ function codexStructureError(parsed: ParsedEntry): string | null {
     return `unsupported Codex dispatch event: ${parsed.event}`;
   }
   if (!parsed.tool) return 'tool_name must be a non-empty string';
+  if (parsed.tool.length > 128) return 'tool_name must be at most 128 characters';
+  if (/\s/u.test(parsed.tool) || hasControlCharacter(parsed.tool)) {
+    return 'tool_name must not contain whitespace or control characters';
+  }
   if (!isRecord(parsed.payload?.tool_input)) return 'tool_input must be a JSON object';
   if (
     (parsed.tool === 'Bash' || parsed.tool === 'apply_patch') &&

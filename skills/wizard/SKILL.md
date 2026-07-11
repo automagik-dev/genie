@@ -28,8 +28,12 @@ Show a compact found/missing checklist, then:
 - `.genie/` missing → scaffold it:
 
 ```bash
-genie init   # idempotent: .genie/INDEX.md + .gitignore rules
+genie init   # idempotent state plus .mcp.json, .warp/.mcp.json, and conditional marker-owned .codex/config.toml routing
 ```
+
+Before running it, tell the user that these are project-scoped writes and that
+Codex uses the TOML fallback only when no installed, enabled, usable Genie
+plugin route can be proven.
 
 ## Phase 2 — Agent Identity
 
@@ -37,11 +41,23 @@ Goal: an `AGENTS.md` defining this project's agent roles and voice. Delegate to 
 
 ## Phase 3 — First Wish
 
-Ask what to build or fix first. Fuzzy → `brainstorm`; concrete → `wish` (creates `.genie/wishes/<slug>/WISH.md` with scope, acceptance criteria, and execution groups). Then dispatch `review` on the plan. The reviewer remains read-only; the wizard/orchestrator appends its evidence under `## Review Results` and persists SHIP as WISH status `APPROVED` (FIX-FIRST/ BLOCKED use those exact statuses). Exit only when the wish is `APPROVED` on disk, not merely when a chat verdict said SHIP.
+Ask what to build or fix first. Fuzzy → `/brainstorm` in Claude or
+`$genie:brainstorm` in the Codex plugin; concrete → `/wish` or `$genie:wish`
+(creates `.genie/wishes/<slug>/WISH.md` with scope, acceptance criteria, and
+execution groups). Then dispatch `/review` or `$genie:review` on the plan. The
+reviewer remains read-only; the wizard/orchestrator appends its evidence under
+`## Review Results` and persists SHIP as WISH status `APPROVED` (FIX-FIRST/
+BLOCKED use those exact statuses). Exit only when the wish is `APPROVED` on
+disk, not merely when a chat verdict said SHIP.
 
 ## Phase 4 — Execute
 
-State what's about to run (wish slug, group count), then run `work` — it dispatches native subagents per execution group, tracks per-group state via `genie task`, and runs fix loops. When it finishes, `review` for final verification. Terminal-first alternative: `genie launch <slug>` opens a Warp cockpit with one pane per ready group, each in its own worktree.
+State what's about to run (wish slug, group count), then run `/work` in Claude
+or `$genie:work` in the Codex plugin — it dispatches native subagents per
+execution group, tracks per-group state via `genie task`, and runs fix loops.
+When it finishes, run `/review` or `$genie:review` for final verification.
+Terminal-first alternative: `genie launch <slug>` opens a Warp cockpit with one
+pane per ready group, each in its own worktree.
 
 ## Phase 5 — Celebrate
 

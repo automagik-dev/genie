@@ -18,7 +18,11 @@ Entry: human invokes `pm` or asks for help managing work. Exit: human takes over
 
 Spawn one fresh-context decision-maker subagent at run start. Route ship/no-ship and prioritization judgment calls back to that same thread with native follow-up messaging; it emulates the human only within the documented Authority Boundaries. Anything past a boundary still goes to the real human.
 
-Entry: human says "run autonomously" / "autopilot". Exit: all tasks shipped, or a decision exceeds authority.
+Entry: human says "run autonomously" / "autopilot". That phrase grants decision
+autonomy only; external repository writes still require the bounded scope from
+`../SKILL.md` (repository, target branch, eligible wishes/PRs, and cleanup
+policy). Exit: all authorized tasks shipped, or a decision/action exceeds that
+scope.
 
 ### Default persona: pragmatic engineering manager
 

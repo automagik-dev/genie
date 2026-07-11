@@ -12,6 +12,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import {
   chmodSync,
   existsSync,
@@ -20,6 +21,7 @@ import {
   mkdtempSync,
   readFileSync,
   readlinkSync,
+  renameSync,
   rmSync,
   symlinkSync,
   utimesSync,
@@ -33,9 +35,11 @@ import {
   type AgentReport,
   type AgentSyncOptions,
   type AgentSyncReport,
+  TARGET_NAME,
   WORKFLOW_MANIFEST_NAME,
   acquireLifecycleLease,
   computeDirDigest,
+  inspectManagedWorkflow,
   lifecycleLockPath,
   resolveGenieSource,
   runAgentSync,
@@ -585,6 +589,80 @@ describe('computeDirDigest', () => {
 // ---------------------------------------------------------------------------
 
 describe('staging cleanup', () => {
+  test('a promotion failure restores the previous live skill and is strict-visible', () => {
+    present(fixture.claudeDir);
+    run({ selection: 'claude' });
+    const alphaDir = join(fixture.claudeDir, 'skills', 'alpha');
+    writeFile(join(fixture.pluginRoot, 'skills', 'alpha', 'SKILL.md'), '# alpha v2\n');
+
+    const report = run({
+      selection: 'claude',
+      renameManagedDir: (from, to) => {
+        const source = String(from);
+        if (source.includes(`${join('.genie-sync-transactions', 'txn-')}`) && source.endsWith(join('staged'))) {
+          throw new Error('simulated promotion failure');
+        }
+        renameSync(from, to);
+      },
+    });
+    const claude = agentReport(report, 'claude');
+
+    expect(readFileSync(join(alphaDir, 'SKILL.md'), 'utf8')).toBe('# alpha\n');
+    expect(claude.failures?.join('\n')).toContain('simulated promotion failure');
+    const marker = join(fixture.root, '.strict-marker');
+    expect(() =>
+      runAgentSyncSafe({ sync: () => report, strict: true, markerPath: marker, log: () => undefined }),
+    ).toThrow('simulated promotion failure');
+    expect(existsSync(marker)).toBe(false);
+
+    expect(skillAction(agentReport(run({ selection: 'claude' }), 'claude'), 'alpha')).toBe('updated');
+    expect(readFileSync(join(alphaDir, 'SKILL.md'), 'utf8')).toBe('# alpha v2\n');
+  });
+
+  test('a journaled crash after moving live restores the prior tree before classification', () => {
+    present(fixture.claudeDir);
+    run({ selection: 'claude' });
+    const skillsDir = join(fixture.claudeDir, 'skills');
+    const alphaDir = join(skillsDir, 'alpha');
+    const priorContentDigest = computeDirDigest(alphaDir);
+    const priorManifestDigest = createHash('sha256')
+      .update(readFileSync(join(alphaDir, MANIFEST_NAME)))
+      .digest('hex');
+    const transactionDir = join(skillsDir, '.genie-sync-transactions', 'txn-616c706861-crashed');
+    mkdirSync(transactionDir, { recursive: true });
+    renameSync(alphaDir, join(transactionDir, 'before'));
+    writeFile(
+      join(transactionDir, 'journal.json'),
+      `${JSON.stringify({
+        version: 1,
+        destName: 'alpha',
+        hadLive: true,
+        beforeContentDigest: priorContentDigest,
+        beforeManifestDigest: priorManifestDigest,
+        stagedContentDigest: '0'.repeat(64),
+        stagedManifestDigest: '1'.repeat(64),
+      })}\n`,
+    );
+
+    const claude = agentReport(run({ selection: 'claude' }), 'claude');
+
+    expect(skillAction(claude, 'alpha')).toBe('unchanged');
+    expect(readFileSync(join(alphaDir, 'SKILL.md'), 'utf8')).toBe('# alpha\n');
+    expect(existsSync(transactionDir)).toBe(false);
+  });
+
+  test('hidden pre-journal managed-dir debris is quarantined and does not poison retries', () => {
+    present(fixture.claudeDir);
+    const debris = join(fixture.claudeDir, 'skills', '.genie-sync-transactions', '.staging-616c706861-crashed');
+    writeFile(join(debris, 'staged', 'SKILL.md'), '# incomplete\n');
+
+    const claude = agentReport(run({ selection: 'claude' }), 'claude');
+
+    expect(skillAction(claude, 'alpha')).toBe('created');
+    expect(existsSync(debris)).toBe(false);
+    expect(readFileSync(join(fixture.claudeDir, 'skills', 'alpha', 'SKILL.md'), 'utf8')).toBe('# alpha\n');
+  });
+
   test('stale genie-sync staging debris from a crashed run is pre-cleaned', () => {
     present(fixture.claudeDir);
     const staleStage = join(fixture.claudeDir, 'skills', 'alpha.genie-sync.staging');
@@ -887,7 +965,7 @@ describe('stampWorkflow parity with council-stamp.cjs', () => {
     expect(stampCouncilWorkflow({ templatePath, pluginRoot, targetDir: cjsDir }).action).toBe('skipped');
   });
 
-  test('an inventory-missing exact legacy workflow is adopted only after a recovery backup', () => {
+  test('an inventory-missing exact legacy workflow remains byte-identical and unmanaged', () => {
     const templatePath = join(fixture.root, 'council.template.js');
     const targetDir = join(fixture.root, 'user-workflows');
     const targetPath = join(targetDir, 'council.js');
@@ -897,10 +975,25 @@ describe('stampWorkflow parity with council-stamp.cjs', () => {
 
     const result = stampWorkflow({ templatePath, pluginRoot: '/personal/plugin', targetDir });
 
-    expect(result.action).toBe('adopted-legacy');
-    expect(readFileSync(targetPath, 'utf8')).not.toBe(before);
-    expect(existsSync(join(targetDir, WORKFLOW_MANIFEST_NAME))).toBe(true);
-    expect(existsSync(join(dirname(targetDir), '.genie-recovery', 'council-bootstrap'))).toBe(true);
+    expect(result.action).toBe('kept-unmanaged');
+    expect(readFileSync(targetPath, 'utf8')).toBe(before);
+    expect(existsSync(join(targetDir, WORKFLOW_MANIFEST_NAME))).toBe(false);
+    expect(existsSync(join(dirname(targetDir), '.genie-recovery'))).toBe(false);
+  });
+
+  test('inspection is pure and pre-journal council debris cannot poison the next stamp', () => {
+    const templatePath = join(fixture.root, 'council.template.js');
+    const targetDir = join(fixture.root, 'recoverable-workflows');
+    const debris = join(targetDir, '.council.genie-txn-staging-crashed');
+    writeFileSync(templatePath, TEMPLATE_BODY, 'utf8');
+    writeFile(join(debris, 'staged', TARGET_NAME), '// incomplete\n');
+
+    expect(inspectManagedWorkflow(targetDir).state).toBe('unmanaged');
+    expect(existsSync(debris)).toBe(true);
+
+    expect(stampWorkflow({ templatePath, pluginRoot: '/plugin', targetDir }).action).toBe('written');
+    expect(existsSync(debris)).toBe(false);
+    expect(inspectManagedWorkflow(targetDir).state).toBe('managed-clean');
   });
 
   test('a clean digest-owned workflow updates, while a modified one is preserved', () => {

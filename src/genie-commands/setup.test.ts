@@ -62,6 +62,8 @@ describe('setup runtime and failure semantics', () => {
   function deps(ok = true, preservedDisabled = false): SetupDeps {
     return {
       cwd: join(root, 'repo'),
+      resolveExecutable: () => '/fixture/bin/codex',
+      validateExecutable: (_name, path) => path,
       checkCommand: async () => ({ exists: true, version: 'fixture' }),
       probeCodexGeniePlugin: () => ({
         cliAvailable: true,
@@ -162,6 +164,7 @@ describe('setup runtime and failure semantics', () => {
         bundleRoot: join(import.meta.dir, '..', '..'),
         codexHome: process.env.CODEX_HOME,
         detected: { codex: true },
+        resolveExecutable: (name) => name,
         runner(_command, args) {
           if (args.join(' ') === 'plugin list --json') {
             lists += 1;

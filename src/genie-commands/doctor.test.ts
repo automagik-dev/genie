@@ -18,11 +18,13 @@ import { join } from 'node:path';
 import { computeDirDigest } from '../lib/agent-sync.js';
 import { reconcileCodexProjectMcp, resolveGitProjectRoots } from '../lib/codex-project-mcp.js';
 import {
+  MINIMUM_BUN_VERSION,
   checkAgentSync,
   checkCodexIntegration,
   checkSubagentModelOverride,
   checkV4Residue,
   doctorCommand,
+  evaluateBunVersion,
   evaluateOmniHookTimeout,
   findDispatchHookTimeoutSec,
 } from './doctor.js';
@@ -79,8 +81,26 @@ afterEach(() => {
 });
 
 function isolatedDoctorDeps(root = join(isolatedHome, 'repo')) {
-  return { root, databaseRoot: root, pluginProbe: NO_CODEX };
+  return { root, databaseRoot: root, pluginProbe: NO_CODEX, bunVersion: '1.3.10', bunPath: '/usr/bin/bun' };
 }
+
+describe('Bun runtime contract', () => {
+  test('doctor minimum matches the package engine contract', () => {
+    const pkg = JSON.parse(readFileSync(join(import.meta.dir, '..', '..', 'package.json'), 'utf8')) as {
+      engines: { bun: string };
+    };
+    expect(pkg.engines.bun).toBe(`>=${MINIMUM_BUN_VERSION}`);
+  });
+
+  test('fails below or outside the declared minimum and passes equal/above versions', () => {
+    const belowMinimum = evaluateBunVersion('1.3.9', '/usr/bin/bun')[0];
+    expect(belowMinimum).toMatchObject({ status: 'fail' });
+    expect(belowMinimum.suggestion).toContain('bun upgrade');
+    expect(evaluateBunVersion('not-semver', '/usr/bin/bun')[0]).toMatchObject({ status: 'fail' });
+    expect(evaluateBunVersion('1.3.10', '/usr/bin/bun')[0]).toMatchObject({ status: 'pass' });
+    expect(evaluateBunVersion('1.4.0', '/usr/bin/bun')[0]).toMatchObject({ status: 'pass' });
+  });
+});
 
 describe('doctorCommand', () => {
   // The suite runs from within the genie repo — a healthy checkout with git,
@@ -235,6 +255,8 @@ describe('Codex doctor lifecycle results', () => {
             root: linked,
             databaseRoot: repo,
             pluginProbe: { cliAvailable: false, status: 'unavailable', installed: false, detail: 'fixture absent' },
+            bunVersion: '1.3.10',
+            bunPath: '/usr/bin/bun',
           },
         ),
       );
@@ -258,6 +280,8 @@ describe('Codex doctor lifecycle results', () => {
             root: process.cwd(),
             databaseRoot: process.cwd(),
             pluginProbe: { cliAvailable: false, status: 'unavailable', installed: false, detail: 'fixture absent' },
+            bunVersion: '1.3.10',
+            bunPath: '/usr/bin/bun',
           },
         ),
       );

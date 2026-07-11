@@ -54,6 +54,8 @@ import {
 
 type CheckStatus = 'pass' | 'warn' | 'fail';
 
+export const MINIMUM_BUN_VERSION = '1.3.10';
+
 interface CheckResult {
   name: string;
   status: CheckStatus;
@@ -184,10 +186,34 @@ function checkSkills(root: string | null): CheckResult[] {
   ];
 }
 
-function checkBun(): CheckResult[] {
-  const bunVersion = typeof Bun !== 'undefined' ? Bun.version : null;
-  const onPath = whichBinary('bun');
+function numericVersion(version: string): [number, number, number] | null {
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(version.trim());
+  if (!match) return null;
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+function versionAtLeast(actual: string, minimum: string): boolean {
+  const left = numericVersion(actual);
+  const right = numericVersion(minimum);
+  if (!left || !right) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) return left[index] > right[index];
+  }
+  return true;
+}
+
+export function evaluateBunVersion(bunVersion: string | null, onPath: string | null): CheckResult[] {
   if (bunVersion) {
+    if (!versionAtLeast(bunVersion, MINIMUM_BUN_VERSION)) {
+      return [
+        {
+          name: `bun ${bunVersion}`,
+          status: 'fail',
+          detail: `unsupported; Genie requires Bun >=${MINIMUM_BUN_VERSION}`,
+          suggestion: `Run \`bun upgrade\`, then confirm \`bun --version\` is at least ${MINIMUM_BUN_VERSION}.`,
+        },
+      ];
+    }
     return [
       {
         name: `bun ${bunVersion}`,
@@ -204,6 +230,13 @@ function checkBun(): CheckResult[] {
       suggestion: 'Install bun (https://bun.sh) — genie is a bun single-file binary.',
     },
   ];
+}
+
+function checkBun(versionOverride?: string | null, pathOverride?: string | null): CheckResult[] {
+  const bunVersion =
+    versionOverride === undefined ? (typeof Bun !== 'undefined' ? Bun.version : null) : versionOverride;
+  const onPath = pathOverride === undefined ? whichBinary('bun') : pathOverride;
+  return evaluateBunVersion(bunVersion, onPath);
 }
 
 function codexPluginCheck(state: CodexPluginProbe): CheckResult {
@@ -814,6 +847,10 @@ export interface DoctorDeps {
   databaseRoot?: string | null;
   /** Injected one-shot plugin state keeps tests away from the live Codex home. */
   pluginProbe?: CodexPluginProbe;
+  /** Runtime-version seam so tests can cover the declared Bun engine boundary. */
+  bunVersion?: string | null;
+  /** PATH seam paired with bunVersion. */
+  bunPath?: string | null;
 }
 
 export async function doctorCommand(options?: { json?: boolean; fix?: boolean }, deps: DoctorDeps = {}): Promise<void> {
@@ -840,7 +877,7 @@ export async function doctorCommand(options?: { json?: boolean; fix?: boolean },
     ...checkGit(root),
     ...checkDatabase(databaseRoot),
     ...checkSkills(root),
-    ...checkBun(),
+    ...checkBun(deps.bunVersion, deps.bunPath),
     ...checkSubagentModelOverride(),
     ...(await checkCodexIntegration(root, pluginProbe)),
     ...checkV4Residue(),

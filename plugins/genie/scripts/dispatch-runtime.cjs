@@ -12,7 +12,7 @@
  */
 
 const { spawn } = require('node:child_process');
-const { existsSync } = require('node:fs');
+const { constants, accessSync, lstatSync, realpathSync } = require('node:fs');
 const { homedir } = require('node:os');
 const path = require('node:path');
 
@@ -44,6 +44,10 @@ function codexInputError(entry) {
     return `unsupported Codex dispatch event: ${entry.event}`;
   }
   if (!entry.tool) return 'tool_name must be a non-empty string';
+  if (entry.tool.length > 128) return 'tool_name must be at most 128 characters';
+  if (/\s|[\u0000-\u001f\u007f]/u.test(entry.tool)) {
+    return 'tool_name must not contain whitespace or control characters';
+  }
   if (!isRecord(entry.input)) return 'tool_input must be a JSON object';
   if ((entry.tool === 'Bash' || entry.tool === 'apply_patch') && typeof entry.input.command !== 'string') {
     return `${entry.tool} tool_input.command must be a string`;
@@ -109,7 +113,7 @@ function validCodexOutput(raw, event) {
   return false;
 }
 
-function resolveGenieCommand(env = process.env, platform = process.platform, fileExists = existsSync) {
+function resolveGenieCommand(env = process.env, platform = process.platform, fsApi = {}) {
   const pathApi = platform === 'win32' ? path.win32 : path.posix;
   const home = env.GENIE_HOME || pathApi.join(homedir(), '.genie');
   if (!pathApi.isAbsolute(home)) {
@@ -125,7 +129,26 @@ function resolveGenieCommand(env = process.env, platform = process.platform, fil
     platform === 'win32'
       ? [pathApi.join(home, 'bin', 'genie.exe'), pathApi.join(home, 'bin', 'genie')]
       : [pathApi.join(home, 'bin', 'genie')];
-  const canonical = candidates.find((candidate) => fileExists(candidate));
+  const inspect = {
+    lstat: fsApi.lstat || lstatSync,
+    realpath: fsApi.realpath || realpathSync.native,
+    access: fsApi.access || accessSync,
+  };
+  const canonical = candidates.find((candidate) => {
+    try {
+      const stat = inspect.lstat(candidate);
+      if (!stat.isFile() || stat.isSymbolicLink()) return false;
+      const resolved = inspect.realpath(candidate);
+      const expected = pathApi.resolve(candidate);
+      const samePath = platform === 'win32' ? resolved.toLowerCase() === expected.toLowerCase() : resolved === expected;
+      if (!samePath) return false;
+      if (platform !== 'win32' && (stat.mode & 0o111) === 0) return false;
+      inspect.access(candidate, platform === 'win32' ? constants.F_OK : constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  });
   if (canonical) return { command: canonical, shell: false };
   return { error: `canonical Genie hook dispatcher not found under ${pathApi.join(home, 'bin')}` };
 }
@@ -167,7 +190,7 @@ async function launch(runtime, raw, deps = {}) {
       return 0;
     }
   }
-  const resolved = (deps.resolveCommand || resolveGenieCommand)(process.env, process.platform, existsSync);
+  const resolved = (deps.resolveCommand || resolveGenieCommand)(process.env, process.platform);
   if (resolved.error || !resolved.command || resolved.shell) {
     const message = `could not start Genie hook dispatcher: ${resolved.error || 'unsafe command resolution'}`;
     if (runtime === 'codex') {

@@ -1,5 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
@@ -15,6 +25,12 @@ interface LaunchDeps {
     | { error: string; command?: never; shell?: never };
 }
 
+interface ResolverFs {
+  lstat: (path: string) => Pick<ReturnType<typeof lstatSync>, 'isFile' | 'isSymbolicLink' | 'mode'>;
+  realpath: (path: string) => string;
+  access: (path: string, mode: number) => void;
+}
+
 const launcher = require('./dispatch-runtime.cjs') as {
   childTimeoutMs: (event: string, runtime: 'codex' | 'claude', env?: NodeJS.ProcessEnv) => number;
   launch: (
@@ -25,7 +41,7 @@ const launcher = require('./dispatch-runtime.cjs') as {
   resolveGenieCommand: (
     env: NodeJS.ProcessEnv,
     platform: NodeJS.Platform,
-    exists: (path: string) => boolean,
+    fs?: ResolverFs,
   ) => { command: string; shell: false; error?: never } | { error: string; command?: never; shell?: never };
   validCodexOutput: (raw: string, event: string) => boolean;
   readBoundedStdin: (
@@ -79,7 +95,7 @@ function fakeGenie(body: string): string {
     'utf8',
   );
   chmodSync(path, 0o755);
-  process.env.GENIE_HOME = home;
+  process.env.GENIE_HOME = realpathSync(home);
   return path;
 }
 
@@ -183,6 +199,26 @@ describe('dispatch-runtime launcher', () => {
     expect(existsSync(log)).toBe(false);
   });
 
+  test('rejects whitespace, control-character, and overlong Codex tool names before spawning', async () => {
+    let spawned = false;
+    const invalid = ['   ', 'Bad\nTool', 'x'.repeat(129)];
+    for (const tool_name of invalid) {
+      const result = await run(
+        'codex',
+        JSON.stringify({ hook_event_name: 'PermissionRequest', tool_name, tool_input: {} }),
+        {
+          resolveCommand: () => ({ command: '/never', shell: false }),
+          spawn: () => {
+            spawned = true;
+            throw new Error('unreachable');
+          },
+        },
+      );
+      expect(JSON.parse(result.stdout).hookSpecificOutput.decision.behavior).toBe('deny');
+    }
+    expect(spawned).toBe(false);
+  });
+
   test('preserves a valid Codex decision', async () => {
     fakeGenie(
       "process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'blocked' } }));",
@@ -251,7 +287,7 @@ describe('dispatch-runtime launcher', () => {
       ].join('\n'),
     );
     const proc = Bun.spawn(['node', join(import.meta.dir, 'dispatch-runtime.cjs'), 'codex'], {
-      env: { ...process.env, GENIE_HOME: join(root, 'genie-home') },
+      env: { ...process.env, GENIE_HOME: realpathSync(join(root, 'genie-home')) },
       stdin: Buffer.from(payload()),
       stdout: 'pipe',
       stderr: 'pipe',
@@ -276,7 +312,7 @@ describe('dispatch-runtime launcher', () => {
       ].join('\n'),
     );
     const proc = Bun.spawn(['node', join(import.meta.dir, 'dispatch-runtime.cjs'), 'codex'], {
-      env: { ...process.env, GENIE_HOME: join(root, 'genie-home') },
+      env: { ...process.env, GENIE_HOME: realpathSync(join(root, 'genie-home')) },
       stdin: Buffer.from(payload()),
       stdout: 'ignore',
       stderr: 'ignore',
@@ -301,10 +337,15 @@ describe('dispatch-runtime launcher', () => {
   });
 
   test('Windows resolution uses only a canonical native executable without a shell', () => {
+    const expected = 'C:\\Users\\test\\.genie\\bin\\genie.exe';
     const command = launcher.resolveGenieCommand(
       { GENIE_HOME: 'C:\\Users\\test\\.genie' },
       'win32',
-      (path) => path.endsWith('genie.exe'),
+      {
+        lstat: (candidate) => ({ isFile: () => candidate === expected, isSymbolicLink: () => false, mode: 0 }),
+        realpath: (candidate) => candidate,
+        access: () => {},
+      },
     );
     expect(command).toEqual({ command: 'C:\\Users\\test\\.genie\\bin\\genie.exe', shell: false });
   });
@@ -314,9 +355,13 @@ describe('dispatch-runtime launcher', () => {
     const missing = launcher.resolveGenieCommand(
       { GENIE_HOME: join(root, 'missing-home'), PATH: join(root, 'attacker-bin') },
       process.platform,
-      (candidate) => {
-        checked.push(candidate);
-        return false;
+      {
+        lstat: (candidate) => {
+          checked.push(candidate);
+          throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+        },
+        realpath: (candidate) => candidate,
+        access: () => {},
       },
     );
     expect(missing.error).toContain('canonical Genie hook dispatcher not found');
@@ -325,14 +370,22 @@ describe('dispatch-runtime launcher', () => {
     const relative = launcher.resolveGenieCommand(
       { GENIE_HOME: 'relative-home', PATH: join(root, 'attacker-bin') },
       process.platform,
-      () => true,
+      {
+        lstat: () => ({ isFile: () => true, isSymbolicLink: () => false, mode: 0o755 }),
+        realpath: (candidate) => candidate,
+        access: () => {},
+      },
     );
     expect(relative.error).toBe('GENIE_HOME must be an absolute path');
 
     const windowsShim = launcher.resolveGenieCommand(
       { GENIE_HOME: 'C:\\Users\\test\\.genie', PATH: 'C:\\attacker' },
       'win32',
-      (candidate) => candidate.endsWith('genie.cmd'),
+      {
+        lstat: (candidate) => ({ isFile: () => candidate.endsWith('genie.cmd'), isSymbolicLink: () => false, mode: 0 }),
+        realpath: (candidate) => candidate,
+        access: () => {},
+      },
     );
     expect(windowsShim.error).toContain('canonical Genie hook dispatcher not found');
 
@@ -349,6 +402,38 @@ describe('dispatch-runtime launcher', () => {
       behavior: 'deny',
       message: 'could not start Genie hook dispatcher: canonical dispatcher absent',
     });
+  });
+
+  test('rejects symlink, directory, realpath-redirection, and non-executable dispatcher candidates', () => {
+    if (process.platform === 'win32') return;
+    mkdirSync(join(root, 'genie-home', 'bin'), { recursive: true });
+    const home = realpathSync(join(root, 'genie-home'));
+    const candidate = join(home, 'bin', 'genie');
+    const target = join(root, 'outside');
+
+    rmSync(candidate, { force: true });
+    writeFileSync(target, '#!/bin/sh\nexit 0\n');
+    chmodSync(target, 0o755);
+    symlinkSync(target, candidate);
+    expect(launcher.resolveGenieCommand({ GENIE_HOME: home }, process.platform).error).toContain('not found');
+
+    rmSync(candidate);
+    mkdirSync(candidate);
+    expect(launcher.resolveGenieCommand({ GENIE_HOME: home }, process.platform).error).toContain('not found');
+
+    rmSync(candidate, { recursive: true });
+    writeFileSync(candidate, '#!/bin/sh\nexit 0\n');
+    chmodSync(candidate, 0o644);
+    expect(launcher.resolveGenieCommand({ GENIE_HOME: home }, process.platform).error).toContain('not found');
+
+    chmodSync(candidate, 0o755);
+    expect(
+      launcher.resolveGenieCommand({ GENIE_HOME: home }, process.platform, {
+        lstat: lstatSync,
+        realpath: () => target,
+        access: () => {},
+      }).error,
+    ).toContain('not found');
   });
 
   test('validates only documented Codex response shapes', () => {

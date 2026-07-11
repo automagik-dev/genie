@@ -2,6 +2,7 @@
   "name": "@automagik/genie",
   "version": "5.260711.6",
   "description": "Collaborative terminal toolkit for human + AI workflows. NOTE: npm distribution discontinued 2026-05-09 — install via `curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash` (cosign + SLSA verified). See https://automagik.dev/genie/release-process",
+  "license": "MIT",
   "type": "module",
   "bin": {
     "genie": "./dist/genie.js"
@@ -27,8 +28,8 @@
     "lint:complexity-budget": "bun run scripts/complexity-budget.ts",
     "lint:council-workflow": "bun scripts/council-workflow-lint.ts",
     "lint:hook-bundles": "bun scripts/hook-bundle-parity.ts --check",
-    "check": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint && bun run lint:council-workflow && bun run lint:hook-bundles && bun test",
-    "check:fast": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint && bun run lint:council-workflow && bun run lint:hook-bundles",
+    "check": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint && bun run lint:complexity-budget && bun run lint:council-workflow && bun run lint:hook-bundles && bun test",
+    "check:fast": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint && bun run lint:complexity-budget && bun run lint:council-workflow && bun run lint:hook-bundles",
     "verify:release": "scripts/verify-release.sh"
   },
   "dependencies": {

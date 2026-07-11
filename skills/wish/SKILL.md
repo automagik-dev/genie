@@ -54,7 +54,11 @@ test -f .genie/brainstorms/<slug>/DESIGN.md
 
    The template ships inside this skill as the single source of truth for wish structure — a plain document, no runtime scaffolder. Copying guarantees the skeleton the parser and linter expect; ad-hoc wishes regularly fail structural lint.
 6. **Fill:** replace the `{{slug}}`/`{{date}}` tokens and every `<TODO: …>` marker with real content. Every group gets acceptance criteria plus a validation command.
-7. **Declare dependencies:** `depends-on` between execution groups and cross-wish `depends-on`/`blocks` in the WISH.md — the DAG is a planning artifact in git.
+7. **Declare dependencies:** use the wish-level `## Dependencies` keys
+   `**depends-on:** <comma-separated slugs or none>` and
+   `**blocks:** <comma-separated slugs or none>` for cross-wish edges. Keep
+   per-group `**depends-on:**` fields under each execution group. The spelling
+   is always hyphenated; the DAG is a machine-readable planning artifact in git.
 8. **Create tasks** — one per execution group, so `work` can claim and complete each group and the board reflects progress:
    ```bash
    genie task create --title "<group title>" --wish <slug> --group <group-name>
@@ -75,7 +79,7 @@ test -f .genie/brainstorms/<slug>/DESIGN.md
 | Success Criteria | Yes | Checkboxes, each testable |
 | Execution Strategy | Yes | Wave-based plan — mandatory even if a single sequential wave; forces ordering, parallelism, and dependency thinking upfront |
 | Execution Groups | Yes | Goal, deliverables, acceptance criteria, validation command |
-| Dependencies | No | `depends-on` / `blocks` using slug or `repo/slug` |
+| Dependencies | Yes | Wish-level `depends-on` / `blocks` using slug or `repo/slug`; use `none` when empty |
 | QA Criteria | No | What to verify on dev after merge |
 | Assumptions / Risks | No | What could invalidate the plan |
 
