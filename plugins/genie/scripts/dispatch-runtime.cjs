@@ -21,10 +21,28 @@ const MAX_STDOUT_BYTES = 64 * 1024;
 const MAX_STDERR_BYTES = 64 * 1024;
 const CODEX_EVENTS = new Set(['PreToolUse', 'PermissionRequest']);
 
+/** @typedef {'codex' | 'claude'} HookRuntime */
+/** @typedef {{error?: string, event?: string, tool?: string, input?: unknown}} ParsedEntry */
+/**
+ * @typedef {object} ResolverFs
+ * @property {typeof lstatSync} [lstat]
+ * @property {typeof realpathSync.native} [realpath]
+ * @property {typeof accessSync} [access]
+ */
+/**
+ * @typedef {object} LaunchDeps
+ * @property {(value: string) => void} [writeStdout]
+ * @property {(value: string) => void} [writeStderr]
+ * @property {typeof spawn} [spawn]
+ * @property {typeof resolveGenieCommand} [resolveCommand]
+ */
+
+/** @param {unknown} value @returns {value is Record<string, unknown>} */
 function isRecord(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/** @param {string} raw @returns {ParsedEntry} */
 function parseEntry(raw) {
   try {
     const value = JSON.parse(raw);
@@ -39,6 +57,7 @@ function parseEntry(raw) {
   }
 }
 
+/** @param {ParsedEntry} entry @returns {string | null} */
 function codexInputError(entry) {
   if (entry.error) return entry.error;
   if (!entry.event) return 'hook_event_name must be a non-empty string';
@@ -57,9 +76,10 @@ function codexInputError(entry) {
   return null;
 }
 
+/** @param {string} raw @param {string} reason @param {string | undefined} expectedEvent */
 function codexFailureOutput(raw, reason, expectedEvent) {
   const parsed = parseEntry(raw);
-  const event = CODEX_EVENTS.has(expectedEvent) ? expectedEvent : parsed.event;
+  const event = expectedEvent !== undefined && CODEX_EVENTS.has(expectedEvent) ? expectedEvent : parsed.event;
   const { tool } = parsed;
   if (event === 'PermissionRequest') {
     return JSON.stringify({
@@ -89,6 +109,7 @@ function codexFailureOutput(raw, reason, expectedEvent) {
   });
 }
 
+/** @param {string} raw @param {string | undefined} event */
 function validCodexOutput(raw, event) {
   if (raw.trim() === '') return true;
   let value;
@@ -125,6 +146,11 @@ function validCodexOutput(raw, event) {
   return false;
 }
 
+/**
+ * @param {NodeJS.ProcessEnv} [env]
+ * @param {NodeJS.Platform} [platform]
+ * @param {ResolverFs} [fsApi]
+ */
 function resolveGenieCommand(env = process.env, platform = process.platform, fsApi = {}) {
   const pathApi = platform === 'win32' ? path.win32 : path.posix;
   const home = env.GENIE_HOME || pathApi.join(homedir(), '.genie');
@@ -165,6 +191,7 @@ function resolveGenieCommand(env = process.env, platform = process.platform, fsA
   return { error: `canonical Genie hook dispatcher not found under ${pathApi.join(home, 'bin')}` };
 }
 
+/** @param {string | undefined} event @param {HookRuntime} runtime @param {NodeJS.ProcessEnv} [env] */
 function childTimeoutMs(event, runtime, env = process.env) {
   const maximum = event === 'PermissionRequest' || runtime === 'claude' ? 115_000 : 12_000;
   const override = Number(env.GENIE_HOOK_CHILD_TIMEOUT_MS);
@@ -172,11 +199,19 @@ function childTimeoutMs(event, runtime, env = process.env) {
   return maximum;
 }
 
+/** @param {NodeJS.ProcessEnv} [env] */
 function killGraceMs(env = process.env) {
   const override = Number(env.GENIE_HOOK_KILL_GRACE_MS);
   return Number.isFinite(override) && override > 0 ? Math.min(Math.floor(override), 1_000) : 1_000;
 }
 
+/**
+ * @param {string} runtime
+ * @param {string} raw
+ * @param {LaunchDeps} [deps]
+ * @param {string} [expectedEvent]
+ * @returns {Promise<number>}
+ */
 async function launch(runtime, raw, deps = {}, expectedEvent) {
   const writeStdout = deps.writeStdout || ((value) => process.stdout.write(value));
   const writeStderr = deps.writeStderr || ((value) => process.stderr.write(value));
@@ -196,7 +231,7 @@ async function launch(runtime, raw, deps = {}, expectedEvent) {
 
   const entry = parseEntry(raw);
   if (runtime === 'codex') {
-    if (CODEX_EVENTS.has(expectedEvent) && entry.event !== expectedEvent) {
+    if (expectedEvent !== undefined && CODEX_EVENTS.has(expectedEvent) && entry.event !== expectedEvent) {
       writeStdout(codexFailureOutput(raw, `genie hook launcher: payload event does not match ${expectedEvent}`, expectedEvent));
       return 0;
     }
@@ -217,6 +252,7 @@ async function launch(runtime, raw, deps = {}, expectedEvent) {
     return 1;
   }
   const spawnImpl = deps.spawn || spawn;
+  /** @type {import('node:child_process').ChildProcessWithoutNullStreams} */
   let child;
   try {
     /** @type {NodeJS.ProcessEnv} */
@@ -228,7 +264,7 @@ async function launch(runtime, raw, deps = {}, expectedEvent) {
     if (runtime === 'codex' && entry.event === 'PreToolUse') {
       childEnv.OMNI_APPROVALS_ENABLED = '0';
     }
-    child = spawnImpl(resolved.command, ['hook', 'dispatch'], {
+    child = /** @type {import('node:child_process').ChildProcessWithoutNullStreams} */ (spawnImpl(resolved.command, ['hook', 'dispatch'], {
       env: childEnv,
       shell: resolved.shell,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -236,7 +272,7 @@ async function launch(runtime, raw, deps = {}, expectedEvent) {
       // A distinct POSIX process group lets TERM→KILL reach every descendant,
       // including helpers that inherited the dispatcher pipes.
       detached: process.platform !== 'win32',
-    });
+    }));
   } catch (error) {
     const message = `could not start Genie hook dispatcher: ${error instanceof Error ? error.message : String(error)}`;
     if (runtime === 'codex') {
@@ -248,19 +284,24 @@ async function launch(runtime, raw, deps = {}, expectedEvent) {
   }
 
   let stdout = '';
+  /** @type {Buffer[]} */
   const stderrChunks = [];
   let stderrBytes = 0;
   let stderrOverflow = false;
   let outputOverflow = false;
   let timedOut = false;
   let settled = false;
+  /** @type {NodeJS.Timeout | undefined} */
   let forceTimer;
   let forceEscalated = false;
+  /** @type {(() => void) | undefined} */
   let finishAfterEscalation;
+  /** @param {NodeJS.Signals} signal */
   const signalChildTree = (signal) => {
-    if (process.platform !== 'win32' && Number.isSafeInteger(child.pid) && child.pid > 0) {
+    const childPid = child.pid;
+    if (process.platform !== 'win32' && typeof childPid === 'number' && Number.isSafeInteger(childPid) && childPid > 0) {
       try {
-        process.kill(-child.pid, signal);
+        process.kill(-childPid, signal);
         return;
       } catch {
         // The group leader may have exited between observation and signalling.
@@ -268,6 +309,7 @@ async function launch(runtime, raw, deps = {}, expectedEvent) {
     }
     child.kill(signal);
   };
+  /** @param {NodeJS.Signals} [signal] */
   const terminateChild = (signal = 'SIGTERM') => {
     signalChildTree(signal);
     if (!forceTimer) {
@@ -292,8 +334,11 @@ async function launch(runtime, raw, deps = {}, expectedEvent) {
   }, childTimeoutMs(entry.event, runtime));
   if (typeof timer.unref === 'function') timer.unref();
 
+  /** @type {NodeJS.Signals | null} */
   let forwardedSignal = null;
-  const forwardedSignals = ['SIGINT', 'SIGTERM'].map((signal) => {
+  /** @type {NodeJS.Signals[]} */
+  const forwardedSignalNames = ['SIGINT', 'SIGTERM'];
+  const forwardedSignals = forwardedSignalNames.map((signal) => {
     const listener = () => {
       if (forwardedSignal) return;
       forwardedSignal = signal;
@@ -308,7 +353,7 @@ async function launch(runtime, raw, deps = {}, expectedEvent) {
     for (const { signal, listener } of forwardedSignals) process.off(signal, listener);
   };
 
-  child.stdout.on('data', (chunk) => {
+  child.stdout.on('data', (/** @type {Buffer | string} */ chunk) => {
     if (outputOverflow) return;
     stdout += chunk.toString();
     if (Buffer.byteLength(stdout, 'utf8') > MAX_STDOUT_BYTES) {
@@ -316,7 +361,7 @@ async function launch(runtime, raw, deps = {}, expectedEvent) {
       terminateChild();
     }
   });
-  child.stderr.on('data', (chunk) => {
+  child.stderr.on('data', (/** @type {Buffer | string} */ chunk) => {
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     const remaining = MAX_STDERR_BYTES - stderrBytes;
     if (remaining > 0) {
@@ -340,11 +385,23 @@ async function launch(runtime, raw, deps = {}, expectedEvent) {
   child.stdin.end(raw);
 
   return await new Promise((resolve) => {
+    /**
+     * @param {number | null} code
+     * @param {NodeJS.Signals | null} signal
+     * @param {Error | null} spawnError
+     */
     const finish = (code, signal, spawnError) => {
       if (settled) return;
-      if (!forceTimer && process.platform !== 'win32' && Number.isSafeInteger(child.pid) && child.pid > 0) {
+      const childPid = child.pid;
+      if (
+        !forceTimer &&
+        process.platform !== 'win32' &&
+        typeof childPid === 'number' &&
+        Number.isSafeInteger(childPid) &&
+        childPid > 0
+      ) {
         try {
-          process.kill(-child.pid, 0);
+          process.kill(-childPid, 0);
           // The direct child has closed but its group still exists: reap any
           // daemonized dispatcher helper before the launcher can return.
           terminateChild();
@@ -354,9 +411,9 @@ async function launch(runtime, raw, deps = {}, expectedEvent) {
       }
       if (forceTimer && process.platform !== 'win32' && !forceEscalated) {
         let groupStillAlive = false;
-        if (Number.isSafeInteger(child.pid) && child.pid > 0) {
+        if (typeof childPid === 'number' && Number.isSafeInteger(childPid) && childPid > 0) {
           try {
-            process.kill(-child.pid, 0);
+            process.kill(-childPid, 0);
             groupStillAlive = true;
           } catch {
             // No process remains in the group; finish without waiting for grace.
@@ -374,18 +431,18 @@ async function launch(runtime, raw, deps = {}, expectedEvent) {
         const bounded = Buffer.concat(stderrChunks).toString('utf8');
         writeStderr(`${bounded}${stderrOverflow ? '\n[genie hook launcher: stderr truncated]\n' : ''}`);
       }
-      if (runtime === 'codex') {
-        const failure = spawnError
-          ? `could not start Genie hook dispatcher: ${spawnError.message}`
-          : timedOut
-            ? 'Genie hook dispatcher timed out'
-            : outputOverflow
-              ? 'Genie hook dispatcher output exceeded the safety limit'
-              : stderrOverflow
-                ? 'Genie hook dispatcher stderr exceeded the safety limit'
+      const failure = spawnError
+        ? `could not start Genie hook dispatcher: ${spawnError.message}`
+        : timedOut
+          ? 'Genie hook dispatcher timed out'
+          : outputOverflow
+            ? 'Genie hook dispatcher output exceeded the safety limit'
+            : stderrOverflow
+              ? 'Genie hook dispatcher stderr exceeded the safety limit'
               : code !== 0 || signal
                 ? `Genie hook dispatcher failed${signal ? ` with ${signal}` : ` with exit ${code}`}`
                 : null;
+      if (runtime === 'codex') {
         if (failure) writeStdout(codexFailureOutput(raw, failure, expectedEvent));
         else if (!validCodexOutput(stdout, entry.event)) {
           writeStdout(codexFailureOutput(raw, 'Genie hook dispatcher returned an invalid Codex response', expectedEvent));
@@ -395,8 +452,19 @@ async function launch(runtime, raw, deps = {}, expectedEvent) {
         return;
       }
 
-      writeStdout(stdout);
-      resolve(typeof code === 'number' ? code : signal ? 1 : 1);
+      if (failure) {
+        // Claude treats a non-zero command-hook result as blocking. Resource
+        // guardrails and spawn failures are launcher failures even when a fake
+        // or stale child exits zero after TERM. Never forward a truncated
+        // stdout prefix that Claude could interpret as a successful response.
+        if (!outputOverflow && !timedOut && !spawnError && !signal) writeStdout(stdout);
+        writeStderr(`[genie hook launcher: ${failure}]\n`);
+        const childFailureCode = typeof code === 'number' && code !== 0 ? code : 1;
+        resolve(childFailureCode);
+      } else {
+        writeStdout(stdout);
+        resolve(0);
+      }
       if (forwardedSignal) process.kill(process.pid, forwardedSignal);
     };
     child.once('error', (error) => finish(null, null, error));
@@ -404,6 +472,10 @@ async function launch(runtime, raw, deps = {}, expectedEvent) {
   });
 }
 
+/**
+ * @param {import('node:stream').Readable} [stream]
+ * @param {number} [maxBytes]
+ */
 async function readBoundedStdin(stream = process.stdin, maxBytes = MAX_STDIN_BYTES) {
   const chunks = [];
   let retained = 0;
@@ -455,8 +527,13 @@ module.exports = {
 
 if (require.main === module) {
   main().catch((error) => {
-    const raw = '';
-    process.stdout.write(codexFailureOutput(raw, `genie hook launcher crashed: ${error instanceof Error ? error.message : String(error)}`, process.argv[3]));
-    process.exitCode = 0;
+    const message = `genie hook launcher crashed: ${error instanceof Error ? error.message : String(error)}`;
+    if (process.argv[2] === 'codex') {
+      process.stdout.write(codexFailureOutput('', message, process.argv[3]));
+      process.exitCode = 0;
+    } else {
+      process.stderr.write(`${message}\n`);
+      process.exitCode = 1;
+    }
   });
 }

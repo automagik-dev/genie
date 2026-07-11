@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -15,8 +16,11 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import {
   type InstallIntegrationsOptions,
+  beginIntegrationConsentTransition,
   claudePluginState,
+  clearIntegrationConsentTransition,
   codexPluginState,
+  commitIntegrationConsentTransition,
   convergeClaudePlugin,
   convergeCodexPlugin,
   inspectCodexAgentOwnership,
@@ -27,6 +31,7 @@ import {
   parseCodexPluginState,
   persistIntegrationConsent,
   readIntegrationConsent,
+  readIntegrationConsentState,
   removeCodexAgents,
   removeRuntimeIntegrations as removeRuntimeIntegrationsWithTrustedResolution,
   resolveBundleRoot,
@@ -301,6 +306,23 @@ describe('durable integration consent and Claude payload provenance', () => {
     expect(() => readIntegrationConsent(home)).toThrow('not a physical file');
   });
 
+  test('pending consent can be resumed, committed, or explicitly cleared to the prior scope', () => {
+    const home = mkdtempSync(join(tmpdir(), 'genie-integration-consent-transition-'));
+    persistIntegrationConsent('claude', home);
+    expect(beginIntegrationConsentTransition('all', home)).toEqual({
+      selection: 'all',
+      state: 'pending',
+      previousSelection: 'claude',
+    });
+    expect(readIntegrationConsent(home)).toBe('all');
+    expect(clearIntegrationConsentTransition(home)).toBe('claude');
+    expect(readIntegrationConsentState(home)).toEqual({ selection: 'claude', state: 'committed' });
+
+    beginIntegrationConsentTransition('all', home);
+    expect(commitIntegrationConsentTransition(home)).toBe('all');
+    expect(readIntegrationConsentState(home)).toEqual({ selection: 'all', state: 'committed' });
+  });
+
   test('Claude verification binds both directory marketplace source and installed bytes', () => {
     const bundleRoot = mkdtempSync(join(tmpdir(), 'genie-claude-bundle-'));
     const claudeHome = mkdtempSync(join(tmpdir(), 'genie-claude-home-'));
@@ -320,7 +342,7 @@ describe('durable integration consent and Claude payload provenance', () => {
     expect(() => verifyClaudePhysicalPayload(input)).toThrow('payload identity mismatch');
   });
 
-  test('a planned refresh intent never authorizes reinstall after manual removal', () => {
+  test('a failed refresh that leaves the plugin installed clears authority before a later manual removal', () => {
     const root = mkdtempSync(join(tmpdir(), 'genie-claude-intent-'));
     const statePath = join(root, 'refresh.json');
     const current = JSON.stringify([{ id: 'genie@automagik', enabled: true, version: VERSION }]);
@@ -330,6 +352,7 @@ describe('durable integration consent and Claude payload provenance', () => {
       runner(command, args) {
         calls.push([command, ...args].join(' '));
         if (args.join(' ') === 'plugin list --json') return { exitCode: 0, stdout: current, stderr: '' };
+        if (args.join(' ') === `plugin marketplace add ${root}`) return { exitCode: 0, stdout: '', stderr: '' };
         return { exitCode: 7, stdout: '', stderr: 'permission denied' };
       },
       bundleRoot: root,
@@ -339,7 +362,7 @@ describe('durable integration consent and Claude payload provenance', () => {
       verifyClaudePayload: () => undefined,
     });
     expect(first?.ok).toBe(false);
-    expect(existsSync(statePath)).toBe(true);
+    expect(existsSync(statePath)).toBe(false);
 
     calls.length = 0;
     const afterManualRemoval = convergeClaudePlugin({
@@ -372,11 +395,55 @@ describe('codex repair convergence (stale marketplace root / stale installed plu
     return mkdtempSync(join(tmpdir(), 'genie-codex-home-'));
   }
 
-  test('destructive refresh authorization is durable before removal and repairs an absent plugin on retry', () => {
+  test('a failed command with an ambiguous absent post-state never authorizes a later update reinstall', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-refresh-ambiguous-'));
+    const statePath = join(root, 'refresh.json');
+    let lists = 0;
+    const first = convergeCodexPlugin({
+      command: 'codex',
+      bundleRoot: root,
+      expectedVersion: VERSION,
+      installIfAbsent: false,
+      statePath,
+      verifyCodexPayload: () => undefined,
+      runner(_command, args) {
+        if (args.join(' ') === 'plugin list --json') {
+          lists += 1;
+          return { exitCode: 0, stdout: lists === 1 ? currentList : '{"installed":[]}', stderr: '' };
+        }
+        if (args.join(' ') === 'plugin add genie@automagik --json') {
+          return { exitCode: 9, stdout: '', stderr: 'ambiguous plugin failure' };
+        }
+        return { exitCode: 0, stdout: '{}', stderr: '' };
+      },
+    });
+    expect(first).toMatchObject({ runtime: 'codex', ok: false });
+    expect(first?.detail).toContain('run genie setup --codex');
+    expect(JSON.parse(readFileSync(statePath, 'utf8')).phase).toBe('ambiguous-absent');
+
+    const retryCalls: string[] = [];
+    const retry = convergeCodexPlugin({
+      command: 'codex',
+      bundleRoot: root,
+      expectedVersion: VERSION,
+      installIfAbsent: false,
+      statePath,
+      verifyCodexPayload: () => undefined,
+      runner(command, args) {
+        retryCalls.push([command, ...args].join(' '));
+        return { exitCode: 0, stdout: '{"installed":[]}', stderr: '' };
+      },
+    });
+    expect(retry).toBeNull();
+    expect(retryCalls).toEqual(['codex plugin list --json']);
+    expect(existsSync(statePath)).toBe(false);
+  });
+
+  test('an observed successful removal is durable and repairs an absent plugin on retry', () => {
     const root = mkdtempSync(join(tmpdir(), 'genie-refresh-authorized-'));
     const statePath = join(root, 'refresh.json');
-    let authorizedBeforeRemove = false;
-    let authorizedBeforeAdd = false;
+    let commandStartedBeforeRemove = false;
+    let removalObservedBeforeFailedAdd = false;
     let lists = 0;
     const first = convergeCodexPlugin({
       command: 'codex',
@@ -391,19 +458,20 @@ describe('codex repair convergence (stale marketplace root / stale installed plu
           return { exitCode: 0, stdout: staleList, stderr: '' };
         }
         if (args.join(' ') === 'plugin remove genie@automagik --json') {
-          authorizedBeforeRemove = JSON.parse(readFileSync(statePath, 'utf8')).phase === 'removal-authorized';
-          return { exitCode: 9, stdout: '', stderr: 'process ended after external removal' };
+          commandStartedBeforeRemove = JSON.parse(readFileSync(statePath, 'utf8')).phase === 'command-started';
+          return { exitCode: 0, stdout: '{}', stderr: '' };
         }
         if (args.join(' ') === 'plugin add genie@automagik --json') {
-          authorizedBeforeAdd = JSON.parse(readFileSync(statePath, 'utf8')).phase !== 'planned';
+          removalObservedBeforeFailedAdd = JSON.parse(readFileSync(statePath, 'utf8')).phase === 'removal-observed';
+          if (removalObservedBeforeFailedAdd) return { exitCode: 9, stdout: '', stderr: 'interrupted reinstall' };
         }
         return { exitCode: 0, stdout: '{}', stderr: '' };
       },
     });
     expect(first?.ok).toBe(false);
-    expect(authorizedBeforeAdd).toBe(true);
-    expect(authorizedBeforeRemove).toBe(true);
-    expect(JSON.parse(readFileSync(statePath, 'utf8')).phase).toBe('removal-authorized');
+    expect(removalObservedBeforeFailedAdd).toBe(true);
+    expect(commandStartedBeforeRemove).toBe(true);
+    expect(JSON.parse(readFileSync(statePath, 'utf8')).phase).toBe('removal-observed');
 
     lists = 0;
     const retryCalls: string[] = [];
@@ -428,10 +496,10 @@ describe('codex repair convergence (stale marketplace root / stale installed plu
     expect(existsSync(statePath)).toBe(false);
   });
 
-  test('Claude authorizes recovery before updating an installed plugin', () => {
+  test('Claude records command-started before update but clears it when the failed command leaves the plugin installed', () => {
     const root = mkdtempSync(join(tmpdir(), 'genie-claude-refresh-authorized-'));
     const statePath = join(root, 'refresh.json');
-    let authorizedBeforeUpdate = false;
+    let commandStartedBeforeUpdate = false;
     const current = JSON.stringify([{ id: 'genie@automagik', enabled: true, version: VERSION }]);
     const result = convergeClaudePlugin({
       command: 'claude',
@@ -443,7 +511,7 @@ describe('codex repair convergence (stale marketplace root / stale installed plu
       runner(_command, args) {
         if (args.join(' ') === 'plugin list --json') return { exitCode: 0, stdout: current, stderr: '' };
         if (args.join(' ') === 'plugin update genie@automagik') {
-          authorizedBeforeUpdate = JSON.parse(readFileSync(statePath, 'utf8')).phase === 'removal-authorized';
+          commandStartedBeforeUpdate = JSON.parse(readFileSync(statePath, 'utf8')).phase === 'command-started';
           return { exitCode: 9, stdout: '', stderr: 'interrupted update' };
         }
         return { exitCode: 0, stdout: '{}', stderr: '' };
@@ -451,8 +519,8 @@ describe('codex repair convergence (stale marketplace root / stale installed plu
     });
 
     expect(result?.ok).toBe(false);
-    expect(authorizedBeforeUpdate).toBe(true);
-    expect(JSON.parse(readFileSync(statePath, 'utf8')).phase).toBe('removal-authorized');
+    expect(commandStartedBeforeUpdate).toBe(true);
+    expect(existsSync(statePath)).toBe(false);
   });
 
   test('same-version payload from the wrong source fails physical convergence after one canonical repair', () => {
@@ -908,6 +976,66 @@ describe('installCodexAgents overwrite discipline', () => {
     expect(readFileSync(join(codexHome, 'agents', conflict as string, 'staged', 'genie-reviewer.toml'), 'utf8')).toBe(
       incoming,
     );
+  });
+
+  test('a role-agent edit after the final pathname check is restored live and incoming bytes are quarantined', () => {
+    const bundleRoot = makeBundle();
+    const codexHome = mkdtempSync(join(tmpdir(), 'genie-codex-role-after-check-'));
+    installCodexAgents(bundleRoot, codexHome);
+    const source = join(bundleRoot, 'plugins', 'genie', 'codex-agents', 'genie-reviewer.toml');
+    const target = join(codexHome, 'agents', 'genie-reviewer.toml');
+    const personal = `${MANAGED_TOML}model = "after-check-race"\n`;
+    writeFileSync(source, `${MANAGED_TOML}model_reasoning_effort = "high"\n`);
+
+    expect(() =>
+      installCodexAgents(bundleRoot, codexHome, {
+        afterAuthorization(stage) {
+          if (stage === 'payload:genie-reviewer.toml') writeFileSync(target, personal);
+        },
+      }),
+    ).toThrow('changed before promotion');
+    expect(readFileSync(target, 'utf8')).toBe(personal);
+    expect(readdirSync(join(codexHome, 'agents')).some((name) => name.startsWith('.genie-role-agents.conflict-'))).toBe(
+      true,
+    );
+  });
+
+  test('expected-absent role-agent creation rejects directory and symlink races after authorization', () => {
+    const bundleRoot = makeBundle();
+    for (const kind of ['directory', 'symlink'] as const) {
+      const codexHome = mkdtempSync(join(tmpdir(), `genie-codex-role-absent-${kind}-`));
+      const target = join(codexHome, 'agents', 'genie-reviewer.toml');
+      expect(() =>
+        installCodexAgents(bundleRoot, codexHome, {
+          afterAuthorization(stage) {
+            if (stage !== 'payload:genie-reviewer.toml') return;
+            if (kind === 'directory') mkdirSync(target);
+            else symlinkSync('personal-target', target);
+          },
+        }),
+      ).toThrow('appeared before promotion');
+      const stat = lstatSync(target);
+      expect(kind === 'directory' ? stat.isDirectory() : stat.isSymbolicLink()).toBe(true);
+    }
+  });
+
+  test('uninstall parks and revalidates a clean role agent before deletion', () => {
+    const bundleRoot = makeBundle();
+    const codexHome = mkdtempSync(join(tmpdir(), 'genie-codex-role-remove-race-'));
+    installCodexAgents(bundleRoot, codexHome);
+    const target = join(codexHome, 'agents', 'genie-reviewer.toml');
+    const personal = `${MANAGED_TOML}model = "remove-race"\n`;
+
+    const result = removeCodexAgents(codexHome, {
+      afterAuthorization(stage) {
+        if (stage === 'payload:genie-reviewer.toml') writeFileSync(target, personal);
+      },
+    });
+
+    expect(result.removed).toEqual([]);
+    expect(result.failures).toHaveLength(1);
+    expect(readFileSync(target, 'utf8')).toBe(personal);
+    expect(inspectCodexAgentOwnership(codexHome).entries[0]?.ownership).toBe('managed-modified');
   });
 
   test('a disjoint concurrent role-agent inventory edit is preserved and aborts the whole batch', () => {

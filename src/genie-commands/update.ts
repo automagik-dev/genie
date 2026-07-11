@@ -2109,10 +2109,15 @@ async function runDelivery(
   }
 
   const oldVersion = normalizeVersion(VERSION);
-  recordPendingDelivery({ version: manifest.version, previousVersion: oldVersion, extractDir, tarballPath });
-
   log('Atomically swapping binary...');
   const targetBin = join(GENIE_BIN, 'genie');
+  recordPendingDelivery({
+    version: manifest.version,
+    previousVersion: oldVersion,
+    previousBinaryPath: targetBin,
+    extractDir,
+    tarballPath,
+  });
   const swapResult = atomicBinarySwap(stagedBin, targetBin, GENIE_BIN_PREVIOUS, oldVersion, {
     preserveSource: true,
   });
@@ -2234,7 +2239,7 @@ interface PendingAuxiliaryFingerprint {
 }
 
 export interface PendingDeliveryRecord {
-  schemaVersion: 2 | 3;
+  schemaVersion: 2 | 3 | 4;
   version: string;
   /** Version of the live binary whose same-version backups recovery may prune. */
   previousVersion: string | null;
@@ -2243,6 +2248,8 @@ export interface PendingDeliveryRecord {
   createdAt: string;
   payload: {
     binary: PendingFileFingerprint;
+    /** Authentic pre-swap executable identity; absent for legacy journals. */
+    previousBinary?: PendingOptionalFileFingerprint;
     versionStamp: PendingOptionalFileFingerprint;
     tarball: PendingFileFingerprint;
     auxiliary: PendingAuxiliaryFingerprint[];
@@ -2254,6 +2261,8 @@ export interface PendingDeliveryPaths {
   extractDir: string;
   tarballPath: string;
   previousVersion?: string | null;
+  /** Live target fingerprinted before the pending journal is published. */
+  previousBinaryPath?: string;
 }
 
 export interface ResumePendingDeliveryOptions {
@@ -2263,6 +2272,8 @@ export interface ResumePendingDeliveryOptions {
   pendingPath?: string;
   operations?: Partial<AuxiliaryTreeOperations>;
   ensureBinary?: (record: PendingDeliveryRecord) => void;
+  /** Test seam for the post-stamp executable version check. */
+  runVersion?: (targetBin: string) => string;
 }
 
 /** Persist the verified extracted payload before the first live mutation. */
@@ -2273,9 +2284,15 @@ export function recordPendingDelivery(
 ): void {
   assertPendingDeliveryPaths(pending, stagingRoot);
   const payload = fingerprintPendingPayload(pending);
+  payload.previousBinary = fingerprintOptionalPhysicalFile(
+    pending.previousBinaryPath ?? join(dirname(stagingRoot), 'genie'),
+    'previous live binary',
+  );
   const record: PendingDeliveryRecord = {
-    schemaVersion: 3,
-    ...pending,
+    schemaVersion: 4,
+    version: pending.version,
+    extractDir: pending.extractDir,
+    tarballPath: pending.tarballPath,
     previousVersion: pending.previousVersion ?? normalizeVersion(VERSION),
     createdAt: new Date().toISOString(),
     payload,
@@ -2326,41 +2343,71 @@ export function resumePendingDelivery(options: ResumePendingDeliveryOptions = {}
     options.ensureBinary ??
     (() => {
       const targetBin = join(genieBin, 'genie');
-      try {
-        verifySwappedBinary(targetBin, record.version, {
-          stagingDir: stagingRoot,
-          previousDir: join(genieBin, '.previous'),
-        });
-        return;
-      } catch {
-        const stagedBin = join(record.extractDir, 'genie');
-        if (!existsSync(stagedBin)) {
-          throw new Error(`pending delivery binary is missing at ${stagedBin}`);
+      const previousDir = join(genieBin, '.previous');
+      const live = fingerprintOptionalPhysicalFile(targetBin, 'live binary');
+      const liveAlreadyNew =
+        live.present && live.fingerprint !== null && fingerprintsEqual(live.fingerprint, record.payload.binary);
+      if (!liveAlreadyNew) {
+        const expectedPrevious = record.payload.previousBinary;
+        if (expectedPrevious !== undefined) {
+          const samePresence = live.present === expectedPrevious.present;
+          const sameFingerprint =
+            !live.present ||
+            (live.fingerprint !== null &&
+              expectedPrevious.fingerprint !== null &&
+              fingerprintsEqual(live.fingerprint, expectedPrevious.fingerprint));
+          if (!samePresence || !sameFingerprint) {
+            throw new Error('pending delivery live binary does not match either the authenticated preimage or payload');
+          }
         }
+        const stagedBin = join(record.extractDir, 'genie');
+        if (!existsSync(stagedBin)) throw new Error(`pending delivery binary is missing at ${stagedBin}`);
         chmodSync(stagedBin, 0o755);
-        atomicBinarySwap(
+        const swap = atomicBinarySwap(
           stagedBin,
           targetBin,
-          join(genieBin, '.previous'),
+          previousDir,
           record.previousVersion ?? normalizeVersion(VERSION),
-          {
-            preserveSource: true,
-          },
+          { preserveSource: true },
         );
-        syncBinaryVersionStamp(record.extractDir, genieBin, record.version);
-        verifySwappedBinary(targetBin, record.version, {
-          stagingDir: stagingRoot,
-          previousDir: join(genieBin, '.previous'),
-        });
+        const expectedPreviousFingerprint = record.payload.previousBinary?.fingerprint;
+        if (
+          swap.oldVersionBackup !== null &&
+          expectedPreviousFingerprint !== undefined &&
+          expectedPreviousFingerprint !== null &&
+          !fingerprintsEqual(
+            fingerprintPhysicalFile(swap.oldVersionBackup, 'previous binary backup'),
+            expectedPreviousFingerprint,
+          )
+        ) {
+          throw new Error(
+            `pending delivery rollback backup does not match the authenticated preimage: ${swap.oldVersionBackup}`,
+          );
+        }
       }
+      // A crash after swap but before this stamp reaches this branch with the
+      // payload bytes already live. Repair metadata only; never swap new over
+      // new or manufacture a mislabeled rollback backup.
+      syncBinaryVersionStamp(record.extractDir, genieBin, record.version);
+      verifySwappedBinary(targetBin, record.version, {
+        runVersion: options.runVersion,
+        stagingDir: stagingRoot,
+        previousDir,
+      });
     });
   ensureBinary(record);
 
   const previousDir = join(genieBin, '.previous');
+  const priorFingerprint = record.payload.previousBinary?.fingerprint ?? null;
   const retainedBackup =
-    record.previousVersion === null ? null : newestSameVersionBackup(previousDir, record.previousVersion);
+    record.previousVersion === null
+      ? null
+      : priorFingerprint === null
+        ? newestSameVersionBackup(previousDir, record.previousVersion)
+        : matchingSameVersionBackup(previousDir, record.previousVersion, priorFingerprint);
   if (retainedBackup !== null && record.previousVersion !== null) {
-    pruneSameVersionBackups(previousDir, record.previousVersion, retainedBackup);
+    if (priorFingerprint === null) pruneSameVersionBackups(previousDir, record.previousVersion, retainedBackup);
+    else pruneMatchingSameVersionBackups(previousDir, record.previousVersion, retainedBackup, priorFingerprint);
   }
 
   const outcomes = syncAuxiliaryContent(record.extractDir, genieHome, options.operations);
@@ -2425,22 +2472,25 @@ function readPendingDelivery(path: string, stagingRoot: string): PendingDelivery
   if (
     typeof parsed !== 'object' ||
     parsed === null ||
-    ![2, 3].includes(Number(Reflect.get(parsed, 'schemaVersion'))) ||
+    ![2, 3, 4].includes(Number(Reflect.get(parsed, 'schemaVersion'))) ||
     typeof Reflect.get(parsed, 'version') !== 'string' ||
-    (Reflect.get(parsed, 'schemaVersion') === 3 &&
+    ([3, 4].includes(Number(Reflect.get(parsed, 'schemaVersion'))) &&
       (typeof Reflect.get(parsed, 'previousVersion') !== 'string' ||
         parseGenieVersion(Reflect.get(parsed, 'previousVersion') as string) === null)) ||
     typeof Reflect.get(parsed, 'extractDir') !== 'string' ||
     typeof Reflect.get(parsed, 'tarballPath') !== 'string' ||
     typeof Reflect.get(parsed, 'createdAt') !== 'string' ||
-    !isPendingPayloadFingerprint(Reflect.get(parsed, 'payload'))
+    !isPendingPayloadFingerprint(Reflect.get(parsed, 'payload')) ||
+    (Reflect.get(parsed, 'schemaVersion') === 4 &&
+      !isOptionalFileFingerprint(Reflect.get(Reflect.get(parsed, 'payload') as object, 'previousBinary')))
   ) {
     throw new Error('pending delivery journal has an invalid schema');
   }
   const record = {
     ...(parsed as PendingDeliveryRecord),
-    previousVersion:
-      Reflect.get(parsed, 'schemaVersion') === 3 ? (Reflect.get(parsed, 'previousVersion') as string) : null,
+    previousVersion: [3, 4].includes(Number(Reflect.get(parsed, 'schemaVersion')))
+      ? (Reflect.get(parsed, 'previousVersion') as string)
+      : null,
   };
   assertPendingDeliveryPaths(record, stagingRoot);
   return record;
@@ -2467,6 +2517,51 @@ function newestSameVersionBackup(previousDir: string, version: string): string |
     })
     .sort((left, right) => right.mtimeMs - left.mtimeMs || right.path.localeCompare(left.path));
   return candidates[0]?.path ?? null;
+}
+
+function matchingSameVersionBackup(
+  previousDir: string,
+  version: string,
+  expected: PendingFileFingerprint,
+): string | null {
+  const candidates = sameVersionBackupPaths(previousDir, version);
+  return (
+    candidates.find((path) => fingerprintsEqual(fingerprintPhysicalFile(path, 'previous binary backup'), expected)) ??
+    null
+  );
+}
+
+function pruneMatchingSameVersionBackups(
+  previousDir: string,
+  version: string,
+  retainedPath: string,
+  expected: PendingFileFingerprint,
+): string[] {
+  const retained = resolve(retainedPath);
+  const removed: string[] = [];
+  for (const path of sameVersionBackupPaths(previousDir, version)) {
+    if (resolve(path) === retained) continue;
+    if (!fingerprintsEqual(fingerprintPhysicalFile(path, 'previous binary backup'), expected)) continue;
+    rmSync(path);
+    removed.push(path);
+  }
+  if (removed.length > 0) fsyncDirectory(previousDir);
+  return removed;
+}
+
+function sameVersionBackupPaths(previousDir: string, version: string): string[] {
+  let entries: string[];
+  try {
+    entries = readdirSync(previousDir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw error;
+  }
+  const prefix = `genie-${version}`;
+  return entries
+    .filter((entry) => entry === prefix || entry.startsWith(`${prefix}.`))
+    .map((entry) => join(previousDir, entry))
+    .sort();
 }
 
 function assertPendingDeliveryPaths(pending: PendingDeliveryPaths, stagingRoot: string): void {

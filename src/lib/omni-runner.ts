@@ -37,7 +37,7 @@ import { matchReaction, matchTextToken } from './omni-matching.js';
 import { signOmniRequest } from './omni-signature.js';
 import { resolveTrustedExecutable } from './trusted-executable.js';
 import {
-  acquireServiceLease,
+  acquireServiceLeaseEpoch,
   clearAgentSessionIfCurrent,
   getAgentSession,
   insertAgentSessionIfAbsent,
@@ -48,15 +48,23 @@ import {
 import {
   ApprovalConflictError,
   type ApprovalDecision,
-  claimApprovalAnnouncement,
-  completeApprovalAnnouncement,
+  type DurableClaimIdentity,
+  type InboundClaimResult,
+  type InboundPreparedDelivery,
+  claimApprovalAnnouncementWithLease,
   expireStale,
+  finalizeApprovalAnnouncement,
   listApprovalsNeedingStatusAck,
   listPendingApprovals,
+  listRecoverableInbound,
+  markApprovalAnnouncementAmbiguous,
+  markApprovalAnnouncementSending,
+  markInboundDeliveryFlushed,
   markInboundHandledIfClaimed,
-  recordAndClaimInbound,
+  prepareInboundDelivery,
+  recordAndClaimInboundDelivery,
   recordStatusGlyph,
-  releaseApprovalAnnouncement,
+  releaseApprovalAnnouncementWithLease,
   releaseInboundClaim,
   resolveApproval,
 } from './v5/omni-queue.js';
@@ -77,6 +85,9 @@ export interface NatsSubscription extends AsyncIterable<NatsInboundMsg> {
 export interface NatsLike {
   subscribe(subject: string): NatsSubscription;
   publish(subject: string, payload: string): void;
+  /** Await until all locally buffered publishes have crossed the NATS protocol
+   * flush boundary. */
+  flush(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -331,6 +342,7 @@ export function redactOmniOutbound(text: string, env: NodeJS.ProcessEnv = proces
   for (const value of values) safe = safe.split(value).join('[REDACTED]');
   return safe
     .replace(/-----BEGIN [^-\r\n]*PRIVATE KEY-----[\s\S]*?-----END [^-\r\n]*PRIVATE KEY-----/gi, '[REDACTED]')
+    .replace(/(\b(?:Proxy-Authorization|Authorization)\s*[:=]\s*)[^\r\n]*/gi, '$1[REDACTED]')
     .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, 'Bearer [REDACTED]')
     .replace(/\bBasic\s+[A-Za-z0-9._~+\/-]+=*/gi, 'Basic [REDACTED]')
     .replace(/(\b(?:Set-Cookie|Cookie)\s*:\s*)[^\r\n]+/gi, '$1[REDACTED]')
@@ -345,7 +357,7 @@ export function redactOmniOutbound(text: string, env: NodeJS.ProcessEnv = proces
       /("[^"]*(?:password|passwd|secret|token|api[-_]?key|access[-_]?key|private[-_]?key|authorization|credential|session|cookie)[^"]*"\s*:\s*)(?:"(?:\\.|[^"])*"|'(?:\\.|[^'])*'|[^\s,;}]+)/gi,
       '$1"[REDACTED]"',
     )
-    .replace(/(https?:\/\/[^\s/:@]+:)[^\s/@]+@/gi, '$1[REDACTED]@');
+    .replace(/(\b[a-z][a-z0-9+.-]*:\/\/[^\s/:@]*:)[^\s/@]+@/gi, '$1[REDACTED]@');
 }
 
 interface KillableChild {
@@ -1035,6 +1047,7 @@ export const defaultNatsFactory: NatsFactory = async ({ servers }) => {
       };
     },
     publish: (subject, payload) => nc.publish(subject, enc.encode(payload)),
+    flush: () => nc.flush(),
     close: () => nc.close(),
   };
 };
@@ -1056,6 +1069,32 @@ interface InboundMessagePayload {
   messageId?: string;
 }
 
+const MAX_INBOUND_FRAME_BYTES = 128 * 1024;
+const MAX_INBOUND_CONTENT_BYTES = 64 * 1024;
+const MAX_INBOUND_ID_CHARS = 512;
+const hasUnsafeTransportControl = (value: string): boolean =>
+  [...value].some((character) => {
+    const code = character.charCodeAt(0);
+    return code <= 0x08 || code === 0x0b || code === 0x0c || (code >= 0x0e && code <= 0x1f) || code === 0x7f;
+  });
+
+function inboundFieldError(parsed: Record<string, unknown>): string | undefined {
+  for (const field of ['content', 'sender', 'instanceId', 'chatId', 'messageId'] as const) {
+    const value = parsed[field];
+    if (value !== undefined && typeof value !== 'string') return `${field} must be a string`;
+    if (typeof value === 'string' && hasUnsafeTransportControl(value)) {
+      return `${field} contains unsafe control characters`;
+    }
+    if (field !== 'content' && typeof value === 'string' && value.length > MAX_INBOUND_ID_CHARS) {
+      return `${field} is too long`;
+    }
+  }
+  const content = parsed.content;
+  return typeof content === 'string' && Buffer.byteLength(content, 'utf8') > MAX_INBOUND_CONTENT_BYTES
+    ? 'content exceeded the safety limit'
+    : undefined;
+}
+
 // ============================================================================
 // Runner
 // ============================================================================
@@ -1065,6 +1104,11 @@ export interface OmniRunnerDeps {
   config: OmniRuntimeConfig;
   /** Outbound NATS publish. */
   publish: (subject: string, payload: string) => void;
+  /** Awaited after publish and before SQLite session/handled commit. */
+  flush?: () => Promise<void>;
+  /** Resident lease identity. Production always supplies the machine-wide
+   * fencing epoch; direct unit runners get a private epoch-zero identity. */
+  claimOwner?: { ownerId: string; epoch: number };
   /** Structured log sink (stdout in serve; captured in tests). */
   log?: (line: string) => void;
   /** Injectable clock. */
@@ -1270,12 +1314,27 @@ function parseInboundFrame(
   if (!identity || (configuredInstance && identity.instance !== configuredInstance)) {
     return { ok: false, reason: `out-of-scope subject ${subject}` };
   }
-  let msg: InboundMessagePayload;
+  if (
+    identity.instance.length > MAX_INBOUND_ID_CHARS ||
+    identity.chat.length > MAX_INBOUND_ID_CHARS ||
+    hasUnsafeTransportControl(identity.instance) ||
+    hasUnsafeTransportControl(identity.chat)
+  ) {
+    return { ok: false, reason: 'invalid subject identity' };
+  }
+  if (Buffer.byteLength(data, 'utf8') > MAX_INBOUND_FRAME_BYTES) {
+    return { ok: false, reason: 'frame exceeded the safety limit' };
+  }
+  let parsed: unknown;
   try {
-    msg = JSON.parse(data) as InboundMessagePayload;
+    parsed = JSON.parse(data);
   } catch {
     return { ok: false };
   }
+  if (!isRecord(parsed)) return { ok: false, reason: 'frame must be a JSON object' };
+  const fieldError = inboundFieldError(parsed);
+  if (fieldError) return { ok: false, reason: fieldError };
+  const msg = parsed as InboundMessagePayload;
   if (
     (msg.instanceId !== undefined && msg.instanceId !== identity.instance) ||
     (msg.chatId !== undefined && msg.chatId !== identity.chat)
@@ -1287,7 +1346,7 @@ function parseInboundFrame(
     msg,
     instance: identity.instance,
     chat: identity.chat,
-    sender: msg.sender ?? 'whatsapp-user',
+    sender: msg.sender?.trim() || 'whatsapp-user',
     body: msg.content ?? '',
   };
 }
@@ -1336,6 +1395,8 @@ function tailOf(text: string, max: number): string {
 
 /** Dropped-because-busy notice (Decision 10 — one in-flight run per route). */
 const BUSY_NOTICE = '\u{1F6D1} busy — one at a time. Your message was stored; try again shortly.';
+const INTERRUPTED_NOTICE =
+  '⚠️ the previous resident stopped during this run. Genie did not replay the workspace action; please review state and retry explicitly.';
 /** Fired when a one-shot exceeds its budget and is killed. */
 const timeoutNotice = (ms: number): string => `\u{23F1}\u{FE0F} timed out after ${ms}ms — the run was cancelled.`;
 /** Max chars of failure detail carried into an error notice — wide enough for
@@ -1351,7 +1412,10 @@ const EXIT_DIAG_TAIL_CHARS = 500;
  *  stderr (a crash explains itself at the end of the stream), falling back to
  *  stdout when stderr is empty. Bare `exit code N` only when both are blank. */
 const exitDetail = (code: number, stderr: string | undefined, stdout: string): string => {
-  const diag = tailOf((stderr ?? '').trim() || stdout.trim(), EXIT_DIAG_TAIL_CHARS);
+  // Child streams are already byte-bounded. Redact that complete bounded
+  // diagnostic before tail selection so truncation cannot discard an auth
+  // label while retaining its opaque credential.
+  const diag = tailOf(redactOmniOutbound((stderr ?? '').trim() || stdout.trim()), EXIT_DIAG_TAIL_CHARS);
   return diag ? `exit code ${code} — ${diag}` : `exit code ${code}`;
 };
 
@@ -1374,6 +1438,52 @@ function currentCodexThread(db: Database, route: OmniRoute): string | undefined 
   return (route.agent ?? 'claude') === 'codex' ? getAgentSession(db, 'codex', route.instance, route.chat) : undefined;
 }
 
+interface DurableDeliveryMeta {
+  version: 1;
+  ok: boolean;
+  threadId?: string;
+  replacesThreadId?: string;
+  clearThreadId?: string;
+}
+
+function encodeDeliveryMeta(result: AgentExecutionResult, ok: boolean): string {
+  return JSON.stringify({
+    version: 1,
+    ok,
+    ...(result.threadId ? { threadId: result.threadId } : {}),
+    ...(result.replacesThreadId ? { replacesThreadId: result.replacesThreadId } : {}),
+    ...(result.clearThreadId ? { clearThreadId: result.clearThreadId } : {}),
+  } satisfies DurableDeliveryMeta);
+}
+
+function decodeDeliveryMeta(raw: string): { result: AgentExecutionResult; ok: boolean } {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error('Durable Omni delivery metadata is not valid JSON');
+  }
+  if (!isRecord(parsed) || parsed.version !== 1 || typeof parsed.ok !== 'boolean') {
+    throw new Error('Durable Omni delivery metadata has an unsupported shape');
+  }
+  for (const field of ['threadId', 'replacesThreadId', 'clearThreadId'] as const) {
+    const value = parsed[field];
+    if (value !== undefined && (typeof value !== 'string' || !isSafeCodexThreadId(value))) {
+      throw new Error(`Durable Omni delivery metadata has an unsafe ${field}`);
+    }
+  }
+  return {
+    ok: parsed.ok,
+    result: {
+      stdout: '',
+      exitCode: parsed.ok ? 0 : 1,
+      ...(typeof parsed.threadId === 'string' ? { threadId: parsed.threadId } : {}),
+      ...(typeof parsed.replacesThreadId === 'string' ? { replacesThreadId: parsed.replacesThreadId } : {}),
+      ...(typeof parsed.clearThreadId === 'string' ? { clearThreadId: parsed.clearThreadId } : {}),
+    },
+  };
+}
+
 function commitPublishedInbound(
   db: Database,
   route: OmniRoute,
@@ -1383,10 +1493,11 @@ function commitPublishedInbound(
   claimToken: string,
   nowMs: number,
   log: (line: string) => void,
+  identity: DurableClaimIdentity,
 ): void {
   const commit = db.transaction(() => {
     persistCodexSessionResult(db, route, result, ok, nowMs, log);
-    if (!markInboundHandledIfClaimed(db, inboundId, claimToken, nowMs)) {
+    if (!markInboundHandledIfClaimed(db, inboundId, claimToken, nowMs, identity, 'flushed')) {
       throw new Error(`Inbound claim ${inboundId} changed before completion`);
     }
   });
@@ -1480,10 +1591,13 @@ class OneShotStoppedError extends Error {
 
 export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
   const { db, config, publish } = deps;
+  const flush = deps.flush ?? (async () => {});
   const log = deps.log ?? (() => {});
   const now = deps.now ?? (() => Date.now());
   const genId =
     deps.genCorrelationId ?? (() => `req_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`);
+  const claimOwner = deps.claimOwner ?? { ownerId: `in-process:${randomUUID()}`, epoch: 0 };
+  const claimIdentity = () => ({ ...claimOwner, now: now() });
   const spawnClaude = deps.spawnClaude ?? defaultSpawnClaude;
   const spawnAgent: AgentExecutor =
     deps.spawnAgent ?? ((opts) => (opts.provider === 'claude' ? spawnClaude(opts) : defaultAgentExecutor(opts)));
@@ -1525,6 +1639,7 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
   const ackInFlight = new Set<string>();
   const activeControllers = new Set<AbortController>();
   const activeHttpControllers = new Set<AbortController>();
+  const unroutableRecoveryLogged = new Set<string>();
   let stopped = false;
   const routeKey = (instance: string, chat: string): string => `${instance}\0${chat}`;
   const findRoute = (instance: string, chat: string): OmniRoute | undefined =>
@@ -1561,9 +1676,6 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
     // that finishes before the ⏳ reaches the API must never leave ✅→⏳ reordered.
     const pendingAck = emitRouteReaction(route, messageId, STATUS_PENDING);
     let spawned: Promise<AgentExecutionResult> | undefined;
-    let publishAttempted = false;
-    let published = false;
-    let completed = false;
     try {
       // Wrap so a SYNCHRONOUS throw from the executor becomes a rejection the
       // race can observe — and so `aborted` always gets a handler attached
@@ -1579,52 +1691,81 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
           threadId: currentCodexThread(db, route),
         }),
       );
-      const result = await Promise.race([spawned, aborted]);
-      // A non-zero exit OR a soft-error terminal result (is_error / non-success /
-      // empty) is a failure — never publish the raw NDJSON blob as a happy reply.
-      const ok = result.exitCode === 0 && !result.isError;
-      const content = oneShotResultContent(result, ok, maxReplyChars);
-      publishAttempted = true;
-      publish(replySubject, buildRoutedReplyPayload(route.instance, route.chat, content, genId(), now()));
-      published = true;
-      // External publication is the commit boundary. Only after it succeeds may
-      // thread state and handled state advance, and they advance together.
-      commitPublishedInbound(db, route, result, ok, inboundId, claimToken, now(), log);
-      completed = true;
+      let result: AgentExecutionResult;
+      let ok: boolean;
+      let content: string;
+      try {
+        result = await Promise.race([spawned, aborted]);
+        // A non-zero exit OR a soft-error terminal result (is_error / non-success /
+        // empty) is a failure — never publish the raw NDJSON blob as a happy reply.
+        ok = result.exitCode === 0 && !result.isError;
+        content = oneShotResultContent(result, ok, maxReplyChars);
+      } catch (error) {
+        result = { stdout: '', exitCode: 1, isError: true };
+        ok = false;
+        content = oneShotFailureContent(error, timeoutMs);
+      }
+      await prepareAndDeliverInbound(route, inboundId, claimToken, replySubject, content, result, ok);
       // ✅ once a genuine reply is published; ❌ on a non-zero exit or soft error.
       // Chained on the ⏳ emit's settlement (fulfilled even when it failed) so the
       // pair reaches the API in order; still fire-and-forget for this run.
       pendingAck.finally(() => emitRouteReaction(route, messageId, ok ? STATUS_APPROVED : STATUS_DENIED));
     } catch (err) {
-      // A publisher can throw after accepting bytes. Never emit a second reply
-      // or acknowledge that ambiguous attempt; leave successful publication
-      // claims fenced, and release a definite failure below for retry.
-      if (publishAttempted) {
-        log(`[omni] reply publication/state commit failed for ${inboundId}: ${errText(err)}`);
-        return;
-      }
-      const content = oneShotFailureContent(err, timeoutMs);
-      publishAttempted = true;
-      publish(replySubject, buildRoutedReplyPayload(route.instance, route.chat, content, genId(), now()));
-      published = true;
-      if (!markInboundHandledIfClaimed(db, inboundId, claimToken, now())) {
-        throw new Error(`Inbound claim ${inboundId} changed before failure completion`);
-      }
-      completed = true;
-      // ❌ on timeout / crash — same ordering chain as the success path.
-      pendingAck.finally(() => emitRouteReaction(route, messageId, STATUS_DENIED));
+      // The durable prepared/flushed phase is preserved while ownership is
+      // released. A successor epoch can retry the same stable request id rather
+      // than re-running the workspace-writing agent.
+      releaseInboundClaim(db, inboundId, claimToken, claimIdentity());
+      log(`[omni] reply delivery/state commit failed for ${inboundId}: ${errText(err)}`);
     } finally {
       clearTimeout(timer);
       if (!controller.signal.aborted) controller.abort(new OneShotStoppedError());
-      // A definite publication failure is retryable. Release before awaiting a
-      // possibly non-compliant child so no late settlement can touch closed DB.
-      if (!completed && !published) releaseInboundClaim(db, inboundId, claimToken);
       // The executor contract requires abort to settle the child. Wait for that
       // cleanup before any DB/NATS owner is allowed to close.
       if (spawned) await Promise.allSettled([spawned]);
       activeControllers.delete(controller);
       inFlight.delete(routeKey(route.instance, route.chat));
     }
+  }
+
+  async function deliverPreparedInbound(
+    route: OmniRoute,
+    inboundId: string,
+    claimToken: string,
+    delivery: InboundPreparedDelivery,
+  ): Promise<boolean> {
+    if (delivery.phase === 'prepared') {
+      publish(delivery.subject, delivery.payload);
+      await flush();
+      if (!markInboundDeliveryFlushed(db, inboundId, claimToken, claimIdentity())) {
+        throw new Error(`Inbound claim ${inboundId} changed before flush commit`);
+      }
+    }
+    const decoded = decodeDeliveryMeta(delivery.meta);
+    commitPublishedInbound(db, route, decoded.result, decoded.ok, inboundId, claimToken, now(), log, claimIdentity());
+    return decoded.ok;
+  }
+
+  async function prepareAndDeliverInbound(
+    route: OmniRoute,
+    inboundId: string,
+    claimToken: string,
+    subject: string,
+    content: string,
+    result: AgentExecutionResult,
+    ok: boolean,
+  ): Promise<void> {
+    const eventId = genId();
+    const delivery: InboundPreparedDelivery = {
+      phase: 'prepared',
+      eventId,
+      subject,
+      payload: buildRoutedReplyPayload(route.instance, route.chat, content, eventId, now()),
+      meta: encodeDeliveryMeta(result, ok),
+    };
+    if (!prepareInboundDelivery(db, inboundId, claimToken, claimIdentity(), delivery)) {
+      throw new Error(`Inbound claim ${inboundId} changed before delivery preparation`);
+    }
+    await deliverPreparedInbound(route, inboundId, claimToken, delivery);
   }
 
   /**
@@ -1643,18 +1784,22 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
     const replySubject = `omni.reply.${route.instance}.${route.chat}`;
     const key = routeKey(route.instance, route.chat);
     if (inFlight.has(key)) {
-      let busyPublished = false;
-      try {
-        publish(replySubject, buildRoutedReplyPayload(route.instance, route.chat, BUSY_NOTICE, genId(), now()));
-        busyPublished = true;
-        if (!markInboundHandledIfClaimed(db, inboundId, claimToken, now())) {
-          throw new Error(`Inbound claim ${inboundId} changed before busy completion`);
-        }
-        log(`[omni] route ${key} busy — dropped inbound ${inboundId} with notice`);
-      } catch (err) {
-        if (!busyPublished) releaseInboundClaim(db, inboundId, claimToken);
-        log(`[omni] busy notice publication/state commit failed for ${inboundId}: ${errText(err)}`);
-      }
+      const busy = prepareAndDeliverInbound(
+        route,
+        inboundId,
+        claimToken,
+        replySubject,
+        BUSY_NOTICE,
+        { stdout: '', exitCode: 1, isError: true },
+        false,
+      )
+        .then(() => log(`[omni] route ${key} busy — dropped inbound ${inboundId} with notice`))
+        .catch((err) => {
+          releaseInboundClaim(db, inboundId, claimToken, claimIdentity());
+          log(`[omni] busy notice delivery/state commit failed for ${inboundId}: ${errText(err)}`);
+        })
+        .finally(() => pending.delete(busy));
+      pending.add(busy);
       return;
     }
     inFlight.add(key);
@@ -1662,6 +1807,70 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
       .catch((err) => log(`[omni] one-shot crashed unexpectedly: ${errText(err)}`))
       .finally(() => pending.delete(run));
     pending.add(run);
+  }
+
+  function startRoutedRecovery(
+    route: OmniRoute,
+    inboundId: string,
+    claimToken: string,
+    claim: InboundClaimResult,
+    messageId?: string,
+  ): void {
+    const key = routeKey(route.instance, route.chat);
+    inFlight.add(key);
+    const replySubject = `omni.reply.${route.instance}.${route.chat}`;
+    const recovery = (
+      claim.mode === 'resume-delivery' && claim.delivery
+        ? deliverPreparedInbound(route, inboundId, claimToken, claim.delivery)
+        : prepareAndDeliverInbound(
+            route,
+            inboundId,
+            claimToken,
+            replySubject,
+            INTERRUPTED_NOTICE,
+            { stdout: '', exitCode: 1, isError: true },
+            false,
+          ).then(() => false)
+    )
+      .then((ok) => {
+        emitRouteReaction(route, messageId, ok ? STATUS_APPROVED : STATUS_DENIED);
+      })
+      .catch((error) => {
+        releaseInboundClaim(db, inboundId, claimToken, claimIdentity());
+        log(`[omni] durable delivery recovery failed for ${inboundId}: ${errText(error)}`);
+      })
+      .finally(() => {
+        inFlight.delete(key);
+        pending.delete(recovery);
+      });
+    pending.add(recovery);
+  }
+
+  function recoverAbandonedInbound(): void {
+    for (const event of listRecoverableInbound(db, claimOwner.epoch)) {
+      const route = findRoute(event.instance, event.chat);
+      if (!route) {
+        if (!unroutableRecoveryLogged.has(event.eventKey)) {
+          unroutableRecoveryLogged.add(event.eventKey);
+          log(`[omni] durable inbound ${event.eventKey} needs recovery but its route is no longer configured`);
+        }
+        continue;
+      }
+      if (inFlight.has(routeKey(route.instance, route.chat))) continue;
+      const claimToken = randomUUID();
+      const claim = recordAndClaimInboundDelivery(db, {
+        instance: event.instance,
+        chat: event.chat,
+        sender: event.sender,
+        body: event.body,
+        eventKey: event.eventKey,
+        claimToken,
+        claimOwnerId: claimOwner.ownerId,
+        claimEpoch: claimOwner.epoch,
+        now: now(),
+      });
+      if (claim) startRoutedRecovery(route, claim.id, claimToken, claim);
+    }
   }
 
   /**
@@ -1766,10 +1975,11 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
    * Announce a single pending approval via the id-returning send and tag the row
    * with the REAL Omni message id (the stanza id) the send returns — so an
    * inbound reaction correlates to THIS approval. Tags only on a successful send;
-   * a failed/id-less send leaves the row un-tagged so the next tick retries
-   * (mirrors the old tag-after-publish semantics). On a successful tag it sets the
-   * ⏳ status reaction on the sent message (SPIKE c) — the first half of the
-   * ⏳→✅/❌ ack. Never throws.
+   * a confirmed id-less failure releases the claim for retry, while a thrown
+   * in-flight transport result becomes explicit ambiguous state so a successor
+   * cannot duplicate a possibly accepted prompt. On a successful tag it sets the
+   * current status reaction (including an immediate terminal glyph when the row
+   * resolved during send). Never throws.
    */
   async function sendAnnounce(
     appr: { id: string; tool: string; inputSummary: string },
@@ -1778,37 +1988,46 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
     const text = formatApprovalMessage(appr.tool, appr.inputSummary);
     const controller = new AbortController();
     activeHttpControllers.add(controller);
-    let claimOpen = true;
     try {
+      if (!markApprovalAnnouncementSending(db, appr.id, claimToken, claimIdentity())) {
+        log(`[omni] announce ${appr.id}: durable claim changed before send`);
+        return;
+      }
       const result = await sendApproval({
         instance: config.instance ?? '',
         chat: config.approvalChat ?? '',
         text,
         signal: controller.signal,
       });
-      if (stopped) return;
       if (!result.messageId) {
         log(
           `[omni] announce ${appr.id}: send returned no messageId${result.error ? ` (${redactOmniOutbound(result.error)})` : ''} — will retry`,
         );
+        releaseApprovalAnnouncementWithLease(db, appr.id, claimToken, claimIdentity());
         return;
       }
-      if (!completeApprovalAnnouncement(db, appr.id, claimToken, result.messageId)) {
+      const completion = finalizeApprovalAnnouncement(db, appr.id, claimToken, result.messageId, claimIdentity());
+      if (!completion.attached) {
         log(`[omni] announce ${appr.id}: durable claim was lost; external id was not overwritten`);
         return;
       }
-      claimOpen = false;
       log(`[omni] announced approval ${appr.id} (omni ${result.messageId})`);
-      emitStatusReaction(result.messageId, STATUS_PENDING); // ⏳ awaiting you
+      const glyph =
+        completion.status === 'pending'
+          ? STATUS_PENDING
+          : completion.status === 'approved'
+            ? STATUS_APPROVED
+            : STATUS_DENIED;
+      emitStatusReaction(result.messageId, glyph);
     } catch (err) {
+      // Once HTTP starts, a thrown transport error cannot prove whether Omni
+      // accepted the prompt. Preserve an explicit ambiguous phase rather than
+      // silently issuing a duplicate prompt from the next resident.
+      markApprovalAnnouncementAmbiguous(db, appr.id, claimToken, claimIdentity());
       if (!stopped) {
         log(`[omni] announce ${appr.id} failed: ${redactOmniOutbound(errText(err))}`);
       }
     } finally {
-      // A send aborted during shutdown (or otherwise failed before the durable
-      // external id commit) must not strand an unannounced row behind this
-      // process's claim. Token conditioning keeps a newer claimant untouched.
-      if (claimOpen) releaseApprovalAnnouncement(db, appr.id, claimToken);
       activeHttpControllers.delete(controller);
     }
   }
@@ -1823,7 +2042,12 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
       if (appr.omniMessageId) continue; // already announced
       if (announcing.has(appr.id)) continue; // send in flight
       const claimToken = randomUUID();
-      if (!claimApprovalAnnouncement(db, appr.id, claimToken)) continue;
+      const outcome = claimApprovalAnnouncementWithLease(db, appr.id, claimToken, claimIdentity());
+      if (outcome === 'ambiguous') {
+        log(`[omni] approval ${appr.id} has an ambiguous prior send; refusing to duplicate the prompt`);
+        continue;
+      }
+      if (outcome !== 'claimed') continue;
       announcing.add(appr.id);
       const send = sendAnnounce(appr, claimToken).finally(() => {
         announcing.delete(appr.id);
@@ -1933,6 +2157,7 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
   return {
     tick(): void {
       if (stopped) return;
+      recoverAbandonedInbound();
       // Expire stale rows, then let reconciliation set the terminal ✅/❌ on any
       // row closed here OR by the hook fork's own self-timeout expiry.
       expireStale(db, config.approvals.pollBudgetMs, now());
@@ -1953,21 +2178,24 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
       // exact redelivery (including one seen by a second runner) must not spawn,
       // reply, announce, or resolve twice.
       const claimToken = randomUUID();
-      const inboundId = recordAndClaimInbound(db, {
+      const claim = recordAndClaimInboundDelivery(db, {
         instance,
         chat,
         sender,
         body,
         eventKey: inboundEventKey(subject, data),
         claimToken,
+        claimOwnerId: claimOwner.ownerId,
+        claimEpoch: claimOwner.epoch,
         now: now(),
       });
-      if (!inboundId) return;
+      if (!claim) return;
+      const inboundId = claim.id;
       let routed = false;
       const finishSynchronous = (handled: boolean) => {
         if (routed) return;
-        if (handled) markInboundHandledIfClaimed(db, inboundId, claimToken, now());
-        else releaseInboundClaim(db, inboundId, claimToken);
+        if (handled) markInboundHandledIfClaimed(db, inboundId, claimToken, now(), claimIdentity());
+        else releaseInboundClaim(db, inboundId, claimToken, claimIdentity());
       };
 
       // Mapped (instance, chat) → spawn a bounded one-shot; unmapped is store-only.
@@ -1982,7 +2210,11 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
       if (routeActionable) {
         if (allowMappedAgentExecution) {
           routed = true;
-          startRoutedRun(route as OmniRoute, inboundId, claimToken, body, msg.messageId);
+          if (claim.mode === 'fresh') {
+            startRoutedRun(route as OmniRoute, inboundId, claimToken, body, msg.messageId);
+          } else {
+            startRoutedRecovery(route as OmniRoute, inboundId, claimToken, claim, msg.messageId);
+          }
         } else {
           log(
             `[omni] mapped execution disabled for ${routeKey(instance, chat)}; set GENIE_OMNI_MAPPED_AGENT_EXECUTION=1 only after accepting the credential boundary`,
@@ -2060,20 +2292,23 @@ async function consume(
 
 interface OmniServeLease {
   signal: AbortSignal;
+  ownerId: string;
+  epoch: number;
   release(): void;
 }
 
 function openOmniServeLease(db: Database, ttlMs: number): OmniServeLease {
   const name = 'omni-serve';
   const ownerId = `${process.pid}:${randomUUID()}`;
-  if (!acquireServiceLease(db, name, ownerId, Date.now(), ttlMs)) {
+  const epoch = acquireServiceLeaseEpoch(db, name, ownerId, Date.now(), ttlMs);
+  if (epoch === undefined) {
     throw new Error('another genie omni serve process owns the machine-wide resident lease');
   }
   const controller = new AbortController();
   const timer = setInterval(
     () => {
       try {
-        if (!renewServiceLease(db, name, ownerId, Date.now(), ttlMs)) {
+        if (!renewServiceLease(db, name, ownerId, Date.now(), ttlMs, epoch)) {
           controller.abort(new Error('Omni serve lost its machine-wide resident lease'));
         }
       } catch (error) {
@@ -2086,11 +2321,13 @@ function openOmniServeLease(db: Database, ttlMs: number): OmniServeLease {
   let released = false;
   return {
     signal: controller.signal,
+    ownerId,
+    epoch,
     release() {
       if (released) return;
       released = true;
       clearInterval(timer);
-      releaseServiceLease(db, name, ownerId);
+      releaseServiceLease(db, name, ownerId, epoch);
     },
   };
 }
@@ -2169,7 +2406,15 @@ export async function runOmniServe(opts: RunOmniServeOptions): Promise<void> {
     lease = openOmniServeLease(db, leaseTtlMs);
 
     nc = await factory({ servers: config.natsUrl });
-    runner = createOmniRunner({ ...opts.runnerDeps, db, config, publish: nc.publish, log });
+    runner = createOmniRunner({
+      ...opts.runnerDeps,
+      db,
+      config,
+      publish: nc.publish,
+      flush: () => nc?.flush() ?? Promise.resolve(),
+      claimOwner: { ownerId: lease.ownerId, epoch: lease.epoch },
+      log,
+    });
 
     // Both text replies AND reactions arrive on this instance-bound subject.
     msgSub = nc.subscribe(`omni.message.${config.instance}.>`);

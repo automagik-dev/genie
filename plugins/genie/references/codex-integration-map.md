@@ -43,7 +43,11 @@ PreToolUse cannot intercept every possible mutation. It is defense in depth, not
 
 ## Installation and convergence
 
-`genie install --integrations codex`, `genie setup --codex`, and `genie update` are the only installation/update paths. SessionStart performs no setup, update, plugin refresh, skill synchronization, or project write.
+`genie install --integrations codex`, `genie setup --codex`, and `genie update` are the only installation/update paths.
+A successful setup persists Codex maintenance consent; later explicit updates use that scope to refresh Codex integration
+and clean digest-managed user-tier fallbacks while preserving unmanaged, modified, and personal skills. Persisted scope
+does not authorize a hook or background updater. SessionStart performs no setup, update, plugin refresh, skill
+synchronization, or project write.
 
 An update crossing from a release older than `5.260711.6` to `5.260711.6` or later can deliver the new payload without the old process knowing the new convergence phase. Run one explicit `genie update` after that first command returns; the newly installed binary then converges product integrations. Current update code performs post-swap convergence inside the already-reviewed parent process and never re-enters a freshly installed older binary as `genie update`.
 

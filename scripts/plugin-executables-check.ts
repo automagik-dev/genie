@@ -4,7 +4,7 @@
 
 import { spawnSync } from 'node:child_process';
 import { existsSync, lstatSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 const ROOT = join(import.meta.dir, '..');
 const SCRIPTS = join(ROOT, 'plugins', 'genie', 'scripts');
@@ -19,13 +19,27 @@ const CHECK_JS_TARGETS = [
   'src/validate-wish.ts',
 ].map((path) => join(SCRIPTS, path));
 
+function strictFixtureTargets(argv: string[]): string[] {
+  const targets: string[] = [];
+  for (let index = 0; index < argv.length; index++) {
+    if (argv[index] !== '--strict-fixture' || !argv[index + 1]) {
+      throw new Error('usage: plugin-executables-check.ts [--strict-fixture <path>]');
+    }
+    targets.push(resolve(argv[index + 1]));
+    index++;
+  }
+  return targets;
+}
+
 function run(command: string, args: string[]): void {
   const result = spawnSync(command, args, { cwd: ROOT, stdio: 'inherit' });
   if (result.error) throw result.error;
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
-for (const path of CHECK_JS_TARGETS) {
+const fixtureTargets = strictFixtureTargets(process.argv.slice(2));
+const typecheckTargets = [...CHECK_JS_TARGETS, ...fixtureTargets];
+for (const path of typecheckTargets) {
   const stat = lstatSync(path);
   if (!stat.isFile() || stat.isSymbolicLink())
     throw new Error(`plugin executable source must be a physical file: ${path}`);
@@ -38,6 +52,7 @@ run(process.execPath, [
   '--noEmit',
   '--allowJs',
   '--checkJs',
+  '--strict',
   '--skipLibCheck',
   '--module',
   'nodenext',
@@ -47,7 +62,7 @@ run(process.execPath, [
   'es2022',
   '--types',
   'node',
-  ...CHECK_JS_TARGETS,
+  ...typecheckTargets,
 ]);
 
 const nodeExecutables = readdirSync(SCRIPTS)
@@ -56,5 +71,5 @@ const nodeExecutables = readdirSync(SCRIPTS)
 for (const name of nodeExecutables) run('node', ['--check', join(SCRIPTS, name)]);
 
 process.stdout.write(
-  `plugin-executables-check: OK (${CHECK_JS_TARGETS.length} checked sources, ${nodeExecutables.length} shipped scripts)\n`,
+  `plugin-executables-check: OK (${CHECK_JS_TARGETS.length} strict checked sources, ${nodeExecutables.length} shipped scripts)\n`,
 );

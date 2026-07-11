@@ -5,6 +5,7 @@ import {
   closeSync,
   copyFileSync,
   existsSync,
+  fsyncSync,
   lstatSync,
   mkdirSync,
   openSync,
@@ -14,7 +15,6 @@ import {
   realpathSync,
   renameSync,
   rmSync,
-  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
@@ -31,40 +31,125 @@ export type RuntimeExecutableResolver = (name: RuntimeName, cwd: string) => stri
 
 export const INTEGRATION_CONSENT_NAME = '.integration-consent.json';
 
-/** Persist the operator's explicit client-home scope for later updates. */
-export function persistIntegrationConsent(selection: IntegrationSelection, genieHome = resolveGenieHome()): void {
+export interface IntegrationConsentState {
+  selection: IntegrationSelection;
+  state: 'committed' | 'pending';
+  previousSelection?: IntegrationSelection;
+}
+
+function writeIntegrationConsentState(state: IntegrationConsentState, genieHome: string): void {
   const path = join(genieHome, INTEGRATION_CONSENT_NAME);
   mkdirSync(genieHome, { recursive: true });
   const staging = `${path}.staging-${process.pid}`;
   writeFileSync(
     staging,
-    `${JSON.stringify({ schemaVersion: 1, selection, updatedAt: new Date().toISOString() }, null, 2)}\n`,
+    `${JSON.stringify({ schemaVersion: 2, ...state, updatedAt: new Date().toISOString() }, null, 2)}\n`,
     { encoding: 'utf8', mode: 0o600 },
   );
+  const fd = openSync(staging, 'r');
+  try {
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
   renameSync(staging, path);
+  try {
+    const dirFd = openSync(genieHome, 'r');
+    try {
+      fsyncSync(dirFd);
+    } finally {
+      closeSync(dirFd);
+    }
+  } catch {
+    // Directory fsync is not portable; file fsync + atomic rename remain.
+  }
+}
+
+/** Persist the operator's explicit client-home scope for later updates. */
+export function persistIntegrationConsent(selection: IntegrationSelection, genieHome = resolveGenieHome()): void {
+  writeIntegrationConsentState({ selection, state: 'committed' }, genieHome);
 }
 
 /** Missing state means a pre-consent release and retains the legacy auto policy. */
-export function readIntegrationConsent(genieHome = resolveGenieHome()): IntegrationSelection {
+export function readIntegrationConsentState(genieHome = resolveGenieHome()): IntegrationConsentState {
   const path = join(genieHome, INTEGRATION_CONSENT_NAME);
   let stat: ReturnType<typeof lstatSync>;
   try {
     stat = lstatSync(path);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 'auto';
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { selection: 'auto', state: 'committed' };
     throw error;
   }
   if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`integration consent is not a physical file: ${path}`);
   const parsed = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
   const selection = parsed.selection;
   if (
-    parsed.schemaVersion !== 1 ||
+    ![1, 2].includes(Number(parsed.schemaVersion)) ||
     typeof selection !== 'string' ||
     !['auto', 'codex', 'claude', 'all', 'none'].includes(selection)
   ) {
     throw new Error(`integration consent has an invalid schema: ${path}`);
   }
-  return selection as IntegrationSelection;
+  if (parsed.schemaVersion === 1) return { selection: selection as IntegrationSelection, state: 'committed' };
+  const state = parsed.state;
+  const previousSelection = parsed.previousSelection;
+  if (
+    !['committed', 'pending'].includes(String(state)) ||
+    (state === 'pending' &&
+      (typeof previousSelection !== 'string' ||
+        !['auto', 'codex', 'claude', 'all', 'none'].includes(previousSelection))) ||
+    (state === 'committed' && previousSelection !== undefined)
+  ) {
+    throw new Error(`integration consent has an invalid schema: ${path}`);
+  }
+  return {
+    selection: selection as IntegrationSelection,
+    state: state as IntegrationConsentState['state'],
+    ...(state === 'pending' ? { previousSelection: previousSelection as IntegrationSelection } : {}),
+  };
+}
+
+export function readIntegrationConsent(genieHome = resolveGenieHome()): IntegrationSelection {
+  return readIntegrationConsentState(genieHome).selection;
+}
+
+/** Publish explicit maintenance consent before the first external setup mutation. */
+export function beginIntegrationConsentTransition(
+  selection: IntegrationSelection,
+  genieHome = resolveGenieHome(),
+): IntegrationConsentState {
+  const current = readIntegrationConsentState(genieHome);
+  if (current.state === 'pending') {
+    if (current.selection !== selection) {
+      throw new Error(
+        `integration consent transition to ${current.selection} is pending; resume it before selecting ${selection}`,
+      );
+    }
+    return current;
+  }
+  const pending: IntegrationConsentState = {
+    selection,
+    state: 'pending',
+    previousSelection: current.selection,
+  };
+  writeIntegrationConsentState(pending, genieHome);
+  return pending;
+}
+
+export function commitIntegrationConsentTransition(genieHome = resolveGenieHome()): IntegrationSelection {
+  const current = readIntegrationConsentState(genieHome);
+  if (current.state !== 'pending') return current.selection;
+  persistIntegrationConsent(current.selection, genieHome);
+  return current.selection;
+}
+
+/** Clear only a pending transition, restoring the previously committed scope. */
+export function clearIntegrationConsentTransition(genieHome = resolveGenieHome()): IntegrationSelection {
+  const current = readIntegrationConsentState(genieHome);
+  if (current.state !== 'pending') return current.selection;
+  const previous = current.previousSelection ?? 'auto';
+  persistIntegrationConsent(previous, genieHome);
+  return previous;
 }
 
 export interface CommandResult {
@@ -525,18 +610,6 @@ function readCodexAgentInventory(codexHome: string): {
   }
 }
 
-function writeCodexAgentInventory(codexHome: string, inventory: CodexAgentInventory): void {
-  const path = inventoryPath(codexHome);
-  mkdirSync(dirname(path), { recursive: true });
-  if (Object.keys(inventory.files).length === 0) {
-    if (existsSync(path)) unlinkSync(path);
-    return;
-  }
-  const staging = `${path}.staging-${process.pid}`;
-  writeFileSync(staging, `${JSON.stringify(inventory, null, 2)}\n`, 'utf8');
-  renameSync(staging, path);
-}
-
 function classifyCodexAgentFile(path: string, recorded: { digest: string } | undefined): CodexAgentOwnership {
   try {
     const stat = lstatSync(path);
@@ -588,6 +661,8 @@ export interface CodexAgentInstallResult {
 export interface CodexAgentTransactionOptions {
   /** Failure-injection seam invoked immediately before each live promotion. */
   beforePromotion?: (stage: string) => void;
+  /** Failure-injection seam after authorization but before the accepted object is parked. */
+  afterAuthorization?: (stage: string) => void;
 }
 
 interface CodexAgentTransactionJournal {
@@ -795,21 +870,45 @@ function publishRoleAgentTransaction(
     options.beforePromotion?.('inventory');
     assertExpectedRoleFile(join(agentsDir, CODEX_AGENT_INVENTORY_NAME), expectedInventoryDigest);
 
-    promotionsStarted = true;
+    // Park every accepted preimage before any staged content is promoted. Each
+    // moved object is re-identified from its quarantine path, closing the race
+    // between pathname authorization and rename.
     for (const operation of operations) {
       const target = join(agentsDir, operation.name);
       assertExpectedRoleFile(target, operation.beforeDigest);
+      options.afterAuthorization?.(`payload:${operation.name}`);
       if (pathExists(target)) renameSync(target, join(publishedBeforeDir, operation.name));
-      if (operation.nextDigest !== null) renameSync(join(publishedStagedDir, operation.name), target);
+      assertExpectedRoleFile(join(publishedBeforeDir, operation.name), operation.beforeDigest);
+      if (physicalRoleFileIdentity(target).kind !== 'absent') {
+        throw new RoleAgentConflictError(`role-agent target reappeared while parked: ${target}`);
+      }
     }
     const targetInventory = join(agentsDir, CODEX_AGENT_INVENTORY_NAME);
     assertExpectedRoleFile(targetInventory, expectedInventoryDigest);
+    options.afterAuthorization?.('inventory');
     if (pathExists(targetInventory)) renameSync(targetInventory, join(publishedBeforeDir, CODEX_AGENT_INVENTORY_NAME));
+    assertExpectedRoleFile(join(publishedBeforeDir, CODEX_AGENT_INVENTORY_NAME), expectedInventoryDigest);
+    if (physicalRoleFileIdentity(targetInventory).kind !== 'absent') {
+      throw new RoleAgentConflictError(`role-agent inventory reappeared while parked: ${targetInventory}`);
+    }
+
+    promotionsStarted = true;
+    for (const operation of operations) {
+      if (operation.nextDigest !== null) {
+        renameSync(join(publishedStagedDir, operation.name), join(agentsDir, operation.name));
+      }
+    }
     if (inventoryContent !== null) renameSync(join(publishedStagedDir, CODEX_AGENT_INVENTORY_NAME), targetInventory);
+    for (const operation of operations) {
+      const expectedNext = operation.nextDigest === null ? null : operation.nextDigest;
+      assertExpectedRoleFile(join(agentsDir, operation.name), expectedNext);
+    }
+    assertExpectedRoleFile(targetInventory, journal.inventoryDigest);
     writeFileSync(join(transactionDir, 'COMMITTED'), 'ok\n');
     rmSync(transactionDir, { recursive: true, force: true });
   } catch (error) {
     if (error instanceof RoleAgentConflictError && !promotionsStarted) {
+      restoreParkedRolePreimages(agentsDir, publishedBeforeDir, operations);
       const conflict = preserveRoleAgentConflict(transactionDir);
       throw new RoleAgentConflictError(`${error.message}; kept live and incoming versions at ${conflict}`);
     }
@@ -826,13 +925,52 @@ function publishRoleAgentTransaction(
 
 class RoleAgentConflictError extends Error {}
 
+type RoleFileIdentity =
+  | { kind: 'absent' }
+  | { kind: 'regular'; digest: string }
+  | { kind: 'non-regular'; entry: 'directory' | 'symlink' | 'other' }
+  | { kind: 'unreadable'; code: string };
+
+function physicalRoleFileIdentity(path: string): RoleFileIdentity {
+  let stat: Stats;
+  try {
+    stat = lstatSync(path);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code ?? 'UNKNOWN';
+    return code === 'ENOENT' ? { kind: 'absent' } : { kind: 'unreadable', code };
+  }
+  if (stat.isSymbolicLink()) return { kind: 'non-regular', entry: 'symlink' };
+  if (stat.isDirectory()) return { kind: 'non-regular', entry: 'directory' };
+  if (!stat.isFile()) return { kind: 'non-regular', entry: 'other' };
+  const digest = fileDigest(path);
+  return digest === null ? { kind: 'unreadable', code: 'READ' } : { kind: 'regular', digest };
+}
+
+function restoreParkedRolePreimages(
+  agentsDir: string,
+  beforeDir: string,
+  operations: CodexAgentTransactionJournal['operations'],
+): void {
+  for (const operation of [...operations].reverse()) {
+    const target = join(agentsDir, operation.name);
+    const parked = join(beforeDir, operation.name);
+    if (pathExists(parked) && physicalRoleFileIdentity(target).kind === 'absent') renameSync(parked, target);
+  }
+  const targetInventory = join(agentsDir, CODEX_AGENT_INVENTORY_NAME);
+  const parkedInventory = join(beforeDir, CODEX_AGENT_INVENTORY_NAME);
+  if (pathExists(parkedInventory) && physicalRoleFileIdentity(targetInventory).kind === 'absent') {
+    renameSync(parkedInventory, targetInventory);
+  }
+}
+
 function assertExpectedRoleFile(path: string, expectedDigest: string | null): void {
-  const stat = lstatOrNull(path);
+  const identity = physicalRoleFileIdentity(path);
   if (expectedDigest === null) {
-    if (stat !== null) throw new RoleAgentConflictError(`role-agent target appeared before promotion: ${path}`);
+    if (identity.kind !== 'absent')
+      throw new RoleAgentConflictError(`role-agent target appeared before promotion (${identity.kind}): ${path}`);
     return;
   }
-  if (stat === null || !stat.isFile() || stat.isSymbolicLink() || fileDigest(path) !== expectedDigest) {
+  if (identity.kind !== 'regular' || identity.digest !== expectedDigest) {
     throw new RoleAgentConflictError(`role-agent target changed before promotion: ${path}`);
   }
 }
@@ -1114,13 +1252,13 @@ function requireCodexPluginState(raw: string, phase: string): RuntimePluginState
 }
 
 interface RefreshIntent {
-  schemaVersion: 3;
+  schemaVersion: 4;
   runtime: RuntimeName;
   installed: true;
   enabled: boolean;
   createdAt: string;
-  /** Any non-planned phase proves Genie authorized the destructive repair. */
-  phase: 'planned' | 'removal-authorized' | 'removed';
+  /** Only removal-observed authorizes recovery of an absent registration. */
+  phase: 'planned' | 'command-started' | 'removal-observed' | 'ambiguous-absent';
 }
 
 export interface ConvergePluginOptions {
@@ -1321,27 +1459,34 @@ function readRefreshIntent(path: string, runtime: RuntimeName): RefreshIntent | 
   if (
     typeof parsed !== 'object' ||
     parsed === null ||
-    ![1, 2, 3].includes(Number(Reflect.get(parsed, 'schemaVersion'))) ||
+    ![1, 2, 3, 4].includes(Number(Reflect.get(parsed, 'schemaVersion'))) ||
     Reflect.get(parsed, 'runtime') !== runtime ||
     Reflect.get(parsed, 'installed') !== true ||
     typeof Reflect.get(parsed, 'enabled') !== 'boolean' ||
     typeof Reflect.get(parsed, 'createdAt') !== 'string' ||
     ([2, 3].includes(Number(Reflect.get(parsed, 'schemaVersion'))) &&
-      !['planned', 'removal-authorized', 'removed'].includes(String(Reflect.get(parsed, 'phase'))))
+      !['planned', 'removal-authorized', 'removed'].includes(String(Reflect.get(parsed, 'phase')))) ||
+    (Number(Reflect.get(parsed, 'schemaVersion')) === 4 &&
+      !['planned', 'command-started', 'removal-observed', 'ambiguous-absent'].includes(
+        String(Reflect.get(parsed, 'phase')),
+      ))
   ) {
     throw new Error(`refresh intent has an invalid schema: ${path}`);
   }
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     runtime,
     installed: true,
     enabled: Reflect.get(parsed, 'enabled') as boolean,
     createdAt: Reflect.get(parsed, 'createdAt') as string,
-    // Legacy intents predate mutation-phase evidence and must never authorize a
-    // reinstall of an absent plugin.
-    phase: [2, 3].includes(Number(Reflect.get(parsed, 'schemaVersion')))
-      ? (Reflect.get(parsed, 'phase') as RefreshIntent['phase'])
-      : 'planned',
+    phase:
+      Number(Reflect.get(parsed, 'schemaVersion')) === 4
+        ? (Reflect.get(parsed, 'phase') as RefreshIntent['phase'])
+        : Reflect.get(parsed, 'phase') === 'removed'
+          ? 'removal-observed'
+          : Reflect.get(parsed, 'phase') === 'removal-authorized'
+            ? 'ambiguous-absent'
+            : 'planned',
   };
 }
 
@@ -1358,7 +1503,7 @@ function clearRefreshIntent(path: string): void {
 
 function plannedRefreshIntent(runtime: RuntimeName, enabled: boolean): RefreshIntent {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     runtime,
     installed: true,
     enabled,
@@ -1367,16 +1512,57 @@ function plannedRefreshIntent(runtime: RuntimeName, enabled: boolean): RefreshIn
   };
 }
 
-function authorizeRefreshRemoval(path: string, intent: RefreshIntent): RefreshIntent {
-  const authorized = { ...intent, phase: 'removal-authorized' as const };
-  writeRefreshIntent(path, authorized);
-  return authorized;
+function markRefreshCommandStarted(path: string, intent: RefreshIntent): RefreshIntent {
+  const started = { ...intent, phase: 'command-started' as const };
+  writeRefreshIntent(path, started);
+  return started;
 }
 
-function markRefreshRemoved(path: string, intent: RefreshIntent): RefreshIntent {
-  const removed = { ...intent, phase: 'removed' as const };
-  writeRefreshIntent(path, removed);
-  return removed;
+function markRefreshRemovalObserved(path: string, intent: RefreshIntent): RefreshIntent {
+  const observed = { ...intent, phase: 'removal-observed' as const };
+  writeRefreshIntent(path, observed);
+  return observed;
+}
+
+function markRefreshStable(path: string, intent: RefreshIntent): RefreshIntent {
+  const stable = { ...intent, phase: 'planned' as const };
+  writeRefreshIntent(path, stable);
+  return stable;
+}
+
+function markRefreshAmbiguous(path: string, intent: RefreshIntent): RefreshIntent {
+  const ambiguous = { ...intent, phase: 'ambiguous-absent' as const };
+  writeRefreshIntent(path, ambiguous);
+  return ambiguous;
+}
+
+/**
+ * A returned command failure is not proof that the plugin was removed. Probe
+ * once: a still-present registration clears stale repair authority, while an
+ * absent/unknowable result is recorded as ambiguous and never auto-reinstalled
+ * by a maintenance update.
+ */
+function settleFailedRefreshIntent(
+  options: ConvergePluginOptions,
+  runtime: RuntimeName,
+  intent: RefreshIntent | null,
+  timeoutMs: number,
+): RefreshIntent | null {
+  if (intent === null || intent.phase === 'planned' || intent.phase === 'removal-observed') return intent;
+  try {
+    const raw = runChecked(options.runner, options.command, ['plugin', 'list', '--json'], false, timeoutMs).stdout;
+    const state =
+      runtime === 'codex'
+        ? requireCodexPluginState(raw, 'after failed refresh command')
+        : requireClaudePluginState(raw, 'after failed refresh command');
+    if (state.installed) {
+      clearRefreshIntent(options.statePath);
+      return null;
+    }
+  } catch {
+    // An unprobeable post-state is ambiguous too; never turn it into install authority.
+  }
+  return markRefreshAmbiguous(options.statePath, intent);
 }
 
 function integrationFailure(runtime: RuntimeName, error: unknown): IntegrationResult {
@@ -1469,7 +1655,7 @@ export function convergeCodexPlugin(options: ConvergePluginOptions): Integration
       runChecked(options.runner, options.command, ['plugin', 'list', '--json'], false, timeoutMs).stdout,
       'before plugin convergence',
     );
-    if (!before.installed && !options.installIfAbsent && (intent === null || intent.phase === 'planned')) {
+    if (!before.installed && !options.installIfAbsent && intent?.phase !== 'removal-observed') {
       if (intent !== null) clearRefreshIntent(options.statePath);
       return null;
     }
@@ -1481,7 +1667,7 @@ export function convergeCodexPlugin(options: ConvergePluginOptions): Integration
     // before that potentially destructive boundary, not only before the later
     // explicit remove/reinstall fallback.
     if (before.installed && intent.phase === 'planned') {
-      intent = authorizeRefreshRemoval(options.statePath, intent);
+      intent = markRefreshCommandStarted(options.statePath, intent);
     }
     runChecked(options.runner, options.command, ['plugin', 'add', 'genie@automagik', '--json'], false, timeoutMs);
     let installed = requireCodexPluginState(
@@ -1489,16 +1675,18 @@ export function convergeCodexPlugin(options: ConvergePluginOptions): Integration
       'after plugin add',
     );
     if (!installed.installed) throw new IntegrationCommandError('Codex plugin is missing after plugin add');
+    intent = markRefreshStable(options.statePath, intent);
     if (installed.installed && installed.version !== options.expectedVersion) {
-      intent = authorizeRefreshRemoval(options.statePath, intent);
+      intent = markRefreshCommandStarted(options.statePath, intent);
       runChecked(options.runner, options.command, ['plugin', 'remove', 'genie@automagik', '--json'], true, timeoutMs);
-      intent = markRefreshRemoved(options.statePath, intent);
+      intent = markRefreshRemovalObserved(options.statePath, intent);
       runChecked(options.runner, options.command, ['plugin', 'add', 'genie@automagik', '--json'], false, timeoutMs);
       installed = requireCodexPluginState(
         runChecked(options.runner, options.command, ['plugin', 'list', '--json'], false, timeoutMs).stdout,
         'after plugin reinstall',
       );
       if (!installed.installed) throw new IntegrationCommandError('Codex plugin is missing after plugin reinstall');
+      intent = markRefreshStable(options.statePath, intent);
     }
     if (!installed.installed || installed.version !== options.expectedVersion) {
       throw new IntegrationCommandError(
@@ -1510,17 +1698,24 @@ export function convergeCodexPlugin(options: ConvergePluginOptions): Integration
       installed,
       timeoutMs,
       () => {
-        intent = authorizeRefreshRemoval(options.statePath, intent as RefreshIntent);
+        intent = markRefreshCommandStarted(options.statePath, intent as RefreshIntent);
       },
       () => {
-        intent = markRefreshRemoved(options.statePath, intent as RefreshIntent);
+        intent = markRefreshRemovalObserved(options.statePath, intent as RefreshIntent);
       },
     );
+    intent = markRefreshStable(options.statePath, intent);
     if (intent.enabled) {
       requireExpectedState('codex', installed, options.expectedVersion, true, 'enabled-state');
     }
   } catch (error) {
     primaryError = error;
+    intent = settleFailedRefreshIntent(options, 'codex', intent, timeoutMs);
+    if (intent?.phase === 'ambiguous-absent') {
+      primaryError = new IntegrationCommandError(
+        `${error instanceof Error ? error.message : String(error)}; Codex state is absent or unknown after a failed command and will not be reinstalled by update — run genie setup --codex to grant explicit repair consent`,
+      );
+    }
   }
 
   if (intent?.enabled === false) {
@@ -1622,7 +1817,7 @@ export function convergeClaudePlugin(options: ConvergePluginOptions): Integratio
       runChecked(options.runner, options.command, ['plugin', 'list', '--json'], false, timeoutMs).stdout,
       'before plugin convergence',
     );
-    if (!before.installed && !options.installIfAbsent && (intent === null || intent.phase === 'planned')) {
+    if (!before.installed && !options.installIfAbsent && intent?.phase !== 'removal-observed') {
       if (intent !== null) clearRefreshIntent(options.statePath);
       return null;
     }
@@ -1634,7 +1829,7 @@ export function convergeClaudePlugin(options: ConvergePluginOptions): Integratio
     // returns. Persist recovery authority first so a process death cannot be
     // mistaken for a later manual uninstall.
     if (before.installed && intent.phase === 'planned') {
-      intent = authorizeRefreshRemoval(options.statePath, intent);
+      intent = markRefreshCommandStarted(options.statePath, intent);
     }
     runChecked(
       options.runner,
@@ -1652,20 +1847,28 @@ export function convergeClaudePlugin(options: ConvergePluginOptions): Integratio
         `Claude plugin refresh reported v${installed.version || 'missing'}; expected v${options.expectedVersion}`,
       );
     }
+    intent = markRefreshStable(options.statePath, intent);
     installed = convergeClaudePayloadIdentity(
       options,
       installed,
       timeoutMs,
       () => {
-        intent = authorizeRefreshRemoval(options.statePath, intent as RefreshIntent);
+        intent = markRefreshCommandStarted(options.statePath, intent as RefreshIntent);
       },
       () => {
-        intent = markRefreshRemoved(options.statePath, intent as RefreshIntent);
+        intent = markRefreshRemovalObserved(options.statePath, intent as RefreshIntent);
       },
     );
+    intent = markRefreshStable(options.statePath, intent);
     if (intent.enabled) requireExpectedState('claude', installed, options.expectedVersion, true, 'enabled-state');
   } catch (error) {
     primaryError = error;
+    intent = settleFailedRefreshIntent(options, 'claude', intent, timeoutMs);
+    if (intent?.phase === 'ambiguous-absent') {
+      primaryError = new IntegrationCommandError(
+        `${error instanceof Error ? error.message : String(error)}; Claude state is absent or unknown after a failed command and will not be reinstalled by update — run genie install or setup to grant explicit repair consent`,
+      );
+    }
   }
 
   if (intent?.enabled === false) {
@@ -1762,7 +1965,10 @@ export interface CodexAgentRemovalResult {
 }
 
 /** Remove only digest-clean inventory-owned role agents; modified/user files stay byte-identical. */
-export function removeCodexAgents(codexHome = getCodexHome()): CodexAgentRemovalResult {
+export function removeCodexAgents(
+  codexHome = getCodexHome(),
+  transactionOptions: CodexAgentTransactionOptions = {},
+): CodexAgentRemovalResult {
   const result: CodexAgentRemovalResult = { removed: [], keptModified: [], missing: [], failures: [] };
   const agentsDir = join(codexHome, 'agents');
   try {
@@ -1782,34 +1988,37 @@ export function removeCodexAgents(codexHome = getCodexHome()): CodexAgentRemoval
     });
     return result;
   }
-  const inventory = state.inventory;
+  const inventory = JSON.parse(JSON.stringify(state.inventory)) as CodexAgentInventory;
+  const removals: string[] = [];
+  const expected = new Map<string, string | null>();
+  const removed: string[] = [];
+  const keptModified: string[] = [];
+  const missing: string[] = [];
   for (const name of Object.keys(inventory.files).sort()) {
     const path = join(codexHome, 'agents', name);
     const ownership = classifyCodexAgentFile(path, inventory.files[name]);
-    try {
-      if (ownership === 'managed-clean') {
-        unlinkSync(path);
-        result.removed.push(name);
-      } else if (ownership === 'managed-modified') {
-        result.keptModified.push(name);
-      } else if (ownership === 'absent') {
-        result.missing.push(name);
-      }
-      // Uninstall relinquishes ownership of modified files without editing them.
-      delete inventory.files[name];
-    } catch (error) {
-      result.failures.push({ name, detail: error instanceof Error ? error.message : String(error) });
+    if (ownership === 'managed-clean') {
+      removals.push(name);
+      expected.set(name, inventory.files[name]?.digest ?? null);
+      removed.push(name);
+    } else if (ownership === 'managed-modified') {
+      keptModified.push(name);
+    } else if (ownership === 'absent') {
+      missing.push(name);
     }
+    // Uninstall relinquishes ownership of modified/missing files without editing them.
+    delete inventory.files[name];
   }
-  if (result.failures.length === 0) {
-    try {
-      writeCodexAgentInventory(codexHome, inventory);
-    } catch (error) {
-      result.failures.push({
-        name: CODEX_AGENT_INVENTORY_NAME,
-        detail: error instanceof Error ? error.message : String(error),
-      });
-    }
+  try {
+    publishRoleAgentTransaction(agentsDir, new Map(), removals, inventory, expected, state.digest, transactionOptions);
+    result.removed.push(...removed);
+    result.keptModified.push(...keptModified);
+    result.missing.push(...missing);
+  } catch (error) {
+    result.failures.push({
+      name: removals[0] ?? CODEX_AGENT_INVENTORY_NAME,
+      detail: error instanceof Error ? error.message : String(error),
+    });
   }
   return result;
 }

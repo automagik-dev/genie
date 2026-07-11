@@ -3,9 +3,14 @@
 Every piece of work follows this flow:
 
 ```
- Idea → brainstorm → wish → review → work → review → PR → Ship
-         (explore)    (plan)   (gate)   (build)  (verify)
+ Idea → brainstorm → design review → wish → plan review → work → implementation review → PR → Ship
+         (explore)   (design gate)    (plan)   (plan gate)  (build)       (verify)
 ```
+
+The gates review different artifacts. For non-trivial work, `brainstorm` automatically routes the completed DESIGN.md
+through read-only design review before `wish` may consume it. The resulting WISH.md must then pass plan review and persist
+`APPROVED` before `work` starts. After execution, a different reviewer validates the implementation. Passing one gate
+never substitutes for either of the others.
 
 ## Persisted lifecycle state
 

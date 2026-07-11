@@ -1,5 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { cpSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -281,6 +291,61 @@ describe('fresh-install-smoke', () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  for (const fixture of [
+    {
+      label: 'renamed Codex role profile',
+      mutate: (pluginRoot: string) =>
+        renameSync(
+          join(pluginRoot, 'codex-agents', 'genie-reviewer.toml'),
+          join(pluginRoot, 'codex-agents', 'genie-auditor.toml'),
+        ),
+      expected: 'codex-agents role inventory differs',
+    },
+    {
+      label: 'renamed Claude role agent',
+      mutate: (pluginRoot: string) =>
+        renameSync(join(pluginRoot, 'agents', 'reviewer.md'), join(pluginRoot, 'agents', 'auditor.md')),
+      expected: 'agents role inventory differs',
+    },
+    {
+      label: 'same-filename Codex role substitution',
+      mutate: (pluginRoot: string) => {
+        const reviewer = join(pluginRoot, 'codex-agents', 'genie-reviewer.toml');
+        const fixer = join(pluginRoot, 'codex-agents', 'genie-fixer.toml');
+        writeFileSync(reviewer, readFileSync(fixer, 'utf8').replace('name = "genie_fixer"', 'name = "genie_reviewer"'));
+      },
+      expected: 'must match the canonical genie_reviewer role contract',
+    },
+    {
+      label: 'same-filename Claude role substitution',
+      mutate: (pluginRoot: string) => {
+        const reviewer = join(pluginRoot, 'agents', 'reviewer.md');
+        const fixer = join(pluginRoot, 'agents', 'fixer.md');
+        writeFileSync(reviewer, readFileSync(fixer, 'utf8').replace('name: fixer', 'name: reviewer'));
+      },
+      expected: 'must match the canonical reviewer role contract',
+    },
+  ]) {
+    test(`rejects a ${fixture.label}`, () => {
+      const root = mkdtempSync(join(tmpdir(), 'genie-role-inventory-fixture-'));
+      try {
+        const pluginRoot = join(root, 'plugin');
+        cpSync(join(REPO_ROOT, 'plugins', 'genie'), pluginRoot, {
+          recursive: true,
+          dereference: false,
+          verbatimSymlinks: true,
+        });
+        fixture.mutate(pluginRoot);
+
+        const result = runSmoke(['--skills-dir', join(REPO_ROOT, 'skills'), '--plugin-root', pluginRoot]);
+        expect(result.code).not.toBe(0);
+        expect(result.stderr).toContain(fixture.expected);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+  }
 
   test('rejects a missing singular reference resource such as genie lifecycle.md', () => {
     const root = mkdtempSync(join(tmpdir(), 'genie-reference-resource-fixture-'));

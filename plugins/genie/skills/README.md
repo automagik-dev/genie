@@ -6,14 +6,19 @@
 Shared skill bodies name semantic routes without a host-specific prefix. Invoke them through the active owner tier:
 
 - Codex plugin: `$genie:brainstorm`, `$genie:wish`, `$genie:review`, `$genie:work`
-- Separately installed Codex personal copies: `$brainstorm`, `$wish`, `$review`, `$work`
+- Codex user tier (a CLI-managed product fallback or separately installed personal copy): `$brainstorm`, `$wish`, `$review`, `$work`
 - Claude Code and Hermes: `/brainstorm`, `/wish`, `/review`, `/work`
 
 The lifecycle is:
 
 ```text
-brainstorm → wish → review → work → review
+brainstorm → design review → wish → plan review → work → implementation review
 ```
+
+For non-trivial work, `brainstorm` automatically sends the completed design through read-only design review before
+handoff to `wish`. The resulting WISH must then pass a distinct plan review before `work`; implementation receives its
+own independent review after execution. These are mandatory artifact gates, not interchangeable uses of one generic
+review step.
 
 All runtimes share the same durable contracts:
 
@@ -37,6 +42,10 @@ bun scripts/fresh-install-smoke.ts          # exercise source and copied plugin 
 
 The build and version paths run the parity check before producing release state. Adding or removing a shipped skill
 therefore requires an intentional update to `SHIPPED_SKILL_NAMES` in `scripts/sync-plugin-skills.ts`.
+
+An explicit successful `genie setup --codex` persists Codex maintenance consent. A later explicit `genie update` may
+therefore refresh clean CLI-managed user-tier fallbacks alongside the plugin, MCP, and optional role profiles. Unmanaged,
+modified, or separately installed personal skills remain user-owned and are never adopted by that consent.
 
 ## Shipped inventory
 

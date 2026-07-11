@@ -43,6 +43,11 @@ genie setup --codex                 # install or repair Codex plugin, role agent
 genie update                        # explicit binary/payload/integration convergence
 ```
 
+A successful `genie setup --codex` persists Codex maintenance consent. Future explicit `genie update` invocations use
+that scope to refresh the Codex plugin, MCP route, optional role profiles, and clean digest-managed product-skill
+fallbacks in the user tier. Unmanaged, modified, and separately installed personal skills stay user-owned; persisted
+maintenance scope does not authorize hooks or background updates.
+
 When crossing from a release older than `5.260711.6` to `5.260711.6` or later, the first update may only deliver the new binary/payload because the already-running old process does not yet know the new convergence phase. After that command returns, run `genie update` once more explicitly. The second invocation runs the newly installed contract; confirm the plugin exposes exactly H3/H4/H6, review hashes with `/hooks`, and start a new task. Later updates converge in one operator-driven path. Do not rely on SessionStart for this compatibility hop.
 
 ### 2026-07-11 update incident
@@ -56,12 +61,19 @@ Containment recovered all 22 adapted directories from Genie's automatic backup, 
 The lifecycle is shared across clients:
 
 ```text
-brainstorm -> wish -> review -> work -> review
+brainstorm -> design review -> wish -> plan review -> work -> implementation review
 ```
 
-Codex invokes the plugin copies as `$genie:brainstorm`, `$genie:wish`, `$genie:review`, and `$genie:work`; bare selectors intentionally select the user tier (a CLI-managed fallback or personal copy). Claude Code uses the equivalent slash skills. Native subagents do not imply separate worktrees. Every engineer first claims its assigned task with `genie task checkout <id> --worker <name>`, reports completion without mutating task state, and is reviewed by a different agent. Only the orchestrator calls `genie task done <id>` after a SHIP verdict and passing validation. Use `genie launch` when separate worktrees or a human-supervised Warp cockpit are required.
+For non-trivial work, brainstorm automatically invokes read-only design review before wish. The WISH then requires a
+separate plan review and persisted `APPROVED` status before work, followed by an independent implementation review. Codex
+invokes the plugin copies as `$genie:brainstorm`, `$genie:wish`, `$genie:review`, and `$genie:work`; bare selectors
+intentionally select the user tier (a CLI-managed fallback or separately installed personal copy). Claude Code uses the
+equivalent slash skills. Native subagents do not imply separate worktrees. Every engineer first claims its assigned task
+with `genie task checkout <id> --worker <name>`, reports completion without mutating task state, and is reviewed by a
+different agent. Only the orchestrator calls `genie task done <id>` after a SHIP verdict and passing validation. Use
+`genie launch` when separate worktrees or a human-supervised Warp cockpit are required.
 
-The seven optional Codex profiles are `genie_engineer_trivial`, `genie_engineer_standard`, `genie_engineer_complex`, `genie_scout`, `genie_fixer`, `genie_reviewer`, and `genie_final_gate`. A plugin-only install falls back to the client's available generic roles.
+The seven optional Codex profiles are `genie_engineer_trivial`, `genie_engineer_standard`, `genie_engineer_complex`, `genie_scout`, `genie_fixer`, `genie_reviewer`, and `genie_final_gate`. The matching Claude inventory is `engineer-trivial`, `engineer-standard`, `engineer-complex`, `scout`, `fixer`, `reviewer`, and `final-gate`. Release checks pin both exact seven-file inventories and their declared names in source, staged payload, extracted archive, and fresh-install copies. A plugin-only install falls back to the client's available generic roles.
 
 ## Distribution and verification
 

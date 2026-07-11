@@ -15,6 +15,15 @@ const { homedir } = require('node:os');
 const { isAbsolute, join, normalize } = require('node:path');
 const { spawn } = require('node:child_process');
 
+/**
+ * @typedef {object} McpLaunchOptions
+ * @property {NodeJS.ProcessEnv} [env]
+ * @property {NodeJS.Platform} [platform]
+ * @property {string} [userHome]
+ * @property {typeof spawn} [spawnImpl]
+ */
+
+/** @param {McpLaunchOptions} [options] */
 function resolveGenieBinary(options = {}) {
   const env = options.env ?? process.env;
   const platform = options.platform ?? process.platform;
@@ -40,6 +49,7 @@ function resolveGenieBinary(options = {}) {
   return canonical;
 }
 
+/** @param {McpLaunchOptions} [options] */
 function launchMcp(options = {}) {
   const binary = resolveGenieBinary(options);
   const spawnImpl = options.spawnImpl ?? spawn;
@@ -51,9 +61,13 @@ function launchMcp(options = {}) {
 
   const graceOverride = Number((options.env ?? process.env).GENIE_MCP_KILL_GRACE_MS);
   const killGraceMs = Number.isFinite(graceOverride) && graceOverride > 0 ? Math.min(graceOverride, 1_000) : 1_000;
+  /** @type {NodeJS.Signals | null} */
   let forwardedSignal = null;
+  /** @type {NodeJS.Timeout | undefined} */
   let forceTimer;
-  const listeners = ['SIGINT', 'SIGTERM'].map((signal) => {
+  /** @type {NodeJS.Signals[]} */
+  const forwardedSignalNames = ['SIGINT', 'SIGTERM'];
+  const listeners = forwardedSignalNames.map((signal) => {
     const listener = () => {
       if (forwardedSignal) return;
       forwardedSignal = signal;

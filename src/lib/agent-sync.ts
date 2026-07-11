@@ -86,6 +86,7 @@ const PREV_SUFFIX = '.genie-sync.prev';
 const SKILL_TRANSACTION_ROOT = '.genie-sync-transactions';
 const SKILL_TRANSACTION_STAGING_PREFIX = '.staging-';
 const SKILL_TRANSACTION_PREFIX = 'txn-';
+const SKILL_REMOVAL_PREFIX = 'delete-';
 /** Cross-process mutual-exclusion lockfile under genieHome — one sync writer per GENIE_HOME. */
 const LOCK_NAME = '.agent-sync.lock';
 /** A lock older than this is a crashed run's debris and may be stolen. */
@@ -141,6 +142,8 @@ export interface AgentSyncOptions {
   renameManagedDir?: typeof renameSync;
   /** Test seam invoked before the final managed-directory CAS check. */
   beforeManagedDirPromotion?: (destDir: string) => void;
+  /** Failure-injection seam around managed-directory removal quarantine. */
+  beforeManagedDirRemoval?: (destDir: string, stage: 'before-park' | 'before-delete') => void;
 }
 
 export type AgentSyncSelection = 'auto' | 'codex' | 'claude' | 'all' | 'none';
@@ -207,6 +210,7 @@ interface RunContext {
   backupsDirIfCreated: () => string | null;
   renameManagedDir: typeof renameSync;
   beforeManagedDirPromotion?: (destDir: string) => void;
+  beforeManagedDirRemoval?: (destDir: string, stage: 'before-park' | 'before-delete') => void;
 }
 
 interface SourceSkill {
@@ -450,6 +454,129 @@ function preserveManagedDirConflict(transactionRoot: string, transactionDir: str
   return conflict;
 }
 
+interface ManagedDirRemovalJournal {
+  version: 1;
+  destName: string;
+  contentDigest: string;
+  manifestDigest: string;
+}
+
+function readManagedDirRemovalJournal(transactionDir: string): ManagedDirRemovalJournal {
+  const parsed = JSON.parse(
+    readFileSync(join(transactionDir, 'journal.json'), 'utf8'),
+  ) as Partial<ManagedDirRemovalJournal>;
+  if (
+    parsed.version !== 1 ||
+    typeof parsed.destName !== 'string' ||
+    !isSafeEntryName(parsed.destName) ||
+    !isDigest(parsed.contentDigest) ||
+    !isDigest(parsed.manifestDigest)
+  ) {
+    throw new Error(`invalid managed skill removal transaction: ${transactionDir}`);
+  }
+  return parsed as ManagedDirRemovalJournal;
+}
+
+function preserveManagedRemovalConflict(transactionRoot: string, transactionDir: string, token: string): string {
+  const conflict = join(transactionRoot, `.conflict-delete-${token}`);
+  renameSync(transactionDir, conflict);
+  return conflict;
+}
+
+/**
+ * Remove one digest-clean managed tree by moving the accepted physical object
+ * into a durable quarantine first. Backup bytes are copied from that parked
+ * object, never from a pathname that can be replaced between check and unlink.
+ */
+function removeManagedDir(
+  ctx: RunContext,
+  agent: string,
+  name: string,
+  destDir: string,
+  expected: ManagedDirExpectedIdentity,
+): void {
+  if (expected.contentDigest === null || expected.manifestDigest === null) {
+    throw new Error(`managed skill removal requires a complete physical identity: ${destDir}`);
+  }
+  const targetParent = dirname(destDir);
+  const transactionRoot = join(targetParent, SKILL_TRANSACTION_ROOT);
+  const token = `${Buffer.from(name).toString('hex')}-${process.pid}-${Date.now()}-${randomBytes(6).toString('hex')}`;
+  const working = createExclusiveTransactionDir(transactionRoot, `${SKILL_TRANSACTION_STAGING_PREFIX}delete-${token}`);
+  const transactionDir = join(transactionRoot, `${SKILL_REMOVAL_PREFIX}${token}`);
+  const parked = join(transactionDir, 'parked');
+  const journal: ManagedDirRemovalJournal = {
+    version: 1,
+    destName: name,
+    contentDigest: expected.contentDigest,
+    manifestDigest: expected.manifestDigest,
+  };
+  writeFileSync(join(working, 'journal.json'), `${JSON.stringify(journal)}\n`, 'utf8');
+  renameSync(working, transactionDir);
+  try {
+    ctx.beforeManagedDirRemoval?.(destDir, 'before-park');
+    if (!matchesExpectedManagedDirIdentity(destDir, expected)) {
+      const conflict = preserveManagedRemovalConflict(transactionRoot, transactionDir, token);
+      throw new ManagedArtifactConflictError(
+        `managed skill changed before removal; kept live removal transaction for review at ${conflict}`,
+      );
+    }
+    ctx.renameManagedDir(destDir, parked);
+    if (!matchesManagedDirIdentity(parked, expected.contentDigest, expected.manifestDigest)) {
+      if (lstatOrNull(destDir) === null) renameSync(parked, destDir);
+      const conflict = preserveManagedRemovalConflict(transactionRoot, transactionDir, token);
+      throw new ManagedArtifactConflictError(
+        `managed skill changed while being parked for removal; preserved it at ${conflict}`,
+      );
+    }
+    ctx.backupInto(agent, name, parked);
+    ctx.beforeManagedDirRemoval?.(destDir, 'before-delete');
+    if (!matchesManagedDirIdentity(parked, expected.contentDigest, expected.manifestDigest)) {
+      const conflict = preserveManagedRemovalConflict(transactionRoot, transactionDir, token);
+      throw new ManagedArtifactConflictError(
+        `managed skill changed after removal backup; preserved exact objects at ${conflict}`,
+      );
+    }
+    writeFileSync(join(transactionDir, 'COMMITTED'), 'ok\n', 'utf8');
+    rmSync(parked, { recursive: true, force: true });
+    rmSync(transactionDir, { recursive: true, force: true });
+    removeEmptyDirSafe(transactionRoot);
+  } catch (error) {
+    if (error instanceof ManagedArtifactConflictError) throw error;
+    if (lstatSafe(parked) !== null && lstatSafe(destDir) === null) renameSync(parked, destDir);
+    throw error;
+  }
+}
+
+function recoverManagedDirRemovalTransaction(
+  targetParent: string,
+  transactionRoot: string,
+  transactionDir: string,
+  token: string,
+): void {
+  const journal = readManagedDirRemovalJournal(transactionDir);
+  const destDir = join(targetParent, journal.destName);
+  const parked = join(transactionDir, 'parked');
+  if (lstatSafe(parked) === null) {
+    rmSync(transactionDir, { recursive: true, force: true });
+    return;
+  }
+  if (!matchesManagedDirIdentity(parked, journal.contentDigest, journal.manifestDigest)) {
+    preserveManagedRemovalConflict(transactionRoot, transactionDir, token);
+    throw new Error(`managed skill removal quarantine changed: ${parked}`);
+  }
+  if (existsSync(join(transactionDir, 'COMMITTED'))) {
+    rmSync(parked, { recursive: true, force: true });
+    rmSync(transactionDir, { recursive: true, force: true });
+    return;
+  }
+  if (lstatOrNull(destDir) !== null) {
+    preserveManagedRemovalConflict(transactionRoot, transactionDir, token);
+    throw new Error(`managed skill removal recovery found a new live target: ${destDir}`);
+  }
+  renameSync(parked, destDir);
+  rmSync(transactionDir, { recursive: true, force: true });
+}
+
 function managedDirIdentity(dir: string): { contentDigest: string; manifestDigest: string } {
   const stat = lstatSafe(dir);
   if (stat === null || !stat.isDirectory() || stat.isSymbolicLink()) {
@@ -538,6 +665,20 @@ function recoverManagedDirTransactions(targetParent: string, report: AgentReport
     const transactionDir = join(transactionRoot, entry.name);
     if (entry.name.startsWith(SKILL_TRANSACTION_STAGING_PREFIX)) {
       quarantineTransactionDebris(transactionRoot, transactionDir);
+      continue;
+    }
+    if (entry.name.startsWith(SKILL_REMOVAL_PREFIX)) {
+      try {
+        recoverManagedDirRemovalTransaction(
+          targetParent,
+          transactionRoot,
+          transactionDir,
+          entry.name.slice(SKILL_REMOVAL_PREFIX.length),
+        );
+      } catch (error) {
+        blocked.add('*');
+        recordFailure(report, `managed skill removal recovery failed: ${errMsg(error)}`);
+      }
       continue;
     }
     if (!entry.name.startsWith(SKILL_TRANSACTION_PREFIX)) continue;
@@ -681,10 +822,19 @@ function removeManagedOrphans(
     if (classifyEntry(dir, entry) !== 'dir' || sourceNames.has(entry.name)) continue;
     const manifest = readManifest(dir);
     if (manifest === null) continue;
-    if (computeDirDigest(dir) === manifest.manifest.digest) {
-      ctx.backupInto(agent, entry.name, dir);
-      rmSync(dir, { recursive: true, force: true });
-      report.skills.push({ name: entry.name, action: 'removed' });
+    const contentDigest = computeDirDigest(dir);
+    if (contentDigest === manifest.manifest.digest) {
+      try {
+        removeManagedDir(ctx, agent, entry.name, dir, {
+          contentDigest,
+          manifestDigest: manifest.fileDigest,
+        });
+        report.skills.push({ name: entry.name, action: 'removed' });
+      } catch (error) {
+        const failure = `managed orphan ${entry.name} (${agent}) removal failed: ${errMsg(error)}`;
+        report.advisories.push(failure);
+        recordFailure(report, failure);
+      }
     } else {
       report.skills.push({ name: entry.name, action: 'kept-modified-orphan' });
       report.advisories.push(`kept modified orphan ${entry.name} (${agent})`);
@@ -752,6 +902,42 @@ function regularFileDigest(path: string): string | null {
   }
 }
 
+type PhysicalFileIdentity =
+  | { kind: 'absent' }
+  | { kind: 'regular'; digest: string }
+  | { kind: 'non-regular'; entry: 'directory' | 'symlink' | 'other' }
+  | { kind: 'unreadable'; code: string };
+
+function physicalFileIdentity(path: string): PhysicalFileIdentity {
+  let stat: Stats;
+  try {
+    stat = lstatSync(path);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code ?? 'UNKNOWN';
+    return code === 'ENOENT' ? { kind: 'absent' } : { kind: 'unreadable', code };
+  }
+  if (stat.isSymbolicLink()) return { kind: 'non-regular', entry: 'symlink' };
+  if (stat.isDirectory()) return { kind: 'non-regular', entry: 'directory' };
+  if (!stat.isFile()) return { kind: 'non-regular', entry: 'other' };
+  try {
+    return { kind: 'regular', digest: hashFile(path) };
+  } catch (error) {
+    return { kind: 'unreadable', code: (error as NodeJS.ErrnoException).code ?? 'UNKNOWN' };
+  }
+}
+
+function physicalIdentityEquals(left: PhysicalFileIdentity, right: PhysicalFileIdentity): boolean {
+  if (left.kind !== right.kind) return false;
+  if (left.kind === 'regular' && right.kind === 'regular') return left.digest === right.digest;
+  if (left.kind === 'non-regular' && right.kind === 'non-regular') return left.entry === right.entry;
+  if (left.kind === 'unreadable' && right.kind === 'unreadable') return left.code === right.code;
+  return left.kind === 'absent' && right.kind === 'absent';
+}
+
+function expectedPhysicalFile(digest: string | null): PhysicalFileIdentity {
+  return digest === null ? { kind: 'absent' } : { kind: 'regular', digest };
+}
+
 /** Classify council.js using only its sidecar ownership grant and recorded digest. */
 export function inspectManagedWorkflow(targetDir: string): ManagedWorkflowReport {
   const targetPath = join(targetDir, TARGET_NAME);
@@ -785,6 +971,8 @@ export function stampWorkflow(opts: {
   now?: () => Date;
   /** Test seam invoked before the final workflow CAS check. */
   beforePromotion?: () => void;
+  /** Failure-injection seam after authorization but before physical parking. */
+  afterAuthorization?: () => void;
 }): {
   action: 'written' | 'skipped' | 'kept-unmanaged' | 'kept-modified' | 'metadata-corrupt';
   targetPath: string;
@@ -826,7 +1014,7 @@ export function stampWorkflow(opts: {
   ) {
     return { action: 'kept-modified', targetPath: ownership.targetPath };
   }
-  publishWorkflowTransaction(targetDir, stamped, manifest, expected, opts.beforePromotion);
+  publishWorkflowTransaction(targetDir, stamped, manifest, expected, opts.beforePromotion, opts.afterAuthorization);
   return { action: 'written', targetPath: ownership.targetPath };
 }
 
@@ -847,6 +1035,7 @@ function publishWorkflowTransaction(
   manifest: SyncManifest,
   expected: { targetDigest: string | null; manifestDigest: string | null },
   beforePromotion?: () => void,
+  afterAuthorization?: () => void,
 ): void {
   mkdirSync(targetDir, { recursive: true });
   const targetPath = join(targetDir, TARGET_NAME);
@@ -880,21 +1069,25 @@ function publishWorkflowTransaction(
   mkdirSync(before, { recursive: true });
   try {
     beforePromotion?.();
+    const expectedTarget = expectedPhysicalFile(expected.targetDigest);
+    const expectedManifest = expectedPhysicalFile(expected.manifestDigest);
     if (
-      regularFileDigest(targetPath) !== expected.targetDigest ||
-      regularFileDigest(manifestPath) !== expected.manifestDigest
+      !physicalIdentityEquals(physicalFileIdentity(targetPath), expectedTarget) ||
+      !physicalIdentityEquals(physicalFileIdentity(manifestPath), expectedManifest)
     ) {
       const conflict = preserveWorkflowConflict(transactionDir);
       throw new ManagedArtifactConflictError(
         `council workflow changed before promotion; kept live and incoming versions for review at ${conflict}`,
       );
     }
+    afterAuthorization?.();
     if (lstatSafe(targetPath) !== null) renameSync(targetPath, join(before, TARGET_NAME));
     if (lstatSafe(manifestPath) !== null) renameSync(manifestPath, join(before, WORKFLOW_MANIFEST_NAME));
     if (
-      (expected.targetDigest !== null && regularFileDigest(join(before, TARGET_NAME)) !== expected.targetDigest) ||
-      (expected.manifestDigest !== null &&
-        regularFileDigest(join(before, WORKFLOW_MANIFEST_NAME)) !== expected.manifestDigest)
+      !physicalIdentityEquals(physicalFileIdentity(join(before, TARGET_NAME)), expectedTarget) ||
+      !physicalIdentityEquals(physicalFileIdentity(join(before, WORKFLOW_MANIFEST_NAME)), expectedManifest) ||
+      physicalFileIdentity(targetPath).kind !== 'absent' ||
+      physicalFileIdentity(manifestPath).kind !== 'absent'
     ) {
       if (lstatSafe(targetPath) === null && lstatSafe(join(before, TARGET_NAME)) !== null)
         renameSync(join(before, TARGET_NAME), targetPath);
@@ -907,6 +1100,12 @@ function publishWorkflowTransaction(
     }
     renameSync(join(publishedStaged, TARGET_NAME), targetPath);
     renameSync(join(publishedStaged, WORKFLOW_MANIFEST_NAME), manifestPath);
+    if (
+      !physicalIdentityEquals(physicalFileIdentity(targetPath), { kind: 'regular', digest: targetDigest }) ||
+      !physicalIdentityEquals(physicalFileIdentity(manifestPath), { kind: 'regular', digest: manifestDigest })
+    ) {
+      throw new Error('council workflow changed before transaction commit');
+    }
     writeFileSync(join(transactionDir, 'COMMITTED'), 'ok\n');
     rmSync(transactionDir, { recursive: true, force: true });
   } catch (error) {
@@ -1081,9 +1280,19 @@ function migrateLegacyCodexCurated(ctx: RunContext, codexDir: string, report: Ag
       report.advisories.push(`kept modified legacy codex skill ${entry.name} at ${dir}`);
       continue;
     }
-    ctx.backupInto('codex-legacy-curated', entry.name, dir);
-    rmSync(dir, { recursive: true, force: true });
-    report.extras.push({ kind: 'legacy-curated', action: 'removed', detail: dir });
+    try {
+      removeManagedDir(ctx, 'codex-legacy-curated', entry.name, dir, {
+        contentDigest: manifest.manifest.digest,
+        manifestDigest: manifest.fileDigest,
+      });
+      report.extras.push({ kind: 'legacy-curated', action: 'removed', detail: dir });
+    } catch (error) {
+      kept += 1;
+      const failure = `legacy codex skill ${entry.name} removal failed: ${errMsg(error)}`;
+      report.extras.push({ kind: 'legacy-curated', action: 'kept-modified', detail: dir });
+      report.advisories.push(failure);
+      recordFailure(report, failure);
+    }
   }
   if (kept === 0) {
     rmSync(legacyDir, { recursive: true, force: true });
@@ -1514,6 +1723,7 @@ function createRunContext(
     backupsDirIfCreated: () => backupsDir,
     renameManagedDir: opts.renameManagedDir ?? renameSync,
     beforeManagedDirPromotion: opts.beforeManagedDirPromotion,
+    beforeManagedDirRemoval: opts.beforeManagedDirRemoval,
   };
 }
 

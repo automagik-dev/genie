@@ -82,29 +82,33 @@ function refreshOneRuntime(
     return { runtime, ok: false, detail: error instanceof Error ? error.message : String(error) };
   }
   if (command === null) return null;
-  if (runtime === 'codex') {
-    return convergeCodexPlugin({
+  try {
+    if (runtime === 'codex') {
+      return convergeCodexPlugin({
+        runner,
+        command,
+        bundleRoot: options.bundleRoot,
+        expectedVersion: options.expectedVersion,
+        installIfAbsent: false,
+        configPath: options.codexConfigPath,
+        statePath: join(stateDir, '.integration-refresh-codex.json'),
+        timeoutMs,
+        codexHome: options.codexHome,
+        verifyCodexPayload: options.verifyCodexPayload,
+      });
+    }
+    return convergeClaudePlugin({
       runner,
       command,
       bundleRoot: options.bundleRoot,
       expectedVersion: options.expectedVersion,
       installIfAbsent: false,
-      configPath: options.codexConfigPath,
-      statePath: join(stateDir, '.integration-refresh-codex.json'),
+      statePath: join(stateDir, '.integration-refresh-claude.json'),
       timeoutMs,
-      codexHome: options.codexHome,
-      verifyCodexPayload: options.verifyCodexPayload,
+      claudeHome: options.claudeHome,
+      verifyClaudePayload: options.verifyClaudePayload,
     });
+  } catch (error) {
+    return { runtime, ok: false, detail: error instanceof Error ? error.message : String(error) };
   }
-  return convergeClaudePlugin({
-    runner,
-    command,
-    bundleRoot: options.bundleRoot,
-    expectedVersion: options.expectedVersion,
-    installIfAbsent: false,
-    statePath: join(stateDir, '.integration-refresh-claude.json'),
-    timeoutMs,
-    claudeHome: options.claudeHome,
-    verifyClaudePayload: options.verifyClaudePayload,
-  });
 }

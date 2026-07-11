@@ -9,6 +9,7 @@ import {
   MIGRATED_STATUS_SENTINEL,
   MalformedDbError,
   acquireServiceLease,
+  acquireServiceLeaseEpoch,
   clearAgentSessionIfCurrent,
   getAgentSession,
   insertAgentSessionIfAbsent,
@@ -124,6 +125,22 @@ describe('machine-scoped service leases', () => {
       db.close();
     }
   });
+
+  test('advances a monotonic fencing epoch only when an expired owner is replaced', () => {
+    const db = openGlobalDb();
+    try {
+      expect(acquireServiceLeaseEpoch(db, 'omni-serve', 'owner-a', 100, 50)).toBe(1);
+      expect(acquireServiceLeaseEpoch(db, 'omni-serve', 'owner-b', 149, 50)).toBeUndefined();
+      expect(acquireServiceLeaseEpoch(db, 'omni-serve', 'owner-a', 140, 50)).toBe(1);
+      expect(acquireServiceLeaseEpoch(db, 'omni-serve', 'owner-b', 190, 50)).toBe(2);
+      expect(renewServiceLease(db, 'omni-serve', 'owner-a', 191, 50, 1)).toBe(false);
+      expect(releaseServiceLease(db, 'omni-serve', 'owner-a', 1)).toBe(false);
+      expect(releaseServiceLease(db, 'omni-serve', 'owner-b', 2)).toBe(true);
+      expect(acquireServiceLeaseEpoch(db, 'omni-serve', 'owner-c', 191, 50)).toBe(3);
+    } finally {
+      db.close();
+    }
+  });
 });
 
 describe('provider session persistence', () => {
@@ -195,9 +212,33 @@ describe('openGlobalDb additive column backfill (last_status_glyph)', () => {
     const db = openGlobalDb({ path });
     try {
       expect(columns(db, 'approvals').has('last_status_glyph')).toBe(true);
-      expect(columns(db, 'approvals').has('announce_claim')).toBe(true);
-      expect(columns(db, 'inbound_messages').has('event_key')).toBe(true);
-      expect(columns(db, 'inbound_messages').has('processing_claim')).toBe(true);
+      for (const column of [
+        'announce_claim',
+        'announce_claim_owner',
+        'announce_claim_epoch',
+        'announce_claimed_at',
+        'announce_phase',
+        'announce_prior_claim',
+        'announce_prior_owner',
+        'announce_prior_epoch',
+      ]) {
+        expect(columns(db, 'approvals').has(column)).toBe(true);
+      }
+      for (const column of [
+        'event_key',
+        'processing_claim',
+        'processing_claim_owner',
+        'processing_claim_epoch',
+        'processing_claimed_at',
+        'processing_phase',
+        'outbound_event_id',
+        'outbound_subject',
+        'outbound_payload',
+        'outbound_meta',
+      ]) {
+        expect(columns(db, 'inbound_messages').has(column)).toBe(true);
+      }
+      expect(columns(db, 'service_leases').has('epoch')).toBe(true);
       const row = db.query("SELECT last_status_glyph FROM approvals WHERE id = 'appr_old'").get() as {
         last_status_glyph: string | null;
       };

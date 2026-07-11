@@ -83,6 +83,41 @@ export interface ClaimInboundFields extends RecordInboundFields {
   eventKey: string;
   /** Unpredictable process/run token used to condition every completion. */
   claimToken: string;
+  /** Resident identity and monotonic lease epoch. A higher epoch may reclaim
+   * work abandoned by an expired resident without accepting stale completion. */
+  claimOwnerId?: string;
+  claimEpoch?: number;
+}
+
+export interface DurableClaimIdentity {
+  ownerId: string;
+  epoch: number;
+  now?: number;
+}
+
+export type ApprovalAnnouncementClaimOutcome = 'claimed' | 'ambiguous' | 'unavailable';
+
+export interface ApprovalAnnouncementCompletion {
+  attached: boolean;
+  status?: ApprovalStatus;
+}
+
+export interface InboundPreparedDelivery {
+  phase: 'prepared' | 'flushed';
+  eventId: string;
+  subject: string;
+  payload: string;
+  meta: string;
+}
+
+export interface InboundClaimResult {
+  id: string;
+  mode: 'fresh' | 'resume-delivery' | 'ambiguous';
+  delivery?: InboundPreparedDelivery;
+}
+
+export interface RecoverableInboundEvent extends RecordInboundFields {
+  eventKey: string;
 }
 
 export interface InboxFilter {
@@ -243,14 +278,141 @@ export function attachOmniMessageId(db: Database, id: string, omniMessageId: str
 
 /** Claim an unannounced approval exactly once across runner processes. */
 export function claimApprovalAnnouncement(db: Database, id: string, claimToken: string): boolean {
+  return claimApprovalAnnouncementWithLease(db, id, claimToken, { ownerId: claimToken, epoch: 0 }) === 'claimed';
+}
+
+/** Claim or epoch-reclaim an approval announcement. Taking over a claim that
+ * crossed the external-send boundary is explicitly ambiguous and never
+ * silently re-sent; a pre-send claim is safe to resume. */
+export function claimApprovalAnnouncementWithLease(
+  db: Database,
+  id: string,
+  claimToken: string,
+  identity: DurableClaimIdentity,
+): ApprovalAnnouncementClaimOutcome {
+  const claimedAt = identity.now ?? Date.now();
+  const claim = db.transaction(() => {
+    const row = db
+      .query(
+        `SELECT status, omni_message_id AS omniMessageId, announce_claim AS claimToken,
+                announce_claim_owner AS ownerId, announce_claim_epoch AS epoch, announce_phase AS phase,
+                announce_prior_claim AS priorToken, announce_prior_owner AS priorOwner,
+                announce_prior_epoch AS priorEpoch
+         FROM approvals WHERE id = ?`,
+      )
+      .get(id) as {
+      status: ApprovalStatus;
+      omniMessageId: string | null;
+      claimToken: string | null;
+      ownerId: string | null;
+      epoch: number | null;
+      phase: string | null;
+      priorToken: string | null;
+      priorOwner: string | null;
+      priorEpoch: number | null;
+    } | null;
+    if (!row || row.status !== 'pending' || row.omniMessageId !== null) return 'unavailable' as const;
+    if (row.claimToken && (row.epoch ?? 0) >= identity.epoch) return 'unavailable' as const;
+    const phase = row.claimToken && (row.phase === 'sending' || row.phase === 'ambiguous') ? 'ambiguous' : 'claimed';
+    const priorToken = phase === 'ambiguous' ? (row.priorToken ?? row.claimToken) : null;
+    const priorOwner = phase === 'ambiguous' ? (row.priorOwner ?? row.ownerId) : null;
+    const priorEpoch = phase === 'ambiguous' ? (row.priorEpoch ?? row.epoch) : null;
+    const changed = db
+      .query(
+        `UPDATE approvals
+         SET announce_claim = ?, announce_claim_owner = ?, announce_claim_epoch = ?,
+             announce_claimed_at = ?, announce_phase = ?, announce_prior_claim = ?,
+             announce_prior_owner = ?, announce_prior_epoch = ?
+         WHERE id = ? AND status = 'pending' AND omni_message_id IS NULL
+           AND (announce_claim IS NULL OR COALESCE(announce_claim_epoch, 0) < ?)`,
+      )
+      .run(
+        claimToken,
+        identity.ownerId,
+        identity.epoch,
+        claimedAt,
+        phase,
+        priorToken,
+        priorOwner,
+        priorEpoch,
+        id,
+        identity.epoch,
+      ).changes;
+    return changed === 1 ? phase : ('unavailable' as const);
+  });
+  return claim.immediate();
+}
+
+export function markApprovalAnnouncementSending(
+  db: Database,
+  id: string,
+  claimToken: string,
+  identity: DurableClaimIdentity,
+): boolean {
   return (
     db
       .query(
-        `UPDATE approvals SET announce_claim = ?
-         WHERE id = ? AND status = 'pending' AND omni_message_id IS NULL AND announce_claim IS NULL`,
+        `UPDATE approvals SET announce_phase = 'sending'
+         WHERE id = ? AND announce_claim = ? AND announce_claim_owner = ? AND announce_claim_epoch = ?
+           AND announce_phase = 'claimed'`,
       )
-      .run(claimToken, id).changes === 1
+      .run(id, claimToken, identity.ownerId, identity.epoch).changes === 1
   );
+}
+
+export function markApprovalAnnouncementAmbiguous(
+  db: Database,
+  id: string,
+  claimToken: string,
+  identity: DurableClaimIdentity,
+): boolean {
+  return (
+    db
+      .query(
+        `UPDATE approvals SET announce_phase = 'ambiguous'
+         WHERE id = ? AND announce_claim = ? AND announce_claim_owner = ? AND announce_claim_epoch = ?`,
+      )
+      .run(id, claimToken, identity.ownerId, identity.epoch).changes === 1
+  );
+}
+
+/** Attach the returned external id even if the approval resolved while HTTP was
+ * in flight. The caller receives the current status and can immediately swap
+ * the ghost prompt to a terminal glyph. */
+export function finalizeApprovalAnnouncement(
+  db: Database,
+  id: string,
+  claimToken: string,
+  omniMessageId: string,
+  identity: DurableClaimIdentity,
+): ApprovalAnnouncementCompletion {
+  const finalize = db.transaction(() => {
+    const changed = db
+      .query(
+        `UPDATE approvals
+         SET omni_message_id = ?, announce_claim = NULL, announce_claim_owner = NULL,
+             announce_claim_epoch = NULL, announce_claimed_at = NULL, announce_phase = NULL,
+             announce_prior_claim = NULL, announce_prior_owner = NULL, announce_prior_epoch = NULL
+         WHERE id = ? AND omni_message_id IS NULL
+           AND ((announce_claim = ? AND announce_claim_owner = ? AND announce_claim_epoch = ?)
+             OR (announce_phase = 'ambiguous' AND announce_prior_claim = ?
+               AND announce_prior_owner = ? AND announce_prior_epoch = ?))`,
+      )
+      .run(
+        omniMessageId,
+        id,
+        claimToken,
+        identity.ownerId,
+        identity.epoch,
+        claimToken,
+        identity.ownerId,
+        identity.epoch,
+      ).changes;
+    if (changed !== 1) return { attached: false };
+    const current = db.query('SELECT status FROM approvals WHERE id = ?').get(id) as { status: ApprovalStatus } | null;
+    return { attached: true, status: current?.status };
+  });
+  return finalize.immediate();
 }
 
 /** Attach the external id only for the exact durable announcement claimant. */
@@ -260,21 +422,33 @@ export function completeApprovalAnnouncement(
   claimToken: string,
   omniMessageId: string,
 ): boolean {
-  return (
-    db
-      .query(
-        `UPDATE approvals SET omni_message_id = ?, announce_claim = NULL
-         WHERE id = ? AND status = 'pending' AND omni_message_id IS NULL AND announce_claim = ?`,
-      )
-      .run(omniMessageId, id, claimToken).changes === 1
-  );
+  return finalizeApprovalAnnouncement(db, id, claimToken, omniMessageId, {
+    ownerId: claimToken,
+    epoch: 0,
+  }).attached;
 }
 
 /** Failed sends release only their own claim so a later tick can retry. */
 export function releaseApprovalAnnouncement(db: Database, id: string, claimToken: string): boolean {
+  return releaseApprovalAnnouncementWithLease(db, id, claimToken, { ownerId: claimToken, epoch: 0 });
+}
+
+export function releaseApprovalAnnouncementWithLease(
+  db: Database,
+  id: string,
+  claimToken: string,
+  identity: DurableClaimIdentity,
+): boolean {
   return (
-    db.query('UPDATE approvals SET announce_claim = NULL WHERE id = ? AND announce_claim = ?').run(id, claimToken)
-      .changes === 1
+    db
+      .query(
+        `UPDATE approvals
+         SET announce_claim = NULL, announce_claim_owner = NULL, announce_claim_epoch = NULL,
+             announce_claimed_at = NULL, announce_phase = NULL, announce_prior_claim = NULL,
+             announce_prior_owner = NULL, announce_prior_epoch = NULL
+         WHERE id = ? AND announce_claim = ? AND announce_claim_owner = ? AND announce_claim_epoch = ?`,
+      )
+      .run(id, claimToken, identity.ownerId, identity.epoch).changes === 1
   );
 }
 
@@ -446,9 +620,48 @@ export function recordInbound(db: Database, fields: RecordInboundFields): string
  * `undefined`, so it cannot spawn, reply, or resolve twice.
  */
 export function recordAndClaimInbound(db: Database, fields: ClaimInboundFields): string | undefined {
+  return recordAndClaimInboundDelivery(db, fields)?.id;
+}
+
+function mapPreparedDelivery(row: {
+  processing_phase: string | null;
+  outbound_event_id: string | null;
+  outbound_subject: string | null;
+  outbound_payload: string | null;
+  outbound_meta: string | null;
+}): InboundPreparedDelivery | undefined {
+  if (
+    (row.processing_phase !== 'prepared' && row.processing_phase !== 'flushed') ||
+    !row.outbound_event_id ||
+    !row.outbound_subject ||
+    row.outbound_payload === null ||
+    row.outbound_meta === null
+  ) {
+    return undefined;
+  }
+  return {
+    phase: row.processing_phase,
+    eventId: row.outbound_event_id,
+    subject: row.outbound_subject,
+    payload: row.outbound_payload,
+    meta: row.outbound_meta,
+  };
+}
+
+/** Insert-or-claim one transport event with lease-epoch fencing. A higher epoch
+ * safely resumes a prepared outbox entry; takeover during workspace execution
+ * becomes explicit ambiguous state and never replays the writing prompt. */
+export function recordAndClaimInboundDelivery(
+  db: Database,
+  fields: ClaimInboundFields,
+): InboundClaimResult | undefined {
   if (!fields.eventKey || fields.eventKey.length > 256) throw new Error('Inbound event key must be 1..256 characters');
   if (!fields.claimToken || fields.claimToken.length > 256)
     throw new Error('Inbound claim token must be 1..256 characters');
+  const ownerId = fields.claimOwnerId ?? fields.claimToken;
+  const epoch = fields.claimEpoch ?? 0;
+  if (!ownerId || ownerId.length > 256) throw new Error('Inbound claim owner must be 1..256 characters');
+  if (!Number.isSafeInteger(epoch) || epoch < 0) throw new Error('Inbound claim epoch must be a non-negative integer');
   const candidateId = newId('inb');
   const receivedAt = fields.now ?? Date.now();
   const claim = db.transaction(() => {
@@ -458,41 +671,186 @@ export function recordAndClaimInbound(db: Database, fields: ClaimInboundFields):
        VALUES (?, ?, ?, ?, ?, ?, NULL, ?, NULL)
        ON CONFLICT(event_key) WHERE event_key IS NOT NULL DO NOTHING`,
     ).run(candidateId, fields.instance, fields.chat, fields.sender, fields.body, receivedAt, fields.eventKey);
-    const row = db.query('SELECT id FROM inbound_messages WHERE event_key = ?').get(fields.eventKey) as {
-      id: string;
-    } | null;
+    const row = db.query('SELECT * FROM inbound_messages WHERE event_key = ?').get(fields.eventKey) as
+      | (RawInbound & {
+          event_key: string | null;
+          processing_claim: string | null;
+          processing_claim_owner: string | null;
+          processing_claim_epoch: number | null;
+          processing_phase: string | null;
+          outbound_event_id: string | null;
+          outbound_subject: string | null;
+          outbound_payload: string | null;
+          outbound_meta: string | null;
+        })
+      | null;
     if (!row) throw new Error('Inbound event insert did not produce a row');
+    if (row.handled_at !== null) return undefined;
+    if (row.processing_claim && (row.processing_claim_epoch ?? 0) >= epoch) return undefined;
+    let phase = row.processing_phase;
+    let mode: InboundClaimResult['mode'];
+    if (phase === 'processing') {
+      phase = 'ambiguous';
+      mode = 'ambiguous';
+    } else if (phase === 'prepared' || phase === 'flushed') {
+      mode = 'resume-delivery';
+    } else if (phase === 'ambiguous') {
+      mode = 'ambiguous';
+    } else {
+      phase = 'processing';
+      mode = 'fresh';
+    }
     const claimed = db
       .query(
-        `UPDATE inbound_messages SET processing_claim = ?
-         WHERE id = ? AND handled_at IS NULL AND processing_claim IS NULL`,
+        `UPDATE inbound_messages
+         SET processing_claim = ?, processing_claim_owner = ?, processing_claim_epoch = ?,
+             processing_claimed_at = ?, processing_phase = ?
+         WHERE id = ? AND handled_at IS NULL
+           AND (processing_claim IS NULL OR COALESCE(processing_claim_epoch, 0) < ?)`,
       )
-      .run(fields.claimToken, row.id).changes;
-    return claimed === 1 ? row.id : undefined;
+      .run(fields.claimToken, ownerId, epoch, receivedAt, phase, row.id, epoch).changes;
+    if (claimed !== 1) return undefined;
+    const delivery = mapPreparedDelivery({ ...row, processing_phase: phase });
+    return { id: row.id, mode, ...(delivery ? { delivery } : {}) };
   });
   return claim.immediate();
 }
 
-/** Mark handled only for the exact processor that successfully published. */
-export function markInboundHandledIfClaimed(db: Database, id: string, claimToken: string, now = Date.now()): boolean {
+/** Bounded startup/tick scan for work owned by an older resident epoch. Core
+ * NATS is not a durable consumer, so recovery cannot depend on redelivery. */
+export function listRecoverableInbound(db: Database, residentEpoch: number, limit = 100): RecoverableInboundEvent[] {
+  const boundedLimit = Math.max(1, Math.min(Math.floor(limit), 1_000));
+  const rows = db
+    .query(
+      `SELECT instance, chat, sender, body, event_key AS eventKey
+       FROM inbound_messages
+       WHERE handled_at IS NULL
+         AND event_key IS NOT NULL
+         AND processing_phase IN ('processing', 'prepared', 'flushed', 'ambiguous')
+         AND (processing_claim IS NULL OR COALESCE(processing_claim_epoch, 0) < ?)
+       ORDER BY received_at ASC
+       LIMIT ?`,
+    )
+    .all(residentEpoch, boundedLimit) as Array<{
+    instance: string;
+    chat: string;
+    sender: string;
+    body: string;
+    eventKey: string;
+  }>;
+  return rows.map((row) => ({
+    instance: row.instance,
+    chat: row.chat,
+    sender: row.sender,
+    body: row.body,
+    eventKey: row.eventKey,
+  }));
+}
+
+const MAX_OUTBOUND_PAYLOAD_BYTES = 32 * 1024;
+
+/** Persist a bounded stable reply before touching NATS. */
+export function prepareInboundDelivery(
+  db: Database,
+  id: string,
+  claimToken: string,
+  identity: DurableClaimIdentity,
+  delivery: Omit<InboundPreparedDelivery, 'phase'>,
+): boolean {
+  if (!/^[A-Za-z0-9._:-]{1,256}$/.test(delivery.eventId)) throw new Error('Invalid outbound event id');
+  if (!delivery.subject || delivery.subject.length > 512 || /[\s\0]/u.test(delivery.subject)) {
+    throw new Error('Invalid outbound subject');
+  }
+  if (Buffer.byteLength(delivery.payload, 'utf8') > MAX_OUTBOUND_PAYLOAD_BYTES) {
+    throw new Error('Outbound payload exceeded the durable limit');
+  }
+  if (Buffer.byteLength(delivery.meta, 'utf8') > 2_048) throw new Error('Outbound metadata exceeded the durable limit');
   return (
     db
       .query(
-        `UPDATE inbound_messages SET handled_at = ?, processing_claim = NULL
-         WHERE id = ? AND handled_at IS NULL AND processing_claim = ?`,
+        `UPDATE inbound_messages
+         SET processing_phase = 'prepared', outbound_event_id = ?, outbound_subject = ?,
+             outbound_payload = ?, outbound_meta = ?
+         WHERE id = ? AND handled_at IS NULL AND processing_claim = ?
+           AND processing_claim_owner = ? AND processing_claim_epoch = ?`,
       )
-      .run(now, id, claimToken).changes === 1
+      .run(
+        delivery.eventId,
+        delivery.subject,
+        delivery.payload,
+        delivery.meta,
+        id,
+        claimToken,
+        identity.ownerId,
+        identity.epoch,
+      ).changes === 1
+  );
+}
+
+export function markInboundDeliveryFlushed(
+  db: Database,
+  id: string,
+  claimToken: string,
+  identity: DurableClaimIdentity,
+): boolean {
+  return (
+    db
+      .query(
+        `UPDATE inbound_messages SET processing_phase = 'flushed'
+         WHERE id = ? AND handled_at IS NULL AND processing_phase = 'prepared'
+           AND processing_claim = ? AND processing_claim_owner = ? AND processing_claim_epoch = ?`,
+      )
+      .run(id, claimToken, identity.ownerId, identity.epoch).changes === 1
+  );
+}
+
+/** Mark handled only for the exact processor that successfully published. */
+export function markInboundHandledIfClaimed(
+  db: Database,
+  id: string,
+  claimToken: string,
+  now = Date.now(),
+  identity?: DurableClaimIdentity,
+  requiredPhase?: 'flushed',
+): boolean {
+  const ownership = identity ? ' AND processing_claim_owner = ? AND processing_claim_epoch = ?' : '';
+  const phase = requiredPhase ? ' AND processing_phase = ?' : '';
+  const params: Array<string | number> = identity
+    ? [now, id, claimToken, identity.ownerId, identity.epoch]
+    : [now, id, claimToken];
+  if (requiredPhase) params.push(requiredPhase);
+  return (
+    db
+      .query(
+        `UPDATE inbound_messages
+         SET handled_at = ?, processing_claim = NULL, processing_claim_owner = NULL,
+             processing_claim_epoch = NULL, processing_claimed_at = NULL, processing_phase = 'delivered',
+             outbound_subject = NULL, outbound_payload = NULL, outbound_meta = NULL
+         WHERE id = ? AND handled_at IS NULL AND processing_claim = ?${ownership}${phase}`,
+      )
+      .run(...params).changes === 1
   );
 }
 
 /** Publication/processing failure returns the row to the retryable unhandled state. */
-export function releaseInboundClaim(db: Database, id: string, claimToken: string): boolean {
+export function releaseInboundClaim(
+  db: Database,
+  id: string,
+  claimToken: string,
+  identity?: DurableClaimIdentity,
+): boolean {
+  const ownership = identity ? ' AND processing_claim_owner = ? AND processing_claim_epoch = ?' : '';
+  const params = identity ? [id, claimToken, identity.ownerId, identity.epoch] : [id, claimToken];
   return (
     db
       .query(
-        'UPDATE inbound_messages SET processing_claim = NULL WHERE id = ? AND handled_at IS NULL AND processing_claim = ?',
+        `UPDATE inbound_messages
+         SET processing_claim = NULL, processing_claim_owner = NULL, processing_claim_epoch = NULL,
+             processing_claimed_at = NULL,
+             processing_phase = CASE WHEN processing_phase = 'processing' THEN NULL ELSE processing_phase END
+         WHERE id = ? AND handled_at IS NULL AND processing_claim = ?${ownership}`,
       )
-      .run(id, claimToken).changes === 1
+      .run(...params).changes === 1
   );
 }
 

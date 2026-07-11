@@ -14,6 +14,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -1624,6 +1625,68 @@ describe('durable pending delivery recovery', () => {
     }
   });
 
+  test('a crash after binary swap but before VERSION stamping repairs metadata without swapping new over new', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-pending-post-swap-crash-'));
+    const home = join(root, 'home');
+    const bin = join(home, 'bin');
+    const staging = join(bin, '.staging');
+    const extract = join(staging, 'extract-5.260711.7');
+    const tarball = join(staging, 'genie.tar.gz');
+    const journal = join(home, '.pending-delivery.json');
+    const target = join(bin, 'genie');
+    const previous = join(bin, '.previous');
+    mkdirSync(extract, { recursive: true });
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(target, 'authentic old binary');
+    writeFileSync(join(bin, 'VERSION'), '5.260711.6\n');
+    writeFileSync(join(extract, 'genie'), 'verified new binary');
+    writeFileSync(join(extract, 'VERSION'), '5.260711.7\n');
+    writeFileSync(tarball, 'verified tarball');
+    chmodSync(target, 0o755);
+    chmodSync(join(extract, 'genie'), 0o755);
+    try {
+      recordPendingDelivery(
+        {
+          version: '5.260711.7',
+          previousVersion: '5.260711.6',
+          previousBinaryPath: target,
+          extractDir: extract,
+          tarballPath: tarball,
+        },
+        journal,
+        staging,
+      );
+      const firstSwap = atomicBinarySwap(join(extract, 'genie'), target, previous, '5.260711.6', {
+        preserveSource: true,
+      });
+      expect(firstSwap.oldVersionBackup).not.toBeNull();
+      const authenticBackup = firstSwap.oldVersionBackup as string;
+      const decoy = join(previous, 'genie-5.260711.6.newer-decoy');
+      writeFileSync(decoy, 'verified new binary');
+      chmodSync(decoy, 0o755);
+      utimesSync(authenticBackup, 1, 1);
+      utimesSync(decoy, 2, 2);
+
+      expect(
+        resumePendingDelivery({
+          genieHome: home,
+          genieBin: bin,
+          stagingRoot: staging,
+          pendingPath: journal,
+          runVersion: () => `genie ${readFileSync(join(bin, 'VERSION'), 'utf8')}`,
+        }),
+      ).toBe(true);
+
+      expect(readFileSync(target, 'utf8')).toBe('verified new binary');
+      expect(readFileSync(join(bin, 'VERSION'), 'utf8')).toBe('5.260711.7\n');
+      expect(readFileSync(authenticBackup, 'utf8')).toBe('authentic old binary');
+      expect(readFileSync(decoy, 'utf8')).toBe('verified new binary');
+      expect(readdirSync(previous).filter((name) => name.startsWith('genie-5.260711.6'))).toHaveLength(2);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('a failed resume retains the verified journal and succeeds on a normal retry', () => {
     const root = mkdtempSync(join(tmpdir(), 'genie-pending-retry-'));
     const home = join(root, 'home');
@@ -2281,6 +2344,46 @@ describe('operator-driven plugin refresh', () => {
     expect(resolved).toEqual(['codex', 'claude']);
     expect(calls).toEqual(['/fixture/claude plugin list --json']);
     expect(results).toEqual([{ runtime: 'codex', ok: false, detail: 'unsafe Codex executable' }]);
+  });
+
+  test('a Codex convergence cleanup exception is isolated and Claude still runs', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-update-cross-runtime-'));
+    const configPath = join(root, 'config.toml');
+    const statePath = join(pluginStateDir, '.integration-refresh-codex.json');
+    writeFileSync(configPath, '[plugins."genie@automagik"]\nenabled = false\n');
+    let codexLists = 0;
+    const calls: string[] = [];
+    const results = refreshUpdatePlugins({
+      bundleRoot: root,
+      expectedVersion: '5.260711.3',
+      stateDir: pluginStateDir,
+      selection: 'all',
+      codexConfigPath: configPath,
+      detected: { codex: true, claude: true },
+      runner(command, args) {
+        calls.push(`${command} ${args.join(' ')}`);
+        if (command === 'claude') return { exitCode: 0, stdout: '[]', stderr: '' };
+        if (args.join(' ') === 'plugin list --json') {
+          codexLists += 1;
+          if (codexLists === 3) {
+            rmSync(statePath, { force: true });
+            mkdirSync(statePath);
+          }
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              installed: [{ pluginId: 'genie@automagik', enabled: false, version: '5.260711.3' }],
+            }),
+            stderr: '',
+          };
+        }
+        return { exitCode: 0, stdout: '{}', stderr: '' };
+      },
+    });
+
+    expect(results[0]).toMatchObject({ runtime: 'codex', ok: false });
+    expect(calls).toContain('claude plugin list --json');
+    rmSync(root, { recursive: true, force: true });
   });
 
   test('indeterminate pre-update state fails closed without installing either integration', () => {

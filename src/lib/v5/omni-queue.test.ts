@@ -10,17 +10,23 @@ import {
   UnknownInboundError,
   attachOmniMessageId,
   claimApprovalAnnouncement,
+  claimApprovalAnnouncementWithLease,
   completeApprovalAnnouncement,
   enqueueApproval,
   expireApprovalIfPending,
   expireStale,
+  finalizeApprovalAnnouncement,
   getApproval,
   listApprovalsNeedingStatusAck,
   listInbox,
   listPendingApprovals,
+  markApprovalAnnouncementSending,
   markHandled,
+  markInboundDeliveryFlushed,
   markInboundHandledIfClaimed,
+  prepareInboundDelivery,
   recordAndClaimInbound,
+  recordAndClaimInboundDelivery,
   recordInbound,
   recordStatusGlyph,
   releaseApprovalAnnouncement,
@@ -126,6 +132,38 @@ describe('approvals', () => {
     expect(releaseApprovalAnnouncement(db, id, 'runner-b')).toBe(false);
     expect(releaseApprovalAnnouncement(db, id, 'runner-a')).toBe(true);
     expect(claimApprovalAnnouncement(db, id, 'runner-b')).toBe(true);
+  });
+
+  test('a higher lease epoch reclaims a pre-send announcement and fences the abandoned owner', () => {
+    const id = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: '{}', now: 1 });
+    const ownerA = { ownerId: 'resident-a', epoch: 1, now: 10 };
+    const ownerB = { ownerId: 'resident-b', epoch: 2, now: 20 };
+    expect(claimApprovalAnnouncementWithLease(db, id, 'claim-a', ownerA)).toBe('claimed');
+    expect(claimApprovalAnnouncementWithLease(db, id, 'claim-b', ownerB)).toBe('claimed');
+    expect(finalizeApprovalAnnouncement(db, id, 'claim-a', 'stale-stanza', ownerA)).toEqual({ attached: false });
+    expect(markApprovalAnnouncementSending(db, id, 'claim-b', ownerB)).toBe(true);
+    expect(finalizeApprovalAnnouncement(db, id, 'claim-b', 'live-stanza', ownerB)).toEqual({
+      attached: true,
+      status: 'pending',
+    });
+    expect(getApproval(db, id)?.omniMessageId).toBe('live-stanza');
+  });
+
+  test('takeover after the external-send boundary is explicit ambiguous state', () => {
+    const id = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: '{}', now: 1 });
+    const ownerA = { ownerId: 'resident-a', epoch: 1, now: 10 };
+    const ownerB = { ownerId: 'resident-b', epoch: 2, now: 20 };
+    expect(claimApprovalAnnouncementWithLease(db, id, 'claim-a', ownerA)).toBe('claimed');
+    expect(markApprovalAnnouncementSending(db, id, 'claim-a', ownerA)).toBe(true);
+    expect(claimApprovalAnnouncementWithLease(db, id, 'claim-b', ownerB)).toBe('ambiguous');
+    expect(
+      finalizeApprovalAnnouncement(db, id, 'attacker', 'wrong-stanza', { ownerId: 'not-prior', epoch: 0 }),
+    ).toEqual({ attached: false });
+    expect(finalizeApprovalAnnouncement(db, id, 'claim-a', 'late-stanza', ownerA)).toEqual({
+      attached: true,
+      status: 'pending',
+    });
+    expect(getApproval(db, id)?.omniMessageId).toBe('late-stanza');
   });
 
   test('resolveApproval transitions pending -> approved and records resolver/time', () => {
@@ -350,6 +388,67 @@ describe('inbox', () => {
     expect(releaseInboundClaim(db, id, 'runner-a')).toBe(true);
     expect(recordAndClaimInbound(db, { ...fields, claimToken: 'runner-b' })).toBe(id);
     expect(listInbox(db)).toHaveLength(1);
+  });
+
+  test('lease takeover marks abandoned execution ambiguous and fences stale completion', () => {
+    const fields = { instance: 'i', chat: 'c', sender: 's', body: 'hello', eventKey: 'event-3', now: 1 };
+    const first = recordAndClaimInboundDelivery(db, {
+      ...fields,
+      claimToken: 'shared-token',
+      claimOwnerId: 'resident-a',
+      claimEpoch: 1,
+    });
+    expect(first?.mode).toBe('fresh');
+    const takeover = recordAndClaimInboundDelivery(db, {
+      ...fields,
+      now: 2,
+      claimToken: 'shared-token',
+      claimOwnerId: 'resident-b',
+      claimEpoch: 2,
+    });
+    expect(takeover).toMatchObject({ id: first?.id, mode: 'ambiguous' });
+    expect(
+      markInboundHandledIfClaimed(db, first?.id as string, 'shared-token', 3, {
+        ownerId: 'resident-a',
+        epoch: 1,
+      }),
+    ).toBe(false);
+  });
+
+  test('prepared delivery survives a kill-point takeover with the same stable event id', () => {
+    const fields = { instance: 'i', chat: 'c', sender: 's', body: 'hello', eventKey: 'event-4', now: 1 };
+    const ownerA = { ownerId: 'resident-a', epoch: 1, now: 1 };
+    const ownerB = { ownerId: 'resident-b', epoch: 2, now: 2 };
+    const first = recordAndClaimInboundDelivery(db, {
+      ...fields,
+      claimToken: 'claim-a',
+      claimOwnerId: ownerA.ownerId,
+      claimEpoch: ownerA.epoch,
+    });
+    expect(
+      prepareInboundDelivery(db, first?.id as string, 'claim-a', ownerA, {
+        eventId: 'reply-stable-1',
+        subject: 'omni.reply.i.c',
+        payload: '{"request_id":"reply-stable-1"}',
+        meta: '{"version":1,"ok":true}',
+      }),
+    ).toBe(true);
+    const takeover = recordAndClaimInboundDelivery(db, {
+      ...fields,
+      now: 2,
+      claimToken: 'claim-b',
+      claimOwnerId: ownerB.ownerId,
+      claimEpoch: ownerB.epoch,
+    });
+    expect(takeover).toMatchObject({
+      id: first?.id,
+      mode: 'resume-delivery',
+      delivery: { phase: 'prepared', eventId: 'reply-stable-1' },
+    });
+    expect(markInboundDeliveryFlushed(db, first?.id as string, 'claim-a', ownerA)).toBe(false);
+    expect(markInboundHandledIfClaimed(db, first?.id as string, 'claim-b', 3, ownerB, 'flushed')).toBe(false);
+    expect(markInboundDeliveryFlushed(db, first?.id as string, 'claim-b', ownerB)).toBe(true);
+    expect(markInboundHandledIfClaimed(db, first?.id as string, 'claim-b', 3, ownerB, 'flushed')).toBe(true);
   });
 });
 

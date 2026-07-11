@@ -38,7 +38,7 @@ import {
   superviseChild,
 } from './omni-runner.js';
 import { getAgentSession, openGlobalDb, upsertAgentSession } from './v5/global-db.js';
-import { enqueueApproval, getApproval, listInbox } from './v5/omni-queue.js';
+import { enqueueApproval, getApproval, listInbox, resolveApproval } from './v5/omni-queue.js';
 
 const INSTANCE = 'inst-A';
 const ROUTE_CHAT = 'chat-42';
@@ -140,6 +140,34 @@ describe('omni runner — inbound one-shot routing', () => {
     expect(listInbox(db)).toHaveLength(0);
   });
 
+  test('malformed inbound field types and bounds are rejected before durable side effects', async () => {
+    const db = freshDb();
+    let spawns = 0;
+    const runner = createOmniRunner({
+      db,
+      config: rt(),
+      publish: () => {},
+      spawnClaude: async () => {
+        spawns++;
+        return { stdout: 'unexpected', exitCode: 0 };
+      },
+    });
+    const subject = `omni.message.${INSTANCE}.${ROUTE_CHAT}`;
+    for (const frame of [
+      [],
+      { content: 42 },
+      { content: 'hello', sender: { name: 'attacker' } },
+      { content: 'hello', messageId: 7 },
+      { content: 'bad\0body' },
+      { content: 'x'.repeat(64 * 1024 + 1) },
+    ]) {
+      runner.handleMessage(subject, JSON.stringify(frame));
+    }
+    await runner.whenIdle();
+    expect(spawns).toBe(0);
+    expect(listInbox(db)).toHaveLength(0);
+  });
+
   test('mapped round-trip: inbound → claude → truncated reply published + markHandled', async () => {
     const db = freshDb();
     const published: Published[] = [];
@@ -199,16 +227,18 @@ describe('omni runner — inbound one-shot routing', () => {
     expect(listInbox(db)).toHaveLength(1);
   });
 
-  test('publish failure neither advances Codex thread nor handles inbound, and a redelivery can retry', async () => {
+  test('flush failure neither advances state nor replays the agent, and retries one stable outbox id', async () => {
     const db = freshDb();
     const config = rt({ routes: [{ instance: INSTANCE, chat: ROUTE_CHAT, repo: ROUTE_REPO, agent: 'codex' }] });
     let spawns = 0;
+    const attemptedPayloads: string[] = [];
     const inbound = mappedInbound('retry publication');
     const failing = createOmniRunner({
       db,
       config,
-      publish: () => {
-        throw new Error('publisher unavailable');
+      publish: (_subject, payload) => attemptedPayloads.push(payload),
+      flush: async () => {
+        throw new Error('flush unavailable after local publish');
       },
       spawnAgent: async () => {
         spawns++;
@@ -225,7 +255,10 @@ describe('omni runner — inbound one-shot routing', () => {
     const retry = createOmniRunner({
       db,
       config,
-      publish: (subject, payload) => published.push({ subject, payload }),
+      publish: (subject, payload) => {
+        attemptedPayloads.push(payload);
+        published.push({ subject, payload });
+      },
       spawnAgent: async () => {
         spawns++;
         return { stdout: 'reply', exitCode: 0, threadId: 'thread-after-publish' };
@@ -233,9 +266,76 @@ describe('omni runner — inbound one-shot routing', () => {
     });
     retry.handleMessage(...inbound);
     await retry.whenIdle();
-    expect(spawns).toBe(2);
+    expect(spawns).toBe(1); // prepared outbox retries; workspace action does not
     expect(published).toHaveLength(1);
+    expect(attemptedPayloads).toHaveLength(2);
+    expect(JSON.parse(attemptedPayloads[0]).request_id).toBe(JSON.parse(attemptedPayloads[1]).request_id);
     expect(getAgentSession(db, 'codex', INSTANCE, ROUTE_CHAT)).toBe('thread-after-publish');
+    expect(listInbox(db)[0].handledAt).not.toBeNull();
+  });
+
+  test('awaits the NATS flush boundary before committing thread and handled state', async () => {
+    const db = freshDb();
+    const published: Published[] = [];
+    let releaseFlush!: () => void;
+    const flushGate = new Promise<void>((resolve) => {
+      releaseFlush = resolve;
+    });
+    const runner = createOmniRunner({
+      db,
+      config: rt({ routes: [{ instance: INSTANCE, chat: ROUTE_CHAT, repo: ROUTE_REPO, agent: 'codex' }] }),
+      publish: (subject, payload) => published.push({ subject, payload }),
+      flush: () => flushGate,
+      spawnAgent: async () => ({ stdout: 'reply', exitCode: 0, threadId: 'thread-after-flush' }),
+    });
+    runner.handleMessage(...mappedInbound('flush first'));
+    for (let attempt = 0; attempt < 20 && published.length === 0; attempt++) await Promise.resolve();
+    expect(published).toHaveLength(1);
+    expect(getAgentSession(db, 'codex', INSTANCE, ROUTE_CHAT)).toBeUndefined();
+    expect(listInbox(db)[0].handledAt).toBeNull();
+    releaseFlush();
+    await runner.whenIdle();
+    expect(getAgentSession(db, 'codex', INSTANCE, ROUTE_CHAT)).toBe('thread-after-flush');
+    expect(listInbox(db)[0].handledAt).not.toBeNull();
+  });
+
+  test('lease takeover during execution publishes an ambiguity notice without replaying the workspace action', async () => {
+    const db = freshDb();
+    const published: Published[] = [];
+    let spawns = 0;
+    let release!: (result: SpawnClaudeResult) => void;
+    const gate = new Promise<SpawnClaudeResult>((resolve) => {
+      release = resolve;
+    });
+    const inbound = mappedInbound('potentially writing action');
+    const first = createOmniRunner({
+      db,
+      config: rt(),
+      publish: (subject, payload) => published.push({ subject, payload }),
+      claimOwner: { ownerId: 'resident-a', epoch: 1 },
+      spawnClaude: async () => {
+        spawns++;
+        return gate;
+      },
+    });
+    const successor = createOmniRunner({
+      db,
+      config: rt(),
+      publish: (subject, payload) => published.push({ subject, payload }),
+      claimOwner: { ownerId: 'resident-b', epoch: 2 },
+      spawnClaude: async () => {
+        spawns++;
+        return { stdout: 'must not run', exitCode: 0 };
+      },
+    });
+    first.handleMessage(...inbound);
+    await Promise.resolve();
+    successor.tick(); // core NATS may not redeliver; SQLite recovery is authoritative
+    await successor.whenIdle();
+    release({ stdout: 'late stale reply', exitCode: 0 });
+    await first.whenIdle();
+    expect(spawns).toBe(1);
+    expect(published.map(content)).toEqual([expect.stringContaining('did not replay')]);
     expect(listInbox(db)[0].handledAt).not.toBeNull();
   });
 
@@ -442,7 +542,7 @@ describe('omni runner — inbound one-shot routing', () => {
         config: rt(),
         publish: (subject, payload) => successPublished.push({ subject, payload }),
         spawnClaude: async () => ({
-          stdout: `reply ${secret} github_pat_AAAAAAAAAAAA Authorization: Basic dXNlcjpzdWNjZXNz Cookie: sid=success-cookie\n{"token":"success-json-token"}`,
+          stdout: `reply ${secret} github_pat_AAAAAAAAAAAA Authorization: Token success-auth-secret\nCookie: sid=success-cookie\n{"token":"success-json-token"}\npostgresql://db:success-uri-secret@db.example/app`,
           exitCode: 0,
         }),
       });
@@ -457,7 +557,7 @@ describe('omni runner — inbound one-shot routing', () => {
         publish: (subject, payload) => failurePublished.push({ subject, payload }),
         spawnClaude: async () => ({
           stdout: '',
-          stderr: `crash ${secret} sk-AAAAAAAAAAAAAAAA api-key=failure-hyphen CREDENTIAL=failure-credential SESSION=failure-session\nSet-Cookie: sid=failure-cookie`,
+          stderr: `crash ${secret} sk-AAAAAAAAAAAAAAAA api-key=failure-hyphen CREDENTIAL=failure-credential SESSION=failure-session\nProxy-Authorization: Digest response="failure-auth-secret"\nSet-Cookie: sid=failure-cookie\nredis://cache:failure-uri-secret@cache.example/0`,
           exitCode: 7,
         }),
       });
@@ -468,7 +568,7 @@ describe('omni runner — inbound one-shot routing', () => {
         expect(content(item)).not.toContain(secret);
         expect(content(item)).not.toMatch(/github_pat_|sk-AAAA/);
         expect(content(item)).not.toMatch(
-          /dXNlcjpzdWNjZXNz|success-cookie|success-json-token|failure-hyphen|failure-credential|failure-session|failure-cookie/,
+          /success-auth-secret|success-cookie|success-json-token|success-uri-secret|failure-hyphen|failure-credential|failure-session|failure-auth-secret|failure-cookie|failure-uri-secret/,
         );
         expect(content(item)).toContain('[REDACTED]');
       }
@@ -566,6 +666,42 @@ describe('omni runner — correlated approval identity + reactions', () => {
     await Promise.all([first.whenIdle(), second.whenIdle()]);
     expect(sends).toBe(1);
     expect(getApproval(db, id)?.omniMessageId).toBe('only-stanza');
+  });
+
+  test('resolution during announcement attaches the stanza and immediately reconciles a terminal glyph', async () => {
+    const db = freshDb();
+    const id = enqueueApproval(db, {
+      repo: '/r',
+      tool: 'Bash',
+      inputSummary: approvalSummary('A'),
+      now: NOW - 1,
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const reactions: ReactionCall[] = [];
+    const runner = createOmniRunner({
+      db,
+      config: rt(),
+      publish: () => {},
+      now: () => NOW,
+      sendApproval: async () => {
+        await gate;
+        return { success: true, messageId: 'resolved-in-flight' };
+      },
+      setReaction: async ({ messageId, emoji }) => {
+        reactions.push({ messageId, emoji });
+        return { success: true };
+      },
+    });
+    runner.tick();
+    await Promise.resolve();
+    resolveApproval(db, id, 'approved', 'human', NOW);
+    release();
+    await runner.whenIdle();
+    expect(getApproval(db, id)?.omniMessageId).toBe('resolved-in-flight');
+    expect(reactions).toEqual([{ messageId: 'resolved-in-flight', emoji: CHECK }]);
   });
 
   test('never transmits a legacy raw Bash preview to the approval channel', async () => {
@@ -1396,6 +1532,9 @@ describe('Codex host process boundaries', () => {
   test('outbound redaction covers auth headers, cookies, separator labels, and quoted JSON credential keys', () => {
     const samples = [
       'Authorization: Basic dXNlcjpzZWNyZXQ=',
+      'Authorization: Token alternate-token-secret',
+      'Authorization=Negotiate negotiate-secret',
+      'Proxy-Authorization: Digest username="u", response="digest-secret"',
       'Cookie: sid=cookie-secret; theme=dark',
       'Set-Cookie: session=cookie-secret; HttpOnly',
       'api-key = hyphen-secret',
@@ -1403,10 +1542,17 @@ describe('Codex host process boundaries', () => {
       'CREDENTIAL: credential-secret',
       'SESSION=session-secret',
       '{"token":"json-token-secret","credential":"json-credential-secret","session":"json-session-secret"}',
+      'postgresql://dbuser:postgres-secret@db.example/app',
+      'redis://cache:redis-secret@cache.example/0',
+      'redis://:redis-password-only@cache.example/0',
+      'mysql://root:mysql-secret@mysql.example/app',
     ];
     const redacted = redactOmniOutbound(samples.join('\n'), {});
     for (const secret of [
       'dXNlcjpzZWNyZXQ=',
+      'alternate-token-secret',
+      'negotiate-secret',
+      'digest-secret',
       'cookie-secret',
       'hyphen-secret',
       'underscore-secret',
@@ -1415,10 +1561,34 @@ describe('Codex host process boundaries', () => {
       'json-token-secret',
       'json-credential-secret',
       'json-session-secret',
+      'postgres-secret',
+      'redis-secret',
+      'redis-password-only',
+      'mysql-secret',
     ]) {
       expect(redacted).not.toContain(secret);
     }
     expect(redacted.match(/\[REDACTED\]/g)?.length).toBeGreaterThanOrEqual(samples.length);
+  });
+
+  test('redacts the full bounded diagnostic before tail selection', async () => {
+    const db = freshDb();
+    const published: Published[] = [];
+    const secret = 'tail-cut-opaque-secret';
+    const runner = createOmniRunner({
+      db,
+      config: rt(),
+      publish: (subject, payload) => published.push({ subject, payload }),
+      spawnClaude: async () => ({
+        stdout: '',
+        stderr: `Authorization: Token ${secret}${' '.repeat(700)}\nfinal cause`,
+        exitCode: 9,
+      }),
+    });
+    runner.handleMessage(...mappedInbound('fail safely'));
+    await runner.whenIdle();
+    expect(content(published[0])).not.toContain(secret);
+    expect(content(published[0])).toContain('[REDACTED]');
   });
 
   test('TERM-resistant mapped child is escalated to KILL within the bounded grace', async () => {
@@ -1587,6 +1757,7 @@ describe('Omni serve shutdown ownership', () => {
     const nats: NatsLike = {
       subscribe: () => subscription,
       publish: () => {},
+      flush: async () => {},
       close: async () => {},
     };
     const abort = new AbortController();
@@ -1656,18 +1827,24 @@ describe('Omni serve shutdown ownership', () => {
     expect(sendSettled).toBe(true);
     expect(getApproval(db, approval)?.omniMessageId).toBeNull();
 
-    // Shutdown released the aborted runner's token-conditioned claim, so a new
-    // resident can announce the same durable row instead of leaving it wedged.
+    // HTTP had already started, so shutdown records an explicit ambiguous phase.
+    // A successor epoch must not silently duplicate a possibly accepted prompt.
+    let retrySends = 0;
     const retryRunner = createOmniRunner({
       db,
       config: rt(),
       publish: () => {},
       now: () => NOW,
-      sendApproval: async () => ({ success: true, messageId: 'retry-stanza' }),
+      claimOwner: { ownerId: 'successor', epoch: 1 },
+      sendApproval: async () => {
+        retrySends++;
+        return { success: true, messageId: 'retry-stanza' };
+      },
     });
     retryRunner.tick();
     await retryRunner.whenIdle();
-    expect(getApproval(db, approval)?.omniMessageId).toBe('retry-stanza');
+    expect(retrySends).toBe(0);
+    expect(getApproval(db, approval)?.omniMessageId).toBeNull();
 
     enqueueApproval(db, {
       repo: '/r',
@@ -1735,6 +1912,7 @@ describe('Omni serve shutdown ownership', () => {
         throw new Error('subscribe-primary');
       },
       publish: () => {},
+      flush: async () => {},
       close: async () => {
         closes++;
         throw new Error('close-secondary');
@@ -1796,6 +1974,7 @@ describe('Omni serve shutdown ownership', () => {
     const nats: NatsLike = {
       subscribe: () => subscription,
       publish: () => order.push('publish'),
+      flush: async () => {},
       close: async () => {
         order.push('nats-close');
       },

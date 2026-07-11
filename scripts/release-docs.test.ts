@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { CLAUDE_ROLE_AGENT_FILES, CODEX_ROLE_PROFILE_FILES } from './fresh-install-smoke.ts';
 
 const ROOT = join(import.meta.dir, '..');
 
@@ -128,6 +129,44 @@ describe('Group E release and documentation contracts', () => {
     expect(workflow).toContain('bun run lint:plugin-executables');
     expect(pkg.scripts.check).toContain('bun run lint:plugin-executables');
     expect(pkg.scripts['check:fast']).toContain('bun run lint:plugin-executables');
+    const executableGate = read('scripts/plugin-executables-check.ts');
+    expect(executableGate).toContain("'--strict'");
+    expect(read('scripts/plugin-executables-check.test.ts')).toContain('error TS7006');
+  });
+
+  test('release gates pin exact Codex and Claude role inventories through archive extraction', () => {
+    expect(CODEX_ROLE_PROFILE_FILES).toEqual([
+      'genie-engineer-complex.toml',
+      'genie-engineer-standard.toml',
+      'genie-engineer-trivial.toml',
+      'genie-final-gate.toml',
+      'genie-fixer.toml',
+      'genie-reviewer.toml',
+      'genie-scout.toml',
+    ]);
+    expect(CLAUDE_ROLE_AGENT_FILES).toEqual([
+      'engineer-complex.md',
+      'engineer-standard.md',
+      'engineer-trivial.md',
+      'final-gate.md',
+      'fixer.md',
+      'reviewer.md',
+      'scout.md',
+    ]);
+
+    const smoke = read('scripts/fresh-install-smoke.ts');
+    for (const file of [...CODEX_ROLE_PROFILE_FILES, ...CLAUDE_ROLE_AGENT_FILES]) expect(smoke).toContain(`'${file}'`);
+    expect(smoke).toContain('checkRoleInventories(pluginRoot)');
+
+    const build = read('scripts/build-binary.sh');
+    expect(build.match(/scripts\/fresh-install-smoke\.ts/g)?.length).toBe(3);
+    const sourceSmoke = build.indexOf('bun "${REPO_ROOT}/scripts/fresh-install-smoke.ts"');
+    const stageSmoke = build.indexOf('--skills-dir "${STAGE}/skills"');
+    const extract = build.indexOf('tar -xzf "${TARBALL}"');
+    const archiveSmoke = build.indexOf('--skills-dir "${VERIFY_ROOT}/skills"');
+    expect(sourceSmoke).toBeGreaterThan(-1);
+    expect(stageSmoke).toBeGreaterThan(sourceSmoke);
+    expect(archiveSmoke).toBeGreaterThan(extract);
   });
 
   test('resurrected metrics bot and incompatible generated state stay retired', () => {
@@ -214,6 +253,29 @@ describe('Group E release and documentation contracts', () => {
     expect(docs).toContain('separately installed personal');
     const manifest = read('plugins/genie/.codex-plugin/plugin.json');
     for (const skill of ['wish', 'work', 'review']) expect(manifest).toContain(`$genie:${skill}`);
+
+    const skillsOverview = read('skills/README.md');
+    expect(skillsOverview).toContain(
+      'Codex user tier (a CLI-managed product fallback or separately installed personal copy)',
+    );
+    expect(skillsOverview).toContain('persists Codex maintenance consent');
+    expect(skillsOverview).toContain('later explicit `genie update`');
+  });
+
+  test('lifecycle and operator docs name design, plan, and implementation review as distinct mandatory gates', () => {
+    const lifecycle = read('skills/genie/reference/lifecycle.md');
+    const plugin = read('plugins/genie/README.md');
+    const root = read('README.md');
+    for (const term of ['design review', 'plan review', 'implementation review']) {
+      expect(lifecycle).toContain(term);
+      expect(plugin).toContain(term);
+      expect(root).toContain(term);
+    }
+    expect(lifecycle).toContain('automatically routes the completed DESIGN.md');
+    expect(plugin).toContain('successful `genie setup --codex` persists Codex maintenance consent');
+    expect(root).toContain('successful Codex setup also persists Codex maintenance consent');
+    expect(plugin).toContain('clean digest-managed product-skill');
+    expect(root).toContain('digest-managed product-skill fallbacks');
   });
 
   test('lifecycle skills share persisted WISH state and keep reviewers read-only', () => {

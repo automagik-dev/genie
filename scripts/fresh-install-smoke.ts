@@ -28,6 +28,61 @@ export function repositoryRootFromModuleUrl(moduleUrl: string): string {
 
 const REPO_ROOT = repositoryRootFromModuleUrl(import.meta.url);
 
+export const CODEX_ROLE_PROFILE_FILES = [
+  'genie-engineer-complex.toml',
+  'genie-engineer-standard.toml',
+  'genie-engineer-trivial.toml',
+  'genie-final-gate.toml',
+  'genie-fixer.toml',
+  'genie-reviewer.toml',
+  'genie-scout.toml',
+] as const;
+
+export const CLAUDE_ROLE_AGENT_FILES = [
+  'engineer-complex.md',
+  'engineer-standard.md',
+  'engineer-trivial.md',
+  'final-gate.md',
+  'fixer.md',
+  'reviewer.md',
+  'scout.md',
+] as const;
+
+const CODEX_ROLE_PROFILE_CONTRACTS = {
+  'genie-engineer-complex.toml': {
+    name: 'genie_engineer_complex',
+    effort: 'xhigh',
+    sandboxMode: 'workspace-write',
+  },
+  'genie-engineer-standard.toml': {
+    name: 'genie_engineer_standard',
+    effort: 'high',
+    sandboxMode: 'workspace-write',
+  },
+  'genie-engineer-trivial.toml': {
+    name: 'genie_engineer_trivial',
+    effort: 'low',
+    sandboxMode: 'workspace-write',
+  },
+  'genie-final-gate.toml': { name: 'genie_final_gate', effort: 'high', sandboxMode: 'read-only' },
+  'genie-fixer.toml': { name: 'genie_fixer', effort: 'medium', sandboxMode: 'workspace-write' },
+  'genie-reviewer.toml': { name: 'genie_reviewer', effort: 'xhigh', sandboxMode: null },
+  'genie-scout.toml': { name: 'genie_scout', effort: 'low', sandboxMode: 'read-only' },
+} as const satisfies Record<
+  (typeof CODEX_ROLE_PROFILE_FILES)[number],
+  { name: string; effort: string; sandboxMode: 'workspace-write' | 'read-only' | null }
+>;
+
+const CLAUDE_ROLE_AGENT_CONTRACTS = {
+  'engineer-complex.md': { name: 'engineer-complex', model: 'opus', effort: 'xhigh' },
+  'engineer-standard.md': { name: 'engineer-standard', model: 'opus', effort: 'high' },
+  'engineer-trivial.md': { name: 'engineer-trivial', model: 'opus', effort: 'low' },
+  'final-gate.md': { name: 'final-gate', model: 'fable', effort: 'high' },
+  'fixer.md': { name: 'fixer', model: 'opus', effort: 'medium' },
+  'reviewer.md': { name: 'reviewer', model: 'opus', effort: 'xhigh' },
+  'scout.md': { name: 'scout', model: 'haiku', effort: 'low' },
+} as const satisfies Record<(typeof CLAUDE_ROLE_AGENT_FILES)[number], { name: string; model: string; effort: string }>;
+
 class SmokeFailure extends Error {}
 
 function fail(message: string): never {
@@ -80,6 +135,95 @@ function listSkillNames(skillsDir: string): string[] {
 function isWithin(root: string, candidate: string): boolean {
   const rel = relative(root, candidate);
   return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !rel.startsWith(sep));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function exactPhysicalFiles(root: string, relativeDir: string, expected: readonly string[]): string {
+  const directory = join(root, relativeDir);
+  if (!existsSync(directory) || !lstatSync(directory).isDirectory()) fail(`role directory not found: ${directory}`);
+  if (lstatSync(directory).isSymbolicLink()) fail(`role directory must be physical: ${directory}`);
+  const entries = readdirSync(directory, { withFileTypes: true });
+  const names = entries.map((entry) => entry.name).sort();
+  if (names.join('\n') !== [...expected].sort().join('\n')) {
+    fail(`${relativeDir} role inventory differs (expected ${expected.join(', ')}, got ${names.join(', ')})`);
+  }
+  for (const entry of entries) {
+    const file = join(directory, entry.name);
+    if (!entry.isFile() || entry.isSymbolicLink() || lstatSync(file).isSymbolicLink()) {
+      fail(`role profile must be a physical file: ${file}`);
+    }
+  }
+  return directory;
+}
+
+function checkCodexRoleProfiles(pluginRoot: string): void {
+  const directory = exactPhysicalFiles(pluginRoot, 'codex-agents', CODEX_ROLE_PROFILE_FILES);
+  for (const fileName of CODEX_ROLE_PROFILE_FILES) {
+    const file = join(directory, fileName);
+    let parsed: unknown;
+    try {
+      parsed = Bun.TOML.parse(readFileSync(file, 'utf8'));
+    } catch (error) {
+      fail(`${fileName} is not parseable TOML: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    const contract = CODEX_ROLE_PROFILE_CONTRACTS[fileName];
+    const accessMatches =
+      contract.sandboxMode === null
+        ? parsed !== undefined &&
+          isRecord(parsed) &&
+          parsed.approval_policy === 'never' &&
+          parsed.default_permissions === ':read-only' &&
+          parsed.sandbox_mode === undefined
+        : parsed !== undefined && isRecord(parsed) && parsed.sandbox_mode === contract.sandboxMode;
+    if (
+      !isRecord(parsed) ||
+      parsed.name !== contract.name ||
+      parsed.model_reasoning_effort !== contract.effort ||
+      !accessMatches ||
+      typeof parsed.description !== 'string' ||
+      parsed.description.trim() === '' ||
+      typeof parsed.developer_instructions !== 'string' ||
+      parsed.developer_instructions.trim() === ''
+    ) {
+      fail(`${fileName} must match the canonical ${contract.name} role contract`);
+    }
+  }
+}
+
+function checkClaudeRoleAgents(pluginRoot: string): void {
+  const directory = exactPhysicalFiles(pluginRoot, 'agents', CLAUDE_ROLE_AGENT_FILES);
+  for (const fileName of CLAUDE_ROLE_AGENT_FILES) {
+    const file = join(directory, fileName);
+    const raw = readFileSync(file, 'utf8');
+    const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(raw);
+    if (!frontmatter) fail(`${fileName} must start with closed YAML frontmatter`);
+    let parsed: unknown;
+    try {
+      parsed = Bun.YAML.parse(frontmatter[1]);
+    } catch (error) {
+      fail(`${fileName} is not parseable YAML: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    const contract = CLAUDE_ROLE_AGENT_CONTRACTS[fileName];
+    if (
+      !isRecord(parsed) ||
+      parsed.name !== contract.name ||
+      typeof parsed.description !== 'string' ||
+      parsed.description.trim() === '' ||
+      parsed.model !== contract.model ||
+      parsed.effort !== contract.effort ||
+      raw.slice(frontmatter[0].length).trim() === ''
+    ) {
+      fail(`${fileName} must match the canonical ${contract.name} role contract`);
+    }
+  }
+}
+
+function checkRoleInventories(pluginRoot: string): void {
+  checkCodexRoleProfiles(pluginRoot);
+  checkClaudeRoleAgents(pluginRoot);
 }
 
 function checkMetadata(skillsDir: string, names: string[]): void {
@@ -257,6 +401,7 @@ function checkPluginLayout(pluginRoot: string, canonicalSkills: string, expected
   });
   checkStarterPrompts(manifest, expectedNames);
   checkPluginMcpLayout(pluginRoot, manifest);
+  checkRoleInventories(pluginRoot);
 }
 
 /** Copy the plugin exactly as a source marketplace does, without dereferencing links. */
@@ -351,8 +496,9 @@ function main(): void {
       checkSourceCopy(args.pluginRoot, args.skillsDir, names);
       checkCacheCopy(args.pluginRoot, args.skillsDir, names);
     }
+    const roleSummary = args.pluginRoot ? ', 7 Codex + 7 Claude role profiles' : '';
     console.log(
-      `fresh-install-smoke: OK (${names.length} valid skills, ${refs} bundled references, source/package parity, Claude variables unset)`,
+      `fresh-install-smoke: OK (${names.length} valid skills, ${refs} bundled references${roleSummary}, source/package parity, Claude variables unset)`,
     );
   } catch (error) {
     if (!(error instanceof SmokeFailure)) throw error;

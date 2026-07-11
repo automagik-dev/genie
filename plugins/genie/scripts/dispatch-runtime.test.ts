@@ -282,6 +282,53 @@ describe('dispatch-runtime launcher', () => {
     expect((await run('claude')).code).toBe(7);
   });
 
+  test('Claude fails closed when a timed-out fake child exits zero after termination', async () => {
+    process.env.GENIE_HOOK_CHILD_TIMEOUT_MS = '100';
+    process.env.GENIE_HOOK_KILL_GRACE_MS = '20';
+    fakeGenie("process.on('SIGTERM', () => process.exit(0)); setInterval(() => {}, 10_000);");
+
+    const result = await run('claude');
+
+    expect(result.code).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('Genie hook dispatcher timed out');
+  });
+
+  test('Claude fails closed when a close-zero fake child exceeds stdout or stderr bounds', async () => {
+    fakeGenie("process.stdout.write('x'.repeat(1024 * 1024));");
+    const stdoutOverflow = await run('claude');
+    expect(stdoutOverflow.code).toBe(1);
+    expect(stdoutOverflow.stdout).toBe('');
+    expect(stdoutOverflow.stderr).toContain('output exceeded the safety limit');
+
+    fakeGenie("process.stderr.write('x'.repeat(1024 * 1024));");
+    const stderrOverflow = await run('claude');
+    expect(stderrOverflow.code).toBe(1);
+    expect(stderrOverflow.stdout).toBe('');
+    expect(Buffer.byteLength(stderrOverflow.stderr)).toBeLessThan(70 * 1024);
+    expect(stderrOverflow.stderr).toContain('[genie hook launcher: stderr truncated]');
+    expect(stderrOverflow.stderr).toContain('stderr exceeded the safety limit');
+  });
+
+  test('Claude fails closed when the dispatcher cannot spawn', async () => {
+    const asyncFailure = await run('claude', payload(), {
+      resolveCommand: () => ({ command: join(root, 'missing-genie'), shell: false }),
+    });
+    expect(asyncFailure.code).toBe(1);
+    expect(asyncFailure.stdout).toBe('');
+    expect(asyncFailure.stderr).toContain('could not start Genie hook dispatcher');
+
+    const synchronousFailure = await run('claude', payload(), {
+      resolveCommand: () => ({ command: '/fixture/genie', shell: false }),
+      spawn: () => {
+        throw new Error('fixture spawn failed');
+      },
+    });
+    expect(synchronousFailure.code).toBe(1);
+    expect(synchronousFailure.stdout).toBe('');
+    expect(synchronousFailure.stderr).toContain('fixture spawn failed');
+  });
+
   test('spawn failures fail closed without an unhandled stdin error', async () => {
     const result = await run('codex', payload('PermissionRequest'), {
       resolveCommand: () => ({ command: join(root, 'missing-genie'), shell: false }),

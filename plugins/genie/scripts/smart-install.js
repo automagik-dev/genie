@@ -453,10 +453,16 @@ function agentSyncThrottleAllows() {
 }
 
 /**
+ * @typedef {{kind: 'absent' | 'opaque'} | {kind: 'regular', content: string, dev: number, ino: number, size: number, mtimeMs: number}} AgentSyncMarker
+ */
+
+/**
  * Capture enough marker identity to distinguish a legacy child's write from a
  * pre-existing marker and from a replacement that races failure cleanup. A
  * non-regular or unstable path is deliberately opaque: cleanup then fails
  * closed and leaves it untouched.
+ * @param {string} [path]
+ * @returns {AgentSyncMarker}
  */
 function captureAgentSyncMarker(path = AGENT_SYNC_MARKER) {
   try {
@@ -482,10 +488,13 @@ function captureAgentSyncMarker(path = AGENT_SYNC_MARKER) {
       mtimeMs: after.mtimeMs,
     };
   } catch (error) {
-    return error?.code === 'ENOENT' ? { kind: 'absent' } : { kind: 'opaque' };
+    return error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT'
+      ? { kind: 'absent' }
+      : { kind: 'opaque' };
   }
 }
 
+/** @param {AgentSyncMarker} a @param {AgentSyncMarker} b */
 function sameAgentSyncMarker(a, b) {
   return (
     a.kind === 'regular' &&
@@ -499,6 +508,7 @@ function sameAgentSyncMarker(a, b) {
 }
 
 /** Restore bytes only when no concurrent writer has recreated the marker. */
+/** @param {string} content */
 function restoreAgentSyncMarkerIfAbsent(content) {
   let fd;
   try {
@@ -525,6 +535,9 @@ function restoreAgentSyncMarkerIfAbsent(content) {
  * a replacement racing the cleanup remains at the canonical path. Any older
  * marker is restored with create-if-absent semantics, so it cannot clobber a
  * concurrent success.
+ * @param {AgentSyncMarker} before
+ * @param {number} startedAt
+ * @param {number} finishedAt
  */
 function discardFailedLegacySyncMarker(before, startedAt, finishedAt) {
   if (before.kind === 'opaque') return;
@@ -588,21 +601,26 @@ function discardFailedLegacySyncMarker(before, startedAt, finishedAt) {
 // with this plugin version; auto-versioning bumps past .9 on release). A dev
 // build still reporting .9 takes the env-only path, which flag-aware binaries
 // honor identically.
+/** @type {[number, number, number]} */
 const SYNC_ENV_AWARE_MIN = [5, 260710, 5];
+/** @type {[number, number, number]} */
 const SYNC_FLAG_AWARE_MIN = [5, 260710, 10];
 // 5.260711.6 is the first release where BOTH sides of this handoff share the
 // lifecycle lease and the child writes .last-agent-sync only after complete
 // convergence. Published .10–.14 and 5.260711.1–.5 remain parent-serialized;
 // current/new children must acquire the lease themselves to avoid self-deadlock.
+/** @type {[number, number, number]} */
 const SYNC_SUCCESS_ONLY_AND_SELF_SERIALIZING_MIN = [5, 260711, 6];
 
 /** Extract [major, minor, patch] from `genie --version` output, or null. */
+/** @param {string} raw @returns {[number, number, number] | null} */
 function parseGenieVersion(raw) {
   const m = /(\d+)\.(\d+)\.(\d+)/.exec(raw || '');
   return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
 }
 
 /** Numeric triple compare: negative when a < b, 0 when equal, positive when a > b. */
+/** @param {[number, number, number]} a @param {[number, number, number]} b */
 function compareVersions(a, b) {
   for (let i = 0; i < 3; i++) {
     if (a[i] !== b[i]) return a[i] - b[i];
@@ -611,6 +629,7 @@ function compareVersions(a, b) {
 }
 
 /** Probe the resolved binary's version (5s cap, no network). Null on any failure. */
+/** @param {string} geniePath */
 function probeGenieVersion(geniePath) {
   try {
     const result = spawnSync(geniePath, ['--version'], {
@@ -634,6 +653,7 @@ function probeGenieVersion(geniePath) {
  * start. Returns true when the delegated sync succeeded; on false the caller
  * stamps /council in-hook.
  */
+/** @param {string} geniePath */
 function delegateAgentSync(geniePath) {
   const version = probeGenieVersion(geniePath);
   if (!version || compareVersions(version, SYNC_ENV_AWARE_MIN) < 0) {
@@ -676,19 +696,21 @@ function delegateAgentSync(geniePath) {
     if (!selfSerializing && markerBefore !== undefined) {
       discardFailedLegacySyncMarker(markerBefore, startedAt, Date.now());
     }
-    console.error(`Warning: agent sync via genie update failed: ${e.message}`);
+    console.error(`Warning: agent sync via genie update failed: ${e instanceof Error ? e.message : String(e)}`);
     return false;
   } finally {
     releaseParentLease?.();
   }
 }
 
+/** @param {string} genieHome */
 function lifecycleLockPath(genieHome) {
   const canonical = resolve(genieHome);
   const suffix = createHash('sha256').update(canonical).digest('hex').slice(0, 16);
   return join(dirname(canonical), `.genie-lifecycle-${suffix}.lock`);
 }
 
+/** @param {number} pid */
 function processStartIdentity(pid) {
   let marker;
   try {
@@ -787,7 +809,7 @@ function stampCouncilFallback() {
       console.error(`Stamped /council workflow to ${stampResult.targetPath}`);
     }
   } catch (e) {
-    console.error(`Warning: could not stamp /council workflow: ${e.message}`);
+    console.error(`Warning: could not stamp /council workflow: ${e instanceof Error ? e.message : String(e)}`);
   } finally {
     releaseLease();
   }
@@ -864,14 +886,14 @@ try {
   try {
     createDefaultConfig();
   } catch (e) {
-    console.error(`Warning: Could not create default config: ${e.message}`);
+    console.error(`Warning: Could not create default config: ${e instanceof Error ? e.message : String(e)}`);
   }
 
   // 3b. Configure tmux TUI (scripts + config on first run)
   try {
     configureTmux();
   } catch (e) {
-    console.error(`Warning: Could not configure tmux TUI: ${e.message}`);
+    console.error(`Warning: Could not configure tmux TUI: ${e instanceof Error ? e.message : String(e)}`);
   }
 
   // 4. Advise on genie CLI install if missing (non-fatal, no network in-hook)
@@ -883,7 +905,7 @@ try {
   // Don't say "continuing anyway" — be specific about what failed and what to do.
   console.error('');
   console.error('Genie setup failed: Bun runtime could not be installed.');
-  console.error(`  Error: ${e.message}`);
+  console.error(`  Error: ${e instanceof Error ? e.message : String(e)}`);
   console.error('');
   console.error('What to do:');
   console.error('  1. Install Bun manually: curl -fsSL https://bun.com/install | bash');

@@ -99,12 +99,31 @@ function schemaIsCurrent(db: Database): boolean {
     unique: number;
     partial: number;
   }>;
+  const serviceCols = new Set(
+    (db.query('PRAGMA table_info(service_leases)').all() as Array<{ name: string }>).map((c) => c.name),
+  );
   const eventKeyIndex = inboundIndexes.find((index) => index.name === 'idx_inbound_event_key');
   return (
     approvalCols.has('last_status_glyph') &&
     approvalCols.has('announce_claim') &&
     inboundCols.has('event_key') &&
     inboundCols.has('processing_claim') &&
+    inboundCols.has('processing_claim_owner') &&
+    inboundCols.has('processing_claim_epoch') &&
+    inboundCols.has('processing_claimed_at') &&
+    inboundCols.has('processing_phase') &&
+    inboundCols.has('outbound_event_id') &&
+    inboundCols.has('outbound_subject') &&
+    inboundCols.has('outbound_payload') &&
+    inboundCols.has('outbound_meta') &&
+    approvalCols.has('announce_claim_owner') &&
+    approvalCols.has('announce_claim_epoch') &&
+    approvalCols.has('announce_claimed_at') &&
+    approvalCols.has('announce_phase') &&
+    approvalCols.has('announce_prior_claim') &&
+    approvalCols.has('announce_prior_owner') &&
+    approvalCols.has('announce_prior_epoch') &&
+    serviceCols.has('epoch') &&
     eventKeyIndex?.unique === 1 &&
     eventKeyIndex.partial === 1
   );
@@ -124,7 +143,14 @@ CREATE TABLE IF NOT EXISTS approvals (
   created_at    INTEGER NOT NULL,
   resolved_at   INTEGER,
   last_status_glyph TEXT,
-  announce_claim TEXT
+  announce_claim TEXT,
+  announce_claim_owner TEXT,
+  announce_claim_epoch INTEGER,
+  announce_claimed_at INTEGER,
+  announce_phase TEXT,
+  announce_prior_claim TEXT,
+  announce_prior_owner TEXT,
+  announce_prior_epoch INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS inbound_messages (
@@ -136,7 +162,15 @@ CREATE TABLE IF NOT EXISTS inbound_messages (
   received_at INTEGER NOT NULL,
   handled_at  INTEGER,
   event_key TEXT,
-  processing_claim TEXT
+  processing_claim TEXT,
+  processing_claim_owner TEXT,
+  processing_claim_epoch INTEGER,
+  processing_claimed_at INTEGER,
+  processing_phase TEXT,
+  outbound_event_id TEXT,
+  outbound_subject TEXT,
+  outbound_payload TEXT,
+  outbound_meta TEXT
 );
 
 CREATE TABLE IF NOT EXISTS agent_sessions (
@@ -151,7 +185,8 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
 CREATE TABLE IF NOT EXISTS service_leases (
   name       TEXT PRIMARY KEY,
   owner_id   TEXT NOT NULL,
-  expires_at INTEGER NOT NULL
+  expires_at INTEGER NOT NULL,
+  epoch      INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status);
@@ -246,6 +281,7 @@ export function ensureSchema(db: Database): void {
   db.exec(SCHEMA_SQL);
   ensureApprovalColumns(db);
   ensureInboundColumns(db);
+  ensureServiceLeaseColumns(db);
 }
 
 /**
@@ -267,6 +303,13 @@ function ensureApprovalColumns(db: Database): void {
     db.query(`UPDATE approvals SET last_status_glyph = ? WHERE status != 'pending'`).run(MIGRATED_STATUS_SENTINEL);
   }
   if (!cols.has('announce_claim')) db.exec('ALTER TABLE approvals ADD COLUMN announce_claim TEXT');
+  if (!cols.has('announce_claim_owner')) db.exec('ALTER TABLE approvals ADD COLUMN announce_claim_owner TEXT');
+  if (!cols.has('announce_claim_epoch')) db.exec('ALTER TABLE approvals ADD COLUMN announce_claim_epoch INTEGER');
+  if (!cols.has('announce_claimed_at')) db.exec('ALTER TABLE approvals ADD COLUMN announce_claimed_at INTEGER');
+  if (!cols.has('announce_phase')) db.exec('ALTER TABLE approvals ADD COLUMN announce_phase TEXT');
+  if (!cols.has('announce_prior_claim')) db.exec('ALTER TABLE approvals ADD COLUMN announce_prior_claim TEXT');
+  if (!cols.has('announce_prior_owner')) db.exec('ALTER TABLE approvals ADD COLUMN announce_prior_owner TEXT');
+  if (!cols.has('announce_prior_epoch')) db.exec('ALTER TABLE approvals ADD COLUMN announce_prior_epoch INTEGER');
 }
 
 function ensureInboundColumns(db: Database): void {
@@ -275,33 +318,105 @@ function ensureInboundColumns(db: Database): void {
   );
   if (!cols.has('event_key')) db.exec('ALTER TABLE inbound_messages ADD COLUMN event_key TEXT');
   if (!cols.has('processing_claim')) db.exec('ALTER TABLE inbound_messages ADD COLUMN processing_claim TEXT');
+  if (!cols.has('processing_claim_owner'))
+    db.exec('ALTER TABLE inbound_messages ADD COLUMN processing_claim_owner TEXT');
+  if (!cols.has('processing_claim_epoch'))
+    db.exec('ALTER TABLE inbound_messages ADD COLUMN processing_claim_epoch INTEGER');
+  if (!cols.has('processing_claimed_at'))
+    db.exec('ALTER TABLE inbound_messages ADD COLUMN processing_claimed_at INTEGER');
+  if (!cols.has('processing_phase')) db.exec('ALTER TABLE inbound_messages ADD COLUMN processing_phase TEXT');
+  if (!cols.has('outbound_event_id')) db.exec('ALTER TABLE inbound_messages ADD COLUMN outbound_event_id TEXT');
+  if (!cols.has('outbound_subject')) db.exec('ALTER TABLE inbound_messages ADD COLUMN outbound_subject TEXT');
+  if (!cols.has('outbound_payload')) db.exec('ALTER TABLE inbound_messages ADD COLUMN outbound_payload TEXT');
+  if (!cols.has('outbound_meta')) db.exec('ALTER TABLE inbound_messages ADD COLUMN outbound_meta TEXT');
   db.exec(
     'CREATE UNIQUE INDEX IF NOT EXISTS idx_inbound_event_key ON inbound_messages(event_key) WHERE event_key IS NOT NULL',
   );
 }
 
+function ensureServiceLeaseColumns(db: Database): void {
+  const cols = new Set(
+    (db.query('PRAGMA table_info(service_leases)').all() as Array<{ name: string }>).map((c) => c.name),
+  );
+  if (!cols.has('epoch')) db.exec('ALTER TABLE service_leases ADD COLUMN epoch INTEGER NOT NULL DEFAULT 1');
+}
+
+/** Acquire a lease and return its monotonic fencing epoch. A takeover advances
+ * the epoch, allowing durable row claims from an expired resident to be
+ * distinguished from live work owned by the current resident. */
+export function acquireServiceLeaseEpoch(
+  db: Database,
+  name: string,
+  ownerId: string,
+  now: number,
+  ttlMs: number,
+): number | undefined {
+  const acquire = db.transaction(() => {
+    const current = db
+      .query('SELECT owner_id AS ownerId, expires_at AS expiresAt, epoch FROM service_leases WHERE name = ?')
+      .get(name) as { ownerId: string; expiresAt: number; epoch: number } | null;
+    if (!current) {
+      db.query('INSERT INTO service_leases(name, owner_id, expires_at, epoch) VALUES (?, ?, ?, 1)').run(
+        name,
+        ownerId,
+        now + ttlMs,
+      );
+      return 1;
+    }
+    if (current.ownerId === ownerId) {
+      db.query('UPDATE service_leases SET expires_at = ? WHERE name = ? AND owner_id = ? AND epoch = ?').run(
+        now + ttlMs,
+        name,
+        ownerId,
+        current.epoch,
+      );
+      return current.epoch;
+    }
+    if (current.expiresAt > now) return undefined;
+    const nextEpoch = current.epoch + 1;
+    db.query('UPDATE service_leases SET owner_id = ?, expires_at = ?, epoch = ? WHERE name = ?').run(
+      ownerId,
+      now + ttlMs,
+      nextEpoch,
+      name,
+    );
+    return nextEpoch;
+  });
+  return acquire.immediate();
+}
+
 /** Acquire a named machine-scoped lease with one atomic conditional upsert. */
 export function acquireServiceLease(db: Database, name: string, ownerId: string, now: number, ttlMs: number): boolean {
-  const result = db
-    .query(
-      `INSERT INTO service_leases(name, owner_id, expires_at)
-       VALUES (?, ?, ?)
-       ON CONFLICT(name) DO UPDATE SET owner_id = excluded.owner_id, expires_at = excluded.expires_at
-       WHERE service_leases.expires_at <= ? OR service_leases.owner_id = excluded.owner_id`,
-    )
-    .run(name, ownerId, now + ttlMs, now);
-  return result.changes === 1;
+  return acquireServiceLeaseEpoch(db, name, ownerId, now, ttlMs) !== undefined;
 }
 
 /** Renew only the exact owner; false fences a resident whose lease was lost. */
-export function renewServiceLease(db: Database, name: string, ownerId: string, now: number, ttlMs: number): boolean {
-  const result = db
-    .query('UPDATE service_leases SET expires_at = ? WHERE name = ? AND owner_id = ?')
-    .run(now + ttlMs, name, ownerId);
+export function renewServiceLease(
+  db: Database,
+  name: string,
+  ownerId: string,
+  now: number,
+  ttlMs: number,
+  epoch?: number,
+): boolean {
+  const result =
+    epoch === undefined
+      ? db
+          .query('UPDATE service_leases SET expires_at = ? WHERE name = ? AND owner_id = ?')
+          .run(now + ttlMs, name, ownerId)
+      : db
+          .query('UPDATE service_leases SET expires_at = ? WHERE name = ? AND owner_id = ? AND epoch = ?')
+          .run(now + ttlMs, name, ownerId, epoch);
   return result.changes === 1;
 }
 
 /** Release only the exact owner token. */
-export function releaseServiceLease(db: Database, name: string, ownerId: string): boolean {
-  return db.query('DELETE FROM service_leases WHERE name = ? AND owner_id = ?').run(name, ownerId).changes === 1;
+export function releaseServiceLease(db: Database, name: string, ownerId: string, epoch?: number): boolean {
+  const result =
+    epoch === undefined
+      ? db.query('UPDATE service_leases SET expires_at = 0 WHERE name = ? AND owner_id = ?').run(name, ownerId)
+      : db
+          .query('UPDATE service_leases SET expires_at = 0 WHERE name = ? AND owner_id = ? AND epoch = ?')
+          .run(name, ownerId, epoch);
+  return result.changes === 1;
 }

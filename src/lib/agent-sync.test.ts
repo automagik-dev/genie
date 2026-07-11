@@ -61,6 +61,7 @@ const {
     version?: string | null;
     now?: () => Date;
     beforePromotion?: () => void;
+    afterAuthorization?: () => void;
   }) => {
     action: 'written' | 'skipped' | 'kept-unmanaged' | 'kept-modified' | 'metadata-corrupt';
     targetPath: string;
@@ -420,6 +421,47 @@ describe('managed orphan handling', () => {
     expect(skillAction(claude, 'beta')).toBe('kept-modified-orphan');
     expect(existsSync(join(betaDir, 'SKILL.md'))).toBe(true);
     expect(claude.advisories.some((line) => line.includes('kept modified orphan beta'))).toBe(true);
+  });
+
+  test('an orphan edit after classification is never deleted and no stale backup is presented as exact', () => {
+    present(fixture.claudeDir);
+    run();
+    const betaDir = join(fixture.claudeDir, 'skills', 'beta');
+    rmSync(join(fixture.pluginRoot, 'skills', 'beta'), { recursive: true, force: true });
+
+    const report = run({
+      beforeManagedDirRemoval(destDir, stage) {
+        if (destDir === betaDir && stage === 'before-park') writeFileSync(join(betaDir, 'SKILL.md'), '# raced\n');
+      },
+    });
+
+    const claude = agentReport(report, 'claude');
+    expect(skillAction(claude, 'beta')).toBeUndefined();
+    expect(readFileSync(join(betaDir, 'SKILL.md'), 'utf8')).toBe('# raced\n');
+    expect(claude.failures?.some((line) => line.includes('changed before removal'))).toBe(true);
+    expect(report.backupsDir).toBeNull();
+  });
+
+  test('a quarantined orphan changed after backup is preserved as a conflict with the exact backup intact', () => {
+    present(fixture.claudeDir);
+    run();
+    rmSync(join(fixture.pluginRoot, 'skills', 'beta'), { recursive: true, force: true });
+
+    const report = run({
+      beforeManagedDirRemoval(_destDir, stage) {
+        if (stage !== 'before-delete') return;
+        const root = join(fixture.claudeDir, 'skills', '.genie-sync-transactions');
+        const transaction = readdirSync(root).find((name) => name.startsWith('delete-')) as string;
+        writeFileSync(join(root, transaction, 'parked', 'SKILL.md'), '# raced parked bytes\n');
+      },
+    });
+
+    const backup = join(report.backupsDir as string, 'claude', 'beta', 'SKILL.md');
+    expect(readFileSync(backup, 'utf8')).toBe('# beta\n');
+    const transactionRoot = join(fixture.claudeDir, 'skills', '.genie-sync-transactions');
+    const conflict = readdirSync(transactionRoot).find((name) => name.startsWith('.conflict-delete-')) as string;
+    expect(readFileSync(join(transactionRoot, conflict, 'parked', 'SKILL.md'), 'utf8')).toBe('# raced parked bytes\n');
+    expect(agentReport(report, 'claude').failures).toHaveLength(1);
   });
 });
 
@@ -915,6 +957,21 @@ describe('codex legacy .curated migration', () => {
     });
   });
 
+  test('a legacy managed dir changed after classification stays live and is not removed', () => {
+    present(fixture.codexDir);
+    const legacyAlpha = join(fixture.codexDir, 'skills', '.curated', 'alpha');
+    seedManagedDir(legacyAlpha, { 'SKILL.md': '# legacy alpha\n' });
+    const report = run({
+      beforeManagedDirRemoval(destDir, stage) {
+        if (destDir === legacyAlpha && stage === 'before-park') {
+          writeFileSync(join(legacyAlpha, 'SKILL.md'), '# legacy raced\n');
+        }
+      },
+    });
+    expect(readFileSync(join(legacyAlpha, 'SKILL.md'), 'utf8')).toBe('# legacy raced\n');
+    expect(agentReport(report, 'codex').failures?.some((line) => line.includes('changed before removal'))).toBe(true);
+  });
+
   test('unmanaged legacy entries are kept (with an advisory) and keep the lane dir alive', () => {
     present(fixture.codexDir);
     const legacyDir = join(fixture.codexDir, 'skills', '.curated');
@@ -1093,6 +1150,34 @@ describe('stampWorkflow parity with council-stamp.cjs', () => {
       expect(readFileSync(join(targetDir, conflict as string, 'staged', TARGET_NAME), 'utf8')).toContain(
         '/incoming/plugin',
       );
+    }
+  });
+
+  test('both council engines reject directory and symlink races after an expected-absence check', () => {
+    const templatePath = join(fixture.root, 'council.template.js');
+    writeFileSync(templatePath, TEMPLATE_BODY, 'utf8');
+    for (const [engine, stamp] of [
+      ['ts', stampWorkflow],
+      ['cjs', stampCouncilWorkflow],
+    ] as const) {
+      for (const kind of ['directory', 'symlink'] as const) {
+        const targetDir = join(fixture.root, `workflow-absence-${engine}-${kind}`);
+        const targetPath = join(targetDir, TARGET_NAME);
+        expect(() =>
+          stamp({
+            templatePath,
+            pluginRoot: '/incoming/plugin',
+            targetDir,
+            afterAuthorization: () => {
+              if (kind === 'directory') mkdirSync(targetPath);
+              else symlinkSync('personal-target', targetPath);
+            },
+          }),
+        ).toThrow('changed during promotion');
+        const stat = lstatSync(targetPath);
+        expect(kind === 'directory' ? stat.isDirectory() : stat.isSymbolicLink()).toBe(true);
+        expect(readdirSync(targetDir).some((name) => name.startsWith('.council.genie-conflict-'))).toBe(true);
+      }
     }
   });
 

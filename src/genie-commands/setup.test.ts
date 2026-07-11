@@ -9,6 +9,7 @@ import {
   installRuntimeIntegrations,
   persistIntegrationConsent,
   readIntegrationConsent,
+  readIntegrationConsentState,
 } from '../lib/runtime-integrations.js';
 import { VERSION } from '../lib/version.js';
 import { type SetupDeps, mergeCodexIntegrationConsent, resolveDefaultAgentAfterCodex, setupCommand } from './setup.js';
@@ -61,7 +62,7 @@ describe('setup runtime and failure semantics', () => {
     process.env.CODEX_HOME = join(root, 'codex-home');
     mkdirSync(join(root, 'repo'), { recursive: true });
     execFileSync('git', ['init', '-q'], { cwd: join(root, 'repo') });
-    process.exitCode = undefined;
+    process.exitCode = 0;
   });
 
   afterEach(() => {
@@ -172,6 +173,25 @@ describe('setup runtime and failure semantics', () => {
     expect(errors.join('\n')).toContain('fixture integration failed');
     expect((await loadGenieConfig()).codex?.configured).not.toBe(true);
     expect(readFileSync(fallbackPath, 'utf8')).toBe(fallback);
+    expect(readIntegrationConsentState(process.env.GENIE_HOME as string).state).toBe('pending');
+  });
+
+  test('an interrupted setup persists pending Codex consent before mutation and a retry commits it', async () => {
+    const genieHome = process.env.GENIE_HOME as string;
+    persistIntegrationConsent('none', genieHome);
+
+    await setupCommand({ codex: true, quick: true }, deps(false));
+    expect(process.exitCode).toBe(1);
+    expect(readIntegrationConsentState(genieHome)).toEqual({
+      selection: 'codex',
+      state: 'pending',
+      previousSelection: 'none',
+    });
+
+    process.exitCode = 0;
+    await setupCommand({ codex: true, quick: true }, deps(true));
+    expect(process.exitCode).not.toBe(1);
+    expect(readIntegrationConsentState(genieHome)).toEqual({ selection: 'codex', state: 'committed' });
   });
 
   test('string enabled in exact-version Codex post-state fails full setup and preserves fallback', async () => {

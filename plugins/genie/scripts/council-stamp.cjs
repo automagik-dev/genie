@@ -25,15 +25,17 @@ const TRANSACTION_PREFIX = '.council.genie-txn-';
 const TRANSACTION_STAGING_PREFIX = '.council.genie-txn-staging-';
 const TRANSACTION_CONFLICT_PREFIX = '.council.genie-conflict-';
 
+/** @param {string} filePath @returns {import('node:fs').Stats|null} */
 function lstatSafe(filePath) {
   try {
     return fs.lstatSync(filePath);
   } catch (error) {
-    if (error && typeof error === 'object' && error.code !== 'ENOENT') throw error;
+    if (errorCode(error) !== 'ENOENT') throw error;
     return null;
   }
 }
 
+/** @param {string} filePath @returns {string|null} */
 function regularFileDigest(filePath) {
   const stat = lstatSafe(filePath);
   if (stat === null || !stat.isFile() || stat.isSymbolicLink()) return null;
@@ -44,6 +46,48 @@ function regularFileDigest(filePath) {
   }
 }
 
+/** @typedef {{kind:'absent'}|{kind:'regular',digest:string}|{kind:'non-regular',entry:'directory'|'symlink'|'other'}|{kind:'unreadable',code:string}} PhysicalFileIdentity */
+
+/** @param {unknown} error @returns {string} */
+function errorCode(error) {
+  return error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'UNKNOWN';
+}
+
+/** @param {string} filePath @returns {PhysicalFileIdentity} */
+function physicalFileIdentity(filePath) {
+  let stat;
+  try {
+    stat = fs.lstatSync(filePath);
+  } catch (error) {
+    const code = errorCode(error);
+    return code === 'ENOENT' ? { kind: 'absent' } : { kind: 'unreadable', code };
+  }
+  if (stat.isSymbolicLink()) return { kind: 'non-regular', entry: 'symlink' };
+  if (stat.isDirectory()) return { kind: 'non-regular', entry: 'directory' };
+  if (!stat.isFile()) return { kind: 'non-regular', entry: 'other' };
+  try {
+    return { kind: 'regular', digest: crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex') };
+  } catch (error) {
+    const code = errorCode(error);
+    return { kind: 'unreadable', code };
+  }
+}
+
+/** @param {PhysicalFileIdentity} left @param {PhysicalFileIdentity} right @returns {boolean} */
+function physicalIdentityEquals(left, right) {
+  if (left.kind !== right.kind) return false;
+  if (left.kind === 'regular') return right.kind === 'regular' && left.digest === right.digest;
+  if (left.kind === 'non-regular') return right.kind === 'non-regular' && left.entry === right.entry;
+  if (left.kind === 'unreadable') return right.kind === 'unreadable' && left.code === right.code;
+  return left.kind === 'absent';
+}
+
+/** @param {string|null} digest @returns {PhysicalFileIdentity} */
+function expectedPhysicalFile(digest) {
+  return digest === null ? { kind: 'absent' } : { kind: 'regular', digest };
+}
+
+/** @param {string} manifestPath */
 function readWorkflowManifest(manifestPath) {
   const stat = lstatSafe(manifestPath);
   if (stat === null) return { status: 'missing' };
@@ -71,6 +115,7 @@ function readWorkflowManifest(manifestPath) {
 }
 
 /** Classify council.js using only its sidecar ownership grant and recorded digest. */
+/** @param {string} targetDir */
 function inspectManagedWorkflow(targetDir) {
   const targetPath = path.join(targetDir, TARGET_NAME);
   const manifestPath = path.join(targetDir, WORKFLOW_MANIFEST_NAME);
@@ -96,11 +141,11 @@ function inspectManagedWorkflow(targetDir) {
  * Genie sidecar may be skipped or updated. Existing files without metadata,
  * user-modified files, and corrupt metadata are preserved byte-identically.
  *
- * @param {{templatePath: string, pluginRoot: string, targetDir: string, version?: string|null, now?: () => Date, beforePromotion?: () => void}} opts
+ * @param {{templatePath: string, pluginRoot: string, targetDir: string, version?: string|null, now?: () => Date, beforePromotion?: () => void, afterAuthorization?: () => void}} opts
  * @returns {{action: 'written'|'skipped'|'kept-unmanaged'|'kept-modified'|'metadata-corrupt', targetPath: string}}
  */
 function stampCouncilWorkflow(opts) {
-  const { templatePath, pluginRoot, targetDir, version = null, now = () => new Date(), beforePromotion } = opts || {};
+  const { templatePath, pluginRoot, targetDir, version = null, now = () => new Date(), beforePromotion, afterAuthorization } = opts || {};
   if (!templatePath || !pluginRoot || !targetDir) {
     throw new Error('stampCouncilWorkflow requires templatePath, pluginRoot, and targetDir');
   }
@@ -143,11 +188,19 @@ function stampCouncilWorkflow(opts) {
   if (ownership.state === 'managed-clean' && (expected.targetDigest === null || expected.manifestDigest === null)) {
     return { action: 'kept-modified', targetPath: ownership.targetPath };
   }
-  publishTransaction(targetDir, stamped, manifest, expected, beforePromotion);
+  publishTransaction(targetDir, stamped, manifest, expected, beforePromotion, afterAuthorization);
   return { action: 'written', targetPath: ownership.targetPath };
 }
 
-function publishTransaction(targetDir, stamped, manifest, expected, beforePromotion) {
+/**
+ * @param {string} targetDir
+ * @param {string} stamped
+ * @param {{managedBy:string,version:string|null,digest:string,syncedAt:string}} manifest
+ * @param {{targetDigest:string|null,manifestDigest:string|null}} expected
+ * @param {(()=>void)|undefined} beforePromotion
+ * @param {(()=>void)|undefined} afterAuthorization
+ */
+function publishTransaction(targetDir, stamped, manifest, expected, beforePromotion, afterAuthorization) {
   fs.mkdirSync(targetDir, { recursive: true });
   const targetPath = path.join(targetDir, TARGET_NAME);
   const manifestPath = path.join(targetDir, WORKFLOW_MANIFEST_NAME);
@@ -180,19 +233,23 @@ function publishTransaction(targetDir, stamped, manifest, expected, beforePromot
   fs.mkdirSync(before, { recursive: true });
   try {
     if (beforePromotion) beforePromotion();
+    const expectedTarget = expectedPhysicalFile(expected.targetDigest);
+    const expectedManifest = expectedPhysicalFile(expected.manifestDigest);
     if (
-      regularFileDigest(targetPath) !== expected.targetDigest ||
-      regularFileDigest(manifestPath) !== expected.manifestDigest
+      !physicalIdentityEquals(physicalFileIdentity(targetPath), expectedTarget) ||
+      !physicalIdentityEquals(physicalFileIdentity(manifestPath), expectedManifest)
     ) {
       const conflict = preserveConflict(transactionDir);
       throw new Error(`council workflow changed before promotion; kept live and incoming versions at ${conflict}`);
     }
+    if (afterAuthorization) afterAuthorization();
     if (lstatSafe(targetPath) !== null) fs.renameSync(targetPath, path.join(before, TARGET_NAME));
     if (lstatSafe(manifestPath) !== null) fs.renameSync(manifestPath, path.join(before, WORKFLOW_MANIFEST_NAME));
     if (
-      (expected.targetDigest !== null && regularFileDigest(path.join(before, TARGET_NAME)) !== expected.targetDigest) ||
-      (expected.manifestDigest !== null &&
-        regularFileDigest(path.join(before, WORKFLOW_MANIFEST_NAME)) !== expected.manifestDigest)
+      !physicalIdentityEquals(physicalFileIdentity(path.join(before, TARGET_NAME)), expectedTarget) ||
+      !physicalIdentityEquals(physicalFileIdentity(path.join(before, WORKFLOW_MANIFEST_NAME)), expectedManifest) ||
+      physicalFileIdentity(targetPath).kind !== 'absent' ||
+      physicalFileIdentity(manifestPath).kind !== 'absent'
     ) {
       if (lstatSafe(targetPath) === null && lstatSafe(path.join(before, TARGET_NAME)) !== null)
         fs.renameSync(path.join(before, TARGET_NAME), targetPath);
@@ -203,6 +260,12 @@ function publishTransaction(targetDir, stamped, manifest, expected, beforePromot
     }
     fs.renameSync(path.join(publishedStaged, TARGET_NAME), targetPath);
     fs.renameSync(path.join(publishedStaged, WORKFLOW_MANIFEST_NAME), manifestPath);
+    if (
+      !physicalIdentityEquals(physicalFileIdentity(targetPath), { kind: 'regular', digest: targetDigest }) ||
+      !physicalIdentityEquals(physicalFileIdentity(manifestPath), { kind: 'regular', digest: manifestDigest })
+    ) {
+      throw new Error('council workflow changed before transaction commit');
+    }
     fs.writeFileSync(path.join(transactionDir, 'COMMITTED'), 'ok\n');
     fs.rmSync(transactionDir, { recursive: true, force: true });
   } catch (error) {
@@ -212,12 +275,14 @@ function publishTransaction(targetDir, stamped, manifest, expected, beforePromot
   }
 }
 
+/** @param {string} transactionDir @returns {string} */
 function preserveConflict(transactionDir) {
   const conflict = transactionDir.replace(TRANSACTION_PREFIX, TRANSACTION_CONFLICT_PREFIX);
   fs.renameSync(transactionDir, conflict);
   return conflict;
 }
 
+/** @param {string} transactionDir */
 function readTransactionJournal(transactionDir) {
   const parsed = JSON.parse(fs.readFileSync(path.join(transactionDir, 'journal.json'), 'utf8'));
   if (
@@ -238,6 +303,7 @@ function readTransactionJournal(transactionDir) {
   return parsed;
 }
 
+/** @param {string} targetDir */
 function recoverTransactions(targetDir) {
   if (!fs.existsSync(targetDir)) return;
   for (const name of fs.readdirSync(targetDir)) {
@@ -262,6 +328,7 @@ function recoverTransactions(targetDir) {
   }
 }
 
+/** @param {string} targetDir @param {string} transactionDir */
 function rollbackTransaction(targetDir, transactionDir) {
   const journal = readTransactionJournal(transactionDir);
   for (const [name, digest, had, beforeDigest] of [
@@ -287,10 +354,12 @@ function rollbackTransaction(targetDir, transactionDir) {
   fs.rmSync(transactionDir, { recursive: true, force: true });
 }
 
+/** @param {unknown} value @returns {boolean} */
 function isOptionalDigest(value) {
   return value === null || (typeof value === 'string' && /^[a-f0-9]{64}$/.test(value));
 }
 
+/** @param {string} targetDir @param {string} preparation */
 function quarantinePreparation(targetDir, preparation) {
   const quarantine = path.join(targetDir, '.genie-sync-quarantine');
   fs.mkdirSync(quarantine, { recursive: true });

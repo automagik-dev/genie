@@ -38,7 +38,7 @@ if (!fs.existsSync(agentsMd) && !fs.existsSync(claudeMd)) {
     // Non-fatal: if we can't write (read-only fs, permissions), just warn
     console.error("");
     console.error("\u{1F9DE} Genie \u2014 First Run Detected");
-    console.error(`  Could not create AGENTS.md: ${err.message}`);
+    console.error(`  Could not create AGENTS.md: ${err instanceof Error ? err.message : String(err)}`);
     console.error("  Create one manually to configure your workspace.");
     console.error("");
   }
