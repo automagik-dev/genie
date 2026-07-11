@@ -16,12 +16,12 @@
 <!-- METRICS:START -->
 | Metric | Value | Window |
 |--------|-------|--------|
-| Releases shipped | 9/day | last 24h |
-| PRs merged | 39 | last 7d |
-| Avg merge time | 2.9h | last 7d |
-| SHIP rate | 23% | last 7d |
+| Releases shipped | 12/day | last 24h |
+| PRs merged | 40 | last 7d |
+| Avg merge time | 3.5h | last 7d |
+| SHIP rate | 18% | last 7d |
 
-*Updated 2026-07-10 by metrics-updater agent.*
+*Updated 2026-07-11 by metrics-updater agent.*
 <!-- METRICS:END -->
 
 Genie is a planning-and-execution layer for AI coding agents. You describe what you want in one sentence; Genie interviews you into a plan, dispatches agents to build it in parallel, reviews the result against acceptance criteria, and hands you something ready to merge.
