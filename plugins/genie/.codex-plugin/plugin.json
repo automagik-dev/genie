@@ -9,21 +9,13 @@
   "homepage": "https://github.com/automagik-dev/genie",
   "repository": "https://github.com/automagik-dev/genie",
   "license": "MIT",
-  "keywords": [
-    "workflow",
-    "orchestration",
-    "codex",
-    "skills",
-    "agents"
-  ],
+  "keywords": ["workflow", "orchestration", "codex", "skills", "agents"],
   "skills": "./skills/",
   "hooks": "./hooks/codex-hooks.json",
   "mcpServers": {
     "genie": {
       "command": "genie",
-      "args": [
-        "mcp"
-      ]
+      "args": ["mcp"]
     }
   },
   "interface": {
@@ -32,12 +24,7 @@
     "longDescription": "First-class Genie workflows for Codex, including shared skills, lifecycle hooks, MCP task state, and role-specific subagents.",
     "developerName": "Namastex Labs",
     "category": "Developer Tools",
-    "capabilities": [
-      "Skills",
-      "Hooks",
-      "MCP",
-      "Subagents"
-    ],
+    "capabilities": ["Skills", "Hooks", "MCP", "Subagents"],
     "websiteURL": "https://github.com/automagik-dev/genie",
     "defaultPrompt": [
       "Use $wish to turn this request into an executable plan.",
