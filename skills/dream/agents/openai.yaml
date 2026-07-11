@@ -1,0 +1,6 @@
+interface:
+  display_name: "Dream Run"
+  short_description: "Orchestrate approved wishes in dependency order"
+  default_prompt: "Use $dream to plan and run these approved wishes in dependency order."
+policy:
+  allow_implicit_invocation: false

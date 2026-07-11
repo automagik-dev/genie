@@ -16,8 +16,10 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { computeDirDigest } from '../lib/agent-sync.js';
+import { reconcileCodexProjectMcp, resolveGitProjectRoots } from '../lib/codex-project-mcp.js';
 import {
   checkAgentSync,
+  checkCodexIntegration,
   checkSubagentModelOverride,
   checkV4Residue,
   doctorCommand,
@@ -93,6 +95,110 @@ describe('doctorCommand', () => {
     const { output } = await captureDoctor(() => doctorCommand());
     expect(output).toContain('genie doctor');
     expect(output).toContain('All checks passed.');
+  });
+});
+
+describe('Codex doctor lifecycle results', () => {
+  test('a timed-out plugin query is a structured hard failure, not a false pass', async () => {
+    const checks = await checkCodexIntegration(process.cwd(), {
+      cliAvailable: true,
+      status: 'error',
+      installed: false,
+      detail: 'codex plugin list timed out after 25ms; retaining the project fallback',
+      timedOut: true,
+    });
+    const plugin = checks.find((check) => check.name === 'Codex Genie plugin');
+    expect(plugin?.status).toBe('fail');
+    expect(plugin?.detail).toContain('timed out');
+    expect(plugin?.suggestion).toContain('fallback');
+  });
+
+  test('missing configured Node is actionable and never displaces the fallback', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'doctor-node-availability-'));
+    try {
+      reconcileCodexProjectMcp(
+        root,
+        { cliAvailable: true, status: 'ok', installed: true, enabled: false, usable: false, detail: 'disabled' },
+        { command: '/absolute/genie', args: ['mcp'] },
+      );
+      const checks = await checkCodexIntegration(root, {
+        cliAvailable: true,
+        status: 'ok',
+        installed: true,
+        enabled: true,
+        usable: false,
+        usabilityDetail: 'configured plugin MCP command "node" is not available on PATH',
+        detail: 'Node unavailable',
+      });
+      const plugin = checks.find((check) => check.name === 'Codex Genie plugin');
+      const route = checks.find((check) => check.name === 'Codex Genie MCP registration');
+      expect(plugin?.detail).toContain('"node" is not available on PATH');
+      expect(route).toMatchObject({ status: 'pass' });
+      expect(route?.detail).toContain('fallback');
+      expect(readFileSync(join(root, '.codex', 'config.toml'), 'utf8')).toContain('/absolute/genie');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('linked worktree routes stay local while the database check uses the common checkout', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'doctor-linked-worktree-'));
+    try {
+      const repo = join(root, 'repo');
+      mkdirSync(repo, { recursive: true });
+      execFileSync('git', ['init', '-q'], { cwd: repo });
+      execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo });
+      execFileSync('git', ['config', 'user.name', 'Test'], { cwd: repo });
+      execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'root'], { cwd: repo });
+      const linked = join(root, 'linked');
+      execFileSync('git', ['worktree', 'add', '-q', '-b', 'doctor-linked', linked], { cwd: repo });
+      const roots = resolveGitProjectRoots(linked);
+      expect(roots).toEqual({ worktreeRoot: linked, commonRoot: repo });
+      reconcileCodexProjectMcp(
+        linked,
+        { cliAvailable: true, status: 'ok', installed: true, enabled: false, usable: false, detail: 'disabled' },
+        { command: '/absolute/genie', args: ['mcp'] },
+      );
+      expect(existsSync(join(linked, '.codex', 'config.toml'))).toBe(true);
+      expect(existsSync(join(repo, '.codex', 'config.toml'))).toBe(false);
+
+      const { output } = await captureDoctor(() =>
+        doctorCommand(
+          { json: true },
+          {
+            root: linked,
+            databaseRoot: repo,
+            pluginProbe: { cliAvailable: false, status: 'unavailable', installed: false, detail: 'fixture absent' },
+          },
+        ),
+      );
+      const json = JSON.parse(output) as { checks: Array<{ name: string; detail?: string }> };
+      expect(json.checks.find((check) => check.name === 'genie.db')?.detail).toContain(
+        join(repo, '.genie', 'genie.db'),
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('injected default doctor median stays within the 120ms latency budget', async () => {
+    const durations: number[] = [];
+    for (let index = 0; index < 5; index += 1) {
+      const started = performance.now();
+      await captureDoctor(() =>
+        doctorCommand(
+          { json: true },
+          {
+            root: process.cwd(),
+            databaseRoot: process.cwd(),
+            pluginProbe: { cliAvailable: false, status: 'unavailable', installed: false, detail: 'fixture absent' },
+          },
+        ),
+      );
+      durations.push(performance.now() - started);
+    }
+    durations.sort((a, b) => a - b);
+    expect(durations[2]).toBeLessThan(120);
   });
 });
 

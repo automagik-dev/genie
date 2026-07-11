@@ -49,6 +49,13 @@ done
 [[ -n "$PLATFORM" ]] || { echo "error: --platform is required" >&2; usage; exit 2; }
 TARGET="$(bun_target_for "$PLATFORM")" || { echo "error: unsupported platform: $PLATFORM" >&2; exit 2; }
 [[ -n "$VERSION" ]] || VERSION=$(node -p "require('${REPO_ROOT}/package.json').version")
+[[ "$VERSION" =~ ^[0-9A-Za-z][0-9A-Za-z.+-]{0,127}$ ]] \
+  || { echo "error: invalid release version: ${VERSION}" >&2; exit 2; }
+
+# The committed plugin mirror is a release input, not a symlink that the
+# packager silently repairs. Fail before compiling if source and mirror drift.
+bun "${REPO_ROOT}/scripts/sync-plugin-skills.ts" --check
+bun "${REPO_ROOT}/scripts/fresh-install-smoke.ts"
 
 STAGE="${DIST_DIR}/${PLATFORM}"
 TARBALL="${DIST_DIR}/genie-${VERSION}-${PLATFORM}.tar.gz"
@@ -61,23 +68,43 @@ bun build --compile \
   "${ENTRY_POINT}" \
   --outfile "${STAGE}/genie"
 
-cp -RL "${REPO_ROOT}/plugins"   "${STAGE}/plugins"
-cp -RL "${REPO_ROOT}/skills"    "${STAGE}/skills"
-cp -RL "${REPO_ROOT}/templates" "${STAGE}/templates"
+cp -R "${REPO_ROOT}/plugins"   "${STAGE}/plugins"
+cp -R "${REPO_ROOT}/skills"    "${STAGE}/skills"
+cp -R "${REPO_ROOT}/templates" "${STAGE}/templates"
 mkdir -p "${STAGE}/.agents/plugins" "${STAGE}/.claude-plugin"
 cp "${REPO_ROOT}/.agents/plugins/marketplace.json" "${STAGE}/.agents/plugins/marketplace.json"
 cp "${REPO_ROOT}/.claude-plugin/marketplace.json" "${STAGE}/.claude-plugin/marketplace.json"
-echo "${VERSION}" > "${STAGE}/VERSION"
+
+# A workflow --version override applies to the staged artifact only. Stamp and
+# then independently verify every version-bearing copy so VERSION, plugin
+# package/manifests, and marketplace metadata cannot disagree after extract.
+bun "${REPO_ROOT}/scripts/release-payload-version.ts" --stamp "${STAGE}" "${VERSION}"
 
 for required in \
   ".agents/plugins/marketplace.json" \
   ".claude-plugin/marketplace.json" \
   "plugins/genie/.codex-plugin/plugin.json" \
+  "plugins/genie/.mcp.json" \
+  "plugins/genie/scripts/mcp-launcher.cjs" \
   "plugins/genie/.claude-plugin/plugin.json" \
   "plugins/genie/hooks/hooks.json" \
   "plugins/genie/hooks/codex-hooks.json"; do
   [[ -f "${STAGE}/${required}" ]] || { echo "error: release payload missing ${required}" >&2; exit 1; }
 done
+
+for skill_dir in "${REPO_ROOT}"/skills/*; do
+  [[ -f "${skill_dir}/SKILL.md" ]] || continue
+  skill="$(basename "${skill_dir}")"
+  [[ -f "${STAGE}/plugins/genie/skills/${skill}/SKILL.md" ]] \
+    || { echo "error: release plugin missing skill ${skill}" >&2; exit 1; }
+  [[ -f "${STAGE}/plugins/genie/skills/${skill}/agents/openai.yaml" ]] \
+    || { echo "error: release plugin missing Codex metadata for ${skill}" >&2; exit 1; }
+done
+
+bun "${REPO_ROOT}/scripts/fresh-install-smoke.ts" \
+  --skills-dir "${STAGE}/skills" \
+  --plugin-root "${STAGE}/plugins/genie"
+bun "${REPO_ROOT}/scripts/release-payload-version.ts" --verify "${STAGE}" "${VERSION}"
 
 tar czf "${TARBALL}" -C "${STAGE}" .
 

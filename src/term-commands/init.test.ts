@@ -16,7 +16,13 @@ function initGitRepo(root: string): void {
 
 /** Run `genie init` in `cwd`. Returns { code, stdout, stderr }. */
 function runInit(cwd: string, args: string[] = []): { code: number; stdout: string; stderr: string } {
-  const res = Bun.spawnSync(['bun', CLI, 'init', ...args], { cwd, stdout: 'pipe', stderr: 'pipe' });
+  const res = Bun.spawnSync([process.execPath, CLI, 'init', ...args], {
+    cwd,
+    stdout: 'pipe',
+    stderr: 'pipe',
+    // Keep unit tests isolated from any live Codex/plugin installation.
+    env: { ...process.env, PATH: '/usr/bin:/bin' },
+  });
   return {
     code: res.exitCode,
     stdout: res.stdout.toString(),
@@ -234,6 +240,20 @@ describe('genie init', () => {
       expect(stderr).toContain('.mcp.json');
       // The bad file is left untouched.
       expect(readFileSync(mcpPath(dir), 'utf-8')).toBe('not json {');
+      expect(existsSync(join(dir, '.genie', 'INDEX.md'))).toBe(false);
+      expect(existsSync(join(dir, '.gitignore'))).toBe(false);
+    });
+
+    test('valid but wrong-shaped server maps are rejected without partial scaffold writes', () => {
+      initGitRepo(dir);
+      mkdirSync(join(dir, '.warp'), { recursive: true });
+      writeFileSync(warpMcpPath(dir), '{"mcpServers":[]}');
+      const { code, stderr } = runInit(dir);
+      expect(code).toBe(1);
+      expect(stderr).toContain('mcpServers');
+      expect(readFileSync(warpMcpPath(dir), 'utf8')).toBe('{"mcpServers":[]}');
+      expect(existsSync(mcpPath(dir))).toBe(false);
+      expect(existsSync(join(dir, '.genie', 'INDEX.md'))).toBe(false);
     });
   });
 });

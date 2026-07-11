@@ -58,9 +58,10 @@ describe('audit-context handler', () => {
 
       const context = result.hookSpecificOutput!.additionalContext!;
       expect(context).toContain('[audit-context]');
-      expect(context).toContain('example.ts');
-      expect(context).toContain('update x to 2');
-      expect(context).toContain('initial commit');
+      expect(context).toMatch(/file\[1\] commits=[0-9a-f]+(?:,[0-9a-f]+)*/);
+      expect(context).not.toContain('example.ts');
+      expect(context).not.toContain('update x to 2');
+      expect(context).not.toContain('initial commit');
     }
   });
 
@@ -86,6 +87,25 @@ describe('audit-context handler', () => {
 
     const result = await auditContext(payload);
     expect(result).toBeUndefined();
+  });
+
+  test('accepts normalized apply_patch file_paths and emits only tracked-file commit ids', async () => {
+    if (!repoReady) return;
+    const payload: HookPayload = {
+      hook_event_name: 'PreToolUse',
+      tool_name: 'apply_patch',
+      tool_input: {
+        command: '*** Begin Patch\n*** Update File: example.ts\n*** Add File: new.ts\n*** End Patch',
+        file_path: 'example.ts',
+        file_paths: ['example.ts', 'new.ts'],
+      },
+      cwd: repoDir,
+    };
+
+    const result = await auditContext(payload);
+    expect(result?.hookSpecificOutput?.additionalContext).toMatch(/file\[1\] commits=[0-9a-f]+/);
+    expect(result?.hookSpecificOutput?.additionalContext).not.toContain('example.ts');
+    expect(result?.hookSpecificOutput?.additionalContext).not.toContain('new.ts');
   });
 
   test('returns undefined when tool_input is missing', async () => {

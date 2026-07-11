@@ -1,10 +1,12 @@
+import { createHash } from 'node:crypto';
 import {
-  copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
   realpathSync,
+  renameSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -20,16 +22,34 @@ export interface CommandResult {
   exitCode: number;
   stdout: string;
   stderr: string;
+  timedOut?: boolean;
 }
 
-export type CommandRunner = (command: string, args: string[]) => CommandResult;
+export interface CommandRunOptions {
+  timeoutMs: number;
+}
 
-const defaultRunner: CommandRunner = (command, args) => {
-  const result = Bun.spawnSync([command, ...args], { stdout: 'pipe', stderr: 'pipe' });
+export type CommandRunner = (command: string, args: string[], options?: CommandRunOptions) => CommandResult;
+
+const INTEGRATION_TIMEOUT_MS = 15_000;
+
+class IntegrationCommandError extends Error {
+  constructor(
+    message: string,
+    readonly timedOut = false,
+  ) {
+    super(message);
+  }
+}
+
+const defaultRunner: CommandRunner = (command, args, options) => {
+  const timeoutMs = options?.timeoutMs ?? INTEGRATION_TIMEOUT_MS;
+  const result = Bun.spawnSync([command, ...args], { stdout: 'pipe', stderr: 'pipe', timeout: timeoutMs });
   return {
     exitCode: result.exitCode,
     stdout: result.stdout.toString(),
     stderr: result.stderr.toString(),
+    timedOut: result.exitedDueToTimeout === true,
   };
 };
 
@@ -113,26 +133,161 @@ export function claudePluginState(raw: string): { installed: boolean; enabled?: 
     : { installed: false };
 }
 
-function runChecked(runner: CommandRunner, command: string, args: string[], allowAlready = false): CommandResult {
-  const result = runner(command, args);
+function runChecked(
+  runner: CommandRunner,
+  command: string,
+  args: string[],
+  allowAlready = false,
+  timeoutMs = INTEGRATION_TIMEOUT_MS,
+): CommandResult {
+  const result = runner(command, args, { timeoutMs });
+  if (result.timedOut) {
+    throw new IntegrationCommandError(`${command} ${args.join(' ')} timed out after ${timeoutMs}ms`, true);
+  }
   if (
     result.exitCode !== 0 &&
     !(allowAlready && /already|exists|configured/i.test(`${result.stdout}\n${result.stderr}`))
   ) {
-    throw new Error(`${command} ${args.join(' ')} failed: ${(result.stderr || result.stdout).trim()}`);
+    throw new IntegrationCommandError(
+      `${command} ${args.join(' ')} failed: ${(result.stderr || result.stdout).trim()}`,
+    );
   }
   return result;
 }
 
-/** Sentinel marking a role-agent TOML as genie-managed (mirrors removeRuntimeIntegrations). */
+export const CODEX_AGENT_INVENTORY_NAME = '.genie-role-agents.json';
+const CODEX_AGENT_INVENTORY_OWNER = 'genie-codex-role-agents';
+const CODEX_AGENT_NAME_RE = /^genie-[A-Za-z0-9][A-Za-z0-9_-]*\.toml$/;
 const CODEX_AGENT_SENTINEL = '# Managed by Genie.';
 
+interface CodexAgentInventory {
+  version: 1;
+  managedBy: typeof CODEX_AGENT_INVENTORY_OWNER;
+  files: Record<string, { digest: string }>;
+}
+
+export type CodexAgentOwnership = 'absent' | 'user-owned' | 'managed-clean' | 'managed-modified';
+
+export interface CodexAgentOwnershipEntry {
+  name: string;
+  path: string;
+  ownership: CodexAgentOwnership;
+}
+
+export interface CodexAgentOwnershipReport {
+  inventoryPath: string;
+  status: 'missing' | 'valid' | 'corrupt';
+  entries: CodexAgentOwnershipEntry[];
+  error?: string;
+}
+
+function emptyCodexAgentInventory(): CodexAgentInventory {
+  return { version: 1, managedBy: CODEX_AGENT_INVENTORY_OWNER, files: {} };
+}
+
+function inventoryPath(codexHome: string): string {
+  return join(codexHome, 'agents', CODEX_AGENT_INVENTORY_NAME);
+}
+
+function fileDigest(path: string): string | null {
+  try {
+    const stat = lstatSync(path);
+    if (!stat.isFile() || stat.isSymbolicLink()) return null;
+    return createHash('sha256').update(readFileSync(path)).digest('hex');
+  } catch {
+    return null;
+  }
+}
+
+function readCodexAgentInventory(codexHome: string): {
+  status: 'missing' | 'valid' | 'corrupt';
+  inventory: CodexAgentInventory;
+  error?: string;
+} {
+  const path = inventoryPath(codexHome);
+  if (!existsSync(path)) return { status: 'missing', inventory: emptyCodexAgentInventory() };
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as Partial<CodexAgentInventory>;
+    if (
+      parsed.version !== 1 ||
+      parsed.managedBy !== CODEX_AGENT_INVENTORY_OWNER ||
+      typeof parsed.files !== 'object' ||
+      parsed.files === null ||
+      Object.entries(parsed.files).some(
+        ([name, value]) =>
+          !CODEX_AGENT_NAME_RE.test(name) ||
+          typeof value !== 'object' ||
+          value === null ||
+          typeof (value as { digest?: unknown }).digest !== 'string' ||
+          !/^[a-f0-9]{64}$/.test((value as { digest: string }).digest),
+      )
+    ) {
+      throw new Error('invalid inventory schema');
+    }
+    return { status: 'valid', inventory: parsed as CodexAgentInventory };
+  } catch (error) {
+    return {
+      status: 'corrupt',
+      inventory: emptyCodexAgentInventory(),
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+function writeCodexAgentInventory(codexHome: string, inventory: CodexAgentInventory): void {
+  const path = inventoryPath(codexHome);
+  mkdirSync(dirname(path), { recursive: true });
+  if (Object.keys(inventory.files).length === 0) {
+    if (existsSync(path)) unlinkSync(path);
+    return;
+  }
+  const staging = `${path}.staging-${process.pid}`;
+  writeFileSync(staging, `${JSON.stringify(inventory, null, 2)}\n`, 'utf8');
+  renameSync(staging, path);
+}
+
+function classifyCodexAgentFile(path: string, recorded: { digest: string } | undefined): CodexAgentOwnership {
+  try {
+    const stat = lstatSync(path);
+    if (!stat.isFile() || stat.isSymbolicLink()) return recorded === undefined ? 'user-owned' : 'managed-modified';
+  } catch {
+    return 'absent';
+  }
+  if (recorded === undefined) return 'user-owned';
+  const digest = fileDigest(path);
+  return digest !== null && digest === recorded.digest ? 'managed-clean' : 'managed-modified';
+}
+
+/** Shared digest-backed classifier for setup/update, doctor, and uninstall. */
+export function inspectCodexAgentOwnership(codexHome = getCodexHome()): CodexAgentOwnershipReport {
+  const state = readCodexAgentInventory(codexHome);
+  const agentsDir = join(codexHome, 'agents');
+  const names = new Set<string>(Object.keys(state.inventory.files));
+  if (existsSync(agentsDir)) {
+    for (const name of readdirSync(agentsDir)) if (CODEX_AGENT_NAME_RE.test(name)) names.add(name);
+  }
+  return {
+    inventoryPath: inventoryPath(codexHome),
+    status: state.status,
+    error: state.error,
+    entries: [...names].sort().map((name) => ({
+      name,
+      path: join(agentsDir, name),
+      ownership: classifyCodexAgentFile(join(agentsDir, name), state.inventory.files[name]),
+    })),
+  };
+}
+
 export interface CodexAgentInstallResult {
-  /** Files written (fresh, unchanged, or refreshed-after-backup). */
+  /** Files converged (fresh, unchanged, or digest-clean updates). */
   installed: number;
-  /** Existing files that differ AND lack the sentinel — user-owned, never overwritten. */
+  /** Existing files without inventory ownership — user-owned, never overwritten. */
   skippedUserOwned: string[];
-  /** Sentinel-carrying files that differed — preserved as `<name>.toml.genie-backup` before overwrite. */
+  /** Modified inventory-owned files preserved byte-identically and relinquished when orphaned. */
+  keptModified: string[];
+  /** Digest-clean inventory entries no longer shipped and removed during convergence. */
+  removed: string[];
+  /** Legacy compatibility field. Modified files are no longer overwritten or backed up. */
   backedUp: string[];
 }
 
@@ -140,28 +295,63 @@ export function installCodexAgents(bundleRoot: string, codexHome = getCodexHome(
   const source = join(bundleRoot, 'plugins', 'genie', 'codex-agents');
   if (!existsSync(source)) throw new Error(`Codex agents are missing from bundle: ${source}`);
   const target = join(codexHome, 'agents');
+  const state = readCodexAgentInventory(codexHome);
+  if (state.status === 'corrupt') {
+    throw new Error(
+      `Codex role-agent ownership inventory is corrupt (${inventoryPath(codexHome)}): ${state.error}; review and move it aside before retrying`,
+    );
+  }
   mkdirSync(target, { recursive: true });
-  const result: CodexAgentInstallResult = { installed: 0, skippedUserOwned: [], backedUp: [] };
-  for (const name of readdirSync(source)) {
-    if (!name.startsWith('genie-') || !name.endsWith('.toml')) continue;
+  const inventory = state.inventory;
+  const result: CodexAgentInstallResult = {
+    installed: 0,
+    skippedUserOwned: [],
+    keptModified: [],
+    removed: [],
+    backedUp: [],
+  };
+  const sourceNames = readdirSync(source)
+    .filter((name) => CODEX_AGENT_NAME_RE.test(name))
+    .sort();
+  for (const name of sourceNames) {
     const sourcePath = join(source, name);
     const targetPath = join(target, name);
-    if (existsSync(targetPath)) {
-      const existing = readFileSync(targetPath, 'utf8');
-      if (existing !== readFileSync(sourcePath, 'utf8')) {
-        if (!existing.startsWith(CODEX_AGENT_SENTINEL)) {
-          // Not genie's file — the user owns it. Never clobber; report instead.
-          result.skippedUserOwned.push(name);
-          continue;
-        }
-        // A genie-managed file the user tuned: keep their copy beside the fresh one.
-        copyFileSync(targetPath, `${targetPath}.genie-backup`);
-        result.backedUp.push(name);
-      }
+    const sourceContent = readFileSync(sourcePath);
+    if (!sourceContent.toString('utf8').startsWith(CODEX_AGENT_SENTINEL)) {
+      throw new Error(`Codex role-agent source lacks the managed sentinel: ${sourcePath}`);
     }
-    copyFileSync(sourcePath, targetPath);
+    const sourceDigest = fileDigest(sourcePath);
+    if (sourceDigest === null) throw new Error(`Codex role-agent source is not a regular readable file: ${sourcePath}`);
+    const ownership = classifyCodexAgentFile(targetPath, inventory.files[name]);
+    if (ownership === 'user-owned') {
+      // Inventory is the sole ownership grant. An exact or sentinel-bearing
+      // personal copy is still user-owned when no inventory entry names it.
+      result.skippedUserOwned.push(name);
+      continue;
+    }
+    if (ownership === 'managed-modified') {
+      result.keptModified.push(name);
+      continue;
+    }
+    if (ownership === 'absent' || inventory.files[name]?.digest !== sourceDigest) {
+      writeFileSync(targetPath, sourceContent);
+    }
+    inventory.files[name] = { digest: sourceDigest };
     result.installed += 1;
   }
+  for (const name of Object.keys(inventory.files)) {
+    if (sourceNames.includes(name)) continue;
+    const targetPath = join(target, name);
+    const ownership = classifyCodexAgentFile(targetPath, inventory.files[name]);
+    if (ownership === 'managed-clean') {
+      unlinkSync(targetPath);
+      result.removed.push(name);
+    } else if (ownership === 'managed-modified') {
+      result.keptModified.push(name);
+    }
+    delete inventory.files[name];
+  }
+  writeCodexAgentInventory(codexHome, inventory);
   return result;
 }
 
@@ -186,6 +376,7 @@ export interface IntegrationResult {
   ok: boolean;
   detail: string;
   preservedDisabled?: boolean;
+  timedOut?: boolean;
 }
 
 export interface InstallIntegrationsOptions {
@@ -194,6 +385,7 @@ export interface InstallIntegrationsOptions {
   runner?: CommandRunner;
   detected?: Partial<Record<RuntimeName, boolean>>;
   codexHome?: string;
+  timeoutMs?: number;
 }
 
 export function installRuntimeIntegrations(options: InstallIntegrationsOptions = {}): IntegrationResult[] {
@@ -221,67 +413,78 @@ export function installRuntimeIntegrations(options: InstallIntegrationsOptions =
         );
       }
       return runtime === 'codex'
-        ? installCodexIntegration(runner, bundleRoot, options.codexHome)
-        : installClaudeIntegration(runner, bundleRoot);
+        ? installCodexIntegration(runner, bundleRoot, options.codexHome, options.timeoutMs)
+        : installClaudeIntegration(runner, bundleRoot, options.timeoutMs);
     } catch (error) {
-      return { runtime, ok: false, detail: error instanceof Error ? error.message : String(error) };
+      return {
+        runtime,
+        ok: false,
+        detail: error instanceof Error ? error.message : String(error),
+        timedOut: error instanceof IntegrationCommandError && error.timedOut,
+      };
     }
   });
 }
 
 /**
- * Register the canonical marketplace root. `plugin marketplace add` refuses when
- * the `automagik` marketplace already points at a DIFFERENT source — live case:
- * a deleted live-test worktree kept feeding every install/repair a stale plugin
- * — and that refusal matches the generic `already` tolerance, so it must be
- * handled first: repoint the marketplace instead of keeping the stale root.
+ * Register the canonical marketplace root. Codex refuses an add when the same
+ * marketplace name points at a different source; remove only that registration,
+ * add the requested root again, and keep every subprocess deadline-bounded.
  */
-function addCodexMarketplace(runner: CommandRunner, bundleRoot: string): void {
-  const result = runner('codex', ['plugin', 'marketplace', 'add', bundleRoot, '--json']);
+function addCodexMarketplace(runner: CommandRunner, bundleRoot: string, timeoutMs: number): void {
+  const args = ['plugin', 'marketplace', 'add', bundleRoot, '--json'];
+  const result = runner('codex', args, { timeoutMs });
+  if (result.timedOut) {
+    throw new IntegrationCommandError(`codex ${args.join(' ')} timed out after ${timeoutMs}ms`, true);
+  }
   if (result.exitCode === 0) return;
   const output = `${result.stdout}\n${result.stderr}`;
   if (/different source/i.test(output)) {
-    runChecked(runner, 'codex', ['plugin', 'marketplace', 'remove', 'automagik', '--json'], true);
-    runChecked(runner, 'codex', ['plugin', 'marketplace', 'add', bundleRoot, '--json']);
+    runChecked(runner, 'codex', ['plugin', 'marketplace', 'remove', 'automagik', '--json'], true, timeoutMs);
+    runChecked(runner, 'codex', args, false, timeoutMs);
     return;
   }
   if (!/already|exists|configured/i.test(output)) {
-    throw new Error(
-      `codex plugin marketplace add ${bundleRoot} --json failed: ${(result.stderr || result.stdout).trim()}`,
-    );
+    throw new IntegrationCommandError(`codex ${args.join(' ')} failed: ${(result.stderr || result.stdout).trim()}`);
   }
 }
 
 /**
- * `plugin add` is a no-op when the id is already installed, so a plugin that
- * came from a previous marketplace root stays pinned to that root's version
- * forever. When the installed version disagrees with the CLI, reinstall once
- * from the (now canonical) marketplace and re-verify — a repair that cannot
- * converge fails loudly instead of reporting "refreshed".
+ * `plugin add` can leave an already-installed plugin pinned to its old
+ * marketplace payload. Reinstall once when its reported version differs from
+ * the running CLI, then fail loudly if the registry still reports stale state.
  */
-function verifyCodexPluginCurrent(runner: CommandRunner): void {
-  let state = codexPluginState(runChecked(runner, 'codex', ['plugin', 'list', '--json']).stdout);
+function verifyCodexPluginCurrent(runner: CommandRunner, timeoutMs: number): void {
+  let state = codexPluginState(runChecked(runner, 'codex', ['plugin', 'list', '--json'], false, timeoutMs).stdout);
   if (!state.installed || state.version === VERSION) return;
-  runChecked(runner, 'codex', ['plugin', 'remove', 'genie@automagik', '--json'], true);
-  runChecked(runner, 'codex', ['plugin', 'add', 'genie@automagik', '--json']);
-  state = codexPluginState(runChecked(runner, 'codex', ['plugin', 'list', '--json']).stdout);
+  runChecked(runner, 'codex', ['plugin', 'remove', 'genie@automagik', '--json'], true, timeoutMs);
+  runChecked(runner, 'codex', ['plugin', 'add', 'genie@automagik', '--json'], false, timeoutMs);
+  state = codexPluginState(runChecked(runner, 'codex', ['plugin', 'list', '--json'], false, timeoutMs).stdout);
   if (state.installed && state.version !== VERSION) {
-    throw new Error(`codex plugin stuck at v${state.version} (CLI v${VERSION}) — marketplace root may be stale`);
+    throw new IntegrationCommandError(
+      `codex plugin stuck at v${state.version} (CLI v${VERSION}) — marketplace root may be stale`,
+    );
   }
 }
 
-function installCodexIntegration(runner: CommandRunner, bundleRoot: string, codexHome?: string): IntegrationResult {
+function installCodexIntegration(
+  runner: CommandRunner,
+  bundleRoot: string,
+  codexHome?: string,
+  timeoutMs = INTEGRATION_TIMEOUT_MS,
+): IntegrationResult {
   const configPath = join(codexHome ?? getCodexHome(), 'config.toml');
   const migration = migrateDeadGenieOtel(configPath);
   if (migration.status === 'error') throw new Error(`Codex config migration failed: ${migration.error}`);
   const agents = installCodexAgents(bundleRoot, codexHome);
-  const before = codexPluginState(runChecked(runner, 'codex', ['plugin', 'list', '--json']).stdout);
-  addCodexMarketplace(runner, bundleRoot);
-  runChecked(runner, 'codex', ['plugin', 'add', 'genie@automagik', '--json']);
-  verifyCodexPluginCurrent(runner);
+  const before = codexPluginState(runChecked(runner, 'codex', ['plugin', 'list', '--json'], false, timeoutMs).stdout);
+  addCodexMarketplace(runner, bundleRoot, timeoutMs);
+  runChecked(runner, 'codex', ['plugin', 'add', 'genie@automagik', '--json'], false, timeoutMs);
+  verifyCodexPluginCurrent(runner, timeoutMs);
   if (before.installed && before.enabled === false) setCodexPluginEnabled(false, configPath);
   const notes = [`${agents.installed} role agents installed`];
-  if (agents.backedUp.length > 0) notes.push(`${agents.backedUp.length} user-tuned backed up (*.genie-backup)`);
+  if (agents.removed.length > 0) notes.push(`removed obsolete: ${agents.removed.join(', ')}`);
+  if (agents.keptModified.length > 0) notes.push(`kept modified: ${agents.keptModified.join(', ')}`);
   if (agents.skippedUserOwned.length > 0) notes.push(`kept user-owned: ${agents.skippedUserOwned.join(', ')}`);
   return {
     runtime: 'codex',
@@ -291,11 +494,15 @@ function installCodexIntegration(runner: CommandRunner, bundleRoot: string, code
   };
 }
 
-function installClaudeIntegration(runner: CommandRunner, bundleRoot: string): IntegrationResult {
-  const before = claudePluginState(runChecked(runner, 'claude', ['plugin', 'list', '--json']).stdout);
-  runChecked(runner, 'claude', ['plugin', 'marketplace', 'add', bundleRoot], true);
-  if (before.installed) runChecked(runner, 'claude', ['plugin', 'update', 'genie@automagik']);
-  else runChecked(runner, 'claude', ['plugin', 'install', 'genie@automagik']);
+function installClaudeIntegration(
+  runner: CommandRunner,
+  bundleRoot: string,
+  timeoutMs = INTEGRATION_TIMEOUT_MS,
+): IntegrationResult {
+  const before = claudePluginState(runChecked(runner, 'claude', ['plugin', 'list', '--json'], false, timeoutMs).stdout);
+  runChecked(runner, 'claude', ['plugin', 'marketplace', 'add', bundleRoot], true, timeoutMs);
+  if (before.installed) runChecked(runner, 'claude', ['plugin', 'update', 'genie@automagik'], false, timeoutMs);
+  else runChecked(runner, 'claude', ['plugin', 'install', 'genie@automagik'], false, timeoutMs);
   return {
     runtime: 'claude',
     ok: true,
@@ -304,25 +511,144 @@ function installClaudeIntegration(runner: CommandRunner, bundleRoot: string): In
   };
 }
 
-/** Remove only Genie-owned runtime integration state; shared marketplaces are opt-in. */
-export function removeRuntimeIntegrations(removeMarketplace = false): void {
-  const codexHome = getCodexHome();
-  const agentsDir = join(codexHome, 'agents');
-  if (existsSync(agentsDir)) {
-    for (const name of readdirSync(agentsDir)) {
-      if (!/^genie-.+\.toml$/.test(name)) continue;
-      const path = join(agentsDir, name);
-      try {
-        if (readFileSync(path, 'utf8').startsWith('# Managed by Genie.')) unlinkSync(path);
-      } catch {
-        // Preserve unreadable or user-modified files.
+export interface CodexAgentRemovalResult {
+  removed: string[];
+  keptModified: string[];
+  missing: string[];
+  failures: Array<{ name: string; detail: string }>;
+}
+
+/** Remove only digest-clean inventory-owned role agents; modified/user files stay byte-identical. */
+export function removeCodexAgents(codexHome = getCodexHome()): CodexAgentRemovalResult {
+  const result: CodexAgentRemovalResult = { removed: [], keptModified: [], missing: [], failures: [] };
+  const state = readCodexAgentInventory(codexHome);
+  if (state.status === 'corrupt') {
+    result.failures.push({
+      name: CODEX_AGENT_INVENTORY_NAME,
+      detail: `ownership inventory is corrupt; no role agents were removed: ${state.error}; review and move it aside before retrying`,
+    });
+    return result;
+  }
+  const inventory = state.inventory;
+  for (const name of Object.keys(inventory.files).sort()) {
+    const path = join(codexHome, 'agents', name);
+    const ownership = classifyCodexAgentFile(path, inventory.files[name]);
+    try {
+      if (ownership === 'managed-clean') {
+        unlinkSync(path);
+        result.removed.push(name);
+      } else if (ownership === 'managed-modified') {
+        result.keptModified.push(name);
+      } else if (ownership === 'absent') {
+        result.missing.push(name);
       }
+      // Uninstall relinquishes ownership of modified files without editing them.
+      delete inventory.files[name];
+    } catch (error) {
+      result.failures.push({ name, detail: error instanceof Error ? error.message : String(error) });
     }
   }
-  if (commandExists('codex')) defaultRunner('codex', ['plugin', 'remove', 'genie@automagik']);
-  if (commandExists('claude')) defaultRunner('claude', ['plugin', 'uninstall', 'genie@automagik']);
-  if (removeMarketplace) {
-    if (commandExists('codex')) defaultRunner('codex', ['plugin', 'marketplace', 'remove', 'automagik']);
-    if (commandExists('claude')) defaultRunner('claude', ['plugin', 'marketplace', 'remove', 'automagik']);
+  if (result.failures.length === 0) {
+    try {
+      writeCodexAgentInventory(codexHome, inventory);
+    } catch (error) {
+      result.failures.push({
+        name: CODEX_AGENT_INVENTORY_NAME,
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
+  return result;
+}
+
+export interface IntegrationRemovalStep {
+  runtime: RuntimeName;
+  operation: 'plugin' | 'marketplace';
+  ok: boolean;
+  detail: string;
+  timedOut?: boolean;
+}
+
+export interface RuntimeIntegrationRemovalResult {
+  ok: boolean;
+  agents: CodexAgentRemovalResult;
+  steps: IntegrationRemovalStep[];
+}
+
+export interface RemoveRuntimeIntegrationsOptions {
+  removeMarketplace?: boolean;
+  runner?: CommandRunner;
+  detected?: Partial<Record<RuntimeName, boolean>>;
+  codexHome?: string;
+  timeoutMs?: number;
+}
+
+function removalStep(
+  runner: CommandRunner,
+  runtime: RuntimeName,
+  operation: IntegrationRemovalStep['operation'],
+  args: string[],
+  timeoutMs: number,
+): IntegrationRemovalStep {
+  try {
+    const result = runner(runtime, args, { timeoutMs });
+    if (result.timedOut) {
+      return {
+        runtime,
+        operation,
+        ok: false,
+        timedOut: true,
+        detail: `timed out after ${timeoutMs}ms; retry the removal`,
+      };
+    }
+    if (result.exitCode !== 0) {
+      const detail = (result.stderr || result.stdout).trim();
+      if (/not installed|not found|does not exist|no such|unknown (plugin|marketplace)/i.test(detail)) {
+        return { runtime, operation, ok: true, detail: 'already absent' };
+      }
+      return {
+        runtime,
+        operation,
+        ok: false,
+        detail: detail || `exited ${result.exitCode}; retry the removal`,
+      };
+    }
+    return { runtime, operation, ok: true, detail: 'removed' };
+  } catch (error) {
+    return { runtime, operation, ok: false, detail: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/** Remove only Genie-owned runtime state and report every failure; shared marketplaces are opt-in. */
+export function removeRuntimeIntegrations(
+  input: boolean | RemoveRuntimeIntegrationsOptions = false,
+): RuntimeIntegrationRemovalResult {
+  const options: RemoveRuntimeIntegrationsOptions = typeof input === 'boolean' ? { removeMarketplace: input } : input;
+  const runner = options.runner ?? defaultRunner;
+  const timeoutMs = options.timeoutMs ?? INTEGRATION_TIMEOUT_MS;
+  const detected = {
+    codex: options.detected?.codex ?? commandExists('codex'),
+    claude: options.detected?.claude ?? commandExists('claude'),
+  };
+  const agents = removeCodexAgents(options.codexHome);
+  const steps: IntegrationRemovalStep[] = [];
+  if (detected.codex) {
+    steps.push(removalStep(runner, 'codex', 'plugin', ['plugin', 'remove', 'genie@automagik'], timeoutMs));
+  }
+  if (detected.claude) {
+    steps.push(removalStep(runner, 'claude', 'plugin', ['plugin', 'uninstall', 'genie@automagik'], timeoutMs));
+  }
+  if (options.removeMarketplace) {
+    if (detected.codex) {
+      steps.push(
+        removalStep(runner, 'codex', 'marketplace', ['plugin', 'marketplace', 'remove', 'automagik'], timeoutMs),
+      );
+    }
+    if (detected.claude) {
+      steps.push(
+        removalStep(runner, 'claude', 'marketplace', ['plugin', 'marketplace', 'remove', 'automagik'], timeoutMs),
+      );
+    }
+  }
+  return { ok: agents.failures.length === 0 && steps.every((step) => step.ok), agents, steps };
 }

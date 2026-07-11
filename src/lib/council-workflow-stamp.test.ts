@@ -10,23 +10,35 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const require = createRequire(import.meta.url);
-const { stampCouncilWorkflow, resolveStampInputs, PLACEHOLDER } =
+const { stampCouncilWorkflow, inspectManagedWorkflow, resolveStampInputs, PLACEHOLDER, WORKFLOW_MANIFEST_NAME } =
   require('../../plugins/genie/scripts/council-stamp.cjs') as {
-    stampCouncilWorkflow: (opts: { templatePath: string; pluginRoot: string; targetDir: string }) => {
-      action: 'written' | 'skipped';
+    stampCouncilWorkflow: (opts: {
+      templatePath: string;
+      pluginRoot: string;
+      targetDir: string;
+      version?: string | null;
+      now?: () => Date;
+    }) => {
+      action: 'written' | 'skipped' | 'kept-unmanaged' | 'kept-modified' | 'metadata-corrupt';
       targetPath: string;
+    };
+    inspectManagedWorkflow: (targetDir: string) => {
+      targetPath: string;
+      manifestPath: string;
+      state: 'unmanaged' | 'managed-clean' | 'managed-modified' | 'corrupt-metadata';
     };
     resolveStampInputs: (opts: { claudePluginRoot: string; genieHome: string; exists?: (p: string) => boolean }) => {
       pluginRoot: string;
       templatePath: string;
     };
     PLACEHOLDER: string;
+    WORKFLOW_MANIFEST_NAME: string;
   };
 
 const TEMPLATE_BODY = [
@@ -56,7 +68,13 @@ describe('stampCouncilWorkflow', () => {
 
   test('replaces the placeholder with the absolute plugin root and writes council.js', () => {
     const pluginRoot = '/opt/plugins/genie';
-    const res = stampCouncilWorkflow({ templatePath, pluginRoot, targetDir });
+    const res = stampCouncilWorkflow({
+      templatePath,
+      pluginRoot,
+      targetDir,
+      version: '9.9.9',
+      now: () => new Date('2026-07-11T12:00:00.000Z'),
+    });
 
     expect(res.action).toBe('written');
     expect(res.targetPath).toBe(join(targetDir, 'council.js'));
@@ -64,6 +82,12 @@ describe('stampCouncilWorkflow', () => {
     const out = readFileSync(res.targetPath, 'utf8');
     expect(out).toContain(`const LENS_ROOT = '${pluginRoot}';`);
     expect(out).not.toContain(PLACEHOLDER);
+    expect(inspectManagedWorkflow(targetDir).state).toBe('managed-clean');
+    expect(JSON.parse(readFileSync(join(targetDir, WORKFLOW_MANIFEST_NAME), 'utf8'))).toMatchObject({
+      managedBy: 'genie-agent-sync',
+      version: '9.9.9',
+      syncedAt: '2026-07-11T12:00:00.000Z',
+    });
   });
 
   test('target lands exactly at <targetDir>/council.js (creating parent dirs)', () => {
@@ -98,6 +122,50 @@ describe('stampCouncilWorkflow', () => {
     const res = stampCouncilWorkflow({ templatePath, pluginRoot, targetDir });
     expect(res.action).toBe('written');
     expect(readFileSync(res.targetPath, 'utf8')).toContain('// updated template');
+  });
+
+  test('an inventory-missing workflow is preserved and never adopted by matching content or signature', () => {
+    mkdirSync(targetDir, { recursive: true });
+    const targetPath = join(targetDir, 'council.js');
+    const personal = TEMPLATE_BODY.split(PLACEHOLDER).join('/abs/plugins/genie');
+    writeFileSync(targetPath, personal, 'utf8');
+
+    const result = stampCouncilWorkflow({ templatePath, pluginRoot: '/abs/plugins/genie', targetDir });
+
+    expect(result.action).toBe('kept-unmanaged');
+    expect(readFileSync(targetPath, 'utf8')).toBe(personal);
+    expect(existsSync(join(targetDir, WORKFLOW_MANIFEST_NAME))).toBe(false);
+    expect(inspectManagedWorkflow(targetDir).state).toBe('unmanaged');
+  });
+
+  test('a digest-owned workflow modified by the user is preserved byte-identically', () => {
+    const targetPath = join(targetDir, 'council.js');
+    stampCouncilWorkflow({ templatePath, pluginRoot: '/old/plugins/genie', targetDir });
+    const modified = `${readFileSync(targetPath, 'utf8')}\n// personal edit\n`;
+    writeFileSync(targetPath, modified, 'utf8');
+    const sidecarBefore = readFileSync(join(targetDir, WORKFLOW_MANIFEST_NAME), 'utf8');
+
+    const result = stampCouncilWorkflow({ templatePath, pluginRoot: '/new/plugins/genie', targetDir });
+
+    expect(result.action).toBe('kept-modified');
+    expect(readFileSync(targetPath, 'utf8')).toBe(modified);
+    expect(readFileSync(join(targetDir, WORKFLOW_MANIFEST_NAME), 'utf8')).toBe(sidecarBefore);
+    expect(inspectManagedWorkflow(targetDir).state).toBe('managed-modified');
+  });
+
+  test('corrupt ownership metadata fails closed without rewriting the target or sidecar', () => {
+    const targetPath = join(targetDir, 'council.js');
+    const sidecarPath = join(targetDir, WORKFLOW_MANIFEST_NAME);
+    stampCouncilWorkflow({ templatePath, pluginRoot: '/old/plugins/genie', targetDir });
+    const targetBefore = readFileSync(targetPath, 'utf8');
+    writeFileSync(sidecarPath, '{broken', 'utf8');
+
+    const result = stampCouncilWorkflow({ templatePath, pluginRoot: '/new/plugins/genie', targetDir });
+
+    expect(result.action).toBe('metadata-corrupt');
+    expect(readFileSync(targetPath, 'utf8')).toBe(targetBefore);
+    expect(readFileSync(sidecarPath, 'utf8')).toBe('{broken');
+    expect(inspectManagedWorkflow(targetDir).state).toBe('corrupt-metadata');
   });
 
   test('throws when a required path argument is missing', () => {

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Documentation"
+  short_description: "Audit and update documentation against code"
+  default_prompt: "Use $docs to align the documentation with the implemented behavior."

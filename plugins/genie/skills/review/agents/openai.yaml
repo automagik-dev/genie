@@ -1,0 +1,4 @@
+interface:
+  display_name: "Genie Review Gate"
+  short_description: "Gate plans, implementations, and pull requests"
+  default_prompt: "Use $review to validate this work against its acceptance criteria."

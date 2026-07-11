@@ -12,15 +12,15 @@
  * layout-normalize + agent-sync steps always run: install must converge agents.
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { computeDirDigest } from '../lib/agent-sync.js';
+import { join } from 'node:path';
 import {
   type InstallIntegrationsOptions,
   type IntegrationSelection,
   installRuntimeIntegrations,
 } from '../lib/runtime-integrations.js';
+import { type AuxiliaryTreeOperations, type AuxiliaryTreeOutcome, convergeAuxiliaryTree } from './auxiliary-trees.js';
 import { cleanupV4 } from './legacy-v4.js';
 import { runAgentSyncSafe } from './update.js';
 
@@ -47,7 +47,7 @@ export interface InstallOptions {
 }
 
 type V4CleanupRunner = typeof cleanupV4;
-type NormalizeAuxLayoutFn = (genieHome: string) => void;
+type NormalizeAuxLayoutFn = (genieHome: string) => unknown;
 type AgentSyncRunner = () => void;
 type IntegrationRunner = (options?: InstallIntegrationsOptions) => ReturnType<typeof installRuntimeIntegrations>;
 
@@ -56,64 +56,41 @@ type IntegrationRunner = (options?: InstallIntegrationsOptions) => ReturnType<ty
  * the canonical `<home>/{plugins,skills,templates}` layout that `genie update`
  * and the agent-sync source resolver expect.
  *
- * install.sh always extracts the tarball into `<home>/bin/`, so on a fresh
- * install the canonical targets are absent and a plain same-filesystem
- * `renameSync` (atomic — readers never observe a partial state) moves each
- * tree into place. On a REINSTALL over an existing install the canonical
- * targets already exist but are STALE — the fresh trees sit in bin/ and,
- * left there, agent-sync would converge agents from old content while
- * `genie update` reports "Already up to date". So when both sides exist,
- * the fresh tree is swapped in atomically unless it is provably identical:
- * the extracted `bin/VERSION` vs the canonical `<home>/VERSION` stamp when
- * both exist, per-tree content digest otherwise. A same-version reinstall
- * therefore stays an idempotent no-op. After adopting fresh trees — and only
- * when NO tree failed — the canonical VERSION stamp is refreshed so the next
- * run short-circuits; a partial adoption leaves the stamp stale so the next
- * reinstall retries the failed tree via the digest compare.
- *
- * Best-effort per directory: a failure on one never aborts the rest or the
- * install.
+ * install.sh extracts into `<home>/bin/`. Each present tree is compared by
+ * content, copied to a sibling staging directory, digest-verified, and then
+ * promoted with same-filesystem renames. VERSION stamps are written only
+ * after all present trees converge and are never treated as content evidence.
+ * Identical extracted trees are removed so deleted files cannot survive into
+ * a later extraction. Every tree is attempted; any failure blocks subsequent
+ * install finishers and retains actionable recovery artifacts.
  */
-export function normalizeAuxLayout(genieHome: string): void {
+export function normalizeAuxLayout(
+  genieHome: string,
+  operations?: Partial<AuxiliaryTreeOperations>,
+): AuxiliaryTreeOutcome[] {
   const binVersion = readVersionStamp(join(genieHome, 'bin', 'VERSION'));
-  const homeVersion = readVersionStamp(join(genieHome, 'VERSION'));
-  const sameVersion = binVersion !== null && homeVersion !== null ? binVersion === homeVersion : null;
-  let adoptedFresh = false;
-  let anyTreeFailed = false;
-  for (const name of AUX_LAYOUT_DIRS) {
+  const outcomes = AUX_LAYOUT_DIRS.map((name) =>
+    convergeAuxiliaryTree({
+      label: name,
+      source: join(genieHome, 'bin', name),
+      destination: join(genieHome, name),
+      removeSourceOnSuccess: true,
+      operations,
+    }),
+  );
+  const attempted = outcomes.some((outcome) => outcome.status !== 'skipped');
+  const failed = outcomes.some((outcome) => outcome.status === 'failed');
+  if (attempted && !failed && binVersion !== null) {
     try {
-      const binPath = join(genieHome, 'bin', name);
-      const homePath = join(genieHome, name);
-      if (!existsSync(binPath)) continue;
-      if (!existsSync(homePath)) {
-        mkdirSync(dirname(homePath), { recursive: true });
-        renameSync(binPath, homePath);
-        continue;
-      }
-      // Reinstall over an existing install: bin/<name> is the freshly
-      // extracted tree. Swap it in unless it is provably identical.
-      const identical = sameVersion ?? computeDirDigest(binPath) === computeDirDigest(homePath);
-      if (identical) continue;
-      swapAuxTreeInPlace(binPath, homePath);
-      adoptedFresh = true;
-    } catch {
-      // layout normalization is best-effort; never fail the install over it.
-      // But a failed tree MUST keep the VERSION stamp stale (below) — stamping
-      // a partial adoption would make same-version reinstalls no-op forever
-      // and the failed tree permanently stale.
-      anyTreeFailed = true;
-    }
-  }
-  if (adoptedFresh && !anyTreeFailed && binVersion !== null) {
-    try {
-      // Fresh trees adopted — refresh the canonical VERSION stamp so
-      // resolveGenieSource/doctor report the just-installed version and the
-      // next normalize run no-ops on the version match.
+      // VERSION is metadata written only after every present tree was proven
+      // digest-identical or promoted successfully. It is never convergence
+      // evidence by itself.
       writeFileSync(join(genieHome, 'VERSION'), `${binVersion}\n`);
     } catch {
       // best-effort; a stale stamp only costs a digest compare next run.
     }
   }
+  return outcomes;
 }
 
 /** Read a VERSION stamp file, returning its trimmed content or null. */
@@ -123,36 +100,6 @@ function readVersionStamp(path: string): string | null {
     return value.length > 0 ? value : null;
   } catch {
     return null;
-  }
-}
-
-/**
- * Atomic stage-next-to-target + rename dance for one auxiliary tree,
- * mirroring `swapAuxiliaryTree` in update.ts (not exported there; keep the
- * semantics in lockstep). Unlike update.ts — which copies out of a staging
- * extract dir — `src` here is the extracted `bin/<name>` tree under the same
- * `genieHome` filesystem, so it is MOVED into place (no copy, no bin/
- * residue). On failure the previous live tree is restored and the error
- * propagates to the caller's per-directory best-effort catch.
- */
-function swapAuxTreeInPlace(src: string, dest: string): void {
-  const staging = `${dest}.new`;
-  const parked = `${dest}.old`;
-  try {
-    if (existsSync(staging)) rmSync(staging, { recursive: true, force: true });
-    if (existsSync(parked)) rmSync(parked, { recursive: true, force: true });
-    renameSync(src, staging); // fresh tree staged next to the target
-    renameSync(dest, parked); // park the live tree
-    renameSync(staging, dest); // fresh becomes live
-    rmSync(parked, { recursive: true, force: true });
-  } catch (err) {
-    try {
-      if (!existsSync(dest) && existsSync(parked)) renameSync(parked, dest);
-      if (existsSync(staging)) rmSync(staging, { recursive: true, force: true });
-    } catch {
-      // give up; dest is in whatever state it's in
-    }
-    throw err;
   }
 }
 
@@ -168,6 +115,7 @@ export function installCommand(
   runSync: AgentSyncRunner = runAgentSyncSafe,
   runIntegrations: IntegrationRunner = installRuntimeIntegrations,
 ): void {
+  const selection = resolveIntegrationSelection(options);
   if (options.skipV4Cleanup) {
     console.log('\x1b[2mSkipping v4 legacy cleanup (--skip-v4-cleanup).\x1b[0m');
   } else {
@@ -175,13 +123,17 @@ export function installCommand(
   }
   // Always converge agents: fix the bin/ layout mismatch, then sync in-process
   // (the freshly-linked binary is already this version, so no re-exec needed).
-  normalizeLayout(GENIE_HOME);
+  const normalized = normalizeLayout(GENIE_HOME);
+  if (Array.isArray(normalized)) {
+    const outcomes = normalized as AuxiliaryTreeOutcome[];
+    for (const outcome of outcomes) printAuxiliaryOutcome(outcome);
+    const failed = outcomes.filter((outcome) => outcome.status === 'failed');
+    if (failed.length > 0) {
+      throw new Error(`Install payload convergence failed: ${failed.map((outcome) => outcome.label).join(', ')}`);
+    }
+  }
   runSync();
 
-  const selection = options.skipIntegrations ? 'none' : (options.integrations ?? 'auto');
-  if (!['auto', 'codex', 'claude', 'all', 'none'].includes(selection)) {
-    throw new Error(`Invalid --integrations value: ${selection}`);
-  }
   const results = runIntegrations({ selection });
   for (const result of results) {
     const glyph = result.ok ? '\x1b[32m+\x1b[0m' : '\x1b[33m!\x1b[0m';
@@ -195,4 +147,28 @@ export function installCommand(
   if (results.some((result) => result.runtime === 'codex' && result.ok)) {
     console.log('  \x1b[33m!\x1b[0m Review Genie hooks with /hooks, then start a new Codex task.');
   }
+}
+
+/** Validate raw Commander input before cleanup, synchronization, or install side effects. */
+export function resolveIntegrationSelection(options: InstallOptions): IntegrationSelection {
+  const selection = options.skipIntegrations ? 'none' : (options.integrations ?? 'auto');
+  if (!['auto', 'codex', 'claude', 'all', 'none'].includes(selection)) {
+    throw new Error(`Invalid --integrations value: ${selection}`);
+  }
+  return selection;
+}
+
+function printAuxiliaryOutcome(outcome: AuxiliaryTreeOutcome): void {
+  if (outcome.status === 'skipped') return;
+  if (outcome.status === 'failed') {
+    const rollback = outcome.rollbackError ? `; rollback: ${outcome.rollbackError}` : '';
+    const fresh = outcome.freshArtifact
+      ? `; verified fresh artifact: ${outcome.freshArtifact}`
+      : '; no verified fresh artifact available';
+    console.log(`  \x1b[31m!\x1b[0m ${outcome.label}: failed at ${outcome.stage}: ${outcome.error}${rollback}${fresh}`);
+    return;
+  }
+  const detail = outcome.status === 'unchanged' ? 'content already current; extracted residue removed' : 'refreshed';
+  console.log(`  \x1b[32m+\x1b[0m ${outcome.label}: ${detail}`);
+  for (const warning of outcome.warnings) console.log(`  \x1b[33m!\x1b[0m ${outcome.label}: ${warning}`);
 }

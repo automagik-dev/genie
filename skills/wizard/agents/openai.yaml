@@ -1,0 +1,6 @@
+interface:
+  display_name: "Genie Setup Wizard"
+  short_description: "Guide first-run setup and the first Genie wish"
+  default_prompt: "Use $wizard to guide this repository through its first Genie setup and wish."
+policy:
+  allow_implicit_invocation: false

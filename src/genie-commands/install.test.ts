@@ -9,10 +9,11 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { installCommand, normalizeAuxLayout } from './install.js';
+import { convergeAuxiliaryTree } from './auxiliary-trees.js';
+import { type InstallOptions, installCommand, normalizeAuxLayout } from './install.js';
 import type { cleanupV4 } from './legacy-v4.js';
 
 function makeCleanupSpy(): { runner: typeof cleanupV4; calls: () => number } {
@@ -118,6 +119,28 @@ describe('installCommand', () => {
       ),
     ).toThrow('Requested integration failed');
   });
+
+  test('rejects an invalid integration option before every finisher side effect', () => {
+    const calls: string[] = [];
+    const invalid = { integrations: 'codxe' } as unknown as InstallOptions;
+    expect(() =>
+      installCommand(
+        invalid,
+        (() => calls.push('cleanup')) as unknown as typeof cleanupV4,
+        () => {
+          calls.push('normalize');
+        },
+        () => {
+          calls.push('sync');
+        },
+        () => {
+          calls.push('integrations');
+          return [];
+        },
+      ),
+    ).toThrow('Invalid --integrations value: codxe');
+    expect(calls).toEqual([]);
+  });
 });
 
 describe('normalizeAuxLayout', () => {
@@ -164,7 +187,7 @@ describe('normalizeAuxLayout', () => {
     expect(readFileSync(join(home, 'VERSION'), 'utf8').trim()).toBe('5.2.0');
   });
 
-  test('same-version reinstall is an idempotent no-op — canonical trees are left alone', () => {
+  test('same-version reinstall repairs divergent content instead of trusting VERSION stamps', () => {
     write(join(home, 'bin', 'VERSION'), '5.2.0\n');
     write(join(home, 'VERSION'), '5.2.0\n');
     // bin content deliberately differs so a wrongful swap would be visible
@@ -174,7 +197,8 @@ describe('normalizeAuxLayout', () => {
     normalizeAuxLayout(home);
     normalizeAuxLayout(home);
 
-    expect(readFileSync(join(home, 'plugins', 'genie', 'SKILL.md'), 'utf8')).toBe('canonical');
+    expect(readFileSync(join(home, 'plugins', 'genie', 'SKILL.md'), 'utf8')).toBe('reextracted');
+    expect(existsSync(join(home, 'bin', 'plugins'))).toBe(false);
     expect(readFileSync(join(home, 'VERSION'), 'utf8').trim()).toBe('5.2.0');
   });
 
@@ -188,14 +212,14 @@ describe('normalizeAuxLayout', () => {
     expect(existsSync(join(home, 'bin', 'skills'))).toBe(false);
   });
 
-  test('without VERSION stamps a digest-identical tree is a no-op', () => {
+  test('a digest-identical extracted tree is removed instead of becoming persistent residue', () => {
     write(join(home, 'bin', 'skills', 'wish', 'SKILL.md'), 'same content');
     write(join(home, 'skills', 'wish', 'SKILL.md'), 'same content');
 
     normalizeAuxLayout(home);
 
     expect(readFileSync(join(home, 'skills', 'wish', 'SKILL.md'), 'utf8')).toBe('same content');
-    expect(existsSync(join(home, 'bin', 'skills', 'wish', 'SKILL.md'))).toBe(true);
+    expect(existsSync(join(home, 'bin', 'skills'))).toBe(false);
   });
 
   test('is a non-throwing no-op when neither layout is present', () => {
@@ -236,5 +260,309 @@ describe('normalizeAuxLayout', () => {
     // …but the stamp MUST stay absent: stamping a partial adoption would make
     // same-version reinstalls no-op forever while skills/ stays stale.
     expect(existsSync(join(home, 'VERSION'))).toBe(false);
+  });
+
+  test('source-removal failure preserves the prior VERSION stamp and extracted recovery tree', () => {
+    const source = join(home, 'bin', 'plugins');
+    write(join(home, 'bin', 'VERSION'), '5.2.0\n');
+    write(join(home, 'VERSION'), '5.1.0\n');
+    write(join(source, 'payload.txt'), 'fresh');
+    write(join(home, 'plugins', 'payload.txt'), 'old');
+
+    const outcomes = normalizeAuxLayout(home, {
+      remove: (path) => {
+        if (path === source) throw new Error('source removal failure');
+        rmSync(path, { recursive: true, force: true });
+      },
+    });
+
+    expect(outcomes.find((outcome) => outcome.label === 'plugins')?.status).toBe('failed');
+    expect(readFileSync(join(home, 'VERSION'), 'utf8').trim()).toBe('5.1.0');
+    expect(readFileSync(join(source, 'payload.txt'), 'utf8')).toBe('fresh');
+    expect(readFileSync(join(home, 'plugins', 'payload.txt'), 'utf8')).toBe('fresh');
+  });
+});
+
+describe('transactional auxiliary-tree convergence', () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'genie-aux-transaction-'));
+  });
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  function fixture(): { source: string; destination: string } {
+    const source = join(root, 'extract', 'plugins');
+    const destination = join(root, 'home', 'plugins');
+    mkdirSync(source, { recursive: true });
+    mkdirSync(destination, { recursive: true });
+    writeFileSync(join(source, 'payload.txt'), 'fresh');
+    writeFileSync(join(destination, 'payload.txt'), 'old');
+    return { source, destination };
+  }
+
+  function copyPayload(source: string, destination: string): void {
+    mkdirSync(destination, { recursive: true });
+    writeFileSync(join(destination, 'payload.txt'), readFileSync(join(source, 'payload.txt')));
+  }
+
+  test('copy failure leaves the prior live tree and complete fresh source untouched', () => {
+    const { source, destination } = fixture();
+    const outcome = convergeAuxiliaryTree({
+      label: 'plugins',
+      source,
+      destination,
+      transactionId: 'copy-failure',
+      operations: {
+        copyTree: () => {
+          throw new Error('copy injected');
+        },
+      },
+    });
+    expect(outcome.status).toBe('failed');
+    if (outcome.status === 'failed') expect(outcome.stage).toBe('copy-fresh');
+    expect(readFileSync(join(destination, 'payload.txt'), 'utf8')).toBe('old');
+    expect(readFileSync(join(source, 'payload.txt'), 'utf8')).toBe('fresh');
+  });
+
+  test('partial copy/disk-full never reports the incomplete staging tree as verified fresh', () => {
+    const { source, destination } = fixture();
+    const staging = `${destination}.new-partial-copy`;
+    const outcome = convergeAuxiliaryTree({
+      label: 'plugins',
+      source,
+      destination,
+      transactionId: 'partial-copy',
+      operations: {
+        copyTree: (_from, to) => {
+          mkdirSync(to, { recursive: true });
+          writeFileSync(join(to, 'payload.txt'), 'partial');
+          throw new Error('ENOSPC: disk full');
+        },
+      },
+    });
+    expect(outcome.status).toBe('failed');
+    if (outcome.status === 'failed') {
+      expect(outcome.stage).toBe('copy-fresh');
+      expect(outcome.freshArtifact).toBe(source);
+      expect(outcome.freshArtifact).not.toBe(staging);
+      expect(outcome.freshArtifactDigest).toMatch(/^[a-f0-9]{64}$/);
+    }
+    expect(readFileSync(join(staging, 'payload.txt'), 'utf8')).toBe('partial');
+    expect(readFileSync(join(destination, 'payload.txt'), 'utf8')).toBe('old');
+  });
+
+  test('verify-copy mismatch reports only the verified source, never corrupt staging', () => {
+    const { source, destination } = fixture();
+    const staging = `${destination}.new-verify-mismatch`;
+    const outcome = convergeAuxiliaryTree({
+      label: 'plugins',
+      source,
+      destination,
+      transactionId: 'verify-mismatch',
+      operations: {
+        copyTree: (_from, to) => {
+          mkdirSync(to, { recursive: true });
+          writeFileSync(join(to, 'payload.txt'), 'corrupt');
+        },
+      },
+    });
+    expect(outcome.status).toBe('failed');
+    if (outcome.status === 'failed') {
+      expect(outcome.stage).toBe('verify-copy');
+      expect(outcome.freshArtifact).toBe(source);
+      expect(outcome.freshArtifact).not.toBe(staging);
+    }
+    expect(readFileSync(join(destination, 'payload.txt'), 'utf8')).toBe('old');
+  });
+
+  test('live-tree parking failure is non-destructive and retains staged fresh content', () => {
+    const { source, destination } = fixture();
+    const outcome = convergeAuxiliaryTree({
+      label: 'plugins',
+      source,
+      destination,
+      transactionId: 'park-failure',
+      operations: {
+        rename: () => {
+          throw new Error('park injected');
+        },
+      },
+    });
+    expect(outcome.status).toBe('failed');
+    if (outcome.status === 'failed') {
+      expect(outcome.stage).toBe('park-live');
+      expect(outcome.freshArtifact).toBeDefined();
+      if (outcome.freshArtifact) expect(existsSync(outcome.freshArtifact)).toBe(true);
+    }
+    expect(readFileSync(join(destination, 'payload.txt'), 'utf8')).toBe('old');
+    expect(readFileSync(join(source, 'payload.txt'), 'utf8')).toBe('fresh');
+  });
+
+  test('fresh promotion failure restores the prior live tree and retains retry artifacts', () => {
+    const { source, destination } = fixture();
+    let renames = 0;
+    const outcome = convergeAuxiliaryTree({
+      label: 'plugins',
+      source,
+      destination,
+      transactionId: 'promote-failure',
+      operations: {
+        rename: (from, to) => {
+          renames += 1;
+          if (renames === 2) throw new Error('promote injected');
+          renameSync(from, to);
+        },
+      },
+    });
+    expect(outcome.status).toBe('failed');
+    if (outcome.status === 'failed') {
+      expect(outcome.stage).toBe('promote-fresh');
+      expect(outcome.freshArtifact).toBeDefined();
+      if (outcome.freshArtifact) expect(existsSync(outcome.freshArtifact)).toBe(true);
+    }
+    expect(readFileSync(join(destination, 'payload.txt'), 'utf8')).toBe('old');
+    expect(readFileSync(join(source, 'payload.txt'), 'utf8')).toBe('fresh');
+  });
+
+  test('rollback rename failure falls back to a verified copy of the prior tree', () => {
+    const { source, destination } = fixture();
+    let renames = 0;
+    const outcome = convergeAuxiliaryTree({
+      label: 'plugins',
+      source,
+      destination,
+      transactionId: 'rollback-copy',
+      operations: {
+        rename: (from, to) => {
+          renames += 1;
+          if (renames >= 2) throw new Error(`rename injected ${renames}`);
+          renameSync(from, to);
+        },
+      },
+    });
+    expect(outcome.status).toBe('failed');
+    if (outcome.status === 'failed') {
+      expect(outcome.stage).toBe('promote-fresh');
+      expect(outcome.rollbackError).toBeUndefined();
+      expect(outcome.previousArtifact).toBeDefined();
+    }
+    expect(readFileSync(join(destination, 'payload.txt'), 'utf8')).toBe('old');
+    expect(readFileSync(join(source, 'payload.txt'), 'utf8')).toBe('fresh');
+  });
+
+  test('total rollback failure retains verified fresh and previous artifacts with an actionable error', () => {
+    const { source, destination } = fixture();
+    let renames = 0;
+    const outcome = convergeAuxiliaryTree({
+      label: 'plugins',
+      source,
+      destination,
+      transactionId: 'total-rollback',
+      operations: {
+        rename: (from, to) => {
+          renames += 1;
+          if (renames >= 2) throw new Error(`rename failure ${renames}`);
+          renameSync(from, to);
+        },
+        copyTree: (from, to) => {
+          if (from.includes('.old-total-rollback')) throw new Error('rollback copy failure');
+          copyPayload(from, to);
+        },
+      },
+    });
+    expect(outcome.status).toBe('failed');
+    if (outcome.status === 'failed') {
+      expect(outcome.stage).toBe('promote-fresh');
+      expect(outcome.rollbackError).toContain('rename rollback failed');
+      expect(outcome.rollbackError).toContain('copy rollback failed');
+      expect(outcome.freshArtifact).toBeDefined();
+      expect(outcome.previousArtifact).toBeDefined();
+      if (outcome.freshArtifact) expect(readFileSync(join(outcome.freshArtifact, 'payload.txt'), 'utf8')).toBe('fresh');
+      if (outcome.previousArtifact)
+        expect(readFileSync(join(outcome.previousArtifact, 'payload.txt'), 'utf8')).toBe('old');
+    }
+    expect(existsSync(destination)).toBe(false);
+  });
+
+  test('identical-source removal failure keeps live and verified source and blocks convergence', () => {
+    const { source, destination } = fixture();
+    writeFileSync(join(destination, 'payload.txt'), 'fresh');
+    const outcome = convergeAuxiliaryTree({
+      label: 'plugins',
+      source,
+      destination,
+      removeSourceOnSuccess: true,
+      transactionId: 'identical-remove',
+      operations: {
+        remove: (path) => {
+          if (path === source) throw new Error('source removal failure');
+          rmSync(path, { recursive: true, force: true });
+        },
+      },
+    });
+    expect(outcome.status).toBe('failed');
+    if (outcome.status === 'failed') {
+      expect(outcome.stage).toBe('remove-identical-source');
+      expect(outcome.freshArtifact).toBe(source);
+    }
+    expect(readFileSync(join(destination, 'payload.txt'), 'utf8')).toBe('fresh');
+    expect(readFileSync(join(source, 'payload.txt'), 'utf8')).toBe('fresh');
+  });
+
+  test('post-promotion source-removal failure keeps new live plus old and verified fresh recovery artifacts', () => {
+    const { source, destination } = fixture();
+    const outcome = convergeAuxiliaryTree({
+      label: 'plugins',
+      source,
+      destination,
+      removeSourceOnSuccess: true,
+      transactionId: 'source-remove',
+      operations: {
+        remove: (path) => {
+          if (path === source) throw new Error('source removal failure');
+          rmSync(path, { recursive: true, force: true });
+        },
+      },
+    });
+    expect(outcome.status).toBe('failed');
+    if (outcome.status === 'failed') {
+      expect(outcome.stage).toBe('remove-source');
+      expect(outcome.freshArtifact).toBeDefined();
+      expect(outcome.previousArtifact).toBeDefined();
+      if (outcome.previousArtifact)
+        expect(readFileSync(join(outcome.previousArtifact, 'payload.txt'), 'utf8')).toBe('old');
+    }
+    expect(readFileSync(join(destination, 'payload.txt'), 'utf8')).toBe('fresh');
+    expect(readFileSync(join(source, 'payload.txt'), 'utf8')).toBe('fresh');
+  });
+
+  test('cross-filesystem source is copied and only destination siblings are renamed', () => {
+    const { source, destination } = fixture();
+    const renameSources: string[] = [];
+    const outcome = convergeAuxiliaryTree({
+      label: 'plugins',
+      source,
+      destination,
+      removeSourceOnSuccess: true,
+      transactionId: 'cross-filesystem',
+      operations: {
+        rename: (from, to) => {
+          renameSources.push(from);
+          if (from === source || from.startsWith(`${source}/`)) {
+            const error = new Error('cross-device link') as NodeJS.ErrnoException;
+            error.code = 'EXDEV';
+            throw error;
+          }
+          renameSync(from, to);
+        },
+      },
+    });
+    expect(outcome.status).toBe('refreshed');
+    expect(readFileSync(join(destination, 'payload.txt'), 'utf8')).toBe('fresh');
+    expect(existsSync(source)).toBe(false);
+    expect(renameSources.some((path) => path === source || path.startsWith(`${source}/`))).toBe(false);
   });
 });

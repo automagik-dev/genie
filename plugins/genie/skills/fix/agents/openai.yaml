@@ -1,0 +1,4 @@
+interface:
+  display_name: "Fix Loop"
+  short_description: "Run a bounded fix and independent re-review loop"
+  default_prompt: "Use $fix to resolve these validated gaps and obtain a fresh re-review."

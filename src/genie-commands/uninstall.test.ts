@@ -8,15 +8,24 @@
  *
  * Ownership contract under test: uninstall deletes only what genie provably
  * shipped — a managed dir whose computeDirDigest still matches its manifest.
- * A digest MISMATCH means the user edited the dir: it is kept on disk, renamed
- * to `<name>.genie-kept` so the agent stops loading it but the content survives.
+ * A digest MISMATCH means the user edited the dir: it is kept byte-identical at
+ * the same path. Uninstall cannot rename, disable, or rewrite user data.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { MANAGED_BY, computeDirDigest } from '../lib/agent-sync.js';
+import { MANAGED_BY, WORKFLOW_MANIFEST_NAME, computeDirDigest, stampWorkflow } from '../lib/agent-sync.js';
 import { collectAgentSyncAssets, removeAgentSyncAssets } from './uninstall.js';
 
 describe('agent-sync managed-asset removal', () => {
@@ -99,70 +108,101 @@ describe('agent-sync managed-asset removal', () => {
     const managed = managedSkill(join(claudeDir, 'skills'), 'wish');
     const mine = unmanagedSkill(join(claudeDir, 'skills'), 'my-own');
 
-    const { removed, kept } = removeAgentSyncAssets(targets());
+    const { removed, kept, failures } = removeAgentSyncAssets(targets());
     expect(removed).toContain(managed);
     expect(kept).toEqual([]);
+    expect(failures).toEqual([]);
     expect(existsSync(managed)).toBe(false);
     expect(existsSync(mine)).toBe(true);
   });
 
-  test('user-modified managed dir is KEPT as .genie-kept with content intact, not deleted', () => {
+  test('user-modified managed dir is kept byte-identical at the same path', () => {
     const edited = modifiedManagedSkill(join(claudeDir, 'skills'), 'review');
-    const keptPath = `${edited}.genie-kept`;
+    const manifestBefore = readFileSync(join(edited, '.genie-sync.json'), 'utf8');
 
-    const { removed, kept } = removeAgentSyncAssets(targets());
+    const { removed, kept, failures } = removeAgentSyncAssets(targets());
     expect(removed).not.toContain(edited);
-    expect(kept).toEqual([keptPath]);
-    // Original name gone → the agent no longer loads the skill…
-    expect(existsSync(edited)).toBe(false);
-    // …but the user's content survives verbatim at the kept path.
-    expect(readFileSync(join(keptPath, 'SKILL.md'), 'utf8')).toBe('# my precious local edits\n');
-    // Ownership relinquished: no manifest left for any genie tool to claim it by.
-    expect(existsSync(join(keptPath, '.genie-sync.json'))).toBe(false);
+    expect(kept).toEqual([edited]);
+    expect(failures).toEqual([]);
+    expect(readFileSync(join(edited, 'SKILL.md'), 'utf8')).toBe('# my precious local edits\n');
+    expect(readFileSync(join(edited, '.genie-sync.json'), 'utf8')).toBe(manifestBefore);
   });
 
-  test('kept dirs from a previous uninstall are never re-collected and never clobbered', () => {
+  test('repeated uninstall attempts keep a modified artifact unchanged and retryable', () => {
     const parent = join(claudeDir, 'skills');
     const edited = modifiedManagedSkill(parent, 'review');
-    removeAgentSyncAssets(targets());
-    const keptPath = `${edited}.genie-kept`;
-    expect(existsSync(keptPath)).toBe(true);
-
-    // Reinstall-then-modify-then-uninstall again: old kept content must survive.
-    modifiedManagedSkill(parent, 'review');
-    const { kept } = removeAgentSyncAssets(targets());
-    expect(kept).toHaveLength(1);
-    expect(kept[0]).not.toBe(keptPath);
-    expect(existsSync(keptPath)).toBe(true);
-
-    // A third run with nothing managed left collects nothing.
-    expect(collectAgentSyncAssets(targets())).toEqual([]);
+    const before = readFileSync(join(edited, 'SKILL.md'), 'utf8');
+    expect(removeAgentSyncAssets(targets()).kept).toEqual([edited]);
+    expect(removeAgentSyncAssets(targets()).kept).toEqual([edited]);
+    expect(readFileSync(join(edited, 'SKILL.md'), 'utf8')).toBe(before);
   });
 
   test('mixed tree: clean removed, modified kept, in one pass', () => {
     const clean = managedSkill(join(claudeDir, 'skills'), 'wish');
     const edited = modifiedManagedSkill(join(codexDir, 'skills', '.curated'), 'review');
 
-    const { removed, kept } = removeAgentSyncAssets(targets());
+    const { removed, kept, failures } = removeAgentSyncAssets(targets());
     expect(removed).toEqual([clean]);
-    expect(kept).toEqual([`${edited}.genie-kept`]);
+    expect(kept).toEqual([edited]);
+    expect(failures).toEqual([]);
     expect(existsSync(clean)).toBe(false);
-    expect(existsSync(`${edited}.genie-kept`)).toBe(true);
+    expect(existsSync(edited)).toBe(true);
   });
 
-  test('stamped council.js is removed; a non-stamped one at the same path is kept', () => {
-    mkdirSync(join(claudeDir, 'workflows'), { recursive: true });
-    const council = join(claudeDir, 'workflows', 'council.js');
-    writeFileSync(council, "export const meta = { name: 'council' };\nconst LENS_ROOT = '/x';\n", 'utf8');
+  test('asset removal I/O failures are structured and leave the asset retryable', () => {
+    const parent = join(claudeDir, 'skills');
+    const managed = managedSkill(parent, 'wish');
+    chmodSync(parent, 0o500);
+    try {
+      const result = removeAgentSyncAssets(targets());
+      expect(result.removed).toEqual([]);
+      expect(result.failures[0]?.path).toBe(managed);
+      expect(existsSync(managed)).toBe(true);
+    } finally {
+      chmodSync(parent, 0o700);
+    }
+  });
+
+  test('digest-owned council.js and its sidecar are removed; an unmanaged lookalike is kept', () => {
+    const workflows = join(claudeDir, 'workflows');
+    const council = join(workflows, 'council.js');
+    const sidecar = join(workflows, WORKFLOW_MANIFEST_NAME);
+    const template = join(tmp, 'council-template.js');
+    writeFileSync(template, "export const meta = { name: 'council' };\nconst LENS_ROOT = '__GENIE_LENS_ROOT__';\n");
+    stampWorkflow({ templatePath: template, pluginRoot: '/x', targetDir: workflows });
 
     let result = removeAgentSyncAssets(targets());
     expect(result.removed).toContain(council);
     expect(existsSync(council)).toBe(false);
+    expect(existsSync(sidecar)).toBe(false);
 
     writeFileSync(council, 'console.log("my own workflow");\n', 'utf8');
     result = removeAgentSyncAssets(targets());
     expect(result.removed).not.toContain(council);
     expect(existsSync(council)).toBe(true);
+  });
+
+  test('modified or corrupt-metadata council workflows fail closed and remain byte-identical', () => {
+    const workflows = join(claudeDir, 'workflows');
+    const council = join(workflows, 'council.js');
+    const sidecar = join(workflows, WORKFLOW_MANIFEST_NAME);
+    const template = join(tmp, 'council-template.js');
+    writeFileSync(template, "const LENS_ROOT = '__GENIE_LENS_ROOT__';\n");
+    stampWorkflow({ templatePath: template, pluginRoot: '/x', targetDir: workflows });
+    writeFileSync(council, 'console.log("my edited workflow");\n', 'utf8');
+    const modifiedCouncil = readFileSync(council, 'utf8');
+    const validSidecar = readFileSync(sidecar, 'utf8');
+
+    let result = removeAgentSyncAssets(targets());
+    expect(result.kept).toContain(council);
+    expect(readFileSync(council, 'utf8')).toBe(modifiedCouncil);
+    expect(readFileSync(sidecar, 'utf8')).toBe(validSidecar);
+
+    writeFileSync(sidecar, '{broken', 'utf8');
+    result = removeAgentSyncAssets(targets());
+    expect(result.kept).toContain(council);
+    expect(readFileSync(council, 'utf8')).toBe(modifiedCouncil);
+    expect(readFileSync(sidecar, 'utf8')).toBe('{broken');
   });
 
   test('hermes symlink into the genie home is removed; one pointing elsewhere is kept', () => {
@@ -191,6 +231,6 @@ describe('agent-sync managed-asset removal', () => {
 
   test('empty / agentless home → nothing collected, nothing removed', () => {
     expect(collectAgentSyncAssets(targets())).toEqual([]);
-    expect(removeAgentSyncAssets(targets())).toEqual({ removed: [], kept: [] });
+    expect(removeAgentSyncAssets(targets())).toEqual({ removed: [], kept: [], failures: [] });
   });
 });

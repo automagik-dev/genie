@@ -14,7 +14,14 @@
     "PreToolUse": [
       {
         "matcher": "Bash|Read|Write|Edit|SendMessage",
-        "hooks": [{ "type": "command", "command": "env GENIE_HOOK_RUNTIME=claude genie hook dispatch", "timeout": 120 }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/dispatch-runtime.cjs\" claude",
+            "commandWindows": "node \"%CLAUDE_PLUGIN_ROOT%\\scripts\\dispatch-runtime.cjs\" claude",
+            "timeout": 120
+          }
+        ]
       },
       {
         "matcher": "Write|Edit",

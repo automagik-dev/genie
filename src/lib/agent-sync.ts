@@ -11,7 +11,8 @@
  * `.genie-sync.json` manifest recording the content digest it was synced from.
  * That manifest is what lets a re-run tell "unchanged" from "the user edited
  * this" from "we never shipped this name" — and it is what makes every
- * destructive step (adopt, remove) back up first, so nothing is ever lost.
+ * destructive step (update, remove) is limited to digest-clean managed trees.
+ * Same-name unmanaged or user-modified trees are never adopted or overwritten.
  *
  * Everything is non-fatal: an adapter that throws is caught per-agent and
  * reported as an advisory; {@link runAgentSync} never throws for agent-level
@@ -19,7 +20,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import {
   type Dirent,
   type Stats,
@@ -51,6 +52,8 @@ import { resolveClaudeDir, resolveCodexDir, resolveGenieHome, resolveHermesHome 
 const PLACEHOLDER = '__GENIE_LENS_ROOT__';
 /** Stamped/synced workflow filename. Exported: doctor/uninstall key their checks on it. */
 export const TARGET_NAME = 'council.js';
+/** Digest-backed ownership record for the stamped council workflow. */
+export const WORKFLOW_MANIFEST_NAME = `${TARGET_NAME}.genie-sync.json`;
 /** Manifest marker written into every managed skill dir. Exported: single source of truth. */
 export const MANIFEST_NAME = '.genie-sync.json';
 /** `managedBy` value that certifies a dir as one this engine owns. Exported: single source of truth. */
@@ -70,7 +73,7 @@ export const MANAGED_BY = 'genie-agent-sync';
  */
 export const CLAUDE_EXCLUDED_SKILLS = new Set(['council']);
 /** Skill actions that represent an actual write to the target. */
-const WRITE_ACTIONS = new Set<SkillAction>(['created', 'updated', 'adopted', 'removed']);
+const WRITE_ACTIONS = new Set<SkillAction>(['created', 'updated', 'removed']);
 /**
  * Collision-proof staging suffixes for atomic managed-dir writes. Chosen so no
  * human backup convention (e.g. `mv review review.old`, or a `review.new`) can
@@ -141,9 +144,11 @@ export type SkillAction =
   | 'created'
   | 'updated'
   | 'unchanged'
+  /** Retained for report compatibility with older releases; new syncs never adopt collisions. */
   | 'adopted'
   | 'removed'
   | 'skipped-unmanaged-kept'
+  | 'kept-modified'
   | 'kept-modified-orphan';
 
 export interface AgentReport {
@@ -198,6 +203,11 @@ interface RunContext {
 interface SourceSkill {
   name: string;
   dir: string;
+}
+
+interface SkillOutcome {
+  action: SkillAction;
+  detail?: string;
 }
 
 // ============================================================================
@@ -300,7 +310,7 @@ function hashFile(path: string): string {
 function readManifest(dir: string): SyncManifest | null {
   try {
     const parsed = JSON.parse(readFileSync(join(dir, MANIFEST_NAME), 'utf8')) as Partial<SyncManifest>;
-    if (parsed.managedBy === MANAGED_BY && typeof parsed.digest === 'string') {
+    if (parsed.managedBy === MANAGED_BY && typeof parsed.digest === 'string' && /^[a-f0-9]{64}$/.test(parsed.digest)) {
       return {
         managedBy: MANAGED_BY,
         version: parsed.version ?? null,
@@ -375,7 +385,7 @@ function syncSkillDirsInto(
   mkdirSync(targetParent, { recursive: true });
   for (const skill of sourceSkills) {
     try {
-      report.skills.push({ name: skill.name, action: syncOneSkill(ctx, agent, skill, targetParent) });
+      report.skills.push({ name: skill.name, ...syncOneSkill(ctx, skill, targetParent) });
     } catch (err) {
       report.advisories.push(`skill ${skill.name} (${agent}) failed: ${errMsg(err)}`);
     }
@@ -388,26 +398,35 @@ function syncSkillDirsInto(
  *   absent                                        → create
  *   managed, files match manifest, source same    → unchanged (no writes)
  *   managed, files match manifest, source differs → update
- *   managed but files edited, OR unmanaged        → adopt-with-backup
+ *   managed but files edited                       → preserve + report
+ *   unmanaged or corrupt-manifest same-name dir   → preserve + report
  */
-function syncOneSkill(ctx: RunContext, agent: string, skill: SourceSkill, targetParent: string): SkillAction {
+function syncOneSkill(ctx: RunContext, skill: SourceSkill, targetParent: string): SkillOutcome {
   const destDir = join(targetParent, skill.name);
   const sourceDigest = computeDirDigest(skill.dir);
   const manifest = buildManifest(ctx, sourceDigest);
   if (!existsSync(destDir)) {
     writeManagedDir(skill.dir, destDir, manifest);
-    return 'created';
+    return { action: 'created' };
+  }
+  if (lstatSafe(destDir)?.isSymbolicLink()) {
+    return { action: 'skipped-unmanaged-kept', detail: 'same-name symlink preserved and never followed' };
   }
   const existing = readManifest(destDir);
-  const currentDigest = computeDirDigest(destDir);
-  if (existing !== null && currentDigest === existing.digest) {
-    if (sourceDigest === existing.digest) return 'unchanged';
-    writeManagedDir(skill.dir, destDir, manifest);
-    return 'updated';
+  if (existing === null) {
+    const reason = existsSync(join(destDir, MANIFEST_NAME)) ? 'corrupt or foreign manifest' : 'no ownership manifest';
+    return { action: 'skipped-unmanaged-kept', detail: `${reason}; existing directory preserved` };
   }
-  ctx.backupInto(agent, skill.name, destDir);
-  writeManagedDir(skill.dir, destDir, manifest);
-  return 'adopted';
+  const currentDigest = computeDirDigest(destDir);
+  if (currentDigest === existing.digest) {
+    if (sourceDigest === existing.digest) return { action: 'unchanged' };
+    writeManagedDir(skill.dir, destDir, manifest);
+    return { action: 'updated' };
+  }
+  return {
+    action: 'kept-modified',
+    detail: 'content differs from the recorded managed digest; existing directory preserved',
+  };
 }
 
 /**
@@ -440,28 +459,117 @@ function removeManagedOrphans(
 }
 
 // ============================================================================
-// Workflow stamp (parity-locked to council-stamp.cjs)
+// Workflow stamp (output parity-locked to council-stamp.cjs)
 // ============================================================================
+
+export type ManagedWorkflowState = 'unmanaged' | 'managed-clean' | 'managed-modified' | 'corrupt-metadata';
+
+export interface ManagedWorkflowReport {
+  targetPath: string;
+  manifestPath: string;
+  state: ManagedWorkflowState;
+}
+
+function readWorkflowManifest(path: string): { status: 'missing' | 'valid' | 'corrupt'; manifest?: SyncManifest } {
+  const stat = lstatSafe(path);
+  if (stat === null) return { status: 'missing' };
+  if (!stat.isFile() || stat.isSymbolicLink()) return { status: 'corrupt' };
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as Partial<SyncManifest>;
+    if (
+      parsed.managedBy !== MANAGED_BY ||
+      typeof parsed.digest !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(parsed.digest) ||
+      (parsed.version !== null && parsed.version !== undefined && typeof parsed.version !== 'string') ||
+      typeof parsed.syncedAt !== 'string'
+    ) {
+      return { status: 'corrupt' };
+    }
+    return {
+      status: 'valid',
+      manifest: {
+        managedBy: MANAGED_BY,
+        version: parsed.version ?? null,
+        digest: parsed.digest,
+        syncedAt: parsed.syncedAt,
+      },
+    };
+  } catch {
+    return { status: 'corrupt' };
+  }
+}
+
+function regularFileDigest(path: string): string | null {
+  const stat = lstatSafe(path);
+  if (stat === null || !stat.isFile() || stat.isSymbolicLink()) return null;
+  try {
+    return hashFile(path);
+  } catch {
+    return null;
+  }
+}
+
+/** Classify council.js using only its sidecar ownership grant and recorded digest. */
+export function inspectManagedWorkflow(targetDir: string): ManagedWorkflowReport {
+  const targetPath = join(targetDir, TARGET_NAME);
+  const manifestPath = join(targetDir, WORKFLOW_MANIFEST_NAME);
+  const ownership = readWorkflowManifest(manifestPath);
+  if (ownership.status === 'missing') return { targetPath, manifestPath, state: 'unmanaged' };
+  if (ownership.status === 'corrupt') return { targetPath, manifestPath, state: 'corrupt-metadata' };
+  const digest = regularFileDigest(targetPath);
+  return {
+    targetPath,
+    manifestPath,
+    state: digest !== null && digest === ownership.manifest?.digest ? 'managed-clean' : 'managed-modified',
+  };
+}
 
 /**
  * Stamp the /council template's LENS_ROOT placeholder with `pluginRoot` and
- * write `<targetDir>/council.js`. Byte-identical output and idempotent-skip
- * semantics to plugins/genie/scripts/council-stamp.cjs (parity test locks it).
+ * write `<targetDir>/council.js` plus a digest ownership sidecar. Output remains
+ * byte-identical to plugins/genie/scripts/council-stamp.cjs, but ownership is
+ * granted only by valid metadata: unmanaged, modified, or corrupt targets are
+ * preserved byte-identically and never adopted by content/signature.
  */
-export function stampWorkflow(opts: { templatePath: string; pluginRoot: string; targetDir: string }): {
-  action: 'written' | 'skipped';
+export function stampWorkflow(opts: {
+  templatePath: string;
+  pluginRoot: string;
+  targetDir: string;
+  version?: string | null;
+  now?: () => Date;
+}): {
+  action: 'written' | 'skipped' | 'kept-unmanaged' | 'kept-modified' | 'metadata-corrupt';
   targetPath: string;
 } {
   const { templatePath, pluginRoot, targetDir } = opts;
   const template = readFileSync(templatePath, 'utf8');
   const stamped = template.split(PLACEHOLDER).join(pluginRoot);
-  const targetPath = join(targetDir, TARGET_NAME);
-  if (existsSync(targetPath) && readFileSync(targetPath, 'utf8') === stamped) {
-    return { action: 'skipped', targetPath };
+  const ownership = inspectManagedWorkflow(targetDir);
+  const targetExists = lstatSafe(ownership.targetPath) !== null;
+  if (ownership.state === 'corrupt-metadata') {
+    return { action: 'metadata-corrupt', targetPath: ownership.targetPath };
+  }
+  if (ownership.state === 'managed-modified') {
+    return { action: 'kept-modified', targetPath: ownership.targetPath };
+  }
+  if (ownership.state === 'unmanaged' && targetExists) {
+    return { action: 'kept-unmanaged', targetPath: ownership.targetPath };
+  }
+  if (ownership.state === 'managed-clean' && readFileSync(ownership.targetPath, 'utf8') === stamped) {
+    return { action: 'skipped', targetPath: ownership.targetPath };
   }
   mkdirSync(targetDir, { recursive: true });
-  writeFileSync(targetPath, stamped, 'utf8');
-  return { action: 'written', targetPath };
+  writeFileSync(ownership.targetPath, stamped, 'utf8');
+  const manifest: SyncManifest = {
+    managedBy: MANAGED_BY,
+    version: opts.version ?? null,
+    digest: createHash('sha256').update(stamped).digest('hex'),
+    syncedAt: (opts.now ?? (() => new Date()))().toISOString(),
+  };
+  const staging = `${ownership.manifestPath}.staging-${process.pid}`;
+  writeFileSync(staging, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+  renameSync(staging, ownership.manifestPath);
+  return { action: 'written', targetPath: ownership.targetPath };
 }
 
 // ============================================================================
@@ -482,7 +590,13 @@ function stampClaudeWorkflow(ctx: RunContext, claudeDir: string, report: AgentRe
     report.extras.push({ kind: 'stamp', action: 'unavailable', detail: `${templatePath} missing` });
     return;
   }
-  const res = stampWorkflow({ templatePath, pluginRoot: ctx.pluginRoot, targetDir: join(claudeDir, 'workflows') });
+  const res = stampWorkflow({
+    templatePath,
+    pluginRoot: ctx.pluginRoot,
+    targetDir: join(claudeDir, 'workflows'),
+    version: ctx.version,
+    now: ctx.now,
+  });
   report.extras.push({ kind: 'stamp', action: res.action, detail: res.targetPath });
 }
 
@@ -503,10 +617,11 @@ function syncCodex(ctx: RunContext, report: AgentReport): void {
 /**
  * One-time cleanup of the retired `<codexDir>/skills/.curated` lane (see
  * {@link codexLegacyCuratedDir}): every manifest-managed dir there is a
- * stranded orphan codex never loaded — back it up, then remove it, so the move
- * to `~/.agents/skills` strands nothing. Unmanaged entries are never touched
- * (genie only removes what it provably shipped); the lane dir itself goes only
- * once it is empty. Genie's own crashed-run staging debris is swept unbacked.
+ * stranded orphan codex never loaded. Digest-clean managed dirs are backed up
+ * outside GENIE_HOME and removed. Modified or unmanaged entries are preserved
+ * in place; a migration must never trade live user data for a backup that a
+ * later uninstall deletes. The lane dir itself goes only once it is empty.
+ * Genie's own crashed-run staging debris is swept unbacked.
  */
 function migrateLegacyCodexCurated(ctx: RunContext, codexDir: string, report: AgentReport): void {
   const legacyDir = codexLegacyCuratedDir(codexDir);
@@ -518,8 +633,19 @@ function migrateLegacyCodexCurated(ctx: RunContext, codexDir: string, report: Ag
       rmSync(dir, { recursive: true, force: true });
       continue;
     }
-    if (classifyEntry(dir, entry) !== 'dir' || readManifest(dir) === null) {
+    if (classifyEntry(dir, entry) !== 'dir') {
       kept += 1;
+      continue;
+    }
+    const manifest = readManifest(dir);
+    if (manifest === null) {
+      kept += 1;
+      continue;
+    }
+    if (computeDirDigest(dir) !== manifest.digest) {
+      kept += 1;
+      report.extras.push({ kind: 'legacy-curated', action: 'kept-modified', detail: dir });
+      report.advisories.push(`kept modified legacy codex skill ${entry.name} at ${dir}`);
       continue;
     }
     ctx.backupInto('codex-legacy-curated', entry.name, dir);
@@ -636,33 +762,102 @@ function detectHermesBinary(opts: AgentSyncOptions): string | null {
 
 /**
  * Acquire the per-GENIE_HOME sync lock via O_EXCL create. Returns a release
- * handle, or null when another live sync holds the lock (the caller must skip).
- * A lock whose mtime is older than {@link LOCK_STALE_MS} is a crashed run's
- * debris: it is stolen via {@link stealStaleLock} and the exclusive create is
- * retried. If the lockfile cannot be created for any reason other than
- * contention (EACCES, EROFS, ...), the sync proceeds UNLOCKED — locking is a
- * safety net, never an availability gate.
+ * handle or a fail-closed skip reason.
+ * A lock whose mtime is older than {@link LOCK_STALE_MS}, or implausibly more
+ * than that far in the future, is stealable only when its recorded PID is not
+ * live. Stealing is serialized by another token-owned lock. Any other lock I/O
+ * failure fails closed; a destructive sync never runs without ownership.
  */
-function acquireSyncLock(lockPath: string): { release: () => void } | null {
+function acquireSyncLock(lockPath: string): { release: () => void } | { skipped: string } {
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      const fd = openSync(lockPath, 'wx');
-      try {
-        writeSync(fd, `${process.pid}\n`);
-      } finally {
-        closeSync(fd);
-      }
-      return { release: () => rmSyncSafe(lockPath) };
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') return { release: () => undefined };
-      const stat = statSafe(lockPath);
-      if (stat === null) continue; // holder released between open and stat — retry
-      if (Date.now() - stat.mtimeMs <= LOCK_STALE_MS) return null; // live holder
-      if (stealStaleLock(lockPath) === 'contended') return null; // live steal/holder race
-      // 'cleared' — the stale debris is gone; loop and retry the exclusive create
-    }
+    const created = tryInitializeSyncLock(lockPath);
+    if (created.status === 'acquired') return created.lock;
+    if (created.status === 'failed') return { skipped: created.reason };
+    const stat = statSafe(lockPath);
+    if (stat === null) continue; // holder released between open and stat — retry
+    if (!isStaleOrInvalidLockTime(stat.mtimeMs)) return heldLockSkip();
+    // Age alone never proves abandonment. A slow or clock-skewed live owner
+    // retains the lock regardless of whether its timestamp is old or future.
+    if (lockHasLiveOwner(lockPath)) return heldLockSkip();
+    if (stealStaleLock(lockPath) === 'contended') return heldLockSkip();
+    // stale debris cleared — loop and retry the exclusive create
   }
-  return null; // lost the steal race to another process whose lock is now fresh
+  return { skipped: 'agent-sync lock remained contended after retries; skipped safely' };
+}
+
+type LockCreateAttempt =
+  | { status: 'acquired'; lock: { release: () => void } }
+  | { status: 'exists' }
+  | { status: 'failed'; reason: string };
+
+function tryInitializeSyncLock(lockPath: string): LockCreateAttempt {
+  let fd: number;
+  const token = randomBytes(16).toString('hex');
+  try {
+    fd = openSync(lockPath, 'wx');
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code ?? 'unknown';
+    return code === 'EEXIST'
+      ? { status: 'exists' }
+      : { status: 'failed', reason: `could not acquire agent-sync lock (${code}); skipped safely` };
+  }
+  let failure: unknown;
+  try {
+    writeSync(fd, `${process.pid}:${token}\n`);
+  } catch (error) {
+    failure = error;
+  }
+  try {
+    closeSync(fd);
+  } catch (error) {
+    failure ??= error;
+  }
+  if (failure === undefined) {
+    return { status: 'acquired', lock: { release: () => releaseOwnedLock(lockPath, token) } };
+  }
+  // A failed initializer never unlinks by pathname alone: if another process
+  // replaced the record, only our token may release it. Partial debris safely
+  // fails closed and is handled by the stale-lock path later.
+  releaseOwnedLock(lockPath, token);
+  const code = (failure as NodeJS.ErrnoException).code ?? 'unknown';
+  return { status: 'failed', reason: `could not initialize agent-sync lock (${code}); skipped safely` };
+}
+
+function heldLockSkip(): { skipped: string } {
+  return { skipped: 'another agent-sync run holds the lock; skipped (the holder converges the same targets)' };
+}
+
+/** Old locks and far-future timestamps cannot suppress synchronization indefinitely. */
+function isStaleOrInvalidLockTime(mtimeMs: number, nowMs = Date.now()): boolean {
+  const ageMs = nowMs - mtimeMs;
+  return ageMs > LOCK_STALE_MS || ageMs < -LOCK_STALE_MS;
+}
+
+/** Parse both current `pid:token` locks and the legacy pid-only lock format. */
+function lockOwnerPid(lockPath: string): number | null {
+  const raw = readTrimmed(lockPath);
+  const match = raw?.match(/^(\d+)(?::[a-f0-9]{32})?$/);
+  if (!match) return null;
+  const pid = Number(match[1]);
+  return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
+}
+
+/** Never steal an old or future-dated lock from a demonstrably live owner. */
+function lockHasLiveOwner(lockPath: string): boolean {
+  const pid = lockOwnerPid(lockPath);
+  if (pid === null) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+/** Release only the lock record carrying this acquisition's unguessable token. */
+function releaseOwnedLock(lockPath: string, token: string): void {
+  if (readTrimmed(lockPath) !== `${process.pid}:${token}`) return;
+  rmSyncSafe(lockPath);
 }
 
 /**
@@ -678,28 +873,22 @@ function acquireSyncLock(lockPath: string): { release: () => void } | null {
  */
 function stealStaleLock(lockPath: string): 'cleared' | 'contended' {
   const guardPath = `${lockPath}.steal`;
-  if (!tryCreateExclusive(guardPath)) {
+  const guardAttempt = tryInitializeSyncLock(guardPath);
+  if (guardAttempt.status !== 'acquired') {
     const guardStat = statSafe(guardPath);
-    if (guardStat !== null && Date.now() - guardStat.mtimeMs > LOCK_STALE_MS) rmSyncSafe(guardPath);
+    if (guardStat !== null && isStaleOrInvalidLockTime(guardStat.mtimeMs) && !lockHasLiveOwner(guardPath)) {
+      rmSyncSafe(guardPath);
+    }
     return 'contended'; // another stealer holds the guard — back off like a live lock
   }
   try {
     const stat = statSafe(lockPath);
-    if (stat !== null && Date.now() - stat.mtimeMs <= LOCK_STALE_MS) return 'contended'; // refreshed under us — live
+    if (stat !== null && !isStaleOrInvalidLockTime(stat.mtimeMs)) return 'contended'; // refreshed under us — live
+    if (stat !== null && lockHasLiveOwner(lockPath)) return 'contended';
     rmSyncSafe(lockPath); // re-verified stale (or already gone) under the guard
     return 'cleared';
   } finally {
-    rmSyncSafe(guardPath);
-  }
-}
-
-/** O_EXCL create-and-close; false on any failure (EEXIST or otherwise). */
-function tryCreateExclusive(path: string): boolean {
-  try {
-    closeSync(openSync(path, 'wx'));
-    return true;
-  } catch {
-    return false;
+    guardAttempt.lock.release();
   }
 }
 
@@ -731,10 +920,9 @@ export function runAgentSync(opts: AgentSyncOptions = {}): AgentSyncReport {
     return { source, agents: [], backupsDir: null };
   }
   const lock = acquireSyncLock(join(genieHome, LOCK_NAME));
-  if (lock === null) {
-    const skipped = 'another agent-sync run holds the lock; skipped (the holder converges the same targets)';
-    log(`agent-sync: ${skipped}`);
-    return { source, agents: [], backupsDir: null, skipped };
+  if ('skipped' in lock) {
+    log(`agent-sync: ${lock.skipped}`);
+    return { source, agents: [], backupsDir: null, skipped: lock.skipped };
   }
   try {
     const ctx = createRunContext(genieHome, source.pluginRoot, source, opts);
@@ -763,11 +951,16 @@ function createRunContext(
     hermes: opts.targets?.hermes ?? resolveHermesHome(),
     agentsSkills: opts.targets?.agentsSkills ?? resolveAgentsSkillsDir(),
   };
-  const stamp = now().toISOString();
+  const stamp = now().toISOString().replace(/[:.]/g, '-');
   let backupsDir: string | null = null;
   const backupInto = (agent: string, name: string, existingDir: string): string => {
     if (backupsDir === null) {
-      backupsDir = join(genieHome, 'state-backups', `agent-sync-${stamp}`);
+      // Uninstall removes GENIE_HOME. Recovery material therefore lives in a
+      // sibling root so a later uninstall cannot erase the only surviving copy.
+      const recoveryRoot = join(dirname(resolve(genieHome)), '.genie-recovery');
+      const base = join(recoveryRoot, `agent-sync-${stamp}-${process.pid}`);
+      backupsDir = base;
+      for (let suffix = 1; existsSync(backupsDir); suffix += 1) backupsDir = `${base}-${suffix}`;
       mkdirSync(backupsDir, { recursive: true });
     }
     const dest = join(backupsDir, agent, name);

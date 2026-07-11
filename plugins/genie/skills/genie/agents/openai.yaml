@@ -1,0 +1,4 @@
+interface:
+  display_name: "Genie Router"
+  short_description: "Route requests to the right Genie lifecycle step"
+  default_prompt: "Use $genie to route this request through the correct Genie workflow."

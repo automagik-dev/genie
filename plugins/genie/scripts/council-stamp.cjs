@@ -14,40 +14,113 @@
  */
 
 const fs = require('node:fs');
+const crypto = require('node:crypto');
 const path = require('node:path');
 
 const PLACEHOLDER = '__GENIE_LENS_ROOT__';
 const TARGET_NAME = 'council.js';
+const WORKFLOW_MANIFEST_NAME = `${TARGET_NAME}.genie-sync.json`;
+const MANAGED_BY = 'genie-agent-sync';
+
+function lstatSafe(filePath) {
+  try {
+    return fs.lstatSync(filePath);
+  } catch {
+    return null;
+  }
+}
+
+function regularFileDigest(filePath) {
+  const stat = lstatSafe(filePath);
+  if (stat === null || !stat.isFile() || stat.isSymbolicLink()) return null;
+  try {
+    return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+  } catch {
+    return null;
+  }
+}
+
+function readWorkflowManifest(manifestPath) {
+  const stat = lstatSafe(manifestPath);
+  if (stat === null) return { status: 'missing' };
+  if (!stat.isFile() || stat.isSymbolicLink()) return { status: 'corrupt' };
+  try {
+    const parsed = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    if (
+      parsed.managedBy !== MANAGED_BY ||
+      typeof parsed.digest !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(parsed.digest) ||
+      (parsed.version !== null && parsed.version !== undefined && typeof parsed.version !== 'string') ||
+      typeof parsed.syncedAt !== 'string'
+    ) {
+      return { status: 'corrupt' };
+    }
+    return { status: 'valid', manifest: parsed };
+  } catch {
+    return { status: 'corrupt' };
+  }
+}
+
+/** Classify council.js using only its sidecar ownership grant and recorded digest. */
+function inspectManagedWorkflow(targetDir) {
+  const targetPath = path.join(targetDir, TARGET_NAME);
+  const manifestPath = path.join(targetDir, WORKFLOW_MANIFEST_NAME);
+  const ownership = readWorkflowManifest(manifestPath);
+  if (ownership.status === 'missing') return { targetPath, manifestPath, state: 'unmanaged' };
+  if (ownership.status === 'corrupt') return { targetPath, manifestPath, state: 'corrupt-metadata' };
+  const digest = regularFileDigest(targetPath);
+  return {
+    targetPath,
+    manifestPath,
+    state: digest !== null && digest === ownership.manifest.digest ? 'managed-clean' : 'managed-modified',
+  };
+}
 
 /**
  * Stamp the template's LENS_ROOT placeholder with the absolute plugin path and
  * write it to <targetDir>/council.js.
  *
- * Idempotent: the stamped bytes are a pure function of (template, pluginRoot),
- * so an unchanged template and an unchanged root produce output identical to
- * what is already on disk — in that case we skip the write. Any drift (template
- * updated, root changed, or the target hand-edited) makes the bytes differ and
- * we rewrite, which is also self-healing.
+ * Idempotent and ownership-safe: only a target whose digest matches a valid
+ * Genie sidecar may be skipped or updated. Existing files without metadata,
+ * user-modified files, and corrupt metadata are preserved byte-identically.
  *
- * @param {{templatePath: string, pluginRoot: string, targetDir: string}} opts
- * @returns {{action: 'written'|'skipped', targetPath: string}}
+ * @param {{templatePath: string, pluginRoot: string, targetDir: string, version?: string|null, now?: () => Date}} opts
+ * @returns {{action: 'written'|'skipped'|'kept-unmanaged'|'kept-modified'|'metadata-corrupt', targetPath: string}}
  */
-function stampCouncilWorkflow({ templatePath, pluginRoot, targetDir } = {}) {
+function stampCouncilWorkflow({ templatePath, pluginRoot, targetDir, version = null, now = () => new Date() } = {}) {
   if (!templatePath || !pluginRoot || !targetDir) {
     throw new Error('stampCouncilWorkflow requires templatePath, pluginRoot, and targetDir');
   }
 
   const template = fs.readFileSync(templatePath, 'utf8');
   const stamped = template.split(PLACEHOLDER).join(pluginRoot);
-  const targetPath = path.join(targetDir, TARGET_NAME);
-
-  if (fs.existsSync(targetPath) && fs.readFileSync(targetPath, 'utf8') === stamped) {
-    return { action: 'skipped', targetPath };
+  const ownership = inspectManagedWorkflow(targetDir);
+  const targetExists = lstatSafe(ownership.targetPath) !== null;
+  if (ownership.state === 'corrupt-metadata') {
+    return { action: 'metadata-corrupt', targetPath: ownership.targetPath };
+  }
+  if (ownership.state === 'managed-modified') {
+    return { action: 'kept-modified', targetPath: ownership.targetPath };
+  }
+  if (ownership.state === 'unmanaged' && targetExists) {
+    return { action: 'kept-unmanaged', targetPath: ownership.targetPath };
+  }
+  if (ownership.state === 'managed-clean' && fs.readFileSync(ownership.targetPath, 'utf8') === stamped) {
+    return { action: 'skipped', targetPath: ownership.targetPath };
   }
 
   fs.mkdirSync(targetDir, { recursive: true });
-  fs.writeFileSync(targetPath, stamped, 'utf8');
-  return { action: 'written', targetPath };
+  fs.writeFileSync(ownership.targetPath, stamped, 'utf8');
+  const manifest = {
+    managedBy: MANAGED_BY,
+    version,
+    digest: crypto.createHash('sha256').update(stamped).digest('hex'),
+    syncedAt: now().toISOString(),
+  };
+  const staging = `${ownership.manifestPath}.staging-${process.pid}`;
+  fs.writeFileSync(staging, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+  fs.renameSync(staging, ownership.manifestPath);
+  return { action: 'written', targetPath: ownership.targetPath };
 }
 
 /**
@@ -77,4 +150,12 @@ function resolveStampInputs({ claudePluginRoot, genieHome, exists = fs.existsSyn
   };
 }
 
-module.exports = { stampCouncilWorkflow, resolveStampInputs, PLACEHOLDER, TARGET_NAME };
+module.exports = {
+  stampCouncilWorkflow,
+  inspectManagedWorkflow,
+  resolveStampInputs,
+  PLACEHOLDER,
+  TARGET_NAME,
+  WORKFLOW_MANIFEST_NAME,
+  MANAGED_BY,
+};

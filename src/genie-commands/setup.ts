@@ -10,6 +10,14 @@ import { join } from 'node:path';
 import { confirm, input, select } from '@inquirer/prompts';
 import { getCodexConfigPath } from '../lib/codex-config.js';
 import {
+  type CodexPluginMcpUsability,
+  type CodexPluginProbe,
+  inspectCodexPluginMcpUsability,
+  preflightCodexPluginMutation,
+  reconcileCodexProjectMcp,
+  resolveGitWorktreeRoot,
+} from '../lib/codex-project-mcp.js';
+import {
   contractPath,
   getGenieConfigPath,
   loadGenieConfig,
@@ -20,7 +28,6 @@ import {
 } from '../lib/genie-config.js';
 import { installRuntimeIntegrations } from '../lib/runtime-integrations.js';
 import { checkCommand } from '../lib/system-detect.js';
-import { removeCodexMcpFallback } from '../term-commands/init.js';
 import { installShortcuts, isShortcutsInstalled } from '../term-commands/shortcuts.js';
 import type { GenieConfig } from '../types/genie-config.js';
 
@@ -32,6 +39,20 @@ export interface SetupOptions {
   session?: boolean;
   reset?: boolean;
   show?: boolean;
+}
+
+export interface SetupDeps {
+  checkCommand?: typeof checkCommand;
+  installRuntimeIntegrations?: typeof installRuntimeIntegrations;
+  inspectPluginUsability?: () => CodexPluginMcpUsability;
+  cwd?: string;
+}
+
+export class SetupIntegrationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SetupIntegrationError';
+  }
 }
 
 /**
@@ -186,23 +207,61 @@ async function configureShortcuts(config: GenieConfig, quick: boolean): Promise<
 // Codex Integration
 // ============================================================================
 
-function repairCodexIntegration(): boolean {
-  const result = installRuntimeIntegrations({ selection: 'codex' })[0];
+function repairCodexIntegration(deps: SetupDeps): void {
+  const root = resolveGitWorktreeRoot(deps.cwd ?? process.cwd());
+  if (root !== null) {
+    const preflight = preflightCodexPluginMutation(root);
+    if (!preflight.ok) throw new SetupIntegrationError(`${preflight.detail}: ${preflight.path}`);
+  }
+
+  const result = (deps.installRuntimeIntegrations ?? installRuntimeIntegrations)({ selection: 'codex' })[0];
   if (!result?.ok) {
-    console.log(`  \x1b[31m\u2717\x1b[0m ${result?.detail ?? 'Codex integration failed'}`);
-    return false;
+    const detail = result?.detail ?? 'Codex integration failed without a diagnostic';
+    throw new SetupIntegrationError(detail);
   }
   console.log(`  \x1b[32m\u2713\x1b[0m ${result.detail}`);
-  removeCodexMcpFallback(join(process.cwd(), '.codex', 'config.toml'));
+
+  if (root !== null) {
+    const usability = result.preservedDisabled
+      ? { usable: false, detail: 'installed plugin remains disabled' }
+      : (deps.inspectPluginUsability ?? inspectCodexPluginMcpUsability)();
+    const plugin: CodexPluginProbe = {
+      cliAvailable: true,
+      status: 'ok',
+      installed: true,
+      enabled: result.preservedDisabled !== true,
+      usable: usability.usable,
+      usabilityDetail: usability.detail,
+      detail: `${result.preservedDisabled ? 'installed plugin remains disabled' : 'installed plugin enabled'}; ${usability.detail}`,
+    };
+    const project = reconcileCodexProjectMcp(root, plugin);
+    if (!project.ok) throw new SetupIntegrationError(project.detail ?? 'Codex project MCP reconciliation failed');
+    console.log(`  \x1b[32m\u2713\x1b[0m Project MCP route: ${project.route} (${project.detail ?? project.action})`);
+    if (!usability.usable && result.preservedDisabled !== true) {
+      console.log(
+        `  \x1b[33m!\x1b[0m Plugin MCP is not usable (${usability.detail}); kept the absolute project fallback.`,
+      );
+    }
+  } else {
+    console.log('  \x1b[2mNo Git worktree detected; project MCP fallback was not changed.\x1b[0m');
+  }
   if (result.preservedDisabled) console.log('  \x1b[2mExisting disabled plugin state was preserved.\x1b[0m');
   console.log('  \x1b[33m!\x1b[0m Review Genie hooks with /hooks, then start a new Codex task.');
-  return true;
 }
 
-async function configureCodex(config: GenieConfig, quick: boolean): Promise<GenieConfig> {
+function preserveRuntimeChoiceAfterCodex(config: GenieConfig): void {
+  const decision = resolveDefaultAgentAfterCodex(config.runtime.defaultAgent);
+  config.runtime.defaultAgent = decision.agent;
+  if (decision.hint) console.log(`  \x1b[2m${decision.hint}\x1b[0m`);
+}
+
+async function configureCodex(config: GenieConfig, quick: boolean, deps: SetupDeps): Promise<GenieConfig> {
   printSection('5. Codex Integration', 'Configure OpenAI Codex for genie agents');
 
-  const codexCheck = await checkCommand('codex');
+  const codexCheck = await (deps.checkCommand ?? checkCommand)('codex');
+  if (codexCheck.timedOut) {
+    throw new SetupIntegrationError(codexCheck.error ?? 'Codex CLI detection timed out');
+  }
   if (!codexCheck.exists) {
     console.log('  \x1b[33m!\x1b[0m Codex CLI not found. Skipping codex integration.');
     return config;
@@ -217,13 +276,17 @@ async function configureCodex(config: GenieConfig, quick: boolean): Promise<Geni
   console.log();
 
   if (quick) {
-    config.codex = { configured: repairCodexIntegration() };
+    repairCodexIntegration(deps);
+    config.codex = { configured: true };
+    preserveRuntimeChoiceAfterCodex(config);
     return config;
   }
 
   const enableCodex = await confirm({ message: 'Install or repair the Genie Codex integration?', default: true });
   if (enableCodex) {
-    config.codex = { configured: repairCodexIntegration() };
+    repairCodexIntegration(deps);
+    config.codex = { configured: true };
+    preserveRuntimeChoiceAfterCodex(config);
   } else {
     console.log('  Skipped. Run \x1b[36mgenie setup --codex\x1b[0m later.');
   }
@@ -372,7 +435,7 @@ function printNextSteps(): void {
 // Main Setup Command
 // ============================================================================
 
-export async function setupCommand(options: SetupOptions = {}): Promise<void> {
+async function runSetupCommand(options: SetupOptions, deps: SetupDeps): Promise<void> {
   // Handle --show flag
   if (options.show) {
     await showCurrentConfig();
@@ -416,12 +479,7 @@ export async function setupCommand(options: SetupOptions = {}): Promise<void> {
 
   if (options.codex) {
     printHeader();
-    config = await configureCodex(config, options.quick ?? false);
-    if (config.codex?.configured) {
-      const decision = resolveDefaultAgentAfterCodex(config.runtime.defaultAgent);
-      config.runtime.defaultAgent = decision.agent;
-      if (decision.hint) console.log(`  \x1b[2m${decision.hint}\x1b[0m`);
-    }
+    config = await configureCodex(config, options.quick ?? false, deps);
     await saveGenieConfig(config);
     if (config.codex?.configured) {
       console.log('\x1b[32m\u2713 Codex configuration saved.\x1b[0m');
@@ -442,7 +500,7 @@ export async function setupCommand(options: SetupOptions = {}): Promise<void> {
   config = await configureSession(config, quick);
   config = await configureTerminal(config, quick);
   config = await configureShortcuts(config, quick);
-  config = await configureCodex(config, quick);
+  config = await configureCodex(config, quick, deps);
   config = await configureDebug(config, quick);
   config = await configurePromptMode(config, quick);
 
@@ -454,6 +512,17 @@ export async function setupCommand(options: SetupOptions = {}): Promise<void> {
 
   // Print next steps
   printNextSteps();
+}
+
+/** Run setup with clean, actionable failure semantics and no false success banner. */
+export async function setupCommand(options: SetupOptions = {}, deps: SetupDeps = {}): Promise<void> {
+  try {
+    await runSetupCommand(options, deps);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error(`Error: Genie setup failed: ${detail}`);
+    process.exitCode = 1;
+  }
 }
 
 /** Copy shipped genie.tmux.conf to ~/.genie/tmux.conf if it doesn't exist yet. */

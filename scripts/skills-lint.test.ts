@@ -8,6 +8,7 @@ import {
   collectResourceViolations,
   extractInlineCodeSpans,
   isResourceAllowlisted,
+  validateSkillMetadata,
 } from './skills-lint.ts';
 
 const SCRIPT = join(import.meta.dir, 'skills-lint.ts');
@@ -19,9 +20,13 @@ describe('checkResourceLine — imperative discriminators', () => {
     expect(checkResourceLine('cp ./templates/foo.md dest').map((v) => v.rule)).toEqual(['cp-repo-template']);
   });
 
-  test('passes a ${CLAUDE_SKILL_DIR}-addressed template copy', () => {
-    expect(checkResourceLine('cp "${CLAUDE_SKILL_DIR}/templates/wish-template.md" dest.md')).toEqual([]);
-    expect(checkResourceLine('cp "${CLAUDE_PLUGIN_ROOT}/templates/foo.md" dest.md')).toEqual([]);
+  test('rejects host-specific skill-root variables', () => {
+    expect(checkResourceLine('cp "${CLAUDE_SKILL_DIR}/templates/wish-template.md" dest.md').map((v) => v.rule)).toEqual(
+      ['host-specific-skill-root'],
+    );
+    expect(checkResourceLine('cp "${CLAUDE_PLUGIN_ROOT}/templates/foo.md" dest.md').map((v) => v.rule)).toEqual([
+      'host-specific-skill-root',
+    ]);
   });
 
   test('flags an unguarded repo-only lint invocation', () => {
@@ -103,8 +108,21 @@ describe('end-to-end: skills-lint against fixture skills trees', () => {
 
   function writeSkill(name: string, body: string): void {
     const skillDir = join(dir, name);
-    mkdirSync(skillDir, { recursive: true });
-    writeFileSync(join(skillDir, 'SKILL.md'), body);
+    mkdirSync(join(skillDir, 'agents'), { recursive: true });
+    const skill = body.startsWith('---\n')
+      ? body
+      : `---\nname: ${name}\ndescription: "Use ${name} for this test workflow."\n---\n\n${body}`;
+    writeFileSync(join(skillDir, 'SKILL.md'), skill);
+    writeFileSync(
+      join(skillDir, 'agents', 'openai.yaml'),
+      [
+        'interface:',
+        `  display_name: "${name}"`,
+        `  short_description: "Run the ${name} workflow safely"`,
+        `  default_prompt: "Use $${name} for this task."`,
+        '',
+      ].join('\n'),
+    );
   }
 
   function runLint(): { code: number; stdout: string; stderr: string } {
@@ -131,12 +149,14 @@ describe('end-to-end: skills-lint against fixture skills trees', () => {
     expect(stderr).toContain('cp-repo-template');
   });
 
-  test('a ${CLAUDE_SKILL_DIR} skill passes', () => {
+  test('a ${CLAUDE_SKILL_DIR} skill fails the portable resource contract', () => {
     writeSkill(
       'good',
       ['# good', '', '```bash', 'cp "${CLAUDE_SKILL_DIR}/templates/wish-template.md" dest.md', '```', ''].join('\n'),
     );
-    expect(runLint().code).toBe(0);
+    const result = runLint();
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain('host-specific-skill-root');
   });
 
   test('allowlisted genie-hacks content passes even with repo-root recipes', () => {
@@ -178,12 +198,61 @@ describe('end-to-end: skills-lint against fixture skills trees', () => {
   });
 });
 
+describe('validateSkillMetadata', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'skill-metadata-'));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function writeMetadataFixture(skill: string, openai: string): string {
+    const skillDir = join(dir, 'fixture');
+    mkdirSync(join(skillDir, 'agents'), { recursive: true });
+    writeFileSync(join(skillDir, 'SKILL.md'), skill);
+    writeFileSync(join(skillDir, 'agents', 'openai.yaml'), openai);
+    return skillDir;
+  }
+
+  test('accepts name/description frontmatter and a matching $skill prompt', () => {
+    const skillDir = writeMetadataFixture(
+      '---\nname: fixture\ndescription: "Fixture workflow for metadata validation."\n---\n\n# Fixture\n',
+      'interface:\n  display_name: "Fixture"\n  short_description: "Validate the fixture workflow"\n  default_prompt: "Use $fixture to validate this input."\n',
+    );
+    expect(validateSkillMetadata(skillDir).violations).toEqual([]);
+  });
+
+  test('rejects unsupported frontmatter and a stale openai prompt', () => {
+    const skillDir = writeMetadataFixture(
+      '---\nname: fixture\ndescription: fixture\nmodel: opus\n---\n\n# Fixture\n',
+      'interface:\n  display_name: "Fixture"\n  short_description: "Validate the fixture workflow"\n  default_prompt: "Use $other to validate this input."\n',
+    );
+    const violations = validateSkillMetadata(skillDir).violations.join('\n');
+    expect(violations).toContain('unsupported frontmatter field: model');
+    expect(violations).toContain('must name $fixture');
+  });
+
+  test('rejects host-specific skill variables and a missing openai manifest', () => {
+    const skillDir = join(dir, 'fixture');
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, 'SKILL.md'),
+      '---\nname: fixture\ndescription: fixture\n---\n\nRead ${CLAUDE_SKILL_DIR}/reference.md.\n',
+    );
+    const violations = validateSkillMetadata(skillDir).violations.join('\n');
+    expect(violations).toContain('CLAUDE_SKILL_DIR');
+    expect(violations).toContain('missing agents/openai.yaml');
+  });
+});
+
 describe('isResourceAllowlisted', () => {
-  test('genie-hacks is allowlisted; README.md is not', () => {
+  test('genie-hacks and the contributor README are allowlisted', () => {
     const skillsDir = '/repo/skills';
     expect(isResourceAllowlisted('/repo/skills/genie-hacks/SKILL.md', skillsDir)).toBe(true);
     expect(isResourceAllowlisted('/repo/skills/genie-hacks/references/catalog.md', skillsDir)).toBe(true);
-    expect(isResourceAllowlisted('/repo/skills/README.md', skillsDir)).toBe(false);
+    expect(isResourceAllowlisted('/repo/skills/README.md', skillsDir)).toBe(true);
     expect(isResourceAllowlisted('/repo/skills/wish/SKILL.md', skillsDir)).toBe(false);
   });
 });

@@ -1,32 +1,56 @@
 import { describe, expect, test } from 'bun:test';
-import {
-  adaptCodexPreToolUseOutput,
-  codexPermissionDecision,
-  dispatchCodexPermissionRequest,
-} from './codex-adapter.js';
+import { adaptCodexPreToolUseOutput, codexPermissionDecision, normalizeCodexHookPayload } from './codex-adapter.js';
 
 describe('Codex hook adapter', () => {
-  test('drops unsupported PreToolUse ask so Codex continues to its local prompt', () => {
+  test('converts unsupported PreToolUse ask to an explicit deny', () => {
     const ask = JSON.stringify({
-      hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask' },
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'ask',
+        permissionDecisionReason: 'remote approval timed out',
+      },
     });
-    expect(adaptCodexPreToolUseOutput(ask)).toBe('');
+    const parsed = JSON.parse(adaptCodexPreToolUseOutput(ask));
+    expect(parsed.hookSpecificOutput.permissionDecision).toBe('deny');
+    expect(parsed.hookSpecificOutput.permissionDecisionReason).toBe('remote approval timed out');
   });
 
-  test('maps allow and deny to PermissionRequest decisions', () => {
-    expect(
-      codexPermissionDecision({
-        hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow' },
-      }),
-    ).toContain('"behavior":"allow"');
-    expect(
-      codexPermissionDecision({
-        hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny' },
-      }),
-    ).toContain('"behavior":"deny"');
+  test('normalizes canonical apply_patch commands to semantic file paths', () => {
+    const payload = normalizeCodexHookPayload({
+      hook_event_name: 'PreToolUse',
+      tool_name: 'apply_patch',
+      tool_input: {
+        command: [
+          '*** Begin Patch',
+          '*** Update File: src/a.ts',
+          '*** Move to: src/b.ts',
+          '*** Add File: src/c.ts',
+          '*** End Patch',
+        ].join('\n'),
+      },
+    });
+    expect(payload.genie_hook_runtime).toBe('codex');
+    expect(payload.tool_input?.file_path).toBe('src/a.ts');
+    expect(payload.tool_input?.file_paths).toEqual(['src/a.ts', 'src/c.ts', 'src/b.ts']);
   });
 
-  test('deny carries the documented optional message so denial reasons surface in Codex', () => {
+  test('marks non-patch and malformed-patch payloads as Codex without mutating the originals', () => {
+    const bash = { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'echo hi' } };
+    expect(normalizeCodexHookPayload(bash)).toEqual({ ...bash, genie_hook_runtime: 'codex' });
+    expect(bash).not.toHaveProperty('genie_hook_runtime');
+    const patch = { hook_event_name: 'PreToolUse', tool_name: 'apply_patch', tool_input: { command: 'no headers' } };
+    expect(normalizeCodexHookPayload(patch)).toEqual({ ...patch, genie_hook_runtime: 'codex' });
+    expect(patch).not.toHaveProperty('genie_hook_runtime');
+  });
+
+  test('maps allow, deny, and ask to PermissionRequest decisions', () => {
+    expect(codexPermissionDecision({ decision: 'allow' })).toContain('"behavior":"allow"');
+    expect(codexPermissionDecision({ decision: 'deny', reason: 'nope' })).toContain('"behavior":"deny"');
+    const timeout = JSON.parse(codexPermissionDecision({ decision: 'ask', reason: 'timed out' }));
+    expect(timeout.hookSpecificOutput.decision).toEqual({ behavior: 'deny', message: 'timed out' });
+  });
+
+  test('deny always carries a message so the reason surfaces in Codex', () => {
     const denied = JSON.parse(
       codexPermissionDecision({
         hookSpecificOutput: {
@@ -38,32 +62,8 @@ describe('Codex hook adapter', () => {
     );
     expect(denied.hookSpecificOutput.decision).toEqual({ behavior: 'deny', message: 'denied via omni approval' });
 
-    // Legacy decision/reason form maps too.
-    const legacy = JSON.parse(codexPermissionDecision({ decision: 'deny', reason: 'branch guard' }));
-    expect(legacy.hookSpecificOutput.decision).toEqual({ behavior: 'deny', message: 'branch guard' });
-
-    // Allow never grows a message; deny without a reason stays bare.
-    const allow = JSON.parse(
-      codexPermissionDecision({
-        hookSpecificOutput: {
-          hookEventName: 'PreToolUse',
-          permissionDecision: 'allow',
-          permissionDecisionReason: 'auto-approved',
-        },
-      }),
-    );
-    expect(allow.hookSpecificOutput.decision).toEqual({ behavior: 'allow' });
-    const bareDeny = JSON.parse(
-      codexPermissionDecision({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny' } }),
-    );
-    expect(bareDeny.hookSpecificOutput.decision).toEqual({ behavior: 'deny' });
-  });
-
-  test('timeout ask returns no decision', async () => {
-    const output = await dispatchCodexPermissionRequest(
-      { hook_event_name: 'PermissionRequest', tool_name: 'Bash' },
-      async () => ({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask' } }),
-    );
-    expect(output).toBe('');
+    const bareDeny = JSON.parse(codexPermissionDecision({ decision: 'deny' }));
+    expect(bareDeny.hookSpecificOutput.decision.behavior).toBe('deny');
+    expect(bareDeny.hookSpecificOutput.decision.message).toContain('could not complete');
   });
 });

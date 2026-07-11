@@ -1,44 +1,61 @@
-import { $ } from 'bun';
-
-interface CommandCheck {
+export interface CommandCheck {
   exists: boolean;
   version?: string;
   path?: string;
+  timedOut?: boolean;
+  error?: string;
 }
 
-export async function checkCommand(cmd: string): Promise<CommandCheck> {
-  try {
-    const whichResult = await $`which ${cmd}`.quiet().text();
-    const cmdPath = whichResult.trim();
+export interface CommandProbeResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  timedOut?: boolean;
+}
 
-    if (!cmdPath) {
-      return { exists: false };
+export interface CommandCheckOptions {
+  timeoutMs?: number;
+  which?: (name: string) => string | null;
+  run?: (path: string, args: string[], timeoutMs: number) => CommandProbeResult;
+}
+
+const DEFAULT_COMMAND_TIMEOUT_MS = 3_000;
+
+function defaultRun(path: string, args: string[], timeoutMs: number): CommandProbeResult {
+  const result = Bun.spawnSync([path, ...args], { stdout: 'pipe', stderr: 'pipe', timeout: timeoutMs });
+  return {
+    exitCode: result.exitCode,
+    stdout: result.stdout.toString(),
+    stderr: result.stderr.toString(),
+    timedOut: result.exitedDueToTimeout === true,
+  };
+}
+
+function parseVersion(raw: string): string | undefined {
+  const firstLine = raw.split('\n')[0]?.trim();
+  if (!firstLine) return undefined;
+  const versionMatch = firstLine.match(/(\d+\.[\d.]+[a-z0-9-]*)/i);
+  return versionMatch ? versionMatch[1] : firstLine.slice(0, 50);
+}
+
+/** Resolve a command and bound every version probe with an explicit deadline. */
+export async function checkCommand(cmd: string, options: CommandCheckOptions = {}): Promise<CommandCheck> {
+  const path = (options.which ?? ((name: string) => Bun.which(name)))(cmd);
+  if (!path) return { exists: false };
+
+  const timeoutMs = options.timeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS;
+  const run = options.run ?? defaultRun;
+  for (const args of [['--version'], ['-v']]) {
+    const result = run(path, args, timeoutMs);
+    if (result.timedOut) {
+      return {
+        exists: true,
+        path,
+        timedOut: true,
+        error: `${cmd} ${args[0]} timed out after ${timeoutMs}ms`,
+      };
     }
-
-    // Try to get version
-    let version: string | undefined;
-    try {
-      // Try common version flags
-      const versionResult = await $`${cmd} --version`.quiet().text();
-      // Extract first line and clean it up
-      const firstLine = versionResult.split('\n')[0].trim();
-      // Try to extract version number
-      const versionMatch = firstLine.match(/(\d+\.[\d.]+[a-z0-9-]*)/i);
-      version = versionMatch ? versionMatch[1] : firstLine.slice(0, 50);
-    } catch {
-      // Some commands don't support --version, try -v
-      try {
-        const vResult = await $`${cmd} -v`.quiet().text();
-        const firstLine = vResult.split('\n')[0].trim();
-        const versionMatch = firstLine.match(/(\d+\.[\d.]+[a-z0-9-]*)/i);
-        version = versionMatch ? versionMatch[1] : firstLine.slice(0, 50);
-      } catch {
-        // Version unknown but command exists
-      }
-    }
-
-    return { exists: true, version, path: cmdPath };
-  } catch {
-    return { exists: false };
+    if (result.exitCode === 0) return { exists: true, path, version: parseVersion(result.stdout) };
   }
+  return { exists: true, path, error: `${cmd} did not return a version from --version or -v` };
 }

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Performance Review"
+  short_description: "Measure cold starts, hot paths, and bottlenecks"
+  default_prompt: "Use $perf to measure this path and explain the observed bottleneck."

@@ -22,6 +22,7 @@ import { execSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { assertPluginSkillsInSync } from './sync-plugin-skills.ts';
 
 // Count existing versions for today from git tags
 function getTodayPublishCount(datePrefix: string): number {
@@ -50,15 +51,19 @@ function generateVersion(): string {
   return `5.${datePrefix}.${n}`;
 }
 
-async function updateJsonVersion(filePath: string, version: string): Promise<boolean> {
+export async function updateJsonVersion(filePath: string, version: string): Promise<boolean> {
   if (!existsSync(filePath)) {
     console.warn(`  ⚠ Skipped (not found): ${filePath}`);
     return false;
   }
   try {
-    const json = JSON.parse(await readFile(filePath, 'utf-8'));
-    json.version = version;
-    await writeFile(filePath, `${JSON.stringify(json, null, 2)}\n`);
+    const source = await readFile(filePath, 'utf-8');
+    const json = JSON.parse(source) as { version?: unknown };
+    if (typeof json.version !== 'string') throw new Error('top-level version must be a string');
+    const updated = source.replace(/("version"\s*:\s*)"[^"]*"/, `$1"${version}"`);
+    if (updated === source && json.version !== version) throw new Error('could not locate top-level version field');
+    JSON.parse(updated);
+    await writeFile(filePath, updated);
     console.log(`  ✓ ${filePath}`);
     return true;
   } catch (err) {
@@ -67,28 +72,8 @@ async function updateJsonVersion(filePath: string, version: string): Promise<boo
   }
 }
 
-// JSON.stringify(_, null, 2) expands short arrays that Biome (120 width)
-// collapses, so a raw stamp leaves the tree lint-red until the next manual
-// format. Re-format every stamped file so a version bump can never break
-// `biome check`. Non-fatal: without Biome the stamp still lands.
-function formatStampedFiles(rootDir: string, files: string[]): void {
-  const targets = files.filter((file) => existsSync(file));
-  if (targets.length === 0) {
-    return;
-  }
-  try {
-    execSync(`bunx biome format --write ${targets.map((file) => `"${file}"`).join(' ')}`, {
-      cwd: rootDir,
-      stdio: 'pipe',
-      timeout: 60000,
-    });
-    console.log('  ✓ biome format applied to stamped files');
-  } catch {
-    console.warn('  ⚠ biome format unavailable — run `bunx biome format --write` on the stamped files');
-  }
-}
-
 async function main() {
+  assertPluginSkillsInSync();
   const version = generateVersion();
   const rootDir = join(dirname(import.meta.path), '..');
 
@@ -125,18 +110,12 @@ async function main() {
     }
   }
 
-  formatStampedFiles(rootDir, [
-    join(rootDir, 'package.json'),
-    join(rootDir, 'plugins/genie/.claude-plugin/plugin.json'),
-    join(rootDir, 'plugins/genie/.codex-plugin/plugin.json'),
-    join(rootDir, 'plugins/genie/package.json'),
-    marketplacePath,
-  ]);
-
   console.log('\n✅ All versions synchronized');
 }
 
-main().catch((err) => {
-  console.error('Version script failed:', err);
-  process.exit(1);
-});
+if (import.meta.main) {
+  main().catch((err) => {
+    console.error('Version script failed:', err);
+    process.exit(1);
+  });
+}

@@ -1,12 +1,24 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import {
   claudePluginState,
   codexPluginState,
+  inspectCodexAgentOwnership,
   installCodexAgents,
   installRuntimeIntegrations,
+  removeCodexAgents,
+  removeRuntimeIntegrations,
   resolveBundleRoot,
   setCodexPluginEnabled,
 } from './runtime-integrations.js';
@@ -99,6 +111,27 @@ describe('runtime plugin state', () => {
     expect(calls).toContain('codex plugin add genie@automagik --json');
     expect(readdirSync(codexHome).some((name) => name.startsWith('config.toml.genie-backup-'))).toBe(true);
   });
+
+  test('install subprocess timeout is bounded and returned as a structured runtime failure', () => {
+    const codexHome = mkdtempSync(join(tmpdir(), 'genie-codex-timeout-'));
+    const observedTimeouts: number[] = [];
+    const result = installRuntimeIntegrations({
+      selection: 'codex',
+      bundleRoot: join(import.meta.dir, '..', '..'),
+      codexHome,
+      detected: { codex: true },
+      timeoutMs: 432,
+      runner(_command, _args, options) {
+        observedTimeouts.push(options?.timeoutMs ?? -1);
+        return { exitCode: 1, stdout: '', stderr: '', timedOut: true };
+      },
+    })[0];
+
+    expect(result.ok).toBe(false);
+    expect(result.timedOut).toBe(true);
+    expect(result.detail).toContain('timed out after 432ms');
+    expect(observedTimeouts).toEqual([432]);
+  });
 });
 
 describe('resolveBundleRoot', () => {
@@ -141,18 +174,21 @@ describe('codex repair convergence (stale marketplace root / stale installed plu
     return mkdtempSync(join(tmpdir(), 'genie-codex-home-'));
   }
 
-  test('marketplace registered from a different source is repointed at the bundle root', () => {
+  test('marketplace registered from a different source is repointed with bounded subprocesses', () => {
     const bundleRoot = join(import.meta.dir, '..', '..');
     const calls: string[] = [];
+    const timeouts: Array<number | undefined> = [];
     let marketplaceAdds = 0;
     const results = installRuntimeIntegrations({
       selection: 'codex',
       bundleRoot,
       codexHome: makeCodexHome(),
       detected: { codex: true },
-      runner(command, args) {
+      timeoutMs: 777,
+      runner(command, args, options) {
         const call = [command, ...args].join(' ');
         calls.push(call);
+        timeouts.push(options?.timeoutMs);
         if (args.join(' ') === `plugin marketplace add ${bundleRoot} --json`) {
           marketplaceAdds += 1;
           if (marketplaceAdds === 1) {
@@ -167,34 +203,59 @@ describe('codex repair convergence (stale marketplace root / stale installed plu
         return { exitCode: 0, stdout: args.join(' ') === 'plugin list --json' ? currentList : '{}', stderr: '' };
       },
     });
-    expect(results[0].ok).toBe(true);
+    expect(results[0]?.ok).toBe(true);
     expect(calls).toContain('codex plugin marketplace remove automagik --json');
     expect(marketplaceAdds).toBe(2);
+    expect(timeouts.every((timeout) => timeout === 777)).toBe(true);
+  });
+
+  test('a marketplace repoint timeout is returned as a structured bounded failure', () => {
+    const bundleRoot = join(import.meta.dir, '..', '..');
+    const result = installRuntimeIntegrations({
+      selection: 'codex',
+      bundleRoot,
+      codexHome: makeCodexHome(),
+      detected: { codex: true },
+      timeoutMs: 654,
+      runner(_command, args, options) {
+        expect(options?.timeoutMs).toBe(654);
+        if (args.join(' ') === 'plugin list --json') {
+          return { exitCode: 0, stdout: currentList, stderr: '' };
+        }
+        return { exitCode: 1, stdout: '', stderr: '', timedOut: true };
+      },
+    })[0];
+
+    expect(result?.ok).toBe(false);
+    expect(result?.timedOut).toBe(true);
+    expect(result?.detail).toContain('timed out after 654ms');
   });
 
   test('installed plugin pinned to a stale root is reinstalled until version-matched', () => {
     const bundleRoot = join(import.meta.dir, '..', '..');
     const calls: string[] = [];
+    const timeouts: Array<number | undefined> = [];
     let lists = 0;
     const results = installRuntimeIntegrations({
       selection: 'codex',
       bundleRoot,
       codexHome: makeCodexHome(),
       detected: { codex: true },
-      runner(command, args) {
+      timeoutMs: 888,
+      runner(command, args, options) {
         calls.push([command, ...args].join(' '));
+        timeouts.push(options?.timeoutMs);
         if (args.join(' ') === 'plugin list --json') {
           lists += 1;
-          // before-state and first verify see the stale install; after the
-          // reinstall the registry reports the version-matched plugin.
           return { exitCode: 0, stdout: lists <= 2 ? staleList : currentList, stderr: '' };
         }
         return { exitCode: 0, stdout: '{}', stderr: '' };
       },
     });
-    expect(results[0].ok).toBe(true);
+    expect(results[0]?.ok).toBe(true);
     expect(calls).toContain('codex plugin remove genie@automagik --json');
-    expect(calls.filter((call) => call === 'codex plugin add genie@automagik --json').length).toBe(2);
+    expect(calls.filter((call) => call === 'codex plugin add genie@automagik --json')).toHaveLength(2);
+    expect(timeouts.every((timeout) => timeout === 888)).toBe(true);
   });
 
   test('a repair that cannot converge fails loudly instead of reporting refreshed', () => {
@@ -208,8 +269,8 @@ describe('codex repair convergence (stale marketplace root / stale installed plu
         return { exitCode: 0, stdout: args.join(' ') === 'plugin list --json' ? staleList : '{}', stderr: '' };
       },
     });
-    expect(results[0].ok).toBe(false);
-    expect(results[0].detail).toMatch(/stuck at v5\.260710\.9/);
+    expect(results[0]?.ok).toBe(false);
+    expect(results[0]?.detail).toMatch(/stuck at v5\.260710\.9/);
   });
 });
 
@@ -256,8 +317,15 @@ describe('installCodexAgents overwrite discipline', () => {
     const bundleRoot = makeBundle();
     const codexHome = mkdtempSync(join(tmpdir(), 'genie-codex-'));
     const result = installCodexAgents(bundleRoot, codexHome);
-    expect(result).toEqual({ installed: 1, skippedUserOwned: [], backedUp: [] });
+    expect(result).toEqual({
+      installed: 1,
+      skippedUserOwned: [],
+      keptModified: [],
+      removed: [],
+      backedUp: [],
+    });
     expect(readFileSync(join(codexHome, 'agents', 'genie-reviewer.toml'), 'utf8')).toBe(MANAGED_TOML);
+    expect(inspectCodexAgentOwnership(codexHome).entries[0]?.ownership).toBe('managed-clean');
   });
 
   test('an identical managed file is refreshed with no backup', () => {
@@ -265,8 +333,30 @@ describe('installCodexAgents overwrite discipline', () => {
     const codexHome = mkdtempSync(join(tmpdir(), 'genie-codex-'));
     installCodexAgents(bundleRoot, codexHome);
     const result = installCodexAgents(bundleRoot, codexHome);
-    expect(result).toEqual({ installed: 1, skippedUserOwned: [], backedUp: [] });
+    expect(result).toEqual({
+      installed: 1,
+      skippedUserOwned: [],
+      keptModified: [],
+      removed: [],
+      backedUp: [],
+    });
     expect(existsSync(join(codexHome, 'agents', 'genie-reviewer.toml.genie-backup'))).toBe(false);
+  });
+
+  test('a byte-identical sentinel copy without inventory remains user-owned across update and removal', () => {
+    const bundleRoot = makeBundle();
+    const codexHome = mkdtempSync(join(tmpdir(), 'genie-codex-'));
+    const target = join(codexHome, 'agents', 'genie-reviewer.toml');
+    write(target, MANAGED_TOML);
+
+    const result = installCodexAgents(bundleRoot, codexHome);
+
+    expect(result.installed).toBe(0);
+    expect(result.skippedUserOwned).toEqual(['genie-reviewer.toml']);
+    expect(readFileSync(target, 'utf8')).toBe(MANAGED_TOML);
+    expect(inspectCodexAgentOwnership(codexHome).entries[0]?.ownership).toBe('user-owned');
+    expect(removeCodexAgents(codexHome).removed).toEqual([]);
+    expect(readFileSync(target, 'utf8')).toBe(MANAGED_TOML);
   });
 
   test('a differing file WITHOUT the sentinel is user-owned: skipped, never overwritten', () => {
@@ -275,20 +365,181 @@ describe('installCodexAgents overwrite discipline', () => {
     const userToml = 'name = "genie_reviewer"\n# hand-written, no sentinel\n';
     write(join(codexHome, 'agents', 'genie-reviewer.toml'), userToml);
     const result = installCodexAgents(bundleRoot, codexHome);
-    expect(result).toEqual({ installed: 0, skippedUserOwned: ['genie-reviewer.toml'], backedUp: [] });
+    expect(result).toEqual({
+      installed: 0,
+      skippedUserOwned: ['genie-reviewer.toml'],
+      keptModified: [],
+      removed: [],
+      backedUp: [],
+    });
     expect(readFileSync(join(codexHome, 'agents', 'genie-reviewer.toml'), 'utf8')).toBe(userToml);
     expect(existsSync(join(codexHome, 'agents', 'genie-reviewer.toml.genie-backup'))).toBe(false);
   });
 
-  test('a differing file WITH the sentinel is backed up beside itself, then overwritten', () => {
+  test('a sentinel alone never grants ownership: a differing file is preserved byte-identically', () => {
     const bundleRoot = makeBundle();
     const codexHome = mkdtempSync(join(tmpdir(), 'genie-codex-'));
     const tuned =
       '# Managed by Genie. Remove with `genie uninstall`.\nname = "genie_reviewer"\nsandbox_mode = "danger"\n';
     write(join(codexHome, 'agents', 'genie-reviewer.toml'), tuned);
     const result = installCodexAgents(bundleRoot, codexHome);
-    expect(result).toEqual({ installed: 1, skippedUserOwned: [], backedUp: ['genie-reviewer.toml'] });
-    expect(readFileSync(join(codexHome, 'agents', 'genie-reviewer.toml'), 'utf8')).toBe(MANAGED_TOML);
-    expect(readFileSync(join(codexHome, 'agents', 'genie-reviewer.toml.genie-backup'), 'utf8')).toBe(tuned);
+    expect(result).toEqual({
+      installed: 0,
+      skippedUserOwned: ['genie-reviewer.toml'],
+      keptModified: [],
+      removed: [],
+      backedUp: [],
+    });
+    expect(readFileSync(join(codexHome, 'agents', 'genie-reviewer.toml'), 'utf8')).toBe(tuned);
+    expect(existsSync(join(codexHome, 'agents', 'genie-reviewer.toml.genie-backup'))).toBe(false);
+  });
+
+  test('a broken same-name symlink is user-owned and never followed or replaced', () => {
+    const bundleRoot = makeBundle();
+    const codexHome = mkdtempSync(join(tmpdir(), 'genie-codex-'));
+    const target = join(codexHome, 'agents', 'genie-reviewer.toml');
+    const outside = join(codexHome, 'outside-target.toml');
+    mkdirSync(dirname(target), { recursive: true });
+    symlinkSync(outside, target);
+
+    const result = installCodexAgents(bundleRoot, codexHome);
+
+    expect(result.skippedUserOwned).toEqual(['genie-reviewer.toml']);
+    expect(existsSync(outside)).toBe(false);
+  });
+
+  test('a digest-owned file modified after install is preserved across refresh and uninstall', () => {
+    const bundleRoot = makeBundle();
+    const codexHome = mkdtempSync(join(tmpdir(), 'genie-codex-'));
+    installCodexAgents(bundleRoot, codexHome);
+    const target = join(codexHome, 'agents', 'genie-reviewer.toml');
+    const tuned = `${MANAGED_TOML}sandbox_mode = "read-only"\n`;
+    writeFileSync(target, tuned);
+
+    const refresh = installCodexAgents(bundleRoot, codexHome);
+    expect(refresh.keptModified).toEqual(['genie-reviewer.toml']);
+    expect(readFileSync(target, 'utf8')).toBe(tuned);
+    expect(inspectCodexAgentOwnership(codexHome).entries[0]?.ownership).toBe('managed-modified');
+
+    const removal = removeCodexAgents(codexHome);
+    expect(removal.keptModified).toEqual(['genie-reviewer.toml']);
+    expect(removal.removed).toEqual([]);
+    expect(readFileSync(target, 'utf8')).toBe(tuned);
+    expect(inspectCodexAgentOwnership(codexHome).entries[0]?.ownership).toBe('user-owned');
+  });
+
+  test('a digest-clean managed file updates and later removes normally', () => {
+    const bundleRoot = makeBundle();
+    const codexHome = mkdtempSync(join(tmpdir(), 'genie-codex-'));
+    installCodexAgents(bundleRoot, codexHome);
+    const source = join(bundleRoot, 'plugins', 'genie', 'codex-agents', 'genie-reviewer.toml');
+    const updated = `${MANAGED_TOML}model_reasoning_effort = "high"\n`;
+    writeFileSync(source, updated);
+
+    expect(installCodexAgents(bundleRoot, codexHome).installed).toBe(1);
+    const target = join(codexHome, 'agents', 'genie-reviewer.toml');
+    expect(readFileSync(target, 'utf8')).toBe(updated);
+    expect(removeCodexAgents(codexHome).removed).toEqual(['genie-reviewer.toml']);
+    expect(existsSync(target)).toBe(false);
+  });
+
+  test('role-agent removal I/O failure is structured and remains retryable', () => {
+    const bundleRoot = makeBundle();
+    const codexHome = mkdtempSync(join(tmpdir(), 'genie-codex-'));
+    installCodexAgents(bundleRoot, codexHome);
+    const agentsDir = join(codexHome, 'agents');
+    const target = join(agentsDir, 'genie-reviewer.toml');
+    chmodSync(agentsDir, 0o500);
+    try {
+      const result = removeCodexAgents(codexHome);
+      expect(result.removed).toEqual([]);
+      expect(result.failures[0]?.name).toBe('genie-reviewer.toml');
+      expect(readFileSync(target, 'utf8')).toBe(MANAGED_TOML);
+    } finally {
+      chmodSync(agentsDir, 0o700);
+    }
+    expect(removeCodexAgents(codexHome).removed).toEqual(['genie-reviewer.toml']);
+  });
+
+  test('a corrupt ownership inventory fails closed without touching an existing role agent', () => {
+    const bundleRoot = makeBundle();
+    const codexHome = mkdtempSync(join(tmpdir(), 'genie-codex-'));
+    installCodexAgents(bundleRoot, codexHome);
+    const target = join(codexHome, 'agents', 'genie-reviewer.toml');
+    const before = readFileSync(target, 'utf8');
+    writeFileSync(join(codexHome, 'agents', '.genie-role-agents.json'), '{broken');
+
+    expect(() => installCodexAgents(bundleRoot, codexHome)).toThrow('ownership inventory is corrupt');
+    expect(readFileSync(target, 'utf8')).toBe(before);
+    const removal = removeCodexAgents(codexHome);
+    expect(removal.failures[0]?.detail).toContain('no role agents were removed');
+    expect(readFileSync(target, 'utf8')).toBe(before);
+  });
+
+  test('inventory filenames cannot escape the Codex agents directory', () => {
+    const bundleRoot = makeBundle();
+    const codexHome = mkdtempSync(join(tmpdir(), 'genie-codex-'));
+    const inventory = {
+      version: 1,
+      managedBy: 'genie-codex-role-agents',
+      files: { 'genie-../../victim.toml': { digest: '0'.repeat(64) } },
+    };
+    write(join(codexHome, 'agents', '.genie-role-agents.json'), JSON.stringify(inventory));
+    const victim = join(codexHome, 'victim.toml');
+    writeFileSync(victim, 'mine\n');
+
+    expect(() => installCodexAgents(bundleRoot, codexHome)).toThrow('invalid inventory schema');
+    expect(readFileSync(victim, 'utf8')).toBe('mine\n');
+  });
+});
+
+describe('runtime integration removal reporting', () => {
+  test('unmanaged same-name role agents survive integration removal byte-identically', () => {
+    const codexHome = mkdtempSync(join(tmpdir(), 'genie-codex-remove-'));
+    const target = join(codexHome, 'agents', 'genie-reviewer.toml');
+    const personal = `${MANAGED_TOML}model = "personal"\n`;
+    write(target, personal);
+
+    const result = removeRuntimeIntegrations({ codexHome, detected: { codex: false, claude: false } });
+
+    expect(result.ok).toBe(true);
+    expect(result.agents.removed).toEqual([]);
+    expect(readFileSync(target, 'utf8')).toBe(personal);
+  });
+
+  test('every requested subprocess receives a deadline and failures remain structured and retryable', () => {
+    const codexHome = mkdtempSync(join(tmpdir(), 'genie-codex-remove-'));
+    const calls: Array<{ command: string; args: string[]; timeoutMs: number | undefined }> = [];
+    const result = removeRuntimeIntegrations({
+      removeMarketplace: true,
+      codexHome,
+      detected: { codex: true, claude: true },
+      timeoutMs: 321,
+      runner(command, args, options) {
+        calls.push({ command, args, timeoutMs: options?.timeoutMs });
+        if (command === 'codex') return { exitCode: 1, stdout: '', stderr: '', timedOut: true };
+        return { exitCode: 7, stdout: '', stderr: 'permission denied' };
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(calls).toHaveLength(4);
+    expect(calls.every((call) => call.timeoutMs === 321)).toBe(true);
+    expect(result.steps.filter((step) => step.timedOut)).toHaveLength(2);
+    expect(result.steps.filter((step) => step.detail.includes('permission denied'))).toHaveLength(2);
+    expect(result.steps.every((step) => step.detail.length > 0)).toBe(true);
+  });
+
+  test('already-absent plugins are an idempotent success', () => {
+    const result = removeRuntimeIntegrations({
+      codexHome: mkdtempSync(join(tmpdir(), 'genie-codex-remove-')),
+      detected: { codex: true, claude: false },
+      runner() {
+        return { exitCode: 1, stdout: '', stderr: 'plugin is not installed' };
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.steps).toEqual([{ runtime: 'codex', operation: 'plugin', ok: true, detail: 'already absent' }]);
   });
 });

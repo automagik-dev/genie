@@ -22,6 +22,7 @@
  */
 
 import { isOmniApprovalEnabled, resolveOmniRuntimeConfig } from '../lib/omni-config.js';
+import { codexPermissionDecision } from './codex-adapter.js';
 import { auditContext } from './handlers/audit-context.js';
 import { branchGuard } from './handlers/branch-guard.js';
 import { freshness } from './handlers/freshness.js';
@@ -103,20 +104,36 @@ const builtinHandlers: ReadonlyArray<Handler> = [
  * state-changing / executing tools by default; overridable via config
  * (`omni.approvals.tools`) resolved in {@link buildOmniRegistry}.
  */
-const DEFAULT_OMNI_APPROVAL_MATCHER = /^(Bash|Write|Edit|NotebookEdit)$/;
+const DEFAULT_OMNI_APPROVAL_MATCHER = /^(Bash|Write|Edit|apply_patch|NotebookEdit)$/;
+const NEVER_MATCH_OMNI_APPROVAL = /(?!)^/;
+
+/**
+ * Compile the operator's approval-tool matcher without widening its scope on
+ * error. An empty, oversized, or syntactically invalid expression matches
+ * nothing: falling back to the default would disclose tool input the operator
+ * explicitly attempted to exclude.
+ */
+export function compileOmniToolMatcher(source: string): RegExp {
+  if (source.trim().length === 0 || source.length > 512) return NEVER_MATCH_OMNI_APPROVAL;
+  try {
+    return new RegExp(source);
+  } catch {
+    return NEVER_MATCH_OMNI_APPROVAL;
+  }
+}
 
 /**
  * Build the `omni-approval` handler descriptor. Priority 5 keeps it AFTER the
  * branch/orchestration deny-guards (1, 2) — so a guard deny short-circuits
  * before we ever bother the phone — and before the context-adding handlers (8).
  */
-function omniApprovalHandler(matcher: RegExp): Handler {
+function omniApprovalHandler(matcher: RegExp, runtime: 'claude' | 'codex'): Handler {
   return {
     version: '1',
     source: 'builtin',
     manifest_path: 'src/hooks/handlers/omni-approval.ts',
     name: 'omni-approval',
-    event: 'PreToolUse',
+    event: runtime === 'codex' ? 'PermissionRequest' : 'PreToolUse',
     matcher,
     priority: 5,
     fn: omniApproval,
@@ -132,9 +149,10 @@ function omniApprovalHandler(matcher: RegExp): Handler {
 export function buildOmniRegistry(
   omniEnabled: boolean,
   toolMatcher: RegExp = DEFAULT_OMNI_APPROVAL_MATCHER,
+  runtime: 'claude' | 'codex' = 'claude',
 ): ReadonlyArray<Handler> {
   if (!omniEnabled) return Object.freeze([...builtinHandlers]);
-  return Object.freeze([...builtinHandlers, omniApprovalHandler(toolMatcher)]);
+  return Object.freeze([...builtinHandlers, omniApprovalHandler(toolMatcher, runtime)]);
 }
 
 /**
@@ -143,16 +161,11 @@ export function buildOmniRegistry(
  * carrying the `omni-approval` handler. A no-op (leaving the frozen builtin
  * registry untouched) when the feature is off — the byte-identical guarantee.
  */
-export async function installDispatchRegistry(): Promise<void> {
+export async function installDispatchRegistry(runtime: 'claude' | 'codex' = 'claude'): Promise<void> {
   const rt = await resolveOmniRuntimeConfig();
   if (!isOmniApprovalEnabled(rt)) return;
-  let matcher = DEFAULT_OMNI_APPROVAL_MATCHER;
-  try {
-    matcher = new RegExp(rt.approvals.toolMatcher);
-  } catch {
-    // Bad user regex — fall back to the safe default rather than crash dispatch.
-  }
-  setRegistry(buildOmniRegistry(true, matcher));
+  const matcher = compileOmniToolMatcher(rt.approvals.toolMatcher);
+  setRegistry(buildOmniRegistry(true, matcher, runtime));
 }
 
 /**
@@ -194,13 +207,24 @@ export function getRegistry(): ReadonlyArray<Handler> {
 // Dispatch Logic
 // ============================================================================
 
+function matcherCandidates(toolName: string): string[] {
+  return toolName === 'apply_patch' ? ['apply_patch', 'Edit', 'Write'] : [toolName];
+}
+
+function matchesTool(matcher: RegExp, toolName: string): boolean {
+  return matcherCandidates(toolName).some((candidate) => {
+    matcher.lastIndex = 0;
+    return matcher.test(candidate);
+  });
+}
+
 function resolveHandlers(event: string, toolName?: string): Handler[] {
   // Read registryRef at call time so setRegistry() swaps land on the next
   // dispatch — in-flight calls finish on the previously captured snapshot.
   return registryRef
     .filter((h) => {
       if (h.event !== event) return false;
-      if (h.matcher && toolName && !h.matcher.test(toolName)) return false;
+      if (h.matcher && toolName && !matchesTool(h.matcher, toolName)) return false;
       if (h.matcher && !toolName) return false;
       return true;
     })
@@ -258,6 +282,14 @@ function buildDenyResponse(
       },
     };
   }
+  if (hookEventName === 'PermissionRequest') {
+    return JSON.parse(
+      codexPermissionDecision({
+        decision: 'deny',
+        reason: reason ?? `Denied by handler: ${handler.name}`,
+      }),
+    ) as Record<string, unknown>;
+  }
   return { decision: 'block', reason: reason ?? `Denied by handler: ${handler.name}` };
 }
 
@@ -307,7 +339,7 @@ const NON_INTERCEPTABLE_PRE_TOOL_USE_TOOLS: ReadonlyArray<string> = ['AskUserQue
  */
 export function buildFailClosedResponse(event: string | undefined, tool: string | undefined, reason: string): string {
   const interceptablePreToolUse =
-    event === 'PreToolUse' && typeof tool === 'string' && !NON_INTERCEPTABLE_PRE_TOOL_USE_TOOLS.includes(tool);
+    event === 'PreToolUse' && (tool === undefined || !NON_INTERCEPTABLE_PRE_TOOL_USE_TOOLS.includes(tool));
 
   if (interceptablePreToolUse) {
     return JSON.stringify({
@@ -317,6 +349,10 @@ export function buildFailClosedResponse(event: string | undefined, tool: string 
         permissionDecisionReason: reason,
       },
     });
+  }
+
+  if (event === 'PermissionRequest') {
+    return codexPermissionDecision({ decision: 'deny', reason });
   }
 
   return JSON.stringify({ decision: 'block', reason });
@@ -374,6 +410,15 @@ function buildBlockingResponse(
       if (explicit?.reason) output.permissionDecisionReason = explicit.reason;
     }
     response.hookSpecificOutput = output;
+  }
+
+  if (hookEventName === 'PermissionRequest' && wantAllow) {
+    return JSON.parse(
+      codexPermissionDecision({
+        decision: 'allow',
+        reason: explicit?.reason,
+      }),
+    ) as Record<string, unknown>;
   }
 
   // UserPromptSubmit accepts hookSpecificOutput.additionalContext to inject
@@ -465,8 +510,16 @@ async function executeBlockingChain(matched: Handler[], payload: HookPayload): P
     // (interactive) or refuse (headless), never auto-allow. It short-circuits —
     // once we've decided to hand the call back to the human, no later handler
     // should keep processing it. Only PreToolUse carries the ask envelope.
-    if (decision === 'ask' && hookEventName === 'PreToolUse') {
-      return buildAskResponse(decisionReason(result));
+    if (decision === 'ask') {
+      if (hookEventName === 'PreToolUse') return buildAskResponse(decisionReason(result));
+      if (hookEventName === 'PermissionRequest') {
+        return JSON.parse(
+          codexPermissionDecision({
+            decision: 'deny',
+            reason: decisionReason(result) ?? 'Genie could not complete the requested approval safely.',
+          }),
+        ) as Record<string, unknown>;
+      }
     }
 
     // An *intentional standalone* `allow` is recorded and propagated, but does
@@ -477,7 +530,11 @@ async function executeBlockingChain(matched: Handler[], payload: HookPayload): P
     // `additionalContext` with a default `allow` field) is NOT recorded: its
     // permission decision stays deferred to CC, preserving byte-identical output
     // when omni is off. See {@link isIntentionalAllow}.
-    if (decision === 'allow' && hookEventName === 'PreToolUse' && isIntentionalAllow(result)) {
+    if (
+      decision === 'allow' &&
+      (hookEventName === 'PreToolUse' || hookEventName === 'PermissionRequest') &&
+      isIntentionalAllow(result)
+    ) {
       explicit = { permissionDecision: 'allow', reason: decisionReason(result) ?? explicit?.reason };
     }
 

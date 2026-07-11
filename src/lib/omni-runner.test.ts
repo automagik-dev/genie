@@ -27,7 +27,7 @@ import {
   runClaudeSession,
   runCodexSession,
 } from './omni-runner.js';
-import { openGlobalDb } from './v5/global-db.js';
+import { getAgentSession, openGlobalDb, upsertAgentSession } from './v5/global-db.js';
 import { enqueueApproval, getApproval, listInbox } from './v5/omni-queue.js';
 
 const INSTANCE = 'inst-A';
@@ -758,11 +758,23 @@ describe('extractStreamJsonReply — stream-json parsing', () => {
 });
 
 describe('Codex executor JSONL and resume', () => {
+  const successJsonl = (text: string, threadId = 'thread-1'): string =>
+    [
+      JSON.stringify({ type: 'thread.started', thread_id: threadId }),
+      JSON.stringify({ type: 'turn.started' }),
+      JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text } }),
+      JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 1 } }),
+    ].join('\n');
+
   test('extracts the thread id and final agent message', () => {
     const jsonl = [
       JSON.stringify({ type: 'thread.started', thread_id: 'thread-1' }),
+      JSON.stringify({ type: 'turn.started' }),
+      JSON.stringify({ type: 'item.completed', item: { type: 'reasoning', text: 'thinking' } }),
       JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'first' } }),
+      JSON.stringify({ type: 'item.completed', item: { type: 'command_execution', command: 'pwd' } }),
       JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'final' } }),
+      JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 3, output_tokens: 2 } }),
     ].join('\n');
     expect(extractCodexJsonlReply(jsonl)).toEqual({
       stdout: 'final',
@@ -772,12 +784,69 @@ describe('Codex executor JSONL and resume', () => {
     });
   });
 
-  test('builds a new turn and a resumed turn with workspace-write', () => {
-    expect(buildCodexArgs({ message: 'hello' })).toEqual(['exec', '--json', '--sandbox', 'workspace-write', 'hello']);
-    const resumed = buildCodexArgs({ message: 'again', threadId: 'thread-1' });
-    expect(resumed.slice(0, 3)).toEqual(['exec', 'resume', '--json']);
-    expect(resumed).toContain('thread-1');
-    expect(resumed[resumed.length - 1]).toBe('again');
+  test('terminates options before every option-like prompt on fresh and resumed turns', () => {
+    for (const message of ['--version', '--help', '-m']) {
+      const fresh = buildCodexArgs({ message });
+      expect(fresh).toEqual(['exec', '--json', '--sandbox', 'workspace-write', '--', message]);
+
+      const resumed = buildCodexArgs({ message, threadId: 'thread-1' });
+      expect(resumed.slice(0, 3)).toEqual(['exec', 'resume', '--json']);
+      expect(resumed).toContain('thread-1');
+      expect(resumed.slice(-2)).toEqual(['--', message]);
+    }
+  });
+
+  test('rejects blank, unrelated, malformed, unknown, and valid-but-incomplete JSONL', () => {
+    const invalidStreams = [
+      '',
+      '  \n',
+      JSON.stringify({ status: 'ok' }),
+      'null',
+      '{"type":"item.completed"',
+      JSON.stringify({ type: 'future.event', payload: {} }),
+      JSON.stringify({ type: 'thread.started', thread_id: 'thread-only' }),
+      [
+        JSON.stringify({ type: 'thread.started', thread_id: 'thread-empty' }),
+        JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: '   ' } }),
+        JSON.stringify({ type: 'turn.completed' }),
+      ].join('\n'),
+    ];
+    for (const jsonl of invalidStreams) {
+      const result = extractCodexJsonlReply(jsonl);
+      expect(result.isError).toBe(true);
+      expect(result.stdout.length).toBeGreaterThan(0);
+      expect(result.stdout.toLowerCase()).toContain('retry');
+    }
+  });
+
+  test('requires the reply before turn.completed and rejects every non-blank event or fragment after it', () => {
+    const completionBeforeReply = [
+      JSON.stringify({ type: 'thread.started', thread_id: 'thread-1' }),
+      JSON.stringify({ type: 'turn.started' }),
+      JSON.stringify({ type: 'turn.completed' }),
+      JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'too late' } }),
+    ].join('\n');
+    const eventAfterCompletion = `${successJsonl('done')}\n${JSON.stringify({ type: 'turn.started' })}`;
+    const fragmentAfterCompletion = `${successJsonl('done')}\ntrailing process noise`;
+
+    const early = extractCodexJsonlReply(completionBeforeReply);
+    expect(early.isError).toBe(true);
+    expect(early.stdout).toContain('before a non-empty agent reply');
+    for (const jsonl of [eventAfterCompletion, fragmentAfterCompletion]) {
+      const result = extractCodexJsonlReply(jsonl);
+      expect(result.isError).toBe(true);
+      expect(result.stdout).toContain('after turn.completed');
+    }
+  });
+
+  test('bounds oversized JSONL lines instead of scanning or acknowledging them', () => {
+    const oversized = JSON.stringify({
+      type: 'item.completed',
+      item: { type: 'agent_message', text: 'x'.repeat(300_000) },
+    });
+    const result = extractCodexJsonlReply(oversized);
+    expect(result.isError).toBe(true);
+    expect(result.stdout).toContain('exceeded');
   });
 
   test('runs codex exec resume and parses its final response', async () => {
@@ -793,18 +862,169 @@ describe('Codex executor JSONL and resume', () => {
       async (args) => {
         calls.push(args);
         return {
-          stdout: `${JSON.stringify({ type: 'thread.started', thread_id: 'thread-1' })}\n${JSON.stringify({
-            type: 'item.completed',
-            item: { type: 'agent_message', text: 'resumed' },
-          })}`,
+          stdout: successJsonl('resumed'),
           stderr: '',
           exitCode: 0,
         };
       },
     );
     expect(calls[0].slice(0, 3)).toEqual(['exec', 'resume', '--json']);
+    expect(calls[0].slice(-2)).toEqual(['--', 'again']);
     expect(result.stdout).toBe('resumed');
     expect(result.threadId).toBe('thread-1');
+  });
+
+  test('a missing persisted thread retries fresh exactly once and returns an atomic replacement', async () => {
+    const calls: string[][] = [];
+    const result = await runCodexSession(
+      {
+        provider: 'codex',
+        message: '--help',
+        cwd: '/repo',
+        signal: new AbortController().signal,
+        threadId: 'stale-thread',
+      },
+      async (args) => {
+        calls.push(args);
+        if (args.includes('resume')) {
+          return {
+            stdout: JSON.stringify({ type: 'error', message: 'Thread not found: stale-thread' }),
+            stderr: '',
+            exitCode: 1,
+          };
+        }
+        return { stdout: successJsonl('recovered', 'fresh-thread'), stderr: '', exitCode: 0 };
+      },
+    );
+
+    expect(calls.length).toBe(2);
+    expect(calls[0].slice(-2)).toEqual(['--', '--help']);
+    expect(calls[1]).not.toContain('resume');
+    expect(calls[1].slice(-2)).toEqual(['--', '--help']);
+    expect(result).toMatchObject({
+      stdout: 'recovered',
+      exitCode: 0,
+      isError: false,
+      threadId: 'fresh-thread',
+      replacesThreadId: 'stale-thread',
+    });
+  });
+
+  test('never treats a truncated agent reply containing "thread not found" as a recovery signal', async () => {
+    const db = freshDb();
+    const published: Published[] = [];
+    upsertAgentSession(db, 'codex', INSTANCE, ROUTE_CHAT, 'live-thread', 1);
+    let calls = 0;
+    const runner = createOmniRunner({
+      db,
+      config: rt({ routes: [{ instance: INSTANCE, chat: ROUTE_CHAT, repo: ROUTE_REPO, agent: 'codex' }] }),
+      publish: (subject, payload) => published.push({ subject, payload }),
+      spawnAgent: (opts) =>
+        runCodexSession(opts, async () => {
+          calls++;
+          return {
+            stdout: [
+              JSON.stringify({ type: 'thread.started', thread_id: 'live-thread' }),
+              JSON.stringify({ type: 'turn.started' }),
+              JSON.stringify({
+                type: 'item.completed',
+                item: { type: 'agent_message', text: 'The documentation says thread not found' },
+              }),
+            ].join('\n'),
+            stderr: '',
+            exitCode: 0,
+          };
+        }),
+    });
+
+    runner.handleMessage(...mappedInbound('question'));
+    await runner.whenIdle();
+
+    expect(calls).toBe(1);
+    expect(getAgentSession(db, 'codex', INSTANCE, ROUTE_CHAT)).toBe('live-thread');
+    expect(content(published[0])).toContain('turn.completed was not emitted');
+  });
+
+  test('a failed fresh recovery is actionable, clears the known-dead id, and never loops', async () => {
+    const calls: string[][] = [];
+    const result = await runCodexSession(
+      {
+        provider: 'codex',
+        message: 'retry me',
+        cwd: '/repo',
+        signal: new AbortController().signal,
+        threadId: 'stale-thread',
+      },
+      async (args) => {
+        calls.push(args);
+        if (args.includes('resume')) {
+          return { stdout: '', stderr: 'Session expired', exitCode: 1 };
+        }
+        return { stdout: '{"type":"turn.started"', stderr: '', exitCode: 0 };
+      },
+    );
+
+    expect(calls.length).toBe(2);
+    expect(result.isError).toBe(true);
+    expect(result.clearThreadId).toBe('stale-thread');
+    expect(result.threadId).toBeUndefined();
+    expect(result.stdout).toContain('one-time fresh retry failed');
+    expect(result.stdout).toContain('send the message again');
+  });
+
+  test('runner replaces a stale id only after valid recovery, then clears it after a failed recovery', async () => {
+    const db = freshDb();
+    const published: Published[] = [];
+    upsertAgentSession(db, 'codex', INSTANCE, ROUTE_CHAT, 'stale-thread', 1);
+    let phase: 'recover-success' | 'resume-missing' | 'fresh-failure' | 'final-fresh' | 'retry-fresh' =
+      'recover-success';
+    const calls: string[][] = [];
+    const runner = createOmniRunner({
+      db,
+      config: rt({ routes: [{ instance: INSTANCE, chat: ROUTE_CHAT, repo: ROUTE_REPO, agent: 'codex' }] }),
+      publish: (subject, payload) => published.push({ subject, payload }),
+      spawnAgent: (opts) =>
+        runCodexSession(opts, async (args) => {
+          calls.push(args);
+          if (phase === 'recover-success') {
+            expect(getAgentSession(db, 'codex', INSTANCE, ROUTE_CHAT)).toBe('stale-thread');
+            phase = 'resume-missing';
+            return { stdout: '', stderr: 'Conversation not found', exitCode: 1 };
+          }
+          if (phase === 'resume-missing') {
+            expect(getAgentSession(db, 'codex', INSTANCE, ROUTE_CHAT)).toBe('stale-thread');
+            phase = 'fresh-failure';
+            return { stdout: successJsonl('first recovered reply', 'fresh-thread'), stderr: '', exitCode: 0 };
+          }
+          if (phase === 'fresh-failure') {
+            phase = 'final-fresh';
+            return { stdout: '', stderr: 'Thread not found', exitCode: 1 };
+          }
+          if (phase === 'final-fresh') {
+            phase = 'retry-fresh';
+            return { stdout: '{"type":"turn.started"', stderr: '', exitCode: 0 };
+          }
+          return { stdout: successJsonl('retry succeeded', 'retry-thread'), stderr: '', exitCode: 0 };
+        }),
+    });
+
+    runner.handleMessage(...mappedInbound('first'));
+    await runner.whenIdle();
+    expect(getAgentSession(db, 'codex', INSTANCE, ROUTE_CHAT)).toBe('fresh-thread');
+    expect(content(published[0])).toBe('first recovered reply');
+
+    runner.handleMessage(...mappedInbound('second'));
+    await runner.whenIdle();
+    expect(calls.length).toBe(4);
+    expect(getAgentSession(db, 'codex', INSTANCE, ROUTE_CHAT)).toBeUndefined();
+    expect(content(published[1])).toContain('send the message again');
+
+    runner.handleMessage(...mappedInbound('third'));
+    await runner.whenIdle();
+    expect(calls.length).toBe(5);
+    expect(calls[4]).not.toContain('resume');
+    expect(getAgentSession(db, 'codex', INSTANCE, ROUTE_CHAT)).toBe('retry-thread');
+    expect(content(published[2])).toBe('retry succeeded');
   });
 });
 

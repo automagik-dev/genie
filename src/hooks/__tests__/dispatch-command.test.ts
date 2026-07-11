@@ -69,11 +69,83 @@ describe('computeDispatchOutput fail-closed', () => {
     const out = await computeDispatchOutput(JSON.stringify({ hook_event_name: 'PreCompact' }));
     expect(out).toBe('');
   });
+
+  test('structurally invalid Codex PreToolUse fails closed with the event-specific envelope', async () => {
+    const out = await computeDispatchOutput(
+      JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: {} }),
+      async () => '',
+      'codex',
+    );
+    const parsed = JSON.parse(out);
+    expect(parsed.hookSpecificOutput.hookEventName).toBe('PreToolUse');
+    expect(parsed.hookSpecificOutput.permissionDecision).toBe('deny');
+    expect(parsed.hookSpecificOutput.permissionDecisionReason).toContain('tool_input.command');
+  });
+
+  test('structurally invalid Codex PermissionRequest fails closed with a deny message', async () => {
+    const out = await computeDispatchOutput(
+      JSON.stringify({ hook_event_name: 'PermissionRequest', tool_input: { command: 'echo hi' } }),
+      async () => '',
+      'codex',
+    );
+    const parsed = JSON.parse(out);
+    expect(parsed.hookSpecificOutput.hookEventName).toBe('PermissionRequest');
+    expect(parsed.hookSpecificOutput.decision.behavior).toBe('deny');
+    expect(parsed.hookSpecificOutput.decision.message).toContain('tool_name');
+  });
+
+  test('Codex apply_patch reaches the dispatcher with normalized affected paths', async () => {
+    let seen: Record<string, unknown> | undefined;
+    const out = await computeDispatchOutput(
+      JSON.stringify({
+        hook_event_name: 'PreToolUse',
+        tool_name: 'apply_patch',
+        tool_input: { command: '*** Begin Patch\n*** Update File: src/a.ts\n*** End Patch' },
+      }),
+      async (input) => {
+        seen = JSON.parse(input) as Record<string, unknown>;
+        return '';
+      },
+      'codex',
+    );
+    expect(out).toBe('');
+    expect((seen?.tool_input as Record<string, unknown>).file_paths).toEqual(['src/a.ts']);
+  });
+
+  test('Codex gh pr merge is denied by the local guard without a remote lookup', async () => {
+    const out = await computeDispatchOutput(
+      JSON.stringify({
+        hook_event_name: 'PreToolUse',
+        tool_name: 'Bash',
+        tool_input: { command: 'gh pr merge 2545 --repo automagik-dev/genie' },
+      }),
+      undefined,
+      'codex',
+    );
+    const parsed = JSON.parse(out);
+    expect(parsed.hookSpecificOutput.permissionDecision).toBe('deny');
+    expect(parsed.hookSpecificOutput.permissionDecisionReason).toContain('do not perform network lookups');
+  });
+
+  test('a Codex dispatch crash during PermissionRequest returns a documented deny', async () => {
+    const out = await computeDispatchOutput(
+      JSON.stringify({
+        hook_event_name: 'PermissionRequest',
+        tool_name: 'Bash',
+        tool_input: { command: 'echo hi' },
+      }),
+      throwingDispatch,
+      'codex',
+    );
+    const parsed = JSON.parse(out);
+    expect(parsed.hookSpecificOutput.decision.behavior).toBe('deny');
+    expect(parsed.hookSpecificOutput.decision.message).toContain('dispatch error');
+  });
 });
 
 /**
- * Runtime selection contract. The shipped hooks files use the env prefix
- * (`env GENIE_HOOK_RUNTIME=... genie hook dispatch`) so the command line stays
+ * Runtime selection contract. The shipped portable launcher uses the env
+ * (`GENIE_HOOK_RUNTIME=... genie hook dispatch`) so the command line stays
  * parseable by OLD deployed binaries — a `--runtime` flag on the command line
  * would make every pre-flag binary error at parse time and fail-closed deny
  * tools fleet-wide on plugin-first rollouts. The flag remains supported and

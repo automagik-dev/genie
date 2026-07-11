@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DEAD_GENIE_OTEL_EXPORTER, migrateDeadGenieOtel } from './codex-config.js';
+import { DEAD_GENIE_OTEL_EXPORTER, getCodexConfigPath, getCodexHome, migrateDeadGenieOtel } from './codex-config.js';
 
 const roots: string[] = [];
 afterEach(() => {
@@ -30,5 +30,14 @@ describe('migrateDeadGenieOtel', () => {
     writeFileSync(path, content);
     expect(migrateDeadGenieOtel(path).status).toBe('unchanged');
     expect(readFileSync(path, 'utf8')).toBe(content);
+  });
+});
+
+describe('Codex home resolution', () => {
+  test('the compatibility helpers delegate empty CODEX_HOME to the canonical safe fallback', () => {
+    const env = { CODEX_HOME: '' } as NodeJS.ProcessEnv;
+    expect(getCodexHome(env)).not.toBe('');
+    expect(getCodexHome(env)).toEndWith('/.codex');
+    expect(getCodexConfigPath(env)).toBe(join(getCodexHome(env), 'config.toml'));
   });
 });

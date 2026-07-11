@@ -1,8 +1,7 @@
 {
-  "mcpServers": {
-    "genie": {
-      "command": "genie",
-      "args": ["mcp"]
-    }
+  "genie": {
+    "command": "node",
+    "args": ["./scripts/mcp-launcher.cjs"],
+    "cwd": "."
   }
 }

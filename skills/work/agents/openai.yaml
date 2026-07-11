@@ -1,0 +1,4 @@
+interface:
+  display_name: "Wish Execution"
+  short_description: "Execute approved wish groups through native roles"
+  default_prompt: "Use $work to execute the approved groups in this Genie wish."

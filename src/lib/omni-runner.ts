@@ -35,7 +35,7 @@ import { join } from 'node:path';
 import type { OmniRoute, OmniRuntimeConfig } from './omni-config.js';
 import { matchReaction, matchTextToken } from './omni-matching.js';
 import { signOmniRequest } from './omni-signature.js';
-import { getAgentSession, upsertAgentSession } from './v5/global-db.js';
+import { getAgentSession } from './v5/global-db.js';
 import {
   ApprovalConflictError,
   type ApprovalDecision,
@@ -349,50 +349,194 @@ export interface AgentExecutionOpts extends SpawnClaudeOpts {
 
 export interface AgentExecutionResult extends SpawnClaudeResult {
   threadId?: string;
+  /** Validated message from a top-level Codex `error` / `turn.failed` event. */
+  codexErrorDetail?: string;
+  /**
+   * A successful fresh turn created this thread after the persisted thread was
+   * confirmed missing. The runner conditionally replaces only this exact stale
+   * value, so another process cannot have a newer route overwritten.
+   */
+  replacesThreadId?: string;
+  /**
+   * A persisted thread was confirmed missing and the single fresh retry failed.
+   * The runner conditionally clears only this exact value so the next inbound
+   * can retry fresh instead of repeatedly resuming a known-dead thread.
+   */
+  clearThreadId?: string;
 }
 
 export type AgentExecutor = (opts: AgentExecutionOpts) => Promise<AgentExecutionResult>;
 
 export function buildCodexArgs(opts: { message: string; threadId?: string }): string[] {
   if (opts.threadId) {
-    return ['exec', 'resume', '--json', '-c', 'sandbox_mode="workspace-write"', opts.threadId, opts.message];
+    return ['exec', 'resume', '--json', '-c', 'sandbox_mode="workspace-write"', opts.threadId, '--', opts.message];
   }
-  return ['exec', '--json', '--sandbox', 'workspace-write', opts.message];
+  return ['exec', '--json', '--sandbox', 'workspace-write', '--', opts.message];
 }
 
-type CodexJsonEvent = {
-  type?: string;
-  thread_id?: string;
-  message?: string;
-  item?: { type?: string; text?: string };
-};
+const CODEX_STDOUT_MAX_BYTES = 1024 * 1024;
+const CODEX_STDERR_MAX_BYTES = 64 * 1024;
+const CODEX_JSONL_MAX_CHARS = CODEX_STDOUT_MAX_BYTES;
+const CODEX_JSONL_MAX_LINE_CHARS = 256 * 1024;
+const CODEX_JSONL_MAX_EVENTS = 10_000;
+const CODEX_ERROR_DETAIL_MAX_CHARS = 2_000;
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const nonEmptyString = (value: unknown): string | undefined =>
+  typeof value === 'string' && value.trim().length > 0 ? value : undefined;
+
+const boundedCodexDetail = (value: string): string =>
+  value.length <= CODEX_ERROR_DETAIL_MAX_CHARS ? value : `${value.slice(0, CODEX_ERROR_DETAIL_MAX_CHARS - 1)}…`;
+
+const codexJsonlError = (detail: string, threadId?: string): AgentExecutionResult => ({
+  stdout: `Codex JSONL was incomplete or unsupported (${boundedCodexDetail(detail)}); retry the message.`,
+  exitCode: 0,
+  isError: true,
+  threadId,
+});
+
+function codexEventError(event: Record<string, unknown>): string | undefined {
+  const direct = nonEmptyString(event.message);
+  if (direct) return direct;
+  if (isRecord(event.error)) return nonEmptyString(event.error.message);
+  return undefined;
+}
+
+interface CodexJsonlState {
+  threadId?: string;
+  reply: string;
+  sawTurnCompleted: boolean;
+  failure?: string;
+}
+
+function consumeCodexEvent(value: unknown, lineNumber: number, state: CodexJsonlState): string | undefined {
+  if (!isRecord(value)) return `line ${lineNumber} is not an event object`;
+  const type = nonEmptyString(value.type);
+  if (!type) return `line ${lineNumber} has no event type`;
+
+  switch (type) {
+    case 'thread.started': {
+      const startedThread = nonEmptyString(value.thread_id);
+      if (!startedThread) return 'thread.started has no thread_id';
+      if (state.threadId && state.threadId !== startedThread) return 'multiple different thread ids were emitted';
+      state.threadId = startedThread;
+      return undefined;
+    }
+    case 'turn.started':
+      return undefined;
+    case 'item.started':
+    case 'item.updated':
+    case 'item.completed': {
+      if (!isRecord(value.item)) return `${type} has no item object`;
+      const itemType = nonEmptyString(value.item.type);
+      if (!itemType) return `${type} item has no type`;
+      const text = nonEmptyString(value.item.text);
+      if (type === 'item.completed' && itemType === 'agent_message' && text) state.reply = text;
+      return undefined;
+    }
+    case 'turn.completed':
+      if (state.sawTurnCompleted) return 'multiple turn.completed events were emitted';
+      if (!state.reply.trim()) return 'turn.completed was emitted before a non-empty agent reply';
+      state.sawTurnCompleted = true;
+      return undefined;
+    case 'turn.failed':
+    case 'error':
+      state.failure = boundedCodexDetail(codexEventError(value) ?? `${type} did not include an error message`);
+      return undefined;
+    default:
+      return `unknown event type ${JSON.stringify(type)}`;
+  }
+}
 
 export function extractCodexJsonlReply(raw: string): AgentExecutionResult {
-  let threadId: string | undefined;
-  let reply = '';
-  let isError = false;
-  let parsed = false;
-  for (const line of raw.split('\n')) {
+  if (raw.length === 0 || raw.trim().length === 0) return codexJsonlError('empty output');
+  if (raw.length > CODEX_JSONL_MAX_CHARS) {
+    return codexJsonlError(`output exceeded ${CODEX_JSONL_MAX_CHARS} characters`);
+  }
+
+  const state: CodexJsonlState = { reply: '', sawTurnCompleted: false };
+  let eventCount = 0;
+  const lines = raw.split('\n');
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index];
     if (!line.trim()) continue;
+    if (state.sawTurnCompleted) {
+      return codexJsonlError(`line ${index + 1} contains content after turn.completed`, state.threadId);
+    }
+    eventCount++;
+    if (eventCount > CODEX_JSONL_MAX_EVENTS) {
+      return codexJsonlError(`event count exceeded ${CODEX_JSONL_MAX_EVENTS}`, state.threadId);
+    }
+    if (line.length > CODEX_JSONL_MAX_LINE_CHARS) {
+      return codexJsonlError(`line ${index + 1} exceeded ${CODEX_JSONL_MAX_LINE_CHARS} characters`, state.threadId);
+    }
+
+    let value: unknown;
     try {
-      const event = JSON.parse(line) as CodexJsonEvent;
-      parsed = true;
-      if (event.type === 'thread.started' && event.thread_id) threadId = event.thread_id;
-      if (event.type === 'item.completed' && event.item?.type === 'agent_message' && event.item.text) {
-        reply = event.item.text;
-      }
-      if (event.type === 'turn.failed' || event.type === 'error') {
-        isError = true;
-        if (!reply && event.message) reply = event.message;
-      }
+      value = JSON.parse(line);
     } catch {
-      // Ignore non-JSON process noise; a fully non-JSON stream falls back below.
+      return codexJsonlError(`line ${index + 1} is not complete JSON`, state.threadId);
+    }
+    const schemaError = consumeCodexEvent(value, index + 1, state);
+    if (schemaError) return codexJsonlError(schemaError, state.threadId);
+    if (state.failure) {
+      return {
+        stdout: `Codex turn failed (${state.failure}); retry the message.`,
+        exitCode: 0,
+        isError: true,
+        threadId: state.threadId,
+        codexErrorDetail: state.failure,
+      };
     }
   }
-  return { stdout: reply || (parsed ? '' : raw), exitCode: 0, isError, threadId };
+
+  if (!state.sawTurnCompleted) return codexJsonlError('turn.completed was not emitted', state.threadId);
+  if (!state.reply.trim()) return codexJsonlError('no non-empty agent reply was emitted', state.threadId);
+  return { stdout: state.reply, exitCode: 0, isError: false, threadId: state.threadId };
 }
 
-export type RawCodexSpawn = RawClaudeSpawn;
+export interface RawCodexRun extends RawClaudeRun {
+  stdoutTruncated?: boolean;
+  stderrTruncated?: boolean;
+}
+
+export type RawCodexSpawn = (args: string[], opts: { cwd: string; signal: AbortSignal }) => Promise<RawCodexRun>;
+
+const MISSING_CODEX_THREAD_RE =
+  /(?:thread|session|conversation)(?:\s+id)?[^\n]{0,100}(?:not found|does not exist|no longer exists|expired|unknown)|no\s+(?:saved\s+)?(?:thread|session|conversation)|no\s+rollout[^\n]{0,60}(?:thread|session|conversation)|(?:missing|expired)\s+(?:thread|session|conversation)/i;
+
+function parseCodexRun(run: RawCodexRun): AgentExecutionResult {
+  const stderrWasTruncated = run.stderrTruncated || run.stderr.length > CODEX_STDERR_MAX_BYTES;
+  const stderr = stderrWasTruncated ? `…${run.stderr.slice(-(CODEX_STDERR_MAX_BYTES - 1))}` : run.stderr;
+  if (run.stdoutTruncated) {
+    return {
+      stdout: `Codex JSONL exceeded ${CODEX_STDOUT_MAX_BYTES} bytes and was truncated; retry with a smaller task.`,
+      stderr,
+      exitCode: run.exitCode,
+      isError: true,
+    };
+  }
+  const parsed = extractCodexJsonlReply(run.stdout);
+  return { ...parsed, stderr, exitCode: run.exitCode, isError: parsed.isError || run.exitCode !== 0 };
+}
+
+const codexThreadIsMissing = (parsed: AgentExecutionResult): boolean =>
+  MISSING_CODEX_THREAD_RE.test(`${parsed.stderr ?? ''}\n${parsed.codexErrorDetail ?? ''}`);
+
+function freshCodexFailure(result: AgentExecutionResult, staleThreadId: string): AgentExecutionResult {
+  const detail = boundedCodexDetail(result.stderr?.trim() || result.stdout.trim() || `exit code ${result.exitCode}`);
+  const message = `Saved Codex thread is missing and the one-time fresh retry failed (${detail}); send the message again to retry.`;
+  return {
+    ...result,
+    stdout: message,
+    stderr: result.exitCode === 0 ? result.stderr : message,
+    isError: true,
+    threadId: undefined,
+    clearThreadId: staleThreadId,
+  };
+}
 
 export async function runCodexSession(
   opts: AgentExecutionOpts,
@@ -400,22 +544,98 @@ export async function runCodexSession(
 ): Promise<AgentExecutionResult> {
   const persona = opts.personaFile && existsSync(opts.personaFile) ? readFileSync(opts.personaFile, 'utf8') : '';
   const message = persona ? `<persona>\n${persona}\n</persona>\n\n${opts.message}` : opts.message;
-  const run = await rawSpawn(buildCodexArgs({ message, threadId: opts.threadId }), {
+  const spawnOpts = {
     cwd: opts.cwd,
     signal: opts.signal,
-  });
-  const parsed = extractCodexJsonlReply(run.stdout);
-  return { ...parsed, stderr: run.stderr, exitCode: run.exitCode, isError: parsed.isError || run.exitCode !== 0 };
+  };
+  const run = await rawSpawn(buildCodexArgs({ message, threadId: opts.threadId }), spawnOpts);
+  const parsed = parseCodexRun(run);
+
+  if (!opts.threadId) {
+    if (parsed.exitCode === 0 && !parsed.isError && !parsed.threadId) {
+      return {
+        ...parsed,
+        stdout: 'Codex completed a fresh turn without returning a thread id; send the message again to retry.',
+        isError: true,
+      };
+    }
+    return parsed;
+  }
+
+  const resumeFailed = parsed.exitCode !== 0 || parsed.isError;
+  if (!resumeFailed) {
+    if (parsed.threadId && parsed.threadId !== opts.threadId) {
+      return {
+        ...parsed,
+        stdout:
+          'Codex resume returned a different thread id; stored session state was left unchanged. Retry the message.',
+        isError: true,
+        threadId: undefined,
+      };
+    }
+    return { ...parsed, threadId: opts.threadId };
+  }
+  if (opts.signal.aborted || run.stdoutTruncated || !codexThreadIsMissing(parsed)) return parsed;
+
+  // A confirmed missing resume gets exactly one fresh attempt. The caller
+  // conditionally swaps the persisted id only after this attempt has a complete,
+  // non-empty reply and a new thread id.
+  const freshRun = await rawSpawn(buildCodexArgs({ message }), spawnOpts);
+  const fresh = parseCodexRun(freshRun);
+  if (fresh.exitCode !== 0 || fresh.isError) return freshCodexFailure(fresh, opts.threadId);
+  if (!fresh.threadId) {
+    return freshCodexFailure(
+      {
+        ...fresh,
+        stdout: 'Codex completed the fresh retry without returning a thread id.',
+        isError: true,
+      },
+      opts.threadId,
+    );
+  }
+  return { ...fresh, replacesThreadId: opts.threadId };
+}
+
+interface BoundedText {
+  text: string;
+  truncated: boolean;
+}
+
+async function readBoundedText(stream: ReadableStream<Uint8Array>, maxBytes: number): Promise<BoundedText> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let text = '';
+  let retained = 0;
+  let truncated = false;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    const remaining = maxBytes - retained;
+    if (remaining > 0) {
+      const kept = value.subarray(0, remaining);
+      retained += kept.byteLength;
+      text += decoder.decode(kept, { stream: true });
+    }
+    if (value.byteLength > Math.max(remaining, 0)) truncated = true;
+  }
+  text += decoder.decode();
+  return { text, truncated };
 }
 
 const defaultRawCodexSpawn: RawCodexSpawn = async (args, { cwd, signal }) => {
   const proc = Bun.spawn(['codex', ...args], { cwd, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', signal });
   const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
+    readBoundedText(proc.stdout, CODEX_STDOUT_MAX_BYTES),
+    readBoundedText(proc.stderr, CODEX_STDERR_MAX_BYTES),
     proc.exited,
   ]);
-  return { stdout, stderr, exitCode };
+  return {
+    stdout: stdout.text,
+    stderr: stderr.text,
+    exitCode,
+    stdoutTruncated: stdout.truncated,
+    stderrTruncated: stderr.truncated,
+  };
 };
 
 export const defaultAgentExecutor: AgentExecutor = (opts) =>
@@ -740,6 +960,60 @@ const exitDetail = (code: number, stderr: string | undefined, stdout: string): s
 /** Compact message for an unknown thrown value. */
 const errText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
+function persistCodexSessionResult(
+  db: Database,
+  route: OmniRoute,
+  result: AgentExecutionResult,
+  succeeded: boolean,
+  nowMs: number,
+  log: (line: string) => void,
+): void {
+  if ((route.agent ?? 'claude') !== 'codex') return;
+  if (succeeded && result.threadId) {
+    if (!result.replacesThreadId) {
+      const current = getAgentSession(db, 'codex', route.instance, route.chat);
+      if (current === result.threadId) return;
+      if (current !== undefined) {
+        throw new Error('Codex session state changed during execution; the reply was not acknowledged. Retry.');
+      }
+      const inserted = db
+        .query(
+          `INSERT INTO agent_sessions(provider, instance, chat, thread_id, updated_at)
+           VALUES ('codex', ?, ?, ?, ?)
+           ON CONFLICT(provider, instance, chat) DO NOTHING`,
+        )
+        .run(route.instance, route.chat, result.threadId, nowMs);
+      if (inserted.changes !== 1) {
+        throw new Error('Codex session state changed during execution; the reply was not acknowledged. Retry.');
+      }
+      return;
+    }
+    const replaced = db
+      .query(
+        `UPDATE agent_sessions
+         SET thread_id = ?, updated_at = ?
+         WHERE provider = 'codex' AND instance = ? AND chat = ? AND thread_id = ?`,
+      )
+      .run(result.threadId, nowMs, route.instance, route.chat, result.replacesThreadId);
+    if (replaced.changes !== 1) {
+      throw new Error('Codex session state changed during recovery; the reply was not acknowledged. Retry.');
+    }
+    return;
+  }
+  if (!result.clearThreadId) return;
+  try {
+    db.query(
+      `DELETE FROM agent_sessions
+       WHERE provider = 'codex' AND instance = ? AND chat = ? AND thread_id = ?`,
+    ).run(route.instance, route.chat, result.clearThreadId);
+  } catch (err) {
+    // Retaining the stale id is safe (the next message performs the same bounded
+    // recovery) and preferable to hiding the actionable child failure behind a
+    // secondary state-cleanup error.
+    log(`[omni] could not clear stale Codex thread: ${errText(err)}`);
+  }
+}
+
 /**
  * Status-ack glyphs for genie's OWN swapping reaction on the approval message.
  * ⏳ on announce (awaiting you), ✅ once approved, ❌ once denied or expired. All
@@ -855,12 +1129,10 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
         }),
       );
       const result = await Promise.race([spawned, aborted]);
-      if ((route.agent ?? 'claude') === 'codex' && result.threadId) {
-        upsertAgentSession(db, 'codex', route.instance, route.chat, result.threadId, now());
-      }
       // A non-zero exit OR a soft-error terminal result (is_error / non-success /
       // empty) is a failure — never publish the raw NDJSON blob as a happy reply.
       const ok = result.exitCode === 0 && !result.isError;
+      persistCodexSessionResult(db, route, result, ok, now(), log);
       const content = ok
         ? truncateReply(result.stdout, maxReplyChars)
         : errorNotice(

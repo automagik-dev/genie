@@ -27,7 +27,7 @@
 
 import type { Command } from 'commander';
 import { registerHookTrustCommand } from '../term-commands/hook/trust.js';
-import { adaptCodexPreToolUseOutput, dispatchCodexPermissionRequest } from './codex-adapter.js';
+import { adaptCodexPreToolUseOutput, normalizeCodexHookPayload } from './codex-adapter.js';
 import { buildFailClosedResponse, dispatch, installDispatchRegistry } from './index.js';
 import type { HookPayload } from './types.js';
 
@@ -44,6 +44,12 @@ interface ParsedEntry {
   ok: boolean;
   event?: string;
   tool?: string;
+  payload?: HookPayload;
+  error?: string;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /**
@@ -55,15 +61,40 @@ interface ParsedEntry {
  */
 function parseEntry(stdin: string): ParsedEntry {
   try {
-    const obj = JSON.parse(stdin) as Record<string, unknown>;
+    const value: unknown = JSON.parse(stdin);
+    if (!isRecord(value)) return { ok: false, error: 'payload must be a JSON object' };
+    const event = typeof value.hook_event_name === 'string' ? value.hook_event_name : undefined;
+    const tool = typeof value.tool_name === 'string' ? value.tool_name : undefined;
     return {
       ok: true,
-      event: typeof obj.hook_event_name === 'string' ? obj.hook_event_name : undefined,
-      tool: typeof obj.tool_name === 'string' ? obj.tool_name : undefined,
+      event,
+      tool,
+      payload: value as HookPayload,
     };
   } catch {
-    return { ok: false };
+    return { ok: false, error: 'payload is not valid JSON' };
   }
+}
+
+function codexStructureError(parsed: ParsedEntry): string | null {
+  if (!parsed.event) return 'hook_event_name must be a non-empty string';
+  if (parsed.event !== 'PreToolUse' && parsed.event !== 'PermissionRequest') {
+    return `unsupported Codex dispatch event: ${parsed.event}`;
+  }
+  if (!parsed.tool) return 'tool_name must be a non-empty string';
+  if (!isRecord(parsed.payload?.tool_input)) return 'tool_input must be a JSON object';
+  if (
+    (parsed.tool === 'Bash' || parsed.tool === 'apply_patch') &&
+    typeof parsed.payload?.tool_input?.command !== 'string'
+  ) {
+    return `${parsed.tool} tool_input.command must be a string`;
+  }
+  return null;
+}
+
+function failClosedForEntry(stdin: string, reason: string): string {
+  const parsed = parseEntry(stdin);
+  return buildFailClosedResponse(parsed.event, parsed.tool, reason);
 }
 
 /**
@@ -85,14 +116,20 @@ export async function computeDispatchOutput(
     // valid JSON). Event/tool are unknown, so we cannot rule out the
     // AskUserQuestion carve-out; buildFailClosedResponse emits the neutral,
     // carve-out-safe form for undefined event/tool.
-    return buildFailClosedResponse(undefined, undefined, 'genie hook: unparseable payload on stdin');
+    return buildFailClosedResponse(undefined, undefined, `genie hook: ${parsed.error ?? 'invalid payload on stdin'}`);
+  }
+
+  if (runtime === 'codex') {
+    const structureError = codexStructureError(parsed);
+    if (structureError) {
+      return buildFailClosedResponse(parsed.event, parsed.tool, `genie hook: ${structureError}`);
+    }
   }
 
   try {
-    if (runtime === 'codex' && parsed.event === 'PermissionRequest') {
-      return await dispatchCodexPermissionRequest(JSON.parse(stdin) as HookPayload);
-    }
-    const output = await dispatchFn(stdin);
+    const dispatchInput =
+      runtime === 'codex' && parsed.payload ? JSON.stringify(normalizeCodexHookPayload(parsed.payload)) : stdin;
+    const output = await dispatchFn(dispatchInput);
     return runtime === 'codex' ? adaptCodexPreToolUseOutput(output) : output;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -114,14 +151,13 @@ interface DispatchOptions {
  * auto-detect (Codex plugin hosts export `PLUGIN_ROOT`; Claude Code does not)
  * → 'claude'.
  *
- * The shipped hooks files select the runtime via the env prefix
- * (`env GENIE_HOOK_RUNTIME=codex genie hook dispatch`), NOT the flag: hook
- * command lines must stay OLD-BINARY-COMPATIBLE. A deployed binary that
- * predates `--runtime` rejects the unknown flag at parse time — on a
- * plugin-first rollout every PreToolUse fork would error and the fail-closed
- * envelope would deny tools fleet-wide. Old binaries ignore the env var and
- * parse `hook dispatch` fine. The flag is kept for forward compat and manual
- * invocation only.
+ * The shipped plugin-local launcher selects the runtime through
+ * `GENIE_HOOK_RUNTIME`, NOT the flag: the child command must stay
+ * OLD-BINARY-COMPATIBLE. A deployed binary that predates `--runtime` rejects
+ * the unknown flag at parse time — on a plugin-first rollout every PreToolUse
+ * fork would error and the fail-closed envelope would deny tools fleet-wide.
+ * Old binaries ignore the env var and parse `hook dispatch` fine. The flag is
+ * kept for forward compatibility and manual invocation only.
  */
 export function resolveDispatchRuntime(
   flag: DispatchOptions['runtime'],
@@ -140,14 +176,21 @@ async function dispatchAction(options: DispatchOptions): Promise<void> {
     process.exit(0);
   }
 
+  const runtime = resolveDispatchRuntime(options.runtime);
+
   // Config-gated registry install at dispatch boot: swaps in the omni-approval
   // handler only when the feature is enabled. No-op (byte-identical output)
   // otherwise. Must run before computeDispatchOutput so the registry the
   // fail-closed wrapper dispatches against already includes the omni handler.
-  await installDispatchRegistry();
-
-  const runtime = resolveDispatchRuntime(options.runtime);
-  const output = await computeDispatchOutput(stdin, dispatch, runtime);
+  let output: string;
+  try {
+    await installDispatchRegistry(runtime);
+    output = await computeDispatchOutput(stdin, dispatch, runtime);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[genie-hook] registry setup failed: ${message}`);
+    output = failClosedForEntry(stdin, `genie hook: registry setup failed: ${message}`);
+  }
   if (output) {
     process.stdout.write(output);
   }

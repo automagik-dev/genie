@@ -12,10 +12,13 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AgentSyncReport } from '../../lib/agent-sync';
+import type { CommandRunner } from '../../lib/runtime-integrations';
+import type { AuxiliaryTreeOutcome, AuxiliaryTreeStage } from '../auxiliary-trees.js';
+import { refreshUpdatePlugins } from '../update-integrations.js';
 import {
   type LatestManifest,
   type VerifyResult,
@@ -27,6 +30,7 @@ import {
   downloadAndVerifyTarball,
   ensureCanonicalInstall,
   fetchLatestManifest,
+  finalizeAuxiliaryDelivery,
   formatVerifyBanner,
   isGenieProcessSnapshotLine,
   manifestUrlForChannel,
@@ -37,12 +41,13 @@ import {
   resolvePlatformId,
   rollbackBinary,
   runAgentSyncSafe,
-  runFreshBinaryAgentSync,
+  runManualUpdateConvergence,
   runV4CleanupSafe,
   runVerifyProbe,
   shortCircuitIfCurrent,
   shouldEmitPathDivergenceWarning,
   summarizeJsonlSignals,
+  syncAuxiliaryContent,
   syncBinaryVersionStamp,
   verifySwappedBinary,
 } from '../update.js';
@@ -210,10 +215,21 @@ describe('compareVersions', () => {
     expect(compareVersions('5.260710.10', '5.260710.2')).toBe(1);
   });
 
-  test('missing / non-numeric components degrade to 0 (never spuriously newer)', () => {
-    expect(compareVersions('5.260710', '5.260710.0')).toBe(0);
-    expect(compareVersions('garbage', '5.260710.1')).toBe(-1);
-    expect(compareVersions('5.260710.1', '')).toBe(1);
+  test('final releases rank above prereleases of the same core', () => {
+    expect(compareVersions('5.260710.14', '5.260710.14-rc.1')).toBe(1);
+    expect(compareVersions('5.260710.14-rc.1', '5.260710.14')).toBe(-1);
+  });
+
+  test('prerelease identifiers follow SemVer-like numeric and lexical precedence', () => {
+    expect(compareVersions('5.260710.14-rc.2', '5.260710.14-rc.10')).toBe(-1);
+    expect(compareVersions('5.260710.14-1', '5.260710.14-rc')).toBe(-1);
+    expect(compareVersions('5.260710.14-alpha', '5.260710.14-beta')).toBe(-1);
+  });
+
+  test('malformed versions are rejected instead of being coerced to zero', () => {
+    for (const malformed of ['5.260710', 'garbage', '', '5.260710.1-', '5.260710.1+']) {
+      expect(() => compareVersions(malformed, '5.260710.1')).toThrow('Invalid Genie version');
+    }
   });
 });
 
@@ -264,6 +280,32 @@ describe('decideDowngrade', () => {
       decideDowngrade({ installedVersion: '5.260710.10', latestVersion: undefined, explicitChannel: true }).kind,
     ).toBe('upgrade');
   });
+
+  test('final/RC decisions never reverse the release direction', () => {
+    expect(
+      decideDowngrade({
+        installedVersion: '5.260710.14',
+        latestVersion: '5.260710.14-rc.1',
+        explicitChannel: false,
+      }).kind,
+    ).toBe('block-downgrade');
+    expect(
+      decideDowngrade({
+        installedVersion: '5.260710.14-rc.1',
+        latestVersion: '5.260710.14',
+        explicitChannel: false,
+      }).kind,
+    ).toBe('upgrade');
+  });
+
+  test('malformed installed and manifest versions are explicit tagged outcomes', () => {
+    expect(
+      decideDowngrade({ installedVersion: 'broken', latestVersion: '5.260710.1', explicitChannel: false }),
+    ).toEqual({ kind: 'invalid-version', field: 'installed', value: 'broken' });
+    expect(
+      decideDowngrade({ installedVersion: '5.260710.1', latestVersion: 'broken', explicitChannel: false }),
+    ).toEqual({ kind: 'invalid-version', field: 'latest', value: 'broken' });
+  });
 });
 
 describe('updateCommand downgrade wiring (BUG B source-shape lock)', () => {
@@ -276,9 +318,9 @@ describe('updateCommand downgrade wiring (BUG B source-shape lock)', () => {
     // The guard must run BEFORE any tarball is fetched.
     expect(guardIdx).toBeGreaterThan(-1);
     expect(guardIdx).toBeLessThan(downloadIdx);
-    // A refused downgrade still converges agents (parity with already-current).
+    // A refused downgrade still converges owned assets + installed plugins.
     const afterGuard = cmdBody.slice(guardIdx);
-    expect(afterGuard).toContain('runAgentSyncSafe()');
+    expect(afterGuard).toContain('runTrackedManualUpdateConvergence(');
   });
 
   test('the guard consults decideDowngrade and honors both refusal and explicit-intent paths', () => {
@@ -1172,18 +1214,11 @@ describe('Plugin sync — .orphaned_at filter (skills regression 2026-05-06)', (
     expect(source).toContain("'.orphaned_at'");
   });
 
-  test('copyDirSync skips FRAMEWORK_MARKER_FILES entries', () => {
-    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
-    const fnStart = source.indexOf('function copyDirSync');
-    expect(fnStart).toBeGreaterThan(-1);
-    const fnEnd = source.indexOf('\n}\n', fnStart);
-    const body = source.slice(fnStart, fnEnd);
-    expect(body).toContain('FRAMEWORK_MARKER_FILES.has(entry.name)');
-    const skipIdx = body.indexOf('FRAMEWORK_MARKER_FILES.has(entry.name)');
-    const isDirIdx = body.indexOf('entry.isDirectory()');
-    expect(skipIdx).toBeGreaterThan(-1);
-    expect(isDirIdx).toBeGreaterThan(-1);
-    expect(skipIdx).toBeLessThan(isDirIdx);
+  test('transactional copier receives and applies FRAMEWORK_MARKER_FILES', () => {
+    const updateSource = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    const helperSource = readFileSync(join(__dirname, '..', 'auxiliary-trees.ts'), 'utf-8');
+    expect(updateSource).toContain('excludedEntryNames: FRAMEWORK_MARKER_FILES');
+    expect(helperSource).toContain('if (excludedEntryNames.has(entry.name)) continue;');
   });
 
   test('repo source tree does NOT contain plugins/genie/.orphaned_at', () => {
@@ -1263,22 +1298,144 @@ describe('fsyncSync import (review fix #1)', () => {
   });
 });
 
-describe('syncAuxiliaryContent atomic swap (review fix #2)', () => {
-  test('uses .new staging dir + renameSync, never rmSync(dest) before copy', () => {
-    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
-    // The atomic per-target staging logic lives in `swapAuxiliaryTree`,
-    // extracted from `syncAuxiliaryContent` for cog-complexity reasons.
-    const fnStart = source.indexOf('function swapAuxiliaryTree');
-    expect(fnStart).toBeGreaterThan(-1);
-    const fnEnd = source.indexOf('\nfunction ', fnStart + 1);
-    const body = source.slice(fnStart, fnEnd === -1 ? undefined : fnEnd);
-    expect(body).toContain('${dest}.new');
-    expect(body).toContain('${dest}.old');
-    expect(body).toMatch(/renameSync\(stagingDest,\s*dest\)/);
-    // The pre-fix sequence — `rmSync(dest, ...) ; copyDirSync(src, dest)` —
-    // must not survive. Allow rmSync of stale staging/old, but the live dest
-    // must move via renameSync, never be deleted before the new copy lands.
-    expect(body).not.toMatch(/if\s*\(existsSync\(dest\)\)\s*rmSync\(dest,/);
+describe('syncAuxiliaryContent transactional outcomes', () => {
+  test('returns a digest-backed outcome for every payload tree and refreshes changed content', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-update-aux-'));
+    const extract = join(root, 'extract');
+    const home = join(root, 'home');
+    try {
+      mkdirSync(join(extract, 'plugins'), { recursive: true });
+      mkdirSync(join(home, 'plugins'), { recursive: true });
+      writeFileSync(join(extract, 'plugins', 'payload.txt'), 'fresh');
+      writeFileSync(join(extract, 'plugins', '.orphaned_at'), 'must not copy');
+      writeFileSync(join(home, 'plugins', 'payload.txt'), 'old');
+
+      const outcomes = syncAuxiliaryContent(extract, home);
+
+      expect(outcomes).toHaveLength(5);
+      expect(outcomes.find((outcome) => outcome.label === 'plugins')?.status).toBe('refreshed');
+      expect(readFileSync(join(home, 'plugins', 'payload.txt'), 'utf8')).toBe('fresh');
+      expect(existsSync(join(home, 'plugins', '.orphaned_at'))).toBe(false);
+      // Update retains extraction until the caller confirms every tree and
+      // removes the whole staging area in one final cleanup.
+      expect(readFileSync(join(extract, 'plugins', 'payload.txt'), 'utf8')).toBe('fresh');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('removes root and nested live framework markers even when payload content otherwise matches', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-update-aux-markers-'));
+    const extract = join(root, 'extract');
+    const home = join(root, 'home');
+    try {
+      for (const tree of [join(extract, 'plugins'), join(home, 'plugins')]) {
+        mkdirSync(join(tree, 'nested'), { recursive: true });
+        writeFileSync(join(tree, 'payload.txt'), 'same');
+        writeFileSync(join(tree, 'nested', 'payload.txt'), 'same nested');
+      }
+      writeFileSync(join(extract, 'plugins', '.orphaned_at'), 'source marker');
+      writeFileSync(join(extract, 'plugins', 'nested', '.orphaned_at'), 'source nested marker');
+      writeFileSync(join(home, 'plugins', '.orphaned_at'), 'live marker');
+      writeFileSync(join(home, 'plugins', 'nested', '.orphaned_at'), 'live nested marker');
+
+      const outcomes = syncAuxiliaryContent(extract, home);
+      expect(outcomes.find((outcome) => outcome.label === 'plugins')?.status).toBe('refreshed');
+      expect(existsSync(join(home, 'plugins', '.orphaned_at'))).toBe(false);
+      expect(existsSync(join(home, 'plugins', 'nested', '.orphaned_at'))).toBe(false);
+      expect(readFileSync(join(home, 'plugins', 'nested', 'payload.txt'), 'utf8')).toBe('same nested');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a promotion failure restores old live content and returns retained fresh evidence', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-update-aux-failure-'));
+    const extract = join(root, 'extract');
+    const home = join(root, 'home');
+    let renames = 0;
+    try {
+      mkdirSync(join(extract, 'plugins'), { recursive: true });
+      mkdirSync(join(home, 'plugins'), { recursive: true });
+      writeFileSync(join(extract, 'plugins', 'payload.txt'), 'fresh');
+      writeFileSync(join(home, 'plugins', 'payload.txt'), 'old');
+      const outcomes = syncAuxiliaryContent(extract, home, {
+        rename: (from, to) => {
+          renames += 1;
+          if (renames === 2) throw new Error('promote injected');
+          renameSync(from, to);
+        },
+      });
+      const plugins = outcomes.find((outcome) => outcome.label === 'plugins');
+      expect(plugins?.status).toBe('failed');
+      if (plugins?.status === 'failed') {
+        expect(plugins.stage).toBe('promote-fresh');
+        expect(plugins.freshArtifact).toBeDefined();
+        if (plugins.freshArtifact) expect(existsSync(plugins.freshArtifact)).toBe(true);
+      }
+      expect(readFileSync(join(home, 'plugins', 'payload.txt'), 'utf8')).toBe('old');
+      expect(readFileSync(join(extract, 'plugins', 'payload.txt'), 'utf8')).toBe('fresh');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('auxiliary VERSION and extraction finalization gate', () => {
+  test('every injected non-success blocks both VERSION stamping and extraction cleanup', () => {
+    const stages: AuxiliaryTreeStage[] = [
+      'copy-fresh',
+      'verify-copy',
+      'park-live',
+      'promote-fresh',
+      'remove-identical-source',
+      'remove-source',
+    ];
+    for (const stage of stages) {
+      const outcome: AuxiliaryTreeOutcome = {
+        label: `fixture-${stage}`,
+        status: 'failed',
+        source: '/tmp/extract/plugins',
+        destination: '/tmp/home/plugins',
+        stage,
+        error: 'injected',
+      };
+      let versionWrites = 0;
+      let extractionCleanups = 0;
+      expect(() =>
+        finalizeAuxiliaryDelivery([outcome], {
+          writeVersion: () => {
+            versionWrites += 1;
+          },
+          cleanupExtraction: () => {
+            extractionCleanups += 1;
+          },
+        }),
+      ).toThrow(`fixture-${stage}`);
+      expect(versionWrites).toBe(0);
+      expect(extractionCleanups).toBe(0);
+    }
+  });
+
+  test('verified convergence stamps VERSION before cleaning extraction', () => {
+    const calls: string[] = [];
+    finalizeAuxiliaryDelivery(
+      [
+        {
+          label: 'plugins',
+          status: 'refreshed',
+          source: '/tmp/extract/plugins',
+          destination: '/tmp/home/plugins',
+          digest: 'a'.repeat(64),
+          warnings: [],
+        },
+      ],
+      {
+        writeVersion: () => calls.push('version'),
+        cleanupExtraction: () => calls.push('cleanup'),
+      },
+    );
+    expect(calls).toEqual(['version', 'cleanup']);
   });
 });
 
@@ -1319,7 +1476,7 @@ describe('ensureCanonicalInstall + resolveLiveBinaryPath (review fix #3)', () =>
     const cmdStart = source.indexOf('export async function updateCommand');
     expect(cmdStart).toBeGreaterThan(-1);
     const cmdBody = source.slice(cmdStart);
-    const ensureIdx = cmdBody.indexOf('ensureCanonicalInstall()');
+    const ensureIdx = cmdBody.indexOf('requireCanonicalInstallOrExit()');
     const deliveryIdx = cmdBody.indexOf('await runDelivery(');
     expect(ensureIdx).toBeGreaterThan(-1);
     expect(deliveryIdx).toBeGreaterThan(-1);
@@ -1659,11 +1816,9 @@ describe('runV4CleanupSafe', () => {
 
 // ============================================================================
 // Agent-sync wiring (agent-sync wish G2). `genie update` is the ONE canonical
-// updater: the sync phase runs on the sync-only fast path, on the already-
-// current short-circuit, and via a post-swap re-exec of the fresh binary. The
-// re-entry contract is the internal env GENIE_UPDATE_SYNC_ONLY=1 plus the
-// internal --sync-only flag (the hook's hard guard against pre-contract
-// binaries) — no new user-facing command. Engine failures are non-fatal.
+// updater: the bounded sync phase runs on --sync-only, while a manual full
+// update converges integrations in the reviewed parent process. A newly
+// installed binary is never re-entered as `genie update`.
 // ============================================================================
 
 describe('runAgentSyncSafe (agent-sync phase)', () => {
@@ -1773,40 +1928,102 @@ describe('runAgentSyncSafe (agent-sync phase)', () => {
     const source = readFileSync(join(import.meta.dir, '..', 'update.ts'), 'utf-8');
     const scIdx = source.indexOf('shortCircuitIfCurrent(installedVersion, latestVersion)');
     expect(scIdx).toBeGreaterThan(-1);
-    expect(source.slice(scIdx, scIdx + 400)).toContain('runAgentSyncSafe()');
+    expect(source.slice(scIdx, scIdx + 700)).toContain('runTrackedManualUpdateConvergence(');
   });
 });
 
-describe('runFreshBinaryAgentSync (post-swap re-exec)', () => {
-  test('execs the freshly installed binary with `update` + GENIE_UPDATE_SYNC_ONLY=1', () => {
-    const calls: Array<{ bin: string; env: NodeJS.ProcessEnv }> = [];
-    runFreshBinaryAgentSync({
-      exec: (bin, env) => {
-        calls.push({ bin, env });
+describe('manual post-update convergence (2026-07-11 cascade regression)', () => {
+  test('runs reviewed parent-side APIs and returns structured integration outcomes', () => {
+    const calls: string[] = [];
+    const result = runManualUpdateConvergence({
+      expectedVersion: '5.260711.3',
+      bundleRoot: '/tmp/verified-bundle',
+      runSync: () => calls.push('parent-safe-sync'),
+      refreshPlugins: (options) => {
+        calls.push(`parent-plugin-refresh:${options.expectedVersion}`);
+        return [{ runtime: 'codex', ok: true, detail: 'plugin/hooks refreshed' }];
       },
+      log: (line) => calls.push(`log:${line}`),
     });
-    expect(calls).toHaveLength(1);
-    expect(calls[0].bin).toContain('genie');
-    expect(calls[0].env.GENIE_UPDATE_SYNC_ONLY).toBe('1');
+    expect(calls[0]).toBe('parent-safe-sync');
+    expect(calls[1]).toBe('parent-plugin-refresh:5.260711.3');
+    expect(result.integrations).toEqual([{ runtime: 'codex', ok: true, detail: 'plugin/hooks refreshed' }]);
   });
 
-  test('a failed re-exec is non-fatal', () => {
-    expect(() =>
-      runFreshBinaryAgentSync({
-        exec: () => {
-          throw new Error('spawn failed');
-        },
-      }),
-    ).not.toThrow();
-  });
-
-  test('updateCommand re-execs the fresh binary after the post-update verify', () => {
+  test('never executes an older fresh binary as full update based only on an environment marker', () => {
     const source = readFileSync(join(import.meta.dir, '..', 'update.ts'), 'utf-8');
+    // Incident: parent installed 5.260710.2, then child ignored
+    // GENIE_UPDATE_SYNC_ONLY and performed a second full update to 5.260711.3.
+    expect(source).not.toContain('runFreshBinaryAgentSync');
+    expect(source).not.toMatch(/execFileSync\([^\n]+,\s*\['update'\]/);
     const verifyIdx = source.indexOf('await runPostUpdateVerifySafe(');
-    const freshIdx = source.indexOf('runFreshBinaryAgentSync();');
-    expect(freshIdx).toBeGreaterThan(-1);
-    expect(verifyIdx).toBeGreaterThan(-1);
-    expect(verifyIdx).toBeLessThan(freshIdx);
+    const convergeIdx = source.lastIndexOf('runTrackedManualUpdateConvergence(', verifyIdx);
+    expect(convergeIdx).toBeGreaterThan(-1);
+    expect(convergeIdx).toBeLessThan(verifyIdx);
+  });
+});
+
+describe('operator-driven plugin refresh', () => {
+  test('recaches Codex plugin/hooks from the local bundle and preserves disabled state', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-update-plugin-refresh-'));
+    const configPath = join(root, 'config.toml');
+    writeFileSync(configPath, '[plugins."genie@automagik"]\nenabled = true\n');
+    const calls: string[] = [];
+    let lists = 0;
+    const runner: CommandRunner = (command, args) => {
+      calls.push(`${command} ${args.join(' ')}`);
+      if (args.join(' ') === 'plugin list --json') {
+        lists += 1;
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            installed: [
+              {
+                pluginId: 'genie@automagik',
+                enabled: lists !== 1,
+                version: lists === 1 ? '5.260710.2' : '5.260711.3',
+              },
+            ],
+          }),
+          stderr: '',
+        };
+      }
+      return { exitCode: 0, stdout: '', stderr: '' };
+    };
+    try {
+      const results = refreshUpdatePlugins({
+        bundleRoot: root,
+        expectedVersion: '5.260711.3',
+        detected: { codex: true, claude: false },
+        codexConfigPath: configPath,
+        runner,
+      });
+      expect(results).toEqual([
+        {
+          runtime: 'codex',
+          ok: true,
+          detail: 'plugin/hooks refreshed to v5.260711.3',
+          preservedDisabled: true,
+        },
+      ]);
+      expect(calls).toContain(`codex plugin marketplace add ${root} --json`);
+      expect(calls).toContain('codex plugin remove genie@automagik --json');
+      expect(calls).toContain('codex plugin add genie@automagik --json');
+      expect(readFileSync(configPath, 'utf8')).toContain('enabled = false');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('returns a structured timed-out integration result', () => {
+    const results = refreshUpdatePlugins({
+      bundleRoot: '/tmp/fixture-bundle',
+      expectedVersion: '5.260711.3',
+      detected: { codex: true, claude: false },
+      runner: () => ({ exitCode: 1, stdout: '', stderr: '', timedOut: true }),
+    });
+    expect(results[0]).toMatchObject({ runtime: 'codex', ok: false, timedOut: true });
+    expect(results[0].detail).toContain('timed out');
   });
 });
 

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Architecture Review"
+  short_description: "Audit module boundaries and design depth"
+  default_prompt: "Use $architecture to assess module boundaries and change amplification."

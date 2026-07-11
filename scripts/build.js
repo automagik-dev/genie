@@ -5,6 +5,7 @@
  * Bundles TypeScript CLIs into standalone CJS executables using esbuild
  */
 
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,10 +21,24 @@ const TARGETS = [
   { name: 'session-context', source: 'plugins/genie/scripts/src/session-context.ts', runtime: 'node' },
 ];
 
-async function buildPlugin() {
+export function updateManifestVersion(filePath, version) {
+  const source = fs.readFileSync(filePath, 'utf-8');
+  const parsed = JSON.parse(source);
+  if (typeof parsed.version !== 'string') throw new Error(`manifest has no string version: ${filePath}`);
+  const updated = source.replace(/("version"\s*:\s*)"[^"]*"/, `$1"${version}"`);
+  if (updated === source && parsed.version !== version)
+    throw new Error(`could not update manifest version: ${filePath}`);
+  JSON.parse(updated);
+  fs.writeFileSync(filePath, updated);
+}
+
+export async function buildPlugin() {
   console.log('Building genie plugin...\n');
 
   try {
+    execFileSync('bun', [path.join(rootDir, 'scripts/sync-plugin-skills.ts'), '--check'], { stdio: 'inherit' });
+    execFileSync('bun', [path.join(rootDir, 'scripts/fresh-install-smoke.ts')], { stdio: 'inherit' });
+
     // Read version from package.json
     const packageJson = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf-8'));
     const version = packageJson.version;
@@ -108,9 +123,7 @@ async function buildPlugin() {
     for (const manifest of ['.claude-plugin/plugin.json', '.codex-plugin/plugin.json']) {
       const pluginJsonPath = path.join(rootDir, 'plugins/genie', manifest);
       if (!fs.existsSync(pluginJsonPath)) continue;
-      const pluginJson = JSON.parse(fs.readFileSync(pluginJsonPath, 'utf-8'));
-      pluginJson.version = version;
-      fs.writeFileSync(pluginJsonPath, `${JSON.stringify(pluginJson, null, 2)}\n`);
+      updateManifestVersion(pluginJsonPath, version);
       console.log(`Updated ${manifest} version`);
     }
 
@@ -135,4 +148,4 @@ async function buildPlugin() {
   }
 }
 
-buildPlugin();
+if (process.argv[1] === fileURLToPath(import.meta.url)) buildPlugin();

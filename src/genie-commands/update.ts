@@ -20,10 +20,17 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { type AgentSyncReport, runAgentSync } from '../lib/agent-sync.js';
 import { contractPath, genieConfigExists, getGenieConfigPath, saveGenieConfig } from '../lib/genie-config.js';
-import { type CodexAgentInstallResult, installCodexAgents, resolveBundleRoot } from '../lib/runtime-integrations.js';
+import {
+  type CodexAgentInstallResult,
+  type IntegrationResult,
+  installCodexAgents,
+  resolveBundleRoot,
+} from '../lib/runtime-integrations.js';
 import { VERSION } from '../lib/version.js';
 import { GenieConfigSchema } from '../types/genie-config.js';
+import { type AuxiliaryTreeOperations, type AuxiliaryTreeOutcome, convergeAuxiliaryTree } from './auxiliary-trees.js';
 import { cleanupV4 } from './legacy-v4.js';
+import { type RefreshUpdatePluginsOptions, refreshUpdatePlugins } from './update-integrations.js';
 
 const GENIE_HOME = process.env.GENIE_HOME || join(homedir(), '.genie');
 const GENIE_BIN = join(GENIE_HOME, 'bin');
@@ -124,28 +131,79 @@ export function decideVerify(args: DecideVerifyArgs): VerifyResult {
  */
 export function shortCircuitIfCurrent(currentVersion: string, latestVersion: string | null | undefined): boolean {
   if (!latestVersion) return false;
-  return normalizeVersion(currentVersion) === normalizeVersion(latestVersion);
+  const current = parseGenieVersion(currentVersion);
+  const latest = parseGenieVersion(latestVersion);
+  return current !== null && latest !== null && compareParsedVersions(current, latest) === 0;
 }
 
 /**
- * Compare two genie versions (`MAJOR.YYMMDD.N`, build metadata stripped) numerically,
- * component by component. Returns -1 when `a` is older than `b`, 0 when equal, 1 when
- * `a` is newer. Missing or non-numeric components are treated as 0 so a malformed
- * version string degrades to "older-or-equal" and never spuriously blocks an update.
+ * Compare two Genie versions (`MAJOR.YYMMDD.N[-prerelease][+build]`). Core and
+ * numeric prerelease identifiers compare numerically; non-numeric identifiers
+ * compare lexically; numeric prerelease identifiers rank below non-numeric
+ * identifiers; and a final release ranks above every prerelease of the same
+ * core. Malformed values are rejected instead of being coerced to zero.
  */
 export function compareVersions(a: string, b: string): number {
-  const pa = normalizeVersion(a).split('.');
-  const pb = normalizeVersion(b).split('.');
-  const len = Math.max(pa.length, pb.length);
-  for (let i = 0; i < len; i++) {
-    const x = Number.parseInt(pa[i] ?? '', 10);
-    const y = Number.parseInt(pb[i] ?? '', 10);
-    const xv = Number.isNaN(x) ? 0 : x;
-    const yv = Number.isNaN(y) ? 0 : y;
-    if (xv < yv) return -1;
-    if (xv > yv) return 1;
+  const parsedA = parseGenieVersion(a);
+  const parsedB = parseGenieVersion(b);
+  if (parsedA === null) throw new Error(`Invalid Genie version: ${JSON.stringify(a)}`);
+  if (parsedB === null) throw new Error(`Invalid Genie version: ${JSON.stringify(b)}`);
+  return compareParsedVersions(parsedA, parsedB);
+}
+
+interface ParsedGenieVersion {
+  core: [bigint, bigint, bigint];
+  prerelease: string[] | null;
+}
+
+const GENIE_VERSION_RE =
+  /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+
+function parseGenieVersion(value: string): ParsedGenieVersion | null {
+  const match = value.trim().match(GENIE_VERSION_RE);
+  if (!match) return null;
+  return {
+    core: [BigInt(match[1]), BigInt(match[2]), BigInt(match[3])],
+    prerelease: match[4] ? match[4].split('.') : null,
+  };
+}
+
+function compareParsedVersions(a: ParsedGenieVersion, b: ParsedGenieVersion): number {
+  const coreComparison = compareNumericIdentifiers(a.core, b.core);
+  if (coreComparison !== 0) return coreComparison;
+  return comparePrereleases(a.prerelease, b.prerelease);
+}
+
+function compareNumericIdentifiers(a: readonly bigint[], b: readonly bigint[]): number {
+  for (let index = 0; index < a.length; index += 1) {
+    if (a[index] < b[index]) return -1;
+    if (a[index] > b[index]) return 1;
   }
   return 0;
+}
+
+function comparePrereleases(a: string[] | null, b: string[] | null): number {
+  if (a === null && b === null) return 0;
+  if (a === null) return 1;
+  if (b === null) return -1;
+  const length = Math.max(a.length, b.length);
+  for (let index = 0; index < length; index += 1) {
+    const left = a[index];
+    const right = b[index];
+    if (left === undefined) return -1;
+    if (right === undefined) return 1;
+    if (left === right) continue;
+    return comparePrereleaseIdentifier(left, right);
+  }
+  return 0;
+}
+
+function comparePrereleaseIdentifier(left: string, right: string): number {
+  const leftNumeric = /^\d+$/.test(left);
+  const rightNumeric = /^\d+$/.test(right);
+  if (leftNumeric && rightNumeric) return BigInt(left) < BigInt(right) ? -1 : 1;
+  if (leftNumeric !== rightNumeric) return leftNumeric ? -1 : 1;
+  return left < right ? -1 : 1;
 }
 
 /**
@@ -160,7 +218,8 @@ export type DowngradeDecision =
   | { kind: 'upgrade' }
   | { kind: 'current' }
   | { kind: 'block-downgrade'; installed: string; latest: string }
-  | { kind: 'allow-downgrade'; installed: string; latest: string };
+  | { kind: 'allow-downgrade'; installed: string; latest: string }
+  | { kind: 'invalid-version'; field: 'installed' | 'latest'; value: string };
 
 /**
  * Decide whether `genie update` should proceed, short-circuit, refuse, or force a
@@ -174,6 +233,12 @@ export function decideDowngrade(args: {
   explicitChannel: boolean;
 }): DowngradeDecision {
   if (!args.latestVersion) return { kind: 'upgrade' };
+  if (parseGenieVersion(args.latestVersion) === null) {
+    return { kind: 'invalid-version', field: 'latest', value: args.latestVersion };
+  }
+  if (parseGenieVersion(args.installedVersion) === null) {
+    return { kind: 'invalid-version', field: 'installed', value: args.installedVersion };
+  }
   const cmp = compareVersions(args.installedVersion, args.latestVersion);
   if (cmp === 0) return { kind: 'current' };
   if (cmp < 0) return { kind: 'upgrade' };
@@ -391,6 +456,7 @@ export async function fetchLatestManifest(
     if (
       typeof parsed.schema_version !== 'number' ||
       typeof parsed.version !== 'string' ||
+      parseGenieVersion(parsed.version) === null ||
       typeof parsed.tarball_base !== 'string' ||
       !Array.isArray(parsed.platforms)
     ) {
@@ -1318,20 +1384,6 @@ async function runCommandSilent(
 
 const FRAMEWORK_MARKER_FILES = new Set(['.orphaned_at']);
 
-function copyDirSync(src: string, dest: string): void {
-  mkdirSync(dest, { recursive: true });
-  for (const entry of readdirSync(src, { withFileTypes: true })) {
-    if (FRAMEWORK_MARKER_FILES.has(entry.name)) continue;
-    const srcPath = join(src, entry.name);
-    const destPath = join(dest, entry.name);
-    if (entry.isDirectory()) {
-      copyDirSync(srcPath, destPath);
-    } else {
-      copyFileSync(srcPath, destPath);
-    }
-  }
-}
-
 // ============================================================================
 // Channel resolution + persistence.
 // ============================================================================
@@ -1565,6 +1617,15 @@ function applyDowngradeGuard(
 ): boolean {
   const explicitChannel = Boolean(options.stable || options.homolog || options.dev || options.next);
   const downgrade = decideDowngrade({ installedVersion, latestVersion, explicitChannel });
+  if (downgrade.kind === 'invalid-version') {
+    if (downgrade.field === 'latest') {
+      throw new Error(`Channel manifest contains an invalid Genie version: ${JSON.stringify(downgrade.value)}`);
+    }
+    log(
+      `Installed version ${JSON.stringify(downgrade.value)} is malformed; proceeding with the valid channel manifest as a repair`,
+    );
+    return false;
+  }
   if (downgrade.kind === 'block-downgrade') {
     log(
       `Installed v${normalizeVersion(downgrade.installed)} is NEWER than ${channel} manifest v${normalizeVersion(downgrade.latest)} — refusing automatic downgrade (switch channels or reinstall explicitly to downgrade)`,
@@ -1579,11 +1640,34 @@ function applyDowngradeGuard(
   return false;
 }
 
+function runTrackedManualUpdateConvergence(expectedVersion: string): void {
+  const convergence = runManualUpdateConvergence({ expectedVersion });
+  if (convergence.integrations.some((result) => !result.ok)) process.exitCode = 1;
+}
+
+function resolveUpdatePlatformOrExit(): string {
+  try {
+    return resolvePlatformId();
+  } catch (err) {
+    error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
+}
+
+function requireCanonicalInstallOrExit(): void {
+  try {
+    ensureCanonicalInstall();
+  } catch (err) {
+    error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
+}
+
 export async function updateCommand(options: UpdateCommandOptions = {}): Promise<void> {
-  // Sync-only fast path — the internal re-entry contract. Two equivalent
-  // triggers: the freshly-swapped binary (runFreshBinaryAgentSync) re-invokes
-  // `genie update` with GENIE_UPDATE_SYNC_ONLY=1, and the CC SessionStart hook
-  // invokes `genie update --sync-only` (the flag is a hard guard — old
+  // Sync-only fast path — bounded local convergence only. Two equivalent
+  // triggers remain for compatibility: an explicit `--sync-only` flag and the
+  // legacy GENIE_UPDATE_SYNC_ONLY environment marker. The flag is the hard
+  // guard for external delegation — old
   // commander binaries reject unknown flags and exit non-zero with zero
   // network, so a pre-contract binary can never misread the delegation as a
   // full update). Both converge agents with no network, manifest fetch, or
@@ -1623,9 +1707,9 @@ export async function updateCommand(options: UpdateCommandOptions = {}): Promise
   const installedVersion = resolveInstalledVersion();
   if (shortCircuitIfCurrent(installedVersion, latestVersion)) {
     success(`Already up to date (v${normalizeVersion(installedVersion)}, channel ${channel})`);
-    // Update = converge everything, not just the binary: sync agents even when
-    // the installed binary is already at the latest version.
-    runAgentSyncSafe();
+    // Operator-driven update converges plugin registration/hooks plus
+    // ownership-safe skills and role agents even when the binary is current.
+    runTrackedManualUpdateConvergence(latestVersion ?? normalizeVersion(installedVersion));
     console.log();
     return;
   }
@@ -1635,29 +1719,18 @@ export async function updateCommand(options: UpdateCommandOptions = {}): Promise
   // .well-known pin) would swap the binary to an OLDER build via the normal
   // "Update available" flow.
   if (applyDowngradeGuard(installedVersion, latestVersion, channel, options)) {
-    // Refused downgrade — still converge agents, exactly like the already-current path.
-    runAgentSyncSafe();
+    // Refused downgrade — still converge the installed version's integrations.
+    runTrackedManualUpdateConvergence(normalizeVersion(installedVersion));
     console.log();
     return;
   }
 
-  let platform: string;
-  try {
-    platform = resolvePlatformId();
-  } catch (err) {
-    error(err instanceof Error ? err.message : String(err));
-    process.exit(1);
-  }
+  const platform = resolveUpdatePlatformOrExit();
 
   // Refuse to swap when the live binary is outside ~/.genie/bin/. Silently
   // updating a different file would mask the regression on bun/npm-installed
   // hosts where $PATH still points at the old binary.
-  try {
-    ensureCanonicalInstall();
-  } catch (err) {
-    error(err instanceof Error ? err.message : String(err));
-    process.exit(1);
-  }
+  requireCanonicalInstallOrExit();
 
   log(`Channel: ${channel}${channel === 'stable' ? ' (stable)' : ` (${channel})`}`);
   log(`Platform: ${platform}`);
@@ -1691,9 +1764,10 @@ export async function updateCommand(options: UpdateCommandOptions = {}): Promise
     attestationVerified: false,
     previousBackup: null,
   };
+  const resolvedManifest = manifest as LatestManifest;
 
   try {
-    await runDelivery(manifest as LatestManifest, platform, diagnosticsCtx);
+    await runDelivery(resolvedManifest, platform, diagnosticsCtx);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     error(`Update failed: ${msg}`);
@@ -1701,10 +1775,8 @@ export async function updateCommand(options: UpdateCommandOptions = {}): Promise
   }
 
   runV4CleanupSafe();
+  runTrackedManualUpdateConvergence(resolvedManifest.version);
   await runPostUpdateVerifySafe({ ...options, noRestart, noVerify }, diagnosticsCtx);
-  // Re-exec the freshly installed binary so the NEW version's agent-sync logic
-  // runs (this process is still the old binary). Non-fatal.
-  runFreshBinaryAgentSync();
 }
 
 /**
@@ -1837,29 +1909,41 @@ function touchAgentSyncMarker(markerPath: string, now: Date): void {
 }
 
 /**
- * After a real binary swap, re-exec the FRESHLY installed binary so the NEW
- * version's agent-sync logic runs — the current process is still the OLD binary.
- * Established pattern (see the `--version` probes at resolveInstalledVersion /
- * verifySwappedBinary). The child hits the sync-only fast path via
- * GENIE_UPDATE_SYNC_ONLY=1 and returns without any network. Non-fatal: a failed
- * re-exec is a one-line advisory. `exec` is an injection seam so the wiring is
- * unit-testable without spawning a binary.
+ * Operator-driven update convergence runs inside the already-reviewed parent
+ * process. Never execute the freshly installed binary as `genie update`: an
+ * explicitly selected older release may predate the sync-only environment
+ * contract and interpret that child invocation as a second full update. That
+ * exact downgrade→unattended-upgrade cascade occurred on 2026-07-11.
  */
-export interface FreshBinaryAgentSyncOptions {
-  exec?: (binaryPath: string, env: NodeJS.ProcessEnv) => void;
+export interface ManualUpdateConvergenceOptions {
+  expectedVersion: string;
+  bundleRoot?: string;
+  runSync?: () => void;
+  refreshPlugins?: (options: RefreshUpdatePluginsOptions) => IntegrationResult[];
+  log?: (line: string) => void;
 }
 
-export function runFreshBinaryAgentSync(opts: FreshBinaryAgentSyncOptions = {}): void {
-  const exec =
-    opts.exec ??
-    ((binaryPath: string, env: NodeJS.ProcessEnv) => {
-      execFileSync(binaryPath, ['update'], { env, stdio: 'inherit', timeout: 120_000 });
-    });
-  try {
-    exec(join(GENIE_BIN, 'genie'), { ...process.env, GENIE_UPDATE_SYNC_ONLY: '1' });
-  } catch (err) {
-    log(`agent sync (post-update) skipped: ${errMsg(err)}`);
+export interface ManualUpdateConvergenceResult {
+  integrations: IntegrationResult[];
+}
+
+export function runManualUpdateConvergence(options: ManualUpdateConvergenceOptions): ManualUpdateConvergenceResult {
+  const emit = options.log ?? log;
+  (options.runSync ?? runAgentSyncSafe)();
+  const integrations = (options.refreshPlugins ?? refreshUpdatePlugins)({
+    bundleRoot: options.bundleRoot ?? GENIE_HOME,
+    expectedVersion: options.expectedVersion,
+  });
+  for (const result of integrations) {
+    const disabled = result.preservedDisabled ? '; disabled state preserved' : '';
+    emit(
+      `integration refresh: ${result.runtime} — ${result.ok ? result.detail : `FAILED: ${result.detail}`}${disabled}`,
+    );
   }
+  if (integrations.some((result) => result.runtime === 'codex' && result.ok)) {
+    emit('Review refreshed Genie hooks with /hooks, then start a new Codex task.');
+  }
+  return { integrations };
 }
 
 function errMsg(err: unknown): string {
@@ -1875,7 +1959,7 @@ async function runDelivery(
   manifest: LatestManifest,
   platform: string,
   diagnosticsCtx: UpdateDiagnosticsContext,
-): Promise<void> {
+): Promise<AuxiliaryTreeOutcome[]> {
   log('Downloading signed tarball from GitHub Releases...');
   const tarballPath = await downloadAndVerifyTarball(manifest, platform, GENIE_BIN_STAGING);
   diagnosticsCtx.tarballPath = tarballPath;
@@ -1926,12 +2010,6 @@ async function runDelivery(
   });
 
   success(`Genie binary updated → v${manifest.version}${swapResult.fallbackUsed ? ' (cross-device fallback)' : ''}`);
-
-  try {
-    writeFileSync(join(GENIE_HOME, 'VERSION'), `${manifest.version}\n`);
-  } catch {
-    // best-effort
-  }
 
   // Post-swap divergence guard: ~/.genie/bin/genie now holds the new
   // binary, but if $PATH resolves `genie` to a different file (a pre-G5
@@ -1984,8 +2062,45 @@ async function runDelivery(
     // advisory only — never fail the update for this
   }
 
-  syncAuxiliaryContent(extractDir);
-  cleanupStagingArtifacts(extractDir, tarballPath);
+  const auxiliaryOutcomes = syncAuxiliaryContent(extractDir);
+  finalizeAuxiliaryDelivery(auxiliaryOutcomes, {
+    writeVersion: () => {
+      try {
+        // This stamp follows verified content convergence. It is never used as
+        // a substitute for per-tree digest comparison.
+        writeFileSync(join(GENIE_HOME, 'VERSION'), `${manifest.version}\n`);
+      } catch {
+        // best-effort; source resolution still uses the converged plugin tree.
+      }
+    },
+    cleanupExtraction: () => cleanupStagingArtifacts(extractDir, tarballPath),
+  });
+  return auxiliaryOutcomes;
+}
+
+export interface AuxiliaryDeliveryFinalizers {
+  writeVersion: () => void;
+  cleanupExtraction: () => void;
+}
+
+/** Never stamp or remove recovery material while any tree is unverified. */
+export function finalizeAuxiliaryDelivery(
+  outcomes: AuxiliaryTreeOutcome[],
+  finalizers: AuxiliaryDeliveryFinalizers,
+): void {
+  const failures = outcomes.filter((outcome) => outcome.status === 'failed');
+  if (failures.length > 0) {
+    throw new Error(
+      `auxiliary payload convergence failed: ${failures
+        .map((outcome) => {
+          const fresh = outcome.freshArtifact ? `; verified fresh: ${outcome.freshArtifact}` : '';
+          return `${outcome.label} (${outcome.stage}${fresh})`;
+        })
+        .join(', ')}`,
+    );
+  }
+  finalizers.writeVersion();
+  finalizers.cleanupExtraction();
 }
 
 function cleanupStagingArtifacts(extractDir: string, tarballPath: string): void {
@@ -2011,51 +2126,48 @@ function cleanupStagingArtifacts(extractDir: string, tarballPath: string): void 
  * directory mid-update. The previous live tree moves to `<dest>.old` and is
  * deleted last.
  *
- * Best-effort — failures are logged but never block the update. Tarballs
- * predating a tree simply skip it (existsSync guard).
+ * Every present tree returns a structured outcome. A failed outcome blocks
+ * VERSION stamping and extraction cleanup so the verified source remains
+ * available for diagnosis and retry. Tarballs predating a tree skip it.
  */
-function syncAuxiliaryContent(extractDir: string): void {
+export function syncAuxiliaryContent(
+  extractDir: string,
+  genieHome = GENIE_HOME,
+  operations?: Partial<AuxiliaryTreeOperations>,
+): AuxiliaryTreeOutcome[] {
   const targets: Array<{ src: string; dest: string; label: string }> = [
-    { src: join(extractDir, 'plugins'), dest: join(GENIE_HOME, 'plugins'), label: 'plugins' },
-    { src: join(extractDir, 'skills'), dest: join(GENIE_HOME, 'skills'), label: 'skills' },
-    { src: join(extractDir, 'templates'), dest: join(GENIE_HOME, 'templates'), label: 'templates' },
-    { src: join(extractDir, '.agents'), dest: join(GENIE_HOME, '.agents'), label: '.agents' },
-    { src: join(extractDir, '.claude-plugin'), dest: join(GENIE_HOME, '.claude-plugin'), label: '.claude-plugin' },
+    { src: join(extractDir, 'plugins'), dest: join(genieHome, 'plugins'), label: 'plugins' },
+    { src: join(extractDir, 'skills'), dest: join(genieHome, 'skills'), label: 'skills' },
+    { src: join(extractDir, 'templates'), dest: join(genieHome, 'templates'), label: 'templates' },
+    { src: join(extractDir, '.agents'), dest: join(genieHome, '.agents'), label: '.agents' },
+    { src: join(extractDir, '.claude-plugin'), dest: join(genieHome, '.claude-plugin'), label: '.claude-plugin' },
   ];
-  for (const target of targets) {
-    if (!existsSync(target.src)) continue;
-    swapAuxiliaryTree(target.src, target.dest, target.label);
-  }
+  const outcomes = targets.map((target) =>
+    convergeAuxiliaryTree({
+      label: target.label,
+      source: target.src,
+      destination: target.dest,
+      excludedEntryNames: FRAMEWORK_MARKER_FILES,
+      operations,
+    }),
+  );
+  for (const outcome of outcomes) printAuxiliaryOutcome(outcome);
+  return outcomes;
 }
 
-/** Atomic stage+rename for one auxiliary tree. Best-effort recovery on
- *  failure restores the previous live tree if we crashed after moving it
- *  aside. Errors are logged but never propagate to the caller. */
-function swapAuxiliaryTree(src: string, dest: string, label: string): void {
-  const stagingDest = `${dest}.new`;
-  const oldDest = `${dest}.old`;
-  try {
-    if (existsSync(stagingDest)) rmSync(stagingDest, { recursive: true, force: true });
-    if (existsSync(oldDest)) rmSync(oldDest, { recursive: true, force: true });
-    copyDirSync(src, stagingDest);
-    if (existsSync(dest)) renameSync(dest, oldDest);
-    renameSync(stagingDest, dest);
-    if (existsSync(oldDest)) rmSync(oldDest, { recursive: true, force: true });
-    success(`Refreshed ${label}/ → ${dest}`);
-  } catch (err) {
-    recoverAuxiliarySwap(dest, stagingDest, oldDest);
-    const msg = err instanceof Error ? err.message : String(err);
-    log(`Could not refresh ${label}/ (non-fatal): ${msg}`);
+function printAuxiliaryOutcome(outcome: AuxiliaryTreeOutcome): void {
+  if (outcome.status === 'skipped') return;
+  if (outcome.status === 'failed') {
+    const rollback = outcome.rollbackError ? `; rollback: ${outcome.rollbackError}` : '';
+    const fresh = outcome.freshArtifact
+      ? `; verified fresh artifact retained at ${outcome.freshArtifact}`
+      : '; no verified fresh artifact available';
+    log(`Could not refresh ${outcome.label}/ at ${outcome.stage}: ${outcome.error}${rollback}${fresh}`);
+    return;
   }
-}
-
-function recoverAuxiliarySwap(dest: string, stagingDest: string, oldDest: string): void {
-  try {
-    if (!existsSync(dest) && existsSync(oldDest)) renameSync(oldDest, dest);
-    if (existsSync(stagingDest)) rmSync(stagingDest, { recursive: true, force: true });
-  } catch {
-    // give up; dest is in whatever state it's in
-  }
+  const verb = outcome.status === 'unchanged' ? 'Verified current' : 'Refreshed';
+  success(`${verb} ${outcome.label}/ → ${outcome.destination}`);
+  for (const warning of outcome.warnings) log(`${outcome.label}/ cleanup warning: ${warning}`);
 }
 
 async function runRollback(): Promise<void> {

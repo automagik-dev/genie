@@ -1,0 +1,4 @@
+interface:
+  display_name: "Root-Cause Trace"
+  short_description: "Reproduce failures and isolate root causes"
+  default_prompt: "Use $trace to reproduce this failure and isolate its root cause without editing."
