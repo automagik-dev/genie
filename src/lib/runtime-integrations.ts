@@ -11,6 +11,7 @@ import {
 import { dirname, join, resolve } from 'node:path';
 import { getCodexConfigPath, getCodexHome, migrateDeadGenieOtel } from './codex-config.js';
 import { resolveGenieHome } from './genie-home.js';
+import { VERSION } from './version.js';
 
 export type IntegrationSelection = 'auto' | 'codex' | 'claude' | 'all' | 'none';
 export type RuntimeName = 'codex' | 'claude';
@@ -228,14 +229,56 @@ export function installRuntimeIntegrations(options: InstallIntegrationsOptions =
   });
 }
 
+/**
+ * Register the canonical marketplace root. `plugin marketplace add` refuses when
+ * the `automagik` marketplace already points at a DIFFERENT source — live case:
+ * a deleted live-test worktree kept feeding every install/repair a stale plugin
+ * — and that refusal matches the generic `already` tolerance, so it must be
+ * handled first: repoint the marketplace instead of keeping the stale root.
+ */
+function addCodexMarketplace(runner: CommandRunner, bundleRoot: string): void {
+  const result = runner('codex', ['plugin', 'marketplace', 'add', bundleRoot, '--json']);
+  if (result.exitCode === 0) return;
+  const output = `${result.stdout}\n${result.stderr}`;
+  if (/different source/i.test(output)) {
+    runChecked(runner, 'codex', ['plugin', 'marketplace', 'remove', 'automagik', '--json'], true);
+    runChecked(runner, 'codex', ['plugin', 'marketplace', 'add', bundleRoot, '--json']);
+    return;
+  }
+  if (!/already|exists|configured/i.test(output)) {
+    throw new Error(
+      `codex plugin marketplace add ${bundleRoot} --json failed: ${(result.stderr || result.stdout).trim()}`,
+    );
+  }
+}
+
+/**
+ * `plugin add` is a no-op when the id is already installed, so a plugin that
+ * came from a previous marketplace root stays pinned to that root's version
+ * forever. When the installed version disagrees with the CLI, reinstall once
+ * from the (now canonical) marketplace and re-verify — a repair that cannot
+ * converge fails loudly instead of reporting "refreshed".
+ */
+function verifyCodexPluginCurrent(runner: CommandRunner): void {
+  let state = codexPluginState(runChecked(runner, 'codex', ['plugin', 'list', '--json']).stdout);
+  if (!state.installed || state.version === VERSION) return;
+  runChecked(runner, 'codex', ['plugin', 'remove', 'genie@automagik', '--json'], true);
+  runChecked(runner, 'codex', ['plugin', 'add', 'genie@automagik', '--json']);
+  state = codexPluginState(runChecked(runner, 'codex', ['plugin', 'list', '--json']).stdout);
+  if (state.installed && state.version !== VERSION) {
+    throw new Error(`codex plugin stuck at v${state.version} (CLI v${VERSION}) — marketplace root may be stale`);
+  }
+}
+
 function installCodexIntegration(runner: CommandRunner, bundleRoot: string, codexHome?: string): IntegrationResult {
   const configPath = join(codexHome ?? getCodexHome(), 'config.toml');
   const migration = migrateDeadGenieOtel(configPath);
   if (migration.status === 'error') throw new Error(`Codex config migration failed: ${migration.error}`);
   const agents = installCodexAgents(bundleRoot, codexHome);
   const before = codexPluginState(runChecked(runner, 'codex', ['plugin', 'list', '--json']).stdout);
-  runChecked(runner, 'codex', ['plugin', 'marketplace', 'add', bundleRoot, '--json'], true);
+  addCodexMarketplace(runner, bundleRoot);
   runChecked(runner, 'codex', ['plugin', 'add', 'genie@automagik', '--json']);
+  verifyCodexPluginCurrent(runner);
   if (before.installed && before.enabled === false) setCodexPluginEnabled(false, configPath);
   const notes = [`${agents.installed} role agents installed`];
   if (agents.backedUp.length > 0) notes.push(`${agents.backedUp.length} user-tuned backed up (*.genie-backup)`);
