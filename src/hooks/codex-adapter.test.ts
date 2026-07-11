@@ -32,6 +32,22 @@ describe('Codex hook adapter', () => {
     expect(payload.genie_hook_runtime).toBe('codex');
     expect(payload.tool_input?.file_path).toBe('src/a.ts');
     expect(payload.tool_input?.file_paths).toEqual(['src/a.ts', 'src/c.ts', 'src/b.ts']);
+    expect(payload.tool_input?.file_paths_truncated).toBeUndefined();
+  });
+
+  test('caps attacker-sized apply_patch path expansion at downstream need and marks truncation', () => {
+    const command = [
+      '*** Begin Patch',
+      ...Array.from({ length: 50_000 }, (_, index) => `*** Update File: src/file-${index}.ts`),
+      '*** End Patch',
+    ].join('\n');
+    const payload = normalizeCodexHookPayload({
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'apply_patch',
+      tool_input: { command },
+    });
+    expect(payload.tool_input?.file_paths).toEqual(Array.from({ length: 10 }, (_, index) => `src/file-${index}.ts`));
+    expect(payload.tool_input?.file_paths_truncated).toBe(true);
   });
 
   test('marks non-patch and malformed-patch payloads as Codex without mutating the originals', () => {

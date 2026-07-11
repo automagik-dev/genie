@@ -1,11 +1,15 @@
 import { createHash } from 'node:crypto';
 import {
+  type Stats,
   chmodSync,
+  closeSync,
   copyFileSync,
   existsSync,
   lstatSync,
   mkdirSync,
+  openSync,
   readFileSync,
+  readSync,
   readdirSync,
   realpathSync,
   renameSync,
@@ -14,6 +18,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
+import { Worker } from 'node:worker_threads';
 import { acquireLifecycleLease } from './agent-sync.js';
 import { getCodexConfigPath, getCodexHome, migrateDeadGenieOtel } from './codex-config.js';
 import { resolveClaudeDir, resolveGenieHome } from './genie-home.js';
@@ -67,15 +72,20 @@ export interface CommandResult {
   stdout: string;
   stderr: string;
   timedOut?: boolean;
+  outputOverflow?: boolean;
 }
 
 export interface CommandRunOptions {
   timeoutMs: number;
+  maxOutputBytes?: number;
+  killGraceMs?: number;
 }
 
 export type CommandRunner = (command: string, args: string[], options?: CommandRunOptions) => CommandResult;
 
 const INTEGRATION_TIMEOUT_MS = 15_000;
+const INTEGRATION_OUTPUT_LIMIT_BYTES = 256 * 1024;
+const INTEGRATION_KILL_GRACE_MS = 250;
 
 class IntegrationCommandError extends Error {
   constructor(
@@ -86,16 +96,178 @@ class IntegrationCommandError extends Error {
   }
 }
 
-const defaultRunner: CommandRunner = (command, args, options) => {
-  const timeoutMs = options?.timeoutMs ?? INTEGRATION_TIMEOUT_MS;
-  const result = Bun.spawnSync([command, ...args], { stdout: 'pipe', stderr: 'pipe', timeout: timeoutMs });
-  return {
-    exitCode: result.exitCode,
-    stdout: result.stdout.toString(),
-    stderr: result.stderr.toString(),
-    timedOut: result.exitedDueToTimeout === true,
+const defaultRunner: CommandRunner = runBoundedIntegrationCommand;
+
+const BOUNDED_RUNNER_WORKER = String.raw`
+  const { spawn } = require('node:child_process');
+  const { workerData } = require('node:worker_threads');
+  const { command, args, timeoutMs, maxOutputBytes, killGraceMs, shared } = workerData;
+  const state = new Int32Array(shared, 0, 2);
+  const bytes = new Uint8Array(shared, 8);
+  let stdout = Buffer.alloc(0);
+  let stderr = Buffer.alloc(0);
+  let outputTotal = 0;
+  let timedOut = false;
+  let outputOverflow = false;
+  let settled = false;
+  let terminating = false;
+  let killTimer;
+  let closedResult;
+
+  const publish = (result) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(killTimer);
+    const payload = Buffer.from(JSON.stringify({
+      ...result,
+      stdout: stdout.toString('base64'),
+      stderr: stderr.toString('base64'),
+      timedOut,
+      outputOverflow,
+    }));
+    if (payload.length > bytes.length) {
+      const fallback = Buffer.from(JSON.stringify({
+        exitCode: 1,
+        stdout: '',
+        stderr: Buffer.from('bounded command result exceeded the shared response limit').toString('base64'),
+        timedOut,
+        outputOverflow: true,
+      }));
+      bytes.set(fallback);
+      Atomics.store(state, 1, fallback.length);
+    } else {
+      bytes.set(payload);
+      Atomics.store(state, 1, payload.length);
+    }
+    Atomics.store(state, 0, 1);
+    Atomics.notify(state, 0);
   };
-};
+
+  let child;
+  const signalTree = (signal) => {
+    if (!child || typeof child.pid !== 'number') return;
+    if (process.platform === 'win32') {
+      if (signal === 'SIGTERM') {
+        try {
+          const killer = spawn('taskkill.exe', ['/pid', String(child.pid), '/T', '/F'], {
+            shell: false,
+            windowsHide: true,
+            stdio: 'ignore',
+          });
+          killer.unref();
+        } catch {}
+      }
+      try { child.kill('SIGKILL'); } catch {}
+      return;
+    }
+    try {
+      process.kill(-child.pid, signal);
+    } catch (error) {
+      if (!error || error.code !== 'ESRCH') {
+        try { child.kill(signal); } catch {}
+      }
+    }
+  };
+  const terminate = (reason) => {
+    if (reason === 'timeout') timedOut = true;
+    if (reason === 'overflow') outputOverflow = true;
+    if (terminating || !child) return;
+    terminating = true;
+    signalTree('SIGTERM');
+    killTimer = setTimeout(() => {
+      // Always signal the process tree after grace: the direct child may have
+      // exited while a detached descendant remains alive with closed stdio.
+      signalTree('SIGKILL');
+      setTimeout(() => publish(closedResult || { exitCode: 1 }), 10);
+    }, killGraceMs);
+  };
+  const append = (stream, chunk) => {
+    const source = Buffer.from(chunk);
+    outputTotal += source.length;
+    const retained = stdout.length + stderr.length;
+    const keep = source.subarray(0, Math.max(0, maxOutputBytes - retained));
+    if (stream === 'stdout') {
+      if (keep.length > 0) stdout = Buffer.concat([stdout, keep]);
+    } else {
+      if (keep.length > 0) stderr = Buffer.concat([stderr, keep]);
+    }
+    if (outputTotal > maxOutputBytes) terminate('overflow');
+  };
+
+  try {
+    child = spawn(command, args, {
+      detached: process.platform !== 'win32',
+      shell: false,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    child.stdout.on('data', (chunk) => append('stdout', chunk));
+    child.stderr.on('data', (chunk) => append('stderr', chunk));
+    child.once('error', (error) => {
+      stderr = Buffer.from(error && error.message ? error.message : String(error)).subarray(0, maxOutputBytes);
+      publish({ exitCode: 1 });
+    });
+    child.once('close', (code) => {
+      closedResult = { exitCode: typeof code === 'number' ? code : 1 };
+      if (!terminating) publish(closedResult);
+    });
+    setTimeout(() => terminate('timeout'), timeoutMs);
+  } catch (error) {
+    stderr = Buffer.from(error && error.message ? error.message : String(error)).subarray(0, maxOutputBytes);
+    publish({ exitCode: 1 });
+  }
+`;
+
+/** Synchronous command facade backed by an asynchronous TERM→KILL worker. */
+export function runBoundedIntegrationCommand(
+  command: string,
+  args: string[],
+  options?: CommandRunOptions,
+): CommandResult {
+  const timeoutMs = boundedPositiveInteger('timeout', options?.timeoutMs ?? INTEGRATION_TIMEOUT_MS, 5 * 60_000);
+  const maxOutputBytes = boundedPositiveInteger(
+    'output limit',
+    options?.maxOutputBytes ?? INTEGRATION_OUTPUT_LIMIT_BYTES,
+    4 * 1024 * 1024,
+  );
+  const killGraceMs = boundedPositiveInteger('kill grace', options?.killGraceMs ?? INTEGRATION_KILL_GRACE_MS, 10_000);
+  const responseCapacity = Math.max(64 * 1024, maxOutputBytes * 3 + 64 * 1024);
+  const shared = new SharedArrayBuffer(8 + responseCapacity);
+  const state = new Int32Array(shared, 0, 2);
+  const worker = new Worker(BOUNDED_RUNNER_WORKER, {
+    eval: true,
+    workerData: { command, args, timeoutMs, maxOutputBytes, killGraceMs, shared },
+  });
+  const wait = Atomics.wait(state, 0, 0, timeoutMs + killGraceMs + 5_000);
+  if (wait === 'timed-out') {
+    void worker.terminate();
+    return { exitCode: 1, stdout: '', stderr: 'bounded command worker did not settle', timedOut: true };
+  }
+  const length = Atomics.load(state, 1);
+  const raw = Buffer.from(new Uint8Array(shared, 8, length)).toString('utf8');
+  void worker.terminate();
+  const parsed = JSON.parse(raw) as {
+    exitCode: number;
+    stdout: string;
+    stderr: string;
+    timedOut: boolean;
+    outputOverflow: boolean;
+  };
+  return {
+    exitCode: parsed.exitCode,
+    stdout: Buffer.from(parsed.stdout, 'base64').toString(),
+    stderr: Buffer.from(parsed.stderr, 'base64').toString(),
+    timedOut: parsed.timedOut,
+    outputOverflow: parsed.outputOverflow,
+  };
+}
+
+function boundedPositiveInteger(label: string, value: number, maximum: number): number {
+  if (!Number.isSafeInteger(value) || value <= 0 || value > maximum) {
+    throw new Error(`integration command ${label} must be an integer between 1 and ${maximum}`);
+  }
+  return value;
+}
 
 export function resolveRuntimeExecutable(
   name: RuntimeName,
@@ -249,6 +421,11 @@ function runChecked(
   if (result.timedOut) {
     throw new IntegrationCommandError(`${command} ${args.join(' ')} timed out after ${timeoutMs}ms`, true);
   }
+  if (result.outputOverflow) {
+    throw new IntegrationCommandError(
+      `${command} ${args.join(' ')} exceeded the ${INTEGRATION_OUTPUT_LIMIT_BYTES}-byte output safety limit`,
+    );
+  }
   if (
     result.exitCode !== 0 &&
     !(allowAlready && /already|exists|configured/i.test(`${result.stdout}\n${result.stderr}`))
@@ -307,12 +484,16 @@ function fileDigest(path: string): string | null {
 function readCodexAgentInventory(codexHome: string): {
   status: 'missing' | 'valid' | 'corrupt';
   inventory: CodexAgentInventory;
+  digest: string | null;
   error?: string;
 } {
   const path = inventoryPath(codexHome);
-  if (!existsSync(path)) return { status: 'missing', inventory: emptyCodexAgentInventory() };
+  const stat = lstatOrNull(path);
+  if (stat === null) return { status: 'missing', inventory: emptyCodexAgentInventory(), digest: null };
   try {
-    const parsed = JSON.parse(readFileSync(path, 'utf8')) as Partial<CodexAgentInventory>;
+    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('inventory is not a physical file');
+    const content = readFileSync(path);
+    const parsed = JSON.parse(content.toString('utf8')) as Partial<CodexAgentInventory>;
     if (
       parsed.version !== 1 ||
       parsed.managedBy !== CODEX_AGENT_INVENTORY_OWNER ||
@@ -329,11 +510,16 @@ function readCodexAgentInventory(codexHome: string): {
     ) {
       throw new Error('invalid inventory schema');
     }
-    return { status: 'valid', inventory: parsed as CodexAgentInventory };
+    return {
+      status: 'valid',
+      inventory: parsed as CodexAgentInventory,
+      digest: createHash('sha256').update(content).digest('hex'),
+    };
   } catch (error) {
     return {
       status: 'corrupt',
       inventory: emptyCodexAgentInventory(),
+      digest: null,
       error: error instanceof Error ? error.message : String(error),
     };
   }
@@ -355,7 +541,8 @@ function classifyCodexAgentFile(path: string, recorded: { digest: string } | und
   try {
     const stat = lstatSync(path);
     if (!stat.isFile() || stat.isSymbolicLink()) return recorded === undefined ? 'user-owned' : 'managed-modified';
-  } catch {
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     return 'absent';
   }
   if (recorded === undefined) return 'user-owned';
@@ -404,9 +591,10 @@ export interface CodexAgentTransactionOptions {
 }
 
 interface CodexAgentTransactionJournal {
-  version: 1;
-  operations: Array<{ name: string; nextDigest: string | null; hadTarget: boolean }>;
+  version: 2;
+  operations: Array<{ name: string; nextDigest: string | null; beforeDigest: string | null; hadTarget: boolean }>;
   inventoryDigest: string | null;
+  inventoryBeforeDigest: string | null;
   inventoryHadTarget: boolean;
 }
 
@@ -421,7 +609,8 @@ function pathExists(path: string): boolean {
   try {
     lstatSync(path);
     return true;
-  } catch {
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     return false;
   }
 }
@@ -429,7 +618,7 @@ function pathExists(path: string): boolean {
 function readRoleTransactionJournal(path: string): CodexAgentTransactionJournal {
   const parsed = JSON.parse(readFileSync(path, 'utf8')) as Partial<CodexAgentTransactionJournal>;
   if (
-    parsed.version !== 1 ||
+    parsed.version !== 2 ||
     !Array.isArray(parsed.operations) ||
     parsed.operations.some(
       (op) =>
@@ -437,15 +626,24 @@ function readRoleTransactionJournal(path: string): CodexAgentTransactionJournal 
         op === null ||
         !CODEX_AGENT_NAME_RE.test((op as { name?: string }).name ?? '') ||
         typeof (op as { hadTarget?: unknown }).hadTarget !== 'boolean' ||
+        !isOptionalPhysicalDigest((op as { beforeDigest?: unknown }).beforeDigest) ||
         ((op as { nextDigest?: unknown }).nextDigest !== null &&
-          !/^[a-f0-9]{64}$/.test(String((op as { nextDigest?: unknown }).nextDigest))),
+          !/^[a-f0-9]{64}$/.test(String((op as { nextDigest?: unknown }).nextDigest))) ||
+        (op as { hadTarget: boolean; beforeDigest: string | null }).hadTarget !==
+          ((op as { beforeDigest: string | null }).beforeDigest !== null),
     ) ||
     (parsed.inventoryDigest !== null && !/^[a-f0-9]{64}$/.test(String(parsed.inventoryDigest))) ||
-    typeof parsed.inventoryHadTarget !== 'boolean'
+    !isOptionalPhysicalDigest(parsed.inventoryBeforeDigest) ||
+    typeof parsed.inventoryHadTarget !== 'boolean' ||
+    parsed.inventoryHadTarget !== (parsed.inventoryBeforeDigest !== null)
   ) {
     throw new Error(`invalid role-agent transaction journal: ${path}`);
   }
   return parsed as CodexAgentTransactionJournal;
+}
+
+function isOptionalPhysicalDigest(value: unknown): value is string | null {
+  return value === null || (typeof value === 'string' && /^[a-f0-9]{64}$/.test(value));
 }
 
 function rollbackRoleTransaction(
@@ -455,28 +653,47 @@ function rollbackRoleTransaction(
 ): void {
   const beforeDir = join(transactionDir, 'before');
   for (const operation of journal.operations) {
-    const target = join(agentsDir, operation.name);
-    const before = join(beforeDir, operation.name);
-    if (pathExists(before)) {
-      if (pathExists(target)) {
-        if (operation.nextDigest === null || fileDigest(target) !== operation.nextDigest) {
-          throw new Error(`role-agent transaction target changed during recovery: ${target}`);
-        }
-        rmSync(target, { recursive: true, force: true });
-      }
-      renameSync(before, target);
-    } else if (!operation.hadTarget && pathExists(target)) {
+    rollbackRoleOperation(agentsDir, beforeDir, operation);
+  }
+  rollbackRoleInventory(agentsDir, beforeDir, journal);
+  rmSync(transactionDir, { recursive: true, force: true });
+}
+
+function rollbackRoleOperation(
+  agentsDir: string,
+  beforeDir: string,
+  operation: CodexAgentTransactionJournal['operations'][number],
+): void {
+  const target = join(agentsDir, operation.name);
+  const before = join(beforeDir, operation.name);
+  if (pathExists(before)) {
+    if (fileDigest(before) !== operation.beforeDigest) {
+      throw new Error(`role-agent transaction prior target changed during recovery: ${before}`);
+    }
+    if (pathExists(target)) {
       if (operation.nextDigest === null || fileDigest(target) !== operation.nextDigest) {
         throw new Error(`role-agent transaction target changed during recovery: ${target}`);
       }
       rmSync(target, { recursive: true, force: true });
-    } else if (operation.hadTarget && !pathExists(target)) {
-      throw new Error(`role-agent transaction lost its prior target during recovery: ${target}`);
     }
+    renameSync(before, target);
+  } else if (!operation.hadTarget && pathExists(target)) {
+    if (operation.nextDigest === null || fileDigest(target) !== operation.nextDigest) {
+      throw new Error(`role-agent transaction target changed during recovery: ${target}`);
+    }
+    rmSync(target, { recursive: true, force: true });
+  } else if (operation.hadTarget && fileDigest(target) !== operation.beforeDigest) {
+    throw new Error(`role-agent transaction lost its prior target during recovery: ${target}`);
   }
+}
+
+function rollbackRoleInventory(agentsDir: string, beforeDir: string, journal: CodexAgentTransactionJournal): void {
   const targetInventory = join(agentsDir, CODEX_AGENT_INVENTORY_NAME);
   const beforeInventory = join(beforeDir, CODEX_AGENT_INVENTORY_NAME);
   if (pathExists(beforeInventory)) {
+    if (fileDigest(beforeInventory) !== journal.inventoryBeforeDigest) {
+      throw new Error(`role-agent transaction prior inventory changed during recovery: ${beforeInventory}`);
+    }
     if (pathExists(targetInventory)) {
       if (journal.inventoryDigest === null || fileDigest(targetInventory) !== journal.inventoryDigest) {
         throw new Error(`role-agent inventory changed during recovery: ${targetInventory}`);
@@ -489,10 +706,11 @@ function rollbackRoleTransaction(
       throw new Error(`role-agent inventory changed during recovery: ${targetInventory}`);
     }
     rmSync(targetInventory, { force: true });
-  } else if (journal.inventoryHadTarget && !pathExists(targetInventory)) {
-    throw new Error(`role-agent transaction lost its prior inventory during recovery: ${targetInventory}`);
+  } else if (journal.inventoryHadTarget) {
+    if (fileDigest(targetInventory) !== journal.inventoryBeforeDigest) {
+      throw new Error(`role-agent transaction lost its prior inventory during recovery: ${targetInventory}`);
+    }
   }
-  rmSync(transactionDir, { recursive: true, force: true });
 }
 
 function recoverRoleAgentTransactions(agentsDir: string): void {
@@ -522,23 +740,32 @@ function publishRoleAgentTransaction(
   writes: Map<string, Buffer>,
   removals: string[],
   inventory: CodexAgentInventory,
+  expected: Map<string, string | null>,
+  expectedInventoryDigest: string | null,
   options: CodexAgentTransactionOptions,
 ): void {
   const operations = [
     ...[...writes].map(([name, content]) => ({
       name,
       nextDigest: digestBytes(content),
-      hadTarget: pathExists(join(agentsDir, name)),
+      beforeDigest: expected.get(name) ?? null,
+      hadTarget: (expected.get(name) ?? null) !== null,
     })),
-    ...removals.map((name) => ({ name, nextDigest: null, hadTarget: pathExists(join(agentsDir, name)) })),
+    ...removals.map((name) => ({
+      name,
+      nextDigest: null,
+      beforeDigest: expected.get(name) ?? null,
+      hadTarget: (expected.get(name) ?? null) !== null,
+    })),
   ].sort((a, b) => a.name.localeCompare(b.name));
   const inventoryContent =
     Object.keys(inventory.files).length === 0 ? null : Buffer.from(`${JSON.stringify(inventory, null, 2)}\n`);
   const journal: CodexAgentTransactionJournal = {
-    version: 1,
+    version: 2,
     operations,
     inventoryDigest: inventoryContent === null ? null : digestBytes(inventoryContent),
-    inventoryHadTarget: pathExists(join(agentsDir, CODEX_AGENT_INVENTORY_NAME)),
+    inventoryBeforeDigest: expectedInventoryDigest,
+    inventoryHadTarget: expectedInventoryDigest !== null,
   };
   const transactionName = `${process.pid}-${Date.now()}-${randomTransactionSuffix()}`;
   const preparationDir = join(agentsDir, `${CODEX_AGENT_PREPARATION_PREFIX}${transactionName}`);
@@ -556,21 +783,36 @@ function publishRoleAgentTransaction(
   renameSync(preparationDir, transactionDir);
   const publishedStagedDir = join(transactionDir, 'staged');
   const publishedBeforeDir = join(transactionDir, 'before');
+  let promotionsStarted = false;
 
   try {
+    // Test hooks run before every authorization check and before any mutation,
+    // so an injected race cannot leave a partially promoted batch.
     for (const operation of operations) {
       options.beforePromotion?.(`payload:${operation.name}`);
+      assertExpectedRoleFile(join(agentsDir, operation.name), operation.beforeDigest);
+    }
+    options.beforePromotion?.('inventory');
+    assertExpectedRoleFile(join(agentsDir, CODEX_AGENT_INVENTORY_NAME), expectedInventoryDigest);
+
+    promotionsStarted = true;
+    for (const operation of operations) {
       const target = join(agentsDir, operation.name);
+      assertExpectedRoleFile(target, operation.beforeDigest);
       if (pathExists(target)) renameSync(target, join(publishedBeforeDir, operation.name));
       if (operation.nextDigest !== null) renameSync(join(publishedStagedDir, operation.name), target);
     }
-    options.beforePromotion?.('inventory');
     const targetInventory = join(agentsDir, CODEX_AGENT_INVENTORY_NAME);
+    assertExpectedRoleFile(targetInventory, expectedInventoryDigest);
     if (pathExists(targetInventory)) renameSync(targetInventory, join(publishedBeforeDir, CODEX_AGENT_INVENTORY_NAME));
     if (inventoryContent !== null) renameSync(join(publishedStagedDir, CODEX_AGENT_INVENTORY_NAME), targetInventory);
     writeFileSync(join(transactionDir, 'COMMITTED'), 'ok\n');
     rmSync(transactionDir, { recursive: true, force: true });
   } catch (error) {
+    if (error instanceof RoleAgentConflictError && !promotionsStarted) {
+      const conflict = preserveRoleAgentConflict(transactionDir);
+      throw new RoleAgentConflictError(`${error.message}; kept live and incoming versions at ${conflict}`);
+    }
     try {
       rollbackRoleTransaction(agentsDir, transactionDir, journal);
     } catch (rollbackError) {
@@ -580,6 +822,34 @@ function publishRoleAgentTransaction(
     }
     throw error;
   }
+}
+
+class RoleAgentConflictError extends Error {}
+
+function assertExpectedRoleFile(path: string, expectedDigest: string | null): void {
+  const stat = lstatOrNull(path);
+  if (expectedDigest === null) {
+    if (stat !== null) throw new RoleAgentConflictError(`role-agent target appeared before promotion: ${path}`);
+    return;
+  }
+  if (stat === null || !stat.isFile() || stat.isSymbolicLink() || fileDigest(path) !== expectedDigest) {
+    throw new RoleAgentConflictError(`role-agent target changed before promotion: ${path}`);
+  }
+}
+
+function lstatOrNull(path: string): Stats | null {
+  try {
+    return lstatSync(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+function preserveRoleAgentConflict(transactionDir: string): string {
+  const conflict = transactionDir.replace(CODEX_AGENT_TRANSACTION_PREFIX, '.genie-role-agents.conflict-');
+  renameSync(transactionDir, conflict);
+  return conflict;
 }
 
 function randomTransactionSuffix(): string {
@@ -603,6 +873,7 @@ export function installCodexAgents(
     );
   }
   const inventory: CodexAgentInventory = JSON.parse(JSON.stringify(state.inventory)) as CodexAgentInventory;
+  const acceptedInventoryDigest = state.digest;
   const result: CodexAgentInstallResult = {
     installed: 0,
     skippedUserOwned: [],
@@ -612,6 +883,7 @@ export function installCodexAgents(
   };
   const writes = new Map<string, Buffer>();
   const removals: string[] = [];
+  const expected = new Map<string, string | null>();
   const sourceNames = readdirSync(source)
     .filter((name) => CODEX_AGENT_NAME_RE.test(name))
     .sort();
@@ -638,6 +910,7 @@ export function installCodexAgents(
     }
     if (ownership === 'absent' || inventory.files[name]?.digest !== sourceDigest) {
       writes.set(name, sourceContent);
+      expected.set(name, ownership === 'absent' ? null : (inventory.files[name]?.digest ?? null));
     }
     inventory.files[name] = { digest: sourceDigest };
     result.installed += 1;
@@ -648,15 +921,23 @@ export function installCodexAgents(
     const ownership = classifyCodexAgentFile(targetPath, inventory.files[name]);
     if (ownership === 'managed-clean') {
       removals.push(name);
+      expected.set(name, inventory.files[name]?.digest ?? null);
       result.removed.push(name);
     } else if (ownership === 'managed-modified') {
       result.keptModified.push(name);
     }
     delete inventory.files[name];
   }
-  const currentInventory = readCodexAgentInventory(codexHome).inventory;
-  if (writes.size > 0 || removals.length > 0 || JSON.stringify(currentInventory) !== JSON.stringify(inventory)) {
-    publishRoleAgentTransaction(target, writes, removals, inventory, transactionOptions);
+  if (writes.size > 0 || removals.length > 0 || JSON.stringify(state.inventory) !== JSON.stringify(inventory)) {
+    publishRoleAgentTransaction(
+      target,
+      writes,
+      removals,
+      inventory,
+      expected,
+      acceptedInventoryDigest,
+      transactionOptions,
+    );
   }
   return result;
 }
@@ -811,6 +1092,9 @@ function addCodexMarketplace(runner: CommandRunner, command: string, bundleRoot:
   if (result.timedOut) {
     throw new IntegrationCommandError(`codex ${args.join(' ')} timed out after ${timeoutMs}ms`, true);
   }
+  if (result.outputOverflow) {
+    throw new IntegrationCommandError(`codex ${args.join(' ')} exceeded the output safety limit`);
+  }
   if (result.exitCode === 0) return;
   const output = `${result.stdout}\n${result.stderr}`;
   if (/different source/i.test(output)) {
@@ -830,13 +1114,13 @@ function requireCodexPluginState(raw: string, phase: string): RuntimePluginState
 }
 
 interface RefreshIntent {
-  schemaVersion: 2;
+  schemaVersion: 3;
   runtime: RuntimeName;
   installed: true;
   enabled: boolean;
   createdAt: string;
-  /** Only `removed` authorizes recovery of an absent plugin. */
-  phase: 'planned' | 'removed';
+  /** Any non-planned phase proves Genie authorized the destructive repair. */
+  phase: 'planned' | 'removal-authorized' | 'removed';
 }
 
 export interface ConvergePluginOptions {
@@ -987,7 +1271,7 @@ function fingerprintPhysicalPluginTree(root: string): string {
           path,
           kind: 'file',
           executable: (stat.mode & 0o111) !== 0,
-          digest: createHash('sha256').update(readFileSync(absolute)).digest('hex'),
+          digest: hashPhysicalFileIncrementally(absolute),
         });
       } else {
         throw new Error(`payload contains an unsupported entry: ${absolute}`);
@@ -1003,12 +1287,29 @@ function fingerprintPhysicalPluginTree(root: string): string {
   return digest.digest('hex');
 }
 
+function hashPhysicalFileIncrementally(path: string): string {
+  const fd = openSync(path, 'r');
+  const digest = createHash('sha256');
+  const buffer = Buffer.allocUnsafe(64 * 1024);
+  try {
+    for (;;) {
+      const bytesRead = readSync(fd, buffer, 0, buffer.length, null);
+      if (bytesRead === 0) break;
+      digest.update(buffer.subarray(0, bytesRead));
+    }
+    return digest.digest('hex');
+  } finally {
+    closeSync(fd);
+  }
+}
+
 function readRefreshIntent(path: string, runtime: RuntimeName): RefreshIntent | null {
   let stat: ReturnType<typeof lstatSync>;
   try {
     stat = lstatSync(path);
-  } catch {
-    return null;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
   }
   if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`refresh intent is not a physical file: ${path}`);
   let parsed: unknown;
@@ -1020,26 +1321,27 @@ function readRefreshIntent(path: string, runtime: RuntimeName): RefreshIntent | 
   if (
     typeof parsed !== 'object' ||
     parsed === null ||
-    ![1, 2].includes(Number(Reflect.get(parsed, 'schemaVersion'))) ||
+    ![1, 2, 3].includes(Number(Reflect.get(parsed, 'schemaVersion'))) ||
     Reflect.get(parsed, 'runtime') !== runtime ||
     Reflect.get(parsed, 'installed') !== true ||
     typeof Reflect.get(parsed, 'enabled') !== 'boolean' ||
     typeof Reflect.get(parsed, 'createdAt') !== 'string' ||
-    (Reflect.get(parsed, 'schemaVersion') === 2 &&
-      !['planned', 'removed'].includes(String(Reflect.get(parsed, 'phase'))))
+    ([2, 3].includes(Number(Reflect.get(parsed, 'schemaVersion'))) &&
+      !['planned', 'removal-authorized', 'removed'].includes(String(Reflect.get(parsed, 'phase'))))
   ) {
     throw new Error(`refresh intent has an invalid schema: ${path}`);
   }
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     runtime,
     installed: true,
     enabled: Reflect.get(parsed, 'enabled') as boolean,
     createdAt: Reflect.get(parsed, 'createdAt') as string,
     // Legacy intents predate mutation-phase evidence and must never authorize a
     // reinstall of an absent plugin.
-    phase:
-      Reflect.get(parsed, 'schemaVersion') === 2 ? (Reflect.get(parsed, 'phase') as RefreshIntent['phase']) : 'planned',
+    phase: [2, 3].includes(Number(Reflect.get(parsed, 'schemaVersion')))
+      ? (Reflect.get(parsed, 'phase') as RefreshIntent['phase'])
+      : 'planned',
   };
 }
 
@@ -1056,13 +1358,19 @@ function clearRefreshIntent(path: string): void {
 
 function plannedRefreshIntent(runtime: RuntimeName, enabled: boolean): RefreshIntent {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     runtime,
     installed: true,
     enabled,
     createdAt: new Date().toISOString(),
     phase: 'planned',
   };
+}
+
+function authorizeRefreshRemoval(path: string, intent: RefreshIntent): RefreshIntent {
+  const authorized = { ...intent, phase: 'removal-authorized' as const };
+  writeRefreshIntent(path, authorized);
+  return authorized;
 }
 
 function markRefreshRemoved(path: string, intent: RefreshIntent): RefreshIntent {
@@ -1098,6 +1406,7 @@ function convergeCodexPayloadIdentity(
   options: ConvergePluginOptions,
   installed: RuntimePluginState,
   timeoutMs: number,
+  authorizeRemoval: () => void,
   markRemoved: () => void,
 ): RuntimePluginState {
   const verifyPayload = options.verifyCodexPayload ?? verifyCodexPhysicalPayload;
@@ -1113,6 +1422,7 @@ function convergeCodexPayloadIdentity(
     // Same-version caches can still originate from the wrong marketplace.
     // Force one canonical source re-registration and reinstall, then require
     // physical identity again before clearing the durable intent.
+    authorizeRemoval();
     runChecked(options.runner, options.command, ['plugin', 'remove', 'genie@automagik', '--json'], true, timeoutMs);
     markRemoved();
     runChecked(
@@ -1159,7 +1469,7 @@ export function convergeCodexPlugin(options: ConvergePluginOptions): Integration
       runChecked(options.runner, options.command, ['plugin', 'list', '--json'], false, timeoutMs).stdout,
       'before plugin convergence',
     );
-    if (!before.installed && !options.installIfAbsent && intent?.phase !== 'removed') {
+    if (!before.installed && !options.installIfAbsent && (intent === null || intent.phase === 'planned')) {
       if (intent !== null) clearRefreshIntent(options.statePath);
       return null;
     }
@@ -1167,6 +1477,12 @@ export function convergeCodexPlugin(options: ConvergePluginOptions): Integration
     writeRefreshIntent(options.statePath, intent);
 
     addCodexMarketplace(options.runner, options.command, options.bundleRoot, timeoutMs);
+    // `plugin add` may refresh an existing cache internally. Authorize repair
+    // before that potentially destructive boundary, not only before the later
+    // explicit remove/reinstall fallback.
+    if (before.installed && intent.phase === 'planned') {
+      intent = authorizeRefreshRemoval(options.statePath, intent);
+    }
     runChecked(options.runner, options.command, ['plugin', 'add', 'genie@automagik', '--json'], false, timeoutMs);
     let installed = requireCodexPluginState(
       runChecked(options.runner, options.command, ['plugin', 'list', '--json'], false, timeoutMs).stdout,
@@ -1174,6 +1490,7 @@ export function convergeCodexPlugin(options: ConvergePluginOptions): Integration
     );
     if (!installed.installed) throw new IntegrationCommandError('Codex plugin is missing after plugin add');
     if (installed.installed && installed.version !== options.expectedVersion) {
+      intent = authorizeRefreshRemoval(options.statePath, intent);
       runChecked(options.runner, options.command, ['plugin', 'remove', 'genie@automagik', '--json'], true, timeoutMs);
       intent = markRefreshRemoved(options.statePath, intent);
       runChecked(options.runner, options.command, ['plugin', 'add', 'genie@automagik', '--json'], false, timeoutMs);
@@ -1188,9 +1505,17 @@ export function convergeCodexPlugin(options: ConvergePluginOptions): Integration
         `codex plugin stuck at v${installed.version || 'missing'} (expected v${options.expectedVersion}) — marketplace root may be stale`,
       );
     }
-    installed = convergeCodexPayloadIdentity(options, installed, timeoutMs, () => {
-      intent = markRefreshRemoved(options.statePath, intent as RefreshIntent);
-    });
+    installed = convergeCodexPayloadIdentity(
+      options,
+      installed,
+      timeoutMs,
+      () => {
+        intent = authorizeRefreshRemoval(options.statePath, intent as RefreshIntent);
+      },
+      () => {
+        intent = markRefreshRemoved(options.statePath, intent as RefreshIntent);
+      },
+    );
     if (intent.enabled) {
       requireExpectedState('codex', installed, options.expectedVersion, true, 'enabled-state');
     }
@@ -1232,6 +1557,8 @@ function addClaudeMarketplace(runner: CommandRunner, command: string, bundleRoot
   const result = runner(command, args, { timeoutMs });
   if (result.timedOut)
     throw new IntegrationCommandError(`claude ${args.join(' ')} timed out after ${timeoutMs}ms`, true);
+  if (result.outputOverflow)
+    throw new IntegrationCommandError(`claude ${args.join(' ')} exceeded the output safety limit`);
   if (result.exitCode === 0) return;
   const output = `${result.stdout}\n${result.stderr}`;
   if (!/already|exists|configured|different source/i.test(output)) {
@@ -1245,6 +1572,7 @@ function convergeClaudePayloadIdentity(
   options: ConvergePluginOptions,
   installed: RuntimePluginState,
   timeoutMs: number,
+  authorizeRemoval: () => void,
   markRemoved: () => void,
 ): RuntimePluginState {
   const verifyPayload = options.verifyClaudePayload ?? verifyClaudePhysicalPayload;
@@ -1257,6 +1585,7 @@ function convergeClaudePayloadIdentity(
     verifyPayload(verificationInput);
     return installed;
   } catch (firstVerificationError) {
+    authorizeRemoval();
     runChecked(options.runner, options.command, ['plugin', 'uninstall', 'genie@automagik'], true, timeoutMs);
     markRemoved();
     runChecked(options.runner, options.command, ['plugin', 'marketplace', 'remove', 'automagik'], true, timeoutMs);
@@ -1293,7 +1622,7 @@ export function convergeClaudePlugin(options: ConvergePluginOptions): Integratio
       runChecked(options.runner, options.command, ['plugin', 'list', '--json'], false, timeoutMs).stdout,
       'before plugin convergence',
     );
-    if (!before.installed && !options.installIfAbsent && intent?.phase !== 'removed') {
+    if (!before.installed && !options.installIfAbsent && (intent === null || intent.phase === 'planned')) {
       if (intent !== null) clearRefreshIntent(options.statePath);
       return null;
     }
@@ -1301,6 +1630,12 @@ export function convergeClaudePlugin(options: ConvergePluginOptions): Integratio
     writeRefreshIntent(options.statePath, intent);
 
     addClaudeMarketplace(options.runner, options.command, options.bundleRoot, timeoutMs);
+    // Claude's update command may replace/remove the installed cache before it
+    // returns. Persist recovery authority first so a process death cannot be
+    // mistaken for a later manual uninstall.
+    if (before.installed && intent.phase === 'planned') {
+      intent = authorizeRefreshRemoval(options.statePath, intent);
+    }
     runChecked(
       options.runner,
       options.command,
@@ -1317,9 +1652,17 @@ export function convergeClaudePlugin(options: ConvergePluginOptions): Integratio
         `Claude plugin refresh reported v${installed.version || 'missing'}; expected v${options.expectedVersion}`,
       );
     }
-    installed = convergeClaudePayloadIdentity(options, installed, timeoutMs, () => {
-      intent = markRefreshRemoved(options.statePath, intent as RefreshIntent);
-    });
+    installed = convergeClaudePayloadIdentity(
+      options,
+      installed,
+      timeoutMs,
+      () => {
+        intent = authorizeRefreshRemoval(options.statePath, intent as RefreshIntent);
+      },
+      () => {
+        intent = markRefreshRemoved(options.statePath, intent as RefreshIntent);
+      },
+    );
     if (intent.enabled) requireExpectedState('claude', installed, options.expectedVersion, true, 'enabled-state');
   } catch (error) {
     primaryError = error;
@@ -1628,6 +1971,14 @@ function removalStep(
         ok: false,
         timedOut: true,
         detail: `timed out after ${timeoutMs}ms; retry the removal`,
+      };
+    }
+    if (result.outputOverflow) {
+      return {
+        runtime,
+        operation,
+        ok: false,
+        detail: 'command output exceeded the safety limit; retry the removal',
       };
     }
     if (result.exitCode !== 0) {

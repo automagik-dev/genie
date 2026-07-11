@@ -22,6 +22,7 @@ import {
   renameSync,
   rmSync,
   statSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -1578,6 +1579,51 @@ describe('durable pending delivery recovery', () => {
     }
   });
 
+  test('successful pending-delivery recovery prunes older backups for the recorded previous version', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-pending-prune-'));
+    const home = join(root, 'home');
+    const staging = join(home, 'bin', '.staging');
+    const extract = join(staging, 'extract-5.260711.7');
+    const tarball = join(staging, 'genie.tar.gz');
+    const journal = join(home, '.pending-delivery.json');
+    const previous = join(home, 'bin', '.previous');
+    mkdirSync(join(extract, 'plugins', 'genie'), { recursive: true });
+    mkdirSync(previous, { recursive: true });
+    writeFileSync(join(extract, 'genie'), 'verified binary');
+    writeFileSync(join(extract, 'plugins', 'genie', 'payload.txt'), 'fresh');
+    writeFileSync(tarball, 'verified');
+    const older = join(previous, 'genie-5.260711.6');
+    const retained = join(previous, 'genie-5.260711.6.retry');
+    writeFileSync(older, 'older rollback');
+    writeFileSync(retained, 'new rollback');
+    utimesSync(older, 1, 1);
+    utimesSync(retained, 2, 2);
+    try {
+      recordPendingDelivery(
+        {
+          version: '5.260711.7',
+          previousVersion: '5.260711.6',
+          extractDir: extract,
+          tarballPath: tarball,
+        },
+        journal,
+        staging,
+      );
+      expect(
+        resumePendingDelivery({
+          genieHome: home,
+          stagingRoot: staging,
+          pendingPath: journal,
+          ensureBinary: () => undefined,
+        }),
+      ).toBe(true);
+      expect(existsSync(older)).toBe(false);
+      expect(readFileSync(retained, 'utf8')).toBe('new rollback');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('a failed resume retains the verified journal and succeeds on a normal retry', () => {
     const root = mkdtempSync(join(tmpdir(), 'genie-pending-retry-'));
     const home = join(root, 'home');
@@ -2210,6 +2256,31 @@ describe('operator-driven plugin refresh', () => {
 
     expect(results).toEqual([]);
     expect(calls).toEqual(['codex plugin list --json', 'claude plugin list --json']);
+  });
+
+  test('a Codex resolver failure does not suppress the independently selected Claude refresh', () => {
+    const resolved: string[] = [];
+    const calls: string[] = [];
+    const results = refreshUpdatePlugins({
+      bundleRoot: '/tmp/fixture-bundle',
+      expectedVersion: '5.260711.3',
+      stateDir: pluginStateDir,
+      selection: 'all',
+      detected: { codex: true, claude: true },
+      resolveExecutable(name) {
+        resolved.push(name);
+        if (name === 'codex') throw new Error('unsafe Codex executable');
+        return '/fixture/claude';
+      },
+      runner(command, args) {
+        calls.push(`${command} ${args.join(' ')}`);
+        return { exitCode: 0, stdout: '[]', stderr: '' };
+      },
+    });
+
+    expect(resolved).toEqual(['codex', 'claude']);
+    expect(calls).toEqual(['/fixture/claude plugin list --json']);
+    expect(results).toEqual([{ runtime: 'codex', ok: false, detail: 'unsafe Codex executable' }]);
   });
 
   test('indeterminate pre-update state fails closed without installing either integration', () => {

@@ -22,6 +22,7 @@ import { execSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { replaceTopLevelStringProperty } from './json-top-level-string.js';
 import { assertPluginSkillsInSync } from './sync-plugin-skills.ts';
 
 // Count existing versions for today from git tags
@@ -60,9 +61,7 @@ export async function updateJsonVersion(filePath: string, version: string): Prom
     const source = await readFile(filePath, 'utf-8');
     const json = JSON.parse(source) as { version?: unknown };
     if (typeof json.version !== 'string') throw new Error('top-level version must be a string');
-    const updated = source.replace(/("version"\s*:\s*)"[^"]*"/, `$1"${version}"`);
-    if (updated === source && json.version !== version) throw new Error('could not locate top-level version field');
-    JSON.parse(updated);
+    const updated = replaceTopLevelStringProperty(source, 'version', version);
     await writeFile(filePath, updated);
     console.log(`  ✓ ${filePath}`);
     return true;
@@ -104,7 +103,7 @@ async function assertVersionFileShape(filePath: string): Promise<void> {
   const parsed: unknown = JSON.parse(source);
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('metadata must be an object');
   if (typeof Reflect.get(parsed, 'version') !== 'string') throw new Error('top-level version must be a string');
-  if (!/("version"\s*:\s*)"[^"]*"/.test(source)) throw new Error('could not locate top-level version field');
+  replaceTopLevelStringProperty(source, 'version', Reflect.get(parsed, 'version') as string);
 }
 
 async function assertClaudeMarketplaceShape(filePath: string): Promise<void> {

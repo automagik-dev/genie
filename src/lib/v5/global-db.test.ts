@@ -8,10 +8,13 @@ import {
   GLOBAL_SCHEMA_VERSION,
   MIGRATED_STATUS_SENTINEL,
   MalformedDbError,
+  acquireServiceLease,
   clearAgentSessionIfCurrent,
   getAgentSession,
   insertAgentSessionIfAbsent,
   openGlobalDb,
+  releaseServiceLease,
+  renewServiceLease,
   replaceAgentSessionIfCurrent,
   resolveGlobalDbPath,
   upsertAgentSession,
@@ -67,7 +70,7 @@ describe('openGlobalDb schema init', () => {
     db2.close();
 
     expect(userVersion(path)).toBe(GLOBAL_SCHEMA_VERSION);
-    expect(tables).toEqual(['agent_sessions', 'approvals', 'inbound_messages']);
+    expect(tables).toEqual(['agent_sessions', 'approvals', 'inbound_messages', 'service_leases']);
   });
 
   test('WAL journal mode is enabled', () => {
@@ -82,6 +85,44 @@ describe('openGlobalDb schema init', () => {
     const db = openGlobalDb({ path });
     db.close();
     expect(existsSync(path)).toBe(true);
+  });
+
+  test('repairs an interrupted event-idempotency index migration on reopen', () => {
+    const db1 = openGlobalDb();
+    db1.exec('DROP INDEX idx_inbound_event_key');
+    db1.close();
+
+    const db2 = openGlobalDb();
+    try {
+      const index = (
+        db2.query('PRAGMA index_list(inbound_messages)').all() as Array<{
+          name: string;
+          unique: number;
+          partial: number;
+        }>
+      ).find((entry) => entry.name === 'idx_inbound_event_key');
+      expect(index).toMatchObject({ unique: 1, partial: 1 });
+    } finally {
+      db2.close();
+    }
+  });
+});
+
+describe('machine-scoped service leases', () => {
+  test('permits one owner, fences non-owners, renews, expires, and token-checks release', () => {
+    const db = openGlobalDb();
+    try {
+      expect(acquireServiceLease(db, 'omni-serve', 'owner-a', 100, 50)).toBe(true);
+      expect(acquireServiceLease(db, 'omni-serve', 'owner-b', 149, 50)).toBe(false);
+      expect(renewServiceLease(db, 'omni-serve', 'owner-b', 149, 50)).toBe(false);
+      expect(renewServiceLease(db, 'omni-serve', 'owner-a', 140, 50)).toBe(true);
+      expect(acquireServiceLease(db, 'omni-serve', 'owner-b', 189, 50)).toBe(false);
+      expect(acquireServiceLease(db, 'omni-serve', 'owner-b', 190, 50)).toBe(true);
+      expect(releaseServiceLease(db, 'omni-serve', 'owner-a')).toBe(false);
+      expect(releaseServiceLease(db, 'omni-serve', 'owner-b')).toBe(true);
+    } finally {
+      db.close();
+    }
   });
 });
 
@@ -154,6 +195,9 @@ describe('openGlobalDb additive column backfill (last_status_glyph)', () => {
     const db = openGlobalDb({ path });
     try {
       expect(columns(db, 'approvals').has('last_status_glyph')).toBe(true);
+      expect(columns(db, 'approvals').has('announce_claim')).toBe(true);
+      expect(columns(db, 'inbound_messages').has('event_key')).toBe(true);
+      expect(columns(db, 'inbound_messages').has('processing_claim')).toBe(true);
       const row = db.query("SELECT last_status_glyph FROM approvals WHERE id = 'appr_old'").get() as {
         last_status_glyph: string | null;
       };

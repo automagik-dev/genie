@@ -36,6 +36,11 @@ Close inherited stable-publication risks that are unchanged by PR #2545 but stil
 | 1 | Stable authorization is a protected release gate, not a workflow input | A dispatcher must not turn an arbitrary ref into a signed stable release. |
 | 2 | Repository code and GitHub Environment/ruleset evidence are both required | Code alone cannot prove the documented second-maintainer approval. |
 
+## Dependencies
+
+**depends-on:** none
+**blocks:** none
+
 ## Success Criteria
 
 - [ ] Stable artifacts can originate only from the approved protected ref/tag SHA after required CI.

@@ -57,6 +57,7 @@ TARGET="$(bun_target_for "$PLATFORM")" || { echo "error: unsupported platform: $
 bun "${REPO_ROOT}/scripts/sync-plugin-skills.ts" --check
 bun "${REPO_ROOT}/scripts/fresh-install-smoke.ts"
 bun "${REPO_ROOT}/scripts/hook-bundle-parity.ts" --check
+bun "${REPO_ROOT}/scripts/plugin-executables-check.ts"
 bun "${REPO_ROOT}/scripts/release-payload-version.ts" --verify-source "${REPO_ROOT}"
 
 STAGE="${DIST_DIR}/${PLATFORM}"
@@ -74,9 +75,44 @@ cp -R "${REPO_ROOT}/plugins"   "${STAGE}/plugins"
 cp -R "${REPO_ROOT}/skills"    "${STAGE}/skills"
 cp -R "${REPO_ROOT}/templates" "${STAGE}/templates"
 cp "${REPO_ROOT}/LICENSE"       "${STAGE}/LICENSE"
-# Plugin tests validate the source checkout; they are not runtime payload and
-# must not change test discovery merely because a contributor built a release.
-find "${STAGE}/plugins" -type f \( -name '*.test.*' -o -name '*.spec.*' \) -delete
+
+# Tests validate the source checkout; no language's test sources or discovery
+# directories belong in the runtime archive. Keep deletion and assertion
+# separate so a newly introduced convention fails closed.
+prune_release_tests() {
+  local root="$1"
+  find "${root}" -type d \( \
+    -iname test -o -iname tests -o -iname __test__ -o -iname __tests__ -o \
+    -iname spec -o -iname specs \
+  \) -prune -exec rm -rf {} +
+  find "${root}" -type f \( \
+    -iname '*.test.*' -o -iname '*.spec.*' -o \
+    -iname 'test_*.*' -o -iname '*_test.*' -o \
+    -iname 'spec_*.*' -o -iname '*_spec.*' -o \
+    -iname 'test.*' -o -iname 'spec.*' \
+  \) -delete
+}
+
+assert_no_release_tests() {
+  local root="$1"
+  local found
+  found="$(find "${root}" \( \
+    \( -type d \( \
+      -iname test -o -iname tests -o -iname __test__ -o -iname __tests__ -o \
+      -iname spec -o -iname specs \
+    \) \) -o \
+    \( -type f \( \
+      -iname '*.test.*' -o -iname '*.spec.*' -o \
+      -iname 'test_*.*' -o -iname '*_test.*' -o \
+      -iname 'spec_*.*' -o -iname '*_spec.*' -o \
+      -iname 'test.*' -o -iname 'spec.*' \
+    \) \) \
+    \) -print -quit)"
+  [[ -z "${found}" ]] || { echo "error: release payload contains test source ${found#"${root}/"}" >&2; return 1; }
+}
+
+prune_release_tests "${STAGE}"
+assert_no_release_tests "${STAGE}"
 mkdir -p "${STAGE}/.agents/plugins" "${STAGE}/.claude-plugin"
 cp "${REPO_ROOT}/.agents/plugins/marketplace.json" "${STAGE}/.agents/plugins/marketplace.json"
 cp "${REPO_ROOT}/.claude-plugin/marketplace.json" "${STAGE}/.claude-plugin/marketplace.json"
@@ -121,6 +157,7 @@ tar czf "${TARBALL}" -C "${STAGE}" .
 VERIFY_ROOT="$(mktemp -d "${DIST_DIR}/.verify-${PLATFORM}.XXXXXX")"
 trap 'rm -rf "${VERIFY_ROOT}"' EXIT
 tar -xzf "${TARBALL}" -C "${VERIFY_ROOT}"
+assert_no_release_tests "${VERIFY_ROOT}"
 
 assert_release_tree_equal() {
   local source_root="$1"

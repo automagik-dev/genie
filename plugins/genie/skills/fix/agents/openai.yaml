@@ -1,4 +1,4 @@
 interface:
   display_name: "Fix Loop"
   short_description: "Run a bounded fix and independent re-review loop"
-  default_prompt: "Use $genie:fix (or $fix only for a separately installed personal copy) to resolve these validated gaps and obtain a fresh re-review."
+  default_prompt: "Use $genie:fix (or $fix only when intentionally selecting its user-tier copy) to resolve these validated gaps and obtain a fresh re-review."

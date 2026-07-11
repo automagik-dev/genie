@@ -5,7 +5,7 @@ description: "Validate plans, execution, or PRs against wish criteria — return
 
 # review — Universal Review Gate
 
-**Runtime syntax:** in Codex, invoke the plugin copy with the owner-qualified `$genie:<skill>` selector; use bare `$<skill>` only for a separately installed personal copy. Claude Code and Hermes use `/<skill>`. Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active tier.
+**Runtime syntax:** in Codex, invoke the plugin copy with the owner-qualified `$genie:<skill>` selector; use bare `$<skill>` only when intentionally selecting a user-tier copy (CLI-managed fallback or separately installed personal skill). Claude Code and Hermes use `/<skill>`. Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active tier.
 
 Validate a design, wish plan, completed execution, or PR against its governing criteria. Dispatch as a subagent — never review your own work inline. The deliverable is findings plus a verdict: report and stop — never implement fixes, however small.
 

@@ -49,7 +49,7 @@ export interface InstallOptions {
 }
 
 type V4CleanupRunner = typeof cleanupV4;
-type NormalizeAuxLayoutFn = (genieHome: string) => unknown;
+type NormalizeAuxLayoutFn = (genieHome: string) => AuxiliaryTreeOutcome[] | undefined;
 type AgentSyncRunner = (selection: IntegrationSelection) => void;
 type IntegrationRunner = (options?: InstallIntegrationsOptions) => ReturnType<typeof installRuntimeIntegrations>;
 type LifecycleLeaseAcquirer = () => LifecycleLease | { skipped: string };
@@ -134,10 +134,9 @@ export function installCommand(
     // Converge only selected agent homes: fix the bin/ layout mismatch, then sync in-process
     // (the freshly-linked binary is already this version, so no re-exec needed).
     const normalized = normalizeLayout(GENIE_HOME);
-    if (Array.isArray(normalized)) {
-      const outcomes = normalized as AuxiliaryTreeOutcome[];
-      for (const outcome of outcomes) printAuxiliaryOutcome(outcome);
-      const failed = outcomes.filter((outcome) => outcome.status === 'failed');
+    if (normalized !== undefined) {
+      for (const outcome of normalized) printAuxiliaryOutcome(outcome);
+      const failed = normalized.filter((outcome) => outcome.status === 'failed');
       if (failed.length > 0) {
         throw new Error(`Install payload convergence failed: ${failed.map((outcome) => outcome.label).join(', ')}`);
       }

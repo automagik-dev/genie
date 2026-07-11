@@ -12,7 +12,13 @@ function wish(date: string, executionStrategy: string): string {
 
 | Field | Value |
 |-------|-------|
+| **Status** | DRAFT |
 | **Date** | ${date} |
+
+## Dependencies
+
+**depends-on:** none
+**blocks:** none
 
 ## Execution Strategy
 
@@ -28,8 +34,8 @@ function runLint(): { code: number; stderr: string } {
   return { code: result.exitCode, stderr: result.stderr.toString() };
 }
 
-function writeWish(contents: string): void {
-  const wishDir = join(wishesDir, 'fixture');
+function writeWish(contents: string, slug = 'fixture'): void {
+  const wishDir = join(wishesDir, slug);
   mkdirSync(wishDir, { recursive: true });
   writeFileSync(join(wishDir, 'WISH.md'), contents);
 }
@@ -101,5 +107,44 @@ describe('wishes-lint Execution Strategy routing fields', () => {
     expect(result.code).toBe(1);
     expect(result.stderr).toContain('Design → ../../brainstorms/missing/DRAFT.md');
     expect(result.stderr).toContain('1 broken brainstorm link(s) across 1 wish file(s)');
+  });
+
+  test('rejects unsupported lifecycle status and missing mandatory dependency keys', () => {
+    const invalidStatus = wish('2026-07-08', 'No table required.').replace('DRAFT', 'SUPERSEDED IN PART');
+    writeWish(invalidStatus);
+    let result = runLint();
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain('unsupported wish status "SUPERSEDED IN PART"');
+
+    rmSync(join(wishesDir, 'fixture'), { recursive: true, force: true });
+    writeWish(wish('2026-07-08', 'No table required.').replace('**blocks:** none', ''));
+    result = runLint();
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain('exactly one **blocks:** key');
+  });
+
+  test('accepts historical terminal status without retrofitting dependency metadata', () => {
+    writeWish('| **Status** | DONE — historical |\n| **Date** | 2026-07-01 |\n');
+    expect(runLint().code).toBe(0);
+  });
+
+  test('rejects missing local references and dependency cycles', () => {
+    writeWish(wish('2026-07-08', 'No table required.').replace('**depends-on:** none', '**depends-on:** missing'));
+    let result = runLint();
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain('references missing wish slug "missing"');
+
+    rmSync(join(wishesDir, 'fixture'), { recursive: true, force: true });
+    writeWish(
+      wish('2026-07-08', 'No table required.').replace('**depends-on:** none', '**depends-on:** beta'),
+      'alpha',
+    );
+    writeWish(
+      wish('2026-07-08', 'No table required.').replace('**depends-on:** none', '**depends-on:** alpha'),
+      'beta',
+    );
+    result = runLint();
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain('wish dependency cycle:');
   });
 });

@@ -20,13 +20,14 @@ Official references:
 | Hooks | `plugins/genie/hooks/codex-hooks.json` | Exactly H3 SessionStart, H4 PreToolUse, H6 PermissionRequest; all require explicit `/hooks` review and a new task after definition changes |
 | MCP | `plugins/genie/.mcp.json` -> `scripts/mcp-launcher.cjs` | Starts only canonical `$GENIE_HOME/bin/genie mcp`; no PATH/shell fallback; unsafe/missing binary fails closed |
 | Optional roles | `plugins/genie/codex-agents/*.toml` -> `~/.codex/agents/` | Seven CLI-installed profiles. Plugin-only installations have no `genie_*` agents |
-| CLI-only user-tier fallback | `~/.agents/skills/<name>` | Explicit install/update may manage only digest-proven Genie copies; unmanaged, malformed, symlinked, or modified collisions are preserved |
+| CLI-managed user-tier fallback | `~/.agents/skills/<name>` | Codex-selected install/update may manage up to 23 digest-proven Genie copies; plugin-only install does not need it, and unmanaged, malformed, symlinked, or modified collisions are preserved |
 | Personal migration | 36 adapted skills and 14 custom agents in the maintainer's user tier | Separate user-owned installation; not part of the 23-skill product payload |
 
 Codex invokes plugin skills with the owner-qualified `$genie:<skill>` selector.
-Bare `$<skill>` selectors are reserved for separately installed personal
-copies; this distinction prevents a same-name personal workflow from silently
-winning manual plugin invocation.
+Bare `$<skill>` selectors intentionally select the user tier, which may be a
+CLI-managed fallback or separately installed personal copy. Owner-qualified
+`$genie:<skill>` prevents a same-name user workflow from silently winning
+manual plugin invocation.
 
 ## Hook contract
 
@@ -34,8 +35,8 @@ Codex hook trust is hash-specific and commands run outside the model tool sandbo
 
 | ID | Event | Matcher | Contract |
 |----|-------|---------|----------|
-| H3 | `SessionStart` | `startup|resume|clear|compact` | One local read-only pass, at most eight wish records and 2 KiB of validated slug/status/count context |
-| H4 | `PreToolUse` | `Bash|Write|Edit|apply_patch` | Portable plugin-local launcher; canonical Bash/apply_patch shapes; deterministic local guardrails only; no Omni |
+| H3 | `SessionStart` | `startup|resume|clear|compact` | One local read-only pass over at most 64 candidates/256 KiB; emits at most eight wish records and 2 KiB of validated slug/status/count context |
+| H4 | `PreToolUse` | `Bash|Write|Edit|apply_patch` | Branch/orchestration for Bash plus audit-context for edit inputs; deterministic and network-free in Codex; no freshness/identity handler or Omni |
 | H6 | `PermissionRequest` | `*` at the host, narrowed by configured registry matcher | Omni at most once when explicitly enabled; bounded/redacted preview; valid allow/deny envelope; failure/interruption/timeout denies |
 
 PreToolUse cannot intercept every possible mutation. It is defense in depth, not branch protection or a sandbox. The removed six commands installed/synchronized software, scaffolded `AGENTS.md`, validated at the wrong lifecycle points, repeatedly injected repository text, or emitted a protocol-inert Stop response.

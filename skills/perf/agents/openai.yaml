@@ -1,4 +1,4 @@
 interface:
   display_name: "Performance Review"
   short_description: "Measure cold starts, hot paths, and bottlenecks"
-  default_prompt: "Use $genie:perf (or $perf only for a separately installed personal copy) to measure this path and explain the observed bottleneck."
+  default_prompt: "Use $genie:perf (or $perf only when intentionally selecting its user-tier copy) to measure this path and explain the observed bottleneck."

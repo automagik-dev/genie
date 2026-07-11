@@ -186,20 +186,71 @@ function checkSkills(root: string | null): CheckResult[] {
   ];
 }
 
-function numericVersion(version: string): [number, number, number] | null {
-  const match = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(version.trim());
+interface ParsedSemVer {
+  core: [number, number, number];
+  prerelease: Array<number | string> | null;
+}
+
+function parseSemVer(version: string): ParsedSemVer | null {
+  const match =
+    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(
+      version.trim(),
+    );
   if (!match) return null;
-  return [Number(match[1]), Number(match[2]), Number(match[3])];
+  const core = [Number(match[1]), Number(match[2]), Number(match[3])] as [number, number, number];
+  if (core.some((part) => !Number.isSafeInteger(part))) return null;
+  const prerelease = match[4]
+    ? match[4].split('.').map((part) => {
+        if (!/^\d+$/.test(part)) return part;
+        if (part.length > 1 && part.startsWith('0')) return Number.NaN;
+        return Number(part);
+      })
+    : null;
+  if (prerelease?.some((part) => typeof part === 'number' && !Number.isSafeInteger(part))) return null;
+  return { core, prerelease };
+}
+
+function compareParts(left: number[], right: number[]): number {
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    if (left[index] !== right[index]) return (left[index] ?? -1) > (right[index] ?? -1) ? 1 : -1;
+  }
+  return 0;
+}
+
+function comparePrereleaseIdentifier(left: number | string, right: number | string): number {
+  if (left === right) return 0;
+  if (typeof left === 'number' && typeof right === 'number') return left > right ? 1 : -1;
+  if (typeof left === 'number') return -1;
+  if (typeof right === 'number') return 1;
+  return left > right ? 1 : -1;
+}
+
+function comparePrerelease(left: Array<number | string> | null, right: Array<number | string> | null): number {
+  if (left === null || right === null) {
+    if (left === right) return 0;
+    return left === null ? 1 : -1;
+  }
+  const length = Math.max(left.length, right.length);
+  for (let index = 0; index < length; index += 1) {
+    const a = left[index];
+    const b = right[index];
+    if (a === undefined || b === undefined) return a === undefined ? -1 : 1;
+    const comparison = comparePrereleaseIdentifier(a, b);
+    if (comparison !== 0) return comparison;
+  }
+  return 0;
+}
+
+function compareSemVer(left: ParsedSemVer, right: ParsedSemVer): number {
+  const core = compareParts(left.core, right.core);
+  return core === 0 ? comparePrerelease(left.prerelease, right.prerelease) : core;
 }
 
 function versionAtLeast(actual: string, minimum: string): boolean {
-  const left = numericVersion(actual);
-  const right = numericVersion(minimum);
+  const left = parseSemVer(actual);
+  const right = parseSemVer(minimum);
   if (!left || !right) return false;
-  for (let index = 0; index < left.length; index += 1) {
-    if (left[index] !== right[index]) return left[index] > right[index];
-  }
-  return true;
+  return compareSemVer(left, right) >= 0;
 }
 
 export function evaluateBunVersion(bunVersion: string | null, onPath: string | null): CheckResult[] {

@@ -7,11 +7,12 @@ This directory is the shared release payload for Claude Code and Codex. The two 
 | Surface | Delivery | Contract |
 |---------|----------|----------|
 | Product skills | The plugin contains 23 physical in-root skill directories, each with `SKILL.md` and `agents/openai.yaml` | Available to a plugin-only install; no escaping symlink and no user-tier copy required |
+| CLI-managed product fallbacks | A Codex-selected `genie install` and later `genie update` synchronize up to 23 digest-owned copies under `~/.agents/skills/<name>` | Bare selectors resolve this user tier; unmanaged, malformed, symlinked, or modified collisions are preserved rather than adopted |
 | Hooks | `.codex-plugin/plugin.json` points to `hooks/codex-hooks.json` | Three untrusted definitions only: H3 SessionStart context, H4 local PreToolUse guardrails, H6 PermissionRequest approval |
 | MCP | `.mcp.json` starts `scripts/mcp-launcher.cjs` | The launcher accepts only the canonical `$GENIE_HOME/bin/genie` (default `~/.genie/bin/genie`) and fails closed if it is absent or unsafe |
 | Role agents | Seven TOMLs are staged in `codex-agents/` | Plugins cannot install custom agents. `genie install` or `genie setup --codex` copies the optional profiles into `~/.codex/agents/` |
 
-The CLI-managed product payload is not the user's personal skill library. A maintainer may separately have 36 adapted skills under `~/.agents/skills`; those are user-owned, are not bundled here, and must survive update/uninstall byte-for-byte when unmanaged or modified.
+The CLI-managed product fallback is not the user's personal skill library. A maintainer may separately have 36 adapted skills under `~/.agents/skills`; those are user-owned, are not bundled here, and must survive update/uninstall byte-for-byte when unmanaged or modified. A plugin-only installation does not need or create the fallback; explicit Codex-selected install/update convergence does.
 
 ## Codex hook trust and side effects
 
@@ -26,8 +27,8 @@ Until that review, the hooks remain untrusted and do not run. Never use a trust-
 
 | ID | Event | Exact behavior | Allowed side effect |
 |----|-------|----------------|---------------------|
-| H3 | `SessionStart` | Emits at most 2 KiB of validated wish slug/status/count context from at most eight local records | Read-only filesystem access |
-| H4 | `PreToolUse` | Runs deterministic local guards for documented Bash/edit payloads through the plugin-local launcher | Repository/Git/GitHub reads; no Omni, install, update, global sync, or scaffolding |
+| H3 | `SessionStart` | Inspects at most 64 candidate directories/256 KiB, then emits at most eight validated wish records and 2 KiB | Read-only filesystem access |
+| H4 | `PreToolUse` | Runs branch/orchestration checks for Bash and audit-context for Write/Edit/apply_patch through the plugin-local launcher | Deterministic local repository/Git reads only; no Codex network lookup, freshness/identity handler, Omni, install, update, global sync, or scaffolding |
 | H6 | `PermissionRequest` | Applies the configured tool matcher and invokes Omni once only when approvals are explicitly enabled | Bounded/redacted approval-queue state; timeout, interruption, malformed output, and transport failure deny |
 
 PreToolUse is a guardrail, not complete interception. Sandbox policy and server-side branch protection remain the hard controls. The six removed Codex commands performed startup install/sync, wrote `AGENTS.md`, validated wishes before/after writes, reinjected context on every prompt, or emitted an inert completion response; none belongs in the retained lifecycle.
@@ -58,7 +59,7 @@ The lifecycle is shared across clients:
 brainstorm -> wish -> review -> work -> review
 ```
 
-Codex invokes the plugin copies as `$genie:brainstorm`, `$genie:wish`, `$genie:review`, and `$genie:work`; bare selectors are reserved for separately installed personal copies. Claude Code uses the equivalent slash skills. Native subagents do not imply separate worktrees. Every engineer first claims its assigned task with `genie task checkout <id> --worker <name>`, reports completion without mutating task state, and is reviewed by a different agent. Only the orchestrator calls `genie task done <id>` after a SHIP verdict and passing validation. Use `genie launch` when separate worktrees or a human-supervised Warp cockpit are required.
+Codex invokes the plugin copies as `$genie:brainstorm`, `$genie:wish`, `$genie:review`, and `$genie:work`; bare selectors intentionally select the user tier (a CLI-managed fallback or personal copy). Claude Code uses the equivalent slash skills. Native subagents do not imply separate worktrees. Every engineer first claims its assigned task with `genie task checkout <id> --worker <name>`, reports completion without mutating task state, and is reviewed by a different agent. Only the orchestrator calls `genie task done <id>` after a SHIP verdict and passing validation. Use `genie launch` when separate worktrees or a human-supervised Warp cockpit are required.
 
 The seven optional Codex profiles are `genie_engineer_trivial`, `genie_engineer_standard`, `genie_engineer_complex`, `genie_scout`, `genie_fixer`, `genie_reviewer`, and `genie_final_gate`. A plugin-only install falls back to the client's available generic roles.
 

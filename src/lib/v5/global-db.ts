@@ -71,7 +71,7 @@ export function openGlobalDb(opts: OpenGlobalOptions = {}): Database {
 }
 
 /** Tables a fully-initialized `user_version = 1` global DB must carry. */
-const EXPECTED_TABLES = ['approvals', 'inbound_messages', 'agent_sessions'] as const;
+const EXPECTED_TABLES = ['approvals', 'inbound_messages', 'agent_sessions', 'service_leases'] as const;
 
 /**
  * True when the DB already holds every expected table. Pure reads (no write
@@ -88,8 +88,26 @@ function schemaIsCurrent(db: Database): boolean {
   for (const t of EXPECTED_TABLES) if (!tables.has(t)) return false;
   // A pre-column v1 DB (missing the additive last_status_glyph) returns false so
   // ensureSchema runs and backfills — mirrors genie-db.ts's ensureTaskColumns.
-  const cols = new Set((db.query('PRAGMA table_info(approvals)').all() as Array<{ name: string }>).map((c) => c.name));
-  return cols.has('last_status_glyph');
+  const approvalCols = new Set(
+    (db.query('PRAGMA table_info(approvals)').all() as Array<{ name: string }>).map((c) => c.name),
+  );
+  const inboundCols = new Set(
+    (db.query('PRAGMA table_info(inbound_messages)').all() as Array<{ name: string }>).map((c) => c.name),
+  );
+  const inboundIndexes = db.query('PRAGMA index_list(inbound_messages)').all() as Array<{
+    name: string;
+    unique: number;
+    partial: number;
+  }>;
+  const eventKeyIndex = inboundIndexes.find((index) => index.name === 'idx_inbound_event_key');
+  return (
+    approvalCols.has('last_status_glyph') &&
+    approvalCols.has('announce_claim') &&
+    inboundCols.has('event_key') &&
+    inboundCols.has('processing_claim') &&
+    eventKeyIndex?.unique === 1 &&
+    eventKeyIndex.partial === 1
+  );
 }
 
 const SCHEMA_SQL = `
@@ -105,7 +123,8 @@ CREATE TABLE IF NOT EXISTS approvals (
   resolved_by   TEXT,
   created_at    INTEGER NOT NULL,
   resolved_at   INTEGER,
-  last_status_glyph TEXT
+  last_status_glyph TEXT,
+  announce_claim TEXT
 );
 
 CREATE TABLE IF NOT EXISTS inbound_messages (
@@ -115,7 +134,9 @@ CREATE TABLE IF NOT EXISTS inbound_messages (
   sender      TEXT NOT NULL,
   body        TEXT NOT NULL,
   received_at INTEGER NOT NULL,
-  handled_at  INTEGER
+  handled_at  INTEGER,
+  event_key TEXT,
+  processing_claim TEXT
 );
 
 CREATE TABLE IF NOT EXISTS agent_sessions (
@@ -125,6 +146,12 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
   thread_id  TEXT NOT NULL,
   updated_at INTEGER NOT NULL,
   PRIMARY KEY (provider, instance, chat)
+);
+
+CREATE TABLE IF NOT EXISTS service_leases (
+  name       TEXT PRIMARY KEY,
+  owner_id   TEXT NOT NULL,
+  expires_at INTEGER NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status);
@@ -218,6 +245,7 @@ export function clearAgentSessionIfCurrent(
 export function ensureSchema(db: Database): void {
   db.exec(SCHEMA_SQL);
   ensureApprovalColumns(db);
+  ensureInboundColumns(db);
 }
 
 /**
@@ -238,4 +266,42 @@ function ensureApprovalColumns(db: Database): void {
     // id we must not spam). Runs ONLY when the column is first added.
     db.query(`UPDATE approvals SET last_status_glyph = ? WHERE status != 'pending'`).run(MIGRATED_STATUS_SENTINEL);
   }
+  if (!cols.has('announce_claim')) db.exec('ALTER TABLE approvals ADD COLUMN announce_claim TEXT');
+}
+
+function ensureInboundColumns(db: Database): void {
+  const cols = new Set(
+    (db.query('PRAGMA table_info(inbound_messages)').all() as Array<{ name: string }>).map((c) => c.name),
+  );
+  if (!cols.has('event_key')) db.exec('ALTER TABLE inbound_messages ADD COLUMN event_key TEXT');
+  if (!cols.has('processing_claim')) db.exec('ALTER TABLE inbound_messages ADD COLUMN processing_claim TEXT');
+  db.exec(
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_inbound_event_key ON inbound_messages(event_key) WHERE event_key IS NOT NULL',
+  );
+}
+
+/** Acquire a named machine-scoped lease with one atomic conditional upsert. */
+export function acquireServiceLease(db: Database, name: string, ownerId: string, now: number, ttlMs: number): boolean {
+  const result = db
+    .query(
+      `INSERT INTO service_leases(name, owner_id, expires_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(name) DO UPDATE SET owner_id = excluded.owner_id, expires_at = excluded.expires_at
+       WHERE service_leases.expires_at <= ? OR service_leases.owner_id = excluded.owner_id`,
+    )
+    .run(name, ownerId, now + ttlMs, now);
+  return result.changes === 1;
+}
+
+/** Renew only the exact owner; false fences a resident whose lease was lost. */
+export function renewServiceLease(db: Database, name: string, ownerId: string, now: number, ttlMs: number): boolean {
+  const result = db
+    .query('UPDATE service_leases SET expires_at = ? WHERE name = ? AND owner_id = ?')
+    .run(now + ttlMs, name, ownerId);
+  return result.changes === 1;
+}
+
+/** Release only the exact owner token. */
+export function releaseServiceLease(db: Database, name: string, ownerId: string): boolean {
+  return db.query('DELETE FROM service_leases WHERE name = ? AND owner_id = ?').run(name, ownerId).changes === 1;
 }

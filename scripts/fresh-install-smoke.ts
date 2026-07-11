@@ -123,8 +123,11 @@ function checkSkillStarterPrompts(skillsDir: string, names: string[]): void {
     if (!metadata.includes(`$genie:${name}`)) {
       fail(`${name}/agents/openai.yaml must name the owner-qualified $genie:${name} selector`);
     }
-    if (metadata.includes(`$${name}`) && !metadata.includes('separately installed personal copy')) {
-      fail(`${name}/agents/openai.yaml uses an ambiguous bare selector without a personal-tier qualifier`);
+    const qualifiesBareSelector =
+      metadata.includes('separately installed personal copy') ||
+      metadata.includes('intentionally selecting its user-tier copy');
+    if (metadata.includes(`$${name}`) && !qualifiesBareSelector) {
+      fail(`${name}/agents/openai.yaml uses an ambiguous bare selector without a user-tier qualifier`);
     }
   }
 }

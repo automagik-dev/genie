@@ -1,4 +1,4 @@
 interface:
   display_name: "Root-Cause Trace"
   short_description: "Reproduce failures and isolate root causes"
-  default_prompt: "Use $genie:trace (or $trace only for a separately installed personal copy) to reproduce this failure and isolate its root cause without editing."
+  default_prompt: "Use $genie:trace (or $trace only when intentionally selecting its user-tier copy) to reproduce this failure and isolate its root cause without editing."

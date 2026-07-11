@@ -5,9 +5,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { acquireLifecycleLease, lifecycleLockPath } from '../lib/agent-sync.js';
 import { loadGenieConfig, saveGenieConfig } from '../lib/genie-config.js';
-import { installRuntimeIntegrations } from '../lib/runtime-integrations.js';
+import {
+  installRuntimeIntegrations,
+  persistIntegrationConsent,
+  readIntegrationConsent,
+} from '../lib/runtime-integrations.js';
 import { VERSION } from '../lib/version.js';
-import { type SetupDeps, resolveDefaultAgentAfterCodex, setupCommand } from './setup.js';
+import { type SetupDeps, mergeCodexIntegrationConsent, resolveDefaultAgentAfterCodex, setupCommand } from './setup.js';
 
 // resolveDefaultAgentAfterCodex is the single decision point `genie setup
 // --codex` runs through before saving runtime.defaultAgent (setup.ts wires it
@@ -31,6 +35,16 @@ describe('resolveDefaultAgentAfterCodex', () => {
 
   test("an already-'codex' setting is idempotent with no hint", () => {
     expect(resolveDefaultAgentAfterCodex('codex')).toEqual({ agent: 'codex' });
+  });
+});
+
+describe('mergeCodexIntegrationConsent', () => {
+  test('adds Codex without dropping an existing explicit Claude scope', () => {
+    expect(mergeCodexIntegrationConsent('none')).toBe('codex');
+    expect(mergeCodexIntegrationConsent('claude')).toBe('all');
+    expect(mergeCodexIntegrationConsent('codex')).toBe('codex');
+    expect(mergeCodexIntegrationConsent('all')).toBe('all');
+    expect(mergeCodexIntegrationConsent('auto')).toBe('auto');
   });
 });
 
@@ -96,6 +110,16 @@ describe('setup runtime and failure semantics', () => {
     expect(process.exitCode).not.toBe(1);
   });
 
+  test('successful setup --codex persists durable consent and merges a prior Claude-only scope', async () => {
+    const genieHome = process.env.GENIE_HOME as string;
+    persistIntegrationConsent('claude', genieHome);
+
+    await setupCommand({ codex: true, quick: true }, deps());
+
+    expect(readIntegrationConsent(genieHome)).toBe('all');
+    expect(process.exitCode).not.toBe(1);
+  });
+
   test('full quick setup applies the never-chosen auto to Codex decision', async () => {
     await setupCommand({ quick: true }, deps());
     const saved = await loadGenieConfig();
@@ -108,7 +132,7 @@ describe('setup runtime and failure semantics', () => {
     await setupCommand({ codex: true, quick: true }, deps(true, true));
     const fallback = await Bun.file(join(root, 'repo', '.codex', 'config.toml')).text();
     expect(fallback).toContain('# BEGIN GENIE MCP FALLBACK');
-    expect(fallback).toContain('[mcp_servers.genie]');
+    expect(fallback).toContain('mcp_servers.genie.command');
   });
 
   test('setup uses one complete post-install probe and a healthy active plugin removes the fallback', async () => {

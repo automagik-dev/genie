@@ -78,6 +78,13 @@ export interface RecordInboundFields {
   now?: number;
 }
 
+export interface ClaimInboundFields extends RecordInboundFields {
+  /** Stable transport identity. Exact duplicate deliveries share this key. */
+  eventKey: string;
+  /** Unpredictable process/run token used to condition every completion. */
+  claimToken: string;
+}
+
 export interface InboxFilter {
   /** When true, only messages still awaiting handling; when false, only handled. */
   handled?: boolean;
@@ -218,12 +225,57 @@ export function enqueueApproval(db: Database, fields: EnqueueApprovalFields): st
 
 /**
  * Tag a pending approval with the Omni message id used to match a WhatsApp
- * reaction. Best-effort by contract, but throws {@link UnknownApprovalError}
- * when the id does not exist so callers can distinguish a typo from a no-op.
+ * reaction. Idempotent for the same value and fail-closed for a conflicting
+ * value, so a late runner can never overwrite the winner's correlation id.
  */
 export function attachOmniMessageId(db: Database, id: string, omniMessageId: string): void {
-  const res = db.query('UPDATE approvals SET omni_message_id = ? WHERE id = ?').run(omniMessageId, id);
-  if (res.changes !== 1) throw new UnknownApprovalError(id);
+  const res = db
+    .query('UPDATE approvals SET omni_message_id = ? WHERE id = ? AND omni_message_id IS NULL')
+    .run(omniMessageId, id);
+  if (res.changes === 1) return;
+  const current = getApproval(db, id);
+  if (!current) throw new UnknownApprovalError(id);
+  // Idempotent same-value replay is safe; a different existing correlation id
+  // is never overwritten by a late/duplicate runner.
+  if (current.omniMessageId === omniMessageId) return;
+  throw new ApprovalConflictError(id);
+}
+
+/** Claim an unannounced approval exactly once across runner processes. */
+export function claimApprovalAnnouncement(db: Database, id: string, claimToken: string): boolean {
+  return (
+    db
+      .query(
+        `UPDATE approvals SET announce_claim = ?
+         WHERE id = ? AND status = 'pending' AND omni_message_id IS NULL AND announce_claim IS NULL`,
+      )
+      .run(claimToken, id).changes === 1
+  );
+}
+
+/** Attach the external id only for the exact durable announcement claimant. */
+export function completeApprovalAnnouncement(
+  db: Database,
+  id: string,
+  claimToken: string,
+  omniMessageId: string,
+): boolean {
+  return (
+    db
+      .query(
+        `UPDATE approvals SET omni_message_id = ?, announce_claim = NULL
+         WHERE id = ? AND status = 'pending' AND omni_message_id IS NULL AND announce_claim = ?`,
+      )
+      .run(omniMessageId, id, claimToken).changes === 1
+  );
+}
+
+/** Failed sends release only their own claim so a later tick can retry. */
+export function releaseApprovalAnnouncement(db: Database, id: string, claimToken: string): boolean {
+  return (
+    db.query('UPDATE approvals SET announce_claim = NULL WHERE id = ? AND announce_claim = ?').run(id, claimToken)
+      .changes === 1
+  );
 }
 
 /**
@@ -386,6 +438,62 @@ export function recordInbound(db: Database, fields: RecordInboundFields): string
      VALUES (?, ?, ?, ?, ?, ?, NULL)`,
   ).run(id, fields.instance, fields.chat, fields.sender, fields.body, receivedAt);
   return id;
+}
+
+/**
+ * Insert-or-find one transport event, then atomically claim it for processing.
+ * A duplicate delivery while the first runner owns or completed the row returns
+ * `undefined`, so it cannot spawn, reply, or resolve twice.
+ */
+export function recordAndClaimInbound(db: Database, fields: ClaimInboundFields): string | undefined {
+  if (!fields.eventKey || fields.eventKey.length > 256) throw new Error('Inbound event key must be 1..256 characters');
+  if (!fields.claimToken || fields.claimToken.length > 256)
+    throw new Error('Inbound claim token must be 1..256 characters');
+  const candidateId = newId('inb');
+  const receivedAt = fields.now ?? Date.now();
+  const claim = db.transaction(() => {
+    db.query(
+      `INSERT INTO inbound_messages
+         (id, instance, chat, sender, body, received_at, handled_at, event_key, processing_claim)
+       VALUES (?, ?, ?, ?, ?, ?, NULL, ?, NULL)
+       ON CONFLICT(event_key) WHERE event_key IS NOT NULL DO NOTHING`,
+    ).run(candidateId, fields.instance, fields.chat, fields.sender, fields.body, receivedAt, fields.eventKey);
+    const row = db.query('SELECT id FROM inbound_messages WHERE event_key = ?').get(fields.eventKey) as {
+      id: string;
+    } | null;
+    if (!row) throw new Error('Inbound event insert did not produce a row');
+    const claimed = db
+      .query(
+        `UPDATE inbound_messages SET processing_claim = ?
+         WHERE id = ? AND handled_at IS NULL AND processing_claim IS NULL`,
+      )
+      .run(fields.claimToken, row.id).changes;
+    return claimed === 1 ? row.id : undefined;
+  });
+  return claim.immediate();
+}
+
+/** Mark handled only for the exact processor that successfully published. */
+export function markInboundHandledIfClaimed(db: Database, id: string, claimToken: string, now = Date.now()): boolean {
+  return (
+    db
+      .query(
+        `UPDATE inbound_messages SET handled_at = ?, processing_claim = NULL
+         WHERE id = ? AND handled_at IS NULL AND processing_claim = ?`,
+      )
+      .run(now, id, claimToken).changes === 1
+  );
+}
+
+/** Publication/processing failure returns the row to the retryable unhandled state. */
+export function releaseInboundClaim(db: Database, id: string, claimToken: string): boolean {
+  return (
+    db
+      .query(
+        'UPDATE inbound_messages SET processing_claim = NULL WHERE id = ? AND handled_at IS NULL AND processing_claim = ?',
+      )
+      .run(id, claimToken).changes === 1
+  );
 }
 
 /** List inbox messages, oldest first, optionally filtered by handled state / instance / chat. */

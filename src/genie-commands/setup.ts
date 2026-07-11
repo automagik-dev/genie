@@ -25,7 +25,12 @@ import {
   saveGenieConfig,
 } from '../lib/genie-config.js';
 import { resolveGenieHome } from '../lib/genie-home.js';
-import { installRuntimeIntegrations } from '../lib/runtime-integrations.js';
+import {
+  type IntegrationSelection,
+  installRuntimeIntegrations,
+  persistIntegrationConsent,
+  readIntegrationConsent,
+} from '../lib/runtime-integrations.js';
 import { checkCommand } from '../lib/system-detect.js';
 import { resolveTrustedExecutable, validateTrustedExecutablePath } from '../lib/trusted-executable.js';
 import { installShortcuts, isShortcutsInstalled } from '../term-commands/shortcuts.js';
@@ -44,6 +49,8 @@ export interface SetupOptions {
 export interface SetupDeps {
   checkCommand?: typeof checkCommand;
   installRuntimeIntegrations?: typeof installRuntimeIntegrations;
+  readIntegrationConsent?: typeof readIntegrationConsent;
+  persistIntegrationConsent?: typeof persistIntegrationConsent;
   /** One bounded post-install snapshot; tests inject this to avoid live Codex state. */
   probeCodexGeniePlugin?: typeof probeCodexGeniePlugin;
   acquireLifecycleLease?: typeof acquireLifecycleLease;
@@ -251,7 +258,20 @@ function repairCodexIntegration(deps: SetupDeps, codexPath: string): void {
     console.log('  \x1b[2mNo Git worktree detected; project MCP fallback was not changed.\x1b[0m');
   }
   if (result.preservedDisabled) console.log('  \x1b[2mExisting disabled plugin state was preserved.\x1b[0m');
+  const genieHome = resolveGenieHome();
+  const currentConsent = (deps.readIntegrationConsent ?? readIntegrationConsent)(genieHome);
+  (deps.persistIntegrationConsent ?? persistIntegrationConsent)(
+    mergeCodexIntegrationConsent(currentConsent),
+    genieHome,
+  );
   console.log('  \x1b[33m!\x1b[0m Review Genie hooks with /hooks, then start a new Codex task.');
+}
+
+/** Merge explicit Codex setup into the durable client-home maintenance scope. */
+export function mergeCodexIntegrationConsent(current: IntegrationSelection): IntegrationSelection {
+  if (current === 'none') return 'codex';
+  if (current === 'claude') return 'all';
+  return current;
 }
 
 function preserveRuntimeChoiceAfterCodex(config: GenieConfig): void {

@@ -2108,11 +2108,11 @@ async function runDelivery(
     // best-effort
   }
 
-  recordPendingDelivery({ version: manifest.version, extractDir, tarballPath });
+  const oldVersion = normalizeVersion(VERSION);
+  recordPendingDelivery({ version: manifest.version, previousVersion: oldVersion, extractDir, tarballPath });
 
   log('Atomically swapping binary...');
   const targetBin = join(GENIE_BIN, 'genie');
-  const oldVersion = normalizeVersion(VERSION);
   const swapResult = atomicBinarySwap(stagedBin, targetBin, GENIE_BIN_PREVIOUS, oldVersion, {
     preserveSource: true,
   });
@@ -2234,8 +2234,10 @@ interface PendingAuxiliaryFingerprint {
 }
 
 export interface PendingDeliveryRecord {
-  schemaVersion: 2;
+  schemaVersion: 2 | 3;
   version: string;
+  /** Version of the live binary whose same-version backups recovery may prune. */
+  previousVersion: string | null;
   extractDir: string;
   tarballPath: string;
   createdAt: string;
@@ -2251,6 +2253,7 @@ export interface PendingDeliveryPaths {
   version: string;
   extractDir: string;
   tarballPath: string;
+  previousVersion?: string | null;
 }
 
 export interface ResumePendingDeliveryOptions {
@@ -2271,8 +2274,9 @@ export function recordPendingDelivery(
   assertPendingDeliveryPaths(pending, stagingRoot);
   const payload = fingerprintPendingPayload(pending);
   const record: PendingDeliveryRecord = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     ...pending,
+    previousVersion: pending.previousVersion ?? normalizeVersion(VERSION),
     createdAt: new Date().toISOString(),
     payload,
   };
@@ -2334,9 +2338,15 @@ export function resumePendingDelivery(options: ResumePendingDeliveryOptions = {}
           throw new Error(`pending delivery binary is missing at ${stagedBin}`);
         }
         chmodSync(stagedBin, 0o755);
-        atomicBinarySwap(stagedBin, targetBin, join(genieBin, '.previous'), normalizeVersion(VERSION), {
-          preserveSource: true,
-        });
+        atomicBinarySwap(
+          stagedBin,
+          targetBin,
+          join(genieBin, '.previous'),
+          record.previousVersion ?? normalizeVersion(VERSION),
+          {
+            preserveSource: true,
+          },
+        );
         syncBinaryVersionStamp(record.extractDir, genieBin, record.version);
         verifySwappedBinary(targetBin, record.version, {
           stagingDir: stagingRoot,
@@ -2345,6 +2355,13 @@ export function resumePendingDelivery(options: ResumePendingDeliveryOptions = {}
       }
     });
   ensureBinary(record);
+
+  const previousDir = join(genieBin, '.previous');
+  const retainedBackup =
+    record.previousVersion === null ? null : newestSameVersionBackup(previousDir, record.previousVersion);
+  if (retainedBackup !== null && record.previousVersion !== null) {
+    pruneSameVersionBackups(previousDir, record.previousVersion, retainedBackup);
+  }
 
   const outcomes = syncAuxiliaryContent(record.extractDir, genieHome, options.operations);
   finalizeAuxiliaryDelivery(outcomes, {
@@ -2393,8 +2410,9 @@ function readPendingDelivery(path: string, stagingRoot: string): PendingDelivery
   let stat: ReturnType<typeof lstatSync>;
   try {
     stat = lstatSync(path);
-  } catch {
-    return null;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
   }
   if (!stat.isFile() || stat.isSymbolicLink())
     throw new Error(`pending delivery journal is not a physical file: ${path}`);
@@ -2407,8 +2425,11 @@ function readPendingDelivery(path: string, stagingRoot: string): PendingDelivery
   if (
     typeof parsed !== 'object' ||
     parsed === null ||
-    Reflect.get(parsed, 'schemaVersion') !== 2 ||
+    ![2, 3].includes(Number(Reflect.get(parsed, 'schemaVersion'))) ||
     typeof Reflect.get(parsed, 'version') !== 'string' ||
+    (Reflect.get(parsed, 'schemaVersion') === 3 &&
+      (typeof Reflect.get(parsed, 'previousVersion') !== 'string' ||
+        parseGenieVersion(Reflect.get(parsed, 'previousVersion') as string) === null)) ||
     typeof Reflect.get(parsed, 'extractDir') !== 'string' ||
     typeof Reflect.get(parsed, 'tarballPath') !== 'string' ||
     typeof Reflect.get(parsed, 'createdAt') !== 'string' ||
@@ -2416,14 +2437,44 @@ function readPendingDelivery(path: string, stagingRoot: string): PendingDelivery
   ) {
     throw new Error('pending delivery journal has an invalid schema');
   }
-  const record = parsed as PendingDeliveryRecord;
+  const record = {
+    ...(parsed as PendingDeliveryRecord),
+    previousVersion:
+      Reflect.get(parsed, 'schemaVersion') === 3 ? (Reflect.get(parsed, 'previousVersion') as string) : null,
+  };
   assertPendingDeliveryPaths(record, stagingRoot);
   return record;
+}
+
+function newestSameVersionBackup(previousDir: string, version: string): string | null {
+  let entries: string[];
+  try {
+    entries = readdirSync(previousDir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
+  const prefix = `genie-${version}`;
+  const candidates = entries
+    .filter((entry) => entry === prefix || entry.startsWith(`${prefix}.`))
+    .map((entry) => {
+      const path = join(previousDir, entry);
+      const stat = lstatSync(path);
+      if (!stat.isFile() || stat.isSymbolicLink()) {
+        throw new Error(`refusing to inspect non-physical binary backup: ${path}`);
+      }
+      return { path, mtimeMs: stat.mtimeMs };
+    })
+    .sort((left, right) => right.mtimeMs - left.mtimeMs || right.path.localeCompare(left.path));
+  return candidates[0]?.path ?? null;
 }
 
 function assertPendingDeliveryPaths(pending: PendingDeliveryPaths, stagingRoot: string): void {
   if (parseGenieVersion(pending.version) === null)
     throw new Error(`invalid pending delivery version: ${pending.version}`);
+  if (pending.previousVersion != null && parseGenieVersion(pending.previousVersion) === null) {
+    throw new Error(`invalid pending delivery previous version: ${pending.previousVersion}`);
+  }
   let physicalStagingRoot: string;
   try {
     const stagingStat = lstatSync(stagingRoot);

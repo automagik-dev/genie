@@ -28,7 +28,7 @@ function reviewerPermissionViolations(profile: ReviewerProfile): string[] {
 }
 
 function buildHelperInputs(): string[] {
-  const pending = [...read('scripts/build-binary.sh').matchAll(/scripts\/([a-z0-9-]+\.ts)/g)].map(
+  const pending = [...read('scripts/build-binary.sh').matchAll(/scripts\/([a-z0-9-]+\.[jt]s)/g)].map(
     (match) => `scripts/${match[1]}`,
   );
   const found = new Set<string>();
@@ -36,7 +36,7 @@ function buildHelperInputs(): string[] {
     const relativePath = pending.shift();
     if (!relativePath || found.has(relativePath)) continue;
     found.add(relativePath);
-    for (const match of read(relativePath).matchAll(/from ['"]\.\/([a-z0-9-]+\.ts)['"]/g)) {
+    for (const match of read(relativePath).matchAll(/from ['"]\.\/([a-z0-9-]+\.[jt]s)['"]/g)) {
       pending.push(`scripts/${match[1]}`);
     }
   }
@@ -58,7 +58,9 @@ describe('Group E release and documentation contracts', () => {
       "'tsconfig.json'",
       "'scripts/build-binary.sh'",
       "'scripts/build.js'",
+      "'scripts/json-top-level-string.js'",
       "'scripts/hook-bundle-parity.ts'",
+      "'scripts/plugin-executables-check.ts'",
       "'scripts/sync-plugin-skills.ts'",
       "'scripts/fresh-install-smoke.ts'",
       "'scripts/skills-lint.ts'",
@@ -97,7 +99,13 @@ describe('Group E release and documentation contracts', () => {
     expect(build).toContain('assert_release_tree_equal "${STAGE}" "${VERIFY_ROOT}"');
     expect(build).toContain('cmp -- "${expected_entry}" "${actual_entry}"');
     expect(build).toContain('cp "${REPO_ROOT}/LICENSE"');
-    expect(build).toContain("-name '*.test.*'");
+    expect(build).toContain("-iname '*.test.*'");
+    expect(build).toContain("-iname 'test_*.*'");
+    expect(build).toContain("-iname '*_test.*'");
+    expect(build).toContain("-iname 'spec_*.*'");
+    expect(build).toContain("-iname '*_spec.*'");
+    expect(build).toContain('assert_no_release_tests "${STAGE}"');
+    expect(build).toContain('assert_no_release_tests "${VERIFY_ROOT}"');
     expect(build).toContain('! -type f ! -type d');
     expect(build).toContain('find "${expected_root}" -mindepth 1');
     expect(postExtractSmoke).toBeGreaterThan(extract);
@@ -117,6 +125,9 @@ describe('Group E release and documentation contracts', () => {
     expect(workflow).toContain('bun run lint:complexity-budget');
     expect(workflow).toContain('bun run lint:council-workflow');
     expect(workflow).toContain('bun run lint:hook-bundles');
+    expect(workflow).toContain('bun run lint:plugin-executables');
+    expect(pkg.scripts.check).toContain('bun run lint:plugin-executables');
+    expect(pkg.scripts['check:fast']).toContain('bun run lint:plugin-executables');
   });
 
   test('resurrected metrics bot and incompatible generated state stay retired', () => {
@@ -173,6 +184,7 @@ describe('Group E release and documentation contracts', () => {
 
   test('operator docs distinguish product, role-agent, personal, MCP, and hook inventories', () => {
     const docs = `${read('README.md')}\n${read('plugins/genie/README.md')}`;
+    expect(read('README.md')).toContain('These five inventories are intentionally separate');
     for (const statement of [
       '23 physical',
       'Seven optional',
@@ -186,6 +198,12 @@ describe('Group E release and documentation contracts', () => {
     ]) {
       expect(docs).toContain(statement);
     }
+    expect(read('README.md')).toContain('synchronizes up to 23 digest-managed product-skill fallbacks');
+    expect(read('README.md')).toContain('CLI-managed product skills');
+    expect(read('plugins/genie/README.md')).toContain('CLI-managed product fallbacks');
+    expect(docs).toContain('at most 64 candidate');
+    expect(docs).toContain('network-free');
+    expect(docs).toContain('no Codex network lookup');
   });
 
   test('plugin docs and cards use owner-qualified selectors with an explicit personal fallback', () => {
@@ -227,6 +245,17 @@ describe('Group E release and documentation contracts', () => {
     for (const path of ['.mcp.json', '.warp/.mcp.json', '.codex/config.toml']) expect(wizard).toContain(path);
     for (const skill of ['brainstorm', 'wish', 'review', 'work']) expect(wizard).toContain(`$genie:${skill}`);
     expect(wizard.indexOf('$genie:review')).toBeLessThan(wizard.indexOf('$genie:work'));
+    expect(wizard).toContain('Phase 3 is a mandatory gate');
+    expect(wizard).toContain('Never enter Phase 4 until WISH status `APPROVED`');
+    expect(wizard).toContain('pending until the user trusts the workspace');
+  });
+
+  test('brainstorm routes every non-trivial design through design and plan review', () => {
+    const brainstorm = read('skills/brainstorm/SKILL.md');
+    expect(brainstorm).toContain('auto-invoke `review` (design review)');
+    expect(brainstorm).toContain('route through `wish` and plan review before any implementation');
+    expect(brainstorm).not.toContain('auto-invoke `review` (plan review)');
+    expect(brainstorm).not.toContain('ask whether to implement directly');
   });
 
   test('Omni and MCP operator instructions expose provider and fallback policy', () => {

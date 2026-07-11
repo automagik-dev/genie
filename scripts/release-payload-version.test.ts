@@ -52,6 +52,11 @@ describe('release payload version contract', () => {
   test('stamps and verifies VERSION plus every copied version-bearing manifest', () => {
     const root = fixture();
     const version = '5.260711.9-rc.1';
+    writeJson(root, 'plugins/genie/.codex-plugin/plugin.json', {
+      metadata: { version: 'nested-must-not-change' },
+      name: 'genie',
+      version: '5.000000.0',
+    });
 
     stampReleasePayloadVersion(root, version);
 
@@ -64,6 +69,9 @@ describe('release payload version contract', () => {
     ]) {
       expect(JSON.parse(readFileSync(join(root, path), 'utf8')).version).toBe(version);
     }
+    expect(
+      JSON.parse(readFileSync(join(root, 'plugins/genie/.codex-plugin/plugin.json'), 'utf8')).metadata.version,
+    ).toBe('nested-must-not-change');
     const claude = JSON.parse(readFileSync(join(root, '.claude-plugin/marketplace.json'), 'utf8'));
     expect(claude.plugins[0].version).toBe(version);
   });

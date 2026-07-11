@@ -128,6 +128,26 @@ describe('computeDispatchOutput fail-closed', () => {
     expect((seen?.tool_input as Record<string, unknown>).file_paths).toEqual(['src/a.ts']);
   });
 
+  test('Codex apply_patch dispatch retains at most ten affected paths with a truncation marker', async () => {
+    let seen: Record<string, unknown> | undefined;
+    const headers = Array.from({ length: 12 }, (_, index) => `*** Update File: src/${index}.ts`).join('\n');
+    await computeDispatchOutput(
+      JSON.stringify({
+        hook_event_name: 'PermissionRequest',
+        tool_name: 'apply_patch',
+        tool_input: { command: `*** Begin Patch\n${headers}\n*** End Patch` },
+      }),
+      async (input) => {
+        seen = JSON.parse(input) as Record<string, unknown>;
+        return '';
+      },
+      'codex',
+    );
+    const input = seen?.tool_input as Record<string, unknown>;
+    expect(input.file_paths).toHaveLength(10);
+    expect(input.file_paths_truncated).toBe(true);
+  });
+
   test('Codex gh pr merge is denied by the local guard without a remote lookup', async () => {
     const out = await computeDispatchOutput(
       JSON.stringify({

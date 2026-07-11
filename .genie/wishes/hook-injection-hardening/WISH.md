@@ -39,6 +39,11 @@ The three PreToolUse file-path hooks interpolate the tool's `file_path` into a s
 | 4 | Bundle the `core.bare` probe removal (finding 6) as Group 2 | Panel + performance lane both flag it; both are one-line footgun removals on the same subprocess-hygiene surface, shipping in the same afternoon. Kept a separate group/commit so it reverts independently of the security fix. |
 | 5 | Delete the `core.bare` probe rather than relocate it | Its own comment says it "should no longer trigger" (the v4 worktree-corruption path is gone; v5 uses `git clone --shared`), and it can flip a legitimately-bare repo's `core.bare` to false. Relocating a guarded check into `launch` is an acceptable alternative — the Group 2 gate only asserts the probe is gone from `genie.ts`, so it passes either way. |
 
+## Dependencies
+
+**depends-on:** none
+**blocks:** none
+
 ## Success Criteria
 
 - [x] A hostile `file_path` containing `$(…)` executes **no** embedded command through `auditContext` — regression test creates a temp git repo, invokes the handler with `file_path: '$(touch PWNED)'`, and asserts no `PWNED` file exists afterward.

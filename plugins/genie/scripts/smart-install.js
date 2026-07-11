@@ -98,9 +98,9 @@ function installBun() {
   console.error('Installing Bun runtime...');
   try {
     if (IS_WINDOWS) {
-      execSync('powershell -c "irm bun.com/install.ps1 | iex"', { stdio: ['pipe', 'pipe', 'inherit'], shell: true });
+      execSync('powershell -c "irm bun.com/install.ps1 | iex"', { stdio: ['pipe', 'pipe', 'inherit'] });
     } else {
-      execSync('curl -fsSL https://bun.com/install | bash', { stdio: ['pipe', 'pipe', 'inherit'], shell: true });
+      execSync('curl -fsSL https://bun.com/install | bash', { stdio: ['pipe', 'pipe', 'inherit'] });
     }
     if (!isBunInstalled()) {
       throw new Error('Bun installation completed but binary not found. Please restart your terminal.');
@@ -183,7 +183,7 @@ function installDeps() {
   }
 
   const bunCmd = IS_WINDOWS && bunPath.includes(' ') ? `"${bunPath}"` : bunPath;
-  execSync(`${bunCmd} install`, { cwd: ROOT, stdio: ['pipe', 'pipe', 'inherit'], shell: IS_WINDOWS });
+  execSync(`${bunCmd} install`, { cwd: ROOT, stdio: ['pipe', 'pipe', 'inherit'] });
 
   // Write version marker
   let version = 'unknown';

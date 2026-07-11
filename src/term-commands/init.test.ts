@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mergeCodexMcpFallback, removeCodexMcpFallback } from './init.js';
 
 const CLI = join(import.meta.dir, '..', 'genie.ts');
+const INTERPRETED_MCP_ARGS = [realpathSync(CLI), 'mcp'];
 const GITIGNORE_RULES = ['.genie/genie.db', '.genie/genie.db-wal', '.genie/genie.db-shm'];
 
 let dir: string;
@@ -183,7 +184,7 @@ describe('genie init', () => {
         expect(existsSync(path)).toBe(true);
         const servers = JSON.parse(readFileSync(path, 'utf-8')).mcpServers;
         expect(servers.genie).toBeDefined();
-        expect(servers.genie.args).toEqual(['mcp']);
+        expect(servers.genie.args).toEqual(INTERPRETED_MCP_ARGS);
         // Absolute command resolved from the running executable — never bare "genie".
         expect(servers.genie.command).not.toBe('genie');
         expect(servers.genie.command.startsWith('/')).toBe(true);
@@ -199,7 +200,7 @@ describe('genie init', () => {
       const servers = JSON.parse(readFileSync(mcpPath(dir), 'utf-8')).mcpServers;
       expect(servers.other).toEqual({ command: 'x' });
       expect(servers.genie).toBeDefined();
-      expect(servers.genie.args).toEqual(['mcp']);
+      expect(servers.genie.args).toEqual(INTERPRETED_MCP_ARGS);
     });
 
     test('preserves other top-level keys and an alternate wrapper key', () => {

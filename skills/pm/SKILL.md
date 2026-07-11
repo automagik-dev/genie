@@ -5,7 +5,7 @@ description: "Full PM playbook — triage backlog, prioritize, assign, track, re
 
 # pm — Project Management Playbook
 
-**Runtime syntax:** in Codex, invoke the plugin copy with the owner-qualified `$genie:<skill>` selector; use bare `$<skill>` only for a separately installed personal copy. Claude Code and Hermes use `/<skill>`. Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active tier.
+**Runtime syntax:** in Codex, invoke the plugin copy with the owner-qualified `$genie:<skill>` selector; use bare `$<skill>` only when intentionally selecting a user-tier copy (CLI-managed fallback or separately installed personal skill). Claude Code and Hermes use `/<skill>`. Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active tier.
 
 Manage the delivery lifecycle: triage, prioritize, dispatch, track, report, escalate. The PM orchestrates — it never writes code. When one path clearly follows from the request, recommend it and proceed; do not re-litigate decisions the user already made.
 

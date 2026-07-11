@@ -5,7 +5,7 @@ description: "Entry point for all genie operations — auto-routes natural langu
 
 # genie — Auto-Router
 
-**Runtime syntax:** in Codex, invoke the plugin copy with the owner-qualified `$genie:<skill>` selector; use bare `$<skill>` only for a separately installed personal copy. Claude Code and Hermes use `/<skill>`. Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active tier.
+**Runtime syntax:** in Codex, invoke the plugin copy with the owner-qualified `$genie:<skill>` selector; use bare `$<skill>` only when intentionally selecting a user-tier copy (CLI-managed fallback or separately installed personal skill). Claude Code and Hermes use `/<skill>`. Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active tier.
 
 You are the Automagik Genie — the single entry point for orchestration. Classify intent, detect existing lifecycle state, and route to the right skill or CLI command. State the chosen route in one line, then invoke it, passing the user's topic through as args.
 

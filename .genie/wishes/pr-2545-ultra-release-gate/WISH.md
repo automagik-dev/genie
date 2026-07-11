@@ -48,6 +48,11 @@ The review ledger is [`REVIEW-DISPOSITION.md`](./REVIEW-DISPOSITION.md), the exa
 | 8 | PR-scope SHIP is not stable-release authorization | Inherited CRITICAL/HIGH publication risks live in the separate [`stable-release-security-gate`](../stable-release-security-gate/WISH.md) wish and continue to block stable promotion until remediated; human approval is an additional post-remediation gate, never a waiver. |
 | 9 | The prior `agent-sync-hardening` wish is superseded only criterion-by-criterion | `REVIEW-DISPOSITION.md` maps old criteria to new evidence. Group E may update status/index text only after each mapped criterion has passing evidence. |
 
+## Dependencies
+
+**depends-on:** none
+**blocks:** agent-sync-hardening
+
 ## Success Criteria
 
 - [ ] The Codex hook manifest contains only the three approved behaviors; no retained hook installs software, mutates user/workspace configuration, or repeatedly injects free-form repository text.

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { updateManifestVersion } from './build.js';
+import { pluginPackageManifest, updateManifestVersion } from './build.js';
 import { synchronizeVersionFiles, updateJsonVersion } from './version.ts';
 
 describe('manifest version formatting', () => {
@@ -63,6 +63,31 @@ describe('manifest version formatting', () => {
     const { path, original } = fixture();
     updateManifestVersion(path, '5.260711.2');
     expect(readFileSync(path, 'utf8')).toBe(original.replace('5.260710.14', '5.260711.2'));
+  });
+
+  test('version stampers target the top-level key when a nested version appears first', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-version-nested-'));
+    roots.push(root);
+    const path = join(root, 'plugin.json');
+    const original = '{\n  "metadata": { "version": "nested" },\n  "version": "5.0.0"\n}\n';
+
+    writeFileSync(path, original);
+    await updateJsonVersion(path, '5.260711.7');
+    expect(readFileSync(path, 'utf8')).toBe(original.replace('"5.0.0"', '"5.260711.7"'));
+    expect(JSON.parse(readFileSync(path, 'utf8')).metadata.version).toBe('nested');
+
+    writeFileSync(path, original);
+    updateManifestVersion(path, '5.260711.8');
+    expect(readFileSync(path, 'utf8')).toBe(original.replace('"5.0.0"', '"5.260711.8"'));
+    expect(JSON.parse(readFileSync(path, 'utf8')).metadata.version).toBe('nested');
+  });
+
+  test('plugin package generator preserves reviewed MIT metadata', () => {
+    const source = readFileSync(join(import.meta.dir, '..', 'plugins', 'genie', 'package.json'), 'utf8');
+    const tracked = JSON.parse(source);
+    expect(pluginPackageManifest(tracked.version)).toEqual(tracked);
+    expect(pluginPackageManifest(tracked.version).license).toBe('MIT');
+    expect(`${JSON.stringify(pluginPackageManifest(tracked.version), null, 2)}\n`).toBe(source);
   });
 
   test('synchronization updates every required file or rejects the run', async () => {

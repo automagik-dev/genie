@@ -20,6 +20,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   readlinkSync,
   renameSync,
   rmSync,
@@ -41,23 +42,30 @@ import {
   computeDirDigest,
   inspectManagedWorkflow,
   lifecycleLockPath,
+  recoverManagedWorkflowTransactions,
   resolveGenieSource,
   runAgentSync,
   stampWorkflow,
 } from './agent-sync';
 
 const require = createRequire(import.meta.url);
-const { stampCouncilWorkflow, PLACEHOLDER } = require('../../plugins/genie/scripts/council-stamp.cjs') as {
+const {
+  stampCouncilWorkflow,
+  recoverTransactions: recoverCjsCouncilTransactions,
+  PLACEHOLDER,
+} = require('../../plugins/genie/scripts/council-stamp.cjs') as {
   stampCouncilWorkflow: (opts: {
     templatePath: string;
     pluginRoot: string;
     targetDir: string;
     version?: string | null;
     now?: () => Date;
+    beforePromotion?: () => void;
   }) => {
     action: 'written' | 'skipped' | 'kept-unmanaged' | 'kept-modified' | 'metadata-corrupt';
     targetPath: string;
   };
+  recoverTransactions: (targetDir: string) => void;
   PLACEHOLDER: string;
 };
 
@@ -619,6 +627,56 @@ describe('staging cleanup', () => {
     expect(readFileSync(join(alphaDir, 'SKILL.md'), 'utf8')).toBe('# alpha v2\n');
   });
 
+  test('a managed skill edited after classification wins the CAS and the incoming version is preserved', () => {
+    present(fixture.claudeDir);
+    run({ selection: 'claude' });
+    const alphaDir = join(fixture.claudeDir, 'skills', 'alpha');
+    writeFile(join(fixture.pluginRoot, 'skills', 'alpha', 'SKILL.md'), '# alpha incoming\n');
+
+    const claude = agentReport(
+      run({
+        selection: 'claude',
+        beforeManagedDirPromotion(destDir) {
+          if (destDir === alphaDir) writeFile(join(destDir, 'SKILL.md'), '# alpha personal race\n');
+        },
+      }),
+      'claude',
+    );
+
+    expect(readFileSync(join(alphaDir, 'SKILL.md'), 'utf8')).toBe('# alpha personal race\n');
+    expect(claude.failures?.join('\n')).toContain('changed before promotion');
+    const transactionRoot = join(fixture.claudeDir, 'skills', '.genie-sync-transactions');
+    const conflict = readdirSync(transactionRoot).find((name) => name.startsWith('.conflict-'));
+    expect(conflict).toBeDefined();
+    expect(readFileSync(join(transactionRoot, conflict as string, 'staged', 'SKILL.md'), 'utf8')).toBe(
+      '# alpha incoming\n',
+    );
+  });
+
+  test('a metadata-only managed-skill edit after classification also revokes promotion authority', () => {
+    present(fixture.claudeDir);
+    run({ selection: 'claude' });
+    const alphaDir = join(fixture.claudeDir, 'skills', 'alpha');
+    const manifestPath = join(alphaDir, MANIFEST_NAME);
+    writeFile(join(fixture.pluginRoot, 'skills', 'alpha', 'SKILL.md'), '# alpha incoming\n');
+
+    const claude = agentReport(
+      run({
+        selection: 'claude',
+        beforeManagedDirPromotion(destDir) {
+          if (destDir !== alphaDir) return;
+          const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
+          writeFileSync(manifestPath, `${JSON.stringify({ ...manifest, personalNote: 'keep me' }, null, 2)}\n`);
+        },
+      }),
+      'claude',
+    );
+
+    expect(JSON.parse(readFileSync(manifestPath, 'utf8')).personalNote).toBe('keep me');
+    expect(readFileSync(join(alphaDir, 'SKILL.md'), 'utf8')).toBe('# alpha\n');
+    expect(claude.failures?.join('\n')).toContain('changed before promotion');
+  });
+
   test('a journaled crash after moving live restores the prior tree before classification', () => {
     present(fixture.claudeDir);
     run({ selection: 'claude' });
@@ -1009,6 +1067,71 @@ describe('stampWorkflow parity with council-stamp.cjs', () => {
     const modified = readFileSync(targetPath, 'utf8');
     expect(stampWorkflow({ templatePath, pluginRoot: '/newer/plugin', targetDir }).action).toBe('kept-modified');
     expect(readFileSync(targetPath, 'utf8')).toBe(modified);
+  });
+
+  test('both council engines preserve a post-classification personal edit and quarantine the incoming version', () => {
+    const templatePath = join(fixture.root, 'council.template.js');
+    writeFileSync(templatePath, TEMPLATE_BODY, 'utf8');
+    for (const [name, stamp] of [
+      ['ts', stampWorkflow],
+      ['cjs', stampCouncilWorkflow],
+    ] as const) {
+      const targetDir = join(fixture.root, `workflow-cas-${name}`);
+      const targetPath = join(targetDir, TARGET_NAME);
+      stamp({ templatePath, pluginRoot: '/old/plugin', targetDir });
+      expect(() =>
+        stamp({
+          templatePath,
+          pluginRoot: '/incoming/plugin',
+          targetDir,
+          beforePromotion: () => writeFileSync(targetPath, '// personal race\n', 'utf8'),
+        }),
+      ).toThrow('changed before promotion');
+      expect(readFileSync(targetPath, 'utf8')).toBe('// personal race\n');
+      const conflict = readdirSync(targetDir).find((entry) => entry.startsWith('.council.genie-conflict-'));
+      expect(conflict).toBeDefined();
+      expect(readFileSync(join(targetDir, conflict as string, 'staged', TARGET_NAME), 'utf8')).toContain(
+        '/incoming/plugin',
+      );
+    }
+  });
+
+  test("TypeScript and SessionStart engines recover each other's version-2 council journals", () => {
+    const templatePath = join(fixture.root, 'council.template.js');
+    writeFileSync(templatePath, TEMPLATE_BODY, 'utf8');
+    for (const [name, recover] of [
+      ['ts-recovers-cjs', recoverManagedWorkflowTransactions],
+      ['cjs-recovers-ts', recoverCjsCouncilTransactions],
+    ] as const) {
+      const targetDir = join(fixture.root, name);
+      stampWorkflow({ templatePath, pluginRoot: '/old/plugin', targetDir, now: FIXED_NOW });
+      const oldTarget = readFileSync(join(targetDir, TARGET_NAME));
+      const oldManifest = readFileSync(join(targetDir, WORKFLOW_MANIFEST_NAME));
+      stampWorkflow({ templatePath, pluginRoot: '/new/plugin', targetDir, now: FIXED_NOW });
+      const nextTarget = readFileSync(join(targetDir, TARGET_NAME));
+      const nextManifest = readFileSync(join(targetDir, WORKFLOW_MANIFEST_NAME));
+      const transaction = join(targetDir, `.council.genie-txn-cross-${name}`);
+      writeFile(join(transaction, 'before', TARGET_NAME), oldTarget.toString());
+      writeFile(join(transaction, 'before', WORKFLOW_MANIFEST_NAME), oldManifest.toString());
+      writeFile(
+        join(transaction, 'journal.json'),
+        `${JSON.stringify({
+          version: 2,
+          targetDigest: createHash('sha256').update(nextTarget).digest('hex'),
+          manifestDigest: createHash('sha256').update(nextManifest).digest('hex'),
+          hadTarget: true,
+          hadManifest: true,
+          beforeTargetDigest: createHash('sha256').update(oldTarget).digest('hex'),
+          beforeManifestDigest: createHash('sha256').update(oldManifest).digest('hex'),
+        })}\n`,
+      );
+
+      recover(targetDir);
+
+      expect(readFileSync(join(targetDir, TARGET_NAME))).toEqual(oldTarget);
+      expect(readFileSync(join(targetDir, WORKFLOW_MANIFEST_NAME))).toEqual(oldManifest);
+      expect(existsSync(transaction)).toBe(false);
+    }
   });
 
   test('corrupt workflow ownership metadata fails closed with zero target writes', () => {

@@ -595,9 +595,29 @@ export function probeCodexGeniePlugin(deps: CodexPluginProbeDeps = {}): CodexPlu
   }
 }
 
-/** The absolute stdio entry used by all project-scoped clients. */
-export function genieMcpEntry(command = process.execPath): McpServerEntry {
-  return { command, args: ['mcp'] };
+function interpretedGenieEntry(argv: string[]): string | null {
+  const candidate = argv[1];
+  if (!candidate || !isAbsolute(candidate)) return null;
+  try {
+    const stat = lstatSync(candidate);
+    if (!stat.isFile() || stat.isSymbolicLink()) return null;
+    return realpathSync(candidate);
+  } catch {
+    // Compiled binaries receive the first CLI argument in argv[1], not a script.
+    return null;
+  }
+}
+
+/**
+ * The absolute stdio entry used by all project-scoped clients. A compiled Bun
+ * executable directly receives `mcp`; an interpreted source/dist invocation
+ * records both the absolute Bun executable and absolute entry script.
+ */
+export function genieMcpEntry(command?: string, argv = process.argv): McpServerEntry {
+  if (command !== undefined) return { command, args: ['mcp'] };
+  const executable = realpathSync(process.execPath);
+  const script = interpretedGenieEntry(argv);
+  return { command: executable, args: script ? [script, 'mcp'] : ['mcp'] };
 }
 
 function isJsonObject(value: unknown): value is JsonObject {
@@ -697,7 +717,17 @@ function fallbackBounds(raw: string, path: string): { start: number; end: number
       `Cannot reconcile genie MCP server: ${path} has an incomplete ${FALLBACK_BEGIN}/${FALLBACK_END} block. Repair or remove that marker block and retry.`,
     );
   }
-  return start < 0 ? null : { start, end: endMarker + FALLBACK_END.length };
+  if (start < 0) return null;
+  let end = endMarker + FALLBACK_END.length;
+  // The generated block owns its line ending and one blank separator. Include
+  // those bytes in the marker bounds so update/remove is byte-idempotent and
+  // cannot accumulate a blank line on every reconciliation.
+  for (let lineEnding = 0; lineEnding < 2; lineEnding += 1) {
+    if (raw.startsWith('\r\n', end)) end += 2;
+    else if (raw[end] === '\n') end += 1;
+    else break;
+  }
+  return { start, end };
 }
 
 function hasUnmanagedFallback(raw: string, owned: { start: number; end: number } | null): boolean {
@@ -716,7 +746,47 @@ function hasUnmanagedFallback(raw: string, owned: { start: number; end: number }
 }
 
 function fallbackBlock(entry: McpServerEntry): string {
-  return `${FALLBACK_BEGIN}\n[mcp_servers.genie]\ncommand = ${JSON.stringify(entry.command)}\nargs = ${JSON.stringify(entry.args)}\n${FALLBACK_END}`;
+  return `${FALLBACK_BEGIN}\nmcp_servers.genie.command = ${JSON.stringify(entry.command)}\nmcp_servers.genie.args = ${JSON.stringify(entry.args)}\n${FALLBACK_END}`;
+}
+
+function removeOwnedFallback(raw: string, owned: { start: number; end: number }): string {
+  return `${raw.slice(0, owned.start)}${raw.slice(owned.end)}`;
+}
+
+function canonicalTomlValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalTomlValue);
+  if (!isJsonObject(value)) return value;
+  const result: JsonObject = {};
+  for (const key of Object.keys(value).sort()) result[key] = canonicalTomlValue(value[key]);
+  return result;
+}
+
+function nonGenieTomlSemantics(raw: string, path: string): string {
+  let parsed: unknown;
+  try {
+    parsed = Bun.TOML.parse(raw);
+  } catch (error) {
+    throw new Error(
+      `Cannot reconcile genie MCP server because ${path} is invalid TOML: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (!isJsonObject(parsed)) return JSON.stringify(parsed);
+  const copy = structuredClone(parsed) as JsonObject;
+  const { mcp_servers: mcpServers, ...withoutServers } = copy;
+  if (isJsonObject(mcpServers)) {
+    const remaining = Object.fromEntries(Object.entries(mcpServers).filter(([key]) => key !== GENIE_PLUGIN_NAME));
+    if (Object.keys(remaining).length > 0) withoutServers.mcp_servers = remaining;
+    return JSON.stringify(canonicalTomlValue(withoutServers));
+  }
+  return JSON.stringify(canonicalTomlValue(copy));
+}
+
+function assertNonGenieTomlSemantics(raw: string, next: string, path: string): void {
+  if (nonGenieTomlSemantics(raw, path) !== nonGenieTomlSemantics(next, path)) {
+    throw new Error(
+      `Cannot reconcile genie MCP server: removing or updating the marker-owned block would change non-Genie TOML semantics in ${path}. Move root keys before the legacy block or add an explicit table header, then retry.`,
+    );
+  }
 }
 
 function prepareCodexFallback(
@@ -746,9 +816,8 @@ function prepareCodexFallback(
     if (owned === null) {
       return { path: configPath, action: 'skipped', ok: true, route: 'plugin', detail: 'enabled plugin' };
     }
-    let content = `${raw.slice(0, owned.start)}${raw.slice(owned.end)}`;
-    if (content.startsWith('\n')) content = content.slice(1);
-    if (content.length > 0 && !content.endsWith('\n')) content += '\n';
+    const content = removeOwnedFallback(raw, owned);
+    assertNonGenieTomlSemantics(raw, content, configPath);
     return {
       path: configPath,
       action: 'updated',
@@ -771,13 +840,9 @@ function prepareCodexFallback(
   }
 
   const block = fallbackBlock(entry);
-  let content: string;
-  if (owned !== null) {
-    content = `${raw.slice(0, owned.start)}${block}${raw.slice(owned.end)}`;
-  } else {
-    const separator = raw.length === 0 ? '' : raw.endsWith('\n') ? '\n' : '\n\n';
-    content = `${raw}${separator}${block}\n`;
-  }
+  const unowned = owned === null ? raw : removeOwnedFallback(raw, owned);
+  const content = unowned.length === 0 ? `${block}\n` : `${block}\n\n${unowned}`;
+  assertNonGenieTomlSemantics(raw, content, configPath);
   if (content === raw) {
     return { path: configPath, action: 'skipped', ok: true, route: 'fallback', detail: 'project fallback current' };
   }

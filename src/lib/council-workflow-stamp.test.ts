@@ -25,7 +25,7 @@ const { stampCouncilWorkflow, inspectManagedWorkflow, resolveStampInputs, PLACEH
       version?: string | null;
       now?: () => Date;
     }) => {
-      action: 'written' | 'skipped' | 'kept-unmanaged' | 'kept-modified' | 'metadata-corrupt' | 'adopted-legacy';
+      action: 'written' | 'skipped' | 'kept-unmanaged' | 'kept-modified' | 'metadata-corrupt';
       targetPath: string;
     };
     inspectManagedWorkflow: (targetDir: string) => {
@@ -124,7 +124,7 @@ describe('stampCouncilWorkflow', () => {
     expect(readFileSync(res.targetPath, 'utf8')).toContain('// updated template');
   });
 
-  test('an exact inventory-missing legacy workflow is backup-first adopted', () => {
+  test('an exact inventory-missing legacy workflow remains byte-identical and unmanaged', () => {
     mkdirSync(targetDir, { recursive: true });
     const targetPath = join(targetDir, 'council.js');
     const personal = TEMPLATE_BODY.split(PLACEHOLDER).join('/abs/plugins/genie');
@@ -132,11 +132,11 @@ describe('stampCouncilWorkflow', () => {
 
     const result = stampCouncilWorkflow({ templatePath, pluginRoot: '/abs/plugins/genie', targetDir });
 
-    expect(result.action).toBe('adopted-legacy');
-    expect(readFileSync(targetPath, 'utf8')).not.toBe(personal);
-    expect(existsSync(join(targetDir, WORKFLOW_MANIFEST_NAME))).toBe(true);
-    expect(existsSync(join(dirname(targetDir), '.genie-recovery', 'council-bootstrap'))).toBe(true);
-    expect(inspectManagedWorkflow(targetDir).state).toBe('managed-clean');
+    expect(result.action).toBe('kept-unmanaged');
+    expect(readFileSync(targetPath, 'utf8')).toBe(personal);
+    expect(existsSync(join(targetDir, WORKFLOW_MANIFEST_NAME))).toBe(false);
+    expect(existsSync(join(dirname(targetDir), '.genie-recovery', 'council-bootstrap'))).toBe(false);
+    expect(inspectManagedWorkflow(targetDir).state).toBe('unmanaged');
   });
 
   test('a digest-owned workflow modified by the user is preserved byte-identically', () => {

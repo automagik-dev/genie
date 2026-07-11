@@ -5,7 +5,7 @@ description: "Wire a Genie agent to an Omni channel in one canonical flow — re
 
 # Omni — Canonical Genie ↔ Omni Wiring
 
-**Runtime syntax:** in Codex, invoke the plugin copy with the owner-qualified `$genie:<skill>` selector; use bare `$<skill>` only for a separately installed personal copy. Claude Code and Hermes use `/<skill>`. Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active tier.
+**Runtime syntax:** in Codex, invoke the plugin copy with the owner-qualified `$genie:<skill>` selector; use bare `$<skill>` only when intentionally selecting a user-tier copy (CLI-managed fallback or separately installed personal skill). Claude Code and Hermes use `/<skill>`. Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active tier.
 
 Take an operator from "channel connected in Omni" to "messages in that channel reach a Genie agent and get replies". This skill owns the wiring flow. If separate Omni setup, messaging, or administration skills are installed, invoke them through the active runtime's skill surface; otherwise use current `omni --help` output and stop when a required capability is unavailable.
 

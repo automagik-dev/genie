@@ -83,6 +83,9 @@ jobs:
       - name: Generated hook bundle parity
         run: bun run lint:hook-bundles
 
+      - name: Shipped plugin executable static checks
+        run: bun run lint:plugin-executables
+
       - name: Fresh-install smoke
         run: bun run scripts/fresh-install-smoke.ts
 

@@ -30,6 +30,7 @@ import { MANAGED_BY, WORKFLOW_MANIFEST_NAME, computeDirDigest, stampWorkflow } f
 import {
   collectAgentSyncAssets,
   hasUninstallWork,
+  inspectUninstallPlan,
   isGenieSymlink,
   isSameOrContainedPath,
   removeAgentSyncAssets,
@@ -315,5 +316,49 @@ describe('uninstall ownership and work detection', () => {
     expect(hasUninstallWork(base)).toBe(false);
     expect(hasUninstallWork({ ...base, runtimeEvidence: { codex: true, claude: false } })).toBe(true);
     expect(hasUninstallWork({ ...base, removeMarketplace: true })).toBe(true);
+  });
+
+  test('a post-confirmation replan observes state that appeared while the preview was open', () => {
+    let present = false;
+    const inspectors = {
+      hasGenieDir: () => present,
+      hookScriptExists: () => false,
+      detectV4Install: () => ({
+        rulesFile: { path: join(root, 'rules.md'), status: 'absent' as const },
+        cacheDirs: [],
+        hasRelics: false,
+      }),
+      existingSymlinks: () => [],
+      collectAgentSyncAssets: () => [],
+      inspectCodexAgentOwnership: () => ({
+        inventoryPath: join(root, 'inventory.json'),
+        status: 'missing' as const,
+        entries: [],
+      }),
+      inspectRuntimeIntegrationEvidence: () => ({
+        codex: false,
+        claude: false,
+        errors: { codex: [], claude: [] },
+      }),
+    };
+
+    const preview = inspectUninstallPlan(join(root, 'genie'), false, inspectors);
+    present = true;
+    const execution = inspectUninstallPlan(join(root, 'genie'), false, inspectors);
+
+    expect(preview.hasGenieDir).toBe(false);
+    expect(execution.hasGenieDir).toBe(true);
+    expect(
+      hasUninstallWork({
+        hasGenieDir: execution.hasGenieDir,
+        hasHookScript: false,
+        hasOrchestrationRules: false,
+        symlinkCount: 0,
+        hasAgentAssets: false,
+        codexRoleInventoryStatus: 'missing',
+        runtimeEvidence: execution.runtimeEvidence,
+        removeMarketplace: false,
+      }),
+    ).toBe(true);
   });
 });

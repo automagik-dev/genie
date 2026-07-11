@@ -56,6 +56,7 @@ describe('installCommand', () => {
       spy.runner,
       () => {
         normalizeCalls += 1;
+        return undefined;
       },
       () => {
         syncCalls += 1;
@@ -78,6 +79,7 @@ describe('installCommand', () => {
       spy.runner,
       () => {
         normalizeCalls += 1;
+        return undefined;
       },
       () => {
         syncCalls += 1;
@@ -96,8 +98,8 @@ describe('installCommand', () => {
     installCommand(
       {},
       makeCleanupSpy().runner,
-      () => {},
-      () => {},
+      () => undefined,
+      () => undefined,
       (options) => {
         selection = options?.selection ?? '';
         return [];
@@ -108,8 +110,8 @@ describe('installCommand', () => {
     installCommand(
       { skipIntegrations: true },
       makeCleanupSpy().runner,
-      () => {},
-      () => {},
+      () => undefined,
+      () => undefined,
       (options) => {
         selection = options?.selection ?? '';
         return [];
@@ -125,7 +127,7 @@ describe('installCommand', () => {
     installCommand(
       { integrations: 'codex' },
       makeCleanupSpy().runner,
-      () => {},
+      () => undefined,
       (selection) => observed.push(selection),
       () => [],
       noopLease,
@@ -134,7 +136,7 @@ describe('installCommand', () => {
     installCommand(
       { integrations: 'none' },
       makeCleanupSpy().runner,
-      () => {},
+      () => undefined,
       (selection) => observed.push(selection),
       () => [],
       noopLease,
@@ -149,8 +151,8 @@ describe('installCommand', () => {
       installCommand(
         {},
         makeCleanupSpy().runner,
-        () => {},
-        () => {},
+        () => undefined,
+        () => undefined,
         failing,
         noopLease,
         noopConsent,
@@ -160,7 +162,7 @@ describe('installCommand', () => {
       installCommand(
         { integrations: 'codex' },
         makeCleanupSpy().runner,
-        () => {},
+        () => undefined,
         () => {},
         failing,
         noopLease,
@@ -178,6 +180,7 @@ describe('installCommand', () => {
         (() => calls.push('cleanup')) as unknown as typeof cleanupV4,
         () => {
           calls.push('normalize');
+          return undefined;
         },
         () => {
           calls.push('sync');

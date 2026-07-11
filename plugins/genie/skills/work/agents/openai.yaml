@@ -1,4 +1,4 @@
 interface:
   display_name: "Wish Execution"
   short_description: "Execute approved wish groups through native roles"
-  default_prompt: "Use $genie:work (or $work only for a separately installed personal copy) to execute the approved groups in this Genie wish."
+  default_prompt: "Use $genie:work (or $work only when intentionally selecting its user-tier copy) to execute the approved groups in this Genie wish."

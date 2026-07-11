@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | SUPERSEDED IN PART — historical PR #2546 plan; closure is mapped criterion-by-criterion in the PR #2545 remediation ledger |
+| **Status** | BLOCKED — historical PR #2546 plan is superseded criterion-by-criterion by the PR #2545 remediation ledger; exact-SHA CI, human approval, and stable-release blockers remain recorded below |
 | **Slug** | `agent-sync-hardening` |
 | **Date** | 2026-07-10 |
 | **Author** | Felipe (planned with Fable 5) |
@@ -37,6 +37,11 @@ Fast-follows F1–F10 and the deferred log stay in the dossier and are tracked a
 | 1 | B1 fix = delegation-flag hard guard, not a version probe | Invoke a flag/contract an old binary *cannot* misread — an unknown flag makes old commander error out immediately with no network. A version probe leaves a parse-fragile window and still spends a spawn on every pre-contract machine. Throttle marker written from the hook side so failures can't retry every session start. |
 | 2 | B4 fix = kept-dir over surviving-backup | On digest mismatch, rename the modified dir in place (`<dir>.genie-kept`) rather than copying to a backup location uninstall might also own — the user's data stays where the user put it, survives `~/.genie` removal by construction, and the confirmation prompt can name it. |
 | 3 | Ship with codex first-class on PR #2546 | The fixes and the codex integration land as one reviewed delta on `takeover/codex-first-class`; one CI gate, one merge, then the pointer flip. No separate hardening PR racing the promotion. |
+
+## Dependencies
+
+**depends-on:** pr-2545-ultra-release-gate
+**blocks:** none
 
 ## Success Criteria
 

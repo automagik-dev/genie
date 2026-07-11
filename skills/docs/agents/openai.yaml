@@ -1,4 +1,4 @@
 interface:
   display_name: "Documentation"
   short_description: "Audit and update documentation against code"
-  default_prompt: "Use $genie:docs (or $docs only for a separately installed personal copy) to align the documentation with the implemented behavior."
+  default_prompt: "Use $genie:docs (or $docs only when intentionally selecting its user-tier copy) to align the documentation with the implemented behavior."

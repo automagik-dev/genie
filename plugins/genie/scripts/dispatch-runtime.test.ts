@@ -181,15 +181,35 @@ describe('dispatch-runtime launcher', () => {
     expect(Buffer.byteLength(result.raw)).toBe(128 * 1024 + 1);
   });
 
+  test('executable main path returns an event-valid H6 denial for oversized PermissionRequest stdin', async () => {
+    const raw = JSON.stringify({
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'Bash',
+      tool_input: { command: 'echo hi', padding: 'x'.repeat(1024 * 1024) },
+    });
+    const proc = Bun.spawn(['node', join(import.meta.dir, 'dispatch-runtime.cjs'), 'codex', 'PermissionRequest'], {
+      stdin: Buffer.from(raw),
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const stdout = await new Response(proc.stdout).text();
+    expect(await proc.exited).toBe(0);
+    expect(launcher.validCodexOutput(stdout, 'PermissionRequest')).toBe(true);
+    expect(JSON.parse(stdout).hookSpecificOutput.decision).toEqual({
+      behavior: 'deny',
+      message: 'genie hook launcher: input exceeded the safety limit',
+    });
+  });
+
   test('rejects malformed and structurally invalid Codex input before spawning', async () => {
     const log = join(root, 'unexpected-spawn');
     process.env.FAKE_LOG = log;
     fakeGenie("fs.writeFileSync(process.env.FAKE_LOG, 'spawned');");
 
     const malformed = await run('codex', '{not json');
-    expect(JSON.parse(malformed.stdout)).toEqual({
-      decision: 'block',
-      reason: 'genie hook launcher: payload is not valid JSON',
+    expect(JSON.parse(malformed.stdout).hookSpecificOutput).toEqual({
+      hookEventName: 'PermissionRequest',
+      decision: { behavior: 'deny', message: 'genie hook launcher: payload is not valid JSON' },
     });
     const invalidPermission = await run(
       'codex',
@@ -322,6 +342,92 @@ describe('dispatch-runtime launcher', () => {
     proc.kill('SIGTERM');
     expect(await proc.exited).not.toBe(0);
     expect(performance.now() - started).toBeLessThan(1_000);
+  });
+
+  test('timeout TERM→KILL reaches dispatcher descendants in the detached process group', async () => {
+    if (process.platform === 'win32') return;
+    const grandchildPidFile = join(root, 'grandchild-pid');
+    process.env.FAKE_LOG = grandchildPidFile;
+    process.env.GENIE_HOOK_CHILD_TIMEOUT_MS = '500';
+    process.env.GENIE_HOOK_KILL_GRACE_MS = '30';
+    fakeGenie(
+      [
+        "const { spawn } = require('node:child_process');",
+        "const grandchild = spawn(process.execPath, ['-e', \"process.on('SIGTERM', () => {}); setInterval(() => {}, 10000)\"], { stdio: 'ignore' });",
+        "fs.writeFileSync(process.env.FAKE_LOG, String(grandchild.pid));",
+        "process.on('SIGTERM', () => process.exit(0));",
+        'setInterval(() => {}, 10_000);',
+      ].join('\n'),
+    );
+
+    const result = await run('codex', payload('PermissionRequest'));
+    expect(JSON.parse(result.stdout).hookSpecificOutput.decision.message).toContain('timed out');
+    const pid = Number(await Bun.file(grandchildPidFile).text());
+    let alive = true;
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      try {
+        process.kill(pid, 0);
+      } catch {
+        alive = false;
+        break;
+      }
+      await Bun.sleep(10);
+    }
+    if (alive) {
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        // already gone
+      }
+    }
+    expect(alive).toBe(false);
+  });
+
+  test('normal dispatcher exit still reaps a daemonized descendant before returning', async () => {
+    if (process.platform === 'win32') return;
+    const grandchildPidFile = join(root, 'daemonized-grandchild-pid');
+    process.env.FAKE_LOG = grandchildPidFile;
+    process.env.GENIE_HOOK_KILL_GRACE_MS = '30';
+    fakeGenie(
+      [
+        "const { spawn } = require('node:child_process');",
+        "const grandchild = spawn(process.execPath, ['-e', \"process.on('SIGTERM', () => {}); setInterval(() => {}, 10000)\"], { stdio: 'ignore' });",
+        "fs.writeFileSync(process.env.FAKE_LOG, String(grandchild.pid));",
+        'process.exit(0);',
+      ].join('\n'),
+    );
+
+    const result = await run('codex');
+    expect(result.code).toBe(0);
+    const pid = Number(await Bun.file(grandchildPidFile).text());
+    let alive = true;
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      try {
+        process.kill(pid, 0);
+      } catch {
+        alive = false;
+        break;
+      }
+      await Bun.sleep(10);
+    }
+    if (alive) {
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        // already gone
+      }
+    }
+    expect(alive).toBe(false);
+  });
+
+  test('captures and forwards at most a bounded stderr diagnostic with a truncation marker', async () => {
+    fakeGenie("process.stderr.write('x'.repeat(1024 * 1024));");
+    const result = await run('codex');
+    expect(Buffer.byteLength(result.stderr)).toBeLessThan(70 * 1024);
+    expect(result.stderr).toEndWith('[genie hook launcher: stderr truncated]\n');
+    expect(JSON.parse(result.stdout).hookSpecificOutput.permissionDecisionReason).toContain(
+      'stderr exceeded the safety limit',
+    );
   });
 
   test('keeps Claude approval polling inside the shared launcher budget', () => {

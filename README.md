@@ -25,7 +25,7 @@ curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh
 
 Every release is cosign-signed (keyless OIDC) with SLSA provenance; the installer verifies the binary — via `gh attestation verify`, falling back to `cosign verify-blob` — before it runs.
 
-The installer detects Claude Code and Codex and installs the version-matched Genie plugin for each. Control this with `--integrations auto|codex|claude|all|none` or `--skip-integrations`. Automatic integration failures warn after the verified binary succeeds; explicitly requested failures are fatal.
+The installer detects Claude Code and Codex and installs the version-matched Genie plugin for each. Control this with `--integrations auto|codex|claude|all|none` or `--skip-integrations`. When Codex is selected, the install/update convergence path also synchronizes up to 23 digest-managed product-skill fallbacks into `~/.agents/skills/`; same-name unmanaged or modified user copies are preserved. Automatic integration failures warn after the verified binary succeeds; explicitly requested failures are fatal.
 
 From inside a repo, run `genie init`. Use `genie setup --codex` to explicitly install or repair the Codex plugin, seven optional role-agent profiles, MCP routing, and the backup-first dead-OTel migration. `genie update` is the explicit update/convergence path. When crossing from a release older than `5.260711.6` to `5.260711.6` or later, let the first update finish and run `genie update` one more time: the first process may only deliver the new binary/payload, while the second runs the new convergence contract. Verify that the plugin exposes exactly H3/H4/H6, then review their hashes with `/hooks` and start a new task. Later updates converge in one operator-driven path. No Codex hook installs software, refreshes plugins, synchronizes personal skills, or writes project instructions.
 
@@ -33,7 +33,7 @@ Codex never auto-trusts plugin hooks. After setup or update, inspect the three G
 
 ## Quickstart
 
-The lifecycle is shared by Claude Code and Codex. Claude uses slash skills. A Codex plugin install uses the owner-qualified `$genie:<skill>` selector; bare `$<skill>` is only for a separately installed personal copy:
+The lifecycle is shared by Claude Code and Codex. Claude uses slash skills. A Codex plugin install uses the unambiguous owner-qualified `$genie:<skill>` selector; bare `$<skill>` resolves the user tier, which may be a CLI-managed product fallback or a separately installed personal copy:
 
 ```text
 1. /brainstorm or $genie:brainstorm   an idea → a concrete DESIGN.md
@@ -79,7 +79,7 @@ genie --help
 
 ## Skills
 
-Skills are the product. Invoke them as `/name` in Claude, `$genie:name` from the Codex plugin, or `$name` only from a separately installed personal copy:
+Skills are the product. Invoke them as `/name` in Claude, `$genie:name` from the Codex plugin, or `$name` only when intentionally selecting the corresponding user-tier copy:
 
 | Skill | What it does |
 |-------|-------------|
@@ -93,23 +93,24 @@ Shared skill bodies use a runtime-neutral delegation contract. Codex maps it to 
 
 ### Codex surface boundaries
 
-These four inventories are intentionally separate:
+These five inventories are intentionally separate:
 
 | Surface | What ships | Ownership |
 |---------|------------|-----------|
 | Codex plugin | 23 physical, in-root product skills with `agents/openai.yaml`; three untrusted hooks; MCP declaration | Versioned release payload; works without copying skills into the user tier |
+| CLI-managed product skills | Up to 23 digest-owned copies under `~/.agents/skills/<name>` | Explicit Codex-selected install/update fallback; clean managed copies converge, while unmanaged or modified collisions are preserved |
 | CLI integration | Seven optional `genie_*` role-agent TOMLs under `~/.codex/agents/` | Installed/repaired by `genie install` or `genie setup --codex`; clean managed copies refresh on explicit update |
 | Personal skills | This maintainer currently has 36 separately adapted skills under `~/.agents/skills` | User-owned; not bundled with Genie and never implied by plugin installation |
 | MCP launcher | Plugin-local Node launcher for `genie mcp` | Resolves only the canonical executable under `$GENIE_HOME/bin` (default `~/.genie/bin`) and fails closed if it is missing or unsafe |
 
-The product's 23 skills and a user's personal 36-skill library can overlap by name without becoming the same asset. Genie preserves unmanaged and modified user copies instead of adopting them.
+The plugin's 23 skills, CLI-managed user-tier fallbacks, and a user's personal 36-skill library are separate inventories even when names overlap. Genie preserves unmanaged and modified user copies instead of adopting them; use `$genie:<skill>` when the plugin copy is intended.
 
 ### Codex hooks: three reviewed behaviors
 
 | Event | Behavior | Side effects |
 |-------|----------|--------------|
-| `SessionStart` (H3) | Reads at most eight small local wish records and emits validated slug/status/count context, capped at 2 KiB | Read-only; no titles, free-form repository text, network, install, update, or writes |
-| `PreToolUse` (H4) | Runs local deterministic branch/freshness/identity guardrails for documented Bash/edit inputs | May read repository and Git/GitHub state; never calls Omni and never installs or synchronizes anything. It is a guardrail, not a substitute for sandbox policy or branch protection |
+| `SessionStart` (H3) | Inspects at most 64 candidate directories and 256 KiB of wish files, then emits at most eight validated slug/status/count records capped at 2 KiB | Read-only; no titles, free-form repository text, network, install, update, or writes |
+| `PreToolUse` (H4) | Runs branch/orchestration checks for `Bash` and audit-context checks for `Write`, `Edit`, and `apply_patch` | Codex handling is deterministic and network-free; it does not invoke the unregistered freshness (`Read`) or identity (`SendMessage`) handlers, never calls Omni, and never installs or synchronizes anything |
 | `PermissionRequest` (H6) | Applies the configured matcher and, only when Omni approvals are explicitly enabled, queues one bounded/redacted remote decision | The only retained hook allowed to write approval-queue state; failure, timeout, malformed output, or interruption denies with a reason |
 
 The removed hooks were the startup installer, first-run `AGENTS.md` writer, pre/post wish validators, per-prompt context reinjection, and inert completion validator. Setup and updates are operator commands, never lifecycle side effects.
@@ -146,7 +147,7 @@ All linked worktrees of a repository share one `genie.db`, resolved from the git
 - `.warp/.mcp.json` — Warp auto-detects this on save (no restart) and lists `genie` under Settings → AI/Agents → MCP servers.
 - `.codex/config.toml` — marker-owned absolute-path fallback, written whenever no installed, enabled, usable native Genie plugin route is proven.
 
-The Claude and Warp JSON files use the identical `mcpServers` shape and are merged idempotently; the Codex TOML fallback is separately marker-owned. Re-running `genie init` preserves every other server and top-level key and rewrites byte-identical. The registered `command` is the **absolute path to the running genie binary** (resolved from `process.execPath`), not bare `genie` — genie is not reliably on PATH (on macOS it lives only at `~/.genie/bin/genie`). Because `genie init`/`launch` run on the box that owns the repo, the recorded path is correct even under Warp's SSH-remote feature, where Warp spawns the server on that same box.
+The Claude and Warp JSON files use the identical `mcpServers` shape and are merged idempotently; the Codex TOML fallback uses marker-owned root-level dotted assignments so it cannot capture following keys. Re-running `genie init` preserves every other server and top-level key and rewrites byte-identical. A compiled Genie records the absolute executable plus `mcp`; an interpreted `bun src/genie.ts` or `bun dist/genie.js` run records the absolute Bun executable plus the absolute script and `mcp`. No route relies on bare `genie`, which is not reliably on PATH. Because `genie init`/`launch` run on the box that owns the repo, the recorded paths are correct even under Warp's SSH-remote feature, where Warp spawns the server on that same box.
 
 **What it exposes** — five read-only tools backed by the per-repo `.genie/genie.db`:
 

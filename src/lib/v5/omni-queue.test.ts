@@ -9,6 +9,8 @@ import {
   UnknownApprovalError,
   UnknownInboundError,
   attachOmniMessageId,
+  claimApprovalAnnouncement,
+  completeApprovalAnnouncement,
   enqueueApproval,
   expireApprovalIfPending,
   expireStale,
@@ -17,8 +19,12 @@ import {
   listInbox,
   listPendingApprovals,
   markHandled,
+  markInboundHandledIfClaimed,
+  recordAndClaimInbound,
   recordInbound,
   recordStatusGlyph,
+  releaseApprovalAnnouncement,
+  releaseInboundClaim,
   resolveApproval,
 } from './omni-queue.js';
 
@@ -92,8 +98,34 @@ describe('approvals', () => {
     expect(getApproval(db, id)?.omniMessageId).toBe('wamid.ABC');
   });
 
+  test('attachOmniMessageId is idempotent and never overwrites an existing correlation id', () => {
+    const id = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: '{}', now: 1 });
+    attachOmniMessageId(db, id, 'stanza-a');
+    attachOmniMessageId(db, id, 'stanza-a');
+    expect(() => attachOmniMessageId(db, id, 'stanza-b')).toThrow(ApprovalConflictError);
+    expect(getApproval(db, id)?.omniMessageId).toBe('stanza-a');
+  });
+
   test('attachOmniMessageId throws UnknownApprovalError for a missing id', () => {
     expect(() => attachOmniMessageId(db, 'appr_nope', 'm')).toThrow(UnknownApprovalError);
+  });
+
+  test('announcement claim has one winner and cannot overwrite another runner correlation id', () => {
+    const id = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: '{}', now: 1 });
+    expect(claimApprovalAnnouncement(db, id, 'runner-a')).toBe(true);
+    expect(claimApprovalAnnouncement(db, id, 'runner-b')).toBe(false);
+    expect(completeApprovalAnnouncement(db, id, 'runner-b', 'stanza-b')).toBe(false);
+    expect(completeApprovalAnnouncement(db, id, 'runner-a', 'stanza-a')).toBe(true);
+    expect(getApproval(db, id)?.omniMessageId).toBe('stanza-a');
+    expect(claimApprovalAnnouncement(db, id, 'runner-b')).toBe(false);
+  });
+
+  test('failed announcement releases only its own claim for retry', () => {
+    const id = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: '{}', now: 1 });
+    expect(claimApprovalAnnouncement(db, id, 'runner-a')).toBe(true);
+    expect(releaseApprovalAnnouncement(db, id, 'runner-b')).toBe(false);
+    expect(releaseApprovalAnnouncement(db, id, 'runner-a')).toBe(true);
+    expect(claimApprovalAnnouncement(db, id, 'runner-b')).toBe(true);
   });
 
   test('resolveApproval transitions pending -> approved and records resolver/time', () => {
@@ -298,6 +330,26 @@ describe('inbox', () => {
 
   test('markHandled throws UnknownInboundError for a missing id', () => {
     expect(() => markHandled(db, 'inb_nope')).toThrow(UnknownInboundError);
+  });
+
+  test('record-and-claim gives one duplicate-delivery winner until handled', () => {
+    const fields = { instance: 'i', chat: 'c', sender: 's', body: 'hello', eventKey: 'event-1', now: 1 };
+    const id = recordAndClaimInbound(db, { ...fields, claimToken: 'runner-a' });
+    expect(id).toBeString();
+    expect(recordAndClaimInbound(db, { ...fields, claimToken: 'runner-b' })).toBeUndefined();
+    expect(markInboundHandledIfClaimed(db, id as string, 'runner-b', 2)).toBe(false);
+    expect(markInboundHandledIfClaimed(db, id as string, 'runner-a', 2)).toBe(true);
+    expect(recordAndClaimInbound(db, { ...fields, claimToken: 'runner-b' })).toBeUndefined();
+    expect(listInbox(db)).toHaveLength(1);
+  });
+
+  test('failed processor releases only its own inbound claim for retry', () => {
+    const fields = { instance: 'i', chat: 'c', sender: 's', body: 'hello', eventKey: 'event-2', now: 1 };
+    const id = recordAndClaimInbound(db, { ...fields, claimToken: 'runner-a' }) as string;
+    expect(releaseInboundClaim(db, id, 'runner-b')).toBe(false);
+    expect(releaseInboundClaim(db, id, 'runner-a')).toBe(true);
+    expect(recordAndClaimInbound(db, { ...fields, claimToken: 'runner-b' })).toBe(id);
+    expect(listInbox(db)).toHaveLength(1);
   });
 });
 

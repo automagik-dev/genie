@@ -8,6 +8,7 @@
  */
 
 import {
+  type Dirent,
   copyFileSync,
   existsSync,
   lstatSync,
@@ -219,17 +220,13 @@ function collectHermesLinkPath(linkPath: string, genieHome: string, out: AgentSy
 function collectHermesLinks(hermesHome: string, genieHome: string, out: AgentSyncAsset[]): void {
   collectHermesLinkPath(join(hermesHome, 'plugins', 'genie'), genieHome, out);
   const profilesRoot = join(hermesHome, 'profiles');
-  let entries: ReturnType<typeof readdirSync>;
+  let entries: Dirent[];
   try {
-    entries = readdirSync(profilesRoot, { withFileTypes: true }) as never;
+    entries = readdirSync(profilesRoot, { withFileTypes: true });
   } catch {
     return;
   }
-  for (const entry of entries as unknown as Array<{
-    name: string;
-    isDirectory: () => boolean;
-    isSymbolicLink: () => boolean;
-  }>) {
+  for (const entry of entries) {
     if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(entry.name) || entry.name === '.' || entry.name === '..') continue;
     const profileRoot = resolve(profilesRoot, entry.name);
@@ -374,6 +371,58 @@ export function hasUninstallWork(snapshot: UninstallWorkSnapshot): boolean {
   );
 }
 
+export interface UninstallPlan {
+  genieDir: string;
+  hasGenieDir: boolean;
+  hasUnprovenHookScript: boolean;
+  legacyReport: ReturnType<typeof detectV4Install>;
+  hasOwnedRules: boolean;
+  existingSymlinks: string[];
+  agentAssets: AgentSyncAsset[];
+  hasAgentAssets: boolean;
+  codexRoleAgents: ReturnType<typeof inspectCodexAgentOwnership>;
+  managedRoleAgents: ReturnType<typeof inspectCodexAgentOwnership>['entries'];
+  runtimeEvidence: ReturnType<typeof inspectRuntimeIntegrationEvidence>;
+  removeMarketplace: boolean;
+}
+
+export interface UninstallPlanInspectors {
+  hasGenieDir?: (path: string) => boolean;
+  hookScriptExists?: () => boolean;
+  detectV4Install?: typeof detectV4Install;
+  existingSymlinks?: (genieDir: string) => string[];
+  collectAgentSyncAssets?: typeof collectAgentSyncAssets;
+  inspectCodexAgentOwnership?: typeof inspectCodexAgentOwnership;
+  inspectRuntimeIntegrationEvidence?: typeof inspectRuntimeIntegrationEvidence;
+}
+
+/** Build a complete read-only uninstall plan. Call again under the lease before mutation. */
+export function inspectUninstallPlan(
+  genieDir = getGenieDir(),
+  removeMarketplace = false,
+  inspectors: UninstallPlanInspectors = {},
+): UninstallPlan {
+  const legacyReport = (inspectors.detectV4Install ?? detectV4Install)();
+  const agentAssets = (inspectors.collectAgentSyncAssets ?? collectAgentSyncAssets)();
+  const codexRoleAgents = (inspectors.inspectCodexAgentOwnership ?? inspectCodexAgentOwnership)();
+  return {
+    genieDir,
+    hasGenieDir: (inspectors.hasGenieDir ?? existsSync)(genieDir),
+    hasUnprovenHookScript: (inspectors.hookScriptExists ?? hookScriptExists)(),
+    legacyReport,
+    hasOwnedRules: legacyReport.rulesFile.status === 'v4-markers',
+    existingSymlinks:
+      inspectors.existingSymlinks?.(genieDir) ??
+      SYMLINKS.filter((name) => isGenieSymlink(join(LOCAL_BIN, name), genieDir)),
+    agentAssets,
+    hasAgentAssets: agentAssets.length > 0,
+    codexRoleAgents,
+    managedRoleAgents: codexRoleAgents.entries.filter((entry) => entry.ownership.startsWith('managed-')),
+    runtimeEvidence: (inspectors.inspectRuntimeIntegrationEvidence ?? inspectRuntimeIntegrationEvidence)(),
+    removeMarketplace,
+  };
+}
+
 function removeSyncedAgentAssets(hasAgentAssets: boolean, failures: UninstallFailure[]): void {
   if (!hasAgentAssets) return;
   console.log('\x1b[2mRemoving synced agent assets...\x1b[0m');
@@ -475,6 +524,28 @@ function performUninstall(
   return { failures };
 }
 
+function performFreshUninstallPlan(
+  genieDir: string,
+  removeMarketplace: boolean,
+): {
+  execution: UninstallPlan;
+  result: UninstallResult;
+} {
+  const execution = inspectUninstallPlan(genieDir, removeMarketplace);
+  const ownedRulesPath = execution.hasOwnedRules ? execution.legacyReport.rulesFile.path : null;
+  return {
+    execution,
+    result: performUninstall(
+      ownedRulesPath,
+      execution.existingSymlinks,
+      genieDir,
+      execution.hasGenieDir,
+      execution.hasAgentAssets,
+      execution.removeMarketplace,
+    ),
+  };
+}
+
 export async function uninstallCommand(options: { removeMarketplace?: boolean } = {}): Promise<void> {
   console.log();
   console.log('\x1b[1m\x1b[33m Uninstall Genie CLI\x1b[0m');
@@ -482,19 +553,22 @@ export async function uninstallCommand(options: { removeMarketplace?: boolean } 
 
   // Preview is strictly read-only. Recovery and the lifecycle lease begin only
   // after confirmation, and destructive helpers revalidate ownership again.
-  const genieDir = getGenieDir();
-  const hasGenieDir = existsSync(genieDir);
-  const hasUnprovenHookScript = hookScriptExists();
-  const legacyReport = detectV4Install();
+  const preview = inspectUninstallPlan(getGenieDir(), options.removeMarketplace ?? false);
+  const {
+    genieDir,
+    hasGenieDir,
+    hasUnprovenHookScript,
+    legacyReport,
+    hasOwnedRules,
+    existingSymlinks,
+    agentAssets,
+    hasAgentAssets,
+    codexRoleAgents,
+    managedRoleAgents,
+    runtimeEvidence,
+  } = preview;
   const rulesStatus = legacyReport.rulesFile.status;
   const rulesPath = legacyReport.rulesFile.path;
-  const hasOwnedRules = rulesStatus === 'v4-markers';
-  const existingSymlinks = SYMLINKS.filter((name) => isGenieSymlink(join(LOCAL_BIN, name), genieDir));
-  const agentAssets = collectAgentSyncAssets();
-  const hasAgentAssets = agentAssets.length > 0;
-  const codexRoleAgents = inspectCodexAgentOwnership();
-  const managedRoleAgents = codexRoleAgents.entries.filter((entry) => entry.ownership.startsWith('managed-'));
-  const runtimeEvidence = inspectRuntimeIntegrationEvidence();
 
   console.log('\x1b[2mThis will remove:\x1b[0m');
   console.log('  \x1b[31m-\x1b[0m Genie plugins and digest-owned Codex role agents');
@@ -561,14 +635,10 @@ export async function uninstallCommand(options: { removeMarketplace?: boolean } 
     throw new Error(`Another Genie lifecycle command is active: ${lifecycleLease.skipped}`);
   try {
     console.log();
-    const result = performUninstall(
-      hasOwnedRules ? rulesPath : null,
-      existingSymlinks,
-      genieDir,
-      hasGenieDir,
-      hasAgentAssets,
-      options.removeMarketplace ?? false,
-    );
+    // The prompt may remain open while another lifecycle process finishes.
+    // Discard every preview decision and rebuild the complete plan under the
+    // lease; destructive helpers still perform their per-artifact CAS checks.
+    const { execution, result } = performFreshUninstallPlan(genieDir, options.removeMarketplace ?? false);
 
     console.log();
     if (result.failures.length > 0) {
@@ -577,7 +647,7 @@ export async function uninstallCommand(options: { removeMarketplace?: boolean } 
       for (const failure of result.failures) {
         console.log(`  \x1b[31m-\x1b[0m ${failure.step}: ${failure.detail}`);
       }
-      if (hasGenieDir && existsSync(genieDir)) {
+      if (execution.hasGenieDir && existsSync(genieDir)) {
         console.log(`  \x1b[33m!\x1b[0m Kept ${contractPath(genieDir)} so you can retry \`genie uninstall\`.`);
       }
       console.log();

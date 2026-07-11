@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
   type CodexPluginProbe,
+  genieMcpEntry,
   inspectCodexPluginMcpUsability,
   inspectCodexProjectMcp,
   preflightCodexPluginMutation,
@@ -87,6 +88,39 @@ function seedActivePlugin(version = '1.2.3'): {
   chmodSync(nodePath, 0o755);
   return { codexHome, pluginRoot, genieHome, nodePath, version };
 }
+
+describe('project MCP executable entry', () => {
+  test('records absolute executable plus script args for interpreted source and dist runs', () => {
+    const repoRoot = join(import.meta.dir, '..', '..');
+    const sourceEntry = join(repoRoot, 'src', 'genie.ts');
+    const distRoot = join(root, 'dist');
+    const build = Bun.spawnSync([process.execPath, 'build', sourceEntry, '--outdir', distRoot, '--target', 'bun'], {
+      cwd: repoRoot,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    expect(build.exitCode).toBe(0);
+
+    for (const script of [sourceEntry, join(distRoot, 'genie.js')]) {
+      const entry = genieMcpEntry(undefined, [process.execPath, script]);
+      expect(entry.command).toBe(realpathSync(process.execPath));
+      expect(entry.args).toEqual([realpathSync(script), 'mcp']);
+      const invocation = Bun.spawnSync([entry.command, ...entry.args, '--help'], {
+        cwd: root,
+        env: { ...process.env, HOME: root, GENIE_HOME: join(root, '.genie') },
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+      expect(invocation.exitCode).toBe(0);
+      expect(invocation.stdout.toString()).toContain('Usage: genie mcp');
+    }
+
+    expect(genieMcpEntry('/absolute/compiled-genie')).toEqual({
+      command: '/absolute/compiled-genie',
+      args: ['mcp'],
+    });
+  });
+});
 
 describe('resolveGitWorktreeRoot', () => {
   test('resolves root, nested directory, and linked worktree to their own working-tree roots', () => {
@@ -465,7 +499,46 @@ describe('Codex plugin/fallback reconciliation', () => {
     const result = reconcileCodexProjectMcp(root, disabled, { command: '/absolute/genie', args: ['mcp'] });
     expect(result).toMatchObject({ ok: true, route: 'fallback', action: 'created' });
     expect(readFileSync(configPath(), 'utf8')).toContain('command = "/absolute/genie"');
+    expect(readFileSync(configPath(), 'utf8')).toContain('mcp_servers.genie.command = "/absolute/genie"');
+    expect(readFileSync(configPath(), 'utf8')).not.toContain('[mcp_servers.genie]');
     expect(inspectCodexProjectMcp(root, disabled).route).toBe('fallback');
+  });
+
+  test('marker-owned dotted TOML never captures following root keys and removal preserves semantics', () => {
+    mkdirSync(join(root, '.codex'), { recursive: true });
+    const original = 'model = "gpt-5"\nreasoning = "high"\n\n[features]\napps = true\n';
+    writeFileSync(configPath(), original);
+
+    expect(reconcileCodexProjectMcp(root, disabled, { command: '/absolute/genie', args: ['mcp'] }).action).toBe(
+      'updated',
+    );
+    const withFallback = readFileSync(configPath(), 'utf8');
+    const before = Bun.TOML.parse(withFallback) as Record<string, unknown>;
+    expect(before.model).toBe('gpt-5');
+    expect(before.reasoning).toBe('high');
+    expect(before.features).toEqual({ apps: true });
+    expect(reconcileCodexProjectMcp(root, disabled, { command: '/absolute/genie', args: ['mcp'] }).action).toBe(
+      'skipped',
+    );
+    expect(readFileSync(configPath(), 'utf8')).toBe(withFallback);
+
+    reconcileCodexProjectMcp(root, enabled, { command: '/absolute/genie', args: ['mcp'] });
+    const removed = readFileSync(configPath(), 'utf8');
+    const after = Bun.TOML.parse(removed) as Record<string, unknown>;
+    expect(after).toEqual({ model: 'gpt-5', reasoning: 'high', features: { apps: true } });
+    expect(removed).toBe(original);
+  });
+
+  test('refuses to remove an ambiguous legacy table block that captured a following key', () => {
+    mkdirSync(join(root, '.codex'), { recursive: true });
+    const ambiguous =
+      '# BEGIN GENIE MCP FALLBACK\n[mcp_servers.genie]\ncommand = "/old"\nargs = ["mcp"]\n# END GENIE MCP FALLBACK\nmodel = "captured"\n';
+    writeFileSync(configPath(), ambiguous);
+
+    expect(() => reconcileCodexProjectMcp(root, enabled, { command: '/genie', args: ['mcp'] })).toThrow(
+      /change non-Genie TOML semantics/,
+    );
+    expect(readFileSync(configPath(), 'utf8')).toBe(ambiguous);
   });
 
   test('query failure conservatively keeps one fallback', () => {

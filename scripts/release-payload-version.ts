@@ -9,6 +9,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { replaceTopLevelStringProperty } from './json-top-level-string.js';
 
 const VERSION_PATTERN = /^[0-9A-Za-z][0-9A-Za-z.+-]{0,127}$/;
 
@@ -41,9 +42,7 @@ function replaceTopLevelVersion(path: string, version: string): void {
   const parsed = readObject(path);
   const source = readFileSync(path, 'utf8');
   if (typeof parsed.version !== 'string') throw new Error(`metadata has no top-level string version: ${path}`);
-  const updated = source.replace(/("version"\s*:\s*)"[^"]*"/, `$1"${version}"`);
-  if (updated === source && parsed.version !== version) throw new Error(`could not stamp top-level version: ${path}`);
-  JSON.parse(updated);
+  const updated = replaceTopLevelStringProperty(source, 'version', version);
   writeFileSync(path, updated);
 }
 

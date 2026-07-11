@@ -49,8 +49,12 @@ function inventory(root: string): string[] {
   return files.sort();
 }
 
-function pluginScriptFromCommand(command: string, runtime?: 'codex'): string {
-  const suffix = runtime ? ` ${runtime}` : '';
+function pluginScriptFromCommand(
+  command: string,
+  runtime?: 'codex',
+  expectedEvent?: 'PreToolUse' | 'PermissionRequest',
+): string {
+  const suffix = runtime ? ` ${runtime}${expectedEvent ? ` ${expectedEvent}` : ''}` : '';
   const match = command.match(new RegExp(`^node "\\$\\{PLUGIN_ROOT\\}/([^"]+)"${suffix}$`));
   expect(match?.[1]).toBeDefined();
   return join(REPO_ROOT, 'plugins', 'genie', match?.[1] ?? 'missing');
@@ -122,8 +126,8 @@ describe('Codex hook manifest', () => {
     const parsed = manifest();
     for (const event of ['PreToolUse', 'PermissionRequest'] as const) {
       const hook = parsed.hooks[event][0].hooks[0];
-      const launcher = pluginScriptFromCommand(hook.command, 'codex');
-      const proc = Bun.spawn(['node', launcher, 'codex'], {
+      const launcher = pluginScriptFromCommand(hook.command, 'codex', event);
+      const proc = Bun.spawn(['node', launcher, 'codex', event], {
         cwd: root,
         env: { ...process.env, GENIE_HOME: genieHome },
         stdin: Buffer.from(

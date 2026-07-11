@@ -28,8 +28,9 @@
     "lint:complexity-budget": "bun run scripts/complexity-budget.ts",
     "lint:council-workflow": "bun scripts/council-workflow-lint.ts",
     "lint:hook-bundles": "bun scripts/hook-bundle-parity.ts --check",
-    "check": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint && bun run lint:complexity-budget && bun run lint:council-workflow && bun run lint:hook-bundles && bun test",
-    "check:fast": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint && bun run lint:complexity-budget && bun run lint:council-workflow && bun run lint:hook-bundles",
+    "lint:plugin-executables": "bun scripts/plugin-executables-check.ts",
+    "check": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint && bun run lint:complexity-budget && bun run lint:council-workflow && bun run lint:hook-bundles && bun run lint:plugin-executables && bun test",
+    "check:fast": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint && bun run lint:complexity-budget && bun run lint:council-workflow && bun run lint:hook-bundles && bun run lint:plugin-executables",
     "verify:release": "scripts/verify-release.sh"
   },
   "dependencies": {

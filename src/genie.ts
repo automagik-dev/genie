@@ -10,7 +10,7 @@
  *   Hooks:      hook namespace + git hook dispatch
  */
 
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { doctorCommand } from './genie-commands/doctor.js';
 import { type InstallOptions, installCommand } from './genie-commands/install.js';
 import { type SetupOptions, setupCommand } from './genie-commands/setup.js';
@@ -87,10 +87,14 @@ program
   .option('--no-restart', 'Skip the post-update binary verify probe')
   .option('--no-verify', 'Skip the post-update binary verify probe')
   .option('--skip-maintenance', 'Skip the post-update binary verify probe (or set GENIE_UPDATE_SKIP_MAINTENANCE=1)')
-  .option('--rollback', 'Restore the most recent ~/.genie/bin/.previous binary backup')
-  .option(
-    '--sync-only',
-    'Converge agent integrations only — no manifest fetch or binary swap (GENIE_UPDATE_SYNC_ONLY=1)',
+  .addOption(
+    new Option('--rollback', 'Restore the most recent ~/.genie/bin/.previous binary backup').conflicts('syncOnly'),
+  )
+  .addOption(
+    new Option(
+      '--sync-only',
+      'Converge agent integrations only — no manifest fetch or binary swap (GENIE_UPDATE_SYNC_ONLY=1)',
+    ).conflicts('rollback'),
   )
   .action(updateCommand);
 

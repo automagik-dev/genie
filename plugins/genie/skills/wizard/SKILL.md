@@ -5,7 +5,7 @@ description: "Guided onboarding — scaffold workspace, shape agent identity, cr
 
 # wizard — First-Run Onboarding
 
-**Runtime syntax:** in Codex, invoke the plugin copy with the owner-qualified `$genie:<skill>` selector; use bare `$<skill>` only for a separately installed personal copy. Claude Code and Hermes use `/<skill>`. Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active tier.
+**Runtime syntax:** in Codex, invoke the plugin copy with the owner-qualified `$genie:<skill>` selector; use bare `$<skill>` only when intentionally selecting a user-tier copy (CLI-managed fallback or separately installed personal skill). Claude Code and Hermes use `/<skill>`. Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active tier.
 
 Walk a new user through complete Genie setup in five phases. Infer everything you can from the repo and confirm once — don't interrogate. Resumable: detect completed phases and skip them.
 
@@ -33,7 +33,9 @@ genie init   # idempotent state plus .mcp.json, .warp/.mcp.json, and conditional
 
 Before running it, tell the user that these are project-scoped writes and that
 Codex uses the TOML fallback only when no installed, enabled, usable Genie
-plugin route can be proven.
+plugin route can be proven. Claude treats the project `.mcp.json` route as
+pending until the user trusts the workspace; Codex users should inspect the
+marker-owned dotted assignments in `.codex/config.toml` before using that route.
 
 ## Phase 2 — Agent Identity
 
@@ -72,4 +74,4 @@ On re-invocation, detect state and jump: `.genie/` exists → skip scaffolding; 
 
 ## Failure Handling
 
-Show the failing command's output and offer retry / skip / abort. A delegated skill failing does not kill the wizard — continue from the next phase. Always leave the user with a concrete next action.
+Show the failing command's output and offer retry / skip / abort for optional phases only. Phase 3 is a mandatory gate: a failed wish or plan review stays in Phase 3; route `FIX-FIRST` through `fix` and a fresh plan review, and stop on `BLOCKED` with its concrete unblocking action. Never enter Phase 4 until WISH status `APPROVED` is persisted on disk. Always leave the user with a concrete next action.
