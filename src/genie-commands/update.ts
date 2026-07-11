@@ -24,6 +24,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import {
   type AgentSyncReport,
   type AgentSyncSelection,
+  type LifecycleLease,
   acquireLifecycleLease,
   runAgentSync,
 } from '../lib/agent-sync.js';
@@ -679,6 +680,8 @@ export interface AtomicBinarySwapOptions {
   beforePromote?: (replacementPath: string, targetPath: string) => void;
   /** Keep a journal-bound source until the surrounding delivery commits. */
   preserveSource?: boolean;
+  /** Authenticated journal preimage consumed by this swap. */
+  expectedPreimage?: PendingOptionalFileFingerprint;
 }
 
 function fsyncFile(path: string): void {
@@ -741,6 +744,8 @@ export function atomicBinarySwap(
   const replacementPath = join(targetDir, `.genie-replacement-${transactionId}`);
   let backupStaging: string | null = null;
   let oldBackup: string | null = null;
+  const expectedPreimage =
+    options.expectedPreimage ?? fingerprintOptionalPhysicalFile(targetBinPath, 'live binary preimage');
   try {
     // The replacement is fully copied, executable, and durable in the target
     // directory before the live canonical path is touched.
@@ -748,6 +753,7 @@ export function atomicBinarySwap(
     chmodSync(replacementPath, 0o755);
     fsyncFile(replacementPath);
 
+    assertExpectedBinaryPreimage(targetBinPath, expectedPreimage, 'before backup');
     let targetStat: ReturnType<typeof lstatSync> | null = null;
     try {
       targetStat = lstatSync(targetBinPath);
@@ -766,9 +772,15 @@ export function atomicBinarySwap(
       renameSync(backupStaging, oldBackup);
       backupStaging = null;
       fsyncDirectory(previousDir);
+      assertAuthenticatedBinaryBackup(oldBackup, expectedPreimage);
     }
 
     options.beforePromote?.(replacementPath, targetBinPath);
+    if (oldBackup !== null) assertAuthenticatedBinaryBackup(oldBackup, expectedPreimage);
+    // Consume exactly the journaled preimage at the last boundary available to
+    // portable Node. The lifecycle lease excludes Genie/install.sh writers;
+    // this recheck rejects any other writer observed before rename-over-live.
+    assertExpectedBinaryPreimage(targetBinPath, expectedPreimage, 'immediately before promotion');
     // rename-over-live is the only mutation of the canonical path. If the
     // process dies before this call, the old executable remains runnable; if
     // it dies after, the complete replacement is already live.
@@ -786,6 +798,31 @@ export function atomicBinarySwap(
     rmSync(replacementPath, { force: true });
     if (backupStaging !== null) rmSync(backupStaging, { force: true });
     throw error;
+  }
+}
+
+function assertExpectedBinaryPreimage(
+  targetPath: string,
+  expected: PendingOptionalFileFingerprint,
+  phase: string,
+): void {
+  const actual = fingerprintOptionalPhysicalFile(targetPath, `live binary ${phase}`);
+  const matches =
+    actual.present === expected.present &&
+    (!actual.present ||
+      (actual.fingerprint !== null &&
+        expected.fingerprint !== null &&
+        fingerprintsEqual(actual.fingerprint, expected.fingerprint)));
+  if (!matches) throw new Error(`live binary preimage changed ${phase}; refusing to overwrite ${targetPath}`);
+}
+
+function assertAuthenticatedBinaryBackup(backupPath: string, expected: PendingOptionalFileFingerprint): void {
+  if (!expected.present || expected.fingerprint === null) {
+    throw new Error(`unexpected rollback backup for an absent binary preimage: ${backupPath}`);
+  }
+  const actual = fingerprintPhysicalFile(backupPath, 'previous binary backup');
+  if (!fingerprintsEqual(actual, expected.fingerprint)) {
+    throw new Error(`rollback backup does not match the authenticated binary preimage: ${backupPath}`);
   }
 }
 
@@ -1747,13 +1784,37 @@ function requireCanonicalInstallOrExit(): void {
   }
 }
 
+function acquireRequiredLifecycleLease(): LifecycleLease {
+  const lease = acquireLifecycleLease(GENIE_HOME);
+  if ('skipped' in lease) {
+    throw new Error(`Another Genie lifecycle command is active: ${lease.skipped}`);
+  }
+  return lease;
+}
+
+function announceUpdatePlanOrExit(
+  channel: ReleaseChannel,
+  platform: string,
+  installedVersion: string,
+  latestVersion: string | null,
+): string {
+  log(`Channel: ${channel}${channel === 'stable' ? ' (stable)' : ` (${channel})`}`);
+  log(`Platform: ${platform}`);
+  if (!latestVersion) {
+    log(`Channel manifest unavailable (.well-known/${channel === 'stable' ? 'latest' : channel}.json missing)`);
+    error(`Cannot resolve target version for channel "${channel}". Aborting.`);
+    process.exit(1);
+  }
+  if (normalizeVersion(installedVersion) !== normalizeVersion(latestVersion)) {
+    log(`Update available: ${normalizeVersion(installedVersion)} → ${normalizeVersion(latestVersion)}`);
+  }
+  return latestVersion;
+}
+
 export async function updateCommand(options: UpdateCommandOptions = {}): Promise<void> {
   const mode = resolveUpdateExecutionMode(options);
   if (mode !== 'normal') {
-    const lifecycleLease = acquireLifecycleLease(GENIE_HOME);
-    if ('skipped' in lifecycleLease) {
-      throw new Error(`Another Genie lifecycle command is active: ${lifecycleLease.skipped}`);
-    }
+    const lifecycleLease = acquireRequiredLifecycleLease();
     try {
       if (mode === 'rollback') await runRollback();
       else {
@@ -1781,21 +1842,9 @@ export async function updateCommand(options: UpdateCommandOptions = {}): Promise
   // acquisition. Interactive users can consider the prompt without blocking
   // install/setup/uninstall in another process.
   const manifest = await fetchLatestManifest(channel);
-  const latestVersion = manifest?.version ?? null;
   const plannedInstalledVersion = resolveInstalledVersion();
   const platform = resolveUpdatePlatformOrExit();
-
-  log(`Channel: ${channel}${channel === 'stable' ? ' (stable)' : ` (${channel})`}`);
-  log(`Platform: ${platform}`);
-  if (latestVersion) {
-    if (normalizeVersion(plannedInstalledVersion) !== normalizeVersion(latestVersion)) {
-      log(`Update available: ${normalizeVersion(plannedInstalledVersion)} → ${normalizeVersion(latestVersion)}`);
-    }
-  } else {
-    log(`Channel manifest unavailable (.well-known/${channel === 'stable' ? 'latest' : channel}.json missing)`);
-    error(`Cannot resolve target version for channel "${channel}". Aborting.`);
-    process.exit(1);
-  }
+  const latestVersion = announceUpdatePlanOrExit(channel, platform, plannedInstalledVersion, manifest?.version ?? null);
   console.log();
 
   const plannedDecision = decideDowngrade({
@@ -1817,10 +1866,7 @@ export async function updateCommand(options: UpdateCommandOptions = {}): Promise
     }
   }
 
-  const lifecycleLease = acquireLifecycleLease(GENIE_HOME);
-  if ('skipped' in lifecycleLease) {
-    throw new Error(`Another Genie lifecycle command is active: ${lifecycleLease.skipped}`);
-  }
+  const lifecycleLease = acquireRequiredLifecycleLease();
   try {
     // Revalidate durable recovery and the installed binary immediately after
     // acquiring the lease, before the first mutation owned by this plan.
@@ -2111,15 +2157,18 @@ async function runDelivery(
   const oldVersion = normalizeVersion(VERSION);
   log('Atomically swapping binary...');
   const targetBin = join(GENIE_BIN, 'genie');
-  recordPendingDelivery({
+  const pending = recordPendingDelivery({
     version: manifest.version,
     previousVersion: oldVersion,
     previousBinaryPath: targetBin,
     extractDir,
     tarballPath,
   });
+  const expectedPreimage = pending.payload.previousBinary;
+  if (expectedPreimage === undefined) throw new Error('pending delivery did not record the live binary preimage');
   const swapResult = atomicBinarySwap(stagedBin, targetBin, GENIE_BIN_PREVIOUS, oldVersion, {
     preserveSource: true,
+    expectedPreimage,
   });
   diagnosticsCtx.previousBackup = swapResult.oldVersionBackup;
 
@@ -2146,6 +2195,7 @@ async function runDelivery(
     previousDir: GENIE_BIN_PREVIOUS,
   });
   if (swapResult.oldVersionBackup !== null) {
+    assertAuthenticatedBinaryBackup(swapResult.oldVersionBackup, expectedPreimage);
     try {
       pruneSameVersionBackups(GENIE_BIN_PREVIOUS, oldVersion, swapResult.oldVersionBackup);
     } catch (pruneError) {
@@ -2281,7 +2331,7 @@ export function recordPendingDelivery(
   pending: PendingDeliveryPaths,
   pendingPath = join(GENIE_HOME, PENDING_DELIVERY_NAME),
   stagingRoot = GENIE_BIN_STAGING,
-): void {
+): PendingDeliveryRecord {
   assertPendingDeliveryPaths(pending, stagingRoot);
   const payload = fingerprintPendingPayload(pending);
   payload.previousBinary = fingerprintOptionalPhysicalFile(
@@ -2318,6 +2368,7 @@ export function recordPendingDelivery(
     // Some platforms do not support opening directories; the file fsync and
     // atomic rename still provide the strongest available journal durability.
   }
+  return record;
 }
 
 /**
@@ -2368,7 +2419,7 @@ export function resumePendingDelivery(options: ResumePendingDeliveryOptions = {}
           targetBin,
           previousDir,
           record.previousVersion ?? normalizeVersion(VERSION),
-          { preserveSource: true },
+          { preserveSource: true, expectedPreimage: record.payload.previousBinary },
         );
         const expectedPreviousFingerprint = record.payload.previousBinary?.fingerprint;
         if (

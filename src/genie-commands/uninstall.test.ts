@@ -148,6 +148,32 @@ describe('agent-sync managed-asset removal', () => {
     expect(readFileSync(join(edited, '.genie-sync.json'), 'utf8')).toBe(manifestBefore);
   });
 
+  test('a nested broken symlink is a physical modification and revokes uninstall authority', () => {
+    const managed = managedSkill(join(claudeDir, 'skills'), 'wish');
+    symlinkSync('missing-personal-target', join(managed, 'personal-link'));
+
+    const assets = collectAgentSyncAssets(targets());
+    expect(assets.find((asset) => asset.path === managed)?.modified).toBe(true);
+    const result = removeAgentSyncAssets(targets());
+    expect(result.kept).toEqual([managed]);
+    expect(lstatSync(join(managed, 'personal-link')).isSymbolicLink()).toBe(true);
+  });
+
+  test('uninstall uses agent-sync park/reverify and preserves a post-classification skill edit', () => {
+    const managed = managedSkill(join(claudeDir, 'skills'), 'wish');
+    const personal = '# personal uninstall race\n';
+
+    const result = removeAgentSyncAssets(targets(), {
+      beforeManagedDirRemoval(path, stage) {
+        if (path === managed && stage === 'before-park') writeFileSync(join(path, 'SKILL.md'), personal);
+      },
+    });
+
+    expect(result.removed).toEqual([]);
+    expect(result.failures[0]?.path).toBe(managed);
+    expect(readFileSync(join(managed, 'SKILL.md'), 'utf8')).toBe(personal);
+  });
+
   test('repeated uninstall attempts keep a modified artifact unchanged and retryable', () => {
     const parent = join(claudeDir, 'skills');
     const edited = modifiedManagedSkill(parent, 'review');
@@ -223,6 +249,24 @@ describe('agent-sync managed-asset removal', () => {
     expect(result.kept).toContain(council);
     expect(readFileSync(council, 'utf8')).toBe(modifiedCouncil);
     expect(readFileSync(sidecar, 'utf8')).toBe('{broken');
+  });
+
+  test('uninstall parks and revalidates council files before deletion', () => {
+    const workflows = join(claudeDir, 'workflows');
+    const council = join(workflows, 'council.js');
+    const template = join(tmp, 'council-template.js');
+    writeFileSync(template, "const LENS_ROOT = '__GENIE_LENS_ROOT__';\n");
+    stampWorkflow({ templatePath: template, pluginRoot: '/x', targetDir: workflows });
+
+    const result = removeAgentSyncAssets(targets(), {
+      beforeWorkflowRemoval(stage) {
+        if (stage === 'before-park') writeFileSync(council, '// personal council race\n');
+      },
+    });
+
+    expect(result.removed).toEqual([]);
+    expect(result.failures[0]?.path).toBe(council);
+    expect(readFileSync(council, 'utf8')).toBe('// personal council race\n');
   });
 
   test('published council transaction recovery failure blocks every destructive asset removal', () => {

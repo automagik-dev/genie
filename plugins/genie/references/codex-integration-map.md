@@ -29,15 +29,17 @@ CLI-managed fallback or separately installed personal copy. Owner-qualified
 `$genie:<skill>` prevents a same-name user workflow from silently winning
 manual plugin invocation.
 
+Starter-card metadata is different: every physical skill's `agents/openai.yaml` prompt is selector-free. The card is already attached to one discovered physical directory, so it must not name either tier and trigger a second resolution step.
+
 ## Hook contract
 
-Codex hook trust is hash-specific and commands run outside the model tool sandbox. Repository or plugin edits do not update an installed cache. After explicit setup/update, operators inspect `/hooks` and start a new task; until then all changed definitions remain untrusted.
+Codex hook trust is hash-specific and commands run outside the model tool sandbox. Repository or plugin edits do not update an installed cache. After explicit setup/update, operators inspect `/hooks` and start a new task; until then all changed definitions remain untrusted. H4/H6 definitions include the literal SHA-256 and contract version of the physical plugin launcher; the launcher verifies those values before any child spawn, and release gates reject definition/launcher drift. The remaining `$GENIE_HOME/bin/genie` executable is mutable and platform-specific. The current hook schema hashes normalized definitions rather than transitive executable bytes, so the universal plugin manifest cannot content-bind every release binary. Canonical-path and non-symlink checks narrow that residual but do not justify automatic trust.
 
 | ID | Event | Matcher | Contract |
 |----|-------|---------|----------|
 | H3 | `SessionStart` | `startup|resume|clear|compact` | One local read-only pass over at most 64 candidates/256 KiB; emits at most eight wish records and 2 KiB of validated slug/status/count context |
-| H4 | `PreToolUse` | `Bash|Write|Edit|apply_patch` | Branch/orchestration for Bash plus audit-context for edit inputs; deterministic and network-free in Codex; no freshness/identity handler or Omni |
-| H6 | `PermissionRequest` | `*` at the host, narrowed by configured registry matcher | Omni at most once when explicitly enabled; bounded/redacted preview; valid allow/deny envelope; failure/interruption/timeout denies |
+| H4 | `PreToolUse` | `Bash|Write|Edit|apply_patch` | Definition-bound launcher verification, then branch/orchestration for Bash plus audit-context for edit inputs; deterministic and network-free in Codex; no freshness/identity handler or Omni |
+| H6 | `PermissionRequest` | `*` at the host, narrowed by configured registry matcher | Definition-bound launcher verification; Omni at most once when explicitly enabled; bounded/redacted preview; valid allow/deny envelope; binding/failure/interruption/timeout denies |
 
 PreToolUse cannot intercept every possible mutation. It is defense in depth, not branch protection or a sandbox. The removed six commands installed/synchronized software, scaffolded `AGENTS.md`, validated at the wrong lifecycle points, repeatedly injected repository text, or emitted a protocol-inert Stop response.
 

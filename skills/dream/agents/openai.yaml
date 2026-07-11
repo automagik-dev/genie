@@ -1,6 +1,6 @@
 interface:
   display_name: "Dream Run"
   short_description: "Orchestrate approved wishes in dependency order"
-  default_prompt: "Use $genie:dream (or $dream only when intentionally selecting its user-tier copy) to plan and run these approved wishes in dependency order."
+  default_prompt: "Plan and run these approved wishes in dependency order with bounded validation."
 policy:
   allow_implicit_invocation: false

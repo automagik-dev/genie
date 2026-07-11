@@ -12,6 +12,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   chmodSync,
@@ -28,7 +29,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { AgentSyncReport } from '../../lib/agent-sync';
+import { type AgentSyncReport, acquireLifecycleLease } from '../../lib/agent-sync';
 import type { CommandRunner } from '../../lib/runtime-integrations';
 import type { AuxiliaryTreeOutcome, AuxiliaryTreeStage } from '../auxiliary-trees.js';
 import {
@@ -1063,6 +1064,41 @@ describe('downloadAndVerifyTarball (G5)', () => {
 // ============================================================================
 
 describe('atomicBinarySwap (G5)', () => {
+  test('standalone install.sh and TypeScript update contend on the same lifecycle lease', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'genie-installer-lifecycle-'));
+    const home = join(tmp, 'home', '.genie');
+    const installer = join(import.meta.dir, '..', '..', '..', 'install.sh');
+    mkdirSync(home, { recursive: true });
+    const lease = acquireLifecycleLease(home);
+    expect('skipped' in lease).toBe(false);
+    try {
+      const blocked = spawnSync('bash', ['-c', 'source "$1"; acquire_lifecycle_lock', 'bash', installer], {
+        encoding: 'utf8',
+        env: { ...process.env, GENIE_HOME: home, GENIE_INSTALL_SOURCE_ONLY: '1' },
+      });
+      expect(blocked.status).toBe(1);
+      expect(blocked.stderr).toContain('another Genie lifecycle command is active');
+    } finally {
+      if (!('skipped' in lease)) lease.release();
+    }
+
+    const acquired = spawnSync(
+      'bash',
+      [
+        '-c',
+        'source "$1"; acquire_lifecycle_lock; test -f "$LIFECYCLE_LOCK"; release_lifecycle_lock',
+        'bash',
+        installer,
+      ],
+      {
+        encoding: 'utf8',
+        env: { ...process.env, GENIE_HOME: home, GENIE_INSTALL_SOURCE_ONLY: '1' },
+      },
+    );
+    expect(acquired.status).toBe(0);
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
   test('happy path: stages binary, backs up old, swaps in new', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'genie-swap-'));
     try {
@@ -1198,6 +1234,93 @@ describe('atomicBinarySwap (G5)', () => {
       expect(readFileSync(targetBin, 'utf8')).toBe('OLD_BINARY');
       expect(readFileSync(stagedBin, 'utf8')).toBe('NEW_BINARY');
       expect(readFileSync(join(previousDir, 'genie-4.260507.0'), 'utf8')).toBe('OLD_BINARY');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('normal delivery consumes the journaled preimage and rejects a last-boundary binary replacement', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'genie-swap-preimage-race-'));
+    try {
+      const bin = join(tmp, 'bin');
+      const staging = join(bin, '.staging');
+      const extract = join(staging, 'extract-5.260711.7');
+      const stagedBin = join(extract, 'genie');
+      const targetBin = join(bin, 'genie');
+      const tarball = join(staging, 'genie.tar.gz');
+      const pendingPath = join(tmp, '.pending-delivery.json');
+      const previousDir = join(bin, '.previous');
+      mkdirSync(extract, { recursive: true });
+      writeFileSync(stagedBin, 'NEW_BINARY');
+      writeFileSync(targetBin, 'AUTHENTIC_OLD_BINARY');
+      writeFileSync(tarball, 'verified tarball');
+      chmodSync(stagedBin, 0o755);
+      chmodSync(targetBin, 0o755);
+      const pending = recordPendingDelivery(
+        {
+          version: '5.260711.7',
+          previousVersion: '5.260711.6',
+          previousBinaryPath: targetBin,
+          extractDir: extract,
+          tarballPath: tarball,
+        },
+        pendingPath,
+        staging,
+      );
+      expect(pending.payload.previousBinary).toBeDefined();
+
+      expect(() =>
+        atomicBinarySwap(stagedBin, targetBin, previousDir, '5.260711.6', {
+          preserveSource: true,
+          expectedPreimage: pending.payload.previousBinary,
+          beforePromote: () => writeFileSync(targetBin, 'CONCURRENT_INSTALLER_BINARY'),
+        }),
+      ).toThrow('preimage changed immediately before promotion');
+      expect(readFileSync(targetBin, 'utf8')).toBe('CONCURRENT_INSTALLER_BINARY');
+      expect(readFileSync(stagedBin, 'utf8')).toBe('NEW_BINARY');
+      expect(readFileSync(join(previousDir, 'genie-5.260711.6'), 'utf8')).toBe('AUTHENTIC_OLD_BINARY');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('normal delivery re-authenticates its rollback backup at the final promotion boundary', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'genie-swap-backup-race-'));
+    try {
+      const bin = join(tmp, 'bin');
+      const staging = join(bin, '.staging');
+      const extract = join(staging, 'extract-5.260711.7');
+      const stagedBin = join(extract, 'genie');
+      const targetBin = join(bin, 'genie');
+      const tarball = join(staging, 'genie.tar.gz');
+      const previousDir = join(bin, '.previous');
+      mkdirSync(extract, { recursive: true });
+      writeFileSync(stagedBin, 'NEW_BINARY');
+      writeFileSync(targetBin, 'AUTHENTIC_OLD_BINARY');
+      writeFileSync(tarball, 'verified tarball');
+      chmodSync(stagedBin, 0o755);
+      chmodSync(targetBin, 0o755);
+      const pending = recordPendingDelivery(
+        {
+          version: '5.260711.7',
+          previousVersion: '5.260711.6',
+          previousBinaryPath: targetBin,
+          extractDir: extract,
+          tarballPath: tarball,
+        },
+        join(tmp, '.pending-delivery.json'),
+        staging,
+      );
+
+      expect(() =>
+        atomicBinarySwap(stagedBin, targetBin, previousDir, '5.260711.6', {
+          preserveSource: true,
+          expectedPreimage: pending.payload.previousBinary,
+          beforePromote: () => writeFileSync(join(previousDir, 'genie-5.260711.6'), 'TAMPERED_BACKUP'),
+        }),
+      ).toThrow('rollback backup does not match');
+      expect(readFileSync(targetBin, 'utf8')).toBe('AUTHENTIC_OLD_BINARY');
+      expect(readFileSync(stagedBin, 'utf8')).toBe('NEW_BINARY');
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

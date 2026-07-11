@@ -5,12 +5,12 @@
  *
  * Plugins cannot ship Claude Code workflows directly, so the template lives in
  * the plugin (plugins/genie/workflows/council.js) with a `__GENIE_LENS_ROOT__`
- * placeholder, and the SessionStart hook (smart-install.js) calls this on every
- * start to write the stamped file to ~/.claude/workflows/council.js.
+ * placeholder. Explicit install/setup/update convergence may stamp it into
+ * ~/.claude/workflows/council.js; lifecycle hooks never call this mutator.
  *
  * Pure and dependency-injectable: all paths are arguments, so the unit test can
  * drive it entirely inside a tmpdir. CommonJS (.cjs) so it is requireable from
- * the ESM smart-install.js via createRequire, and from bun:test.
+ * explicit integration convergence code and from bun:test.
  */
 
 const fs = require('node:fs');
@@ -87,6 +87,28 @@ function expectedPhysicalFile(digest) {
   return digest === null ? { kind: 'absent' } : { kind: 'regular', digest };
 }
 
+/**
+ * Publish a regular file only when the destination is absent. The disposable
+ * hard-link candidate can be changed through the live name without mutating
+ * the original staged evidence retained in the transaction.
+ * @param {string} stagedPath
+ * @param {string} targetPath
+ */
+function publishRegularFileNoClobber(stagedPath, targetPath) {
+  const stat = fs.lstatSync(stagedPath);
+  if (!stat.isFile() || stat.isSymbolicLink()) {
+    throw new Error(`publish source is not a physical regular file: ${stagedPath}`);
+  }
+  const candidate = `${stagedPath}.publish-${process.pid}-${crypto.randomBytes(6).toString('hex')}`;
+  fs.copyFileSync(stagedPath, candidate, fs.constants.COPYFILE_EXCL);
+  fs.chmodSync(candidate, stat.mode & 0o7777);
+  try {
+    fs.linkSync(candidate, targetPath);
+  } finally {
+    fs.rmSync(candidate, { force: true });
+  }
+}
+
 /** @param {string} manifestPath */
 function readWorkflowManifest(manifestPath) {
   const stat = lstatSafe(manifestPath);
@@ -141,11 +163,11 @@ function inspectManagedWorkflow(targetDir) {
  * Genie sidecar may be skipped or updated. Existing files without metadata,
  * user-modified files, and corrupt metadata are preserved byte-identically.
  *
- * @param {{templatePath: string, pluginRoot: string, targetDir: string, version?: string|null, now?: () => Date, beforePromotion?: () => void, afterAuthorization?: () => void}} opts
+ * @param {{templatePath: string, pluginRoot: string, targetDir: string, version?: string|null, now?: () => Date, beforePromotion?: () => void, afterAuthorization?: () => void, beforePublish?: () => void}} opts
  * @returns {{action: 'written'|'skipped'|'kept-unmanaged'|'kept-modified'|'metadata-corrupt', targetPath: string}}
  */
 function stampCouncilWorkflow(opts) {
-  const { templatePath, pluginRoot, targetDir, version = null, now = () => new Date(), beforePromotion, afterAuthorization } = opts || {};
+  const { templatePath, pluginRoot, targetDir, version = null, now = () => new Date(), beforePromotion, afterAuthorization, beforePublish } = opts || {};
   if (!templatePath || !pluginRoot || !targetDir) {
     throw new Error('stampCouncilWorkflow requires templatePath, pluginRoot, and targetDir');
   }
@@ -188,7 +210,7 @@ function stampCouncilWorkflow(opts) {
   if (ownership.state === 'managed-clean' && (expected.targetDigest === null || expected.manifestDigest === null)) {
     return { action: 'kept-modified', targetPath: ownership.targetPath };
   }
-  publishTransaction(targetDir, stamped, manifest, expected, beforePromotion, afterAuthorization);
+  publishTransaction(targetDir, stamped, manifest, expected, beforePromotion, afterAuthorization, beforePublish);
   return { action: 'written', targetPath: ownership.targetPath };
 }
 
@@ -199,8 +221,9 @@ function stampCouncilWorkflow(opts) {
  * @param {{targetDigest:string|null,manifestDigest:string|null}} expected
  * @param {(()=>void)|undefined} beforePromotion
  * @param {(()=>void)|undefined} afterAuthorization
+ * @param {(()=>void)|undefined} beforePublish
  */
-function publishTransaction(targetDir, stamped, manifest, expected, beforePromotion, afterAuthorization) {
+function publishTransaction(targetDir, stamped, manifest, expected, beforePromotion, afterAuthorization, beforePublish) {
   fs.mkdirSync(targetDir, { recursive: true });
   const targetPath = path.join(targetDir, TARGET_NAME);
   const manifestPath = path.join(targetDir, WORKFLOW_MANIFEST_NAME);
@@ -258,8 +281,16 @@ function publishTransaction(targetDir, stamped, manifest, expected, beforePromot
       const conflict = preserveConflict(transactionDir);
       throw new Error(`council workflow changed during promotion; kept both versions at ${conflict}`);
     }
-    fs.renameSync(path.join(publishedStaged, TARGET_NAME), targetPath);
-    fs.renameSync(path.join(publishedStaged, WORKFLOW_MANIFEST_NAME), manifestPath);
+    if (beforePublish) beforePublish();
+    try {
+      publishRegularFileNoClobber(path.join(publishedStaged, TARGET_NAME), targetPath);
+      publishRegularFileNoClobber(path.join(publishedStaged, WORKFLOW_MANIFEST_NAME), manifestPath);
+    } catch (error) {
+      const conflict = preserveConflict(transactionDir);
+      throw new Error(
+        `exclusive council publish failed (${errorCode(error)}); kept live, prior, and incoming versions at ${conflict}`,
+      );
+    }
     if (
       !physicalIdentityEquals(physicalFileIdentity(targetPath), { kind: 'regular', digest: targetDigest }) ||
       !physicalIdentityEquals(physicalFileIdentity(manifestPath), { kind: 'regular', digest: manifestDigest })

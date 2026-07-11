@@ -13,24 +13,22 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
-  readFileSync,
   readdirSync,
   readlinkSync,
   rmSync,
   unlinkSync,
-  writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { confirm } from '@inquirer/prompts';
 import {
-  MANAGED_BY,
-  MANIFEST_NAME,
   acquireLifecycleLease,
   codexLegacyCuratedDir,
-  computeDirDigest,
+  inspectManagedSkillTree,
   inspectManagedWorkflow,
   recoverManagedWorkflowTransactions,
+  removeManagedSkillTree,
+  removeManagedWorkflow,
   resolveAgentsSkillsDir,
 } from '../lib/agent-sync.js';
 import { hookScriptExists } from '../lib/claude-settings.js';
@@ -113,14 +111,7 @@ export function removeSymlinks(
 // agent-sync managed assets (wish agent-sync) — removed only when provably ours
 // ============================================================================
 
-// The managed-dir contract mirrored from src/lib/agent-sync.ts. Uninstall only
-// removes what genie provably shipped: skill dirs carrying this manifest, the
-// stamped council.js, and the hermes symlink that resolves into the genie home.
-// Protocol identifiers imported from the engine — single source of truth.
-const SYNC_MANIFEST_NAME = MANIFEST_NAME;
-const SYNC_MANAGED_BY = MANAGED_BY;
-
-interface AgentSyncRemovalTargets {
+export interface AgentSyncRemovalTargets {
   claudeDir?: string;
   codexDir?: string;
   /** Shared `~/.agents/skills` tier codex skills are synced into (detection root stays `codexDir`). */
@@ -149,19 +140,9 @@ interface AgentSyncAsset {
  * - `'modified'` — manifest present but content diverged (or digest missing/uncomputable) → user data lives here.
  */
 function classifyManagedSkillDir(dir: string): 'clean' | 'modified' | null {
-  let parsed: { managedBy?: string; digest?: string };
-  try {
-    parsed = JSON.parse(readFileSync(join(dir, SYNC_MANIFEST_NAME), 'utf8')) as { managedBy?: string; digest?: string };
-  } catch {
-    return null;
-  }
-  if (parsed.managedBy !== SYNC_MANAGED_BY) return null;
-  if (typeof parsed.digest !== 'string' || !/^[a-f0-9]{64}$/.test(parsed.digest)) return 'modified';
-  try {
-    return computeDirDigest(dir) === parsed.digest ? 'clean' : 'modified';
-  } catch {
-    return 'modified';
-  }
+  const state = inspectManagedSkillTree(dir).state;
+  if (state === 'unmanaged') return null;
+  return state === 'managed-clean' ? 'clean' : 'modified';
 }
 
 function collectManagedSkillDirs(parent: string, agent: AgentSyncAsset['agent'], out: AgentSyncAsset[]): void {
@@ -262,6 +243,11 @@ export interface AgentSyncRemovalResult {
   failures: Array<{ path: string; detail: string }>;
 }
 
+export interface AgentSyncRemovalOptions {
+  beforeManagedDirRemoval?: (destDir: string, stage: 'before-park' | 'before-delete') => void;
+  beforeWorkflowRemoval?: (stage: 'before-park' | 'before-delete') => void;
+}
+
 function recoverCouncilBeforeRemoval(targets: AgentSyncRemovalTargets): { path: string; detail: string } | null {
   const workflowDir = join(targets.claudeDir ?? resolveClaudeDir(), 'workflows');
   try {
@@ -281,19 +267,23 @@ function recoverCouncilBeforeRemoval(targets: AgentSyncRemovalTargets): { path: 
  * left byte-identical at the same path. Uninstall does not get to rename,
  * disable, rewrite, or relinquish ownership of a user-modified artifact.
  */
-export function removeAgentSyncAssets(targets: AgentSyncRemovalTargets = {}): AgentSyncRemovalResult {
+export function removeAgentSyncAssets(
+  targets: AgentSyncRemovalTargets = {},
+  options: AgentSyncRemovalOptions = {},
+): AgentSyncRemovalResult {
   const removed: string[] = [];
   const kept: string[] = [];
   const failures: AgentSyncRemovalResult['failures'] = [];
   const recoveryFailure = recoverCouncilBeforeRemoval(targets);
   if (recoveryFailure) return { removed, kept, failures: [recoveryFailure] };
-  removeCollectedAgentAssets(collectAgentSyncAssets(targets), targets, { removed, kept, failures });
+  removeCollectedAgentAssets(collectAgentSyncAssets(targets), targets, options, { removed, kept, failures });
   return { removed, kept, failures };
 }
 
 function removeCollectedAgentAssets(
   assets: AgentSyncAsset[],
   targets: AgentSyncRemovalTargets,
+  options: AgentSyncRemovalOptions,
   result: AgentSyncRemovalResult,
 ): void {
   for (const asset of assets) {
@@ -301,33 +291,25 @@ function removeCollectedAgentAssets(
       if (asset.modified) {
         result.kept.push(asset.path);
       } else if (asset.kind === 'workflow' && asset.metadataPath) {
-        // Re-check immediately before deletion so a workflow edited after the
-        // initial scan is preserved. Remove metadata first; if target removal
-        // fails, restore the sidecar so the cleanup remains retryable.
-        const current = inspectManagedWorkflow(join(targets.claudeDir ?? resolveClaudeDir(), 'workflows'));
-        if (current.state !== 'managed-clean') {
+        const disposition = removeManagedWorkflow(join(targets.claudeDir ?? resolveClaudeDir(), 'workflows'), {
+          beforeRemoval: options.beforeWorkflowRemoval,
+        });
+        if (disposition !== 'removed') {
           result.kept.push(asset.path);
           continue;
-        }
-        const metadata = readFileSync(asset.metadataPath);
-        unlinkSync(asset.metadataPath);
-        try {
-          unlinkSync(asset.path);
-        } catch (error) {
-          writeFileSync(asset.metadataPath, metadata);
-          throw error;
         }
         result.removed.push(asset.path);
       } else {
         if (asset.kind === 'skill') {
-          // Revalidate immediately before the destructive step. The initial
-          // scan is only a preview; user edits that land before confirmation
-          // revoke Genie's deletion authority.
-          if (classifyManagedSkillDir(asset.path) !== 'clean') {
+          const disposition = removeManagedSkillTree(asset.path, {
+            genieHome: targets.genieHome,
+            agent: asset.agent,
+            beforeManagedDirRemoval: options.beforeManagedDirRemoval,
+          });
+          if (disposition !== 'removed') {
             result.kept.push(asset.path);
             continue;
           }
-          rmSync(asset.path, { recursive: true, force: true });
         } else unlinkSync(asset.path);
         result.removed.push(asset.path);
       }

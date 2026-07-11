@@ -1,4 +1,4 @@
 interface:
   display_name: "DX and Docs Review"
   short_description: "Audit onboarding, docs drift, and developer UX"
-  default_prompt: "Use $genie:dx-docs (or $dx-docs only when intentionally selecting its user-tier copy) to audit this contributor journey against the live product."
+  default_prompt: "Audit this contributor journey and its documentation against the live product."

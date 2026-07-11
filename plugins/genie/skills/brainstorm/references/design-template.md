@@ -44,4 +44,13 @@
 
 ## Next Step
 
-Run `wish` to convert this design into an executable plan.
+After an independent design review returns SHIP, persist the evidence below and verify its content digest before running `wish`.
+
+<!-- genie-design-review:start -->
+## Design Review Evidence
+
+- **Verdict:** PENDING
+- **Reviewed content SHA-256:** PENDING
+- **Reviewer:** PENDING
+- **Reviewed at:** PENDING
+<!-- genie-design-review:end -->

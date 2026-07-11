@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { CLAUDE_ROLE_AGENT_FILES, CODEX_ROLE_PROFILE_FILES } from './fresh-install-smoke.ts';
 
@@ -61,6 +61,7 @@ describe('Group E release and documentation contracts', () => {
       "'scripts/build.js'",
       "'scripts/json-top-level-string.js'",
       "'scripts/hook-bundle-parity.ts'",
+      "'scripts/hook-content-binding.ts'",
       "'scripts/plugin-executables-check.ts'",
       "'scripts/sync-plugin-skills.ts'",
       "'scripts/fresh-install-smoke.ts'",
@@ -91,6 +92,7 @@ describe('Group E release and documentation contracts', () => {
   test('release packaging validates generated hooks and the extracted archive payload', () => {
     const build = read('scripts/build-binary.sh');
     expect(build).toContain('scripts/hook-bundle-parity.ts');
+    expect(build).toContain('scripts/hook-content-binding.ts');
     const archive = build.indexOf('tar czf "${TARBALL}"');
     const extract = build.indexOf('tar -xzf "${TARBALL}"');
     const postExtractSmoke = build.lastIndexOf('scripts/fresh-install-smoke.ts');
@@ -126,7 +128,10 @@ describe('Group E release and documentation contracts', () => {
     expect(workflow).toContain('bun run lint:complexity-budget');
     expect(workflow).toContain('bun run lint:council-workflow');
     expect(workflow).toContain('bun run lint:hook-bundles');
+    expect(workflow).toContain('bun run lint:hook-content');
     expect(workflow).toContain('bun run lint:plugin-executables');
+    expect(pkg.scripts.check).toContain('bun run lint:hook-content');
+    expect(pkg.scripts['check:fast']).toContain('bun run lint:hook-content');
     expect(pkg.scripts.check).toContain('bun run lint:plugin-executables');
     expect(pkg.scripts['check:fast']).toContain('bun run lint:plugin-executables');
     const executableGate = read('scripts/plugin-executables-check.ts');
@@ -245,7 +250,7 @@ describe('Group E release and documentation contracts', () => {
     expect(docs).toContain('no Codex network lookup');
   });
 
-  test('plugin docs and cards use owner-qualified selectors with an explicit personal fallback', () => {
+  test('manual docs use explicit tiers while all physical skill cards remain selector-free', () => {
     const docs = `${read('README.md')}\n${read('plugins/genie/README.md')}\n${read('skills/README.md')}`;
     for (const skill of ['brainstorm', 'wish', 'review', 'work']) {
       expect(docs).toContain(`$genie:${skill}`);
@@ -253,6 +258,19 @@ describe('Group E release and documentation contracts', () => {
     expect(docs).toContain('separately installed personal');
     const manifest = read('plugins/genie/.codex-plugin/plugin.json');
     for (const skill of ['wish', 'work', 'review']) expect(manifest).toContain(`$genie:${skill}`);
+
+    const skillNames = readdirSync(join(ROOT, 'skills'), { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && existsSync(join(ROOT, 'skills', entry.name, 'agents', 'openai.yaml')))
+      .map((entry) => entry.name)
+      .sort();
+    expect(skillNames).toHaveLength(23);
+    for (const name of skillNames) {
+      const parsed = Bun.YAML.parse(read(`skills/${name}/agents/openai.yaml`)) as {
+        interface?: { default_prompt?: unknown };
+      };
+      expect(parsed.interface?.default_prompt).toBeString();
+      expect(parsed.interface?.default_prompt).not.toMatch(/\$(?:[a-z0-9][a-z0-9-]*:)?[a-z0-9][a-z0-9-]*/i);
+    }
 
     const skillsOverview = read('skills/README.md');
     expect(skillsOverview).toContain(
@@ -318,6 +336,37 @@ describe('Group E release and documentation contracts', () => {
     expect(brainstorm).toContain('route through `wish` and plan review before any implementation');
     expect(brainstorm).not.toContain('auto-invoke `review` (plan review)');
     expect(brainstorm).not.toContain('ask whether to implement directly');
+  });
+
+  test('design review evidence is digest-bound, persisted, and required before wish', () => {
+    const brainstorm = read('skills/brainstorm/SKILL.md');
+    const template = read('skills/brainstorm/references/design-template.md');
+    const wish = read('skills/wish/SKILL.md');
+    const lint = read('scripts/wishes-lint.ts');
+    expect(brainstorm).toContain('design-review-evidence.mjs');
+    expect(brainstorm).toContain('changing any reviewed design content invalidates the evidence');
+    expect(template).toContain('<!-- genie-design-review:start -->');
+    expect(template).toContain('Reviewed content SHA-256');
+    expect(wish).toContain('Missing evidence, a non-SHIP verdict, or a content-digest mismatch cannot be waived');
+    expect(lint).toContain('DESIGN_REVIEW_EVIDENCE_THRESHOLD');
+    expect(lint).toContain('designReviewViolations');
+  });
+
+  test('both reviewer profiles cover every universal review context', () => {
+    const profiles = [read('plugins/genie/codex-agents/genie-reviewer.toml'), read('plugins/genie/agents/reviewer.md')];
+    for (const profile of profiles) {
+      for (const marker of [
+        'DESIGN.md',
+        'Plan review',
+        'completed execution',
+        'PR review',
+        'SHIP',
+        'FIX-FIRST',
+        'BLOCKED',
+      ]) {
+        expect(profile).toContain(marker);
+      }
+    }
   });
 
   test('Omni and MCP operator instructions expose provider and fallback policy', () => {

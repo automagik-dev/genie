@@ -26,12 +26,14 @@ import {
 } from '../lib/genie-config.js';
 import { resolveGenieHome } from '../lib/genie-home.js';
 import {
+  type IntegrationConsentTransitionRef,
   type IntegrationSelection,
   beginIntegrationConsentTransition,
   clearIntegrationConsentTransition,
   commitIntegrationConsentTransition,
   installRuntimeIntegrations,
   readIntegrationConsent,
+  readIntegrationConsentState,
 } from '../lib/runtime-integrations.js';
 import { checkCommand } from '../lib/system-detect.js';
 import { resolveTrustedExecutable, validateTrustedExecutablePath } from '../lib/trusted-executable.js';
@@ -52,9 +54,12 @@ export interface SetupDeps {
   checkCommand?: typeof checkCommand;
   installRuntimeIntegrations?: typeof installRuntimeIntegrations;
   readIntegrationConsent?: typeof readIntegrationConsent;
+  readIntegrationConsentState?: typeof readIntegrationConsentState;
   beginIntegrationConsentTransition?: typeof beginIntegrationConsentTransition;
   clearIntegrationConsentTransition?: typeof clearIntegrationConsentTransition;
   commitIntegrationConsentTransition?: typeof commitIntegrationConsentTransition;
+  /** Interactive confirmation seam; production uses @inquirer/prompts. */
+  confirm?: typeof confirm;
   /** One bounded post-install snapshot; tests inject this to avoid live Codex state. */
   probeCodexGeniePlugin?: typeof probeCodexGeniePlugin;
   acquireLifecycleLease?: typeof acquireLifecycleLease;
@@ -227,6 +232,22 @@ async function configureShortcuts(config: GenieConfig, quick: boolean, deps: Set
 // Codex Integration
 // ============================================================================
 
+function reconcileSetupCodexProject(root: string | null, plugin: ReturnType<typeof probeCodexGeniePlugin>): void {
+  if (root === null) {
+    console.log('  \x1b[2mNo Git worktree detected; project MCP fallback was not changed.\x1b[0m');
+    return;
+  }
+
+  const project = reconcileCodexProjectMcp(root, plugin);
+  if (!project.ok) throw new SetupIntegrationError(project.detail ?? 'Codex project MCP reconciliation failed');
+  console.log(`  \x1b[32m\u2713\x1b[0m Project MCP route: ${project.route} (${project.detail ?? project.action})`);
+  if (!plugin.usable && plugin.enabled === true) {
+    console.log(
+      `  \x1b[33m!\x1b[0m Plugin MCP is not usable (${plugin.usabilityDetail ?? plugin.detail}); kept the absolute project fallback.`,
+    );
+  }
+}
+
 function repairCodexIntegration(deps: SetupDeps, codexPath: string): void {
   const cwd = deps.cwd ?? process.cwd();
   const validate = deps.validateExecutable ?? validateTrustedExecutablePath;
@@ -240,7 +261,10 @@ function repairCodexIntegration(deps: SetupDeps, codexPath: string): void {
   const genieHome = resolveGenieHome();
   const currentConsent = (deps.readIntegrationConsent ?? readIntegrationConsent)(genieHome);
   const nextConsent = mergeCodexIntegrationConsent(currentConsent);
-  (deps.beginIntegrationConsentTransition ?? beginIntegrationConsentTransition)(nextConsent, genieHome);
+  const transition = (deps.beginIntegrationConsentTransition ?? beginIntegrationConsentTransition)(
+    nextConsent,
+    genieHome,
+  );
 
   try {
     const result = (deps.installRuntimeIntegrations ?? installRuntimeIntegrations)({
@@ -254,21 +278,9 @@ function repairCodexIntegration(deps: SetupDeps, codexPath: string): void {
     }
     console.log(`  \x1b[32m\u2713\x1b[0m ${result.detail}`);
     const plugin = (deps.probeCodexGeniePlugin ?? probeCodexGeniePlugin)();
-
-    if (root !== null) {
-      const project = reconcileCodexProjectMcp(root, plugin);
-      if (!project.ok) throw new SetupIntegrationError(project.detail ?? 'Codex project MCP reconciliation failed');
-      console.log(`  \x1b[32m\u2713\x1b[0m Project MCP route: ${project.route} (${project.detail ?? project.action})`);
-      if (!plugin.usable && plugin.enabled === true) {
-        console.log(
-          `  \x1b[33m!\x1b[0m Plugin MCP is not usable (${plugin.usabilityDetail ?? plugin.detail}); kept the absolute project fallback.`,
-        );
-      }
-    } else {
-      console.log('  \x1b[2mNo Git worktree detected; project MCP fallback was not changed.\x1b[0m');
-    }
+    reconcileSetupCodexProject(root, plugin);
     if (result.preservedDisabled) console.log('  \x1b[2mExisting disabled plugin state was preserved.\x1b[0m');
-    (deps.commitIntegrationConsentTransition ?? commitIntegrationConsentTransition)(genieHome);
+    (deps.commitIntegrationConsentTransition ?? commitIntegrationConsentTransition)(transition, genieHome);
   } catch (error) {
     throw new SetupIntegrationError(
       `${error instanceof Error ? error.message : String(error)}; Codex maintenance consent is pending — rerun genie setup --codex to resume`,
@@ -327,6 +339,13 @@ async function configureCodex(config: GenieConfig, quick: boolean, deps: SetupDe
   console.log(`  Config: \x1b[2m${contractPath(getCodexConfigPath())}\x1b[0m`);
   console.log();
 
+  const genieHome = resolveGenieHome();
+  const observedConsent = (deps.readIntegrationConsentState ?? readIntegrationConsentState)(genieHome);
+  const observedTransition: IntegrationConsentTransitionRef | null =
+    observedConsent.state === 'pending'
+      ? { revision: observedConsent.revision, transitionToken: observedConsent.transitionToken }
+      : null;
+
   if (quick) {
     await withSetupLease(deps, () => repairCodexIntegration(deps, codexPath as string));
     config.codex = { configured: true };
@@ -334,7 +353,7 @@ async function configureCodex(config: GenieConfig, quick: boolean, deps: SetupDe
     return config;
   }
 
-  const enableCodex = await confirm({
+  const enableCodex = await (deps.confirm ?? confirm)({
     message: 'Install or repair Codex and let later explicit genie updates maintain managed Codex assets?',
     default: true,
   });
@@ -343,8 +362,14 @@ async function configureCodex(config: GenieConfig, quick: boolean, deps: SetupDe
     config.codex = { configured: true };
     preserveRuntimeChoiceAfterCodex(config);
   } else {
-    const restored = (deps.clearIntegrationConsentTransition ?? clearIntegrationConsentTransition)(resolveGenieHome());
-    console.log(`  Pending Codex maintenance consent cleared; retained scope: ${restored}.`);
+    if (observedTransition !== null) {
+      const restored = await withSetupLease(deps, () =>
+        (deps.clearIntegrationConsentTransition ?? clearIntegrationConsentTransition)(observedTransition, genieHome),
+      );
+      console.log(`  Pending Codex maintenance consent cleared; retained scope: ${restored}.`);
+    } else {
+      console.log('  No pending Codex maintenance consent was present.');
+    }
     console.log('  Skipped. Run \x1b[36mgenie setup --codex\x1b[0m later.');
   }
 

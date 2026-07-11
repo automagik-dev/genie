@@ -27,21 +27,23 @@ Every release is cosign-signed (keyless OIDC) with SLSA provenance; the installe
 
 The installer detects Claude Code and Codex and installs the version-matched Genie plugin for each. Control this with `--integrations auto|codex|claude|all|none` or `--skip-integrations`. When Codex is selected, the install/update convergence path also synchronizes up to 23 digest-managed product-skill fallbacks into `~/.agents/skills/`; same-name unmanaged or modified user copies are preserved. Automatic integration failures warn after the verified binary succeeds; explicitly requested failures are fatal.
 
-From inside a repo, run `genie init`. Use `genie setup --codex` to explicitly install or repair the Codex plugin, seven optional role-agent profiles, MCP routing, and the backup-first dead-OTel migration. A successful Codex setup also persists Codex maintenance consent: later, explicit `genie update` runs may refresh those Codex integration surfaces and synchronize clean, digest-managed product-skill fallbacks under `~/.agents/skills/`. That consent never makes personal or modified skills managed, and it gives no authority to hooks. `genie update` is the explicit update/convergence path. When crossing from a release older than `5.260711.6` to `5.260711.6` or later, let the first update finish and run `genie update` one more time: the first process may only deliver the new binary/payload, while the second runs the new convergence contract. Verify that the plugin exposes exactly H3/H4/H6, then review their hashes with `/hooks` and start a new task. Later updates converge in one operator-driven path. No Codex hook installs software, refreshes plugins, synchronizes skills, or writes project instructions.
+From inside a repo, run `genie init`. Use `genie setup --codex` to explicitly install or repair the Codex plugin, seven optional role-agent profiles, MCP routing, and the backup-first dead-OTel migration. A successful Codex setup also persists Codex maintenance consent: later, explicit `genie update` runs may refresh those Codex integration surfaces and synchronize clean, digest-managed product-skill fallbacks under `~/.agents/skills/`. That consent never makes personal or modified skills managed, and it gives no authority to hooks. `genie update` is the explicit update/convergence path. When crossing from a release older than `5.260711.6` to `5.260711.6` or later, let the first update finish and run `genie update` one more time: the first process may only deliver the new binary/payload, while the second runs the new convergence contract. Verify that the plugin exposes exactly H3/H4/H6, then review their hashes with `/hooks` and start a new task. Later updates converge in one operator-driven path. No Codex hook or Claude SessionStart hook installs software, refreshes plugins, synchronizes skills, stamps workflows, or writes project instructions.
 
-Codex never auto-trusts plugin hooks. After setup or update, inspect the three Genie definitions with `/hooks`, approve only the hashes you understand, and start a new task so the reviewed definitions take effect. Until then they remain untrusted and do not run.
+Codex never auto-trusts plugin hooks. H4/H6 definitions bind the exact plugin launcher SHA-256 and the launcher verifies itself before spawning, so launcher changes produce new definitions; the current hook schema still cannot transitively bind the mutable platform-specific Genie binary. After setup or update, inspect the three Genie definitions with `/hooks`, approve only the hashes you understand, and start a new task so the reviewed definitions take effect. Until then they remain untrusted and do not run.
 
 ## Quickstart
 
 The lifecycle is shared by Claude Code and Codex. Claude uses slash skills. A Codex plugin install uses the unambiguous owner-qualified `$genie:<skill>` selector; bare `$<skill>` resolves the user tier, which may be a CLI-managed product fallback or a separately installed personal copy:
 
 ```text
-1. /brainstorm or $genie:brainstorm   an idea → DESIGN.md → mandatory design review
+1. /brainstorm or $genie:brainstorm   an idea → DESIGN.md → digest-bound mandatory design review
 2. /wish or $genie:wish               accepted DESIGN.md → a scoped WISH.md
 3. /review or $genie:review           mandatory plan review; persist APPROVED or concrete gaps
 4. /work or $genie:work               native role agents build each approved group
 5. /review or $genie:review           independent implementation review: SHIP, FIX-FIRST, or BLOCKED
 ```
+
+These are manual invocation selectors. Codex starter cards embedded in each physical skill are selector-free, so the selected plugin-tier or user-tier card cannot redirect to its same-name copy in another tier.
 
 Re-run `genie board` any time for a current snapshot of task state on the kanban. The plan documents land in git as you go; the operational state lives in `.genie/genie.db`.
 

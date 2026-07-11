@@ -248,7 +248,7 @@ async function testApprovalCommand(opts: { live?: boolean }): Promise<void> {
     const sent: string[] = [];
     const sendApproval: OmniSend = async ({ text }) => {
       sent.push(text);
-      return { success: true, messageId: TEST_STANZA_ID };
+      return { outcome: 'accepted', messageId: TEST_STANZA_ID };
     };
     const setReaction: OmniSetReaction = async ({ messageId, emoji }) => {
       reactions.push({ messageId, emoji });

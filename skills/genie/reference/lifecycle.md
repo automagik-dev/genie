@@ -12,6 +12,8 @@ through read-only design review before `wish` may consume it. The resulting WISH
 `APPROVED` before `work` starts. After execution, a different reviewer validates the implementation. Passing one gate
 never substitutes for either of the others.
 
+Design review has its own durable evidence block in DESIGN.md: verdict, reviewed-content SHA-256, reviewer identity, and UTC timestamp. The digest excludes only that bounded evidence block. Any later design edit invalidates the evidence, and `wish` plus the wish linter reject the linked design until a fresh review returns SHIP.
+
 ## Persisted lifecycle state
 
 A review verdict and a wish status are different things. `SHIP`, `FIX-FIRST`,

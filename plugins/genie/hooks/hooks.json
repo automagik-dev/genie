@@ -1,13 +1,16 @@
 {
-  "description": "Genie lifecycle hooks for Claude Code",
+  "description": "Genie hooks for Claude Code with diagnostic-only SessionStart context",
   "hooks": {
     "SessionStart": [
       {
         "matcher": "*",
         "hooks": [
-          { "type": "command", "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/smart-install.js", "timeout": 60 },
-          { "type": "command", "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/first-run-check.cjs", "timeout": 5 },
-          { "type": "command", "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/session-context.cjs", "timeout": 10 }
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/session-context.cjs\"",
+            "commandWindows": "node \"%CLAUDE_PLUGIN_ROOT%\\scripts\\session-context.cjs\"",
+            "timeout": 10
+          }
         ]
       }
     ],

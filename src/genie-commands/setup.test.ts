@@ -6,6 +6,8 @@ import { join } from 'node:path';
 import { acquireLifecycleLease, lifecycleLockPath } from '../lib/agent-sync.js';
 import { loadGenieConfig, saveGenieConfig } from '../lib/genie-config.js';
 import {
+  beginIntegrationConsentTransition,
+  clearIntegrationConsentTransition,
   installRuntimeIntegrations,
   persistIntegrationConsent,
   readIntegrationConsent,
@@ -182,16 +184,51 @@ describe('setup runtime and failure semantics', () => {
 
     await setupCommand({ codex: true, quick: true }, deps(false));
     expect(process.exitCode).toBe(1);
-    expect(readIntegrationConsentState(genieHome)).toEqual({
+    expect(readIntegrationConsentState(genieHome)).toMatchObject({
       selection: 'codex',
       state: 'pending',
       previousSelection: 'none',
     });
+    const pending = readIntegrationConsentState(genieHome);
+    expect(pending.state === 'pending' ? pending.transitionToken : '').toMatch(/^[a-f0-9]{32}$/);
 
     process.exitCode = 0;
     await setupCommand({ codex: true, quick: true }, deps(true));
     expect(process.exitCode).not.toBe(1);
-    expect(readIntegrationConsentState(genieHome)).toEqual({ selection: 'codex', state: 'committed' });
+    expect(readIntegrationConsentState(genieHome)).toMatchObject({ selection: 'codex', state: 'committed' });
+  });
+
+  test('interactive decline runs under the lifecycle lease and cannot clear a newer pending transition', async () => {
+    const genieHome = process.env.GENIE_HOME as string;
+    persistIntegrationConsent('none', genieHome);
+    const observed = beginIntegrationConsentTransition('codex', genieHome);
+    let leaseHeld = false;
+    let clearSawLease = false;
+    const interactive = deps();
+    interactive.acquireLifecycleLease = () => {
+      leaseHeld = true;
+      return {
+        path: lifecycleLockPath(genieHome),
+        release: () => {
+          leaseHeld = false;
+        },
+      };
+    };
+    interactive.confirm = () => {
+      clearIntegrationConsentTransition(observed, genieHome);
+      beginIntegrationConsentTransition('codex', genieHome);
+      return Object.assign(Promise.resolve(false), { cancel: () => {} });
+    };
+    interactive.clearIntegrationConsentTransition = (transition, home) => {
+      clearSawLease = leaseHeld;
+      return clearIntegrationConsentTransition(transition, home);
+    };
+
+    await setupCommand({ codex: true }, interactive);
+
+    expect(clearSawLease).toBe(true);
+    expect(process.exitCode).toBe(1);
+    expect(readIntegrationConsentState(genieHome)).toMatchObject({ selection: 'codex', state: 'pending' });
   });
 
   test('string enabled in exact-version Codex post-state fails full setup and preserves fallback', async () => {

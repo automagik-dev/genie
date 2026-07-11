@@ -9,10 +9,12 @@
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
+import { designReviewViolations } from '../skills/brainstorm/references/design-review-evidence.mjs';
 
 const ROOT = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
 const DEFAULT_WISHES_DIR = join(ROOT, '.genie/wishes');
 const EXECUTION_STRATEGY_THRESHOLD = '2026-07-09';
+const DESIGN_REVIEW_EVIDENCE_THRESHOLD = '2026-07-11';
 
 const STUB_MARKERS = ['_No brainstorm — direct wish_', '_Design not recovered'];
 const CANONICAL_STATUSES = new Set(['DRAFT', 'FIX-FIRST', 'APPROVED', 'IN_PROGRESS', 'BLOCKED', 'SHIPPED']);
@@ -205,6 +207,52 @@ function metadataValue(lines: string[], field: string): { line: number; value: s
   return null;
 }
 
+function lintDesignReviewEvidence(file: string): WishStructureIssue[] {
+  if (basename(file) !== 'WISH.md') return [];
+  const text = readFileSync(file, 'utf8');
+  if (/^<!-- wishes-lint:ignore -->/m.test(text)) return [];
+  const lines = text.split('\n');
+  const date = metadataValue(lines, 'Date');
+  const newContract = date !== null && date.value >= DESIGN_REVIEW_EVIDENCE_THRESHOLD;
+  const design = metadataValue(lines, 'Design');
+  if (!design) {
+    return newContract ? [{ file, line: 1, message: 'new wish metadata must contain a Design field' }] : [];
+  }
+  if (design.value === STUB_MARKERS[0]) return [];
+
+  const links = [...design.value.matchAll(/\[[^\]]+\]\(([^)]+)\)/g)]
+    .map((match) => match[1].split('#')[0].split(' ')[0])
+    .filter((target): target is string => Boolean(target?.includes('brainstorms/') && target.endsWith('DESIGN.md')));
+  if (links.length === 0) {
+    return newContract
+      ? [
+          {
+            file,
+            line: design.line,
+            message: `Design must be ${STUB_MARKERS[0]} or link at least one brainstorm DESIGN.md`,
+          },
+        ]
+      : [];
+  }
+
+  const issues: WishStructureIssue[] = [];
+  for (const target of links) {
+    if (/^https?:\/\//i.test(target)) {
+      issues.push({ file, line: design.line, message: 'design-review evidence requires a local DESIGN.md' });
+      continue;
+    }
+    const resolved = resolve(dirname(file), target);
+    if (!existsSync(resolved)) continue; // lintFile reports the broken link with its original text.
+    const source = readFileSync(resolved, 'utf8');
+    if (!newContract && !source.includes('<!-- genie-design-review:start -->')) continue;
+    const violations = designReviewViolations(source);
+    for (const violation of violations) {
+      issues.push({ file, line: design.line, message: `invalid design-review evidence for ${target}: ${violation}` });
+    }
+  }
+  return issues;
+}
+
 function dependencyValues(
   file: string,
   lines: string[],
@@ -256,10 +304,19 @@ function lintWishMetadata(file: string): { record?: WishRecord; issues: WishStru
   if (/^<!-- wishes-lint:ignore -->/m.test(text)) return { issues: [] };
   const lines = text.split('\n');
   const statusField = metadataValue(lines, 'Status');
+  const dateField = metadataValue(lines, 'Date');
   const issues: WishStructureIssue[] = [];
   if (!statusField) {
     issues.push({ file, line: 1, message: 'wish metadata must contain a Status field' });
     return { issues };
+  }
+  if (!dateField) issues.push({ file, line: 1, message: 'wish metadata must contain a Date field' });
+  else if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(dateField.value) ||
+    Number.isNaN(Date.parse(`${dateField.value}T00:00:00Z`)) ||
+    new Date(`${dateField.value}T00:00:00Z`).toISOString().slice(0, 10) !== dateField.value
+  ) {
+    issues.push({ file, line: dateField.line, message: 'wish Date field must use a valid YYYY-MM-DD value' });
   }
   const status = statusField.value
     .split(/\s+[—-]\s+/)[0]
@@ -357,6 +414,7 @@ function main() {
   for (const file of files) {
     allBroken.push(...lintFile(file));
     allStructureIssues.push(...lintExecutionStrategy(file));
+    allStructureIssues.push(...lintDesignReviewEvidence(file));
     const metadata = lintWishMetadata(file);
     allStructureIssues.push(...metadata.issues);
     if (metadata.record) wishRecords.push(metadata.record);

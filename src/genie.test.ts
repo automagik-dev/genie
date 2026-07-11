@@ -6,10 +6,9 @@ import { join } from 'node:path';
 // ============================================================================
 // CLI registration contract — spawn the real entrypoint, exactly as a user
 // invokes it, and assert commander actually registered the surface. These
-// tests exist because the hook delegation re-entry contract
-// (GENIE_UPDATE_SYNC_ONLY=1 → `genie update --sync-only`) depends on the
-// .option() call in src/genie.ts: if someone removes it, every SessionStart
-// delegation degrades into a full unattended update (the B1 failure mode).
+// `--sync-only` remains an explicit update/convergence compatibility surface.
+// Lifecycle hooks never invoke it; keeping the option registered prevents old
+// explicit automation from being reinterpreted as a full update.
 // ============================================================================
 
 describe('genie CLI registration', () => {
@@ -23,7 +22,7 @@ describe('genie CLI registration', () => {
     rmSync(fxHome, { recursive: true, force: true });
   });
 
-  test('update --help registers --sync-only (hook delegation re-entry contract)', () => {
+  test('update --help registers the explicit --sync-only compatibility surface', () => {
     const repoRoot = import.meta.dir;
     const proc = Bun.spawnSync([process.execPath, join(repoRoot, 'genie.ts'), 'update', '--help'], {
       cwd: repoRoot,

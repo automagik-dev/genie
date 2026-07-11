@@ -8,6 +8,7 @@ import {
   GLOBAL_SCHEMA_VERSION,
   MIGRATED_STATUS_SENTINEL,
   MalformedDbError,
+  OMNI_SERVICE_LEASE_NAME,
   acquireServiceLease,
   acquireServiceLeaseEpoch,
   clearAgentSessionIfCurrent,
@@ -20,7 +21,12 @@ import {
   resolveGlobalDbPath,
   upsertAgentSession,
 } from './global-db.js';
-import { listApprovalsNeedingStatusAck } from './omni-queue.js';
+import {
+  claimApprovalAnnouncementWithLease,
+  listApprovalsNeedingStatusAck,
+  listRecoverableInbound,
+  recordAndClaimInboundDelivery,
+} from './omni-queue.js';
 
 let dir: string;
 const originalGenieHome = process.env.GENIE_HOME;
@@ -248,6 +254,94 @@ describe('openGlobalDb additive column backfill (last_status_glyph)', () => {
     }
     // Same version — additive backfill stays within v1 (no destructive migration).
     expect(userVersion(path)).toBe(GLOBAL_SCHEMA_VERSION);
+  });
+
+  test('exact base-schema claims migrate to ambiguity and remain safely recoverable', () => {
+    const path = join(dir, 'legacy-claimed.db');
+    const seed = new Database(path);
+    seed.exec(`
+      CREATE TABLE approvals (
+        id TEXT PRIMARY KEY, repo TEXT NOT NULL, session_hint TEXT, tool TEXT NOT NULL,
+        input_summary TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('pending','approved','denied','expired')),
+        omni_message_id TEXT, requested_by TEXT, resolved_by TEXT,
+        created_at INTEGER NOT NULL, resolved_at INTEGER,
+        last_status_glyph TEXT, announce_claim TEXT
+      );
+      CREATE TABLE inbound_messages (
+        id TEXT PRIMARY KEY, instance TEXT NOT NULL, chat TEXT NOT NULL, sender TEXT NOT NULL,
+        body TEXT NOT NULL, received_at INTEGER NOT NULL, handled_at INTEGER,
+        event_key TEXT, processing_claim TEXT
+      );
+      CREATE TABLE agent_sessions (
+        provider TEXT NOT NULL, instance TEXT NOT NULL, chat TEXT NOT NULL,
+        thread_id TEXT NOT NULL, updated_at INTEGER NOT NULL,
+        PRIMARY KEY (provider, instance, chat)
+      );
+      CREATE TABLE service_leases (
+        name TEXT PRIMARY KEY, owner_id TEXT NOT NULL, expires_at INTEGER NOT NULL
+      );
+      CREATE INDEX idx_approvals_status ON approvals(status);
+      CREATE INDEX idx_inbound_handled ON inbound_messages(handled_at);
+      CREATE UNIQUE INDEX idx_inbound_event_key ON inbound_messages(event_key) WHERE event_key IS NOT NULL;
+    `);
+    seed
+      .query(
+        `INSERT INTO approvals
+           (id, repo, tool, input_summary, status, created_at, announce_claim)
+         VALUES ('legacy-approval', '/r', 'Bash', '{}', 'pending', 1, 'old-announce')`,
+      )
+      .run();
+    seed
+      .query(
+        `INSERT INTO inbound_messages
+           (id, instance, chat, sender, body, received_at, event_key, processing_claim)
+         VALUES ('legacy-inbound', 'i', 'c', 's', 'write', 2, 'legacy-event', 'old-processing')`,
+      )
+      .run();
+    seed
+      .query('INSERT INTO service_leases(name, owner_id, expires_at) VALUES (?, ?, ?)')
+      .run(OMNI_SERVICE_LEASE_NAME, 'old-resident', 0);
+    seed.exec(`PRAGMA user_version = ${GLOBAL_SCHEMA_VERSION}`);
+    seed.close();
+
+    const db = openGlobalDb({ path });
+    try {
+      expect(
+        (
+          db.query("SELECT announce_phase AS phase FROM approvals WHERE id = 'legacy-approval'").get() as {
+            phase: string;
+          }
+        ).phase,
+      ).toBe('ambiguous');
+      expect(
+        (
+          db.query("SELECT processing_phase AS phase FROM inbound_messages WHERE id = 'legacy-inbound'").get() as {
+            phase: string;
+          }
+        ).phase,
+      ).toBe('ambiguous');
+
+      const epoch = acquireServiceLeaseEpoch(db, OMNI_SERVICE_LEASE_NAME, 'new-resident', 100, 100) as number;
+      const identity = { ownerId: 'new-resident', epoch, now: 100 };
+      expect(claimApprovalAnnouncementWithLease(db, 'legacy-approval', 'new-announce', identity)).toBe('ambiguous');
+      expect(listRecoverableInbound(db, epoch).map((event) => event.eventKey)).toEqual(['legacy-event']);
+      expect(
+        recordAndClaimInboundDelivery(db, {
+          instance: 'i',
+          chat: 'c',
+          sender: 's',
+          body: 'write',
+          eventKey: 'legacy-event',
+          claimToken: 'new-processing',
+          claimOwnerId: identity.ownerId,
+          claimEpoch: identity.epoch,
+          now: 100,
+        }),
+      ).toMatchObject({ id: 'legacy-inbound', mode: 'ambiguous' });
+    } finally {
+      db.close();
+    }
   });
 
   test('one-time backfill stamps pre-upgrade CLOSED history as MIGRATED so reconcile ignores it', () => {

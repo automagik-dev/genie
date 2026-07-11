@@ -62,6 +62,7 @@ const {
     now?: () => Date;
     beforePromotion?: () => void;
     afterAuthorization?: () => void;
+    beforePublish?: () => void;
   }) => {
     action: 'written' | 'skipped' | 'kept-unmanaged' | 'kept-modified' | 'metadata-corrupt';
     targetPath: string;
@@ -632,6 +633,33 @@ describe('computeDirDigest', () => {
     writeFile(join(dir, 'SKILL.md'), 'two');
     expect(computeDirDigest(dir)).not.toBe(before);
   });
+
+  test('identifies symlink kind and target without following external content', () => {
+    const dir = join(fixture.root, 'physical-symlink');
+    const external = join(fixture.root, 'external.txt');
+    writeFile(external, 'one\n');
+    mkdirSync(dir, { recursive: true });
+    symlinkSync(external, join(dir, 'entry'));
+    const linked = computeDirDigest(dir);
+
+    writeFile(external, 'two\n');
+    expect(computeDirDigest(dir)).toBe(linked);
+    rmSync(join(dir, 'entry'));
+    writeFile(join(dir, 'entry'), 'two\n');
+    expect(computeDirDigest(dir)).not.toBe(linked);
+    rmSync(join(dir, 'entry'));
+    symlinkSync('different-target', join(dir, 'entry'));
+    expect(computeDirDigest(dir)).not.toBe(linked);
+  });
+
+  test('identifies entry modes and broken symlinks', () => {
+    const dir = join(fixture.root, 'physical-modes');
+    writeFile(join(dir, 'tool'), '#!/bin/sh\n');
+    symlinkSync('missing-target', join(dir, 'broken'));
+    const before = computeDirDigest(dir);
+    chmodSync(join(dir, 'tool'), 0o755);
+    expect(computeDirDigest(dir)).not.toBe(before);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -647,12 +675,8 @@ describe('staging cleanup', () => {
 
     const report = run({
       selection: 'claude',
-      renameManagedDir: (from, to) => {
-        const source = String(from);
-        if (source.includes(`${join('.genie-sync-transactions', 'txn-')}`) && source.endsWith(join('staged'))) {
-          throw new Error('simulated promotion failure');
-        }
-        renameSync(from, to);
+      beforeManagedDirPublish: () => {
+        throw new Error('simulated promotion failure');
       },
     });
     const claude = agentReport(report, 'claude');
@@ -719,6 +743,33 @@ describe('staging cleanup', () => {
     expect(claude.failures?.join('\n')).toContain('changed before promotion');
   });
 
+  test('a skill recreated after parking but before final publish is never clobbered', () => {
+    present(fixture.claudeDir);
+    run({ selection: 'claude' });
+    const alphaDir = join(fixture.claudeDir, 'skills', 'alpha');
+    writeFile(join(fixture.pluginRoot, 'skills', 'alpha', 'SKILL.md'), '# alpha incoming\n');
+
+    const claude = agentReport(
+      run({
+        selection: 'claude',
+        beforeManagedDirPublish(destDir) {
+          if (destDir !== alphaDir) return;
+          writeFile(join(destDir, 'SKILL.md'), '# alpha personal after park\n');
+        },
+      }),
+      'claude',
+    );
+
+    expect(readFileSync(join(alphaDir, 'SKILL.md'), 'utf8')).toBe('# alpha personal after park\n');
+    expect(claude.failures?.join('\n')).toContain('exclusive directory publish failed');
+    const transactionRoot = join(fixture.claudeDir, 'skills', '.genie-sync-transactions');
+    const conflict = readdirSync(transactionRoot).find((name) => name.startsWith('.conflict-'));
+    expect(conflict).toBeDefined();
+    expect(readFileSync(join(transactionRoot, conflict as string, 'staged', 'SKILL.md'), 'utf8')).toBe(
+      '# alpha incoming\n',
+    );
+  });
+
   test('a journaled crash after moving live restores the prior tree before classification', () => {
     present(fixture.claudeDir);
     run({ selection: 'claude' });
@@ -734,13 +785,14 @@ describe('staging cleanup', () => {
     writeFile(
       join(transactionDir, 'journal.json'),
       `${JSON.stringify({
-        version: 1,
+        version: 2,
         destName: 'alpha',
         hadLive: true,
         beforeContentDigest: priorContentDigest,
         beforeManifestDigest: priorManifestDigest,
         stagedContentDigest: '0'.repeat(64),
         stagedManifestDigest: '1'.repeat(64),
+        identityVersion: 2,
       })}\n`,
     );
 
@@ -1178,6 +1230,34 @@ describe('stampWorkflow parity with council-stamp.cjs', () => {
         expect(kind === 'directory' ? stat.isDirectory() : stat.isSymbolicLink()).toBe(true);
         expect(readdirSync(targetDir).some((name) => name.startsWith('.council.genie-conflict-'))).toBe(true);
       }
+    }
+  });
+
+  test('both council engines preserve a file recreated after parking but before exclusive publish', () => {
+    const templatePath = join(fixture.root, 'council.template.js');
+    writeFileSync(templatePath, TEMPLATE_BODY, 'utf8');
+    for (const [engine, stamp] of [
+      ['ts', stampWorkflow],
+      ['cjs', stampCouncilWorkflow],
+    ] as const) {
+      const targetDir = join(fixture.root, `workflow-final-publish-${engine}`);
+      const targetPath = join(targetDir, TARGET_NAME);
+      stamp({ templatePath, pluginRoot: '/old/plugin', targetDir });
+
+      expect(() =>
+        stamp({
+          templatePath,
+          pluginRoot: '/incoming/plugin',
+          targetDir,
+          beforePublish: () => writeFileSync(targetPath, '// personal after park\n'),
+        }),
+      ).toThrow('exclusive');
+      expect(readFileSync(targetPath, 'utf8')).toBe('// personal after park\n');
+      const conflict = readdirSync(targetDir).find((name) => name.startsWith('.council.genie-conflict-'));
+      expect(conflict).toBeDefined();
+      expect(readFileSync(join(targetDir, conflict as string, 'staged', TARGET_NAME), 'utf8')).toContain(
+        '/incoming/plugin',
+      );
     }
   });
 

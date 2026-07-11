@@ -37,21 +37,25 @@ import { matchReaction, matchTextToken } from './omni-matching.js';
 import { signOmniRequest } from './omni-signature.js';
 import { resolveTrustedExecutable } from './trusted-executable.js';
 import {
+  OMNI_SERVICE_LEASE_NAME,
   acquireServiceLeaseEpoch,
   clearAgentSessionIfCurrent,
   getAgentSession,
   insertAgentSessionIfAbsent,
+  isServiceLeaseCurrent,
   releaseServiceLease,
   renewServiceLease,
   replaceAgentSessionIfCurrent,
 } from './v5/global-db.js';
 import {
-  ApprovalConflictError,
   type ApprovalDecision,
   type DurableClaimIdentity,
   type InboundClaimResult,
   type InboundPreparedDelivery,
+  MAX_OUTBOUND_PAYLOAD_BYTES,
+  type RecoverableInboundEvent,
   claimApprovalAnnouncementWithLease,
+  consumeClaimedApprovalInbound,
   expireStale,
   finalizeApprovalAnnouncement,
   listApprovalsNeedingStatusAck,
@@ -60,13 +64,15 @@ import {
   markApprovalAnnouncementAmbiguous,
   markApprovalAnnouncementSending,
   markInboundDeliveryFlushed,
+  markInboundExecuted,
+  markInboundExecuting,
   markInboundHandledIfClaimed,
   prepareInboundDelivery,
   recordAndClaimInboundDelivery,
   recordStatusGlyph,
   releaseApprovalAnnouncementWithLease,
   releaseInboundClaim,
-  resolveApproval,
+  validatePreparedInboundLease,
 } from './v5/omni-queue.js';
 
 // ============================================================================
@@ -331,33 +337,84 @@ export function buildMappedAgentEnv(source: NodeJS.ProcessEnv = process.env): Re
 const SENSITIVE_ENV_NAME =
   /(?:PASSWORD|PASSWD|SECRET|TOKEN|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|AUTHORIZATION|CREDENTIAL|SESSION|COOKIE)/i;
 
+export type OmniRedactor = (text: string) => string;
+
 /** Redact known ambient secret values plus common credential shapes before any
  * child-controlled success or failure text crosses the Omni transport. */
-export function redactOmniOutbound(text: string, env: NodeJS.ProcessEnv = process.env): string {
+export function redactOmniOutbound(
+  text: string,
+  env: NodeJS.ProcessEnv = process.env,
+  configuredSecrets: readonly string[] = [],
+): string {
   let safe = text;
-  const values = Object.entries(env)
-    .filter(([name, value]) => SENSITIVE_ENV_NAME.test(name) && typeof value === 'string' && value.length >= 8)
-    .map(([, value]) => value as string)
+  const values = [
+    ...configuredSecrets.filter((value) => value.length > 0),
+    ...Object.entries(env)
+      .filter(([name, value]) => SENSITIVE_ENV_NAME.test(name) && typeof value === 'string' && value.length >= 8)
+      .map(([, value]) => value as string),
+  ]
+    .filter((value, index, all) => all.indexOf(value) === index)
     .sort((a, b) => b.length - a.length);
   for (const value of values) safe = safe.split(value).join('[REDACTED]');
-  return safe
-    .replace(/-----BEGIN [^-\r\n]*PRIVATE KEY-----[\s\S]*?-----END [^-\r\n]*PRIVATE KEY-----/gi, '[REDACTED]')
-    .replace(/(\b(?:Proxy-Authorization|Authorization)\s*[:=]\s*)[^\r\n]*/gi, '$1[REDACTED]')
-    .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, 'Bearer [REDACTED]')
-    .replace(/\bBasic\s+[A-Za-z0-9._~+\/-]+=*/gi, 'Basic [REDACTED]')
-    .replace(/(\b(?:Set-Cookie|Cookie)\s*:\s*)[^\r\n]+/gi, '$1[REDACTED]')
-    .replace(/\b(?:gh[pousr]_|github_pat_|sk-|xox[baprs]-|npm_)[A-Za-z0-9._-]{8,}/gi, '[REDACTED]')
-    .replace(/\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g, '[REDACTED]')
-    .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, '[REDACTED]')
-    .replace(
-      /(\b[A-Z0-9_-]*(?:PASSWORD|PASSWD|SECRET|TOKEN|API[-_]?KEY|ACCESS[-_]?KEY|PRIVATE[-_]?KEY|AUTHORIZATION|CREDENTIAL|SESSION|COOKIE)[A-Z0-9_-]*\s*[:=]\s*)(?:"(?:\\.|[^"])*"|'(?:\\.|[^'])*'|[^\s,;]+)/gi,
-      '$1[REDACTED]',
-    )
-    .replace(
-      /("[^"]*(?:password|passwd|secret|token|api[-_]?key|access[-_]?key|private[-_]?key|authorization|credential|session|cookie)[^"]*"\s*:\s*)(?:"(?:\\.|[^"])*"|'(?:\\.|[^'])*'|[^\s,;}]+)/gi,
-      '$1"[REDACTED]"',
-    )
-    .replace(/(\b[a-z][a-z0-9+.-]*:\/\/[^\s/:@]*:)[^\s/@]+@/gi, '$1[REDACTED]@');
+  return (
+    safe
+      .replace(/-----BEGIN [^-\r\n]*PRIVATE KEY-----[\s\S]*?-----END [^-\r\n]*PRIVATE KEY-----/gi, '[REDACTED]')
+      // JSON embedded in a diagnostic is often escaped one or more times. Redact
+      // the complete escaped auth value before the plain-header fallbacks run.
+      .replace(
+        /((?:\\+["'])(?:Proxy-Authorization|Authorization)(?:\\+["'])\s*:\s*(?:\\+["']))[^\r\n]*?((?:\\+["']))/gi,
+        '$1[REDACTED]$2',
+      )
+      .replace(/(\b(?:Proxy-Authorization|Authorization)\s*[:=]\s*)[^\r\n]*/gi, '$1[REDACTED]')
+      .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, 'Bearer [REDACTED]')
+      .replace(/\bBasic\s+[A-Za-z0-9._~+\/-]+=*/gi, 'Basic [REDACTED]')
+      .replace(/(\b(?:Set-Cookie|Cookie)\s*:\s*)[^\r\n]+/gi, '$1[REDACTED]')
+      .replace(/\b(?:gh[pousr]_|github_pat_|sk-|xox[baprs]-|npm_)[A-Za-z0-9._-]{8,}/gi, '[REDACTED]')
+      .replace(/\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g, '[REDACTED]')
+      .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, '[REDACTED]')
+      .replace(
+        /(\b[A-Z0-9_-]*(?:PASSWORD|PASSWD|SECRET|TOKEN|API[-_]?KEY|ACCESS[-_]?KEY|PRIVATE[-_]?KEY|AUTHORIZATION|CREDENTIAL|SESSION|COOKIE)[A-Z0-9_-]*\s*[:=]\s*)(?:"(?:\\.|[^"])*"|'(?:\\.|[^'])*'|[^\s,;]+)/gi,
+        '$1[REDACTED]',
+      )
+      .replace(
+        /("[^"]*(?:password|passwd|secret|token|api[-_]?key|access[-_]?key|private[-_]?key|authorization|credential|session|cookie)[^"]*"\s*:\s*)(?:"(?:\\.|[^"])*"|'(?:\\.|[^'])*'|[^\s,;}]+)/gi,
+        '$1"[REDACTED]"',
+      )
+      .replace(
+        /([?&](?:X-Amz-(?:Signature|Credential|Security-Token)|X-Goog-(?:Signature|Credential|Security-Token)|GoogleAccessId|Signature|sig)=)[^&#\s"'<>\\]+/gi,
+        '$1[REDACTED]',
+      )
+      // Redact every URI userinfo form, including token-only NATS credentials and
+      // empty-user Redis URLs (`redis://:password@host`).
+      .replace(/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, '$1[REDACTED]@')
+  );
+}
+
+function configuredOmniSecrets(config: OmniRuntimeConfig): string[] {
+  const secrets = new Set<string>();
+  if (config.apiKey) secrets.add(config.apiKey);
+  for (const candidate of [config.apiUrl, config.natsUrl]) {
+    if (!candidate) continue;
+    for (const match of candidate.matchAll(/\b[a-z][a-z0-9+.-]*:\/\/([^\s/@]+)@/gi)) {
+      const userinfo = match[1];
+      secrets.add(userinfo);
+      for (const part of userinfo.split(':')) {
+        if (!part) continue;
+        try {
+          secrets.add(decodeURIComponent(part));
+        } catch {
+          secrets.add(part);
+        }
+      }
+    }
+  }
+  return [...secrets];
+}
+
+/** One config/env-seeded boundary used for both external text and every log. */
+export function createOmniRedactor(config: OmniRuntimeConfig, env: NodeJS.ProcessEnv = process.env): OmniRedactor {
+  const secrets = configuredOmniSecrets(config);
+  return (text) => redactOmniOutbound(text, env, secrets);
 }
 
 interface KillableChild {
@@ -901,16 +958,14 @@ export const defaultAgentExecutor: AgentExecutor = (opts) =>
 // ============================================================================
 
 /**
- * Result of an id-returning Omni send. `messageId` is the correlatable id — the
- * WhatsApp stanza id / externalId (SPIKE finding (b)) — that an inbound reaction
- * later references. Absent on a failed send (the row stays un-tagged and is
- * retried on the next tick).
+ * Result of an id-returning Omni send. Only `accepted` carries the correlatable
+ * WhatsApp stanza id. A preflight rejection is retry-safe; every uncertain
+ * outcome after dispatch is explicitly ambiguous and must not be auto-retried.
  */
-export interface OmniSendResult {
-  messageId?: string;
-  success?: boolean;
-  error?: string;
-}
+export type OmniSendResult =
+  | { outcome: 'definitely-not-started'; error: string }
+  | { outcome: 'accepted'; messageId: string }
+  | { outcome: 'ambiguous'; error: string };
 
 export interface OmniSendOpts {
   instance: string;
@@ -932,8 +987,8 @@ export type OmniSend = (opts: OmniSendOpts) => Promise<OmniSendResult>;
  * Default id-returning send — POSTs the approval message to Omni's HTTP send
  * route, signed exactly like {@link registerAgentInOmni} (bearer + optional
  * ed25519). Returns the message id from the response so `announce()` can store
- * the correlatable stanza id. Degrades to an error result (silent retry, never a
- * throw) when the Omni API URL is unconfigured.
+ * the correlatable stanza id. A missing API URL is the sole retry-safe preflight
+ * result; HTTP errors, malformed responses, and transport failures are ambiguous.
  *
  * NOTE: the exact send route + response field that surface the WhatsApp *stanza
  * id* (vs the persisted Omni UUID) are documented in SPIKE (b) but not yet
@@ -943,24 +998,34 @@ export type OmniSend = (opts: OmniSendOpts) => Promise<OmniSendResult>;
 export function makeDefaultOmniSend(config: OmniRuntimeConfig): OmniSend {
   return async ({ instance, chat, text, signal }) => {
     const apiUrl = config.apiUrl;
-    if (!apiUrl) return { success: false, error: 'omni apiUrl not configured' };
+    if (!apiUrl) return { outcome: 'definitely-not-started', error: 'omni apiUrl not configured' };
     const path = '/api/v2/messages';
     const bodyJson = JSON.stringify({ instanceId: instance, chatId: chat, text });
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (config.apiKey) headers.Authorization = `Bearer ${config.apiKey}`;
     const sig = signOmniRequest('POST', path, bodyJson);
     if (sig) Object.assign(headers, sig);
-    const res = await fetch(`${apiUrl.replace(/\/+$/, '')}${path}`, {
-      method: 'POST',
-      headers,
-      body: bodyJson,
-      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000),
-    });
-    if (!res.ok) return { success: false, error: `HTTP ${res.status}` };
-    // SendResult ({ success, messageId, ... }) may be top-level or `{ data }`-wrapped.
-    const json = (await res.json()) as { messageId?: string; data?: { messageId?: string } };
-    const messageId = json.messageId ?? json.data?.messageId;
-    return { success: Boolean(messageId), messageId };
+    try {
+      const res = await fetch(`${apiUrl.replace(/\/+$/, '')}${path}`, {
+        method: 'POST',
+        headers,
+        body: bodyJson,
+        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000),
+      });
+      // Once fetch is invoked, HTTP status alone cannot prove the server did not
+      // create a message before returning an error.
+      if (!res.ok) return { outcome: 'ambiguous', error: `HTTP ${res.status}` };
+      const json: unknown = await res.json();
+      const top = isRecord(json) ? json.messageId : undefined;
+      const nested = isRecord(json) && isRecord(json.data) ? json.data.messageId : undefined;
+      const messageId = typeof top === 'string' ? top : typeof nested === 'string' ? nested : undefined;
+      if (!messageId || messageId.length > 512 || hasUnsafeTransportControl(messageId)) {
+        return { outcome: 'ambiguous', error: 'Omni accepted the request without a safe message id' };
+      }
+      return { outcome: 'accepted', messageId };
+    } catch (error) {
+      return { outcome: 'ambiguous', error: errText(error) };
+    }
   };
 }
 
@@ -1107,8 +1172,10 @@ export interface OmniRunnerDeps {
   /** Awaited after publish and before SQLite session/handled commit. */
   flush?: () => Promise<void>;
   /** Resident lease identity. Production always supplies the machine-wide
-   * fencing epoch; direct unit runners get a private epoch-zero identity. */
+   * fencing epoch; direct runners acquire a short embedded-process lease. */
   claimOwner?: { ownerId: string; epoch: number };
+  /** Share the config-seeded boundary with the serve wrapper. */
+  redact?: OmniRedactor;
   /** Structured log sink (stdout in serve; captured in tests). */
   log?: (line: string) => void;
   /** Injectable clock. */
@@ -1367,21 +1434,46 @@ function buildRoutedReplyPayload(
   correlationId: string,
   nowMs: number,
 ): string {
-  return JSON.stringify({
-    content,
-    agent: 'genie',
-    chat_id: chat,
-    instance_id: instance,
-    request_id: correlationId,
-    timestamp: new Date(nowMs).toISOString(),
-  });
+  const render = (boundedContent: string) =>
+    JSON.stringify({
+      content: boundedContent,
+      agent: 'genie',
+      chat_id: chat,
+      instance_id: instance,
+      request_id: correlationId,
+      timestamp: new Date(nowMs).toISOString(),
+    });
+  const initial = render(content);
+  if (Buffer.byteLength(initial, 'utf8') <= MAX_OUTBOUND_PAYLOAD_BYTES) return initial;
+
+  // JSON escaping and multibyte UTF-8 make a character cap insufficient. Find
+  // the largest Unicode-code-point prefix whose complete wire envelope fits.
+  const points = Array.from(content);
+  let low = 0;
+  let high = points.length;
+  let best = render('…');
+  if (Buffer.byteLength(best, 'utf8') > MAX_OUTBOUND_PAYLOAD_BYTES) {
+    throw new Error('Omni reply envelope exceeded the durable payload limit');
+  }
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    const candidate = render(`${points.slice(0, middle).join('')}…`);
+    if (Buffer.byteLength(candidate, 'utf8') <= MAX_OUTBOUND_PAYLOAD_BYTES) {
+      best = candidate;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+  return best;
 }
 
 /** Cap a reply to `max` chars, replacing the tail with a single ellipsis. */
 function truncateReply(text: string, max: number): string {
   if (max <= 0) return '';
-  if (text.length <= max) return text;
-  return `${text.slice(0, max - 1)}…`;
+  const points = Array.from(text);
+  if (points.length <= max) return text;
+  return `${points.slice(0, max - 1).join('')}…`;
 }
 
 /** Keep the LAST `max` chars of a diagnostic, replacing the head with a single
@@ -1389,8 +1481,9 @@ function truncateReply(text: string, max: number): string {
  *  cause is at the END of its stderr, not the start. */
 function tailOf(text: string, max: number): string {
   if (max <= 0) return '';
-  if (text.length <= max) return text;
-  return `…${text.slice(-(max - 1))}`;
+  const points = Array.from(text);
+  if (points.length <= max) return text;
+  return `…${points.slice(-(max - 1)).join('')}`;
 }
 
 /** Dropped-because-busy notice (Decision 10 — one in-flight run per route). */
@@ -1411,27 +1504,38 @@ const EXIT_DIAG_TAIL_CHARS = 500;
 /** Failure detail for a non-zero exit: the code plus the TAIL of the child's
  *  stderr (a crash explains itself at the end of the stream), falling back to
  *  stdout when stderr is empty. Bare `exit code N` only when both are blank. */
-const exitDetail = (code: number, stderr: string | undefined, stdout: string): string => {
+const exitDetail = (
+  code: number,
+  stderr: string | undefined,
+  stdout: string,
+  redact: OmniRedactor = (text) => redactOmniOutbound(text),
+): string => {
   // Child streams are already byte-bounded. Redact that complete bounded
   // diagnostic before tail selection so truncation cannot discard an auth
   // label while retaining its opaque credential.
-  const diag = tailOf(redactOmniOutbound((stderr ?? '').trim() || stdout.trim()), EXIT_DIAG_TAIL_CHARS);
+  const diag = tailOf(redact((stderr ?? '').trim() || stdout.trim()), EXIT_DIAG_TAIL_CHARS);
   return diag ? `exit code ${code} — ${diag}` : `exit code ${code}`;
 };
 
 /** Compact message for an unknown thrown value. */
 const errText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
-function oneShotResultContent(result: AgentExecutionResult, ok: boolean, maxReplyChars: number): string {
-  if (ok) return truncateReply(redactOmniOutbound(result.stdout), maxReplyChars);
-  const detail = result.exitCode !== 0 ? exitDetail(result.exitCode, result.stderr, result.stdout) : result.stdout;
-  return errorNotice(redactOmniOutbound(detail || 'agent returned an error'));
+function oneShotResultContent(
+  result: AgentExecutionResult,
+  ok: boolean,
+  maxReplyChars: number,
+  redact: OmniRedactor,
+): string {
+  if (ok) return truncateReply(redact(result.stdout), maxReplyChars);
+  const detail =
+    result.exitCode !== 0 ? exitDetail(result.exitCode, result.stderr, result.stdout, redact) : result.stdout;
+  return errorNotice(redact(detail || 'agent returned an error'));
 }
 
-function oneShotFailureContent(error: unknown, timeoutMs: number): string {
+function oneShotFailureContent(error: unknown, timeoutMs: number, redact: OmniRedactor): string {
   if (error instanceof OneShotTimeoutError) return timeoutNotice(timeoutMs);
   if (error instanceof OneShotStoppedError) return '⏹️ cancelled because Omni serve stopped.';
-  return errorNotice(redactOmniOutbound(errText(error)));
+  return errorNotice(redact(errText(error)));
 }
 
 function currentCodexThread(db: Database, route: OmniRoute): string | undefined {
@@ -1592,12 +1696,23 @@ class OneShotStoppedError extends Error {
 export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
   const { db, config, publish } = deps;
   const flush = deps.flush ?? (async () => {});
-  const log = deps.log ?? (() => {});
   const now = deps.now ?? (() => Date.now());
+  const redact = deps.redact ?? createOmniRedactor(config);
+  const rawLog = deps.log ?? (() => {});
+  const log = (line: string) => rawLog(redact(line));
   const genId =
     deps.genCorrelationId ?? (() => `req_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`);
-  const claimOwner = deps.claimOwner ?? { ownerId: `in-process:${randomUUID()}`, epoch: 0 };
+  const claimOwner =
+    deps.claimOwner ??
+    (() => {
+      const ownerId = `embedded:${process.pid}`;
+      const epoch = acquireServiceLeaseEpoch(db, OMNI_SERVICE_LEASE_NAME, ownerId, now(), 5 * 60_000);
+      if (epoch === undefined) throw new Error('another Omni resident owns the machine-wide service lease');
+      return { ownerId, epoch };
+    })();
   const claimIdentity = () => ({ ...claimOwner, now: now() });
+  const ownsCurrentLease = () =>
+    isServiceLeaseCurrent(db, OMNI_SERVICE_LEASE_NAME, claimOwner.ownerId, claimOwner.epoch, now());
   const spawnClaude = deps.spawnClaude ?? defaultSpawnClaude;
   const spawnAgent: AgentExecutor =
     deps.spawnAgent ?? ((opts) => (opts.provider === 'claude' ? spawnClaude(opts) : defaultAgentExecutor(opts)));
@@ -1621,7 +1736,10 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
   // Inbound one-shot routing state (Decision 10 — one in-flight run per route).
   const routes = config.routes ?? [];
   const timeoutMs = config.inboundTimeoutMs ?? 120_000;
-  const maxReplyChars = config.inboundMaxReplyChars ?? 4_000;
+  const requestedReplyChars = config.inboundMaxReplyChars ?? 4_000;
+  const maxReplyChars = Number.isFinite(requestedReplyChars)
+    ? Math.max(0, Math.min(Math.floor(requestedReplyChars), MAX_OUTBOUND_PAYLOAD_BYTES))
+    : 4_000;
   /** Routes with a run currently in flight — a second message on one is dropped. */
   const inFlight = new Set<string>();
   /** Live one-shot promises, so `whenIdle` (tests) can await completion. */
@@ -1669,14 +1787,18 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
         { once: true },
       );
     });
-    // ⏳ on the inbound message right before the spawn (route-scoped, no-op if the
-    // inbound carried no stanza id) — the first half of the run's ⏳→✅/❌ ack. The
-    // settlement promise (always fulfilled — emit errors are swallowed inside) is
-    // kept so the final ✅/❌ can be chained AFTER the ⏳ HTTP call has landed: a run
-    // that finishes before the ⏳ reaches the API must never leave ✅→⏳ reordered.
-    const pendingAck = emitRouteReaction(route, messageId, STATUS_PENDING);
+    let pendingAck = Promise.resolve();
     let spawned: Promise<AgentExecutionResult> | undefined;
     try {
+      // This IMMEDIATE transition revalidates the unexpired machine lease at the
+      // final boundary before either the status HTTP call or workspace execution.
+      if (!markInboundExecuting(db, inboundId, claimToken, claimIdentity())) {
+        throw new Error(`Inbound claim ${inboundId} changed before agent execution`);
+      }
+      // ⏳ on the inbound message right before the spawn (route-scoped, no-op if
+      // the inbound carried no stanza id). It is sequenced before the terminal ack.
+      pendingAck = emitRouteReaction(route, messageId, STATUS_PENDING);
+      if (!ownsCurrentLease()) throw new Error(`Inbound claim ${inboundId} lost its lease before agent spawn`);
       // Wrap so a SYNCHRONOUS throw from the executor becomes a rejection the
       // race can observe — and so `aborted` always gets a handler attached
       // (else a late finally-abort would surface as an unhandled rejection).
@@ -1693,18 +1815,25 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
       );
       let result: AgentExecutionResult;
       let ok: boolean;
-      let content: string;
+      let executionError: unknown;
       try {
         result = await Promise.race([spawned, aborted]);
         // A non-zero exit OR a soft-error terminal result (is_error / non-success /
         // empty) is a failure — never publish the raw NDJSON blob as a happy reply.
         ok = result.exitCode === 0 && !result.isError;
-        content = oneShotResultContent(result, ok, maxReplyChars);
       } catch (error) {
         result = { stdout: '', exitCode: 1, isError: true };
         ok = false;
-        content = oneShotFailureContent(error, timeoutMs);
+        executionError = error;
       }
+      // Persist the post-execution boundary before redaction, JSON rendering, or
+      // outbox preparation can fail. Such failures are never replayed as fresh.
+      if (!markInboundExecuted(db, inboundId, claimToken, claimIdentity())) {
+        throw new Error(`Inbound claim ${inboundId} changed after agent execution`);
+      }
+      const content = executionError
+        ? oneShotFailureContent(executionError, timeoutMs, redact)
+        : oneShotResultContent(result, ok, maxReplyChars, redact);
       await prepareAndDeliverInbound(route, inboundId, claimToken, replySubject, content, result, ok);
       // ✅ once a genuine reply is published; ❌ on a non-zero exit or soft error.
       // Chained on the ⏳ emit's settlement (fulfilled even when it failed) so the
@@ -1734,6 +1863,10 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
     delivery: InboundPreparedDelivery,
   ): Promise<boolean> {
     if (delivery.phase === 'prepared') {
+      if (!validatePreparedInboundLease(db, inboundId, claimToken, claimIdentity())) {
+        throw new Error(`Inbound claim ${inboundId} lost its lease before publish`);
+      }
+      if (!ownsCurrentLease()) throw new Error(`Inbound claim ${inboundId} lost its lease before publish`);
       publish(delivery.subject, delivery.payload);
       await flush();
       if (!markInboundDeliveryFlushed(db, inboundId, claimToken, claimIdentity())) {
@@ -1759,7 +1892,7 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
       phase: 'prepared',
       eventId,
       subject,
-      payload: buildRoutedReplyPayload(route.instance, route.chat, content, eventId, now()),
+      payload: buildRoutedReplyPayload(route.instance, route.chat, redact(content), eventId, now()),
       meta: encodeDeliveryMeta(result, ok),
     };
     if (!prepareInboundDelivery(db, inboundId, claimToken, claimIdentity(), delivery)) {
@@ -1846,31 +1979,43 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
     pending.add(recovery);
   }
 
-  function recoverAbandonedInbound(): void {
-    for (const event of listRecoverableInbound(db, claimOwner.epoch)) {
-      const route = findRoute(event.instance, event.chat);
-      if (!route) {
-        if (!unroutableRecoveryLogged.has(event.eventKey)) {
-          unroutableRecoveryLogged.add(event.eventKey);
-          log(`[omni] durable inbound ${event.eventKey} needs recovery but its route is no longer configured`);
-        }
-        continue;
+  function recoverInboundEvent(event: RecoverableInboundEvent): void {
+    const approvalIntent = event.chat === config.approvalChat ? approvalInboundIntent(event.body) : undefined;
+    const route = findRoute(event.instance, event.chat);
+    if (!approvalIntent && !route) {
+      if (!unroutableRecoveryLogged.has(event.eventKey)) {
+        unroutableRecoveryLogged.add(event.eventKey);
+        log(`[omni] durable inbound ${event.eventKey} needs recovery but its route is no longer configured`);
       }
-      if (inFlight.has(routeKey(route.instance, route.chat))) continue;
-      const claimToken = randomUUID();
-      const claim = recordAndClaimInboundDelivery(db, {
-        instance: event.instance,
-        chat: event.chat,
-        sender: event.sender,
-        body: event.body,
-        eventKey: event.eventKey,
-        claimToken,
-        claimOwnerId: claimOwner.ownerId,
-        claimEpoch: claimOwner.epoch,
-        now: now(),
-      });
-      if (claim) startRoutedRecovery(route, claim.id, claimToken, claim);
+      return;
     }
+    if (route && inFlight.has(routeKey(route.instance, route.chat))) return;
+    const claimToken = randomUUID();
+    const claim = recordAndClaimInboundDelivery(db, {
+      instance: event.instance,
+      chat: event.chat,
+      sender: event.sender,
+      body: event.body,
+      eventKey: event.eventKey,
+      claimToken,
+      claimOwnerId: claimOwner.ownerId,
+      claimEpoch: claimOwner.epoch,
+      now: now(),
+    });
+    if (!claim) return;
+    if (!approvalIntent) {
+      startRoutedRecovery(route as OmniRoute, claim.id, claimToken, claim);
+      return;
+    }
+    if (claim.mode === 'resume-delivery' && route) {
+      startRoutedRecovery(route, claim.id, claimToken, claim);
+      return;
+    }
+    consumeApprovalClaim(claim, claimToken, approvalIntent, event.sender);
+  }
+
+  function recoverAbandonedInbound(): void {
+    for (const event of listRecoverableInbound(db, claimOwner.epoch)) recoverInboundEvent(event);
   }
 
   /**
@@ -1901,6 +2046,7 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
   }): Promise<void> {
     const { instance, chat, targetId, emoji, recordGlyph, guard } = params;
     if (stopped || !targetId) return Promise.resolve();
+    if (!ownsCurrentLease()) return Promise.resolve();
     if (guard && ackInFlight.has(targetId)) return Promise.resolve();
     if (guard) ackInFlight.add(targetId);
     const controller = new AbortController();
@@ -1974,10 +2120,9 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
   /**
    * Announce a single pending approval via the id-returning send and tag the row
    * with the REAL Omni message id (the stanza id) the send returns — so an
-   * inbound reaction correlates to THIS approval. Tags only on a successful send;
-   * a confirmed id-less failure releases the claim for retry, while a thrown
-   * in-flight transport result becomes explicit ambiguous state so a successor
-   * cannot duplicate a possibly accepted prompt. On a successful tag it sets the
+   * inbound reaction correlates to THIS approval. Only a definitely-not-started
+   * preflight outcome releases for retry; every post-dispatch no-id outcome is
+   * durable ambiguity. On a successful tag it sets the
    * current status reaction (including an immediate terminal glyph when the row
    * resolved during send). Never throws.
    */
@@ -1985,12 +2130,16 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
     appr: { id: string; tool: string; inputSummary: string },
     claimToken: string,
   ): Promise<void> {
-    const text = formatApprovalMessage(appr.tool, appr.inputSummary);
+    const text = redact(formatApprovalMessage(appr.tool, appr.inputSummary));
     const controller = new AbortController();
     activeHttpControllers.add(controller);
     try {
       if (!markApprovalAnnouncementSending(db, appr.id, claimToken, claimIdentity())) {
         log(`[omni] announce ${appr.id}: durable claim changed before send`);
+        return;
+      }
+      if (!ownsCurrentLease()) {
+        releaseApprovalAnnouncementWithLease(db, appr.id, claimToken, claimIdentity());
         return;
       }
       const result = await sendApproval({
@@ -1999,11 +2148,14 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
         text,
         signal: controller.signal,
       });
-      if (!result.messageId) {
-        log(
-          `[omni] announce ${appr.id}: send returned no messageId${result.error ? ` (${redactOmniOutbound(result.error)})` : ''} — will retry`,
-        );
+      if (result.outcome === 'definitely-not-started') {
+        log(`[omni] announce ${appr.id}: send did not start (${result.error}) — will retry`);
         releaseApprovalAnnouncementWithLease(db, appr.id, claimToken, claimIdentity());
+        return;
+      }
+      if (result.outcome === 'ambiguous') {
+        markApprovalAnnouncementAmbiguous(db, appr.id, claimToken, claimIdentity());
+        log(`[omni] announce ${appr.id}: send outcome is ambiguous (${result.error}) — refusing automatic retry`);
         return;
       }
       const completion = finalizeApprovalAnnouncement(db, appr.id, claimToken, result.messageId, claimIdentity());
@@ -2025,7 +2177,7 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
       // silently issuing a duplicate prompt from the next resident.
       markApprovalAnnouncementAmbiguous(db, appr.id, claimToken, claimIdentity());
       if (!stopped) {
-        log(`[omni] announce ${appr.id} failed: ${redactOmniOutbound(errText(err))}`);
+        log(`[omni] announce ${appr.id} failed: ${errText(err)}`);
       }
     } finally {
       activeHttpControllers.delete(controller);
@@ -2057,63 +2209,70 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
     }
   }
 
-  function resolveOldest(decision: ApprovalDecision, resolvedBy: string, note: string): boolean {
-    const pending = listPendingApprovals(db);
-    if (pending.length === 0) return false;
-    return tryResolve(pending[0].id, decision, resolvedBy, note);
+  interface ApprovalInboundIntent {
+    decision: ApprovalDecision;
+    targetMessageId?: string;
+    note: string;
   }
 
-  function tryResolve(id: string, decision: ApprovalDecision, resolvedBy: string, note: string): boolean {
-    try {
-      // Stamp resolved_at with the runner clock so the reconciliation recency
-      // window (which reads now() from the same dep) lines up deterministically.
-      const row = resolveApproval(db, id, decision, resolvedBy, now());
-      log(`[omni] resolved ${id} → ${decision} by ${resolvedBy} (${note})`);
-      // Swap the ⏳ status reaction to ✅ (approved) / ❌ (denied) — the row is
-      // now closed, so this is the second half of the ⏳→✅/❌ ack.
-      emitStatusReaction(row.omniMessageId, decision === 'approved' ? STATUS_APPROVED : STATUS_DENIED);
-      return true;
-    } catch (err) {
-      // Lost the race to another resolver — benign under concurrency.
-      if (err instanceof ApprovalConflictError) return false;
-      throw err;
-    }
-  }
-
-  /**
-   * Resolve an approval from an inbound reaction. Correlates by the stored real
-   * Omni message id (the reaction's target stanza id, from the `[Reaction: … on
-   * message <id>]` content or the top-level `messageId`). An EXPLICIT target that
-   * matches no pending row is a NO-OP (logged, ignored) — NOT an oldest fallback:
-   * a reaction on an already-resolved / unknown message must never resolve some
-   * unrelated pending approval (the concurrency hazard this wish exists to kill).
-   * Oldest fallback is reserved for the no-target-id case; reactions always carry
-   * a target id, so this branch is defensive. Non-vocabulary emoji are ignored.
-   */
-  function resolveReaction(emoji: string, targetId: string | undefined, sender: string): boolean {
-    const decision = matchReaction(emoji, vocab);
-    if (!decision) return false;
-    if (targetId) {
-      const match = listPendingApprovals(db).find((a) => a.omniMessageId === targetId);
-      if (match) {
-        tryResolve(match.id, decision, sender, `reaction ${emoji}`);
-      } else {
-        log(`[omni] reaction ${emoji} targets unknown/resolved id ${targetId} — ignored (no oldest fallback)`);
-      }
-      return true;
-    }
-    resolveOldest(decision, sender, `reaction ${emoji} (fallback)`);
-    return true;
-  }
-
-  function handleApprovalBody(body: string, messageId: string | undefined, sender: string): boolean {
-    if (!body) return false;
+  function approvalInboundIntent(body: string, messageId?: string): ApprovalInboundIntent | undefined {
+    if (!body) return undefined;
     const reaction = parseReaction(body);
-    if (reaction) return resolveReaction(reaction.emoji, reaction.targetId || messageId, sender);
+    if (reaction) {
+      const decision = matchReaction(reaction.emoji, vocab);
+      if (!decision) return undefined;
+      const targetMessageId = reaction.targetId || messageId;
+      return {
+        decision,
+        ...(targetMessageId ? { targetMessageId } : {}),
+        note: `reaction ${reaction.emoji}${targetMessageId ? '' : ' (fallback)'}`,
+      };
+    }
     const decision = matchTextToken(body, vocab);
-    if (!decision) return false;
-    resolveOldest(decision, sender, `text:"${body.trim().toLowerCase()}"`);
-    return true;
+    return decision ? { decision, note: `text:"${body.trim().toLowerCase()}"` } : undefined;
+  }
+
+  /** Resolve and consume a fresh approval inbound atomically. Ambiguous legacy
+   * or post-execution claims are consumed without applying their human token to
+   * any approval because its prior side effect cannot be reconstructed safely. */
+  function consumeApprovalClaim(
+    claim: InboundClaimResult,
+    claimToken: string,
+    intent: ApprovalInboundIntent,
+    sender: string,
+  ): void {
+    if (claim.mode !== 'fresh') {
+      if (claim.mode === 'ambiguous') {
+        if (markInboundHandledIfClaimed(db, claim.id, claimToken, now(), claimIdentity(), 'ambiguous')) {
+          log(`[omni] ambiguous approval inbound ${claim.id} was not replayed`);
+        }
+      }
+      return;
+    }
+    const outcome = consumeClaimedApprovalInbound(
+      db,
+      claim.id,
+      claimToken,
+      claimIdentity(),
+      intent.decision,
+      sender,
+      intent.targetMessageId,
+      now(),
+    );
+    if (!outcome.consumed) return;
+    if (!outcome.resolved) {
+      if (outcome.targetMissing) {
+        log(
+          `[omni] ${intent.note} targets unknown/resolved id ${intent.targetMessageId} — ignored (no oldest fallback)`,
+        );
+      }
+      return;
+    }
+    log(`[omni] resolved ${outcome.resolved.id} → ${intent.decision} by ${sender} (${intent.note})`);
+    emitStatusReaction(
+      outcome.resolved.omniMessageId,
+      intent.decision === 'approved' ? STATUS_APPROVED : STATUS_DENIED,
+    );
   }
 
   /**
@@ -2154,9 +2313,51 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
     }
   }
 
+  function processInboundFrame(subject: string, data: string, frame: ParsedInboundFrame): void {
+    const { msg, instance, chat, sender, body } = frame;
+    const claimToken = randomUUID();
+    const claim = recordAndClaimInboundDelivery(db, {
+      instance,
+      chat,
+      sender,
+      body,
+      eventKey: inboundEventKey(subject, data),
+      claimToken,
+      claimOwnerId: claimOwner.ownerId,
+      claimEpoch: claimOwner.epoch,
+      now: now(),
+    });
+    if (!claim) return;
+    const inboundId = claim.id;
+    const route = findRoute(instance, chat);
+
+    const approvalIntent = chat === config.approvalChat ? approvalInboundIntent(body, msg.messageId) : undefined;
+    if (approvalIntent) {
+      if (claim.mode === 'resume-delivery' && route) {
+        startRoutedRecovery(route, inboundId, claimToken, claim, msg.messageId);
+      } else {
+        consumeApprovalClaim(claim, claimToken, approvalIntent, sender);
+      }
+      return;
+    }
+
+    const routeActionable = Boolean(route) && !parseReaction(body) && body.trim().length > 0;
+    if (routeActionable && allowMappedAgentExecution) {
+      if (claim.mode === 'fresh') startRoutedRun(route as OmniRoute, inboundId, claimToken, body, msg.messageId);
+      else startRoutedRecovery(route as OmniRoute, inboundId, claimToken, claim, msg.messageId);
+      return;
+    }
+    if (routeActionable) {
+      log(
+        `[omni] mapped execution disabled for ${routeKey(instance, chat)}; set GENIE_OMNI_MAPPED_AGENT_EXECUTION=1 only after accepting the credential boundary`,
+      );
+    }
+    releaseInboundClaim(db, inboundId, claimToken, claimIdentity());
+  }
+
   return {
     tick(): void {
-      if (stopped) return;
+      if (stopped || !ownsCurrentLease()) return;
       recoverAbandonedInbound();
       // Expire stale rows, then let reconciliation set the terminal ✅/❌ on any
       // row closed here OR by the hook fork's own self-timeout expiry.
@@ -2166,70 +2367,13 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
     },
 
     handleMessage(subject: string, data: string): void {
-      if (stopped) return;
+      if (stopped || !ownsCurrentLease()) return;
       const frame = parseInboundFrame(subject, data, config.instance);
       if (!frame.ok) {
         if (frame.reason) log(`[omni] rejected inbound with ${frame.reason}`);
         return;
       }
-      const { msg, instance, chat, sender, body } = frame;
-
-      // Insert + claim one stable transport event. NATS is at-least-once, so an
-      // exact redelivery (including one seen by a second runner) must not spawn,
-      // reply, announce, or resolve twice.
-      const claimToken = randomUUID();
-      const claim = recordAndClaimInboundDelivery(db, {
-        instance,
-        chat,
-        sender,
-        body,
-        eventKey: inboundEventKey(subject, data),
-        claimToken,
-        claimOwnerId: claimOwner.ownerId,
-        claimEpoch: claimOwner.epoch,
-        now: now(),
-      });
-      if (!claim) return;
-      const inboundId = claim.id;
-      let routed = false;
-      const finishSynchronous = (handled: boolean) => {
-        if (routed) return;
-        if (handled) markInboundHandledIfClaimed(db, inboundId, claimToken, now(), claimIdentity());
-        else releaseInboundClaim(db, inboundId, claimToken, claimIdentity());
-      };
-
-      // Mapped (instance, chat) → spawn a bounded one-shot; unmapped is store-only.
-      // Thread the inbound WhatsApp stanza id so the run can ⏳→✅/❌ react on it.
-      // A reaction frame must NOT start a run: its body is `[Reaction: …]` (a
-      // nonsense prompt) and its `messageId` is the REACTED-TO message, so the
-      // run's ⏳→✅/❌ ack would mutate that prior message. Skip it — and an
-      // empty/whitespace body — with no ack and no reply (the inbound is already
-      // stored above, and the approval-chat reaction path below still runs).
-      const route = findRoute(instance, chat);
-      const routeActionable = Boolean(route) && !parseReaction(body) && body.trim().length > 0;
-      if (routeActionable) {
-        if (allowMappedAgentExecution) {
-          routed = true;
-          if (claim.mode === 'fresh') {
-            startRoutedRun(route as OmniRoute, inboundId, claimToken, body, msg.messageId);
-          } else {
-            startRoutedRecovery(route as OmniRoute, inboundId, claimToken, claim, msg.messageId);
-          }
-        } else {
-          log(
-            `[omni] mapped execution disabled for ${routeKey(instance, chat)}; set GENIE_OMNI_MAPPED_AGENT_EXECUTION=1 only after accepting the credential boundary`,
-          );
-        }
-      }
-
-      // Only the approval chat can resolve approvals.
-      if (chat !== config.approvalChat) {
-        finishSynchronous(false);
-        return;
-      }
-      // Reaction targets and bare text vocabulary are both handled here; the
-      // dual-emit bare emoji remains unmatched and therefore cannot resolve twice.
-      finishSynchronous(handleApprovalBody(body, msg.messageId, sender));
+      processInboundFrame(subject, data, frame);
     },
 
     async whenIdle(): Promise<void> {
@@ -2298,7 +2442,7 @@ interface OmniServeLease {
 }
 
 function openOmniServeLease(db: Database, ttlMs: number): OmniServeLease {
-  const name = 'omni-serve';
+  const name = OMNI_SERVICE_LEASE_NAME;
   const ownerId = `${process.pid}:${randomUUID()}`;
   const epoch = acquireServiceLeaseEpoch(db, name, ownerId, Date.now(), ttlMs);
   if (epoch === undefined) {
@@ -2387,7 +2531,9 @@ async function closeOmniResources(
 
 export async function runOmniServe(opts: RunOmniServeOptions): Promise<void> {
   const { db, config } = opts;
-  const log = opts.log ?? (() => {});
+  const redact = createOmniRedactor(config);
+  const rawLog = opts.log ?? (() => {});
+  const log = (line: string) => rawLog(redact(line));
   const factory = opts.natsFactory ?? defaultNatsFactory;
   const cleanupTimeoutMs = Math.max(1, Math.min((opts.runnerDeps?.drainTimeoutMs ?? 12_000) + 1_000, 31_000));
   const leaseTtlMs = Math.max(100, Math.min(opts.leaseTtlMs ?? 30_000, 300_000));
@@ -2413,7 +2559,8 @@ export async function runOmniServe(opts: RunOmniServeOptions): Promise<void> {
       publish: nc.publish,
       flush: () => nc?.flush() ?? Promise.resolve(),
       claimOwner: { ownerId: lease.ownerId, epoch: lease.epoch },
-      log,
+      redact,
+      log: rawLog,
     });
 
     // Both text replies AND reactions arrive on this instance-bound subject.

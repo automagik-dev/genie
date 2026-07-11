@@ -12,7 +12,8 @@
  */
 
 const { spawn } = require('node:child_process');
-const { constants, accessSync, lstatSync, realpathSync } = require('node:fs');
+const { createHash, timingSafeEqual } = require('node:crypto');
+const { constants, accessSync, lstatSync, readFileSync, realpathSync } = require('node:fs');
 const { homedir } = require('node:os');
 const path = require('node:path');
 
@@ -20,6 +21,7 @@ const MAX_STDIN_BYTES = 1024 * 1024;
 const MAX_STDOUT_BYTES = 64 * 1024;
 const MAX_STDERR_BYTES = 64 * 1024;
 const CODEX_EVENTS = new Set(['PreToolUse', 'PermissionRequest']);
+const CODEX_LAUNCHER_CONTRACT = 'genie-codex-dispatch-v1';
 
 /** @typedef {'codex' | 'claude'} HookRuntime */
 /** @typedef {{error?: string, event?: string, tool?: string, input?: unknown}} ParsedEntry */
@@ -40,6 +42,60 @@ const CODEX_EVENTS = new Set(['PreToolUse', 'PermissionRequest']);
 /** @param {unknown} value @returns {value is Record<string, unknown>} */
 function isRecord(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Hash the exact physical launcher file Codex is about to execute. A symlink is
+ * rejected because its target can change without changing the reviewed hook
+ * definition.
+ *
+ * @param {string} [launcherPath]
+ * @param {{lstat?: typeof lstatSync, readFile?: typeof readFileSync}} [fsApi]
+ * @returns {{digest: string} | {error: string}}
+ */
+function launcherSha256(launcherPath = __filename, fsApi = {}) {
+  try {
+    const stat = (fsApi.lstat || lstatSync)(launcherPath);
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      return { error: 'launcher must be a physical file' };
+    }
+    const bytes = (fsApi.readFile || readFileSync)(launcherPath);
+    return { digest: createHash('sha256').update(bytes).digest('hex') };
+  } catch (error) {
+    return { error: `could not hash launcher: ${error instanceof Error ? error.message : String(error)}` };
+  }
+}
+
+/**
+ * @param {string | undefined} expectedDigest
+ * @param {string | undefined} expectedContract
+ * @param {string} [launcherPath]
+ * @param {{lstat?: typeof lstatSync, readFile?: typeof readFileSync}} [fsApi]
+ * @returns {string | null}
+ */
+function launcherBindingError(expectedDigest, expectedContract, launcherPath = __filename, fsApi = {}) {
+  if (expectedContract !== CODEX_LAUNCHER_CONTRACT) {
+    return 'launcher contract version is missing or does not match the reviewed definition';
+  }
+  if (typeof expectedDigest !== 'string' || !/^[a-f0-9]{64}$/.test(expectedDigest)) {
+    return 'launcher SHA-256 is missing or malformed';
+  }
+  const actual = launcherSha256(launcherPath, fsApi);
+  if ('error' in actual) return actual.error;
+  const matches = timingSafeEqual(Buffer.from(actual.digest, 'hex'), Buffer.from(expectedDigest, 'hex'));
+  return matches ? null : 'launcher bytes do not match the reviewed hook definition';
+}
+
+/** @param {string[]} args */
+function parseLauncherBindingArgs(args) {
+  if (
+    args.length !== 4 ||
+    args[0] !== '--launcher-contract' ||
+    args[2] !== '--launcher-sha256'
+  ) {
+    return { error: 'launcher binding flags are missing or malformed' };
+  }
+  return { contract: args[1], digest: args[3] };
 }
 
 /** @param {string} raw @returns {ParsedEntry} */
@@ -226,7 +282,7 @@ async function launch(runtime, raw, deps = {}, expectedEvent) {
       return 0;
     }
     writeStderr(`${message}\n`);
-    return 1;
+    return 2;
   }
 
   const entry = parseEntry(raw);
@@ -249,7 +305,7 @@ async function launch(runtime, raw, deps = {}, expectedEvent) {
       return 0;
     }
     writeStderr(`${message}\n`);
-    return 1;
+    return 2;
   }
   const spawnImpl = deps.spawn || spawn;
   /** @type {import('node:child_process').ChildProcessWithoutNullStreams} */
@@ -280,7 +336,7 @@ async function launch(runtime, raw, deps = {}, expectedEvent) {
       return 0;
     }
     writeStderr(`${message}\n`);
-    return 1;
+    return 2;
   }
 
   let stdout = '';
@@ -459,8 +515,10 @@ async function launch(runtime, raw, deps = {}, expectedEvent) {
         // stdout prefix that Claude could interpret as a successful response.
         if (!outputOverflow && !timedOut && !spawnError && !signal) writeStdout(stdout);
         writeStderr(`[genie hook launcher: ${failure}]\n`);
-        const childFailureCode = typeof code === 'number' && code !== 0 ? code : 1;
-        resolve(childFailureCode);
+        // Claude Code only treats command-hook exit 2 as a blocking failure.
+        // Normalize every launcher-generated failure, including a stale child
+        // exit status, so a broken guardrail cannot silently fail open.
+        resolve(2);
       } else {
         writeStdout(stdout);
         resolve(0);
@@ -500,6 +558,7 @@ async function readBoundedStdin(stream = process.stdin, maxBytes = MAX_STDIN_BYT
 async function main() {
   const runtime = process.argv[2];
   const expectedEvent = process.argv[3];
+  const binding = runtime === 'codex' ? parseLauncherBindingArgs(process.argv.slice(4)) : null;
   const { raw, overflow } = await readBoundedStdin();
   if (overflow) {
     const message = 'genie hook launcher: input exceeded the safety limit';
@@ -508,18 +567,32 @@ async function main() {
       process.exitCode = 0;
     } else {
       process.stderr.write(`${message}\n`);
-      process.exitCode = 1;
+      process.exitCode = 2;
     }
     return;
+  }
+  if (runtime === 'codex') {
+    const error = binding && 'error' in binding
+      ? binding.error
+      : launcherBindingError(binding?.digest, binding?.contract);
+    if (error) {
+      process.stdout.write(codexFailureOutput(raw, `genie hook launcher: ${error}`, expectedEvent));
+      process.exitCode = 0;
+      return;
+    }
   }
   process.exitCode = await launch(runtime, raw, {}, expectedEvent);
 }
 
 module.exports = {
   childTimeoutMs,
+  CODEX_LAUNCHER_CONTRACT,
   codexFailureOutput,
+  launcherBindingError,
+  launcherSha256,
   launch,
   parseEntry,
+  parseLauncherBindingArgs,
   readBoundedStdin,
   resolveGenieCommand,
   validCodexOutput,
@@ -533,7 +606,7 @@ if (require.main === module) {
       process.exitCode = 0;
     } else {
       process.stderr.write(`${message}\n`);
-      process.exitCode = 1;
+      process.exitCode = 2;
     }
   });
 }

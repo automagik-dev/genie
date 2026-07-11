@@ -33,7 +33,14 @@ LOCAL_BIN="$HOME/.local/bin"
 TMP_DIR="$(mktemp -d -t genie-install-XXXXXX)"
 COSIGN_BIN=""
 COSIGN_BOOTSTRAPPED=0
-trap 'rm -rf "$TMP_DIR"' EXIT
+LIFECYCLE_LOCK=""
+LIFECYCLE_OWNER_FILE=""
+
+cleanup() {
+  release_lifecycle_lock
+  rm -rf "$TMP_DIR"
+}
+trap cleanup EXIT
 
 log()  { printf '\033[1;36m==>\033[0m %s\n' "$*" >&2; }
 warn() { printf '\033[1;33m!!\033[0m %s\n' "$*" >&2; }
@@ -46,6 +53,48 @@ sha256_file() {
   else
     shasum -a 256 "$1" | awk '{print $1}'
   fi
+}
+
+sha256_text() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    printf '%s' "$1" | sha256sum | awk '{print $1}'
+  else
+    printf '%s' "$1" | shasum -a 256 | awk '{print $1}'
+  fi
+}
+
+# Coordinate the standalone installer with TypeScript lifecycle commands. The
+# lock pathname exactly mirrors lifecycleLockPath() in src/lib/agent-sync.ts.
+# A same-directory hard link is the portable atomic create-if-absent primitive;
+# it fails without replacing an update/setup/uninstall owner's lock.
+acquire_lifecycle_lock() {
+  local canonical_home digest token owner_record
+  mkdir -p "$GENIE_HOME"
+  # Node's path.resolve is lexical and intentionally does not dereference
+  # symlinks (/tmp vs /private/tmp on macOS), so preserve the logical path too.
+  canonical_home="$(cd -L "$GENIE_HOME" && pwd -L)"
+  digest="$(sha256_text "$canonical_home")"
+  LIFECYCLE_LOCK="$(dirname "$canonical_home")/.genie-lifecycle-${digest:0:16}.lock"
+  token="$(sha256_text "installer:$$:${TMP_DIR}:$(date +%s)")"
+  LIFECYCLE_OWNER_FILE="${LIFECYCLE_LOCK}.installer-$$-${token:0:16}"
+  owner_record="$$:${token:0:32}:unknown"
+  ( umask 077; printf '%s\n' "$owner_record" > "$LIFECYCLE_OWNER_FILE" )
+  if ! ln "$LIFECYCLE_OWNER_FILE" "$LIFECYCLE_LOCK" 2>/dev/null; then
+    rm -f "$LIFECYCLE_OWNER_FILE"
+    LIFECYCLE_OWNER_FILE=""
+    die "another Genie lifecycle command is active for $canonical_home; retry after it finishes" 1
+  fi
+}
+
+release_lifecycle_lock() {
+  if [[ -n "$LIFECYCLE_LOCK" && -n "$LIFECYCLE_OWNER_FILE" ]]; then
+    if [[ -e "$LIFECYCLE_LOCK" && -e "$LIFECYCLE_OWNER_FILE" && "$LIFECYCLE_LOCK" -ef "$LIFECYCLE_OWNER_FILE" ]]; then
+      rm -f "$LIFECYCLE_LOCK"
+    fi
+    rm -f "$LIFECYCLE_OWNER_FILE"
+  fi
+  LIFECYCLE_LOCK=""
+  LIFECYCLE_OWNER_FILE=""
 }
 
 manifest_get() {
@@ -400,11 +449,15 @@ main() {
   [[ -n "$tarball_base" && "$tarball_base" != "null" ]] || die "latest.json missing .tarball_base" 1
   log "installing genie v${version}"
   tarball="$(download_and_verify "$version" "$platform" "$tarball_base")"
+  acquire_lifecycle_lock
   extract_and_link "$tarball"
+  release_lifecycle_lock
   detect_legacy_install
   ensure_path_wired
   handoff_to_subcommand "$@"
   log "genie v${version} installed"
 }
 
-main "$@"
+if [[ "${GENIE_INSTALL_SOURCE_ONLY:-0}" != "1" ]]; then
+  main "$@"
+fi

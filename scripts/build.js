@@ -120,6 +120,7 @@ export async function buildPlugin() {
     // Generated hook bundles are committed release inputs. Prove the exact
     // SessionStart source/output contract before version metadata is updated.
     execFileSync('bun', [path.join(rootDir, 'scripts/hook-bundle-parity.ts'), '--check'], { stdio: 'inherit' });
+    execFileSync('bun', [path.join(rootDir, 'scripts/hook-content-binding.ts'), '--check'], { stdio: 'inherit' });
 
     // NOTE: the shipped SessionStart hook under plugins/genie/scripts/ is now the
     // single committed source of truth (agent-sync wish, Decision 8). The old

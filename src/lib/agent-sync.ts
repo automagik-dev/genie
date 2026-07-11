@@ -22,11 +22,15 @@
 import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import {
+  constants,
   type Dirent,
   type Stats,
+  chmodSync,
   closeSync,
+  copyFileSync,
   cpSync,
   existsSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   openSync,
@@ -37,6 +41,7 @@ import {
   rmSync,
   statSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
   writeSync,
 } from 'node:fs';
@@ -87,6 +92,8 @@ const SKILL_TRANSACTION_ROOT = '.genie-sync-transactions';
 const SKILL_TRANSACTION_STAGING_PREFIX = '.staging-';
 const SKILL_TRANSACTION_PREFIX = 'txn-';
 const SKILL_REMOVAL_PREFIX = 'delete-';
+/** Physical-tree digest schema. Version 1 was the legacy regular-file content digest. */
+export const PHYSICAL_TREE_IDENTITY_VERSION = 2;
 /** Cross-process mutual-exclusion lockfile under genieHome — one sync writer per GENIE_HOME. */
 const LOCK_NAME = '.agent-sync.lock';
 /** A lock older than this is a crashed run's debris and may be stolen. */
@@ -142,6 +149,8 @@ export interface AgentSyncOptions {
   renameManagedDir?: typeof renameSync;
   /** Test seam invoked before the final managed-directory CAS check. */
   beforeManagedDirPromotion?: (destDir: string) => void;
+  /** Failure-injection seam after parking and immediately before exclusive publication. */
+  beforeManagedDirPublish?: (destDir: string) => void;
   /** Failure-injection seam around managed-directory removal quarantine. */
   beforeManagedDirRemoval?: (destDir: string, stage: 'before-park' | 'before-delete') => void;
 }
@@ -196,6 +205,8 @@ interface SyncManifest {
   version: string | null;
   digest: string;
   syncedAt: string;
+  /** Present only for managed directory manifests; workflow digests remain file-content digests. */
+  identityVersion?: typeof PHYSICAL_TREE_IDENTITY_VERSION;
 }
 
 interface RunContext {
@@ -210,6 +221,7 @@ interface RunContext {
   backupsDirIfCreated: () => string | null;
   renameManagedDir: typeof renameSync;
   beforeManagedDirPromotion?: (destDir: string) => void;
+  beforeManagedDirPublish?: (destDir: string) => void;
   beforeManagedDirRemoval?: (destDir: string, stage: 'before-park' | 'before-delete') => void;
 }
 
@@ -251,20 +263,123 @@ function firstExisting(paths: string[]): string | null {
 }
 
 // ============================================================================
-// Digest — a stable fingerprint of a directory's file content
+// Digest — a stable fingerprint of a physical directory tree
 // ============================================================================
 
 /**
- * sha256 over the sorted `(relpath, sha256(content))` pairs of every file in
- * `dir`. The manifest is always excluded (its digest field would otherwise be
- * self-referential); callers may exclude additional relpaths. Directory entry
- * order does not affect the result.
+ * Version-2 SHA-256 identity over the root and every physical entry. Each entry
+ * contributes its normalized relative path, exact lstat kind, permission mode,
+ * and kind-specific payload (regular-file content hash or raw symlink target).
+ * Symlinks are never followed; FIFOs, sockets, devices, and other non-regular
+ * entries are represented rather than silently skipped. The manifest is always
+ * excluded because its digest field would otherwise be self-referential.
  */
 export function computeDirDigest(dir: string, exclude?: Set<string>): string {
-  const excluded = new Set(exclude ?? []);
+  const rootStat = lstatSync(dir);
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
+    throw new Error(`physical tree root is not a directory: ${dir}`);
+  }
+  const excluded = new Set([...(exclude ?? [])].map(normalizePhysicalRelPath));
   excluded.add(MANIFEST_NAME);
+  const entries: PhysicalTreeEntry[] = [physicalTreeEntry('.', rootStat, dir)];
+  collectPhysicalTreeEntries(dir, dir, excluded, entries);
+  entries.sort(byRel);
+  const digest = createHash('sha256');
+  digest.update(`genie-physical-tree-v${PHYSICAL_TREE_IDENTITY_VERSION}\0`);
+  for (const entry of entries) {
+    updateLengthPrefixed(digest, entry.rel);
+    updateLengthPrefixed(digest, entry.kind);
+    updateLengthPrefixed(digest, entry.mode.toString(8));
+    updateLengthPrefixed(digest, entry.payload);
+  }
+  return digest.digest('hex');
+}
+
+interface PhysicalTreeEntry {
+  rel: string;
+  kind: 'directory' | 'file' | 'symlink' | 'fifo' | 'socket' | 'block-device' | 'character-device' | 'other';
+  mode: number;
+  payload: string;
+}
+
+function byRel(a: { rel: string }, b: { rel: string }): number {
+  if (a.rel < b.rel) return -1;
+  if (a.rel > b.rel) return 1;
+  return 0;
+}
+
+function normalizePhysicalRelPath(path: string): string {
+  return path.split(sep).join('/');
+}
+
+function physicalEntryKind(stat: Stats): PhysicalTreeEntry['kind'] {
+  if (stat.isSymbolicLink()) return 'symlink';
+  if (stat.isDirectory()) return 'directory';
+  if (stat.isFile()) return 'file';
+  if (stat.isFIFO()) return 'fifo';
+  if (stat.isSocket()) return 'socket';
+  if (stat.isBlockDevice()) return 'block-device';
+  if (stat.isCharacterDevice()) return 'character-device';
+  return 'other';
+}
+
+function physicalTreeEntry(rel: string, stat: Stats, absolute: string): PhysicalTreeEntry {
+  const kind = physicalEntryKind(stat);
+  const payload = kind === 'file' ? hashFile(absolute) : kind === 'symlink' ? readlinkSync(absolute) : '';
+  return { rel, kind, mode: stat.mode & 0o7777, payload };
+}
+
+function collectPhysicalTreeEntries(
+  root: string,
+  current: string,
+  excluded: Set<string>,
+  out: PhysicalTreeEntry[],
+): void {
+  for (const name of readdirSync(current)) {
+    const abs = join(current, name);
+    const rel = normalizePhysicalRelPath(relative(root, abs));
+    if (excluded.has(rel)) continue;
+    const stat = lstatSync(abs);
+    const entry = physicalTreeEntry(rel, stat, abs);
+    out.push(entry);
+    if (entry.kind === 'directory') collectPhysicalTreeEntries(root, abs, excluded, out);
+  }
+}
+
+function updateLengthPrefixed(digest: ReturnType<typeof createHash>, value: string): void {
+  const bytes = Buffer.from(value);
+  digest.update(String(bytes.length));
+  digest.update(':');
+  digest.update(bytes);
+  digest.update('\0');
+}
+
+/**
+ * Legacy v1 digest, accepted only when every physical entry is a regular file
+ * or directory. A symlink or special entry in an old tree therefore revokes
+ * deletion/update authority instead of recreating the legacy follow/skip bug.
+ */
+function computeLegacyRegularTreeDigest(dir: string): string | null {
+  const rootStat = lstatSync(dir);
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) return null;
   const files: Array<{ rel: string; hash: string }> = [];
-  collectFileHashes(dir, dir, excluded, files);
+  const visit = (current: string): boolean => {
+    for (const name of readdirSync(current)) {
+      const absolute = join(current, name);
+      const rel = relative(dir, absolute);
+      if (rel === MANIFEST_NAME) continue;
+      const stat = lstatSync(absolute);
+      if (stat.isDirectory() && !stat.isSymbolicLink()) {
+        if (!visit(absolute)) return false;
+      } else if (stat.isFile() && !stat.isSymbolicLink()) {
+        files.push({ rel, hash: hashFile(absolute) });
+      } else {
+        return false;
+      }
+    }
+    return true;
+  };
+  if (!visit(dir)) return null;
   files.sort(byRel);
   const digest = createHash('sha256');
   for (const file of files) {
@@ -274,28 +389,6 @@ export function computeDirDigest(dir: string, exclude?: Set<string>): string {
     digest.update('\0');
   }
   return digest.digest('hex');
-}
-
-function byRel(a: { rel: string }, b: { rel: string }): number {
-  if (a.rel < b.rel) return -1;
-  if (a.rel > b.rel) return 1;
-  return 0;
-}
-
-function collectFileHashes(
-  root: string,
-  current: string,
-  excluded: Set<string>,
-  out: Array<{ rel: string; hash: string }>,
-): void {
-  for (const entry of readdirSync(current, { withFileTypes: true })) {
-    const abs = join(current, entry.name);
-    const rel = relative(root, abs);
-    if (excluded.has(rel)) continue;
-    const kind = classifyEntry(abs, entry);
-    if (kind === 'dir') collectFileHashes(root, abs, excluded, out);
-    else if (kind === 'file') out.push({ rel, hash: hashFile(abs) });
-  }
 }
 
 /** Resolve a dirent to file/dir/skip, following symlinks and dropping broken ones. */
@@ -324,13 +417,21 @@ function readManifest(dir: string): { manifest: SyncManifest; fileDigest: string
   try {
     const content = readFileSync(join(dir, MANIFEST_NAME));
     const parsed = JSON.parse(content.toString('utf8')) as Partial<SyncManifest>;
-    if (parsed.managedBy === MANAGED_BY && typeof parsed.digest === 'string' && /^[a-f0-9]{64}$/.test(parsed.digest)) {
+    if (
+      parsed.managedBy === MANAGED_BY &&
+      typeof parsed.digest === 'string' &&
+      /^[a-f0-9]{64}$/.test(parsed.digest) &&
+      (parsed.identityVersion === undefined || parsed.identityVersion === PHYSICAL_TREE_IDENTITY_VERSION)
+    ) {
       return {
         manifest: {
           managedBy: MANAGED_BY,
           version: parsed.version ?? null,
           digest: parsed.digest,
           syncedAt: typeof parsed.syncedAt === 'string' ? parsed.syncedAt : '',
+          ...(parsed.identityVersion === PHYSICAL_TREE_IDENTITY_VERSION
+            ? { identityVersion: PHYSICAL_TREE_IDENTITY_VERSION }
+            : {}),
         },
         fileDigest: createHash('sha256').update(content).digest('hex'),
       };
@@ -346,17 +447,25 @@ function writeManifest(dir: string, manifest: SyncManifest): void {
 }
 
 function buildManifest(ctx: RunContext, digest: string): SyncManifest {
-  return { managedBy: MANAGED_BY, version: ctx.version, digest, syncedAt: ctx.now().toISOString() };
+  return {
+    managedBy: MANAGED_BY,
+    version: ctx.version,
+    digest,
+    syncedAt: ctx.now().toISOString(),
+    identityVersion: PHYSICAL_TREE_IDENTITY_VERSION,
+  };
 }
 
 interface ManagedDirTransactionJournal {
-  version: 1;
+  version: 1 | 2;
   destName: string;
   hadLive: boolean;
   beforeContentDigest: string | null;
   beforeManifestDigest: string | null;
   stagedContentDigest: string;
   stagedManifestDigest: string;
+  /** v1 journals used content-only digests; v2 hashes physical entry identity. */
+  identityVersion?: 1 | typeof PHYSICAL_TREE_IDENTITY_VERSION;
 }
 
 interface ManagedDirExpectedIdentity {
@@ -365,6 +474,79 @@ interface ManagedDirExpectedIdentity {
 }
 
 class ManagedArtifactConflictError extends Error {}
+
+class NoClobberPublishError extends ManagedArtifactConflictError {}
+
+/**
+ * Atomically reserve an absent regular-file pathname with a hard link. The
+ * linked candidate is a disposable copy, so the original staged bytes remain
+ * immutable evidence if a concurrent writer changes the published inode.
+ */
+export function publishRegularFileNoClobber(stagedPath: string, targetPath: string): void {
+  const stagedStat = lstatSync(stagedPath);
+  if (!stagedStat.isFile() || stagedStat.isSymbolicLink()) {
+    throw new Error(`publish source is not a physical regular file: ${stagedPath}`);
+  }
+  const candidate = `${stagedPath}.publish-${process.pid}-${randomBytes(6).toString('hex')}`;
+  copyFileSync(stagedPath, candidate, constants.COPYFILE_EXCL);
+  chmodSync(candidate, stagedStat.mode & 0o7777);
+  try {
+    linkSync(candidate, targetPath);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code ?? 'UNKNOWN';
+    throw new NoClobberPublishError(`exclusive publish failed (${code}); target was preserved: ${targetPath}`);
+  } finally {
+    rmSync(candidate, { force: true });
+  }
+}
+
+/**
+ * Reserve an absent directory root with mkdir(EEXIST), then populate it using
+ * only exclusive child creates. This is the strongest portable Node primitive
+ * for directories: it never replaces a competing root and retains the complete
+ * staged tree in the journal if a child-level collision occurs.
+ */
+function publishPhysicalTreeNoClobber(stagedDir: string, targetDir: string): void {
+  const stagedStat = lstatSync(stagedDir);
+  if (!stagedStat.isDirectory() || stagedStat.isSymbolicLink()) {
+    throw new Error(`publish source is not a physical directory: ${stagedDir}`);
+  }
+  try {
+    mkdirSync(targetDir, { mode: stagedStat.mode & 0o7777 });
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code ?? 'UNKNOWN';
+    throw new NoClobberPublishError(`exclusive directory publish failed (${code}); target was preserved: ${targetDir}`);
+  }
+  const visit = (source: string, destination: string): void => {
+    for (const name of readdirSync(source)) {
+      const from = join(source, name);
+      const to = join(destination, name);
+      const stat = lstatSync(from);
+      try {
+        if (stat.isDirectory() && !stat.isSymbolicLink()) {
+          mkdirSync(to, { mode: stat.mode & 0o7777 });
+          visit(from, to);
+          chmodSync(to, stat.mode & 0o7777);
+        } else if (stat.isFile() && !stat.isSymbolicLink()) {
+          publishRegularFileNoClobber(from, to);
+        } else if (stat.isSymbolicLink()) {
+          symlinkSync(readlinkSync(from), to);
+        } else {
+          throw new Error(`unsupported physical entry during managed-tree publish: ${from}`);
+        }
+      } catch (error) {
+        if (error instanceof NoClobberPublishError) throw error;
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === 'EEXIST') {
+          throw new NoClobberPublishError(`exclusive tree entry publish failed (EEXIST); target was preserved: ${to}`);
+        }
+        throw error;
+      }
+    }
+  };
+  visit(stagedDir, targetDir);
+  chmodSync(targetDir, stagedStat.mode & 0o7777);
+}
 
 /**
  * Copy `sourceDir` into `destDir` through a journaled transaction. The complete
@@ -394,13 +576,14 @@ function writeManagedDir(
     writeManifest(staged, manifest);
     const stagedIdentity = managedDirIdentity(staged);
     const journal: ManagedDirTransactionJournal = {
-      version: 1,
+      version: 2,
       destName,
       hadLive: expected.contentDigest !== null,
       beforeContentDigest: expected.contentDigest,
       beforeManifestDigest: expected.manifestDigest,
       stagedContentDigest: stagedIdentity.contentDigest,
       stagedManifestDigest: stagedIdentity.manifestDigest,
+      identityVersion: PHYSICAL_TREE_IDENTITY_VERSION,
     };
     writeFileSync(join(working, 'journal.json'), `${JSON.stringify(journal)}\n`, 'utf8');
     renameSync(working, published);
@@ -422,7 +605,24 @@ function writeManagedDir(
           );
         }
       }
-      ctx.renameManagedDir(join(published, 'staged'), destDir);
+      ctx.beforeManagedDirPublish?.(destDir);
+      try {
+        publishPhysicalTreeNoClobber(join(published, 'staged'), destDir);
+      } catch (error) {
+        if (error instanceof NoClobberPublishError) {
+          const conflict = preserveManagedDirConflict(transactionRoot, published, token);
+          throw new ManagedArtifactConflictError(
+            `${error.message}; kept live and incoming versions for review at ${conflict}`,
+          );
+        }
+        throw error;
+      }
+      if (!matchesManagedDirIdentity(destDir, journal.stagedContentDigest, journal.stagedManifestDigest)) {
+        const conflict = preserveManagedDirConflict(transactionRoot, published, token);
+        throw new ManagedArtifactConflictError(
+          `managed skill changed during exclusive publication; kept live and incoming versions for review at ${conflict}`,
+        );
+      }
       writeFileSync(join(published, 'COMMITTED'), 'ok\n', 'utf8');
       rmSync(published, { recursive: true, force: true });
       removeEmptyDirSafe(transactionRoot);
@@ -455,10 +655,11 @@ function preserveManagedDirConflict(transactionRoot: string, transactionDir: str
 }
 
 interface ManagedDirRemovalJournal {
-  version: 1;
+  version: 1 | 2;
   destName: string;
   contentDigest: string;
   manifestDigest: string;
+  identityVersion?: 1 | typeof PHYSICAL_TREE_IDENTITY_VERSION;
 }
 
 function readManagedDirRemovalJournal(transactionDir: string): ManagedDirRemovalJournal {
@@ -466,11 +667,12 @@ function readManagedDirRemovalJournal(transactionDir: string): ManagedDirRemoval
     readFileSync(join(transactionDir, 'journal.json'), 'utf8'),
   ) as Partial<ManagedDirRemovalJournal>;
   if (
-    parsed.version !== 1 ||
+    ![1, 2].includes(Number(parsed.version)) ||
     typeof parsed.destName !== 'string' ||
     !isSafeEntryName(parsed.destName) ||
     !isDigest(parsed.contentDigest) ||
-    !isDigest(parsed.manifestDigest)
+    !isDigest(parsed.manifestDigest) ||
+    (parsed.version === 2 && parsed.identityVersion !== PHYSICAL_TREE_IDENTITY_VERSION)
   ) {
     throw new Error(`invalid managed skill removal transaction: ${transactionDir}`);
   }
@@ -505,10 +707,11 @@ function removeManagedDir(
   const transactionDir = join(transactionRoot, `${SKILL_REMOVAL_PREFIX}${token}`);
   const parked = join(transactionDir, 'parked');
   const journal: ManagedDirRemovalJournal = {
-    version: 1,
+    version: 2,
     destName: name,
     contentDigest: expected.contentDigest,
     manifestDigest: expected.manifestDigest,
+    identityVersion: PHYSICAL_TREE_IDENTITY_VERSION,
   };
   writeFileSync(join(working, 'journal.json'), `${JSON.stringify(journal)}\n`, 'utf8');
   renameSync(working, transactionDir);
@@ -560,7 +763,7 @@ function recoverManagedDirRemovalTransaction(
     rmSync(transactionDir, { recursive: true, force: true });
     return;
   }
-  if (!matchesManagedDirIdentity(parked, journal.contentDigest, journal.manifestDigest)) {
+  if (!matchesManagedDirIdentity(parked, journal.contentDigest, journal.manifestDigest, journal.identityVersion ?? 1)) {
     preserveManagedRemovalConflict(transactionRoot, transactionDir, token);
     throw new Error(`managed skill removal quarantine changed: ${parked}`);
   }
@@ -587,11 +790,120 @@ function managedDirIdentity(dir: string): { contentDigest: string; manifestDiges
   return { contentDigest: computeDirDigest(dir), manifestDigest };
 }
 
-function matchesManagedDirIdentity(dir: string, contentDigest: string | null, manifestDigest: string | null): boolean {
+/**
+ * Return the current v2 physical identity only when the tree still matches its
+ * ownership manifest. Legacy manifests are accepted solely for regular-only
+ * trees, then callers rewrite them with identityVersion=2 on the next sync.
+ */
+function acceptedManagedDirPhysicalDigest(dir: string, manifest: SyncManifest): string | null {
+  const physicalDigest = computeDirDigest(dir);
+  if (manifest.identityVersion === PHYSICAL_TREE_IDENTITY_VERSION) {
+    return physicalDigest === manifest.digest ? physicalDigest : null;
+  }
+  // Transitional fixtures/releases could write the v2 digest before adding the
+  // explicit schema tag. Exact v2 equality is unambiguous and safe to accept.
+  if (physicalDigest === manifest.digest) return physicalDigest;
+  const legacyDigest = computeLegacyRegularTreeDigest(dir);
+  return legacyDigest !== null && legacyDigest === manifest.digest ? physicalDigest : null;
+}
+
+export type ManagedSkillTreeState = 'unmanaged' | 'managed-clean' | 'managed-modified' | 'corrupt-metadata';
+
+export interface ManagedSkillTreeReport {
+  path: string;
+  state: ManagedSkillTreeState;
+  /** Accepted v2 physical identity captured during classification. */
+  contentDigest?: string;
+  manifestDigest?: string;
+}
+
+/** One ownership classifier shared by sync, doctor-facing callers, and uninstall. */
+export function inspectManagedSkillTree(dir: string): ManagedSkillTreeReport {
+  const root = lstatSafe(dir);
+  if (root === null || !root.isDirectory() || root.isSymbolicLink()) return { path: dir, state: 'unmanaged' };
+  const manifestPath = join(dir, MANIFEST_NAME);
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  } catch {
+    return lstatSafe(manifestPath) === null
+      ? { path: dir, state: 'unmanaged' }
+      : { path: dir, state: 'corrupt-metadata' };
+  }
+  if (typeof raw !== 'object' || raw === null || Reflect.get(raw, 'managedBy') !== MANAGED_BY) {
+    return { path: dir, state: 'unmanaged' };
+  }
+  const manifest = readManifest(dir);
+  if (manifest === null) return { path: dir, state: 'corrupt-metadata' };
+  try {
+    const contentDigest = acceptedManagedDirPhysicalDigest(dir, manifest.manifest);
+    return contentDigest === null
+      ? { path: dir, state: 'managed-modified' }
+      : { path: dir, state: 'managed-clean', contentDigest, manifestDigest: manifest.fileDigest };
+  } catch {
+    return { path: dir, state: 'managed-modified' };
+  }
+}
+
+export interface ManagedSkillTreeRemovalOptions {
+  genieHome?: string;
+  agent?: string;
+  renameManagedDir?: typeof renameSync;
+  beforeManagedDirRemoval?: AgentSyncOptions['beforeManagedDirRemoval'];
+}
+
+/**
+ * Recover, reclassify, park, reverify, back up, and remove one managed skill.
+ * Callers receive a disposition and never perform their own recursive delete.
+ */
+export function removeManagedSkillTree(
+  dir: string,
+  options: ManagedSkillTreeRemovalOptions = {},
+): 'removed' | 'unmanaged' | 'kept-modified' {
+  const report = emptyReport(options.agent === 'codex' ? 'codex' : 'claude');
+  const blocked = recoverManagedDirTransactions(dirname(dir), report);
+  const name = relative(dirname(dir), dir);
+  if (blocked.has('*') || blocked.has(name) || (report.failures?.length ?? 0) > 0) {
+    throw new Error(report.failures?.join('; ') ?? `managed skill recovery blocked removal: ${dir}`);
+  }
+  const inspected = inspectManagedSkillTree(dir);
+  if (inspected.state === 'unmanaged') return 'unmanaged';
+  if (
+    inspected.state !== 'managed-clean' ||
+    inspected.contentDigest === undefined ||
+    inspected.manifestDigest === undefined
+  ) {
+    return 'kept-modified';
+  }
+  const genieHome = options.genieHome ?? resolveGenieHome();
+  const ctx = createRunContext(
+    genieHome,
+    '',
+    { pluginRoot: null, hermesRoot: null, version: null },
+    {
+      genieHome,
+      renameManagedDir: options.renameManagedDir,
+      beforeManagedDirRemoval: options.beforeManagedDirRemoval,
+    },
+  );
+  removeManagedDir(ctx, options.agent ?? 'uninstall', name, dir, {
+    contentDigest: inspected.contentDigest,
+    manifestDigest: inspected.manifestDigest,
+  });
+  return 'removed';
+}
+
+function matchesManagedDirIdentity(
+  dir: string,
+  contentDigest: string | null,
+  manifestDigest: string | null,
+  identityVersion: 1 | typeof PHYSICAL_TREE_IDENTITY_VERSION = PHYSICAL_TREE_IDENTITY_VERSION,
+): boolean {
   if (contentDigest === null || manifestDigest === null) return false;
   try {
     const identity = managedDirIdentity(dir);
-    return identity.contentDigest === contentDigest && identity.manifestDigest === manifestDigest;
+    const comparableDigest = identityVersion === 1 ? computeLegacyRegularTreeDigest(dir) : identity.contentDigest;
+    return comparableDigest === contentDigest && identity.manifestDigest === manifestDigest;
   } catch {
     return false;
   }
@@ -602,7 +914,7 @@ function readManagedDirTransactionJournal(transactionDir: string): ManagedDirTra
     readFileSync(join(transactionDir, 'journal.json'), 'utf8'),
   ) as Partial<ManagedDirTransactionJournal>;
   if (
-    parsed.version !== 1 ||
+    ![1, 2].includes(Number(parsed.version)) ||
     typeof parsed.destName !== 'string' ||
     !isSafeEntryName(parsed.destName) ||
     typeof parsed.hadLive !== 'boolean' ||
@@ -611,7 +923,8 @@ function readManagedDirTransactionJournal(transactionDir: string): ManagedDirTra
     !isDigest(parsed.stagedContentDigest) ||
     !isDigest(parsed.stagedManifestDigest) ||
     (parsed.hadLive && (parsed.beforeContentDigest === null || parsed.beforeManifestDigest === null)) ||
-    (!parsed.hadLive && (parsed.beforeContentDigest !== null || parsed.beforeManifestDigest !== null))
+    (!parsed.hadLive && (parsed.beforeContentDigest !== null || parsed.beforeManifestDigest !== null)) ||
+    (parsed.version === 2 && parsed.identityVersion !== PHYSICAL_TREE_IDENTITY_VERSION)
   ) {
     throw new Error(`invalid managed skill transaction: ${transactionDir}`);
   }
@@ -626,22 +939,50 @@ function rollbackManagedDirTransaction(
   const destDir = join(targetParent, journal.destName);
   const before = join(transactionDir, 'before');
   if (lstatSafe(before) !== null) {
-    if (!matchesManagedDirIdentity(before, journal.beforeContentDigest, journal.beforeManifestDigest)) {
+    if (
+      !matchesManagedDirIdentity(
+        before,
+        journal.beforeContentDigest,
+        journal.beforeManifestDigest,
+        journal.identityVersion ?? 1,
+      )
+    ) {
       throw new Error(`managed skill prior tree changed: ${before}`);
     }
     if (lstatSafe(destDir) !== null) {
-      if (!matchesManagedDirIdentity(destDir, journal.stagedContentDigest, journal.stagedManifestDigest)) {
+      if (
+        !matchesManagedDirIdentity(
+          destDir,
+          journal.stagedContentDigest,
+          journal.stagedManifestDigest,
+          journal.identityVersion ?? 1,
+        )
+      ) {
         throw new Error(`managed skill transaction target changed: ${destDir}`);
       }
       rmSync(destDir, { recursive: true, force: true });
     }
     renameSync(before, destDir);
   } else if (journal.hadLive) {
-    if (!matchesManagedDirIdentity(destDir, journal.beforeContentDigest, journal.beforeManifestDigest)) {
+    if (
+      !matchesManagedDirIdentity(
+        destDir,
+        journal.beforeContentDigest,
+        journal.beforeManifestDigest,
+        journal.identityVersion ?? 1,
+      )
+    ) {
       throw new Error(`managed skill transaction lost prior tree: ${destDir}`);
     }
   } else if (lstatSafe(destDir) !== null) {
-    if (!matchesManagedDirIdentity(destDir, journal.stagedContentDigest, journal.stagedManifestDigest)) {
+    if (
+      !matchesManagedDirIdentity(
+        destDir,
+        journal.stagedContentDigest,
+        journal.stagedManifestDigest,
+        journal.identityVersion ?? 1,
+      )
+    ) {
       throw new Error(`managed skill transaction target changed: ${destDir}`);
     }
     rmSync(destDir, { recursive: true, force: true });
@@ -780,9 +1121,14 @@ function syncOneSkill(ctx: RunContext, skill: SourceSkill, targetParent: string)
     const reason = existsSync(join(destDir, MANIFEST_NAME)) ? 'corrupt or foreign manifest' : 'no ownership manifest';
     return { action: 'skipped-unmanaged-kept', detail: `${reason}; existing directory preserved` };
   }
-  const currentDigest = computeDirDigest(destDir);
-  if (currentDigest === existing.manifest.digest) {
-    if (sourceDigest === existing.manifest.digest) return { action: 'unchanged' };
+  const currentDigest = acceptedManagedDirPhysicalDigest(destDir, existing.manifest);
+  if (currentDigest !== null) {
+    if (
+      existing.manifest.identityVersion === PHYSICAL_TREE_IDENTITY_VERSION &&
+      sourceDigest === existing.manifest.digest
+    ) {
+      return { action: 'unchanged' };
+    }
     writeManagedDir(ctx, skill.dir, destDir, manifest, {
       contentDigest: currentDigest,
       manifestDigest: existing.fileDigest,
@@ -822,8 +1168,8 @@ function removeManagedOrphans(
     if (classifyEntry(dir, entry) !== 'dir' || sourceNames.has(entry.name)) continue;
     const manifest = readManifest(dir);
     if (manifest === null) continue;
-    const contentDigest = computeDirDigest(dir);
-    if (contentDigest === manifest.manifest.digest) {
+    const contentDigest = acceptedManagedDirPhysicalDigest(dir, manifest.manifest);
+    if (contentDigest !== null) {
       try {
         removeManagedDir(ctx, agent, entry.name, dir, {
           contentDigest,
@@ -973,6 +1319,8 @@ export function stampWorkflow(opts: {
   beforePromotion?: () => void;
   /** Failure-injection seam after authorization but before physical parking. */
   afterAuthorization?: () => void;
+  /** Failure-injection seam after parking and immediately before exclusive publication. */
+  beforePublish?: () => void;
 }): {
   action: 'written' | 'skipped' | 'kept-unmanaged' | 'kept-modified' | 'metadata-corrupt';
   targetPath: string;
@@ -1014,12 +1362,28 @@ export function stampWorkflow(opts: {
   ) {
     return { action: 'kept-modified', targetPath: ownership.targetPath };
   }
-  publishWorkflowTransaction(targetDir, stamped, manifest, expected, opts.beforePromotion, opts.afterAuthorization);
+  publishWorkflowTransaction(
+    targetDir,
+    stamped,
+    manifest,
+    expected,
+    opts.beforePromotion,
+    opts.afterAuthorization,
+    opts.beforePublish,
+  );
   return { action: 'written', targetPath: ownership.targetPath };
 }
 
 const WORKFLOW_TRANSACTION_PREFIX = '.council.genie-txn-';
 const WORKFLOW_TRANSACTION_STAGING_PREFIX = '.council.genie-txn-staging-';
+const WORKFLOW_REMOVAL_PREFIX = '.council.genie-delete-';
+const WORKFLOW_REMOVAL_CONFLICT_PREFIX = '.council.genie-delete-conflict-';
+
+interface WorkflowRemovalJournal {
+  version: 1;
+  targetDigest: string;
+  manifestDigest: string;
+}
 
 function stampWorkflowTemplate(template: string, pluginRoot: string): string {
   const quotedPlaceholder = `'${PLACEHOLDER}'`;
@@ -1036,6 +1400,7 @@ function publishWorkflowTransaction(
   expected: { targetDigest: string | null; manifestDigest: string | null },
   beforePromotion?: () => void,
   afterAuthorization?: () => void,
+  beforePublish?: () => void,
 ): void {
   mkdirSync(targetDir, { recursive: true });
   const targetPath = join(targetDir, TARGET_NAME);
@@ -1098,8 +1463,19 @@ function publishWorkflowTransaction(
         `council workflow changed during promotion; kept both versions for review at ${conflict}`,
       );
     }
-    renameSync(join(publishedStaged, TARGET_NAME), targetPath);
-    renameSync(join(publishedStaged, WORKFLOW_MANIFEST_NAME), manifestPath);
+    beforePublish?.();
+    try {
+      publishRegularFileNoClobber(join(publishedStaged, TARGET_NAME), targetPath);
+      publishRegularFileNoClobber(join(publishedStaged, WORKFLOW_MANIFEST_NAME), manifestPath);
+    } catch (error) {
+      if (error instanceof NoClobberPublishError) {
+        const conflict = preserveWorkflowConflict(transactionDir);
+        throw new ManagedArtifactConflictError(
+          `${error.message}; kept live, prior, and incoming workflow versions for review at ${conflict}`,
+        );
+      }
+      throw error;
+    }
     if (
       !physicalIdentityEquals(physicalFileIdentity(targetPath), { kind: 'regular', digest: targetDigest }) ||
       !physicalIdentityEquals(physicalFileIdentity(manifestPath), { kind: 'regular', digest: manifestDigest })
@@ -1133,6 +1509,10 @@ export function recoverManagedWorkflowTransactions(targetDir: string): void {
       quarantineTransactionDebris(targetDir, join(targetDir, name));
       continue;
     }
+    if (name.startsWith(WORKFLOW_REMOVAL_PREFIX)) {
+      recoverWorkflowRemovalTransaction(targetDir, join(targetDir, name));
+      continue;
+    }
     if (!name.startsWith(WORKFLOW_TRANSACTION_PREFIX)) continue;
     const transactionDir = join(targetDir, name);
     const journal = readWorkflowTransactionJournal(transactionDir);
@@ -1147,6 +1527,163 @@ export function recoverManagedWorkflowTransactions(targetDir: string): void {
     } else {
       rollbackWorkflowTransaction(targetDir, transactionDir);
     }
+  }
+}
+
+function readWorkflowRemovalJournal(transactionDir: string): WorkflowRemovalJournal {
+  const parsed = JSON.parse(
+    readFileSync(join(transactionDir, 'journal.json'), 'utf8'),
+  ) as Partial<WorkflowRemovalJournal>;
+  if (parsed.version !== 1 || !isDigest(parsed.targetDigest) || !isDigest(parsed.manifestDigest)) {
+    throw new Error(`invalid council workflow removal transaction: ${transactionDir}`);
+  }
+  return parsed as WorkflowRemovalJournal;
+}
+
+function preserveWorkflowRemovalConflict(transactionDir: string): string {
+  const conflict = transactionDir.replace(WORKFLOW_REMOVAL_PREFIX, WORKFLOW_REMOVAL_CONFLICT_PREFIX);
+  renameSync(transactionDir, conflict);
+  return conflict;
+}
+
+function restoreWorkflowRemovalPreimages(targetDir: string, transactionDir: string): boolean {
+  let complete = true;
+  for (const name of [TARGET_NAME, WORKFLOW_MANIFEST_NAME]) {
+    const parked = join(transactionDir, 'parked', name);
+    const target = join(targetDir, name);
+    if (lstatSafe(parked) === null) continue;
+    if (physicalFileIdentity(target).kind !== 'absent') {
+      complete = false;
+      continue;
+    }
+    publishRegularFileNoClobber(parked, target);
+    unlinkSync(parked);
+  }
+  return complete;
+}
+
+function recoverWorkflowRemovalTransaction(targetDir: string, transactionDir: string): void {
+  const journal = readWorkflowRemovalJournal(transactionDir);
+  const parkedTarget = join(transactionDir, 'parked', TARGET_NAME);
+  const parkedManifest = join(transactionDir, 'parked', WORKFLOW_MANIFEST_NAME);
+  if (existsSync(join(transactionDir, 'COMMITTED'))) {
+    if (
+      !physicalIdentityEquals(physicalFileIdentity(parkedTarget), { kind: 'regular', digest: journal.targetDigest }) ||
+      !physicalIdentityEquals(physicalFileIdentity(parkedManifest), { kind: 'regular', digest: journal.manifestDigest })
+    ) {
+      const conflict = preserveWorkflowRemovalConflict(transactionDir);
+      throw new Error(`committed council removal quarantine changed; preserved for review at ${conflict}`);
+    }
+    rmSync(transactionDir, { recursive: true, force: true });
+    return;
+  }
+  for (const [name, digest] of [
+    [TARGET_NAME, journal.targetDigest],
+    [WORKFLOW_MANIFEST_NAME, journal.manifestDigest],
+  ] as const) {
+    const parked = physicalFileIdentity(join(transactionDir, 'parked', name));
+    const live = physicalFileIdentity(join(targetDir, name));
+    const expected = { kind: 'regular', digest } as const;
+    if (
+      !physicalIdentityEquals(parked, expected) &&
+      !(parked.kind === 'absent' && physicalIdentityEquals(live, expected))
+    ) {
+      const conflict = preserveWorkflowRemovalConflict(transactionDir);
+      throw new Error(`council removal quarantine changed; preserved for review at ${conflict}`);
+    }
+  }
+  if (!restoreWorkflowRemovalPreimages(targetDir, transactionDir)) {
+    const conflict = preserveWorkflowRemovalConflict(transactionDir);
+    throw new Error(`council removal recovery found new live data; preserved prior bytes at ${conflict}`);
+  }
+  rmSync(transactionDir, { recursive: true, force: true });
+}
+
+export interface ManagedWorkflowRemovalOptions {
+  /** Failure-injection seam immediately before parking or final deletion. */
+  beforeRemoval?: (stage: 'before-park' | 'before-delete') => void;
+}
+
+/** Journaled council removal shared by uninstall and workflow maintenance. */
+export function removeManagedWorkflow(
+  targetDir: string,
+  options: ManagedWorkflowRemovalOptions = {},
+): 'removed' | 'unmanaged' | 'kept-modified' {
+  recoverManagedWorkflowTransactions(targetDir);
+  const inspected = inspectManagedWorkflow(targetDir);
+  if (inspected.state === 'unmanaged') return 'unmanaged';
+  if (
+    inspected.state !== 'managed-clean' ||
+    inspected.targetDigest === undefined ||
+    inspected.manifestDigest === undefined
+  ) {
+    return 'kept-modified';
+  }
+  const expectedTarget = { kind: 'regular', digest: inspected.targetDigest } as const;
+  const expectedManifest = { kind: 'regular', digest: inspected.manifestDigest } as const;
+  const token = `${process.pid}-${Date.now()}-${randomBytes(6).toString('hex')}`;
+  const working = createExclusiveTransactionDir(targetDir, `${WORKFLOW_TRANSACTION_STAGING_PREFIX}delete-${token}`);
+  const transactionDir = join(targetDir, `${WORKFLOW_REMOVAL_PREFIX}${token}`);
+  writeFileSync(
+    join(working, 'journal.json'),
+    `${JSON.stringify({
+      version: 1,
+      targetDigest: inspected.targetDigest,
+      manifestDigest: inspected.manifestDigest,
+    } satisfies WorkflowRemovalJournal)}\n`,
+  );
+  mkdirSync(join(working, 'parked'));
+  renameSync(working, transactionDir);
+  const parkedTarget = join(transactionDir, 'parked', TARGET_NAME);
+  const parkedManifest = join(transactionDir, 'parked', WORKFLOW_MANIFEST_NAME);
+  const targetPath = join(targetDir, TARGET_NAME);
+  const manifestPath = join(targetDir, WORKFLOW_MANIFEST_NAME);
+  try {
+    options.beforeRemoval?.('before-park');
+    if (
+      !physicalIdentityEquals(physicalFileIdentity(targetPath), expectedTarget) ||
+      !physicalIdentityEquals(physicalFileIdentity(manifestPath), expectedManifest)
+    ) {
+      const conflict = preserveWorkflowRemovalConflict(transactionDir);
+      throw new ManagedArtifactConflictError(
+        `council workflow changed before removal; preserved transaction at ${conflict}`,
+      );
+    }
+    renameSync(targetPath, parkedTarget);
+    renameSync(manifestPath, parkedManifest);
+    if (
+      !physicalIdentityEquals(physicalFileIdentity(parkedTarget), expectedTarget) ||
+      !physicalIdentityEquals(physicalFileIdentity(parkedManifest), expectedManifest) ||
+      physicalFileIdentity(targetPath).kind !== 'absent' ||
+      physicalFileIdentity(manifestPath).kind !== 'absent'
+    ) {
+      restoreWorkflowRemovalPreimages(targetDir, transactionDir);
+      const conflict = preserveWorkflowRemovalConflict(transactionDir);
+      throw new ManagedArtifactConflictError(
+        `council workflow changed while being parked; preserved live and prior bytes at ${conflict}`,
+      );
+    }
+    options.beforeRemoval?.('before-delete');
+    if (
+      !physicalIdentityEquals(physicalFileIdentity(parkedTarget), expectedTarget) ||
+      !physicalIdentityEquals(physicalFileIdentity(parkedManifest), expectedManifest)
+    ) {
+      const conflict = preserveWorkflowRemovalConflict(transactionDir);
+      throw new ManagedArtifactConflictError(
+        `council workflow changed after parking; preserved exact objects at ${conflict}`,
+      );
+    }
+    writeFileSync(join(transactionDir, 'COMMITTED'), 'ok\n');
+    rmSync(transactionDir, { recursive: true, force: true });
+    return 'removed';
+  } catch (error) {
+    if (error instanceof ManagedArtifactConflictError) throw error;
+    try {
+      if (existsSync(transactionDir)) recoverWorkflowRemovalTransaction(targetDir, transactionDir);
+    } catch (rollbackError) {
+      throw new Error(`${errMsg(error)}; council removal rollback failed: ${errMsg(rollbackError)}`);
+    }
+    throw error;
   }
 }
 
@@ -1274,7 +1811,8 @@ function migrateLegacyCodexCurated(ctx: RunContext, codexDir: string, report: Ag
       kept += 1;
       continue;
     }
-    if (computeDirDigest(dir) !== manifest.manifest.digest) {
+    const contentDigest = acceptedManagedDirPhysicalDigest(dir, manifest.manifest);
+    if (contentDigest === null) {
       kept += 1;
       report.extras.push({ kind: 'legacy-curated', action: 'kept-modified', detail: dir });
       report.advisories.push(`kept modified legacy codex skill ${entry.name} at ${dir}`);
@@ -1282,7 +1820,7 @@ function migrateLegacyCodexCurated(ctx: RunContext, codexDir: string, report: Ag
     }
     try {
       removeManagedDir(ctx, 'codex-legacy-curated', entry.name, dir, {
-        contentDigest: manifest.manifest.digest,
+        contentDigest,
         manifestDigest: manifest.fileDigest,
       });
       report.extras.push({ kind: 'legacy-curated', action: 'removed', detail: dir });
@@ -1723,6 +2261,7 @@ function createRunContext(
     backupsDirIfCreated: () => backupsDir,
     renameManagedDir: opts.renameManagedDir ?? renameSync,
     beforeManagedDirPromotion: opts.beforeManagedDirPromotion,
+    beforeManagedDirPublish: opts.beforeManagedDirPublish,
     beforeManagedDirRemoval: opts.beforeManagedDirRemoval,
   };
 }

@@ -59,6 +59,7 @@ on:
       - 'scripts/build.js'
       - 'scripts/json-top-level-string.js'
       - 'scripts/hook-bundle-parity.ts'
+      - 'scripts/hook-content-binding.ts'
       - 'scripts/plugin-executables-check.ts'
       - 'scripts/sync-plugin-skills.ts'
       - 'scripts/fresh-install-smoke.ts'

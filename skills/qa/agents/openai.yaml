@@ -1,4 +1,4 @@
 interface:
   display_name: "Quality Engineering"
   short_description: "Audit test topology and regression risk"
-  default_prompt: "Use $genie:qa (or $qa only when intentionally selecting its user-tier copy) to map the risky behavior in this change to executable tests."
+  default_prompt: "Map the risky behavior in this change to executable tests and release evidence."

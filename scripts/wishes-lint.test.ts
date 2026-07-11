@@ -1,9 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { stampDesignReview } from '../skills/brainstorm/references/design-review-evidence.mjs';
 
 const LINT_SCRIPT = join(import.meta.dir, 'wishes-lint.ts');
+const DESIGN_TEMPLATE = readFileSync(
+  join(import.meta.dir, '..', 'skills', 'brainstorm', 'references', 'design-template.md'),
+  'utf8',
+);
 
 let wishesDir: string;
 
@@ -38,6 +43,31 @@ function writeWish(contents: string, slug = 'fixture'): void {
   const wishDir = join(wishesDir, slug);
   mkdirSync(wishDir, { recursive: true });
   writeFileSync(join(wishDir, 'WISH.md'), contents);
+}
+
+function reviewedWish(designField: string): string {
+  return `${wish(
+    '2026-07-11',
+    `| Group | Agent | Complexity | Model | Description |
+|-------|-------|------------|-------|-------------|
+| 1 | engineer | 3 | engineer-standard | fixture |`,
+  )}
+| **Design** | ${designField} |
+`;
+}
+
+function writeDesign(verdict: 'SHIP' | 'FIX-FIRST' = 'SHIP'): string {
+  const path = join(wishesDir, 'brainstorms', 'fixture', 'DESIGN.md');
+  mkdirSync(join(wishesDir, 'brainstorms', 'fixture'), { recursive: true });
+  writeFileSync(
+    path,
+    stampDesignReview(DESIGN_TEMPLATE, {
+      verdict,
+      reviewer: 'reviewer/thread-42',
+      reviewedAt: '2026-07-11T12:00:00.000Z',
+    }),
+  );
+  return path;
 }
 
 beforeEach(() => {
@@ -107,6 +137,43 @@ describe('wishes-lint Execution Strategy routing fields', () => {
     expect(result.code).toBe(1);
     expect(result.stderr).toContain('Design → ../../brainstorms/missing/DRAFT.md');
     expect(result.stderr).toContain('1 broken brainstorm link(s) across 1 wish file(s)');
+  });
+
+  test('new linked wishes require current digest-bound design SHIP evidence', () => {
+    const design = writeDesign();
+    writeWish(reviewedWish('[DESIGN.md](../brainstorms/fixture/DESIGN.md)'));
+    expect(runLint().code).toBe(0);
+
+    writeFileSync(design, `${readFileSync(design, 'utf8')}\nChanged after review.\n`);
+    const changed = runLint();
+    expect(changed.code).toBe(1);
+    expect(changed.stderr).toContain('design changed after review');
+  });
+
+  test('new wishes reject non-SHIP evidence but retain the explicit direct-wish path', () => {
+    writeDesign('FIX-FIRST');
+    writeWish(reviewedWish('[DESIGN.md](../brainstorms/fixture/DESIGN.md)'));
+    let result = runLint();
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain('design review verdict must be SHIP');
+
+    rmSync(join(wishesDir, 'fixture'), { recursive: true, force: true });
+    writeWish(reviewedWish('[DESIGN.md](../brainstorms/fixture/DESIGN.md)').replace('2026-07-11', '2026-07-10'));
+    result = runLint();
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain('design review verdict must be SHIP');
+
+    rmSync(join(wishesDir, 'fixture'), { recursive: true, force: true });
+    writeWish(reviewedWish('_No brainstorm — direct wish_'));
+    result = runLint();
+    expect(result.code).toBe(0);
+  });
+
+  test('invalid or placeholder dates cannot bypass current lifecycle contracts', () => {
+    writeWish(reviewedWish('_No brainstorm — direct wish_').replace('2026-07-11', '{{date}}'));
+    const result = runLint();
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain('wish Date field must use a valid YYYY-MM-DD value');
   });
 
   test('rejects unsupported lifecycle status and missing mandatory dependency keys', () => {

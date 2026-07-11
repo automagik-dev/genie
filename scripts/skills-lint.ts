@@ -231,8 +231,12 @@ export function validateSkillMetadata(skillDir: string): SkillMetadataValidation
         violations.push('agents/openai.yaml interface.short_description must be 25-64 characters');
       }
       const prompt = ui.default_prompt;
-      if (typeof prompt !== 'string' || !name || !new RegExp(`(^|\\s)\\$${name}(?=\\s|[.,:;!?]|$)`).test(prompt)) {
-        violations.push(`agents/openai.yaml interface.default_prompt must name $${name ?? '<skill>'}`);
+      if (typeof prompt !== 'string' || prompt.trim() === '') {
+        violations.push('agents/openai.yaml interface.default_prompt must be a non-empty string');
+      } else if (/\$(?:[a-z0-9][a-z0-9-]*:)?[a-z0-9][a-z0-9-]*/i.test(prompt)) {
+        violations.push(
+          'agents/openai.yaml interface.default_prompt must be selector-free because metadata ships in multiple physical tiers',
+        );
       }
     }
     if (parsed.policy !== undefined && typeof parsed.policy.allow_implicit_invocation !== 'boolean') {

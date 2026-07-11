@@ -100,7 +100,7 @@ async function driveRoundTrip(
     publish: (subject, payload) => published.push({ subject, payload }),
     sendApproval: async (opts) => {
       sent.push(opts);
-      return { success: true, messageId: STANZA_ID };
+      return { outcome: 'accepted', messageId: STANZA_ID };
     },
   });
   let phoned = false;

@@ -29,6 +29,7 @@ import {
   extractCodexJsonlReply,
   extractStreamJsonReply,
   isSafeCodexThreadId,
+  makeDefaultOmniSend,
   readBoundedText,
   redactOmniOutbound,
   resolveTrustedHostExecutable,
@@ -37,7 +38,13 @@ import {
   runOmniServe,
   superviseChild,
 } from './omni-runner.js';
-import { getAgentSession, openGlobalDb, upsertAgentSession } from './v5/global-db.js';
+import {
+  OMNI_SERVICE_LEASE_NAME,
+  acquireServiceLeaseEpoch,
+  getAgentSession,
+  openGlobalDb,
+  upsertAgentSession,
+} from './v5/global-db.js';
 import { enqueueApproval, getApproval, listInbox, resolveApproval } from './v5/omni-queue.js';
 
 const INSTANCE = 'inst-A';
@@ -83,6 +90,34 @@ function content(p: Published): string {
 }
 
 const routeSubject = `omni.reply.${INSTANCE}.${ROUTE_CHAT}`;
+
+describe('default Omni approval send outcomes', () => {
+  test('only preflight rejection is definitely-not-started', async () => {
+    expect(await makeDefaultOmniSend(rt({ apiUrl: undefined }))({ instance: INSTANCE, chat: 'c', text: 'x' })).toEqual({
+      outcome: 'definitely-not-started',
+      error: 'omni apiUrl not configured',
+    });
+  });
+
+  test('HTTP errors and accepted responses without a correlation id are ambiguous', async () => {
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = (async () => new Response('', { status: 503 })) as unknown as typeof fetch;
+      const send = makeDefaultOmniSend(rt({ apiUrl: 'https://omni.example' }));
+      expect(await send({ instance: INSTANCE, chat: 'c', text: 'x' })).toEqual({
+        outcome: 'ambiguous',
+        error: 'HTTP 503',
+      });
+      globalThis.fetch = (async () => Response.json({ success: true })) as unknown as typeof fetch;
+      expect(await send({ instance: INSTANCE, chat: 'c', text: 'x' })).toEqual({
+        outcome: 'ambiguous',
+        error: 'Omni accepted the request without a safe message id',
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
 
 /** An inbound frame on the mapped route, as omni would publish it. */
 function mappedInbound(body: string, chat = ROUTE_CHAT): [string, string] {
@@ -301,6 +336,8 @@ describe('omni runner — inbound one-shot routing', () => {
 
   test('lease takeover during execution publishes an ambiguity notice without replaying the workspace action', async () => {
     const db = freshDb();
+    let clock = 10_000;
+    const epochA = acquireServiceLeaseEpoch(db, OMNI_SERVICE_LEASE_NAME, 'resident-a', clock, 10) as number;
     const published: Published[] = [];
     let spawns = 0;
     let release!: (result: SpawnClaudeResult) => void;
@@ -312,24 +349,28 @@ describe('omni runner — inbound one-shot routing', () => {
       db,
       config: rt(),
       publish: (subject, payload) => published.push({ subject, payload }),
-      claimOwner: { ownerId: 'resident-a', epoch: 1 },
+      claimOwner: { ownerId: 'resident-a', epoch: epochA },
+      now: () => clock,
       spawnClaude: async () => {
         spawns++;
         return gate;
       },
     });
+    first.handleMessage(...inbound);
+    await Promise.resolve();
+    clock += 11;
+    const epochB = acquireServiceLeaseEpoch(db, OMNI_SERVICE_LEASE_NAME, 'resident-b', clock, 1_000) as number;
     const successor = createOmniRunner({
       db,
       config: rt(),
       publish: (subject, payload) => published.push({ subject, payload }),
-      claimOwner: { ownerId: 'resident-b', epoch: 2 },
+      claimOwner: { ownerId: 'resident-b', epoch: epochB },
+      now: () => clock,
       spawnClaude: async () => {
         spawns++;
         return { stdout: 'must not run', exitCode: 0 };
       },
     });
-    first.handleMessage(...inbound);
-    await Promise.resolve();
     successor.tick(); // core NATS may not redeliver; SQLite recovery is authoritative
     await successor.whenIdle();
     release({ stdout: 'late stale reply', exitCode: 0 });
@@ -542,7 +583,7 @@ describe('omni runner — inbound one-shot routing', () => {
         config: rt(),
         publish: (subject, payload) => successPublished.push({ subject, payload }),
         spawnClaude: async () => ({
-          stdout: `reply ${secret} github_pat_AAAAAAAAAAAA Authorization: Token success-auth-secret\nCookie: sid=success-cookie\n{"token":"success-json-token"}\npostgresql://db:success-uri-secret@db.example/app`,
+          stdout: `reply ${secret} github_pat_AAAAAAAAAAAA Authorization: Token success-auth-secret\nCookie: sid=success-cookie\n{"token":"success-json-token"}\n{\\"Authorization\\":\\"Bearer success-escaped-secret\\"}\npostgresql://db:success-uri-secret@db.example/app\nhttps://s3.example/x?X-Amz-Signature=success-aws-signature`,
           exitCode: 0,
         }),
       });
@@ -557,7 +598,7 @@ describe('omni runner — inbound one-shot routing', () => {
         publish: (subject, payload) => failurePublished.push({ subject, payload }),
         spawnClaude: async () => ({
           stdout: '',
-          stderr: `crash ${secret} sk-AAAAAAAAAAAAAAAA api-key=failure-hyphen CREDENTIAL=failure-credential SESSION=failure-session\nProxy-Authorization: Digest response="failure-auth-secret"\nSet-Cookie: sid=failure-cookie\nredis://cache:failure-uri-secret@cache.example/0`,
+          stderr: `crash ${secret} sk-AAAAAAAAAAAAAAAA api-key=failure-hyphen CREDENTIAL=failure-credential SESSION=failure-session\nProxy-Authorization: Digest response="failure-auth-secret"\n{\\"Proxy-Authorization\\":\\"Basic failure-escaped-secret\\"}\nSet-Cookie: sid=failure-cookie\nredis://cache:failure-uri-secret@cache.example/0\nhttps://g.example/x?X-Goog-Signature=failure-gcp-signature&sig=failure-azure-signature`,
           exitCode: 7,
         }),
       });
@@ -568,7 +609,7 @@ describe('omni runner — inbound one-shot routing', () => {
         expect(content(item)).not.toContain(secret);
         expect(content(item)).not.toMatch(/github_pat_|sk-AAAA/);
         expect(content(item)).not.toMatch(
-          /success-auth-secret|success-cookie|success-json-token|success-uri-secret|failure-hyphen|failure-credential|failure-session|failure-auth-secret|failure-cookie|failure-uri-secret/,
+          /success-auth-secret|success-cookie|success-json-token|success-escaped-secret|success-uri-secret|success-aws-signature|failure-hyphen|failure-credential|failure-session|failure-auth-secret|failure-escaped-secret|failure-cookie|failure-uri-secret|failure-gcp-signature|failure-azure-signature/,
         );
         expect(content(item)).toContain('[REDACTED]');
       }
@@ -595,6 +636,57 @@ describe('omni runner — inbound one-shot routing', () => {
     expect(reply.length).toBe(10);
     expect(reply.endsWith('…')).toBe(true);
   });
+
+  test('UTF-8 multibyte replies are clamped with their JSON envelope to the durable 32KiB budget', async () => {
+    const db = freshDb();
+    const published: Published[] = [];
+    let spawns = 0;
+    const runner = createOmniRunner({
+      db,
+      config: rt({ inboundMaxReplyChars: 100_000 }),
+      publish: (subject, payload) => published.push({ subject, payload }),
+      spawnClaude: async () => {
+        spawns++;
+        return { stdout: '🧞'.repeat(20_000), exitCode: 0 };
+      },
+    });
+    runner.handleMessage(...mappedInbound('large multibyte output'));
+    await runner.whenIdle();
+    expect(spawns).toBe(1);
+    expect(published).toHaveLength(1);
+    expect(Buffer.byteLength(published[0].payload, 'utf8')).toBeLessThanOrEqual(32 * 1024);
+    expect(content(published[0]).endsWith('…')).toBe(true);
+    expect(listInbox(db)[0].handledAt).not.toBeNull();
+  });
+
+  test('a post-execution preparation failure recovers ambiguously without replaying the agent', async () => {
+    const db = freshDb();
+    const published: Published[] = [];
+    let spawns = 0;
+    let ids = 0;
+    const runner = createOmniRunner({
+      db,
+      config: rt(),
+      publish: (subject, payload) => published.push({ subject, payload }),
+      genCorrelationId: () => (++ids === 1 ? 'invalid id' : 'stable-recovery-id'),
+      spawnClaude: async () => {
+        spawns++;
+        return { stdout: 'workspace action completed', exitCode: 0 };
+      },
+    });
+    const inbound = mappedInbound('write once');
+    runner.handleMessage(...inbound);
+    await runner.whenIdle();
+    expect(spawns).toBe(1);
+    expect(published).toEqual([]);
+
+    runner.handleMessage(...inbound);
+    await runner.whenIdle();
+    expect(spawns).toBe(1);
+    expect(published).toHaveLength(1);
+    expect(content(published[0])).toContain('did not replay');
+    expect(listInbox(db)[0].handledAt).not.toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -619,7 +711,7 @@ const approvalSummary = (marker: 'A' | 'B'): string =>
  *  structural command marker, so correlation is order-independent. */
 const sendApproval: OmniSend = async ({ text }) => {
   const marker = text.includes('summary-b') ? 'B' : 'A';
-  return { success: true, messageId: `stanza-${marker}` };
+  return { outcome: 'accepted', messageId: `stanza-${marker}` };
 };
 
 /** An inbound frame on the approval chat, as omni would publish it. */
@@ -656,7 +748,7 @@ describe('omni runner — correlated approval identity + reactions', () => {
     const send: OmniSend = async () => {
       sends++;
       await gate;
-      return { success: true, messageId: 'only-stanza' };
+      return { outcome: 'accepted', messageId: 'only-stanza' };
     };
     const first = createOmniRunner({ db, config: rt(), publish: () => {}, sendApproval: send, now: () => NOW });
     const second = createOmniRunner({ db, config: rt(), publish: () => {}, sendApproval: send, now: () => NOW });
@@ -688,7 +780,7 @@ describe('omni runner — correlated approval identity + reactions', () => {
       now: () => NOW,
       sendApproval: async () => {
         await gate;
-        return { success: true, messageId: 'resolved-in-flight' };
+        return { outcome: 'accepted', messageId: 'resolved-in-flight' };
       },
       setReaction: async ({ messageId, emoji }) => {
         reactions.push({ messageId, emoji });
@@ -713,7 +805,7 @@ describe('omni runner — correlated approval identity + reactions', () => {
       publish: () => {},
       sendApproval: async ({ text }) => {
         texts.push(text);
-        return { success: true, messageId: 'stanza-safe' };
+        return { outcome: 'accepted', messageId: 'stanza-safe' };
       },
       now: () => NOW,
     });
@@ -742,7 +834,7 @@ describe('omni runner — correlated approval identity + reactions', () => {
       publish: () => {},
       sendApproval: async ({ text }) => {
         texts.push(text);
-        return { success: true, messageId: `stanza-${texts.length}` };
+        return { outcome: 'accepted', messageId: `stanza-${texts.length}` };
       },
       now: () => NOW,
     });
@@ -825,6 +917,72 @@ describe('omni runner — correlated approval identity + reactions', () => {
     // Oldest (A) resolves; B untouched — bare text carries no quoted id here.
     expect(getApproval(db, a)?.status).toBe('approved');
     expect(getApproval(db, b)?.status).toBe('pending');
+  });
+
+  test('an exact bare-text redelivery is consumed once and cannot approve the next request', async () => {
+    const db = freshDb();
+    const runner = approvalRunner(db);
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('A'), now: NOW - 2 });
+    const b = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('B'), now: NOW - 1 });
+    const inbound = approvalInbound({ content: 'y' });
+    runner.handleMessage(...inbound);
+    runner.handleMessage(...inbound);
+    expect(getApproval(db, a)?.status).toBe('approved');
+    expect(getApproval(db, b)?.status).toBe('pending');
+    expect(listInbox(db)).toHaveLength(1);
+    expect(listInbox(db)[0].handledAt).not.toBeNull();
+  });
+
+  test('a legacy crash after resolving bare y is recovered as ambiguity, not applied to the next approval', async () => {
+    const db = freshDb();
+    const runner = approvalRunner(db);
+    const first = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('A'), now: NOW - 2 });
+    const second = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('B'), now: NOW - 1 });
+    // Exact old split-transaction kill point: approval changed, claimed inbound
+    // still unhandled in the legacy `processing` phase.
+    resolveApproval(db, first, 'approved', 'human', NOW - 1);
+    db.query(
+      `INSERT INTO inbound_messages
+         (id, instance, chat, sender, body, received_at, handled_at, event_key,
+          processing_claim, processing_claim_owner, processing_claim_epoch, processing_phase)
+       VALUES ('legacy-bare-y', ?, ?, 'human', 'y', ?, NULL, 'legacy-bare-y-event',
+               'old-claim', 'old-resident', 0, 'processing')`,
+    ).run(INSTANCE, APPROVAL_CHAT, NOW - 1);
+
+    runner.tick();
+    await runner.whenIdle();
+    expect(getApproval(db, first)?.status).toBe('approved');
+    expect(getApproval(db, second)?.status).toBe('pending');
+    expect(listInbox(db)[0].handledAt).not.toBeNull();
+  });
+
+  test('a post-dispatch no-id approval result is durably ambiguous and never resent', async () => {
+    const db = freshDb();
+    let sends = 0;
+    const runner = createOmniRunner({
+      db,
+      config: rt(),
+      publish: () => {},
+      now: () => NOW,
+      sendApproval: async () => {
+        sends++;
+        return { outcome: 'ambiguous', error: 'HTTP 503 after dispatch' };
+      },
+    });
+    const id = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('A'), now: NOW - 1 });
+    runner.tick();
+    await runner.whenIdle();
+    runner.tick();
+    await runner.whenIdle();
+    expect(sends).toBe(1);
+    expect(getApproval(db, id)?.omniMessageId).toBeNull();
+    expect(
+      (
+        db.query('SELECT announce_phase AS phase FROM approvals WHERE id = ?').get(id) as {
+          phase: string | null;
+        }
+      ).phase,
+    ).toBe('ambiguous');
   });
 
   test('a reaction from another instance is ignored (PR #2507 instance-scope guard)', async () => {
@@ -1571,6 +1729,55 @@ describe('Codex host process boundaries', () => {
     expect(redacted.match(/\[REDACTED\]/g)?.length).toBeGreaterThanOrEqual(samples.length);
   });
 
+  test('outbound redaction covers escaped auth JSON and AWS, GCP, and Azure signed URLs', () => {
+    const samples = [
+      String.raw`{\"Authorization\":\"Bearer ESCAPED_AUTH_SECRET\"}`,
+      String.raw`{\"Proxy-Authorization\":\"Basic ESCAPED_PROXY_SECRET\"}`,
+      'https://s3.example/object?X-Amz-Credential=AWS_CREDENTIAL_SECRET&X-Amz-Signature=AWS_SIGNED_SECRET',
+      'https://storage.example/object?X-Goog-Credential=GCP_CREDENTIAL_SECRET&X-Goog-Signature=GCP_SIGNED_SECRET',
+      'https://blob.example/object?sv=2024-01-01&sig=AZURE_SAS_SECRET',
+    ];
+    const redacted = redactOmniOutbound(samples.join('\n'), {});
+    for (const secret of [
+      'ESCAPED_AUTH_SECRET',
+      'ESCAPED_PROXY_SECRET',
+      'AWS_CREDENTIAL_SECRET',
+      'AWS_SIGNED_SECRET',
+      'GCP_CREDENTIAL_SECRET',
+      'GCP_SIGNED_SECRET',
+      'AZURE_SAS_SECRET',
+    ]) {
+      expect(redacted).not.toContain(secret);
+    }
+  });
+
+  test('one config-seeded boundary redacts API keys and credential NATS URLs from outbound text and logs', async () => {
+    const db = freshDb();
+    const published: Published[] = [];
+    const logs: string[] = [];
+    const apiKey = 'CONFIG_ONLY_API_KEY_SENTINEL';
+    const natsUrl = 'nats://nats-user:nats-password-sentinel@nats.example:4222';
+    const runner = createOmniRunner({
+      db,
+      config: rt({ apiKey, natsUrl }),
+      publish: (subject, payload) => published.push({ subject, payload }),
+      flush: async () => {
+        throw new Error(`flush failed for ${natsUrl} with ${apiKey}`);
+      },
+      log: (line) => logs.push(line),
+      spawnClaude: async () => ({ stdout: `reply leaked ${apiKey}`, exitCode: 0 }),
+    });
+    runner.handleMessage(...mappedInbound('redact config'));
+    await runner.whenIdle();
+    expect(published).toHaveLength(1);
+    expect(content(published[0])).not.toContain(apiKey);
+    expect(content(published[0])).toContain('[REDACTED]');
+    expect(logs.join('\n')).not.toContain('nats-password-sentinel');
+    expect(logs.join('\n')).not.toContain('nats-user');
+    expect(logs.join('\n')).not.toContain(apiKey);
+    expect(logs.join('\n')).toContain('[REDACTED]');
+  });
+
   test('redacts the full bounded diagnostic before tail selection', async () => {
     const db = freshDb();
     const published: Published[] = [];
@@ -1736,6 +1943,43 @@ describe('Codex host process boundaries', () => {
 });
 
 describe('Omni serve shutdown ownership', () => {
+  test('serve startup redacts credential-bearing NATS URLs before logging', async () => {
+    const db = freshDb();
+    const logs: string[] = [];
+    let stopped = false;
+    let wake: (() => void) | undefined;
+    const subscription: NatsSubscription = {
+      unsubscribe() {
+        stopped = true;
+        wake?.();
+      },
+      async *[Symbol.asyncIterator]() {
+        while (!stopped) {
+          await new Promise<void>((resolve) => {
+            wake = resolve;
+          });
+        }
+      },
+    };
+    const nats: NatsLike = {
+      subscribe: () => subscription,
+      publish: () => {},
+      flush: async () => {},
+      close: async () => {},
+    };
+    const abort = new AbortController();
+    await runOmniServe({
+      db,
+      config: rt({ natsUrl: 'nats://log-user:log-password@nats.example:4222' }),
+      natsFactory: async () => nats,
+      signal: abort.signal,
+      log: (line) => logs.push(line),
+      onReady: () => abort.abort(),
+    });
+    expect(logs.join('\n')).toContain('nats://[REDACTED]@nats.example:4222');
+    expect(logs.join('\n')).not.toMatch(/log-user|log-password/);
+  });
+
   test('machine-wide serve lease rejects a second resident before it opens NATS', async () => {
     const db = freshDb();
     let factoryCalls = 0;
@@ -1838,7 +2082,7 @@ describe('Omni serve shutdown ownership', () => {
       claimOwner: { ownerId: 'successor', epoch: 1 },
       sendApproval: async () => {
         retrySends++;
-        return { success: true, messageId: 'retry-stanza' };
+        return { outcome: 'accepted', messageId: 'retry-stanza' };
       },
     });
     retryRunner.tick();
@@ -1859,7 +2103,7 @@ describe('Omni serve shutdown ownership', () => {
       config: rt(),
       publish: () => {},
       now: () => NOW,
-      sendApproval: async () => ({ success: true, messageId: 'reaction-stanza' }),
+      sendApproval: async () => ({ outcome: 'accepted', messageId: 'reaction-stanza' }),
       setReaction: ({ signal }) =>
         new Promise((_, reject) => {
           reactionStarted = true;

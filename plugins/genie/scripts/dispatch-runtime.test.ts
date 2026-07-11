@@ -5,6 +5,7 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -16,6 +17,7 @@ import { createRequire } from 'node:module';
 import { Readable } from 'node:stream';
 
 const require = createRequire(import.meta.url);
+const LAUNCHER_PATH = join(import.meta.dir, 'dispatch-runtime.cjs');
 interface LaunchDeps {
   writeStdout?: (value: string) => void;
   writeStderr?: (value: string) => void;
@@ -32,12 +34,15 @@ interface ResolverFs {
 }
 
 const launcher = require('./dispatch-runtime.cjs') as {
+  CODEX_LAUNCHER_CONTRACT: string;
   childTimeoutMs: (event: string, runtime: 'codex' | 'claude', env?: NodeJS.ProcessEnv) => number;
   launch: (
     runtime: string,
     raw: string,
     deps?: LaunchDeps,
   ) => Promise<number>;
+  launcherSha256: (path?: string) => { digest: string } | { error: string };
+  launcherBindingError: (digest: string, contract: string, path?: string) => string | null;
   resolveGenieCommand: (
     env: NodeJS.ProcessEnv,
     platform: NodeJS.Platform,
@@ -49,6 +54,19 @@ const launcher = require('./dispatch-runtime.cjs') as {
     maxBytes?: number,
   ) => Promise<{ raw: string; overflow: boolean }>;
 };
+
+function codexMainArgs(event: 'PreToolUse' | 'PermissionRequest'): string[] {
+  const hashed = launcher.launcherSha256();
+  if ('error' in hashed) throw new Error(hashed.error);
+  return [
+    'codex',
+    event,
+    '--launcher-contract',
+    launcher.CODEX_LAUNCHER_CONTRACT,
+    '--launcher-sha256',
+    hashed.digest,
+  ];
+}
 
 let root: string;
 let previous: Record<string, string | undefined>;
@@ -187,7 +205,7 @@ describe('dispatch-runtime launcher', () => {
       tool_name: 'Bash',
       tool_input: { command: 'echo hi', padding: 'x'.repeat(1024 * 1024) },
     });
-    const proc = Bun.spawn(['node', join(import.meta.dir, 'dispatch-runtime.cjs'), 'codex', 'PermissionRequest'], {
+    const proc = Bun.spawn(['node', LAUNCHER_PATH, ...codexMainArgs('PermissionRequest')], {
       stdin: Buffer.from(raw),
       stdout: 'pipe',
       stderr: 'pipe',
@@ -199,6 +217,36 @@ describe('dispatch-runtime launcher', () => {
       behavior: 'deny',
       message: 'genie hook launcher: input exceeded the safety limit',
     });
+  });
+
+  test('executable main denies before spawn when its bytes drift from the reviewed definition', async () => {
+    const mutated = join(root, 'dispatch-runtime-mutated.cjs');
+    writeFileSync(mutated, `${readFileSync(LAUNCHER_PATH, 'utf8')}\n// unreviewed mutation\n`);
+    const unexpected = join(root, 'unexpected-spawn');
+    process.env.FAKE_LOG = unexpected;
+    fakeGenie("fs.writeFileSync(process.env.FAKE_LOG, 'spawned');");
+
+    const proc = Bun.spawn(['node', mutated, ...codexMainArgs('PreToolUse')], {
+      stdin: Buffer.from(payload()),
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const stdout = await new Response(proc.stdout).text();
+    expect(await proc.exited).toBe(0);
+    expect(JSON.parse(stdout).hookSpecificOutput.permissionDecision).toBe('deny');
+    expect(JSON.parse(stdout).hookSpecificOutput.permissionDecisionReason).toContain(
+      'launcher bytes do not match the reviewed hook definition',
+    );
+    expect(existsSync(unexpected)).toBe(false);
+  });
+
+  test('launcher contract version is checked independently of the content digest', () => {
+    const hashed = launcher.launcherSha256();
+    if ('error' in hashed) throw new Error(hashed.error);
+    expect(launcher.launcherBindingError(hashed.digest, launcher.CODEX_LAUNCHER_CONTRACT)).toBeNull();
+    expect(launcher.launcherBindingError(hashed.digest, 'unreviewed-contract')).toContain(
+      'contract version is missing or does not match',
+    );
   });
 
   test('rejects malformed and structurally invalid Codex input before spawning', async () => {
@@ -277,9 +325,9 @@ describe('dispatch-runtime launcher', () => {
     expect(JSON.parse(timedOut.stdout).hookSpecificOutput.decision.message).toContain('timed out');
   });
 
-  test('Claude preserves the child exit status', async () => {
+  test('Claude normalizes a child failure to the host-blocking exit status', async () => {
     fakeGenie('process.exit(7);');
-    expect((await run('claude')).code).toBe(7);
+    expect((await run('claude')).code).toBe(2);
   });
 
   test('Claude fails closed when a timed-out fake child exits zero after termination', async () => {
@@ -289,7 +337,7 @@ describe('dispatch-runtime launcher', () => {
 
     const result = await run('claude');
 
-    expect(result.code).toBe(1);
+    expect(result.code).toBe(2);
     expect(result.stdout).toBe('');
     expect(result.stderr).toContain('Genie hook dispatcher timed out');
   });
@@ -297,13 +345,13 @@ describe('dispatch-runtime launcher', () => {
   test('Claude fails closed when a close-zero fake child exceeds stdout or stderr bounds', async () => {
     fakeGenie("process.stdout.write('x'.repeat(1024 * 1024));");
     const stdoutOverflow = await run('claude');
-    expect(stdoutOverflow.code).toBe(1);
+    expect(stdoutOverflow.code).toBe(2);
     expect(stdoutOverflow.stdout).toBe('');
     expect(stdoutOverflow.stderr).toContain('output exceeded the safety limit');
 
     fakeGenie("process.stderr.write('x'.repeat(1024 * 1024));");
     const stderrOverflow = await run('claude');
-    expect(stderrOverflow.code).toBe(1);
+    expect(stderrOverflow.code).toBe(2);
     expect(stderrOverflow.stdout).toBe('');
     expect(Buffer.byteLength(stderrOverflow.stderr)).toBeLessThan(70 * 1024);
     expect(stderrOverflow.stderr).toContain('[genie hook launcher: stderr truncated]');
@@ -314,7 +362,7 @@ describe('dispatch-runtime launcher', () => {
     const asyncFailure = await run('claude', payload(), {
       resolveCommand: () => ({ command: join(root, 'missing-genie'), shell: false }),
     });
-    expect(asyncFailure.code).toBe(1);
+    expect(asyncFailure.code).toBe(2);
     expect(asyncFailure.stdout).toBe('');
     expect(asyncFailure.stderr).toContain('could not start Genie hook dispatcher');
 
@@ -324,9 +372,22 @@ describe('dispatch-runtime launcher', () => {
         throw new Error('fixture spawn failed');
       },
     });
-    expect(synchronousFailure.code).toBe(1);
+    expect(synchronousFailure.code).toBe(2);
     expect(synchronousFailure.stdout).toBe('');
     expect(synchronousFailure.stderr).toContain('fixture spawn failed');
+  });
+
+  test('Claude input and resolver guardrails also use the host-blocking exit status', async () => {
+    const oversized = await run('claude', 'x'.repeat(1024 * 1024 + 1));
+    expect(oversized.code).toBe(2);
+    expect(oversized.stderr).toContain('input exceeded the safety limit');
+
+    const unresolved = await run('claude', payload(), {
+      resolveCommand: () => ({ error: 'canonical dispatcher absent' }),
+    });
+    expect(unresolved.code).toBe(2);
+    expect(unresolved.stdout).toBe('');
+    expect(unresolved.stderr).toContain('canonical dispatcher absent');
   });
 
   test('spawn failures fail closed without an unhandled stdin error', async () => {
@@ -353,7 +414,7 @@ describe('dispatch-runtime launcher', () => {
         'setInterval(() => {}, 10_000);',
       ].join('\n'),
     );
-    const proc = Bun.spawn(['node', join(import.meta.dir, 'dispatch-runtime.cjs'), 'codex'], {
+    const proc = Bun.spawn(['node', LAUNCHER_PATH, ...codexMainArgs('PreToolUse')], {
       env: { ...process.env, GENIE_HOME: realpathSync(join(root, 'genie-home')) },
       stdin: Buffer.from(payload()),
       stdout: 'pipe',
@@ -378,7 +439,7 @@ describe('dispatch-runtime launcher', () => {
         'setInterval(() => {}, 10_000);',
       ].join('\n'),
     );
-    const proc = Bun.spawn(['node', join(import.meta.dir, 'dispatch-runtime.cjs'), 'codex'], {
+    const proc = Bun.spawn(['node', LAUNCHER_PATH, ...codexMainArgs('PreToolUse')], {
       env: { ...process.env, GENIE_HOME: realpathSync(join(root, 'genie-home')) },
       stdin: Buffer.from(payload()),
       stdout: 'ignore',

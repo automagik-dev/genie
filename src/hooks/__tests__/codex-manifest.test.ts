@@ -55,9 +55,16 @@ function pluginScriptFromCommand(
   expectedEvent?: 'PreToolUse' | 'PermissionRequest',
 ): string {
   const suffix = runtime ? ` ${runtime}${expectedEvent ? ` ${expectedEvent}` : ''}` : '';
-  const match = command.match(new RegExp(`^node "\\$\\{PLUGIN_ROOT\\}/([^"]+)"${suffix}$`));
+  const binding = runtime ? '(?: --launcher-contract [^ ]+ --launcher-sha256 [a-f0-9]{64})?' : '';
+  const match = command.match(new RegExp(`^node "\\$\\{PLUGIN_ROOT\\}/([^"]+)"${suffix}${binding}$`));
   expect(match?.[1]).toBeDefined();
   return join(REPO_ROOT, 'plugins', 'genie', match?.[1] ?? 'missing');
+}
+
+function codexBindingArgs(command: string): string[] {
+  const match = command.match(/(--launcher-contract) ([^ ]+) (--launcher-sha256) ([a-f0-9]{64})$/);
+  expect(match).not.toBeNull();
+  return match ? match.slice(1) : [];
 }
 
 let root: string;
@@ -127,7 +134,7 @@ describe('Codex hook manifest', () => {
     for (const event of ['PreToolUse', 'PermissionRequest'] as const) {
       const hook = parsed.hooks[event][0].hooks[0];
       const launcher = pluginScriptFromCommand(hook.command, 'codex', event);
-      const proc = Bun.spawn(['node', launcher, 'codex', event], {
+      const proc = Bun.spawn(['node', launcher, 'codex', event, ...codexBindingArgs(hook.command)], {
         cwd: root,
         env: { ...process.env, GENIE_HOME: genieHome },
         stdin: Buffer.from(

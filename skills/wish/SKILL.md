@@ -18,17 +18,20 @@ Wish artifacts live in `.genie/wishes/` in the shared worktree. Execution-group 
 
 ## Design link pre-flight
 
-Before writing the wish, check the design exists:
+Before writing the wish, check the design exists and, when present, verify the
+review evidence with the helper shipped in this skill:
 
 ```bash
 test -f .genie/brainstorms/<slug>/DESIGN.md
+node "<wish-skill-dir>/references/design-review-evidence.mjs" verify ".genie/brainstorms/<slug>/DESIGN.md"
 ```
 
-- **Present:** emit `| **Design** | [DESIGN.md](../../brainstorms/<slug>/DESIGN.md) |`.
+- **Present and verification exits 0:** emit `| **Design** | [DESIGN.md](../../brainstorms/<slug>/DESIGN.md) |`.
+- **Present but verification fails:** stop and return to design review. Missing evidence, a non-SHIP verdict, or a content-digest mismatch cannot be waived; editing DESIGN.md invalidates its prior review.
 - **Absent:** emit `| **Design** | _No brainstorm — direct wish_ |` (no link) — valid for hotfixes, trivial changes, or plans obvious enough that a brainstorm adds no value. The linter (`scripts/wishes-lint.ts`) accepts the literal stub text; a bracket-link to a non-existent brainstorm file fails lint.
 
 ## Flow
-1. **Gate check:** if the request is fuzzy (no prior design, unclear scope, vague requirements), run `brainstorm` first and say so.
+1. **Gate check:** if the request is fuzzy (no prior design, unclear scope, vague requirements), run `brainstorm` first and say so. If a design exists, do not scaffold until its digest-bound design-review evidence verifies as SHIP.
 2. **Align intent:** clarify until success criteria are testable.
 3. **Define scope:** explicit IN and OUT lists. OUT cannot be empty.
 4. **Decompose:** small, loosely coupled execution groups.
@@ -87,6 +90,7 @@ test -f .genie/brainstorms/<slug>/DESIGN.md
 - Never write WISH.md from scratch — always copy the in-skill template, then edit.
 - Lint before handoff: the genie repo's wish linter must pass before `review` sees the wish.
 - Never emit a bracket-link to a non-existent brainstorm — use the `_No brainstorm — direct wish_` stub.
+- Never consume a linked design whose persisted review evidence is missing, non-SHIP, or stale; the wish linter independently enforces this for new wishes.
 - No implementation during `wish` — planning only.
 - Every group testable, bite-sized, and independently shippable; no vague tasks ("improve everything").
 - OUT scope must contain at least one concrete exclusion.

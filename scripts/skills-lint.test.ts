@@ -119,7 +119,7 @@ describe('end-to-end: skills-lint against fixture skills trees', () => {
         'interface:',
         `  display_name: "${name}"`,
         `  short_description: "Run the ${name} workflow safely"`,
-        `  default_prompt: "Use $${name} for this task."`,
+        `  default_prompt: "Run the ${name} workflow for this task."`,
         '',
       ].join('\n'),
     );
@@ -216,22 +216,22 @@ describe('validateSkillMetadata', () => {
     return skillDir;
   }
 
-  test('accepts name/description frontmatter and a matching $skill prompt', () => {
+  test('accepts name/description frontmatter and a selector-free prompt', () => {
     const skillDir = writeMetadataFixture(
       '---\nname: fixture\ndescription: "Fixture workflow for metadata validation."\n---\n\n# Fixture\n',
-      'interface:\n  display_name: "Fixture"\n  short_description: "Validate the fixture workflow"\n  default_prompt: "Use $fixture to validate this input."\n',
+      'interface:\n  display_name: "Fixture"\n  short_description: "Validate the fixture workflow"\n  default_prompt: "Validate this input with the fixture workflow."\n',
     );
     expect(validateSkillMetadata(skillDir).violations).toEqual([]);
   });
 
-  test('rejects unsupported frontmatter and a stale openai prompt', () => {
+  test('rejects unsupported frontmatter and any physical-tier selector', () => {
     const skillDir = writeMetadataFixture(
       '---\nname: fixture\ndescription: fixture\nmodel: opus\n---\n\n# Fixture\n',
-      'interface:\n  display_name: "Fixture"\n  short_description: "Validate the fixture workflow"\n  default_prompt: "Use $other to validate this input."\n',
+      'interface:\n  display_name: "Fixture"\n  short_description: "Validate the fixture workflow"\n  default_prompt: "Use $genie:fixture or $fixture to validate this input."\n',
     );
     const violations = validateSkillMetadata(skillDir).violations.join('\n');
     expect(violations).toContain('unsupported frontmatter field: model');
-    expect(violations).toContain('must name $fixture');
+    expect(violations).toContain('must be selector-free because metadata ships in multiple physical tiers');
   });
 
   test('rejects host-specific skill variables and a missing openai manifest', () => {

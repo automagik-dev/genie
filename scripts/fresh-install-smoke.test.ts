@@ -13,7 +13,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { repositoryRootFromModuleUrl } from './fresh-install-smoke.ts';
+import { checkSkillStarterPrompts, repositoryRootFromModuleUrl } from './fresh-install-smoke.ts';
 
 const SMOKE_SCRIPT = join(import.meta.dir, 'fresh-install-smoke.ts');
 const REPO_ROOT = join(import.meta.dir, '..');
@@ -79,7 +79,7 @@ function writeOpenAiMetadata(skillDir: string, name: string): void {
       'interface:',
       `  display_name: "${name}"`,
       `  short_description: "Run the ${name} workflow safely"`,
-      `  default_prompt: "Use $genie:${name} (or $${name} only for a separately installed personal copy) for this task."`,
+      `  default_prompt: "Run the ${name} workflow for this task."`,
       '',
     ].join('\n'),
   );
@@ -98,6 +98,30 @@ describe('fresh-install-smoke', () => {
     // Surface the failure reason if this ever regresses.
     expect(result.stdout + result.stderr).toContain('fresh-install-smoke: OK');
     expect(result.code).toBe(0);
+  });
+
+  test('the same metadata is safe in plugin and user tiers because prompts contain no selector', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-selector-free-fixture-'));
+    try {
+      for (const tier of ['plugin', 'user']) {
+        const skill = join(root, tier, 'fixture');
+        writeOpenAiMetadata(skill, 'fixture');
+        expect(() => checkSkillStarterPrompts(join(root, tier), ['fixture'])).not.toThrow();
+      }
+      const metadata = join(root, 'user', 'fixture', 'agents', 'openai.yaml');
+      writeFileSync(
+        metadata,
+        readFileSync(metadata, 'utf8').replace(
+          'default_prompt: "Run the fixture workflow',
+          'default_prompt: "Use $genie:fixture or $fixture to run',
+        ),
+      );
+      expect(() => checkSkillStarterPrompts(join(root, 'user'), ['fixture'])).toThrow(
+        'starter prompt must be selector-free across physical tiers',
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   describe('broken fixture', () => {
@@ -325,6 +349,32 @@ describe('fresh-install-smoke', () => {
         writeFileSync(reviewer, readFileSync(fixer, 'utf8').replace('name: fixer', 'name: reviewer'));
       },
       expected: 'must match the canonical reviewer role contract',
+    },
+    {
+      label: 'execution-only Codex reviewer profile',
+      mutate: (pluginRoot: string) => {
+        const reviewer = join(pluginRoot, 'codex-agents', 'genie-reviewer.toml');
+        const raw = readFileSync(reviewer, 'utf8');
+        writeFileSync(
+          reviewer,
+          raw.replace(
+            /developer_instructions = """[\s\S]*?"""/,
+            'developer_instructions = """Review completed execution and return evidence. Remain read-only."""',
+          ),
+        );
+      },
+      expected: 'must cover design, plan, execution, and PR contexts',
+    },
+    {
+      label: 'execution-only Claude reviewer profile',
+      mutate: (pluginRoot: string) => {
+        const reviewer = join(pluginRoot, 'agents', 'reviewer.md');
+        const raw = readFileSync(reviewer, 'utf8');
+        const frontmatter = /^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/.exec(raw);
+        if (!frontmatter) throw new Error('fixture reviewer frontmatter missing');
+        writeFileSync(reviewer, `${frontmatter[0]}\n# Reviewer\n\nReview completed execution and return evidence.\n`);
+      },
+      expected: 'must cover design, plan, execution, and PR contexts',
     },
   ]) {
     test(`rejects a ${fixture.label}`, () => {

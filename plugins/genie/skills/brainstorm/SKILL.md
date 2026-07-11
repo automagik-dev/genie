@@ -101,6 +101,13 @@ At WRS = 100:
    genie task create --title "<brainstorm title>"
    ```
 6. Auto-invoke `review` (design review) on the DESIGN.md. The invoking orchestrator receives the verdict; the reviewer remains read-only.
+7. **Persist the evidence before handoff.** Resolve `references/design-review-evidence.mjs` from this loaded skill directory. The invoking orchestrator runs its `stamp` command with the returned verdict, the reviewer agent/thread identifier, and the review timestamp, then runs `verify` and stages DESIGN.md again. The SHA-256 subject is the exact UTF-8 DESIGN.md with the bounded evidence block removed, so changing any reviewed design content invalidates the evidence and requires a fresh review. Only a verified `SHIP` block permits `wish`; FIX-FIRST/BLOCKED evidence remains auditable but does not advance.
+
+   ```bash
+   node "<brainstorm-skill-dir>/references/design-review-evidence.mjs" stamp ".genie/brainstorms/<slug>/DESIGN.md" --verdict SHIP --reviewer "<agent-or-thread-id>" --reviewed-at "<ISO-8601-UTC>"
+   node "<brainstorm-skill-dir>/references/design-review-evidence.mjs" verify ".genie/brainstorms/<slug>/DESIGN.md"
+   git add ".genie/brainstorms/<slug>/DESIGN.md"
+   ```
 
 ## Output Options
 
@@ -112,7 +119,7 @@ At WRS = 100:
 
 ## Handoff
 
-After `review` returns SHIP on the design:
+After `review` returns SHIP and the digest-bound evidence verifies on the design:
 
 ```
 Design reviewed and validated (WRS {score}/100). Proceeding to wish.
@@ -122,6 +129,8 @@ Invoke `wish` to create and review `.genie/wishes/<slug>/WISH.md`. Only after
 the invoking orchestrator has persisted plan SHIP as WISH status `APPROVED`
 may it move the `.genie/INDEX.md` entry to Poured and link that existing wish. FIX-FIRST or
 BLOCKED leaves the brainstorm in Ready with the current design/wish link.
+
+Never reuse design-review evidence after editing DESIGN.md. `verify` must pass immediately before `wish` consumes the design.
 
 Note cross-repo or cross-agent dependencies — they become `depends-on`/`blocks` fields in the wish.
 
@@ -135,7 +144,7 @@ Note cross-repo or cross-agent dependencies — they become `depends-on`/`blocks
 
 When spawned as a native subagent, your final message IS the completion signal — the dispatcher is notified when you finish; do not poll or emit a separate contract call. End with exactly one terminal outcome as the last word:
 
-- **done** — WRS hit 100, DESIGN.md written and staged, `review` handed off. Report the DESIGN.md path.
+- **done** — WRS hit 100, DESIGN.md written and staged, design review SHIP evidence persisted and verified, then `wish` handed off. Report the DESIGN.md path.
 - **blocked** — needs human input or an unblocking signal. State exactly what.
 - **failed** — aborted or irrecoverable. State why.
 

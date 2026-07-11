@@ -3,15 +3,20 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { MIGRATED_STATUS_SENTINEL, openGlobalDb } from './global-db.js';
+import {
+  MIGRATED_STATUS_SENTINEL,
+  OMNI_SERVICE_LEASE_NAME,
+  acquireServiceLeaseEpoch,
+  openGlobalDb,
+  releaseServiceLease,
+} from './global-db.js';
 import {
   ApprovalConflictError,
   UnknownApprovalError,
   UnknownInboundError,
   attachOmniMessageId,
-  claimApprovalAnnouncement,
   claimApprovalAnnouncementWithLease,
-  completeApprovalAnnouncement,
+  consumeClaimedApprovalInbound,
   enqueueApproval,
   expireApprovalIfPending,
   expireStale,
@@ -23,15 +28,18 @@ import {
   markApprovalAnnouncementSending,
   markHandled,
   markInboundDeliveryFlushed,
+  markInboundExecuted,
+  markInboundExecuting,
   markInboundHandledIfClaimed,
   prepareInboundDelivery,
   recordAndClaimInbound,
   recordAndClaimInboundDelivery,
   recordInbound,
   recordStatusGlyph,
-  releaseApprovalAnnouncement,
+  releaseApprovalAnnouncementWithLease,
   releaseInboundClaim,
   resolveApproval,
+  validatePreparedInboundLease,
 } from './omni-queue.js';
 
 const HOURGLASS = '\u{23F3}'; // ⏳
@@ -41,6 +49,8 @@ const TERMINAL = [CHECK, CROSS];
 // Deterministic clock + recency window for the reconciliation-query tests.
 const NOW_Q = 5_000_000;
 const WINDOW = 1_000_000;
+const TEST_OWNER = 'queue-test-resident';
+const testIdentity = (now = 1) => ({ ownerId: TEST_OWNER, epoch: 1, now });
 
 let dir: string;
 let db: Database;
@@ -50,6 +60,7 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'genie-omniq-'));
   process.env.GENIE_HOME = dir;
   db = openGlobalDb({ path: join(dir, 'genie.db') });
+  expect(acquireServiceLeaseEpoch(db, OMNI_SERVICE_LEASE_NAME, TEST_OWNER, 0, 1_000_000_000)).toBe(1);
 });
 
 afterEach(() => {
@@ -118,27 +129,33 @@ describe('approvals', () => {
 
   test('announcement claim has one winner and cannot overwrite another runner correlation id', () => {
     const id = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: '{}', now: 1 });
-    expect(claimApprovalAnnouncement(db, id, 'runner-a')).toBe(true);
-    expect(claimApprovalAnnouncement(db, id, 'runner-b')).toBe(false);
-    expect(completeApprovalAnnouncement(db, id, 'runner-b', 'stanza-b')).toBe(false);
-    expect(completeApprovalAnnouncement(db, id, 'runner-a', 'stanza-a')).toBe(true);
+    expect(claimApprovalAnnouncementWithLease(db, id, 'runner-a', testIdentity())).toBe('claimed');
+    expect(claimApprovalAnnouncementWithLease(db, id, 'runner-b', testIdentity())).toBe('unavailable');
+    expect(finalizeApprovalAnnouncement(db, id, 'runner-b', 'stanza-b', testIdentity())).toEqual({ attached: false });
+    expect(finalizeApprovalAnnouncement(db, id, 'runner-a', 'stanza-a', testIdentity())).toEqual({
+      attached: true,
+      status: 'pending',
+    });
     expect(getApproval(db, id)?.omniMessageId).toBe('stanza-a');
-    expect(claimApprovalAnnouncement(db, id, 'runner-b')).toBe(false);
+    expect(claimApprovalAnnouncementWithLease(db, id, 'runner-b', testIdentity())).toBe('unavailable');
   });
 
   test('failed announcement releases only its own claim for retry', () => {
     const id = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: '{}', now: 1 });
-    expect(claimApprovalAnnouncement(db, id, 'runner-a')).toBe(true);
-    expect(releaseApprovalAnnouncement(db, id, 'runner-b')).toBe(false);
-    expect(releaseApprovalAnnouncement(db, id, 'runner-a')).toBe(true);
-    expect(claimApprovalAnnouncement(db, id, 'runner-b')).toBe(true);
+    expect(claimApprovalAnnouncementWithLease(db, id, 'runner-a', testIdentity())).toBe('claimed');
+    expect(releaseApprovalAnnouncementWithLease(db, id, 'runner-b', testIdentity())).toBe(false);
+    expect(releaseApprovalAnnouncementWithLease(db, id, 'runner-a', testIdentity())).toBe(true);
+    expect(claimApprovalAnnouncementWithLease(db, id, 'runner-b', testIdentity())).toBe('claimed');
   });
 
   test('a higher lease epoch reclaims a pre-send announcement and fences the abandoned owner', () => {
     const id = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: '{}', now: 1 });
-    const ownerA = { ownerId: 'resident-a', epoch: 1, now: 10 };
-    const ownerB = { ownerId: 'resident-b', epoch: 2, now: 20 };
+    expect(releaseServiceLease(db, OMNI_SERVICE_LEASE_NAME, TEST_OWNER, 1)).toBe(true);
+    const epochA = acquireServiceLeaseEpoch(db, OMNI_SERVICE_LEASE_NAME, 'resident-a', 10, 5) as number;
+    const ownerA = { ownerId: 'resident-a', epoch: epochA, now: 10 };
     expect(claimApprovalAnnouncementWithLease(db, id, 'claim-a', ownerA)).toBe('claimed');
+    const epochB = acquireServiceLeaseEpoch(db, OMNI_SERVICE_LEASE_NAME, 'resident-b', 20, 100) as number;
+    const ownerB = { ownerId: 'resident-b', epoch: epochB, now: 20 };
     expect(claimApprovalAnnouncementWithLease(db, id, 'claim-b', ownerB)).toBe('claimed');
     expect(finalizeApprovalAnnouncement(db, id, 'claim-a', 'stale-stanza', ownerA)).toEqual({ attached: false });
     expect(markApprovalAnnouncementSending(db, id, 'claim-b', ownerB)).toBe(true);
@@ -151,10 +168,13 @@ describe('approvals', () => {
 
   test('takeover after the external-send boundary is explicit ambiguous state', () => {
     const id = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: '{}', now: 1 });
-    const ownerA = { ownerId: 'resident-a', epoch: 1, now: 10 };
-    const ownerB = { ownerId: 'resident-b', epoch: 2, now: 20 };
+    expect(releaseServiceLease(db, OMNI_SERVICE_LEASE_NAME, TEST_OWNER, 1)).toBe(true);
+    const epochA = acquireServiceLeaseEpoch(db, OMNI_SERVICE_LEASE_NAME, 'resident-a', 10, 5) as number;
+    const ownerA = { ownerId: 'resident-a', epoch: epochA, now: 10 };
     expect(claimApprovalAnnouncementWithLease(db, id, 'claim-a', ownerA)).toBe('claimed');
     expect(markApprovalAnnouncementSending(db, id, 'claim-a', ownerA)).toBe(true);
+    const epochB = acquireServiceLeaseEpoch(db, OMNI_SERVICE_LEASE_NAME, 'resident-b', 20, 100) as number;
+    const ownerB = { ownerId: 'resident-b', epoch: epochB, now: 20 };
     expect(claimApprovalAnnouncementWithLease(db, id, 'claim-b', ownerB)).toBe('ambiguous');
     expect(
       finalizeApprovalAnnouncement(db, id, 'attacker', 'wrong-stanza', { ownerId: 'not-prior', epoch: 0 }),
@@ -164,6 +184,57 @@ describe('approvals', () => {
       status: 'pending',
     });
     expect(getApproval(db, id)?.omniMessageId).toBe('late-stanza');
+  });
+
+  test('a stale resident cannot claim fresh approval/inbound work or cross the send boundary', () => {
+    expect(releaseServiceLease(db, OMNI_SERVICE_LEASE_NAME, TEST_OWNER, 1)).toBe(true);
+    const epochA = acquireServiceLeaseEpoch(db, OMNI_SERVICE_LEASE_NAME, 'resident-a', 10, 5) as number;
+    const ownerA = { ownerId: 'resident-a', epoch: epochA, now: 10 };
+    const claimed = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: '{}', now: 1 });
+    expect(claimApprovalAnnouncementWithLease(db, claimed, 'claim-a', ownerA)).toBe('claimed');
+    const inboundA = recordAndClaimInboundDelivery(db, {
+      instance: 'i',
+      chat: 'c',
+      sender: 's',
+      body: 'claimed before takeover',
+      eventKey: 'claimed-before-takeover',
+      claimToken: 'inbound-a',
+      claimOwnerId: ownerA.ownerId,
+      claimEpoch: ownerA.epoch,
+      now: 10,
+    });
+    expect(inboundA?.mode).toBe('fresh');
+    const expiredFresh = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: '{}', now: 2 });
+    expect(claimApprovalAnnouncementWithLease(db, expiredFresh, 'expired-owner', { ...ownerA, now: 16 })).toBe(
+      'unavailable',
+    );
+
+    const epochB = acquireServiceLeaseEpoch(db, OMNI_SERVICE_LEASE_NAME, 'resident-b', 20, 100) as number;
+    const fresh = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: '{}', now: 2 });
+    expect(claimApprovalAnnouncementWithLease(db, fresh, 'stale-fresh', { ...ownerA, now: 20 })).toBe('unavailable');
+    expect(markApprovalAnnouncementSending(db, claimed, 'claim-a', { ...ownerA, now: 20 })).toBe(false);
+    expect(markInboundExecuting(db, inboundA?.id as string, 'inbound-a', { ...ownerA, now: 20 })).toBe(false);
+    expect(
+      recordAndClaimInboundDelivery(db, {
+        instance: 'i',
+        chat: 'c',
+        sender: 's',
+        body: 'stale',
+        eventKey: 'stale-fresh-inbound',
+        claimToken: 'stale-claim',
+        claimOwnerId: ownerA.ownerId,
+        claimEpoch: ownerA.epoch,
+        now: 20,
+      }),
+    ).toBeUndefined();
+    expect(listInbox(db).map((row) => row.body)).toEqual(['claimed before takeover']);
+    expect(
+      claimApprovalAnnouncementWithLease(db, fresh, 'live-fresh', {
+        ownerId: 'resident-b',
+        epoch: epochB,
+        now: 20,
+      }),
+    ).toBe('claimed');
   });
 
   test('resolveApproval transitions pending -> approved and records resolver/time', () => {
@@ -371,54 +442,80 @@ describe('inbox', () => {
   });
 
   test('record-and-claim gives one duplicate-delivery winner until handled', () => {
-    const fields = { instance: 'i', chat: 'c', sender: 's', body: 'hello', eventKey: 'event-1', now: 1 };
+    const fields = {
+      instance: 'i',
+      chat: 'c',
+      sender: 's',
+      body: 'hello',
+      eventKey: 'event-1',
+      now: 1,
+      claimOwnerId: TEST_OWNER,
+      claimEpoch: 1,
+    };
     const id = recordAndClaimInbound(db, { ...fields, claimToken: 'runner-a' });
     expect(id).toBeString();
     expect(recordAndClaimInbound(db, { ...fields, claimToken: 'runner-b' })).toBeUndefined();
-    expect(markInboundHandledIfClaimed(db, id as string, 'runner-b', 2)).toBe(false);
-    expect(markInboundHandledIfClaimed(db, id as string, 'runner-a', 2)).toBe(true);
+    expect(markInboundHandledIfClaimed(db, id as string, 'runner-b', 2, testIdentity(2))).toBe(false);
+    expect(markInboundHandledIfClaimed(db, id as string, 'runner-a', 2, testIdentity(2))).toBe(true);
     expect(recordAndClaimInbound(db, { ...fields, claimToken: 'runner-b' })).toBeUndefined();
     expect(listInbox(db)).toHaveLength(1);
   });
 
   test('failed processor releases only its own inbound claim for retry', () => {
-    const fields = { instance: 'i', chat: 'c', sender: 's', body: 'hello', eventKey: 'event-2', now: 1 };
+    const fields = {
+      instance: 'i',
+      chat: 'c',
+      sender: 's',
+      body: 'hello',
+      eventKey: 'event-2',
+      now: 1,
+      claimOwnerId: TEST_OWNER,
+      claimEpoch: 1,
+    };
     const id = recordAndClaimInbound(db, { ...fields, claimToken: 'runner-a' }) as string;
-    expect(releaseInboundClaim(db, id, 'runner-b')).toBe(false);
-    expect(releaseInboundClaim(db, id, 'runner-a')).toBe(true);
+    expect(releaseInboundClaim(db, id, 'runner-b', testIdentity())).toBe(false);
+    expect(releaseInboundClaim(db, id, 'runner-a', testIdentity())).toBe(true);
     expect(recordAndClaimInbound(db, { ...fields, claimToken: 'runner-b' })).toBe(id);
     expect(listInbox(db)).toHaveLength(1);
   });
 
   test('lease takeover marks abandoned execution ambiguous and fences stale completion', () => {
     const fields = { instance: 'i', chat: 'c', sender: 's', body: 'hello', eventKey: 'event-3', now: 1 };
+    expect(releaseServiceLease(db, OMNI_SERVICE_LEASE_NAME, TEST_OWNER, 1)).toBe(true);
+    const epochA = acquireServiceLeaseEpoch(db, OMNI_SERVICE_LEASE_NAME, 'resident-a', 1, 1) as number;
+    const ownerA = { ownerId: 'resident-a', epoch: epochA, now: 1 };
     const first = recordAndClaimInboundDelivery(db, {
       ...fields,
       claimToken: 'shared-token',
-      claimOwnerId: 'resident-a',
-      claimEpoch: 1,
+      claimOwnerId: ownerA.ownerId,
+      claimEpoch: ownerA.epoch,
     });
     expect(first?.mode).toBe('fresh');
+    expect(markInboundExecuting(db, first?.id as string, 'shared-token', ownerA)).toBe(true);
+    const epochB = acquireServiceLeaseEpoch(db, OMNI_SERVICE_LEASE_NAME, 'resident-b', 2, 100) as number;
+    const ownerB = { ownerId: 'resident-b', epoch: epochB, now: 2 };
     const takeover = recordAndClaimInboundDelivery(db, {
       ...fields,
       now: 2,
       claimToken: 'shared-token',
-      claimOwnerId: 'resident-b',
-      claimEpoch: 2,
+      claimOwnerId: ownerB.ownerId,
+      claimEpoch: ownerB.epoch,
     });
     expect(takeover).toMatchObject({ id: first?.id, mode: 'ambiguous' });
     expect(
       markInboundHandledIfClaimed(db, first?.id as string, 'shared-token', 3, {
         ownerId: 'resident-a',
-        epoch: 1,
+        epoch: epochA,
+        now: 3,
       }),
     ).toBe(false);
   });
 
   test('prepared delivery survives a kill-point takeover with the same stable event id', () => {
     const fields = { instance: 'i', chat: 'c', sender: 's', body: 'hello', eventKey: 'event-4', now: 1 };
-    const ownerA = { ownerId: 'resident-a', epoch: 1, now: 1 };
-    const ownerB = { ownerId: 'resident-b', epoch: 2, now: 2 };
+    expect(releaseServiceLease(db, OMNI_SERVICE_LEASE_NAME, TEST_OWNER, 1)).toBe(true);
+    const epochA = acquireServiceLeaseEpoch(db, OMNI_SERVICE_LEASE_NAME, 'resident-a', 1, 1) as number;
+    const ownerA = { ownerId: 'resident-a', epoch: epochA, now: 1 };
     const first = recordAndClaimInboundDelivery(db, {
       ...fields,
       claimToken: 'claim-a',
@@ -433,6 +530,8 @@ describe('inbox', () => {
         meta: '{"version":1,"ok":true}',
       }),
     ).toBe(true);
+    const epochB = acquireServiceLeaseEpoch(db, OMNI_SERVICE_LEASE_NAME, 'resident-b', 2, 100) as number;
+    const ownerB = { ownerId: 'resident-b', epoch: epochB, now: 2 };
     const takeover = recordAndClaimInboundDelivery(db, {
       ...fields,
       now: 2,
@@ -445,10 +544,83 @@ describe('inbox', () => {
       mode: 'resume-delivery',
       delivery: { phase: 'prepared', eventId: 'reply-stable-1' },
     });
+    expect(validatePreparedInboundLease(db, first?.id as string, 'claim-a', ownerA)).toBe(false);
     expect(markInboundDeliveryFlushed(db, first?.id as string, 'claim-a', ownerA)).toBe(false);
     expect(markInboundHandledIfClaimed(db, first?.id as string, 'claim-b', 3, ownerB, 'flushed')).toBe(false);
     expect(markInboundDeliveryFlushed(db, first?.id as string, 'claim-b', ownerB)).toBe(true);
     expect(markInboundHandledIfClaimed(db, first?.id as string, 'claim-b', 3, ownerB, 'flushed')).toBe(true);
+  });
+
+  test('atomically consumes a bare approval inbound so replay cannot resolve the next request', () => {
+    const firstApproval = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'first', now: 1 });
+    const secondApproval = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'second', now: 2 });
+    const fields = {
+      instance: 'i',
+      chat: 'approval',
+      sender: 'human',
+      body: 'y',
+      eventKey: 'bare-y-once',
+      claimToken: 'approval-inbound-claim',
+      claimOwnerId: TEST_OWNER,
+      claimEpoch: 1,
+      now: 3,
+    };
+    const claim = recordAndClaimInboundDelivery(db, fields);
+    expect(claim?.mode).toBe('fresh');
+    const consumed = consumeClaimedApprovalInbound(
+      db,
+      claim?.id as string,
+      fields.claimToken,
+      testIdentity(3),
+      'approved',
+      'human',
+      undefined,
+      3,
+    );
+    expect(consumed).toMatchObject({ consumed: true, resolved: { id: firstApproval, status: 'approved' } });
+    expect(recordAndClaimInboundDelivery(db, { ...fields, claimToken: 'replay', now: 4 })).toBeUndefined();
+    expect(getApproval(db, firstApproval)?.status).toBe('approved');
+    expect(getApproval(db, secondApproval)?.status).toBe('pending');
+    expect(listInbox(db)[0].handledAt).toBe(3);
+  });
+
+  test('post-execution preparation failure becomes ambiguity and is never fresh on takeover', () => {
+    expect(releaseServiceLease(db, OMNI_SERVICE_LEASE_NAME, TEST_OWNER, 1)).toBe(true);
+    const epochA = acquireServiceLeaseEpoch(db, OMNI_SERVICE_LEASE_NAME, 'resident-a', 10, 5) as number;
+    const ownerA = { ownerId: 'resident-a', epoch: epochA, now: 10 };
+    const fields = {
+      instance: 'i',
+      chat: 'c',
+      sender: 's',
+      body: 'write',
+      eventKey: 'post-exec-failure',
+      claimToken: 'claim-a',
+      claimOwnerId: ownerA.ownerId,
+      claimEpoch: ownerA.epoch,
+      now: 10,
+    };
+    const first = recordAndClaimInboundDelivery(db, fields);
+    expect(markInboundExecuting(db, first?.id as string, fields.claimToken, ownerA)).toBe(true);
+    expect(markInboundExecuted(db, first?.id as string, fields.claimToken, ownerA)).toBe(true);
+    expect(() =>
+      prepareInboundDelivery(db, first?.id as string, fields.claimToken, ownerA, {
+        eventId: 'too-large',
+        subject: 'omni.reply.i.c',
+        payload: 'x'.repeat(32 * 1024 + 1),
+        meta: '{}',
+      }),
+    ).toThrow('durable limit');
+    expect(releaseInboundClaim(db, first?.id as string, fields.claimToken, ownerA)).toBe(true);
+
+    const epochB = acquireServiceLeaseEpoch(db, OMNI_SERVICE_LEASE_NAME, 'resident-b', 20, 100) as number;
+    const takeover = recordAndClaimInboundDelivery(db, {
+      ...fields,
+      claimToken: 'claim-b',
+      claimOwnerId: 'resident-b',
+      claimEpoch: epochB,
+      now: 20,
+    });
+    expect(takeover).toMatchObject({ id: first?.id, mode: 'ambiguous' });
   });
 });
 

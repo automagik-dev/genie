@@ -83,6 +83,9 @@ jobs:
       - name: Generated hook bundle parity
         run: bun run lint:hook-bundles
 
+      - name: Codex hook launcher content binding
+        run: bun run lint:hook-content
+
       - name: Shipped plugin executable static checks
         run: bun run lint:plugin-executables
 

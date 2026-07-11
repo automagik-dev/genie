@@ -25,11 +25,13 @@ Codex runs trusted commands on the host, outside the model sandbox. Plugin insta
 
 Until that review, the hooks remain untrusted and do not run. Never use a trust-bypass flag.
 
+H4 and H6 definitions carry the literal SHA-256 of `scripts/dispatch-runtime.cjs` plus a launcher-contract version. The launcher hashes its own physical (non-symlink) file before spawning Genie and returns an event-valid denial on any mismatch. Release checks regenerate/compare those literals, so changing launcher bytes necessarily changes the definitions presented by `/hooks`. This binds the reviewed definition to the plugin launcher, but not to the later mutable, platform-specific `$GENIE_HOME/bin/genie` binary: Codex's current hook schema hashes the normalized definition, not every transitive executable byte, and a single cross-platform plugin manifest cannot name all release-binary digests. Canonical-path/non-symlink checks remain defense in depth; this residual is why Genie does not auto-trust these hooks and still requires operator review after every update.
+
 | ID | Event | Exact behavior | Allowed side effect |
 |----|-------|----------------|---------------------|
 | H3 | `SessionStart` | Inspects at most 64 candidate directories/256 KiB, then emits at most eight validated wish records and 2 KiB | Read-only filesystem access |
-| H4 | `PreToolUse` | Runs branch/orchestration checks for Bash and audit-context for Write/Edit/apply_patch through the plugin-local launcher | Deterministic local repository/Git reads only; no Codex network lookup, freshness/identity handler, Omni, install, update, global sync, or scaffolding |
-| H6 | `PermissionRequest` | Applies the configured tool matcher and invokes Omni once only when approvals are explicitly enabled | Bounded/redacted approval-queue state; timeout, interruption, malformed output, and transport failure deny |
+| H4 | `PreToolUse` | Verifies the definition-bound launcher, then runs branch/orchestration checks for Bash and audit-context for Write/Edit/apply_patch | Deterministic local repository/Git reads only; no Codex network lookup, freshness/identity handler, Omni, install, update, global sync, or scaffolding |
+| H6 | `PermissionRequest` | Verifies the definition-bound launcher, applies the configured tool matcher, and invokes Omni once only when approvals are explicitly enabled | Bounded/redacted approval-queue state; timeout, interruption, malformed output, binding drift, and transport failure deny |
 
 PreToolUse is a guardrail, not complete interception. Sandbox policy and server-side branch protection remain the hard controls. The six removed Codex commands performed startup install/sync, wrote `AGENTS.md`, validated wishes before/after writes, reinjected context on every prompt, or emitted an inert completion response; none belongs in the retained lifecycle.
 
@@ -65,13 +67,15 @@ brainstorm -> design review -> wish -> plan review -> work -> implementation rev
 ```
 
 For non-trivial work, brainstorm automatically invokes read-only design review before wish. The WISH then requires a
-separate plan review and persisted `APPROVED` status before work, followed by an independent implementation review. Codex
+separate plan review and persisted `APPROVED` status before work, followed by an independent implementation review. Design SHIP is persisted in DESIGN.md with reviewer identity, UTC timestamp, and a SHA-256 of the exact reviewed content; wish creation and lint reject missing, non-SHIP, or stale evidence. Codex
 invokes the plugin copies as `$genie:brainstorm`, `$genie:wish`, `$genie:review`, and `$genie:work`; bare selectors
 intentionally select the user tier (a CLI-managed fallback or separately installed personal copy). Claude Code uses the
 equivalent slash skills. Native subagents do not imply separate worktrees. Every engineer first claims its assigned task
 with `genie task checkout <id> --worker <name>`, reports completion without mutating task state, and is reviewed by a
 different agent. Only the orchestrator calls `genie task done <id>` after a SHIP verdict and passing validation. Use
 `genie launch` when separate worktrees or a human-supervised Warp cockpit are required.
+
+Those selectors are for manual invocation. Each physical skill's `agents/openai.yaml` starter card is selector-free, so selecting a plugin-tier or user-tier card executes that already-selected physical skill instead of naming and potentially redirecting to the other tier.
 
 The seven optional Codex profiles are `genie_engineer_trivial`, `genie_engineer_standard`, `genie_engineer_complex`, `genie_scout`, `genie_fixer`, `genie_reviewer`, and `genie_final_gate`. The matching Claude inventory is `engineer-trivial`, `engineer-standard`, `engineer-complex`, `scout`, `fixer`, `reviewer`, and `final-gate`. Release checks pin both exact seven-file inventories and their declared names in source, staged payload, extracted archive, and fresh-install copies. A plugin-only install falls back to the client's available generic roles.
 
@@ -89,4 +93,4 @@ Release tarballs contain the compiled `genie` executable, the complete `plugins/
 
 ## Claude Code and Hermes
 
-Claude Code consumes `.claude-plugin/plugin.json`, its conventional `hooks/hooks.json`, native agents, and the stamped council workflow. Hermes uses the sibling [`plugins/hermes-genie/`](../hermes-genie/README.md) read-only plugin. Both share Genie's documents and task database, but their native runtime surfaces remain client-specific.
+Claude Code consumes `.claude-plugin/plugin.json`, its conventional `hooks/hooks.json`, native agents, and the stamped council workflow. Its SessionStart surface is one bounded, read-only `session-context.cjs` diagnostic: it does not run first-use setup, update, skill synchronization, council stamping, or project scaffolding. The retained `smart-install.js` and `first-run-check.cjs` filenames are inert compatibility diagnostics for stale cached manifests, not mutators. Operators must invoke `genie init`, `genie install`, `genie setup`, or `genie update` explicitly. Hermes uses the sibling [`plugins/hermes-genie/`](../hermes-genie/README.md) read-only plugin. Both share Genie's documents and task database, but their native runtime surfaces remain client-specific.

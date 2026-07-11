@@ -28,6 +28,9 @@ export { BusyDbError, ForeignDbError, GenieDbError, isBusyError, MalformedDbErro
 /** Schema revision for the GLOBAL database. Independent of the per-repo version. */
 export const GLOBAL_SCHEMA_VERSION = 1;
 
+/** Machine-wide lease that authorizes Omni queue claims and external effects. */
+export const OMNI_SERVICE_LEASE_NAME = 'omni-serve';
+
 /**
  * Sentinel written into `last_status_glyph` for pre-existing closed approvals at
  * the moment the column is first added (the one-time upgrade backfill). It is
@@ -99,10 +102,13 @@ function schemaIsCurrent(db: Database): boolean {
     unique: number;
     partial: number;
   }>;
+  const approvalIndexes = db.query('PRAGMA index_list(approvals)').all() as Array<{ name: string }>;
   const serviceCols = new Set(
     (db.query('PRAGMA table_info(service_leases)').all() as Array<{ name: string }>).map((c) => c.name),
   );
   const eventKeyIndex = inboundIndexes.find((index) => index.name === 'idx_inbound_event_key');
+  const approvalClaimBackfilled = approvalIndexes.some((index) => index.name === 'idx_approval_claim_phase_backfill');
+  const inboundClaimBackfilled = inboundIndexes.some((index) => index.name === 'idx_inbound_claim_phase_backfill');
   return (
     approvalCols.has('last_status_glyph') &&
     approvalCols.has('announce_claim') &&
@@ -125,7 +131,9 @@ function schemaIsCurrent(db: Database): boolean {
     approvalCols.has('announce_prior_epoch') &&
     serviceCols.has('epoch') &&
     eventKeyIndex?.unique === 1 &&
-    eventKeyIndex.partial === 1
+    eventKeyIndex.partial === 1 &&
+    approvalClaimBackfilled &&
+    inboundClaimBackfilled
   );
 }
 
@@ -278,10 +286,13 @@ export function clearAgentSessionIfCurrent(
 
 /** Create every table/index if absent. Idempotent — pure `IF NOT EXISTS`. */
 export function ensureSchema(db: Database): void {
-  db.exec(SCHEMA_SQL);
-  ensureApprovalColumns(db);
-  ensureInboundColumns(db);
-  ensureServiceLeaseColumns(db);
+  const ensure = db.transaction(() => {
+    db.exec(SCHEMA_SQL);
+    ensureApprovalColumns(db);
+    ensureInboundColumns(db);
+    ensureServiceLeaseColumns(db);
+  });
+  ensure.immediate();
 }
 
 /**
@@ -310,6 +321,15 @@ function ensureApprovalColumns(db: Database): void {
   if (!cols.has('announce_prior_claim')) db.exec('ALTER TABLE approvals ADD COLUMN announce_prior_claim TEXT');
   if (!cols.has('announce_prior_owner')) db.exec('ALTER TABLE approvals ADD COLUMN announce_prior_owner TEXT');
   if (!cols.has('announce_prior_epoch')) db.exec('ALTER TABLE approvals ADD COLUMN announce_prior_epoch INTEGER');
+  // A pre-phase resident may have crossed the HTTP boundary before crashing.
+  // There is no durable evidence that replay is safe, so upgrades classify the
+  // claim as ambiguous instead of treating NULL as a retryable pre-send state.
+  db.exec(
+    "UPDATE approvals SET announce_phase = 'ambiguous' WHERE announce_claim IS NOT NULL AND announce_phase IS NULL",
+  );
+  // Empty partial index is a transactional migration marker. It lets the open
+  // fast-path prove the backfill ran without scanning queue history every time.
+  db.exec('CREATE INDEX IF NOT EXISTS idx_approval_claim_phase_backfill ON approvals(id) WHERE 0');
 }
 
 function ensureInboundColumns(db: Database): void {
@@ -329,6 +349,12 @@ function ensureInboundColumns(db: Database): void {
   if (!cols.has('outbound_subject')) db.exec('ALTER TABLE inbound_messages ADD COLUMN outbound_subject TEXT');
   if (!cols.has('outbound_payload')) db.exec('ALTER TABLE inbound_messages ADD COLUMN outbound_payload TEXT');
   if (!cols.has('outbound_meta')) db.exec('ALTER TABLE inbound_messages ADD COLUMN outbound_meta TEXT');
+  // The old schema had only processing_claim. A crash could have occurred after
+  // workspace execution, so an unknown phase must never be replayed as fresh.
+  db.exec(
+    "UPDATE inbound_messages SET processing_phase = 'ambiguous' WHERE processing_claim IS NOT NULL AND processing_phase IS NULL",
+  );
+  db.exec('CREATE INDEX IF NOT EXISTS idx_inbound_claim_phase_backfill ON inbound_messages(id) WHERE 0');
   db.exec(
     'CREATE UNIQUE INDEX IF NOT EXISTS idx_inbound_event_key ON inbound_messages(event_key) WHERE event_key IS NOT NULL',
   );
@@ -408,6 +434,25 @@ export function renewServiceLease(
           .query('UPDATE service_leases SET expires_at = ? WHERE name = ? AND owner_id = ? AND epoch = ?')
           .run(now + ttlMs, name, ownerId, epoch);
   return result.changes === 1;
+}
+
+/** Pure authority probe for side effects that do not have a queue-row phase
+ * transition of their own (for example status reactions). */
+export function isServiceLeaseCurrent(
+  db: Database,
+  name: string,
+  ownerId: string,
+  epoch: number,
+  now = Date.now(),
+): boolean {
+  return (
+    db
+      .query(
+        `SELECT 1 FROM service_leases
+         WHERE name = ? AND owner_id = ? AND epoch = ? AND expires_at > ?`,
+      )
+      .get(name, ownerId, epoch, now) !== null
+  );
 }
 
 /** Release only the exact owner token. */

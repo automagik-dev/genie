@@ -9,6 +9,8 @@ Shared skill bodies name semantic routes without a host-specific prefix. Invoke 
 - Codex user tier (a CLI-managed product fallback or separately installed personal copy): `$brainstorm`, `$wish`, `$review`, `$work`
 - Claude Code and Hermes: `/brainstorm`, `/wish`, `/review`, `/work`
 
+The `agents/openai.yaml` starter prompt inside each skill is deliberately selector-free. A starter card already belongs to one discovered physical skill, and repeating either `$genie:<name>` or `$<name>` inside that card could redirect execution to a different tier. Manual invocation still uses the explicit selector mapping above.
+
 The lifecycle is:
 
 ```text
@@ -19,6 +21,8 @@ For non-trivial work, `brainstorm` automatically sends the completed design thro
 handoff to `wish`. The resulting WISH must then pass a distinct plan review before `work`; implementation receives its
 own independent review after execution. These are mandatory artifact gates, not interchangeable uses of one generic
 review step.
+
+The design gate is durable: DESIGN.md carries reviewer identity, UTC timestamp, verdict, and the SHA-256 of its exact reviewed content (excluding only the bounded evidence block). Editing the design invalidates that evidence; `wish` and lint require a current SHIP digest for linked designs.
 
 All runtimes share the same durable contracts:
 

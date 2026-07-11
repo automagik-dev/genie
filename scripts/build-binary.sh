@@ -57,6 +57,7 @@ TARGET="$(bun_target_for "$PLATFORM")" || { echo "error: unsupported platform: $
 bun "${REPO_ROOT}/scripts/sync-plugin-skills.ts" --check
 bun "${REPO_ROOT}/scripts/fresh-install-smoke.ts"
 bun "${REPO_ROOT}/scripts/hook-bundle-parity.ts" --check
+bun "${REPO_ROOT}/scripts/hook-content-binding.ts" --check
 bun "${REPO_ROOT}/scripts/plugin-executables-check.ts"
 bun "${REPO_ROOT}/scripts/release-payload-version.ts" --verify-source "${REPO_ROOT}"
 

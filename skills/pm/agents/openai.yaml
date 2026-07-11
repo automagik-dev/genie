@@ -1,4 +1,4 @@
 interface:
   display_name: "Project Management"
   short_description: "Coordinate backlog, delivery gates, and escalation"
-  default_prompt: "Use $genie:pm (or $pm only when intentionally selecting its user-tier copy) to coordinate this work through the appropriate delivery gates."
+  default_prompt: "Coordinate this work through the appropriate delivery and release gates."

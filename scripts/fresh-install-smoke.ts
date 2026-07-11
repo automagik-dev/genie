@@ -15,10 +15,12 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
+  writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertHookContentBinding } from './hook-content-binding.ts';
 import { validateSkillMetadata } from './skills-lint.ts';
 import { SHIPPED_SKILL_NAMES, assertPluginSkillsInSync } from './sync-plugin-skills.ts';
 
@@ -82,6 +84,16 @@ const CLAUDE_ROLE_AGENT_CONTRACTS = {
   'reviewer.md': { name: 'reviewer', model: 'opus', effort: 'xhigh' },
   'scout.md': { name: 'scout', model: 'haiku', effort: 'low' },
 } as const satisfies Record<(typeof CLAUDE_ROLE_AGENT_FILES)[number], { name: string; model: string; effort: string }>;
+
+const REVIEWER_CONTEXT_MARKERS = [
+  'DESIGN.md',
+  'Plan review',
+  'completed execution',
+  'PR review',
+  'SHIP',
+  'FIX-FIRST',
+  'BLOCKED',
+];
 
 class SmokeFailure extends Error {}
 
@@ -190,6 +202,13 @@ function checkCodexRoleProfiles(pluginRoot: string): void {
     ) {
       fail(`${fileName} must match the canonical ${contract.name} role contract`);
     }
+    if (fileName === 'genie-reviewer.toml' && isRecord(parsed)) {
+      const instructions = typeof parsed.developer_instructions === 'string' ? parsed.developer_instructions : '';
+      const missing = REVIEWER_CONTEXT_MARKERS.filter((marker) => !instructions.includes(marker));
+      if (missing.length > 0) {
+        fail(`genie-reviewer.toml must cover design, plan, execution, and PR contexts (${missing.join(', ')})`);
+      }
+    }
   }
 }
 
@@ -217,6 +236,13 @@ function checkClaudeRoleAgents(pluginRoot: string): void {
       raw.slice(frontmatter[0].length).trim() === ''
     ) {
       fail(`${fileName} must match the canonical ${contract.name} role contract`);
+    }
+    if (fileName === 'reviewer.md') {
+      const body = raw.slice(frontmatter[0].length);
+      const missing = REVIEWER_CONTEXT_MARKERS.filter((marker) => !body.includes(marker));
+      if (missing.length > 0) {
+        fail(`reviewer.md must cover design, plan, execution, and PR contexts (${missing.join(', ')})`);
+      }
     }
   }
 }
@@ -261,18 +287,61 @@ function checkBundledReferences(skillsDir: string, names: string[]): number {
   return checked;
 }
 
-function checkSkillStarterPrompts(skillsDir: string, names: string[]): void {
+export function checkSkillStarterPrompts(skillsDir: string, names: string[]): void {
   for (const name of names) {
-    const metadata = readFileSync(join(skillsDir, name, 'agents', 'openai.yaml'), 'utf8');
-    if (!metadata.includes(`$genie:${name}`)) {
-      fail(`${name}/agents/openai.yaml must name the owner-qualified $genie:${name} selector`);
+    const metadata = Bun.YAML.parse(readFileSync(join(skillsDir, name, 'agents', 'openai.yaml'), 'utf8')) as {
+      interface?: { default_prompt?: unknown };
+    };
+    const prompt = metadata.interface?.default_prompt;
+    if (typeof prompt !== 'string' || prompt.trim() === '') {
+      fail(`${name}/agents/openai.yaml must provide a non-empty starter prompt`);
     }
-    const qualifiesBareSelector =
-      metadata.includes('separately installed personal copy') ||
-      metadata.includes('intentionally selecting its user-tier copy');
-    if (metadata.includes(`$${name}`) && !qualifiesBareSelector) {
-      fail(`${name}/agents/openai.yaml uses an ambiguous bare selector without a user-tier qualifier`);
+    if (/\$(?:[a-z0-9][a-z0-9-]*:)?[a-z0-9][a-z0-9-]*/i.test(prompt)) {
+      fail(`${name}/agents/openai.yaml starter prompt must be selector-free across physical tiers`);
     }
+  }
+}
+
+function checkDesignReviewEvidenceTool(skillsDir: string, names: string[]): void {
+  if (!names.includes('brainstorm') || !names.includes('wish')) return;
+  const brainstormTool = join(skillsDir, 'brainstorm', 'references', 'design-review-evidence.mjs');
+  const wishTool = join(skillsDir, 'wish', 'references', 'design-review-evidence.mjs');
+  const template = join(skillsDir, 'brainstorm', 'references', 'design-template.md');
+  for (const file of [brainstormTool, wishTool, template]) {
+    if (!existsSync(file) || !lstatSync(file).isFile() || lstatSync(file).isSymbolicLink()) {
+      fail(`design-review contract resource must be a physical file: ${file}`);
+    }
+  }
+  const root = mkdtempSync(join(tmpdir(), 'genie-design-review-smoke-'));
+  try {
+    const design = join(root, 'DESIGN.md');
+    cpSync(template, design);
+    const stamp = Bun.spawnSync(
+      [
+        'node',
+        brainstormTool,
+        'stamp',
+        design,
+        '--verdict',
+        'SHIP',
+        '--reviewer',
+        'fresh-install-smoke',
+        '--reviewed-at',
+        '2026-07-11T00:00:00.000Z',
+      ],
+      { stdout: 'pipe', stderr: 'pipe' },
+    );
+    if (stamp.exitCode !== 0) fail(`design-review stamp failed: ${stamp.stderr.toString().trim()}`);
+    const verified = Bun.spawnSync(['node', wishTool, 'verify', design], { stdout: 'pipe', stderr: 'pipe' });
+    if (verified.exitCode !== 0) fail(`design-review verification failed: ${verified.stderr.toString().trim()}`);
+
+    writeFileSync(design, `${readFileSync(design, 'utf8')}\npost-review drift\n`);
+    const stale = Bun.spawnSync(['node', wishTool, 'verify', design], { stdout: 'pipe', stderr: 'pipe' });
+    if (stale.exitCode === 0 || !stale.stderr.toString().includes('design changed after review')) {
+      fail('design-review verifier did not reject post-review content drift');
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 }
 
@@ -401,6 +470,14 @@ function checkPluginLayout(pluginRoot: string, canonicalSkills: string, expected
   });
   checkStarterPrompts(manifest, expectedNames);
   checkPluginMcpLayout(pluginRoot, manifest);
+  try {
+    assertHookContentBinding(
+      join(pluginRoot, 'hooks', 'codex-hooks.json'),
+      join(pluginRoot, 'scripts', 'dispatch-runtime.cjs'),
+    );
+  } catch (error) {
+    fail(`Codex hook launcher content binding failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
   checkRoleInventories(pluginRoot);
 }
 
@@ -489,6 +566,7 @@ function main(): void {
     }
     checkMetadata(args.skillsDir, names);
     checkSkillStarterPrompts(args.skillsDir, names);
+    checkDesignReviewEvidenceTool(args.skillsDir, names);
     const refs = checkBundledReferences(args.skillsDir, names);
     runWishScaffoldSmoke(args.skillsDir);
     if (args.pluginRoot) {

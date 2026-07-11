@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import {
   type Stats,
   chmodSync,
@@ -19,7 +19,7 @@ import {
 } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { Worker } from 'node:worker_threads';
-import { acquireLifecycleLease } from './agent-sync.js';
+import { acquireLifecycleLease, publishRegularFileNoClobber } from './agent-sync.js';
 import { getCodexConfigPath, getCodexHome, migrateDeadGenieOtel } from './codex-config.js';
 import { resolveClaudeDir, resolveGenieHome } from './genie-home.js';
 import { validateTrustedExecutablePath } from './trusted-executable.js';
@@ -31,10 +31,19 @@ export type RuntimeExecutableResolver = (name: RuntimeName, cwd: string) => stri
 
 export const INTEGRATION_CONSENT_NAME = '.integration-consent.json';
 
-export interface IntegrationConsentState {
-  selection: IntegrationSelection;
-  state: 'committed' | 'pending';
-  previousSelection?: IntegrationSelection;
+export type IntegrationConsentState =
+  | { selection: IntegrationSelection; state: 'committed'; revision: number }
+  | {
+      selection: IntegrationSelection;
+      state: 'pending';
+      revision: number;
+      previousSelection: IntegrationSelection;
+      transitionToken: string;
+    };
+
+export interface IntegrationConsentTransitionRef {
+  revision: number;
+  transitionToken: string;
 }
 
 function writeIntegrationConsentState(state: IntegrationConsentState, genieHome: string): void {
@@ -43,7 +52,7 @@ function writeIntegrationConsentState(state: IntegrationConsentState, genieHome:
   const staging = `${path}.staging-${process.pid}`;
   writeFileSync(
     staging,
-    `${JSON.stringify({ schemaVersion: 2, ...state, updatedAt: new Date().toISOString() }, null, 2)}\n`,
+    `${JSON.stringify({ schemaVersion: 3, ...state, updatedAt: new Date().toISOString() }, null, 2)}\n`,
     { encoding: 'utf8', mode: 0o600 },
   );
   const fd = openSync(staging, 'r');
@@ -67,7 +76,8 @@ function writeIntegrationConsentState(state: IntegrationConsentState, genieHome:
 
 /** Persist the operator's explicit client-home scope for later updates. */
 export function persistIntegrationConsent(selection: IntegrationSelection, genieHome = resolveGenieHome()): void {
-  writeIntegrationConsentState({ selection, state: 'committed' }, genieHome);
+  const current = readIntegrationConsentState(genieHome);
+  writeIntegrationConsentState({ selection, state: 'committed', revision: current.revision + 1 }, genieHome);
 }
 
 /** Missing state means a pre-consent release and retains the legacy auto policy. */
@@ -77,20 +87,25 @@ export function readIntegrationConsentState(genieHome = resolveGenieHome()): Int
   try {
     stat = lstatSync(path);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { selection: 'auto', state: 'committed' };
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return { selection: 'auto', state: 'committed', revision: 0 };
+    }
     throw error;
   }
   if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`integration consent is not a physical file: ${path}`);
-  const parsed = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+  const content = readFileSync(path);
+  const parsed = JSON.parse(content.toString('utf8')) as Record<string, unknown>;
   const selection = parsed.selection;
   if (
-    ![1, 2].includes(Number(parsed.schemaVersion)) ||
+    ![1, 2, 3].includes(Number(parsed.schemaVersion)) ||
     typeof selection !== 'string' ||
     !['auto', 'codex', 'claude', 'all', 'none'].includes(selection)
   ) {
     throw new Error(`integration consent has an invalid schema: ${path}`);
   }
-  if (parsed.schemaVersion === 1) return { selection: selection as IntegrationSelection, state: 'committed' };
+  if (parsed.schemaVersion === 1) {
+    return { selection: selection as IntegrationSelection, state: 'committed', revision: 0 };
+  }
   const state = parsed.state;
   const previousSelection = parsed.previousSelection;
   if (
@@ -102,11 +117,39 @@ export function readIntegrationConsentState(genieHome = resolveGenieHome()): Int
   ) {
     throw new Error(`integration consent has an invalid schema: ${path}`);
   }
+  if (parsed.schemaVersion === 2) {
+    if (state === 'committed') {
+      return { selection: selection as IntegrationSelection, state: 'committed', revision: 0 };
+    }
+    return {
+      selection: selection as IntegrationSelection,
+      state: 'pending',
+      revision: 0,
+      previousSelection: previousSelection as IntegrationSelection,
+      transitionToken: `legacy-${createHash('sha256').update(content).digest('hex')}`,
+    };
+  }
+  const revision = parsed.revision;
+  const transitionToken = parsed.transitionToken;
+  if (
+    !Number.isSafeInteger(revision) ||
+    Number(revision) < 0 ||
+    (state === 'pending' && (typeof transitionToken !== 'string' || !/^[a-f0-9]{32}$/.test(transitionToken))) ||
+    (state === 'committed' && transitionToken !== undefined)
+  ) {
+    throw new Error(`integration consent has an invalid schema: ${path}`);
+  }
   return {
     selection: selection as IntegrationSelection,
     state: state as IntegrationConsentState['state'],
-    ...(state === 'pending' ? { previousSelection: previousSelection as IntegrationSelection } : {}),
-  };
+    revision: revision as number,
+    ...(state === 'pending'
+      ? {
+          previousSelection: previousSelection as IntegrationSelection,
+          transitionToken: transitionToken as string,
+        }
+      : {}),
+  } as IntegrationConsentState;
 }
 
 export function readIntegrationConsent(genieHome = resolveGenieHome()): IntegrationSelection {
@@ -117,7 +160,7 @@ export function readIntegrationConsent(genieHome = resolveGenieHome()): Integrat
 export function beginIntegrationConsentTransition(
   selection: IntegrationSelection,
   genieHome = resolveGenieHome(),
-): IntegrationConsentState {
+): Extract<IntegrationConsentState, { state: 'pending' }> {
   const current = readIntegrationConsentState(genieHome);
   if (current.state === 'pending') {
     if (current.selection !== selection) {
@@ -130,25 +173,52 @@ export function beginIntegrationConsentTransition(
   const pending: IntegrationConsentState = {
     selection,
     state: 'pending',
+    revision: current.revision + 1,
     previousSelection: current.selection,
+    transitionToken: randomBytes(16).toString('hex'),
   };
   writeIntegrationConsentState(pending, genieHome);
   return pending;
 }
 
-export function commitIntegrationConsentTransition(genieHome = resolveGenieHome()): IntegrationSelection {
+function assertIntegrationConsentTransition(
+  current: IntegrationConsentState,
+  expected: IntegrationConsentTransitionRef,
+  action: 'commit' | 'clear',
+): asserts current is Extract<IntegrationConsentState, { state: 'pending' }> {
+  if (
+    current.state !== 'pending' ||
+    current.revision !== expected.revision ||
+    current.transitionToken !== expected.transitionToken
+  ) {
+    throw new Error(
+      `integration consent ${action} CAS failed: pending transition token/revision changed; re-read state and retry`,
+    );
+  }
+}
+
+export function commitIntegrationConsentTransition(
+  expected: IntegrationConsentTransitionRef,
+  genieHome = resolveGenieHome(),
+): IntegrationSelection {
   const current = readIntegrationConsentState(genieHome);
-  if (current.state !== 'pending') return current.selection;
-  persistIntegrationConsent(current.selection, genieHome);
+  assertIntegrationConsentTransition(current, expected, 'commit');
+  writeIntegrationConsentState(
+    { selection: current.selection, state: 'committed', revision: current.revision + 1 },
+    genieHome,
+  );
   return current.selection;
 }
 
 /** Clear only a pending transition, restoring the previously committed scope. */
-export function clearIntegrationConsentTransition(genieHome = resolveGenieHome()): IntegrationSelection {
+export function clearIntegrationConsentTransition(
+  expected: IntegrationConsentTransitionRef,
+  genieHome = resolveGenieHome(),
+): IntegrationSelection {
   const current = readIntegrationConsentState(genieHome);
-  if (current.state !== 'pending') return current.selection;
-  const previous = current.previousSelection ?? 'auto';
-  persistIntegrationConsent(previous, genieHome);
+  assertIntegrationConsentTransition(current, expected, 'clear');
+  const previous = current.previousSelection;
+  writeIntegrationConsentState({ selection: previous, state: 'committed', revision: current.revision + 1 }, genieHome);
   return previous;
 }
 
@@ -663,6 +733,8 @@ export interface CodexAgentTransactionOptions {
   beforePromotion?: (stage: string) => void;
   /** Failure-injection seam after authorization but before the accepted object is parked. */
   afterAuthorization?: (stage: string) => void;
+  /** Failure-injection seam after parking and immediately before exclusive publication. */
+  beforePublish?: (stage: string) => void;
 }
 
 interface CodexAgentTransactionJournal {
@@ -671,6 +743,18 @@ interface CodexAgentTransactionJournal {
   inventoryDigest: string | null;
   inventoryBeforeDigest: string | null;
   inventoryHadTarget: boolean;
+}
+
+interface RoleAgentTransactionPlan {
+  operations: CodexAgentTransactionJournal['operations'];
+  inventoryContent: Buffer | null;
+  journal: CodexAgentTransactionJournal;
+}
+
+interface PreparedRoleAgentTransaction {
+  transactionDir: string;
+  stagedDir: string;
+  beforeDir: string;
 }
 
 const CODEX_AGENT_TRANSACTION_PREFIX = '.genie-role-agents.txn-';
@@ -810,15 +894,13 @@ function recoverRoleAgentTransactions(agentsDir: string): void {
   }
 }
 
-function publishRoleAgentTransaction(
-  agentsDir: string,
+function planRoleAgentTransaction(
   writes: Map<string, Buffer>,
   removals: string[],
   inventory: CodexAgentInventory,
   expected: Map<string, string | null>,
   expectedInventoryDigest: string | null,
-  options: CodexAgentTransactionOptions,
-): void {
+): RoleAgentTransactionPlan {
   const operations = [
     ...[...writes].map(([name, content]) => ({
       name,
@@ -842,81 +924,156 @@ function publishRoleAgentTransaction(
     inventoryBeforeDigest: expectedInventoryDigest,
     inventoryHadTarget: expectedInventoryDigest !== null,
   };
+  return { operations, inventoryContent, journal };
+}
+
+function prepareRoleAgentTransaction(
+  agentsDir: string,
+  writes: Map<string, Buffer>,
+  plan: RoleAgentTransactionPlan,
+): PreparedRoleAgentTransaction {
   const transactionName = `${process.pid}-${Date.now()}-${randomTransactionSuffix()}`;
   const preparationDir = join(agentsDir, `${CODEX_AGENT_PREPARATION_PREFIX}${transactionName}`);
   const transactionDir = join(agentsDir, `${CODEX_AGENT_TRANSACTION_PREFIX}${transactionName}`);
   const stagedDir = join(preparationDir, 'staged');
-  const beforeDir = join(preparationDir, 'before');
   mkdirSync(stagedDir, { recursive: true });
-  mkdirSync(beforeDir, { recursive: true });
+  mkdirSync(join(preparationDir, 'before'), { recursive: true });
   for (const [name, content] of writes) writeFileSync(join(stagedDir, name), content);
-  if (inventoryContent !== null) writeFileSync(join(stagedDir, CODEX_AGENT_INVENTORY_NAME), inventoryContent);
-  writeFileSync(join(preparationDir, 'journal.json'), `${JSON.stringify(journal, null, 2)}\n`);
+  if (plan.inventoryContent !== null) {
+    writeFileSync(join(stagedDir, CODEX_AGENT_INVENTORY_NAME), plan.inventoryContent);
+  }
+  writeFileSync(join(preparationDir, 'journal.json'), `${JSON.stringify(plan.journal, null, 2)}\n`);
   // Recovery only discovers the transaction after every staged artifact and the
   // complete journal exist. A crash before this rename leaves inert preparation
   // debris rather than a transaction that poisons every future lifecycle run.
   renameSync(preparationDir, transactionDir);
-  const publishedStagedDir = join(transactionDir, 'staged');
-  const publishedBeforeDir = join(transactionDir, 'before');
+  return {
+    transactionDir,
+    stagedDir: join(transactionDir, 'staged'),
+    beforeDir: join(transactionDir, 'before'),
+  };
+}
+
+function authorizeRoleAgentPreimages(
+  agentsDir: string,
+  operations: CodexAgentTransactionJournal['operations'],
+  expectedInventoryDigest: string | null,
+  options: CodexAgentTransactionOptions,
+): void {
+  // Test hooks run before every authorization check and before any mutation,
+  // so an injected race cannot leave a partially promoted batch.
+  for (const operation of operations) {
+    options.beforePromotion?.(`payload:${operation.name}`);
+    assertExpectedRoleFile(join(agentsDir, operation.name), operation.beforeDigest);
+  }
+  options.beforePromotion?.('inventory');
+  assertExpectedRoleFile(join(agentsDir, CODEX_AGENT_INVENTORY_NAME), expectedInventoryDigest);
+}
+
+function parkRoleAgentPreimages(
+  agentsDir: string,
+  beforeDir: string,
+  operations: CodexAgentTransactionJournal['operations'],
+  expectedInventoryDigest: string | null,
+  options: CodexAgentTransactionOptions,
+): void {
+  // Park every accepted preimage before any staged content is promoted. Each
+  // moved object is re-identified from its quarantine path, closing the race
+  // between pathname authorization and rename.
+  for (const operation of operations) {
+    const target = join(agentsDir, operation.name);
+    assertExpectedRoleFile(target, operation.beforeDigest);
+    options.afterAuthorization?.(`payload:${operation.name}`);
+    if (pathExists(target)) renameSync(target, join(beforeDir, operation.name));
+    assertExpectedRoleFile(join(beforeDir, operation.name), operation.beforeDigest);
+    if (physicalRoleFileIdentity(target).kind !== 'absent') {
+      throw new RoleAgentConflictError(`role-agent target reappeared while parked: ${target}`);
+    }
+  }
+
+  const targetInventory = join(agentsDir, CODEX_AGENT_INVENTORY_NAME);
+  assertExpectedRoleFile(targetInventory, expectedInventoryDigest);
+  options.afterAuthorization?.('inventory');
+  if (pathExists(targetInventory)) renameSync(targetInventory, join(beforeDir, CODEX_AGENT_INVENTORY_NAME));
+  assertExpectedRoleFile(join(beforeDir, CODEX_AGENT_INVENTORY_NAME), expectedInventoryDigest);
+  if (physicalRoleFileIdentity(targetInventory).kind !== 'absent') {
+    throw new RoleAgentConflictError(`role-agent inventory reappeared while parked: ${targetInventory}`);
+  }
+}
+
+function publishRoleAgentArtifact(staged: string, target: string, description: string): void {
+  try {
+    publishRegularFileNoClobber(staged, target);
+  } catch (error) {
+    throw new RoleAgentConflictError(
+      `exclusive ${description} publish failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+function publishRoleAgentArtifacts(
+  agentsDir: string,
+  stagedDir: string,
+  plan: RoleAgentTransactionPlan,
+  options: CodexAgentTransactionOptions,
+): void {
+  for (const operation of plan.operations) {
+    if (operation.nextDigest === null) continue;
+    options.beforePublish?.(`payload:${operation.name}`);
+    publishRoleAgentArtifact(
+      join(stagedDir, operation.name),
+      join(agentsDir, operation.name),
+      `role-agent ${operation.name}`,
+    );
+  }
+  if (plan.inventoryContent === null) return;
+  options.beforePublish?.('inventory');
+  publishRoleAgentArtifact(
+    join(stagedDir, CODEX_AGENT_INVENTORY_NAME),
+    join(agentsDir, CODEX_AGENT_INVENTORY_NAME),
+    'role-agent inventory',
+  );
+}
+
+function verifyPublishedRoleAgentTransaction(agentsDir: string, journal: CodexAgentTransactionJournal): void {
+  for (const operation of journal.operations) {
+    assertExpectedRoleFile(join(agentsDir, operation.name), operation.nextDigest);
+  }
+  assertExpectedRoleFile(join(agentsDir, CODEX_AGENT_INVENTORY_NAME), journal.inventoryDigest);
+}
+
+function publishRoleAgentTransaction(
+  agentsDir: string,
+  writes: Map<string, Buffer>,
+  removals: string[],
+  inventory: CodexAgentInventory,
+  expected: Map<string, string | null>,
+  expectedInventoryDigest: string | null,
+  options: CodexAgentTransactionOptions,
+): void {
+  const plan = planRoleAgentTransaction(writes, removals, inventory, expected, expectedInventoryDigest);
+  const prepared = prepareRoleAgentTransaction(agentsDir, writes, plan);
   let promotionsStarted = false;
 
   try {
-    // Test hooks run before every authorization check and before any mutation,
-    // so an injected race cannot leave a partially promoted batch.
-    for (const operation of operations) {
-      options.beforePromotion?.(`payload:${operation.name}`);
-      assertExpectedRoleFile(join(agentsDir, operation.name), operation.beforeDigest);
-    }
-    options.beforePromotion?.('inventory');
-    assertExpectedRoleFile(join(agentsDir, CODEX_AGENT_INVENTORY_NAME), expectedInventoryDigest);
-
-    // Park every accepted preimage before any staged content is promoted. Each
-    // moved object is re-identified from its quarantine path, closing the race
-    // between pathname authorization and rename.
-    for (const operation of operations) {
-      const target = join(agentsDir, operation.name);
-      assertExpectedRoleFile(target, operation.beforeDigest);
-      options.afterAuthorization?.(`payload:${operation.name}`);
-      if (pathExists(target)) renameSync(target, join(publishedBeforeDir, operation.name));
-      assertExpectedRoleFile(join(publishedBeforeDir, operation.name), operation.beforeDigest);
-      if (physicalRoleFileIdentity(target).kind !== 'absent') {
-        throw new RoleAgentConflictError(`role-agent target reappeared while parked: ${target}`);
-      }
-    }
-    const targetInventory = join(agentsDir, CODEX_AGENT_INVENTORY_NAME);
-    assertExpectedRoleFile(targetInventory, expectedInventoryDigest);
-    options.afterAuthorization?.('inventory');
-    if (pathExists(targetInventory)) renameSync(targetInventory, join(publishedBeforeDir, CODEX_AGENT_INVENTORY_NAME));
-    assertExpectedRoleFile(join(publishedBeforeDir, CODEX_AGENT_INVENTORY_NAME), expectedInventoryDigest);
-    if (physicalRoleFileIdentity(targetInventory).kind !== 'absent') {
-      throw new RoleAgentConflictError(`role-agent inventory reappeared while parked: ${targetInventory}`);
-    }
-
+    authorizeRoleAgentPreimages(agentsDir, plan.operations, expectedInventoryDigest, options);
+    parkRoleAgentPreimages(agentsDir, prepared.beforeDir, plan.operations, expectedInventoryDigest, options);
     promotionsStarted = true;
-    for (const operation of operations) {
-      if (operation.nextDigest !== null) {
-        renameSync(join(publishedStagedDir, operation.name), join(agentsDir, operation.name));
-      }
-    }
-    if (inventoryContent !== null) renameSync(join(publishedStagedDir, CODEX_AGENT_INVENTORY_NAME), targetInventory);
-    for (const operation of operations) {
-      const expectedNext = operation.nextDigest === null ? null : operation.nextDigest;
-      assertExpectedRoleFile(join(agentsDir, operation.name), expectedNext);
-    }
-    assertExpectedRoleFile(targetInventory, journal.inventoryDigest);
-    writeFileSync(join(transactionDir, 'COMMITTED'), 'ok\n');
-    rmSync(transactionDir, { recursive: true, force: true });
+    publishRoleAgentArtifacts(agentsDir, prepared.stagedDir, plan, options);
+    verifyPublishedRoleAgentTransaction(agentsDir, plan.journal);
+    writeFileSync(join(prepared.transactionDir, 'COMMITTED'), 'ok\n');
+    rmSync(prepared.transactionDir, { recursive: true, force: true });
   } catch (error) {
     if (error instanceof RoleAgentConflictError && !promotionsStarted) {
-      restoreParkedRolePreimages(agentsDir, publishedBeforeDir, operations);
-      const conflict = preserveRoleAgentConflict(transactionDir);
+      restoreParkedRolePreimages(agentsDir, prepared.beforeDir, plan.operations);
+      const conflict = preserveRoleAgentConflict(prepared.transactionDir);
       throw new RoleAgentConflictError(`${error.message}; kept live and incoming versions at ${conflict}`);
     }
     try {
-      rollbackRoleTransaction(agentsDir, transactionDir, journal);
+      rollbackRoleTransaction(agentsDir, prepared.transactionDir, plan.journal);
     } catch (rollbackError) {
       throw new Error(
-        `role-agent transaction failed (${error instanceof Error ? error.message : String(error)}); rollback failed (${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}); retry after reviewing ${transactionDir}`,
+        `role-agent transaction failed (${error instanceof Error ? error.message : String(error)}); rollback failed (${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}); retry after reviewing ${prepared.transactionDir}`,
       );
     }
     throw error;
@@ -994,6 +1151,65 @@ function randomTransactionSuffix(): string {
   return createHash('sha256').update(`${process.pid}:${Date.now()}:${Math.random()}`).digest('hex').slice(0, 12);
 }
 
+interface CodexAgentInstallPlan {
+  inventory: CodexAgentInventory;
+  result: CodexAgentInstallResult;
+  writes: Map<string, Buffer>;
+  removals: string[];
+  expected: Map<string, string | null>;
+}
+
+function collectCurrentCodexAgentPayloads(
+  source: string,
+  target: string,
+  sourceNames: string[],
+  plan: CodexAgentInstallPlan,
+): void {
+  for (const name of sourceNames) {
+    const sourcePath = join(source, name);
+    const targetPath = join(target, name);
+    const sourceContent = readFileSync(sourcePath);
+    if (!sourceContent.toString('utf8').startsWith(CODEX_AGENT_SENTINEL)) {
+      throw new Error(`Codex role-agent source lacks the managed sentinel: ${sourcePath}`);
+    }
+    const sourceDigest = fileDigest(sourcePath);
+    if (sourceDigest === null) throw new Error(`Codex role-agent source is not a regular readable file: ${sourcePath}`);
+    const ownership = classifyCodexAgentFile(targetPath, plan.inventory.files[name]);
+    if (ownership === 'user-owned') {
+      // Bytes are not an ownership capability. An inventory-free file remains
+      // personal even when it exactly matches a current or historical Genie
+      // payload; update/uninstall must never silently acquire deletion authority.
+      plan.result.skippedUserOwned.push(name);
+      continue;
+    }
+    if (ownership === 'managed-modified') {
+      plan.result.keptModified.push(name);
+      continue;
+    }
+    if (ownership === 'absent' || plan.inventory.files[name]?.digest !== sourceDigest) {
+      plan.writes.set(name, sourceContent);
+      plan.expected.set(name, ownership === 'absent' ? null : (plan.inventory.files[name]?.digest ?? null));
+    }
+    plan.inventory.files[name] = { digest: sourceDigest };
+    plan.result.installed += 1;
+  }
+}
+
+function collectObsoleteCodexAgentPayloads(target: string, sourceNames: string[], plan: CodexAgentInstallPlan): void {
+  for (const name of Object.keys(plan.inventory.files)) {
+    if (sourceNames.includes(name)) continue;
+    const ownership = classifyCodexAgentFile(join(target, name), plan.inventory.files[name]);
+    if (ownership === 'managed-clean') {
+      plan.removals.push(name);
+      plan.expected.set(name, plan.inventory.files[name]?.digest ?? null);
+      plan.result.removed.push(name);
+    } else if (ownership === 'managed-modified') {
+      plan.result.keptModified.push(name);
+    }
+    delete plan.inventory.files[name];
+  }
+}
+
 export function installCodexAgents(
   bundleRoot: string,
   codexHome = getCodexHome(),
@@ -1010,74 +1226,41 @@ export function installCodexAgents(
       `Codex role-agent ownership inventory is corrupt (${inventoryPath(codexHome)}): ${state.error}; review and move it aside before retrying`,
     );
   }
-  const inventory: CodexAgentInventory = JSON.parse(JSON.stringify(state.inventory)) as CodexAgentInventory;
   const acceptedInventoryDigest = state.digest;
-  const result: CodexAgentInstallResult = {
-    installed: 0,
-    skippedUserOwned: [],
-    keptModified: [],
-    removed: [],
-    backedUp: [],
+  const plan: CodexAgentInstallPlan = {
+    inventory: JSON.parse(JSON.stringify(state.inventory)) as CodexAgentInventory,
+    result: {
+      installed: 0,
+      skippedUserOwned: [],
+      keptModified: [],
+      removed: [],
+      backedUp: [],
+    },
+    writes: new Map<string, Buffer>(),
+    removals: [],
+    expected: new Map<string, string | null>(),
   };
-  const writes = new Map<string, Buffer>();
-  const removals: string[] = [];
-  const expected = new Map<string, string | null>();
   const sourceNames = readdirSync(source)
     .filter((name) => CODEX_AGENT_NAME_RE.test(name))
     .sort();
-  for (const name of sourceNames) {
-    const sourcePath = join(source, name);
-    const targetPath = join(target, name);
-    const sourceContent = readFileSync(sourcePath);
-    if (!sourceContent.toString('utf8').startsWith(CODEX_AGENT_SENTINEL)) {
-      throw new Error(`Codex role-agent source lacks the managed sentinel: ${sourcePath}`);
-    }
-    const sourceDigest = fileDigest(sourcePath);
-    if (sourceDigest === null) throw new Error(`Codex role-agent source is not a regular readable file: ${sourcePath}`);
-    const ownership = classifyCodexAgentFile(targetPath, inventory.files[name]);
-    if (ownership === 'user-owned') {
-      // Bytes are not an ownership capability. An inventory-free file remains
-      // personal even when it exactly matches a current or historical Genie
-      // payload; update/uninstall must never silently acquire deletion authority.
-      result.skippedUserOwned.push(name);
-      continue;
-    }
-    if (ownership === 'managed-modified') {
-      result.keptModified.push(name);
-      continue;
-    }
-    if (ownership === 'absent' || inventory.files[name]?.digest !== sourceDigest) {
-      writes.set(name, sourceContent);
-      expected.set(name, ownership === 'absent' ? null : (inventory.files[name]?.digest ?? null));
-    }
-    inventory.files[name] = { digest: sourceDigest };
-    result.installed += 1;
-  }
-  for (const name of Object.keys(inventory.files)) {
-    if (sourceNames.includes(name)) continue;
-    const targetPath = join(target, name);
-    const ownership = classifyCodexAgentFile(targetPath, inventory.files[name]);
-    if (ownership === 'managed-clean') {
-      removals.push(name);
-      expected.set(name, inventory.files[name]?.digest ?? null);
-      result.removed.push(name);
-    } else if (ownership === 'managed-modified') {
-      result.keptModified.push(name);
-    }
-    delete inventory.files[name];
-  }
-  if (writes.size > 0 || removals.length > 0 || JSON.stringify(state.inventory) !== JSON.stringify(inventory)) {
+  collectCurrentCodexAgentPayloads(source, target, sourceNames, plan);
+  collectObsoleteCodexAgentPayloads(target, sourceNames, plan);
+  if (
+    plan.writes.size > 0 ||
+    plan.removals.length > 0 ||
+    JSON.stringify(state.inventory) !== JSON.stringify(plan.inventory)
+  ) {
     publishRoleAgentTransaction(
       target,
-      writes,
-      removals,
-      inventory,
-      expected,
+      plan.writes,
+      plan.removals,
+      plan.inventory,
+      plan.expected,
       acceptedInventoryDigest,
       transactionOptions,
     );
   }
-  return result;
+  return plan.result;
 }
 
 export interface CodexEnabledMutationResult {
@@ -1548,7 +1731,7 @@ function settleFailedRefreshIntent(
   intent: RefreshIntent | null,
   timeoutMs: number,
 ): RefreshIntent | null {
-  if (intent === null || intent.phase === 'planned' || intent.phase === 'removal-observed') return intent;
+  if (intent === null || intent.phase === 'planned') return intent;
   try {
     const raw = runChecked(options.runner, options.command, ['plugin', 'list', '--json'], false, timeoutMs).stdout;
     const state =
@@ -1556,12 +1739,19 @@ function settleFailedRefreshIntent(
         ? requireCodexPluginState(raw, 'after failed refresh command')
         : requireClaudePluginState(raw, 'after failed refresh command');
     if (state.installed) {
-      clearRefreshIntent(options.statePath);
-      return null;
+      // Registration presence consumes any one-shot removal authority, but the
+      // planned record stays until enabled-state restoration is verified.
+      if (intent.enabled) {
+        clearRefreshIntent(options.statePath);
+        return null;
+      }
+      return markRefreshStable(options.statePath, intent);
     }
   } catch {
-    // An unprobeable post-state is ambiguous too; never turn it into install authority.
+    // An observed explicit removal remains legitimate crash-repair authority;
+    // command-started without observation is ambiguous and cannot reinstall.
   }
+  if (intent.phase === 'removal-observed') return intent;
   return markRefreshAmbiguous(options.statePath, intent);
 }
 
@@ -1594,6 +1784,7 @@ function convergeCodexPayloadIdentity(
   timeoutMs: number,
   authorizeRemoval: () => void,
   markRemoved: () => void,
+  markReinstalled: () => void,
 ): RuntimePluginState {
   const verifyPayload = options.verifyCodexPayload ?? verifyCodexPhysicalPayload;
   const verificationInput = {
@@ -1629,6 +1820,10 @@ function convergeCodexPayloadIdentity(
         `Codex payload-identity repair did not restore v${options.expectedVersion}: installed=${repaired.installed}, version=${repaired.version || 'missing'}`,
       );
     }
+    // Consume removal authority as soon as registration presence is proven;
+    // final physical verification may still fail, but a later manual removal
+    // must not be resurrected by this stale transaction.
+    markReinstalled();
     try {
       verifyPayload(verificationInput);
       return repaired;
@@ -1640,6 +1835,91 @@ function convergeCodexPayloadIdentity(
   }
 }
 
+interface PluginConvergenceProgress {
+  intent: RefreshIntent | null;
+  desiredEnabled: boolean | null;
+}
+
+function performCodexPluginConvergence(
+  options: ConvergePluginOptions,
+  timeoutMs: number,
+  progress: PluginConvergenceProgress,
+): boolean {
+  progress.intent = readRefreshIntent(options.statePath, 'codex');
+  const before = requireCodexPluginState(
+    runChecked(options.runner, options.command, ['plugin', 'list', '--json'], false, timeoutMs).stdout,
+    'before plugin convergence',
+  );
+  if (!before.installed && !options.installIfAbsent && progress.intent?.phase !== 'removal-observed') {
+    if (progress.intent !== null) clearRefreshIntent(options.statePath);
+    return false;
+  }
+  progress.intent ??= plannedRefreshIntent('codex', before.installed ? before.enabled === true : true);
+  progress.desiredEnabled = progress.intent.enabled;
+  writeRefreshIntent(options.statePath, progress.intent);
+
+  addCodexMarketplace(options.runner, options.command, options.bundleRoot, timeoutMs);
+  // `plugin add` may refresh an existing cache internally. Authorize repair
+  // before that potentially destructive boundary, not only before the later
+  // explicit remove/reinstall fallback.
+  if (before.installed && progress.intent.phase === 'planned') {
+    progress.intent = markRefreshCommandStarted(options.statePath, progress.intent);
+  }
+  runChecked(options.runner, options.command, ['plugin', 'add', 'genie@automagik', '--json'], false, timeoutMs);
+  let installed = requireCodexPluginState(
+    runChecked(options.runner, options.command, ['plugin', 'list', '--json'], false, timeoutMs).stdout,
+    'after plugin add',
+  );
+  if (!installed.installed) throw new IntegrationCommandError('Codex plugin is missing after plugin add');
+  progress.intent = markRefreshStable(options.statePath, progress.intent);
+  if (installed.version !== options.expectedVersion) {
+    progress.intent = markRefreshCommandStarted(options.statePath, progress.intent);
+    runChecked(options.runner, options.command, ['plugin', 'remove', 'genie@automagik', '--json'], true, timeoutMs);
+    progress.intent = markRefreshRemovalObserved(options.statePath, progress.intent);
+    runChecked(options.runner, options.command, ['plugin', 'add', 'genie@automagik', '--json'], false, timeoutMs);
+    installed = requireCodexPluginState(
+      runChecked(options.runner, options.command, ['plugin', 'list', '--json'], false, timeoutMs).stdout,
+      'after plugin reinstall',
+    );
+    if (!installed.installed) throw new IntegrationCommandError('Codex plugin is missing after plugin reinstall');
+    progress.intent = markRefreshStable(options.statePath, progress.intent);
+  }
+  if (installed.version !== options.expectedVersion) {
+    throw new IntegrationCommandError(
+      `codex plugin stuck at v${installed.version || 'missing'} (expected v${options.expectedVersion}) — marketplace root may be stale`,
+    );
+  }
+  installed = convergeCodexPayloadIdentity(
+    options,
+    installed,
+    timeoutMs,
+    () => {
+      progress.intent = markRefreshCommandStarted(options.statePath, progress.intent as RefreshIntent);
+    },
+    () => {
+      progress.intent = markRefreshRemovalObserved(options.statePath, progress.intent as RefreshIntent);
+    },
+    () => {
+      progress.intent = markRefreshStable(options.statePath, progress.intent as RefreshIntent);
+    },
+  );
+  progress.intent = markRefreshStable(options.statePath, progress.intent);
+  if (progress.intent.enabled) {
+    requireExpectedState('codex', installed, options.expectedVersion, true, 'enabled-state');
+  }
+  return true;
+}
+
+function restoreCodexDisabledState(options: ConvergePluginOptions, timeoutMs: number): void {
+  const restored = setCodexPluginEnabled(false, options.configPath ?? getCodexConfigPath());
+  if (!restored.ok) throw new IntegrationCommandError(restored.detail);
+  const state = requireCodexPluginState(
+    runChecked(options.runner, options.command, ['plugin', 'list', '--json'], false, timeoutMs).stdout,
+    'after restoring disabled state',
+  );
+  requireExpectedState('codex', state, options.expectedVersion, false, 'disabled-state restore');
+}
+
 /**
  * One Codex plugin convergence state machine for install/setup/update. The
  * durable intent preserves both installation consent and disabled consent
@@ -1647,86 +1927,23 @@ function convergeCodexPayloadIdentity(
  */
 export function convergeCodexPlugin(options: ConvergePluginOptions): IntegrationResult | null {
   const timeoutMs = options.timeoutMs ?? INTEGRATION_TIMEOUT_MS;
-  let intent: RefreshIntent | null = null;
+  const progress: PluginConvergenceProgress = { intent: null, desiredEnabled: null };
   let primaryError: unknown;
   try {
-    intent = readRefreshIntent(options.statePath, 'codex');
-    const before = requireCodexPluginState(
-      runChecked(options.runner, options.command, ['plugin', 'list', '--json'], false, timeoutMs).stdout,
-      'before plugin convergence',
-    );
-    if (!before.installed && !options.installIfAbsent && intent?.phase !== 'removal-observed') {
-      if (intent !== null) clearRefreshIntent(options.statePath);
-      return null;
-    }
-    intent ??= plannedRefreshIntent('codex', before.installed ? before.enabled === true : true);
-    writeRefreshIntent(options.statePath, intent);
-
-    addCodexMarketplace(options.runner, options.command, options.bundleRoot, timeoutMs);
-    // `plugin add` may refresh an existing cache internally. Authorize repair
-    // before that potentially destructive boundary, not only before the later
-    // explicit remove/reinstall fallback.
-    if (before.installed && intent.phase === 'planned') {
-      intent = markRefreshCommandStarted(options.statePath, intent);
-    }
-    runChecked(options.runner, options.command, ['plugin', 'add', 'genie@automagik', '--json'], false, timeoutMs);
-    let installed = requireCodexPluginState(
-      runChecked(options.runner, options.command, ['plugin', 'list', '--json'], false, timeoutMs).stdout,
-      'after plugin add',
-    );
-    if (!installed.installed) throw new IntegrationCommandError('Codex plugin is missing after plugin add');
-    intent = markRefreshStable(options.statePath, intent);
-    if (installed.installed && installed.version !== options.expectedVersion) {
-      intent = markRefreshCommandStarted(options.statePath, intent);
-      runChecked(options.runner, options.command, ['plugin', 'remove', 'genie@automagik', '--json'], true, timeoutMs);
-      intent = markRefreshRemovalObserved(options.statePath, intent);
-      runChecked(options.runner, options.command, ['plugin', 'add', 'genie@automagik', '--json'], false, timeoutMs);
-      installed = requireCodexPluginState(
-        runChecked(options.runner, options.command, ['plugin', 'list', '--json'], false, timeoutMs).stdout,
-        'after plugin reinstall',
-      );
-      if (!installed.installed) throw new IntegrationCommandError('Codex plugin is missing after plugin reinstall');
-      intent = markRefreshStable(options.statePath, intent);
-    }
-    if (!installed.installed || installed.version !== options.expectedVersion) {
-      throw new IntegrationCommandError(
-        `codex plugin stuck at v${installed.version || 'missing'} (expected v${options.expectedVersion}) — marketplace root may be stale`,
-      );
-    }
-    installed = convergeCodexPayloadIdentity(
-      options,
-      installed,
-      timeoutMs,
-      () => {
-        intent = markRefreshCommandStarted(options.statePath, intent as RefreshIntent);
-      },
-      () => {
-        intent = markRefreshRemovalObserved(options.statePath, intent as RefreshIntent);
-      },
-    );
-    intent = markRefreshStable(options.statePath, intent);
-    if (intent.enabled) {
-      requireExpectedState('codex', installed, options.expectedVersion, true, 'enabled-state');
-    }
+    if (!performCodexPluginConvergence(options, timeoutMs, progress)) return null;
   } catch (error) {
     primaryError = error;
-    intent = settleFailedRefreshIntent(options, 'codex', intent, timeoutMs);
-    if (intent?.phase === 'ambiguous-absent') {
+    progress.intent = settleFailedRefreshIntent(options, 'codex', progress.intent, timeoutMs);
+    if (progress.intent?.phase === 'ambiguous-absent') {
       primaryError = new IntegrationCommandError(
         `${error instanceof Error ? error.message : String(error)}; Codex state is absent or unknown after a failed command and will not be reinstalled by update — run genie setup --codex to grant explicit repair consent`,
       );
     }
   }
 
-  if (intent?.enabled === false) {
+  if (progress.desiredEnabled === false) {
     try {
-      const restored = setCodexPluginEnabled(false, options.configPath ?? getCodexConfigPath());
-      if (!restored.ok) throw new IntegrationCommandError(restored.detail);
-      const state = requireCodexPluginState(
-        runChecked(options.runner, options.command, ['plugin', 'list', '--json'], false, timeoutMs).stdout,
-        'after restoring disabled state',
-      );
-      requireExpectedState('codex', state, options.expectedVersion, false, 'disabled-state restore');
+      restoreCodexDisabledState(options, timeoutMs);
     } catch (error) {
       primaryError ??= error;
     }
@@ -1737,7 +1954,7 @@ export function convergeCodexPlugin(options: ConvergePluginOptions): Integration
     runtime: 'codex',
     ok: true,
     detail: `plugin/hooks refreshed to v${options.expectedVersion}`,
-    preservedDisabled: intent?.enabled === false,
+    preservedDisabled: progress.desiredEnabled === false,
   };
 }
 
@@ -1769,6 +1986,7 @@ function convergeClaudePayloadIdentity(
   timeoutMs: number,
   authorizeRemoval: () => void,
   markRemoved: () => void,
+  markReinstalled: () => void,
 ): RuntimePluginState {
   const verifyPayload = options.verifyClaudePayload ?? verifyClaudePhysicalPayload;
   const verificationInput = {
@@ -1795,6 +2013,7 @@ function convergeClaudePayloadIdentity(
         `Claude payload-identity repair did not restore v${options.expectedVersion}: installed=${repaired.installed}, version=${repaired.version || 'missing'}`,
       );
     }
+    markReinstalled();
     try {
       verifyPayload(verificationInput);
       return repaired;
@@ -1810,6 +2029,7 @@ function convergeClaudePayloadIdentity(
 export function convergeClaudePlugin(options: ConvergePluginOptions): IntegrationResult | null {
   const timeoutMs = options.timeoutMs ?? INTEGRATION_TIMEOUT_MS;
   let intent: RefreshIntent | null = null;
+  let desiredEnabled: boolean | null = null;
   let primaryError: unknown;
   try {
     intent = readRefreshIntent(options.statePath, 'claude');
@@ -1822,6 +2042,7 @@ export function convergeClaudePlugin(options: ConvergePluginOptions): Integratio
       return null;
     }
     intent ??= plannedRefreshIntent('claude', before.installed ? before.enabled === true : true);
+    desiredEnabled = intent.enabled;
     writeRefreshIntent(options.statePath, intent);
 
     addClaudeMarketplace(options.runner, options.command, options.bundleRoot, timeoutMs);
@@ -1858,6 +2079,9 @@ export function convergeClaudePlugin(options: ConvergePluginOptions): Integratio
       () => {
         intent = markRefreshRemovalObserved(options.statePath, intent as RefreshIntent);
       },
+      () => {
+        intent = markRefreshStable(options.statePath, intent as RefreshIntent);
+      },
     );
     intent = markRefreshStable(options.statePath, intent);
     if (intent.enabled) requireExpectedState('claude', installed, options.expectedVersion, true, 'enabled-state');
@@ -1871,7 +2095,7 @@ export function convergeClaudePlugin(options: ConvergePluginOptions): Integratio
     }
   }
 
-  if (intent?.enabled === false) {
+  if (desiredEnabled === false) {
     try {
       runChecked(options.runner, options.command, ['plugin', 'disable', 'genie@automagik'], false, timeoutMs);
       const restored = requireClaudePluginState(
@@ -1889,7 +2113,7 @@ export function convergeClaudePlugin(options: ConvergePluginOptions): Integratio
     runtime: 'claude',
     ok: true,
     detail: `plugin/hooks refreshed to v${options.expectedVersion}`,
-    preservedDisabled: intent?.enabled === false,
+    preservedDisabled: desiredEnabled === false,
   };
 }
 
@@ -2227,6 +2451,85 @@ function unavailableRemovalStep(
   return { runtime, operation: 'plugin', ok: false, detail };
 }
 
+interface RuntimeRemovalResolution {
+  commands: Partial<Record<RuntimeName, string>>;
+  errors: Record<RuntimeName, string[]>;
+  detected: Record<RuntimeName, boolean>;
+}
+
+function resolveRemovalRuntimeCommands(
+  options: RemoveRuntimeIntegrationsOptions,
+  cwd: string,
+): RuntimeRemovalResolution {
+  const resolution: RuntimeRemovalResolution = {
+    commands: {},
+    errors: { codex: [], claude: [] },
+    detected: { codex: false, claude: false },
+  };
+  for (const runtime of ['codex', 'claude'] as const) {
+    if (options.detected?.[runtime] === false) continue;
+    try {
+      const command = resolveRuntimeExecutable(runtime, cwd, options.resolveExecutable);
+      if (command !== null) {
+        resolution.commands[runtime] = command;
+        resolution.detected[runtime] = true;
+      }
+    } catch (error) {
+      resolution.errors[runtime].push(error instanceof Error ? error.message : String(error));
+    }
+  }
+  return resolution;
+}
+
+function appendRuntimePluginRemoval(
+  steps: IntegrationRemovalStep[],
+  runtime: RuntimeName,
+  resolution: RuntimeRemovalResolution,
+  evidence: boolean,
+  inspectionErrors: string[],
+  runner: CommandRunner,
+  timeoutMs: number,
+  removeMarketplace: boolean,
+): void {
+  if (resolution.detected[runtime]) {
+    const action = runtime === 'codex' ? 'remove' : 'uninstall';
+    steps.push(
+      removalStep(
+        runner,
+        resolution.commands[runtime] as string,
+        runtime,
+        'plugin',
+        ['plugin', action, 'genie@automagik'],
+        timeoutMs,
+      ),
+    );
+    return;
+  }
+  const unavailable = unavailableRemovalStep(runtime, evidence, inspectionErrors, removeMarketplace);
+  if (unavailable !== null) steps.push(unavailable);
+}
+
+function appendRuntimeMarketplaceRemoval(
+  steps: IntegrationRemovalStep[],
+  runtime: RuntimeName,
+  resolution: RuntimeRemovalResolution,
+  runner: CommandRunner,
+  timeoutMs: number,
+  removeMarketplace: boolean,
+): void {
+  if (!removeMarketplace || !resolution.detected[runtime]) return;
+  steps.push(
+    removalStep(
+      runner,
+      resolution.commands[runtime] as string,
+      runtime,
+      'marketplace',
+      ['plugin', 'marketplace', 'remove', 'automagik'],
+      timeoutMs,
+    ),
+  );
+}
+
 /** Remove only Genie-owned runtime state and report every failure; shared marketplaces are opt-in. */
 export function removeRuntimeIntegrations(
   input: boolean | RemoveRuntimeIntegrationsOptions = false,
@@ -2235,21 +2538,7 @@ export function removeRuntimeIntegrations(
   const runner = options.runner ?? defaultRunner;
   const timeoutMs = options.timeoutMs ?? INTEGRATION_TIMEOUT_MS;
   const cwd = options.cwd ?? process.cwd();
-  const commands: Partial<Record<RuntimeName, string>> = {};
-  const resolutionErrors: Record<RuntimeName, string[]> = { codex: [], claude: [] };
-  const detected: Record<RuntimeName, boolean> = { codex: false, claude: false };
-  for (const runtime of ['codex', 'claude'] as const) {
-    if (options.detected?.[runtime] === false) continue;
-    try {
-      const command = resolveRuntimeExecutable(runtime, cwd, options.resolveExecutable);
-      if (command !== null) {
-        commands[runtime] = command;
-        detected[runtime] = true;
-      }
-    } catch (error) {
-      resolutionErrors[runtime].push(error instanceof Error ? error.message : String(error));
-    }
-  }
+  const resolution = resolveRemovalRuntimeCommands(options, cwd);
   const inspectedEvidence = inspectRuntimeIntegrationEvidence({
     codexHome: options.codexHome,
     claudeHome: options.claudeHome,
@@ -2258,79 +2547,34 @@ export function removeRuntimeIntegrations(
     codex: options.installedEvidence?.codex ?? inspectedEvidence.codex,
     claude: options.installedEvidence?.claude ?? inspectedEvidence.claude,
     errors: {
-      codex: [...inspectedEvidence.errors.codex, ...resolutionErrors.codex],
-      claude: [...inspectedEvidence.errors.claude, ...resolutionErrors.claude],
+      codex: [...inspectedEvidence.errors.codex, ...resolution.errors.codex],
+      claude: [...inspectedEvidence.errors.claude, ...resolution.errors.claude],
     },
   };
   const agents = removeCodexAgents(options.codexHome);
   const steps: IntegrationRemovalStep[] = [];
-  if (detected.codex) {
-    steps.push(
-      removalStep(
-        runner,
-        commands.codex as string,
-        'codex',
-        'plugin',
-        ['plugin', 'remove', 'genie@automagik'],
-        timeoutMs,
-      ),
-    );
-  }
-  if (!detected.codex) {
-    const unavailable = unavailableRemovalStep(
-      'codex',
-      evidence.codex,
-      evidence.errors.codex,
-      options.removeMarketplace === true,
-    );
-    if (unavailable) steps.push(unavailable);
-  }
-  if (detected.claude) {
-    steps.push(
-      removalStep(
-        runner,
-        commands.claude as string,
-        'claude',
-        'plugin',
-        ['plugin', 'uninstall', 'genie@automagik'],
-        timeoutMs,
-      ),
-    );
-  }
-  if (!detected.claude) {
-    const unavailable = unavailableRemovalStep(
-      'claude',
-      evidence.claude,
-      evidence.errors.claude,
-      options.removeMarketplace === true,
-    );
-    if (unavailable) steps.push(unavailable);
-  }
-  if (options.removeMarketplace) {
-    if (detected.codex) {
-      steps.push(
-        removalStep(
-          runner,
-          commands.codex as string,
-          'codex',
-          'marketplace',
-          ['plugin', 'marketplace', 'remove', 'automagik'],
-          timeoutMs,
-        ),
-      );
-    }
-    if (detected.claude) {
-      steps.push(
-        removalStep(
-          runner,
-          commands.claude as string,
-          'claude',
-          'marketplace',
-          ['plugin', 'marketplace', 'remove', 'automagik'],
-          timeoutMs,
-        ),
-      );
-    }
-  }
+  const removeMarketplace = options.removeMarketplace === true;
+  appendRuntimePluginRemoval(
+    steps,
+    'codex',
+    resolution,
+    evidence.codex,
+    evidence.errors.codex,
+    runner,
+    timeoutMs,
+    removeMarketplace,
+  );
+  appendRuntimePluginRemoval(
+    steps,
+    'claude',
+    resolution,
+    evidence.claude,
+    evidence.errors.claude,
+    runner,
+    timeoutMs,
+    removeMarketplace,
+  );
+  appendRuntimeMarketplaceRemoval(steps, 'codex', resolution, runner, timeoutMs, removeMarketplace);
+  appendRuntimeMarketplaceRemoval(steps, 'claude', resolution, runner, timeoutMs, removeMarketplace);
   return { ok: agents.failures.length === 0 && steps.every((step) => step.ok), agents, steps };
 }

@@ -14,7 +14,7 @@
  * - package.json (root)
  * - plugins/genie/.claude-plugin/plugin.json (Claude Code)
  * - plugins/genie/.codex-plugin/plugin.json (Codex)
- * - plugins/genie/package.json (smart-install version checks)
+ * - plugins/genie/package.json (runtime payload metadata)
  * - .claude-plugin/marketplace.json (marketplace listing)
  */
 
