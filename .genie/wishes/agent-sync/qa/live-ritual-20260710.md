@@ -53,9 +53,41 @@ Dogfood: **14 pass / 0 fail** —
   hermes linked, marketplace note (disabled, optional, never mutated)
 - throttle marker present; no downgrade, no clobber
 
+## Iteration 4 — STABLE leg, CLEAN after two live fixes (2026-07-11, v5.260711.3)
+
+PR #2545 (dev→main) human-merged; the content-match promotion verification (#2551) rode inside it,
+so the merge-method footgun is structurally dead — `latest.json` advanced 5.260710.2 → 5.260711.3.
+
+```
+$ genie update --stable -y            # dev 5.260710.13 → stable 5.260711.3 (signed tarball verified)
+$ genie update -y
+✔ Already up to date (v5.260711.3, channel stable)   # channel persisted
+▸ agent-sync: claude — unchanged 21, updated 1, stamp skipped
+▸ agent-sync: codex — adopted 22, created 1, legacy-curated removed (×23 — .curated → ~/.agents/skills migration)
+▸ agent-sync: hermes — symlink unchanged
+```
+
+Dogfood (codex checks updated for the agents-skills tier): **16 pass / 0 fail**; doctor all-green,
+incl. `Codex Genie plugin — v5.260711.3; enabled` after the repair below.
+
+Two bugs live-reproduced on this leg, both fixed on dev:
+1. **Auto-version bump re-broke biome** — `version.ts` stamps via `JSON.stringify(_, null, 2)` and
+   version.yml's format-step list was missing the codex manifest; third occurrence, turned #2545's
+   Quality Gate red. → **Fix #2552** (stamp self-formats via biome; yml list completed); proven live:
+   bump 5.260711.3 landed +1/−1 per file.
+2. **`genie setup --codex` false "refreshed"** — the `automagik` marketplace was pinned to a deleted
+   live-test worktree; the *"already added from a different source"* refusal matched the generic
+   `already` tolerance and `plugin add` no-ops on an installed id, so the plugin stayed at
+   v5.260710.9 while setup claimed success. → **Fix #2553** (repoint marketplace, verify + reinstall
+   once, fail loudly on non-convergence); manual remove→re-add converged this machine.
+
+Operational note: every auto-bump leaves the promotion PR's checks in `action_required` (head pushed
+by github-actions[bot]); close/reopen re-triggers them under a human actor.
+
 ## Residual (tracked, not blockers here)
 
-- Stable-channel leg: pending PR #2545 (dev→main) human merge — **merge method must be "Create a
-  merge commit"**; rebase/squash silently skips the stable release (version.yml:66 gate; bit #2537
-  and #2542). After stable publishes: `genie update --stable -y` + re-dogfood.
+- Fixes #2552/#2553 are on dev only — they ship with the next routine dev→main promotion.
+- One-hop aux-tree staleness: a pre-`.agents`-contract binary syncs only plugins/skills/templates on
+  its last swap; the marketplace manifests arrive on the following swap (this machine was healed by
+  extracting them from the verified 5.260711.3 tarball).
 - council-workflow qa/ (deliberation + audit runs) remains Felipe's own ritual.
