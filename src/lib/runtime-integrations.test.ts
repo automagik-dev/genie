@@ -10,6 +10,7 @@ import {
   resolveBundleRoot,
   setCodexPluginEnabled,
 } from './runtime-integrations.js';
+import { VERSION } from './version.js';
 
 const MANAGED_TOML = '# Managed by Genie. Remove with `genie uninstall`.\nname = "genie_reviewer"\n';
 
@@ -125,6 +126,90 @@ describe('resolveBundleRoot', () => {
     expect(resolveBundleRoot('/nonexistent/explicit')).toBe('/nonexistent/explicit');
     process.env.GENIE_BUNDLE_ROOT = '/nonexistent/env';
     expect(resolveBundleRoot()).toBe('/nonexistent/env');
+  });
+});
+
+describe('codex repair convergence (stale marketplace root / stale installed plugin)', () => {
+  const staleList = JSON.stringify({
+    installed: [{ pluginId: 'genie@automagik', enabled: true, version: '5.260710.9' }],
+  });
+  const currentList = JSON.stringify({
+    installed: [{ pluginId: 'genie@automagik', enabled: true, version: VERSION }],
+  });
+
+  function makeCodexHome(): string {
+    return mkdtempSync(join(tmpdir(), 'genie-codex-home-'));
+  }
+
+  test('marketplace registered from a different source is repointed at the bundle root', () => {
+    const bundleRoot = join(import.meta.dir, '..', '..');
+    const calls: string[] = [];
+    let marketplaceAdds = 0;
+    const results = installRuntimeIntegrations({
+      selection: 'codex',
+      bundleRoot,
+      codexHome: makeCodexHome(),
+      detected: { codex: true },
+      runner(command, args) {
+        const call = [command, ...args].join(' ');
+        calls.push(call);
+        if (args.join(' ') === `plugin marketplace add ${bundleRoot} --json`) {
+          marketplaceAdds += 1;
+          if (marketplaceAdds === 1) {
+            return {
+              exitCode: 1,
+              stdout: '',
+              stderr:
+                "Error: marketplace 'automagik' is already added from a different source; remove it before adding this source",
+            };
+          }
+        }
+        return { exitCode: 0, stdout: args.join(' ') === 'plugin list --json' ? currentList : '{}', stderr: '' };
+      },
+    });
+    expect(results[0].ok).toBe(true);
+    expect(calls).toContain('codex plugin marketplace remove automagik --json');
+    expect(marketplaceAdds).toBe(2);
+  });
+
+  test('installed plugin pinned to a stale root is reinstalled until version-matched', () => {
+    const bundleRoot = join(import.meta.dir, '..', '..');
+    const calls: string[] = [];
+    let lists = 0;
+    const results = installRuntimeIntegrations({
+      selection: 'codex',
+      bundleRoot,
+      codexHome: makeCodexHome(),
+      detected: { codex: true },
+      runner(command, args) {
+        calls.push([command, ...args].join(' '));
+        if (args.join(' ') === 'plugin list --json') {
+          lists += 1;
+          // before-state and first verify see the stale install; after the
+          // reinstall the registry reports the version-matched plugin.
+          return { exitCode: 0, stdout: lists <= 2 ? staleList : currentList, stderr: '' };
+        }
+        return { exitCode: 0, stdout: '{}', stderr: '' };
+      },
+    });
+    expect(results[0].ok).toBe(true);
+    expect(calls).toContain('codex plugin remove genie@automagik --json');
+    expect(calls.filter((call) => call === 'codex plugin add genie@automagik --json').length).toBe(2);
+  });
+
+  test('a repair that cannot converge fails loudly instead of reporting refreshed', () => {
+    const bundleRoot = join(import.meta.dir, '..', '..');
+    const results = installRuntimeIntegrations({
+      selection: 'codex',
+      bundleRoot,
+      codexHome: makeCodexHome(),
+      detected: { codex: true },
+      runner(_command, args) {
+        return { exitCode: 0, stdout: args.join(' ') === 'plugin list --json' ? staleList : '{}', stderr: '' };
+      },
+    });
+    expect(results[0].ok).toBe(false);
+    expect(results[0].detail).toMatch(/stuck at v5\.260710\.9/);
   });
 });
 
