@@ -553,6 +553,50 @@ describe('authorizeCodexActivation — fingerprint-bound permit from a genuine a
   });
 });
 
+describe('brand unforgeability — the consent entry point is the only route to a genuine brand', () => {
+  test('the brand classes are not runtime exports, so `ClassName.mint(...)` has no escape hatch', () => {
+    // A private constructor blocks `new`/`extends` but NOT `Class.mint(...)`; removing
+    // the runtime export removes the only handle an importer could call `mint` through.
+    expect((mod as Record<string, unknown>).RetirementAssertion).toBeUndefined();
+    expect((mod as Record<string, unknown>).ActivationPermit).toBeUndefined();
+    // Nothing on the module surface exposes the minters either.
+    for (const value of Object.values(mod as Record<string, unknown>)) {
+      expect((value as { mint?: unknown } | null)?.mint).toBeUndefined();
+    }
+  });
+
+  test('the only granted authorization flows from requestRetirementAssertion under a TTY ConsentContext', () => {
+    const snapshot = pendingSnapshot();
+    const consent = requestRetirementAssertion(snapshot, ttyContext());
+    if (consent.result !== 'granted') throw new Error('expected the consent entry point to grant');
+    const result = authorizeCodexActivation({
+      state: classifyCodexActivation(snapshot),
+      snapshot,
+      invocation: { entry: 'setup-codex', assertion: consent.assertion },
+    });
+    expect(result.result).toBe('granted');
+  });
+
+  test('an assertion whose fields are copied off a genuine one is still refused (membership, not shape)', () => {
+    const snapshot = pendingSnapshot();
+    const consent = requestRetirementAssertion(snapshot, ttyContext());
+    if (consent.result !== 'granted') throw new Error('expected the consent entry point to grant');
+    const genuine = consent.assertion;
+    // Structural clone: identical readonly fields, but never registered in the brand WeakSet.
+    const clone = {
+      observedFrom: genuine.observedFrom,
+      observedTarget: genuine.observedTarget,
+      assertedAt: genuine.assertedAt,
+    } as unknown as mod.RetirementAssertion;
+    const result = authorizeCodexActivation({
+      state: classifyCodexActivation(snapshot),
+      snapshot,
+      invocation: { entry: 'setup-codex', assertion: clone },
+    });
+    expect(result.result).toBe('refused');
+  });
+});
+
 // ============================================================================
 // Observation — bounded, inert, physical-fault aware
 // ============================================================================

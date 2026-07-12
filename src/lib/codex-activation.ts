@@ -748,7 +748,7 @@ const MINTED_PERMITS = new WeakSet<object>();
  * point can construct one, and only for the current process. It is authority,
  * never proof of task liveness, and is never persisted.
  */
-export class RetirementAssertion {
+class RetirementAssertion {
   private constructor(
     readonly observedFrom: string | null,
     readonly observedTarget: string,
@@ -766,7 +766,7 @@ export class RetirementAssertion {
 export type PermitCapability = 'activation' | 'journal-quarantine';
 
 /** An opaque, process-local capability bound to an activation-request fingerprint. */
-export class ActivationPermit {
+class ActivationPermit {
   private constructor(
     readonly capability: PermitCapability,
     readonly fingerprint: ActivationRequestFingerprint,
@@ -785,6 +785,11 @@ export class ActivationPermit {
     return permit;
   }
 }
+
+// Brands are type-only exports: importers may name them in type position, but the
+// runtime classes (and their `static mint`) never leave this module, so the only
+// route to a genuine, WeakSet-registered brand is the guarded consent entry point.
+export type { RetirementAssertion, ActivationPermit };
 
 export interface ActivationRequestFingerprint {
   observedFrom: string | null;
