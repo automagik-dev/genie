@@ -1,15 +1,15 @@
 /**
  * Tests for the agent-sync managed-asset removal in `genie uninstall`.
  *
- * The full uninstallCommand is interactive (confirm prompt) and targets the real
- * home; here we only prove the manifest-verified collect/remove seams — the code
- * that decides WHICH external agent assets uninstall is allowed to delete. Every
- * path is injected into a tmpdir, so no test ever touches the real HOME.
+ * The interactive prompt stays out of scope. Manifest-verified removal seams and
+ * a fully injected noninteractive flow run under a tmpdir, so no test touches the
+ * real HOME.
  *
  * Ownership contract under test: uninstall deletes only what genie provably
  * shipped — a managed dir whose computeDirDigest still matches its manifest.
- * A digest MISMATCH means the user edited the dir: it is kept byte-identical at
- * the same path. Uninstall cannot rename, disable, or rewrite user data.
+ * A managed-skill digest mismatch stays byte-identical at the same path. A flat
+ * agent mismatch is transactionally disowned and kept aside so it stops loading
+ * while its exact user bytes survive.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
@@ -17,6 +17,7 @@ import { createHash } from 'node:crypto';
 import {
   chmodSync,
   existsSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -34,7 +35,10 @@ import {
   MANAGED_BY,
   PHYSICAL_TREE_IDENTITY_VERSION,
   WORKFLOW_MANIFEST_NAME,
+  acquireAgentSyncLock,
   computeDirDigest,
+  computeFileDigest,
+  readAgentFilesManifest,
   stampWorkflow,
 } from '../lib/agent-sync.js';
 import {
@@ -43,10 +47,12 @@ import {
   collectAgentSyncAssets,
   executeUninstallBatch,
   hasPendingUninstallTransactions,
+  hasRemovableGenieInstallState,
   hasUninstallWork,
   inspectUninstallPlan,
   isGenieSymlink,
   isSameOrContainedPath,
+  performUninstall,
   readUninstallBatchDecision,
   recordUninstallBatchDecision,
   recoverUninstallTransactions,
@@ -77,8 +83,21 @@ describe('agent-sync managed-asset removal', () => {
   let hermesHome: string;
   let genieHome: string;
 
+  const fixedNow = () => new Date('2026-07-11T12:00:00.000Z');
+
   function targets() {
-    return { claudeDir, codexDir, agentsSkillsDir, hermesHome, genieHome };
+    return { claudeDir, codexDir, agentsSkillsDir, hermesHome, genieHome, now: fixedNow };
+  }
+
+  function uninstallBackupCollisionPath(): string {
+    return join(
+      genieHome,
+      'state-backups',
+      'agent-sync-uninstall-2026-07-11T12:00:00.000Z',
+      'claude',
+      'agents',
+      'scout.md',
+    );
   }
 
   /** A managed dir exactly as agent-sync ships it: manifest digest matches content. */
@@ -121,6 +140,22 @@ describe('agent-sync managed-asset removal', () => {
     writeFileSync(join(dir, 'SKILL.md'), content, 'utf8');
     const manifest = { managedBy: MANAGED_BY, version: '1', digest: computeDirDigest(dir), syncedAt: 'now' };
     writeFileSync(join(dir, '.genie-sync.json'), JSON.stringify(manifest), 'utf8');
+  }
+
+  /** Add one flat Claude agent plus its entry in the shared per-file manifest. */
+  function managedAgent(name: string, content = '# managed agent\n'): string {
+    const parent = join(claudeDir, 'agents');
+    const path = join(parent, name);
+    mkdirSync(parent, { recursive: true });
+    writeFileSync(path, content, 'utf8');
+    const manifest = readAgentFilesManifest(parent) ?? { managedBy: MANAGED_BY, files: {} };
+    manifest.files[name] = {
+      digest: computeFileDigest(path),
+      version: '1',
+      syncedAt: '2026-07-11T10:00:00.000Z',
+    };
+    writeFileSync(join(parent, '.genie-sync.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+    return path;
   }
 
   beforeEach(() => {
@@ -711,6 +746,461 @@ describe('agent-sync managed-asset removal', () => {
     expect(existsSync(uninstallBatchJournalPath(genieHome))).toBe(false);
     expect(existsSync(replacement)).toBe(true);
     expect(readFileSync(join(replacement, 'SKILL.md'), 'utf8')).toBe('# swapped in between attempts\n');
+  });
+  test('collects only flat Claude agents represented in the shared manifest', () => {
+    const scout = managedAgent('scout.md');
+    const own = join(claudeDir, 'agents', 'my-own-agent.md');
+    writeFileSync(own, '# entirely mine\n', 'utf8');
+
+    const assets = collectAgentSyncAssets(targets());
+    const agentPaths = assets.filter((asset) => asset.kind === 'agent').map((asset) => asset.path);
+
+    expect(agentPaths).toEqual([scout]);
+    expect(agentPaths).not.toContain(own);
+  });
+
+  test('agent uninstall backs up/removes clean entries, keeps modified bytes, and never touches user files', () => {
+    const scout = managedAgent('scout.md', '# shipped scout\n');
+    const reviewer = managedAgent('reviewer.md', '# shipped reviewer\n');
+    const reviewerBytes = Buffer.from('# reviewer with local edits\n');
+    writeFileSync(reviewer, reviewerBytes);
+    const own = join(claudeDir, 'agents', 'my-own-agent.md');
+    const ownBytes = Buffer.from([0x23, 0x20, 0x6d, 0x79, 0x20, 0x6f, 0x77, 0x6e, 0x0a]);
+    writeFileSync(own, ownBytes);
+
+    const { removed, kept } = removeAgentSyncAssets(targets());
+    const reviewerKept = `${reviewer}.genie-kept`;
+
+    expect(removed).toContain(scout);
+    expect(existsSync(scout)).toBe(false);
+    expect(kept).toContain(reviewerKept);
+    expect(existsSync(reviewer)).toBe(false);
+    expect(readFileSync(reviewerKept)).toEqual(reviewerBytes);
+    expect(readFileSync(own)).toEqual(ownBytes);
+    expect(readAgentFilesManifest(join(claudeDir, 'agents'))).toBeNull();
+
+    const backup = join(
+      genieHome,
+      'state-backups',
+      'agent-sync-uninstall-2026-07-11T12:00:00.000Z',
+      'claude',
+      'agents',
+      'scout.md',
+    );
+    expect(readFileSync(backup, 'utf8')).toBe('# shipped scout\n');
+  });
+
+  test('a symlink backup collision and its victim survive while uninstall allocates a distinct root', () => {
+    const scout = managedAgent('scout.md', '# shipped scout\n');
+    const collision = uninstallBackupCollisionPath();
+    const victim = join(tmp, 'uninstall-backup-symlink-victim');
+    const victimBytes = Buffer.from('symlink victim bytes\n');
+    writeFileSync(victim, victimBytes);
+    mkdirSync(dirname(collision), { recursive: true });
+    symlinkSync(victim, collision);
+
+    const result = removeAgentSyncAssets(targets());
+    const distinctBackup = join(
+      genieHome,
+      'state-backups',
+      'agent-sync-uninstall-2026-07-11T12:00:00.000Z-1',
+      'claude',
+      'agents',
+      'scout.md',
+    );
+
+    expect(result.removed).toEqual([scout]);
+    expect(lstatSync(collision).isSymbolicLink()).toBe(true);
+    expect(readFileSync(victim)).toEqual(victimBytes);
+    expect(readFileSync(distinctBackup, 'utf8')).toBe('# shipped scout\n');
+  });
+
+  test('a multiply-linked backup collision preserves both prior names and creates a distinct backup', () => {
+    managedAgent('scout.md', '# shipped scout\n');
+    const collision = uninstallBackupCollisionPath();
+    const victim = join(tmp, 'uninstall-backup-hardlink-victim');
+    const victimBytes = Buffer.from('hardlink victim bytes\n');
+    writeFileSync(victim, victimBytes);
+    mkdirSync(dirname(collision), { recursive: true });
+    linkSync(victim, collision);
+
+    removeAgentSyncAssets(targets());
+    const distinctBackup = join(
+      genieHome,
+      'state-backups',
+      'agent-sync-uninstall-2026-07-11T12:00:00.000Z-1',
+      'claude',
+      'agents',
+      'scout.md',
+    );
+
+    expect(lstatSync(victim).nlink).toBe(2);
+    expect(readFileSync(victim)).toEqual(victimBytes);
+    expect(readFileSync(collision)).toEqual(victimBytes);
+    expect(readFileSync(distinctBackup, 'utf8')).toBe('# shipped scout\n');
+  });
+
+  test('an existing regular backup collision is never overwritten', () => {
+    managedAgent('scout.md', '# shipped scout\n');
+    const collision = uninstallBackupCollisionPath();
+    const collisionBytes = Buffer.from('prior regular backup\n');
+    mkdirSync(dirname(collision), { recursive: true });
+    writeFileSync(collision, collisionBytes);
+
+    removeAgentSyncAssets(targets());
+    const distinctBackup = join(
+      genieHome,
+      'state-backups',
+      'agent-sync-uninstall-2026-07-11T12:00:00.000Z-1',
+      'claude',
+      'agents',
+      'scout.md',
+    );
+
+    expect(readFileSync(collision)).toEqual(collisionBytes);
+    expect(readFileSync(distinctBackup, 'utf8')).toBe('# shipped scout\n');
+  });
+
+  test('a replacement at the captured-to-remove boundary survives live and stays unowned', () => {
+    const scout = managedAgent('scout.md', '# shipped scout\n');
+    const replacementBytes = Buffer.from('# concurrent replacement\n');
+    let crossedBarrier = false;
+
+    const result = removeAgentSyncAssets({
+      ...targets(),
+      beforeAgentFileMutation: (event) => {
+        if (!crossedBarrier && event.operation === 'remove' && event.path === scout) {
+          crossedBarrier = true;
+          writeFileSync(scout, replacementBytes);
+        }
+      },
+    });
+
+    expect(crossedBarrier).toBe(true);
+    expect(result.removed).not.toContain(scout);
+    expect(result.kept).toEqual([]);
+    expect(readFileSync(scout)).toEqual(replacementBytes);
+    expect(readAgentFilesManifest(join(claudeDir, 'agents'))).toBeNull();
+    expect(result.advisories?.some((line) => line.includes('concurrently appeared'))).toBe(true);
+    expect(
+      readFileSync(
+        join(
+          genieHome,
+          'state-backups',
+          'agent-sync-uninstall-2026-07-11T12:00:00.000Z',
+          'claude',
+          'agents',
+          'scout.md',
+        ),
+      ),
+    ).toEqual(Buffer.from('# shipped scout\n'));
+  });
+
+  test('a replacement at the captured-to-keep boundary stays live while prior edits are kept', () => {
+    const reviewer = managedAgent('reviewer.md', '# shipped reviewer\n');
+    writeFileSync(reviewer, '# initial local edit\n');
+    const newestBytes = Buffer.from('# newest edit at barrier\n');
+
+    const result = removeAgentSyncAssets({
+      ...targets(),
+      beforeAgentFileMutation: (event) => {
+        if (event.operation === 'keep' && event.path === reviewer) writeFileSync(reviewer, newestBytes);
+      },
+    });
+
+    expect(result.kept).toHaveLength(1);
+    expect(readFileSync(result.kept[0] as string, 'utf8')).toBe('# initial local edit\n');
+    expect(readFileSync(reviewer)).toEqual(newestBytes);
+    expect(readAgentFilesManifest(join(claudeDir, 'agents'))).toBeNull();
+    expect(result.advisories?.some((line) => line.includes('concurrently appeared'))).toBe(true);
+  });
+
+  test('manifest CAS failure restores exact staged bytes and never claims removal', () => {
+    const scout = managedAgent('scout.md', '# shipped scout\n');
+    const agentsDir = join(claudeDir, 'agents');
+    const manifestPath = join(agentsDir, '.genie-sync.json');
+    const scoutBytes = readFileSync(scout);
+    let changedDigest = '';
+
+    const result = removeAgentSyncAssets({
+      ...targets(),
+      beforeAgentFileMutation: (event) => {
+        if (event.operation !== 'remove' || event.path !== scout) return;
+        const manifest = readAgentFilesManifest(agentsDir);
+        if (manifest === null) throw new Error('fixture manifest missing at CAS barrier');
+        changedDigest = 'concurrently-reowned-digest';
+        manifest.files['scout.md'] = { ...manifest.files['scout.md']!, digest: changedDigest };
+        writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+      },
+    });
+
+    expect(result.removed).not.toContain(scout);
+    expect(result.kept).toEqual([]);
+    expect(readFileSync(scout)).toEqual(scoutBytes);
+    expect(readAgentFilesManifest(agentsDir)?.files['scout.md']?.digest).toBe(changedDigest);
+    expect(result.advisories?.some((line) => line.includes('manifest ownership changed'))).toBe(true);
+  });
+
+  test('a manifest-owned directory at an agent filename is preserved at an exclusive kept path', () => {
+    const scout = managedAgent('scout.md', '# shipped scout\n');
+    rmSync(scout);
+    mkdirSync(scout);
+    writeFileSync(join(scout, 'precious.txt'), 'directory bytes\n');
+
+    const result = removeAgentSyncAssets(targets());
+
+    expect(result.kept).toEqual([`${scout}.genie-kept`]);
+    expect(readFileSync(join(`${scout}.genie-kept`, 'precious.txt'), 'utf8')).toBe('directory bytes\n');
+    expect(existsSync(scout)).toBe(false);
+  });
+
+  test('a manifest-owned symlink is kept as a symlink without following or changing its victim', () => {
+    const scout = managedAgent('scout.md', '# shipped scout\n');
+    const victim = join(tmp, 'agent-symlink-victim');
+    const victimBytes = Buffer.from('victim stays untouched\n');
+    writeFileSync(victim, victimBytes);
+    rmSync(scout);
+    symlinkSync(victim, scout);
+
+    const result = removeAgentSyncAssets(targets());
+    const keptPath = `${scout}.genie-kept`;
+
+    expect(result.kept).toEqual([keptPath]);
+    expect(lstatSync(keptPath).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(keptPath)).toBe(victim);
+    expect(readFileSync(victim)).toEqual(victimBytes);
+  });
+
+  test('the shared sync lock makes uninstall fail closed without touching live or manifest bytes', () => {
+    const scout = managedAgent('scout.md', '# shipped scout\n');
+    const manifestPath = join(claudeDir, 'agents', '.genie-sync.json');
+    const manifestBytes = readFileSync(manifestPath);
+    writeFileSync(join(genieHome, '.agent-sync.lock'), 'holder\n');
+
+    const result = removeAgentSyncAssets(targets());
+
+    expect(result.skipped).toContain('holds the lock');
+    expect(readFileSync(scout, 'utf8')).toBe('# shipped scout\n');
+    expect(readFileSync(manifestPath)).toEqual(manifestBytes);
+  });
+
+  test('fixed staging debris remains byte-identical while two uninstall runs converge', () => {
+    const scout = managedAgent('scout.md', '# shipped scout\n');
+    const agentsDir = join(claudeDir, 'agents');
+    const manifestDebris = join(agentsDir, '.genie-sync.json.genie-sync.staging');
+    const uninstallDebris = join(agentsDir, '.genie-uninstall.staging');
+    const manifestDebrisBytes = Buffer.from('manifest stage debris\n');
+    const uninstallDebrisBytes = Buffer.from('uninstall stage debris\n');
+    writeFileSync(manifestDebris, manifestDebrisBytes);
+    writeFileSync(uninstallDebris, uninstallDebrisBytes);
+
+    const first = removeAgentSyncAssets(targets());
+    const second = removeAgentSyncAssets(targets());
+
+    expect(first.removed).toEqual([scout]);
+    expect(second).toEqual({ removed: [], kept: [], identityMismatch: [], failures: [] });
+    expect(readFileSync(manifestDebris)).toEqual(manifestDebrisBytes);
+    expect(readFileSync(uninstallDebris)).toEqual(uninstallDebrisBytes);
+  });
+
+  test('modified-agent kept allocation never overwrites prior base or timestamp artifacts', () => {
+    const reviewer = managedAgent('reviewer.md', '# shipped reviewer\n');
+    const editedBytes = Buffer.from('# newest local reviewer edits\n');
+    writeFileSync(reviewer, editedBytes);
+    const baseKept = `${reviewer}.genie-kept`;
+    const timestampKept = `${baseKept}-${fixedNow().getTime()}`;
+    const baseBytes = Buffer.from('# older base kept artifact\n');
+    const timestampBytes = Buffer.from('# older timestamp kept artifact\n');
+    writeFileSync(baseKept, baseBytes);
+    writeFileSync(timestampKept, timestampBytes);
+
+    const result = removeAgentSyncAssets(targets());
+    const newestKept = `${timestampKept}-1`;
+
+    expect(result.kept).toEqual([newestKept]);
+    expect(readFileSync(baseKept)).toEqual(baseBytes);
+    expect(readFileSync(timestampKept)).toEqual(timestampBytes);
+    expect(readFileSync(newestKept)).toEqual(editedBytes);
+    expect(existsSync(reviewer)).toBe(false);
+  });
+
+  test('missing manifest-owned files are pruned and a second uninstall is a strict no-op', () => {
+    const live = managedAgent('live.md', '# live managed agent\n');
+    const parent = join(claudeDir, 'agents');
+    const manifest = readAgentFilesManifest(parent);
+    if (manifest === null) throw new Error('fixture manifest missing');
+    manifest.files['missing.md'] = {
+      digest: 'deadbeef',
+      version: '1',
+      syncedAt: '2026-07-11T10:00:00.000Z',
+    };
+    writeFileSync(join(parent, '.genie-sync.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+
+    const first = removeAgentSyncAssets(targets());
+
+    expect(first.removed).toEqual([live]);
+    expect(first.kept).toEqual([]);
+    expect(existsSync(live)).toBe(false);
+    expect(readAgentFilesManifest(parent)).toBeNull();
+    expect(removeAgentSyncAssets(targets())).toEqual({ removed: [], kept: [], identityMismatch: [], failures: [] });
+  });
+
+  test('the fully injected uninstall flow is a strict second-run no-op with backups-only GENIE_HOME', () => {
+    const scout = managedAgent('scout.md', '# shipped scout\n');
+    const own = join(claudeDir, 'agents', 'my-own-agent.md');
+    const ownBytes = Buffer.from([0x00, 0x23, 0x20, 0x6d, 0x69, 0x6e, 0x65, 0xff]);
+    writeFileSync(own, ownBytes);
+    const installState = join(genieHome, 'plugins', 'genie', 'payload.txt');
+    mkdirSync(join(genieHome, 'plugins', 'genie'), { recursive: true });
+    writeFileSync(installState, 'remove me\n', 'utf8');
+
+    let runtimeRemovalCalls = 0;
+    const dependencies = {
+      agentSyncTargets: targets(),
+      orchestrationRulesPath: join(tmp, 'no-legacy-rules'),
+      removeRuntimeIntegrations: () => {
+        runtimeRemovalCalls += 1;
+      },
+    };
+
+    performUninstall(false, [], genieHome, true, true, false, dependencies);
+
+    const backup = join(
+      genieHome,
+      'state-backups',
+      'agent-sync-uninstall-2026-07-11T12:00:00.000Z',
+      'claude',
+      'agents',
+      'scout.md',
+    );
+    expect(existsSync(scout)).toBe(false);
+    expect(readFileSync(backup, 'utf8')).toBe('# shipped scout\n');
+    expect(readFileSync(own)).toEqual(ownBytes);
+    expect(existsSync(installState)).toBe(false);
+    expect(hasRemovableGenieInstallState(genieHome)).toBe(false);
+    expect(runtimeRemovalCalls).toBe(1);
+
+    const backupBytes = readFileSync(backup);
+    performUninstall(false, [], genieHome, true, true, false, dependencies);
+
+    expect(runtimeRemovalCalls).toBe(1);
+    expect(readFileSync(backup)).toEqual(backupBytes);
+    expect(readFileSync(own)).toEqual(ownBytes);
+  });
+
+  test('INV1: uninstall preserves captured bytes mutated after validation instead of discarding them', () => {
+    const scout = managedAgent('scout.md', '# shipped scout\n');
+    const agentsDir = join(claudeDir, 'agents');
+    const mutatedBytes = Buffer.from('# mutated after capture\n');
+
+    const result = removeAgentSyncAssets({
+      ...targets(),
+      beforeAgentFileMutation: (event) => {
+        if (event.operation !== 'remove' || event.path !== scout) return;
+        // The live file is already quarantined at this barrier; mutate the captured inode.
+        const quarantine = readdirSync(agentsDir).find((name) => name.startsWith('.scout.md.agent-retire-'));
+        if (quarantine === undefined) throw new Error('captured quarantine dir not found');
+        writeFileSync(join(agentsDir, quarantine, 'object'), mutatedBytes);
+      },
+    });
+
+    expect(result.removed).toEqual([scout]);
+    expect(readAgentFilesManifest(agentsDir)).toBeNull();
+    // the mutated bytes survive visibly instead of being unlinked into nothing
+    expect(result.kept).toEqual([`${scout}.genie-kept`]);
+    expect(readFileSync(`${scout}.genie-kept`)).toEqual(mutatedBytes);
+    expect(result.advisories?.some((line) => line.includes('changed after validation'))).toBe(true);
+    // the backup still holds exactly the validated bytes
+    expect(readFileSync(uninstallBackupCollisionPath(), 'utf8')).toBe('# shipped scout\n');
+  });
+
+  test('INV4: a replacement manifest installed during relinquish is detected — never a false success', () => {
+    const scout = managedAgent('scout.md', '# shipped scout\n');
+    const agentsDir = join(claudeDir, 'agents');
+    const manifestPath = join(agentsDir, '.genie-sync.json');
+    const replacement = {
+      managedBy: MANAGED_BY,
+      files: { 'scout.md': { digest: 'replacement-owner', version: '2', syncedAt: 'later' } },
+    };
+    const replacementBytes = Buffer.from(`${JSON.stringify(replacement, null, 2)}\n`);
+
+    const result = removeAgentSyncAssets({
+      ...targets(),
+      // fires inside the removal commit, after the base manifest is captured away
+      beforeAgentManifestCommit: () => {
+        writeFileSync(manifestPath, replacementBytes);
+      },
+    });
+
+    expect(result.removed).toEqual([]);
+    expect(result.kept).toEqual([]);
+    expect(readFileSync(scout, 'utf8')).toBe('# shipped scout\n'); // rollback restored the live agent
+    expect(readFileSync(manifestPath)).toEqual(replacementBytes); // the replacement stays live, unclobbered
+    expect(result.advisories?.some((line) => line.includes('replacement manifest appeared'))).toBe(true);
+    expect(result.advisories?.some((line) => line.includes('preserved previous manifest'))).toBe(true);
+  });
+
+  test('INV5: one lock spans asset removal and canonical-source deletion in the full uninstall', () => {
+    const scout = managedAgent('scout.md', '# shipped scout\n');
+    const sourcePayload = join(genieHome, 'plugins', 'genie', 'agents', 'scout.md');
+    mkdirSync(dirname(sourcePayload), { recursive: true });
+    writeFileSync(sourcePayload, '# canonical source\n', 'utf8');
+
+    let probedDuringAssets = false;
+    let probedBetween = false;
+    const dependencies = {
+      agentSyncTargets: {
+        ...targets(),
+        beforeAgentFileMutation: () => {
+          probedDuringAssets = true;
+          expect(acquireAgentSyncLock(genieHome)).toBeNull(); // lock held during asset removal
+        },
+      },
+      orchestrationRulesPath: join(tmp, 'no-legacy-rules'),
+      removeRuntimeIntegrations: () => {
+        probedBetween = true;
+        expect(acquireAgentSyncLock(genieHome)).toBeNull(); // still held in the former gap
+        expect(existsSync(sourcePayload)).toBe(true); // canonical source not yet deleted
+      },
+    };
+
+    performUninstall(false, [], genieHome, true, true, false, dependencies);
+
+    expect(probedDuringAssets).toBe(true);
+    expect(probedBetween).toBe(true);
+    expect(existsSync(sourcePayload)).toBe(false); // source deleted under the same lock
+    expect(existsSync(scout)).toBe(false);
+    const released = acquireAgentSyncLock(genieHome);
+    expect(released).not.toBeNull(); // lock released only after everything
+    released?.release();
+    expect(hasRemovableGenieInstallState(genieHome)).toBe(false);
+  });
+
+  test('INV6: an exception after staging restores the live agent — no hidden bytes, ownership intact', () => {
+    const reviewer = managedAgent('reviewer.md', '# shipped reviewer\n');
+    const editedBytes = Buffer.from('# precious local edits\n');
+    writeFileSync(reviewer, editedBytes);
+    const agentsDir = join(claudeDir, 'agents');
+
+    const first = removeAgentSyncAssets({
+      ...targets(),
+      beforeAgentFileMutation: (event) => {
+        if (event.operation === 'keep') throw new Error('injected post-staging fault');
+      },
+    });
+
+    expect(first.kept).toEqual([]);
+    expect(first.removed).toEqual([]);
+    expect(readFileSync(reviewer)).toEqual(editedBytes); // live path restored, byte-identical
+    expect(readAgentFilesManifest(agentsDir)?.files['reviewer.md']).toBeDefined(); // ownership unchanged
+    expect(first.advisories?.some((line) => line.includes('injected post-staging fault'))).toBe(true);
+    // no hidden staging or quarantine debris is left holding the bytes
+    expect(readdirSync(agentsDir).sort()).toEqual(['.genie-sync.json', 'reviewer.md']);
+
+    const second = removeAgentSyncAssets(targets()); // clean retry succeeds
+    expect(second.kept).toEqual([`${reviewer}.genie-kept`]);
+    expect(readFileSync(`${reviewer}.genie-kept`)).toEqual(editedBytes);
+    expect(readAgentFilesManifest(agentsDir)).toBeNull();
   });
 });
 
