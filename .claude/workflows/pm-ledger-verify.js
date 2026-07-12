@@ -11,10 +11,12 @@ export const meta = {
 //   review/finding ledger). evidenceFile: optional absolute path to a raw-evidence
 //   bundle (command outputs, quotes) that ledger claims must be grounded in.
 // repoRoot: defaults to the git root containing wishDir.
-const wishDir = args && args.wishDir
+// Tolerate a JSON-encoded string args (some invocation paths stringify it).
+const parsedArgs = typeof args === 'string' ? JSON.parse(args) : args
+const wishDir = parsedArgs && parsedArgs.wishDir
 if (!wishDir) throw new Error('pm-ledger-verify requires args.wishDir (absolute path to the wish directory)')
-const evidenceFile = (args && args.evidenceFile) || null
-const repoRoot = (args && args.repoRoot) || null
+const evidenceFile = (parsedArgs && parsedArgs.evidenceFile) || null
+const repoRoot = (parsedArgs && parsedArgs.repoRoot) || null
 
 const FINDINGS = {
   type: 'object',

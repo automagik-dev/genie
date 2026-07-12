@@ -17,6 +17,19 @@ Result: **12 findings, 4 must-fix — all corrected before anything was committe
 
 The eight non-must-fix findings (stale "final" labels on superseded snapshots, merged evidence from two different builds in one gate cell, an unverifiable "were not touched" claim about non-baseline personal skills) were also applied where cheap; each correction is visible in commit `34fdae4d`.
 
+## Run 2 — 2026-07-12, successor finalization at head `e3abf2b5`
+
+Inputs: uncommitted ledger edits recording F42/F43 fixes, replay rows F44–F52, and the refreshed validation snapshot; evidence bundle with the ledger diff, aggregate/merge-sim/live-audit outputs, replay verdicts, and reviewer report quotes.
+
+Result: **14 findings, 10 must-fix (two distinct defects reported across lenses) — all corrected before commit.**
+
+| # | Must-fix defect | Correction |
+|---|-----------------|------------|
+| 1 | Pass-count off by one everywhere: ledgers said "1,435 pass, 1 skip" but bun's "Ran 1435 tests" total includes the skip — the run had 1,434 pass | All occurrences corrected to 1,434 pass (1,435 ran); the earlier quiet-run figure corrected the same way |
+| 2 | "Seven-lane replay ran on the final tree" — it ran at `8e147d87`, three commits before the shipped head; loop-1 fixes were covered by a targeted re-review, not a re-replay | Summary, INDEX, and narrative rephrased to name `8e147d87` explicitly and state the re-review-not-replay coverage of the shipped head |
+
+Non-must-fix corrections also applied: stale 2026-07-11 status sentence anchored as superseded, F22's dangling snapshot cross-reference removed, F40 updated for the merged PR, and the Darwin ARM64 gate re-labeled "PASS at `d9b0afbd` only" since no package was rebuilt at the successor head.
+
 ## Rerun instructions
 
 From a Claude Code session in this repository:
