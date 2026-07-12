@@ -409,6 +409,19 @@ describe('same-name collision preservation', () => {
     expect(readFileSync(join(outside, 'SKILL.md'), 'utf8')).toBe('# personal symlink target\n');
   });
 
+  test('a same-name dangling skill symlink is preserved instead of failing the sync', () => {
+    present(fixture.claudeDir);
+    const alphaDir = join(fixture.claudeDir, 'skills', 'alpha');
+    mkdirSync(dirname(alphaDir), { recursive: true });
+    symlinkSync(join(fixture.root, 'target-that-does-not-exist'), alphaDir);
+
+    const report = agentReport(run(), 'claude');
+
+    expect(skillAction(report, 'alpha')).toBe('skipped-unmanaged-kept');
+    expect(report.failures ?? []).toEqual([]);
+    expect(lstatSync(alphaDir).isSymbolicLink()).toBe(true);
+  });
+
   test('a dir genie never shipped is left completely untouched', () => {
     present(fixture.claudeDir);
     const customDir = join(fixture.claudeDir, 'skills', 'my-custom-skill');

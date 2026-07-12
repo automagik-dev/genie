@@ -1224,11 +1224,15 @@ function syncOneSkill(ctx: RunContext, skill: SourceSkill, targetParent: string)
   recoverLegacyManagedDirSwap(destDir);
   const sourceDigest = computeDirDigest(skill.dir);
   const manifest = buildManifest(ctx, sourceDigest);
-  if (!existsSync(destDir)) {
+  // lstat, not existsSync: a dangling symlink is absent to existsSync but present to the
+  // lstat-based identity check that guards promotion. Treating it as absent would stage a
+  // create, then abort on the "changed before promotion" conflict it can never satisfy.
+  const destStat = lstatSafe(destDir);
+  if (destStat === null) {
     writeManagedDir(ctx, skill.dir, destDir, manifest, { contentDigest: null, manifestDigest: null });
     return { action: 'created' };
   }
-  if (lstatSafe(destDir)?.isSymbolicLink()) {
+  if (destStat.isSymbolicLink()) {
     return { action: 'skipped-unmanaged-kept', detail: 'same-name symlink preserved and never followed' };
   }
   const existing = readManifest(destDir);
