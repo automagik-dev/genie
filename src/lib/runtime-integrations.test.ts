@@ -592,6 +592,126 @@ describe('durable integration consent and Claude payload provenance', () => {
     expect(retry).toBeNull();
     expect(retryCalls).toEqual(['claude plugin list --json']);
   });
+
+  test('Claude disabled-state restore tolerates an already-disabled plugin', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-claude-already-disabled-'));
+    const statePath = join(root, 'refresh.json');
+    const result = convergeClaudePlugin({
+      command: 'claude',
+      bundleRoot: root,
+      expectedVersion: VERSION,
+      installIfAbsent: false,
+      statePath,
+      verifyClaudePayload: () => undefined,
+      runner(_command, args) {
+        const call = args.join(' ');
+        if (call === 'plugin list --json') {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify([{ id: 'genie@automagik', enabled: false, version: VERSION }]),
+            stderr: '',
+          };
+        }
+        if (call === 'plugin disable genie@automagik') {
+          return {
+            exitCode: 1,
+            stdout: '',
+            stderr: '✘ Failed to disable plugin "genie@automagik": Plugin "genie@automagik" is already disabled',
+          };
+        }
+        return { exitCode: 0, stdout: '{}', stderr: '' };
+      },
+    });
+
+    expect(result?.ok).toBe(true);
+    expect(result?.preservedDisabled).toBe(true);
+    expect(existsSync(statePath)).toBe(false);
+  });
+
+  test('Claude stale planned intent defers to a live enabled plugin instead of re-disabling it', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-claude-stale-planned-intent-'));
+    const statePath = join(root, 'refresh.json');
+    writeFileSync(
+      statePath,
+      `${JSON.stringify({
+        schemaVersion: 4,
+        runtime: 'claude',
+        installed: true,
+        enabled: false,
+        createdAt: new Date().toISOString(),
+        phase: 'planned',
+      })}\n`,
+    );
+    const calls: string[] = [];
+    const result = convergeClaudePlugin({
+      command: 'claude',
+      bundleRoot: root,
+      expectedVersion: VERSION,
+      installIfAbsent: false,
+      statePath,
+      verifyClaudePayload: () => undefined,
+      runner(_command, args) {
+        const call = args.join(' ');
+        calls.push(call);
+        if (call === 'plugin list --json') {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify([{ id: 'genie@automagik', enabled: true, version: VERSION }]),
+            stderr: '',
+          };
+        }
+        return { exitCode: 0, stdout: '{}', stderr: '' };
+      },
+    });
+
+    expect(result?.ok).toBe(true);
+    expect(result?.preservedDisabled).toBe(false);
+    expect(calls).not.toContain('plugin disable genie@automagik');
+    expect(existsSync(statePath)).toBe(false);
+  });
+
+  test('Codex stale planned intent defers to a live enabled plugin instead of re-disabling it', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-codex-stale-planned-intent-'));
+    const statePath = join(root, 'refresh.json');
+    const configPath = join(root, 'config.toml');
+    writeFileSync(configPath, '[plugins."genie@automagik"]\nenabled = true\n');
+    writeFileSync(
+      statePath,
+      `${JSON.stringify({
+        schemaVersion: 4,
+        runtime: 'codex',
+        installed: true,
+        enabled: false,
+        createdAt: new Date().toISOString(),
+        phase: 'planned',
+      })}\n`,
+    );
+    const result = convergeCodexPlugin({
+      command: 'codex',
+      bundleRoot: root,
+      expectedVersion: VERSION,
+      installIfAbsent: false,
+      statePath,
+      configPath,
+      codexHome: root,
+      verifyCodexPayload: () => undefined,
+      runner(_command, args) {
+        if (args.join(' ') === 'plugin list --json') {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({ installed: [{ pluginId: 'genie@automagik', enabled: true, version: VERSION }] }),
+            stderr: '',
+          };
+        }
+        return { exitCode: 0, stdout: '{}', stderr: '' };
+      },
+    });
+
+    expect(result?.ok).toBe(true);
+    expect(result?.preservedDisabled).toBe(false);
+    expect(readFileSync(configPath, 'utf8')).toContain('enabled = true');
+    expect(existsSync(statePath)).toBe(false);
+  });
 });
 
 describe('codex repair convergence (stale marketplace root / stale installed plugin)', () => {
