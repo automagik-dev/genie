@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | SHIP — plan gate SHIP 2026-07-12 at fix loop 1/2 (reviewed digest `4c71ab68…`); ready for `/work` in an isolated worktree from refreshed main ≥ `5.260712.1` |
+| **Status** | IN_PROGRESS — plan gate SHIP 2026-07-12 at fix loop 1/2 (reviewed digest `4c71ab68…`); executing in an isolated worktree from refreshed main @ `5.260712.1` |
 | **Slug** | `codex-plugin-update-handoff` |
 | **Date** | 2026-07-12 |
 | **Author** | Felipe + Codex brainstorm session |
