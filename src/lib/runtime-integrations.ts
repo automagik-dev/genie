@@ -2167,6 +2167,22 @@ function settleFailedRefreshIntent(
   return markRefreshAmbiguous(options.statePath, intent);
 }
 
+/**
+ * A leftover planned-phase intent means the previous run settled with the
+ * plugin installed, so the live enabled state — which the user may have
+ * changed since — is authoritative, not the file's snapshot. Later phases
+ * keep the file's word: mid-recovery the plugin can be legitimately absent
+ * or transiently misconfigured, and only the intent knows the user's state.
+ */
+function reconcilePlannedIntentWithLiveState(
+  intent: RefreshIntent | null,
+  before: RuntimePluginState,
+): RefreshIntent | null {
+  if (intent === null || intent.phase !== 'planned' || !before.installed) return intent;
+  const liveEnabled = before.enabled === true;
+  return intent.enabled === liveEnabled ? intent : { ...intent, enabled: liveEnabled };
+}
+
 function integrationFailure(runtime: RuntimeName, error: unknown): IntegrationResult {
   return {
     runtime,
@@ -2273,6 +2289,8 @@ function performCodexPluginConvergence(
     if (progress.intent !== null) clearRefreshIntent(options.statePath);
     return false;
   }
+  progress.intent = reconcilePlannedIntentWithLiveState(progress.intent, before);
+  progress.desiredEnabled = progress.intent?.enabled ?? null;
 
   progress.hookReviewRequired = codexHookReviewRequired(options, before);
 
@@ -2464,6 +2482,8 @@ export function convergeClaudePlugin(options: ConvergePluginOptions): Integratio
       if (intent !== null) clearRefreshIntent(options.statePath);
       return null;
     }
+    intent = reconcilePlannedIntentWithLiveState(intent, before);
+    desiredEnabled = intent?.enabled ?? null;
     intent ??= plannedRefreshIntent('claude', before.installed ? before.enabled === true : true);
     desiredEnabled = intent.enabled;
     writeRefreshIntent(options.statePath, intent);
@@ -2520,7 +2540,9 @@ export function convergeClaudePlugin(options: ConvergePluginOptions): Integratio
 
   if (desiredEnabled === false) {
     try {
-      runChecked(options.runner, options.command, ['plugin', 'disable', 'genie@automagik'], false, timeoutMs);
+      // "already disabled" is the desired end state, not a failure; the list
+      // check below verifies the restore either way.
+      runChecked(options.runner, options.command, ['plugin', 'disable', 'genie@automagik'], true, timeoutMs);
       const restored = requireClaudePluginState(
         runChecked(options.runner, options.command, ['plugin', 'list', '--json'], false, timeoutMs).stdout,
         'after restoring disabled state',
