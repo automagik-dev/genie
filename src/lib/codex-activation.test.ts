@@ -554,15 +554,51 @@ describe('authorizeCodexActivation — fingerprint-bound permit from a genuine a
 });
 
 describe('brand unforgeability — the consent entry point is the only route to a genuine brand', () => {
+  function openBrandStore() {
+    const fx = makeFixture({ targetVersion: T, registeredVersion: OLD });
+    const store = openCodexActivationStore({
+      genieHome: fx.genieHome,
+      codexHome: fx.codexHome,
+      command: 'codex',
+      runner: listRunner({ stdout: pluginListJson([{ version: OLD }]) }),
+    });
+    return { fx, store };
+  }
+
+  function grantGenuinePermit(store: mod.CodexActivationStore) {
+    const snapshot = store.observe();
+    const consent = requestRetirementAssertion(snapshot, ttyContext());
+    if (consent.result !== 'granted') throw new Error('consent not granted');
+    const auth = authorizeCodexActivation({
+      state: classifyCodexActivation(snapshot),
+      snapshot,
+      invocation: { entry: 'setup-codex', assertion: consent.assertion },
+    });
+    if (auth.result !== 'granted') throw new Error('authorization not granted');
+    return auth.permit;
+  }
+
   test('the brand classes are not runtime exports, so `ClassName.mint(...)` has no escape hatch', () => {
-    // A private constructor blocks `new`/`extends` but NOT `Class.mint(...)`; removing
-    // the runtime export removes the only handle an importer could call `mint` through.
+    // Type-only exports: the classes never leave the module as runtime values.
     expect((mod as Record<string, unknown>).RetirementAssertion).toBeUndefined();
     expect((mod as Record<string, unknown>).ActivationPermit).toBeUndefined();
     // Nothing on the module surface exposes the minters either.
     for (const value of Object.values(mod as Record<string, unknown>)) {
       expect((value as { mint?: unknown } | null)?.mint).toBeUndefined();
     }
+  });
+
+  test('the removed static is unreachable via instance.constructor.mint', () => {
+    // `mint` was a STATIC, so it lived on the constructor function and
+    // `instance.constructor.mint(...)` reached it even after the type-only export.
+    // Moving minting to module-private free functions removes it from the constructor.
+    const consent = requestRetirementAssertion(pendingSnapshot(), ttyContext());
+    if (consent.result !== 'granted') throw new Error('expected the consent entry point to grant');
+    expect((consent.assertion.constructor as unknown as { mint?: unknown }).mint).toBeUndefined();
+
+    const { store } = openBrandStore();
+    const permit = grantGenuinePermit(store);
+    expect((permit.constructor as unknown as { mint?: unknown }).mint).toBeUndefined();
   });
 
   test('the only granted authorization flows from requestRetirementAssertion under a TTY ConsentContext', () => {
@@ -594,6 +630,42 @@ describe('brand unforgeability — the consent entry point is the only route to 
       invocation: { entry: 'setup-codex', assertion: clone },
     });
     expect(result.result).toBe('refused');
+  });
+
+  test('an assertion re-constructed from a genuine instance constructor is refused', () => {
+    const snapshot = pendingSnapshot();
+    const consent = requestRetirementAssertion(snapshot, ttyContext());
+    if (consent.result !== 'granted') throw new Error('expected the consent entry point to grant');
+    const ctor = consent.assertion.constructor as unknown as new (...args: unknown[]) => mod.RetirementAssertion;
+    // Both routes bypass the compile-time private guard but never register the instance
+    // in the brand WeakSet, so the runtime boundary refuses them.
+    const forgeries = [Reflect.construct(ctor, [OLD, T, 'now']), new ctor(OLD, T, 'now')];
+    for (const forged of forgeries) {
+      const result = authorizeCodexActivation({
+        state: classifyCodexActivation(snapshot),
+        snapshot,
+        invocation: { entry: 'setup-codex', assertion: forged },
+      });
+      expect(result.result).toBe('refused');
+    }
+  });
+
+  test('a permit re-constructed from a genuine permit constructor is refused by beginActivation', () => {
+    const { fx, store } = openBrandStore();
+    const genuine = grantGenuinePermit(store);
+    const ctor = genuine.constructor as unknown as new (...args: unknown[]) => mod.ActivationPermit;
+    // Fresh, correct fingerprint so only WeakSet membership — not staleness — can refuse it.
+    const snapshot = store.observe();
+    const forged = new ctor('activation', computeActivationFingerprint(snapshot), OLD, T);
+    const lease = heldLease(fx.genieHome);
+    try {
+      const result = store.beginActivation(lease, forged);
+      expect(result.status).not.toBe('started');
+      expect(result.status).toBe('refused');
+      expect(existsSync(join(fx.genieHome, '.codex-plugin-refresh-intent.json'))).toBe(false);
+    } finally {
+      lease.release();
+    }
   });
 });
 

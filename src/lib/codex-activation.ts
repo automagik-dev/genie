@@ -745,50 +745,71 @@ const MINTED_PERMITS = new WeakSet<object>();
 
 /**
  * A version-specific operator retirement assertion. Only the deep consent entry
- * point can construct one, and only for the current process. It is authority,
- * never proof of task liveness, and is never persisted.
+ * point can mint one, and only for the current process. It is authority, never
+ * proof of task liveness, and is never persisted. Genuineness is proven by
+ * membership in `MINTED_ASSERTIONS`, never by construction: any instance made
+ * outside `mintRetirementAssertion` (including `new instance.constructor(...)`)
+ * is unregistered and rejected by every brand check.
  */
 class RetirementAssertion {
-  private constructor(
+  constructor(
     readonly observedFrom: string | null,
     readonly observedTarget: string,
     readonly assertedAt: string,
   ) {}
+}
 
-  /** Module-internal factory; registers the instance as genuine. */
-  static mint(observedFrom: string | null, observedTarget: string, assertedAt: string): RetirementAssertion {
-    const assertion = new RetirementAssertion(observedFrom, observedTarget, assertedAt);
-    MINTED_ASSERTIONS.add(assertion);
-    return assertion;
-  }
+/**
+ * Module-private factory; the sole path that registers a `RetirementAssertion` as
+ * genuine. A free function, not a static, so it is unreachable via
+ * `instance.constructor.*` — closing the static-`mint` escape hatch.
+ */
+function mintRetirementAssertion(
+  observedFrom: string | null,
+  observedTarget: string,
+  assertedAt: string,
+): RetirementAssertion {
+  const assertion = new RetirementAssertion(observedFrom, observedTarget, assertedAt);
+  MINTED_ASSERTIONS.add(assertion);
+  return assertion;
 }
 
 export type PermitCapability = 'activation' | 'journal-quarantine';
 
-/** An opaque, process-local capability bound to an activation-request fingerprint. */
+/**
+ * An opaque, process-local capability bound to an activation-request fingerprint.
+ * Genuineness is proven by membership in `MINTED_PERMITS`, never by construction.
+ */
 class ActivationPermit {
-  private constructor(
+  constructor(
     readonly capability: PermitCapability,
     readonly fingerprint: ActivationRequestFingerprint,
     readonly observedFrom: string | null,
     readonly observedTarget: string,
   ) {}
+}
 
-  static mint(
-    capability: PermitCapability,
-    fingerprint: ActivationRequestFingerprint,
-    observedFrom: string | null,
-    observedTarget: string,
-  ): ActivationPermit {
-    const permit = new ActivationPermit(capability, fingerprint, observedFrom, observedTarget);
-    MINTED_PERMITS.add(permit);
-    return permit;
-  }
+/**
+ * Module-private factory; the sole path that registers an `ActivationPermit` as
+ * genuine. A free function, not a static, so it is unreachable via
+ * `instance.constructor.*` — closing the static-`mint` escape hatch.
+ */
+function mintActivationPermit(
+  capability: PermitCapability,
+  fingerprint: ActivationRequestFingerprint,
+  observedFrom: string | null,
+  observedTarget: string,
+): ActivationPermit {
+  const permit = new ActivationPermit(capability, fingerprint, observedFrom, observedTarget);
+  MINTED_PERMITS.add(permit);
+  return permit;
 }
 
 // Brands are type-only exports: importers may name them in type position, but the
-// runtime classes (and their `static mint`) never leave this module, so the only
-// route to a genuine, WeakSet-registered brand is the guarded consent entry point.
+// runtime classes never leave this module. The minters are free functions (not
+// statics on the constructor), so neither an importer nor `instance.constructor`
+// can reach them — the guarded consent entry point is the only route to a genuine,
+// WeakSet-registered brand.
 export type { RetirementAssertion, ActivationPermit };
 
 export interface ActivationRequestFingerprint {
@@ -917,7 +938,7 @@ export function authorizeCodexActivation(request: AuthorizationRequest): Authori
     return { result: 'refused', reason: 'stale assertion: observed versions changed since consent' };
   }
   const fingerprint = computeActivationFingerprint(request.snapshot);
-  const permit = ActivationPermit.mint(capability, fingerprint, observed.from, observed.target ?? '');
+  const permit = mintActivationPermit(capability, fingerprint, observed.from, observed.target ?? '');
   return { result: 'granted', permit };
 }
 
@@ -979,7 +1000,7 @@ export function requestRetirementAssertion(
     return { result: 'refused', reason: 'consent prompt failed or was interrupted' };
   }
   if (!affirmative) return { result: 'refused', reason: 'operator declined the retirement assertion' };
-  return { result: 'granted', assertion: RetirementAssertion.mint(observed.from, target, new Date().toISOString()) };
+  return { result: 'granted', assertion: mintRetirementAssertion(observed.from, target, new Date().toISOString()) };
 }
 
 function environmentGuard(ctx: ConsentContext): string | null {
