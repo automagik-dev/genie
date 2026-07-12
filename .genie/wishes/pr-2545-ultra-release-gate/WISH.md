@@ -10,7 +10,7 @@
 | **Branch** | `fix/pr2545-ultra-gate` |
 | **Repos touched** | `automagik-dev/genie` |
 | **Design** | Seven Ultra specialist lanes plus native Codex review of PR #2545 at `42c11eeb`; follow-up rebased onto `dev` `5101fd35` |
-| **Promotion state** | PR #2545 merged via `6f682e2b` from promoted source `10ceb2c0`; this wish now ships as a follow-up targeting `dev` |
+| **Promotion state** | PR #2545 merged via `6f682e2b` from promoted source `10ceb2c0`; this wish ships as follow-up draft PR [#2556](https://github.com/automagik-dev/genie/pull/2556) targeting `dev` |
 
 ## Summary
 
