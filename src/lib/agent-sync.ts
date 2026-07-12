@@ -906,6 +906,13 @@ export interface ManagedSkillTreeRemovalOptions {
   agent?: string;
   renameManagedDir?: typeof renameSync;
   beforeManagedDirRemoval?: AgentSyncOptions['beforeManagedDirRemoval'];
+  /**
+   * Recorded uninstall-batch physical identity. When supplied, the tree is
+   * removed only if its live identity still equals this exact record; otherwise
+   * removal is refused so a replacement installed at the same path between plan
+   * and retry is never deleted under stale path authority (F43).
+   */
+  expectedIdentity?: { contentDigest: string; manifestDigest: string };
 }
 
 /**
@@ -915,7 +922,7 @@ export interface ManagedSkillTreeRemovalOptions {
 export function removeManagedSkillTree(
   dir: string,
   options: ManagedSkillTreeRemovalOptions = {},
-): 'removed' | 'unmanaged' | 'kept-modified' {
+): 'removed' | 'unmanaged' | 'kept-modified' | 'kept-identity-mismatch' {
   const report = emptyReport(options.agent === 'codex' ? 'codex' : 'claude');
   const blocked = recoverManagedDirTransactions(dirname(dir), report);
   const name = relative(dirname(dir), dir);
@@ -931,6 +938,21 @@ export function removeManagedSkillTree(
   ) {
     return 'kept-modified';
   }
+  // Bind removal to the batch identity BEFORE parking. A digest-clean tree whose
+  // identity differs from the record is a distinct object the batch never
+  // observed; refuse it as an identity mismatch rather than overloading
+  // kept-modified so the caller can report the swap actionably.
+  if (
+    options.expectedIdentity !== undefined &&
+    (inspected.contentDigest !== options.expectedIdentity.contentDigest ||
+      inspected.manifestDigest !== options.expectedIdentity.manifestDigest)
+  ) {
+    return 'kept-identity-mismatch';
+  }
+  const expected = options.expectedIdentity ?? {
+    contentDigest: inspected.contentDigest,
+    manifestDigest: inspected.manifestDigest,
+  };
   const genieHome = options.genieHome ?? resolveGenieHome();
   const ctx = createRunContext(
     genieHome,
@@ -942,9 +964,12 @@ export function removeManagedSkillTree(
       beforeManagedDirRemoval: options.beforeManagedDirRemoval,
     },
   );
+  // Thread the batch identity into removeManagedDir so its park-and-reverify
+  // guards re-check the recorded identity on the quarantined object, closing the
+  // window between this inspection and the physical rename.
   removeManagedDir(ctx, options.agent ?? 'uninstall', name, dir, {
-    contentDigest: inspected.contentDigest,
-    manifestDigest: inspected.manifestDigest,
+    contentDigest: expected.contentDigest,
+    manifestDigest: expected.manifestDigest,
   });
   return 'removed';
 }
@@ -1851,13 +1876,24 @@ function recoverWorkflowRemovalTransaction(targetDir: string, transactionDir: st
 export interface ManagedWorkflowRemovalOptions {
   /** Failure-injection seam immediately before parking or final deletion. */
   beforeRemoval?: (stage: 'before-park' | 'before-delete') => void;
+  /**
+   * Recorded uninstall-batch identity of the council target plus its sidecar.
+   * When supplied, removal proceeds only if the live pair still matches it, so a
+   * replacement council stamped at the same path after the batch is preserved.
+   */
+  expectedIdentity?: {
+    targetDigest: string;
+    manifestDigest: string;
+    targetMode: number;
+    manifestMode: number;
+  };
 }
 
 /** Journaled council removal shared by uninstall and workflow maintenance. */
 export function removeManagedWorkflow(
   targetDir: string,
   options: ManagedWorkflowRemovalOptions = {},
-): 'removed' | 'unmanaged' | 'kept-modified' {
+): 'removed' | 'unmanaged' | 'kept-modified' | 'kept-identity-mismatch' {
   recoverManagedWorkflowTransactions(targetDir);
   const inspected = inspectManagedWorkflow(targetDir);
   if (inspected.state === 'unmanaged') return 'unmanaged';
@@ -1869,6 +1905,18 @@ export function removeManagedWorkflow(
     inspected.manifestMode === undefined
   ) {
     return 'kept-modified';
+  }
+  // Refuse a council/sidecar pair whose live identity diverged from the batch
+  // record (a re-stamped or swapped workflow). The park guards below then run
+  // against this same matched identity, so no live edit slips through.
+  if (
+    options.expectedIdentity !== undefined &&
+    (inspected.targetDigest !== options.expectedIdentity.targetDigest ||
+      inspected.manifestDigest !== options.expectedIdentity.manifestDigest ||
+      inspected.targetMode !== options.expectedIdentity.targetMode ||
+      inspected.manifestMode !== options.expectedIdentity.manifestMode)
+  ) {
+    return 'kept-identity-mismatch';
   }
   const expectedTarget = {
     kind: 'regular',
@@ -2545,13 +2593,40 @@ export function acquireLifecycleLease(genieHome = resolveGenieHome()): Lifecycle
  * RE-verified while holding the guard, so a fresh lock created after the
  * caller's first observation is never removed. A guard left by a crashed
  * stealer ages out via {@link LOCK_STALE_MS} like the lock itself.
+ *
+ * ONE protocol, two acquirers — this function and the shell installer
+ * (recover_stale_lifecycle_lock in install.sh) must stay byte-compatible:
+ *   - Lock path: `<dirname(canonical GENIE_HOME)>/.genie-lifecycle-<sha256(canonical)[:16]>.lock`
+ *     ({@link lifecycleLockPath}); guard path is `<lock>.steal`.
+ *   - Owner record: `pid:token32[:sha64|unknown]` — a decimal pid, an optional
+ *     32-hex token, and an optional process-start identity (64-hex, or the
+ *     literal `unknown` the shell always writes). {@link lockOwner} parses it;
+ *     an empty or otherwise unparseable record yields `null`.
+ *   - Staleness window: ±{@link LOCK_STALE_MS} (10 min) around the mtime; a
+ *     timestamp too old OR implausibly far future is "stale".
+ *   - Guard reap rule (the aged-guard-recovery branch below, mirrored by the
+ *     shell's foreign_lock_record_is_stale): reap an existing guard we did not
+ *     create only when its mtime is stale AND its owner is dead. An empty or
+ *     unparseable record counts as dead (`lockOwner` → null). A live pid —
+ *     including another user's process, where `process.kill(pid, 0)` throws
+ *     EPERM — counts as alive and is never reaped ({@link lockHasLiveOwner}). A
+ *     symlinked/non-regular guard OR lock is never reaped (lstat, never follow —
+ *     parity with the shell's `! -L`). Reaping only unlinks; it never renames or
+ *     quarantines.
+ *   - Residual race (accepted): a process suspended (e.g. SIGSTOP, GC, swap)
+ *     across BOTH the guard read→rm window and the lock read→rm window can
+ *     still let two acquirers proceed as concurrent owners. This is pre-existing
+ *     in the TS path; the shell matches it at parity rather than widening it.
  */
 function stealStaleLock(lockPath: string): 'cleared' | 'contended' {
   const guardPath = `${lockPath}.steal`;
   const guardAttempt = tryInitializeSyncLock(guardPath);
   if (guardAttempt.status !== 'acquired') {
-    const guardStat = statSafe(guardPath);
-    if (guardStat !== null && isStaleOrInvalidLockTime(guardStat.mtimeMs) && !lockHasLiveOwner(guardPath)) {
+    // lstat (never follow): a symlinked or otherwise non-regular guard is never
+    // ours to reap — refuse it, matching the shell's `! -L` guard, so neither
+    // acquirer can be redirected into unlinking a target it does not own.
+    const guardStat = lstatSafe(guardPath);
+    if (guardStat?.isFile() && isStaleOrInvalidLockTime(guardStat.mtimeMs) && !lockHasLiveOwner(guardPath)) {
       rmSyncSafe(guardPath);
     }
     return 'contended'; // another stealer holds the guard — back off like a live lock
@@ -2560,6 +2635,10 @@ function stealStaleLock(lockPath: string): 'cleared' | 'contended' {
     const stat = statSafe(lockPath);
     if (stat !== null && !isStaleOrInvalidLockTime(stat.mtimeMs)) return 'contended'; // refreshed under us — live
     if (stat !== null && lockHasLiveOwner(lockPath)) return 'contended';
+    // Same fail-closed refusal for the lock: never unlink through a symlink or
+    // other non-regular node (a symlinked lock is not ours to steal).
+    const lockStat = lstatSafe(lockPath);
+    if (lockStat !== null && !lockStat.isFile()) return 'contended';
     rmSyncSafe(lockPath); // re-verified stale (or already gone) under the guard
     return 'cleared';
   } finally {
