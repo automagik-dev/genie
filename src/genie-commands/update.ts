@@ -24,6 +24,8 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import {
   type AgentSyncReport,
   type AgentSyncSelection,
+  LIFECYCLE_LEASE_OWNER_ENV,
+  LIFECYCLE_LEASE_PATH_ENV,
   type LifecycleLease,
   acquireLifecycleLease,
   runAgentSync,
@@ -31,11 +33,18 @@ import {
 import { contractPath, genieConfigExists, getGenieConfigPath, saveGenieConfig } from '../lib/genie-config.js';
 import {
   type CodexAgentInstallResult,
+  type CommandRunner,
   type IntegrationResult,
   type IntegrationSelection,
+  type RuntimeExecutableResolver,
+  type RuntimeName,
   installCodexAgents,
+  parseClaudePluginState,
+  parseCodexPluginState,
   readIntegrationConsent,
   resolveBundleRoot,
+  resolveRuntimeExecutable,
+  runBoundedIntegrationCommand,
 } from '../lib/runtime-integrations.js';
 import { VERSION } from '../lib/version.js';
 import { GenieConfigSchema } from '../types/genie-config.js';
@@ -1717,19 +1726,43 @@ export interface UpdateCommandOptions {
   rollback?: boolean;
   /** `--sync-only`. Converge agent integrations and return — no manifest
    *  fetch, no binary swap. Equivalent to GENIE_UPDATE_SYNC_ONLY=1; the flag
-   *  form is the SessionStart hook's hard guard: a pre-contract binary rejects
-   *  the unknown flag and exits immediately (zero network) instead of silently
-   *  running a full unattended update. */
+   *  is retained for legacy automation and intentionally remains limited to
+   *  skills and role agents. */
   syncOnly?: boolean;
+  /** Hidden child protocol used only after a verified binary delivery. A
+   *  pre-contract binary must reject this argv flag before doing any work. */
+  postDeliveryConverge?: boolean;
 }
 
-export type UpdateExecutionMode = 'normal' | 'rollback' | 'sync-only';
+export type UpdateExecutionMode = 'normal' | 'rollback' | 'sync-only' | 'post-delivery-converge';
+
+function hasPostDeliveryModeConflict(options: UpdateCommandOptions, syncOnlyEnvironment: string | undefined): boolean {
+  return Boolean(
+    options.rollback ||
+      options.syncOnly ||
+      syncOnlyEnvironment === '1' ||
+      options.dev ||
+      options.homolog ||
+      options.next ||
+      options.stable ||
+      options.yes ||
+      options.restart === false ||
+      options.verify === false ||
+      options.skipMaintenance,
+  );
+}
 
 /** Resolve one mutually-exclusive mode before any recovery or other mutation. */
 export function resolveUpdateExecutionMode(
   options: UpdateCommandOptions,
   syncOnlyEnvironment = process.env.GENIE_UPDATE_SYNC_ONLY,
 ): UpdateExecutionMode {
+  if (options.postDeliveryConverge) {
+    if (hasPostDeliveryModeConflict(options, syncOnlyEnvironment)) {
+      throw new Error('--post-delivery-converge cannot be combined with another update mode or delivery option');
+    }
+    return 'post-delivery-converge';
+  }
   if (options.rollback && options.syncOnly) {
     throw new Error('--rollback and --sync-only cannot be used together');
   }
@@ -1808,6 +1841,118 @@ function acquireRequiredLifecycleLease(): LifecycleLease {
   return lease;
 }
 
+export type FreshBinaryConvergenceRunner = (binaryPath: string, argv: string[], environment: NodeJS.ProcessEnv) => void;
+
+export interface FreshBinaryConvergenceOptions {
+  lifecycleLease: LifecycleLease;
+  binaryPath?: string;
+  run?: FreshBinaryConvergenceRunner;
+}
+
+/**
+ * Hand the live lifecycle lease to the freshly installed binary and invoke an
+ * argv-only protocol that old binaries reject at parse time. The parent stays
+ * the sole lease owner while the child performs integration convergence.
+ */
+export function runFreshBinaryPostDeliveryConvergence(options: FreshBinaryConvergenceOptions): void {
+  const binaryPath = options.binaryPath ?? join(GENIE_BIN, 'genie');
+  let owner: string;
+  try {
+    owner = readFileSync(options.lifecycleLease.path, 'utf8').trim();
+  } catch (cause) {
+    throw new Error(`cannot hand off the Genie lifecycle lease: ${errMsg(cause)}`);
+  }
+  if (!owner || owner.includes('\n') || owner.includes('\r')) {
+    throw new Error('cannot hand off the Genie lifecycle lease: live owner record is missing or malformed');
+  }
+  const environment: NodeJS.ProcessEnv = {
+    ...process.env,
+    [LIFECYCLE_LEASE_PATH_ENV]: options.lifecycleLease.path,
+    [LIFECYCLE_LEASE_OWNER_ENV]: owner,
+  };
+  const run =
+    options.run ??
+    ((path, argv, env) => {
+      execFileSync(path, argv, { env, stdio: 'inherit' });
+    });
+  try {
+    run(binaryPath, ['update', '--post-delivery-converge'], environment);
+  } catch (cause) {
+    throw new Error(
+      `fresh Genie integration convergence failed: ${errMsg(cause)}. The verified CLI update is installed, but its integrations are not converged. Close all Codex tasks first. Then, from an external terminal, run \`genie update\` (or \`genie setup --codex\`), review \`/hooks\`, and start a new Codex task.`,
+    );
+  }
+}
+
+function selectedLegacySyncRuntimes(selection: IntegrationSelection): RuntimeName[] {
+  if (selection === 'none') return [];
+  if (selection === 'codex' || selection === 'claude') return [selection];
+  return ['codex', 'claude'];
+}
+
+export interface LegacySyncOnlyAdvisoryOptions {
+  selection: IntegrationSelection;
+  expectedVersion: string;
+  runner?: CommandRunner;
+  resolveExecutable?: RuntimeExecutableResolver;
+  cwd?: string;
+}
+
+function legacySyncRuntimeDrift(
+  runtime: RuntimeName,
+  options: LegacySyncOnlyAdvisoryOptions,
+  cwd: string,
+  runner: CommandRunner,
+): string | null {
+  let executable: string | null;
+  try {
+    executable = resolveRuntimeExecutable(runtime, cwd, options.resolveExecutable);
+  } catch {
+    return null;
+  }
+  if (executable === null) return null;
+  try {
+    const result = runner(executable, ['plugin', 'list', '--json'], { timeoutMs: 15_000 });
+    if (result.exitCode !== 0 || result.timedOut || result.outputOverflow) return null;
+    const parsed = runtime === 'codex' ? parseCodexPluginState(result.stdout) : parseClaudePluginState(result.stdout);
+    if (!parsed.ok || !parsed.state.installed || !parsed.state.version) return null;
+    if (normalizeVersion(parsed.state.version) === normalizeVersion(options.expectedVersion)) return null;
+    return `${runtime} v${parsed.state.version}${parsed.state.enabled === false ? ' (disabled; preserved)' : ''}`;
+  } catch {
+    return null;
+  }
+}
+
+/** Read-only plugin-state probe used by the first release carrying the fresh
+ * child protocol. Legacy `--sync-only` remains skills/role-only; it merely
+ * tells the operator when that compatibility path left a selected plugin on
+ * the previous version. */
+export function legacySyncOnlyPluginAdvisory(options: LegacySyncOnlyAdvisoryOptions): string | null {
+  if (options.selection === 'none') return null;
+  const cwd = options.cwd ?? process.cwd();
+  const runner = options.runner ?? runBoundedIntegrationCommand;
+  const stale: string[] = [];
+  for (const runtime of selectedLegacySyncRuntimes(options.selection)) {
+    const drift = legacySyncRuntimeDrift(runtime, options, cwd, runner);
+    if (drift !== null) stale.push(drift);
+  }
+  if (stale.length === 0) return null;
+  return `Legacy --sync-only left selected plugin integration${stale.length === 1 ? '' : 's'} stale (${stale.join(', ')}; CLI/source v${normalizeVersion(options.expectedVersion)}). Close all Codex tasks first. Then, from an external terminal, run \`genie update\` (or \`genie setup --codex\`), review \`/hooks\`, and start a new Codex task.`;
+}
+
+export interface LegacySyncOnlyConvergenceOptions extends LegacySyncOnlyAdvisoryOptions {
+  sync?: () => void;
+  log?: (line: string) => void;
+}
+
+/** Emit version-drift recovery before strict skill/role convergence so a sync
+ * failure cannot hide the plugin advisory needed by first-release upgrades. */
+export function runLegacySyncOnlyConvergence(options: LegacySyncOnlyConvergenceOptions): void {
+  const advisory = legacySyncOnlyPluginAdvisory(options);
+  if (advisory !== null) (options.log ?? log)(advisory);
+  (options.sync ?? (() => runAgentSyncSafe({ strict: true, selection: options.selection })))();
+}
+
 function announceUpdatePlanOrExit(
   channel: ReleaseChannel,
   platform: string,
@@ -1827,21 +1972,61 @@ function announceUpdatePlanOrExit(
   return latestVersion;
 }
 
+function runLegacySyncOnlyMode(): void {
+  // Consent is re-read under the lease so a concurrent lifecycle command
+  // cannot change the selected client-home scope between plan and write.
+  const selection = readIntegrationConsent(GENIE_HOME);
+  runLegacySyncOnlyConvergence({ selection, expectedVersion: VERSION });
+}
+
+function runPostDeliveryConvergenceMode(): void {
+  const installedVersion = readBinaryVersion(join(GENIE_BIN, 'genie'));
+  if (installedVersion === null) {
+    error('Post-delivery convergence refused: the canonical installed binary did not report a version.');
+    process.exitCode = 1;
+    return;
+  }
+  try {
+    const convergence = runManualUpdateConvergence({
+      expectedVersion: installedVersion,
+      selection: readIntegrationConsent(GENIE_HOME),
+    });
+    const failures = convergence.integrations.filter((result) => !result.ok);
+    if (failures.length > 0) {
+      throw new Error(failures.map((result) => `${result.runtime}: ${result.detail}`).join('; '));
+    }
+  } catch (cause) {
+    error(`Post-delivery convergence failed: ${errMsg(cause)}`);
+    process.exitCode = 1;
+  }
+}
+
+async function runExplicitUpdateMode(mode: Exclude<UpdateExecutionMode, 'normal'>): Promise<void> {
+  const lifecycleLease = acquireRequiredLifecycleLease();
+  try {
+    if (mode === 'rollback') await runRollback();
+    else if (mode === 'sync-only') runLegacySyncOnlyMode();
+    else runPostDeliveryConvergenceMode();
+  } finally {
+    lifecycleLease.release();
+  }
+}
+
+function runFreshConvergenceOrReport(lifecycleLease: LifecycleLease): boolean {
+  try {
+    runFreshBinaryPostDeliveryConvergence({ lifecycleLease });
+    return true;
+  } catch (cause) {
+    error(errMsg(cause));
+    process.exitCode = 1;
+    return false;
+  }
+}
+
 export async function updateCommand(options: UpdateCommandOptions = {}): Promise<void> {
   const mode = resolveUpdateExecutionMode(options);
   if (mode !== 'normal') {
-    const lifecycleLease = acquireRequiredLifecycleLease();
-    try {
-      if (mode === 'rollback') await runRollback();
-      else {
-        // Consent is re-read under the lease so a concurrent lifecycle command
-        // cannot change the selected client-home scope between plan and write.
-        const selection = readIntegrationConsent(GENIE_HOME);
-        runAgentSyncSafe({ strict: true, selection });
-      }
-    } finally {
-      lifecycleLease.release();
-    }
+    await runExplicitUpdateMode(mode);
     return;
   }
 
@@ -1938,7 +2123,7 @@ export async function updateCommand(options: UpdateCommandOptions = {}): Promise
     }
 
     runV4CleanupSafe();
-    runTrackedManualUpdateConvergence(resolvedManifest.version);
+    if (!runFreshConvergenceOrReport(lifecycleLease)) return;
     await runPostUpdateVerifySafe({ ...options, noRestart, noVerify }, diagnosticsCtx);
   } finally {
     lifecycleLease.release();
@@ -2093,11 +2278,11 @@ function touchAgentSyncMarker(markerPath: string, now: Date): void {
 }
 
 /**
- * Operator-driven update convergence runs inside the already-reviewed parent
- * process. Never execute the freshly installed binary as `genie update`: an
- * explicitly selected older release may predate the sync-only environment
- * contract and interpret that child invocation as a second full update. That
- * exact downgrade→unattended-upgrade cascade occurred on 2026-07-11.
+ * Canonical operator-driven convergence routine. After delivery it runs only
+ * inside the fresh binary's explicit `--post-delivery-converge` mode; already-
+ * current and blocked-downgrade paths can call it in-process. Never launch a
+ * fresh binary with an ambiguous plain `update` or environment-only marker —
+ * that caused the 2026-07-11 downgrade→unattended-upgrade cascade.
  */
 export interface ManualUpdateConvergenceOptions {
   expectedVersion: string;
@@ -2129,8 +2314,8 @@ export function runManualUpdateConvergence(options: ManualUpdateConvergenceOptio
       `integration refresh: ${result.runtime} — ${result.ok ? result.detail : `FAILED: ${result.detail}`}${disabled}`,
     );
   }
-  if (integrations.some((result) => result.runtime === 'codex' && result.ok)) {
-    emit('Review refreshed Genie hooks with /hooks, then start a new Codex task.');
+  if (integrations.some((result) => result.runtime === 'codex' && result.ok && result.hookReviewRequired)) {
+    emit('Close all Codex tasks first. Then review refreshed Genie hooks with /hooks and start a new Codex task.');
   }
   return { integrations };
 }

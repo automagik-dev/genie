@@ -51,6 +51,7 @@ import {
   formatVerifyBanner,
   hashPhysicalFileIncrementally,
   isGenieProcessSnapshotLine,
+  legacySyncOnlyPluginAdvisory,
   manifestUrlForChannel,
   normalizeVersion,
   persistChannel,
@@ -64,6 +65,8 @@ import {
   resumePendingDelivery,
   rollbackBinary,
   runAgentSyncSafe,
+  runFreshBinaryPostDeliveryConvergence,
+  runLegacySyncOnlyConvergence,
   runManualUpdateConvergence,
   runV4CleanupSafe,
   runVerifyProbe,
@@ -427,11 +430,16 @@ describe('updateCommand wiring', () => {
     const cmdStart = source.indexOf('export async function updateCommand');
     expect(cmdStart).toBeGreaterThan(-1);
     const cmdBody = source.slice(cmdStart);
-    const rollbackIdx = cmdBody.indexOf("mode === 'rollback'");
-    const downloadIdx = cmdBody.indexOf('await downloadAndVerifyTarball(');
-    expect(rollbackIdx).toBeGreaterThan(-1);
-    expect(downloadIdx).toBeGreaterThan(-1);
-    expect(rollbackIdx).toBeLessThan(downloadIdx);
+    const explicitModeIdx = cmdBody.indexOf('await runExplicitUpdateMode(mode)');
+    const fetchIdx = cmdBody.indexOf('await fetchLatestManifest(');
+    expect(explicitModeIdx).toBeGreaterThan(-1);
+    expect(fetchIdx).toBeGreaterThan(-1);
+    expect(explicitModeIdx).toBeLessThan(fetchIdx);
+    const explicitMode = source.slice(
+      source.indexOf('async function runExplicitUpdateMode'),
+      source.indexOf('function runFreshConvergenceOrReport'),
+    );
+    expect(explicitMode).toContain("if (mode === 'rollback') await runRollback()");
   });
 });
 
@@ -1743,8 +1751,22 @@ describe('durable pending delivery recovery', () => {
     expect(resolveUpdateExecutionMode({ syncOnly: true }, undefined)).toBe('sync-only');
     expect(resolveUpdateExecutionMode({}, '1')).toBe('sync-only');
     expect(resolveUpdateExecutionMode({ rollback: true }, '1')).toBe('rollback');
+    expect(resolveUpdateExecutionMode({ postDeliveryConverge: true }, undefined)).toBe('post-delivery-converge');
     expect(() => resolveUpdateExecutionMode({ rollback: true, syncOnly: true }, undefined)).toThrow(
       '--rollback and --sync-only cannot be used together',
+    );
+    for (const options of [
+      { postDeliveryConverge: true, rollback: true },
+      { postDeliveryConverge: true, syncOnly: true },
+      { postDeliveryConverge: true, stable: true },
+      { postDeliveryConverge: true, verify: false },
+    ]) {
+      expect(() => resolveUpdateExecutionMode(options, undefined)).toThrow(
+        '--post-delivery-converge cannot be combined',
+      );
+    }
+    expect(() => resolveUpdateExecutionMode({ postDeliveryConverge: true }, '1')).toThrow(
+      '--post-delivery-converge cannot be combined',
     );
   });
 
@@ -2520,11 +2542,25 @@ describe('runAgentSyncSafe (agent-sync phase)', () => {
     expect(fastPathIdx).toBeGreaterThan(-1);
     expect(fastPathIdx).toBeLessThan(fetchIdx);
     expect(fastPathIdx).toBeLessThan(deliveryIdx);
-    // The fast-path block calls the sync phase (and only that path does, pre-fetch).
+    // The compatibility mode routes before fetch and remains skills/role-only.
     const fastPath = cmdBody.slice(fastPathIdx, fetchIdx);
-    expect(fastPath).toContain('runAgentSyncSafe({ strict: true, selection })');
+    expect(fastPath).toContain('await runExplicitUpdateMode(mode)');
     expect(fastPath).not.toContain('runTrackedManualUpdateConvergence(');
     expect(fastPath).not.toContain('refreshUpdatePlugins(');
+    const legacyModeStart = source.indexOf('function runLegacySyncOnlyMode()');
+    const postDeliveryModeStart = source.indexOf('function runPostDeliveryConvergenceMode()', legacyModeStart);
+    const legacyMode = source.slice(legacyModeStart, postDeliveryModeStart);
+    expect(legacyMode).toContain('runLegacySyncOnlyConvergence({ selection, expectedVersion: VERSION })');
+    expect(legacyMode).not.toContain('runManualUpdateConvergence(');
+    expect(legacyMode).not.toContain('refreshUpdatePlugins(');
+    const convergenceStart = source.indexOf('export function runLegacySyncOnlyConvergence(');
+    const convergenceEnd = source.indexOf('function announceUpdatePlanOrExit(', convergenceStart);
+    const convergence = source.slice(convergenceStart, convergenceEnd);
+    expect(convergence.indexOf('legacySyncOnlyPluginAdvisory(options)')).toBeLessThan(
+      convergence.indexOf('runAgentSyncSafe({ strict: true'),
+    );
+    expect(convergence).not.toContain('runManualUpdateConvergence(');
+    expect(convergence).not.toContain('refreshUpdatePlugins(');
   });
 
   test('short-circuit (already-current) path calls the sync phase before returning', () => {
@@ -2536,7 +2572,7 @@ describe('runAgentSyncSafe (agent-sync phase)', () => {
 });
 
 describe('manual post-update convergence (2026-07-11 cascade regression)', () => {
-  test('runs reviewed parent-side APIs and returns structured integration outcomes', () => {
+  test('runs the canonical convergence APIs and returns structured integration outcomes', () => {
     const calls: string[] = [];
     const result = runManualUpdateConvergence({
       expectedVersion: '5.260711.3',
@@ -2553,16 +2589,168 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
     expect(result.integrations).toEqual([{ runtime: 'codex', ok: true, detail: 'plugin/hooks refreshed' }]);
   });
 
-  test('never executes an older fresh binary as full update based only on an environment marker', () => {
+  test('normal delivery invokes the fresh binary only through the explicit child protocol', () => {
     const source = readFileSync(join(import.meta.dir, '..', 'update.ts'), 'utf-8');
-    // Incident: parent installed 5.260710.2, then child ignored
-    // GENIE_UPDATE_SYNC_ONLY and performed a second full update to 5.260711.3.
-    expect(source).not.toContain('runFreshBinaryAgentSync');
-    expect(source).not.toMatch(/execFileSync\([^\n]+,\s*\['update'\]/);
+    expect(source).not.toMatch(/execFileSync\([^\n]+,\s*\['update'\]\s*,/);
+    expect(source).toContain("run(binaryPath, ['update', '--post-delivery-converge'], environment)");
+    const deliveryIdx = source.indexOf('await runDelivery(');
+    const convergeIdx = source.indexOf('runFreshConvergenceOrReport(lifecycleLease)', deliveryIdx);
     const verifyIdx = source.indexOf('await runPostUpdateVerifySafe(');
-    const convergeIdx = source.lastIndexOf('runTrackedManualUpdateConvergence(', verifyIdx);
-    expect(convergeIdx).toBeGreaterThan(-1);
+    expect(deliveryIdx).toBeGreaterThan(-1);
+    expect(convergeIdx).toBeGreaterThan(deliveryIdx);
     expect(convergeIdx).toBeLessThan(verifyIdx);
+  });
+
+  test('hands the exact live lifecycle lease to the fresh binary without releasing the parent lease', () => {
+    const home = mkdtempSync(join(tmpdir(), 'genie-fresh-converge-lease-'));
+    const lease = acquireLifecycleLease(home);
+    expect('skipped' in lease).toBe(false);
+    if ('skipped' in lease) return;
+    try {
+      let called = false;
+      runFreshBinaryPostDeliveryConvergence({
+        lifecycleLease: lease,
+        binaryPath: '/fixture/fresh-genie',
+        run(binaryPath, argv, environment) {
+          called = true;
+          expect(binaryPath).toBe('/fixture/fresh-genie');
+          expect(argv).toEqual(['update', '--post-delivery-converge']);
+          expect(environment.GENIE_LIFECYCLE_LEASE_PATH).toBe(lease.path);
+          expect(environment.GENIE_LIFECYCLE_LEASE_OWNER).toBe(readFileSync(lease.path, 'utf8').trim());
+          expect(existsSync(lease.path)).toBe(true);
+          const previousPath = process.env.GENIE_LIFECYCLE_LEASE_PATH;
+          const previousOwner = process.env.GENIE_LIFECYCLE_LEASE_OWNER;
+          try {
+            process.env.GENIE_LIFECYCLE_LEASE_PATH = environment.GENIE_LIFECYCLE_LEASE_PATH;
+            process.env.GENIE_LIFECYCLE_LEASE_OWNER = environment.GENIE_LIFECYCLE_LEASE_OWNER;
+            const borrowed = acquireLifecycleLease(home);
+            expect('skipped' in borrowed).toBe(false);
+            if (!('skipped' in borrowed)) borrowed.release();
+            expect(existsSync(lease.path)).toBe(true);
+          } finally {
+            if (previousPath === undefined) process.env.GENIE_LIFECYCLE_LEASE_PATH = undefined;
+            else process.env.GENIE_LIFECYCLE_LEASE_PATH = previousPath;
+            if (previousOwner === undefined) process.env.GENIE_LIFECYCLE_LEASE_OWNER = undefined;
+            else process.env.GENIE_LIFECYCLE_LEASE_OWNER = previousOwner;
+          }
+        },
+      });
+      expect(called).toBe(true);
+      expect(existsSync(lease.path)).toBe(true);
+    } finally {
+      lease.release();
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('fresh-child failure propagates with explicit operator recovery', () => {
+    const home = mkdtempSync(join(tmpdir(), 'genie-fresh-converge-failure-'));
+    const lease = acquireLifecycleLease(home);
+    expect('skipped' in lease).toBe(false);
+    if ('skipped' in lease) return;
+    try {
+      let message = '';
+      try {
+        runFreshBinaryPostDeliveryConvergence({
+          lifecycleLease: lease,
+          run: () => {
+            throw new Error('exit 7');
+          },
+        });
+      } catch (error) {
+        message = error instanceof Error ? error.message : String(error);
+      }
+      expect(message).toContain('fresh Genie integration convergence failed: exit 7');
+      expect(message).toContain('Close all Codex tasks first');
+      expect(message).toContain('external terminal');
+      expect(message.indexOf('Close all Codex tasks first')).toBeLessThan(message.indexOf('external terminal'));
+    } finally {
+      lease.release();
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('legacy sync-only advisory is read-only and reports selected version drift', () => {
+    const calls: string[] = [];
+    const advisory = legacySyncOnlyPluginAdvisory({
+      selection: 'codex',
+      expectedVersion: '5.260711.7',
+      resolveExecutable: () => '/fixture/codex',
+      runner(command, args) {
+        calls.push(`${command} ${args.join(' ')}`);
+        return {
+          exitCode: 0,
+          stdout: '{"installed":[{"pluginId":"genie@automagik","enabled":true,"version":"5.260711.6"}]}',
+          stderr: '',
+        };
+      },
+    });
+    expect(calls).toEqual(['/fixture/codex plugin list --json']);
+    expect(advisory).toContain('codex v5.260711.6');
+    expect(advisory).toContain('external terminal');
+    expect(advisory).toContain('review `/hooks`');
+
+    const disabled = legacySyncOnlyPluginAdvisory({
+      selection: 'codex',
+      expectedVersion: '5.260711.7',
+      resolveExecutable: () => '/fixture/codex',
+      runner: () => ({
+        exitCode: 0,
+        stdout: '{"installed":[{"pluginId":"genie@automagik","enabled":false,"version":"5.260711.6"}]}',
+        stderr: '',
+      }),
+    });
+    expect(disabled).toContain('codex v5.260711.6 (disabled; preserved)');
+
+    for (const state of [
+      { installed: [] },
+      { installed: [{ pluginId: 'genie@automagik', enabled: true, version: '5.260711.7' }] },
+    ]) {
+      expect(
+        legacySyncOnlyPluginAdvisory({
+          selection: 'codex',
+          expectedVersion: '5.260711.7',
+          resolveExecutable: () => '/fixture/codex',
+          runner: () => ({ exitCode: 0, stdout: JSON.stringify(state), stderr: '' }),
+        }),
+      ).toBeNull();
+    }
+    let invoked = false;
+    expect(
+      legacySyncOnlyPluginAdvisory({
+        selection: 'none',
+        expectedVersion: '5.260711.7',
+        resolveExecutable: () => {
+          invoked = true;
+          return '/fixture/codex';
+        },
+      }),
+    ).toBeNull();
+    expect(invoked).toBe(false);
+  });
+
+  test('legacy sync-only emits stale-plugin recovery even when strict agent sync fails', () => {
+    const events: string[] = [];
+    expect(() =>
+      runLegacySyncOnlyConvergence({
+        selection: 'codex',
+        expectedVersion: '5.260711.7',
+        resolveExecutable: () => '/fixture/codex',
+        runner: () => ({
+          exitCode: 0,
+          stdout: '{"installed":[{"pluginId":"genie@automagik","enabled":true,"version":"5.260711.6"}]}',
+          stderr: '',
+        }),
+        log: (line) => events.push(`advisory:${line}`),
+        sync: () => {
+          events.push('sync');
+          throw new Error('strict sync failed');
+        },
+      }),
+    ).toThrow('strict sync failed');
+    expect(events).toHaveLength(2);
+    expect(events[0]).toContain('advisory:Legacy --sync-only');
+    expect(events[1]).toBe('sync');
   });
 });
 
@@ -2639,7 +2827,7 @@ describe('operator-driven plugin refresh', () => {
         if (command === 'claude') return { exitCode: 0, stdout: '[]', stderr: '' };
         if (args.join(' ') === 'plugin list --json') {
           codexLists += 1;
-          if (codexLists === 3) {
+          if (codexLists === 2) {
             rmSync(statePath, { force: true });
             mkdirSync(statePath);
           }
@@ -2719,6 +2907,7 @@ describe('operator-driven plugin refresh', () => {
           ok: true,
           detail: 'plugin/hooks refreshed to v5.260711.3',
           preservedDisabled: true,
+          hookReviewRequired: false,
         },
       ]);
       expect(calls).toContain(`codex plugin marketplace add ${root} --json`);
@@ -2777,57 +2966,40 @@ describe('operator-driven plugin refresh', () => {
     }
   });
 
-  test('a failed Codex re-add remains durable and converges on the next invocation', () => {
-    const root = mkdtempSync(join(tmpdir(), 'genie-update-plugin-retry-'));
-    let installed = true;
-    let version = '5.260710.2';
-    let addCalls = 0;
+  test('stale Codex update refresh never removes/re-adds or mutates the old cache', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-update-plugin-stale-generation-'));
+    const codexHome = join(root, 'codex');
+    const oldCache = join(codexHome, 'plugins', 'cache', 'automagik', 'genie', '5.260710.2', 'payload.txt');
+    mkdirSync(join(oldCache, '..'), { recursive: true });
+    writeFileSync(oldCache, 'old-cache-bytes\n');
+    const calls: string[] = [];
     const runner: CommandRunner = (_command, args) => {
       const command = args.join(' ');
+      calls.push(command);
       if (command === 'plugin list --json') {
         return {
           exitCode: 0,
-          stdout: JSON.stringify({
-            installed: installed ? [{ pluginId: 'genie@automagik', enabled: true, version }] : [],
-          }),
+          stdout: '{"installed":[{"pluginId":"genie@automagik","enabled":true,"version":"5.260710.2"}]}',
           stderr: '',
         };
-      }
-      if (command === 'plugin remove genie@automagik --json') {
-        installed = false;
-        return { exitCode: 0, stdout: '', stderr: '' };
-      }
-      if (command === 'plugin add genie@automagik --json') {
-        addCalls += 1;
-        if (addCalls === 2) return { exitCode: 7, stdout: '', stderr: 'transient cache failure' };
-        if (!installed) {
-          installed = true;
-          version = '5.260711.3';
-        }
       }
       return { exitCode: 0, stdout: '', stderr: '' };
     };
     try {
-      const first = refreshUpdatePlugins({
+      const result = refreshUpdatePlugins({
         bundleRoot: root,
         expectedVersion: '5.260711.3',
         stateDir: pluginStateDir,
         detected: { codex: true, claude: false },
+        codexHome,
         runner,
       });
-      expect(first[0]).toMatchObject({ runtime: 'codex', ok: false });
-      expect(installed).toBe(false);
-      expect(existsSync(join(pluginStateDir, '.integration-refresh-codex.json'))).toBe(true);
-
-      const second = refreshUpdatePlugins({
-        bundleRoot: root,
-        expectedVersion: '5.260711.3',
-        stateDir: pluginStateDir,
-        detected: { codex: true, claude: false },
-        runner,
-      });
-      expect(second[0]).toMatchObject({ runtime: 'codex', ok: true });
-      expect(installed).toBe(true);
+      expect(result[0]).toMatchObject({ runtime: 'codex', ok: false });
+      expect(result[0]?.detail).toContain('after one non-destructive add attempt');
+      expect(result[0]?.detail).toContain('Close all Codex tasks first');
+      expect(calls.filter((call) => call === 'plugin add genie@automagik --json')).toHaveLength(1);
+      expect(calls).not.toContain('plugin remove genie@automagik --json');
+      expect(readFileSync(oldCache, 'utf8')).toBe('old-cache-bytes\n');
       expect(existsSync(join(pluginStateDir, '.integration-refresh-codex.json'))).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });

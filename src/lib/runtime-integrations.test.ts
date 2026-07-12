@@ -404,13 +404,14 @@ describe('durable integration consent and Claude payload provenance', () => {
     const configPath = join(root, 'config.toml');
     writeFileSync(configPath, '[plugins."genie@automagik"]\nenabled = false\n');
     let commandFailed = false;
+    let lists = 0;
     const list = () =>
       JSON.stringify({
         installed: [
           {
             pluginId: 'genie@automagik',
             enabled: !/enabled\s*=\s*false/.test(readFileSync(configPath, 'utf8')),
-            version: VERSION,
+            version: lists++ === 0 ? '5.260710.9' : VERSION,
           },
         ],
       });
@@ -619,7 +620,7 @@ describe('codex repair convergence (stale marketplace root / stale installed plu
       runner(_command, args) {
         if (args.join(' ') === 'plugin list --json') {
           lists += 1;
-          return { exitCode: 0, stdout: lists === 1 ? currentList : '{"installed":[]}', stderr: '' };
+          return { exitCode: 0, stdout: lists === 1 ? staleList : '{"installed":[]}', stderr: '' };
         }
         if (args.join(' ') === 'plugin add genie@automagik --json') {
           return { exitCode: 9, stdout: '', stderr: 'ambiguous plugin failure' };
@@ -628,7 +629,7 @@ describe('codex repair convergence (stale marketplace root / stale installed plu
       },
     });
     expect(first).toMatchObject({ runtime: 'codex', ok: false });
-    expect(first?.detail).toContain('run genie setup --codex');
+    expect(first?.detail).toContain('run `genie setup --codex`');
     expect(JSON.parse(readFileSync(statePath, 'utf8')).phase).toBe('ambiguous-absent');
 
     const retryCalls: string[] = [];
@@ -649,43 +650,21 @@ describe('codex repair convergence (stale marketplace root / stale installed plu
     expect(existsSync(statePath)).toBe(false);
   });
 
-  test('an observed successful removal is durable and repairs an absent plugin on retry', () => {
+  test('a legacy removal-observed intent remains the only automatic absent-registration repair authority', () => {
     const root = mkdtempSync(join(tmpdir(), 'genie-refresh-authorized-'));
     const statePath = join(root, 'refresh.json');
-    let commandStartedBeforeRemove = false;
-    let removalObservedBeforeFailedAdd = false;
-    let lists = 0;
-    let registrationAbsent = false;
-    const first = convergeCodexPlugin({
-      command: 'codex',
-      bundleRoot: root,
-      expectedVersion: VERSION,
-      installIfAbsent: false,
+    writeFileSync(
       statePath,
-      verifyCodexPayload: () => undefined,
-      runner(_command, args) {
-        if (args.join(' ') === 'plugin list --json') {
-          lists += 1;
-          return { exitCode: 0, stdout: registrationAbsent ? '{"installed":[]}' : staleList, stderr: '' };
-        }
-        if (args.join(' ') === 'plugin remove genie@automagik --json') {
-          commandStartedBeforeRemove = JSON.parse(readFileSync(statePath, 'utf8')).phase === 'command-started';
-          registrationAbsent = true;
-          return { exitCode: 0, stdout: '{}', stderr: '' };
-        }
-        if (args.join(' ') === 'plugin add genie@automagik --json') {
-          removalObservedBeforeFailedAdd = JSON.parse(readFileSync(statePath, 'utf8')).phase === 'removal-observed';
-          if (removalObservedBeforeFailedAdd) return { exitCode: 9, stdout: '', stderr: 'interrupted reinstall' };
-        }
-        return { exitCode: 0, stdout: '{}', stderr: '' };
-      },
-    });
-    expect(first?.ok).toBe(false);
-    expect(removalObservedBeforeFailedAdd).toBe(true);
-    expect(commandStartedBeforeRemove).toBe(true);
-    expect(JSON.parse(readFileSync(statePath, 'utf8')).phase).toBe('removal-observed');
-
-    lists = 0;
+      `${JSON.stringify({
+        schemaVersion: 4,
+        runtime: 'codex',
+        installed: true,
+        enabled: true,
+        createdAt: new Date().toISOString(),
+        phase: 'removal-observed',
+      })}\n`,
+    );
+    let lists = 0;
     const retryCalls: string[] = [];
     const retry = convergeCodexPlugin({
       command: 'codex',
@@ -705,53 +684,47 @@ describe('codex repair convergence (stale marketplace root / stale installed plu
     });
     expect(retry?.ok).toBe(true);
     expect(retryCalls).toContain('codex plugin add genie@automagik --json');
+    expect(retryCalls).not.toContain('codex plugin remove genie@automagik --json');
     expect(existsSync(statePath)).toBe(false);
   });
 
-  test('Codex consumes removal authority when reinstall is observed before final payload verification fails', () => {
-    const root = mkdtempSync(join(tmpdir(), 'genie-codex-consume-removal-'));
+  test('Codex refuses an old-to-expected payload mismatch without repairing the expected generation', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-codex-version-generation-'));
     const statePath = join(root, 'refresh.json');
-    let installed = true;
     let verifies = 0;
-    const list = () => (installed ? currentList : '{"installed":[]}');
+    let lists = 0;
+    let callsAtVerification = -1;
+    const calls: string[] = [];
     const first = convergeCodexPlugin({
       command: 'codex',
       bundleRoot: root,
       expectedVersion: VERSION,
       installIfAbsent: false,
       statePath,
+      codexHome: root,
       verifyCodexPayload() {
         verifies += 1;
-        throw new Error(`payload mismatch ${verifies}`);
+        callsAtVerification = calls.length;
+        throw new Error('payload mismatch after version transition');
       },
-      runner(_command, args) {
-        const call = args.join(' ');
-        if (call === 'plugin list --json') return { exitCode: 0, stdout: list(), stderr: '' };
-        if (call === 'plugin remove genie@automagik --json') installed = false;
-        if (call === 'plugin add genie@automagik --json') installed = true;
+      runner(command, args) {
+        const call = [command, ...args].join(' ');
+        calls.push(call);
+        if (args.join(' ') === 'plugin list --json') {
+          lists += 1;
+          return { exitCode: 0, stdout: lists === 1 ? staleList : currentList, stderr: '' };
+        }
         return { exitCode: 0, stdout: '{}', stderr: '' };
       },
     });
     expect(first?.ok).toBe(false);
-    expect(verifies).toBe(2);
+    expect(first?.detail).toContain('[same-version-payload-mismatch]');
+    expect(verifies).toBe(1);
+    expect(calls.filter((call) => call === 'codex plugin add genie@automagik --json')).toHaveLength(1);
+    expect(calls).not.toContain('codex plugin remove genie@automagik --json');
+    expect(calls).not.toContain('codex plugin marketplace remove automagik --json');
+    expect(calls.slice(callsAtVerification)).toEqual([]);
     expect(JSON.parse(readFileSync(statePath, 'utf8')).phase).toBe('planned');
-
-    installed = false; // explicit manual removal after the failed physical repair
-    const retryCalls: string[] = [];
-    const retry = convergeCodexPlugin({
-      command: 'codex',
-      bundleRoot: root,
-      expectedVersion: VERSION,
-      installIfAbsent: false,
-      statePath,
-      verifyCodexPayload: () => undefined,
-      runner(command, args) {
-        retryCalls.push([command, ...args].join(' '));
-        return { exitCode: 0, stdout: '{"installed":[]}', stderr: '' };
-      },
-    });
-    expect(retry).toBeNull();
-    expect(retryCalls).toEqual(['codex plugin list --json']);
   });
 
   test('Claude consumes removal authority when reinstall is observed before final payload verification fails', () => {
@@ -828,7 +801,7 @@ describe('codex repair convergence (stale marketplace root / stale installed plu
     expect(existsSync(statePath)).toBe(false);
   });
 
-  test('same-version payload from the wrong source fails physical convergence after one canonical repair', () => {
+  test('same-version payload mismatch refuses cache mutation and requires a new plugin version', () => {
     const bundleRoot = mkdtempSync(join(tmpdir(), 'genie-canonical-bundle-'));
     const codexHome = makeCodexHome();
     write(join(bundleRoot, 'plugins', 'genie', 'codex-agents', 'genie-reviewer.toml'), MANAGED_TOML);
@@ -851,9 +824,155 @@ describe('codex repair convergence (stale marketplace root / stale installed plu
     })[0];
 
     expect(result?.ok).toBe(false);
-    expect(result?.detail).toContain('payload identity did not converge');
-    expect(calls).toContain('codex plugin remove genie@automagik --json');
-    expect(calls).toContain('codex plugin marketplace remove automagik --json');
+    expect(result?.detail).toContain('[same-version-payload-mismatch]');
+    expect(result?.detail).toContain('Refusing to mutate or reinstall an active plugin version in place');
+    expect(result?.detail).toContain('Publish the changed payload under a new plugin version');
+    expect(result?.detail).toContain('genie setup --codex');
+    expect(calls).toEqual(['codex plugin list --json']);
+    expect(readFileSync(join(cacheRoot, 'package.json'), 'utf8')).toBe('{"name":"wrong-source"}\n');
+    expect(existsSync(join(codexHome, '.integration-refresh-codex.json'))).toBe(false);
+  });
+
+  test('a corrupt pre-existing target generation blocks an old-to-current transition before mutation', () => {
+    const bundleRoot = mkdtempSync(join(tmpdir(), 'genie-target-preflight-bundle-'));
+    const codexHome = makeCodexHome();
+    write(join(bundleRoot, 'plugins', 'genie', 'codex-agents', 'genie-reviewer.toml'), MANAGED_TOML);
+    write(join(bundleRoot, 'plugins', 'genie', 'package.json'), '{"name":"canonical"}\n');
+    const target = join(codexHome, 'plugins', 'cache', 'automagik', 'genie', VERSION, 'package.json');
+    write(target, '{"name":"corrupt-preexisting-target"}\n');
+    const calls: string[] = [];
+
+    const result = installRuntimeIntegrationsWithPhysicalVerification({
+      selection: 'codex',
+      bundleRoot,
+      codexHome,
+      genieHome: codexHome,
+      stateDir: codexHome,
+      detected: { codex: true },
+      resolveExecutable: (name) => name,
+      runner(command, args) {
+        calls.push([command, ...args].join(' '));
+        return { exitCode: 0, stdout: args.join(' ') === 'plugin list --json' ? staleList : '{}', stderr: '' };
+      },
+    })[0];
+
+    expect(result?.ok).toBe(false);
+    expect(result?.detail).toContain('[same-version-payload-mismatch]');
+    expect(calls).toEqual(['codex plugin list --json']);
+    expect(readFileSync(target, 'utf8')).toBe('{"name":"corrupt-preexisting-target"}\n');
+  });
+
+  for (const fixture of [
+    { label: 'identical hook definitions', oldHook: '{"hooks":{"SessionStart":[]}}\n', changed: false },
+    { label: 'changed hook definitions', oldHook: '{"hooks":{"PreToolUse":[]}}\n', changed: true },
+  ]) {
+    test(`version transition reports review only for ${fixture.label}`, () => {
+      const bundleRoot = mkdtempSync(join(tmpdir(), 'genie-hook-identity-bundle-'));
+      const codexHome = makeCodexHome();
+      const statePath = join(codexHome, 'refresh.json');
+      const canonicalHook = '{"hooks":{"SessionStart":[]}}\n';
+      write(join(bundleRoot, 'plugins', 'genie', 'hooks', 'codex-hooks.json'), canonicalHook);
+      write(
+        join(codexHome, 'plugins', 'cache', 'automagik', 'genie', '5.260710.9', 'hooks', 'codex-hooks.json'),
+        fixture.oldHook,
+      );
+      let lists = 0;
+      const result = convergeCodexPlugin({
+        command: 'codex',
+        bundleRoot,
+        expectedVersion: VERSION,
+        installIfAbsent: false,
+        statePath,
+        codexHome,
+        verifyCodexPayload: () => undefined,
+        runner(_command, args) {
+          if (args.join(' ') === 'plugin list --json') {
+            lists += 1;
+            return { exitCode: 0, stdout: lists === 1 ? staleList : currentList, stderr: '' };
+          }
+          return { exitCode: 0, stdout: '{}', stderr: '' };
+        },
+      });
+
+      expect(result).toMatchObject({ runtime: 'codex', ok: true, hookReviewRequired: fixture.changed });
+    });
+  }
+
+  test('initial explicit Codex install reports hook review while update keeps an absent plugin absent', () => {
+    const bundleRoot = mkdtempSync(join(tmpdir(), 'genie-hook-initial-bundle-'));
+    const codexHome = makeCodexHome();
+    write(join(bundleRoot, 'plugins', 'genie', 'hooks', 'codex-hooks.json'), '{"hooks":{"SessionStart":[]}}\n');
+    let installed = false;
+    const runner = (_command: string, args: string[]) => {
+      if (args.join(' ') === 'plugin list --json') {
+        return { exitCode: 0, stdout: installed ? currentList : '{"installed":[]}', stderr: '' };
+      }
+      if (args.join(' ') === 'plugin add genie@automagik --json') installed = true;
+      return { exitCode: 0, stdout: '{}', stderr: '' };
+    };
+
+    const absentUpdate = convergeCodexPlugin({
+      command: 'codex',
+      bundleRoot,
+      expectedVersion: VERSION,
+      installIfAbsent: false,
+      statePath: join(codexHome, 'update-refresh.json'),
+      codexHome,
+      verifyCodexPayload: () => undefined,
+      runner,
+    });
+    expect(absentUpdate).toBeNull();
+
+    const install = convergeCodexPlugin({
+      command: 'codex',
+      bundleRoot,
+      expectedVersion: VERSION,
+      installIfAbsent: true,
+      statePath: join(codexHome, 'install-refresh.json'),
+      codexHome,
+      verifyCodexPayload: () => undefined,
+      runner,
+    });
+    expect(install).toMatchObject({ runtime: 'codex', ok: true, hookReviewRequired: true });
+  });
+
+  test('matching-current disabled Codex setup is idempotent without plugin cache mutation or residual intent', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-codex-disabled-current-'));
+    const statePath = join(root, 'refresh.json');
+    const configPath = join(root, 'config.toml');
+    writeFileSync(configPath, '[plugins."genie@automagik"]\nenabled = false\n');
+    const disabledList = JSON.stringify({
+      installed: [{ pluginId: 'genie@automagik', enabled: false, version: VERSION }],
+    });
+    const calls: string[] = [];
+    const setup = () =>
+      convergeCodexPlugin({
+        command: 'codex',
+        bundleRoot: root,
+        expectedVersion: VERSION,
+        installIfAbsent: true,
+        statePath,
+        configPath,
+        verifyCodexPayload: () => undefined,
+        runner(command, args) {
+          calls.push([command, ...args].join(' '));
+          return {
+            exitCode: 0,
+            stdout: args.join(' ') === 'plugin list --json' ? disabledList : '{}',
+            stderr: '',
+          };
+        },
+      });
+
+    expect(setup()).toMatchObject({ runtime: 'codex', ok: true, preservedDisabled: true });
+    expect(existsSync(statePath)).toBe(false);
+    expect(setup()).toMatchObject({ runtime: 'codex', ok: true, preservedDisabled: true });
+    expect(existsSync(statePath)).toBe(false);
+    expect(readFileSync(configPath, 'utf8')).toContain('enabled = false');
+    expect(calls.filter((call) => call === 'codex plugin list --json')).toHaveLength(4);
+    expect(calls.filter((call) => call.includes('plugin marketplace add'))).toHaveLength(2);
+    expect(calls).not.toContain('codex plugin add genie@automagik --json');
+    expect(calls).not.toContain('codex plugin remove genie@automagik --json');
   });
 
   test('marketplace registered from a different source is repointed with bounded subprocesses', () => {
@@ -887,6 +1006,7 @@ describe('codex repair convergence (stale marketplace root / stale installed plu
     });
     expect(results[0]?.ok).toBe(true);
     expect(calls).toContain('codex plugin marketplace remove automagik --json');
+    expect(calls).not.toContain('codex plugin add genie@automagik --json');
     expect(marketplaceAdds).toBe(2);
     expect(timeouts.every((timeout) => timeout === 777)).toBe(true);
   });
@@ -913,30 +1033,34 @@ describe('codex repair convergence (stale marketplace root / stale installed plu
     expect(result?.detail).toContain('timed out after 654ms');
   });
 
-  test('installed plugin pinned to a stale root is reinstalled until version-matched', () => {
+  test('installed stale Codex plugin fails closed without remove/re-add or cache mutation', () => {
     const bundleRoot = join(import.meta.dir, '..', '..');
+    const codexHome = makeCodexHome();
+    const oldCacheFile = join(codexHome, 'plugins', 'cache', 'automagik', 'genie', '5.260710.9', 'payload.txt');
+    write(oldCacheFile, 'old-cache-bytes\n');
     const calls: string[] = [];
     const timeouts: Array<number | undefined> = [];
-    let lists = 0;
     const results = installRuntimeIntegrations({
       selection: 'codex',
       bundleRoot,
-      codexHome: makeCodexHome(),
+      codexHome,
       detected: { codex: true },
       timeoutMs: 888,
       runner(command, args, options) {
         calls.push([command, ...args].join(' '));
         timeouts.push(options?.timeoutMs);
-        if (args.join(' ') === 'plugin list --json') {
-          lists += 1;
-          return { exitCode: 0, stdout: lists <= 2 ? staleList : currentList, stderr: '' };
-        }
+        if (args.join(' ') === 'plugin list --json') return { exitCode: 0, stdout: staleList, stderr: '' };
         return { exitCode: 0, stdout: '{}', stderr: '' };
       },
     });
-    expect(results[0]?.ok).toBe(true);
-    expect(calls).toContain('codex plugin remove genie@automagik --json');
-    expect(calls.filter((call) => call === 'codex plugin add genie@automagik --json')).toHaveLength(2);
+    expect(results[0]?.ok).toBe(false);
+    expect(results[0]?.detail).toContain('after one non-destructive add attempt');
+    expect(results[0]?.detail).toContain('Close all Codex tasks first');
+    expect(results[0]?.detail).toContain('external terminal');
+    expect(calls.filter((call) => call === 'codex plugin add genie@automagik --json')).toHaveLength(1);
+    expect(calls).not.toContain('codex plugin remove genie@automagik --json');
+    expect(readFileSync(oldCacheFile, 'utf8')).toBe('old-cache-bytes\n');
+    expect(existsSync(join(codexHome, '.integration-refresh-codex.json'))).toBe(false);
     expect(timeouts.every((timeout) => timeout === 888)).toBe(true);
   });
 
@@ -952,7 +1076,8 @@ describe('codex repair convergence (stale marketplace root / stale installed plu
       },
     });
     expect(results[0]?.ok).toBe(false);
-    expect(results[0]?.detail).toMatch(/stuck at v5\.260710\.9/);
+    expect(results[0]?.detail).toMatch(/remained at v5\.260710\.9/);
+    expect(results[0]?.detail).toContain('Refusing automatic plugin removal/reinstall');
   });
 
   for (const [label, postState, expected] of [
@@ -971,36 +1096,6 @@ describe('codex repair convergence (stale marketplace root / stale installed plu
           if (args.join(' ') === 'plugin list --json') {
             lists += 1;
             return { exitCode: 0, stdout: lists === 1 ? '{"installed":[]}' : postState, stderr: '' };
-          }
-          return { exitCode: 0, stdout: '{}', stderr: '' };
-        },
-      })[0];
-
-      expect(result?.ok).toBe(false);
-      expect(result?.detail).toMatch(expected);
-    });
-  }
-
-  for (const [label, repairedState, expected] of [
-    ['missing', '{"installed":[]}', /missing after plugin reinstall/],
-    ['malformed', '{"unexpected":[]}', /malformed JSON.*after plugin reinstall/],
-  ] as const) {
-    test(`${label} post-reinstall state is a failure`, () => {
-      const bundleRoot = join(import.meta.dir, '..', '..');
-      let lists = 0;
-      const result = installRuntimeIntegrations({
-        selection: 'codex',
-        bundleRoot,
-        codexHome: makeCodexHome(),
-        detected: { codex: true },
-        runner(_command, args) {
-          if (args.join(' ') === 'plugin list --json') {
-            lists += 1;
-            return {
-              exitCode: 0,
-              stdout: lists === 1 ? currentList : lists === 2 ? staleList : repairedState,
-              stderr: '',
-            };
           }
           return { exitCode: 0, stdout: '{}', stderr: '' };
         },

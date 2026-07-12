@@ -76,6 +76,19 @@ describe('standalone install.sh lifecycle lease', () => {
     });
   }
 
+  test('logical path normalization is nounset-safe before the first array element', () => {
+    const result = shell(`
+      source "$1"
+      logical_absolute_path '/tmp/genie'
+      logical_absolute_path '/../tmp/..'
+    `);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe('/tmp/genie\n/\n');
+    expect(result.stderr).not.toContain('unbound variable');
+    expect(readFileSync(installer, 'utf8')).not.toContain('${#normalized_parts[@]}');
+  });
+
   test('acquires before an absent GENIE_HOME and owns continuously through final verification', () => {
     const result = shell(`
       source "$1"
@@ -307,6 +320,38 @@ describe('installCommand', () => {
         noopConsent,
       ),
     ).toThrow('Requested integration failed');
+  });
+
+  test('install prints hook review guidance only when hook definition bytes changed', () => {
+    const lines: string[] = [];
+    const originalLog = console.log;
+    console.log = (...args: unknown[]) => lines.push(args.map(String).join(' '));
+    const run = (hookReviewRequired: boolean) =>
+      installCommand(
+        { integrations: 'codex' },
+        makeCleanupSpy().runner,
+        () => undefined,
+        () => undefined,
+        () => [
+          {
+            runtime: 'codex',
+            ok: true,
+            detail: 'fixture integration current',
+            hookReviewRequired,
+          },
+        ],
+        noopLease,
+        noopConsent,
+      );
+    try {
+      run(false);
+      expect(lines.join('\n')).not.toContain('Review Genie hooks with /hooks');
+      lines.length = 0;
+      run(true);
+      expect(lines.join('\n')).toContain('Review Genie hooks with /hooks, then start a new Codex task.');
+    } finally {
+      console.log = originalLog;
+    }
   });
 
   test('rejects an invalid integration option before every finisher side effect', () => {

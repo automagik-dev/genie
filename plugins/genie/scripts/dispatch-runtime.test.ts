@@ -219,6 +219,36 @@ describe('dispatch-runtime launcher', () => {
     });
   });
 
+  for (const event of ['PreToolUse', 'PermissionRequest'] as const) {
+    test(`executable main gives ${event} recovery for a stale hook definition with missing binding flags`, async () => {
+      const unexpected = join(root, `unexpected-stale-hook-spawn-${event}`);
+      process.env.FAKE_LOG = unexpected;
+      fakeGenie("fs.writeFileSync(process.env.FAKE_LOG, 'spawned');");
+
+      const proc = Bun.spawn(['node', LAUNCHER_PATH, 'codex', event], {
+        env: process.env,
+        stdin: Buffer.from(payload(event)),
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+      const stdout = await new Response(proc.stdout).text();
+      expect(await proc.exited).toBe(0);
+      expect(launcher.validCodexOutput(stdout, event)).toBe(true);
+      const output = JSON.parse(stdout).hookSpecificOutput;
+      const reason = (event === 'PreToolUse' ? output.permissionDecisionReason : output.decision.message) as string;
+      if (event === 'PreToolUse') expect(output.permissionDecision).toBe('deny');
+      else expect(output.decision.behavior).toBe('deny');
+      expect(reason).toContain('stale Codex hook definition after a Genie plugin refresh');
+      expect(reason).toContain('Close all Codex tasks first');
+      expect(reason).toContain('external terminal');
+      expect(reason).toContain('`genie doctor`');
+      expect(reason).toContain('if repair is needed, run `genie setup --codex`');
+      expect(reason).toContain('review `/hooks`, then start a new Codex task');
+      expect(reason.indexOf('Close all Codex tasks first')).toBeLessThan(reason.indexOf('external terminal'));
+      expect(existsSync(unexpected)).toBe(false);
+    });
+  }
+
   test('executable main denies before spawn when its bytes drift from the reviewed definition', async () => {
     const mutated = join(root, 'dispatch-runtime-mutated.cjs');
     writeFileSync(mutated, `${readFileSync(LAUNCHER_PATH, 'utf8')}\n// unreviewed mutation\n`);

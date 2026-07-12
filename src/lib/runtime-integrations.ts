@@ -1721,6 +1721,8 @@ export interface IntegrationResult {
   ok: boolean;
   detail: string;
   preservedDisabled?: boolean;
+  /** True only when the runtime's reviewed hook definition bytes changed. */
+  hookReviewRequired?: boolean;
   timedOut?: boolean;
 }
 
@@ -2188,66 +2190,72 @@ function requireExpectedState(
   }
 }
 
-function convergeCodexPayloadIdentity(
-  options: ConvergePluginOptions,
-  installed: RuntimePluginState,
-  timeoutMs: number,
-  authorizeRemoval: () => void,
-  markRemoved: () => void,
-  markReinstalled: () => void,
-): RuntimePluginState {
+function verifyInstalledExpectedVersionCodexPayload(options: ConvergePluginOptions): void {
   const verifyPayload = options.verifyCodexPayload ?? verifyCodexPhysicalPayload;
-  const verificationInput = {
-    bundleRoot: options.bundleRoot,
-    codexHome: options.codexHome ?? getCodexHome(),
-    expectedVersion: options.expectedVersion,
-  };
   try {
-    verifyPayload(verificationInput);
-    return installed;
-  } catch (firstVerificationError) {
-    // Same-version caches can still originate from the wrong marketplace.
-    // Force one canonical source re-registration and reinstall, then require
-    // physical identity again before clearing the durable intent.
-    authorizeRemoval();
-    runChecked(options.runner, options.command, ['plugin', 'remove', 'genie@automagik', '--json'], true, timeoutMs);
-    markRemoved();
-    runChecked(
-      options.runner,
-      options.command,
-      ['plugin', 'marketplace', 'remove', 'automagik', '--json'],
-      true,
-      timeoutMs,
+    verifyPayload({
+      bundleRoot: options.bundleRoot,
+      codexHome: options.codexHome ?? getCodexHome(),
+      expectedVersion: options.expectedVersion,
+    });
+  } catch (error) {
+    throw new IntegrationCommandError(
+      `Codex plugin versioning violation [same-version-payload-mismatch]: installed v${options.expectedVersion} cache bytes differ from the canonical payload. Refusing to mutate or reinstall an active plugin version in place. Publish the changed payload under a new plugin version. Close all Codex tasks first. Then, from an external terminal, run \`genie setup --codex\`, review \`/hooks\`, and start a new Codex task. Cause: ${error instanceof Error ? error.message : String(error)}`,
     );
-    addCodexMarketplace(options.runner, options.command, options.bundleRoot, timeoutMs);
-    runChecked(options.runner, options.command, ['plugin', 'add', 'genie@automagik', '--json'], false, timeoutMs);
-    const repaired = requireCodexPluginState(
-      runChecked(options.runner, options.command, ['plugin', 'list', '--json'], false, timeoutMs).stdout,
-      'after payload-identity reinstall',
-    );
-    if (!repaired.installed || repaired.version !== options.expectedVersion) {
-      throw new IntegrationCommandError(
-        `Codex payload-identity repair did not restore v${options.expectedVersion}: installed=${repaired.installed}, version=${repaired.version || 'missing'}`,
-      );
-    }
-    // Consume removal authority as soon as registration presence is proven;
-    // final physical verification may still fail, but a later manual removal
-    // must not be resurrected by this stale transaction.
-    markReinstalled();
-    try {
-      verifyPayload(verificationInput);
-      return repaired;
-    } catch (finalVerificationError) {
-      throw new IntegrationCommandError(
-        `Codex plugin payload identity did not converge after canonical reinstall: ${finalVerificationError instanceof Error ? finalVerificationError.message : String(finalVerificationError)}; initial verification: ${firstVerificationError instanceof Error ? firstVerificationError.message : String(firstVerificationError)}`,
-      );
-    }
   }
+}
+
+function expectedCodexGenerationPath(options: ConvergePluginOptions): string {
+  return join(options.codexHome ?? getCodexHome(), 'plugins', 'cache', 'automagik', 'genie', options.expectedVersion);
+}
+
+function expectedCodexGenerationExists(options: ConvergePluginOptions): boolean {
+  try {
+    lstatSync(expectedCodexGenerationPath(options));
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw new IntegrationCommandError(
+      `Codex expected plugin generation cannot be inspected at ${expectedCodexGenerationPath(options)}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+function physicalHookDefinitionIdentity(path: string): string {
+  try {
+    const stat = lstatSync(path);
+    if (!stat.isFile() || stat.isSymbolicLink()) return 'unsafe';
+    return `sha256:${hashPhysicalFileIncrementally(path)}`;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'absent' : 'unreadable';
+  }
+}
+
+function codexHookReviewRequired(options: ConvergePluginOptions, before: RuntimePluginState): boolean {
+  const canonical = physicalHookDefinitionIdentity(
+    join(options.bundleRoot, 'plugins', 'genie', 'hooks', 'codex-hooks.json'),
+  );
+  if (canonical === 'absent') return false;
+  if (!before.installed || !before.version) return true;
+  const installed = physicalHookDefinitionIdentity(
+    join(
+      options.codexHome ?? getCodexHome(),
+      'plugins',
+      'cache',
+      'automagik',
+      'genie',
+      before.version,
+      'hooks',
+      'codex-hooks.json',
+    ),
+  );
+  return installed !== canonical;
 }
 
 interface PluginConvergenceProgress {
   intent: RefreshIntent | null;
   desiredEnabled: boolean | null;
+  hookReviewRequired: boolean;
 }
 
 function performCodexPluginConvergence(
@@ -2265,55 +2273,56 @@ function performCodexPluginConvergence(
     if (progress.intent !== null) clearRefreshIntent(options.statePath);
     return false;
   }
+
+  progress.hookReviewRequired = codexHookReviewRequired(options, before);
+
+  // A Codex task retains its reviewed hook command while it is running. The
+  // command resolves the launcher from this versioned cache path on every
+  // invocation, so replacing that path in place can pair an old definition
+  // with new launcher bytes. Verify before any marketplace/plugin mutation and
+  // require changed bytes to use a new versioned cache generation.
+  const installedExpectedVersion = before.installed && before.version === options.expectedVersion;
+  const expectedGenerationExists = expectedCodexGenerationExists(options);
+  if (installedExpectedVersion || expectedGenerationExists) verifyInstalledExpectedVersionCodexPayload(options);
+
   progress.intent ??= plannedRefreshIntent('codex', before.installed ? before.enabled === true : true);
   progress.desiredEnabled = progress.intent.enabled;
   writeRefreshIntent(options.statePath, progress.intent);
 
   addCodexMarketplace(options.runner, options.command, options.bundleRoot, timeoutMs);
-  // `plugin add` may refresh an existing cache internally. Authorize repair
-  // before that potentially destructive boundary, not only before the later
-  // explicit remove/reinstall fallback.
+  if (installedExpectedVersion) {
+    progress.intent = markRefreshStable(options.statePath, progress.intent);
+    if (progress.intent.enabled) {
+      requireExpectedState('codex', before, options.expectedVersion, true, 'enabled-state');
+    }
+    return true;
+  }
+  // `plugin add` may advance the registration/cache internally. Record that
+  // command boundary for crash recovery; Genie never follows it with an
+  // automatic remove/reinstall of a generation that live tasks may reference.
   if (before.installed && progress.intent.phase === 'planned') {
     progress.intent = markRefreshCommandStarted(options.statePath, progress.intent);
   }
   runChecked(options.runner, options.command, ['plugin', 'add', 'genie@automagik', '--json'], false, timeoutMs);
-  let installed = requireCodexPluginState(
+  const installed = requireCodexPluginState(
     runChecked(options.runner, options.command, ['plugin', 'list', '--json'], false, timeoutMs).stdout,
     'after plugin add',
   );
   if (!installed.installed) throw new IntegrationCommandError('Codex plugin is missing after plugin add');
   progress.intent = markRefreshStable(options.statePath, progress.intent);
   if (installed.version !== options.expectedVersion) {
-    progress.intent = markRefreshCommandStarted(options.statePath, progress.intent);
-    runChecked(options.runner, options.command, ['plugin', 'remove', 'genie@automagik', '--json'], true, timeoutMs);
-    progress.intent = markRefreshRemovalObserved(options.statePath, progress.intent);
-    runChecked(options.runner, options.command, ['plugin', 'add', 'genie@automagik', '--json'], false, timeoutMs);
-    installed = requireCodexPluginState(
-      runChecked(options.runner, options.command, ['plugin', 'list', '--json'], false, timeoutMs).stdout,
-      'after plugin reinstall',
-    );
-    if (!installed.installed) throw new IntegrationCommandError('Codex plugin is missing after plugin reinstall');
-    progress.intent = markRefreshStable(options.statePath, progress.intent);
-  }
-  if (installed.version !== options.expectedVersion) {
+    // A running Codex task retains its reviewed hook definition. Removing and
+    // re-adding the old registration here can invalidate that live definition
+    // even when the first, non-destructive add simply failed to advance the
+    // selected generation. Presence was re-observed, so consume all repair
+    // authority and leave the registration/cache exactly where Codex left it.
+    clearRefreshIntent(options.statePath);
+    progress.intent = null;
     throw new IntegrationCommandError(
-      `codex plugin stuck at v${installed.version || 'missing'} (expected v${options.expectedVersion}) — marketplace root may be stale`,
+      `Codex plugin remained at v${installed.version || 'missing'} after one non-destructive add attempt (expected v${options.expectedVersion}). Refusing automatic plugin removal/reinstall; the existing registration and cache are preserved. Close all Codex tasks first. Then, from an external terminal, run \`genie update\` (or \`genie setup --codex\`), review \`/hooks\`, and start a new Codex task.`,
     );
   }
-  installed = convergeCodexPayloadIdentity(
-    options,
-    installed,
-    timeoutMs,
-    () => {
-      progress.intent = markRefreshCommandStarted(options.statePath, progress.intent as RefreshIntent);
-    },
-    () => {
-      progress.intent = markRefreshRemovalObserved(options.statePath, progress.intent as RefreshIntent);
-    },
-    () => {
-      progress.intent = markRefreshStable(options.statePath, progress.intent as RefreshIntent);
-    },
-  );
+  verifyInstalledExpectedVersionCodexPayload(options);
   progress.intent = markRefreshStable(options.statePath, progress.intent);
   if (progress.intent.enabled) {
     requireExpectedState('codex', installed, options.expectedVersion, true, 'enabled-state');
@@ -2338,7 +2347,7 @@ function restoreCodexDisabledState(options: ConvergePluginOptions, timeoutMs: nu
  */
 export function convergeCodexPlugin(options: ConvergePluginOptions): IntegrationResult | null {
   const timeoutMs = options.timeoutMs ?? INTEGRATION_TIMEOUT_MS;
-  const progress: PluginConvergenceProgress = { intent: null, desiredEnabled: null };
+  const progress: PluginConvergenceProgress = { intent: null, desiredEnabled: null, hookReviewRequired: false };
   let primaryError: unknown;
   try {
     if (!performCodexPluginConvergence(options, timeoutMs, progress)) return null;
@@ -2347,7 +2356,7 @@ export function convergeCodexPlugin(options: ConvergePluginOptions): Integration
     progress.intent = settleFailedRefreshIntent(options, 'codex', progress.intent, timeoutMs);
     if (progress.intent?.phase === 'ambiguous-absent') {
       primaryError = new IntegrationCommandError(
-        `${error instanceof Error ? error.message : String(error)}; Codex state is absent or unknown after a failed command and will not be reinstalled by update — run genie setup --codex to grant explicit repair consent`,
+        `${error instanceof Error ? error.message : String(error)}; Codex state is absent or unknown after a failed command and will not be reinstalled by update. Close all Codex tasks first. Then, from an external terminal, run \`genie setup --codex\` to grant explicit repair consent, review \`/hooks\`, and start a new Codex task.`,
       );
     }
   }
@@ -2367,6 +2376,7 @@ export function convergeCodexPlugin(options: ConvergePluginOptions): Integration
     ok: true,
     detail: `plugin/hooks refreshed to v${options.expectedVersion}`,
     preservedDisabled: progress.desiredEnabled === false,
+    hookReviewRequired: progress.hookReviewRequired,
   };
 }
 

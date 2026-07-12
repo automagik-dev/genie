@@ -1,5 +1,5 @@
 import { Database } from 'bun:sqlite';
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import {
   cpSync,
@@ -31,13 +31,15 @@ import {
 import { cleanupV4 } from './legacy-v4.js';
 
 /**
- * Capture everything written to stdout during `fn`, restoring the real
- * `process.stdout.write` (and any exitCode side effect) afterwards.
+ * Capture everything written to stdout during `fn` with a deterministic
+ * non-failing exit-code baseline. Bun keeps the last numeric `process.exitCode`
+ * when assigned `undefined`, so using `undefined` as the success sentinel makes
+ * this helper depend on worker/test ordering (Linux CI commonly enters at 0).
  */
-async function captureDoctor(fn: () => Promise<void>): Promise<{ output: string; exitCode: number | undefined }> {
+async function captureDoctor(fn: () => Promise<void>): Promise<{ output: string; exitCode: number }> {
   const realWrite = process.stdout.write.bind(process.stdout);
   const priorExit = process.exitCode;
-  process.exitCode = undefined;
+  process.exitCode = 0;
   let buffer = '';
   process.stdout.write = ((chunk: string) => {
     buffer += chunk;
@@ -48,7 +50,10 @@ async function captureDoctor(fn: () => Promise<void>): Promise<{ output: string;
     return { output: buffer, exitCode: process.exitCode };
   } finally {
     process.stdout.write = realWrite;
-    process.exitCode = priorExit;
+    // Bun cannot restore `undefined` after a numeric exitCode was assigned.
+    // Preserve a prior numeric failure, otherwise leave the test process in
+    // the canonical non-failing state.
+    process.exitCode = priorExit ?? 0;
   }
 }
 
@@ -117,7 +122,7 @@ describe('doctorCommand', () => {
   });
 
   afterEach(() => {
-    process.exitCode = undefined;
+    process.exitCode = 0;
   });
 
   test('emits a check for each pillar', () => {
@@ -144,7 +149,7 @@ describe('doctorCommand', () => {
 
   test('does not set a failing exit code when all checks pass', async () => {
     const { exitCode } = await captureDoctor(() => doctorCommand({ json: true }, isolatedDoctorDeps()));
-    expect(exitCode).toBeUndefined();
+    expect(exitCode).toBe(0);
   });
 
   test('human output renders a header and a summary line', async () => {
@@ -326,7 +331,7 @@ describe('CLAUDE_CODE_SUBAGENT_MODEL override warning', () => {
     expect(warning?.status).toBe('warn');
     expect(warning?.detail).toContain('overrides per-agent model pins');
     expect(json.ok).toBe(true);
-    expect(exitCode).toBeUndefined();
+    expect(exitCode).toBe(0);
   });
 
   test('is silent when unset, including in the doctor output', async () => {
@@ -410,17 +415,8 @@ describe('doctorCommand — genie.db check branches', () => {
 
   afterEach(() => {
     process.chdir(priorCwd);
-    process.exitCode = undefined;
-    rmSync(tmp, { recursive: true, force: true });
-  });
-
-  // The schema-version test drives doctorCommand to set `process.exitCode = 1`.
-  // bun treats `process.exitCode = undefined` as a no-op (it does not clear a
-  // previously-set code), so the per-test resets above cannot undo it — the 1
-  // would leak and make the entire `bun test` run exit non-zero despite every
-  // test passing. Clear it to 0 once, after this file's tests complete.
-  afterAll(() => {
     process.exitCode = 0;
+    rmSync(tmp, { recursive: true, force: true });
   });
 
   test('absent genie.db → pass ("absent"), no failing exit code', async () => {
@@ -432,7 +428,7 @@ describe('doctorCommand — genie.db check branches', () => {
     const db = json.checks.find((c) => c.name === 'genie.db');
     expect(db?.status).toBe('pass');
     expect(db?.detail).toContain('absent');
-    expect(exitCode).toBeUndefined();
+    expect(exitCode).toBe(0);
   });
 
   test('genie.db at an unrecognized schema version → fail + exit code 1', async () => {

@@ -265,6 +265,7 @@ function repairCodexIntegration(deps: SetupDeps, codexPath: string): void {
     nextConsent,
     genieHome,
   );
+  let hookReviewRequired = false;
 
   try {
     const result = (deps.installRuntimeIntegrations ?? installRuntimeIntegrations)({
@@ -276,6 +277,7 @@ function repairCodexIntegration(deps: SetupDeps, codexPath: string): void {
       const detail = result?.detail ?? 'Codex integration failed without a diagnostic';
       throw new SetupIntegrationError(detail);
     }
+    hookReviewRequired = result.hookReviewRequired === true;
     console.log(`  \x1b[32m\u2713\x1b[0m ${result.detail}`);
     const plugin = (deps.probeCodexGeniePlugin ?? probeCodexGeniePlugin)();
     reconcileSetupCodexProject(root, plugin);
@@ -286,7 +288,9 @@ function repairCodexIntegration(deps: SetupDeps, codexPath: string): void {
       `${error instanceof Error ? error.message : String(error)}; Codex maintenance consent is pending — rerun genie setup --codex to resume`,
     );
   }
-  console.log('  \x1b[33m!\x1b[0m Review Genie hooks with /hooks, then start a new Codex task.');
+  if (hookReviewRequired) {
+    console.log('  \x1b[33m!\x1b[0m Review Genie hooks with /hooks, then start a new Codex task.');
+  }
 }
 
 /** Merge explicit Codex setup into the durable client-home maintenance scope. */

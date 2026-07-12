@@ -22,6 +22,10 @@ const MAX_STDOUT_BYTES = 64 * 1024;
 const MAX_STDERR_BYTES = 64 * 1024;
 const CODEX_EVENTS = new Set(['PreToolUse', 'PermissionRequest']);
 const CODEX_LAUNCHER_CONTRACT = 'genie-codex-dispatch-v1';
+const STALE_CODEX_HOOK_RECOVERY =
+  'stale Codex hook definition after a Genie plugin refresh: launcher binding flags are missing or malformed. ' +
+  'Close all Codex tasks first. Then, from an external terminal, run `genie doctor`; ' +
+  'if repair is needed, run `genie setup --codex`; review `/hooks`, then start a new Codex task';
 
 /** @typedef {'codex' | 'claude'} HookRuntime */
 /** @typedef {{error?: string, event?: string, tool?: string, input?: unknown}} ParsedEntry */
@@ -93,7 +97,7 @@ function parseLauncherBindingArgs(args) {
     args[0] !== '--launcher-contract' ||
     args[2] !== '--launcher-sha256'
   ) {
-    return { error: 'launcher binding flags are missing or malformed' };
+    return { error: STALE_CODEX_HOOK_RECOVERY };
   }
   return { contract: args[1], digest: args[3] };
 }

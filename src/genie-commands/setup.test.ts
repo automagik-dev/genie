@@ -76,7 +76,7 @@ describe('setup runtime and failure semantics', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  function deps(ok = true, preservedDisabled = false): SetupDeps {
+  function deps(ok = true, preservedDisabled = false, hookReviewRequired = false): SetupDeps {
     return {
       cwd: join(root, 'repo'),
       resolveExecutable: () => '/fixture/bin/codex',
@@ -99,6 +99,7 @@ describe('setup runtime and failure semantics', () => {
           ok,
           detail: ok ? 'fixture integration installed' : 'fixture integration failed',
           preservedDisabled,
+          hookReviewRequired,
         },
       ]) as SetupDeps['installRuntimeIntegrations'],
     };
@@ -121,6 +122,21 @@ describe('setup runtime and failure semantics', () => {
 
     expect(readIntegrationConsent(genieHome)).toBe('all');
     expect(process.exitCode).not.toBe(1);
+  });
+
+  test('setup prints hook review guidance only when hook definition bytes changed', async () => {
+    const lines: string[] = [];
+    const originalLog = console.log;
+    console.log = (...args: unknown[]) => lines.push(args.map(String).join(' '));
+    try {
+      await setupCommand({ codex: true, quick: true }, deps(true, false, false));
+      expect(lines.join('\n')).not.toContain('Review Genie hooks with /hooks');
+      lines.length = 0;
+      await setupCommand({ codex: true, quick: true }, deps(true, false, true));
+      expect(lines.join('\n')).toContain('Review Genie hooks with /hooks, then start a new Codex task.');
+    } finally {
+      console.log = originalLog;
+    }
   });
 
   test('full quick setup applies the never-chosen auto to Codex decision', async () => {

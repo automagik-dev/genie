@@ -96,6 +96,22 @@ program
       'Converge agent integrations only — no manifest fetch or binary swap (GENIE_UPDATE_SYNC_ONLY=1)',
     ).conflicts('rollback'),
   )
+  .addOption(
+    new Option('--post-delivery-converge')
+      .hideHelp()
+      .conflicts([
+        'rollback',
+        'syncOnly',
+        'dev',
+        'homolog',
+        'next',
+        'stable',
+        'yes',
+        'restart',
+        'verify',
+        'skipMaintenance',
+      ]),
+  )
   .action(updateCommand);
 
 program

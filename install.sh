@@ -69,7 +69,7 @@ sha256_text() {
 # The parent must already exist so a losing installer cannot mutate protected
 # scope merely while trying to acquire the shared lifecycle lease.
 logical_absolute_path() {
-  local input="$1" component output="" index
+  local input="$1" component count=0
   local -a raw_parts normalized_parts
   case "$input" in
     /*) ;;
@@ -80,13 +80,18 @@ logical_absolute_path() {
     case "$component" in
       ''|.) ;;
       ..)
-        index=${#normalized_parts[@]}
-        if [[ "$index" -gt 0 ]]; then unset 'normalized_parts[index-1]'; fi
+        if [[ "$count" -gt 0 ]]; then
+          count=$((count - 1))
+          unset 'normalized_parts[count]'
+        fi
         ;;
-      *) normalized_parts[${#normalized_parts[@]}]="$component" ;;
+      *)
+        normalized_parts[count]="$component"
+        count=$((count + 1))
+        ;;
     esac
   done
-  if [[ "${#normalized_parts[@]}" -eq 0 ]]; then
+  if [[ "$count" -eq 0 ]]; then
     printf '/\n'
     return
   fi

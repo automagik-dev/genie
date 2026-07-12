@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -33,6 +33,29 @@ describe('genie CLI registration', () => {
     const stdout = proc.stdout.toString();
     expect(stdout).toContain('--sync-only');
     expect(stdout).toContain('GENIE_UPDATE_SYNC_ONLY=1'); // help text names the env contract
+    expect(stdout).not.toContain('--post-delivery-converge');
+  });
+
+  test('hidden post-delivery mode converges locally without entering channel/network delivery', () => {
+    const repoRoot = import.meta.dir;
+    const genieHome = join(fxHome, '.genie');
+    const binary = join(genieHome, 'bin', 'genie');
+    mkdirSync(join(genieHome, 'bin'), { recursive: true });
+    writeFileSync(binary, '#!/bin/sh\nprintf "genie 5.260711.7\\n"\n');
+    chmodSync(binary, 0o755);
+    writeFileSync(
+      join(genieHome, '.integration-consent.json'),
+      `${JSON.stringify({ schemaVersion: 3, selection: 'none', state: 'committed', revision: 1 })}\n`,
+    );
+
+    const proc = Bun.spawnSync([process.execPath, join(repoRoot, 'genie.ts'), 'update', '--post-delivery-converge'], {
+      cwd: repoRoot,
+      env: { ...process.env, HOME: fxHome, GENIE_HOME: genieHome, GENIE_UPDATE_SYNC_ONLY: '' },
+    });
+
+    expect(proc.exitCode).toBe(0);
+    expect(proc.stdout.toString()).not.toContain('Channel:');
+    expect(proc.stdout.toString()).not.toContain('Downloading signed tarball');
   });
 
   test('init --help discloses every project MCP file it may reconcile', () => {
@@ -76,5 +99,21 @@ describe('genie CLI registration', () => {
     expect(stderr).not.toContain('src/genie-commands/update.ts');
     expect(stderr).not.toContain('Bun v');
     expect(stderr).not.toContain(' at ');
+  });
+
+  test('hidden post-delivery mode rejects delivery and compatibility flags before action', () => {
+    const repoRoot = import.meta.dir;
+    for (const conflicting of ['--sync-only', '--stable']) {
+      const proc = Bun.spawnSync(
+        [process.execPath, join(repoRoot, 'genie.ts'), 'update', '--post-delivery-converge', conflicting],
+        {
+          cwd: repoRoot,
+          env: { ...process.env, HOME: fxHome, GENIE_HOME: join(fxHome, '.genie') },
+        },
+      );
+      expect(proc.exitCode).toBe(1);
+      expect(proc.stderr.toString()).toContain("option '--post-delivery-converge' cannot be used with option");
+      expect(proc.stdout.toString()).not.toContain('Channel:');
+    }
   });
 });

@@ -154,7 +154,7 @@ export function installCommand(
       if (failed.length > 0)
         throw new Error(`Requested integration failed: ${failed.map((r) => r.runtime).join(', ')}`);
     }
-    if (results.some((result) => result.runtime === 'codex' && result.ok)) {
+    if (results.some((result) => result.runtime === 'codex' && result.ok && result.hookReviewRequired)) {
       console.log('  \x1b[33m!\x1b[0m Review Genie hooks with /hooks, then start a new Codex task.');
     }
   } finally {
