@@ -7,6 +7,5 @@
   },
   "repository": "https://github.com/automagik-dev/genie",
   "license": "MIT",
-  "keywords": ["workflow", "orchestration", "collaboration", "claude-code", "tmux", "agents"],
-  "hooks": "./hooks/hooks.json"
+  "keywords": ["workflow", "orchestration", "collaboration", "claude-code", "tmux", "agents"]
 }
