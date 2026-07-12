@@ -8,13 +8,21 @@
  */
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve } from 'node:path';
+import { designReviewViolations } from '../skills/brainstorm/references/design-review-evidence.mjs';
 
 const ROOT = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
 const DEFAULT_WISHES_DIR = join(ROOT, '.genie/wishes');
 const EXECUTION_STRATEGY_THRESHOLD = '2026-07-09';
+const DESIGN_REVIEW_EVIDENCE_THRESHOLD = '2026-07-11';
 
 const STUB_MARKERS = ['_No brainstorm — direct wish_', '_Design not recovered'];
+const CANONICAL_STATUSES = new Set(['DRAFT', 'FIX-FIRST', 'APPROVED', 'IN_PROGRESS', 'BLOCKED', 'SHIPPED']);
+// Historical wishes predate the persisted lifecycle state machine. They remain
+// readable terminal records, but new/active documents must use canonical state.
+const LEGACY_TERMINAL_STATUSES = new Set(['DONE', 'EXECUTED']);
+const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const QUALIFIED_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}\/[a-z0-9][a-z0-9-]{0,63}$/;
 
 function walk(dir: string): string[] {
   const out: string[] = [];
@@ -40,6 +48,14 @@ interface WishStructureIssue {
   file: string;
   line: number;
   message: string;
+}
+
+interface WishRecord {
+  file: string;
+  slug: string;
+  status: string;
+  dependsOn: string[];
+  blocks: string[];
 }
 
 function wishesDirFromArgs(args: string[]): string {
@@ -182,6 +198,205 @@ function lintExecutionStrategy(file: string): WishStructureIssue[] {
   return issues;
 }
 
+function metadataValue(lines: string[], field: string): { line: number; value: string } | null {
+  const pattern = new RegExp(`^\\|\\s*\\*\\*${field}\\*\\*\\s*\\|\\s*(.*?)\\s*\\|\\s*$`, 'i');
+  for (let index = 0; index < lines.length; index += 1) {
+    const match = pattern.exec(lines[index]);
+    if (match) return { line: index + 1, value: match[1].trim() };
+  }
+  return null;
+}
+
+function lintDesignReviewEvidence(file: string): WishStructureIssue[] {
+  if (basename(file) !== 'WISH.md') return [];
+  const text = readFileSync(file, 'utf8');
+  if (/^<!-- wishes-lint:ignore -->/m.test(text)) return [];
+  const lines = text.split('\n');
+  const date = metadataValue(lines, 'Date');
+  const newContract = date !== null && date.value >= DESIGN_REVIEW_EVIDENCE_THRESHOLD;
+  const design = metadataValue(lines, 'Design');
+  if (!design) {
+    return newContract ? [{ file, line: 1, message: 'new wish metadata must contain a Design field' }] : [];
+  }
+  if (design.value === STUB_MARKERS[0]) return [];
+
+  const links = [...design.value.matchAll(/\[[^\]]+\]\(([^)]+)\)/g)]
+    .map((match) => match[1].split('#')[0].split(' ')[0])
+    .filter((target): target is string => Boolean(target?.includes('brainstorms/') && target.endsWith('DESIGN.md')));
+  if (links.length === 0) {
+    return newContract
+      ? [
+          {
+            file,
+            line: design.line,
+            message: `Design must be ${STUB_MARKERS[0]} or link at least one brainstorm DESIGN.md`,
+          },
+        ]
+      : [];
+  }
+
+  const issues: WishStructureIssue[] = [];
+  for (const target of links) {
+    if (/^https?:\/\//i.test(target)) {
+      issues.push({ file, line: design.line, message: 'design-review evidence requires a local DESIGN.md' });
+      continue;
+    }
+    const resolved = resolve(dirname(file), target);
+    if (!existsSync(resolved)) continue; // lintFile reports the broken link with its original text.
+    const source = readFileSync(resolved, 'utf8');
+    if (!newContract && !source.includes('<!-- genie-design-review:start -->')) continue;
+    const violations = designReviewViolations(source);
+    for (const violation of violations) {
+      issues.push({ file, line: design.line, message: `invalid design-review evidence for ${target}: ${violation}` });
+    }
+  }
+  return issues;
+}
+
+function dependencyValues(
+  file: string,
+  lines: string[],
+  required: boolean,
+): { record?: Pick<WishRecord, 'dependsOn' | 'blocks'>; issues: WishStructureIssue[] } {
+  const issues: WishStructureIssue[] = [];
+  const heading = lines.findIndex((line) => /^##\s+Dependencies\s*$/i.test(line));
+  if (heading < 0) {
+    if (required) issues.push({ file, line: 1, message: 'canonical wish must contain a ## Dependencies section' });
+    return required ? { issues } : { record: { dependsOn: [], blocks: [] }, issues };
+  }
+  const end = lines.findIndex((line, index) => index > heading && /^##\s+/.test(line));
+  const section = lines.slice(heading + 1, end < 0 ? undefined : end);
+
+  const parseKey = (key: 'depends-on' | 'blocks'): string[] | null => {
+    const matches = section
+      .map((line, index) => ({
+        line: heading + index + 2,
+        match: new RegExp(`^\\*\\*${key}:\\*\\*\\s*(.+?)\\s*$`, 'i').exec(line),
+      }))
+      .filter((entry) => entry.match !== null);
+    if (matches.length !== 1) {
+      issues.push({
+        file,
+        line: heading + 1,
+        message: `Dependencies must contain exactly one **${key}:** key`,
+      });
+      return null;
+    }
+    const raw = matches[0].match?.[1].trim() ?? '';
+    if (raw.toLowerCase() === 'none') return [];
+    const values = raw.split(',').map((value) => value.trim());
+    for (const value of values) {
+      if (!SLUG_PATTERN.test(value) && !QUALIFIED_SLUG_PATTERN.test(value)) {
+        issues.push({ file, line: matches[0].line, message: `invalid ${key} wish slug: ${JSON.stringify(value)}` });
+      }
+    }
+    return values;
+  };
+
+  const dependsOn = parseKey('depends-on');
+  const blocks = parseKey('blocks');
+  return dependsOn && blocks ? { record: { dependsOn, blocks }, issues } : { issues };
+}
+
+function lintWishMetadata(file: string): { record?: WishRecord; issues: WishStructureIssue[] } {
+  if (basename(file) !== 'WISH.md') return { issues: [] };
+  const text = readFileSync(file, 'utf8');
+  if (/^<!-- wishes-lint:ignore -->/m.test(text)) return { issues: [] };
+  const lines = text.split('\n');
+  const statusField = metadataValue(lines, 'Status');
+  const dateField = metadataValue(lines, 'Date');
+  const issues: WishStructureIssue[] = [];
+  if (!statusField) {
+    issues.push({ file, line: 1, message: 'wish metadata must contain a Status field' });
+    return { issues };
+  }
+  if (!dateField) issues.push({ file, line: 1, message: 'wish metadata must contain a Date field' });
+  else if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(dateField.value) ||
+    Number.isNaN(Date.parse(`${dateField.value}T00:00:00Z`)) ||
+    new Date(`${dateField.value}T00:00:00Z`).toISOString().slice(0, 10) !== dateField.value
+  ) {
+    issues.push({ file, line: dateField.line, message: 'wish Date field must use a valid YYYY-MM-DD value' });
+  }
+  const status = statusField.value
+    .split(/\s+[—-]\s+/)[0]
+    .replace(/\s+\([^)]*\)\s*$/, '')
+    .trim();
+  const canonical = CANONICAL_STATUSES.has(status);
+  if (!canonical && !LEGACY_TERMINAL_STATUSES.has(status)) {
+    issues.push({
+      file,
+      line: statusField.line,
+      message: `unsupported wish status ${JSON.stringify(status)}; allowed: ${[...CANONICAL_STATUSES, ...LEGACY_TERMINAL_STATUSES].join(', ')}`,
+    });
+  }
+  const dependencies = dependencyValues(file, lines, canonical);
+  issues.push(...dependencies.issues);
+  if (!dependencies.record || issues.length > 0) return { issues };
+  return {
+    record: {
+      file,
+      slug: basename(dirname(file)),
+      status,
+      dependsOn: dependencies.record.dependsOn,
+      blocks: dependencies.record.blocks,
+    },
+    issues,
+  };
+}
+
+function lintWishGraph(records: WishRecord[]): WishStructureIssue[] {
+  const issues: WishStructureIssue[] = [];
+  const bySlug = new Map(records.map((record) => [record.slug, record]));
+  const prerequisites = new Map(records.map((record) => [record.slug, new Set<string>()]));
+  const addReference = (owner: WishRecord, referenced: string, relation: 'depends-on' | 'blocks'): void => {
+    if (referenced.includes('/')) return; // Cross-repository edges are shape-checked but cannot be resolved locally.
+    if (!bySlug.has(referenced)) {
+      issues.push({
+        file: owner.file,
+        line: 1,
+        message: `${relation} references missing wish slug ${JSON.stringify(referenced)}`,
+      });
+      return;
+    }
+    if (referenced === owner.slug) {
+      issues.push({ file: owner.file, line: 1, message: `${relation} cannot reference its own wish slug` });
+      return;
+    }
+    if (relation === 'depends-on') prerequisites.get(owner.slug)?.add(referenced);
+    else prerequisites.get(referenced)?.add(owner.slug);
+  };
+  for (const record of records) {
+    for (const dependency of record.dependsOn) addReference(record, dependency, 'depends-on');
+    for (const blocked of record.blocks) addReference(record, blocked, 'blocks');
+  }
+
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  const path: string[] = [];
+  const visit = (slug: string): void => {
+    if (visiting.has(slug)) {
+      const start = path.indexOf(slug);
+      const cycle = [...path.slice(start), slug];
+      issues.push({
+        file: bySlug.get(slug)?.file ?? records[0].file,
+        line: 1,
+        message: `wish dependency cycle: ${cycle.join(' -> ')}`,
+      });
+      return;
+    }
+    if (visited.has(slug)) return;
+    visiting.add(slug);
+    path.push(slug);
+    for (const dependency of prerequisites.get(slug) ?? []) visit(dependency);
+    path.pop();
+    visiting.delete(slug);
+    visited.add(slug);
+  };
+  for (const slug of bySlug.keys()) visit(slug);
+  return issues;
+}
+
 function main() {
   let wishesDir: string;
   try {
@@ -194,11 +409,17 @@ function main() {
   const files = walk(wishesDir);
   const allBroken: BrokenLink[] = [];
   const allStructureIssues: WishStructureIssue[] = [];
+  const wishRecords: WishRecord[] = [];
 
   for (const file of files) {
     allBroken.push(...lintFile(file));
     allStructureIssues.push(...lintExecutionStrategy(file));
+    allStructureIssues.push(...lintDesignReviewEvidence(file));
+    const metadata = lintWishMetadata(file);
+    allStructureIssues.push(...metadata.issues);
+    if (metadata.record) wishRecords.push(metadata.record);
   }
+  allStructureIssues.push(...lintWishGraph(wishRecords));
 
   if (allBroken.length > 0 || allStructureIssues.length > 0) {
     for (const b of allBroken) {
@@ -211,7 +432,7 @@ function main() {
       console.error(`${relative(ROOT, issue.file)}:${issue.line}: ${issue.message}`);
     }
     if (allStructureIssues.length > 0) {
-      console.error(`\nwishes-lint: ${allStructureIssues.length} Execution Strategy issue(s)`);
+      console.error(`\nwishes-lint: ${allStructureIssues.length} wish structure/graph issue(s)`);
     }
     process.exit(1);
   }

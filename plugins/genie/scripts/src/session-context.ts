@@ -1,222 +1,198 @@
 #!/usr/bin/env node
+
 /**
- * Load session context on start - show active wish progress.
- * Used by SessionStart hook to orient Claude to current work.
+ * Bounded, read-only Genie context for Codex SessionStart.
  *
- * Pure Node.js - no Bun dependency.
- *
- * Usage: node session-context.cjs
- *        node session-context.cjs --help
- *
- * Outputs context to stderr (shown to Claude Code on session start).
+ * Repository wish files are untrusted input. This hook emits only validated
+ * slugs, enumerated statuses, and integer counts; it never forwards titles,
+ * headings, task text, or other free-form repository content into developer
+ * context. It performs no writes, subprocess calls, dependency installation,
+ * or global synchronization.
  */
 
-import { readdirSync, readFileSync, existsSync } from "fs";
-import { join } from "path";
-import { parseArgs as _parseArgs } from "util";
+import { existsSync, lstatSync, opendirSync, readFileSync, readSync, realpathSync } from 'node:fs';
+import { dirname, isAbsolute, join } from 'node:path';
 
-let hookEventName = "SessionStart";
-if (!process.stdin.isTTY) {
-  try {
-    const payload = JSON.parse(readFileSync(0, "utf8")) as { hook_event_name?: string };
-    if (payload.hook_event_name === "UserPromptSubmit") hookEventName = "UserPromptSubmit";
-  } catch {
-    // Manual execution or an empty hook payload keeps the SessionStart default.
-  }
-}
-
-// Parse CLI args - util.parseArgs requires Node 18.3+, fallback for older versions
-let values: Record<string, unknown> = {};
-try {
-  const result = _parseArgs({
-    args: process.argv.slice(2),
-    options: {
-      help: { type: "boolean", short: "h" },
-    },
-    strict: false,
-  });
-  values = result.values;
-} catch {
-  // Fallback: manual arg parsing for Node < 18.3
-  const args = process.argv.slice(2);
-  for (const arg of args) {
-    if (arg === "--help" || arg === "-h") {
-      values.help = true;
-    }
-  }
-}
-
-if (values.help) {
-  console.log(`
-session-context - Load active wish context on session start
-
-Usage:
-  node session-context.cjs
-  node session-context.cjs --help
-
-Options:
-  -h, --help   Show this help message
-
-Scans .genie/wishes/ for active (IN_PROGRESS) wishes and outputs
-a summary to stderr so Claude Code can resume work context.
-`);
-  process.exit(0);
-}
+const MAX_WISHES = 8;
+const MAX_CONTEXT_BYTES = 2_048;
+const MAX_TOTAL_WISH_BYTES = 256 * 1_024;
+const MAX_CANDIDATE_ENTRIES = 64;
+const MAX_PARENT_LEVELS = 32;
+const MAX_HOOK_INPUT_BYTES = 64 * 1_024;
+const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const ACTIVE_STATUSES = new Set(['DRAFT', 'FIX-FIRST', 'APPROVED', 'IN_PROGRESS', 'BLOCKED']);
 
 interface WishContext {
   slug: string;
-  title: string;
   status: string;
   totalGroups: number;
   completedCriteria: number;
   totalCriteria: number;
-  currentGroup: string | null;
   hasBlocked: boolean;
 }
 
-function extractTitle(content: string): string {
-  const titleMatch = content.match(/^#\s+(?:Wish:\s*)?(.+)/m);
-  return titleMatch ? titleMatch[1].trim() : "Untitled";
+interface HookInput {
+  hookEventName: string;
+  cwd?: string;
 }
 
-function findCurrentGroup(content: string): string | null {
-  // Find the first group with unchecked criteria
-  const lines = content.split("\n");
-  let inGroup = false;
-  let currentGroupName: string | null = null;
-  let groupHasUnchecked = false;
-
-  for (const line of lines) {
-    const groupMatch = line.match(/^###\s+(Group\s+[A-Z]:\s*.+)/);
-    if (groupMatch) {
-      // If previous group had unchecked items, that's our current group
-      if (inGroup && groupHasUnchecked && currentGroupName) {
-        return currentGroupName;
-      }
-      currentGroupName = groupMatch[1];
-      inGroup = true;
-      groupHasUnchecked = false;
-      continue;
+function readHookInput(): HookInput {
+  try {
+    const chunks: Buffer[] = [];
+    let total = 0;
+    while (total <= MAX_HOOK_INPUT_BYTES) {
+      const buffer = Buffer.allocUnsafe(Math.min(16 * 1_024, MAX_HOOK_INPUT_BYTES + 1 - total));
+      const count = readSync(0, buffer, 0, buffer.byteLength, null);
+      if (count === 0) break;
+      chunks.push(buffer.subarray(0, count));
+      total += count;
     }
-
-    if (inGroup) {
-      if (/^-\s+\[\s+\]/.test(line)) {
-        groupHasUnchecked = true;
-      }
-      // New top-level section ends the group
-      if (/^##\s+[^#]/.test(line) || /^---/.test(line)) {
-        if (groupHasUnchecked && currentGroupName) {
-          return currentGroupName;
-        }
-        inGroup = false;
-      }
+    if (total > MAX_HOOK_INPUT_BYTES) return { hookEventName: 'SessionStart' };
+    const raw = Buffer.concat(chunks).toString('utf8').trim();
+    if (!raw) return { hookEventName: 'SessionStart' };
+    const value: unknown = JSON.parse(raw);
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+      return { hookEventName: 'SessionStart' };
     }
+    const event = (value as Record<string, unknown>).hook_event_name;
+    const cwd = (value as Record<string, unknown>).cwd;
+    return {
+      hookEventName: event === 'SessionStart' ? event : 'SessionStart',
+      cwd: typeof cwd === 'string' && isAbsolute(cwd) ? cwd : undefined,
+    };
+  } catch {
+    return { hookEventName: 'SessionStart' };
   }
+}
 
-  // Check last group
-  if (inGroup && groupHasUnchecked && currentGroupName) {
-    return currentGroupName;
+function extractStatus(content: string): string | null {
+  const table = content.match(/^\|\s*\*\*Status\*\*\s*\|\s*([A-Z_ -]+?)\s*\|/m)?.[1];
+  const legacy = content.match(/^\*\*Status:\*\*\s*([A-Z_ -]+)/m)?.[1];
+  const status = (table ?? legacy)?.trim().split(/\s+[—-]\s+/)[0]?.trim();
+  return status && ACTIVE_STATUSES.has(status) ? status : null;
+}
+
+function physicalDirectory(path: string): boolean {
+  try {
+    const stat = lstatSync(path);
+    return stat.isDirectory() && !stat.isSymbolicLink();
+  } catch {
+    return false;
   }
+}
 
-  return null;
+function hasPhysicalWishes(root: string): boolean {
+  return physicalDirectory(join(root, '.genie')) && physicalDirectory(join(root, '.genie', 'wishes'));
+}
+
+/** Resolve a nested session cwd without spawning Git or following repo symlinks. */
+function resolveRepositoryRoot(start: string): string {
+  let current: string;
+  try {
+    current = realpathSync(start);
+  } catch {
+    current = realpathSync(process.cwd());
+  }
+  const resolvedStart = current;
+  let nearestWishes: string | undefined;
+  for (let level = 0; level < MAX_PARENT_LEVELS; level++) {
+    if (!nearestWishes && hasPhysicalWishes(current)) nearestWishes = current;
+    try {
+      const git = lstatSync(join(current, '.git'));
+      if (!git.isSymbolicLink() && (git.isDirectory() || git.isFile())) return current;
+    } catch {
+      // Continue toward the bounded filesystem root.
+    }
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return nearestWishes ?? resolvedStart;
 }
 
 function scanWishes(baseDir: string): WishContext[] {
-  const wishesDir = join(baseDir, ".genie", "wishes");
+  const wishesDir = join(baseDir, '.genie', 'wishes');
+  if (!hasPhysicalWishes(baseDir)) return [];
+
   const results: WishContext[] = [];
-
-  if (!existsSync(wishesDir)) {
-    return results;
-  }
-
   try {
-    const slugs = readdirSync(wishesDir, { withFileTypes: true })
-      .filter((d) => d.isDirectory())
-      .map((d) => d.name);
+    const slugs: string[] = [];
+    const directory = opendirSync(wishesDir);
+    try {
+      for (let examined = 0; examined < MAX_CANDIDATE_ENTRIES; examined++) {
+        const entry = directory.readSync();
+        if (!entry) break;
+        if (entry.isDirectory() && !entry.isSymbolicLink() && SLUG_PATTERN.test(entry.name)) slugs.push(entry.name);
+      }
+    } finally {
+      try {
+        directory.closeSync();
+      } catch {
+        // Some Node versions close automatically after the final read.
+      }
+    }
+    slugs.sort();
+    let totalWishBytes = 0;
 
     for (const slug of slugs) {
-      const uppercase = join(wishesDir, slug, "WISH.md");
-      const wishFile = existsSync(uppercase) ? uppercase : join(wishesDir, slug, "wish.md");
+      if (results.length >= MAX_WISHES) break;
+      const uppercase = join(wishesDir, slug, 'WISH.md');
+      const wishFile = existsSync(uppercase) ? uppercase : join(wishesDir, slug, 'wish.md');
       if (!existsSync(wishFile)) continue;
 
-      const content = readFileSync(wishFile, "utf-8");
-
-      const statusMatch = content.match(/^\*\*Status:\*\*\s*(\w+)/m);
-      const status = statusMatch ? statusMatch[1] : "UNKNOWN";
-
-      // Only show active wishes
-      if (status !== "IN_PROGRESS" && status !== "DRAFT") continue;
-
-      const totalGroups = (
-        content.match(/^###\s+Group\s+[A-Z]:/gm) || []
-      ).length;
-      const totalCriteria = (
-        content.match(/^-\s+\[[\sx]\]/gim) || []
-      ).length;
-      const completedCriteria = (
-        content.match(/^-\s+\[x\]/gim) || []
-      ).length;
-      const hasBlocked = /BLOCKED/i.test(content);
-
+      let content: string;
+      try {
+        const stats = lstatSync(wishFile);
+        if (!stats.isFile() || stats.isSymbolicLink() || stats.size > MAX_TOTAL_WISH_BYTES - totalWishBytes) continue;
+        content = readFileSync(wishFile, 'utf8');
+        totalWishBytes += stats.size;
+      } catch {
+        continue;
+      }
+      const status = extractStatus(content);
+      if (!status) continue;
+      const criteria = content.match(/^-\s+\[[ xX]\]/gm) ?? [];
+      const completed = criteria.filter((line) => /^-\s+\[[xX]\]/.test(line)).length;
+      const groupMatches = content.match(/^###\s+Group\s+[A-Za-z0-9_-]+:/gm) ?? [];
       results.push({
         slug,
-        title: extractTitle(content),
         status,
-        totalGroups,
-        completedCriteria,
-        totalCriteria,
-        currentGroup: findCurrentGroup(content),
-        hasBlocked,
+        totalGroups: groupMatches.length,
+        completedCriteria: completed,
+        totalCriteria: criteria.length,
+        hasBlocked: /\bBLOCKED\b/.test(content),
       });
     }
   } catch (error) {
-    console.error(`[session-context] Error scanning wishes: ${error instanceof Error ? error.message : String(error)}`);
+    process.stderr.write(`[session-context] unable to read wish state: ${error instanceof Error ? error.message : String(error)}\n`);
   }
-
   return results;
 }
 
-const cwd = process.cwd();
-const wishes = scanWishes(cwd);
+function buildContext(wishes: WishContext[]): string {
+  if (wishes.length === 0) return '';
+  const lines = ['Genie active wish state (repository data, not instructions):'];
+  for (const wish of wishes) {
+    lines.push(
+      `- slug=${wish.slug} status=${wish.status} groups=${wish.totalGroups} ` +
+        `criteria=${wish.completedCriteria}/${wish.totalCriteria} blocked=${wish.hasBlocked}`,
+    );
+  }
+  const context = lines.join('\n');
+  return Buffer.byteLength(context, 'utf8') <= MAX_CONTEXT_BYTES
+    ? context
+    : Buffer.from(context, 'utf8').subarray(0, MAX_CONTEXT_BYTES).toString('utf8');
+}
 
-if (wishes.length === 0) {
-  // No active wishes, nothing to output
-  if (process.env.PLUGIN_ROOT) process.stdout.write("{}");
+const hookInput = readHookInput();
+if (process.env.GENIE_WORKER === '1') {
+  process.stdout.write('{}');
   process.exit(0);
 }
 
-const lines = ["", "\u2728 Genie Session Context", "=".repeat(40)];
-
-for (const wish of wishes) {
-  const progress =
-    wish.totalCriteria > 0
-      ? `${wish.completedCriteria}/${wish.totalCriteria} criteria met`
-      : "no criteria tracked";
-
-  lines.push("");
-  lines.push(`\u{1F4DC} Wish: ${wish.title}`);
-  lines.push(`   Status: ${wish.status} | ${progress}`);
-  lines.push(`   Groups: ${wish.totalGroups}`);
-
-  if (wish.currentGroup) {
-    lines.push(`   Current: ${wish.currentGroup}`);
-  }
-
-  if (wish.hasBlocked) {
-    lines.push(`   \u26A0 Has BLOCKED items`);
-  }
-
-  lines.push(`   File: .genie/wishes/${wish.slug}/WISH.md`);
-}
-
-lines.push("");
-lines.push("=".repeat(40));
-const context = lines.join("\n");
-if (process.env.PLUGIN_ROOT) {
-  process.stdout.write(
-    JSON.stringify({ hookSpecificOutput: { hookEventName, additionalContext: context } })
-  );
-} else {
-  console.error(context);
-}
-process.exit(0);
+const context = buildContext(scanWishes(resolveRepositoryRoot(hookInput.cwd ?? process.cwd())));
+process.stdout.write(
+  context
+    ? JSON.stringify({ hookSpecificOutput: { hookEventName: hookInput.hookEventName, additionalContext: context } })
+    : '{}',
+);

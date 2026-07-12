@@ -1,0 +1,4 @@
+interface:
+  display_name: "Prompt Refiner"
+  short_description: "Turn rough prompts into execution-ready briefs"
+  default_prompt: "Turn this draft into a precise, production-ready prompt."

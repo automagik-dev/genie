@@ -10,7 +10,7 @@
  *   Hooks:      hook namespace + git hook dispatch
  */
 
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { doctorCommand } from './genie-commands/doctor.js';
 import { type InstallOptions, installCommand } from './genie-commands/install.js';
 import { type SetupOptions, setupCommand } from './genie-commands/setup.js';
@@ -60,7 +60,7 @@ program
   .description('Configure genie settings')
   .option('--quick', 'Accept all defaults')
   .option('--shortcuts', 'Only configure keyboard shortcuts')
-  .option('--codex', 'Only configure Codex integration')
+  .option('--codex', 'Configure Codex and persist its scope for later explicit Genie updates')
   .option('--terminal', 'Only configure terminal defaults')
   .option('--session', 'Only configure session settings')
   .option('--reset', 'Reset configuration to defaults')
@@ -87,10 +87,30 @@ program
   .option('--no-restart', 'Skip the post-update binary verify probe')
   .option('--no-verify', 'Skip the post-update binary verify probe')
   .option('--skip-maintenance', 'Skip the post-update binary verify probe (or set GENIE_UPDATE_SKIP_MAINTENANCE=1)')
-  .option('--rollback', 'Restore the most recent ~/.genie/bin/.previous binary backup')
-  .option(
-    '--sync-only',
-    'Converge agent integrations only — no manifest fetch or binary swap (GENIE_UPDATE_SYNC_ONLY=1)',
+  .addOption(
+    new Option('--rollback', 'Restore the most recent ~/.genie/bin/.previous binary backup').conflicts('syncOnly'),
+  )
+  .addOption(
+    new Option(
+      '--sync-only',
+      'Converge agent integrations only — no manifest fetch or binary swap (GENIE_UPDATE_SYNC_ONLY=1)',
+    ).conflicts('rollback'),
+  )
+  .addOption(
+    new Option('--post-delivery-converge')
+      .hideHelp()
+      .conflicts([
+        'rollback',
+        'syncOnly',
+        'dev',
+        'homolog',
+        'next',
+        'stable',
+        'yes',
+        'restart',
+        'verify',
+        'skipMaintenance',
+      ]),
   )
   .action(updateCommand);
 

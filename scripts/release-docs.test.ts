@@ -1,0 +1,386 @@
+import { describe, expect, test } from 'bun:test';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { CLAUDE_ROLE_AGENT_FILES, CODEX_ROLE_PROFILE_FILES } from './fresh-install-smoke.ts';
+
+const ROOT = join(import.meta.dir, '..');
+
+function read(relativePath: string): string {
+  return readFileSync(join(ROOT, relativePath), 'utf8');
+}
+
+interface ReviewerProfile {
+  approval_policy?: unknown;
+  default_permissions?: unknown;
+  sandbox_mode?: unknown;
+  sandbox_workspace_write?: unknown;
+  permissions?: Record<string, unknown>;
+}
+
+function reviewerPermissionViolations(profile: ReviewerProfile): string[] {
+  const violations: string[] = [];
+  if (profile.approval_policy !== 'never') violations.push('approval policy must be never');
+  if (profile.default_permissions !== ':read-only') violations.push('built-in read-only permissions must be selected');
+  if (profile.sandbox_mode !== undefined) violations.push('legacy sandbox mode must not override the named profile');
+  if (profile.sandbox_workspace_write !== undefined) violations.push('legacy workspace-write grants are forbidden');
+  if (Object.keys(profile.permissions ?? {}).length > 0)
+    violations.push('custom writable permission profiles are forbidden');
+  return violations;
+}
+
+function buildHelperInputs(): string[] {
+  const pending = [...read('scripts/build-binary.sh').matchAll(/scripts\/([a-z0-9-]+\.[jt]s)/g)].map(
+    (match) => `scripts/${match[1]}`,
+  );
+  const found = new Set<string>();
+  while (pending.length > 0) {
+    const relativePath = pending.shift();
+    if (!relativePath || found.has(relativePath)) continue;
+    found.add(relativePath);
+    for (const match of read(relativePath).matchAll(/from ['"]\.\/([a-z0-9-]+\.[jt]s)['"]/g)) {
+      pending.push(`scripts/${match[1]}`);
+    }
+  }
+  return [...found].sort();
+}
+
+describe('Group E release and documentation contracts', () => {
+  test('Build Tarballs PR filter covers every release-payload input class', () => {
+    const workflow = read('.github/workflows/build-tarballs.yml');
+    for (const path of [
+      "'src/**'",
+      "'skills/**'",
+      "'templates/**'",
+      "'plugins/**'",
+      "'package.json'",
+      "'LICENSE'",
+      "'bun.lock'",
+      "'bunfig.toml'",
+      "'tsconfig.json'",
+      "'scripts/build-binary.sh'",
+      "'scripts/build.js'",
+      "'scripts/json-top-level-string.js'",
+      "'scripts/hook-bundle-parity.ts'",
+      "'scripts/hook-content-binding.ts'",
+      "'scripts/plugin-executables-check.ts'",
+      "'scripts/sync-plugin-skills.ts'",
+      "'scripts/fresh-install-smoke.ts'",
+      "'scripts/skills-lint.ts'",
+      "'scripts/release-payload-version.ts'",
+      "'.agents/plugins/marketplace.json'",
+      "'.claude-plugin/marketplace.json'",
+      "'.github/workflows/build-tarballs.yml'",
+    ]) {
+      expect(workflow).toContain(`- ${path}`);
+    }
+    expect(workflow).toContain('skills/<name>/SKILL.md');
+    expect(workflow).toContain('agents/openai.yaml');
+    expect(buildHelperInputs()).toContain('scripts/skills-lint.ts');
+    for (const helper of buildHelperInputs()) expect(workflow).toContain(`- '${helper}'`);
+  });
+
+  test('release create and promotion paths retain the one-time convergence caveat', () => {
+    const workflow = read('.github/workflows/release-publish.yml');
+    const helper = read('scripts/reconcile-release-note.sh');
+    expect(workflow).toContain('bash scripts/reconcile-release-note.sh');
+    expect(helper).toContain('genie-agent-sync-migration-v1');
+    expect(helper).toContain('older than `5.260711.6`');
+    expect(helper).toContain('create_args=(release create');
+    expect(helper).toContain('gh release edit');
+  });
+
+  test('release packaging validates generated hooks and the extracted archive payload', () => {
+    const build = read('scripts/build-binary.sh');
+    expect(build).toContain('scripts/hook-bundle-parity.ts');
+    expect(build).toContain('scripts/hook-content-binding.ts');
+    const archive = build.indexOf('tar czf "${TARBALL}"');
+    const extract = build.indexOf('tar -xzf "${TARBALL}"');
+    const postExtractSmoke = build.lastIndexOf('scripts/fresh-install-smoke.ts');
+    const postExtractVersion = build.lastIndexOf('scripts/release-payload-version.ts');
+    expect(archive).toBeGreaterThan(-1);
+    expect(extract).toBeGreaterThan(archive);
+    expect(build).toContain('assert_release_tree_equal "${STAGE}" "${VERIFY_ROOT}"');
+    expect(build).toContain('cmp -- "${expected_entry}" "${actual_entry}"');
+    expect(build).toContain('cp "${REPO_ROOT}/LICENSE"');
+    expect(build).toContain("-iname '*.test.*'");
+    expect(build).toContain("-iname 'test_*.*'");
+    expect(build).toContain("-iname '*_test.*'");
+    expect(build).toContain("-iname 'spec_*.*'");
+    expect(build).toContain("-iname '*_spec.*'");
+    expect(build).toContain('assert_no_release_tests "${STAGE}"');
+    expect(build).toContain('assert_no_release_tests "${VERIFY_ROOT}"');
+    expect(build).toContain('! -type f ! -type d');
+    expect(build).toContain('find "${expected_root}" -mindepth 1');
+    expect(postExtractSmoke).toBeGreaterThan(extract);
+    expect(postExtractVersion).toBeGreaterThan(extract);
+
+    const rootPackage = JSON.parse(read('package.json')) as { license?: unknown };
+    const pluginPackage = JSON.parse(read('plugins/genie/package.json')) as { license?: unknown };
+    expect(rootPackage.license).toBe('MIT');
+    expect(pluginPackage.license).toBe('MIT');
+  });
+
+  test('committed CI reproduces the council and generated-hook parts of the local gate', () => {
+    const workflow = read('.github/workflows/ci.yml');
+    const pkg = JSON.parse(read('package.json')) as { scripts: Record<string, string> };
+    expect(pkg.scripts.check).toContain('bun run lint:complexity-budget');
+    expect(pkg.scripts['check:fast']).toContain('bun run lint:complexity-budget');
+    expect(workflow).toContain('bun run lint:complexity-budget');
+    expect(workflow).toContain('bun run lint:council-workflow');
+    expect(workflow).toContain('bun run lint:hook-bundles');
+    expect(workflow).toContain('bun run lint:hook-content');
+    expect(workflow).toContain('bun run lint:plugin-executables');
+    expect(pkg.scripts.check).toContain('bun run lint:hook-content');
+    expect(pkg.scripts['check:fast']).toContain('bun run lint:hook-content');
+    expect(pkg.scripts.check).toContain('bun run lint:plugin-executables');
+    expect(pkg.scripts['check:fast']).toContain('bun run lint:plugin-executables');
+    const executableGate = read('scripts/plugin-executables-check.ts');
+    expect(executableGate).toContain("'--strict'");
+    expect(read('scripts/plugin-executables-check.test.ts')).toContain('error TS7006');
+  });
+
+  test('release gates pin exact Codex and Claude role inventories through archive extraction', () => {
+    expect(CODEX_ROLE_PROFILE_FILES).toEqual([
+      'genie-engineer-complex.toml',
+      'genie-engineer-standard.toml',
+      'genie-engineer-trivial.toml',
+      'genie-final-gate.toml',
+      'genie-fixer.toml',
+      'genie-reviewer.toml',
+      'genie-scout.toml',
+    ]);
+    expect(CLAUDE_ROLE_AGENT_FILES).toEqual([
+      'engineer-complex.md',
+      'engineer-standard.md',
+      'engineer-trivial.md',
+      'final-gate.md',
+      'fixer.md',
+      'reviewer.md',
+      'scout.md',
+    ]);
+
+    const smoke = read('scripts/fresh-install-smoke.ts');
+    for (const file of [...CODEX_ROLE_PROFILE_FILES, ...CLAUDE_ROLE_AGENT_FILES]) expect(smoke).toContain(`'${file}'`);
+    expect(smoke).toContain('checkRoleInventories(pluginRoot)');
+
+    const build = read('scripts/build-binary.sh');
+    expect(build.match(/scripts\/fresh-install-smoke\.ts/g)?.length).toBe(3);
+    const sourceSmoke = build.indexOf('bun "${REPO_ROOT}/scripts/fresh-install-smoke.ts"');
+    const stageSmoke = build.indexOf('--skills-dir "${STAGE}/skills"');
+    const extract = build.indexOf('tar -xzf "${TARBALL}"');
+    const archiveSmoke = build.indexOf('--skills-dir "${VERIFY_ROOT}/skills"');
+    expect(sourceSmoke).toBeGreaterThan(-1);
+    expect(stageSmoke).toBeGreaterThan(sourceSmoke);
+    expect(archiveSmoke).toBeGreaterThan(extract);
+  });
+
+  test('resurrected metrics bot and incompatible generated state stay retired', () => {
+    expect(read('README.md')).not.toContain('<!-- METRICS:START -->');
+    for (const file of ['AGENT.md', 'runs.jsonl', 'state.json']) {
+      expect(existsSync(join(ROOT, '.genie/agents/metrics-updater', file))).toBe(false);
+    }
+  });
+
+  test('reviewer permission profile remains read-only even for temporary-hosted worktrees', () => {
+    const profile = Bun.TOML.parse(read('plugins/genie/codex-agents/genie-reviewer.toml')) as ReviewerProfile;
+    expect(reviewerPermissionViolations(profile)).toEqual([]);
+
+    expect(reviewerPermissionViolations({ ...profile, permissions: { unsafe: {} } })).toContain(
+      'custom writable permission profiles are forbidden',
+    );
+    expect(reviewerPermissionViolations({ ...profile, default_permissions: 'genie-reviewer-temp' })).toContain(
+      'built-in read-only permissions must be selected',
+    );
+    expect(reviewerPermissionViolations({ ...profile, sandbox_mode: 'workspace-write' })).toContain(
+      'legacy sandbox mode must not override the named profile',
+    );
+    expect(
+      reviewerPermissionViolations({ ...profile, sandbox_workspace_write: { writable_roots: ['/repo'] } }),
+    ).toContain('legacy workspace-write grants are forbidden');
+  });
+
+  test('README and contributor command inventories match the 14-command source surface', () => {
+    const expected = [
+      'board',
+      'doctor',
+      'help',
+      'hook',
+      'init',
+      'install',
+      'launch',
+      'mcp',
+      'omni',
+      'setup',
+      'shortcuts',
+      'task',
+      'uninstall',
+      'update',
+    ];
+    const readme = read('README.md');
+    const contributor = read('CLAUDE.md');
+    expect(readme).toContain('14 CLI commands');
+    expect(contributor).toContain('Fourteen top-level commands');
+    const readmeCommands = [...readme.matchAll(/^\| `genie ([a-z-]+)/gm)].map((match) => match[1]).sort();
+    const contributorCommands = [...contributor.matchAll(/^\| `([a-z-]+)/gm)].map((match) => match[1]).sort();
+    expect(readmeCommands).toEqual(expected);
+    expect(contributorCommands).toEqual(expected);
+  });
+
+  test('operator docs distinguish product, role-agent, personal, MCP, and hook inventories', () => {
+    const docs = `${read('README.md')}\n${read('plugins/genie/README.md')}`;
+    expect(read('README.md')).toContain('These five inventories are intentionally separate');
+    for (const statement of [
+      '23 physical',
+      'Seven optional',
+      '36 adapted skills',
+      'mcp-launcher.cjs',
+      'H3',
+      'H4',
+      'H6',
+      '/hooks',
+      'start a new task',
+    ]) {
+      expect(docs).toContain(statement);
+    }
+    expect(read('README.md')).toContain('synchronizes up to 23 digest-managed product-skill fallbacks');
+    expect(read('README.md')).toContain('CLI-managed product skills');
+    expect(read('plugins/genie/README.md')).toContain('CLI-managed product fallbacks');
+    expect(docs).toContain('at most 64 candidate');
+    expect(docs).toContain('network-free');
+    expect(docs).toContain('no Codex network lookup');
+  });
+
+  test('manual docs use explicit tiers while all physical skill cards remain selector-free', () => {
+    const docs = `${read('README.md')}\n${read('plugins/genie/README.md')}\n${read('skills/README.md')}`;
+    for (const skill of ['brainstorm', 'wish', 'review', 'work']) {
+      expect(docs).toContain(`$genie:${skill}`);
+    }
+    expect(docs).toContain('separately installed personal');
+    const manifest = read('plugins/genie/.codex-plugin/plugin.json');
+    for (const skill of ['wish', 'work', 'review']) expect(manifest).toContain(`$genie:${skill}`);
+
+    const skillNames = readdirSync(join(ROOT, 'skills'), { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && existsSync(join(ROOT, 'skills', entry.name, 'agents', 'openai.yaml')))
+      .map((entry) => entry.name)
+      .sort();
+    expect(skillNames).toHaveLength(23);
+    for (const name of skillNames) {
+      const parsed = Bun.YAML.parse(read(`skills/${name}/agents/openai.yaml`)) as {
+        interface?: { default_prompt?: unknown };
+      };
+      expect(parsed.interface?.default_prompt).toBeString();
+      expect(parsed.interface?.default_prompt).not.toMatch(/\$(?:[a-z0-9][a-z0-9-]*:)?[a-z0-9][a-z0-9-]*/i);
+    }
+
+    const skillsOverview = read('skills/README.md');
+    expect(skillsOverview).toContain(
+      'Codex user tier (a CLI-managed product fallback or separately installed personal copy)',
+    );
+    expect(skillsOverview).toContain('persists Codex maintenance consent');
+    expect(skillsOverview).toContain('later explicit `genie update`');
+  });
+
+  test('lifecycle and operator docs name design, plan, and implementation review as distinct mandatory gates', () => {
+    const lifecycle = read('skills/genie/reference/lifecycle.md');
+    const plugin = read('plugins/genie/README.md');
+    const root = read('README.md');
+    for (const term of ['design review', 'plan review', 'implementation review']) {
+      expect(lifecycle).toContain(term);
+      expect(plugin).toContain(term);
+      expect(root).toContain(term);
+    }
+    expect(lifecycle).toContain('automatically routes the completed DESIGN.md');
+    expect(plugin).toContain('successful `genie setup --codex` persists Codex maintenance consent');
+    expect(root).toContain('successful Codex setup also persists Codex maintenance consent');
+    expect(plugin).toContain('clean digest-managed product-skill');
+    expect(root).toContain('digest-managed product-skill fallbacks');
+  });
+
+  test('lifecycle skills share persisted WISH state and keep reviewers read-only', () => {
+    const lifecycle = read('skills/genie/reference/lifecycle.md');
+    for (const status of ['`DRAFT`', '`FIX-FIRST`', '`APPROVED`', '`IN_PROGRESS`', '`BLOCKED`', '`SHIPPED`']) {
+      expect(lifecycle).toContain(status);
+    }
+    const brainstorm = read('skills/brainstorm/SKILL.md');
+    const review = read('skills/review/SKILL.md');
+    const dream = read('skills/dream/SKILL.md');
+    const wish = read('skills/wish/templates/wish-template.md');
+    const pm = read('skills/pm/SKILL.md');
+    expect(dream).toContain('Status field is exactly `APPROVED`');
+    expect(brainstorm).toContain('Do not move it to Poured before a WISH.md exists');
+    expect(brainstorm).toContain('single brainstorm/planning index is `.genie/INDEX.md`');
+    expect(brainstorm).toContain('Legacy migration is idempotent');
+    expect(review).toContain('### Design Review (after `brainstorm`)');
+    expect(review).toContain('The reviewer is read-only');
+    expect(wish).toContain('## Dependencies');
+    expect(wish).toContain('**depends-on:** none');
+    expect(dream).toContain('wish-level `**depends-on:**`');
+    expect(dream).not.toContain('depends_on');
+    expect(pm).toContain('Explicit task-scoped grant');
+    expect(pm).toMatch(/Selecting Autopilot\s+does not itself authorize external repository writes/);
+  });
+
+  test('wizard discloses init MCP writes and owner-qualified lifecycle order', () => {
+    const wizard = read('skills/wizard/SKILL.md');
+    for (const path of ['.mcp.json', '.warp/.mcp.json', '.codex/config.toml']) expect(wizard).toContain(path);
+    for (const skill of ['brainstorm', 'wish', 'review', 'work']) expect(wizard).toContain(`$genie:${skill}`);
+    expect(wizard.indexOf('$genie:review')).toBeLessThan(wizard.indexOf('$genie:work'));
+    expect(wizard).toContain('Phase 3 is a mandatory gate');
+    expect(wizard).toContain('Never enter Phase 4 until WISH status `APPROVED`');
+    expect(wizard).toContain('pending until the user trusts the workspace');
+  });
+
+  test('brainstorm routes every non-trivial design through design and plan review', () => {
+    const brainstorm = read('skills/brainstorm/SKILL.md');
+    expect(brainstorm).toContain('auto-invoke `review` (design review)');
+    expect(brainstorm).toContain('route through `wish` and plan review before any implementation');
+    expect(brainstorm).not.toContain('auto-invoke `review` (plan review)');
+    expect(brainstorm).not.toContain('ask whether to implement directly');
+  });
+
+  test('design review evidence is digest-bound, persisted, and required before wish', () => {
+    const brainstorm = read('skills/brainstorm/SKILL.md');
+    const review = read('skills/review/SKILL.md');
+    const template = read('skills/brainstorm/references/design-template.md');
+    const wish = read('skills/wish/SKILL.md');
+    const lint = read('scripts/wishes-lint.ts');
+    expect(brainstorm).toContain('design-review-evidence.mjs');
+    expect(brainstorm).toContain('--reviewed-sha256 "<reviewer-returned-sha256>"');
+    expect(brainstorm).toContain('rejects an edit made after review');
+    expect(brainstorm).toContain('changing any reviewed design content invalidates the evidence');
+    expect(review).toContain('as `reviewed-sha256`');
+    expect(review).toContain('passes that value unchanged');
+    expect(template).toContain('<!-- genie-design-review:start -->');
+    expect(template).toContain('Reviewed content SHA-256');
+    expect(wish).toContain('Missing evidence, a non-SHIP verdict, or a content-digest mismatch cannot be waived');
+    expect(wish).toContain('Never repair the failure with a locally recomputed digest');
+    expect(lint).toContain('DESIGN_REVIEW_EVIDENCE_THRESHOLD');
+    expect(lint).toContain('designReviewViolations');
+  });
+
+  test('both reviewer profiles cover every universal review context', () => {
+    const profiles = [read('plugins/genie/codex-agents/genie-reviewer.toml'), read('plugins/genie/agents/reviewer.md')];
+    for (const profile of profiles) {
+      for (const marker of [
+        'DESIGN.md',
+        'Plan review',
+        'completed execution',
+        'PR review',
+        'SHIP',
+        'FIX-FIRST',
+        'BLOCKED',
+      ]) {
+        expect(profile).toContain(marker);
+      }
+    }
+  });
+
+  test('Omni and MCP operator instructions expose provider and fallback policy', () => {
+    const omni = read('skills/omni/SKILL.md');
+    expect(omni).toContain('{instance, chat, repo, agent, persona?}');
+    expect(omni).toContain('"agent": "codex"');
+    const readme = read('README.md');
+    expect(readme).toContain('no installed, enabled, usable Genie plugin route');
+    for (const path of ['.mcp.json', '.warp/.mcp.json', '.codex/config.toml']) expect(readme).toContain(path);
+  });
+});

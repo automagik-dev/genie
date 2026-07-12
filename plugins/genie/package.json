@@ -3,6 +3,7 @@
   "version": "5.260711.6",
   "private": true,
   "description": "Runtime dependencies for genie bundled CLIs",
+  "license": "MIT",
   "type": "module",
   "dependencies": {},
   "engines": {

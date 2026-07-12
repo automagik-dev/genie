@@ -1,14 +1,14 @@
 /** Codex configuration migration helpers. Genie does not use OTel as a health signal. */
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { resolveCodexDir } from './genie-home.js';
 
 export const DEAD_GENIE_OTEL_EXPORTER =
   'exporter = { otlp-http = { endpoint = "http://127.0.0.1:14318/v1/traces", protocol = "binary" } }';
 
 export function getCodexHome(env: NodeJS.ProcessEnv = process.env): string {
-  return env.CODEX_HOME ?? join(homedir(), '.codex');
+  return resolveCodexDir(env);
 }
 
 export function getCodexConfigPath(env: NodeJS.ProcessEnv = process.env): string {

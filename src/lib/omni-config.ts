@@ -27,8 +27,16 @@ export const DEFAULT_APPROVE_REACTIONS = ['\u{1F44D}', '\u{2705}', '\u{1F44C}'];
 export const DEFAULT_DENY_REACTIONS = ['\u{1F44E}', '\u{274C}', '\u{1F6AB}']; // 👎 ❌ 🚫
 
 const DEFAULT_NATS_URL = 'localhost:4222';
-const DEFAULT_TOOL_MATCHER = '^(Bash|Write|Edit|NotebookEdit)$';
-const DEFAULT_POLL_BUDGET_MS = 110_000;
+const DEFAULT_TOOL_MATCHER = '^(Bash|Write|Edit|apply_patch|NotebookEdit)$';
+/**
+ * PermissionRequest timing ladder: Omni polls for at most 110s, the bundled
+ * launcher owns 115s, and the Codex host manifest owns 125s. The 5s/15s
+ * margins leave time to expire the row, serialize a deny, and terminate.
+ */
+export const MAX_APPROVAL_POLL_BUDGET_MS = 110_000;
+export const PERMISSION_CHILD_TIMEOUT_MS = 115_000;
+export const PERMISSION_HOST_TIMEOUT_MS = 125_000;
+const DEFAULT_POLL_BUDGET_MS = MAX_APPROVAL_POLL_BUDGET_MS;
 const DEFAULT_POLL_INTERVAL_MS = 400;
 const DEFAULT_INBOUND_TIMEOUT_MS = 120_000;
 const DEFAULT_INBOUND_MAX_REPLY_CHARS = 4_000;
@@ -94,6 +102,21 @@ function envFlag(raw: string | undefined): boolean | undefined {
   return /^(1|true|yes|on)$/i.test(raw.trim());
 }
 
+export function normalizeApprovalTiming(
+  pollBudgetMs: number | undefined,
+  pollIntervalMs: number | undefined,
+): { pollBudgetMs: number; pollIntervalMs: number } {
+  const budget =
+    typeof pollBudgetMs === 'number' && Number.isFinite(pollBudgetMs) && pollBudgetMs > 0
+      ? Math.min(Math.max(1, Math.floor(pollBudgetMs)), MAX_APPROVAL_POLL_BUDGET_MS)
+      : DEFAULT_POLL_BUDGET_MS;
+  const interval =
+    typeof pollIntervalMs === 'number' && Number.isFinite(pollIntervalMs) && pollIntervalMs > 0
+      ? Math.max(1, Math.floor(pollIntervalMs))
+      : DEFAULT_POLL_INTERVAL_MS;
+  return { pollBudgetMs: budget, pollIntervalMs: Math.min(interval, budget) };
+}
+
 /**
  * Resolve the full omni runtime config from disk config + environment.
  *
@@ -106,6 +129,7 @@ export async function resolveOmniRuntimeConfig(config?: { omni?: OmniConfig }): 
   const appr = omni?.approvals;
 
   const enabled = envFlag(process.env.OMNI_APPROVALS_ENABLED) ?? appr?.enabled ?? false;
+  const timing = normalizeApprovalTiming(appr?.pollBudgetMs, appr?.pollIntervalMs);
 
   return {
     apiUrl: process.env.OMNI_API_URL ?? omni?.apiUrl,
@@ -123,8 +147,8 @@ export async function resolveOmniRuntimeConfig(config?: { omni?: OmniConfig }): 
     approvals: {
       enabled,
       toolMatcher: appr?.tools ?? DEFAULT_TOOL_MATCHER,
-      pollBudgetMs: appr?.pollBudgetMs ?? DEFAULT_POLL_BUDGET_MS,
-      pollIntervalMs: appr?.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS,
+      pollBudgetMs: timing.pollBudgetMs,
+      pollIntervalMs: timing.pollIntervalMs,
     },
   };
 }

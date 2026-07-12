@@ -1,0 +1,4 @@
+interface:
+  display_name: "DX and Docs Review"
+  short_description: "Audit onboarding, docs drift, and developer UX"
+  default_prompt: "Audit this contributor journey and its documentation against the live product."

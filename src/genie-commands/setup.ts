@@ -8,7 +8,14 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { confirm, input, select } from '@inquirer/prompts';
+import { acquireLifecycleLease } from '../lib/agent-sync.js';
 import { getCodexConfigPath } from '../lib/codex-config.js';
+import {
+  preflightCodexPluginMutation,
+  probeCodexGeniePlugin,
+  reconcileCodexProjectMcp,
+  resolveGitWorktreeRoot,
+} from '../lib/codex-project-mcp.js';
 import {
   contractPath,
   getGenieConfigPath,
@@ -16,11 +23,20 @@ import {
   markSetupComplete,
   resetConfig,
   saveGenieConfig,
-  updateShortcutsConfig,
 } from '../lib/genie-config.js';
-import { installRuntimeIntegrations } from '../lib/runtime-integrations.js';
+import { resolveGenieHome } from '../lib/genie-home.js';
+import {
+  type IntegrationConsentTransitionRef,
+  type IntegrationSelection,
+  beginIntegrationConsentTransition,
+  clearIntegrationConsentTransition,
+  commitIntegrationConsentTransition,
+  installRuntimeIntegrations,
+  readIntegrationConsent,
+  readIntegrationConsentState,
+} from '../lib/runtime-integrations.js';
 import { checkCommand } from '../lib/system-detect.js';
-import { removeCodexMcpFallback } from '../term-commands/init.js';
+import { resolveTrustedExecutable, validateTrustedExecutablePath } from '../lib/trusted-executable.js';
 import { installShortcuts, isShortcutsInstalled } from '../term-commands/shortcuts.js';
 import type { GenieConfig } from '../types/genie-config.js';
 
@@ -32,6 +48,33 @@ export interface SetupOptions {
   session?: boolean;
   reset?: boolean;
   show?: boolean;
+}
+
+export interface SetupDeps {
+  checkCommand?: typeof checkCommand;
+  installRuntimeIntegrations?: typeof installRuntimeIntegrations;
+  readIntegrationConsent?: typeof readIntegrationConsent;
+  readIntegrationConsentState?: typeof readIntegrationConsentState;
+  beginIntegrationConsentTransition?: typeof beginIntegrationConsentTransition;
+  clearIntegrationConsentTransition?: typeof clearIntegrationConsentTransition;
+  commitIntegrationConsentTransition?: typeof commitIntegrationConsentTransition;
+  /** Interactive confirmation seam; production uses @inquirer/prompts. */
+  confirm?: typeof confirm;
+  /** One bounded post-install snapshot; tests inject this to avoid live Codex state. */
+  probeCodexGeniePlugin?: typeof probeCodexGeniePlugin;
+  acquireLifecycleLease?: typeof acquireLifecycleLease;
+  /** Test seam for the once-bound absolute Codex CLI path. */
+  resolveExecutable?: (name: string, cwd: string) => string | null;
+  /** Test seam for revalidating that same path under the lifecycle lease. */
+  validateExecutable?: (name: string, path: string, cwd: string) => string;
+  cwd?: string;
+}
+
+export class SetupIntegrationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SetupIntegrationError';
+  }
 }
 
 /**
@@ -141,7 +184,7 @@ async function configureTerminal(config: GenieConfig, quick: boolean): Promise<G
 // Keyboard Shortcuts
 // ============================================================================
 
-async function configureShortcuts(config: GenieConfig, quick: boolean): Promise<GenieConfig> {
+async function configureShortcuts(config: GenieConfig, quick: boolean, deps: SetupDeps): Promise<GenieConfig> {
   printSection('4. Keyboard Shortcuts', 'Warp-like tmux shortcuts for quick navigation');
 
   const home = homedir();
@@ -172,9 +215,12 @@ async function configureShortcuts(config: GenieConfig, quick: boolean): Promise<
 
   if (installChoice) {
     console.log();
-    await installShortcuts();
-    config.shortcuts.tmuxInstalled = true;
-    await updateShortcutsConfig({ tmuxInstalled: true });
+    await withSetupLease(deps, async () => {
+      // The prompt was answered without a lease. Re-read the target immediately
+      // after acquisition so a concurrent setup cannot cause duplicate writes.
+      if (!isShortcutsInstalled(tmuxConf)) await installShortcuts();
+      config.shortcuts.tmuxInstalled = true;
+    });
   } else {
     console.log('  Skipped. Run \x1b[36mgenie shortcuts install\x1b[0m later.');
   }
@@ -186,23 +232,102 @@ async function configureShortcuts(config: GenieConfig, quick: boolean): Promise<
 // Codex Integration
 // ============================================================================
 
-function repairCodexIntegration(): boolean {
-  const result = installRuntimeIntegrations({ selection: 'codex' })[0];
-  if (!result?.ok) {
-    console.log(`  \x1b[31m\u2717\x1b[0m ${result?.detail ?? 'Codex integration failed'}`);
-    return false;
+function reconcileSetupCodexProject(root: string | null, plugin: ReturnType<typeof probeCodexGeniePlugin>): void {
+  if (root === null) {
+    console.log('  \x1b[2mNo Git worktree detected; project MCP fallback was not changed.\x1b[0m');
+    return;
   }
-  console.log(`  \x1b[32m\u2713\x1b[0m ${result.detail}`);
-  removeCodexMcpFallback(join(process.cwd(), '.codex', 'config.toml'));
-  if (result.preservedDisabled) console.log('  \x1b[2mExisting disabled plugin state was preserved.\x1b[0m');
-  console.log('  \x1b[33m!\x1b[0m Review Genie hooks with /hooks, then start a new Codex task.');
-  return true;
+
+  const project = reconcileCodexProjectMcp(root, plugin);
+  if (!project.ok) throw new SetupIntegrationError(project.detail ?? 'Codex project MCP reconciliation failed');
+  console.log(`  \x1b[32m\u2713\x1b[0m Project MCP route: ${project.route} (${project.detail ?? project.action})`);
+  if (!plugin.usable && plugin.enabled === true) {
+    console.log(
+      `  \x1b[33m!\x1b[0m Plugin MCP is not usable (${plugin.usabilityDetail ?? plugin.detail}); kept the absolute project fallback.`,
+    );
+  }
 }
 
-async function configureCodex(config: GenieConfig, quick: boolean): Promise<GenieConfig> {
+function repairCodexIntegration(deps: SetupDeps, codexPath: string): void {
+  const cwd = deps.cwd ?? process.cwd();
+  const validate = deps.validateExecutable ?? validateTrustedExecutablePath;
+  validate('Codex CLI', codexPath, cwd);
+  const root = resolveGitWorktreeRoot(cwd);
+  if (root !== null) {
+    const preflight = preflightCodexPluginMutation(root);
+    if (!preflight.ok) throw new SetupIntegrationError(`${preflight.detail}: ${preflight.path}`);
+  }
+
+  const genieHome = resolveGenieHome();
+  const currentConsent = (deps.readIntegrationConsent ?? readIntegrationConsent)(genieHome);
+  const nextConsent = mergeCodexIntegrationConsent(currentConsent);
+  const transition = (deps.beginIntegrationConsentTransition ?? beginIntegrationConsentTransition)(
+    nextConsent,
+    genieHome,
+  );
+  let hookReviewRequired = false;
+
+  try {
+    const result = (deps.installRuntimeIntegrations ?? installRuntimeIntegrations)({
+      selection: 'codex',
+      cwd,
+      resolveExecutable: () => codexPath,
+    })[0];
+    if (!result?.ok) {
+      const detail = result?.detail ?? 'Codex integration failed without a diagnostic';
+      throw new SetupIntegrationError(detail);
+    }
+    hookReviewRequired = result.hookReviewRequired === true;
+    console.log(`  \x1b[32m\u2713\x1b[0m ${result.detail}`);
+    const plugin = (deps.probeCodexGeniePlugin ?? probeCodexGeniePlugin)();
+    reconcileSetupCodexProject(root, plugin);
+    if (result.preservedDisabled) console.log('  \x1b[2mExisting disabled plugin state was preserved.\x1b[0m');
+    (deps.commitIntegrationConsentTransition ?? commitIntegrationConsentTransition)(transition, genieHome);
+  } catch (error) {
+    throw new SetupIntegrationError(
+      `${error instanceof Error ? error.message : String(error)}; Codex maintenance consent is pending — rerun genie setup --codex to resume`,
+    );
+  }
+  if (hookReviewRequired) {
+    console.log('  \x1b[33m!\x1b[0m Review Genie hooks with /hooks, then start a new Codex task.');
+  }
+}
+
+/** Merge explicit Codex setup into the durable client-home maintenance scope. */
+export function mergeCodexIntegrationConsent(current: IntegrationSelection): IntegrationSelection {
+  if (current === 'none') return 'codex';
+  if (current === 'claude') return 'all';
+  return current;
+}
+
+function preserveRuntimeChoiceAfterCodex(config: GenieConfig): void {
+  const decision = resolveDefaultAgentAfterCodex(config.runtime.defaultAgent);
+  config.runtime.defaultAgent = decision.agent;
+  if (decision.hint) console.log(`  \x1b[2m${decision.hint}\x1b[0m`);
+}
+
+async function configureCodex(config: GenieConfig, quick: boolean, deps: SetupDeps): Promise<GenieConfig> {
   printSection('5. Codex Integration', 'Configure OpenAI Codex for genie agents');
 
-  const codexCheck = await checkCommand('codex');
+  const cwd = deps.cwd ?? process.cwd();
+  let codexPath: string | null;
+  try {
+    codexPath = deps.resolveExecutable
+      ? deps.resolveExecutable('codex', cwd)
+      : Bun.which('codex') === null
+        ? null
+        : resolveTrustedExecutable('codex', cwd);
+  } catch (error) {
+    throw new SetupIntegrationError(error instanceof Error ? error.message : String(error));
+  }
+  if (codexPath === null) {
+    console.log('  \x1b[33m!\x1b[0m Codex CLI not found. Skipping codex integration.');
+    return config;
+  }
+  const codexCheck = await (deps.checkCommand ?? checkCommand)(codexPath, { which: () => codexPath });
+  if (codexCheck.timedOut) {
+    throw new SetupIntegrationError(codexCheck.error ?? 'Codex CLI detection timed out');
+  }
   if (!codexCheck.exists) {
     console.log('  \x1b[33m!\x1b[0m Codex CLI not found. Skipping codex integration.');
     return config;
@@ -212,19 +337,43 @@ async function configureCodex(config: GenieConfig, quick: boolean): Promise<Geni
 
   console.log();
   console.log('  Genie installs or repairs the native Codex plugin, MCP server, and role agents.');
+  console.log('  Successful setup persists Codex maintenance consent for later explicit genie updates.');
+  console.log('  Those updates may refresh Genie-managed user-tier skills under ~/.agents/skills.');
   console.log('  The obsolete Genie loopback OTel exporter is removed with a backup when present.');
   console.log(`  Config: \x1b[2m${contractPath(getCodexConfigPath())}\x1b[0m`);
   console.log();
 
+  const genieHome = resolveGenieHome();
+  const observedConsent = (deps.readIntegrationConsentState ?? readIntegrationConsentState)(genieHome);
+  const observedTransition: IntegrationConsentTransitionRef | null =
+    observedConsent.state === 'pending'
+      ? { revision: observedConsent.revision, transitionToken: observedConsent.transitionToken }
+      : null;
+
   if (quick) {
-    config.codex = { configured: repairCodexIntegration() };
+    await withSetupLease(deps, () => repairCodexIntegration(deps, codexPath as string));
+    config.codex = { configured: true };
+    preserveRuntimeChoiceAfterCodex(config);
     return config;
   }
 
-  const enableCodex = await confirm({ message: 'Install or repair the Genie Codex integration?', default: true });
+  const enableCodex = await (deps.confirm ?? confirm)({
+    message: 'Install or repair Codex and let later explicit genie updates maintain managed Codex assets?',
+    default: true,
+  });
   if (enableCodex) {
-    config.codex = { configured: repairCodexIntegration() };
+    await withSetupLease(deps, () => repairCodexIntegration(deps, codexPath as string));
+    config.codex = { configured: true };
+    preserveRuntimeChoiceAfterCodex(config);
   } else {
+    if (observedTransition !== null) {
+      const restored = await withSetupLease(deps, () =>
+        (deps.clearIntegrationConsentTransition ?? clearIntegrationConsentTransition)(observedTransition, genieHome),
+      );
+      console.log(`  Pending Codex maintenance consent cleared; retained scope: ${restored}.`);
+    } else {
+      console.log('  No pending Codex maintenance consent was present.');
+    }
     console.log('  Skipped. Run \x1b[36mgenie setup --codex\x1b[0m later.');
   }
 
@@ -318,7 +467,7 @@ async function configurePromptMode(config: GenieConfig, quick: boolean): Promise
 // Summary and Save
 // ============================================================================
 
-async function showSummaryAndSave(config: GenieConfig): Promise<void> {
+async function showSummaryAndSave(config: GenieConfig, baseline: GenieConfig, deps: SetupDeps): Promise<void> {
   printSection('Summary', `Configuration will be saved to ${contractPath(getGenieConfigPath())}`);
 
   console.log(`  Session: \x1b[36m${config.session.name}\x1b[0m (window: ${config.session.defaultWindow})`);
@@ -334,7 +483,7 @@ async function showSummaryAndSave(config: GenieConfig): Promise<void> {
   // Save config
   config.setupComplete = true;
   config.lastSetupAt = new Date().toISOString();
-  await saveGenieConfig(config);
+  await saveSetupConfig(config, baseline, deps);
 
   console.log('\x1b[32m\u2713 Configuration saved!\x1b[0m');
 }
@@ -372,7 +521,7 @@ function printNextSteps(): void {
 // Main Setup Command
 // ============================================================================
 
-export async function setupCommand(options: SetupOptions = {}): Promise<void> {
+async function runSetupCommand(options: SetupOptions, deps: SetupDeps): Promise<void> {
   // Handle --show flag
   if (options.show) {
     await showCurrentConfig();
@@ -381,7 +530,7 @@ export async function setupCommand(options: SetupOptions = {}): Promise<void> {
 
   // Handle --reset flag
   if (options.reset) {
-    await resetConfig();
+    await withSetupLease(deps, () => resetConfig());
     console.log('\x1b[32m\u2713 Configuration reset to defaults.\x1b[0m');
     console.log();
     return;
@@ -389,19 +538,20 @@ export async function setupCommand(options: SetupOptions = {}): Promise<void> {
 
   // Load existing config
   let config = await loadGenieConfig();
+  const baseline = structuredClone(config);
 
   // Handle section-specific flags
   if (options.shortcuts) {
     printHeader();
-    await configureShortcuts(config, false);
-    await markSetupComplete();
+    await configureShortcuts(config, false, deps);
+    await withSetupLease(deps, () => markSetupComplete());
     return;
   }
 
   if (options.terminal) {
     printHeader();
     config = await configureTerminal(config, false);
-    await saveGenieConfig(config);
+    await saveSetupConfig(config, baseline, deps);
     console.log('\x1b[32m\u2713 Terminal configuration saved.\x1b[0m');
     return;
   }
@@ -409,20 +559,15 @@ export async function setupCommand(options: SetupOptions = {}): Promise<void> {
   if (options.session) {
     printHeader();
     config = await configureSession(config, false);
-    await saveGenieConfig(config);
+    await saveSetupConfig(config, baseline, deps);
     console.log('\x1b[32m\u2713 Session configuration saved.\x1b[0m');
     return;
   }
 
   if (options.codex) {
     printHeader();
-    config = await configureCodex(config, options.quick ?? false);
-    if (config.codex?.configured) {
-      const decision = resolveDefaultAgentAfterCodex(config.runtime.defaultAgent);
-      config.runtime.defaultAgent = decision.agent;
-      if (decision.hint) console.log(`  \x1b[2m${decision.hint}\x1b[0m`);
-    }
-    await saveGenieConfig(config);
+    config = await configureCodex(config, options.quick ?? false, deps);
+    await saveSetupConfig(config, baseline, deps);
     if (config.codex?.configured) {
       console.log('\x1b[32m\u2713 Codex configuration saved.\x1b[0m');
     }
@@ -441,19 +586,53 @@ export async function setupCommand(options: SetupOptions = {}): Promise<void> {
   // Run all sections
   config = await configureSession(config, quick);
   config = await configureTerminal(config, quick);
-  config = await configureShortcuts(config, quick);
-  config = await configureCodex(config, quick);
+  config = await configureShortcuts(config, quick, deps);
+  config = await configureCodex(config, quick, deps);
   config = await configureDebug(config, quick);
   config = await configurePromptMode(config, quick);
 
   // Save and show summary
-  await showSummaryAndSave(config);
+  await showSummaryAndSave(config, baseline, deps);
 
-  // Install genie tmux config
-  installGenieTmuxConf();
+  // This file mutation follows the same just-acquired/revalidated config
+  // commit rather than extending a lease across any wizard prompt.
+  await withSetupLease(deps, () => installGenieTmuxConf());
 
   // Print next steps
   printNextSteps();
+}
+
+/** Run setup with clean, actionable failure semantics and no false success banner. */
+export async function setupCommand(options: SetupOptions = {}, deps: SetupDeps = {}): Promise<void> {
+  try {
+    await runSetupCommand(options, deps);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error(`Error: Genie setup failed: ${detail}`);
+    process.exitCode = 1;
+  }
+}
+
+/** Acquire only for a bounded mutation; no interactive prompt calls this helper. */
+async function withSetupLease<T>(deps: SetupDeps, mutation: () => T | Promise<T>): Promise<T> {
+  const lifecycleLease = (deps.acquireLifecycleLease ?? acquireLifecycleLease)(resolveGenieHome());
+  if ('skipped' in lifecycleLease) throw new SetupIntegrationError(lifecycleLease.skipped);
+  try {
+    return await mutation();
+  } finally {
+    lifecycleLease.release();
+  }
+}
+
+/** Fail closed instead of overwriting config changed while the wizard prompted. */
+async function saveSetupConfig(config: GenieConfig, baseline: GenieConfig, deps: SetupDeps): Promise<void> {
+  await withSetupLease(deps, async () => {
+    const current = await loadGenieConfig();
+    if (JSON.stringify(current) !== JSON.stringify(baseline)) {
+      throw new SetupIntegrationError('Genie configuration changed while setup was open; review it and retry setup');
+    }
+    await saveGenieConfig(config);
+  });
 }
 
 /** Copy shipped genie.tmux.conf to ~/.genie/tmux.conf if it doesn't exist yet. */

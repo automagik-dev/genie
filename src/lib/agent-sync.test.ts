@@ -12,13 +12,17 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import {
+  chmodSync,
   existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   readlinkSync,
+  renameSync,
   rmSync,
   symlinkSync,
   utimesSync,
@@ -32,18 +36,42 @@ import {
   type AgentReport,
   type AgentSyncOptions,
   type AgentSyncReport,
+  LIFECYCLE_LEASE_OWNER_ENV,
+  LIFECYCLE_LEASE_PATH_ENV,
+  TARGET_NAME,
+  WORKFLOW_MANIFEST_NAME,
+  acquireLifecycleLease,
   computeDirDigest,
+  inspectManagedWorkflow,
+  lifecycleLockPath,
+  recoverManagedSkillTransactions,
+  recoverManagedWorkflowTransactions,
+  removeManagedWorkflow,
   resolveGenieSource,
   runAgentSync,
   stampWorkflow,
 } from './agent-sync';
 
 const require = createRequire(import.meta.url);
-const { stampCouncilWorkflow, PLACEHOLDER } = require('../../plugins/genie/scripts/council-stamp.cjs') as {
-  stampCouncilWorkflow: (opts: { templatePath: string; pluginRoot: string; targetDir: string }) => {
-    action: 'written' | 'skipped';
+const {
+  stampCouncilWorkflow,
+  recoverTransactions: recoverCjsCouncilTransactions,
+  PLACEHOLDER,
+} = require('../../plugins/genie/scripts/council-stamp.cjs') as {
+  stampCouncilWorkflow: (opts: {
+    templatePath: string;
+    pluginRoot: string;
+    targetDir: string;
+    version?: string | null;
+    now?: () => Date;
+    beforePromotion?: () => void;
+    afterAuthorization?: () => void;
+    beforePublish?: () => void;
+  }) => {
+    action: 'written' | 'skipped' | 'kept-unmanaged' | 'kept-modified' | 'metadata-corrupt';
     targetPath: string;
   };
+  recoverTransactions: (targetDir: string) => void;
   PLACEHOLDER: string;
 };
 
@@ -188,8 +216,14 @@ describe('fresh create', () => {
 
     expect(extraAction(report, 'stamp')).toBe('written');
     const council = readFileSync(join(fixture.claudeDir, 'workflows', 'council.js'), 'utf8');
-    expect(council).toContain(`const LENS_ROOT = '${fixture.pluginRoot}';`);
+    expect(council).toContain(`const LENS_ROOT = ${JSON.stringify(fixture.pluginRoot)};`);
     expect(council).not.toContain(PLACEHOLDER);
+    const workflowManifest = JSON.parse(
+      readFileSync(join(fixture.claudeDir, 'workflows', WORKFLOW_MANIFEST_NAME), 'utf8'),
+    ) as { managedBy: string; version: string; digest: string };
+    expect(workflowManifest.managedBy).toBe('genie-agent-sync');
+    expect(workflowManifest.version).toBe('9.9.9');
+    expect(workflowManifest.digest).toMatch(/^[a-f0-9]{64}$/);
   });
 
   test('codex: skills land top-level under the agents skills tier with a restart advisory', () => {
@@ -284,14 +318,42 @@ describe('source change', () => {
     expect(readFileSync(join(alphaDir, 'SKILL.md'), 'utf8')).toBe('# alpha v2\n');
     expect(readManifest(alphaDir).digest).not.toBe(before);
   });
+
+  test('a v1 skill upgrades only when its complete physical tree matches canonical source', () => {
+    rmSync(fixture.root, { recursive: true, force: true });
+    fixture = setup({ skills: { alpha: { 'SKILL.md': '# alpha\n' } } });
+    present(fixture.claudeDir);
+    const alphaDir = join(fixture.claudeDir, 'skills', 'alpha');
+    seedV1ManagedDir(alphaDir, { 'SKILL.md': '# alpha\n' });
+
+    const claude = agentReport(run({ selection: 'claude' }), 'claude');
+
+    expect(skillAction(claude, 'alpha')).toBe('updated');
+    expect(JSON.parse(readFileSync(join(alphaDir, MANIFEST_NAME), 'utf8')).identityVersion).toBe(2);
+  });
+
+  test('a chmod-only edit under v1 authority fails closed', () => {
+    rmSync(fixture.root, { recursive: true, force: true });
+    fixture = setup({ skills: { alpha: { 'SKILL.md': '# alpha\n' } } });
+    present(fixture.claudeDir);
+    const alphaDir = join(fixture.claudeDir, 'skills', 'alpha');
+    seedV1ManagedDir(alphaDir, { 'SKILL.md': '# alpha\n' });
+    chmodSync(join(alphaDir, 'SKILL.md'), 0o755);
+
+    const claude = agentReport(run({ selection: 'claude' }), 'claude');
+
+    expect(skillAction(claude, 'alpha')).toBe('kept-modified');
+    expect(lstatSync(join(alphaDir, 'SKILL.md')).mode & 0o7777).toBe(0o755);
+    expect(JSON.parse(readFileSync(join(alphaDir, MANIFEST_NAME), 'utf8')).identityVersion).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
-// Adopt-with-backup
+// Same-name collision preservation
 // ---------------------------------------------------------------------------
 
-describe('auto-adopt with backup', () => {
-  test('a user-modified managed skill is backed up then rewritten', () => {
+describe('same-name collision preservation', () => {
+  test('a user-modified managed skill is kept byte-identical and not overwritten', () => {
     present(fixture.claudeDir);
     run();
     const alphaDir = join(fixture.claudeDir, 'skills', 'alpha');
@@ -299,43 +361,52 @@ describe('auto-adopt with backup', () => {
 
     const report = run();
     const claude = agentReport(report, 'claude');
-    expect(skillAction(claude, 'alpha')).toBe('adopted');
-    expect(readFileSync(join(alphaDir, 'SKILL.md'), 'utf8')).toBe('# alpha\n'); // restored from source
-
-    expect(report.backupsDir).not.toBeNull();
-    const backup = join(report.backupsDir as string, 'claude', 'alpha', 'SKILL.md');
-    expect(readFileSync(backup, 'utf8')).toBe('# hand-edited\n'); // the edit is preserved
+    expect(skillAction(claude, 'alpha')).toBe('kept-modified');
+    expect(readFileSync(join(alphaDir, 'SKILL.md'), 'utf8')).toBe('# hand-edited\n');
+    expect(report.backupsDir).toBeNull();
   });
 
-  test('an unmanaged same-name dir (no manifest) is adopted with a backup', () => {
+  test('an unmanaged same-name dir (no manifest) is kept and never adopted', () => {
     present(fixture.claudeDir);
     const alphaDir = join(fixture.claudeDir, 'skills', 'alpha');
     writeFile(join(alphaDir, 'SKILL.md'), '# pre-existing unmanaged\n');
 
     const report = run();
     const claude = agentReport(report, 'claude');
-    expect(skillAction(claude, 'alpha')).toBe('adopted');
-    expect(existsSync(join(alphaDir, MANIFEST_NAME))).toBe(true); // now managed
-    expect(readFileSync(join(alphaDir, 'SKILL.md'), 'utf8')).toBe('# alpha\n');
-
-    const backup = join(report.backupsDir as string, 'claude', 'alpha', 'SKILL.md');
-    expect(readFileSync(backup, 'utf8')).toBe('# pre-existing unmanaged\n');
+    expect(skillAction(claude, 'alpha')).toBe('skipped-unmanaged-kept');
+    expect(existsSync(join(alphaDir, MANIFEST_NAME))).toBe(false);
+    expect(readFileSync(join(alphaDir, 'SKILL.md'), 'utf8')).toBe('# pre-existing unmanaged\n');
+    expect(report.backupsDir).toBeNull();
   });
 
-  test('a target dir with a corrupt manifest is adopted with a backup, never crashes', () => {
+  test('a target dir with a corrupt manifest is kept byte-identical and never crashes', () => {
     present(fixture.claudeDir);
     const alphaDir = join(fixture.claudeDir, 'skills', 'alpha');
     writeFile(join(alphaDir, 'SKILL.md'), '# pre-existing with corrupt manifest\n');
-    writeFile(join(alphaDir, MANIFEST_NAME), '{ this is not valid json '); // unparsable → treated as unmanaged
+    const corrupt = '{ this is not valid json ';
+    writeFile(join(alphaDir, MANIFEST_NAME), corrupt);
 
     const report = run();
     const claude = agentReport(report, 'claude');
-    expect(skillAction(claude, 'alpha')).toBe('adopted');
-    expect(readFileSync(join(alphaDir, 'SKILL.md'), 'utf8')).toBe('# alpha\n'); // restored from source
+    expect(skillAction(claude, 'alpha')).toBe('skipped-unmanaged-kept');
+    expect(readFileSync(join(alphaDir, 'SKILL.md'), 'utf8')).toBe('# pre-existing with corrupt manifest\n');
+    expect(readFileSync(join(alphaDir, MANIFEST_NAME), 'utf8')).toBe(corrupt);
+    expect(report.backupsDir).toBeNull();
+  });
 
-    expect(report.backupsDir).not.toBeNull();
-    const backup = join(report.backupsDir as string, 'claude', 'alpha', 'SKILL.md');
-    expect(readFileSync(backup, 'utf8')).toBe('# pre-existing with corrupt manifest\n'); // the edit is preserved
+  test('a same-name skill symlink is never followed, adopted, or replaced', () => {
+    present(fixture.claudeDir);
+    const outside = join(fixture.root, 'personal-alpha');
+    writeFile(join(outside, 'SKILL.md'), '# personal symlink target\n');
+    const alphaDir = join(fixture.claudeDir, 'skills', 'alpha');
+    mkdirSync(dirname(alphaDir), { recursive: true });
+    symlinkSync(outside, alphaDir);
+
+    const report = agentReport(run(), 'claude');
+
+    expect(skillAction(report, 'alpha')).toBe('skipped-unmanaged-kept');
+    expect(lstatSync(alphaDir).isSymbolicLink()).toBe(true);
+    expect(readFileSync(join(outside, 'SKILL.md'), 'utf8')).toBe('# personal symlink target\n');
   });
 
   test('a dir genie never shipped is left completely untouched', () => {
@@ -383,6 +454,47 @@ describe('managed orphan handling', () => {
     expect(skillAction(claude, 'beta')).toBe('kept-modified-orphan');
     expect(existsSync(join(betaDir, 'SKILL.md'))).toBe(true);
     expect(claude.advisories.some((line) => line.includes('kept modified orphan beta'))).toBe(true);
+  });
+
+  test('an orphan edit after classification is never deleted and no stale backup is presented as exact', () => {
+    present(fixture.claudeDir);
+    run();
+    const betaDir = join(fixture.claudeDir, 'skills', 'beta');
+    rmSync(join(fixture.pluginRoot, 'skills', 'beta'), { recursive: true, force: true });
+
+    const report = run({
+      beforeManagedDirRemoval(destDir, stage) {
+        if (destDir === betaDir && stage === 'before-park') writeFileSync(join(betaDir, 'SKILL.md'), '# raced\n');
+      },
+    });
+
+    const claude = agentReport(report, 'claude');
+    expect(skillAction(claude, 'beta')).toBeUndefined();
+    expect(readFileSync(join(betaDir, 'SKILL.md'), 'utf8')).toBe('# raced\n');
+    expect(claude.failures?.some((line) => line.includes('changed before removal'))).toBe(true);
+    expect(report.backupsDir).toBeNull();
+  });
+
+  test('a quarantined orphan changed after backup is preserved as a conflict with the exact backup intact', () => {
+    present(fixture.claudeDir);
+    run();
+    rmSync(join(fixture.pluginRoot, 'skills', 'beta'), { recursive: true, force: true });
+
+    const report = run({
+      beforeManagedDirRemoval(_destDir, stage) {
+        if (stage !== 'before-delete') return;
+        const root = join(fixture.claudeDir, 'skills', '.genie-sync-transactions');
+        const transaction = readdirSync(root).find((name) => name.startsWith('delete-')) as string;
+        writeFileSync(join(root, transaction, 'parked', 'SKILL.md'), '# raced parked bytes\n');
+      },
+    });
+
+    const backup = join(report.backupsDir as string, 'claude', 'beta', 'SKILL.md');
+    expect(readFileSync(backup, 'utf8')).toBe('# beta\n');
+    const transactionRoot = join(fixture.claudeDir, 'skills', '.genie-sync-transactions');
+    const conflict = readdirSync(transactionRoot).find((name) => name.startsWith('.conflict-delete-')) as string;
+    expect(readFileSync(join(transactionRoot, conflict, 'parked', 'SKILL.md'), 'utf8')).toBe('# raced parked bytes\n');
+    expect(agentReport(report, 'claude').failures).toHaveLength(1);
   });
 });
 
@@ -471,6 +583,30 @@ describe('undetected agents', () => {
   });
 });
 
+describe('explicit client selection', () => {
+  test('codex selection leaves Claude and Hermes homes byte-identical', () => {
+    present(fixture.claudeDir);
+    present(fixture.codexDir);
+    present(fixture.hermesHome);
+    const report = run({ selection: 'codex' });
+    expect(report.agents.map((agent) => agent.agent)).toEqual(['codex']);
+    expect(existsSync(join(fixture.agentsSkillsDir, 'alpha', 'SKILL.md'))).toBe(true);
+    expect(existsSync(join(fixture.claudeDir, 'skills'))).toBe(false);
+    expect(existsSync(join(fixture.hermesHome, 'plugins', 'genie'))).toBe(false);
+  });
+
+  test('none selection mutates no client home', () => {
+    present(fixture.claudeDir);
+    present(fixture.codexDir);
+    present(fixture.hermesHome);
+    const report = run({ selection: 'none' });
+    expect(report.agents).toEqual([]);
+    expect(existsSync(join(fixture.claudeDir, 'skills'))).toBe(false);
+    expect(existsSync(join(fixture.agentsSkillsDir, 'alpha'))).toBe(false);
+    expect(existsSync(join(fixture.hermesHome, 'plugins', 'genie'))).toBe(false);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Report fidelity on a late adapter failure
 // ---------------------------------------------------------------------------
@@ -529,6 +665,33 @@ describe('computeDirDigest', () => {
     writeFile(join(dir, 'SKILL.md'), 'two');
     expect(computeDirDigest(dir)).not.toBe(before);
   });
+
+  test('identifies symlink kind and target without following external content', () => {
+    const dir = join(fixture.root, 'physical-symlink');
+    const external = join(fixture.root, 'external.txt');
+    writeFile(external, 'one\n');
+    mkdirSync(dir, { recursive: true });
+    symlinkSync(external, join(dir, 'entry'));
+    const linked = computeDirDigest(dir);
+
+    writeFile(external, 'two\n');
+    expect(computeDirDigest(dir)).toBe(linked);
+    rmSync(join(dir, 'entry'));
+    writeFile(join(dir, 'entry'), 'two\n');
+    expect(computeDirDigest(dir)).not.toBe(linked);
+    rmSync(join(dir, 'entry'));
+    symlinkSync('different-target', join(dir, 'entry'));
+    expect(computeDirDigest(dir)).not.toBe(linked);
+  });
+
+  test('identifies entry modes and broken symlinks', () => {
+    const dir = join(fixture.root, 'physical-modes');
+    writeFile(join(dir, 'tool'), '#!/bin/sh\n');
+    symlinkSync('missing-target', join(dir, 'broken'));
+    const before = computeDirDigest(dir);
+    chmodSync(join(dir, 'tool'), 0o755);
+    expect(computeDirDigest(dir)).not.toBe(before);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -536,6 +699,208 @@ describe('computeDirDigest', () => {
 // ---------------------------------------------------------------------------
 
 describe('staging cleanup', () => {
+  test('a promotion failure restores the previous live skill and is strict-visible', () => {
+    present(fixture.claudeDir);
+    run({ selection: 'claude' });
+    const alphaDir = join(fixture.claudeDir, 'skills', 'alpha');
+    writeFile(join(fixture.pluginRoot, 'skills', 'alpha', 'SKILL.md'), '# alpha v2\n');
+
+    const report = run({
+      selection: 'claude',
+      beforeManagedDirPublish: () => {
+        throw new Error('simulated promotion failure');
+      },
+    });
+    const claude = agentReport(report, 'claude');
+
+    expect(readFileSync(join(alphaDir, 'SKILL.md'), 'utf8')).toBe('# alpha\n');
+    expect(claude.failures?.join('\n')).toContain('simulated promotion failure');
+    const marker = join(fixture.root, '.strict-marker');
+    expect(() =>
+      runAgentSyncSafe({ sync: () => report, strict: true, markerPath: marker, log: () => undefined }),
+    ).toThrow('simulated promotion failure');
+    expect(existsSync(marker)).toBe(false);
+
+    expect(skillAction(agentReport(run({ selection: 'claude' }), 'claude'), 'alpha')).toBe('updated');
+    expect(readFileSync(join(alphaDir, 'SKILL.md'), 'utf8')).toBe('# alpha v2\n');
+  });
+
+  test('a rollback race preserves the live, prior, and staged skill trees', () => {
+    present(fixture.claudeDir);
+    run({ selection: 'claude' });
+    const alphaDir = join(fixture.claudeDir, 'skills', 'alpha');
+    writeFile(join(fixture.pluginRoot, 'skills', 'alpha', 'SKILL.md'), '# alpha incoming\n');
+
+    const claude = agentReport(
+      run({
+        selection: 'claude',
+        beforeManagedDirPublish(destDir) {
+          if (destDir !== alphaDir) return;
+          writeFile(join(destDir, 'SKILL.md'), '# alpha rollback racer\n');
+          throw new Error('fail after racer publication');
+        },
+      }),
+      'claude',
+    );
+
+    expect(readFileSync(join(alphaDir, 'SKILL.md'), 'utf8')).toBe('# alpha rollback racer\n');
+    expect(claude.failures?.join('\n')).toContain('preserved managed skill evidence');
+    const transactionRoot = join(fixture.claudeDir, 'skills', '.genie-sync-transactions');
+    const conflict = readdirSync(transactionRoot).find((name) => name.startsWith('.conflict-')) as string;
+    expect(readFileSync(join(transactionRoot, conflict, 'before', 'SKILL.md'), 'utf8')).toBe('# alpha\n');
+    expect(readFileSync(join(transactionRoot, conflict, 'staged', 'SKILL.md'), 'utf8')).toBe('# alpha incoming\n');
+  });
+
+  test('a managed skill edited after classification wins the CAS and the incoming version is preserved', () => {
+    present(fixture.claudeDir);
+    run({ selection: 'claude' });
+    const alphaDir = join(fixture.claudeDir, 'skills', 'alpha');
+    writeFile(join(fixture.pluginRoot, 'skills', 'alpha', 'SKILL.md'), '# alpha incoming\n');
+
+    const claude = agentReport(
+      run({
+        selection: 'claude',
+        beforeManagedDirPromotion(destDir) {
+          if (destDir === alphaDir) writeFile(join(destDir, 'SKILL.md'), '# alpha personal race\n');
+        },
+      }),
+      'claude',
+    );
+
+    expect(readFileSync(join(alphaDir, 'SKILL.md'), 'utf8')).toBe('# alpha personal race\n');
+    expect(claude.failures?.join('\n')).toContain('changed before promotion');
+    const transactionRoot = join(fixture.claudeDir, 'skills', '.genie-sync-transactions');
+    const conflict = readdirSync(transactionRoot).find((name) => name.startsWith('.conflict-'));
+    expect(conflict).toBeDefined();
+    expect(readFileSync(join(transactionRoot, conflict as string, 'staged', 'SKILL.md'), 'utf8')).toBe(
+      '# alpha incoming\n',
+    );
+  });
+
+  test('a metadata-only managed-skill edit after classification also revokes promotion authority', () => {
+    present(fixture.claudeDir);
+    run({ selection: 'claude' });
+    const alphaDir = join(fixture.claudeDir, 'skills', 'alpha');
+    const manifestPath = join(alphaDir, MANIFEST_NAME);
+    writeFile(join(fixture.pluginRoot, 'skills', 'alpha', 'SKILL.md'), '# alpha incoming\n');
+
+    const claude = agentReport(
+      run({
+        selection: 'claude',
+        beforeManagedDirPromotion(destDir) {
+          if (destDir !== alphaDir) return;
+          const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
+          writeFileSync(manifestPath, `${JSON.stringify({ ...manifest, personalNote: 'keep me' }, null, 2)}\n`);
+        },
+      }),
+      'claude',
+    );
+
+    expect(JSON.parse(readFileSync(manifestPath, 'utf8')).personalNote).toBe('keep me');
+    expect(readFileSync(join(alphaDir, 'SKILL.md'), 'utf8')).toBe('# alpha\n');
+    expect(claude.failures?.join('\n')).toContain('changed before promotion');
+  });
+
+  test('a skill recreated after parking but before final publish is never clobbered', () => {
+    present(fixture.claudeDir);
+    run({ selection: 'claude' });
+    const alphaDir = join(fixture.claudeDir, 'skills', 'alpha');
+    writeFile(join(fixture.pluginRoot, 'skills', 'alpha', 'SKILL.md'), '# alpha incoming\n');
+
+    const claude = agentReport(
+      run({
+        selection: 'claude',
+        beforeManagedDirPublish(destDir) {
+          if (destDir !== alphaDir) return;
+          writeFile(join(destDir, 'SKILL.md'), '# alpha personal after park\n');
+        },
+      }),
+      'claude',
+    );
+
+    expect(readFileSync(join(alphaDir, 'SKILL.md'), 'utf8')).toBe('# alpha personal after park\n');
+    expect(claude.failures?.join('\n')).toContain('exclusive directory publish failed');
+    const transactionRoot = join(fixture.claudeDir, 'skills', '.genie-sync-transactions');
+    const conflict = readdirSync(transactionRoot).find((name) => name.startsWith('.conflict-'));
+    expect(conflict).toBeDefined();
+    expect(readFileSync(join(transactionRoot, conflict as string, 'staged', 'SKILL.md'), 'utf8')).toBe(
+      '# alpha incoming\n',
+    );
+  });
+
+  test('a journaled crash after moving live restores the prior tree before classification', () => {
+    present(fixture.claudeDir);
+    run({ selection: 'claude' });
+    const skillsDir = join(fixture.claudeDir, 'skills');
+    const alphaDir = join(skillsDir, 'alpha');
+    const priorContentDigest = computeDirDigest(alphaDir);
+    const priorManifestDigest = createHash('sha256')
+      .update(readFileSync(join(alphaDir, MANIFEST_NAME)))
+      .digest('hex');
+    const transactionDir = join(skillsDir, '.genie-sync-transactions', 'txn-616c706861-crashed');
+    mkdirSync(transactionDir, { recursive: true });
+    renameSync(alphaDir, join(transactionDir, 'before'));
+    writeFile(
+      join(transactionDir, 'journal.json'),
+      `${JSON.stringify({
+        version: 2,
+        destName: 'alpha',
+        hadLive: true,
+        beforeContentDigest: priorContentDigest,
+        beforeManifestDigest: priorManifestDigest,
+        stagedContentDigest: '0'.repeat(64),
+        stagedManifestDigest: '1'.repeat(64),
+        identityVersion: 2,
+      })}\n`,
+    );
+
+    const claude = agentReport(run({ selection: 'claude' }), 'claude');
+
+    expect(skillAction(claude, 'alpha')).toBe('unchanged');
+    expect(readFileSync(join(alphaDir, 'SKILL.md'), 'utf8')).toBe('# alpha\n');
+    expect(existsSync(transactionDir)).toBe(false);
+  });
+
+  test('public recovery restores a parked removal even when no live skill is enumerable', () => {
+    present(fixture.claudeDir);
+    run({ selection: 'claude' });
+    const skillsDir = join(fixture.claudeDir, 'skills');
+    const alphaDir = join(skillsDir, 'alpha');
+    const transactionDir = join(skillsDir, '.genie-sync-transactions', 'delete-616c706861-crashed');
+    const contentDigest = computeDirDigest(alphaDir);
+    const manifestDigest = createHash('sha256')
+      .update(readFileSync(join(alphaDir, MANIFEST_NAME)))
+      .digest('hex');
+    writeFile(
+      join(transactionDir, 'journal.json'),
+      `${JSON.stringify({
+        version: 2,
+        destName: 'alpha',
+        contentDigest,
+        manifestDigest,
+        identityVersion: 2,
+      })}\n`,
+    );
+    renameSync(alphaDir, join(transactionDir, 'parked'));
+
+    recoverManagedSkillTransactions(skillsDir);
+
+    expect(readFileSync(join(alphaDir, 'SKILL.md'), 'utf8')).toBe('# alpha\n');
+    expect(existsSync(transactionDir)).toBe(false);
+  });
+
+  test('hidden pre-journal managed-dir debris is quarantined and does not poison retries', () => {
+    present(fixture.claudeDir);
+    const debris = join(fixture.claudeDir, 'skills', '.genie-sync-transactions', '.staging-616c706861-crashed');
+    writeFile(join(debris, 'staged', 'SKILL.md'), '# incomplete\n');
+
+    const claude = agentReport(run({ selection: 'claude' }), 'claude');
+
+    expect(skillAction(claude, 'alpha')).toBe('created');
+    expect(existsSync(debris)).toBe(false);
+    expect(readFileSync(join(fixture.claudeDir, 'skills', 'alpha', 'SKILL.md'), 'utf8')).toBe('# alpha\n');
+  });
+
   test('stale genie-sync staging debris from a crashed run is pre-cleaned', () => {
     present(fixture.claudeDir);
     const staleStage = join(fixture.claudeDir, 'skills', 'alpha.genie-sync.staging');
@@ -633,6 +998,18 @@ describe('hermes linking', () => {
     expect(readlinkSync(profileLink)).toBe(fixture.hermesSource);
   });
 
+  test('an unsafe active_profile cannot escape the Hermes profiles root', () => {
+    present(fixture.hermesHome);
+    writeFile(join(fixture.hermesHome, 'active_profile'), '../../outside');
+    const outside = join(fixture.root, 'outside', 'plugins', 'genie');
+
+    const report = run({ hermesBinary: null });
+
+    expect(existsSync(outside)).toBe(false);
+    const hermes = agentReport(report, 'hermes');
+    expect(hermes.failures?.join('\n')).toContain('invalid Hermes active_profile');
+  });
+
   test('detection via binary alone creates the link under a fresh hermes home', () => {
     // hermesHome does not exist; only a binary override is provided
     const enableCalls: string[][] = [];
@@ -662,6 +1039,26 @@ function seedManagedDir(dir: string, files: Record<string, string>): void {
   writeFile(join(dir, MANIFEST_NAME), `${JSON.stringify(manifest, null, 2)}\n`);
 }
 
+function seedV1ManagedDir(dir: string, files: Record<string, string>): void {
+  for (const [rel, content] of Object.entries(files)) writeFile(join(dir, rel), content);
+  const digest = createHash('sha256');
+  for (const [rel, content] of Object.entries(files).sort(([left], [right]) => left.localeCompare(right))) {
+    digest.update(rel);
+    digest.update('\0');
+    digest.update(createHash('sha256').update(content).digest('hex'));
+    digest.update('\0');
+  }
+  writeFile(
+    join(dir, MANIFEST_NAME),
+    `${JSON.stringify({
+      managedBy: 'genie-agent-sync',
+      version: '8.0.0',
+      digest: digest.digest('hex'),
+      syncedAt: '2025-01-01T00:00:00.000Z',
+    })}\n`,
+  );
+}
+
 describe('codex .system', () => {
   test('the OpenAI-owned .system tree is never enumerated or touched', () => {
     present(fixture.codexDir);
@@ -686,26 +1083,66 @@ describe('codex legacy .curated migration', () => {
     const codex = agentReport(report, 'codex');
 
     expect(existsSync(legacyDir)).toBe(false); // lane fully retired
+    expect((report.backupsDir as string).startsWith(`${fixture.genieHome}/`)).toBe(false);
     // both legacy dirs were backed up before removal
     const backupRoot = join(report.backupsDir as string, 'codex-legacy-curated');
     expect(readFileSync(join(backupRoot, 'alpha', 'SKILL.md'), 'utf8')).toBe('# legacy alpha\n');
     expect(readFileSync(join(backupRoot, 'zombie', 'SKILL.md'), 'utf8')).toBe('# legacy zombie\n');
+    rmSync(fixture.genieHome, { recursive: true, force: true });
+    expect(readFileSync(join(backupRoot, 'alpha', 'SKILL.md'), 'utf8')).toBe('# legacy alpha\n');
     const removed = codex.extras.filter((entry) => entry.kind === 'legacy-curated' && entry.action === 'removed');
     expect(removed).toHaveLength(2);
     // and the live tier got the current source skills
     expect(readFileSync(join(fixture.agentsSkillsDir, 'alpha', 'SKILL.md'), 'utf8')).toBe('# alpha\n');
   });
 
-  test('a user-modified managed legacy dir is still removed, but its edits survive in the backup', () => {
+  test('a user-modified managed legacy dir is preserved in place byte-identically', () => {
     present(fixture.codexDir);
     const legacyAlpha = join(fixture.codexDir, 'skills', '.curated', 'alpha');
     seedManagedDir(legacyAlpha, { 'SKILL.md': '# legacy alpha\n' });
     writeFile(join(legacyAlpha, 'SKILL.md'), '# hand-edited legacy\n'); // digest now diverges
+    const manifestBefore = readFileSync(join(legacyAlpha, MANIFEST_NAME), 'utf8');
 
     const report = run();
-    expect(existsSync(legacyAlpha)).toBe(false);
-    const backup = join(report.backupsDir as string, 'codex-legacy-curated', 'alpha', 'SKILL.md');
-    expect(readFileSync(backup, 'utf8')).toBe('# hand-edited legacy\n');
+    const codex = agentReport(report, 'codex');
+    expect(readFileSync(join(legacyAlpha, 'SKILL.md'), 'utf8')).toBe('# hand-edited legacy\n');
+    expect(readFileSync(join(legacyAlpha, MANIFEST_NAME), 'utf8')).toBe(manifestBefore);
+    expect(report.backupsDir).toBeNull();
+    expect(codex.extras).toContainEqual({
+      kind: 'legacy-curated',
+      action: 'kept-modified',
+      detail: legacyAlpha,
+    });
+  });
+
+  test('content-only v1 ownership never authorizes destructive legacy cleanup', () => {
+    present(fixture.codexDir);
+    const legacyAlpha = join(fixture.codexDir, 'skills', '.curated', 'alpha');
+    seedV1ManagedDir(legacyAlpha, { 'SKILL.md': '# legacy alpha\n' });
+
+    const codex = agentReport(run(), 'codex');
+
+    expect(readFileSync(join(legacyAlpha, 'SKILL.md'), 'utf8')).toBe('# legacy alpha\n');
+    expect(codex.extras).toContainEqual({
+      kind: 'legacy-curated',
+      action: 'kept-modified',
+      detail: legacyAlpha,
+    });
+  });
+
+  test('a legacy managed dir changed after classification stays live and is not removed', () => {
+    present(fixture.codexDir);
+    const legacyAlpha = join(fixture.codexDir, 'skills', '.curated', 'alpha');
+    seedManagedDir(legacyAlpha, { 'SKILL.md': '# legacy alpha\n' });
+    const report = run({
+      beforeManagedDirRemoval(destDir, stage) {
+        if (destDir === legacyAlpha && stage === 'before-park') {
+          writeFileSync(join(legacyAlpha, 'SKILL.md'), '# legacy raced\n');
+        }
+      },
+    });
+    expect(readFileSync(join(legacyAlpha, 'SKILL.md'), 'utf8')).toBe('# legacy raced\n');
+    expect(agentReport(report, 'codex').failures?.some((line) => line.includes('changed before removal'))).toBe(true);
   });
 
   test('unmanaged legacy entries are kept (with an advisory) and keep the lane dir alive', () => {
@@ -743,6 +1180,20 @@ describe('codex legacy .curated migration', () => {
     expect(readFileSync(join(foreign, 'SKILL.md'), 'utf8')).toBe('# installed by another tool\n');
     expect(existsSync(join(foreign, MANIFEST_NAME))).toBe(false);
   });
+
+  test('a personal Codex skill colliding with a shipped name remains byte-identical and unmanaged', () => {
+    present(fixture.codexDir);
+    const personal = join(fixture.agentsSkillsDir, 'alpha');
+    writeFile(join(personal, 'SKILL.md'), '# personal Codex adaptation\n');
+    writeFile(join(personal, 'agents', 'openai.yaml'), 'policy:\n  allow_implicit_invocation: false\n');
+
+    const codex = agentReport(run(), 'codex');
+
+    expect(skillAction(codex, 'alpha')).toBe('skipped-unmanaged-kept');
+    expect(readFileSync(join(personal, 'SKILL.md'), 'utf8')).toBe('# personal Codex adaptation\n');
+    expect(readFileSync(join(personal, 'agents', 'openai.yaml'), 'utf8')).toContain('allow_implicit_invocation');
+    expect(existsSync(join(personal, MANIFEST_NAME))).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -775,22 +1226,365 @@ describe('resolveGenieSource', () => {
 // ---------------------------------------------------------------------------
 
 describe('stampWorkflow parity with council-stamp.cjs', () => {
-  test('produces byte-identical output and identical skip semantics', () => {
+  test('produces byte-identical workflow output and identical skip semantics', () => {
     const templatePath = join(fixture.root, 'council.template.js');
     writeFileSync(templatePath, TEMPLATE_BODY, 'utf8');
     const pluginRoot = '/opt/some/plugins/genie';
     const tsDir = join(fixture.root, 'ts-out');
     const cjsDir = join(fixture.root, 'cjs-out');
 
-    const tsWrite = stampWorkflow({ templatePath, pluginRoot, targetDir: tsDir });
-    const cjsWrite = stampCouncilWorkflow({ templatePath, pluginRoot, targetDir: cjsDir });
+    const tsWrite = stampWorkflow({ templatePath, pluginRoot, targetDir: tsDir, version: '1.2.3', now: FIXED_NOW });
+    const cjsWrite = stampCouncilWorkflow({
+      templatePath,
+      pluginRoot,
+      targetDir: cjsDir,
+      version: '1.2.3',
+      now: FIXED_NOW,
+    });
     expect(tsWrite.action).toBe('written');
     expect(cjsWrite.action).toBe('written');
     expect(readFileSync(join(tsDir, 'council.js'), 'utf8')).toBe(readFileSync(join(cjsDir, 'council.js'), 'utf8'));
+    expect(readFileSync(join(tsDir, WORKFLOW_MANIFEST_NAME), 'utf8')).toBe(
+      readFileSync(join(cjsDir, WORKFLOW_MANIFEST_NAME), 'utf8'),
+    );
+    for (const dir of [tsDir, cjsDir]) {
+      expect(lstatSync(join(dir, TARGET_NAME)).mode & 0o7777).toBe(0o644);
+      expect(lstatSync(join(dir, WORKFLOW_MANIFEST_NAME)).mode & 0o7777).toBe(0o644);
+    }
 
     // idempotent skip on the unchanged re-run, for both implementations
     expect(stampWorkflow({ templatePath, pluginRoot, targetDir: tsDir }).action).toBe('skipped');
     expect(stampCouncilWorkflow({ templatePath, pluginRoot, targetDir: cjsDir }).action).toBe('skipped');
+  });
+
+  test('an inventory-missing exact legacy workflow remains byte-identical and unmanaged', () => {
+    const templatePath = join(fixture.root, 'council.template.js');
+    const targetDir = join(fixture.root, 'user-workflows');
+    const targetPath = join(targetDir, 'council.js');
+    writeFileSync(templatePath, TEMPLATE_BODY, 'utf8');
+    writeFile(targetPath, TEMPLATE_BODY.split(PLACEHOLDER).join('/personal/plugin'));
+    const before = readFileSync(targetPath, 'utf8');
+
+    const result = stampWorkflow({ templatePath, pluginRoot: '/personal/plugin', targetDir });
+
+    expect(result.action).toBe('kept-unmanaged');
+    expect(readFileSync(targetPath, 'utf8')).toBe(before);
+    expect(existsSync(join(targetDir, WORKFLOW_MANIFEST_NAME))).toBe(false);
+    expect(existsSync(join(dirname(targetDir), '.genie-recovery'))).toBe(false);
+  });
+
+  test('inspection is pure and pre-journal council debris cannot poison the next stamp', () => {
+    const templatePath = join(fixture.root, 'council.template.js');
+    const targetDir = join(fixture.root, 'recoverable-workflows');
+    const debris = join(targetDir, '.council.genie-txn-staging-crashed');
+    writeFileSync(templatePath, TEMPLATE_BODY, 'utf8');
+    writeFile(join(debris, 'staged', TARGET_NAME), '// incomplete\n');
+
+    expect(inspectManagedWorkflow(targetDir).state).toBe('unmanaged');
+    expect(existsSync(debris)).toBe(true);
+
+    expect(stampWorkflow({ templatePath, pluginRoot: '/plugin', targetDir }).action).toBe('written');
+    expect(existsSync(debris)).toBe(false);
+    expect(inspectManagedWorkflow(targetDir).state).toBe('managed-clean');
+  });
+
+  test('a clean digest-owned workflow updates, while a modified one is preserved', () => {
+    const templatePath = join(fixture.root, 'council.template.js');
+    const targetDir = join(fixture.root, 'managed-workflows');
+    const targetPath = join(targetDir, 'council.js');
+    writeFileSync(templatePath, TEMPLATE_BODY, 'utf8');
+    expect(stampWorkflow({ templatePath, pluginRoot: '/old/plugin', targetDir }).action).toBe('written');
+    expect(stampWorkflow({ templatePath, pluginRoot: '/new/plugin', targetDir }).action).toBe('written');
+    expect(readFileSync(targetPath, 'utf8')).toContain('const LENS_ROOT = "/new/plugin";');
+
+    writeFileSync(targetPath, `${readFileSync(targetPath, 'utf8')}\n// personal edit\n`, 'utf8');
+    const modified = readFileSync(targetPath, 'utf8');
+    expect(stampWorkflow({ templatePath, pluginRoot: '/newer/plugin', targetDir }).action).toBe('kept-modified');
+    expect(readFileSync(targetPath, 'utf8')).toBe(modified);
+  });
+
+  test('council chmod-only edits fail closed before update or removal', () => {
+    const templatePath = join(fixture.root, 'council.template.js');
+    const targetDir = join(fixture.root, 'chmod-workflows');
+    const targetPath = join(targetDir, TARGET_NAME);
+    writeFileSync(templatePath, TEMPLATE_BODY, 'utf8');
+    stampWorkflow({ templatePath, pluginRoot: '/old/plugin', targetDir });
+    chmodSync(targetPath, 0o755);
+
+    expect(stampWorkflow({ templatePath, pluginRoot: '/new/plugin', targetDir }).action).toBe('kept-modified');
+    expect(removeManagedWorkflow(targetDir)).toBe('kept-modified');
+    expect(lstatSync(targetPath).mode & 0o7777).toBe(0o755);
+  });
+
+  test('a chmod race after council removal classification revokes destructive authority', () => {
+    const templatePath = join(fixture.root, 'council.template.js');
+    const targetDir = join(fixture.root, 'chmod-removal-race');
+    const targetPath = join(targetDir, TARGET_NAME);
+    writeFileSync(templatePath, TEMPLATE_BODY, 'utf8');
+    stampWorkflow({ templatePath, pluginRoot: '/old/plugin', targetDir });
+
+    expect(() =>
+      removeManagedWorkflow(targetDir, {
+        beforeRemoval: (stage) => {
+          if (stage === 'before-park') chmodSync(targetPath, 0o600);
+        },
+      }),
+    ).toThrow('changed before removal');
+    expect(lstatSync(targetPath).mode & 0o7777).toBe(0o600);
+  });
+
+  test('both council engines preserve a post-classification personal edit and quarantine the incoming version', () => {
+    const templatePath = join(fixture.root, 'council.template.js');
+    writeFileSync(templatePath, TEMPLATE_BODY, 'utf8');
+    for (const [name, stamp] of [
+      ['ts', stampWorkflow],
+      ['cjs', stampCouncilWorkflow],
+    ] as const) {
+      const targetDir = join(fixture.root, `workflow-cas-${name}`);
+      const targetPath = join(targetDir, TARGET_NAME);
+      stamp({ templatePath, pluginRoot: '/old/plugin', targetDir });
+      expect(() =>
+        stamp({
+          templatePath,
+          pluginRoot: '/incoming/plugin',
+          targetDir,
+          beforePromotion: () => writeFileSync(targetPath, '// personal race\n', 'utf8'),
+        }),
+      ).toThrow('changed before promotion');
+      expect(readFileSync(targetPath, 'utf8')).toBe('// personal race\n');
+      const conflict = readdirSync(targetDir).find((entry) => entry.startsWith('.council.genie-conflict-'));
+      expect(conflict).toBeDefined();
+      expect(readFileSync(join(targetDir, conflict as string, 'staged', TARGET_NAME), 'utf8')).toContain(
+        '/incoming/plugin',
+      );
+    }
+  });
+
+  test('both council engines reject directory and symlink races after an expected-absence check', () => {
+    const templatePath = join(fixture.root, 'council.template.js');
+    writeFileSync(templatePath, TEMPLATE_BODY, 'utf8');
+    for (const [engine, stamp] of [
+      ['ts', stampWorkflow],
+      ['cjs', stampCouncilWorkflow],
+    ] as const) {
+      for (const kind of ['directory', 'symlink'] as const) {
+        const targetDir = join(fixture.root, `workflow-absence-${engine}-${kind}`);
+        const targetPath = join(targetDir, TARGET_NAME);
+        expect(() =>
+          stamp({
+            templatePath,
+            pluginRoot: '/incoming/plugin',
+            targetDir,
+            afterAuthorization: () => {
+              if (kind === 'directory') mkdirSync(targetPath);
+              else symlinkSync('personal-target', targetPath);
+            },
+          }),
+        ).toThrow('changed during promotion');
+        const stat = lstatSync(targetPath);
+        expect(kind === 'directory' ? stat.isDirectory() : stat.isSymbolicLink()).toBe(true);
+        expect(readdirSync(targetDir).some((name) => name.startsWith('.council.genie-conflict-'))).toBe(true);
+      }
+    }
+  });
+
+  test('both council engines preserve a file recreated after parking but before exclusive publish', () => {
+    const templatePath = join(fixture.root, 'council.template.js');
+    writeFileSync(templatePath, TEMPLATE_BODY, 'utf8');
+    for (const [engine, stamp] of [
+      ['ts', stampWorkflow],
+      ['cjs', stampCouncilWorkflow],
+    ] as const) {
+      const targetDir = join(fixture.root, `workflow-final-publish-${engine}`);
+      const targetPath = join(targetDir, TARGET_NAME);
+      stamp({ templatePath, pluginRoot: '/old/plugin', targetDir });
+
+      expect(() =>
+        stamp({
+          templatePath,
+          pluginRoot: '/incoming/plugin',
+          targetDir,
+          beforePublish: () => writeFileSync(targetPath, '// personal after park\n'),
+        }),
+      ).toThrow('exclusive');
+      expect(readFileSync(targetPath, 'utf8')).toBe('// personal after park\n');
+      const conflict = readdirSync(targetDir).find((name) => name.startsWith('.council.genie-conflict-'));
+      expect(conflict).toBeDefined();
+      expect(readFileSync(join(targetDir, conflict as string, 'staged', TARGET_NAME), 'utf8')).toContain(
+        '/incoming/plugin',
+      );
+    }
+  });
+
+  test('both council rollbacks preserve a byte-identical chmod racer plus prior and staged evidence', () => {
+    const templatePath = join(fixture.root, 'council.template.js');
+    writeFileSync(templatePath, TEMPLATE_BODY, 'utf8');
+    for (const [engine, stamp] of [
+      ['ts', stampWorkflow],
+      ['cjs', stampCouncilWorkflow],
+    ] as const) {
+      const targetDir = join(fixture.root, `workflow-rollback-race-${engine}`);
+      const targetPath = join(targetDir, TARGET_NAME);
+      stamp({ templatePath, pluginRoot: '/old/plugin', targetDir });
+
+      expect(() =>
+        stamp({
+          templatePath,
+          pluginRoot: '/incoming/plugin',
+          targetDir,
+          beforePublish: () => {
+            const transaction = readdirSync(targetDir).find((name) => name.startsWith('.council.genie-txn-'));
+            if (transaction === undefined) throw new Error('missing workflow transaction');
+            writeFileSync(targetPath, readFileSync(join(targetDir, transaction, 'staged', TARGET_NAME)));
+            chmodSync(targetPath, 0o600);
+            throw new Error('fail after byte-identical chmod racer');
+          },
+        }),
+      ).toThrow('preserved workflow evidence');
+
+      expect(readFileSync(targetPath, 'utf8')).toContain('/incoming/plugin');
+      expect(lstatSync(targetPath).mode & 0o7777).toBe(0o600);
+      const conflict = readdirSync(targetDir).find((name) => name.startsWith('.council.genie-conflict-')) as string;
+      expect(readFileSync(join(targetDir, conflict, 'before', TARGET_NAME), 'utf8')).toContain('/old/plugin');
+      expect(readFileSync(join(targetDir, conflict, 'staged', TARGET_NAME), 'utf8')).toContain('/incoming/plugin');
+    }
+  });
+
+  test('SessionStart recovery preserves a byte-identical chmod racer plus prior and staged evidence', () => {
+    const templatePath = join(fixture.root, 'council.template.js');
+    const targetDir = join(fixture.root, 'cjs-workflow-recovery-race');
+    const targetPath = join(targetDir, TARGET_NAME);
+    const manifestPath = join(targetDir, WORKFLOW_MANIFEST_NAME);
+    writeFileSync(templatePath, TEMPLATE_BODY, 'utf8');
+    stampCouncilWorkflow({ templatePath, pluginRoot: '/old/plugin', targetDir, now: FIXED_NOW });
+    const oldTarget = readFileSync(targetPath);
+    const oldManifest = readFileSync(manifestPath);
+    stampCouncilWorkflow({ templatePath, pluginRoot: '/incoming/plugin', targetDir, now: FIXED_NOW });
+    const incomingTarget = readFileSync(targetPath);
+    const incomingManifest = readFileSync(manifestPath);
+    const transaction = join(targetDir, '.council.genie-txn-cjs-recovery-race');
+    writeFile(join(transaction, 'before', TARGET_NAME), oldTarget.toString());
+    writeFile(join(transaction, 'before', WORKFLOW_MANIFEST_NAME), oldManifest.toString());
+    writeFile(join(transaction, 'staged', TARGET_NAME), incomingTarget.toString());
+    writeFile(join(transaction, 'staged', WORKFLOW_MANIFEST_NAME), incomingManifest.toString());
+    writeFile(
+      join(transaction, 'journal.json'),
+      `${JSON.stringify({
+        version: 2,
+        targetDigest: createHash('sha256').update(incomingTarget).digest('hex'),
+        manifestDigest: createHash('sha256').update(incomingManifest).digest('hex'),
+        hadTarget: true,
+        hadManifest: true,
+        beforeTargetDigest: createHash('sha256').update(oldTarget).digest('hex'),
+        beforeManifestDigest: createHash('sha256').update(oldManifest).digest('hex'),
+        identityVersion: 2,
+        targetMode: 0o644,
+        manifestMode: 0o644,
+        beforeTargetMode: 0o644,
+        beforeManifestMode: 0o644,
+      })}\n`,
+    );
+    chmodSync(targetPath, 0o600);
+
+    expect(() => recoverCjsCouncilTransactions(targetDir)).toThrow('preserved workflow evidence');
+
+    expect(readFileSync(targetPath)).toEqual(incomingTarget);
+    expect(lstatSync(targetPath).mode & 0o7777).toBe(0o600);
+    const conflict = readdirSync(targetDir).find((name) => name.startsWith('.council.genie-conflict-')) as string;
+    expect(readFileSync(join(targetDir, conflict, 'before', TARGET_NAME))).toEqual(oldTarget);
+    expect(readFileSync(join(targetDir, conflict, 'staged', TARGET_NAME))).toEqual(incomingTarget);
+  });
+
+  test('v1 council removal recovery refuses content-only destructive authority', () => {
+    const templatePath = join(fixture.root, 'council.template.js');
+    const targetDir = join(fixture.root, 'workflow-v1-removal');
+    writeFileSync(templatePath, TEMPLATE_BODY, 'utf8');
+    stampWorkflow({ templatePath, pluginRoot: '/old/plugin', targetDir });
+    const targetDigest = createHash('sha256')
+      .update(readFileSync(join(targetDir, TARGET_NAME)))
+      .digest('hex');
+    const manifestDigest = createHash('sha256')
+      .update(readFileSync(join(targetDir, WORKFLOW_MANIFEST_NAME)))
+      .digest('hex');
+    const transaction = join(targetDir, '.council.genie-delete-v1-reviewer');
+    writeFile(join(transaction, 'journal.json'), `${JSON.stringify({ version: 1, targetDigest, manifestDigest })}\n`);
+    mkdirSync(join(transaction, 'parked'), { recursive: true });
+    renameSync(join(targetDir, TARGET_NAME), join(transaction, 'parked', TARGET_NAME));
+    renameSync(join(targetDir, WORKFLOW_MANIFEST_NAME), join(transaction, 'parked', WORKFLOW_MANIFEST_NAME));
+
+    expect(() => recoverManagedWorkflowTransactions(targetDir)).toThrow('lacks physical identity authority');
+    const conflict = readdirSync(targetDir).find((name) => name.startsWith('.council.genie-delete-conflict-'));
+    expect(conflict).toBeDefined();
+    expect(readFileSync(join(targetDir, conflict as string, 'parked', TARGET_NAME), 'utf8')).toContain('/old/plugin');
+  });
+
+  test("TypeScript and SessionStart engines recover each other's version-2 council journals", () => {
+    const templatePath = join(fixture.root, 'council.template.js');
+    writeFileSync(templatePath, TEMPLATE_BODY, 'utf8');
+    for (const [name, recover] of [
+      ['ts-recovers-cjs', recoverManagedWorkflowTransactions],
+      ['cjs-recovers-ts', recoverCjsCouncilTransactions],
+    ] as const) {
+      const targetDir = join(fixture.root, name);
+      stampWorkflow({ templatePath, pluginRoot: '/old/plugin', targetDir, now: FIXED_NOW });
+      const oldTarget = readFileSync(join(targetDir, TARGET_NAME));
+      const oldManifest = readFileSync(join(targetDir, WORKFLOW_MANIFEST_NAME));
+      stampWorkflow({ templatePath, pluginRoot: '/new/plugin', targetDir, now: FIXED_NOW });
+      const nextTarget = readFileSync(join(targetDir, TARGET_NAME));
+      const nextManifest = readFileSync(join(targetDir, WORKFLOW_MANIFEST_NAME));
+      const transaction = join(targetDir, `.council.genie-txn-cross-${name}`);
+      writeFile(join(transaction, 'before', TARGET_NAME), oldTarget.toString());
+      writeFile(join(transaction, 'before', WORKFLOW_MANIFEST_NAME), oldManifest.toString());
+      writeFile(join(transaction, 'staged', TARGET_NAME), nextTarget.toString());
+      writeFile(join(transaction, 'staged', WORKFLOW_MANIFEST_NAME), nextManifest.toString());
+      writeFile(
+        join(transaction, 'journal.json'),
+        `${JSON.stringify({
+          version: 2,
+          targetDigest: createHash('sha256').update(nextTarget).digest('hex'),
+          manifestDigest: createHash('sha256').update(nextManifest).digest('hex'),
+          hadTarget: true,
+          hadManifest: true,
+          beforeTargetDigest: createHash('sha256').update(oldTarget).digest('hex'),
+          beforeManifestDigest: createHash('sha256').update(oldManifest).digest('hex'),
+        })}\n`,
+      );
+
+      recover(targetDir);
+
+      expect(readFileSync(join(targetDir, TARGET_NAME))).toEqual(oldTarget);
+      expect(readFileSync(join(targetDir, WORKFLOW_MANIFEST_NAME))).toEqual(oldManifest);
+      expect(existsSync(transaction)).toBe(false);
+    }
+  });
+
+  test('corrupt workflow ownership metadata fails closed with zero target writes', () => {
+    const templatePath = join(fixture.root, 'council.template.js');
+    const targetDir = join(fixture.root, 'corrupt-workflows');
+    const targetPath = join(targetDir, 'council.js');
+    writeFileSync(templatePath, TEMPLATE_BODY, 'utf8');
+    writeFile(targetPath, '// mine\n');
+    writeFile(join(targetDir, WORKFLOW_MANIFEST_NAME), '{broken');
+
+    expect(stampWorkflow({ templatePath, pluginRoot: '/new/plugin', targetDir }).action).toBe('metadata-corrupt');
+    expect(readFileSync(targetPath, 'utf8')).toBe('// mine\n');
+    expect(readFileSync(join(targetDir, WORKFLOW_MANIFEST_NAME), 'utf8')).toBe('{broken');
+  });
+
+  test('workflow paths are emitted as valid escaped JavaScript literals in both stampers', () => {
+    const templatePath = join(fixture.root, 'council.template.js');
+    writeFileSync(templatePath, TEMPLATE_BODY, 'utf8');
+    for (const pluginRoot of ["/opt/O'Brien/genie", 'C:\\Users\\genie', '/tmp/line\nbreak']) {
+      const tsDir = join(fixture.root, `escaped-ts-${Buffer.from(pluginRoot).toString('hex')}`);
+      const cjsDir = join(fixture.root, `escaped-cjs-${Buffer.from(pluginRoot).toString('hex')}`);
+      stampWorkflow({ templatePath, pluginRoot, targetDir: tsDir });
+      stampCouncilWorkflow({ templatePath, pluginRoot, targetDir: cjsDir });
+      const ts = readFileSync(join(tsDir, 'council.js'), 'utf8');
+      const cjs = readFileSync(join(cjsDir, 'council.js'), 'utf8');
+      expect(ts).toBe(cjs);
+      expect(ts).toContain(`const LENS_ROOT = ${JSON.stringify(pluginRoot)};`);
+      expect(() => new Function(ts.replace('export const meta', 'const meta'))).not.toThrow();
+    }
   });
 
   test('claude stamp reports unavailable (never throws) when the template is missing', () => {
@@ -833,7 +1627,7 @@ describe('cross-process sync lock', () => {
   test('a stale lock (older than the age-out) is stolen and the sync proceeds', () => {
     present(fixture.claudeDir);
     const lockPath = join(fixture.genieHome, LOCK_NAME);
-    writeFile(lockPath, '999\n');
+    writeFile(lockPath, '2147483647\n');
     const staleSec = (Date.now() - 11 * 60 * 1000) / 1000; // 11 min > 10 min age-out
     utimesSync(lockPath, staleSec, staleSec);
 
@@ -842,6 +1636,75 @@ describe('cross-process sync lock', () => {
     expect(report.skipped).toBeUndefined();
     expect(skillAction(agentReport(report, 'claude'), 'alpha')).toBe('created');
     expect(existsSync(lockPath)).toBe(false); // released after the run
+  });
+
+  test('an ordinary stale timestamp never permits stealing from a live PID', () => {
+    present(fixture.claudeDir);
+    const lockPath = join(fixture.genieHome, LOCK_NAME);
+    writeFile(lockPath, `${process.pid}:0123456789abcdef0123456789abcdef\n`);
+    const staleSec = (Date.now() - 11 * 60 * 1000) / 1000;
+    utimesSync(lockPath, staleSec, staleSec);
+
+    const report = run();
+
+    expect(report.skipped).toContain('holds the lock');
+    expect(existsSync(join(fixture.claudeDir, 'skills'))).toBe(false);
+    expect(readFileSync(lockPath, 'utf8')).toContain(`${process.pid}:`);
+  });
+
+  test('a stale lock with a reused live PID but mismatched start identity is stealable', () => {
+    present(fixture.claudeDir);
+    const lockPath = join(fixture.genieHome, LOCK_NAME);
+    writeFile(lockPath, `${process.pid}:0123456789abcdef0123456789abcdef:${'0'.repeat(64)}\n`);
+    const staleSec = (Date.now() - 11 * 60 * 1000) / 1000;
+    utimesSync(lockPath, staleSec, staleSec);
+
+    const report = run();
+
+    expect(report.skipped).toBeUndefined();
+    expect(skillAction(agentReport(report, 'claude'), 'alpha')).toBe('created');
+    expect(existsSync(lockPath)).toBe(false);
+  });
+
+  test('a far-future lock timestamp is treated as invalid debris rather than suppressing sync indefinitely', () => {
+    present(fixture.claudeDir);
+    const lockPath = join(fixture.genieHome, LOCK_NAME);
+    writeFile(lockPath, 'future\n');
+    const futureSec = (Date.now() + 11 * 60 * 1000) / 1000;
+    utimesSync(lockPath, futureSec, futureSec);
+
+    const report = run();
+
+    expect(report.skipped).toBeUndefined();
+    expect(skillAction(agentReport(report, 'claude'), 'alpha')).toBe('created');
+    expect(existsSync(lockPath)).toBe(false);
+  });
+
+  test('a far-future lock with a live owner is not stolen under clock skew', () => {
+    present(fixture.claudeDir);
+    const lockPath = join(fixture.genieHome, LOCK_NAME);
+    writeFile(lockPath, `${process.pid}\n`);
+    const futureSec = (Date.now() + 11 * 60 * 1000) / 1000;
+    utimesSync(lockPath, futureSec, futureSec);
+
+    const report = run();
+
+    expect(report.skipped).toContain('holds the lock');
+    expect(existsSync(join(fixture.claudeDir, 'skills'))).toBe(false);
+    expect(readFileSync(lockPath, 'utf8')).toBe(`${process.pid}\n`);
+  });
+
+  test('lock acquisition I/O failure fails closed and performs zero target writes', () => {
+    present(fixture.claudeDir);
+    chmodSync(fixture.genieHome, 0o500);
+    try {
+      const report = run();
+      expect(report.skipped).toContain('could not acquire agent-sync lock');
+      expect(report.agents).toEqual([]);
+      expect(existsSync(join(fixture.claudeDir, 'skills'))).toBe(false);
+    } finally {
+      chmodSync(fixture.genieHome, 0o700);
+    }
   });
 
   test('the lock is released after a run, so a sequential re-run proceeds normally', () => {
@@ -854,10 +1717,24 @@ describe('cross-process sync lock', () => {
     expect(skillAction(agentReport(second, 'claude'), 'alpha')).toBe('unchanged');
   });
 
-  test('the throttle marker is written from the injected clock', () => {
+  test('release preserves a replacement lock whose ownership token changed mid-run', () => {
+    present(fixture.hermesHome);
+    const lockPath = join(fixture.genieHome, LOCK_NAME);
+    const replacement = `${process.pid}:ffffffffffffffffffffffffffffffff\n`;
+
+    const report = run({
+      hermesBinary: '/fake/bin/hermes',
+      execHermesEnable: () => writeFileSync(lockPath, replacement, 'utf8'),
+    });
+
+    expect(report.skipped).toBeUndefined();
+    expect(readFileSync(lockPath, 'utf8')).toBe(replacement);
+  });
+
+  test('the raw engine never marks convergence complete', () => {
     present(fixture.claudeDir);
     run();
-    expect(readFileSync(join(fixture.genieHome, MARKER_NAME), 'utf8')).toBe('2026-07-10T12:00:00.000Z\n');
+    expect(existsSync(join(fixture.genieHome, MARKER_NAME))).toBe(false);
   });
 
   /**
@@ -874,7 +1751,7 @@ describe('cross-process sync lock', () => {
     writeFileSync(
       runnerPath,
       [
-        `import { existsSync } from 'node:fs';`,
+        `import { existsSync, writeFileSync } from 'node:fs';`,
         `import { runAgentSync } from ${JSON.stringify(join(import.meta.dir, 'agent-sync.ts'))};`,
         `const sleepMs = Number(process.env.SYNC_TEST_ENABLE_SLEEP_MS ?? '0');`,
         'const goFile = process.env.SYNC_TEST_GO_FILE;',
@@ -891,6 +1768,8 @@ describe('cross-process sync lock', () => {
         '  },',
         `  hermesBinary: '/fake/bin/hermes',`,
         '  execHermesEnable: () => {',
+        '    const readyFile = process.env.SYNC_TEST_READY_FILE;',
+        "    if (readyFile) writeFileSync(readyFile, 'ready\\n');",
         '    if (sleepMs > 0) Bun.sleepSync(sleepMs);',
         '  },',
         '  log: () => undefined,',
@@ -931,15 +1810,21 @@ describe('cross-process sync lock', () => {
     present(fixture.codexDir);
     present(fixture.hermesHome);
     const runnerPath = writeSyncRunner();
+    const readyPath = join(fixture.root, 'holder-ready');
 
-    const holder = spawnRunner(runnerPath, { SYNC_TEST_ENABLE_SLEEP_MS: '2000' });
-    // The engine writes the throttle marker at sync START (right after lock
-    // acquisition), so its appearance proves the holder is mid-sync — the
-    // deterministic gate for launching the contender.
+    const holder = spawnRunner(runnerPath, {
+      SYNC_TEST_ENABLE_SLEEP_MS: '2000',
+      SYNC_TEST_READY_FILE: readyPath,
+    });
+    // The injected Hermes seam runs while the holder owns the lifecycle lock.
+    // Its explicit ready file is the deterministic overlap barrier; the
+    // convergence marker must remain absent until the safe outer wrapper has
+    // also completed role convergence.
     const markerPath = join(fixture.genieHome, MARKER_NAME);
     const deadline = Date.now() + 10_000;
-    while (!existsSync(markerPath) && Date.now() < deadline) await Bun.sleep(20);
-    expect(existsSync(markerPath)).toBe(true); // marker at START, not completion
+    while (!existsSync(readyPath) && Date.now() < deadline) await Bun.sleep(20);
+    expect(existsSync(readyPath)).toBe(true);
+    expect(existsSync(markerPath)).toBe(false);
 
     const contender = spawnRunner(runnerPath, { SYNC_TEST_ENABLE_SLEEP_MS: '0' });
     const contenderReport = await contender; // resolves while the holder still sleeps in-lock
@@ -963,6 +1848,7 @@ describe('cross-process sync lock', () => {
     expect(wrote).toHaveLength(1); // exactly one performed the sync
     expect(skippedRuns).toHaveLength(1); // the other skipped with the advisory
     expect(skillAction(agentReport(wrote[0] as AgentSyncReport, 'claude'), 'alpha')).toBe('created');
+    expect(existsSync(markerPath)).toBe(false);
     expect(existsSync(join(fixture.genieHome, LOCK_NAME))).toBe(false); // holder released
   }, 20_000);
 
@@ -973,7 +1859,7 @@ describe('cross-process sync lock', () => {
     const runnerPath = writeSyncRunner();
     // A crashed run's stale lock that every racer will try to steal.
     const lockPath = join(fixture.genieHome, LOCK_NAME);
-    writeFile(lockPath, '999\n');
+    writeFile(lockPath, '2147483647\n');
     const staleSec = (Date.now() - 11 * 60 * 1000) / 1000; // 11 min > 10 min age-out
     utimesSync(lockPath, staleSec, staleSec);
 
@@ -1004,6 +1890,66 @@ describe('cross-process sync lock', () => {
     }
     expect(existsSync(lockPath)).toBe(false); // stale lock is gone; any winner released its own
   }, 30_000);
+});
+
+describe('shared lifecycle lease', () => {
+  test('lives beside GENIE_HOME and is reentrant within one lifecycle process', () => {
+    const path = lifecycleLockPath(fixture.genieHome);
+    expect(dirname(path)).toBe(dirname(fixture.genieHome));
+    expect(path.startsWith(`${fixture.genieHome}/`)).toBe(false);
+    const first = acquireLifecycleLease(fixture.genieHome);
+    expect('skipped' in first).toBe(false);
+    if ('skipped' in first) throw new Error(first.skipped);
+    const second = acquireLifecycleLease(fixture.genieHome);
+    expect('skipped' in second).toBe(false);
+    if ('skipped' in second) throw new Error(second.skipped);
+    expect(existsSync(path)).toBe(true);
+    second.release();
+    expect(existsSync(path)).toBe(true);
+    first.release();
+    expect(existsSync(path)).toBe(false);
+  });
+
+  test('a child borrows only the exact shell-owned lifecycle lease and never releases it', () => {
+    const path = lifecycleLockPath(fixture.genieHome);
+    const owner = `${process.pid}:${'a'.repeat(32)}:${'b'.repeat(64)}`;
+    writeFile(path, `${owner}\n`);
+    process.env[LIFECYCLE_LEASE_PATH_ENV] = path;
+    process.env[LIFECYCLE_LEASE_OWNER_ENV] = owner;
+    try {
+      const borrowed = acquireLifecycleLease(fixture.genieHome);
+      expect('skipped' in borrowed).toBe(false);
+      if ('skipped' in borrowed) throw new Error(borrowed.skipped);
+      borrowed.release();
+      expect(readFileSync(path, 'utf8')).toBe(`${owner}\n`);
+    } finally {
+      delete process.env[LIFECYCLE_LEASE_PATH_ENV];
+      delete process.env[LIFECYCLE_LEASE_OWNER_ENV];
+      rmSync(path, { force: true });
+    }
+  });
+
+  test('forged or path-mismatched borrowed lifecycle leases fail closed', () => {
+    const path = lifecycleLockPath(fixture.genieHome);
+    const owner = `${process.pid}:${'c'.repeat(32)}:${'d'.repeat(64)}`;
+    writeFile(path, `${owner}\n`);
+    try {
+      for (const [borrowedPath, borrowedOwner] of [
+        [path, `${process.pid}:${'e'.repeat(32)}:${'d'.repeat(64)}`],
+        [`${path}.forged`, owner],
+      ]) {
+        process.env[LIFECYCLE_LEASE_PATH_ENV] = borrowedPath;
+        process.env[LIFECYCLE_LEASE_OWNER_ENV] = borrowedOwner;
+        const result = acquireLifecycleLease(fixture.genieHome);
+        expect('skipped' in result ? result.skipped : '').toContain('did not exactly match');
+        expect(readFileSync(path, 'utf8')).toBe(`${owner}\n`);
+      }
+    } finally {
+      delete process.env[LIFECYCLE_LEASE_PATH_ENV];
+      delete process.env[LIFECYCLE_LEASE_OWNER_ENV];
+      rmSync(path, { force: true });
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1037,7 +1983,13 @@ describe('runAgentSyncSafe codex role-agent refresh wiring', () => {
       sync: () => fakeReport(),
       codexRefresh: () => {
         calls += 1;
-        return { installed: 7, skippedUserOwned: ['genie-reviewer.toml'], backedUp: ['genie-wish.toml'] };
+        return {
+          installed: 7,
+          skippedUserOwned: ['genie-reviewer.toml'],
+          keptModified: [],
+          removed: [],
+          backedUp: ['genie-wish.toml'],
+        };
       },
       log: (line) => lines.push(line),
       markerPath: markerPath(),
@@ -1055,7 +2007,7 @@ describe('runAgentSyncSafe codex role-agent refresh wiring', () => {
       sync: () => fakeReport({}, false),
       codexRefresh: () => {
         calls += 1;
-        return { installed: 7, skippedUserOwned: [], backedUp: [] };
+        return { installed: 7, skippedUserOwned: [], keptModified: [], removed: [], backedUp: [] };
       },
       log: () => undefined,
       markerPath: markerPath(),
@@ -1069,7 +2021,7 @@ describe('runAgentSyncSafe codex role-agent refresh wiring', () => {
       sync: () => fakeReport({ agents: [], skipped: 'another agent-sync run holds the lock' }),
       codexRefresh: () => {
         calls += 1;
-        return { installed: 7, skippedUserOwned: [], backedUp: [] };
+        return { installed: 7, skippedUserOwned: [], keptModified: [], removed: [], backedUp: [] };
       },
       log: () => undefined,
       markerPath: markerPath(),
@@ -1088,7 +2040,7 @@ describe('runAgentSyncSafe codex role-agent refresh wiring', () => {
     expect(lines.join('\n')).not.toContain('role-agent TOMLs');
   });
 
-  test('a refresh throw is non-fatal: advisory line, skill summary intact, marker still touched', () => {
+  test('a best-effort refresh throw is advisory and leaves the retry marker untouched', () => {
     const lines: string[] = [];
     const marker = markerPath();
     expect(() =>
@@ -1102,7 +2054,23 @@ describe('runAgentSyncSafe codex role-agent refresh wiring', () => {
       }),
     ).not.toThrow();
     expect(lines.join('\n')).toContain('codex role-agent refresh failed: toml copy exploded');
-    expect(existsSync(marker)).toBe(true);
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  test('strict explicit convergence propagates a role-agent failure', () => {
+    const marker = markerPath();
+    expect(() =>
+      runAgentSyncSafe({
+        sync: () => fakeReport(),
+        codexRefresh: () => {
+          throw new Error('inventory unavailable');
+        },
+        strict: true,
+        log: () => undefined,
+        markerPath: marker,
+      }),
+    ).toThrow('inventory unavailable');
+    expect(existsSync(marker)).toBe(false);
   });
 });
 

@@ -74,6 +74,21 @@ jobs:
       - name: Wishes lint
         run: bun run wishes:lint
 
+      - name: Complexity budget
+        run: bun run lint:complexity-budget
+
+      - name: Council workflow lint
+        run: bun run lint:council-workflow
+
+      - name: Generated hook bundle parity
+        run: bun run lint:hook-bundles
+
+      - name: Codex hook launcher content binding
+        run: bun run lint:hook-content
+
+      - name: Shipped plugin executable static checks
+        run: bun run lint:plugin-executables
+
       - name: Fresh-install smoke
         run: bun run scripts/fresh-install-smoke.ts
 

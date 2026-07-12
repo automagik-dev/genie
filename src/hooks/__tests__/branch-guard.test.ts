@@ -82,6 +82,21 @@ describe('branch-guard', () => {
     }
   });
 
+  test('Codex denies every gh pr merge locally without invoking the network resolver', async () => {
+    let resolverCalls = 0;
+    const payload = { ...makePayload('gh pr merge 123 --repo automagik-dev/genie'), genie_hook_runtime: 'codex' };
+    const result = await branchGuard(payload, {
+      resolvePrBase: async () => {
+        resolverCalls += 1;
+        throw new Error('network resolver must remain unreachable');
+      },
+    });
+    expect(result?.decision).toBe('deny');
+    expect(result?.reason).toContain('do not perform network lookups');
+    expect(result?.reason).toContain('branch protection');
+    expect(resolverCalls).toBe(0);
+  });
+
   describe('blocks gh pr merge when PR targets main/master', () => {
     const cases: Array<{ cmd: string; base: string }> = [
       { cmd: 'gh pr merge 123', base: 'main' },

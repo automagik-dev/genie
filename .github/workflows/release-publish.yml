@@ -170,42 +170,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.meta.outputs.version }}
           CHANNEL: ${{ steps.meta.outputs.channel }}
-          DRAFT_FLAG: ${{ inputs.draft && '--draft' || '' }}
+          DRAFT: ${{ inputs.draft }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
         shell: bash
         run: |
           set -euo pipefail
-          PRERELEASE_FLAG=""
-          if [[ "${CHANNEL}" != "stable" ]]; then
-            PRERELEASE_FLAG="--prerelease"
-          fi
-
-          if ! gh release view "v${VERSION}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            # shellcheck disable=SC2086 # intentional word-split on optional flags
-            gh release create "v${VERSION}" \
-              --repo "${{ github.repository }}" \
-              --title "v${VERSION}" \
-              --notes "Release v${VERSION} (channel: ${CHANNEL})" \
-              ${DRAFT_FLAG} ${PRERELEASE_FLAG}
-          fi
-
-          # Reconcile release flags to the channel — idempotent, and the
-          # whole point on the stable re-dispatch path: the dev chain
-          # creates v${VERSION} as --prerelease, then a dev→main merge
-          # re-dispatches this workflow with channel=stable. The release
-          # already exists, so the `gh release create` branch above is
-          # skipped and the prerelease flag would never flip. Without this
-          # block, .well-known/latest.json advances but GitHub's "Latest"
-          # badge stays stuck on the old stable tag (the v4.260511.5
-          # symptom). Drafts can't be marked latest, so skip when drafting.
-          if [[ -z "${DRAFT_FLAG}" ]]; then
-            if [[ "${CHANNEL}" == "stable" ]]; then
-              gh release edit "v${VERSION}" --repo "${{ github.repository }}" \
-                --prerelease=false --latest
-            else
-              gh release edit "v${VERSION}" --repo "${{ github.repository }}" \
-                --prerelease=true --latest=false
-            fi
-          fi
+          # Testable/idempotent create, migration-note, and promotion logic.
+          # The helper preserves human-authored bodies and propagates gh errors.
+          bash scripts/reconcile-release-note.sh
 
           if [[ -d dist && -n "$(ls -A dist 2>/dev/null)" ]]; then
             gh release upload "v${VERSION}" \

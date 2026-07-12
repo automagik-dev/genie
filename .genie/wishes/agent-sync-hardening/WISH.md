@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | EXECUTING — 5 parallel fix lanes dispatched 2026-07-10 on the PR #2546 head |
+| **Status** | BLOCKED — historical PR #2546 plan is superseded criterion-by-criterion by the PR #2545 remediation ledger; exact-SHA CI, human approval, and stable-release blockers remain recorded below |
 | **Slug** | `agent-sync-hardening` |
 | **Date** | 2026-07-10 |
 | **Author** | Felipe (planned with Fable 5) |
@@ -13,6 +13,8 @@
 ## Summary
 
 The ultracode review of the shipped agent-sync delta (2026-07-10) returned **NOT SAFE TO PROMOTE**: 3 HIGH + 4 MEDIUM defects, all missed by the PR bots, several triggered by the promotion itself — the SessionStart hook fires a full unattended binary update on every pre-contract CLI, the sync engine has zero cross-process guarding against multi-pane `genie launch` races, and the entire hook delegation path ships untested. `genie uninstall` additionally destroys user-modified managed skill dirs and then deletes its own backups. **The stable pointer flip is HELD until B1–B7 land.** This wish tracks that fix wave; it ships together with the codex first-class integration on PR #2546.
+
+> **2026-07-11 supersession note.** The paragraph above is preserved as the historical finding, not current behavior. PR #2545 merged, and follow-up branch `fix/pr2545-ultra-gate` removes the SessionStart updater entirely. [`REVIEW-DISPOSITION.md`](../pr-2545-ultra-release-gate/REVIEW-DISPOSITION.md) maps B1–B7 to current evidence: H3/H4/H6 only; ownership-safe locking/sync/uninstall; transactional auxiliary trees; and explicit one-release migration guidance. The first upgrade from a pre-convergence binary can require one operator-run second `genie update` after the first command returns; no lifecycle hook performs it. This wish is not marked DONE wholesale, and exact-final-SHA CI, human approval, and stable-release blockers remain open.
 
 ## Defects (B1–B7, from the dossier)
 
@@ -35,6 +37,11 @@ Fast-follows F1–F10 and the deferred log stay in the dossier and are tracked a
 | 1 | B1 fix = delegation-flag hard guard, not a version probe | Invoke a flag/contract an old binary *cannot* misread — an unknown flag makes old commander error out immediately with no network. A version probe leaves a parse-fragile window and still spends a spawn on every pre-contract machine. Throttle marker written from the hook side so failures can't retry every session start. |
 | 2 | B4 fix = kept-dir over surviving-backup | On digest mismatch, rename the modified dir in place (`<dir>.genie-kept`) rather than copying to a backup location uninstall might also own — the user's data stays where the user put it, survives `~/.genie` removal by construction, and the confirmation prompt can name it. |
 | 3 | Ship with codex first-class on PR #2546 | The fixes and the codex integration land as one reviewed delta on `takeover/codex-first-class`; one CI gate, one merge, then the pointer flip. No separate hardening PR racing the promotion. |
+
+## Dependencies
+
+**depends-on:** pr-2545-ultra-release-gate
+**blocks:** none
 
 ## Success Criteria
 

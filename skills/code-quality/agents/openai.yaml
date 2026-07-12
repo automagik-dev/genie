@@ -1,0 +1,4 @@
+interface:
+  display_name: "Code Quality"
+  short_description: "Run code gates and audit type discipline"
+  default_prompt: "Run the repository's real gates and identify correctness and maintainability risks."

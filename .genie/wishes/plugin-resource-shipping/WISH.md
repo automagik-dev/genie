@@ -42,6 +42,11 @@ A fresh plugin install breaks `/wish` outside the genie repo: the skill instruct
 | 3 | Enforce by lint + CI smoke, not by convention | 3 of 5 hook scripts already died silently by convention-drift; the sweep found offenders only because we looked — make the regression class mechanically impossible |
 | 4 | Cross-wish dependency: Group 1 waits for routing-matrix G3 | routing-matrix (SHIP-reviewed) edits the same template file (Complexity/Model columns); land those first, then move the file — never reopen a reviewed wish |
 
+## Dependencies
+
+**depends-on:** routing-matrix
+**blocks:** none
+
 ## Success Criteria
 
 - [ ] `skills/wish/templates/wish-template.md` exists (with routing-matrix's columns); repo-root `templates/wish-template.md` is gone; zero references to the old path outside `.genie/` history docs.

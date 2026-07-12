@@ -12,10 +12,30 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { AgentSyncReport } from '../../lib/agent-sync';
+import { type AgentSyncReport, acquireLifecycleLease } from '../../lib/agent-sync';
+import type { CommandRunner } from '../../lib/runtime-integrations';
+import type { AuxiliaryTreeOutcome, AuxiliaryTreeStage } from '../auxiliary-trees.js';
+import {
+  type RefreshUpdatePluginsOptions,
+  refreshUpdatePlugins as refreshUpdatePluginsWithPhysicalVerification,
+} from '../update-integrations.js';
 import {
   type LatestManifest,
   type VerifyResult,
@@ -27,25 +47,45 @@ import {
   downloadAndVerifyTarball,
   ensureCanonicalInstall,
   fetchLatestManifest,
+  finalizeAuxiliaryDelivery,
   formatVerifyBanner,
+  hashPhysicalFileIncrementally,
   isGenieProcessSnapshotLine,
+  legacySyncOnlyPluginAdvisory,
   manifestUrlForChannel,
   normalizeVersion,
   persistChannel,
+  pruneSameVersionBackups,
+  quarantinePendingDelivery,
+  recordPendingDelivery,
   resolveChannel,
   resolveLiveBinaryPath,
   resolvePlatformId,
+  resolveUpdateExecutionMode,
+  resumePendingDelivery,
   rollbackBinary,
   runAgentSyncSafe,
-  runFreshBinaryAgentSync,
+  runFreshBinaryPostDeliveryConvergence,
+  runLegacySyncOnlyConvergence,
+  runManualUpdateConvergence,
   runV4CleanupSafe,
   runVerifyProbe,
   shortCircuitIfCurrent,
   shouldEmitPathDivergenceWarning,
   summarizeJsonlSignals,
+  syncAuxiliaryContent,
   syncBinaryVersionStamp,
   verifySwappedBinary,
 } from '../update.js';
+
+function refreshUpdatePlugins(options: RefreshUpdatePluginsOptions) {
+  return refreshUpdatePluginsWithPhysicalVerification({
+    ...options,
+    resolveExecutable: options.resolveExecutable ?? ((name) => name),
+    verifyCodexPayload: options.verifyCodexPayload ?? (() => undefined),
+    verifyClaudePayload: options.verifyClaudePayload ?? (() => undefined),
+  });
+}
 
 // ============================================================================
 // Pure-helper coverage — `decideVerify`, `normalizeVersion`,
@@ -178,6 +218,15 @@ describe('shortCircuitIfCurrent', () => {
   });
 });
 
+describe('numeric prerelease comparator laws', () => {
+  test('equal numeric identifiers with leading zeroes remain symmetric', () => {
+    const a = '5.260711.1-rc.01';
+    const b = '5.260711.1-rc.1';
+    expect(compareVersions(a, b)).toBe(0);
+    expect(compareVersions(b, a)).toBe(0);
+  });
+});
+
 // ============================================================================
 // Downgrade guard (BUG B) — numeric version comparison + the pure decision
 // function that refuses a silent backward swap. `shortCircuitIfCurrent` only
@@ -210,10 +259,21 @@ describe('compareVersions', () => {
     expect(compareVersions('5.260710.10', '5.260710.2')).toBe(1);
   });
 
-  test('missing / non-numeric components degrade to 0 (never spuriously newer)', () => {
-    expect(compareVersions('5.260710', '5.260710.0')).toBe(0);
-    expect(compareVersions('garbage', '5.260710.1')).toBe(-1);
-    expect(compareVersions('5.260710.1', '')).toBe(1);
+  test('final releases rank above prereleases of the same core', () => {
+    expect(compareVersions('5.260710.14', '5.260710.14-rc.1')).toBe(1);
+    expect(compareVersions('5.260710.14-rc.1', '5.260710.14')).toBe(-1);
+  });
+
+  test('prerelease identifiers follow SemVer-like numeric and lexical precedence', () => {
+    expect(compareVersions('5.260710.14-rc.2', '5.260710.14-rc.10')).toBe(-1);
+    expect(compareVersions('5.260710.14-1', '5.260710.14-rc')).toBe(-1);
+    expect(compareVersions('5.260710.14-alpha', '5.260710.14-beta')).toBe(-1);
+  });
+
+  test('malformed versions are rejected instead of being coerced to zero', () => {
+    for (const malformed of ['5.260710', 'garbage', '', '5.260710.1-', '5.260710.1+']) {
+      expect(() => compareVersions(malformed, '5.260710.1')).toThrow('Invalid Genie version');
+    }
   });
 });
 
@@ -264,6 +324,32 @@ describe('decideDowngrade', () => {
       decideDowngrade({ installedVersion: '5.260710.10', latestVersion: undefined, explicitChannel: true }).kind,
     ).toBe('upgrade');
   });
+
+  test('final/RC decisions never reverse the release direction', () => {
+    expect(
+      decideDowngrade({
+        installedVersion: '5.260710.14',
+        latestVersion: '5.260710.14-rc.1',
+        explicitChannel: false,
+      }).kind,
+    ).toBe('block-downgrade');
+    expect(
+      decideDowngrade({
+        installedVersion: '5.260710.14-rc.1',
+        latestVersion: '5.260710.14',
+        explicitChannel: false,
+      }).kind,
+    ).toBe('upgrade');
+  });
+
+  test('malformed installed and manifest versions are explicit tagged outcomes', () => {
+    expect(
+      decideDowngrade({ installedVersion: 'broken', latestVersion: '5.260710.1', explicitChannel: false }),
+    ).toEqual({ kind: 'invalid-version', field: 'installed', value: 'broken' });
+    expect(
+      decideDowngrade({ installedVersion: '5.260710.1', latestVersion: 'broken', explicitChannel: false }),
+    ).toEqual({ kind: 'invalid-version', field: 'latest', value: 'broken' });
+  });
 });
 
 describe('updateCommand downgrade wiring (BUG B source-shape lock)', () => {
@@ -276,9 +362,9 @@ describe('updateCommand downgrade wiring (BUG B source-shape lock)', () => {
     // The guard must run BEFORE any tarball is fetched.
     expect(guardIdx).toBeGreaterThan(-1);
     expect(guardIdx).toBeLessThan(downloadIdx);
-    // A refused downgrade still converges agents (parity with already-current).
+    // A refused downgrade still converges owned assets + installed plugins.
     const afterGuard = cmdBody.slice(guardIdx);
-    expect(afterGuard).toContain('runAgentSyncSafe()');
+    expect(afterGuard).toContain('runTrackedManualUpdateConvergence(');
   });
 
   test('the guard consults decideDowngrade and honors both refusal and explicit-intent paths', () => {
@@ -344,11 +430,16 @@ describe('updateCommand wiring', () => {
     const cmdStart = source.indexOf('export async function updateCommand');
     expect(cmdStart).toBeGreaterThan(-1);
     const cmdBody = source.slice(cmdStart);
-    const rollbackIdx = cmdBody.indexOf('options.rollback');
-    const downloadIdx = cmdBody.indexOf('await downloadAndVerifyTarball(');
-    expect(rollbackIdx).toBeGreaterThan(-1);
-    expect(downloadIdx).toBeGreaterThan(-1);
-    expect(rollbackIdx).toBeLessThan(downloadIdx);
+    const explicitModeIdx = cmdBody.indexOf('await runExplicitUpdateMode(mode)');
+    const fetchIdx = cmdBody.indexOf('await fetchLatestManifest(');
+    expect(explicitModeIdx).toBeGreaterThan(-1);
+    expect(fetchIdx).toBeGreaterThan(-1);
+    expect(explicitModeIdx).toBeLessThan(fetchIdx);
+    const explicitMode = source.slice(
+      source.indexOf('async function runExplicitUpdateMode'),
+      source.indexOf('function runFreshConvergenceOrReport'),
+    );
+    expect(explicitMode).toContain("if (mode === 'rollback') await runRollback()");
   });
 });
 
@@ -981,6 +1072,41 @@ describe('downloadAndVerifyTarball (G5)', () => {
 // ============================================================================
 
 describe('atomicBinarySwap (G5)', () => {
+  test('standalone install.sh and TypeScript update contend on the same lifecycle lease', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'genie-installer-lifecycle-'));
+    const home = join(tmp, 'home', '.genie');
+    const installer = join(import.meta.dir, '..', '..', '..', 'install.sh');
+    mkdirSync(home, { recursive: true });
+    const lease = acquireLifecycleLease(home);
+    expect('skipped' in lease).toBe(false);
+    try {
+      const blocked = spawnSync('bash', ['-c', 'source "$1"; acquire_lifecycle_lock', 'bash', installer], {
+        encoding: 'utf8',
+        env: { ...process.env, GENIE_HOME: home, GENIE_INSTALL_SOURCE_ONLY: '1' },
+      });
+      expect(blocked.status).toBe(1);
+      expect(blocked.stderr).toContain('another Genie lifecycle command is active');
+    } finally {
+      if (!('skipped' in lease)) lease.release();
+    }
+
+    const acquired = spawnSync(
+      'bash',
+      [
+        '-c',
+        'source "$1"; acquire_lifecycle_lock; test -f "$LIFECYCLE_LOCK"; release_lifecycle_lock',
+        'bash',
+        installer,
+      ],
+      {
+        encoding: 'utf8',
+        env: { ...process.env, GENIE_HOME: home, GENIE_INSTALL_SOURCE_ONLY: '1' },
+      },
+    );
+    expect(acquired.status).toBe(0);
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
   test('happy path: stages binary, backs up old, swaps in new', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'genie-swap-'));
     try {
@@ -1050,6 +1176,26 @@ describe('atomicBinarySwap (G5)', () => {
 
       const result = atomicBinarySwap(stagedBin, targetBin, previousDir, '4.260507.0');
       expect(readFileSync(result.oldVersionBackup as string, 'utf-8')).toBe('CURRENT');
+      expect(readdirSync(previousDir)).toHaveLength(2);
+      expect(pruneSameVersionBackups(previousDir, '4.260507.0', result.oldVersionBackup as string)).toHaveLength(1);
+      expect(readdirSync(previousDir)).toEqual([expect.stringMatching(/^genie-4\.260507\.0(?:\.|$)/)]);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('preserves a journal-bound source while removing the redundant swap copy', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'genie-swap-journal-source-'));
+    try {
+      const stagedBin = join(tmp, 'staged', 'genie');
+      const targetBin = join(tmp, 'bin', 'genie');
+      mkdirSync(join(tmp, 'staged'), { recursive: true });
+      writeFileSync(stagedBin, 'NEW');
+      atomicBinarySwap(stagedBin, targetBin, join(tmp, 'bin', '.previous'), '4.260507.0', {
+        preserveSource: true,
+      });
+      expect(readFileSync(stagedBin, 'utf8')).toBe('NEW');
+      expect(readFileSync(targetBin, 'utf8')).toBe('NEW');
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
@@ -1068,6 +1214,215 @@ describe('atomicBinarySwap (G5)', () => {
       const mode = statSync(targetBin).mode & 0o777;
       // 0o755 — owner rwx, group/other rx
       expect(mode & 0o100).toBe(0o100); // owner exec bit
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('an interruption before promotion leaves the old canonical binary runnable', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'genie-swap-interrupt-'));
+    try {
+      const stagedBin = join(tmp, 'staged', 'genie');
+      const targetBin = join(tmp, 'bin', 'genie');
+      const previousDir = join(tmp, 'bin', '.previous');
+      mkdirSync(join(tmp, 'staged'), { recursive: true });
+      mkdirSync(join(tmp, 'bin'), { recursive: true });
+      writeFileSync(stagedBin, 'NEW_BINARY');
+      writeFileSync(targetBin, 'OLD_BINARY');
+
+      expect(() =>
+        atomicBinarySwap(stagedBin, targetBin, previousDir, '4.260507.0', {
+          beforePromote: () => {
+            expect(readFileSync(targetBin, 'utf8')).toBe('OLD_BINARY');
+            throw new Error('power loss injected');
+          },
+        }),
+      ).toThrow('power loss injected');
+
+      expect(readFileSync(targetBin, 'utf8')).toBe('OLD_BINARY');
+      expect(readFileSync(stagedBin, 'utf8')).toBe('NEW_BINARY');
+      expect(readFileSync(join(previousDir, 'genie-4.260507.0'), 'utf8')).toBe('OLD_BINARY');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('normal delivery consumes the journaled preimage and rejects a last-boundary binary replacement', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'genie-swap-preimage-race-'));
+    try {
+      const bin = join(tmp, 'bin');
+      const staging = join(bin, '.staging');
+      const extract = join(staging, 'extract-5.260711.7');
+      const stagedBin = join(extract, 'genie');
+      const targetBin = join(bin, 'genie');
+      const tarball = join(staging, 'genie.tar.gz');
+      const pendingPath = join(tmp, '.pending-delivery.json');
+      const previousDir = join(bin, '.previous');
+      mkdirSync(extract, { recursive: true });
+      writeFileSync(stagedBin, 'NEW_BINARY');
+      writeFileSync(targetBin, 'AUTHENTIC_OLD_BINARY');
+      writeFileSync(tarball, 'verified tarball');
+      chmodSync(stagedBin, 0o755);
+      chmodSync(targetBin, 0o755);
+      const pending = recordPendingDelivery(
+        {
+          version: '5.260711.7',
+          previousVersion: '5.260711.6',
+          previousBinaryPath: targetBin,
+          extractDir: extract,
+          tarballPath: tarball,
+        },
+        pendingPath,
+        staging,
+      );
+      expect(pending.payload.previousBinary).toBeDefined();
+
+      expect(() =>
+        atomicBinarySwap(stagedBin, targetBin, previousDir, '5.260711.6', {
+          preserveSource: true,
+          expectedPreimage: pending.payload.previousBinary,
+          expectedPayloadFingerprint: pending.payload.binary,
+          beforePromote: () => writeFileSync(targetBin, 'CONCURRENT_INSTALLER_BINARY'),
+        }),
+      ).toThrow('preimage changed immediately before promotion');
+      expect(readFileSync(targetBin, 'utf8')).toBe('CONCURRENT_INSTALLER_BINARY');
+      expect(readFileSync(stagedBin, 'utf8')).toBe('NEW_BINARY');
+      expect(readFileSync(join(previousDir, 'genie-5.260711.6'), 'utf8')).toBe('AUTHENTIC_OLD_BINARY');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('normal delivery re-authenticates its rollback backup at the final promotion boundary', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'genie-swap-backup-race-'));
+    try {
+      const bin = join(tmp, 'bin');
+      const staging = join(bin, '.staging');
+      const extract = join(staging, 'extract-5.260711.7');
+      const stagedBin = join(extract, 'genie');
+      const targetBin = join(bin, 'genie');
+      const tarball = join(staging, 'genie.tar.gz');
+      const previousDir = join(bin, '.previous');
+      mkdirSync(extract, { recursive: true });
+      writeFileSync(stagedBin, 'NEW_BINARY');
+      writeFileSync(targetBin, 'AUTHENTIC_OLD_BINARY');
+      writeFileSync(tarball, 'verified tarball');
+      chmodSync(stagedBin, 0o755);
+      chmodSync(targetBin, 0o755);
+      const pending = recordPendingDelivery(
+        {
+          version: '5.260711.7',
+          previousVersion: '5.260711.6',
+          previousBinaryPath: targetBin,
+          extractDir: extract,
+          tarballPath: tarball,
+        },
+        join(tmp, '.pending-delivery.json'),
+        staging,
+      );
+
+      expect(() =>
+        atomicBinarySwap(stagedBin, targetBin, previousDir, '5.260711.6', {
+          preserveSource: true,
+          expectedPreimage: pending.payload.previousBinary,
+          expectedPayloadFingerprint: pending.payload.binary,
+          beforePromote: () => writeFileSync(join(previousDir, 'genie-5.260711.6'), 'TAMPERED_BACKUP'),
+        }),
+      ).toThrow('rollback backup does not match');
+      expect(readFileSync(targetBin, 'utf8')).toBe('AUTHENTIC_OLD_BINARY');
+      expect(readFileSync(stagedBin, 'utf8')).toBe('NEW_BINARY');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('normal delivery rejects a replacement changed after copy but before promotion', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'genie-swap-payload-race-'));
+    try {
+      const bin = join(tmp, 'bin');
+      const staging = join(bin, '.staging');
+      const extract = join(staging, 'extract-5.260711.7');
+      const stagedBin = join(extract, 'genie');
+      const targetBin = join(bin, 'genie');
+      const tarball = join(staging, 'genie.tar.gz');
+      const journal = join(tmp, '.pending-delivery.json');
+      const previousDir = join(bin, '.previous');
+      mkdirSync(extract, { recursive: true });
+      writeFileSync(stagedBin, 'AUTHENTIC_NEW_BINARY');
+      writeFileSync(targetBin, 'AUTHENTIC_OLD_BINARY');
+      writeFileSync(tarball, 'verified tarball');
+      chmodSync(stagedBin, 0o755);
+      chmodSync(targetBin, 0o755);
+      const pending = recordPendingDelivery(
+        {
+          version: '5.260711.7',
+          previousVersion: '5.260711.6',
+          previousBinaryPath: targetBin,
+          extractDir: extract,
+          tarballPath: tarball,
+        },
+        journal,
+        staging,
+      );
+
+      expect(() =>
+        atomicBinarySwap(stagedBin, targetBin, previousDir, '5.260711.6', {
+          preserveSource: true,
+          expectedPreimage: pending.payload.previousBinary,
+          expectedPayloadFingerprint: pending.payload.binary,
+          beforePromote: (replacementPath) => writeFileSync(replacementPath, 'SUBSTITUTED_NEW_BINARY'),
+        }),
+      ).toThrow('journaled payload fingerprint immediately before promotion');
+      expect(readFileSync(targetBin, 'utf8')).toBe('AUTHENTIC_OLD_BINARY');
+      expect(readFileSync(stagedBin, 'utf8')).toBe('AUTHENTIC_NEW_BINARY');
+      expect(readFileSync(join(previousDir, 'genie-5.260711.6'), 'utf8')).toBe('AUTHENTIC_OLD_BINARY');
+      expect(existsSync(journal)).toBe(true);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('normal delivery authenticates the canonical target after promotion', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'genie-swap-post-promote-race-'));
+    try {
+      const bin = join(tmp, 'bin');
+      const staging = join(bin, '.staging');
+      const extract = join(staging, 'extract-5.260711.7');
+      const stagedBin = join(extract, 'genie');
+      const targetBin = join(bin, 'genie');
+      const tarball = join(staging, 'genie.tar.gz');
+      const journal = join(tmp, '.pending-delivery.json');
+      const previousDir = join(bin, '.previous');
+      mkdirSync(extract, { recursive: true });
+      writeFileSync(stagedBin, 'AUTHENTIC_NEW_BINARY');
+      writeFileSync(targetBin, 'AUTHENTIC_OLD_BINARY');
+      writeFileSync(tarball, 'verified tarball');
+      chmodSync(stagedBin, 0o755);
+      chmodSync(targetBin, 0o755);
+      const pending = recordPendingDelivery(
+        {
+          version: '5.260711.7',
+          previousVersion: '5.260711.6',
+          previousBinaryPath: targetBin,
+          extractDir: extract,
+          tarballPath: tarball,
+        },
+        journal,
+        staging,
+      );
+
+      expect(() =>
+        atomicBinarySwap(stagedBin, targetBin, previousDir, '5.260711.6', {
+          preserveSource: true,
+          expectedPreimage: pending.payload.previousBinary,
+          expectedPayloadFingerprint: pending.payload.binary,
+          afterPromote: (targetPath) => writeFileSync(targetPath, 'SUBSTITUTED_LIVE_BINARY'),
+        }),
+      ).toThrow('journaled payload fingerprint after promotion');
+      expect(readFileSync(targetBin, 'utf8')).toBe('SUBSTITUTED_LIVE_BINARY');
+      expect(readFileSync(stagedBin, 'utf8')).toBe('AUTHENTIC_NEW_BINARY');
+      expect(readFileSync(join(previousDir, 'genie-5.260711.6'), 'utf8')).toBe('AUTHENTIC_OLD_BINARY');
+      expect(existsSync(journal)).toBe(true);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
@@ -1172,18 +1527,11 @@ describe('Plugin sync — .orphaned_at filter (skills regression 2026-05-06)', (
     expect(source).toContain("'.orphaned_at'");
   });
 
-  test('copyDirSync skips FRAMEWORK_MARKER_FILES entries', () => {
-    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
-    const fnStart = source.indexOf('function copyDirSync');
-    expect(fnStart).toBeGreaterThan(-1);
-    const fnEnd = source.indexOf('\n}\n', fnStart);
-    const body = source.slice(fnStart, fnEnd);
-    expect(body).toContain('FRAMEWORK_MARKER_FILES.has(entry.name)');
-    const skipIdx = body.indexOf('FRAMEWORK_MARKER_FILES.has(entry.name)');
-    const isDirIdx = body.indexOf('entry.isDirectory()');
-    expect(skipIdx).toBeGreaterThan(-1);
-    expect(isDirIdx).toBeGreaterThan(-1);
-    expect(skipIdx).toBeLessThan(isDirIdx);
+  test('transactional copier receives and applies FRAMEWORK_MARKER_FILES', () => {
+    const updateSource = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    const helperSource = readFileSync(join(__dirname, '..', 'auxiliary-trees.ts'), 'utf-8');
+    expect(updateSource).toContain('excludedEntryNames: FRAMEWORK_MARKER_FILES');
+    expect(helperSource).toContain('if (excludedEntryNames.has(entry.name)) continue;');
   });
 
   test('repo source tree does NOT contain plugins/genie/.orphaned_at', () => {
@@ -1205,46 +1553,27 @@ describe('Plugin sync — .orphaned_at filter (skills regression 2026-05-06)', (
 // Pinning the bug fixes so a future regression can't slip them back in.
 // ============================================================================
 
-describe('atomicBinarySwap cross-device temp-file pattern (review fix 0b/4)', () => {
-  // We can't easily simulate two filesystems in a unit test. Instead, exercise
-  // the source-shape lock: the function must emit a `.tmp` write before the
-  // final rename, never write directly to targetBinPath in the cross-device
-  // branch. This catches the regression even when the test is on one fs.
-  test('cross-device branch writes to <target>.tmp then renameSync to target', () => {
+describe('atomicBinarySwap canonical-path safety', () => {
+  test('promotes a complete target-directory replacement with one rename-over-live', () => {
     const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
     const fnStart = source.indexOf('export function atomicBinarySwap');
     const fnEnd = source.indexOf('\nexport function ', fnStart + 1);
     const body = source.slice(fnStart, fnEnd === -1 ? undefined : fnEnd);
-    // The `else` branch (cross-device fallback) must use `<targetBinPath>.tmp`.
-    expect(body).toContain('${targetBinPath}.tmp');
-    // It must call renameSync from tmp → target after fsync.
-    expect(body).toMatch(/renameSync\(tmpTarget,\s*targetBinPath\)/);
-    // It must NOT write copyFileSync directly to targetBinPath in the
-    // cross-device branch (fsync would be after corruption).
-    const elseBranchStart = body.indexOf('} else {');
-    expect(elseBranchStart).toBeGreaterThan(-1);
-    const elseBranch = body.slice(elseBranchStart);
-    expect(elseBranch).not.toMatch(/copyFileSync\(stagedBinPath,\s*targetBinPath\)/);
+    expect(body).toContain('.genie-replacement-');
+    expect(body).toContain('fsyncFile(replacementPath)');
+    expect(body).toContain('renameSync(replacementPath, targetBinPath)');
+    expect(body).not.toContain('rmSync(targetBinPath');
+    expect(body).not.toContain('renameSync(targetBinPath');
   });
 
-  test('backup move always uses renameSync (target+backup are same-fs by construction)', () => {
+  test('backs up by copy so the old canonical path remains live before promotion', () => {
     const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
     const fnStart = source.indexOf('export function atomicBinarySwap');
     const fnEnd = source.indexOf('\nexport function ', fnStart + 1);
     const body = source.slice(fnStart, fnEnd === -1 ? undefined : fnEnd);
-    // The previous bug branched on sameFs (staging-vs-target) for the backup
-    // move, which is irrelevant — backup is target → target/.previous, both
-    // inside GENIE_BIN. Lock the unconditional renameSync.
-    const backupBlockStart = body.indexOf('if (existsSync(targetBinPath)) {');
-    expect(backupBlockStart).toBeGreaterThan(-1);
-    const innerStartFromBlock = body.slice(backupBlockStart);
-    // After the rmSync stale-cleanup, the next renameSync IS the backup move
-    // and must NOT be wrapped in `if (sameFs)` for the backup leg.
-    const renameInBlock = innerStartFromBlock.indexOf('renameSync(targetBinPath, oldBackup)');
-    expect(renameInBlock).toBeGreaterThan(-1);
-    const beforeRename = innerStartFromBlock.slice(0, renameInBlock);
-    // No conditional branch on sameFs gating the backup move.
-    expect(beforeRename).not.toMatch(/if\s*\(\s*sameFs\s*\)\s*\{[^}]*renameSync\(targetBinPath/);
+    expect(body).toContain('copyFileSync(targetBinPath, backupStaging');
+    expect(body).toContain('renameSync(backupStaging, oldBackup)');
+    expect(body).not.toContain('renameSync(targetBinPath, oldBackup)');
   });
 });
 
@@ -1263,22 +1592,472 @@ describe('fsyncSync import (review fix #1)', () => {
   });
 });
 
-describe('syncAuxiliaryContent atomic swap (review fix #2)', () => {
-  test('uses .new staging dir + renameSync, never rmSync(dest) before copy', () => {
-    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
-    // The atomic per-target staging logic lives in `swapAuxiliaryTree`,
-    // extracted from `syncAuxiliaryContent` for cog-complexity reasons.
-    const fnStart = source.indexOf('function swapAuxiliaryTree');
-    expect(fnStart).toBeGreaterThan(-1);
-    const fnEnd = source.indexOf('\nfunction ', fnStart + 1);
-    const body = source.slice(fnStart, fnEnd === -1 ? undefined : fnEnd);
-    expect(body).toContain('${dest}.new');
-    expect(body).toContain('${dest}.old');
-    expect(body).toMatch(/renameSync\(stagingDest,\s*dest\)/);
-    // The pre-fix sequence — `rmSync(dest, ...) ; copyDirSync(src, dest)` —
-    // must not survive. Allow rmSync of stale staging/old, but the live dest
-    // must move via renameSync, never be deleted before the new copy lands.
-    expect(body).not.toMatch(/if\s*\(existsSync\(dest\)\)\s*rmSync\(dest,/);
+describe('syncAuxiliaryContent transactional outcomes', () => {
+  test('returns a digest-backed outcome for every payload tree and refreshes changed content', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-update-aux-'));
+    const extract = join(root, 'extract');
+    const home = join(root, 'home');
+    try {
+      mkdirSync(join(extract, 'plugins'), { recursive: true });
+      mkdirSync(join(home, 'plugins'), { recursive: true });
+      writeFileSync(join(extract, 'plugins', 'payload.txt'), 'fresh');
+      writeFileSync(join(extract, 'plugins', '.orphaned_at'), 'must not copy');
+      writeFileSync(join(home, 'plugins', 'payload.txt'), 'old');
+
+      const outcomes = syncAuxiliaryContent(extract, home);
+
+      expect(outcomes).toHaveLength(5);
+      expect(outcomes.find((outcome) => outcome.label === 'plugins')?.status).toBe('refreshed');
+      expect(readFileSync(join(home, 'plugins', 'payload.txt'), 'utf8')).toBe('fresh');
+      expect(existsSync(join(home, 'plugins', '.orphaned_at'))).toBe(false);
+      // Update retains extraction until the caller confirms every tree and
+      // removes the whole staging area in one final cleanup.
+      expect(readFileSync(join(extract, 'plugins', 'payload.txt'), 'utf8')).toBe('fresh');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('removes root and nested live framework markers even when payload content otherwise matches', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-update-aux-markers-'));
+    const extract = join(root, 'extract');
+    const home = join(root, 'home');
+    try {
+      for (const tree of [join(extract, 'plugins'), join(home, 'plugins')]) {
+        mkdirSync(join(tree, 'nested'), { recursive: true });
+        writeFileSync(join(tree, 'payload.txt'), 'same');
+        writeFileSync(join(tree, 'nested', 'payload.txt'), 'same nested');
+      }
+      writeFileSync(join(extract, 'plugins', '.orphaned_at'), 'source marker');
+      writeFileSync(join(extract, 'plugins', 'nested', '.orphaned_at'), 'source nested marker');
+      writeFileSync(join(home, 'plugins', '.orphaned_at'), 'live marker');
+      writeFileSync(join(home, 'plugins', 'nested', '.orphaned_at'), 'live nested marker');
+
+      const outcomes = syncAuxiliaryContent(extract, home);
+      expect(outcomes.find((outcome) => outcome.label === 'plugins')?.status).toBe('refreshed');
+      expect(existsSync(join(home, 'plugins', '.orphaned_at'))).toBe(false);
+      expect(existsSync(join(home, 'plugins', 'nested', '.orphaned_at'))).toBe(false);
+      expect(readFileSync(join(home, 'plugins', 'nested', 'payload.txt'), 'utf8')).toBe('same nested');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a promotion failure restores old live content and returns retained fresh evidence', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-update-aux-failure-'));
+    const extract = join(root, 'extract');
+    const home = join(root, 'home');
+    let renames = 0;
+    try {
+      mkdirSync(join(extract, 'plugins'), { recursive: true });
+      mkdirSync(join(home, 'plugins'), { recursive: true });
+      writeFileSync(join(extract, 'plugins', 'payload.txt'), 'fresh');
+      writeFileSync(join(home, 'plugins', 'payload.txt'), 'old');
+      const outcomes = syncAuxiliaryContent(extract, home, {
+        rename: (from, to) => {
+          renames += 1;
+          if (renames === 2) throw new Error('promote injected');
+          renameSync(from, to);
+        },
+      });
+      const plugins = outcomes.find((outcome) => outcome.label === 'plugins');
+      expect(plugins?.status).toBe('failed');
+      if (plugins?.status === 'failed') {
+        expect(plugins.stage).toBe('promote-fresh');
+        expect(plugins.freshArtifact).toBeDefined();
+        if (plugins.freshArtifact) expect(existsSync(plugins.freshArtifact)).toBe(true);
+      }
+      expect(readFileSync(join(home, 'plugins', 'payload.txt'), 'utf8')).toBe('old');
+      expect(readFileSync(join(extract, 'plugins', 'payload.txt'), 'utf8')).toBe('fresh');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('auxiliary VERSION and extraction finalization gate', () => {
+  test('every injected non-success blocks both VERSION stamping and extraction cleanup', () => {
+    const stages: AuxiliaryTreeStage[] = [
+      'copy-fresh',
+      'verify-copy',
+      'park-live',
+      'promote-fresh',
+      'remove-identical-source',
+      'remove-source',
+    ];
+    for (const stage of stages) {
+      const outcome: AuxiliaryTreeOutcome = {
+        label: `fixture-${stage}`,
+        status: 'failed',
+        source: '/tmp/extract/plugins',
+        destination: '/tmp/home/plugins',
+        stage,
+        error: 'injected',
+      };
+      let versionWrites = 0;
+      let extractionCleanups = 0;
+      expect(() =>
+        finalizeAuxiliaryDelivery([outcome], {
+          writeVersion: () => {
+            versionWrites += 1;
+          },
+          cleanupExtraction: () => {
+            extractionCleanups += 1;
+          },
+        }),
+      ).toThrow(`fixture-${stage}`);
+      expect(versionWrites).toBe(0);
+      expect(extractionCleanups).toBe(0);
+    }
+  });
+
+  test('verified convergence stamps VERSION before cleaning extraction', () => {
+    const calls: string[] = [];
+    finalizeAuxiliaryDelivery(
+      [
+        {
+          label: 'plugins',
+          status: 'refreshed',
+          source: '/tmp/extract/plugins',
+          destination: '/tmp/home/plugins',
+          digest: 'a'.repeat(64),
+          warnings: [],
+        },
+      ],
+      {
+        writeVersion: () => calls.push('version'),
+        cleanupExtraction: () => calls.push('cleanup'),
+      },
+    );
+    expect(calls).toEqual(['version', 'cleanup']);
+  });
+});
+
+describe('durable pending delivery recovery', () => {
+  test('incremental hashing matches SHA-256 across multiple fixed-size reads', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-incremental-hash-'));
+    const path = join(root, 'payload');
+    const bytes = Buffer.alloc(3 * 1024 * 1024 + 17, 0x5a);
+    try {
+      writeFileSync(path, bytes);
+      expect(hashPhysicalFileIncrementally(path, 64 * 1024)).toBe(createHash('sha256').update(bytes).digest('hex'));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('explicit update modes are resolved before recovery and cannot conflict', () => {
+    expect(resolveUpdateExecutionMode({}, undefined)).toBe('normal');
+    expect(resolveUpdateExecutionMode({ syncOnly: true }, undefined)).toBe('sync-only');
+    expect(resolveUpdateExecutionMode({}, '1')).toBe('sync-only');
+    expect(resolveUpdateExecutionMode({ rollback: true }, '1')).toBe('rollback');
+    expect(resolveUpdateExecutionMode({ postDeliveryConverge: true }, undefined)).toBe('post-delivery-converge');
+    expect(() => resolveUpdateExecutionMode({ rollback: true, syncOnly: true }, undefined)).toThrow(
+      '--rollback and --sync-only cannot be used together',
+    );
+    for (const options of [
+      { postDeliveryConverge: true, rollback: true },
+      { postDeliveryConverge: true, syncOnly: true },
+      { postDeliveryConverge: true, stable: true },
+      { postDeliveryConverge: true, verify: false },
+    ]) {
+      expect(() => resolveUpdateExecutionMode(options, undefined)).toThrow(
+        '--post-delivery-converge cannot be combined',
+      );
+    }
+    expect(() => resolveUpdateExecutionMode({ postDeliveryConverge: true }, '1')).toThrow(
+      '--post-delivery-converge cannot be combined',
+    );
+  });
+
+  test('rollback quarantine atomically removes a pending journal from the recovery path', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-pending-cancel-'));
+    const journal = join(root, '.pending-delivery.json');
+    writeFileSync(journal, '{"schemaVersion":2}\n', { mode: 0o600 });
+    try {
+      const quarantined = quarantinePendingDelivery(journal);
+      expect(quarantined).not.toBeNull();
+      expect(existsSync(journal)).toBe(false);
+      expect(quarantined && existsSync(quarantined)).toBe(true);
+      expect(quarantinePendingDelivery(journal)).toBeNull();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('resumes local auxiliary convergence before clearing the journal', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-pending-delivery-'));
+    const home = join(root, 'home');
+    const staging = join(home, 'bin', '.staging');
+    const extract = join(staging, 'extract-5.260711.7');
+    const tarball = join(staging, 'genie.tar.gz');
+    const journal = join(home, '.pending-delivery.json');
+    mkdirSync(join(extract, 'plugins', 'genie'), { recursive: true });
+    writeFileSync(join(extract, 'genie'), 'verified binary');
+    writeFileSync(join(extract, 'plugins', 'genie', 'payload.txt'), 'fresh');
+    writeFileSync(tarball, 'verified');
+    try {
+      recordPendingDelivery({ version: '5.260711.7', extractDir: extract, tarballPath: tarball }, journal, staging);
+      let binaryChecks = 0;
+      expect(
+        resumePendingDelivery({
+          genieHome: home,
+          stagingRoot: staging,
+          pendingPath: journal,
+          ensureBinary: () => {
+            binaryChecks += 1;
+          },
+        }),
+      ).toBe(true);
+      expect(binaryChecks).toBe(1);
+      expect(readFileSync(join(home, 'plugins', 'genie', 'payload.txt'), 'utf8')).toBe('fresh');
+      expect(readFileSync(join(home, 'VERSION'), 'utf8')).toBe('5.260711.7\n');
+      expect(existsSync(journal)).toBe(false);
+      expect(resumePendingDelivery({ genieHome: home, stagingRoot: staging, pendingPath: journal })).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('successful pending-delivery recovery prunes older backups for the recorded previous version', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-pending-prune-'));
+    const home = join(root, 'home');
+    const staging = join(home, 'bin', '.staging');
+    const extract = join(staging, 'extract-5.260711.7');
+    const tarball = join(staging, 'genie.tar.gz');
+    const journal = join(home, '.pending-delivery.json');
+    const previous = join(home, 'bin', '.previous');
+    mkdirSync(join(extract, 'plugins', 'genie'), { recursive: true });
+    mkdirSync(previous, { recursive: true });
+    writeFileSync(join(extract, 'genie'), 'verified binary');
+    writeFileSync(join(extract, 'plugins', 'genie', 'payload.txt'), 'fresh');
+    writeFileSync(tarball, 'verified');
+    const older = join(previous, 'genie-5.260711.6');
+    const retained = join(previous, 'genie-5.260711.6.retry');
+    writeFileSync(older, 'older rollback');
+    writeFileSync(retained, 'new rollback');
+    utimesSync(older, 1, 1);
+    utimesSync(retained, 2, 2);
+    try {
+      recordPendingDelivery(
+        {
+          version: '5.260711.7',
+          previousVersion: '5.260711.6',
+          extractDir: extract,
+          tarballPath: tarball,
+        },
+        journal,
+        staging,
+      );
+      expect(
+        resumePendingDelivery({
+          genieHome: home,
+          stagingRoot: staging,
+          pendingPath: journal,
+          ensureBinary: () => undefined,
+        }),
+      ).toBe(true);
+      expect(existsSync(older)).toBe(false);
+      expect(readFileSync(retained, 'utf8')).toBe('new rollback');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a crash after binary swap but before VERSION stamping repairs metadata without swapping new over new', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-pending-post-swap-crash-'));
+    const home = join(root, 'home');
+    const bin = join(home, 'bin');
+    const staging = join(bin, '.staging');
+    const extract = join(staging, 'extract-5.260711.7');
+    const tarball = join(staging, 'genie.tar.gz');
+    const journal = join(home, '.pending-delivery.json');
+    const target = join(bin, 'genie');
+    const previous = join(bin, '.previous');
+    mkdirSync(extract, { recursive: true });
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(target, 'authentic old binary');
+    writeFileSync(join(bin, 'VERSION'), '5.260711.6\n');
+    writeFileSync(join(extract, 'genie'), 'verified new binary');
+    writeFileSync(join(extract, 'VERSION'), '5.260711.7\n');
+    writeFileSync(tarball, 'verified tarball');
+    chmodSync(target, 0o755);
+    chmodSync(join(extract, 'genie'), 0o755);
+    try {
+      const pending = recordPendingDelivery(
+        {
+          version: '5.260711.7',
+          previousVersion: '5.260711.6',
+          previousBinaryPath: target,
+          extractDir: extract,
+          tarballPath: tarball,
+        },
+        journal,
+        staging,
+      );
+      const firstSwap = atomicBinarySwap(join(extract, 'genie'), target, previous, '5.260711.6', {
+        preserveSource: true,
+        expectedPreimage: pending.payload.previousBinary,
+        expectedPayloadFingerprint: pending.payload.binary,
+      });
+      expect(firstSwap.oldVersionBackup).not.toBeNull();
+      const authenticBackup = firstSwap.oldVersionBackup as string;
+      const decoy = join(previous, 'genie-5.260711.6.newer-decoy');
+      writeFileSync(decoy, 'verified new binary');
+      chmodSync(decoy, 0o755);
+      utimesSync(authenticBackup, 1, 1);
+      utimesSync(decoy, 2, 2);
+
+      expect(
+        resumePendingDelivery({
+          genieHome: home,
+          genieBin: bin,
+          stagingRoot: staging,
+          pendingPath: journal,
+          runVersion: () => `genie ${readFileSync(join(bin, 'VERSION'), 'utf8')}`,
+        }),
+      ).toBe(true);
+
+      expect(readFileSync(target, 'utf8')).toBe('verified new binary');
+      expect(readFileSync(join(bin, 'VERSION'), 'utf8')).toBe('5.260711.7\n');
+      expect(readFileSync(authenticBackup, 'utf8')).toBe('authentic old binary');
+      expect(readFileSync(decoy, 'utf8')).toBe('verified new binary');
+      expect(readdirSync(previous).filter((name) => name.startsWith('genie-5.260711.6'))).toHaveLength(2);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('schema-v4 already-new recovery retains its journal without an authenticated prior backup', () => {
+    for (const backupState of ['missing', 'mismatched'] as const) {
+      const root = mkdtempSync(join(tmpdir(), `genie-pending-already-new-${backupState}-`));
+      const home = join(root, 'home');
+      const bin = join(home, 'bin');
+      const staging = join(bin, '.staging');
+      const extract = join(staging, 'extract-5.260711.7');
+      const tarball = join(staging, 'genie.tar.gz');
+      const journal = join(home, '.pending-delivery.json');
+      const target = join(bin, 'genie');
+      const previous = join(bin, '.previous');
+      mkdirSync(extract, { recursive: true });
+      writeFileSync(target, 'AUTHENTIC_OLD_BINARY');
+      writeFileSync(join(bin, 'VERSION'), '5.260711.6\n');
+      writeFileSync(join(extract, 'genie'), 'AUTHENTIC_NEW_BINARY');
+      writeFileSync(join(extract, 'VERSION'), '5.260711.7\n');
+      writeFileSync(tarball, 'verified tarball');
+      chmodSync(target, 0o755);
+      chmodSync(join(extract, 'genie'), 0o755);
+      try {
+        recordPendingDelivery(
+          {
+            version: '5.260711.7',
+            previousVersion: '5.260711.6',
+            previousBinaryPath: target,
+            extractDir: extract,
+            tarballPath: tarball,
+          },
+          journal,
+          staging,
+        );
+        writeFileSync(target, 'AUTHENTIC_NEW_BINARY');
+        chmodSync(target, 0o755);
+        if (backupState === 'mismatched') {
+          mkdirSync(previous, { recursive: true });
+          writeFileSync(join(previous, 'genie-5.260711.6'), 'UNAUTHENTICATED_BACKUP');
+          chmodSync(join(previous, 'genie-5.260711.6'), 0o755);
+        }
+
+        expect(() =>
+          resumePendingDelivery({
+            genieHome: home,
+            genieBin: bin,
+            stagingRoot: staging,
+            pendingPath: journal,
+          }),
+        ).toThrow('no authenticated rollback backup matches the journaled preimage');
+        expect(readFileSync(join(bin, 'VERSION'), 'utf8')).toBe('5.260711.6\n');
+        expect(existsSync(journal)).toBe(true);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
+  });
+
+  test('a failed resume retains the verified journal and succeeds on a normal retry', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-pending-retry-'));
+    const home = join(root, 'home');
+    const staging = join(home, 'bin', '.staging');
+    const extract = join(staging, 'extract-5.260711.7');
+    const tarball = join(staging, 'genie.tar.gz');
+    const journal = join(home, '.pending-delivery.json');
+    mkdirSync(join(extract, 'plugins', 'genie'), { recursive: true });
+    writeFileSync(join(extract, 'genie'), 'verified binary');
+    writeFileSync(join(extract, 'plugins', 'genie', 'payload.txt'), 'fresh');
+    writeFileSync(tarball, 'verified');
+    recordPendingDelivery({ version: '5.260711.7', extractDir: extract, tarballPath: tarball }, journal, staging);
+    try {
+      expect(() =>
+        resumePendingDelivery({
+          genieHome: home,
+          stagingRoot: staging,
+          pendingPath: journal,
+          ensureBinary: () => undefined,
+          operations: {
+            rename() {
+              throw new Error('promotion unavailable');
+            },
+          },
+        }),
+      ).toThrow('auxiliary payload convergence failed');
+      expect(existsSync(journal)).toBe(true);
+      expect(
+        resumePendingDelivery({
+          genieHome: home,
+          stagingRoot: staging,
+          pendingPath: journal,
+          ensureBinary: () => undefined,
+        }),
+      ).toBe(true);
+      expect(existsSync(journal)).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects binary and auxiliary tampering before any live mutation', () => {
+    for (const tamper of ['binary', 'auxiliary'] as const) {
+      const root = mkdtempSync(join(tmpdir(), `genie-pending-tamper-${tamper}-`));
+      const home = join(root, 'home');
+      const staging = join(home, 'bin', '.staging');
+      const extract = join(staging, 'extract-5.260711.7');
+      const tarball = join(staging, 'genie.tar.gz');
+      const journal = join(home, '.pending-delivery.json');
+      mkdirSync(join(extract, 'plugins', 'genie'), { recursive: true });
+      writeFileSync(join(extract, 'genie'), 'verified binary');
+      writeFileSync(join(extract, 'plugins', 'genie', 'payload.txt'), 'verified auxiliary');
+      writeFileSync(tarball, 'verified tarball');
+      try {
+        recordPendingDelivery({ version: '5.260711.7', extractDir: extract, tarballPath: tarball }, journal, staging);
+        if (tamper === 'binary') writeFileSync(join(extract, 'genie'), 'substituted binary');
+        else writeFileSync(join(extract, 'plugins', 'genie', 'payload.txt'), 'substituted auxiliary');
+        let binaryChecks = 0;
+        expect(() =>
+          resumePendingDelivery({
+            genieHome: home,
+            stagingRoot: staging,
+            pendingPath: journal,
+            ensureBinary: () => {
+              binaryChecks += 1;
+            },
+          }),
+        ).toThrow('pending delivery payload fingerprint mismatch');
+        expect(binaryChecks).toBe(0);
+        expect(existsSync(join(home, 'plugins'))).toBe(false);
+        expect(existsSync(journal)).toBe(true);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
   });
 });
 
@@ -1319,7 +2098,7 @@ describe('ensureCanonicalInstall + resolveLiveBinaryPath (review fix #3)', () =>
     const cmdStart = source.indexOf('export async function updateCommand');
     expect(cmdStart).toBeGreaterThan(-1);
     const cmdBody = source.slice(cmdStart);
-    const ensureIdx = cmdBody.indexOf('ensureCanonicalInstall()');
+    const ensureIdx = cmdBody.indexOf('requireCanonicalInstallOrExit()');
     const deliveryIdx = cmdBody.indexOf('await runDelivery(');
     expect(ensureIdx).toBeGreaterThan(-1);
     expect(deliveryIdx).toBeGreaterThan(-1);
@@ -1659,11 +2438,9 @@ describe('runV4CleanupSafe', () => {
 
 // ============================================================================
 // Agent-sync wiring (agent-sync wish G2). `genie update` is the ONE canonical
-// updater: the sync phase runs on the sync-only fast path, on the already-
-// current short-circuit, and via a post-swap re-exec of the fresh binary. The
-// re-entry contract is the internal env GENIE_UPDATE_SYNC_ONLY=1 plus the
-// internal --sync-only flag (the hook's hard guard against pre-contract
-// binaries) — no new user-facing command. Engine failures are non-fatal.
+// updater: the bounded sync phase runs on --sync-only, while a manual full
+// update converges integrations in the reviewed parent process. A newly
+// installed binary is never re-entered as `genie update`.
 // ============================================================================
 
 describe('runAgentSyncSafe (agent-sync phase)', () => {
@@ -1738,7 +2515,7 @@ describe('runAgentSyncSafe (agent-sync phase)', () => {
     }
   });
 
-  test('marker is refreshed even when the engine throws (the sync phase ran)', () => {
+  test('marker is not refreshed when convergence fails so the retry remains immediate', () => {
     const dir = mkdtempSync(join(tmpdir(), 'genie-asm-'));
     const marker = join(dir, '.last-agent-sync');
     try {
@@ -1749,7 +2526,7 @@ describe('runAgentSyncSafe (agent-sync phase)', () => {
         log: () => {},
         markerPath: marker,
       });
-      expect(existsSync(marker)).toBe(true);
+      expect(existsSync(marker)).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -1759,54 +2536,590 @@ describe('runAgentSyncSafe (agent-sync phase)', () => {
     const source = readFileSync(join(import.meta.dir, '..', 'update.ts'), 'utf-8');
     const cmdStart = source.indexOf('export async function updateCommand');
     const cmdBody = source.slice(cmdStart);
-    const fastPathIdx = cmdBody.indexOf("process.env.GENIE_UPDATE_SYNC_ONLY === '1'");
+    const fastPathIdx = cmdBody.indexOf("mode !== 'normal'");
     const fetchIdx = cmdBody.indexOf('await fetchLatestManifest(');
     const deliveryIdx = cmdBody.indexOf('await runDelivery(');
     expect(fastPathIdx).toBeGreaterThan(-1);
     expect(fastPathIdx).toBeLessThan(fetchIdx);
     expect(fastPathIdx).toBeLessThan(deliveryIdx);
-    // The fast-path block calls the sync phase (and only that path does, pre-fetch).
-    expect(cmdBody.slice(fastPathIdx, fetchIdx)).toContain('runAgentSyncSafe()');
+    // The compatibility mode routes before fetch and remains skills/role-only.
+    const fastPath = cmdBody.slice(fastPathIdx, fetchIdx);
+    expect(fastPath).toContain('await runExplicitUpdateMode(mode)');
+    expect(fastPath).not.toContain('runTrackedManualUpdateConvergence(');
+    expect(fastPath).not.toContain('refreshUpdatePlugins(');
+    const legacyModeStart = source.indexOf('function runLegacySyncOnlyMode()');
+    const postDeliveryModeStart = source.indexOf('function runPostDeliveryConvergenceMode()', legacyModeStart);
+    const legacyMode = source.slice(legacyModeStart, postDeliveryModeStart);
+    expect(legacyMode).toContain('runLegacySyncOnlyConvergence({ selection, expectedVersion: VERSION })');
+    expect(legacyMode).not.toContain('runManualUpdateConvergence(');
+    expect(legacyMode).not.toContain('refreshUpdatePlugins(');
+    const convergenceStart = source.indexOf('export function runLegacySyncOnlyConvergence(');
+    const convergenceEnd = source.indexOf('function announceUpdatePlanOrExit(', convergenceStart);
+    const convergence = source.slice(convergenceStart, convergenceEnd);
+    expect(convergence.indexOf('legacySyncOnlyPluginAdvisory(options)')).toBeLessThan(
+      convergence.indexOf('runAgentSyncSafe({ strict: true'),
+    );
+    expect(convergence).not.toContain('runManualUpdateConvergence(');
+    expect(convergence).not.toContain('refreshUpdatePlugins(');
   });
 
   test('short-circuit (already-current) path calls the sync phase before returning', () => {
     const source = readFileSync(join(import.meta.dir, '..', 'update.ts'), 'utf-8');
     const scIdx = source.indexOf('shortCircuitIfCurrent(installedVersion, latestVersion)');
     expect(scIdx).toBeGreaterThan(-1);
-    expect(source.slice(scIdx, scIdx + 400)).toContain('runAgentSyncSafe()');
+    expect(source.slice(scIdx, scIdx + 700)).toContain('runTrackedManualUpdateConvergence(');
   });
 });
 
-describe('runFreshBinaryAgentSync (post-swap re-exec)', () => {
-  test('execs the freshly installed binary with `update` + GENIE_UPDATE_SYNC_ONLY=1', () => {
-    const calls: Array<{ bin: string; env: NodeJS.ProcessEnv }> = [];
-    runFreshBinaryAgentSync({
-      exec: (bin, env) => {
-        calls.push({ bin, env });
+describe('manual post-update convergence (2026-07-11 cascade regression)', () => {
+  test('runs the canonical convergence APIs and returns structured integration outcomes', () => {
+    const calls: string[] = [];
+    const result = runManualUpdateConvergence({
+      expectedVersion: '5.260711.3',
+      bundleRoot: '/tmp/verified-bundle',
+      runSync: () => calls.push('parent-safe-sync'),
+      refreshPlugins: (options) => {
+        calls.push(`parent-plugin-refresh:${options.expectedVersion}`);
+        return [{ runtime: 'codex', ok: true, detail: 'plugin/hooks refreshed' }];
+      },
+      log: (line) => calls.push(`log:${line}`),
+    });
+    expect(calls[0]).toBe('parent-safe-sync');
+    expect(calls[1]).toBe('parent-plugin-refresh:5.260711.3');
+    expect(result.integrations).toEqual([{ runtime: 'codex', ok: true, detail: 'plugin/hooks refreshed' }]);
+  });
+
+  test('normal delivery invokes the fresh binary only through the explicit child protocol', () => {
+    const source = readFileSync(join(import.meta.dir, '..', 'update.ts'), 'utf-8');
+    expect(source).not.toMatch(/execFileSync\([^\n]+,\s*\['update'\]\s*,/);
+    expect(source).toContain("run(binaryPath, ['update', '--post-delivery-converge'], environment)");
+    const deliveryIdx = source.indexOf('await runDelivery(');
+    const convergeIdx = source.indexOf('runFreshConvergenceOrReport(lifecycleLease)', deliveryIdx);
+    const verifyIdx = source.indexOf('await runPostUpdateVerifySafe(');
+    expect(deliveryIdx).toBeGreaterThan(-1);
+    expect(convergeIdx).toBeGreaterThan(deliveryIdx);
+    expect(convergeIdx).toBeLessThan(verifyIdx);
+  });
+
+  test('hands the exact live lifecycle lease to the fresh binary without releasing the parent lease', () => {
+    const home = mkdtempSync(join(tmpdir(), 'genie-fresh-converge-lease-'));
+    const lease = acquireLifecycleLease(home);
+    expect('skipped' in lease).toBe(false);
+    if ('skipped' in lease) return;
+    try {
+      let called = false;
+      runFreshBinaryPostDeliveryConvergence({
+        lifecycleLease: lease,
+        binaryPath: '/fixture/fresh-genie',
+        run(binaryPath, argv, environment) {
+          called = true;
+          expect(binaryPath).toBe('/fixture/fresh-genie');
+          expect(argv).toEqual(['update', '--post-delivery-converge']);
+          expect(environment.GENIE_LIFECYCLE_LEASE_PATH).toBe(lease.path);
+          expect(environment.GENIE_LIFECYCLE_LEASE_OWNER).toBe(readFileSync(lease.path, 'utf8').trim());
+          expect(existsSync(lease.path)).toBe(true);
+          const previousPath = process.env.GENIE_LIFECYCLE_LEASE_PATH;
+          const previousOwner = process.env.GENIE_LIFECYCLE_LEASE_OWNER;
+          try {
+            process.env.GENIE_LIFECYCLE_LEASE_PATH = environment.GENIE_LIFECYCLE_LEASE_PATH;
+            process.env.GENIE_LIFECYCLE_LEASE_OWNER = environment.GENIE_LIFECYCLE_LEASE_OWNER;
+            const borrowed = acquireLifecycleLease(home);
+            expect('skipped' in borrowed).toBe(false);
+            if (!('skipped' in borrowed)) borrowed.release();
+            expect(existsSync(lease.path)).toBe(true);
+          } finally {
+            if (previousPath === undefined) process.env.GENIE_LIFECYCLE_LEASE_PATH = undefined;
+            else process.env.GENIE_LIFECYCLE_LEASE_PATH = previousPath;
+            if (previousOwner === undefined) process.env.GENIE_LIFECYCLE_LEASE_OWNER = undefined;
+            else process.env.GENIE_LIFECYCLE_LEASE_OWNER = previousOwner;
+          }
+        },
+      });
+      expect(called).toBe(true);
+      expect(existsSync(lease.path)).toBe(true);
+    } finally {
+      lease.release();
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('fresh-child failure propagates with explicit operator recovery', () => {
+    const home = mkdtempSync(join(tmpdir(), 'genie-fresh-converge-failure-'));
+    const lease = acquireLifecycleLease(home);
+    expect('skipped' in lease).toBe(false);
+    if ('skipped' in lease) return;
+    try {
+      let message = '';
+      try {
+        runFreshBinaryPostDeliveryConvergence({
+          lifecycleLease: lease,
+          run: () => {
+            throw new Error('exit 7');
+          },
+        });
+      } catch (error) {
+        message = error instanceof Error ? error.message : String(error);
+      }
+      expect(message).toContain('fresh Genie integration convergence failed: exit 7');
+      expect(message).toContain('Close all Codex tasks first');
+      expect(message).toContain('external terminal');
+      expect(message.indexOf('Close all Codex tasks first')).toBeLessThan(message.indexOf('external terminal'));
+    } finally {
+      lease.release();
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('legacy sync-only advisory is read-only and reports selected version drift', () => {
+    const calls: string[] = [];
+    const advisory = legacySyncOnlyPluginAdvisory({
+      selection: 'codex',
+      expectedVersion: '5.260711.7',
+      resolveExecutable: () => '/fixture/codex',
+      runner(command, args) {
+        calls.push(`${command} ${args.join(' ')}`);
+        return {
+          exitCode: 0,
+          stdout: '{"installed":[{"pluginId":"genie@automagik","enabled":true,"version":"5.260711.6"}]}',
+          stderr: '',
+        };
       },
     });
-    expect(calls).toHaveLength(1);
-    expect(calls[0].bin).toContain('genie');
-    expect(calls[0].env.GENIE_UPDATE_SYNC_ONLY).toBe('1');
-  });
+    expect(calls).toEqual(['/fixture/codex plugin list --json']);
+    expect(advisory).toContain('codex v5.260711.6');
+    expect(advisory).toContain('external terminal');
+    expect(advisory).toContain('review `/hooks`');
 
-  test('a failed re-exec is non-fatal', () => {
-    expect(() =>
-      runFreshBinaryAgentSync({
-        exec: () => {
-          throw new Error('spawn failed');
+    const disabled = legacySyncOnlyPluginAdvisory({
+      selection: 'codex',
+      expectedVersion: '5.260711.7',
+      resolveExecutable: () => '/fixture/codex',
+      runner: () => ({
+        exitCode: 0,
+        stdout: '{"installed":[{"pluginId":"genie@automagik","enabled":false,"version":"5.260711.6"}]}',
+        stderr: '',
+      }),
+    });
+    expect(disabled).toContain('codex v5.260711.6 (disabled; preserved)');
+
+    for (const state of [
+      { installed: [] },
+      { installed: [{ pluginId: 'genie@automagik', enabled: true, version: '5.260711.7' }] },
+    ]) {
+      expect(
+        legacySyncOnlyPluginAdvisory({
+          selection: 'codex',
+          expectedVersion: '5.260711.7',
+          resolveExecutable: () => '/fixture/codex',
+          runner: () => ({ exitCode: 0, stdout: JSON.stringify(state), stderr: '' }),
+        }),
+      ).toBeNull();
+    }
+    let invoked = false;
+    expect(
+      legacySyncOnlyPluginAdvisory({
+        selection: 'none',
+        expectedVersion: '5.260711.7',
+        resolveExecutable: () => {
+          invoked = true;
+          return '/fixture/codex';
         },
       }),
-    ).not.toThrow();
+    ).toBeNull();
+    expect(invoked).toBe(false);
   });
 
-  test('updateCommand re-execs the fresh binary after the post-update verify', () => {
-    const source = readFileSync(join(import.meta.dir, '..', 'update.ts'), 'utf-8');
-    const verifyIdx = source.indexOf('await runPostUpdateVerifySafe(');
-    const freshIdx = source.indexOf('runFreshBinaryAgentSync();');
-    expect(freshIdx).toBeGreaterThan(-1);
-    expect(verifyIdx).toBeGreaterThan(-1);
-    expect(verifyIdx).toBeLessThan(freshIdx);
+  test('legacy sync-only emits stale-plugin recovery even when strict agent sync fails', () => {
+    const events: string[] = [];
+    expect(() =>
+      runLegacySyncOnlyConvergence({
+        selection: 'codex',
+        expectedVersion: '5.260711.7',
+        resolveExecutable: () => '/fixture/codex',
+        runner: () => ({
+          exitCode: 0,
+          stdout: '{"installed":[{"pluginId":"genie@automagik","enabled":true,"version":"5.260711.6"}]}',
+          stderr: '',
+        }),
+        log: (line) => events.push(`advisory:${line}`),
+        sync: () => {
+          events.push('sync');
+          throw new Error('strict sync failed');
+        },
+      }),
+    ).toThrow('strict sync failed');
+    expect(events).toHaveLength(2);
+    expect(events[0]).toContain('advisory:Legacy --sync-only');
+    expect(events[1]).toBe('sync');
+  });
+});
+
+describe('operator-driven plugin refresh', () => {
+  let pluginStateDir: string;
+
+  beforeEach(() => {
+    pluginStateDir = mkdtempSync(join(tmpdir(), 'genie-update-plugin-state-'));
+  });
+
+  afterEach(() => {
+    rmSync(pluginStateDir, { recursive: true, force: true });
+  });
+
+  test('CLI detection is not consent: validly absent integrations remain absent', () => {
+    const calls: string[] = [];
+    const results = refreshUpdatePlugins({
+      bundleRoot: '/tmp/fixture-bundle',
+      expectedVersion: '5.260711.3',
+      stateDir: pluginStateDir,
+      detected: { codex: true, claude: true },
+      runner(command, args) {
+        calls.push(`${command} ${args.join(' ')}`);
+        if (command === 'codex') return { exitCode: 0, stdout: '{"installed":[]}', stderr: '' };
+        return { exitCode: 0, stdout: '[]', stderr: '' };
+      },
+    });
+
+    expect(results).toEqual([]);
+    expect(calls).toEqual(['codex plugin list --json', 'claude plugin list --json']);
+  });
+
+  test('a Codex resolver failure does not suppress the independently selected Claude refresh', () => {
+    const resolved: string[] = [];
+    const calls: string[] = [];
+    const results = refreshUpdatePlugins({
+      bundleRoot: '/tmp/fixture-bundle',
+      expectedVersion: '5.260711.3',
+      stateDir: pluginStateDir,
+      selection: 'all',
+      detected: { codex: true, claude: true },
+      resolveExecutable(name) {
+        resolved.push(name);
+        if (name === 'codex') throw new Error('unsafe Codex executable');
+        return '/fixture/claude';
+      },
+      runner(command, args) {
+        calls.push(`${command} ${args.join(' ')}`);
+        return { exitCode: 0, stdout: '[]', stderr: '' };
+      },
+    });
+
+    expect(resolved).toEqual(['codex', 'claude']);
+    expect(calls).toEqual(['/fixture/claude plugin list --json']);
+    expect(results).toEqual([{ runtime: 'codex', ok: false, detail: 'unsafe Codex executable' }]);
+  });
+
+  test('a Codex convergence cleanup exception is isolated and Claude still runs', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-update-cross-runtime-'));
+    const configPath = join(root, 'config.toml');
+    const statePath = join(pluginStateDir, '.integration-refresh-codex.json');
+    writeFileSync(configPath, '[plugins."genie@automagik"]\nenabled = false\n');
+    let codexLists = 0;
+    const calls: string[] = [];
+    const results = refreshUpdatePlugins({
+      bundleRoot: root,
+      expectedVersion: '5.260711.3',
+      stateDir: pluginStateDir,
+      selection: 'all',
+      codexConfigPath: configPath,
+      detected: { codex: true, claude: true },
+      runner(command, args) {
+        calls.push(`${command} ${args.join(' ')}`);
+        if (command === 'claude') return { exitCode: 0, stdout: '[]', stderr: '' };
+        if (args.join(' ') === 'plugin list --json') {
+          codexLists += 1;
+          if (codexLists === 2) {
+            rmSync(statePath, { force: true });
+            mkdirSync(statePath);
+          }
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              installed: [{ pluginId: 'genie@automagik', enabled: false, version: '5.260711.3' }],
+            }),
+            stderr: '',
+          };
+        }
+        return { exitCode: 0, stdout: '{}', stderr: '' };
+      },
+    });
+
+    expect(results[0]).toMatchObject({ runtime: 'codex', ok: false });
+    expect(calls).toContain('claude plugin list --json');
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test('indeterminate pre-update state fails closed without installing either integration', () => {
+    const calls: string[] = [];
+    const results = refreshUpdatePlugins({
+      bundleRoot: '/tmp/fixture-bundle',
+      expectedVersion: '5.260711.3',
+      stateDir: pluginStateDir,
+      detected: { codex: true, claude: true },
+      runner(command, args) {
+        calls.push(`${command} ${args.join(' ')}`);
+        return { exitCode: 0, stdout: '{}', stderr: '' };
+      },
+    });
+
+    expect(results).toHaveLength(2);
+    expect(results.every((result) => !result.ok && result.detail.includes('malformed JSON'))).toBe(true);
+    expect(calls).toEqual(['codex plugin list --json', 'claude plugin list --json']);
+  });
+
+  test('recaches Codex plugin/hooks from the local bundle and preserves disabled state', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-update-plugin-refresh-'));
+    const configPath = join(root, 'config.toml');
+    writeFileSync(configPath, '[plugins."genie@automagik"]\nenabled = true\n');
+    const calls: string[] = [];
+    let lists = 0;
+    const runner: CommandRunner = (command, args) => {
+      calls.push(`${command} ${args.join(' ')}`);
+      if (args.join(' ') === 'plugin list --json') {
+        lists += 1;
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            installed: [
+              {
+                pluginId: 'genie@automagik',
+                enabled: lists === 2,
+                version: lists === 1 ? '5.260710.2' : '5.260711.3',
+              },
+            ],
+          }),
+          stderr: '',
+        };
+      }
+      return { exitCode: 0, stdout: '', stderr: '' };
+    };
+    try {
+      const results = refreshUpdatePlugins({
+        bundleRoot: root,
+        expectedVersion: '5.260711.3',
+        stateDir: pluginStateDir,
+        detected: { codex: true, claude: false },
+        codexConfigPath: configPath,
+        runner,
+      });
+      expect(results).toEqual([
+        {
+          runtime: 'codex',
+          ok: true,
+          detail: 'plugin/hooks refreshed to v5.260711.3',
+          preservedDisabled: true,
+          hookReviewRequired: false,
+        },
+      ]);
+      expect(calls).toContain(`codex plugin marketplace add ${root} --json`);
+      expect(calls).toContain('codex plugin add genie@automagik --json');
+      expect(readFileSync(configPath, 'utf8')).toContain('enabled = false');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('returns a structured timed-out integration result', () => {
+    const results = refreshUpdatePlugins({
+      bundleRoot: '/tmp/fixture-bundle',
+      expectedVersion: '5.260711.3',
+      stateDir: pluginStateDir,
+      detected: { codex: true, claude: false },
+      runner: () => ({ exitCode: 1, stdout: '', stderr: '', timedOut: true }),
+    });
+    expect(results[0]).toMatchObject({ runtime: 'codex', ok: false, timedOut: true });
+    expect(results[0].detail).toContain('timed out');
+  });
+
+  test('malformed Codex post-refresh state fails and still restores the prior disabled state', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-update-plugin-failed-refresh-'));
+    const configPath = join(root, 'config.toml');
+    writeFileSync(configPath, '[plugins."genie@automagik"]\nenabled = true\n');
+    let lists = 0;
+    try {
+      const results = refreshUpdatePlugins({
+        bundleRoot: root,
+        expectedVersion: '5.260711.3',
+        stateDir: pluginStateDir,
+        detected: { codex: true, claude: false },
+        codexConfigPath: configPath,
+        runner(_command, args) {
+          if (args.join(' ') === 'plugin list --json') {
+            lists += 1;
+            return {
+              exitCode: 0,
+              stdout:
+                lists === 1
+                  ? '{"installed":[{"pluginId":"genie@automagik","enabled":false,"version":"5.260710.2"}]}'
+                  : '{"unexpected":[]}',
+              stderr: '',
+            };
+          }
+          return { exitCode: 0, stdout: '', stderr: '' };
+        },
+      });
+
+      expect(results[0]).toMatchObject({ runtime: 'codex', ok: false });
+      expect(results[0]?.detail).toMatch(/malformed JSON.*after plugin add/);
+      expect(readFileSync(configPath, 'utf8')).toContain('enabled = false');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('stale Codex update refresh never removes/re-adds or mutates the old cache', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-update-plugin-stale-generation-'));
+    const codexHome = join(root, 'codex');
+    const oldCache = join(codexHome, 'plugins', 'cache', 'automagik', 'genie', '5.260710.2', 'payload.txt');
+    mkdirSync(join(oldCache, '..'), { recursive: true });
+    writeFileSync(oldCache, 'old-cache-bytes\n');
+    const calls: string[] = [];
+    const runner: CommandRunner = (_command, args) => {
+      const command = args.join(' ');
+      calls.push(command);
+      if (command === 'plugin list --json') {
+        return {
+          exitCode: 0,
+          stdout: '{"installed":[{"pluginId":"genie@automagik","enabled":true,"version":"5.260710.2"}]}',
+          stderr: '',
+        };
+      }
+      return { exitCode: 0, stdout: '', stderr: '' };
+    };
+    try {
+      const result = refreshUpdatePlugins({
+        bundleRoot: root,
+        expectedVersion: '5.260711.3',
+        stateDir: pluginStateDir,
+        detected: { codex: true, claude: false },
+        codexHome,
+        runner,
+      });
+      expect(result[0]).toMatchObject({ runtime: 'codex', ok: false });
+      expect(result[0]?.detail).toContain('after one non-destructive add attempt');
+      expect(result[0]?.detail).toContain('Close all Codex tasks first');
+      expect(calls.filter((call) => call === 'plugin add genie@automagik --json')).toHaveLength(1);
+      expect(calls).not.toContain('plugin remove genie@automagik --json');
+      expect(readFileSync(oldCache, 'utf8')).toBe('old-cache-bytes\n');
+      expect(existsSync(join(pluginStateDir, '.integration-refresh-codex.json'))).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('actively restores and verifies a disabled Claude plugin after refresh', () => {
+    const calls: string[] = [];
+    const timeouts: Array<number | undefined> = [];
+    let lists = 0;
+    const results = refreshUpdatePlugins({
+      bundleRoot: '/tmp/fixture-bundle',
+      expectedVersion: '5.260711.3',
+      stateDir: pluginStateDir,
+      detected: { codex: false, claude: true },
+      timeoutMs: 777,
+      runner(command, args, options) {
+        calls.push(`${command} ${args.join(' ')}`);
+        timeouts.push(options?.timeoutMs);
+        if (args.join(' ') === 'plugin list --json') {
+          lists += 1;
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify([
+              {
+                id: 'genie@automagik',
+                enabled: lists === 1 ? false : lists === 2,
+                version: lists === 1 ? '5.260710.2' : '5.260711.3',
+              },
+            ]),
+            stderr: '',
+          };
+        }
+        return { exitCode: 0, stdout: '', stderr: '' };
+      },
+    });
+
+    expect(results).toEqual([
+      {
+        runtime: 'claude',
+        ok: true,
+        detail: 'plugin/hooks refreshed to v5.260711.3',
+        preservedDisabled: true,
+      },
+    ]);
+    expect(calls).toEqual([
+      'claude plugin list --json',
+      'claude plugin marketplace add /tmp/fixture-bundle',
+      'claude plugin update genie@automagik',
+      'claude plugin list --json',
+      'claude plugin disable genie@automagik',
+      'claude plugin list --json',
+    ]);
+    expect(timeouts.every((timeout) => timeout === 777)).toBe(true);
+  });
+
+  test('Claude disable command failure is a structured refresh failure, not preservation fiction', () => {
+    let lists = 0;
+    const results = refreshUpdatePlugins({
+      bundleRoot: '/tmp/fixture-bundle',
+      expectedVersion: '5.260711.3',
+      stateDir: pluginStateDir,
+      detected: { codex: false, claude: true },
+      runner(_command, args) {
+        if (args.join(' ') === 'plugin list --json') {
+          lists += 1;
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify([
+              {
+                id: 'genie@automagik',
+                enabled: lists !== 1,
+                version: lists === 1 ? '5.260710.2' : '5.260711.3',
+              },
+            ]),
+            stderr: '',
+          };
+        }
+        if (args.join(' ') === 'plugin disable genie@automagik') {
+          return { exitCode: 1, stdout: '', stderr: 'disable refused' };
+        }
+        return { exitCode: 0, stdout: '', stderr: '' };
+      },
+    });
+
+    expect(results[0]).toMatchObject({ runtime: 'claude', ok: false });
+    expect(results[0]?.detail).toContain('disable refused');
+    expect(results[0]?.preservedDisabled).not.toBe(true);
+  });
+
+  test('Claude post-disable state must verify disabled before preservation is reported', () => {
+    let lists = 0;
+    const results = refreshUpdatePlugins({
+      bundleRoot: '/tmp/fixture-bundle',
+      expectedVersion: '5.260711.3',
+      stateDir: pluginStateDir,
+      detected: { codex: false, claude: true },
+      runner(_command, args) {
+        if (args.join(' ') === 'plugin list --json') {
+          lists += 1;
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify([
+              {
+                id: 'genie@automagik',
+                enabled: lists !== 1,
+                version: lists === 1 ? '5.260710.2' : '5.260711.3',
+              },
+            ]),
+            stderr: '',
+          };
+        }
+        return { exitCode: 0, stdout: '', stderr: '' };
+      },
+    });
+
+    expect(lists).toBe(3);
+    expect(results[0]).toMatchObject({ runtime: 'claude', ok: false });
+    expect(results[0]?.detail).toContain('disabled-state restore verification failed');
+    expect(results[0]?.preservedDisabled).not.toBe(true);
   });
 });
 

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Fix Loop"
+  short_description: "Run a bounded fix and independent re-review loop"
+  default_prompt: "Resolve these validated gaps and obtain an independent fresh review."

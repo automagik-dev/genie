@@ -9,26 +9,43 @@
  */
 import type { Database } from 'bun:sqlite';
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { OmniRuntimeConfig } from './omni-config.js';
 import {
+  type NatsInboundMsg,
+  type NatsLike,
+  type NatsSubscription,
   type OmniSend,
   type RawClaudeSpawn,
   type SpawnClaude,
   type SpawnClaudeResult,
   buildClaudeArgs,
   buildCodexArgs,
+  buildMappedAgentEnv,
   createOmniRunner,
   deterministicSessionId,
   extractCodexJsonlReply,
   extractStreamJsonReply,
+  isSafeCodexThreadId,
+  makeDefaultOmniSend,
+  readBoundedText,
+  redactOmniOutbound,
+  resolveTrustedHostExecutable,
   runClaudeSession,
   runCodexSession,
+  runOmniServe,
+  superviseChild,
 } from './omni-runner.js';
-import { openGlobalDb } from './v5/global-db.js';
-import { enqueueApproval, getApproval, listInbox } from './v5/omni-queue.js';
+import {
+  OMNI_SERVICE_LEASE_NAME,
+  acquireServiceLeaseEpoch,
+  getAgentSession,
+  openGlobalDb,
+  upsertAgentSession,
+} from './v5/global-db.js';
+import { enqueueApproval, getApproval, listInbox, resolveApproval } from './v5/omni-queue.js';
 
 const INSTANCE = 'inst-A';
 const ROUTE_CHAT = 'chat-42';
@@ -74,6 +91,34 @@ function content(p: Published): string {
 
 const routeSubject = `omni.reply.${INSTANCE}.${ROUTE_CHAT}`;
 
+describe('default Omni approval send outcomes', () => {
+  test('only preflight rejection is definitely-not-started', async () => {
+    expect(await makeDefaultOmniSend(rt({ apiUrl: undefined }))({ instance: INSTANCE, chat: 'c', text: 'x' })).toEqual({
+      outcome: 'definitely-not-started',
+      error: 'omni apiUrl not configured',
+    });
+  });
+
+  test('HTTP errors and accepted responses without a correlation id are ambiguous', async () => {
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = (async () => new Response('', { status: 503 })) as unknown as typeof fetch;
+      const send = makeDefaultOmniSend(rt({ apiUrl: 'https://omni.example' }));
+      expect(await send({ instance: INSTANCE, chat: 'c', text: 'x' })).toEqual({
+        outcome: 'ambiguous',
+        error: 'HTTP 503',
+      });
+      globalThis.fetch = (async () => Response.json({ success: true })) as unknown as typeof fetch;
+      expect(await send({ instance: INSTANCE, chat: 'c', text: 'x' })).toEqual({
+        outcome: 'ambiguous',
+        error: 'Omni accepted the request without a safe message id',
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 /** An inbound frame on the mapped route, as omni would publish it. */
 function mappedInbound(body: string, chat = ROUTE_CHAT): [string, string] {
   return [
@@ -83,6 +128,81 @@ function mappedInbound(body: string, chat = ROUTE_CHAT): [string, string] {
 }
 
 describe('omni runner — inbound one-shot routing', () => {
+  test('mapped execution is disabled unless explicitly opted in', async () => {
+    const db = freshDb();
+    const published: Published[] = [];
+    let spawns = 0;
+    const runner = createOmniRunner({
+      db,
+      config: rt(),
+      publish: (subject, payload) => published.push({ subject, payload }),
+      allowMappedAgentExecution: false,
+      spawnAgent: async () => {
+        spawns++;
+        return { stdout: 'must not run', exitCode: 0 };
+      },
+    });
+    runner.handleMessage(...mappedInbound('attempt exfiltration'));
+    await runner.whenIdle();
+    expect(spawns).toBe(0);
+    expect(published).toHaveLength(0);
+    expect(listInbox(db)).toHaveLength(1);
+  });
+
+  test('subject identity is authoritative and mismatched payload identity has zero side effects', async () => {
+    const db = freshDb();
+    let spawns = 0;
+    const runner = createOmniRunner({
+      db,
+      config: rt(),
+      publish: () => {},
+      spawnAgent: async () => {
+        spawns++;
+        return { stdout: 'must not run', exitCode: 0 };
+      },
+    });
+    runner.handleMessage(
+      `omni.message.${INSTANCE}.${ROUTE_CHAT}`,
+      JSON.stringify({ content: 'spoof', instanceId: INSTANCE, chatId: 'other-chat' }),
+    );
+    runner.handleMessage(
+      `omni.message.${INSTANCE}.${ROUTE_CHAT}`,
+      JSON.stringify({ content: 'spoof', instanceId: 'other-instance', chatId: ROUTE_CHAT }),
+    );
+    runner.handleMessage(`omni.message.other-instance.${ROUTE_CHAT}`, JSON.stringify({ content: 'spoof' }));
+    await runner.whenIdle();
+    expect(spawns).toBe(0);
+    expect(listInbox(db)).toHaveLength(0);
+  });
+
+  test('malformed inbound field types and bounds are rejected before durable side effects', async () => {
+    const db = freshDb();
+    let spawns = 0;
+    const runner = createOmniRunner({
+      db,
+      config: rt(),
+      publish: () => {},
+      spawnClaude: async () => {
+        spawns++;
+        return { stdout: 'unexpected', exitCode: 0 };
+      },
+    });
+    const subject = `omni.message.${INSTANCE}.${ROUTE_CHAT}`;
+    for (const frame of [
+      [],
+      { content: 42 },
+      { content: 'hello', sender: { name: 'attacker' } },
+      { content: 'hello', messageId: 7 },
+      { content: 'bad\0body' },
+      { content: 'x'.repeat(64 * 1024 + 1) },
+    ]) {
+      runner.handleMessage(subject, JSON.stringify(frame));
+    }
+    await runner.whenIdle();
+    expect(spawns).toBe(0);
+    expect(listInbox(db)).toHaveLength(0);
+  });
+
   test('mapped round-trip: inbound → claude → truncated reply published + markHandled', async () => {
     const db = freshDb();
     const published: Published[] = [];
@@ -111,6 +231,215 @@ describe('omni runner — inbound one-shot routing', () => {
     const inbox = listInbox(db);
     expect(inbox.length).toBe(1);
     expect(inbox[0].handledAt).not.toBeNull();
+  });
+
+  test('duplicate NATS delivery across two runners has one durable spawn and one reply', async () => {
+    const db = freshDb();
+    const published: Published[] = [];
+    let spawns = 0;
+    let release!: (value: SpawnClaudeResult) => void;
+    const gate = new Promise<SpawnClaudeResult>((resolve) => {
+      release = resolve;
+    });
+    const deps = {
+      db,
+      config: rt(),
+      publish: (subject: string, payload: string) => published.push({ subject, payload }),
+      spawnClaude: async () => {
+        spawns++;
+        return gate;
+      },
+    };
+    const first = createOmniRunner(deps);
+    const second = createOmniRunner(deps);
+    const inbound = mappedInbound('at-least-once frame');
+    first.handleMessage(...inbound);
+    second.handleMessage(...inbound);
+    release({ stdout: 'one reply', exitCode: 0 });
+    await Promise.all([first.whenIdle(), second.whenIdle()]);
+    expect(spawns).toBe(1);
+    expect(published.map(content)).toEqual(['one reply']);
+    expect(listInbox(db)).toHaveLength(1);
+  });
+
+  test('flush failure neither advances state nor replays the agent, and retries one stable outbox id', async () => {
+    const db = freshDb();
+    const config = rt({ routes: [{ instance: INSTANCE, chat: ROUTE_CHAT, repo: ROUTE_REPO, agent: 'codex' }] });
+    let spawns = 0;
+    const attemptedPayloads: string[] = [];
+    const inbound = mappedInbound('retry publication');
+    const failing = createOmniRunner({
+      db,
+      config,
+      publish: (_subject, payload) => attemptedPayloads.push(payload),
+      flush: async () => {
+        throw new Error('flush unavailable after local publish');
+      },
+      spawnAgent: async () => {
+        spawns++;
+        return { stdout: 'reply', exitCode: 0, threadId: 'thread-after-publish' };
+      },
+    });
+    failing.handleMessage(...inbound);
+    await failing.whenIdle();
+    expect(getAgentSession(db, 'codex', INSTANCE, ROUTE_CHAT)).toBeUndefined();
+    expect(listInbox(db)).toHaveLength(1);
+    expect(listInbox(db)[0].handledAt).toBeNull();
+
+    const published: Published[] = [];
+    const retry = createOmniRunner({
+      db,
+      config,
+      publish: (subject, payload) => {
+        attemptedPayloads.push(payload);
+        published.push({ subject, payload });
+      },
+      spawnAgent: async () => {
+        spawns++;
+        return { stdout: 'reply', exitCode: 0, threadId: 'thread-after-publish' };
+      },
+    });
+    retry.handleMessage(...inbound);
+    await retry.whenIdle();
+    expect(spawns).toBe(1); // prepared outbox retries; workspace action does not
+    expect(published).toHaveLength(1);
+    expect(attemptedPayloads).toHaveLength(2);
+    expect(JSON.parse(attemptedPayloads[0]).request_id).toBe(JSON.parse(attemptedPayloads[1]).request_id);
+    expect(getAgentSession(db, 'codex', INSTANCE, ROUTE_CHAT)).toBe('thread-after-publish');
+    expect(listInbox(db)[0].handledAt).not.toBeNull();
+  });
+
+  test('awaits the NATS flush boundary before committing thread and handled state', async () => {
+    const db = freshDb();
+    const published: Published[] = [];
+    let releaseFlush!: () => void;
+    const flushGate = new Promise<void>((resolve) => {
+      releaseFlush = resolve;
+    });
+    const runner = createOmniRunner({
+      db,
+      config: rt({ routes: [{ instance: INSTANCE, chat: ROUTE_CHAT, repo: ROUTE_REPO, agent: 'codex' }] }),
+      publish: (subject, payload) => published.push({ subject, payload }),
+      flush: () => flushGate,
+      spawnAgent: async () => ({ stdout: 'reply', exitCode: 0, threadId: 'thread-after-flush' }),
+    });
+    runner.handleMessage(...mappedInbound('flush first'));
+    for (let attempt = 0; attempt < 20 && published.length === 0; attempt++) await Promise.resolve();
+    expect(published).toHaveLength(1);
+    expect(getAgentSession(db, 'codex', INSTANCE, ROUTE_CHAT)).toBeUndefined();
+    expect(listInbox(db)[0].handledAt).toBeNull();
+    releaseFlush();
+    await runner.whenIdle();
+    expect(getAgentSession(db, 'codex', INSTANCE, ROUTE_CHAT)).toBe('thread-after-flush');
+    expect(listInbox(db)[0].handledAt).not.toBeNull();
+  });
+
+  test('lease takeover during execution publishes an ambiguity notice without replaying the workspace action', async () => {
+    const db = freshDb();
+    let clock = 10_000;
+    const epochA = acquireServiceLeaseEpoch(db, OMNI_SERVICE_LEASE_NAME, 'resident-a', clock, 10) as number;
+    const published: Published[] = [];
+    let spawns = 0;
+    let release!: (result: SpawnClaudeResult) => void;
+    const gate = new Promise<SpawnClaudeResult>((resolve) => {
+      release = resolve;
+    });
+    const inbound = mappedInbound('potentially writing action');
+    const first = createOmniRunner({
+      db,
+      config: rt(),
+      publish: (subject, payload) => published.push({ subject, payload }),
+      claimOwner: { ownerId: 'resident-a', epoch: epochA },
+      now: () => clock,
+      spawnClaude: async () => {
+        spawns++;
+        return gate;
+      },
+    });
+    first.handleMessage(...inbound);
+    await Promise.resolve();
+    clock += 11;
+    const epochB = acquireServiceLeaseEpoch(db, OMNI_SERVICE_LEASE_NAME, 'resident-b', clock, 1_000) as number;
+    const successor = createOmniRunner({
+      db,
+      config: rt(),
+      publish: (subject, payload) => published.push({ subject, payload }),
+      claimOwner: { ownerId: 'resident-b', epoch: epochB },
+      now: () => clock,
+      spawnClaude: async () => {
+        spawns++;
+        return { stdout: 'must not run', exitCode: 0 };
+      },
+    });
+    successor.tick(); // core NATS may not redeliver; SQLite recovery is authoritative
+    await successor.whenIdle();
+    release({ stdout: 'late stale reply', exitCode: 0 });
+    await first.whenIdle();
+    expect(spawns).toBe(1);
+    expect(published.map(content)).toEqual([expect.stringContaining('did not replay')]);
+    expect(listInbox(db)[0].handledAt).not.toBeNull();
+  });
+
+  test('lease takeover after the executing fence but before spawn is recoverable with no unhandled rejection', async () => {
+    const db = freshDb();
+    let clock = 10;
+    const epochA = acquireServiceLeaseEpoch(db, OMNI_SERVICE_LEASE_NAME, 'resident-a', clock, 5) as number;
+    let epochB: number | undefined;
+    let spawns = 0;
+    const published: Published[] = [];
+    const unhandled: unknown[] = [];
+    const captureUnhandled = (reason: unknown) => unhandled.push(reason);
+    const now = () => {
+      const row = db.query('SELECT processing_phase AS phase FROM inbound_messages LIMIT 1').get() as {
+        phase: string | null;
+      } | null;
+      if (row?.phase === 'executing' && epochB === undefined) {
+        clock = 20;
+        epochB = acquireServiceLeaseEpoch(db, OMNI_SERVICE_LEASE_NAME, 'resident-b', clock, 100);
+      }
+      return clock;
+    };
+    process.on('unhandledRejection', captureUnhandled);
+    try {
+      const first = createOmniRunner({
+        db,
+        config: rt(),
+        publish: (subject, payload) => published.push({ subject, payload }),
+        claimOwner: { ownerId: 'resident-a', epoch: epochA },
+        now,
+        spawnClaude: async () => {
+          spawns++;
+          return { stdout: 'must not run', exitCode: 0 };
+        },
+      });
+      first.handleMessage(...mappedInboundWithId('take over before spawn', 'wamid-pre-spawn'));
+      await first.whenIdle();
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+      expect(epochB).toBeNumber();
+      expect(spawns).toBe(0);
+      expect(unhandled).toEqual([]);
+      expect(listInbox(db)[0].handledAt).toBeNull();
+
+      const successor = createOmniRunner({
+        db,
+        config: rt(),
+        publish: (subject, payload) => published.push({ subject, payload }),
+        claimOwner: { ownerId: 'resident-b', epoch: epochB as number },
+        now: () => clock,
+        spawnClaude: async () => {
+          spawns++;
+          return { stdout: 'must not replay', exitCode: 0 };
+        },
+      });
+      successor.tick();
+      await successor.whenIdle();
+      expect(spawns).toBe(0);
+      expect(published.map(content)).toEqual([expect.stringContaining('did not replay')]);
+      expect(listInbox(db)[0].handledAt).not.toBeNull();
+    } finally {
+      process.off('unhandledRejection', captureUnhandled);
+    }
   });
 
   test('unmapped chat: store-only — never spawns, no reply', async () => {
@@ -173,10 +502,11 @@ describe('omni runner — inbound one-shot routing', () => {
     expect(spawns).toBe(1);
     expect(published.length).toBe(2);
     expect(content(published[1])).toBe('done');
-    // Both inbounds are stored; only the one that ran is handled.
+    // Both inbounds are stored and acknowledged only after their respective
+    // reply/busy publication succeeds.
     const inbox = listInbox(db);
     expect(inbox.length).toBe(2);
-    expect(inbox.filter((m) => m.handledAt !== null).length).toBe(1);
+    expect(inbox.filter((m) => m.handledAt !== null).length).toBe(2);
   });
 
   test('child timeout: bounded error notice, in-flight cleared so the route recovers', async () => {
@@ -303,6 +633,54 @@ describe('omni runner — inbound one-shot routing', () => {
     expect(notice.length).toBeLessThan(700); // bounded, never the whole stream
   });
 
+  test('redacts ambient and secret-shaped values from successful and failed child output', async () => {
+    const secret = 'SENTINEL_AMBIENT_SECRET_123456';
+    const previous = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = secret;
+    try {
+      const successDb = freshDb();
+      const successPublished: Published[] = [];
+      const success = createOmniRunner({
+        db: successDb,
+        config: rt(),
+        publish: (subject, payload) => successPublished.push({ subject, payload }),
+        spawnClaude: async () => ({
+          stdout: `reply ${secret} github_pat_AAAAAAAAAAAA Authorization: Token success-auth-secret\nCookie: sid=success-cookie\n{"token":"success-json-token"}\n{\\"Authorization\\":\\"Bearer success-escaped-secret\\"}\npostgresql://db:success-uri-secret@db.example/app\nhttps://s3.example/x?X-Amz-Signature=success-aws-signature`,
+          exitCode: 0,
+        }),
+      });
+      success.handleMessage(...mappedInbound('success'));
+      await success.whenIdle();
+
+      const failureDb = freshDb();
+      const failurePublished: Published[] = [];
+      const failure = createOmniRunner({
+        db: failureDb,
+        config: rt(),
+        publish: (subject, payload) => failurePublished.push({ subject, payload }),
+        spawnClaude: async () => ({
+          stdout: '',
+          stderr: `crash ${secret} sk-AAAAAAAAAAAAAAAA api-key=failure-hyphen CREDENTIAL=failure-credential SESSION=failure-session\nProxy-Authorization: Digest response="failure-auth-secret"\n{\\"Proxy-Authorization\\":\\"Basic failure-escaped-secret\\"}\nSet-Cookie: sid=failure-cookie\nredis://cache:failure-uri-secret@cache.example/0\nhttps://g.example/x?X-Goog-Signature=failure-gcp-signature&sig=failure-azure-signature`,
+          exitCode: 7,
+        }),
+      });
+      failure.handleMessage(...mappedInbound('failure'));
+      await failure.whenIdle();
+
+      for (const item of [...successPublished, ...failurePublished]) {
+        expect(content(item)).not.toContain(secret);
+        expect(content(item)).not.toMatch(/github_pat_|sk-AAAA/);
+        expect(content(item)).not.toMatch(
+          /success-auth-secret|success-cookie|success-json-token|success-escaped-secret|success-uri-secret|success-aws-signature|failure-hyphen|failure-credential|failure-session|failure-auth-secret|failure-escaped-secret|failure-cookie|failure-uri-secret|failure-gcp-signature|failure-azure-signature/,
+        );
+        expect(content(item)).toContain('[REDACTED]');
+      }
+    } finally {
+      if (previous === undefined) Reflect.deleteProperty(process.env, 'GITHUB_TOKEN');
+      else process.env.GITHUB_TOKEN = previous;
+    }
+  });
+
   test('output cap: an over-long reply is truncated to the configured max', async () => {
     const db = freshDb();
     const published: Published[] = [];
@@ -320,6 +698,57 @@ describe('omni runner — inbound one-shot routing', () => {
     expect(reply.length).toBe(10);
     expect(reply.endsWith('…')).toBe(true);
   });
+
+  test('UTF-8 multibyte replies are clamped with their JSON envelope to the durable 32KiB budget', async () => {
+    const db = freshDb();
+    const published: Published[] = [];
+    let spawns = 0;
+    const runner = createOmniRunner({
+      db,
+      config: rt({ inboundMaxReplyChars: 100_000 }),
+      publish: (subject, payload) => published.push({ subject, payload }),
+      spawnClaude: async () => {
+        spawns++;
+        return { stdout: '🧞'.repeat(20_000), exitCode: 0 };
+      },
+    });
+    runner.handleMessage(...mappedInbound('large multibyte output'));
+    await runner.whenIdle();
+    expect(spawns).toBe(1);
+    expect(published).toHaveLength(1);
+    expect(Buffer.byteLength(published[0].payload, 'utf8')).toBeLessThanOrEqual(32 * 1024);
+    expect(content(published[0]).endsWith('…')).toBe(true);
+    expect(listInbox(db)[0].handledAt).not.toBeNull();
+  });
+
+  test('a post-execution preparation failure recovers ambiguously without replaying the agent', async () => {
+    const db = freshDb();
+    const published: Published[] = [];
+    let spawns = 0;
+    let ids = 0;
+    const runner = createOmniRunner({
+      db,
+      config: rt(),
+      publish: (subject, payload) => published.push({ subject, payload }),
+      genCorrelationId: () => (++ids === 1 ? 'invalid id' : 'stable-recovery-id'),
+      spawnClaude: async () => {
+        spawns++;
+        return { stdout: 'workspace action completed', exitCode: 0 };
+      },
+    });
+    const inbound = mappedInbound('write once');
+    runner.handleMessage(...inbound);
+    await runner.whenIdle();
+    expect(spawns).toBe(1);
+    expect(published).toEqual([]);
+
+    runner.handleMessage(...inbound);
+    await runner.whenIdle();
+    expect(spawns).toBe(1);
+    expect(published).toHaveLength(1);
+    expect(content(published[0])).toContain('did not replay');
+    expect(listInbox(db)[0].handledAt).not.toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -333,12 +762,18 @@ describe('omni runner — inbound one-shot routing', () => {
 // ---------------------------------------------------------------------------
 const APPROVAL_CHAT = 'approval-chat'; // matches rt() above
 
+const approvalSummary = (marker: 'A' | 'B'): string =>
+  JSON.stringify({
+    version: 1,
+    kind: 'Bash',
+    commands: [{ executable: `summary-${marker.toLowerCase()}`, options: [], env: [], argumentCount: 0 }],
+  });
+
 /** Fake id-returning send: assigns each approval a stanza id derived from its
- *  input-summary marker (embedded in the formatted message), so correlation is
- *  order-independent. `summary-A` → `stanza-A`, `summary-B` → `stanza-B`. */
+ *  structural command marker, so correlation is order-independent. */
 const sendApproval: OmniSend = async ({ text }) => {
-  const marker = text.includes('summary-B') ? 'B' : 'A';
-  return { success: true, messageId: `stanza-${marker}` };
+  const marker = text.includes('summary-b') ? 'B' : 'A';
+  return { outcome: 'accepted', messageId: `stanza-${marker}` };
 };
 
 /** An inbound frame on the approval chat, as omni would publish it. */
@@ -359,10 +794,199 @@ const approvalRunner = (db: Database) =>
   createOmniRunner({ db, config: rt(), publish: () => {}, sendApproval, now: () => NOW });
 
 describe('omni runner — correlated approval identity + reactions', () => {
+  test('two runners atomically claim one approval announcement and never overwrite its stanza id', async () => {
+    const db = freshDb();
+    const id = enqueueApproval(db, {
+      repo: '/r',
+      tool: 'Bash',
+      inputSummary: approvalSummary('A'),
+      now: NOW - 1,
+    });
+    let sends = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const send: OmniSend = async () => {
+      sends++;
+      await gate;
+      return { outcome: 'accepted', messageId: 'only-stanza' };
+    };
+    const first = createOmniRunner({ db, config: rt(), publish: () => {}, sendApproval: send, now: () => NOW });
+    const second = createOmniRunner({ db, config: rt(), publish: () => {}, sendApproval: send, now: () => NOW });
+    first.tick();
+    second.tick();
+    release();
+    await Promise.all([first.whenIdle(), second.whenIdle()]);
+    expect(sends).toBe(1);
+    expect(getApproval(db, id)?.omniMessageId).toBe('only-stanza');
+  });
+
+  test('lease takeover before approval dispatch releases definite non-delivery for a retry', async () => {
+    const db = freshDb();
+    let clock = 100;
+    const epochA = acquireServiceLeaseEpoch(db, OMNI_SERVICE_LEASE_NAME, 'resident-a', clock, 10) as number;
+    const id = enqueueApproval(db, {
+      repo: '/r',
+      tool: 'Bash',
+      inputSummary: approvalSummary('A'),
+      now: clock - 1,
+    });
+    let tookOver = false;
+    let sendsA = 0;
+    let sendsB = 0;
+    let successor: ReturnType<typeof createOmniRunner> | undefined;
+    const nowA = () => {
+      const row = db.query('SELECT announce_phase AS phase FROM approvals WHERE id = ?').get(id) as {
+        phase: string | null;
+      };
+      if (!tookOver && row.phase === 'sending') {
+        tookOver = true;
+        clock = 111;
+        const epochB = acquireServiceLeaseEpoch(db, OMNI_SERVICE_LEASE_NAME, 'resident-b', clock, 1_000) as number;
+        successor = createOmniRunner({
+          db,
+          config: rt(),
+          publish: () => {},
+          claimOwner: { ownerId: 'resident-b', epoch: epochB },
+          now: () => clock,
+          sendApproval: async () => {
+            sendsB++;
+            return { outcome: 'accepted', messageId: 'retry-stanza' };
+          },
+        });
+        successor.tick();
+      }
+      return clock;
+    };
+    const first = createOmniRunner({
+      db,
+      config: rt(),
+      publish: () => {},
+      claimOwner: { ownerId: 'resident-a', epoch: epochA },
+      now: nowA,
+      sendApproval: async () => {
+        sendsA++;
+        return { outcome: 'accepted', messageId: 'must-not-send' };
+      },
+    });
+
+    first.tick();
+    await first.whenIdle();
+    await successor?.whenIdle();
+    expect(tookOver).toBe(true);
+    expect(sendsA).toBe(0);
+    expect(sendsB).toBe(0);
+    expect(
+      db.query('SELECT announce_claim AS claim, announce_phase AS phase FROM approvals WHERE id = ?').get(id),
+    ).toEqual({ claim: null, phase: null });
+
+    successor?.tick();
+    await successor?.whenIdle();
+    expect(sendsB).toBe(1);
+    expect(getApproval(db, id)?.omniMessageId).toBe('retry-stanza');
+  });
+
+  test('resolution during announcement attaches the stanza and immediately reconciles a terminal glyph', async () => {
+    const db = freshDb();
+    const id = enqueueApproval(db, {
+      repo: '/r',
+      tool: 'Bash',
+      inputSummary: approvalSummary('A'),
+      now: NOW - 1,
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const reactions: ReactionCall[] = [];
+    const runner = createOmniRunner({
+      db,
+      config: rt(),
+      publish: () => {},
+      now: () => NOW,
+      sendApproval: async () => {
+        await gate;
+        return { outcome: 'accepted', messageId: 'resolved-in-flight' };
+      },
+      setReaction: async ({ messageId, emoji }) => {
+        reactions.push({ messageId, emoji });
+        return { success: true };
+      },
+    });
+    runner.tick();
+    await Promise.resolve();
+    resolveApproval(db, id, 'approved', 'human', NOW);
+    release();
+    await runner.whenIdle();
+    expect(getApproval(db, id)?.omniMessageId).toBe('resolved-in-flight');
+    expect(reactions).toEqual([{ messageId: 'resolved-in-flight', emoji: CHECK }]);
+  });
+
+  test('never transmits a legacy raw Bash preview to the approval channel', async () => {
+    const db = freshDb();
+    const texts: string[] = [];
+    const runner = createOmniRunner({
+      db,
+      config: rt(),
+      publish: () => {},
+      sendApproval: async ({ text }) => {
+        texts.push(text);
+        return { outcome: 'accepted', messageId: 'stanza-safe' };
+      },
+      now: () => NOW,
+    });
+    enqueueApproval(db, {
+      repo: '/r',
+      tool: 'Bash',
+      inputSummary:
+        'curl -u user:password https://user:password@example.test/?X-Amz-Signature=signed-secret&sig=sas-secret',
+      now: NOW - 1,
+    });
+    runner.tick();
+    await runner.whenIdle();
+    expect(texts).toHaveLength(1);
+    for (const secret of ['password', 'signed-secret', 'sas-secret', 'https://']) {
+      expect(texts[0]).not.toContain(secret);
+    }
+    expect(texts[0]).toContain('legacyPreviewOmitted');
+  });
+
+  test('never transmits legacy non-Bash or unknown durable input summaries', async () => {
+    const db = freshDb();
+    const texts: string[] = [];
+    const runner = createOmniRunner({
+      db,
+      config: rt(),
+      publish: () => {},
+      sendApproval: async ({ text }) => {
+        texts.push(text);
+        return { outcome: 'accepted', messageId: `stanza-${texts.length}` };
+      },
+      now: () => NOW,
+    });
+    for (const tool of ['Write', 'Edit', 'NotebookEdit', 'mcp__legacy__unknown']) {
+      enqueueApproval(db, {
+        repo: '/r',
+        tool,
+        inputSummary: JSON.stringify({ content: 'LEGACY_DURABLE_SECRET', token: 'LEGACY_TOKEN_SECRET' }),
+        now: NOW - 1,
+      });
+    }
+    runner.tick();
+    await runner.whenIdle();
+    expect(texts).toHaveLength(4);
+    for (const text of texts) {
+      expect(text).toContain('legacyPreviewOmitted');
+      expect(text).not.toContain('LEGACY_DURABLE_SECRET');
+      expect(text).not.toContain('LEGACY_TOKEN_SECRET');
+    }
+  });
+
   test('announce stores the REAL stanza id returned by the send (not a genId ref)', async () => {
     const db = freshDb();
     const runner = approvalRunner(db);
-    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('A'), now: NOW - 2000 });
     runner.tick();
     await runner.whenIdle();
     expect(getApproval(db, a)?.omniMessageId).toBe('stanza-A');
@@ -371,8 +995,8 @@ describe('omni runner — correlated approval identity + reactions', () => {
   test('reaction resolves the exact approval by stored stanza id, not the oldest', async () => {
     const db = freshDb();
     const runner = approvalRunner(db);
-    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
-    const b = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-B', now: NOW - 1000 });
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('A'), now: NOW - 2000 });
+    const b = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('B'), now: NOW - 1000 });
     runner.tick();
     await runner.whenIdle();
     // Both rows tagged with their own real stanza ids.
@@ -390,8 +1014,8 @@ describe('omni runner — correlated approval identity + reactions', () => {
   test('dual-emit bare-emoji echo does not double-resolve a second approval', async () => {
     const db = freshDb();
     const runner = approvalRunner(db);
-    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
-    const b = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-B', now: NOW - 1000 });
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('A'), now: NOW - 2000 });
+    const b = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('B'), now: NOW - 1000 });
     runner.tick();
     await runner.whenIdle();
 
@@ -411,8 +1035,8 @@ describe('omni runner — correlated approval identity + reactions', () => {
   test('bare text reply still resolves the oldest pending approval (documented fallback)', async () => {
     const db = freshDb();
     const runner = approvalRunner(db);
-    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
-    const b = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-B', now: NOW - 1000 });
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('A'), now: NOW - 2000 });
+    const b = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('B'), now: NOW - 1000 });
     runner.tick();
     await runner.whenIdle();
 
@@ -422,10 +1046,76 @@ describe('omni runner — correlated approval identity + reactions', () => {
     expect(getApproval(db, b)?.status).toBe('pending');
   });
 
+  test('an exact bare-text redelivery is consumed once and cannot approve the next request', async () => {
+    const db = freshDb();
+    const runner = approvalRunner(db);
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('A'), now: NOW - 2 });
+    const b = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('B'), now: NOW - 1 });
+    const inbound = approvalInbound({ content: 'y' });
+    runner.handleMessage(...inbound);
+    runner.handleMessage(...inbound);
+    expect(getApproval(db, a)?.status).toBe('approved');
+    expect(getApproval(db, b)?.status).toBe('pending');
+    expect(listInbox(db)).toHaveLength(1);
+    expect(listInbox(db)[0].handledAt).not.toBeNull();
+  });
+
+  test('a legacy crash after resolving bare y is recovered as ambiguity, not applied to the next approval', async () => {
+    const db = freshDb();
+    const runner = approvalRunner(db);
+    const first = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('A'), now: NOW - 2 });
+    const second = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('B'), now: NOW - 1 });
+    // Exact old split-transaction kill point: approval changed, claimed inbound
+    // still unhandled in the legacy `processing` phase.
+    resolveApproval(db, first, 'approved', 'human', NOW - 1);
+    db.query(
+      `INSERT INTO inbound_messages
+         (id, instance, chat, sender, body, received_at, handled_at, event_key,
+          processing_claim, processing_claim_owner, processing_claim_epoch, processing_phase)
+       VALUES ('legacy-bare-y', ?, ?, 'human', 'y', ?, NULL, 'legacy-bare-y-event',
+               'old-claim', 'old-resident', 0, 'processing')`,
+    ).run(INSTANCE, APPROVAL_CHAT, NOW - 1);
+
+    runner.tick();
+    await runner.whenIdle();
+    expect(getApproval(db, first)?.status).toBe('approved');
+    expect(getApproval(db, second)?.status).toBe('pending');
+    expect(listInbox(db)[0].handledAt).not.toBeNull();
+  });
+
+  test('a post-dispatch no-id approval result is durably ambiguous and never resent', async () => {
+    const db = freshDb();
+    let sends = 0;
+    const runner = createOmniRunner({
+      db,
+      config: rt(),
+      publish: () => {},
+      now: () => NOW,
+      sendApproval: async () => {
+        sends++;
+        return { outcome: 'ambiguous', error: 'HTTP 503 after dispatch' };
+      },
+    });
+    const id = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('A'), now: NOW - 1 });
+    runner.tick();
+    await runner.whenIdle();
+    runner.tick();
+    await runner.whenIdle();
+    expect(sends).toBe(1);
+    expect(getApproval(db, id)?.omniMessageId).toBeNull();
+    expect(
+      (
+        db.query('SELECT announce_phase AS phase FROM approvals WHERE id = ?').get(id) as {
+          phase: string | null;
+        }
+      ).phase,
+    ).toBe('ambiguous');
+  });
+
   test('a reaction from another instance is ignored (PR #2507 instance-scope guard)', async () => {
     const db = freshDb();
     const runner = approvalRunner(db);
-    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('A'), now: NOW - 2000 });
     runner.tick();
     await runner.whenIdle();
 
@@ -479,7 +1169,7 @@ describe('omni runner — ⏳→✅/❌ status-reaction lifecycle', () => {
     const db = freshDb();
     const reactions: ReactionCall[] = [];
     const runner = statusRunner(db, reactions, { now: NOW });
-    enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
+    enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('A'), now: NOW - 2000 });
     runner.tick();
     await runner.whenIdle();
     expect(reactions).toEqual([{ messageId: 'stanza-A', emoji: HOURGLASS }]);
@@ -489,7 +1179,7 @@ describe('omni runner — ⏳→✅/❌ status-reaction lifecycle', () => {
     const db = freshDb();
     const reactions: ReactionCall[] = [];
     const runner = statusRunner(db, reactions, { now: NOW });
-    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('A'), now: NOW - 2000 });
     runner.tick();
     await runner.whenIdle();
 
@@ -509,7 +1199,7 @@ describe('omni runner — ⏳→✅/❌ status-reaction lifecycle', () => {
     const db = freshDb();
     const reactions: ReactionCall[] = [];
     const runner = statusRunner(db, reactions, { now: NOW });
-    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('A'), now: NOW - 2000 });
     runner.tick();
     await runner.whenIdle();
 
@@ -527,7 +1217,7 @@ describe('omni runner — ⏳→✅/❌ status-reaction lifecycle', () => {
     const reactions: ReactionCall[] = [];
     const clock = { now: NOW };
     const runner = statusRunner(db, reactions, clock);
-    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('A'), now: NOW - 2000 });
     runner.tick(); // announce + ⏳
     await runner.whenIdle();
 
@@ -544,8 +1234,8 @@ describe('omni runner — ⏳→✅/❌ status-reaction lifecycle', () => {
     const db = freshDb();
     const reactions: ReactionCall[] = [];
     const runner = statusRunner(db, reactions, { now: NOW });
-    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
-    const b = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-B', now: NOW - 1000 });
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('A'), now: NOW - 2000 });
+    const b = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('B'), now: NOW - 1000 });
     runner.tick();
     await runner.whenIdle();
 
@@ -566,7 +1256,7 @@ describe('omni runner — ⏳→✅/❌ status-reaction lifecycle', () => {
     const db = freshDb();
     const reactions: ReactionCall[] = [];
     const runner = statusRunner(db, reactions, { now: NOW });
-    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('A'), now: NOW - 2000 });
     runner.tick();
     await runner.whenIdle();
     expect(getApproval(db, a)?.lastStatusGlyph).toBe(HOURGLASS); // recorded ⏳
@@ -597,7 +1287,7 @@ describe('omni runner — status-ack reconciliation (hook-fork-expiry race)', ()
     const db = freshDb();
     const reactions: ReactionCall[] = [];
     const runner = statusRunner(db, reactions, { now: NOW });
-    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('A'), now: NOW - 2000 });
     runner.tick(); // announce + ⏳
     await runner.whenIdle();
     expect(getApproval(db, a)?.lastStatusGlyph).toBe(HOURGLASS);
@@ -618,7 +1308,7 @@ describe('omni runner — status-ack reconciliation (hook-fork-expiry race)', ()
     const db = freshDb();
     const reactions: ReactionCall[] = [];
     const runner = statusRunner(db, reactions, { now: NOW });
-    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('A'), now: NOW - 2000 });
     runner.tick();
     await runner.whenIdle();
     hookForkExpire(db, a);
@@ -652,7 +1342,7 @@ describe('omni runner — status-ack reconciliation (hook-fork-expiry race)', ()
       },
       now: () => NOW,
     });
-    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('A'), now: NOW - 2000 });
     runner.tick(); // announce ⏳ (call 1, ok → recorded)
     await runner.whenIdle();
 
@@ -758,11 +1448,23 @@ describe('extractStreamJsonReply — stream-json parsing', () => {
 });
 
 describe('Codex executor JSONL and resume', () => {
+  const successJsonl = (text: string, threadId = 'thread-1'): string =>
+    [
+      JSON.stringify({ type: 'thread.started', thread_id: threadId }),
+      JSON.stringify({ type: 'turn.started' }),
+      JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text } }),
+      JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 1 } }),
+    ].join('\n');
+
   test('extracts the thread id and final agent message', () => {
     const jsonl = [
       JSON.stringify({ type: 'thread.started', thread_id: 'thread-1' }),
+      JSON.stringify({ type: 'turn.started' }),
+      JSON.stringify({ type: 'item.completed', item: { type: 'reasoning', text: 'thinking' } }),
       JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'first' } }),
+      JSON.stringify({ type: 'item.completed', item: { type: 'command_execution', command: 'pwd' } }),
       JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'final' } }),
+      JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 3, output_tokens: 2 } }),
     ].join('\n');
     expect(extractCodexJsonlReply(jsonl)).toEqual({
       stdout: 'final',
@@ -772,12 +1474,85 @@ describe('Codex executor JSONL and resume', () => {
     });
   });
 
-  test('builds a new turn and a resumed turn with workspace-write', () => {
-    expect(buildCodexArgs({ message: 'hello' })).toEqual(['exec', '--json', '--sandbox', 'workspace-write', 'hello']);
-    const resumed = buildCodexArgs({ message: 'again', threadId: 'thread-1' });
-    expect(resumed.slice(0, 3)).toEqual(['exec', 'resume', '--json']);
-    expect(resumed).toContain('thread-1');
-    expect(resumed[resumed.length - 1]).toBe('again');
+  test('terminates options before every option-like prompt on fresh and resumed turns', () => {
+    for (const message of ['--version', '--help', '-m']) {
+      const fresh = buildCodexArgs({ message });
+      expect(fresh).toEqual(['exec', '--json', '--sandbox', 'workspace-write', '--', message]);
+
+      const resumed = buildCodexArgs({ message, threadId: 'thread-1' });
+      expect(resumed.slice(0, 3)).toEqual(['exec', 'resume', '--json']);
+      expect(resumed).toContain('thread-1');
+      expect(resumed.slice(-3)).toEqual(['--', 'thread-1', message]);
+    }
+  });
+
+  test('rejects option-like, control-character, and oversized persisted thread ids', () => {
+    for (const unsafe of ['--last', '-m', 'thread\nnext', 'x'.repeat(257)]) {
+      expect(isSafeCodexThreadId(unsafe)).toBe(false);
+      expect(() => buildCodexArgs({ message: 'hello', threadId: unsafe })).toThrow('unsafe persisted Codex thread id');
+    }
+    expect(isSafeCodexThreadId('0190abcd-1234-7abc-8def-0123456789ab')).toBe(true);
+    const emitted = extractCodexJsonlReply(
+      [
+        JSON.stringify({ type: 'thread.started', thread_id: '--dangerously-bypass-approvals-and-sandbox' }),
+        JSON.stringify({ type: 'turn.started' }),
+      ].join('\n'),
+    );
+    expect(emitted.isError).toBe(true);
+    expect(emitted.stdout).toContain('unsafe thread_id');
+  });
+
+  test('rejects blank, unrelated, malformed, unknown, and valid-but-incomplete JSONL', () => {
+    const invalidStreams = [
+      '',
+      '  \n',
+      JSON.stringify({ status: 'ok' }),
+      'null',
+      '{"type":"item.completed"',
+      JSON.stringify({ type: 'future.event', payload: {} }),
+      JSON.stringify({ type: 'thread.started', thread_id: 'thread-only' }),
+      [
+        JSON.stringify({ type: 'thread.started', thread_id: 'thread-empty' }),
+        JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: '   ' } }),
+        JSON.stringify({ type: 'turn.completed' }),
+      ].join('\n'),
+    ];
+    for (const jsonl of invalidStreams) {
+      const result = extractCodexJsonlReply(jsonl);
+      expect(result.isError).toBe(true);
+      expect(result.stdout.length).toBeGreaterThan(0);
+      expect(result.stdout.toLowerCase()).toContain('retry');
+    }
+  });
+
+  test('requires the reply before turn.completed and rejects every non-blank event or fragment after it', () => {
+    const completionBeforeReply = [
+      JSON.stringify({ type: 'thread.started', thread_id: 'thread-1' }),
+      JSON.stringify({ type: 'turn.started' }),
+      JSON.stringify({ type: 'turn.completed' }),
+      JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'too late' } }),
+    ].join('\n');
+    const eventAfterCompletion = `${successJsonl('done')}\n${JSON.stringify({ type: 'turn.started' })}`;
+    const fragmentAfterCompletion = `${successJsonl('done')}\ntrailing process noise`;
+
+    const early = extractCodexJsonlReply(completionBeforeReply);
+    expect(early.isError).toBe(true);
+    expect(early.stdout).toContain('before a non-empty agent reply');
+    for (const jsonl of [eventAfterCompletion, fragmentAfterCompletion]) {
+      const result = extractCodexJsonlReply(jsonl);
+      expect(result.isError).toBe(true);
+      expect(result.stdout).toContain('after turn.completed');
+    }
+  });
+
+  test('bounds oversized JSONL lines instead of scanning or acknowledging them', () => {
+    const oversized = JSON.stringify({
+      type: 'item.completed',
+      item: { type: 'agent_message', text: 'x'.repeat(300_000) },
+    });
+    const result = extractCodexJsonlReply(oversized);
+    expect(result.isError).toBe(true);
+    expect(result.stdout).toContain('exceeded');
   });
 
   test('runs codex exec resume and parses its final response', async () => {
@@ -793,18 +1568,901 @@ describe('Codex executor JSONL and resume', () => {
       async (args) => {
         calls.push(args);
         return {
-          stdout: `${JSON.stringify({ type: 'thread.started', thread_id: 'thread-1' })}\n${JSON.stringify({
-            type: 'item.completed',
-            item: { type: 'agent_message', text: 'resumed' },
-          })}`,
+          stdout: successJsonl('resumed'),
           stderr: '',
           exitCode: 0,
         };
       },
     );
     expect(calls[0].slice(0, 3)).toEqual(['exec', 'resume', '--json']);
+    expect(calls[0].slice(-3)).toEqual(['--', 'thread-1', 'again']);
     expect(result.stdout).toBe('resumed');
     expect(result.threadId).toBe('thread-1');
+  });
+
+  test('a missing persisted thread retries fresh exactly once and returns an atomic replacement', async () => {
+    const calls: string[][] = [];
+    const result = await runCodexSession(
+      {
+        provider: 'codex',
+        message: '--help',
+        cwd: '/repo',
+        signal: new AbortController().signal,
+        threadId: 'stale-thread',
+      },
+      async (args) => {
+        calls.push(args);
+        if (args.includes('resume')) {
+          return {
+            stdout: JSON.stringify({ type: 'error', message: 'Thread not found: stale-thread' }),
+            stderr: '',
+            exitCode: 1,
+          };
+        }
+        return { stdout: successJsonl('recovered', 'fresh-thread'), stderr: '', exitCode: 0 };
+      },
+    );
+
+    expect(calls.length).toBe(2);
+    expect(calls[0].slice(-3)).toEqual(['--', 'stale-thread', '--help']);
+    expect(calls[1]).not.toContain('resume');
+    expect(calls[1].slice(-2)).toEqual(['--', '--help']);
+    expect(result).toMatchObject({
+      stdout: 'recovered',
+      exitCode: 0,
+      isError: false,
+      threadId: 'fresh-thread',
+      replacesThreadId: 'stale-thread',
+    });
+  });
+
+  test('unrelated Codex errors never replay a workspace-writing prompt or mutate session state', async () => {
+    const diagnostics = [
+      'Thread execution failed: unknown model alias',
+      'Unknown tool: mcp__missing',
+      'Authentication failed for current account',
+      'Quota exceeded for this workspace',
+      'Workspace not found: project-alpha',
+    ];
+    for (const diagnostic of diagnostics) {
+      let calls = 0;
+      const result = await runCodexSession(
+        {
+          provider: 'codex',
+          message: 'mutating prompt',
+          cwd: '/repo',
+          signal: new AbortController().signal,
+          threadId: 'live-thread',
+        },
+        async () => {
+          calls++;
+          return { stdout: JSON.stringify({ type: 'error', message: diagnostic }), stderr: '', exitCode: 1 };
+        },
+      );
+      expect(calls).toBe(1);
+      expect(result.replacesThreadId).toBeUndefined();
+      expect(result.clearThreadId).toBeUndefined();
+    }
+  });
+
+  test('structured missing-thread code permits exactly one fresh retry', async () => {
+    let calls = 0;
+    const result = await runCodexSession(
+      {
+        provider: 'codex',
+        message: 'retry',
+        cwd: '/repo',
+        signal: new AbortController().signal,
+        threadId: 'stale-thread',
+      },
+      async (args) => {
+        calls++;
+        if (args.includes('resume')) {
+          return {
+            stdout: JSON.stringify({ type: 'error', error: { code: 'thread_not_found', message: 'gone' } }),
+            stderr: '',
+            exitCode: 1,
+          };
+        }
+        return { stdout: successJsonl('recovered', 'fresh-thread'), stderr: '', exitCode: 0 };
+      },
+    );
+    expect(calls).toBe(2);
+    expect(result).toMatchObject({ threadId: 'fresh-thread', replacesThreadId: 'stale-thread' });
+  });
+
+  test('never treats a truncated agent reply containing "thread not found" as a recovery signal', async () => {
+    const db = freshDb();
+    const published: Published[] = [];
+    upsertAgentSession(db, 'codex', INSTANCE, ROUTE_CHAT, 'live-thread', 1);
+    let calls = 0;
+    const runner = createOmniRunner({
+      db,
+      config: rt({ routes: [{ instance: INSTANCE, chat: ROUTE_CHAT, repo: ROUTE_REPO, agent: 'codex' }] }),
+      publish: (subject, payload) => published.push({ subject, payload }),
+      spawnAgent: (opts) =>
+        runCodexSession(opts, async () => {
+          calls++;
+          return {
+            stdout: [
+              JSON.stringify({ type: 'thread.started', thread_id: 'live-thread' }),
+              JSON.stringify({ type: 'turn.started' }),
+              JSON.stringify({
+                type: 'item.completed',
+                item: { type: 'agent_message', text: 'The documentation says thread not found' },
+              }),
+            ].join('\n'),
+            stderr: '',
+            exitCode: 0,
+          };
+        }),
+    });
+
+    runner.handleMessage(...mappedInbound('question'));
+    await runner.whenIdle();
+
+    expect(calls).toBe(1);
+    expect(getAgentSession(db, 'codex', INSTANCE, ROUTE_CHAT)).toBe('live-thread');
+    expect(content(published[0])).toContain('turn.completed was not emitted');
+  });
+
+  test('a failed fresh recovery is actionable, clears the known-dead id, and never loops', async () => {
+    const calls: string[][] = [];
+    const result = await runCodexSession(
+      {
+        provider: 'codex',
+        message: 'retry me',
+        cwd: '/repo',
+        signal: new AbortController().signal,
+        threadId: 'stale-thread',
+      },
+      async (args) => {
+        calls.push(args);
+        if (args.includes('resume')) {
+          return { stdout: '', stderr: 'Session expired', exitCode: 1 };
+        }
+        return { stdout: '{"type":"turn.started"', stderr: '', exitCode: 0 };
+      },
+    );
+
+    expect(calls.length).toBe(2);
+    expect(result.isError).toBe(true);
+    expect(result.clearThreadId).toBe('stale-thread');
+    expect(result.threadId).toBeUndefined();
+    expect(result.stdout).toContain('one-time fresh retry failed');
+    expect(result.stdout).toContain('send the message again');
+  });
+
+  test('runner replaces a stale id only after valid recovery, then clears it after a failed recovery', async () => {
+    const db = freshDb();
+    const published: Published[] = [];
+    upsertAgentSession(db, 'codex', INSTANCE, ROUTE_CHAT, 'stale-thread', 1);
+    let phase: 'recover-success' | 'resume-missing' | 'fresh-failure' | 'final-fresh' | 'retry-fresh' =
+      'recover-success';
+    const calls: string[][] = [];
+    const runner = createOmniRunner({
+      db,
+      config: rt({ routes: [{ instance: INSTANCE, chat: ROUTE_CHAT, repo: ROUTE_REPO, agent: 'codex' }] }),
+      publish: (subject, payload) => published.push({ subject, payload }),
+      spawnAgent: (opts) =>
+        runCodexSession(opts, async (args) => {
+          calls.push(args);
+          if (phase === 'recover-success') {
+            expect(getAgentSession(db, 'codex', INSTANCE, ROUTE_CHAT)).toBe('stale-thread');
+            phase = 'resume-missing';
+            return { stdout: '', stderr: 'Conversation not found', exitCode: 1 };
+          }
+          if (phase === 'resume-missing') {
+            expect(getAgentSession(db, 'codex', INSTANCE, ROUTE_CHAT)).toBe('stale-thread');
+            phase = 'fresh-failure';
+            return { stdout: successJsonl('first recovered reply', 'fresh-thread'), stderr: '', exitCode: 0 };
+          }
+          if (phase === 'fresh-failure') {
+            phase = 'final-fresh';
+            return { stdout: '', stderr: 'Thread not found', exitCode: 1 };
+          }
+          if (phase === 'final-fresh') {
+            phase = 'retry-fresh';
+            return { stdout: '{"type":"turn.started"', stderr: '', exitCode: 0 };
+          }
+          return { stdout: successJsonl('retry succeeded', 'retry-thread'), stderr: '', exitCode: 0 };
+        }),
+    });
+
+    runner.handleMessage(...mappedInbound('first'));
+    await runner.whenIdle();
+    expect(getAgentSession(db, 'codex', INSTANCE, ROUTE_CHAT)).toBe('fresh-thread');
+    expect(content(published[0])).toBe('first recovered reply');
+
+    runner.handleMessage(...mappedInbound('second'));
+    await runner.whenIdle();
+    expect(calls.length).toBe(4);
+    expect(getAgentSession(db, 'codex', INSTANCE, ROUTE_CHAT)).toBeUndefined();
+    expect(content(published[1])).toContain('send the message again');
+
+    runner.handleMessage(...mappedInbound('third'));
+    await runner.whenIdle();
+    expect(calls.length).toBe(5);
+    expect(calls[4]).not.toContain('resume');
+    expect(getAgentSession(db, 'codex', INSTANCE, ROUTE_CHAT)).toBe('retry-thread');
+    expect(content(published[2])).toBe('retry succeeded');
+  });
+});
+
+describe('Codex host process boundaries', () => {
+  test('mapped-agent environment excludes Omni and unrelated credentials', () => {
+    const env = buildMappedAgentEnv({
+      HOME: '/home/test',
+      PATH: '/bin',
+      LANG: 'C',
+      OMNI_API_KEY: 'omni-secret',
+      OMNI_NATS_URL: 'nats://secret',
+      GITHUB_TOKEN: 'github-secret',
+      ANTHROPIC_API_KEY: 'provider-secret',
+      AWS_SECRET_ACCESS_KEY: 'aws-secret',
+    });
+    expect(env).toEqual({ HOME: '/home/test', PATH: '/bin', LANG: 'C' });
+  });
+
+  test('outbound redaction covers success/failure credential shapes and known ambient values', () => {
+    const text =
+      'GITHUB_TOKEN=ambient-secret github_pat_AAAAAAAAAAAA Bearer abc.def.ghi https://user:password@example.test';
+    const redacted = redactOmniOutbound(text, { GITHUB_TOKEN: 'ambient-secret' });
+    for (const secret of ['ambient-secret', 'github_pat_AAAAAAAAAAAA', 'abc.def.ghi', 'password']) {
+      expect(redacted).not.toContain(secret);
+    }
+    expect(redacted).toContain('[REDACTED]');
+  });
+
+  test('outbound redaction covers auth headers, cookies, separator labels, and quoted JSON credential keys', () => {
+    const samples = [
+      'Authorization: Basic dXNlcjpzZWNyZXQ=',
+      'Authorization: Token alternate-token-secret',
+      'Authorization=Negotiate negotiate-secret',
+      'Proxy-Authorization: Digest username="u", response="digest-secret"',
+      'Cookie: sid=cookie-secret; theme=dark',
+      'Set-Cookie: session=cookie-secret; HttpOnly',
+      'api-key = hyphen-secret',
+      'ACCESS_KEY=underscore-secret',
+      'CREDENTIAL: credential-secret',
+      'SESSION=session-secret',
+      '{"token":"json-token-secret","credential":"json-credential-secret","session":"json-session-secret"}',
+      'postgresql://dbuser:postgres-secret@db.example/app',
+      'redis://cache:redis-secret@cache.example/0',
+      'redis://:redis-password-only@cache.example/0',
+      'mysql://root:mysql-secret@mysql.example/app',
+    ];
+    const redacted = redactOmniOutbound(samples.join('\n'), {});
+    for (const secret of [
+      'dXNlcjpzZWNyZXQ=',
+      'alternate-token-secret',
+      'negotiate-secret',
+      'digest-secret',
+      'cookie-secret',
+      'hyphen-secret',
+      'underscore-secret',
+      'credential-secret',
+      'session-secret',
+      'json-token-secret',
+      'json-credential-secret',
+      'json-session-secret',
+      'postgres-secret',
+      'redis-secret',
+      'redis-password-only',
+      'mysql-secret',
+    ]) {
+      expect(redacted).not.toContain(secret);
+    }
+    expect(redacted.match(/\[REDACTED\]/g)?.length).toBeGreaterThanOrEqual(samples.length);
+  });
+
+  test('outbound redaction covers escaped auth JSON and AWS, GCP, and Azure signed URLs', () => {
+    const samples = [
+      String.raw`{\"Authorization\":\"Bearer ESCAPED_AUTH_SECRET\"}`,
+      String.raw`{\"Proxy-Authorization\":\"Basic ESCAPED_PROXY_SECRET\"}`,
+      'https://s3.example/object?X-Amz-Credential=AWS_CREDENTIAL_SECRET&X-Amz-Signature=AWS_SIGNED_SECRET',
+      'https://storage.example/object?X-Goog-Credential=GCP_CREDENTIAL_SECRET&X-Goog-Signature=GCP_SIGNED_SECRET',
+      'https://blob.example/object?sv=2024-01-01&sig=AZURE_SAS_SECRET',
+    ];
+    const redacted = redactOmniOutbound(samples.join('\n'), {});
+    for (const secret of [
+      'ESCAPED_AUTH_SECRET',
+      'ESCAPED_PROXY_SECRET',
+      'AWS_CREDENTIAL_SECRET',
+      'AWS_SIGNED_SECRET',
+      'GCP_CREDENTIAL_SECRET',
+      'GCP_SIGNED_SECRET',
+      'AZURE_SAS_SECRET',
+    ]) {
+      expect(redacted).not.toContain(secret);
+    }
+  });
+
+  test('one config-seeded boundary redacts API keys and credential NATS URLs from outbound text and logs', async () => {
+    const db = freshDb();
+    const published: Published[] = [];
+    const logs: string[] = [];
+    const apiKey = 'CONFIG_ONLY_API_KEY_SENTINEL';
+    const natsUrl = 'nats://nats-user:nats-password-sentinel@nats.example:4222';
+    const runner = createOmniRunner({
+      db,
+      config: rt({ apiKey, natsUrl }),
+      publish: (subject, payload) => published.push({ subject, payload }),
+      flush: async () => {
+        throw new Error(`flush failed for ${natsUrl} with ${apiKey}`);
+      },
+      log: (line) => logs.push(line),
+      spawnClaude: async () => ({ stdout: `reply leaked ${apiKey}`, exitCode: 0 }),
+    });
+    runner.handleMessage(...mappedInbound('redact config'));
+    await runner.whenIdle();
+    expect(published).toHaveLength(1);
+    expect(content(published[0])).not.toContain(apiKey);
+    expect(content(published[0])).toContain('[REDACTED]');
+    expect(logs.join('\n')).not.toContain('nats-password-sentinel');
+    expect(logs.join('\n')).not.toContain('nats-user');
+    expect(logs.join('\n')).not.toContain(apiKey);
+    expect(logs.join('\n')).toContain('[REDACTED]');
+  });
+
+  test('redacts the full bounded diagnostic before tail selection', async () => {
+    const db = freshDb();
+    const published: Published[] = [];
+    const secret = 'tail-cut-opaque-secret';
+    const runner = createOmniRunner({
+      db,
+      config: rt(),
+      publish: (subject, payload) => published.push({ subject, payload }),
+      spawnClaude: async () => ({
+        stdout: '',
+        stderr: `Authorization: Token ${secret}${' '.repeat(700)}\nfinal cause`,
+        exitCode: 9,
+      }),
+    });
+    runner.handleMessage(...mappedInbound('fail safely'));
+    await runner.whenIdle();
+    expect(content(published[0])).not.toContain(secret);
+    expect(content(published[0])).toContain('[REDACTED]');
+  });
+
+  test('TERM-resistant mapped child is escalated to KILL within the bounded grace', async () => {
+    if (process.platform === 'win32') return;
+    const fixture = mkdtempSync(join(tmpdir(), 'genie-omni-supervision-'));
+    const ready = join(fixture, 'ready');
+    try {
+      const controller = new AbortController();
+      const proc = Bun.spawn(
+        [
+          process.execPath,
+          '-e',
+          `require('node:fs').writeFileSync(${JSON.stringify(ready)}, 'ready'); process.on('SIGTERM', () => {}); setInterval(() => {}, 10000);`,
+        ],
+        { stdin: 'ignore', stdout: 'ignore', stderr: 'ignore' },
+      );
+      const running = superviseChild(proc, controller.signal, 50).exited;
+      for (let attempt = 0; attempt < 100 && !existsSync(ready); attempt++) await Bun.sleep(10);
+      expect(existsSync(ready)).toBe(true);
+      const started = performance.now();
+      controller.abort();
+      await running;
+      expect(performance.now() - started).toBeLessThan(500);
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  test('process-group supervision kills a TERM-resistant mapped grandchild', async () => {
+    if (process.platform === 'win32') return;
+    const fixture = mkdtempSync(join(tmpdir(), 'genie-omni-tree-supervision-'));
+    const pidFile = join(fixture, 'grandchild');
+    let grandchildPid = 0;
+    try {
+      const script = [
+        "const { spawn } = require('node:child_process');",
+        `const child = spawn(process.execPath, ['-e', \"process.on('SIGTERM', () => {}); setInterval(() => {}, 10000)\"], { stdio: 'ignore' });`,
+        `require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(child.pid));`,
+        'process.exit(0);',
+      ].join('\n');
+      const proc = Bun.spawn([process.execPath, '-e', script], {
+        stdin: 'ignore',
+        stdout: 'ignore',
+        stderr: 'ignore',
+        detached: true,
+      });
+      const controller = new AbortController();
+      const running = superviseChild(proc, controller.signal, 50, true).exited;
+      for (let attempt = 0; attempt < 100 && !existsSync(pidFile); attempt++) await Bun.sleep(10);
+      grandchildPid = Number(await Bun.file(pidFile).text());
+      await running;
+      let alive = true;
+      for (let attempt = 0; attempt < 100; attempt++) {
+        try {
+          process.kill(grandchildPid, 0);
+        } catch {
+          alive = false;
+          break;
+        }
+        await Bun.sleep(10);
+      }
+      expect(alive).toBe(false);
+    } finally {
+      if (grandchildPid > 0) {
+        try {
+          process.kill(grandchildPid, 'SIGKILL');
+        } catch {
+          // already gone
+        }
+      }
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  test('stdout overflow cancels the stream immediately without waiting for EOF', async () => {
+    let cancelled = false;
+    let overflowed = false;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('123456789'));
+        // Deliberately never close: bounded reading must cancel after byte 9.
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const started = performance.now();
+    const result = await readBoundedText(stream, 8, () => {
+      overflowed = true;
+    });
+    expect(result).toEqual({ text: '12345678', truncated: true });
+    expect(overflowed).toBe(true);
+    expect(cancelled).toBe(true);
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
+  test('uses an absolute host executable and rejects nested-route and common-repo decoys', () => {
+    const route = mkdtempSync(join(tmpdir(), 'genie-codex-route-'));
+    try {
+      const trustedNode = Bun.which('node');
+      if (!trustedNode) throw new Error('Node is required');
+      const repo = join(route, 'repo');
+      const nested = join(repo, 'packages', 'app');
+      mkdirSync(join(repo, '.git'), { recursive: true });
+      mkdirSync(nested, { recursive: true });
+      expect(resolveTrustedHostExecutable('codex', nested, () => trustedNode)).toBe(realpathSync(trustedNode));
+
+      const decoy = join(repo, 'bin', process.platform === 'win32' ? 'codex.exe' : 'codex');
+      mkdirSync(join(repo, 'bin'), { recursive: true });
+      writeFileSync(decoy, 'decoy');
+      chmodSync(decoy, 0o755);
+      expect(() => resolveTrustedHostExecutable('codex', nested, () => decoy)).toThrow('repository-local');
+
+      const main = join(route, 'main');
+      const linked = join(route, 'linked');
+      const linkedGitDir = join(main, '.git', 'worktrees', 'linked');
+      const linkedNested = join(linked, 'src', 'nested');
+      mkdirSync(linkedGitDir, { recursive: true });
+      mkdirSync(linkedNested, { recursive: true });
+      writeFileSync(join(linked, '.git'), `gitdir: ${linkedGitDir}\n`);
+      writeFileSync(join(linkedGitDir, 'commondir'), '../..\n');
+      const commonDecoy = join(main, 'bin', process.platform === 'win32' ? 'claude.exe' : 'claude');
+      mkdirSync(join(main, 'bin'), { recursive: true });
+      writeFileSync(commonDecoy, 'common repo decoy');
+      chmodSync(commonDecoy, 0o755);
+      expect(() => resolveTrustedHostExecutable('claude', linkedNested, () => commonDecoy)).toThrow('repository-local');
+    } finally {
+      rmSync(route, { recursive: true, force: true });
+    }
+  });
+
+  test('fails closed when repository trust metadata points at a missing git directory', () => {
+    const route = mkdtempSync(join(tmpdir(), 'genie-broken-git-route-'));
+    try {
+      const trustedNode = Bun.which('node');
+      if (!trustedNode) throw new Error('Node is required');
+      const nested = join(route, 'src', 'nested');
+      mkdirSync(nested, { recursive: true });
+      writeFileSync(join(route, '.git'), `gitdir: ${join(route, 'missing-git-dir')}\n`);
+      expect(() => resolveTrustedHostExecutable('codex', nested, () => trustedNode)).toThrow();
+    } finally {
+      rmSync(route, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('Omni serve shutdown ownership', () => {
+  test('serve startup redacts credential-bearing NATS URLs before logging', async () => {
+    const db = freshDb();
+    const logs: string[] = [];
+    let stopped = false;
+    let wake: (() => void) | undefined;
+    const subscription: NatsSubscription = {
+      unsubscribe() {
+        stopped = true;
+        wake?.();
+      },
+      async *[Symbol.asyncIterator]() {
+        while (!stopped) {
+          await new Promise<void>((resolve) => {
+            wake = resolve;
+          });
+        }
+      },
+    };
+    const nats: NatsLike = {
+      subscribe: () => subscription,
+      publish: () => {},
+      flush: async () => {},
+      close: async () => {},
+    };
+    const abort = new AbortController();
+    await runOmniServe({
+      db,
+      config: rt({ natsUrl: 'nats://log-user:log-password@nats.example:4222' }),
+      natsFactory: async () => nats,
+      signal: abort.signal,
+      log: (line) => logs.push(line),
+      onReady: () => abort.abort(),
+    });
+    expect(logs.join('\n')).toContain('nats://[REDACTED]@nats.example:4222');
+    expect(logs.join('\n')).not.toMatch(/log-user|log-password/);
+  });
+
+  test('machine-wide serve lease rejects a second resident before it opens NATS', async () => {
+    const db = freshDb();
+    let factoryCalls = 0;
+    let stopped = false;
+    let wake: (() => void) | undefined;
+    const subscription: NatsSubscription = {
+      unsubscribe() {
+        stopped = true;
+        wake?.();
+      },
+      async *[Symbol.asyncIterator]() {
+        while (!stopped) {
+          await new Promise<void>((resolve) => {
+            wake = resolve;
+          });
+        }
+      },
+    };
+    const nats: NatsLike = {
+      subscribe: () => subscription,
+      publish: () => {},
+      flush: async () => {},
+      close: async () => {},
+    };
+    const abort = new AbortController();
+    let ready!: () => void;
+    const readyPromise = new Promise<void>((resolve) => {
+      ready = resolve;
+    });
+    const first = runOmniServe({
+      db,
+      config: rt(),
+      natsFactory: async () => {
+        factoryCalls++;
+        return nats;
+      },
+      signal: abort.signal,
+      onReady: ready,
+    });
+    await readyPromise;
+    await expect(
+      runOmniServe({
+        db,
+        config: rt(),
+        natsFactory: async () => {
+          factoryCalls++;
+          return nats;
+        },
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow('machine-wide resident lease');
+    expect(factoryCalls).toBe(1);
+    abort.abort();
+    await first;
+  });
+
+  test('stop aborts and drains every approval HTTP task and suppresses post-stop final reactions', async () => {
+    const db = freshDb();
+    const approval = enqueueApproval(db, {
+      repo: '/r',
+      tool: 'Bash',
+      inputSummary: approvalSummary('A'),
+      now: NOW - 1,
+    });
+    let sendStarted = false;
+    let sendSettled = false;
+    const announceRunner = createOmniRunner({
+      db,
+      config: rt(),
+      publish: () => {},
+      now: () => NOW,
+      sendApproval: ({ signal }) =>
+        new Promise((_, reject) => {
+          sendStarted = true;
+          signal?.addEventListener(
+            'abort',
+            () => {
+              sendSettled = true;
+              reject(signal.reason);
+            },
+            { once: true },
+          );
+        }),
+    });
+    announceRunner.tick();
+    await Promise.resolve();
+    expect(sendStarted).toBe(true);
+    await announceRunner.stop();
+    expect(sendSettled).toBe(true);
+    expect(getApproval(db, approval)?.omniMessageId).toBeNull();
+
+    // HTTP had already started, so shutdown records an explicit ambiguous phase.
+    // A successor epoch must not silently duplicate a possibly accepted prompt.
+    let retrySends = 0;
+    const retryRunner = createOmniRunner({
+      db,
+      config: rt(),
+      publish: () => {},
+      now: () => NOW,
+      claimOwner: { ownerId: 'successor', epoch: 1 },
+      sendApproval: async () => {
+        retrySends++;
+        return { outcome: 'accepted', messageId: 'retry-stanza' };
+      },
+    });
+    retryRunner.tick();
+    await retryRunner.whenIdle();
+    expect(retrySends).toBe(0);
+    expect(getApproval(db, approval)?.omniMessageId).toBeNull();
+
+    enqueueApproval(db, {
+      repo: '/r',
+      tool: 'Bash',
+      inputSummary: approvalSummary('B'),
+      now: NOW - 1,
+    });
+    let reactionStarted = false;
+    let reactionSettled = false;
+    const reactionRunner = createOmniRunner({
+      db,
+      config: rt(),
+      publish: () => {},
+      now: () => NOW,
+      sendApproval: async () => ({ outcome: 'accepted', messageId: 'reaction-stanza' }),
+      setReaction: ({ signal }) =>
+        new Promise((_, reject) => {
+          reactionStarted = true;
+          signal?.addEventListener(
+            'abort',
+            () => {
+              reactionSettled = true;
+              reject(signal.reason);
+            },
+            { once: true },
+          );
+        }),
+    });
+    reactionRunner.tick();
+    for (let attempt = 0; attempt < 20 && !reactionStarted; attempt++) await Promise.resolve();
+    expect(reactionStarted).toBe(true);
+    await reactionRunner.stop();
+    expect(reactionSettled).toBe(true);
+
+    const reactions: string[] = [];
+    let childStarted!: () => void;
+    const childReady = new Promise<void>((resolve) => {
+      childStarted = resolve;
+    });
+    const routeRunner = createOmniRunner({
+      db,
+      config: rt(),
+      publish: () => {},
+      setReaction: async ({ emoji }) => {
+        reactions.push(emoji);
+        return { success: true };
+      },
+      spawnAgent: ({ signal }) =>
+        new Promise((_, reject) => {
+          childStarted();
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+        }),
+    });
+    routeRunner.handleMessage(...mappedInboundWithId('stop this run', 'wamid-stop'));
+    await childReady;
+    await routeRunner.stop();
+    expect(reactions).toEqual(['\u{23F3}']);
+  });
+  test('startup failure preserves the primary error while independently closing NATS', async () => {
+    const db = freshDb();
+    const logs: string[] = [];
+    let closes = 0;
+    const apiKey = 'STARTUP_API_KEY_SENTINEL';
+    const natsUrl = 'nats://startup-user:startup-password@nats.example:4222?opaque=STARTUP_QUERY_SECRET';
+    const nats: NatsLike = {
+      subscribe: () => {
+        throw new Error(`subscribe-primary ${natsUrl} ${apiKey}`);
+      },
+      publish: () => {},
+      flush: async () => {},
+      close: async () => {
+        closes++;
+        throw new Error(`close-secondary ${natsUrl} ${apiKey}`);
+      },
+    };
+    let thrown: unknown;
+    try {
+      await runOmniServe({
+        db,
+        config: rt({ apiKey, natsUrl }),
+        natsFactory: async () => nats,
+        log: (line) => logs.push(line),
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    const rendered = `${String(thrown)}\n${thrown instanceof Error ? thrown.stack : ''}\n${logs.join('\n')}`;
+    for (const secret of [apiKey, 'startup-user', 'startup-password', 'STARTUP_QUERY_SECRET']) {
+      expect(rendered).not.toContain(secret);
+    }
+    expect(rendered).toContain('[REDACTED]');
+    expect(closes).toBe(1);
+    expect(logs.some((line) => line.includes('close-secondary'))).toBe(true);
+  });
+
+  test('cleanup-only failure rejects with config-seeded redacted aggregate members', async () => {
+    const db = freshDb();
+    const apiKey = 'CLEANUP_API_KEY_SENTINEL';
+    const natsUrl = 'nats://cleanup-user:cleanup-password@nats.example:4222?auth=CLEANUP_QUERY_SECRET';
+    let stopped = false;
+    let wake: (() => void) | undefined;
+    const subscription: NatsSubscription = {
+      unsubscribe() {
+        stopped = true;
+        wake?.();
+      },
+      async *[Symbol.asyncIterator]() {
+        while (!stopped) {
+          await new Promise<void>((resolve) => {
+            wake = resolve;
+          });
+        }
+      },
+    };
+    const nats: NatsLike = {
+      subscribe: () => subscription,
+      publish: () => {},
+      flush: async () => {},
+      close: async () => {
+        throw new Error(`cleanup failed for ${natsUrl} with ${apiKey}`);
+      },
+    };
+    const abort = new AbortController();
+    let thrown: unknown;
+    try {
+      await runOmniServe({
+        db,
+        config: rt({ apiKey, natsUrl }),
+        natsFactory: async () => nats,
+        signal: abort.signal,
+        onReady: () => abort.abort(),
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(AggregateError);
+    const aggregate = thrown as AggregateError;
+    const rendered = [aggregate.stack, ...aggregate.errors.map((error) => String(error))].join('\n');
+    for (const secret of [apiKey, 'cleanup-user', 'cleanup-password', 'CLEANUP_QUERY_SECRET']) {
+      expect(rendered).not.toContain(secret);
+    }
+    expect(rendered).toContain('[REDACTED]');
+  });
+
+  test('runner stop is bounded even when an injected child ignores abort', async () => {
+    const db = freshDb();
+    let settle!: (value: SpawnClaudeResult) => void;
+    const runner = createOmniRunner({
+      db,
+      config: rt(),
+      publish: () => {},
+      drainTimeoutMs: 25,
+      spawnAgent: () =>
+        new Promise((resolve) => {
+          settle = resolve;
+        }),
+    });
+    runner.handleMessage(...mappedInbound('hang'));
+    const started = performance.now();
+    await expect(runner.stop()).rejects.toThrow('drain exceeded');
+    expect(performance.now() - started).toBeLessThan(500);
+    settle({ stdout: 'settled', exitCode: 1, isError: true });
+    await runner.whenIdle();
+  });
+
+  test('aborts and drains an in-flight route before closing NATS or SQLite ownership returns', async () => {
+    const db = freshDb();
+    const order: string[] = [];
+    const queue: NatsInboundMsg[] = [];
+    let closed = false;
+    let wake: (() => void) | undefined;
+    const subscription: NatsSubscription = {
+      unsubscribe() {
+        closed = true;
+        wake?.();
+      },
+      async *[Symbol.asyncIterator]() {
+        while (!closed) {
+          const next = queue.shift();
+          if (next) {
+            yield next;
+            continue;
+          }
+          await new Promise<void>((resolve) => {
+            wake = resolve;
+          });
+          wake = undefined;
+        }
+      },
+    };
+    const nats: NatsLike = {
+      subscribe: () => subscription,
+      publish: () => order.push('publish'),
+      flush: async () => {},
+      close: async () => {
+        order.push('nats-close');
+      },
+    };
+    const serveAbort = new AbortController();
+    let ready!: () => void;
+    const readyPromise = new Promise<void>((resolve) => {
+      ready = resolve;
+    });
+    let childStarted!: () => void;
+    const childStartedPromise = new Promise<void>((resolve) => {
+      childStarted = resolve;
+    });
+    const serve = runOmniServe({
+      db,
+      config: rt(),
+      natsFactory: async () => nats,
+      signal: serveAbort.signal,
+      onReady: ready,
+      runnerDeps: {
+        spawnAgent: ({ signal }) =>
+          new Promise((resolve) => {
+            childStarted();
+            signal.addEventListener(
+              'abort',
+              () => {
+                setTimeout(() => {
+                  order.push('child-settled');
+                  resolve({ stdout: 'cancelled', exitCode: 1, isError: true });
+                }, 20);
+              },
+              { once: true },
+            );
+          }),
+      },
+    });
+    await readyPromise;
+    queue.push({
+      subject: `omni.message.${INSTANCE}.${ROUTE_CHAT}`,
+      data: new TextEncoder().encode(
+        JSON.stringify({ content: 'in flight', chatId: ROUTE_CHAT, sender: 'boss', instanceId: INSTANCE }),
+      ),
+    });
+    wake?.();
+    await childStartedPromise;
+    serveAbort.abort();
+    await serve;
+
+    expect(order.indexOf('child-settled')).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf('child-settled')).toBeLessThan(order.indexOf('nats-close'));
+    expect(listInbox(db, { handled: true })).toHaveLength(1);
+    expect(() => db.query('SELECT 1').get()).not.toThrow();
   });
 });
 
@@ -1197,7 +2855,7 @@ describe('omni runner — routed-run reaction/empty guard', () => {
       },
       now: () => NOW,
     });
-    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: 'summary-A', now: NOW - 2000 });
+    const a = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: approvalSummary('A'), now: NOW - 2000 });
     runner.tick();
     await runner.whenIdle();
 

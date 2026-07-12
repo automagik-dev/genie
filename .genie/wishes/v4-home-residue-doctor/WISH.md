@@ -37,6 +37,11 @@
 | 2 | Uncertain classification → KEEP + report | Deleting user home data on a guess is the one unforgivable failure; the manifest only ever lists provably-dead paths |
 | 3 | Age-filter in the reporter, not log deletion alone | scheduler.log is also in the delete manifest, but the reporter must be robust for users who never run --fix |
 
+## Dependencies
+
+**depends-on:** none
+**blocks:** none
+
 ## Success Criteria
 
 - [ ] Every manifest addition justified by a src-grep proof (path absent from v5 read/write surfaces), stated in code comment or test.

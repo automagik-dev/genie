@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mergeCodexMcpFallback, removeCodexMcpFallback } from './init.js';
 
 const CLI = join(import.meta.dir, '..', 'genie.ts');
+const INTERPRETED_MCP_ARGS = [realpathSync(CLI), 'mcp'];
 const GITIGNORE_RULES = ['.genie/genie.db', '.genie/genie.db-wal', '.genie/genie.db-shm'];
 
 let dir: string;
@@ -16,7 +17,13 @@ function initGitRepo(root: string): void {
 
 /** Run `genie init` in `cwd`. Returns { code, stdout, stderr }. */
 function runInit(cwd: string, args: string[] = []): { code: number; stdout: string; stderr: string } {
-  const res = Bun.spawnSync(['bun', CLI, 'init', ...args], { cwd, stdout: 'pipe', stderr: 'pipe' });
+  const res = Bun.spawnSync([process.execPath, CLI, 'init', ...args], {
+    cwd,
+    stdout: 'pipe',
+    stderr: 'pipe',
+    // Keep unit tests isolated from any live Codex/plugin installation.
+    env: { ...process.env, PATH: '/usr/bin:/bin' },
+  });
   return {
     code: res.exitCode,
     stdout: res.stdout.toString(),
@@ -51,7 +58,16 @@ describe('genie init', () => {
       expect(gitignore).toContain(rule);
     }
     expect(stdout).toContain('brainstorm');
+    expect(stdout).toContain('$genie:brainstorm');
+    expect(stdout).toContain('$genie:review');
+    expect(stdout.indexOf('$genie:review')).toBeLessThan(stdout.indexOf('$genie:work'));
     expect(stdout).toContain('genie board');
+  });
+
+  test('--help discloses every project MCP file class init may reconcile', () => {
+    const { code, stdout } = runInit(dir, ['--help']);
+    expect(code).toBe(0);
+    for (const path of ['.mcp.json', '.warp/.mcp.json', '.codex/config.toml']) expect(stdout).toContain(path);
   });
 
   test('second run is a no-op: .gitignore and INDEX.md are byte-identical', () => {
@@ -168,7 +184,7 @@ describe('genie init', () => {
         expect(existsSync(path)).toBe(true);
         const servers = JSON.parse(readFileSync(path, 'utf-8')).mcpServers;
         expect(servers.genie).toBeDefined();
-        expect(servers.genie.args).toEqual(['mcp']);
+        expect(servers.genie.args).toEqual(INTERPRETED_MCP_ARGS);
         // Absolute command resolved from the running executable — never bare "genie".
         expect(servers.genie.command).not.toBe('genie');
         expect(servers.genie.command.startsWith('/')).toBe(true);
@@ -184,7 +200,7 @@ describe('genie init', () => {
       const servers = JSON.parse(readFileSync(mcpPath(dir), 'utf-8')).mcpServers;
       expect(servers.other).toEqual({ command: 'x' });
       expect(servers.genie).toBeDefined();
-      expect(servers.genie.args).toEqual(['mcp']);
+      expect(servers.genie.args).toEqual(INTERPRETED_MCP_ARGS);
     });
 
     test('preserves other top-level keys and an alternate wrapper key', () => {
@@ -234,6 +250,20 @@ describe('genie init', () => {
       expect(stderr).toContain('.mcp.json');
       // The bad file is left untouched.
       expect(readFileSync(mcpPath(dir), 'utf-8')).toBe('not json {');
+      expect(existsSync(join(dir, '.genie', 'INDEX.md'))).toBe(false);
+      expect(existsSync(join(dir, '.gitignore'))).toBe(false);
+    });
+
+    test('valid but wrong-shaped server maps are rejected without partial scaffold writes', () => {
+      initGitRepo(dir);
+      mkdirSync(join(dir, '.warp'), { recursive: true });
+      writeFileSync(warpMcpPath(dir), '{"mcpServers":[]}');
+      const { code, stderr } = runInit(dir);
+      expect(code).toBe(1);
+      expect(stderr).toContain('mcpServers');
+      expect(readFileSync(warpMcpPath(dir), 'utf8')).toBe('{"mcpServers":[]}');
+      expect(existsSync(mcpPath(dir))).toBe(false);
+      expect(existsSync(join(dir, '.genie', 'INDEX.md'))).toBe(false);
     });
   });
 });
