@@ -81,24 +81,61 @@ const absolutePathSchema = z
   .string()
   .max(4096)
   .refine((path) => isAbsolute(path) && resolve(path) === path);
-const dispositionSchema = z.enum(['remove', 'keep']);
+const digestSchema = z.string().regex(/^[a-f0-9]{64}$/);
+const physicalModeSchema = z.number().int().min(0).max(0o7777);
+const codexRoleNameSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/);
+
+// Per-kind physical identity the classifier already computed at plan time. Every
+// removable managed asset carries the exact identity uninstall is authorized to
+// delete; a mismatch at removal proves a distinct object occupies the path.
+const agentAssetIdentitySchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('skill'), contentDigest: digestSchema, manifestDigest: digestSchema }).strict(),
+  z
+    .object({
+      kind: z.literal('workflow'),
+      targetDigest: digestSchema,
+      manifestDigest: digestSchema,
+      targetMode: physicalModeSchema,
+      manifestMode: physicalModeSchema,
+    })
+    .strict(),
+  z.object({ kind: z.literal('link'), target: z.string().min(1).max(4096) }).strict(),
+]);
+
+export type AgentAssetIdentity = z.infer<typeof agentAssetIdentitySchema>;
+
+// A removable asset records its identity; a kept (modified/corrupt) asset records
+// none because it holds user data now and is never a deletion candidate.
+const agentAssetSchema = z.discriminatedUnion('disposition', [
+  z.object({ path: absolutePathSchema, disposition: z.literal('remove'), identity: agentAssetIdentitySchema }).strict(),
+  z.object({ path: absolutePathSchema, disposition: z.literal('keep') }).strict(),
+]);
+
+const codexRoleAgentSchema = z.discriminatedUnion('disposition', [
+  z
+    .object({
+      name: codexRoleNameSchema,
+      disposition: z.literal('remove'),
+      identity: z.object({ digest: digestSchema, mode: physicalModeSchema }).strict(),
+    })
+    .strict(),
+  z.object({ name: codexRoleNameSchema, disposition: z.literal('keep') }).strict(),
+]);
+
 const uninstallBatchMemberSchema = z.string().regex(/^(asset|rules|runtime|home|symlink):[a-f0-9]{64}$/);
 const uninstallBatchProgressSchema = z
   .object({
     active: uninstallBatchMemberSchema.nullable(),
     completed: z.array(uninstallBatchMemberSchema).max(1024),
+    // Durable receipts for identity-mismatched members: removal was never
+    // authorized, yet the batch may still clear (see UninstallBatchProgressController).
+    preserved: z.array(uninstallBatchMemberSchema).max(1024),
   })
   .strict();
 const uninstallBatchScopeSchema = z
   .object({
-    agentAssets: z.array(z.object({ path: absolutePathSchema, disposition: dispositionSchema }).strict()).max(512),
-    codexRoleAgents: z
-      .array(
-        z
-          .object({ name: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/), disposition: dispositionSchema })
-          .strict(),
-      )
-      .max(128),
+    agentAssets: z.array(agentAssetSchema).max(512),
+    codexRoleAgents: z.array(codexRoleAgentSchema).max(128),
     codexRoleInventoryStatus: z.enum(['missing', 'valid', 'corrupt']),
     genieHomePresent: z.boolean(),
     ownedRulesPath: absolutePathSchema.nullable(),
@@ -113,17 +150,70 @@ export type UninstallBatchScope = z.infer<typeof uninstallBatchScopeSchema>;
 
 const uninstallBatchDecisionSchema = z
   .object({
-    schemaVersion: z.literal(1),
+    schemaVersion: z.literal(2),
     genieHome: absolutePathSchema,
     scope: uninstallBatchScopeSchema,
     progress: uninstallBatchProgressSchema,
-    digest: z.string().regex(/^[a-f0-9]{64}$/),
+    digest: digestSchema,
   })
   .strict();
 
 export type UninstallBatchDecision = z.infer<typeof uninstallBatchDecisionSchema>;
 
 type UninstallBatchPayload = Omit<UninstallBatchDecision, 'digest'>;
+
+// ---------------------------------------------------------------------------
+// v1 (legacy) read-only shape. An authentic v1 journal from a prior release is
+// discarded and re-recorded as v2 from current live state (executeUninstallBatch);
+// this schema exists only so that migration can authenticate it before discard,
+// never to act on a v1 record. Unauthentic/corrupt journals still fail closed.
+// ---------------------------------------------------------------------------
+const uninstallBatchScopeSchemaV1 = z
+  .object({
+    agentAssets: z
+      .array(z.object({ path: absolutePathSchema, disposition: z.enum(['remove', 'keep']) }).strict())
+      .max(512),
+    codexRoleAgents: z
+      .array(z.object({ name: codexRoleNameSchema, disposition: z.enum(['remove', 'keep']) }).strict())
+      .max(128),
+    codexRoleInventoryStatus: z.enum(['missing', 'valid', 'corrupt']),
+    genieHomePresent: z.boolean(),
+    ownedRulesPath: absolutePathSchema.nullable(),
+    removeMarketplace: z.boolean(),
+    runtimeClients: z.object({ codex: z.boolean(), claude: z.boolean() }).strict(),
+    runtimePlugins: z.object({ codex: z.boolean(), claude: z.boolean() }).strict(),
+    symlinks: z.array(z.enum(['genie', 'term'])).max(2),
+  })
+  .strict();
+const uninstallBatchDecisionSchemaV1 = z
+  .object({
+    schemaVersion: z.literal(1),
+    genieHome: absolutePathSchema,
+    scope: uninstallBatchScopeSchemaV1,
+    progress: z
+      .object({
+        active: uninstallBatchMemberSchema.nullable(),
+        completed: z.array(uninstallBatchMemberSchema).max(1024),
+      })
+      .strict(),
+    digest: digestSchema,
+  })
+  .strict();
+
+type UninstallBatchDecisionV1 = z.infer<typeof uninstallBatchDecisionSchemaV1>;
+
+type UninstallBatchReadState =
+  | { kind: 'none' }
+  | { kind: 'v2'; decision: UninstallBatchDecision }
+  | { kind: 'legacy-v1'; decision: UninstallBatchDecisionV1 };
+
+/** Thrown by {@link readUninstallBatchDecision} for an authentic v1 journal that must be migrated. */
+export class LegacyUninstallBatchJournalError extends Error {
+  constructor(readonly interruptedMember: string | null) {
+    super('uninstall batch journal is an authentic legacy v1 record awaiting migration');
+    this.name = 'LegacyUninstallBatchJournalError';
+  }
+}
 
 /** Return true only when `candidate` is the same path as `parent` or canonically beneath it. */
 export function isSameOrContainedPath(
@@ -180,7 +270,8 @@ function uninstallBatchPayload(decision: UninstallBatchDecision): UninstallBatch
   };
 }
 
-function uninstallBatchDigest(payload: UninstallBatchPayload): string {
+// Accepts a v1 or v2 payload; both authenticate under the same canonical digest.
+function uninstallBatchDigest(payload: object): string {
   return createHash('sha256').update(JSON.stringify(payload)).digest('hex');
 }
 
@@ -206,13 +297,20 @@ function assertExactUninstallProgress(
   if (new Set(progress.completed).size !== progress.completed.length) {
     throw new Error('uninstall batch journal contains duplicate completion receipts');
   }
-  if (progress.active !== null && progress.completed.includes(progress.active)) {
-    throw new Error('uninstall batch journal marks one member active and completed');
+  if (new Set(progress.preserved).size !== progress.preserved.length) {
+    throw new Error('uninstall batch journal contains duplicate preservation receipts');
+  }
+  const settled = [...progress.completed, ...progress.preserved];
+  if (new Set(settled).size !== settled.length) {
+    throw new Error('uninstall batch journal marks one member both completed and preserved');
+  }
+  if (progress.active !== null && settled.includes(progress.active)) {
+    throw new Error('uninstall batch journal marks one member active and settled');
   }
   if (scope !== undefined) {
     if (genieHome === undefined) throw new Error('uninstall batch progress validation requires its Genie home');
     const allowed = uninstallBatchMembers(scope, genieHome);
-    const unexpected = [...progress.completed, ...(progress.active === null ? [] : [progress.active])].filter(
+    const unexpected = [...settled, ...(progress.active === null ? [] : [progress.active])].filter(
       (member) => !allowed.has(member),
     );
     if (unexpected.length > 0) {
@@ -225,10 +323,10 @@ function authenticatedUninstallBatch(genieHome: string, scope: UninstallBatchSco
   const parsedScope = uninstallBatchScopeSchema.parse(scope);
   assertExactUninstallScope(parsedScope);
   const payload: UninstallBatchPayload = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     genieHome: resolve(genieHome),
     scope: parsedScope,
-    progress: { active: null, completed: [] },
+    progress: { active: null, completed: [], preserved: [] },
   };
   return { ...payload, digest: uninstallBatchDigest(payload) };
 }
@@ -273,28 +371,49 @@ export function hasPendingUninstallBatch(genieHome = getGenieDir()): boolean {
   }
 }
 
-function validateUninstallBatch(parsed: unknown, genieHome: string, journalPath: string): UninstallBatchDecision {
-  const result = uninstallBatchDecisionSchema.safeParse(parsed);
-  if (!result.success || result.data.genieHome !== resolve(genieHome)) {
-    throw new Error('uninstall batch journal has an invalid schema or target');
-  }
-  const decision = result.data;
-  assertExactUninstallScope(decision.scope);
-  assertExactUninstallProgress(decision.progress, decision.scope, decision.genieHome);
-  const expected = Buffer.from(uninstallBatchDigest(uninstallBatchPayload(decision)), 'hex');
-  const actual = Buffer.from(decision.digest, 'hex');
+function authenticateUninstallDigest(payload: object, digest: string, journalPath: string): void {
+  const expected = Buffer.from(uninstallBatchDigest(payload), 'hex');
+  const actual = Buffer.from(digest, 'hex');
   if (!timingSafeEqual(actual, expected)) {
     throw new Error(`uninstall batch journal authentication failed: ${journalPath}`);
   }
-  return decision;
 }
 
-/** Read and authenticate a durable uninstall decision without mutating it. */
-export function readUninstallBatchDecision(genieHome = getGenieDir()): UninstallBatchDecision | null {
+/**
+ * Authenticate a parsed journal as v2 or a legacy v1 record. A v2 record is
+ * fully cross-checked; a v1 record is authenticated only enough to prove it is
+ * ours before migration discards it. Any other shape/digest fails closed.
+ */
+function authenticateUninstallBatch(parsed: unknown, genieHome: string, journalPath: string): UninstallBatchReadState {
+  const v2 = uninstallBatchDecisionSchema.safeParse(parsed);
+  if (v2.success && v2.data.genieHome === resolve(genieHome)) {
+    const decision = v2.data;
+    assertExactUninstallScope(decision.scope);
+    assertExactUninstallProgress(decision.progress, decision.scope, decision.genieHome);
+    authenticateUninstallDigest(uninstallBatchPayload(decision), decision.digest, journalPath);
+    return { kind: 'v2', decision };
+  }
+  const v1 = uninstallBatchDecisionSchemaV1.safeParse(parsed);
+  if (v1.success && v1.data.genieHome === resolve(genieHome)) {
+    const decision = v1.data;
+    // A migrated v1 record is discarded, not executed, so it needs only digest
+    // authentication under its own shape — no v2 member cross-check applies.
+    authenticateUninstallDigest(
+      { schemaVersion: 1, genieHome: decision.genieHome, scope: decision.scope, progress: decision.progress },
+      decision.digest,
+      journalPath,
+    );
+    return { kind: 'legacy-v1', decision };
+  }
+  throw new Error('uninstall batch journal has an invalid schema or target');
+}
+
+/** Shared physical-security checks + parse; returns the authenticated read state. */
+function readUninstallBatchState(genieHome: string): UninstallBatchReadState {
   const journalPath = uninstallBatchJournalPath(genieHome);
   assertUninstallBatchLocation(genieHome, journalPath);
   const stat = lstatOrNull(journalPath);
-  if (stat === null) return null;
+  if (stat === null) return { kind: 'none' };
   const recoveryStat = lstatOrNull(dirname(journalPath));
   if (recoveryStat === null || !recoveryStat.isDirectory() || recoveryStat.isSymbolicLink()) {
     throw new Error(`uninstall recovery root is not a physical directory: ${dirname(journalPath)}`);
@@ -305,11 +424,44 @@ export function readUninstallBatchDecision(genieHome = getGenieDir()): Uninstall
   }
   assertPrivateRecoveryObject(journalPath, stat, 'uninstall batch journal');
   try {
-    return validateUninstallBatch(JSON.parse(readFileSync(journalPath, 'utf8')), genieHome, journalPath);
+    return authenticateUninstallBatch(JSON.parse(readFileSync(journalPath, 'utf8')), genieHome, journalPath);
   } catch (error) {
     if (error instanceof SyntaxError) throw new Error(`uninstall batch journal is unreadable: ${journalPath}`);
     throw error;
   }
+}
+
+/**
+ * Read and authenticate a durable uninstall decision without mutating it. An
+ * authentic legacy v1 journal raises {@link LegacyUninstallBatchJournalError}
+ * so the caller can migrate it; unauthentic/corrupt journals still throw.
+ */
+export function readUninstallBatchDecision(genieHome = getGenieDir()): UninstallBatchDecision | null {
+  const state = readUninstallBatchState(genieHome);
+  if (state.kind === 'none') return null;
+  if (state.kind === 'legacy-v1') throw new LegacyUninstallBatchJournalError(state.decision.progress.active);
+  return state.decision;
+}
+
+/** Read-only active-member evidence for the preview across v1 and v2 journals; never throws. */
+export function pendingUninstallBatchInterruptedMember(genieHome = getGenieDir()): string | null {
+  try {
+    const state = readUninstallBatchState(genieHome);
+    return state.kind === 'none' ? null : state.decision.progress.active;
+  } catch {
+    return null;
+  }
+}
+
+/** Re-authenticate the exact v1 journal, then discard it so a fresh v2 decision can be recorded. */
+function discardLegacyUninstallBatchDecision(genieHome: string): void {
+  const state = readUninstallBatchState(genieHome);
+  if (state.kind !== 'legacy-v1') {
+    throw new Error('uninstall batch journal is no longer an authentic legacy v1 record');
+  }
+  const journalPath = uninstallBatchJournalPath(genieHome);
+  unlinkSync(journalPath);
+  fsyncDirectoryBestEffort(dirname(journalPath));
 }
 
 function ensurePhysicalRecoveryRoot(path: string): void {
@@ -366,6 +518,10 @@ export function uninstallBatchMemberId(kind: UninstallBatchMemberKind, key: stri
 }
 
 export function uninstallBatchRuntimeMemberId(scope: UninstallBatchScope): string {
+  // The runtime member id hashes the whole codexRoleAgents array, so recording
+  // per-agent identity in v2 changes the id versus a v1 journal. That is fine:
+  // v1 journals are migrated (discarded + re-recorded) before any member runs,
+  // so no receipt is ever compared across the two schema versions.
   return uninstallBatchMemberId(
     'runtime',
     JSON.stringify({
@@ -625,18 +781,12 @@ interface AgentSyncAsset {
   modified?: boolean;
   /** Workflow-only digest ownership sidecar removed together with a clean target. */
   metadataPath?: string;
-}
-
-/**
- * Classify a skill dir against the agent-sync ownership contract:
- * - `null` — no genie-agent-sync manifest → not ours, invisible to uninstall.
- * - `'clean'` — manifest present AND `computeDirDigest(dir)` matches its digest → provably shipped by genie.
- * - `'modified'` — manifest present but content diverged (or digest missing/uncomputable) → user data lives here.
- */
-function classifyManagedSkillDir(dir: string): 'clean' | 'modified' | null {
-  const state = inspectManagedSkillTree(dir).state;
-  if (state === 'unmanaged') return null;
-  return state === 'managed-clean' ? 'clean' : 'modified';
+  /**
+   * The exact physical identity captured by this classification. Present only for
+   * a removable (clean) asset; the uninstall batch records it so a later retry can
+   * refuse a replacement occupying the same path (F43).
+   */
+  identity?: AgentAssetIdentity;
 }
 
 function collectManagedSkillDirs(parent: string, agent: AgentSyncAsset['agent'], out: AgentSyncAsset[]): void {
@@ -657,20 +807,57 @@ function collectManagedSkillDirs(parent: string, agent: AgentSyncAsset['agent'],
       isDir = false;
     }
     if (!isDir) continue;
-    const disposition = classifyManagedSkillDir(dir);
-    if (disposition) out.push({ agent, kind: 'skill', path: dir, modified: disposition === 'modified' });
+    // One inspection yields both the disposition and the identity, so the batch
+    // records exactly what classification observed. No manifest → invisible;
+    // manifest but diverged/corrupt → modified (user data), no identity.
+    const report = inspectManagedSkillTree(dir);
+    if (report.state === 'unmanaged') continue;
+    if (report.state === 'managed-clean' && report.contentDigest !== undefined && report.manifestDigest !== undefined) {
+      out.push({
+        agent,
+        kind: 'skill',
+        path: dir,
+        modified: false,
+        identity: { kind: 'skill', contentDigest: report.contentDigest, manifestDigest: report.manifestDigest },
+      });
+    } else {
+      out.push({ agent, kind: 'skill', path: dir, modified: true });
+    }
   }
 }
 
 function collectManagedCouncil(claudeDir: string, out: AgentSyncAsset[]): void {
   const workflow = inspectManagedWorkflow(join(claudeDir, 'workflows'));
   if (workflow.state === 'unmanaged') return;
+  if (
+    workflow.state === 'managed-clean' &&
+    workflow.targetDigest !== undefined &&
+    workflow.manifestDigest !== undefined &&
+    workflow.targetMode !== undefined &&
+    workflow.manifestMode !== undefined
+  ) {
+    out.push({
+      agent: 'claude',
+      kind: 'workflow',
+      path: workflow.targetPath,
+      metadataPath: workflow.manifestPath,
+      modified: false,
+      identity: {
+        kind: 'workflow',
+        targetDigest: workflow.targetDigest,
+        manifestDigest: workflow.manifestDigest,
+        targetMode: workflow.targetMode,
+        manifestMode: workflow.manifestMode,
+      },
+    });
+    return;
+  }
   out.push({
     agent: 'claude',
     kind: 'workflow',
     path: workflow.targetPath,
     metadataPath: workflow.manifestPath,
-    modified: workflow.state !== 'managed-clean',
+    modified: true,
   });
 }
 
@@ -684,9 +871,14 @@ function collectHermesLinkPath(linkPath: string, genieHome: string, out: AgentSy
   }
   if (!stat.isSymbolicLink()) return;
   try {
-    const resolved = resolve(dirname(linkPath), readlinkSync(linkPath));
+    const target = readlinkSync(linkPath);
+    const resolved = resolve(dirname(linkPath), target);
     const home = resolve(genieHome);
-    if (isSameOrContainedPath(home, resolved)) out.push({ agent: 'hermes', kind: 'link', path: linkPath });
+    // Record the raw link target as identity so removal re-verifies the exact
+    // pointer before unlinking a symlink the user may have repointed since.
+    if (isSameOrContainedPath(home, resolved)) {
+      out.push({ agent: 'hermes', kind: 'link', path: linkPath, identity: { kind: 'link', target } });
+    }
   } catch {
     /* unreadable symlink → leave it */
   }
@@ -731,8 +923,10 @@ export function collectAgentSyncAssets(targets: AgentSyncRemovalTargets = {}): A
 export interface AgentSyncRemovalResult {
   /** Assets deleted outright (digest-clean skills, stamped council.js, hermes link). */
   removed: string[];
-  /** User-modified/corrupt-metadata assets preserved byte-identically at their current paths. */
+  /** User-modified/corrupt-metadata/identity-mismatched assets preserved byte-identically at their paths. */
   kept: string[];
+  /** Subset of `kept` whose live identity diverged from a recorded batch identity (vs. a plain user edit). */
+  identityMismatch: string[];
   /** Per-asset failures. Callers keep Genie installed so cleanup can be retried. */
   failures: Array<{ path: string; detail: string }>;
 }
@@ -740,8 +934,12 @@ export interface AgentSyncRemovalResult {
 export interface AgentSyncRemovalOptions {
   beforeManagedDirRemoval?: (destDir: string, stage: 'before-park' | 'before-delete') => void;
   beforeWorkflowRemoval?: (stage: 'before-park' | 'before-delete') => void;
-  /** Durable uninstall-batch allowlist; live ownership is still re-inspected. */
-  plannedAssetPaths?: readonly string[];
+  /**
+   * Durable uninstall-batch allowlist with the recorded identity per planned path.
+   * Membership filters which assets are candidates; identity binds removal so a
+   * replacement at the same path is preserved, not deleted under path authority.
+   */
+  plannedAssets?: readonly { path: string; identity: AgentAssetIdentity }[];
 }
 
 function recoverTransactionsBeforeRemoval(targets: AgentSyncRemovalTargets): { path: string; detail: string } | null {
@@ -767,61 +965,96 @@ export function removeAgentSyncAssets(
   targets: AgentSyncRemovalTargets = {},
   options: AgentSyncRemovalOptions = {},
 ): AgentSyncRemovalResult {
-  const removed: string[] = [];
-  const kept: string[] = [];
-  const failures: AgentSyncRemovalResult['failures'] = [];
+  const result: AgentSyncRemovalResult = { removed: [], kept: [], identityMismatch: [], failures: [] };
   const recoveryFailure = recoverTransactionsBeforeRemoval(targets);
-  if (recoveryFailure) return { removed, kept, failures: [recoveryFailure] };
-  const plannedPaths =
-    options.plannedAssetPaths === undefined ? null : new Set(options.plannedAssetPaths.map((path) => resolve(path)));
-  const assets = collectAgentSyncAssets(targets).filter(
-    (asset) => plannedPaths === null || plannedPaths.has(resolve(asset.path)),
-  );
-  removeCollectedAgentAssets(assets, targets, options, { removed, kept, failures });
-  if (plannedPaths !== null) {
-    for (const path of kept) {
-      if (!plannedPaths.has(resolve(path))) continue;
-      failures.push({
-        path,
-        detail: 'recorded removable asset changed after the uninstall batch was created; kept it byte-identical',
-      });
-    }
+  if (recoveryFailure) {
+    result.failures.push(recoveryFailure);
+    return result;
   }
-  return { removed, kept, failures };
+  const plannedByPath =
+    options.plannedAssets === undefined
+      ? null
+      : new Map(options.plannedAssets.map((planned) => [resolve(planned.path), planned.identity]));
+  const assets = collectAgentSyncAssets(targets).filter(
+    (asset) => plannedByPath === null || plannedByPath.has(resolve(asset.path)),
+  );
+  removeCollectedAgentAssets(assets, targets, options, plannedByPath, result);
+  return result;
+}
+
+function recordAgentAssetDisposition(
+  disposition: 'removed' | 'unmanaged' | 'kept-modified' | 'kept-identity-mismatch',
+  path: string,
+  result: AgentSyncRemovalResult,
+): void {
+  if (disposition === 'removed') {
+    result.removed.push(path);
+    return;
+  }
+  result.kept.push(path);
+  if (disposition === 'kept-identity-mismatch') result.identityMismatch.push(path);
+}
+
+/** Re-verify a recorded hermes link still points where the batch recorded before unlinking it. */
+function removeManagedLink(linkPath: string, expectedTarget: string | undefined, result: AgentSyncRemovalResult): void {
+  let liveTarget: string;
+  try {
+    const stat = lstatSync(linkPath);
+    if (!stat.isSymbolicLink()) {
+      // A real object now occupies the recorded link path; never delete it.
+      result.kept.push(linkPath);
+      result.identityMismatch.push(linkPath);
+      return;
+    }
+    liveTarget = readlinkSync(linkPath);
+  } catch (error) {
+    // Already gone before we reached it: an idempotent no-op, not a failure.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw error;
+  }
+  if (expectedTarget !== undefined && liveTarget !== expectedTarget) {
+    result.kept.push(linkPath);
+    result.identityMismatch.push(linkPath);
+    return;
+  }
+  unlinkSync(linkPath);
+  result.removed.push(linkPath);
 }
 
 function removeCollectedAgentAssets(
   assets: AgentSyncAsset[],
   targets: AgentSyncRemovalTargets,
   options: AgentSyncRemovalOptions,
+  plannedByPath: Map<string, AgentAssetIdentity> | null,
   result: AgentSyncRemovalResult,
 ): void {
   for (const asset of assets) {
+    const expectedIdentity = plannedByPath?.get(resolve(asset.path));
+    // Defense in depth: a recorded identity whose kind does not match the object
+    // now occupying the path is a physical replacement of a different kind. Refuse
+    // it as an identity mismatch rather than degrading to an unbound removal.
+    if (expectedIdentity !== undefined && expectedIdentity.kind !== asset.kind) {
+      result.kept.push(asset.path);
+      result.identityMismatch.push(asset.path);
+      continue;
+    }
     try {
-      if (asset.modified) {
-        result.kept.push(asset.path);
-      } else if (asset.kind === 'workflow' && asset.metadataPath) {
+      if (asset.kind === 'workflow' && asset.metadataPath) {
         const disposition = removeManagedWorkflow(join(targets.claudeDir ?? resolveClaudeDir(), 'workflows'), {
           beforeRemoval: options.beforeWorkflowRemoval,
+          expectedIdentity: expectedIdentity?.kind === 'workflow' ? expectedIdentity : undefined,
         });
-        if (disposition !== 'removed') {
-          result.kept.push(asset.path);
-          continue;
-        }
-        result.removed.push(asset.path);
+        recordAgentAssetDisposition(disposition, asset.path, result);
+      } else if (asset.kind === 'skill') {
+        const disposition = removeManagedSkillTree(asset.path, {
+          genieHome: targets.genieHome,
+          agent: asset.agent,
+          beforeManagedDirRemoval: options.beforeManagedDirRemoval,
+          expectedIdentity: expectedIdentity?.kind === 'skill' ? expectedIdentity : undefined,
+        });
+        recordAgentAssetDisposition(disposition, asset.path, result);
       } else {
-        if (asset.kind === 'skill') {
-          const disposition = removeManagedSkillTree(asset.path, {
-            genieHome: targets.genieHome,
-            agent: asset.agent,
-            beforeManagedDirRemoval: options.beforeManagedDirRemoval,
-          });
-          if (disposition !== 'removed') {
-            result.kept.push(asset.path);
-            continue;
-          }
-        } else unlinkSync(asset.path);
-        result.removed.push(asset.path);
+        removeManagedLink(asset.path, expectedIdentity?.kind === 'link' ? expectedIdentity.target : undefined, result);
       }
     } catch (error) {
       result.failures.push({ path: asset.path, detail: error instanceof Error ? error.message : String(error) });
@@ -834,8 +1067,23 @@ export interface UninstallFailure {
   detail: string;
 }
 
+/** A recorded-removable item left byte-identical because its identity diverged from the batch record. */
+export interface UninstallPreservation {
+  step: string;
+  detail: string;
+}
+
 export interface UninstallResult {
   failures: UninstallFailure[];
+  /** Identity-mismatched items preserved byte-identical; surfaced prominently, never silently. */
+  preserved?: UninstallPreservation[];
+  /** Non-failure advisories (e.g. a legacy batch re-planned from current live state). */
+  notes?: string[];
+}
+
+function recordPreservation(result: UninstallResult, item: UninstallPreservation): void {
+  if (result.preserved === undefined) result.preserved = [];
+  result.preserved.push(item);
 }
 
 export interface UninstallBatchExecutionOperations {
@@ -853,7 +1101,10 @@ export interface UninstallBatchProgressController {
   abort(member: string): void;
   begin(member: string): void;
   complete(member: string): void;
+  /** Durably record that an identity-mismatched member was preserved, not removed. */
+  preserve(member: string): void;
   isCompleted(member: string): boolean;
+  isPreserved(member: string): boolean;
 }
 
 /**
@@ -872,7 +1123,23 @@ export function executeUninstallBatch(
   const recordDecision = operations.recordDecision ?? recordUninstallBatchDecision;
   const updateDecision = operations.updateDecision ?? updateUninstallBatchProgress;
   const clearDecision = operations.clearDecision ?? clearUninstallBatchDecision;
-  let decision = readDecision(genieHome) ?? recordDecision(genieHome, requestedScope);
+  let decision: UninstallBatchDecision;
+  let legacyMigrationNote: string | null = null;
+  try {
+    decision = readDecision(genieHome) ?? recordDecision(genieHome, requestedScope);
+  } catch (error) {
+    if (!(error instanceof LegacyUninstallBatchJournalError)) throw error;
+    // Authentic v1 journal from a prior release: discard it and re-record a fresh
+    // v2 decision from the CURRENT live scope. Safe because every published
+    // external transaction was recovered before this ran and each member removal
+    // is independently idempotent/transactional; an in-flight v1 member is only
+    // noted (recovered transactionally), never replayed from stale authority.
+    if (error.interruptedMember !== null) {
+      legacyMigrationNote = `Re-planned a legacy uninstall batch from current live state; its interrupted member ${error.interruptedMember} was recovered transactionally, not replayed.`;
+    }
+    discardLegacyUninstallBatchDecision(genieHome);
+    decision = recordDecision(genieHome, requestedScope);
+  }
   if (decision.progress.active !== null) {
     return {
       decision,
@@ -900,30 +1167,59 @@ export function executeUninstallBatch(
     isCompleted(member) {
       return decision.progress.completed.includes(assertMember(member));
     },
+    isPreserved(member) {
+      return decision.progress.preserved.includes(assertMember(member));
+    },
     begin(member) {
       const exactMember = assertMember(member);
       if (decision.progress.active !== null) throw new Error('another uninstall batch member is already active');
       if (decision.progress.completed.includes(exactMember)) {
         throw new Error(`uninstall batch member is already completed: ${exactMember}`);
       }
-      persist({ active: exactMember, completed: decision.progress.completed });
+      if (decision.progress.preserved.includes(exactMember)) {
+        throw new Error(`uninstall batch member is already preserved: ${exactMember}`);
+      }
+      persist({ active: exactMember, completed: decision.progress.completed, preserved: decision.progress.preserved });
     },
     complete(member) {
       const exactMember = assertMember(member);
       if (decision.progress.active !== exactMember) {
         throw new Error(`uninstall batch completion receipt does not match the active member: ${exactMember}`);
       }
-      persist({ active: null, completed: [...decision.progress.completed, exactMember].sort() });
+      persist({
+        active: null,
+        completed: [...decision.progress.completed, exactMember].sort(),
+        preserved: decision.progress.preserved,
+      });
+    },
+    preserve(member) {
+      const exactMember = assertMember(member);
+      if (decision.progress.active !== exactMember) {
+        throw new Error(`uninstall batch preserve receipt does not match the active member: ${exactMember}`);
+      }
+      // A mismatched member can never regain removal authority (its live identity
+      // can no longer equal the record), so a durable preserve receipt lets the
+      // batch clear instead of stranding the journal forever on an object we must
+      // not touch.
+      persist({
+        active: null,
+        completed: decision.progress.completed,
+        preserved: [...decision.progress.preserved, exactMember].sort(),
+      });
     },
     abort(member) {
       const exactMember = assertMember(member);
       if (decision.progress.active !== exactMember) {
         throw new Error(`uninstall batch abort receipt does not match the active member: ${exactMember}`);
       }
-      persist({ active: null, completed: decision.progress.completed });
+      persist({ active: null, completed: decision.progress.completed, preserved: decision.progress.preserved });
     },
   };
   const result = cleanup(decision.scope, progress);
+  if (legacyMigrationNote !== null) {
+    if (result.notes === undefined) result.notes = [];
+    result.notes.push(legacyMigrationNote);
+  }
   if (result.failures.length > 0) return { decision, result };
   if (decision.progress.active !== null) {
     result.failures.push({
@@ -932,13 +1228,15 @@ export function executeUninstallBatch(
     });
     return { decision, result };
   }
+  // A member settles when it is completed OR durably preserved; the batch clears
+  // once completed ∪ preserved covers every recorded member.
   const incomplete = [...uninstallBatchMembers(decision.scope, decision.genieHome)].filter(
-    (member) => !decision.progress.completed.includes(member),
+    (member) => !decision.progress.completed.includes(member) && !decision.progress.preserved.includes(member),
   );
   if (incomplete.length > 0) {
     result.failures.push({
       step: 'Finalizing uninstall batch journal',
-      detail: `requested members lack durable completion receipts: ${incomplete.join(', ')}`,
+      detail: `requested members lack durable completion or preservation receipts: ${incomplete.join(', ')}`,
     });
     return { decision, result };
   }
@@ -1069,29 +1367,38 @@ export function inspectUninstallPlan(
 
 function removeSyncedAgentAssets(
   agentAssets: UninstallBatchScope['agentAssets'],
-  failures: UninstallFailure[],
+  result: UninstallResult,
   progress: UninstallBatchProgressController,
 ): void {
-  const removableAssets = agentAssets.filter((asset) => asset.disposition === 'remove');
-  if (removableAssets.length === 0) return;
+  if (!agentAssets.some((asset) => asset.disposition === 'remove')) return;
   console.log('\x1b[2mRemoving synced agent assets...\x1b[0m');
-  for (const asset of removableAssets) {
+  for (const asset of agentAssets) {
+    if (asset.disposition !== 'remove') continue;
     const member = uninstallBatchMemberId('asset', asset.path);
-    if (progress.isCompleted(member)) continue;
+    // A member already settled on a prior attempt (removed or preserved) is never
+    // reprocessed; restoring the original bytes cannot resurrect removal authority.
+    if (progress.isCompleted(member) || progress.isPreserved(member)) continue;
     progress.begin(member);
-    const result = removeAgentSyncAssets({}, { plannedAssetPaths: [asset.path] });
-    if (result.kept.length > 0) {
-      console.log(`  \x1b[33m!\x1b[0m Kept managed asset byte-identical: ${contractPath(asset.path)}`);
-    }
-    if (result.failures.length > 0) {
-      if (result.removed.length === 0) progress.abort(member);
-      for (const failure of result.failures) {
-        failures.push({ step: `Removing synced asset ${contractPath(failure.path)}`, detail: failure.detail });
+    const removal = removeAgentSyncAssets({}, { plannedAssets: [{ path: asset.path, identity: asset.identity }] });
+    if (removal.failures.length > 0) {
+      if (removal.removed.length === 0) progress.abort(member);
+      for (const failure of removal.failures) {
+        result.failures.push({ step: `Removing synced asset ${contractPath(failure.path)}`, detail: failure.detail });
       }
       return;
     }
+    if (removal.kept.length > 0) {
+      const detail =
+        removal.identityMismatch.length > 0
+          ? 'recorded removable asset was replaced by a different managed object after the uninstall batch; preserved it byte-identical'
+          : 'recorded removable asset was modified after the uninstall batch; preserved it byte-identical';
+      console.log(`  \x1b[33m!\x1b[0m Preserved managed asset byte-identical: ${contractPath(asset.path)}`);
+      recordPreservation(result, { step: `Preserving synced asset ${contractPath(asset.path)}`, detail });
+      progress.preserve(member);
+      continue;
+    }
     progress.complete(member);
-    if (result.removed.length > 0) {
+    if (removal.removed.length > 0) {
       console.log(`  \x1b[32m+\x1b[0m Removed managed asset: ${contractPath(asset.path)}`);
     }
   }
@@ -1142,7 +1449,7 @@ export function uninstallBatchRuntimeTargets(
 
 function removeIntegrationState(
   scope: UninstallBatchScope,
-  failures: UninstallFailure[],
+  result: UninstallResult,
   progress: UninstallBatchProgressController,
 ): void {
   const member = uninstallBatchRuntimeMemberId(scope);
@@ -1151,35 +1458,52 @@ function removeIntegrationState(
   const runtimeEvidence = inspectRuntimeIntegrationEvidence();
   const violations = uninstallBatchIntegrationViolations(scope, current, runtimeEvidence);
   if (violations.length > 0) {
-    failures.push({
+    result.failures.push({
       step: 'Validating runtime integration uninstall allowlist',
       detail: violations.join('; '),
     });
     return;
   }
   progress.begin(member);
-  const failureCount = failures.length;
+  const failureCount = result.failures.length;
+  // Restrict role-agent removal to the recorded plan and bind it to the recorded
+  // identity, so a role TOML swapped for a different clean file is preserved.
+  const plannedRoleAgents = new Map<string, { digest: string; mode: number }>();
+  for (const agent of scope.codexRoleAgents) {
+    if (agent.disposition === 'remove') {
+      plannedRoleAgents.set(agent.name, { digest: agent.identity.digest, mode: agent.identity.mode });
+    }
+  }
   const integrations = removeRuntimeIntegrations({
     removeMarketplace: scope.removeMarketplace,
     installedEvidence: scope.runtimePlugins,
     detected: uninstallBatchRuntimeTargets(scope),
+    plannedRoleAgents,
   });
   for (const name of integrations.agents.keptModified) {
-    console.log(`  \x1b[33m!\x1b[0m Kept modified Codex role agent byte-identical: ${name}`);
-    if (scope.codexRoleAgents.some((agent) => agent.name === name && agent.disposition === 'remove')) {
-      failures.push({
-        step: `Removing Codex role agent ${name}`,
-        detail: 'recorded removable role agent changed after the uninstall batch was created; kept it byte-identical',
+    console.log(`  \x1b[33m!\x1b[0m Preserved Codex role agent byte-identical: ${name}`);
+    if (plannedRoleAgents.has(name)) {
+      recordPreservation(result, {
+        step: `Preserving Codex role agent ${name}`,
+        detail: 'recorded removable role agent was modified after the uninstall batch; preserved it byte-identical',
       });
     }
   }
+  for (const name of integrations.agents.keptIdentityMismatch) {
+    console.log(`  \x1b[33m!\x1b[0m Preserved Codex role agent byte-identical (identity mismatch): ${name}`);
+    recordPreservation(result, {
+      step: `Preserving Codex role agent ${name}`,
+      detail:
+        'recorded removable role agent was replaced after the uninstall batch; preserved the replacement byte-identical',
+    });
+  }
   for (const failure of integrations.agents.failures) {
-    failures.push({ step: `Removing Codex role agent ${failure.name}`, detail: failure.detail });
+    result.failures.push({ step: `Removing Codex role agent ${failure.name}`, detail: failure.detail });
   }
   for (const step of integrations.steps) {
-    if (!step.ok) failures.push({ step: `Removing ${step.runtime} ${step.operation}`, detail: step.detail });
+    if (!step.ok) result.failures.push({ step: `Removing ${step.runtime} ${step.operation}`, detail: step.detail });
   }
-  if (failures.length === failureCount) progress.complete(member);
+  if (result.failures.length === failureCount) progress.complete(member);
 }
 
 /** Try an uninstall step, logging success or warning and returning structured failure. */
@@ -1276,41 +1600,56 @@ function performUninstall(
   scope: UninstallBatchScope,
   progress: UninstallBatchProgressController,
 ): UninstallResult {
-  const failures: UninstallFailure[] = [];
+  const result: UninstallResult = { failures: [], preserved: [], notes: [] };
   const rulesFailure = removeRulesMember(genieDir, scope.ownedRulesPath, progress);
-  if (rulesFailure) return { failures: [rulesFailure] };
+  if (rulesFailure) {
+    result.failures.push(rulesFailure);
+    return result;
+  }
 
   // Managed assets live outside GENIE_HOME, so remove them before deleting it.
-  removeSyncedAgentAssets(scope.agentAssets, failures, progress);
-  if (failures.length > 0) return { failures };
+  removeSyncedAgentAssets(scope.agentAssets, result, progress);
+  if (result.failures.length > 0) return result;
   if (hasRuntimeIntegrationWork(scope)) {
-    removeIntegrationState(scope, failures, progress);
-    if (failures.length > 0) return { failures };
+    removeIntegrationState(scope, result, progress);
+    if (result.failures.length > 0) return result;
   }
 
   // Preserve the CLI and external recovery root while any requested removal is
   // incomplete, otherwise the user loses the easiest retry path.
   const homeFailure = removeGenieHomeMember(genieDir, scope.genieHomePresent, progress);
-  if (homeFailure) return { failures: [homeFailure] };
+  if (homeFailure) {
+    result.failures.push(homeFailure);
+    return result;
+  }
   // Keep the normal command path available whenever any failure-prone cleanup
   // or GENIE_HOME removal failed. Once the home is gone, only dangling source-
   // install links remain and can be removed as the final commit step.
-  return { failures: removeSymlinkMembers(genieDir, scope.symlinks, progress) };
+  result.failures.push(...removeSymlinkMembers(genieDir, scope.symlinks, progress));
+  return result;
 }
 
 function uninstallBatchScope(plan: UninstallPlan): UninstallBatchScope {
   return {
     agentAssets: plan.agentAssets
-      .map((asset) => ({
-        path: resolve(asset.path),
-        disposition: asset.modified ? ('keep' as const) : ('remove' as const),
-      }))
+      .map((asset): UninstallBatchScope['agentAssets'][number] =>
+        // Only a clean asset carries a proven identity; a modified/corrupt one is
+        // recorded as keep and never becomes a deletion candidate.
+        !asset.modified && asset.identity !== undefined
+          ? { path: resolve(asset.path), disposition: 'remove', identity: asset.identity }
+          : { path: resolve(asset.path), disposition: 'keep' },
+      )
       .sort((left, right) => left.path.localeCompare(right.path)),
     codexRoleAgents: plan.managedRoleAgents
-      .map((agent) => ({
-        name: agent.name,
-        disposition: agent.ownership === 'managed-clean' ? ('remove' as const) : ('keep' as const),
-      }))
+      .map((agent): UninstallBatchScope['codexRoleAgents'][number] =>
+        agent.ownership === 'managed-clean' && agent.identity !== undefined
+          ? {
+              name: agent.name,
+              disposition: 'remove',
+              identity: { digest: agent.identity.digest, mode: agent.identity.mode },
+            }
+          : { name: agent.name, disposition: 'keep' },
+      )
       .sort((left, right) => left.name.localeCompare(right.name)),
     codexRoleInventoryStatus: plan.codexRoleAgents.status,
     genieHomePresent: plan.hasGenieDir,
@@ -1359,6 +1698,19 @@ export function performFreshUninstallPlan(
 
 function reportUninstallResult(execution: UninstallPlan, result: UninstallResult, genieDir: string): void {
   console.log();
+  for (const note of result.notes ?? []) {
+    console.log(`\x1b[36mi\x1b[0m ${note}`);
+  }
+  const preserved = result.preserved ?? [];
+  if (preserved.length > 0) {
+    // Surface identity-mismatched preservations prominently; a recorded-removable
+    // object was replaced or edited after the batch and was kept byte-identical.
+    console.log(
+      '\x1b[33m!\x1b[0m Preserved recorded-removable items whose identity changed after the batch (kept byte-identical):',
+    );
+    for (const item of preserved) console.log(`  \x1b[33m~\x1b[0m ${item.step}: ${item.detail}`);
+    console.log();
+  }
   if (result.failures.length > 0) {
     process.exitCode = 1;
     console.log('\x1b[31m!\x1b[0m Genie CLI uninstall is incomplete; no success was reported.');
@@ -1378,6 +1730,17 @@ function reportUninstallResult(execution: UninstallPlan, result: UninstallResult
   console.log('  \x1b[2mor\x1b[0m');
   console.log('  \x1b[36mnpm uninstall -g @automagik/genie\x1b[0m');
   console.log();
+}
+
+/** Preview line for a retained batch, noting any interrupted member (recovered, not replayed). */
+function reportPendingBatchPreview(genieDir: string): void {
+  console.log('  \x1b[31m-\x1b[0m Resume the authenticated pending uninstall batch');
+  const interrupted = pendingUninstallBatchInterruptedMember(genieDir);
+  if (interrupted !== null) {
+    console.log(
+      `  \x1b[33m!\x1b[0m A prior batch member (${interrupted}) was interrupted; it will be recovered transactionally, not replayed`,
+    );
+  }
 }
 
 export async function uninstallCommand(options: { removeMarketplace?: boolean } = {}): Promise<void> {
@@ -1442,7 +1805,7 @@ export async function uninstallCommand(options: { removeMarketplace?: boolean } 
   if (hasPendingTransactions) {
     console.log('  \x1b[31m-\x1b[0m Recover and re-evaluate pending managed asset transactions');
   }
-  if (hasPendingBatch) console.log('  \x1b[31m-\x1b[0m Resume the authenticated pending uninstall batch');
+  if (hasPendingBatch) reportPendingBatchPreview(genieDir);
   console.log();
 
   if (

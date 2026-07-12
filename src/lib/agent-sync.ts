@@ -906,6 +906,13 @@ export interface ManagedSkillTreeRemovalOptions {
   agent?: string;
   renameManagedDir?: typeof renameSync;
   beforeManagedDirRemoval?: AgentSyncOptions['beforeManagedDirRemoval'];
+  /**
+   * Recorded uninstall-batch physical identity. When supplied, the tree is
+   * removed only if its live identity still equals this exact record; otherwise
+   * removal is refused so a replacement installed at the same path between plan
+   * and retry is never deleted under stale path authority (F43).
+   */
+  expectedIdentity?: { contentDigest: string; manifestDigest: string };
 }
 
 /**
@@ -915,7 +922,7 @@ export interface ManagedSkillTreeRemovalOptions {
 export function removeManagedSkillTree(
   dir: string,
   options: ManagedSkillTreeRemovalOptions = {},
-): 'removed' | 'unmanaged' | 'kept-modified' {
+): 'removed' | 'unmanaged' | 'kept-modified' | 'kept-identity-mismatch' {
   const report = emptyReport(options.agent === 'codex' ? 'codex' : 'claude');
   const blocked = recoverManagedDirTransactions(dirname(dir), report);
   const name = relative(dirname(dir), dir);
@@ -931,6 +938,21 @@ export function removeManagedSkillTree(
   ) {
     return 'kept-modified';
   }
+  // Bind removal to the batch identity BEFORE parking. A digest-clean tree whose
+  // identity differs from the record is a distinct object the batch never
+  // observed; refuse it as an identity mismatch rather than overloading
+  // kept-modified so the caller can report the swap actionably.
+  if (
+    options.expectedIdentity !== undefined &&
+    (inspected.contentDigest !== options.expectedIdentity.contentDigest ||
+      inspected.manifestDigest !== options.expectedIdentity.manifestDigest)
+  ) {
+    return 'kept-identity-mismatch';
+  }
+  const expected = options.expectedIdentity ?? {
+    contentDigest: inspected.contentDigest,
+    manifestDigest: inspected.manifestDigest,
+  };
   const genieHome = options.genieHome ?? resolveGenieHome();
   const ctx = createRunContext(
     genieHome,
@@ -942,9 +964,12 @@ export function removeManagedSkillTree(
       beforeManagedDirRemoval: options.beforeManagedDirRemoval,
     },
   );
+  // Thread the batch identity into removeManagedDir so its park-and-reverify
+  // guards re-check the recorded identity on the quarantined object, closing the
+  // window between this inspection and the physical rename.
   removeManagedDir(ctx, options.agent ?? 'uninstall', name, dir, {
-    contentDigest: inspected.contentDigest,
-    manifestDigest: inspected.manifestDigest,
+    contentDigest: expected.contentDigest,
+    manifestDigest: expected.manifestDigest,
   });
   return 'removed';
 }
@@ -1851,13 +1876,24 @@ function recoverWorkflowRemovalTransaction(targetDir: string, transactionDir: st
 export interface ManagedWorkflowRemovalOptions {
   /** Failure-injection seam immediately before parking or final deletion. */
   beforeRemoval?: (stage: 'before-park' | 'before-delete') => void;
+  /**
+   * Recorded uninstall-batch identity of the council target plus its sidecar.
+   * When supplied, removal proceeds only if the live pair still matches it, so a
+   * replacement council stamped at the same path after the batch is preserved.
+   */
+  expectedIdentity?: {
+    targetDigest: string;
+    manifestDigest: string;
+    targetMode: number;
+    manifestMode: number;
+  };
 }
 
 /** Journaled council removal shared by uninstall and workflow maintenance. */
 export function removeManagedWorkflow(
   targetDir: string,
   options: ManagedWorkflowRemovalOptions = {},
-): 'removed' | 'unmanaged' | 'kept-modified' {
+): 'removed' | 'unmanaged' | 'kept-modified' | 'kept-identity-mismatch' {
   recoverManagedWorkflowTransactions(targetDir);
   const inspected = inspectManagedWorkflow(targetDir);
   if (inspected.state === 'unmanaged') return 'unmanaged';
@@ -1869,6 +1905,18 @@ export function removeManagedWorkflow(
     inspected.manifestMode === undefined
   ) {
     return 'kept-modified';
+  }
+  // Refuse a council/sidecar pair whose live identity diverged from the batch
+  // record (a re-stamped or swapped workflow). The park guards below then run
+  // against this same matched identity, so no live edit slips through.
+  if (
+    options.expectedIdentity !== undefined &&
+    (inspected.targetDigest !== options.expectedIdentity.targetDigest ||
+      inspected.manifestDigest !== options.expectedIdentity.manifestDigest ||
+      inspected.targetMode !== options.expectedIdentity.targetMode ||
+      inspected.manifestMode !== options.expectedIdentity.manifestMode)
+  ) {
+    return 'kept-identity-mismatch';
   }
   const expectedTarget = {
     kind: 'regular',
