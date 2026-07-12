@@ -1,9 +1,0 @@
-{
-  "last_run": "2026-07-12",
-  "last_metrics": {
-    "releases_24h": 5,
-    "avg_merge_time_h": 3.7,
-    "ship_rate_pct": 100,
-    "merged_prs_7d": 39
-  }
-}
