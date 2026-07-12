@@ -2,14 +2,14 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | IN PROGRESS — Group A **SHIP** (attempt 4, Fable-tier architecture-first repair, independent review 2026-07-12); Group B dispatched; Group C post-release user-gated |
+| **Status** | IN_PROGRESS — Groups A+B **SHIP** (2026-07-12); awaiting PR/release, then Group C day-3 QA (user-gated live ritual) |
 | **Slug** | `routing-delivery-fix` |
 | **Date** | 2026-07-11 |
 | **Author** | Felipe + team-lead session (rebaseline wish 1) |
 | **Appetite** | small |
 | **Branch** | `wish/routing-delivery-fix` |
 | **Repos touched** | genie |
-| **Design** | [DESIGN.md](../../brainstorms/token-efficiency-rebaseline/DESIGN.md) |
+| **Design** | _No brainstorm — direct wish_ |
 
 ## Summary
 
@@ -226,9 +226,12 @@ test -s "$(ls -t /Users/feliperosa/workspace/genie/.genie/wishes/routing-matrix/
 
 ## Dependencies
 
-- **blocks:** `work-on-workflows` (rebaseline wish 3 — sequenced after Fix per the ratified order;
-  no mechanical dependency).
-- `genie-spend` (rebaseline wish 2) is independent and may run in parallel.
+**depends-on:** none
+**blocks:** none
+
+Scheduling note: the future `work-on-workflows` rebaseline is sequenced after this fix per the ratified
+order, but has no canonical wish slug and therefore is not a machine dependency. `genie-spend`
+(rebaseline wish 2) is independent and may run in parallel.
 
 ## QA Criteria
 
@@ -376,6 +379,26 @@ Gates re-run independently from a script file: 106 focused pass / 0 fail; `bun r
    fail-closed but unexplained in output.
 
 Budget closed: `attempts=4/4` (SHIP on 4); `effort_escalations=1/2`.
+
+### Execution review — Group B `doctor-duplicate-guard` (2026-07-12): **SHIP**
+
+- **Engineer pass (engineer-standard, pinned tier, attempt 1):** per-file classifier inside
+  `checkClaudeSync()` over the union of source ∪ manifest names (user-authored agents structurally
+  never reported); duplicate-surface warning on strict `enabledPlugins["genie@automagik"] === true`;
+  machine-readable `roleAgents` rider on the existing `doctor --json` check entry (`manifestStatus`,
+  name-sorted `files[{name, state}]`, `duplicateSurface`, `manifestReason` when unsafe) with the four
+  state names documented as a stability contract. Reuses Group A's `enumerateSourceAgentFiles` and
+  fail-closed `inspectAgentFilesManifest` (additive exports only — transaction core untouched).
+- **Independent review, loop 0: SHIP** — all three acceptance criteria verified test-pinned,
+  including the false-PASS discriminator (hand-copy-only host → `present-unmanaged` + warn, asserted
+  positively AND negatively); classifier semantics coherent across user-edit / outdated-version /
+  vanished-source / never-synced / fresh-host / unsafe-manifest edges; agent-sync delta confirmed
+  behaviorally inert; messaging coherent with `checkMarketplacePlugin`. Gates re-run independently:
+  43 doctor tests, 106 Group A regression tests, `bun run check` 976 pass / 1 skip / 0 fail,
+  `git diff --check` clean. Both declared open items judged acceptable.
+- **LOW advisories (non-blocking):** no dedicated human-detail line for `manifestStatus:'foreign'`;
+  two finer stale branches and the malformed-settings.json probe path handled in code but unpinned
+  by tests.
 
 ---
 

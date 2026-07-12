@@ -354,7 +354,7 @@ interface SkillOutcome {
   detail?: string;
 }
 
-interface SourceAgentFile {
+export interface SourceAgentFile {
   name: string;
   path: string;
 }
@@ -597,6 +597,34 @@ function writeManifest(dir: string, manifest: SyncManifest): void {
 export function readAgentFilesManifest(dir: string): AgentFilesManifest | null {
   const state = inspectAgentFilesManifest(dir);
   return state.kind === 'managed' ? state.manifest : null;
+}
+
+/**
+ * Lightweight, read-only view of the shared agent manifest for external
+ * consumers (doctor). Distinguishes a genie-managed manifest (with its per-file
+ * entries) from foreign / absent / unsafe WITHOUT exposing the raw byte+stat
+ * snapshot. `unsafe` mirrors {@link inspectAgentFilesManifest}'s fail-closed
+ * verdict (symlink, non-regular file, multiple hard links, or unreadable) so a
+ * diagnostic can surface it as a warning instead of silently reporting healthy.
+ */
+export type AgentFilesManifestView =
+  | { kind: 'managed'; files: Record<string, AgentFileManifestEntry> }
+  | { kind: 'foreign' }
+  | { kind: 'absent' }
+  | { kind: 'unsafe'; reason: string };
+
+export function readAgentFilesManifestState(dir: string): AgentFilesManifestView {
+  const state = inspectAgentFilesManifest(dir);
+  switch (state.kind) {
+    case 'managed':
+      return { kind: 'managed', files: state.manifest.files };
+    case 'foreign':
+      return { kind: 'foreign' };
+    case 'absent':
+      return { kind: 'absent' };
+    default:
+      return { kind: 'unsafe', reason: state.reason };
+  }
 }
 
 function inspectAgentFilesManifest(dir: string): AgentManifestState {
@@ -3300,8 +3328,12 @@ function removeManagedOrphans(
 // Claude agent enumeration + per-file policy
 // ============================================================================
 
-/** Source agents are flat Markdown files directly under `<pluginRoot>/agents`. */
-function enumerateSourceAgentFiles(pluginRoot: string): SourceAgentFile[] {
+/**
+ * Source agents are flat Markdown files directly under `<pluginRoot>/agents`.
+ * Exported so doctor's read-only role-agent classifier enumerates the exact same
+ * source set the sync engine fans out (no divergent reimplementation).
+ */
+export function enumerateSourceAgentFiles(pluginRoot: string): SourceAgentFile[] {
   const agentsRoot = join(pluginRoot, 'agents');
   if (!existsSync(agentsRoot)) return [];
   return readdirSync(agentsRoot, { withFileTypes: true })
