@@ -32,6 +32,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { confirm } from '@inquirer/prompts';
 import { z } from 'zod';
 import {
+  TARGET_NAME,
   acquireLifecycleLease,
   codexLegacyCuratedDir,
   inspectManagedSkillTree,
@@ -789,7 +790,12 @@ interface AgentSyncAsset {
   identity?: AgentAssetIdentity;
 }
 
-function collectManagedSkillDirs(parent: string, agent: AgentSyncAsset['agent'], out: AgentSyncAsset[]): void {
+function collectManagedSkillDirs(
+  parent: string,
+  agent: AgentSyncAsset['agent'],
+  out: AgentSyncAsset[],
+  restrictToPaths?: ReadonlySet<string>,
+): void {
   let names: string[];
   try {
     names = readdirSync(parent);
@@ -800,6 +806,10 @@ function collectManagedSkillDirs(parent: string, agent: AgentSyncAsset['agent'],
     // Dirs a previous uninstall already relinquished are the user's now — never re-collect.
     if (name.includes(LEGACY_KEPT_MARKER)) continue;
     const dir = join(parent, name);
+    // Batch removal re-collects once per planned member; skip the full-tree digest
+    // of any dir outside this call's allowlist BEFORE inspecting it, so a batch of
+    // N members costs N single-dir digests instead of N × (every managed dir).
+    if (restrictToPaths !== undefined && !restrictToPaths.has(resolve(dir))) continue;
     let isDir = false;
     try {
       isDir = lstatSync(dir).isDirectory();
@@ -826,7 +836,8 @@ function collectManagedSkillDirs(parent: string, agent: AgentSyncAsset['agent'],
   }
 }
 
-function collectManagedCouncil(claudeDir: string, out: AgentSyncAsset[]): void {
+function collectManagedCouncil(claudeDir: string, out: AgentSyncAsset[], restrictToPaths?: ReadonlySet<string>): void {
+  if (restrictToPaths !== undefined && !restrictToPaths.has(resolve(join(claudeDir, 'workflows', TARGET_NAME)))) return;
   const workflow = inspectManagedWorkflow(join(claudeDir, 'workflows'));
   if (workflow.state === 'unmanaged') return;
   if (
@@ -862,7 +873,13 @@ function collectManagedCouncil(claudeDir: string, out: AgentSyncAsset[]): void {
 }
 
 /** The hermes plugin link is ours only when the symlink resolves into the genie home. */
-function collectHermesLinkPath(linkPath: string, genieHome: string, out: AgentSyncAsset[]): void {
+function collectHermesLinkPath(
+  linkPath: string,
+  genieHome: string,
+  out: AgentSyncAsset[],
+  restrictToPaths?: ReadonlySet<string>,
+): void {
+  if (restrictToPaths !== undefined && !restrictToPaths.has(resolve(linkPath))) return;
   let stat: ReturnType<typeof lstatSync>;
   try {
     stat = lstatSync(linkPath);
@@ -884,8 +901,13 @@ function collectHermesLinkPath(linkPath: string, genieHome: string, out: AgentSy
   }
 }
 
-function collectHermesLinks(hermesHome: string, genieHome: string, out: AgentSyncAsset[]): void {
-  collectHermesLinkPath(join(hermesHome, 'plugins', 'genie'), genieHome, out);
+function collectHermesLinks(
+  hermesHome: string,
+  genieHome: string,
+  out: AgentSyncAsset[],
+  restrictToPaths?: ReadonlySet<string>,
+): void {
+  collectHermesLinkPath(join(hermesHome, 'plugins', 'genie'), genieHome, out, restrictToPaths);
   const profilesRoot = join(hermesHome, 'profiles');
   let entries: Dirent[];
   try {
@@ -898,25 +920,34 @@ function collectHermesLinks(hermesHome: string, genieHome: string, out: AgentSyn
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(entry.name) || entry.name === '.' || entry.name === '..') continue;
     const profileRoot = resolve(profilesRoot, entry.name);
     if (!isSameOrContainedPath(profilesRoot, profileRoot)) continue;
-    collectHermesLinkPath(join(profileRoot, 'plugins', 'genie'), genieHome, out);
+    collectHermesLinkPath(join(profileRoot, 'plugins', 'genie'), genieHome, out, restrictToPaths);
   }
 }
 
-/** Read-only scan for genie-managed agent assets (skills, stamped council.js, hermes link). */
-export function collectAgentSyncAssets(targets: AgentSyncRemovalTargets = {}): AgentSyncAsset[] {
+/**
+ * Read-only scan for genie-managed agent assets (skills, stamped council.js, hermes link).
+ * `restrictToPaths` (resolved paths) bounds the scan to those exact objects, so a
+ * batch removing N members re-inspects only each planned path instead of digesting
+ * every managed dir once per member. Classification of each returned path is
+ * unchanged — it is still freshly inspected on every call.
+ */
+export function collectAgentSyncAssets(
+  targets: AgentSyncRemovalTargets = {},
+  restrictToPaths?: ReadonlySet<string>,
+): AgentSyncAsset[] {
   const claudeDir = targets.claudeDir ?? resolveClaudeDir();
   const codexDir = targets.codexDir ?? resolveCodexDir();
   const hermesHome = targets.hermesHome ?? resolveHermesHome();
   const genieHome = targets.genieHome ?? resolveGenieHome();
   const out: AgentSyncAsset[] = [];
-  collectManagedSkillDirs(join(claudeDir, 'skills'), 'claude', out);
+  collectManagedSkillDirs(join(claudeDir, 'skills'), 'claude', out, restrictToPaths);
   // Live codex tier + the retired `.curated` lane (machines that never synced
   // post-migration still carry managed dirs there). Manifest-gated either way —
   // unmanaged siblings in the shared ~/.agents/skills tier are invisible.
-  collectManagedSkillDirs(targets.agentsSkillsDir ?? resolveAgentsSkillsDir(), 'codex', out);
-  collectManagedSkillDirs(codexLegacyCuratedDir(codexDir), 'codex', out);
-  collectManagedCouncil(claudeDir, out);
-  collectHermesLinks(hermesHome, genieHome, out);
+  collectManagedSkillDirs(targets.agentsSkillsDir ?? resolveAgentsSkillsDir(), 'codex', out, restrictToPaths);
+  collectManagedSkillDirs(codexLegacyCuratedDir(codexDir), 'codex', out, restrictToPaths);
+  collectManagedCouncil(claudeDir, out, restrictToPaths);
+  collectHermesLinks(hermesHome, genieHome, out, restrictToPaths);
   return out;
 }
 
@@ -975,7 +1006,11 @@ export function removeAgentSyncAssets(
     options.plannedAssets === undefined
       ? null
       : new Map(options.plannedAssets.map((planned) => [resolve(planned.path), planned.identity]));
-  const assets = collectAgentSyncAssets(targets).filter(
+  // Scope the (expensive, full-tree-digesting) collection to exactly the planned
+  // paths. The resulting membership is identical to collecting everything then
+  // filtering, but a per-member batch call no longer digests every sibling.
+  const restrictToPaths = plannedByPath === null ? undefined : new Set(plannedByPath.keys());
+  const assets = collectAgentSyncAssets(targets, restrictToPaths).filter(
     (asset) => plannedByPath === null || plannedByPath.has(resolve(asset.path)),
   );
   removeCollectedAgentAssets(assets, targets, options, plannedByPath, result);

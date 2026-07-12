@@ -278,6 +278,21 @@ describe('agent-sync managed-asset removal', () => {
     expect(existsSync(later)).toBe(true);
   });
 
+  test('collectAgentSyncAssets scoped to a path digests only that path, not its siblings', () => {
+    // Guards the O(N) batch cost: a per-member removal re-collects once per member,
+    // and each such call must digest only the planned path — never every sibling.
+    const a = managedSkill(join(claudeDir, 'skills'), 'wish');
+    const b = managedSkill(join(claudeDir, 'skills'), 'review');
+
+    expect(collectAgentSyncAssets(targets(), new Set([resolve(a)])).map((asset) => asset.path)).toEqual([a]);
+    // An unrestricted scan still sees both — the scope only bounds the work, not the contract.
+    expect(
+      collectAgentSyncAssets(targets())
+        .map((asset) => asset.path)
+        .sort(),
+    ).toEqual([a, b].sort());
+  });
+
   test('a recorded removable asset modified after the batch is preserved, not blocking (F43 contract)', () => {
     const planned = managedSkill(join(claudeDir, 'skills'), 'wish');
     const identity = skillIdentity(planned);

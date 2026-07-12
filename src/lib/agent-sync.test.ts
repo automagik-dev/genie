@@ -1735,6 +1735,63 @@ describe('cross-process sync lock', () => {
     expect(readFileSync(lockPath, 'utf8')).toContain('999999:'); // stale lock left in place
   });
 
+  test('a future-mtime dead-owner steal guard is reaped (far-future = debris, per ± window)', () => {
+    present(fixture.claudeDir);
+    const lockPath = join(fixture.genieHome, LOCK_NAME);
+    const guardPath = `${lockPath}.steal`;
+    writeFile(lockPath, '999999:0123456789abcdef0123456789abcdef:unknown\n');
+    writeFile(guardPath, '999999:abcdefabcdefabcdefabcdefabcdefab:unknown\n');
+    const agedSec = (Date.now() - 11 * 60 * 1000) / 1000;
+    const futureSec = (Date.now() + 11 * 60 * 1000) / 1000; // implausibly far future
+    utimesSync(lockPath, agedSec, agedSec);
+    utimesSync(guardPath, futureSec, futureSec);
+
+    const first = run();
+    expect(first.skipped).toContain('holds the lock');
+    expect(existsSync(guardPath)).toBe(false); // future-dated debris reaped
+
+    const second = run();
+    expect(second.skipped).toBeUndefined();
+    expect(existsSync(lockPath)).toBe(false); // stale lock then stolen + released
+  });
+
+  test('a symlinked steal guard is treated as contended and never followed or unlinked', () => {
+    present(fixture.claudeDir);
+    const lockPath = join(fixture.genieHome, LOCK_NAME);
+    const guardPath = `${lockPath}.steal`;
+    const target = join(fixture.root, 'guard-symlink-target');
+    writeFile(lockPath, '999999:0123456789abcdef0123456789abcdef:unknown\n');
+    const agedSec = (Date.now() - 11 * 60 * 1000) / 1000;
+    utimesSync(lockPath, agedSec, agedSec);
+    // Aged, dead-owner target: a symlink-FOLLOWING reap would have unlinked the guard.
+    writeFile(target, '999999:abcdefabcdefabcdefabcdefabcdefab:unknown\n');
+    utimesSync(target, agedSec, agedSec);
+    symlinkSync(target, guardPath);
+
+    const report = run();
+
+    expect(report.skipped).toContain('holds the lock');
+    expect(lstatSync(guardPath).isSymbolicLink()).toBe(true); // symlink node left intact
+    expect(existsSync(join(fixture.claudeDir, 'skills'))).toBe(false); // zero writes
+  });
+
+  test('a symlinked lock is treated as contended and never unlinked', () => {
+    present(fixture.claudeDir);
+    const lockPath = join(fixture.genieHome, LOCK_NAME);
+    const target = join(fixture.root, 'lock-symlink-target');
+    const agedSec = (Date.now() - 11 * 60 * 1000) / 1000;
+    // Aged, dead-owner target: a symlink-following reap would unlink the lock link.
+    writeFile(target, '999999:0123456789abcdef0123456789abcdef:unknown\n');
+    utimesSync(target, agedSec, agedSec);
+    symlinkSync(target, lockPath);
+
+    const report = run();
+
+    expect(report.skipped).toContain('holds the lock'); // never steal a symlinked lock
+    expect(lstatSync(lockPath).isSymbolicLink()).toBe(true); // symlink node left intact
+    expect(existsSync(join(fixture.claudeDir, 'skills'))).toBe(false); // zero writes
+  });
+
   test('lock acquisition I/O failure fails closed and performs zero target writes', () => {
     present(fixture.claudeDir);
     chmodSync(fixture.genieHome, 0o500);

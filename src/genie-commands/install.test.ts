@@ -13,6 +13,7 @@ import { spawnSync } from 'node:child_process';
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -235,6 +236,72 @@ describe('standalone install.sh lifecycle lease', () => {
     const result = shell('source "$1"; ps() { return 1; }; acquire_lifecycle_lock; release_lifecycle_lock');
 
     expect(result.status).toBe(0);
+    expect(existsSync(lock)).toBe(false);
+  });
+
+  test('a future-mtime abandoned guard (dead owner) is reaped per the ± window', () => {
+    const lock = lifecycleLockPath(genieHome);
+    const guard = `${lock}.steal`;
+    writeFileSync(lock, '999999:0123456789abcdef0123456789abcdef:unknown\n', { mode: 0o600 });
+    writeFileSync(guard, '999999:abcdefabcdefabcdefabcdefabcdefab:unknown\n', { mode: 0o600 });
+    const agedPast = new Date(Date.now() - 11 * 60 * 1_000);
+    const agedFuture = new Date(Date.now() + 11 * 60 * 1_000); // implausibly far future = debris too
+    utimesSync(lock, agedPast, agedPast);
+    utimesSync(guard, agedFuture, agedFuture);
+
+    const result = shell('source "$1"; acquire_lifecycle_lock; test -f "$LIFECYCLE_LOCK"; release_lifecycle_lock');
+
+    expect(result.status).toBe(0);
+    expect(existsSync(lock)).toBe(false);
+    expect(existsSync(guard)).toBe(false);
+  });
+
+  test('a symlinked steal guard is never reaped and still blocks (fail-closed on ! -L)', () => {
+    const lock = lifecycleLockPath(genieHome);
+    const guard = `${lock}.steal`;
+    const target = join(root, 'guard-symlink-target');
+    writeFileSync(lock, '999999:0123456789abcdef0123456789abcdef:unknown\n', { mode: 0o600 });
+    const aged = new Date(Date.now() - 11 * 60 * 1_000);
+    utimesSync(lock, aged, aged);
+    writeFileSync(target, '999999:abcdefabcdefabcdefabcdefabcdefab:unknown\n', { mode: 0o600 });
+    symlinkSync(target, guard); // a guard we must refuse to follow/unlink
+
+    const result = shell('source "$1"; acquire_lifecycle_lock');
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('another Genie lifecycle command is active');
+    expect(lstatSync(guard).isSymbolicLink()).toBe(true); // symlink node untouched
+    expect(existsSync(lock)).toBe(true); // stale lock never stolen behind a symlink guard
+  });
+
+  test('a no-trailing-newline live-owner guard is preserved and not mis-reaped', () => {
+    const lock = lifecycleLockPath(genieHome);
+    const guard = `${lock}.steal`;
+    writeFileSync(lock, '999999:0123456789abcdef0123456789abcdef:unknown\n', { mode: 0o600 });
+    // A live owner (this test process) with NO trailing newline: the read idiom
+    // must keep the record instead of clobbering it to "" and reaping a live guard.
+    writeFileSync(guard, `${process.pid}:abcdefabcdefabcdefabcdefabcdefab:unknown`, { mode: 0o600 });
+    const aged = new Date(Date.now() - 11 * 60 * 1_000);
+    utimesSync(lock, aged, aged);
+    utimesSync(guard, aged, aged);
+
+    const result = shell('source "$1"; acquire_lifecycle_lock');
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('another Genie lifecycle command is active');
+    expect(existsSync(guard)).toBe(true); // live owner preserved despite the missing newline
+  });
+
+  test('an empty aged lock (crash between create and record write) is recovered', () => {
+    const lock = lifecycleLockPath(genieHome);
+    writeFileSync(lock, '', { mode: 0o600 }); // zero-byte lock, as TS leaves on a mid-write crash
+    const aged = new Date(Date.now() - 11 * 60 * 1_000);
+    utimesSync(lock, aged, aged);
+
+    const result = shell('source "$1"; acquire_lifecycle_lock; test -f "$LIFECYCLE_LOCK"; release_lifecycle_lock');
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).not.toContain('another Genie lifecycle command');
     expect(existsSync(lock)).toBe(false);
   });
 

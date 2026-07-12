@@ -16,7 +16,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Bash|Read|Write|Edit|SendMessage",
+        "matcher": "Bash|Read|Write|Edit|NotebookEdit|SendMessage",
         "hooks": [
           {
             "type": "command",

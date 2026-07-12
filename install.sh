@@ -110,18 +110,21 @@ lock_mtime_seconds() {
 lock_record_is_stale() {
   local path="$1" expected_record="$2" current_record mtime now age pid
   [[ -f "$path" && ! -L "$path" ]] || return 1
-  IFS= read -r current_record < "$path" || return 1
+  # EOF without a trailing newline still populates the record; only a genuinely
+  # empty read collapses to "". A zero-byte lock (a crash between openSync('wx')
+  # and writeSync) is thus observed as "" and matched by an "" expected record.
+  IFS= read -r current_record < "$path" || [ -n "$current_record" ] || current_record=""
   [[ "$current_record" == "$expected_record" ]] || return 1
   case "$current_record" in
     *:*) pid="${current_record%%:*}" ;;
-    *) return 1 ;;
+    *) pid="$current_record" ;;
   esac
-  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
-  # Liveness via `ps -p`, not `kill -0`: a lock owned by another user is still
-  # alive even though `kill -0` fails there with EPERM. Treating EPERM as death
-  # would wrongly steal a live foreign-owned lock — the same EPERM-is-alive rule
-  # lockHasLiveOwner enforces in src/lib/agent-sync.ts.
-  if ps -p "$pid" >/dev/null 2>&1; then return 1; fi
+  # Liveness via `ps -p`, not `kill -0`, so a lock owned by another user (EPERM
+  # under `kill -0`) still counts as alive — the EPERM-is-alive rule
+  # lockHasLiveOwner enforces in src/lib/agent-sync.ts. An empty or unparseable
+  # record has no live pid to pin it, so it is a dead owner recoverable once
+  # aged — the same debris TS lockOwner maps to null.
+  if [[ "$pid" =~ ^[0-9]+$ ]] && ps -p "$pid" >/dev/null 2>&1; then return 1; fi
   mtime="$(lock_mtime_seconds "$path" 2>/dev/null)" || return 1
   now="$(date +%s)"
   age=$((now - mtime))
@@ -139,7 +142,9 @@ lock_record_is_stale() {
 foreign_lock_record_is_stale() {
   local path="$1" record pid mtime now age
   [[ -f "$path" && ! -L "$path" ]] || return 1
-  IFS= read -r record < "$path" || record=""
+  # EOF without a trailing newline keeps the partial record (a live pid must not
+  # be clobbered to "" and mis-reaped); only a truly empty read yields "".
+  IFS= read -r record < "$path" || [ -n "$record" ] || record=""
   case "$record" in
     *:*) pid="${record%%:*}" ;;
     *) pid="$record" ;;
@@ -163,7 +168,10 @@ foreign_lock_record_is_stale() {
 recover_stale_lifecycle_lock() {
   local observed guard guard_owner guard_token guard_record current
   [[ -f "$LIFECYCLE_LOCK" && ! -L "$LIFECYCLE_LOCK" ]] || return 1
-  IFS= read -r observed < "$LIFECYCLE_LOCK" || return 1
+  # A zero-byte lock reads as observed="" (dead-owner debris); a no-newline
+  # record is preserved rather than clobbered. lock_record_is_stale re-verifies
+  # observed against the live bytes before anything is removed.
+  IFS= read -r observed < "$LIFECYCLE_LOCK" || [ -n "$observed" ] || observed=""
   lock_record_is_stale "$LIFECYCLE_LOCK" "$observed" || return 1
   guard="${LIFECYCLE_LOCK}.steal"
   guard_token="$(sha256_text "installer-steal:$$:${TMP_DIR}:$(date +%s):${observed}")"
@@ -180,7 +188,7 @@ recover_stale_lifecycle_lock() {
     return 1
   fi
   if lock_record_is_stale "$LIFECYCLE_LOCK" "$observed"; then
-    IFS= read -r current < "$LIFECYCLE_LOCK" || current=""
+    IFS= read -r current < "$LIFECYCLE_LOCK" || [ -n "$current" ] || current=""
     if [[ "$current" == "$observed" ]]; then rm -f "$LIFECYCLE_LOCK"; fi
   fi
   if [[ -e "$guard" && -e "$guard_owner" && "$guard" -ef "$guard_owner" ]]; then rm -f "$guard"; fi

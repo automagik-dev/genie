@@ -705,6 +705,28 @@ describe('persistChannel — sticky channel persistence (release-channel-dev)', 
   // schema test above (write "dev" → read back as "dev") plus the
   // resolveChannel test (which reads from genie-config). We just assert
   // that persistChannel does not throw on either channel input.
+  //
+  // Isolated under a tmp GENIE_HOME so persistChannel never reads or writes the
+  // developer's real ~/.genie/config.json (which would flip a dev-channel user
+  // to stable and could materialize a default config on a clean machine).
+  let dir: string;
+  let prevGenieHome: string | undefined;
+
+  beforeEach(() => {
+    prevGenieHome = process.env.GENIE_HOME;
+    dir = mkdtempSync(join(tmpdir(), 'update-channel-sticky-'));
+    process.env.GENIE_HOME = dir;
+  });
+
+  afterEach(() => {
+    if (prevGenieHome === undefined) {
+      Reflect.deleteProperty(process.env, 'GENIE_HOME');
+    } else {
+      process.env.GENIE_HOME = prevGenieHome;
+    }
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   test('persistChannel("dev") does not throw', async () => {
     await expect(persistChannel('dev')).resolves.toBeUndefined();
   });

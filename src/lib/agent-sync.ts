@@ -2610,8 +2610,9 @@ export function acquireLifecycleLease(genieHome = resolveGenieHome()): Lifecycle
  *     unparseable record counts as dead (`lockOwner` → null). A live pid —
  *     including another user's process, where `process.kill(pid, 0)` throws
  *     EPERM — counts as alive and is never reaped ({@link lockHasLiveOwner}). A
- *     symlinked/non-regular guard is never reaped. Reaping only unlinks; it
- *     never renames or quarantines.
+ *     symlinked/non-regular guard OR lock is never reaped (lstat, never follow —
+ *     parity with the shell's `! -L`). Reaping only unlinks; it never renames or
+ *     quarantines.
  *   - Residual race (accepted): a process suspended (e.g. SIGSTOP, GC, swap)
  *     across BOTH the guard read→rm window and the lock read→rm window can
  *     still let two acquirers proceed as concurrent owners. This is pre-existing
@@ -2621,8 +2622,11 @@ function stealStaleLock(lockPath: string): 'cleared' | 'contended' {
   const guardPath = `${lockPath}.steal`;
   const guardAttempt = tryInitializeSyncLock(guardPath);
   if (guardAttempt.status !== 'acquired') {
-    const guardStat = statSafe(guardPath);
-    if (guardStat !== null && isStaleOrInvalidLockTime(guardStat.mtimeMs) && !lockHasLiveOwner(guardPath)) {
+    // lstat (never follow): a symlinked or otherwise non-regular guard is never
+    // ours to reap — refuse it, matching the shell's `! -L` guard, so neither
+    // acquirer can be redirected into unlinking a target it does not own.
+    const guardStat = lstatSafe(guardPath);
+    if (guardStat?.isFile() && isStaleOrInvalidLockTime(guardStat.mtimeMs) && !lockHasLiveOwner(guardPath)) {
       rmSyncSafe(guardPath);
     }
     return 'contended'; // another stealer holds the guard — back off like a live lock
@@ -2631,6 +2635,10 @@ function stealStaleLock(lockPath: string): 'cleared' | 'contended' {
     const stat = statSafe(lockPath);
     if (stat !== null && !isStaleOrInvalidLockTime(stat.mtimeMs)) return 'contended'; // refreshed under us — live
     if (stat !== null && lockHasLiveOwner(lockPath)) return 'contended';
+    // Same fail-closed refusal for the lock: never unlink through a symlink or
+    // other non-regular node (a symlinked lock is not ours to steal).
+    const lockStat = lstatSafe(lockPath);
+    if (lockStat !== null && !lockStat.isFile()) return 'contended';
     rmSyncSafe(lockPath); // re-verified stale (or already gone) under the guard
     return 'cleared';
   } finally {
