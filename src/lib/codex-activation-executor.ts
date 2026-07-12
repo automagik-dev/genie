@@ -229,9 +229,11 @@ function runActivationUnderLease(
     };
   }
   if (begin.status === 'refused') {
-    // A genuine but ineligible state (e.g. command-started/removal-observed/
-    // ambiguous/mismatch): report the classifier's deterministic recovery, having
-    // written nothing. `beginActivation` performs no journal write on refusal.
+    // A genuine permit for a state that opens no activation transaction (e.g.
+    // cache-missing/payload-mismatch, or a quarantine-only capability): report the
+    // classifier's deterministic recovery, having written nothing. The post-command
+    // phases (command-started/removal-observed/ambiguous-absent) no longer land here
+    // — `beginActivation` resumes their bound journal.
     return refusedFromState(preState, begin.reason);
   }
   const handle = begin.handle;

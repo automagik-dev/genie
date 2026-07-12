@@ -447,7 +447,7 @@ describe('crash recovery', () => {
     expect(classifyCodexActivation(fx.openStore().observe()).kind).toBe('current');
   });
 
-  test('a failure before the add leaves command-started; N stays present and the retry is a gated refusal', () => {
+  test('a failure before the add leaves command-started; a fresh authorized run resumes it to completion', () => {
     const fx = fixture({ from: FROM_VERSION, initialEnabled: true, createFromCache: true });
     publishDelivery(fx);
     const first = runActivation(fx, {
@@ -462,12 +462,224 @@ describe('crash recovery', () => {
     expect(existsSync(intentPath(fx))).toBe(true);
     expect(classifyCodexActivation(fx.openStore().observe()).kind).toBe('intent-command-started');
 
-    // Second run: command-started is not eligible for a fresh transaction; the
-    // executor reports a deterministic gated refusal without mutating.
+    // Second authorized run: the DESIGN truth table grants command-started an
+    // external-tty-setup transaction. beginActivation resumes the bound journal and
+    // the executor idempotently reconciles through one supported add + verify.
     const second = runActivation(fx);
+    expect(second.status).toBe('activated');
+    if (second.status !== 'activated') throw new Error('unreachable');
+    // Never claims N survived: the recovery names the old-generation break risk.
+    expect(second.recovery).toContain('old generation');
+    expect(addCalls(fx)).toBe(1);
+    expect(existsSync(intentPath(fx))).toBe(false);
+    expect(classifyCodexActivation(fx.openStore().observe()).kind).toBe('current');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Post-command phase resume (DESIGN truth table: command-started /
+// removal-observed / ambiguous-absent are external-tty-setup transactions that
+// RESUME the bound journal and reconcile idempotently through the supported add).
+// ---------------------------------------------------------------------------
+
+function activateWith(
+  fx: Fixture,
+  runner: CommandRunner,
+  deps: CodexActivationExecutorDeps = {},
+): ActivationExecutionResult {
+  const store = openCodexActivationStore({
+    genieHome: fx.genieHome,
+    codexHome: fx.codexHome,
+    canonicalRoot: fx.canonicalRoot,
+    allowRootOverride: true,
+    command: STUB_COMMAND,
+    runner,
+  });
+  const { permit } = mintPermit(store);
+  return executeCodexActivation({
+    permit,
+    store,
+    command: STUB_COMMAND,
+    codexHome: fx.codexHome,
+    genieHome: fx.genieHome,
+    configPath: fx.configPath,
+    deps: { runner, ...deps },
+  });
+}
+
+function installedList(version: string | null): CommandResult {
+  return version === null
+    ? json({ installed: [] })
+    : json({ installed: [{ pluginId: 'genie@automagik', enabled: true, version }] });
+}
+
+/** First-run runner whose add fails AFTER the old registration goes absent (→ removal-observed). */
+function removalObservedRunner(fx: Fixture): CommandRunner {
+  let removed = false;
+  return (_command, args) => {
+    const key = args.join(' ');
+    if (key === 'plugin list --json') {
+      if (existsSync(fx.targetCacheDir)) return installedList(TARGET_VERSION);
+      return installedList(removed ? null : FROM_VERSION);
+    }
+    if (key === 'plugin add genie@automagik --json') {
+      removed = true; // the old generation is gone, but T was never installed
+      return { exitCode: 1, stdout: '', stderr: 'plugin add failed after removing the old generation' };
+    }
+    return { exitCode: 0, stdout: '{}', stderr: '' };
+  };
+}
+
+/** First-run runner whose add fails and leaves the follow-up query unavailable (→ ambiguous-absent). */
+function ambiguousAbsentRunner(fx: Fixture): CommandRunner {
+  let added = false;
+  return (_command, args) => {
+    const key = args.join(' ');
+    if (key === 'plugin list --json') {
+      if (existsSync(fx.targetCacheDir)) return installedList(TARGET_VERSION);
+      if (added) return { exitCode: 1, stdout: '', stderr: 'plugin list unavailable' };
+      return installedList(FROM_VERSION);
+    }
+    if (key === 'plugin add genie@automagik --json') {
+      added = true; // outcome unknowable: the follow-up query cannot attribute absence
+      return { exitCode: 1, stdout: '', stderr: 'plugin add failed with an ambiguous outcome' };
+    }
+    return { exitCode: 0, stdout: '{}', stderr: '' };
+  };
+}
+
+describe('post-command phase resume', () => {
+  test('removal-observed resumes: a fresh authorized run reconciles through add + verify', () => {
+    const fx = fixture({ from: FROM_VERSION, initialEnabled: true, createFromCache: true });
+    publishDelivery(fx);
+    // First run: the add fails after the old registration went absent, T never installed.
+    const first = activateWith(fx, removalObservedRunner(fx));
+    expect(first.status).toBe('broken');
+    expect(existsSync(intentPath(fx))).toBe(true);
+    expect(classifyCodexActivation(fx.openStore().observe()).kind).toBe('intent-removal-observed');
+
+    // Second authorized run resumes the bound journal and completes via a supported add.
+    const second = runActivation(fx);
+    expect(second.status).toBe('activated');
+    if (second.status !== 'activated') throw new Error('unreachable');
+    expect(second.recovery).toContain('old generation'); // never claims N survived
+    expect(addCalls(fx)).toBe(1);
+    expect(existsSync(intentPath(fx))).toBe(false);
+    expect(classifyCodexActivation(fx.openStore().observe()).kind).toBe('current');
+  });
+
+  test('ambiguous-absent resumes: a fresh authorized run reconciles idempotently', () => {
+    const fx = fixture({ from: FROM_VERSION, initialEnabled: true, createFromCache: true });
+    publishDelivery(fx);
+    const first = activateWith(fx, ambiguousAbsentRunner(fx));
+    expect(first.status).toBe('broken');
+    expect(existsSync(intentPath(fx))).toBe(true);
+    expect(classifyCodexActivation(fx.openStore().observe()).kind).toBe('intent-ambiguous-absent');
+
+    const second = runActivation(fx);
+    expect(second.status).toBe('activated');
+    if (second.status !== 'activated') throw new Error('unreachable');
+    expect(second.recovery).toContain('old generation');
+    expect(addCalls(fx)).toBe(1);
+    expect(existsSync(intentPath(fx))).toBe(false);
+    expect(classifyCodexActivation(fx.openStore().observe()).kind).toBe('current');
+  });
+
+  test('a resumed post-command run interrupted again stays broken with the journal intact', () => {
+    const fx = fixture({ from: FROM_VERSION, initialEnabled: true, createFromCache: true });
+    publishDelivery(fx);
+    runActivation(fx, {
+      hooks: {
+        beforePluginAdd() {
+          throw new Error('injected crash 1');
+        },
+      },
+    });
+    expect(classifyCodexActivation(fx.openStore().observe()).kind).toBe('intent-command-started');
+    // Second authorized run resumes but is interrupted again before the add.
+    const second = runActivation(fx, {
+      hooks: {
+        beforePluginAdd() {
+          throw new Error('injected crash 2');
+        },
+      },
+    });
     expect(second.status).toBe('broken');
     expect(addCalls(fx)).toBe(0);
+    expect(existsSync(intentPath(fx))).toBe(true);
+    expect(classifyCodexActivation(fx.openStore().observe()).kind).toBe('intent-command-started');
+    // A third authorized run finally resumes to completion (idempotent retry).
+    const third = runActivation(fx);
+    expect(third.status).toBe('activated');
+    expect(addCalls(fx)).toBe(1);
+    expect(existsSync(intentPath(fx))).toBe(false);
   });
+
+  test('a stale permit on a post-command resume refuses with zero mutation', () => {
+    const fx = fixture({ from: FROM_VERSION, initialEnabled: true, createFromCache: true });
+    publishDelivery(fx);
+    runActivation(fx, {
+      hooks: {
+        beforePluginAdd() {
+          throw new Error('injected crash');
+        },
+      },
+    });
+    expect(classifyCodexActivation(fx.openStore().observe()).kind).toBe('intent-command-started');
+    const journalBefore = readFileSync(intentPath(fx), 'utf8');
+
+    const store = fx.openStore();
+    const { permit } = mintPermit(store);
+    // Drift an observed fingerprint field (enabled) after consent, before execution.
+    setConfigEnabled(fx.configPath, false);
+    const result = executeCodexActivation({
+      permit,
+      store,
+      command: STUB_COMMAND,
+      codexHome: fx.codexHome,
+      genieHome: fx.genieHome,
+      configPath: fx.configPath,
+      deps: { runner: fx.makeRunner() },
+    });
+    expect(result.status).toBe('stale');
+    if (result.status !== 'stale') throw new Error('unreachable');
+    expect(result.mismatchField).toBe('enabled');
+    expect(addCalls(fx)).toBe(0);
+    expect(readFileSync(intentPath(fx), 'utf8')).toBe(journalBefore);
+  });
+
+  // Reviewer MEDIUM: failure injection at each post-add phase leaves a recoverable
+  // target-current journal and an idempotent authorized rerun with no second add.
+  const INJECTION_PHASES = [
+    'afterPluginAdd',
+    'beforeRemovalObserved',
+    'beforeParity',
+    'beforeH3',
+    'beforeEnabledRestore',
+  ] as const;
+  for (const phase of INJECTION_PHASES) {
+    test(`an injected failure at ${phase} recovers via target-current with no second add`, () => {
+      const fx = fixture({ from: FROM_VERSION, initialEnabled: true, createFromCache: true });
+      publishDelivery(fx);
+      const hooks: ActivationPhaseHooks = {};
+      hooks[phase] = () => {
+        throw new Error(`injected crash at ${phase}`);
+      };
+      const first = runActivation(fx, { hooks });
+      expect(first.status).toBe('broken');
+      expect(addCalls(fx)).toBe(1);
+      expect(existsSync(intentPath(fx))).toBe(true);
+      // The add already reached T, so the interrupted journal classifies target-current.
+      expect(classifyCodexActivation(fx.openStore().observe()).kind).toBe('intent-target-current');
+
+      // Second authorized run finalizes via target-current with NO second add.
+      const second = runActivation(fx);
+      expect(second.status).toBe('activated');
+      expect(addCalls(fx)).toBe(1);
+      expect(existsSync(intentPath(fx))).toBe(false);
+      expect(classifyCodexActivation(fx.openStore().observe()).kind).toBe('current');
+    });
+  }
 });
 
 describe('explicit downgrade', () => {

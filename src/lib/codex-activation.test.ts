@@ -1,5 +1,14 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import * as mod from './codex-activation.js';
@@ -1114,6 +1123,85 @@ describe('CodexActivationStore — beginActivation fingerprint binding', () => {
       `${JSON.stringify({ schemaVersion: 1, operationId: 'f'.repeat(32), kind: 'rollback', pid: process.pid, startedAt: 'x' })}\n`,
     );
     expect(() => store.advanceIntentPhase(lease, begun.handle, 'command-started')).toThrow();
+  });
+
+  // The DESIGN truth table grants command-started / removal-observed / ambiguous-absent
+  // an external-tty-setup transaction. beginActivation must RESUME their bound journal
+  // (same id, preserved phase) rather than refuse or write a duplicate planned intent.
+  const POST_COMMAND_PHASES = ['command-started', 'removal-observed', 'ambiguous-absent'] as const;
+  for (const phase of POST_COMMAND_PHASES) {
+    test(`a fresh assertion resumes an intent-${phase} journal (same id, preserved phase)`, () => {
+      const fx = makeFixture({ targetVersion: T, registeredVersion: OLD });
+      const store = openCodexActivationStore({
+        genieHome: fx.genieHome,
+        codexHome: fx.codexHome,
+        command: 'codex',
+        runner: listRunner({ stdout: pluginListJson([{ version: OLD }]) }),
+      });
+      // Drive the journal into the post-command phase under a first operation.
+      let firstId: string;
+      const lease1 = heldLease(fx.genieHome);
+      try {
+        const begun = store.beginActivation(lease1, grantPermit(store));
+        if (begun.status !== 'started') throw new Error('expected started');
+        firstId = begun.handle.refreshIntentId;
+        store.advanceIntentPhase(lease1, begun.handle, phase);
+      } finally {
+        lease1.release();
+      }
+      expect(classifyCodexActivation(store.observe()).kind).toBe(`intent-${phase}`);
+
+      // A fresh assertion under a NEW operation resumes the same bound journal.
+      const lease2 = heldLease(fx.genieHome);
+      try {
+        const resumed = store.beginActivation(lease2, grantPermit(store));
+        expect(resumed.status).toBe('started');
+        if (resumed.status !== 'started') throw new Error('unreachable');
+        // Same refreshIntentId: resumed, never a new planned intent.
+        expect(resumed.handle.refreshIntentId).toBe(firstId);
+        // Re-adopted under the new operation for fencing.
+        expect(resumed.handle.operationId).toBe(lease2.operationId);
+      } finally {
+        lease2.release();
+      }
+      // The on-disk phase is preserved — no reset to planned.
+      const after = store.observe();
+      expect(after.intent.status === 'valid' && after.intent.intent.phase).toBe(phase);
+      expect(after.intent.status === 'valid' && after.intent.intent.refreshIntentId).toBe(firstId);
+    });
+  }
+
+  test('a stale permit on a resumed post-command phase refuses and leaves the journal untouched', () => {
+    const fx = makeFixture({ targetVersion: T, registeredVersion: OLD });
+    const store = openCodexActivationStore({
+      genieHome: fx.genieHome,
+      codexHome: fx.codexHome,
+      command: 'codex',
+      runner: listRunner({ stdout: pluginListJson([{ version: OLD }]) }),
+    });
+    const intentFile = join(fx.genieHome, '.codex-plugin-refresh-intent.json');
+    const lease1 = heldLease(fx.genieHome);
+    try {
+      const begun = store.beginActivation(lease1, grantPermit(store));
+      if (begun.status !== 'started') throw new Error('expected started');
+      store.advanceIntentPhase(lease1, begun.handle, 'command-started');
+    } finally {
+      lease1.release();
+    }
+    const permit = grantPermit(store);
+    const before = readFileSync(intentFile, 'utf8');
+    // Drift a fingerprint field (canonical digest) after consent, before the resume.
+    writeFileSync(join(fx.genieHome, 'plugins', 'genie', 'new-file.txt'), 'drift\n');
+    const lease2 = heldLease(fx.genieHome);
+    try {
+      const result = store.beginActivation(lease2, permit);
+      expect(result.status).toBe('stale');
+      if (result.status === 'stale') expect(result.mismatchField).toBe('canonicalPayloadSha256');
+      // The journal was neither re-stamped nor advanced.
+      expect(readFileSync(intentFile, 'utf8')).toBe(before);
+    } finally {
+      lease2.release();
+    }
   });
 });
 

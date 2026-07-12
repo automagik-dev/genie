@@ -1655,20 +1655,50 @@ function beginActivationImpl(
     return { status: 'stale', mismatchField: mismatch, detail: `fingerprint field ${mismatch} changed since consent` };
   }
   const state = classifyCodexActivation(snapshot);
-  const plan = planIntentFromState(state, snapshot, lease.operationId);
-  if ('refused' in plan) return { status: 'refused', reason: plan.refused };
+  const resolved = resolveActivationIntent(state, snapshot, lease.operationId);
+  if ('refused' in resolved) return { status: 'refused', reason: resolved.refused };
   lease.assertOperation(lease.operationId);
-  atomicWriteFileSync(intentPath, `${JSON.stringify(plan.intent, null, 2)}\n`, { backup: true });
+  atomicWriteFileSync(intentPath, `${JSON.stringify(resolved.intent, null, 2)}\n`, { backup: true });
   return {
     status: 'started',
     handle: {
       operationId: lease.operationId,
-      refreshIntentId: plan.intent.refreshIntentId,
+      refreshIntentId: resolved.intent.refreshIntentId,
       intentPath,
-      direction: plan.intent.direction,
-      receiptId: plan.intent.receiptId,
+      direction: resolved.intent.direction,
+      receiptId: resolved.intent.receiptId,
     },
   };
+}
+
+/**
+ * Decide the journal a permitted activation writes. A post-command phase RESUMES
+ * its existing bound journal — the same `refreshIntentId` and phase, re-stamped
+ * onto the current lease operation — so a fresh external assertion continues the
+ * interrupted transaction rather than opening a duplicate `planned` intent (the
+ * fingerprint match already proved the bound intentPhase/intentId are current).
+ * Every other eligible state opens a new planned transaction unchanged.
+ */
+function resolveActivationIntent(
+  state: CodexActivationState,
+  snapshot: CodexActivationSnapshot,
+  operationId: string,
+): { intent: RefreshIntent } | { refused: string } {
+  const resume = resumeIntentForState(state);
+  if (resume !== null) return { intent: { ...resume, operationId } };
+  return planIntentFromState(state, snapshot, operationId);
+}
+
+/** The three post-command phases (per the DESIGN truth table) resume their bound journal. */
+function resumeIntentForState(state: CodexActivationState): RefreshIntent | null {
+  switch (state.kind) {
+    case 'intent-command-started':
+    case 'intent-removal-observed':
+    case 'intent-ambiguous-absent':
+      return state.intent;
+    default:
+      return null;
+  }
 }
 
 function planIntentFromState(
