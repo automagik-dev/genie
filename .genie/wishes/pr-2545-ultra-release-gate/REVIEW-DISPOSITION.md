@@ -63,6 +63,8 @@ The existing `.genie/wishes/agent-sync-hardening/WISH.md` remains authoritative 
 
 PR-remediation SHIP closes only non-blocking rows with concrete evidence. Rows F16–F18 and F31 continue to block stable promotion through the separate wish even if this PR-scope review later returns SHIP.
 
+Ledger edits in this wish are adversarially verified before commit by the [`pm-ledger-verify`](../../../.claude/workflows/pm-ledger-verify.js) workflow; runs are recorded in [`FINALIZATION-VERIFICATION.md`](./FINALIZATION-VERIFICATION.md).
+
 ## Current validation snapshot
 
 Run on the follow-up worktree at final code commit `d9b0afbd063f7df3fbffb5f06ce7ce31f19ff0e4` on 2026-07-11 (finalization pass):
