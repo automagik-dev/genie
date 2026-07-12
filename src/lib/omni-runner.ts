@@ -392,29 +392,80 @@ export function redactOmniOutbound(
 
 function configuredOmniSecrets(config: OmniRuntimeConfig): string[] {
   const secrets = new Set<string>();
-  if (config.apiKey) secrets.add(config.apiKey);
+  const addCandidate = (value: string, minimumLength = 1): void => {
+    if (value.length >= minimumLength && value.trim().length >= minimumLength) secrets.add(value);
+  };
+  const addSecret = (value: string, minimumLength = 1): void => {
+    if (!value) return;
+    addCandidate(value, minimumLength);
+    try {
+      addCandidate(decodeURIComponent(value), minimumLength);
+      addCandidate(decodeURIComponent(value.replace(/\+/g, ' ')), minimumLength);
+    } catch {
+      // The raw configured value is still seeded when percent-decoding fails.
+    }
+  };
+  if (config.apiKey) addSecret(config.apiKey);
   for (const candidate of [config.apiUrl, config.natsUrl]) {
     if (!candidate) continue;
     for (const match of candidate.matchAll(/\b[a-z][a-z0-9+.-]*:\/\/([^\s/@]+)@/gi)) {
       const userinfo = match[1];
-      secrets.add(userinfo);
-      for (const part of userinfo.split(':')) {
-        if (!part) continue;
-        try {
-          secrets.add(decodeURIComponent(part));
-        } catch {
-          secrets.add(part);
-        }
+      addSecret(userinfo);
+      for (const part of userinfo.split(':')) addSecret(part);
+    }
+    const queryStart = candidate.indexOf('?');
+    if (queryStart >= 0) {
+      const fragmentStart = candidate.indexOf('#', queryStart + 1);
+      const query = candidate.slice(queryStart + 1, fragmentStart >= 0 ? fragmentStart : undefined);
+      for (const pair of query.split('&')) {
+        const separator = pair.indexOf('=');
+        // Query pairs are redacted contextually below. Long values are also
+        // safe to seed globally in case a transport error prints only the
+        // credential, but tiny values such as `1` must never rewrite all JSON
+        // numbers or ordinary prose.
+        if (separator >= 0) addSecret(pair.slice(separator + 1), 8);
       }
     }
   }
   return [...secrets];
 }
 
+function configuredOmniQueryRedactions(config: OmniRuntimeConfig): Array<readonly [string, string]> {
+  const replacements = new Map<string, string>();
+  for (const candidate of [config.apiUrl, config.natsUrl]) {
+    if (!candidate) continue;
+    const queryStart = candidate.indexOf('?');
+    if (queryStart < 0) continue;
+    const fragmentStart = candidate.indexOf('#', queryStart + 1);
+    const query = candidate.slice(queryStart + 1, fragmentStart >= 0 ? fragmentStart : undefined);
+    for (const pair of query.split('&')) {
+      const separator = pair.indexOf('=');
+      if (separator < 0) continue;
+      const key = pair.slice(0, separator);
+      const value = pair.slice(separator + 1);
+      if (!key || !value) continue;
+      replacements.set(pair, `${key}=[REDACTED]`);
+      try {
+        const decodedKey = decodeURIComponent(key.replace(/\+/g, ' '));
+        const decodedValue = decodeURIComponent(value.replace(/\+/g, ' '));
+        if (decodedKey && decodedValue) replacements.set(`${decodedKey}=${decodedValue}`, `${decodedKey}=[REDACTED]`);
+      } catch {
+        // The exact encoded pair remains protected when decoding fails.
+      }
+    }
+  }
+  return [...replacements].sort(([a], [b]) => b.length - a.length);
+}
+
 /** One config/env-seeded boundary used for both external text and every log. */
 export function createOmniRedactor(config: OmniRuntimeConfig, env: NodeJS.ProcessEnv = process.env): OmniRedactor {
   const secrets = configuredOmniSecrets(config);
-  return (text) => redactOmniOutbound(text, env, secrets);
+  const queryRedactions = configuredOmniQueryRedactions(config);
+  return (text) => {
+    let safe = text;
+    for (const [pair, replacement] of queryRedactions) safe = safe.split(pair).join(replacement);
+    return redactOmniOutbound(safe, env, secrets);
+  };
 }
 
 interface KillableChild {
@@ -1780,13 +1831,6 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
     const controller = new AbortController();
     activeControllers.add(controller);
     const timer = setTimeout(() => controller.abort(new OneShotTimeoutError()), timeoutMs);
-    const aborted = new Promise<never>((_, reject) => {
-      controller.signal.addEventListener(
-        'abort',
-        () => reject(controller.signal.reason instanceof Error ? controller.signal.reason : new OneShotTimeoutError()),
-        { once: true },
-      );
-    });
     let pendingAck = Promise.resolve();
     let spawned: Promise<AgentExecutionResult> | undefined;
     try {
@@ -1799,6 +1843,12 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
       // the inbound carried no stanza id). It is sequenced before the terminal ack.
       pendingAck = emitRouteReaction(route, messageId, STATUS_PENDING);
       if (!ownsCurrentLease()) throw new Error(`Inbound claim ${inboundId} lost its lease before agent spawn`);
+      const aborted = new Promise<never>((_, reject) => {
+        const rejectWithReason = () =>
+          reject(controller.signal.reason instanceof Error ? controller.signal.reason : new OneShotTimeoutError());
+        if (controller.signal.aborted) rejectWithReason();
+        else controller.signal.addEventListener('abort', rejectWithReason, { once: true });
+      });
       // Wrap so a SYNCHRONOUS throw from the executor becomes a rejection the
       // race can observe — and so `aborted` always gets a handler attached
       // (else a late finally-abort would surface as an unhandled rejection).
@@ -1843,7 +1893,7 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
       // The durable prepared/flushed phase is preserved while ownership is
       // released. A successor epoch can retry the same stable request id rather
       // than re-running the workspace-writing agent.
-      releaseInboundClaim(db, inboundId, claimToken, claimIdentity());
+      releaseInboundClaim(db, inboundId, claimToken, claimIdentity(), { preservePreExecution: true });
       log(`[omni] reply delivery/state commit failed for ${inboundId}: ${errText(err)}`);
     } finally {
       clearTimeout(timer);
@@ -2529,6 +2579,19 @@ async function closeOmniResources(
   return errors;
 }
 
+/** Create a terminal-safe error without retaining the raw message, stack, or
+ * cause. Aggregate members are projected recursively because runtimes may
+ * render them independently of the aggregate message. */
+function redactOmniError(error: unknown, redact: OmniRedactor): Error {
+  if (error instanceof AggregateError) {
+    return new AggregateError(
+      error.errors.map((entry) => redactOmniError(entry, redact)),
+      redact(error.message),
+    );
+  }
+  return new Error(redact(error instanceof Error ? error.message : String(error)));
+}
+
 export async function runOmniServe(opts: RunOmniServeOptions): Promise<void> {
   const { db, config } = opts;
   const redact = createOmniRedactor(config);
@@ -2599,6 +2662,8 @@ export async function runOmniServe(opts: RunOmniServeOptions): Promise<void> {
     }
     if (nc) log('[omni] stopped');
   }
-  if (hasPrimaryError) throw primaryError;
-  if (cleanupErrors.length > 0) throw new AggregateError(cleanupErrors, 'Omni shutdown failed');
+  if (hasPrimaryError) throw redactOmniError(primaryError, redact);
+  if (cleanupErrors.length > 0) {
+    throw redactOmniError(new AggregateError(cleanupErrors, 'Omni shutdown failed'), redact);
+  }
 }

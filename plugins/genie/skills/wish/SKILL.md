@@ -26,8 +26,8 @@ test -f .genie/brainstorms/<slug>/DESIGN.md
 node "<wish-skill-dir>/references/design-review-evidence.mjs" verify ".genie/brainstorms/<slug>/DESIGN.md"
 ```
 
-- **Present and verification exits 0:** emit `| **Design** | [DESIGN.md](../../brainstorms/<slug>/DESIGN.md) |`.
-- **Present but verification fails:** stop and return to design review. Missing evidence, a non-SHIP verdict, or a content-digest mismatch cannot be waived; editing DESIGN.md invalidates its prior review.
+- **Present and verification exits 0:** consume the reviewer-bound evidence and emit `| **Design** | [DESIGN.md](../../brainstorms/<slug>/DESIGN.md) |`.
+- **Present but verification fails:** stop and return to design review. Missing evidence, a non-SHIP verdict, or a content-digest mismatch cannot be waived; editing DESIGN.md invalidates its prior review. Never repair the failure with a locally recomputed digest — only a new design review may return the `reviewed-sha256` passed to stamping.
 - **Absent:** emit `| **Design** | _No brainstorm — direct wish_ |` (no link) — valid for hotfixes, trivial changes, or plans obvious enough that a brainstorm adds no value. The linter (`scripts/wishes-lint.ts`) accepts the literal stub text; a bracket-link to a non-existent brainstorm file fails lint.
 
 ## Flow

@@ -13,6 +13,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import {
   chmodSync,
   existsSync,
@@ -20,21 +21,39 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, win32 } from 'node:path';
-import { MANAGED_BY, WORKFLOW_MANIFEST_NAME, computeDirDigest, stampWorkflow } from '../lib/agent-sync.js';
 import {
+  MANAGED_BY,
+  PHYSICAL_TREE_IDENTITY_VERSION,
+  WORKFLOW_MANIFEST_NAME,
+  computeDirDigest,
+  stampWorkflow,
+} from '../lib/agent-sync.js';
+import {
+  type UninstallBatchScope,
+  clearUninstallBatchDecision,
   collectAgentSyncAssets,
+  executeUninstallBatch,
+  hasPendingUninstallTransactions,
   hasUninstallWork,
   inspectUninstallPlan,
   isGenieSymlink,
   isSameOrContainedPath,
+  readUninstallBatchDecision,
+  recordUninstallBatchDecision,
+  recoverUninstallTransactions,
   removeAgentSyncAssets,
   removeSymlinks,
+  uninstallBatchIntegrationViolations,
+  uninstallBatchJournalPath,
+  uninstallBatchMemberId,
+  uninstallBatchRuntimeTargets,
 } from './uninstall.js';
 
 describe('path containment', () => {
@@ -136,6 +155,39 @@ describe('agent-sync managed-asset removal', () => {
     expect(existsSync(mine)).toBe(true);
   });
 
+  test('recovers a parked managed skill with no live sibling before authoritative enumeration', () => {
+    const parent = join(claudeDir, 'skills');
+    const managed = managedSkill(parent, 'wish');
+    const contentDigest = computeDirDigest(managed);
+    const manifestDigest = createHash('sha256')
+      .update(readFileSync(join(managed, '.genie-sync.json')))
+      .digest('hex');
+    const transaction = join(parent, '.genie-sync-transactions', 'delete-crashed');
+    mkdirSync(transaction, { recursive: true });
+    writeFileSync(
+      join(transaction, 'journal.json'),
+      `${JSON.stringify({
+        version: 2,
+        destName: 'wish',
+        contentDigest,
+        manifestDigest,
+        identityVersion: PHYSICAL_TREE_IDENTITY_VERSION,
+      })}\n`,
+    );
+    renameSync(managed, join(transaction, 'parked'));
+
+    expect(existsSync(managed)).toBe(false);
+    expect(collectAgentSyncAssets(targets()).map((asset) => asset.path)).not.toContain(managed);
+    expect(hasPendingUninstallTransactions(targets())).toBe(true);
+
+    const result = removeAgentSyncAssets(targets());
+
+    expect(result.failures).toEqual([]);
+    expect(result.removed).toContain(managed);
+    expect(existsSync(managed)).toBe(false);
+    expect(existsSync(transaction)).toBe(false);
+  });
+
   test('user-modified managed dir is kept byte-identical at the same path', () => {
     const edited = modifiedManagedSkill(join(claudeDir, 'skills'), 'review');
     const manifestBefore = readFileSync(join(edited, '.genie-sync.json'), 'utf8');
@@ -193,6 +245,32 @@ describe('agent-sync managed-asset removal', () => {
     expect(failures).toEqual([]);
     expect(existsSync(clean)).toBe(false);
     expect(existsSync(edited)).toBe(true);
+  });
+
+  test('a durable batch allowlist does not absorb a later managed sibling', () => {
+    const planned = managedSkill(join(claudeDir, 'skills'), 'wish');
+    const later = managedSkill(join(claudeDir, 'skills'), 'review');
+
+    const result = removeAgentSyncAssets(targets(), { plannedAssetPaths: [planned] });
+
+    expect(result.removed).toEqual([planned]);
+    expect(existsSync(later)).toBe(true);
+  });
+
+  test('a recorded removable asset that later becomes modified blocks batch completion', () => {
+    const planned = modifiedManagedSkill(join(claudeDir, 'skills'), 'wish');
+
+    const result = removeAgentSyncAssets(targets(), { plannedAssetPaths: [planned] });
+
+    expect(result.removed).toEqual([]);
+    expect(result.kept).toEqual([planned]);
+    expect(result.failures).toEqual([
+      {
+        path: planned,
+        detail: 'recorded removable asset changed after the uninstall batch was created; kept it byte-identical',
+      },
+    ]);
+    expect(readFileSync(join(planned, 'SKILL.md'), 'utf8')).toBe('# my precious local edits\n');
   });
 
   test('asset removal I/O failures are structured and leave the asset retryable', () => {
@@ -281,6 +359,23 @@ describe('agent-sync managed-asset removal', () => {
     expect(existsSync(skill)).toBe(true);
   });
 
+  test('a preserved managed-skill transaction conflict blocks authoritative enumeration and removal', () => {
+    const skill = managedSkill(join(claudeDir, 'skills'), 'wish');
+    const conflict = join(claudeDir, 'skills', '.genie-sync-transactions', '.conflict-delete-crashed');
+    mkdirSync(join(conflict, 'parked'), { recursive: true });
+
+    expect(hasPendingUninstallTransactions(targets())).toBe(true);
+    expect(() => recoverUninstallTransactions(targets())).toThrow(
+      'unresolved managed-skill transaction conflict requires review',
+    );
+
+    const result = removeAgentSyncAssets(targets());
+    expect(result.removed).toEqual([]);
+    expect(result.failures[0]?.detail).toContain('unresolved managed-skill transaction conflict requires review');
+    expect(existsSync(skill)).toBe(true);
+    expect(existsSync(conflict)).toBe(true);
+  });
+
   test('hermes symlink into the genie home is removed; one pointing elsewhere is kept', () => {
     mkdirSync(join(hermesHome, 'plugins'), { recursive: true });
     const link = join(hermesHome, 'plugins', 'genie');
@@ -322,6 +417,233 @@ describe('agent-sync managed-asset removal', () => {
   });
 });
 
+describe('durable uninstall batch', () => {
+  let root: string;
+  let genieHome: string;
+
+  function scope(agentPaths: string[] = []): UninstallBatchScope {
+    return {
+      agentAssets: agentPaths.map((path) => ({ path, disposition: 'remove' })),
+      codexRoleAgents: [],
+      codexRoleInventoryStatus: 'missing',
+      genieHomePresent: false,
+      ownedRulesPath: null,
+      removeMarketplace: false,
+      runtimeClients: { codex: false, claude: false },
+      runtimePlugins: { codex: false, claude: false },
+      symlinks: [],
+    };
+  }
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'uninstall-batch-'));
+    genieHome = join(root, 'home', '.genie');
+    mkdirSync(genieHome, { recursive: true });
+  });
+
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  test('retains the authenticated journal across cleanup failure and clears it last on retry', () => {
+    const events: string[] = [];
+    const firstAsset = join(root, 'claude', 'skills', 'wish');
+    const secondAsset = join(root, 'claude', 'skills', 'review');
+    mkdirSync(firstAsset, { recursive: true });
+    mkdirSync(secondAsset, { recursive: true });
+    const plannedScope = scope([firstAsset, secondAsset]);
+    const firstMember = uninstallBatchMemberId('asset', firstAsset);
+    const secondMember = uninstallBatchMemberId('asset', secondAsset);
+    const first = executeUninstallBatch(genieHome, plannedScope, (decisionScope, progress) => {
+      events.push('cleanup-failed');
+      expect(decisionScope.agentAssets.map((asset) => asset.path)).toEqual([firstAsset, secondAsset]);
+      progress.begin(firstMember);
+      rmSync(firstAsset, { recursive: true, force: true });
+      progress.complete(firstMember);
+      return { failures: [{ step: 'injected cleanup', detail: 'retry me' }] };
+    });
+    const journalPath = uninstallBatchJournalPath(genieHome);
+    const pending = readUninstallBatchDecision(genieHome);
+
+    expect(first.result.failures).toHaveLength(1);
+    expect(existsSync(journalPath)).toBe(true);
+    expect(journalPath.startsWith(`${genieHome}/`)).toBe(false);
+    expect(pending?.digest).toBe(first.decision.digest);
+    expect(pending?.progress).toEqual({ active: null, completed: [firstMember] });
+
+    // A fresh object later occupies the already-completed slot. The retry must
+    // skip it rather than replaying path authority from the immutable scope.
+    mkdirSync(firstAsset, { recursive: true });
+    writeFileSync(join(firstAsset, 'later-user-data'), 'preserve me\n');
+
+    const retried = executeUninstallBatch(
+      genieHome,
+      plannedScope,
+      (decisionScope, progress) => {
+        events.push('cleanup-retried');
+        expect(existsSync(journalPath)).toBe(true);
+        expect(decisionScope.agentAssets.map((asset) => asset.path)).toEqual([firstAsset, secondAsset]);
+        expect(progress.isCompleted(firstMember)).toBe(true);
+        expect(existsSync(firstAsset)).toBe(true);
+        expect(existsSync(secondAsset)).toBe(true);
+        progress.begin(secondMember);
+        rmSync(secondAsset, { recursive: true, force: true });
+        progress.complete(secondMember);
+        return { failures: [] };
+      },
+      {
+        clearDecision(home, digest) {
+          events.push('journal-cleared');
+          clearUninstallBatchDecision(home, digest);
+        },
+      },
+    );
+
+    expect(retried.decision.progress.completed).toEqual([firstMember, secondMember].sort());
+    expect(retried.result.failures).toEqual([]);
+    expect(events).toEqual(['cleanup-failed', 'cleanup-retried', 'journal-cleared']);
+    expect(readFileSync(join(firstAsset, 'later-user-data'), 'utf8')).toBe('preserve me\n');
+    expect(existsSync(journalPath)).toBe(false);
+  });
+
+  test('an interrupted member remains active and is never replayed automatically', () => {
+    const asset = join(root, 'interrupted-asset');
+    const member = uninstallBatchMemberId('asset', asset);
+    const interruptedScope = scope([asset]);
+    const first = executeUninstallBatch(genieHome, interruptedScope, (_decisionScope, progress) => {
+      progress.begin(member);
+      return { failures: [{ step: 'injected crash boundary', detail: 'ambiguous outcome' }] };
+    });
+    let replayed = false;
+
+    const retried = executeUninstallBatch(genieHome, interruptedScope, () => {
+      replayed = true;
+      return { failures: [] };
+    });
+
+    expect(first.decision.progress.active).toBe(member);
+    expect(replayed).toBe(false);
+    expect(retried.result.failures[0]?.detail).toContain('refused to replay that slot');
+    expect(readUninstallBatchDecision(genieHome)?.progress.active).toBe(member);
+  });
+
+  test('never clears a batch while a requested member lacks a completion receipt', () => {
+    const asset = join(root, 'unreceipted-asset');
+    const plannedScope = scope([asset]);
+
+    const result = executeUninstallBatch(genieHome, plannedScope, () => ({ failures: [] }));
+
+    expect(result.result.failures[0]?.detail).toContain('requested members lack durable completion receipts');
+    expect(readUninstallBatchDecision(genieHome)).not.toBeNull();
+  });
+
+  test('refuses to publish a progress receipt outside the exact recorded scope', () => {
+    const planned = join(root, 'planned-asset');
+    const unplanned = uninstallBatchMemberId('asset', join(root, 'later-asset'));
+
+    expect(() =>
+      executeUninstallBatch(genieHome, scope([planned]), (_decisionScope, progress) => {
+        progress.begin(unplanned);
+        return { failures: [] };
+      }),
+    ).toThrow('outside the exact recorded scope');
+    expect(readUninstallBatchDecision(genieHome)?.progress).toEqual({ active: null, completed: [] });
+  });
+
+  test('rejects a decision whose authenticated scope was edited', () => {
+    executeUninstallBatch(genieHome, scope(), () => ({
+      failures: [{ step: 'injected cleanup', detail: 'retain decision' }],
+    }));
+    const journalPath = uninstallBatchJournalPath(genieHome);
+    const parsed = JSON.parse(readFileSync(journalPath, 'utf8')) as {
+      scope: { removeMarketplace: boolean };
+    };
+    parsed.scope.removeMarketplace = true;
+    writeFileSync(journalPath, `${JSON.stringify(parsed, null, 2)}\n`);
+
+    expect(() => readUninstallBatchDecision(genieHome)).toThrow('authentication failed');
+  });
+
+  test('rejects duplicate members before publishing an uninstall allowlist', () => {
+    const duplicated = scope([join(root, 'asset'), join(root, 'asset')]);
+
+    expect(() => recordUninstallBatchDecision(genieHome, duplicated)).toThrow('duplicate agent-asset paths');
+    expect(existsSync(uninstallBatchJournalPath(genieHome))).toBe(false);
+  });
+
+  test('fails closed when the recovery root is a symlink', () => {
+    const recoveryRoot = join(root, 'home', '.genie-recovery');
+    const redirected = join(root, 'redirected-recovery');
+    mkdirSync(redirected, { recursive: true });
+    symlinkSync(redirected, recoveryRoot);
+
+    expect(() => recordUninstallBatchDecision(genieHome, scope())).toThrow(
+      'uninstall recovery root is not a physical directory',
+    );
+    expect(existsSync(uninstallBatchJournalPath(genieHome))).toBe(false);
+  });
+
+  test('rejects a group-writable uninstall journal', () => {
+    executeUninstallBatch(genieHome, scope(), () => ({
+      failures: [{ step: 'injected cleanup', detail: 'retain decision' }],
+    }));
+    const journalPath = uninstallBatchJournalPath(genieHome);
+    chmodSync(journalPath, 0o620);
+
+    expect(() => readUninstallBatchDecision(genieHome)).toThrow('uninstall batch journal is group/world-writable');
+  });
+});
+
+describe('durable runtime integration allowlist', () => {
+  function scope(): UninstallBatchScope {
+    return {
+      agentAssets: [],
+      codexRoleAgents: [{ name: 'genie-review.toml', disposition: 'remove' }],
+      codexRoleInventoryStatus: 'valid',
+      genieHomePresent: true,
+      ownedRulesPath: null,
+      removeMarketplace: false,
+      runtimeClients: { codex: true, claude: true },
+      runtimePlugins: { codex: false, claude: true },
+      symlinks: [],
+    };
+  }
+
+  test('targets only recorded plugins unless marketplace consent recorded a client', () => {
+    const planned = scope();
+    expect(uninstallBatchRuntimeTargets(planned)).toEqual({ codex: false, claude: true });
+    expect(uninstallBatchRuntimeTargets({ ...planned, removeMarketplace: true })).toEqual({
+      codex: true,
+      claude: true,
+    });
+  });
+
+  test('rejects later plugins, roles, corrupt inventory, and unreadable runtime state before mutation', () => {
+    const planned = scope();
+    const violations = uninstallBatchIntegrationViolations(
+      planned,
+      {
+        status: 'corrupt',
+        entries: [
+          {
+            name: 'genie-later.toml',
+            path: '/tmp/genie-later.toml',
+            ownership: 'managed-clean',
+          },
+        ],
+      },
+      {
+        codex: true,
+        claude: true,
+        errors: { codex: ['corrupt config'], claude: [] },
+      },
+    );
+
+    expect(violations).toContain('Codex role-agent ownership inventory is corrupt');
+    expect(violations).toContain('unexpected Codex role agents: genie-later.toml');
+    expect(violations).toContain('codex integration state is unreadable: corrupt config');
+    expect(violations).toContain('codex Genie plugin appeared after the uninstall batch was recorded');
+  });
+});
+
 describe('uninstall ownership and work detection', () => {
   let root: string;
   beforeEach(() => {
@@ -346,6 +668,20 @@ describe('uninstall ownership and work detection', () => {
     expect(isGenieSymlink(foreign, genieHome)).toBe(false);
   });
 
+  test('a frozen symlink allowlist does not absorb a later canonical sibling', () => {
+    const genieHome = join(root, 'genie');
+    const localBin = join(root, 'bin');
+    mkdirSync(localBin, { recursive: true });
+    const genieLink = join(localBin, 'genie');
+    const laterTermLink = join(localBin, 'term');
+    symlinkSync(join(genieHome, 'bin', 'genie'), genieLink);
+    symlinkSync(join(genieHome, 'bin', 'term'), laterTermLink);
+
+    expect(removeSymlinks(localBin, genieHome, ['genie'])).toEqual({ removed: ['genie'], failures: [] });
+    expect(existsSync(genieLink)).toBe(false);
+    expect(lstatSync(laterTermLink).isSymbolicLink()).toBe(true);
+  });
+
   test('runtime evidence and an explicit marketplace request both prevent false nothing-to-uninstall', () => {
     const base = {
       hasGenieDir: false,
@@ -360,6 +696,8 @@ describe('uninstall ownership and work detection', () => {
     expect(hasUninstallWork(base)).toBe(false);
     expect(hasUninstallWork({ ...base, runtimeEvidence: { codex: true, claude: false } })).toBe(true);
     expect(hasUninstallWork({ ...base, removeMarketplace: true })).toBe(true);
+    expect(hasUninstallWork({ ...base, hasPendingTransactions: true })).toBe(true);
+    expect(hasUninstallWork({ ...base, hasPendingBatch: true })).toBe(true);
   });
 
   test('a post-confirmation replan observes state that appeared while the preview was open', () => {
@@ -379,11 +717,18 @@ describe('uninstall ownership and work detection', () => {
         status: 'missing' as const,
         entries: [],
       }),
+      inspectRuntimeClientAvailability: () => ({
+        codex: false,
+        claude: false,
+        errors: { codex: [], claude: [] },
+      }),
       inspectRuntimeIntegrationEvidence: () => ({
         codex: false,
         claude: false,
         errors: { codex: [], claude: [] },
       }),
+      hasPendingBatch: () => false,
+      hasPendingTransactions: () => false,
     };
 
     const preview = inspectUninstallPlan(join(root, 'genie'), false, inspectors);

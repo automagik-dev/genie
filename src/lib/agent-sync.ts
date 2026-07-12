@@ -41,7 +41,6 @@ import {
   rmSync,
   statSync,
   symlinkSync,
-  unlinkSync,
   writeFileSync,
   writeSync,
 } from 'node:fs';
@@ -59,6 +58,8 @@ const PLACEHOLDER = '__GENIE_LENS_ROOT__';
 export const TARGET_NAME = 'council.js';
 /** Digest-backed ownership record for the stamped council workflow. */
 export const WORKFLOW_MANIFEST_NAME = `${TARGET_NAME}.genie-sync.json`;
+/** Deterministic physical mode for both stamped council artifacts. */
+const WORKFLOW_FILE_MODE = 0o644;
 /** Manifest marker written into every managed skill dir. Exported: single source of truth. */
 export const MANIFEST_NAME = '.genie-sync.json';
 /** `managedBy` value that certifies a dir as one this engine owns. Exported: single source of truth. */
@@ -94,6 +95,10 @@ const SKILL_TRANSACTION_PREFIX = 'txn-';
 const SKILL_REMOVAL_PREFIX = 'delete-';
 /** Physical-tree digest schema. Version 1 was the legacy regular-file content digest. */
 export const PHYSICAL_TREE_IDENTITY_VERSION = 2;
+/** Borrowed lifecycle-lease path passed from a shell owner to its child process. */
+export const LIFECYCLE_LEASE_PATH_ENV = 'GENIE_LIFECYCLE_LEASE_PATH';
+/** Exact on-disk owner record paired with {@link LIFECYCLE_LEASE_PATH_ENV}. */
+export const LIFECYCLE_LEASE_OWNER_ENV = 'GENIE_LIFECYCLE_LEASE_OWNER';
 /** Cross-process mutual-exclusion lockfile under genieHome — one sync writer per GENIE_HOME. */
 const LOCK_NAME = '.agent-sync.lock';
 /** A lock older than this is a crashed run's debris and may be stolen. */
@@ -205,8 +210,10 @@ interface SyncManifest {
   version: string | null;
   digest: string;
   syncedAt: string;
-  /** Present only for managed directory manifests; workflow digests remain file-content digests. */
+  /** Physical-identity schema for managed directories and stamped workflows. */
   identityVersion?: typeof PHYSICAL_TREE_IDENTITY_VERSION;
+  /** Stamped workflow target mode; absent from managed-directory manifests. */
+  targetMode?: number;
 }
 
 interface RunContext {
@@ -598,7 +605,13 @@ function writeManagedDir(
       if (expected.contentDigest !== null) {
         ctx.renameManagedDir(destDir, before);
         if (!matchesManagedDirIdentity(before, expected.contentDigest, expected.manifestDigest)) {
-          if (lstatSafe(destDir) === null) renameSync(before, destDir);
+          if (lstatSafe(destDir) === null) {
+            try {
+              publishPhysicalTreeNoClobber(before, destDir);
+            } catch {
+              // Preserve both the parked object and any racing live object.
+            }
+          }
           const conflict = preserveManagedDirConflict(transactionRoot, published, token);
           throw new ManagedArtifactConflictError(
             `managed skill changed during promotion; kept both versions for review at ${conflict}`,
@@ -652,6 +665,18 @@ function preserveManagedDirConflict(transactionRoot: string, transactionDir: str
   const conflict = join(transactionRoot, `.conflict-${token}`);
   renameSync(transactionDir, conflict);
   return conflict;
+}
+
+function preserveManagedDirTransactionConflict(transactionDir: string): string {
+  const name = transactionDir.split(sep).at(-1) ?? '';
+  if (!name.startsWith(SKILL_TRANSACTION_PREFIX)) {
+    throw new Error(`invalid managed skill transaction name: ${transactionDir}`);
+  }
+  return preserveManagedDirConflict(
+    dirname(transactionDir),
+    transactionDir,
+    name.slice(SKILL_TRANSACTION_PREFIX.length),
+  );
 }
 
 interface ManagedDirRemovalJournal {
@@ -725,7 +750,13 @@ function removeManagedDir(
     }
     ctx.renameManagedDir(destDir, parked);
     if (!matchesManagedDirIdentity(parked, expected.contentDigest, expected.manifestDigest)) {
-      if (lstatOrNull(destDir) === null) renameSync(parked, destDir);
+      if (lstatOrNull(destDir) === null) {
+        try {
+          publishPhysicalTreeNoClobber(parked, destDir);
+        } catch {
+          // Preserve the parked object and any racing live object as evidence.
+        }
+      }
       const conflict = preserveManagedRemovalConflict(transactionRoot, transactionDir, token);
       throw new ManagedArtifactConflictError(
         `managed skill changed while being parked for removal; preserved it at ${conflict}`,
@@ -745,7 +776,13 @@ function removeManagedDir(
     removeEmptyDirSafe(transactionRoot);
   } catch (error) {
     if (error instanceof ManagedArtifactConflictError) throw error;
-    if (lstatSafe(parked) !== null && lstatSafe(destDir) === null) renameSync(parked, destDir);
+    try {
+      if (lstatSafe(transactionDir) !== null) {
+        recoverManagedDirRemovalTransaction(targetParent, transactionRoot, transactionDir, token);
+      }
+    } catch (rollbackError) {
+      throw new Error(`${errMsg(error)}; managed skill removal rollback failed: ${errMsg(rollbackError)}`);
+    }
     throw error;
   }
 }
@@ -776,7 +813,18 @@ function recoverManagedDirRemovalTransaction(
     preserveManagedRemovalConflict(transactionRoot, transactionDir, token);
     throw new Error(`managed skill removal recovery found a new live target: ${destDir}`);
   }
-  renameSync(parked, destDir);
+  try {
+    publishPhysicalTreeNoClobber(parked, destDir);
+  } catch (error) {
+    const conflict = preserveManagedRemovalConflict(transactionRoot, transactionDir, token);
+    throw new Error(`${errMsg(error)}; preserved managed skill removal evidence at ${conflict}`);
+  }
+  if (
+    !matchesManagedDirIdentity(destDir, journal.contentDigest, journal.manifestDigest, journal.identityVersion ?? 1)
+  ) {
+    const conflict = preserveManagedRemovalConflict(transactionRoot, transactionDir, token);
+    throw new Error(`managed skill removal restore changed; preserved evidence at ${conflict}`);
+  }
   rmSync(transactionDir, { recursive: true, force: true });
 }
 
@@ -792,10 +840,16 @@ function managedDirIdentity(dir: string): { contentDigest: string; manifestDiges
 
 /**
  * Return the current v2 physical identity only when the tree still matches its
- * ownership manifest. Legacy manifests are accepted solely for regular-only
- * trees, then callers rewrite them with identityVersion=2 on the next sync.
+ * ownership manifest. An untagged v2 digest is an unambiguous transitional
+ * record. A content-only v1 digest is accepted only when a caller also proves
+ * that the complete current physical tree equals a trusted canonical tree;
+ * destructive orphan/legacy-lane callers intentionally provide no such proof.
  */
-function acceptedManagedDirPhysicalDigest(dir: string, manifest: SyncManifest): string | null {
+function acceptedManagedDirPhysicalDigest(
+  dir: string,
+  manifest: SyncManifest,
+  trustedPhysicalDigest?: string,
+): string | null {
   const physicalDigest = computeDirDigest(dir);
   if (manifest.identityVersion === PHYSICAL_TREE_IDENTITY_VERSION) {
     return physicalDigest === manifest.digest ? physicalDigest : null;
@@ -804,7 +858,9 @@ function acceptedManagedDirPhysicalDigest(dir: string, manifest: SyncManifest): 
   // explicit schema tag. Exact v2 equality is unambiguous and safe to accept.
   if (physicalDigest === manifest.digest) return physicalDigest;
   const legacyDigest = computeLegacyRegularTreeDigest(dir);
-  return legacyDigest !== null && legacyDigest === manifest.digest ? physicalDigest : null;
+  return legacyDigest !== null && legacyDigest === manifest.digest && physicalDigest === trustedPhysicalDigest
+    ? physicalDigest
+    : null;
 }
 
 export type ManagedSkillTreeState = 'unmanaged' | 'managed-clean' | 'managed-modified' | 'corrupt-metadata';
@@ -897,13 +953,16 @@ function matchesManagedDirIdentity(
   dir: string,
   contentDigest: string | null,
   manifestDigest: string | null,
-  identityVersion: 1 | typeof PHYSICAL_TREE_IDENTITY_VERSION = PHYSICAL_TREE_IDENTITY_VERSION,
+  _identityVersion: 1 | typeof PHYSICAL_TREE_IDENTITY_VERSION = PHYSICAL_TREE_IDENTITY_VERSION,
 ): boolean {
   if (contentDigest === null || manifestDigest === null) return false;
   try {
     const identity = managedDirIdentity(dir);
-    const comparableDigest = identityVersion === 1 ? computeLegacyRegularTreeDigest(dir) : identity.contentDigest;
-    return comparableDigest === contentDigest && identity.manifestDigest === manifestDigest;
+    // Legacy journals occasionally carried an already-v2 digest before the
+    // schema tag shipped. Exact v2 equality upgrades that authority safely.
+    // A genuine content-only v1 digest cannot prove modes, entry kinds, or raw
+    // link targets and therefore never authorizes a destructive recovery.
+    return identity.contentDigest === contentDigest && identity.manifestDigest === manifestDigest;
   } catch {
     return false;
   }
@@ -931,64 +990,99 @@ function readManagedDirTransactionJournal(transactionDir: string): ManagedDirTra
   return parsed as ManagedDirTransactionJournal;
 }
 
+function matchesJournalStagedDir(path: string, journal: ManagedDirTransactionJournal): boolean {
+  return matchesManagedDirIdentity(
+    path,
+    journal.stagedContentDigest,
+    journal.stagedManifestDigest,
+    journal.identityVersion ?? 1,
+  );
+}
+
+function matchesJournalPriorDir(path: string, journal: ManagedDirTransactionJournal): boolean {
+  return matchesManagedDirIdentity(
+    path,
+    journal.beforeContentDigest,
+    journal.beforeManifestDigest,
+    journal.identityVersion ?? 1,
+  );
+}
+
+function republishParkedManagedDir(published: string, destDir: string): void {
+  if (lstatSafe(destDir) !== null) return;
+  try {
+    publishPhysicalTreeNoClobber(published, destDir);
+  } catch {
+    // Preserve the parked tree and any racing live tree as evidence.
+  }
+}
+
+function parkManagedDirRollbackPublication(
+  destDir: string,
+  before: string,
+  published: string,
+  journal: ManagedDirTransactionJournal,
+): void {
+  if (lstatSafe(published) !== null) {
+    if (!matchesJournalStagedDir(published, journal)) {
+      throw new Error(`managed skill parked publication changed: ${published}`);
+    }
+    return;
+  }
+  if (lstatSafe(destDir) === null || (lstatSafe(before) === null && journal.hadLive)) return;
+  const isStaged = matchesJournalStagedDir(destDir, journal);
+  const isRestoredPrior = lstatSafe(before) !== null && matchesJournalPriorDir(destDir, journal);
+  if (!isStaged && !isRestoredPrior) throw new Error(`managed skill transaction target changed: ${destDir}`);
+  if (!isStaged) return;
+  renameSync(destDir, published);
+  if (matchesJournalStagedDir(published, journal)) return;
+  republishParkedManagedDir(published, destDir);
+  throw new Error(`managed skill transaction target changed while being parked: ${destDir}`);
+}
+
+function restoreManagedDirRollbackPreimage(
+  destDir: string,
+  before: string,
+  journal: ManagedDirTransactionJournal,
+): void {
+  if (lstatSafe(before) !== null) {
+    if (!matchesJournalPriorDir(before, journal)) throw new Error(`managed skill prior tree changed: ${before}`);
+    if (lstatSafe(destDir) === null) publishPhysicalTreeNoClobber(before, destDir);
+    if (!matchesJournalPriorDir(destDir, journal)) {
+      throw new Error(`managed skill prior tree changed during restore: ${destDir}`);
+    }
+    return;
+  }
+  if (journal.hadLive && !matchesJournalPriorDir(destDir, journal)) {
+    throw new Error(`managed skill transaction lost prior tree: ${destDir}`);
+  }
+  if (!journal.hadLive && lstatSafe(destDir) !== null) {
+    throw new Error(`managed skill transaction restore found new live data: ${destDir}`);
+  }
+}
+
 function rollbackManagedDirTransaction(
   targetParent: string,
   transactionDir: string,
   journal: ManagedDirTransactionJournal,
 ): void {
-  const destDir = join(targetParent, journal.destName);
-  const before = join(transactionDir, 'before');
-  if (lstatSafe(before) !== null) {
-    if (
-      !matchesManagedDirIdentity(
-        before,
-        journal.beforeContentDigest,
-        journal.beforeManifestDigest,
-        journal.identityVersion ?? 1,
-      )
-    ) {
-      throw new Error(`managed skill prior tree changed: ${before}`);
+  try {
+    const destDir = join(targetParent, journal.destName);
+    const before = join(transactionDir, 'before');
+    const staged = join(transactionDir, 'staged');
+    const published = join(transactionDir, 'published');
+    if (lstatSafe(staged) !== null && !matchesJournalStagedDir(staged, journal)) {
+      throw new Error(`managed skill staged tree changed: ${staged}`);
     }
-    if (lstatSafe(destDir) !== null) {
-      if (
-        !matchesManagedDirIdentity(
-          destDir,
-          journal.stagedContentDigest,
-          journal.stagedManifestDigest,
-          journal.identityVersion ?? 1,
-        )
-      ) {
-        throw new Error(`managed skill transaction target changed: ${destDir}`);
-      }
-      rmSync(destDir, { recursive: true, force: true });
-    }
-    renameSync(before, destDir);
-  } else if (journal.hadLive) {
-    if (
-      !matchesManagedDirIdentity(
-        destDir,
-        journal.beforeContentDigest,
-        journal.beforeManifestDigest,
-        journal.identityVersion ?? 1,
-      )
-    ) {
-      throw new Error(`managed skill transaction lost prior tree: ${destDir}`);
-    }
-  } else if (lstatSafe(destDir) !== null) {
-    if (
-      !matchesManagedDirIdentity(
-        destDir,
-        journal.stagedContentDigest,
-        journal.stagedManifestDigest,
-        journal.identityVersion ?? 1,
-      )
-    ) {
-      throw new Error(`managed skill transaction target changed: ${destDir}`);
-    }
-    rmSync(destDir, { recursive: true, force: true });
+    parkManagedDirRollbackPublication(destDir, before, published, journal);
+    restoreManagedDirRollbackPreimage(destDir, before, journal);
+    rmSync(transactionDir, { recursive: true, force: true });
+    removeEmptyDirSafe(join(targetParent, SKILL_TRANSACTION_ROOT));
+  } catch (error) {
+    if (lstatSafe(transactionDir) === null) throw error;
+    const conflict = preserveManagedDirTransactionConflict(transactionDir);
+    throw new ManagedArtifactConflictError(`${errMsg(error)}; preserved managed skill evidence at ${conflict}`);
   }
-  rmSync(transactionDir, { recursive: true, force: true });
-  removeEmptyDirSafe(join(targetParent, SKILL_TRANSACTION_ROOT));
 }
 
 /** Recover every journaled managed-skill promotion before classifying ownership. */
@@ -1029,7 +1123,8 @@ function recoverManagedDirTransactions(targetParent: string, report: AgentReport
       if (existsSync(join(transactionDir, 'COMMITTED'))) {
         const destDir = join(targetParent, journal.destName);
         if (!matchesManagedDirIdentity(destDir, journal.stagedContentDigest, journal.stagedManifestDigest)) {
-          throw new Error(`committed managed skill transaction is inconsistent: ${transactionDir}`);
+          const conflict = preserveManagedDirTransactionConflict(transactionDir);
+          throw new Error(`committed managed skill transaction is inconsistent; preserved at ${conflict}`);
         }
         rmSync(transactionDir, { recursive: true, force: true });
       } else {
@@ -1044,11 +1139,31 @@ function recoverManagedDirTransactions(targetParent: string, report: AgentReport
   return blocked;
 }
 
+/**
+ * Recover every journal below one skills parent before callers enumerate live
+ * skill directories. This also discovers removals whose live target is absent
+ * because the owned tree is parked inside the hidden transaction root.
+ */
+export function recoverManagedSkillTransactions(targetParent: string): void {
+  const report = emptyReport('claude');
+  const blocked = recoverManagedDirTransactions(targetParent, report);
+  if (blocked.size > 0 || (report.failures?.length ?? 0) > 0) {
+    throw new Error(report.failures?.join('; ') ?? `managed skill recovery blocked under ${targetParent}`);
+  }
+}
+
 function recoverLegacyManagedDirSwap(destDir: string): void {
   const stageDir = `${destDir}${STAGING_SUFFIX}`;
   const oldDir = `${destDir}${PREV_SUFFIX}`;
   if (lstatSafe(stageDir) !== null) quarantineTransactionDebris(dirname(destDir), stageDir);
-  if (lstatSafe(oldDir) !== null && lstatSafe(destDir) === null) renameSync(oldDir, destDir);
+  if (lstatSafe(oldDir) !== null && lstatSafe(destDir) === null) {
+    const identity = managedDirIdentity(oldDir);
+    publishPhysicalTreeNoClobber(oldDir, destDir);
+    if (!matchesManagedDirIdentity(destDir, identity.contentDigest, identity.manifestDigest)) {
+      throw new Error(`legacy managed skill restore changed; preserved prior tree at ${oldDir}`);
+    }
+    rmSync(oldDir, { recursive: true, force: true });
+  }
 }
 
 // ============================================================================
@@ -1121,7 +1236,7 @@ function syncOneSkill(ctx: RunContext, skill: SourceSkill, targetParent: string)
     const reason = existsSync(join(destDir, MANIFEST_NAME)) ? 'corrupt or foreign manifest' : 'no ownership manifest';
     return { action: 'skipped-unmanaged-kept', detail: `${reason}; existing directory preserved` };
   }
-  const currentDigest = acceptedManagedDirPhysicalDigest(destDir, existing.manifest);
+  const currentDigest = acceptedManagedDirPhysicalDigest(destDir, existing.manifest, sourceDigest);
   if (currentDigest !== null) {
     if (
       existing.manifest.identityVersion === PHYSICAL_TREE_IDENTITY_VERSION &&
@@ -1201,6 +1316,8 @@ export interface ManagedWorkflowReport {
   /** Accepted physical identity captured by the ownership read. */
   targetDigest?: string;
   manifestDigest?: string;
+  targetMode?: number;
+  manifestMode?: number;
 }
 
 function readWorkflowManifest(path: string): {
@@ -1219,7 +1336,9 @@ function readWorkflowManifest(path: string): {
       typeof parsed.digest !== 'string' ||
       !/^[a-f0-9]{64}$/.test(parsed.digest) ||
       (parsed.version !== null && parsed.version !== undefined && typeof parsed.version !== 'string') ||
-      typeof parsed.syncedAt !== 'string'
+      typeof parsed.syncedAt !== 'string' ||
+      (parsed.identityVersion !== undefined && parsed.identityVersion !== PHYSICAL_TREE_IDENTITY_VERSION) ||
+      (parsed.identityVersion === PHYSICAL_TREE_IDENTITY_VERSION && !isPhysicalMode(parsed.targetMode))
     ) {
       return { status: 'corrupt' };
     }
@@ -1230,6 +1349,9 @@ function readWorkflowManifest(path: string): {
         version: parsed.version ?? null,
         digest: parsed.digest,
         syncedAt: parsed.syncedAt,
+        ...(parsed.identityVersion === PHYSICAL_TREE_IDENTITY_VERSION
+          ? { identityVersion: PHYSICAL_TREE_IDENTITY_VERSION, targetMode: parsed.targetMode }
+          : {}),
       },
       fileDigest: createHash('sha256').update(content).digest('hex'),
     };
@@ -1248,10 +1370,18 @@ function regularFileDigest(path: string): string | null {
   }
 }
 
+interface PhysicalRegularFileIdentity {
+  kind: 'regular';
+  mode: number;
+  digest: string;
+}
+
 type PhysicalFileIdentity =
   | { kind: 'absent' }
-  | { kind: 'regular'; digest: string }
-  | { kind: 'non-regular'; entry: 'directory' | 'symlink' | 'other' }
+  | PhysicalRegularFileIdentity
+  | { kind: 'directory'; mode: number }
+  | { kind: 'symlink'; mode: number; target: string }
+  | { kind: 'other'; mode: number; entry: PhysicalTreeEntry['kind'] }
   | { kind: 'unreadable'; code: string };
 
 function physicalFileIdentity(path: string): PhysicalFileIdentity {
@@ -1262,11 +1392,18 @@ function physicalFileIdentity(path: string): PhysicalFileIdentity {
     const code = (error as NodeJS.ErrnoException).code ?? 'UNKNOWN';
     return code === 'ENOENT' ? { kind: 'absent' } : { kind: 'unreadable', code };
   }
-  if (stat.isSymbolicLink()) return { kind: 'non-regular', entry: 'symlink' };
-  if (stat.isDirectory()) return { kind: 'non-regular', entry: 'directory' };
-  if (!stat.isFile()) return { kind: 'non-regular', entry: 'other' };
+  const mode = stat.mode & 0o7777;
+  if (stat.isSymbolicLink()) {
+    try {
+      return { kind: 'symlink', mode, target: readlinkSync(path) };
+    } catch (error) {
+      return { kind: 'unreadable', code: (error as NodeJS.ErrnoException).code ?? 'UNKNOWN' };
+    }
+  }
+  if (stat.isDirectory()) return { kind: 'directory', mode };
+  if (!stat.isFile()) return { kind: 'other', mode, entry: physicalEntryKind(stat) };
   try {
-    return { kind: 'regular', digest: hashFile(path) };
+    return { kind: 'regular', mode, digest: hashFile(path) };
   } catch (error) {
     return { kind: 'unreadable', code: (error as NodeJS.ErrnoException).code ?? 'UNKNOWN' };
   }
@@ -1274,14 +1411,22 @@ function physicalFileIdentity(path: string): PhysicalFileIdentity {
 
 function physicalIdentityEquals(left: PhysicalFileIdentity, right: PhysicalFileIdentity): boolean {
   if (left.kind !== right.kind) return false;
-  if (left.kind === 'regular' && right.kind === 'regular') return left.digest === right.digest;
-  if (left.kind === 'non-regular' && right.kind === 'non-regular') return left.entry === right.entry;
+  if (left.kind === 'regular' && right.kind === 'regular') {
+    return left.mode === right.mode && left.digest === right.digest;
+  }
+  if (left.kind === 'directory' && right.kind === 'directory') return left.mode === right.mode;
+  if (left.kind === 'symlink' && right.kind === 'symlink') {
+    return left.mode === right.mode && left.target === right.target;
+  }
+  if (left.kind === 'other' && right.kind === 'other') {
+    return left.mode === right.mode && left.entry === right.entry;
+  }
   if (left.kind === 'unreadable' && right.kind === 'unreadable') return left.code === right.code;
   return left.kind === 'absent' && right.kind === 'absent';
 }
 
-function expectedPhysicalFile(digest: string | null): PhysicalFileIdentity {
-  return digest === null ? { kind: 'absent' } : { kind: 'regular', digest };
+function expectedPhysicalFile(digest: string | null, mode: number | null): PhysicalFileIdentity {
+  return digest === null || mode === null ? { kind: 'absent' } : { kind: 'regular', mode, digest };
 }
 
 /** Classify council.js using only its sidecar ownership grant and recorded digest. */
@@ -1291,13 +1436,30 @@ export function inspectManagedWorkflow(targetDir: string): ManagedWorkflowReport
   const ownership = readWorkflowManifest(manifestPath);
   if (ownership.status === 'missing') return { targetPath, manifestPath, state: 'unmanaged' };
   if (ownership.status === 'corrupt') return { targetPath, manifestPath, state: 'corrupt-metadata' };
-  const digest = regularFileDigest(targetPath);
+  const targetIdentity = physicalFileIdentity(targetPath);
+  const manifestIdentity = physicalFileIdentity(manifestPath);
+  const expectedTargetMode =
+    ownership.manifest?.identityVersion === PHYSICAL_TREE_IDENTITY_VERSION
+      ? ownership.manifest.targetMode
+      : WORKFLOW_FILE_MODE;
+  const clean =
+    targetIdentity.kind === 'regular' &&
+    targetIdentity.digest === ownership.manifest?.digest &&
+    targetIdentity.mode === expectedTargetMode &&
+    manifestIdentity.kind === 'regular' &&
+    manifestIdentity.digest === ownership.fileDigest &&
+    manifestIdentity.mode === WORKFLOW_FILE_MODE;
   return {
     targetPath,
     manifestPath,
-    state: digest !== null && digest === ownership.manifest?.digest ? 'managed-clean' : 'managed-modified',
-    ...(digest !== null && digest === ownership.manifest?.digest && ownership.fileDigest !== undefined
-      ? { targetDigest: digest, manifestDigest: ownership.fileDigest }
+    state: clean ? 'managed-clean' : 'managed-modified',
+    ...(clean && targetIdentity.kind === 'regular' && manifestIdentity.kind === 'regular'
+      ? {
+          targetDigest: targetIdentity.digest,
+          manifestDigest: manifestIdentity.digest,
+          targetMode: targetIdentity.mode,
+          manifestMode: manifestIdentity.mode,
+        }
       : {}),
   };
 }
@@ -1348,16 +1510,24 @@ export function stampWorkflow(opts: {
     version: opts.version ?? null,
     digest: createHash('sha256').update(stamped).digest('hex'),
     syncedAt: (opts.now ?? (() => new Date()))().toISOString(),
+    identityVersion: PHYSICAL_TREE_IDENTITY_VERSION,
+    targetMode: WORKFLOW_FILE_MODE,
   };
   const expected =
     ownership.state === 'managed-clean'
       ? {
           targetDigest: ownership.targetDigest ?? null,
           manifestDigest: ownership.manifestDigest ?? null,
+          targetMode: ownership.targetMode ?? null,
+          manifestMode: ownership.manifestMode ?? null,
         }
-      : { targetDigest: null, manifestDigest: null };
+      : { targetDigest: null, manifestDigest: null, targetMode: null, manifestMode: null };
   if (
-    (ownership.state === 'managed-clean' && (expected.targetDigest === null || expected.manifestDigest === null)) ||
+    (ownership.state === 'managed-clean' &&
+      (expected.targetDigest === null ||
+        expected.manifestDigest === null ||
+        expected.targetMode === null ||
+        expected.manifestMode === null)) ||
     (ownership.state === 'unmanaged' && targetExists)
   ) {
     return { action: 'kept-modified', targetPath: ownership.targetPath };
@@ -1380,9 +1550,26 @@ const WORKFLOW_REMOVAL_PREFIX = '.council.genie-delete-';
 const WORKFLOW_REMOVAL_CONFLICT_PREFIX = '.council.genie-delete-conflict-';
 
 interface WorkflowRemovalJournal {
-  version: 1;
+  version: 1 | 2;
   targetDigest: string;
   manifestDigest: string;
+  identityVersion?: typeof PHYSICAL_TREE_IDENTITY_VERSION;
+  targetMode?: number;
+  manifestMode?: number;
+}
+
+interface WorkflowTransactionJournal {
+  targetDigest: string;
+  manifestDigest: string;
+  hadTarget: boolean;
+  hadManifest: boolean;
+  beforeTargetDigest: string | null;
+  beforeManifestDigest: string | null;
+  identityVersion?: typeof PHYSICAL_TREE_IDENTITY_VERSION;
+  targetMode?: number;
+  manifestMode?: number;
+  beforeTargetMode?: number | null;
+  beforeManifestMode?: number | null;
 }
 
 function stampWorkflowTemplate(template: string, pluginRoot: string): string {
@@ -1397,7 +1584,12 @@ function publishWorkflowTransaction(
   targetDir: string,
   stamped: string,
   manifest: SyncManifest,
-  expected: { targetDigest: string | null; manifestDigest: string | null },
+  expected: {
+    targetDigest: string | null;
+    manifestDigest: string | null;
+    targetMode: number | null;
+    manifestMode: number | null;
+  },
   beforePromotion?: () => void,
   afterAuthorization?: () => void,
   beforePublish?: () => void,
@@ -1415,6 +1607,13 @@ function publishWorkflowTransaction(
   mkdirSync(staged, { recursive: true });
   writeFileSync(join(staged, TARGET_NAME), stamped, 'utf8');
   writeFileSync(join(staged, WORKFLOW_MANIFEST_NAME), manifestContent, 'utf8');
+  chmodSync(join(staged, TARGET_NAME), WORKFLOW_FILE_MODE);
+  chmodSync(join(staged, WORKFLOW_MANIFEST_NAME), WORKFLOW_FILE_MODE);
+  const stagedTarget = physicalFileIdentity(join(staged, TARGET_NAME));
+  const stagedManifest = physicalFileIdentity(join(staged, WORKFLOW_MANIFEST_NAME));
+  if (stagedTarget.kind !== 'regular' || stagedManifest.kind !== 'regular') {
+    throw new Error('council workflow staging did not produce physical regular files');
+  }
   writeFileSync(
     join(working, 'journal.json'),
     `${JSON.stringify({
@@ -1425,6 +1624,11 @@ function publishWorkflowTransaction(
       hadManifest: expected.manifestDigest !== null,
       beforeTargetDigest: expected.targetDigest,
       beforeManifestDigest: expected.manifestDigest,
+      identityVersion: PHYSICAL_TREE_IDENTITY_VERSION,
+      targetMode: stagedTarget.mode,
+      manifestMode: stagedManifest.mode,
+      beforeTargetMode: expected.targetMode,
+      beforeManifestMode: expected.manifestMode,
     })}\n`,
     'utf8',
   );
@@ -1434,8 +1638,8 @@ function publishWorkflowTransaction(
   mkdirSync(before, { recursive: true });
   try {
     beforePromotion?.();
-    const expectedTarget = expectedPhysicalFile(expected.targetDigest);
-    const expectedManifest = expectedPhysicalFile(expected.manifestDigest);
+    const expectedTarget = expectedPhysicalFile(expected.targetDigest, expected.targetMode);
+    const expectedManifest = expectedPhysicalFile(expected.manifestDigest, expected.manifestMode);
     if (
       !physicalIdentityEquals(physicalFileIdentity(targetPath), expectedTarget) ||
       !physicalIdentityEquals(physicalFileIdentity(manifestPath), expectedManifest)
@@ -1446,18 +1650,15 @@ function publishWorkflowTransaction(
       );
     }
     afterAuthorization?.();
-    if (lstatSafe(targetPath) !== null) renameSync(targetPath, join(before, TARGET_NAME));
-    if (lstatSafe(manifestPath) !== null) renameSync(manifestPath, join(before, WORKFLOW_MANIFEST_NAME));
+    if (expected.targetDigest !== null) renameSync(targetPath, join(before, TARGET_NAME));
+    if (expected.manifestDigest !== null) renameSync(manifestPath, join(before, WORKFLOW_MANIFEST_NAME));
     if (
       !physicalIdentityEquals(physicalFileIdentity(join(before, TARGET_NAME)), expectedTarget) ||
       !physicalIdentityEquals(physicalFileIdentity(join(before, WORKFLOW_MANIFEST_NAME)), expectedManifest) ||
       physicalFileIdentity(targetPath).kind !== 'absent' ||
       physicalFileIdentity(manifestPath).kind !== 'absent'
     ) {
-      if (lstatSafe(targetPath) === null && lstatSafe(join(before, TARGET_NAME)) !== null)
-        renameSync(join(before, TARGET_NAME), targetPath);
-      if (lstatSafe(manifestPath) === null && lstatSafe(join(before, WORKFLOW_MANIFEST_NAME)) !== null)
-        renameSync(join(before, WORKFLOW_MANIFEST_NAME), manifestPath);
+      restoreWorkflowPreimagesNoClobber(targetDir, transactionDir);
       const conflict = preserveWorkflowConflict(transactionDir);
       throw new ManagedArtifactConflictError(
         `council workflow changed during promotion; kept both versions for review at ${conflict}`,
@@ -1477,8 +1678,8 @@ function publishWorkflowTransaction(
       throw error;
     }
     if (
-      !physicalIdentityEquals(physicalFileIdentity(targetPath), { kind: 'regular', digest: targetDigest }) ||
-      !physicalIdentityEquals(physicalFileIdentity(manifestPath), { kind: 'regular', digest: manifestDigest })
+      !physicalIdentityEquals(physicalFileIdentity(targetPath), stagedTarget) ||
+      !physicalIdentityEquals(physicalFileIdentity(manifestPath), stagedManifest)
     ) {
       throw new Error('council workflow changed before transaction commit');
     }
@@ -1517,11 +1718,26 @@ export function recoverManagedWorkflowTransactions(targetDir: string): void {
     const transactionDir = join(targetDir, name);
     const journal = readWorkflowTransactionJournal(transactionDir);
     if (existsSync(join(transactionDir, 'COMMITTED'))) {
+      const targetIdentity = journaledWorkflowIdentity(
+        transactionDir,
+        TARGET_NAME,
+        journal.targetDigest,
+        journal.targetMode,
+        join(transactionDir, 'staged', TARGET_NAME),
+      );
+      const manifestIdentity = journaledWorkflowIdentity(
+        transactionDir,
+        WORKFLOW_MANIFEST_NAME,
+        journal.manifestDigest,
+        journal.manifestMode,
+        join(transactionDir, 'staged', WORKFLOW_MANIFEST_NAME),
+      );
       if (
-        regularFileDigest(join(targetDir, TARGET_NAME)) !== journal.targetDigest ||
-        regularFileDigest(join(targetDir, WORKFLOW_MANIFEST_NAME)) !== journal.manifestDigest
+        !physicalIdentityEquals(physicalFileIdentity(join(targetDir, TARGET_NAME)), targetIdentity) ||
+        !physicalIdentityEquals(physicalFileIdentity(join(targetDir, WORKFLOW_MANIFEST_NAME)), manifestIdentity)
       ) {
-        throw new Error(`committed council workflow transaction is inconsistent: ${transactionDir}`);
+        const conflict = preserveWorkflowConflict(transactionDir);
+        throw new Error(`committed council workflow transaction is inconsistent; preserved at ${conflict}`);
       }
       rmSync(transactionDir, { recursive: true, force: true });
     } else {
@@ -1534,7 +1750,15 @@ function readWorkflowRemovalJournal(transactionDir: string): WorkflowRemovalJour
   const parsed = JSON.parse(
     readFileSync(join(transactionDir, 'journal.json'), 'utf8'),
   ) as Partial<WorkflowRemovalJournal>;
-  if (parsed.version !== 1 || !isDigest(parsed.targetDigest) || !isDigest(parsed.manifestDigest)) {
+  if (
+    ![1, 2].includes(Number(parsed.version)) ||
+    !isDigest(parsed.targetDigest) ||
+    !isDigest(parsed.manifestDigest) ||
+    (parsed.version === 2 &&
+      (parsed.identityVersion !== PHYSICAL_TREE_IDENTITY_VERSION ||
+        !isPhysicalMode(parsed.targetMode) ||
+        !isPhysicalMode(parsed.manifestMode)))
+  ) {
     throw new Error(`invalid council workflow removal transaction: ${transactionDir}`);
   }
   return parsed as WorkflowRemovalJournal;
@@ -1546,30 +1770,56 @@ function preserveWorkflowRemovalConflict(transactionDir: string): string {
   return conflict;
 }
 
-function restoreWorkflowRemovalPreimages(targetDir: string, transactionDir: string): boolean {
+function publishWorkflowPreimagesNoClobber(targetDir: string, sourceDir: string): boolean {
   let complete = true;
   for (const name of [TARGET_NAME, WORKFLOW_MANIFEST_NAME]) {
-    const parked = join(transactionDir, 'parked', name);
+    const parked = join(sourceDir, name);
     const target = join(targetDir, name);
     if (lstatSafe(parked) === null) continue;
     if (physicalFileIdentity(target).kind !== 'absent') {
       complete = false;
       continue;
     }
-    publishRegularFileNoClobber(parked, target);
-    unlinkSync(parked);
+    try {
+      publishRegularFileNoClobber(parked, target);
+    } catch (error) {
+      if (!(error instanceof NoClobberPublishError)) throw error;
+      complete = false;
+    }
   }
   return complete;
+}
+
+function restoreWorkflowPreimagesNoClobber(targetDir: string, transactionDir: string): boolean {
+  return publishWorkflowPreimagesNoClobber(targetDir, join(transactionDir, 'before'));
+}
+
+function restoreWorkflowRemovalPreimages(targetDir: string, transactionDir: string): boolean {
+  return publishWorkflowPreimagesNoClobber(targetDir, join(transactionDir, 'parked'));
 }
 
 function recoverWorkflowRemovalTransaction(targetDir: string, transactionDir: string): void {
   const journal = readWorkflowRemovalJournal(transactionDir);
   const parkedTarget = join(transactionDir, 'parked', TARGET_NAME);
   const parkedManifest = join(transactionDir, 'parked', WORKFLOW_MANIFEST_NAME);
+  if (
+    journal.identityVersion !== PHYSICAL_TREE_IDENTITY_VERSION ||
+    !isPhysicalMode(journal.targetMode) ||
+    !isPhysicalMode(journal.manifestMode)
+  ) {
+    const conflict = preserveWorkflowRemovalConflict(transactionDir);
+    throw new Error(`legacy council removal lacks physical identity authority; preserved for review at ${conflict}`);
+  }
+  const expectedTarget = { kind: 'regular', mode: journal.targetMode, digest: journal.targetDigest } as const;
+  const expectedManifest = {
+    kind: 'regular',
+    mode: journal.manifestMode,
+    digest: journal.manifestDigest,
+  } as const;
   if (existsSync(join(transactionDir, 'COMMITTED'))) {
     if (
-      !physicalIdentityEquals(physicalFileIdentity(parkedTarget), { kind: 'regular', digest: journal.targetDigest }) ||
-      !physicalIdentityEquals(physicalFileIdentity(parkedManifest), { kind: 'regular', digest: journal.manifestDigest })
+      !physicalIdentityEquals(physicalFileIdentity(parkedTarget), expectedTarget) ||
+      !physicalIdentityEquals(physicalFileIdentity(parkedManifest), expectedManifest)
     ) {
       const conflict = preserveWorkflowRemovalConflict(transactionDir);
       throw new Error(`committed council removal quarantine changed; preserved for review at ${conflict}`);
@@ -1577,13 +1827,12 @@ function recoverWorkflowRemovalTransaction(targetDir: string, transactionDir: st
     rmSync(transactionDir, { recursive: true, force: true });
     return;
   }
-  for (const [name, digest] of [
-    [TARGET_NAME, journal.targetDigest],
-    [WORKFLOW_MANIFEST_NAME, journal.manifestDigest],
+  for (const [name, expected] of [
+    [TARGET_NAME, expectedTarget],
+    [WORKFLOW_MANIFEST_NAME, expectedManifest],
   ] as const) {
     const parked = physicalFileIdentity(join(transactionDir, 'parked', name));
     const live = physicalFileIdentity(join(targetDir, name));
-    const expected = { kind: 'regular', digest } as const;
     if (
       !physicalIdentityEquals(parked, expected) &&
       !(parked.kind === 'absent' && physicalIdentityEquals(live, expected))
@@ -1615,21 +1864,34 @@ export function removeManagedWorkflow(
   if (
     inspected.state !== 'managed-clean' ||
     inspected.targetDigest === undefined ||
-    inspected.manifestDigest === undefined
+    inspected.manifestDigest === undefined ||
+    inspected.targetMode === undefined ||
+    inspected.manifestMode === undefined
   ) {
     return 'kept-modified';
   }
-  const expectedTarget = { kind: 'regular', digest: inspected.targetDigest } as const;
-  const expectedManifest = { kind: 'regular', digest: inspected.manifestDigest } as const;
+  const expectedTarget = {
+    kind: 'regular',
+    mode: inspected.targetMode,
+    digest: inspected.targetDigest,
+  } as const;
+  const expectedManifest = {
+    kind: 'regular',
+    mode: inspected.manifestMode,
+    digest: inspected.manifestDigest,
+  } as const;
   const token = `${process.pid}-${Date.now()}-${randomBytes(6).toString('hex')}`;
   const working = createExclusiveTransactionDir(targetDir, `${WORKFLOW_TRANSACTION_STAGING_PREFIX}delete-${token}`);
   const transactionDir = join(targetDir, `${WORKFLOW_REMOVAL_PREFIX}${token}`);
   writeFileSync(
     join(working, 'journal.json'),
     `${JSON.stringify({
-      version: 1,
+      version: 2,
       targetDigest: inspected.targetDigest,
       manifestDigest: inspected.manifestDigest,
+      identityVersion: PHYSICAL_TREE_IDENTITY_VERSION,
+      targetMode: inspected.targetMode,
+      manifestMode: inspected.manifestMode,
     } satisfies WorkflowRemovalJournal)}\n`,
   );
   mkdirSync(join(working, 'parked'));
@@ -1687,14 +1949,7 @@ export function removeManagedWorkflow(
   }
 }
 
-function readWorkflowTransactionJournal(transactionDir: string): {
-  targetDigest: string;
-  manifestDigest: string;
-  hadTarget: boolean;
-  hadManifest: boolean;
-  beforeTargetDigest: string | null;
-  beforeManifestDigest: string | null;
-} {
+function readWorkflowTransactionJournal(transactionDir: string): WorkflowTransactionJournal {
   const parsed = JSON.parse(readFileSync(join(transactionDir, 'journal.json'), 'utf8')) as Record<string, unknown>;
   if (
     parsed.version !== 2 ||
@@ -1707,38 +1962,154 @@ function readWorkflowTransactionJournal(transactionDir: string): {
     !isOptionalDigest(parsed.beforeTargetDigest) ||
     !isOptionalDigest(parsed.beforeManifestDigest) ||
     parsed.hadTarget !== (parsed.beforeTargetDigest !== null) ||
-    parsed.hadManifest !== (parsed.beforeManifestDigest !== null)
+    parsed.hadManifest !== (parsed.beforeManifestDigest !== null) ||
+    (parsed.identityVersion !== undefined && parsed.identityVersion !== PHYSICAL_TREE_IDENTITY_VERSION) ||
+    (parsed.identityVersion === PHYSICAL_TREE_IDENTITY_VERSION &&
+      (!isPhysicalMode(parsed.targetMode) ||
+        !isPhysicalMode(parsed.manifestMode) ||
+        !isOptionalPhysicalMode(parsed.beforeTargetMode) ||
+        !isOptionalPhysicalMode(parsed.beforeManifestMode) ||
+        parsed.hadTarget !== (parsed.beforeTargetMode !== null) ||
+        parsed.hadManifest !== (parsed.beforeManifestMode !== null)))
   ) {
     throw new Error(`invalid council workflow transaction: ${transactionDir}`);
   }
-  return parsed as ReturnType<typeof readWorkflowTransactionJournal>;
+  return parsed as unknown as WorkflowTransactionJournal;
+}
+
+function journaledWorkflowIdentity(
+  transactionDir: string,
+  name: string,
+  digest: string,
+  mode: number | null | undefined,
+  evidencePath: string,
+  referenceMode?: number,
+): PhysicalRegularFileIdentity {
+  if (isPhysicalMode(mode)) return { kind: 'regular', mode, digest };
+  const evidence = physicalFileIdentity(evidencePath);
+  if (
+    evidence.kind !== 'regular' ||
+    evidence.digest !== digest ||
+    (referenceMode !== undefined && evidence.mode !== referenceMode)
+  ) {
+    throw new Error(
+      `legacy council transaction cannot safely upgrade physical authority for ${name}: ${transactionDir}`,
+    );
+  }
+  return evidence;
+}
+
+function parkWorkflowRollbackTarget(
+  transactionDir: string,
+  name: string,
+  target: string,
+  expected: PhysicalRegularFileIdentity,
+): void {
+  const current = physicalFileIdentity(target);
+  if (current.kind === 'absent') return;
+  if (!physicalIdentityEquals(current, expected)) {
+    throw new Error(`council transaction target changed: ${target}`);
+  }
+  const publishedDir = join(transactionDir, 'published');
+  mkdirSync(publishedDir, { recursive: true });
+  const parked = join(publishedDir, name);
+  renameSync(target, parked);
+  if (!physicalIdentityEquals(physicalFileIdentity(parked), expected)) {
+    if (physicalFileIdentity(target).kind === 'absent') {
+      try {
+        publishRegularFileNoClobber(parked, target);
+      } catch {
+        // Both the moved object and any racing live object remain as evidence.
+      }
+    }
+    throw new Error(`council transaction target changed while being parked: ${target}`);
+  }
 }
 
 function rollbackWorkflowTransaction(targetDir: string, transactionDir: string): void {
-  const journal = readWorkflowTransactionJournal(transactionDir);
-  for (const [name, digest, had, beforeDigest] of [
-    [TARGET_NAME, journal.targetDigest, journal.hadTarget, journal.beforeTargetDigest],
-    [WORKFLOW_MANIFEST_NAME, journal.manifestDigest, journal.hadManifest, journal.beforeManifestDigest],
-  ] as const) {
-    const target = join(targetDir, name);
-    const before = join(transactionDir, 'before', name);
-    if (lstatSafe(before) !== null) {
-      if (regularFileDigest(before) !== beforeDigest)
-        throw new Error(`council transaction prior target changed: ${before}`);
-      if (lstatSafe(target) !== null) {
-        if (regularFileDigest(target) !== digest) throw new Error(`council transaction target changed: ${target}`);
-        rmSync(target, { force: true });
+  try {
+    const journal = readWorkflowTransactionJournal(transactionDir);
+    const entries = [
+      [
+        TARGET_NAME,
+        journal.targetDigest,
+        journal.targetMode,
+        journal.hadTarget,
+        journal.beforeTargetDigest,
+        journal.beforeTargetMode,
+      ],
+      [
+        WORKFLOW_MANIFEST_NAME,
+        journal.manifestDigest,
+        journal.manifestMode,
+        journal.hadManifest,
+        journal.beforeManifestDigest,
+        journal.beforeManifestMode,
+      ],
+    ] as const;
+    const resolved = entries.map(([name, digest, mode, had, beforeDigest, beforeMode]) => {
+      const target = join(targetDir, name);
+      const before = join(transactionDir, 'before', name);
+      const staged = journaledWorkflowIdentity(
+        transactionDir,
+        name,
+        digest,
+        mode,
+        join(transactionDir, 'staged', name),
+      );
+      let prior: PhysicalRegularFileIdentity | null = null;
+      if (lstatSafe(before) !== null) {
+        if (beforeDigest === null) throw new Error(`council transaction has an unexpected prior target: ${before}`);
+        prior = journaledWorkflowIdentity(
+          transactionDir,
+          name,
+          beforeDigest,
+          beforeMode,
+          before,
+          mode === undefined ? staged.mode : undefined,
+        );
+        if (!physicalIdentityEquals(physicalFileIdentity(before), prior)) {
+          throw new Error(`council transaction prior target changed: ${before}`);
+        }
+      } else if (!had) {
+        prior = null;
+      } else {
+        if (beforeDigest === null) throw new Error(`council transaction lost prior target: ${target}`);
+        prior = journaledWorkflowIdentity(
+          transactionDir,
+          name,
+          beforeDigest,
+          beforeMode,
+          target,
+          mode === undefined ? staged.mode : undefined,
+        );
+        if (!physicalIdentityEquals(physicalFileIdentity(target), prior)) {
+          throw new Error(`council transaction lost prior target: ${target}`);
+        }
       }
-      renameSync(before, target);
-    } else if (!had && lstatSafe(target) !== null) {
-      if (regularFileDigest(target) !== digest) throw new Error(`council transaction target changed: ${target}`);
-      rmSync(target, { force: true });
-    } else if (had) {
-      if (regularFileDigest(target) !== beforeDigest)
-        throw new Error(`council transaction lost prior target: ${target}`);
+      return { name, target, before, staged, prior, had };
+    });
+
+    for (const entry of resolved) {
+      if (lstatSafe(entry.before) !== null || !entry.had) {
+        parkWorkflowRollbackTarget(transactionDir, entry.name, entry.target, entry.staged);
+      }
     }
+    if (!restoreWorkflowPreimagesNoClobber(targetDir, transactionDir)) {
+      throw new Error('council transaction restore raced with new live data');
+    }
+    for (const entry of resolved) {
+      const expected: PhysicalFileIdentity = entry.prior ?? { kind: 'absent' };
+      if (!physicalIdentityEquals(physicalFileIdentity(entry.target), expected)) {
+        throw new Error(`council transaction restore changed before cleanup: ${entry.target}`);
+      }
+    }
+    rmSync(transactionDir, { recursive: true, force: true });
+  } catch (error) {
+    if (lstatSafe(transactionDir) === null) throw error;
+    const conflict = preserveWorkflowConflict(transactionDir);
+    throw new ManagedArtifactConflictError(`${errMsg(error)}; preserved workflow evidence at ${conflict}`);
   }
-  rmSync(transactionDir, { recursive: true, force: true });
 }
 
 // ============================================================================
@@ -2103,6 +2474,23 @@ export function lifecycleLockPath(genieHome = resolveGenieHome()): string {
 
 export function acquireLifecycleLease(genieHome = resolveGenieHome()): LifecycleLease | { skipped: string } {
   const path = lifecycleLockPath(genieHome);
+  const borrowedPath = process.env[LIFECYCLE_LEASE_PATH_ENV];
+  const borrowedOwner = process.env[LIFECYCLE_LEASE_OWNER_ENV];
+  if (borrowedPath !== undefined || borrowedOwner !== undefined) {
+    if (
+      borrowedPath !== path ||
+      borrowedOwner === undefined ||
+      borrowedOwner.length === 0 ||
+      borrowedOwner.includes('\n') ||
+      borrowedOwner.includes('\r') ||
+      readTrimmed(path) !== borrowedOwner
+    ) {
+      return { skipped: 'borrowed lifecycle lease did not exactly match the expected live owner; skipped safely' };
+    }
+    // The shell parent remains the sole owner. A child must neither register
+    // an exit handler nor unlink/decrement the parent lease when it finishes.
+    return { path, release: () => undefined };
+  }
   const active = ACTIVE_LIFECYCLE_LEASES.get(path);
   if (active) {
     active.count += 1;
@@ -2303,6 +2691,14 @@ function isDigest(value: unknown): value is string {
 
 function isOptionalDigest(value: unknown): value is string | null {
   return value === null || isDigest(value);
+}
+
+function isPhysicalMode(value: unknown): value is number {
+  return Number.isInteger(value) && Number(value) >= 0 && Number(value) <= 0o7777;
+}
+
+function isOptionalPhysicalMode(value: unknown): value is number | null {
+  return value === null || isPhysicalMode(value);
 }
 
 function isSafeEntryName(value: string): boolean {

@@ -451,6 +451,9 @@ export function finalizeApprovalAnnouncement(
   return finalize.immediate();
 }
 
+/** Clear an announcement only when the caller has proved dispatch did not
+ * start. A successor may already have converted the prior sender's `sending`
+ * claim to ambiguity, so the durable prior tuple is also an authorization key. */
 export function releaseApprovalAnnouncementWithLease(
   db: Database,
   id: string,
@@ -464,9 +467,15 @@ export function releaseApprovalAnnouncementWithLease(
          SET announce_claim = NULL, announce_claim_owner = NULL, announce_claim_epoch = NULL,
              announce_claimed_at = NULL, announce_phase = NULL, announce_prior_claim = NULL,
              announce_prior_owner = NULL, announce_prior_epoch = NULL
-         WHERE id = ? AND announce_claim = ? AND announce_claim_owner = ? AND announce_claim_epoch = ?`,
+         WHERE id = ? AND omni_message_id IS NULL
+           AND (
+             (announce_claim = ? AND announce_claim_owner = ? AND announce_claim_epoch = ?
+               AND (announce_phase IS NULL OR announce_phase IN ('claimed', 'sending')))
+             OR (announce_phase = 'ambiguous' AND announce_prior_claim = ?
+               AND announce_prior_owner = ? AND announce_prior_epoch = ?)
+           )`,
       )
-      .run(id, claimToken, identity.ownerId, identity.epoch).changes === 1
+      .run(id, claimToken, identity.ownerId, identity.epoch, claimToken, identity.ownerId, identity.epoch).changes === 1
   );
 }
 
@@ -825,7 +834,10 @@ export function listRecoverableInbound(db: Database, residentEpoch: number, limi
        FROM inbound_messages
        WHERE handled_at IS NULL
          AND event_key IS NOT NULL
-         AND processing_phase IN ('claimed', 'processing', 'executing', 'executed', 'prepared', 'flushed', 'ambiguous')
+         AND (
+           processing_phase IN ('claimed', 'processing', 'executing', 'executed', 'prepared', 'flushed', 'ambiguous')
+           OR (processing_phase IS NULL AND processing_claim IS NOT NULL)
+         )
          AND (processing_claim IS NULL OR COALESCE(processing_claim_epoch, 0) < ?)
        ORDER BY received_at ASC
        LIMIT ?`,
@@ -1010,15 +1022,24 @@ export function markInboundHandledIfClaimed(
   );
 }
 
-/** Publication/processing failure returns the row to the retryable unhandled state. */
+/** Publication/processing failure releases ownership. Callers that lost the
+ * lease before execution can preserve `claimed` for startup recovery; ordinary
+ * store-only releases return to the transport-redelivery state. */
 export function releaseInboundClaim(
   db: Database,
   id: string,
   claimToken: string,
   identity: DurableClaimIdentity,
+  options: { preservePreExecution?: boolean } = {},
 ): boolean {
   const ownership = ' AND processing_claim_owner = ? AND processing_claim_epoch = ?';
-  const params = [id, claimToken, identity.ownerId, identity.epoch];
+  const params: Array<string | number | null> = [
+    options.preservePreExecution ? 'claimed' : null,
+    id,
+    claimToken,
+    identity.ownerId,
+    identity.epoch,
+  ];
   return (
     db
       .query(
@@ -1026,7 +1047,7 @@ export function releaseInboundClaim(
          SET processing_claim = NULL, processing_claim_owner = NULL, processing_claim_epoch = NULL,
              processing_claimed_at = NULL,
              processing_phase = CASE
-               WHEN processing_phase = 'claimed' THEN NULL
+               WHEN processing_phase = 'claimed' THEN ?
                WHEN processing_phase IN ('processing', 'executing', 'executed') THEN 'ambiguous'
                ELSE processing_phase
              END

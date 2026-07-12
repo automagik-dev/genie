@@ -678,10 +678,14 @@ interface AtomicSwapResult {
 export interface AtomicBinarySwapOptions {
   /** Failure-injection seam immediately before rename-over-live. */
   beforePromote?: (replacementPath: string, targetPath: string) => void;
+  /** Failure-injection seam immediately after rename-over-live. */
+  afterPromote?: (targetPath: string) => void;
   /** Keep a journal-bound source until the surrounding delivery commits. */
   preserveSource?: boolean;
   /** Authenticated journal preimage consumed by this swap. */
   expectedPreimage?: PendingOptionalFileFingerprint;
+  /** Authenticated journal fingerprint of the binary being promoted. */
+  expectedPayloadFingerprint?: PendingFileFingerprint;
 }
 
 function fsyncFile(path: string): void {
@@ -752,6 +756,8 @@ export function atomicBinarySwap(
     copyFileSync(stagedBinPath, replacementPath, constants.COPYFILE_EXCL);
     chmodSync(replacementPath, 0o755);
     fsyncFile(replacementPath);
+    const expectedPayloadFingerprint =
+      options.expectedPayloadFingerprint ?? fingerprintPhysicalFile(replacementPath, 'replacement binary baseline');
 
     assertExpectedBinaryPreimage(targetBinPath, expectedPreimage, 'before backup');
     let targetStat: ReturnType<typeof lstatSync> | null = null;
@@ -781,10 +787,13 @@ export function atomicBinarySwap(
     // portable Node. The lifecycle lease excludes Genie/install.sh writers;
     // this recheck rejects any other writer observed before rename-over-live.
     assertExpectedBinaryPreimage(targetBinPath, expectedPreimage, 'immediately before promotion');
+    assertAuthenticatedBinaryPayload(replacementPath, expectedPayloadFingerprint, 'immediately before promotion');
     // rename-over-live is the only mutation of the canonical path. If the
     // process dies before this call, the old executable remains runnable; if
     // it dies after, the complete replacement is already live.
     renameSync(replacementPath, targetBinPath);
+    options.afterPromote?.(targetBinPath);
+    assertAuthenticatedBinaryPayload(targetBinPath, expectedPayloadFingerprint, 'after promotion');
     fsyncDirectory(targetDir);
     if (!options.preserveSource) {
       try {
@@ -823,6 +832,13 @@ function assertAuthenticatedBinaryBackup(backupPath: string, expected: PendingOp
   const actual = fingerprintPhysicalFile(backupPath, 'previous binary backup');
   if (!fingerprintsEqual(actual, expected.fingerprint)) {
     throw new Error(`rollback backup does not match the authenticated binary preimage: ${backupPath}`);
+  }
+}
+
+function assertAuthenticatedBinaryPayload(path: string, expected: PendingFileFingerprint, phase: string): void {
+  const actual = fingerprintPhysicalFile(path, `binary payload ${phase}`);
+  if (!fingerprintsEqual(actual, expected)) {
+    throw new Error(`binary does not match the journaled payload fingerprint ${phase}: ${path}`);
   }
 }
 
@@ -2169,6 +2185,7 @@ async function runDelivery(
   const swapResult = atomicBinarySwap(stagedBin, targetBin, GENIE_BIN_PREVIOUS, oldVersion, {
     preserveSource: true,
     expectedPreimage,
+    expectedPayloadFingerprint: pending.payload.binary,
   });
   diagnosticsCtx.previousBackup = swapResult.oldVersionBackup;
 
@@ -2398,7 +2415,9 @@ export function resumePendingDelivery(options: ResumePendingDeliveryOptions = {}
       const live = fingerprintOptionalPhysicalFile(targetBin, 'live binary');
       const liveAlreadyNew =
         live.present && live.fingerprint !== null && fingerprintsEqual(live.fingerprint, record.payload.binary);
-      if (!liveAlreadyNew) {
+      if (liveAlreadyNew) {
+        assertAuthenticatedAlreadyNewBackup(record, previousDir);
+      } else {
         const expectedPrevious = record.payload.previousBinary;
         if (expectedPrevious !== undefined) {
           const samePresence = live.present === expectedPrevious.present;
@@ -2419,7 +2438,11 @@ export function resumePendingDelivery(options: ResumePendingDeliveryOptions = {}
           targetBin,
           previousDir,
           record.previousVersion ?? normalizeVersion(VERSION),
-          { preserveSource: true, expectedPreimage: record.payload.previousBinary },
+          {
+            preserveSource: true,
+            expectedPreimage: record.payload.previousBinary,
+            expectedPayloadFingerprint: record.payload.binary,
+          },
         );
         const expectedPreviousFingerprint = record.payload.previousBinary?.fingerprint;
         if (
@@ -2580,6 +2603,20 @@ function matchingSameVersionBackup(
     candidates.find((path) => fingerprintsEqual(fingerprintPhysicalFile(path, 'previous binary backup'), expected)) ??
     null
   );
+}
+
+function assertAuthenticatedAlreadyNewBackup(record: PendingDeliveryRecord, previousDir: string): void {
+  const expectedPrevious = record.payload.previousBinary;
+  if (record.schemaVersion !== 4 || expectedPrevious?.present !== true) return;
+  if (
+    expectedPrevious.fingerprint === null ||
+    record.previousVersion === null ||
+    matchingSameVersionBackup(previousDir, record.previousVersion, expectedPrevious.fingerprint) === null
+  ) {
+    throw new Error(
+      'pending delivery binary is already live but no authenticated rollback backup matches the journaled preimage',
+    );
+  }
 }
 
 function pruneMatchingSameVersionBackups(

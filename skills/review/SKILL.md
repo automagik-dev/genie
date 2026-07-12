@@ -97,9 +97,12 @@ If an ordinary reviewer and the `final-gate` disagree, log an appeal with the wi
 
 The reviewer is read-only. Return a timestampable evidence block containing
 the review context, target SHA/path, commands and outcomes, verdict, and gaps.
-For a design review, include the exact reviewed-content SHA-256 defined by the
-bounded evidence block in DESIGN.md; the invoking orchestrator stamps and
-verifies that block, and any later design edit invalidates it. For plan,
+For a design review, return the exact reviewed-content SHA-256 defined by the
+bounded evidence block in DESIGN.md as `reviewed-sha256`; the invoking
+orchestrator passes that value unchanged to the stamp command as
+`--reviewed-sha256`. Stamping rejects a current design that differs from the
+reviewed content, verification rejects any later edit, and the reviewer never
+recomputes a digest for content it did not review. For plan,
 execution, and PR review, the orchestrator appends the block under the wish's
 `## Review Results` and owns every durable transition:
 

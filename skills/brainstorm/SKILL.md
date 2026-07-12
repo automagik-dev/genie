@@ -100,11 +100,11 @@ At WRS = 100:
    ```bash
    genie task create --title "<brainstorm title>"
    ```
-6. Auto-invoke `review` (design review) on the DESIGN.md. The invoking orchestrator receives the verdict; the reviewer remains read-only.
-7. **Persist the evidence before handoff.** Resolve `references/design-review-evidence.mjs` from this loaded skill directory. The invoking orchestrator runs its `stamp` command with the returned verdict, the reviewer agent/thread identifier, and the review timestamp, then runs `verify` and stages DESIGN.md again. The SHA-256 subject is the exact UTF-8 DESIGN.md with the bounded evidence block removed, so changing any reviewed design content invalidates the evidence and requires a fresh review. Only a verified `SHIP` block permits `wish`; FIX-FIRST/BLOCKED evidence remains auditable but does not advance.
+6. Auto-invoke `review` (design review) on the DESIGN.md. The invoking orchestrator receives the verdict, reviewer-returned reviewed-content SHA-256, reviewer agent/thread identifier, and review timestamp; the reviewer remains read-only.
+7. **Persist the evidence before handoff.** Resolve `references/design-review-evidence.mjs` from this loaded skill directory. The invoking orchestrator passes the reviewer-returned digest unchanged through `--reviewed-sha256` with the returned verdict, reviewer identifier, and review timestamp, then runs `verify` and stages DESIGN.md again. The stamp command compares that digest to the current reviewable DESIGN.md before writing and rejects an edit made after review. The SHA-256 subject is the exact UTF-8 DESIGN.md with the bounded evidence block removed, so changing any reviewed design content invalidates the evidence and requires a fresh review. Only a verified `SHIP` block permits `wish`; FIX-FIRST/BLOCKED evidence remains auditable but does not advance.
 
    ```bash
-   node "<brainstorm-skill-dir>/references/design-review-evidence.mjs" stamp ".genie/brainstorms/<slug>/DESIGN.md" --verdict SHIP --reviewer "<agent-or-thread-id>" --reviewed-at "<ISO-8601-UTC>"
+   node "<brainstorm-skill-dir>/references/design-review-evidence.mjs" stamp ".genie/brainstorms/<slug>/DESIGN.md" --verdict SHIP --reviewed-sha256 "<reviewer-returned-sha256>" --reviewer "<agent-or-thread-id>" --reviewed-at "<ISO-8601-UTC>"
    node "<brainstorm-skill-dir>/references/design-review-evidence.mjs" verify ".genie/brainstorms/<slug>/DESIGN.md"
    git add ".genie/brainstorms/<slug>/DESIGN.md"
    ```

@@ -12,12 +12,13 @@ import {
   readFileSync,
   readSync,
   readdirSync,
+  readlinkSync,
   realpathSync,
   renameSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { acquireLifecycleLease, publishRegularFileNoClobber } from './agent-sync.js';
 import { getCodexConfigPath, getCodexHome, migrateDeadGenieOtel } from './codex-config.js';
@@ -596,12 +597,31 @@ export const CODEX_AGENT_INVENTORY_NAME = '.genie-role-agents.json';
 const CODEX_AGENT_INVENTORY_OWNER = 'genie-codex-role-agents';
 const CODEX_AGENT_NAME_RE = /^genie-[A-Za-z0-9][A-Za-z0-9_-]*\.toml$/;
 const CODEX_AGENT_SENTINEL = '# Managed by Genie.';
+const CODEX_AGENT_INVENTORY_MODE = 0o600;
 
-interface CodexAgentInventory {
+type RegularRoleFileIdentity = { kind: 'regular'; mode: number; digest: string };
+
+type RoleFileIdentity =
+  | { kind: 'absent' }
+  | RegularRoleFileIdentity
+  | { kind: 'directory'; mode: number }
+  | { kind: 'symlink'; mode: number; target: string }
+  | { kind: 'other'; mode: number }
+  | { kind: 'unreadable'; mode: number | null; code: string };
+
+interface LegacyCodexAgentInventory {
   version: 1;
   managedBy: typeof CODEX_AGENT_INVENTORY_OWNER;
   files: Record<string, { digest: string }>;
 }
+
+interface CodexAgentInventory {
+  version: 2;
+  managedBy: typeof CODEX_AGENT_INVENTORY_OWNER;
+  files: Record<string, { identity: RegularRoleFileIdentity }>;
+}
+
+type ReadCodexAgentInventory = LegacyCodexAgentInventory | CodexAgentInventory;
 
 export type CodexAgentOwnership = 'absent' | 'user-owned' | 'managed-clean' | 'managed-modified';
 
@@ -619,78 +639,101 @@ export interface CodexAgentOwnershipReport {
 }
 
 function emptyCodexAgentInventory(): CodexAgentInventory {
-  return { version: 1, managedBy: CODEX_AGENT_INVENTORY_OWNER, files: {} };
+  return { version: 2, managedBy: CODEX_AGENT_INVENTORY_OWNER, files: {} };
 }
 
 function inventoryPath(codexHome: string): string {
   return join(codexHome, 'agents', CODEX_AGENT_INVENTORY_NAME);
 }
 
-function fileDigest(path: string): string | null {
-  try {
-    const stat = lstatSync(path);
-    if (!stat.isFile() || stat.isSymbolicLink()) return null;
-    return createHash('sha256').update(readFileSync(path)).digest('hex');
-  } catch {
-    return null;
-  }
-}
-
 function readCodexAgentInventory(codexHome: string): {
   status: 'missing' | 'valid' | 'corrupt';
-  inventory: CodexAgentInventory;
-  digest: string | null;
+  inventory: ReadCodexAgentInventory;
+  identity: RoleFileIdentity;
   error?: string;
 } {
   const path = inventoryPath(codexHome);
   const stat = lstatOrNull(path);
-  if (stat === null) return { status: 'missing', inventory: emptyCodexAgentInventory(), digest: null };
+  if (stat === null) {
+    return { status: 'missing', inventory: emptyCodexAgentInventory(), identity: { kind: 'absent' } };
+  }
   try {
     if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('inventory is not a physical file');
     const content = readFileSync(path);
-    const parsed = JSON.parse(content.toString('utf8')) as Partial<CodexAgentInventory>;
-    if (
-      parsed.version !== 1 ||
-      parsed.managedBy !== CODEX_AGENT_INVENTORY_OWNER ||
-      typeof parsed.files !== 'object' ||
-      parsed.files === null ||
-      Object.entries(parsed.files).some(
+    const acceptedIdentity: RegularRoleFileIdentity = {
+      kind: 'regular',
+      mode: stat.mode & 0o7777,
+      digest: digestBytes(content),
+    };
+    if (!roleFileIdentityEquals(physicalRoleFileIdentity(path), acceptedIdentity)) {
+      throw new Error('inventory changed while it was being read');
+    }
+    const parsed = JSON.parse(content.toString('utf8')) as Partial<ReadCodexAgentInventory>;
+    const files = parsed.files;
+    const validLegacyFiles =
+      parsed.version === 1 &&
+      typeof files === 'object' &&
+      files !== null &&
+      Object.entries(files).every(
         ([name, value]) =>
-          !CODEX_AGENT_NAME_RE.test(name) ||
-          typeof value !== 'object' ||
-          value === null ||
-          typeof (value as { digest?: unknown }).digest !== 'string' ||
-          !/^[a-f0-9]{64}$/.test((value as { digest: string }).digest),
-      )
-    ) {
+          CODEX_AGENT_NAME_RE.test(name) &&
+          typeof value === 'object' &&
+          value !== null &&
+          typeof Reflect.get(value, 'digest') === 'string' &&
+          /^[a-f0-9]{64}$/.test(String(Reflect.get(value, 'digest'))),
+      );
+    const validPhysicalFiles =
+      parsed.version === 2 &&
+      acceptedIdentity.mode === CODEX_AGENT_INVENTORY_MODE &&
+      typeof files === 'object' &&
+      files !== null &&
+      Object.entries(files).every(
+        ([name, value]) =>
+          CODEX_AGENT_NAME_RE.test(name) &&
+          typeof value === 'object' &&
+          value !== null &&
+          isRegularRoleFileIdentity(Reflect.get(value, 'identity')),
+      );
+    if (parsed.managedBy !== CODEX_AGENT_INVENTORY_OWNER || (!validLegacyFiles && !validPhysicalFiles)) {
       throw new Error('invalid inventory schema');
     }
     return {
       status: 'valid',
-      inventory: parsed as CodexAgentInventory,
-      digest: createHash('sha256').update(content).digest('hex'),
+      inventory: parsed as ReadCodexAgentInventory,
+      identity: acceptedIdentity,
     };
   } catch (error) {
     return {
       status: 'corrupt',
       inventory: emptyCodexAgentInventory(),
-      digest: null,
+      identity: physicalRoleFileIdentity(path),
       error: error instanceof Error ? error.message : String(error),
     };
   }
 }
 
-function classifyCodexAgentFile(path: string, recorded: { digest: string } | undefined): CodexAgentOwnership {
-  try {
-    const stat = lstatSync(path);
-    if (!stat.isFile() || stat.isSymbolicLink()) return recorded === undefined ? 'user-owned' : 'managed-modified';
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    return 'absent';
-  }
+type RecordedCodexAgent = { digest: string } | { identity: RegularRoleFileIdentity };
+
+function classifyCodexAgentFile(
+  path: string,
+  recorded: RecordedCodexAgent | undefined,
+  legacyUpgradeIdentity?: RegularRoleFileIdentity,
+): CodexAgentOwnership {
+  const actual = physicalRoleFileIdentity(path);
+  if (actual.kind === 'absent') return 'absent';
   if (recorded === undefined) return 'user-owned';
-  const digest = fileDigest(path);
-  return digest !== null && digest === recorded.digest ? 'managed-clean' : 'managed-modified';
+  if ('identity' in recorded) {
+    return roleFileIdentityEquals(actual, recorded.identity) ? 'managed-clean' : 'managed-modified';
+  }
+  // A v1 digest did not bind mode. It may upgrade only when the current source
+  // supplies the missing canonical mode; direct uninstall and obsolete entries
+  // refuse deletion authority rather than adopting a chmod-only user edit.
+  if (legacyUpgradeIdentity === undefined || actual.kind !== 'regular') return 'managed-modified';
+  const safeLegacyIdentity: RegularRoleFileIdentity = {
+    ...legacyUpgradeIdentity,
+    digest: recorded.digest,
+  };
+  return roleFileIdentityEquals(actual, safeLegacyIdentity) ? 'managed-clean' : 'managed-modified';
 }
 
 /** Shared digest-backed classifier for setup/update, doctor, and uninstall. */
@@ -735,14 +778,27 @@ export interface CodexAgentTransactionOptions {
   afterAuthorization?: (stage: string) => void;
   /** Failure-injection seam after parking and immediately before exclusive publication. */
   beforePublish?: (stage: string) => void;
+  /** Failure-injection seam after the durable commit marker and before evidence cleanup. */
+  afterCommit?: () => void;
+  /** Failure-injection seam after authenticated cleanup rename and before recursive deletion. */
+  afterCleanupRename?: (cleanupDir: string) => void;
+}
+
+interface RoleAgentWrite {
+  content: Buffer;
+  identity: RegularRoleFileIdentity;
 }
 
 interface CodexAgentTransactionJournal {
-  version: 2;
-  operations: Array<{ name: string; nextDigest: string | null; beforeDigest: string | null; hadTarget: boolean }>;
-  inventoryDigest: string | null;
-  inventoryBeforeDigest: string | null;
-  inventoryHadTarget: boolean;
+  version: 3;
+  operations: Array<{ name: string; nextIdentity: RoleFileIdentity; beforeIdentity: RoleFileIdentity }>;
+  inventoryIdentity: RoleFileIdentity;
+  inventoryBeforeIdentity: RoleFileIdentity;
+}
+
+interface RoleAgentPublicationRecord {
+  version: 1;
+  artifacts: Record<string, RegularRoleFileIdentity>;
 }
 
 interface RoleAgentTransactionPlan {
@@ -758,7 +814,10 @@ interface PreparedRoleAgentTransaction {
 }
 
 const CODEX_AGENT_TRANSACTION_PREFIX = '.genie-role-agents.txn-';
+const CODEX_AGENT_COMMITTED_CLEANUP_PREFIX = '.genie-role-agents.committed-cleanup-';
 const CODEX_AGENT_PREPARATION_PREFIX = '.genie-role-agents.prepare-';
+const CODEX_AGENT_CONFLICT_PREFIX = '.genie-role-agents.conflict-';
+const CODEX_AGENT_PUBLICATIONS_NAME = 'publications.json';
 
 function digestBytes(content: Buffer | string): string {
   return createHash('sha256').update(content).digest('hex');
@@ -775,34 +834,86 @@ function pathExists(path: string): boolean {
 }
 
 function readRoleTransactionJournal(path: string): CodexAgentTransactionJournal {
-  const parsed = JSON.parse(readFileSync(path, 'utf8')) as Partial<CodexAgentTransactionJournal>;
+  if (physicalRoleFileIdentity(path).kind !== 'regular') {
+    throw new Error(`role-agent transaction journal is not a physical regular file: ${path}`);
+  }
+  const parsed = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+  if (parsed.version === 2) {
+    throw new Error(`legacy digest-only role-agent transaction cannot be recovered automatically: ${path}`);
+  }
+  const operations = Array.isArray(parsed.operations) ? parsed.operations : [];
   if (
-    parsed.version !== 2 ||
+    parsed.version !== 3 ||
     !Array.isArray(parsed.operations) ||
     parsed.operations.some(
       (op) =>
         typeof op !== 'object' ||
         op === null ||
         !CODEX_AGENT_NAME_RE.test((op as { name?: string }).name ?? '') ||
-        typeof (op as { hadTarget?: unknown }).hadTarget !== 'boolean' ||
-        !isOptionalPhysicalDigest((op as { beforeDigest?: unknown }).beforeDigest) ||
-        ((op as { nextDigest?: unknown }).nextDigest !== null &&
-          !/^[a-f0-9]{64}$/.test(String((op as { nextDigest?: unknown }).nextDigest))) ||
-        (op as { hadTarget: boolean; beforeDigest: string | null }).hadTarget !==
-          ((op as { beforeDigest: string | null }).beforeDigest !== null),
+        !isJournalRoleFileIdentity((op as { beforeIdentity?: unknown }).beforeIdentity) ||
+        !isJournalRoleFileIdentity((op as { nextIdentity?: unknown }).nextIdentity),
     ) ||
-    (parsed.inventoryDigest !== null && !/^[a-f0-9]{64}$/.test(String(parsed.inventoryDigest))) ||
-    !isOptionalPhysicalDigest(parsed.inventoryBeforeDigest) ||
-    typeof parsed.inventoryHadTarget !== 'boolean' ||
-    parsed.inventoryHadTarget !== (parsed.inventoryBeforeDigest !== null)
+    !isJournalRoleFileIdentity(parsed.inventoryIdentity) ||
+    !isJournalRoleFileIdentity(parsed.inventoryBeforeIdentity) ||
+    new Set(operations.map((operation) => Reflect.get(operation as object, 'name'))).size !== operations.length
   ) {
     throw new Error(`invalid role-agent transaction journal: ${path}`);
   }
-  return parsed as CodexAgentTransactionJournal;
+  return parsed as unknown as CodexAgentTransactionJournal;
 }
 
-function isOptionalPhysicalDigest(value: unknown): value is string | null {
-  return value === null || (typeof value === 'string' && /^[a-f0-9]{64}$/.test(value));
+function isRoleFileMode(value: unknown): value is number {
+  return Number.isSafeInteger(value) && Number(value) >= 0 && Number(value) <= 0o7777;
+}
+
+function isRegularRoleFileIdentity(value: unknown): value is RegularRoleFileIdentity {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    Reflect.get(value, 'kind') === 'regular' &&
+    isRoleFileMode(Reflect.get(value, 'mode')) &&
+    typeof Reflect.get(value, 'digest') === 'string' &&
+    /^[a-f0-9]{64}$/.test(String(Reflect.get(value, 'digest')))
+  );
+}
+
+function isJournalRoleFileIdentity(value: unknown): value is RoleFileIdentity {
+  return (
+    (typeof value === 'object' && value !== null && Reflect.get(value, 'kind') === 'absent') ||
+    isRegularRoleFileIdentity(value)
+  );
+}
+
+function readRolePublicationRecord(transactionDir: string): RoleAgentPublicationRecord {
+  const path = join(transactionDir, CODEX_AGENT_PUBLICATIONS_NAME);
+  const identity = physicalRoleFileIdentity(path);
+  if (identity.kind === 'absent') return { version: 1, artifacts: {} };
+  if (identity.kind !== 'regular' || identity.mode !== 0o600) {
+    throw new Error(`role-agent publication record is not a mode-0600 physical regular file: ${path}`);
+  }
+  const parsed = JSON.parse(readFileSync(path, 'utf8')) as Partial<RoleAgentPublicationRecord>;
+  if (
+    parsed.version !== 1 ||
+    typeof parsed.artifacts !== 'object' ||
+    parsed.artifacts === null ||
+    Object.entries(parsed.artifacts).some(
+      ([name, identity]) =>
+        (name !== CODEX_AGENT_INVENTORY_NAME && !CODEX_AGENT_NAME_RE.test(name)) ||
+        !isRegularRoleFileIdentity(identity),
+    )
+  ) {
+    throw new Error(`invalid role-agent publication record: ${path}`);
+  }
+  return parsed as RoleAgentPublicationRecord;
+}
+
+function recordRolePublication(transactionDir: string, name: string, identity: RegularRoleFileIdentity): void {
+  const record = readRolePublicationRecord(transactionDir);
+  record.artifacts[name] = identity;
+  const path = join(transactionDir, CODEX_AGENT_PUBLICATIONS_NAME);
+  const staging = `${path}.staging-${process.pid}`;
+  writeFileSync(staging, `${JSON.stringify(record, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+  renameSync(staging, path);
 }
 
 function rollbackRoleTransaction(
@@ -811,125 +922,362 @@ function rollbackRoleTransaction(
   journal: CodexAgentTransactionJournal,
 ): void {
   const beforeDir = join(transactionDir, 'before');
+  const publishedDir = join(transactionDir, 'published');
+  const publication = readRolePublicationRecord(transactionDir);
   for (const operation of journal.operations) {
-    rollbackRoleOperation(agentsDir, beforeDir, operation);
+    rollbackRoleArtifact(
+      join(agentsDir, operation.name),
+      join(beforeDir, operation.name),
+      join(publishedDir, operation.name),
+      operation.beforeIdentity,
+      operation.nextIdentity,
+      publication.artifacts[operation.name],
+      `role-agent ${operation.name}`,
+    );
   }
-  rollbackRoleInventory(agentsDir, beforeDir, journal);
+  rollbackRoleArtifact(
+    join(agentsDir, CODEX_AGENT_INVENTORY_NAME),
+    join(beforeDir, CODEX_AGENT_INVENTORY_NAME),
+    join(publishedDir, CODEX_AGENT_INVENTORY_NAME),
+    journal.inventoryBeforeIdentity,
+    journal.inventoryIdentity,
+    publication.artifacts[CODEX_AGENT_INVENTORY_NAME],
+    'role-agent inventory',
+  );
   rmSync(transactionDir, { recursive: true, force: true });
 }
 
-function rollbackRoleOperation(
-  agentsDir: string,
-  beforeDir: string,
-  operation: CodexAgentTransactionJournal['operations'][number],
+function rollbackRoleArtifact(
+  target: string,
+  before: string,
+  published: string,
+  beforeIdentity: RoleFileIdentity,
+  nextIdentity: RoleFileIdentity,
+  recordedPublication: RegularRoleFileIdentity | undefined,
+  description: string,
 ): void {
-  const target = join(agentsDir, operation.name);
-  const before = join(beforeDir, operation.name);
-  if (pathExists(before)) {
-    if (fileDigest(before) !== operation.beforeDigest) {
-      throw new Error(`role-agent transaction prior target changed during recovery: ${before}`);
+  const parkedIdentity = physicalRoleFileIdentity(before);
+  if (beforeIdentity.kind === 'regular' && parkedIdentity.kind !== 'absent') {
+    if (!roleFileIdentityEquals(parkedIdentity, beforeIdentity)) {
+      throw new RoleAgentConflictError(`${description} prior target changed during recovery: ${before}`);
     }
-    if (pathExists(target)) {
-      if (operation.nextDigest === null || fileDigest(target) !== operation.nextDigest) {
-        throw new Error(`role-agent transaction target changed during recovery: ${target}`);
-      }
-      rmSync(target, { recursive: true, force: true });
+    const liveIdentity = physicalRoleFileIdentity(target);
+    if (roleFileIdentityEquals(liveIdentity, beforeIdentity)) return;
+    if (liveIdentity.kind !== 'absent') {
+      parkRecordedRolePublication(target, published, liveIdentity, recordedPublication, description);
     }
-    renameSync(before, target);
-  } else if (!operation.hadTarget && pathExists(target)) {
-    if (operation.nextDigest === null || fileDigest(target) !== operation.nextDigest) {
-      throw new Error(`role-agent transaction target changed during recovery: ${target}`);
+    restoreRoleArtifactNoClobber(before, target, beforeIdentity, description);
+    return;
+  }
+  if (beforeIdentity.kind === 'regular') {
+    if (!roleFileIdentityEquals(physicalRoleFileIdentity(target), beforeIdentity)) {
+      throw new RoleAgentConflictError(`${description} lost its prior target during recovery: ${target}`);
     }
-    rmSync(target, { recursive: true, force: true });
-  } else if (operation.hadTarget && fileDigest(target) !== operation.beforeDigest) {
-    throw new Error(`role-agent transaction lost its prior target during recovery: ${target}`);
+    return;
+  }
+  if (beforeIdentity.kind !== 'absent') {
+    throw new Error(`unsupported ${description} prior identity in transaction`);
+  }
+  if (parkedIdentity.kind !== 'absent') {
+    throw new RoleAgentConflictError(`${description} has an unexpected parked target during recovery: ${before}`);
+  }
+  const liveIdentity = physicalRoleFileIdentity(target);
+  if (liveIdentity.kind !== 'absent') {
+    parkRecordedRolePublication(target, published, liveIdentity, recordedPublication, description);
+  } else if (nextIdentity.kind === 'regular' && recordedPublication === undefined) {
+    // The process may have died after exclusive publication but before recording
+    // its identity, and another actor may then have removed it. Absence is the
+    // requested rollback state, so no artifact needs deletion.
+    return;
   }
 }
 
-function rollbackRoleInventory(agentsDir: string, beforeDir: string, journal: CodexAgentTransactionJournal): void {
-  const targetInventory = join(agentsDir, CODEX_AGENT_INVENTORY_NAME);
-  const beforeInventory = join(beforeDir, CODEX_AGENT_INVENTORY_NAME);
-  if (pathExists(beforeInventory)) {
-    if (fileDigest(beforeInventory) !== journal.inventoryBeforeDigest) {
-      throw new Error(`role-agent transaction prior inventory changed during recovery: ${beforeInventory}`);
+function parkRecordedRolePublication(
+  target: string,
+  published: string,
+  liveIdentity: RoleFileIdentity,
+  recordedPublication: RegularRoleFileIdentity | undefined,
+  description: string,
+): void {
+  if (recordedPublication === undefined || !roleFileIdentityEquals(liveIdentity, recordedPublication)) {
+    throw new RoleAgentConflictError(
+      `${description} live target is not an exact recorded publication; preserving it: ${target}`,
+    );
+  }
+  const alreadyParked = physicalRoleFileIdentity(published);
+  if (alreadyParked.kind !== 'absent') {
+    if (!roleFileIdentityEquals(alreadyParked, recordedPublication)) {
+      throw new RoleAgentConflictError(`${description} published evidence changed during recovery: ${published}`);
     }
-    if (pathExists(targetInventory)) {
-      if (journal.inventoryDigest === null || fileDigest(targetInventory) !== journal.inventoryDigest) {
-        throw new Error(`role-agent inventory changed during recovery: ${targetInventory}`);
+    throw new RoleAgentConflictError(`${description} target reappeared during recovery: ${target}`);
+  }
+  mkdirSync(dirname(published), { recursive: true });
+  renameSync(target, published);
+  if (!roleFileIdentityEquals(physicalRoleFileIdentity(published), recordedPublication)) {
+    throw new RoleAgentConflictError(`${description} changed while parking its publication: ${published}`);
+  }
+  if (physicalRoleFileIdentity(target).kind !== 'absent') {
+    throw new RoleAgentConflictError(`${description} target reappeared during recovery: ${target}`);
+  }
+}
+
+function restoreRoleArtifactNoClobber(
+  parked: string,
+  target: string,
+  expected: RegularRoleFileIdentity,
+  description: string,
+): void {
+  try {
+    publishRegularFileNoClobber(parked, target);
+  } catch (error) {
+    throw new RoleAgentConflictError(
+      `exclusive ${description} restore failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (!roleFileIdentityEquals(physicalRoleFileIdentity(target), expected)) {
+    throw new RoleAgentConflictError(`${description} changed during exclusive restore: ${target}`);
+  }
+}
+
+interface RoleAgentArtifactAuthority {
+  name: string;
+  nextIdentity: RoleFileIdentity;
+  beforeIdentity: RoleFileIdentity;
+}
+
+function roleAgentArtifactAuthorities(journal: CodexAgentTransactionJournal): RoleAgentArtifactAuthority[] {
+  return [
+    ...journal.operations,
+    {
+      name: CODEX_AGENT_INVENTORY_NAME,
+      nextIdentity: journal.inventoryIdentity,
+      beforeIdentity: journal.inventoryBeforeIdentity,
+    },
+  ];
+}
+
+function readRoleTransactionDirectoryEntries(path: string, description: string, optional = false): string[] {
+  const identity = physicalRoleFileIdentity(path);
+  if (identity.kind === 'absent' && optional) return [];
+  if (identity.kind !== 'directory') {
+    throw new RoleAgentConflictError(`committed ${description} is not a physical directory: ${path}`);
+  }
+  return readdirSync(path).sort();
+}
+
+function assertExactRoleTransactionArtifacts(
+  directory: string,
+  expected: Map<string, RegularRoleFileIdentity>,
+  description: string,
+): void {
+  const entries = readRoleTransactionDirectoryEntries(directory, description);
+  const expectedNames = [...expected.keys()].sort();
+  if (entries.length !== expectedNames.length || entries.some((entry, index) => entry !== expectedNames[index])) {
+    throw new RoleAgentConflictError(`committed ${description} artifact set does not match the journal`);
+  }
+  for (const [name, identity] of expected) {
+    if (!roleFileIdentityEquals(physicalRoleFileIdentity(join(directory, name)), identity)) {
+      throw new RoleAgentConflictError(`committed ${description} evidence changed: ${join(directory, name)}`);
+    }
+  }
+}
+
+function authenticateCommittedRoleTransaction(
+  agentsDir: string,
+  transactionDir: string,
+  journal: CodexAgentTransactionJournal,
+): void {
+  const marker = physicalRoleFileIdentity(join(transactionDir, 'COMMITTED'));
+  if (marker.kind !== 'regular' || marker.digest !== digestBytes('ok\n')) {
+    throw new RoleAgentConflictError('committed role-agent transaction has an invalid commit marker');
+  }
+
+  const rootEntries = readdirSync(transactionDir);
+  const allowedRootEntries = new Set([
+    'COMMITTED',
+    'before',
+    'journal.json',
+    'published',
+    CODEX_AGENT_PUBLICATIONS_NAME,
+    'staged',
+  ]);
+  if (rootEntries.some((entry) => !allowedRootEntries.has(entry))) {
+    throw new RoleAgentConflictError('committed role-agent transaction contains an unauthenticated artifact');
+  }
+
+  const authorities = roleAgentArtifactAuthorities(journal);
+  const staged = new Map<string, RegularRoleFileIdentity>();
+  const before = new Map<string, RegularRoleFileIdentity>();
+  for (const authority of authorities) {
+    if (authority.nextIdentity.kind === 'regular') staged.set(authority.name, authority.nextIdentity);
+    if (authority.beforeIdentity.kind === 'regular') before.set(authority.name, authority.beforeIdentity);
+    if (!roleFileIdentityEquals(physicalRoleFileIdentity(join(agentsDir, authority.name)), authority.nextIdentity)) {
+      throw new RoleAgentConflictError(`committed live next state changed: ${join(agentsDir, authority.name)}`);
+    }
+  }
+
+  const publication = readRolePublicationRecord(transactionDir);
+  const publicationNames = Object.keys(publication.artifacts).sort();
+  const stagedNames = [...staged.keys()].sort();
+  if (
+    publicationNames.length !== stagedNames.length ||
+    publicationNames.some((name, index) => name !== stagedNames[index])
+  ) {
+    throw new RoleAgentConflictError('committed publication record does not exactly match the journal');
+  }
+  for (const [name, identity] of staged) {
+    if (!roleFileIdentityEquals(publication.artifacts[name], identity)) {
+      throw new RoleAgentConflictError(`committed publication authority changed for ${name}`);
+    }
+  }
+
+  assertExactRoleTransactionArtifacts(join(transactionDir, 'staged'), staged, 'staged');
+  assertExactRoleTransactionArtifacts(join(transactionDir, 'before'), before, 'prior parked');
+
+  const publishedDir = join(transactionDir, 'published');
+  for (const name of readRoleTransactionDirectoryEntries(publishedDir, 'published evidence', true)) {
+    const recorded = publication.artifacts[name];
+    if (
+      recorded === undefined ||
+      !roleFileIdentityEquals(physicalRoleFileIdentity(join(publishedDir, name)), recorded)
+    ) {
+      throw new RoleAgentConflictError(`committed published evidence changed: ${join(publishedDir, name)}`);
+    }
+  }
+}
+
+function renameRoleAgentTransactionNamespace(
+  transactionDir: string,
+  sourcePrefix: string,
+  destinationPrefix: string,
+): string {
+  const name = basename(transactionDir);
+  if (!name.startsWith(sourcePrefix)) {
+    throw new Error(`role-agent transaction is outside the expected ${sourcePrefix} namespace: ${transactionDir}`);
+  }
+  const destination = join(dirname(transactionDir), `${destinationPrefix}${name.slice(sourcePrefix.length)}`);
+  renameSync(transactionDir, destination);
+  return destination;
+}
+
+function beginCommittedRoleTransactionCleanup(
+  agentsDir: string,
+  transactionDir: string,
+  journal: CodexAgentTransactionJournal,
+): string {
+  authenticateCommittedRoleTransaction(agentsDir, transactionDir, journal);
+  return renameRoleAgentTransactionNamespace(
+    transactionDir,
+    CODEX_AGENT_TRANSACTION_PREFIX,
+    CODEX_AGENT_COMMITTED_CLEANUP_PREFIX,
+  );
+}
+
+function finishCommittedRoleTransactionCleanup(
+  agentsDir: string,
+  cleanupDir: string,
+  journal: CodexAgentTransactionJournal,
+): void {
+  // Re-authenticate under the cleanup-only pathname before deleting evidence.
+  // If deletion is interrupted, this namespace can never be mistaken for
+  // rollback authority even when COMMITTED or other children are already gone.
+  authenticateCommittedRoleTransaction(agentsDir, cleanupDir, journal);
+  rmSync(cleanupDir, { recursive: true, force: true });
+}
+
+function recoverCommittedRoleAgentCleanups(agentsDir: string, names: string[]): void {
+  for (const name of names) {
+    const cleanupDir = join(agentsDir, name);
+    try {
+      if (physicalRoleFileIdentity(cleanupDir).kind !== 'directory') {
+        throw new Error(`committed role-agent cleanup is not a physical directory: ${cleanupDir}`);
       }
-      rmSync(targetInventory, { force: true });
-    }
-    renameSync(beforeInventory, targetInventory);
-  } else if (!journal.inventoryHadTarget && pathExists(targetInventory)) {
-    if (journal.inventoryDigest === null || fileDigest(targetInventory) !== journal.inventoryDigest) {
-      throw new Error(`role-agent inventory changed during recovery: ${targetInventory}`);
-    }
-    rmSync(targetInventory, { force: true });
-  } else if (journal.inventoryHadTarget) {
-    if (fileDigest(targetInventory) !== journal.inventoryBeforeDigest) {
-      throw new Error(`role-agent transaction lost its prior inventory during recovery: ${targetInventory}`);
+      const journal = readRoleTransactionJournal(join(cleanupDir, 'journal.json'));
+      finishCommittedRoleTransactionCleanup(agentsDir, cleanupDir, journal);
+    } catch (error) {
+      const conflict = pathExists(cleanupDir) ? preserveRoleAgentConflict(cleanupDir) : cleanupDir;
+      throw new Error(
+        `committed role-agent cleanup preserved live, prior, and staged evidence at ${conflict}: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 }
 
 function recoverRoleAgentTransactions(agentsDir: string): void {
-  if (!pathExists(agentsDir)) return;
-  for (const name of readdirSync(agentsDir).filter((entry) => entry.startsWith(CODEX_AGENT_TRANSACTION_PREFIX))) {
+  const rootIdentity = physicalRoleFileIdentity(agentsDir);
+  if (rootIdentity.kind === 'absent') return;
+  if (rootIdentity.kind !== 'directory') {
+    throw new Error(`Codex role-agent root is not a physical directory: ${agentsDir}`);
+  }
+  const entries = readdirSync(agentsDir).sort();
+  recoverCommittedRoleAgentCleanups(
+    agentsDir,
+    entries.filter((entry) => entry.startsWith(CODEX_AGENT_COMMITTED_CLEANUP_PREFIX)),
+  );
+  for (const name of entries.filter((entry) => entry.startsWith(CODEX_AGENT_TRANSACTION_PREFIX))) {
     const transactionDir = join(agentsDir, name);
-    const journal = readRoleTransactionJournal(join(transactionDir, 'journal.json'));
-    if (pathExists(join(transactionDir, 'COMMITTED'))) {
-      const coherent =
-        journal.operations.every((operation) => {
-          const target = join(agentsDir, operation.name);
-          return operation.nextDigest === null ? !pathExists(target) : fileDigest(target) === operation.nextDigest;
-        }) &&
-        (journal.inventoryDigest === null
-          ? !pathExists(join(agentsDir, CODEX_AGENT_INVENTORY_NAME))
-          : fileDigest(join(agentsDir, CODEX_AGENT_INVENTORY_NAME)) === journal.inventoryDigest);
-      if (!coherent) throw new Error(`committed role-agent transaction is inconsistent: ${transactionDir}`);
-      rmSync(transactionDir, { recursive: true, force: true });
-      continue;
+    if (physicalRoleFileIdentity(transactionDir).kind !== 'directory') {
+      throw new Error(`role-agent transaction is not a physical directory: ${transactionDir}`);
     }
-    rollbackRoleTransaction(agentsDir, transactionDir, journal);
+    let evidenceDir = transactionDir;
+    try {
+      const journal = readRoleTransactionJournal(join(transactionDir, 'journal.json'));
+      if (pathExists(join(transactionDir, 'COMMITTED'))) {
+        evidenceDir = beginCommittedRoleTransactionCleanup(agentsDir, transactionDir, journal);
+        finishCommittedRoleTransactionCleanup(agentsDir, evidenceDir, journal);
+        continue;
+      }
+      rollbackRoleTransaction(agentsDir, transactionDir, journal);
+    } catch (error) {
+      const conflict = pathExists(evidenceDir) ? preserveRoleAgentConflict(evidenceDir) : evidenceDir;
+      throw new Error(
+        `role-agent transaction recovery preserved live, prior, and staged evidence at ${conflict}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 }
 
+/** Recover only journaled transactions beneath the known Codex agents root. */
+export function recoverCodexAgentTransactions(codexHome = getCodexHome()): void {
+  recoverRoleAgentTransactions(join(codexHome, 'agents'));
+}
+
 function planRoleAgentTransaction(
-  writes: Map<string, Buffer>,
+  writes: Map<string, RoleAgentWrite>,
   removals: string[],
   inventory: CodexAgentInventory,
-  expected: Map<string, string | null>,
-  expectedInventoryDigest: string | null,
+  expected: Map<string, RoleFileIdentity>,
+  expectedInventoryIdentity: RoleFileIdentity,
 ): RoleAgentTransactionPlan {
   const operations = [
-    ...[...writes].map(([name, content]) => ({
+    ...[...writes].map(([name, write]) => ({
       name,
-      nextDigest: digestBytes(content),
-      beforeDigest: expected.get(name) ?? null,
-      hadTarget: (expected.get(name) ?? null) !== null,
+      nextIdentity: write.identity,
+      beforeIdentity: expected.get(name) ?? { kind: 'absent' as const },
     })),
     ...removals.map((name) => ({
       name,
-      nextDigest: null,
-      beforeDigest: expected.get(name) ?? null,
-      hadTarget: (expected.get(name) ?? null) !== null,
+      nextIdentity: { kind: 'absent' as const },
+      beforeIdentity: expected.get(name) ?? { kind: 'absent' as const },
     })),
   ].sort((a, b) => a.name.localeCompare(b.name));
   const inventoryContent =
     Object.keys(inventory.files).length === 0 ? null : Buffer.from(`${JSON.stringify(inventory, null, 2)}\n`);
   const journal: CodexAgentTransactionJournal = {
-    version: 2,
+    version: 3,
     operations,
-    inventoryDigest: inventoryContent === null ? null : digestBytes(inventoryContent),
-    inventoryBeforeDigest: expectedInventoryDigest,
-    inventoryHadTarget: expectedInventoryDigest !== null,
+    inventoryIdentity:
+      inventoryContent === null
+        ? { kind: 'absent' }
+        : { kind: 'regular', mode: CODEX_AGENT_INVENTORY_MODE, digest: digestBytes(inventoryContent) },
+    inventoryBeforeIdentity: expectedInventoryIdentity,
   };
   return { operations, inventoryContent, journal };
 }
 
 function prepareRoleAgentTransaction(
   agentsDir: string,
-  writes: Map<string, Buffer>,
+  writes: Map<string, RoleAgentWrite>,
   plan: RoleAgentTransactionPlan,
 ): PreparedRoleAgentTransaction {
   const transactionName = `${process.pid}-${Date.now()}-${randomTransactionSuffix()}`;
@@ -938,9 +1286,15 @@ function prepareRoleAgentTransaction(
   const stagedDir = join(preparationDir, 'staged');
   mkdirSync(stagedDir, { recursive: true });
   mkdirSync(join(preparationDir, 'before'), { recursive: true });
-  for (const [name, content] of writes) writeFileSync(join(stagedDir, name), content);
+  for (const [name, write] of writes) {
+    writeFileSync(join(stagedDir, name), write.content, { mode: write.identity.mode });
+    chmodSync(join(stagedDir, name), write.identity.mode);
+  }
   if (plan.inventoryContent !== null) {
-    writeFileSync(join(stagedDir, CODEX_AGENT_INVENTORY_NAME), plan.inventoryContent);
+    writeFileSync(join(stagedDir, CODEX_AGENT_INVENTORY_NAME), plan.inventoryContent, {
+      mode: CODEX_AGENT_INVENTORY_MODE,
+    });
+    chmodSync(join(stagedDir, CODEX_AGENT_INVENTORY_NAME), CODEX_AGENT_INVENTORY_MODE);
   }
   writeFileSync(join(preparationDir, 'journal.json'), `${JSON.stringify(plan.journal, null, 2)}\n`);
   // Recovery only discovers the transaction after every staged artifact and the
@@ -957,24 +1311,24 @@ function prepareRoleAgentTransaction(
 function authorizeRoleAgentPreimages(
   agentsDir: string,
   operations: CodexAgentTransactionJournal['operations'],
-  expectedInventoryDigest: string | null,
+  expectedInventoryIdentity: RoleFileIdentity,
   options: CodexAgentTransactionOptions,
 ): void {
   // Test hooks run before every authorization check and before any mutation,
   // so an injected race cannot leave a partially promoted batch.
   for (const operation of operations) {
     options.beforePromotion?.(`payload:${operation.name}`);
-    assertExpectedRoleFile(join(agentsDir, operation.name), operation.beforeDigest);
+    assertExpectedRoleFile(join(agentsDir, operation.name), operation.beforeIdentity);
   }
   options.beforePromotion?.('inventory');
-  assertExpectedRoleFile(join(agentsDir, CODEX_AGENT_INVENTORY_NAME), expectedInventoryDigest);
+  assertExpectedRoleFile(join(agentsDir, CODEX_AGENT_INVENTORY_NAME), expectedInventoryIdentity);
 }
 
 function parkRoleAgentPreimages(
   agentsDir: string,
   beforeDir: string,
   operations: CodexAgentTransactionJournal['operations'],
-  expectedInventoryDigest: string | null,
+  expectedInventoryIdentity: RoleFileIdentity,
   options: CodexAgentTransactionOptions,
 ): void {
   // Park every accepted preimage before any staged content is promoted. Each
@@ -982,26 +1336,35 @@ function parkRoleAgentPreimages(
   // between pathname authorization and rename.
   for (const operation of operations) {
     const target = join(agentsDir, operation.name);
-    assertExpectedRoleFile(target, operation.beforeDigest);
+    assertExpectedRoleFile(target, operation.beforeIdentity);
     options.afterAuthorization?.(`payload:${operation.name}`);
+    assertExpectedRoleFile(target, operation.beforeIdentity);
     if (pathExists(target)) renameSync(target, join(beforeDir, operation.name));
-    assertExpectedRoleFile(join(beforeDir, operation.name), operation.beforeDigest);
+    assertExpectedRoleFile(join(beforeDir, operation.name), operation.beforeIdentity);
     if (physicalRoleFileIdentity(target).kind !== 'absent') {
       throw new RoleAgentConflictError(`role-agent target reappeared while parked: ${target}`);
     }
   }
 
   const targetInventory = join(agentsDir, CODEX_AGENT_INVENTORY_NAME);
-  assertExpectedRoleFile(targetInventory, expectedInventoryDigest);
+  assertExpectedRoleFile(targetInventory, expectedInventoryIdentity);
   options.afterAuthorization?.('inventory');
+  assertExpectedRoleFile(targetInventory, expectedInventoryIdentity);
   if (pathExists(targetInventory)) renameSync(targetInventory, join(beforeDir, CODEX_AGENT_INVENTORY_NAME));
-  assertExpectedRoleFile(join(beforeDir, CODEX_AGENT_INVENTORY_NAME), expectedInventoryDigest);
+  assertExpectedRoleFile(join(beforeDir, CODEX_AGENT_INVENTORY_NAME), expectedInventoryIdentity);
   if (physicalRoleFileIdentity(targetInventory).kind !== 'absent') {
     throw new RoleAgentConflictError(`role-agent inventory reappeared while parked: ${targetInventory}`);
   }
 }
 
-function publishRoleAgentArtifact(staged: string, target: string, description: string): void {
+function publishRoleAgentArtifact(
+  transactionDir: string,
+  staged: string,
+  target: string,
+  name: string,
+  expected: RegularRoleFileIdentity,
+  description: string,
+): void {
   try {
     publishRegularFileNoClobber(staged, target);
   } catch (error) {
@@ -1009,71 +1372,89 @@ function publishRoleAgentArtifact(staged: string, target: string, description: s
       `exclusive ${description} publish failed: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
+  const published = physicalRoleFileIdentity(target);
+  if (!roleFileIdentityEquals(published, expected) || published.kind !== 'regular') {
+    throw new RoleAgentConflictError(`${description} changed during exclusive publication: ${target}`);
+  }
+  recordRolePublication(transactionDir, name, published);
 }
 
 function publishRoleAgentArtifacts(
   agentsDir: string,
-  stagedDir: string,
+  prepared: PreparedRoleAgentTransaction,
   plan: RoleAgentTransactionPlan,
   options: CodexAgentTransactionOptions,
 ): void {
   for (const operation of plan.operations) {
-    if (operation.nextDigest === null) continue;
+    if (operation.nextIdentity.kind !== 'regular') continue;
     options.beforePublish?.(`payload:${operation.name}`);
     publishRoleAgentArtifact(
-      join(stagedDir, operation.name),
+      prepared.transactionDir,
+      join(prepared.stagedDir, operation.name),
       join(agentsDir, operation.name),
+      operation.name,
+      operation.nextIdentity,
       `role-agent ${operation.name}`,
     );
   }
   if (plan.inventoryContent === null) return;
+  if (plan.journal.inventoryIdentity.kind !== 'regular') {
+    throw new Error('role-agent inventory content lacks a regular publication identity');
+  }
   options.beforePublish?.('inventory');
   publishRoleAgentArtifact(
-    join(stagedDir, CODEX_AGENT_INVENTORY_NAME),
+    prepared.transactionDir,
+    join(prepared.stagedDir, CODEX_AGENT_INVENTORY_NAME),
     join(agentsDir, CODEX_AGENT_INVENTORY_NAME),
+    CODEX_AGENT_INVENTORY_NAME,
+    plan.journal.inventoryIdentity,
     'role-agent inventory',
   );
 }
 
 function verifyPublishedRoleAgentTransaction(agentsDir: string, journal: CodexAgentTransactionJournal): void {
   for (const operation of journal.operations) {
-    assertExpectedRoleFile(join(agentsDir, operation.name), operation.nextDigest);
+    assertExpectedRoleFile(join(agentsDir, operation.name), operation.nextIdentity);
   }
-  assertExpectedRoleFile(join(agentsDir, CODEX_AGENT_INVENTORY_NAME), journal.inventoryDigest);
+  assertExpectedRoleFile(join(agentsDir, CODEX_AGENT_INVENTORY_NAME), journal.inventoryIdentity);
 }
 
 function publishRoleAgentTransaction(
   agentsDir: string,
-  writes: Map<string, Buffer>,
+  writes: Map<string, RoleAgentWrite>,
   removals: string[],
   inventory: CodexAgentInventory,
-  expected: Map<string, string | null>,
-  expectedInventoryDigest: string | null,
+  expected: Map<string, RoleFileIdentity>,
+  expectedInventoryIdentity: RoleFileIdentity,
   options: CodexAgentTransactionOptions,
 ): void {
-  const plan = planRoleAgentTransaction(writes, removals, inventory, expected, expectedInventoryDigest);
+  const plan = planRoleAgentTransaction(writes, removals, inventory, expected, expectedInventoryIdentity);
   const prepared = prepareRoleAgentTransaction(agentsDir, writes, plan);
-  let promotionsStarted = false;
+  let committed = false;
 
   try {
-    authorizeRoleAgentPreimages(agentsDir, plan.operations, expectedInventoryDigest, options);
-    parkRoleAgentPreimages(agentsDir, prepared.beforeDir, plan.operations, expectedInventoryDigest, options);
-    promotionsStarted = true;
-    publishRoleAgentArtifacts(agentsDir, prepared.stagedDir, plan, options);
+    authorizeRoleAgentPreimages(agentsDir, plan.operations, expectedInventoryIdentity, options);
+    parkRoleAgentPreimages(agentsDir, prepared.beforeDir, plan.operations, expectedInventoryIdentity, options);
+    publishRoleAgentArtifacts(agentsDir, prepared, plan, options);
     verifyPublishedRoleAgentTransaction(agentsDir, plan.journal);
     writeFileSync(join(prepared.transactionDir, 'COMMITTED'), 'ok\n');
-    rmSync(prepared.transactionDir, { recursive: true, force: true });
+    committed = true;
+    options.afterCommit?.();
+    const cleanupDir = beginCommittedRoleTransactionCleanup(agentsDir, prepared.transactionDir, plan.journal);
+    options.afterCleanupRename?.(cleanupDir);
+    finishCommittedRoleTransactionCleanup(agentsDir, cleanupDir, plan.journal);
   } catch (error) {
-    if (error instanceof RoleAgentConflictError && !promotionsStarted) {
-      restoreParkedRolePreimages(agentsDir, prepared.beforeDir, plan.operations);
-      const conflict = preserveRoleAgentConflict(prepared.transactionDir);
-      throw new RoleAgentConflictError(`${error.message}; kept live and incoming versions at ${conflict}`);
-    }
+    // COMMITTED is the point of no return. Recovery authenticates and cleans
+    // this exact next state; it must never reinterpret it as rollback work.
+    if (committed) throw error;
     try {
       rollbackRoleTransaction(agentsDir, prepared.transactionDir, plan.journal);
     } catch (rollbackError) {
+      const conflict = pathExists(prepared.transactionDir)
+        ? preserveRoleAgentConflict(prepared.transactionDir)
+        : prepared.transactionDir;
       throw new Error(
-        `role-agent transaction failed (${error instanceof Error ? error.message : String(error)}); rollback failed (${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}); retry after reviewing ${prepared.transactionDir}`,
+        `role-agent transaction failed (${error instanceof Error ? error.message : String(error)}); rollback preserved live, prior, and staged evidence at ${conflict} (${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)})`,
       );
     }
     throw error;
@@ -1082,52 +1463,49 @@ function publishRoleAgentTransaction(
 
 class RoleAgentConflictError extends Error {}
 
-type RoleFileIdentity =
-  | { kind: 'absent' }
-  | { kind: 'regular'; digest: string }
-  | { kind: 'non-regular'; entry: 'directory' | 'symlink' | 'other' }
-  | { kind: 'unreadable'; code: string };
-
 function physicalRoleFileIdentity(path: string): RoleFileIdentity {
   let stat: Stats;
   try {
     stat = lstatSync(path);
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code ?? 'UNKNOWN';
-    return code === 'ENOENT' ? { kind: 'absent' } : { kind: 'unreadable', code };
+    return code === 'ENOENT' ? { kind: 'absent' } : { kind: 'unreadable', mode: null, code };
   }
-  if (stat.isSymbolicLink()) return { kind: 'non-regular', entry: 'symlink' };
-  if (stat.isDirectory()) return { kind: 'non-regular', entry: 'directory' };
-  if (!stat.isFile()) return { kind: 'non-regular', entry: 'other' };
-  const digest = fileDigest(path);
-  return digest === null ? { kind: 'unreadable', code: 'READ' } : { kind: 'regular', digest };
-}
-
-function restoreParkedRolePreimages(
-  agentsDir: string,
-  beforeDir: string,
-  operations: CodexAgentTransactionJournal['operations'],
-): void {
-  for (const operation of [...operations].reverse()) {
-    const target = join(agentsDir, operation.name);
-    const parked = join(beforeDir, operation.name);
-    if (pathExists(parked) && physicalRoleFileIdentity(target).kind === 'absent') renameSync(parked, target);
+  const mode = stat.mode & 0o7777;
+  if (stat.isSymbolicLink()) {
+    try {
+      return { kind: 'symlink', mode, target: readlinkSync(path) };
+    } catch (error) {
+      return { kind: 'unreadable', mode, code: (error as NodeJS.ErrnoException).code ?? 'READLINK' };
+    }
   }
-  const targetInventory = join(agentsDir, CODEX_AGENT_INVENTORY_NAME);
-  const parkedInventory = join(beforeDir, CODEX_AGENT_INVENTORY_NAME);
-  if (pathExists(parkedInventory) && physicalRoleFileIdentity(targetInventory).kind === 'absent') {
-    renameSync(parkedInventory, targetInventory);
+  if (stat.isDirectory()) return { kind: 'directory', mode };
+  if (!stat.isFile()) return { kind: 'other', mode };
+  try {
+    return { kind: 'regular', mode, digest: createHash('sha256').update(readFileSync(path)).digest('hex') };
+  } catch (error) {
+    return { kind: 'unreadable', mode, code: (error as NodeJS.ErrnoException).code ?? 'READ' };
   }
 }
 
-function assertExpectedRoleFile(path: string, expectedDigest: string | null): void {
+function roleFileIdentityEquals(left: RoleFileIdentity | undefined, right: RoleFileIdentity | undefined): boolean {
+  if (left === undefined || right === undefined || left.kind !== right.kind) return false;
+  if (left.kind === 'absent' || right.kind === 'absent') return true;
+  if (left.mode !== right.mode) return false;
+  if (left.kind === 'regular' && right.kind === 'regular') return left.digest === right.digest;
+  if (left.kind === 'symlink' && right.kind === 'symlink') return left.target === right.target;
+  if (left.kind === 'unreadable' && right.kind === 'unreadable') return left.code === right.code;
+  return left.kind === right.kind;
+}
+
+function assertExpectedRoleFile(path: string, expected: RoleFileIdentity): void {
   const identity = physicalRoleFileIdentity(path);
-  if (expectedDigest === null) {
+  if (expected.kind === 'absent') {
     if (identity.kind !== 'absent')
       throw new RoleAgentConflictError(`role-agent target appeared before promotion (${identity.kind}): ${path}`);
     return;
   }
-  if (identity.kind !== 'regular' || identity.digest !== expectedDigest) {
+  if (!roleFileIdentityEquals(identity, expected)) {
     throw new RoleAgentConflictError(`role-agent target changed before promotion: ${path}`);
   }
 }
@@ -1142,9 +1520,16 @@ function lstatOrNull(path: string): Stats | null {
 }
 
 function preserveRoleAgentConflict(transactionDir: string): string {
-  const conflict = transactionDir.replace(CODEX_AGENT_TRANSACTION_PREFIX, '.genie-role-agents.conflict-');
-  renameSync(transactionDir, conflict);
-  return conflict;
+  const name = basename(transactionDir);
+  const sourcePrefix = name.startsWith(CODEX_AGENT_TRANSACTION_PREFIX)
+    ? CODEX_AGENT_TRANSACTION_PREFIX
+    : name.startsWith(CODEX_AGENT_COMMITTED_CLEANUP_PREFIX)
+      ? CODEX_AGENT_COMMITTED_CLEANUP_PREFIX
+      : null;
+  if (sourcePrefix === null) {
+    throw new Error(`role-agent evidence is outside a recoverable namespace: ${transactionDir}`);
+  }
+  return renameRoleAgentTransactionNamespace(transactionDir, sourcePrefix, CODEX_AGENT_CONFLICT_PREFIX);
 }
 
 function randomTransactionSuffix(): string {
@@ -1152,11 +1537,12 @@ function randomTransactionSuffix(): string {
 }
 
 interface CodexAgentInstallPlan {
+  recorded: ReadCodexAgentInventory;
   inventory: CodexAgentInventory;
   result: CodexAgentInstallResult;
-  writes: Map<string, Buffer>;
+  writes: Map<string, RoleAgentWrite>;
   removals: string[];
-  expected: Map<string, string | null>;
+  expected: Map<string, RoleFileIdentity>;
 }
 
 function collectCurrentCodexAgentPayloads(
@@ -1172,9 +1558,12 @@ function collectCurrentCodexAgentPayloads(
     if (!sourceContent.toString('utf8').startsWith(CODEX_AGENT_SENTINEL)) {
       throw new Error(`Codex role-agent source lacks the managed sentinel: ${sourcePath}`);
     }
-    const sourceDigest = fileDigest(sourcePath);
-    if (sourceDigest === null) throw new Error(`Codex role-agent source is not a regular readable file: ${sourcePath}`);
-    const ownership = classifyCodexAgentFile(targetPath, plan.inventory.files[name]);
+    const sourceIdentity = physicalRoleFileIdentity(sourcePath);
+    if (sourceIdentity.kind !== 'regular') {
+      throw new Error(`Codex role-agent source is not a regular readable file: ${sourcePath}`);
+    }
+    const recorded = plan.recorded.files[name];
+    const ownership = classifyCodexAgentFile(targetPath, recorded, sourceIdentity);
     if (ownership === 'user-owned') {
       // Bytes are not an ownership capability. An inventory-free file remains
       // personal even when it exactly matches a current or historical Genie
@@ -1184,29 +1573,45 @@ function collectCurrentCodexAgentPayloads(
     }
     if (ownership === 'managed-modified') {
       plan.result.keptModified.push(name);
+      if (recorded !== undefined && 'identity' in recorded) {
+        plan.inventory.files[name] = recorded;
+      } else {
+        throw new Error(
+          `Codex role-agent ${name} has legacy v1 digest authority but its physical mode cannot be authenticated; preserved it and refused the inventory upgrade`,
+        );
+      }
       continue;
     }
-    if (ownership === 'absent' || plan.inventory.files[name]?.digest !== sourceDigest) {
-      plan.writes.set(name, sourceContent);
-      plan.expected.set(name, ownership === 'absent' ? null : (plan.inventory.files[name]?.digest ?? null));
+    const acceptedIdentity: RoleFileIdentity =
+      ownership === 'absent'
+        ? { kind: 'absent' }
+        : recorded !== undefined && 'identity' in recorded
+          ? recorded.identity
+          : {
+              ...sourceIdentity,
+              digest: recorded && 'digest' in recorded ? recorded.digest : sourceIdentity.digest,
+            };
+    if (!roleFileIdentityEquals(acceptedIdentity, sourceIdentity)) {
+      plan.writes.set(name, { content: sourceContent, identity: sourceIdentity });
+      plan.expected.set(name, acceptedIdentity);
     }
-    plan.inventory.files[name] = { digest: sourceDigest };
+    plan.inventory.files[name] = { identity: sourceIdentity };
     plan.result.installed += 1;
   }
 }
 
 function collectObsoleteCodexAgentPayloads(target: string, sourceNames: string[], plan: CodexAgentInstallPlan): void {
-  for (const name of Object.keys(plan.inventory.files)) {
+  for (const name of Object.keys(plan.recorded.files)) {
     if (sourceNames.includes(name)) continue;
-    const ownership = classifyCodexAgentFile(join(target, name), plan.inventory.files[name]);
+    const recorded = plan.recorded.files[name];
+    const ownership = classifyCodexAgentFile(join(target, name), recorded);
     if (ownership === 'managed-clean') {
       plan.removals.push(name);
-      plan.expected.set(name, plan.inventory.files[name]?.digest ?? null);
+      plan.expected.set(name, 'identity' in recorded ? recorded.identity : { kind: 'absent' });
       plan.result.removed.push(name);
     } else if (ownership === 'managed-modified') {
       plan.result.keptModified.push(name);
     }
-    delete plan.inventory.files[name];
   }
 }
 
@@ -1226,9 +1631,10 @@ export function installCodexAgents(
       `Codex role-agent ownership inventory is corrupt (${inventoryPath(codexHome)}): ${state.error}; review and move it aside before retrying`,
     );
   }
-  const acceptedInventoryDigest = state.digest;
+  const acceptedInventoryIdentity = state.identity;
   const plan: CodexAgentInstallPlan = {
-    inventory: JSON.parse(JSON.stringify(state.inventory)) as CodexAgentInventory,
+    recorded: state.inventory,
+    inventory: emptyCodexAgentInventory(),
     result: {
       installed: 0,
       skippedUserOwned: [],
@@ -1236,9 +1642,9 @@ export function installCodexAgents(
       removed: [],
       backedUp: [],
     },
-    writes: new Map<string, Buffer>(),
+    writes: new Map<string, RoleAgentWrite>(),
     removals: [],
-    expected: new Map<string, string | null>(),
+    expected: new Map<string, RoleFileIdentity>(),
   };
   const sourceNames = readdirSync(source)
     .filter((name) => CODEX_AGENT_NAME_RE.test(name))
@@ -1256,7 +1662,7 @@ export function installCodexAgents(
       plan.removals,
       plan.inventory,
       plan.expected,
-      acceptedInventoryDigest,
+      acceptedInventoryIdentity,
       transactionOptions,
     );
   }
@@ -1713,6 +2119,10 @@ function markRefreshStable(path: string, intent: RefreshIntent): RefreshIntent {
   return stable;
 }
 
+function markRefreshStableIfPresent(path: string, intent: RefreshIntent | null): RefreshIntent | null {
+  return intent === null ? null : markRefreshStable(path, intent);
+}
+
 function markRefreshAmbiguous(path: string, intent: RefreshIntent): RefreshIntent {
   const ambiguous = { ...intent, phase: 'ambiguous-absent' as const };
   writeRefreshIntent(path, ambiguous);
@@ -1846,6 +2256,7 @@ function performCodexPluginConvergence(
   progress: PluginConvergenceProgress,
 ): boolean {
   progress.intent = readRefreshIntent(options.statePath, 'codex');
+  progress.desiredEnabled = progress.intent?.enabled ?? null;
   const before = requireCodexPluginState(
     runChecked(options.runner, options.command, ['plugin', 'list', '--json'], false, timeoutMs).stdout,
     'before plugin convergence',
@@ -1944,6 +2355,7 @@ export function convergeCodexPlugin(options: ConvergePluginOptions): Integration
   if (progress.desiredEnabled === false) {
     try {
       restoreCodexDisabledState(options, timeoutMs);
+      progress.intent = markRefreshStableIfPresent(options.statePath, progress.intent);
     } catch (error) {
       primaryError ??= error;
     }
@@ -2033,6 +2445,7 @@ export function convergeClaudePlugin(options: ConvergePluginOptions): Integratio
   let primaryError: unknown;
   try {
     intent = readRefreshIntent(options.statePath, 'claude');
+    desiredEnabled = intent?.enabled ?? null;
     const before = requireClaudePluginState(
       runChecked(options.runner, options.command, ['plugin', 'list', '--json'], false, timeoutMs).stdout,
       'before plugin convergence',
@@ -2103,6 +2516,7 @@ export function convergeClaudePlugin(options: ConvergePluginOptions): Integratio
         'after restoring disabled state',
       );
       requireExpectedState('claude', restored, options.expectedVersion, false, 'disabled-state restore');
+      intent = markRefreshStableIfPresent(options.statePath, intent);
     } catch (error) {
       primaryError ??= error;
     }
@@ -2188,7 +2602,7 @@ export interface CodexAgentRemovalResult {
   failures: Array<{ name: string; detail: string }>;
 }
 
-/** Remove only digest-clean inventory-owned role agents; modified/user files stay byte-identical. */
+/** Remove only exact physical inventory-owned role agents; modified/user files stay byte-identical. */
 export function removeCodexAgents(
   codexHome = getCodexHome(),
   transactionOptions: CodexAgentTransactionOptions = {},
@@ -2196,7 +2610,7 @@ export function removeCodexAgents(
   const result: CodexAgentRemovalResult = { removed: [], keptModified: [], missing: [], failures: [] };
   const agentsDir = join(codexHome, 'agents');
   try {
-    recoverRoleAgentTransactions(agentsDir);
+    recoverCodexAgentTransactions(codexHome);
   } catch (error) {
     result.failures.push({
       name: CODEX_AGENT_INVENTORY_NAME,
@@ -2212,29 +2626,36 @@ export function removeCodexAgents(
     });
     return result;
   }
-  const inventory = JSON.parse(JSON.stringify(state.inventory)) as CodexAgentInventory;
+  const inventory = emptyCodexAgentInventory();
   const removals: string[] = [];
-  const expected = new Map<string, string | null>();
+  const expected = new Map<string, RoleFileIdentity>();
   const removed: string[] = [];
   const keptModified: string[] = [];
   const missing: string[] = [];
-  for (const name of Object.keys(inventory.files).sort()) {
+  for (const name of Object.keys(state.inventory.files).sort()) {
     const path = join(codexHome, 'agents', name);
-    const ownership = classifyCodexAgentFile(path, inventory.files[name]);
+    const recorded = state.inventory.files[name];
+    const ownership = classifyCodexAgentFile(path, recorded);
     if (ownership === 'managed-clean') {
       removals.push(name);
-      expected.set(name, inventory.files[name]?.digest ?? null);
+      if (recorded !== undefined && 'identity' in recorded) expected.set(name, recorded.identity);
       removed.push(name);
     } else if (ownership === 'managed-modified') {
       keptModified.push(name);
     } else if (ownership === 'absent') {
       missing.push(name);
     }
-    // Uninstall relinquishes ownership of modified/missing files without editing them.
-    delete inventory.files[name];
   }
   try {
-    publishRoleAgentTransaction(agentsDir, new Map(), removals, inventory, expected, state.digest, transactionOptions);
+    publishRoleAgentTransaction(
+      agentsDir,
+      new Map(),
+      removals,
+      inventory,
+      expected,
+      state.identity,
+      transactionOptions,
+    );
     result.removed.push(...removed);
     result.keptModified.push(...keptModified);
     result.missing.push(...missing);

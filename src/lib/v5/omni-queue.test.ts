@@ -25,6 +25,7 @@ import {
   listApprovalsNeedingStatusAck,
   listInbox,
   listPendingApprovals,
+  listRecoverableInbound,
   markApprovalAnnouncementSending,
   markHandled,
   markInboundDeliveryFlushed,
@@ -184,6 +185,22 @@ describe('approvals', () => {
       status: 'pending',
     });
     expect(getApproval(db, id)?.omniMessageId).toBe('late-stanza');
+  });
+
+  test('a definitely-not-started prior sender releases an ambiguous takeover for retry', () => {
+    const id = enqueueApproval(db, { repo: '/r', tool: 'Bash', inputSummary: '{}', now: 1 });
+    expect(releaseServiceLease(db, OMNI_SERVICE_LEASE_NAME, TEST_OWNER, 1)).toBe(true);
+    const epochA = acquireServiceLeaseEpoch(db, OMNI_SERVICE_LEASE_NAME, 'resident-a', 10, 5) as number;
+    const ownerA = { ownerId: 'resident-a', epoch: epochA, now: 10 };
+    expect(claimApprovalAnnouncementWithLease(db, id, 'claim-a', ownerA)).toBe('claimed');
+    expect(markApprovalAnnouncementSending(db, id, 'claim-a', ownerA)).toBe(true);
+
+    const epochB = acquireServiceLeaseEpoch(db, OMNI_SERVICE_LEASE_NAME, 'resident-b', 20, 100) as number;
+    const ownerB = { ownerId: 'resident-b', epoch: epochB, now: 20 };
+    expect(claimApprovalAnnouncementWithLease(db, id, 'claim-b', ownerB)).toBe('ambiguous');
+
+    expect(releaseApprovalAnnouncementWithLease(db, id, 'claim-a', ownerA)).toBe(true);
+    expect(claimApprovalAnnouncementWithLease(db, id, 'claim-b-retry', ownerB)).toBe('claimed');
   });
 
   test('a stale resident cannot claim fresh approval/inbound work or cross the send boundary', () => {
@@ -477,6 +494,61 @@ describe('inbox', () => {
     expect(releaseInboundClaim(db, id, 'runner-a', testIdentity())).toBe(true);
     expect(recordAndClaimInbound(db, { ...fields, claimToken: 'runner-b' })).toBe(id);
     expect(listInbox(db)).toHaveLength(1);
+  });
+
+  test('a released pre-execution claim remains visible to startup recovery', () => {
+    const fields = {
+      instance: 'i',
+      chat: 'c',
+      sender: 's',
+      body: 'retry after lease loss',
+      eventKey: 'pre-execution-release',
+      claimToken: 'runner-a',
+      claimOwnerId: TEST_OWNER,
+      claimEpoch: 1,
+      now: 1,
+    };
+    const claim = recordAndClaimInboundDelivery(db, fields);
+    expect(claim?.mode).toBe('fresh');
+    expect(
+      releaseInboundClaim(db, claim?.id as string, fields.claimToken, testIdentity(), {
+        preservePreExecution: true,
+      }),
+    ).toBe(true);
+    expect(listRecoverableInbound(db, 2).map((event) => event.eventKey)).toEqual([fields.eventKey]);
+  });
+
+  test('recovery enumerates a legacy null-phase claim written after schema initialization', () => {
+    expect(releaseServiceLease(db, OMNI_SERVICE_LEASE_NAME, TEST_OWNER, 1)).toBe(true);
+    const epochA = acquireServiceLeaseEpoch(db, OMNI_SERVICE_LEASE_NAME, 'resident-a', 10, 5) as number;
+    const first = recordAndClaimInboundDelivery(db, {
+      instance: 'i',
+      chat: 'c',
+      sender: 's',
+      body: 'legacy write',
+      eventKey: 'late-null-phase',
+      claimToken: 'claim-a',
+      claimOwnerId: 'resident-a',
+      claimEpoch: epochA,
+      now: 10,
+    });
+    db.query('UPDATE inbound_messages SET processing_phase = NULL WHERE id = ?').run(first?.id as string);
+
+    const epochB = acquireServiceLeaseEpoch(db, OMNI_SERVICE_LEASE_NAME, 'resident-b', 20, 100) as number;
+    expect(listRecoverableInbound(db, epochB).map((event) => event.eventKey)).toEqual(['late-null-phase']);
+    expect(
+      recordAndClaimInboundDelivery(db, {
+        instance: 'i',
+        chat: 'c',
+        sender: 's',
+        body: 'legacy write',
+        eventKey: 'late-null-phase',
+        claimToken: 'claim-b',
+        claimOwnerId: 'resident-b',
+        claimEpoch: epochB,
+        now: 20,
+      }),
+    ).toMatchObject({ id: first?.id, mode: 'ambiguous' });
   });
 
   test('lease takeover marks abandoned execution ambiguous and fences stale completion', () => {

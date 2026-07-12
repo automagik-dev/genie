@@ -35,6 +35,8 @@ COSIGN_BIN=""
 COSIGN_BOOTSTRAPPED=0
 LIFECYCLE_LOCK=""
 LIFECYCLE_OWNER_FILE=""
+LIFECYCLE_OWNER_RECORD=""
+LIFECYCLE_LOCK_STALE_SECONDS=600
 
 cleanup() {
   release_lifecycle_lock
@@ -63,27 +65,111 @@ sha256_text() {
   fi
 }
 
+# Resolve like Node's path.resolve without creating or dereferencing GENIE_HOME.
+# The parent must already exist so a losing installer cannot mutate protected
+# scope merely while trying to acquire the shared lifecycle lease.
+logical_absolute_path() {
+  local input="$1" component output="" index
+  local -a raw_parts normalized_parts
+  case "$input" in
+    /*) ;;
+    *) input="${PWD}/${input}" ;;
+  esac
+  IFS='/' read -r -a raw_parts <<< "$input"
+  for component in "${raw_parts[@]}"; do
+    case "$component" in
+      ''|.) ;;
+      ..)
+        index=${#normalized_parts[@]}
+        if [[ "$index" -gt 0 ]]; then unset 'normalized_parts[index-1]'; fi
+        ;;
+      *) normalized_parts[${#normalized_parts[@]}]="$component" ;;
+    esac
+  done
+  if [[ "${#normalized_parts[@]}" -eq 0 ]]; then
+    printf '/\n'
+    return
+  fi
+  printf '/%s' "${normalized_parts[@]}"
+  printf '\n'
+}
+
+lock_mtime_seconds() {
+  if stat -f '%m' "$1" >/dev/null 2>&1; then
+    stat -f '%m' "$1"
+  else
+    stat -c '%Y' "$1"
+  fi
+}
+
+lock_record_is_stale() {
+  local path="$1" expected_record="$2" current_record mtime now age pid
+  [[ -f "$path" && ! -L "$path" ]] || return 1
+  IFS= read -r current_record < "$path" || return 1
+  [[ "$current_record" == "$expected_record" ]] || return 1
+  case "$current_record" in
+    [1-9][0-9]*:*) pid="${current_record%%:*}" ;;
+    *) return 1 ;;
+  esac
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  if kill -0 "$pid" 2>/dev/null; then return 1; fi
+  mtime="$(lock_mtime_seconds "$path" 2>/dev/null)" || return 1
+  now="$(date +%s)"
+  age=$((now - mtime))
+  [[ "$age" -gt "$LIFECYCLE_LOCK_STALE_SECONDS" || "$age" -lt "-$LIFECYCLE_LOCK_STALE_SECONDS" ]]
+}
+
+# Clear abandoned lease debris under the same token-owned `.steal` guard used
+# by TypeScript. The lock record is checked again while the guard is held, so a
+# newly acquired owner can never be removed by an old observation.
+recover_stale_lifecycle_lock() {
+  local observed guard guard_owner guard_token guard_record current
+  [[ -f "$LIFECYCLE_LOCK" && ! -L "$LIFECYCLE_LOCK" ]] || return 1
+  IFS= read -r observed < "$LIFECYCLE_LOCK" || return 1
+  lock_record_is_stale "$LIFECYCLE_LOCK" "$observed" || return 1
+  guard="${LIFECYCLE_LOCK}.steal"
+  guard_token="$(sha256_text "installer-steal:$$:${TMP_DIR}:$(date +%s):${observed}")"
+  guard_owner="${guard}.installer-$$-${guard_token:0:16}"
+  guard_record="$$:${guard_token:0:32}:unknown"
+  ( umask 077; printf '%s\n' "$guard_record" > "$guard_owner" )
+  if ! ln "$guard_owner" "$guard" 2>/dev/null; then
+    rm -f "$guard_owner"
+    return 1
+  fi
+  if lock_record_is_stale "$LIFECYCLE_LOCK" "$observed"; then
+    IFS= read -r current < "$LIFECYCLE_LOCK" || current=""
+    if [[ "$current" == "$observed" ]]; then rm -f "$LIFECYCLE_LOCK"; fi
+  fi
+  if [[ -e "$guard" && -e "$guard_owner" && "$guard" -ef "$guard_owner" ]]; then rm -f "$guard"; fi
+  rm -f "$guard_owner"
+  [[ ! -e "$LIFECYCLE_LOCK" ]]
+}
+
 # Coordinate the standalone installer with TypeScript lifecycle commands. The
 # lock pathname exactly mirrors lifecycleLockPath() in src/lib/agent-sync.ts.
 # A same-directory hard link is the portable atomic create-if-absent primitive;
 # it fails without replacing an update/setup/uninstall owner's lock.
 acquire_lifecycle_lock() {
-  local canonical_home digest token owner_record
-  mkdir -p "$GENIE_HOME"
-  # Node's path.resolve is lexical and intentionally does not dereference
-  # symlinks (/tmp vs /private/tmp on macOS), so preserve the logical path too.
-  canonical_home="$(cd -L "$GENIE_HOME" && pwd -L)"
+  local canonical_home digest token attempt
+  canonical_home="$(logical_absolute_path "$GENIE_HOME")"
+  [[ -d "$(dirname "$canonical_home")" ]] ||
+    die "GENIE_HOME parent does not exist; refusing to mutate before lifecycle lease acquisition: $(dirname "$canonical_home")" 1
   digest="$(sha256_text "$canonical_home")"
   LIFECYCLE_LOCK="$(dirname "$canonical_home")/.genie-lifecycle-${digest:0:16}.lock"
   token="$(sha256_text "installer:$$:${TMP_DIR}:$(date +%s)")"
   LIFECYCLE_OWNER_FILE="${LIFECYCLE_LOCK}.installer-$$-${token:0:16}"
-  owner_record="$$:${token:0:32}:unknown"
-  ( umask 077; printf '%s\n' "$owner_record" > "$LIFECYCLE_OWNER_FILE" )
-  if ! ln "$LIFECYCLE_OWNER_FILE" "$LIFECYCLE_LOCK" 2>/dev/null; then
+  LIFECYCLE_OWNER_RECORD="$$:${token:0:32}:unknown"
+  attempt=0
+  while [[ "$attempt" -lt 3 ]]; do
+    ( umask 077; printf '%s\n' "$LIFECYCLE_OWNER_RECORD" > "$LIFECYCLE_OWNER_FILE" )
+    if ln "$LIFECYCLE_OWNER_FILE" "$LIFECYCLE_LOCK" 2>/dev/null; then return 0; fi
     rm -f "$LIFECYCLE_OWNER_FILE"
-    LIFECYCLE_OWNER_FILE=""
-    die "another Genie lifecycle command is active for $canonical_home; retry after it finishes" 1
-  fi
+    recover_stale_lifecycle_lock || true
+    attempt=$((attempt + 1))
+  done
+  LIFECYCLE_OWNER_FILE=""
+  LIFECYCLE_OWNER_RECORD=""
+  die "another Genie lifecycle command is active for $canonical_home; retry after it finishes" 1
 }
 
 release_lifecycle_lock() {
@@ -95,6 +181,7 @@ release_lifecycle_lock() {
   fi
   LIFECYCLE_LOCK=""
   LIFECYCLE_OWNER_FILE=""
+  LIFECYCLE_OWNER_RECORD=""
 }
 
 manifest_get() {
@@ -415,25 +502,46 @@ ensure_path_wired() {
 # file, orphaned automagik/genie/4.* plugin caches) lives there — see
 # src/genie-commands/install.ts + legacy-v4.ts; it is never duplicated in
 # bash. Installer args are forwarded so `curl ... | bash -s -- --skip-v4-cleanup`
-# reaches the subcommand. Non-fatal on purpose: the binary is installed either
-# way, and an older binary without the `install` subcommand must not fail the
-# bootstrap. Not `exec` — exec would skip the EXIT trap and leak $TMP_DIR.
+# reaches the subcommand. The shell remains the token-authenticated lease owner
+# while the child borrows that exact record; a failed finisher is fatal because
+# reporting installation success would otherwise bless a partial lifecycle.
+# Not `exec` — exec would skip the EXIT trap and leak $TMP_DIR.
 handoff_to_subcommand() {
   log "handing off to: genie install (post-install finishing)"
-  local explicit=0 previous=""
-  for arg in "$@"; do
-    case "$arg" in
-      --integrations=codex|--integrations=claude|--integrations=all) explicit=1 ;;
-      codex|claude|all) [[ "$previous" == "--integrations" ]] && explicit=1 ;;
-    esac
-    previous="$arg"
-  done
-  if ! "$LOCAL_BIN/genie" install "$@"; then
-    if [[ "$explicit" -eq 1 ]]; then
-      die "explicitly requested integration installation failed" 1
-    fi
-    warn "genie install finishing failed — binary is installed; run '$LOCAL_BIN/genie install' manually"
+  [[ -n "$LIFECYCLE_LOCK" && -n "$LIFECYCLE_OWNER_RECORD" ]] ||
+    die "lifecycle lease was lost before the post-install finisher" 1
+  if ! GENIE_LIFECYCLE_LEASE_PATH="$LIFECYCLE_LOCK" \
+    GENIE_LIFECYCLE_LEASE_OWNER="$LIFECYCLE_OWNER_RECORD" \
+    "$LOCAL_BIN/genie" install "$@"; then
+    die "genie install finishing failed; installation remains incomplete and retryable" 1
   fi
+}
+
+parse_version_token() {
+  local value="$1"
+  local version_re='(^|[^0-9A-Za-z.+-])v?([0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?)([^0-9A-Za-z.+-]|$)'
+  [[ "$value" =~ $version_re ]] || return 1
+  printf '%s\n' "${BASH_REMATCH[2]}"
+}
+
+verify_installation() {
+  local expected_version="$1" expected_token actual_version actual_token current_record
+  [[ -n "$LIFECYCLE_LOCK" && -f "$LIFECYCLE_LOCK" && ! -L "$LIFECYCLE_LOCK" ]] ||
+    die "lifecycle lease disappeared before final installation verification" 1
+  IFS= read -r current_record < "$LIFECYCLE_LOCK" || current_record=""
+  [[ "$current_record" == "$LIFECYCLE_OWNER_RECORD" ]] ||
+    die "lifecycle lease ownership changed before final installation verification" 1
+  [[ -x "$GENIE_HOME/bin/genie" && -L "$LOCAL_BIN/genie" && "$LOCAL_BIN/genie" -ef "$GENIE_HOME/bin/genie" ]] ||
+    die "installed Genie binary or canonical symlink is missing after finishing" 1
+  actual_version="$(GENIE_LIFECYCLE_LEASE_PATH="$LIFECYCLE_LOCK" \
+    GENIE_LIFECYCLE_LEASE_OWNER="$LIFECYCLE_OWNER_RECORD" \
+    "$LOCAL_BIN/genie" --version)" || die "installed Genie binary failed final version verification" 1
+  expected_token="$(parse_version_token "$expected_version")" ||
+    die "installation manifest supplied an invalid version token: ${expected_version:-empty}" 1
+  actual_token="$(parse_version_token "$actual_version")" ||
+    die "installed Genie emitted no valid version token (got ${actual_version:-empty})" 1
+  [[ "$actual_token" == "$expected_token" ]] ||
+    die "installed Genie version mismatch (expected ${expected_token}, got ${actual_token})" 1
 }
 
 main() {
@@ -448,14 +556,18 @@ main() {
   [[ -n "$version"      && "$version"      != "null" ]] || die "latest.json missing .version" 1
   [[ -n "$tarball_base" && "$tarball_base" != "null" ]] || die "latest.json missing .tarball_base" 1
   log "installing genie v${version}"
-  tarball="$(download_and_verify "$version" "$platform" "$tarball_base")"
+  # Acquire before download verification because INSECURE=1 records its audit
+  # event under GENIE_HOME. Ownership then remains continuous through every
+  # extraction, PATH, child-finisher, and final-verification mutation.
   acquire_lifecycle_lock
+  tarball="$(download_and_verify "$version" "$platform" "$tarball_base")"
   extract_and_link "$tarball"
-  release_lifecycle_lock
   detect_legacy_install
   ensure_path_wired
   handoff_to_subcommand "$@"
+  verify_installation "$version"
   log "genie v${version} installed"
+  release_lifecycle_lock
 }
 
 if [[ "${GENIE_INSTALL_SOURCE_ONLY:-0}" != "1" ]]; then

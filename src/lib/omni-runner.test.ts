@@ -380,6 +380,68 @@ describe('omni runner — inbound one-shot routing', () => {
     expect(listInbox(db)[0].handledAt).not.toBeNull();
   });
 
+  test('lease takeover after the executing fence but before spawn is recoverable with no unhandled rejection', async () => {
+    const db = freshDb();
+    let clock = 10;
+    const epochA = acquireServiceLeaseEpoch(db, OMNI_SERVICE_LEASE_NAME, 'resident-a', clock, 5) as number;
+    let epochB: number | undefined;
+    let spawns = 0;
+    const published: Published[] = [];
+    const unhandled: unknown[] = [];
+    const captureUnhandled = (reason: unknown) => unhandled.push(reason);
+    const now = () => {
+      const row = db.query('SELECT processing_phase AS phase FROM inbound_messages LIMIT 1').get() as {
+        phase: string | null;
+      } | null;
+      if (row?.phase === 'executing' && epochB === undefined) {
+        clock = 20;
+        epochB = acquireServiceLeaseEpoch(db, OMNI_SERVICE_LEASE_NAME, 'resident-b', clock, 100);
+      }
+      return clock;
+    };
+    process.on('unhandledRejection', captureUnhandled);
+    try {
+      const first = createOmniRunner({
+        db,
+        config: rt(),
+        publish: (subject, payload) => published.push({ subject, payload }),
+        claimOwner: { ownerId: 'resident-a', epoch: epochA },
+        now,
+        spawnClaude: async () => {
+          spawns++;
+          return { stdout: 'must not run', exitCode: 0 };
+        },
+      });
+      first.handleMessage(...mappedInboundWithId('take over before spawn', 'wamid-pre-spawn'));
+      await first.whenIdle();
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+      expect(epochB).toBeNumber();
+      expect(spawns).toBe(0);
+      expect(unhandled).toEqual([]);
+      expect(listInbox(db)[0].handledAt).toBeNull();
+
+      const successor = createOmniRunner({
+        db,
+        config: rt(),
+        publish: (subject, payload) => published.push({ subject, payload }),
+        claimOwner: { ownerId: 'resident-b', epoch: epochB as number },
+        now: () => clock,
+        spawnClaude: async () => {
+          spawns++;
+          return { stdout: 'must not replay', exitCode: 0 };
+        },
+      });
+      successor.tick();
+      await successor.whenIdle();
+      expect(spawns).toBe(0);
+      expect(published.map(content)).toEqual([expect.stringContaining('did not replay')]);
+      expect(listInbox(db)[0].handledAt).not.toBeNull();
+    } finally {
+      process.off('unhandledRejection', captureUnhandled);
+    }
+  });
+
   test('unmapped chat: store-only — never spawns, no reply', async () => {
     const db = freshDb();
     const published: Published[] = [];
@@ -758,6 +820,71 @@ describe('omni runner — correlated approval identity + reactions', () => {
     await Promise.all([first.whenIdle(), second.whenIdle()]);
     expect(sends).toBe(1);
     expect(getApproval(db, id)?.omniMessageId).toBe('only-stanza');
+  });
+
+  test('lease takeover before approval dispatch releases definite non-delivery for a retry', async () => {
+    const db = freshDb();
+    let clock = 100;
+    const epochA = acquireServiceLeaseEpoch(db, OMNI_SERVICE_LEASE_NAME, 'resident-a', clock, 10) as number;
+    const id = enqueueApproval(db, {
+      repo: '/r',
+      tool: 'Bash',
+      inputSummary: approvalSummary('A'),
+      now: clock - 1,
+    });
+    let tookOver = false;
+    let sendsA = 0;
+    let sendsB = 0;
+    let successor: ReturnType<typeof createOmniRunner> | undefined;
+    const nowA = () => {
+      const row = db.query('SELECT announce_phase AS phase FROM approvals WHERE id = ?').get(id) as {
+        phase: string | null;
+      };
+      if (!tookOver && row.phase === 'sending') {
+        tookOver = true;
+        clock = 111;
+        const epochB = acquireServiceLeaseEpoch(db, OMNI_SERVICE_LEASE_NAME, 'resident-b', clock, 1_000) as number;
+        successor = createOmniRunner({
+          db,
+          config: rt(),
+          publish: () => {},
+          claimOwner: { ownerId: 'resident-b', epoch: epochB },
+          now: () => clock,
+          sendApproval: async () => {
+            sendsB++;
+            return { outcome: 'accepted', messageId: 'retry-stanza' };
+          },
+        });
+        successor.tick();
+      }
+      return clock;
+    };
+    const first = createOmniRunner({
+      db,
+      config: rt(),
+      publish: () => {},
+      claimOwner: { ownerId: 'resident-a', epoch: epochA },
+      now: nowA,
+      sendApproval: async () => {
+        sendsA++;
+        return { outcome: 'accepted', messageId: 'must-not-send' };
+      },
+    });
+
+    first.tick();
+    await first.whenIdle();
+    await successor?.whenIdle();
+    expect(tookOver).toBe(true);
+    expect(sendsA).toBe(0);
+    expect(sendsB).toBe(0);
+    expect(
+      db.query('SELECT announce_claim AS claim, announce_phase AS phase FROM approvals WHERE id = ?').get(id),
+    ).toEqual({ claim: null, phase: null });
+
+    successor?.tick();
+    await successor?.whenIdle();
+    expect(sendsB).toBe(1);
+    expect(getApproval(db, id)?.omniMessageId).toBe('retry-stanza');
   });
 
   test('resolution during announcement attaches the stanza and immediately reconciles a terminal glyph', async () => {
@@ -2151,22 +2278,87 @@ describe('Omni serve shutdown ownership', () => {
     const db = freshDb();
     const logs: string[] = [];
     let closes = 0;
+    const apiKey = 'STARTUP_API_KEY_SENTINEL';
+    const natsUrl = 'nats://startup-user:startup-password@nats.example:4222?opaque=STARTUP_QUERY_SECRET';
     const nats: NatsLike = {
       subscribe: () => {
-        throw new Error('subscribe-primary');
+        throw new Error(`subscribe-primary ${natsUrl} ${apiKey}`);
       },
       publish: () => {},
       flush: async () => {},
       close: async () => {
         closes++;
-        throw new Error('close-secondary');
+        throw new Error(`close-secondary ${natsUrl} ${apiKey}`);
       },
     };
-    await expect(
-      runOmniServe({ db, config: rt(), natsFactory: async () => nats, log: (line) => logs.push(line) }),
-    ).rejects.toThrow('subscribe-primary');
+    let thrown: unknown;
+    try {
+      await runOmniServe({
+        db,
+        config: rt({ apiKey, natsUrl }),
+        natsFactory: async () => nats,
+        log: (line) => logs.push(line),
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    const rendered = `${String(thrown)}\n${thrown instanceof Error ? thrown.stack : ''}\n${logs.join('\n')}`;
+    for (const secret of [apiKey, 'startup-user', 'startup-password', 'STARTUP_QUERY_SECRET']) {
+      expect(rendered).not.toContain(secret);
+    }
+    expect(rendered).toContain('[REDACTED]');
     expect(closes).toBe(1);
     expect(logs.some((line) => line.includes('close-secondary'))).toBe(true);
+  });
+
+  test('cleanup-only failure rejects with config-seeded redacted aggregate members', async () => {
+    const db = freshDb();
+    const apiKey = 'CLEANUP_API_KEY_SENTINEL';
+    const natsUrl = 'nats://cleanup-user:cleanup-password@nats.example:4222?auth=CLEANUP_QUERY_SECRET';
+    let stopped = false;
+    let wake: (() => void) | undefined;
+    const subscription: NatsSubscription = {
+      unsubscribe() {
+        stopped = true;
+        wake?.();
+      },
+      async *[Symbol.asyncIterator]() {
+        while (!stopped) {
+          await new Promise<void>((resolve) => {
+            wake = resolve;
+          });
+        }
+      },
+    };
+    const nats: NatsLike = {
+      subscribe: () => subscription,
+      publish: () => {},
+      flush: async () => {},
+      close: async () => {
+        throw new Error(`cleanup failed for ${natsUrl} with ${apiKey}`);
+      },
+    };
+    const abort = new AbortController();
+    let thrown: unknown;
+    try {
+      await runOmniServe({
+        db,
+        config: rt({ apiKey, natsUrl }),
+        natsFactory: async () => nats,
+        signal: abort.signal,
+        onReady: () => abort.abort(),
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(AggregateError);
+    const aggregate = thrown as AggregateError;
+    const rendered = [aggregate.stack, ...aggregate.errors.map((error) => String(error))].join('\n');
+    for (const secret of [apiKey, 'cleanup-user', 'cleanup-password', 'CLEANUP_QUERY_SECRET']) {
+      expect(rendered).not.toContain(secret);
+    }
+    expect(rendered).toContain('[REDACTED]');
   });
 
   test('runner stop is bounded even when an injected child ignores abort', async () => {

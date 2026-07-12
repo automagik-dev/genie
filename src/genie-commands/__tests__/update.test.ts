@@ -1273,6 +1273,7 @@ describe('atomicBinarySwap (G5)', () => {
         atomicBinarySwap(stagedBin, targetBin, previousDir, '5.260711.6', {
           preserveSource: true,
           expectedPreimage: pending.payload.previousBinary,
+          expectedPayloadFingerprint: pending.payload.binary,
           beforePromote: () => writeFileSync(targetBin, 'CONCURRENT_INSTALLER_BINARY'),
         }),
       ).toThrow('preimage changed immediately before promotion');
@@ -1316,11 +1317,104 @@ describe('atomicBinarySwap (G5)', () => {
         atomicBinarySwap(stagedBin, targetBin, previousDir, '5.260711.6', {
           preserveSource: true,
           expectedPreimage: pending.payload.previousBinary,
+          expectedPayloadFingerprint: pending.payload.binary,
           beforePromote: () => writeFileSync(join(previousDir, 'genie-5.260711.6'), 'TAMPERED_BACKUP'),
         }),
       ).toThrow('rollback backup does not match');
       expect(readFileSync(targetBin, 'utf8')).toBe('AUTHENTIC_OLD_BINARY');
       expect(readFileSync(stagedBin, 'utf8')).toBe('NEW_BINARY');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('normal delivery rejects a replacement changed after copy but before promotion', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'genie-swap-payload-race-'));
+    try {
+      const bin = join(tmp, 'bin');
+      const staging = join(bin, '.staging');
+      const extract = join(staging, 'extract-5.260711.7');
+      const stagedBin = join(extract, 'genie');
+      const targetBin = join(bin, 'genie');
+      const tarball = join(staging, 'genie.tar.gz');
+      const journal = join(tmp, '.pending-delivery.json');
+      const previousDir = join(bin, '.previous');
+      mkdirSync(extract, { recursive: true });
+      writeFileSync(stagedBin, 'AUTHENTIC_NEW_BINARY');
+      writeFileSync(targetBin, 'AUTHENTIC_OLD_BINARY');
+      writeFileSync(tarball, 'verified tarball');
+      chmodSync(stagedBin, 0o755);
+      chmodSync(targetBin, 0o755);
+      const pending = recordPendingDelivery(
+        {
+          version: '5.260711.7',
+          previousVersion: '5.260711.6',
+          previousBinaryPath: targetBin,
+          extractDir: extract,
+          tarballPath: tarball,
+        },
+        journal,
+        staging,
+      );
+
+      expect(() =>
+        atomicBinarySwap(stagedBin, targetBin, previousDir, '5.260711.6', {
+          preserveSource: true,
+          expectedPreimage: pending.payload.previousBinary,
+          expectedPayloadFingerprint: pending.payload.binary,
+          beforePromote: (replacementPath) => writeFileSync(replacementPath, 'SUBSTITUTED_NEW_BINARY'),
+        }),
+      ).toThrow('journaled payload fingerprint immediately before promotion');
+      expect(readFileSync(targetBin, 'utf8')).toBe('AUTHENTIC_OLD_BINARY');
+      expect(readFileSync(stagedBin, 'utf8')).toBe('AUTHENTIC_NEW_BINARY');
+      expect(readFileSync(join(previousDir, 'genie-5.260711.6'), 'utf8')).toBe('AUTHENTIC_OLD_BINARY');
+      expect(existsSync(journal)).toBe(true);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('normal delivery authenticates the canonical target after promotion', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'genie-swap-post-promote-race-'));
+    try {
+      const bin = join(tmp, 'bin');
+      const staging = join(bin, '.staging');
+      const extract = join(staging, 'extract-5.260711.7');
+      const stagedBin = join(extract, 'genie');
+      const targetBin = join(bin, 'genie');
+      const tarball = join(staging, 'genie.tar.gz');
+      const journal = join(tmp, '.pending-delivery.json');
+      const previousDir = join(bin, '.previous');
+      mkdirSync(extract, { recursive: true });
+      writeFileSync(stagedBin, 'AUTHENTIC_NEW_BINARY');
+      writeFileSync(targetBin, 'AUTHENTIC_OLD_BINARY');
+      writeFileSync(tarball, 'verified tarball');
+      chmodSync(stagedBin, 0o755);
+      chmodSync(targetBin, 0o755);
+      const pending = recordPendingDelivery(
+        {
+          version: '5.260711.7',
+          previousVersion: '5.260711.6',
+          previousBinaryPath: targetBin,
+          extractDir: extract,
+          tarballPath: tarball,
+        },
+        journal,
+        staging,
+      );
+
+      expect(() =>
+        atomicBinarySwap(stagedBin, targetBin, previousDir, '5.260711.6', {
+          preserveSource: true,
+          expectedPreimage: pending.payload.previousBinary,
+          expectedPayloadFingerprint: pending.payload.binary,
+          afterPromote: (targetPath) => writeFileSync(targetPath, 'SUBSTITUTED_LIVE_BINARY'),
+        }),
+      ).toThrow('journaled payload fingerprint after promotion');
+      expect(readFileSync(targetBin, 'utf8')).toBe('SUBSTITUTED_LIVE_BINARY');
+      expect(readFileSync(stagedBin, 'utf8')).toBe('AUTHENTIC_NEW_BINARY');
+      expect(readFileSync(join(previousDir, 'genie-5.260711.6'), 'utf8')).toBe('AUTHENTIC_OLD_BINARY');
+      expect(existsSync(journal)).toBe(true);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
@@ -1768,7 +1862,7 @@ describe('durable pending delivery recovery', () => {
     chmodSync(target, 0o755);
     chmodSync(join(extract, 'genie'), 0o755);
     try {
-      recordPendingDelivery(
+      const pending = recordPendingDelivery(
         {
           version: '5.260711.7',
           previousVersion: '5.260711.6',
@@ -1781,6 +1875,8 @@ describe('durable pending delivery recovery', () => {
       );
       const firstSwap = atomicBinarySwap(join(extract, 'genie'), target, previous, '5.260711.6', {
         preserveSource: true,
+        expectedPreimage: pending.payload.previousBinary,
+        expectedPayloadFingerprint: pending.payload.binary,
       });
       expect(firstSwap.oldVersionBackup).not.toBeNull();
       const authenticBackup = firstSwap.oldVersionBackup as string;
@@ -1807,6 +1903,61 @@ describe('durable pending delivery recovery', () => {
       expect(readdirSync(previous).filter((name) => name.startsWith('genie-5.260711.6'))).toHaveLength(2);
     } finally {
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('schema-v4 already-new recovery retains its journal without an authenticated prior backup', () => {
+    for (const backupState of ['missing', 'mismatched'] as const) {
+      const root = mkdtempSync(join(tmpdir(), `genie-pending-already-new-${backupState}-`));
+      const home = join(root, 'home');
+      const bin = join(home, 'bin');
+      const staging = join(bin, '.staging');
+      const extract = join(staging, 'extract-5.260711.7');
+      const tarball = join(staging, 'genie.tar.gz');
+      const journal = join(home, '.pending-delivery.json');
+      const target = join(bin, 'genie');
+      const previous = join(bin, '.previous');
+      mkdirSync(extract, { recursive: true });
+      writeFileSync(target, 'AUTHENTIC_OLD_BINARY');
+      writeFileSync(join(bin, 'VERSION'), '5.260711.6\n');
+      writeFileSync(join(extract, 'genie'), 'AUTHENTIC_NEW_BINARY');
+      writeFileSync(join(extract, 'VERSION'), '5.260711.7\n');
+      writeFileSync(tarball, 'verified tarball');
+      chmodSync(target, 0o755);
+      chmodSync(join(extract, 'genie'), 0o755);
+      try {
+        recordPendingDelivery(
+          {
+            version: '5.260711.7',
+            previousVersion: '5.260711.6',
+            previousBinaryPath: target,
+            extractDir: extract,
+            tarballPath: tarball,
+          },
+          journal,
+          staging,
+        );
+        writeFileSync(target, 'AUTHENTIC_NEW_BINARY');
+        chmodSync(target, 0o755);
+        if (backupState === 'mismatched') {
+          mkdirSync(previous, { recursive: true });
+          writeFileSync(join(previous, 'genie-5.260711.6'), 'UNAUTHENTICATED_BACKUP');
+          chmodSync(join(previous, 'genie-5.260711.6'), 0o755);
+        }
+
+        expect(() =>
+          resumePendingDelivery({
+            genieHome: home,
+            genieBin: bin,
+            stagingRoot: staging,
+            pendingPath: journal,
+          }),
+        ).toThrow('no authenticated rollback backup matches the journaled preimage');
+        expect(readFileSync(join(bin, 'VERSION'), 'utf8')).toBe('5.260711.6\n');
+        expect(existsSync(journal)).toBe(true);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
     }
   });
 

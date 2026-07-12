@@ -32,6 +32,7 @@ import {
   persistIntegrationConsent,
   readIntegrationConsent,
   readIntegrationConsentState,
+  recoverCodexAgentTransactions,
   removeCodexAgents,
   removeRuntimeIntegrations as removeRuntimeIntegrationsWithTrustedResolution,
   resolveBundleRoot,
@@ -467,6 +468,128 @@ describe('durable integration consent and Claude payload provenance', () => {
     expect(result?.ok).toBe(false);
     expect(enabled).toBe(false);
     expect(JSON.parse(readFileSync(statePath, 'utf8'))).toMatchObject({ phase: 'planned', enabled: false });
+  });
+
+  test('Codex captures durable disabled intent before a failing first probe and consumes reinstall authority', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-codex-disabled-first-probe-'));
+    const statePath = join(root, 'refresh.json');
+    const configPath = join(root, 'config.toml');
+    writeFileSync(configPath, '[plugins."genie@automagik"]\nenabled = true\n');
+    writeFileSync(
+      statePath,
+      `${JSON.stringify({
+        schemaVersion: 4,
+        runtime: 'codex',
+        installed: true,
+        enabled: false,
+        createdAt: new Date().toISOString(),
+        phase: 'removal-observed',
+      })}\n`,
+    );
+    let lists = 0;
+    const first = convergeCodexPlugin({
+      command: 'codex',
+      bundleRoot: root,
+      expectedVersion: VERSION,
+      installIfAbsent: false,
+      statePath,
+      configPath,
+      verifyCodexPayload: () => undefined,
+      runner(_command, args) {
+        if (args.join(' ') !== 'plugin list --json') return { exitCode: 0, stdout: '{}', stderr: '' };
+        lists += 1;
+        if (lists < 3) return { exitCode: 9, stdout: '', stderr: 'probe unavailable' };
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            installed: [{ pluginId: 'genie@automagik', enabled: false, version: VERSION }],
+          }),
+          stderr: '',
+        };
+      },
+    });
+
+    expect(first?.ok).toBe(false);
+    expect(readFileSync(configPath, 'utf8')).toContain('enabled = false');
+    expect(JSON.parse(readFileSync(statePath, 'utf8'))).toMatchObject({ phase: 'planned', enabled: false });
+
+    const retryCalls: string[] = [];
+    const retry = convergeCodexPlugin({
+      command: 'codex',
+      bundleRoot: root,
+      expectedVersion: VERSION,
+      installIfAbsent: false,
+      statePath,
+      configPath,
+      verifyCodexPayload: () => undefined,
+      runner(command, args) {
+        retryCalls.push([command, ...args].join(' '));
+        return { exitCode: 0, stdout: '{"installed":[]}', stderr: '' };
+      },
+    });
+    expect(retry).toBeNull();
+    expect(retryCalls).toEqual(['codex plugin list --json']);
+  });
+
+  test('Claude captures durable disabled intent before a failing first probe and consumes reinstall authority', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-claude-disabled-first-probe-'));
+    const statePath = join(root, 'refresh.json');
+    writeFileSync(
+      statePath,
+      `${JSON.stringify({
+        schemaVersion: 4,
+        runtime: 'claude',
+        installed: true,
+        enabled: false,
+        createdAt: new Date().toISOString(),
+        phase: 'removal-observed',
+      })}\n`,
+    );
+    let lists = 0;
+    let enabled = true;
+    const first = convergeClaudePlugin({
+      command: 'claude',
+      bundleRoot: root,
+      expectedVersion: VERSION,
+      installIfAbsent: false,
+      statePath,
+      verifyClaudePayload: () => undefined,
+      runner(_command, args) {
+        const call = args.join(' ');
+        if (call === 'plugin disable genie@automagik') {
+          enabled = false;
+          return { exitCode: 0, stdout: '', stderr: '' };
+        }
+        if (call !== 'plugin list --json') return { exitCode: 0, stdout: '{}', stderr: '' };
+        lists += 1;
+        if (lists < 3) return { exitCode: 9, stdout: '', stderr: 'probe unavailable' };
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify([{ id: 'genie@automagik', enabled, version: VERSION }]),
+          stderr: '',
+        };
+      },
+    });
+
+    expect(first?.ok).toBe(false);
+    expect(enabled).toBe(false);
+    expect(JSON.parse(readFileSync(statePath, 'utf8'))).toMatchObject({ phase: 'planned', enabled: false });
+
+    const retryCalls: string[] = [];
+    const retry = convergeClaudePlugin({
+      command: 'claude',
+      bundleRoot: root,
+      expectedVersion: VERSION,
+      installIfAbsent: false,
+      statePath,
+      verifyClaudePayload: () => undefined,
+      runner(command, args) {
+        retryCalls.push([command, ...args].join(' '));
+        return { exitCode: 0, stdout: '[]', stderr: '' };
+      },
+    });
+    expect(retry).toBeNull();
+    expect(retryCalls).toEqual(['claude plugin list --json']);
   });
 });
 
@@ -942,10 +1065,45 @@ describe('installCodexAgents overwrite discipline', () => {
     return bundleRoot;
   }
 
+  interface CommittedRoleAgentCrash {
+    agentsDir: string;
+    codexHome: string;
+    incoming: string;
+    transactionDir: string;
+  }
+
+  function makeCommittedRoleAgentCrash(): CommittedRoleAgentCrash {
+    const bundleRoot = makeBundle();
+    const codexHome = mkdtempSync(join(tmpdir(), 'genie-codex-committed-crash-'));
+    installCodexAgents(bundleRoot, codexHome);
+    const source = join(bundleRoot, 'plugins', 'genie', 'codex-agents', 'genie-reviewer.toml');
+    const incoming = `${MANAGED_TOML}model_reasoning_effort = "high"\n`;
+    writeFileSync(source, incoming);
+
+    expect(() =>
+      installCodexAgents(bundleRoot, codexHome, {
+        afterCommit() {
+          throw new Error('injected crash after durable commit');
+        },
+      }),
+    ).toThrow('injected crash after durable commit');
+
+    const agentsDir = join(codexHome, 'agents');
+    const transactionName = readdirSync(agentsDir).find((name) => name.startsWith('.genie-role-agents.txn-'));
+    expect(transactionName).toBeDefined();
+    return {
+      agentsDir,
+      codexHome,
+      incoming,
+      transactionDir: join(agentsDir, transactionName as string),
+    };
+  }
+
   test('fresh install copies the managed file', () => {
     const bundleRoot = makeBundle();
     const codexHome = mkdtempSync(join(tmpdir(), 'genie-codex-'));
     const result = installCodexAgents(bundleRoot, codexHome);
+    expect(() => recoverCodexAgentTransactions(codexHome)).not.toThrow();
     expect(result).toEqual({
       installed: 1,
       skippedUserOwned: [],
@@ -1056,6 +1214,64 @@ describe('installCodexAgents overwrite discipline', () => {
     expect(removal.removed).toEqual([]);
     expect(readFileSync(target, 'utf8')).toBe(tuned);
     expect(inspectCodexAgentOwnership(codexHome).entries[0]?.ownership).toBe('user-owned');
+  });
+
+  test('chmod-only role-agent edits revoke refresh and removal authority', () => {
+    const bundleRoot = makeBundle();
+    const codexHome = mkdtempSync(join(tmpdir(), 'genie-codex-role-mode-'));
+    installCodexAgents(bundleRoot, codexHome);
+    const target = join(codexHome, 'agents', 'genie-reviewer.toml');
+    const installedMode = lstatSync(target).mode & 0o7777;
+    const changedMode = installedMode === 0o600 ? 0o644 : 0o600;
+    chmodSync(target, changedMode);
+
+    expect(installCodexAgents(bundleRoot, codexHome).keptModified).toEqual(['genie-reviewer.toml']);
+    expect(lstatSync(target).mode & 0o7777).toBe(changedMode);
+    expect(inspectCodexAgentOwnership(codexHome).entries[0]?.ownership).toBe('managed-modified');
+
+    const removal = removeCodexAgents(codexHome);
+    expect(removal.removed).toEqual([]);
+    expect(removal.keptModified).toEqual(['genie-reviewer.toml']);
+    expect(readFileSync(target, 'utf8')).toBe(MANAGED_TOML);
+    expect(lstatSync(target).mode & 0o7777).toBe(changedMode);
+  });
+
+  test('v1 digest authority upgrades only with a source-authenticated mode and otherwise refuses', () => {
+    const bundleRoot = makeBundle();
+    const source = join(bundleRoot, 'plugins', 'genie', 'codex-agents', 'genie-reviewer.toml');
+    const sourceMode = lstatSync(source).mode & 0o7777;
+    const digest = createHash('sha256').update(MANAGED_TOML).digest('hex');
+    const legacyInventory = {
+      version: 1,
+      managedBy: 'genie-codex-role-agents',
+      files: { 'genie-reviewer.toml': { digest } },
+    };
+
+    const upgradeHome = mkdtempSync(join(tmpdir(), 'genie-codex-role-v1-upgrade-'));
+    const upgradeTarget = join(upgradeHome, 'agents', 'genie-reviewer.toml');
+    write(upgradeTarget, MANAGED_TOML);
+    chmodSync(upgradeTarget, sourceMode);
+    write(join(upgradeHome, 'agents', '.genie-role-agents.json'), `${JSON.stringify(legacyInventory)}\n`);
+    expect(installCodexAgents(bundleRoot, upgradeHome).installed).toBe(1);
+    expect(JSON.parse(readFileSync(join(upgradeHome, 'agents', '.genie-role-agents.json'), 'utf8'))).toMatchObject({
+      version: 2,
+      files: { 'genie-reviewer.toml': { identity: { kind: 'regular', mode: sourceMode, digest } } },
+    });
+
+    const refusedHome = mkdtempSync(join(tmpdir(), 'genie-codex-role-v1-refuse-'));
+    const refusedTarget = join(refusedHome, 'agents', 'genie-reviewer.toml');
+    const refusedInventory = join(refusedHome, 'agents', '.genie-role-agents.json');
+    write(refusedTarget, MANAGED_TOML);
+    const changedMode = sourceMode === 0o600 ? 0o644 : 0o600;
+    chmodSync(refusedTarget, changedMode);
+    write(refusedInventory, `${JSON.stringify(legacyInventory)}\n`);
+
+    expect(() => installCodexAgents(bundleRoot, refusedHome)).toThrow('refused the inventory upgrade');
+    expect(JSON.parse(readFileSync(refusedInventory, 'utf8')).version).toBe(1);
+    const removal = removeCodexAgents(refusedHome);
+    expect(removal.removed).toEqual([]);
+    expect(removal.keptModified).toEqual(['genie-reviewer.toml']);
+    expect(lstatSync(refusedTarget).mode & 0o7777).toBe(changedMode);
   });
 
   test('a digest-clean managed file updates and later removes normally', () => {
@@ -1212,6 +1428,32 @@ describe('installCodexAgents overwrite discipline', () => {
     );
   });
 
+  test('a byte-identical reviewer race is never mistaken for a recorded publication during rollback', () => {
+    const bundleRoot = makeBundle();
+    const codexHome = mkdtempSync(join(tmpdir(), 'genie-codex-role-identical-race-'));
+    installCodexAgents(bundleRoot, codexHome);
+    const source = join(bundleRoot, 'plugins', 'genie', 'codex-agents', 'genie-reviewer.toml');
+    const agentsDir = join(codexHome, 'agents');
+    const target = join(agentsDir, 'genie-reviewer.toml');
+    const prior = readFileSync(target, 'utf8');
+    const incoming = `${MANAGED_TOML}model_reasoning_effort = "high"\n`;
+    writeFileSync(source, incoming);
+
+    expect(() =>
+      installCodexAgents(bundleRoot, codexHome, {
+        beforePublish(stage) {
+          if (stage === 'payload:genie-reviewer.toml') writeFileSync(target, incoming);
+        },
+      }),
+    ).toThrow('live target is not an exact recorded publication');
+
+    expect(readFileSync(target, 'utf8')).toBe(incoming);
+    const conflict = readdirSync(agentsDir).find((name) => name.startsWith('.genie-role-agents.conflict-'));
+    expect(conflict).toBeDefined();
+    expect(readFileSync(join(agentsDir, conflict as string, 'before', 'genie-reviewer.toml'), 'utf8')).toBe(prior);
+    expect(readFileSync(join(agentsDir, conflict as string, 'staged', 'genie-reviewer.toml'), 'utf8')).toBe(incoming);
+  });
+
   test('a role inventory created at the final publish boundary is never overwritten', () => {
     const bundleRoot = makeBundle();
     const codexHome = mkdtempSync(join(tmpdir(), 'genie-codex-inventory-final-publish-'));
@@ -1227,7 +1469,7 @@ describe('installCodexAgents overwrite discipline', () => {
       }),
     ).toThrow('exclusive role-agent inventory publish failed');
     expect(readFileSync(inventory, 'utf8')).toBe(personal);
-    const transaction = readdirSync(agentsDir).find((name) => name.startsWith('.genie-role-agents.txn-'));
+    const transaction = readdirSync(agentsDir).find((name) => name.startsWith('.genie-role-agents.conflict-'));
     expect(transaction).toBeDefined();
     expect(readFileSync(join(agentsDir, transaction as string, 'staged', '.genie-role-agents.json'), 'utf8')).toContain(
       'genie-reviewer.toml',
@@ -1319,6 +1561,172 @@ describe('installCodexAgents overwrite discipline', () => {
     expect(installCodexAgents(bundleRoot, codexHome).installed).toBe(1);
     expect(readFileSync(join(codexHome, 'agents', 'genie-reviewer.toml'), 'utf8')).toBe(MANAGED_TOML);
   });
+
+  test('a crash after COMMITTED authenticates the next state and performs roll-forward cleanup', () => {
+    const crash = makeCommittedRoleAgentCrash();
+    const target = join(crash.agentsDir, 'genie-reviewer.toml');
+    expect(readFileSync(target, 'utf8')).toBe(crash.incoming);
+    expect(existsSync(join(crash.transactionDir, 'COMMITTED'))).toBe(true);
+
+    expect(() => recoverCodexAgentTransactions(crash.codexHome)).not.toThrow();
+
+    expect(existsSync(crash.transactionDir)).toBe(false);
+    expect(readFileSync(target, 'utf8')).toBe(crash.incoming);
+    expect(inspectCodexAgentOwnership(crash.codexHome).entries[0]?.ownership).toBe('managed-clean');
+  });
+
+  test('an interruption after the committed-cleanup rename retries without rolling back live state', () => {
+    const bundleRoot = makeBundle();
+    const codexHome = mkdtempSync(join(tmpdir(), 'genie-codex-cleanup-interruption-'));
+    installCodexAgents(bundleRoot, codexHome);
+    const source = join(bundleRoot, 'plugins', 'genie', 'codex-agents', 'genie-reviewer.toml');
+    const target = join(codexHome, 'agents', 'genie-reviewer.toml');
+    const agentsDir = join(codexHome, 'agents');
+    const incoming = `${MANAGED_TOML}model_reasoning_effort = "high"\n`;
+    writeFileSync(source, incoming);
+    let cleanupDir = '';
+
+    expect(() =>
+      installCodexAgents(bundleRoot, codexHome, {
+        afterCleanupRename(path) {
+          cleanupDir = path;
+          throw new Error('injected interruption during committed cleanup');
+        },
+      }),
+    ).toThrow('injected interruption during committed cleanup');
+
+    expect(cleanupDir).toContain('.genie-role-agents.committed-cleanup-');
+    expect(existsSync(cleanupDir)).toBe(true);
+    expect(readdirSync(agentsDir).some((name) => name.startsWith('.genie-role-agents.txn-'))).toBe(false);
+    expect(readFileSync(target, 'utf8')).toBe(incoming);
+
+    expect(() => recoverCodexAgentTransactions(codexHome)).not.toThrow();
+
+    expect(existsSync(cleanupDir)).toBe(false);
+    expect(readFileSync(target, 'utf8')).toBe(incoming);
+    expect(inspectCodexAgentOwnership(codexHome).entries[0]?.ownership).toBe('managed-clean');
+  });
+
+  test('cleanup interruption after COMMITTED removal is quarantined and never gains rollback authority', () => {
+    const bundleRoot = makeBundle();
+    const codexHome = mkdtempSync(join(tmpdir(), 'genie-codex-cleanup-marker-kill-'));
+    installCodexAgents(bundleRoot, codexHome);
+    const source = join(bundleRoot, 'plugins', 'genie', 'codex-agents', 'genie-reviewer.toml');
+    const agentsDir = join(codexHome, 'agents');
+    const target = join(agentsDir, 'genie-reviewer.toml');
+    const incoming = `${MANAGED_TOML}model_reasoning_effort = "high"\n`;
+    writeFileSync(source, incoming);
+    let cleanupDir = '';
+
+    expect(() =>
+      installCodexAgents(bundleRoot, codexHome, {
+        afterCleanupRename(path) {
+          cleanupDir = path;
+          rmSync(join(path, 'COMMITTED'));
+          throw new Error('injected kill after cleanup removed COMMITTED');
+        },
+      }),
+    ).toThrow('injected kill after cleanup removed COMMITTED');
+
+    expect(readFileSync(target, 'utf8')).toBe(incoming);
+    expect(() => recoverCodexAgentTransactions(codexHome)).toThrow('invalid commit marker');
+    expect(readFileSync(target, 'utf8')).toBe(incoming);
+    expect(existsSync(cleanupDir)).toBe(false);
+    const conflictName = readdirSync(agentsDir).find((name) => name.startsWith('.genie-role-agents.conflict-'));
+    expect(conflictName).toBeDefined();
+    const conflict = join(agentsDir, conflictName as string);
+    expect(existsSync(join(conflict, 'journal.json'))).toBe(true);
+    expect(existsSync(join(conflict, 'staged'))).toBe(true);
+    expect(existsSync(join(conflict, 'before'))).toBe(true);
+
+    expect(() => recoverCodexAgentTransactions(codexHome)).not.toThrow();
+    expect(readFileSync(target, 'utf8')).toBe(incoming);
+    expect(inspectCodexAgentOwnership(codexHome).entries[0]?.ownership).toBe('managed-clean');
+  });
+
+  test('committed-cleanup recovery preserves tampered evidence fail-closed without rollback', () => {
+    const bundleRoot = makeBundle();
+    const codexHome = mkdtempSync(join(tmpdir(), 'genie-codex-cleanup-tamper-'));
+    installCodexAgents(bundleRoot, codexHome);
+    const source = join(bundleRoot, 'plugins', 'genie', 'codex-agents', 'genie-reviewer.toml');
+    const agentsDir = join(codexHome, 'agents');
+    const target = join(agentsDir, 'genie-reviewer.toml');
+    const incoming = `${MANAGED_TOML}model_reasoning_effort = "high"\n`;
+    writeFileSync(source, incoming);
+    let cleanupDir = '';
+
+    expect(() =>
+      installCodexAgents(bundleRoot, codexHome, {
+        afterCleanupRename(path) {
+          cleanupDir = path;
+          throw new Error('injected interruption before cleanup tamper');
+        },
+      }),
+    ).toThrow('injected interruption before cleanup tamper');
+    writeFileSync(join(cleanupDir, 'staged', 'genie-reviewer.toml'), 'tampered cleanup evidence\n');
+
+    expect(() => recoverCodexAgentTransactions(codexHome)).toThrow('committed staged evidence changed');
+
+    expect(readFileSync(target, 'utf8')).toBe(incoming);
+    expect(existsSync(cleanupDir)).toBe(false);
+    const conflictName = readdirSync(agentsDir).find((name) => name.startsWith('.genie-role-agents.conflict-'));
+    expect(conflictName).toBeDefined();
+    const conflict = join(agentsDir, conflictName as string);
+    expect(readFileSync(join(conflict, 'staged', 'genie-reviewer.toml'), 'utf8')).toBe('tampered cleanup evidence\n');
+    expect(existsSync(join(conflict, 'before', 'genie-reviewer.toml'))).toBe(true);
+  });
+
+  for (const [label, tamper, expectedError] of [
+    [
+      'staged bytes',
+      (crash: CommittedRoleAgentCrash) =>
+        writeFileSync(join(crash.transactionDir, 'staged', 'genie-reviewer.toml'), 'tampered staged bytes\n'),
+      'committed staged evidence changed',
+    ],
+    [
+      'prior parked bytes',
+      (crash: CommittedRoleAgentCrash) =>
+        writeFileSync(join(crash.transactionDir, 'before', 'genie-reviewer.toml'), 'tampered prior bytes\n'),
+      'committed prior parked evidence changed',
+    ],
+    [
+      'publication authority',
+      (crash: CommittedRoleAgentCrash) => {
+        const path = join(crash.transactionDir, 'publications.json');
+        const record = JSON.parse(readFileSync(path, 'utf8')) as {
+          artifacts: Record<string, { digest: string }>;
+        };
+        const reviewer = record.artifacts['genie-reviewer.toml'];
+        if (reviewer) reviewer.digest = '0'.repeat(64);
+        writeFileSync(path, `${JSON.stringify(record, null, 2)}\n`);
+      },
+      'committed publication authority changed',
+    ],
+    [
+      'physical published evidence',
+      (crash: CommittedRoleAgentCrash) =>
+        write(join(crash.transactionDir, 'published', 'genie-reviewer.toml'), 'tampered published bytes\n'),
+      'committed published evidence changed',
+    ],
+  ] as const) {
+    test(`COMMITTED recovery preserves the entire transaction when ${label} are tampered`, () => {
+      const crash = makeCommittedRoleAgentCrash();
+      tamper(crash);
+
+      expect(() => recoverCodexAgentTransactions(crash.codexHome)).toThrow(expectedError);
+
+      expect(readFileSync(join(crash.agentsDir, 'genie-reviewer.toml'), 'utf8')).toBe(crash.incoming);
+      expect(existsSync(crash.transactionDir)).toBe(false);
+      const conflictName = readdirSync(crash.agentsDir).find((name) => name.startsWith('.genie-role-agents.conflict-'));
+      expect(conflictName).toBeDefined();
+      const conflict = join(crash.agentsDir, conflictName as string);
+      expect(readFileSync(join(conflict, 'COMMITTED'), 'utf8')).toBe('ok\n');
+      expect(existsSync(join(conflict, 'journal.json'))).toBe(true);
+      expect(existsSync(join(conflict, 'staged'))).toBe(true);
+      expect(existsSync(join(conflict, 'before'))).toBe(true);
+      expect(existsSync(join(conflict, 'publications.json'))).toBe(true);
+    });
+  }
 
   test('uninstall fails closed when a published role transaction cannot be recovered', () => {
     const bundleRoot = makeBundle();

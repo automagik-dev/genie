@@ -36,13 +36,17 @@ import {
   type AgentReport,
   type AgentSyncOptions,
   type AgentSyncReport,
+  LIFECYCLE_LEASE_OWNER_ENV,
+  LIFECYCLE_LEASE_PATH_ENV,
   TARGET_NAME,
   WORKFLOW_MANIFEST_NAME,
   acquireLifecycleLease,
   computeDirDigest,
   inspectManagedWorkflow,
   lifecycleLockPath,
+  recoverManagedSkillTransactions,
   recoverManagedWorkflowTransactions,
+  removeManagedWorkflow,
   resolveGenieSource,
   runAgentSync,
   stampWorkflow,
@@ -313,6 +317,34 @@ describe('source change', () => {
     const alphaDir = join(fixture.claudeDir, 'skills', 'alpha');
     expect(readFileSync(join(alphaDir, 'SKILL.md'), 'utf8')).toBe('# alpha v2\n');
     expect(readManifest(alphaDir).digest).not.toBe(before);
+  });
+
+  test('a v1 skill upgrades only when its complete physical tree matches canonical source', () => {
+    rmSync(fixture.root, { recursive: true, force: true });
+    fixture = setup({ skills: { alpha: { 'SKILL.md': '# alpha\n' } } });
+    present(fixture.claudeDir);
+    const alphaDir = join(fixture.claudeDir, 'skills', 'alpha');
+    seedV1ManagedDir(alphaDir, { 'SKILL.md': '# alpha\n' });
+
+    const claude = agentReport(run({ selection: 'claude' }), 'claude');
+
+    expect(skillAction(claude, 'alpha')).toBe('updated');
+    expect(JSON.parse(readFileSync(join(alphaDir, MANIFEST_NAME), 'utf8')).identityVersion).toBe(2);
+  });
+
+  test('a chmod-only edit under v1 authority fails closed', () => {
+    rmSync(fixture.root, { recursive: true, force: true });
+    fixture = setup({ skills: { alpha: { 'SKILL.md': '# alpha\n' } } });
+    present(fixture.claudeDir);
+    const alphaDir = join(fixture.claudeDir, 'skills', 'alpha');
+    seedV1ManagedDir(alphaDir, { 'SKILL.md': '# alpha\n' });
+    chmodSync(join(alphaDir, 'SKILL.md'), 0o755);
+
+    const claude = agentReport(run({ selection: 'claude' }), 'claude');
+
+    expect(skillAction(claude, 'alpha')).toBe('kept-modified');
+    expect(lstatSync(join(alphaDir, 'SKILL.md')).mode & 0o7777).toBe(0o755);
+    expect(JSON.parse(readFileSync(join(alphaDir, MANIFEST_NAME), 'utf8')).identityVersion).toBeUndefined();
   });
 });
 
@@ -693,6 +725,32 @@ describe('staging cleanup', () => {
     expect(readFileSync(join(alphaDir, 'SKILL.md'), 'utf8')).toBe('# alpha v2\n');
   });
 
+  test('a rollback race preserves the live, prior, and staged skill trees', () => {
+    present(fixture.claudeDir);
+    run({ selection: 'claude' });
+    const alphaDir = join(fixture.claudeDir, 'skills', 'alpha');
+    writeFile(join(fixture.pluginRoot, 'skills', 'alpha', 'SKILL.md'), '# alpha incoming\n');
+
+    const claude = agentReport(
+      run({
+        selection: 'claude',
+        beforeManagedDirPublish(destDir) {
+          if (destDir !== alphaDir) return;
+          writeFile(join(destDir, 'SKILL.md'), '# alpha rollback racer\n');
+          throw new Error('fail after racer publication');
+        },
+      }),
+      'claude',
+    );
+
+    expect(readFileSync(join(alphaDir, 'SKILL.md'), 'utf8')).toBe('# alpha rollback racer\n');
+    expect(claude.failures?.join('\n')).toContain('preserved managed skill evidence');
+    const transactionRoot = join(fixture.claudeDir, 'skills', '.genie-sync-transactions');
+    const conflict = readdirSync(transactionRoot).find((name) => name.startsWith('.conflict-')) as string;
+    expect(readFileSync(join(transactionRoot, conflict, 'before', 'SKILL.md'), 'utf8')).toBe('# alpha\n');
+    expect(readFileSync(join(transactionRoot, conflict, 'staged', 'SKILL.md'), 'utf8')).toBe('# alpha incoming\n');
+  });
+
   test('a managed skill edited after classification wins the CAS and the incoming version is preserved', () => {
     present(fixture.claudeDir);
     run({ selection: 'claude' });
@@ -799,6 +857,34 @@ describe('staging cleanup', () => {
     const claude = agentReport(run({ selection: 'claude' }), 'claude');
 
     expect(skillAction(claude, 'alpha')).toBe('unchanged');
+    expect(readFileSync(join(alphaDir, 'SKILL.md'), 'utf8')).toBe('# alpha\n');
+    expect(existsSync(transactionDir)).toBe(false);
+  });
+
+  test('public recovery restores a parked removal even when no live skill is enumerable', () => {
+    present(fixture.claudeDir);
+    run({ selection: 'claude' });
+    const skillsDir = join(fixture.claudeDir, 'skills');
+    const alphaDir = join(skillsDir, 'alpha');
+    const transactionDir = join(skillsDir, '.genie-sync-transactions', 'delete-616c706861-crashed');
+    const contentDigest = computeDirDigest(alphaDir);
+    const manifestDigest = createHash('sha256')
+      .update(readFileSync(join(alphaDir, MANIFEST_NAME)))
+      .digest('hex');
+    writeFile(
+      join(transactionDir, 'journal.json'),
+      `${JSON.stringify({
+        version: 2,
+        destName: 'alpha',
+        contentDigest,
+        manifestDigest,
+        identityVersion: 2,
+      })}\n`,
+    );
+    renameSync(alphaDir, join(transactionDir, 'parked'));
+
+    recoverManagedSkillTransactions(skillsDir);
+
     expect(readFileSync(join(alphaDir, 'SKILL.md'), 'utf8')).toBe('# alpha\n');
     expect(existsSync(transactionDir)).toBe(false);
   });
@@ -953,6 +1039,26 @@ function seedManagedDir(dir: string, files: Record<string, string>): void {
   writeFile(join(dir, MANIFEST_NAME), `${JSON.stringify(manifest, null, 2)}\n`);
 }
 
+function seedV1ManagedDir(dir: string, files: Record<string, string>): void {
+  for (const [rel, content] of Object.entries(files)) writeFile(join(dir, rel), content);
+  const digest = createHash('sha256');
+  for (const [rel, content] of Object.entries(files).sort(([left], [right]) => left.localeCompare(right))) {
+    digest.update(rel);
+    digest.update('\0');
+    digest.update(createHash('sha256').update(content).digest('hex'));
+    digest.update('\0');
+  }
+  writeFile(
+    join(dir, MANIFEST_NAME),
+    `${JSON.stringify({
+      managedBy: 'genie-agent-sync',
+      version: '8.0.0',
+      digest: digest.digest('hex'),
+      syncedAt: '2025-01-01T00:00:00.000Z',
+    })}\n`,
+  );
+}
+
 describe('codex .system', () => {
   test('the OpenAI-owned .system tree is never enumerated or touched', () => {
     present(fixture.codexDir);
@@ -1002,6 +1108,21 @@ describe('codex legacy .curated migration', () => {
     expect(readFileSync(join(legacyAlpha, 'SKILL.md'), 'utf8')).toBe('# hand-edited legacy\n');
     expect(readFileSync(join(legacyAlpha, MANIFEST_NAME), 'utf8')).toBe(manifestBefore);
     expect(report.backupsDir).toBeNull();
+    expect(codex.extras).toContainEqual({
+      kind: 'legacy-curated',
+      action: 'kept-modified',
+      detail: legacyAlpha,
+    });
+  });
+
+  test('content-only v1 ownership never authorizes destructive legacy cleanup', () => {
+    present(fixture.codexDir);
+    const legacyAlpha = join(fixture.codexDir, 'skills', '.curated', 'alpha');
+    seedV1ManagedDir(legacyAlpha, { 'SKILL.md': '# legacy alpha\n' });
+
+    const codex = agentReport(run(), 'codex');
+
+    expect(readFileSync(join(legacyAlpha, 'SKILL.md'), 'utf8')).toBe('# legacy alpha\n');
     expect(codex.extras).toContainEqual({
       kind: 'legacy-curated',
       action: 'kept-modified',
@@ -1105,7 +1226,7 @@ describe('resolveGenieSource', () => {
 // ---------------------------------------------------------------------------
 
 describe('stampWorkflow parity with council-stamp.cjs', () => {
-  test('produces byte-identical output and identical skip semantics', () => {
+  test('produces byte-identical workflow output and identical skip semantics', () => {
     const templatePath = join(fixture.root, 'council.template.js');
     writeFileSync(templatePath, TEMPLATE_BODY, 'utf8');
     const pluginRoot = '/opt/some/plugins/genie';
@@ -1126,6 +1247,10 @@ describe('stampWorkflow parity with council-stamp.cjs', () => {
     expect(readFileSync(join(tsDir, WORKFLOW_MANIFEST_NAME), 'utf8')).toBe(
       readFileSync(join(cjsDir, WORKFLOW_MANIFEST_NAME), 'utf8'),
     );
+    for (const dir of [tsDir, cjsDir]) {
+      expect(lstatSync(join(dir, TARGET_NAME)).mode & 0o7777).toBe(0o644);
+      expect(lstatSync(join(dir, WORKFLOW_MANIFEST_NAME)).mode & 0o7777).toBe(0o644);
+    }
 
     // idempotent skip on the unchanged re-run, for both implementations
     expect(stampWorkflow({ templatePath, pluginRoot, targetDir: tsDir }).action).toBe('skipped');
@@ -1176,6 +1301,36 @@ describe('stampWorkflow parity with council-stamp.cjs', () => {
     const modified = readFileSync(targetPath, 'utf8');
     expect(stampWorkflow({ templatePath, pluginRoot: '/newer/plugin', targetDir }).action).toBe('kept-modified');
     expect(readFileSync(targetPath, 'utf8')).toBe(modified);
+  });
+
+  test('council chmod-only edits fail closed before update or removal', () => {
+    const templatePath = join(fixture.root, 'council.template.js');
+    const targetDir = join(fixture.root, 'chmod-workflows');
+    const targetPath = join(targetDir, TARGET_NAME);
+    writeFileSync(templatePath, TEMPLATE_BODY, 'utf8');
+    stampWorkflow({ templatePath, pluginRoot: '/old/plugin', targetDir });
+    chmodSync(targetPath, 0o755);
+
+    expect(stampWorkflow({ templatePath, pluginRoot: '/new/plugin', targetDir }).action).toBe('kept-modified');
+    expect(removeManagedWorkflow(targetDir)).toBe('kept-modified');
+    expect(lstatSync(targetPath).mode & 0o7777).toBe(0o755);
+  });
+
+  test('a chmod race after council removal classification revokes destructive authority', () => {
+    const templatePath = join(fixture.root, 'council.template.js');
+    const targetDir = join(fixture.root, 'chmod-removal-race');
+    const targetPath = join(targetDir, TARGET_NAME);
+    writeFileSync(templatePath, TEMPLATE_BODY, 'utf8');
+    stampWorkflow({ templatePath, pluginRoot: '/old/plugin', targetDir });
+
+    expect(() =>
+      removeManagedWorkflow(targetDir, {
+        beforeRemoval: (stage) => {
+          if (stage === 'before-park') chmodSync(targetPath, 0o600);
+        },
+      }),
+    ).toThrow('changed before removal');
+    expect(lstatSync(targetPath).mode & 0o7777).toBe(0o600);
   });
 
   test('both council engines preserve a post-classification personal edit and quarantine the incoming version', () => {
@@ -1261,6 +1416,108 @@ describe('stampWorkflow parity with council-stamp.cjs', () => {
     }
   });
 
+  test('both council rollbacks preserve a byte-identical chmod racer plus prior and staged evidence', () => {
+    const templatePath = join(fixture.root, 'council.template.js');
+    writeFileSync(templatePath, TEMPLATE_BODY, 'utf8');
+    for (const [engine, stamp] of [
+      ['ts', stampWorkflow],
+      ['cjs', stampCouncilWorkflow],
+    ] as const) {
+      const targetDir = join(fixture.root, `workflow-rollback-race-${engine}`);
+      const targetPath = join(targetDir, TARGET_NAME);
+      stamp({ templatePath, pluginRoot: '/old/plugin', targetDir });
+
+      expect(() =>
+        stamp({
+          templatePath,
+          pluginRoot: '/incoming/plugin',
+          targetDir,
+          beforePublish: () => {
+            const transaction = readdirSync(targetDir).find((name) => name.startsWith('.council.genie-txn-'));
+            if (transaction === undefined) throw new Error('missing workflow transaction');
+            writeFileSync(targetPath, readFileSync(join(targetDir, transaction, 'staged', TARGET_NAME)));
+            chmodSync(targetPath, 0o600);
+            throw new Error('fail after byte-identical chmod racer');
+          },
+        }),
+      ).toThrow('preserved workflow evidence');
+
+      expect(readFileSync(targetPath, 'utf8')).toContain('/incoming/plugin');
+      expect(lstatSync(targetPath).mode & 0o7777).toBe(0o600);
+      const conflict = readdirSync(targetDir).find((name) => name.startsWith('.council.genie-conflict-')) as string;
+      expect(readFileSync(join(targetDir, conflict, 'before', TARGET_NAME), 'utf8')).toContain('/old/plugin');
+      expect(readFileSync(join(targetDir, conflict, 'staged', TARGET_NAME), 'utf8')).toContain('/incoming/plugin');
+    }
+  });
+
+  test('SessionStart recovery preserves a byte-identical chmod racer plus prior and staged evidence', () => {
+    const templatePath = join(fixture.root, 'council.template.js');
+    const targetDir = join(fixture.root, 'cjs-workflow-recovery-race');
+    const targetPath = join(targetDir, TARGET_NAME);
+    const manifestPath = join(targetDir, WORKFLOW_MANIFEST_NAME);
+    writeFileSync(templatePath, TEMPLATE_BODY, 'utf8');
+    stampCouncilWorkflow({ templatePath, pluginRoot: '/old/plugin', targetDir, now: FIXED_NOW });
+    const oldTarget = readFileSync(targetPath);
+    const oldManifest = readFileSync(manifestPath);
+    stampCouncilWorkflow({ templatePath, pluginRoot: '/incoming/plugin', targetDir, now: FIXED_NOW });
+    const incomingTarget = readFileSync(targetPath);
+    const incomingManifest = readFileSync(manifestPath);
+    const transaction = join(targetDir, '.council.genie-txn-cjs-recovery-race');
+    writeFile(join(transaction, 'before', TARGET_NAME), oldTarget.toString());
+    writeFile(join(transaction, 'before', WORKFLOW_MANIFEST_NAME), oldManifest.toString());
+    writeFile(join(transaction, 'staged', TARGET_NAME), incomingTarget.toString());
+    writeFile(join(transaction, 'staged', WORKFLOW_MANIFEST_NAME), incomingManifest.toString());
+    writeFile(
+      join(transaction, 'journal.json'),
+      `${JSON.stringify({
+        version: 2,
+        targetDigest: createHash('sha256').update(incomingTarget).digest('hex'),
+        manifestDigest: createHash('sha256').update(incomingManifest).digest('hex'),
+        hadTarget: true,
+        hadManifest: true,
+        beforeTargetDigest: createHash('sha256').update(oldTarget).digest('hex'),
+        beforeManifestDigest: createHash('sha256').update(oldManifest).digest('hex'),
+        identityVersion: 2,
+        targetMode: 0o644,
+        manifestMode: 0o644,
+        beforeTargetMode: 0o644,
+        beforeManifestMode: 0o644,
+      })}\n`,
+    );
+    chmodSync(targetPath, 0o600);
+
+    expect(() => recoverCjsCouncilTransactions(targetDir)).toThrow('preserved workflow evidence');
+
+    expect(readFileSync(targetPath)).toEqual(incomingTarget);
+    expect(lstatSync(targetPath).mode & 0o7777).toBe(0o600);
+    const conflict = readdirSync(targetDir).find((name) => name.startsWith('.council.genie-conflict-')) as string;
+    expect(readFileSync(join(targetDir, conflict, 'before', TARGET_NAME))).toEqual(oldTarget);
+    expect(readFileSync(join(targetDir, conflict, 'staged', TARGET_NAME))).toEqual(incomingTarget);
+  });
+
+  test('v1 council removal recovery refuses content-only destructive authority', () => {
+    const templatePath = join(fixture.root, 'council.template.js');
+    const targetDir = join(fixture.root, 'workflow-v1-removal');
+    writeFileSync(templatePath, TEMPLATE_BODY, 'utf8');
+    stampWorkflow({ templatePath, pluginRoot: '/old/plugin', targetDir });
+    const targetDigest = createHash('sha256')
+      .update(readFileSync(join(targetDir, TARGET_NAME)))
+      .digest('hex');
+    const manifestDigest = createHash('sha256')
+      .update(readFileSync(join(targetDir, WORKFLOW_MANIFEST_NAME)))
+      .digest('hex');
+    const transaction = join(targetDir, '.council.genie-delete-v1-reviewer');
+    writeFile(join(transaction, 'journal.json'), `${JSON.stringify({ version: 1, targetDigest, manifestDigest })}\n`);
+    mkdirSync(join(transaction, 'parked'), { recursive: true });
+    renameSync(join(targetDir, TARGET_NAME), join(transaction, 'parked', TARGET_NAME));
+    renameSync(join(targetDir, WORKFLOW_MANIFEST_NAME), join(transaction, 'parked', WORKFLOW_MANIFEST_NAME));
+
+    expect(() => recoverManagedWorkflowTransactions(targetDir)).toThrow('lacks physical identity authority');
+    const conflict = readdirSync(targetDir).find((name) => name.startsWith('.council.genie-delete-conflict-'));
+    expect(conflict).toBeDefined();
+    expect(readFileSync(join(targetDir, conflict as string, 'parked', TARGET_NAME), 'utf8')).toContain('/old/plugin');
+  });
+
   test("TypeScript and SessionStart engines recover each other's version-2 council journals", () => {
     const templatePath = join(fixture.root, 'council.template.js');
     writeFileSync(templatePath, TEMPLATE_BODY, 'utf8');
@@ -1278,6 +1535,8 @@ describe('stampWorkflow parity with council-stamp.cjs', () => {
       const transaction = join(targetDir, `.council.genie-txn-cross-${name}`);
       writeFile(join(transaction, 'before', TARGET_NAME), oldTarget.toString());
       writeFile(join(transaction, 'before', WORKFLOW_MANIFEST_NAME), oldManifest.toString());
+      writeFile(join(transaction, 'staged', TARGET_NAME), nextTarget.toString());
+      writeFile(join(transaction, 'staged', WORKFLOW_MANIFEST_NAME), nextManifest.toString());
       writeFile(
         join(transaction, 'journal.json'),
         `${JSON.stringify({
@@ -1649,6 +1908,47 @@ describe('shared lifecycle lease', () => {
     expect(existsSync(path)).toBe(true);
     first.release();
     expect(existsSync(path)).toBe(false);
+  });
+
+  test('a child borrows only the exact shell-owned lifecycle lease and never releases it', () => {
+    const path = lifecycleLockPath(fixture.genieHome);
+    const owner = `${process.pid}:${'a'.repeat(32)}:${'b'.repeat(64)}`;
+    writeFile(path, `${owner}\n`);
+    process.env[LIFECYCLE_LEASE_PATH_ENV] = path;
+    process.env[LIFECYCLE_LEASE_OWNER_ENV] = owner;
+    try {
+      const borrowed = acquireLifecycleLease(fixture.genieHome);
+      expect('skipped' in borrowed).toBe(false);
+      if ('skipped' in borrowed) throw new Error(borrowed.skipped);
+      borrowed.release();
+      expect(readFileSync(path, 'utf8')).toBe(`${owner}\n`);
+    } finally {
+      delete process.env[LIFECYCLE_LEASE_PATH_ENV];
+      delete process.env[LIFECYCLE_LEASE_OWNER_ENV];
+      rmSync(path, { force: true });
+    }
+  });
+
+  test('forged or path-mismatched borrowed lifecycle leases fail closed', () => {
+    const path = lifecycleLockPath(fixture.genieHome);
+    const owner = `${process.pid}:${'c'.repeat(32)}:${'d'.repeat(64)}`;
+    writeFile(path, `${owner}\n`);
+    try {
+      for (const [borrowedPath, borrowedOwner] of [
+        [path, `${process.pid}:${'e'.repeat(32)}:${'d'.repeat(64)}`],
+        [`${path}.forged`, owner],
+      ]) {
+        process.env[LIFECYCLE_LEASE_PATH_ENV] = borrowedPath;
+        process.env[LIFECYCLE_LEASE_OWNER_ENV] = borrowedOwner;
+        const result = acquireLifecycleLease(fixture.genieHome);
+        expect('skipped' in result ? result.skipped : '').toContain('did not exactly match');
+        expect(readFileSync(path, 'utf8')).toBe(`${owner}\n`);
+      }
+    } finally {
+      delete process.env[LIFECYCLE_LEASE_PATH_ENV];
+      delete process.env[LIFECYCLE_LEASE_OWNER_ENV];
+      rmSync(path, { force: true });
+    }
   });
 });
 

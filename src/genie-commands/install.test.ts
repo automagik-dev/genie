@@ -9,6 +9,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { spawnSync } from 'node:child_process';
 import {
   chmodSync,
   existsSync,
@@ -19,10 +20,12 @@ import {
   rmSync,
   statSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { acquireLifecycleLease, lifecycleLockPath } from '../lib/agent-sync.js';
 import { convergeAuxiliaryTree } from './auxiliary-trees.js';
 import { type InstallOptions, installCommand, normalizeAuxLayout } from './install.js';
 import type { cleanupV4 } from './legacy-v4.js';
@@ -45,6 +48,141 @@ function makeCleanupSpy(): { runner: typeof cleanupV4; calls: () => number } {
 
 const noopLease = () => ({ path: '/tmp/test-lifecycle.lock', release: () => undefined });
 const noopConsent = () => undefined;
+
+describe('standalone install.sh lifecycle lease', () => {
+  let root: string;
+  let home: string;
+  let genieHome: string;
+  const installer = join(import.meta.dir, '..', '..', 'install.sh');
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'genie-install-shell-'));
+    home = join(root, 'home');
+    genieHome = join(home, '.genie');
+    mkdirSync(home, { recursive: true });
+  });
+
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  function shell(script: string) {
+    return spawnSync('bash', ['-c', script, 'bash', installer], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        HOME: home,
+        GENIE_HOME: genieHome,
+        GENIE_INSTALL_SOURCE_ONLY: '1',
+      },
+    });
+  }
+
+  test('acquires before an absent GENIE_HOME and owns continuously through final verification', () => {
+    const result = shell(`
+      source "$1"
+      need() { :; }
+      detect_platform() { printf 'darwin-arm64\\n'; }
+      resolve_channel() { printf 'stable\\n'; }
+      fetch_latest() { printf '{}\\n'; }
+      manifest_get() {
+        if [[ "$2" == 'version' ]]; then printf '5.9.0\\n'; else printf '/fixture\\n'; fi
+      }
+      assert_lease() {
+        test -f "$LIFECYCLE_LOCK"
+        test "$(sed -n '1p' "$LIFECYCLE_LOCK")" = "$LIFECYCLE_OWNER_RECORD"
+      }
+      download_and_verify() {
+        assert_lease
+        test ! -e "$GENIE_HOME"
+        printf '%s/payload.tar.gz\\n' "$TMP_DIR"
+      }
+      extract_and_link() {
+        assert_lease
+        mkdir -p "$GENIE_HOME/bin" "$LOCAL_BIN"
+        printf '#!/usr/bin/env bash\\n' > "$GENIE_HOME/bin/genie"
+        chmod +x "$GENIE_HOME/bin/genie"
+        ln -s "$GENIE_HOME/bin/genie" "$LOCAL_BIN/genie"
+      }
+      detect_legacy_install() { assert_lease; }
+      ensure_path_wired() { assert_lease; }
+      handoff_to_subcommand() { assert_lease; }
+      verify_installation() { assert_lease; test "$1" = '5.9.0'; }
+      main
+      test -z "$LIFECYCLE_LOCK"
+    `);
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).not.toContain('another Genie lifecycle command');
+    expect(existsSync(genieHome)).toBe(true);
+    expect(existsSync(lifecycleLockPath(genieHome))).toBe(false);
+  });
+
+  test('a losing installer does not create an absent GENIE_HOME', () => {
+    const lease = acquireLifecycleLease(genieHome);
+    expect('skipped' in lease).toBe(false);
+    if ('skipped' in lease) throw new Error(lease.skipped);
+    try {
+      const result = shell('source "$1"; acquire_lifecycle_lock');
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('another Genie lifecycle command is active');
+      expect(existsSync(genieHome)).toBe(false);
+    } finally {
+      lease.release();
+    }
+  });
+
+  test('recovers a stale dead shell owner using the shared steal guard', () => {
+    const lock = lifecycleLockPath(genieHome);
+    writeFileSync(lock, '999999:0123456789abcdef0123456789abcdef:unknown\n', { mode: 0o600 });
+    const stale = new Date(Date.now() - 11 * 60 * 1_000);
+    utimesSync(lock, stale, stale);
+
+    const result = shell('source "$1"; acquire_lifecycle_lock; test -f "$LIFECYCLE_LOCK"; release_lifecycle_lock');
+
+    expect(result.status).toBe(0);
+    expect(existsSync(lock)).toBe(false);
+    expect(existsSync(`${lock}.steal`)).toBe(false);
+  });
+
+  test('final verification compares one exact normalized version token, never a substring', () => {
+    const localBin = join(home, '.local', 'bin');
+    const binary = join(genieHome, 'bin', 'genie');
+    mkdirSync(dirname(binary), { recursive: true });
+    mkdirSync(localBin, { recursive: true });
+    writeFileSync(binary, "#!/usr/bin/env bash\nprintf 'genie v5.9.0\\n'\n", { mode: 0o755 });
+    symlinkSync(binary, join(localBin, 'genie'));
+
+    const exact = shell('source "$1"; acquire_lifecycle_lock; verify_installation 5.9.0; release_lifecycle_lock');
+    expect(exact.status).toBe(0);
+
+    writeFileSync(binary, "#!/usr/bin/env bash\nprintf 'genie v15.9.0\\n'\n", { mode: 0o755 });
+    const collision = shell('source "$1"; acquire_lifecycle_lock; verify_installation 5.9.0');
+    expect(collision.status).toBe(1);
+    expect(collision.stderr).toContain('version mismatch (expected 5.9.0, got 15.9.0)');
+  });
+
+  test('passes the exact owner record to the child finisher and treats failure as fatal', () => {
+    const localBin = join(home, '.local', 'bin');
+    const observed = join(root, 'observed-owner');
+    mkdirSync(localBin, { recursive: true });
+    writeFileSync(
+      join(localBin, 'genie'),
+      `#!/usr/bin/env bash\nset -euo pipefail\n[[ "\${1:-}" == install ]]\n[[ "$(sed -n '1p' "$GENIE_LIFECYCLE_LEASE_PATH")" == "$GENIE_LIFECYCLE_LEASE_OWNER" ]]\nprintf '%s' "$GENIE_LIFECYCLE_LEASE_OWNER" > ${JSON.stringify(observed)}\n`,
+      { mode: 0o755 },
+    );
+
+    const success = shell(
+      'source "$1"; acquire_lifecycle_lock; handoff_to_subcommand; test -f "$LIFECYCLE_LOCK"; release_lifecycle_lock',
+    );
+    expect(success.status).toBe(0);
+    expect(readFileSync(observed, 'utf8')).toMatch(/^[0-9]+:[a-f0-9]{32}:unknown$/);
+
+    writeFileSync(join(localBin, 'genie'), '#!/usr/bin/env bash\nexit 19\n', { mode: 0o755 });
+    const failure = shell('source "$1"; acquire_lifecycle_lock; handoff_to_subcommand');
+    expect(failure.status).toBe(1);
+    expect(failure.stderr).toContain('installation remains incomplete and retryable');
+    expect(existsSync(lifecycleLockPath(genieHome))).toBe(false);
+  });
+});
 
 describe('installCommand', () => {
   test('runs v4 cleanup + layout normalize + agent sync by default', () => {

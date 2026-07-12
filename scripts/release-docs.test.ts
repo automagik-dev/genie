@@ -340,14 +340,20 @@ describe('Group E release and documentation contracts', () => {
 
   test('design review evidence is digest-bound, persisted, and required before wish', () => {
     const brainstorm = read('skills/brainstorm/SKILL.md');
+    const review = read('skills/review/SKILL.md');
     const template = read('skills/brainstorm/references/design-template.md');
     const wish = read('skills/wish/SKILL.md');
     const lint = read('scripts/wishes-lint.ts');
     expect(brainstorm).toContain('design-review-evidence.mjs');
+    expect(brainstorm).toContain('--reviewed-sha256 "<reviewer-returned-sha256>"');
+    expect(brainstorm).toContain('rejects an edit made after review');
     expect(brainstorm).toContain('changing any reviewed design content invalidates the evidence');
+    expect(review).toContain('as `reviewed-sha256`');
+    expect(review).toContain('passes that value unchanged');
     expect(template).toContain('<!-- genie-design-review:start -->');
     expect(template).toContain('Reviewed content SHA-256');
     expect(wish).toContain('Missing evidence, a non-SHIP verdict, or a content-digest mismatch cannot be waived');
+    expect(wish).toContain('Never repair the failure with a locally recomputed digest');
     expect(lint).toContain('DESIGN_REVIEW_EVIDENCE_THRESHOLD');
     expect(lint).toContain('designReviewViolations');
   });

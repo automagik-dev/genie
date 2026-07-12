@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { stampDesignReview } from '../skills/brainstorm/references/design-review-evidence.mjs';
+import { designReviewDigest, stampDesignReview } from '../skills/brainstorm/references/design-review-evidence.mjs';
 
 const LINT_SCRIPT = join(import.meta.dir, 'wishes-lint.ts');
 const DESIGN_TEMPLATE = readFileSync(
@@ -63,6 +63,7 @@ function writeDesign(verdict: 'SHIP' | 'FIX-FIRST' = 'SHIP'): string {
     path,
     stampDesignReview(DESIGN_TEMPLATE, {
       verdict,
+      reviewedSha256: designReviewDigest(DESIGN_TEMPLATE),
       reviewer: 'reviewer/thread-42',
       reviewedAt: '2026-07-11T12:00:00.000Z',
     }),

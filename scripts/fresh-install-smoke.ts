@@ -316,6 +316,15 @@ function checkDesignReviewEvidenceTool(skillsDir: string, names: string[]): void
   try {
     const design = join(root, 'DESIGN.md');
     cpSync(template, design);
+    const digest = Bun.spawnSync(['node', brainstormTool, 'digest', design], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    if (digest.exitCode !== 0) fail(`design-review digest failed: ${digest.stderr.toString().trim()}`);
+    const reviewedSha256 = digest.stdout.toString().trim();
+    if (!/^[a-f0-9]{64}$/.test(reviewedSha256)) {
+      fail('design-review digest must be exactly 64 lowercase hex characters');
+    }
     const stamp = Bun.spawnSync(
       [
         'node',
@@ -324,6 +333,8 @@ function checkDesignReviewEvidenceTool(skillsDir: string, names: string[]): void
         design,
         '--verdict',
         'SHIP',
+        '--reviewed-sha256',
+        reviewedSha256,
         '--reviewer',
         'fresh-install-smoke',
         '--reviewed-at',

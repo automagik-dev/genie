@@ -83,9 +83,15 @@ export function designReviewViolations(source) {
   return violations;
 }
 
-export function stampDesignReview(source, { verdict, reviewer, reviewedAt = new Date().toISOString() }) {
+export function stampDesignReview(
+  source,
+  { verdict, reviewedSha256, reviewer, reviewedAt = new Date().toISOString() },
+) {
   reviewableDesign(source);
   if (!DESIGN_REVIEW_VERDICTS.has(verdict)) throw new Error(`unsupported design-review verdict: ${verdict}`);
+  if (typeof reviewedSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(reviewedSha256)) {
+    throw new Error('reviewed content SHA-256 must be 64 lowercase hex characters');
+  }
   if (typeof reviewer !== 'string' || reviewer.trim() === '' || /[\r\n]/.test(reviewer)) {
     throw new Error('reviewer must be a non-empty single-line identifier');
   }
@@ -93,12 +99,15 @@ export function stampDesignReview(source, { verdict, reviewer, reviewedAt = new 
     throw new Error('reviewed-at must be an ISO-8601 UTC instant');
   }
   const digest = designReviewDigest(source);
+  if (reviewedSha256 !== digest) {
+    throw new Error('design changed after review; reviewed content SHA-256 no longer matches');
+  }
   const block = [
     DESIGN_REVIEW_START,
     '## Design Review Evidence',
     '',
     `- **Verdict:** ${verdict}`,
-    `- **Reviewed content SHA-256:** \`${digest}\``,
+    `- **Reviewed content SHA-256:** \`${reviewedSha256}\``,
     `- **Reviewer:** ${reviewer.trim()}`,
     `- **Reviewed at:** ${new Date(reviewedAt).toISOString()}`,
     DESIGN_REVIEW_END,
@@ -117,7 +126,7 @@ export function runDesignReviewEvidenceCli() {
   const [command, designPath, ...args] = process.argv.slice(2);
   if (!designPath || !['digest', 'verify', 'stamp'].includes(command)) {
     throw new Error(
-      'usage: design-review-evidence.mjs digest|verify <DESIGN.md> | stamp <DESIGN.md> --verdict <verdict> --reviewer <id> [--reviewed-at <ISO>]',
+      'usage: design-review-evidence.mjs digest|verify <DESIGN.md> | stamp <DESIGN.md> --verdict <verdict> --reviewed-sha256 <sha256> --reviewer <id> [--reviewed-at <ISO>]',
     );
   }
   const source = readFileSync(designPath, 'utf8');
@@ -135,6 +144,7 @@ export function runDesignReviewEvidenceCli() {
   }
   const stamped = stampDesignReview(source, {
     verdict: option(args, '--verdict'),
+    reviewedSha256: option(args, '--reviewed-sha256'),
     reviewer: option(args, '--reviewer'),
     reviewedAt: option(args, '--reviewed-at'),
   });

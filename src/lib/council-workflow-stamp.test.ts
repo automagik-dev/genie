@@ -10,7 +10,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -152,6 +152,62 @@ describe('stampCouncilWorkflow', () => {
     expect(readFileSync(targetPath, 'utf8')).toBe(modified);
     expect(readFileSync(join(targetDir, WORKFLOW_MANIFEST_NAME), 'utf8')).toBe(sidecarBefore);
     expect(inspectManagedWorkflow(targetDir).state).toBe('managed-modified');
+  });
+
+  test('chmod-only edits to either managed artifact fail closed', () => {
+    for (const name of ['council.js', WORKFLOW_MANIFEST_NAME]) {
+      const caseDir = join(targetDir, name);
+      stampCouncilWorkflow({ templatePath, pluginRoot: '/old/plugins/genie', targetDir: caseDir });
+      const targetPath = join(caseDir, 'council.js');
+      const manifestPath = join(caseDir, WORKFLOW_MANIFEST_NAME);
+      const targetBefore = readFileSync(targetPath);
+      const manifestBefore = readFileSync(manifestPath);
+      const changedPath = join(caseDir, name);
+      chmodSync(changedPath, 0o755);
+
+      expect(inspectManagedWorkflow(caseDir).state).toBe('managed-modified');
+      expect(stampCouncilWorkflow({ templatePath, pluginRoot: '/new/plugins/genie', targetDir: caseDir }).action).toBe(
+        'kept-modified',
+      );
+      expect(readFileSync(targetPath)).toEqual(targetBefore);
+      expect(readFileSync(manifestPath)).toEqual(manifestBefore);
+      expect(lstatSync(changedPath).mode & 0o7777).toBe(0o755);
+    }
+  });
+
+  test('legacy content-only authority upgrades only with canonical physical evidence', () => {
+    const trustedDir = join(targetDir, 'trusted-v1');
+    stampCouncilWorkflow({ templatePath, pluginRoot: '/old/plugins/genie', targetDir: trustedDir });
+    const trustedManifestPath = join(trustedDir, WORKFLOW_MANIFEST_NAME);
+    const trustedManifest = JSON.parse(readFileSync(trustedManifestPath, 'utf8'));
+    trustedManifest.identityVersion = undefined;
+    trustedManifest.targetMode = undefined;
+    writeFileSync(trustedManifestPath, `${JSON.stringify(trustedManifest, null, 2)}\n`, 'utf8');
+
+    expect(inspectManagedWorkflow(trustedDir).state).toBe('managed-clean');
+    expect(stampCouncilWorkflow({ templatePath, pluginRoot: '/new/plugins/genie', targetDir: trustedDir }).action).toBe(
+      'written',
+    );
+    expect(JSON.parse(readFileSync(trustedManifestPath, 'utf8'))).toMatchObject({
+      identityVersion: 2,
+      targetMode: 0o644,
+    });
+
+    const changedDir = join(targetDir, 'changed-v1');
+    stampCouncilWorkflow({ templatePath, pluginRoot: '/old/plugins/genie', targetDir: changedDir });
+    const changedManifestPath = join(changedDir, WORKFLOW_MANIFEST_NAME);
+    const changedManifest = JSON.parse(readFileSync(changedManifestPath, 'utf8'));
+    changedManifest.identityVersion = undefined;
+    changedManifest.targetMode = undefined;
+    writeFileSync(changedManifestPath, `${JSON.stringify(changedManifest, null, 2)}\n`, 'utf8');
+    chmodSync(join(changedDir, 'council.js'), 0o755);
+
+    expect(inspectManagedWorkflow(changedDir).state).toBe('managed-modified');
+    expect(stampCouncilWorkflow({ templatePath, pluginRoot: '/new/plugins/genie', targetDir: changedDir }).action).toBe(
+      'kept-modified',
+    );
+    expect(lstatSync(join(changedDir, 'council.js')).mode & 0o7777).toBe(0o755);
+    expect(JSON.parse(readFileSync(changedManifestPath, 'utf8')).identityVersion).toBeUndefined();
   });
 
   test('corrupt ownership metadata fails closed without rewriting the target or sidecar', () => {

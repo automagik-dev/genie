@@ -93,10 +93,11 @@ describe('fresh-install-smoke', () => {
     expect(repositoryRootFromModuleUrl(moduleUrl)).toBe(checkout);
   });
 
-  test('exits 0 against the real repository skills tree', () => {
+  test('passes the digest-bound design review and post-stamp drift checks against the real skills tree', () => {
     const result = runSmoke();
     // Surface the failure reason if this ever regresses.
     expect(result.stdout + result.stderr).toContain('fresh-install-smoke: OK');
+    expect(result.stderr).toBe('');
     expect(result.code).toBe(0);
   });
 

@@ -21,6 +21,8 @@ const PLACEHOLDER = '__GENIE_LENS_ROOT__';
 const TARGET_NAME = 'council.js';
 const WORKFLOW_MANIFEST_NAME = `${TARGET_NAME}.genie-sync.json`;
 const MANAGED_BY = 'genie-agent-sync';
+const WORKFLOW_FILE_MODE = 0o644;
+const PHYSICAL_FILE_IDENTITY_VERSION = 2;
 const TRANSACTION_PREFIX = '.council.genie-txn-';
 const TRANSACTION_STAGING_PREFIX = '.council.genie-txn-staging-';
 const TRANSACTION_CONFLICT_PREFIX = '.council.genie-conflict-';
@@ -35,22 +37,23 @@ function lstatSafe(filePath) {
   }
 }
 
-/** @param {string} filePath @returns {string|null} */
-function regularFileDigest(filePath) {
-  const stat = lstatSafe(filePath);
-  if (stat === null || !stat.isFile() || stat.isSymbolicLink()) return null;
-  try {
-    return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
-  } catch {
-    return null;
-  }
-}
+/** @typedef {{kind:'absent'}|{kind:'regular',mode:number,digest:string}|{kind:'directory',mode:number}|{kind:'symlink',mode:number,target:string}|{kind:'other',mode:number,entry:string}|{kind:'unreadable',code:string}} PhysicalFileIdentity */
 
-/** @typedef {{kind:'absent'}|{kind:'regular',digest:string}|{kind:'non-regular',entry:'directory'|'symlink'|'other'}|{kind:'unreadable',code:string}} PhysicalFileIdentity */
+/** @typedef {{managedBy:string,version:string|null,digest:string,syncedAt:string,identityVersion?:number,targetMode?:number}} WorkflowOwnershipManifest */
+/** @typedef {{status:'missing'}|{status:'corrupt'}|{status:'valid',manifest:WorkflowOwnershipManifest,fileDigest:string}} WorkflowManifestReadResult */
 
 /** @param {unknown} error @returns {string} */
 function errorCode(error) {
   return error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'UNKNOWN';
+}
+
+/** @param {import('node:fs').Stats} stat @returns {string} */
+function physicalEntryKind(stat) {
+  if (stat.isFIFO()) return 'fifo';
+  if (stat.isSocket()) return 'socket';
+  if (stat.isBlockDevice()) return 'block-device';
+  if (stat.isCharacterDevice()) return 'character-device';
+  return 'other';
 }
 
 /** @param {string} filePath @returns {PhysicalFileIdentity} */
@@ -62,11 +65,22 @@ function physicalFileIdentity(filePath) {
     const code = errorCode(error);
     return code === 'ENOENT' ? { kind: 'absent' } : { kind: 'unreadable', code };
   }
-  if (stat.isSymbolicLink()) return { kind: 'non-regular', entry: 'symlink' };
-  if (stat.isDirectory()) return { kind: 'non-regular', entry: 'directory' };
-  if (!stat.isFile()) return { kind: 'non-regular', entry: 'other' };
+  const mode = stat.mode & 0o7777;
+  if (stat.isSymbolicLink()) {
+    try {
+      return { kind: 'symlink', mode, target: fs.readlinkSync(filePath) };
+    } catch (error) {
+      return { kind: 'unreadable', code: errorCode(error) };
+    }
+  }
+  if (stat.isDirectory()) return { kind: 'directory', mode };
+  if (!stat.isFile()) return { kind: 'other', mode, entry: physicalEntryKind(stat) };
   try {
-    return { kind: 'regular', digest: crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex') };
+    return {
+      kind: 'regular',
+      mode,
+      digest: crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex'),
+    };
   } catch (error) {
     const code = errorCode(error);
     return { kind: 'unreadable', code };
@@ -76,16 +90,26 @@ function physicalFileIdentity(filePath) {
 /** @param {PhysicalFileIdentity} left @param {PhysicalFileIdentity} right @returns {boolean} */
 function physicalIdentityEquals(left, right) {
   if (left.kind !== right.kind) return false;
-  if (left.kind === 'regular') return right.kind === 'regular' && left.digest === right.digest;
-  if (left.kind === 'non-regular') return right.kind === 'non-regular' && left.entry === right.entry;
+  if (left.kind === 'regular') {
+    return right.kind === 'regular' && left.mode === right.mode && left.digest === right.digest;
+  }
+  if (left.kind === 'directory') return right.kind === 'directory' && left.mode === right.mode;
+  if (left.kind === 'symlink') {
+    return right.kind === 'symlink' && left.mode === right.mode && left.target === right.target;
+  }
+  if (left.kind === 'other') {
+    return right.kind === 'other' && left.mode === right.mode && left.entry === right.entry;
+  }
   if (left.kind === 'unreadable') return right.kind === 'unreadable' && left.code === right.code;
   return left.kind === 'absent';
 }
 
-/** @param {string|null} digest @returns {PhysicalFileIdentity} */
-function expectedPhysicalFile(digest) {
-  return digest === null ? { kind: 'absent' } : { kind: 'regular', digest };
+/** @param {string|null} digest @param {number|null} mode @returns {PhysicalFileIdentity} */
+function expectedPhysicalFile(digest, mode) {
+  return digest === null || mode === null ? { kind: 'absent' } : { kind: 'regular', mode, digest };
 }
+
+class NoClobberPublishError extends Error {}
 
 /**
  * Publish a regular file only when the destination is absent. The disposable
@@ -104,12 +128,16 @@ function publishRegularFileNoClobber(stagedPath, targetPath) {
   fs.chmodSync(candidate, stat.mode & 0o7777);
   try {
     fs.linkSync(candidate, targetPath);
+  } catch (error) {
+    throw new NoClobberPublishError(
+      `exclusive publish failed (${errorCode(error)}); target was preserved: ${targetPath}`,
+    );
   } finally {
     fs.rmSync(candidate, { force: true });
   }
 }
 
-/** @param {string} manifestPath */
+/** @param {string} manifestPath @returns {WorkflowManifestReadResult} */
 function readWorkflowManifest(manifestPath) {
   const stat = lstatSafe(manifestPath);
   if (stat === null) return { status: 'missing' };
@@ -122,13 +150,23 @@ function readWorkflowManifest(manifestPath) {
       typeof parsed.digest !== 'string' ||
       !/^[a-f0-9]{64}$/.test(parsed.digest) ||
       (parsed.version !== null && parsed.version !== undefined && typeof parsed.version !== 'string') ||
-      typeof parsed.syncedAt !== 'string'
+      typeof parsed.syncedAt !== 'string' ||
+      (parsed.identityVersion !== undefined && parsed.identityVersion !== PHYSICAL_FILE_IDENTITY_VERSION) ||
+      (parsed.identityVersion === PHYSICAL_FILE_IDENTITY_VERSION && !isPhysicalMode(parsed.targetMode))
     ) {
       return { status: 'corrupt' };
     }
     return {
       status: 'valid',
-      manifest: parsed,
+      manifest: {
+        managedBy: MANAGED_BY,
+        version: parsed.version ?? null,
+        digest: parsed.digest,
+        syncedAt: parsed.syncedAt,
+        ...(parsed.identityVersion === PHYSICAL_FILE_IDENTITY_VERSION
+          ? { identityVersion: PHYSICAL_FILE_IDENTITY_VERSION, targetMode: parsed.targetMode }
+          : {}),
+      },
       fileDigest: crypto.createHash('sha256').update(content).digest('hex'),
     };
   } catch {
@@ -144,13 +182,31 @@ function inspectManagedWorkflow(targetDir) {
   const ownership = readWorkflowManifest(manifestPath);
   if (ownership.status === 'missing') return { targetPath, manifestPath, state: 'unmanaged' };
   if (ownership.status === 'corrupt') return { targetPath, manifestPath, state: 'corrupt-metadata' };
-  const digest = regularFileDigest(targetPath);
+  const manifest = ownership.manifest;
+  const targetIdentity = physicalFileIdentity(targetPath);
+  const manifestIdentity = physicalFileIdentity(manifestPath);
+  const expectedTargetMode =
+    manifest.identityVersion === PHYSICAL_FILE_IDENTITY_VERSION && isPhysicalMode(manifest.targetMode)
+      ? manifest.targetMode
+      : WORKFLOW_FILE_MODE;
+  const clean =
+    targetIdentity.kind === 'regular' &&
+    targetIdentity.digest === manifest.digest &&
+    targetIdentity.mode === expectedTargetMode &&
+    manifestIdentity.kind === 'regular' &&
+    manifestIdentity.digest === ownership.fileDigest &&
+    manifestIdentity.mode === WORKFLOW_FILE_MODE;
   return {
     targetPath,
     manifestPath,
-    state: digest !== null && digest === ownership.manifest.digest ? 'managed-clean' : 'managed-modified',
-    ...(digest !== null && digest === ownership.manifest.digest
-      ? { targetDigest: digest, manifestDigest: ownership.fileDigest }
+    state: clean ? 'managed-clean' : 'managed-modified',
+    ...(clean && targetIdentity.kind === 'regular' && manifestIdentity.kind === 'regular'
+      ? {
+          targetDigest: targetIdentity.digest,
+          manifestDigest: manifestIdentity.digest,
+          targetMode: targetIdentity.mode,
+          manifestMode: manifestIdentity.mode,
+        }
       : {}),
   };
 }
@@ -199,15 +255,25 @@ function stampCouncilWorkflow(opts) {
     version,
     digest: crypto.createHash('sha256').update(stamped).digest('hex'),
     syncedAt: now().toISOString(),
+    identityVersion: PHYSICAL_FILE_IDENTITY_VERSION,
+    targetMode: WORKFLOW_FILE_MODE,
   };
   const expected =
     ownership.state === 'managed-clean'
       ? {
           targetDigest: ownership.targetDigest || null,
           manifestDigest: ownership.manifestDigest || null,
+          targetMode: ownership.targetMode ?? null,
+          manifestMode: ownership.manifestMode ?? null,
         }
-      : { targetDigest: null, manifestDigest: null };
-  if (ownership.state === 'managed-clean' && (expected.targetDigest === null || expected.manifestDigest === null)) {
+      : { targetDigest: null, manifestDigest: null, targetMode: null, manifestMode: null };
+  if (
+    ownership.state === 'managed-clean' &&
+    (expected.targetDigest === null ||
+      expected.manifestDigest === null ||
+      expected.targetMode === null ||
+      expected.manifestMode === null)
+  ) {
     return { action: 'kept-modified', targetPath: ownership.targetPath };
   }
   publishTransaction(targetDir, stamped, manifest, expected, beforePromotion, afterAuthorization, beforePublish);
@@ -217,8 +283,8 @@ function stampCouncilWorkflow(opts) {
 /**
  * @param {string} targetDir
  * @param {string} stamped
- * @param {{managedBy:string,version:string|null,digest:string,syncedAt:string}} manifest
- * @param {{targetDigest:string|null,manifestDigest:string|null}} expected
+ * @param {{managedBy:string,version:string|null,digest:string,syncedAt:string,identityVersion:number,targetMode:number}} manifest
+ * @param {{targetDigest:string|null,manifestDigest:string|null,targetMode:number|null,manifestMode:number|null}} expected
  * @param {(()=>void)|undefined} beforePromotion
  * @param {(()=>void)|undefined} afterAuthorization
  * @param {(()=>void)|undefined} beforePublish
@@ -237,6 +303,13 @@ function publishTransaction(targetDir, stamped, manifest, expected, beforePromot
   fs.mkdirSync(staged, { recursive: true });
   fs.writeFileSync(path.join(staged, TARGET_NAME), stamped, 'utf8');
   fs.writeFileSync(path.join(staged, WORKFLOW_MANIFEST_NAME), manifestContent, 'utf8');
+  fs.chmodSync(path.join(staged, TARGET_NAME), WORKFLOW_FILE_MODE);
+  fs.chmodSync(path.join(staged, WORKFLOW_MANIFEST_NAME), WORKFLOW_FILE_MODE);
+  const stagedTarget = physicalFileIdentity(path.join(staged, TARGET_NAME));
+  const stagedManifest = physicalFileIdentity(path.join(staged, WORKFLOW_MANIFEST_NAME));
+  if (stagedTarget.kind !== 'regular' || stagedManifest.kind !== 'regular') {
+    throw new Error('council workflow staging did not produce physical regular files');
+  }
   fs.writeFileSync(
     path.join(working, 'journal.json'),
     `${JSON.stringify({
@@ -247,6 +320,11 @@ function publishTransaction(targetDir, stamped, manifest, expected, beforePromot
       hadManifest: expected.manifestDigest !== null,
       beforeTargetDigest: expected.targetDigest,
       beforeManifestDigest: expected.manifestDigest,
+      identityVersion: PHYSICAL_FILE_IDENTITY_VERSION,
+      targetMode: stagedTarget.mode,
+      manifestMode: stagedManifest.mode,
+      beforeTargetMode: expected.targetMode,
+      beforeManifestMode: expected.manifestMode,
     })}\n`,
     'utf8',
   );
@@ -256,8 +334,8 @@ function publishTransaction(targetDir, stamped, manifest, expected, beforePromot
   fs.mkdirSync(before, { recursive: true });
   try {
     if (beforePromotion) beforePromotion();
-    const expectedTarget = expectedPhysicalFile(expected.targetDigest);
-    const expectedManifest = expectedPhysicalFile(expected.manifestDigest);
+    const expectedTarget = expectedPhysicalFile(expected.targetDigest, expected.targetMode);
+    const expectedManifest = expectedPhysicalFile(expected.manifestDigest, expected.manifestMode);
     if (
       !physicalIdentityEquals(physicalFileIdentity(targetPath), expectedTarget) ||
       !physicalIdentityEquals(physicalFileIdentity(manifestPath), expectedManifest)
@@ -266,18 +344,15 @@ function publishTransaction(targetDir, stamped, manifest, expected, beforePromot
       throw new Error(`council workflow changed before promotion; kept live and incoming versions at ${conflict}`);
     }
     if (afterAuthorization) afterAuthorization();
-    if (lstatSafe(targetPath) !== null) fs.renameSync(targetPath, path.join(before, TARGET_NAME));
-    if (lstatSafe(manifestPath) !== null) fs.renameSync(manifestPath, path.join(before, WORKFLOW_MANIFEST_NAME));
+    if (expected.targetDigest !== null) fs.renameSync(targetPath, path.join(before, TARGET_NAME));
+    if (expected.manifestDigest !== null) fs.renameSync(manifestPath, path.join(before, WORKFLOW_MANIFEST_NAME));
     if (
       !physicalIdentityEquals(physicalFileIdentity(path.join(before, TARGET_NAME)), expectedTarget) ||
       !physicalIdentityEquals(physicalFileIdentity(path.join(before, WORKFLOW_MANIFEST_NAME)), expectedManifest) ||
       physicalFileIdentity(targetPath).kind !== 'absent' ||
       physicalFileIdentity(manifestPath).kind !== 'absent'
     ) {
-      if (lstatSafe(targetPath) === null && lstatSafe(path.join(before, TARGET_NAME)) !== null)
-        fs.renameSync(path.join(before, TARGET_NAME), targetPath);
-      if (lstatSafe(manifestPath) === null && lstatSafe(path.join(before, WORKFLOW_MANIFEST_NAME)) !== null)
-        fs.renameSync(path.join(before, WORKFLOW_MANIFEST_NAME), manifestPath);
+      restoreWorkflowPreimagesNoClobber(targetDir, transactionDir);
       const conflict = preserveConflict(transactionDir);
       throw new Error(`council workflow changed during promotion; kept both versions at ${conflict}`);
     }
@@ -292,8 +367,8 @@ function publishTransaction(targetDir, stamped, manifest, expected, beforePromot
       );
     }
     if (
-      !physicalIdentityEquals(physicalFileIdentity(targetPath), { kind: 'regular', digest: targetDigest }) ||
-      !physicalIdentityEquals(physicalFileIdentity(manifestPath), { kind: 'regular', digest: manifestDigest })
+      !physicalIdentityEquals(physicalFileIdentity(targetPath), stagedTarget) ||
+      !physicalIdentityEquals(physicalFileIdentity(manifestPath), stagedManifest)
     ) {
       throw new Error('council workflow changed before transaction commit');
     }
@@ -301,7 +376,11 @@ function publishTransaction(targetDir, stamped, manifest, expected, beforePromot
     fs.rmSync(transactionDir, { recursive: true, force: true });
   } catch (error) {
     if (!fs.existsSync(transactionDir)) throw error;
-    rollbackTransaction(targetDir, transactionDir);
+    try {
+      rollbackTransaction(targetDir, transactionDir);
+    } catch (rollbackError) {
+      throw new Error(`${errorMessage(error)}; council workflow rollback failed: ${errorMessage(rollbackError)}`);
+    }
     throw error;
   }
 }
@@ -327,7 +406,15 @@ function readTransactionJournal(transactionDir) {
     !isOptionalDigest(parsed.beforeTargetDigest) ||
     !isOptionalDigest(parsed.beforeManifestDigest) ||
     parsed.hadTarget !== (parsed.beforeTargetDigest !== null) ||
-    parsed.hadManifest !== (parsed.beforeManifestDigest !== null)
+    parsed.hadManifest !== (parsed.beforeManifestDigest !== null) ||
+    (parsed.identityVersion !== undefined && parsed.identityVersion !== PHYSICAL_FILE_IDENTITY_VERSION) ||
+    (parsed.identityVersion === PHYSICAL_FILE_IDENTITY_VERSION &&
+      (!isPhysicalMode(parsed.targetMode) ||
+        !isPhysicalMode(parsed.manifestMode) ||
+        !isOptionalPhysicalMode(parsed.beforeTargetMode) ||
+        !isOptionalPhysicalMode(parsed.beforeManifestMode) ||
+        parsed.hadTarget !== (parsed.beforeTargetMode !== null) ||
+        parsed.hadManifest !== (parsed.beforeManifestMode !== null)))
   ) {
     throw new Error(`invalid council workflow transaction: ${transactionDir}`);
   }
@@ -346,11 +433,26 @@ function recoverTransactions(targetDir) {
     const transactionDir = path.join(targetDir, name);
     const journal = readTransactionJournal(transactionDir);
     if (fs.existsSync(path.join(transactionDir, 'COMMITTED'))) {
+      const targetIdentity = journaledWorkflowIdentity(
+        transactionDir,
+        TARGET_NAME,
+        journal.targetDigest,
+        journal.targetMode,
+        path.join(transactionDir, 'staged', TARGET_NAME),
+      );
+      const manifestIdentity = journaledWorkflowIdentity(
+        transactionDir,
+        WORKFLOW_MANIFEST_NAME,
+        journal.manifestDigest,
+        journal.manifestMode,
+        path.join(transactionDir, 'staged', WORKFLOW_MANIFEST_NAME),
+      );
       if (
-        regularFileDigest(path.join(targetDir, TARGET_NAME)) !== journal.targetDigest ||
-        regularFileDigest(path.join(targetDir, WORKFLOW_MANIFEST_NAME)) !== journal.manifestDigest
+        !physicalIdentityEquals(physicalFileIdentity(path.join(targetDir, TARGET_NAME)), targetIdentity) ||
+        !physicalIdentityEquals(physicalFileIdentity(path.join(targetDir, WORKFLOW_MANIFEST_NAME)), manifestIdentity)
       ) {
-        throw new Error(`committed council workflow transaction is inconsistent: ${transactionDir}`);
+        const conflict = preserveConflict(transactionDir);
+        throw new Error(`committed council workflow transaction is inconsistent; preserved at ${conflict}`);
       }
       fs.rmSync(transactionDir, { recursive: true, force: true });
     } else {
@@ -359,35 +461,189 @@ function recoverTransactions(targetDir) {
   }
 }
 
-/** @param {string} targetDir @param {string} transactionDir */
-function rollbackTransaction(targetDir, transactionDir) {
-  const journal = readTransactionJournal(transactionDir);
-  for (const [name, digest, had, beforeDigest] of [
-    [TARGET_NAME, journal.targetDigest, journal.hadTarget, journal.beforeTargetDigest],
-    [WORKFLOW_MANIFEST_NAME, journal.manifestDigest, journal.hadManifest, journal.beforeManifestDigest],
-  ]) {
+/** @param {string} targetDir @param {string} sourceDir @returns {boolean} */
+function publishWorkflowPreimagesNoClobber(targetDir, sourceDir) {
+  let complete = true;
+  for (const name of [TARGET_NAME, WORKFLOW_MANIFEST_NAME]) {
+    const parked = path.join(sourceDir, name);
     const target = path.join(targetDir, name);
-    const before = path.join(transactionDir, 'before', name);
-    if (lstatSafe(before) !== null) {
-      if (regularFileDigest(before) !== beforeDigest) throw new Error(`council transaction prior target changed: ${before}`);
-      if (lstatSafe(target) !== null) {
-        if (regularFileDigest(target) !== digest) throw new Error(`council transaction target changed: ${target}`);
-        fs.rmSync(target, { force: true });
-      }
-      fs.renameSync(before, target);
-    } else if (!had && lstatSafe(target) !== null) {
-      if (regularFileDigest(target) !== digest) throw new Error(`council transaction target changed: ${target}`);
-      fs.rmSync(target, { force: true });
-    } else if (had) {
-      if (regularFileDigest(target) !== beforeDigest) throw new Error(`council transaction lost prior target: ${target}`);
+    if (lstatSafe(parked) === null) continue;
+    if (physicalFileIdentity(target).kind !== 'absent') {
+      complete = false;
+      continue;
+    }
+    try {
+      publishRegularFileNoClobber(parked, target);
+    } catch (error) {
+      if (!(error instanceof NoClobberPublishError)) throw error;
+      complete = false;
     }
   }
-  fs.rmSync(transactionDir, { recursive: true, force: true });
+  return complete;
+}
+
+/** @param {string} targetDir @param {string} transactionDir @returns {boolean} */
+function restoreWorkflowPreimagesNoClobber(targetDir, transactionDir) {
+  return publishWorkflowPreimagesNoClobber(targetDir, path.join(transactionDir, 'before'));
+}
+
+/**
+ * @param {string} transactionDir
+ * @param {string} name
+ * @param {string} digest
+ * @param {number|null|undefined} mode
+ * @param {string} evidencePath
+ * @param {number} [referenceMode]
+ * @returns {{kind:'regular',mode:number,digest:string}}
+ */
+function journaledWorkflowIdentity(transactionDir, name, digest, mode, evidencePath, referenceMode) {
+  if (isPhysicalMode(mode)) return { kind: 'regular', mode, digest };
+  const evidence = physicalFileIdentity(evidencePath);
+  if (
+    evidence.kind !== 'regular' ||
+    evidence.digest !== digest ||
+    (referenceMode !== undefined && evidence.mode !== referenceMode)
+  ) {
+    throw new Error(
+      `legacy council transaction cannot safely upgrade physical authority for ${name}: ${transactionDir}`,
+    );
+  }
+  return evidence;
+}
+
+/**
+ * @param {string} transactionDir
+ * @param {string} name
+ * @param {string} target
+ * @param {{kind:'regular',mode:number,digest:string}} expected
+ */
+function parkWorkflowRollbackTarget(transactionDir, name, target, expected) {
+  const current = physicalFileIdentity(target);
+  if (current.kind === 'absent') return;
+  if (!physicalIdentityEquals(current, expected)) {
+    throw new Error(`council transaction target changed: ${target}`);
+  }
+  const publishedDir = path.join(transactionDir, 'published');
+  fs.mkdirSync(publishedDir, { recursive: true });
+  const parked = path.join(publishedDir, name);
+  fs.renameSync(target, parked);
+  if (!physicalIdentityEquals(physicalFileIdentity(parked), expected)) {
+    if (physicalFileIdentity(target).kind === 'absent') {
+      try {
+        publishRegularFileNoClobber(parked, target);
+      } catch {
+        // Both the moved object and any racing live object remain as evidence.
+      }
+    }
+    throw new Error(`council transaction target changed while being parked: ${target}`);
+  }
+}
+
+/** @param {string} targetDir @param {string} transactionDir */
+function rollbackTransaction(targetDir, transactionDir) {
+  try {
+    const journal = readTransactionJournal(transactionDir);
+    const entries = [
+      [
+        TARGET_NAME,
+        journal.targetDigest,
+        journal.targetMode,
+        journal.hadTarget,
+        journal.beforeTargetDigest,
+        journal.beforeTargetMode,
+      ],
+      [
+        WORKFLOW_MANIFEST_NAME,
+        journal.manifestDigest,
+        journal.manifestMode,
+        journal.hadManifest,
+        journal.beforeManifestDigest,
+        journal.beforeManifestMode,
+      ],
+    ];
+    const resolved = entries.map(([name, digest, mode, had, beforeDigest, beforeMode]) => {
+      const target = path.join(targetDir, name);
+      const before = path.join(transactionDir, 'before', name);
+      const staged = journaledWorkflowIdentity(
+        transactionDir,
+        name,
+        digest,
+        mode,
+        path.join(transactionDir, 'staged', name),
+      );
+      let prior = null;
+      if (lstatSafe(before) !== null) {
+        if (beforeDigest === null) throw new Error(`council transaction has an unexpected prior target: ${before}`);
+        prior = journaledWorkflowIdentity(
+          transactionDir,
+          name,
+          beforeDigest,
+          beforeMode,
+          before,
+          mode === undefined ? staged.mode : undefined,
+        );
+        if (!physicalIdentityEquals(physicalFileIdentity(before), prior)) {
+          throw new Error(`council transaction prior target changed: ${before}`);
+        }
+      } else if (!had) {
+        prior = null;
+      } else {
+        if (beforeDigest === null) throw new Error(`council transaction lost prior target: ${target}`);
+        prior = journaledWorkflowIdentity(
+          transactionDir,
+          name,
+          beforeDigest,
+          beforeMode,
+          target,
+          mode === undefined ? staged.mode : undefined,
+        );
+        if (!physicalIdentityEquals(physicalFileIdentity(target), prior)) {
+          throw new Error(`council transaction lost prior target: ${target}`);
+        }
+      }
+      return { name, target, before, staged, prior, had };
+    });
+
+    for (const entry of resolved) {
+      if (lstatSafe(entry.before) !== null || !entry.had) {
+        parkWorkflowRollbackTarget(transactionDir, entry.name, entry.target, entry.staged);
+      }
+    }
+    if (!restoreWorkflowPreimagesNoClobber(targetDir, transactionDir)) {
+      throw new Error('council transaction restore raced with new live data');
+    }
+    for (const entry of resolved) {
+      const expected = entry.prior ?? { kind: 'absent' };
+      if (!physicalIdentityEquals(physicalFileIdentity(entry.target), expected)) {
+        throw new Error(`council transaction restore changed before cleanup: ${entry.target}`);
+      }
+    }
+    fs.rmSync(transactionDir, { recursive: true, force: true });
+  } catch (error) {
+    if (lstatSafe(transactionDir) === null) throw error;
+    const conflict = preserveConflict(transactionDir);
+    throw new Error(`${errorMessage(error)}; preserved workflow evidence at ${conflict}`);
+  }
 }
 
 /** @param {unknown} value @returns {boolean} */
 function isOptionalDigest(value) {
   return value === null || (typeof value === 'string' && /^[a-f0-9]{64}$/.test(value));
+}
+
+/** @param {unknown} value @returns {value is number} */
+function isPhysicalMode(value) {
+  return Number.isInteger(value) && Number(value) >= 0 && Number(value) <= 0o7777;
+}
+
+/** @param {unknown} value @returns {boolean} */
+function isOptionalPhysicalMode(value) {
+  return value === null || isPhysicalMode(value);
+}
+
+/** @param {unknown} error @returns {string} */
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /** @param {string} targetDir @param {string} preparation */

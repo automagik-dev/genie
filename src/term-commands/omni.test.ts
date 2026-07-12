@@ -14,7 +14,7 @@
 import type { Database } from 'bun:sqlite';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { createHash, createPublicKey, verify } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { omniApproval } from '../hooks/handlers/omni-approval.js';
@@ -24,7 +24,7 @@ import { registerAgentInOmni } from '../lib/omni-registration.js';
 import { createOmniRunner, natsConnectionCount } from '../lib/omni-runner.js';
 import { __test__ as sigTest } from '../lib/omni-signature.js';
 import { openGlobalDb } from '../lib/v5/global-db.js';
-import { listInbox } from '../lib/v5/omni-queue.js';
+import { enqueueApproval, listInbox } from '../lib/v5/omni-queue.js';
 import { __test__ as omniTest } from './omni.js';
 
 function rt(overrides: Partial<OmniRuntimeConfig> = {}): OmniRuntimeConfig {
@@ -274,6 +274,142 @@ describe('transport is not initialized without `omni serve`', () => {
     runner.tick();
     listInbox(db);
     expect(natsConnectionCount()).toBe(0);
+  });
+});
+
+describe('omni status credential redaction', () => {
+  async function captureStatus(json: boolean): Promise<string> {
+    const realWrite = process.stdout.write.bind(process.stdout);
+    const home = mkdtempSync(join(tmpdir(), 'omni-status-'));
+    const keys = ['GENIE_HOME', 'OMNI_API_KEY', 'OMNI_NATS_URL', 'OMNI_INSTANCE', 'OMNI_APPROVAL_CHAT'] as const;
+    const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]])) as Record<
+      (typeof keys)[number],
+      string | undefined
+    >;
+    let buffer = '';
+    process.env.GENIE_HOME = home;
+    for (const key of keys.slice(1)) Reflect.deleteProperty(process.env, key);
+    writeFileSync(
+      join(home, 'config.json'),
+      JSON.stringify({
+        omni: {
+          apiUrl: 'https://status-api.example.test',
+          apiKey: 'STATUS_API_KEY_SENTINEL',
+          natsUrl: 'nats://status-user:status-password@nats.example:4222?tls=1&opaque=STATUS_QUERY_SECRET',
+          instance: 'instance-STATUS_API_KEY_SENTINEL',
+          approvalChat: 'approval-chat',
+        },
+      }),
+    );
+    const db = openGlobalDb();
+    enqueueApproval(db, { repo: '/status', tool: 'Bash', inputSummary: 'status fixture' });
+    db.close();
+    process.stdout.write = ((chunk: string) => {
+      buffer += chunk;
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      await omniTest.statusCommand({ json });
+      return buffer;
+    } finally {
+      process.stdout.write = realWrite;
+      for (const key of keys) restoreEnv(key, previous[key]);
+      rmSync(home, { recursive: true, force: true });
+    }
+  }
+
+  function expectStatusRedacted(output: string): void {
+    for (const secret of [
+      'STATUS_API_KEY_SENTINEL',
+      'status-user',
+      'status-password',
+      'STATUS_QUERY_SECRET',
+      'tls=1',
+    ]) {
+      expect(output).not.toContain(secret);
+    }
+    expect(output).toContain('[REDACTED]');
+  }
+
+  test('human status redacts configured API keys and credential URL userinfo/query', async () => {
+    const output = await captureStatus(false);
+    expectStatusRedacted(output);
+    expect(output).toContain('tls=[REDACTED]&opaque=[REDACTED]');
+    expect(output).toContain('pending=1');
+  });
+
+  test('JSON status remains valid while redacting configured API keys and credential URL userinfo/query', async () => {
+    const output = await captureStatus(true);
+    expectStatusRedacted(output);
+    expect(JSON.parse(output)).toMatchObject({
+      instance: 'instance-[REDACTED]',
+      natsUrl: 'nats://[REDACTED]@nats.example:4222?tls=[REDACTED]&opaque=[REDACTED]',
+      approvals: { pending: 1 },
+    });
+  });
+
+  test('serve passes the raw URL inward but exposes only a config-redacted startup error', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'omni-serve-error-'));
+    const keys = [
+      'GENIE_HOME',
+      'OMNI_API_KEY',
+      'OMNI_NATS_URL',
+      'OMNI_INSTANCE',
+      'OMNI_APPROVAL_CHAT',
+      'OMNI_APPROVALS_ENABLED',
+    ] as const;
+    const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]])) as Record<
+      (typeof keys)[number],
+      string | undefined
+    >;
+    const apiKey = 'SERVE_API_KEY_SENTINEL';
+    const apiUrl = 'https://serve-api-user:serve-api-password@api.example.test?opaque=SERVE_API_QUERY_SECRET';
+    const natsUrl = 'nats://serve-user:serve-password@nats.example:4222?opaque=SERVE_QUERY_SECRET';
+    let observedServers: string | undefined;
+    process.env.GENIE_HOME = home;
+    for (const key of keys.slice(1)) Reflect.deleteProperty(process.env, key);
+    writeFileSync(
+      join(home, 'config.json'),
+      JSON.stringify({
+        omni: {
+          apiUrl,
+          apiKey,
+          natsUrl,
+          instance: 'instance',
+          approvalChat: 'approval-chat',
+          approvals: { enabled: true },
+        },
+      }),
+    );
+    try {
+      let thrown: unknown;
+      try {
+        await omniTest.serveCommand(async ({ servers }) => {
+          observedServers = servers;
+          throw new Error(`startup rejected ${servers} via ${apiUrl} with ${apiKey}`);
+        });
+      } catch (error) {
+        thrown = error;
+      }
+      expect(observedServers).toBe(natsUrl);
+      expect(thrown).toBeInstanceOf(Error);
+      const rendered = `${String(thrown)}\n${thrown instanceof Error ? thrown.stack : ''}`;
+      for (const secret of [
+        apiKey,
+        'serve-user',
+        'serve-password',
+        'SERVE_QUERY_SECRET',
+        'serve-api-user',
+        'serve-api-password',
+        'SERVE_API_QUERY_SECRET',
+      ]) {
+        expect(rendered).not.toContain(secret);
+      }
+      expect(rendered).toContain('[REDACTED]');
+    } finally {
+      for (const key of keys) restoreEnv(key, previous[key]);
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
 
