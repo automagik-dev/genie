@@ -13,7 +13,6 @@
  * non-zero if any check is a hard failure.
  */
 
-import { execFileSync } from 'node:child_process';
 import { existsSync, lstatSync, readFileSync, readdirSync, readlinkSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -26,7 +25,13 @@ import {
   resolveAgentsSkillsDir,
   resolveGenieSource,
 } from '../lib/agent-sync.js';
-import { DEAD_GENIE_OTEL_EXPORTER, getCodexConfigPath, getCodexHome } from '../lib/codex-config.js';
+import { DEAD_GENIE_OTEL_EXPORTER, getCodexConfigPath } from '../lib/codex-config.js';
+import {
+  type CodexPluginProbe,
+  inspectCodexProjectMcp,
+  probeCodexGeniePlugin,
+  resolveGitProjectRoots,
+} from '../lib/codex-project-mcp.js';
 import { loadGenieConfig } from '../lib/genie-config.js';
 import {
   resolveClaudeDir,
@@ -35,8 +40,8 @@ import {
   resolveHermesHome,
 } from '../lib/genie-home.js';
 import { resolveOmniRuntimeConfig } from '../lib/omni-config.js';
-import { codexPluginState, resolveBundleRoot } from '../lib/runtime-integrations.js';
-import { CURRENT_SCHEMA_VERSION, GenieDbError, openDb, resolveDbPath, resolveRepoRoot } from '../lib/v5/genie-db.js';
+import { inspectCodexAgentOwnership } from '../lib/runtime-integrations.js';
+import { CURRENT_SCHEMA_VERSION, GenieDbError, openDb } from '../lib/v5/genie-db.js';
 import { VERSION } from '../lib/version.js';
 import {
   cleanupV4,
@@ -48,6 +53,8 @@ import {
 } from './legacy-v4.js';
 
 type CheckStatus = 'pass' | 'warn' | 'fail';
+
+export const MINIMUM_BUN_VERSION = '1.3.10';
 
 interface CheckResult {
   name: string;
@@ -72,13 +79,7 @@ const GLYPH: Record<CheckStatus, string> = {
 
 function whichBinary(name: string): string | null {
   try {
-    const bunWhich = (Bun as unknown as { which?: (n: string) => string | null }).which;
-    if (typeof bunWhich === 'function') return bunWhich(name);
-  } catch {
-    /* fall through to execFileSync */
-  }
-  try {
-    return execFileSync('which', [name], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || null;
+    return Bun.which(name);
   } catch {
     return null;
   }
@@ -104,7 +105,7 @@ function checkGenieBinary(): CheckResult[] {
   return results;
 }
 
-function checkGit(): CheckResult[] {
+function checkGit(root: string | null): CheckResult[] {
   const gitPath = whichBinary('git');
   if (!gitPath) {
     return [
@@ -117,17 +118,9 @@ function checkGit(): CheckResult[] {
     ];
   }
   const results: CheckResult[] = [{ name: 'git present', status: 'pass', detail: gitPath }];
-  try {
-    const inside = execFileSync('git', ['rev-parse', '--is-inside-work-tree'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
-    if (inside === 'true') {
-      results.push({ name: 'inside a git repository', status: 'pass', detail: resolveRepoRoot() });
-    } else {
-      results.push({ name: 'inside a git repository', status: 'warn', detail: 'not a work tree' });
-    }
-  } catch {
+  if (root !== null) {
+    results.push({ name: 'inside a git repository', status: 'pass', detail: root });
+  } else {
     results.push({
       name: 'inside a git repository',
       status: 'warn',
@@ -138,8 +131,8 @@ function checkGit(): CheckResult[] {
   return results;
 }
 
-function checkDatabase(): CheckResult[] {
-  const dbPath = resolveDbPath();
+function checkDatabase(root: string | null): CheckResult[] {
+  const dbPath = join(root ?? process.cwd(), '.genie', 'genie.db');
   if (!existsSync(dbPath)) {
     return [
       {
@@ -173,10 +166,12 @@ function checkDatabase(): CheckResult[] {
   }
 }
 
-function checkSkills(): CheckResult[] {
+function checkSkills(root: string | null): CheckResult[] {
   // skills/ ships alongside the source tree; resolve it relative to the repo
   // root (dev) — an installed plugin bundle exposes the same directory.
-  const candidates = [join(resolveRepoRoot(), 'skills'), join(import.meta.dir, '..', '..', 'skills')];
+  const candidates = [root === null ? null : join(root, 'skills'), join(import.meta.dir, '..', '..', 'skills')].filter(
+    (candidate): candidate is string => candidate !== null,
+  );
   const found = candidates.find((p) => existsSync(join(p, 'wish', 'SKILL.md')) || existsSync(join(p, 'wish.md')));
   if (found) {
     return [{ name: 'skills present', status: 'pass', detail: found }];
@@ -191,10 +186,85 @@ function checkSkills(): CheckResult[] {
   ];
 }
 
-function checkBun(): CheckResult[] {
-  const bunVersion = typeof Bun !== 'undefined' ? Bun.version : null;
-  const onPath = whichBinary('bun');
+interface ParsedSemVer {
+  core: [number, number, number];
+  prerelease: Array<number | string> | null;
+}
+
+function parseSemVer(version: string): ParsedSemVer | null {
+  const match =
+    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(
+      version.trim(),
+    );
+  if (!match) return null;
+  const core = [Number(match[1]), Number(match[2]), Number(match[3])] as [number, number, number];
+  if (core.some((part) => !Number.isSafeInteger(part))) return null;
+  const prerelease = match[4]
+    ? match[4].split('.').map((part) => {
+        if (!/^\d+$/.test(part)) return part;
+        if (part.length > 1 && part.startsWith('0')) return Number.NaN;
+        return Number(part);
+      })
+    : null;
+  if (prerelease?.some((part) => typeof part === 'number' && !Number.isSafeInteger(part))) return null;
+  return { core, prerelease };
+}
+
+function compareParts(left: number[], right: number[]): number {
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    if (left[index] !== right[index]) return (left[index] ?? -1) > (right[index] ?? -1) ? 1 : -1;
+  }
+  return 0;
+}
+
+function comparePrereleaseIdentifier(left: number | string, right: number | string): number {
+  if (left === right) return 0;
+  if (typeof left === 'number' && typeof right === 'number') return left > right ? 1 : -1;
+  if (typeof left === 'number') return -1;
+  if (typeof right === 'number') return 1;
+  return left > right ? 1 : -1;
+}
+
+function comparePrerelease(left: Array<number | string> | null, right: Array<number | string> | null): number {
+  if (left === null || right === null) {
+    if (left === right) return 0;
+    return left === null ? 1 : -1;
+  }
+  const length = Math.max(left.length, right.length);
+  for (let index = 0; index < length; index += 1) {
+    const a = left[index];
+    const b = right[index];
+    if (a === undefined || b === undefined) return a === undefined ? -1 : 1;
+    const comparison = comparePrereleaseIdentifier(a, b);
+    if (comparison !== 0) return comparison;
+  }
+  return 0;
+}
+
+function compareSemVer(left: ParsedSemVer, right: ParsedSemVer): number {
+  const core = compareParts(left.core, right.core);
+  return core === 0 ? comparePrerelease(left.prerelease, right.prerelease) : core;
+}
+
+function versionAtLeast(actual: string, minimum: string): boolean {
+  const left = parseSemVer(actual);
+  const right = parseSemVer(minimum);
+  if (!left || !right) return false;
+  return compareSemVer(left, right) >= 0;
+}
+
+export function evaluateBunVersion(bunVersion: string | null, onPath: string | null): CheckResult[] {
   if (bunVersion) {
+    if (!versionAtLeast(bunVersion, MINIMUM_BUN_VERSION)) {
+      return [
+        {
+          name: `bun ${bunVersion}`,
+          status: 'fail',
+          detail: `unsupported; Genie requires Bun >=${MINIMUM_BUN_VERSION}`,
+          suggestion: `Run \`bun upgrade\`, then confirm \`bun --version\` is at least ${MINIMUM_BUN_VERSION}.`,
+        },
+      ];
+    }
     return [
       {
         name: `bun ${bunVersion}`,
@@ -213,18 +283,22 @@ function checkBun(): CheckResult[] {
   ];
 }
 
-function readCodexPluginState(results: CheckResult[]): ReturnType<typeof codexPluginState> {
-  try {
-    return codexPluginState(
-      execFileSync('codex', ['plugin', 'list', '--json'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }),
-    );
-  } catch {
-    results.push({ name: 'Codex plugin query', status: 'warn', detail: 'codex plugin list failed' });
-    return { installed: false };
-  }
+function checkBun(versionOverride?: string | null, pathOverride?: string | null): CheckResult[] {
+  const bunVersion =
+    versionOverride === undefined ? (typeof Bun !== 'undefined' ? Bun.version : null) : versionOverride;
+  const onPath = pathOverride === undefined ? whichBinary('bun') : pathOverride;
+  return evaluateBunVersion(bunVersion, onPath);
 }
 
-function codexPluginCheck(state: ReturnType<typeof codexPluginState>): CheckResult {
+function codexPluginCheck(state: CodexPluginProbe): CheckResult {
+  if (state.status === 'error') {
+    return {
+      name: 'Codex Genie plugin',
+      status: 'fail',
+      detail: state.detail,
+      suggestion: 'Retry `genie doctor`; project fallback remains authoritative until plugin state is known.',
+    };
+  }
   if (!state.installed) {
     return {
       name: 'Codex Genie plugin',
@@ -234,67 +308,108 @@ function codexPluginCheck(state: ReturnType<typeof codexPluginState>): CheckResu
     };
   }
   const current = state.version === VERSION;
+  const healthy = current && state.enabled === true && state.usable === true;
   return {
     name: 'Codex Genie plugin',
-    status: current ? 'pass' : 'warn',
-    detail: `v${state.version ?? 'unknown'}; ${state.enabled ? 'enabled' : 'disabled'} (CLI v${VERSION})`,
-    suggestion: current ? undefined : 'Run `genie setup --codex` to refresh the version-matched plugin.',
+    status: healthy ? 'pass' : 'warn',
+    detail: `v${state.version ?? 'unknown'}; ${state.enabled === true ? 'enabled' : 'disabled or unknown'}; ${state.usable === true ? 'MCP launcher usable' : `MCP launcher unusable (${state.usabilityDetail ?? 'unknown reason'})`} (CLI v${VERSION})`,
+    suggestion: healthy
+      ? undefined
+      : 'Run `genie setup --codex` to refresh it; keep the absolute project fallback until launcher health passes.',
   };
 }
 
 function codexAgentCheck(): CheckResult {
-  const agentsDir = join(getCodexHome(), 'agents');
-  const count = existsSync(agentsDir)
-    ? readdirSync(agentsDir).filter((name) => /^genie-.+\.toml$/.test(name)).length
-    : 0;
+  const report = inspectCodexAgentOwnership(resolveCodexDir());
+  const counts = {
+    clean: report.entries.filter((entry) => entry.ownership === 'managed-clean').length,
+    modified: report.entries.filter((entry) => entry.ownership === 'managed-modified').length,
+    user: report.entries.filter((entry) => entry.ownership === 'user-owned').length,
+    absent: report.entries.filter((entry) => entry.ownership === 'absent').length,
+  };
+  const healthy = report.status === 'valid' && counts.clean === 7 && counts.modified === 0 && counts.absent === 0;
   return {
     name: 'Codex Genie role agents',
-    status: count === 7 ? 'pass' : 'warn',
-    detail: `${count}/7 installed`,
-    suggestion: count === 7 ? undefined : 'Run `genie setup --codex` to repair marker-owned role agents.',
+    status: healthy ? 'pass' : 'warn',
+    detail: `inventory ${report.status}; clean=${counts.clean}/7, modified=${counts.modified}, user-owned=${counts.user}, absent=${counts.absent}${report.error ? ` (${report.error})` : ''}`,
+    suggestion: healthy
+      ? undefined
+      : 'Review modified/user-owned collisions, then run `genie setup --codex`; Genie will not overwrite them.',
   };
 }
 
-function probeGenieMcp(): CheckResult {
-  const genie = whichBinary('genie');
-  if (!genie) return { name: 'Genie MCP connectivity', status: 'warn', detail: 'genie executable not on PATH' };
-  const requests = [
-    { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} },
-    { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
-    { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'genie_board', arguments: {} } },
-  ];
-  try {
-    const stdout = execFileSync(genie, ['mcp'], {
-      encoding: 'utf8',
-      input: `${requests.map((request) => JSON.stringify(request)).join('\n')}\n`,
-      stdio: ['pipe', 'pipe', 'ignore'],
-      timeout: 5_000,
-    });
-    const replies = stdout
-      .trim()
-      .split('\n')
-      .map((line) => JSON.parse(line) as { id?: number; result?: unknown; error?: unknown });
-    const healthy = [1, 2, 3].every((id) => replies.some((reply) => reply.id === id && reply.result && !reply.error));
+function codexProjectRouteCheck(root: string | null, probe: CodexPluginProbe): CheckResult {
+  if (root === null) {
     return {
-      name: 'Genie MCP connectivity',
-      status: healthy ? 'pass' : 'warn',
-      detail: healthy ? 'initialize, tools/list, and genie_board succeeded' : 'incomplete JSON-RPC response',
+      name: 'Codex Genie MCP registration',
+      status: 'warn',
+      detail: 'not inside a Git worktree; project route not inspected',
+      suggestion: 'Run `genie doctor` from the repository you want Codex to use.',
+    };
+  }
+  try {
+    const route = inspectCodexProjectMcp(root, probe);
+    return {
+      name: 'Codex Genie MCP registration',
+      status: route.ok ? 'pass' : 'fail',
+      detail: `${route.route}: ${route.detail ?? 'no detail'}`,
+      suggestion: route.ok ? undefined : 'Run `genie init` in this worktree to reconcile the project fallback.',
     };
   } catch (error) {
     return {
-      name: 'Genie MCP connectivity',
-      status: 'warn',
+      name: 'Codex Genie MCP registration',
+      status: 'fail',
       detail: error instanceof Error ? error.message : String(error),
+      suggestion: 'Repair the incomplete marker block, then run `genie init`.',
     };
   }
 }
 
-async function checkCodexIntegration(): Promise<CheckResult[]> {
+function codexPluginSurfaceChecks(probe: CodexPluginProbe): CheckResult[] {
+  if (!probe.installed) return [];
+  const manifest = probe.activePluginRoot ? join(probe.activePluginRoot, '.codex-plugin', 'plugin.json') : null;
+  let declared = false;
+  if (manifest !== null && existsSync(manifest)) {
+    try {
+      const parsed = JSON.parse(readFileSync(manifest, 'utf8')) as unknown;
+      declared =
+        typeof parsed === 'object' &&
+        parsed !== null &&
+        !Array.isArray(parsed) &&
+        (parsed as Record<string, unknown>).mcpServers === './.mcp.json';
+    } catch {
+      declared = false;
+    }
+  }
+  return [
+    {
+      name: 'Codex Genie MCP capability',
+      status: declared ? 'pass' : 'warn',
+      detail: declared
+        ? `stdio server declared by active plugin at ${probe.activePluginRoot}`
+        : manifest === null
+          ? 'active installed plugin root is unproven; source-bundle declarations do not establish runtime health'
+          : `active plugin manifest is missing, corrupt, or does not declare ./.mcp.json: ${manifest}`,
+      suggestion: declared ? undefined : 'Run `genie setup --codex` to refresh the active plugin cache.',
+    },
+    {
+      name: 'Codex hook review',
+      status: 'warn',
+      detail: 'trust is a user decision and cannot be inferred safely',
+      suggestion: 'Open /hooks, review Genie commands, then start a new Codex task.',
+    },
+  ];
+}
+
+export async function checkCodexIntegration(
+  root: string | null,
+  probe: CodexPluginProbe = probeCodexGeniePlugin(),
+): Promise<CheckResult[]> {
+  if (!probe.cliAvailable)
+    return [{ name: 'Codex CLI', status: 'warn', detail: 'not installed (Claude-only mode available)' }];
   const codex = whichBinary('codex');
-  if (!codex) return [{ name: 'Codex CLI', status: 'warn', detail: 'not installed (Claude-only mode available)' }];
-  const results: CheckResult[] = [{ name: 'Codex CLI', status: 'pass', detail: codex }];
-  const state = readCodexPluginState(results);
-  results.push(codexPluginCheck(state), codexAgentCheck());
+  const results: CheckResult[] = [{ name: 'Codex CLI', status: 'pass', detail: codex ?? 'detected by bounded probe' }];
+  results.push(codexPluginCheck(probe), codexAgentCheck());
   const configPath = getCodexConfigPath();
   const obsolete = existsSync(configPath) && readFileSync(configPath, 'utf8').includes(DEAD_GENIE_OTEL_EXPORTER);
   results.push({
@@ -303,41 +418,7 @@ async function checkCodexIntegration(): Promise<CheckResult[]> {
     detail: obsolete ? 'present' : 'absent',
     suggestion: obsolete ? 'Run `genie setup --codex` for backup-first removal.' : undefined,
   });
-  const fallback = join(process.cwd(), '.codex', 'config.toml');
-  const duplicate =
-    state.installed && existsSync(fallback) && readFileSync(fallback, 'utf8').includes('# BEGIN GENIE MCP FALLBACK');
-  results.push({
-    name: 'Codex Genie MCP registration',
-    status: duplicate ? 'warn' : state.installed ? 'pass' : 'warn',
-    detail: duplicate
-      ? 'plugin plus project fallback (duplicate)'
-      : state.installed
-        ? 'plugin-bundled'
-        : 'plugin unavailable',
-  });
-  if (state.installed) {
-    // resolveBundleRoot is null when no installed/checkout root carries the
-    // plugin payload — report that distinctly instead of probing a junk path.
-    const bundleRoot = resolveBundleRoot();
-    const manifest = bundleRoot === null ? null : join(bundleRoot, 'plugins', 'genie', '.codex-plugin', 'plugin.json');
-    const declared = manifest !== null && existsSync(manifest) && readFileSync(manifest, 'utf8').includes('"genie"');
-    results.push({
-      name: 'Codex Genie MCP capability',
-      status: declared ? 'pass' : 'warn',
-      detail: declared
-        ? 'stdio server declared'
-        : bundleRoot === null
-          ? 'genie bundle root not found (reinstall genie or set GENIE_BUNDLE_ROOT)'
-          : 'manifest declaration missing',
-    });
-    results.push(probeGenieMcp());
-    results.push({
-      name: 'Codex hook review',
-      status: 'warn',
-      detail: 'trust is a user decision and cannot be inferred safely',
-      suggestion: 'Open /hooks, review Genie commands, then start a new Codex task.',
-    });
-  }
+  results.push(codexProjectRouteCheck(root, probe), ...codexPluginSurfaceChecks(probe));
   const config = await loadGenieConfig();
   results.push({ name: 'preferred agent runtime', status: 'pass', detail: config.runtime.defaultAgent });
   return results;
@@ -810,7 +891,20 @@ export function checkAgentSync(paths: AgentSyncPaths = {}): CheckResult[] {
 // Entry point
 // ============================================================================
 
-export async function doctorCommand(options?: { json?: boolean; fix?: boolean }): Promise<void> {
+export interface DoctorDeps {
+  /** Pre-resolved worktree root; explicit null means outside Git. */
+  root?: string | null;
+  /** Main checkout root that owns the shared genie.db. */
+  databaseRoot?: string | null;
+  /** Injected one-shot plugin state keeps tests away from the live Codex home. */
+  pluginProbe?: CodexPluginProbe;
+  /** Runtime-version seam so tests can cover the declared Bun engine boundary. */
+  bunVersion?: string | null;
+  /** PATH seam paired with bunVersion. */
+  bunPath?: string | null;
+}
+
+export async function doctorCommand(options?: { json?: boolean; fix?: boolean }, deps: DoctorDeps = {}): Promise<void> {
   // --fix: run the backup-first v4 cleanup BEFORE the checks so the report
   // below reflects the post-fix state. Without --fix, detection only — the
   // residue check is a pure read and nothing on disk changes. In --json mode
@@ -819,14 +913,24 @@ export async function doctorCommand(options?: { json?: boolean; fix?: boolean })
     cleanupV4(options.json ? { logSink: (line) => process.stderr.write(`${line}\n`) } : {});
   }
 
+  // One bounded Git resolution and one bounded Codex plugin query feed every
+  // downstream check. No doctor branch independently re-spawns either probe.
+  const injectedRoot = deps.root === null || typeof deps.root === 'string';
+  const gitRoots = injectedRoot ? null : resolveGitProjectRoots();
+  const root = injectedRoot ? (deps.root ?? null) : (gitRoots?.worktreeRoot ?? null);
+  const databaseRoot =
+    deps.databaseRoot === null || typeof deps.databaseRoot === 'string'
+      ? deps.databaseRoot
+      : (gitRoots?.commonRoot ?? root);
+  const pluginProbe = deps.pluginProbe?.cliAvailable !== undefined ? deps.pluginProbe : probeCodexGeniePlugin();
   const results: CheckResult[] = [
     ...checkGenieBinary(),
-    ...checkGit(),
-    ...checkDatabase(),
-    ...checkSkills(),
-    ...checkBun(),
+    ...checkGit(root),
+    ...checkDatabase(databaseRoot),
+    ...checkSkills(root),
+    ...checkBun(deps.bunVersion, deps.bunPath),
     ...checkSubagentModelOverride(),
-    ...(await checkCodexIntegration()),
+    ...(await checkCodexIntegration(root, pluginProbe)),
     ...checkV4Residue(),
     ...checkAgentSync(),
     ...(await checkOmniHookTimeout()),

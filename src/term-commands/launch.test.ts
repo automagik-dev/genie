@@ -19,6 +19,7 @@ import {
   executeLaunch,
   resolveLaunchAgent,
   resolveLaunchModel,
+  shellQuote,
 } from './launch.js';
 
 // ----------------------------------------------------------------------------
@@ -77,6 +78,13 @@ function deps(extra: Partial<LaunchDeps> = {}): LaunchDeps {
     warpDir: fx.warp,
     platform: 'darwin',
     write: () => {},
+    // Never query the developer's live Codex installation from unit tests.
+    codexPluginProbe: {
+      cliAvailable: false,
+      status: 'unavailable',
+      installed: false,
+      detail: 'fixture: Codex absent',
+    },
     ...extra,
   };
 }
@@ -117,6 +125,8 @@ describe('genie launch --dry-run', () => {
     // Prompt content lists both tasks' ids (verified via the plan, not disk).
     const apiGroup = plan.groups.find((g) => g.name === 'api');
     expect(apiGroup?.prompt).toContain(a.id);
+    expect(apiGroup?.prompt).not.toContain('genie task done');
+    expect(apiGroup?.prompt).toContain('only the PM marks tasks done');
     const uiGroup = plan.groups.find((g) => g.name === 'ui');
     expect(uiGroup?.prompt).toContain(b.id);
 
@@ -290,6 +300,19 @@ describe('resolveLaunchModel', () => {
         workerProfiles: { invalid: { launcher: 'claude', claudeArgs: ['--model=not safe'] } },
       }),
     ).toBe(DEFAULT_LAUNCH_MODEL);
+  });
+});
+
+describe('launch shell quoting', () => {
+  test('a prompt path containing an apostrophe stays one shell argument', () => {
+    const quoted = shellQuote("/tmp/team's prompt");
+    expect(quoted).toBe("'/tmp/team'\"'\"'s prompt'");
+    const result = Bun.spawnSync(['sh', '-c', `set -- ${quoted}; printf '%s' "$1"`], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString()).toBe("/tmp/team's prompt");
   });
 });
 
@@ -584,7 +607,7 @@ describe('genie launch (built CLI, workspace-guard inclusive)', () => {
     bundleDir = mkdtempSync(join(tmpdir(), 'genie-launch-bundle-'));
     bundle = join(bundleDir, 'genie.js');
     const res = spawnSync(
-      'bun',
+      process.execPath,
       ['build', join(REPO_ROOT, 'src', 'genie.ts'), '--target', 'bun', '--external', 'bun', '--outfile', bundle],
       { cwd: REPO_ROOT, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
     );
@@ -620,7 +643,7 @@ describe('genie launch (built CLI, workspace-guard inclusive)', () => {
   });
 
   function runCli(args: string[]): { status: number | null; stdout: string; stderr: string } {
-    const res = spawnSync('bun', [bundle, ...args], {
+    const res = spawnSync(process.execPath, [bundle, ...args], {
       cwd: cliRepo,
       encoding: 'utf-8',
       input: '',

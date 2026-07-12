@@ -20,9 +20,16 @@ export function resolveClaudeDir(): string {
   return process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
 }
 
-/** Codex config root — `$CODEX_HOME` or `~/.codex`. */
-export function resolveCodexDir(): string {
-  return process.env.CODEX_HOME || join(homedir(), '.codex');
+/**
+ * Codex config root — non-empty `$CODEX_HOME` or `~/.codex`.
+ *
+ * `env` and `home` are injectable so every caller and test shares one policy.
+ * An explicit empty override is invalid and falls back safely; it must never
+ * turn `config.toml` or `agents/` into a cwd-relative path.
+ */
+export function resolveCodexDir(env: NodeJS.ProcessEnv = process.env, home = homedir()): string {
+  const override = env.CODEX_HOME;
+  return typeof override === 'string' && override.trim().length > 0 ? override : join(home, '.codex');
 }
 
 /** Hermes home — `$HERMES_HOME` or `~/.hermes`. */

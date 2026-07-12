@@ -11,11 +11,20 @@
  * No network, no daemon, no database. Refuses politely outside a git repo.
  */
 
-import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { Command } from 'commander';
-import { codexPluginState } from '../lib/runtime-integrations.js';
+import {
+  type ArtifactAction,
+  type McpConfigResult,
+  type RegisterProjectMcpOptions,
+  mergeCodexMcpFallback,
+  registerProjectMcpConfigs,
+  removeCodexMcpFallback,
+  resolveGitWorktreeRoot,
+} from '../lib/codex-project-mcp.js';
+
+export { mergeCodexMcpFallback, removeCodexMcpFallback };
 
 // ============================================================================
 // Output helpers (process.stdout/stderr — no console.* in source)
@@ -75,23 +84,11 @@ const GITIGNORE_RULES = ['.genie/genie.db', '.genie/genie.db-wal', '.genie/genie
  * repo. Uses `--show-toplevel` so the scaffold always lands at the repo root,
  * even when `genie init` is invoked from a subdirectory.
  */
-function resolveGitRoot(cwd: string): string | null {
-  try {
-    return execFileSync('git', ['rev-parse', '--show-toplevel'], {
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-      cwd,
-    }).trim();
-  } catch {
-    return null;
-  }
-}
+const resolveGitRoot = resolveGitWorktreeRoot;
 
 // ============================================================================
 // Scaffold steps
 // ============================================================================
-
-type ArtifactAction = 'created' | 'updated' | 'skipped';
 
 interface InitResult {
   root: string;
@@ -130,164 +127,14 @@ function scaffoldGitignore(root: string): { action: ArtifactAction; added: strin
   return { action: exists ? 'updated' : 'created', added: missing };
 }
 
-// ============================================================================
-// MCP server registration (.mcp.json + .warp/.mcp.json)
-// ============================================================================
-
-/**
- * A stdio MCP server entry, as both Warp and Claude Code read it. `type:"stdio"`
- * is optional (a `command` present defaults to stdio), so it is omitted.
- */
-interface McpServerEntry {
-  command: string;
-  args: string[];
-}
-
-/** Arbitrary JSON object (an already-parsed config we merge into). */
-type JsonObject = Record<string, unknown>;
-
-/**
- * Wrapper keys Warp recognizes for the server map, in order of preference.
- * `mcpServers` is what we write for a fresh file; if an existing file already
- * holds its servers under one of the alternates, that key is preserved.
- */
-const MCP_WRAPPER_KEYS = ['mcpServers', 'mcp_servers', 'servers'] as const;
-
-/**
- * The genie server entry written under the `genie` key. The command is the
- * ABSOLUTE path to the currently-running genie executable — for the shipped
- * bun-compiled single-file binary that is {@link process.execPath}. Bare
- * `"genie"` is NOT used: genie is not reliably on the spawning process's PATH
- * (on macOS it lives only at `~/.genie/bin/genie`). Resolving at write time is
- * self-consistent under Warp-over-SSH — `genie init` runs on the box that owns
- * the repo, so it records that box's genie path, and Warp spawns there too.
- */
-function genieMcpEntry(): McpServerEntry {
-  return { command: process.execPath, args: ['mcp'] };
-}
-
-/** True for a plain (non-array) JSON object. */
-function isJsonObject(value: unknown): value is JsonObject {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-/**
- * Parse an existing config's raw bytes into an object, or start from `{}` when
- * the file is absent. A file that exists but is not a JSON object is a real
- * problem worth surfacing (we must not silently clobber it), so it throws.
- */
-function parseMcpConfig(raw: string | null, path: string): JsonObject {
-  if (raw === null || raw.trim() === '') return {};
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error(`Cannot register genie MCP server: ${path} is not valid JSON.`);
-  }
-  if (!isJsonObject(parsed)) {
-    throw new Error(`Cannot register genie MCP server: ${path} is not a JSON object.`);
-  }
-  return parsed;
-}
-
-/**
- * Locate the server map inside a parsed config, preserving whatever wrapper key
- * an existing file already uses (`mcpServers`, `mcp_servers`, `servers`, or a
- * nested `mcp.servers`). When none is present the `mcpServers` key is created —
- * the preferred shape for a new file.
- */
-function locateServerMap(config: JsonObject): JsonObject {
-  for (const key of MCP_WRAPPER_KEYS) {
-    const existing = config[key];
-    if (isJsonObject(existing)) return existing;
-  }
-  const nested = config.mcp;
-  if (isJsonObject(nested) && isJsonObject(nested.servers)) return nested.servers;
-
-  const created: JsonObject = {};
-  config.mcpServers = created;
-  return created;
-}
-
-/**
- * Merge the genie MCP server entry into the config at `configPath`, creating the
- * file (and its parent dir) when absent. Only the `genie` key under the server
- * map is added/updated — every other server AND every other top-level key is
- * preserved. Serialization is deterministic (2-space JSON + trailing newline)
- * so a rerun that changes nothing is byte-identical and reports `skipped`.
- */
-function mergeMcpConfig(configPath: string, entry: McpServerEntry): ArtifactAction {
-  const raw = existsSync(configPath) ? readFileSync(configPath, 'utf-8') : null;
-  const config = parseMcpConfig(raw, configPath);
-  const servers = locateServerMap(config);
-  servers.genie = entry;
-
-  const serialized = `${JSON.stringify(config, null, 2)}\n`;
-  if (raw !== null && raw === serialized) return 'skipped';
-
-  mkdirSync(dirname(configPath), { recursive: true });
-  writeFileSync(configPath, serialized);
-  return raw === null ? 'created' : 'updated';
-}
-
-interface McpConfigResult {
-  path: string;
-  action: ArtifactAction;
-}
-
-function codexHasGeniePlugin(): boolean {
-  if (!Bun.which('codex')) return false;
-  const result = Bun.spawnSync(['codex', 'plugin', 'list', '--json'], { stdout: 'pipe', stderr: 'pipe' });
-  return result.exitCode === 0 && codexPluginState(result.stdout.toString()).installed;
-}
-
-export function mergeCodexMcpFallback(configPath: string, entry: McpServerEntry): ArtifactAction {
-  const raw = existsSync(configPath) ? readFileSync(configPath, 'utf8') : '';
-  const begin = '# BEGIN GENIE MCP FALLBACK';
-  const end = '# END GENIE MCP FALLBACK';
-  if (raw.includes('[mcp_servers.genie]') && !raw.includes(begin)) return 'skipped';
-  const block = `${begin}\n[mcp_servers.genie]\ncommand = ${JSON.stringify(entry.command)}\nargs = ["mcp"]\n${end}`;
-  const start = raw.indexOf(begin);
-  const finish = start >= 0 ? raw.indexOf(end, start) : -1;
-  const updated =
-    start >= 0 && finish >= 0
-      ? `${raw.slice(0, start)}${block}${raw.slice(finish + end.length)}`
-      : `${raw}${raw.length > 0 && !raw.endsWith('\n') ? '\n' : ''}\n${block}\n`;
-  if (updated === raw) return 'skipped';
-  mkdirSync(dirname(configPath), { recursive: true });
-  writeFileSync(configPath, updated);
-  return raw.length === 0 ? 'created' : 'updated';
-}
-
-export function removeCodexMcpFallback(configPath: string): ArtifactAction {
-  if (!existsSync(configPath)) return 'skipped';
-  const raw = readFileSync(configPath, 'utf8');
-  const begin = '# BEGIN GENIE MCP FALLBACK';
-  const end = '# END GENIE MCP FALLBACK';
-  const start = raw.indexOf(begin);
-  const finish = start >= 0 ? raw.indexOf(end, start) : -1;
-  if (start < 0 || finish < 0) return 'skipped';
-  const after = finish + end.length;
-  const updated = `${raw.slice(0, start).trimEnd()}\n${raw.slice(after).trimStart()}`;
-  writeFileSync(configPath, updated, 'utf8');
-  return 'updated';
-}
-
 /**
  * Register the `genie mcp` server into both project-scope config files under
  * `root`: `<root>/.mcp.json` (Claude Code) and `<root>/.warp/.mcp.json` (Warp).
  * Both get the identical entry; the merge is idempotent and preserves existing
  * servers. Exported so `genie launch` can register the same server per worktree.
  */
-export function registerMcpConfigs(root: string): McpConfigResult[] {
-  const entry = genieMcpEntry();
-  const targets = [join(root, '.mcp.json'), join(root, '.warp', '.mcp.json')];
-  const results = targets.map((path) => ({ path, action: mergeMcpConfig(path, entry) }));
-  if (Bun.which('codex') && !codexHasGeniePlugin()) {
-    const path = join(root, '.codex', 'config.toml');
-    results.push({ path, action: mergeCodexMcpFallback(path, entry) });
-  }
-  return results;
+export function registerMcpConfigs(root: string, options: RegisterProjectMcpOptions = {}): McpConfigResult[] {
+  return registerProjectMcpConfigs(root, options);
 }
 
 // ============================================================================
@@ -319,11 +166,12 @@ function printHumanReport(result: InitResult): void {
   out('');
   out('Warp, Claude Code, and Codex will discover the read-only `genie mcp` server.');
   out('');
-  out('Next steps — use slash skills in Claude or $skills/natural language in Codex:');
-  out('  brainstorm   Explore a fuzzy idea into a DESIGN.md');
-  out('  wish         Turn the design into an executable wish plan');
-  out('  work         Execute the wish plan in dispatched waves');
-  out('  review       Validate the result against its acceptance criteria');
+  out('Next steps — Claude uses /<skill>; the Codex plugin uses owner-qualified $genie:<skill>:');
+  out('  1. /brainstorm or $genie:brainstorm   Explore a fuzzy idea into a DESIGN.md');
+  out('  2. /wish or $genie:wish               Turn the design into an executable wish plan');
+  out('  3. /review or $genie:review           Validate and persist an APPROVED plan');
+  out('  4. /work or $genie:work               Execute the approved plan in dispatched waves');
+  out('  5. /review or $genie:review           Validate the implementation against its criteria');
   out('');
   out('Track progress any time with:  genie board');
 }
@@ -341,9 +189,12 @@ function handleInit(opts: InitOptions): void {
     const root = resolveGitRoot(process.cwd());
     if (!root) throw new NotAGitRepoError();
 
+    // MCP config is planned and schema-checked before any scaffold mutation.
+    // A wrong-shaped existing JSON file therefore fails without leaving a new
+    // INDEX or gitignore rules behind.
+    const mcp = registerMcpConfigs(root);
     const index = scaffoldIndex(root);
     const gitignore = scaffoldGitignore(root);
-    const mcp = registerMcpConfigs(root);
     const result: InitResult = { root, index, gitignore: gitignore.action, rulesAdded: gitignore.added, mcp };
 
     if (opts.json) {
@@ -361,7 +212,9 @@ function handleInit(opts: InitOptions): void {
 export function registerInitCommand(program: Command): void {
   program
     .command('init')
-    .description('Scaffold the per-repo genie state (idempotent): .genie/INDEX.md + .gitignore rules')
+    .description(
+      'Initialize Genie state and reconcile project MCP routing (.mcp.json, .warp/.mcp.json, optional .codex/config.toml)',
+    )
     .option('--json', 'Emit the created/skipped result as JSON')
     .action((opts: InitOptions) => handleInit(opts));
 }

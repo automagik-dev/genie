@@ -61,7 +61,7 @@ src/lib/v5/                     v5 state engine — SQLite, zero-daemon ("lightw
   omni-queue.ts                 Approval-queue + inbox persistence for the Omni runner
   warp-launch.ts                Warp cockpit planner — one worktree per ready group
   TAXONOMY.md                   The docs-in-git / state-in-SQLite contract
-src/hooks/                      In-process Claude Code hook dispatch (fail-closed)
+src/hooks/                      Provider-neutral Claude/Codex hook dispatch and wire adapters
   index.ts                      Handler chain + fail-closed envelope (buildFailClosedResponse)
   dispatch-command.ts           CLI entry: genie hook dispatch
   handlers/                     branch-guard, freshness, identity-inject, omni-approval, orchestration-guard, audit-context
@@ -79,7 +79,7 @@ Fourteen top-level commands (run `genie <command> --help` for detail):
 | `board` | Kanban view derived by query (no stored view state); `--board`, `--wish`, `--json` |
 | `doctor` | Diagnostic checks on the genie installation |
 | `hook` | Hook middleware for Claude Code (`genie hook dispatch` runs in-process) |
-| `init` | Scaffold per-repo state — `.genie/INDEX.md` + `.gitignore` rules (idempotent) |
+| `init` | Scaffold per-repo state and reconcile `.mcp.json`, `.warp/.mcp.json`, plus marker-owned `.codex/config.toml` fallback when no installed, enabled, usable plugin route is proven |
 | `install` | Post-install finisher — v4 legacy cleanup (`--skip-v4-cleanup`) |
 | `launch <slug>` | Open a Warp cockpit for a wish: one pane per ready group, each in its own worktree |
 | `mcp` | Read-only stdio MCP server exposing genie.db task/board state |
@@ -97,7 +97,7 @@ genie task create --title 'x'         # Create a task
 genie task list                       # List tasks (with filters)
 genie task checkout <id> --worker w   # Atomically claim a ready task for a worker
 genie task status <id>                # Task detail, dependencies, stage log
-genie task done <id>                  # Mark done + recompute the ready set
+genie task done <id>                  # Orchestrator only: mark reviewed work done + recompute ready set
 genie task export                     # Emit the complete DB state as JSON
 ```
 
@@ -158,19 +158,23 @@ Biome's `noExcessiveCognitiveComplexity` is set to `maxAllowedComplexity: 25` (w
 - Prefer linear code when a function reads as one workflow (CLI command body, orchestration step, request handler). Helpers extracted purely to reduce a score under 25 usually add indirection without clarity.
 - Split when there is a real boundary: a distinct policy decision, an IO concern, a state-machine transition, a presentation/data divide, or reused logic with at least two callers.
 - Only suppress with `biome-ignore lint/complexity/noExcessiveCognitiveComplexity:` when extraction would obscure a linear flow or break a tested invariant. The comment must explain the reason — never just "complexity".
-- Score >25 is review-triggering architecture debt, not a hard error. Track it in `.genie/wishes/complexity-budget-simplification/hotspots.md` and address via a separate refactor wish, not opportunistic edits.
-- Drift is enforced by `bun run lint:complexity-budget` (script in `scripts/complexity-budget.ts`). Raising any of the budget ceilings requires updating the script with a written justification.
+- Score >25 is review-triggering architecture debt, not a hard error. The budget command names every current hotspot; record intentional follow-up work in a dedicated refactor wish rather than opportunistic edits.
+- Drift is enforced by `bun run lint:complexity-budget` in `check`, `check:fast`, pre-push, and CI. Raising any budget ceiling requires updating `scripts/complexity-budget.ts` with a written justification.
 
 ## Gotchas
 
-- **Hook dispatch is in-process, fail-closed, and bounded by Claude Code's per-hook `timeout`** — each hook event is a short-lived `genie hook dispatch` fork that runs the handler chain in-process and exits (no daemon, no socket, no DB). There is no genie-managed dispatch timeout; the ceiling is the `timeout` field on the hook's entry in Claude Code's `settings.json` (CC default if unset). A dispatch that can't parse its payload or throws emits a NON-empty deny/block envelope instead of empty stdout, because CC reads empty PreToolUse stdout as allow-by-default — see `buildFailClosedResponse` in `src/hooks/index.ts`. The fail-closed default is locked by `src/hooks/__tests__/dispatch-fail-closed-regression.test.ts`, which drives the shipped `dist/genie.js`.
+- **Codex ships exactly H3/H4/H6, and all remain untrusted after an edit** — H3 is bounded read-only SessionStart context; H4 is deterministic local PreToolUse guarding; H6 is matcher-scoped PermissionRequest approval and is the only retained hook that may write approval-queue state. No Codex lifecycle hook installs, updates, synchronizes, or scaffolds. Run `genie setup --codex` or `genie update` explicitly, inspect changed hashes with `/hooks`, and start a new task. Codex hook commands run outside the model sandbox, so hard controls still belong in sandbox permissions and server-side branch protection.
+- **Hook dispatch is provider-aware and fail-closed** — the plugin-local Codex launcher selects only the canonical `$GENIE_HOME/bin/genie`, preserves stdin/stdout/signals, bounds child time/output, validates event-specific JSON, and converts launch/timeout/schema failures into a reasoned deny. Claude dispatch remains a short-lived in-process `genie hook dispatch` fork. Neither path is a daemon.
 - **`AskUserQuestion` is the one PreToolUse carve-out** — it is in `NON_INTERCEPTABLE_PRE_TOOL_USE_TOOLS` and MUST get an EMPTY response, not the neutral `{ decision: 'block' }` block form. Empirically CC consumes any additionalContext as the synthesized answer, so a fail-closed block would corrupt the inline picker. The fail-closed envelope special-cases this tool.
 - **Two `genie.db` files, never cross-import** — per-repo `.genie/genie.db` (`genie-db.ts`, task/board/wish) and global `~/.genie/genie.db` (`global-db.ts`, omni queue + inbox) are independent databases with their own schemas and `user_version`. `global-db.ts` shares only `sqlite-open.ts` with the per-repo one — do not reach across for path constants.
 - **Codex integration health is native state, not OTel** — the old Genie exporter at `127.0.0.1:14318` has no relay and is removed by an exact-match, backup-first migration. Preserve unrelated OTel settings and `disable_paste_burst`.
 - **The Omni runner (`genie omni serve`) is the only optional daemon** — a foreground NATS bridge that drains the global approval queue. Everything else is fork-and-exit; no resident processes.
 - **`bun run dead-code`** (knip) has pre-existing false positives for biome/commitlint/husky devDeps — not regressions.
-- **agent-sync converges every detected coding agent** — `genie update` and `genie install` fan the canonical source `~/.genie/plugins/genie` into every DETECTED agent (Claude Code skills + `~/.claude/workflows/council.js`; Codex `~/.codex/skills/.curated/`; the Hermes `~/.hermes/plugins/genie` symlink) via `src/lib/agent-sync.ts`. There is no new user-facing command — the re-entry contract is the internal env `GENIE_UPDATE_SYNC_ONLY=1` (the post-swap exec and the SessionStart-hook trigger both set it) plus the internal `genie update --sync-only` flag, which the SessionStart hook passes as a hard guard so a pre-contract binary errors out instead of silently running a full unattended update. Managed skill dirs carry `.genie-sync.json` (`managedBy: genie-agent-sync`); every replacement or removal is backed up first under `~/.genie/state-backups/`, so `genie doctor`/`genie uninstall` only ever touch what genie provably shipped.
-- **One stamp root, never CLAUDE_PLUGIN_ROOT-primary** — council.js stamping (both the `genie update` CLI and the hook's CLI-less fallback) resolves its `LENS_ROOT` via `resolveStampInputs`, which PREFERS the stable `~/.genie/plugins/genie` root — that path never changes across versions — and only falls back to `CLAUDE_PLUGIN_ROOT` when the stable template is absent. Do not reintroduce CLAUDE_PLUGIN_ROOT-primary stamping: the marketplace root changes on every plugin update, which is what caused the stale-cache downgrade ping-pong the stable root exists to kill.
+- **agent-sync runs only on selected explicit install/update paths** — `genie install` and `genie update` converge only the client tiers selected by `--integrations`; `none` mutates no client home. Codex user-tier fallback skills live at `~/.agents/skills`, never the retired hidden `.codex/skills/.curated` path. Same-name unmanaged, malformed-marker, symlinked, or modified user assets are skipped/preserved, while digest-matching Genie-owned copies can refresh or uninstall. Codex plugin skills are a separate physical 23-skill in-root payload, and the optional seven role-agent TOMLs are staged under `plugins/genie/codex-agents/` for CLI install into `~/.codex/agents/`.
+- **Do not re-exec a freshly installed older binary for convergence** — the 2026-07-11 downgrade incident proved that an old target can ignore an environment-only sync contract and perform a second full update. Current manual update convergence stays inside the already-reviewed parent process, then refreshes runtime integration state. When crossing from a release older than `5.260711.6` to `5.260711.6` or later, run one explicit second `genie update` after the first command returns; no hook supplies that compatibility hop.
+- **Generated SessionStart parity is a release gate** — edit `plugins/genie/scripts/src/session-context.ts`, regenerate with `bun scripts/hook-bundle-parity.ts --write`, and commit the executable `session-context.cjs`. `bun run check`, the plugin build, and tarball build all reject byte or mode drift.
+- **Wish state is persisted by the orchestrator, never the reviewer** — reviewer verdicts are SHIP/FIX-FIRST/BLOCKED evidence; durable WISH statuses are `DRAFT`, `FIX-FIRST`, `APPROVED`, `IN_PROGRESS`, `BLOCKED`, and `SHIPPED`. SessionStart, `genie`, `dream`, `wizard`, and resume routing consume that vocabulary. A chat verdict does not advance state until the invoking orchestrator appends review evidence and updates WISH.md.
+- **One stamp root, never CLAUDE_PLUGIN_ROOT-primary** — explicit install/update council stamping resolves `LENS_ROOT` from the stable `~/.genie/plugins/genie` root and only falls back to `CLAUDE_PLUGIN_ROOT` when the stable template is absent. No lifecycle hook stamps or synchronizes it. Do not reintroduce marketplace-root-primary stamping: marketplace roots change with plugin versions and can revive stale-cache downgrade behavior.
 
 ## PR Review Rules
 

@@ -14,7 +14,14 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { orchestrationGuard } from '../handlers/orchestration-guard.js';
-import { buildOmniRegistry, dispatch, getRegistry, installDispatchRegistry, setRegistry } from '../index.js';
+import {
+  buildOmniRegistry,
+  compileOmniToolMatcher,
+  dispatch,
+  getRegistry,
+  installDispatchRegistry,
+  setRegistry,
+} from '../index.js';
 import type { Handler, HandlerResult } from '../types.js';
 
 function restoreEnv(key: string, prev: string | undefined): void {
@@ -65,6 +72,23 @@ describe('config-gated omni-approval registry', () => {
     expect(omni?.matcher?.test('WebFetch')).toBe(true);
     expect(omni?.matcher?.test('Bash')).toBe(false);
   });
+
+  test('malformed, empty, and oversized configured matchers match nothing', () => {
+    for (const source of ['[', '', 'x'.repeat(513)]) {
+      const matcher = compileOmniToolMatcher(source);
+      for (const tool of ['Bash', 'Write', 'Edit', 'apply_patch', 'mcp__private__read_secret']) {
+        matcher.lastIndex = 0;
+        expect(matcher.test(tool)).toBe(false);
+      }
+    }
+  });
+
+  test('Codex registers Omni on PermissionRequest only', () => {
+    const reg = buildOmniRegistry(true, /^(Bash|Write|Edit)$/, 'codex');
+    const omni = reg.find((h) => h.name === 'omni-approval');
+    expect(omni?.event).toBe('PermissionRequest');
+    expect(reg.some((h) => h.name === 'omni-approval' && h.event === 'PreToolUse')).toBe(false);
+  });
 });
 
 describe('installDispatchRegistry — config-gated boot seam', () => {
@@ -107,6 +131,140 @@ describe('installDispatchRegistry — config-gated boot seam', () => {
     process.env.OMNI_APPROVAL_CHAT = 'chat';
     await installDispatchRegistry();
     expect(getRegistry().some((h) => h.name === 'omni-approval')).toBe(true);
+  });
+
+  test('enabled Codex registry never places Omni on PreToolUse', async () => {
+    process.env.OMNI_APPROVALS_ENABLED = '1';
+    process.env.OMNI_INSTANCE = 'inst';
+    process.env.OMNI_APPROVAL_CHAT = 'chat';
+    await installDispatchRegistry('codex');
+    const omni = getRegistry().find((h) => h.name === 'omni-approval');
+    expect(omni?.event).toBe('PermissionRequest');
+  });
+});
+
+describe('Codex PermissionRequest propagation', () => {
+  let original: ReadonlyArray<Handler>;
+  beforeEach(() => {
+    original = getRegistry();
+  });
+  afterEach(() => {
+    setRegistry(original);
+  });
+
+  function permissionHandler(result: HandlerResult, matcher = /^Bash$/): Handler {
+    return {
+      ...BASE,
+      name: 'permission-handler',
+      event: 'PermissionRequest',
+      matcher,
+      fn: async () => result,
+    } as Handler;
+  }
+
+  test('allow uses the documented PermissionRequest envelope', async () => {
+    setRegistry([
+      permissionHandler({
+        hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow' },
+      }),
+    ]);
+    const out = await dispatch(
+      JSON.stringify({
+        hook_event_name: 'PermissionRequest',
+        tool_name: 'Bash',
+        tool_input: { command: 'echo hi' },
+      }),
+    );
+    expect(JSON.parse(out).hookSpecificOutput.decision).toEqual({ behavior: 'allow' });
+  });
+
+  test('timeout ask becomes a deny with a reason, never an empty response', async () => {
+    setRegistry([
+      permissionHandler({
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'ask',
+          permissionDecisionReason: 'remote approval timed out',
+        },
+      }),
+    ]);
+    const out = await dispatch(
+      JSON.stringify({
+        hook_event_name: 'PermissionRequest',
+        tool_name: 'Bash',
+        tool_input: { command: 'echo hi' },
+      }),
+    );
+    expect(JSON.parse(out).hookSpecificOutput.decision).toEqual({
+      behavior: 'deny',
+      message: 'remote approval timed out',
+    });
+  });
+
+  test('configured Write alias matches canonical apply_patch', async () => {
+    setRegistry([
+      permissionHandler(
+        { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow' } },
+        /^Write$/,
+      ),
+    ]);
+    const out = await dispatch(
+      JSON.stringify({
+        hook_event_name: 'PermissionRequest',
+        tool_name: 'apply_patch',
+        tool_input: { command: '*** Begin Patch\n*** Update File: a.ts\n*** End Patch' },
+      }),
+    );
+    expect(JSON.parse(out).hookSpecificOutput.decision.behavior).toBe('allow');
+  });
+
+  test('excluded tool is not evaluated or serialized', async () => {
+    let calls = 0;
+    setRegistry([
+      {
+        ...permissionHandler({ decision: 'allow' }),
+        fn: async () => {
+          calls += 1;
+          return { decision: 'allow' };
+        },
+      },
+    ]);
+    const out = await dispatch(
+      JSON.stringify({
+        hook_event_name: 'PermissionRequest',
+        tool_name: 'mcp__private__read_secret',
+        tool_input: { token: 'do-not-send' },
+      }),
+    );
+    expect(out).toBe('');
+    expect(calls).toBe(0);
+  });
+
+  test('malformed configured matcher never passes tool input to the approval handler', async () => {
+    let calls = 0;
+    const omni = buildOmniRegistry(true, compileOmniToolMatcher('['), 'codex').find(
+      (candidate) => candidate.name === 'omni-approval',
+    );
+    expect(omni).toBeDefined();
+    setRegistry([
+      {
+        ...omni!,
+        fn: async () => {
+          calls += 1;
+          return { decision: 'allow' };
+        },
+      },
+    ]);
+    const secret = 'must-never-be-serialized-or-queued';
+    const out = await dispatch(
+      JSON.stringify({
+        hook_event_name: 'PermissionRequest',
+        tool_name: 'Bash',
+        tool_input: { command: `curl -H "Authorization: Basic ${secret}" example.test` },
+      }),
+    );
+    expect(out).toBe('');
+    expect(calls).toBe(0);
   });
 });
 

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Brainstorm"
+  short_description: "Explore fuzzy ideas into a testable design"
+  default_prompt: "Turn this early idea into a concrete, reviewable design."

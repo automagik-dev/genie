@@ -1,101 +1,96 @@
-# Genie Plugin
+# Genie plugin surfaces
 
-Company-standard Claude Code plugin for the Genie workflow.
+This directory is the shared release payload for Claude Code and Codex. The two clients load different manifests, but the 23 product skills have one canonical source (`/skills`) and one committed, byte-checked plugin mirror (`plugins/genie/skills`).
 
-## Features
+## What Codex gets
 
-- **Core workflow skills**: `/brainstorm`, `/wish`, `/work`, `/review`
-- **Bootstrap skills**: `genie-base`, `genie-blank-init`
-- **Shared skill source**: `plugins/genie/skills -> ../../skills`
-- **Agents + hooks + references** for wish execution and validation
+| Surface | Delivery | Contract |
+|---------|----------|----------|
+| Product skills | The plugin contains 23 physical in-root skill directories, each with `SKILL.md` and `agents/openai.yaml` | Available to a plugin-only install; no escaping symlink and no user-tier copy required |
+| CLI-managed product fallbacks | A Codex-selected `genie install` and later `genie update` synchronize up to 23 digest-owned copies under `~/.agents/skills/<name>` | Bare selectors resolve this user tier; unmanaged, malformed, symlinked, or modified collisions are preserved rather than adopted |
+| Hooks | `.codex-plugin/plugin.json` points to `hooks/codex-hooks.json` | Three untrusted definitions only: H3 SessionStart context, H4 local PreToolUse guardrails, H6 PermissionRequest approval |
+| MCP | `.mcp.json` starts `scripts/mcp-launcher.cjs` | The launcher accepts only the canonical `$GENIE_HOME/bin/genie` (default `~/.genie/bin/genie`) and fails closed if it is absent or unsafe |
+| Role agents | Seven TOMLs are staged in `codex-agents/` | Plugins cannot install custom agents. `genie install` or `genie setup --codex` copies the optional profiles into `~/.codex/agents/` |
 
-## Workflow
+The CLI-managed product fallback is not the user's personal skill library. A maintainer may separately have 36 adapted skills under `~/.agents/skills`; those are user-owned, are not bundled here, and must survive update/uninstall byte-for-byte when unmanaged or modified. A plugin-only installation does not need or create the fallback; explicit Codex-selected install/update convergence does.
 
-```text
-/brainstorm → /wish → /work → /review → SHIP
-```
+## Codex hook trust and side effects
 
-### 1) `/brainstorm`
-Explore options, validate direction, and produce a design handoff.
+Codex runs trusted commands on the host, outside the model sandbox. Plugin installation does not grant trust. After every setup, update, or hook edit:
 
-### 2) `/wish`
-Turn a validated idea into `.genie/wishes/<slug>/wish.md` with scope, criteria, and validation commands.
+1. Open `/hooks` in Codex.
+2. Confirm that only H3, H4, and H6 are present and inspect each changed definition/hash.
+3. Trust only the definitions you intend to run.
+4. Start a new task; the current task does not adopt changed hook definitions.
 
-### 3) `/work`
-Execute wish tasks with bounded fix loops and per-group validation evidence.
+Until that review, the hooks remain untrusted and do not run. Never use a trust-bypass flag.
 
-### 4) `/review`
-Universal review gate (plan, execution, PR) returning `SHIP`, `FIX-FIRST`, or `BLOCKED`.
+H4 and H6 definitions carry the literal SHA-256 of `scripts/dispatch-runtime.cjs` plus a launcher-contract version. The launcher hashes its own physical (non-symlink) file before spawning Genie and returns an event-valid denial on any mismatch. Release checks regenerate/compare those literals, so changing launcher bytes necessarily changes the definitions presented by `/hooks`. This binds the reviewed definition to the plugin launcher, but not to the later mutable, platform-specific `$GENIE_HOME/bin/genie` binary: Codex's current hook schema hashes the normalized definition, not every transitive executable byte, and a single cross-platform plugin manifest cannot name all release-binary digests. Canonical-path/non-symlink checks remain defense in depth; this residual is why Genie does not auto-trust these hooks and still requires operator review after every update.
 
-## `/council` workflow
+| ID | Event | Exact behavior | Allowed side effect |
+|----|-------|----------------|---------------------|
+| H3 | `SessionStart` | Inspects at most 64 candidate directories/256 KiB, then emits at most eight validated wish records and 2 KiB | Read-only filesystem access |
+| H4 | `PreToolUse` | Verifies the definition-bound launcher, then runs branch/orchestration checks for Bash and audit-context for Write/Edit/apply_patch | Deterministic local repository/Git reads only; no Codex network lookup, freshness/identity handler, Omni, install, update, global sync, or scaffolding |
+| H6 | `PermissionRequest` | Verifies the definition-bound launcher, applies the configured tool matcher, and invokes Omni once only when approvals are explicitly enabled | Bounded/redacted approval-queue state; timeout, interruption, malformed output, binding drift, and transport failure deny |
 
-The multi-perspective engine ships as a native dynamic workflow, not a skill:
+PreToolUse is a guardrail, not complete interception. Sandbox policy and server-side branch protection remain the hard controls. The six removed Codex commands performed startup install/sync, wrote `AGENTS.md`, validated wishes before/after writes, reinjected context on every prompt, or emitted an inert completion response; none belongs in the retained lifecycle.
 
-- **What ships**: `workflows/council.js` (the engine template), `references/lenses/` (6 deliberation cards), and the 7 lane skills (`repo-hygiene`, `architecture`, `code-quality`, `qa`, `perf`, `supply-chain`, `dx-docs`) doubling as audit lenses.
-- **Distribution**: `genie update` is the canonical updater — it stamps `LENS_ROOT` with the stable source root (`~/.genie/plugins/genie`) and writes `~/.claude/workflows/council.js`; the SessionStart hook is only a throttled trigger that delegates to it, with a CLI-less fallback stamp on plugin-only machines. See [Agent sync](#agent-sync) below.
-- **Modes**:
-  - `/council <topic>` — deliberation: 3-4 lenses routed by topic, 2-round Socratic exchange, dissent preserved verbatim.
-  - `/council audit [focus]` — lane audit: assess-only, evidence-backed findings that route to `/wish`, profile updates merged single-writer into `.genie/repo-profile.md`.
-- **Requirements**: Claude Code ≥ 2.1.154 with dynamic workflows available (paid plans; an org-level `disableWorkflows` setting turns the command off).
-- **Override**: a project-level `.claude/workflows/council.js` takes precedence over the personal stamped copy.
+## Explicit install and update paths
 
-## Agent sync
-
-`genie update` is the canonical updater. On every run — even when the binary is already at the latest release — it converges every **detected** coding agent from the single source root `~/.genie/plugins/genie`:
-
-| Agent | Target | What lands |
-|-------|--------|------------|
-| Claude Code | `~/.claude/skills/` + `~/.claude/workflows/council.js` | all genie skills + the stamped `/council` workflow |
-| Codex | `~/.agents/skills/` | genie skills as Agent-Skills folders in the shared user tier codex-rs loads (detection stays keyed on `~/.codex`; the retired `~/.codex/skills/.curated/` lane is migrated away with backups; `.system` is OpenAI's, never touched) |
-| Hermes | `~/.hermes/plugins/genie` | symlink into `~/.genie/plugins/hermes-genie` |
-
-- **One-time caveat on the delivering update**: the "on every run" guarantee starts one release late. The `genie update` that first brings agent-sync is still executed by the *old* binary, which only swaps the binary and has no sync phase — that run converges nothing. Run `genie update` once more, or let the SessionStart hook converge within its ~6h throttle window. Every update after that is self-syncing.
-- **Managed and reversible**: every synced skill dir carries a `.genie-sync.json` manifest, so a re-run can tell "unchanged" from "you edited this" from "genie never shipped this name". Any dir genie replaces or removes is backed up first under `~/.genie/state-backups/` — nothing is ever lost, and dirs genie never shipped are left untouched.
-- **The SessionStart hook is only a trigger**: when the genie CLI is on PATH it delegates to `genie update` (throttled ~6h via `~/.genie/.last-agent-sync`) and duplicates no sync logic. On a plugin-only machine with no CLI it falls back to stamping `~/.claude/workflows/council.js` directly.
-- **The marketplace plugin is optional on CLI machines**: because `genie update` converges skills directly, the `genie@automagik` marketplace plugin is not required where the CLI is installed. `genie doctor` reports its state but never re-enables it.
-- **Visibility and removal**: `genie doctor` prints a per-agent freshness line (current vs stale skills, council-stamp state, hermes link), advising `genie update` when anything is stale; `genie uninstall` removes only what genie provably shipped (skill dirs by manifest; council.js by its stamp signature; the hermes link only when it resolves into the genie home).
-
-## Release lag: pinned versions and update cadence
-
-On a machine **with the genie CLI installed**, `genie update` is the convergence path described in [Agent sync](#agent-sync) — it refreshes all detected agents directly, so the marketplace pin below matters mainly for plugin-only machines.
-
-Installed plugin versions **pin to GitHub Releases** — a `/plugin install` snapshots
-whatever release is current and stays there until you update. It does **not** track
-`dev` or `main`. The update cadence is manual: run `/plugin update` to advance a
-machine to the latest published release.
-
-Because the pin is sticky, a machine can drift well behind the source tree. Observed
-example: a machine sat pinned at `5.260703.5` for a week while `dev` moved on — the
-plugin kept working, but none of the intervening fixes reached it until someone ran
-`/plugin update`. Treat `/plugin update` as a periodic hygiene step, not a one-time
-setup action.
-
-## Directory Structure
-
-```text
-genie/
-├── .claude-plugin/plugin.json
-├── genie.ts
-├── skills -> ../../skills
-├── agents/
-├── hooks/
-├── scripts/
-├── workflows/
-└── references/
-```
-
-## Verification
+No hook installs or updates Genie. Operators use:
 
 ```bash
-ls ~/.claude/plugins/genie/plugin.json
+genie install --integrations codex  # installer-owned finishing path
+genie setup --codex                 # install or repair Codex plugin, role agents, and MCP routing
+genie update                        # explicit binary/payload/integration convergence
 ```
 
-Smoke-test the core commands:
-- `/brainstorm`
-- `/wish`
-- `/work`
-- `/review`
+A successful `genie setup --codex` persists Codex maintenance consent. Future explicit `genie update` invocations use
+that scope to refresh the Codex plugin, MCP route, optional role profiles, and clean digest-managed product-skill
+fallbacks in the user tier. Unmanaged, modified, and separately installed personal skills stay user-owned; persisted
+maintenance scope does not authorize hooks or background updates.
 
-## Sibling surface: Hermes
+When crossing from a release older than `5.260711.6` to `5.260711.6` or later, the first update may only deliver the new binary/payload because the already-running old process does not yet know the new convergence phase. After that command returns, run `genie update` once more explicitly. The second invocation runs the newly installed contract; confirm the plugin exposes exactly H3/H4/H6, review hashes with `/hooks`, and start a new task. Later updates converge in one operator-driven path. Do not rely on SessionStart for this compatibility hop.
 
-This Claude Code plugin and the Hermes-native plugin ([`plugins/hermes-genie/`](../hermes-genie/README.md)) are sibling surfaces of the same Genie substrate. This one carries the workflow skills into Claude Code; the Hermes plugin exposes read-only Genie state (status, board, wish/task queries, dry-run plans) inside Hermes sessions — Hermes acts as the chat/reasoning cockpit while Genie remains the execution system and source of task truth.
+### 2026-07-11 update incident
+
+One release-dogfood update exposed why that boundary matters. A `5.260710.13` process selected stale stable `5.260710.2`; its fresh child did not understand the environment-only sync request and performed another full update to `5.260711.3`. The ensuing legacy sync adopted 22 same-name personal skills and created a duplicate `review` skill.
+
+Containment recovered all 22 adapted directories from Genie's automatic backup, quarantined both recreated `review` copies, removed the old hook trust, and verified the 36 personal-skill digests plus 14 custom-agent TOMLs against the pre-incident baseline. The code fix keeps post-update convergence in the reviewed parent process and preserves user-owned collisions. This note intentionally contains no machine-specific paths, process ids, or credentials.
+
+## Skills and orchestration
+
+The lifecycle is shared across clients:
+
+```text
+brainstorm -> design review -> wish -> plan review -> work -> implementation review
+```
+
+For non-trivial work, brainstorm automatically invokes read-only design review before wish. The WISH then requires a
+separate plan review and persisted `APPROVED` status before work, followed by an independent implementation review. Design SHIP is persisted in DESIGN.md with reviewer identity, UTC timestamp, and a SHA-256 of the exact reviewed content; wish creation and lint reject missing, non-SHIP, or stale evidence. Codex
+invokes the plugin copies as `$genie:brainstorm`, `$genie:wish`, `$genie:review`, and `$genie:work`; bare selectors
+intentionally select the user tier (a CLI-managed fallback or separately installed personal copy). Claude Code uses the
+equivalent slash skills. Native subagents do not imply separate worktrees. Every engineer first claims its assigned task
+with `genie task checkout <id> --worker <name>`, reports completion without mutating task state, and is reviewed by a
+different agent. Only the orchestrator calls `genie task done <id>` after a SHIP verdict and passing validation. Use
+`genie launch` when separate worktrees or a human-supervised Warp cockpit are required.
+
+Those selectors are for manual invocation. Each physical skill's `agents/openai.yaml` starter card is selector-free, so selecting a plugin-tier or user-tier card executes that already-selected physical skill instead of naming and potentially redirecting to the other tier.
+
+The seven optional Codex profiles are `genie_engineer_trivial`, `genie_engineer_standard`, `genie_engineer_complex`, `genie_scout`, `genie_fixer`, `genie_reviewer`, and `genie_final_gate`. The matching Claude inventory is `engineer-trivial`, `engineer-standard`, `engineer-complex`, `scout`, `fixer`, `reviewer`, and `final-gate`. Release checks pin both exact seven-file inventories and their declared names in source, staged payload, extracted archive, and fresh-install copies. A plugin-only install falls back to the client's available generic roles.
+
+## Distribution and verification
+
+`plugins/genie/skills/` is generated from root `skills/`; never edit the mirror directly.
+
+```bash
+bun scripts/sync-plugin-skills.ts --check
+bun run skills:lint
+bun scripts/fresh-install-smoke.ts
+```
+
+Release tarballs contain the compiled `genie` executable, the complete `plugins/` tree (including hooks, MCP launcher, role-agent staging, and the 23-skill mirror), root `skills/`, `templates/`, both runtime marketplace manifests, and `VERSION`. Build/version paths verify source-to-plugin parity, required component inventory, generated-hook parity, and version equality before packaging, then extract the finished archive and repeat the inventory/mode/resource/version checks against the extracted payload.
+
+## Claude Code and Hermes
+
+Claude Code consumes `.claude-plugin/plugin.json`, its conventional `hooks/hooks.json`, native agents, and the stamped council workflow. Its SessionStart surface is one bounded, read-only `session-context.cjs` diagnostic: it does not run first-use setup, update, skill synchronization, council stamping, or project scaffolding. The retained `smart-install.js` and `first-run-check.cjs` filenames are inert compatibility diagnostics for stale cached manifests, not mutators. Operators must invoke `genie init`, `genie install`, `genie setup`, or `genie update` explicitly. Hermes uses the sibling [`plugins/hermes-genie/`](../hermes-genie/README.md) read-only plugin. Both share Genie's documents and task database, but their native runtime surfaces remain client-specific.

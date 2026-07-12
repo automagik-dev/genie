@@ -1,10 +1,13 @@
 import { execFileSync, execSync, spawn } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
 import {
+  constants,
   chmodSync,
   closeSync,
   copyFileSync,
   existsSync,
   fsyncSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -17,18 +20,48 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { type AgentSyncReport, runAgentSync } from '../lib/agent-sync.js';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import {
+  type AgentSyncReport,
+  type AgentSyncSelection,
+  LIFECYCLE_LEASE_OWNER_ENV,
+  LIFECYCLE_LEASE_PATH_ENV,
+  type LifecycleLease,
+  acquireLifecycleLease,
+  runAgentSync,
+} from '../lib/agent-sync.js';
 import { contractPath, genieConfigExists, getGenieConfigPath, saveGenieConfig } from '../lib/genie-config.js';
-import { type CodexAgentInstallResult, installCodexAgents, resolveBundleRoot } from '../lib/runtime-integrations.js';
+import {
+  type CodexAgentInstallResult,
+  type CommandRunner,
+  type IntegrationResult,
+  type IntegrationSelection,
+  type RuntimeExecutableResolver,
+  type RuntimeName,
+  installCodexAgents,
+  parseClaudePluginState,
+  parseCodexPluginState,
+  readIntegrationConsent,
+  resolveBundleRoot,
+  resolveRuntimeExecutable,
+  runBoundedIntegrationCommand,
+} from '../lib/runtime-integrations.js';
 import { VERSION } from '../lib/version.js';
 import { GenieConfigSchema } from '../types/genie-config.js';
+import {
+  type AuxiliaryTreeOperations,
+  type AuxiliaryTreeOutcome,
+  convergeAuxiliaryTree,
+  fingerprintAuxiliaryTree,
+} from './auxiliary-trees.js';
 import { cleanupV4 } from './legacy-v4.js';
+import { type RefreshUpdatePluginsOptions, refreshUpdatePlugins } from './update-integrations.js';
 
 const GENIE_HOME = process.env.GENIE_HOME || join(homedir(), '.genie');
 const GENIE_BIN = join(GENIE_HOME, 'bin');
 const GENIE_BIN_STAGING = join(GENIE_BIN, '.staging');
 const GENIE_BIN_PREVIOUS = join(GENIE_BIN, '.previous');
+const PENDING_DELIVERY_NAME = '.pending-delivery.json';
 const TRUTHY = new Set(['1', 'true', 'yes', 'on']);
 
 /**
@@ -124,28 +157,85 @@ export function decideVerify(args: DecideVerifyArgs): VerifyResult {
  */
 export function shortCircuitIfCurrent(currentVersion: string, latestVersion: string | null | undefined): boolean {
   if (!latestVersion) return false;
-  return normalizeVersion(currentVersion) === normalizeVersion(latestVersion);
+  const current = parseGenieVersion(currentVersion);
+  const latest = parseGenieVersion(latestVersion);
+  return current !== null && latest !== null && compareParsedVersions(current, latest) === 0;
 }
 
 /**
- * Compare two genie versions (`MAJOR.YYMMDD.N`, build metadata stripped) numerically,
- * component by component. Returns -1 when `a` is older than `b`, 0 when equal, 1 when
- * `a` is newer. Missing or non-numeric components are treated as 0 so a malformed
- * version string degrades to "older-or-equal" and never spuriously blocks an update.
+ * Compare two Genie versions (`MAJOR.YYMMDD.N[-prerelease][+build]`). Core and
+ * numeric prerelease identifiers compare numerically; non-numeric identifiers
+ * compare lexically; numeric prerelease identifiers rank below non-numeric
+ * identifiers; and a final release ranks above every prerelease of the same
+ * core. Malformed values are rejected instead of being coerced to zero.
  */
 export function compareVersions(a: string, b: string): number {
-  const pa = normalizeVersion(a).split('.');
-  const pb = normalizeVersion(b).split('.');
-  const len = Math.max(pa.length, pb.length);
-  for (let i = 0; i < len; i++) {
-    const x = Number.parseInt(pa[i] ?? '', 10);
-    const y = Number.parseInt(pb[i] ?? '', 10);
-    const xv = Number.isNaN(x) ? 0 : x;
-    const yv = Number.isNaN(y) ? 0 : y;
-    if (xv < yv) return -1;
-    if (xv > yv) return 1;
+  const parsedA = parseGenieVersion(a);
+  const parsedB = parseGenieVersion(b);
+  if (parsedA === null) throw new Error(`Invalid Genie version: ${JSON.stringify(a)}`);
+  if (parsedB === null) throw new Error(`Invalid Genie version: ${JSON.stringify(b)}`);
+  return compareParsedVersions(parsedA, parsedB);
+}
+
+interface ParsedGenieVersion {
+  core: [bigint, bigint, bigint];
+  prerelease: string[] | null;
+}
+
+const GENIE_VERSION_RE =
+  /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+
+function parseGenieVersion(value: string): ParsedGenieVersion | null {
+  const match = value.trim().match(GENIE_VERSION_RE);
+  if (!match) return null;
+  return {
+    core: [BigInt(match[1]), BigInt(match[2]), BigInt(match[3])],
+    prerelease: match[4] ? match[4].split('.') : null,
+  };
+}
+
+function compareParsedVersions(a: ParsedGenieVersion, b: ParsedGenieVersion): number {
+  const coreComparison = compareNumericIdentifiers(a.core, b.core);
+  if (coreComparison !== 0) return coreComparison;
+  return comparePrereleases(a.prerelease, b.prerelease);
+}
+
+function compareNumericIdentifiers(a: readonly bigint[], b: readonly bigint[]): number {
+  for (let index = 0; index < a.length; index += 1) {
+    if (a[index] < b[index]) return -1;
+    if (a[index] > b[index]) return 1;
   }
   return 0;
+}
+
+function comparePrereleases(a: string[] | null, b: string[] | null): number {
+  if (a === null && b === null) return 0;
+  if (a === null) return 1;
+  if (b === null) return -1;
+  const length = Math.max(a.length, b.length);
+  for (let index = 0; index < length; index += 1) {
+    const left = a[index];
+    const right = b[index];
+    if (left === undefined) return -1;
+    if (right === undefined) return 1;
+    if (left === right) continue;
+    return comparePrereleaseIdentifier(left, right);
+  }
+  return 0;
+}
+
+function comparePrereleaseIdentifier(left: string, right: string): number {
+  const leftNumeric = /^\d+$/.test(left);
+  const rightNumeric = /^\d+$/.test(right);
+  if (leftNumeric && rightNumeric) {
+    const leftValue = BigInt(left);
+    const rightValue = BigInt(right);
+    if (leftValue < rightValue) return -1;
+    if (leftValue > rightValue) return 1;
+    return 0;
+  }
+  if (leftNumeric !== rightNumeric) return leftNumeric ? -1 : 1;
+  return left < right ? -1 : 1;
 }
 
 /**
@@ -160,7 +250,8 @@ export type DowngradeDecision =
   | { kind: 'upgrade' }
   | { kind: 'current' }
   | { kind: 'block-downgrade'; installed: string; latest: string }
-  | { kind: 'allow-downgrade'; installed: string; latest: string };
+  | { kind: 'allow-downgrade'; installed: string; latest: string }
+  | { kind: 'invalid-version'; field: 'installed' | 'latest'; value: string };
 
 /**
  * Decide whether `genie update` should proceed, short-circuit, refuse, or force a
@@ -174,6 +265,12 @@ export function decideDowngrade(args: {
   explicitChannel: boolean;
 }): DowngradeDecision {
   if (!args.latestVersion) return { kind: 'upgrade' };
+  if (parseGenieVersion(args.latestVersion) === null) {
+    return { kind: 'invalid-version', field: 'latest', value: args.latestVersion };
+  }
+  if (parseGenieVersion(args.installedVersion) === null) {
+    return { kind: 'invalid-version', field: 'installed', value: args.installedVersion };
+  }
   const cmp = compareVersions(args.installedVersion, args.latestVersion);
   if (cmp === 0) return { kind: 'current' };
   if (cmp < 0) return { kind: 'upgrade' };
@@ -391,6 +488,7 @@ export async function fetchLatestManifest(
     if (
       typeof parsed.schema_version !== 'number' ||
       typeof parsed.version !== 'string' ||
+      parseGenieVersion(parsed.version) === null ||
       typeof parsed.tarball_base !== 'string' ||
       !Array.isArray(parsed.platforms)
     ) {
@@ -586,33 +684,66 @@ interface AtomicSwapResult {
   fallbackUsed: boolean;
 }
 
+export interface AtomicBinarySwapOptions {
+  /** Failure-injection seam immediately before rename-over-live. */
+  beforePromote?: (replacementPath: string, targetPath: string) => void;
+  /** Failure-injection seam immediately after rename-over-live. */
+  afterPromote?: (targetPath: string) => void;
+  /** Keep a journal-bound source until the surrounding delivery commits. */
+  preserveSource?: boolean;
+  /** Authenticated journal preimage consumed by this swap. */
+  expectedPreimage?: PendingOptionalFileFingerprint;
+  /** Authenticated journal fingerprint of the binary being promoted. */
+  expectedPayloadFingerprint?: PendingFileFingerprint;
+}
+
+function fsyncFile(path: string): void {
+  const fd = openSync(path, 'r');
+  try {
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function fsyncDirectory(path: string): void {
+  try {
+    const fd = openSync(path, 'r');
+    try {
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    // Directory fsync is unavailable on some supported platforms.
+  }
+}
+
 /**
  * Atomic binary swap.
  *
- * Backup move: target → previousDir is always within `GENIE_BIN`, so it is
- * guaranteed same-filesystem and uses `renameSync` unconditionally. The
- * `sameFs` device check only applies to the staging→target leg.
- *
- * Same-fs staging swap: `renameSync(staged, target)` — atomic on POSIX.
- *
- * Cross-device staging swap: copy staging → `target.tmp` (in the target
- * directory, so the final `renameSync` is same-fs and atomic) → `fsyncSync`
- * the bytes → `renameSync(target.tmp, target)`. The live target is preserved
- * until the replacement is fully written; an interrupted copy leaves only
- * the orphan `.tmp` file, never a half-written live binary.
- *
- * Old binary is moved to `~/.genie/bin/.previous/genie-<old-version>` so
- * `genie update --rollback` can restore it.
+ * A complete replacement is first copied and fsynced beside the canonical
+ * target. The prior executable is copied (not moved) into `.previous`, then
+ * one rename-over-live atomically promotes the replacement. Consequently an
+ * interruption before promotion always leaves the old canonical executable
+ * runnable, regardless of the filesystem that held the downloaded staging
+ * file. The source staging file is only removed after successful promotion.
  */
 export function atomicBinarySwap(
   stagedBinPath: string,
   targetBinPath: string,
   previousDir: string,
   oldVersion: string,
+  options: AtomicBinarySwapOptions = {},
 ): AtomicSwapResult {
-  if (!existsSync(stagedBinPath)) {
+  let stagedStat: ReturnType<typeof lstatSync>;
+  try {
+    stagedStat = lstatSync(stagedBinPath);
+  } catch {
     throw new Error(`staged binary missing: ${stagedBinPath}`);
   }
+  if (!stagedStat.isFile() || stagedStat.isSymbolicLink())
+    throw new Error(`staged binary is not a physical file: ${stagedBinPath}`);
 
   const targetDir = dirname(targetBinPath);
   mkdirSync(targetDir, { recursive: true });
@@ -622,62 +753,126 @@ export function atomicBinarySwap(
   const targetDev = deviceIdFor(targetBinPath);
   const sameFs = stagingDev !== null && targetDev !== null && stagingDev === targetDev;
 
+  const transactionId = `${process.pid}-${randomUUID()}`;
+  const replacementPath = join(targetDir, `.genie-replacement-${transactionId}`);
+  let backupStaging: string | null = null;
   let oldBackup: string | null = null;
-  if (existsSync(targetBinPath)) {
-    oldBackup = join(previousDir, `genie-${oldVersion}`);
-    if (existsSync(oldBackup)) {
-      try {
-        rmSync(oldBackup);
-      } catch {
-        // best-effort
-      }
-    }
-    // Backup move is always GENIE_BIN/* → GENIE_BIN/.previous/* (same fs by
-    // construction); renameSync is atomic regardless of the staging-side
-    // sameFs flag.
-    renameSync(targetBinPath, oldBackup);
-  }
-
-  if (sameFs) {
-    renameSync(stagedBinPath, targetBinPath);
-  } else {
-    // Cross-device: write to a temp file in the TARGET directory so the
-    // final rename is same-fs and atomic. If the copy is interrupted,
-    // we leave an orphan `.tmp` that the next update will overwrite —
-    // never a corrupted live binary.
-    const tmpTarget = `${targetBinPath}.tmp`;
-    if (existsSync(tmpTarget)) {
-      try {
-        rmSync(tmpTarget);
-      } catch {
-        // best-effort
-      }
-    }
-    copyFileSync(stagedBinPath, tmpTarget);
-    try {
-      const fd = openSync(tmpTarget, 'r');
-      try {
-        fsyncSync(fd);
-      } finally {
-        closeSync(fd);
-      }
-    } catch {
-      // fsync is best-effort.
-    }
-    renameSync(tmpTarget, targetBinPath);
-    try {
-      rmSync(stagedBinPath);
-    } catch {
-      // staging cleanup is best-effort
-    }
-  }
+  const expectedPreimage =
+    options.expectedPreimage ?? fingerprintOptionalPhysicalFile(targetBinPath, 'live binary preimage');
   try {
-    chmodSync(targetBinPath, 0o755);
-  } catch {
-    // best-effort
-  }
+    // The replacement is fully copied, executable, and durable in the target
+    // directory before the live canonical path is touched.
+    copyFileSync(stagedBinPath, replacementPath, constants.COPYFILE_EXCL);
+    chmodSync(replacementPath, 0o755);
+    fsyncFile(replacementPath);
+    const expectedPayloadFingerprint =
+      options.expectedPayloadFingerprint ?? fingerprintPhysicalFile(replacementPath, 'replacement binary baseline');
 
-  return { oldVersionBackup: oldBackup, swapped: true, fallbackUsed: !sameFs };
+    assertExpectedBinaryPreimage(targetBinPath, expectedPreimage, 'before backup');
+    let targetStat: ReturnType<typeof lstatSync> | null = null;
+    try {
+      targetStat = lstatSync(targetBinPath);
+    } catch {
+      targetStat = null;
+    }
+    if (targetStat !== null) {
+      if (!targetStat.isFile() || targetStat.isSymbolicLink())
+        throw new Error(`live binary is not a physical file: ${targetBinPath}`);
+      const canonicalBackup = join(previousDir, `genie-${oldVersion}`);
+      oldBackup = existsSync(canonicalBackup) ? `${canonicalBackup}.${Date.now()}-${randomUUID()}` : canonicalBackup;
+      backupStaging = `${oldBackup}.staging-${transactionId}`;
+      copyFileSync(targetBinPath, backupStaging, constants.COPYFILE_EXCL);
+      chmodSync(backupStaging, targetStat.mode & 0o777);
+      fsyncFile(backupStaging);
+      renameSync(backupStaging, oldBackup);
+      backupStaging = null;
+      fsyncDirectory(previousDir);
+      assertAuthenticatedBinaryBackup(oldBackup, expectedPreimage);
+    }
+
+    options.beforePromote?.(replacementPath, targetBinPath);
+    if (oldBackup !== null) assertAuthenticatedBinaryBackup(oldBackup, expectedPreimage);
+    // Consume exactly the journaled preimage at the last boundary available to
+    // portable Node. The lifecycle lease excludes Genie/install.sh writers;
+    // this recheck rejects any other writer observed before rename-over-live.
+    assertExpectedBinaryPreimage(targetBinPath, expectedPreimage, 'immediately before promotion');
+    assertAuthenticatedBinaryPayload(replacementPath, expectedPayloadFingerprint, 'immediately before promotion');
+    // rename-over-live is the only mutation of the canonical path. If the
+    // process dies before this call, the old executable remains runnable; if
+    // it dies after, the complete replacement is already live.
+    renameSync(replacementPath, targetBinPath);
+    options.afterPromote?.(targetBinPath);
+    assertAuthenticatedBinaryPayload(targetBinPath, expectedPayloadFingerprint, 'after promotion');
+    fsyncDirectory(targetDir);
+    if (!options.preserveSource) {
+      try {
+        rmSync(stagedBinPath);
+      } catch {
+        // A disposable staging source may survive a successful promotion.
+      }
+    }
+    return { oldVersionBackup: oldBackup, swapped: true, fallbackUsed: !sameFs };
+  } catch (error) {
+    rmSync(replacementPath, { force: true });
+    if (backupStaging !== null) rmSync(backupStaging, { force: true });
+    throw error;
+  }
+}
+
+function assertExpectedBinaryPreimage(
+  targetPath: string,
+  expected: PendingOptionalFileFingerprint,
+  phase: string,
+): void {
+  const actual = fingerprintOptionalPhysicalFile(targetPath, `live binary ${phase}`);
+  const matches =
+    actual.present === expected.present &&
+    (!actual.present ||
+      (actual.fingerprint !== null &&
+        expected.fingerprint !== null &&
+        fingerprintsEqual(actual.fingerprint, expected.fingerprint)));
+  if (!matches) throw new Error(`live binary preimage changed ${phase}; refusing to overwrite ${targetPath}`);
+}
+
+function assertAuthenticatedBinaryBackup(backupPath: string, expected: PendingOptionalFileFingerprint): void {
+  if (!expected.present || expected.fingerprint === null) {
+    throw new Error(`unexpected rollback backup for an absent binary preimage: ${backupPath}`);
+  }
+  const actual = fingerprintPhysicalFile(backupPath, 'previous binary backup');
+  if (!fingerprintsEqual(actual, expected.fingerprint)) {
+    throw new Error(`rollback backup does not match the authenticated binary preimage: ${backupPath}`);
+  }
+}
+
+function assertAuthenticatedBinaryPayload(path: string, expected: PendingFileFingerprint, phase: string): void {
+  const actual = fingerprintPhysicalFile(path, `binary payload ${phase}`);
+  if (!fingerprintsEqual(actual, expected)) {
+    throw new Error(`binary does not match the journaled payload fingerprint ${phase}: ${path}`);
+  }
+}
+
+/**
+ * Keep only the backup created by the verified promotion for one old version.
+ * Pruning happens after live-binary verification, never before the new binary
+ * is known-good, so a failed promotion retains every rollback candidate.
+ */
+export function pruneSameVersionBackups(previousDir: string, oldVersion: string, retainedPath: string): string[] {
+  const canonicalPrefix = `genie-${oldVersion}`;
+  const retained = resolve(retainedPath);
+  const removed: string[] = [];
+  for (const entry of readdirSync(previousDir)) {
+    if (entry !== canonicalPrefix && !entry.startsWith(`${canonicalPrefix}.`)) continue;
+    const path = join(previousDir, entry);
+    if (resolve(path) === retained) continue;
+    const stat = lstatSync(path);
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      throw new Error(`refusing to prune non-physical binary backup: ${path}`);
+    }
+    rmSync(path);
+    removed.push(path);
+  }
+  if (removed.length > 0) fsyncDirectory(previousDir);
+  return removed;
 }
 
 /**
@@ -1317,20 +1512,8 @@ async function runCommandSilent(
 // ============================================================================
 
 const FRAMEWORK_MARKER_FILES = new Set(['.orphaned_at']);
-
-function copyDirSync(src: string, dest: string): void {
-  mkdirSync(dest, { recursive: true });
-  for (const entry of readdirSync(src, { withFileTypes: true })) {
-    if (FRAMEWORK_MARKER_FILES.has(entry.name)) continue;
-    const srcPath = join(src, entry.name);
-    const destPath = join(dest, entry.name);
-    if (entry.isDirectory()) {
-      copyDirSync(srcPath, destPath);
-    } else {
-      copyFileSync(srcPath, destPath);
-    }
-  }
-}
+const AUXILIARY_DELIVERY_TREE_NAMES = ['plugins', 'skills', 'templates', '.agents', '.claude-plugin'] as const;
+type AuxiliaryDeliveryTreeName = (typeof AUXILIARY_DELIVERY_TREE_NAMES)[number];
 
 // ============================================================================
 // Channel resolution + persistence.
@@ -1543,10 +1726,49 @@ export interface UpdateCommandOptions {
   rollback?: boolean;
   /** `--sync-only`. Converge agent integrations and return — no manifest
    *  fetch, no binary swap. Equivalent to GENIE_UPDATE_SYNC_ONLY=1; the flag
-   *  form is the SessionStart hook's hard guard: a pre-contract binary rejects
-   *  the unknown flag and exits immediately (zero network) instead of silently
-   *  running a full unattended update. */
+   *  is retained for legacy automation and intentionally remains limited to
+   *  skills and role agents. */
   syncOnly?: boolean;
+  /** Hidden child protocol used only after a verified binary delivery. A
+   *  pre-contract binary must reject this argv flag before doing any work. */
+  postDeliveryConverge?: boolean;
+}
+
+export type UpdateExecutionMode = 'normal' | 'rollback' | 'sync-only' | 'post-delivery-converge';
+
+function hasPostDeliveryModeConflict(options: UpdateCommandOptions, syncOnlyEnvironment: string | undefined): boolean {
+  return Boolean(
+    options.rollback ||
+      options.syncOnly ||
+      syncOnlyEnvironment === '1' ||
+      options.dev ||
+      options.homolog ||
+      options.next ||
+      options.stable ||
+      options.yes ||
+      options.restart === false ||
+      options.verify === false ||
+      options.skipMaintenance,
+  );
+}
+
+/** Resolve one mutually-exclusive mode before any recovery or other mutation. */
+export function resolveUpdateExecutionMode(
+  options: UpdateCommandOptions,
+  syncOnlyEnvironment = process.env.GENIE_UPDATE_SYNC_ONLY,
+): UpdateExecutionMode {
+  if (options.postDeliveryConverge) {
+    if (hasPostDeliveryModeConflict(options, syncOnlyEnvironment)) {
+      throw new Error('--post-delivery-converge cannot be combined with another update mode or delivery option');
+    }
+    return 'post-delivery-converge';
+  }
+  if (options.rollback && options.syncOnly) {
+    throw new Error('--rollback and --sync-only cannot be used together');
+  }
+  if (options.rollback) return 'rollback';
+  if (options.syncOnly === true || syncOnlyEnvironment === '1') return 'sync-only';
+  return 'normal';
 }
 
 /**
@@ -1565,6 +1787,15 @@ function applyDowngradeGuard(
 ): boolean {
   const explicitChannel = Boolean(options.stable || options.homolog || options.dev || options.next);
   const downgrade = decideDowngrade({ installedVersion, latestVersion, explicitChannel });
+  if (downgrade.kind === 'invalid-version') {
+    if (downgrade.field === 'latest') {
+      throw new Error(`Channel manifest contains an invalid Genie version: ${JSON.stringify(downgrade.value)}`);
+    }
+    log(
+      `Installed version ${JSON.stringify(downgrade.value)} is malformed; proceeding with the valid channel manifest as a repair`,
+    );
+    return false;
+  }
   if (downgrade.kind === 'block-downgrade') {
     log(
       `Installed v${normalizeVersion(downgrade.installed)} is NEWER than ${channel} manifest v${normalizeVersion(downgrade.latest)} — refusing automatic downgrade (switch channels or reinstall explicitly to downgrade)`,
@@ -1579,17 +1810,223 @@ function applyDowngradeGuard(
   return false;
 }
 
+function runTrackedManualUpdateConvergence(expectedVersion: string): void {
+  const convergence = runManualUpdateConvergence({ expectedVersion });
+  if (convergence.integrations.some((result) => !result.ok)) process.exitCode = 1;
+}
+
+function resolveUpdatePlatformOrExit(): string {
+  try {
+    return resolvePlatformId();
+  } catch (err) {
+    error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
+}
+
+function requireCanonicalInstallOrExit(): void {
+  try {
+    ensureCanonicalInstall();
+  } catch (err) {
+    error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
+}
+
+function acquireRequiredLifecycleLease(): LifecycleLease {
+  const lease = acquireLifecycleLease(GENIE_HOME);
+  if ('skipped' in lease) {
+    throw new Error(`Another Genie lifecycle command is active: ${lease.skipped}`);
+  }
+  return lease;
+}
+
+export type FreshBinaryConvergenceRunner = (binaryPath: string, argv: string[], environment: NodeJS.ProcessEnv) => void;
+
+export interface FreshBinaryConvergenceOptions {
+  lifecycleLease: LifecycleLease;
+  binaryPath?: string;
+  run?: FreshBinaryConvergenceRunner;
+}
+
+/**
+ * Hand the live lifecycle lease to the freshly installed binary and invoke an
+ * argv-only protocol that old binaries reject at parse time. The parent stays
+ * the sole lease owner while the child performs integration convergence.
+ */
+export function runFreshBinaryPostDeliveryConvergence(options: FreshBinaryConvergenceOptions): void {
+  const binaryPath = options.binaryPath ?? join(GENIE_BIN, 'genie');
+  let owner: string;
+  try {
+    owner = readFileSync(options.lifecycleLease.path, 'utf8').trim();
+  } catch (cause) {
+    throw new Error(`cannot hand off the Genie lifecycle lease: ${errMsg(cause)}`);
+  }
+  if (!owner || owner.includes('\n') || owner.includes('\r')) {
+    throw new Error('cannot hand off the Genie lifecycle lease: live owner record is missing or malformed');
+  }
+  const environment: NodeJS.ProcessEnv = {
+    ...process.env,
+    [LIFECYCLE_LEASE_PATH_ENV]: options.lifecycleLease.path,
+    [LIFECYCLE_LEASE_OWNER_ENV]: owner,
+  };
+  const run =
+    options.run ??
+    ((path, argv, env) => {
+      execFileSync(path, argv, { env, stdio: 'inherit' });
+    });
+  try {
+    run(binaryPath, ['update', '--post-delivery-converge'], environment);
+  } catch (cause) {
+    throw new Error(
+      `fresh Genie integration convergence failed: ${errMsg(cause)}. The verified CLI update is installed, but its integrations are not converged. Close all Codex tasks first. Then, from an external terminal, run \`genie update\` (or \`genie setup --codex\`), review \`/hooks\`, and start a new Codex task.`,
+    );
+  }
+}
+
+function selectedLegacySyncRuntimes(selection: IntegrationSelection): RuntimeName[] {
+  if (selection === 'none') return [];
+  if (selection === 'codex' || selection === 'claude') return [selection];
+  return ['codex', 'claude'];
+}
+
+export interface LegacySyncOnlyAdvisoryOptions {
+  selection: IntegrationSelection;
+  expectedVersion: string;
+  runner?: CommandRunner;
+  resolveExecutable?: RuntimeExecutableResolver;
+  cwd?: string;
+}
+
+function legacySyncRuntimeDrift(
+  runtime: RuntimeName,
+  options: LegacySyncOnlyAdvisoryOptions,
+  cwd: string,
+  runner: CommandRunner,
+): string | null {
+  let executable: string | null;
+  try {
+    executable = resolveRuntimeExecutable(runtime, cwd, options.resolveExecutable);
+  } catch {
+    return null;
+  }
+  if (executable === null) return null;
+  try {
+    const result = runner(executable, ['plugin', 'list', '--json'], { timeoutMs: 15_000 });
+    if (result.exitCode !== 0 || result.timedOut || result.outputOverflow) return null;
+    const parsed = runtime === 'codex' ? parseCodexPluginState(result.stdout) : parseClaudePluginState(result.stdout);
+    if (!parsed.ok || !parsed.state.installed || !parsed.state.version) return null;
+    if (normalizeVersion(parsed.state.version) === normalizeVersion(options.expectedVersion)) return null;
+    return `${runtime} v${parsed.state.version}${parsed.state.enabled === false ? ' (disabled; preserved)' : ''}`;
+  } catch {
+    return null;
+  }
+}
+
+/** Read-only plugin-state probe used by the first release carrying the fresh
+ * child protocol. Legacy `--sync-only` remains skills/role-only; it merely
+ * tells the operator when that compatibility path left a selected plugin on
+ * the previous version. */
+export function legacySyncOnlyPluginAdvisory(options: LegacySyncOnlyAdvisoryOptions): string | null {
+  if (options.selection === 'none') return null;
+  const cwd = options.cwd ?? process.cwd();
+  const runner = options.runner ?? runBoundedIntegrationCommand;
+  const stale: string[] = [];
+  for (const runtime of selectedLegacySyncRuntimes(options.selection)) {
+    const drift = legacySyncRuntimeDrift(runtime, options, cwd, runner);
+    if (drift !== null) stale.push(drift);
+  }
+  if (stale.length === 0) return null;
+  return `Legacy --sync-only left selected plugin integration${stale.length === 1 ? '' : 's'} stale (${stale.join(', ')}; CLI/source v${normalizeVersion(options.expectedVersion)}). Close all Codex tasks first. Then, from an external terminal, run \`genie update\` (or \`genie setup --codex\`), review \`/hooks\`, and start a new Codex task.`;
+}
+
+export interface LegacySyncOnlyConvergenceOptions extends LegacySyncOnlyAdvisoryOptions {
+  sync?: () => void;
+  log?: (line: string) => void;
+}
+
+/** Emit version-drift recovery before strict skill/role convergence so a sync
+ * failure cannot hide the plugin advisory needed by first-release upgrades. */
+export function runLegacySyncOnlyConvergence(options: LegacySyncOnlyConvergenceOptions): void {
+  const advisory = legacySyncOnlyPluginAdvisory(options);
+  if (advisory !== null) (options.log ?? log)(advisory);
+  (options.sync ?? (() => runAgentSyncSafe({ strict: true, selection: options.selection })))();
+}
+
+function announceUpdatePlanOrExit(
+  channel: ReleaseChannel,
+  platform: string,
+  installedVersion: string,
+  latestVersion: string | null,
+): string {
+  log(`Channel: ${channel}${channel === 'stable' ? ' (stable)' : ` (${channel})`}`);
+  log(`Platform: ${platform}`);
+  if (!latestVersion) {
+    log(`Channel manifest unavailable (.well-known/${channel === 'stable' ? 'latest' : channel}.json missing)`);
+    error(`Cannot resolve target version for channel "${channel}". Aborting.`);
+    process.exit(1);
+  }
+  if (normalizeVersion(installedVersion) !== normalizeVersion(latestVersion)) {
+    log(`Update available: ${normalizeVersion(installedVersion)} → ${normalizeVersion(latestVersion)}`);
+  }
+  return latestVersion;
+}
+
+function runLegacySyncOnlyMode(): void {
+  // Consent is re-read under the lease so a concurrent lifecycle command
+  // cannot change the selected client-home scope between plan and write.
+  const selection = readIntegrationConsent(GENIE_HOME);
+  runLegacySyncOnlyConvergence({ selection, expectedVersion: VERSION });
+}
+
+function runPostDeliveryConvergenceMode(): void {
+  const installedVersion = readBinaryVersion(join(GENIE_BIN, 'genie'));
+  if (installedVersion === null) {
+    error('Post-delivery convergence refused: the canonical installed binary did not report a version.');
+    process.exitCode = 1;
+    return;
+  }
+  try {
+    const convergence = runManualUpdateConvergence({
+      expectedVersion: installedVersion,
+      selection: readIntegrationConsent(GENIE_HOME),
+    });
+    const failures = convergence.integrations.filter((result) => !result.ok);
+    if (failures.length > 0) {
+      throw new Error(failures.map((result) => `${result.runtime}: ${result.detail}`).join('; '));
+    }
+  } catch (cause) {
+    error(`Post-delivery convergence failed: ${errMsg(cause)}`);
+    process.exitCode = 1;
+  }
+}
+
+async function runExplicitUpdateMode(mode: Exclude<UpdateExecutionMode, 'normal'>): Promise<void> {
+  const lifecycleLease = acquireRequiredLifecycleLease();
+  try {
+    if (mode === 'rollback') await runRollback();
+    else if (mode === 'sync-only') runLegacySyncOnlyMode();
+    else runPostDeliveryConvergenceMode();
+  } finally {
+    lifecycleLease.release();
+  }
+}
+
+function runFreshConvergenceOrReport(lifecycleLease: LifecycleLease): boolean {
+  try {
+    runFreshBinaryPostDeliveryConvergence({ lifecycleLease });
+    return true;
+  } catch (cause) {
+    error(errMsg(cause));
+    process.exitCode = 1;
+    return false;
+  }
+}
+
 export async function updateCommand(options: UpdateCommandOptions = {}): Promise<void> {
-  // Sync-only fast path — the internal re-entry contract. Two equivalent
-  // triggers: the freshly-swapped binary (runFreshBinaryAgentSync) re-invokes
-  // `genie update` with GENIE_UPDATE_SYNC_ONLY=1, and the CC SessionStart hook
-  // invokes `genie update --sync-only` (the flag is a hard guard — old
-  // commander binaries reject unknown flags and exit non-zero with zero
-  // network, so a pre-contract binary can never misread the delegation as a
-  // full update). Both converge agents with no network, manifest fetch, or
-  // channel persistence.
-  if (options.syncOnly === true || process.env.GENIE_UPDATE_SYNC_ONLY === '1') {
-    runAgentSyncSafe();
+  const mode = resolveUpdateExecutionMode(options);
+  if (mode !== 'normal') {
+    await runExplicitUpdateMode(mode);
     return;
   }
 
@@ -1598,80 +2035,29 @@ export async function updateCommand(options: UpdateCommandOptions = {}): Promise
   console.log(`${colorize('\x1b[2m', '\x1b[0m', '────────────────────────────────────')}`);
   console.log();
 
-  if (options.rollback) {
-    await runRollback();
-    return;
-  }
-
   const noRestart = options.restart === false || isTruthyEnv(process.env.GENIE_UPDATE_NO_RESTART);
   const noVerify = options.verify === false || isTruthyEnv(process.env.GENIE_UPDATE_NO_VERIFY);
   const channel = await resolveChannel(options);
 
-  // Persist on every run, not just explicit channel flips. This makes the
-  // sticky behavior bulletproof: a one-time `genie update --dev` writes the
-  // channel to config, and every subsequent bare `genie update` re-resolves
-  // and re-persists the same channel. The only way to leave the dev channel
-  // is an explicit `--stable`. (See wish release-channel-dev, decision #4.)
-  await persistChannel(channel);
-
-  // Pre-flight: fetch the channel manifest. Single canonical source of truth.
+  // Planning is read-only and deliberately happens before lifecycle lease
+  // acquisition. Interactive users can consider the prompt without blocking
+  // install/setup/uninstall in another process.
   const manifest = await fetchLatestManifest(channel);
-  const latestVersion = manifest?.version ?? null;
-  // Key the decision off the installed binary, NOT this process's
-  // compile-time VERSION — a stale shadowing binary on $PATH would
-  // otherwise re-offer the same update on every invocation.
-  const installedVersion = resolveInstalledVersion();
-  if (shortCircuitIfCurrent(installedVersion, latestVersion)) {
-    success(`Already up to date (v${normalizeVersion(installedVersion)}, channel ${channel})`);
-    // Update = converge everything, not just the binary: sync agents even when
-    // the installed binary is already at the latest version.
-    runAgentSyncSafe();
-    console.log();
-    return;
-  }
-
-  // Downgrade guard. `shortCircuitIfCurrent` only catches the EQUAL case; without
-  // this a manifest that points BACKWARD (a channel rollback, or a stale
-  // .well-known pin) would swap the binary to an OLDER build via the normal
-  // "Update available" flow.
-  if (applyDowngradeGuard(installedVersion, latestVersion, channel, options)) {
-    // Refused downgrade — still converge agents, exactly like the already-current path.
-    runAgentSyncSafe();
-    console.log();
-    return;
-  }
-
-  let platform: string;
-  try {
-    platform = resolvePlatformId();
-  } catch (err) {
-    error(err instanceof Error ? err.message : String(err));
-    process.exit(1);
-  }
-
-  // Refuse to swap when the live binary is outside ~/.genie/bin/. Silently
-  // updating a different file would mask the regression on bun/npm-installed
-  // hosts where $PATH still points at the old binary.
-  try {
-    ensureCanonicalInstall();
-  } catch (err) {
-    error(err instanceof Error ? err.message : String(err));
-    process.exit(1);
-  }
-
-  log(`Channel: ${channel}${channel === 'stable' ? ' (stable)' : ` (${channel})`}`);
-  log(`Platform: ${platform}`);
-  if (latestVersion) {
-    log(`Update available: ${normalizeVersion(installedVersion)} → ${normalizeVersion(latestVersion)}`);
-  } else {
-    log(`Channel manifest unavailable (.well-known/${channel === 'stable' ? 'latest' : channel}.json missing)`);
-    error(`Cannot resolve target version for channel "${channel}". Aborting.`);
-    process.exit(1);
-  }
+  const plannedInstalledVersion = resolveInstalledVersion();
+  const platform = resolveUpdatePlatformOrExit();
+  const latestVersion = announceUpdatePlanOrExit(channel, platform, plannedInstalledVersion, manifest?.version ?? null);
   console.log();
 
-  if (!shouldAutoConfirm(options)) {
-    const proceedQuestion = `Update v${normalizeVersion(installedVersion)} → v${normalizeVersion(latestVersion as string)}?`;
+  const plannedDecision = decideDowngrade({
+    installedVersion: plannedInstalledVersion,
+    latestVersion,
+    explicitChannel: Boolean(options.stable || options.homolog || options.dev || options.next),
+  });
+  const plannedNeedsDelivery =
+    normalizeVersion(plannedInstalledVersion) !== normalizeVersion(latestVersion as string) &&
+    plannedDecision.kind !== 'block-downgrade';
+  if (plannedNeedsDelivery && !shouldAutoConfirm(options)) {
+    const proceedQuestion = `Update v${normalizeVersion(plannedInstalledVersion)} → v${normalizeVersion(latestVersion as string)}?`;
     const proceed = await promptConfirm(proceedQuestion);
     if (!proceed) {
       console.log();
@@ -1681,30 +2067,67 @@ export async function updateCommand(options: UpdateCommandOptions = {}): Promise
     }
   }
 
-  const diagnosticsCtx: UpdateDiagnosticsContext = {
-    channel,
-    manifest,
-    platform,
-    latestVersion,
-    cliVersion: VERSION,
-    tarballPath: null,
-    attestationVerified: false,
-    previousBackup: null,
-  };
-
+  const lifecycleLease = acquireRequiredLifecycleLease();
   try {
-    await runDelivery(manifest as LatestManifest, platform, diagnosticsCtx);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    error(`Update failed: ${msg}`);
-    process.exit(1);
-  }
+    // Revalidate durable recovery and the installed binary immediately after
+    // acquiring the lease, before the first mutation owned by this plan.
+    try {
+      resumePendingDelivery();
+    } catch (err) {
+      error(`Pending update recovery failed: ${errMsg(err)}`);
+      process.exitCode = 1;
+      return;
+    }
+    const installedVersion = resolveInstalledVersion();
 
-  runV4CleanupSafe();
-  await runPostUpdateVerifySafe({ ...options, noRestart, noVerify }, diagnosticsCtx);
-  // Re-exec the freshly installed binary so the NEW version's agent-sync logic
-  // runs (this process is still the old binary). Non-fatal.
-  runFreshBinaryAgentSync();
+    // Channel persistence is now inside the mutation lease and follows local
+    // state revalidation; the prompt itself never owns the lease.
+    await persistChannel(channel);
+
+    if (shortCircuitIfCurrent(installedVersion, latestVersion)) {
+      success(`Already up to date (v${normalizeVersion(installedVersion)}, channel ${channel})`);
+      runTrackedManualUpdateConvergence(latestVersion ?? normalizeVersion(installedVersion));
+      console.log();
+      return;
+    }
+
+    if (applyDowngradeGuard(installedVersion, latestVersion, channel, options)) {
+      runTrackedManualUpdateConvergence(normalizeVersion(installedVersion));
+      console.log();
+      return;
+    }
+
+    // A concurrent lifecycle operation may have moved or replaced the live
+    // binary while this process was prompting. Re-check canonical ownership
+    // under the lease immediately before delivery.
+    requireCanonicalInstallOrExit();
+
+    const diagnosticsCtx: UpdateDiagnosticsContext = {
+      channel,
+      manifest,
+      platform,
+      latestVersion,
+      cliVersion: VERSION,
+      tarballPath: null,
+      attestationVerified: false,
+      previousBackup: null,
+    };
+    const resolvedManifest = manifest as LatestManifest;
+
+    try {
+      await runDelivery(resolvedManifest, platform, diagnosticsCtx);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      error(`Update failed: ${msg}`);
+      process.exit(1);
+    }
+
+    runV4CleanupSafe();
+    if (!runFreshConvergenceOrReport(lifecycleLease)) return;
+    await runPostUpdateVerifySafe({ ...options, noRestart, noVerify }, diagnosticsCtx);
+  } finally {
+    lifecycleLease.release();
+  }
 }
 
 /**
@@ -1728,10 +2151,10 @@ export function runV4CleanupSafe(runner: typeof cleanupV4 = cleanupV4): void {
  * root. This is the ONE printer: the sync-only fast path, the already-current
  * short-circuit, and `genie install` all funnel through here.
  *
- * Non-fatal by contract — an engine failure becomes a single advisory line,
- * never a thrown error — and it always refreshes the `~/.genie/.last-agent-sync`
- * throttle marker the SessionStart hook reads, so the marker records that the
- * sync phase ran regardless of outcome.
+ * Non-fatal by default — an engine failure becomes a single advisory line.
+ * The `~/.genie/.last-agent-sync` throttle marker is refreshed only after
+ * agent skills and Codex role agents both converge without any reported
+ * failure; partial work therefore remains immediately retryable.
  *
  * `sync` / `log` / `markerPath` / `now` are injection seams (mirrors
  * runV4CleanupSafe + verifySwappedBinary) so the wiring is unit-testable without
@@ -1752,18 +2175,33 @@ export interface RunAgentSyncSafeOptions {
    * null when no bundle root resolves / it carries no codex-agents staging dir.
    */
   codexRefresh?: () => CodexAgentInstallResult | null;
+  /** Explicit lifecycle commands fail instead of converting convergence errors to warnings. */
+  strict?: boolean;
+  selection?: AgentSyncSelection;
 }
 
-export function runAgentSyncSafe(opts: RunAgentSyncSafeOptions = {}): void {
+export function runAgentSyncSafe(opts: RunAgentSyncSafeOptions = {}): AgentSyncReport | null {
   const emit = opts.log ?? log;
+  let successful = false;
   try {
-    const report = (opts.sync ?? runAgentSync)();
+    const report = (opts.sync ?? runAgentSync)({ selection: opts.selection });
     for (const line of formatAgentSyncSummary(report)) emit(line);
-    refreshCodexIntegrationsSafe(report, emit, opts.codexRefresh);
+    const roleError = refreshCodexIntegrationsSafe(report, emit, opts.codexRefresh);
+    const failures = report.agents.flatMap((agent) => agent.failures ?? []);
+    if (report.source.pluginRoot === null) failures.push('no Genie plugin source was available');
+    if (report.skipped) failures.push(report.skipped);
+    if (roleError) failures.push(roleError);
+    if (opts.strict && failures.length > 0) throw new Error(failures.join('; '));
+    successful = failures.length === 0;
+    if (successful) {
+      touchAgentSyncMarker(opts.markerPath ?? join(GENIE_HOME, '.last-agent-sync'), (opts.now ?? (() => new Date()))());
+    }
+    return report;
   } catch (err) {
     emit(`agent sync failed: ${errMsg(err)} — will retry on the next genie update`);
+    if (opts.strict) throw err;
+    return null;
   }
-  touchAgentSyncMarker(opts.markerPath ?? join(GENIE_HOME, '.last-agent-sync'), (opts.now ?? (() => new Date()))());
 }
 
 /**
@@ -1783,17 +2221,20 @@ function refreshCodexIntegrationsSafe(
   report: AgentSyncReport,
   emit: (line: string) => void,
   refresh?: () => CodexAgentInstallResult | null,
-): void {
-  if (report.skipped || !report.agents.some((agent) => agent.agent === 'codex' && agent.detected)) return;
+): string | null {
+  if (report.skipped || !report.agents.some((agent) => agent.agent === 'codex' && agent.detected)) return null;
   try {
     const result = (refresh ?? refreshCodexRoleAgents)();
-    if (result === null) return;
+    if (result === null) return 'Codex role-agent bundle is unavailable';
     const parts = [`${result.installed} role-agent TOMLs refreshed`];
     if (result.backedUp.length > 0) parts.push(`${result.backedUp.length} user-tuned backed up`);
     if (result.skippedUserOwned.length > 0) parts.push(`${result.skippedUserOwned.length} user-owned kept`);
     emit(`agent-sync: codex — ${parts.join(', ')}`);
+    return null;
   } catch (err) {
-    emit(`agent-sync: codex role-agent refresh failed: ${errMsg(err)} — will retry on the next genie update`);
+    const failure = `agent-sync: codex role-agent refresh failed: ${errMsg(err)} — will retry on the next genie update`;
+    emit(failure);
+    return failure;
   }
 }
 
@@ -1837,29 +2278,46 @@ function touchAgentSyncMarker(markerPath: string, now: Date): void {
 }
 
 /**
- * After a real binary swap, re-exec the FRESHLY installed binary so the NEW
- * version's agent-sync logic runs — the current process is still the OLD binary.
- * Established pattern (see the `--version` probes at resolveInstalledVersion /
- * verifySwappedBinary). The child hits the sync-only fast path via
- * GENIE_UPDATE_SYNC_ONLY=1 and returns without any network. Non-fatal: a failed
- * re-exec is a one-line advisory. `exec` is an injection seam so the wiring is
- * unit-testable without spawning a binary.
+ * Canonical operator-driven convergence routine. After delivery it runs only
+ * inside the fresh binary's explicit `--post-delivery-converge` mode; already-
+ * current and blocked-downgrade paths can call it in-process. Never launch a
+ * fresh binary with an ambiguous plain `update` or environment-only marker —
+ * that caused the 2026-07-11 downgrade→unattended-upgrade cascade.
  */
-export interface FreshBinaryAgentSyncOptions {
-  exec?: (binaryPath: string, env: NodeJS.ProcessEnv) => void;
+export interface ManualUpdateConvergenceOptions {
+  expectedVersion: string;
+  bundleRoot?: string;
+  runSync?: () => void;
+  refreshPlugins?: (options: RefreshUpdatePluginsOptions) => IntegrationResult[];
+  log?: (line: string) => void;
+  /** Persisted operator scope; defaults to the install-time consent record. */
+  selection?: IntegrationSelection;
 }
 
-export function runFreshBinaryAgentSync(opts: FreshBinaryAgentSyncOptions = {}): void {
-  const exec =
-    opts.exec ??
-    ((binaryPath: string, env: NodeJS.ProcessEnv) => {
-      execFileSync(binaryPath, ['update'], { env, stdio: 'inherit', timeout: 120_000 });
-    });
-  try {
-    exec(join(GENIE_BIN, 'genie'), { ...process.env, GENIE_UPDATE_SYNC_ONLY: '1' });
-  } catch (err) {
-    log(`agent sync (post-update) skipped: ${errMsg(err)}`);
+export interface ManualUpdateConvergenceResult {
+  integrations: IntegrationResult[];
+}
+
+export function runManualUpdateConvergence(options: ManualUpdateConvergenceOptions): ManualUpdateConvergenceResult {
+  const emit = options.log ?? log;
+  const selection = options.selection ?? readIntegrationConsent(GENIE_HOME);
+  if (selection === 'none') return { integrations: [] };
+  (options.runSync ?? (() => runAgentSyncSafe({ strict: true, selection })))();
+  const integrations = (options.refreshPlugins ?? refreshUpdatePlugins)({
+    bundleRoot: options.bundleRoot ?? GENIE_HOME,
+    expectedVersion: options.expectedVersion,
+    selection,
+  });
+  for (const result of integrations) {
+    const disabled = result.preservedDisabled ? '; disabled state preserved' : '';
+    emit(
+      `integration refresh: ${result.runtime} — ${result.ok ? result.detail : `FAILED: ${result.detail}`}${disabled}`,
+    );
   }
+  if (integrations.some((result) => result.runtime === 'codex' && result.ok && result.hookReviewRequired)) {
+    emit('Close all Codex tasks first. Then review refreshed Genie hooks with /hooks and start a new Codex task.');
+  }
+  return { integrations };
 }
 
 function errMsg(err: unknown): string {
@@ -1875,7 +2333,7 @@ async function runDelivery(
   manifest: LatestManifest,
   platform: string,
   diagnosticsCtx: UpdateDiagnosticsContext,
-): Promise<void> {
+): Promise<AuxiliaryTreeOutcome[]> {
   log('Downloading signed tarball from GitHub Releases...');
   const tarballPath = await downloadAndVerifyTarball(manifest, platform, GENIE_BIN_STAGING);
   diagnosticsCtx.tarballPath = tarballPath;
@@ -1897,9 +2355,23 @@ async function runDelivery(
     // best-effort
   }
 
+  const oldVersion = normalizeVersion(VERSION);
   log('Atomically swapping binary...');
   const targetBin = join(GENIE_BIN, 'genie');
-  const swapResult = atomicBinarySwap(stagedBin, targetBin, GENIE_BIN_PREVIOUS, normalizeVersion(VERSION));
+  const pending = recordPendingDelivery({
+    version: manifest.version,
+    previousVersion: oldVersion,
+    previousBinaryPath: targetBin,
+    extractDir,
+    tarballPath,
+  });
+  const expectedPreimage = pending.payload.previousBinary;
+  if (expectedPreimage === undefined) throw new Error('pending delivery did not record the live binary preimage');
+  const swapResult = atomicBinarySwap(stagedBin, targetBin, GENIE_BIN_PREVIOUS, oldVersion, {
+    preserveSource: true,
+    expectedPreimage,
+    expectedPayloadFingerprint: pending.payload.binary,
+  });
   diagnosticsCtx.previousBackup = swapResult.oldVersionBackup;
 
   // Sync the per-binary VERSION stamp BEFORE verifying. The compiled binary
@@ -1924,14 +2396,16 @@ async function runDelivery(
     stagingDir: GENIE_BIN_STAGING,
     previousDir: GENIE_BIN_PREVIOUS,
   });
+  if (swapResult.oldVersionBackup !== null) {
+    assertAuthenticatedBinaryBackup(swapResult.oldVersionBackup, expectedPreimage);
+    try {
+      pruneSameVersionBackups(GENIE_BIN_PREVIOUS, oldVersion, swapResult.oldVersionBackup);
+    } catch (pruneError) {
+      log(`Backup retention cleanup deferred: ${errMsg(pruneError)}`);
+    }
+  }
 
   success(`Genie binary updated → v${manifest.version}${swapResult.fallbackUsed ? ' (cross-device fallback)' : ''}`);
-
-  try {
-    writeFileSync(join(GENIE_HOME, 'VERSION'), `${manifest.version}\n`);
-  } catch {
-    // best-effort
-  }
 
   // Post-swap divergence guard: ~/.genie/bin/genie now holds the new
   // binary, but if $PATH resolves `genie` to a different file (a pre-G5
@@ -1984,8 +2458,591 @@ async function runDelivery(
     // advisory only — never fail the update for this
   }
 
-  syncAuxiliaryContent(extractDir);
-  cleanupStagingArtifacts(extractDir, tarballPath);
+  const auxiliaryOutcomes = syncAuxiliaryContent(extractDir);
+  finalizeAuxiliaryDelivery(auxiliaryOutcomes, {
+    writeVersion: () => {
+      // This stamp follows verified content convergence. It is never used as
+      // a substitute for per-tree digest comparison, and a failed stamp keeps
+      // the durable transaction retryable.
+      writeFileSync(join(GENIE_HOME, 'VERSION'), `${manifest.version}\n`);
+    },
+    cleanupExtraction: () => {
+      clearPendingDelivery();
+      cleanupStagingArtifacts(extractDir, tarballPath);
+    },
+  });
+  return auxiliaryOutcomes;
+}
+
+interface PendingFileFingerprint {
+  sha256: string;
+  mode: number;
+}
+
+interface PendingOptionalFileFingerprint {
+  present: boolean;
+  fingerprint: PendingFileFingerprint | null;
+}
+
+interface PendingAuxiliaryFingerprint {
+  name: AuxiliaryDeliveryTreeName;
+  present: boolean;
+  digest: string | null;
+}
+
+export interface PendingDeliveryRecord {
+  schemaVersion: 2 | 3 | 4;
+  version: string;
+  /** Version of the live binary whose same-version backups recovery may prune. */
+  previousVersion: string | null;
+  extractDir: string;
+  tarballPath: string;
+  createdAt: string;
+  payload: {
+    binary: PendingFileFingerprint;
+    /** Authentic pre-swap executable identity; absent for legacy journals. */
+    previousBinary?: PendingOptionalFileFingerprint;
+    versionStamp: PendingOptionalFileFingerprint;
+    tarball: PendingFileFingerprint;
+    auxiliary: PendingAuxiliaryFingerprint[];
+  };
+}
+
+export interface PendingDeliveryPaths {
+  version: string;
+  extractDir: string;
+  tarballPath: string;
+  previousVersion?: string | null;
+  /** Live target fingerprinted before the pending journal is published. */
+  previousBinaryPath?: string;
+}
+
+export interface ResumePendingDeliveryOptions {
+  genieHome?: string;
+  genieBin?: string;
+  stagingRoot?: string;
+  pendingPath?: string;
+  operations?: Partial<AuxiliaryTreeOperations>;
+  ensureBinary?: (record: PendingDeliveryRecord) => void;
+  /** Test seam for the post-stamp executable version check. */
+  runVersion?: (targetBin: string) => string;
+}
+
+/** Persist the verified extracted payload before the first live mutation. */
+export function recordPendingDelivery(
+  pending: PendingDeliveryPaths,
+  pendingPath = join(GENIE_HOME, PENDING_DELIVERY_NAME),
+  stagingRoot = GENIE_BIN_STAGING,
+): PendingDeliveryRecord {
+  assertPendingDeliveryPaths(pending, stagingRoot);
+  const payload = fingerprintPendingPayload(pending);
+  payload.previousBinary = fingerprintOptionalPhysicalFile(
+    pending.previousBinaryPath ?? join(dirname(stagingRoot), 'genie'),
+    'previous live binary',
+  );
+  const record: PendingDeliveryRecord = {
+    schemaVersion: 4,
+    version: pending.version,
+    extractDir: pending.extractDir,
+    tarballPath: pending.tarballPath,
+    previousVersion: pending.previousVersion ?? normalizeVersion(VERSION),
+    createdAt: new Date().toISOString(),
+    payload,
+  };
+  mkdirSync(dirname(pendingPath), { recursive: true });
+  const staging = `${pendingPath}.staging-${process.pid}`;
+  writeFileSync(staging, `${JSON.stringify(record, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+  const stagingFd = openSync(staging, 'r');
+  try {
+    fsyncSync(stagingFd);
+  } finally {
+    closeSync(stagingFd);
+  }
+  renameSync(staging, pendingPath);
+  try {
+    const directoryFd = openSync(dirname(pendingPath), 'r');
+    try {
+      fsyncSync(directoryFd);
+    } finally {
+      closeSync(directoryFd);
+    }
+  } catch {
+    // Some platforms do not support opening directories; the file fsync and
+    // atomic rename still provide the strongest available journal durability.
+  }
+  return record;
+}
+
+/**
+ * Complete a previously verified release transaction. This includes the
+ * binary when a process died between journaling and swap, then every auxiliary
+ * tree and the root VERSION stamp. The journal is cleared last.
+ */
+export function resumePendingDelivery(options: ResumePendingDeliveryOptions = {}): boolean {
+  const genieHome = options.genieHome ?? GENIE_HOME;
+  const genieBin = options.genieBin ?? join(genieHome, 'bin');
+  const stagingRoot = options.stagingRoot ?? join(genieBin, '.staging');
+  const pendingPath = options.pendingPath ?? join(genieHome, PENDING_DELIVERY_NAME);
+  const record = readPendingDelivery(pendingPath, stagingRoot);
+  if (record === null) return false;
+
+  // Revalidate every retained artifact before the first live mutation. The
+  // journal records physical bytes/modes and complete auxiliary-tree digests,
+  // including absence, so a modified or substituted extraction cannot be
+  // resumed merely because its paths and version string still match.
+  revalidatePendingPayload(record);
+
+  const ensureBinary =
+    options.ensureBinary ??
+    (() => {
+      const targetBin = join(genieBin, 'genie');
+      const previousDir = join(genieBin, '.previous');
+      const live = fingerprintOptionalPhysicalFile(targetBin, 'live binary');
+      const liveAlreadyNew =
+        live.present && live.fingerprint !== null && fingerprintsEqual(live.fingerprint, record.payload.binary);
+      if (liveAlreadyNew) {
+        assertAuthenticatedAlreadyNewBackup(record, previousDir);
+      } else {
+        const expectedPrevious = record.payload.previousBinary;
+        if (expectedPrevious !== undefined) {
+          const samePresence = live.present === expectedPrevious.present;
+          const sameFingerprint =
+            !live.present ||
+            (live.fingerprint !== null &&
+              expectedPrevious.fingerprint !== null &&
+              fingerprintsEqual(live.fingerprint, expectedPrevious.fingerprint));
+          if (!samePresence || !sameFingerprint) {
+            throw new Error('pending delivery live binary does not match either the authenticated preimage or payload');
+          }
+        }
+        const stagedBin = join(record.extractDir, 'genie');
+        if (!existsSync(stagedBin)) throw new Error(`pending delivery binary is missing at ${stagedBin}`);
+        chmodSync(stagedBin, 0o755);
+        const swap = atomicBinarySwap(
+          stagedBin,
+          targetBin,
+          previousDir,
+          record.previousVersion ?? normalizeVersion(VERSION),
+          {
+            preserveSource: true,
+            expectedPreimage: record.payload.previousBinary,
+            expectedPayloadFingerprint: record.payload.binary,
+          },
+        );
+        const expectedPreviousFingerprint = record.payload.previousBinary?.fingerprint;
+        if (
+          swap.oldVersionBackup !== null &&
+          expectedPreviousFingerprint !== undefined &&
+          expectedPreviousFingerprint !== null &&
+          !fingerprintsEqual(
+            fingerprintPhysicalFile(swap.oldVersionBackup, 'previous binary backup'),
+            expectedPreviousFingerprint,
+          )
+        ) {
+          throw new Error(
+            `pending delivery rollback backup does not match the authenticated preimage: ${swap.oldVersionBackup}`,
+          );
+        }
+      }
+      // A crash after swap but before this stamp reaches this branch with the
+      // payload bytes already live. Repair metadata only; never swap new over
+      // new or manufacture a mislabeled rollback backup.
+      syncBinaryVersionStamp(record.extractDir, genieBin, record.version);
+      verifySwappedBinary(targetBin, record.version, {
+        runVersion: options.runVersion,
+        stagingDir: stagingRoot,
+        previousDir,
+      });
+    });
+  ensureBinary(record);
+
+  const previousDir = join(genieBin, '.previous');
+  const priorFingerprint = record.payload.previousBinary?.fingerprint ?? null;
+  const retainedBackup =
+    record.previousVersion === null
+      ? null
+      : priorFingerprint === null
+        ? newestSameVersionBackup(previousDir, record.previousVersion)
+        : matchingSameVersionBackup(previousDir, record.previousVersion, priorFingerprint);
+  if (retainedBackup !== null && record.previousVersion !== null) {
+    if (priorFingerprint === null) pruneSameVersionBackups(previousDir, record.previousVersion, retainedBackup);
+    else pruneMatchingSameVersionBackups(previousDir, record.previousVersion, retainedBackup, priorFingerprint);
+  }
+
+  const outcomes = syncAuxiliaryContent(record.extractDir, genieHome, options.operations);
+  finalizeAuxiliaryDelivery(outcomes, {
+    writeVersion: () => writeFileSync(join(genieHome, 'VERSION'), `${record.version}\n`),
+    cleanupExtraction: () => {
+      clearPendingDelivery(pendingPath);
+      cleanupStagingArtifacts(record.extractDir, record.tarballPath);
+    },
+  });
+  return true;
+}
+
+/**
+ * An explicit rollback supersedes any forward-delivery journal. Quarantine the
+ * journal atomically before touching the live binary so a crash cannot replay
+ * the superseded release on the next update.
+ */
+export function quarantinePendingDelivery(pendingPath = join(GENIE_HOME, PENDING_DELIVERY_NAME)): string | null {
+  let stat: ReturnType<typeof lstatSync>;
+  try {
+    stat = lstatSync(pendingPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
+  if (!stat.isFile() || stat.isSymbolicLink()) {
+    throw new Error(`pending delivery journal is not a physical file: ${pendingPath}`);
+  }
+  const quarantined = `${pendingPath}.cancelled-${Date.now()}-${process.pid}`;
+  renameSync(pendingPath, quarantined);
+  try {
+    const directoryFd = openSync(dirname(pendingPath), 'r');
+    try {
+      fsyncSync(directoryFd);
+    } finally {
+      closeSync(directoryFd);
+    }
+  } catch {
+    // Directory fsync is unavailable on some supported platforms; rename still
+    // prevents ordinary recovery from observing the superseded journal.
+  }
+  return quarantined;
+}
+
+function readPendingDelivery(path: string, stagingRoot: string): PendingDeliveryRecord | null {
+  let stat: ReturnType<typeof lstatSync>;
+  try {
+    stat = lstatSync(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
+  if (!stat.isFile() || stat.isSymbolicLink())
+    throw new Error(`pending delivery journal is not a physical file: ${path}`);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(path, 'utf8'));
+  } catch (error) {
+    throw new Error(`pending delivery journal is unreadable: ${errMsg(error)}`);
+  }
+  if (
+    typeof parsed !== 'object' ||
+    parsed === null ||
+    ![2, 3, 4].includes(Number(Reflect.get(parsed, 'schemaVersion'))) ||
+    typeof Reflect.get(parsed, 'version') !== 'string' ||
+    ([3, 4].includes(Number(Reflect.get(parsed, 'schemaVersion'))) &&
+      (typeof Reflect.get(parsed, 'previousVersion') !== 'string' ||
+        parseGenieVersion(Reflect.get(parsed, 'previousVersion') as string) === null)) ||
+    typeof Reflect.get(parsed, 'extractDir') !== 'string' ||
+    typeof Reflect.get(parsed, 'tarballPath') !== 'string' ||
+    typeof Reflect.get(parsed, 'createdAt') !== 'string' ||
+    !isPendingPayloadFingerprint(Reflect.get(parsed, 'payload')) ||
+    (Reflect.get(parsed, 'schemaVersion') === 4 &&
+      !isOptionalFileFingerprint(Reflect.get(Reflect.get(parsed, 'payload') as object, 'previousBinary')))
+  ) {
+    throw new Error('pending delivery journal has an invalid schema');
+  }
+  const record = {
+    ...(parsed as PendingDeliveryRecord),
+    previousVersion: [3, 4].includes(Number(Reflect.get(parsed, 'schemaVersion')))
+      ? (Reflect.get(parsed, 'previousVersion') as string)
+      : null,
+  };
+  assertPendingDeliveryPaths(record, stagingRoot);
+  return record;
+}
+
+function newestSameVersionBackup(previousDir: string, version: string): string | null {
+  let entries: string[];
+  try {
+    entries = readdirSync(previousDir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
+  const prefix = `genie-${version}`;
+  const candidates = entries
+    .filter((entry) => entry === prefix || entry.startsWith(`${prefix}.`))
+    .map((entry) => {
+      const path = join(previousDir, entry);
+      const stat = lstatSync(path);
+      if (!stat.isFile() || stat.isSymbolicLink()) {
+        throw new Error(`refusing to inspect non-physical binary backup: ${path}`);
+      }
+      return { path, mtimeMs: stat.mtimeMs };
+    })
+    .sort((left, right) => right.mtimeMs - left.mtimeMs || right.path.localeCompare(left.path));
+  return candidates[0]?.path ?? null;
+}
+
+function matchingSameVersionBackup(
+  previousDir: string,
+  version: string,
+  expected: PendingFileFingerprint,
+): string | null {
+  const candidates = sameVersionBackupPaths(previousDir, version);
+  return (
+    candidates.find((path) => fingerprintsEqual(fingerprintPhysicalFile(path, 'previous binary backup'), expected)) ??
+    null
+  );
+}
+
+function assertAuthenticatedAlreadyNewBackup(record: PendingDeliveryRecord, previousDir: string): void {
+  const expectedPrevious = record.payload.previousBinary;
+  if (record.schemaVersion !== 4 || expectedPrevious?.present !== true) return;
+  if (
+    expectedPrevious.fingerprint === null ||
+    record.previousVersion === null ||
+    matchingSameVersionBackup(previousDir, record.previousVersion, expectedPrevious.fingerprint) === null
+  ) {
+    throw new Error(
+      'pending delivery binary is already live but no authenticated rollback backup matches the journaled preimage',
+    );
+  }
+}
+
+function pruneMatchingSameVersionBackups(
+  previousDir: string,
+  version: string,
+  retainedPath: string,
+  expected: PendingFileFingerprint,
+): string[] {
+  const retained = resolve(retainedPath);
+  const removed: string[] = [];
+  for (const path of sameVersionBackupPaths(previousDir, version)) {
+    if (resolve(path) === retained) continue;
+    if (!fingerprintsEqual(fingerprintPhysicalFile(path, 'previous binary backup'), expected)) continue;
+    rmSync(path);
+    removed.push(path);
+  }
+  if (removed.length > 0) fsyncDirectory(previousDir);
+  return removed;
+}
+
+function sameVersionBackupPaths(previousDir: string, version: string): string[] {
+  let entries: string[];
+  try {
+    entries = readdirSync(previousDir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw error;
+  }
+  const prefix = `genie-${version}`;
+  return entries
+    .filter((entry) => entry === prefix || entry.startsWith(`${prefix}.`))
+    .map((entry) => join(previousDir, entry))
+    .sort();
+}
+
+function assertPendingDeliveryPaths(pending: PendingDeliveryPaths, stagingRoot: string): void {
+  if (parseGenieVersion(pending.version) === null)
+    throw new Error(`invalid pending delivery version: ${pending.version}`);
+  if (pending.previousVersion != null && parseGenieVersion(pending.previousVersion) === null) {
+    throw new Error(`invalid pending delivery previous version: ${pending.previousVersion}`);
+  }
+  let physicalStagingRoot: string;
+  try {
+    const stagingStat = lstatSync(stagingRoot);
+    if (!stagingStat.isDirectory() || stagingStat.isSymbolicLink()) throw new Error('not a physical directory');
+    physicalStagingRoot = realpathSync(stagingRoot);
+  } catch (error) {
+    throw new Error(`pending delivery staging root is unavailable: ${stagingRoot} (${errMsg(error)})`);
+  }
+  for (const [label, path] of [
+    ['extractDir', pending.extractDir],
+    ['tarballPath', pending.tarballPath],
+  ] as const) {
+    const rel = relative(resolve(stagingRoot), resolve(path));
+    if (rel === '' || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+      throw new Error(`pending delivery ${label} escapes staging root: ${path}`);
+    }
+    let physicalPath: string;
+    try {
+      const pathStat = lstatSync(path);
+      const expectedKind = label === 'extractDir' ? pathStat.isDirectory() : pathStat.isFile();
+      if (!expectedKind || pathStat.isSymbolicLink()) throw new Error('wrong physical entry type');
+      physicalPath = realpathSync(path);
+    } catch (error) {
+      throw new Error(`pending delivery ${label} is unavailable: ${path} (${errMsg(error)})`);
+    }
+    const physicalRel = relative(physicalStagingRoot, physicalPath);
+    if (physicalRel === '' || physicalRel === '..' || physicalRel.startsWith(`..${sep}`) || isAbsolute(physicalRel)) {
+      throw new Error(`pending delivery ${label} escapes physical staging root: ${path}`);
+    }
+  }
+}
+
+const PENDING_FILE_HASH_BUFFER_BYTES = 1024 * 1024;
+
+/** Hash a physical file with a fixed-size buffer instead of retaining release-sized bytes in RSS. */
+export function hashPhysicalFileIncrementally(path: string, bufferBytes = PENDING_FILE_HASH_BUFFER_BYTES): string {
+  if (!Number.isSafeInteger(bufferBytes) || bufferBytes < 1 || bufferBytes > 8 * 1024 * 1024) {
+    throw new Error(`invalid incremental hash buffer size: ${bufferBytes}`);
+  }
+  const hash = createHash('sha256');
+  const buffer = Buffer.allocUnsafe(bufferBytes);
+  const fd = openSync(path, 'r');
+  try {
+    for (;;) {
+      const bytesRead = readSync(fd, buffer, 0, buffer.length, null);
+      if (bytesRead === 0) break;
+      hash.update(buffer.subarray(0, bytesRead));
+    }
+  } finally {
+    closeSync(fd);
+  }
+  return hash.digest('hex');
+}
+
+function fingerprintPhysicalFile(path: string, label: string): PendingFileFingerprint {
+  let stat: ReturnType<typeof lstatSync>;
+  try {
+    stat = lstatSync(path);
+  } catch (error) {
+    throw new Error(`pending delivery ${label} is unavailable: ${path} (${errMsg(error)})`);
+  }
+  if (!stat.isFile() || stat.isSymbolicLink()) {
+    throw new Error(`pending delivery ${label} is not a physical file: ${path}`);
+  }
+  return {
+    sha256: hashPhysicalFileIncrementally(path),
+    mode: stat.mode & 0o7777,
+  };
+}
+
+function fingerprintOptionalPhysicalFile(path: string, label: string): PendingOptionalFileFingerprint {
+  try {
+    lstatSync(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { present: false, fingerprint: null };
+    throw new Error(`pending delivery ${label} is unavailable: ${path} (${errMsg(error)})`);
+  }
+  return { present: true, fingerprint: fingerprintPhysicalFile(path, label) };
+}
+
+function fingerprintPendingAuxiliary(extractDir: string): PendingAuxiliaryFingerprint[] {
+  return AUXILIARY_DELIVERY_TREE_NAMES.map((name) => {
+    const path = join(extractDir, name);
+    try {
+      lstatSync(path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { name, present: false, digest: null };
+      throw new Error(`pending delivery auxiliary tree is unavailable: ${path} (${errMsg(error)})`);
+    }
+    return { name, present: true, digest: fingerprintAuxiliaryTree(path) };
+  });
+}
+
+function fingerprintPendingPayload(pending: PendingDeliveryPaths): PendingDeliveryRecord['payload'] {
+  return {
+    binary: fingerprintPhysicalFile(join(pending.extractDir, 'genie'), 'binary'),
+    versionStamp: fingerprintOptionalPhysicalFile(join(pending.extractDir, 'VERSION'), 'VERSION stamp'),
+    tarball: fingerprintPhysicalFile(pending.tarballPath, 'tarball'),
+    auxiliary: fingerprintPendingAuxiliary(pending.extractDir),
+  };
+}
+
+function fingerprintsEqual(left: PendingFileFingerprint, right: PendingFileFingerprint): boolean {
+  return left.sha256 === right.sha256 && left.mode === right.mode;
+}
+
+function revalidatePendingPayload(record: PendingDeliveryRecord): void {
+  const actual = fingerprintPendingPayload(record);
+  const mismatches: string[] = [];
+  if (!fingerprintsEqual(actual.binary, record.payload.binary)) mismatches.push('binary');
+  if (
+    actual.versionStamp.present !== record.payload.versionStamp.present ||
+    (actual.versionStamp.present &&
+      actual.versionStamp.fingerprint !== null &&
+      record.payload.versionStamp.fingerprint !== null &&
+      !fingerprintsEqual(actual.versionStamp.fingerprint, record.payload.versionStamp.fingerprint))
+  ) {
+    mismatches.push('VERSION stamp');
+  }
+  if (!fingerprintsEqual(actual.tarball, record.payload.tarball)) mismatches.push('tarball');
+  for (const expected of record.payload.auxiliary) {
+    const observed = actual.auxiliary.find((entry) => entry.name === expected.name);
+    if (observed === undefined || observed.present !== expected.present || observed.digest !== expected.digest) {
+      mismatches.push(`${expected.name}/`);
+    }
+  }
+  if (mismatches.length > 0) {
+    throw new Error(`pending delivery payload fingerprint mismatch: ${mismatches.join(', ')}`);
+  }
+}
+
+function isSha256(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
+}
+
+function isFileFingerprint(value: unknown): value is PendingFileFingerprint {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    isSha256(Reflect.get(value, 'sha256')) &&
+    Number.isInteger(Reflect.get(value, 'mode')) &&
+    (Reflect.get(value, 'mode') as number) >= 0 &&
+    (Reflect.get(value, 'mode') as number) <= 0o7777
+  );
+}
+
+function isOptionalFileFingerprint(value: unknown): value is PendingOptionalFileFingerprint {
+  if (typeof value !== 'object' || value === null || typeof Reflect.get(value, 'present') !== 'boolean') return false;
+  const present = Reflect.get(value, 'present');
+  const fingerprint = Reflect.get(value, 'fingerprint');
+  return present ? isFileFingerprint(fingerprint) : fingerprint === null;
+}
+
+function isPendingPayloadFingerprint(value: unknown): value is PendingDeliveryRecord['payload'] {
+  if (typeof value !== 'object' || value === null) return false;
+  const auxiliary = Reflect.get(value, 'auxiliary');
+  if (
+    !isFileFingerprint(Reflect.get(value, 'binary')) ||
+    !isOptionalFileFingerprint(Reflect.get(value, 'versionStamp')) ||
+    !isFileFingerprint(Reflect.get(value, 'tarball')) ||
+    !Array.isArray(auxiliary) ||
+    auxiliary.length !== AUXILIARY_DELIVERY_TREE_NAMES.length
+  ) {
+    return false;
+  }
+  return AUXILIARY_DELIVERY_TREE_NAMES.every((name) => {
+    const entries = auxiliary.filter((entry) => typeof entry === 'object' && entry !== null && entry.name === name);
+    if (entries.length !== 1) return false;
+    const entry = entries[0];
+    return typeof entry.present === 'boolean' && (entry.present ? isSha256(entry.digest) : entry.digest === null);
+  });
+}
+
+function clearPendingDelivery(path = join(GENIE_HOME, PENDING_DELIVERY_NAME)): void {
+  rmSync(path, { force: true });
+}
+
+export interface AuxiliaryDeliveryFinalizers {
+  writeVersion: () => void;
+  cleanupExtraction: () => void;
+}
+
+/** Never stamp or remove recovery material while any tree is unverified. */
+export function finalizeAuxiliaryDelivery(
+  outcomes: AuxiliaryTreeOutcome[],
+  finalizers: AuxiliaryDeliveryFinalizers,
+): void {
+  const failures = outcomes.filter((outcome) => outcome.status === 'failed');
+  if (failures.length > 0) {
+    throw new Error(
+      `auxiliary payload convergence failed: ${failures
+        .map((outcome) => {
+          const fresh = outcome.freshArtifact ? `; verified fresh: ${outcome.freshArtifact}` : '';
+          return `${outcome.label} (${outcome.stage}${fresh})`;
+        })
+        .join(', ')}`,
+    );
+  }
+  finalizers.writeVersion();
+  finalizers.cleanupExtraction();
 }
 
 function cleanupStagingArtifacts(extractDir: string, tarballPath: string): void {
@@ -2006,63 +3063,63 @@ function cleanupStagingArtifacts(extractDir: string, tarballPath: string): void 
  * (`.agents/`, `.claude-plugin/` — must sit beside plugins/ so their relative
  * `./plugins/genie` payload references stay truthful; mirrors AUX_LAYOUT_DIRS
  * in install.ts) from the extracted tarball into `~/.genie/`. Stage to a
- * sibling `<dest>.new` directory and `renameSync` over the live target so
- * concurrent readers (Claude Code's plugin loader) never observe an empty
- * directory mid-update. The previous live tree moves to `<dest>.old` and is
- * deleted last.
+ * sibling `<dest>.new` directory and promote it with same-filesystem renames.
+ * The previous live tree is retained until the fresh tree is verified. Portable
+ * Node filesystem APIs do not provide an atomic non-empty directory exchange;
+ * the pending-delivery journal therefore preserves retry/recovery evidence but
+ * does not claim cross-process generation atomicity.
  *
- * Best-effort — failures are logged but never block the update. Tarballs
- * predating a tree simply skip it (existsSync guard).
+ * Every present tree returns a structured outcome. A failed outcome blocks
+ * VERSION stamping and extraction cleanup so the verified source remains
+ * available for diagnosis and retry. Tarballs predating a tree skip it.
  */
-function syncAuxiliaryContent(extractDir: string): void {
+export function syncAuxiliaryContent(
+  extractDir: string,
+  genieHome = GENIE_HOME,
+  operations?: Partial<AuxiliaryTreeOperations>,
+): AuxiliaryTreeOutcome[] {
   const targets: Array<{ src: string; dest: string; label: string }> = [
-    { src: join(extractDir, 'plugins'), dest: join(GENIE_HOME, 'plugins'), label: 'plugins' },
-    { src: join(extractDir, 'skills'), dest: join(GENIE_HOME, 'skills'), label: 'skills' },
-    { src: join(extractDir, 'templates'), dest: join(GENIE_HOME, 'templates'), label: 'templates' },
-    { src: join(extractDir, '.agents'), dest: join(GENIE_HOME, '.agents'), label: '.agents' },
-    { src: join(extractDir, '.claude-plugin'), dest: join(GENIE_HOME, '.claude-plugin'), label: '.claude-plugin' },
+    { src: join(extractDir, 'plugins'), dest: join(genieHome, 'plugins'), label: 'plugins' },
+    { src: join(extractDir, 'skills'), dest: join(genieHome, 'skills'), label: 'skills' },
+    { src: join(extractDir, 'templates'), dest: join(genieHome, 'templates'), label: 'templates' },
+    { src: join(extractDir, '.agents'), dest: join(genieHome, '.agents'), label: '.agents' },
+    { src: join(extractDir, '.claude-plugin'), dest: join(genieHome, '.claude-plugin'), label: '.claude-plugin' },
   ];
-  for (const target of targets) {
-    if (!existsSync(target.src)) continue;
-    swapAuxiliaryTree(target.src, target.dest, target.label);
-  }
+  const outcomes = targets.map((target) =>
+    convergeAuxiliaryTree({
+      label: target.label,
+      source: target.src,
+      destination: target.dest,
+      excludedEntryNames: FRAMEWORK_MARKER_FILES,
+      operations,
+    }),
+  );
+  for (const outcome of outcomes) printAuxiliaryOutcome(outcome);
+  return outcomes;
 }
 
-/** Atomic stage+rename for one auxiliary tree. Best-effort recovery on
- *  failure restores the previous live tree if we crashed after moving it
- *  aside. Errors are logged but never propagate to the caller. */
-function swapAuxiliaryTree(src: string, dest: string, label: string): void {
-  const stagingDest = `${dest}.new`;
-  const oldDest = `${dest}.old`;
-  try {
-    if (existsSync(stagingDest)) rmSync(stagingDest, { recursive: true, force: true });
-    if (existsSync(oldDest)) rmSync(oldDest, { recursive: true, force: true });
-    copyDirSync(src, stagingDest);
-    if (existsSync(dest)) renameSync(dest, oldDest);
-    renameSync(stagingDest, dest);
-    if (existsSync(oldDest)) rmSync(oldDest, { recursive: true, force: true });
-    success(`Refreshed ${label}/ → ${dest}`);
-  } catch (err) {
-    recoverAuxiliarySwap(dest, stagingDest, oldDest);
-    const msg = err instanceof Error ? err.message : String(err);
-    log(`Could not refresh ${label}/ (non-fatal): ${msg}`);
+function printAuxiliaryOutcome(outcome: AuxiliaryTreeOutcome): void {
+  if (outcome.status === 'skipped') return;
+  if (outcome.status === 'failed') {
+    const rollback = outcome.rollbackError ? `; rollback: ${outcome.rollbackError}` : '';
+    const fresh = outcome.freshArtifact
+      ? `; verified fresh artifact retained at ${outcome.freshArtifact}`
+      : '; no verified fresh artifact available';
+    log(`Could not refresh ${outcome.label}/ at ${outcome.stage}: ${outcome.error}${rollback}${fresh}`);
+    return;
   }
-}
-
-function recoverAuxiliarySwap(dest: string, stagingDest: string, oldDest: string): void {
-  try {
-    if (!existsSync(dest) && existsSync(oldDest)) renameSync(oldDest, dest);
-    if (existsSync(stagingDest)) rmSync(stagingDest, { recursive: true, force: true });
-  } catch {
-    // give up; dest is in whatever state it's in
-  }
+  const verb = outcome.status === 'unchanged' ? 'Verified current' : 'Refreshed';
+  success(`${verb} ${outcome.label}/ → ${outcome.destination}`);
+  for (const warning of outcome.warnings) log(`${outcome.label}/ cleanup warning: ${warning}`);
 }
 
 async function runRollback(): Promise<void> {
   log('Rolling back to previous binary...');
   try {
+    const quarantined = quarantinePendingDelivery();
     const result = rollbackBinary();
     success(`Restored ${result.from} → ${result.restored}`);
+    if (quarantined) log(`Superseded pending delivery quarantined at ${quarantined}`);
     console.log();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

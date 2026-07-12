@@ -28,8 +28,10 @@ import {
 } from '../lib/omni-config.js';
 import { resolveOmniApiKey, resolveOmniApiUrl } from '../lib/omni-registration.js';
 import {
+  type NatsFactory,
   type OmniSend,
   type OmniSetReaction,
+  createOmniRedactor,
   createOmniRunner,
   makeDefaultOmniSend,
   makeDefaultOmniSetReaction,
@@ -51,8 +53,9 @@ function fail(message: string): never {
 // omni serve
 // ============================================================================
 
-async function serveCommand(): Promise<void> {
+async function serveCommand(natsFactory?: NatsFactory): Promise<void> {
   const rt = await resolveOmniRuntimeConfig();
+  const redact = createOmniRedactor(rt);
   if (!isOmniApprovalEnabled(rt)) {
     fail(
       'Omni approvals are not enabled. Set omni.approvals.enabled=true and omni.instance + omni.approvalChat ' +
@@ -70,9 +73,12 @@ async function serveCommand(): Promise<void> {
     await runOmniServe({
       db,
       config: rt,
+      ...(natsFactory ? { natsFactory } : {}),
       signal: controller.signal,
       log: (line) => out(line),
     });
+  } catch (error) {
+    throw new Error(redact(error instanceof Error ? error.message : String(error)));
   } finally {
     process.off('SIGINT', stop);
     process.off('SIGTERM', stop);
@@ -91,6 +97,8 @@ interface StatusRow {
 
 async function statusCommand(opts: { json?: boolean }): Promise<void> {
   const rt = await resolveOmniRuntimeConfig();
+  const redact = createOmniRedactor(rt);
+  const statusOut = (line = '') => out(redact(line));
   const db = openGlobalDb();
   try {
     const rows = db.query('SELECT status, count(*) AS n FROM approvals GROUP BY status').all() as StatusRow[];
@@ -101,9 +109,9 @@ async function statusCommand(opts: { json?: boolean }): Promise<void> {
 
     const summary = {
       enabled: isOmniApprovalEnabled(rt),
-      instance: rt.instance ?? null,
-      approvalChat: rt.approvalChat ?? null,
-      natsUrl: rt.natsUrl,
+      instance: rt.instance ? redact(rt.instance) : null,
+      approvalChat: rt.approvalChat ? redact(rt.approvalChat) : null,
+      natsUrl: redact(rt.natsUrl),
       approvals: {
         pending: byStatus.pending ?? 0,
         approved: byStatus.approved ?? 0,
@@ -114,26 +122,26 @@ async function statusCommand(opts: { json?: boolean }): Promise<void> {
     };
 
     if (opts.json) {
-      out(JSON.stringify(summary, null, 2));
+      statusOut(JSON.stringify(summary, null, 2));
       return;
     }
 
-    out(`Omni approvals: ${summary.enabled ? 'ENABLED' : 'disabled'}`);
+    statusOut(`Omni approvals: ${summary.enabled ? 'ENABLED' : 'disabled'}`);
     if (!summary.enabled) {
       const missing: string[] = [];
       if (!rt.approvals.enabled) missing.push('approvals.enabled');
       if (!rt.instance) missing.push('instance');
       if (!rt.approvalChat) missing.push('approvalChat');
-      out(`  missing config: ${missing.join(', ') || 'none'}`);
+      statusOut(`  missing config: ${missing.join(', ') || 'none'}`);
     }
-    out(`  instance:      ${summary.instance ?? '(unset)'}`);
-    out(`  approvalChat:  ${summary.approvalChat ?? '(unset)'}`);
-    out(`  natsUrl:       ${summary.natsUrl}`);
-    out('Approvals queue:');
-    out(
+    statusOut(`  instance:      ${summary.instance ?? '(unset)'}`);
+    statusOut(`  approvalChat:  ${summary.approvalChat ?? '(unset)'}`);
+    statusOut(`  natsUrl:       ${summary.natsUrl}`);
+    statusOut('Approvals queue:');
+    statusOut(
       `  pending=${summary.approvals.pending} approved=${summary.approvals.approved} denied=${summary.approvals.denied} expired=${summary.approvals.expired}`,
     );
-    out(`Inbox: total=${summary.inbox.total} unhandled=${summary.inbox.unhandled}`);
+    statusOut(`Inbox: total=${summary.inbox.total} unhandled=${summary.inbox.unhandled}`);
   } finally {
     db.close();
   }
@@ -248,7 +256,7 @@ async function testApprovalCommand(opts: { live?: boolean }): Promise<void> {
     const sent: string[] = [];
     const sendApproval: OmniSend = async ({ text }) => {
       sent.push(text);
-      return { success: true, messageId: TEST_STANZA_ID };
+      return { outcome: 'accepted', messageId: TEST_STANZA_ID };
     };
     const setReaction: OmniSetReaction = async ({ messageId, emoji }) => {
       reactions.push({ messageId, emoji });
@@ -549,5 +557,7 @@ export const __test__ = {
   loadHostJson,
   writeHostJson,
   generateAndPersistKeypair,
+  serveCommand,
+  statusCommand,
   testApprovalCommand,
 };

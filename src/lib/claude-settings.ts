@@ -5,7 +5,7 @@
  * Uses Zod with passthrough() to preserve unknown fields.
  */
 
-import { existsSync, unlinkSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 // Claude directory and settings file paths
@@ -27,16 +27,6 @@ function getGenieHookScriptPath(): string {
  */
 export function hookScriptExists(): boolean {
   return existsSync(getGenieHookScriptPath());
-}
-
-/**
- * Remove the hook script file (for cleanup)
- */
-export function removeHookScript(): void {
-  const scriptPath = getGenieHookScriptPath();
-  if (existsSync(scriptPath)) {
-    unlinkSync(scriptPath);
-  }
 }
 
 /**

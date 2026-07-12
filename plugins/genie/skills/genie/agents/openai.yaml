@@ -1,0 +1,4 @@
+interface:
+  display_name: "Genie Router"
+  short_description: "Route requests to the right Genie lifecycle step"
+  default_prompt: "Route this request through the appropriate Genie workflow."

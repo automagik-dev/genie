@@ -1,6 +1,6 @@
 {
   "name": "genie",
-  "version": "5.260711.6",
+  "version": "5.260712.1",
   "description": "Plan, execute, review, and ship software with Genie workflows in Codex.",
   "author": {
     "name": "Namastex Labs",
@@ -12,24 +12,19 @@
   "keywords": ["workflow", "orchestration", "codex", "skills", "agents"],
   "skills": "./skills/",
   "hooks": "./hooks/codex-hooks.json",
-  "mcpServers": {
-    "genie": {
-      "command": "genie",
-      "args": ["mcp"]
-    }
-  },
+  "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Genie",
     "shortDescription": "Plan, execute, review, and ship with Genie",
-    "longDescription": "First-class Genie workflows for Codex, including shared skills, lifecycle hooks, MCP task state, and role-specific subagents.",
+    "longDescription": "First-class Genie workflows for Codex, including shared skills, lifecycle hooks, and MCP task state. Genie CLI setup can install optional role agents.",
     "developerName": "Namastex Labs",
     "category": "Developer Tools",
-    "capabilities": ["Skills", "Hooks", "MCP", "Subagents"],
+    "capabilities": ["Skills", "Hooks", "MCP"],
     "websiteURL": "https://github.com/automagik-dev/genie",
     "defaultPrompt": [
-      "Use $wish to turn this request into an executable plan.",
-      "Use $work to implement the active Genie wish.",
-      "Use $review to validate the current work independently."
+      "Use $genie:wish to turn this request into an executable plan.",
+      "Use $genie:work to implement the active Genie wish.",
+      "Use $genie:review to validate the current work independently."
     ]
   }
 }

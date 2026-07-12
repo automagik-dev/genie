@@ -1,0 +1,4 @@
+interface:
+  display_name: "Council"
+  short_description: "Pressure-test decisions through independent lenses"
+  default_prompt: "Pressure-test this decision from independent technical, product, risk, and dissenting perspectives."

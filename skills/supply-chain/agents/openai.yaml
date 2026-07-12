@@ -1,0 +1,4 @@
+interface:
+  display_name: "Supply-Chain Review"
+  short_description: "Audit trust boundaries and release provenance"
+  default_prompt: "Audit the trust boundaries and release chain in this change."

@@ -16,7 +16,7 @@
  *   - matches inbound replies/reactions against the approve/deny vocabulary and
  *     resolves the correlated approval (reaction → the stored stanza id; bare
  *     text → oldest-pending fallback);
- *   - records every inbound message to the inbox (`recordInbound`). One-shot
+ *   - records and atomically claims every inbound message in the inbox. One-shot
  *     agent spawning on inbound is Group 4 — this group only stores.
  *
  * The hook handler never touches NATS: it enqueues a row and polls the DB. This
@@ -35,18 +35,44 @@ import { join } from 'node:path';
 import type { OmniRoute, OmniRuntimeConfig } from './omni-config.js';
 import { matchReaction, matchTextToken } from './omni-matching.js';
 import { signOmniRequest } from './omni-signature.js';
-import { getAgentSession, upsertAgentSession } from './v5/global-db.js';
+import { resolveTrustedExecutable } from './trusted-executable.js';
 import {
-  ApprovalConflictError,
+  OMNI_SERVICE_LEASE_NAME,
+  acquireServiceLeaseEpoch,
+  clearAgentSessionIfCurrent,
+  getAgentSession,
+  insertAgentSessionIfAbsent,
+  isServiceLeaseCurrent,
+  releaseServiceLease,
+  renewServiceLease,
+  replaceAgentSessionIfCurrent,
+} from './v5/global-db.js';
+import {
   type ApprovalDecision,
-  attachOmniMessageId,
+  type DurableClaimIdentity,
+  type InboundClaimResult,
+  type InboundPreparedDelivery,
+  MAX_OUTBOUND_PAYLOAD_BYTES,
+  type RecoverableInboundEvent,
+  claimApprovalAnnouncementWithLease,
+  consumeClaimedApprovalInbound,
   expireStale,
+  finalizeApprovalAnnouncement,
   listApprovalsNeedingStatusAck,
   listPendingApprovals,
-  markHandled,
-  recordInbound,
+  listRecoverableInbound,
+  markApprovalAnnouncementAmbiguous,
+  markApprovalAnnouncementSending,
+  markInboundDeliveryFlushed,
+  markInboundExecuted,
+  markInboundExecuting,
+  markInboundHandledIfClaimed,
+  prepareInboundDelivery,
+  recordAndClaimInboundDelivery,
   recordStatusGlyph,
-  resolveApproval,
+  releaseApprovalAnnouncementWithLease,
+  releaseInboundClaim,
+  validatePreparedInboundLease,
 } from './v5/omni-queue.js';
 
 // ============================================================================
@@ -65,6 +91,9 @@ export interface NatsSubscription extends AsyncIterable<NatsInboundMsg> {
 export interface NatsLike {
   subscribe(subject: string): NatsSubscription;
   publish(subject: string, payload: string): void;
+  /** Await until all locally buffered publishes have crossed the NATS protocol
+   * flush boundary. */
+  flush(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -267,6 +296,259 @@ export interface RawClaudeRun {
  *  orchestration in {@link runClaudeSession} is tested without a real fork. */
 export type RawClaudeSpawn = (args: string[], opts: { cwd: string; signal: AbortSignal }) => Promise<RawClaudeRun>;
 
+const CHILD_TERM_GRACE_MS = 1_000;
+const AGENT_STDOUT_MAX_BYTES = 1024 * 1024;
+const AGENT_STDERR_MAX_BYTES = 64 * 1024;
+const SAFE_AGENT_ENV_KEYS = new Set([
+  'HOME',
+  'USER',
+  'LOGNAME',
+  'SHELL',
+  'PATH',
+  'TMPDIR',
+  'TMP',
+  'TEMP',
+  'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
+  'TERM',
+  'NO_COLOR',
+  'FORCE_COLOR',
+  'XDG_CONFIG_HOME',
+  'XDG_CACHE_HOME',
+  'XDG_DATA_HOME',
+  'SystemRoot',
+  'COMSPEC',
+  'PATHEXT',
+]);
+
+/** Minimal environment for mapped route agents. Omni/provider/cloud secrets are
+ * never inherited. File-backed credentials still make full isolation
+ * impossible, which is why production mapped execution is separately opt-in. */
+export function buildMappedAgentEnv(source: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const safe: Record<string, string> = {};
+  for (const key of SAFE_AGENT_ENV_KEYS) {
+    const value = source[key];
+    if (typeof value === 'string' && !value.includes('\0')) safe[key] = value;
+  }
+  return safe;
+}
+
+const SENSITIVE_ENV_NAME =
+  /(?:PASSWORD|PASSWD|SECRET|TOKEN|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|AUTHORIZATION|CREDENTIAL|SESSION|COOKIE)/i;
+
+export type OmniRedactor = (text: string) => string;
+
+/** Redact known ambient secret values plus common credential shapes before any
+ * child-controlled success or failure text crosses the Omni transport. */
+export function redactOmniOutbound(
+  text: string,
+  env: NodeJS.ProcessEnv = process.env,
+  configuredSecrets: readonly string[] = [],
+): string {
+  let safe = text;
+  const values = [
+    ...configuredSecrets.filter((value) => value.length > 0),
+    ...Object.entries(env)
+      .filter(([name, value]) => SENSITIVE_ENV_NAME.test(name) && typeof value === 'string' && value.length >= 8)
+      .map(([, value]) => value as string),
+  ]
+    .filter((value, index, all) => all.indexOf(value) === index)
+    .sort((a, b) => b.length - a.length);
+  for (const value of values) safe = safe.split(value).join('[REDACTED]');
+  return (
+    safe
+      .replace(/-----BEGIN [^-\r\n]*PRIVATE KEY-----[\s\S]*?-----END [^-\r\n]*PRIVATE KEY-----/gi, '[REDACTED]')
+      // JSON embedded in a diagnostic is often escaped one or more times. Redact
+      // the complete escaped auth value before the plain-header fallbacks run.
+      .replace(
+        /((?:\\+["'])(?:Proxy-Authorization|Authorization)(?:\\+["'])\s*:\s*(?:\\+["']))[^\r\n]*?((?:\\+["']))/gi,
+        '$1[REDACTED]$2',
+      )
+      .replace(/(\b(?:Proxy-Authorization|Authorization)\s*[:=]\s*)[^\r\n]*/gi, '$1[REDACTED]')
+      .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, 'Bearer [REDACTED]')
+      .replace(/\bBasic\s+[A-Za-z0-9._~+\/-]+=*/gi, 'Basic [REDACTED]')
+      .replace(/(\b(?:Set-Cookie|Cookie)\s*:\s*)[^\r\n]+/gi, '$1[REDACTED]')
+      .replace(/\b(?:gh[pousr]_|github_pat_|sk-|xox[baprs]-|npm_)[A-Za-z0-9._-]{8,}/gi, '[REDACTED]')
+      .replace(/\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g, '[REDACTED]')
+      .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, '[REDACTED]')
+      .replace(
+        /(\b[A-Z0-9_-]*(?:PASSWORD|PASSWD|SECRET|TOKEN|API[-_]?KEY|ACCESS[-_]?KEY|PRIVATE[-_]?KEY|AUTHORIZATION|CREDENTIAL|SESSION|COOKIE)[A-Z0-9_-]*\s*[:=]\s*)(?:"(?:\\.|[^"])*"|'(?:\\.|[^'])*'|[^\s,;]+)/gi,
+        '$1[REDACTED]',
+      )
+      .replace(
+        /("[^"]*(?:password|passwd|secret|token|api[-_]?key|access[-_]?key|private[-_]?key|authorization|credential|session|cookie)[^"]*"\s*:\s*)(?:"(?:\\.|[^"])*"|'(?:\\.|[^'])*'|[^\s,;}]+)/gi,
+        '$1"[REDACTED]"',
+      )
+      .replace(
+        /([?&](?:X-Amz-(?:Signature|Credential|Security-Token)|X-Goog-(?:Signature|Credential|Security-Token)|GoogleAccessId|Signature|sig)=)[^&#\s"'<>\\]+/gi,
+        '$1[REDACTED]',
+      )
+      // Redact every URI userinfo form, including token-only NATS credentials and
+      // empty-user Redis URLs (`redis://:password@host`).
+      .replace(/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, '$1[REDACTED]@')
+  );
+}
+
+function configuredOmniSecrets(config: OmniRuntimeConfig): string[] {
+  const secrets = new Set<string>();
+  const addCandidate = (value: string, minimumLength = 1): void => {
+    if (value.length >= minimumLength && value.trim().length >= minimumLength) secrets.add(value);
+  };
+  const addSecret = (value: string, minimumLength = 1): void => {
+    if (!value) return;
+    addCandidate(value, minimumLength);
+    try {
+      addCandidate(decodeURIComponent(value), minimumLength);
+      addCandidate(decodeURIComponent(value.replace(/\+/g, ' ')), minimumLength);
+    } catch {
+      // The raw configured value is still seeded when percent-decoding fails.
+    }
+  };
+  if (config.apiKey) addSecret(config.apiKey);
+  for (const candidate of [config.apiUrl, config.natsUrl]) {
+    if (!candidate) continue;
+    for (const match of candidate.matchAll(/\b[a-z][a-z0-9+.-]*:\/\/([^\s/@]+)@/gi)) {
+      const userinfo = match[1];
+      addSecret(userinfo);
+      for (const part of userinfo.split(':')) addSecret(part);
+    }
+    const queryStart = candidate.indexOf('?');
+    if (queryStart >= 0) {
+      const fragmentStart = candidate.indexOf('#', queryStart + 1);
+      const query = candidate.slice(queryStart + 1, fragmentStart >= 0 ? fragmentStart : undefined);
+      for (const pair of query.split('&')) {
+        const separator = pair.indexOf('=');
+        // Query pairs are redacted contextually below. Long values are also
+        // safe to seed globally in case a transport error prints only the
+        // credential, but tiny values such as `1` must never rewrite all JSON
+        // numbers or ordinary prose.
+        if (separator >= 0) addSecret(pair.slice(separator + 1), 8);
+      }
+    }
+  }
+  return [...secrets];
+}
+
+function configuredOmniQueryRedactions(config: OmniRuntimeConfig): Array<readonly [string, string]> {
+  const replacements = new Map<string, string>();
+  for (const candidate of [config.apiUrl, config.natsUrl]) {
+    if (!candidate) continue;
+    const queryStart = candidate.indexOf('?');
+    if (queryStart < 0) continue;
+    const fragmentStart = candidate.indexOf('#', queryStart + 1);
+    const query = candidate.slice(queryStart + 1, fragmentStart >= 0 ? fragmentStart : undefined);
+    for (const pair of query.split('&')) {
+      const separator = pair.indexOf('=');
+      if (separator < 0) continue;
+      const key = pair.slice(0, separator);
+      const value = pair.slice(separator + 1);
+      if (!key || !value) continue;
+      replacements.set(pair, `${key}=[REDACTED]`);
+      try {
+        const decodedKey = decodeURIComponent(key.replace(/\+/g, ' '));
+        const decodedValue = decodeURIComponent(value.replace(/\+/g, ' '));
+        if (decodedKey && decodedValue) replacements.set(`${decodedKey}=${decodedValue}`, `${decodedKey}=[REDACTED]`);
+      } catch {
+        // The exact encoded pair remains protected when decoding fails.
+      }
+    }
+  }
+  return [...replacements].sort(([a], [b]) => b.length - a.length);
+}
+
+/** One config/env-seeded boundary used for both external text and every log. */
+export function createOmniRedactor(config: OmniRuntimeConfig, env: NodeJS.ProcessEnv = process.env): OmniRedactor {
+  const secrets = configuredOmniSecrets(config);
+  const queryRedactions = configuredOmniQueryRedactions(config);
+  return (text) => {
+    let safe = text;
+    for (const [pair, replacement] of queryRedactions) safe = safe.split(pair).join(replacement);
+    return redactOmniOutbound(safe, env, secrets);
+  };
+}
+
+interface KillableChild {
+  pid?: number;
+  kill(signal: 'SIGTERM' | 'SIGKILL'): void;
+  exited: Promise<number>;
+}
+
+/** Own abort semantics instead of relying on Bun's soft SIGTERM-only signal. */
+export function superviseChild(
+  child: KillableChild,
+  signal: AbortSignal,
+  graceMs = CHILD_TERM_GRACE_MS,
+  processGroup = false,
+) {
+  let exited = false;
+  let forceTimer: ReturnType<typeof setTimeout> | undefined;
+  let forceDone: (() => void) | undefined;
+  const forceSettled = new Promise<void>((resolve) => {
+    forceDone = resolve;
+  });
+  const signalTree = (childSignal: 'SIGTERM' | 'SIGKILL') => {
+    if (processGroup && process.platform !== 'win32' && Number.isSafeInteger(child.pid) && (child.pid ?? 0) > 0) {
+      try {
+        process.kill(-(child.pid as number), childSignal);
+        return;
+      } catch {
+        // The group leader may have exited while a descendant still drains.
+      }
+    }
+    child.kill(childSignal);
+  };
+  const terminate = () => {
+    if ((exited && !processGroup) || forceTimer) return;
+    try {
+      signalTree('SIGTERM');
+    } catch {
+      // The child may have exited between the guard and kill.
+    }
+    forceTimer = setTimeout(() => {
+      if (!exited || processGroup) {
+        try {
+          signalTree('SIGKILL');
+        } catch {
+          // Already gone.
+        }
+      }
+      forceDone?.();
+    }, graceMs);
+    if (!processGroup && typeof forceTimer.unref === 'function') forceTimer.unref();
+  };
+  const abort = () => terminate();
+  if (signal.aborted) terminate();
+  else signal.addEventListener('abort', abort, { once: true });
+  const exitedPromise = child.exited.then(async (code) => {
+    exited = true;
+    // Mapped agents may not daemonize helpers. If the direct parent exits while
+    // its detached group still has descendants, begin the same bounded reap
+    // even without an external abort.
+    if (processGroup && !forceTimer) terminate();
+    // A direct parent can exit on TERM while a resistant grandchild remains in
+    // the detached group. For group supervision, wait through the escalation
+    // before reporting settlement; direct-child supervision can finish now.
+    let groupStillAlive = false;
+    if (forceTimer && processGroup && Number.isSafeInteger(child.pid) && (child.pid ?? 0) > 0) {
+      try {
+        process.kill(-(child.pid as number), 0);
+        groupStillAlive = true;
+      } catch {
+        // No process remains in the group; there is nothing to escalate.
+      }
+    }
+    if (groupStillAlive) await forceSettled;
+    else {
+      if (forceTimer) clearTimeout(forceTimer);
+      forceDone?.();
+    }
+    signal.removeEventListener('abort', abort);
+    return code;
+  });
+  return { exited: exitedPromise, terminate };
+}
+
 /**
  * Does this stderr mean "the session id you tried to resume does not exist"? Claude
  * 2.1.201 says `No conversation found with session ID: <id>` (verified live);
@@ -311,20 +593,22 @@ export async function runClaudeSession(opts: SpawnClaudeOpts, rawSpawn: RawClaud
 /** Default raw fork of one `claude` process. stdin is closed (`ignore`) so claude
  *  never waits ~3s for piped input in headless one-shot mode. */
 const defaultRawSpawn: RawClaudeSpawn = async (args, { cwd, signal }) => {
-  const proc = Bun.spawn(['claude', ...args], {
+  const command = resolveTrustedHostExecutable('claude', cwd);
+  const proc = Bun.spawn([command, ...args], {
     cwd,
+    env: buildMappedAgentEnv(),
     stdin: 'ignore',
     stdout: 'pipe',
     stderr: 'pipe',
-    // Bun forwards the AbortSignal: aborting SIGKILLs the child, freeing the route.
-    signal,
+    detached: process.platform !== 'win32',
   });
+  const supervised = superviseChild(proc, signal, CHILD_TERM_GRACE_MS, process.platform !== 'win32');
   const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
+    readBoundedText(proc.stdout, AGENT_STDOUT_MAX_BYTES, supervised.terminate, signal),
+    readBoundedText(proc.stderr, AGENT_STDERR_MAX_BYTES, undefined, signal),
+    supervised.exited,
   ]);
-  return { stdout, stderr, exitCode };
+  return { stdout: stdout.text, stderr: stderr.text, exitCode };
 };
 
 /**
@@ -349,50 +633,245 @@ export interface AgentExecutionOpts extends SpawnClaudeOpts {
 
 export interface AgentExecutionResult extends SpawnClaudeResult {
   threadId?: string;
+  /** Validated message from a top-level Codex `error` / `turn.failed` event. */
+  codexErrorDetail?: string;
+  /** Stable machine-readable code from a top-level Codex failure event. */
+  codexErrorCode?: string;
+  /**
+   * A successful fresh turn created this thread after the persisted thread was
+   * confirmed missing. The runner conditionally replaces only this exact stale
+   * value, so another process cannot have a newer route overwritten.
+   */
+  replacesThreadId?: string;
+  /**
+   * A persisted thread was confirmed missing and the single fresh retry failed.
+   * The runner conditionally clears only this exact value so the next inbound
+   * can retry fresh instead of repeatedly resuming a known-dead thread.
+   */
+  clearThreadId?: string;
 }
 
 export type AgentExecutor = (opts: AgentExecutionOpts) => Promise<AgentExecutionResult>;
 
+export function resolveTrustedHostExecutable(
+  name: string,
+  childCwd: string,
+  which: (command: string) => string | null = (command) => Bun.which(command),
+): string {
+  return resolveTrustedExecutable(name, childCwd, which);
+}
+
+export function isSafeCodexThreadId(value: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/.test(value);
+}
+
 export function buildCodexArgs(opts: { message: string; threadId?: string }): string[] {
   if (opts.threadId) {
-    return ['exec', 'resume', '--json', '-c', 'sandbox_mode="workspace-write"', opts.threadId, opts.message];
+    if (!isSafeCodexThreadId(opts.threadId)) throw new Error('Refusing unsafe persisted Codex thread id');
+    return ['exec', 'resume', '--json', '-c', 'sandbox_mode="workspace-write"', '--', opts.threadId, opts.message];
   }
-  return ['exec', '--json', '--sandbox', 'workspace-write', opts.message];
+  return ['exec', '--json', '--sandbox', 'workspace-write', '--', opts.message];
 }
 
-type CodexJsonEvent = {
-  type?: string;
-  thread_id?: string;
-  message?: string;
-  item?: { type?: string; text?: string };
-};
+const CODEX_STDOUT_MAX_BYTES = 1024 * 1024;
+const CODEX_STDERR_MAX_BYTES = 64 * 1024;
+const CODEX_JSONL_MAX_CHARS = CODEX_STDOUT_MAX_BYTES;
+const CODEX_JSONL_MAX_LINE_CHARS = 256 * 1024;
+const CODEX_JSONL_MAX_EVENTS = 10_000;
+const CODEX_ERROR_DETAIL_MAX_CHARS = 2_000;
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const nonEmptyString = (value: unknown): string | undefined =>
+  typeof value === 'string' && value.trim().length > 0 ? value : undefined;
+
+const boundedCodexDetail = (value: string): string =>
+  value.length <= CODEX_ERROR_DETAIL_MAX_CHARS ? value : `${value.slice(0, CODEX_ERROR_DETAIL_MAX_CHARS - 1)}…`;
+
+const codexJsonlError = (detail: string, threadId?: string): AgentExecutionResult => ({
+  stdout: `Codex JSONL was incomplete or unsupported (${boundedCodexDetail(detail)}); retry the message.`,
+  exitCode: 0,
+  isError: true,
+  threadId,
+});
+
+function codexEventError(event: Record<string, unknown>): string | undefined {
+  const direct = nonEmptyString(event.message);
+  if (direct) return direct;
+  if (isRecord(event.error)) return nonEmptyString(event.error.message);
+  return undefined;
+}
+
+function codexEventErrorCode(event: Record<string, unknown>): string | undefined {
+  const direct = nonEmptyString(event.code);
+  if (direct) return direct;
+  if (isRecord(event.error)) return nonEmptyString(event.error.code);
+  return undefined;
+}
+
+interface CodexJsonlState {
+  threadId?: string;
+  reply: string;
+  sawTurnCompleted: boolean;
+  failure?: string;
+  failureCode?: string;
+}
+
+function consumeCodexEvent(value: unknown, lineNumber: number, state: CodexJsonlState): string | undefined {
+  if (!isRecord(value)) return `line ${lineNumber} is not an event object`;
+  const type = nonEmptyString(value.type);
+  if (!type) return `line ${lineNumber} has no event type`;
+
+  switch (type) {
+    case 'thread.started': {
+      const startedThread = nonEmptyString(value.thread_id);
+      if (!startedThread) return 'thread.started has no thread_id';
+      if (!isSafeCodexThreadId(startedThread)) return 'thread.started emitted an unsafe thread_id';
+      if (state.threadId && state.threadId !== startedThread) return 'multiple different thread ids were emitted';
+      state.threadId = startedThread;
+      return undefined;
+    }
+    case 'turn.started':
+      return undefined;
+    case 'item.started':
+    case 'item.updated':
+    case 'item.completed': {
+      if (!isRecord(value.item)) return `${type} has no item object`;
+      const itemType = nonEmptyString(value.item.type);
+      if (!itemType) return `${type} item has no type`;
+      const text = nonEmptyString(value.item.text);
+      if (type === 'item.completed' && itemType === 'agent_message' && text) state.reply = text;
+      return undefined;
+    }
+    case 'turn.completed':
+      if (state.sawTurnCompleted) return 'multiple turn.completed events were emitted';
+      if (!state.reply.trim()) return 'turn.completed was emitted before a non-empty agent reply';
+      state.sawTurnCompleted = true;
+      return undefined;
+    case 'turn.failed':
+    case 'error':
+      state.failure = boundedCodexDetail(codexEventError(value) ?? `${type} did not include an error message`);
+      state.failureCode = codexEventErrorCode(value);
+      return undefined;
+    default:
+      return `unknown event type ${JSON.stringify(type)}`;
+  }
+}
 
 export function extractCodexJsonlReply(raw: string): AgentExecutionResult {
-  let threadId: string | undefined;
-  let reply = '';
-  let isError = false;
-  let parsed = false;
-  for (const line of raw.split('\n')) {
+  if (raw.length === 0 || raw.trim().length === 0) return codexJsonlError('empty output');
+  if (raw.length > CODEX_JSONL_MAX_CHARS) {
+    return codexJsonlError(`output exceeded ${CODEX_JSONL_MAX_CHARS} characters`);
+  }
+
+  const state: CodexJsonlState = { reply: '', sawTurnCompleted: false };
+  let eventCount = 0;
+  const lines = raw.split('\n');
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index];
     if (!line.trim()) continue;
+    if (state.sawTurnCompleted) {
+      return codexJsonlError(`line ${index + 1} contains content after turn.completed`, state.threadId);
+    }
+    eventCount++;
+    if (eventCount > CODEX_JSONL_MAX_EVENTS) {
+      return codexJsonlError(`event count exceeded ${CODEX_JSONL_MAX_EVENTS}`, state.threadId);
+    }
+    if (line.length > CODEX_JSONL_MAX_LINE_CHARS) {
+      return codexJsonlError(`line ${index + 1} exceeded ${CODEX_JSONL_MAX_LINE_CHARS} characters`, state.threadId);
+    }
+
+    let value: unknown;
     try {
-      const event = JSON.parse(line) as CodexJsonEvent;
-      parsed = true;
-      if (event.type === 'thread.started' && event.thread_id) threadId = event.thread_id;
-      if (event.type === 'item.completed' && event.item?.type === 'agent_message' && event.item.text) {
-        reply = event.item.text;
-      }
-      if (event.type === 'turn.failed' || event.type === 'error') {
-        isError = true;
-        if (!reply && event.message) reply = event.message;
-      }
+      value = JSON.parse(line);
     } catch {
-      // Ignore non-JSON process noise; a fully non-JSON stream falls back below.
+      return codexJsonlError(`line ${index + 1} is not complete JSON`, state.threadId);
+    }
+    const schemaError = consumeCodexEvent(value, index + 1, state);
+    if (schemaError) return codexJsonlError(schemaError, state.threadId);
+    if (state.failure) {
+      return {
+        stdout: `Codex turn failed (${state.failure}); retry the message.`,
+        exitCode: 0,
+        isError: true,
+        threadId: state.threadId,
+        codexErrorDetail: state.failure,
+        codexErrorCode: state.failureCode,
+      };
     }
   }
-  return { stdout: reply || (parsed ? '' : raw), exitCode: 0, isError, threadId };
+
+  if (!state.sawTurnCompleted) return codexJsonlError('turn.completed was not emitted', state.threadId);
+  if (!state.reply.trim()) return codexJsonlError('no non-empty agent reply was emitted', state.threadId);
+  return { stdout: state.reply, exitCode: 0, isError: false, threadId: state.threadId };
 }
 
-export type RawCodexSpawn = RawClaudeSpawn;
+export interface RawCodexRun extends RawClaudeRun {
+  stdoutTruncated?: boolean;
+  stderrTruncated?: boolean;
+}
+
+export type RawCodexSpawn = (args: string[], opts: { cwd: string; signal: AbortSignal }) => Promise<RawCodexRun>;
+
+const MISSING_CODEX_THREAD_CODES = new Set([
+  'thread_not_found',
+  'session_not_found',
+  'conversation_not_found',
+  'rollout_not_found',
+]);
+
+function parseCodexRun(run: RawCodexRun): AgentExecutionResult {
+  const stderrWasTruncated = run.stderrTruncated || run.stderr.length > CODEX_STDERR_MAX_BYTES;
+  const stderr = stderrWasTruncated ? `…${run.stderr.slice(-(CODEX_STDERR_MAX_BYTES - 1))}` : run.stderr;
+  if (run.stdoutTruncated) {
+    return {
+      stdout: `Codex JSONL exceeded ${CODEX_STDOUT_MAX_BYTES} bytes and was truncated; retry with a smaller task.`,
+      stderr,
+      exitCode: run.exitCode,
+      isError: true,
+    };
+  }
+  const parsed = extractCodexJsonlReply(run.stdout);
+  return { ...parsed, stderr, exitCode: run.exitCode, isError: parsed.isError || run.exitCode !== 0 };
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Retry only stable machine codes or exact, whole-line CLI diagnostics. Broad
+ * proximity matching can replay a mutating prompt after an unrelated error. */
+const codexThreadIsMissing = (parsed: AgentExecutionResult, staleThreadId: string): boolean => {
+  if (parsed.codexErrorCode && MISSING_CODEX_THREAD_CODES.has(parsed.codexErrorCode.toLowerCase())) return true;
+  const stale = escapeRegExp(staleThreadId);
+  const exact = [
+    new RegExp(`^Thread not found(?::\\s*${stale})?$`, 'i'),
+    new RegExp(`^Conversation not found(?::\\s*${stale})?$`, 'i'),
+    new RegExp(`^No conversation found with (?:session|thread) ID:\\s*${stale}$`, 'i'),
+    new RegExp(`^No such (?:thread|session|conversation)(?::\\s*${stale})?$`, 'i'),
+    /^Session expired$/i,
+    /^No saved (?:thread|session|conversation)$/i,
+  ];
+  const lines = `${parsed.stderr ?? ''}\n${parsed.codexErrorDetail ?? ''}`
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return lines.some((line) => exact.some((pattern) => pattern.test(line)));
+};
+
+function freshCodexFailure(result: AgentExecutionResult, staleThreadId: string): AgentExecutionResult {
+  const detail = boundedCodexDetail(result.stderr?.trim() || result.stdout.trim() || `exit code ${result.exitCode}`);
+  const message = `Saved Codex thread is missing and the one-time fresh retry failed (${detail}); send the message again to retry.`;
+  return {
+    ...result,
+    stdout: message,
+    stderr: result.exitCode === 0 ? result.stderr : message,
+    isError: true,
+    threadId: undefined,
+    clearThreadId: staleThreadId,
+  };
+}
 
 export async function runCodexSession(
   opts: AgentExecutionOpts,
@@ -400,22 +879,126 @@ export async function runCodexSession(
 ): Promise<AgentExecutionResult> {
   const persona = opts.personaFile && existsSync(opts.personaFile) ? readFileSync(opts.personaFile, 'utf8') : '';
   const message = persona ? `<persona>\n${persona}\n</persona>\n\n${opts.message}` : opts.message;
-  const run = await rawSpawn(buildCodexArgs({ message, threadId: opts.threadId }), {
+  const spawnOpts = {
     cwd: opts.cwd,
     signal: opts.signal,
-  });
-  const parsed = extractCodexJsonlReply(run.stdout);
-  return { ...parsed, stderr: run.stderr, exitCode: run.exitCode, isError: parsed.isError || run.exitCode !== 0 };
+  };
+  const run = await rawSpawn(buildCodexArgs({ message, threadId: opts.threadId }), spawnOpts);
+  const parsed = parseCodexRun(run);
+
+  if (!opts.threadId) {
+    if (parsed.exitCode === 0 && !parsed.isError && !parsed.threadId) {
+      return {
+        ...parsed,
+        stdout: 'Codex completed a fresh turn without returning a thread id; send the message again to retry.',
+        isError: true,
+      };
+    }
+    return parsed;
+  }
+
+  const resumeFailed = parsed.exitCode !== 0 || parsed.isError;
+  if (!resumeFailed) {
+    if (parsed.threadId && parsed.threadId !== opts.threadId) {
+      return {
+        ...parsed,
+        stdout:
+          'Codex resume returned a different thread id; stored session state was left unchanged. Retry the message.',
+        isError: true,
+        threadId: undefined,
+      };
+    }
+    return { ...parsed, threadId: opts.threadId };
+  }
+  if (opts.signal.aborted || run.stdoutTruncated || !codexThreadIsMissing(parsed, opts.threadId)) return parsed;
+
+  // A confirmed missing resume gets exactly one fresh attempt. The caller
+  // conditionally swaps the persisted id only after this attempt has a complete,
+  // non-empty reply and a new thread id.
+  const freshRun = await rawSpawn(buildCodexArgs({ message }), spawnOpts);
+  const fresh = parseCodexRun(freshRun);
+  if (fresh.exitCode !== 0 || fresh.isError) return freshCodexFailure(fresh, opts.threadId);
+  if (!fresh.threadId) {
+    return freshCodexFailure(
+      {
+        ...fresh,
+        stdout: 'Codex completed the fresh retry without returning a thread id.',
+        isError: true,
+      },
+      opts.threadId,
+    );
+  }
+  return { ...fresh, replacesThreadId: opts.threadId };
+}
+
+interface BoundedText {
+  text: string;
+  truncated: boolean;
+}
+
+export async function readBoundedText(
+  stream: ReadableStream<Uint8Array>,
+  maxBytes: number,
+  onOverflow?: () => void,
+  signal?: AbortSignal,
+): Promise<BoundedText> {
+  const reader = stream.getReader();
+  const cancel = () => {
+    void reader.cancel().catch(() => {});
+  };
+  if (signal?.aborted) cancel();
+  else signal?.addEventListener('abort', cancel, { once: true });
+  const decoder = new TextDecoder();
+  let text = '';
+  let retained = 0;
+  let truncated = false;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const remaining = maxBytes - retained;
+      if (remaining > 0) {
+        const kept = value.subarray(0, remaining);
+        retained += kept.byteLength;
+        text += decoder.decode(kept, { stream: true });
+      }
+      if (value.byteLength > Math.max(remaining, 0)) {
+        truncated = true;
+        onOverflow?.();
+        await reader.cancel();
+        break;
+      }
+    }
+  } finally {
+    signal?.removeEventListener('abort', cancel);
+  }
+  text += decoder.decode();
+  return { text, truncated };
 }
 
 const defaultRawCodexSpawn: RawCodexSpawn = async (args, { cwd, signal }) => {
-  const proc = Bun.spawn(['codex', ...args], { cwd, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', signal });
+  const command = resolveTrustedHostExecutable('codex', cwd);
+  const proc = Bun.spawn([command, ...args], {
+    cwd,
+    env: buildMappedAgentEnv(),
+    stdin: 'ignore',
+    stdout: 'pipe',
+    stderr: 'pipe',
+    detached: process.platform !== 'win32',
+  });
+  const supervised = superviseChild(proc, signal, CHILD_TERM_GRACE_MS, process.platform !== 'win32');
   const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
+    readBoundedText(proc.stdout, CODEX_STDOUT_MAX_BYTES, supervised.terminate, signal),
+    readBoundedText(proc.stderr, CODEX_STDERR_MAX_BYTES, undefined, signal),
+    supervised.exited,
   ]);
-  return { stdout, stderr, exitCode };
+  return {
+    stdout: stdout.text,
+    stderr: stderr.text,
+    exitCode,
+    stdoutTruncated: stdout.truncated,
+    stderrTruncated: stderr.truncated,
+  };
 };
 
 export const defaultAgentExecutor: AgentExecutor = (opts) =>
@@ -426,21 +1009,20 @@ export const defaultAgentExecutor: AgentExecutor = (opts) =>
 // ============================================================================
 
 /**
- * Result of an id-returning Omni send. `messageId` is the correlatable id — the
- * WhatsApp stanza id / externalId (SPIKE finding (b)) — that an inbound reaction
- * later references. Absent on a failed send (the row stays un-tagged and is
- * retried on the next tick).
+ * Result of an id-returning Omni send. Only `accepted` carries the correlatable
+ * WhatsApp stanza id. A preflight rejection is retry-safe; every uncertain
+ * outcome after dispatch is explicitly ambiguous and must not be auto-retried.
  */
-export interface OmniSendResult {
-  messageId?: string;
-  success?: boolean;
-  error?: string;
-}
+export type OmniSendResult =
+  | { outcome: 'definitely-not-started'; error: string }
+  | { outcome: 'accepted'; messageId: string }
+  | { outcome: 'ambiguous'; error: string };
 
 export interface OmniSendOpts {
   instance: string;
   chat: string;
   text: string;
+  signal?: AbortSignal;
 }
 
 /**
@@ -456,8 +1038,8 @@ export type OmniSend = (opts: OmniSendOpts) => Promise<OmniSendResult>;
  * Default id-returning send — POSTs the approval message to Omni's HTTP send
  * route, signed exactly like {@link registerAgentInOmni} (bearer + optional
  * ed25519). Returns the message id from the response so `announce()` can store
- * the correlatable stanza id. Degrades to an error result (silent retry, never a
- * throw) when the Omni API URL is unconfigured.
+ * the correlatable stanza id. A missing API URL is the sole retry-safe preflight
+ * result; HTTP errors, malformed responses, and transport failures are ambiguous.
  *
  * NOTE: the exact send route + response field that surface the WhatsApp *stanza
  * id* (vs the persisted Omni UUID) are documented in SPIKE (b) but not yet
@@ -465,26 +1047,36 @@ export type OmniSend = (opts: OmniSendOpts) => Promise<OmniSendResult>;
  * suite proves; G3's `--live` round-trip confirms this default's wire format.
  */
 export function makeDefaultOmniSend(config: OmniRuntimeConfig): OmniSend {
-  return async ({ instance, chat, text }) => {
+  return async ({ instance, chat, text, signal }) => {
     const apiUrl = config.apiUrl;
-    if (!apiUrl) return { success: false, error: 'omni apiUrl not configured' };
+    if (!apiUrl) return { outcome: 'definitely-not-started', error: 'omni apiUrl not configured' };
     const path = '/api/v2/messages';
     const bodyJson = JSON.stringify({ instanceId: instance, chatId: chat, text });
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (config.apiKey) headers.Authorization = `Bearer ${config.apiKey}`;
     const sig = signOmniRequest('POST', path, bodyJson);
     if (sig) Object.assign(headers, sig);
-    const res = await fetch(`${apiUrl.replace(/\/+$/, '')}${path}`, {
-      method: 'POST',
-      headers,
-      body: bodyJson,
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!res.ok) return { success: false, error: `HTTP ${res.status}` };
-    // SendResult ({ success, messageId, ... }) may be top-level or `{ data }`-wrapped.
-    const json = (await res.json()) as { messageId?: string; data?: { messageId?: string } };
-    const messageId = json.messageId ?? json.data?.messageId;
-    return { success: Boolean(messageId), messageId };
+    try {
+      const res = await fetch(`${apiUrl.replace(/\/+$/, '')}${path}`, {
+        method: 'POST',
+        headers,
+        body: bodyJson,
+        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000),
+      });
+      // Once fetch is invoked, HTTP status alone cannot prove the server did not
+      // create a message before returning an error.
+      if (!res.ok) return { outcome: 'ambiguous', error: `HTTP ${res.status}` };
+      const json: unknown = await res.json();
+      const top = isRecord(json) ? json.messageId : undefined;
+      const nested = isRecord(json) && isRecord(json.data) ? json.data.messageId : undefined;
+      const messageId = typeof top === 'string' ? top : typeof nested === 'string' ? nested : undefined;
+      if (!messageId || messageId.length > 512 || hasUnsafeTransportControl(messageId)) {
+        return { outcome: 'ambiguous', error: 'Omni accepted the request without a safe message id' };
+      }
+      return { outcome: 'accepted', messageId };
+    } catch (error) {
+      return { outcome: 'ambiguous', error: errText(error) };
+    }
   };
 }
 
@@ -504,6 +1096,7 @@ export interface OmniSetReactionOpts {
   messageId: string;
   /** The status emoji to set (⏳/✅/❌). A new emoji SWAPS the prior one in place. */
   emoji: string;
+  signal?: AbortSignal;
 }
 
 /**
@@ -533,7 +1126,7 @@ export type OmniSetReaction = (opts: OmniSetReactionOpts) => Promise<OmniSetReac
  * confirms this default's wire format (and whether the in-place swap renders).
  */
 export function makeDefaultOmniSetReaction(config: OmniRuntimeConfig): OmniSetReaction {
-  return async ({ instance, chat, messageId, emoji }) => {
+  return async ({ instance, chat, messageId, emoji, signal }) => {
     const apiUrl = config.apiUrl;
     if (!apiUrl) return { success: false, error: 'omni apiUrl not configured' };
     const path = '/api/v2/messages/send/reaction';
@@ -546,7 +1139,7 @@ export function makeDefaultOmniSetReaction(config: OmniRuntimeConfig): OmniSetRe
       method: 'POST',
       headers,
       body: bodyJson,
-      signal: AbortSignal.timeout(10_000),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000),
     });
     if (!res.ok) return { success: false, error: `HTTP ${res.status}` };
     return { success: true };
@@ -570,6 +1163,7 @@ export const defaultNatsFactory: NatsFactory = async ({ servers }) => {
       };
     },
     publish: (subject, payload) => nc.publish(subject, enc.encode(payload)),
+    flush: () => nc.flush(),
     close: () => nc.close(),
   };
 };
@@ -591,6 +1185,32 @@ interface InboundMessagePayload {
   messageId?: string;
 }
 
+const MAX_INBOUND_FRAME_BYTES = 128 * 1024;
+const MAX_INBOUND_CONTENT_BYTES = 64 * 1024;
+const MAX_INBOUND_ID_CHARS = 512;
+const hasUnsafeTransportControl = (value: string): boolean =>
+  [...value].some((character) => {
+    const code = character.charCodeAt(0);
+    return code <= 0x08 || code === 0x0b || code === 0x0c || (code >= 0x0e && code <= 0x1f) || code === 0x7f;
+  });
+
+function inboundFieldError(parsed: Record<string, unknown>): string | undefined {
+  for (const field of ['content', 'sender', 'instanceId', 'chatId', 'messageId'] as const) {
+    const value = parsed[field];
+    if (value !== undefined && typeof value !== 'string') return `${field} must be a string`;
+    if (typeof value === 'string' && hasUnsafeTransportControl(value)) {
+      return `${field} contains unsafe control characters`;
+    }
+    if (field !== 'content' && typeof value === 'string' && value.length > MAX_INBOUND_ID_CHARS) {
+      return `${field} is too long`;
+    }
+  }
+  const content = parsed.content;
+  return typeof content === 'string' && Buffer.byteLength(content, 'utf8') > MAX_INBOUND_CONTENT_BYTES
+    ? 'content exceeded the safety limit'
+    : undefined;
+}
+
 // ============================================================================
 // Runner
 // ============================================================================
@@ -600,6 +1220,13 @@ export interface OmniRunnerDeps {
   config: OmniRuntimeConfig;
   /** Outbound NATS publish. */
   publish: (subject: string, payload: string) => void;
+  /** Awaited after publish and before SQLite session/handled commit. */
+  flush?: () => Promise<void>;
+  /** Resident lease identity. Production always supplies the machine-wide
+   * fencing epoch; direct runners acquire a short embedded-process lease. */
+  claimOwner?: { ownerId: string; epoch: number };
+  /** Share the config-seeded boundary with the serve wrapper. */
+  redact?: OmniRedactor;
   /** Structured log sink (stdout in serve; captured in tests). */
   log?: (line: string) => void;
   /** Injectable clock. */
@@ -627,6 +1254,11 @@ export interface OmniRunnerDeps {
    * swaps behind if the in-place reaction swap does not render live.
    */
   setReaction?: OmniSetReaction;
+  /** Explicitly enable mapped workspace-writing agent runs. Production defaults
+   * off because child authentication may remain file-backed outside env control. */
+  allowMappedAgentExecution?: boolean;
+  /** Maximum time shutdown/idle drains may wait on injected network/child work. */
+  drainTimeoutMs?: number;
 }
 
 export interface OmniRunner {
@@ -643,14 +1275,114 @@ export interface OmniRunner {
    * the mapped round-trip deterministically.
    */
   whenIdle(): Promise<void>;
+  /** Stop intake, abort active route children, and drain all owned work. */
+  stop(): Promise<void>;
+}
+
+const OMITTED_APPROVAL_PREVIEW = JSON.stringify({ version: 1, legacyPreviewOmitted: true });
+const SAFE_APPROVAL_TOOL = /^[A-Za-z0-9_.:-]{1,128}$/;
+const hasControlCharacter = (value: string): boolean =>
+  [...value].some((character) => {
+    const code = character.charCodeAt(0);
+    return code <= 0x1f || code === 0x7f;
+  });
+
+function safeSummaryPath(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 240 || hasControlCharacter(value)) {
+    return undefined;
+  }
+  return redactOmniOutbound(value);
+}
+
+function boundedApprovalPreview(value: Record<string, unknown>): string {
+  const preview = JSON.stringify(value);
+  return preview.length > 200 ? JSON.stringify({ version: 1, kind: value.kind, previewTruncated: true }) : preview;
+}
+
+/** Every durable row is compatibility input, not trusted producer output. Only
+ * the current version and allowlisted fields are reconstructed for transport. */
+function safeApprovalPreview(tool: string, inputSummary: string): string {
+  try {
+    const parsed: unknown = JSON.parse(inputSummary);
+    if (!isRecord(parsed) || parsed.version !== 1) return OMITTED_APPROVAL_PREVIEW;
+    if (parsed.kind === 'empty') return JSON.stringify({ version: 1, kind: 'empty' });
+    if (tool === 'Bash' && parsed.kind === 'Bash' && Array.isArray(parsed.commands)) {
+      const commands = parsed.commands.slice(0, 8).flatMap((value) => {
+        if (!isRecord(value) || typeof value.executable !== 'string') return [];
+        const executable =
+          /^[A-Za-z][A-Za-z0-9._+-]{0,63}$/.test(value.executable) &&
+          !/(?:password|passwd|secret|token|api[_-]?key|private[_-]?key)/i.test(value.executable) &&
+          !/^(?:gh[pousr]_|github_pat_|sk-|xox[baprs]-|npm_|AKIA|ASIA|AIza)/i.test(value.executable)
+            ? value.executable
+            : '[command]';
+        const options = Array.isArray(value.options)
+          ? value.options
+              .filter(
+                (option): option is string =>
+                  typeof option === 'string' && /^--?[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(option),
+              )
+              .slice(0, 12)
+          : [];
+        const env = Array.isArray(value.env)
+          ? value.env
+              .filter((name): name is string => typeof name === 'string' && /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(name))
+              .slice(0, 12)
+          : [];
+        const argumentCount =
+          typeof value.argumentCount === 'number' &&
+          Number.isSafeInteger(value.argumentCount) &&
+          value.argumentCount >= 0
+            ? Math.min(value.argumentCount, 10_000)
+            : 0;
+        return [{ executable, options, env, argumentCount }];
+      });
+      return boundedApprovalPreview({ version: 1, kind: 'Bash', commands, truncated: parsed.truncated === true });
+    }
+    if ((tool === 'Write' || tool === 'Edit' || tool === 'apply_patch') && parsed.kind === tool) {
+      const paths = Array.isArray(parsed.paths)
+        ? parsed.paths
+            .flatMap((value) => {
+              const safe = safeSummaryPath(value);
+              return safe ? [safe] : [];
+            })
+            .slice(0, 10)
+        : [];
+      return boundedApprovalPreview({ version: 1, kind: tool, paths });
+    }
+    if (tool === 'NotebookEdit' && parsed.kind === 'NotebookEdit') {
+      const paths = Array.isArray(parsed.paths)
+        ? parsed.paths
+            .flatMap((value) => {
+              const safe = safeSummaryPath(value);
+              return safe ? [safe] : [];
+            })
+            .slice(0, 10)
+        : [];
+      const cellId = safeSummaryPath(parsed.cellId);
+      return boundedApprovalPreview({ version: 1, kind: 'NotebookEdit', paths, ...(cellId ? { cellId } : {}) });
+    }
+    if (parsed.kind === 'other' && typeof parsed.inputFieldCount === 'number') {
+      const inputFieldCount = Number.isSafeInteger(parsed.inputFieldCount)
+        ? Math.max(0, Math.min(parsed.inputFieldCount, 10_000))
+        : 0;
+      return JSON.stringify({ version: 1, kind: 'other', inputFieldCount });
+    }
+    if (parsed.previewTruncated === true && typeof parsed.kind === 'string') {
+      return JSON.stringify({ version: 1, kind: parsed.kind.slice(0, 40), previewTruncated: true });
+    }
+    return OMITTED_APPROVAL_PREVIEW;
+  } catch {
+    return OMITTED_APPROVAL_PREVIEW;
+  }
 }
 
 function formatApprovalMessage(tool: string, inputSummary: string): string {
-  const preview = inputSummary.length > 200 ? `${inputSummary.slice(0, 197)}...` : inputSummary;
+  const safeTool = SAFE_APPROVAL_TOOL.test(tool) ? tool : 'unknown';
+  const preview = safeApprovalPreview(safeTool, inputSummary);
   return [
     '\u{1F514} *Approval Required*',
     '',
-    `Tool: \`${tool}\``,
+    `Tool: \`${safeTool}\``,
     `Preview: ${preview}`,
     '',
     'Reply *y* to approve or *n* to deny',
@@ -672,10 +1404,73 @@ function parseReaction(content: string): { emoji: string; targetId: string } | n
   return m ? { emoji: m[1].trim(), targetId: m[2].trim() } : null;
 }
 
-/** chat id from payload, else parsed from `omni.message.{instance}.{chat...}`. */
-function chatIdFromSubject(subject: string): string | undefined {
+/** Authoritative identity carried by `omni.message.{instance}.{chat...}`. */
+function identityFromSubject(subject: string): { instance: string; chat: string } | undefined {
   const parts = subject.split('.');
-  return parts.length >= 4 ? parts.slice(3).join('.') : undefined;
+  if (parts.length < 4 || parts[0] !== 'omni' || parts[1] !== 'message' || !parts[2]) return undefined;
+  const chat = parts.slice(3).join('.');
+  return chat ? { instance: parts[2], chat } : undefined;
+}
+
+type ParsedInboundFrame = {
+  ok: true;
+  msg: InboundMessagePayload;
+  instance: string;
+  chat: string;
+  sender: string;
+  body: string;
+};
+type RejectedInboundFrame = { ok: false; reason?: string };
+
+/** Parse and scope-check the NATS envelope before any durable side effect. */
+function parseInboundFrame(
+  subject: string,
+  data: string,
+  configuredInstance: string | undefined,
+): ParsedInboundFrame | RejectedInboundFrame {
+  const identity = identityFromSubject(subject);
+  if (!identity || (configuredInstance && identity.instance !== configuredInstance)) {
+    return { ok: false, reason: `out-of-scope subject ${subject}` };
+  }
+  if (
+    identity.instance.length > MAX_INBOUND_ID_CHARS ||
+    identity.chat.length > MAX_INBOUND_ID_CHARS ||
+    hasUnsafeTransportControl(identity.instance) ||
+    hasUnsafeTransportControl(identity.chat)
+  ) {
+    return { ok: false, reason: 'invalid subject identity' };
+  }
+  if (Buffer.byteLength(data, 'utf8') > MAX_INBOUND_FRAME_BYTES) {
+    return { ok: false, reason: 'frame exceeded the safety limit' };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(data);
+  } catch {
+    return { ok: false };
+  }
+  if (!isRecord(parsed)) return { ok: false, reason: 'frame must be a JSON object' };
+  const fieldError = inboundFieldError(parsed);
+  if (fieldError) return { ok: false, reason: fieldError };
+  const msg = parsed as InboundMessagePayload;
+  if (
+    (msg.instanceId !== undefined && msg.instanceId !== identity.instance) ||
+    (msg.chatId !== undefined && msg.chatId !== identity.chat)
+  ) {
+    return { ok: false, reason: `identity mismatch on ${subject}` };
+  }
+  return {
+    ok: true,
+    msg,
+    instance: identity.instance,
+    chat: identity.chat,
+    sender: msg.sender?.trim() || 'whatsapp-user',
+    body: msg.content ?? '',
+  };
+}
+
+function inboundEventKey(subject: string, data: string): string {
+  return createHash('sha256').update('omni-inbound\0').update(subject).update('\0').update(data).digest('hex');
 }
 
 /**
@@ -690,21 +1485,46 @@ function buildRoutedReplyPayload(
   correlationId: string,
   nowMs: number,
 ): string {
-  return JSON.stringify({
-    content,
-    agent: 'genie',
-    chat_id: chat,
-    instance_id: instance,
-    request_id: correlationId,
-    timestamp: new Date(nowMs).toISOString(),
-  });
+  const render = (boundedContent: string) =>
+    JSON.stringify({
+      content: boundedContent,
+      agent: 'genie',
+      chat_id: chat,
+      instance_id: instance,
+      request_id: correlationId,
+      timestamp: new Date(nowMs).toISOString(),
+    });
+  const initial = render(content);
+  if (Buffer.byteLength(initial, 'utf8') <= MAX_OUTBOUND_PAYLOAD_BYTES) return initial;
+
+  // JSON escaping and multibyte UTF-8 make a character cap insufficient. Find
+  // the largest Unicode-code-point prefix whose complete wire envelope fits.
+  const points = Array.from(content);
+  let low = 0;
+  let high = points.length;
+  let best = render('…');
+  if (Buffer.byteLength(best, 'utf8') > MAX_OUTBOUND_PAYLOAD_BYTES) {
+    throw new Error('Omni reply envelope exceeded the durable payload limit');
+  }
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    const candidate = render(`${points.slice(0, middle).join('')}…`);
+    if (Buffer.byteLength(candidate, 'utf8') <= MAX_OUTBOUND_PAYLOAD_BYTES) {
+      best = candidate;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+  return best;
 }
 
 /** Cap a reply to `max` chars, replacing the tail with a single ellipsis. */
 function truncateReply(text: string, max: number): string {
   if (max <= 0) return '';
-  if (text.length <= max) return text;
-  return `${text.slice(0, max - 1)}…`;
+  const points = Array.from(text);
+  if (points.length <= max) return text;
+  return `${points.slice(0, max - 1).join('')}…`;
 }
 
 /** Keep the LAST `max` chars of a diagnostic, replacing the head with a single
@@ -712,12 +1532,15 @@ function truncateReply(text: string, max: number): string {
  *  cause is at the END of its stderr, not the start. */
 function tailOf(text: string, max: number): string {
   if (max <= 0) return '';
-  if (text.length <= max) return text;
-  return `…${text.slice(-(max - 1))}`;
+  const points = Array.from(text);
+  if (points.length <= max) return text;
+  return `…${points.slice(-(max - 1)).join('')}`;
 }
 
 /** Dropped-because-busy notice (Decision 10 — one in-flight run per route). */
 const BUSY_NOTICE = '\u{1F6D1} busy — one at a time. Your message was stored; try again shortly.';
+const INTERRUPTED_NOTICE =
+  '⚠️ the previous resident stopped during this run. Genie did not replay the workspace action; please review state and retry explicitly.';
 /** Fired when a one-shot exceeds its budget and is killed. */
 const timeoutNotice = (ms: number): string => `\u{23F1}\u{FE0F} timed out after ${ms}ms — the run was cancelled.`;
 /** Max chars of failure detail carried into an error notice — wide enough for
@@ -732,13 +1555,156 @@ const EXIT_DIAG_TAIL_CHARS = 500;
 /** Failure detail for a non-zero exit: the code plus the TAIL of the child's
  *  stderr (a crash explains itself at the end of the stream), falling back to
  *  stdout when stderr is empty. Bare `exit code N` only when both are blank. */
-const exitDetail = (code: number, stderr: string | undefined, stdout: string): string => {
-  const diag = tailOf((stderr ?? '').trim() || stdout.trim(), EXIT_DIAG_TAIL_CHARS);
+const exitDetail = (
+  code: number,
+  stderr: string | undefined,
+  stdout: string,
+  redact: OmniRedactor = (text) => redactOmniOutbound(text),
+): string => {
+  // Child streams are already byte-bounded. Redact that complete bounded
+  // diagnostic before tail selection so truncation cannot discard an auth
+  // label while retaining its opaque credential.
+  const diag = tailOf(redact((stderr ?? '').trim() || stdout.trim()), EXIT_DIAG_TAIL_CHARS);
   return diag ? `exit code ${code} — ${diag}` : `exit code ${code}`;
 };
 
 /** Compact message for an unknown thrown value. */
 const errText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+function oneShotResultContent(
+  result: AgentExecutionResult,
+  ok: boolean,
+  maxReplyChars: number,
+  redact: OmniRedactor,
+): string {
+  if (ok) return truncateReply(redact(result.stdout), maxReplyChars);
+  const detail =
+    result.exitCode !== 0 ? exitDetail(result.exitCode, result.stderr, result.stdout, redact) : result.stdout;
+  return errorNotice(redact(detail || 'agent returned an error'));
+}
+
+function oneShotFailureContent(error: unknown, timeoutMs: number, redact: OmniRedactor): string {
+  if (error instanceof OneShotTimeoutError) return timeoutNotice(timeoutMs);
+  if (error instanceof OneShotStoppedError) return '⏹️ cancelled because Omni serve stopped.';
+  return errorNotice(redact(errText(error)));
+}
+
+function currentCodexThread(db: Database, route: OmniRoute): string | undefined {
+  return (route.agent ?? 'claude') === 'codex' ? getAgentSession(db, 'codex', route.instance, route.chat) : undefined;
+}
+
+interface DurableDeliveryMeta {
+  version: 1;
+  ok: boolean;
+  threadId?: string;
+  replacesThreadId?: string;
+  clearThreadId?: string;
+}
+
+function encodeDeliveryMeta(result: AgentExecutionResult, ok: boolean): string {
+  return JSON.stringify({
+    version: 1,
+    ok,
+    ...(result.threadId ? { threadId: result.threadId } : {}),
+    ...(result.replacesThreadId ? { replacesThreadId: result.replacesThreadId } : {}),
+    ...(result.clearThreadId ? { clearThreadId: result.clearThreadId } : {}),
+  } satisfies DurableDeliveryMeta);
+}
+
+function decodeDeliveryMeta(raw: string): { result: AgentExecutionResult; ok: boolean } {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error('Durable Omni delivery metadata is not valid JSON');
+  }
+  if (!isRecord(parsed) || parsed.version !== 1 || typeof parsed.ok !== 'boolean') {
+    throw new Error('Durable Omni delivery metadata has an unsupported shape');
+  }
+  for (const field of ['threadId', 'replacesThreadId', 'clearThreadId'] as const) {
+    const value = parsed[field];
+    if (value !== undefined && (typeof value !== 'string' || !isSafeCodexThreadId(value))) {
+      throw new Error(`Durable Omni delivery metadata has an unsafe ${field}`);
+    }
+  }
+  return {
+    ok: parsed.ok,
+    result: {
+      stdout: '',
+      exitCode: parsed.ok ? 0 : 1,
+      ...(typeof parsed.threadId === 'string' ? { threadId: parsed.threadId } : {}),
+      ...(typeof parsed.replacesThreadId === 'string' ? { replacesThreadId: parsed.replacesThreadId } : {}),
+      ...(typeof parsed.clearThreadId === 'string' ? { clearThreadId: parsed.clearThreadId } : {}),
+    },
+  };
+}
+
+function commitPublishedInbound(
+  db: Database,
+  route: OmniRoute,
+  result: AgentExecutionResult,
+  ok: boolean,
+  inboundId: string,
+  claimToken: string,
+  nowMs: number,
+  log: (line: string) => void,
+  identity: DurableClaimIdentity,
+): void {
+  const commit = db.transaction(() => {
+    persistCodexSessionResult(db, route, result, ok, nowMs, log);
+    if (!markInboundHandledIfClaimed(db, inboundId, claimToken, nowMs, identity, 'flushed')) {
+      throw new Error(`Inbound claim ${inboundId} changed before completion`);
+    }
+  });
+  commit.immediate();
+}
+
+function persistCodexSessionResult(
+  db: Database,
+  route: OmniRoute,
+  result: AgentExecutionResult,
+  succeeded: boolean,
+  nowMs: number,
+  log: (line: string) => void,
+): void {
+  if ((route.agent ?? 'claude') !== 'codex') return;
+  if (succeeded && result.threadId) {
+    if (!result.replacesThreadId) {
+      const current = getAgentSession(db, 'codex', route.instance, route.chat);
+      if (current === result.threadId) return;
+      if (current !== undefined) {
+        throw new Error('Codex session state changed during execution; the reply was not acknowledged. Retry.');
+      }
+      if (!insertAgentSessionIfAbsent(db, 'codex', route.instance, route.chat, result.threadId, nowMs)) {
+        throw new Error('Codex session state changed during execution; the reply was not acknowledged. Retry.');
+      }
+      return;
+    }
+    if (
+      !replaceAgentSessionIfCurrent(
+        db,
+        'codex',
+        route.instance,
+        route.chat,
+        result.replacesThreadId,
+        result.threadId,
+        nowMs,
+      )
+    ) {
+      throw new Error('Codex session state changed during recovery; the reply was not acknowledged. Retry.');
+    }
+    return;
+  }
+  if (!result.clearThreadId) return;
+  try {
+    clearAgentSessionIfCurrent(db, 'codex', route.instance, route.chat, result.clearThreadId);
+  } catch (err) {
+    // Retaining the stale id is safe (the next message performs the same bounded
+    // recovery) and preferable to hiding the actionable child failure behind a
+    // secondary state-cleanup error.
+    log(`[omni] could not clear stale Codex thread: ${errText(err)}`);
+  }
+}
 
 /**
  * Status-ack glyphs for genie's OWN swapping reaction on the approval message.
@@ -771,15 +1737,44 @@ class OneShotTimeoutError extends Error {
   }
 }
 
+class OneShotStoppedError extends Error {
+  constructor() {
+    super('omni serve stopped');
+    this.name = 'OneShotStoppedError';
+  }
+}
+
 export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
   const { db, config, publish } = deps;
-  const log = deps.log ?? (() => {});
+  const flush = deps.flush ?? (async () => {});
   const now = deps.now ?? (() => Date.now());
+  const redact = deps.redact ?? createOmniRedactor(config);
+  const rawLog = deps.log ?? (() => {});
+  const log = (line: string) => rawLog(redact(line));
   const genId =
     deps.genCorrelationId ?? (() => `req_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`);
+  const claimOwner =
+    deps.claimOwner ??
+    (() => {
+      const ownerId = `embedded:${process.pid}`;
+      const epoch = acquireServiceLeaseEpoch(db, OMNI_SERVICE_LEASE_NAME, ownerId, now(), 5 * 60_000);
+      if (epoch === undefined) throw new Error('another Omni resident owns the machine-wide service lease');
+      return { ownerId, epoch };
+    })();
+  const claimIdentity = () => ({ ...claimOwner, now: now() });
+  const ownsCurrentLease = () =>
+    isServiceLeaseCurrent(db, OMNI_SERVICE_LEASE_NAME, claimOwner.ownerId, claimOwner.epoch, now());
   const spawnClaude = deps.spawnClaude ?? defaultSpawnClaude;
   const spawnAgent: AgentExecutor =
     deps.spawnAgent ?? ((opts) => (opts.provider === 'claude' ? spawnClaude(opts) : defaultAgentExecutor(opts)));
+  const allowMappedAgentExecution =
+    deps.allowMappedAgentExecution ??
+    (deps.spawnAgent !== undefined ||
+      deps.spawnClaude !== undefined ||
+      /^(?:1|true|yes|on)$/i.test(process.env.GENIE_OMNI_MAPPED_AGENT_EXECUTION?.trim() ?? ''));
+  // Default exceeds the owned HTTP deadline; shutdown aborts requests first,
+  // then drains their settlement before the caller may close SQLite/NATS.
+  const drainTimeoutMs = Math.max(1, Math.min(deps.drainTimeoutMs ?? 12_000, 30_000));
   const sendApproval = deps.sendApproval ?? makeDefaultOmniSend(config);
   const setReaction = deps.setReaction ?? makeDefaultOmniSetReaction(config);
   const vocab = {
@@ -792,7 +1787,10 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
   // Inbound one-shot routing state (Decision 10 — one in-flight run per route).
   const routes = config.routes ?? [];
   const timeoutMs = config.inboundTimeoutMs ?? 120_000;
-  const maxReplyChars = config.inboundMaxReplyChars ?? 4_000;
+  const requestedReplyChars = config.inboundMaxReplyChars ?? 4_000;
+  const maxReplyChars = Number.isFinite(requestedReplyChars)
+    ? Math.max(0, Math.min(Math.floor(requestedReplyChars), MAX_OUTBOUND_PAYLOAD_BYTES))
+    : 4_000;
   /** Routes with a run currently in flight — a second message on one is dropped. */
   const inFlight = new Set<string>();
   /** Live one-shot promises, so `whenIdle` (tests) can await completion. */
@@ -808,7 +1806,11 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
    *  the reconciliation pass (every tick) from double-firing an ack whose glyph
    *  the prior emit has not yet recorded. Keyed by the stanza id. */
   const ackInFlight = new Set<string>();
-  const routeKey = (instance: string, chat: string): string => `${instance} ${chat}`;
+  const activeControllers = new Set<AbortController>();
+  const activeHttpControllers = new Set<AbortController>();
+  const unroutableRecoveryLogged = new Set<string>();
+  let stopped = false;
+  const routeKey = (instance: string, chat: string): string => `${instance}\0${chat}`;
   const findRoute = (instance: string, chat: string): OmniRoute | undefined =>
     routes.find((r) => r.instance === instance && r.chat === chat);
 
@@ -821,26 +1823,36 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
   async function runOneShot(
     route: OmniRoute,
     inboundId: string,
+    claimToken: string,
     message: string,
     replySubject: string,
     messageId?: string,
   ): Promise<void> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    const aborted = new Promise<never>((_, reject) => {
-      controller.signal.addEventListener('abort', () => reject(new OneShotTimeoutError()), { once: true });
-    });
-    // ⏳ on the inbound message right before the spawn (route-scoped, no-op if the
-    // inbound carried no stanza id) — the first half of the run's ⏳→✅/❌ ack. The
-    // settlement promise (always fulfilled — emit errors are swallowed inside) is
-    // kept so the final ✅/❌ can be chained AFTER the ⏳ HTTP call has landed: a run
-    // that finishes before the ⏳ reaches the API must never leave ✅→⏳ reordered.
-    const pendingAck = emitRouteReaction(route, messageId, STATUS_PENDING);
+    activeControllers.add(controller);
+    const timer = setTimeout(() => controller.abort(new OneShotTimeoutError()), timeoutMs);
+    let pendingAck = Promise.resolve();
+    let spawned: Promise<AgentExecutionResult> | undefined;
     try {
+      // This IMMEDIATE transition revalidates the unexpired machine lease at the
+      // final boundary before either the status HTTP call or workspace execution.
+      if (!markInboundExecuting(db, inboundId, claimToken, claimIdentity())) {
+        throw new Error(`Inbound claim ${inboundId} changed before agent execution`);
+      }
+      // ⏳ on the inbound message right before the spawn (route-scoped, no-op if
+      // the inbound carried no stanza id). It is sequenced before the terminal ack.
+      pendingAck = emitRouteReaction(route, messageId, STATUS_PENDING);
+      if (!ownsCurrentLease()) throw new Error(`Inbound claim ${inboundId} lost its lease before agent spawn`);
+      const aborted = new Promise<never>((_, reject) => {
+        const rejectWithReason = () =>
+          reject(controller.signal.reason instanceof Error ? controller.signal.reason : new OneShotTimeoutError());
+        if (controller.signal.aborted) rejectWithReason();
+        else controller.signal.addEventListener('abort', rejectWithReason, { once: true });
+      });
       // Wrap so a SYNCHRONOUS throw from the executor becomes a rejection the
       // race can observe — and so `aborted` always gets a handler attached
       // (else a late finally-abort would surface as an unhandled rejection).
-      const spawned = Promise.resolve().then(() =>
+      spawned = Promise.resolve().then(() =>
         spawnAgent({
           provider: route.agent ?? 'claude',
           message,
@@ -848,46 +1860,95 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
           signal: controller.signal,
           personaFile: resolvePersonaFile(route),
           sessionId: deterministicSessionId(route.instance, route.chat),
-          threadId:
-            (route.agent ?? 'claude') === 'codex'
-              ? getAgentSession(db, 'codex', route.instance, route.chat)
-              : undefined,
+          threadId: currentCodexThread(db, route),
         }),
       );
-      const result = await Promise.race([spawned, aborted]);
-      if ((route.agent ?? 'claude') === 'codex' && result.threadId) {
-        upsertAgentSession(db, 'codex', route.instance, route.chat, result.threadId, now());
+      let result: AgentExecutionResult;
+      let ok: boolean;
+      let executionError: unknown;
+      try {
+        result = await Promise.race([spawned, aborted]);
+        // A non-zero exit OR a soft-error terminal result (is_error / non-success /
+        // empty) is a failure — never publish the raw NDJSON blob as a happy reply.
+        ok = result.exitCode === 0 && !result.isError;
+      } catch (error) {
+        result = { stdout: '', exitCode: 1, isError: true };
+        ok = false;
+        executionError = error;
       }
-      // A non-zero exit OR a soft-error terminal result (is_error / non-success /
-      // empty) is a failure — never publish the raw NDJSON blob as a happy reply.
-      const ok = result.exitCode === 0 && !result.isError;
-      const content = ok
-        ? truncateReply(result.stdout, maxReplyChars)
-        : errorNotice(
-            result.exitCode !== 0
-              ? exitDetail(result.exitCode, result.stderr, result.stdout)
-              : result.stdout || 'agent returned an error',
-          );
-      publish(replySubject, buildRoutedReplyPayload(route.instance, route.chat, content, genId(), now()));
+      // Persist the post-execution boundary before redaction, JSON rendering, or
+      // outbox preparation can fail. Such failures are never replayed as fresh.
+      if (!markInboundExecuted(db, inboundId, claimToken, claimIdentity())) {
+        throw new Error(`Inbound claim ${inboundId} changed after agent execution`);
+      }
+      const content = executionError
+        ? oneShotFailureContent(executionError, timeoutMs, redact)
+        : oneShotResultContent(result, ok, maxReplyChars, redact);
+      await prepareAndDeliverInbound(route, inboundId, claimToken, replySubject, content, result, ok);
       // ✅ once a genuine reply is published; ❌ on a non-zero exit or soft error.
       // Chained on the ⏳ emit's settlement (fulfilled even when it failed) so the
       // pair reaches the API in order; still fire-and-forget for this run.
       pendingAck.finally(() => emitRouteReaction(route, messageId, ok ? STATUS_APPROVED : STATUS_DENIED));
     } catch (err) {
-      const content = err instanceof OneShotTimeoutError ? timeoutNotice(timeoutMs) : errorNotice(errText(err));
-      publish(replySubject, buildRoutedReplyPayload(route.instance, route.chat, content, genId(), now()));
-      // ❌ on timeout / crash — same ordering chain as the success path.
-      pendingAck.finally(() => emitRouteReaction(route, messageId, STATUS_DENIED));
+      // The durable prepared/flushed phase is preserved while ownership is
+      // released. A successor epoch can retry the same stable request id rather
+      // than re-running the workspace-writing agent.
+      releaseInboundClaim(db, inboundId, claimToken, claimIdentity(), { preservePreExecution: true });
+      log(`[omni] reply delivery/state commit failed for ${inboundId}: ${errText(err)}`);
     } finally {
       clearTimeout(timer);
-      controller.abort(); // ensure a still-running child is killed on every path
-      try {
-        markHandled(db, inboundId, now());
-      } catch (err) {
-        log(`[omni] markHandled failed for ${inboundId}: ${errText(err)}`);
-      }
+      if (!controller.signal.aborted) controller.abort(new OneShotStoppedError());
+      // The executor contract requires abort to settle the child. Wait for that
+      // cleanup before any DB/NATS owner is allowed to close.
+      if (spawned) await Promise.allSettled([spawned]);
+      activeControllers.delete(controller);
       inFlight.delete(routeKey(route.instance, route.chat));
     }
+  }
+
+  async function deliverPreparedInbound(
+    route: OmniRoute,
+    inboundId: string,
+    claimToken: string,
+    delivery: InboundPreparedDelivery,
+  ): Promise<boolean> {
+    if (delivery.phase === 'prepared') {
+      if (!validatePreparedInboundLease(db, inboundId, claimToken, claimIdentity())) {
+        throw new Error(`Inbound claim ${inboundId} lost its lease before publish`);
+      }
+      if (!ownsCurrentLease()) throw new Error(`Inbound claim ${inboundId} lost its lease before publish`);
+      publish(delivery.subject, delivery.payload);
+      await flush();
+      if (!markInboundDeliveryFlushed(db, inboundId, claimToken, claimIdentity())) {
+        throw new Error(`Inbound claim ${inboundId} changed before flush commit`);
+      }
+    }
+    const decoded = decodeDeliveryMeta(delivery.meta);
+    commitPublishedInbound(db, route, decoded.result, decoded.ok, inboundId, claimToken, now(), log, claimIdentity());
+    return decoded.ok;
+  }
+
+  async function prepareAndDeliverInbound(
+    route: OmniRoute,
+    inboundId: string,
+    claimToken: string,
+    subject: string,
+    content: string,
+    result: AgentExecutionResult,
+    ok: boolean,
+  ): Promise<void> {
+    const eventId = genId();
+    const delivery: InboundPreparedDelivery = {
+      phase: 'prepared',
+      eventId,
+      subject,
+      payload: buildRoutedReplyPayload(route.instance, route.chat, redact(content), eventId, now()),
+      meta: encodeDeliveryMeta(result, ok),
+    };
+    if (!prepareInboundDelivery(db, inboundId, claimToken, claimIdentity(), delivery)) {
+      throw new Error(`Inbound claim ${inboundId} changed before delivery preparation`);
+    }
+    await deliverPreparedInbound(route, inboundId, claimToken, delivery);
   }
 
   /**
@@ -895,20 +1956,116 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
    * to `inFlight` SYNCHRONOUSLY before any await so a second message racing the
    * first sees it busy. Fire-and-forget: the serve loop never awaits the run.
    */
-  function startRoutedRun(route: OmniRoute, inboundId: string, message: string, messageId?: string): void {
+  function startRoutedRun(
+    route: OmniRoute,
+    inboundId: string,
+    claimToken: string,
+    message: string,
+    messageId?: string,
+  ): void {
+    if (stopped) return;
     const replySubject = `omni.reply.${route.instance}.${route.chat}`;
     const key = routeKey(route.instance, route.chat);
     if (inFlight.has(key)) {
-      // Busy: reply, leave the inbound stored (already recorded) and unhandled.
-      publish(replySubject, buildRoutedReplyPayload(route.instance, route.chat, BUSY_NOTICE, genId(), now()));
-      log(`[omni] route ${key} busy — dropped inbound ${inboundId} with notice`);
+      const busy = prepareAndDeliverInbound(
+        route,
+        inboundId,
+        claimToken,
+        replySubject,
+        BUSY_NOTICE,
+        { stdout: '', exitCode: 1, isError: true },
+        false,
+      )
+        .then(() => log(`[omni] route ${key} busy — dropped inbound ${inboundId} with notice`))
+        .catch((err) => {
+          releaseInboundClaim(db, inboundId, claimToken, claimIdentity());
+          log(`[omni] busy notice delivery/state commit failed for ${inboundId}: ${errText(err)}`);
+        })
+        .finally(() => pending.delete(busy));
+      pending.add(busy);
       return;
     }
     inFlight.add(key);
-    const run = runOneShot(route, inboundId, message, replySubject, messageId)
+    const run = runOneShot(route, inboundId, claimToken, message, replySubject, messageId)
       .catch((err) => log(`[omni] one-shot crashed unexpectedly: ${errText(err)}`))
       .finally(() => pending.delete(run));
     pending.add(run);
+  }
+
+  function startRoutedRecovery(
+    route: OmniRoute,
+    inboundId: string,
+    claimToken: string,
+    claim: InboundClaimResult,
+    messageId?: string,
+  ): void {
+    const key = routeKey(route.instance, route.chat);
+    inFlight.add(key);
+    const replySubject = `omni.reply.${route.instance}.${route.chat}`;
+    const recovery = (
+      claim.mode === 'resume-delivery' && claim.delivery
+        ? deliverPreparedInbound(route, inboundId, claimToken, claim.delivery)
+        : prepareAndDeliverInbound(
+            route,
+            inboundId,
+            claimToken,
+            replySubject,
+            INTERRUPTED_NOTICE,
+            { stdout: '', exitCode: 1, isError: true },
+            false,
+          ).then(() => false)
+    )
+      .then((ok) => {
+        emitRouteReaction(route, messageId, ok ? STATUS_APPROVED : STATUS_DENIED);
+      })
+      .catch((error) => {
+        releaseInboundClaim(db, inboundId, claimToken, claimIdentity());
+        log(`[omni] durable delivery recovery failed for ${inboundId}: ${errText(error)}`);
+      })
+      .finally(() => {
+        inFlight.delete(key);
+        pending.delete(recovery);
+      });
+    pending.add(recovery);
+  }
+
+  function recoverInboundEvent(event: RecoverableInboundEvent): void {
+    const approvalIntent = event.chat === config.approvalChat ? approvalInboundIntent(event.body) : undefined;
+    const route = findRoute(event.instance, event.chat);
+    if (!approvalIntent && !route) {
+      if (!unroutableRecoveryLogged.has(event.eventKey)) {
+        unroutableRecoveryLogged.add(event.eventKey);
+        log(`[omni] durable inbound ${event.eventKey} needs recovery but its route is no longer configured`);
+      }
+      return;
+    }
+    if (route && inFlight.has(routeKey(route.instance, route.chat))) return;
+    const claimToken = randomUUID();
+    const claim = recordAndClaimInboundDelivery(db, {
+      instance: event.instance,
+      chat: event.chat,
+      sender: event.sender,
+      body: event.body,
+      eventKey: event.eventKey,
+      claimToken,
+      claimOwnerId: claimOwner.ownerId,
+      claimEpoch: claimOwner.epoch,
+      now: now(),
+    });
+    if (!claim) return;
+    if (!approvalIntent) {
+      startRoutedRecovery(route as OmniRoute, claim.id, claimToken, claim);
+      return;
+    }
+    if (claim.mode === 'resume-delivery' && route) {
+      startRoutedRecovery(route, claim.id, claimToken, claim);
+      return;
+    }
+    consumeApprovalClaim(claim, claimToken, approvalIntent, event.sender);
+  }
+
+  function recoverAbandonedInbound(): void {
+    for (const event of listRecoverableInbound(db, claimOwner.epoch)) recoverInboundEvent(event);
   }
 
   /**
@@ -938,19 +2095,24 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
     guard: boolean;
   }): Promise<void> {
     const { instance, chat, targetId, emoji, recordGlyph, guard } = params;
-    if (!targetId) return Promise.resolve();
+    if (stopped || !targetId) return Promise.resolve();
+    if (!ownsCurrentLease()) return Promise.resolve();
     if (guard && ackInFlight.has(targetId)) return Promise.resolve();
     if (guard) ackInFlight.add(targetId);
-    const react = setReaction({ instance, chat, messageId: targetId, emoji })
+    const controller = new AbortController();
+    activeHttpControllers.add(controller);
+    const react = setReaction({ instance, chat, messageId: targetId, emoji, signal: controller.signal })
       .then((res) => {
+        if (stopped) return;
         if (res && res.success === false) {
-          log(`[omni] status ${emoji} on ${targetId} failed${res.error ? ` (${res.error})` : ''}`);
+          log(`[omni] status ${emoji} on ${targetId} failed${res.error ? ` (${redactOmniOutbound(res.error)})` : ''}`);
           return;
         }
         if (recordGlyph) recordStatusGlyph(db, targetId, emoji); // persist only on confirmed success
       })
-      .catch((err) => log(`[omni] status ${emoji} on ${targetId} failed: ${errText(err)}`))
+      .catch((err) => log(`[omni] status ${emoji} on ${targetId} failed: ${redactOmniOutbound(errText(err))}`))
       .finally(() => {
+        activeHttpControllers.delete(controller);
         if (guard) ackInFlight.delete(targetId);
         inFlightReactions.delete(react);
       });
@@ -1008,27 +2170,67 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
   /**
    * Announce a single pending approval via the id-returning send and tag the row
    * with the REAL Omni message id (the stanza id) the send returns — so an
-   * inbound reaction correlates to THIS approval. Tags only on a successful send;
-   * a failed/id-less send leaves the row un-tagged so the next tick retries
-   * (mirrors the old tag-after-publish semantics). On a successful tag it sets the
-   * ⏳ status reaction on the sent message (SPIKE c) — the first half of the
-   * ⏳→✅/❌ ack. Never throws.
+   * inbound reaction correlates to THIS approval. Only a definitely-not-started
+   * preflight outcome releases for retry; every post-dispatch no-id outcome is
+   * durable ambiguity. On a successful tag it sets the
+   * current status reaction (including an immediate terminal glyph when the row
+   * resolved during send). Never throws.
    */
-  async function sendAnnounce(appr: { id: string; tool: string; inputSummary: string }): Promise<void> {
-    const text = formatApprovalMessage(appr.tool, appr.inputSummary);
+  async function sendAnnounce(
+    appr: { id: string; tool: string; inputSummary: string },
+    claimToken: string,
+  ): Promise<void> {
+    const text = redact(formatApprovalMessage(appr.tool, appr.inputSummary));
+    const controller = new AbortController();
+    activeHttpControllers.add(controller);
     try {
-      const result = await sendApproval({ instance: config.instance ?? '', chat: config.approvalChat ?? '', text });
-      if (!result.messageId) {
-        log(
-          `[omni] announce ${appr.id}: send returned no messageId${result.error ? ` (${result.error})` : ''} — will retry`,
-        );
+      if (!markApprovalAnnouncementSending(db, appr.id, claimToken, claimIdentity())) {
+        log(`[omni] announce ${appr.id}: durable claim changed before send`);
         return;
       }
-      attachOmniMessageId(db, appr.id, result.messageId);
+      if (!ownsCurrentLease()) {
+        releaseApprovalAnnouncementWithLease(db, appr.id, claimToken, claimIdentity());
+        return;
+      }
+      const result = await sendApproval({
+        instance: config.instance ?? '',
+        chat: config.approvalChat ?? '',
+        text,
+        signal: controller.signal,
+      });
+      if (result.outcome === 'definitely-not-started') {
+        log(`[omni] announce ${appr.id}: send did not start (${result.error}) — will retry`);
+        releaseApprovalAnnouncementWithLease(db, appr.id, claimToken, claimIdentity());
+        return;
+      }
+      if (result.outcome === 'ambiguous') {
+        markApprovalAnnouncementAmbiguous(db, appr.id, claimToken, claimIdentity());
+        log(`[omni] announce ${appr.id}: send outcome is ambiguous (${result.error}) — refusing automatic retry`);
+        return;
+      }
+      const completion = finalizeApprovalAnnouncement(db, appr.id, claimToken, result.messageId, claimIdentity());
+      if (!completion.attached) {
+        log(`[omni] announce ${appr.id}: durable claim was lost; external id was not overwritten`);
+        return;
+      }
       log(`[omni] announced approval ${appr.id} (omni ${result.messageId})`);
-      emitStatusReaction(result.messageId, STATUS_PENDING); // ⏳ awaiting you
+      const glyph =
+        completion.status === 'pending'
+          ? STATUS_PENDING
+          : completion.status === 'approved'
+            ? STATUS_APPROVED
+            : STATUS_DENIED;
+      emitStatusReaction(result.messageId, glyph);
     } catch (err) {
-      log(`[omni] announce ${appr.id} failed: ${errText(err)}`);
+      // Once HTTP starts, a thrown transport error cannot prove whether Omni
+      // accepted the prompt. Preserve an explicit ambiguous phase rather than
+      // silently issuing a duplicate prompt from the next resident.
+      markApprovalAnnouncementAmbiguous(db, appr.id, claimToken, claimIdentity());
+      if (!stopped) {
+        log(`[omni] announce ${appr.id} failed: ${errText(err)}`);
+      }
+    } finally {
+      activeHttpControllers.delete(controller);
     }
   }
 
@@ -1041,8 +2243,15 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
     for (const appr of listPendingApprovals(db)) {
       if (appr.omniMessageId) continue; // already announced
       if (announcing.has(appr.id)) continue; // send in flight
+      const claimToken = randomUUID();
+      const outcome = claimApprovalAnnouncementWithLease(db, appr.id, claimToken, claimIdentity());
+      if (outcome === 'ambiguous') {
+        log(`[omni] approval ${appr.id} has an ambiguous prior send; refusing to duplicate the prompt`);
+        continue;
+      }
+      if (outcome !== 'claimed') continue;
       announcing.add(appr.id);
-      const send = sendAnnounce(appr).finally(() => {
+      const send = sendAnnounce(appr, claimToken).finally(() => {
         announcing.delete(appr.id);
         inFlightSends.delete(send);
       });
@@ -1050,52 +2259,70 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
     }
   }
 
-  function resolveOldest(decision: ApprovalDecision, resolvedBy: string, note: string): boolean {
-    const pending = listPendingApprovals(db);
-    if (pending.length === 0) return false;
-    return tryResolve(pending[0].id, decision, resolvedBy, note);
+  interface ApprovalInboundIntent {
+    decision: ApprovalDecision;
+    targetMessageId?: string;
+    note: string;
   }
 
-  function tryResolve(id: string, decision: ApprovalDecision, resolvedBy: string, note: string): boolean {
-    try {
-      // Stamp resolved_at with the runner clock so the reconciliation recency
-      // window (which reads now() from the same dep) lines up deterministically.
-      const row = resolveApproval(db, id, decision, resolvedBy, now());
-      log(`[omni] resolved ${id} → ${decision} by ${resolvedBy} (${note})`);
-      // Swap the ⏳ status reaction to ✅ (approved) / ❌ (denied) — the row is
-      // now closed, so this is the second half of the ⏳→✅/❌ ack.
-      emitStatusReaction(row.omniMessageId, decision === 'approved' ? STATUS_APPROVED : STATUS_DENIED);
-      return true;
-    } catch (err) {
-      // Lost the race to another resolver — benign under concurrency.
-      if (err instanceof ApprovalConflictError) return false;
-      throw err;
+  function approvalInboundIntent(body: string, messageId?: string): ApprovalInboundIntent | undefined {
+    if (!body) return undefined;
+    const reaction = parseReaction(body);
+    if (reaction) {
+      const decision = matchReaction(reaction.emoji, vocab);
+      if (!decision) return undefined;
+      const targetMessageId = reaction.targetId || messageId;
+      return {
+        decision,
+        ...(targetMessageId ? { targetMessageId } : {}),
+        note: `reaction ${reaction.emoji}${targetMessageId ? '' : ' (fallback)'}`,
+      };
     }
+    const decision = matchTextToken(body, vocab);
+    return decision ? { decision, note: `text:"${body.trim().toLowerCase()}"` } : undefined;
   }
 
-  /**
-   * Resolve an approval from an inbound reaction. Correlates by the stored real
-   * Omni message id (the reaction's target stanza id, from the `[Reaction: … on
-   * message <id>]` content or the top-level `messageId`). An EXPLICIT target that
-   * matches no pending row is a NO-OP (logged, ignored) — NOT an oldest fallback:
-   * a reaction on an already-resolved / unknown message must never resolve some
-   * unrelated pending approval (the concurrency hazard this wish exists to kill).
-   * Oldest fallback is reserved for the no-target-id case; reactions always carry
-   * a target id, so this branch is defensive. Non-vocabulary emoji are ignored.
-   */
-  function resolveReaction(emoji: string, targetId: string | undefined, sender: string): void {
-    const decision = matchReaction(emoji, vocab);
-    if (!decision) return;
-    if (targetId) {
-      const match = listPendingApprovals(db).find((a) => a.omniMessageId === targetId);
-      if (match) {
-        tryResolve(match.id, decision, sender, `reaction ${emoji}`);
-      } else {
-        log(`[omni] reaction ${emoji} targets unknown/resolved id ${targetId} — ignored (no oldest fallback)`);
+  /** Resolve and consume a fresh approval inbound atomically. Ambiguous legacy
+   * or post-execution claims are consumed without applying their human token to
+   * any approval because its prior side effect cannot be reconstructed safely. */
+  function consumeApprovalClaim(
+    claim: InboundClaimResult,
+    claimToken: string,
+    intent: ApprovalInboundIntent,
+    sender: string,
+  ): void {
+    if (claim.mode !== 'fresh') {
+      if (claim.mode === 'ambiguous') {
+        if (markInboundHandledIfClaimed(db, claim.id, claimToken, now(), claimIdentity(), 'ambiguous')) {
+          log(`[omni] ambiguous approval inbound ${claim.id} was not replayed`);
+        }
       }
       return;
     }
-    resolveOldest(decision, sender, `reaction ${emoji} (fallback)`);
+    const outcome = consumeClaimedApprovalInbound(
+      db,
+      claim.id,
+      claimToken,
+      claimIdentity(),
+      intent.decision,
+      sender,
+      intent.targetMessageId,
+      now(),
+    );
+    if (!outcome.consumed) return;
+    if (!outcome.resolved) {
+      if (outcome.targetMissing) {
+        log(
+          `[omni] ${intent.note} targets unknown/resolved id ${intent.targetMessageId} — ignored (no oldest fallback)`,
+        );
+      }
+      return;
+    }
+    log(`[omni] resolved ${outcome.resolved.id} → ${intent.decision} by ${sender} (${intent.note})`);
+    emitStatusReaction(
+      outcome.resolved.omniMessageId,
+      intent.decision === 'approved' ? STATUS_APPROVED : STATUS_DENIED,
+    );
   }
 
   /**
@@ -1115,8 +2342,73 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
     }
   }
 
+  async function drain(): Promise<void> {
+    const deadline = Date.now() + drainTimeoutMs;
+    while (pending.size > 0 || inFlightSends.size > 0 || inFlightReactions.size > 0) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new Error(`Omni drain exceeded ${drainTimeoutMs}ms`);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const timedOut = await Promise.race([
+          Promise.allSettled([...pending, ...inFlightSends, ...inFlightReactions]).then(() => false),
+          new Promise<true>((resolve) => {
+            timer = setTimeout(() => resolve(true), remaining);
+            if (typeof timer.unref === 'function') timer.unref();
+          }),
+        ]);
+        if (timedOut) throw new Error(`Omni drain exceeded ${drainTimeoutMs}ms`);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    }
+  }
+
+  function processInboundFrame(subject: string, data: string, frame: ParsedInboundFrame): void {
+    const { msg, instance, chat, sender, body } = frame;
+    const claimToken = randomUUID();
+    const claim = recordAndClaimInboundDelivery(db, {
+      instance,
+      chat,
+      sender,
+      body,
+      eventKey: inboundEventKey(subject, data),
+      claimToken,
+      claimOwnerId: claimOwner.ownerId,
+      claimEpoch: claimOwner.epoch,
+      now: now(),
+    });
+    if (!claim) return;
+    const inboundId = claim.id;
+    const route = findRoute(instance, chat);
+
+    const approvalIntent = chat === config.approvalChat ? approvalInboundIntent(body, msg.messageId) : undefined;
+    if (approvalIntent) {
+      if (claim.mode === 'resume-delivery' && route) {
+        startRoutedRecovery(route, inboundId, claimToken, claim, msg.messageId);
+      } else {
+        consumeApprovalClaim(claim, claimToken, approvalIntent, sender);
+      }
+      return;
+    }
+
+    const routeActionable = Boolean(route) && !parseReaction(body) && body.trim().length > 0;
+    if (routeActionable && allowMappedAgentExecution) {
+      if (claim.mode === 'fresh') startRoutedRun(route as OmniRoute, inboundId, claimToken, body, msg.messageId);
+      else startRoutedRecovery(route as OmniRoute, inboundId, claimToken, claim, msg.messageId);
+      return;
+    }
+    if (routeActionable) {
+      log(
+        `[omni] mapped execution disabled for ${routeKey(instance, chat)}; set GENIE_OMNI_MAPPED_AGENT_EXECUTION=1 only after accepting the credential boundary`,
+      );
+    }
+    releaseInboundClaim(db, inboundId, claimToken, claimIdentity());
+  }
+
   return {
     tick(): void {
+      if (stopped || !ownsCurrentLease()) return;
+      recoverAbandonedInbound();
       // Expire stale rows, then let reconciliation set the terminal ✅/❌ on any
       // row closed here OR by the hook fork's own self-timeout expiry.
       expireStale(db, config.approvals.pollBudgetMs, now());
@@ -1125,54 +2417,13 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
     },
 
     handleMessage(subject: string, data: string): void {
-      let msg: InboundMessagePayload;
-      try {
-        msg = JSON.parse(data) as InboundMessagePayload;
-      } catch {
-        return; // skip malformed
-      }
-      const chatId = msg.chatId ?? chatIdFromSubject(subject);
-      const sender = msg.sender ?? 'whatsapp-user';
-      const instance = msg.instanceId ?? config.instance ?? 'unknown';
-      const chat = chatId ?? 'unknown';
-      const body = msg.content ?? '';
-
-      // Store every inbound message to the inbox — mapped or not.
-      const inboundId = recordInbound(db, { instance, chat, sender, body, now: now() });
-
-      // Mapped (instance, chat) → spawn a bounded one-shot; unmapped is store-only.
-      // Thread the inbound WhatsApp stanza id so the run can ⏳→✅/❌ react on it.
-      // A reaction frame must NOT start a run: its body is `[Reaction: …]` (a
-      // nonsense prompt) and its `messageId` is the REACTED-TO message, so the
-      // run's ⏳→✅/❌ ack would mutate that prior message. Skip it — and an
-      // empty/whitespace body — with no ack and no reply (the inbound is already
-      // stored above, and the approval-chat reaction path below still runs).
-      const route = findRoute(instance, chat);
-      if (route && !parseReaction(body) && body.trim().length > 0) {
-        startRoutedRun(route, inboundId, body, msg.messageId);
-      }
-
-      // Only the approval chat can resolve approvals.
-      if (!chatId || chatId !== config.approvalChat) return;
-      // Instance-scope guard (PR #2507): another instance's reply/reaction must
-      // never resolve our approval, even if the approvalChat JID repeats.
-      if (msg.instanceId && config.instance && msg.instanceId !== config.instance) return;
-      if (!body) return;
-
-      // A reaction reaches genie on THIS subject (SPIKE a) as
-      // `[Reaction: <emoji> on message <id>]`; the target id is also the
-      // top-level `messageId`. Only this form is a reaction — the dual-emit
-      // bare-emoji echo matches neither branch below, so it never double-resolves.
-      const reaction = parseReaction(body);
-      if (reaction) {
-        resolveReaction(reaction.emoji, reaction.targetId || msg.messageId, sender);
+      if (stopped || !ownsCurrentLease()) return;
+      const frame = parseInboundFrame(subject, data, config.instance);
+      if (!frame.ok) {
+        if (frame.reason) log(`[omni] rejected inbound with ${frame.reason}`);
         return;
       }
-
-      // Bare text reply → oldest-pending fallback (no quoted id in this build).
-      const decision = matchTextToken(body, vocab);
-      if (!decision) return;
-      resolveOldest(decision, sender, `text:"${body.trim().toLowerCase()}"`);
+      processInboundFrame(subject, data, frame);
     },
 
     async whenIdle(): Promise<void> {
@@ -1180,9 +2431,16 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
       // send settles by firing the ⏳ status reaction (adds to inFlightReactions
       // mid-drain), and a resolve fires ✅/❌, so the loop must keep going until
       // every set has quiesced.
-      while (pending.size > 0 || inFlightSends.size > 0 || inFlightReactions.size > 0) {
-        await Promise.allSettled([...pending, ...inFlightSends, ...inFlightReactions]);
+      await drain();
+    },
+
+    async stop(): Promise<void> {
+      if (!stopped) {
+        stopped = true;
+        for (const controller of activeControllers) controller.abort(new OneShotStoppedError());
+        for (const controller of activeHttpControllers) controller.abort(new OneShotStoppedError());
       }
+      await drain();
     },
   };
 }
@@ -1200,6 +2458,10 @@ export interface RunOmniServeOptions {
   /** Fired once subscriptions + tick loop are live (tests await this). */
   onReady?: () => void;
   log?: (line: string) => void;
+  /** Focused test seam for child/transport side effects; production omits it. */
+  runnerDeps?: Omit<OmniRunnerDeps, 'db' | 'config' | 'publish'>;
+  /** Test seam for the machine-wide resident lease. Production uses 30s. */
+  leaseTtlMs?: number;
 }
 
 /** Drain one subscription into a handler, tolerating per-message failures. */
@@ -1222,39 +2484,186 @@ async function consume(
   }
 }
 
+interface OmniServeLease {
+  signal: AbortSignal;
+  ownerId: string;
+  epoch: number;
+  release(): void;
+}
+
+function openOmniServeLease(db: Database, ttlMs: number): OmniServeLease {
+  const name = OMNI_SERVICE_LEASE_NAME;
+  const ownerId = `${process.pid}:${randomUUID()}`;
+  const epoch = acquireServiceLeaseEpoch(db, name, ownerId, Date.now(), ttlMs);
+  if (epoch === undefined) {
+    throw new Error('another genie omni serve process owns the machine-wide resident lease');
+  }
+  const controller = new AbortController();
+  const timer = setInterval(
+    () => {
+      try {
+        if (!renewServiceLease(db, name, ownerId, Date.now(), ttlMs, epoch)) {
+          controller.abort(new Error('Omni serve lost its machine-wide resident lease'));
+        }
+      } catch (error) {
+        controller.abort(error instanceof Error ? error : new Error(String(error)));
+      }
+    },
+    Math.max(50, Math.floor(ttlMs / 3)),
+  );
+  if (typeof timer.unref === 'function') timer.unref();
+  let released = false;
+  return {
+    signal: controller.signal,
+    ownerId,
+    epoch,
+    release() {
+      if (released) return;
+      released = true;
+      clearInterval(timer);
+      releaseServiceLease(db, name, ownerId, epoch);
+    },
+  };
+}
+
+async function waitForOmniStop(external: AbortSignal | undefined, lease: AbortSignal): Promise<void> {
+  if (external?.aborted) return;
+  if (lease.aborted) throw lease.reason ?? new Error('Omni serve lease lost');
+  await new Promise<void>((resolve, reject) => {
+    external?.addEventListener('abort', () => resolve(), { once: true });
+    lease.addEventListener('abort', () => reject(lease.reason ?? new Error('Omni serve lease lost')), { once: true });
+  });
+}
+
+async function settleCleanupAction(
+  label: string,
+  action: () => void | Promise<void>,
+  timeoutMs: number,
+  errors: Error[],
+): Promise<boolean> {
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      Promise.resolve().then(action),
+      new Promise<never>((_, reject) => {
+        deadline = setTimeout(() => reject(new Error(`${label} exceeded ${timeoutMs}ms`)), timeoutMs);
+        if (typeof deadline.unref === 'function') deadline.unref();
+      }),
+    ]);
+    return true;
+  } catch (error) {
+    errors.push(error instanceof Error ? error : new Error(`${label}: ${String(error)}`));
+    return false;
+  } finally {
+    if (deadline) clearTimeout(deadline);
+  }
+}
+
+async function closeOmniResources(
+  runner: OmniRunner | undefined,
+  subscription: NatsSubscription | undefined,
+  consumeTask: Promise<void> | undefined,
+  nc: NatsLike | undefined,
+  timeoutMs: number,
+): Promise<Error[]> {
+  const errors: Error[] = [];
+  const stopping = runner?.stop();
+  void stopping?.catch(() => {});
+  const unsubscribed = subscription
+    ? await settleCleanupAction('Omni subscription unsubscribe', () => subscription.unsubscribe(), timeoutMs, errors)
+    : true;
+  if (stopping) await settleCleanupAction('Omni runner stop', () => stopping, timeoutMs, errors);
+  if (!unsubscribed && nc) await settleCleanupAction('Omni NATS close', () => nc.close(), timeoutMs, errors);
+  if (consumeTask) await settleCleanupAction('Omni subscription drain', () => consumeTask, timeoutMs, errors);
+  if (unsubscribed && nc) await settleCleanupAction('Omni NATS close', () => nc.close(), timeoutMs, errors);
+  return errors;
+}
+
+/** Create a terminal-safe error without retaining the raw message, stack, or
+ * cause. Aggregate members are projected recursively because runtimes may
+ * render them independently of the aggregate message. */
+function redactOmniError(error: unknown, redact: OmniRedactor): Error {
+  if (error instanceof AggregateError) {
+    return new AggregateError(
+      error.errors.map((entry) => redactOmniError(entry, redact)),
+      redact(error.message),
+    );
+  }
+  return new Error(redact(error instanceof Error ? error.message : String(error)));
+}
+
 export async function runOmniServe(opts: RunOmniServeOptions): Promise<void> {
   const { db, config } = opts;
-  const log = opts.log ?? (() => {});
+  const redact = createOmniRedactor(config);
+  const rawLog = opts.log ?? (() => {});
+  const log = (line: string) => rawLog(redact(line));
   const factory = opts.natsFactory ?? defaultNatsFactory;
+  const cleanupTimeoutMs = Math.max(1, Math.min((opts.runnerDeps?.drainTimeoutMs ?? 12_000) + 1_000, 31_000));
+  const leaseTtlMs = Math.max(100, Math.min(opts.leaseTtlMs ?? 30_000, 300_000));
+  let lease: OmniServeLease | undefined;
+  let nc: NatsLike | undefined;
+  let runner: OmniRunner | undefined;
+  let msgSub: NatsSubscription | undefined;
+  let consumeTask: Promise<void> | undefined;
+  let timer: ReturnType<typeof setInterval> | undefined;
+  let hasPrimaryError = false;
+  let primaryError: unknown;
 
-  const nc = await factory({ servers: config.natsUrl });
-  const runner = createOmniRunner({ db, config, publish: nc.publish, log });
+  const cleanupErrors: Error[] = [];
 
-  // Both text replies AND reactions arrive on `omni.message.{instance}.>` in this
-  // Omni build; the legacy `omni.event.>` subject has no publishers (SPIKE a), so
-  // it is no longer subscribed.
-  const msgSub = nc.subscribe(`omni.message.${config.instance}.>`);
-  void consume(msgSub, runner.handleMessage, log);
+  try {
+    lease = openOmniServeLease(db, leaseTtlMs);
 
-  const timer = setInterval(() => {
-    try {
-      runner.tick();
-    } catch (err) {
-      log(`[omni] tick error: ${err instanceof Error ? err.message : String(err)}`);
+    nc = await factory({ servers: config.natsUrl });
+    runner = createOmniRunner({
+      ...opts.runnerDeps,
+      db,
+      config,
+      publish: nc.publish,
+      flush: () => nc?.flush() ?? Promise.resolve(),
+      claimOwner: { ownerId: lease.ownerId, epoch: lease.epoch },
+      redact,
+      log: rawLog,
+    });
+
+    // Both text replies AND reactions arrive on this instance-bound subject.
+    msgSub = nc.subscribe(`omni.message.${config.instance}.>`);
+    consumeTask = consume(msgSub, runner.handleMessage, log);
+
+    timer = setInterval(() => {
+      try {
+        runner?.tick();
+      } catch (err) {
+        log(`[omni] tick error: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }, config.approvals.pollIntervalMs);
+
+    runner.tick();
+    log(`[omni] serving — instance=${config.instance} chat=${config.approvalChat} nats=${config.natsUrl}`);
+    opts.onReady?.();
+
+    await waitForOmniStop(opts.signal, lease.signal);
+  } catch (error) {
+    hasPrimaryError = true;
+    primaryError = error;
+  } finally {
+    if (timer) clearInterval(timer);
+    cleanupErrors.push(...(await closeOmniResources(runner, msgSub, consumeTask, nc, cleanupTimeoutMs)));
+    if (lease) {
+      try {
+        lease.release();
+      } catch (error) {
+        cleanupErrors.push(error instanceof Error ? error : new Error(`Omni lease release: ${String(error)}`));
+      }
     }
-  }, config.approvals.pollIntervalMs);
 
-  runner.tick(); // announce anything already queued
-  log(`[omni] serving — instance=${config.instance} chat=${config.approvalChat} nats=${config.natsUrl}`);
-  opts.onReady?.();
-
-  await new Promise<void>((resolve) => {
-    if (opts.signal?.aborted) return resolve();
-    opts.signal?.addEventListener('abort', () => resolve(), { once: true });
-  });
-
-  clearInterval(timer);
-  msgSub.unsubscribe();
-  await nc.close();
-  log('[omni] stopped');
+    if (cleanupErrors.length > 0 && hasPrimaryError) {
+      for (const error of cleanupErrors) log(`[omni] cleanup error after primary failure: ${error.message}`);
+    }
+    if (nc) log('[omni] stopped');
+  }
+  if (hasPrimaryError) throw redactOmniError(primaryError, redact);
+  if (cleanupErrors.length > 0) {
+    throw redactOmniError(new AggregateError(cleanupErrors, 'Omni shutdown failed'), redact);
+  }
 }

@@ -1,5 +1,5 @@
 import { Database } from 'bun:sqlite';
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import {
   cpSync,
@@ -16,24 +16,30 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { computeDirDigest } from '../lib/agent-sync.js';
+import { reconcileCodexProjectMcp, resolveGitProjectRoots } from '../lib/codex-project-mcp.js';
 import {
+  MINIMUM_BUN_VERSION,
   checkAgentSync,
+  checkCodexIntegration,
   checkSubagentModelOverride,
   checkV4Residue,
   doctorCommand,
+  evaluateBunVersion,
   evaluateOmniHookTimeout,
   findDispatchHookTimeoutSec,
 } from './doctor.js';
 import { cleanupV4 } from './legacy-v4.js';
 
 /**
- * Capture everything written to stdout during `fn`, restoring the real
- * `process.stdout.write` (and any exitCode side effect) afterwards.
+ * Capture everything written to stdout during `fn` with a deterministic
+ * non-failing exit-code baseline. Bun keeps the last numeric `process.exitCode`
+ * when assigned `undefined`, so using `undefined` as the success sentinel makes
+ * this helper depend on worker/test ordering (Linux CI commonly enters at 0).
  */
-async function captureDoctor(fn: () => Promise<void>): Promise<{ output: string; exitCode: number | undefined }> {
+async function captureDoctor(fn: () => Promise<void>): Promise<{ output: string; exitCode: number }> {
   const realWrite = process.stdout.write.bind(process.stdout);
   const priorExit = process.exitCode;
-  process.exitCode = undefined;
+  process.exitCode = 0;
   let buffer = '';
   process.stdout.write = ((chunk: string) => {
     buffer += chunk;
@@ -44,9 +50,66 @@ async function captureDoctor(fn: () => Promise<void>): Promise<{ output: string;
     return { output: buffer, exitCode: process.exitCode };
   } finally {
     process.stdout.write = realWrite;
-    process.exitCode = priorExit;
+    // Bun cannot restore `undefined` after a numeric exitCode was assigned.
+    // Preserve a prior numeric failure, otherwise leave the test process in
+    // the canonical non-failing state.
+    process.exitCode = priorExit ?? 0;
   }
 }
+
+const NO_CODEX = { cliAvailable: false, status: 'unavailable' as const, installed: false, detail: 'fixture absent' };
+const ISOLATED_ENV_KEYS = ['HOME', 'GENIE_HOME', 'CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'HERMES_HOME'] as const;
+let isolatedHome: string;
+let savedIsolatedEnv: Partial<Record<(typeof ISOLATED_ENV_KEYS)[number], string>>;
+
+beforeEach(() => {
+  isolatedHome = mkdtempSync(join(tmpdir(), 'genie-doctor-home-'));
+  savedIsolatedEnv = {};
+  for (const key of ISOLATED_ENV_KEYS) {
+    if (process.env[key] !== undefined) savedIsolatedEnv[key] = process.env[key];
+  }
+  process.env.HOME = isolatedHome;
+  process.env.GENIE_HOME = join(isolatedHome, 'genie');
+  process.env.CODEX_HOME = join(isolatedHome, 'codex');
+  process.env.CLAUDE_CONFIG_DIR = join(isolatedHome, 'claude');
+  process.env.HERMES_HOME = join(isolatedHome, 'hermes');
+  mkdirSync(join(isolatedHome, 'repo'), { recursive: true });
+});
+
+afterEach(() => {
+  for (const key of ISOLATED_ENV_KEYS) {
+    const saved = savedIsolatedEnv[key];
+    if (saved === undefined) Reflect.deleteProperty(process.env, key);
+    else process.env[key] = saved;
+  }
+  rmSync(isolatedHome, { recursive: true, force: true });
+});
+
+function isolatedDoctorDeps(root = join(isolatedHome, 'repo')) {
+  return { root, databaseRoot: root, pluginProbe: NO_CODEX, bunVersion: '1.3.10', bunPath: '/usr/bin/bun' };
+}
+
+describe('Bun runtime contract', () => {
+  test('doctor minimum matches the package engine contract', () => {
+    const pkg = JSON.parse(readFileSync(join(import.meta.dir, '..', '..', 'package.json'), 'utf8')) as {
+      engines: { bun: string };
+    };
+    expect(pkg.engines.bun).toBe(`>=${MINIMUM_BUN_VERSION}`);
+  });
+
+  test('fails below or outside the declared minimum and passes equal/above versions', () => {
+    const belowMinimum = evaluateBunVersion('1.3.9', '/usr/bin/bun')[0];
+    expect(belowMinimum).toMatchObject({ status: 'fail' });
+    expect(belowMinimum.suggestion).toContain('bun upgrade');
+    expect(evaluateBunVersion('not-semver', '/usr/bin/bun')[0]).toMatchObject({ status: 'fail' });
+    expect(evaluateBunVersion('1.3.10-canary.1', '/usr/bin/bun')[0]).toMatchObject({ status: 'fail' });
+    expect(evaluateBunVersion('1.3.10-rc.9+build.1', '/usr/bin/bun')[0]).toMatchObject({ status: 'fail' });
+    expect(evaluateBunVersion('1.3.10', '/usr/bin/bun')[0]).toMatchObject({ status: 'pass' });
+    expect(evaluateBunVersion('1.3.10+build.1', '/usr/bin/bun')[0]).toMatchObject({ status: 'pass' });
+    expect(evaluateBunVersion('1.3.11-canary.1', '/usr/bin/bun')[0]).toMatchObject({ status: 'pass' });
+    expect(evaluateBunVersion('1.4.0', '/usr/bin/bun')[0]).toMatchObject({ status: 'pass' });
+  });
+});
 
 describe('doctorCommand', () => {
   // The suite runs from within the genie repo — a healthy checkout with git,
@@ -54,12 +117,12 @@ describe('doctorCommand', () => {
   let json: { ok: boolean; checks: Array<{ name: string; status: string }> };
 
   beforeEach(async () => {
-    const { output } = await captureDoctor(() => doctorCommand({ json: true }));
+    const { output } = await captureDoctor(() => doctorCommand({ json: true }, isolatedDoctorDeps()));
     json = JSON.parse(output);
   });
 
   afterEach(() => {
-    process.exitCode = undefined;
+    process.exitCode = 0;
   });
 
   test('emits a check for each pillar', () => {
@@ -85,14 +148,156 @@ describe('doctorCommand', () => {
   });
 
   test('does not set a failing exit code when all checks pass', async () => {
-    const { exitCode } = await captureDoctor(() => doctorCommand({ json: true }));
-    expect(exitCode).toBeUndefined();
+    const { exitCode } = await captureDoctor(() => doctorCommand({ json: true }, isolatedDoctorDeps()));
+    expect(exitCode).toBe(0);
   });
 
   test('human output renders a header and a summary line', async () => {
-    const { output } = await captureDoctor(() => doctorCommand());
+    const { output } = await captureDoctor(() => doctorCommand({}, isolatedDoctorDeps()));
     expect(output).toContain('genie doctor');
     expect(output).toContain('All checks passed.');
+  });
+});
+
+describe('Codex doctor lifecycle results', () => {
+  test('a timed-out plugin query is a structured hard failure, not a false pass', async () => {
+    const checks = await checkCodexIntegration(process.cwd(), {
+      cliAvailable: true,
+      status: 'error',
+      installed: false,
+      detail: 'codex plugin list timed out after 25ms; retaining the project fallback',
+      timedOut: true,
+    });
+    const plugin = checks.find((check) => check.name === 'Codex Genie plugin');
+    expect(plugin?.status).toBe('fail');
+    expect(plugin?.detail).toContain('timed out');
+    expect(plugin?.suggestion).toContain('fallback');
+  });
+
+  test('missing configured Node is actionable and never displaces the fallback', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'doctor-node-availability-'));
+    try {
+      reconcileCodexProjectMcp(
+        root,
+        { cliAvailable: true, status: 'ok', installed: true, enabled: false, usable: false, detail: 'disabled' },
+        { command: '/absolute/genie', args: ['mcp'] },
+      );
+      const checks = await checkCodexIntegration(root, {
+        cliAvailable: true,
+        status: 'ok',
+        installed: true,
+        enabled: true,
+        usable: false,
+        usabilityDetail: 'configured plugin MCP command "node" is not available on PATH',
+        detail: 'Node unavailable',
+      });
+      const plugin = checks.find((check) => check.name === 'Codex Genie plugin');
+      const route = checks.find((check) => check.name === 'Codex Genie MCP registration');
+      expect(plugin?.detail).toContain('"node" is not available on PATH');
+      expect(route).toMatchObject({ status: 'pass' });
+      expect(route?.detail).toContain('fallback');
+      expect(readFileSync(join(root, '.codex', 'config.toml'), 'utf8')).toContain('/absolute/genie');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('healthy source bundle cannot make an unproven active plugin capability pass', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'doctor-active-plugin-'));
+    const priorCodexHome = process.env.CODEX_HOME;
+    process.env.CODEX_HOME = join(root, 'codex-home');
+    try {
+      expect(existsSync(join(import.meta.dir, '..', '..', 'plugins', 'genie', '.codex-plugin', 'plugin.json'))).toBe(
+        true,
+      );
+      const probe = {
+        cliAvailable: true,
+        status: 'ok' as const,
+        installed: true,
+        enabled: true,
+        usable: false,
+        usabilityDetail: 'active plugin cache root is missing',
+        detail: 'active plugin cache root is missing',
+      };
+      reconcileCodexProjectMcp(root, probe, { command: '/absolute/genie', args: ['mcp'] });
+      const checks = await checkCodexIntegration(root, probe);
+      const plugin = checks.find((check) => check.name === 'Codex Genie plugin');
+      const capability = checks.find((check) => check.name === 'Codex Genie MCP capability');
+      const route = checks.find((check) => check.name === 'Codex Genie MCP registration');
+      expect(plugin).toMatchObject({ status: 'warn' });
+      expect(capability).toMatchObject({ status: 'warn' });
+      expect(capability?.detail).toContain('source-bundle declarations do not establish runtime health');
+      expect(route).toMatchObject({ status: 'pass' });
+      expect(route?.detail).toContain('fallback');
+    } finally {
+      if (priorCodexHome === undefined) Reflect.deleteProperty(process.env, 'CODEX_HOME');
+      else process.env.CODEX_HOME = priorCodexHome;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('linked worktree routes stay local while the database check uses the common checkout', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'doctor-linked-worktree-'));
+    try {
+      const repo = join(root, 'repo');
+      mkdirSync(repo, { recursive: true });
+      execFileSync('git', ['init', '-q'], { cwd: repo });
+      execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo });
+      execFileSync('git', ['config', 'user.name', 'Test'], { cwd: repo });
+      execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'root'], { cwd: repo });
+      const linked = join(root, 'linked');
+      execFileSync('git', ['worktree', 'add', '-q', '-b', 'doctor-linked', linked], { cwd: repo });
+      const roots = resolveGitProjectRoots(linked);
+      expect(roots).toEqual({ worktreeRoot: linked, commonRoot: repo });
+      reconcileCodexProjectMcp(
+        linked,
+        { cliAvailable: true, status: 'ok', installed: true, enabled: false, usable: false, detail: 'disabled' },
+        { command: '/absolute/genie', args: ['mcp'] },
+      );
+      expect(existsSync(join(linked, '.codex', 'config.toml'))).toBe(true);
+      expect(existsSync(join(repo, '.codex', 'config.toml'))).toBe(false);
+
+      const { output } = await captureDoctor(() =>
+        doctorCommand(
+          { json: true },
+          {
+            root: linked,
+            databaseRoot: repo,
+            pluginProbe: { cliAvailable: false, status: 'unavailable', installed: false, detail: 'fixture absent' },
+            bunVersion: '1.3.10',
+            bunPath: '/usr/bin/bun',
+          },
+        ),
+      );
+      const json = JSON.parse(output) as { checks: Array<{ name: string; detail?: string }> };
+      expect(json.checks.find((check) => check.name === 'genie.db')?.detail).toContain(
+        join(repo, '.genie', 'genie.db'),
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('injected default doctor median stays within the 120ms latency budget', async () => {
+    const durations: number[] = [];
+    for (let index = 0; index < 5; index += 1) {
+      const started = performance.now();
+      await captureDoctor(() =>
+        doctorCommand(
+          { json: true },
+          {
+            root: process.cwd(),
+            databaseRoot: process.cwd(),
+            pluginProbe: { cliAvailable: false, status: 'unavailable', installed: false, detail: 'fixture absent' },
+            bunVersion: '1.3.10',
+            bunPath: '/usr/bin/bun',
+          },
+        ),
+      );
+      durations.push(performance.now() - started);
+    }
+    durations.sort((a, b) => a - b);
+    expect(durations[2]).toBeLessThan(120);
   });
 });
 
@@ -116,7 +321,7 @@ describe('CLAUDE_CODE_SUBAGENT_MODEL override warning', () => {
   test('warns non-fatally when set and explains that per-agent pins are overridden', async () => {
     process.env[key] = 'sonnet';
 
-    const { output, exitCode } = await captureDoctor(() => doctorCommand({ json: true }));
+    const { output, exitCode } = await captureDoctor(() => doctorCommand({ json: true }, isolatedDoctorDeps()));
     const json = JSON.parse(output) as {
       ok: boolean;
       checks: Array<{ name: string; status: string; detail?: string }>;
@@ -126,14 +331,14 @@ describe('CLAUDE_CODE_SUBAGENT_MODEL override warning', () => {
     expect(warning?.status).toBe('warn');
     expect(warning?.detail).toContain('overrides per-agent model pins');
     expect(json.ok).toBe(true);
-    expect(exitCode).toBeUndefined();
+    expect(exitCode).toBe(0);
   });
 
   test('is silent when unset, including in the doctor output', async () => {
     delete process.env[key];
 
     expect(checkSubagentModelOverride()).toEqual([]);
-    const { output } = await captureDoctor(() => doctorCommand({ json: true }));
+    const { output } = await captureDoctor(() => doctorCommand({ json: true }, isolatedDoctorDeps()));
 
     expect(output).not.toContain(key);
   });
@@ -210,29 +415,20 @@ describe('doctorCommand — genie.db check branches', () => {
 
   afterEach(() => {
     process.chdir(priorCwd);
-    process.exitCode = undefined;
-    rmSync(tmp, { recursive: true, force: true });
-  });
-
-  // The schema-version test drives doctorCommand to set `process.exitCode = 1`.
-  // bun treats `process.exitCode = undefined` as a no-op (it does not clear a
-  // previously-set code), so the per-test resets above cannot undo it — the 1
-  // would leak and make the entire `bun test` run exit non-zero despite every
-  // test passing. Clear it to 0 once, after this file's tests complete.
-  afterAll(() => {
     process.exitCode = 0;
+    rmSync(tmp, { recursive: true, force: true });
   });
 
   test('absent genie.db → pass ("absent"), no failing exit code', async () => {
     const dbCandidate = join(tmp, '.genie', 'genie.db');
     expect(existsSync(dbCandidate)).toBe(false);
 
-    const { output, exitCode } = await captureDoctor(() => doctorCommand({ json: true }));
+    const { output, exitCode } = await captureDoctor(() => doctorCommand({ json: true }, isolatedDoctorDeps(tmp)));
     const json = JSON.parse(output) as { checks: Array<{ name: string; status: string; detail?: string }> };
     const db = json.checks.find((c) => c.name === 'genie.db');
     expect(db?.status).toBe('pass');
     expect(db?.detail).toContain('absent');
-    expect(exitCode).toBeUndefined();
+    expect(exitCode).toBe(0);
   });
 
   test('genie.db at an unrecognized schema version → fail + exit code 1', async () => {
@@ -244,7 +440,7 @@ describe('doctorCommand — genie.db check branches', () => {
     seed.exec('PRAGMA user_version = 99');
     seed.close();
 
-    const { output, exitCode } = await captureDoctor(() => doctorCommand({ json: true }));
+    const { output, exitCode } = await captureDoctor(() => doctorCommand({ json: true }, isolatedDoctorDeps(tmp)));
     const json = JSON.parse(output) as { ok: boolean; checks: Array<{ name: string; status: string }> };
     const db = json.checks.find((c) => c.name === 'genie.db');
     expect(db?.status).toBe('fail');
@@ -340,7 +536,7 @@ describe('checkV4Residue', () => {
     process.env.GENIE_HOME = residueGenieHome;
     const before = snapshot(residueHome);
 
-    const { output } = await captureDoctor(() => doctorCommand({ json: true }));
+    const { output } = await captureDoctor(() => doctorCommand({ json: true }, isolatedDoctorDeps()));
 
     expect(snapshot(residueHome)).toEqual(before); // no fix flag → zero disk change
     const parsed = JSON.parse(output) as { checks: Array<{ name: string; status: string }> };

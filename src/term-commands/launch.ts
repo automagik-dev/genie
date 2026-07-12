@@ -22,13 +22,18 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import type { Command } from 'commander';
+import {
+  type CodexPluginProbe,
+  probeCodexGeniePlugin,
+  registerProjectMcpConfigs,
+  resolveGitWorktreeRoot,
+} from '../lib/codex-project-mcp.js';
 import { loadGenieConfig } from '../lib/genie-config.js';
 import { openDb } from '../lib/v5/genie-db.js';
 import { type TaskRow, listTasks } from '../lib/v5/task-state.js';
 import { type PaneSpec, buildLaunchConfigYaml, launchUri, writeLaunchConfig } from '../lib/v5/warp-launch.js';
 import { genieHome } from '../lib/workspace.js';
 import type { GenieConfig } from '../types/genie-config.js';
-import { registerMcpConfigs } from './init.js';
 
 // ============================================================================
 // Typed errors
@@ -273,6 +278,8 @@ export interface LaunchDeps {
   openImpl?: (uri: string, platform: NodeJS.Platform) => boolean;
   /** Stdout writer. Defaults to `process.stdout.write`. */
   write?: (line: string) => void;
+  /** One-shot Codex plugin state injected by tests or a higher-level caller. */
+  codexPluginProbe?: CodexPluginProbe;
 }
 
 export interface LaunchOptions {
@@ -316,15 +323,9 @@ function sanitize(value: string): string {
  * {@link LaunchError} instead of leaking the subprocess trace.
  */
 function resolveRepoRoot(cwd: string): string {
-  try {
-    return execFileSync('git', ['rev-parse', '--show-toplevel'], {
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-      cwd,
-    }).trim();
-  } catch {
-    throw new LaunchError('genie launch must be run inside a git repository.');
-  }
+  const root = resolveGitWorktreeRoot(cwd);
+  if (root !== null) return root;
+  throw new LaunchError('genie launch must be run inside a git repository.');
 }
 
 /** Base dir for worktrees: explicit override, else `<GENIE_HOME>/worktrees`. */
@@ -351,13 +352,15 @@ function buildPrompt(slug: string, group: string, tasks: TaskRow[]): string {
     `Group: ${group}`,
     '',
     `You own group "${group}" of wish "${slug}". It has ${tasks.length} ready task(s).`,
-    'Claim each task before you work it, then mark it done when complete:',
+    'Claim each task before you work it. When complete, report evidence to the PM; only the PM marks tasks done:',
     '',
   ];
   for (const task of tasks) {
     lines.push(`- ${task.id}  ${task.title}`);
     lines.push(`    claim:  genie task checkout ${task.id} --worker ${group}`);
-    lines.push(`    finish: genie task done ${task.id}`);
+    lines.push(
+      '    finish: report implementation and validation evidence to the PM (do not mutate task completion state)',
+    );
   }
   lines.push('');
   lines.push(`Full context for this group lives in: .genie/wishes/${slug}/WISH.md`);
@@ -595,6 +598,9 @@ function pruneWorktrees(repoRoot: string): void {
 /** Create worktrees + prompts, write the config, and open it. */
 function materialize(plan: LaunchPlan, deps: LaunchDeps, write: (line: string) => void, openEnabled: boolean): void {
   const platform = deps.platform ?? process.platform;
+  // A launch may materialize many worktrees. Query global Codex plugin state
+  // exactly once, then reconcile every project using that immutable snapshot.
+  const pluginProbe = deps.codexPluginProbe ?? probeCodexGeniePlugin();
   pruneWorktrees(plan.repoRoot);
   write(`Launching wish "${plan.slug}" — ${plan.groups.length} group(s):`);
   for (const group of plan.groups) {
@@ -603,7 +609,7 @@ function materialize(plan: LaunchPlan, deps: LaunchDeps, write: (line: string) =
     writeFileSync(group.promptPath, group.prompt, 'utf-8');
     // Register the read-only `genie mcp` server in this worktree so the pane's
     // agent (Warp/Claude Code) can query board + wish state. Idempotent + merges.
-    registerMcpConfigs(group.worktree);
+    registerProjectMcpConfigs(group.worktree, { pluginProbe });
     write(`  ${group.name}  →  ${group.worktree}  [${action}]`);
   }
 

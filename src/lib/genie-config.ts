@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { type GenieConfig, GenieConfigSchema, type ShortcutsConfig } from '../types/genie-config.js';
+import { type GenieConfig, GenieConfigSchema } from '../types/genie-config.js';
 import { genieHome } from './workspace.js';
 
 /**
@@ -116,15 +116,6 @@ export async function markSetupComplete(): Promise<void> {
 export async function resetConfig(): Promise<void> {
   const defaultConfig = getDefaultGenieConfig();
   await saveGenieConfig(defaultConfig);
-}
-
-/**
- * Update shortcuts configuration
- */
-export async function updateShortcutsConfig(partial: Partial<ShortcutsConfig>): Promise<void> {
-  const config = await loadGenieConfig();
-  config.shortcuts = { ...config.shortcuts, ...partial };
-  await saveGenieConfig(config);
 }
 
 // ============================================================================

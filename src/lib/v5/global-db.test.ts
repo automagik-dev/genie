@@ -8,12 +8,25 @@ import {
   GLOBAL_SCHEMA_VERSION,
   MIGRATED_STATUS_SENTINEL,
   MalformedDbError,
+  OMNI_SERVICE_LEASE_NAME,
+  acquireServiceLease,
+  acquireServiceLeaseEpoch,
+  clearAgentSessionIfCurrent,
   getAgentSession,
+  insertAgentSessionIfAbsent,
   openGlobalDb,
+  releaseServiceLease,
+  renewServiceLease,
+  replaceAgentSessionIfCurrent,
   resolveGlobalDbPath,
   upsertAgentSession,
 } from './global-db.js';
-import { listApprovalsNeedingStatusAck } from './omni-queue.js';
+import {
+  claimApprovalAnnouncementWithLease,
+  listApprovalsNeedingStatusAck,
+  listRecoverableInbound,
+  recordAndClaimInboundDelivery,
+} from './omni-queue.js';
 
 let dir: string;
 const originalGenieHome = process.env.GENIE_HOME;
@@ -64,7 +77,7 @@ describe('openGlobalDb schema init', () => {
     db2.close();
 
     expect(userVersion(path)).toBe(GLOBAL_SCHEMA_VERSION);
-    expect(tables).toEqual(['agent_sessions', 'approvals', 'inbound_messages']);
+    expect(tables).toEqual(['agent_sessions', 'approvals', 'inbound_messages', 'service_leases']);
   });
 
   test('WAL journal mode is enabled', () => {
@@ -80,6 +93,60 @@ describe('openGlobalDb schema init', () => {
     db.close();
     expect(existsSync(path)).toBe(true);
   });
+
+  test('repairs an interrupted event-idempotency index migration on reopen', () => {
+    const db1 = openGlobalDb();
+    db1.exec('DROP INDEX idx_inbound_event_key');
+    db1.close();
+
+    const db2 = openGlobalDb();
+    try {
+      const index = (
+        db2.query('PRAGMA index_list(inbound_messages)').all() as Array<{
+          name: string;
+          unique: number;
+          partial: number;
+        }>
+      ).find((entry) => entry.name === 'idx_inbound_event_key');
+      expect(index).toMatchObject({ unique: 1, partial: 1 });
+    } finally {
+      db2.close();
+    }
+  });
+});
+
+describe('machine-scoped service leases', () => {
+  test('permits one owner, fences non-owners, renews, expires, and token-checks release', () => {
+    const db = openGlobalDb();
+    try {
+      expect(acquireServiceLease(db, 'omni-serve', 'owner-a', 100, 50)).toBe(true);
+      expect(acquireServiceLease(db, 'omni-serve', 'owner-b', 149, 50)).toBe(false);
+      expect(renewServiceLease(db, 'omni-serve', 'owner-b', 149, 50)).toBe(false);
+      expect(renewServiceLease(db, 'omni-serve', 'owner-a', 140, 50)).toBe(true);
+      expect(acquireServiceLease(db, 'omni-serve', 'owner-b', 189, 50)).toBe(false);
+      expect(acquireServiceLease(db, 'omni-serve', 'owner-b', 190, 50)).toBe(true);
+      expect(releaseServiceLease(db, 'omni-serve', 'owner-a')).toBe(false);
+      expect(releaseServiceLease(db, 'omni-serve', 'owner-b')).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('advances a monotonic fencing epoch only when an expired owner is replaced', () => {
+    const db = openGlobalDb();
+    try {
+      expect(acquireServiceLeaseEpoch(db, 'omni-serve', 'owner-a', 100, 50)).toBe(1);
+      expect(acquireServiceLeaseEpoch(db, 'omni-serve', 'owner-b', 149, 50)).toBeUndefined();
+      expect(acquireServiceLeaseEpoch(db, 'omni-serve', 'owner-a', 140, 50)).toBe(1);
+      expect(acquireServiceLeaseEpoch(db, 'omni-serve', 'owner-b', 190, 50)).toBe(2);
+      expect(renewServiceLease(db, 'omni-serve', 'owner-a', 191, 50, 1)).toBe(false);
+      expect(releaseServiceLease(db, 'omni-serve', 'owner-a', 1)).toBe(false);
+      expect(releaseServiceLease(db, 'omni-serve', 'owner-b', 2)).toBe(true);
+      expect(acquireServiceLeaseEpoch(db, 'omni-serve', 'owner-c', 191, 50)).toBe(3);
+    } finally {
+      db.close();
+    }
+  });
 });
 
 describe('provider session persistence', () => {
@@ -92,6 +159,22 @@ describe('provider session persistence', () => {
       upsertAgentSession(db, 'codex', 'i', 'c', 'thread-2', 2);
       expect(getAgentSession(db, 'codex', 'i', 'c')).toBe('thread-2');
       expect(getAgentSession(db, 'claude', 'i', 'c')).toBeUndefined();
+    } finally {
+      db.close();
+    }
+  });
+
+  test('owns conditional insert, replace, and clear operations behind typed outcomes', () => {
+    const db = openGlobalDb();
+    try {
+      expect(insertAgentSessionIfAbsent(db, 'codex', 'i', 'c', 'thread-1', 1)).toBe(true);
+      expect(insertAgentSessionIfAbsent(db, 'codex', 'i', 'c', 'racer', 2)).toBe(false);
+      expect(replaceAgentSessionIfCurrent(db, 'codex', 'i', 'c', 'stale', 'bad', 3)).toBe(false);
+      expect(replaceAgentSessionIfCurrent(db, 'codex', 'i', 'c', 'thread-1', 'thread-2', 4)).toBe(true);
+      expect(getAgentSession(db, 'codex', 'i', 'c')).toBe('thread-2');
+      expect(clearAgentSessionIfCurrent(db, 'codex', 'i', 'c', 'thread-1')).toBe(false);
+      expect(clearAgentSessionIfCurrent(db, 'codex', 'i', 'c', 'thread-2')).toBe(true);
+      expect(getAgentSession(db, 'codex', 'i', 'c')).toBeUndefined();
     } finally {
       db.close();
     }
@@ -135,6 +218,33 @@ describe('openGlobalDb additive column backfill (last_status_glyph)', () => {
     const db = openGlobalDb({ path });
     try {
       expect(columns(db, 'approvals').has('last_status_glyph')).toBe(true);
+      for (const column of [
+        'announce_claim',
+        'announce_claim_owner',
+        'announce_claim_epoch',
+        'announce_claimed_at',
+        'announce_phase',
+        'announce_prior_claim',
+        'announce_prior_owner',
+        'announce_prior_epoch',
+      ]) {
+        expect(columns(db, 'approvals').has(column)).toBe(true);
+      }
+      for (const column of [
+        'event_key',
+        'processing_claim',
+        'processing_claim_owner',
+        'processing_claim_epoch',
+        'processing_claimed_at',
+        'processing_phase',
+        'outbound_event_id',
+        'outbound_subject',
+        'outbound_payload',
+        'outbound_meta',
+      ]) {
+        expect(columns(db, 'inbound_messages').has(column)).toBe(true);
+      }
+      expect(columns(db, 'service_leases').has('epoch')).toBe(true);
       const row = db.query("SELECT last_status_glyph FROM approvals WHERE id = 'appr_old'").get() as {
         last_status_glyph: string | null;
       };
@@ -144,6 +254,94 @@ describe('openGlobalDb additive column backfill (last_status_glyph)', () => {
     }
     // Same version — additive backfill stays within v1 (no destructive migration).
     expect(userVersion(path)).toBe(GLOBAL_SCHEMA_VERSION);
+  });
+
+  test('exact base-schema claims migrate to ambiguity and remain safely recoverable', () => {
+    const path = join(dir, 'legacy-claimed.db');
+    const seed = new Database(path);
+    seed.exec(`
+      CREATE TABLE approvals (
+        id TEXT PRIMARY KEY, repo TEXT NOT NULL, session_hint TEXT, tool TEXT NOT NULL,
+        input_summary TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('pending','approved','denied','expired')),
+        omni_message_id TEXT, requested_by TEXT, resolved_by TEXT,
+        created_at INTEGER NOT NULL, resolved_at INTEGER,
+        last_status_glyph TEXT, announce_claim TEXT
+      );
+      CREATE TABLE inbound_messages (
+        id TEXT PRIMARY KEY, instance TEXT NOT NULL, chat TEXT NOT NULL, sender TEXT NOT NULL,
+        body TEXT NOT NULL, received_at INTEGER NOT NULL, handled_at INTEGER,
+        event_key TEXT, processing_claim TEXT
+      );
+      CREATE TABLE agent_sessions (
+        provider TEXT NOT NULL, instance TEXT NOT NULL, chat TEXT NOT NULL,
+        thread_id TEXT NOT NULL, updated_at INTEGER NOT NULL,
+        PRIMARY KEY (provider, instance, chat)
+      );
+      CREATE TABLE service_leases (
+        name TEXT PRIMARY KEY, owner_id TEXT NOT NULL, expires_at INTEGER NOT NULL
+      );
+      CREATE INDEX idx_approvals_status ON approvals(status);
+      CREATE INDEX idx_inbound_handled ON inbound_messages(handled_at);
+      CREATE UNIQUE INDEX idx_inbound_event_key ON inbound_messages(event_key) WHERE event_key IS NOT NULL;
+    `);
+    seed
+      .query(
+        `INSERT INTO approvals
+           (id, repo, tool, input_summary, status, created_at, announce_claim)
+         VALUES ('legacy-approval', '/r', 'Bash', '{}', 'pending', 1, 'old-announce')`,
+      )
+      .run();
+    seed
+      .query(
+        `INSERT INTO inbound_messages
+           (id, instance, chat, sender, body, received_at, event_key, processing_claim)
+         VALUES ('legacy-inbound', 'i', 'c', 's', 'write', 2, 'legacy-event', 'old-processing')`,
+      )
+      .run();
+    seed
+      .query('INSERT INTO service_leases(name, owner_id, expires_at) VALUES (?, ?, ?)')
+      .run(OMNI_SERVICE_LEASE_NAME, 'old-resident', 0);
+    seed.exec(`PRAGMA user_version = ${GLOBAL_SCHEMA_VERSION}`);
+    seed.close();
+
+    const db = openGlobalDb({ path });
+    try {
+      expect(
+        (
+          db.query("SELECT announce_phase AS phase FROM approvals WHERE id = 'legacy-approval'").get() as {
+            phase: string;
+          }
+        ).phase,
+      ).toBe('ambiguous');
+      expect(
+        (
+          db.query("SELECT processing_phase AS phase FROM inbound_messages WHERE id = 'legacy-inbound'").get() as {
+            phase: string;
+          }
+        ).phase,
+      ).toBe('ambiguous');
+
+      const epoch = acquireServiceLeaseEpoch(db, OMNI_SERVICE_LEASE_NAME, 'new-resident', 100, 100) as number;
+      const identity = { ownerId: 'new-resident', epoch, now: 100 };
+      expect(claimApprovalAnnouncementWithLease(db, 'legacy-approval', 'new-announce', identity)).toBe('ambiguous');
+      expect(listRecoverableInbound(db, epoch).map((event) => event.eventKey)).toEqual(['legacy-event']);
+      expect(
+        recordAndClaimInboundDelivery(db, {
+          instance: 'i',
+          chat: 'c',
+          sender: 's',
+          body: 'write',
+          eventKey: 'legacy-event',
+          claimToken: 'new-processing',
+          claimOwnerId: identity.ownerId,
+          claimEpoch: identity.epoch,
+          now: 100,
+        }),
+      ).toMatchObject({ id: 'legacy-inbound', mode: 'ambiguous' });
+    } finally {
+      db.close();
+    }
   });
 
   test('one-time backfill stamps pre-upgrade CLOSED history as MIGRATED so reconcile ignores it', () => {

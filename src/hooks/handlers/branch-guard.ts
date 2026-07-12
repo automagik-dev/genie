@@ -1,8 +1,9 @@
 /**
  * Branch Guard Handler — PreToolUse:Bash
  *
- * Blocks git/gh commands that target main/master branches.
- * This is the hard enforcement layer for branch protection.
+ * Blocks git/gh commands that target main/master branches. This hook is a
+ * local guardrail; server-side branch protection remains the hard enforcement
+ * layer because client hooks do not intercept every mutation path.
  *
  * Standing law §19 (v2, 2026-04-21): Agents MAY merge PRs targeting `dev`.
  * Merge to `main` / `master` is humans-only (GitHub UI). This handler enforces
@@ -243,8 +244,22 @@ export async function branchGuard(payload: HookPayload, deps: BranchGuardDeps = 
     }
   }
 
-  // §19 (v2): gh pr merge — allow if PR targets an allowed base (dev), deny otherwise.
+  // Codex PreToolUse must be deterministic and network-free. Resolving a PR
+  // base with `gh pr view` would cross that boundary, so all Codex `gh pr
+  // merge` attempts are denied locally. Server-side branch protection remains
+  // authoritative, and a human can perform an approved merge outside the hook.
+  // Claude keeps the historical base-resolution behavior below.
   if (/gh\s+pr\s+merge\b/.test(matchTarget)) {
+    if (payload.genie_hook_runtime === 'codex') {
+      return {
+        decision: 'deny',
+        reason:
+          'BLOCKED: Codex hook guardrails do not perform network lookups or PR merges. Use the reviewed server-side merge workflow; branch protection is authoritative.',
+      };
+    }
+
+    // §19 (v2): Claude may merge when a locally invoked lookup confirms an
+    // allowed base (dev/v5); any lookup failure remains fail-closed.
     const prNum = extractPrNumber(matchTarget);
     if (!prNum) {
       return {

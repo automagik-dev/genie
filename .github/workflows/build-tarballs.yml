@@ -8,9 +8,10 @@ name: Build Tarballs
 #
 # Tarball contents (per wish G1 deliverable 3):
 #   genie       — bun --compile static executable
-#   plugins/    — shared Genie payload with Claude + Codex manifests and hooks
+#   plugins/    — full Claude/Codex/Hermes payload: manifests, 23-skill mirror,
+#                 hooks, MCP launcher, references, and optional role-agent staging
 #   .agents/ + .claude-plugin/ — runtime marketplace manifests
-#   skills/     — skills/<name>/AGENT.md copied verbatim
+#   skills/     — canonical skills/<name>/SKILL.md + agents/openai.yaml/resources
 #   templates/  — wish-template, genie-config.template.json
 #   VERSION     — plain-text stamp consumed by src/lib/version.ts
 #
@@ -45,10 +46,27 @@ on:
   workflow_call: {}
   pull_request:
     paths:
+      - 'src/**'
+      - 'skills/**'
+      - 'templates/**'
+      - 'plugins/**'
+      - 'package.json'
+      - 'LICENSE'
+      - 'bun.lock'
+      - 'bunfig.toml'
+      - 'tsconfig.json'
       - 'scripts/build-binary.sh'
+      - 'scripts/build.js'
+      - 'scripts/json-top-level-string.js'
+      - 'scripts/hook-bundle-parity.ts'
+      - 'scripts/hook-content-binding.ts'
+      - 'scripts/plugin-executables-check.ts'
+      - 'scripts/sync-plugin-skills.ts'
+      - 'scripts/fresh-install-smoke.ts'
+      - 'scripts/skills-lint.ts'
+      - 'scripts/release-payload-version.ts'
       - '.agents/plugins/marketplace.json'
       - '.claude-plugin/marketplace.json'
-      - 'plugins/genie/**'
       - '.github/workflows/build-tarballs.yml'
 
 concurrency:

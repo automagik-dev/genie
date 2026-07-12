@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 /**
- * skills-lint: validate that every `genie <cmd>` / `omni <cmd>` invocation
- * inside a bash/sh code fence in any SKILL.md (or nested prompt .md)
- * corresponds to a real subcommand in the current CLI surface.
+ * skills-lint validates both the command surface and the shipped Codex skill
+ * contract: strict SKILL.md frontmatter, matching agents/openai.yaml metadata,
+ * skill-relative resources, and real `genie` / `omni` commands.
  *
  * Exit non-zero if any skill has missing commands.
  * Honors a `<!-- skills-lint:ignore -->` bailout marker to skip a file.
@@ -10,7 +10,7 @@
 
 import { execSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
+import { basename, join, relative, sep } from 'node:path';
 
 const ROOT = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
 // SKILLS_LINT_DIR lets tests point the scanner at a fixture tree; defaults to
@@ -20,12 +20,14 @@ const SKILLS_DIR = process.env.SKILLS_LINT_DIR ?? join(ROOT, 'skills');
 // Resource-shipping allowlist: catalog/recipe content is allowed to show
 // repo-root command recipes verbatim (they are illustrative, not runtime
 // instructions). Matched by the first path segment under the scanned skills
-// dir. skills/README.md is intentionally NOT allowlisted — real skill prose
-// must ship its own resources via ${CLAUDE_SKILL_DIR}/${CLAUDE_PLUGIN_ROOT}.
+// dir. The top-level README is contributor documentation and may name repo
+// scripts; executable skill prose must address resources relative to the
+// loaded SKILL.md, not a repo root or a host-specific environment variable.
 const RESOURCE_ALLOWLIST_SEGMENTS = new Set(['genie-hacks']);
 
 export function isResourceAllowlisted(file: string, skillsDir: string = SKILLS_DIR): boolean {
   const rel = relative(skillsDir, file);
+  if (rel === 'README.md') return true;
   const first = rel.split(sep)[0];
   return RESOURCE_ALLOWLIST_SEGMENTS.has(first);
 }
@@ -143,18 +145,115 @@ export function extractInlineCodeSpans(text: string): string[] {
   return spans;
 }
 
-export type ResourceRule = 'cp-repo-template' | 'unguarded-repo-lint' | 'repo-script-invocation';
+export type ResourceRule =
+  | 'cp-repo-template'
+  | 'host-specific-skill-root'
+  | 'unguarded-repo-lint'
+  | 'repo-script-invocation';
 
 export interface ResourceViolation {
   rule: ResourceRule;
   snippet: string;
 }
 
+export interface SkillMetadataValidation {
+  name: string | null;
+  violations: string[];
+}
+
+const ALLOWED_FRONTMATTER_KEYS = new Set(['name', 'description']);
+
+/** Validate the portable SKILL.md + Codex UI metadata contract for one skill. */
+export function validateSkillMetadata(skillDir: string): SkillMetadataValidation {
+  const skillPath = join(skillDir, 'SKILL.md');
+  const violations: string[] = [];
+  if (!existsSync(skillPath)) return { name: null, violations: ['missing SKILL.md'] };
+
+  const text = readFileSync(skillPath, 'utf8');
+  const lines = text.split(/\r?\n/);
+  if (lines[0] !== '---') return { name: null, violations: ['SKILL.md must start with YAML frontmatter'] };
+  const end = lines.indexOf('---', 1);
+  if (end < 0) return { name: null, violations: ['SKILL.md frontmatter is not closed'] };
+
+  const fields = new Map<string, string>();
+  for (const line of lines.slice(1, end)) {
+    if (line.trim() === '') continue;
+    const match = /^([a-z][a-z0-9_-]*):\s*(.+)$/.exec(line);
+    if (!match) {
+      violations.push(`unsupported frontmatter syntax: ${line.trim()}`);
+      continue;
+    }
+    const [, key, value] = match;
+    if (!ALLOWED_FRONTMATTER_KEYS.has(key)) violations.push(`unsupported frontmatter field: ${key}`);
+    if (fields.has(key)) violations.push(`duplicate frontmatter field: ${key}`);
+    fields.set(key, value.trim());
+  }
+
+  const name = fields.get('name')?.replace(/^['"]|['"]$/g, '') ?? null;
+  const description = fields.get('description')?.replace(/^['"]|['"]$/g, '') ?? '';
+  if (!name) violations.push('missing frontmatter field: name');
+  if (!description) violations.push('missing frontmatter field: description');
+  if (name && name !== basename(skillDir)) {
+    violations.push(
+      `frontmatter name ${JSON.stringify(name)} does not match directory ${JSON.stringify(basename(skillDir))}`,
+    );
+  }
+  if (name && !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name)) violations.push(`invalid skill name: ${name}`);
+
+  for (const token of ['CLAUDE_SKILL_DIR', 'CLAUDE_PLUGIN_ROOT', '$ARGUMENTS']) {
+    if (text.includes(token)) violations.push(`host-specific skill construct is unsupported: ${token}`);
+  }
+  if (/^!`[^`]+`\s*$/m.test(text)) violations.push('host-specific bang-command injection is unsupported');
+
+  const openaiPath = join(skillDir, 'agents', 'openai.yaml');
+  if (!existsSync(openaiPath)) {
+    violations.push('missing agents/openai.yaml');
+    return { name, violations };
+  }
+
+  try {
+    const parsed = Bun.YAML.parse(readFileSync(openaiPath, 'utf8')) as {
+      interface?: Record<string, unknown>;
+      policy?: Record<string, unknown>;
+    };
+    const ui = parsed?.interface;
+    if (!ui || typeof ui !== 'object') {
+      violations.push('agents/openai.yaml is missing interface metadata');
+    } else {
+      if (typeof ui.display_name !== 'string' || ui.display_name.trim() === '') {
+        violations.push('agents/openai.yaml interface.display_name must be a non-empty string');
+      }
+      if (
+        typeof ui.short_description !== 'string' ||
+        ui.short_description.length < 25 ||
+        ui.short_description.length > 64
+      ) {
+        violations.push('agents/openai.yaml interface.short_description must be 25-64 characters');
+      }
+      const prompt = ui.default_prompt;
+      if (typeof prompt !== 'string' || prompt.trim() === '') {
+        violations.push('agents/openai.yaml interface.default_prompt must be a non-empty string');
+      } else if (/\$(?:[a-z0-9][a-z0-9-]*:)?[a-z0-9][a-z0-9-]*/i.test(prompt)) {
+        violations.push(
+          'agents/openai.yaml interface.default_prompt must be selector-free because metadata ships in multiple physical tiers',
+        );
+      }
+    }
+    if (parsed.policy !== undefined && typeof parsed.policy.allow_implicit_invocation !== 'boolean') {
+      violations.push('agents/openai.yaml policy.allow_implicit_invocation must be boolean');
+    }
+  } catch (error) {
+    violations.push(`agents/openai.yaml is invalid YAML: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  return { name, violations };
+}
+
 /**
  * Inspect a single line of command context (a fence line or an inline-code
- * span) for imperative resource-shipping violations. Skill-shipped files MUST
- * be addressed via ${CLAUDE_SKILL_DIR}/${CLAUDE_PLUGIN_ROOT}; repo-only
- * commands MUST be guarded by a same-line package.json existence probe. Bare
+ * span) for imperative resource-shipping violations. Skill-shipped files must
+ * be resolved from the loaded SKILL.md directory; repo-only commands must be
+ * guarded by a same-line package.json existence probe. Bare
  * descriptive path mentions in prose never reach here (only code context does)
  * and never match — every rule keys on an imperative verb.
  */
@@ -162,9 +261,13 @@ export function checkResourceLine(line: string): ResourceViolation[] {
   const violations: ResourceViolation[] = [];
   const snippet = line.trim();
 
-  // (a) Imperative repo-root template copy: `cp templates/...`. The shipped
-  // form is `cp "${CLAUDE_SKILL_DIR}/templates/..."`, whose source token is
-  // NOT a bare `templates/`, so it is not matched.
+  if (/\$\{?(?:CLAUDE_SKILL_DIR|CLAUDE_PLUGIN_ROOT)\}?/.test(line)) {
+    violations.push({ rule: 'host-specific-skill-root', snippet });
+  }
+
+  // (a) Imperative repo-root template copy: `cp templates/...`. Portable skill
+  // prose resolves the owning skill directory first, so a bare templates/
+  // source is ambiguous and rejected.
   if (/\bcp\b(?:\s+-\S+)*\s+["']?(?:\.\/)?templates\//.test(line)) {
     violations.push({ rule: 'cp-repo-template', snippet });
   }
@@ -185,9 +288,7 @@ export function checkResourceLine(line: string): ResourceViolation[] {
   }
 
   // (c) Imperative execution of a repo-root script — scripts/*.ts is repo-only.
-  // Runtime instructions must address skill-shipped scripts via
-  // ${CLAUDE_SKILL_DIR}. A descriptive `scripts/foo.ts` mention (no run verb)
-  // does not match.
+  // A descriptive `scripts/foo.ts` mention (no run verb) does not match.
   if (/(?:\bbun run |\bbun |\bnode |\.\/|\bsh |\bbash )scripts\/[A-Za-z0-9_./-]+\.ts\b/.test(line)) {
     violations.push({ rule: 'repo-script-invocation', snippet });
   }
@@ -217,6 +318,7 @@ interface Report {
   skill: string;
   missingCommands: Array<{ tool: string; command: string }>;
   resourceViolations: ResourceViolation[];
+  metadataViolations: string[];
 }
 
 function main() {
@@ -229,6 +331,11 @@ function main() {
 
   const files = walk(SKILLS_DIR);
   const reports: Report[] = [];
+  const metadataBySkill = new Map<string, string[]>();
+  for (const entry of readdirSync(SKILLS_DIR, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !existsSync(join(SKILLS_DIR, entry.name, 'SKILL.md'))) continue;
+    metadataBySkill.set(entry.name, validateSkillMetadata(join(SKILLS_DIR, entry.name)).violations);
+  }
 
   // First pass: collect all invocations from non-ignored skills. The omni CLI
   // is only probed when some scanned skill actually references it; when the
@@ -244,8 +351,9 @@ function main() {
       genie.push(...extractInvocations(fence, 'genie'));
       omni.push(...extractInvocations(fence, 'omni'));
     }
-    // Catalog/recipe content (genie-hacks) is allowed to show repo-root
-    // recipes verbatim; every other skill must ship its own resources.
+    // Catalog/recipe content and the contributor-facing top-level README may
+    // show repo-root commands; executable skill instructions must ship their
+    // own resources.
     const resource = isResourceAllowlisted(file) ? [] : collectResourceViolations(text);
     scanned.push({ file, genie, omni, resource });
   }
@@ -264,24 +372,38 @@ function main() {
         if (!omniCmds.has(cmd)) missing.push({ tool: 'omni', command: cmd });
       }
     }
-    reports.push({ skill: relative(ROOT, file), missingCommands: missing, resourceViolations: resource });
+    const topLevelSkill = relative(SKILLS_DIR, file).split(sep)[0];
+    const metadataViolations = file.endsWith(`${sep}SKILL.md`) ? (metadataBySkill.get(topLevelSkill) ?? []) : [];
+    reports.push({
+      skill: relative(ROOT, file),
+      missingCommands: missing,
+      resourceViolations: resource,
+      metadataViolations,
+    });
   }
 
   const missingFailed = reports.filter((r) => r.missingCommands.length > 0);
   const resourceFailed = reports.filter((r) => r.resourceViolations.length > 0);
+  const metadataFailed = reports.filter((r) => r.metadataViolations.length > 0);
   console.log(JSON.stringify(reports, null, 2));
 
-  if (missingFailed.length > 0 || resourceFailed.length > 0) {
+  if (missingFailed.length > 0 || resourceFailed.length > 0 || metadataFailed.length > 0) {
     if (missingFailed.length > 0) {
       console.error(`\nskills-lint: ${missingFailed.length} skill(s) reference missing commands`);
     }
     if (resourceFailed.length > 0) {
       console.error(`\nskills-lint: ${resourceFailed.length} skill(s) reference repo-only resources`);
-      console.error('skills-lint: skill-shipped paths must use ${CLAUDE_SKILL_DIR}/${CLAUDE_PLUGIN_ROOT}');
+      console.error('skills-lint: resolve skill-shipped paths from the loaded SKILL.md directory');
       for (const r of resourceFailed) {
         for (const v of r.resourceViolations) {
           console.error(`  ${r.skill}: [${v.rule}] ${v.snippet}`);
         }
+      }
+    }
+    if (metadataFailed.length > 0) {
+      console.error(`\nskills-lint: ${metadataFailed.length} skill(s) have invalid Codex metadata`);
+      for (const r of metadataFailed) {
+        for (const violation of r.metadataViolations) console.error(`  ${r.skill}: ${violation}`);
       }
     }
     process.exit(1);
