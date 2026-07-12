@@ -2545,6 +2545,29 @@ export function acquireLifecycleLease(genieHome = resolveGenieHome()): Lifecycle
  * RE-verified while holding the guard, so a fresh lock created after the
  * caller's first observation is never removed. A guard left by a crashed
  * stealer ages out via {@link LOCK_STALE_MS} like the lock itself.
+ *
+ * ONE protocol, two acquirers — this function and the shell installer
+ * (recover_stale_lifecycle_lock in install.sh) must stay byte-compatible:
+ *   - Lock path: `<dirname(canonical GENIE_HOME)>/.genie-lifecycle-<sha256(canonical)[:16]>.lock`
+ *     ({@link lifecycleLockPath}); guard path is `<lock>.steal`.
+ *   - Owner record: `pid:token32[:sha64|unknown]` — a decimal pid, an optional
+ *     32-hex token, and an optional process-start identity (64-hex, or the
+ *     literal `unknown` the shell always writes). {@link lockOwner} parses it;
+ *     an empty or otherwise unparseable record yields `null`.
+ *   - Staleness window: ±{@link LOCK_STALE_MS} (10 min) around the mtime; a
+ *     timestamp too old OR implausibly far future is "stale".
+ *   - Guard reap rule (the aged-guard-recovery branch below, mirrored by the
+ *     shell's foreign_lock_record_is_stale): reap an existing guard we did not
+ *     create only when its mtime is stale AND its owner is dead. An empty or
+ *     unparseable record counts as dead (`lockOwner` → null). A live pid —
+ *     including another user's process, where `process.kill(pid, 0)` throws
+ *     EPERM — counts as alive and is never reaped ({@link lockHasLiveOwner}). A
+ *     symlinked/non-regular guard is never reaped. Reaping only unlinks; it
+ *     never renames or quarantines.
+ *   - Residual race (accepted): a process suspended (e.g. SIGSTOP, GC, swap)
+ *     across BOTH the guard read→rm window and the lock read→rm window can
+ *     still let two acquirers proceed as concurrent owners. This is pre-existing
+ *     in the TS path; the shell matches it at parity rather than widening it.
  */
 function stealStaleLock(lockPath: string): 'cleared' | 'contended' {
   const guardPath = `${lockPath}.steal`;

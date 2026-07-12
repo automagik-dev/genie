@@ -113,11 +113,40 @@ lock_record_is_stale() {
   IFS= read -r current_record < "$path" || return 1
   [[ "$current_record" == "$expected_record" ]] || return 1
   case "$current_record" in
-    [1-9][0-9]*:*) pid="${current_record%%:*}" ;;
+    *:*) pid="${current_record%%:*}" ;;
     *) return 1 ;;
   esac
   [[ "$pid" =~ ^[0-9]+$ ]] || return 1
-  if kill -0 "$pid" 2>/dev/null; then return 1; fi
+  # Liveness via `ps -p`, not `kill -0`: a lock owned by another user is still
+  # alive even though `kill -0` fails there with EPERM. Treating EPERM as death
+  # would wrongly steal a live foreign-owned lock — the same EPERM-is-alive rule
+  # lockHasLiveOwner enforces in src/lib/agent-sync.ts.
+  if ps -p "$pid" >/dev/null 2>&1; then return 1; fi
+  mtime="$(lock_mtime_seconds "$path" 2>/dev/null)" || return 1
+  now="$(date +%s)"
+  age=$((now - mtime))
+  [[ "$age" -gt "$LIFECYCLE_LOCK_STALE_SECONDS" || "$age" -lt "-$LIFECYCLE_LOCK_STALE_SECONDS" ]]
+}
+
+# Judge an EXISTING `.steal` guard we do not own for reaping. Mirrors the TS
+# aged-guard-recovery branch in stealStaleLock (src/lib/agent-sync.ts): a guard
+# is reapable only when BOTH its mtime is outside the ±stale window AND its
+# owner is dead. An empty or unparseable record — the debris a crash between
+# guard create and record write leaves — is a dead owner (TS lockOwner returns
+# null for the same records). A symlinked or non-regular guard is never
+# reapable. Liveness uses `ps -p` so another user's live process (EPERM under
+# `kill -0`) still counts as alive, matching lockHasLiveOwner.
+foreign_lock_record_is_stale() {
+  local path="$1" record pid mtime now age
+  [[ -f "$path" && ! -L "$path" ]] || return 1
+  IFS= read -r record < "$path" || record=""
+  case "$record" in
+    *:*) pid="${record%%:*}" ;;
+    *) pid="$record" ;;
+  esac
+  # A parseable, live pid pins the guard as owned regardless of age; an empty or
+  # unparseable pid falls through as a dead owner subject only to the mtime gate.
+  if [[ "$pid" =~ ^[0-9]+$ ]] && ps -p "$pid" >/dev/null 2>&1; then return 1; fi
   mtime="$(lock_mtime_seconds "$path" 2>/dev/null)" || return 1
   now="$(date +%s)"
   age=$((now - mtime))
@@ -125,8 +154,12 @@ lock_record_is_stale() {
 }
 
 # Clear abandoned lease debris under the same token-owned `.steal` guard used
-# by TypeScript. The lock record is checked again while the guard is held, so a
-# newly acquired owner can never be removed by an old observation.
+# by TypeScript's stealStaleLock (src/lib/agent-sync.ts) — keep the two in
+# lockstep. The lock record is checked again while the guard is held, so a
+# newly acquired owner can never be removed by an old observation. An abandoned
+# guard (aged mtime AND dead/empty owner) is itself reaped and the caller backs
+# off so the outer loop can re-win the guard; a fresh or live-owned guard fails
+# closed. A guard is only ever unlinked, never renamed or quarantined.
 recover_stale_lifecycle_lock() {
   local observed guard guard_owner guard_token guard_record current
   [[ -f "$LIFECYCLE_LOCK" && ! -L "$LIFECYCLE_LOCK" ]] || return 1
@@ -138,6 +171,11 @@ recover_stale_lifecycle_lock() {
   guard_record="$$:${guard_token:0:32}:unknown"
   ( umask 077; printf '%s\n' "$guard_record" > "$guard_owner" )
   if ! ln "$guard_owner" "$guard" 2>/dev/null; then
+    # An abandoned guard (aged mtime AND dead/empty owner) is the F42 debris that
+    # otherwise blocks acquisition forever; reap it and back off so the next
+    # outer attempt can win the guard. A fresh or live-owned guard is left in
+    # place (fail-closed).
+    if foreign_lock_record_is_stale "$guard"; then rm -f "$guard"; fi
     rm -f "$guard_owner"
     return 1
   fi
@@ -165,7 +203,10 @@ acquire_lifecycle_lock() {
   LIFECYCLE_OWNER_FILE="${LIFECYCLE_LOCK}.installer-$$-${token:0:16}"
   LIFECYCLE_OWNER_RECORD="$$:${token:0:32}:unknown"
   attempt=0
-  while [[ "$attempt" -lt 3 ]]; do
+  # A stale lock behind an abandoned guard consumes three attempts in the worst
+  # case (reap the guard, then win the guard + clear the lock, then win the
+  # lock); budget one extra so transient contention still has slack.
+  while [[ "$attempt" -lt 4 ]]; do
     ( umask 077; printf '%s\n' "$LIFECYCLE_OWNER_RECORD" > "$LIFECYCLE_OWNER_FILE" )
     if ln "$LIFECYCLE_OWNER_FILE" "$LIFECYCLE_LOCK" 2>/dev/null; then return 0; fi
     rm -f "$LIFECYCLE_OWNER_FILE"

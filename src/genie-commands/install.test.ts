@@ -156,6 +156,88 @@ describe('standalone install.sh lifecycle lease', () => {
     expect(existsSync(`${lock}.steal`)).toBe(false);
   });
 
+  test('an abandoned steal guard (dead owner, aged) no longer permanently blocks acquisition', () => {
+    const lock = lifecycleLockPath(genieHome);
+    const guard = `${lock}.steal`;
+    writeFileSync(lock, '999999:0123456789abcdef0123456789abcdef:unknown\n', { mode: 0o600 });
+    writeFileSync(guard, '999999:abcdefabcdefabcdefabcdefabcdefab:unknown\n', { mode: 0o600 });
+    const aged = new Date(Date.now() - 11 * 60 * 1_000);
+    utimesSync(lock, aged, aged);
+    utimesSync(guard, aged, aged);
+
+    const result = shell('source "$1"; acquire_lifecycle_lock; test -f "$LIFECYCLE_LOCK"; release_lifecycle_lock');
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).not.toContain('another Genie lifecycle command');
+    expect(existsSync(lock)).toBe(false); // stale lock cleared once the guard was reaped
+    expect(existsSync(guard)).toBe(false); // abandoned guard reaped, installer's own guard released
+  });
+
+  test('a zero-length aged steal guard is reaped like an abandoned owner record', () => {
+    const lock = lifecycleLockPath(genieHome);
+    const guard = `${lock}.steal`;
+    writeFileSync(lock, '999999:0123456789abcdef0123456789abcdef:unknown\n', { mode: 0o600 });
+    writeFileSync(guard, '', { mode: 0o600 }); // crash between guard create and record write
+    const aged = new Date(Date.now() - 11 * 60 * 1_000);
+    utimesSync(lock, aged, aged);
+    utimesSync(guard, aged, aged);
+
+    const result = shell('source "$1"; acquire_lifecycle_lock; release_lifecycle_lock');
+
+    expect(result.status).toBe(0);
+    expect(existsSync(lock)).toBe(false);
+    expect(existsSync(guard)).toBe(false);
+  });
+
+  test('a fresh steal guard still fails closed (never reaped)', () => {
+    const lock = lifecycleLockPath(genieHome);
+    const guard = `${lock}.steal`;
+    writeFileSync(lock, '999999:0123456789abcdef0123456789abcdef:unknown\n', { mode: 0o600 });
+    const aged = new Date(Date.now() - 11 * 60 * 1_000);
+    utimesSync(lock, aged, aged);
+    writeFileSync(guard, '999999:abcdefabcdefabcdefabcdefabcdefab:unknown\n', { mode: 0o600 }); // fresh mtime
+
+    const result = shell('source "$1"; acquire_lifecycle_lock');
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('another Genie lifecycle command is active');
+    expect(existsSync(guard)).toBe(true); // an in-window guard is a live stealer — untouched
+    expect(existsSync(lock)).toBe(true); // the stale lock is never stolen behind a live guard
+  });
+
+  test('a live-owner steal guard (aged mtime) still blocks — ps liveness, EPERM-safe', () => {
+    const lock = lifecycleLockPath(genieHome);
+    const guard = `${lock}.steal`;
+    writeFileSync(lock, '999999:0123456789abcdef0123456789abcdef:unknown\n', { mode: 0o600 });
+    // This test process is a controlled live owner: `ps -p` sees it alive even
+    // though age says the guard is old, so it must never be reaped.
+    writeFileSync(guard, `${process.pid}:abcdefabcdefabcdefabcdefabcdefab:unknown\n`, { mode: 0o600 });
+    const aged = new Date(Date.now() - 11 * 60 * 1_000);
+    utimesSync(lock, aged, aged);
+    utimesSync(guard, aged, aged);
+
+    const result = shell('source "$1"; acquire_lifecycle_lock');
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('another Genie lifecycle command is active');
+    expect(existsSync(guard)).toBe(true); // live owner is never reaped regardless of age
+  });
+
+  test('a single-digit pid lock record parses (regression for the two-digit-minimum glob)', () => {
+    const lock = lifecycleLockPath(genieHome);
+    writeFileSync(lock, '5:0123456789abcdef0123456789abcdef:unknown\n', { mode: 0o600 });
+    const aged = new Date(Date.now() - 11 * 60 * 1_000);
+    utimesSync(lock, aged, aged);
+
+    // Stub `ps` to report every pid dead so the outcome turns solely on whether
+    // the single-digit record is PARSED. The old `[1-9][0-9]*:*` glob required
+    // two leading digits and left a single-digit-pid lock unrecoverable forever.
+    const result = shell('source "$1"; ps() { return 1; }; acquire_lifecycle_lock; release_lifecycle_lock');
+
+    expect(result.status).toBe(0);
+    expect(existsSync(lock)).toBe(false);
+  });
+
   test('final verification compares one exact normalized version token, never a substring', () => {
     const localBin = join(home, '.local', 'bin');
     const binary = join(genieHome, 'bin', 'genie');

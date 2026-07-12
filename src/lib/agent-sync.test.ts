@@ -1694,6 +1694,47 @@ describe('cross-process sync lock', () => {
     expect(readFileSync(lockPath, 'utf8')).toBe(`${process.pid}\n`);
   });
 
+  test('an aged, dead-owner steal guard is reaped so a subsequent run proceeds', () => {
+    present(fixture.claudeDir);
+    const lockPath = join(fixture.genieHome, LOCK_NAME);
+    const guardPath = `${lockPath}.steal`;
+    // A crashed run left both a stale lock and the abandoned steal guard behind.
+    writeFile(lockPath, '999999:0123456789abcdef0123456789abcdef:unknown\n');
+    writeFile(guardPath, '999999:abcdefabcdefabcdefabcdefabcdefab:unknown\n');
+    const agedSec = (Date.now() - 11 * 60 * 1000) / 1000; // 11 min > 10 min age-out
+    utimesSync(lockPath, agedSec, agedSec);
+    utimesSync(guardPath, agedSec, agedSec);
+
+    // First contact reaps the aged dead-owner guard but still backs off this run
+    // (the guard was contended when observed); the lock is left untouched.
+    const first = run();
+    expect(first.skipped).toContain('holds the lock');
+    expect(existsSync(guardPath)).toBe(false); // abandoned guard reaped
+
+    // With the guard cleared, the next run steals the still-stale lock and syncs.
+    const second = run();
+    expect(second.skipped).toBeUndefined();
+    expect(skillAction(agentReport(second, 'claude'), 'alpha')).toBe('created');
+    expect(existsSync(lockPath)).toBe(false); // released after the run
+  });
+
+  test('a fresh foreign steal guard is never reaped and the run backs off', () => {
+    present(fixture.claudeDir);
+    const lockPath = join(fixture.genieHome, LOCK_NAME);
+    const guardPath = `${lockPath}.steal`;
+    writeFile(lockPath, '999999:0123456789abcdef0123456789abcdef:unknown\n');
+    const agedSec = (Date.now() - 11 * 60 * 1000) / 1000;
+    utimesSync(lockPath, agedSec, agedSec);
+    writeFile(guardPath, '999999:abcdefabcdefabcdefabcdefabcdefab:unknown\n'); // fresh mtime
+
+    const report = run();
+
+    expect(report.skipped).toContain('holds the lock');
+    expect(existsSync(guardPath)).toBe(true); // an in-window guard is a live stealer — untouched
+    expect(existsSync(join(fixture.claudeDir, 'skills'))).toBe(false); // zero writes
+    expect(readFileSync(lockPath, 'utf8')).toContain('999999:'); // stale lock left in place
+  });
+
   test('lock acquisition I/O failure fails closed and performs zero target writes', () => {
     present(fixture.claudeDir);
     chmodSync(fixture.genieHome, 0o500);
