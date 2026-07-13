@@ -1,20 +1,27 @@
 ---
 name: genie
-description: Cockpit contract for driving Genie from Hermes — structured read-only tools first, human-gated mutations, outcome-first evidence reporting.
+description: Thin cockpit pointer for driving Genie from Hermes — load the product wish/work/review skills via the first-class skill path, use the MCP board tools for task truth, keep mutations human-gated.
 ---
 
-# Genie Cockpit Contract
+# Genie Cockpit Pointer
 
 Genie is the execution system and the source of task truth. When a workspace
 contains `.genie/`, treat Genie state — wishes, tasks, boards, worker status —
 as canonical over anything scraped from a terminal.
 
-## Structured tools first
+## Load the product skills, don't duplicate them
 
-- Use the plugin tools before any terminal scraping: `genie_status` (doctor
-  plus `.genie` presence), `genie_board` (task board), `genie_task_list`
-  (tasks with wish/status filters), and `genie_wish_status` (board plus tasks
-  for one wish).
+- For planning, execution, and review posture, load the first-class product
+  skills directly: `wish`, `work`, and `review`. This plugin no longer ships
+  `genie-work`/`genie-review` duplicates — the product skills are canonical.
+
+## Use MCP for board truth
+
+- Read board and task state through the genie MCP tools (`genie_board`,
+  `genie_wish_status`, `genie_task`) rather than terminal scraping. The native
+  Hermes surface only adds the gap tools MCP does not cover: `genie_status`
+  (doctor plus `.genie` presence), `genie_work_plan` (dry-run launch plan), and
+  `genie_review_plan` (wish status plus acceptance criteria).
 - Never poll panes with `tmux capture-pane` or `sleep` loops to infer worker
   progress. The structured tools return the same truth with provenance.
 
@@ -28,5 +35,3 @@ as canonical over anything scraped from a terminal.
 
 - Lead with the outcome, then the key facts, then the exact CLI evidence:
   the `genie ...` argv that produced the data, on one line.
-- On failure, lead with the error and keep the same evidence line so the
-  operator can reproduce it verbatim.

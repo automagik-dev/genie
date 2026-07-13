@@ -5,7 +5,8 @@ The rules that keep the Hermes-native surface read-only, and the gate every futu
 ## Read-only MVP boundary
 
 - Every tool, slash command, hook, and skill in this plugin reports `mutation: "none"` and performs no state writes — no task claims, no dispatch, no sends, no writes under `.genie/`.
-- The only subprocess surface is the argv-only bridge to read-only genie subcommands: `doctor --json`, `board --json`, `task list --json`, `task status <id>`, and `launch <slug> --dry-run`.
+- The default native surface is the three gap tools the MCP board surface does not cover: `genie_status` (`doctor --json` plus `.genie/` presence), `genie_work_plan` (`launch <slug> --dry-run`), and `genie_review_plan` (board/task composite plus the WISH.md acceptance sections). Board and task truth come from the genie MCP tools.
+- The four legacy board/task tools (`genie_board`, `genie_wish_status`, `genie_task_list`, `genie_task_status`) still exist behind `GENIE_HERMES_LEGACY_TOOLS=1` for one transition release; they wrap the same read-only subcommands (`board --json`, `task list --json`, `task status <id>`) and remain `mutation: "none"`. All subprocess calls use the argv-only bridge.
 - The dry-run line is the boundary: `genie_work_plan` runs `genie launch <slug> --dry-run`, which prints the dispatch plan and touches nothing. Executing a real `genie launch` is a mutation and is out of scope here.
 
 ## Deferred mutation tools

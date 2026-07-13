@@ -3,7 +3,12 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pluginPackageManifest, updateManifestVersion } from './build.js';
-import { synchronizeVersionFiles, updateJsonVersion } from './version.ts';
+import {
+  replaceTopLevelYamlVersion,
+  synchronizeVersionFiles,
+  updateJsonVersion,
+  updateYamlVersion,
+} from './version.ts';
 
 describe('manifest version formatting', () => {
   const roots: string[] = [];
@@ -50,6 +55,9 @@ describe('manifest version formatting', () => {
     writeJson('.claude-plugin/marketplace.json', {
       plugins: [{ name: 'genie', version: '5.000000.0' }],
     });
+    const yamlPath = join(root, 'plugins/hermes-genie/plugin.yaml');
+    mkdirSync(dirname(yamlPath), { recursive: true });
+    writeFileSync(yamlPath, 'name: genie\nversion: 5.000000.0\ndescription: "Native surface"\n');
     return root;
   }
 
@@ -96,12 +104,43 @@ describe('manifest version formatting', () => {
     expect(JSON.parse(readFileSync(join(root, '.claude-plugin/marketplace.json'), 'utf8')).plugins[0].version).toBe(
       '5.260711.3',
     );
+    // The Hermes YAML manifest is synced alongside the JSON manifests.
+    expect(readFileSync(join(root, 'plugins/hermes-genie/plugin.yaml'), 'utf8')).toBe(
+      'name: genie\nversion: 5.260711.3\ndescription: "Native surface"\n',
+    );
 
     rmSync(join(root, 'plugins/genie/.codex-plugin/plugin.json'));
     await expect(synchronizeVersionFiles(root, '5.260711.4')).rejects.toThrow(
       'version synchronization preflight failed',
     );
     expect(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version).toBe('5.260711.3');
+  });
+
+  test('synchronization rejects a YAML manifest without a version line', async () => {
+    const root = synchronizationFixture();
+    writeFileSync(join(root, 'plugins/hermes-genie/plugin.yaml'), 'name: genie\ndescription: "no version"\n');
+    await expect(synchronizeVersionFiles(root, '5.260711.5')).rejects.toThrow(
+      'version synchronization preflight failed',
+    );
+  });
+
+  test('updateYamlVersion rewrites only the version line', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-version-yaml-'));
+    roots.push(root);
+    const path = join(root, 'plugin.yaml');
+    const original = 'name: genie\nversion: 0.1.0\ndescription: "Native surface"\nprovides_tools:\n  - genie_status\n';
+    writeFileSync(path, original);
+    await updateYamlVersion(path, '5.260712.2');
+    expect(readFileSync(path, 'utf8')).toBe(original.replace('version: 0.1.0', 'version: 5.260712.2'));
+  });
+
+  test('replaceTopLevelYamlVersion ignores indented version keys and rejects duplicates', () => {
+    const nested = 'name: genie\nversion: 0.1.0\nmeta:\n  version: keep-me\n';
+    expect(replaceTopLevelYamlVersion(nested, '5.260712.2')).toBe(
+      'name: genie\nversion: 5.260712.2\nmeta:\n  version: keep-me\n',
+    );
+    expect(() => replaceTopLevelYamlVersion('name: genie\n', '5.0.0')).toThrow('found 0');
+    expect(() => replaceTopLevelYamlVersion('version: a\nversion: b\n', '5.0.0')).toThrow('found 2');
   });
 
   test('synchronization rejects malformed required metadata', async () => {

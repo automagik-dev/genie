@@ -16,6 +16,7 @@
  * - plugins/genie/.codex-plugin/plugin.json (Codex)
  * - plugins/genie/package.json (runtime payload metadata)
  * - .claude-plugin/marketplace.json (marketplace listing)
+ * - plugins/hermes-genie/plugin.yaml (Hermes native surface, YAML manifest)
  */
 
 import { execSync } from 'node:child_process';
@@ -71,6 +72,41 @@ export async function updateJsonVersion(filePath: string, version: string): Prom
   }
 }
 
+/**
+ * Rewrite only the top-level `version:` line of a YAML manifest, preserving the
+ * rest of the document byte-for-byte. Throws unless exactly one top-level
+ * `version:` line exists (nested/indented `version:` keys are ignored).
+ */
+export function replaceTopLevelYamlVersion(source: string, version: string): string {
+  const lines = source.split('\n');
+  let replaced = 0;
+  const out = lines.map((line) => {
+    // Top-level key only: no leading whitespace before `version:`.
+    if (!/^version:(\s|$)/.test(line)) return line;
+    replaced += 1;
+    return `version: ${version}`;
+  });
+  if (replaced !== 1) throw new Error(`expected exactly one top-level version line, found ${replaced}`);
+  return out.join('\n');
+}
+
+export async function updateYamlVersion(filePath: string, version: string): Promise<boolean> {
+  if (!existsSync(filePath)) {
+    console.warn(`  ⚠ Skipped (not found): ${filePath}`);
+    return false;
+  }
+  try {
+    const source = await readFile(filePath, 'utf-8');
+    const updated = replaceTopLevelYamlVersion(source, version);
+    await writeFile(filePath, updated);
+    console.log(`  ✓ ${filePath}`);
+    return true;
+  } catch (err) {
+    console.error(`  ✗ Failed: ${filePath}`, err);
+    return false;
+  }
+}
+
 export async function updateClaudeMarketplaceVersion(filePath: string, version: string): Promise<boolean> {
   if (!existsSync(filePath)) {
     console.warn(`  ⚠ Skipped (not found): ${filePath}`);
@@ -106,6 +142,13 @@ async function assertVersionFileShape(filePath: string): Promise<void> {
   replaceTopLevelStringProperty(source, 'version', Reflect.get(parsed, 'version') as string);
 }
 
+async function assertYamlVersionFileShape(filePath: string): Promise<void> {
+  if (!existsSync(filePath)) throw new Error('file is missing');
+  const source = await readFile(filePath, 'utf-8');
+  // Throws unless exactly one top-level version line is present.
+  replaceTopLevelYamlVersion(source, '0.0.0');
+}
+
 async function assertClaudeMarketplaceShape(filePath: string): Promise<void> {
   if (!existsSync(filePath)) throw new Error('file is missing');
   const parsed: unknown = JSON.parse(await readFile(filePath, 'utf-8'));
@@ -129,6 +172,7 @@ export async function synchronizeVersionFiles(rootDir: string, version: string):
     join(rootDir, 'plugins/genie/package.json'),
   ];
   const marketplacePath = join(rootDir, '.claude-plugin/marketplace.json');
+  const yamlPaths = [join(rootDir, 'plugins/hermes-genie/plugin.yaml')];
   const preflightFailures: string[] = [];
   for (const path of paths) {
     try {
@@ -142,6 +186,13 @@ export async function synchronizeVersionFiles(rootDir: string, version: string):
   } catch (error) {
     preflightFailures.push(`${marketplacePath}: ${error instanceof Error ? error.message : String(error)}`);
   }
+  for (const path of yamlPaths) {
+    try {
+      await assertYamlVersionFileShape(path);
+    } catch (error) {
+      preflightFailures.push(`${path}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
   if (preflightFailures.length > 0) {
     throw new Error(`version synchronization preflight failed for: ${preflightFailures.join('; ')}`);
   }
@@ -150,6 +201,7 @@ export async function synchronizeVersionFiles(rootDir: string, version: string):
   for (const path of paths) outcomes.push({ path, ok: await updateJsonVersion(path, version) });
 
   outcomes.push({ path: marketplacePath, ok: await updateClaudeMarketplaceVersion(marketplacePath, version) });
+  for (const path of yamlPaths) outcomes.push({ path, ok: await updateYamlVersion(path, version) });
   const failed = outcomes.filter((outcome) => !outcome.ok).map((outcome) => outcome.path);
   if (failed.length > 0) throw new Error(`version synchronization failed for: ${failed.join(', ')}`);
 }
