@@ -24,14 +24,17 @@ import { basename, dirname, join, relative, resolve } from 'node:path';
 import { Worker } from 'node:worker_threads';
 import {
   CODEX_FALLBACK_RETIREMENT_ROOT,
+  type CodexFallbackOwnership,
   type CodexFallbackRetirementPlan,
   type CodexFallbackRetirementResult,
   type PlanCodexFallbackRetirementOptions,
   type VerifiedCodexSkillPayload,
   acquireLifecycleLease,
   applyCodexFallbackRetirement,
+  classifyCodexFallback,
   computeDirDigest,
   inspectManagedSkillTree,
+  loadHistoricalCodexFallbackTupleKeys,
   planCodexFallbackRetirement,
   publishRegularFileNoClobber,
   recoverCodexFallbackRetirements,
@@ -3028,29 +3031,58 @@ function emptyAgentInstallResult(): CodexAgentInstallResult {
 
 /**
  * Read-only classification of the shared `~/.agents/skills` tier for the doctor
- * diagnostic (R5/A9). Uses the SAME ownership classifier as sync and retirement
- * ({@link inspectManagedSkillTree}) so doctor never disagrees with what
- * `genie update` would retire, and NEVER launches the plugin MCP or mutates disk.
+ * diagnostic (R5/A9). Structural well-formedness alone
+ * ({@link inspectManagedSkillTree}) only tells doctor a tree is self-consistent
+ * (untampered content matching its own manifest) — it says nothing about
+ * whether {@link planCodexFallbackRetirement} will actually accept it, which
+ * additionally requires the exact `identityVersion: 2` marker tag AND either a
+ * frozen-allowlist historical tuple or a live-plugin verified-target digest
+ * match. Reporting every structurally clean tree as "clean, run `genie update`"
+ * therefore lies to any tree the planner would refuse (an infinite no-op loop:
+ * PR #2575's `ambiguous-ownership` case, and any pre-`identityVersion` era-A
+ * marker). This inspector applies the SAME two-stage gate the planner uses —
+ * {@link classifyCodexFallback} against the SAME frozen allowlist
+ * ({@link loadHistoricalCodexFallbackTupleKeys}) and a verified-target payload
+ * read directly from `<pluginRoot>/skills` (pure filesystem read; NEVER the
+ * plugin MCP) — so doctor never promises a retirement the engine then refuses.
  *
- * - `cleanFallbacks` — managed-clean genie skill dirs still in the user tier;
- *   under plugin-only semantics these are repairable duplicate providers that
- *   `genie update` retires (distinct remediation from a personal collision).
+ * - `cleanFallbacks` — recognized (historical-tuple or verified-target) genie
+ *   skill dirs still in the user tier; `genie update` retires these.
+ * - `unrecognizedFallbacks` — structurally well-formed, self-consistent, genie-
+ *   managed dirs whose content the planner does NOT recognize (not in the
+ *   frozen allowlist, no matching live-plugin payload, or missing the exact
+ *   `identityVersion: 2` tag). Never user-modified, but not retirable either —
+ *   manual review, not `genie update`, resolves these (#2575 vocabulary).
  * - `preservedCollisions` — managed-modified / corrupt-metadata dirs; personal
  *   content preserved in place that only manual review resolves.
  * - `quarantinedTransactions` — retained committed retirement transactions.
  * - `retainedEvidence` — transactions that archived a changed fallback tree aside;
- *   the Group A conflict class surfaced as manual-recovery guidance (R8).
+ *   the Group A conflict class surfaced as manual-recovery guidance (R8), each
+ *   carrying the actual on-disk evidence path so doctor can point at it directly.
+ * - `unreadable` — `agentsSkillsDir` exists but could not be listed (e.g.
+ *   permissions); distinct from "absent" (a fresh plugin-only install, which is
+ *   healthy). An unreadable tier can hide real fallback state, so it warns.
  */
 /** Decision-5 classification of a preserved personal collision (why genie left it in place). */
 export type PreservedCollisionClass = 'modified-managed' | 'malformed-marker';
 
+/** A retirement transaction that archived changed-tree evidence, with its actual on-disk path (R8). */
+export interface RetainedFallbackEvidence {
+  transactionId: string;
+  evidencePath: string;
+}
+
 export interface CodexFallbackTierReport {
   cleanFallbacks: string[];
+  /** Well-formed, self-consistent, genie-managed dirs the planner does not recognize as retirable. */
+  unrecognizedFallbacks: string[];
   preservedCollisions: string[];
   /** Per preserved-collision classification, so doctor can report Decision-5 fields (name + classification). */
   preservedCollisionClass: Record<string, PreservedCollisionClass>;
   quarantinedTransactions: number;
-  retainedEvidence: string[];
+  retainedEvidence: RetainedFallbackEvidence[];
+  /** `agentsSkillsDir` exists but readdir failed for a reason other than "absent" — classification is incomplete. */
+  unreadable: boolean;
 }
 
 /** Basename of a retirement transaction's archived changed-tree evidence dir (agent-sync on-disk contract). */
@@ -3082,30 +3114,77 @@ function summarizeCodexQuarantine(retirementRoot: string, report: CodexFallbackT
       continue;
     }
     report.quarantinedTransactions += 1;
-    if (retirementTransactionHasEvidence(txnDir)) report.retainedEvidence.push(name);
+    if (retirementTransactionHasEvidence(txnDir)) {
+      report.retainedEvidence.push({ transactionId: name, evidencePath: join(txnDir, RETIREMENT_EVIDENCE_DIRNAME) });
+    }
   }
 }
 
-export function inspectCodexFallbackTier(agentsSkillsDir: string): CodexFallbackTierReport {
+/**
+ * Build the read-only analog of {@link buildVerifiedCodexPayload}: the content
+ * genie's OWN plugin bundle would install for `skillName`, read straight from
+ * `<pluginRoot>/skills/<skillName>` on disk. No MCP session — doctor never
+ * launches the plugin — so this is a lighter-weight proof than the retirement
+ * engine's canonical-cache-bound `CodexHealthProof`, deliberately restricted to
+ * classification/messaging, never to authorize an actual retirement.
+ */
+function verifiedTargetFromPluginRoot(pluginRoot: string, skillName: string): VerifiedCodexSkillPayload | null {
+  const path = join(pluginRoot, 'skills', skillName);
+  try {
+    const stat = lstatSync(path);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) return null;
+    return { skillName, path, physicalDigest: computeDirDigest(path), canonicalVerified: true };
+  } catch {
+    return null;
+  }
+}
+
+/** Codex-fallback ownership gate: `null` pluginRoot leaves every name unresolved (allowlist-only). */
+function classifyFallbackDirOwnership(
+  agentsSkillsDir: string,
+  name: string,
+  pluginRoot: string | null,
+  historical: ReadonlySet<string>,
+): CodexFallbackOwnership {
+  const path = join(agentsSkillsDir, name);
+  const target = pluginRoot === null ? null : verifiedTargetFromPluginRoot(pluginRoot, name);
+  return classifyCodexFallback(path, name, target, historical);
+}
+
+export function inspectCodexFallbackTier(
+  agentsSkillsDir: string,
+  pluginRoot: string | null = null,
+): CodexFallbackTierReport {
   const report: CodexFallbackTierReport = {
     cleanFallbacks: [],
+    unrecognizedFallbacks: [],
     preservedCollisions: [],
     preservedCollisionClass: {},
     quarantinedTransactions: 0,
     retainedEvidence: [],
+    unreadable: false,
   };
   let names: string[];
   try {
     names = readdirSync(agentsSkillsDir);
-  } catch {
+  } catch (error) {
+    // ENOENT ("absent") is a healthy fresh plugin-only install: no fallback tier
+    // exists yet, so an all-zero report is accurate. Any other failure (e.g.
+    // EACCES) means the tier exists but genie cannot see into it — classifying
+    // that as healthy would hide real fallback state, so it warns instead.
+    if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') report.unreadable = true;
     return report;
   }
+  const historical = loadHistoricalCodexFallbackTupleKeys();
   for (const name of names) {
     // The quarantine root is inspected as retained evidence, never as a live fallback.
     if (name === CODEX_FALLBACK_RETIREMENT_ROOT) continue;
     const state = inspectManagedSkillTree(join(agentsSkillsDir, name)).state;
-    if (state === 'managed-clean') report.cleanFallbacks.push(name);
-    else if (state === 'managed-modified' || state === 'corrupt-metadata') {
+    if (state === 'managed-clean') {
+      const ownership = classifyFallbackDirOwnership(agentsSkillsDir, name, pluginRoot, historical);
+      if (ownership.accepted) report.cleanFallbacks.push(name);
+      else report.unrecognizedFallbacks.push(name);
+    } else if (state === 'managed-modified' || state === 'corrupt-metadata') {
       report.preservedCollisions.push(name);
       report.preservedCollisionClass[name] = state === 'managed-modified' ? 'modified-managed' : 'malformed-marker';
     }
@@ -3113,8 +3192,11 @@ export function inspectCodexFallbackTier(agentsSkillsDir: string): CodexFallback
   }
   summarizeCodexQuarantine(join(agentsSkillsDir, CODEX_FALLBACK_RETIREMENT_ROOT), report);
   report.cleanFallbacks.sort();
+  report.unrecognizedFallbacks.sort();
   report.preservedCollisions.sort();
-  report.retainedEvidence.sort();
+  report.retainedEvidence.sort((a, b) =>
+    a.transactionId < b.transactionId ? -1 : a.transactionId > b.transactionId ? 1 : 0,
+  );
   return report;
 }
 
