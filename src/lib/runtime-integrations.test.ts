@@ -14,7 +14,12 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { CODEX_FALLBACK_RETIREMENT_ROOT, computeDirDigest } from './agent-sync.js';
+import {
+  CODEX_FALLBACK_RETIREMENT_ROOT,
+  applyCodexFallbackRetirement,
+  computeDirDigest,
+  planCodexFallbackRetirement,
+} from './agent-sync.js';
 import { REQUIRED_GENIE_MCP_TOOLS } from './codex-mcp-health-session.js';
 import type { CodexPluginProbe } from './codex-project-mcp.js';
 import {
@@ -2661,6 +2666,95 @@ describe('translateRetirementConflicts surfaces R8 conflict classes as manual-re
 
   test('returns the step result when it does not throw', () => {
     expect(translateRetirementConflicts(() => 42)).toBe(42);
+  });
+});
+
+describe('R8 retirement-conflict contract producer drift (agent-sync ↔ runtime-integrations)', () => {
+  // RETIREMENT_CONFLICT_CONTRACT pins raw substrings of agent-sync error messages
+  // but nothing else binds the PRODUCER side: a reword in agent-sync silently
+  // reverts a class to raw pass-through. This suite binds both sides so a reword
+  // on EITHER fails CI. The pinned substrings are extracted straight from the
+  // (unexported) contract source; each must appear in a producible agent-sync
+  // message AND still be recognized by translateRetirementConflicts.
+  const agentSyncSource = readFileSync(join(import.meta.dir, 'agent-sync.ts'), 'utf8');
+  const runtimeSource = readFileSync(join(import.meta.dir, 'runtime-integrations.ts'), 'utf8');
+  const contractStart = runtimeSource.indexOf('RETIREMENT_CONFLICT_CONTRACT');
+  const contractBody = runtimeSource.slice(contractStart, runtimeSource.indexOf('];', contractStart));
+  const pinned = [...contractBody.matchAll(/match:\s*'([^']+)'/g)].map((m) => m[1] as string);
+
+  test('the contract still pins exactly the 8 known conflict classes', () => {
+    expect([...pinned].sort()).toEqual([
+      'changed evidence retained',
+      'kept both versions for review',
+      'kept live and incoming versions for review',
+      'kept live removal transaction for review',
+      'restored source changed during cleanup',
+      'restored source changed during disposal',
+      'source changed after planning',
+      'source changed at move boundary',
+    ]);
+  });
+
+  // Producer-side binding for every pinned class. Classes 1-5 (retirement engine:
+  // 'source changed ...', 'changed evidence retained', 'restored source ...') are
+  // PROVOKED end-to-end across agent-sync.test.ts's batch suite, and 'source
+  // changed after planning' is re-provoked below through translateRetirementConflicts
+  // to prove the translation wiring on a real engine throw. Classes 6-8
+  // (managed-skill-tree: 'kept ... for review') are bound by static source
+  // presence — provoking them needs the managed-dir promotion failpoint seams,
+  // which are exercised directly in agent-sync.test.ts.
+  for (const substring of pinned) {
+    test(`"${substring}" is emitted by agent-sync and recognized by the contract`, () => {
+      expect(agentSyncSource).toContain(substring); // producer still emits it verbatim
+      expect(() =>
+        translateRetirementConflicts(() => {
+          throw new Error(`fallback retirement ${substring} at /path`);
+        }),
+      ).toThrow('needs manual recovery'); // consumer still recognizes it
+    });
+  }
+
+  test('provoked end-to-end: a source edited after planning throws the pinned message and is translated', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'r8-drift-'));
+    try {
+      const fallback = join(tmp, 'agents', 'skills');
+      const skill = join(fallback, 'wish');
+      mkdirSync(skill, { recursive: true });
+      writeFileSync(join(skill, 'SKILL.md'), '# wish\n', 'utf8');
+      const digest = computeDirDigest(skill);
+      writeFileSync(
+        join(skill, '.genie-sync.json'),
+        `${JSON.stringify({ managedBy: 'genie-agent-sync', version: 'v1', digest, syncedAt: 'now', identityVersion: 2 })}\n`,
+        'utf8',
+      );
+      const target = join(tmp, 'target', 'wish');
+      mkdirSync(target, { recursive: true });
+      writeFileSync(join(target, 'SKILL.md'), '# wish\n', 'utf8');
+      const plan = planCodexFallbackRetirement({
+        fallbackSkillsDir: fallback,
+        skillNames: ['wish'],
+        verifiedTargets: [
+          { skillName: 'wish', path: target, physicalDigest: computeDirDigest(target), canonicalVerified: true },
+        ],
+      });
+      expect(plan.accepted).toHaveLength(1);
+      // Personal edit after planning → the move-time identity check fails.
+      writeFileSync(join(skill, 'USER.txt'), 'edited after planning\n', 'utf8');
+      let raw = '';
+      expect(() =>
+        translateRetirementConflicts(() => {
+          try {
+            return applyCodexFallbackRetirement(plan);
+          } catch (error) {
+            raw = error instanceof Error ? error.message : String(error);
+            throw error;
+          }
+        }),
+      ).toThrow('needs manual recovery');
+      expect(raw).toContain('source changed after planning'); // the real throw carries the pinned substring
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });
 

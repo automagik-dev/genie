@@ -47,6 +47,8 @@ import {
   type AgentSyncOptions,
   type AgentSyncReport,
   CODEX_FALLBACK_RETIREMENT_ROOT,
+  type CodexFallbackRetirementFailpoint,
+  type FsyncPathDeps,
   LIFECYCLE_LEASE_OWNER_ENV,
   LIFECYCLE_LEASE_PATH_ENV,
   TARGET_NAME,
@@ -55,6 +57,8 @@ import {
   applyCodexFallbackRetirement,
   atomicRenameDirectoryNoClobber,
   computeDirDigest,
+  currentSyncLockHostId,
+  fsyncPathForTest,
   inspectManagedWorkflow,
   lifecycleLockPath,
   planCodexFallbackRetirement,
@@ -65,6 +69,7 @@ import {
   removeManagedWorkflow,
   resolveGenieSource,
   resolveLinuxRenameat2,
+  retirementTransactionId,
   runAgentSync,
   stampWorkflow,
   writeAllSync,
@@ -1789,6 +1794,15 @@ const LOCK_NAME = '.agent-sync.lock';
 const MARKER_NAME = '.last-agent-sync';
 
 describe('cross-process sync lock', () => {
+  // Same-host identity every writer (this process + spawned runners on this
+  // machine) embeds as the 4th owner-record field; a lock is stealable ONLY when
+  // this matches AND the pid is dead. A pid past pid_max is always dead.
+  const HOST = currentSyncLockHostId();
+  const DEAD_PID = 2147483647;
+  const TOKEN = '0123456789abcdef0123456789abcdef';
+  /** Same-host owner record with an explicitly dead/live pid and 'unknown' start identity. */
+  const sameHostRecord = (pid: number) => `${pid}:${TOKEN}:unknown:${HOST}\n`;
+
   test('a fresh lock held elsewhere skips the whole sync with an advisory — zero writes, lock untouched', () => {
     present(fixture.claudeDir);
     const lockPath = join(fixture.genieHome, LOCK_NAME);
@@ -1806,10 +1820,10 @@ describe('cross-process sync lock', () => {
     expect(existsSync(lockPath)).toBe(true); // never releases someone else's live lock
   });
 
-  test('a stale lock (older than the age-out) is stolen and the sync proceeds', () => {
+  test('a stale SAME-HOST lock with a dead pid is stolen and the sync proceeds', () => {
     present(fixture.claudeDir);
     const lockPath = join(fixture.genieHome, LOCK_NAME);
-    writeFile(lockPath, '2147483647\n');
+    writeFile(lockPath, sameHostRecord(DEAD_PID)); // same host + dead pid → the only stealable shape
     const staleSec = (Date.now() - 11 * 60 * 1000) / 1000; // 11 min > 10 min age-out
     utimesSync(lockPath, staleSec, staleSec);
 
@@ -1820,10 +1834,45 @@ describe('cross-process sync lock', () => {
     expect(existsSync(lockPath)).toBe(false); // released after the run
   });
 
-  test('an ordinary stale timestamp never permits stealing from a live PID', () => {
+  test('a stale CROSS-HOST lock is never stolen even with a locally-dead pid (double-writer safety)', () => {
     present(fixture.claudeDir);
     const lockPath = join(fixture.genieHome, LOCK_NAME);
-    writeFile(lockPath, `${process.pid}:0123456789abcdef0123456789abcdef\n`);
+    // A peer on an NFS / pid-namespace-shared $HOME: its pid may be dead HERE but
+    // that says nothing about the remote host, so the lock must never be stolen.
+    writeFile(lockPath, `${DEAD_PID}:${TOKEN}:unknown:${'f'.repeat(64)}\n`);
+    const staleSec = (Date.now() - 11 * 60 * 1000) / 1000;
+    utimesSync(lockPath, staleSec, staleSec);
+
+    const report = run();
+
+    expect(report.skipped).toContain('holds the lock'); // fail closed, no steal
+    expect(existsSync(join(fixture.claudeDir, 'skills'))).toBe(false);
+    expect(readFileSync(lockPath, 'utf8')).toContain(`:${'f'.repeat(64)}`); // untouched
+  });
+
+  test('a stale OLD-FORMAT lock (no host field) keeps legacy pid+mtime steal semantics (shell parity)', () => {
+    present(fixture.claudeDir);
+    const lockPath = join(fixture.genieHome, LOCK_NAME);
+    // Pre-upgrade / shell-written record: no host field. Deliberately NOT refused
+    // (host-bearing cross-host records are — see the CROSS-HOST test): host-less
+    // records fall through to legacy pid+mtime liveness, in lockstep with
+    // install.sh which writes and reaps this exact shape. A dead pid + stale mtime
+    // is therefore reaped exactly as before, so the shell<->TS parity holds.
+    writeFile(lockPath, `${DEAD_PID}:${TOKEN}:unknown\n`);
+    const staleSec = (Date.now() - 11 * 60 * 1000) / 1000;
+    utimesSync(lockPath, staleSec, staleSec);
+
+    const report = run();
+
+    expect(report.skipped).toBeUndefined();
+    expect(skillAction(agentReport(report, 'claude'), 'alpha')).toBe('created');
+    expect(existsSync(lockPath)).toBe(false); // stolen (legacy behavior) then released
+  });
+
+  test('an ordinary stale timestamp never permits stealing from a live SAME-HOST PID', () => {
+    present(fixture.claudeDir);
+    const lockPath = join(fixture.genieHome, LOCK_NAME);
+    writeFile(lockPath, sameHostRecord(process.pid)); // live pid, same host, 'unknown' identity → live
     const staleSec = (Date.now() - 11 * 60 * 1000) / 1000;
     utimesSync(lockPath, staleSec, staleSec);
 
@@ -1834,10 +1883,10 @@ describe('cross-process sync lock', () => {
     expect(readFileSync(lockPath, 'utf8')).toContain(`${process.pid}:`);
   });
 
-  test('a stale lock with a reused live PID but mismatched start identity is stealable', () => {
+  test('a stale SAME-HOST lock with a reused live PID but mismatched start identity is stealable', () => {
     present(fixture.claudeDir);
     const lockPath = join(fixture.genieHome, LOCK_NAME);
-    writeFile(lockPath, `${process.pid}:0123456789abcdef0123456789abcdef:${'0'.repeat(64)}\n`);
+    writeFile(lockPath, `${process.pid}:${TOKEN}:${'0'.repeat(64)}:${HOST}\n`);
     const staleSec = (Date.now() - 11 * 60 * 1000) / 1000;
     utimesSync(lockPath, staleSec, staleSec);
 
@@ -1862,10 +1911,10 @@ describe('cross-process sync lock', () => {
     expect(existsSync(lockPath)).toBe(false);
   });
 
-  test('a far-future lock with a live owner is not stolen under clock skew', () => {
+  test('a far-future lock with a live SAME-HOST owner is not stolen under clock skew', () => {
     present(fixture.claudeDir);
     const lockPath = join(fixture.genieHome, LOCK_NAME);
-    writeFile(lockPath, `${process.pid}\n`);
+    writeFile(lockPath, sameHostRecord(process.pid)); // live, same host → live regardless of a skewed mtime
     const futureSec = (Date.now() + 11 * 60 * 1000) / 1000;
     utimesSync(lockPath, futureSec, futureSec);
 
@@ -1873,16 +1922,16 @@ describe('cross-process sync lock', () => {
 
     expect(report.skipped).toContain('holds the lock');
     expect(existsSync(join(fixture.claudeDir, 'skills'))).toBe(false);
-    expect(readFileSync(lockPath, 'utf8')).toBe(`${process.pid}\n`);
+    expect(readFileSync(lockPath, 'utf8')).toBe(sameHostRecord(process.pid));
   });
 
-  test('an aged, dead-owner steal guard is reaped so a subsequent run proceeds', () => {
+  test('an aged, dead-owner SAME-HOST steal guard is reaped so a subsequent run proceeds', () => {
     present(fixture.claudeDir);
     const lockPath = join(fixture.genieHome, LOCK_NAME);
     const guardPath = `${lockPath}.steal`;
     // A crashed run left both a stale lock and the abandoned steal guard behind.
-    writeFile(lockPath, '999999:0123456789abcdef0123456789abcdef:unknown\n');
-    writeFile(guardPath, '999999:abcdefabcdefabcdefabcdefabcdefab:unknown\n');
+    writeFile(lockPath, sameHostRecord(DEAD_PID));
+    writeFile(guardPath, `${DEAD_PID}:abcdefabcdefabcdefabcdefabcdefab:unknown:${HOST}\n`);
     const agedSec = (Date.now() - 11 * 60 * 1000) / 1000; // 11 min > 10 min age-out
     utimesSync(lockPath, agedSec, agedSec);
     utimesSync(guardPath, agedSec, agedSec);
@@ -1904,25 +1953,25 @@ describe('cross-process sync lock', () => {
     present(fixture.claudeDir);
     const lockPath = join(fixture.genieHome, LOCK_NAME);
     const guardPath = `${lockPath}.steal`;
-    writeFile(lockPath, '999999:0123456789abcdef0123456789abcdef:unknown\n');
+    writeFile(lockPath, sameHostRecord(DEAD_PID));
     const agedSec = (Date.now() - 11 * 60 * 1000) / 1000;
     utimesSync(lockPath, agedSec, agedSec);
-    writeFile(guardPath, '999999:abcdefabcdefabcdefabcdefabcdefab:unknown\n'); // fresh mtime
+    writeFile(guardPath, `${DEAD_PID}:abcdefabcdefabcdefabcdefabcdefab:unknown:${HOST}\n`); // fresh mtime
 
     const report = run();
 
     expect(report.skipped).toContain('holds the lock');
     expect(existsSync(guardPath)).toBe(true); // an in-window guard is a live stealer — untouched
     expect(existsSync(join(fixture.claudeDir, 'skills'))).toBe(false); // zero writes
-    expect(readFileSync(lockPath, 'utf8')).toContain('999999:'); // stale lock left in place
+    expect(readFileSync(lockPath, 'utf8')).toContain(`${DEAD_PID}:`); // stale lock left in place
   });
 
-  test('a future-mtime dead-owner steal guard is reaped (far-future = debris, per ± window)', () => {
+  test('a future-mtime dead-owner SAME-HOST steal guard is reaped (far-future = debris, per ± window)', () => {
     present(fixture.claudeDir);
     const lockPath = join(fixture.genieHome, LOCK_NAME);
     const guardPath = `${lockPath}.steal`;
-    writeFile(lockPath, '999999:0123456789abcdef0123456789abcdef:unknown\n');
-    writeFile(guardPath, '999999:abcdefabcdefabcdefabcdefabcdefab:unknown\n');
+    writeFile(lockPath, sameHostRecord(DEAD_PID));
+    writeFile(guardPath, `${DEAD_PID}:abcdefabcdefabcdefabcdefabcdefab:unknown:${HOST}\n`);
     const agedSec = (Date.now() - 11 * 60 * 1000) / 1000;
     const futureSec = (Date.now() + 11 * 60 * 1000) / 1000; // implausibly far future
     utimesSync(lockPath, agedSec, agedSec);
@@ -1942,11 +1991,11 @@ describe('cross-process sync lock', () => {
     const lockPath = join(fixture.genieHome, LOCK_NAME);
     const guardPath = `${lockPath}.steal`;
     const target = join(fixture.root, 'guard-symlink-target');
-    writeFile(lockPath, '999999:0123456789abcdef0123456789abcdef:unknown\n');
+    writeFile(lockPath, sameHostRecord(DEAD_PID)); // same-host dead lock → reach stealStaleLock, which then meets the guard
     const agedSec = (Date.now() - 11 * 60 * 1000) / 1000;
     utimesSync(lockPath, agedSec, agedSec);
     // Aged, dead-owner target: a symlink-FOLLOWING reap would have unlinked the guard.
-    writeFile(target, '999999:abcdefabcdefabcdefabcdefabcdefab:unknown\n');
+    writeFile(target, `${DEAD_PID}:abcdefabcdefabcdefabcdefabcdefab:unknown:${HOST}\n`);
     utimesSync(target, agedSec, agedSec);
     symlinkSync(target, guardPath);
 
@@ -1962,8 +2011,10 @@ describe('cross-process sync lock', () => {
     const lockPath = join(fixture.genieHome, LOCK_NAME);
     const target = join(fixture.root, 'lock-symlink-target');
     const agedSec = (Date.now() - 11 * 60 * 1000) / 1000;
-    // Aged, dead-owner target: a symlink-following reap would unlink the lock link.
-    writeFile(target, '999999:0123456789abcdef0123456789abcdef:unknown\n');
+    // Aged, dead-owner SAME-HOST target: read through the symlink it is a dead
+    // same-host owner, so acquisition reaches stealStaleLock — whose lstat refusal
+    // (never follow a symlinked lock) is what must leave the link intact.
+    writeFile(target, sameHostRecord(DEAD_PID));
     utimesSync(target, agedSec, agedSec);
     symlinkSync(target, lockPath);
 
@@ -2137,9 +2188,9 @@ describe('cross-process sync lock', () => {
     present(fixture.codexDir);
     present(fixture.hermesHome);
     const runnerPath = writeSyncRunner();
-    // A crashed run's stale lock that every racer will try to steal.
+    // A crashed run's stale SAME-HOST lock (dead pid) that every racer will try to steal.
     const lockPath = join(fixture.genieHome, LOCK_NAME);
-    writeFile(lockPath, '2147483647\n');
+    writeFile(lockPath, sameHostRecord(DEAD_PID));
     const staleSec = (Date.now() - 11 * 60 * 1000) / 1000; // 11 min > 10 min age-out
     utimesSync(lockPath, staleSec, staleSec);
 
@@ -3415,6 +3466,192 @@ describe('Codex fallback batch retirement', () => {
     expect(() => applyCodexFallbackRetirement(plan)).toThrow('source changed after planning');
     expect(readFileSync(join(alpha.path, 'USER.txt'), 'utf8')).toBe('integration content\n');
   });
+
+  // ---------------------------------------------------------------------------
+  // Fix 1 — residual last-copy-loss: a re-run's pristine archive must never
+  // overwrite a prior generation's changed evidence.
+  // ---------------------------------------------------------------------------
+
+  test('three-cycle evidence: a pristine re-run archive never overwrites the cycle-1 changed evidence', () => {
+    const { alpha, beta, plan } = batchFixture();
+    const txnDir = join(plan.fallbackSkillsDir, RETIREMENT_ROOT, `txn-${plan.transactionId}`);
+
+    // Cycle 1: a personal edit lands in alpha's move TOCTOU window. The edited
+    // tree is quarantined, destination verification fails, and the restore
+    // republishes the edited tree to live AND archives the edited quarantine
+    // copy to evidence/alpha. The transaction ends non-committed.
+    expect(() =>
+      applyCodexFallbackRetirement(plan, {
+        failpoint: (point) => {
+          if (point === 'after-move-boundary-identification:0') {
+            writeFile(join(alpha.path, 'USER.txt'), 'cycle-1 user edit\n');
+          }
+        },
+      }),
+    ).toThrow('destination verification failed');
+    expect(readFileSync(join(txnDir, 'evidence', 'alpha', 'USER.txt'), 'utf8')).toBe('cycle-1 user edit\n');
+
+    // Cycles 2/3: the user reverts alpha byte-exactly to genie content. On the
+    // same-txn re-run the initial restore leaves both live trees pristine and the
+    // forward pass re-quarantines them; a mid-batch failure on beta then
+    // re-enters restore for alpha (destinationMatches true → restoreDigest
+    // undefined) → republish → cleanup → dispose, which now finds the pre-existing
+    // DIFFERING evidence/alpha. The old engine rmSync'd it (the only copy of the
+    // user's edited bytes); the fix claims a fresh suffixed path instead.
+    rmSync(join(alpha.path, 'USER.txt')); // revert to the exact genie tree
+    expect(computeDirDigest(alpha.path)).toBe(alpha.digest);
+    expect(() =>
+      applyCodexFallbackRetirement(plan, {
+        failpoint: (point) => {
+          if (point === 'before-move:1') writeFile(join(beta.path, 'USER.txt'), 'beta perturbation\n');
+        },
+      }),
+    ).toThrow('source changed at move boundary');
+
+    // Cycle-1 changed evidence SURVIVES byte-for-byte; the pristine re-run copy is
+    // archived to a distinct suffixed path, never overwriting it.
+    expect(readFileSync(join(txnDir, 'evidence', 'alpha', 'USER.txt'), 'utf8')).toBe('cycle-1 user edit\n');
+    const suffixed = readdirSync(join(txnDir, 'evidence')).filter((n) => n.startsWith('alpha.'));
+    expect(suffixed).toHaveLength(1);
+    expect(existsSync(join(txnDir, 'evidence', suffixed[0]!, 'USER.txt'))).toBe(false); // pristine re-run copy
+    expect(computeDirDigest(join(txnDir, 'evidence', suffixed[0]!))).toBe(alpha.digest);
+    const journal = JSON.parse(readFileSync(join(txnDir, 'journal.json'), 'utf8')) as {
+      entries: Array<{ skillName: string; evidence?: string }>;
+    };
+    expect(journal.entries.find((e) => e.skillName === 'alpha')?.evidence).toBe(suffixed[0]);
+
+    // The suffixed-evidence journal still replays: a further retry is a clean
+    // recoverable conflict (beta stayed live-modified) and both archives survive.
+    expect(() => applyCodexFallbackRetirement(plan)).toThrow('source changed after planning');
+    expect(readFileSync(join(txnDir, 'evidence', 'alpha', 'USER.txt'), 'utf8')).toBe('cycle-1 user edit\n');
+    expect(existsSync(join(txnDir, 'evidence', suffixed[0]!))).toBe(true);
+  });
+
+  test('an existing byte-identical evidence archive is disposed as a duplicate (no suffix proliferation)', () => {
+    // A byte-identical pre-existing archive is disposed in place (prior behavior),
+    // never suffixed. Reached by two mid-batch restores of the SAME pristine alpha:
+    // run 1 archives pristine alpha to evidence/alpha; run 2 re-quarantines an
+    // identical pristine alpha, and disposal recognizes the duplicate.
+    const { alpha, beta, plan } = batchFixture();
+    const txnDir = join(plan.fallbackSkillsDir, RETIREMENT_ROOT, `txn-${plan.transactionId}`);
+    const perturbBeta = {
+      failpoint: (point: CodexFallbackRetirementFailpoint) => {
+        if (point === 'before-move:1') writeFile(join(beta.path, 'USER.txt'), 'beta perturbation\n');
+      },
+    } as const;
+
+    // Run 1: alpha (pristine) is quarantined, then restore archives it to evidence/alpha.
+    expect(() => applyCodexFallbackRetirement(plan, perturbBeta)).toThrow('source changed at move boundary');
+    expect(computeDirDigest(join(txnDir, 'evidence', 'alpha'))).toBe(alpha.digest);
+
+    // Revert beta; run 2 re-quarantines an IDENTICAL pristine alpha and re-disposes.
+    rmSync(join(beta.path, 'USER.txt'));
+    expect(() => applyCodexFallbackRetirement(plan, perturbBeta)).toThrow('source changed at move boundary');
+
+    const archives = readdirSync(join(txnDir, 'evidence')).filter((n) => n.startsWith('alpha'));
+    expect(archives).toEqual(['alpha']); // duplicate disposed in place — no alpha.2
+    expect(computeDirDigest(join(txnDir, 'evidence', 'alpha'))).toBe(alpha.digest);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Fix 2 — cross-host lock steal safety (retirement lock reuses acquireSyncLock).
+  // ---------------------------------------------------------------------------
+
+  test('a fresh retirement lock records this host identity as the 4th owner field', () => {
+    const { plan } = batchFixture();
+    let record = '';
+    const lockPath = join(plan.fallbackSkillsDir, RETIREMENT_ROOT, '.retirement.lock');
+    const result = applyCodexFallbackRetirement(plan, {
+      failpoint: (point) => {
+        if (point === 'after-journal-durable' && record === '') record = readFileSync(lockPath, 'utf8').trim();
+      },
+    });
+    expect(result.status).toBe('committed');
+    // pid:token32:(sha64|unknown):host64 — the host field is currentSyncLockHostId().
+    expect(record).toMatch(/^\d+:[a-f0-9]{32}:(?:[a-f0-9]{64}|unknown):[a-f0-9]{64}$/);
+    expect(record.endsWith(`:${currentSyncLockHostId()}`)).toBe(true);
+  });
+
+  test('a stale CROSS-HOST retirement lock is never stolen — apply fails closed with no data changed', () => {
+    const { alpha, beta, plan } = batchFixture();
+    const txnRoot = join(plan.fallbackSkillsDir, RETIREMENT_ROOT);
+    mkdirSync(txnRoot, { recursive: true });
+    const lockPath = join(txnRoot, '.retirement.lock');
+    // A peer holding the lock on another host of a shared $HOME; its pid is dead
+    // HERE but that proves nothing about the remote host, so it must not be stolen.
+    writeFileSync(lockPath, `2147483647:${'0'.repeat(32)}:unknown:${'f'.repeat(64)}\n`, 'utf8');
+    const staleSec = (Date.now() - 11 * 60 * 1000) / 1000;
+    utimesSync(lockPath, staleSec, staleSec);
+    const prev = process.env.GENIE_RETIREMENT_LOCK_WAIT_MS;
+    process.env.GENIE_RETIREMENT_LOCK_WAIT_MS = '120'; // bounded deadline → fail closed fast
+    try {
+      expect(() => applyCodexFallbackRetirement(plan)).toThrow('lock contended; no data changed');
+    } finally {
+      if (prev === undefined) Reflect.deleteProperty(process.env, 'GENIE_RETIREMENT_LOCK_WAIT_MS');
+      else process.env.GENIE_RETIREMENT_LOCK_WAIT_MS = prev;
+    }
+    // Nothing moved: both sources intact, no quarantine, foreign lock untouched.
+    expect(computeDirDigest(alpha.path)).toBe(alpha.digest);
+    expect(computeDirDigest(beta.path)).toBe(beta.digest);
+    expect(existsSync(join(txnRoot, `txn-${plan.transactionId}`, 'quarantine'))).toBe(false);
+    expect(readFileSync(lockPath, 'utf8')).toContain(`:${'f'.repeat(64)}`);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Fix 3 — forged-journal entry-name confinement (plan time + re-validation).
+  // ---------------------------------------------------------------------------
+
+  test('plan time rejects dot-prefixed and reserved-infra skill names', () => {
+    const fallback = join(fixture.root, 'confinement-plan');
+    mkdirSync(fallback, { recursive: true });
+    for (const name of ['.hidden', 'evidence', 'quarantine', 'journal.json', '.genie-codex-fallback-retirement']) {
+      expect(() => planCodexFallbackRetirement({ fallbackSkillsDir: fallback, skillNames: [name] })).toThrow(
+        'unique safe path entries',
+      );
+    }
+  });
+
+  test('forged-journal defense: recovery rejects a hash-consistent journal naming engine infrastructure', () => {
+    // fixture.root is already canonical (the batchFixture tests rely on it), so
+    // journal.fallbackSkillsDir === canonicalPhysicalFallbackRoot(fallback).
+    const fallback = join(fixture.root, 'confinement-recover');
+    mkdirSync(fallback, { recursive: true });
+    const txnRoot = join(fallback, RETIREMENT_ROOT);
+    for (const evil of ['.genie-codex-fallback-retirement', 'evidence', '.evil']) {
+      const accepted = [
+        {
+          skillName: evil,
+          source: join(fallback, evil),
+          markerVersion: 'v1',
+          physicalDigest: 'a'.repeat(64),
+          markerDigest: 'b'.repeat(64),
+          targetDigest: null,
+          ownership: 'historical-tuple' as const,
+        },
+      ];
+      const transactionId = retirementTransactionId(accepted); // self-consistent hash → passes the identity gate
+      const txnDir = join(txnRoot, `txn-${transactionId}`);
+      const quarantined = join(txnDir, 'quarantine', evil, 'SKILL.md');
+      writeFile(quarantined, '# forged\n'); // non-empty quarantine → not pre-journal debris
+      writeFile(
+        join(txnDir, 'journal.json'),
+        `${JSON.stringify({
+          version: 1,
+          fallbackSkillsDir: fallback,
+          transactionId,
+          accepted,
+          preserved: [],
+          phase: 'moving',
+          entries: accepted.map((a) => ({ ...a, destination: join(txnDir, 'quarantine', evil), phase: 'moved' })),
+        })}\n`,
+      );
+      // Rejected at re-validation (the isSafeEntryName gate, not the identity gate),
+      // and the forged tree is left in place — never moved/restored out of the txn.
+      expect(() => recoverCodexFallbackRetirements(fallback)).toThrow(`txn-${transactionId}`);
+      expect(existsSync(quarantined)).toBe(true);
+      rmSync(txnDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('Codex fallback allowlist generator', () => {
@@ -3572,5 +3809,61 @@ describe('no-clobber directory publish (G5 musl portability)', () => {
     atomicRenameDirectoryNoClobber(stagedTree('cache-2'), join(fixture.root, 'cache-t2'), { opener, probe });
     expect(calls).toBe(afterFirst); // the second publish reuses the memoized probe — no re-detection
     if (process.platform === 'linux') expect(afterFirst).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fix 4 — directory-metadata fsync tolerance (Windows / network-fs failpoint).
+// A directory fsync that the platform refuses must NOT brick journal-prepare;
+// FILE fsync stays strict because journal/staging byte durability is load-bearing.
+// ---------------------------------------------------------------------------
+
+describe('fsyncPath directory-metadata flush tolerance (Fix 4)', () => {
+  const errno = (code: string): NodeJS.ErrnoException => Object.assign(new Error(code), { code });
+  const dir = (name: string): string => {
+    const d = join(fixture.root, name);
+    mkdirSync(d, { recursive: true });
+    return d;
+  };
+  const throwingFsync = (code: string): FsyncPathDeps['fsync'] =>
+    (() => {
+      throw errno(code);
+    }) as unknown as FsyncPathDeps['fsync'];
+
+  for (const code of ['EISDIR', 'EPERM', 'EINVAL', 'ENOTSUP'] as const) {
+    test(`a DIRECTORY fsync raising ${code} is swallowed (best-effort)`, () => {
+      expect(() => fsyncPathForTest(dir(`fsync-dir-${code}`), { fsync: throwingFsync(code) })).not.toThrow();
+    });
+  }
+
+  test('a DIRECTORY that cannot even be opened for fsync is tolerated', () => {
+    const open = (() => {
+      throw errno('EISDIR');
+    }) as unknown as FsyncPathDeps['open'];
+    expect(() => fsyncPathForTest(dir('fsync-open-eisdir'), { open })).not.toThrow();
+  });
+
+  test('a DIRECTORY fsync is skipped entirely on win32 (open never attempted)', () => {
+    let opened = false;
+    const open = (() => {
+      opened = true;
+      return 0;
+    }) as unknown as FsyncPathDeps['open'];
+    fsyncPathForTest(dir('fsync-win32'), { platform: 'win32', open });
+    expect(opened).toBe(false);
+  });
+
+  test('a FILE fsync failure stays strict — journal/staging durability is load-bearing', () => {
+    const f = join(fixture.root, 'fsync-file-strict');
+    writeFile(f, 'durable\n');
+    expect(() => fsyncPathForTest(f, { fsync: throwingFsync('EIO') })).toThrow('EIO');
+  });
+
+  test('a DIRECTORY fsync raising a NON-tolerable code still propagates', () => {
+    expect(() => fsyncPathForTest(dir('fsync-dir-eio'), { fsync: throwingFsync('EIO') })).toThrow('EIO');
+  });
+
+  test('a healthy directory fsync succeeds through the real syscalls', () => {
+    expect(() => fsyncPathForTest(dir('fsync-dir-ok'))).not.toThrow();
   });
 });

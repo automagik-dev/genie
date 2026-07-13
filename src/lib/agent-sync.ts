@@ -47,7 +47,7 @@ import {
   writeFileSync,
   writeSync,
 } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, hostname } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import historicalCodexFallbackAllowlist from '../fixtures/codex-fallback-allowlist.json';
 import { resolveClaudeDir, resolveCodexDir, resolveGenieHome, resolveHermesHome } from './genie-home.js';
@@ -1115,7 +1115,8 @@ function classifyCodexFallback(
   };
 }
 
-function retirementTransactionId(accepted: readonly CodexFallbackAcceptedIdentity[], generation = 0): string {
+/** Deterministic transaction id (sha256[:32]) — exported so a forged-journal test can build a self-consistent journal. */
+export function retirementTransactionId(accepted: readonly CodexFallbackAcceptedIdentity[], generation = 0): string {
   const stable = accepted.map((entry) => ({
     skillName: entry.skillName,
     markerVersion: entry.markerVersion,
@@ -1256,13 +1257,58 @@ export interface CodexFallbackRetirementResult {
   retired: string[];
 }
 
-function fsyncPath(path: string): void {
-  const fd = openSync(path, constants.O_RDONLY);
+/** Errors a DIRECTORY-metadata flush may legitimately raise on platforms/filesystems that refuse it. */
+function isTolerableDirectoryFsyncError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === 'EISDIR' || code === 'EPERM' || code === 'EINVAL' || code === 'ENOTSUP';
+}
+
+/**
+ * Test seam for {@link fsyncPath}: inject the open/fsync syscalls (and platform)
+ * so a directory-metadata flush can be forced to throw the way Windows and some
+ * network filesystems do. Real callers pass nothing.
+ */
+export interface FsyncPathDeps {
+  open?: typeof openSync;
+  fsync?: typeof fsyncSync;
+  platform?: NodeJS.Platform;
+}
+
+/**
+ * fsync a path's metadata to disk. FILE fsync is STRICT — journal and staging
+ * byte durability is the load-bearing crash-safety guarantee, so a failure
+ * propagates. DIRECTORY-metadata flush is best-effort: Windows (and some network
+ * filesystems) refuse to open/fsync a directory fd (EISDIR/EPERM/EINVAL/ENOTSUP),
+ * which must NOT brick the codex step of `genie update` at journal-prepare. On
+ * win32 a directory fsync is skipped entirely; elsewhere the tolerable errors are
+ * swallowed. A durable rename still lands; only the extra directory-entry flush
+ * is skipped, exactly as on filesystems that never guaranteed it.
+ */
+function fsyncPath(path: string, deps: FsyncPathDeps = {}): void {
+  const open = deps.open ?? openSync;
+  const fsync = deps.fsync ?? fsyncSync;
+  const platform = deps.platform ?? process.platform;
+  const isDirectory = lstatSafe(path)?.isDirectory() ?? false;
+  if (isDirectory && platform === 'win32') return; // never fsync a directory fd on Windows
+  let fd: number;
   try {
-    fsyncSync(fd);
+    fd = open(path, constants.O_RDONLY);
+  } catch (error) {
+    if (isDirectory && isTolerableDirectoryFsyncError(error)) return; // best-effort directory flush
+    throw error;
+  }
+  try {
+    fsync(fd);
+  } catch (error) {
+    if (!(isDirectory && isTolerableDirectoryFsyncError(error))) throw error; // FILE fsync stays strict
   } finally {
     closeSync(fd);
   }
+}
+
+/** Directly exercisable {@link fsyncPath} for the directory-fsync-tolerance proof (Windows/network-fs failpoint). */
+export function fsyncPathForTest(path: string, deps: FsyncPathDeps = {}): void {
+  fsyncPath(path, deps);
 }
 
 /**
@@ -1672,12 +1718,44 @@ function cleanupRestoredRetirementDestination(
 }
 
 /**
+ * Allocate an unused suffixed evidence basename (`<skill>.2`, `.3`, …) when the
+ * primary `evidence/<skill>` slot already holds a DIFFERING archived tree that
+ * must be preserved. Probed under the single-writer retirement lock; the
+ * no-clobber publish at the call site is the defense-in-depth guard against a
+ * probe/rename race. Both the path and its basename are returned so the chosen
+ * name can be journaled (it must round-trip {@link isSafeEntryName} — `<skill>.N`
+ * is not dot-prefixed and never collides with reserved infra names).
+ */
+function claimFreshEvidencePath(
+  evidenceRoot: string,
+  skillName: string,
+  transactionDir: string,
+): { path: string; name: string } {
+  for (let suffix = 2; suffix < 1000; suffix += 1) {
+    const name = `${skillName}.${suffix}`;
+    const path = join(evidenceRoot, name);
+    if (!isInside(transactionDir, path)) throw new Error(`unconfined retirement evidence: ${path}`);
+    if (lstatSafe(path) === null) return { path, name };
+  }
+  throw new Error(`could not allocate a fresh retirement evidence path for ${skillName}`);
+}
+
+/**
  * Archive the quarantine copy aside with a single atomic rename instead of a
- * recursive delete. The last intact copy is MOVED to `evidence/<skillName>`,
- * never destroyed, so no interval exists in which zero copies of the tree are
- * on disk. After the move a re-verify converts a source that vanished during
- * the check/disposal window into a recoverable conflict rather than a lost
- * commit — the journal never records `restored` while the live tree is absent.
+ * recursive delete. The last intact copy is MOVED to `evidence/<skillName>` (or
+ * a fresh suffixed sibling), never destroyed, so no interval exists in which
+ * zero copies of the tree are on disk. After the move a re-verify converts a
+ * source that vanished during the check/disposal window into a recoverable
+ * conflict rather than a lost commit — the journal never records `restored`
+ * while the live tree is absent.
+ *
+ * An OCCUPIED primary slot is only ever removed when it holds a byte-identical
+ * duplicate of the copy being archived. A DIFFERING archive — the residual
+ * last-copy-loss path: a cycle-1 restore archives the user's edited bytes to
+ * `evidence/<skill>`, then a later same-txn generation re-moves a byte-pristine
+ * tree and re-enters restore with `destinationMatches` true — is preserved
+ * in place and the incoming copy is moved to a fresh suffixed path via the
+ * no-clobber primitive. The chosen archive path is journaled BEFORE the move.
  */
 function disposeQuarantineToEvidence(
   transactionDir: string,
@@ -1691,13 +1769,35 @@ function disposeQuarantineToEvidence(
   failpoint?.(`before-quarantine-disposal:${index}`);
   const evidenceRoot = join(transactionDir, RETIREMENT_EVIDENCE_DIR);
   if (lstatSafe(evidenceRoot) === null) mkdirSync(evidenceRoot, { mode: 0o700 });
-  const evidencePath = join(evidenceRoot, entry.skillName);
-  if (!isInside(transactionDir, evidencePath)) throw new Error(`unconfined retirement evidence: ${evidencePath}`);
-  if (lstatSafe(evidencePath) !== null) rmSync(evidencePath, { recursive: true, force: true }); // only our own prior half-archive
-  entry.evidence = entry.skillName; // persist archive intent BEFORE the move
+  const primaryEvidence = join(evidenceRoot, entry.skillName);
+  if (!isInside(transactionDir, primaryEvidence)) throw new Error(`unconfined retirement evidence: ${primaryEvidence}`);
+  const existing = lstatSafe(primaryEvidence);
+  const incomingDigest = existing === null ? null : exactPhysicalDirectoryDigest(paths.destination);
+  const duplicate =
+    existing !== null && incomingDigest !== null && exactPhysicalDirectoryDigest(primaryEvidence) === incomingDigest;
+
+  let evidencePath: string;
+  if (duplicate || existing === null) {
+    // Empty slot, or the primary archive already holds these exact bytes. In the
+    // duplicate case removing the archive and re-moving the byte-identical copy
+    // loses nothing (this is the prior single-archive behavior, kept verbatim).
+    evidencePath = primaryEvidence;
+    entry.evidence = entry.skillName;
+  } else {
+    // Occupied by a DIFFERING tree that must survive: claim a fresh suffixed
+    // path and NEVER delete the existing archive.
+    const fresh = claimFreshEvidencePath(evidenceRoot, entry.skillName, transactionDir);
+    evidencePath = fresh.path;
+    entry.evidence = fresh.name;
+  }
   journal.phase = 'restoring';
-  writeDurableRetirementJournal(transactionDir, journal, failpoint);
-  renameSync(paths.destination, evidencePath); // ATOMIC — the last copy is MOVED aside, never deleted
+  writeDurableRetirementJournal(transactionDir, journal, failpoint); // persist the chosen archive path BEFORE the move
+  if (duplicate) rmSync(primaryEvidence, { recursive: true, force: true }); // remove only the byte-identical duplicate
+  if (existing === null || duplicate) {
+    renameSync(paths.destination, evidencePath); // ATOMIC — the last copy is MOVED aside, never recursive-deleted
+  } else {
+    atomicRenameDirectoryNoClobber(paths.destination, evidencePath); // no-clobber onto a fresh path; old archive untouched
+  }
   fsyncPath(evidenceRoot);
   fsyncPath(paths.quarantine);
   failpoint?.(`after-quarantine-disposal:${index}`);
@@ -2017,6 +2117,18 @@ function committedRetirementResult(
   };
 }
 
+/**
+ * Re-prove every source's identity before a forward (re-)move. This resets each
+ * entry to `planned` but DELIBERATELY does NOT clear `entry.evidence` between
+ * generations: that field is a durable pointer to a changed-tree copy archived
+ * aside by a PRIOR restore, and it is the only in-journal reference
+ * {@link resolveNeitherTreeRestore} uses to convert a catastrophic "neither
+ * tree" into a recoverable "changed evidence retained" — clearing it would
+ * weaken the never-lose-a-copy invariant. On-disk safety no longer depends on
+ * this field regardless: {@link disposeQuarantineToEvidence} re-reads the
+ * evidence slot from disk and refuses to overwrite a differing archive, so a
+ * stale `entry.evidence` can never authorize data loss.
+ */
 function validateRetirementSources(
   fallbackSkillsDir: string,
   transactionDir: string,
@@ -3889,7 +4001,12 @@ function tryInitializeSyncLock(lockPath: string): LockCreateAttempt {
   let fd: number;
   const token = randomBytes(16).toString('hex');
   const processIdentity = processStartIdentity(process.pid) ?? 'unknown';
-  const ownerRecord = `${process.pid}:${token}:${processIdentity}`;
+  // Host identity is appended as a 4th field so a lock created on one host can
+  // never be stolen from another on an NFS / pid-namespace-shared $HOME. The
+  // shell installer (install.sh) writes only the 3-field `pid:token:unknown`
+  // form and parses just the leading pid, so a 4th field is backward-compatible
+  // both ways: {@link lockOwner} reads it, the shell ignores it.
+  const ownerRecord = `${process.pid}:${token}:${processIdentity}:${currentSyncLockHostId()}`;
   try {
     fd = openSync(lockPath, 'wx');
   } catch (error) {
@@ -3930,19 +4047,49 @@ function isStaleOrInvalidLockTime(mtimeMs: number, nowMs = Date.now()): boolean 
   return ageMs > LOCK_STALE_MS || ageMs < -LOCK_STALE_MS;
 }
 
-/** Parse current pid/token/start locks plus legacy pid/token and pid-only records. */
-function lockOwner(lockPath: string): { pid: number; processIdentity: string | null } | null {
+/**
+ * Parse current `pid:token:start:host` locks plus every legacy form
+ * (`pid:token:start`, `pid:token`, `pid`) and the shell's `pid:token:unknown`.
+ * `host` is absent (→ null) for any record written before this field existed or
+ * by the shell installer; a null host is treated as "unknown host" downstream.
+ */
+function lockOwner(lockPath: string): { pid: number; processIdentity: string | null; host: string | null } | null {
   const raw = readTrimmed(lockPath);
-  const match = raw?.match(/^(\d+)(?::[a-f0-9]{32})?(?::([a-f0-9]{64}|unknown))?$/);
+  const match = raw?.match(/^(\d+)(?::[a-f0-9]{32})?(?::([a-f0-9]{64}|unknown))?(?::([a-f0-9]{64}))?$/);
   if (!match) return null;
   const pid = Number(match[1]);
-  return Number.isSafeInteger(pid) && pid > 0 ? { pid, processIdentity: match[2] ?? null } : null;
+  return Number.isSafeInteger(pid) && pid > 0
+    ? { pid, processIdentity: match[2] ?? null, host: match[3] ?? null }
+    : null;
 }
 
-/** Never steal a live lock; PID reuse is rejected by the process-start identity. */
+/**
+ * Never steal a live lock. Beyond PID-reuse rejection via the process-start
+ * identity, a recorded HOST identity that DIFFERS from this host is treated as a
+ * live owner and never stolen: `process.kill`/`ps` liveness on THIS host says
+ * nothing about a peer on an NFS- or pid-namespace-shared $HOME, so a locally
+ * "dead" pid cannot authorize stealing a lock a remote host may still hold. The
+ * fail-closed asymmetry is deliberate — a wrongly-kept stale lock costs one
+ * manual `rm`; a wrongly-stolen live lock costs a silent double writer.
+ *
+ * Deliberate scope decision (host-less records): a record with NO host field —
+ * pre-this-change debris OR the shell installer's `pid:token:unknown` — falls
+ * through to the legacy pid + start-identity liveness rather than being refused
+ * outright. This preserves the shipped, tested shell<->TS lifecycle-lock parity
+ * contract (install.sh writes and reaps host-less records by pid+mtime; the
+ * guard-debris parity test in update.test.ts pins it). Refusing host-less steals
+ * in TS alone would desynchronize the two acquirers AND still leave the shell
+ * able to cross-host-steal — trading a real regression for incomplete safety.
+ * Because every lock written after this change carries a host field — INCLUDING
+ * every retirement lock (TS-only) and every post-upgrade agent-sync/lifecycle
+ * lock — cross-host steal is prevented everywhere it can actually occur; only
+ * transient legacy/shell-shaped records retain the prior semantics, in lockstep
+ * with the shell.
+ */
 function lockHasLiveOwner(lockPath: string): boolean {
   const owner = lockOwner(lockPath);
-  if (owner === null) return false;
+  if (owner === null) return false; // empty / unparseable record is genuine dead-writer debris
+  if (owner.host !== null && owner.host !== currentSyncLockHostId()) return true; // host-bearing + cross-host → never steal
   try {
     process.kill(owner.pid, 0);
   } catch (error) {
@@ -3957,6 +4104,32 @@ function lockHasLiveOwner(lockPath: string): boolean {
 function releaseOwnedLock(lockPath: string, ownerRecord: string): void {
   if (readTrimmed(lockPath) !== ownerRecord) return;
   rmSyncSafe(lockPath);
+}
+
+let cachedSyncLockHostId: string | null = null;
+
+/**
+ * A stable identity for THIS host, embedded in every lock owner record so a
+ * cross-host stealer can recognize "not my host" and refuse to steal. It is the
+ * sha256 of the hostname plus, on linux, the kernel boot id
+ * (`/proc/sys/kernel/random/boot_id`) — so a reused hostname across reboots (or
+ * across container instances that share it) still yields distinct identities
+ * where the boot id is readable. The boot id is best-effort: an empty read
+ * degrades to hostname-only, which is still host-scoped. Exported for tests that
+ * must forge same-host vs cross-host owner records.
+ */
+export function currentSyncLockHostId(): string {
+  if (cachedSyncLockHostId !== null) return cachedSyncLockHostId;
+  let bootId = '';
+  if (process.platform === 'linux') {
+    try {
+      bootId = readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim();
+    } catch {
+      bootId = '';
+    }
+  }
+  cachedSyncLockHostId = createHash('sha256').update(`${hostname()}\0${bootId}`).digest('hex');
+  return cachedSyncLockHostId;
 }
 
 function processStartIdentity(pid: number): string | null {
@@ -4264,8 +4437,39 @@ function isOptionalPhysicalMode(value: unknown): value is number | null {
   return value === null || isPhysicalMode(value);
 }
 
+/**
+ * Retirement infrastructure basenames a moved/restored entry name must never
+ * collide with. The dot-prefixed infra (`.retirement.lock`, `.restore-staging`,
+ * `.genie-codex-fallback-retirement`, every `.journal.*` temp) is already
+ * excluded by the leading-dot rule below; these are the non-hidden ones.
+ */
+const RETIREMENT_INFRA_ENTRY_NAMES: ReadonlySet<string> = new Set([
+  'journal.json',
+  'quarantine',
+  RETIREMENT_EVIDENCE_DIR,
+]);
+
+/**
+ * A journal/skill entry name must be a single path component that can never name
+ * the engine's own on-disk infrastructure. Rejecting dot-prefixed names (so
+ * `.`, `..`, `.retirement.lock`, `.restore-staging`,
+ * `.genie-codex-fallback-retirement`, and any `.journal.*` temp are refused) and
+ * the reserved non-hidden infra names (`journal.json`, `quarantine`, `evidence`)
+ * is a forged-journal defense: it is applied at BOTH plan time
+ * ({@link planCodexFallbackRetirement}) and journal re-validation
+ * ({@link validateRetirementPaths} / {@link readRetirementJournal}), so a
+ * crafted `accepted[]`/`entries[]` can never steer a recovery move or restore
+ * onto the transaction's own state. Suffixed evidence archives (`<skill>.2`) are
+ * NOT dot-prefixed and remain valid.
+ */
 function isSafeEntryName(value: string): boolean {
-  return value !== '' && value !== '.' && value !== '..' && !value.includes('/') && !value.includes('\\');
+  return (
+    value !== '' &&
+    !value.startsWith('.') &&
+    !value.includes('/') &&
+    !value.includes('\\') &&
+    !RETIREMENT_INFRA_ENTRY_NAMES.has(value)
+  );
 }
 
 function createExclusiveTransactionDir(parent: string, preferredName: string): string {
