@@ -24,10 +24,10 @@ skills, same MCP tool set, same agent-sync convergence, same doctor coverage.
 | Surface | Claude | Codex | Hermes (current) | Hermes (target) |
 |---------|--------|-------|------------------|-----------------|
 | Plugin manifest | `.claude-plugin/plugin.json` (Skills, Hooks, MCP) — **current** | `plugins/genie/.codex-plugin/plugin.json` — **current** | `plugins/hermes-genie/plugin.yaml` declares 7 native tools + hooks + commands + 4 skills — **current** | `plugins/hermes-genie/plugin.yaml` declares 3 native tools + MCP + hooks; skills sourced via `skills.external_dirs` — **target** |
-| Skills path | canonical `skills/` (23) — **current** | `skills/` canonical + `plugins/genie/skills/` mirror (23) — **current** | 4 plugin-local skills (`genie`, `genie-work`, `genie-review`, `genie-khaw-bridge`) — **current** | the 23 product skills via `skills.external_dirs`; ≤1 thin cockpit adapter via `ctx.register_skill` — **target** |
+| Skills path | canonical `skills/` (23) — **current** | `skills/` canonical + `plugins/genie/skills/` mirror (23) — **current** | 4 plugin-local skills (`genie`, `genie-work`, `genie-review`, `genie-khaw-bridge`) — **current** | the 23 product skills via `skills.external_dirs` pointed at the release-converged **`$GENIE_HOME/skills`** root (resolver fallback chain: explicit override → `$GENIE_HOME/skills` → `$GENIE_HOME/plugins/genie/skills`); ≤1 thin cockpit adapter via `ctx.register_skill` — **target** |
 | Hooks | Claude hook set — **current** | `codex-hooks.json` H3/H4/H6 — **current** | `on_session_start`, `pre_tool_call`, `post_tool_call` (advisory KHAW bridge) — **current** | same advisory hooks, read-only, no mutation — **target** |
 | MCP | `.mcp.json` → `genie mcp` (5 read-only tools) — **current** | `plugins/genie/.mcp.json` → `genie mcp` (5 read-only tools) — **current** | none — native tools only — **current** | `genie mcp` wired as the shared 5-tool read-only server — **target** |
-| Agent-sync lane | `syncClaude` — **current** | `syncCodex` — **current** | `syncHermes` symlinks `$HERMES_HOME/plugins/genie` → sibling `hermes-genie`, runs `hermes plugins enable genie` — **current** | same lane, now also converging the external skills dir + MCP wiring — **target** |
+| Agent-sync lane | `syncClaude` — **current** | `syncCodex` — **current** | `syncHermes` symlinks `$HERMES_HOME/plugins/genie` → sibling `hermes-genie`, runs `hermes plugins enable genie` — **current** | same lane, now also converging (after link/enable) the `skills.external_dirs` entry for `$GENIE_HOME/skills` + the `mcp_servers.genie` wiring into the live profile's `config.yaml`; inline top-level `mcp_servers:`/`skills:` degrade to a non-fatal WARN skip — **target** |
 | Doctor coverage | `agent sync: claude` — **current** | `agent sync: codex` — **current** | `agent sync: hermes — linked → …` — **current** | Hermes lane + MCP + skills-dir checks in `genie doctor` — **target** |
 
 ## Tool map
@@ -64,9 +64,20 @@ the Hermes side. See baseline notes.
 Target: Hermes drives the **same 23 product skills** as Claude and Codex — no forked skill copies.
 
 - **First-class path — `skills.external_dirs`:** Hermes loads the 23 canonical product skills
-  (including `/wish`, `/work`, `/brainstorm`) by pointing `skills.external_dirs` at the shared
-  `skills/` root. This is how Hermes gets `/wish`, `/work`, `/brainstorm` and the rest without a
-  divergent per-client skill payload. These skills appear in the host's `available_skills` index.
+  (including `/wish`, `/work`, `/brainstorm`) by pointing `skills.external_dirs` at the
+  release-converged **`$GENIE_HOME/skills`** root. This is how Hermes gets `/wish`, `/work`,
+  `/brainstorm` and the rest without a divergent per-client skill payload. These skills appear in
+  the host's `available_skills` index.
+  - **Resolved path (Open Question 1 — RESOLVED):** `$GENIE_HOME/skills` is the stable, canonical
+    answer. Both `genie install` (`normalizeAuxLayout`) and `genie update` (`syncAuxiliaryContent`)
+    already materialize it from the release tarball's top-level `skills/`, so agent-sync does **not**
+    publish it — it only reads it. The Group 4 `syncHermes` lane resolves the root via
+    `resolveProductSkillsRoot()` (`src/lib/hermes-skills-config.ts`) with a graceful fallback chain
+    for uninstalled/dev checkouts: explicit `skillsRoot` override → `$GENIE_HOME/skills` →
+    `$GENIE_HOME/plugins/genie/skills` (the byte-checked mirror). A candidate counts only when
+    **populated** (holds ≥1 `<name>/SKILL.md`); if none resolves the helper raises a typed
+    `HermesConfigError` rather than registering a non-existent dir. Full analysis:
+    `.genie/wishes/hermes-homogeneous-integration/reports/skills-root-resolution.md`.
 - **`ctx.register_skill` — reserved, ≤1 adapter:** at most **one** thin cockpit adapter may be
   registered programmatically via `ctx.register_skill`. It is **plugin-namespaced** and
   **hidden from the `available_skills` index** (it is an internal bridge, not a user-facing skill).
@@ -83,7 +94,7 @@ manual dual system, and no lifecycle hook installs, updates, or synchronizes the
 
 | Path | Effect on Hermes |
 |------|------------------|
-| `genie install --integrations hermes` | Runs the `syncHermes` lane: symlinks `$HERMES_HOME/plugins/genie` → sibling `hermes-genie`, converges the external skills dir + MCP wiring, best-effort `hermes plugins enable genie`. |
+| `genie install --integrations hermes` | Runs the `syncHermes` lane: symlinks `$HERMES_HOME/plugins/genie` → sibling `hermes-genie`, best-effort `hermes plugins enable genie`, then converges the `skills.external_dirs` entry for `$GENIE_HOME/skills` and the `mcp_servers.genie` command into the live profile's `config.yaml`. Proven per-leg by `genie doctor`. |
 | `genie update` | Re-runs the same convergence inside the already-reviewed parent process; refreshes the linked surface. |
 | `genie setup` / `genie setup --hermes` | Configures + persists Hermes maintenance consent used by later explicit updates. |
 

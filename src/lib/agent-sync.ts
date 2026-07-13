@@ -47,6 +47,8 @@ import {
 import { homedir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { resolveClaudeDir, resolveCodexDir, resolveGenieHome, resolveHermesHome } from './genie-home.js';
+import { HermesConfigError, mergeMcpServersGenie } from './hermes-mcp-config.js';
+import { mergeSkillsExternalDir } from './hermes-skills-config.js';
 
 // ============================================================================
 // Constants
@@ -217,6 +219,7 @@ interface SyncManifest {
 }
 
 interface RunContext {
+  genieHome: string;
   pluginRoot: string;
   hermesRoot: string | null;
   version: string | null;
@@ -2233,6 +2236,85 @@ function syncHermes(ctx: RunContext, opts: AgentSyncOptions, report: AgentReport
   if ((mainAction === 'created' || mainAction === 'adopted') && binary !== null) {
     runHermesEnable(opts, binary, report);
   }
+  // AFTER the plugin link/enable converge, wire the two config legs (MCP server +
+  // skills external dir) into the live profile's config.yaml. Each leg is
+  // independently non-fatal: an inline-shaped operator config degrades to a WARN
+  // skip and any helper error records `failed`, but neither ever throws, sets
+  // report.failures, or blocks the other leg — the plugin link has already won.
+  convergeHermesConfig(ctx, hermesHome, report);
+}
+
+/**
+ * Resolve the Hermes `config.yaml` for the live profile the plugin-link lane
+ * targets: the active sticky profile's home when a safe `active_profile` is set,
+ * else the default Hermes home. Mirrors {@link ensureStickyProfileLink}'s
+ * validation so a config write lands in the same home whose plugins/genie link is
+ * converged. An unsafe/invalid profile falls back to the default home (never an
+ * escaped path); the link lane already surfaces the invalid-profile failure.
+ */
+export function resolveHermesConfigPath(hermesHome: string): string {
+  return join(resolveHermesProfileHome(hermesHome), 'config.yaml');
+}
+
+function resolveHermesProfileHome(hermesHome: string): string {
+  const active = readTrimmed(join(hermesHome, 'active_profile'));
+  if (active === null || active === '') return hermesHome;
+  // Same guard the sticky-link lane enforces — an invalid/unsafe profile name
+  // must never redirect a write outside the profiles root.
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(active) || active === '.' || active === '..') return hermesHome;
+  const profilesRoot = resolve(hermesHome, 'profiles');
+  const profileRoot = resolve(profilesRoot, active);
+  if (!profileRoot.startsWith(`${profilesRoot}${sep}`)) return hermesHome;
+  return profileRoot;
+}
+
+/**
+ * Converge the MCP-server and skills-external-dir legs into the one live-profile
+ * config.yaml. Both legs back up the same file before mutating it, so each is
+ * handed a distinct backup timestamp (skills offset +1s) — otherwise two
+ * same-run mutations would write the same `config.yaml.genie-backup-<stamp>`
+ * name and the skills leg would clobber the MCP leg's pristine backup.
+ */
+function convergeHermesConfig(ctx: RunContext, hermesHome: string, report: AgentReport): void {
+  const configPath = resolveHermesConfigPath(hermesHome);
+  const base = ctx.now().getTime();
+  convergeHermesLeg(
+    'mcp-config',
+    report,
+    () => mergeMcpServersGenie({ configPath, genieHome: ctx.genieHome, now: new Date(base) }).status,
+  );
+  convergeHermesLeg(
+    'skills-dir',
+    report,
+    () => mergeSkillsExternalDir({ configPath, genieHome: ctx.genieHome, now: new Date(base + 1000) }).status,
+  );
+}
+
+/**
+ * Run one Hermes config leg and record its outcome as a report extra, never
+ * throwing. A {@link HermesConfigError} carrying `code === 'inline-top-level-key'`
+ * is the operator's inline/flow-style top-level key: a NON-FATAL convergence
+ * outcome recorded as a `skipped` WARN with the helper's remediation hint
+ * ("rewrite … as a block mapping"). Any other error records `failed`. Neither
+ * sets report.failures — a config-leg outcome must not fail a strict `genie
+ * update` or block the plugin-link / sibling leg that already converged.
+ */
+function convergeHermesLeg(
+  kind: 'mcp-config' | 'skills-dir',
+  report: AgentReport,
+  run: () => 'created' | 'updated' | 'unchanged',
+): void {
+  try {
+    report.extras.push({ kind, action: run() });
+  } catch (err) {
+    if (err instanceof HermesConfigError && err.code === 'inline-top-level-key') {
+      report.extras.push({ kind, action: 'skipped', detail: err.message });
+      report.advisories.push(`hermes ${kind} skipped (inline top-level key): ${err.message}`);
+      return;
+    }
+    report.extras.push({ kind, action: 'failed', detail: errMsg(err) });
+    report.advisories.push(`hermes ${kind} failed: ${errMsg(err)}`);
+  }
 }
 
 /**
@@ -2644,6 +2726,7 @@ function createRunContext(
     return dest;
   };
   return {
+    genieHome,
     pluginRoot,
     hermesRoot: source.hermesRoot,
     version: source.version,

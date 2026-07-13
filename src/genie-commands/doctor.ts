@@ -13,9 +13,19 @@
  * non-zero if any check is a hard failure.
  */
 
-import { existsSync, lstatSync, readFileSync, readdirSync, readlinkSync, statSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import {
+  constants,
+  accessSync,
+  existsSync,
+  lstatSync,
+  readFileSync,
+  readdirSync,
+  readlinkSync,
+  statSync,
+} from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import {
   CLAUDE_EXCLUDED_SKILLS,
   MANAGED_BY,
@@ -24,6 +34,7 @@ import {
   computeDirDigest,
   resolveAgentsSkillsDir,
   resolveGenieSource,
+  resolveHermesConfigPath,
 } from '../lib/agent-sync.js';
 import { DEAD_GENIE_OTEL_EXPORTER, getCodexConfigPath } from '../lib/codex-config.js';
 import {
@@ -39,6 +50,7 @@ import {
   resolveGenieHome as resolveGlobalGenieHome,
   resolveHermesHome,
 } from '../lib/genie-home.js';
+import { resolveProductSkillsRoot } from '../lib/hermes-skills-config.js';
 import { resolveOmniRuntimeConfig } from '../lib/omni-config.js';
 import { inspectCodexAgentOwnership } from '../lib/runtime-integrations.js';
 import { CURRENT_SCHEMA_VERSION, GenieDbError, openDb } from '../lib/v5/genie-db.js';
@@ -630,6 +642,8 @@ const SYNC_MANIFEST_NAME = MANIFEST_NAME;
 const SYNC_MANAGED_BY = MANAGED_BY;
 const COUNCIL_WORKFLOW_FILE = TARGET_NAME;
 const SYNC_SUGGESTION = 'Run `genie update` to converge all detected coding agents.';
+const HERMES_INLINE_SUGGESTION =
+  'Rewrite the inline top-level key as a block mapping so genie can merge without deleting your entries, then run `genie update`.';
 
 interface AgentSyncPaths {
   genieHome?: string;
@@ -638,6 +652,13 @@ interface AgentSyncPaths {
   /** Shared `~/.agents/skills` tier codex skills are synced into (detection root stays `codexDir`). */
   agentsSkillsDir?: string;
   hermesHome?: string;
+  /**
+   * Hermes CLI detection override for the best-effort enable probe. `undefined`
+   * probes PATH; `null` explicitly skips the probe (hermes CLI absent → silent).
+   */
+  hermesBinary?: string | null;
+  /** Injectable `hermes plugins list` reader so tests never spawn a process. */
+  hermesPluginsList?: (binary: string) => string;
   settingsPath?: string;
 }
 
@@ -782,13 +803,31 @@ function checkCodexSync(pluginRoot: string, codexDir: string, agentsSkillsDir: s
   ];
 }
 
-function checkHermesSync(hermesRoot: string | null, hermesHome: string): CheckResult[] {
+interface HermesCheckInput {
+  hermesRoot: string | null;
+  hermesHome: string;
+  genieHome: string;
+  pluginRoot: string;
+  binary: string | null;
+  pluginsList?: (binary: string) => string;
+}
+
+/**
+ * Independent per-leg Hermes health: the plugin symlink, the `mcp_servers.genie`
+ * entry, the skills external-dir (or managed-copy fallback), and a best-effort
+ * `hermes plugins list` enable probe. Each leg is a separate {@link CheckResult}
+ * so `genie doctor` distinguishes which leg is unhealthy. An inline/flow-style
+ * top-level `mcp_servers:`/`skills:` — the shape the merge helpers refuse — is a
+ * WARN (never a FAIL) carrying the block-mapping remediation hint.
+ */
+function checkHermesSync(input: HermesCheckInput): CheckResult[] {
+  const { hermesRoot, hermesHome } = input;
   if (!existsSync(hermesHome)) return [{ name: 'agent sync: hermes', status: 'pass', detail: 'not detected' }];
   if (hermesRoot === null) {
     return [{ name: 'agent sync: hermes', status: 'pass', detail: 'hermes-genie source absent — link check skipped' }];
   }
   const link = hermesLinkState(join(hermesHome, 'plugins', 'genie'), hermesRoot);
-  return [
+  const results: CheckResult[] = [
     {
       name: 'agent sync: hermes',
       status: link.ok ? 'pass' : 'warn',
@@ -796,6 +835,197 @@ function checkHermesSync(hermesRoot: string | null, hermesHome: string): CheckRe
       suggestion: link.ok ? undefined : SYNC_SUGGESTION,
     },
   ];
+  // Config-driven legs read the live profile's config.yaml (sticky-profile-aware),
+  // exactly where the agent-sync lane writes it.
+  const configPath = resolveHermesConfigPath(hermesHome);
+  const configText = readTextOrNull(configPath);
+  results.push(checkHermesMcp(configText, configPath));
+  results.push(checkHermesSkills(configText, input.genieHome, input.pluginRoot, configPath));
+  const enabled = checkHermesPluginEnabled(input.binary, input.pluginsList);
+  if (enabled !== null) results.push(enabled);
+  return results;
+}
+
+/** `mcp_servers.genie.command` must be an absolute path to an existing, executable file. */
+function checkHermesMcp(configText: string | null, configPath: string): CheckResult {
+  const name = 'agent sync: hermes mcp';
+  if (configText === null) {
+    return { name, status: 'warn', detail: `config.yaml absent (${configPath})`, suggestion: SYNC_SUGGESTION };
+  }
+  const inline = detectInlineTopLevelKey(configText, 'mcp_servers');
+  if (inline) return { name, status: 'warn', detail: inline, suggestion: HERMES_INLINE_SUGGESTION };
+  const command = readMcpGenieCommand(configText);
+  if (command === null) {
+    return { name, status: 'warn', detail: 'mcp_servers.genie absent', suggestion: SYNC_SUGGESTION };
+  }
+  if (!isAbsolute(command)) {
+    return {
+      name,
+      status: 'warn',
+      detail: `mcp_servers.genie.command not absolute (${command})`,
+      suggestion: SYNC_SUGGESTION,
+    };
+  }
+  if (!isExecutableFile(command)) {
+    return {
+      name,
+      status: 'warn',
+      detail: `mcp_servers.genie.command missing or not executable (${command})`,
+      suggestion: SYNC_SUGGESTION,
+    };
+  }
+  return { name, status: 'pass', detail: `mcp_servers.genie → ${command}` };
+}
+
+/**
+ * Skills leg passes when `skills.external_dirs` contains the resolved product
+ * skills root, OR the older-Hermes managed copy under `<configHome>/skills` holds
+ * at least as many skills as the product source.
+ */
+function checkHermesSkills(
+  configText: string | null,
+  genieHome: string,
+  pluginRoot: string,
+  configPath: string,
+): CheckResult {
+  const name = 'agent sync: hermes skills';
+  if (configText !== null) {
+    const inline = detectInlineTopLevelKey(configText, 'skills');
+    if (inline) return { name, status: 'warn', detail: inline, suggestion: HERMES_INLINE_SUGGESTION };
+  }
+  const skillsRoot = safeResolveProductSkillsRoot(genieHome);
+  const externalDirs = configText === null ? [] : readSkillsExternalDirs(configText);
+  if (skillsRoot !== null && externalDirs.includes(skillsRoot)) {
+    return { name, status: 'pass', detail: `external_dirs → ${skillsRoot}` };
+  }
+  const productCount = countSkillDirs(join(pluginRoot, 'skills'));
+  const copyDir = join(dirname(configPath), 'skills');
+  const copyCount = countSkillDirs(copyDir);
+  if (productCount > 0 && copyCount >= productCount) {
+    return { name, status: 'pass', detail: `managed copy ${copyCount}/${productCount} skills (${copyDir})` };
+  }
+  const detail =
+    skillsRoot === null
+      ? `product skills root unresolved; managed copy ${copyCount}/${productCount}`
+      : `external_dirs missing ${skillsRoot}; managed copy ${copyCount}/${productCount}`;
+  return { name, status: 'warn', detail, suggestion: SYNC_SUGGESTION };
+}
+
+/**
+ * Best-effort enable probe. Silent (null) when the hermes CLI is absent; otherwise
+ * a WARN when `hermes plugins list` shows genie disabled, and a benign pass when
+ * the probe is inconclusive or the CLI call fails — never a hard failure.
+ */
+function checkHermesPluginEnabled(binary: string | null, pluginsList?: (binary: string) => string): CheckResult | null {
+  if (binary === null) return null;
+  const name = 'agent sync: hermes plugin enabled';
+  let output: string;
+  try {
+    output = (pluginsList ?? defaultHermesPluginsList)(binary);
+  } catch {
+    return { name, status: 'pass', detail: 'enable state unknown (hermes plugins list unavailable)' };
+  }
+  const enabled = hermesPluginsListShowsGenieEnabled(output);
+  if (enabled === true) return { name, status: 'pass', detail: 'genie enabled' };
+  if (enabled === false) {
+    return { name, status: 'warn', detail: 'genie present but not enabled', suggestion: SYNC_SUGGESTION };
+  }
+  return { name, status: 'pass', detail: 'genie enable state unknown (not listed)' };
+}
+
+function defaultHermesPluginsList(binary: string): string {
+  return execFileSync(binary, ['plugins', 'list'], {
+    encoding: 'utf8',
+    timeout: 5_000,
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
+}
+
+/** Fuzzy, best-effort read of an `enabled`/`disabled` marker on a genie line. */
+function hermesPluginsListShowsGenieEnabled(output: string): boolean | null {
+  for (const line of output.split('\n')) {
+    if (!/genie/i.test(line)) continue;
+    if (/disabled/i.test(line)) return false;
+    if (/enabled/i.test(line)) return true;
+  }
+  return null;
+}
+
+/**
+ * Mirror of the merge helpers' `assertNoInlineTopLevelKey`: returns the WARN hint
+ * when a top-level `key:` carries an inline/flow/scalar value on the same line,
+ * else null. Read-only — doctor never rewrites config.
+ */
+function detectInlineTopLevelKey(text: string, key: string): string | null {
+  const keyLine = new RegExp(`^${key}:(?:\\s|$)`);
+  const blockHeader = new RegExp(`^${key}:\\s*(#.*)?$`);
+  for (const line of text.split('\n')) {
+    if (keyLine.test(line) && !blockHeader.test(line)) {
+      return `top-level "${key}" has an inline value (${line.trim()}); genie cannot merge it`;
+    }
+  }
+  return null;
+}
+
+function readMcpGenieCommand(text: string): string | null {
+  const genie = readYamlPath(text, ['mcp_servers', 'genie']);
+  if (!isPlainObject(genie)) return null;
+  return typeof genie.command === 'string' ? genie.command : null;
+}
+
+function readSkillsExternalDirs(text: string): string[] {
+  const skills = readYamlPath(text, ['skills']);
+  if (!isPlainObject(skills) || !Array.isArray(skills.external_dirs)) return [];
+  return skills.external_dirs.filter((d): d is string => typeof d === 'string');
+}
+
+/** Walk a dotted path through a parsed YAML document; undefined on any miss/parse error. */
+function readYamlPath(text: string, path: string[]): unknown {
+  let node: unknown;
+  try {
+    node = Bun.YAML.parse(text);
+  } catch {
+    return undefined;
+  }
+  for (const key of path) {
+    if (!isPlainObject(node)) return undefined;
+    node = node[key];
+  }
+  return node;
+}
+
+function safeResolveProductSkillsRoot(genieHome: string): string | null {
+  try {
+    return resolveProductSkillsRoot({ genieHome });
+  } catch {
+    return null;
+  }
+}
+
+function countSkillDirs(dir: string): number {
+  return listSubdirs(dir).filter((name) => existsSync(join(dir, name, 'SKILL.md'))).length;
+}
+
+function isExecutableFile(path: string): boolean {
+  try {
+    if (!statSync(path).isFile()) return false;
+    accessSync(path, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function readTextOrNull(path: string): string | null {
+  try {
+    return readFileSync(path, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function hermesLinkState(linkPath: string, hermesRoot: string): { ok: boolean; detail: string } {
@@ -879,10 +1109,20 @@ export function checkAgentSync(paths: AgentSyncPaths = {}): CheckResult[] {
     ];
   }
   const pluginRoot = source.pluginRoot;
+  const hermesBinary = paths.hermesBinary !== undefined ? paths.hermesBinary : whichBinary('hermes');
   return [
     ...safeAgentChecks('claude', () => checkClaudeSync(pluginRoot, claudeDir)),
     ...safeAgentChecks('codex', () => checkCodexSync(pluginRoot, codexDir, agentsSkillsDir)),
-    ...safeAgentChecks('hermes', () => checkHermesSync(source.hermesRoot, hermesHome)),
+    ...safeAgentChecks('hermes', () =>
+      checkHermesSync({
+        hermesRoot: source.hermesRoot,
+        hermesHome,
+        genieHome,
+        pluginRoot,
+        binary: hermesBinary,
+        pluginsList: paths.hermesPluginsList,
+      }),
+    ),
     ...safeAgentChecks('marketplace', () => checkMarketplacePlugin(settingsPath)),
   ];
 }
