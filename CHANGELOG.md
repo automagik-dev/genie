@@ -30,7 +30,7 @@ Wish: `repair-genie-codex-hooks-and-dedupe-skills`.
   A machine upgrading from a fallback-seeding release moves only provably clean,
   digest-owned copies into a single durable transaction under
   `~/.agents/skills/.genie-codex-fallback-retirement/` (`.retirement.lock`,
-  `txn-<id>/journal.json`, `txn-<id>/quarantine/<skill>/`, `evidence/`).
+  `txn-<id>/journal.json`, `txn-<id>/quarantine/<skill>/`, `txn-<id>/evidence/<skill>/`).
   Acceptance requires a physical non-symlink directory, a valid versioned
   `.genie-sync.json`, a recomputed canonical digest equal to the marker, and a
   match against the verified target payload or a committed verified-release
@@ -39,9 +39,9 @@ Wish: `repair-genie-codex-hooks-and-dedupe-skills`.
   first rename; an interrupted run reverse-restores every pre-commit move
   without clobbering conflicts; a committed retry recognizes the same
   transaction and creates no second transaction or accumulating quarantine.
-  Changed trees are archived under `evidence/` (never deleted in a check/delete
-  window), giving `source changed after planning` and `changed evidence
-  retained` manual-recovery paths.
+  Changed trees are archived under `txn-<id>/evidence/<skill>/` (nested inside the
+  transaction dir, never deleted in a check/delete window), giving `source
+  changed after planning` and `changed evidence retained` manual-recovery paths.
 - **Personal collisions win preservation.** Modified-managed, malformed-marker,
   symlinked, and unmanaged same-name skills stay byte/mode/link-identical and
   are reported as user-owned collisions. `genie doctor` reports plugin version,

@@ -36,7 +36,7 @@ silently winning manual plugin invocation.
   .retirement.lock          single-writer lock for the retirement root
   txn-<id>/journal.json     fsynced full-batch record of every retired identity
   txn-<id>/quarantine/<skill>/   retired skill trees, moved intact
-  evidence/                 changed trees archived aside during recovery races
+  txn-<id>/evidence/<skill>/     changed trees archived aside during recovery races
 ```
 
 Acceptance requires a physical non-symlink directory, a valid versioned
@@ -50,8 +50,9 @@ from `txn-<id>/quarantine/<skill>/` to `~/.agents/skills/<skill>/` only if a bar
 user-tier copy is wanted. On **"source changed after planning"** retirement aborts
 before any move: the changed personal copy stays in place under
 `~/.agents/skills/<skill>` (nothing is moved or archived). The republish-to-live +
-`evidence/` archive belongs instead to the restore/disposal races — a
-**"changed evidence retained"** archive under `evidence/` is a durable backup of
+`txn-<id>/evidence/<skill>/` archive belongs instead to the restore/disposal races — a
+**"changed evidence retained"** archive under `txn-<id>/evidence/<skill>/` (nested inside
+the transaction dir, beside `quarantine/`) is a durable backup of
 that content; diff it before removing. `.codex/skills/.curated` is a legacy uninstall-only lane:
 `genie uninstall` still collects it, but no sync path recreates it.
 

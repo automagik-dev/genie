@@ -21,9 +21,19 @@
  * If real codex in the isolated home surfaces zero genie providers, that is a
  * FINDING to fix (fail with a `codex plugin list --json` dump), never a reason
  * to mock.
+ *
+ * Why only 20 of 23 installed skills surface as `genie:*` providers (review
+ * carryover): codex's implicit-invocation catalog lists ONLY skills that permit
+ * implicit invocation. Three Genie skills (`dream`, `omni`, `wizard`) deliberately
+ * declare `policy.allow_implicit_invocation: false` in `agents/openai.yaml` — they
+ * are heavy orchestration/setup flows that must never auto-trigger. Their omission
+ * is intended codex behavior driven by our own policy, NOT a payload/frontmatter
+ * defect. We assert this EXACTLY: the loaded set equals the installed skills whose
+ * openai.yaml does not opt out, so a real frontmatter/payload regression (an
+ * implicit-invocation skill going missing) fails loudly.
  */
 
-import { readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   SmokeFailure,
@@ -137,8 +147,35 @@ function main(): void {
         if (section.includes(forbidden)) fail(`prompt-input catalog leaks a managed source path: ${forbidden}`);
       }
 
+      // Exact-parity gate for the 20/23 catalog gap: prove the ONLY installed
+      // skills codex omits are exactly those that opted out of implicit invocation
+      // (`allow_implicit_invocation: false`), so the omission is intended policy —
+      // not a payload/frontmatter defect. A regression that drops an
+      // implicit-invocation skill (missing) or surfaces an opted-out one
+      // (wronglyLoaded) fails here.
+      const loadedCanonical = new Set(genieProviders.map((provider) => provider.slice('genie:'.length)));
+      const phantom = [...loadedCanonical].filter((name) => !canonicalNames.includes(name));
+      if (phantom.length > 0)
+        fail(`genie:* providers with no installed skill (phantom catalog entry): [${phantom.join(', ')}]`);
+      const skillsRoot = join(activePluginRoot(iso, version), 'skills');
+      const implicitDenied = canonicalNames
+        .filter((name) => {
+          const yaml = join(skillsRoot, name, 'agents', 'openai.yaml');
+          return existsSync(yaml) && /allow_implicit_invocation:\s*false/.test(readFileSync(yaml, 'utf8'));
+        })
+        .sort();
+      const expectedLoaded = canonicalNames.filter((name) => !implicitDenied.includes(name));
+      const missing = expectedLoaded.filter((name) => !loadedCanonical.has(name));
+      if (missing.length > 0)
+        fail(
+          `implicit-invocation skills MISSING from the loaded catalog — payload/frontmatter defect, not policy: [${missing.join(', ')}]`,
+        );
+      const wronglyLoaded = [...loadedCanonical].filter((name) => implicitDenied.includes(name)).sort();
+      if (wronglyLoaded.length > 0)
+        fail(`skills that opted OUT of implicit invocation were surfaced anyway: [${wronglyLoaded.join(', ')}]`);
+
       console.log(
-        `codex-debug-discovery-smoke: OK — real codex 0.144.1 loaded ${genieProviders.length} genie:* providers (incl. genie:wish, genie:work), zero bare product names, zero managed source paths`,
+        `codex-debug-discovery-smoke: OK — real codex 0.144.1 loaded ${genieProviders.length}/${canonicalNames.length} genie:* providers (incl. genie:wish, genie:work); the ${implicitDenied.length} omitted (${implicitDenied.join(', ')}) are exactly the skills declaring allow_implicit_invocation:false — intended codex behavior, not a payload defect; zero bare product names, zero managed source paths`,
       );
     });
   } catch (error) {

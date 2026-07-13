@@ -126,7 +126,7 @@ Older Genie releases seeded up to 23 digest-managed product skills into `~/.agen
   .retirement.lock          single-writer lock for the retirement root
   txn-<id>/journal.json     fsynced full-batch record of every retired identity
   txn-<id>/quarantine/<skill>/   the retired skill trees, moved intact
-  evidence/                 changed-tree copies archived aside during recovery races
+  txn-<id>/evidence/<skill>/     changed-tree copies archived aside during recovery races
 ```
 
 A copy is only retired when it is a physical non-symlink directory, carries a valid versioned `.genie-sync.json` marker, its recomputed canonical physical digest equals the marker digest, and it matches either the verified target-plugin payload or a committed verified-release historical tuple. Anything failing any predicate — modified-managed, malformed-marker, symlinked, or an unmanaged same-name personal skill — stays in place untouched and is reported as a user-owned collision.
@@ -135,7 +135,7 @@ The transaction is idempotent and durable: repeated updates recognize the commit
 
 - **Recover a retired skill.** Move the tree back out of `txn-<id>/quarantine/<skill>/` into `~/.agents/skills/<skill>/`. This is only needed if you intentionally want a bare `$<skill>` user-tier copy; the plugin already serves it as `$genie:<skill>`.
 - **"Source changed after planning".** If your live skill was edited between the health proof and the move, retirement aborts before touching disk — the changed personal copy simply stays in place at `~/.agents/skills/<skill>`; nothing is moved, republished, or archived. Review that copy, then rerun the command.
-- **"Changed evidence retained".** This is the class that republishes to the live path and archives aside: when a quarantined tree changed during restore or disposal, the changed copy is retained under `evidence/<...>` as your durable backup of that exact content. Diff it against the live path before removing it.
+- **"Changed evidence retained".** This is the class that republishes to the live path and archives aside: when a quarantined tree changed during restore or disposal, the changed copy is retained under `txn-<id>/evidence/<skill>/` (nested inside the transaction dir, beside `quarantine/`) as your durable backup of that exact content. Diff it against the live path before removing it.
 
 `genie doctor` reports the quarantined count and every preserved collision (name, classification, effective precedence, and remediation). It never claims literal name uniqueness while user content remains.
 

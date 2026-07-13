@@ -23,6 +23,8 @@
  *   7  forced plugin-add failure (C2)         — nonzero, protected trees byte-identical, no txn
  *   8  musl no-clobber (C5)                   — built artifact fall-through + fail-closed mkdir-claim
  *   9  env-dependent suites + black-box (C8)  — run in-isolation, then prove the criteria black-box
+ *  10  preservation oracle sabotage (C4)      — byte/mode/symlink mutation MUST be caught
+ *  11  shipped-doc plugin-only contract       — skill cards + recovery prose + txn-<id>/evidence path
  */
 
 import {
@@ -578,6 +580,26 @@ function readRepoFile(relPath: string): string {
   return readFileSync(join(REPO_ROOT, relPath), 'utf8');
 }
 
+/**
+ * Every retirement `evidence/` path in the docs must be nested under `txn-<id>/`
+ * — the real on-disk location `disposeQuarantineToEvidence` writes and doctor +
+ * `inspectRetirement` read (`<txnDir>/evidence/<skill>`). A retirement-root-level
+ * `evidence/` sibling of `txn-<id>/` is a nonexistent dir; the "changed evidence
+ * retained" recovery would send users to it to find their only durable backup.
+ * `txn-<id>/` is exactly the 9 chars that must immediately precede `evidence/`.
+ */
+function assertEvidencePathNested(rel: string, body: string): void {
+  const refs = [...body.matchAll(/evidence\//g)];
+  if (refs.length === 0) return;
+  for (const ref of refs) {
+    const at = ref.index ?? 0;
+    if (body.slice(Math.max(0, at - 9), at) !== 'txn-<id>/') {
+      const window = body.slice(Math.max(0, at - 24), at + 9).replace(/\n/g, '\\n');
+      fail(`${rel}: retirement 'evidence/' is not nested under txn-<id>/ (misplaced at retirement root): …${window}…`);
+    }
+  }
+}
+
 function stepDocContract(notes: string[]): void {
   // HIGH: no shipped/source skill card may still promise the retired
   // "CLI-managed fallback" user tier; each must carry the plugin-only phrasing.
@@ -617,7 +639,68 @@ function stepDocContract(notes: string[]): void {
     if (bullet.includes('to the live path'))
       fail(`'${anchor}' bullet still mis-describes a republish-to-live recovery: ${rel}`);
   }
-  notes.push('doc-contract: 46 skill cards plugin-only; 3 contract docs describe source-changed abort (no republish)');
+
+  // Quarantine-layout path fidelity: every doc that names the retirement
+  // `evidence/` dir must nest it under `txn-<id>/`, matching the on-disk contract.
+  for (const rel of [
+    'README.md',
+    'plugins/genie/README.md',
+    'plugins/genie/references/codex-integration-map.md',
+    'CHANGELOG.md',
+  ]) {
+    assertEvidencePathNested(rel, readRepoFile(rel));
+  }
+  notes.push(
+    'doc-contract: 46 skill cards plugin-only; 3 contract docs describe source-changed abort (no republish); 4 docs nest evidence/ under txn-<id>/',
+  );
+}
+
+// ============================================================================
+// Step 11 — preservation oracle sabotage self-test (C4 / A6)
+// ============================================================================
+
+/** Capture a protected node, prove baseline passes, sabotage it, and REQUIRE the oracle to throw. */
+function expectOracleCatches(label: string, protectedPath: string, mutate: () => void): void {
+  const captured = captureProtected([protectedPath]);
+  assertProtectedUnchanged(`${label} baseline`, captured); // unchanged must pass
+  mutate();
+  let caught = false;
+  try {
+    assertProtectedUnchanged(label, captured);
+  } catch (error) {
+    if (!(error instanceof SmokeFailure)) throw error;
+    caught = true;
+  }
+  if (!caught) fail(`preservation oracle FAILED to catch ${label} — assertProtectedUnchanged is not decisive`);
+}
+
+function stepPreservationSabotage(notes: string[]): void {
+  withIsolatedHome((iso) => {
+    // Meta-proof (review carryover): directly sabotage each preservation
+    // dimension and require the SAME assertProtectedUnchanged oracle used across
+    // steps 3-7 to catch it, so those green preservation assertions are known
+    // decisive, not vacuously passing.
+    const personal = seedPersonalFixtures(iso);
+    // (1) byte sabotage of a protected file's contents
+    expectOracleCatches('byte-sabotage', join(iso.skillsDir, personal.names.modifiedManaged), () => {
+      writeFileSync(join(iso.skillsDir, personal.names.modifiedManaged, 'SKILL.md'), 'SABOTAGE bytes\n');
+    });
+    // (2) mode sabotage of a protected directory (0o755 → 0o700)
+    expectOracleCatches('mode-sabotage', join(iso.skillsDir, personal.names.malformedMarker), () => {
+      chmodSync(join(iso.skillsDir, personal.names.malformedMarker), 0o700);
+    });
+    // (3) symlink-target sabotage of a protected symlink (repoint to a new dir)
+    const linkPath = join(iso.skillsDir, personal.names.symlinked);
+    const newTarget = join(iso.home, 'sabotage-target');
+    mkdirSync(newTarget, { recursive: true });
+    expectOracleCatches('symlink-target-sabotage', linkPath, () => {
+      rmSync(linkPath);
+      symlinkSync(newTarget, linkPath);
+    });
+    notes.push(
+      'preservation-sabotage: assertProtectedUnchanged catches byte + mode + symlink-target mutation (oracle proven decisive)',
+    );
+  });
 }
 
 // ============================================================================
@@ -637,6 +720,7 @@ function main(): void {
     stepPluginIncapable(notes);
     stepForcedPluginFailure(notes);
     stepMuslNoClobber(notes);
+    stepPreservationSabotage(notes);
     stepEnvDependentSuites(notes);
     stepDocContract(notes);
     console.log(`codex-plugin-only-smoke: OK\n  - ${notes.join('\n  - ')}`);

@@ -7,7 +7,7 @@ This directory is the shared release payload for Claude Code and Codex. The two 
 | Surface | Delivery | Contract |
 |---------|----------|----------|
 | Product skills | The plugin contains 23 physical in-root skill directories, each with `SKILL.md` and `agents/openai.yaml` | The **sole** Genie-managed skill provider; no escaping symlink and no user-tier copy — nothing is written to `~/.agents/skills` |
-| Fallback retirement | Hidden `~/.agents/skills/.genie-codex-fallback-retirement/` quarantine transaction | Never written on fresh install. Upgrades from a fallback-seeding release move only provably clean, digest-owned historical copies here after one plugin health proof; `evidence/` archives retain changed trees for recovery |
+| Fallback retirement | Hidden `~/.agents/skills/.genie-codex-fallback-retirement/` quarantine transaction | Never written on fresh install. Upgrades from a fallback-seeding release move only provably clean, digest-owned historical copies here after one plugin health proof; `txn-<id>/evidence/` archives retain changed trees for recovery |
 | Hooks | `.codex-plugin/plugin.json` points to `hooks/codex-hooks.json` | Three untrusted definitions only: H3 SessionStart context, H4 local PreToolUse guardrails, H6 PermissionRequest approval |
 | MCP | `.mcp.json` starts `scripts/mcp-launcher.cjs` | The launcher accepts only the canonical `$GENIE_HOME/bin/genie` (default `~/.genie/bin/genie`) and fails closed if it is absent or unsafe |
 | Role agents | Seven TOMLs are staged in `codex-agents/` | Plugins cannot install custom agents. `genie install` or `genie setup --codex` copies the optional profiles into `~/.codex/agents/` behind the same plugin health gate |
@@ -21,14 +21,14 @@ The plugin is the only Genie-managed skill provider. A fresh Codex install write
   .retirement.lock          single-writer lock for the retirement root
   txn-<id>/journal.json     fsynced full-batch record of every retired identity
   txn-<id>/quarantine/<skill>/   retired skill trees, moved intact
-  evidence/                 changed trees archived aside during recovery races
+  txn-<id>/evidence/<skill>/     changed trees archived aside during recovery races
 ```
 
 The transaction is idempotent and crash-safe: repeated updates recognize the committed transaction (no second transaction, no accumulating quarantine); an interrupted run reverse-restores every pre-commit move without clobbering conflicts. Committed quarantine and journal evidence are retained. Manual recovery:
 
 - **Restore a retired skill:** move it back from `txn-<id>/quarantine/<skill>/` to `~/.agents/skills/<skill>/` (only if you want a bare user-tier copy; the plugin already serves `$genie:<skill>`).
 - **"Source changed after planning":** if the live skill was edited between the health proof and the move, retirement aborts before any move — the changed personal copy stays in place at `~/.agents/skills/<skill>`; nothing is moved or archived. Review it, then rerun.
-- **"Changed evidence retained":** the republish-to-live + archive behavior belongs to this class — when a quarantined tree changed during restore or disposal, the changed copy is retained under `evidence/` as a durable backup of that exact content; diff it against the live path before removing it.
+- **"Changed evidence retained":** the republish-to-live + archive behavior belongs to this class — when a quarantined tree changed during restore or disposal, the changed copy is retained under `txn-<id>/evidence/<skill>/` (nested inside the transaction dir, beside `quarantine/`) as a durable backup of that exact content; diff it against the live path before removing it.
 
 `genie doctor` reports the quarantined count and every preserved collision (name, classification, effective precedence, and remediation). Restart Codex after any Codex convergence so it drops stale bare providers and loads only owner-qualified `genie:*` plugin skills.
 
