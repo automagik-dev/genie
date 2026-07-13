@@ -15,11 +15,13 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import {
   chmodSync,
+  closeSync,
   cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   readdirSync,
   readlinkSync,
@@ -28,6 +30,7 @@ import {
   symlinkSync,
   utimesSync,
   writeFileSync,
+  writeSync,
 } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -43,22 +46,28 @@ import {
   type AgentReport,
   type AgentSyncOptions,
   type AgentSyncReport,
+  CODEX_FALLBACK_RETIREMENT_ROOT,
   LIFECYCLE_LEASE_OWNER_ENV,
   LIFECYCLE_LEASE_PATH_ENV,
   TARGET_NAME,
   WORKFLOW_MANIFEST_NAME,
   acquireLifecycleLease,
   applyCodexFallbackRetirement,
+  atomicRenameDirectoryNoClobber,
   computeDirDigest,
   inspectManagedWorkflow,
   lifecycleLockPath,
   planCodexFallbackRetirement,
+  publishDirectoryViaNameClaim,
+  recoverCodexFallbackRetirements,
   recoverManagedSkillTransactions,
   recoverManagedWorkflowTransactions,
   removeManagedWorkflow,
   resolveGenieSource,
+  resolveLinuxRenameat2,
   runAgentSync,
   stampWorkflow,
+  writeAllSync,
 } from './agent-sync';
 
 const require = createRequire(import.meta.url);
@@ -3066,6 +3075,318 @@ describe('Codex fallback batch retirement', () => {
     expect(lstatSync(dangling).isSymbolicLink()).toBe(true);
     expect(existsSync(join(fixture.agentsSkillsDir, '.genie-codex-fallback-retirement'))).toBe(false);
   });
+
+  // ---------------------------------------------------------------------------
+  // Group A recovery gaps (G1 final-copy safety, G2 serialization, G3 discovery)
+  // ---------------------------------------------------------------------------
+
+  const RETIREMENT_ROOT = CODEX_FALLBACK_RETIREMENT_ROOT;
+
+  function retirementRunnerPath(): string {
+    const runnerPath = join(fixture.root, 'retire-runner.ts');
+    writeFileSync(
+      runnerPath,
+      [
+        "import { existsSync, readFileSync } from 'node:fs';",
+        `import { applyCodexFallbackRetirement, recoverCodexFallbackRetirements } from ${JSON.stringify(
+          join(import.meta.dir, 'agent-sync.ts'),
+        )};`,
+        'const goFile = process.env.RETIRE_GO_FILE;',
+        'if (goFile) { while (!existsSync(goFile)) Bun.sleepSync(2); }',
+        'try {',
+        "  if (process.env.RETIRE_MODE === 'recover') {",
+        '    const results = recoverCodexFallbackRetirements(process.env.RETIRE_FALLBACK as string);',
+        '    process.stdout.write(JSON.stringify({ ok: true, results }));',
+        '  } else {',
+        "    const plan = JSON.parse(readFileSync(process.env.RETIRE_PLAN as string, 'utf8'));",
+        '    const result = applyCodexFallbackRetirement(plan);',
+        '    process.stdout.write(JSON.stringify({ ok: true, status: result.status, transactionId: result.transactionId }));',
+        '  }',
+        '} catch (e) {',
+        '  process.stdout.write(JSON.stringify({ ok: false, error: e instanceof Error ? e.message : String(e) }));',
+        '}',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    return runnerPath;
+  }
+
+  interface RetireRunnerResult {
+    ok: boolean;
+    status?: string;
+    transactionId?: string;
+    error?: string;
+    results?: Array<{ status: string; transactionId: string }>;
+  }
+
+  async function spawnRetire(runnerPath: string, env: Record<string, string>): Promise<RetireRunnerResult> {
+    const proc = Bun.spawn(['bun', runnerPath], {
+      env: { ...process.env, ...env },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const [out] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+    return JSON.parse(out || '{"ok":false,"error":"no runner output"}') as RetireRunnerResult;
+  }
+
+  test('G1: a source deleted in the disposal window archives the changed copy as evidence — never zero copies', () => {
+    const { alpha, plan } = batchFixture();
+    let changed = false;
+    let deleted = false;
+    expect(() =>
+      applyCodexFallbackRetirement(plan, {
+        failpoint: (point) => {
+          if (point === 'after-move-boundary-identification:0') {
+            writeFile(join(alpha.path, 'USER.txt'), 'changed final copy\n');
+            changed = true;
+          }
+          if (changed && !deleted && point === 'before-quarantine-disposal:0') {
+            deleted = true;
+            rmSync(alpha.path, { recursive: true }); // delete the only live copy inside the disposal window
+          }
+        },
+      }),
+    ).toThrow('changed evidence retained');
+    const txnDir = join(plan.fallbackSkillsDir, RETIREMENT_ROOT, `txn-${plan.transactionId}`);
+    const evidence = join(txnDir, 'evidence', 'alpha');
+    // An intact changed copy survived — the quarantine copy was MOVED aside, never recursive-deleted.
+    expect(existsSync(evidence)).toBe(true);
+    expect(readFileSync(join(evidence, 'USER.txt'), 'utf8')).toBe('changed final copy\n');
+    expect(readFileSync(join(evidence, 'SKILL.md'), 'utf8')).toBe('# alpha\n');
+    expect(existsSync(join(txnDir, 'quarantine', 'alpha'))).toBe(false);
+    const journal = JSON.parse(readFileSync(join(txnDir, 'journal.json'), 'utf8')) as {
+      entries: Array<{ evidence?: string; observedTreeDigest?: string }>;
+    };
+    expect(journal.entries[0]?.evidence).toBe('alpha');
+    expect(journal.entries[0]?.observedTreeDigest).toMatch(/^[a-f0-9]{64}$/);
+    // A subsequent attempt is a recoverable conflict, never the catastrophic throw.
+    expect(() => applyCodexFallbackRetirement(plan)).toThrow('changed evidence retained');
+    expect(() => applyCodexFallbackRetirement(plan)).not.toThrow('neither live nor quarantined');
+    expect(existsSync(evidence)).toBe(true);
+  });
+
+  test('G1 cross-process: a source deleted by another process during disposal keeps the changed evidence copy', async () => {
+    const { alpha, plan } = batchFixture();
+    const planPath = join(fixture.root, 'race-plan.json');
+    writeFile(planPath, JSON.stringify(plan));
+    const readyFile = join(fixture.root, 'race-ready');
+    const goFile = join(fixture.root, 'race-go');
+    const runnerPath = join(fixture.root, 'disposal-race-runner.ts');
+    writeFileSync(
+      runnerPath,
+      [
+        "import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';",
+        "import { dirname } from 'node:path';",
+        `import { applyCodexFallbackRetirement } from ${JSON.stringify(join(import.meta.dir, 'agent-sync.ts'))};`,
+        'const plan = JSON.parse(readFileSync(process.env.RACE_PLAN as string, "utf8"));',
+        'const readyFile = process.env.RACE_READY as string;',
+        'const goFile = process.env.RACE_GO as string;',
+        'const userPath = process.env.RACE_USER_PATH as string;',
+        'try {',
+        '  applyCodexFallbackRetirement(plan, { failpoint: (point) => {',
+        "    if (point === 'after-move-boundary-identification:0') {",
+        '      mkdirSync(dirname(userPath), { recursive: true });',
+        "      writeFileSync(userPath, 'cross-process changed\\n');",
+        '    }',
+        "    if (point === 'before-quarantine-disposal:0') {",
+        "      writeFileSync(readyFile, 'ready\\n');",
+        '      while (!existsSync(goFile)) Bun.sleepSync(2);',
+        '    }',
+        '  }});',
+        '  process.stdout.write(JSON.stringify({ ok: true }));',
+        '} catch (e) {',
+        '  process.stdout.write(JSON.stringify({ ok: false, error: e instanceof Error ? e.message : String(e) }));',
+        '}',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    const proc = Bun.spawn(['bun', runnerPath], {
+      env: {
+        ...process.env,
+        RACE_PLAN: planPath,
+        RACE_READY: readyFile,
+        RACE_GO: goFile,
+        RACE_USER_PATH: join(alpha.path, 'USER.txt'),
+      },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const deadline = Date.now() + 15_000;
+    while (!existsSync(readyFile) && Date.now() < deadline) await Bun.sleep(20);
+    expect(existsSync(readyFile)).toBe(true);
+    rmSync(alpha.path, { recursive: true, force: true }); // another process deletes the live source mid-disposal
+    writeFile(goFile, 'go\n');
+    const [out] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+    const result = JSON.parse(out || '{"ok":false}') as RetireRunnerResult;
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('changed evidence retained');
+    const txnDir = join(plan.fallbackSkillsDir, RETIREMENT_ROOT, `txn-${plan.transactionId}`);
+    const evidence = join(txnDir, 'evidence', 'alpha');
+    expect(existsSync(evidence)).toBe(true);
+    expect(readFileSync(join(evidence, 'USER.txt'), 'utf8')).toBe('cross-process changed\n');
+    expect(existsSync(join(txnDir, 'quarantine', 'alpha'))).toBe(false);
+  }, 25_000);
+
+  test('G2: N concurrent same-plan retirements commit exactly once and never revoke a returned commit', async () => {
+    const { fallback, plan } = batchFixture();
+    const planPath = join(fixture.root, 'race-plan.json');
+    writeFile(planPath, JSON.stringify(plan));
+    const runnerPath = retirementRunnerPath();
+    const goFile = join(fixture.root, 'nway-go');
+    const N = 4;
+    const pending = Array.from({ length: N }, () =>
+      spawnRetire(runnerPath, { RETIRE_PLAN: planPath, RETIRE_GO_FILE: goFile }),
+    );
+    await Bun.sleep(200); // let every runner park on the go-file barrier
+    writeFile(goFile, 'go\n');
+    const results = await Promise.all(pending);
+    for (const r of results) expect(r.ok).toBe(true);
+    const committed = results.filter((r) => r.status === 'committed');
+    const already = results.filter((r) => r.status === 'already-committed');
+    expect(committed).toHaveLength(1); // exactly one authoritative commit under N-way concurrency
+    expect(already).toHaveLength(N - 1);
+    const txnDir = join(fallback, RETIREMENT_ROOT, `txn-${plan.transactionId}`);
+    const journal = JSON.parse(readFileSync(join(txnDir, 'journal.json'), 'utf8')) as { phase: string };
+    expect(journal.phase).toBe('committed'); // terminal, never rewritten to a pre-commit phase
+    expect(existsSync(join(fallback, 'alpha'))).toBe(false);
+    expect(existsSync(join(fallback, 'beta'))).toBe(false);
+    expect(readdirSync(join(txnDir, 'quarantine')).sort()).toEqual(['alpha', 'beta']);
+    expect(existsSync(join(fallback, RETIREMENT_ROOT, '.retirement.lock'))).toBe(false); // released in finally
+  }, 30_000);
+
+  test('G2: a reentrant retirement while the lock is held fails closed without corrupting the journal', () => {
+    const { plan } = batchFixture();
+    const prev = process.env.GENIE_RETIREMENT_LOCK_WAIT_MS;
+    process.env.GENIE_RETIREMENT_LOCK_WAIT_MS = '150'; // bounded deadline so the reentrant attempt fails fast
+    let reentered = false;
+    let reentrantError = '';
+    try {
+      const result = applyCodexFallbackRetirement(plan, {
+        failpoint: (point) => {
+          if (point === 'before-journal-rename' && !reentered) {
+            reentered = true;
+            try {
+              applyCodexFallbackRetirement(plan); // same process already holds the lock → contended
+            } catch (e) {
+              reentrantError = e instanceof Error ? e.message : String(e);
+            }
+          }
+        },
+      });
+      expect(result.status).toBe('committed');
+    } finally {
+      if (prev === undefined) Reflect.deleteProperty(process.env, 'GENIE_RETIREMENT_LOCK_WAIT_MS');
+      else process.env.GENIE_RETIREMENT_LOCK_WAIT_MS = prev;
+    }
+    expect(reentered).toBe(true);
+    expect(reentrantError).toContain('lock contended');
+    expect(reentrantError).toContain('no data changed');
+    const txnDir = join(plan.fallbackSkillsDir, RETIREMENT_ROOT, `txn-${plan.transactionId}`);
+    const journal = JSON.parse(readFileSync(join(txnDir, 'journal.json'), 'utf8')) as { phase: string };
+    expect(journal.phase).toBe('committed'); // the contended reentrant call never rewrote the durable journal
+  });
+
+  test('G3: recovery discovers and converges an unfinished transaction that replanning cannot rediscover', () => {
+    const { alpha, beta, fallback, plan } = batchFixture();
+    // Crash after both moves and abort the restore, leaving both trees quarantined.
+    expect(() =>
+      applyCodexFallbackRetirement(plan, {
+        failpoint: (point) => {
+          if (point === 'after-move:1') throw new Error('hard crash after moves');
+          if (point === 'before-restore:1') throw new Error('restore aborted');
+        },
+      }),
+    ).toThrow('fallback retirement restore failed');
+    const txnDir = join(fallback, RETIREMENT_ROOT, `txn-${plan.transactionId}`);
+    expect(existsSync(join(txnDir, 'quarantine', 'alpha'))).toBe(true);
+    expect(existsSync(join(txnDir, 'quarantine', 'beta'))).toBe(true);
+    expect(existsSync(alpha.path)).toBe(false);
+    expect(existsSync(beta.path)).toBe(false);
+    // A fresh replan from live paths is blind — sources are gone, so it hashes an empty batch.
+    const blind = planCodexFallbackRetirement({ fallbackSkillsDir: fallback, skillNames: ['alpha', 'beta'] });
+    expect(blind.accepted).toHaveLength(0);
+    expect(blind.transactionId).not.toBe(plan.transactionId);
+    // Store-enumerating recovery reconstructs the plan from the journal alone and converges it.
+    const results = recoverCodexFallbackRetirements(fallback);
+    expect(results).toHaveLength(1);
+    expect(['committed', 'already-committed']).toContain(results[0]!.status);
+    const journal = JSON.parse(readFileSync(join(txnDir, 'journal.json'), 'utf8')) as { phase: string };
+    expect(['committed', 'restored']).toContain(journal.phase);
+  });
+
+  test('G3 real-process: a bare runner that knows only the fallback dir recovers a quarantined crash', async () => {
+    const { alpha, beta, fallback, plan } = batchFixture();
+    expect(() =>
+      applyCodexFallbackRetirement(plan, {
+        failpoint: (point) => {
+          if (point === 'after-move:1') throw new Error('hard crash after moves');
+          if (point === 'before-restore:1') throw new Error('restore aborted');
+        },
+      }),
+    ).toThrow('fallback retirement restore failed');
+    expect(existsSync(alpha.path)).toBe(false);
+    expect(existsSync(beta.path)).toBe(false);
+    const runnerPath = retirementRunnerPath();
+    const result = await spawnRetire(runnerPath, { RETIRE_MODE: 'recover', RETIRE_FALLBACK: fallback });
+    expect(result.ok).toBe(true);
+    expect(result.results).toHaveLength(1);
+    expect(['committed', 'already-committed']).toContain(result.results![0]!.status);
+    const txnDir = join(fallback, RETIREMENT_ROOT, `txn-${plan.transactionId}`);
+    const journal = JSON.parse(readFileSync(join(txnDir, 'journal.json'), 'utf8')) as { phase: string };
+    expect(['committed', 'restored']).toContain(journal.phase);
+  }, 20_000);
+
+  test('G3: recovery finishes a committed base generation and isolates a corrupt sibling transaction', () => {
+    const { fallback, plan } = batchFixture();
+    const first = applyCodexFallbackRetirement(plan);
+    expect(first.status).toBe('committed');
+    // Resurrect alpha exactly (managed) so the committed base owes a generation.
+    cpSync(join(first.transactionDir, 'quarantine', 'alpha'), join(fallback, 'alpha'), { recursive: true });
+    // A corrupt sibling transaction (valid txn name, unreadable journal, non-empty quarantine) must not sink the sweep.
+    const corruptId = 'd'.repeat(32);
+    const corruptDir = join(fallback, RETIREMENT_ROOT, `txn-${corruptId}`);
+    writeFile(join(corruptDir, 'quarantine', 'ghost', 'SKILL.md'), '# ghost\n');
+    writeFile(join(corruptDir, 'journal.json'), 'not valid json {{{');
+    expect(() => recoverCodexFallbackRetirements(fallback)).toThrow(`txn-${corruptId}`);
+    // Despite the corrupt sibling, the committed base still produced a distinct committed generation.
+    expect(existsSync(join(fallback, 'alpha'))).toBe(false);
+    const txns = readdirSync(join(fallback, RETIREMENT_ROOT))
+      .filter((n) => n.startsWith('txn-'))
+      .sort();
+    expect(txns).toHaveLength(3); // base, generation, corrupt sibling all retained
+    expect(txns).toContain(`txn-${plan.transactionId}`);
+    expect(txns).toContain(`txn-${corruptId}`);
+  });
+
+  test('G1/G5 integration: a changed-tree restore keeps both the republished tree and its archived evidence copy', () => {
+    const { alpha, plan } = batchFixture();
+    let changed = false;
+    let interrupted = false;
+    expect(() =>
+      applyCodexFallbackRetirement(plan, {
+        failpoint: (point) => {
+          if (point === 'after-move-boundary-identification:0') {
+            writeFile(join(alpha.path, 'USER.txt'), 'integration content\n');
+            changed = true;
+          }
+          if (changed && !interrupted && point === 'after-quarantine-disposal:0') {
+            interrupted = true;
+            throw new Error('stop immediately after atomic archive');
+          }
+        },
+      }),
+    ).toThrow('fallback retirement restore failed');
+    const txnDir = join(plan.fallbackSkillsDir, RETIREMENT_ROOT, `txn-${plan.transactionId}`);
+    // The atomically republished live tree AND the archived evidence copy both survive the interruption.
+    expect(readFileSync(join(alpha.path, 'USER.txt'), 'utf8')).toBe('integration content\n');
+    expect(readFileSync(join(txnDir, 'evidence', 'alpha', 'USER.txt'), 'utf8')).toBe('integration content\n');
+    expect(existsSync(join(txnDir, 'quarantine', 'alpha'))).toBe(false);
+    // Retry converges to a terminal state without ever losing the changed bytes.
+    expect(() => applyCodexFallbackRetirement(plan)).toThrow('source changed after planning');
+    expect(readFileSync(join(alpha.path, 'USER.txt'), 'utf8')).toBe('integration content\n');
+  });
 });
 
 describe('Codex fallback allowlist generator', () => {
@@ -3103,5 +3424,125 @@ describe('Codex fallback allowlist generator', () => {
         physicalDigest: computeDirDigest(join(payloadRoot, 'skills', 'alpha')),
       },
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G4 short-write loop + G5 musl-safe no-clobber directory publish primitives
+// ---------------------------------------------------------------------------
+
+describe('writeAllSync short-write loop (G4)', () => {
+  test('completes a whole buffer across a partial write then a full write', () => {
+    const path = join(fixture.root, 'writeall-target');
+    const buffer = Buffer.from('the quick brown fox jumps over the lazy dog\n');
+    let calls = 0;
+    const partialOnce: typeof writeSync = ((fd: number, buf: Buffer, offset: number, length: number) => {
+      calls += 1;
+      const chunk = calls === 1 ? Math.min(4, length) : length; // short write on the first call only
+      return writeSync(fd, buf, offset, chunk);
+    }) as typeof writeSync;
+    const fd = openSync(path, 'w');
+    try {
+      writeAllSync(fd, buffer, partialOnce);
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(path)).toEqual(buffer); // every byte landed despite the short write
+    expect(calls).toBeGreaterThanOrEqual(2); // the loop advanced the offset and finished the tail
+  });
+
+  test('a writer that never makes progress raises rather than looping forever', () => {
+    const zeroWriter: typeof writeSync = (() => 0) as typeof writeSync;
+    expect(() => writeAllSync(1, Buffer.from('x'), zeroWriter)).toThrow('made no progress');
+  });
+});
+
+describe('no-clobber directory publish (G5 musl portability)', () => {
+  function stagedTree(name: string, body = `# ${name}\n`): string {
+    const dir = join(fixture.root, name);
+    writeFile(join(dir, 'SKILL.md'), body);
+    return dir;
+  }
+
+  function bufPath(b: Buffer): string {
+    return b.toString('utf8').replace(/\0$/, '');
+  }
+
+  // A JS stand-in for renameat2(RENAME_NOREPLACE): refuse when the target exists.
+  const noReplaceRenamer = (s: Buffer, t: Buffer): number => {
+    const target = bufPath(t);
+    if (existsSync(target)) return -1;
+    renameSync(bufPath(s), target);
+    return 0;
+  };
+
+  test('resolveLinuxRenameat2 tries candidate sonames in order and returns the first that resolves', () => {
+    const attempted: string[] = [];
+    const opener = (soname: string) => {
+      attempted.push(soname);
+      return soname === 'good.so' ? noReplaceRenamer : null;
+    };
+    const resolved = resolveLinuxRenameat2(opener, ['bad-1.so', 'good.so', 'never-reached.so']);
+    expect(resolved).toBe(noReplaceRenamer);
+    expect(attempted).toEqual(['bad-1.so', 'good.so']); // stops at the first success
+  });
+
+  test('a resolved renameat2 publishes atomically onto an absent target and rejects an existing one', () => {
+    const staged = stagedTree('rn-src');
+    const digest = computeDirDigest(staged);
+    const target = join(fixture.root, 'rn-target');
+    atomicRenameDirectoryNoClobber(staged, target, { opener: () => noReplaceRenamer, probe: {} });
+    expect(computeDirDigest(target)).toBe(digest);
+    const staged2 = stagedTree('rn-src2');
+    expect(() =>
+      atomicRenameDirectoryNoClobber(staged2, target, { opener: () => noReplaceRenamer, probe: {} }),
+    ).toThrow('target preserved');
+    expect(computeDirDigest(target)).toBe(digest); // pre-existing target bytes untouched
+  });
+
+  test('with no libc renameat2 available, the portable name-claim publishes onto an absent target', () => {
+    const staged = stagedTree('portable-src');
+    const digest = computeDirDigest(staged);
+    const target = join(fixture.root, 'portable-target'); // absent
+    atomicRenameDirectoryNoClobber(staged, target, { opener: () => null, probe: {} });
+    expect(computeDirDigest(target)).toBe(digest); // mkdir-claim + rename-onto-empty reproduces the tree
+  });
+
+  test('with no libc renameat2 available, a non-empty target is preserved and NoClobberPublishError is raised', () => {
+    const staged = stagedTree('portable-src2');
+    const target = join(fixture.root, 'portable-target2');
+    writeFile(join(target, 'EXISTING.txt'), 'user bytes\n');
+    const before = computeDirDigest(target);
+    expect(() => atomicRenameDirectoryNoClobber(staged, target, { opener: () => null, probe: {} })).toThrow(
+      'portable directory claim failed',
+    );
+    expect(computeDirDigest(target)).toBe(before); // target never clobbered
+    expect(readFileSync(join(target, 'EXISTING.txt'), 'utf8')).toBe('user bytes\n');
+  });
+
+  test('publishDirectoryViaNameClaim replaces only an empty claimed dir and rejects a populated target', () => {
+    const staged = stagedTree('claim-src');
+    const digest = computeDirDigest(staged);
+    const target = join(fixture.root, 'claim-target'); // absent
+    publishDirectoryViaNameClaim(staged, target);
+    expect(computeDirDigest(target)).toBe(digest);
+    const staged2 = stagedTree('claim-src2');
+    const before = computeDirDigest(target);
+    expect(() => publishDirectoryViaNameClaim(staged2, target)).toThrow('portable directory claim failed');
+    expect(computeDirDigest(target)).toBe(before); // a real (non-empty) target is never touched
+  });
+
+  test('feature detection is memoized at first use across publishes', () => {
+    let calls = 0;
+    const probe = {}; // fresh probe cache shared across both publishes
+    const opener = () => {
+      calls += 1;
+      return null; // simulate musl: no candidate resolves
+    };
+    atomicRenameDirectoryNoClobber(stagedTree('cache-1'), join(fixture.root, 'cache-t1'), { opener, probe });
+    const afterFirst = calls;
+    atomicRenameDirectoryNoClobber(stagedTree('cache-2'), join(fixture.root, 'cache-t2'), { opener, probe });
+    expect(calls).toBe(afterFirst); // the second publish reuses the memoized probe — no re-detection
+    if (process.platform === 'linux') expect(afterFirst).toBeGreaterThan(0);
   });
 });
