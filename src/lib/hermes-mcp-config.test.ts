@@ -269,4 +269,120 @@ describe('mergeMcpServersGenie', () => {
     };
     expect(parsed.mcp_servers.genie.env.GENIE_HOME).toBe(root);
   });
+
+  // A YAML comment is valid at ANY indentation, including one deeper than the
+  // real children. Before the fix, `childIndentOf` picked the comment's indent
+  // as the block's child indent, `findChildRange` then missed the real `genie`/
+  // sibling lines at the true indent, and a duplicate mis-indented `genie` block
+  // was appended — producing output `Bun.YAML.parse` rejects. These cases lock
+  // that class of bug down for good.
+  describe('comment-line indentation (regression)', () => {
+    test('repro: comment deeper-indented than the real sibling child still merges cleanly, output parses', () => {
+      const root = tmp();
+      const configPath = join(root, 'config.yaml');
+      const original = 'mcp_servers:\n      # my servers\n  other:\n    command: x\n';
+      writeFileSync(configPath, original);
+
+      const result = mergeMcpServersGenie({
+        configPath,
+        binaryPath: bin(root),
+        genieHome: root,
+        fsExists: () => false,
+      });
+      expect(result.status).toBe('created');
+
+      const text = readFileSync(configPath, 'utf8');
+      // Exactly one genie child — no duplicate mis-indented append.
+      expect(text.match(/^\s*genie:\s*$/gm)?.length).toBe(1);
+      expect(text).toContain('      # my servers\n');
+
+      const parsed = Bun.YAML.parse(text) as {
+        mcp_servers: { other: { command: string }; genie: { command: string } };
+      };
+      expect(parsed.mcp_servers.other.command).toBe('x');
+      expect(parsed.mcp_servers.genie.command).toBe(bin(root));
+    });
+
+    test('comment at a smaller indent than the genie child is skipped when deriving child indent', () => {
+      const root = tmp();
+      const configPath = join(root, 'config.yaml');
+      const original =
+        'mcp_servers:\n# top-level-ish comment\n  genie:\n    command: /old/genie\n    args:\n      - mcp\n';
+      writeFileSync(configPath, original);
+
+      const command = bin(root);
+      const result = mergeMcpServersGenie({ configPath, binaryPath: command, genieHome: root, fsExists: () => false });
+      expect(result.status).toBe('updated');
+
+      const text = readFileSync(configPath, 'utf8');
+      expect(text.match(/^\s*genie:\s*$/gm)?.length).toBe(1);
+
+      const parsed = Bun.YAML.parse(text) as { mcp_servers: { genie: { command: string } } };
+      expect(parsed.mcp_servers.genie.command).toBe(command);
+    });
+
+    test('a comment sitting between the genie child and a later sibling does not swallow the sibling', () => {
+      const root = tmp();
+      const configPath = join(root, 'config.yaml');
+      const original =
+        'mcp_servers:\n' +
+        '  genie:\n' +
+        '    command: /old/genie\n' +
+        '    args:\n' +
+        '      - mcp\n' +
+        '  # comment between children\n' +
+        '  other:\n' +
+        '    command: /usr/bin/other\n';
+      writeFileSync(configPath, original);
+
+      const command = bin(root);
+      const result = mergeMcpServersGenie({ configPath, binaryPath: command, genieHome: root, fsExists: () => false });
+      expect(result.status).toBe('updated');
+
+      const text = readFileSync(configPath, 'utf8');
+      expect(text).toContain('  # comment between children\n');
+
+      const parsed = Bun.YAML.parse(text) as {
+        mcp_servers: { genie: { command: string }; other: { command: string } };
+      };
+      expect(parsed.mcp_servers.genie.command).toBe(command);
+      expect(parsed.mcp_servers.other.command).toBe('/usr/bin/other');
+    });
+
+    test('a comment-only mcp_servers body (no real children yet) still derives a sane child indent and merges cleanly', () => {
+      const root = tmp();
+      const configPath = join(root, 'config.yaml');
+      const original = 'mcp_servers:\n  # nothing configured yet\nother: 1\n';
+      writeFileSync(configPath, original);
+
+      const result = mergeMcpServersGenie({
+        configPath,
+        binaryPath: bin(root),
+        genieHome: root,
+        fsExists: () => false,
+      });
+      expect(result.status).toBe('created');
+
+      const text = readFileSync(configPath, 'utf8');
+      const parsed = Bun.YAML.parse(text) as { mcp_servers: { genie: { command: string } }; other: number };
+      expect(parsed.mcp_servers.genie.command).toBe(bin(root));
+      expect(parsed.other).toBe(1);
+    });
+
+    test('repro layout is idempotent: a second merge is unchanged and stays parseable', () => {
+      const root = tmp();
+      const configPath = join(root, 'config.yaml');
+      writeFileSync(configPath, 'mcp_servers:\n      # my servers\n  other:\n    command: x\n');
+      const command = bin(root);
+
+      const first = mergeMcpServersGenie({ configPath, binaryPath: command, genieHome: root, fsExists: () => false });
+      expect(first.status).toBe('created');
+      const afterFirst = readFileSync(configPath, 'utf8');
+      Bun.YAML.parse(afterFirst); // still parses
+
+      const second = mergeMcpServersGenie({ configPath, binaryPath: command, genieHome: root, fsExists: () => false });
+      expect(second.status).toBe('unchanged');
+      expect(readFileSync(configPath, 'utf8')).toBe(afterFirst);
+    });
+  });
 });

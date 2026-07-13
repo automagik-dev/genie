@@ -311,6 +311,110 @@ describe('mergeSkillsExternalDir', () => {
     expect(second.status).toBe('unchanged');
     expect(readFileSync(configPath, 'utf8')).toBe(afterFirst);
   });
+
+  // A YAML comment is valid at ANY indentation, including one deeper than the
+  // real children. Before the fix, `childIndentOf` picked the comment's indent
+  // as the block's child indent, the child-key matchers then missed the real
+  // `external_dirs` line at the true indent, and a duplicate mis-indented key
+  // was appended — producing output `Bun.YAML.parse` rejects. These cases lock
+  // that class of bug down for good.
+  describe('comment-line indentation (regression)', () => {
+    test('repro: comment deeper-indented than the real inline-empty child still merges in place, output parses', () => {
+      const root = tmp();
+      const skillsRoot = makeSkillsRoot(join(root, 'skills'));
+      const configPath = join(root, 'config.yaml');
+      const original = 'skills:\n      # my comment\n  external_dirs: []\nother: 1\n';
+      writeFileSync(configPath, original);
+
+      const result = mergeSkillsExternalDir({ configPath, skillsRoot });
+      expect(result.status).toBe('updated');
+
+      const text = readFileSync(configPath, 'utf8');
+      // Exactly one external_dirs key — no duplicate mis-indented append.
+      expect(text.match(/external_dirs:/g)?.length).toBe(1);
+      expect(text).toContain('      # my comment\n');
+
+      const parsed = Bun.YAML.parse(text) as { skills: { external_dirs: string[] }; other: number };
+      expect(parsed.skills.external_dirs).toEqual([skillsRoot]);
+      expect(parsed.other).toBe(1);
+    });
+
+    test('comment at a smaller indent than the block-style child is skipped when deriving child indent', () => {
+      const root = tmp();
+      const skillsRoot = makeSkillsRoot(join(root, 'skills'));
+      const configPath = join(root, 'config.yaml');
+      const original = 'skills:\n# top-level-ish comment\n  external_dirs:\n    - /home/user/mine\nother: 1\n';
+      writeFileSync(configPath, original);
+
+      const result = mergeSkillsExternalDir({ configPath, skillsRoot });
+      expect(result.status).toBe('updated');
+
+      const text = readFileSync(configPath, 'utf8');
+      expect(text.match(/external_dirs:/g)?.length).toBe(1);
+
+      const parsed = Bun.YAML.parse(text) as { skills: { external_dirs: string[] }; other: number };
+      expect(parsed.skills.external_dirs).toEqual(['/home/user/mine', skillsRoot]);
+      expect(parsed.other).toBe(1);
+    });
+
+    test('a comment sitting between the external_dirs child and a later sibling does not swallow the sibling', () => {
+      const root = tmp();
+      const skillsRoot = makeSkillsRoot(join(root, 'skills'));
+      const configPath = join(root, 'config.yaml');
+      const original =
+        'skills:\n' +
+        '  external_dirs:\n' +
+        '    - /home/user/mine\n' +
+        '  # comment between children\n' +
+        '  template_vars: true\n';
+      writeFileSync(configPath, original);
+
+      const result = mergeSkillsExternalDir({ configPath, skillsRoot });
+      expect(result.status).toBe('updated');
+
+      const text = readFileSync(configPath, 'utf8');
+      expect(text).toContain('  # comment between children\n');
+      expect(text).toContain('  template_vars: true\n');
+
+      const parsed = Bun.YAML.parse(text) as {
+        skills: { external_dirs: string[]; template_vars: boolean };
+      };
+      expect(parsed.skills.external_dirs).toEqual(['/home/user/mine', skillsRoot]);
+      expect(parsed.skills.template_vars).toBe(true);
+    });
+
+    test('a comment-only skills body (no real children yet) still derives a sane child indent and merges cleanly', () => {
+      const root = tmp();
+      const skillsRoot = makeSkillsRoot(join(root, 'skills'));
+      const configPath = join(root, 'config.yaml');
+      const original = 'skills:\n  # nothing configured yet\nother: 1\n';
+      writeFileSync(configPath, original);
+
+      const result = mergeSkillsExternalDir({ configPath, skillsRoot });
+      expect(result.status).toBe('updated');
+
+      const text = readFileSync(configPath, 'utf8');
+      const parsed = Bun.YAML.parse(text) as { skills: { external_dirs: string[] }; other: number };
+      expect(parsed.skills.external_dirs).toEqual([skillsRoot]);
+      expect(parsed.other).toBe(1);
+    });
+
+    test('repro layout is idempotent: a second merge is unchanged and stays parseable', () => {
+      const root = tmp();
+      const skillsRoot = makeSkillsRoot(join(root, 'skills'));
+      const configPath = join(root, 'config.yaml');
+      writeFileSync(configPath, 'skills:\n      # my comment\n  external_dirs: []\nother: 1\n');
+
+      const first = mergeSkillsExternalDir({ configPath, skillsRoot });
+      expect(first.status).toBe('updated');
+      const afterFirst = readFileSync(configPath, 'utf8');
+      Bun.YAML.parse(afterFirst); // still parses
+
+      const second = mergeSkillsExternalDir({ configPath, skillsRoot });
+      expect(second.status).toBe('unchanged');
+      expect(readFileSync(configPath, 'utf8')).toBe(afterFirst);
+    });
+  });
 });
 
 describe('copyProductSkillsDigestManaged (older-Hermes fallback)', () => {
