@@ -159,7 +159,19 @@ export function installCommand(
         throw new Error(`Requested integration failed: ${failed.map((r) => r.runtime).join(', ')}`);
     }
     const agentSyncSelection = narrowAgentSyncSelection(selection);
-    if (agentSyncSelection !== null && !codexFailed) runSync(agentSyncSelection);
+    if (agentSyncSelection !== null) {
+      if (!codexFailed) {
+        runSync(agentSyncSelection);
+      } else {
+        // selection === 'auto' is the only surviving case here: an explicit
+        // --integrations all/claude/codex codex failure already threw above,
+        // so a silent codexFailed-guarded skip here would otherwise exit 0
+        // with Claude agent-sync never having run and no trace of why.
+        console.log(
+          '  \x1b[33m!\x1b[0m Skipped Claude agent-sync: codex integration failed under --integrations auto (rerun with --integrations claude to sync Claude only, or fix codex and rerun).',
+        );
+      }
+    }
     if (results.some((result) => result.runtime === 'codex' && result.ok && result.hookReviewRequired)) {
       console.log('  \x1b[33m!\x1b[0m Review Genie hooks with /hooks, then start a new Codex task.');
     }

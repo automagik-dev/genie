@@ -459,6 +459,30 @@ describe('installCommand', () => {
     expect(observed).toEqual([]);
   });
 
+  test('a codex-gated Claude skip under --integrations auto prints an explicit advisory (not a silent exit 0)', () => {
+    const lines: string[] = [];
+    const originalLog = console.log;
+    console.log = (...args: unknown[]) => lines.push(args.map(String).join(' '));
+    try {
+      installCommand(
+        { integrations: 'auto' },
+        makeCleanupSpy().runner,
+        () => undefined,
+        () => {
+          throw new Error('runSync must not be called when codex gates the Claude sync');
+        },
+        () => [{ runtime: 'codex' as const, ok: false, detail: 'plugin-incapable Codex' }],
+        noopLease,
+        noopConsent,
+      );
+      const output = lines.join('\n');
+      expect(output).toContain('Skipped Claude agent-sync');
+      expect(output).toContain('codex integration failed');
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
   test('explicit integration failures are fatal while auto failures warn', () => {
     const failing = () => [{ runtime: 'codex' as const, ok: false, detail: 'missing' }];
     expect(() =>
