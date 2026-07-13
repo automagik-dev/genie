@@ -52,7 +52,11 @@ import {
 } from '../lib/genie-home.js';
 import { resolveProductSkillsRoot } from '../lib/hermes-skills-config.js';
 import { resolveOmniRuntimeConfig } from '../lib/omni-config.js';
-import { inspectCodexAgentOwnership } from '../lib/runtime-integrations.js';
+import {
+  CANONICAL_GENIE_SKILL_NAMES,
+  inspectCodexAgentOwnership,
+  inspectCodexFallbackTier,
+} from '../lib/runtime-integrations.js';
 import { CURRENT_SCHEMA_VERSION, GenieDbError, openDb } from '../lib/v5/genie-db.js';
 import { VERSION } from '../lib/version.js';
 import {
@@ -377,6 +381,31 @@ function codexProjectRouteCheck(root: string | null, probe: CodexPluginProbe): C
   }
 }
 
+/**
+ * Payload completeness (R5): how many of the exact canonical Genie skills the
+ * active plugin root physically ships. Pure read of `<activePluginRoot>/skills`
+ * — never launches the MCP (A9). A short payload is repairable, not health.
+ */
+function codexPluginPayloadCheck(probe: CodexPluginProbe): CheckResult | null {
+  if (!probe.installed || probe.activePluginRoot === undefined) return null;
+  const skillsRoot = join(probe.activePluginRoot, 'skills');
+  const present = CANONICAL_GENIE_SKILL_NAMES.filter((name) => {
+    try {
+      return statSync(join(skillsRoot, name)).isDirectory();
+    } catch {
+      return false;
+    }
+  });
+  const complete = present.length === CANONICAL_GENIE_SKILL_NAMES.length;
+  const missing = CANONICAL_GENIE_SKILL_NAMES.filter((name) => !present.includes(name));
+  return {
+    name: 'Codex Genie plugin payload',
+    status: complete ? 'pass' : 'warn',
+    detail: `${present.length}/${CANONICAL_GENIE_SKILL_NAMES.length} canonical skills present in active plugin${complete ? '' : ` (missing: ${missing.join(', ')})`}`,
+    suggestion: complete ? undefined : 'Run `genie setup --codex` to reinstall the active plugin payload.',
+  };
+}
+
 function codexPluginSurfaceChecks(probe: CodexPluginProbe): CheckResult[] {
   if (!probe.installed) return [];
   const manifest = probe.activePluginRoot ? join(probe.activePluginRoot, '.codex-plugin', 'plugin.json') : null;
@@ -393,7 +422,9 @@ function codexPluginSurfaceChecks(probe: CodexPluginProbe): CheckResult[] {
       declared = false;
     }
   }
+  const payload = codexPluginPayloadCheck(probe);
   return [
+    ...(payload ? [payload] : []),
     {
       name: 'Codex Genie MCP capability',
       status: declared ? 'pass' : 'warn',
@@ -782,25 +813,56 @@ function checkClaudeSync(pluginRoot: string, claudeDir: string): CheckResult[] {
 }
 
 /**
- * Codex detection stays keyed on `~/.codex` (the CODEX_HOME root), but the
- * skills agent-sync writes live in the shared `~/.agents/skills` tier — the
- * only user tier codex-rs actually loads (the legacy `.curated` lane is
- * retired and migrated away on sync; see agent-sync.ts).
+ * Codex Genie skills are plugin-only (R5). The shared `~/.agents/skills` tier
+ * must therefore hold NO Genie-managed product fallbacks: an empty tier is the
+ * healthy plugin-only state, and any managed-clean fallback there is repairable
+ * duplicate provider state, not health. Doctor reports the shared classifier's
+ * counts (A9: pure read, never launches the plugin MCP) with DISTINCT
+ * remediations — a clean fallback is repairable via `genie update`, a preserved
+ * personal collision is manual — and surfaces retained changed-evidence as a
+ * manual-recovery line (R8) rather than a raw recovery-sweep error.
  */
-function checkCodexSync(pluginRoot: string, codexDir: string, agentsSkillsDir: string): CheckResult[] {
+function checkCodexSync(codexDir: string, agentsSkillsDir: string): CheckResult[] {
   if (!existsSync(codexDir)) return [{ name: 'agent sync: codex', status: 'pass', detail: 'not detected' }];
-  const summary = summarizeManagedSkills(pluginRoot, agentsSkillsDir);
-  const populated = summary.current + summary.stale > 0;
-  const skills = skillsFreshness(summary);
-  const stale = skills.stale || !populated;
-  return [
-    {
+  const tier = inspectCodexFallbackTier(agentsSkillsDir);
+  const quarantineNote =
+    tier.quarantinedTransactions > 0
+      ? `; ${tier.quarantinedTransactions} retired quarantine transaction(s) retained`
+      : '';
+  const results: CheckResult[] = [];
+  if (tier.cleanFallbacks.length === 0) {
+    results.push({
       name: 'agent sync: codex',
-      status: stale ? 'warn' : 'pass',
-      detail: populated ? skills.detail : '~/.agents/skills not populated',
-      suggestion: stale ? SYNC_SUGGESTION : undefined,
-    },
-  ];
+      status: 'pass',
+      detail: `plugin-only — no managed ~/.agents/skills fallbacks${quarantineNote}`,
+    });
+  } else {
+    results.push({
+      name: 'agent sync: codex',
+      status: 'warn',
+      detail: `${tier.cleanFallbacks.length} clean managed fallback(s) in ~/.agents/skills — repairable duplicate provider state (${tier.cleanFallbacks.join(', ')})${quarantineNote}`,
+      suggestion: 'Run `genie update` to retire these clean fallbacks; the installed plugin already provides them.',
+    });
+  }
+  if (tier.preservedCollisions.length > 0) {
+    results.push({
+      name: 'agent sync: codex collisions',
+      status: 'warn',
+      detail: `${tier.preservedCollisions.length} preserved personal skill(s) collide with plugin names (${tier.preservedCollisions.join(', ')})`,
+      suggestion:
+        'Personal edits are preserved in place; `genie update` never touches them. Review each and remove or rename it manually.',
+    });
+  }
+  if (tier.retainedEvidence.length > 0) {
+    results.push({
+      name: 'agent sync: codex quarantine evidence',
+      status: 'warn',
+      detail: `${tier.retainedEvidence.length} retirement transaction(s) retained changed-tree evidence (${tier.retainedEvidence.join(', ')})`,
+      suggestion:
+        'A Codex fallback changed during retirement; the changed copy was archived aside under the quarantine evidence directory. Review the retained evidence and reconcile it manually.',
+    });
+  }
+  return results;
 }
 
 interface HermesCheckInput {
@@ -1070,7 +1132,7 @@ function checkMarketplacePlugin(settingsPath: string): CheckResult[] {
       name,
       status: 'pass',
       detail:
-        'genie@automagik not enabled — optional; `genie update` converges skills directly (never auto-re-enabled)',
+        'genie@automagik not enabled — optional; the installed plugin provides Genie skills (never auto-re-enabled)',
     },
   ];
 }
@@ -1112,7 +1174,7 @@ export function checkAgentSync(paths: AgentSyncPaths = {}): CheckResult[] {
   const hermesBinary = paths.hermesBinary !== undefined ? paths.hermesBinary : whichBinary('hermes');
   return [
     ...safeAgentChecks('claude', () => checkClaudeSync(pluginRoot, claudeDir)),
-    ...safeAgentChecks('codex', () => checkCodexSync(pluginRoot, codexDir, agentsSkillsDir)),
+    ...safeAgentChecks('codex', () => checkCodexSync(codexDir, agentsSkillsDir)),
     ...safeAgentChecks('hermes', () =>
       checkHermesSync({
         hermesRoot: source.hermesRoot,

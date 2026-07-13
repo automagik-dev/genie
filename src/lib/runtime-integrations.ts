@@ -23,6 +23,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { Worker } from 'node:worker_threads';
 import {
+  CODEX_FALLBACK_RETIREMENT_ROOT,
   type CodexFallbackRetirementPlan,
   type CodexFallbackRetirementResult,
   type PlanCodexFallbackRetirementOptions,
@@ -30,6 +31,7 @@ import {
   acquireLifecycleLease,
   applyCodexFallbackRetirement,
   computeDirDigest,
+  inspectManagedSkillTree,
   planCodexFallbackRetirement,
   publishRegularFileNoClobber,
   recoverCodexFallbackRetirements,
@@ -2937,6 +2939,89 @@ export function convergeCodexPluginOnly(options: ConvergeCodexPluginOnlyOptions)
 
 function emptyAgentInstallResult(): CodexAgentInstallResult {
   return { installed: 0, skippedUserOwned: [], keptModified: [], removed: [], backedUp: [] };
+}
+
+/**
+ * Read-only classification of the shared `~/.agents/skills` tier for the doctor
+ * diagnostic (R5/A9). Uses the SAME ownership classifier as sync and retirement
+ * ({@link inspectManagedSkillTree}) so doctor never disagrees with what
+ * `genie update` would retire, and NEVER launches the plugin MCP or mutates disk.
+ *
+ * - `cleanFallbacks` — managed-clean genie skill dirs still in the user tier;
+ *   under plugin-only semantics these are repairable duplicate providers that
+ *   `genie update` retires (distinct remediation from a personal collision).
+ * - `preservedCollisions` — managed-modified / corrupt-metadata dirs; personal
+ *   content preserved in place that only manual review resolves.
+ * - `quarantinedTransactions` — retained committed retirement transactions.
+ * - `retainedEvidence` — transactions that archived a changed fallback tree aside;
+ *   the Group A conflict class surfaced as manual-recovery guidance (R8).
+ */
+export interface CodexFallbackTierReport {
+  cleanFallbacks: string[];
+  preservedCollisions: string[];
+  quarantinedTransactions: number;
+  retainedEvidence: string[];
+}
+
+/** Basename of a retirement transaction's archived changed-tree evidence dir (agent-sync on-disk contract). */
+const RETIREMENT_EVIDENCE_DIRNAME = 'evidence';
+/** Prefix of a committed/recoverable retirement transaction dir (agent-sync on-disk contract). */
+const RETIREMENT_TRANSACTION_PREFIX = 'txn-';
+
+function retirementTransactionHasEvidence(txnDir: string): boolean {
+  try {
+    return readdirSync(join(txnDir, RETIREMENT_EVIDENCE_DIRNAME)).length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function summarizeCodexQuarantine(retirementRoot: string, report: CodexFallbackTierReport): void {
+  let entries: string[];
+  try {
+    entries = readdirSync(retirementRoot);
+  } catch {
+    return;
+  }
+  for (const name of entries) {
+    if (!name.startsWith(RETIREMENT_TRANSACTION_PREFIX)) continue; // skips .retirement.lock, temps
+    const txnDir = join(retirementRoot, name);
+    try {
+      if (!lstatSync(txnDir).isDirectory()) continue;
+    } catch {
+      continue;
+    }
+    report.quarantinedTransactions += 1;
+    if (retirementTransactionHasEvidence(txnDir)) report.retainedEvidence.push(name);
+  }
+}
+
+export function inspectCodexFallbackTier(agentsSkillsDir: string): CodexFallbackTierReport {
+  const report: CodexFallbackTierReport = {
+    cleanFallbacks: [],
+    preservedCollisions: [],
+    quarantinedTransactions: 0,
+    retainedEvidence: [],
+  };
+  let names: string[];
+  try {
+    names = readdirSync(agentsSkillsDir);
+  } catch {
+    return report;
+  }
+  for (const name of names) {
+    // The quarantine root is inspected as retained evidence, never as a live fallback.
+    if (name === CODEX_FALLBACK_RETIREMENT_ROOT) continue;
+    const state = inspectManagedSkillTree(join(agentsSkillsDir, name)).state;
+    if (state === 'managed-clean') report.cleanFallbacks.push(name);
+    else if (state === 'managed-modified' || state === 'corrupt-metadata') report.preservedCollisions.push(name);
+    // `unmanaged` → the user's own skill; genie only speaks for what it shipped.
+  }
+  summarizeCodexQuarantine(join(agentsSkillsDir, CODEX_FALLBACK_RETIREMENT_ROOT), report);
+  report.cleanFallbacks.sort();
+  report.preservedCollisions.sort();
+  report.retainedEvidence.sort();
+  return report;
 }
 
 function describeCodexIntegration(

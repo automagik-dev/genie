@@ -33,6 +33,7 @@ import {
   convergeCodexPlugin,
   convergeCodexPluginOnly,
   inspectCodexAgentOwnership,
+  inspectCodexFallbackTier,
   inspectRuntimeIntegrationEvidence,
   installCodexAgents,
   installRuntimeIntegrations as installRuntimeIntegrationsWithPhysicalVerification,
@@ -2492,5 +2493,78 @@ describe('translateRetirementConflicts surfaces R8 conflict classes as manual-re
 
   test('returns the step result when it does not throw', () => {
     expect(translateRetirementConflicts(() => 42)).toBe(42);
+  });
+});
+
+describe('inspectCodexFallbackTier (shared doctor/uninstall classifier — read-only)', () => {
+  let tmp: string;
+  let agentsSkillsDir: string;
+
+  function seedManaged(name: string, mutate?: (dir: string) => void): string {
+    const dir = join(agentsSkillsDir, name);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'SKILL.md'), `# ${name}\n`, 'utf8');
+    const digest = computeDirDigest(dir);
+    writeFileSync(
+      join(dir, '.genie-sync.json'),
+      JSON.stringify({ managedBy: 'genie-agent-sync', version: '1', digest, syncedAt: 'now' }),
+      'utf8',
+    );
+    mutate?.(dir);
+    return dir;
+  }
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), 'fallback-tier-'));
+    agentsSkillsDir = join(tmp, 'agents', 'skills');
+    mkdirSync(agentsSkillsDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  test('absent tier → all-zero report (no mutation, no throw)', () => {
+    const report = inspectCodexFallbackTier(join(tmp, 'nonexistent'));
+    expect(report).toEqual({
+      cleanFallbacks: [],
+      preservedCollisions: [],
+      quarantinedTransactions: 0,
+      retainedEvidence: [],
+    });
+  });
+
+  test('classifies clean fallbacks, personal collisions, and unmanaged skills distinctly', () => {
+    seedManaged('wish');
+    seedManaged('work');
+    // Personal edit after sync → managed-modified.
+    seedManaged('review', (dir) => writeFileSync(join(dir, 'SKILL.md'), '# personal\n', 'utf8'));
+    // Unmanaged personal skill → never counted.
+    const mine = join(agentsSkillsDir, 'my-own');
+    mkdirSync(mine, { recursive: true });
+    writeFileSync(join(mine, 'SKILL.md'), '# mine\n', 'utf8');
+
+    const report = inspectCodexFallbackTier(agentsSkillsDir);
+    expect(report.cleanFallbacks).toEqual(['wish', 'work']);
+    expect(report.preservedCollisions).toEqual(['review']);
+    expect(report.quarantinedTransactions).toBe(0);
+  });
+
+  test('counts committed quarantine transactions and flags retained changed-evidence (R8) without recursing into them', () => {
+    const root = join(agentsSkillsDir, CODEX_FALLBACK_RETIREMENT_ROOT);
+    // One plain committed transaction, one with archived changed-tree evidence.
+    mkdirSync(join(root, 'txn-aaaa', 'quarantine', 'wish'), { recursive: true });
+    writeFileSync(join(root, 'txn-aaaa', 'quarantine', 'wish', '.genie-sync.json'), '{}', 'utf8');
+    mkdirSync(join(root, 'txn-bbbb', 'evidence', 'work'), { recursive: true });
+    writeFileSync(join(root, 'txn-bbbb', 'evidence', 'work', 'SKILL.md'), '# changed\n', 'utf8');
+    // A lock file / temp is not a transaction.
+    writeFileSync(join(root, '.retirement.lock'), '', 'utf8');
+
+    const report = inspectCodexFallbackTier(agentsSkillsDir);
+    expect(report.quarantinedTransactions).toBe(2);
+    expect(report.retainedEvidence).toEqual(['txn-bbbb']);
+    // The quarantine root is never mistaken for a managed fallback.
+    expect(report.cleanFallbacks).toEqual([]);
+    expect(report.preservedCollisions).toEqual([]);
   });
 });
