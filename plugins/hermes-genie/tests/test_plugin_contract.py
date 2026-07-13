@@ -77,8 +77,9 @@ def test_plugin_manifest_declares_native_surface():
     assert "genie" in data["provides_commands"]
     assert "genie" in data["provides_skills"]
     assert "genie" in data["provides_cli_commands"]
-    for hook in ["on_session_start", "pre_tool_call", "post_tool_call"]:
+    for hook in ["on_session_start", "pre_tool_call", "pre_llm_call"]:
         assert hook in data["provides_hooks"]
+    assert "post_tool_call" not in data["provides_hooks"]
 
 
 def test_plugin_module_exports_register():
@@ -289,7 +290,7 @@ def test_review_plan_extracts_criteria_sections(tmp_path):
 # --- Group 2: slash commands, advisory hooks, skills, CLI surface -----------
 
 SLASH_COMMANDS = ["genie", "genie-board", "genie-wish", "genie-work-plan", "genie-review-plan"]
-HOOK_EVENTS = ["on_session_start", "pre_tool_call", "post_tool_call"]
+HOOK_EVENTS = ["on_session_start", "pre_tool_call", "pre_llm_call"]
 SKILL_NAMES = ["genie", "genie-work", "genie-review", "genie-khaw-bridge"]
 BLOCKING_KEYS = {"block", "blocked", "deny", "denied", "decision", "stop", "abort", "error"}
 
@@ -369,13 +370,14 @@ def test_hooks_are_advisory_and_never_blocking(tmp_path):
     normal = handlers["pre_tool_call"]({"command": "ls -la"})
     assert normal == {"mutation": "none"}
 
-    post = handlers["post_tool_call"]({"command": "tmux capture-pane -t genie-worker -p"})
-    assert post == {"mutation": "none"}
+    # pre_llm_call injects nothing outside a .genie/ repo — None, never a block.
+    injected = handlers["pre_llm_call"]({"cwd": str(plain)})
+    assert injected is None
 
-    for result in [started, bare, scrape, poll, normal, post]:
+    for result in [started, bare, scrape, poll, normal]:
         assert result["mutation"] == "none"
         assert not (set(result) & BLOCKING_KEYS), f"blocking directive in {result}"
-        assert set(result) <= {"message", "advice", "mutation"}
+        assert set(result) <= {"message", "advice", "mutation", "context"}
 
 
 def test_hooks_tolerate_missing_and_object_events(tmp_path):
@@ -385,7 +387,8 @@ def test_hooks_tolerate_missing_and_object_events(tmp_path):
     handlers = _hook_handlers(ctx)
     for event in HOOK_EVENTS:
         result = handlers[event]()  # no event at all
-        assert result["mutation"] == "none"
+        # pre_llm_call may return None (no injection); advisory hooks report "none".
+        assert result is None or result["mutation"] == "none"
 
     class Event:
         def __init__(self, **fields: Any) -> None:

@@ -297,7 +297,7 @@ def register(ctx) -> None:
         hook_defs: list[tuple[str, Any]] = [
             ("on_session_start", hooks.on_session_start),
             ("pre_tool_call", hooks.pre_tool_call),
-            ("post_tool_call", hooks.post_tool_call),
+            ("pre_llm_call", hooks.pre_llm_call),
         ]
         for event, handler in hook_defs:
             ctx.register_hook(event, handler)

@@ -12,7 +12,7 @@ provides_tools:
 provides_hooks:
   - on_session_start
   - pre_tool_call
-  - post_tool_call
+  - pre_llm_call
 provides_commands:
   - genie
   - genie-board
