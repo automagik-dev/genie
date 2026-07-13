@@ -309,6 +309,16 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - **Substance verified by reviewer:** both caps hard and correctly ordered (≤ 8 lines at collection, ≤ 2 KiB on joined text); 5 s timeout wired and asserted; all failure paths return None (double-guarded); injection surface sound — `status` comes from the trusted column key, `id`/`wish` newline-collapsed so hostile rows cannot inflate line count (regression-tested); `on_session_start`/`pre_tool_call` byte-identical; `post_tool_call` gone from hooks.py and plugin.yaml; contract-test edits hook-only with version/tool/skill/khaw assertions intact; output shape confirmed against the real `board --json` emitter (`src/term-commands/v5-board.ts`), not just mocks.
 - **Carried forward to Group 5:** `references/native-surface.md` still documents `post_tool_call` (doc drift flagged by engineer; that file is a Group 5 deliverable).
 
+### Group 2 local+quality review — 2026-07-13T01:44:14Z FIX-FIRST → 2026-07-13T01:54:32Z SHIP
+
+- **Reviewer:** genie:reviewer/g2-local-review (reviewer ≠ engineer ≠ fixer)
+- **Work:** commits `87ff5bf` + `1ee1390` (engineer) + `b577cd8` (fixer, loop 1 of 2), merged to wish branch as `f2abab6`; validation re-run by orchestrator post-fix: 34 pass / 0 fail (104 assertions)
+- **First pass — FIX-FIRST:** MEDIUM — inline/flow/scalar top-level `mcp_servers:`/`skills:` caused a blind duplicate-key append that could silently drop user sibling entries (reproduced end-to-end), violating "never delete user entries". LOW — report precedence ordering contradicted implementation; LOW — digest-managed copy fallback never pruned removed skills.
+- **Fix:** fail-closed typed `HermesConfigError('inline-top-level-key')` raised before any backup/write in both modules (merging into flow values would require the parse/re-serialize round-trip the module contract forbids); report precedence corrected; managed target pruned before re-copy. All covered by new tests.
+- **Re-review — SHIP, no gaps:** guard verified to fire strictly before `writeBackup`/`writeFileSync`, error path leaves file byte-identical with no backup; no regression across block-style/null-block/missing-file/drifted-update cases; scope exactly the five permitted files.
+- **Contract handed to Group 4:** treat `code === 'inline-top-level-key'` as a NON-FATAL per-target convergence outcome — report/doctor WARN with the rewrite-as-block-mapping hint, never a thrown failure that blocks `genie update`; plugin-link leg still converges.
+- **Open question 1 resolved:** `$GENIE_HOME/skills` IS a stable populated path (converged by `genie install` `AUX_LAYOUT_DIRS`/`normalizeAuxLayout` and `genie update` `syncAuxiliaryContent`); helper keeps a populated-gated fallback chain for dev checkouts. Recorded in `reports/skills-root-resolution.md`.
+
 ---
 
 ## Files to Create/Modify
