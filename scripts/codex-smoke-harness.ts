@@ -186,6 +186,7 @@ function makeIsolatedHome(): IsolatedHome {
   liveTempRoots.add(home);
   const genieHome = join(home, '.genie');
   const codexHome = join(home, '.codex');
+  const claudeConfigDir = join(home, '.claude');
   const skillsDir = join(home, '.agents', 'skills');
   const bin = join(home, 'bin');
   const project = join(home, 'project');
@@ -195,6 +196,12 @@ function makeIsolatedHome(): IsolatedHome {
     HOME: home,
     GENIE_HOME: genieHome,
     CODEX_HOME: codexHome,
+    // Rebase CLAUDE_CONFIG_DIR into the isolated home too — without this a
+    // developer/CI environment that sets CLAUDE_CONFIG_DIR explicitly (rather
+    // than relying on the ~/.claude default) leaks a real Claude config dir
+    // into the smoke despite HOME being isolated (genie-home.ts resolves it
+    // via `process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude')`).
+    CLAUDE_CONFIG_DIR: claudeConfigDir,
     GENIE_AGENTS_SKILLS_DIR: skillsDir,
     PATH: `${bin}:${basePath}`,
   };
@@ -358,6 +365,11 @@ export function seedPersonalFixtures(iso: IsolatedHome): PersonalFixtures {
   // malformed-marker: managedBy present but JSON is corrupt.
   const malformed = join(iso.skillsDir, names.malformedMarker);
   mkdirSync(malformed, { recursive: true });
+  // Pin the mode explicitly rather than trusting mkdirSync's umask-derived
+  // default: under umask 077 the directory is already created at 0o700, the
+  // same value the mode-sabotage self-test chmods to, making the "sabotage" a
+  // no-op and false-failing `expectOracleCatches('mode-sabotage', ...)` below.
+  chmodSync(malformed, 0o755);
   writeFileSync(join(malformed, 'SKILL.md'), '# personal skill with a broken marker\n');
   writeFileSync(join(malformed, FALLBACK_MARKER_NAME), '{ "managedBy": "genie-agent-sync", broken');
 
