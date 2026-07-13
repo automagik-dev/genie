@@ -1,10 +1,10 @@
 # Hermes integration map
 
 The single authoritative Claude / Codex / Hermes parity document for the Genie orchestration
-surface. It describes the **TARGET** homogeneous state this wish (`hermes-homogeneous-integration`)
-builds — groups 2–6 implement the code; this map is the north star. Every row is tagged
-**current** (already shipped) or **target** (this wish's convergence goal). Where they differ,
-both are shown so a reader can tell where we are from where we are going.
+surface. It describes the homogeneous state the `hermes-homogeneous-integration` wish shipped —
+groups 2–6 implemented the code; this map is the record of what landed. Every row is tagged
+**current** (the shipped state, live on `dev`) or **pre-wish** (the historical baseline before
+this wish, kept for context). Where they differ, both are shown so a reader can tell what changed.
 
 Companion docs:
 
@@ -13,41 +13,41 @@ Companion docs:
 - `plugins/hermes-genie/references/native-surface.md` — the current Hermes layer map + payload contract.
 - `plugins/hermes-genie/references/mutation-gates.md` — the read-only boundary and human-gate rule.
 
-Baseline evidence for the "current" columns lives in
+Baseline evidence for the "pre-wish" columns lives in
 `.genie/wishes/hermes-homogeneous-integration/reports/baseline.md`.
 
 ## Shipped surfaces per client
 
-Parity target: Hermes is a first-class client alongside Claude and Codex — same 23 product
+Parity, shipped: Hermes is a first-class client alongside Claude and Codex — same 23 product
 skills, same MCP tool set, same agent-sync convergence, same doctor coverage.
 
-| Surface | Claude | Codex | Hermes (current) | Hermes (target) |
-|---------|--------|-------|------------------|-----------------|
-| Plugin manifest | `.claude-plugin/plugin.json` (Skills, Hooks, MCP) — **current** | `plugins/genie/.codex-plugin/plugin.json` — **current** | `plugins/hermes-genie/plugin.yaml` declares 7 native tools + hooks + commands + 4 skills — **current** | `plugins/hermes-genie/plugin.yaml` declares 3 native tools + MCP + hooks; skills sourced via `skills.external_dirs` — **target** |
-| Skills path | canonical `skills/` (23) — **current** | `skills/` canonical + `plugins/genie/skills/` mirror (23) — **current** | 4 plugin-local skills (`genie`, `genie-work`, `genie-review`, `genie-khaw-bridge`) — **current** | the 23 product skills via `skills.external_dirs` pointed at the release-converged **`$GENIE_HOME/skills`** root (resolver fallback chain: explicit override → `$GENIE_HOME/skills` → `$GENIE_HOME/plugins/genie/skills`); ≤1 thin cockpit adapter via `ctx.register_skill` — **target** |
-| Hooks | Claude hook set — **current** | `codex-hooks.json` H3/H4/H6 — **current** | `on_session_start`, `pre_tool_call`, `post_tool_call` (advisory KHAW bridge) — **current** | same advisory hooks, read-only, no mutation — **target** |
-| MCP | `.mcp.json` → `genie mcp` (5 read-only tools) — **current** | `plugins/genie/.mcp.json` → `genie mcp` (5 read-only tools) — **current** | none — native tools only — **current** | `genie mcp` wired as the shared 5-tool read-only server — **target** |
-| Agent-sync lane | `syncClaude` — **current** | `syncCodex` — **current** | `syncHermes` symlinks `$HERMES_HOME/plugins/genie` → sibling `hermes-genie`, runs `hermes plugins enable genie` — **current** | same lane, now also converging (after link/enable) the `skills.external_dirs` entry for `$GENIE_HOME/skills` + the `mcp_servers.genie` wiring into the live profile's `config.yaml`; inline top-level `mcp_servers:`/`skills:` degrade to a non-fatal WARN skip — **target** |
-| Doctor coverage | `agent sync: claude` — **current** | `agent sync: codex` — **current** | `agent sync: hermes — linked → …` — **current** | Hermes lane + MCP + skills-dir checks in `genie doctor` — **target** |
+| Surface | Claude | Codex | Hermes (pre-wish) | Hermes (current, shipped) |
+|---------|--------|-------|--------------------|----------------------------|
+| Plugin manifest | `.claude-plugin/plugin.json` (Skills, Hooks, MCP) — **current** | `plugins/genie/.codex-plugin/plugin.json` — **current** | `plugins/hermes-genie/plugin.yaml` declared 7 native tools + hooks + commands + 4 skills — **pre-wish** | `plugins/hermes-genie/plugin.yaml` declares 3 native tools + MCP + hooks; skills sourced via `skills.external_dirs` — **current** |
+| Skills path | canonical `skills/` (23) — **current** | `skills/` canonical + `plugins/genie/skills/` mirror (23) — **current** | 4 plugin-local skills (`genie`, `genie-work`, `genie-review`, `genie-khaw-bridge`) — **pre-wish** | the 23 product skills via `skills.external_dirs` pointed at the release-converged **`$GENIE_HOME/skills`** root (resolver fallback chain: explicit override → `$GENIE_HOME/skills` → `$GENIE_HOME/plugins/genie/skills`); ≤1 thin cockpit adapter via `ctx.register_skill` — **current** |
+| Hooks | Claude hook set — **current** | `codex-hooks.json` H3/H4/H6 — **current** | `on_session_start`, `pre_tool_call`, `post_tool_call` (advisory KHAW bridge) — **pre-wish** | `on_session_start`, `pre_tool_call`, `pre_llm_call` (advisory, read-only, no mutation; KHAW bridge removed) — **current** |
+| MCP | `.mcp.json` → `genie mcp` (5 read-only tools) — **current** | `plugins/genie/.mcp.json` → `genie mcp` (5 read-only tools) — **current** | none — native tools only — **pre-wish** | `genie mcp` wired as the shared 5-tool read-only server — **current** |
+| Agent-sync lane | `syncClaude` — **current** | `syncCodex` — **current** | `syncHermes` symlinks `$HERMES_HOME/plugins/genie` → sibling `hermes-genie`, runs `hermes plugins enable genie` — **pre-wish** | same lane, now also converging (after link/enable) the `skills.external_dirs` entry for `$GENIE_HOME/skills` + the `mcp_servers.genie` wiring into the live profile's `config.yaml`; inline top-level `mcp_servers:`/`skills:` degrade to a non-fatal WARN skip — **current** |
+| Doctor coverage | `agent sync: claude` — **current** | `agent sync: codex` — **current** | `agent sync: hermes — linked → …` — **pre-wish** | Hermes lane + MCP + skills-dir checks in `genie doctor` — **current** |
 
 ## Tool map
 
-Convergence target: the shared read-only **MCP** server (`genie mcp`) provides the board/wish/task
+Convergence, shipped: the shared read-only **MCP** server (`genie mcp`) provides the board/wish/task
 surface for every client; Hermes keeps only the tools that have no MCP equivalent. **No duplicates** —
 a tool is either an MCP tool or a native Hermes tool, never both.
 
 | Kind | Tool | Wraps (read-only) | Status |
 |------|------|-------------------|--------|
-| MCP (shared) | `genie_board` | `genie board --json` | **target** — provided by `genie mcp` |
-| MCP (shared) | `genie_wish_status` | board slice + task list for one slug | **target** — provided by `genie mcp` |
-| MCP (shared) | `genie_task` | task list / task detail | **target** — provided by `genie mcp` |
-| MCP (shared) | `genie_active` | active wishes/tasks snapshot | **target** — provided by `genie mcp` |
-| MCP (shared) | `genie_worktree_context` | resolved worktree/branch/cwd context | **target** — provided by `genie mcp` |
-| Native Hermes | `genie_status` | `genie doctor --json` + `.genie/` presence | **target** — remains native |
-| Native Hermes | `genie_work_plan` | `genie launch <slug> --dry-run` | **target** — remains native |
-| Native Hermes | `genie_review_plan` | board/tasks + Success/QA criteria from WISH.md | **target** — remains native |
+| MCP (shared) | `genie_board` | `genie board --json` | **current** — provided by `genie mcp` |
+| MCP (shared) | `genie_wish_status` | board slice + task list for one slug | **current** — provided by `genie mcp` |
+| MCP (shared) | `genie_task` | task list / task detail | **current** — provided by `genie mcp` |
+| MCP (shared) | `genie_active` | active wishes/tasks snapshot | **current** — provided by `genie mcp` |
+| MCP (shared) | `genie_worktree_context` | resolved worktree/branch/cwd context | **current** — provided by `genie mcp` |
+| Native Hermes | `genie_status` | `genie doctor --json` + `.genie/` presence | **current** — remains native |
+| Native Hermes | `genie_work_plan` | `genie launch <slug> --dry-run` | **current** — remains native |
+| Native Hermes | `genie_review_plan` | board/tasks + Success/QA criteria from WISH.md | **current** — remains native |
 
-**Retired natives** (present in today's `plugin.yaml`, removed by this wish because the MCP tools
+**Retired natives** (present in the pre-wish `plugin.yaml`, removed once the MCP tools shipped to
 replace them — do not re-add): `genie_board`, `genie_wish_status`, `genie_task_list`,
 `genie_task_status`.
 
@@ -56,12 +56,12 @@ migration window so a host pinned to the old surface does not break mid-upgrade.
 off by default, and slated for removal once all hosts are on the MCP path. It never changes the
 read-only contract — every tool still reports `mutation: "none"`.
 
-Current state (pre-wish): `plugin.yaml` ships all 7 tools natively and there is no MCP server on
+Pre-wish baseline: `plugin.yaml` shipped all 7 tools natively and there was no MCP server on
 the Hermes side. See baseline notes.
 
 ## Skill invocation
 
-Target: Hermes drives the **same 23 product skills** as Claude and Codex — no forked skill copies.
+Shipped: Hermes drives the **same 23 product skills** as Claude and Codex — no forked skill copies.
 
 - **First-class path — `skills.external_dirs`:** Hermes loads the 23 canonical product skills
   (including `/wish`, `/work`, `/brainstorm`) by pointing `skills.external_dirs` at the
@@ -84,8 +84,8 @@ Target: Hermes drives the **same 23 product skills** as Claude and Codex — no 
   It exists only to adapt cockpit affordances to the shared skills; it must not duplicate or shadow
   any of the 23 product skills.
 
-Current state (pre-wish): Hermes ships 4 plugin-local skills in `plugin.yaml` rather than the 23
-via `external_dirs`. Convergence to the external-dirs path is a target of this wish.
+Pre-wish baseline: Hermes shipped 4 plugin-local skills in `plugin.yaml` rather than the 23
+via `external_dirs`. Convergence to the external-dirs path landed with this wish.
 
 ## Install / update paths
 
