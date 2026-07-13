@@ -56,6 +56,8 @@ All seven tools are read-only — every payload carries `mutation: "none"`.
 
 The full layer map (slash commands, CLI tree, hooks, skills), payload contract, and grounded tool-to-CLI mapping live in [`references/native-surface.md`](references/native-surface.md).
 
+The authoritative Claude/Codex/Hermes parity document — shipped surfaces per client, the MCP-vs-native tool map, skill invocation via `skills.external_dirs`, install/update convergence paths, and the mutation-gate pointer — lives in [`references/hermes-integration-map.md`](references/hermes-integration-map.md). It marks each row current vs the homogeneous target this integration builds.
+
 ## Boundary
 
 Hermes is the chat/reasoning cockpit; Genie remains the execution system and source of task truth.
