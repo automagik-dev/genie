@@ -18,6 +18,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { computeDirDigest } from '../lib/agent-sync.js';
 import { reconcileCodexProjectMcp, resolveGitProjectRoots } from '../lib/codex-project-mcp.js';
+import { CANONICAL_GENIE_SKILL_NAMES } from '../lib/runtime-integrations.js';
 import {
   MINIMUM_BUN_VERSION,
   checkAgentSync,
@@ -233,6 +234,46 @@ describe('Codex doctor lifecycle results', () => {
     } finally {
       if (priorCodexHome === undefined) Reflect.deleteProperty(process.env, 'CODEX_HOME');
       else process.env.CODEX_HOME = priorCodexHome;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('plugin payload completeness reports canonical skill presence from the active plugin root (R5, read-only)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'doctor-payload-'));
+    try {
+      const activePluginRoot = join(root, 'active-plugin');
+      const skillsRoot = join(activePluginRoot, 'skills');
+      // Ship every canonical skill except one → payload is short, not healthy.
+      for (const name of CANONICAL_GENIE_SKILL_NAMES.slice(0, -1)) {
+        mkdirSync(join(skillsRoot, name), { recursive: true });
+      }
+      const missing = CANONICAL_GENIE_SKILL_NAMES[CANONICAL_GENIE_SKILL_NAMES.length - 1];
+      const probe = {
+        cliAvailable: true,
+        status: 'ok' as const,
+        installed: true,
+        enabled: true,
+        usable: true,
+        version: '5.0.0',
+        activePluginRoot,
+        detail: 'installed',
+      };
+      const checks = await checkCodexIntegration(root, probe);
+      const payload = checks.find((check) => check.name === 'Codex Genie plugin payload');
+      expect(payload?.status).toBe('warn');
+      expect(payload?.detail).toContain(
+        `${CANONICAL_GENIE_SKILL_NAMES.length - 1}/${CANONICAL_GENIE_SKILL_NAMES.length}`,
+      );
+      expect(payload?.detail).toContain(missing);
+
+      // Complete payload → pass, no remediation.
+      mkdirSync(join(skillsRoot, missing), { recursive: true });
+      const complete = (await checkCodexIntegration(root, probe)).find(
+        (check) => check.name === 'Codex Genie plugin payload',
+      );
+      expect(complete?.status).toBe('pass');
+      expect(complete?.suggestion).toBeUndefined();
+    } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
@@ -800,11 +841,66 @@ describe('checkAgentSync', () => {
     expect(hermes?.detail).toContain('points elsewhere');
   });
 
-  test('codex detected but ~/.agents/skills tier empty → warn (not populated)', () => {
+  // Codex Genie skills are plugin-only (R5): an EMPTY user tier is the healthy
+  // state, and a clean managed fallback there is repairable duplicate state.
+  test('codex detected, empty ~/.agents/skills tier → pass (plugin-only)', () => {
     mkdirSync(codexDir, { recursive: true });
     const codex = find(checkAgentSync(paths()), 'agent sync: codex');
+    expect(codex?.status).toBe('pass');
+    expect(codex?.detail).toContain('plugin-only');
+    expect(codex?.suggestion).toBeUndefined();
+  });
+
+  test('codex clean managed fallback → warn repairable duplicate (run genie update)', () => {
+    mkdirSync(codexDir, { recursive: true });
+    seedManaged(join(pluginRoot, 'skills', 'wish'), join(agentsSkillsDir, 'wish'));
+    const codex = find(checkAgentSync(paths()), 'agent sync: codex');
     expect(codex?.status).toBe('warn');
-    expect(codex?.detail).toContain('.agents/skills not populated');
+    expect(codex?.detail).toContain('repairable duplicate provider state');
+    expect(codex?.detail).toContain('wish');
+    expect(codex?.suggestion).toContain('genie update');
+  });
+
+  test('codex preserved personal collision → DISTINCT manual remediation', () => {
+    mkdirSync(codexDir, { recursive: true });
+    // Valid managed marker but content diverged from its digest → managed-modified.
+    seedManaged(join(pluginRoot, 'skills', 'wish'), join(agentsSkillsDir, 'wish'));
+    writeFileSync(join(agentsSkillsDir, 'wish', 'SKILL.md'), '# my personal edit\n', 'utf8');
+    const results = checkAgentSync(paths());
+    const codex = find(results, 'agent sync: codex');
+    expect(codex?.status).toBe('pass'); // no CLEAN fallback → main line stays plugin-only
+    const collision = find(results, 'agent sync: codex collisions');
+    expect(collision?.status).toBe('warn');
+    expect(collision?.detail).toContain('collide with plugin names');
+    expect(collision?.suggestion).toContain('manually');
+    // DISTINCT from the repairable-duplicate remediation: personal collisions are
+    // never retired by `genie update`, only reviewed/removed by the user.
+    expect(collision?.suggestion).not.toContain('retire');
+  });
+
+  test('codex retirement quarantine with retained evidence → R8 manual-recovery line', () => {
+    mkdirSync(codexDir, { recursive: true });
+    const txn = join(agentsSkillsDir, '.genie-codex-fallback-retirement', 'txn-abc');
+    mkdirSync(join(txn, 'quarantine'), { recursive: true });
+    mkdirSync(join(txn, 'evidence', 'wish'), { recursive: true });
+    writeFileSync(join(txn, 'evidence', 'wish', 'SKILL.md'), '# changed copy\n', 'utf8');
+    const results = checkAgentSync(paths());
+    const codex = find(results, 'agent sync: codex');
+    expect(codex?.status).toBe('pass');
+    expect(codex?.detail).toContain('retired quarantine transaction(s) retained');
+    const evidence = find(results, 'agent sync: codex quarantine evidence');
+    expect(evidence?.status).toBe('warn');
+    expect(evidence?.detail).toContain('retained changed-tree evidence');
+    expect(evidence?.suggestion).toContain('reconcile it manually');
+  });
+
+  test('codex quarantine root is never counted as a managed fallback', () => {
+    mkdirSync(codexDir, { recursive: true });
+    // A retirement root with a committed txn but no live fallbacks stays plugin-only.
+    mkdirSync(join(agentsSkillsDir, '.genie-codex-fallback-retirement', 'txn-xyz', 'quarantine'), { recursive: true });
+    const codex = find(checkAgentSync(paths()), 'agent sync: codex');
+    expect(codex?.status).toBe('pass');
+    expect(codex?.detail).toContain('plugin-only');
   });
 
   test('marketplace plugin: disabled/absent → optional pass note; enabled → silent', () => {

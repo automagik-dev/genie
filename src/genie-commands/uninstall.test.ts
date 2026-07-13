@@ -21,6 +21,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   readlinkSync,
   renameSync,
   rmSync,
@@ -368,6 +369,73 @@ describe('agent-sync managed-asset removal', () => {
     } finally {
       chmodSync(parent, 0o700);
     }
+  });
+
+  // R6: uninstall is classifier-only. It must never delete the Codex fallback
+  // retirement quarantine (retained transaction evidence), even though the
+  // quarantined trees themselves carry genie-agent-sync markers.
+  function snapshotTree(root: string): Map<string, string> {
+    const snap = new Map<string, string>();
+    const walk = (dir: string): void => {
+      for (const name of readdirSync(dir).sort()) {
+        const path = join(dir, name);
+        const stat = lstatSync(path);
+        const rel = path.slice(root.length);
+        if (stat.isSymbolicLink()) snap.set(rel, `symlink:${readlinkSync(path)}`);
+        else if (stat.isDirectory()) {
+          snap.set(rel, 'dir');
+          walk(path);
+        } else snap.set(rel, `file:${readFileSync(path, 'utf8')}`);
+      }
+    };
+    walk(root);
+    return snap;
+  }
+
+  function seedRetirementQuarantine(): string {
+    const root = join(agentsSkillsDir, '.genie-codex-fallback-retirement');
+    const txn = join(root, 'txn-deadbeef');
+    const quarantined = managedSkill(join(txn, 'quarantine'), 'wish');
+    writeFileSync(join(txn, 'journal.json'), '{"version":1}\n', 'utf8');
+    writeFileSync(join(txn, 'COMMITTED'), '', 'utf8');
+    // A changed-tree evidence copy archived aside (Group A conflict class).
+    mkdirSync(join(txn, 'evidence', 'wish'), { recursive: true });
+    writeFileSync(join(txn, 'evidence', 'wish', 'SKILL.md'), '# changed personal copy\n', 'utf8');
+    // A symlink inside quarantine must survive by link target (lstat), never followed.
+    symlinkSync('missing-target', join(quarantined, 'personal-link'));
+    return root;
+  }
+
+  test('R6: retirement quarantine is never collected and stays byte/link-identical through uninstall', () => {
+    mkdirSync(agentsSkillsDir, { recursive: true });
+    const quarantineRoot = seedRetirementQuarantine();
+    const liveClean = managedSkill(agentsSkillsDir, 'review');
+    const before = snapshotTree(quarantineRoot);
+
+    const collected = collectAgentSyncAssets(targets()).map((a) => a.path);
+    // Nothing under the quarantine root is ever collected as a managed asset.
+    expect(collected.some((p) => p.startsWith(quarantineRoot))).toBe(false);
+    // The live clean fallback IS still an uninstall target.
+    expect(collected).toContain(liveClean);
+
+    const result = removeAgentSyncAssets(targets());
+    expect(result.removed).toContain(liveClean);
+    expect(result.failures).toEqual([]);
+    expect(existsSync(liveClean)).toBe(false);
+    // Quarantine tree unchanged byte-for-byte and link-for-link.
+    expect(snapshotTree(quarantineRoot)).toEqual(before);
+    expect(
+      lstatSync(join(quarantineRoot, 'txn-deadbeef', 'quarantine', 'wish', 'personal-link')).isSymbolicLink(),
+    ).toBe(true);
+  });
+
+  test('R6: uninstall source requires no plugin health — no probe, launcher, or plugin-enable calls', () => {
+    const source = readFileSync(join(import.meta.dir, 'uninstall.ts'), 'utf8');
+    expect(source).not.toContain('probeCodexGeniePlugin');
+    expect(source).not.toContain('runBoundedCodexMcpSession');
+    expect(source).not.toContain('proveCodexPluginHealth');
+    // Never re-enables a plugin during teardown.
+    expect(source).not.toMatch(/plugin['"]\s*,\s*['"]enable/);
   });
 
   test('digest-owned council.js and its sidecar are removed; an unmanaged lookalike is kept', () => {

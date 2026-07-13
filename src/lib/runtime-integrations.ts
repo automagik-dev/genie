@@ -18,13 +18,63 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { Worker } from 'node:worker_threads';
-import { acquireLifecycleLease, publishRegularFileNoClobber } from './agent-sync.js';
+import {
+  CODEX_FALLBACK_RETIREMENT_ROOT,
+  type CodexFallbackRetirementPlan,
+  type CodexFallbackRetirementResult,
+  type PlanCodexFallbackRetirementOptions,
+  type VerifiedCodexSkillPayload,
+  acquireLifecycleLease,
+  applyCodexFallbackRetirement,
+  computeDirDigest,
+  inspectManagedSkillTree,
+  planCodexFallbackRetirement,
+  publishRegularFileNoClobber,
+  recoverCodexFallbackRetirements,
+  resolveAgentsSkillsDir,
+} from './agent-sync.js';
 import { getCodexConfigPath, getCodexHome, migrateDeadGenieOtel } from './codex-config.js';
+import {
+  type BoundedCodexMcpSessionOptions,
+  type McpSessionResult,
+  REQUIRED_GENIE_MCP_TOOLS,
+  runBoundedCodexMcpSession,
+} from './codex-mcp-health-session.js';
+import { type CodexPluginProbe, type CodexPluginProbeDeps, probeCodexGeniePlugin } from './codex-project-mcp.js';
 import { resolveClaudeDir, resolveGenieHome } from './genie-home.js';
 import { validateTrustedExecutablePath } from './trusted-executable.js';
 import { VERSION } from './version.js';
+
+/** Canonical Genie product skills shipped by the plugin; the exact expected Codex inventory. */
+export const CANONICAL_GENIE_SKILL_NAMES = [
+  'architecture',
+  'brainstorm',
+  'code-quality',
+  'council',
+  'docs',
+  'dream',
+  'dx-docs',
+  'fix',
+  'genie',
+  'genie-hacks',
+  'omni',
+  'perf',
+  'pm',
+  'qa',
+  'refine',
+  'repo-hygiene',
+  'report',
+  'review',
+  'supply-chain',
+  'trace',
+  'wish',
+  'wizard',
+  'work',
+] as const;
 
 export type IntegrationSelection = 'auto' | 'codex' | 'claude' | 'all' | 'none';
 export type RuntimeName = 'codex' | 'claude';
@@ -1733,6 +1783,16 @@ export interface IntegrationResult {
   /** True only when the runtime's reviewed hook definition bytes changed. */
   hookReviewRequired?: boolean;
   timedOut?: boolean;
+  /**
+   * The single post-convergence Codex plugin snapshot (R1). Surfaced so callers
+   * (e.g. setup's project-MCP reconcile) reuse the one snapshot instead of
+   * re-probing. Present only on codex results that reached convergence.
+   */
+  snapshot?: CodexPluginProbe;
+  /** Names of clean historical fallbacks quarantined by this run's retirement. */
+  retiredFallbacks?: readonly string[];
+  /** Count of preserved personal collisions the retirement classifier left in place. */
+  preservedCollisions?: number;
 }
 
 export interface InstallIntegrationsOptions {
@@ -1755,6 +1815,8 @@ export interface InstallIntegrationsOptions {
   cwd?: string;
   /** Deterministic test seam; production resolves and validates PATH once. */
   resolveExecutable?: RuntimeExecutableResolver;
+  /** Deterministic test seams for the codex plugin-only convergence orchestrator. */
+  codexPluginOnly?: CodexPluginOnlyDeps;
 }
 
 export function installRuntimeIntegrations(options: InstallIntegrationsOptions = {}): IntegrationResult[] {
@@ -1795,6 +1857,7 @@ export function installRuntimeIntegrations(options: InstallIntegrationsOptions =
               options.timeoutMs,
               options.stateDir ?? genieHome,
               options.verifyCodexPayload,
+              options.codexPluginOnly,
             )
           : installClaudeIntegration(
               runner,
@@ -2283,6 +2346,25 @@ interface PluginConvergenceProgress {
   hookReviewRequired: boolean;
 }
 
+/**
+ * A Codex build predating the `plugin` subcommand reports an "unrecognized
+ * subcommand" error on the very first convergence command. Under plugin-only
+ * semantics (wish decision 1, R9) there is no product-skill fallback lane to
+ * silently rebuild: the mutation must abort before any fallback read and the
+ * operator must be told to upgrade Codex. This augments only that signal; a
+ * normal command failure (network, malformed JSON) is rethrown unchanged.
+ */
+function augmentCodexPluginIncapability(error: unknown): unknown {
+  const message = error instanceof Error ? error.message : String(error);
+  if (!/unrecognized subcommand|unknown subcommand|no such subcommand/i.test(message) || !/\bplugin\b/i.test(message)) {
+    return error;
+  }
+  return new IntegrationCommandError(
+    `${message}; this Codex build does not support the \`plugin\` subcommand. Upgrade Codex to a plugin-capable release (codex 0.144.1+) and retry — Genie will not fall back to duplicating product skills into ~/.agents/skills.`,
+    error instanceof IntegrationCommandError && error.timedOut,
+  );
+}
+
 function performCodexPluginConvergence(
   options: ConvergePluginOptions,
   timeoutMs: number,
@@ -2290,10 +2372,13 @@ function performCodexPluginConvergence(
 ): boolean {
   progress.intent = readRefreshIntent(options.statePath, 'codex');
   progress.desiredEnabled = progress.intent?.enabled ?? null;
-  const before = requireCodexPluginState(
-    runChecked(options.runner, options.command, ['plugin', 'list', '--json'], false, timeoutMs).stdout,
-    'before plugin convergence',
-  );
+  let beforeRaw: string;
+  try {
+    beforeRaw = runChecked(options.runner, options.command, ['plugin', 'list', '--json'], false, timeoutMs).stdout;
+  } catch (error) {
+    throw augmentCodexPluginIncapability(error);
+  }
+  const before = requireCodexPluginState(beforeRaw, 'before plugin convergence');
   if (!before.installed && !options.installIfAbsent && progress.intent?.phase !== 'removal-observed') {
     if (progress.intent !== null) clearRefreshIntent(options.statePath);
     return false;
@@ -2572,6 +2657,454 @@ export function convergeClaudePlugin(options: ConvergePluginOptions): Integratio
   };
 }
 
+/**
+ * The immutable proof that the single post-convergence Codex plugin snapshot is
+ * genuinely healthy. It carries the verified skill payload that authorizes
+ * fallback retirement, so it MUST be frozen — retirement can only trust an
+ * identity that nothing mutated between proof and plan.
+ */
+export interface CodexHealthProof {
+  readonly version: 1;
+  readonly snapshot: CodexPluginProbe;
+  readonly activePluginRoot: string;
+  readonly expectedVersion: string;
+  readonly skillInventory: readonly string[];
+  readonly payload: readonly VerifiedCodexSkillPayload[];
+  readonly mcp: { readonly initialized: true; readonly tools: readonly string[]; readonly wishStatusReadOnly: true };
+}
+
+export interface ProveCodexPluginHealthOptions {
+  snapshot: CodexPluginProbe;
+  bundleRoot: string;
+  codexHome: string;
+  expectedVersion: string;
+  /** Deterministic test seam; production binds the installed cache to the canonical bundle. */
+  verifyCodexPayload?: CodexPayloadVerifier;
+  /** Deterministic test seam; production launches the plugin MCP through its launcher. */
+  runSession?: (options: BoundedCodexMcpSessionOptions) => McpSessionResult;
+  sessionTimeoutMs?: number;
+  /** Exact expected inventory; defaults to the canonical 23 Genie product skills. */
+  skillInventory?: readonly string[];
+  /** Node command that runs the plugin `.cjs` launcher; defaults to `node`. */
+  nodePath?: string;
+}
+
+function rejectHealth(detail: string): never {
+  throw new IntegrationCommandError(`Codex plugin health rejected before retirement: ${detail}`);
+}
+
+/**
+ * Recompute the exact, canonically-verified skill payload from the active
+ * plugin's own `skills/` tree. Each entry must be a physical directory whose
+ * marker-excluded digest is stable; a missing or non-physical skill is inventory
+ * drift and rejects health. The digest uses {@link computeDirDigest} so it lines
+ * up byte-for-byte with the retirement classifier's target comparison.
+ */
+function buildVerifiedCodexPayload(
+  activePluginRoot: string,
+  skillInventory: readonly string[],
+): VerifiedCodexSkillPayload[] {
+  const skillsRoot = join(activePluginRoot, 'skills');
+  const payload: VerifiedCodexSkillPayload[] = [];
+  for (const skillName of skillInventory) {
+    const path = join(skillsRoot, skillName);
+    let stat: Stats;
+    try {
+      stat = lstatSync(path);
+    } catch {
+      rejectHealth(`expected plugin skill "${skillName}" is missing from the active payload at ${path}`);
+    }
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+      rejectHealth(`expected plugin skill "${skillName}" is not a physical directory at ${path}`);
+    }
+    payload.push({ skillName, path, physicalDigest: computeDirDigest(path), canonicalVerified: true });
+  }
+  return payload;
+}
+
+/**
+ * Bind the snapshot's active plugin root to the canonical Codex cache location.
+ * Version equality and physicality alone do not prove WHERE the consumed bytes
+ * live: a future Codex that emits `installedPath` could point `activePluginRoot`
+ * at a physically-valid but off-cache tree (resolveReportedPluginRoot proves
+ * physicality, not location), after which digesting it or launching its MCP
+ * would stamp `canonicalVerified` on unproven bytes. Reject health unless the
+ * root resolves to `codexHome/plugins/cache/automagik/genie/<version>`.
+ */
+function bindActiveRootToCanonicalCache(activePluginRoot: string, codexHome: string, expectedVersion: string): void {
+  const canonicalCacheRoot = join(codexHome, 'plugins', 'cache', 'automagik', 'genie', expectedVersion);
+  let resolvedActive: string;
+  let resolvedCanonical: string;
+  try {
+    resolvedActive = realpathSync(activePluginRoot);
+    resolvedCanonical = realpathSync(canonicalCacheRoot);
+  } catch (error) {
+    rejectHealth(
+      `active plugin root ${activePluginRoot} could not be bound to the canonical Codex cache path ${canonicalCacheRoot}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (resolvedActive !== resolvedCanonical) {
+    rejectHealth(
+      `active plugin root ${activePluginRoot} is not the canonical Codex cache path ${canonicalCacheRoot}; plugin-only convergence refuses unverified roots`,
+    );
+  }
+}
+
+/**
+ * Reject health BEFORE any retirement unless the single snapshot is exactly one
+ * enabled target-version plugin with a usable launcher, a canonically-verified
+ * installed payload and exact inventory, and a bounded MCP session that
+ * completes initialize / tools-list (all five tools) / read-only wish_status.
+ * Returns a frozen {@link CodexHealthProof} whose payload feeds retirement.
+ */
+export function proveCodexPluginHealth(options: ProveCodexPluginHealthOptions): CodexHealthProof {
+  const { snapshot } = options;
+  if (snapshot.status !== 'ok') rejectHealth(`plugin snapshot status is "${snapshot.status}": ${snapshot.detail}`);
+  if (!snapshot.installed) rejectHealth('plugin is not installed');
+  if (snapshot.enabled !== true) rejectHealth('plugin is disabled or its enabled state is unknown');
+  if (snapshot.version !== options.expectedVersion) {
+    rejectHealth(`plugin version ${snapshot.version ?? 'missing'} does not match expected ${options.expectedVersion}`);
+  }
+  // A single ambiguous/duplicate enabled cache root leaves activePluginRoot
+  // unproven; parseCodexPluginSnapshot already rejects >1 registration entry.
+  if (snapshot.activePluginRoot === undefined) {
+    rejectHealth(`active plugin root was not proven by the snapshot: ${snapshot.usabilityDetail ?? snapshot.detail}`);
+  }
+  if (snapshot.usable !== true) rejectHealth(snapshot.usabilityDetail ?? 'plugin MCP launcher is not usable');
+
+  const activePluginRoot = snapshot.activePluginRoot;
+  // Bind the consumed tree to the canonical cache BEFORE any digesting or MCP
+  // launch so unverified off-cache roots can never reach retirement authority.
+  bindActiveRootToCanonicalCache(activePluginRoot, options.codexHome, options.expectedVersion);
+  const verifyPayload = options.verifyCodexPayload ?? verifyCodexPhysicalPayload;
+  verifyPayload({
+    bundleRoot: options.bundleRoot,
+    codexHome: options.codexHome,
+    expectedVersion: options.expectedVersion,
+  });
+
+  const skillInventory = options.skillInventory ?? CANONICAL_GENIE_SKILL_NAMES;
+  const payload = buildVerifiedCodexPayload(activePluginRoot, skillInventory);
+
+  // A7: the session runs through the snapshot's own proven launcher (derived
+  // from the single activePluginRoot, not a re-read), in an isolated throwaway
+  // cwd so a missing db degrades to an empty board without touching real state.
+  const runSession = options.runSession ?? runBoundedCodexMcpSession;
+  const sessionCwd = mkdtempSync(join(tmpdir(), 'genie-mcp-health-'));
+  let session: McpSessionResult;
+  try {
+    session = runSession({
+      launcherPath: join(activePluginRoot, 'scripts', 'mcp-launcher.cjs'),
+      cwd: sessionCwd,
+      nodePath: options.nodePath,
+      timeoutMs: options.sessionTimeoutMs,
+      requiredTools: REQUIRED_GENIE_MCP_TOOLS,
+    });
+  } finally {
+    try {
+      rmSync(sessionCwd, { recursive: true, force: true });
+    } catch {
+      // best-effort; the throwaway cwd never held real state.
+    }
+  }
+  if (!session.ok || session.wishStatusReadOnly !== true) rejectHealth(session.detail);
+
+  const frozenPayload = Object.freeze(payload.map((entry) => Object.freeze(entry)));
+  return Object.freeze({
+    version: 1,
+    snapshot,
+    activePluginRoot,
+    expectedVersion: options.expectedVersion,
+    skillInventory: Object.freeze([...skillInventory]),
+    payload: frozenPayload,
+    mcp: Object.freeze({
+      initialized: true,
+      tools: Object.freeze([...(session.tools ?? [])]),
+      wishStatusReadOnly: true,
+    }),
+  }) as CodexHealthProof;
+}
+
+/**
+ * The retirement recover/apply primitives THROW joined recovery-sweep messages
+ * on the concurrent-edit conflict classes (Group A LOW carryovers, R8). Surface
+ * each as actionable manual-recovery guidance instead of raw aggregated text.
+ * The matched substrings are a pinned contract against agent-sync's conflict
+ * messages; a raw pass-through of any one is an R8 regression.
+ */
+const RETIREMENT_CONFLICT_CONTRACT: ReadonlyArray<{ readonly match: string; readonly guidance: string }> = [
+  {
+    match: 'source changed after planning',
+    guidance:
+      'a Codex fallback skill changed on disk after health was proven; the changed personal copy was preserved. Review it, then rerun the command.',
+  },
+  {
+    match: 'source changed at move boundary',
+    guidance:
+      'a Codex fallback skill changed while it was being quarantined; the changed personal copy was preserved. Review it, then rerun the command.',
+  },
+  {
+    match: 'changed evidence retained',
+    guidance:
+      'a changed Codex fallback copy was archived aside under the quarantine evidence directory rather than deleted. Review the retained evidence, then rerun the command.',
+  },
+  {
+    match: 'restored source changed during cleanup',
+    guidance:
+      'a restored Codex fallback skill changed during retirement cleanup; both the live and quarantined copies were preserved. Reconcile them manually, then rerun the command.',
+  },
+  {
+    match: 'restored source changed during disposal',
+    guidance:
+      'a restored Codex fallback skill changed during quarantine disposal; the changed copy was retained as evidence. Reconcile it manually, then rerun the command.',
+  },
+  {
+    match: 'kept live and incoming versions for review',
+    guidance:
+      'a Codex skill changed during exclusive publication; both versions were kept for review under the transaction root. Reconcile them manually, then rerun the command.',
+  },
+  {
+    match: 'kept both versions for review',
+    guidance:
+      'a Codex skill changed during promotion; both versions were kept for review under the transaction root. Reconcile them manually, then rerun the command.',
+  },
+  {
+    match: 'kept live removal transaction for review',
+    guidance:
+      'a Codex skill changed before removal; the live removal transaction was kept for review. Reconcile it manually, then rerun the command.',
+  },
+];
+
+/** Run a retirement step, translating its conflict-class failures into manual-recovery guidance (R8). */
+export function translateRetirementConflicts<T>(step: () => T): T {
+  try {
+    return step();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    for (const { match, guidance } of RETIREMENT_CONFLICT_CONTRACT) {
+      if (message.includes(match)) {
+        throw new IntegrationCommandError(
+          `Codex fallback retirement needs manual recovery: ${guidance} (detail: ${message})`,
+        );
+      }
+    }
+    throw error;
+  }
+}
+
+export interface CodexPluginOnlyDeps {
+  converge?: (options: ConvergePluginOptions) => IntegrationResult | null;
+  probe?: (deps: CodexPluginProbeDeps) => CodexPluginProbe;
+  prove?: (options: ProveCodexPluginHealthOptions) => CodexHealthProof;
+  recover?: (fallbackSkillsDir: string) => CodexFallbackRetirementResult[];
+  plan?: (options: PlanCodexFallbackRetirementOptions) => CodexFallbackRetirementPlan;
+  apply?: (plan: CodexFallbackRetirementPlan) => CodexFallbackRetirementResult;
+  installAgents?: (bundleRoot: string, codexHome?: string) => CodexAgentInstallResult;
+  runSession?: (options: BoundedCodexMcpSessionOptions) => McpSessionResult;
+  /** Live Codex user-skills tier; defaults to resolveAgentsSkillsDir() (env-isolated in tests). */
+  fallbackSkillsDir?: string;
+  probeCwd?: string;
+}
+
+export interface ConvergeCodexPluginOnlyOptions extends ConvergePluginOptions {
+  deps?: CodexPluginOnlyDeps;
+}
+
+export interface CodexPluginOnlyResult {
+  result: IntegrationResult;
+  proof: CodexHealthProof | null;
+  agents: CodexAgentInstallResult;
+  retired: readonly string[];
+  preservedCollisions: number;
+}
+
+/** Absent fallback tier means a fresh install: nothing to retire, and R2/R7 forbid creating the lane. */
+function fallbackDirPresent(fallbackSkillsDir: string): boolean {
+  return existsSync(fallbackSkillsDir);
+}
+
+/**
+ * The shared plugin-only convergence orchestrator (R1). Exact order: converge
+ * the plugin (honoring deliberate disablement) → take EXACTLY ONE
+ * post-convergence snapshot → prove health once → crash-complete + retire only
+ * proven-clean fallbacks from that immutable proof → then remaining integrations
+ * (role-agent TOMLs). A deliberately disabled plugin skips health + retirement
+ * and is never enabled (R3). Convergence failure returns the failure result
+ * without rebuilding any fallback lane (R9). Returns null only when the plugin
+ * is absent and `installIfAbsent` is false (update leaves an absent plugin
+ * alone) — never silently installs it.
+ */
+export function convergeCodexPluginOnly(options: ConvergeCodexPluginOnlyOptions): CodexPluginOnlyResult | null {
+  const deps = options.deps ?? {};
+  const codexHome = options.codexHome ?? getCodexHome();
+  const fallbackSkillsDir = deps.fallbackSkillsDir ?? resolveAgentsSkillsDir();
+  const installAgents = deps.installAgents ?? installCodexAgents;
+
+  const plugin = (deps.converge ?? convergeCodexPlugin)(options);
+  if (plugin === null) return null;
+  if (!plugin.ok) {
+    return { result: plugin, proof: null, agents: emptyAgentInstallResult(), retired: [], preservedCollisions: 0 };
+  }
+
+  const snapshot = (deps.probe ?? probeCodexGeniePlugin)({ codexHome, cwd: deps.probeCwd ?? process.cwd() });
+
+  if (plugin.preservedDisabled === true) {
+    const agents = installAgents(options.bundleRoot, codexHome);
+    return { result: { ...plugin, snapshot }, proof: null, agents, retired: [], preservedCollisions: 0 };
+  }
+
+  const proof = (deps.prove ?? proveCodexPluginHealth)({
+    snapshot,
+    bundleRoot: options.bundleRoot,
+    codexHome,
+    expectedVersion: options.expectedVersion,
+    verifyCodexPayload: options.verifyCodexPayload,
+    runSession: deps.runSession,
+  });
+
+  let retired: readonly string[] = [];
+  let preservedCollisions = 0;
+  if (fallbackDirPresent(fallbackSkillsDir)) {
+    translateRetirementConflicts(() => (deps.recover ?? recoverCodexFallbackRetirements)(fallbackSkillsDir));
+    const plan = (deps.plan ?? planCodexFallbackRetirement)({
+      fallbackSkillsDir,
+      skillNames: proof.skillInventory,
+      verifiedTargets: proof.payload,
+    });
+    // planCodexFallbackRetirement records an absent canonical skill as a
+    // {accepted:false, reason:'missing'} preserved entry, so after a full
+    // migration every subsequent run would otherwise report a phantom
+    // "preserved 23 personal collision(s)". Count only real on-disk collisions.
+    preservedCollisions = plan.preserved.filter((entry) => entry.reason !== 'missing').length;
+    // A11: a zero-accepted plan is a true no-op — never open a fresh transaction
+    // so a plugin-only second run cannot accumulate empty quarantine journals.
+    if (plan.accepted.length > 0) {
+      const retirement = translateRetirementConflicts(() => (deps.apply ?? applyCodexFallbackRetirement)(plan));
+      retired = retirement.retired;
+    }
+  }
+
+  const agents = installAgents(options.bundleRoot, codexHome);
+  return {
+    result: { ...plugin, snapshot, retiredFallbacks: retired, preservedCollisions },
+    proof,
+    agents,
+    retired,
+    preservedCollisions,
+  };
+}
+
+function emptyAgentInstallResult(): CodexAgentInstallResult {
+  return { installed: 0, skippedUserOwned: [], keptModified: [], removed: [], backedUp: [] };
+}
+
+/**
+ * Read-only classification of the shared `~/.agents/skills` tier for the doctor
+ * diagnostic (R5/A9). Uses the SAME ownership classifier as sync and retirement
+ * ({@link inspectManagedSkillTree}) so doctor never disagrees with what
+ * `genie update` would retire, and NEVER launches the plugin MCP or mutates disk.
+ *
+ * - `cleanFallbacks` — managed-clean genie skill dirs still in the user tier;
+ *   under plugin-only semantics these are repairable duplicate providers that
+ *   `genie update` retires (distinct remediation from a personal collision).
+ * - `preservedCollisions` — managed-modified / corrupt-metadata dirs; personal
+ *   content preserved in place that only manual review resolves.
+ * - `quarantinedTransactions` — retained committed retirement transactions.
+ * - `retainedEvidence` — transactions that archived a changed fallback tree aside;
+ *   the Group A conflict class surfaced as manual-recovery guidance (R8).
+ */
+/** Decision-5 classification of a preserved personal collision (why genie left it in place). */
+export type PreservedCollisionClass = 'modified-managed' | 'malformed-marker';
+
+export interface CodexFallbackTierReport {
+  cleanFallbacks: string[];
+  preservedCollisions: string[];
+  /** Per preserved-collision classification, so doctor can report Decision-5 fields (name + classification). */
+  preservedCollisionClass: Record<string, PreservedCollisionClass>;
+  quarantinedTransactions: number;
+  retainedEvidence: string[];
+}
+
+/** Basename of a retirement transaction's archived changed-tree evidence dir (agent-sync on-disk contract). */
+const RETIREMENT_EVIDENCE_DIRNAME = 'evidence';
+/** Prefix of a committed/recoverable retirement transaction dir (agent-sync on-disk contract). */
+const RETIREMENT_TRANSACTION_PREFIX = 'txn-';
+
+function retirementTransactionHasEvidence(txnDir: string): boolean {
+  try {
+    return readdirSync(join(txnDir, RETIREMENT_EVIDENCE_DIRNAME)).length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function summarizeCodexQuarantine(retirementRoot: string, report: CodexFallbackTierReport): void {
+  let entries: string[];
+  try {
+    entries = readdirSync(retirementRoot);
+  } catch {
+    return;
+  }
+  for (const name of entries) {
+    if (!name.startsWith(RETIREMENT_TRANSACTION_PREFIX)) continue; // skips .retirement.lock, temps
+    const txnDir = join(retirementRoot, name);
+    try {
+      if (!lstatSync(txnDir).isDirectory()) continue;
+    } catch {
+      continue;
+    }
+    report.quarantinedTransactions += 1;
+    if (retirementTransactionHasEvidence(txnDir)) report.retainedEvidence.push(name);
+  }
+}
+
+export function inspectCodexFallbackTier(agentsSkillsDir: string): CodexFallbackTierReport {
+  const report: CodexFallbackTierReport = {
+    cleanFallbacks: [],
+    preservedCollisions: [],
+    preservedCollisionClass: {},
+    quarantinedTransactions: 0,
+    retainedEvidence: [],
+  };
+  let names: string[];
+  try {
+    names = readdirSync(agentsSkillsDir);
+  } catch {
+    return report;
+  }
+  for (const name of names) {
+    // The quarantine root is inspected as retained evidence, never as a live fallback.
+    if (name === CODEX_FALLBACK_RETIREMENT_ROOT) continue;
+    const state = inspectManagedSkillTree(join(agentsSkillsDir, name)).state;
+    if (state === 'managed-clean') report.cleanFallbacks.push(name);
+    else if (state === 'managed-modified' || state === 'corrupt-metadata') {
+      report.preservedCollisions.push(name);
+      report.preservedCollisionClass[name] = state === 'managed-modified' ? 'modified-managed' : 'malformed-marker';
+    }
+    // `unmanaged` → the user's own skill; genie only speaks for what it shipped.
+  }
+  summarizeCodexQuarantine(join(agentsSkillsDir, CODEX_FALLBACK_RETIREMENT_ROOT), report);
+  report.cleanFallbacks.sort();
+  report.preservedCollisions.sort();
+  report.retainedEvidence.sort();
+  return report;
+}
+
+function describeCodexIntegration(
+  agents: CodexAgentInstallResult,
+  retired: readonly string[],
+  collisions: number,
+): string {
+  const notes = [`${agents.installed} role agents installed`];
+  if (agents.removed.length > 0) notes.push(`removed obsolete: ${agents.removed.join(', ')}`);
+  if (agents.keptModified.length > 0) notes.push(`kept modified: ${agents.keptModified.join(', ')}`);
+  if (agents.skippedUserOwned.length > 0) notes.push(`kept user-owned: ${agents.skippedUserOwned.join(', ')}`);
+  if (retired.length > 0)
+    notes.push(`retired ${retired.length} clean fallback skill${retired.length === 1 ? '' : 's'}`);
+  if (collisions > 0) notes.push(`preserved ${collisions} personal collision${collisions === 1 ? '' : 's'}`);
+  return `plugin refreshed; ${notes.join('; ')}`;
+}
+
 function installCodexIntegration(
   runner: CommandRunner,
   command: string,
@@ -2580,12 +3113,12 @@ function installCodexIntegration(
   timeoutMs = INTEGRATION_TIMEOUT_MS,
   stateDir = resolveGenieHome(),
   verifyCodexPayload?: CodexPayloadVerifier,
+  deps?: CodexPluginOnlyDeps,
 ): IntegrationResult {
   const configPath = join(codexHome ?? getCodexHome(), 'config.toml');
   const migration = migrateDeadGenieOtel(configPath);
   if (migration.status === 'error') throw new Error(`Codex config migration failed: ${migration.error}`);
-  const agents = installCodexAgents(bundleRoot, codexHome);
-  const plugin = convergeCodexPlugin({
+  const outcome = convergeCodexPluginOnly({
     runner,
     command,
     bundleRoot,
@@ -2596,18 +3129,19 @@ function installCodexIntegration(
     timeoutMs,
     codexHome,
     verifyCodexPayload,
+    deps,
   });
-  if (plugin === null) throw new Error('Codex plugin convergence returned no result for explicit install');
+  if (outcome === null) throw new Error('Codex plugin convergence returned no result for explicit install');
+  const plugin = outcome.result;
   if (!plugin.ok) throw new IntegrationCommandError(plugin.detail, plugin.timedOut);
-  const notes = [`${agents.installed} role agents installed`];
-  if (agents.removed.length > 0) notes.push(`removed obsolete: ${agents.removed.join(', ')}`);
-  if (agents.keptModified.length > 0) notes.push(`kept modified: ${agents.keptModified.join(', ')}`);
-  if (agents.skippedUserOwned.length > 0) notes.push(`kept user-owned: ${agents.skippedUserOwned.join(', ')}`);
   return {
     runtime: 'codex',
     ok: true,
-    detail: `plugin refreshed; ${notes.join('; ')}`,
+    detail: describeCodexIntegration(outcome.agents, outcome.retired, outcome.preservedCollisions),
     preservedDisabled: plugin.preservedDisabled,
+    snapshot: plugin.snapshot,
+    retiredFallbacks: outcome.retired,
+    preservedCollisions: outcome.preservedCollisions,
   };
 }
 

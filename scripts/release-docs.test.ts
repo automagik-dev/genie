@@ -242,9 +242,14 @@ describe('Group E release and documentation contracts', () => {
     ]) {
       expect(docs).toContain(statement);
     }
-    expect(read('README.md')).toContain('synchronizes up to 23 digest-managed product-skill fallbacks');
-    expect(read('README.md')).toContain('CLI-managed product skills');
-    expect(read('plugins/genie/README.md')).toContain('CLI-managed product fallbacks');
+    // Plugin-only contract: the installed plugin is the sole Genie-managed skill provider.
+    expect(read('README.md')).toContain('the installed plugin is the **only** Genie-managed skill provider');
+    expect(read('README.md')).toContain('Fallback retirement');
+    expect(read('plugins/genie/README.md')).toContain('the only Genie-managed skill provider');
+    // The retired CLI-managed-fallback promise must be gone from operator docs.
+    expect(docs).not.toContain('synchronizes up to 23 digest-managed product-skill fallbacks');
+    expect(docs).not.toContain('CLI-managed product skills');
+    expect(docs).not.toContain('CLI-managed product fallbacks');
     expect(docs).toContain('at most 64 candidate');
     expect(docs).toContain('network-free');
     expect(docs).toContain('no Codex network lookup');
@@ -274,8 +279,9 @@ describe('Group E release and documentation contracts', () => {
 
     const skillsOverview = read('skills/README.md');
     expect(skillsOverview).toContain(
-      'Codex user tier (a CLI-managed product fallback or separately installed personal copy)',
+      'Codex user tier (only a separately installed personal copy; Genie no longer seeds this tier)',
     );
+    expect(skillsOverview).not.toContain('CLI-managed product fallback');
     expect(skillsOverview).toContain('persists Codex maintenance consent');
     expect(skillsOverview).toContain('later explicit `genie update`');
   });
@@ -292,8 +298,11 @@ describe('Group E release and documentation contracts', () => {
     expect(lifecycle).toContain('automatically routes the completed DESIGN.md');
     expect(plugin).toContain('successful `genie setup --codex` persists Codex maintenance consent');
     expect(root).toContain('successful Codex setup also persists Codex maintenance consent');
-    expect(plugin).toContain('clean digest-managed product-skill');
-    expect(root).toContain('digest-managed product-skill fallbacks');
+    // Consent no longer authorizes CLI-managed user-tier fallbacks; it refreshes only plugin surfaces.
+    expect(plugin).toContain('No supported path writes new product');
+    expect(root).toContain('never writes new product skills into the user tier');
+    expect(plugin).not.toContain('digest-managed product-skill');
+    expect(root).not.toContain('digest-managed product-skill fallbacks');
   });
 
   test('lifecycle skills share persisted WISH state and keep reviewers read-only', () => {

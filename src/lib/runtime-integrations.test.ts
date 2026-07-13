@@ -14,8 +14,16 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { CODEX_FALLBACK_RETIREMENT_ROOT, computeDirDigest } from './agent-sync.js';
+import { REQUIRED_GENIE_MCP_TOOLS } from './codex-mcp-health-session.js';
+import type { CodexPluginProbe } from './codex-project-mcp.js';
 import {
+  CANONICAL_GENIE_SKILL_NAMES,
+  type CodexHealthProof,
+  type CodexPluginOnlyDeps,
   type InstallIntegrationsOptions,
+  type IntegrationResult,
+  type ProveCodexPluginHealthOptions,
   beginIntegrationConsentTransition,
   claudePluginState,
   clearIntegrationConsentTransition,
@@ -23,13 +31,16 @@ import {
   commitIntegrationConsentTransition,
   convergeClaudePlugin,
   convergeCodexPlugin,
+  convergeCodexPluginOnly,
   inspectCodexAgentOwnership,
+  inspectCodexFallbackTier,
   inspectRuntimeIntegrationEvidence,
   installCodexAgents,
   installRuntimeIntegrations as installRuntimeIntegrationsWithPhysicalVerification,
   parseClaudePluginState,
   parseCodexPluginState,
   persistIntegrationConsent,
+  proveCodexPluginHealth,
   readIntegrationConsent,
   readIntegrationConsentState,
   recoverCodexAgentTransactions,
@@ -38,9 +49,54 @@ import {
   resolveBundleRoot,
   runBoundedIntegrationCommand,
   setCodexPluginEnabled,
+  translateRetirementConflicts,
   verifyClaudePhysicalPayload,
 } from './runtime-integrations.js';
 import { VERSION } from './version.js';
+
+/** A healthy enabled target-version Codex snapshot for plugin-only convergence seams. */
+function healthyCodexProbe(activePluginRoot = '/fixture/plugin/root'): CodexPluginProbe {
+  return {
+    cliAvailable: true,
+    status: 'ok',
+    installed: true,
+    enabled: true,
+    version: VERSION,
+    activePluginRoot,
+    usable: true,
+    usabilityDetail: 'fixture plugin is usable',
+    detail: 'fixture healthy codex plugin',
+  };
+}
+
+/** A frozen healthy proof with an empty payload; retirement is exercised against the isolated fallback dir. */
+function healthyCodexProof(activePluginRoot = '/fixture/plugin/root'): CodexHealthProof {
+  return Object.freeze({
+    version: 1,
+    snapshot: healthyCodexProbe(activePluginRoot),
+    activePluginRoot,
+    expectedVersion: VERSION,
+    skillInventory: CANONICAL_GENIE_SKILL_NAMES,
+    payload: [],
+    mcp: { initialized: true, tools: [...REQUIRED_GENIE_MCP_TOOLS], wishStatusReadOnly: true },
+  }) as CodexHealthProof;
+}
+
+/** Default plugin-only seams: healthy probe/proof/session against a fresh isolated fallback tier. */
+function healthyCodexPluginOnly(overrides: CodexPluginOnlyDeps = {}): CodexPluginOnlyDeps {
+  return {
+    probe: () => healthyCodexProbe(),
+    prove: () => healthyCodexProof(),
+    runSession: () => ({
+      ok: true,
+      detail: 'fixture session',
+      tools: [...REQUIRED_GENIE_MCP_TOOLS],
+      wishStatusReadOnly: true,
+    }),
+    fallbackSkillsDir: mkdtempSync(join(tmpdir(), 'genie-fallback-skills-')),
+    ...overrides,
+  };
+}
 
 const MANAGED_TOML = '# Managed by Genie. Remove with `genie uninstall`.\nname = "genie_reviewer"\n';
 
@@ -51,6 +107,7 @@ function installRuntimeIntegrations(options: InstallIntegrationsOptions) {
     resolveExecutable: options.resolveExecutable ?? ((name) => name),
     verifyCodexPayload: options.verifyCodexPayload ?? (() => undefined),
     verifyClaudePayload: options.verifyClaudePayload ?? (() => undefined),
+    codexPluginOnly: healthyCodexPluginOnly(options.codexPluginOnly),
   });
 }
 
@@ -2151,5 +2208,446 @@ describe('runtime integration removal reporting', () => {
     expect(result.steps).toEqual([
       expect.objectContaining({ runtime: 'codex', ok: false, detail: expect.stringContaining('CLI unavailable') }),
     ]);
+  });
+});
+
+// ===========================================================================
+// Group B: plugin-only convergence orchestration, health proof, and R8 conflict
+// surfacing. Every test uses an isolated fallback tier — never real home state.
+// ===========================================================================
+
+const MANIFEST_NAME = '.genie-sync.json';
+
+function stampFallbackSkill(dir: string, version = 'fixture-v1'): string {
+  const digest = computeDirDigest(dir);
+  writeFileSync(
+    join(dir, MANIFEST_NAME),
+    `${JSON.stringify({ managedBy: 'genie-agent-sync', version, digest, syncedAt: '2026-07-12T00:00:00.000Z', identityVersion: 2 })}\n`,
+  );
+  return digest;
+}
+
+function healthyPluginResult(): IntegrationResult {
+  return { runtime: 'codex', ok: true, detail: `plugin/hooks refreshed to v${VERSION}`, preservedDisabled: false };
+}
+
+function baseConvergeOptions(fallbackSkillsDir: string, overrides: Partial<CodexPluginOnlyDeps> = {}) {
+  return {
+    runner: (() => ({ exitCode: 0, stdout: '{}', stderr: '' })) as never,
+    command: '/fixture/codex',
+    bundleRoot: '/fixture/bundle',
+    expectedVersion: VERSION,
+    installIfAbsent: true,
+    statePath: join(mkdtempSync(join(tmpdir(), 'genie-state-')), '.integration-refresh-codex.json'),
+    codexHome: mkdtempSync(join(tmpdir(), 'genie-codex-home-')),
+    deps: {
+      converge: () => healthyPluginResult(),
+      probe: () => healthyCodexProbe(),
+      prove: () => healthyCodexProof(),
+      runSession: () => ({ ok: true, detail: 'ok', tools: [...REQUIRED_GENIE_MCP_TOOLS], wishStatusReadOnly: true }),
+      installAgents: () => ({ installed: 7, skippedUserOwned: [], keptModified: [], removed: [], backedUp: [] }),
+      fallbackSkillsDir,
+      ...overrides,
+    } as CodexPluginOnlyDeps,
+  };
+}
+
+describe('convergeCodexPluginOnly ordering and single-proof (R1)', () => {
+  test('orders converge → single probe → prove → retire → role agents, with exactly one probe', () => {
+    const fallback = mkdtempSync(join(tmpdir(), 'genie-fallback-order-'));
+    const trace: string[] = [];
+    let probes = 0;
+    const options = baseConvergeOptions(fallback, {
+      converge: () => {
+        trace.push('converge');
+        return healthyPluginResult();
+      },
+      probe: () => {
+        probes += 1;
+        trace.push('probe');
+        return healthyCodexProbe();
+      },
+      prove: () => {
+        trace.push('prove');
+        return healthyCodexProof();
+      },
+      recover: () => {
+        trace.push('recover');
+        return [];
+      },
+      plan: (opts) => {
+        trace.push('plan');
+        return {
+          version: 1,
+          fallbackSkillsDir: opts.fallbackSkillsDir,
+          transactionId: 'x',
+          accepted: [],
+          preserved: [],
+        };
+      },
+      apply: () => {
+        trace.push('apply');
+        return { transactionId: 'x', transactionDir: 'd', status: 'committed', retired: [] };
+      },
+      installAgents: () => {
+        trace.push('installAgents');
+        return { installed: 7, skippedUserOwned: [], keptModified: [], removed: [], backedUp: [] };
+      },
+    });
+    convergeCodexPluginOnly(options);
+    // A zero-accepted plan short-circuits apply (A11), so 'apply' is absent here.
+    expect(trace).toEqual(['converge', 'probe', 'prove', 'recover', 'plan', 'installAgents']);
+    expect(trace.indexOf('converge')).toBeLessThan(trace.indexOf('probe'));
+    expect(trace.indexOf('probe')).toBeLessThan(trace.indexOf('prove'));
+    expect(trace.indexOf('prove')).toBeLessThan(trace.indexOf('plan'));
+    expect(trace.indexOf('plan')).toBeLessThan(trace.indexOf('installAgents'));
+    expect(probes).toBe(1);
+  });
+
+  test('a deliberately disabled plugin skips health + retirement and is never enabled (R3)', () => {
+    const fallback = mkdtempSync(join(tmpdir(), 'genie-fallback-disabled-'));
+    let proved = false;
+    let retired = false;
+    const outcome = convergeCodexPluginOnly(
+      baseConvergeOptions(fallback, {
+        converge: () => ({ ...healthyPluginResult(), preservedDisabled: true }),
+        probe: () => ({ ...healthyCodexProbe(), enabled: false, usable: false }),
+        prove: () => {
+          proved = true;
+          return healthyCodexProof();
+        },
+        apply: () => {
+          retired = true;
+          return { transactionId: 'x', transactionDir: 'd', status: 'committed', retired: [] };
+        },
+      }),
+    );
+    expect(outcome).not.toBeNull();
+    expect(outcome?.proof).toBeNull();
+    expect(outcome?.result.preservedDisabled).toBe(true);
+    expect(outcome?.result.snapshot?.enabled).toBe(false);
+    expect(proved).toBe(false);
+    expect(retired).toBe(false);
+  });
+
+  test('a failed convergence returns the failure without retiring any fallback (R9)', () => {
+    const fallback = mkdtempSync(join(tmpdir(), 'genie-fallback-failed-'));
+    let retired = false;
+    const outcome = convergeCodexPluginOnly(
+      baseConvergeOptions(fallback, {
+        converge: () => ({ runtime: 'codex', ok: false, detail: 'plugin-incapable Codex' }),
+        apply: () => {
+          retired = true;
+          return { transactionId: 'x', transactionDir: 'd', status: 'committed', retired: [] };
+        },
+      }),
+    );
+    expect(outcome?.result.ok).toBe(false);
+    expect(outcome?.proof).toBeNull();
+    expect(retired).toBe(false);
+  });
+
+  test('retires a proven-clean fallback then a second run is a no-op with no new transaction (R7/A11)', () => {
+    const fallback = mkdtempSync(join(tmpdir(), 'genie-fallback-idem-'));
+    // Target skill dir uses mkdirSync so its physical-tree digest (which includes
+    // the root directory mode) matches the mkdirSync-created fallback skill dir.
+    const targetParent = mkdtempSync(join(tmpdir(), 'genie-target-skill-'));
+    const target = join(targetParent, 'wish');
+    mkdirSync(target, { recursive: true });
+    writeFileSync(join(target, 'SKILL.md'), '# wish skill\n');
+    const targetDigest = computeDirDigest(target);
+    // A clean fallback whose content matches the verified target payload.
+    const skillDir = join(fallback, 'wish');
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, 'SKILL.md'), '# wish skill\n');
+    stampFallbackSkill(skillDir);
+
+    const proofWithTarget = () =>
+      Object.freeze({
+        version: 1,
+        snapshot: healthyCodexProbe(),
+        activePluginRoot: '/fixture/plugin/root',
+        expectedVersion: VERSION,
+        skillInventory: ['wish'],
+        payload: [{ skillName: 'wish', path: target, physicalDigest: targetDigest, canonicalVerified: true as const }],
+        mcp: { initialized: true, tools: [...REQUIRED_GENIE_MCP_TOOLS], wishStatusReadOnly: true },
+      }) as CodexHealthProof;
+
+    const first = convergeCodexPluginOnly(baseConvergeOptions(fallback, { prove: proofWithTarget }));
+    expect(first?.retired).toEqual(['wish']);
+    expect(existsSync(skillDir)).toBe(false);
+    const txnRoot = join(fallback, CODEX_FALLBACK_RETIREMENT_ROOT);
+    const txnsAfterFirst = readdirSync(txnRoot).filter((name) => name.startsWith('txn-'));
+    expect(txnsAfterFirst).toHaveLength(1);
+
+    const second = convergeCodexPluginOnly(baseConvergeOptions(fallback, { prove: proofWithTarget }));
+    expect(second?.retired).toEqual([]);
+    const txnsAfterSecond = readdirSync(txnRoot).filter((name) => name.startsWith('txn-'));
+    expect(txnsAfterSecond).toEqual(txnsAfterFirst);
+  });
+});
+
+describe('convergeCodexPluginOnly preservedCollisions counts only real on-disk collisions (PR #2572)', () => {
+  // planCodexFallbackRetirement records every absent canonical skill as a
+  // {accepted:false, reason:'missing'} preserved entry. These runs use the REAL
+  // plan (no `plan` override) so the 'missing' entries are actually produced and
+  // the filter is exercised. describeCodexIntegration only appends the
+  // "preserved N personal collision(s)" note when the count is > 0, so a count
+  // of 0 keeps the phantom collision phrase out of the user-facing detail.
+  test('post-migration second run: only the quarantine root remains, all canonical skills migrated → 0 collisions', () => {
+    const fallback = mkdtempSync(join(tmpdir(), 'genie-fallback-postmigration-'));
+    // Post-migration steady state: every canonical skill has left the top level
+    // (moved under the retirement transaction root during the first run).
+    mkdirSync(join(fallback, CODEX_FALLBACK_RETIREMENT_ROOT), { recursive: true });
+    const outcome = convergeCodexPluginOnly(baseConvergeOptions(fallback));
+    expect(outcome?.preservedCollisions).toBe(0);
+    expect(outcome?.result.preservedCollisions).toBe(0);
+    expect(outcome?.retired).toEqual([]);
+  });
+
+  test('fallback dir exists with no top-level canonical skills present → 0 collisions', () => {
+    const fallback = mkdtempSync(join(tmpdir(), 'genie-fallback-noncanonical-'));
+    // A non-canonical personal skill name never enters the plan (it is not in
+    // skillNames), so it can neither be retired nor inflate the collision count.
+    mkdirSync(join(fallback, 'my-personal-skill'), { recursive: true });
+    writeFileSync(join(fallback, 'my-personal-skill', 'SKILL.md'), '# personal\n');
+    const outcome = convergeCodexPluginOnly(baseConvergeOptions(fallback));
+    expect(outcome?.preservedCollisions).toBe(0);
+    expect(outcome?.result.preservedCollisions).toBe(0);
+  });
+
+  test('a real modified-managed collision still counts', () => {
+    const fallback = mkdtempSync(join(tmpdir(), 'genie-fallback-realcollision-'));
+    // A managed 'wish' skill whose on-disk tree diverges from its recorded
+    // marker digest classifies as modified-tree: a genuine personal collision.
+    const skillDir = join(fallback, 'wish');
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, 'SKILL.md'), '# wish skill\n');
+    stampFallbackSkill(skillDir);
+    writeFileSync(join(skillDir, 'SKILL.md'), '# wish skill (locally modified)\n');
+    const outcome = convergeCodexPluginOnly(baseConvergeOptions(fallback));
+    expect(outcome?.preservedCollisions).toBe(1);
+    expect(outcome?.result.preservedCollisions).toBe(1);
+    expect(outcome?.retired).toEqual([]);
+  });
+});
+
+describe('proveCodexPluginHealth reject-before-retirement matrix (R4)', () => {
+  // The active plugin root must resolve to the canonical Codex cache path, so
+  // the fixture places the plugin skills tree under codexHome/plugins/cache/...
+  const codexHome = mkdtempSync(join(tmpdir(), 'genie-prove-codex-home-'));
+  const target = join(codexHome, 'plugins', 'cache', 'automagik', 'genie', VERSION);
+  const skillsRoot = join(target, 'skills');
+  for (const name of CANONICAL_GENIE_SKILL_NAMES) {
+    mkdirSync(join(skillsRoot, name), { recursive: true });
+    writeFileSync(join(skillsRoot, name, 'SKILL.md'), `# ${name}\n`);
+  }
+  const healthyOpts = (): ProveCodexPluginHealthOptions => ({
+    snapshot: healthyCodexProbe(target),
+    bundleRoot: '/fixture/bundle',
+    codexHome,
+    expectedVersion: VERSION,
+    verifyCodexPayload: () => undefined,
+    runSession: () => ({ ok: true, detail: 'ok', tools: [...REQUIRED_GENIE_MCP_TOOLS], wishStatusReadOnly: true }),
+    skillInventory: [...CANONICAL_GENIE_SKILL_NAMES],
+  });
+
+  test('accepts a healthy snapshot and returns a frozen proof', () => {
+    const proof = proveCodexPluginHealth(healthyOpts());
+    expect(proof.version).toBe(1);
+    expect(proof.payload).toHaveLength(CANONICAL_GENIE_SKILL_NAMES.length);
+    expect(proof.mcp.wishStatusReadOnly).toBe(true);
+    expect(Object.isFrozen(proof)).toBe(true);
+    expect(Object.isFrozen(proof.payload)).toBe(true);
+    expect(() => {
+      (proof as { expectedVersion: string }).expectedVersion = 'tampered';
+    }).toThrow();
+  });
+
+  const rejectCases: Array<[string, Partial<CodexPluginProbe>]> = [
+    ['a disabled plugin', { enabled: false }],
+    ['a wrong-version plugin', { version: '0.0.0' }],
+    ['an unusable launcher', { usable: false }],
+    ['an ambiguous active root', { activePluginRoot: undefined }],
+    ['an errored snapshot', { status: 'error' }],
+  ];
+  for (const [label, snapshotOverride] of rejectCases) {
+    test(`rejects ${label} before retirement`, () => {
+      const opts = healthyOpts();
+      opts.snapshot = { ...opts.snapshot, ...snapshotOverride };
+      expect(() => proveCodexPluginHealth(opts)).toThrow('rejected before retirement');
+    });
+  }
+
+  test('rejects payload identity drift (verifyCodexPayload throws)', () => {
+    const opts = healthyOpts();
+    opts.verifyCodexPayload = () => {
+      throw new Error('installed Codex plugin payload identity mismatch');
+    };
+    expect(() => proveCodexPluginHealth(opts)).toThrow('payload identity mismatch');
+  });
+
+  test('rejects a skill-inventory drift (an expected plugin skill is missing)', () => {
+    const opts = healthyOpts();
+    opts.skillInventory = [...CANONICAL_GENIE_SKILL_NAMES, 'not-a-real-skill'];
+    expect(() => proveCodexPluginHealth(opts)).toThrow('rejected before retirement');
+  });
+
+  test('rejects a bounded MCP session failure (missing tool)', () => {
+    const opts = healthyOpts();
+    opts.runSession = () => ({ ok: false, detail: 'missing required Genie tools: genie_wish_status' });
+    expect(() => proveCodexPluginHealth(opts)).toThrow('rejected before retirement');
+  });
+
+  test('rejects a non-read-only wish_status even when the session reports ok', () => {
+    const opts = healthyOpts();
+    opts.runSession = () => ({
+      ok: true,
+      detail: 'ok',
+      tools: [...REQUIRED_GENIE_MCP_TOOLS],
+      wishStatusReadOnly: false,
+    });
+    expect(() => proveCodexPluginHealth(opts)).toThrow('rejected before retirement');
+  });
+
+  test('rejects an activePluginRoot diverging from the derived canonical cache path before any digest or MCP launch', () => {
+    // Simulate a future Codex emitting an installedPath that is physically valid
+    // but lives OUTSIDE codexHome/plugins/cache/automagik/genie/<version>.
+    const divergent = mkdtempSync(join(tmpdir(), 'genie-divergent-plugin-root-'));
+    const divergentSkills = join(divergent, 'skills');
+    for (const name of CANONICAL_GENIE_SKILL_NAMES) {
+      mkdirSync(join(divergentSkills, name), { recursive: true });
+      writeFileSync(join(divergentSkills, name, 'SKILL.md'), `# ${name}\n`);
+    }
+    const opts = healthyOpts();
+    opts.snapshot = healthyCodexProbe(divergent);
+    let digested = false;
+    let launched = false;
+    opts.verifyCodexPayload = () => {
+      digested = true;
+    };
+    opts.runSession = () => {
+      launched = true;
+      return { ok: true, detail: 'ok', tools: [...REQUIRED_GENIE_MCP_TOOLS], wishStatusReadOnly: true };
+    };
+    // Health must reject (no proof returned → no retirement is ever authorized)
+    // and the actionable error must name the divergent root.
+    expect(() => proveCodexPluginHealth(opts)).toThrow('rejected before retirement');
+    expect(() => proveCodexPluginHealth(opts)).toThrow(divergent);
+    // The rejection lands BEFORE the payload verifier, the skill digesting, and
+    // the MCP session launch.
+    expect(digested).toBe(false);
+    expect(launched).toBe(false);
+  });
+});
+
+describe('translateRetirementConflicts surfaces R8 conflict classes as manual-recovery guidance', () => {
+  for (const substring of [
+    'source changed after planning',
+    'source changed at move boundary',
+    'changed evidence retained',
+    'restored source changed during cleanup',
+    'restored source changed during disposal',
+    'kept live and incoming versions for review',
+    'kept both versions for review',
+    'kept live removal transaction for review',
+  ]) {
+    test(`translates "${substring}" into actionable manual-recovery text (not raw)`, () => {
+      expect(() =>
+        translateRetirementConflicts(() => {
+          throw new Error(`fallback retirement ${substring} at /somewhere`);
+        }),
+      ).toThrow('needs manual recovery');
+    });
+  }
+
+  test('passes through a non-conflict error unchanged', () => {
+    expect(() =>
+      translateRetirementConflicts(() => {
+        throw new Error('some unrelated failure');
+      }),
+    ).toThrow('some unrelated failure');
+  });
+
+  test('returns the step result when it does not throw', () => {
+    expect(translateRetirementConflicts(() => 42)).toBe(42);
+  });
+});
+
+describe('inspectCodexFallbackTier (shared doctor/uninstall classifier — read-only)', () => {
+  let tmp: string;
+  let agentsSkillsDir: string;
+
+  function seedManaged(name: string, mutate?: (dir: string) => void): string {
+    const dir = join(agentsSkillsDir, name);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'SKILL.md'), `# ${name}\n`, 'utf8');
+    const digest = computeDirDigest(dir);
+    writeFileSync(
+      join(dir, '.genie-sync.json'),
+      JSON.stringify({ managedBy: 'genie-agent-sync', version: '1', digest, syncedAt: 'now' }),
+      'utf8',
+    );
+    mutate?.(dir);
+    return dir;
+  }
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), 'fallback-tier-'));
+    agentsSkillsDir = join(tmp, 'agents', 'skills');
+    mkdirSync(agentsSkillsDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  test('absent tier → all-zero report (no mutation, no throw)', () => {
+    const report = inspectCodexFallbackTier(join(tmp, 'nonexistent'));
+    expect(report).toEqual({
+      cleanFallbacks: [],
+      preservedCollisions: [],
+      preservedCollisionClass: {},
+      quarantinedTransactions: 0,
+      retainedEvidence: [],
+    });
+  });
+
+  test('classifies clean fallbacks, personal collisions, and unmanaged skills distinctly', () => {
+    seedManaged('wish');
+    seedManaged('work');
+    // Personal edit after sync → managed-modified.
+    seedManaged('review', (dir) => writeFileSync(join(dir, 'SKILL.md'), '# personal\n', 'utf8'));
+    // Corrupt marker → corrupt-metadata (malformed-marker).
+    seedManaged('trace', (dir) => writeFileSync(join(dir, '.genie-sync.json'), '{ broken', 'utf8'));
+    // Unmanaged personal skill → never counted.
+    const mine = join(agentsSkillsDir, 'my-own');
+    mkdirSync(mine, { recursive: true });
+    writeFileSync(join(mine, 'SKILL.md'), '# mine\n', 'utf8');
+
+    const report = inspectCodexFallbackTier(agentsSkillsDir);
+    expect(report.cleanFallbacks).toEqual(['wish', 'work']);
+    expect(report.preservedCollisions).toEqual(['review', 'trace']);
+    // Decision 5: each preserved collision carries its classification for doctor.
+    expect(report.preservedCollisionClass).toEqual({ review: 'modified-managed', trace: 'malformed-marker' });
+    expect(report.quarantinedTransactions).toBe(0);
+  });
+
+  test('counts committed quarantine transactions and flags retained changed-evidence (R8) without recursing into them', () => {
+    const root = join(agentsSkillsDir, CODEX_FALLBACK_RETIREMENT_ROOT);
+    // One plain committed transaction, one with archived changed-tree evidence.
+    mkdirSync(join(root, 'txn-aaaa', 'quarantine', 'wish'), { recursive: true });
+    writeFileSync(join(root, 'txn-aaaa', 'quarantine', 'wish', '.genie-sync.json'), '{}', 'utf8');
+    mkdirSync(join(root, 'txn-bbbb', 'evidence', 'work'), { recursive: true });
+    writeFileSync(join(root, 'txn-bbbb', 'evidence', 'work', 'SKILL.md'), '# changed\n', 'utf8');
+    // A lock file / temp is not a transaction.
+    writeFileSync(join(root, '.retirement.lock'), '', 'utf8');
+
+    const report = inspectCodexFallbackTier(agentsSkillsDir);
+    expect(report.quarantinedTransactions).toBe(2);
+    expect(report.retainedEvidence).toEqual(['txn-bbbb']);
+    // The quarantine root is never mistaken for a managed fallback.
+    expect(report.cleanFallbacks).toEqual([]);
+    expect(report.preservedCollisions).toEqual([]);
   });
 });

@@ -12,7 +12,7 @@ import { acquireLifecycleLease } from '../lib/agent-sync.js';
 import { getCodexConfigPath } from '../lib/codex-config.js';
 import {
   preflightCodexPluginMutation,
-  probeCodexGeniePlugin,
+  type probeCodexGeniePlugin,
   reconcileCodexProjectMcp,
   resolveGitWorktreeRoot,
 } from '../lib/codex-project-mcp.js';
@@ -279,7 +279,12 @@ function repairCodexIntegration(deps: SetupDeps, codexPath: string): void {
     }
     hookReviewRequired = result.hookReviewRequired === true;
     console.log(`  \x1b[32m\u2713\x1b[0m ${result.detail}`);
-    const plugin = (deps.probeCodexGeniePlugin ?? probeCodexGeniePlugin)();
+    // R1/A5: reuse the SINGLE post-convergence snapshot surfaced by the codex
+    // integration; never take a second probe here.
+    const plugin = result.snapshot;
+    if (plugin === undefined) {
+      throw new SetupIntegrationError('Codex integration did not surface a post-convergence health snapshot');
+    }
     reconcileSetupCodexProject(root, plugin);
     if (result.preservedDisabled) console.log('  \x1b[2mExisting disabled plugin state was preserved.\x1b[0m');
     (deps.commitIntegrationConsentTransition ?? commitIntegrationConsentTransition)(transition, genieHome);
@@ -338,7 +343,8 @@ async function configureCodex(config: GenieConfig, quick: boolean, deps: SetupDe
   console.log();
   console.log('  Genie installs or repairs the native Codex plugin, MCP server, and role agents.');
   console.log('  Successful setup persists Codex maintenance consent for later explicit genie updates.');
-  console.log('  Those updates may refresh Genie-managed user-tier skills under ~/.agents/skills.');
+  console.log('  Genie product skills are served only by the installed plugin; no CLI-managed Codex');
+  console.log('  skill fallbacks are written under ~/.agents/skills.');
   console.log('  The obsolete Genie loopback OTel exporter is removed with a backup when present.');
   console.log(`  Config: \x1b[2m${contractPath(getCodexConfigPath())}\x1b[0m`);
   console.log();

@@ -30,7 +30,15 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type AgentSyncReport, acquireLifecycleLease, lifecycleLockPath } from '../../lib/agent-sync';
-import type { CommandRunner } from '../../lib/runtime-integrations';
+import { REQUIRED_GENIE_MCP_TOOLS } from '../../lib/codex-mcp-health-session';
+import type { CodexPluginProbe } from '../../lib/codex-project-mcp';
+import {
+  CANONICAL_GENIE_SKILL_NAMES,
+  type CodexHealthProof,
+  type CodexPluginOnlyDeps,
+  type CommandRunner,
+} from '../../lib/runtime-integrations';
+import { VERSION } from '../../lib/version';
 import type { AuxiliaryTreeOutcome, AuxiliaryTreeStage } from '../auxiliary-trees.js';
 import {
   type RefreshUpdatePluginsOptions,
@@ -50,9 +58,11 @@ import {
   finalizeAuxiliaryDelivery,
   formatVerifyBanner,
   hashPhysicalFileIncrementally,
+  inspectSyncOnlyCodexHealth,
   isGenieProcessSnapshotLine,
   legacySyncOnlyPluginAdvisory,
   manifestUrlForChannel,
+  narrowUpdateAgentSyncSelection,
   normalizeVersion,
   persistChannel,
   pruneSameVersionBackups,
@@ -78,12 +88,58 @@ import {
   verifySwappedBinary,
 } from '../update.js';
 
+function healthyUpdateCodexProbe(): CodexPluginProbe {
+  return {
+    cliAvailable: true,
+    status: 'ok',
+    installed: true,
+    enabled: true,
+    version: '5.260711.3',
+    activePluginRoot: '/fixture/plugin/root',
+    usable: true,
+    usabilityDetail: 'fixture usable',
+    detail: 'fixture healthy codex plugin',
+  };
+}
+
+/**
+ * Full-update codex now converges through convergeCodexPluginOnly. These refresh
+ * suites drive fake bundles, so stub the health/probe/retire/role-agent seams and
+ * point retirement at an isolated empty fallback tier — convergeCodexPlugin itself
+ * still runs for real against the injected runner.
+ */
+function healthyUpdateCodexPluginOnly(overrides: CodexPluginOnlyDeps = {}): CodexPluginOnlyDeps {
+  return {
+    probe: () => healthyUpdateCodexProbe(),
+    prove: () =>
+      Object.freeze({
+        version: 1,
+        snapshot: healthyUpdateCodexProbe(),
+        activePluginRoot: '/fixture/plugin/root',
+        expectedVersion: '5.260711.3',
+        skillInventory: CANONICAL_GENIE_SKILL_NAMES,
+        payload: [],
+        mcp: { initialized: true, tools: [...REQUIRED_GENIE_MCP_TOOLS], wishStatusReadOnly: true },
+      }) as CodexHealthProof,
+    runSession: () => ({
+      ok: true,
+      detail: 'fixture session',
+      tools: [...REQUIRED_GENIE_MCP_TOOLS],
+      wishStatusReadOnly: true,
+    }),
+    installAgents: () => ({ installed: 0, skippedUserOwned: [], keptModified: [], removed: [], backedUp: [] }),
+    fallbackSkillsDir: mkdtempSync(join(tmpdir(), 'genie-update-fallback-')),
+    ...overrides,
+  };
+}
+
 function refreshUpdatePlugins(options: RefreshUpdatePluginsOptions) {
   return refreshUpdatePluginsWithPhysicalVerification({
     ...options,
     resolveExecutable: options.resolveExecutable ?? ((name) => name),
     verifyCodexPayload: options.verifyCodexPayload ?? (() => undefined),
     verifyClaudePayload: options.verifyClaudePayload ?? (() => undefined),
+    codexPluginOnly: healthyUpdateCodexPluginOnly(options.codexPluginOnly),
   });
 }
 
@@ -2810,6 +2866,9 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
           stdout: '{"installed":[{"pluginId":"genie@automagik","enabled":true,"version":"5.260711.6"}]}',
           stderr: '',
         }),
+        // Isolate the advisory→sync ordering; the codex INSPECT gate is proven by
+        // its own byte-identity failure tests below.
+        inspectCodex: () => {},
         log: (line) => events.push(`advisory:${line}`),
         sync: () => {
           events.push('sync');
@@ -2970,15 +3029,14 @@ describe('operator-driven plugin refresh', () => {
         codexConfigPath: configPath,
         runner,
       });
-      expect(results).toEqual([
-        {
-          runtime: 'codex',
-          ok: true,
-          detail: 'plugin/hooks refreshed to v5.260711.3',
-          preservedDisabled: true,
-          hookReviewRequired: false,
-        },
-      ]);
+      expect(results).toHaveLength(1);
+      expect(results[0]).toMatchObject({
+        runtime: 'codex',
+        ok: true,
+        detail: 'plugin/hooks refreshed to v5.260711.3',
+        preservedDisabled: true,
+        hookReviewRequired: false,
+      });
       expect(calls).toContain(`codex plugin marketplace add ${root} --json`);
       expect(calls).toContain('codex plugin add genie@automagik --json');
       expect(readFileSync(configPath, 'utf8')).toContain('enabled = false');
@@ -3255,4 +3313,112 @@ describe('summarizeJsonlSignals age filter', () => {
     expect(summary.signals.map((s) => s.event)).toEqual(['no.timestamp']);
     expect(summary.newestStaleTimestamp).toBeNull();
   });
+});
+
+// ===========================================================================
+// A14/R3: --sync-only INSPECTS codex health and fails nonzero + byte-identical
+// on a missing / disabled / stale plugin, never enabling or swapping anything.
+// ===========================================================================
+describe('--sync-only codex inspection (A14/R3)', () => {
+  function digestTree(dir: string): string {
+    const digest = createHash('sha256');
+    const walk = (current: string): void => {
+      for (const name of readdirSync(current).sort()) {
+        const abs = join(current, name);
+        const stat = statSync(abs);
+        digest.update(`${name}\0${stat.isDirectory() ? 'd' : 'f'}\0${stat.isDirectory() ? '' : readFileSync(abs)}\0`);
+        if (stat.isDirectory()) walk(abs);
+      }
+    };
+    walk(dir);
+    return digest.digest('hex');
+  }
+
+  const healthyProbe = (): CodexPluginProbe => ({ ...healthyUpdateCodexProbe(), version: VERSION });
+  const disabledProbe = (): CodexPluginProbe => ({
+    ...healthyUpdateCodexProbe(),
+    version: VERSION,
+    enabled: false,
+    usable: false,
+  });
+  const missingProbe = (): CodexPluginProbe => ({
+    cliAvailable: true,
+    status: 'ok',
+    installed: false,
+    usable: false,
+    usabilityDetail: 'plugin is not installed',
+    detail: 'not installed',
+  });
+  const staleProbe = (): CodexPluginProbe => ({ ...healthyUpdateCodexProbe(), version: '0.0.0' });
+
+  test('narrowUpdateAgentSyncSelection keeps agent-sync Claude-scoped', () => {
+    expect(narrowUpdateAgentSyncSelection('codex')).toBeNull();
+    expect(narrowUpdateAgentSyncSelection('none')).toBeNull();
+    expect(narrowUpdateAgentSyncSelection('auto')).toBe('claude');
+    expect(narrowUpdateAgentSyncSelection('all')).toBe('claude');
+    expect(narrowUpdateAgentSyncSelection('claude')).toBe('claude');
+  });
+
+  test('a healthy exact plugin passes inspection', () => {
+    expect(() =>
+      inspectSyncOnlyCodexHealth({
+        selection: 'codex',
+        expectedVersion: VERSION,
+        resolveExecutable: () => '/fixture/codex',
+        probe: healthyProbe,
+        prove: () => ({}) as never,
+      }),
+    ).not.toThrow();
+  });
+
+  test('inspection is skipped entirely when codex is not in scope', () => {
+    let probed = false;
+    inspectSyncOnlyCodexHealth({
+      selection: 'claude',
+      expectedVersion: VERSION,
+      resolveExecutable: () => '/fixture/codex',
+      probe: () => {
+        probed = true;
+        return healthyProbe();
+      },
+    });
+    expect(probed).toBe(false);
+  });
+
+  for (const [label, probe] of [
+    ['disabled', disabledProbe],
+    ['missing', missingProbe],
+    ['stale', staleProbe],
+  ] as const) {
+    test(`a ${label} plugin fails --sync-only nonzero and leaves fallback + claude trees byte-identical, never enabling`, () => {
+      const fallback = mkdtempSync(join(tmpdir(), `genie-synconly-fallback-${label}-`));
+      mkdirSync(join(fallback, 'wish'), { recursive: true });
+      writeFileSync(join(fallback, 'wish', 'SKILL.md'), '# personal wish\n');
+      const claude = mkdtempSync(join(tmpdir(), `genie-synconly-claude-${label}-`));
+      writeFileSync(join(claude, 'note.md'), 'claude skill\n');
+      const beforeFallback = digestTree(fallback);
+      const beforeClaude = digestTree(claude);
+      let synced = false;
+      try {
+        expect(() =>
+          runLegacySyncOnlyConvergence({
+            selection: 'codex',
+            expectedVersion: VERSION,
+            resolveExecutable: () => '/fixture/codex',
+            runner: () => ({ exitCode: 0, stdout: '{"installed":[]}', stderr: '' }),
+            probe,
+            sync: () => {
+              synced = true;
+            },
+          }),
+        ).toThrow('--sync-only cannot converge the Codex plugin');
+        expect(synced).toBe(false);
+        expect(digestTree(fallback)).toBe(beforeFallback);
+        expect(digestTree(claude)).toBe(beforeClaude);
+      } finally {
+        rmSync(fallback, { recursive: true, force: true });
+        rmSync(claude, { recursive: true, force: true });
+      }
+    });
+  }
 });

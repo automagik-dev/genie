@@ -2,13 +2,14 @@ import { join } from 'node:path';
 import {
   type ClaudePayloadVerifier,
   type CodexPayloadVerifier,
+  type CodexPluginOnlyDeps,
   type CommandRunner,
   type IntegrationResult,
   type IntegrationSelection,
   type RuntimeExecutableResolver,
   type RuntimeName,
   convergeClaudePlugin,
-  convergeCodexPlugin,
+  convergeCodexPluginOnly,
   resolveRuntimeExecutable,
   runBoundedIntegrationCommand,
 } from '../lib/runtime-integrations.js';
@@ -33,6 +34,8 @@ export interface RefreshUpdatePluginsOptions {
   /** Defaults to the verified installed bundle root (GENIE_HOME in production). */
   stateDir?: string;
   timeoutMs?: number;
+  /** Deterministic test seams for the codex plugin-only convergence orchestrator. */
+  codexPluginOnly?: CodexPluginOnlyDeps;
 }
 
 /**
@@ -84,7 +87,11 @@ function refreshOneRuntime(
   if (command === null) return null;
   try {
     if (runtime === 'codex') {
-      return convergeCodexPlugin({
+      // Full update converges codex through the plugin-only orchestrator so it
+      // takes one post-convergence health proof, retires only proven-clean
+      // fallbacks, and refreshes role agents — never re-writing product skills
+      // into ~/.agents/skills (R1/R2). An absent plugin stays absent (null).
+      const outcome = convergeCodexPluginOnly({
         runner,
         command,
         bundleRoot: options.bundleRoot,
@@ -95,7 +102,9 @@ function refreshOneRuntime(
         timeoutMs,
         codexHome: options.codexHome,
         verifyCodexPayload: options.verifyCodexPayload,
+        deps: options.codexPluginOnly,
       });
+      return outcome === null ? null : outcome.result;
     }
     return convergeClaudePlugin({
       runner,

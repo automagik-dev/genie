@@ -5,7 +5,7 @@ description: "Investigate bugs comprehensively — cascade through trace, captur
 
 # report — Comprehensive Bug Report and GitHub Issue Creation
 
-**Runtime syntax:** in Codex, invoke the plugin copy with the owner-qualified `$genie:<skill>` selector; use bare `$<skill>` only when intentionally selecting a user-tier copy (CLI-managed fallback or separately installed personal skill). Claude Code and Hermes use `/<skill>`. Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active tier.
+**Runtime syntax:** in Codex, invoke the plugin copy with the owner-qualified `$genie:<skill>` selector; use bare `$<skill>` only when intentionally selecting a user-tier copy (a separately installed personal copy; Genie no longer seeds this tier). Claude Code and Hermes use `/<skill>`. Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active tier.
 
 Investigate a bug end-to-end: collect symptoms, run `trace` for root cause, capture browser evidence when available, pull observability data from project-configured tools, and prepare a GitHub issue with all findings attached. Investigation only — the deliverable is findings, never fixes; `report` must not modify source code. Creating the issue is a separate external write and requires explicit confirmation unless the user already asked for issue creation.
 
