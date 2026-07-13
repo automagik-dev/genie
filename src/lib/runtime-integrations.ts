@@ -599,7 +599,7 @@ const CODEX_AGENT_NAME_RE = /^genie-[A-Za-z0-9][A-Za-z0-9_-]*\.toml$/;
 const CODEX_AGENT_SENTINEL = '# Managed by Genie.';
 const CODEX_AGENT_INVENTORY_MODE = 0o600;
 
-type RegularRoleFileIdentity = { kind: 'regular'; mode: number; digest: string };
+export type RegularRoleFileIdentity = { kind: 'regular'; mode: number; digest: string };
 
 type RoleFileIdentity =
   | { kind: 'absent' }
@@ -629,6 +629,8 @@ export interface CodexAgentOwnershipEntry {
   name: string;
   path: string;
   ownership: CodexAgentOwnership;
+  /** Live physical identity when the entry is a regular file; drives identity-bound uninstall. */
+  identity?: RegularRoleFileIdentity;
 }
 
 export interface CodexAgentOwnershipReport {
@@ -748,11 +750,18 @@ export function inspectCodexAgentOwnership(codexHome = getCodexHome()): CodexAge
     inventoryPath: inventoryPath(codexHome),
     status: state.status,
     error: state.error,
-    entries: [...names].sort().map((name) => ({
-      name,
-      path: join(agentsDir, name),
-      ownership: classifyCodexAgentFile(join(agentsDir, name), state.inventory.files[name]),
-    })),
+    entries: [...names].sort().map((name) => {
+      const path = join(agentsDir, name);
+      // Surface the same physical identity the classifier reads so the uninstall
+      // planner can record it without a second, separately-timed inspection.
+      const identity = physicalRoleFileIdentity(path);
+      return {
+        name,
+        path,
+        ownership: classifyCodexAgentFile(path, state.inventory.files[name]),
+        ...(identity.kind === 'regular' ? { identity } : {}),
+      };
+    }),
   };
 }
 
@@ -2630,16 +2639,64 @@ function installClaudeIntegration(
 export interface CodexAgentRemovalResult {
   removed: string[];
   keptModified: string[];
+  /** Planned-remove agents whose live identity diverged from the recorded batch identity. */
+  keptIdentityMismatch: string[];
   missing: string[];
   failures: Array<{ name: string; detail: string }>;
 }
 
-/** Remove only exact physical inventory-owned role agents; modified/user files stay byte-identical. */
+type CleanRoleAgentRemovalDecision =
+  | { action: 'remove'; expected: RegularRoleFileIdentity | undefined }
+  | { action: 'skip' }
+  | { action: 'identity-mismatch' };
+
+/**
+ * Decide whether a managed-clean role agent is removable. Without a plan, every
+ * clean agent is removed using its live-inventory identity. With a plan, only a
+ * planned name whose live identity still equals the recorded `{digest, mode}` is
+ * removed (bound to the batch identity); an unplanned name is skipped and a
+ * mismatched one is preserved.
+ */
+function decideCleanRoleAgentRemoval(
+  path: string,
+  recorded: RecordedCodexAgent | undefined,
+  plannedRemovals: ReadonlyMap<string, { digest: string; mode: number }> | undefined,
+  name: string,
+): CleanRoleAgentRemovalDecision {
+  if (plannedRemovals === undefined) {
+    return {
+      action: 'remove',
+      expected: recorded !== undefined && 'identity' in recorded ? recorded.identity : undefined,
+    };
+  }
+  const planned = plannedRemovals.get(name);
+  if (planned === undefined) return { action: 'skip' };
+  const live = physicalRoleFileIdentity(path);
+  if (live.kind !== 'regular' || live.digest !== planned.digest || live.mode !== planned.mode) {
+    return { action: 'identity-mismatch' };
+  }
+  return { action: 'remove', expected: { kind: 'regular', mode: planned.mode, digest: planned.digest } };
+}
+
+/**
+ * Remove only exact physical inventory-owned role agents; modified/user files
+ * stay byte-identical. When `plannedRemovals` is supplied (durable uninstall
+ * batch), removal is further restricted to those planned names whose live
+ * identity still equals the recorded `{digest, mode}`: a swapped-but-clean
+ * replacement is preserved and reported instead of deleted under path authority.
+ */
 export function removeCodexAgents(
   codexHome = getCodexHome(),
   transactionOptions: CodexAgentTransactionOptions = {},
+  plannedRemovals?: ReadonlyMap<string, { digest: string; mode: number }>,
 ): CodexAgentRemovalResult {
-  const result: CodexAgentRemovalResult = { removed: [], keptModified: [], missing: [], failures: [] };
+  const result: CodexAgentRemovalResult = {
+    removed: [],
+    keptModified: [],
+    keptIdentityMismatch: [],
+    missing: [],
+    failures: [],
+  };
   const agentsDir = join(codexHome, 'agents');
   try {
     recoverCodexAgentTransactions(codexHome);
@@ -2663,20 +2720,34 @@ export function removeCodexAgents(
   const expected = new Map<string, RoleFileIdentity>();
   const removed: string[] = [];
   const keptModified: string[] = [];
+  const keptIdentityMismatch: string[] = [];
   const missing: string[] = [];
   for (const name of Object.keys(state.inventory.files).sort()) {
     const path = join(codexHome, 'agents', name);
     const recorded = state.inventory.files[name];
     const ownership = classifyCodexAgentFile(path, recorded);
-    if (ownership === 'managed-clean') {
-      removals.push(name);
-      if (recorded !== undefined && 'identity' in recorded) expected.set(name, recorded.identity);
-      removed.push(name);
-    } else if (ownership === 'managed-modified') {
+    if (ownership === 'managed-modified') {
       keptModified.push(name);
-    } else if (ownership === 'absent') {
-      missing.push(name);
+      continue;
     }
+    if (ownership === 'absent') {
+      missing.push(name);
+      continue;
+    }
+    if (ownership !== 'managed-clean') continue;
+    // The uninstall violations gate already fences unexpected managed agents, so
+    // an unplanned clean agent under a plan is a defensive skip, not the norm.
+    const decision = decideCleanRoleAgentRemoval(path, recorded, plannedRemovals, name);
+    if (decision.action === 'skip') continue;
+    if (decision.action === 'identity-mismatch') {
+      keptIdentityMismatch.push(name);
+      continue;
+    }
+    // Feed the batch identity (when planned) — not the live-inventory identity —
+    // as the removal preimage so a swapped replacement never passes authorization.
+    removals.push(name);
+    if (decision.expected !== undefined) expected.set(name, decision.expected);
+    removed.push(name);
   }
   try {
     publishRoleAgentTransaction(
@@ -2690,6 +2761,7 @@ export function removeCodexAgents(
     );
     result.removed.push(...removed);
     result.keptModified.push(...keptModified);
+    result.keptIdentityMismatch.push(...keptIdentityMismatch);
     result.missing.push(...missing);
   } catch (error) {
     result.failures.push({
@@ -2727,6 +2799,12 @@ export interface RemoveRuntimeIntegrationsOptions {
   cwd?: string;
   /** Deterministic test seam; production resolves and validates PATH once. */
   resolveExecutable?: RuntimeExecutableResolver;
+  /**
+   * Durable uninstall-batch allowlist: role-agent name → recorded `{digest, mode}`.
+   * Restricts role-agent removal to these planned names whose live identity still
+   * matches. Omitted by non-uninstall callers, which converge every clean agent.
+   */
+  plannedRoleAgents?: ReadonlyMap<string, { digest: string; mode: number }>;
 }
 
 export interface RuntimeIntegrationEvidence {
@@ -3004,7 +3082,7 @@ export function removeRuntimeIntegrations(
       claude: [...inspectedEvidence.errors.claude, ...resolution.errors.claude],
     },
   };
-  const agents = removeCodexAgents(options.codexHome);
+  const agents = removeCodexAgents(options.codexHome, {}, options.plannedRoleAgents);
   const steps: IntegrationRemovalStep[] = [];
   const removeMarketplace = options.removeMarketplace === true;
   appendRuntimePluginRemoval(

@@ -29,7 +29,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { type AgentSyncReport, acquireLifecycleLease } from '../../lib/agent-sync';
+import { type AgentSyncReport, acquireLifecycleLease, lifecycleLockPath } from '../../lib/agent-sync';
 import type { CommandRunner } from '../../lib/runtime-integrations';
 import type { AuxiliaryTreeOutcome, AuxiliaryTreeStage } from '../auxiliary-trees.js';
 import {
@@ -705,6 +705,28 @@ describe('persistChannel — sticky channel persistence (release-channel-dev)', 
   // schema test above (write "dev" → read back as "dev") plus the
   // resolveChannel test (which reads from genie-config). We just assert
   // that persistChannel does not throw on either channel input.
+  //
+  // Isolated under a tmp GENIE_HOME so persistChannel never reads or writes the
+  // developer's real ~/.genie/config.json (which would flip a dev-channel user
+  // to stable and could materialize a default config on a clean machine).
+  let dir: string;
+  let prevGenieHome: string | undefined;
+
+  beforeEach(() => {
+    prevGenieHome = process.env.GENIE_HOME;
+    dir = mkdtempSync(join(tmpdir(), 'update-channel-sticky-'));
+    process.env.GENIE_HOME = dir;
+  });
+
+  afterEach(() => {
+    if (prevGenieHome === undefined) {
+      Reflect.deleteProperty(process.env, 'GENIE_HOME');
+    } else {
+      process.env.GENIE_HOME = prevGenieHome;
+    }
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   test('persistChannel("dev") does not throw', async () => {
     await expect(persistChannel('dev')).resolves.toBeUndefined();
   });
@@ -1105,6 +1127,53 @@ describe('atomicBinarySwap (G5)', () => {
     );
     expect(acquired.status).toBe(0);
     rmSync(tmp, { recursive: true, force: true });
+  });
+
+  test('guard-debris parity: shell and TypeScript evaluate each other’s steal-guard format', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'genie-guard-parity-'));
+    const home = join(tmp, 'home', '.genie');
+    const installer = join(import.meta.dir, '..', '..', '..', 'install.sh');
+    mkdirSync(home, { recursive: true });
+    const agedSec = (Date.now() - 11 * 60 * 1000) / 1000; // 11 min > 10 min age-out
+    const underTest = join(tmp, 'guard-under-test');
+    // Evaluate a guard file with the shell helper; exit 0 = reapable, 1 = not.
+    const shellReapable = (guardPath: string) =>
+      spawnSync('bash', ['-c', 'source "$1"; foreign_lock_record_is_stale "$2"', 'bash', installer, guardPath], {
+        encoding: 'utf8',
+        env: { ...process.env, GENIE_INSTALL_SOURCE_ONLY: '1' },
+      }).status;
+    try {
+      // Direction 1 — the shell reads a guard written in the TS record shape
+      // (pid:token32:sha64): an aged, dead owner is reapable...
+      writeFileSync(underTest, `999999:0123456789abcdef0123456789abcdef:${'0'.repeat(64)}\n`, { mode: 0o600 });
+      utimesSync(underTest, agedSec, agedSec);
+      expect(shellReapable(underTest)).toBe(0);
+      // ...but the same TS-shape record owned by THIS live process is never reaped.
+      writeFileSync(underTest, `${process.pid}:0123456789abcdef0123456789abcdef:${'0'.repeat(64)}\n`, { mode: 0o600 });
+      utimesSync(underTest, agedSec, agedSec);
+      expect(shellReapable(underTest)).toBe(1);
+
+      // Direction 2 — TypeScript's lockOwner reads a guard written in the shell
+      // record shape (pid:token32:unknown). Plant a stale lifecycle lock plus the
+      // aged, dead-owner shell-format guard and let acquireLifecycleLease drive
+      // stealStaleLock: it reaps the guard and backs off.
+      const lockPath = lifecycleLockPath(home);
+      const guardPath = `${lockPath}.steal`;
+      writeFileSync(lockPath, '999999:0123456789abcdef0123456789abcdef:unknown\n', { mode: 0o600 });
+      writeFileSync(guardPath, '888888:abcdefabcdefabcdefabcdefabcdefab:unknown\n', { mode: 0o600 });
+      utimesSync(lockPath, agedSec, agedSec);
+      utimesSync(guardPath, agedSec, agedSec);
+
+      const outcome = acquireLifecycleLease(home);
+      try {
+        expect('skipped' in outcome).toBe(true); // reaped the guard, then backed off
+        expect(existsSync(guardPath)).toBe(false); // TS evaluated the shell-format record and reaped it
+      } finally {
+        if (!('skipped' in outcome)) outcome.release();
+      }
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   test('happy path: stages binary, backs up old, swaps in new', () => {
