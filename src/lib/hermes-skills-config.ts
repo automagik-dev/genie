@@ -32,6 +32,14 @@
  * no backup). Any mutation of an existing non-empty file writes a
  * `<config>.genie-backup-<timestamp>` copy first.
  *
+ * A top-level `skills:` carrying an **inline/flow/scalar value on the same line**
+ * (`skills: {}`, `skills: {external_dirs: [/x]}`, `skills: null`) is deliberately
+ * *not* merged: merging into a flow value would require re-serializing user bytes,
+ * and blindly appending a second `skills:` key produces spec-invalid duplicate-key
+ * YAML or silently drops the user's siblings on last-wins. Such a config is refused
+ * with a typed `HermesConfigError` before any backup or write, so the original file
+ * survives byte-for-byte.
+ *
  * ## Older-Hermes fallback
  *
  * `copyProductSkillsDigestManaged` stages the resolved skills tree into a
@@ -41,7 +49,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative } from 'node:path';
 import { resolveGenieHome } from './genie-home.js';
 import { HermesConfigError } from './hermes-mcp-config.js';
@@ -157,6 +165,9 @@ export function copyProductSkillsDigestManaged(opts: CopyProductSkillsOptions): 
     return { status: 'unchanged', targetDir: opts.targetDir, skillsRoot, digest };
   }
 
+  // Prune the managed target before re-copying so a skill removed upstream does not
+  // linger stale. The target is genie-managed by definition, so a full replace is safe.
+  rmSync(opts.targetDir, { recursive: true, force: true });
   mkdirSync(opts.targetDir, { recursive: true });
   cpSync(skillsRoot, opts.targetDir, { recursive: true });
   writeFileSync(
@@ -189,6 +200,7 @@ function spliceExternalDir(original: string, skillsRoot: string): string {
   }
 
   const { lines, trailingNewline } = toLines(original);
+  assertNoInlineTopLevelKey(lines, 'skills');
   const skillsHeader = findTopLevelKeyLine(lines, 'skills');
   if (skillsHeader < 0) {
     const section = `${['skills:', '  external_dirs:', managedItem(4)].join('\n')}\n`;
@@ -289,6 +301,26 @@ function findTopLevelKeyLine(lines: string[], key: string): number {
     if (re.test(lines[i])) return i;
   }
   return -1;
+}
+
+/**
+ * Refuse to merge when a top-level `key:` carries an inline/flow/scalar value on
+ * the same line (e.g. `key: {}`, `key: {a: b}`, `key: null`). Only a bare block
+ * header (`key:` optionally trailed by a comment) is mergeable; anything else can
+ * only be merged by re-serializing user bytes, so we raise a typed error before
+ * any write instead of appending a duplicate top-level key.
+ */
+function assertNoInlineTopLevelKey(lines: string[], key: string): void {
+  const keyLine = new RegExp(`^${key}:(?:\\s|$)`);
+  const blockHeader = new RegExp(`^${key}:\\s*(#.*)?$`);
+  for (const line of lines) {
+    if (keyLine.test(line) && !blockHeader.test(line)) {
+      throw new HermesConfigError(
+        'inline-top-level-key',
+        `cannot merge: top-level "${key}" has an inline value on the same line (${line.trim()}); rewrite it as a block mapping so genie can merge without deleting your entries`,
+      );
+    }
+  }
 }
 
 /** End of a top-level block: first following line at indent 0. */

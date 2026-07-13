@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { HermesConfigError } from './hermes-mcp-config.js';
@@ -28,6 +28,11 @@ function makeSkillsRoot(dir: string, names: string[] = ['brainstorm', 'wish']): 
     writeFileSync(join(skillDir, 'SKILL.md'), `# ${name}\n`);
   }
   return dir;
+}
+
+/** True when a `<config>.genie-backup-*` sibling exists in the dir. */
+function hasBackup(root: string): boolean {
+  return readdirSync(root).some((f) => f.includes('genie-backup'));
 }
 
 describe('resolveProductSkillsRoot', () => {
@@ -152,6 +157,60 @@ describe('mergeSkillsExternalDir', () => {
     expect(readFileSync(configPath, 'utf8')).toBe(afterFirst);
   });
 
+  // A top-level `skills:` carrying an inline/flow/scalar value on the same line is
+  // refused with a typed error rather than blindly appending a duplicate top-level
+  // key. The refusal happens before any backup or write, so user siblings survive.
+  test('empty flow `skills: {}` → typed error, nothing written, no backup', () => {
+    const root = tmp();
+    const skillsRoot = makeSkillsRoot(join(root, 'skills'));
+    const configPath = join(root, 'config.yaml');
+    const original = 'version: 1\nskills: {}\n';
+    writeFileSync(configPath, original);
+
+    expect(() => mergeSkillsExternalDir({ configPath, skillsRoot })).toThrow(HermesConfigError);
+    expect(readFileSync(configPath, 'utf8')).toBe(original);
+    expect(hasBackup(root)).toBe(false);
+  });
+
+  test('flow-with-content is refused cleanly — user sibling survives verbatim, backup untouched', () => {
+    const root = tmp();
+    const skillsRoot = makeSkillsRoot(join(root, 'skills'));
+    const configPath = join(root, 'config.yaml');
+    const original = 'skills: {external_dirs: [/home/u/mine]}\n';
+    writeFileSync(configPath, original);
+
+    expect(() => mergeSkillsExternalDir({ configPath, skillsRoot })).toThrow(HermesConfigError);
+    // The user's sibling entry is never deleted: the file is left byte-for-byte.
+    expect(readFileSync(configPath, 'utf8')).toBe(original);
+    expect(hasBackup(root)).toBe(false);
+  });
+
+  test('scalar/null on the same line `skills: null` → typed error, nothing written', () => {
+    const root = tmp();
+    const skillsRoot = makeSkillsRoot(join(root, 'skills'));
+    const configPath = join(root, 'config.yaml');
+    const original = 'skills: null\n';
+    writeFileSync(configPath, original);
+
+    expect(() => mergeSkillsExternalDir({ configPath, skillsRoot })).toThrow(HermesConfigError);
+    expect(readFileSync(configPath, 'utf8')).toBe(original);
+    expect(hasBackup(root)).toBe(false);
+  });
+
+  test('refusal is idempotent: a repeated call still throws and never writes or backs up', () => {
+    const root = tmp();
+    const skillsRoot = makeSkillsRoot(join(root, 'skills'));
+    const configPath = join(root, 'config.yaml');
+    const original = 'skills: {external_dirs: [/home/u/mine]}\n';
+    writeFileSync(configPath, original);
+
+    for (let i = 0; i < 2; i++) {
+      expect(() => mergeSkillsExternalDir({ configPath, skillsRoot })).toThrow(HermesConfigError);
+    }
+    expect(readFileSync(configPath, 'utf8')).toBe(original);
+    expect(hasBackup(root)).toBe(false);
+  });
+
   test('a changed root replaces the single managed entry, never leaving two genie entries', () => {
     const root = tmp();
     const oldRoot = makeSkillsRoot(join(root, 'old-skills'));
@@ -191,5 +250,25 @@ describe('copyProductSkillsDigestManaged (older-Hermes fallback)', () => {
     const second = copyProductSkillsDigestManaged({ skillsRoot, targetDir });
     expect(second.status).toBe('unchanged');
     expect(second.digest).toBe(first.digest);
+  });
+
+  test('a shrunk source prunes stale managed files: a removed skill is gone after re-sync', () => {
+    const root = tmp();
+    const skillsRoot = makeSkillsRoot(join(root, 'skills'), ['brainstorm', 'wish', 'review']);
+    const targetDir = join(root, 'hermes-managed-skills');
+
+    const first = copyProductSkillsDigestManaged({ skillsRoot, targetDir });
+    expect(first.status).toBe('copied');
+    expect(existsSync(join(targetDir, 'review', 'SKILL.md'))).toBe(true);
+
+    // Source shrinks: the 'review' skill is removed upstream.
+    rmSync(join(skillsRoot, 'review'), { recursive: true, force: true });
+
+    const second = copyProductSkillsDigestManaged({ skillsRoot, targetDir });
+    expect(second.status).toBe('copied'); // digest changed → re-copy
+    // The managed target no longer carries the deleted skill (managed dir is pruned first).
+    expect(existsSync(join(targetDir, 'review', 'SKILL.md'))).toBe(false);
+    expect(existsSync(join(targetDir, 'brainstorm', 'SKILL.md'))).toBe(true);
+    expect(existsSync(join(targetDir, 'wish', 'SKILL.md'))).toBe(true);
   });
 });

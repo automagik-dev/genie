@@ -24,10 +24,10 @@ This is a **separate** mechanism from agent-sync's client-tier skill sync (`sync
 ## Recommendation
 
 1. **Do not add agent-sync publishing for `$GENIE_HOME/skills`.** It would duplicate `syncAuxiliaryContent`/`normalizeAuxLayout` and create a second writer to the same tree. The existing install/update converge is authoritative.
-2. **The Group 2 skills helper resolves a product-skills root via a documented fallback chain**, preferring the installed layout and degrading safely on dev checkouts:
-   - (a) `$GENIE_HOME/skills` when populated (installed layout — the canonical answer).
-   - (b) `$GENIE_HOME/plugins/genie/skills` (the byte-checked plugin mirror, also converged by install/update) when (a) is empty.
-   - (c) an explicit `skillsRoot` override option (dev checkouts point this at the repo's `skills/`).
+2. **The Group 2 skills helper resolves a product-skills root via a documented fallback chain**, giving an explicit override top precedence and otherwise preferring the installed layout, degrading safely on dev checkouts:
+   - (a) an explicit `skillsRoot` override option when provided (a deliberate dev/CI choice — **highest** precedence; dev checkouts point this at the repo's `skills/`).
+   - (b) `$GENIE_HOME/skills` when populated (installed layout — the canonical answer).
+   - (c) `$GENIE_HOME/plugins/genie/skills` (the byte-checked plugin mirror, also converged by install/update) when (b) is empty.
    - typed error if none resolves — never silently register a non-existent dir into Hermes config.
    The helper treats "populated" as "directory exists and contains at least one `*/SKILL.md`", so a stub/empty dir does not shadow a real mirror. This chain is implemented as `resolveProductSkillsRoot()` in `src/lib/hermes-skills-config.ts`.
 3. **Group 4 wiring guidance:** invoke the `skills.external_dirs` merge from the doctor/agent-sync integration point **only after** a successful `install`/`update` convergence, so the registered path is already populated. For the older-Hermes copy fallback (Hermes builds without external-dir support), Group 2 ships a digest-managed copy behind an explicit option (`copyProductSkillsDigestManaged`) that stages the same resolved root into a Hermes-managed skills dir idempotently.

@@ -40,6 +40,14 @@
  * 4. **No `mcp_servers:` key** → append a fresh `mcp_servers:` section at EOF;
  *    all prior content is preserved byte-for-byte as a prefix.
  *
+ * A top-level `mcp_servers:` carrying an **inline/flow/scalar value on the same
+ * line** (`mcp_servers: {}`, `mcp_servers: {other: {...}}`, `mcp_servers: null`)
+ * is deliberately *not* merged: merging a block child into a flow value would
+ * require re-serializing user bytes, and blindly appending a second `mcp_servers:`
+ * key produces spec-invalid duplicate-key YAML or silently drops the user's
+ * siblings on last-wins. Such a config is refused with a typed `HermesConfigError`
+ * before any backup or write, so the original file survives byte-for-byte.
+ *
  * The genie entry itself is genie-owned: its content is rewritten to canonical
  * whenever it differs. Everything *outside* the entry (other servers, other
  * top-level keys, comments, formatting) is never touched. A pre-existing entry
@@ -206,6 +214,8 @@ function spliceGenieEntry(original: string, entry: McpGenieEntry): string {
     return fromLines(lines, trailingNewline);
   }
 
+  assertNoInlineTopLevelKey(lines, 'mcp_servers');
+
   const header = findTopLevelKeyLine(lines, 'mcp_servers');
   if (header >= 0) {
     spliceIntoBlock(lines, header, entry);
@@ -301,6 +311,26 @@ function findTopLevelKeyLine(lines: string[], key: string): number {
     if (re.test(lines[i])) return i;
   }
   return -1;
+}
+
+/**
+ * Refuse to merge when a top-level `key:` carries an inline/flow/scalar value on
+ * the same line (e.g. `key: {}`, `key: {a: b}`, `key: null`). Only a bare block
+ * header (`key:` optionally trailed by a comment) is mergeable; anything else can
+ * only be merged by re-serializing user bytes, so we raise a typed error before
+ * any write instead of appending a duplicate top-level key.
+ */
+function assertNoInlineTopLevelKey(lines: string[], key: string): void {
+  const keyLine = new RegExp(`^${key}:(?:\\s|$)`);
+  const blockHeader = new RegExp(`^${key}:\\s*(#.*)?$`);
+  for (const line of lines) {
+    if (keyLine.test(line) && !blockHeader.test(line)) {
+      throw new HermesConfigError(
+        'inline-top-level-key',
+        `cannot merge: top-level "${key}" has an inline value on the same line (${line.trim()}); rewrite it as a block mapping so genie can merge without deleting your entries`,
+      );
+    }
+  }
 }
 
 /** First line index after a block header where the block's children end. */

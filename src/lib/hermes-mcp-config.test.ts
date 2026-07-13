@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { HermesConfigError, mergeMcpServersGenie, resolveGenieBinaryPath } from './hermes-mcp-config.js';
@@ -18,6 +18,11 @@ function tmp(): string {
 /** Absolute binary path good enough for the merge under test. */
 function bin(root: string): string {
   return join(root, 'bin', 'genie');
+}
+
+/** True when a `<config>.genie-backup-*` sibling exists in the dir. */
+function hasBackup(root: string): boolean {
+  return readdirSync(root).some((f) => f.includes('genie-backup'));
 }
 
 describe('resolveGenieBinaryPath', () => {
@@ -187,6 +192,65 @@ describe('mergeMcpServersGenie', () => {
     expect(second.status).toBe('unchanged');
     expect(second.backupPath).toBeUndefined();
     expect(readFileSync(configPath, 'utf8')).toBe(afterFirst);
+  });
+
+  // A top-level `mcp_servers:` carrying an inline/flow/scalar value on the same line
+  // is refused with a typed error rather than blindly appending a duplicate top-level
+  // key (which produced spec-invalid duplicate-key YAML, or silently deleted user
+  // siblings on last-wins). The refusal happens before any backup or write.
+  test('empty flow `mcp_servers: {}` → typed error, nothing written, no backup', () => {
+    const root = tmp();
+    const configPath = join(root, 'config.yaml');
+    const original = 'version: 1\nmcp_servers: {}\n';
+    writeFileSync(configPath, original);
+
+    expect(() =>
+      mergeMcpServersGenie({ configPath, binaryPath: bin(root), genieHome: root, fsExists: () => false }),
+    ).toThrow(HermesConfigError);
+    expect(readFileSync(configPath, 'utf8')).toBe(original);
+    expect(hasBackup(root)).toBe(false);
+  });
+
+  test('flow-with-content is refused cleanly — user sibling survives verbatim, backup untouched', () => {
+    const root = tmp();
+    const configPath = join(root, 'config.yaml');
+    const original = 'mcp_servers: {other: {command: /usr/bin/other, args: [serve]}}\n';
+    writeFileSync(configPath, original);
+
+    expect(() =>
+      mergeMcpServersGenie({ configPath, binaryPath: bin(root), genieHome: root, fsExists: () => false }),
+    ).toThrow(HermesConfigError);
+    // The user's sibling server is never deleted: the file is left byte-for-byte.
+    expect(readFileSync(configPath, 'utf8')).toBe(original);
+    expect(hasBackup(root)).toBe(false);
+  });
+
+  test('scalar/null on the same line `mcp_servers: null` → typed error, nothing written', () => {
+    const root = tmp();
+    const configPath = join(root, 'config.yaml');
+    const original = 'mcp_servers: null\n';
+    writeFileSync(configPath, original);
+
+    expect(() =>
+      mergeMcpServersGenie({ configPath, binaryPath: bin(root), genieHome: root, fsExists: () => false }),
+    ).toThrow(HermesConfigError);
+    expect(readFileSync(configPath, 'utf8')).toBe(original);
+    expect(hasBackup(root)).toBe(false);
+  });
+
+  test('refusal is idempotent: a repeated call still throws and never writes or backs up', () => {
+    const root = tmp();
+    const configPath = join(root, 'config.yaml');
+    const original = 'mcp_servers: {}\n';
+    writeFileSync(configPath, original);
+
+    for (let i = 0; i < 2; i++) {
+      expect(() =>
+        mergeMcpServersGenie({ configPath, binaryPath: bin(root), genieHome: root, fsExists: () => false }),
+      ).toThrow(HermesConfigError);
+    }
+    expect(readFileSync(configPath, 'utf8')).toBe(original);
+    expect(hasBackup(root)).toBe(false);
   });
 
   test('optional env.GENIE_HOME is emitted when requested', () => {
