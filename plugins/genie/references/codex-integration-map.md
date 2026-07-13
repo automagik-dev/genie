@@ -19,15 +19,39 @@ Official references:
 | Product skills | `skills/` canonical; `plugins/genie/skills/` committed mirror | Exactly 23 physical, in-root skills with valid `name`/`description` frontmatter and `agents/openai.yaml`; source/package parity is fail-closed |
 | Hooks | `plugins/genie/hooks/codex-hooks.json` | Exactly H3 SessionStart, H4 PreToolUse, H6 PermissionRequest; all require explicit `/hooks` review and a new task after definition changes |
 | MCP | `plugins/genie/.mcp.json` -> `scripts/mcp-launcher.cjs` | Starts only canonical `$GENIE_HOME/bin/genie mcp`; no PATH/shell fallback; unsafe/missing binary fails closed |
-| Optional roles | `plugins/genie/codex-agents/*.toml` -> `~/.codex/agents/` | Seven CLI-installed profiles. Plugin-only installations have no `genie_*` agents |
-| CLI-managed user-tier fallback | `~/.agents/skills/<name>` | Codex-selected install/update may manage up to 23 digest-proven Genie copies; plugin-only install does not need it, and unmanaged, malformed, symlinked, or modified collisions are preserved |
-| Personal migration | 36 adapted skills and 14 custom agents in the maintainer's user tier | Separate user-owned installation; not part of the 23-skill product payload |
+| Optional roles | `plugins/genie/codex-agents/*.toml` -> `~/.codex/agents/` | Seven CLI-installed profiles, gated behind plugin health. Plugin-only installations have no `genie_*` agents |
+| Fallback retirement | `~/.agents/skills/.genie-codex-fallback-retirement/` | No supported path writes Genie product skills to `~/.agents/skills`. Upgrades from a fallback-seeding release retire only provably clean, digest-owned historical copies into one durable quarantine transaction after a single plugin health proof; unmanaged, malformed, symlinked, or modified collisions are preserved and reported |
+| Personal migration | 36 adapted skills and 14 custom agents in the maintainer's user tier | Separate user-owned installation; not part of the 23-skill product payload; survives update/uninstall byte-for-byte |
 
 Codex invokes plugin skills with the owner-qualified `$genie:<skill>` selector.
-Bare `$<skill>` selectors intentionally select the user tier, which may be a
-CLI-managed fallback or separately installed personal copy. Owner-qualified
-`$genie:<skill>` prevents a same-name user workflow from silently winning
-manual plugin invocation.
+Bare `$<skill>` selectors intentionally select the user tier, which now only
+ever holds a separately installed personal copy — Genie no longer seeds it.
+Owner-qualified `$genie:<skill>` prevents a same-name user workflow from
+silently winning manual plugin invocation.
+
+### Retirement/quarantine layout
+
+```text
+~/.agents/skills/.genie-codex-fallback-retirement/
+  .retirement.lock          single-writer lock for the retirement root
+  txn-<id>/journal.json     fsynced full-batch record of every retired identity
+  txn-<id>/quarantine/<skill>/   retired skill trees, moved intact
+  evidence/                 changed trees archived aside during recovery races
+```
+
+Acceptance requires a physical non-symlink directory, a valid versioned
+`.genie-sync.json`, a recomputed canonical digest equal to the marker, and a
+match against either the verified target-plugin payload or a committed
+verified-release historical tuple. The transaction is idempotent and crash-safe:
+repeated updates recognize the committed transaction (no second transaction, no
+accumulating quarantine), and an interrupted run reverse-restores every
+pre-commit move without clobbering conflicts. Manual recovery: move a tree back
+from `txn-<id>/quarantine/<skill>/` to `~/.agents/skills/<skill>/` only if a bare
+user-tier copy is wanted. On **"source changed after planning"** the changed tree
+is republished to the live path and the intact copy is left under `evidence/`; a
+**"changed evidence retained"** archive under `evidence/` is a durable backup —
+diff it before removing. `.codex/skills/.curated` is a legacy uninstall-only lane:
+`genie uninstall` still collects it, but no sync path recreates it.
 
 Starter-card metadata is different: every physical skill's `agents/openai.yaml` prompt is selector-free. The card is already attached to one discovered physical directory, so it must not name either tier and trigger a second resolution step.
 
@@ -46,10 +70,11 @@ PreToolUse cannot intercept every possible mutation. It is defense in depth, not
 ## Installation and convergence
 
 `genie install --integrations codex`, `genie setup --codex`, and `genie update` are the only installation/update paths.
-A successful setup persists Codex maintenance consent; later explicit updates use that scope to refresh Codex integration
-and clean digest-managed user-tier fallbacks while preserving unmanaged, modified, and personal skills. Persisted scope
-does not authorize a hook or background updater. SessionStart performs no setup, update, plugin refresh, skill
-synchronization, or project write.
+A successful setup persists Codex maintenance consent; later explicit updates use that scope to refresh the Codex plugin,
+MCP route, and role profiles. No supported path writes product skills into `~/.agents/skills`; the only user-tier
+mutation is retiring provably clean historical fallbacks into the hidden quarantine transaction after a health proof,
+while unmanaged, modified, and personal skills are preserved. Persisted scope does not authorize a hook or background
+updater. SessionStart performs no setup, update, plugin refresh, skill synchronization, or project write.
 
 An update crossing from a release older than `5.260711.6` to `5.260711.6` or later can deliver the new payload without the old process knowing the new convergence phase. Run one explicit `genie update` after that first command returns; the newly installed binary then converges product integrations. Current update code performs post-swap convergence inside the already-reviewed parent process and never re-enters a freshly installed older binary as `genie update`.
 

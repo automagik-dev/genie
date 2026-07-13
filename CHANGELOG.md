@@ -1,5 +1,70 @@
 # Changelog
 
+## Plugin-only Codex skills
+
+Wish: `repair-genie-codex-hooks-and-dedupe-skills`.
+
+### Changed — the installed Codex plugin is the sole Genie-managed skill provider
+
+- **Fresh Codex installs write zero user-tier skills.** `genie install`,
+  `genie setup --codex`, and `genie update` no longer copy the 23 product
+  skills into `~/.agents/skills/`. The version-matched plugin is the only
+  Genie-managed provider, so a restarted Codex loads only owner-qualified
+  `genie:*` skills instead of both bare (`wish`) and qualified (`genie:wish`)
+  duplicates. Bare `$<skill>` now resolves only a personal copy the user
+  installed themselves.
+- **One health proof gates every mutation.** Install, full update, and setup
+  converge the target plugin (respecting explicit disablement), take exactly
+  one post-convergence health snapshot — one enabled exact-version plugin with
+  a canonically verified payload/inventory and a bounded JSON-RPC session
+  (`initialize`, `tools/list` with all five Genie tools, read-only
+  `wish_status`) — then retire accepted fallbacks and only then run remaining
+  integrations (including role-agent install). `update --sync-only` inspects
+  rather than converges: a missing, disabled, or stale exact plugin fails
+  nonzero and leaves all trees byte-identical. A deliberately disabled plugin
+  is never silently enabled.
+
+### Added — durable fallback retirement, quarantine, and recovery
+
+- **Upgrades quarantine clean historical fallbacks instead of deleting them.**
+  A machine upgrading from a fallback-seeding release moves only provably clean,
+  digest-owned copies into a single durable transaction under
+  `~/.agents/skills/.genie-codex-fallback-retirement/` (`.retirement.lock`,
+  `txn-<id>/journal.json`, `txn-<id>/quarantine/<skill>/`, `evidence/`).
+  Acceptance requires a physical non-symlink directory, a valid versioned
+  `.genie-sync.json`, a recomputed canonical digest equal to the marker, and a
+  match against the verified target payload or a committed verified-release
+  historical tuple.
+- **Crash-safe and idempotent.** A full-batch journal is fsynced before the
+  first rename; an interrupted run reverse-restores every pre-commit move
+  without clobbering conflicts; a committed retry recognizes the same
+  transaction and creates no second transaction or accumulating quarantine.
+  Changed trees are archived under `evidence/` (never deleted in a check/delete
+  window), giving `source changed after planning` and `changed evidence
+  retained` manual-recovery paths.
+- **Personal collisions win preservation.** Modified-managed, malformed-marker,
+  symlinked, and unmanaged same-name skills stay byte/mode/link-identical and
+  are reported as user-owned collisions. `genie doctor` reports plugin version,
+  payload completeness, MCP usability, clean fallback count (flagged as
+  repairable duplicate state), quarantined count, and each preserved collision
+  with distinct remediation; success never claims literal name uniqueness while
+  user content remains.
+
+### Changed — plugin-incapable Codex fails loudly
+
+- A Codex whose `plugin` subcommand is unknown now exits nonzero **before** any
+  mutation, leaves all trees byte-identical, and prints explicit guidance to
+  upgrade Codex — instead of silently rebuilding bare product-skill fallbacks.
+
+### Notes
+
+- `.codex/skills/.curated` is a legacy uninstall-only lane: `genie uninstall`
+  still collects it, but no install/update/setup/sync path recreates it.
+- Restart Codex after any Codex convergence so it drops stale bare providers.
+- Claude and Hermes skill synchronization, Codex hooks (H3/H4/H6), the MCP
+  launcher, role-agent TOMLs, and the PR #2559 dangling-symlink preservation are
+  unchanged and regression-gated.
+
 ## v5-launch
 
 ### TUI clipboard contract — terminal-native selection
