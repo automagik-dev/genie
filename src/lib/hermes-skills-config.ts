@@ -37,8 +37,18 @@
  * *not* merged: merging into a flow value would require re-serializing user bytes,
  * and blindly appending a second `skills:` key produces spec-invalid duplicate-key
  * YAML or silently drops the user's siblings on last-wins. Such a config is refused
- * with a typed `HermesConfigError` before any backup or write, so the original file
- * survives byte-for-byte.
+ * with a typed `HermesConfigError('inline-top-level-key')` before any backup or
+ * write, so the original file survives byte-for-byte.
+ *
+ * The same fail-closed philosophy extends one level down. Inside a block-style
+ * `skills:`, a nested `external_dirs` child is merged **in place** — never appended
+ * as a second key:
+ *   - a block-style child gets the single managed entry merged/replaced inside it;
+ *   - an inline **empty** child (`external_dirs: []`) is rewritten to the managed
+ *     block, leaving every surrounding sibling byte-for-byte;
+ *   - an inline **non-empty** child (`external_dirs: [/x]`) cannot be merged without
+ *     re-serializing user bytes, so it is refused with a typed
+ *     `HermesConfigError('inline-nested-key')` before any backup or write.
  *
  * ## Older-Hermes fallback
  *
@@ -212,6 +222,19 @@ function spliceExternalDir(original: string, skillsRoot: string): string {
   const extHeader = findChildKeyLine(lines, skillsHeader + 1, skillsEnd, childIndent, 'external_dirs');
 
   if (extHeader < 0) {
+    const inline = findInlineChildKeyLine(lines, skillsHeader + 1, skillsEnd, childIndent, 'external_dirs');
+    if (inline.index >= 0) {
+      if (!inline.empty) {
+        throw new HermesConfigError(
+          'inline-nested-key',
+          `cannot merge: nested "skills.external_dirs" has an inline non-empty value on the same line (${lines[inline.index].trim()}); rewrite it as a block list so genie can merge without deleting your entries`,
+        );
+      }
+      // Inline empty `external_dirs: []` → replace that single line with the managed
+      // block entry in place, preserving every surrounding sibling byte-for-byte.
+      lines.splice(inline.index, 1, `${' '.repeat(childIndent)}external_dirs:`, managedItem(childIndent + 2));
+      return fromLines(lines, trailingNewline);
+    }
     lines.splice(skillsEnd, 0, `${' '.repeat(childIndent)}external_dirs:`, managedItem(childIndent + 2));
     return fromLines(lines, trailingNewline);
   }
@@ -350,6 +373,31 @@ function findChildKeyLine(lines: string[], start: number, blockEnd: number, chil
     if (indentOf(lines[i]) === childIndent && re.test(lines[i])) return i;
   }
   return -1;
+}
+
+/**
+ * Locate a nested child key that carries an inline/flow value on the same line
+ * (e.g. `external_dirs: []`, `external_dirs: [/x]`) rather than a bare block
+ * header. Block-style headers are handled by `findChildKeyLine`; this covers the
+ * inline sibling class. `empty` is true only for an empty flow list (`[]`/`[ ]`),
+ * which can be replaced in place; any other inline value is unmergeable.
+ */
+function findInlineChildKeyLine(
+  lines: string[],
+  start: number,
+  blockEnd: number,
+  childIndent: number,
+  name: string,
+): { index: number; empty: boolean } {
+  const prefix = new RegExp(`^ {${childIndent}}${name}:(?:\\s|$)`);
+  const bare = new RegExp(`^ {${childIndent}}${name}:\\s*(#.*)?$`);
+  const empty = new RegExp(`^ {${childIndent}}${name}:\\s+\\[\\s*\\]\\s*(#.*)?$`);
+  for (let i = start; i < blockEnd; i++) {
+    if (indentOf(lines[i]) !== childIndent) continue;
+    if (!prefix.test(lines[i]) || bare.test(lines[i])) continue;
+    return { index: i, empty: empty.test(lines[i]) };
+  }
+  return { index: -1, empty: false };
 }
 
 /** Indentation of the first list item, defaulting to childIndent + 2. */
