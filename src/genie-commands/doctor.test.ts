@@ -699,7 +699,14 @@ describe('checkAgentSync', () => {
     writeFileSync(join(pluginRoot, 'skills', name, 'SKILL.md'), body, 'utf8');
   }
 
-  /** Copy a source skill into a target parent + stamp a manifest (current unless a digest is forced). */
+  /**
+   * Copy a source skill into a target parent + stamp a manifest (current unless
+   * a digest is forced). Stamps `identityVersion: 2`, matching what the real
+   * `buildManifest` always writes — the Codex-fallback ownership gate
+   * (`strictFallbackMarker`) requires that exact tag, so an untagged manifest
+   * would misrepresent a byte-identical, freshly-synced managed dir as
+   * unrecognized instead of clean.
+   */
   function seedManaged(sourceDir: string, destDir: string, digest?: string): void {
     cpSync(sourceDir, destDir, { recursive: true });
     writeFileSync(
@@ -709,6 +716,7 @@ describe('checkAgentSync', () => {
         version: '1',
         digest: digest ?? computeDirDigest(sourceDir),
         syncedAt: '2026-01-01T00:00:00.000Z',
+        identityVersion: 2,
       }),
       'utf8',
     );
@@ -878,7 +886,7 @@ describe('checkAgentSync', () => {
     expect(collision?.suggestion).not.toContain('retire');
   });
 
-  test('codex retirement quarantine with retained evidence → R8 manual-recovery line', () => {
+  test('codex retirement quarantine with retained evidence → R8 manual-recovery line naming the actual evidence path', () => {
     mkdirSync(codexDir, { recursive: true });
     const txn = join(agentsSkillsDir, '.genie-codex-fallback-retirement', 'txn-abc');
     mkdirSync(join(txn, 'quarantine'), { recursive: true });
@@ -891,7 +899,60 @@ describe('checkAgentSync', () => {
     const evidence = find(results, 'agent sync: codex quarantine evidence');
     expect(evidence?.status).toBe('warn');
     expect(evidence?.detail).toContain('retained changed-tree evidence');
+    expect(evidence?.detail).toContain('txn-abc');
+    // Item 3(b): naming the transaction id alone leaves the user to guess where
+    // the archived copy actually lives — the message must carry the real path.
+    expect(evidence?.detail).toContain(join(txn, 'evidence'));
     expect(evidence?.suggestion).toContain('reconcile it manually');
+  });
+
+  test('codex well-formed but unrecognized fallback → distinct "review manually" warn, main line stays plugin-only, never advises `genie update`', () => {
+    // identityVersion:2, digest self-consistent with its own manifest — but the
+    // content is NOT the installed plugin's payload and not in the frozen
+    // historical allowlist, so `planCodexFallbackRetirement` would refuse it
+    // ('ambiguous-ownership'). This is the PR #2575 no-op-loop bug: doctor must
+    // never call this "clean" or tell the user `genie update` fixes it.
+    mkdirSync(codexDir, { recursive: true });
+    const dir = join(agentsSkillsDir, 'orphaned-content');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'SKILL.md'), '# not the installed plugin payload\n', 'utf8');
+    writeFileSync(
+      join(dir, '.genie-sync.json'),
+      JSON.stringify({
+        managedBy: 'genie-agent-sync',
+        version: '1',
+        digest: computeDirDigest(dir),
+        syncedAt: '2026-01-01T00:00:00.000Z',
+        identityVersion: 2,
+      }),
+      'utf8',
+    );
+
+    const results = checkAgentSync(paths());
+    const codex = find(results, 'agent sync: codex');
+    expect(codex?.status).toBe('pass'); // no RECOGNIZED clean fallback → main line stays plugin-only
+    expect(codex?.detail).toContain('plugin-only');
+    const unrecognized = find(results, 'agent sync: codex unrecognized');
+    expect(unrecognized?.status).toBe('warn');
+    expect(unrecognized?.detail).toContain('unrecognized managed fallback');
+    expect(unrecognized?.detail).toContain('review manually');
+    expect(unrecognized?.detail).toContain('orphaned-content');
+    // The whole point: this warning must never send the user down the same
+    // no-op loop `genie update` already refuses to close.
+    expect(unrecognized?.suggestion).not.toContain('Run `genie update` to retire');
+  });
+
+  test('codex ~/.agents/skills exists but is unreadable → warn, never a false-healthy plugin-only pass', () => {
+    mkdirSync(codexDir, { recursive: true });
+    // A regular file at the fallback-tier path makes readdirSync fail ENOTDIR —
+    // portable across CI/root vs non-root, unlike permission-bit simulation.
+    mkdirSync(dirname(agentsSkillsDir), { recursive: true });
+    writeFileSync(agentsSkillsDir, '', 'utf8');
+
+    const codex = find(checkAgentSync(paths()), 'agent sync: codex');
+    expect(codex?.status).toBe('warn');
+    expect(codex?.detail).toContain(agentsSkillsDir);
+    expect(codex?.suggestion).toContain('permissions');
   });
 
   test('codex quarantine root is never counted as a managed fallback', () => {

@@ -2667,7 +2667,9 @@ describe('translateRetirementConflicts surfaces R8 conflict classes as manual-re
 describe('inspectCodexFallbackTier (shared doctor/uninstall classifier — read-only)', () => {
   let tmp: string;
   let agentsSkillsDir: string;
+  let pluginRoot: string;
 
+  /** Real `buildManifest` always stamps `identityVersion: 2` — fixtures match that. */
   function seedManaged(name: string, mutate?: (dir: string) => void): string {
     const dir = join(agentsSkillsDir, name);
     mkdirSync(dir, { recursive: true });
@@ -2675,16 +2677,25 @@ describe('inspectCodexFallbackTier (shared doctor/uninstall classifier — read-
     const digest = computeDirDigest(dir);
     writeFileSync(
       join(dir, '.genie-sync.json'),
-      JSON.stringify({ managedBy: 'genie-agent-sync', version: '1', digest, syncedAt: 'now' }),
+      JSON.stringify({ managedBy: 'genie-agent-sync', version: '1', digest, syncedAt: 'now', identityVersion: 2 }),
       'utf8',
     );
     mutate?.(dir);
     return dir;
   }
 
+  /** Mirror a fallback dir's content into `<pluginRoot>/skills/<name>` so it verifies as a live-plugin target. */
+  function mirrorToPlugin(name: string): void {
+    const source = join(agentsSkillsDir, name, 'SKILL.md');
+    const dest = join(pluginRoot, 'skills', name);
+    mkdirSync(dest, { recursive: true });
+    writeFileSync(join(dest, 'SKILL.md'), readFileSync(source, 'utf8'), 'utf8');
+  }
+
   beforeEach(() => {
     tmp = mkdtempSync(join(tmpdir(), 'fallback-tier-'));
     agentsSkillsDir = join(tmp, 'agents', 'skills');
+    pluginRoot = join(tmp, 'plugin');
     mkdirSync(agentsSkillsDir, { recursive: true });
   });
 
@@ -2696,16 +2707,31 @@ describe('inspectCodexFallbackTier (shared doctor/uninstall classifier — read-
     const report = inspectCodexFallbackTier(join(tmp, 'nonexistent'));
     expect(report).toEqual({
       cleanFallbacks: [],
+      unrecognizedFallbacks: [],
       preservedCollisions: [],
       preservedCollisionClass: {},
       quarantinedTransactions: 0,
       retainedEvidence: [],
+      unreadable: false,
     });
+  });
+
+  test('unreadable tier (exists but cannot be listed) → warns instead of passing as healthy plugin-only', () => {
+    // A regular file at the fallback-tier path makes readdirSync fail ENOTDIR —
+    // portable across CI/root vs non-root, unlike permission-bit simulation.
+    const blocked = join(tmp, 'blocked-tier');
+    writeFileSync(blocked, '', 'utf8');
+    const report = inspectCodexFallbackTier(blocked);
+    expect(report.unreadable).toBe(true);
+    expect(report.cleanFallbacks).toEqual([]);
+    expect(report.unrecognizedFallbacks).toEqual([]);
   });
 
   test('classifies clean fallbacks, personal collisions, and unmanaged skills distinctly', () => {
     seedManaged('wish');
     seedManaged('work');
+    mirrorToPlugin('wish');
+    mirrorToPlugin('work');
     // Personal edit after sync → managed-modified.
     seedManaged('review', (dir) => writeFileSync(join(dir, 'SKILL.md'), '# personal\n', 'utf8'));
     // Corrupt marker → corrupt-metadata (malformed-marker).
@@ -2715,15 +2741,66 @@ describe('inspectCodexFallbackTier (shared doctor/uninstall classifier — read-
     mkdirSync(mine, { recursive: true });
     writeFileSync(join(mine, 'SKILL.md'), '# mine\n', 'utf8');
 
-    const report = inspectCodexFallbackTier(agentsSkillsDir);
+    const report = inspectCodexFallbackTier(agentsSkillsDir, pluginRoot);
     expect(report.cleanFallbacks).toEqual(['wish', 'work']);
+    expect(report.unrecognizedFallbacks).toEqual([]);
     expect(report.preservedCollisions).toEqual(['review', 'trace']);
     // Decision 5: each preserved collision carries its classification for doctor.
     expect(report.preservedCollisionClass).toEqual({ review: 'modified-managed', trace: 'malformed-marker' });
     expect(report.quarantinedTransactions).toBe(0);
   });
 
-  test('counts committed quarantine transactions and flags retained changed-evidence (R8) without recursing into them', () => {
+  test('a structurally clean, self-consistent tree the planner does not recognize is unrecognized, never clean (#2575 no-op-loop bug)', () => {
+    // identityVersion:2, digest matches its own manifest — structurally
+    // indistinguishable from a real managed dir — but no pluginRoot mirror and
+    // no historical-tuple match, so `planCodexFallbackRetirement` would refuse
+    // it ('ambiguous-ownership'). Doctor must not tell this user to `genie
+    // update`; that would never converge.
+    seedManaged('orphaned-content');
+
+    const report = inspectCodexFallbackTier(agentsSkillsDir, pluginRoot);
+    expect(report.cleanFallbacks).toEqual([]);
+    expect(report.unrecognizedFallbacks).toEqual(['orphaned-content']);
+    expect(report.preservedCollisions).toEqual([]);
+  });
+
+  test('a pre-identityVersion (era-A) marker is preserved as managed-modified, never reported clean (era-A digest algorithm is not the current v2 physical-tree digest)', () => {
+    // Era-A genie (v5.260710.14–v5.260711.6) wrote managedBy/digest/syncedAt but
+    // no `identityVersion` field, and computed `digest` as sha256 over sorted
+    // (relpath, sha256(content)) file pairs only — no mode/kind, no version
+    // domain-separator prefix. That is a DIFFERENT algorithm than the current
+    // v2 physical-tree digest, so `acceptedManagedDirPhysicalDigest`'s untagged
+    // "transitional" fast-path (exact v2 match) never fires, and its legacy-v1
+    // fallback path requires a caller-supplied trusted digest that this
+    // read-only tier inspector never provides — so it lands as
+    // 'managed-modified', never 'managed-clean'/'clean, run genie update'.
+    const dir = join(agentsSkillsDir, 'legacy-era-a');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'SKILL.md'), '# legacy-era-a\n', 'utf8');
+    const legacyDigest = createHash('sha256')
+      .update('SKILL.md')
+      .update('\0')
+      .update(
+        createHash('sha256')
+          .update(readFileSync(join(dir, 'SKILL.md')))
+          .digest('hex'),
+      )
+      .update('\0')
+      .digest('hex');
+    writeFileSync(
+      join(dir, '.genie-sync.json'),
+      JSON.stringify({ managedBy: 'genie-agent-sync', version: '5.260711.6', digest: legacyDigest, syncedAt: 'now' }),
+      'utf8',
+    );
+
+    const report = inspectCodexFallbackTier(agentsSkillsDir, pluginRoot);
+    expect(report.cleanFallbacks).toEqual([]);
+    expect(report.unrecognizedFallbacks).toEqual([]);
+    expect(report.preservedCollisions).toEqual(['legacy-era-a']);
+    expect(report.preservedCollisionClass['legacy-era-a']).toBe('modified-managed');
+  });
+
+  test('counts committed quarantine transactions and flags retained changed-evidence (R8) with the actual on-disk path, without recursing into them', () => {
     const root = join(agentsSkillsDir, CODEX_FALLBACK_RETIREMENT_ROOT);
     // One plain committed transaction, one with archived changed-tree evidence.
     mkdirSync(join(root, 'txn-aaaa', 'quarantine', 'wish'), { recursive: true });
@@ -2735,7 +2812,9 @@ describe('inspectCodexFallbackTier (shared doctor/uninstall classifier — read-
 
     const report = inspectCodexFallbackTier(agentsSkillsDir);
     expect(report.quarantinedTransactions).toBe(2);
-    expect(report.retainedEvidence).toEqual(['txn-bbbb']);
+    expect(report.retainedEvidence).toEqual([
+      { transactionId: 'txn-bbbb', evidencePath: join(root, 'txn-bbbb', 'evidence') },
+    ]);
     // The quarantine root is never mistaken for a managed fallback.
     expect(report.cleanFallbacks).toEqual([]);
     expect(report.preservedCollisions).toEqual([]);

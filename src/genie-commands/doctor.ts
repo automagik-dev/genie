@@ -819,13 +819,27 @@ function checkClaudeSync(pluginRoot: string, claudeDir: string): CheckResult[] {
  * healthy plugin-only state, and any managed-clean fallback there is repairable
  * duplicate provider state, not health. Doctor reports the shared classifier's
  * counts (A9: pure read, never launches the plugin MCP) with DISTINCT
- * remediations — a clean fallback is repairable via `genie update`, a preserved
- * personal collision is manual — and surfaces retained changed-evidence as a
- * manual-recovery line (R8) rather than a raw recovery-sweep error.
+ * remediations — a clean fallback is repairable via `genie update`, a
+ * well-formed-but-unrecognized fallback is manual review (never `genie update`
+ * — the planner refuses it too, so recommending update would be an infinite
+ * no-op loop), and a preserved personal collision is manual — and surfaces
+ * retained changed-evidence as a manual-recovery line (R8) rather than a raw
+ * recovery-sweep error.
  */
-function checkCodexSync(codexDir: string, agentsSkillsDir: string): CheckResult[] {
+function checkCodexSync(codexDir: string, agentsSkillsDir: string, pluginRoot: string | null): CheckResult[] {
   if (!existsSync(codexDir)) return [{ name: 'agent sync: codex', status: 'pass', detail: 'not detected' }];
-  const tier = inspectCodexFallbackTier(agentsSkillsDir);
+  const tier = inspectCodexFallbackTier(agentsSkillsDir, pluginRoot);
+  if (tier.unreadable) {
+    return [
+      {
+        name: 'agent sync: codex',
+        status: 'warn',
+        detail: `~/.agents/skills (${agentsSkillsDir}) exists but could not be listed — fallback state is unknown`,
+        suggestion:
+          'Check read permissions on ~/.agents/skills; genie cannot classify Codex fallback state until it is readable.',
+      },
+    ];
+  }
   const quarantineNote =
     tier.quarantinedTransactions > 0
       ? `; ${tier.quarantinedTransactions} retired quarantine transaction(s) retained`
@@ -845,6 +859,22 @@ function checkCodexSync(codexDir: string, agentsSkillsDir: string): CheckResult[
       suggestion: 'Run `genie update` to retire these clean fallbacks; the installed plugin already provides them.',
     });
   }
+  if (tier.unrecognizedFallbacks.length > 0) {
+    // #2575 vocabulary: well-formed identityVersion:2, self-consistent,
+    // genie-managed content the planner does not recognize (not in the frozen
+    // allowlist and no matching live-plugin payload). Era-A fallbacks (v1
+    // legacy digest, no identityVersion) do NOT land here — their marker fails
+    // the v2 self-consistency check, so they surface as preservedCollisions.
+    // Never user-edited, so NOT a personal collision — but `genie update`
+    // refuses to retire it, so recommending that here would be a no-op loop.
+    results.push({
+      name: 'agent sync: codex unrecognized',
+      status: 'warn',
+      detail: `${tier.unrecognizedFallbacks.length} unrecognized managed fallback(s) in ~/.agents/skills (review manually): ${tier.unrecognizedFallbacks.join(', ')}`,
+      suggestion:
+        '`genie update` will NOT retire these — the content is well-formed genie provenance but not in the frozen allowlist and does not match the installed plugin payload. Review each manually; do not expect `genie update` to clear this warning.',
+    });
+  }
   if (tier.preservedCollisions.length > 0) {
     // Decision 5: report each collision's name + classification + effective precedence + remediation.
     const classified = tier.preservedCollisions
@@ -859,10 +889,13 @@ function checkCodexSync(codexDir: string, agentsSkillsDir: string): CheckResult[
     });
   }
   if (tier.retainedEvidence.length > 0) {
+    const evidenceList = tier.retainedEvidence
+      .map((entry) => `${entry.transactionId} (${entry.evidencePath})`)
+      .join(', ');
     results.push({
       name: 'agent sync: codex quarantine evidence',
       status: 'warn',
-      detail: `${tier.retainedEvidence.length} retirement transaction(s) retained changed-tree evidence (${tier.retainedEvidence.join(', ')})`,
+      detail: `${tier.retainedEvidence.length} retirement transaction(s) retained changed-tree evidence: ${evidenceList}`,
       suggestion:
         'A Codex fallback changed during retirement; the changed copy was archived aside under the quarantine evidence directory. Review the retained evidence and reconcile it manually.',
     });
@@ -1195,7 +1228,7 @@ export function checkAgentSync(paths: AgentSyncPaths = {}): CheckResult[] {
   const hermesBinary = paths.hermesBinary !== undefined ? paths.hermesBinary : whichBinary('hermes');
   return [
     ...safeAgentChecks('claude', () => checkClaudeSync(pluginRoot, claudeDir)),
-    ...safeAgentChecks('codex', () => checkCodexSync(codexDir, agentsSkillsDir)),
+    ...safeAgentChecks('codex', () => checkCodexSync(codexDir, agentsSkillsDir, pluginRoot)),
     ...safeAgentChecks('hermes', () =>
       checkHermesSync({
         hermesRoot: source.hermesRoot,

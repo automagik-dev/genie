@@ -1074,7 +1074,28 @@ function historicalTupleKey(tuple: Pick<CodexFallbackHistoricalTuple, 'skillName
   return `${tuple.skillName}\0${tuple.physicalDigest}`;
 }
 
-function classifyCodexFallback(
+/**
+ * Load the frozen historical-tuple allowlist as an ownership-key set. Exported
+ * so read-only callers (doctor's tier inspection) apply the SAME acceptance
+ * policy as {@link planCodexFallbackRetirement} instead of re-deriving their
+ * own notion of "recognized" — the fixture loading and key derivation live in
+ * exactly one place.
+ */
+export function loadHistoricalCodexFallbackTupleKeys(): ReadonlySet<string> {
+  const tuples = historicalCodexFallbackAllowlist as CodexFallbackHistoricalTuple[];
+  return new Set(tuples.map(historicalTupleKey));
+}
+
+/**
+ * Classify a single `~/.agents/skills/<name>` dir's Codex-fallback ownership.
+ * Exported so doctor's read-only tier inspection can split a structurally
+ * `managed-clean` tree into "recognized, retirable by `genie update`" vs
+ * "well-formed but unrecognized, needs manual review" using the identical
+ * marker/digest/allowlist gate {@link planCodexFallbackRetirement} uses to
+ * decide what it will actually retire — so doctor never promises a retirement
+ * the engine then refuses.
+ */
+export function classifyCodexFallback(
   path: string,
   skillName: string,
   target: VerifiedCodexSkillPayload | null | undefined,
@@ -1138,8 +1159,7 @@ export function planCodexFallbackRetirement(options: PlanCodexFallbackRetirement
     throw new Error('fallback retirement skill names must be unique safe path entries');
   }
   const targets = verifiedTargetByName(options.verifiedTargets ?? []);
-  const tuples = historicalCodexFallbackAllowlist as CodexFallbackHistoricalTuple[];
-  const historical = new Set(tuples.map(historicalTupleKey));
+  const historical = loadHistoricalCodexFallbackTupleKeys();
   const classified = names.map((skillName) =>
     classifyCodexFallback(join(fallbackSkillsDir, skillName), skillName, targets.get(skillName), historical),
   );
