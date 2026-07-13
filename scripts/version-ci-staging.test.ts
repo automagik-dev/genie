@@ -86,13 +86,17 @@ describe('synchronizeVersionFiles CI staging', () => {
     expect(readFileSync(join(root, 'plugins/hermes-genie/plugin.yaml'), 'utf8')).toContain('version: 5.260713.4');
   });
 
-  test('warns but exits 0 when git add fails (not a git repo)', async () => {
+  test('fails the sync when git add fails (not a git repo)', async () => {
     const root = versionFixture(); // deliberately NOT a git repo
     process.env.GITHUB_ACTIONS = 'true';
 
-    // Best-effort staging: the git failure must not reject the sync.
-    await expect(synchronizeVersionFiles(root, '5.260713.5')).resolves.toBeUndefined();
-    // The version files are still fully rewritten despite the staging failure.
+    // A CI staging failure must fail the sync — silently continuing would
+    // re-introduce the plugin.yaml version-skew defect this staging exists
+    // to prevent (the workflow's own `git add` list is stale and would ship
+    // a bump with a stale Hermes manifest).
+    await expect(synchronizeVersionFiles(root, '5.260713.5')).rejects.toThrow(/CI staging failed/);
+    // The version files are still fully rewritten on disk before staging ran —
+    // only the staging (and therefore the auto-version commit) is blocked.
     expect(readFileSync(join(root, 'plugins/hermes-genie/plugin.yaml'), 'utf8')).toContain('version: 5.260713.5');
     expect(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version).toBe('5.260713.5');
   });
