@@ -51,5 +51,15 @@ export default {
     (message: string) => message.startsWith('wish: pivot to Option B'),
     (message: string) => message.startsWith('wish: address reviewer loop 2 findings'),
     (message: string) => message.startsWith('wish: loop 3 cleanups'),
+    // Historical exception: six wave-merge commits (group-1..6) landed on dev
+    // via #2565 before the orchestration learned that a lowercase `merge:`
+    // subject evades the `Merge` ignore above and trips type-enum (merge is
+    // not a conventional type). Rewriting dev is off the table — the branch is
+    // shared and the PRs are merged. Ignoring these exact subjects unblocks
+    // the rolling dev→main promotion without touching history. The pattern is
+    // bounded to group-1..6 so genuinely new `merge:` commits still fail. Do
+    // NOT create more `merge:`-prefixed commits — let git use its default
+    // `Merge …` subjects, or use `chore:`.
+    (message: string) => /^merge: group-[1-6] /.test(message),
   ],
 };
