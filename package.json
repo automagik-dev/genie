@@ -31,6 +31,8 @@
     "hooks:bind": "bun scripts/hook-content-binding.ts --write",
     "lint:hook-content": "bun scripts/hook-content-binding.ts --check",
     "lint:plugin-executables": "bun scripts/plugin-executables-check.ts",
+    "smoke:codex": "bun run scripts/codex-plugin-only-smoke.ts",
+    "smoke:codex-discovery": "bun run scripts/codex-debug-discovery-smoke.ts",
     "check": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint && bun run lint:complexity-budget && bun run lint:council-workflow && bun run lint:hook-bundles && bun run lint:hook-content && bun run lint:plugin-executables && bun test",
     "check:fast": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint && bun run lint:complexity-budget && bun run lint:council-workflow && bun run lint:hook-bundles && bun run lint:hook-content && bun run lint:plugin-executables",
     "verify:release": "scripts/verify-release.sh"
