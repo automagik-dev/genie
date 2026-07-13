@@ -1,0 +1,117 @@
+[
+  {
+    "markerVersion": "5.260712.1",
+    "skillName": "architecture",
+    "physicalDigest": "559c84ed9f09d9af21187cd3158277a9550b418a98c378cdbec6395c5d98e2e7"
+  },
+  {
+    "markerVersion": "5.260712.1",
+    "skillName": "brainstorm",
+    "physicalDigest": "58b50637be1a15d065b2a2215d01b60b4364a80d9b455e945ed2dc9cf8bbc50f"
+  },
+  {
+    "markerVersion": "5.260712.1",
+    "skillName": "code-quality",
+    "physicalDigest": "73893c3f596709f4ea99a03749e82bace52e16e90faf40fc605a8271e6f608de"
+  },
+  {
+    "markerVersion": "5.260712.1",
+    "skillName": "council",
+    "physicalDigest": "27902cadbae8f2333339482de4ed40adcc3e9e357539d1ebdce11b4ad1fa39b2"
+  },
+  {
+    "markerVersion": "5.260712.1",
+    "skillName": "docs",
+    "physicalDigest": "1765dda96b7befd78c249a9651a47eb96dd3529b51f5e27d37335aba0938ec73"
+  },
+  {
+    "markerVersion": "5.260712.1",
+    "skillName": "dream",
+    "physicalDigest": "319c6a1a8718a37bd051ad089f14d2b40a42b6e704d172e5237080e93b357914"
+  },
+  {
+    "markerVersion": "5.260712.1",
+    "skillName": "dx-docs",
+    "physicalDigest": "c3bfd4935a3e4e8cfcbe062af9942cbe131c412a1f273c13d41968dff3b87abd"
+  },
+  {
+    "markerVersion": "5.260712.1",
+    "skillName": "fix",
+    "physicalDigest": "9bf823fdae3f4a356f10c6e5de3ead799a4e9292bd9217b5bc66221041c1e227"
+  },
+  {
+    "markerVersion": "5.260712.1",
+    "skillName": "genie",
+    "physicalDigest": "848b209cdb2f5cdc99ba67f53a268bf4bb018b6a3b4673c720e8c2f66c46487c"
+  },
+  {
+    "markerVersion": "5.260712.1",
+    "skillName": "genie-hacks",
+    "physicalDigest": "fde8b511befb75f502e0af35299f20cb5f88ac75cf0e92e4438beeadf228cd27"
+  },
+  {
+    "markerVersion": "5.260712.1",
+    "skillName": "omni",
+    "physicalDigest": "44341b558ee604171ebdff02768372c27906141d22dfe1e7b6a24906b2ca9d2b"
+  },
+  {
+    "markerVersion": "5.260712.1",
+    "skillName": "perf",
+    "physicalDigest": "aeac4d9eb60f05dd7f2c679b08fb87e57a9ea424917eb21af40e3c4c69b56b8f"
+  },
+  {
+    "markerVersion": "5.260712.1",
+    "skillName": "pm",
+    "physicalDigest": "b2e5ebd1082f3727a9604cea7337b5bb9ea3bde4062fd788fde8171ea8ed6709"
+  },
+  {
+    "markerVersion": "5.260712.1",
+    "skillName": "qa",
+    "physicalDigest": "bbcd797eae2a7e93e1850e02c32d749380abb70a5c5c94c87cdc80bf3ed30edd"
+  },
+  {
+    "markerVersion": "5.260712.1",
+    "skillName": "refine",
+    "physicalDigest": "aabd8761fac1db11efea0ad29f4631f3754ddfa5735991ccb93ddab86a102ffe"
+  },
+  {
+    "markerVersion": "5.260712.1",
+    "skillName": "repo-hygiene",
+    "physicalDigest": "1e877024673cace285f6491c6290ff2ad947b20e797e7e0f98f6d090eb511824"
+  },
+  {
+    "markerVersion": "5.260712.1",
+    "skillName": "report",
+    "physicalDigest": "6874b9793bd60a79b0f0c18225767e9a9270c2dc8586d3ae1797c16e2137a67c"
+  },
+  {
+    "markerVersion": "5.260712.1",
+    "skillName": "review",
+    "physicalDigest": "15793e31ed0e9c97cfd46fc4a1b86c996fa5f32706e64b98f57c1ef94677a5e8"
+  },
+  {
+    "markerVersion": "5.260712.1",
+    "skillName": "supply-chain",
+    "physicalDigest": "5fbd9f360262d9fb705332f8d5c4469da3cd276d3fd0b8dfb17859788bc7b7e7"
+  },
+  {
+    "markerVersion": "5.260712.1",
+    "skillName": "trace",
+    "physicalDigest": "084e4810751dcf8f435ae1af87fba1a4054952ede6bc1efaa692c4f3700df92b"
+  },
+  {
+    "markerVersion": "5.260712.1",
+    "skillName": "wish",
+    "physicalDigest": "1f304b867f1d7a98e977e1ced0ee43eef37bfe683dfbad16196e55d4808655cd"
+  },
+  {
+    "markerVersion": "5.260712.1",
+    "skillName": "wizard",
+    "physicalDigest": "9ff6a48895c829618ace7dd01edc3ee537ab206a6bba05956f9c198ec75503c8"
+  },
+  {
+    "markerVersion": "5.260712.1",
+    "skillName": "work",
+    "physicalDigest": "7480f4a6f7eca88c3a20e89abc17629b650306dbeaec65c3d062c13d89a3fe03"
+  }
+]

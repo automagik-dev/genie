@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import {
   chmodSync,
+  cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -31,6 +32,8 @@ import {
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { generateCodexFallbackAllowlist } from '../../scripts/generate-codex-fallback-allowlist';
+import historicalCodexFallbackAllowlist from '../fixtures/codex-fallback-allowlist.json';
 import { checkAgentSync } from '../genie-commands/doctor';
 import { runAgentSyncSafe } from '../genie-commands/update';
 import {
@@ -42,9 +45,11 @@ import {
   TARGET_NAME,
   WORKFLOW_MANIFEST_NAME,
   acquireLifecycleLease,
+  applyCodexFallbackRetirement,
   computeDirDigest,
   inspectManagedWorkflow,
   lifecycleLockPath,
+  planCodexFallbackRetirement,
   recoverManagedSkillTransactions,
   recoverManagedWorkflowTransactions,
   removeManagedWorkflow,
@@ -2356,5 +2361,282 @@ describe('orphan detection ignores non-managed siblings', () => {
     // both survive on disk, not merely absent from the report
     expect(existsSync(join(skillsDir, 'unmanaged', 'SKILL.md'))).toBe(true);
     expect(existsSync(join(skillsDir, 'beta.genie-sync.prev', 'left.txt'))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Unwired Codex fallback retirement boundary
+// ---------------------------------------------------------------------------
+
+function stampFallback(dir: string, version = 'fixture-v1'): string {
+  const digest = computeDirDigest(dir);
+  writeFile(
+    join(dir, MANIFEST_NAME),
+    `${JSON.stringify({
+      managedBy: 'genie-agent-sync',
+      version,
+      digest,
+      syncedAt: '2026-07-12T00:00:00.000Z',
+      identityVersion: 2,
+    })}\n`,
+  );
+  return digest;
+}
+
+function writeFallback(parent: string, name: string, body = `# ${name}\n`): { path: string; digest: string } {
+  const path = join(parent, name);
+  writeFile(join(path, 'SKILL.md'), body);
+  return { path, digest: stampFallback(path) };
+}
+
+function verifiedTarget(skillName: string, path: string, physicalDigest: string) {
+  return { skillName, path, physicalDigest, canonicalVerified: true as const };
+}
+
+describe('Codex fallback ownership planning', () => {
+  test('accepts all 23 committed historical name/version/physical tuples', () => {
+    const fallback = join(fixture.root, 'historical-fallbacks');
+    const shippedSkills = join(import.meta.dir, '..', '..', 'skills');
+    for (const tuple of historicalCodexFallbackAllowlist) {
+      const destination = join(fallback, tuple.skillName);
+      cpSync(join(shippedSkills, tuple.skillName), destination, { recursive: true });
+      expect(stampFallback(destination, tuple.markerVersion)).toBe(tuple.physicalDigest);
+    }
+
+    const plan = planCodexFallbackRetirement({
+      fallbackSkillsDir: fallback,
+      skillNames: historicalCodexFallbackAllowlist.map((tuple) => tuple.skillName),
+    });
+    expect(plan.accepted).toHaveLength(23);
+    expect(plan.preserved).toEqual([]);
+    expect(plan.accepted.every((entry) => entry.ownership === 'historical-tuple')).toBe(true);
+  });
+
+  test('accepts an exact same-skill verified target without historical authority', () => {
+    const fallback = join(fixture.root, 'fallback');
+    const target = join(fixture.root, 'target', 'new-skill');
+    const source = writeFallback(fallback, 'new-skill');
+    writeFile(join(target, 'SKILL.md'), '# new-skill\n');
+    const targetDigest = computeDirDigest(target);
+
+    const plan = planCodexFallbackRetirement({
+      fallbackSkillsDir: fallback,
+      skillNames: ['new-skill'],
+      verifiedTargets: [verifiedTarget('new-skill', target, targetDigest)],
+    });
+    expect(plan.accepted).toHaveLength(1);
+    expect(plan.accepted[0]?.ownership).toBe('verified-target');
+    expect(plan.accepted[0]?.physicalDigest).toBe(source.digest);
+  });
+
+  test('preserves renamed/cross-skill, forged tuple, malformed, modified, unmanaged, and symlink inputs', () => {
+    const fallback = join(fixture.root, 'negative-fallbacks');
+    const shippedSkills = join(import.meta.dir, '..', '..', 'skills');
+    const architecture = historicalCodexFallbackAllowlist.find((tuple) => tuple.skillName === 'architecture');
+    if (architecture === undefined) throw new Error('missing architecture fixture tuple');
+
+    cpSync(join(shippedSkills, 'architecture'), join(fallback, 'renamed'), { recursive: true });
+    stampFallback(join(fallback, 'renamed'), architecture.markerVersion);
+    const forged = writeFallback(fallback, 'forged');
+    const malformed = writeFallback(fallback, 'malformed');
+    writeFile(join(malformed.path, MANIFEST_NAME), '{not-json\n');
+    const modified = writeFallback(fallback, 'modified');
+    writeFile(join(modified.path, 'SKILL.md'), '# edited\n');
+    writeFile(join(fallback, 'unmanaged', 'SKILL.md'), '# unmanaged\n');
+    symlinkSync('/definitely/missing', join(fallback, 'dangling'));
+    const target = join(fixture.root, 'cross-target', 'renamed');
+    cpSync(join(shippedSkills, 'architecture'), target, { recursive: true });
+    const before = readFileSync(join(forged.path, MANIFEST_NAME));
+
+    const plan = planCodexFallbackRetirement({
+      fallbackSkillsDir: fallback,
+      skillNames: ['renamed', 'forged', 'malformed', 'modified', 'unmanaged', 'dangling'],
+      verifiedTargets: [verifiedTarget('architecture', target, computeDirDigest(target))],
+    });
+    expect(plan.accepted).toEqual([]);
+    expect(Object.fromEntries(plan.preserved.map((entry) => [entry.skillName, entry.reason]))).toEqual({
+      dangling: 'symlink',
+      forged: 'ambiguous-ownership',
+      malformed: 'malformed-marker',
+      modified: 'modified-tree',
+      renamed: 'ambiguous-ownership',
+      unmanaged: 'malformed-marker',
+    });
+    expect(readFileSync(join(forged.path, MANIFEST_NAME))).toEqual(before);
+    expect(lstatSync(join(fallback, 'dangling')).isSymbolicLink()).toBe(true);
+  });
+
+  test('rejects unverified or digest-diverged target payloads', () => {
+    const fallback = join(fixture.root, 'fallback');
+    const source = writeFallback(fallback, 'alpha');
+    const target = join(fixture.root, 'target', 'alpha');
+    writeFile(join(target, 'SKILL.md'), '# alpha\n');
+    const targetDigest = computeDirDigest(target);
+    writeFile(join(target, 'changed'), 'changed\n');
+    const unverified = {
+      skillName: 'alpha',
+      path: target,
+      physicalDigest: source.digest,
+      canonicalVerified: false,
+    } as unknown as ReturnType<typeof verifiedTarget>;
+
+    expect(
+      planCodexFallbackRetirement({ fallbackSkillsDir: fallback, skillNames: ['alpha'], verifiedTargets: [unverified] })
+        .accepted,
+    ).toEqual([]);
+    expect(
+      planCodexFallbackRetirement({
+        fallbackSkillsDir: fallback,
+        skillNames: ['alpha'],
+        verifiedTargets: [verifiedTarget('alpha', target, targetDigest)],
+      }).accepted,
+    ).toEqual([]);
+  });
+});
+
+describe('Codex fallback batch retirement', () => {
+  function batchFixture() {
+    const fallback = join(fixture.root, 'batch-fallback');
+    const targetRoot = join(fixture.root, 'batch-target');
+    const alpha = writeFallback(fallback, 'alpha');
+    const beta = writeFallback(fallback, 'beta');
+    writeFile(join(targetRoot, 'alpha', 'SKILL.md'), '# alpha\n');
+    writeFile(join(targetRoot, 'beta', 'SKILL.md'), '# beta\n');
+    const targets = [
+      verifiedTarget('alpha', join(targetRoot, 'alpha'), computeDirDigest(join(targetRoot, 'alpha'))),
+      verifiedTarget('beta', join(targetRoot, 'beta'), computeDirDigest(join(targetRoot, 'beta'))),
+    ];
+    const plan = planCodexFallbackRetirement({
+      fallbackSkillsDir: fallback,
+      skillNames: ['alpha', 'beta'],
+      verifiedTargets: targets,
+    });
+    return { fallback, alpha, beta, plan };
+  }
+
+  for (const failpoint of [
+    'after-journal-durable',
+    'after-move:0',
+    'after-move:1',
+    'after-verification:0',
+    'after-verification:1',
+    'before-commit',
+  ] as const) {
+    test(`restores the complete batch in reverse after ${failpoint}`, () => {
+      const { alpha, beta, plan } = batchFixture();
+      expect(() =>
+        applyCodexFallbackRetirement(plan, {
+          failpoint: (point) => {
+            if (point === failpoint) throw new Error(`stop at ${point}`);
+          },
+        }),
+      ).toThrow(`stop at ${failpoint}`);
+      expect(computeDirDigest(alpha.path)).toBe(alpha.digest);
+      expect(computeDirDigest(beta.path)).toBe(beta.digest);
+      expect(applyCodexFallbackRetirement(plan).status).toBe('committed');
+    });
+  }
+
+  for (const restoreFailpoint of ['after-restore:1', 'after-restore:0'] as const) {
+    test(`${restoreFailpoint} leaves the same transaction recoverable`, () => {
+      const { alpha, beta, plan } = batchFixture();
+      let primaryThrown = false;
+      expect(() =>
+        applyCodexFallbackRetirement(plan, {
+          failpoint: (point) => {
+            if (point === 'after-move:1') primaryThrown = true;
+            if (point === 'after-move:1' || (primaryThrown && point === restoreFailpoint)) {
+              throw new Error(`stop ${point}`);
+            }
+          },
+        }),
+      ).toThrow('fallback retirement restore failed');
+      expect(applyCodexFallbackRetirement(plan).status).toBe('committed');
+      expect(existsSync(alpha.path)).toBe(false);
+      expect(existsSync(beta.path)).toBe(false);
+    });
+  }
+
+  test('a restore conflict preserves both the live conflict and recoverable quarantine', () => {
+    const { alpha, plan } = batchFixture();
+    expect(() =>
+      applyCodexFallbackRetirement(plan, {
+        failpoint: (point) => {
+          if (point === 'after-move:0') {
+            writeFile(join(alpha.path, 'USER.txt'), 'racing user bytes\n');
+            throw new Error('inject restore conflict');
+          }
+        },
+      }),
+    ).toThrow('restore conflict');
+    expect(readFileSync(join(alpha.path, 'USER.txt'), 'utf8')).toBe('racing user bytes\n');
+    expect(
+      existsSync(join(plan.fallbackSkillsDir, '.genie-codex-fallback-retirement', `txn-${plan.transactionId}`)),
+    ).toBe(true);
+  });
+
+  test('commits only after destination verification and retry retains one transaction', () => {
+    const { fallback, plan } = batchFixture();
+    expect(() =>
+      applyCodexFallbackRetirement(plan, {
+        failpoint: (point) => {
+          if (point === 'after-commit-durable') throw new Error('crash after commit');
+        },
+      }),
+    ).toThrow('crash after commit');
+    const retry = applyCodexFallbackRetirement(plan);
+    expect(retry.status).toBe('already-committed');
+    expect(readdirSync(join(fallback, '.genie-codex-fallback-retirement'))).toEqual([`txn-${plan.transactionId}`]);
+    expect(existsSync(join(retry.transactionDir, 'journal.json'))).toBe(true);
+    expect(readdirSync(join(retry.transactionDir, 'quarantine')).sort()).toEqual(['alpha', 'beta']);
+  });
+
+  test('active sync remains unwired and preserves the dangling legacy symlink behavior', () => {
+    present(fixture.codexDir);
+    const dangling = join(fixture.agentsSkillsDir, 'alpha');
+    mkdirSync(dirname(dangling), { recursive: true });
+    symlinkSync('/definitely/missing', dangling);
+    const report = agentReport(run(), 'codex');
+    expect(skillAction(report, 'alpha')).toBe('skipped-unmanaged-kept');
+    expect(lstatSync(dangling).isSymbolicLink()).toBe(true);
+    expect(existsSync(join(fixture.agentsSkillsDir, '.genie-codex-fallback-retirement'))).toBe(false);
+  });
+});
+
+describe('Codex fallback allowlist generator', () => {
+  test('requires a canonically verified complete release skills digest', () => {
+    const payloadRoot = join(fixture.root, 'release');
+    writeFile(join(payloadRoot, 'skills', 'alpha', 'SKILL.md'), '# alpha\n');
+    const skillsDigest = computeDirDigest(join(payloadRoot, 'skills'));
+    expect(() =>
+      generateCodexFallbackAllowlist({
+        payloadRoot,
+        markerVersion: 'release-v1',
+        verifiedSkillsDigest: skillsDigest,
+        canonicalVerified: false,
+      } as unknown as Parameters<typeof generateCodexFallbackAllowlist>[0]),
+    ).toThrow('release payload is not canonically verified');
+    expect(() =>
+      generateCodexFallbackAllowlist({
+        payloadRoot,
+        markerVersion: 'release-v1',
+        verifiedSkillsDigest: '0'.repeat(64),
+        canonicalVerified: true,
+      }),
+    ).toThrow('verified release payload digest mismatch');
+    expect(
+      generateCodexFallbackAllowlist({
+        payloadRoot,
+        markerVersion: 'release-v1',
+        verifiedSkillsDigest: skillsDigest,
+        canonicalVerified: true,
+      }),
+    ).toEqual([
+      {
+        markerVersion: 'release-v1',
+        skillName: 'alpha',
+        physicalDigest: computeDirDigest(join(payloadRoot, 'skills', 'alpha')),
+      },
+    ]);
   });
 });
