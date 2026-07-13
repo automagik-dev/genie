@@ -2,6 +2,7 @@ import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import {
+  chmodSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -14,7 +15,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { computeDirDigest } from '../lib/agent-sync.js';
 import { reconcileCodexProjectMcp, resolveGitProjectRoots } from '../lib/codex-project-mcp.js';
 import {
@@ -688,6 +689,9 @@ describe('checkAgentSync', () => {
       codexDir,
       agentsSkillsDir,
       hermesHome,
+      // Disable the best-effort `hermes plugins list` enable probe by default so no
+      // test ever spawns a real process; probe-specific tests inject a reader.
+      hermesBinary: null as string | null,
       settingsPath: join(claudeDir, 'settings.json'),
     };
   }
@@ -821,5 +825,166 @@ describe('checkAgentSync', () => {
     );
     mkt = find(checkAgentSync(paths()), 'agent sync: marketplace plugin');
     expect(mkt).toBeUndefined();
+  });
+
+  // -------------------------------------------------------------------------
+  // Hermes per-leg health: link / mcp / skills / enable probe — independent
+  // -------------------------------------------------------------------------
+
+  /** The product-skills root doctor resolves in this fixture (plugin mirror). */
+  function productSkillsRoot(): string {
+    return join(pluginRoot, 'skills');
+  }
+
+  function presentHermes(): void {
+    mkdirSync(join(hermesHome, 'plugins'), { recursive: true });
+    symlinkSync(join(genieHome, 'plugins', 'hermes-genie'), join(hermesHome, 'plugins', 'genie'));
+  }
+
+  function writeHermesConfig(text: string): void {
+    mkdirSync(hermesHome, { recursive: true });
+    writeFileSync(join(hermesHome, 'config.yaml'), text, 'utf8');
+  }
+
+  /** An absolute, executable fake genie binary for the MCP command check. */
+  function presentGenieBinary(): string {
+    const bin = join(tmp, 'bin', 'genie');
+    mkdirSync(dirname(bin), { recursive: true });
+    writeFileSync(bin, '#!/usr/bin/env bun\n', { mode: 0o755 });
+    chmodSync(bin, 0o755);
+    return bin;
+  }
+
+  const mcpConfig = (command: string) =>
+    `mcp_servers:\n  genie:\n    command: ${JSON.stringify(command)}\n    args:\n      - mcp\n`;
+  const skillsConfig = (dir: string) => `skills:\n  external_dirs:\n    - ${JSON.stringify(dir)}\n`;
+
+  test('hermes mcp leg: absolute executable command → pass; each unhealthy shape → warn', () => {
+    presentHermes();
+    const bin = presentGenieBinary();
+
+    writeHermesConfig(mcpConfig(bin));
+    let mcp = find(checkAgentSync(paths()), 'agent sync: hermes mcp');
+    expect(mcp?.status).toBe('pass');
+    expect(mcp?.detail).toContain(bin);
+
+    // Relative command → warn.
+    writeHermesConfig(mcpConfig('genie'));
+    mcp = find(checkAgentSync(paths()), 'agent sync: hermes mcp');
+    expect(mcp?.status).toBe('warn');
+    expect(mcp?.detail).toContain('not absolute');
+
+    // Absolute but non-existent/non-executable → warn.
+    writeHermesConfig(mcpConfig(join(tmp, 'bin', 'nope')));
+    mcp = find(checkAgentSync(paths()), 'agent sync: hermes mcp');
+    expect(mcp?.status).toBe('warn');
+    expect(mcp?.detail).toContain('not executable');
+
+    // Config absent entirely → warn advising genie update.
+    rmSync(join(hermesHome, 'config.yaml'), { force: true });
+    mcp = find(checkAgentSync(paths()), 'agent sync: hermes mcp');
+    expect(mcp?.status).toBe('warn');
+    expect(mcp?.detail).toContain('config.yaml absent');
+    expect(mcp?.suggestion).toContain('genie update');
+  });
+
+  test('hermes skills leg: external_dirs contains the product root → pass', () => {
+    presentHermes();
+    writeHermesConfig(skillsConfig(productSkillsRoot()));
+    const skills = find(checkAgentSync(paths()), 'agent sync: hermes skills');
+    expect(skills?.status).toBe('pass');
+    expect(skills?.detail).toContain(productSkillsRoot());
+  });
+
+  test('hermes skills leg: managed-copy fallback count ≥ product count → pass', () => {
+    presentHermes();
+    // No external_dirs entry; instead seed a managed copy under <configHome>/skills
+    // with at least as many SKILL.md dirs as the product source (wish + review = 2).
+    writeHermesConfig('other: {}\n');
+    for (const name of ['wish', 'review']) {
+      mkdirSync(join(hermesHome, 'skills', name), { recursive: true });
+      writeFileSync(join(hermesHome, 'skills', name, 'SKILL.md'), `# ${name}\n`, 'utf8');
+    }
+    const skills = find(checkAgentSync(paths()), 'agent sync: hermes skills');
+    expect(skills?.status).toBe('pass');
+    expect(skills?.detail).toContain('managed copy 2/2');
+  });
+
+  test('hermes skills leg: neither external_dirs nor a full managed copy → warn', () => {
+    presentHermes();
+    writeHermesConfig('other: {}\n');
+    const skills = find(checkAgentSync(paths()), 'agent sync: hermes skills');
+    expect(skills?.status).toBe('warn');
+    expect(skills?.suggestion).toContain('genie update');
+  });
+
+  test('hermes legs are independent: healthy MCP + unhealthy skills', () => {
+    presentHermes();
+    const bin = presentGenieBinary();
+    // MCP block healthy, skills block absent → mcp pass, skills warn.
+    writeHermesConfig(mcpConfig(bin));
+    const results = checkAgentSync(paths());
+    expect(find(results, 'agent sync: hermes mcp')?.status).toBe('pass');
+    expect(find(results, 'agent sync: hermes skills')?.status).toBe('warn');
+    // The link leg stays independently healthy.
+    expect(find(results, 'agent sync: hermes')?.status).toBe('pass');
+  });
+
+  test('hermes inline top-level mcp_servers → WARN (never FAIL) with block-mapping hint', () => {
+    presentHermes();
+    writeHermesConfig(`mcp_servers: {}\nskills:\n  external_dirs:\n    - ${JSON.stringify(productSkillsRoot())}\n`);
+    const results = checkAgentSync(paths());
+    const mcp = find(results, 'agent sync: hermes mcp');
+    expect(mcp?.status).toBe('warn');
+    expect(mcp?.detail).toContain('inline value');
+    expect(mcp?.suggestion).toContain('block mapping');
+    // The skills leg (block-shaped) still evaluates healthy — inline is per-leg.
+    expect(find(results, 'agent sync: hermes skills')?.status).toBe('pass');
+    // No hermes check is ever a hard failure.
+    expect(results.filter((r) => r.name.startsWith('agent sync: hermes')).every((r) => r.status !== 'fail')).toBe(true);
+  });
+
+  test('hermes inline top-level skills → WARN with block-mapping hint', () => {
+    presentHermes();
+    writeHermesConfig('skills: {}\n');
+    const skills = find(checkAgentSync(paths()), 'agent sync: hermes skills');
+    expect(skills?.status).toBe('warn');
+    expect(skills?.detail).toContain('inline value');
+    expect(skills?.suggestion).toContain('block mapping');
+  });
+
+  test('hermes enable probe: enabled → pass, disabled → warn, CLI absent → no check emitted', () => {
+    presentHermes();
+    const base = paths();
+
+    let hermes = checkAgentSync({
+      ...base,
+      hermesBinary: '/fake/hermes',
+      hermesPluginsList: () => 'genie   enabled\n',
+    });
+    expect(find(hermes, 'agent sync: hermes plugin enabled')?.status).toBe('pass');
+
+    hermes = checkAgentSync({ ...base, hermesBinary: '/fake/hermes', hermesPluginsList: () => 'genie   disabled\n' });
+    const disabled = find(hermes, 'agent sync: hermes plugin enabled');
+    expect(disabled?.status).toBe('warn');
+    expect(disabled?.detail).toContain('not enabled');
+
+    // CLI absent (binary null) → probe is skipped silently, no check line.
+    hermes = checkAgentSync({ ...base, hermesBinary: null });
+    expect(find(hermes, 'agent sync: hermes plugin enabled')).toBeUndefined();
+  });
+
+  test('hermes enable probe: a throwing CLI is best-effort, never a failure', () => {
+    presentHermes();
+    const hermes = checkAgentSync({
+      ...paths(),
+      hermesBinary: '/fake/hermes',
+      hermesPluginsList: () => {
+        throw new Error('hermes wedged');
+      },
+    });
+    const probe = find(hermes, 'agent sync: hermes plugin enabled');
+    expect(probe?.status).toBe('pass');
+    expect(probe?.detail).toContain('unknown');
   });
 });

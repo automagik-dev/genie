@@ -15,6 +15,37 @@ Wish: `wish/tui-native-selection`.
 
 ## Unreleased
 
+### Hermes homogeneous integration
+
+Genie now integrates with Hermes the same way it does with Claude and Codex —
+one canonical source, converged by `genie install`/`genie update` (wish:
+`hermes-homogeneous-integration`).
+
+- **Skills via `external_dirs`.** The product skills root is registered into the
+  live Hermes profile's `config.yaml` under `skills.external_dirs` — idempotent,
+  backup-first, byte-preserving text surgery — instead of shipping a divergent
+  in-plugin skill set. A digest-managed copy fallback covers older Hermes builds
+  without external-dir support.
+- **MCP config convergence.** `mcp_servers.genie` is merged into the same
+  `config.yaml` idempotently and backup-first, pointing at the absolute installed
+  `genie` binary; unrelated operator config (other servers, comments, formatting)
+  is never touched.
+- **`pre_llm_call` bounded context.** The advisory hook set moved from
+  `post_tool_call` to `pre_llm_call`, injecting bounded read-only Genie state
+  (never a blocking directive) at the point it can actually steer a turn.
+- **Slimmed native tools.** The default Hermes tool surface is the three gap
+  tools the MCP board does not cover (`genie_status`, `genie_work_plan`,
+  `genie_review_plan`); the legacy board/task duplicates register only behind
+  `GENIE_HERMES_LEGACY_TOOLS=1` for one transition release.
+- **khaw-bridge removed.** The `genie-khaw-bridge` skill left the payload;
+  that ownership now lives with the KHAW plugin.
+- **Version alignment.** The Hermes `plugin.yaml` version tracks the genie
+  release version, and `genie doctor` verifies the match.
+- **agent-sync + doctor depth.** agent-sync converges the Hermes plugin link,
+  MCP leg, and skills leg (each independently non-fatal); `genie doctor` grew
+  per-leg Hermes health checks — link, MCP command absolute+executable, skills
+  external-dir-or-managed-copy, and a best-effort enable probe.
+
 ### Skipped
 
 - **v4.260510.5 (skipped):** build artifacts existed (run 25619912030) but never received a signed release due to GITHUB_TOKEN workflow_run anti-recursion blocker; superseded by v4.260510.6 via the new release.yml workflow_call orchestrator (wish: release-pipeline-collapse).

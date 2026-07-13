@@ -1,8 +1,9 @@
 """Advisory hooks nudging Hermes sessions toward structured Genie state.
 
-Every handler is advisory-only: it may attach a message or advice, never a
-blocking directive, and always reports mutation "none". Events are accepted
-as mappings or attribute objects; a missing event degrades to a no-op.
+Every handler is advisory-only: it may attach a message, advice, or bounded
+read-only context, never a blocking directive, and always reports mutation
+"none" (or ``None`` for no injection). Events are accepted as mappings or
+attribute objects; a missing event degrades to a no-op.
 """
 
 from __future__ import annotations
@@ -10,13 +11,25 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+try:  # package import (Hermes loads plugins as packages)
+    from .session_context import pre_llm_call
+except ImportError:  # flat import (module loaded from a file location)
+    import sys
+
+    _HERE = str(Path(__file__).resolve().parent)
+    if _HERE not in sys.path:
+        sys.path.insert(0, _HERE)
+    from session_context import pre_llm_call  # type: ignore[no-redef]
+
+__all__ = ["on_session_start", "pre_tool_call", "pre_llm_call"]
+
 _SESSION_REMINDER = (
     "Genie state detected in this workspace. Prefer the structured Genie tools "
-    "(genie_status, genie_board, genie_task_list) over terminal scraping."
+    "(genie_status, genie_board, genie_task) over terminal scraping."
 )
 _STRUCTURED_ADVICE = (
     "This command looks like terminal scraping or sleep-polling of Genie workers. "
-    "Prefer the structured Genie tools (genie_status, genie_board, genie_task_list, "
+    "Prefer the structured Genie tools (genie_status, genie_board, genie_task, "
     "genie_wish_status) — they return the same truth with provenance."
 )
 
@@ -50,9 +63,4 @@ def pre_tool_call(event: Any = None, **kwargs: Any) -> dict[str, Any]:
         text = str(raw)
     if "tmux capture-pane" in text or ("sleep " in text and "genie" in text):
         return {"advice": _STRUCTURED_ADVICE, "mutation": "none"}
-    return {"mutation": "none"}
-
-
-def post_tool_call(event: Any = None, **kwargs: Any) -> dict[str, Any]:
-    """Pass through unchanged; evidence-footer normalization is deferred past MVP."""
     return {"mutation": "none"}
