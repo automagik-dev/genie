@@ -2557,6 +2557,29 @@ describe('Codex fallback batch retirement', () => {
     expect(computeDirDigest(alpha.path)).toBe(alpha.digest);
   });
 
+  test('rejects a quarantine replaced by a symlink with zero outside writes or moves', () => {
+    const { alpha, plan } = batchFixture();
+    const outside = join(fixture.root, 'outside-quarantine');
+    mkdirSync(outside, { recursive: true });
+    expect(() =>
+      applyCodexFallbackRetirement(plan, {
+        failpoint: (point) => {
+          if (point !== 'after-journal-durable') return;
+          const quarantine = join(
+            plan.fallbackSkillsDir,
+            '.genie-codex-fallback-retirement',
+            `txn-${plan.transactionId}`,
+            'quarantine',
+          );
+          rmSync(quarantine, { recursive: true });
+          symlinkSync(outside, quarantine);
+        },
+      }),
+    ).toThrow('canonical physical directory');
+    expect(readdirSync(outside)).toEqual([]);
+    expect(computeDirDigest(alpha.path)).toBe(alpha.digest);
+  });
+
   test('rejects an unconstrained journal destination before recovery mutation', () => {
     const { alpha, plan } = batchFixture();
     let stopped = false;
@@ -2670,6 +2693,33 @@ describe('Codex fallback batch retirement', () => {
     });
   }
 
+  for (const restoreFailpoint of [
+    'after-restore-staging-create:0',
+    'after-restore-copy:0:0',
+    'after-restore-verification:0',
+    'after-restore-sync:0',
+    'before-restore-publication:0',
+    'after-restore-filesystem:0',
+    'before-restore-cleanup:0',
+  ] as const) {
+    test(`interrupted staged restoration is recoverable at ${restoreFailpoint}`, () => {
+      const { plan } = batchFixture();
+      let restoring = false;
+      expect(() =>
+        applyCodexFallbackRetirement(plan, {
+          failpoint: (point) => {
+            if (point === 'after-move:0') {
+              restoring = true;
+              throw new Error('start recovery');
+            }
+            if (restoring && point === restoreFailpoint) throw new Error(`stop ${point}`);
+          },
+        }),
+      ).toThrow('fallback retirement restore failed');
+      expect(applyCodexFallbackRetirement(plan).status).toBe('committed');
+    });
+  }
+
   test('a restore conflict preserves both the live conflict and recoverable quarantine', () => {
     const { alpha, plan } = batchFixture();
     expect(() =>
@@ -2688,6 +2738,26 @@ describe('Codex fallback batch retirement', () => {
     ).toBe(true);
   });
 
+  test('a conflict created at staged restore publication is never clobbered', () => {
+    const { alpha, plan } = batchFixture();
+    let restoring = false;
+    expect(() =>
+      applyCodexFallbackRetirement(plan, {
+        failpoint: (point) => {
+          if (point === 'after-move:0') {
+            restoring = true;
+            throw new Error('start recovery');
+          }
+          if (restoring && point === 'before-restore-publication:0') {
+            writeFile(join(alpha.path, 'USER.txt'), 'publication racer\n');
+          }
+        },
+      }),
+    ).toThrow('restore conflict');
+    expect(readFileSync(join(alpha.path, 'USER.txt'), 'utf8')).toBe('publication racer\n');
+    expect(existsSync(join(plan.fallbackSkillsDir, '.genie-codex-fallback-retirement'))).toBe(true);
+  });
+
   test('commits only after destination verification and retry retains one transaction', () => {
     const { fallback, plan } = batchFixture();
     expect(() =>
@@ -2702,6 +2772,30 @@ describe('Codex fallback batch retirement', () => {
     expect(readdirSync(join(fallback, '.genie-codex-fallback-retirement'))).toEqual([`txn-${plan.transactionId}`]);
     expect(existsSync(join(retry.transactionDir, 'journal.json'))).toBe(true);
     expect(readdirSync(join(retry.transactionDir, 'quarantine')).sort()).toEqual(['alpha', 'beta']);
+  });
+
+  test('an exact managed resurrection is retired into one distinct committed generation', () => {
+    const { fallback, plan } = batchFixture();
+    const first = applyCodexFallbackRetirement(plan);
+    cpSync(join(first.transactionDir, 'quarantine', 'alpha'), join(fallback, 'alpha'), { recursive: true });
+    const second = applyCodexFallbackRetirement(plan);
+    expect(second.status).toBe('committed');
+    expect(second.transactionId).not.toBe(first.transactionId);
+    expect(existsSync(join(fallback, 'alpha'))).toBe(false);
+    const transactions = readdirSync(join(fallback, '.genie-codex-fallback-retirement')).sort();
+    expect(transactions).toHaveLength(2);
+    expect(applyCodexFallbackRetirement(plan).status).toBe('already-committed');
+    expect(readdirSync(join(fallback, '.genie-codex-fallback-retirement')).sort()).toEqual(transactions);
+  });
+
+  test('a modified or personal resurrection is preserved without creating a generation', () => {
+    const { fallback, plan } = batchFixture();
+    const first = applyCodexFallbackRetirement(plan);
+    cpSync(join(first.transactionDir, 'quarantine', 'alpha'), join(fallback, 'alpha'), { recursive: true });
+    writeFile(join(fallback, 'alpha', 'USER.txt'), 'personal\n');
+    expect(applyCodexFallbackRetirement(plan).status).toBe('already-committed');
+    expect(readFileSync(join(fallback, 'alpha', 'USER.txt'), 'utf8')).toBe('personal\n');
+    expect(readdirSync(join(fallback, '.genie-codex-fallback-retirement'))).toHaveLength(1);
   });
 
   test('active sync remains unwired and preserves the dangling legacy symlink behavior', () => {
