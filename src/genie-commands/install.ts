@@ -141,25 +141,42 @@ export function installCommand(
         throw new Error(`Install payload convergence failed: ${failed.map((outcome) => outcome.label).join(', ')}`);
       }
     }
-    if (selection !== 'none') runSync(selection);
-
+    // Codex is now converged end-to-end (plugin → single health proof →
+    // fallback retirement → role agents) through runIntegrations; agent-sync is
+    // scoped to Claude only so it never re-writes Genie product skills into
+    // ~/.agents/skills (R2). Integrations run BEFORE the Claude skill sync so a
+    // plugin-incapable Codex leaves Claude trees byte-identical (R1/A2).
     const results = runIntegrations({ selection });
     for (const result of results) {
       const glyph = result.ok ? '\x1b[32m+\x1b[0m' : '\x1b[33m!\x1b[0m';
       const disabled = result.preservedDisabled ? '; disabled state preserved' : '';
       console.log(`  ${glyph} ${result.runtime}: ${result.detail}${disabled}`);
     }
+    const codexFailed = results.some((result) => result.runtime === 'codex' && !result.ok);
     if (selection !== 'auto' && selection !== 'none') {
       const failed = results.filter((result) => !result.ok);
       if (failed.length > 0)
         throw new Error(`Requested integration failed: ${failed.map((r) => r.runtime).join(', ')}`);
     }
+    const agentSyncSelection = narrowAgentSyncSelection(selection);
+    if (agentSyncSelection !== null && !codexFailed) runSync(agentSyncSelection);
     if (results.some((result) => result.runtime === 'codex' && result.ok && result.hookReviewRequired)) {
       console.log('  \x1b[33m!\x1b[0m Review Genie hooks with /hooks, then start a new Codex task.');
     }
   } finally {
     lease.release();
   }
+}
+
+/**
+ * Narrow a client selection to the agent-sync scope. Codex product skills now
+ * live only in the plugin, so agent-sync (the sole ~/.agents/skills writer via
+ * syncCodex) must never run for codex: `auto`/`all`/`claude` sync Claude only,
+ * and `codex`/`none` skip agent-sync entirely (R2/A1). runIntegrations keeps the
+ * full selection so codex still converges through installCodexIntegration.
+ */
+export function narrowAgentSyncSelection(selection: IntegrationSelection): 'claude' | null {
+  return selection === 'auto' || selection === 'all' || selection === 'claude' ? 'claude' : null;
 }
 
 /** Validate raw Commander input before cleanup, synchronization, or install side effects. */

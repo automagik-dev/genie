@@ -77,7 +77,7 @@ describe('setup runtime and failure semantics', () => {
   });
 
   function deps(ok = true, preservedDisabled = false, hookReviewRequired = false): SetupDeps {
-    return {
+    const d: SetupDeps = {
       cwd: join(root, 'repo'),
       resolveExecutable: () => '/fixture/bin/codex',
       validateExecutable: (_name, path) => path,
@@ -93,16 +93,22 @@ describe('setup runtime and failure semantics', () => {
         usabilityDetail: preservedDisabled ? 'installed plugin remains disabled' : 'fixture launcher usable',
         detail: preservedDisabled ? 'installed plugin remains disabled' : 'fixture launcher usable',
       }),
+      // The real installRuntimeIntegrations converges + probes ONCE internally and
+      // surfaces that single snapshot on the codex result (R1/A5). The mock mirrors
+      // that: it invokes the (possibly test-overridden) probe once and threads the
+      // snapshot so repairCodexIntegration never re-probes.
       installRuntimeIntegrations: (() => [
         {
-          runtime: 'codex',
+          runtime: 'codex' as const,
           ok,
           detail: ok ? 'fixture integration installed' : 'fixture integration failed',
           preservedDisabled,
           hookReviewRequired,
+          snapshot: ok ? d.probeCodexGeniePlugin?.() : undefined,
         },
       ]) as SetupDeps['installRuntimeIntegrations'],
     };
+    return d;
   }
 
   test('sectional setup preserves an explicit Claude choice', async () => {

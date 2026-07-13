@@ -422,27 +422,41 @@ describe('installCommand', () => {
     expect(selection).toBe('none');
   });
 
-  test('selection bounds agent-sync homes and none performs no client sync', () => {
+  test('agent-sync is Claude-scoped: codex and none never invoke it; auto/all/claude sync Claude only', () => {
+    const observed: string[] = [];
+    const runFor = (integrations: 'codex' | 'none' | 'auto' | 'all' | 'claude') =>
+      installCommand(
+        { integrations },
+        makeCleanupSpy().runner,
+        () => undefined,
+        (selection) => observed.push(selection),
+        () => [],
+        noopLease,
+        noopConsent,
+      );
+    // codex converges through runIntegrations only — agent-sync (the sole
+    // ~/.agents/skills writer) must never run for codex (R2/A1).
+    runFor('codex');
+    runFor('none');
+    expect(observed).toEqual([]);
+    runFor('auto');
+    runFor('all');
+    runFor('claude');
+    expect(observed).toEqual(['claude', 'claude', 'claude']);
+  });
+
+  test('a failed codex integration gates the Claude skill sync so Claude trees stay byte-identical (A2)', () => {
     const observed: string[] = [];
     installCommand(
-      { integrations: 'codex' },
+      { integrations: 'auto' },
       makeCleanupSpy().runner,
       () => undefined,
       (selection) => observed.push(selection),
-      () => [],
+      () => [{ runtime: 'codex' as const, ok: false, detail: 'plugin-incapable Codex' }],
       noopLease,
       noopConsent,
     );
-    installCommand(
-      { integrations: 'none' },
-      makeCleanupSpy().runner,
-      () => undefined,
-      (selection) => observed.push(selection),
-      () => [],
-      noopLease,
-      noopConsent,
-    );
-    expect(observed).toEqual(['codex']);
+    expect(observed).toEqual([]);
   });
 
   test('explicit integration failures are fatal while auto failures warn', () => {
