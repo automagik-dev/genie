@@ -317,6 +317,30 @@ describe('fresh-install-smoke', () => {
     }
   });
 
+  test('rejects a Claude manifest whose MCP entry is not plugin-root-anchored', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-plugin-claude-mcp-fixture-'));
+    try {
+      const pluginRoot = join(root, 'plugin');
+      cpSync(join(REPO_ROOT, 'plugins', 'genie'), pluginRoot, {
+        recursive: true,
+        dereference: false,
+        verbatimSymlinks: true,
+      });
+      const manifestPath = join(pluginRoot, '.claude-plugin', 'plugin.json');
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
+      manifest.mcpServers = {
+        genie: { command: 'node', args: ['./scripts/mcp-launcher.cjs'], cwd: '.' },
+      };
+      writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+
+      const result = runSmoke(['--skills-dir', join(REPO_ROOT, 'skills'), '--plugin-root', pluginRoot]);
+      expect(result.code).not.toBe(0);
+      expect(result.stderr).toContain('${CLAUDE_PLUGIN_ROOT}/scripts/mcp-launcher.cjs');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   for (const fixture of [
     {
       label: 'renamed Codex role profile',
