@@ -25,11 +25,11 @@ __all__ = ["on_session_start", "pre_tool_call", "pre_llm_call"]
 
 _SESSION_REMINDER = (
     "Genie state detected in this workspace. Prefer the structured Genie tools "
-    "(genie_status, genie_board, genie_task_list) over terminal scraping."
+    "(genie_status, genie_board, genie_task) over terminal scraping."
 )
 _STRUCTURED_ADVICE = (
     "This command looks like terminal scraping or sleep-polling of Genie workers. "
-    "Prefer the structured Genie tools (genie_status, genie_board, genie_task_list, "
+    "Prefer the structured Genie tools (genie_status, genie_board, genie_task, "
     "genie_wish_status) — they return the same truth with provenance."
 )
 
