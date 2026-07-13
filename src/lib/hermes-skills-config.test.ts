@@ -225,6 +225,92 @@ describe('mergeSkillsExternalDir', () => {
     // Exactly one managed entry — old genie root replaced, not accumulated.
     expect(parsed.skills.external_dirs).toEqual([newRoot]);
   });
+
+  // Nested inline child inside a block-style `skills:` — the real isit profile shape.
+  // An inline empty `external_dirs: []` child must be merged IN PLACE (replaced with
+  // the managed block), never appended as a second `external_dirs` key.
+  test('isit shape: inline empty external_dirs child merged in place → exactly one key, siblings byte-identical', () => {
+    const root = tmp();
+    const skillsRoot = makeSkillsRoot(join(root, 'skills'));
+    const configPath = join(root, 'config.yaml');
+    const original =
+      'skills:\n' +
+      '  external_dirs: []\n' +
+      '  template_vars: true\n' +
+      '  inline_shell: false\n' +
+      '  inline_shell_timeout: 10\n';
+    writeFileSync(configPath, original);
+
+    const result = mergeSkillsExternalDir({ configPath, skillsRoot, now: new Date('2026-07-13T00:00:00Z') });
+    expect(result.status).toBe('updated');
+    expect(result.backupPath).toBeDefined();
+    expect(readFileSync(result.backupPath as string, 'utf8')).toBe(original);
+
+    const text = readFileSync(configPath, 'utf8');
+    // Exactly ONE external_dirs key inside the skills mapping (no spec-invalid duplicate).
+    expect(text.match(/external_dirs:/g)?.length).toBe(1);
+    // Siblings preserved byte-for-byte.
+    expect(text).toContain('  template_vars: true\n');
+    expect(text).toContain('  inline_shell: false\n');
+    expect(text).toContain('  inline_shell_timeout: 10\n');
+
+    const parsed = Bun.YAML.parse(text) as {
+      skills: {
+        external_dirs: string[];
+        template_vars: boolean;
+        inline_shell: boolean;
+        inline_shell_timeout: number;
+      };
+    };
+    expect(parsed.skills.external_dirs).toEqual([skillsRoot]);
+    expect(parsed.skills.template_vars).toBe(true);
+    expect(parsed.skills.inline_shell).toBe(false);
+    expect(parsed.skills.inline_shell_timeout).toBe(10);
+  });
+
+  test('inline NON-empty external_dirs child → typed refusal, file + backup untouched', () => {
+    const root = tmp();
+    const skillsRoot = makeSkillsRoot(join(root, 'skills'));
+    const configPath = join(root, 'config.yaml');
+    const original = 'skills:\n  external_dirs: [/home/u/mine]\n  template_vars: true\n';
+    writeFileSync(configPath, original);
+
+    expect(() => mergeSkillsExternalDir({ configPath, skillsRoot })).toThrow(HermesConfigError);
+    // The user's inline entry is never deleted: the file is left byte-for-byte.
+    expect(readFileSync(configPath, 'utf8')).toBe(original);
+    expect(hasBackup(root)).toBe(false);
+  });
+
+  test('the inline non-empty nested refusal carries the distinct inline-nested-key code', () => {
+    const root = tmp();
+    const skillsRoot = makeSkillsRoot(join(root, 'skills'));
+    const configPath = join(root, 'config.yaml');
+    writeFileSync(configPath, 'skills:\n  external_dirs: [/home/u/mine]\n');
+
+    try {
+      mergeSkillsExternalDir({ configPath, skillsRoot });
+      throw new Error('expected a HermesConfigError to be thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(HermesConfigError);
+      expect((err as HermesConfigError).code).toBe('inline-nested-key');
+    }
+  });
+
+  test('isit shape merge is idempotent: second run is unchanged', () => {
+    const root = tmp();
+    const skillsRoot = makeSkillsRoot(join(root, 'skills'));
+    const configPath = join(root, 'config.yaml');
+    const original = 'skills:\n  external_dirs: []\n  template_vars: true\n';
+    writeFileSync(configPath, original);
+
+    const first = mergeSkillsExternalDir({ configPath, skillsRoot });
+    expect(first.status).toBe('updated');
+    const afterFirst = readFileSync(configPath, 'utf8');
+
+    const second = mergeSkillsExternalDir({ configPath, skillsRoot });
+    expect(second.status).toBe('unchanged');
+    expect(readFileSync(configPath, 'utf8')).toBe(afterFirst);
+  });
 });
 
 describe('copyProductSkillsDigestManaged (older-Hermes fallback)', () => {
