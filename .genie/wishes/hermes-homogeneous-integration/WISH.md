@@ -300,6 +300,15 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - **Gaps (all LOW, provenance-metadata only):** baseline.md header records base commit `a191224`/branch `wish/hermes-homogeneous-integration` while the worktree actually forked from `c350aef` on `worktree-agent-a335b967e6666af59`; captured evidence itself verified byte-exact against the live repo (plugin.yaml transcription, agent-sync grep line numbers, host probes). Informational: worktree lacked WISH.md — orchestration concern, resolved by merging into the wish branch.
 - **Substance verified by reviewer:** MCP set = exactly the 5 tools in `src/lib/v5/mcp-tools.ts`; native kept 3 + retired 4 = current 7 in plugin.yaml; 23 real skill dirs; all companion-doc pointers resolve; diff provably docs-only (4 md files, +229/-0).
 
+### Group 3 local+quality review — 2026-07-13T01:35:26Z — SHIP
+
+- **Reviewer:** genie:reviewer/g3-local-review (reviewer ≠ engineer)
+- **Work:** commit `f634460`, merged to wish branch as `e6364fb`; validation re-run by orchestrator: 32 passed (full plugin suite 55 passed per engineer)
+- **Verdict:** SHIP
+- **Gaps:** LOW — `_event_value` duplicated in `session_context.py` and `hooks.py`; deliberate (importing back would create a circular import), accepted as-is.
+- **Substance verified by reviewer:** both caps hard and correctly ordered (≤ 8 lines at collection, ≤ 2 KiB on joined text); 5 s timeout wired and asserted; all failure paths return None (double-guarded); injection surface sound — `status` comes from the trusted column key, `id`/`wish` newline-collapsed so hostile rows cannot inflate line count (regression-tested); `on_session_start`/`pre_tool_call` byte-identical; `post_tool_call` gone from hooks.py and plugin.yaml; contract-test edits hook-only with version/tool/skill/khaw assertions intact; output shape confirmed against the real `board --json` emitter (`src/term-commands/v5-board.ts`), not just mocks.
+- **Carried forward to Group 5:** `references/native-surface.md` still documents `post_tool_call` (doc drift flagged by engineer; that file is a Group 5 deliverable).
+
 ---
 
 ## Files to Create/Modify
