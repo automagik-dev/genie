@@ -319,6 +319,14 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - **Contract handed to Group 4:** treat `code === 'inline-top-level-key'` as a NON-FATAL per-target convergence outcome — report/doctor WARN with the rewrite-as-block-mapping hint, never a thrown failure that blocks `genie update`; plugin-link leg still converges.
 - **Open question 1 resolved:** `$GENIE_HOME/skills` IS a stable populated path (converged by `genie install` `AUX_LAYOUT_DIRS`/`normalizeAuxLayout` and `genie update` `syncAuxiliaryContent`); helper keeps a populated-gated fallback chain for dev checkouts. Recorded in `reports/skills-root-resolution.md`.
 
+### Group 5 local+quality review — 2026-07-13T01:56:18Z — SHIP
+
+- **Reviewer:** genie:reviewer/g5-local-review (reviewer ≠ engineer)
+- **Work:** commits `ee5a0d3` + `8e234f3`, merged to wish branch as `53f328a`; validation re-run by orchestrator: 58 pytest pass, khaw absent from plugin.yaml, version `5.260712.2`
+- **Verdict:** SHIP
+- **Gaps:** LOW — `hooks.py` advisory strings (`_SESSION_REMINDER`/`_STRUCTURED_ADVICE`) still recommend the retired `genie_task_list` (no same-named MCP equivalent; MCP exposes `genie_task`). Non-breaking advisory drift; carried to Group 6 as a one-line cleanup (Group 3's hook tests only assert `genie_board`/`genie_status`, so it's safe).
+- **Substance verified by reviewer (live execution, not summary-trust):** flag gate controls registration both ways (default exactly 3 tools; `=1` restores 7; `true` stays 3 by strict compare); MCP-prefer path degrades to the read-only bridge on any exception with only `str` results short-circuiting; skills dir down to the single `genie/SKILL.md` cockpit pointer which does NOT pretend external_dirs is wired; version.ts YAML write provably byte-preserving with 0/2+-version-line preflight rejects; Group 3 hook assertions untouched; tests strengthened, not weakened; no forbidden paths touched.
+
 ---
 
 ## Files to Create/Modify
