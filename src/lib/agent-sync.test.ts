@@ -2445,6 +2445,34 @@ describe('Codex fallback ownership planning', () => {
     expect(plan.accepted[0]?.ownership).toBe('historical-tuple');
   });
 
+  test('accepts and retires a historical tuple stamped by a later, unlisted release', () => {
+    // Fallback seeding stamps `marker.version` to whatever release happens to
+    // be installed, not the frozen fixture's markerVersion — a pristine tree
+    // seeded by a later, unlisted release (e.g. current stable 5.260713.1)
+    // with byte-identical content must still be recognized and retired.
+    // markerVersion is provenance metadata, never the ownership proof key.
+    const fallback = join(fixture.root, 'historical-version-agnostic');
+    const shippedSkills = frozenHistoricalSkillsRoot('verified-release-version-agnostic');
+    const tuple = historicalCodexFallbackAllowlist[0];
+    if (tuple === undefined) throw new Error('missing historical tuple');
+    const destination = join(fallback, tuple.skillName);
+    cpSync(join(shippedSkills, tuple.skillName), destination, { recursive: true });
+    expect(stampFallback(destination, '5.260713.1')).toBe(tuple.physicalDigest);
+    expect(tuple.markerVersion).not.toBe('5.260713.1');
+
+    const plan = planCodexFallbackRetirement({ fallbackSkillsDir: fallback, skillNames: [tuple.skillName] });
+    expect(plan.preserved).toEqual([]);
+    expect(plan.accepted).toHaveLength(1);
+    expect(plan.accepted[0]?.ownership).toBe('historical-tuple');
+    expect(plan.accepted[0]?.markerVersion).toBe('5.260713.1');
+    expect(plan.accepted[0]?.physicalDigest).toBe(tuple.physicalDigest);
+
+    const result = applyCodexFallbackRetirement(plan);
+    expect(result.status).toBe('committed');
+    expect(result.retired).toEqual([tuple.skillName]);
+    expect(existsSync(destination)).toBe(false);
+  });
+
   test('rejects a symlinked fallback root before planning', () => {
     const physical = join(fixture.root, 'physical-fallback');
     mkdirSync(physical, { recursive: true });
