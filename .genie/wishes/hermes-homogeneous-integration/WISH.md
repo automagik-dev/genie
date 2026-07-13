@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | IN_PROGRESS |
+| **Status** | SHIPPED |
 | **Slug** | `hermes-homogeneous-integration` |
 | **Date** | 2026-07-12 |
 | **Author** | Felipe (felipe@namastex.io) |
@@ -353,6 +353,15 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - **Gaps:** LOW — `hermes-integration-map.md:28` Hooks row has one factually stale cell ("same advisory hooks" / manifest-vs-config MCP wording) vs the shipped `pre_llm_call` set; `native-surface.md` is accurate. One-cell docs polish for the PR, not a hold.
 - **Residual risks for the PR description:** live isit dogfood pending (USER-GATED); 2 pre-existing codex-manifest failures on main need a separate fix; smoke refusal guard covers only canonical home paths (accepted G6 LOW); `_event_value` duplication (accepted G3 LOW); invalid-profile fallback split (intentional, accepted G4 LOW); baseline.md provenance metadata (accepted G1 LOW); `GENIE_HERMES_LEGACY_TOOLS=1` is a one-release transition surface with scheduled removal. Verified closed: G4 round-trip e2e (`dc73026`), G5 advisory drift (`fa51da0`).
 - **Cross-group seams verified sound by construction:** doctor and agent-sync share `resolveHermesConfigPath` + `resolveProductSkillsRoot`; plugin degrades gracefully without an MCP context; retired-tool/hook state consistent across plugin.yaml, `__init__.py`, smoke assertions, and native-surface.md.
+
+### Merge + live QA — 2026-07-13 — SHIPPED
+
+- **Merge:** PR [#2565](https://github.com/automagik-dev/genie/pull/2565) merged to `dev` at `40512016` (operator-authorized); CI green on the merge commit (Commitlint red only on GitHub's auto-generated merge message). Released as `v5.260713.2` (dev channel).
+- **Live dogfood (operator-authorized, real host, isit profile):** PASS — full evidence in [qa/live-dogfood-20260713.md](qa/live-dogfood-20260713.md). All 23 product skills first-class in `hermes skills list`; `mcp_servers.genie` managed block in the live profile config with backup-first writes (+1s offset verified in the wild); all four doctor hermes legs green; Claude/Codex lanes unchanged.
+- **Defects found by dogfood, filed as follow-up tasks (not blocking shipped function):**
+  - D1 MEDIUM — `mergeSkillsExternalDir` appended a second nested `external_dirs` key inside an existing block-style `skills:` with an inline `external_dirs: []` child (works via PyYAML last-wins; spec-invalid duplicate key). Nested-level sibling of the G2-reviewed top-level inline-key class.
+  - D2 MEDIUM — the `[auto-version]` release pipeline bumps only JSON manifests and skips the `scripts/version.ts` YAML sync, so shipped `plugin.yaml` reads `5.260712.2` vs genie `5.260713.2`.
+- **Status transition:** merge + required QA complete → `SHIPPED` (orchestrator).
 
 ---
 
