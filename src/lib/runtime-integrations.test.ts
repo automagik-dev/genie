@@ -2529,6 +2529,7 @@ describe('inspectCodexFallbackTier (shared doctor/uninstall classifier — read-
     expect(report).toEqual({
       cleanFallbacks: [],
       preservedCollisions: [],
+      preservedCollisionClass: {},
       quarantinedTransactions: 0,
       retainedEvidence: [],
     });
@@ -2539,6 +2540,8 @@ describe('inspectCodexFallbackTier (shared doctor/uninstall classifier — read-
     seedManaged('work');
     // Personal edit after sync → managed-modified.
     seedManaged('review', (dir) => writeFileSync(join(dir, 'SKILL.md'), '# personal\n', 'utf8'));
+    // Corrupt marker → corrupt-metadata (malformed-marker).
+    seedManaged('trace', (dir) => writeFileSync(join(dir, '.genie-sync.json'), '{ broken', 'utf8'));
     // Unmanaged personal skill → never counted.
     const mine = join(agentsSkillsDir, 'my-own');
     mkdirSync(mine, { recursive: true });
@@ -2546,7 +2549,9 @@ describe('inspectCodexFallbackTier (shared doctor/uninstall classifier — read-
 
     const report = inspectCodexFallbackTier(agentsSkillsDir);
     expect(report.cleanFallbacks).toEqual(['wish', 'work']);
-    expect(report.preservedCollisions).toEqual(['review']);
+    expect(report.preservedCollisions).toEqual(['review', 'trace']);
+    // Decision 5: each preserved collision carries its classification for doctor.
+    expect(report.preservedCollisionClass).toEqual({ review: 'modified-managed', trace: 'malformed-marker' });
     expect(report.quarantinedTransactions).toBe(0);
   });
 

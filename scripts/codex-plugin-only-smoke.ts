@@ -331,6 +331,20 @@ function stepMixedCollisions(notes: string[]): void {
     ) {
       fail(`collision report is missing preserved personal fixtures: ${collisions.detail}`);
     }
+    // Decision 5: doctor reports name + classification + effective precedence + remediation per collision.
+    if (
+      !collisions.detail.includes(`${personal.names.modifiedManaged} (modified-managed)`) ||
+      !collisions.detail.includes(`${personal.names.malformedMarker} (malformed-marker)`)
+    ) {
+      fail(`collision report is missing per-collision classification: ${collisions.detail}`);
+    }
+    const precedence = collisions.suggestion ?? '';
+    if (
+      !/effective precedence/i.test(precedence) ||
+      !precedence.includes('genie:<name>') ||
+      !precedence.includes('bare `<name>`')
+    )
+      fail(`collision report is missing effective-precedence remediation: ${precedence}`);
     assertRoleAgents(iso, ROLE_AGENT_COUNT);
     assertPluginHealthy(iso, TARGET_VERSION);
 
@@ -385,6 +399,11 @@ function stepRoleAgentHealthFailure(notes: string[]): void {
     corruptInstalledPayload(iso);
     const upd = convergeUpdate(iso);
     if (upd.exitCode === 0) fail('health-failure path unexpectedly succeeded (corrupt payload accepted)');
+    // Pin attribution: the nonzero exit must come from payload/health verification of the
+    // corrupted plugin, not some unrelated convergence failure.
+    const failText = `${upd.stderr}\n${upd.stdout}`;
+    if (!/payload/i.test(failText) || !/(mismatch|differ|canonical|health)/i.test(failText))
+      fail(`health-failure exit not attributed to payload/health verification: ${failText.trim().slice(0, 300)}`);
     const agentsDiff = diffTree(agentsBefore, snapshotNode(join(iso.codexHome, 'agents')));
     if (agentsDiff.length > 0) fail(`role agents changed on the health-failure path: ${agentsDiff.join(' | ')}`);
     const fallbackDiff = diffTree(fallbackBefore, snapshotTree(iso.skillsDir));
@@ -526,14 +545,11 @@ function stepEnvDependentSuites(notes: string[]): void {
     installGenieHome(iso);
     linkRealCodex(iso);
     if (runCli(iso, ['install', '--integrations', 'codex']).exitCode !== 0) fail('C8 home install codex failed');
-    // (1) Run the two env-dependent suites inside the isolated env with real
-    //     codex on PATH; RECORD the outcome but never abort on a pre-existing red.
-    const suites = Bun.spawnSync(
-      ['bun', 'test', 'src/lib/codex-project-mcp.test.ts', 'src/hooks/__tests__/codex-manifest.test.ts'],
-      { cwd: REPO_ROOT, env: iso.env, stdout: 'pipe', stderr: 'pipe' },
-    );
-    const suitesGreen = suites.exitCode === 0;
-    // (2) Black-box equivalents (authoritative per plan):
+    // C8 OR-path: the 2 env-dependent unit suites (codex-project-mcp.test.ts,
+    // codex-manifest.test.ts) build their own fixtures, so running them under
+    // iso.env changes nothing — they stay pre-existing red regardless (documented
+    // in CHANGELOG's "Known non-blocking red gate"). We therefore prove the SAME
+    // criteria black-box against the real installed plugin, which IS authoritative.
     // 2a. Project-MCP reconciliation via `genie init` in the isolated project repo.
     const init = runCli(iso, ['init', '--json']);
     if (init.exitCode !== 0) fail(`genie init failed: ${init.stderr.trim() || init.stdout.trim()}`);
@@ -549,9 +565,59 @@ function stepEnvDependentSuites(notes: string[]): void {
     // 2d. SessionStart hook context emission (covers the codex-manifest criteria).
     assertSessionStartHook(iso, readCodexGeniePlugin(iso).version);
     notes.push(
-      `C8: env-dependent suites ${suitesGreen ? 'GREEN' : 'red (pre-existing, non-blocking)'} in isolation; black-box project-MCP + manifest-shape + MCP-usability + SessionStart authoritative`,
+      'C8: black-box project-MCP + manifest-shape + MCP-usability + SessionStart authoritative (env-dependent unit suites are pre-existing red regardless of iso.env — see CHANGELOG)',
     );
   });
+}
+
+// ============================================================================
+// Step 10 — shipped-doc plugin-only contract (HIGH SKILL.md + MEDIUM recovery)
+// ============================================================================
+
+function readRepoFile(relPath: string): string {
+  return readFileSync(join(REPO_ROOT, relPath), 'utf8');
+}
+
+function stepDocContract(notes: string[]): void {
+  // HIGH: no shipped/source skill card may still promise the retired
+  // "CLI-managed fallback" user tier; each must carry the plugin-only phrasing.
+  let cards = 0;
+  for (const base of ['plugins/genie/skills', 'skills']) {
+    for (const name of readdirSync(join(REPO_ROOT, base))) {
+      const rel = `${base}/${name}/SKILL.md`;
+      if (!existsSync(join(REPO_ROOT, rel))) continue;
+      const body = readRepoFile(rel);
+      if (body.includes('CLI-managed fallback'))
+        fail(`skill card still promises the retired CLI-managed fallback tier: ${rel}`);
+      if (!body.includes('Genie no longer seeds this tier'))
+        fail(`skill card is missing the plugin-only user-tier phrasing: ${rel}`);
+      cards += 1;
+    }
+  }
+  if (cards !== 46) fail(`expected 46 skill cards under both mirrors, checked ${cards}`);
+
+  // MEDIUM: the three contract docs must describe "source changed after planning"
+  // as a pre-move abort (changed copy stays in place; nothing republished/archived),
+  // never as a republish-to-live + evidence/ recovery.
+  const anchor = 'source changed after planning';
+  for (const rel of ['README.md', 'plugins/genie/README.md', 'plugins/genie/references/codex-integration-map.md']) {
+    const body = readRepoFile(rel);
+    if (body.includes('CLI-managed fallback'))
+      fail(`contract doc still promises the retired CLI-managed fallback tier: ${rel}`);
+    const lower = body.toLowerCase();
+    const idx = lower.indexOf(anchor);
+    if (idx < 0) fail(`contract doc is missing the '${anchor}' recovery bullet: ${rel}`);
+    // Scope to this bullet only — the next "changed evidence retained" bullet
+    // legitimately DOES republish-to-live, so it must not leak into the window.
+    const nextBullet = lower.indexOf('changed evidence retained', idx + anchor.length);
+    const bullet = lower.slice(idx, nextBullet > idx ? nextBullet : idx + 320);
+    if (!bullet.includes('stays in place') || !bullet.includes('abort'))
+      fail(`'${anchor}' bullet does not describe a pre-move abort/stays-in-place: ${rel}`);
+    // The retired misdescription claimed the changed tree is republished "to the live path".
+    if (bullet.includes('to the live path'))
+      fail(`'${anchor}' bullet still mis-describes a republish-to-live recovery: ${rel}`);
+  }
+  notes.push('doc-contract: 46 skill cards plugin-only; 3 contract docs describe source-changed abort (no republish)');
 }
 
 // ============================================================================
@@ -572,6 +638,7 @@ function main(): void {
     stepForcedPluginFailure(notes);
     stepMuslNoClobber(notes);
     stepEnvDependentSuites(notes);
+    stepDocContract(notes);
     console.log(`codex-plugin-only-smoke: OK\n  - ${notes.join('\n  - ')}`);
   } catch (error) {
     if (!(error instanceof SmokeFailure)) throw error;

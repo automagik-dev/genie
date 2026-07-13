@@ -134,8 +134,8 @@ A copy is only retired when it is a physical non-symlink directory, carries a va
 The transaction is idempotent and durable: repeated updates recognize the committed transaction and never create a second one or accumulate quarantine entries; an interrupted run reverse-restores every pre-commit move without clobbering conflicts. Quarantine and journal evidence are retained after commit so you can recover manually:
 
 - **Recover a retired skill.** Move the tree back out of `txn-<id>/quarantine/<skill>/` into `~/.agents/skills/<skill>/`. This is only needed if you intentionally want a bare `$<skill>` user-tier copy; the plugin already serves it as `$genie:<skill>`.
-- **"Source changed after planning".** If your live skill was edited between planning and the move, the recovery protocol republishes the changed tree to the live path and leaves the intact copy under `evidence/` rather than deleting it. Inspect `evidence/` and keep whichever tree you want; nothing is lost.
-- **"Changed evidence retained".** A changed quarantine tree archived under `evidence/<...>` is your durable backup of that exact content. Diff it against the live path before removing it.
+- **"Source changed after planning".** If your live skill was edited between the health proof and the move, retirement aborts before touching disk — the changed personal copy simply stays in place at `~/.agents/skills/<skill>`; nothing is moved, republished, or archived. Review that copy, then rerun the command.
+- **"Changed evidence retained".** This is the class that republishes to the live path and archives aside: when a quarantined tree changed during restore or disposal, the changed copy is retained under `evidence/<...>` as your durable backup of that exact content. Diff it against the live path before removing it.
 
 `genie doctor` reports the quarantined count and every preserved collision (name, classification, effective precedence, and remediation). It never claims literal name uniqueness while user content remains.
 

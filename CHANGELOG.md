@@ -65,6 +65,28 @@ Wish: `repair-genie-codex-hooks-and-dedupe-skills`.
   launcher, role-agent TOMLs, and the PR #2559 dangling-symlink preservation are
   unchanged and regression-gated.
 
+### Known non-blocking red gate
+
+- `bun run check` exits 1 solely because of 6 pre-existing env-dependent unit
+  failures: `src/lib/codex-project-mcp.test.ts` (4) and
+  `src/hooks/__tests__/codex-manifest.test.ts` (2). They build their own
+  fixtures with an unpopulated `GENIE_HOME`, so `session-context.cjs` emits `{}`
+  and they fail identically with or without an isolated env; they are untouched
+  by this wish (`git log ed6b4249..HEAD` is empty on both files). The same
+  criteria are proven black-box against the real installed plugin in
+  `scripts/codex-plugin-only-smoke.ts` (project-MCP reconcile via `genie init`,
+  installed-manifest MCP shape, JSON-RPC MCP usability, and the bounded
+  SessionStart hook). Do not mistake this red for a regression; CI is not green.
+
+### Before release promotion
+
+- The plugin-only smoke installs the built CLI plus the source `plugins/` tree
+  (matching release contents by proxy). Verify the actual packaged tarball
+  payload — not only the source checkout — before promoting a release.
+- Run the manual dogfood checklist (README, "Manual dogfood checklist") once
+  from a restarted Codex session to confirm one plugin version, working
+  MCP/hooks, and only owner-qualified `genie:*` skills.
+
 ## v5-launch
 
 ### TUI clipboard contract — terminal-native selection

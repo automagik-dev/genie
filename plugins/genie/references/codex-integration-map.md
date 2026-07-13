@@ -47,10 +47,12 @@ repeated updates recognize the committed transaction (no second transaction, no
 accumulating quarantine), and an interrupted run reverse-restores every
 pre-commit move without clobbering conflicts. Manual recovery: move a tree back
 from `txn-<id>/quarantine/<skill>/` to `~/.agents/skills/<skill>/` only if a bare
-user-tier copy is wanted. On **"source changed after planning"** the changed tree
-is republished to the live path and the intact copy is left under `evidence/`; a
-**"changed evidence retained"** archive under `evidence/` is a durable backup —
-diff it before removing. `.codex/skills/.curated` is a legacy uninstall-only lane:
+user-tier copy is wanted. On **"source changed after planning"** retirement aborts
+before any move: the changed personal copy stays in place under
+`~/.agents/skills/<skill>` (nothing is moved or archived). The republish-to-live +
+`evidence/` archive belongs instead to the restore/disposal races — a
+**"changed evidence retained"** archive under `evidence/` is a durable backup of
+that content; diff it before removing. `.codex/skills/.curated` is a legacy uninstall-only lane:
 `genie uninstall` still collects it, but no sync path recreates it.
 
 Starter-card metadata is different: every physical skill's `agents/openai.yaml` prompt is selector-free. The card is already attached to one discovered physical directory, so it must not name either tier and trigger a second resolution step.

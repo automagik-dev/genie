@@ -845,12 +845,16 @@ function checkCodexSync(codexDir: string, agentsSkillsDir: string): CheckResult[
     });
   }
   if (tier.preservedCollisions.length > 0) {
+    // Decision 5: report each collision's name + classification + effective precedence + remediation.
+    const classified = tier.preservedCollisions
+      .map((name) => `${name} (${tier.preservedCollisionClass[name] ?? 'preserved'})`)
+      .join(', ');
     results.push({
       name: 'agent sync: codex collisions',
       status: 'warn',
-      detail: `${tier.preservedCollisions.length} preserved personal skill(s) collide with plugin names (${tier.preservedCollisions.join(', ')})`,
+      detail: `${tier.preservedCollisions.length} preserved personal skill(s) collide with plugin names: ${classified}`,
       suggestion:
-        'Personal edits are preserved in place; `genie update` never touches them. Review each and remove or rename it manually.',
+        'Effective precedence: the installed plugin owns the owner-qualified `genie:<name>` selector; each preserved copy owns bare `<name>`. Personal edits are preserved in place; `genie update` never touches them. Review each and remove or rename it manually.',
     });
   }
   if (tier.retainedEvidence.length > 0) {

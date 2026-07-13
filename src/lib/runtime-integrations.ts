@@ -2978,9 +2978,14 @@ function emptyAgentInstallResult(): CodexAgentInstallResult {
  * - `retainedEvidence` — transactions that archived a changed fallback tree aside;
  *   the Group A conflict class surfaced as manual-recovery guidance (R8).
  */
+/** Decision-5 classification of a preserved personal collision (why genie left it in place). */
+export type PreservedCollisionClass = 'modified-managed' | 'malformed-marker';
+
 export interface CodexFallbackTierReport {
   cleanFallbacks: string[];
   preservedCollisions: string[];
+  /** Per preserved-collision classification, so doctor can report Decision-5 fields (name + classification). */
+  preservedCollisionClass: Record<string, PreservedCollisionClass>;
   quarantinedTransactions: number;
   retainedEvidence: string[];
 }
@@ -3022,6 +3027,7 @@ export function inspectCodexFallbackTier(agentsSkillsDir: string): CodexFallback
   const report: CodexFallbackTierReport = {
     cleanFallbacks: [],
     preservedCollisions: [],
+    preservedCollisionClass: {},
     quarantinedTransactions: 0,
     retainedEvidence: [],
   };
@@ -3036,7 +3042,10 @@ export function inspectCodexFallbackTier(agentsSkillsDir: string): CodexFallback
     if (name === CODEX_FALLBACK_RETIREMENT_ROOT) continue;
     const state = inspectManagedSkillTree(join(agentsSkillsDir, name)).state;
     if (state === 'managed-clean') report.cleanFallbacks.push(name);
-    else if (state === 'managed-modified' || state === 'corrupt-metadata') report.preservedCollisions.push(name);
+    else if (state === 'managed-modified' || state === 'corrupt-metadata') {
+      report.preservedCollisions.push(name);
+      report.preservedCollisionClass[name] = state === 'managed-modified' ? 'modified-managed' : 'malformed-marker';
+    }
     // `unmanaged` → the user's own skill; genie only speaks for what it shipped.
   }
   summarizeCodexQuarantine(join(agentsSkillsDir, CODEX_FALLBACK_RETIREMENT_ROOT), report);

@@ -27,10 +27,10 @@ The plugin is the only Genie-managed skill provider. A fresh Codex install write
 The transaction is idempotent and crash-safe: repeated updates recognize the committed transaction (no second transaction, no accumulating quarantine); an interrupted run reverse-restores every pre-commit move without clobbering conflicts. Committed quarantine and journal evidence are retained. Manual recovery:
 
 - **Restore a retired skill:** move it back from `txn-<id>/quarantine/<skill>/` to `~/.agents/skills/<skill>/` (only if you want a bare user-tier copy; the plugin already serves `$genie:<skill>`).
-- **"Source changed after planning":** if the live skill was edited between planning and the move, recovery republishes the changed tree to the live path and leaves the intact copy under `evidence/` — inspect it and keep whichever you want.
-- **"Changed evidence retained":** a tree archived under `evidence/` is a durable backup of that exact content; diff it against the live path before removing it.
+- **"Source changed after planning":** if the live skill was edited between the health proof and the move, retirement aborts before any move — the changed personal copy stays in place at `~/.agents/skills/<skill>`; nothing is moved or archived. Review it, then rerun.
+- **"Changed evidence retained":** the republish-to-live + archive behavior belongs to this class — when a quarantined tree changed during restore or disposal, the changed copy is retained under `evidence/` as a durable backup of that exact content; diff it against the live path before removing it.
 
-`genie doctor` reports the quarantined count and every preserved collision (name, classification, precedence, remediation). Restart Codex after any Codex convergence so it drops stale bare providers and loads only owner-qualified `genie:*` plugin skills.
+`genie doctor` reports the quarantined count and every preserved collision (name, classification, effective precedence, and remediation). Restart Codex after any Codex convergence so it drops stale bare providers and loads only owner-qualified `genie:*` plugin skills.
 
 ## Codex hook trust and side effects
 
