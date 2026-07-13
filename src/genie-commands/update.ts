@@ -1945,9 +1945,17 @@ export function legacySyncOnlyPluginAdvisory(options: LegacySyncOnlyAdvisoryOpti
   return `Legacy --sync-only left selected plugin integration${stale.length === 1 ? '' : 's'} stale (${stale.join(', ')}; CLI/source v${normalizeVersion(options.expectedVersion)}). Close all Codex tasks first. Then, from an external terminal, run \`genie update\` (or \`genie setup --codex\`), review \`/hooks\`, and start a new Codex task.`;
 }
 
-/** Agent-sync is Claude-scoped in every lifecycle path: codex product skills are plugin-only (R2/A1). */
-export function narrowUpdateAgentSyncSelection(selection: IntegrationSelection): 'claude' | null {
-  return selection === 'auto' || selection === 'all' || selection === 'claude' ? 'claude' : null;
+/**
+ * Gate the agent-sync scope for update. R2/A1 (agent-sync must never write
+ * codex product skills into ~/.agents/skills) is structural in `runAgentSync`
+ * itself now — there is no `codex` arm to narrow away from — so this only
+ * skips agent-sync where it has nothing to do: `none` and `codex` (codex
+ * converges entirely through the plugin-only integration refresh, never
+ * through agent-sync). `auto`/`all`/`claude` pass through UNCHANGED so
+ * `runAgentSync` sees the real selection and converges hermes on `auto`/`all`.
+ */
+export function narrowUpdateAgentSyncSelection(selection: IntegrationSelection): IntegrationSelection | null {
+  return selection === 'none' || selection === 'codex' ? null : selection;
 }
 
 export interface SyncOnlyCodexInspectionOptions {
@@ -2023,8 +2031,9 @@ export interface LegacySyncOnlyConvergenceOptions extends LegacySyncOnlyAdvisory
 /**
  * Emit version-drift recovery, INSPECT codex health (R3/A14 — fail nonzero and
  * byte-identical before any write on a missing/disabled/stale/unhealthy plugin),
- * then run the Claude-scoped strict skill sync. Sync is Claude-only so codex
- * product skills are never rewritten under ~/.agents/skills (R2/A1).
+ * then run the strict agent-sync skill sync for the requested scope. Codex
+ * product skills are never rewritten under ~/.agents/skills (R2/A1) — that
+ * guarantee is structural in `runAgentSync`, not a Claude-only narrowing here.
  */
 export function runLegacySyncOnlyConvergence(options: LegacySyncOnlyConvergenceOptions): void {
   const advisory = legacySyncOnlyPluginAdvisory(options);
@@ -2398,8 +2407,10 @@ export function runManualUpdateConvergence(options: ManualUpdateConvergenceOptio
   const emit = options.log ?? log;
   const selection = options.selection ?? readIntegrationConsent(GENIE_HOME);
   if (selection === 'none') return { integrations: [] };
-  // R2/A1/A13: agent-sync is the sole ~/.agents/skills writer (via syncCodex), so
-  // a full update scopes it to Claude only. Codex product skills stay
+  // R2/A1/A13: `runAgentSync` has no codex arm, so it structurally never
+  // writes ~/.agents/skills — a full update passes the real selection through
+  // (converging claude + hermes on auto/all) and only gates the codex-only /
+  // none cases, where agent-sync has nothing to do. Codex product skills stay
   // plugin-only, and codex role agents + fallback retirement are refreshed by
   // refreshUpdatePlugins → convergeCodexPluginOnly below.
   const agentSyncSelection = narrowUpdateAgentSyncSelection(selection);

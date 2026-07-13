@@ -29,7 +29,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { type AgentSyncReport, acquireLifecycleLease, lifecycleLockPath } from '../../lib/agent-sync';
+import { type AgentSyncReport, acquireLifecycleLease, lifecycleLockPath, runAgentSync } from '../../lib/agent-sync';
 import { REQUIRED_GENIE_MCP_TOOLS } from '../../lib/codex-mcp-health-session';
 import type { CodexPluginProbe } from '../../lib/codex-project-mcp';
 import {
@@ -37,6 +37,7 @@ import {
   type CodexHealthProof,
   type CodexPluginOnlyDeps,
   type CommandRunner,
+  type IntegrationSelection,
 } from '../../lib/runtime-integrations';
 import { VERSION } from '../../lib/version';
 import type { AuxiliaryTreeOutcome, AuxiliaryTreeStage } from '../auxiliary-trees.js';
@@ -2882,6 +2883,137 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
   });
 });
 
+describe('runManualUpdateConvergence — hermes leg restored end-to-end (restore-hermes-sync-leg regression)', () => {
+  // A prior release (#2572) narrowed every production selection to 'claude'
+  // before it reached runAgentSync, so `genie update`'s hermes leg (which
+  // only fires on a verbatim 'auto'/'all' selection) silently stopped
+  // converging — confirmed live via `genie update --sync-only` printing only
+  // 'agent-sync: claude'. This suite drives the REAL runSync path (no `sync`
+  // mock) through real GENIE_HOME/HERMES_HOME fixtures, isolated the way
+  // doctor.test.ts isolates its lifecycle env, to prove the hermes leg
+  // converges again and that the PR #2576 duplicate-external_dirs repair is
+  // reachable from the update lifecycle, not just the low-level helper test.
+  const ENV_KEYS = ['HOME', 'GENIE_HOME', 'HERMES_HOME', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME'] as const;
+  let isolatedHome: string;
+  let savedEnv: Partial<Record<(typeof ENV_KEYS)[number], string>>;
+  let genieHome: string;
+  let hermesHome: string;
+  let genieBin: string;
+
+  beforeEach(() => {
+    isolatedHome = mkdtempSync(join(tmpdir(), 'genie-update-hermes-'));
+    savedEnv = {};
+    for (const key of ENV_KEYS) {
+      if (process.env[key] !== undefined) savedEnv[key] = process.env[key];
+    }
+    genieHome = join(isolatedHome, 'genie');
+    hermesHome = join(isolatedHome, 'hermes');
+    process.env.HOME = isolatedHome;
+    process.env.GENIE_HOME = genieHome;
+    process.env.HERMES_HOME = hermesHome;
+    process.env.CLAUDE_CONFIG_DIR = join(isolatedHome, 'claude'); // absent: claude leg simply undetected
+    process.env.CODEX_HOME = join(isolatedHome, 'codex');
+
+    // Minimal real genie plugin source: a populated skills root + VERSION +
+    // an executable bin/genie (resolveGenieBinaryPath / resolveProductSkillsRoot
+    // both require real files, not injected targets, since this test exercises
+    // the default env-resolved paths exactly like production `genie update`).
+    mkdirSync(join(genieHome, 'plugins', 'genie', 'skills', 'alpha'), { recursive: true });
+    writeFileSync(join(genieHome, 'plugins', 'genie', 'skills', 'alpha', 'SKILL.md'), '# alpha\n');
+    // resolveGenieSource requires plugins/hermes-genie NEXT TO plugins/genie for
+    // ctx.hermesRoot to resolve — without it, syncHermes bails before either
+    // config leg runs (see the 'hermes source ... not found' advisory).
+    mkdirSync(join(genieHome, 'plugins', 'hermes-genie'), { recursive: true });
+    writeFileSync(join(genieHome, 'plugins', 'hermes-genie', 'plugin.json'), '{"name":"hermes-genie"}\n');
+    writeFileSync(join(genieHome, 'VERSION'), '9.9.9\n');
+    mkdirSync(join(genieHome, 'bin'), { recursive: true });
+    genieBin = join(genieHome, 'bin', 'genie');
+    writeFileSync(genieBin, '#!/usr/bin/env bun\n');
+    chmodSync(genieBin, 0o755);
+    mkdirSync(hermesHome, { recursive: true });
+  });
+
+  afterEach(() => {
+    for (const key of ENV_KEYS) {
+      const saved = savedEnv[key];
+      if (saved === undefined) Reflect.deleteProperty(process.env, key);
+      else process.env[key] = saved;
+    }
+    rmSync(isolatedHome, { recursive: true, force: true });
+  });
+
+  /**
+   * Mirrors `runManualUpdateConvergence`'s own default `runSync` closure
+   * (narrow the selection, then `runAgentSyncSafe`), but pins `markerPath`
+   * inside the isolated tmpdir. `update.ts`'s `GENIE_HOME` constant is
+   * captured once at module import time, before this suite's `beforeEach` can
+   * repoint `process.env.GENIE_HOME` — the default marker path would
+   * otherwise write `.last-agent-sync` outside this test's sandbox. The sync
+   * engine itself is unaffected: `runAgentSync` resolves every target via the
+   * live `resolveGenieHome()`/`resolveHermesHome()` env reads, so this still
+   * exercises the real narrowing + the real engine end-to-end.
+   */
+  function realRunSync(selection: IntegrationSelection): () => void {
+    return () => {
+      const agentSyncSelection = narrowUpdateAgentSyncSelection(selection);
+      if (agentSyncSelection !== null) {
+        runAgentSyncSafe({
+          strict: true,
+          selection: agentSyncSelection,
+          markerPath: join(isolatedHome, '.last-agent-sync'),
+          // hermesBinary: null keeps this test-safe (no `hermes plugins enable`
+          // exec) — the same posture agent-sync.test.ts's `run()` fixture takes.
+          sync: (opts) => runAgentSync({ ...opts, hermesBinary: null }),
+        });
+      }
+    };
+  }
+
+  test('selection auto converges the hermes leg (mcp_servers.genie + skills.external_dirs) into a fresh config', () => {
+    const result = runManualUpdateConvergence({
+      expectedVersion: '9.9.9',
+      selection: 'auto',
+      runSync: realRunSync('auto'),
+      refreshPlugins: () => [],
+      log: () => undefined,
+    });
+    expect(result.integrations).toEqual([]);
+
+    const configPath = join(hermesHome, 'config.yaml');
+    const text = readFileSync(configPath, 'utf8');
+    expect(text).toContain('mcp_servers:');
+    expect(text).toContain(genieBin);
+    expect(text).toContain('skills:');
+    expect(text).toContain('external_dirs:');
+    expect(text).toContain(join(genieHome, 'plugins', 'genie', 'skills'));
+  });
+
+  test('selection auto repairs a config damaged with the duplicate-external_dirs shape (PR #2576)', () => {
+    const configPath = join(hermesHome, 'config.yaml');
+    const skillsRoot = join(genieHome, 'plugins', 'genie', 'skills');
+    // Exact damaged shape from an earlier buggy release: `skills:` carries BOTH
+    // an inline empty `external_dirs: []` and a later block-style `external_dirs`
+    // holding the genie-marked managed entry — spec-invalid duplicate-key YAML.
+    const damaged = `skills:\n  external_dirs: []\n  template_vars: true\n  external_dirs:\n    - ${JSON.stringify(skillsRoot)}  # genie:managed:skills.external_dirs\n`;
+    writeFileSync(configPath, damaged);
+
+    runManualUpdateConvergence({
+      expectedVersion: '9.9.9',
+      selection: 'auto',
+      runSync: realRunSync('auto'),
+      refreshPlugins: () => [],
+      log: () => undefined,
+    });
+
+    const text = readFileSync(configPath, 'utf8');
+    expect(text.match(/external_dirs:/g)?.length).toBe(1);
+    expect(text).toContain('template_vars: true');
+    const parsed = Bun.YAML.parse(text) as { skills: { external_dirs: string[]; template_vars: boolean } };
+    expect(parsed.skills.external_dirs).toEqual([skillsRoot]);
+    expect(parsed.skills.template_vars).toBe(true);
+  });
+});
+
 describe('operator-driven plugin refresh', () => {
   let pluginStateDir: string;
 
@@ -3351,11 +3483,15 @@ describe('--sync-only codex inspection (A14/R3)', () => {
   });
   const staleProbe = (): CodexPluginProbe => ({ ...healthyUpdateCodexProbe(), version: '0.0.0' });
 
-  test('narrowUpdateAgentSyncSelection keeps agent-sync Claude-scoped', () => {
+  test('narrowUpdateAgentSyncSelection passes the real selection through (restore-hermes-sync-leg)', () => {
+    // codex/none: agent-sync has nothing to do (codex is plugin-only; none is none).
     expect(narrowUpdateAgentSyncSelection('codex')).toBeNull();
     expect(narrowUpdateAgentSyncSelection('none')).toBeNull();
-    expect(narrowUpdateAgentSyncSelection('auto')).toBe('claude');
-    expect(narrowUpdateAgentSyncSelection('all')).toBe('claude');
+    // auto/all/claude pass through UNCHANGED. Collapsing these to 'claude' (the
+    // prior behavior) silently killed runAgentSync's hermes leg, which only
+    // fires on a verbatim 'auto'/'all' — see runAgentSync in agent-sync.ts.
+    expect(narrowUpdateAgentSyncSelection('auto')).toBe('auto');
+    expect(narrowUpdateAgentSyncSelection('all')).toBe('all');
     expect(narrowUpdateAgentSyncSelection('claude')).toBe('claude');
   });
 

@@ -84,8 +84,6 @@ export const MANAGED_BY = 'genie-agent-sync';
  * never reports a legitimately-excluded skill as "missing/stale".
  */
 export const CLAUDE_EXCLUDED_SKILLS = new Set(['council']);
-/** Skill actions that represent an actual write to the target. */
-const WRITE_ACTIONS = new Set<SkillAction>(['created', 'updated', 'removed']);
 /**
  * Collision-proof staging suffixes for atomic managed-dir writes. Chosen so no
  * human backup convention (e.g. `mv review review.old`, or a `review.new`) can
@@ -3724,75 +3722,16 @@ function stampClaudeWorkflow(ctx: RunContext, claudeDir: string, report: AgentRe
   report.extras.push({ kind: 'stamp', action: res.action, detail: res.targetPath });
 }
 
-function syncCodex(ctx: RunContext, report: AgentReport): void {
-  const codexDir = ctx.targets.codex;
-  if (!existsSync(codexDir)) return;
-  report.detected = true;
-  migrateLegacyCodexCurated(ctx, codexDir, report);
-  // Codex loads user skills from the top-level `~/.agents/skills/<name>` tier.
-  // Everything under `<codexDir>/skills/` (incl. OpenAI's `.system/`) is left
-  // alone: hidden dirs are pruned by codex and were never genie's to manage.
-  syncSkillDirsInto(ctx, 'codex', ctx.targets.agentsSkills, report);
-  if (report.skills.some((skill) => WRITE_ACTIONS.has(skill.action))) {
-    report.advisories.push('restart Codex to pick up updated skills');
-  }
-}
-
-/**
- * One-time cleanup of the retired `<codexDir>/skills/.curated` lane (see
- * {@link codexLegacyCuratedDir}): every manifest-managed dir there is a
- * stranded orphan codex never loaded. Digest-clean managed dirs are backed up
- * outside GENIE_HOME and removed. Modified or unmanaged entries are preserved
- * in place; a migration must never trade live user data for a backup that a
- * later uninstall deletes. The lane dir itself goes only once it is empty.
- * Genie's own crashed-run staging debris is swept unbacked.
- */
-function migrateLegacyCodexCurated(ctx: RunContext, codexDir: string, report: AgentReport): void {
-  const legacyDir = codexLegacyCuratedDir(codexDir);
-  if (!existsSync(legacyDir)) return;
-  let kept = 0;
-  for (const entry of readdirSync(legacyDir, { withFileTypes: true })) {
-    const dir = join(legacyDir, entry.name);
-    if (entry.name.endsWith(STAGING_SUFFIX) || entry.name.endsWith(PREV_SUFFIX)) {
-      rmSync(dir, { recursive: true, force: true });
-      continue;
-    }
-    if (classifyEntry(dir, entry) !== 'dir') {
-      kept += 1;
-      continue;
-    }
-    const manifest = readManifest(dir);
-    if (manifest === null) {
-      kept += 1;
-      continue;
-    }
-    const contentDigest = acceptedManagedDirPhysicalDigest(dir, manifest.manifest);
-    if (contentDigest === null) {
-      kept += 1;
-      report.extras.push({ kind: 'legacy-curated', action: 'kept-modified', detail: dir });
-      report.advisories.push(`kept modified legacy codex skill ${entry.name} at ${dir}`);
-      continue;
-    }
-    try {
-      removeManagedDir(ctx, 'codex-legacy-curated', entry.name, dir, {
-        contentDigest,
-        manifestDigest: manifest.fileDigest,
-      });
-      report.extras.push({ kind: 'legacy-curated', action: 'removed', detail: dir });
-    } catch (error) {
-      kept += 1;
-      const failure = `legacy codex skill ${entry.name} removal failed: ${errMsg(error)}`;
-      report.extras.push({ kind: 'legacy-curated', action: 'kept-modified', detail: dir });
-      report.advisories.push(failure);
-      recordFailure(report, failure);
-    }
-  }
-  if (kept === 0) {
-    rmSync(legacyDir, { recursive: true, force: true });
-  } else {
-    report.advisories.push(`legacy codex lane ${legacyDir} contains unmanaged entries; left in place`);
-  }
-}
+// The codex writer (`syncCodex`) that used to live here is retired: codex
+// product skills are plugin-only, converged end-to-end by
+// `installCodexIntegration` in runtime-integrations.ts (plugin → health proof
+// → fallback retirement → role agents). `runAgentSync` has no `codex` arm, so
+// this module never writes into `~/.agents/skills` again (R2/A1, structural).
+// The classifier/retirement primitives that flow — `codexLegacyCuratedDir`,
+// `inspectManagedSkillTree`, `planCodexFallbackRetirement`,
+// `applyCodexFallbackRetirement`, `recoverCodexFallbackRetirements` — remain:
+// they are shared with `genie uninstall` and `genie doctor`, which read/repair
+// that tier independently of this file's write path.
 
 type LinkAction = 'created' | 'unchanged' | 'adopted' | 'skipped-unmanaged-kept';
 
@@ -4335,6 +4274,13 @@ function stealStaleLock(lockPath: string): 'cleared' | 'contended' {
  * agent-level failures; a null pluginRoot yields an empty report. Exactly one
  * run per GENIE_HOME may write at a time: a concurrent run returns a report
  * with `skipped` set and performs zero writes.
+ *
+ * R2/A1 is structural here, not caller discipline: there is no `codex` arm
+ * below, so no `selection` value can ever make this function write into
+ * `~/.agents/skills`. Codex product skills are plugin-only, converged
+ * end-to-end by `installCodexIntegration` (plugin → health proof → fallback
+ * retirement → role agents) in runtime-integrations.ts; the old codex writer
+ * (`syncCodex`) is retired.
  */
 export function runAgentSync(opts: AgentSyncOptions = {}): AgentSyncReport {
   const genieHome = opts.genieHome ?? resolveGenieHome();
@@ -4355,9 +4301,6 @@ export function runAgentSync(opts: AgentSyncOptions = {}): AgentSyncReport {
     const agents: AgentReport[] = [];
     if (selection === 'auto' || selection === 'all' || selection === 'claude') {
       agents.push(runAgentSafe('claude', (report) => syncClaude(ctx, report)));
-    }
-    if (selection === 'auto' || selection === 'all' || selection === 'codex') {
-      agents.push(runAgentSafe('codex', (report) => syncCodex(ctx, report)));
     }
     if (selection === 'auto' || selection === 'all') {
       agents.push(runAgentSafe('hermes', (report) => syncHermes(ctx, opts, report)));
