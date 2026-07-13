@@ -155,6 +155,7 @@ export function mergeSkillsExternalDir(opts: MergeSkillsExternalDirOptions): Mer
 
   const status: 'created' | 'updated' = exists && original.length > 0 ? 'updated' : 'created';
   const nextText = spliceExternalDir(original, skillsRoot);
+  assertMergedSkillsInvariant(nextText, skillsRoot);
 
   let backupPath: string | undefined;
   if (exists && original.length > 0) {
@@ -199,6 +200,39 @@ function listedExternalDirs(text: string): string[] {
   if (!isRecord(parsed) || !isRecord(parsed.skills)) return [];
   const dirs = parsed.skills.external_dirs;
   return Array.isArray(dirs) ? dirs.filter((d): d is string => typeof d === 'string') : [];
+}
+
+/**
+ * Final fail-closed safety net: the line-level splice above handles every
+ * documented shape (bare block, inline empty/non-empty child, comment lines
+ * interleaved among children), but a sufficiently pathological comment layout
+ * could still slip past the matchers undetected. Rather than trust that no such
+ * layout exists, verify the actual output before it is ever written: it must
+ * parse as YAML, and it must contain exactly one `skills.external_dirs` entry
+ * equal to the resolved root (the never-clobber invariant — refusal is always
+ * acceptable, corruption never is).
+ */
+function assertMergedSkillsInvariant(nextText: string, skillsRoot: string): void {
+  let parsed: unknown;
+  try {
+    parsed = Bun.YAML.parse(nextText);
+  } catch (err) {
+    throw new HermesConfigError(
+      'unparseable-merge-result',
+      `refusing to write: merged config would not parse as YAML (${err instanceof Error ? err.message : String(err)})`,
+    );
+  }
+  const dirs =
+    isRecord(parsed) && isRecord(parsed.skills) && Array.isArray(parsed.skills.external_dirs)
+      ? parsed.skills.external_dirs.filter((d): d is string => typeof d === 'string')
+      : [];
+  const occurrences = dirs.filter((d) => d === skillsRoot).length;
+  if (occurrences !== 1) {
+    throw new HermesConfigError(
+      'unverified-merge',
+      `refusing to write: merged config would contain ${occurrences} occurrence(s) of "${skillsRoot}" in skills.external_dirs instead of exactly 1`,
+    );
+  }
 }
 
 /** Produce the next config text with exactly one managed external_dirs entry. */
@@ -314,6 +348,21 @@ function isBlank(line: string): boolean {
   return line.trim() === '';
 }
 
+/**
+ * A YAML comment-only line is valid at ANY indentation and carries no structural
+ * weight. Every boundary-detection helper below must treat it exactly like a
+ * blank line: it never terminates a block and it is never mistaken for "the
+ * first real child" when deriving a block's child indent.
+ */
+function isCommentOnly(line: string): boolean {
+  return line.trim().startsWith('#');
+}
+
+/** True for a line with no structural weight: blank or comment-only. */
+function isSkippable(line: string): boolean {
+  return isBlank(line) || isCommentOnly(line);
+}
+
 function indentOf(line: string): number {
   return line.match(/^ */)?.[0].length ?? 0;
 }
@@ -346,23 +395,29 @@ function assertNoInlineTopLevelKey(lines: string[], key: string): void {
   }
 }
 
-/** End of a top-level block: first following line at indent 0. */
+/**
+ * End of a top-level block: first following line at indent 0. A comment-only
+ * line is skipped regardless of its own indentation — YAML comments are valid
+ * at any column and never close a block on their own.
+ */
 function blockEndIndex(lines: string[], header: number): number {
   let end = header + 1;
-  while (end < lines.length && (isBlank(lines[end]) || indentOf(lines[end]) > 0)) end++;
+  while (end < lines.length && (isCommentOnly(lines[end]) || isBlank(lines[end]) || indentOf(lines[end]) > 0)) end++;
   return end;
 }
 
-/** End of a nested block whose header sits at `parentIndent`. */
+/** End of a nested block whose header sits at `parentIndent`. Comments never close it. */
 function blockEndIndexFrom(lines: string[], header: number, hardEnd: number, parentIndent: number): number {
   let end = header + 1;
-  while (end < hardEnd && (isBlank(lines[end]) || indentOf(lines[end]) > parentIndent)) end++;
+  while (end < hardEnd && (isCommentOnly(lines[end]) || isBlank(lines[end]) || indentOf(lines[end]) > parentIndent))
+    end++;
   return end;
 }
 
+/** Indentation of the first real (non-blank, non-comment) child line. */
 function childIndentOf(lines: string[], header: number, blockEnd: number): number {
   for (let i = header + 1; i < blockEnd; i++) {
-    if (!isBlank(lines[i])) return indentOf(lines[i]);
+    if (!isSkippable(lines[i])) return indentOf(lines[i]);
   }
   return 2;
 }

@@ -155,6 +155,7 @@ export function mergeMcpServersGenie(opts: MergeMcpGenieOptions): MergeMcpGenieR
 
   const status: 'created' | 'updated' = existingGenie ? 'updated' : 'created';
   const nextText = spliceGenieEntry(original, entry);
+  assertMergedGenieEntryInvariant(nextText, entry);
 
   let backupPath: string | undefined;
   if (exists && original.length > 0) {
@@ -197,6 +198,34 @@ function entrySatisfies(existing: McpGenieEntry, desired: McpGenieEntry): boolea
     }
   }
   return true;
+}
+
+/**
+ * Final fail-closed safety net: the line-level splice above handles every
+ * documented shape (marker region, unmarked child, no genie child, no
+ * mcp_servers key, comment lines interleaved among siblings), but a
+ * sufficiently pathological comment layout could still slip past the matchers
+ * undetected. Rather than trust that no such layout exists, verify the actual
+ * output before it is ever written: it must parse as YAML and it must contain
+ * exactly the expected `mcp_servers.genie` entry (the never-clobber invariant —
+ * refusal is always acceptable, corruption never is).
+ */
+function assertMergedGenieEntryInvariant(nextText: string, entry: McpGenieEntry): void {
+  try {
+    Bun.YAML.parse(nextText);
+  } catch (err) {
+    throw new HermesConfigError(
+      'unparseable-merge-result',
+      `refusing to write: merged config would not parse as YAML (${err instanceof Error ? err.message : String(err)})`,
+    );
+  }
+  const written = readGenieEntry(nextText);
+  if (!written || !entrySatisfies(written, entry)) {
+    throw new HermesConfigError(
+      'unverified-merge',
+      'refusing to write: merged config would not contain the expected mcp_servers.genie entry',
+    );
+  }
 }
 
 /** Produce the next config text with the genie entry merged in via targeted surgery. */
@@ -291,6 +320,21 @@ function isBlank(line: string): boolean {
   return line.trim() === '';
 }
 
+/**
+ * A YAML comment-only line is valid at ANY indentation and carries no structural
+ * weight. Every boundary-detection helper below must treat it exactly like a
+ * blank line: it never terminates a block and it is never mistaken for "the
+ * first real child" when deriving a block's child indent.
+ */
+function isCommentOnly(line: string): boolean {
+  return line.trim().startsWith('#');
+}
+
+/** True for a line with no structural weight: blank or comment-only. */
+function isSkippable(line: string): boolean {
+  return isBlank(line) || isCommentOnly(line);
+}
+
 function indentOf(line: string): number {
   return line.match(/^ */)?.[0].length ?? 0;
 }
@@ -333,22 +377,36 @@ function assertNoInlineTopLevelKey(lines: string[], key: string): void {
   }
 }
 
-/** First line index after a block header where the block's children end. */
+/**
+ * First line index after a block header where the block's children end. A
+ * comment-only line is skipped regardless of its own indentation — YAML
+ * comments are valid at any column and never close a block on their own.
+ */
 function blockEndIndex(lines: string[], header: number): number {
   let end = header + 1;
-  while (end < lines.length && (isBlank(lines[end]) || indentOf(lines[end]) > 0)) end++;
+  while (end < lines.length && (isCommentOnly(lines[end]) || isBlank(lines[end]) || indentOf(lines[end]) > 0)) end++;
   return end;
 }
 
-/** Indentation of the first non-blank child line, defaulting to 2. */
+/** Indentation of the first real (non-blank, non-comment) child line, defaulting to 2. */
 function childIndentOf(lines: string[], header: number, blockEnd: number): number {
   for (let i = header + 1; i < blockEnd; i++) {
-    if (!isBlank(lines[i])) return indentOf(lines[i]);
+    if (!isSkippable(lines[i])) return indentOf(lines[i]);
   }
   return 2;
 }
 
-/** Line range [start, end) of a named child entry at a given indent. */
+/**
+ * Line range [start, end) of a named child entry at a given indent.
+ *
+ * Deliberately NOT comment-skipping here, unlike the search-boundary helpers
+ * above: this range is used to DELETE and replace an existing child's content
+ * wholesale. A deeper-indented line (comment or not) is still genie's own
+ * nested content and is correctly swallowed by `indentOf > childIndent`. But a
+ * comment sitting AT or below `childIndent` — between this child and the next
+ * sibling — belongs to neither and must not be deleted: the module's contract
+ * is that comments outside the managed entry are never touched.
+ */
 function findChildRange(
   lines: string[],
   start: number,
