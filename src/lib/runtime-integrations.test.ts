@@ -2387,8 +2387,56 @@ describe('convergeCodexPluginOnly ordering and single-proof (R1)', () => {
   });
 });
 
+describe('convergeCodexPluginOnly preservedCollisions counts only real on-disk collisions (PR #2572)', () => {
+  // planCodexFallbackRetirement records every absent canonical skill as a
+  // {accepted:false, reason:'missing'} preserved entry. These runs use the REAL
+  // plan (no `plan` override) so the 'missing' entries are actually produced and
+  // the filter is exercised. describeCodexIntegration only appends the
+  // "preserved N personal collision(s)" note when the count is > 0, so a count
+  // of 0 keeps the phantom collision phrase out of the user-facing detail.
+  test('post-migration second run: only the quarantine root remains, all canonical skills migrated → 0 collisions', () => {
+    const fallback = mkdtempSync(join(tmpdir(), 'genie-fallback-postmigration-'));
+    // Post-migration steady state: every canonical skill has left the top level
+    // (moved under the retirement transaction root during the first run).
+    mkdirSync(join(fallback, CODEX_FALLBACK_RETIREMENT_ROOT), { recursive: true });
+    const outcome = convergeCodexPluginOnly(baseConvergeOptions(fallback));
+    expect(outcome?.preservedCollisions).toBe(0);
+    expect(outcome?.result.preservedCollisions).toBe(0);
+    expect(outcome?.retired).toEqual([]);
+  });
+
+  test('fallback dir exists with no top-level canonical skills present → 0 collisions', () => {
+    const fallback = mkdtempSync(join(tmpdir(), 'genie-fallback-noncanonical-'));
+    // A non-canonical personal skill name never enters the plan (it is not in
+    // skillNames), so it can neither be retired nor inflate the collision count.
+    mkdirSync(join(fallback, 'my-personal-skill'), { recursive: true });
+    writeFileSync(join(fallback, 'my-personal-skill', 'SKILL.md'), '# personal\n');
+    const outcome = convergeCodexPluginOnly(baseConvergeOptions(fallback));
+    expect(outcome?.preservedCollisions).toBe(0);
+    expect(outcome?.result.preservedCollisions).toBe(0);
+  });
+
+  test('a real modified-managed collision still counts', () => {
+    const fallback = mkdtempSync(join(tmpdir(), 'genie-fallback-realcollision-'));
+    // A managed 'wish' skill whose on-disk tree diverges from its recorded
+    // marker digest classifies as modified-tree: a genuine personal collision.
+    const skillDir = join(fallback, 'wish');
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, 'SKILL.md'), '# wish skill\n');
+    stampFallbackSkill(skillDir);
+    writeFileSync(join(skillDir, 'SKILL.md'), '# wish skill (locally modified)\n');
+    const outcome = convergeCodexPluginOnly(baseConvergeOptions(fallback));
+    expect(outcome?.preservedCollisions).toBe(1);
+    expect(outcome?.result.preservedCollisions).toBe(1);
+    expect(outcome?.retired).toEqual([]);
+  });
+});
+
 describe('proveCodexPluginHealth reject-before-retirement matrix (R4)', () => {
-  const target = mkdtempSync(join(tmpdir(), 'genie-prove-target-'));
+  // The active plugin root must resolve to the canonical Codex cache path, so
+  // the fixture places the plugin skills tree under codexHome/plugins/cache/...
+  const codexHome = mkdtempSync(join(tmpdir(), 'genie-prove-codex-home-'));
+  const target = join(codexHome, 'plugins', 'cache', 'automagik', 'genie', VERSION);
   const skillsRoot = join(target, 'skills');
   for (const name of CANONICAL_GENIE_SKILL_NAMES) {
     mkdirSync(join(skillsRoot, name), { recursive: true });
@@ -2397,7 +2445,7 @@ describe('proveCodexPluginHealth reject-before-retirement matrix (R4)', () => {
   const healthyOpts = (): ProveCodexPluginHealthOptions => ({
     snapshot: healthyCodexProbe(target),
     bundleRoot: '/fixture/bundle',
-    codexHome: '/fixture/codex-home',
+    codexHome,
     expectedVersion: VERSION,
     verifyCodexPayload: () => undefined,
     runSession: () => ({ ok: true, detail: 'ok', tools: [...REQUIRED_GENIE_MCP_TOOLS], wishStatusReadOnly: true }),
@@ -2460,6 +2508,36 @@ describe('proveCodexPluginHealth reject-before-retirement matrix (R4)', () => {
       wishStatusReadOnly: false,
     });
     expect(() => proveCodexPluginHealth(opts)).toThrow('rejected before retirement');
+  });
+
+  test('rejects an activePluginRoot diverging from the derived canonical cache path before any digest or MCP launch', () => {
+    // Simulate a future Codex emitting an installedPath that is physically valid
+    // but lives OUTSIDE codexHome/plugins/cache/automagik/genie/<version>.
+    const divergent = mkdtempSync(join(tmpdir(), 'genie-divergent-plugin-root-'));
+    const divergentSkills = join(divergent, 'skills');
+    for (const name of CANONICAL_GENIE_SKILL_NAMES) {
+      mkdirSync(join(divergentSkills, name), { recursive: true });
+      writeFileSync(join(divergentSkills, name, 'SKILL.md'), `# ${name}\n`);
+    }
+    const opts = healthyOpts();
+    opts.snapshot = healthyCodexProbe(divergent);
+    let digested = false;
+    let launched = false;
+    opts.verifyCodexPayload = () => {
+      digested = true;
+    };
+    opts.runSession = () => {
+      launched = true;
+      return { ok: true, detail: 'ok', tools: [...REQUIRED_GENIE_MCP_TOOLS], wishStatusReadOnly: true };
+    };
+    // Health must reject (no proof returned → no retirement is ever authorized)
+    // and the actionable error must name the divergent root.
+    expect(() => proveCodexPluginHealth(opts)).toThrow('rejected before retirement');
+    expect(() => proveCodexPluginHealth(opts)).toThrow(divergent);
+    // The rejection lands BEFORE the payload verifier, the skill digesting, and
+    // the MCP session launch.
+    expect(digested).toBe(false);
+    expect(launched).toBe(false);
   });
 });
 

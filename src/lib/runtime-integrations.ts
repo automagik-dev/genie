@@ -2723,6 +2723,34 @@ function buildVerifiedCodexPayload(
 }
 
 /**
+ * Bind the snapshot's active plugin root to the canonical Codex cache location.
+ * Version equality and physicality alone do not prove WHERE the consumed bytes
+ * live: a future Codex that emits `installedPath` could point `activePluginRoot`
+ * at a physically-valid but off-cache tree (resolveReportedPluginRoot proves
+ * physicality, not location), after which digesting it or launching its MCP
+ * would stamp `canonicalVerified` on unproven bytes. Reject health unless the
+ * root resolves to `codexHome/plugins/cache/automagik/genie/<version>`.
+ */
+function bindActiveRootToCanonicalCache(activePluginRoot: string, codexHome: string, expectedVersion: string): void {
+  const canonicalCacheRoot = join(codexHome, 'plugins', 'cache', 'automagik', 'genie', expectedVersion);
+  let resolvedActive: string;
+  let resolvedCanonical: string;
+  try {
+    resolvedActive = realpathSync(activePluginRoot);
+    resolvedCanonical = realpathSync(canonicalCacheRoot);
+  } catch (error) {
+    rejectHealth(
+      `active plugin root ${activePluginRoot} could not be bound to the canonical Codex cache path ${canonicalCacheRoot}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (resolvedActive !== resolvedCanonical) {
+    rejectHealth(
+      `active plugin root ${activePluginRoot} is not the canonical Codex cache path ${canonicalCacheRoot}; plugin-only convergence refuses unverified roots`,
+    );
+  }
+}
+
+/**
  * Reject health BEFORE any retirement unless the single snapshot is exactly one
  * enabled target-version plugin with a usable launcher, a canonically-verified
  * installed payload and exact inventory, and a bounded MCP session that
@@ -2745,6 +2773,9 @@ export function proveCodexPluginHealth(options: ProveCodexPluginHealthOptions): 
   if (snapshot.usable !== true) rejectHealth(snapshot.usabilityDetail ?? 'plugin MCP launcher is not usable');
 
   const activePluginRoot = snapshot.activePluginRoot;
+  // Bind the consumed tree to the canonical cache BEFORE any digesting or MCP
+  // launch so unverified off-cache roots can never reach retirement authority.
+  bindActiveRootToCanonicalCache(activePluginRoot, options.codexHome, options.expectedVersion);
   const verifyPayload = options.verifyCodexPayload ?? verifyCodexPhysicalPayload;
   verifyPayload({
     bundleRoot: options.bundleRoot,
@@ -2940,7 +2971,11 @@ export function convergeCodexPluginOnly(options: ConvergeCodexPluginOnlyOptions)
       skillNames: proof.skillInventory,
       verifiedTargets: proof.payload,
     });
-    preservedCollisions = plan.preserved.length;
+    // planCodexFallbackRetirement records an absent canonical skill as a
+    // {accepted:false, reason:'missing'} preserved entry, so after a full
+    // migration every subsequent run would otherwise report a phantom
+    // "preserved 23 personal collision(s)". Count only real on-disk collisions.
+    preservedCollisions = plan.preserved.filter((entry) => entry.reason !== 'missing').length;
     // A11: a zero-accepted plan is a true no-op — never open a fresh transaction
     // so a plugin-only second run cannot accumulate empty quarantine journals.
     if (plan.accepted.length > 0) {
