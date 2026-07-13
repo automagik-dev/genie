@@ -2633,6 +2633,129 @@ describe('Codex fallback batch retirement', () => {
     });
   }
 
+  test('a personal edit at before-move is re-identified and remains live', () => {
+    const { alpha, plan } = batchFixture();
+    expect(() =>
+      applyCodexFallbackRetirement(plan, {
+        failpoint: (point) => {
+          if (point === 'before-move:0') writeFile(join(alpha.path, 'USER.txt'), 'personal before move\n');
+        },
+      }),
+    ).toThrow('source changed at move boundary');
+    expect(readFileSync(join(alpha.path, 'USER.txt'), 'utf8')).toBe('personal before move\n');
+    const quarantine = join(
+      plan.fallbackSkillsDir,
+      '.genie-codex-fallback-retirement',
+      `txn-${plan.transactionId}`,
+      'quarantine',
+      'alpha',
+    );
+    expect(existsSync(quarantine)).toBe(false);
+    expect(() => applyCodexFallbackRetirement(plan)).toThrow('source changed after planning');
+    expect(readFileSync(join(alpha.path, 'USER.txt'), 'utf8')).toBe('personal before move\n');
+  });
+
+  test('a personal edit in the final check/rename race is republished from quarantine', () => {
+    const { alpha, plan } = batchFixture();
+    expect(() =>
+      applyCodexFallbackRetirement(plan, {
+        failpoint: (point) => {
+          if (point === 'after-move-boundary-identification:0') {
+            writeFile(join(alpha.path, 'USER.txt'), 'personal in rename race\n');
+          }
+        },
+      }),
+    ).toThrow('destination verification failed');
+    expect(readFileSync(join(alpha.path, 'USER.txt'), 'utf8')).toBe('personal in rename race\n');
+    const transactionDir = join(
+      plan.fallbackSkillsDir,
+      '.genie-codex-fallback-retirement',
+      `txn-${plan.transactionId}`,
+    );
+    expect(existsSync(join(transactionDir, 'quarantine', 'alpha'))).toBe(false);
+    const journal = JSON.parse(readFileSync(join(transactionDir, 'journal.json'), 'utf8')) as {
+      phase: string;
+      entries: Array<{ phase: string; observedTreeDigest?: string }>;
+    };
+    expect(journal.phase).toBe('restored');
+    expect(journal.entries[0]?.phase).toBe('restored');
+    expect(journal.entries[0]?.observedTreeDigest).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  for (const restoreFailpoint of [
+    'after-restore-observation:0',
+    'after-restore-staging-create:0',
+    'after-restore-copy:0:0',
+    'after-restore-verification:0',
+    'after-restore-sync:0',
+    'before-restore-publication:0',
+    'after-restore-filesystem:0',
+    'before-restore-cleanup:0',
+  ] as const) {
+    test(`changed-content republication recovers after ${restoreFailpoint}`, () => {
+      const { alpha, plan } = batchFixture();
+      let changedMovedTree = false;
+      let interrupted = false;
+      expect(() =>
+        applyCodexFallbackRetirement(plan, {
+          failpoint: (point) => {
+            if (point === 'after-move-boundary-identification:0') {
+              writeFile(join(alpha.path, 'USER.txt'), `personal ${restoreFailpoint}\n`);
+              changedMovedTree = true;
+            }
+            if (changedMovedTree && !interrupted && point === restoreFailpoint) {
+              interrupted = true;
+              throw new Error(`interrupt ${point}`);
+            }
+          },
+        }),
+      ).toThrow('fallback retirement restore failed');
+      expect(() => applyCodexFallbackRetirement(plan)).toThrow('source changed after planning');
+      expect(readFileSync(join(alpha.path, 'USER.txt'), 'utf8')).toBe(`personal ${restoreFailpoint}\n`);
+      const quarantine = join(
+        plan.fallbackSkillsDir,
+        '.genie-codex-fallback-retirement',
+        `txn-${plan.transactionId}`,
+        'quarantine',
+        'alpha',
+      );
+      expect(existsSync(quarantine)).toBe(false);
+    });
+  }
+
+  test('a changed quarantine and live publication conflict are both retained with recoverable status', () => {
+    const { alpha, plan } = batchFixture();
+    expect(() =>
+      applyCodexFallbackRetirement(plan, {
+        failpoint: (point) => {
+          if (point === 'after-move-boundary-identification:0') {
+            writeFile(join(alpha.path, 'USER.txt'), 'changed quarantine\n');
+          }
+          if (point === 'before-restore-publication:0') {
+            writeFile(join(alpha.path, 'CONFLICT.txt'), 'live conflict\n');
+          }
+        },
+      }),
+    ).toThrow('both trees retained with recoverable status');
+    expect(readFileSync(join(alpha.path, 'CONFLICT.txt'), 'utf8')).toBe('live conflict\n');
+    const transactionDir = join(
+      plan.fallbackSkillsDir,
+      '.genie-codex-fallback-retirement',
+      `txn-${plan.transactionId}`,
+    );
+    expect(readFileSync(join(transactionDir, 'quarantine', 'alpha', 'USER.txt'), 'utf8')).toBe('changed quarantine\n');
+    const journal = JSON.parse(readFileSync(join(transactionDir, 'journal.json'), 'utf8')) as {
+      phase: string;
+      entries: Array<{ phase: string; observedTreeDigest?: string }>;
+    };
+    expect(journal.phase).toBe('restore-conflict');
+    expect(journal.entries[0]?.phase).toBe('restore-conflict');
+    expect(journal.entries[0]?.observedTreeDigest).toMatch(/^[a-f0-9]{64}$/);
+    expect(() => applyCodexFallbackRetirement(plan)).toThrow('both trees retained with recoverable status');
+    expect(readFileSync(join(alpha.path, 'CONFLICT.txt'), 'utf8')).toBe('live conflict\n');
+    expect(readFileSync(join(transactionDir, 'quarantine', 'alpha', 'USER.txt'), 'utf8')).toBe('changed quarantine\n');
+  });
+
   test('retry reconciles a crash after restore rename but before restored phase persistence', () => {
     const { plan } = batchFixture();
     let moved = false;

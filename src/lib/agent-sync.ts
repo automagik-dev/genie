@@ -290,12 +290,20 @@ function firstExisting(paths: string[]): string | null {
  * excluded because its digest field would otherwise be self-referential.
  */
 export function computeDirDigest(dir: string, exclude?: Set<string>): string {
+  const excluded = new Set([...(exclude ?? [])].map(normalizePhysicalRelPath));
+  excluded.add(MANIFEST_NAME);
+  return computePhysicalTreeDigest(dir, excluded);
+}
+
+function computeExactDirDigest(dir: string): string {
+  return computePhysicalTreeDigest(dir, new Set());
+}
+
+function computePhysicalTreeDigest(dir: string, excluded: Set<string>): string {
   const rootStat = lstatSync(dir);
   if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
     throw new Error(`physical tree root is not a directory: ${dir}`);
   }
-  const excluded = new Set([...(exclude ?? [])].map(normalizePhysicalRelPath));
-  excluded.add(MANIFEST_NAME);
   const entries: PhysicalTreeEntry[] = [physicalTreeEntry('.', rootStat, dir)];
   collectPhysicalTreeEntries(dir, dir, excluded, entries);
   entries.sort(byRel);
@@ -1134,14 +1142,55 @@ export function planCodexFallbackRetirement(options: PlanCodexFallbackRetirement
   };
 }
 
-type CodexFallbackRetirementPhase = 'prepared' | 'moving' | 'verifying' | 'restoring' | 'restored' | 'committed';
+type CodexFallbackRetirementPhase =
+  | 'prepared'
+  | 'moving'
+  | 'verifying'
+  | 'restoring'
+  | 'restore-conflict'
+  | 'restored'
+  | 'committed';
+
+type CodexFallbackRetirementEntryPhase =
+  | 'planned'
+  | 'moved'
+  | 'verified'
+  | 'restore-observed'
+  | 'restore-conflict'
+  | 'preserved-live'
+  | 'restored';
+
+interface CodexFallbackRetirementEntry extends CodexFallbackAcceptedIdentity {
+  destination: string;
+  phase: CodexFallbackRetirementEntryPhase;
+  /** Exact physical identity, including the marker, captured after retirement authority was lost. */
+  observedTreeDigest?: string;
+}
 
 interface CodexFallbackRetirementJournal extends CodexFallbackRetirementPlan {
   phase: CodexFallbackRetirementPhase;
-  entries: Array<
-    CodexFallbackAcceptedIdentity & { destination: string; phase: 'planned' | 'moved' | 'verified' | 'restored' }
-  >;
+  entries: CodexFallbackRetirementEntry[];
 }
+
+const CODEX_FALLBACK_RETIREMENT_PHASES = new Set<CodexFallbackRetirementPhase>([
+  'prepared',
+  'moving',
+  'verifying',
+  'restoring',
+  'restore-conflict',
+  'restored',
+  'committed',
+]);
+
+const CODEX_FALLBACK_RETIREMENT_ENTRY_PHASES = new Set<CodexFallbackRetirementEntryPhase>([
+  'planned',
+  'moved',
+  'verified',
+  'restore-observed',
+  'restore-conflict',
+  'preserved-live',
+  'restored',
+]);
 
 export type CodexFallbackRetirementFailpoint =
   | 'after-journal-temp-create'
@@ -1149,11 +1198,13 @@ export type CodexFallbackRetirementFailpoint =
   | 'after-journal-rename'
   | 'after-journal-durable'
   | `before-move:${number}`
+  | `after-move-boundary-identification:${number}`
   | `after-move-filesystem:${number}`
   | `after-move:${number}`
   | `before-destination-verification:${number}`
   | `after-verification:${number}`
   | `before-restore:${number}`
+  | `after-restore-observation:${number}`
   | `after-restore-staging-create:${number}`
   | `after-restore-copy:${number}:${number}`
   | `after-restore-verification:${number}`
@@ -1299,7 +1350,13 @@ function readRetirementJournal(fallbackSkillsDir: string, transactionDir: string
     !/^[a-f0-9]{32}$/.test(parsed.transactionId) ||
     !Array.isArray(parsed.accepted) ||
     !Array.isArray(parsed.entries) ||
-    parsed.accepted.length !== parsed.entries.length
+    parsed.accepted.length !== parsed.entries.length ||
+    !CODEX_FALLBACK_RETIREMENT_PHASES.has(parsed.phase) ||
+    parsed.entries.some(
+      (entry) =>
+        !CODEX_FALLBACK_RETIREMENT_ENTRY_PHASES.has(entry.phase) ||
+        (entry.observedTreeDigest !== undefined && !isDigest(entry.observedTreeDigest)),
+    )
   ) {
     throw new Error(`invalid Codex fallback retirement journal: ${transactionDir}`);
   }
@@ -1317,14 +1374,18 @@ function sameRetirementBatch(plan: CodexFallbackRetirementPlan, journal: CodexFa
 }
 
 function matchesFallbackIdentity(path: string, expected: CodexFallbackAcceptedIdentity): boolean {
-  const parsed = strictFallbackMarker(path);
-  return (
-    parsed !== null &&
-    parsed.marker.version === expected.markerVersion &&
-    parsed.marker.digest === expected.physicalDigest &&
-    parsed.markerDigest === expected.markerDigest &&
-    computeDirDigest(path) === expected.physicalDigest
-  );
+  try {
+    const parsed = strictFallbackMarker(path);
+    return (
+      parsed !== null &&
+      parsed.marker.version === expected.markerVersion &&
+      parsed.marker.digest === expected.physicalDigest &&
+      parsed.markerDigest === expected.markerDigest &&
+      computeDirDigest(path) === expected.physicalDigest
+    );
+  } catch {
+    return false;
+  }
 }
 
 function fsyncPhysicalTree(path: string): void {
@@ -1334,6 +1395,260 @@ function fsyncPhysicalTree(path: string): void {
     for (const name of readdirSync(path)) fsyncPhysicalTree(join(path, name));
   }
   fsyncPath(path);
+}
+
+function exactPhysicalDirectoryDigest(path: string): string | null {
+  const stat = lstatSafe(path);
+  if (stat === null || !stat.isDirectory() || stat.isSymbolicLink()) return null;
+  try {
+    return computeExactDirDigest(path);
+  } catch {
+    return null;
+  }
+}
+
+interface RetirementRestorePaths {
+  quarantine: string;
+  source: string;
+  destination: string;
+  stagingRoot: string;
+  staging: string;
+}
+
+function retirementRestorePaths(
+  fallbackSkillsDir: string,
+  transactionDir: string,
+  entry: CodexFallbackRetirementEntry,
+): RetirementRestorePaths {
+  const quarantine = validateQuarantineDirectory(fallbackSkillsDir, transactionDir);
+  const stagingRoot = join(transactionDir, '.restore-staging');
+  return {
+    quarantine,
+    source: join(fallbackSkillsDir, entry.skillName),
+    destination: join(quarantine, entry.skillName),
+    stagingRoot,
+    staging: join(stagingRoot, entry.skillName),
+  };
+}
+
+function matchesRestoreIdentity(
+  path: string,
+  entry: CodexFallbackRetirementEntry,
+  observedTreeDigest?: string,
+): boolean {
+  return observedTreeDigest === undefined
+    ? matchesFallbackIdentity(path, entry)
+    : exactPhysicalDirectoryDigest(path) === observedTreeDigest;
+}
+
+function writeRestoreConflict(
+  transactionDir: string,
+  journal: CodexFallbackRetirementJournal,
+  entry: CodexFallbackRetirementEntry,
+  reason: string,
+  failpoint?: ApplyCodexFallbackRetirementOptions['failpoint'],
+): never {
+  entry.phase = 'restore-conflict';
+  journal.phase = 'restore-conflict';
+  writeDurableRetirementJournal(transactionDir, journal, failpoint);
+  throw new Error(`${reason}; both trees retained with recoverable status at ${transactionDir}`);
+}
+
+function markRetirementEntryRestored(
+  transactionDir: string,
+  journal: CodexFallbackRetirementJournal,
+  entry: CodexFallbackRetirementEntry,
+  phase: 'preserved-live' | 'restored',
+  failpoint?: ApplyCodexFallbackRetirementOptions['failpoint'],
+): void {
+  journal.phase = 'restoring';
+  entry.phase = phase;
+  writeDurableRetirementJournal(transactionDir, journal, failpoint);
+}
+
+function cleanupRestoredRetirementDestination(
+  fallbackSkillsDir: string,
+  transactionDir: string,
+  journal: CodexFallbackRetirementJournal,
+  entry: CodexFallbackRetirementEntry,
+  paths: RetirementRestorePaths,
+  observedTreeDigest: string | undefined,
+  failpoint?: ApplyCodexFallbackRetirementOptions['failpoint'],
+): void {
+  fsyncPhysicalTree(paths.source);
+  fsyncPath(fallbackSkillsDir);
+  validateQuarantineDirectory(fallbackSkillsDir, transactionDir);
+  if (!matchesRestoreIdentity(paths.destination, entry, observedTreeDigest)) {
+    writeRestoreConflict(
+      transactionDir,
+      journal,
+      entry,
+      'fallback retirement quarantine changed during cleanup',
+      failpoint,
+    );
+  }
+  rmSync(paths.destination, { recursive: true });
+  fsyncPath(paths.quarantine);
+  markRetirementEntryRestored(transactionDir, journal, entry, 'restored', failpoint);
+}
+
+function stageRetirementRestore(
+  paths: RetirementRestorePaths,
+  entry: CodexFallbackRetirementEntry,
+  index: number,
+  observedTreeDigest: string | undefined,
+  failpoint?: ApplyCodexFallbackRetirementOptions['failpoint'],
+): void {
+  if (lstatSafe(paths.stagingRoot) === null) mkdirSync(paths.stagingRoot, { mode: 0o700 });
+  assertCanonicalPhysicalDirectory(paths.stagingRoot, 'fallback retirement restore staging');
+  if (lstatSafe(paths.staging) !== null) rmSync(paths.staging, { recursive: true });
+  mkdirSync(paths.staging, { mode: lstatSync(paths.destination).mode & 0o7777 });
+  failpoint?.(`after-restore-staging-create:${index}`);
+  for (const [copyIndex, name] of readdirSync(paths.destination).entries()) {
+    cpSync(join(paths.destination, name), join(paths.staging, name), { recursive: true, preserveTimestamps: true });
+    failpoint?.(`after-restore-copy:${index}:${copyIndex}`);
+  }
+  chmodSync(paths.staging, lstatSync(paths.destination).mode & 0o7777);
+  if (!matchesRestoreIdentity(paths.staging, entry, observedTreeDigest)) {
+    throw new Error(`fallback retirement restore staging changed: ${paths.staging}`);
+  }
+  failpoint?.(`after-restore-verification:${index}`);
+  fsyncPhysicalTree(paths.staging);
+  fsyncPath(paths.stagingRoot);
+  failpoint?.(`after-restore-sync:${index}`);
+}
+
+function publishRetirementRestore(
+  fallbackSkillsDir: string,
+  transactionDir: string,
+  journal: CodexFallbackRetirementJournal,
+  entry: CodexFallbackRetirementEntry,
+  paths: RetirementRestorePaths,
+  index: number,
+  observedTreeDigest: string | undefined,
+  failpoint?: ApplyCodexFallbackRetirementOptions['failpoint'],
+): void {
+  failpoint?.(`before-restore-publication:${index}`);
+  validateQuarantineDirectory(fallbackSkillsDir, transactionDir);
+  if (!matchesRestoreIdentity(paths.destination, entry, observedTreeDigest)) {
+    throw new Error(`fallback retirement quarantine changed before republication: ${paths.destination}`);
+  }
+  if (lstatSafe(paths.source) !== null) {
+    writeRestoreConflict(
+      transactionDir,
+      journal,
+      entry,
+      `fallback retirement restore conflict at ${paths.source}`,
+      failpoint,
+    );
+  }
+  try {
+    publishPhysicalTreeNoClobber(paths.staging, paths.source);
+  } catch (error) {
+    if (lstatSafe(paths.source) !== null) {
+      writeRestoreConflict(
+        transactionDir,
+        journal,
+        entry,
+        `fallback retirement restore conflict at ${paths.source}`,
+        failpoint,
+      );
+    }
+    throw error;
+  }
+  fsyncPhysicalTree(paths.source);
+  fsyncPath(fallbackSkillsDir);
+  failpoint?.(`after-restore-filesystem:${index}`);
+  if (!matchesRestoreIdentity(paths.source, entry, observedTreeDigest)) {
+    writeRestoreConflict(
+      transactionDir,
+      journal,
+      entry,
+      `fallback retirement restore verification failed at ${paths.source}`,
+      failpoint,
+    );
+  }
+  failpoint?.(`before-restore-cleanup:${index}`);
+  cleanupRestoredRetirementDestination(
+    fallbackSkillsDir,
+    transactionDir,
+    journal,
+    entry,
+    paths,
+    observedTreeDigest,
+    failpoint,
+  );
+  rmSync(paths.staging, { recursive: true, force: true });
+  fsyncPath(paths.stagingRoot);
+  failpoint?.(`after-restore:${index}`);
+}
+
+function restoreRetirementEntry(
+  fallbackSkillsDir: string,
+  transactionDir: string,
+  journal: CodexFallbackRetirementJournal,
+  entry: CodexFallbackRetirementEntry,
+  index: number,
+  failpoint?: ApplyCodexFallbackRetirementOptions['failpoint'],
+): void {
+  const paths = retirementRestorePaths(fallbackSkillsDir, transactionDir, entry);
+  const sourceExists = lstatSafe(paths.source) !== null;
+  const destinationExists = lstatSafe(paths.destination) !== null;
+  const sourceMatches = matchesFallbackIdentity(paths.source, entry);
+  const destinationMatches = matchesFallbackIdentity(paths.destination, entry);
+  const observed = entry.observedTreeDigest;
+  const sourceObserved = observed !== undefined && matchesRestoreIdentity(paths.source, entry, observed);
+  const destinationObserved = observed !== undefined && matchesRestoreIdentity(paths.destination, entry, observed);
+
+  if ((sourceMatches && destinationMatches) || (sourceObserved && destinationObserved)) {
+    cleanupRestoredRetirementDestination(
+      fallbackSkillsDir,
+      transactionDir,
+      journal,
+      entry,
+      paths,
+      sourceObserved ? observed : undefined,
+      failpoint,
+    );
+    return;
+  }
+  if ((sourceMatches || sourceObserved) && !destinationExists) {
+    markRetirementEntryRestored(transactionDir, journal, entry, 'restored', failpoint);
+    return;
+  }
+  if (sourceExists && destinationExists) {
+    writeRestoreConflict(
+      transactionDir,
+      journal,
+      entry,
+      `fallback retirement restore conflict at ${paths.source}`,
+      failpoint,
+    );
+  }
+  if (sourceExists) {
+    entry.observedTreeDigest = exactPhysicalDirectoryDigest(paths.source) ?? undefined;
+    markRetirementEntryRestored(transactionDir, journal, entry, 'preserved-live', failpoint);
+    return;
+  }
+  if (!destinationExists) {
+    throw new Error(`fallback retirement restore has neither live nor quarantined tree: ${paths.source}`);
+  }
+
+  let restoreDigest: string | undefined;
+  if (!destinationMatches) {
+    restoreDigest = exactPhysicalDirectoryDigest(paths.destination) ?? undefined;
+    if (restoreDigest === undefined) {
+      throw new Error(`fallback retirement quarantine is not a recoverable physical tree: ${paths.destination}`);
+    }
+    entry.observedTreeDigest = restoreDigest;
+    entry.phase = 'restore-observed';
+    journal.phase = 'restoring';
+    writeDurableRetirementJournal(transactionDir, journal, failpoint);
+    failpoint?.(`after-restore-observation:${index}`);
+  }
+  failpoint?.(`before-restore:${index}`);
+  stageRetirementRestore(paths, entry, index, restoreDigest, failpoint);
+  publishRetirementRestore(fallbackSkillsDir, transactionDir, journal, entry, paths, index, restoreDigest, failpoint);
 }
 
 function restoreRetirementMoves(
@@ -1347,67 +1662,7 @@ function restoreRetirementMoves(
   for (let index = journal.entries.length - 1; index >= 0; index -= 1) {
     const entry = journal.entries[index];
     if (entry === undefined) continue;
-    const quarantine = validateQuarantineDirectory(fallbackSkillsDir, transactionDir);
-    const source = join(fallbackSkillsDir, entry.skillName);
-    const destination = join(quarantine, entry.skillName);
-    const sourceMatches = matchesFallbackIdentity(source, entry);
-    const destinationMatches = matchesFallbackIdentity(destination, entry);
-    if (sourceMatches && destinationMatches) {
-      fsyncPhysicalTree(source);
-      fsyncPath(fallbackSkillsDir);
-      validateQuarantineDirectory(fallbackSkillsDir, transactionDir);
-      rmSync(destination, { recursive: true });
-      fsyncPath(quarantine);
-      entry.phase = 'restored';
-      continue;
-    }
-    if (sourceMatches && !destinationMatches) {
-      entry.phase = 'restored';
-      continue;
-    }
-    if (!destinationMatches || sourceMatches) {
-      throw new Error(`fallback retirement quarantine changed; recoverable state retained at ${transactionDir}`);
-    }
-    if (lstatSafe(source) !== null) {
-      throw new Error(`fallback retirement restore conflict at ${source}; quarantine retained at ${transactionDir}`);
-    }
-    failpoint?.(`before-restore:${index}`);
-    const stagingRoot = join(transactionDir, '.restore-staging');
-    if (lstatSafe(stagingRoot) === null) mkdirSync(stagingRoot, { mode: 0o700 });
-    assertCanonicalPhysicalDirectory(stagingRoot, 'fallback retirement restore staging');
-    const staging = join(stagingRoot, entry.skillName);
-    if (lstatSafe(staging) !== null) rmSync(staging, { recursive: true });
-    mkdirSync(staging, { mode: lstatSync(destination).mode & 0o7777 });
-    failpoint?.(`after-restore-staging-create:${index}`);
-    const names = readdirSync(destination);
-    for (const [copyIndex, name] of names.entries()) {
-      cpSync(join(destination, name), join(staging, name), { recursive: true, preserveTimestamps: true });
-      failpoint?.(`after-restore-copy:${index}:${copyIndex}`);
-    }
-    chmodSync(staging, lstatSync(destination).mode & 0o7777);
-    if (!matchesFallbackIdentity(staging, entry))
-      throw new Error(`fallback retirement restore staging changed: ${staging}`);
-    failpoint?.(`after-restore-verification:${index}`);
-    fsyncPhysicalTree(staging);
-    fsyncPath(stagingRoot);
-    failpoint?.(`after-restore-sync:${index}`);
-    failpoint?.(`before-restore-publication:${index}`);
-    validateQuarantineDirectory(fallbackSkillsDir, transactionDir);
-    if (lstatSafe(source) !== null) throw new Error(`fallback retirement restore conflict at ${source}`);
-    renameSync(staging, source);
-    fsyncPhysicalTree(source);
-    fsyncPath(fallbackSkillsDir);
-    failpoint?.(`after-restore-filesystem:${index}`);
-    if (!matchesFallbackIdentity(source, entry)) {
-      throw new Error(`fallback retirement restore verification failed at ${source}`);
-    }
-    failpoint?.(`before-restore-cleanup:${index}`);
-    validateQuarantineDirectory(fallbackSkillsDir, transactionDir);
-    rmSync(destination, { recursive: true });
-    fsyncPath(quarantine);
-    entry.phase = 'restored';
-    writeDurableRetirementJournal(transactionDir, journal, failpoint);
-    failpoint?.(`after-restore:${index}`);
+    restoreRetirementEntry(fallbackSkillsDir, transactionDir, journal, entry, index, failpoint);
   }
   journal.phase = 'restored';
   writeDurableRetirementJournal(transactionDir, journal, failpoint);
@@ -1468,6 +1723,124 @@ function loadOrPrepareRetirementJournal(
     : readRetirementJournal(fallbackSkillsDir, transactionDir);
 }
 
+function committedRetirementResult(
+  plan: CodexFallbackRetirementPlan,
+  journal: CodexFallbackRetirementJournal,
+  transactionRoot: string,
+  transactionDir: string,
+  options: ApplyCodexFallbackRetirementOptions,
+): CodexFallbackRetirementResult {
+  const resurrected = journal.entries.filter((entry) =>
+    matchesFallbackIdentity(join(plan.fallbackSkillsDir, entry.skillName), entry),
+  );
+  if (resurrected.length > 0) {
+    let generation = (plan.generation ?? 0) + 1;
+    let generationId = retirementTransactionId(resurrected, generation);
+    while (lstatSafe(join(transactionRoot, `txn-${generationId}`)) !== null) {
+      generation += 1;
+      generationId = retirementTransactionId(resurrected, generation);
+    }
+    const generationPlan = {
+      ...plan,
+      generation,
+      transactionId: generationId,
+      accepted: resurrected.map(
+        ({ destination: _destination, phase: _phase, observedTreeDigest: _observed, ...entry }) => entry,
+      ),
+    };
+    return applyCodexFallbackRetirement(generationPlan, options);
+  }
+  return {
+    transactionId: plan.transactionId,
+    transactionDir,
+    status: 'already-committed',
+    retired: journal.accepted.map((entry) => entry.skillName),
+  };
+}
+
+function validateRetirementSources(
+  fallbackSkillsDir: string,
+  transactionDir: string,
+  journal: CodexFallbackRetirementJournal,
+): void {
+  for (const entry of journal.entries) {
+    const quarantine = validateQuarantineDirectory(fallbackSkillsDir, transactionDir);
+    const source = join(fallbackSkillsDir, entry.skillName);
+    const destination = join(quarantine, entry.skillName);
+    entry.phase = 'planned';
+    if (!matchesFallbackIdentity(source, entry)) {
+      throw new Error(`fallback retirement source changed after planning: ${source}`);
+    }
+    if (lstatSafe(destination) !== null) throw new Error(`fallback retirement quarantine collision: ${destination}`);
+  }
+}
+
+function moveRetirementEntries(
+  fallbackSkillsDir: string,
+  transactionDir: string,
+  journal: CodexFallbackRetirementJournal,
+  failpoint?: ApplyCodexFallbackRetirementOptions['failpoint'],
+): void {
+  journal.phase = 'moving';
+  writeDurableRetirementJournal(transactionDir, journal, failpoint);
+  failpoint?.('after-journal-durable');
+  for (const [index, entry] of journal.entries.entries()) {
+    failpoint?.(`before-move:${index}`);
+    const quarantine = validateQuarantineDirectory(fallbackSkillsDir, transactionDir);
+    const source = join(fallbackSkillsDir, entry.skillName);
+    const destination = join(quarantine, entry.skillName);
+    if (!matchesFallbackIdentity(source, entry)) {
+      throw new Error(`fallback retirement source changed at move boundary: ${source}`);
+    }
+    if (lstatSafe(destination) !== null) throw new Error(`fallback retirement quarantine collision: ${destination}`);
+    failpoint?.(`after-move-boundary-identification:${index}`);
+    // This narrows the mutation window; Node exposes no atomic identity-CAS rename, so verification after rename remains required.
+    renameSync(source, destination);
+    fsyncPath(fallbackSkillsDir);
+    fsyncPath(quarantine);
+    failpoint?.(`after-move-filesystem:${index}`);
+    entry.phase = 'moved';
+    writeDurableRetirementJournal(transactionDir, journal, failpoint);
+    failpoint?.(`after-move:${index}`);
+  }
+}
+
+function verifyRetirementDestinations(
+  fallbackSkillsDir: string,
+  transactionDir: string,
+  journal: CodexFallbackRetirementJournal,
+  failpoint?: ApplyCodexFallbackRetirementOptions['failpoint'],
+): void {
+  journal.phase = 'verifying';
+  writeDurableRetirementJournal(transactionDir, journal, failpoint);
+  for (const [index, entry] of journal.entries.entries()) {
+    failpoint?.(`before-destination-verification:${index}`);
+    const quarantine = validateQuarantineDirectory(fallbackSkillsDir, transactionDir);
+    const source = join(fallbackSkillsDir, entry.skillName);
+    const destination = join(quarantine, entry.skillName);
+    if (!matchesFallbackIdentity(destination, entry) || lstatSafe(source) !== null) {
+      throw new Error(`fallback retirement destination verification failed: ${destination}`);
+    }
+    entry.phase = 'verified';
+    writeDurableRetirementJournal(transactionDir, journal, failpoint);
+    failpoint?.(`after-verification:${index}`);
+  }
+}
+
+function commitRetirementJournal(
+  transactionRoot: string,
+  transactionDir: string,
+  journal: CodexFallbackRetirementJournal,
+  failpoint?: ApplyCodexFallbackRetirementOptions['failpoint'],
+): void {
+  failpoint?.('before-commit');
+  journal.phase = 'committed';
+  writeDurableRetirementJournal(transactionDir, journal, failpoint);
+  failpoint?.('after-commit-journal');
+  fsyncPath(transactionRoot);
+  failpoint?.('after-commit-durable');
+}
+
 /**
  * Retire one already-planned batch into a retained hidden quarantine. The
  * complete journal is durable before the first rename. Pre-commit failures
@@ -1505,82 +1878,17 @@ export function applyCodexFallbackRetirement(
   if (!sameRetirementBatch(plan, journal))
     throw new Error(`fallback retirement transaction identity conflict: ${transactionDir}`);
   if (journal.phase === 'committed') {
-    const resurrected = journal.entries.filter((entry) =>
-      matchesFallbackIdentity(join(fallbackSkillsDir, entry.skillName), entry),
-    );
-    if (resurrected.length > 0) {
-      let generation = (plan.generation ?? 0) + 1;
-      let generationId = retirementTransactionId(resurrected, generation);
-      while (lstatSafe(join(transactionRoot, `txn-${generationId}`)) !== null) {
-        generation += 1;
-        generationId = retirementTransactionId(resurrected, generation);
-      }
-      const generationPlan = {
-        ...plan,
-        generation,
-        transactionId: generationId,
-        accepted: resurrected.map(({ destination: _destination, phase: _phase, ...entry }) => entry),
-      };
-      return applyCodexFallbackRetirement(generationPlan, options);
-    }
-    return {
-      transactionId: plan.transactionId,
-      transactionDir,
-      status: 'already-committed',
-      retired: journal.accepted.map((entry) => entry.skillName),
-    };
+    return committedRetirementResult(plan, journal, transactionRoot, transactionDir, options);
   }
   try {
-    if (journal.entries.some((entry) => matchesFallbackIdentity(entry.destination, entry))) {
+    if (journal.entries.some((entry) => lstatSafe(entry.destination) !== null)) {
       restoreRetirementMoves(fallbackSkillsDir, transactionDir, journal, options.failpoint);
       journal = readRetirementJournal(fallbackSkillsDir, transactionDir);
     }
-    for (const entry of journal.entries) {
-      const quarantine = validateQuarantineDirectory(fallbackSkillsDir, transactionDir);
-      const source = join(fallbackSkillsDir, entry.skillName);
-      const destination = join(quarantine, entry.skillName);
-      entry.phase = 'planned';
-      if (!matchesFallbackIdentity(source, entry)) {
-        throw new Error(`fallback retirement source changed after planning: ${source}`);
-      }
-      if (lstatSafe(destination) !== null) throw new Error(`fallback retirement quarantine collision: ${destination}`);
-    }
-    journal.phase = 'moving';
-    writeDurableRetirementJournal(transactionDir, journal, options.failpoint);
-    options.failpoint?.('after-journal-durable');
-    for (const [index, entry] of journal.entries.entries()) {
-      options.failpoint?.(`before-move:${index}`);
-      const quarantine = validateQuarantineDirectory(fallbackSkillsDir, transactionDir);
-      const source = join(fallbackSkillsDir, entry.skillName);
-      const destination = join(quarantine, entry.skillName);
-      renameSync(source, destination);
-      fsyncPath(fallbackSkillsDir);
-      fsyncPath(quarantine);
-      options.failpoint?.(`after-move-filesystem:${index}`);
-      entry.phase = 'moved';
-      writeDurableRetirementJournal(transactionDir, journal, options.failpoint);
-      options.failpoint?.(`after-move:${index}`);
-    }
-    journal.phase = 'verifying';
-    writeDurableRetirementJournal(transactionDir, journal, options.failpoint);
-    for (const [index, entry] of journal.entries.entries()) {
-      options.failpoint?.(`before-destination-verification:${index}`);
-      const quarantine = validateQuarantineDirectory(fallbackSkillsDir, transactionDir);
-      const source = join(fallbackSkillsDir, entry.skillName);
-      const destination = join(quarantine, entry.skillName);
-      if (!matchesFallbackIdentity(destination, entry) || lstatSafe(source) !== null) {
-        throw new Error(`fallback retirement destination verification failed: ${destination}`);
-      }
-      entry.phase = 'verified';
-      writeDurableRetirementJournal(transactionDir, journal, options.failpoint);
-      options.failpoint?.(`after-verification:${index}`);
-    }
-    options.failpoint?.('before-commit');
-    journal.phase = 'committed';
-    writeDurableRetirementJournal(transactionDir, journal, options.failpoint);
-    options.failpoint?.('after-commit-journal');
-    fsyncPath(transactionRoot);
-    options.failpoint?.('after-commit-durable');
+    validateRetirementSources(fallbackSkillsDir, transactionDir, journal);
+    moveRetirementEntries(fallbackSkillsDir, transactionDir, journal, options.failpoint);
+    verifyRetirementDestinations(fallbackSkillsDir, transactionDir, journal, options.failpoint);
+    commitRetirementJournal(transactionRoot, transactionDir, journal, options.failpoint);
     return {
       transactionId: plan.transactionId,
       transactionDir,
