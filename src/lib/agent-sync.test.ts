@@ -31,6 +31,7 @@ import {
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { checkAgentSync } from '../genie-commands/doctor';
 import { runAgentSyncSafe } from '../genie-commands/update';
 import {
   type AgentReport,
@@ -1150,6 +1151,40 @@ describe('hermes config convergence', () => {
     expect(hermes.failures).toBeUndefined(); // failed leg is non-fatal to the run
     expect(extraAction(hermes, 'skills-dir')).toBe('created');
     expect(extraAction(hermes, 'symlink')).toBe('created');
+  });
+
+  test('round-trip: syncHermes writes converge and doctor.checkAgentSync reports every hermes leg green', () => {
+    // WRITE: runAgentSync → syncHermes converges the plugin link + config.yaml
+    // (mcp_servers.genie + skills.external_dirs) into the fixture's HERMES_HOME.
+    present(fixture.hermesHome);
+    const bin = presentGenieBinary();
+    const wrote = agentReport(run(), 'hermes');
+    expect(extraAction(wrote, 'mcp-config')).toBe('created');
+    expect(extraAction(wrote, 'skills-dir')).toBe('updated');
+
+    // READ-BACK: the doctor's read-only agent-sync check, pointed at the SAME
+    // converged tmpdir fixture, must confirm every hermes leg the writer produced.
+    // hermesBinary:null skips the enable probe so this test never spawns a process.
+    const hermesChecks = checkAgentSync({
+      genieHome: fixture.genieHome,
+      claudeDir: fixture.claudeDir,
+      codexDir: fixture.codexDir,
+      agentsSkillsDir: fixture.agentsSkillsDir,
+      hermesHome: fixture.hermesHome,
+      hermesBinary: null,
+      settingsPath: join(fixture.claudeDir, 'settings.json'),
+    }).filter((check) => check.name.startsWith('agent sync: hermes'));
+
+    const byName = (name: string) => hermesChecks.find((check) => check.name === name);
+    expect(byName('agent sync: hermes')?.status).toBe('pass'); // plugin symlink leg
+    expect(byName('agent sync: hermes')?.detail).toContain(fixture.hermesSource);
+    expect(byName('agent sync: hermes mcp')?.status).toBe('pass');
+    expect(byName('agent sync: hermes mcp')?.detail).toContain(bin);
+    expect(byName('agent sync: hermes skills')?.status).toBe('pass');
+    expect(byName('agent sync: hermes skills')?.detail).toContain(skillsRoot());
+    // Every emitted hermes leg is a pass — the writer and the doctor agree end-to-end.
+    expect(hermesChecks.length).toBeGreaterThanOrEqual(3);
+    expect(hermesChecks.every((check) => check.status === 'pass')).toBe(true);
   });
 });
 
