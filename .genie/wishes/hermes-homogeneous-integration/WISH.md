@@ -292,6 +292,14 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - **Rationale (reviewer):** All five FIX-FIRST gaps resolved in place and verified against the repo: Group 3's validation now updates only the hook assertions its own changes break (tool/skill/version assertions deferred to Group 5); the Wave-1 map collision is broken by routing Group 2's resolution to a private report with `group-1, group-2` edges on the Group 4 fold; the invalid `bun test --filter` fallback is gone; the omitted test/version files are named; Group 6's routing matches the rubric. Dependency graph (4→{1,2}, 5→3, 6→{4,5}) is acyclic and wave-consistent; Wave-2 parallel groups touch disjoint files.
 - **Status set by orchestrator:** APPROVED
 
+### Group 1 local+quality review — 2026-07-13T01:28:27Z — SHIP
+
+- **Reviewer:** genie:reviewer/g1-local-review (reviewer ≠ engineer)
+- **Work:** commit `0c441a8`, merged to wish branch as `d3584f1`; validation command exit 0 (orchestrator-run)
+- **Verdict:** SHIP
+- **Gaps (all LOW, provenance-metadata only):** baseline.md header records base commit `a191224`/branch `wish/hermes-homogeneous-integration` while the worktree actually forked from `c350aef` on `worktree-agent-a335b967e6666af59`; captured evidence itself verified byte-exact against the live repo (plugin.yaml transcription, agent-sync grep line numbers, host probes). Informational: worktree lacked WISH.md — orchestration concern, resolved by merging into the wish branch.
+- **Substance verified by reviewer:** MCP set = exactly the 5 tools in `src/lib/v5/mcp-tools.ts`; native kept 3 + retired 4 = current 7 in plugin.yaml; 23 real skill dirs; all companion-doc pointers resolve; diff provably docs-only (4 md files, +229/-0).
+
 ---
 
 ## Files to Create/Modify
