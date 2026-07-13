@@ -3385,6 +3385,36 @@ describe('--sync-only codex inspection (A14/R3)', () => {
     expect(probed).toBe(false);
   });
 
+  test('under auto with no codex CLI on PATH, inspection is skipped but prints an explicit advisory (not a silent pass)', () => {
+    let probed = false;
+    const lines: string[] = [];
+    inspectSyncOnlyCodexHealth({
+      selection: 'auto',
+      expectedVersion: VERSION,
+      resolveExecutable: () => null,
+      probe: () => {
+        probed = true;
+        return healthyProbe();
+      },
+      log: (line) => lines.push(line),
+    });
+    expect(probed).toBe(false);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('Codex checks skipped');
+    expect(lines[0]).toContain('no codex CLI found');
+  });
+
+  test('an explicit codex/all selection with no codex CLI on PATH still throws (auto is the only silent-skip scope)', () => {
+    expect(() =>
+      inspectSyncOnlyCodexHealth({
+        selection: 'codex',
+        expectedVersion: VERSION,
+        resolveExecutable: () => null,
+        probe: healthyProbe,
+      }),
+    ).toThrow('--sync-only requires the Codex CLI');
+  });
+
   for (const [label, probe] of [
     ['disabled', disabledProbe],
     ['missing', missingProbe],
