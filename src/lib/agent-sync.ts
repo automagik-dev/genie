@@ -4112,11 +4112,15 @@ let cachedSyncLockHostId: string | null = null;
  * A stable identity for THIS host, embedded in every lock owner record so a
  * cross-host stealer can recognize "not my host" and refuse to steal. It is the
  * sha256 of the hostname plus, on linux, the kernel boot id
- * (`/proc/sys/kernel/random/boot_id`) — so a reused hostname across reboots (or
- * across container instances that share it) still yields distinct identities
- * where the boot id is readable. The boot id is best-effort: an empty read
- * degrades to hostname-only, which is still host-scoped. Exported for tests that
- * must forge same-host vs cross-host owner records.
+ * (`/proc/sys/kernel/random/boot_id`) — so a reused hostname across reboots
+ * still yields distinct identities where the boot id is readable. Coverage is
+ * scoped to distinct-hostname/distinct-kernel hosts: same-kernel containers
+ * SHARE the boot id (runc/containerd do not namespace it), so two containers
+ * with a pinned identical hostname and a shared $HOME collapse to one host id
+ * and fall back to pid-liveness semantics across pid namespaces. The boot id is
+ * best-effort: an empty read degrades to hostname-only, which is still
+ * host-scoped. Exported for tests that must forge same-host vs cross-host owner
+ * records.
  */
 export function currentSyncLockHostId(): string {
   if (cachedSyncLockHostId !== null) return cachedSyncLockHostId;
