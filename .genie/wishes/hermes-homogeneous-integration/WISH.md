@@ -336,6 +336,15 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - **Substance verified by reviewer:** inline-key/failed config legs provably cannot reach `report.failures` (strict `genie update` throw at update.ts:2194 reads `agent.failures`, which config legs never populate) — Group 2's binding contract honored; sticky-profile resolver mirrors `ensureStickyProfileLink` byte-for-byte including the escape guard; "+1s" backup offset sound (base captured once, distinct filenames guaranteed); idempotency asserts `unchanged` for both legs; doctor legs independent CheckResults; enable probe uses bounded `execFileSync` arg-array (no shell); integration map contains only Group 1+4 edits.
 - **Orchestrator note:** the 2 failing tests in `src/hooks/__tests__/codex-manifest.test.ts` under full `bun test` were verified pre-existing on main `c350aef` in the identical environment — not attributable to this wish.
 
+### Group 6 local+quality review — 2026-07-13T02:54:10Z — SHIP
+
+- **Reviewer:** genie:reviewer/g6-local-review (reviewer ≠ engineer)
+- **Work:** commits `dc73026` (round-trip test, closes G4 LOW), `fa51da0` (advisory strings, closes G5 LOW), `cb33ffc` (smoke), `c4e08cf` (CHANGELOG); merged to wish branch as `63696bf`
+- **Orchestrator-reproduced validation:** smoke exit 0 / 7 PASS / 0 FAIL with the documented fixture (unpopulated GENIE_HOME correctly dies; missing version stamp correctly FAILs); `bun run check` 1450 pass / 1 skip / 2 fail with the only failures the known pre-existing codex-manifest SessionStart tests; hermes pytest 58 passed.
+- **Verdict:** SHIP
+- **Gaps:** LOW — smoke refusal guard compares only against canonical `~/.genie`/`~/.hermes`; a relocated real home pointed at via env would bypass the refusal (writes remain backup-first/idempotent). Non-blocking.
+- **Substance verified by reviewer:** all five smoke legs are real assertions proven to catch broken state (tamper evidence: wrong version + injected post_tool_call → exactly 2 FAILs); `--sync-only` convergence confirmed no-network/no-binary-swap through the code path `runLegacySyncOnlyMode → runAgentSyncSafe`; smoke is stricter than doctor (warn glyph counts as not-green); round-trip bun test genuinely exercises writer + doctor on one fixture (re-run green, 10 assertions); CHANGELOG maps 1:1 to the seven wish scope points with no live-dogfood overclaim; live isit dogfood recorded USER-GATED pending.
+
 ---
 
 ## Files to Create/Modify
