@@ -57,6 +57,21 @@
  * Backups: any mutation of an existing non-empty file writes a
  * `<config>.genie-backup-<timestamp>` copy of the original bytes first. Creating
  * a brand-new file is not a mutation and writes no backup.
+ *
+ * ## Duplicate-key repair (DF-1)
+ *
+ * An earlier buggy genie release could leave a second `genie:` child key under
+ * `mcp_servers:` — spec-invalid duplicate-key YAML that `Bun.YAML.parse`
+ * silently resolves last-wins, so it is invisible to a parse-only check and
+ * survives every future merge. `mergeMcpServersGenie` detects this textual
+ * duplicate BEFORE deciding `unchanged`/`updated`/`created` and repairs it when
+ * safe: exactly one `genie:` occurrence is the marker-wrapped managed region,
+ * and every other occurrence is either an empty `genie:` block or one whose
+ * parsed command/args/env are identical to the managed region's — those
+ * duplicates are dropped, leaving exactly one `genie` key. Any other duplicate
+ * shape (two non-empty, non-identical entries, or content genie cannot prove
+ * safe to drop) is refused with a typed `HermesConfigError` before any backup
+ * or write, so the original file survives byte-for-byte.
  */
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -146,19 +161,28 @@ export function mergeMcpServersGenie(opts: MergeMcpGenieOptions): MergeMcpGenieR
   if (opts.includeGenieHomeEnv) entry.env = { GENIE_HOME: genieHome };
 
   const exists = existsSync(opts.configPath);
-  const original = exists ? readFileSync(opts.configPath, 'utf8') : '';
-  const existingGenie = exists ? readGenieEntry(original) : undefined;
+  const diskOriginal = exists ? readFileSync(opts.configPath, 'utf8') : '';
 
-  if (existingGenie && entrySatisfies(existingGenie, entry)) {
+  // DF-1: repair a spec-invalid duplicate `genie:` child key BEFORE any other
+  // decision — see the module doc comment. Throws (fail-closed) when the
+  // duplicate shape cannot be proven safe to collapse.
+  const repaired = exists ? repairDuplicateMcpGenieEntries(diskOriginal) : diskOriginal;
+  const wasRepaired = repaired !== diskOriginal;
+
+  const existingGenie = exists ? readGenieEntry(repaired) : undefined;
+
+  // A repair always forces a write, since the duplicate key itself must be
+  // removed from disk even if the managed entry's content is unchanged.
+  if (!wasRepaired && existingGenie && entrySatisfies(existingGenie, entry)) {
     return { status: 'unchanged', path: opts.configPath, entry };
   }
 
   const status: 'created' | 'updated' = existingGenie ? 'updated' : 'created';
-  const nextText = spliceGenieEntry(original, entry);
+  const nextText = spliceGenieEntry(repaired, entry);
   assertMergedGenieEntryInvariant(nextText, entry);
 
   let backupPath: string | undefined;
-  if (exists && original.length > 0) {
+  if (exists && diskOriginal.length > 0) {
     backupPath = writeBackup(opts.configPath, now);
   }
   mkdirSync(dirname(opts.configPath), { recursive: true });
@@ -198,6 +222,130 @@ function entrySatisfies(existing: McpGenieEntry, desired: McpGenieEntry): boolea
     }
   }
   return true;
+}
+
+interface GenieChildOccurrence {
+  headerIndex: number;
+  bodyRange: { start: number; end: number };
+  /** True when immediately wrapped by MARKER_BEGIN above and MARKER_END below — the managed region. */
+  markerWrapped: boolean;
+}
+
+/**
+ * Every `genie:` child-key occurrence under an `mcp_servers:` block, in
+ * document order. Unlike `findChildRange` (which returns only the FIRST
+ * match), this is the duplicate-detection primitive: a spec-invalid config can
+ * carry more than one `genie` key, at most one of which is marker-wrapped.
+ */
+function findAllGenieChildOccurrences(
+  lines: string[],
+  start: number,
+  blockEnd: number,
+  childIndent: number,
+): GenieChildOccurrence[] {
+  const headerRe = new RegExp(`^ {${childIndent}}genie:\\s*(#.*)?$`);
+  const out: GenieChildOccurrence[] = [];
+  for (let i = start; i < blockEnd; i++) {
+    if (indentOf(lines[i]) !== childIndent || !headerRe.test(lines[i])) continue;
+    let end = i + 1;
+    while (end < blockEnd && (isBlank(lines[end]) || indentOf(lines[end]) > childIndent)) end++;
+    const before = lines[i - 1];
+    const after = lines[end];
+    const markerWrapped =
+      before !== undefined && before.trim() === MARKER_BEGIN && after !== undefined && after.trim() === MARKER_END;
+    out.push({ headerIndex: i, bodyRange: { start: i + 1, end }, markerWrapped });
+  }
+  return out;
+}
+
+/** Reconstruct and parse a single `genie:` occurrence's content, ignoring the rest of the document. */
+function parseGenieOccurrenceEntry(lines: string[], occ: GenieChildOccurrence): McpGenieEntry | undefined {
+  const snippet = ['mcp_servers:', lines[occ.headerIndex], ...lines.slice(occ.bodyRange.start, occ.bodyRange.end)].join(
+    '\n',
+  );
+  return readGenieEntry(`${snippet}\n`);
+}
+
+/** True when two entries carry the exact same command, args, and env — a stricter check than `entrySatisfies`. */
+function genieEntriesIdentical(a: McpGenieEntry | undefined, b: McpGenieEntry | undefined): boolean {
+  if (!a || !b) return false;
+  if (a.command !== b.command) return false;
+  if (!stringArraysEqual(a.args, b.args)) return false;
+  const aEnv = a.env ?? {};
+  const bEnv = b.env ?? {};
+  const aKeys = Object.keys(aEnv).sort();
+  const bKeys = Object.keys(bEnv).sort();
+  return aKeys.length === bKeys.length && aKeys.every((k, i) => k === bKeys[i] && aEnv[k] === bEnv[k]);
+}
+
+/**
+ * DF-1 repair: detect and collapse a spec-invalid duplicate `genie:` child key
+ * under `mcp_servers:` — see the module doc comment for the full contract.
+ * Returns `original` unchanged when there is nothing to repair (fewer than 2
+ * occurrences, or no `mcp_servers:` block at all — an inline top-level
+ * `mcp_servers:` is left for `assertNoInlineTopLevelKey` to refuse
+ * downstream). Throws a typed `HermesConfigError` for any duplicate shape that
+ * cannot be proven safe to collapse.
+ */
+function repairDuplicateMcpGenieEntries(original: string): string {
+  if (original.length === 0) return original;
+  const { lines, trailingNewline } = toLines(original);
+  const header = findTopLevelKeyLine(lines, 'mcp_servers');
+  if (header < 0) return original;
+
+  const blockEnd = blockEndIndex(lines, header);
+  const childIndent = childIndentOf(lines, header, blockEnd);
+  const occurrences = findAllGenieChildOccurrences(lines, header + 1, blockEnd, childIndent);
+  if (occurrences.length < 2) return original;
+
+  const managedList = occurrences.filter((o) => o.markerWrapped);
+  if (managedList.length !== 1) {
+    throw new HermesConfigError(
+      'duplicate-mcp-genie-unmarked',
+      `cannot repair: "mcp_servers.genie" appears ${occurrences.length} times and ${managedList.length} of them are the marker-wrapped managed region (expected exactly 1); resolve the duplicate manually`,
+    );
+  }
+  const managed = managedList[0];
+  const managedEntry = parseGenieOccurrenceEntry(lines, managed);
+  for (const occ of occurrences) {
+    if (occ === managed) continue;
+    const bodyEmpty = occ.bodyRange.start >= occ.bodyRange.end;
+    const occEntry = bodyEmpty ? undefined : parseGenieOccurrenceEntry(lines, occ);
+    const safe = bodyEmpty || genieEntriesIdentical(managedEntry, occEntry);
+    if (!safe) {
+      throw new HermesConfigError(
+        'duplicate-mcp-genie-conflict',
+        `cannot repair: a duplicate "genie" entry under "mcp_servers:" (line ${occ.headerIndex + 1}) has content genie cannot prove is safe to drop; resolve the duplicate manually`,
+      );
+    }
+  }
+
+  // Safe: drop every non-managed occurrence's header+body lines, keep the
+  // managed (marker-wrapped) region exactly as-is. Remove last-to-first so
+  // earlier indices survive.
+  const sorted = [...occurrences].sort((a, b) => b.headerIndex - a.headerIndex);
+  for (const occ of sorted) {
+    if (occ === managed) continue;
+    lines.splice(occ.headerIndex, occ.bodyRange.end - occ.headerIndex);
+  }
+  return fromLines(lines, trailingNewline);
+}
+
+/**
+ * Read-only textual duplicate-key detector for `genie doctor` — mirrors the
+ * repair machinery's occurrence scan but never repairs or throws. True when
+ * `mcp_servers.genie` appears more than once, even if the parsed document
+ * happens to look correct (last-wins hides the duplicate from any parse-only
+ * check).
+ */
+export function hasDuplicateMcpGenieKeys(text: string): boolean {
+  if (text.length === 0) return false;
+  const { lines } = toLines(text);
+  const header = findTopLevelKeyLine(lines, 'mcp_servers');
+  if (header < 0) return false;
+  const blockEnd = blockEndIndex(lines, header);
+  const childIndent = childIndentOf(lines, header, blockEnd);
+  return findAllGenieChildOccurrences(lines, header + 1, blockEnd, childIndent).length > 1;
 }
 
 /**

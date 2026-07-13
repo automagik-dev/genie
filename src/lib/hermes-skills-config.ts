@@ -50,6 +50,34 @@
  *     re-serializing user bytes, so it is refused with a typed
  *     `HermesConfigError('inline-nested-key')` before any backup or write.
  *
+ * ## Duplicate-key repair (DF-1)
+ *
+ * An earlier buggy genie release could append a second `external_dirs:` child
+ * key under `skills:` instead of merging into the existing one — spec-invalid
+ * duplicate-key YAML that `Bun.YAML.parse` silently resolves last-wins, so it
+ * is invisible to any check that only reads the parsed document and survives
+ * every future merge untouched. `mergeSkillsExternalDir` detects this textual
+ * duplicate BEFORE deciding `unchanged`/`updated`/`created` and repairs it when
+ * safe: exactly one occurrence carries the genie marker (the managed entry) and
+ * every other occurrence is either empty (`[]` / an empty block) or a subset of
+ * the managed entry's own items — those duplicates are collapsed away, leaving
+ * exactly one `external_dirs` key. Any other duplicate shape (two non-empty
+ * non-managed lists, or content genie cannot prove is safe to drop) is refused
+ * with a typed `HermesConfigError` before any backup or write, so the original
+ * file survives byte-for-byte — refusal is always acceptable, corruption never
+ * is.
+ *
+ * ## Stale-marker orphan avoidance
+ *
+ * The old "unchanged" check only asked whether the resolved root appeared
+ * *anywhere* in the parsed `external_dirs` list. That let a stale scenario slip
+ * through forever: the genie-marked entry still points at a previous root while
+ * the current root also appears as a separate, hand-added, unmarked entry — the
+ * marker never migrates, orphaning it. The check now asks specifically whether
+ * the *marked* entry (when one exists) already equals the resolved root; if not,
+ * the marked line is rewritten to the current root exactly like a normal root
+ * change, and any genuine user-added unmarked entry is left untouched.
+ *
  * ## Older-Hermes fallback
  *
  * `copyProductSkillsDigestManaged` stages the resolved skills tree into a
@@ -148,17 +176,31 @@ export function mergeSkillsExternalDir(opts: MergeSkillsExternalDirOptions): Mer
   const skillsRoot = resolveProductSkillsRoot(opts);
 
   const exists = existsSync(opts.configPath);
-  const original = exists ? readFileSync(opts.configPath, 'utf8') : '';
-  if (exists && listedExternalDirs(original).includes(skillsRoot)) {
+  const diskOriginal = exists ? readFileSync(opts.configPath, 'utf8') : '';
+
+  // DF-1: repair a spec-invalid duplicate `external_dirs` child key BEFORE any
+  // other decision — see the module doc comment. Throws (fail-closed) when the
+  // duplicate shape cannot be proven safe to collapse.
+  const repaired = exists ? repairDuplicateSkillsExternalDirs(diskOriginal) : diskOriginal;
+  const wasRepaired = repaired !== diskOriginal;
+
+  // "Already correct" now asks specifically about the *marked* entry (when one
+  // exists) rather than "root appears anywhere" — see the stale-marker-orphan
+  // doc comment above. A repair always forces a write, since the duplicate key
+  // itself must be removed from disk even if the managed value is unchanged.
+  const marked = exists ? markedExternalDirValue(repaired) : undefined;
+  const rootListed = exists ? listedExternalDirs(repaired).includes(skillsRoot) : false;
+  const alreadyCorrect = marked !== undefined ? marked === skillsRoot : rootListed;
+  if (exists && !wasRepaired && alreadyCorrect) {
     return { status: 'unchanged', path: opts.configPath, skillsRoot };
   }
 
-  const status: 'created' | 'updated' = exists && original.length > 0 ? 'updated' : 'created';
-  const nextText = spliceExternalDir(original, skillsRoot);
+  const status: 'created' | 'updated' = exists && diskOriginal.length > 0 ? 'updated' : 'created';
+  const nextText = spliceExternalDir(repaired, skillsRoot);
   assertMergedSkillsInvariant(nextText, skillsRoot);
 
   let backupPath: string | undefined;
-  if (exists && original.length > 0) {
+  if (exists && diskOriginal.length > 0) {
     backupPath = writeBackup(opts.configPath, now);
   }
   mkdirSync(dirname(opts.configPath), { recursive: true });
@@ -200,6 +242,176 @@ function listedExternalDirs(text: string): string[] {
   if (!isRecord(parsed) || !isRecord(parsed.skills)) return [];
   const dirs = parsed.skills.external_dirs;
   return Array.isArray(dirs) ? dirs.filter((d): d is string => typeof d === 'string') : [];
+}
+
+/**
+ * The value carried by the genie-marked `external_dirs` list item, or
+ * `undefined` when no marker is present anywhere in the text. Scans raw lines
+ * rather than the parsed document: the parsed value alone cannot distinguish
+ * "the marked item already equals the resolved root" from "the root merely
+ * appears somewhere else in the list" — exactly the distinction the
+ * stale-marker-orphan fix depends on.
+ */
+function markedExternalDirValue(text: string): string | undefined {
+  const markerRe = new RegExp(`^\\s*-\\s+(.*?)\\s+${escapeRegExp(MARKER)}\\s*$`);
+  for (const line of text.split('\n')) {
+    const match = line.match(markerRe);
+    if (!match) continue;
+    try {
+      const parsed = Bun.YAML.parse(match[1]);
+      if (typeof parsed === 'string') return parsed;
+    } catch {
+      /* fall through to the raw token below */
+    }
+    return match[1].trim();
+  }
+  return undefined;
+}
+
+interface ExternalDirsOccurrence {
+  headerIndex: number;
+  kind: 'block' | 'inline';
+  /** Item line range for a block occurrence; absent for an inline occurrence. */
+  itemsRange?: { start: number; end: number };
+  /** True only for an inline empty flow list (`external_dirs: []`). */
+  isEmptyInline: boolean;
+}
+
+/**
+ * Every `external_dirs` child-key occurrence under a `skills:` block, block or
+ * inline, in document order. Unlike `findChildKeyLine`/`findInlineChildKeyLine`
+ * (which each return only the FIRST match of their own kind), this is the
+ * duplicate-detection primitive: a spec-invalid config can carry more than one
+ * `external_dirs` key, mixing block and inline shapes.
+ */
+function findAllExternalDirsOccurrences(
+  lines: string[],
+  start: number,
+  blockEnd: number,
+  childIndent: number,
+): ExternalDirsOccurrence[] {
+  const blockRe = new RegExp(`^ {${childIndent}}external_dirs:\\s*(#.*)?$`);
+  const inlinePrefix = new RegExp(`^ {${childIndent}}external_dirs:(?:\\s|$)`);
+  const emptyRe = new RegExp(`^ {${childIndent}}external_dirs:\\s+\\[\\s*\\]\\s*(#.*)?$`);
+  const out: ExternalDirsOccurrence[] = [];
+  for (let i = start; i < blockEnd; i++) {
+    if (indentOf(lines[i]) !== childIndent) continue;
+    if (blockRe.test(lines[i])) {
+      const end = blockEndIndexFrom(lines, i, blockEnd, childIndent);
+      out.push({ headerIndex: i, kind: 'block', itemsRange: { start: i + 1, end }, isEmptyInline: false });
+    } else if (inlinePrefix.test(lines[i])) {
+      out.push({ headerIndex: i, kind: 'inline', isEmptyInline: emptyRe.test(lines[i]) });
+    }
+  }
+  return out;
+}
+
+/** Parsed list-item values of an occurrence, plus whether any item carries the genie marker. */
+function occurrenceItems(lines: string[], occ: ExternalDirsOccurrence): { items: string[]; hasMarker: boolean } {
+  if (occ.kind === 'inline') {
+    // An empty inline list has no items; a non-empty inline list cannot be
+    // safely compared without re-serializing user bytes, so it is treated as an
+    // opaque, never-subset-safe blob (a sentinel that matches nothing).
+    return occ.isEmptyInline ? { items: [], hasMarker: false } : { items: ['<inline-non-empty>'], hasMarker: false };
+  }
+  const items: string[] = [];
+  let hasMarker = false;
+  const range = occ.itemsRange;
+  if (!range) return { items, hasMarker };
+  for (let i = range.start; i < range.end; i++) {
+    const line = lines[i];
+    if (isSkippable(line)) continue;
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('-')) continue;
+    const withMarker = line.includes(MARKER);
+    const valuePart = trimmed
+      .replace(/^-\s*/, '')
+      .replace(new RegExp(`\\s*${escapeRegExp(MARKER)}\\s*$`), '')
+      .trim();
+    let value: string;
+    try {
+      const parsed = Bun.YAML.parse(valuePart);
+      value = typeof parsed === 'string' ? parsed : valuePart;
+    } catch {
+      value = valuePart;
+    }
+    items.push(value);
+    if (withMarker) hasMarker = true;
+  }
+  return { items, hasMarker };
+}
+
+/**
+ * DF-1 repair: detect and collapse a spec-invalid duplicate `external_dirs`
+ * child key under `skills:` — see the module doc comment for the full
+ * contract. Returns `original` unchanged when there is nothing to repair
+ * (fewer than 2 occurrences, or no `skills:` block at all — an inline
+ * top-level `skills:` is left for `assertNoInlineTopLevelKey` to refuse
+ * downstream). Throws a typed `HermesConfigError` for any duplicate shape that
+ * cannot be proven safe to collapse.
+ */
+function repairDuplicateSkillsExternalDirs(original: string): string {
+  if (original.length === 0) return original;
+  const { lines, trailingNewline } = toLines(original);
+  const skillsHeader = findTopLevelKeyLine(lines, 'skills');
+  if (skillsHeader < 0) return original;
+
+  const skillsEnd = blockEndIndex(lines, skillsHeader);
+  const childIndent = childIndentOf(lines, skillsHeader, skillsEnd);
+  const occurrences = findAllExternalDirsOccurrences(lines, skillsHeader + 1, skillsEnd, childIndent);
+  if (occurrences.length < 2) return original;
+
+  const classified = occurrences.map((occ) => ({ occ, ...occurrenceItems(lines, occ) }));
+  const marked = classified.filter((c) => c.hasMarker);
+  if (marked.length !== 1) {
+    throw new HermesConfigError(
+      'duplicate-external-dirs-unmarked',
+      `cannot repair: "skills.external_dirs" appears ${occurrences.length} times under "skills:" and ${marked.length} of them carry the genie marker (expected exactly 1); resolve the duplicate manually`,
+    );
+  }
+  const managed = marked[0];
+  const managedItemSet = new Set(managed.items);
+  for (const other of classified) {
+    if (other === managed) continue;
+    const safe = other.items.length === 0 || other.items.every((item) => managedItemSet.has(item));
+    if (!safe) {
+      throw new HermesConfigError(
+        'duplicate-external-dirs-conflict',
+        `cannot repair: a duplicate "external_dirs" under "skills:" (line ${other.occ.headerIndex + 1}) has entries genie cannot prove are safe to drop; resolve the duplicate manually`,
+      );
+    }
+  }
+
+  // Safe: drop every non-managed occurrence's lines entirely, keeping the
+  // managed one exactly as-is. Remove last-to-first so earlier indices survive.
+  const sorted = [...occurrences].sort((a, b) => b.headerIndex - a.headerIndex);
+  for (const occ of sorted) {
+    if (occ === managed.occ) continue;
+    const delEnd = occ.kind === 'block' ? (occ.itemsRange?.end ?? occ.headerIndex + 1) : occ.headerIndex + 1;
+    lines.splice(occ.headerIndex, delEnd - occ.headerIndex);
+  }
+  return fromLines(lines, trailingNewline);
+}
+
+/**
+ * Read-only textual duplicate-key detector for `genie doctor` — mirrors the
+ * repair machinery's occurrence scan but never repairs or throws. True when
+ * `skills.external_dirs` appears more than once under `skills:`, even if the
+ * parsed document happens to look correct (last-wins hides the duplicate from
+ * any parse-only check).
+ */
+export function hasDuplicateSkillsExternalDirsKeys(text: string): boolean {
+  if (text.length === 0) return false;
+  const { lines } = toLines(text);
+  const header = findTopLevelKeyLine(lines, 'skills');
+  if (header < 0) return false;
+  const blockEnd = blockEndIndex(lines, header);
+  const childIndent = childIndentOf(lines, header, blockEnd);
+  return findAllExternalDirsOccurrences(lines, header + 1, blockEnd, childIndent).length > 1;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**
@@ -277,11 +489,52 @@ function spliceExternalDir(original: string, skillsRoot: string): string {
   const itemIndent = listItemIndentOf(lines, extHeader + 1, listEnd, childIndent);
   const managed = findMarkedItem(lines, extHeader + 1, listEnd);
   if (managed >= 0) {
-    lines.splice(managed, 1, managedItem(itemIndent));
+    // Stale-marker orphan avoidance: if the resolved root ALREADY appears as a
+    // separate, unmarked item (e.g. hand-added by a user, or left behind by an
+    // older root), drop that redundant duplicate value first. Replacing only the
+    // marked line while leaving the duplicate in place would produce two items
+    // with the same value — violating the "exactly one occurrence" invariant
+    // enforced below — and leaving the marker on its stale old-root value would
+    // orphan it forever instead of migrating to the current root.
+    const duplicate = findPlainItemWithValue(lines, extHeader + 1, listEnd, skillsRoot, managed);
+    if (duplicate >= 0) {
+      lines.splice(duplicate, 1);
+      const adjusted = duplicate < managed ? managed - 1 : managed;
+      lines.splice(adjusted, 1, managedItem(itemIndent));
+    } else {
+      lines.splice(managed, 1, managedItem(itemIndent));
+    }
   } else {
     lines.splice(listEnd, 0, managedItem(itemIndent));
   }
   return fromLines(lines, trailingNewline);
+}
+
+/** Scalar value of a block list item line, stripping the leading `- ` and any trailing marker comment. */
+function parseListItemValue(line: string): string {
+  const withoutDash = line.trim().replace(/^-\s*/, '');
+  const withoutMarker = withoutDash.replace(new RegExp(`\\s*${escapeRegExp(MARKER)}\\s*$`), '').trim();
+  try {
+    const parsed = Bun.YAML.parse(withoutMarker);
+    return typeof parsed === 'string' ? parsed : withoutMarker;
+  } catch {
+    return withoutMarker;
+  }
+}
+
+/** Index of a block list item (other than `excludeIndex`) whose value equals `value`, or -1. */
+function findPlainItemWithValue(
+  lines: string[],
+  start: number,
+  end: number,
+  value: string,
+  excludeIndex: number,
+): number {
+  for (let i = start; i < end; i++) {
+    if (i === excludeIndex || isBlank(lines[i]) || !lines[i].trim().startsWith('-')) continue;
+    if (parseListItemValue(lines[i]) === value) return i;
+  }
+  return -1;
 }
 
 // --- digest helpers ---
