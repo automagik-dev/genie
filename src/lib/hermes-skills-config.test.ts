@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { HermesConfigError } from './hermes-mcp-config.js';
 import {
   copyProductSkillsDigestManaged,
+  hasDuplicateSkillsExternalDirsKeys,
   mergeSkillsExternalDir,
   resolveProductSkillsRoot,
 } from './hermes-skills-config.js';
@@ -414,6 +415,209 @@ describe('mergeSkillsExternalDir', () => {
       expect(second.status).toBe('unchanged');
       expect(readFileSync(configPath, 'utf8')).toBe(afterFirst);
     });
+  });
+});
+
+describe('DF-1: duplicate skills.external_dirs key repair', () => {
+  test('the real damaged shape: inline empty + marked block duplicate → repairs to ONE managed entry, parseable, backup written', () => {
+    const root = tmp();
+    const skillsRoot = makeSkillsRoot(join(root, 'skills'));
+    const configPath = join(root, 'config.yaml');
+    // Exact damaged shape from an earlier buggy release: `skills:` carries BOTH
+    // an inline empty `external_dirs: []` and a later block-style `external_dirs`
+    // holding the genie-marked managed entry — spec-invalid duplicate-key YAML
+    // that last-wins parsing hides.
+    const original = `skills:\n  external_dirs: []\n  template_vars: true\n  external_dirs:\n    - ${JSON.stringify(skillsRoot)}  # genie:managed:skills.external_dirs\n`;
+    writeFileSync(configPath, original);
+    expect(hasDuplicateSkillsExternalDirsKeys(original)).toBe(true);
+
+    const result = mergeSkillsExternalDir({ configPath, skillsRoot, now: new Date('2026-07-13T00:00:00Z') });
+    expect(result.status).toBe('updated');
+    expect(result.backupPath).toBeDefined();
+    expect(readFileSync(result.backupPath as string, 'utf8')).toBe(original);
+
+    const text = readFileSync(configPath, 'utf8');
+    expect(text.match(/external_dirs:/g)?.length).toBe(1);
+    expect(text).toContain('  template_vars: true\n');
+    expect(hasDuplicateSkillsExternalDirsKeys(text)).toBe(false);
+
+    const parsed = Bun.YAML.parse(text) as { skills: { external_dirs: string[]; template_vars: boolean } };
+    expect(parsed.skills.external_dirs).toEqual([skillsRoot]);
+    expect(parsed.skills.template_vars).toBe(true);
+  });
+
+  test('repair is idempotent: a second merge on the repaired file is unchanged', () => {
+    const root = tmp();
+    const skillsRoot = makeSkillsRoot(join(root, 'skills'));
+    const configPath = join(root, 'config.yaml');
+    const original = `skills:\n  external_dirs: []\n  external_dirs:\n    - ${JSON.stringify(skillsRoot)}  # genie:managed:skills.external_dirs\n`;
+    writeFileSync(configPath, original);
+
+    const first = mergeSkillsExternalDir({ configPath, skillsRoot });
+    expect(first.status).toBe('updated');
+    const afterFirst = readFileSync(configPath, 'utf8');
+
+    const second = mergeSkillsExternalDir({ configPath, skillsRoot });
+    expect(second.status).toBe('unchanged');
+    expect(second.backupPath).toBeUndefined();
+    expect(readFileSync(configPath, 'utf8')).toBe(afterFirst);
+  });
+
+  test('a duplicate whose entries are a subset of the managed one also repairs safely', () => {
+    const root = tmp();
+    const skillsRoot = makeSkillsRoot(join(root, 'skills'));
+    const configPath = join(root, 'config.yaml');
+    // First (unmarked) duplicate's item duplicates the managed one's own value —
+    // a subset of the managed entry's items, so it is safe to drop.
+    const original = `skills:\n  external_dirs:\n    - ${JSON.stringify(skillsRoot)}\n  external_dirs:\n    - ${JSON.stringify(skillsRoot)}  # genie:managed:skills.external_dirs\n`;
+    writeFileSync(configPath, original);
+
+    const result = mergeSkillsExternalDir({ configPath, skillsRoot });
+    expect(result.status).toBe('updated');
+
+    const text = readFileSync(configPath, 'utf8');
+    expect(text.match(/external_dirs:/g)?.length).toBe(1);
+    const parsed = Bun.YAML.parse(text) as { skills: { external_dirs: string[] } };
+    expect(parsed.skills.external_dirs).toEqual([skillsRoot]);
+  });
+
+  test('two non-empty, non-managed duplicate lists → typed refusal, file and backup untouched', () => {
+    const root = tmp();
+    const skillsRoot = makeSkillsRoot(join(root, 'skills'));
+    const configPath = join(root, 'config.yaml');
+    // Neither occurrence is genie-marked — ambiguous which one (if either) is
+    // the "real" managed entry, so genie must refuse rather than guess.
+    const original = 'skills:\n  external_dirs:\n    - /home/a\n  external_dirs:\n    - /home/b\n';
+    writeFileSync(configPath, original);
+
+    expect(() => mergeSkillsExternalDir({ configPath, skillsRoot })).toThrow(HermesConfigError);
+    expect(readFileSync(configPath, 'utf8')).toBe(original);
+    expect(hasBackup(root)).toBe(false);
+  });
+
+  test('duplicate conflict carries the distinct conflict error code', () => {
+    const root = tmp();
+    const skillsRoot = makeSkillsRoot(join(root, 'skills'));
+    const configPath = join(root, 'config.yaml');
+    const original = `skills:\n  external_dirs:\n    - /home/not-a-subset\n  external_dirs:\n    - ${JSON.stringify(skillsRoot)}  # genie:managed:skills.external_dirs\n`;
+    writeFileSync(configPath, original);
+
+    try {
+      mergeSkillsExternalDir({ configPath, skillsRoot });
+      throw new Error('expected a HermesConfigError to be thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(HermesConfigError);
+      expect((err as HermesConfigError).code).toBe('duplicate-external-dirs-conflict');
+    }
+    expect(readFileSync(configPath, 'utf8')).toBe(original);
+    expect(hasBackup(root)).toBe(false);
+  });
+
+  test('two marker-carrying duplicates (ambiguous which is managed) → typed refusal with the unmarked-count code', () => {
+    const root = tmp();
+    const skillsRoot = makeSkillsRoot(join(root, 'skills'));
+    const configPath = join(root, 'config.yaml');
+    const original = `skills:\n  external_dirs:\n    - ${JSON.stringify(skillsRoot)}  # genie:managed:skills.external_dirs\n  external_dirs:\n    - /home/other  # genie:managed:skills.external_dirs\n`;
+    writeFileSync(configPath, original);
+
+    try {
+      mergeSkillsExternalDir({ configPath, skillsRoot });
+      throw new Error('expected a HermesConfigError to be thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(HermesConfigError);
+      expect((err as HermesConfigError).code).toBe('duplicate-external-dirs-unmarked');
+    }
+    expect(readFileSync(configPath, 'utf8')).toBe(original);
+    expect(hasBackup(root)).toBe(false);
+  });
+
+  test('refusal is idempotent: a repeated call still throws and never writes or backs up', () => {
+    const root = tmp();
+    const skillsRoot = makeSkillsRoot(join(root, 'skills'));
+    const configPath = join(root, 'config.yaml');
+    const original = 'skills:\n  external_dirs:\n    - /home/a\n  external_dirs:\n    - /home/b\n';
+    writeFileSync(configPath, original);
+
+    for (let i = 0; i < 2; i++) {
+      expect(() => mergeSkillsExternalDir({ configPath, skillsRoot })).toThrow(HermesConfigError);
+    }
+    expect(readFileSync(configPath, 'utf8')).toBe(original);
+    expect(hasBackup(root)).toBe(false);
+  });
+});
+
+describe('hasDuplicateSkillsExternalDirsKeys', () => {
+  test('false for no skills key, single key, and empty text', () => {
+    expect(hasDuplicateSkillsExternalDirsKeys('')).toBe(false);
+    expect(hasDuplicateSkillsExternalDirsKeys('other: 1\n')).toBe(false);
+    expect(hasDuplicateSkillsExternalDirsKeys('skills:\n  external_dirs:\n    - /home/a\n')).toBe(false);
+  });
+
+  test('true for a textual duplicate even when the parsed value looks correct (last-wins hides it)', () => {
+    const text = 'skills:\n  external_dirs: []\n  external_dirs:\n    - /home/a\n';
+    // Parsed last-wins value looks completely fine...
+    expect(Bun.YAML.parse(text)).toEqual({ skills: { external_dirs: ['/home/a'] } });
+    // ...but the textual duplicate is still there and must be flagged.
+    expect(hasDuplicateSkillsExternalDirsKeys(text)).toBe(true);
+  });
+});
+
+describe('stale-marker orphan avoidance', () => {
+  test('marked entry points at a previous root while the current root also appears unmarked → marker migrates, unmarked entry untouched', () => {
+    const root = tmp();
+    const oldRoot = makeSkillsRoot(join(root, 'old-skills'));
+    const newRoot = makeSkillsRoot(join(root, 'new-skills'));
+    const configPath = join(root, 'config.yaml');
+    // A hand-added, unmarked entry happens to equal the NEW root, while the
+    // genie marker is still stuck on the OLD root. The old "root present
+    // anywhere" check would call this unchanged forever, orphaning the marker.
+    const original = `skills:\n  external_dirs:\n    - ${JSON.stringify(newRoot)}\n    - ${JSON.stringify(oldRoot)}  # genie:managed:skills.external_dirs\n`;
+    writeFileSync(configPath, original);
+
+    const result = mergeSkillsExternalDir({ configPath, skillsRoot: newRoot, now: new Date('2026-07-13T00:00:00Z') });
+    expect(result.status).toBe('updated');
+    expect(result.backupPath).toBeDefined();
+    expect(readFileSync(result.backupPath as string, 'utf8')).toBe(original);
+
+    const text = readFileSync(configPath, 'utf8');
+    const parsed = Bun.YAML.parse(text) as { skills: { external_dirs: string[] } };
+    // Exactly one occurrence of the current root — the marker migrates onto it
+    // instead of leaving a stale marked old-root entry beside an orphaned
+    // duplicate. The redundant hand-added duplicate is absorbed into the single
+    // managed entry rather than accumulating a second identical item.
+    expect(parsed.skills.external_dirs).toEqual([newRoot]);
+    expect((text.match(/genie:managed:skills\.external_dirs/g) ?? []).length).toBe(1);
+    expect(text).not.toContain(oldRoot);
+  });
+
+  test('is idempotent: a second merge after the marker migration is unchanged', () => {
+    const root = tmp();
+    const oldRoot = makeSkillsRoot(join(root, 'old-skills'));
+    const newRoot = makeSkillsRoot(join(root, 'new-skills'));
+    const configPath = join(root, 'config.yaml');
+    const original = `skills:\n  external_dirs:\n    - ${JSON.stringify(newRoot)}\n    - ${JSON.stringify(oldRoot)}  # genie:managed:skills.external_dirs\n`;
+    writeFileSync(configPath, original);
+
+    const first = mergeSkillsExternalDir({ configPath, skillsRoot: newRoot });
+    expect(first.status).toBe('updated');
+    const afterFirst = readFileSync(configPath, 'utf8');
+
+    const second = mergeSkillsExternalDir({ configPath, skillsRoot: newRoot });
+    expect(second.status).toBe('unchanged');
+    expect(readFileSync(configPath, 'utf8')).toBe(afterFirst);
+  });
+
+  test('marked entry already equals the current root → unchanged, even with an unrelated unmarked sibling', () => {
+    const root = tmp();
+    const skillsRoot = makeSkillsRoot(join(root, 'skills'));
+    const configPath = join(root, 'config.yaml');
+    const original = `skills:\n  external_dirs:\n    - /home/user/my-skills\n    - ${JSON.stringify(skillsRoot)}  # genie:managed:skills.external_dirs\n`;
+    writeFileSync(configPath, original);
+
+    const result = mergeSkillsExternalDir({ configPath, skillsRoot });
+    expect(result.status).toBe('unchanged');
+    expect(result.backupPath).toBeUndefined();
+    expect(readFileSync(configPath, 'utf8')).toBe(original);
   });
 });
 

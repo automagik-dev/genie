@@ -2,7 +2,12 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { HermesConfigError, mergeMcpServersGenie, resolveGenieBinaryPath } from './hermes-mcp-config.js';
+import {
+  HermesConfigError,
+  hasDuplicateMcpGenieKeys,
+  mergeMcpServersGenie,
+  resolveGenieBinaryPath,
+} from './hermes-mcp-config.js';
 
 const roots: string[] = [];
 afterEach(() => {
@@ -384,5 +389,168 @@ describe('mergeMcpServersGenie', () => {
       expect(second.status).toBe('unchanged');
       expect(readFileSync(configPath, 'utf8')).toBe(afterFirst);
     });
+  });
+});
+
+describe('DF-1: duplicate mcp_servers.genie key repair', () => {
+  const markerBegin = '  # genie:managed:mcp_servers.genie — begin (managed by genie; edit via genie only)';
+  const markerEnd = '  # genie:managed:mcp_servers.genie — end';
+  const managedBlock = (command: string) =>
+    `${markerBegin}\n  genie:\n    command: ${JSON.stringify(command)}\n    args:\n      - mcp\n${markerEnd}\n`;
+
+  test('an empty stray unmarked genie: key alongside the marker-wrapped region repairs to ONE entry, parseable, backup written', () => {
+    const root = tmp();
+    const configPath = join(root, 'config.yaml');
+    const command = bin(root);
+    // An earlier buggy release left a bare `genie:` header with nothing under it,
+    // alongside the current marker-wrapped managed region — spec-invalid
+    // duplicate-key YAML that last-wins parsing hides.
+    const original = `mcp_servers:\n  genie:\n${managedBlock(command)}`;
+    writeFileSync(configPath, original);
+    expect(hasDuplicateMcpGenieKeys(original)).toBe(true);
+
+    const result = mergeMcpServersGenie({
+      configPath,
+      binaryPath: command,
+      genieHome: root,
+      fsExists: () => false,
+      now: new Date('2026-07-13T00:00:00Z'),
+    });
+    expect(result.status).toBe('updated');
+    expect(result.backupPath).toBeDefined();
+    expect(readFileSync(result.backupPath as string, 'utf8')).toBe(original);
+
+    const text = readFileSync(configPath, 'utf8');
+    expect(text.match(/^\s*genie:\s*$/gm)?.length).toBe(1);
+    expect(hasDuplicateMcpGenieKeys(text)).toBe(false);
+
+    const parsed = Bun.YAML.parse(text) as { mcp_servers: { genie: { command: string; args: string[] } } };
+    expect(parsed.mcp_servers.genie.command).toBe(command);
+    expect(parsed.mcp_servers.genie.args).toEqual(['mcp']);
+  });
+
+  test('repair is idempotent: a second merge on the repaired file is unchanged', () => {
+    const root = tmp();
+    const configPath = join(root, 'config.yaml');
+    const command = bin(root);
+    const original = `mcp_servers:\n  genie:\n${managedBlock(command)}`;
+    writeFileSync(configPath, original);
+
+    const first = mergeMcpServersGenie({ configPath, binaryPath: command, genieHome: root, fsExists: () => false });
+    expect(first.status).toBe('updated');
+    const afterFirst = readFileSync(configPath, 'utf8');
+
+    const second = mergeMcpServersGenie({ configPath, binaryPath: command, genieHome: root, fsExists: () => false });
+    expect(second.status).toBe('unchanged');
+    expect(second.backupPath).toBeUndefined();
+    expect(readFileSync(configPath, 'utf8')).toBe(afterFirst);
+  });
+
+  test('a duplicate with content identical to the managed region also repairs safely', () => {
+    const root = tmp();
+    const configPath = join(root, 'config.yaml');
+    const command = bin(root);
+    // Unmarked leftover carrying the EXACT same command/args as the managed
+    // region — safe to drop even though it is not empty.
+    const original = `mcp_servers:\n  genie:\n    command: ${JSON.stringify(command)}\n    args:\n      - mcp\n${managedBlock(command)}`;
+    writeFileSync(configPath, original);
+
+    const result = mergeMcpServersGenie({ configPath, binaryPath: command, genieHome: root, fsExists: () => false });
+    expect(result.status).toBe('updated');
+
+    const text = readFileSync(configPath, 'utf8');
+    expect(text.match(/^\s*genie:\s*$/gm)?.length).toBe(1);
+    const parsed = Bun.YAML.parse(text) as { mcp_servers: { genie: { command: string } } };
+    expect(parsed.mcp_servers.genie.command).toBe(command);
+  });
+
+  test('a duplicate with conflicting (non-empty, non-identical) content → typed refusal with the conflict code', () => {
+    const root = tmp();
+    const configPath = join(root, 'config.yaml');
+    const command = bin(root);
+    const original = `mcp_servers:\n  genie:\n    command: /old/stale/genie\n    args:\n      - mcp\n${managedBlock(command)}`;
+    writeFileSync(configPath, original);
+
+    try {
+      mergeMcpServersGenie({ configPath, binaryPath: command, genieHome: root, fsExists: () => false });
+      throw new Error('expected a HermesConfigError to be thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(HermesConfigError);
+      expect((err as HermesConfigError).code).toBe('duplicate-mcp-genie-conflict');
+    }
+    expect(readFileSync(configPath, 'utf8')).toBe(original);
+    expect(hasBackup(root)).toBe(false);
+  });
+
+  test('no marker-wrapped region among the duplicates → typed refusal with the unmarked code', () => {
+    const root = tmp();
+    const configPath = join(root, 'config.yaml');
+    const command = bin(root);
+    // Two plain unmarked `genie:` children, neither wrapped in markers —
+    // ambiguous which one (if either) is authoritative.
+    const original =
+      'mcp_servers:\n' +
+      '  genie:\n    command: /usr/bin/a\n    args:\n      - mcp\n' +
+      '  other:\n    command: /usr/bin/other\n' +
+      '  genie:\n    command: /usr/bin/b\n    args:\n      - mcp\n';
+    writeFileSync(configPath, original);
+
+    try {
+      mergeMcpServersGenie({ configPath, binaryPath: command, genieHome: root, fsExists: () => false });
+      throw new Error('expected a HermesConfigError to be thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(HermesConfigError);
+      expect((err as HermesConfigError).code).toBe('duplicate-mcp-genie-unmarked');
+    }
+    expect(readFileSync(configPath, 'utf8')).toBe(original);
+    expect(hasBackup(root)).toBe(false);
+  });
+
+  test('two marker-wrapped regions (ambiguous which is managed) → typed refusal with the unmarked code', () => {
+    const root = tmp();
+    const configPath = join(root, 'config.yaml');
+    const command = bin(root);
+    const original = `mcp_servers:\n${managedBlock('/old/genie')}${managedBlock(command)}`;
+    writeFileSync(configPath, original);
+
+    try {
+      mergeMcpServersGenie({ configPath, binaryPath: command, genieHome: root, fsExists: () => false });
+      throw new Error('expected a HermesConfigError to be thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(HermesConfigError);
+      expect((err as HermesConfigError).code).toBe('duplicate-mcp-genie-unmarked');
+    }
+    expect(readFileSync(configPath, 'utf8')).toBe(original);
+    expect(hasBackup(root)).toBe(false);
+  });
+
+  test('refusal is idempotent: a repeated call still throws and never writes or backs up', () => {
+    const root = tmp();
+    const configPath = join(root, 'config.yaml');
+    const command = bin(root);
+    const original = `mcp_servers:\n  genie:\n    command: /old/stale/genie\n    args:\n      - mcp\n${managedBlock(command)}`;
+    writeFileSync(configPath, original);
+
+    for (let i = 0; i < 2; i++) {
+      expect(() =>
+        mergeMcpServersGenie({ configPath, binaryPath: command, genieHome: root, fsExists: () => false }),
+      ).toThrow(HermesConfigError);
+    }
+    expect(readFileSync(configPath, 'utf8')).toBe(original);
+    expect(hasBackup(root)).toBe(false);
+  });
+});
+
+describe('hasDuplicateMcpGenieKeys', () => {
+  test('false for no mcp_servers key, single key, and empty text', () => {
+    expect(hasDuplicateMcpGenieKeys('')).toBe(false);
+    expect(hasDuplicateMcpGenieKeys('other: 1\n')).toBe(false);
+    expect(hasDuplicateMcpGenieKeys('mcp_servers:\n  genie:\n    command: /x\n')).toBe(false);
+  });
+
+  test('true for a textual duplicate even when the parsed value looks correct (last-wins hides it)', () => {
+    const text = 'mcp_servers:\n  genie:\n  genie:\n    command: /x\n    args:\n      - mcp\n';
+    expect(Bun.YAML.parse(text)).toEqual({ mcp_servers: { genie: { command: '/x', args: ['mcp'] } } });
+    expect(hasDuplicateMcpGenieKeys(text)).toBe(true);
   });
 });

@@ -50,7 +50,8 @@ import {
   resolveGenieHome as resolveGlobalGenieHome,
   resolveHermesHome,
 } from '../lib/genie-home.js';
-import { resolveProductSkillsRoot } from '../lib/hermes-skills-config.js';
+import { hasDuplicateMcpGenieKeys } from '../lib/hermes-mcp-config.js';
+import { hasDuplicateSkillsExternalDirsKeys, resolveProductSkillsRoot } from '../lib/hermes-skills-config.js';
 import { resolveOmniRuntimeConfig } from '../lib/omni-config.js';
 import {
   CANONICAL_GENIE_SKILL_NAMES,
@@ -920,6 +921,14 @@ function checkHermesMcp(configText: string | null, configPath: string): CheckRes
   }
   const inline = detectInlineTopLevelKey(configText, 'mcp_servers');
   if (inline) return { name, status: 'warn', detail: inline, suggestion: HERMES_INLINE_SUGGESTION };
+  if (hasDuplicateMcpGenieKeys(configText)) {
+    return {
+      name,
+      status: 'warn',
+      detail: `duplicate "mcp_servers.genie" key detected in ${configPath} — a stale duplicate can persist even when the parsed value looks correct`,
+      suggestion: SYNC_SUGGESTION,
+    };
+  }
   const command = readMcpGenieCommand(configText);
   if (command === null) {
     return { name, status: 'warn', detail: 'mcp_servers.genie absent', suggestion: SYNC_SUGGESTION };
@@ -958,6 +967,14 @@ function checkHermesSkills(
   if (configText !== null) {
     const inline = detectInlineTopLevelKey(configText, 'skills');
     if (inline) return { name, status: 'warn', detail: inline, suggestion: HERMES_INLINE_SUGGESTION };
+    if (hasDuplicateSkillsExternalDirsKeys(configText)) {
+      return {
+        name,
+        status: 'warn',
+        detail: `duplicate "skills.external_dirs" key detected in ${configPath} — a stale duplicate can persist even when the parsed value looks correct`,
+        suggestion: SYNC_SUGGESTION,
+      };
+    }
   }
   const skillsRoot = safeResolveProductSkillsRoot(genieHome);
   const externalDirs = configText === null ? [] : readSkillsExternalDirs(configText);

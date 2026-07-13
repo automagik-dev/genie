@@ -1083,4 +1083,61 @@ describe('checkAgentSync', () => {
     expect(probe?.status).toBe('pass');
     expect(probe?.detail).toContain('unknown');
   });
+
+  // -------------------------------------------------------------------------
+  // Textual duplicate-key detection (DF-1): the mcp/skills legs must WARN when
+  // a spec-invalid duplicate child key is present under mcp_servers:/skills: —
+  // even when the last-wins PARSED value looks perfectly healthy, since that
+  // is exactly what let the duplicate persist forever before the repair.
+  // -------------------------------------------------------------------------
+
+  const dupMcpConfig = (command: string) =>
+    `mcp_servers:\n  genie:\n  genie:\n    command: ${JSON.stringify(command)}\n    args:\n      - mcp\n`;
+  const dupSkillsConfig = (dir: string) =>
+    `skills:\n  external_dirs: []\n  external_dirs:\n    - ${JSON.stringify(dir)}\n`;
+
+  test('hermes mcp leg: textual duplicate genie key → warn naming the config path, even though the parsed value is healthy', () => {
+    presentHermes();
+    const bin = presentGenieBinary();
+    writeHermesConfig(dupMcpConfig(bin));
+
+    // The parsed (last-wins) value looks completely correct...
+    const parsed = Bun.YAML.parse(readFileSync(join(hermesHome, 'config.yaml'), 'utf8')) as {
+      mcp_servers: { genie: { command: string } };
+    };
+    expect(parsed.mcp_servers.genie.command).toBe(bin);
+
+    // ...but doctor must still flag the textual duplicate.
+    const mcp = find(checkAgentSync(paths()), 'agent sync: hermes mcp');
+    expect(mcp?.status).toBe('warn');
+    expect(mcp?.detail).toContain('duplicate');
+    expect(mcp?.detail).toContain(join(hermesHome, 'config.yaml'));
+    expect(mcp?.suggestion).toContain('genie update');
+  });
+
+  test('hermes skills leg: textual duplicate external_dirs key → warn naming the config path, even though the parsed value is healthy', () => {
+    presentHermes();
+    writeHermesConfig(dupSkillsConfig(productSkillsRoot()));
+
+    const parsed = Bun.YAML.parse(readFileSync(join(hermesHome, 'config.yaml'), 'utf8')) as {
+      skills: { external_dirs: string[] };
+    };
+    expect(parsed.skills.external_dirs).toEqual([productSkillsRoot()]);
+
+    const skills = find(checkAgentSync(paths()), 'agent sync: hermes skills');
+    expect(skills?.status).toBe('warn');
+    expect(skills?.detail).toContain('duplicate');
+    expect(skills?.detail).toContain(join(hermesHome, 'config.yaml'));
+    expect(skills?.suggestion).toContain('genie update');
+  });
+
+  test('after repair (single key, no duplicate): both legs pass, no duplicate warning', () => {
+    presentHermes();
+    const bin = presentGenieBinary();
+    writeHermesConfig(`${mcpConfig(bin)}${skillsConfig(productSkillsRoot())}`);
+
+    const results = checkAgentSync(paths());
+    expect(find(results, 'agent sync: hermes mcp')?.status).toBe('pass');
+    expect(find(results, 'agent sync: hermes skills')?.status).toBe('pass');
+  });
 });
