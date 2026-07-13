@@ -468,6 +468,37 @@ function checkPluginMcpLayout(pluginRoot: string, manifest: Record<string, unkno
   }
 }
 
+// Claude Code spawns plugin MCP servers from the project cwd (the root
+// .mcp.json's relative launcher path only works for Codex), so the Claude
+// manifest must carry its own ${CLAUDE_PLUGIN_ROOT}-anchored entry that
+// overrides the shared root config.
+function checkClaudePluginMcpLayout(pluginRoot: string): void {
+  const manifestPath = join(pluginRoot, '.claude-plugin', 'plugin.json');
+  if (!existsSync(manifestPath)) fail(`Claude plugin manifest missing: ${manifestPath}`);
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
+  const servers = manifest.mcpServers;
+  const serverMap =
+    typeof servers === 'object' && servers !== null && !Array.isArray(servers)
+      ? (servers as Record<string, unknown>)
+      : undefined;
+  const rawEntry = serverMap?.genie;
+  const entry =
+    typeof rawEntry === 'object' && rawEntry !== null && !Array.isArray(rawEntry)
+      ? (rawEntry as { command?: unknown; args?: unknown; cwd?: unknown })
+      : undefined;
+  if (
+    entry?.command !== 'node' ||
+    !Array.isArray(entry.args) ||
+    entry.args.length !== 1 ||
+    entry.args[0] !== '${CLAUDE_PLUGIN_ROOT}/scripts/mcp-launcher.cjs' ||
+    'cwd' in entry
+  ) {
+    fail(
+      'Claude plugin manifest must declare an inline genie MCP server running node ${CLAUDE_PLUGIN_ROOT}/scripts/mcp-launcher.cjs',
+    );
+  }
+}
+
 function checkPluginLayout(pluginRoot: string, canonicalSkills: string, expectedNames: string[]): void {
   const { skillsDir, manifest } = resolvePluginSkills(pluginRoot);
   const actual = listSkillNames(skillsDir);
@@ -481,6 +512,7 @@ function checkPluginLayout(pluginRoot: string, canonicalSkills: string, expected
   });
   checkStarterPrompts(manifest, expectedNames);
   checkPluginMcpLayout(pluginRoot, manifest);
+  checkClaudePluginMcpLayout(pluginRoot);
   try {
     assertHookContentBinding(
       join(pluginRoot, 'hooks', 'codex-hooks.json'),

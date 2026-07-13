@@ -1504,6 +1504,49 @@ describe('installCodexAgents overwrite discipline', () => {
     expect(existsSync(target)).toBe(false);
   });
 
+  test('an identity-matched planned role agent is removed under the batch allowlist', () => {
+    const bundleRoot = makeBundle();
+    const codexHome = mkdtempSync(join(tmpdir(), 'genie-codex-role-planned-match-'));
+    installCodexAgents(bundleRoot, codexHome);
+    const target = join(codexHome, 'agents', 'genie-reviewer.toml');
+    const identity = {
+      digest: createHash('sha256').update(readFileSync(target)).digest('hex'),
+      mode: lstatSync(target).mode & 0o7777,
+    };
+
+    const result = removeCodexAgents(codexHome, {}, new Map([['genie-reviewer.toml', identity]]));
+
+    expect(result.removed).toEqual(['genie-reviewer.toml']);
+    expect(result.keptIdentityMismatch).toEqual([]);
+    expect(existsSync(target)).toBe(false);
+  });
+
+  test('a planned role agent swapped for a different clean file is preserved (identity mismatch)', () => {
+    const bundleRoot = makeBundle();
+    const codexHome = mkdtempSync(join(tmpdir(), 'genie-codex-role-swap-'));
+    installCodexAgents(bundleRoot, codexHome);
+    const target = join(codexHome, 'agents', 'genie-reviewer.toml');
+    // The batch recorded the ORIGINAL identity.
+    const recorded = {
+      digest: createHash('sha256').update(readFileSync(target)).digest('hex'),
+      mode: lstatSync(target).mode & 0o7777,
+    };
+    // A different clean payload lands and the inventory is updated to match, so it
+    // classifies managed-clean by live inventory yet has a different digest.
+    const source = join(bundleRoot, 'plugins', 'genie', 'codex-agents', 'genie-reviewer.toml');
+    writeFileSync(source, `${MANAGED_TOML}model = "swapped-but-clean"\n`);
+    installCodexAgents(bundleRoot, codexHome);
+    const swapped = readFileSync(target, 'utf8');
+    expect(inspectCodexAgentOwnership(codexHome).entries[0]?.ownership).toBe('managed-clean');
+
+    const result = removeCodexAgents(codexHome, {}, new Map([['genie-reviewer.toml', recorded]]));
+
+    expect(result.removed).toEqual([]);
+    expect(result.keptIdentityMismatch).toEqual(['genie-reviewer.toml']);
+    expect(readFileSync(target, 'utf8')).toBe(swapped);
+    expect(existsSync(target)).toBe(true);
+  });
+
   test('role-agent removal I/O failure is structured and remains retryable', () => {
     const bundleRoot = makeBundle();
     const codexHome = mkdtempSync(join(tmpdir(), 'genie-codex-'));
