@@ -345,6 +345,15 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - **Gaps:** LOW — smoke refusal guard compares only against canonical `~/.genie`/`~/.hermes`; a relocated real home pointed at via env would bypass the refusal (writes remain backup-first/idempotent). Non-blocking.
 - **Substance verified by reviewer:** all five smoke legs are real assertions proven to catch broken state (tamper evidence: wrong version + injected post_tool_call → exactly 2 FAILs); `--sync-only` convergence confirmed no-network/no-binary-swap through the code path `runLegacySyncOnlyMode → runAgentSyncSafe`; smoke is stricter than doctor (warn glyph counts as not-green); round-trip bun test genuinely exercises writer + doctor on one fixture (re-run green, 10 assertions); CHANGELOG maps 1:1 to the seven wish scope points with no live-dogfood overclaim; live isit dogfood recorded USER-GATED pending.
 
+### Whole-wish execution review (final gate) — 2026-07-13T03:00:46Z — SHIP
+
+- **Reviewer:** genie:final-gate/execution-review-hermes-homogeneous-integration (independent; re-ran every validation itself after a fresh dependency install)
+- **Verdict:** SHIP
+- **Success criteria:** 1 MET-WITH-CAVEAT (isolated end-to-end proof shipped; live isit dogfood USER-GATED pending per repo QA precedent) · 2 MET · 3 MET · 4 MET · 5 MET · 6 MET-WITH-CAVEAT (full check green except the 2 pre-existing codex-manifest SessionStart failures — `git diff a191224..HEAD -- src/hooks/ plugins/genie/scripts/` is empty, structurally non-attributable) · 7 MET (delta-wide mutation-verb grep clean; `--dry-run` hard-coded; fail-closed config guard; config legs cannot fail a strict update)
+- **Gaps:** LOW — `hermes-integration-map.md:28` Hooks row has one factually stale cell ("same advisory hooks" / manifest-vs-config MCP wording) vs the shipped `pre_llm_call` set; `native-surface.md` is accurate. One-cell docs polish for the PR, not a hold.
+- **Residual risks for the PR description:** live isit dogfood pending (USER-GATED); 2 pre-existing codex-manifest failures on main need a separate fix; smoke refusal guard covers only canonical home paths (accepted G6 LOW); `_event_value` duplication (accepted G3 LOW); invalid-profile fallback split (intentional, accepted G4 LOW); baseline.md provenance metadata (accepted G1 LOW); `GENIE_HERMES_LEGACY_TOOLS=1` is a one-release transition surface with scheduled removal. Verified closed: G4 round-trip e2e (`dc73026`), G5 advisory drift (`fa51da0`).
+- **Cross-group seams verified sound by construction:** doctor and agent-sync share `resolveHermesConfigPath` + `resolveProductSkillsRoot`; plugin degrades gracefully without an MCP context; retired-tool/hook state consistent across plugin.yaml, `__init__.py`, smoke assertions, and native-surface.md.
+
 ---
 
 ## Files to Create/Modify
