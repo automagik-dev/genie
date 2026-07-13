@@ -32,7 +32,10 @@ import {
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { generateCodexFallbackAllowlist } from '../../scripts/generate-codex-fallback-allowlist';
+import {
+  generateCodexFallbackAllowlist,
+  materializeFrozenCodexFallbackRelease,
+} from '../../scripts/generate-codex-fallback-allowlist';
 import historicalCodexFallbackAllowlist from '../fixtures/codex-fallback-allowlist.json';
 import { checkAgentSync } from '../genie-commands/doctor';
 import { runAgentSyncSafe } from '../genie-commands/update';
@@ -2393,10 +2396,15 @@ function verifiedTarget(skillName: string, path: string, physicalDigest: string)
   return { skillName, path, physicalDigest, canonicalVerified: true as const };
 }
 
+function frozenHistoricalSkillsRoot(name: string): string {
+  const release = materializeFrozenCodexFallbackRelease(join(fixture.root, name));
+  return join(release.payloadRoot, 'skills');
+}
+
 describe('Codex fallback ownership planning', () => {
   test('accepts all 23 committed historical name/version/physical tuples', () => {
     const fallback = join(fixture.root, 'historical-fallbacks');
-    const shippedSkills = join(import.meta.dir, '..', '..', 'skills');
+    const shippedSkills = frozenHistoricalSkillsRoot('verified-release-all');
     for (const tuple of historicalCodexFallbackAllowlist) {
       const destination = join(fallback, tuple.skillName);
       cpSync(join(shippedSkills, tuple.skillName), destination, { recursive: true });
@@ -2414,7 +2422,7 @@ describe('Codex fallback ownership planning', () => {
 
   test('historical tuples are exact-content policy; syncedAt is not provenance authority', () => {
     const fallback = join(fixture.root, 'historical-policy');
-    const shippedSkills = join(import.meta.dir, '..', '..', 'skills');
+    const shippedSkills = frozenHistoricalSkillsRoot('verified-release-policy');
     const tuple = historicalCodexFallbackAllowlist[0];
     if (tuple === undefined) throw new Error('missing historical tuple');
     const destination = join(fallback, tuple.skillName);
@@ -2455,7 +2463,7 @@ describe('Codex fallback ownership planning', () => {
 
   test('preserves renamed/cross-skill, forged tuple, malformed, modified, unmanaged, and symlink inputs', () => {
     const fallback = join(fixture.root, 'negative-fallbacks');
-    const shippedSkills = join(import.meta.dir, '..', '..', 'skills');
+    const shippedSkills = frozenHistoricalSkillsRoot('verified-release-negative');
     const architecture = historicalCodexFallbackAllowlist.find((tuple) => tuple.skillName === 'architecture');
     if (architecture === undefined) throw new Error('missing architecture fixture tuple');
 
@@ -2689,6 +2697,7 @@ describe('Codex fallback batch retirement', () => {
     'after-restore-verification:0',
     'after-restore-sync:0',
     'before-restore-publication:0',
+    'after-restore-publication:0',
     'after-restore-filesystem:0',
     'before-restore-cleanup:0',
   ] as const) {
@@ -2722,6 +2731,103 @@ describe('Codex fallback batch retirement', () => {
       expect(existsSync(quarantine)).toBe(false);
     });
   }
+
+  test('a stop immediately after atomic changed-tree publication leaves two complete retryable copies', () => {
+    const { alpha, plan } = batchFixture();
+    let movedTreeChanged = false;
+    let interrupted = false;
+    expect(() =>
+      applyCodexFallbackRetirement(plan, {
+        failpoint: (point) => {
+          if (point === 'after-move-boundary-identification:0') {
+            writeFile(join(alpha.path, 'USER.txt'), 'atomic publication content\n');
+            movedTreeChanged = true;
+          }
+          if (movedTreeChanged && !interrupted && point === 'after-restore-publication:0') {
+            interrupted = true;
+            throw new Error('stop after atomic publication');
+          }
+        },
+      }),
+    ).toThrow('fallback retirement restore failed');
+    const quarantine = join(
+      plan.fallbackSkillsDir,
+      '.genie-codex-fallback-retirement',
+      `txn-${plan.transactionId}`,
+      'quarantine',
+      'alpha',
+    );
+    expect(readFileSync(join(alpha.path, 'USER.txt'), 'utf8')).toBe('atomic publication content\n');
+    expect(readFileSync(join(quarantine, 'USER.txt'), 'utf8')).toBe('atomic publication content\n');
+    expect(computeDirDigest(alpha.path)).toBe(computeDirDigest(quarantine));
+    expect(() => applyCodexFallbackRetirement(plan)).toThrow('source changed after planning');
+    expect(readFileSync(join(alpha.path, 'USER.txt'), 'utf8')).toBe('atomic publication content\n');
+    expect(existsSync(quarantine)).toBe(false);
+  });
+
+  test('a replacement at changed-tree cleanup keeps the intact quarantine and reports a recoverable conflict', () => {
+    const { alpha, plan } = batchFixture();
+    let movedTreeChanged = false;
+    let replaced = false;
+    expect(() =>
+      applyCodexFallbackRetirement(plan, {
+        failpoint: (point) => {
+          if (point === 'after-move-boundary-identification:0') {
+            writeFile(join(alpha.path, 'USER.txt'), 'quarantined user content\n');
+            movedTreeChanged = true;
+          }
+          if (movedTreeChanged && !replaced && point === 'before-restore-cleanup:0') {
+            replaced = true;
+            rmSync(alpha.path, { recursive: true });
+            writeFile(join(alpha.path, 'REPLACEMENT.txt'), 'concurrent replacement\n');
+          }
+        },
+      }),
+    ).toThrow('restored source changed during cleanup');
+    const quarantine = join(
+      plan.fallbackSkillsDir,
+      '.genie-codex-fallback-retirement',
+      `txn-${plan.transactionId}`,
+      'quarantine',
+      'alpha',
+    );
+    expect(readFileSync(join(alpha.path, 'REPLACEMENT.txt'), 'utf8')).toBe('concurrent replacement\n');
+    expect(readFileSync(join(quarantine, 'USER.txt'), 'utf8')).toBe('quarantined user content\n');
+    expect(() => applyCodexFallbackRetirement(plan)).toThrow('both trees retained with recoverable status');
+    expect(readFileSync(join(quarantine, 'USER.txt'), 'utf8')).toBe('quarantined user content\n');
+  });
+
+  test('a removal at changed-tree cleanup keeps quarantine intact and retry republishes atomically', () => {
+    const { alpha, plan } = batchFixture();
+    let movedTreeChanged = false;
+    let removed = false;
+    expect(() =>
+      applyCodexFallbackRetirement(plan, {
+        failpoint: (point) => {
+          if (point === 'after-move-boundary-identification:0') {
+            writeFile(join(alpha.path, 'USER.txt'), 'removed publication content\n');
+            movedTreeChanged = true;
+          }
+          if (movedTreeChanged && !removed && point === 'before-restore-cleanup:0') {
+            removed = true;
+            rmSync(alpha.path, { recursive: true });
+          }
+        },
+      }),
+    ).toThrow('intact quarantine retained with recoverable status');
+    const quarantine = join(
+      plan.fallbackSkillsDir,
+      '.genie-codex-fallback-retirement',
+      `txn-${plan.transactionId}`,
+      'quarantine',
+      'alpha',
+    );
+    expect(existsSync(alpha.path)).toBe(false);
+    expect(readFileSync(join(quarantine, 'USER.txt'), 'utf8')).toBe('removed publication content\n');
+    expect(() => applyCodexFallbackRetirement(plan)).toThrow('source changed after planning');
+    expect(readFileSync(join(alpha.path, 'USER.txt'), 'utf8')).toBe('removed publication content\n');
+    expect(existsSync(quarantine)).toBe(false);
+  });
 
   test('a changed quarantine and live publication conflict are both retained with recoverable status', () => {
     const { alpha, plan } = batchFixture();
@@ -2822,6 +2928,7 @@ describe('Codex fallback batch retirement', () => {
     'after-restore-verification:0',
     'after-restore-sync:0',
     'before-restore-publication:0',
+    'after-restore-publication:0',
     'after-restore-filesystem:0',
     'before-restore-cleanup:0',
   ] as const) {
@@ -2879,6 +2986,34 @@ describe('Codex fallback batch retirement', () => {
     ).toThrow('restore conflict');
     expect(readFileSync(join(alpha.path, 'USER.txt'), 'utf8')).toBe('publication racer\n');
     expect(existsSync(join(plan.fallbackSkillsDir, '.genie-codex-fallback-retirement'))).toBe(true);
+  });
+
+  test('atomic restore publication does not replace a concurrently created empty directory', () => {
+    const { alpha, plan } = batchFixture();
+    let restoring = false;
+    expect(() =>
+      applyCodexFallbackRetirement(plan, {
+        failpoint: (point) => {
+          if (point === 'after-move:0') {
+            restoring = true;
+            throw new Error('start recovery');
+          }
+          if (restoring && point === 'before-restore-publication:0') mkdirSync(alpha.path);
+        },
+      }),
+    ).toThrow('restore conflict');
+    expect(readdirSync(alpha.path)).toEqual([]);
+    expect(
+      existsSync(
+        join(
+          plan.fallbackSkillsDir,
+          '.genie-codex-fallback-retirement',
+          `txn-${plan.transactionId}`,
+          'quarantine',
+          'alpha',
+        ),
+      ),
+    ).toBe(true);
   });
 
   test('commits only after destination verification and retry retains one transaction', () => {

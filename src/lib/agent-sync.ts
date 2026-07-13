@@ -19,6 +19,7 @@
  * failures.
  */
 
+import { dlopen } from 'bun:ffi';
 import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import {
@@ -1210,6 +1211,7 @@ export type CodexFallbackRetirementFailpoint =
   | `after-restore-verification:${number}`
   | `after-restore-sync:${number}`
   | `before-restore-publication:${number}`
+  | `after-restore-publication:${number}`
   | `after-restore-filesystem:${number}`
   | `before-restore-cleanup:${number}`
   | `after-restore:${number}`
@@ -1441,17 +1443,58 @@ function matchesRestoreIdentity(
     : exactPhysicalDirectoryDigest(path) === observedTreeDigest;
 }
 
+const AT_FDCWD = -100;
+const LINUX_RENAME_NOREPLACE = 1;
+const DARWIN_RENAME_EXCL = 4;
+
+/** Publish one complete same-filesystem directory while atomically rejecting every existing target inode. */
+function atomicRenameDirectoryNoClobber(stagedDir: string, targetDir: string): void {
+  const stagedStat = lstatSync(stagedDir);
+  if (!stagedStat.isDirectory() || stagedStat.isSymbolicLink()) {
+    throw new Error(`atomic publish source is not a physical directory: ${stagedDir}`);
+  }
+  const stagedPath = Buffer.from(`${stagedDir}\0`);
+  const targetPath = Buffer.from(`${targetDir}\0`);
+  let result: number;
+  if (process.platform === 'linux') {
+    const libc = dlopen('libc.so.6', {
+      renameat2: { args: ['i32', 'cstring', 'i32', 'cstring', 'u32'], returns: 'i32' },
+    } as const);
+    try {
+      result = libc.symbols.renameat2(AT_FDCWD, stagedPath, AT_FDCWD, targetPath, LINUX_RENAME_NOREPLACE);
+    } finally {
+      libc.close();
+    }
+  } else if (process.platform === 'darwin') {
+    const libc = dlopen('/usr/lib/libSystem.B.dylib', {
+      renamex_np: { args: ['cstring', 'cstring', 'u32'], returns: 'i32' },
+    } as const);
+    try {
+      result = libc.symbols.renamex_np(stagedPath, targetPath, DARWIN_RENAME_EXCL);
+    } finally {
+      libc.close();
+    }
+  } else {
+    throw new Error(`atomic no-clobber directory publication is unsupported on ${process.platform}`);
+  }
+  if (result !== 0) {
+    const detail = lstatSafe(targetDir) === null ? 'rename failed' : 'target exists';
+    throw new NoClobberPublishError(`atomic no-clobber publish failed (${detail}); target preserved: ${targetDir}`);
+  }
+}
+
 function writeRestoreConflict(
   transactionDir: string,
   journal: CodexFallbackRetirementJournal,
   entry: CodexFallbackRetirementEntry,
   reason: string,
   failpoint?: ApplyCodexFallbackRetirementOptions['failpoint'],
+  retained = 'both trees retained',
 ): never {
   entry.phase = 'restore-conflict';
   journal.phase = 'restore-conflict';
   writeDurableRetirementJournal(transactionDir, journal, failpoint);
-  throw new Error(`${reason}; both trees retained with recoverable status at ${transactionDir}`);
+  throw new Error(`${reason}; ${retained} with recoverable status at ${transactionDir}`);
 }
 
 function markRetirementEntryRestored(
@@ -1472,9 +1515,11 @@ function cleanupRestoredRetirementDestination(
   journal: CodexFallbackRetirementJournal,
   entry: CodexFallbackRetirementEntry,
   paths: RetirementRestorePaths,
+  index: number,
   observedTreeDigest: string | undefined,
   failpoint?: ApplyCodexFallbackRetirementOptions['failpoint'],
 ): void {
+  failpoint?.(`before-restore-cleanup:${index}`);
   fsyncPhysicalTree(paths.source);
   fsyncPath(fallbackSkillsDir);
   validateQuarantineDirectory(fallbackSkillsDir, transactionDir);
@@ -1485,6 +1530,19 @@ function cleanupRestoredRetirementDestination(
       entry,
       'fallback retirement quarantine changed during cleanup',
       failpoint,
+    );
+  }
+  // Quarantine stays authoritative until the live object is re-identified at
+  // this destructive boundary; publication-time identity is intentionally insufficient.
+  if (!matchesRestoreIdentity(paths.source, entry, observedTreeDigest)) {
+    const retained = lstatSafe(paths.source) === null ? 'intact quarantine retained' : 'both trees retained';
+    writeRestoreConflict(
+      transactionDir,
+      journal,
+      entry,
+      `fallback retirement restored source changed during cleanup at ${paths.source}`,
+      failpoint,
+      retained,
     );
   }
   rmSync(paths.destination, { recursive: true });
@@ -1543,7 +1601,7 @@ function publishRetirementRestore(
     );
   }
   try {
-    publishPhysicalTreeNoClobber(paths.staging, paths.source);
+    atomicRenameDirectoryNoClobber(paths.staging, paths.source);
   } catch (error) {
     if (lstatSafe(paths.source) !== null) {
       writeRestoreConflict(
@@ -1556,6 +1614,7 @@ function publishRetirementRestore(
     }
     throw error;
   }
+  failpoint?.(`after-restore-publication:${index}`);
   fsyncPhysicalTree(paths.source);
   fsyncPath(fallbackSkillsDir);
   failpoint?.(`after-restore-filesystem:${index}`);
@@ -1568,13 +1627,13 @@ function publishRetirementRestore(
       failpoint,
     );
   }
-  failpoint?.(`before-restore-cleanup:${index}`);
   cleanupRestoredRetirementDestination(
     fallbackSkillsDir,
     transactionDir,
     journal,
     entry,
     paths,
+    index,
     observedTreeDigest,
     failpoint,
   );
@@ -1607,6 +1666,7 @@ function restoreRetirementEntry(
       journal,
       entry,
       paths,
+      index,
       sourceObserved ? observed : undefined,
       failpoint,
     );
