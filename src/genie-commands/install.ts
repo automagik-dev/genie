@@ -142,10 +142,11 @@ export function installCommand(
       }
     }
     // Codex is now converged end-to-end (plugin → single health proof →
-    // fallback retirement → role agents) through runIntegrations; agent-sync is
-    // scoped to Claude only so it never re-writes Genie product skills into
-    // ~/.agents/skills (R2). Integrations run BEFORE the Claude skill sync so a
-    // plugin-incapable Codex leaves Claude trees byte-identical (R1/A2).
+    // fallback retirement → role agents) through runIntegrations; agent-sync
+    // never writes Genie product skills into ~/.agents/skills (R2) because
+    // `runAgentSync` has no codex arm at all — structural, not selection-gated.
+    // Integrations run BEFORE the Claude/hermes agent-sync so a plugin-incapable
+    // Codex leaves Claude trees byte-identical (R1/A2).
     const results = runIntegrations({ selection });
     for (const result of results) {
       const glyph = result.ok ? '\x1b[32m+\x1b[0m' : '\x1b[33m!\x1b[0m';
@@ -166,9 +167,9 @@ export function installCommand(
         // selection === 'auto' is the only surviving case here: an explicit
         // --integrations all/claude/codex codex failure already threw above,
         // so a silent codexFailed-guarded skip here would otherwise exit 0
-        // with Claude agent-sync never having run and no trace of why.
+        // with agent-sync never having run and no trace of why.
         console.log(
-          '  \x1b[33m!\x1b[0m Skipped Claude agent-sync: codex integration failed under --integrations auto (rerun with --integrations claude to sync Claude only, or fix codex and rerun).',
+          '  \x1b[33m!\x1b[0m Skipped agent-sync: codex integration failed under --integrations auto (rerun with --integrations claude to sync Claude/hermes only, or fix codex and rerun).',
         );
       }
     }
@@ -181,14 +182,17 @@ export function installCommand(
 }
 
 /**
- * Narrow a client selection to the agent-sync scope. Codex product skills now
- * live only in the plugin, so agent-sync (the sole ~/.agents/skills writer via
- * syncCodex) must never run for codex: `auto`/`all`/`claude` sync Claude only,
- * and `codex`/`none` skip agent-sync entirely (R2/A1). runIntegrations keeps the
- * full selection so codex still converges through installCodexIntegration.
+ * Gate the agent-sync scope for install. R2/A1 (agent-sync must never write
+ * codex product skills into ~/.agents/skills) is now structural in
+ * `runAgentSync` itself — there is no `codex` arm to narrow away from — so
+ * this only needs to skip agent-sync where it has nothing to do: `none`
+ * (nothing selected) and `codex` (codex converges entirely through
+ * `installCodexIntegration`, never through agent-sync). Every other selection
+ * (`auto`/`all`/`claude`) passes through UNCHANGED so `runAgentSync` sees the
+ * real selection and converges hermes on `auto`/`all` too.
  */
-export function narrowAgentSyncSelection(selection: IntegrationSelection): 'claude' | null {
-  return selection === 'auto' || selection === 'all' || selection === 'claude' ? 'claude' : null;
+export function narrowAgentSyncSelection(selection: IntegrationSelection): IntegrationSelection | null {
+  return selection === 'none' || selection === 'codex' ? null : selection;
 }
 
 /** Validate raw Commander input before cleanup, synchronization, or install side effects. */

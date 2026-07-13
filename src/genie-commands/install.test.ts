@@ -422,7 +422,7 @@ describe('installCommand', () => {
     expect(selection).toBe('none');
   });
 
-  test('agent-sync is Claude-scoped: codex and none never invoke it; auto/all/claude sync Claude only', () => {
+  test('agent-sync selection passes through unchanged (restore-hermes-sync-leg): codex/none skip it, auto/all/claude reach it as-is', () => {
     const observed: string[] = [];
     const runFor = (integrations: 'codex' | 'none' | 'auto' | 'all' | 'claude') =>
       installCommand(
@@ -434,15 +434,19 @@ describe('installCommand', () => {
         noopLease,
         noopConsent,
       );
-    // codex converges through runIntegrations only — agent-sync (the sole
-    // ~/.agents/skills writer) must never run for codex (R2/A1).
+    // codex converges through runIntegrations only — agent-sync never writes
+    // ~/.agents/skills at all now (R2/A1 is structural in runAgentSync), so
+    // codex/none simply have nothing for agent-sync to do.
     runFor('codex');
     runFor('none');
     expect(observed).toEqual([]);
+    // auto/all/claude pass through UNCHANGED — narrowAgentSyncSelection no
+    // longer collapses them to 'claude', which is what silently killed the
+    // hermes leg (runAgentSync's hermes gate needs 'auto'/'all' verbatim).
     runFor('auto');
     runFor('all');
     runFor('claude');
-    expect(observed).toEqual(['claude', 'claude', 'claude']);
+    expect(observed).toEqual(['auto', 'all', 'claude']);
   });
 
   test('a failed codex integration gates the Claude skill sync so Claude trees stay byte-identical (A2)', () => {
@@ -476,7 +480,7 @@ describe('installCommand', () => {
         noopConsent,
       );
       const output = lines.join('\n');
-      expect(output).toContain('Skipped Claude agent-sync');
+      expect(output).toContain('Skipped agent-sync');
       expect(output).toContain('codex integration failed');
     } finally {
       console.log = originalLog;

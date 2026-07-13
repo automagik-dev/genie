@@ -249,18 +249,6 @@ describe('fresh create', () => {
     expect(workflowManifest.digest).toMatch(/^[a-f0-9]{64}$/);
   });
 
-  test('codex: skills land top-level under the agents skills tier with a restart advisory', () => {
-    present(fixture.codexDir);
-    const report = agentReport(run(), 'codex');
-
-    expect(report.detected).toBe(true);
-    expect(existsSync(join(fixture.agentsSkillsDir, 'alpha', 'SKILL.md'))).toBe(true);
-    expect(readManifest(join(fixture.agentsSkillsDir, 'alpha')).managedBy).toBe('genie-agent-sync');
-    // nothing is ever written into the retired `<codexDir>/skills/.curated` lane
-    expect(existsSync(join(fixture.codexDir, 'skills', '.curated'))).toBe(false);
-    expect(report.advisories).toContain('restart Codex to pick up updated skills');
-  });
-
   test('hermes: symlink created + enable exec fired exactly once', () => {
     present(fixture.hermesHome);
     const enableCalls: string[][] = [];
@@ -309,10 +297,6 @@ describe('idempotent re-run', () => {
     expect(skillAction(claude, 'alpha')).toBe('unchanged');
     expect(skillAction(claude, 'beta')).toBe('unchanged');
     expect(extraAction(claude, 'stamp')).toBe('skipped');
-
-    const codex = agentReport(second, 'codex');
-    expect(skillAction(codex, 'alpha')).toBe('unchanged');
-    expect(codex.advisories).not.toContain('restart Codex to pick up updated skills');
 
     const hermes = agentReport(second, 'hermes');
     expect(extraAction(hermes, 'symlink')).toBe('unchanged');
@@ -541,20 +525,16 @@ describe('managed orphan handling', () => {
 describe('claude council exclusion', () => {
   const councilFiles = { 'SKILL.md': '# council (portable, non-workflow runtimes)\n' };
 
-  test('council is synced to codex but never to claude (workflow owns the name there)', () => {
+  test('council is excluded from claude (the native /council workflow owns the name there)', () => {
     rmSync(fixture.root, { recursive: true, force: true });
     fixture = setup({ skills: { alpha: { 'SKILL.md': '# alpha\n' }, council: councilFiles } });
     present(fixture.claudeDir);
-    present(fixture.codexDir);
 
     const report = run();
     const claude = agentReport(report, 'claude');
-    const codex = agentReport(report, 'codex');
     expect(skillAction(claude, 'council')).toBeUndefined();
     expect(existsSync(join(fixture.claudeDir, 'skills', 'council'))).toBe(false);
     expect(skillAction(claude, 'alpha')).toBe('created');
-    expect(skillAction(codex, 'council')).toBe('created');
-    expect(existsSync(join(fixture.agentsSkillsDir, 'council', 'SKILL.md'))).toBe(true);
   });
 
   test('a managed council already synced to claude (pre-exclusion release) is backed up and removed', () => {
@@ -600,9 +580,11 @@ describe('undetected agents', () => {
   test('a missing agent dir yields detected:false and zero writes', () => {
     // no target dirs created at all
     const report = run();
-    for (const agent of ['claude', 'codex', 'hermes'] as const) {
+    for (const agent of ['claude', 'hermes'] as const) {
       expect(agentReport(report, agent).detected).toBe(false);
     }
+    // codex never appears in the report at all — runAgentSync has no codex arm.
+    expect(report.agents.some((agent) => agent.agent === 'codex')).toBe(false);
     expect(existsSync(fixture.claudeDir)).toBe(false);
     expect(existsSync(fixture.codexDir)).toBe(false);
     expect(existsSync(join(fixture.hermesHome, 'plugins'))).toBe(false);
@@ -620,15 +602,18 @@ describe('undetected agents', () => {
 });
 
 describe('explicit client selection', () => {
-  test('codex selection leaves Claude and Hermes homes byte-identical', () => {
+  test('codex selection is structurally a no-op: zero agents, every home byte-identical', () => {
     present(fixture.claudeDir);
     present(fixture.codexDir);
     present(fixture.hermesHome);
+    writeFile(join(fixture.agentsSkillsDir, 'alpha', 'SKILL.md'), '# seeded, pre-existing\n');
     const report = run({ selection: 'codex' });
-    expect(report.agents.map((agent) => agent.agent)).toEqual(['codex']);
-    expect(existsSync(join(fixture.agentsSkillsDir, 'alpha', 'SKILL.md'))).toBe(true);
+    // runAgentSync has no `codex` arm at all: `selection: 'codex'` matches
+    // none of the claude/hermes gates either, so nothing runs.
+    expect(report.agents).toEqual([]);
     expect(existsSync(join(fixture.claudeDir, 'skills'))).toBe(false);
     expect(existsSync(join(fixture.hermesHome, 'plugins', 'genie'))).toBe(false);
+    expect(readFileSync(join(fixture.agentsSkillsDir, 'alpha', 'SKILL.md'), 'utf8')).toBe('# seeded, pre-existing\n');
   });
 
   test('none selection mutates no client home', () => {
@@ -640,6 +625,28 @@ describe('explicit client selection', () => {
     expect(existsSync(join(fixture.claudeDir, 'skills'))).toBe(false);
     expect(existsSync(join(fixture.agentsSkillsDir, 'alpha'))).toBe(false);
     expect(existsSync(join(fixture.hermesHome, 'plugins', 'genie'))).toBe(false);
+  });
+
+  // Regression (restore-hermes-sync-leg): a prior release narrowed every
+  // production caller's selection to 'claude' before it ever reached
+  // runAgentSync, so 'auto'/'all' never converged hermes — see the
+  // update.ts-level lifecycle test for the end-to-end version of this bug.
+  // This is the R2/A1 + hermes-restoration contract pinned at the engine
+  // level: 'auto' must converge BOTH claude and hermes, and must NEVER touch
+  // the shared ~/.agents/skills tier (there is no codex arm to do so).
+  test('auto selection converges claude AND hermes, and never touches a seeded ~/.agents/skills fixture', () => {
+    present(fixture.claudeDir);
+    present(fixture.hermesHome);
+    writeFile(join(fixture.agentsSkillsDir, 'alpha', 'SKILL.md'), '# seeded, pre-existing\n');
+
+    const report = run({ selection: 'auto' });
+
+    expect(report.agents.map((agent) => agent.agent).sort()).toEqual(['claude', 'hermes']);
+    expect(skillAction(agentReport(report, 'claude'), 'alpha')).toBe('created');
+    expect(extraAction(agentReport(report, 'hermes'), 'symlink')).toBe('created');
+    // R2/A1: the seeded ~/.agents/skills fixture is byte-identical — no codex
+    // arm exists to have written or removed anything there.
+    expect(readFileSync(join(fixture.agentsSkillsDir, 'alpha', 'SKILL.md'), 'utf8')).toBe('# seeded, pre-existing\n');
   });
 });
 
@@ -1210,22 +1217,6 @@ describe('hermes config convergence', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Codex: .system protection + one-time .curated → ~/.agents/skills migration
-// ---------------------------------------------------------------------------
-
-/** Materialize a dir that looks exactly like one agent-sync shipped (manifest incl. matching digest). */
-function seedManagedDir(dir: string, files: Record<string, string>): void {
-  for (const [rel, content] of Object.entries(files)) writeFile(join(dir, rel), content);
-  const manifest = {
-    managedBy: 'genie-agent-sync',
-    version: '9.9.8',
-    digest: computeDirDigest(dir),
-    syncedAt: '2026-01-01T00:00:00.000Z',
-  };
-  writeFile(join(dir, MANIFEST_NAME), `${JSON.stringify(manifest, null, 2)}\n`);
-}
-
 function seedV1ManagedDir(dir: string, files: Record<string, string>): void {
   for (const [rel, content] of Object.entries(files)) writeFile(join(dir, rel), content);
   const digest = createHash('sha256');
@@ -1246,142 +1237,14 @@ function seedV1ManagedDir(dir: string, files: Record<string, string>): void {
   );
 }
 
-describe('codex .system', () => {
-  test('the OpenAI-owned .system tree is never enumerated or touched', () => {
-    present(fixture.codexDir);
-    const systemSkill = join(fixture.codexDir, 'skills', '.system', 'openai-builtin', 'SKILL.md');
-    writeFile(systemSkill, '# openai builtin\n');
-
-    const report = agentReport(run(), 'codex');
-    expect(skillAction(report, 'openai-builtin')).toBeUndefined();
-    expect(readFileSync(systemSkill, 'utf8')).toBe('# openai builtin\n');
-    expect(existsSync(join(systemSkill, '..', MANIFEST_NAME))).toBe(false);
-  });
-});
-
-describe('codex legacy .curated migration', () => {
-  test('manifest-managed legacy dirs are backed up then removed; the empty lane dir goes too', () => {
-    present(fixture.codexDir);
-    const legacyDir = join(fixture.codexDir, 'skills', '.curated');
-    seedManagedDir(join(legacyDir, 'alpha'), { 'SKILL.md': '# legacy alpha\n' });
-    seedManagedDir(join(legacyDir, 'zombie'), { 'SKILL.md': '# legacy zombie\n' });
-
-    const report = run();
-    const codex = agentReport(report, 'codex');
-
-    expect(existsSync(legacyDir)).toBe(false); // lane fully retired
-    expect((report.backupsDir as string).startsWith(`${fixture.genieHome}/`)).toBe(false);
-    // both legacy dirs were backed up before removal
-    const backupRoot = join(report.backupsDir as string, 'codex-legacy-curated');
-    expect(readFileSync(join(backupRoot, 'alpha', 'SKILL.md'), 'utf8')).toBe('# legacy alpha\n');
-    expect(readFileSync(join(backupRoot, 'zombie', 'SKILL.md'), 'utf8')).toBe('# legacy zombie\n');
-    rmSync(fixture.genieHome, { recursive: true, force: true });
-    expect(readFileSync(join(backupRoot, 'alpha', 'SKILL.md'), 'utf8')).toBe('# legacy alpha\n');
-    const removed = codex.extras.filter((entry) => entry.kind === 'legacy-curated' && entry.action === 'removed');
-    expect(removed).toHaveLength(2);
-    // and the live tier got the current source skills
-    expect(readFileSync(join(fixture.agentsSkillsDir, 'alpha', 'SKILL.md'), 'utf8')).toBe('# alpha\n');
-  });
-
-  test('a user-modified managed legacy dir is preserved in place byte-identically', () => {
-    present(fixture.codexDir);
-    const legacyAlpha = join(fixture.codexDir, 'skills', '.curated', 'alpha');
-    seedManagedDir(legacyAlpha, { 'SKILL.md': '# legacy alpha\n' });
-    writeFile(join(legacyAlpha, 'SKILL.md'), '# hand-edited legacy\n'); // digest now diverges
-    const manifestBefore = readFileSync(join(legacyAlpha, MANIFEST_NAME), 'utf8');
-
-    const report = run();
-    const codex = agentReport(report, 'codex');
-    expect(readFileSync(join(legacyAlpha, 'SKILL.md'), 'utf8')).toBe('# hand-edited legacy\n');
-    expect(readFileSync(join(legacyAlpha, MANIFEST_NAME), 'utf8')).toBe(manifestBefore);
-    expect(report.backupsDir).toBeNull();
-    expect(codex.extras).toContainEqual({
-      kind: 'legacy-curated',
-      action: 'kept-modified',
-      detail: legacyAlpha,
-    });
-  });
-
-  test('content-only v1 ownership never authorizes destructive legacy cleanup', () => {
-    present(fixture.codexDir);
-    const legacyAlpha = join(fixture.codexDir, 'skills', '.curated', 'alpha');
-    seedV1ManagedDir(legacyAlpha, { 'SKILL.md': '# legacy alpha\n' });
-
-    const codex = agentReport(run(), 'codex');
-
-    expect(readFileSync(join(legacyAlpha, 'SKILL.md'), 'utf8')).toBe('# legacy alpha\n');
-    expect(codex.extras).toContainEqual({
-      kind: 'legacy-curated',
-      action: 'kept-modified',
-      detail: legacyAlpha,
-    });
-  });
-
-  test('a legacy managed dir changed after classification stays live and is not removed', () => {
-    present(fixture.codexDir);
-    const legacyAlpha = join(fixture.codexDir, 'skills', '.curated', 'alpha');
-    seedManagedDir(legacyAlpha, { 'SKILL.md': '# legacy alpha\n' });
-    const report = run({
-      beforeManagedDirRemoval(destDir, stage) {
-        if (destDir === legacyAlpha && stage === 'before-park') {
-          writeFileSync(join(legacyAlpha, 'SKILL.md'), '# legacy raced\n');
-        }
-      },
-    });
-    expect(readFileSync(join(legacyAlpha, 'SKILL.md'), 'utf8')).toBe('# legacy raced\n');
-    expect(agentReport(report, 'codex').failures?.some((line) => line.includes('changed before removal'))).toBe(true);
-  });
-
-  test('unmanaged legacy entries are kept (with an advisory) and keep the lane dir alive', () => {
-    present(fixture.codexDir);
-    const legacyDir = join(fixture.codexDir, 'skills', '.curated');
-    seedManagedDir(join(legacyDir, 'alpha'), { 'SKILL.md': '# legacy alpha\n' });
-    const userSkill = join(legacyDir, 'my-own-thing', 'SKILL.md');
-    writeFile(userSkill, '# not genie-managed\n'); // no manifest
-
-    const codex = agentReport(run(), 'codex');
-
-    expect(existsSync(join(legacyDir, 'alpha'))).toBe(false); // managed dir migrated out
-    expect(readFileSync(userSkill, 'utf8')).toBe('# not genie-managed\n'); // user content untouched
-    expect(codex.advisories.some((line) => line.includes('unmanaged entries'))).toBe(true);
-  });
-
-  test('the migration is one-time: a second run sees no legacy lane and reports no legacy extras', () => {
-    present(fixture.codexDir);
-    seedManagedDir(join(fixture.codexDir, 'skills', '.curated', 'alpha'), { 'SKILL.md': '# legacy alpha\n' });
-    run();
-
-    const second = agentReport(run(), 'codex');
-    expect(second.extras.filter((entry) => entry.kind === 'legacy-curated')).toHaveLength(0);
-    expect(skillAction(second, 'alpha')).toBe('unchanged'); // live tier already converged
-  });
-
-  test('unmanaged siblings already in the shared agents skills tier are never touched', () => {
-    present(fixture.codexDir);
-    const foreign = join(fixture.agentsSkillsDir, 'somebody-elses-skill');
-    writeFile(join(foreign, 'SKILL.md'), '# installed by another tool\n');
-
-    const report = run();
-    const codex = agentReport(report, 'codex');
-    expect(skillAction(codex, 'somebody-elses-skill')).toBeUndefined();
-    expect(readFileSync(join(foreign, 'SKILL.md'), 'utf8')).toBe('# installed by another tool\n');
-    expect(existsSync(join(foreign, MANIFEST_NAME))).toBe(false);
-  });
-
-  test('a personal Codex skill colliding with a shipped name remains byte-identical and unmanaged', () => {
-    present(fixture.codexDir);
-    const personal = join(fixture.agentsSkillsDir, 'alpha');
-    writeFile(join(personal, 'SKILL.md'), '# personal Codex adaptation\n');
-    writeFile(join(personal, 'agents', 'openai.yaml'), 'policy:\n  allow_implicit_invocation: false\n');
-
-    const codex = agentReport(run(), 'codex');
-
-    expect(skillAction(codex, 'alpha')).toBe('skipped-unmanaged-kept');
-    expect(readFileSync(join(personal, 'SKILL.md'), 'utf8')).toBe('# personal Codex adaptation\n');
-    expect(readFileSync(join(personal, 'agents', 'openai.yaml'), 'utf8')).toContain('allow_implicit_invocation');
-    expect(existsSync(join(personal, MANIFEST_NAME))).toBe(false);
-  });
-});
+// The `codex .system` and `codex legacy .curated migration` describes that
+// used to live here tested `syncCodex`, which is retired: codex product
+// skills are plugin-only now (installCodexIntegration), and `runAgentSync`
+// has no codex arm at all. `.system` protection and `.curated` migration are
+// moot when nothing writes into ~/.agents/skills or reads <codexDir>/skills/
+// from this engine anymore. `genie uninstall`'s own `.curated` classifier
+// (codexLegacyCuratedDir + inspectManagedSkillTree) is unaffected and covered
+// in uninstall.test.ts.
 
 // ---------------------------------------------------------------------------
 // Source resolution
@@ -3144,16 +3007,12 @@ describe('Codex fallback batch retirement', () => {
     expect(readdirSync(join(fallback, '.genie-codex-fallback-retirement'))).toHaveLength(1);
   });
 
-  test('active sync remains unwired and preserves the dangling legacy symlink behavior', () => {
-    present(fixture.codexDir);
-    const dangling = join(fixture.agentsSkillsDir, 'alpha');
-    mkdirSync(dirname(dangling), { recursive: true });
-    symlinkSync('/definitely/missing', dangling);
-    const report = agentReport(run(), 'codex');
-    expect(skillAction(report, 'alpha')).toBe('skipped-unmanaged-kept');
-    expect(lstatSync(dangling).isSymbolicLink()).toBe(true);
-    expect(existsSync(join(fixture.agentsSkillsDir, '.genie-codex-fallback-retirement'))).toBe(false);
-  });
+  // The 'active sync remains unwired...' boundary test that used to live here
+  // pinned that `run()` (agent-sync's `syncCodex`) never triggered the
+  // fallback retirement transaction machinery even though both existed in the
+  // same binary. `syncCodex` is retired, so there is no longer an active-sync
+  // codex leg for the retirement machinery to be unwired FROM — the two
+  // systems can no longer collide because only one of them exists.
 
   // ---------------------------------------------------------------------------
   // Group A recovery gaps (G1 final-copy safety, G2 serialization, G3 discovery)
