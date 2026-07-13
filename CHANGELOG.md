@@ -1,10 +1,25 @@
 # Changelog
 
-## Plugin-only Codex skills
+## v5-launch
+
+### TUI clipboard contract — terminal-native selection
+
+v5 TUI uses terminal-native selection. Drag to highlight, Cmd+C to copy.
+tmux's automatic OSC 52 emit is disabled — the terminal owns the entire
+selection lifecycle.
+
+Operators on terminals that misbehave with the new mouse mode can fall
+back to `GENIE_TUI_MOUSE=0` and use `prefix+[` tmux copy-mode.
+
+Wish: `wish/tui-native-selection`.
+
+## Unreleased
+
+### Plugin-only Codex skills
 
 Wish: `repair-genie-codex-hooks-and-dedupe-skills`.
 
-### Changed — the installed Codex plugin is the sole Genie-managed skill provider
+#### Changed — the installed Codex plugin is the sole Genie-managed skill provider
 
 - **Fresh Codex installs write zero user-tier skills.** `genie install`,
   `genie setup --codex`, and `genie update` no longer copy the 23 product
@@ -24,7 +39,7 @@ Wish: `repair-genie-codex-hooks-and-dedupe-skills`.
   nonzero and leaves all trees byte-identical. A deliberately disabled plugin
   is never silently enabled.
 
-### Added — durable fallback retirement, quarantine, and recovery
+#### Added — durable fallback retirement, quarantine, and recovery
 
 - **Upgrades quarantine clean historical fallbacks instead of deleting them.**
   A machine upgrading from a fallback-seeding release moves only provably clean,
@@ -50,13 +65,13 @@ Wish: `repair-genie-codex-hooks-and-dedupe-skills`.
   with distinct remediation; success never claims literal name uniqueness while
   user content remains.
 
-### Changed — plugin-incapable Codex fails loudly
+#### Changed — plugin-incapable Codex fails loudly
 
 - A Codex whose `plugin` subcommand is unknown now exits nonzero **before** any
   mutation, leaves all trees byte-identical, and prints explicit guidance to
   upgrade Codex — instead of silently rebuilding bare product-skill fallbacks.
 
-### Notes
+#### Notes
 
 - `.codex/skills/.curated` is a legacy uninstall-only lane: `genie uninstall`
   still collects it, but no install/update/setup/sync path recreates it.
@@ -65,7 +80,7 @@ Wish: `repair-genie-codex-hooks-and-dedupe-skills`.
   launcher, role-agent TOMLs, and the PR #2559 dangling-symlink preservation are
   unchanged and regression-gated.
 
-### Known non-blocking red gate
+#### Known non-blocking red gate
 
 - `bun run check` exits 1 solely because of 6 pre-existing env-dependent unit
   failures: `src/lib/codex-project-mcp.test.ts` (4) and
@@ -78,7 +93,7 @@ Wish: `repair-genie-codex-hooks-and-dedupe-skills`.
   installed-manifest MCP shape, JSON-RPC MCP usability, and the bounded
   SessionStart hook). Do not mistake this red for a regression; CI is not green.
 
-### Before release promotion
+#### Before release promotion
 
 - The plugin-only smoke installs the built CLI plus the source `plugins/` tree
   (matching release contents by proxy). Verify the actual packaged tarball
@@ -86,21 +101,6 @@ Wish: `repair-genie-codex-hooks-and-dedupe-skills`.
 - Run the manual dogfood checklist (README, "Manual dogfood checklist") once
   from a restarted Codex session to confirm one plugin version, working
   MCP/hooks, and only owner-qualified `genie:*` skills.
-
-## v5-launch
-
-### TUI clipboard contract — terminal-native selection
-
-v5 TUI uses terminal-native selection. Drag to highlight, Cmd+C to copy.
-tmux's automatic OSC 52 emit is disabled — the terminal owns the entire
-selection lifecycle.
-
-Operators on terminals that misbehave with the new mouse mode can fall
-back to `GENIE_TUI_MOUSE=0` and use `prefix+[` tmux copy-mode.
-
-Wish: `wish/tui-native-selection`.
-
-## Unreleased
 
 ### Hermes homogeneous integration
 

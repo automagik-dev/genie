@@ -177,17 +177,18 @@ async function assertClaudeMarketplaceShape(filePath: string): Promise<void> {
 
 /**
  * In CI only, stage the files this sync actually rewrote so the auto-version
- * commit ships them. Best-effort: a git failure logs a warning and returns —
- * it must never fail the version sync (the workflow's own `git add` still covers
- * the JSON files). Uses an arg-array (never a shell string) so paths can't be
- * interpolated into a command line.
+ * commit ships them. Under GITHUB_ACTIONS a git failure must fail the sync —
+ * silently warning and continuing re-introduces the plugin.yaml version-skew
+ * defect this staging exists to prevent (the workflow's own `git add` list is
+ * stale and omits it). Uses an arg-array (never a shell string) so paths
+ * can't be interpolated into a command line.
  */
 function stageRewrittenFilesInCi(rootDir: string, paths: string[]): void {
   if (process.env.GITHUB_ACTIONS !== 'true' || paths.length === 0) return;
   try {
     execFileSync('git', ['add', '--', ...paths], { cwd: rootDir, stdio: 'pipe' });
   } catch (err) {
-    console.warn(`  ⚠ CI staging skipped (git add failed): ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(`CI staging failed (git add): ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 

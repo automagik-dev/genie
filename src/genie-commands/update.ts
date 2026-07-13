@@ -1960,6 +1960,7 @@ export interface SyncOnlyCodexInspectionOptions {
   probe?: (deps: CodexPluginProbeDeps) => CodexPluginProbe;
   prove?: (options: ProveCodexPluginHealthOptions) => CodexHealthProof;
   runSession?: ProveCodexPluginHealthOptions['runSession'];
+  log?: (line: string) => void;
 }
 
 /**
@@ -1980,7 +1981,15 @@ export function inspectSyncOnlyCodexHealth(options: SyncOnlyCodexInspectionOptio
   }
   if (command === null) {
     // Under auto, an absent Codex CLI is simply not selected; explicit codex/all requires it.
-    if (options.selection === 'auto') return;
+    if (options.selection === 'auto') {
+      // A possibly-installed plugin still goes uninspected here — say so
+      // rather than passing silently, so the operator knows why no codex
+      // drift/health advisory appeared.
+      (options.log ?? log)(
+        'Codex checks skipped: no codex CLI found on PATH (--integrations auto never installs it; the plugin, if installed, was not inspected).',
+      );
+      return;
+    }
     throw new Error(
       '--sync-only requires the Codex CLI for the selected scope, but it was not found; --sync-only never installs it',
     );
@@ -2029,6 +2038,7 @@ export function runLegacySyncOnlyConvergence(options: LegacySyncOnlyConvergenceO
     resolveExecutable: options.resolveExecutable,
     probe: options.probe,
     prove: options.prove,
+    log: options.log,
   });
   const agentSyncSelection = narrowUpdateAgentSyncSelection(options.selection);
   (

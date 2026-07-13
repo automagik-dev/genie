@@ -99,21 +99,33 @@ describe('manifest version formatting', () => {
   });
 
   test('synchronization updates every required file or rejects the run', async () => {
-    const root = synchronizationFixture();
-    await synchronizeVersionFiles(root, '5.260711.3');
-    expect(JSON.parse(readFileSync(join(root, '.claude-plugin/marketplace.json'), 'utf8')).plugins[0].version).toBe(
-      '5.260711.3',
-    );
-    // The Hermes YAML manifest is synced alongside the JSON manifests.
-    expect(readFileSync(join(root, 'plugins/hermes-genie/plugin.yaml'), 'utf8')).toBe(
-      'name: genie\nversion: 5.260711.3\ndescription: "Native surface"\n',
-    );
+    // This fixture root is deliberately not a git repo — it exercises JSON/YAML
+    // rewrite correctness, not CI staging. synchronizeVersionFiles only attempts
+    // `git add` (and now fails hard on error — see version-ci-staging.test.ts)
+    // under GITHUB_ACTIONS=true, which the real CI runner always sets; clear it
+    // for the duration of this test so it stays about rewrite correctness.
+    const savedGithubActions = process.env.GITHUB_ACTIONS;
+    Reflect.deleteProperty(process.env, 'GITHUB_ACTIONS');
+    try {
+      const root = synchronizationFixture();
+      await synchronizeVersionFiles(root, '5.260711.3');
+      expect(JSON.parse(readFileSync(join(root, '.claude-plugin/marketplace.json'), 'utf8')).plugins[0].version).toBe(
+        '5.260711.3',
+      );
+      // The Hermes YAML manifest is synced alongside the JSON manifests.
+      expect(readFileSync(join(root, 'plugins/hermes-genie/plugin.yaml'), 'utf8')).toBe(
+        'name: genie\nversion: 5.260711.3\ndescription: "Native surface"\n',
+      );
 
-    rmSync(join(root, 'plugins/genie/.codex-plugin/plugin.json'));
-    await expect(synchronizeVersionFiles(root, '5.260711.4')).rejects.toThrow(
-      'version synchronization preflight failed',
-    );
-    expect(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version).toBe('5.260711.3');
+      rmSync(join(root, 'plugins/genie/.codex-plugin/plugin.json'));
+      await expect(synchronizeVersionFiles(root, '5.260711.4')).rejects.toThrow(
+        'version synchronization preflight failed',
+      );
+      expect(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version).toBe('5.260711.3');
+    } finally {
+      if (savedGithubActions === undefined) Reflect.deleteProperty(process.env, 'GITHUB_ACTIONS');
+      else process.env.GITHUB_ACTIONS = savedGithubActions;
+    }
   });
 
   test('synchronization rejects a YAML manifest without a version line', async () => {
