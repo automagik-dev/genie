@@ -3048,11 +3048,13 @@ function emptyAgentInstallResult(): CodexAgentInstallResult {
  *
  * - `cleanFallbacks` — recognized (historical-tuple or verified-target) genie
  *   skill dirs still in the user tier; `genie update` retires these.
- * - `unrecognizedFallbacks` — structurally well-formed, self-consistent, genie-
- *   managed dirs whose content the planner does NOT recognize (not in the
- *   frozen allowlist, no matching live-plugin payload, or missing the exact
- *   `identityVersion: 2` tag). Never user-modified, but not retirable either —
- *   manual review, not `genie update`, resolves these (#2575 vocabulary).
+ * - `unrecognizedFallbacks` — structurally well-formed identityVersion:2,
+ *   self-consistent genie-managed dirs whose content the planner does NOT
+ *   recognize (not in the frozen allowlist, no matching live-plugin payload).
+ *   Era-A dirs (v1 legacy digest, no identityVersion) fail v2 self-consistency
+ *   and land in `preservedCollisions` instead. Never user-modified, but not
+ *   retirable either — manual review, not `genie update`, resolves these
+ *   (#2575 vocabulary).
  * - `preservedCollisions` — managed-modified / corrupt-metadata dirs; personal
  *   content preserved in place that only manual review resolves.
  * - `quarantinedTransactions` — retained committed retirement transactions.

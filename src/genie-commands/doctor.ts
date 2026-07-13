@@ -859,12 +859,13 @@ function checkCodexSync(codexDir: string, agentsSkillsDir: string, pluginRoot: s
     });
   }
   if (tier.unrecognizedFallbacks.length > 0) {
-    // #2575 vocabulary: well-formed, self-consistent, genie-managed content the
-    // planner does not recognize (not in the frozen allowlist, no matching
-    // live-plugin payload, or missing the exact identityVersion:2 tag — this is
-    // also where a pre-identityVersion era-A fallback lands). Never user-edited,
-    // so it is NOT a personal collision — but `genie update` refuses to retire
-    // it, so recommending that here would be a no-op loop.
+    // #2575 vocabulary: well-formed identityVersion:2, self-consistent,
+    // genie-managed content the planner does not recognize (not in the frozen
+    // allowlist and no matching live-plugin payload). Era-A fallbacks (v1
+    // legacy digest, no identityVersion) do NOT land here — their marker fails
+    // the v2 self-consistency check, so they surface as preservedCollisions.
+    // Never user-edited, so NOT a personal collision — but `genie update`
+    // refuses to retire it, so recommending that here would be a no-op loop.
     results.push({
       name: 'agent sync: codex unrecognized',
       status: 'warn',
