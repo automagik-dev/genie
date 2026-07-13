@@ -327,6 +327,15 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - **Gaps:** LOW — `hooks.py` advisory strings (`_SESSION_REMINDER`/`_STRUCTURED_ADVICE`) still recommend the retired `genie_task_list` (no same-named MCP equivalent; MCP exposes `genie_task`). Non-breaking advisory drift; carried to Group 6 as a one-line cleanup (Group 3's hook tests only assert `genie_board`/`genie_status`, so it's safe).
 - **Substance verified by reviewer (live execution, not summary-trust):** flag gate controls registration both ways (default exactly 3 tools; `=1` restores 7; `true` stays 3 by strict compare); MCP-prefer path degrades to the read-only bridge on any exception with only `str` results short-circuiting; skills dir down to the single `genie/SKILL.md` cockpit pointer which does NOT pretend external_dirs is wired; version.ts YAML write provably byte-preserving with 0/2+-version-line preflight rejects; Group 3 hook assertions untouched; tests strengthened, not weakened; no forbidden paths touched.
 
+### Group 4 local+quality review — 2026-07-13T02:23:01Z — SHIP
+
+- **Reviewer:** genie:reviewer/g4-local-review (reviewer ≠ engineer)
+- **Work:** commits `3b8684f` + `c1ef1e9` + `b523629`, merged to wish branch as `3ab1f6e`; validation re-run by orchestrator: 443 pass / 1 skip / 0 fail
+- **Verdict:** SHIP
+- **Gaps:** LOW — no single end-to-end test runs `syncHermes` then `checkAgentSync` against the same converged fixture (covered implicitly via shared `resolveHermesConfigPath`); carried to Group 6. LOW (informational, intentional) — invalid/escaped `active_profile`: config lane falls back to default home while the link lane records the failure, which is the correct strict-mode signal.
+- **Substance verified by reviewer:** inline-key/failed config legs provably cannot reach `report.failures` (strict `genie update` throw at update.ts:2194 reads `agent.failures`, which config legs never populate) — Group 2's binding contract honored; sticky-profile resolver mirrors `ensureStickyProfileLink` byte-for-byte including the escape guard; "+1s" backup offset sound (base captured once, distinct filenames guaranteed); idempotency asserts `unchanged` for both legs; doctor legs independent CheckResults; enable probe uses bounded `execFileSync` arg-array (no shell); integration map contains only Group 1+4 edits.
+- **Orchestrator note:** the 2 failing tests in `src/hooks/__tests__/codex-manifest.test.ts` under full `bun test` were verified pre-existing on main `c350aef` in the identical environment — not attributable to this wish.
+
 ---
 
 ## Files to Create/Modify
