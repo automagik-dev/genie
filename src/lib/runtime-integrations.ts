@@ -2346,6 +2346,25 @@ interface PluginConvergenceProgress {
   hookReviewRequired: boolean;
 }
 
+/**
+ * A Codex build predating the `plugin` subcommand reports an "unrecognized
+ * subcommand" error on the very first convergence command. Under plugin-only
+ * semantics (wish decision 1, R9) there is no product-skill fallback lane to
+ * silently rebuild: the mutation must abort before any fallback read and the
+ * operator must be told to upgrade Codex. This augments only that signal; a
+ * normal command failure (network, malformed JSON) is rethrown unchanged.
+ */
+function augmentCodexPluginIncapability(error: unknown): unknown {
+  const message = error instanceof Error ? error.message : String(error);
+  if (!/unrecognized subcommand|unknown subcommand|no such subcommand/i.test(message) || !/\bplugin\b/i.test(message)) {
+    return error;
+  }
+  return new IntegrationCommandError(
+    `${message}; this Codex build does not support the \`plugin\` subcommand. Upgrade Codex to a plugin-capable release (codex 0.144.1+) and retry — Genie will not fall back to duplicating product skills into ~/.agents/skills.`,
+    error instanceof IntegrationCommandError && error.timedOut,
+  );
+}
+
 function performCodexPluginConvergence(
   options: ConvergePluginOptions,
   timeoutMs: number,
@@ -2353,10 +2372,13 @@ function performCodexPluginConvergence(
 ): boolean {
   progress.intent = readRefreshIntent(options.statePath, 'codex');
   progress.desiredEnabled = progress.intent?.enabled ?? null;
-  const before = requireCodexPluginState(
-    runChecked(options.runner, options.command, ['plugin', 'list', '--json'], false, timeoutMs).stdout,
-    'before plugin convergence',
-  );
+  let beforeRaw: string;
+  try {
+    beforeRaw = runChecked(options.runner, options.command, ['plugin', 'list', '--json'], false, timeoutMs).stdout;
+  } catch (error) {
+    throw augmentCodexPluginIncapability(error);
+  }
+  const before = requireCodexPluginState(beforeRaw, 'before plugin convergence');
   if (!before.installed && !options.installIfAbsent && progress.intent?.phase !== 'removal-observed') {
     if (progress.intent !== null) clearRefreshIntent(options.statePath);
     return false;

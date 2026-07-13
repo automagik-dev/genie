@@ -3,6 +3,14 @@
 /**
  * Exercise the exact Codex source-plugin layout without relying on symlink
  * dereference, a globally installed Genie CLI, or Claude-only skill variables.
+ *
+ * Plugin-only contract (wish `repair-genie-codex-hooks-and-dedupe-skills`): this
+ * smoke validates the PLUGIN payload + manifest MCP shape that the installed
+ * plugin is the sole provider of — it never asserts any `~/.agents/skills`
+ * product-skill fallback lane (that lane is retired; see
+ * `codex-plugin-only-smoke.ts` for the black-box lifecycle proof). Its
+ * Claude-manifest and Codex-manifest MCP checks remain the authoritative plugin
+ * MCP-shape gate and must keep passing.
  */
 
 import {
