@@ -2412,6 +2412,30 @@ describe('Codex fallback ownership planning', () => {
     expect(plan.accepted.every((entry) => entry.ownership === 'historical-tuple')).toBe(true);
   });
 
+  test('historical tuples are exact-content policy; syncedAt is not provenance authority', () => {
+    const fallback = join(fixture.root, 'historical-policy');
+    const shippedSkills = join(import.meta.dir, '..', '..', 'skills');
+    const tuple = historicalCodexFallbackAllowlist[0];
+    if (tuple === undefined) throw new Error('missing historical tuple');
+    const destination = join(fallback, tuple.skillName);
+    cpSync(join(shippedSkills, tuple.skillName), destination, { recursive: true });
+    stampFallback(destination, tuple.markerVersion);
+    const marker = JSON.parse(readFileSync(join(destination, MANIFEST_NAME), 'utf8')) as Record<string, unknown>;
+    marker.syncedAt = 'not-authenticated-provenance';
+    writeFile(join(destination, MANIFEST_NAME), `${JSON.stringify(marker)}\n`);
+
+    const plan = planCodexFallbackRetirement({ fallbackSkillsDir: fallback, skillNames: [tuple.skillName] });
+    expect(plan.accepted[0]?.ownership).toBe('historical-tuple');
+  });
+
+  test('rejects a symlinked fallback root before planning', () => {
+    const physical = join(fixture.root, 'physical-fallback');
+    mkdirSync(physical, { recursive: true });
+    const alias = join(fixture.root, 'fallback-alias');
+    symlinkSync(physical, alias);
+    expect(() => planCodexFallbackRetirement({ fallbackSkillsDir: alias, skillNames: [] })).toThrow('symlink-free');
+  });
+
   test('accepts an exact same-skill verified target without historical authority', () => {
     const fallback = join(fixture.root, 'fallback');
     const target = join(fixture.root, 'target', 'new-skill');
@@ -2513,6 +2537,95 @@ describe('Codex fallback batch retirement', () => {
     });
     return { fallback, alpha, beta, plan };
   }
+
+  test('rejects caller-mutated outside sources before any mutation', () => {
+    const { alpha, plan } = batchFixture();
+    const outside = writeFallback(join(fixture.root, 'outside'), 'alpha');
+    plan.accepted[0]!.source = outside.path;
+    expect(() => applyCodexFallbackRetirement(plan)).toThrow('unconfined');
+    expect(computeDirDigest(alpha.path)).toBe(alpha.digest);
+    expect(computeDirDigest(outside.path)).toBe(outside.digest);
+  });
+
+  test('rejects a symlinked hidden transaction root without escaping', () => {
+    const { alpha, plan } = batchFixture();
+    const outside = join(fixture.root, 'outside-transactions');
+    mkdirSync(outside, { recursive: true });
+    symlinkSync(outside, join(plan.fallbackSkillsDir, '.genie-codex-fallback-retirement'));
+    expect(() => applyCodexFallbackRetirement(plan)).toThrow('canonical physical directory');
+    expect(readdirSync(outside)).toEqual([]);
+    expect(computeDirDigest(alpha.path)).toBe(alpha.digest);
+  });
+
+  test('rejects an unconstrained journal destination before recovery mutation', () => {
+    const { alpha, plan } = batchFixture();
+    let stopped = false;
+    expect(() =>
+      applyCodexFallbackRetirement(plan, {
+        failpoint: (point) => {
+          if (!stopped && point === 'after-journal-durable') {
+            stopped = true;
+            throw new Error('stop prepared');
+          }
+        },
+      }),
+    ).toThrow('stop prepared');
+    const journalPath = join(
+      plan.fallbackSkillsDir,
+      '.genie-codex-fallback-retirement',
+      `txn-${plan.transactionId}`,
+      'journal.json',
+    );
+    const journal = JSON.parse(readFileSync(journalPath, 'utf8')) as { entries: Array<{ destination: string }> };
+    journal.entries[0]!.destination = join(fixture.root, 'outside-quarantine');
+    writeFile(journalPath, `${JSON.stringify(journal)}\n`);
+    expect(() => applyCodexFallbackRetirement(plan)).toThrow('unconfined');
+    expect(computeDirDigest(alpha.path)).toBe(alpha.digest);
+  });
+
+  for (const failpoint of [
+    'after-journal-temp-create',
+    'before-journal-rename',
+    'after-journal-rename',
+    'before-move:0',
+    'after-move-filesystem:0',
+    'before-destination-verification:0',
+    'after-commit-journal',
+  ] as const) {
+    test(`retry restores or commits after persisted crash shape ${failpoint}`, () => {
+      const { plan } = batchFixture();
+      let stopped = false;
+      expect(() =>
+        applyCodexFallbackRetirement(plan, {
+          failpoint: (point) => {
+            if (!stopped && point === failpoint) {
+              stopped = true;
+              throw new Error(`crash ${point}`);
+            }
+            if (stopped && point === 'before-restore:0') throw new Error('crash recovery');
+          },
+        }),
+      ).toThrow();
+      expect(['committed', 'already-committed']).toContain(applyCodexFallbackRetirement(plan).status);
+    });
+  }
+
+  test('retry reconciles a crash after restore rename but before restored phase persistence', () => {
+    const { plan } = batchFixture();
+    let moved = false;
+    expect(() =>
+      applyCodexFallbackRetirement(plan, {
+        failpoint: (point) => {
+          if (!moved && point === 'after-move-filesystem:0') {
+            moved = true;
+            throw new Error('crash move');
+          }
+          if (moved && point === 'after-restore-filesystem:0') throw new Error('crash restore');
+        },
+      }),
+    ).toThrow('fallback retirement restore failed');
+    expect(applyCodexFallbackRetirement(plan).status).toBe('committed');
+  });
 
   for (const failpoint of [
     'after-journal-durable',

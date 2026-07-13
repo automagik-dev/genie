@@ -93,7 +93,9 @@ function option(args: string[], name: string): string | undefined {
 function main(args: string[]): void {
   if (args.includes('--check')) {
     validateCommittedAllowlist();
-    process.stdout.write('codex fallback allowlist: 23 deterministic tuples OK\n');
+    process.stdout.write(
+      'codex fallback allowlist: 23 deterministic exact-content retirement tuples OK (not authenticated provenance)\n',
+    );
     return;
   }
   const payloadRoot = option(args, '--payload');
