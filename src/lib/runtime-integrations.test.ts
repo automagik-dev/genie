@@ -2430,6 +2430,96 @@ describe('convergeCodexPluginOnly preservedCollisions counts only real on-disk c
     expect(outcome?.result.preservedCollisions).toBe(1);
     expect(outcome?.retired).toEqual([]);
   });
+
+  test('a well-formed but unrecognized marker is preserved distinctly, not counted as a personal collision', () => {
+    const fallback = mkdtempSync(join(tmpdir(), 'genie-fallback-unrecognized-'));
+    // A well-formed genie marker (managedBy/identityVersion/digest all
+    // self-consistent, so the tree was never locally modified) whose
+    // (skillName, digest) is not in the frozen historical allowlist and has
+    // no verified target match. This is unrecognized managed content, not a
+    // personal collision — the fix must not lump it into the collision count.
+    const skillDir = join(fallback, 'wish');
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, 'SKILL.md'), '# unrecognized wish content, never shipped by genie\n');
+    stampFallbackSkill(skillDir, 'fixture-vNext');
+    const outcome = convergeCodexPluginOnly(baseConvergeOptions(fallback));
+    expect(outcome?.preservedCollisions).toBe(0);
+    expect(outcome?.result.preservedCollisions).toBe(0);
+    expect(outcome?.preservedUnrecognized).toBe(1);
+    expect(outcome?.result.preservedUnrecognized).toBe(1);
+    expect(outcome?.retired).toEqual([]);
+  });
+});
+
+describe('describeCodexIntegration reports unrecognized fallbacks distinctly from personal collisions', () => {
+  test('install detail text separates "unrecognized managed fallback" from "personal collision"', () => {
+    const fallback = mkdtempSync(join(tmpdir(), 'genie-fallback-unrecognized-detail-'));
+    const skillDir = join(fallback, 'wish');
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, 'SKILL.md'), '# unrecognized wish content, never shipped by genie\n');
+    stampFallbackSkill(skillDir, 'fixture-vNext');
+
+    const result = installRuntimeIntegrations({
+      selection: 'codex',
+      bundleRoot: '/fixture/bundle',
+      codexHome: mkdtempSync(join(tmpdir(), 'genie-codex-home-unrecognized-')),
+      detected: { codex: true },
+      codexPluginOnly: {
+        converge: () => healthyPluginResult(),
+        probe: () => healthyCodexProbe(),
+        prove: () => healthyCodexProof(),
+        runSession: () => ({
+          ok: true,
+          detail: 'ok',
+          tools: [...REQUIRED_GENIE_MCP_TOOLS],
+          wishStatusReadOnly: true,
+        }),
+        installAgents: () => ({ installed: 7, skippedUserOwned: [], keptModified: [], removed: [], backedUp: [] }),
+        fallbackSkillsDir: fallback,
+      },
+    })[0];
+
+    expect(result?.ok).toBe(true);
+    expect(result?.preservedUnrecognized).toBe(1);
+    expect(result?.preservedCollisions).toBe(0);
+    expect(result?.detail).toContain('preserved 1 unrecognized managed fallback');
+    expect(result?.detail).not.toContain('personal collision');
+  });
+
+  test('install detail text still reports a genuine collision as "personal collision"', () => {
+    const fallback = mkdtempSync(join(tmpdir(), 'genie-fallback-collision-detail-'));
+    const skillDir = join(fallback, 'wish');
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, 'SKILL.md'), '# wish skill\n');
+    stampFallbackSkill(skillDir);
+    writeFileSync(join(skillDir, 'SKILL.md'), '# wish skill (locally modified)\n');
+
+    const result = installRuntimeIntegrations({
+      selection: 'codex',
+      bundleRoot: '/fixture/bundle',
+      codexHome: mkdtempSync(join(tmpdir(), 'genie-codex-home-collision-')),
+      detected: { codex: true },
+      codexPluginOnly: {
+        converge: () => healthyPluginResult(),
+        probe: () => healthyCodexProbe(),
+        prove: () => healthyCodexProof(),
+        runSession: () => ({
+          ok: true,
+          detail: 'ok',
+          tools: [...REQUIRED_GENIE_MCP_TOOLS],
+          wishStatusReadOnly: true,
+        }),
+        installAgents: () => ({ installed: 7, skippedUserOwned: [], keptModified: [], removed: [], backedUp: [] }),
+        fallbackSkillsDir: fallback,
+      },
+    })[0];
+
+    expect(result?.ok).toBe(true);
+    expect(result?.preservedCollisions).toBe(1);
+    expect(result?.preservedUnrecognized).toBe(0);
+    expect(result?.detail).toContain('preserved 1 personal collision');
+    expect(result?.detail).not.toContain('unrecognized managed fallback');
+  });
 });
 
 describe('proveCodexPluginHealth reject-before-retirement matrix (R4)', () => {

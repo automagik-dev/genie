@@ -931,7 +931,13 @@ export function inspectManagedSkillTree(dir: string): ManagedSkillTreeReport {
 // ============================================================================
 
 export interface CodexFallbackHistoricalTuple {
-  /** Exact-content retirement policy only; this tuple is not authenticated provenance. */
+  /**
+   * Provenance metadata only — not authenticated, and NOT part of the
+   * ownership match key (see {@link historicalTupleKey}). Fallback seeding
+   * stamps `marker.version` to whatever release happens to be installed, so a
+   * byte-identical tree seeded by a later, unlisted release must still match
+   * on (skillName, physicalDigest) alone.
+   */
   markerVersion: string;
   skillName: string;
   physicalDigest: string;
@@ -1056,8 +1062,16 @@ function verifiedTargetDigest(target: VerifiedCodexSkillPayload | null | undefin
   }
 }
 
-function historicalTupleKey(tuple: CodexFallbackHistoricalTuple): string {
-  return `${tuple.markerVersion}\0${tuple.skillName}\0${tuple.physicalDigest}`;
+/**
+ * Ownership proof key: (skillName, physicalDigest) only. `markerVersion` is
+ * self-reported by the untrusted marker file and is retained on the tuple as
+ * provenance metadata, but it adds zero proof value over the exact-content
+ * digest — fallback seeding stamps `marker.version` to whatever release
+ * happened to be installed, so keying on it silently rejects byte-identical
+ * historical content stamped by a later release than the one the fixture froze.
+ */
+function historicalTupleKey(tuple: Pick<CodexFallbackHistoricalTuple, 'skillName' | 'physicalDigest'>): string {
+  return `${tuple.skillName}\0${tuple.physicalDigest}`;
 }
 
 function classifyCodexFallback(
@@ -1090,7 +1104,7 @@ function classifyCodexFallback(
   if (targetDigest === physicalDigest && target?.skillName === skillName) {
     return { ...common, targetDigest, accepted: true, reason: 'verified-target' };
   }
-  if (historical.has(historicalTupleKey({ markerVersion: parsed.marker.version, skillName, physicalDigest }))) {
+  if (historical.has(historicalTupleKey({ skillName, physicalDigest }))) {
     return { ...common, accepted: true, reason: 'historical-tuple' };
   }
   return {

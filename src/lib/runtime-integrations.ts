@@ -1793,6 +1793,8 @@ export interface IntegrationResult {
   retiredFallbacks?: readonly string[];
   /** Count of preserved personal collisions the retirement classifier left in place. */
   preservedCollisions?: number;
+  /** Count of preserved well-formed-but-unrecognized fallback markers (distinct from a personal collision). */
+  preservedUnrecognized?: number;
 }
 
 export interface InstallIntegrationsOptions {
@@ -2916,6 +2918,8 @@ export interface CodexPluginOnlyResult {
   agents: CodexAgentInstallResult;
   retired: readonly string[];
   preservedCollisions: number;
+  /** Well-formed genie markers whose content is not yet in the frozen allowlist and has no verified target match. */
+  preservedUnrecognized: number;
 }
 
 /** Absent fallback tier means a fresh install: nothing to retire, and R2/R7 forbid creating the lane. */
@@ -2943,14 +2947,28 @@ export function convergeCodexPluginOnly(options: ConvergeCodexPluginOnlyOptions)
   const plugin = (deps.converge ?? convergeCodexPlugin)(options);
   if (plugin === null) return null;
   if (!plugin.ok) {
-    return { result: plugin, proof: null, agents: emptyAgentInstallResult(), retired: [], preservedCollisions: 0 };
+    return {
+      result: plugin,
+      proof: null,
+      agents: emptyAgentInstallResult(),
+      retired: [],
+      preservedCollisions: 0,
+      preservedUnrecognized: 0,
+    };
   }
 
   const snapshot = (deps.probe ?? probeCodexGeniePlugin)({ codexHome, cwd: deps.probeCwd ?? process.cwd() });
 
   if (plugin.preservedDisabled === true) {
     const agents = installAgents(options.bundleRoot, codexHome);
-    return { result: { ...plugin, snapshot }, proof: null, agents, retired: [], preservedCollisions: 0 };
+    return {
+      result: { ...plugin, snapshot },
+      proof: null,
+      agents,
+      retired: [],
+      preservedCollisions: 0,
+      preservedUnrecognized: 0,
+    };
   }
 
   const proof = (deps.prove ?? proveCodexPluginHealth)({
@@ -2964,6 +2982,7 @@ export function convergeCodexPluginOnly(options: ConvergeCodexPluginOnlyOptions)
 
   let retired: readonly string[] = [];
   let preservedCollisions = 0;
+  let preservedUnrecognized = 0;
   if (fallbackDirPresent(fallbackSkillsDir)) {
     translateRetirementConflicts(() => (deps.recover ?? recoverCodexFallbackRetirements)(fallbackSkillsDir));
     const plan = (deps.plan ?? planCodexFallbackRetirement)({
@@ -2975,7 +2994,15 @@ export function convergeCodexPluginOnly(options: ConvergeCodexPluginOnlyOptions)
     // {accepted:false, reason:'missing'} preserved entry, so after a full
     // migration every subsequent run would otherwise report a phantom
     // "preserved 23 personal collision(s)". Count only real on-disk collisions.
-    preservedCollisions = plan.preserved.filter((entry) => entry.reason !== 'missing').length;
+    // 'ambiguous-ownership' is a well-formed genie marker whose (skillName,
+    // digest) is not yet in the frozen allowlist and has no matching verified
+    // target — that is unrecognized managed content, not a personal collision
+    // (the tree was never modified by the user), so it is counted and reported
+    // separately.
+    preservedCollisions = plan.preserved.filter(
+      (entry) => entry.reason !== 'missing' && entry.reason !== 'ambiguous-ownership',
+    ).length;
+    preservedUnrecognized = plan.preserved.filter((entry) => entry.reason === 'ambiguous-ownership').length;
     // A11: a zero-accepted plan is a true no-op — never open a fresh transaction
     // so a plugin-only second run cannot accumulate empty quarantine journals.
     if (plan.accepted.length > 0) {
@@ -2986,11 +3013,12 @@ export function convergeCodexPluginOnly(options: ConvergeCodexPluginOnlyOptions)
 
   const agents = installAgents(options.bundleRoot, codexHome);
   return {
-    result: { ...plugin, snapshot, retiredFallbacks: retired, preservedCollisions },
+    result: { ...plugin, snapshot, retiredFallbacks: retired, preservedCollisions, preservedUnrecognized },
     proof,
     agents,
     retired,
     preservedCollisions,
+    preservedUnrecognized,
   };
 }
 
@@ -3094,6 +3122,7 @@ function describeCodexIntegration(
   agents: CodexAgentInstallResult,
   retired: readonly string[],
   collisions: number,
+  unrecognized: number,
 ): string {
   const notes = [`${agents.installed} role agents installed`];
   if (agents.removed.length > 0) notes.push(`removed obsolete: ${agents.removed.join(', ')}`);
@@ -3102,6 +3131,14 @@ function describeCodexIntegration(
   if (retired.length > 0)
     notes.push(`retired ${retired.length} clean fallback skill${retired.length === 1 ? '' : 's'}`);
   if (collisions > 0) notes.push(`preserved ${collisions} personal collision${collisions === 1 ? '' : 's'}`);
+  // Distinct from a personal collision: the marker is well-formed genie
+  // provenance, but its (skillName, digest) is not in the frozen allowlist and
+  // has no matching verified target — an unrecognized managed version/content,
+  // not user-modified content. Manual review, not `genie update`, resolves it.
+  if (unrecognized > 0)
+    notes.push(
+      `preserved ${unrecognized} unrecognized managed fallback${unrecognized === 1 ? '' : 's'} (review manually)`,
+    );
   return `plugin refreshed; ${notes.join('; ')}`;
 }
 
@@ -3137,11 +3174,17 @@ function installCodexIntegration(
   return {
     runtime: 'codex',
     ok: true,
-    detail: describeCodexIntegration(outcome.agents, outcome.retired, outcome.preservedCollisions),
+    detail: describeCodexIntegration(
+      outcome.agents,
+      outcome.retired,
+      outcome.preservedCollisions,
+      outcome.preservedUnrecognized,
+    ),
     preservedDisabled: plugin.preservedDisabled,
     snapshot: plugin.snapshot,
     retiredFallbacks: outcome.retired,
     preservedCollisions: outcome.preservedCollisions,
+    preservedUnrecognized: outcome.preservedUnrecognized,
   };
 }
 
