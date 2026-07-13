@@ -17,9 +17,21 @@
  * - plugins/genie/package.json (runtime payload metadata)
  * - .claude-plugin/marketplace.json (marketplace listing)
  * - plugins/hermes-genie/plugin.yaml (Hermes native surface, YAML manifest)
+ *
+ * CI staging (GITHUB_ACTIONS only): after rewriting, this script `git add`s every
+ * file it actually touched. This exists because the release workflow's own
+ * `git add -A '*.json' 'src/lib/version.ts'` list predates the YAML manifests —
+ * it re-guesses the version-carrying file set and silently omitted plugin.yaml,
+ * so a bump could ship with a stale Hermes manifest (defect D2). The list of
+ * version files lives here, not in the workflow, so this is the one place that
+ * always knows the full set. Keeping the fix here (rather than in the workflow)
+ * matters because `.github/workflows/**` can't always be updated in the same
+ * change — some environments lack workflow-scoped push credentials. Staging is
+ * best-effort: a git failure warns but never fails the sync, and the workflow's
+ * own `git add` still covers the JSON files as belt-and-suspenders.
  */
 
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -163,6 +175,22 @@ async function assertClaudeMarketplaceShape(filePath: string): Promise<void> {
   }
 }
 
+/**
+ * In CI only, stage the files this sync actually rewrote so the auto-version
+ * commit ships them. Best-effort: a git failure logs a warning and returns —
+ * it must never fail the version sync (the workflow's own `git add` still covers
+ * the JSON files). Uses an arg-array (never a shell string) so paths can't be
+ * interpolated into a command line.
+ */
+function stageRewrittenFilesInCi(rootDir: string, paths: string[]): void {
+  if (process.env.GITHUB_ACTIONS !== 'true' || paths.length === 0) return;
+  try {
+    execFileSync('git', ['add', '--', ...paths], { cwd: rootDir, stdio: 'pipe' });
+  } catch (err) {
+    console.warn(`  ⚠ CI staging skipped (git add failed): ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 /** Update every authoritative version file and fail the command on any partial write. */
 export async function synchronizeVersionFiles(rootDir: string, version: string): Promise<void> {
   const paths = [
@@ -202,6 +230,13 @@ export async function synchronizeVersionFiles(rootDir: string, version: string):
 
   outcomes.push({ path: marketplacePath, ok: await updateClaudeMarketplaceVersion(marketplacePath, version) });
   for (const path of yamlPaths) outcomes.push({ path, ok: await updateYamlVersion(path, version) });
+
+  // Stage every file we actually rewrote so CI commits the full set (incl. YAML).
+  stageRewrittenFilesInCi(
+    rootDir,
+    outcomes.filter((outcome) => outcome.ok).map((outcome) => outcome.path),
+  );
+
   const failed = outcomes.filter((outcome) => !outcome.ok).map((outcome) => outcome.path);
   if (failed.length > 0) throw new Error(`version synchronization failed for: ${failed.join(', ')}`);
 }
