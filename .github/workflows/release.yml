@@ -10,8 +10,9 @@ name: Release
 # sign-attest.yml + release-publish.yml receive version via workflow_call
 # inputs. Per-job `permissions:` blocks declare the union of the called
 # workflow's inner needs (caller is the ceiling — workflow_call does NOT
-# auto-inherit, per Decision #7 of the wish). `secrets: inherit` on every
-# uses: invocation for forward-compat.
+# auto-inherit, per Decision #7 of the wish). Blanket `secrets: inherit` was
+# removed (F18 least-privilege): the called workflows use only GITHUB_TOKEN,
+# which reusable workflows receive automatically.
 #
 # The cosign keyless OIDC SAN URI remains
 # `.github/workflows/sign-attest.yml@<ref>` because the cosign step
@@ -56,11 +57,38 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # F16 gate (wish stable-release-security-gate): a stable-capable
+  # workflow_dispatch must target a protected `v<version>` tag, never a
+  # free-form branch ref. The automated dev release dispatches this workflow on
+  # the freshly-pushed tag (version.yml), so dev is never blocked — the guard is
+  # a tag-ref requirement on manual dispatch only (HARD INVARIANT preserved). A
+  # bare `push: tags: v*` trigger is already tag-bound, so the guard no-ops for
+  # it. Extracted into scripts/release-guard.sh so it is unit-tested
+  # (scripts/release-guard.test.ts) rather than an unverifiable inline `${{ }}`.
+  guard:
+    name: Guard stable-capable dispatch
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - name: Require a protected tag for stable-capable dispatch
+        shell: bash
+        run: bash scripts/release-guard.sh require-dispatch-tag
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          VERSION: ${{ inputs.version }}
+          CHANNEL: ${{ inputs.channel }}
+
   build:
+    needs: guard
     uses: ./.github/workflows/build-tarballs.yml
     permissions:
       contents: read
-    secrets: inherit
+    # GITHUB_TOKEN is provided to reusable workflows automatically; the called
+    # workflows use no other secret (F18 — blanket `secrets: inherit` removed).
 
   sign-attest:
     needs: build
@@ -70,11 +98,11 @@ jobs:
       id-token: write       # cosign keyless + attest-build-provenance OIDC
       attestations: write   # GitHub Attestations API registration
       actions: read         # cross-run artifact metadata
-    secrets: inherit
     # No `with.version:` — sign-attest.yml derives the bare version from
     # tarball filenames (genie-<VERSION>-<PLATFORM>.tar.gz). Passing
     # github.ref_name on tag pushes would leak the `v` prefix and fail
     # sign-attest's input/derived version equality check at line 129-132.
+    # secrets: inherit removed (F18) — sign-attest only reads GITHUB_TOKEN.
 
   publish:
     needs: sign-attest
@@ -82,7 +110,7 @@ jobs:
     permissions:
       contents: write       # gh release create/upload + push latest.json commit
       id-token: write       # reserved for any OIDC-using publish-time verifiers
-    secrets: inherit
+    # secrets: inherit removed (F18) — release-publish only reads GITHUB_TOKEN.
     with:
       version: ${{ needs.sign-attest.outputs.version }}
       # workflow_dispatch supplies the channel (version.yml passes 'dev' for

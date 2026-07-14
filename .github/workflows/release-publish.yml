@@ -68,7 +68,12 @@ on:
         description: 'Release channel (stable = no --prerelease; homolog/dev = --prerelease)'
         required: true
         type: choice
-        default: stable
+        # Defensive default (wish stable-release-security-gate, F16): a careless
+        # standalone dispatch defaults to the prerelease `dev` channel, NOT
+        # `stable`. Standalone publish is a break-glass replay path — reaching
+        # the stable channel + production environment must be a deliberate
+        # operator choice on a protected tag, never the fall-through default.
+        default: dev
         # Canonical channel taxonomy (Felipe directive 2026-05-12,
         # unified across the automagik sibling projects). beta + canary retired.
         options:
@@ -89,10 +94,56 @@ permissions:
   contents: write              # gh release create/upload + push latest.json commit
 
 jobs:
+  # F16/F17 gate (wish stable-release-security-gate). The standalone
+  # workflow_dispatch here is a direct stable-publish path that bypasses the
+  # orchestrator, so it must target a protected `v<version>` tag and its
+  # break-glass `run_id` must resolve to a SUCCESSFUL sign-attest run on the SAME
+  # repo, workflow, tag ref, and head SHA. The orchestrated workflow_call passes
+  # no run_id (provenance no-op) and inherits the tag ref, so dev/stable releases
+  # driven by release.yml are never blocked. Logic lives in
+  # scripts/release-guard.sh so it is unit-tested rather than an inline `${{ }}`.
+  guard:
+    name: Guard dispatch + upstream provenance
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read       # gh api reads the upstream sign-attest run record
+    steps:
+      - uses: actions/checkout@v5
+      - name: Require a protected tag for standalone dispatch
+        shell: bash
+        run: bash scripts/release-guard.sh require-dispatch-tag
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          VERSION: ${{ inputs.version }}
+          CHANNEL: ${{ inputs.channel }}
+      - name: Bind break-glass run_id to the upstream sign-attest identity
+        shell: bash
+        run: bash scripts/release-guard.sh guard-run-provenance
+        env:
+          RUN_ID: ${{ inputs.run_id }}
+          EXPECTED_REPO: ${{ github.repository }}
+          EXPECTED_WORKFLOW: .github/workflows/sign-attest.yml
+          EXPECTED_REF: ${{ github.ref }}
+          EXPECTED_SHA: ${{ github.sha }}
+          EXPECTED_VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+
   publish:
+    needs: [guard]
     name: Publish to GitHub Releases
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # Channel-scoped production environment (wish deliverable 6). The GitHub
+    # `production` environment (Group 2: independent required reviewer +
+    # prevent-self-review) attaches ONLY when channel == 'stable'. Dev/homolog
+    # resolve to an empty environment string → NO approval gate, so the HARD
+    # INVARIANT (dev publishes end-to-end without manual approval) holds. In the
+    # orchestrated path release.yml passes channel through, so a dev release
+    # here has inputs.channel == 'dev' and never touches production.
+    environment: ${{ inputs.channel == 'stable' && 'production' || '' }}
     steps:
       - uses: actions/checkout@v5
 

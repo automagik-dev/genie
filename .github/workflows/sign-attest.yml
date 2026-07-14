@@ -64,10 +64,49 @@ permissions:
 
 jobs:
   # ---------------------------------------------------------------------------
+  # guard — F16/F17 (wish stable-release-security-gate). A standalone
+  # workflow_dispatch must target a protected `v<version>` tag, and a break-glass
+  # `run_id` must point at a SUCCESSFUL build-tarballs run on the SAME repo,
+  # workflow, tag ref, and head SHA before anything is signed. The orchestrated
+  # workflow_call path passes no run_id (RUN_ID empty → provenance no-op) and
+  # inherits the tag ref, so dev/stable releases are never blocked. Validation is
+  # in scripts/release-guard.sh so it is unit-tested, not an inline `${{ }}`.
+  # ---------------------------------------------------------------------------
+  guard:
+    name: Guard dispatch + upstream provenance
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read       # gh api reads the upstream run record
+    steps:
+      - uses: actions/checkout@v5
+      - name: Require a protected tag for standalone dispatch
+        shell: bash
+        run: bash scripts/release-guard.sh require-dispatch-tag
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          VERSION: ${{ inputs.version }}
+          CHANNEL: ''
+      - name: Bind break-glass run_id to the upstream build-tarballs identity
+        shell: bash
+        run: bash scripts/release-guard.sh guard-run-provenance
+        env:
+          RUN_ID: ${{ inputs.run_id }}
+          EXPECTED_REPO: ${{ github.repository }}
+          EXPECTED_WORKFLOW: .github/workflows/build-tarballs.yml
+          EXPECTED_REF: ${{ github.ref }}
+          EXPECTED_SHA: ${{ github.sha }}
+          EXPECTED_VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+
+  # ---------------------------------------------------------------------------
   # prepare — resolve version + upstream run-id, download every tarball,
   # build the multi-subject base64 input the SLSA generator consumes.
   # ---------------------------------------------------------------------------
   prepare:
+    needs: [guard]
     name: Prepare hashes for SLSA
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -165,6 +204,13 @@ jobs:
       # check requires the elevated grant.
       contents: write
       actions: read      # read upstream workflow run metadata
+    # SHA-PINNING EXCEPTION (wish stable-release-security-gate, F18): the SLSA
+    # generator reusable workflow MUST be referenced by an exact `@vX.Y.Z`
+    # semver tag and CANNOT be pinned to a commit SHA. slsa-verifier derives the
+    # trusted builder identity from this tag, and the generator FAILS THE BUILD
+    # if referenced by a hash or a shorter tag (`@vX` / `@vX.Y`). See
+    # slsa-github-generator README ("It also needs to be referred as `@vX.Y.Z`")
+    # and slsa-verifier issue #12. Pinning here would break stable provenance.
     uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
     with:
       base64-subjects: ${{ needs.prepare.outputs.hashes }}
@@ -244,12 +290,12 @@ jobs:
           ls -la "${DEST}"
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@v3
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
         with:
           cosign-release: 'v2.4.1'
 
       - name: Install slsa-verifier
-        uses: slsa-framework/slsa-verifier/actions/installer@v2.7.1
+        uses: slsa-framework/slsa-verifier/actions/installer@ea584f4502babc6f60d9bc799dbbb13c1caa9ee6 # v2.7.1
 
       - name: cosign sign-blob (keyless OIDC, sigstore bundle)
         shell: bash
@@ -282,7 +328,7 @@ jobs:
 
       - name: GitHub-native build-provenance attestation
         id: attest
-        uses: actions/attest-build-provenance@v1
+        uses: actions/attest-build-provenance@ef244123eb79f2f7a7e75d99086184180e6d0018 # v1
         with:
           subject-path: dist/genie-${{ needs.prepare.outputs.version }}-${{ matrix.platform }}.tar.gz
 

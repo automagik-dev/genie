@@ -77,7 +77,32 @@ permissions:
   contents: read
 
 jobs:
+  # F16 gate (wish stable-release-security-gate): the standalone
+  # workflow_dispatch entry is stable-capable (its tarballs feed sign + publish),
+  # so a manual dispatch must target a protected `v<version>` tag, never a
+  # free-form branch. The `pull_request` and orchestrated `workflow_call` paths
+  # are exempt — the guard no-ops for them. github.event_name inside a
+  # release.yml-dispatched workflow_call is `workflow_dispatch`, and release.yml
+  # is always dispatched on the tag, so the orchestrated dev/stable flow passes.
+  guard:
+    name: Guard standalone dispatch
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - name: Require a protected tag for standalone dispatch
+        shell: bash
+        run: bash scripts/release-guard.sh require-dispatch-tag
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          VERSION: ${{ inputs.version }}
+          CHANNEL: ''
+
   build:
+    needs: guard
     name: Build ${{ matrix.platform }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
@@ -98,7 +123,7 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.3.11
 
