@@ -32,6 +32,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { confirm } from '@inquirer/prompts';
 import { z } from 'zod';
 import {
+  CODEX_FALLBACK_RETIREMENT_ROOT,
   TARGET_NAME,
   acquireLifecycleLease,
   codexLegacyCuratedDir,
@@ -805,6 +806,9 @@ function collectManagedSkillDirs(
   for (const name of names) {
     // Dirs a previous uninstall already relinquished are the user's now — never re-collect.
     if (name.includes(LEGACY_KEPT_MARKER)) continue;
+    // The Codex fallback-retirement quarantine is retained evidence (R6): uninstall
+    // classifies but never deletes it, so it is invisible to managed-skill collection.
+    if (name === CODEX_FALLBACK_RETIREMENT_ROOT) continue;
     const dir = join(parent, name);
     // Batch removal re-collects once per planned member; skip the full-tree digest
     // of any dir outside this call's allowlist BEFORE inspecting it, so a batch of

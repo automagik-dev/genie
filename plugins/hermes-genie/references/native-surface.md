@@ -6,18 +6,19 @@ What the Genie Hermes plugin exposes, layer by layer, and the exact contract eve
 
 | Layer | Provides | Declared in `plugin.yaml` |
 |-------|----------|---------------------------|
-| Tools | `genie_status`, `genie_board`, `genie_wish_status`, `genie_task_list`, `genie_task_status`, `genie_work_plan`, `genie_review_plan` | `provides_tools` |
+| Tools (default) | `genie_status`, `genie_work_plan`, `genie_review_plan` — the three gap tools the genie MCP board surface does not cover | `provides_tools` |
+| Tools (legacy, flag-gated) | `genie_board`, `genie_wish_status`, `genie_task_list`, `genie_task_status` — duplicate MCP board/task truth; register only when `GENIE_HERMES_LEGACY_TOOLS=1` for one transition release | not declared (transitional) |
 | Slash commands | `/genie` dispatcher (`status`, `board`, `wish`, `work-plan`, `review-plan`, `help`) plus thin wrappers `/genie-board`, `/genie-wish`, `/genie-work-plan`, `/genie-review-plan` | `provides_commands` |
 | CLI tree | `hermes genie` with subcommands `status`, `board`, `wish`, `work-plan`, `review-plan` | `provides_cli_commands` |
-| Hooks | `on_session_start`, `pre_tool_call`, `post_tool_call` | `provides_hooks` |
-| Skills | `genie`, `genie-work`, `genie-review`, `genie-khaw-bridge` | `provides_skills` |
+| Hooks | `on_session_start`, `pre_tool_call`, `pre_llm_call` | `provides_hooks` |
+| Skills | `genie` (one thin cockpit pointer) | `provides_skills` |
 
 Layer semantics:
 
-- **Slash commands** — `/genie <subcommand>` gives outcome-first, human-readable output; an unknown subcommand answers with a pointer to `/genie help`. The `/genie-*` wrappers are aliases into the same dispatcher.
+- **Slash commands** — `/genie <subcommand>` gives outcome-first, human-readable output; an unknown subcommand answers with a pointer to `/genie help`. The `/genie-*` wrappers are aliases into the same dispatcher. When Hermes passes a plugin context that can invoke tools (`call_tool`), the dispatcher routes each subcommand to the first-class MCP tool name so the human surface rides the same truth as the model; when no such context is present (or the MCP call fails) it falls back to the plugin-local read-only bridge handler during the transition.
 - **CLI tree** — registered only when the Hermes build exposes `register_cli_command`. Registration of CLI commands, skills, and hooks is `hasattr`-guarded, so `register(ctx)` completes cleanly on builds that lack any of them.
-- **Hooks** — advisory only, never blocking. `on_session_start` injects a short reminder when the working directory contains `.genie/`; `pre_tool_call` raises an advisory when a terminal command scrapes or sleep-polls Genie state (e.g. `tmux capture-pane`) instead of using the structured tools; `post_tool_call` is a no-op passthrough. All report `mutation: "none"`.
-- **Skills** — the cockpit contract (`genie`), work-plan-first execution posture (`genie-work`), SHIP/FIX-FIRST/BLOCKED review posture (`genie-review`), and the KHAW mapping contract (`genie-khaw-bridge`: Brain/Purpose Sessions stay canonical in KHAW; Genie owns execution detail).
+- **Hooks** — advisory only, never blocking. `on_session_start` injects a short reminder when the working directory contains `.genie/`; `pre_tool_call` raises an advisory when a terminal command scrapes or sleep-polls Genie state (e.g. `tmux capture-pane`) instead of using the structured tools; `pre_llm_call` injects bounded Genie session context when the working directory contains `.genie/` and returns `None` (no injection) otherwise. All report `mutation: "none"`.
+- **Skills** — a single thin cockpit pointer (`genie`) that routes to the first-class product `wish`/`work`/`review` skills and to the MCP tools for board truth. The former plugin-local `genie-work`/`genie-review` duplicates are retired (the product skills are canonical), and the `genie-khaw-bridge` skill moved to the KHAW plugin.
 
 ## Payload contract
 
@@ -47,13 +48,13 @@ Every tool returns a JSON string with one uniform envelope:
 
 | Tool | Genie CLI invocation | Notes |
 |------|----------------------|-------|
-| `genie_status` | `genie doctor --json` | `data` wraps the doctor report as `data.doctor` plus `data.genie_dir` / `data.genie_dir_present` for the resolved cwd |
-| `genie_board` | `genie board --json [--wish <slug>]` | |
-| `genie_wish_status` | `genie board --wish <slug> --json` + `genie task list --wish <slug> --json` | composite: `data.board` and `data.tasks` are full leg payloads |
-| `genie_task_list` | `genie task list --json [--wish <slug>] [--status <status>]` | `status` is one of `blocked`, `ready`, `in_progress`, `done` |
-| `genie_task_status` | `genie task status <id>` | raw text capture (`parsed: false` expected) |
-| `genie_work_plan` | `genie launch <slug> --dry-run [--groups <csv>]` | dry-run prints the dispatch plan (YAML-ish, raw capture) without touching anything |
-| `genie_review_plan` | board + task-list composite, then reads `.genie/wishes/<slug>/WISH.md` | extracts the `## Success Criteria` and `## QA Criteria` sections into `data.criteria`; `source` is the wish-file path |
+| `genie_status` | `genie doctor --json` | gap tool (default). `data` wraps the doctor report as `data.doctor` plus `data.genie_dir` / `data.genie_dir_present` for the resolved cwd |
+| `genie_work_plan` | `genie launch <slug> --dry-run [--groups <csv>]` | gap tool (default). Dry-run prints the dispatch plan (YAML-ish, raw capture) without touching anything |
+| `genie_review_plan` | board + task-list composite, then reads `.genie/wishes/<slug>/WISH.md` | gap tool (default). Extracts the `## Success Criteria` and `## QA Criteria` sections into `data.criteria`; `source` is the wish-file path |
+| `genie_board` | `genie board --json [--wish <slug>]` | legacy (flag-gated). Duplicates the MCP board tool; prefer the MCP surface |
+| `genie_wish_status` | `genie board --wish <slug> --json` + `genie task list --wish <slug> --json` | legacy (flag-gated). Composite: `data.board` and `data.tasks` are full leg payloads |
+| `genie_task_list` | `genie task list --json [--wish <slug>] [--status <status>]` | legacy (flag-gated). `status` is one of `blocked`, `ready`, `in_progress`, `done` |
+| `genie_task_status` | `genie task status <id>` | legacy (flag-gated). Raw text capture (`parsed: false` expected) |
 
 ## Input safety
 

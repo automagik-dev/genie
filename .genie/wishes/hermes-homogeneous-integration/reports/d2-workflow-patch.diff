@@ -1,0 +1,19 @@
+commit 8e4726364d9e12004c2753aa82f7107f4db4722c
+Author: Felipe Rosa <felipe@namastex.io>
+Date:   Mon Jul 13 06:25:39 2026 -0300
+
+    fix(ci): stage plugin.yaml in auto-version commit (D2)
+
+diff --git a/.github/workflows/version.yml b/.github/workflows/version.yml
+index d0e9741f..3e3b80bc 100644
+--- a/.github/workflows/version.yml
++++ b/.github/workflows/version.yml
+@@ -198,7 +198,7 @@ jobs:
+           VERSION="${{ steps.version.outputs.version }}"
+           BRANCH="${{ steps.context.outputs.branch }}"
+ 
+-          git add -A '*.json' 'src/lib/version.ts'
++          git add -A '*.json' 'src/lib/version.ts' 'plugins/hermes-genie/plugin.yaml'
+           if git diff --cached --quiet; then
+             echo "No version changes to commit"
+           else

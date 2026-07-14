@@ -120,6 +120,47 @@ jobs:
       - name: v5 lifecycle e2e
         run: V5_E2E_BUILD=1 bash tests/e2e/v5-lifecycle.sh
 
+  # Black-box proof that the BUILT CLI makes Codex product skills plugin-only
+  # (wish `repair-genie-codex-hooks-and-dedupe-skills`, Group C). Runs against
+  # a real codex CLI (pinned via `@openai/codex` on npm — the same package
+  # that ships the platform-specific `codex-cli` binary installed locally) in
+  # a fully isolated $HOME/$CODEX_HOME the smoke harness creates per-run.
+  # `ubuntu-latest` (not the blacksmith runner used elsewhere) because this
+  # job's feasibility was verified specifically against a stock GH-hosted
+  # Linux runner; see PR body for the verification evidence.
+  codex-smoke:
+    name: Codex Plugin Smoke (black-box)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.11"
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        env:
+          BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache-${{ github.run_id }}-${{ github.run_attempt }}
+        run: bun install
+
+      - name: Install codex CLI (pinned, unauthenticated — the smokes never call `codex login`)
+        run: npm install -g @openai/codex@0.144.1
+
+      - name: Build
+        run: bun run build
+
+      - name: Codex plugin-only smoke
+        run: bun run smoke:codex
+
+      - name: Codex debug discovery smoke
+        run: bun run smoke:codex-discovery
+
   # Umbrella status check. Branch protection is configured to require
   # "Quality Gate (typecheck + lint + test)" as a required status, so the
   # job name MUST stay exactly that string. `if: always()` ensures this

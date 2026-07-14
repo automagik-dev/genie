@@ -29,8 +29,17 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { type AgentSyncReport, acquireLifecycleLease, lifecycleLockPath } from '../../lib/agent-sync';
-import type { CommandRunner } from '../../lib/runtime-integrations';
+import { type AgentSyncReport, acquireLifecycleLease, lifecycleLockPath, runAgentSync } from '../../lib/agent-sync';
+import { REQUIRED_GENIE_MCP_TOOLS } from '../../lib/codex-mcp-health-session';
+import type { CodexPluginProbe } from '../../lib/codex-project-mcp';
+import {
+  CANONICAL_GENIE_SKILL_NAMES,
+  type CodexHealthProof,
+  type CodexPluginOnlyDeps,
+  type CommandRunner,
+  type IntegrationSelection,
+} from '../../lib/runtime-integrations';
+import { VERSION } from '../../lib/version';
 import type { AuxiliaryTreeOutcome, AuxiliaryTreeStage } from '../auxiliary-trees.js';
 import {
   type RefreshUpdatePluginsOptions,
@@ -50,9 +59,11 @@ import {
   finalizeAuxiliaryDelivery,
   formatVerifyBanner,
   hashPhysicalFileIncrementally,
+  inspectSyncOnlyCodexHealth,
   isGenieProcessSnapshotLine,
   legacySyncOnlyPluginAdvisory,
   manifestUrlForChannel,
+  narrowUpdateAgentSyncSelection,
   normalizeVersion,
   persistChannel,
   pruneSameVersionBackups,
@@ -78,12 +89,58 @@ import {
   verifySwappedBinary,
 } from '../update.js';
 
+function healthyUpdateCodexProbe(): CodexPluginProbe {
+  return {
+    cliAvailable: true,
+    status: 'ok',
+    installed: true,
+    enabled: true,
+    version: '5.260711.3',
+    activePluginRoot: '/fixture/plugin/root',
+    usable: true,
+    usabilityDetail: 'fixture usable',
+    detail: 'fixture healthy codex plugin',
+  };
+}
+
+/**
+ * Full-update codex now converges through convergeCodexPluginOnly. These refresh
+ * suites drive fake bundles, so stub the health/probe/retire/role-agent seams and
+ * point retirement at an isolated empty fallback tier — convergeCodexPlugin itself
+ * still runs for real against the injected runner.
+ */
+function healthyUpdateCodexPluginOnly(overrides: CodexPluginOnlyDeps = {}): CodexPluginOnlyDeps {
+  return {
+    probe: () => healthyUpdateCodexProbe(),
+    prove: () =>
+      Object.freeze({
+        version: 1,
+        snapshot: healthyUpdateCodexProbe(),
+        activePluginRoot: '/fixture/plugin/root',
+        expectedVersion: '5.260711.3',
+        skillInventory: CANONICAL_GENIE_SKILL_NAMES,
+        payload: [],
+        mcp: { initialized: true, tools: [...REQUIRED_GENIE_MCP_TOOLS], wishStatusReadOnly: true },
+      }) as CodexHealthProof,
+    runSession: () => ({
+      ok: true,
+      detail: 'fixture session',
+      tools: [...REQUIRED_GENIE_MCP_TOOLS],
+      wishStatusReadOnly: true,
+    }),
+    installAgents: () => ({ installed: 0, skippedUserOwned: [], keptModified: [], removed: [], backedUp: [] }),
+    fallbackSkillsDir: mkdtempSync(join(tmpdir(), 'genie-update-fallback-')),
+    ...overrides,
+  };
+}
+
 function refreshUpdatePlugins(options: RefreshUpdatePluginsOptions) {
   return refreshUpdatePluginsWithPhysicalVerification({
     ...options,
     resolveExecutable: options.resolveExecutable ?? ((name) => name),
     verifyCodexPayload: options.verifyCodexPayload ?? (() => undefined),
     verifyClaudePayload: options.verifyClaudePayload ?? (() => undefined),
+    codexPluginOnly: healthyUpdateCodexPluginOnly(options.codexPluginOnly),
   });
 }
 
@@ -2810,6 +2867,9 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
           stdout: '{"installed":[{"pluginId":"genie@automagik","enabled":true,"version":"5.260711.6"}]}',
           stderr: '',
         }),
+        // Isolate the advisory→sync ordering; the codex INSPECT gate is proven by
+        // its own byte-identity failure tests below.
+        inspectCodex: () => {},
         log: (line) => events.push(`advisory:${line}`),
         sync: () => {
           events.push('sync');
@@ -2820,6 +2880,137 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
     expect(events).toHaveLength(2);
     expect(events[0]).toContain('advisory:Legacy --sync-only');
     expect(events[1]).toBe('sync');
+  });
+});
+
+describe('runManualUpdateConvergence — hermes leg restored end-to-end (restore-hermes-sync-leg regression)', () => {
+  // A prior release (#2572) narrowed every production selection to 'claude'
+  // before it reached runAgentSync, so `genie update`'s hermes leg (which
+  // only fires on a verbatim 'auto'/'all' selection) silently stopped
+  // converging — confirmed live via `genie update --sync-only` printing only
+  // 'agent-sync: claude'. This suite drives the REAL runSync path (no `sync`
+  // mock) through real GENIE_HOME/HERMES_HOME fixtures, isolated the way
+  // doctor.test.ts isolates its lifecycle env, to prove the hermes leg
+  // converges again and that the PR #2576 duplicate-external_dirs repair is
+  // reachable from the update lifecycle, not just the low-level helper test.
+  const ENV_KEYS = ['HOME', 'GENIE_HOME', 'HERMES_HOME', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME'] as const;
+  let isolatedHome: string;
+  let savedEnv: Partial<Record<(typeof ENV_KEYS)[number], string>>;
+  let genieHome: string;
+  let hermesHome: string;
+  let genieBin: string;
+
+  beforeEach(() => {
+    isolatedHome = mkdtempSync(join(tmpdir(), 'genie-update-hermes-'));
+    savedEnv = {};
+    for (const key of ENV_KEYS) {
+      if (process.env[key] !== undefined) savedEnv[key] = process.env[key];
+    }
+    genieHome = join(isolatedHome, 'genie');
+    hermesHome = join(isolatedHome, 'hermes');
+    process.env.HOME = isolatedHome;
+    process.env.GENIE_HOME = genieHome;
+    process.env.HERMES_HOME = hermesHome;
+    process.env.CLAUDE_CONFIG_DIR = join(isolatedHome, 'claude'); // absent: claude leg simply undetected
+    process.env.CODEX_HOME = join(isolatedHome, 'codex');
+
+    // Minimal real genie plugin source: a populated skills root + VERSION +
+    // an executable bin/genie (resolveGenieBinaryPath / resolveProductSkillsRoot
+    // both require real files, not injected targets, since this test exercises
+    // the default env-resolved paths exactly like production `genie update`).
+    mkdirSync(join(genieHome, 'plugins', 'genie', 'skills', 'alpha'), { recursive: true });
+    writeFileSync(join(genieHome, 'plugins', 'genie', 'skills', 'alpha', 'SKILL.md'), '# alpha\n');
+    // resolveGenieSource requires plugins/hermes-genie NEXT TO plugins/genie for
+    // ctx.hermesRoot to resolve — without it, syncHermes bails before either
+    // config leg runs (see the 'hermes source ... not found' advisory).
+    mkdirSync(join(genieHome, 'plugins', 'hermes-genie'), { recursive: true });
+    writeFileSync(join(genieHome, 'plugins', 'hermes-genie', 'plugin.json'), '{"name":"hermes-genie"}\n');
+    writeFileSync(join(genieHome, 'VERSION'), '9.9.9\n');
+    mkdirSync(join(genieHome, 'bin'), { recursive: true });
+    genieBin = join(genieHome, 'bin', 'genie');
+    writeFileSync(genieBin, '#!/usr/bin/env bun\n');
+    chmodSync(genieBin, 0o755);
+    mkdirSync(hermesHome, { recursive: true });
+  });
+
+  afterEach(() => {
+    for (const key of ENV_KEYS) {
+      const saved = savedEnv[key];
+      if (saved === undefined) Reflect.deleteProperty(process.env, key);
+      else process.env[key] = saved;
+    }
+    rmSync(isolatedHome, { recursive: true, force: true });
+  });
+
+  /**
+   * Mirrors `runManualUpdateConvergence`'s own default `runSync` closure
+   * (narrow the selection, then `runAgentSyncSafe`), but pins `markerPath`
+   * inside the isolated tmpdir. `update.ts`'s `GENIE_HOME` constant is
+   * captured once at module import time, before this suite's `beforeEach` can
+   * repoint `process.env.GENIE_HOME` — the default marker path would
+   * otherwise write `.last-agent-sync` outside this test's sandbox. The sync
+   * engine itself is unaffected: `runAgentSync` resolves every target via the
+   * live `resolveGenieHome()`/`resolveHermesHome()` env reads, so this still
+   * exercises the real narrowing + the real engine end-to-end.
+   */
+  function realRunSync(selection: IntegrationSelection): () => void {
+    return () => {
+      const agentSyncSelection = narrowUpdateAgentSyncSelection(selection);
+      if (agentSyncSelection !== null) {
+        runAgentSyncSafe({
+          strict: true,
+          selection: agentSyncSelection,
+          markerPath: join(isolatedHome, '.last-agent-sync'),
+          // hermesBinary: null keeps this test-safe (no `hermes plugins enable`
+          // exec) — the same posture agent-sync.test.ts's `run()` fixture takes.
+          sync: (opts) => runAgentSync({ ...opts, hermesBinary: null }),
+        });
+      }
+    };
+  }
+
+  test('selection auto converges the hermes leg (mcp_servers.genie + skills.external_dirs) into a fresh config', () => {
+    const result = runManualUpdateConvergence({
+      expectedVersion: '9.9.9',
+      selection: 'auto',
+      runSync: realRunSync('auto'),
+      refreshPlugins: () => [],
+      log: () => undefined,
+    });
+    expect(result.integrations).toEqual([]);
+
+    const configPath = join(hermesHome, 'config.yaml');
+    const text = readFileSync(configPath, 'utf8');
+    expect(text).toContain('mcp_servers:');
+    expect(text).toContain(genieBin);
+    expect(text).toContain('skills:');
+    expect(text).toContain('external_dirs:');
+    expect(text).toContain(join(genieHome, 'plugins', 'genie', 'skills'));
+  });
+
+  test('selection auto repairs a config damaged with the duplicate-external_dirs shape (PR #2576)', () => {
+    const configPath = join(hermesHome, 'config.yaml');
+    const skillsRoot = join(genieHome, 'plugins', 'genie', 'skills');
+    // Exact damaged shape from an earlier buggy release: `skills:` carries BOTH
+    // an inline empty `external_dirs: []` and a later block-style `external_dirs`
+    // holding the genie-marked managed entry — spec-invalid duplicate-key YAML.
+    const damaged = `skills:\n  external_dirs: []\n  template_vars: true\n  external_dirs:\n    - ${JSON.stringify(skillsRoot)}  # genie:managed:skills.external_dirs\n`;
+    writeFileSync(configPath, damaged);
+
+    runManualUpdateConvergence({
+      expectedVersion: '9.9.9',
+      selection: 'auto',
+      runSync: realRunSync('auto'),
+      refreshPlugins: () => [],
+      log: () => undefined,
+    });
+
+    const text = readFileSync(configPath, 'utf8');
+    expect(text.match(/external_dirs:/g)?.length).toBe(1);
+    expect(text).toContain('template_vars: true');
+    const parsed = Bun.YAML.parse(text) as { skills: { external_dirs: string[]; template_vars: boolean } };
+    expect(parsed.skills.external_dirs).toEqual([skillsRoot]);
+    expect(parsed.skills.template_vars).toBe(true);
   });
 });
 
@@ -2970,15 +3161,14 @@ describe('operator-driven plugin refresh', () => {
         codexConfigPath: configPath,
         runner,
       });
-      expect(results).toEqual([
-        {
-          runtime: 'codex',
-          ok: true,
-          detail: 'plugin/hooks refreshed to v5.260711.3',
-          preservedDisabled: true,
-          hookReviewRequired: false,
-        },
-      ]);
+      expect(results).toHaveLength(1);
+      expect(results[0]).toMatchObject({
+        runtime: 'codex',
+        ok: true,
+        detail: 'plugin/hooks refreshed to v5.260711.3',
+        preservedDisabled: true,
+        hookReviewRequired: false,
+      });
       expect(calls).toContain(`codex plugin marketplace add ${root} --json`);
       expect(calls).toContain('codex plugin add genie@automagik --json');
       expect(readFileSync(configPath, 'utf8')).toContain('enabled = false');
@@ -3255,4 +3445,146 @@ describe('summarizeJsonlSignals age filter', () => {
     expect(summary.signals.map((s) => s.event)).toEqual(['no.timestamp']);
     expect(summary.newestStaleTimestamp).toBeNull();
   });
+});
+
+// ===========================================================================
+// A14/R3: --sync-only INSPECTS codex health and fails nonzero + byte-identical
+// on a missing / disabled / stale plugin, never enabling or swapping anything.
+// ===========================================================================
+describe('--sync-only codex inspection (A14/R3)', () => {
+  function digestTree(dir: string): string {
+    const digest = createHash('sha256');
+    const walk = (current: string): void => {
+      for (const name of readdirSync(current).sort()) {
+        const abs = join(current, name);
+        const stat = statSync(abs);
+        digest.update(`${name}\0${stat.isDirectory() ? 'd' : 'f'}\0${stat.isDirectory() ? '' : readFileSync(abs)}\0`);
+        if (stat.isDirectory()) walk(abs);
+      }
+    };
+    walk(dir);
+    return digest.digest('hex');
+  }
+
+  const healthyProbe = (): CodexPluginProbe => ({ ...healthyUpdateCodexProbe(), version: VERSION });
+  const disabledProbe = (): CodexPluginProbe => ({
+    ...healthyUpdateCodexProbe(),
+    version: VERSION,
+    enabled: false,
+    usable: false,
+  });
+  const missingProbe = (): CodexPluginProbe => ({
+    cliAvailable: true,
+    status: 'ok',
+    installed: false,
+    usable: false,
+    usabilityDetail: 'plugin is not installed',
+    detail: 'not installed',
+  });
+  const staleProbe = (): CodexPluginProbe => ({ ...healthyUpdateCodexProbe(), version: '0.0.0' });
+
+  test('narrowUpdateAgentSyncSelection passes the real selection through (restore-hermes-sync-leg)', () => {
+    // codex/none: agent-sync has nothing to do (codex is plugin-only; none is none).
+    expect(narrowUpdateAgentSyncSelection('codex')).toBeNull();
+    expect(narrowUpdateAgentSyncSelection('none')).toBeNull();
+    // auto/all/claude pass through UNCHANGED. Collapsing these to 'claude' (the
+    // prior behavior) silently killed runAgentSync's hermes leg, which only
+    // fires on a verbatim 'auto'/'all' — see runAgentSync in agent-sync.ts.
+    expect(narrowUpdateAgentSyncSelection('auto')).toBe('auto');
+    expect(narrowUpdateAgentSyncSelection('all')).toBe('all');
+    expect(narrowUpdateAgentSyncSelection('claude')).toBe('claude');
+  });
+
+  test('a healthy exact plugin passes inspection', () => {
+    expect(() =>
+      inspectSyncOnlyCodexHealth({
+        selection: 'codex',
+        expectedVersion: VERSION,
+        resolveExecutable: () => '/fixture/codex',
+        probe: healthyProbe,
+        prove: () => ({}) as never,
+      }),
+    ).not.toThrow();
+  });
+
+  test('inspection is skipped entirely when codex is not in scope', () => {
+    let probed = false;
+    inspectSyncOnlyCodexHealth({
+      selection: 'claude',
+      expectedVersion: VERSION,
+      resolveExecutable: () => '/fixture/codex',
+      probe: () => {
+        probed = true;
+        return healthyProbe();
+      },
+    });
+    expect(probed).toBe(false);
+  });
+
+  test('under auto with no codex CLI on PATH, inspection is skipped but prints an explicit advisory (not a silent pass)', () => {
+    let probed = false;
+    const lines: string[] = [];
+    inspectSyncOnlyCodexHealth({
+      selection: 'auto',
+      expectedVersion: VERSION,
+      resolveExecutable: () => null,
+      probe: () => {
+        probed = true;
+        return healthyProbe();
+      },
+      log: (line) => lines.push(line),
+    });
+    expect(probed).toBe(false);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('Codex checks skipped');
+    expect(lines[0]).toContain('no codex CLI found');
+  });
+
+  test('an explicit codex/all selection with no codex CLI on PATH still throws (auto is the only silent-skip scope)', () => {
+    expect(() =>
+      inspectSyncOnlyCodexHealth({
+        selection: 'codex',
+        expectedVersion: VERSION,
+        resolveExecutable: () => null,
+        probe: healthyProbe,
+      }),
+    ).toThrow('--sync-only requires the Codex CLI');
+  });
+
+  for (const [label, probe] of [
+    ['disabled', disabledProbe],
+    ['missing', missingProbe],
+    ['stale', staleProbe],
+  ] as const) {
+    test(`a ${label} plugin fails --sync-only nonzero and leaves fallback + claude trees byte-identical, never enabling`, () => {
+      const fallback = mkdtempSync(join(tmpdir(), `genie-synconly-fallback-${label}-`));
+      mkdirSync(join(fallback, 'wish'), { recursive: true });
+      writeFileSync(join(fallback, 'wish', 'SKILL.md'), '# personal wish\n');
+      const claude = mkdtempSync(join(tmpdir(), `genie-synconly-claude-${label}-`));
+      writeFileSync(join(claude, 'note.md'), 'claude skill\n');
+      const beforeFallback = digestTree(fallback);
+      const beforeClaude = digestTree(claude);
+      let synced = false;
+      try {
+        expect(() =>
+          runLegacySyncOnlyConvergence({
+            selection: 'codex',
+            expectedVersion: VERSION,
+            resolveExecutable: () => '/fixture/codex',
+            runner: () => ({ exitCode: 0, stdout: '{"installed":[]}', stderr: '' }),
+            probe,
+            sync: () => {
+              synced = true;
+            },
+          }),
+        ).toThrow('--sync-only cannot converge the Codex plugin');
+        expect(synced).toBe(false);
+        expect(digestTree(fallback)).toBe(beforeFallback);
+        expect(digestTree(claude)).toBe(beforeClaude);
+      } finally {
+        rmSync(fallback, { recursive: true, force: true });
+        rmSync(claude, { recursive: true, force: true });
+      }
+    });
+  }
 });

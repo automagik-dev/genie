@@ -51,5 +51,25 @@ export default {
     (message: string) => message.startsWith('wish: pivot to Option B'),
     (message: string) => message.startsWith('wish: address reviewer loop 2 findings'),
     (message: string) => message.startsWith('wish: loop 3 cleanups'),
+    // Historical exception: six wave-merge commits (group-1..6) landed on dev
+    // via #2565 before the orchestration learned that a lowercase `merge:`
+    // subject evades the `Merge` ignore above and trips type-enum (merge is
+    // not a conventional type). Rewriting dev is off the table — the branch is
+    // shared and the PRs are merged. Ignoring these six exact historical
+    // subjects (commits d3584f14, f2abab6e, e6364fbd, 3ab1f6e9, 53f328ac,
+    // 63696bf6) unblocks the rolling dev→main promotion without touching
+    // history. Matching is pinned to the exact full subjects — never a
+    // group-N prefix pattern — so genuinely new `merge:` commits still fail.
+    // Do NOT create more `merge:`-prefixed commits — let git use its default
+    // `Merge …` subjects, or use `chore:`.
+    (message: string) =>
+      [
+        'merge: group-1 baseline + hermes integration map (review SHIP)',
+        'merge: group-2 hermes MCP + skills config helpers (review FIX-FIRST->SHIP)',
+        'merge: group-3 pre_llm_call bounded session context (review SHIP)',
+        'merge: group-4 agent-sync hermes lane + doctor depth (review SHIP)',
+        'merge: group-5 slim native surface + skills cleanup + version align (review SHIP)',
+        'merge: group-6 smoke/dogfood gate + changelog (review SHIP)',
+      ].includes(message.split('\n')[0]),
   ],
 };

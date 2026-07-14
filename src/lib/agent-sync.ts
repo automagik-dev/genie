@@ -19,6 +19,7 @@
  * failures.
  */
 
+import { dlopen } from 'bun:ffi';
 import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import {
@@ -30,6 +31,7 @@ import {
   copyFileSync,
   cpSync,
   existsSync,
+  fsyncSync,
   linkSync,
   lstatSync,
   mkdirSync,
@@ -37,6 +39,7 @@ import {
   readFileSync,
   readdirSync,
   readlinkSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -44,9 +47,12 @@ import {
   writeFileSync,
   writeSync,
 } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, hostname } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
+import historicalCodexFallbackAllowlist from '../fixtures/codex-fallback-allowlist.json';
 import { resolveClaudeDir, resolveCodexDir, resolveGenieHome, resolveHermesHome } from './genie-home.js';
+import { HermesConfigError, mergeMcpServersGenie } from './hermes-mcp-config.js';
+import { mergeSkillsExternalDir } from './hermes-skills-config.js';
 
 // ============================================================================
 // Constants
@@ -78,8 +84,6 @@ export const MANAGED_BY = 'genie-agent-sync';
  * never reports a legitimately-excluded skill as "missing/stale".
  */
 export const CLAUDE_EXCLUDED_SKILLS = new Set(['council']);
-/** Skill actions that represent an actual write to the target. */
-const WRITE_ACTIONS = new Set<SkillAction>(['created', 'updated', 'removed']);
 /**
  * Collision-proof staging suffixes for atomic managed-dir writes. Chosen so no
  * human backup convention (e.g. `mv review review.old`, or a `review.new`) can
@@ -95,6 +99,16 @@ const SKILL_TRANSACTION_PREFIX = 'txn-';
 const SKILL_REMOVAL_PREFIX = 'delete-';
 /** Physical-tree digest schema. Version 1 was the legacy regular-file content digest. */
 export const PHYSICAL_TREE_IDENTITY_VERSION = 2;
+/** Hidden retained transaction root used only by the explicit fallback-retirement primitive. */
+export const CODEX_FALLBACK_RETIREMENT_ROOT = '.genie-codex-fallback-retirement';
+/** Single-writer lock scoped to each fallbackSkillsDir's retirement root; lives directly in it, ignored by the txn-* scan. */
+const RETIREMENT_LOCK_NAME = '.retirement.lock';
+/** Per-transaction subdir retaining changed-tree copies archived aside during restore disposal (never recursive-deleted). */
+const RETIREMENT_EVIDENCE_DIR = 'evidence';
+/** Bounded blocking wait before the retirement lock wrapper fails closed. Test-overridable via env for fast reentry proofs. */
+const RETIREMENT_LOCK_WAIT_MS = 30_000;
+/** Feature-detected glibc/musl sonames for the Linux renameat2 no-clobber fast path (x86_64). */
+const LINUX_LIBC_CANDIDATES = ['libc.so.6', 'ld-musl-x86_64.so.1', 'libc.musl-x86_64.so.1'] as const;
 /** Borrowed lifecycle-lease path passed from a shell owner to its child process. */
 export const LIFECYCLE_LEASE_PATH_ENV = 'GENIE_LIFECYCLE_LEASE_PATH';
 /** Exact on-disk owner record paired with {@link LIFECYCLE_LEASE_PATH_ENV}. */
@@ -217,6 +231,7 @@ interface SyncManifest {
 }
 
 interface RunContext {
+  genieHome: string;
   pluginRoot: string;
   hermesRoot: string | null;
   version: string | null;
@@ -282,12 +297,20 @@ function firstExisting(paths: string[]): string | null {
  * excluded because its digest field would otherwise be self-referential.
  */
 export function computeDirDigest(dir: string, exclude?: Set<string>): string {
+  const excluded = new Set([...(exclude ?? [])].map(normalizePhysicalRelPath));
+  excluded.add(MANIFEST_NAME);
+  return computePhysicalTreeDigest(dir, excluded);
+}
+
+function computeExactDirDigest(dir: string): string {
+  return computePhysicalTreeDigest(dir, new Set());
+}
+
+function computePhysicalTreeDigest(dir: string, excluded: Set<string>): string {
   const rootStat = lstatSync(dir);
   if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
     throw new Error(`physical tree root is not a directory: ${dir}`);
   }
-  const excluded = new Set([...(exclude ?? [])].map(normalizePhysicalRelPath));
-  excluded.add(MANIFEST_NAME);
   const entries: PhysicalTreeEntry[] = [physicalTreeEntry('.', rootStat, dir)];
   collectPhysicalTreeEntries(dir, dir, excluded, entries);
   entries.sort(byRel);
@@ -899,6 +922,1513 @@ export function inspectManagedSkillTree(dir: string): ManagedSkillTreeReport {
   } catch {
     return { path: dir, state: 'managed-modified' };
   }
+}
+
+// ============================================================================
+// Retired Codex fallback ownership + batch retirement (deliberately unwired)
+// ============================================================================
+
+export interface CodexFallbackHistoricalTuple {
+  /**
+   * Provenance metadata only — not authenticated, and NOT part of the
+   * ownership match key (see {@link historicalTupleKey}). Fallback seeding
+   * stamps `marker.version` to whatever release happens to be installed, so a
+   * byte-identical tree seeded by a later, unlisted release must still match
+   * on (skillName, physicalDigest) alone.
+   */
+  markerVersion: string;
+  skillName: string;
+  physicalDigest: string;
+}
+
+export interface VerifiedCodexSkillPayload {
+  skillName: string;
+  path: string;
+  physicalDigest: string;
+  /** Set only after the caller's canonical release verification succeeds. */
+  canonicalVerified: true;
+}
+
+export type CodexFallbackOwnershipReason =
+  | 'historical-tuple'
+  | 'verified-target'
+  | 'missing'
+  | 'symlink'
+  | 'not-physical-directory'
+  | 'malformed-marker'
+  | 'modified-tree'
+  | 'ambiguous-ownership';
+
+export interface CodexFallbackOwnership {
+  skillName: string;
+  path: string;
+  accepted: boolean;
+  reason: CodexFallbackOwnershipReason;
+  markerVersion?: string;
+  physicalDigest?: string;
+  markerDigest?: string;
+  targetDigest?: string;
+}
+
+export interface CodexFallbackRetirementPlan {
+  version: 1;
+  generation?: number;
+  fallbackSkillsDir: string;
+  transactionId: string;
+  accepted: CodexFallbackAcceptedIdentity[];
+  preserved: CodexFallbackOwnership[];
+}
+
+export interface CodexFallbackAcceptedIdentity {
+  skillName: string;
+  source: string;
+  markerVersion: string;
+  physicalDigest: string;
+  markerDigest: string;
+  targetDigest: string | null;
+  ownership: 'historical-tuple' | 'verified-target';
+}
+
+export interface PlanCodexFallbackRetirementOptions {
+  fallbackSkillsDir: string;
+  skillNames: readonly string[];
+  verifiedTargets?: readonly VerifiedCodexSkillPayload[];
+}
+
+interface StrictFallbackMarker {
+  managedBy: typeof MANAGED_BY;
+  version: string;
+  digest: string;
+  /** Informational timestamp only; never ownership or provenance authority. */
+  syncedAt: string;
+  identityVersion: typeof PHYSICAL_TREE_IDENTITY_VERSION;
+}
+
+function strictFallbackMarker(dir: string): { marker: StrictFallbackMarker; markerDigest: string } | null {
+  const markerPath = join(dir, MANIFEST_NAME);
+  const markerStat = lstatSafe(markerPath);
+  if (markerStat === null || !markerStat.isFile() || markerStat.isSymbolicLink()) return null;
+  try {
+    const bytes = readFileSync(markerPath);
+    const parsed = JSON.parse(bytes.toString('utf8')) as Partial<StrictFallbackMarker>;
+    if (
+      parsed.managedBy !== MANAGED_BY ||
+      typeof parsed.version !== 'string' ||
+      parsed.version.length === 0 ||
+      !isDigest(parsed.digest) ||
+      typeof parsed.syncedAt !== 'string' ||
+      parsed.identityVersion !== PHYSICAL_TREE_IDENTITY_VERSION
+    ) {
+      return null;
+    }
+    return {
+      marker: parsed as StrictFallbackMarker,
+      markerDigest: createHash('sha256').update(bytes).digest('hex'),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function verifiedTargetByName(
+  targets: readonly VerifiedCodexSkillPayload[],
+): Map<string, VerifiedCodexSkillPayload | null> {
+  const indexed = new Map<string, VerifiedCodexSkillPayload | null>();
+  for (const target of targets) {
+    const prior = indexed.get(target.skillName);
+    indexed.set(target.skillName, prior === undefined ? target : null);
+  }
+  return indexed;
+}
+
+function verifiedTargetDigest(target: VerifiedCodexSkillPayload | null | undefined): string | null {
+  if (
+    target === null ||
+    target === undefined ||
+    target.canonicalVerified !== true ||
+    !isDigest(target.physicalDigest)
+  ) {
+    return null;
+  }
+  const stat = lstatSafe(target.path);
+  if (stat === null || !stat.isDirectory() || stat.isSymbolicLink()) return null;
+  try {
+    const canonical = realpathSync(target.path);
+    return computeDirDigest(canonical) === target.physicalDigest ? target.physicalDigest : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Ownership proof key: (skillName, physicalDigest) only. `markerVersion` is
+ * self-reported by the untrusted marker file and is retained on the tuple as
+ * provenance metadata, but it adds zero proof value over the exact-content
+ * digest — fallback seeding stamps `marker.version` to whatever release
+ * happened to be installed, so keying on it silently rejects byte-identical
+ * historical content stamped by a later release than the one the fixture froze.
+ */
+function historicalTupleKey(tuple: Pick<CodexFallbackHistoricalTuple, 'skillName' | 'physicalDigest'>): string {
+  return `${tuple.skillName}\0${tuple.physicalDigest}`;
+}
+
+/**
+ * Load the frozen historical-tuple allowlist as an ownership-key set. Exported
+ * so read-only callers (doctor's tier inspection) apply the SAME acceptance
+ * policy as {@link planCodexFallbackRetirement} instead of re-deriving their
+ * own notion of "recognized" — the fixture loading and key derivation live in
+ * exactly one place.
+ */
+export function loadHistoricalCodexFallbackTupleKeys(): ReadonlySet<string> {
+  const tuples = historicalCodexFallbackAllowlist as CodexFallbackHistoricalTuple[];
+  return new Set(tuples.map(historicalTupleKey));
+}
+
+/**
+ * Classify a single `~/.agents/skills/<name>` dir's Codex-fallback ownership.
+ * Exported so doctor's read-only tier inspection can split a structurally
+ * `managed-clean` tree into "recognized, retirable by `genie update`" vs
+ * "well-formed but unrecognized, needs manual review" using the identical
+ * marker/digest/allowlist gate {@link planCodexFallbackRetirement} uses to
+ * decide what it will actually retire — so doctor never promises a retirement
+ * the engine then refuses.
+ */
+export function classifyCodexFallback(
+  path: string,
+  skillName: string,
+  target: VerifiedCodexSkillPayload | null | undefined,
+  historical: ReadonlySet<string>,
+): CodexFallbackOwnership {
+  const stat = lstatSafe(path);
+  if (stat === null) return { skillName, path, accepted: false, reason: 'missing' };
+  if (stat.isSymbolicLink()) return { skillName, path, accepted: false, reason: 'symlink' };
+  if (!stat.isDirectory()) return { skillName, path, accepted: false, reason: 'not-physical-directory' };
+  const parsed = strictFallbackMarker(path);
+  if (parsed === null) return { skillName, path, accepted: false, reason: 'malformed-marker' };
+  let physicalDigest: string;
+  try {
+    physicalDigest = computeDirDigest(path);
+  } catch {
+    return { skillName, path, accepted: false, reason: 'modified-tree' };
+  }
+  const common = {
+    skillName,
+    path,
+    markerVersion: parsed.marker.version,
+    physicalDigest,
+    markerDigest: parsed.markerDigest,
+  };
+  if (physicalDigest !== parsed.marker.digest) return { ...common, accepted: false, reason: 'modified-tree' };
+  const targetDigest = verifiedTargetDigest(target);
+  if (targetDigest === physicalDigest && target?.skillName === skillName) {
+    return { ...common, targetDigest, accepted: true, reason: 'verified-target' };
+  }
+  if (historical.has(historicalTupleKey({ skillName, physicalDigest }))) {
+    return { ...common, accepted: true, reason: 'historical-tuple' };
+  }
+  return {
+    ...common,
+    ...(targetDigest === null ? {} : { targetDigest }),
+    accepted: false,
+    reason: 'ambiguous-ownership',
+  };
+}
+
+/** Deterministic transaction id (sha256[:32]) — exported so a forged-journal test can build a self-consistent journal. */
+export function retirementTransactionId(accepted: readonly CodexFallbackAcceptedIdentity[], generation = 0): string {
+  const stable = accepted.map((entry) => ({
+    skillName: entry.skillName,
+    markerVersion: entry.markerVersion,
+    physicalDigest: entry.physicalDigest,
+    markerDigest: entry.markerDigest,
+    targetDigest: entry.targetDigest,
+  }));
+  return createHash('sha256').update(JSON.stringify({ generation, stable })).digest('hex').slice(0, 32);
+}
+
+/**
+ * Build a closed, deterministic ownership decision without changing disk.
+ * Ambiguous names are reported under `preserved` and never enter the apply set.
+ * No active install/update/setup path calls this boundary.
+ */
+export function planCodexFallbackRetirement(options: PlanCodexFallbackRetirementOptions): CodexFallbackRetirementPlan {
+  const fallbackSkillsDir = canonicalPhysicalFallbackRoot(options.fallbackSkillsDir);
+  const names = [...new Set(options.skillNames)].sort();
+  if (names.length !== options.skillNames.length || names.some((name) => !isSafeEntryName(name))) {
+    throw new Error('fallback retirement skill names must be unique safe path entries');
+  }
+  const targets = verifiedTargetByName(options.verifiedTargets ?? []);
+  const historical = loadHistoricalCodexFallbackTupleKeys();
+  const classified = names.map((skillName) =>
+    classifyCodexFallback(join(fallbackSkillsDir, skillName), skillName, targets.get(skillName), historical),
+  );
+  const accepted = classified
+    .filter((entry) => entry.accepted)
+    .map(
+      (entry): CodexFallbackAcceptedIdentity => ({
+        skillName: entry.skillName,
+        source: entry.path,
+        markerVersion: entry.markerVersion as string,
+        physicalDigest: entry.physicalDigest as string,
+        markerDigest: entry.markerDigest as string,
+        targetDigest: entry.targetDigest ?? null,
+        ownership: entry.reason as CodexFallbackAcceptedIdentity['ownership'],
+      }),
+    );
+  return {
+    version: 1,
+    fallbackSkillsDir,
+    transactionId: retirementTransactionId(accepted),
+    accepted,
+    preserved: classified.filter((entry) => !entry.accepted),
+  };
+}
+
+type CodexFallbackRetirementPhase =
+  | 'prepared'
+  | 'moving'
+  | 'verifying'
+  | 'restoring'
+  | 'restore-conflict'
+  | 'restored'
+  | 'committed';
+
+type CodexFallbackRetirementEntryPhase =
+  | 'planned'
+  | 'moved'
+  | 'verified'
+  | 'restore-observed'
+  | 'restore-conflict'
+  | 'preserved-live'
+  | 'restored';
+
+interface CodexFallbackRetirementEntry extends CodexFallbackAcceptedIdentity {
+  destination: string;
+  phase: CodexFallbackRetirementEntryPhase;
+  /** Exact physical identity, including the marker, captured after retirement authority was lost. */
+  observedTreeDigest?: string;
+  /** Basename under `evidence/` where a changed quarantine tree was archived aside during disposal. */
+  evidence?: string;
+}
+
+interface CodexFallbackRetirementJournal extends CodexFallbackRetirementPlan {
+  phase: CodexFallbackRetirementPhase;
+  entries: CodexFallbackRetirementEntry[];
+}
+
+const CODEX_FALLBACK_RETIREMENT_PHASES = new Set<CodexFallbackRetirementPhase>([
+  'prepared',
+  'moving',
+  'verifying',
+  'restoring',
+  'restore-conflict',
+  'restored',
+  'committed',
+]);
+
+const CODEX_FALLBACK_RETIREMENT_ENTRY_PHASES = new Set<CodexFallbackRetirementEntryPhase>([
+  'planned',
+  'moved',
+  'verified',
+  'restore-observed',
+  'restore-conflict',
+  'preserved-live',
+  'restored',
+]);
+
+export type CodexFallbackRetirementFailpoint =
+  | 'after-journal-temp-create'
+  | 'before-journal-rename'
+  | 'after-journal-rename'
+  | 'after-journal-durable'
+  | `before-move:${number}`
+  | `after-move-boundary-identification:${number}`
+  | `after-move-filesystem:${number}`
+  | `after-move:${number}`
+  | `before-destination-verification:${number}`
+  | `after-verification:${number}`
+  | `before-restore:${number}`
+  | `after-restore-observation:${number}`
+  | `after-restore-staging-create:${number}`
+  | `after-restore-copy:${number}:${number}`
+  | `after-restore-verification:${number}`
+  | `after-restore-sync:${number}`
+  | `before-restore-publication:${number}`
+  | `after-restore-publication:${number}`
+  | `after-restore-filesystem:${number}`
+  | `before-restore-cleanup:${number}`
+  | `before-quarantine-disposal:${number}`
+  | `after-quarantine-disposal:${number}`
+  | `after-restore:${number}`
+  | 'before-commit'
+  | 'after-commit-journal'
+  | 'after-commit-durable';
+
+export interface ApplyCodexFallbackRetirementOptions {
+  failpoint?: (point: CodexFallbackRetirementFailpoint) => void;
+}
+
+export interface CodexFallbackRetirementResult {
+  transactionId: string;
+  transactionDir: string;
+  status: 'committed' | 'already-committed';
+  retired: string[];
+}
+
+/** Errors a DIRECTORY-metadata flush may legitimately raise on platforms/filesystems that refuse it. */
+function isTolerableDirectoryFsyncError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === 'EISDIR' || code === 'EPERM' || code === 'EINVAL' || code === 'ENOTSUP';
+}
+
+/**
+ * Test seam for {@link fsyncPath}: inject the open/fsync syscalls (and platform)
+ * so a directory-metadata flush can be forced to throw the way Windows and some
+ * network filesystems do. Real callers pass nothing.
+ */
+export interface FsyncPathDeps {
+  open?: typeof openSync;
+  fsync?: typeof fsyncSync;
+  platform?: NodeJS.Platform;
+}
+
+/**
+ * fsync a path's metadata to disk. FILE fsync is STRICT — journal and staging
+ * byte durability is the load-bearing crash-safety guarantee, so a failure
+ * propagates. DIRECTORY-metadata flush is best-effort: Windows (and some network
+ * filesystems) refuse to open/fsync a directory fd (EISDIR/EPERM/EINVAL/ENOTSUP),
+ * which must NOT brick the codex step of `genie update` at journal-prepare. On
+ * win32 a directory fsync is skipped entirely; elsewhere the tolerable errors are
+ * swallowed. A durable rename still lands; only the extra directory-entry flush
+ * is skipped, exactly as on filesystems that never guaranteed it.
+ */
+function fsyncPath(path: string, deps: FsyncPathDeps = {}): void {
+  const open = deps.open ?? openSync;
+  const fsync = deps.fsync ?? fsyncSync;
+  const platform = deps.platform ?? process.platform;
+  const isDirectory = lstatSafe(path)?.isDirectory() ?? false;
+  if (isDirectory && platform === 'win32') return; // never fsync a directory fd on Windows
+  let fd: number;
+  try {
+    fd = open(path, constants.O_RDONLY);
+  } catch (error) {
+    if (isDirectory && isTolerableDirectoryFsyncError(error)) return; // best-effort directory flush
+    throw error;
+  }
+  try {
+    fsync(fd);
+  } catch (error) {
+    if (!(isDirectory && isTolerableDirectoryFsyncError(error))) throw error; // FILE fsync stays strict
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** Directly exercisable {@link fsyncPath} for the directory-fsync-tolerance proof (Windows/network-fs failpoint). */
+export function fsyncPathForTest(path: string, deps: FsyncPathDeps = {}): void {
+  fsyncPath(path, deps);
+}
+
+/**
+ * Write a whole buffer to a descriptor, tolerating partial `writeSync` results.
+ * Exported for a direct unit proof (a `writeFn` that returns a partial count
+ * once, then delegates). The `<= 0` guard turns a stuck writer into a thrown
+ * error rather than an infinite loop.
+ */
+export function writeAllSync(fd: number, buffer: Buffer, writeFn: typeof writeSync = writeSync): void {
+  let offset = 0;
+  while (offset < buffer.length) {
+    const written = writeFn(fd, buffer, offset, buffer.length - offset);
+    if (written <= 0) throw new Error(`journal write made no progress at offset ${offset}/${buffer.length}`);
+    offset += written;
+  }
+}
+
+function writeDurableRetirementJournal(
+  transactionDir: string,
+  journal: CodexFallbackRetirementJournal,
+  failpoint?: ApplyCodexFallbackRetirementOptions['failpoint'],
+): void {
+  const journalPath = join(transactionDir, 'journal.json');
+  // Unique per-writer temp under O_EXCL: even a future unlocked caller cannot
+  // clobber a peer's temp or the durable journal. The single writer lock is the
+  // primary guarantee; this is defense-in-depth CAS on the durable write.
+  const temporary = join(transactionDir, `.journal.${process.pid}.${randomBytes(6).toString('hex')}.next`);
+  const fd = openSync(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
+  try {
+    failpoint?.('after-journal-temp-create');
+    // Loop until every byte is written before fsync; a short write must never
+    // publish a torn journal via the atomic rename below.
+    writeAllSync(fd, Buffer.from(`${JSON.stringify(journal, null, 2)}\n`));
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+  failpoint?.('before-journal-rename');
+  renameSync(temporary, journalPath);
+  failpoint?.('after-journal-rename');
+  fsyncPath(transactionDir);
+}
+
+function canonicalPhysicalFallbackRoot(path: string): string {
+  const resolved = resolve(path);
+  const stat = lstatSafe(resolved);
+  if (stat?.isSymbolicLink()) throw new Error(`fallback skills root must be symlink-free: ${resolved}`);
+  if (stat === null || !stat.isDirectory()) {
+    throw new Error(`fallback skills root must be a physical directory: ${resolved}`);
+  }
+  const canonical = realpathSync(resolved);
+  if (canonical !== resolved) throw new Error(`fallback skills root must be symlink-free: ${resolved}`);
+  return canonical;
+}
+
+function assertCanonicalPhysicalDirectory(path: string, label: string): void {
+  const stat = lstatSafe(path);
+  if (stat === null || !stat.isDirectory() || stat.isSymbolicLink() || realpathSync(path) !== path) {
+    throw new Error(`${label} must be a canonical physical directory: ${path}`);
+  }
+}
+
+function validateQuarantineDirectory(fallbackSkillsDir: string, transactionDir: string, create = false): string {
+  const fallback = canonicalPhysicalFallbackRoot(fallbackSkillsDir);
+  if (fallback !== fallbackSkillsDir) throw new Error('fallback retirement root identity changed');
+  const transactionRoot = join(fallback, CODEX_FALLBACK_RETIREMENT_ROOT);
+  for (const [path, label] of [
+    [transactionRoot, 'fallback retirement transaction root'],
+    [transactionDir, 'fallback retirement transaction'],
+  ] as const) {
+    assertCanonicalPhysicalDirectory(path, label);
+    if (!isInside(fallback, realpathSync(path))) throw new Error(`${label} escaped fallback root: ${path}`);
+  }
+  const quarantine = join(transactionDir, 'quarantine');
+  if (create && lstatSafe(quarantine) === null) mkdirSync(quarantine, { mode: 0o700 });
+  assertCanonicalPhysicalDirectory(quarantine, 'fallback retirement quarantine');
+  if (!isInside(fallback, realpathSync(quarantine))) {
+    throw new Error(`fallback retirement quarantine escaped fallback root: ${quarantine}`);
+  }
+  return quarantine;
+}
+
+function isInside(parent: string, child: string): boolean {
+  const rel = relative(parent, child);
+  return rel !== '' && !rel.startsWith(`..${sep}`) && rel !== '..';
+}
+
+function validateRetirementPaths(
+  fallbackSkillsDir: string,
+  transactionDir: string,
+  journal: CodexFallbackRetirementJournal,
+): void {
+  const transactionRoot = join(fallbackSkillsDir, CODEX_FALLBACK_RETIREMENT_ROOT);
+  const expectedTransaction = join(transactionRoot, `txn-${journal.transactionId}`);
+  if (transactionDir !== expectedTransaction || !isInside(transactionRoot, transactionDir)) {
+    throw new Error(`invalid Codex fallback retirement transaction path: ${transactionDir}`);
+  }
+  if (
+    journal.fallbackSkillsDir !== fallbackSkillsDir ||
+    retirementTransactionId(journal.accepted, journal.generation ?? 0) !== journal.transactionId
+  ) {
+    throw new Error(`invalid Codex fallback retirement identity: ${transactionDir}`);
+  }
+  if (journal.entries.length !== journal.accepted.length)
+    throw new Error(`invalid Codex fallback retirement journal: ${transactionDir}`);
+  for (const [index, accepted] of journal.accepted.entries()) {
+    const entry = journal.entries[index];
+    if (entry === undefined || !isSafeEntryName(accepted.skillName) || entry.skillName !== accepted.skillName) {
+      throw new Error(`invalid Codex fallback retirement entry: ${transactionDir}`);
+    }
+    const source = join(fallbackSkillsDir, accepted.skillName);
+    const destination = join(transactionDir, 'quarantine', accepted.skillName);
+    if (
+      accepted.source !== source ||
+      entry.source !== source ||
+      entry.destination !== destination ||
+      dirname(source) !== fallbackSkillsDir ||
+      !isInside(transactionDir, destination)
+    ) {
+      throw new Error(`unconfined Codex fallback retirement entry: ${accepted.skillName}`);
+    }
+  }
+}
+
+function readRetirementJournal(fallbackSkillsDir: string, transactionDir: string): CodexFallbackRetirementJournal {
+  const parsed = JSON.parse(
+    readFileSync(join(transactionDir, 'journal.json'), 'utf8'),
+  ) as CodexFallbackRetirementJournal;
+  if (
+    parsed.version !== 1 ||
+    !/^[a-f0-9]{32}$/.test(parsed.transactionId) ||
+    !Array.isArray(parsed.accepted) ||
+    !Array.isArray(parsed.entries) ||
+    parsed.accepted.length !== parsed.entries.length ||
+    !CODEX_FALLBACK_RETIREMENT_PHASES.has(parsed.phase) ||
+    parsed.entries.some(
+      (entry) =>
+        !CODEX_FALLBACK_RETIREMENT_ENTRY_PHASES.has(entry.phase) ||
+        (entry.observedTreeDigest !== undefined && !isDigest(entry.observedTreeDigest)) ||
+        (entry.evidence !== undefined &&
+          (!isSafeEntryName(entry.evidence) ||
+            !isInside(transactionDir, join(transactionDir, RETIREMENT_EVIDENCE_DIR, entry.evidence)))),
+    )
+  ) {
+    throw new Error(`invalid Codex fallback retirement journal: ${transactionDir}`);
+  }
+  validateRetirementPaths(fallbackSkillsDir, transactionDir, parsed);
+  // The single writer lock guarantees one live writer; sweep any crashed peer's
+  // unique-temp leftovers so they can never masquerade as the durable journal.
+  for (const name of readdirSync(transactionDir)) {
+    if (name.startsWith('.journal.') && name.endsWith('.next')) rmSync(join(transactionDir, name), { force: true });
+  }
+  return parsed;
+}
+
+function sameRetirementBatch(plan: CodexFallbackRetirementPlan, journal: CodexFallbackRetirementJournal): boolean {
+  return (
+    plan.transactionId === journal.transactionId &&
+    plan.fallbackSkillsDir === journal.fallbackSkillsDir &&
+    JSON.stringify(plan.accepted) === JSON.stringify(journal.accepted)
+  );
+}
+
+function matchesFallbackIdentity(path: string, expected: CodexFallbackAcceptedIdentity): boolean {
+  try {
+    const parsed = strictFallbackMarker(path);
+    return (
+      parsed !== null &&
+      parsed.marker.version === expected.markerVersion &&
+      parsed.marker.digest === expected.physicalDigest &&
+      parsed.markerDigest === expected.markerDigest &&
+      computeDirDigest(path) === expected.physicalDigest
+    );
+  } catch {
+    return false;
+  }
+}
+
+function fsyncPhysicalTree(path: string): void {
+  const stat = lstatSafe(path);
+  if (stat === null || stat.isSymbolicLink()) return;
+  if (stat.isDirectory()) {
+    for (const name of readdirSync(path)) fsyncPhysicalTree(join(path, name));
+  }
+  fsyncPath(path);
+}
+
+function exactPhysicalDirectoryDigest(path: string): string | null {
+  const stat = lstatSafe(path);
+  if (stat === null || !stat.isDirectory() || stat.isSymbolicLink()) return null;
+  try {
+    return computeExactDirDigest(path);
+  } catch {
+    return null;
+  }
+}
+
+interface RetirementRestorePaths {
+  quarantine: string;
+  source: string;
+  destination: string;
+  stagingRoot: string;
+  staging: string;
+}
+
+function retirementRestorePaths(
+  fallbackSkillsDir: string,
+  transactionDir: string,
+  entry: CodexFallbackRetirementEntry,
+): RetirementRestorePaths {
+  const quarantine = validateQuarantineDirectory(fallbackSkillsDir, transactionDir);
+  const stagingRoot = join(transactionDir, '.restore-staging');
+  return {
+    quarantine,
+    source: join(fallbackSkillsDir, entry.skillName),
+    destination: join(quarantine, entry.skillName),
+    stagingRoot,
+    staging: join(stagingRoot, entry.skillName),
+  };
+}
+
+function matchesRestoreIdentity(
+  path: string,
+  entry: CodexFallbackRetirementEntry,
+  observedTreeDigest?: string,
+): boolean {
+  return observedTreeDigest === undefined
+    ? matchesFallbackIdentity(path, entry)
+    : exactPhysicalDirectoryDigest(path) === observedTreeDigest;
+}
+
+const AT_FDCWD = -100;
+const LINUX_RENAME_NOREPLACE = 1;
+const DARWIN_RENAME_EXCL = 4;
+
+type Renameat2 = (staged: Buffer, target: Buffer) => number;
+type LibcRenameOpener = (soname: string) => Renameat2 | null;
+interface RenameProbe {
+  resolved?: Renameat2 | null;
+}
+/** Dependency-injection seam for the Linux no-clobber fast path — no global mutable state, no test-only setter. */
+export interface NoClobberDeps {
+  opener?: LibcRenameOpener;
+  candidates?: readonly string[];
+  probe?: RenameProbe;
+}
+
+const defaultLibcOpener: LibcRenameOpener = (soname) => {
+  try {
+    const libc = dlopen(soname, {
+      renameat2: { args: ['i32', 'cstring', 'i32', 'cstring', 'u32'], returns: 'i32' },
+    } as const);
+    // Handle intentionally retained for process lifetime via the closure (single memoized detection).
+    return (s, t) => libc.symbols.renameat2(AT_FDCWD, s, AT_FDCWD, t, LINUX_RENAME_NOREPLACE);
+  } catch {
+    return null;
+  }
+};
+
+/** First soname whose renameat2 resolves, else null (musl / no renameat2). Exported for candidate fall-through proofs. */
+export function resolveLinuxRenameat2(
+  opener: LibcRenameOpener = defaultLibcOpener,
+  candidates: readonly string[] = LINUX_LIBC_CANDIDATES,
+): Renameat2 | null {
+  for (const soname of candidates) {
+    const fn = opener(soname);
+    if (fn) return fn;
+  }
+  return null;
+}
+
+const defaultLinuxProbe: RenameProbe = {};
+function probeLinuxRenameat2(deps: NoClobberDeps): Renameat2 | null {
+  const probe = deps.probe ?? defaultLinuxProbe;
+  if (!('resolved' in probe)) probe.resolved = resolveLinuxRenameat2(deps.opener, deps.candidates);
+  return probe.resolved ?? null;
+}
+
+/**
+ * Portable, always-available, directory-ONLY, provably no-clobber publish.
+ * `mkdir` reserves the target name atomically (EEXIST => a real target is
+ * present and never touched); `rename` then replaces only the empty dir we just
+ * claimed. A concurrently-populated claim makes `rename` fail and only the
+ * still-empty claim is removed.
+ */
+export function publishDirectoryViaNameClaim(stagedDir: string, targetDir: string): void {
+  try {
+    mkdirSync(targetDir);
+  } catch (e) {
+    throw new NoClobberPublishError(
+      `portable directory claim failed (${(e as NodeJS.ErrnoException).code}); target preserved: ${targetDir}`,
+    );
+  }
+  try {
+    renameSync(stagedDir, targetDir);
+  } catch (e) {
+    if (readdirSync(targetDir).length === 0) rmSyncSafe(targetDir); // remove only our own still-empty claim
+    throw new NoClobberPublishError(
+      `portable directory publish failed (${(e as NodeJS.ErrnoException).code}); target preserved: ${targetDir}`,
+    );
+  }
+}
+
+/** Publish one complete same-filesystem directory while atomically rejecting every existing target inode. */
+export function atomicRenameDirectoryNoClobber(stagedDir: string, targetDir: string, deps: NoClobberDeps = {}): void {
+  const stagedStat = lstatSync(stagedDir);
+  if (!stagedStat.isDirectory() || stagedStat.isSymbolicLink()) {
+    throw new Error(`atomic publish source is not a physical directory: ${stagedDir}`);
+  }
+  const stagedPath = Buffer.from(`${stagedDir}\0`);
+  const targetPath = Buffer.from(`${targetDir}\0`);
+  if (process.platform === 'linux') {
+    const rn = probeLinuxRenameat2(deps);
+    if (rn === null) {
+      publishDirectoryViaNameClaim(stagedDir, targetDir); // musl / no renameat2 => portable
+      return;
+    }
+    if (rn(stagedPath, targetPath) !== 0) {
+      const detail = lstatSafe(targetDir) === null ? 'rename failed' : 'target exists';
+      throw new NoClobberPublishError(`atomic no-clobber publish failed (${detail}); target preserved: ${targetDir}`);
+    }
+    return;
+  }
+  if (process.platform === 'darwin') {
+    const libc = dlopen('/usr/lib/libSystem.B.dylib', {
+      renamex_np: { args: ['cstring', 'cstring', 'u32'], returns: 'i32' },
+    } as const);
+    let result: number;
+    try {
+      result = libc.symbols.renamex_np(stagedPath, targetPath, DARWIN_RENAME_EXCL);
+    } finally {
+      libc.close();
+    }
+    if (result !== 0) {
+      const detail = lstatSafe(targetDir) === null ? 'rename failed' : 'target exists';
+      throw new NoClobberPublishError(`atomic no-clobber publish failed (${detail}); target preserved: ${targetDir}`);
+    }
+    return;
+  }
+  publishDirectoryViaNameClaim(stagedDir, targetDir); // was: throw unsupported — now portable & no-clobber
+}
+
+function writeRestoreConflict(
+  transactionDir: string,
+  journal: CodexFallbackRetirementJournal,
+  entry: CodexFallbackRetirementEntry,
+  reason: string,
+  failpoint?: ApplyCodexFallbackRetirementOptions['failpoint'],
+  retained = 'both trees retained',
+): never {
+  entry.phase = 'restore-conflict';
+  journal.phase = 'restore-conflict';
+  writeDurableRetirementJournal(transactionDir, journal, failpoint);
+  throw new Error(`${reason}; ${retained} with recoverable status at ${transactionDir}`);
+}
+
+function markRetirementEntryRestored(
+  transactionDir: string,
+  journal: CodexFallbackRetirementJournal,
+  entry: CodexFallbackRetirementEntry,
+  phase: 'preserved-live' | 'restored',
+  failpoint?: ApplyCodexFallbackRetirementOptions['failpoint'],
+): void {
+  journal.phase = 'restoring';
+  entry.phase = phase;
+  writeDurableRetirementJournal(transactionDir, journal, failpoint);
+}
+
+function cleanupRestoredRetirementDestination(
+  fallbackSkillsDir: string,
+  transactionDir: string,
+  journal: CodexFallbackRetirementJournal,
+  entry: CodexFallbackRetirementEntry,
+  paths: RetirementRestorePaths,
+  index: number,
+  observedTreeDigest: string | undefined,
+  failpoint?: ApplyCodexFallbackRetirementOptions['failpoint'],
+): void {
+  failpoint?.(`before-restore-cleanup:${index}`);
+  fsyncPhysicalTree(paths.source);
+  fsyncPath(fallbackSkillsDir);
+  validateQuarantineDirectory(fallbackSkillsDir, transactionDir);
+  if (!matchesRestoreIdentity(paths.destination, entry, observedTreeDigest)) {
+    writeRestoreConflict(
+      transactionDir,
+      journal,
+      entry,
+      'fallback retirement quarantine changed during cleanup',
+      failpoint,
+    );
+  }
+  // Quarantine stays authoritative until the live object is re-identified at
+  // this destructive boundary; publication-time identity is intentionally insufficient.
+  if (!matchesRestoreIdentity(paths.source, entry, observedTreeDigest)) {
+    const retained = lstatSafe(paths.source) === null ? 'intact quarantine retained' : 'both trees retained';
+    writeRestoreConflict(
+      transactionDir,
+      journal,
+      entry,
+      `fallback retirement restored source changed during cleanup at ${paths.source}`,
+      failpoint,
+      retained,
+    );
+  }
+  disposeQuarantineToEvidence(transactionDir, journal, entry, paths, index, observedTreeDigest, failpoint);
+  markRetirementEntryRestored(transactionDir, journal, entry, 'restored', failpoint);
+}
+
+/**
+ * Allocate an unused suffixed evidence basename (`<skill>.2`, `.3`, …) when the
+ * primary `evidence/<skill>` slot already holds a DIFFERING archived tree that
+ * must be preserved. Probed under the single-writer retirement lock; the
+ * no-clobber publish at the call site is the defense-in-depth guard against a
+ * probe/rename race. Both the path and its basename are returned so the chosen
+ * name can be journaled (it must round-trip {@link isSafeEntryName} — `<skill>.N`
+ * is not dot-prefixed and never collides with reserved infra names).
+ */
+function claimFreshEvidencePath(
+  evidenceRoot: string,
+  skillName: string,
+  transactionDir: string,
+): { path: string; name: string } {
+  for (let suffix = 2; suffix < 1000; suffix += 1) {
+    const name = `${skillName}.${suffix}`;
+    const path = join(evidenceRoot, name);
+    if (!isInside(transactionDir, path)) throw new Error(`unconfined retirement evidence: ${path}`);
+    if (lstatSafe(path) === null) return { path, name };
+  }
+  throw new Error(`could not allocate a fresh retirement evidence path for ${skillName}`);
+}
+
+/**
+ * Archive the quarantine copy aside with a single atomic rename instead of a
+ * recursive delete. The last intact copy is MOVED to `evidence/<skillName>` (or
+ * a fresh suffixed sibling), never destroyed, so no interval exists in which
+ * zero copies of the tree are on disk. After the move a re-verify converts a
+ * source that vanished during the check/disposal window into a recoverable
+ * conflict rather than a lost commit — the journal never records `restored`
+ * while the live tree is absent.
+ *
+ * An OCCUPIED primary slot is only ever removed when it holds a byte-identical
+ * duplicate of the copy being archived. A DIFFERING archive — the residual
+ * last-copy-loss path: a cycle-1 restore archives the user's edited bytes to
+ * `evidence/<skill>`, then a later same-txn generation re-moves a byte-pristine
+ * tree and re-enters restore with `destinationMatches` true — is preserved
+ * in place and the incoming copy is moved to a fresh suffixed path via the
+ * no-clobber primitive. The chosen archive path is journaled BEFORE the move.
+ */
+function disposeQuarantineToEvidence(
+  transactionDir: string,
+  journal: CodexFallbackRetirementJournal,
+  entry: CodexFallbackRetirementEntry,
+  paths: RetirementRestorePaths,
+  index: number,
+  observedTreeDigest: string | undefined,
+  failpoint?: ApplyCodexFallbackRetirementOptions['failpoint'],
+): void {
+  failpoint?.(`before-quarantine-disposal:${index}`);
+  const evidenceRoot = join(transactionDir, RETIREMENT_EVIDENCE_DIR);
+  if (lstatSafe(evidenceRoot) === null) mkdirSync(evidenceRoot, { mode: 0o700 });
+  const primaryEvidence = join(evidenceRoot, entry.skillName);
+  if (!isInside(transactionDir, primaryEvidence)) throw new Error(`unconfined retirement evidence: ${primaryEvidence}`);
+  const existing = lstatSafe(primaryEvidence);
+  const incomingDigest = existing === null ? null : exactPhysicalDirectoryDigest(paths.destination);
+  const duplicate =
+    existing !== null && incomingDigest !== null && exactPhysicalDirectoryDigest(primaryEvidence) === incomingDigest;
+
+  let evidencePath: string;
+  if (duplicate || existing === null) {
+    // Empty slot, or the primary archive already holds these exact bytes. In the
+    // duplicate case removing the archive and re-moving the byte-identical copy
+    // loses nothing (this is the prior single-archive behavior, kept verbatim).
+    evidencePath = primaryEvidence;
+    entry.evidence = entry.skillName;
+  } else {
+    // Occupied by a DIFFERING tree that must survive: claim a fresh suffixed
+    // path and NEVER delete the existing archive.
+    const fresh = claimFreshEvidencePath(evidenceRoot, entry.skillName, transactionDir);
+    evidencePath = fresh.path;
+    entry.evidence = fresh.name;
+  }
+  journal.phase = 'restoring';
+  writeDurableRetirementJournal(transactionDir, journal, failpoint); // persist the chosen archive path BEFORE the move
+  if (duplicate) rmSync(primaryEvidence, { recursive: true, force: true }); // remove only the byte-identical duplicate
+  if (existing === null || duplicate) {
+    renameSync(paths.destination, evidencePath); // ATOMIC — the last copy is MOVED aside, never recursive-deleted
+  } else {
+    atomicRenameDirectoryNoClobber(paths.destination, evidencePath); // no-clobber onto a fresh path; old archive untouched
+  }
+  fsyncPath(evidenceRoot);
+  fsyncPath(paths.quarantine);
+  failpoint?.(`after-quarantine-disposal:${index}`);
+  // Confirm the live tree survived the check/disposal window before declaring success.
+  if (!matchesRestoreIdentity(paths.source, entry, observedTreeDigest)) {
+    const retained = lstatSafe(paths.source) === null ? 'changed evidence retained' : 'both trees retained';
+    writeRestoreConflict(
+      transactionDir,
+      journal,
+      entry,
+      `fallback retirement restored source changed during disposal at ${paths.source}`,
+      failpoint,
+      retained,
+    );
+  }
+}
+
+function stageRetirementRestore(
+  paths: RetirementRestorePaths,
+  entry: CodexFallbackRetirementEntry,
+  index: number,
+  observedTreeDigest: string | undefined,
+  failpoint?: ApplyCodexFallbackRetirementOptions['failpoint'],
+): void {
+  if (lstatSafe(paths.stagingRoot) === null) mkdirSync(paths.stagingRoot, { mode: 0o700 });
+  assertCanonicalPhysicalDirectory(paths.stagingRoot, 'fallback retirement restore staging');
+  if (lstatSafe(paths.staging) !== null) rmSync(paths.staging, { recursive: true });
+  mkdirSync(paths.staging, { mode: lstatSync(paths.destination).mode & 0o7777 });
+  failpoint?.(`after-restore-staging-create:${index}`);
+  for (const [copyIndex, name] of readdirSync(paths.destination).entries()) {
+    cpSync(join(paths.destination, name), join(paths.staging, name), { recursive: true, preserveTimestamps: true });
+    failpoint?.(`after-restore-copy:${index}:${copyIndex}`);
+  }
+  chmodSync(paths.staging, lstatSync(paths.destination).mode & 0o7777);
+  if (!matchesRestoreIdentity(paths.staging, entry, observedTreeDigest)) {
+    throw new Error(`fallback retirement restore staging changed: ${paths.staging}`);
+  }
+  failpoint?.(`after-restore-verification:${index}`);
+  fsyncPhysicalTree(paths.staging);
+  fsyncPath(paths.stagingRoot);
+  failpoint?.(`after-restore-sync:${index}`);
+}
+
+function publishRetirementRestore(
+  fallbackSkillsDir: string,
+  transactionDir: string,
+  journal: CodexFallbackRetirementJournal,
+  entry: CodexFallbackRetirementEntry,
+  paths: RetirementRestorePaths,
+  index: number,
+  observedTreeDigest: string | undefined,
+  failpoint?: ApplyCodexFallbackRetirementOptions['failpoint'],
+): void {
+  failpoint?.(`before-restore-publication:${index}`);
+  validateQuarantineDirectory(fallbackSkillsDir, transactionDir);
+  if (!matchesRestoreIdentity(paths.destination, entry, observedTreeDigest)) {
+    throw new Error(`fallback retirement quarantine changed before republication: ${paths.destination}`);
+  }
+  if (lstatSafe(paths.source) !== null) {
+    writeRestoreConflict(
+      transactionDir,
+      journal,
+      entry,
+      `fallback retirement restore conflict at ${paths.source}`,
+      failpoint,
+    );
+  }
+  try {
+    atomicRenameDirectoryNoClobber(paths.staging, paths.source);
+  } catch (error) {
+    if (lstatSafe(paths.source) !== null) {
+      writeRestoreConflict(
+        transactionDir,
+        journal,
+        entry,
+        `fallback retirement restore conflict at ${paths.source}`,
+        failpoint,
+      );
+    }
+    throw error;
+  }
+  failpoint?.(`after-restore-publication:${index}`);
+  fsyncPhysicalTree(paths.source);
+  fsyncPath(fallbackSkillsDir);
+  failpoint?.(`after-restore-filesystem:${index}`);
+  if (!matchesRestoreIdentity(paths.source, entry, observedTreeDigest)) {
+    writeRestoreConflict(
+      transactionDir,
+      journal,
+      entry,
+      `fallback retirement restore verification failed at ${paths.source}`,
+      failpoint,
+    );
+  }
+  cleanupRestoredRetirementDestination(
+    fallbackSkillsDir,
+    transactionDir,
+    journal,
+    entry,
+    paths,
+    index,
+    observedTreeDigest,
+    failpoint,
+  );
+  rmSync(paths.staging, { recursive: true, force: true });
+  fsyncPath(paths.stagingRoot);
+  failpoint?.(`after-restore:${index}`);
+}
+
+/**
+ * Neither the live source nor the quarantine copy is present. If the quarantine
+ * copy was already archived aside under evidence/ (a valid archived tree
+ * exists), surface a recoverable conflict instead of the catastrophic throw —
+ * the last intact changed copy is never lost.
+ */
+function resolveNeitherTreeRestore(
+  transactionDir: string,
+  journal: CodexFallbackRetirementJournal,
+  entry: CodexFallbackRetirementEntry,
+  paths: RetirementRestorePaths,
+  failpoint?: ApplyCodexFallbackRetirementOptions['failpoint'],
+): never {
+  const evidencePath = entry.evidence ? join(transactionDir, RETIREMENT_EVIDENCE_DIR, entry.evidence) : null;
+  const evidenceDigest = evidencePath ? exactPhysicalDirectoryDigest(evidencePath) : null;
+  if (
+    evidenceDigest !== null &&
+    (entry.observedTreeDigest === undefined || evidenceDigest === entry.observedTreeDigest)
+  ) {
+    writeRestoreConflict(
+      transactionDir,
+      journal,
+      entry,
+      `fallback retirement changed evidence retained at ${evidencePath}`,
+      failpoint,
+      'changed evidence retained',
+    );
+  }
+  throw new Error(`fallback retirement restore has neither live nor quarantined tree: ${paths.source}`);
+}
+
+function restoreRetirementEntry(
+  fallbackSkillsDir: string,
+  transactionDir: string,
+  journal: CodexFallbackRetirementJournal,
+  entry: CodexFallbackRetirementEntry,
+  index: number,
+  failpoint?: ApplyCodexFallbackRetirementOptions['failpoint'],
+): void {
+  const paths = retirementRestorePaths(fallbackSkillsDir, transactionDir, entry);
+  const sourceExists = lstatSafe(paths.source) !== null;
+  const destinationExists = lstatSafe(paths.destination) !== null;
+  const sourceMatches = matchesFallbackIdentity(paths.source, entry);
+  const destinationMatches = matchesFallbackIdentity(paths.destination, entry);
+  const observed = entry.observedTreeDigest;
+  const sourceObserved = observed !== undefined && matchesRestoreIdentity(paths.source, entry, observed);
+  const destinationObserved = observed !== undefined && matchesRestoreIdentity(paths.destination, entry, observed);
+
+  if ((sourceMatches && destinationMatches) || (sourceObserved && destinationObserved)) {
+    cleanupRestoredRetirementDestination(
+      fallbackSkillsDir,
+      transactionDir,
+      journal,
+      entry,
+      paths,
+      index,
+      sourceObserved ? observed : undefined,
+      failpoint,
+    );
+    return;
+  }
+  if ((sourceMatches || sourceObserved) && !destinationExists) {
+    markRetirementEntryRestored(transactionDir, journal, entry, 'restored', failpoint);
+    return;
+  }
+  if (sourceExists && destinationExists) {
+    writeRestoreConflict(
+      transactionDir,
+      journal,
+      entry,
+      `fallback retirement restore conflict at ${paths.source}`,
+      failpoint,
+    );
+  }
+  if (sourceExists) {
+    entry.observedTreeDigest = exactPhysicalDirectoryDigest(paths.source) ?? undefined;
+    markRetirementEntryRestored(transactionDir, journal, entry, 'preserved-live', failpoint);
+    return;
+  }
+  if (!destinationExists) {
+    resolveNeitherTreeRestore(transactionDir, journal, entry, paths, failpoint);
+  }
+
+  let restoreDigest: string | undefined;
+  if (!destinationMatches) {
+    restoreDigest = exactPhysicalDirectoryDigest(paths.destination) ?? undefined;
+    if (restoreDigest === undefined) {
+      throw new Error(`fallback retirement quarantine is not a recoverable physical tree: ${paths.destination}`);
+    }
+    entry.observedTreeDigest = restoreDigest;
+    entry.phase = 'restore-observed';
+    journal.phase = 'restoring';
+    writeDurableRetirementJournal(transactionDir, journal, failpoint);
+    failpoint?.(`after-restore-observation:${index}`);
+  }
+  failpoint?.(`before-restore:${index}`);
+  stageRetirementRestore(paths, entry, index, restoreDigest, failpoint);
+  publishRetirementRestore(fallbackSkillsDir, transactionDir, journal, entry, paths, index, restoreDigest, failpoint);
+}
+
+function restoreRetirementMoves(
+  fallbackSkillsDir: string,
+  transactionDir: string,
+  journal: CodexFallbackRetirementJournal,
+  failpoint?: ApplyCodexFallbackRetirementOptions['failpoint'],
+): void {
+  journal.phase = 'restoring';
+  writeDurableRetirementJournal(transactionDir, journal, failpoint);
+  for (let index = journal.entries.length - 1; index >= 0; index -= 1) {
+    const entry = journal.entries[index];
+    if (entry === undefined) continue;
+    restoreRetirementEntry(fallbackSkillsDir, transactionDir, journal, entry, index, failpoint);
+  }
+  journal.phase = 'restored';
+  writeDurableRetirementJournal(transactionDir, journal, failpoint);
+}
+
+function prepareRetirementJournal(
+  plan: CodexFallbackRetirementPlan,
+  transactionRoot: string,
+  transactionDir: string,
+  failpoint?: ApplyCodexFallbackRetirementOptions['failpoint'],
+): CodexFallbackRetirementJournal {
+  mkdirSync(transactionRoot, { recursive: true, mode: 0o700 });
+  assertCanonicalPhysicalDirectory(transactionRoot, 'fallback retirement transaction root');
+  mkdirSync(transactionDir, { mode: 0o700 });
+  assertCanonicalPhysicalDirectory(transactionDir, 'fallback retirement transaction');
+  const quarantine = join(transactionDir, 'quarantine');
+  mkdirSync(quarantine, { mode: 0o700 });
+  validateQuarantineDirectory(plan.fallbackSkillsDir, transactionDir);
+  const journal: CodexFallbackRetirementJournal = {
+    ...plan,
+    phase: 'prepared',
+    entries: plan.accepted.map((entry) => ({
+      ...entry,
+      destination: join(quarantine, entry.skillName),
+      phase: 'planned',
+    })),
+  };
+  validateRetirementPaths(plan.fallbackSkillsDir, transactionDir, journal);
+  writeDurableRetirementJournal(transactionDir, journal, failpoint);
+  fsyncPath(transactionRoot);
+  fsyncPath(dirname(transactionRoot));
+  return journal;
+}
+
+function loadOrPrepareRetirementJournal(
+  plan: CodexFallbackRetirementPlan,
+  fallbackSkillsDir: string,
+  transactionRoot: string,
+  transactionDir: string,
+  failpoint?: ApplyCodexFallbackRetirementOptions['failpoint'],
+): CodexFallbackRetirementJournal {
+  if (lstatSafe(transactionRoot) !== null) {
+    assertCanonicalPhysicalDirectory(transactionRoot, 'fallback retirement transaction root');
+  }
+  if (lstatSafe(transactionDir) !== null) {
+    assertCanonicalPhysicalDirectory(transactionDir, 'fallback retirement transaction');
+  }
+  if (lstatSafe(transactionDir) !== null && lstatSafe(join(transactionDir, 'journal.json')) === null) {
+    const quarantine = join(transactionDir, 'quarantine');
+    if (lstatSafe(quarantine) !== null && readdirSync(quarantine).length > 0) {
+      throw new Error(`unconstrained Codex fallback retirement debris: ${transactionDir}`);
+    }
+    rmSync(transactionDir, { recursive: true });
+    fsyncPath(transactionRoot);
+  }
+  return lstatSafe(transactionDir) === null
+    ? prepareRetirementJournal(plan, transactionRoot, transactionDir, failpoint)
+    : readRetirementJournal(fallbackSkillsDir, transactionDir);
+}
+
+function committedRetirementResult(
+  plan: CodexFallbackRetirementPlan,
+  journal: CodexFallbackRetirementJournal,
+  fallback: string,
+  transactionRoot: string,
+  transactionDir: string,
+  options: ApplyCodexFallbackRetirementOptions,
+): CodexFallbackRetirementResult {
+  const resurrected = journal.entries.filter((entry) =>
+    matchesFallbackIdentity(join(plan.fallbackSkillsDir, entry.skillName), entry),
+  );
+  if (resurrected.length > 0) {
+    let generation = (plan.generation ?? 0) + 1;
+    let generationId = retirementTransactionId(resurrected, generation);
+    while (lstatSafe(join(transactionRoot, `txn-${generationId}`)) !== null) {
+      generation += 1;
+      generationId = retirementTransactionId(resurrected, generation);
+    }
+    const generationPlan = {
+      ...plan,
+      generation,
+      transactionId: generationId,
+      accepted: resurrected.map(
+        ({ destination: _destination, phase: _phase, observedTreeDigest: _observed, evidence: _evidence, ...entry }) =>
+          entry,
+      ),
+    };
+    // Reuse the already-held lock (recursion drives the internal body, never the public shell).
+    return applyRetirementLocked(generationPlan, fallback, transactionRoot, options);
+  }
+  return {
+    transactionId: plan.transactionId,
+    transactionDir,
+    status: 'already-committed',
+    retired: journal.accepted.map((entry) => entry.skillName),
+  };
+}
+
+/**
+ * Re-prove every source's identity before a forward (re-)move. This resets each
+ * entry to `planned` but DELIBERATELY does NOT clear `entry.evidence` between
+ * generations: that field is a durable pointer to a changed-tree copy archived
+ * aside by a PRIOR restore, and it is the only in-journal reference
+ * {@link resolveNeitherTreeRestore} uses to convert a catastrophic "neither
+ * tree" into a recoverable "changed evidence retained" — clearing it would
+ * weaken the never-lose-a-copy invariant. On-disk safety no longer depends on
+ * this field regardless: {@link disposeQuarantineToEvidence} re-reads the
+ * evidence slot from disk and refuses to overwrite a differing archive, so a
+ * stale `entry.evidence` can never authorize data loss.
+ */
+function validateRetirementSources(
+  fallbackSkillsDir: string,
+  transactionDir: string,
+  journal: CodexFallbackRetirementJournal,
+): void {
+  for (const entry of journal.entries) {
+    const quarantine = validateQuarantineDirectory(fallbackSkillsDir, transactionDir);
+    const source = join(fallbackSkillsDir, entry.skillName);
+    const destination = join(quarantine, entry.skillName);
+    entry.phase = 'planned';
+    if (!matchesFallbackIdentity(source, entry)) {
+      throw new Error(`fallback retirement source changed after planning: ${source}`);
+    }
+    if (lstatSafe(destination) !== null) throw new Error(`fallback retirement quarantine collision: ${destination}`);
+  }
+}
+
+function moveRetirementEntries(
+  fallbackSkillsDir: string,
+  transactionDir: string,
+  journal: CodexFallbackRetirementJournal,
+  failpoint?: ApplyCodexFallbackRetirementOptions['failpoint'],
+): void {
+  journal.phase = 'moving';
+  writeDurableRetirementJournal(transactionDir, journal, failpoint);
+  failpoint?.('after-journal-durable');
+  for (const [index, entry] of journal.entries.entries()) {
+    failpoint?.(`before-move:${index}`);
+    const quarantine = validateQuarantineDirectory(fallbackSkillsDir, transactionDir);
+    const source = join(fallbackSkillsDir, entry.skillName);
+    const destination = join(quarantine, entry.skillName);
+    if (!matchesFallbackIdentity(source, entry)) {
+      throw new Error(`fallback retirement source changed at move boundary: ${source}`);
+    }
+    if (lstatSafe(destination) !== null) throw new Error(`fallback retirement quarantine collision: ${destination}`);
+    failpoint?.(`after-move-boundary-identification:${index}`);
+    // This narrows the mutation window; Node exposes no atomic identity-CAS rename, so verification after rename remains required.
+    renameSync(source, destination);
+    fsyncPath(fallbackSkillsDir);
+    fsyncPath(quarantine);
+    failpoint?.(`after-move-filesystem:${index}`);
+    entry.phase = 'moved';
+    writeDurableRetirementJournal(transactionDir, journal, failpoint);
+    failpoint?.(`after-move:${index}`);
+  }
+}
+
+function verifyRetirementDestinations(
+  fallbackSkillsDir: string,
+  transactionDir: string,
+  journal: CodexFallbackRetirementJournal,
+  failpoint?: ApplyCodexFallbackRetirementOptions['failpoint'],
+): void {
+  journal.phase = 'verifying';
+  writeDurableRetirementJournal(transactionDir, journal, failpoint);
+  for (const [index, entry] of journal.entries.entries()) {
+    failpoint?.(`before-destination-verification:${index}`);
+    const quarantine = validateQuarantineDirectory(fallbackSkillsDir, transactionDir);
+    const source = join(fallbackSkillsDir, entry.skillName);
+    const destination = join(quarantine, entry.skillName);
+    if (!matchesFallbackIdentity(destination, entry) || lstatSafe(source) !== null) {
+      throw new Error(`fallback retirement destination verification failed: ${destination}`);
+    }
+    entry.phase = 'verified';
+    writeDurableRetirementJournal(transactionDir, journal, failpoint);
+    failpoint?.(`after-verification:${index}`);
+  }
+}
+
+function commitRetirementJournal(
+  transactionRoot: string,
+  transactionDir: string,
+  journal: CodexFallbackRetirementJournal,
+  failpoint?: ApplyCodexFallbackRetirementOptions['failpoint'],
+): void {
+  failpoint?.('before-commit');
+  journal.phase = 'committed';
+  writeDurableRetirementJournal(transactionDir, journal, failpoint);
+  failpoint?.('after-commit-journal');
+  fsyncPath(transactionRoot);
+  failpoint?.('after-commit-durable');
+}
+
+/** Portable synchronous bounded sleep — no dependency on the Bun global. */
+function sleepSyncMs(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function retirementLockWaitMs(): number {
+  const override = process.env.GENIE_RETIREMENT_LOCK_WAIT_MS;
+  const parsed = override === undefined ? Number.NaN : Number(override);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : RETIREMENT_LOCK_WAIT_MS;
+}
+
+/**
+ * Bounded-blocking wrapper over the whole tested {@link acquireSyncLock}
+ * (reuses its O_EXCL create, pid + process-start-identity liveness, staleness,
+ * and guard-file stealing verbatim). A stale/dead holder is stolen inside
+ * `acquireSyncLock`; a live holder is retried until the deadline, then this
+ * fails closed having mutated nothing on disk.
+ */
+function acquireRetirementLock(lockPath: string): { release: () => void } {
+  const deadline = Date.now() + retirementLockWaitMs();
+  for (;;) {
+    const lock = acquireSyncLock(lockPath);
+    if (!('skipped' in lock)) return lock;
+    if (Date.now() >= deadline) {
+      throw new Error(`fallback retirement lock contended; no data changed: ${lockPath}`);
+    }
+    sleepSyncMs(25);
+  }
+}
+
+/**
+ * Assert a physical transaction root BEFORE the lock path is ever opened, so a
+ * symlinked root is rejected before any write can reach its target (preserves
+ * the symlink-escape rejection). Creates the root only when absent.
+ */
+function ensurePhysicalTransactionRoot(transactionRoot: string): void {
+  if (lstatSafe(transactionRoot) !== null) {
+    assertCanonicalPhysicalDirectory(transactionRoot, 'fallback retirement transaction root');
+  } else {
+    mkdirSync(transactionRoot, { recursive: true, mode: 0o700 });
+  }
+}
+
+/**
+ * Retire one already-planned batch into a retained hidden quarantine. The
+ * complete journal is durable before the first rename. Pre-commit failures
+ * restore moved trees in reverse without replacing a competing live path.
+ *
+ * A single-writer lock scoped to this fallback root's retirement root
+ * serializes every mutation under it, collapsing the concurrent-invocation
+ * threat class. The public function is the ONLY place that takes/releases the
+ * lock; the generation recursion drives the internal body directly.
+ */
+export function applyCodexFallbackRetirement(
+  plan: CodexFallbackRetirementPlan,
+  options: ApplyCodexFallbackRetirementOptions = {},
+): CodexFallbackRetirementResult {
+  const fallback = canonicalPhysicalFallbackRoot(plan.fallbackSkillsDir);
+  if (
+    fallback !== plan.fallbackSkillsDir ||
+    retirementTransactionId(plan.accepted, plan.generation ?? 0) !== plan.transactionId
+  ) {
+    throw new Error('fallback retirement plan identity changed after planning');
+  }
+  const transactionRoot = join(fallback, CODEX_FALLBACK_RETIREMENT_ROOT);
+  ensurePhysicalTransactionRoot(transactionRoot); // MUST run before the lock — rejects a symlinked root first
+  const lock = acquireRetirementLock(join(transactionRoot, RETIREMENT_LOCK_NAME));
+  try {
+    return applyRetirementLocked(plan, fallback, transactionRoot, options);
+  } finally {
+    lock.release();
+  }
+}
+
+/** Forward + catch-restore body of a retirement, assuming the retirement lock is already held. */
+function applyRetirementLocked(
+  plan: CodexFallbackRetirementPlan,
+  fallback: string,
+  transactionRoot: string,
+  options: ApplyCodexFallbackRetirementOptions,
+): CodexFallbackRetirementResult {
+  const transactionDir = join(transactionRoot, `txn-${plan.transactionId}`);
+  validateRetirementPaths(fallback, transactionDir, {
+    ...plan,
+    phase: 'prepared',
+    entries: plan.accepted.map((entry) => ({
+      ...entry,
+      destination: join(transactionDir, 'quarantine', entry.skillName),
+      phase: 'planned',
+    })),
+  });
+  let journal = loadOrPrepareRetirementJournal(plan, fallback, transactionRoot, transactionDir, options.failpoint);
+  if (!sameRetirementBatch(plan, journal))
+    throw new Error(`fallback retirement transaction identity conflict: ${transactionDir}`);
+  if (journal.phase === 'committed') {
+    return committedRetirementResult(plan, journal, fallback, transactionRoot, transactionDir, options);
+  }
+  try {
+    if (
+      journal.entries.some(
+        (entry) =>
+          lstatSafe(entry.destination) !== null ||
+          lstatSafe(join(transactionDir, RETIREMENT_EVIDENCE_DIR, entry.skillName)) !== null,
+      )
+    ) {
+      restoreRetirementMoves(fallback, transactionDir, journal, options.failpoint);
+      journal = readRetirementJournal(fallback, transactionDir);
+    }
+    validateRetirementSources(fallback, transactionDir, journal);
+    moveRetirementEntries(fallback, transactionDir, journal, options.failpoint);
+    verifyRetirementDestinations(fallback, transactionDir, journal, options.failpoint);
+    commitRetirementJournal(transactionRoot, transactionDir, journal, options.failpoint);
+    return {
+      transactionId: plan.transactionId,
+      transactionDir,
+      status: 'committed',
+      retired: journal.accepted.map((entry) => entry.skillName),
+    };
+  } catch (error) {
+    journal = readRetirementJournal(fallback, transactionDir);
+    if (journal.phase !== 'committed') {
+      try {
+        restoreRetirementMoves(fallback, transactionDir, journal, options.failpoint);
+      } catch (restoreError) {
+        throw new Error(`${errMsg(error)}; fallback retirement restore failed: ${errMsg(restoreError)}`);
+      }
+    }
+    throw error;
+  }
+}
+
+/**
+ * Store-enumerating recovery: reconstruct each on-disk transaction's plan from
+ * its own journal (not from live paths, which a fresh process cannot replan
+ * once sources are quarantined) and drive it through the same idempotent
+ * {@link applyRetirementLocked}. Per-transaction isolation records a failure
+ * without sinking the rest of the sweep; a committed base whose skill
+ * resurrected finishes its generation inline under the held lock.
+ */
+export function recoverCodexFallbackRetirements(
+  fallbackSkillsDir: string,
+  options: ApplyCodexFallbackRetirementOptions = {},
+): CodexFallbackRetirementResult[] {
+  const fallback = canonicalPhysicalFallbackRoot(fallbackSkillsDir);
+  const transactionRoot = join(fallback, CODEX_FALLBACK_RETIREMENT_ROOT);
+  if (lstatSafe(transactionRoot) === null) return [];
+  assertCanonicalPhysicalDirectory(transactionRoot, 'fallback retirement transaction root');
+  const lock = acquireRetirementLock(join(transactionRoot, RETIREMENT_LOCK_NAME));
+  try {
+    const results: CodexFallbackRetirementResult[] = [];
+    const failures: string[] = [];
+    for (const entry of readdirSync(transactionRoot, { withFileTypes: true })) {
+      if (!entry.name.startsWith('txn-')) continue; // skips .retirement.lock, .retirement.lock.steal, temps
+      const transactionDir = join(transactionRoot, entry.name);
+      try {
+        results.push(recoverOneRetirement(fallback, transactionRoot, transactionDir, entry.name, options));
+      } catch (error) {
+        failures.push(`fallback retirement recovery failed for ${entry.name}: ${errMsg(error)}`);
+      }
+    }
+    if (failures.length > 0) throw new Error(failures.join('; ')); // surface after the full pass; evidence retained
+    return results;
+  } finally {
+    lock.release();
+  }
+}
+
+function recoverOneRetirement(
+  fallback: string,
+  transactionRoot: string,
+  transactionDir: string,
+  dirName: string,
+  options: ApplyCodexFallbackRetirementOptions,
+): CodexFallbackRetirementResult {
+  let journal: CodexFallbackRetirementJournal;
+  try {
+    journal = readRetirementJournal(fallback, transactionDir); // validates identity + confinement from disk
+  } catch (error) {
+    // Journal-less / empty-quarantine debris: apply the exact rule
+    // loadOrPrepareRetirementJournal uses. Otherwise fail closed, evidence retained.
+    const quarantine = join(transactionDir, 'quarantine');
+    const journalAbsent = lstatSafe(join(transactionDir, 'journal.json')) === null;
+    const quarantineEmpty = lstatSafe(quarantine) === null || readdirSync(quarantine).length === 0;
+    if (journalAbsent && quarantineEmpty) {
+      rmSync(transactionDir, { recursive: true });
+      fsyncPath(transactionRoot);
+      return { transactionId: dirName.slice(4), transactionDir, status: 'already-committed', retired: [] };
+    }
+    throw error;
+  }
+  const plan: CodexFallbackRetirementPlan = {
+    version: journal.version,
+    generation: journal.generation,
+    fallbackSkillsDir: journal.fallbackSkillsDir,
+    transactionId: journal.transactionId,
+    accepted: journal.accepted,
+    preserved: journal.preserved,
+  };
+  return applyRetirementLocked(plan, fallback, transactionRoot, options); // lock already held; one proven path
 }
 
 export interface ManagedSkillTreeRemovalOptions {
@@ -2192,75 +3722,16 @@ function stampClaudeWorkflow(ctx: RunContext, claudeDir: string, report: AgentRe
   report.extras.push({ kind: 'stamp', action: res.action, detail: res.targetPath });
 }
 
-function syncCodex(ctx: RunContext, report: AgentReport): void {
-  const codexDir = ctx.targets.codex;
-  if (!existsSync(codexDir)) return;
-  report.detected = true;
-  migrateLegacyCodexCurated(ctx, codexDir, report);
-  // Codex loads user skills from the top-level `~/.agents/skills/<name>` tier.
-  // Everything under `<codexDir>/skills/` (incl. OpenAI's `.system/`) is left
-  // alone: hidden dirs are pruned by codex and were never genie's to manage.
-  syncSkillDirsInto(ctx, 'codex', ctx.targets.agentsSkills, report);
-  if (report.skills.some((skill) => WRITE_ACTIONS.has(skill.action))) {
-    report.advisories.push('restart Codex to pick up updated skills');
-  }
-}
-
-/**
- * One-time cleanup of the retired `<codexDir>/skills/.curated` lane (see
- * {@link codexLegacyCuratedDir}): every manifest-managed dir there is a
- * stranded orphan codex never loaded. Digest-clean managed dirs are backed up
- * outside GENIE_HOME and removed. Modified or unmanaged entries are preserved
- * in place; a migration must never trade live user data for a backup that a
- * later uninstall deletes. The lane dir itself goes only once it is empty.
- * Genie's own crashed-run staging debris is swept unbacked.
- */
-function migrateLegacyCodexCurated(ctx: RunContext, codexDir: string, report: AgentReport): void {
-  const legacyDir = codexLegacyCuratedDir(codexDir);
-  if (!existsSync(legacyDir)) return;
-  let kept = 0;
-  for (const entry of readdirSync(legacyDir, { withFileTypes: true })) {
-    const dir = join(legacyDir, entry.name);
-    if (entry.name.endsWith(STAGING_SUFFIX) || entry.name.endsWith(PREV_SUFFIX)) {
-      rmSync(dir, { recursive: true, force: true });
-      continue;
-    }
-    if (classifyEntry(dir, entry) !== 'dir') {
-      kept += 1;
-      continue;
-    }
-    const manifest = readManifest(dir);
-    if (manifest === null) {
-      kept += 1;
-      continue;
-    }
-    const contentDigest = acceptedManagedDirPhysicalDigest(dir, manifest.manifest);
-    if (contentDigest === null) {
-      kept += 1;
-      report.extras.push({ kind: 'legacy-curated', action: 'kept-modified', detail: dir });
-      report.advisories.push(`kept modified legacy codex skill ${entry.name} at ${dir}`);
-      continue;
-    }
-    try {
-      removeManagedDir(ctx, 'codex-legacy-curated', entry.name, dir, {
-        contentDigest,
-        manifestDigest: manifest.fileDigest,
-      });
-      report.extras.push({ kind: 'legacy-curated', action: 'removed', detail: dir });
-    } catch (error) {
-      kept += 1;
-      const failure = `legacy codex skill ${entry.name} removal failed: ${errMsg(error)}`;
-      report.extras.push({ kind: 'legacy-curated', action: 'kept-modified', detail: dir });
-      report.advisories.push(failure);
-      recordFailure(report, failure);
-    }
-  }
-  if (kept === 0) {
-    rmSync(legacyDir, { recursive: true, force: true });
-  } else {
-    report.advisories.push(`legacy codex lane ${legacyDir} contains unmanaged entries; left in place`);
-  }
-}
+// The codex writer (`syncCodex`) that used to live here is retired: codex
+// product skills are plugin-only, converged end-to-end by
+// `installCodexIntegration` in runtime-integrations.ts (plugin → health proof
+// → fallback retirement → role agents). `runAgentSync` has no `codex` arm, so
+// this module never writes into `~/.agents/skills` again (R2/A1, structural).
+// The classifier/retirement primitives that flow — `codexLegacyCuratedDir`,
+// `inspectManagedSkillTree`, `planCodexFallbackRetirement`,
+// `applyCodexFallbackRetirement`, `recoverCodexFallbackRetirements` — remain:
+// they are shared with `genie uninstall` and `genie doctor`, which read/repair
+// that tier independently of this file's write path.
 
 type LinkAction = 'created' | 'unchanged' | 'adopted' | 'skipped-unmanaged-kept';
 
@@ -2280,6 +3751,85 @@ function syncHermes(ctx: RunContext, opts: AgentSyncOptions, report: AgentReport
   // enabled; fire enable exactly once. Never gated on the sticky-profile link.
   if ((mainAction === 'created' || mainAction === 'adopted') && binary !== null) {
     runHermesEnable(opts, binary, report);
+  }
+  // AFTER the plugin link/enable converge, wire the two config legs (MCP server +
+  // skills external dir) into the live profile's config.yaml. Each leg is
+  // independently non-fatal: an inline-shaped operator config degrades to a WARN
+  // skip and any helper error records `failed`, but neither ever throws, sets
+  // report.failures, or blocks the other leg — the plugin link has already won.
+  convergeHermesConfig(ctx, hermesHome, report);
+}
+
+/**
+ * Resolve the Hermes `config.yaml` for the live profile the plugin-link lane
+ * targets: the active sticky profile's home when a safe `active_profile` is set,
+ * else the default Hermes home. Mirrors {@link ensureStickyProfileLink}'s
+ * validation so a config write lands in the same home whose plugins/genie link is
+ * converged. An unsafe/invalid profile falls back to the default home (never an
+ * escaped path); the link lane already surfaces the invalid-profile failure.
+ */
+export function resolveHermesConfigPath(hermesHome: string): string {
+  return join(resolveHermesProfileHome(hermesHome), 'config.yaml');
+}
+
+function resolveHermesProfileHome(hermesHome: string): string {
+  const active = readTrimmed(join(hermesHome, 'active_profile'));
+  if (active === null || active === '') return hermesHome;
+  // Same guard the sticky-link lane enforces — an invalid/unsafe profile name
+  // must never redirect a write outside the profiles root.
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(active) || active === '.' || active === '..') return hermesHome;
+  const profilesRoot = resolve(hermesHome, 'profiles');
+  const profileRoot = resolve(profilesRoot, active);
+  if (!profileRoot.startsWith(`${profilesRoot}${sep}`)) return hermesHome;
+  return profileRoot;
+}
+
+/**
+ * Converge the MCP-server and skills-external-dir legs into the one live-profile
+ * config.yaml. Both legs back up the same file before mutating it, so each is
+ * handed a distinct backup timestamp (skills offset +1s) — otherwise two
+ * same-run mutations would write the same `config.yaml.genie-backup-<stamp>`
+ * name and the skills leg would clobber the MCP leg's pristine backup.
+ */
+function convergeHermesConfig(ctx: RunContext, hermesHome: string, report: AgentReport): void {
+  const configPath = resolveHermesConfigPath(hermesHome);
+  const base = ctx.now().getTime();
+  convergeHermesLeg(
+    'mcp-config',
+    report,
+    () => mergeMcpServersGenie({ configPath, genieHome: ctx.genieHome, now: new Date(base) }).status,
+  );
+  convergeHermesLeg(
+    'skills-dir',
+    report,
+    () => mergeSkillsExternalDir({ configPath, genieHome: ctx.genieHome, now: new Date(base + 1000) }).status,
+  );
+}
+
+/**
+ * Run one Hermes config leg and record its outcome as a report extra, never
+ * throwing. A {@link HermesConfigError} carrying `code === 'inline-top-level-key'`
+ * is the operator's inline/flow-style top-level key: a NON-FATAL convergence
+ * outcome recorded as a `skipped` WARN with the helper's remediation hint
+ * ("rewrite … as a block mapping"). Any other error records `failed`. Neither
+ * sets report.failures — a config-leg outcome must not fail a strict `genie
+ * update` or block the plugin-link / sibling leg that already converged.
+ */
+function convergeHermesLeg(
+  kind: 'mcp-config' | 'skills-dir',
+  report: AgentReport,
+  run: () => 'created' | 'updated' | 'unchanged',
+): void {
+  try {
+    report.extras.push({ kind, action: run() });
+  } catch (err) {
+    if (err instanceof HermesConfigError && err.code === 'inline-top-level-key') {
+      report.extras.push({ kind, action: 'skipped', detail: err.message });
+      report.advisories.push(`hermes ${kind} skipped (inline top-level key): ${err.message}`);
+      return;
+    }
+    report.extras.push({ kind, action: 'failed', detail: errMsg(err) });
+    report.advisories.push(`hermes ${kind} failed: ${errMsg(err)}`);
   }
 }
 
@@ -2410,7 +3960,12 @@ function tryInitializeSyncLock(lockPath: string): LockCreateAttempt {
   let fd: number;
   const token = randomBytes(16).toString('hex');
   const processIdentity = processStartIdentity(process.pid) ?? 'unknown';
-  const ownerRecord = `${process.pid}:${token}:${processIdentity}`;
+  // Host identity is appended as a 4th field so a lock created on one host can
+  // never be stolen from another on an NFS / pid-namespace-shared $HOME. The
+  // shell installer (install.sh) writes only the 3-field `pid:token:unknown`
+  // form and parses just the leading pid, so a 4th field is backward-compatible
+  // both ways: {@link lockOwner} reads it, the shell ignores it.
+  const ownerRecord = `${process.pid}:${token}:${processIdentity}:${currentSyncLockHostId()}`;
   try {
     fd = openSync(lockPath, 'wx');
   } catch (error) {
@@ -2451,19 +4006,49 @@ function isStaleOrInvalidLockTime(mtimeMs: number, nowMs = Date.now()): boolean 
   return ageMs > LOCK_STALE_MS || ageMs < -LOCK_STALE_MS;
 }
 
-/** Parse current pid/token/start locks plus legacy pid/token and pid-only records. */
-function lockOwner(lockPath: string): { pid: number; processIdentity: string | null } | null {
+/**
+ * Parse current `pid:token:start:host` locks plus every legacy form
+ * (`pid:token:start`, `pid:token`, `pid`) and the shell's `pid:token:unknown`.
+ * `host` is absent (→ null) for any record written before this field existed or
+ * by the shell installer; a null host is treated as "unknown host" downstream.
+ */
+function lockOwner(lockPath: string): { pid: number; processIdentity: string | null; host: string | null } | null {
   const raw = readTrimmed(lockPath);
-  const match = raw?.match(/^(\d+)(?::[a-f0-9]{32})?(?::([a-f0-9]{64}|unknown))?$/);
+  const match = raw?.match(/^(\d+)(?::[a-f0-9]{32})?(?::([a-f0-9]{64}|unknown))?(?::([a-f0-9]{64}))?$/);
   if (!match) return null;
   const pid = Number(match[1]);
-  return Number.isSafeInteger(pid) && pid > 0 ? { pid, processIdentity: match[2] ?? null } : null;
+  return Number.isSafeInteger(pid) && pid > 0
+    ? { pid, processIdentity: match[2] ?? null, host: match[3] ?? null }
+    : null;
 }
 
-/** Never steal a live lock; PID reuse is rejected by the process-start identity. */
+/**
+ * Never steal a live lock. Beyond PID-reuse rejection via the process-start
+ * identity, a recorded HOST identity that DIFFERS from this host is treated as a
+ * live owner and never stolen: `process.kill`/`ps` liveness on THIS host says
+ * nothing about a peer on an NFS- or pid-namespace-shared $HOME, so a locally
+ * "dead" pid cannot authorize stealing a lock a remote host may still hold. The
+ * fail-closed asymmetry is deliberate — a wrongly-kept stale lock costs one
+ * manual `rm`; a wrongly-stolen live lock costs a silent double writer.
+ *
+ * Deliberate scope decision (host-less records): a record with NO host field —
+ * pre-this-change debris OR the shell installer's `pid:token:unknown` — falls
+ * through to the legacy pid + start-identity liveness rather than being refused
+ * outright. This preserves the shipped, tested shell<->TS lifecycle-lock parity
+ * contract (install.sh writes and reaps host-less records by pid+mtime; the
+ * guard-debris parity test in update.test.ts pins it). Refusing host-less steals
+ * in TS alone would desynchronize the two acquirers AND still leave the shell
+ * able to cross-host-steal — trading a real regression for incomplete safety.
+ * Because every lock written after this change carries a host field — INCLUDING
+ * every retirement lock (TS-only) and every post-upgrade agent-sync/lifecycle
+ * lock — cross-host steal is prevented everywhere it can actually occur; only
+ * transient legacy/shell-shaped records retain the prior semantics, in lockstep
+ * with the shell.
+ */
 function lockHasLiveOwner(lockPath: string): boolean {
   const owner = lockOwner(lockPath);
-  if (owner === null) return false;
+  if (owner === null) return false; // empty / unparseable record is genuine dead-writer debris
+  if (owner.host !== null && owner.host !== currentSyncLockHostId()) return true; // host-bearing + cross-host → never steal
   try {
     process.kill(owner.pid, 0);
   } catch (error) {
@@ -2478,6 +4063,36 @@ function lockHasLiveOwner(lockPath: string): boolean {
 function releaseOwnedLock(lockPath: string, ownerRecord: string): void {
   if (readTrimmed(lockPath) !== ownerRecord) return;
   rmSyncSafe(lockPath);
+}
+
+let cachedSyncLockHostId: string | null = null;
+
+/**
+ * A stable identity for THIS host, embedded in every lock owner record so a
+ * cross-host stealer can recognize "not my host" and refuse to steal. It is the
+ * sha256 of the hostname plus, on linux, the kernel boot id
+ * (`/proc/sys/kernel/random/boot_id`) — so a reused hostname across reboots
+ * still yields distinct identities where the boot id is readable. Coverage is
+ * scoped to distinct-hostname/distinct-kernel hosts: same-kernel containers
+ * SHARE the boot id (runc/containerd do not namespace it), so two containers
+ * with a pinned identical hostname and a shared $HOME collapse to one host id
+ * and fall back to pid-liveness semantics across pid namespaces. The boot id is
+ * best-effort: an empty read degrades to hostname-only, which is still
+ * host-scoped. Exported for tests that must forge same-host vs cross-host owner
+ * records.
+ */
+export function currentSyncLockHostId(): string {
+  if (cachedSyncLockHostId !== null) return cachedSyncLockHostId;
+  let bootId = '';
+  if (process.platform === 'linux') {
+    try {
+      bootId = readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim();
+    } catch {
+      bootId = '';
+    }
+  }
+  cachedSyncLockHostId = createHash('sha256').update(`${hostname()}\0${bootId}`).digest('hex');
+  return cachedSyncLockHostId;
 }
 
 function processStartIdentity(pid: number): string | null {
@@ -2659,6 +4274,13 @@ function stealStaleLock(lockPath: string): 'cleared' | 'contended' {
  * agent-level failures; a null pluginRoot yields an empty report. Exactly one
  * run per GENIE_HOME may write at a time: a concurrent run returns a report
  * with `skipped` set and performs zero writes.
+ *
+ * R2/A1 is structural here, not caller discipline: there is no `codex` arm
+ * below, so no `selection` value can ever make this function write into
+ * `~/.agents/skills`. Codex product skills are plugin-only, converged
+ * end-to-end by `installCodexIntegration` (plugin → health proof → fallback
+ * retirement → role agents) in runtime-integrations.ts; the old codex writer
+ * (`syncCodex`) is retired.
  */
 export function runAgentSync(opts: AgentSyncOptions = {}): AgentSyncReport {
   const genieHome = opts.genieHome ?? resolveGenieHome();
@@ -2679,9 +4301,6 @@ export function runAgentSync(opts: AgentSyncOptions = {}): AgentSyncReport {
     const agents: AgentReport[] = [];
     if (selection === 'auto' || selection === 'all' || selection === 'claude') {
       agents.push(runAgentSafe('claude', (report) => syncClaude(ctx, report)));
-    }
-    if (selection === 'auto' || selection === 'all' || selection === 'codex') {
-      agents.push(runAgentSafe('codex', (report) => syncCodex(ctx, report)));
     }
     if (selection === 'auto' || selection === 'all') {
       agents.push(runAgentSafe('hermes', (report) => syncHermes(ctx, opts, report)));
@@ -2723,6 +4342,7 @@ function createRunContext(
     return dest;
   };
   return {
+    genieHome,
     pluginRoot,
     hermesRoot: source.hermesRoot,
     version: source.version,
@@ -2784,8 +4404,39 @@ function isOptionalPhysicalMode(value: unknown): value is number | null {
   return value === null || isPhysicalMode(value);
 }
 
+/**
+ * Retirement infrastructure basenames a moved/restored entry name must never
+ * collide with. The dot-prefixed infra (`.retirement.lock`, `.restore-staging`,
+ * `.genie-codex-fallback-retirement`, every `.journal.*` temp) is already
+ * excluded by the leading-dot rule below; these are the non-hidden ones.
+ */
+const RETIREMENT_INFRA_ENTRY_NAMES: ReadonlySet<string> = new Set([
+  'journal.json',
+  'quarantine',
+  RETIREMENT_EVIDENCE_DIR,
+]);
+
+/**
+ * A journal/skill entry name must be a single path component that can never name
+ * the engine's own on-disk infrastructure. Rejecting dot-prefixed names (so
+ * `.`, `..`, `.retirement.lock`, `.restore-staging`,
+ * `.genie-codex-fallback-retirement`, and any `.journal.*` temp are refused) and
+ * the reserved non-hidden infra names (`journal.json`, `quarantine`, `evidence`)
+ * is a forged-journal defense: it is applied at BOTH plan time
+ * ({@link planCodexFallbackRetirement}) and journal re-validation
+ * ({@link validateRetirementPaths} / {@link readRetirementJournal}), so a
+ * crafted `accepted[]`/`entries[]` can never steer a recovery move or restore
+ * onto the transaction's own state. Suffixed evidence archives (`<skill>.2`) are
+ * NOT dot-prefixed and remain valid.
+ */
 function isSafeEntryName(value: string): boolean {
-  return value !== '' && value !== '.' && value !== '..' && !value.includes('/') && !value.includes('\\');
+  return (
+    value !== '' &&
+    !value.startsWith('.') &&
+    !value.includes('/') &&
+    !value.includes('\\') &&
+    !RETIREMENT_INFRA_ENTRY_NAMES.has(value)
+  );
 }
 
 function createExclusiveTransactionDir(parent: string, preferredName: string): string {

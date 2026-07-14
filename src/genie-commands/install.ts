@@ -141,18 +141,37 @@ export function installCommand(
         throw new Error(`Install payload convergence failed: ${failed.map((outcome) => outcome.label).join(', ')}`);
       }
     }
-    if (selection !== 'none') runSync(selection);
-
+    // Codex is now converged end-to-end (plugin → single health proof →
+    // fallback retirement → role agents) through runIntegrations; agent-sync
+    // never writes Genie product skills into ~/.agents/skills (R2) because
+    // `runAgentSync` has no codex arm at all — structural, not selection-gated.
+    // Integrations run BEFORE the Claude/hermes agent-sync so a plugin-incapable
+    // Codex leaves Claude trees byte-identical (R1/A2).
     const results = runIntegrations({ selection });
     for (const result of results) {
       const glyph = result.ok ? '\x1b[32m+\x1b[0m' : '\x1b[33m!\x1b[0m';
       const disabled = result.preservedDisabled ? '; disabled state preserved' : '';
       console.log(`  ${glyph} ${result.runtime}: ${result.detail}${disabled}`);
     }
+    const codexFailed = results.some((result) => result.runtime === 'codex' && !result.ok);
     if (selection !== 'auto' && selection !== 'none') {
       const failed = results.filter((result) => !result.ok);
       if (failed.length > 0)
         throw new Error(`Requested integration failed: ${failed.map((r) => r.runtime).join(', ')}`);
+    }
+    const agentSyncSelection = narrowAgentSyncSelection(selection);
+    if (agentSyncSelection !== null) {
+      if (!codexFailed) {
+        runSync(agentSyncSelection);
+      } else {
+        // selection === 'auto' is the only surviving case here: an explicit
+        // --integrations all/claude/codex codex failure already threw above,
+        // so a silent codexFailed-guarded skip here would otherwise exit 0
+        // with agent-sync never having run and no trace of why.
+        console.log(
+          '  \x1b[33m!\x1b[0m Skipped agent-sync: codex integration failed under --integrations auto (rerun with --integrations claude to sync Claude/hermes only, or fix codex and rerun).',
+        );
+      }
     }
     if (results.some((result) => result.runtime === 'codex' && result.ok && result.hookReviewRequired)) {
       console.log('  \x1b[33m!\x1b[0m Review Genie hooks with /hooks, then start a new Codex task.');
@@ -160,6 +179,20 @@ export function installCommand(
   } finally {
     lease.release();
   }
+}
+
+/**
+ * Gate the agent-sync scope for install. R2/A1 (agent-sync must never write
+ * codex product skills into ~/.agents/skills) is now structural in
+ * `runAgentSync` itself — there is no `codex` arm to narrow away from — so
+ * this only needs to skip agent-sync where it has nothing to do: `none`
+ * (nothing selected) and `codex` (codex converges entirely through
+ * `installCodexIntegration`, never through agent-sync). Every other selection
+ * (`auto`/`all`/`claude`) passes through UNCHANGED so `runAgentSync` sees the
+ * real selection and converges hermes on `auto`/`all` too.
+ */
+export function narrowAgentSyncSelection(selection: IntegrationSelection): IntegrationSelection | null {
+  return selection === 'none' || selection === 'codex' ? null : selection;
 }
 
 /** Validate raw Commander input before cleanup, synchronization, or install side effects. */

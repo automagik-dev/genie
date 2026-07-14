@@ -1,6 +1,6 @@
 {
   "name": "@automagik/genie",
-  "version": "5.260713.1",
+  "version": "5.260714.3",
   "description": "Collaborative terminal toolkit for human + AI workflows. NOTE: npm distribution discontinued 2026-05-09 — install via `curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash` (cosign + SLSA verified). See https://automagik.dev/genie/release-process",
   "license": "MIT",
   "type": "module",
@@ -31,6 +31,8 @@
     "hooks:bind": "bun scripts/hook-content-binding.ts --write",
     "lint:hook-content": "bun scripts/hook-content-binding.ts --check",
     "lint:plugin-executables": "bun scripts/plugin-executables-check.ts",
+    "smoke:codex": "bun run scripts/codex-plugin-only-smoke.ts",
+    "smoke:codex-discovery": "bun run scripts/codex-debug-discovery-smoke.ts",
     "check": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint && bun run lint:complexity-budget && bun run lint:council-workflow && bun run lint:hook-bundles && bun run lint:hook-content && bun run lint:plugin-executables && bun test",
     "check:fast": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint && bun run lint:complexity-budget && bun run lint:council-workflow && bun run lint:hook-bundles && bun run lint:hook-content && bun run lint:plugin-executables",
     "verify:release": "scripts/verify-release.sh"

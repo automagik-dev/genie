@@ -422,27 +422,69 @@ describe('installCommand', () => {
     expect(selection).toBe('none');
   });
 
-  test('selection bounds agent-sync homes and none performs no client sync', () => {
+  test('agent-sync selection passes through unchanged (restore-hermes-sync-leg): codex/none skip it, auto/all/claude reach it as-is', () => {
+    const observed: string[] = [];
+    const runFor = (integrations: 'codex' | 'none' | 'auto' | 'all' | 'claude') =>
+      installCommand(
+        { integrations },
+        makeCleanupSpy().runner,
+        () => undefined,
+        (selection) => observed.push(selection),
+        () => [],
+        noopLease,
+        noopConsent,
+      );
+    // codex converges through runIntegrations only — agent-sync never writes
+    // ~/.agents/skills at all now (R2/A1 is structural in runAgentSync), so
+    // codex/none simply have nothing for agent-sync to do.
+    runFor('codex');
+    runFor('none');
+    expect(observed).toEqual([]);
+    // auto/all/claude pass through UNCHANGED — narrowAgentSyncSelection no
+    // longer collapses them to 'claude', which is what silently killed the
+    // hermes leg (runAgentSync's hermes gate needs 'auto'/'all' verbatim).
+    runFor('auto');
+    runFor('all');
+    runFor('claude');
+    expect(observed).toEqual(['auto', 'all', 'claude']);
+  });
+
+  test('a failed codex integration gates the Claude skill sync so Claude trees stay byte-identical (A2)', () => {
     const observed: string[] = [];
     installCommand(
-      { integrations: 'codex' },
+      { integrations: 'auto' },
       makeCleanupSpy().runner,
       () => undefined,
       (selection) => observed.push(selection),
-      () => [],
+      () => [{ runtime: 'codex' as const, ok: false, detail: 'plugin-incapable Codex' }],
       noopLease,
       noopConsent,
     );
-    installCommand(
-      { integrations: 'none' },
-      makeCleanupSpy().runner,
-      () => undefined,
-      (selection) => observed.push(selection),
-      () => [],
-      noopLease,
-      noopConsent,
-    );
-    expect(observed).toEqual(['codex']);
+    expect(observed).toEqual([]);
+  });
+
+  test('a codex-gated Claude skip under --integrations auto prints an explicit advisory (not a silent exit 0)', () => {
+    const lines: string[] = [];
+    const originalLog = console.log;
+    console.log = (...args: unknown[]) => lines.push(args.map(String).join(' '));
+    try {
+      installCommand(
+        { integrations: 'auto' },
+        makeCleanupSpy().runner,
+        () => undefined,
+        () => {
+          throw new Error('runSync must not be called when codex gates the Claude sync');
+        },
+        () => [{ runtime: 'codex' as const, ok: false, detail: 'plugin-incapable Codex' }],
+        noopLease,
+        noopConsent,
+      );
+      const output = lines.join('\n');
+      expect(output).toContain('Skipped agent-sync');
+      expect(output).toContain('codex integration failed');
+    } finally {
+      console.log = originalLog;
+    }
   });
 
   test('explicit integration failures are fatal while auto failures warn', () => {

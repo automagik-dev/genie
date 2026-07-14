@@ -16,9 +16,22 @@
  * - plugins/genie/.codex-plugin/plugin.json (Codex)
  * - plugins/genie/package.json (runtime payload metadata)
  * - .claude-plugin/marketplace.json (marketplace listing)
+ * - plugins/hermes-genie/plugin.yaml (Hermes native surface, YAML manifest)
+ *
+ * CI staging (GITHUB_ACTIONS only): after rewriting, this script `git add`s every
+ * file it actually touched. This exists because the release workflow's own
+ * `git add -A '*.json' 'src/lib/version.ts'` list predates the YAML manifests —
+ * it re-guesses the version-carrying file set and silently omitted plugin.yaml,
+ * so a bump could ship with a stale Hermes manifest (defect D2). The list of
+ * version files lives here, not in the workflow, so this is the one place that
+ * always knows the full set. Keeping the fix here (rather than in the workflow)
+ * matters because `.github/workflows/**` can't always be updated in the same
+ * change — some environments lack workflow-scoped push credentials. Staging is
+ * best-effort: a git failure warns but never fails the sync, and the workflow's
+ * own `git add` still covers the JSON files as belt-and-suspenders.
  */
 
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -71,6 +84,41 @@ export async function updateJsonVersion(filePath: string, version: string): Prom
   }
 }
 
+/**
+ * Rewrite only the top-level `version:` line of a YAML manifest, preserving the
+ * rest of the document byte-for-byte. Throws unless exactly one top-level
+ * `version:` line exists (nested/indented `version:` keys are ignored).
+ */
+export function replaceTopLevelYamlVersion(source: string, version: string): string {
+  const lines = source.split('\n');
+  let replaced = 0;
+  const out = lines.map((line) => {
+    // Top-level key only: no leading whitespace before `version:`.
+    if (!/^version:(\s|$)/.test(line)) return line;
+    replaced += 1;
+    return `version: ${version}`;
+  });
+  if (replaced !== 1) throw new Error(`expected exactly one top-level version line, found ${replaced}`);
+  return out.join('\n');
+}
+
+export async function updateYamlVersion(filePath: string, version: string): Promise<boolean> {
+  if (!existsSync(filePath)) {
+    console.warn(`  ⚠ Skipped (not found): ${filePath}`);
+    return false;
+  }
+  try {
+    const source = await readFile(filePath, 'utf-8');
+    const updated = replaceTopLevelYamlVersion(source, version);
+    await writeFile(filePath, updated);
+    console.log(`  ✓ ${filePath}`);
+    return true;
+  } catch (err) {
+    console.error(`  ✗ Failed: ${filePath}`, err);
+    return false;
+  }
+}
+
 export async function updateClaudeMarketplaceVersion(filePath: string, version: string): Promise<boolean> {
   if (!existsSync(filePath)) {
     console.warn(`  ⚠ Skipped (not found): ${filePath}`);
@@ -106,6 +154,13 @@ async function assertVersionFileShape(filePath: string): Promise<void> {
   replaceTopLevelStringProperty(source, 'version', Reflect.get(parsed, 'version') as string);
 }
 
+async function assertYamlVersionFileShape(filePath: string): Promise<void> {
+  if (!existsSync(filePath)) throw new Error('file is missing');
+  const source = await readFile(filePath, 'utf-8');
+  // Throws unless exactly one top-level version line is present.
+  replaceTopLevelYamlVersion(source, '0.0.0');
+}
+
 async function assertClaudeMarketplaceShape(filePath: string): Promise<void> {
   if (!existsSync(filePath)) throw new Error('file is missing');
   const parsed: unknown = JSON.parse(await readFile(filePath, 'utf-8'));
@@ -120,6 +175,23 @@ async function assertClaudeMarketplaceShape(filePath: string): Promise<void> {
   }
 }
 
+/**
+ * In CI only, stage the files this sync actually rewrote so the auto-version
+ * commit ships them. Under GITHUB_ACTIONS a git failure must fail the sync —
+ * silently warning and continuing re-introduces the plugin.yaml version-skew
+ * defect this staging exists to prevent (the workflow's own `git add` list is
+ * stale and omits it). Uses an arg-array (never a shell string) so paths
+ * can't be interpolated into a command line.
+ */
+function stageRewrittenFilesInCi(rootDir: string, paths: string[]): void {
+  if (process.env.GITHUB_ACTIONS !== 'true' || paths.length === 0) return;
+  try {
+    execFileSync('git', ['add', '--', ...paths], { cwd: rootDir, stdio: 'pipe' });
+  } catch (err) {
+    throw new Error(`CI staging failed (git add): ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 /** Update every authoritative version file and fail the command on any partial write. */
 export async function synchronizeVersionFiles(rootDir: string, version: string): Promise<void> {
   const paths = [
@@ -129,6 +201,7 @@ export async function synchronizeVersionFiles(rootDir: string, version: string):
     join(rootDir, 'plugins/genie/package.json'),
   ];
   const marketplacePath = join(rootDir, '.claude-plugin/marketplace.json');
+  const yamlPaths = [join(rootDir, 'plugins/hermes-genie/plugin.yaml')];
   const preflightFailures: string[] = [];
   for (const path of paths) {
     try {
@@ -142,6 +215,13 @@ export async function synchronizeVersionFiles(rootDir: string, version: string):
   } catch (error) {
     preflightFailures.push(`${marketplacePath}: ${error instanceof Error ? error.message : String(error)}`);
   }
+  for (const path of yamlPaths) {
+    try {
+      await assertYamlVersionFileShape(path);
+    } catch (error) {
+      preflightFailures.push(`${path}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
   if (preflightFailures.length > 0) {
     throw new Error(`version synchronization preflight failed for: ${preflightFailures.join('; ')}`);
   }
@@ -150,6 +230,14 @@ export async function synchronizeVersionFiles(rootDir: string, version: string):
   for (const path of paths) outcomes.push({ path, ok: await updateJsonVersion(path, version) });
 
   outcomes.push({ path: marketplacePath, ok: await updateClaudeMarketplaceVersion(marketplacePath, version) });
+  for (const path of yamlPaths) outcomes.push({ path, ok: await updateYamlVersion(path, version) });
+
+  // Stage every file we actually rewrote so CI commits the full set (incl. YAML).
+  stageRewrittenFilesInCi(
+    rootDir,
+    outcomes.filter((outcome) => outcome.ok).map((outcome) => outcome.path),
+  );
+
   const failed = outcomes.filter((outcome) => !outcome.ok).map((outcome) => outcome.path);
   if (failed.length > 0) throw new Error(`version synchronization failed for: ${failed.join(', ')}`);
 }
