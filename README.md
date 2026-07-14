@@ -11,6 +11,17 @@
   <a href="https://discord.gg/xcW8c7fF3R"><img alt="discord" src="https://img.shields.io/discord/1095114867012292758?style=flat-square&color=00D9FF&label=discord" /></a>
 </p>
 
+<!-- METRICS:START -->
+<p align="center">
+
+| 📦 Releases / day | ⏱ Avg merge time | ✅ SHIP rate |
+|:-----------------:|:-----------------:|:------------:|
+| **11** | **3.8 h** | **98%** |
+
+<sub>Last updated: 2026-07-14 · based on last 24 h releases and last 7 d PRs</sub>
+</p>
+<!-- METRICS:END -->
+
 <br />
 
 Genie is a planning-and-execution layer for AI coding agents. You describe what you want in one sentence; Genie interviews you into a plan, dispatches agents to build it in parallel, reviews the result against acceptance criteria, and hands you something ready to merge.

@@ -1,0 +1,1 @@
+{"timestamp":"2026-07-14T00:00:00Z","duration_ms":0,"api_calls":2,"tools_generated":0,"errors":[],"metrics":{"releases_per_day":11,"avg_merge_time_hours":3.8,"ship_rate_pct":98,"prs_merged_7d":45,"prs_closed_7d":46,"latest_release":"v5.260713.11"}}
