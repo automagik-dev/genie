@@ -10,9 +10,9 @@
  * Warp facts baked in here:
  *   - config files live in a platform-specific dir (see {@link resolveWarpConfigDir}),
  *   - `cwd` MUST be an absolute path — Warp rejects `~` and relative paths,
- *   - tab `color` accepts ANSI color names only (Red/Green/Yellow/Blue/Magenta/Cyan),
+ *   - tab `color` accepts lowercase ANSI color names only (red/green/yellow/blue/magenta/cyan),
  *   - a tab holds up to a 2x2 grid of panes via nested `split_direction` layouts,
- *   - the launch URI is `warp://launch/<absolute-path-to-yaml>`.
+ *   - the launch URI is `warp://launch/<config-name>` (the wish slug).
  *
  * Pure library: no CLI wiring, no console output. Callers own presentation.
  */
@@ -131,7 +131,7 @@ export interface LaunchConfig {
 // ============================================================================
 
 /** ANSI color names Warp accepts for `tab.color`, cycled across tabs. */
-const TAB_COLORS = ['Red', 'Green', 'Yellow', 'Blue', 'Magenta', 'Cyan'] as const;
+const TAB_COLORS = ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan'] as const;
 
 /** Max panes Warp lays out cleanly as a 2x2 grid before overflowing to a new tab. */
 const MAX_PANES_PER_TAB = 4;
@@ -305,15 +305,12 @@ export function writeLaunchConfig(spec: LaunchSpec, opts: WriteOptions = {}): st
 }
 
 /**
- * Build the `warp://launch/<abs-path>` URI that opens a written config.
- * The path is encoded per segment: each `/`-delimited component is passed
- * through `encodeURIComponent` and the slashes are rejoined. This preserves the
- * path separators while escaping every other reserved character inside a
- * segment — including `#` (which `encodeURI` leaves intact, letting it be
- * mistaken for a URI fragment and truncate the path) as well as spaces — so the
- * URI survives being handed to `open`/`xdg-open` intact.
+ * Build the `warp://launch/<config-name>` URI that opens a written config.
+ * Warp resolves this relative identifier against its launch-configuration
+ * directory and matches it to the YAML top-level `name`. Absolute paths produce
+ * a double-slash URI that Warp rejects. Encode the identifier as one URI path
+ * component so reserved characters cannot change URI semantics.
  */
-export function launchUri(absPath: string): string {
-  const encoded = absPath.split('/').map(encodeURIComponent).join('/');
-  return `warp://launch/${encoded}`;
+export function launchUri(configName: string): string {
+  return `warp://launch/${encodeURIComponent(configName)}`;
 }
