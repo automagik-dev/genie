@@ -2087,7 +2087,7 @@ export interface NoClobberDeps {
   opener?: LibcRenameOpener;
   candidates?: readonly string[];
   probe?: RenameProbe;
-  /** Deterministically select the regular-file native family without mutating global process state. */
+  /** Deterministically select the native no-clobber family without mutating global process state. */
   platform?: NodeJS.Platform;
   /** Regular-file and lock-home callers use an explicit opener to select the Darwin branch on test hosts. */
   darwinOpener?: () => ((staged: Buffer, target: Buffer) => number) | null;
@@ -2267,13 +2267,13 @@ function exactFileStageMovedToTarget(stage: FileStage, targetFile: string): bool
   }
 }
 
-function selectedRegularFileNativePlatform(deps: NoClobberDeps): NodeJS.Platform {
+function selectedNoClobberPlatform(deps: NoClobberDeps): NodeJS.Platform {
   return deps.platform ?? (deps.darwinOpener === undefined ? process.platform : 'darwin');
 }
 
 /** Null means native setup was unavailable before invocation, so the portable commit remains safe to select. */
 function resolveRegularFileNativeRename(deps: NoClobberDeps): Renameat2 | null {
-  const platform = selectedRegularFileNativePlatform(deps);
+  const platform = selectedNoClobberPlatform(deps);
   if (platform === 'darwin') return resolveDarwinRenameExclusive(deps);
   if (platform === 'linux') return probeLinuxRenameat2(deps);
   return null;
@@ -6239,28 +6239,9 @@ function removeExactEmptyStagedHome(stagePath: string, expected: Stats): void {
 
 type AgentSyncHomePublisher = (stagedDir: string, targetDir: string) => void;
 
-/** Resolve native NOREPLACE before any publish call; unavailable setup selects the dedicated portable commit. */
-function resolveNativeAgentSyncHomePublisher(options: AgentSyncLockOptions): AgentSyncHomePublisher | null {
-  if (options.forcePortableHomePublish === true) return null;
-  const deps = options.homePublishDeps ?? {};
-  if (process.platform === 'darwin' || deps.darwinOpener !== undefined) {
-    const renameExclusive = resolveDarwinRenameExclusive(deps);
-    if (renameExclusive === null) return null;
-    return (stagedDir, targetDir) => {
-      const result = renameExclusive(Buffer.from(`${stagedDir}\0`), Buffer.from(`${targetDir}\0`));
-      if (result !== 0) {
-        const detail = lstatSafe(targetDir) === null ? 'rename failed' : 'target exists';
-        throw new NoClobberPublishError(
-          `atomic agent-sync home publish failed (${detail}); target preserved: ${targetDir}`,
-        );
-      }
-    };
-  }
-  if (process.platform !== 'linux') return null;
-  const renameNoReplace = probeLinuxRenameat2(deps);
-  if (renameNoReplace === null) return null;
+function makeAgentSyncHomePublisher(renameExclusive: Renameat2): AgentSyncHomePublisher {
   return (stagedDir, targetDir) => {
-    const result = renameNoReplace(Buffer.from(`${stagedDir}\0`), Buffer.from(`${targetDir}\0`));
+    const result = renameExclusive(Buffer.from(`${stagedDir}\0`), Buffer.from(`${targetDir}\0`));
     if (result !== 0) {
       const detail = lstatSafe(targetDir) === null ? 'rename failed' : 'target exists';
       throw new NoClobberPublishError(
@@ -6268,6 +6249,20 @@ function resolveNativeAgentSyncHomePublisher(options: AgentSyncLockOptions): Age
       );
     }
   };
+}
+
+/** Resolve native NOREPLACE before any publish call; unavailable setup selects the dedicated portable commit. */
+function resolveNativeAgentSyncHomePublisher(options: AgentSyncLockOptions): AgentSyncHomePublisher | null {
+  if (options.forcePortableHomePublish === true) return null;
+  const deps = options.homePublishDeps ?? {};
+  const platform = selectedNoClobberPlatform(deps);
+  if (platform === 'darwin') {
+    const renameExclusive = resolveDarwinRenameExclusive(deps);
+    return renameExclusive === null ? null : makeAgentSyncHomePublisher(renameExclusive);
+  }
+  if (platform !== 'linux') return null;
+  const renameNoReplace = probeLinuxRenameat2(deps);
+  return renameNoReplace === null ? null : makeAgentSyncHomePublisher(renameNoReplace);
 }
 
 /**
