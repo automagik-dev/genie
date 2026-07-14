@@ -984,6 +984,24 @@ describe('agent-sync managed-asset removal', () => {
     expect(readFileSync(manifestPath)).toEqual(manifestBytes);
   });
 
+  test('an absent GENIE_HOME still permits backup-first removal of an external manifest-owned agent', () => {
+    const scout = managedAgent('scout.md', '# shipped outside an absent home\n');
+    const agentsDir = join(claudeDir, 'agents');
+    const manifestPath = join(agentsDir, '.genie-sync.json');
+    rmSync(genieHome, { recursive: true, force: true });
+    expect(existsSync(genieHome)).toBe(false);
+
+    const result = removeAgentSyncAssets(targets());
+
+    expect(result.failures).toEqual([]);
+    expect(result.removed).toEqual([scout]);
+    expect(existsSync(scout)).toBe(false);
+    expect(existsSync(manifestPath)).toBe(false);
+    expect(readAgentFilesManifest(agentsDir)).toBeNull();
+    expect(readFileSync(uninstallBackupCollisionPath(), 'utf8')).toBe('# shipped outside an absent home\n');
+    expect(existsSync(join(genieHome, '.agent-sync.lock'))).toBe(false);
+  });
+
   test('fixed staging debris remains byte-identical while two uninstall runs converge', () => {
     const scout = managedAgent('scout.md', '# shipped scout\n');
     const agentsDir = join(claudeDir, 'agents');
