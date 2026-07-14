@@ -5878,7 +5878,11 @@ function unlinkExactOwnedLockFile(
   const lockPath = dirname(ownerPath);
   let quarantineDir: string;
   try {
-    quarantineDir = mkdtempSync(join(lockPath, '.owner-quarantine-'));
+    // Sibling, never child: a child quarantine dir makes lockPath non-empty, so a
+    // concurrent stealer's transient quarantine fails the winner's rmdir(lockPath)
+    // with ENOTEMPTY (steal skipped, lock orphaned) and misclassifies the lock as
+    // 'foreign' in inspectLockObject. Mirrors the `.stage-` sibling pattern.
+    quarantineDir = mkdtempSync(`${lockPath}.owner-quarantine-`);
   } catch (error) {
     if (isNodeErrorCode(error, 'ENOENT') || isNodeErrorCode(error, 'ENOTDIR')) return false;
     throw error;
