@@ -55,6 +55,7 @@ import {
   decideVerify,
   downloadAndVerifyTarball,
   ensureCanonicalInstall,
+  extractTarball,
   fetchLatestManifest,
   finalizeAuxiliaryDelivery,
   formatVerifyBanner,
@@ -1138,6 +1139,25 @@ describe('downloadAndVerifyTarball (G5)', () => {
       await downloadAndVerifyTarball(manifest, 'darwin-arm64', tmp, { runner, skipAttestation: true });
       expect(calls).toHaveLength(1);
       expect(calls[0].args[0]).toBe('release');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+// ============================================================================
+// G5 — Corrupt artifact (F31a destructive-failure fixture). A tarball that is
+// not a valid gzip archive must make `extractTarball` throw so the update never
+// reaches the atomic swap with a half-extracted payload.
+// ============================================================================
+
+describe('extractTarball (G5 — corrupt artifact)', () => {
+  test('throws on a corrupt (non-gzip) tarball', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'genie-extract-corrupt-'));
+    try {
+      const tarball = join(tmp, 'genie-5.260714.1-linux-x64-glibc.tar.gz');
+      writeFileSync(tarball, 'this is not a gzip archive');
+      await expect(extractTarball(tarball, join(tmp, 'extract'))).rejects.toThrow(/tar -xzf/);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

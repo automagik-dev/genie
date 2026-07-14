@@ -37,9 +37,13 @@ LIFECYCLE_LOCK=""
 LIFECYCLE_OWNER_FILE=""
 LIFECYCLE_OWNER_RECORD=""
 LIFECYCLE_LOCK_STALE_SECONDS=600
+# Set while a transactional extract is in flight so the EXIT trap disposes of a
+# half-populated staging tree without ever touching the live install (F31a).
+STAGING_DIR=""
 
 cleanup() {
   release_lifecycle_lock
+  [[ -n "$STAGING_DIR" ]] && rm -rf "$STAGING_DIR"
   rm -rf "$TMP_DIR"
 }
 trap cleanup EXIT
@@ -448,14 +452,118 @@ download_and_verify() {
   printf '%s\n' "$tarball"
 }
 
+# Verify a freshly-extracted staging tree before it is allowed to replace the
+# live install. Rejects a corrupt artifact (no binary / non-executable) and a
+# version mismatch (wrong tarball) so a broken payload never reaches promotion.
+verify_staged_binary() {
+  local staging="$1" expected_version="$2" staged_bin actual_version expected_token actual_token
+  staged_bin="${staging}/genie"
+  [[ -f "$staged_bin" && ! -L "$staged_bin" ]] ||
+    die "staged tarball has no genie binary; refusing to promote a corrupt artifact" 4
+  chmod +x "$staged_bin"
+  actual_version="$("$staged_bin" --version 2>/dev/null)" ||
+    die "staged genie binary failed to execute; refusing to promote a corrupt artifact" 4
+  expected_token="$(parse_version_token "$expected_version")" ||
+    die "installation manifest supplied an invalid version token: ${expected_version:-empty}" 1
+  actual_token="$(parse_version_token "$actual_version")" ||
+    die "staged genie emitted no valid version token (got ${actual_version:-empty}); refusing to promote" 4
+  [[ "$actual_token" == "$expected_token" ]] ||
+    die "staged genie version mismatch (expected ${expected_token}, got ${actual_token}); refusing to promote" 4
+}
+
+# Post-swap correctness guard: run the live binary and confirm it reports the
+# version we intended to install. Returns non-zero (never dies) so the caller
+# can roll back before failing.
+verify_promoted_binary() {
+  local expected_version="$1" actual expected_token actual_token
+  actual="$("${GENIE_HOME}/bin/genie" --version 2>/dev/null)" || return 1
+  expected_token="$(parse_version_token "$expected_version")" || return 1
+  actual_token="$(parse_version_token "$actual")" || return 1
+  [[ "$actual_token" == "$expected_token" ]]
+}
+
+# Restore the newest backup from bin/.previous over the live binary. Used only
+# when a promoted binary fails its post-swap verification.
+rollback_binary() {
+  local previous_dir="${GENIE_HOME}/bin/.previous" newest
+  [[ -d "$previous_dir" ]] || return 1
+  newest="$(ls -1t "$previous_dir"/genie-* 2>/dev/null | head -n1)"
+  [[ -n "$newest" && -f "$newest" ]] || return 1
+  cp -p "$newest" "${GENIE_HOME}/bin/genie.rollback.$$" &&
+    mv -f "${GENIE_HOME}/bin/genie.rollback.$$" "${GENIE_HOME}/bin/genie" &&
+    chmod +x "${GENIE_HOME}/bin/genie"
+}
+
+# Promote a verified staging tree over the live install. The single
+# rename-over-live of the `genie` binary is the atomic commit: the old
+# executable is runnable up to that instant, the new one immediately after, and
+# a crash mid-rename can never yield a partial file. Sidecars (VERSION, plugins,
+# skills, templates, marketplaces) are moved into place first so the freshly
+# promoted binary reads its own VERSION during verification; the old binary is
+# backed up to bin/.previous so a failed post-swap verification rolls back.
+promote_staged_install() {
+  local staging="$1" expected_version="$2"
+  local bin="$GENIE_HOME/bin" previous_dir="${GENIE_HOME}/bin/.previous"
+  local staged_bin="${staging}/genie" old_version backup entry base
+  mkdir -p "$previous_dir"
+
+  # Capture the currently-installed version BEFORE any sidecar (incl. VERSION)
+  # moves, so the backup filename reflects the binary actually being replaced.
+  if [[ -f "${bin}/genie" && ! -L "${bin}/genie" ]]; then
+    old_version="$(parse_version_token "$("${bin}/genie" --version 2>/dev/null || true)" 2>/dev/null || true)"
+    [[ -n "$old_version" ]] || old_version="previous"
+    backup="${previous_dir}/genie-${old_version}"
+    cp -p "${bin}/genie" "${backup}.staging.$$" &&
+      mv -f "${backup}.staging.$$" "$backup" ||
+      die "could not back up the current binary before promotion; leaving install untouched" 1
+  fi
+
+  # Move every sidecar (all tarball entries except the binary itself) into the
+  # live install. `find` covers dotfiles (.agents, .claude-plugin).
+  while IFS= read -r entry; do
+    base="$(basename "$entry")"
+    [[ "$base" == "genie" ]] && continue
+    rm -rf "${bin:?}/${base}"
+    mv "$entry" "${bin}/${base}"
+  done < <(find "$staging" -mindepth 1 -maxdepth 1)
+
+  # Destructive-failure injection seam (tests only, F31a). Simulates a kill
+  # between backup and the atomic rename; the live binary must stay runnable.
+  if [[ "${GENIE_INSTALL_SWAP_FAULT:-}" == "before-promote" ]]; then
+    die "swap fault injected before promotion (test seam)" 1
+  fi
+
+  chmod +x "$staged_bin"
+  mv -f "$staged_bin" "${bin}/genie" ||
+    die "atomic binary promotion failed; previous install left intact" 1
+  chmod +x "${bin}/genie"
+
+  if ! verify_promoted_binary "$expected_version"; then
+    if rollback_binary; then
+      die "post-swap verification failed; rolled back to the previous binary" 4
+    fi
+    die "post-swap verification failed and no rollback candidate was available" 4
+  fi
+}
+
+# Transactional install (F31a). Extract to a same-filesystem staging tree,
+# verify it, atomically promote it (with rollback), then point $PATH at it. A
+# corrupt tarball or an interrupted swap never leaves a half-written binary at
+# $GENIE_HOME/bin/genie.
 extract_and_link() {
-  local tarball="$1"
-  mkdir -p "$GENIE_HOME/bin" "$LOCAL_BIN"
-  log "extracting to $GENIE_HOME/bin"
-  tar -xzf "$tarball" -C "$GENIE_HOME/bin"
-  chmod +x "$GENIE_HOME/bin/genie"
-  ln -sfn "$GENIE_HOME/bin/genie" "$LOCAL_BIN/genie"
-  log "symlink: $LOCAL_BIN/genie → $GENIE_HOME/bin/genie"
+  local tarball="$1" expected_version="$2" bin="$GENIE_HOME/bin"
+  mkdir -p "$bin" "$LOCAL_BIN"
+  STAGING_DIR="$(mktemp -d "${bin}/.install-staging-XXXXXX")" ||
+    die "could not create staging directory under ${bin}" 1
+  log "extracting to staging ${STAGING_DIR##*/}"
+  tar -xzf "$tarball" -C "$STAGING_DIR" ||
+    die "extraction failed (corrupt tarball?): ${tarball}" 5
+  verify_staged_binary "$STAGING_DIR" "$expected_version"
+  promote_staged_install "$STAGING_DIR" "$expected_version"
+  ln -sfn "$bin/genie" "$LOCAL_BIN/genie"
+  log "symlink: $LOCAL_BIN/genie → $bin/genie"
+  rm -rf "$STAGING_DIR"
+  STAGING_DIR=""
 }
 
 # Detect pre-cutover (bun-global / npm-global) installs and surface the
@@ -615,7 +723,7 @@ main() {
   # extraction, PATH, child-finisher, and final-verification mutation.
   acquire_lifecycle_lock
   tarball="$(download_and_verify "$version" "$platform" "$tarball_base")"
-  extract_and_link "$tarball"
+  extract_and_link "$tarball" "$version"
   detect_legacy_install
   ensure_path_wired
   handoff_to_subcommand "$@"
