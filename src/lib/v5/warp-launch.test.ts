@@ -76,9 +76,9 @@ describe('buildLaunchConfig — tab chunking', () => {
   });
 
   test('tab colors cycle through the allowed ANSI set', () => {
-    // 28 panes → 7 tabs, so the 6-color cycle wraps once (tab 7 reuses Red).
+    // 28 panes → 7 tabs, so the 6-color cycle wraps once (tab 7 reuses red).
     const tabs = tabsOf(roundTrip(specWith(28)));
-    expect(tabs.map((t) => t.color)).toEqual(['Red', 'Green', 'Yellow', 'Blue', 'Magenta', 'Cyan', 'Red']);
+    expect(tabs.map((t) => t.color)).toEqual(['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'red']);
   });
 
   test('only the very first pane is focused', () => {
@@ -288,21 +288,15 @@ describe('writeLaunchConfig', () => {
 });
 
 describe('launchUri', () => {
-  test('prefixes the absolute path with warp://launch/', () => {
-    expect(launchUri('/Users/me/.warp/launch_configurations/genie-x.yaml')).toBe(
-      'warp://launch//Users/me/.warp/launch_configurations/genie-x.yaml',
-    );
+  test('uses the relative config name accepted by Warp', () => {
+    expect(launchUri('my-wish')).toBe('warp://launch/my-wish');
   });
 
-  test('percent-encodes spaces while preserving path slashes', () => {
-    expect(launchUri('/Users/me/My Repo/.warp/genie-x.yaml')).toBe(
-      'warp://launch//Users/me/My%20Repo/.warp/genie-x.yaml',
-    );
+  test('does not emit the rejected double-slash absolute-path form', () => {
+    expect(launchUri('my-wish')).not.toStartWith('warp://launch//');
   });
 
-  test('percent-encodes a "#" (which encodeURI would leave to truncate the path) per segment', () => {
-    expect(launchUri('/Users/me/My#Repo/.warp/genie-x.yaml')).toBe(
-      'warp://launch//Users/me/My%23Repo/.warp/genie-x.yaml',
-    );
+  test('percent-encodes reserved characters in a config name', () => {
+    expect(launchUri('My Wish#1')).toBe('warp://launch/My%20Wish%231');
   });
 });

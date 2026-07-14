@@ -377,7 +377,7 @@ describe('genie launch (real run, --no-open)', () => {
     };
     executeLaunch(slug, {}, deps({ openImpl: record }));
     expect(opened).toHaveLength(1);
-    expect(opened[0]).toBe(`warp://launch/${configPath(slug)}`);
+    expect(opened[0]).toBe(`warp://launch/${slug}`);
   });
 });
 
