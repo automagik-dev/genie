@@ -110,6 +110,9 @@ jobs:
     permissions:
       contents: write       # gh release create/upload + push latest.json commit
       id-token: write       # reserved for any OIDC-using publish-time verifiers
+      actions: read         # release-publish's guard job reads upstream run records;
+                            # a called workflow cannot elevate past the caller, so the
+                            # orchestrated path fails at init without this grant
     # secrets: inherit removed (F18) — release-publish only reads GITHUB_TOKEN.
     with:
       version: ${{ needs.sign-attest.outputs.version }}

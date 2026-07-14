@@ -124,18 +124,20 @@ guard_run_provenance() {
     note "no upstream run_id supplied (orchestrated same-run path); skipping provenance check"
     return 0
   fi
-  command -v gh >/dev/null 2>&1 || misuse "gh CLI is required for guard-run-provenance"
+  # Validate inputs before probing the environment so malformed input is
+  # rejected (exit 3) even on hosts without the gh CLI.
+  [[ "$run_id" =~ ^[0-9]+$ ]] || fail "run_id '${run_id}' is not a numeric run id"
   local expected_repo="${EXPECTED_REPO:-}"
   [[ -n "$expected_repo" ]] || misuse "guard-run-provenance needs EXPECTED_REPO"
-  [[ "$run_id" =~ ^[0-9]+$ ]] || fail "run_id '${run_id}' is not a numeric run id"
+  command -v gh >/dev/null 2>&1 || misuse "gh CLI is required for guard-run-provenance"
   local tmp
   tmp="$(mktemp)"
+  # ${tmp:-} because the EXIT trap outlives this function's local under set -u.
+  trap 'rm -f "${tmp:-}"' EXIT
   if ! gh api "repos/${expected_repo}/actions/runs/${run_id}" >"$tmp" 2>/dev/null; then
-    rm -f "$tmp"
     fail "could not fetch upstream run ${run_id} from ${expected_repo} (bad run_id or insufficient token scope)"
   fi
   check_run_provenance "$tmp"
-  rm -f "$tmp"
 }
 
 main() {
