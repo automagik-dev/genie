@@ -186,6 +186,10 @@ export interface AgentSyncOptions {
   beforeAgentFileMutation?: (event: AgentFileMutationEvent) => void;
   /** Fault-injection barrier after the shared manifest transaction is staged and before its atomic commit. */
   beforeAgentManifestCommit?: (event: AgentManifestCommitEvent) => void;
+  /** Deterministic race barrier after the old manifest is captured and immediately before no-replace publish. */
+  beforeAgentManifestPublish?: (event: AgentManifestCommitEvent) => void;
+  /** Injectable portable-manifest publication dependencies for boundary regressions. */
+  agentManifestPublishOptions?: AgentManifestPublishOptions;
   /** Deterministic lock lifecycle seams used by boundary-level regression tests. */
   lockOptions?: AgentSyncLockOptions;
 }
@@ -212,6 +216,19 @@ export interface AgentManifestCommitEvent {
   stagePath: string;
 }
 
+export interface PortableManifestStageCleanupEvent {
+  path: string;
+  stagePath: string;
+  capturedStagePath: string;
+}
+
+export interface AgentManifestPublishOptions {
+  /** Force the hard-link fallback even when the host exposes native NOREPLACE rename. */
+  forcePortable?: boolean;
+  /** Deterministic failure/race barrier after the stage name is captured but before it is retired. */
+  beforePortableStageNameCleanup?: (event: PortableManifestStageCleanupEvent) => void;
+}
+
 export interface AgentSyncLockMutationEvent {
   operation: 'release' | 'stale-remove';
   path: string;
@@ -221,6 +238,12 @@ export interface AgentSyncLockMutationEvent {
 export interface AgentSyncLockOptions {
   /** Deterministic barrier after a generation is prepared and before its atomic publish. */
   beforePublish?: (event: { path: string }) => void;
+  /** Deterministic barrier after a missing GENIE_HOME is staged and before its atomic publish. */
+  beforeHomePublish?: (event: { path: string; stagePath: string }) => void;
+  /** Force missing-home publication through the portable mkdir commit (test seam). */
+  forcePortableHomePublish?: boolean;
+  /** Deterministic barrier after the portable mkdir commit and before the live home is inspected. */
+  afterPortableHomeClaim?: (event: { path: string; stagePath: string }) => void;
   /** Deterministic barrier after the lock pathname is captured and before the captured object is finalized. */
   afterCapture?: (event: AgentSyncLockMutationEvent) => void;
 }
@@ -342,6 +365,8 @@ interface RunContext {
   beforeManagedDirRemoval?: (destDir: string, stage: 'before-park' | 'before-delete') => void;
   beforeAgentFileMutation?: AgentSyncOptions['beforeAgentFileMutation'];
   beforeAgentManifestCommit?: AgentSyncOptions['beforeAgentManifestCommit'];
+  beforeAgentManifestPublish?: AgentSyncOptions['beforeAgentManifestPublish'];
+  agentManifestPublishOptions?: AgentSyncOptions['agentManifestPublishOptions'];
 }
 
 interface SourceSkill {
@@ -758,9 +783,19 @@ function createFileStage(targetPath: string, content: Buffer): FileStage {
 
 /** The staged payload is still the exact object this run wrote (identity + bytes). */
 function fileStageOwned(stage: FileStage): boolean {
+  return fileStagePayloadMatches(stage, stage.path);
+}
+
+/** Identity + byte check for a staged inode after one of its names has moved. */
+function fileStagePayloadMatches(stage: FileStage, path: string): boolean {
   try {
-    const stat = lstatSync(stage.path);
-    return stat.isFile() && sameObjectIdentity(stage.stat, stat) && readFileSync(stage.path).equals(stage.bytes);
+    const stat = lstatSync(path);
+    return (
+      stat.isFile() &&
+      !stat.isSymbolicLink() &&
+      sameObjectIdentity(stage.stat, stat) &&
+      readFileSync(path).equals(stage.bytes)
+    );
   } catch {
     return false;
   }
@@ -800,8 +835,22 @@ function consumeFileStageName(stage: FileStage): string | null {
   } catch (error) {
     if (!isNodeErrorCode(error, 'ENOENT')) return `could not remove staged name ${stage.path}: ${errMsg(error)}`;
   }
-  removeEmptyDirSafe(stage.dir);
+  try {
+    removeEmptyDirSafe(stage.dir);
+  } catch (error) {
+    return `could not remove staged directory ${stage.dir}: ${errMsg(error)}`;
+  }
   return null;
+}
+
+/** Cleanup after a native atomic manifest publish; the staged name was consumed by rename. */
+function finishNativeCommittedFileStage(stage: FileStage): string | null {
+  try {
+    removeEmptyDirSafe(stage.dir);
+    return null;
+  } catch (error) {
+    return `could not remove staged directory ${stage.dir}: ${errMsg(error)}`;
+  }
 }
 
 function removeEmptyDirSafe(path: string): void {
@@ -2131,6 +2180,67 @@ export function atomicRenameDirectoryNoClobber(stagedDir: string, targetDir: str
   publishDirectoryViaNameClaim(stagedDir, targetDir); // was: throw unsupported — now portable & no-clobber
 }
 
+type RegularFileNoClobberPublish = 'renamed' | 'linked';
+
+/**
+ * Publish one staged regular file while atomically rejecting every existing
+ * target inode. Linux and Darwin consume the staged name with their native
+ * no-replace rename primitive. Other platforms (and Linux without renameat2)
+ * use a hard link as an exclusive reservation; the caller treats it as
+ * committed only after retiring the extra name and verifying a safe nlink=1.
+ */
+function atomicRenameRegularFileNoClobber(
+  stagedFile: string,
+  targetFile: string,
+  deps: NoClobberDeps = {},
+  forcePortable = false,
+): RegularFileNoClobberPublish {
+  const stagedStat = lstatSync(stagedFile);
+  if (!stagedStat.isFile() || stagedStat.isSymbolicLink()) {
+    throw new Error(`atomic publish source is not a physical regular file: ${stagedFile}`);
+  }
+  const stagedPath = Buffer.from(`${stagedFile}\0`);
+  const targetPath = Buffer.from(`${targetFile}\0`);
+  if (!forcePortable && process.platform === 'linux') {
+    const rn = probeLinuxRenameat2(deps);
+    if (rn !== null) {
+      if (rn(stagedPath, targetPath) !== 0) {
+        const detail = lstatSafe(targetFile) === null ? 'rename failed' : 'target exists';
+        throw new NoClobberPublishError(
+          `atomic regular-file no-clobber publish failed (${detail}); target preserved: ${targetFile}`,
+        );
+      }
+      return 'renamed';
+    }
+  } else if (!forcePortable && process.platform === 'darwin') {
+    const libc = dlopen('/usr/lib/libSystem.B.dylib', {
+      renamex_np: { args: ['cstring', 'cstring', 'u32'], returns: 'i32' },
+    } as const);
+    let result: number;
+    try {
+      result = libc.symbols.renamex_np(stagedPath, targetPath, DARWIN_RENAME_EXCL);
+    } finally {
+      libc.close();
+    }
+    if (result !== 0) {
+      const detail = lstatSafe(targetFile) === null ? 'rename failed' : 'target exists';
+      throw new NoClobberPublishError(
+        `atomic regular-file no-clobber publish failed (${detail}); target preserved: ${targetFile}`,
+      );
+    }
+    return 'renamed';
+  }
+  try {
+    linkSync(stagedFile, targetFile);
+    return 'linked';
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code ?? 'UNKNOWN';
+    throw new NoClobberPublishError(
+      `portable regular-file no-clobber publish failed (${code}); target preserved: ${targetFile}`,
+    );
+  }
+}
+
 function writeRestoreConflict(
   transactionDir: string,
   journal: CodexFallbackRetirementJournal,
@@ -3353,9 +3463,9 @@ export function enumerateSourceAgentFiles(pluginRoot: string): SourceAgentFile[]
 //   - every irreversible unlink re-verifies the exact captured identity first;
 //   - ownership moves in ONE manifest commit whose claim set is re-verified
 //     against the live objects after the commit barrier;
-//   - the manifest publishes by rename of an exclusively staged payload, so a
-//     second hardlink to the manifest can never exist and post-publish cleanup
-//     is rmdir-only — advisory, never a rollback trigger;
+//   - the manifest publishes NOREPLACE from an exclusively staged payload;
+//     native rename consumes it, while the portable hard-link path commits only
+//     after identity-checked cleanup proves the live manifest has nlink=1;
 //   - final-entry relinquish verifies post-state before reporting success.
 // ============================================================================
 
@@ -3415,6 +3525,8 @@ export interface FlatAgentTransactionSeams {
   now: () => Date;
   beforeFileMutation?: (event: AgentFileMutationEvent) => void;
   beforeManifestCommit?: (event: AgentManifestCommitEvent) => void;
+  beforeManifestPublish?: (event: AgentManifestCommitEvent) => void;
+  manifestPublishOptions?: AgentManifestPublishOptions;
 }
 
 interface FlatAgentTxnCtx {
@@ -3709,6 +3821,175 @@ interface ManifestCommitResult {
   reason?: string;
 }
 
+function preserveCapturedManifestObject(
+  ctx: FlatAgentTxnCtx,
+  captured: CapturedPath,
+  livePath: string,
+  label: string,
+): void {
+  try {
+    const preserved = restoreOrPreserveCaptured(captured, livePath);
+    if (preserved !== livePath) ctx.advisories.push(`preserved ${label} at ${preserved ?? captured.path}`);
+  } catch (error) {
+    ctx.advisories.push(`${label} left quarantined at ${captured.path}: ${errMsg(error)}`);
+  }
+}
+
+/** Unlink only a captured private name that still denotes this exact staged payload. */
+function discardCapturedStagePayload(
+  ctx: FlatAgentTxnCtx,
+  stage: FileStage,
+  captured: CapturedPath,
+  restorePath: string,
+  label: string,
+): void {
+  if (!fileStagePayloadMatches(stage, captured.path)) {
+    preserveCapturedManifestObject(ctx, captured, restorePath, `replaced ${label}`);
+    return;
+  }
+  try {
+    unlinkSync(captured.path);
+    removeEmptyDirSafe(captured.dir);
+  } catch (error) {
+    ctx.advisories.push(`${label} left quarantined at ${captured.path}: ${errMsg(error)}`);
+  }
+}
+
+/** Remove the live target only after capturing and proving it is the exact linked staged inode. */
+function unpublishPortableManifestTarget(ctx: FlatAgentTxnCtx, stage: FileStage, manifestPath: string): void {
+  let captured: CapturedPath | null;
+  try {
+    captured = capturePath(manifestPath, 'manifest-portable-rollback');
+  } catch (error) {
+    ctx.advisories.push(`portable manifest target could not be captured safely: ${errMsg(error)}`);
+    return;
+  }
+  if (captured === null) return;
+  if (!fileStagePayloadMatches(stage, captured.path)) {
+    preserveCapturedManifestObject(ctx, captured, manifestPath, 'foreign manifest replacement');
+    return;
+  }
+  try {
+    unlinkSync(captured.path);
+    removeEmptyDirSafe(captured.dir);
+  } catch (error) {
+    ctx.advisories.push(`linked manifest payload left quarantined at ${captured.path}: ${errMsg(error)}`);
+  }
+}
+
+function capturePortableStageName(stage: FileStage): CapturedPath | null {
+  try {
+    return capturePath(stage.path, 'manifest-stage-name');
+  } catch {
+    return null;
+  }
+}
+
+function portableLinkPairIsExact(stage: FileStage, capturedStagePath: string, manifestPath: string): boolean {
+  try {
+    const capturedStat = lstatSync(capturedStagePath);
+    const targetStat = lstatSync(manifestPath);
+    return (
+      capturedStat.nlink === 2 &&
+      targetStat.nlink === 2 &&
+      sameObjectIdentity(capturedStat, targetStat) &&
+      fileStagePayloadMatches(stage, capturedStagePath) &&
+      fileStagePayloadMatches(stage, manifestPath)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function cleanupPortableStageContainers(ctx: FlatAgentTxnCtx, stage: FileStage, capturedStage: CapturedPath): void {
+  try {
+    removeEmptyDirSafe(capturedStage.dir);
+    removeEmptyDirSafe(stage.dir);
+  } catch (error) {
+    ctx.advisories.push(`portable manifest stage directory cleanup deferred: ${errMsg(error)}`);
+  }
+}
+
+function retirePortableManifestStageName(
+  ctx: FlatAgentTxnCtx,
+  stage: FileStage,
+  capturedStage: CapturedPath,
+  manifestPath: string,
+): string | null {
+  try {
+    ctx.seams.manifestPublishOptions?.beforePortableStageNameCleanup?.({
+      path: manifestPath,
+      stagePath: stage.path,
+      capturedStagePath: capturedStage.path,
+    });
+  } catch (error) {
+    return errMsg(error);
+  }
+  if (!portableLinkPairIsExact(stage, capturedStage.path, manifestPath)) {
+    return 'portable manifest link pair changed before stage-name cleanup';
+  }
+  try {
+    unlinkSync(capturedStage.path);
+  } catch (error) {
+    return `portable manifest stage-name cleanup failed: ${errMsg(error)}`;
+  }
+  try {
+    const targetStat = lstatSync(manifestPath);
+    return targetStat.nlink === 1 && fileStagePayloadMatches(stage, manifestPath)
+      ? null
+      : 'portable manifest target was not a safe single-link file after cleanup';
+  } catch (error) {
+    return `portable manifest target verification failed: ${errMsg(error)}`;
+  }
+}
+
+function rollbackPortableManifestReservation(
+  ctx: FlatAgentTxnCtx,
+  stage: FileStage,
+  manifestPath: string,
+  capturedStage: CapturedPath | null,
+): void {
+  unpublishPortableManifestTarget(ctx, stage, manifestPath);
+  if (capturedStage === null) {
+    try {
+      pushAdvisory(ctx, cleanupFileStage(stage));
+    } catch (error) {
+      ctx.advisories.push(`portable manifest stage cleanup deferred: ${errMsg(error)}`);
+    }
+    return;
+  }
+  discardCapturedStagePayload(ctx, stage, capturedStage, stage.path, 'portable manifest stage payload');
+  try {
+    removeEmptyDirSafe(stage.dir);
+  } catch (error) {
+    ctx.advisories.push(`portable manifest stage directory cleanup deferred: ${errMsg(error)}`);
+  }
+}
+
+/**
+ * Complete the hard-link fallback. The transaction is committed only after the
+ * extra staged name is identity-checked, removed, and the live manifest is
+ * verified as the same regular inode with nlink=1.
+ */
+function completePortableManifestPublish(
+  ctx: FlatAgentTxnCtx,
+  stage: FileStage,
+  manifestPath: string,
+): ManifestCommitResult {
+  const capturedStage = capturePortableStageName(stage);
+  const reason =
+    capturedStage === null
+      ? 'could not capture portable manifest stage name'
+      : retirePortableManifestStageName(ctx, stage, capturedStage, manifestPath);
+  if (reason === null && capturedStage !== null) {
+    // Safe nlink=1 is the commit point. Directory cleanup below is advisory-only.
+    cleanupPortableStageContainers(ctx, stage, capturedStage);
+    return { committed: true };
+  }
+  rollbackPortableManifestReservation(ctx, stage, manifestPath, capturedStage);
+  return { committed: false, reason: reason ?? 'portable manifest stage-name cleanup failed' };
+}
+
 /** The single ownership commit; false means every ownership delta must roll back. */
 function commitFlatAgentManifest(ctx: FlatAgentTxnCtx, base: AgentManifestState, states: FlatAgentOpState[]): boolean {
   if (!states.some((state) => state.delta !== null)) return true;
@@ -3723,11 +4004,93 @@ function commitFlatAgentManifest(ctx: FlatAgentTxnCtx, base: AgentManifestState,
   return result.committed;
 }
 
+function invokeManifestBarrier(
+  barrier: ((event: AgentManifestCommitEvent) => void) | undefined,
+  event: AgentManifestCommitEvent,
+): string | null {
+  try {
+    barrier?.(event);
+    return null;
+  } catch (error) {
+    return errMsg(error);
+  }
+}
+
+function failStagedManifestPublish(ctx: FlatAgentTxnCtx, stage: FileStage, reason: string): ManifestCommitResult {
+  try {
+    pushAdvisory(ctx, cleanupFileStage(stage));
+  } catch (error) {
+    ctx.advisories.push(`manifest stage cleanup deferred: ${errMsg(error)}`);
+  }
+  return { committed: false, reason };
+}
+
+interface ManifestBaseCaptureResult {
+  captured: CapturedPath | null;
+  reason: string | null;
+}
+
+function captureBaseManifestForWrite(
+  ctx: FlatAgentTxnCtx,
+  base: AgentManifestState,
+  manifestPath: string,
+): ManifestBaseCaptureResult {
+  if (base.kind === 'absent') return { captured: null, reason: null };
+  let captured: CapturedPath | null;
+  try {
+    captured = capturePath(manifestPath, 'manifest-old');
+  } catch (error) {
+    return { captured: null, reason: errMsg(error) };
+  }
+  if (captured !== null && manifestStillBase(captured.path, base)) return { captured, reason: null };
+  if (captured !== null) restorePreviousManifest(ctx, captured, manifestPath);
+  return { captured: null, reason: 'manifest ownership changed before commit' };
+}
+
+function publishFlatAgentManifestStage(
+  ctx: FlatAgentTxnCtx,
+  stage: FileStage,
+  manifestPath: string,
+): ManifestCommitResult {
+  const barrierFailure = invokeManifestBarrier(ctx.seams.beforeManifestPublish, {
+    path: manifestPath,
+    stagePath: stage.path,
+  });
+  if (barrierFailure !== null) return failStagedManifestPublish(ctx, stage, barrierFailure);
+  if (!fileStageOwned(stage)) {
+    return failStagedManifestPublish(ctx, stage, 'staged manifest payload changed before publish');
+  }
+  let publish: RegularFileNoClobberPublish;
+  try {
+    publish = atomicRenameRegularFileNoClobber(
+      stage.path,
+      manifestPath,
+      {},
+      ctx.seams.manifestPublishOptions?.forcePortable,
+    );
+  } catch (error) {
+    return failStagedManifestPublish(ctx, stage, errMsg(error));
+  }
+  if (publish === 'linked') return completePortableManifestPublish(ctx, stage, manifestPath);
+  // Native NOREPLACE rename is the commit point; directory cleanup cannot roll it back.
+  pushAdvisory(ctx, finishNativeCommittedFileStage(stage));
+  return { committed: true };
+}
+
+function disposePreviousManifestAfterCommit(ctx: FlatAgentTxnCtx, captured: CapturedPath | null): void {
+  if (captured === null) return;
+  try {
+    removeCapturedPath(captured);
+  } catch (error) {
+    ctx.advisories.push(`previous manifest left quarantined at ${captured.path}: ${errMsg(error)}`);
+  }
+}
+
 /**
  * Write path: stage exclusively → barrier → re-verify live objects → CAS the
- * base manifest out of the way → RENAME the payload in. The rename both decides
- * the outcome and consumes the staged payload, so no second hardlink to the
- * manifest can ever exist; everything after it is advisory-only.
+ * base manifest out of the way → publish the payload NOREPLACE. Native rename
+ * consumes the staged name; the portable hard-link fallback does not commit
+ * until its extra name is retired and the live target verifies at nlink=1.
  */
 function commitFlatAgentManifestWrite(
   ctx: FlatAgentTxnCtx,
@@ -3737,15 +4100,13 @@ function commitFlatAgentManifestWrite(
 ): ManifestCommitResult {
   const manifestPath = join(ctx.dir, MANIFEST_NAME);
   let stage = createFileStage(manifestPath, manifestPayload(provisional));
-  try {
-    ctx.seams.beforeManifestCommit?.({ path: manifestPath, stagePath: stage.path });
-  } catch (error) {
-    pushAdvisory(ctx, cleanupFileStage(stage));
-    return { committed: false, reason: errMsg(error) };
-  }
+  const barrierFailure = invokeManifestBarrier(ctx.seams.beforeManifestCommit, {
+    path: manifestPath,
+    stagePath: stage.path,
+  });
+  if (barrierFailure !== null) return failStagedManifestPublish(ctx, stage, barrierFailure);
   if (!fileStageOwned(stage)) {
-    pushAdvisory(ctx, cleanupFileStage(stage));
-    return { committed: false, reason: 'staged manifest payload changed before commit' };
+    return failStagedManifestPublish(ctx, stage, 'staged manifest payload changed before commit');
   }
   reverifyFlatAgentOps(ctx, states);
   const claim = buildFlatAgentClaim(ctx, states);
@@ -3760,36 +4121,16 @@ function commitFlatAgentManifestWrite(
     pushAdvisory(ctx, cleanupFileStage(stage));
     stage = createFileStage(manifestPath, payload);
   }
-  let captured: CapturedPath | null = null;
-  if (base.kind !== 'absent') {
-    captured = capturePath(manifestPath, 'manifest-old');
-    if (captured === null || !manifestStillBase(captured.path, base)) {
-      if (captured !== null) restorePreviousManifest(ctx, captured, manifestPath);
-      pushAdvisory(ctx, cleanupFileStage(stage));
-      return { committed: false, reason: 'manifest ownership changed before commit' };
-    }
+  const baseCapture = captureBaseManifestForWrite(ctx, base, manifestPath);
+  if (baseCapture.reason !== null) return failStagedManifestPublish(ctx, stage, baseCapture.reason);
+  const publication = publishFlatAgentManifestStage(ctx, stage, manifestPath);
+  if (!publication.committed) {
+    if (baseCapture.captured !== null) restorePreviousManifest(ctx, baseCapture.captured, manifestPath);
+    return publication;
   }
-  try {
-    renameSync(stage.path, manifestPath);
-  } catch (error) {
-    if (captured !== null) restorePreviousManifest(ctx, captured, manifestPath);
-    pushAdvisory(ctx, cleanupFileStage(stage));
-    return { committed: false, reason: errMsg(error) };
-  }
-  // Outcome decided at the rename. Nothing below may throw or roll back.
-  if (captured !== null) {
-    try {
-      removeCapturedPath(captured);
-    } catch (error) {
-      ctx.advisories.push(`previous manifest left quarantined at ${captured.path}: ${errMsg(error)}`);
-    }
-  }
-  try {
-    removeEmptyDirSafe(stage.dir);
-  } catch {
-    // empty-stage-dir debris is inert; the payload itself was consumed by the rename
-  }
-  return { committed: true };
+  // Native rename or verified portable nlink=1 decided the outcome. Nothing below may roll back.
+  disposePreviousManifestAfterCommit(ctx, baseCapture.captured);
+  return publication;
 }
 
 /** Removal path: the transaction ends with zero owned names — the manifest itself goes. */
@@ -3985,6 +4326,8 @@ function syncClaudeAgentFiles(ctx: RunContext, claudeDir: string, report: AgentR
     now: ctx.now,
     beforeFileMutation: ctx.beforeAgentFileMutation,
     beforeManifestCommit: ctx.beforeAgentManifestCommit,
+    beforeManifestPublish: ctx.beforeAgentManifestPublish,
+    manifestPublishOptions: ctx.agentManifestPublishOptions,
   });
   report.advisories.push(...result.advisories);
   if (!result.committed) {
@@ -5757,12 +6100,215 @@ function inspectOwnedLockFile(ownerPath: string): { stat: Stats; token: string }
   }
 }
 
+interface AgentSyncHomeState {
+  path: string;
+  created: boolean;
+  stat: Stats;
+}
+
+/** Inspect the final GENIE_HOME component without following it. */
+function inspectPhysicalAgentSyncHome(genieHome: string): AgentSyncHomeState | null {
+  try {
+    const stat = lstatSync(genieHome);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+      throw new AgentSyncLockError(`agent-sync lock home is not a physical directory: ${genieHome}`);
+    }
+    return { path: genieHome, created: false, stat };
+  } catch (error) {
+    if (error instanceof AgentSyncLockError) throw error;
+    if (isNodeErrorCode(error, 'ENOENT')) return null;
+    throw new AgentSyncLockError(
+      `agent-sync lock home inspection failed closed for ${genieHome}: ${errMsg(error)}`,
+      error,
+    );
+  }
+}
+
+function removeExactEmptyStagedHome(stagePath: string, expected: Stats): void {
+  try {
+    const current = lstatSync(stagePath);
+    if (
+      current.isDirectory() &&
+      !current.isSymbolicLink() &&
+      samePathIdentity(expected, current) &&
+      readdirSync(stagePath).length === 0
+    ) {
+      rmdirSync(stagePath);
+    }
+  } catch {
+    // Replaced, non-empty, or unreadable staging is preserved for inspection.
+  }
+}
+
+/** Native NOREPLACE is safe to move the pre-statted generation; every other path uses mkdir as the commit. */
+function hasNativeAgentSyncHomePublish(options: AgentSyncLockOptions): boolean {
+  if (options.forcePortableHomePublish === true) return false;
+  if (process.platform === 'darwin') return true;
+  return process.platform === 'linux' && probeLinuxRenameat2({}) !== null;
+}
+
+/**
+ * Portably claim a missing GENIE_HOME without ever renaming over its pathname.
+ * The mkdir itself is the atomic commit. Even when the live directory still
+ * has our identity after inspection, it is conservatively returned as
+ * existing state so release never removes a later replacement by pathname.
+ */
+function publishPortableEmptyAgentSyncHome(
+  genieHome: string,
+  stagePath: string,
+  stagedStat: Stats,
+  options: AgentSyncLockOptions,
+): AgentSyncHomeState {
+  try {
+    mkdirSync(genieHome, { mode: 0o700 });
+  } catch (error) {
+    removeExactEmptyStagedHome(stagePath, stagedStat);
+    if (isNodeErrorCode(error, 'EEXIST')) {
+      const winner = inspectPhysicalAgentSyncHome(genieHome);
+      if (winner !== null) return winner;
+    }
+    throw new AgentSyncLockError(
+      `portable agent-sync lock home claim failed closed for ${genieHome}: ${errMsg(error)}`,
+      error,
+    );
+  }
+  try {
+    options.afterPortableHomeClaim?.({ path: genieHome, stagePath });
+  } catch (error) {
+    removeExactEmptyStagedHome(stagePath, stagedStat);
+    throw new AgentSyncLockError(
+      `portable agent-sync lock home claim barrier failed for ${genieHome}: ${errMsg(error)}`,
+      error,
+    );
+  }
+  removeExactEmptyStagedHome(stagePath, stagedStat);
+  const live = inspectPhysicalAgentSyncHome(genieHome);
+  if (live !== null) return live;
+  throw new AgentSyncLockError(`portable agent-sync lock home disappeared after claim: ${genieHome}`);
+}
+
+/**
+ * Ensure the final GENIE_HOME component is one physical directory. A missing
+ * home is prepared as a pre-statted sibling generation and published
+ * NOREPLACE; a concurrent directory winner is existing state, never ours.
+ */
+function ensurePhysicalAgentSyncHome(genieHome: string, options: AgentSyncLockOptions): AgentSyncHomeState {
+  const existing = inspectPhysicalAgentSyncHome(genieHome);
+  if (existing !== null) return existing;
+  let stagePath: string;
+  try {
+    stagePath = mkdtempSync(join(dirname(genieHome), `.${basename(genieHome)}.agent-sync-home-stage-`));
+  } catch (error) {
+    throw new AgentSyncLockError(`could not stage agent-sync lock home ${genieHome}: ${errMsg(error)}`, error);
+  }
+  const stagedStat = lstatSync(stagePath);
+  try {
+    options.beforeHomePublish?.({ path: genieHome, stagePath });
+  } catch (error) {
+    removeExactEmptyStagedHome(stagePath, stagedStat);
+    throw new AgentSyncLockError(
+      `agent-sync lock home publish barrier failed for ${genieHome}: ${errMsg(error)}`,
+      error,
+    );
+  }
+  if (!hasNativeAgentSyncHomePublish(options)) {
+    return publishPortableEmptyAgentSyncHome(genieHome, stagePath, stagedStat, options);
+  }
+  try {
+    atomicRenameDirectoryNoClobber(stagePath, genieHome);
+  } catch (error) {
+    removeExactEmptyStagedHome(stagePath, stagedStat);
+    const winner = inspectPhysicalAgentSyncHome(genieHome);
+    if (winner !== null) return winner;
+    throw new AgentSyncLockError(
+      `agent-sync lock home publish failed closed for ${genieHome}: ${errMsg(error)}`,
+      error,
+    );
+  }
+  try {
+    const published = lstatSync(genieHome);
+    if (!published.isDirectory() || published.isSymbolicLink() || !samePathIdentity(stagedStat, published)) {
+      throw new AgentSyncLockError(`created agent-sync lock home ownership could not be verified for ${genieHome}`);
+    }
+    return { path: genieHome, created: true, stat: stagedStat };
+  } catch (error) {
+    if (error instanceof AgentSyncLockError) throw error;
+    throw new AgentSyncLockError(
+      `created agent-sync lock home could not be verified for ${genieHome}: ${errMsg(error)}`,
+      error,
+    );
+  }
+}
+
+/** Remove only the same empty home this acquisition created solely to host its lock. */
+function removeCreatedAgentSyncHome(state: AgentSyncHomeState): void {
+  if (!state.created) return;
+  try {
+    const current = lstatSync(state.path);
+    if (!current.isDirectory() || current.isSymbolicLink() || !samePathIdentity(state.stat, current)) return;
+    if (readdirSync(state.path).length !== 0) return;
+  } catch {
+    return;
+  }
+  let captured: CapturedPath | null;
+  try {
+    captured = capturePath(state.path, 'lock-home-release');
+  } catch {
+    return;
+  }
+  if (captured === null) return;
+  try {
+    const current = lstatSync(captured.path);
+    if (
+      current.isDirectory() &&
+      !current.isSymbolicLink() &&
+      samePathIdentity(state.stat, current) &&
+      readdirSync(captured.path).length === 0
+    ) {
+      rmdirSync(captured.path);
+      removeEmptyDirSafe(captured.dir);
+      return;
+    }
+  } catch {
+    // Restore below; an unreadable or changed home is never discarded.
+  }
+  try {
+    atomicRenameDirectoryNoClobber(captured.path, state.path);
+    removeEmptyDirSafe(captured.dir);
+  } catch {
+    // A replacement won the live pathname; preserve the captured home in place.
+  }
+}
+
 /** Acquire the same per-GENIE_HOME mutation lock used by sync and uninstall. */
 export function acquireAgentSyncLock(
   genieHome: string,
   options: AgentSyncLockOptions = {},
 ): { release: () => void } | null {
-  return acquireAgentMutationLock(join(genieHome, AGENT_SYNC_LOCK_NAME), options);
+  const home = ensurePhysicalAgentSyncHome(genieHome, options);
+  let lock: { release: () => void } | null;
+  try {
+    lock = acquireAgentMutationLock(join(genieHome, AGENT_SYNC_LOCK_NAME), options);
+  } catch (error) {
+    removeCreatedAgentSyncHome(home);
+    throw error;
+  }
+  if (lock === null) {
+    removeCreatedAgentSyncHome(home);
+    return null;
+  }
+  let released = false;
+  return {
+    release: () => {
+      if (released) return;
+      released = true;
+      try {
+        lock.release();
+      } finally {
+        removeCreatedAgentSyncHome(home);
+      }
+    },
+  };
 }
 
 /**
@@ -6026,6 +6572,8 @@ function createRunContext(
     beforeManagedDirRemoval: opts.beforeManagedDirRemoval,
     beforeAgentFileMutation: opts.beforeAgentFileMutation,
     beforeAgentManifestCommit: opts.beforeAgentManifestCommit,
+    beforeAgentManifestPublish: opts.beforeAgentManifestPublish,
+    agentManifestPublishOptions: opts.agentManifestPublishOptions,
   };
 }
 

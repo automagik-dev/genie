@@ -612,6 +612,152 @@ describe('claude agent fan-out', () => {
     expect(readAgentFilesManifest(agentsDir)?.files['scout.md']).toBeUndefined();
   });
 
+  test('a foreign manifest racing a captured base is never replaced and rolls back agent bytes', () => {
+    present(fixture.claudeDir);
+    run();
+    const agentsDir = join(fixture.claudeDir, 'agents');
+    const scoutPath = join(agentsDir, 'scout.md');
+    const manifestPath = join(agentsDir, MANIFEST_NAME);
+    const scoutBefore = readFileSync(scoutPath);
+    const manifestBefore = readFileSync(manifestPath);
+    const foreignBytes = Buffer.from('foreign manifest installed after base capture\n');
+    let crossedPublishBarrier = false;
+    writeSourceAgent(fixture.pluginRoot, 'scout', '# scout v2\n');
+
+    const claude = agentReport(
+      run({
+        beforeAgentManifestPublish: ({ path }) => {
+          crossedPublishBarrier = true;
+          expect(path).toBe(manifestPath);
+          expect(existsSync(path)).toBe(false);
+          writeFileSync(path, foreignBytes);
+        },
+      }),
+      'claude',
+    );
+
+    expect(crossedPublishBarrier).toBe(true);
+    expect(readFileSync(manifestPath)).toEqual(foreignBytes);
+    expect(readFileSync(scoutPath)).toEqual(scoutBefore);
+    expect(claude.failures?.join('\n')).toContain('agent transaction did not commit');
+    expect(claude.advisories.some((line) => line.includes('target preserved'))).toBe(true);
+    expect(claude.advisories.some((line) => line.includes('preserved previous manifest'))).toBe(true);
+    const priorManifestDir = readdirSync(agentsDir).find((name) => name.startsWith(`.${MANIFEST_NAME}.manifest-old-`));
+    expect(priorManifestDir).toBeDefined();
+    expect(readFileSync(join(agentsDir, priorManifestDir as string, 'object'))).toEqual(manifestBefore);
+  });
+
+  test('a foreign manifest racing an absent base is never replaced and new agent files roll back', () => {
+    present(fixture.claudeDir);
+    const agentsDir = join(fixture.claudeDir, 'agents');
+    const manifestPath = join(agentsDir, MANIFEST_NAME);
+    const foreignBytes = Buffer.from('foreign manifest installed into absent base\n');
+    let crossedPublishBarrier = false;
+
+    const claude = agentReport(
+      run({
+        beforeAgentManifestPublish: ({ path }) => {
+          crossedPublishBarrier = true;
+          expect(path).toBe(manifestPath);
+          expect(existsSync(path)).toBe(false);
+          writeFileSync(path, foreignBytes);
+        },
+      }),
+      'claude',
+    );
+
+    expect(crossedPublishBarrier).toBe(true);
+    expect(readFileSync(manifestPath)).toEqual(foreignBytes);
+    expect(existsSync(join(agentsDir, 'scout.md'))).toBe(false);
+    expect(existsSync(join(agentsDir, 'reviewer.md'))).toBe(false);
+    expect(claude.failures?.join('\n')).toContain('agent transaction did not commit');
+    expect(claude.advisories.some((line) => line.includes('target preserved'))).toBe(true);
+  });
+
+  test('portable manifest fallback commits only after the live target reaches nlink=1', () => {
+    present(fixture.claudeDir);
+    const agentsDir = join(fixture.claudeDir, 'agents');
+    const manifestPath = join(agentsDir, MANIFEST_NAME);
+
+    const claude = agentReport(run({ agentManifestPublishOptions: { forcePortable: true } }), 'claude');
+
+    expect(claude.failures).toBeUndefined();
+    expect(readAgentFilesManifest(agentsDir)?.files['scout.md']).toBeDefined();
+    expect(lstatSync(manifestPath).nlink).toBe(1);
+  });
+
+  test('portable manifest cleanup failure unpublishes the linked inode and restores the prior base', () => {
+    present(fixture.claudeDir);
+    run();
+    const agentsDir = join(fixture.claudeDir, 'agents');
+    const scoutPath = join(agentsDir, 'scout.md');
+    const manifestPath = join(agentsDir, MANIFEST_NAME);
+    const scoutBefore = readFileSync(scoutPath);
+    const manifestBefore = readFileSync(manifestPath);
+    let crossedCleanupBarrier = false;
+    writeSourceAgent(fixture.pluginRoot, 'scout', '# scout v2\n');
+
+    const claude = agentReport(
+      run({
+        agentManifestPublishOptions: {
+          forcePortable: true,
+          beforePortableStageNameCleanup: ({ path, capturedStagePath }) => {
+            crossedCleanupBarrier = true;
+            expect(path).toBe(manifestPath);
+            expect(lstatSync(path).nlink).toBe(2);
+            expect(lstatSync(capturedStagePath).nlink).toBe(2);
+            throw new Error('injected portable stage-name cleanup failure');
+          },
+        },
+      }),
+      'claude',
+    );
+
+    expect(crossedCleanupBarrier).toBe(true);
+    expect(readFileSync(manifestPath)).toEqual(manifestBefore);
+    expect(lstatSync(manifestPath).nlink).toBe(1);
+    expect(readFileSync(scoutPath)).toEqual(scoutBefore);
+    expect(claude.failures?.join('\n')).toContain('agent transaction did not commit');
+    expect(claude.advisories.join('\n')).toContain('injected portable stage-name cleanup failure');
+    expect(readdirSync(agentsDir).some((name) => name.includes(`${MANIFEST_NAME}.genie-sync.staging-`))).toBe(false);
+  });
+
+  test('portable cleanup failure preserves a foreign manifest replacement without a multiply-linked live file', () => {
+    present(fixture.claudeDir);
+    run();
+    const agentsDir = join(fixture.claudeDir, 'agents');
+    const scoutPath = join(agentsDir, 'scout.md');
+    const manifestPath = join(agentsDir, MANIFEST_NAME);
+    const scoutBefore = readFileSync(scoutPath);
+    const manifestBefore = readFileSync(manifestPath);
+    const foreignBytes = Buffer.from('foreign manifest at portable cleanup barrier\n');
+    writeSourceAgent(fixture.pluginRoot, 'scout', '# scout v2\n');
+
+    const claude = agentReport(
+      run({
+        agentManifestPublishOptions: {
+          forcePortable: true,
+          beforePortableStageNameCleanup: ({ path }) => {
+            rmSync(path);
+            writeFileSync(path, foreignBytes);
+            throw new Error('portable cleanup failed after foreign replacement');
+          },
+        },
+      }),
+      'claude',
+    );
+
+    expect(readFileSync(manifestPath)).toEqual(foreignBytes);
+    expect(lstatSync(manifestPath).nlink).toBe(1);
+    expect(readFileSync(scoutPath)).toEqual(scoutBefore);
+    expect(claude.failures?.join('\n')).toContain('agent transaction did not commit');
+    expect(claude.advisories.some((line) => line.includes('preserved previous manifest'))).toBe(true);
+    const priorManifestDir = readdirSync(agentsDir).find((name) => name.startsWith(`.${MANIFEST_NAME}.manifest-old-`));
+    expect(priorManifestDir).toBeDefined();
+    expect(readFileSync(join(agentsDir, priorManifestDir as string, 'object'))).toEqual(manifestBefore);
+    expect(readdirSync(agentsDir).some((name) => name.includes(`${MANIFEST_NAME}.genie-sync.staging-`))).toBe(false);
+  });
+
   test('a clean orphan is restored exactly when its ownership commit fails', () => {
     present(fixture.claudeDir);
     run();
@@ -2299,7 +2445,118 @@ describe('cross-process sync lock', () => {
     expect(existsSync(join(fixture.claudeDir, 'skills'))).toBe(false);
     expect(existsSync(join(fixture.genieHome, MARKER_NAME))).toBe(false);
     expect(lines.some((line) => line.includes('failed closed'))).toBe(true);
-    expect(() => acquireAgentSyncLock(join(fixture.root, 'not-a-directory'))).toThrow(AgentSyncLockError);
+    const notADirectory = join(fixture.root, 'not-a-directory');
+    writeFileSync(notADirectory, 'foreign regular file\n');
+    expect(() => acquireAgentSyncLock(notADirectory)).toThrow(AgentSyncLockError);
+    const physicalHome = join(fixture.root, 'physical-home');
+    const symlinkHome = join(fixture.root, 'symlink-home');
+    mkdirSync(physicalHome);
+    symlinkSync(physicalHome, symlinkHome);
+    expect(() => acquireAgentSyncLock(symlinkHome)).toThrow(AgentSyncLockError);
+    expect(lstatSync(symlinkHome).isSymbolicLink()).toBe(true);
+  });
+
+  test('an absent GENIE_HOME is created for locking and released without lock or staging debris', () => {
+    const absentHome = join(fixture.root, 'absent-genie-home');
+
+    const lock = acquireAgentSyncLock(absentHome);
+
+    expect(lock).not.toBeNull();
+    expect(existsSync(join(absentHome, LOCK_NAME))).toBe(true);
+    lock?.release();
+    expect(existsSync(join(absentHome, LOCK_NAME))).toBe(false);
+    if (existsSync(absentHome)) expect(readdirSync(absentHome)).toEqual([]);
+    expect(readdirSync(fixture.root).some((name) => name.startsWith('.absent-genie-home.agent-sync-home-stage-'))).toBe(
+      false,
+    );
+  });
+
+  test('a foreign physical GENIE_HOME winning the prepublish race is treated as existing and preserved', () => {
+    const racedHome = join(fixture.root, 'raced-genie-home');
+    let stagedHome = '';
+    const foreignIdentity = { dev: -1, ino: -1, mode: -1 };
+
+    const lock = acquireAgentSyncLock(racedHome, {
+      beforeHomePublish: ({ path, stagePath }) => {
+        stagedHome = stagePath;
+        mkdirSync(path);
+        const stat = lstatSync(path);
+        foreignIdentity.dev = stat.dev;
+        foreignIdentity.ino = stat.ino;
+        foreignIdentity.mode = stat.mode;
+      },
+    });
+
+    expect(lock).not.toBeNull();
+    expect(existsSync(stagedHome)).toBe(false);
+    expect(existsSync(join(racedHome, LOCK_NAME))).toBe(true);
+    lock?.release();
+    const after = lstatSync(racedHome);
+    expect({ dev: after.dev, ino: after.ino, mode: after.mode }).toEqual(foreignIdentity);
+    expect(readdirSync(racedHome)).toEqual([]);
+  });
+
+  test('portable home publication never overwrites or later deletes a foreign directory replacing its mkdir claim', () => {
+    const racedHome = join(fixture.root, 'portable-raced-genie-home');
+    const displacedClaim = join(fixture.root, 'portable-displaced-home-claim');
+    let stagedHome = '';
+    const foreignIdentity = { dev: -1, ino: -1, mode: -1 };
+
+    const lock = acquireAgentSyncLock(racedHome, {
+      forcePortableHomePublish: true,
+      afterPortableHomeClaim: ({ path, stagePath }) => {
+        stagedHome = stagePath;
+        renameSync(path, displacedClaim);
+        mkdirSync(path);
+        const stat = lstatSync(path);
+        foreignIdentity.dev = stat.dev;
+        foreignIdentity.ino = stat.ino;
+        foreignIdentity.mode = stat.mode;
+      },
+    });
+
+    expect(lock).not.toBeNull();
+    expect(stagedHome).not.toBe('');
+    expect(existsSync(stagedHome)).toBe(false);
+    expect(existsSync(join(racedHome, LOCK_NAME))).toBe(true);
+    lock?.release();
+    const after = lstatSync(racedHome);
+    expect({ dev: after.dev, ino: after.ino, mode: after.mode }).toEqual(foreignIdentity);
+    expect(readdirSync(racedHome)).toEqual([]);
+    expect(lstatSync(displacedClaim).isDirectory()).toBe(true);
+  });
+
+  test('portable home publication fails closed and preserves a symlink replacing its mkdir claim', () => {
+    const racedHome = join(fixture.root, 'portable-symlink-raced-genie-home');
+    const displacedClaim = join(fixture.root, 'portable-symlink-displaced-home-claim');
+    const victim = join(fixture.root, 'portable-home-symlink-victim');
+    let stagedHome = '';
+    const foreignIdentity = { dev: -1, ino: -1, mode: -1 };
+    mkdirSync(victim);
+
+    expect(() =>
+      acquireAgentSyncLock(racedHome, {
+        forcePortableHomePublish: true,
+        afterPortableHomeClaim: ({ path, stagePath }) => {
+          stagedHome = stagePath;
+          renameSync(path, displacedClaim);
+          symlinkSync(victim, path);
+          const stat = lstatSync(path);
+          foreignIdentity.dev = stat.dev;
+          foreignIdentity.ino = stat.ino;
+          foreignIdentity.mode = stat.mode;
+        },
+      }),
+    ).toThrow(AgentSyncLockError);
+
+    expect(stagedHome).not.toBe('');
+    expect(existsSync(stagedHome)).toBe(false);
+    const after = lstatSync(racedHome);
+    expect(after.isSymbolicLink()).toBe(true);
+    expect({ dev: after.dev, ino: after.ino, mode: after.mode }).toEqual(foreignIdentity);
+    expect(readlinkSync(racedHome)).toBe(victim);
+    expect(readdirSync(victim)).toEqual([]);
+    expect(lstatSync(displacedClaim).isDirectory()).toBe(true);
   });
 
   test('a foreign owner replacement installed after release capture survives byte-for-byte', () => {
