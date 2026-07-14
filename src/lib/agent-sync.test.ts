@@ -2753,6 +2753,33 @@ describe('cross-process sync lock', () => {
     expect(readdirSync(absentHome)).toEqual([]);
   });
 
+  test('an explicit Linux home platform with unavailable native setup selects the portable mkdir commit', () => {
+    const absentHome = join(fixture.root, 'linux-native-unavailable-home');
+    const candidates = ['missing-libc-one.so', 'missing-libc-two.so'] as const;
+    const attempted: string[] = [];
+    let portableClaimed = false;
+
+    const lock = acquireAgentSyncLock(absentHome, {
+      homePublishDeps: {
+        platform: 'linux',
+        candidates,
+        opener: (soname) => {
+          attempted.push(soname);
+          return null;
+        },
+      },
+      afterPortableHomeClaim: () => {
+        portableClaimed = true;
+      },
+    });
+
+    expect(attempted).toEqual([...candidates]);
+    expect(portableClaimed).toBe(true);
+    expect(lock).not.toBeNull();
+    lock?.release();
+    expect(readdirSync(absentHome)).toEqual([]);
+  });
+
   test('a Darwin home native invocation exception fails closed without a portable retry', () => {
     const absentHome = join(fixture.root, 'darwin-native-home-invocation-failure');
     let portableClaimed = false;
