@@ -614,7 +614,7 @@ function materialize(plan: LaunchPlan, deps: LaunchDeps, write: (line: string) =
   }
 
   const configPath = writeLaunchConfig({ slug: plan.slug, panes: plan.panes }, { dir: deps.warpDir, platform });
-  const uri = launchUri(configPath);
+  const uri = launchUri(plan.slug);
   write(`Wrote launch config: ${configPath}`);
 
   const openImpl = deps.openImpl ?? defaultOpen;
