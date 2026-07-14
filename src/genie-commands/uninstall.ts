@@ -24,7 +24,6 @@ import {
   readlinkSync,
   renameSync,
   rmSync,
-  rmdirSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -2024,14 +2023,6 @@ function removeGenieDirPreservingStateBackups(genieDir: string): void {
   }
 }
 
-function removeGenieDirIfEmpty(genieDir: string): void {
-  try {
-    rmdirSync(genieDir);
-  } catch {
-    // Durable backups, another safe retained object, or an already-absent root are all valid.
-  }
-}
-
 /** A durable-backups/active-lock-only root is recovery state, not an installed Genie tree. */
 export function hasRemovableGenieInstallState(genieDir: string): boolean {
   try {
@@ -2183,7 +2174,6 @@ export function performUninstall(
     if (plannedNames.length > 0) removeSymlinks(LOCAL_BIN, genieDir, plannedNames);
   } finally {
     lock.release();
-    removeGenieDirIfEmpty(genieDir);
   }
 }
 
@@ -2345,7 +2335,6 @@ function executeConfirmedUninstall(genieDir: string, removeMarketplace: boolean)
     executeFreshUninstall(genieDir, removeMarketplace);
   } finally {
     agentSyncLock.release();
-    removeGenieDirIfEmpty(genieDir);
   }
 }
 

@@ -225,6 +225,8 @@ export interface PortableManifestStageCleanupEvent {
 export interface AgentManifestPublishOptions {
   /** Force the hard-link fallback even when the host exposes native NOREPLACE rename. */
   forcePortable?: boolean;
+  /** Injectable native capability setup for deterministic fallback tests. */
+  noClobberDeps?: NoClobberDeps;
   /** Deterministic failure/race barrier after the stage name is captured but before it is retired. */
   beforePortableStageNameCleanup?: (event: PortableManifestStageCleanupEvent) => void;
 }
@@ -242,6 +244,8 @@ export interface AgentSyncLockOptions {
   beforeHomePublish?: (event: { path: string; stagePath: string }) => void;
   /** Force missing-home publication through the portable mkdir commit (test seam). */
   forcePortableHomePublish?: boolean;
+  /** Injectable native capability setup for missing-home publication. */
+  homePublishDeps?: NoClobberDeps;
   /** Deterministic barrier after the portable mkdir commit and before the live home is inspected. */
   afterPortableHomeClaim?: (event: { path: string; stagePath: string }) => void;
   /** Deterministic barrier after the lock pathname is captured and before the captured object is finalized. */
@@ -2078,11 +2082,15 @@ type LibcRenameOpener = (soname: string) => Renameat2 | null;
 interface RenameProbe {
   resolved?: Renameat2 | null;
 }
-/** Dependency-injection seam for the Linux no-clobber fast path — no global mutable state, no test-only setter. */
+/** Native no-clobber capability seams — no global mutable state or test-only setter. */
 export interface NoClobberDeps {
   opener?: LibcRenameOpener;
   candidates?: readonly string[];
   probe?: RenameProbe;
+  /** Deterministically select the regular-file native family without mutating global process state. */
+  platform?: NodeJS.Platform;
+  /** Regular-file and lock-home callers use an explicit opener to select the Darwin branch on test hosts. */
+  darwinOpener?: () => ((staged: Buffer, target: Buffer) => number) | null;
 }
 
 const defaultLibcOpener: LibcRenameOpener = (soname) => {
@@ -2111,9 +2119,67 @@ export function resolveLinuxRenameat2(
 
 const defaultLinuxProbe: RenameProbe = {};
 function probeLinuxRenameat2(deps: NoClobberDeps): Renameat2 | null {
-  const probe = deps.probe ?? defaultLinuxProbe;
-  if (!('resolved' in probe)) probe.resolved = resolveLinuxRenameat2(deps.opener, deps.candidates);
+  const hasInjectedResolution = deps.opener !== undefined || deps.candidates !== undefined;
+  const probe = deps.probe ?? (hasInjectedResolution ? {} : defaultLinuxProbe);
+  if (!('resolved' in probe)) {
+    try {
+      probe.resolved = resolveLinuxRenameat2(deps.opener, deps.candidates);
+    } catch {
+      probe.resolved = null;
+    }
+  }
   return probe.resolved ?? null;
+}
+
+const defaultDarwinRenameOpener: NonNullable<NoClobberDeps['darwinOpener']> = () => {
+  try {
+    const libc = dlopen('/usr/lib/libSystem.B.dylib', {
+      renamex_np: { args: ['cstring', 'cstring', 'u32'], returns: 'i32' },
+    } as const);
+    try {
+      const renamex = libc.symbols.renamex_np;
+      if (typeof renamex !== 'function') {
+        libc.close();
+        return null;
+      }
+      return (staged, target) => {
+        let result: number;
+        try {
+          result = renamex(staged, target, DARWIN_RENAME_EXCL);
+        } catch (error) {
+          try {
+            libc.close();
+          } catch {
+            // Preserve the native invocation error; cleanup cannot authorize a portable retry.
+          }
+          throw error;
+        }
+        try {
+          libc.close();
+        } catch {
+          // The native result is already known; close-only failure cannot rewrite the commit outcome.
+        }
+        return result;
+      };
+    } catch {
+      try {
+        libc.close();
+      } catch {
+        // Setup already failed; inability to close the incomplete handle does not make the capability available.
+      }
+      return null;
+    }
+  } catch {
+    return null;
+  }
+};
+
+function resolveDarwinRenameExclusive(deps: NoClobberDeps): ((staged: Buffer, target: Buffer) => number) | null {
+  try {
+    return (deps.darwinOpener ?? defaultDarwinRenameOpener)();
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -2182,6 +2248,59 @@ export function atomicRenameDirectoryNoClobber(stagedDir: string, targetDir: str
 
 type RegularFileNoClobberPublish = 'renamed' | 'linked';
 
+/** Reconcile an exception only when the exact staged payload moved completely onto the target name. */
+function exactFileStageMovedToTarget(stage: FileStage, targetFile: string): boolean {
+  if (lstatSafe(stage.path) !== null) return false;
+  try {
+    const before = lstatSync(targetFile);
+    if (
+      !before.isFile() ||
+      before.isSymbolicLink() ||
+      !samePathIdentity(stage.stat, before) ||
+      !readFileSync(targetFile).equals(stage.bytes)
+    ) {
+      return false;
+    }
+    return samePathIdentity(before, lstatSync(targetFile));
+  } catch {
+    return false;
+  }
+}
+
+function selectedRegularFileNativePlatform(deps: NoClobberDeps): NodeJS.Platform {
+  return deps.platform ?? (deps.darwinOpener === undefined ? process.platform : 'darwin');
+}
+
+/** Null means native setup was unavailable before invocation, so the portable commit remains safe to select. */
+function resolveRegularFileNativeRename(deps: NoClobberDeps): Renameat2 | null {
+  const platform = selectedRegularFileNativePlatform(deps);
+  if (platform === 'darwin') return resolveDarwinRenameExclusive(deps);
+  if (platform === 'linux') return probeLinuxRenameat2(deps);
+  return null;
+}
+
+/** Once invoked, native return and exception outcomes are authoritative and never select a portable retry. */
+function publishRegularFileViaNativeNoClobber(
+  stage: FileStage,
+  targetFile: string,
+  renameExclusive: Renameat2,
+): RegularFileNoClobberPublish {
+  let result: number;
+  try {
+    result = renameExclusive(Buffer.from(`${stage.path}\0`), Buffer.from(`${targetFile}\0`));
+  } catch (error) {
+    if (exactFileStageMovedToTarget(stage, targetFile)) return 'renamed';
+    throw error;
+  }
+  if (result !== 0) {
+    const detail = lstatSafe(targetFile) === null ? 'rename failed' : 'target exists';
+    throw new NoClobberPublishError(
+      `atomic regular-file no-clobber publish failed (${detail}); target preserved: ${targetFile}`,
+    );
+  }
+  return 'renamed';
+}
+
 /**
  * Publish one staged regular file while atomically rejecting every existing
  * target inode. Linux and Darwin consume the staged name with their native
@@ -2190,48 +2309,26 @@ type RegularFileNoClobberPublish = 'renamed' | 'linked';
  * committed only after retiring the extra name and verifying a safe nlink=1.
  */
 function atomicRenameRegularFileNoClobber(
-  stagedFile: string,
+  stage: FileStage,
   targetFile: string,
   deps: NoClobberDeps = {},
   forcePortable = false,
 ): RegularFileNoClobberPublish {
-  const stagedStat = lstatSync(stagedFile);
-  if (!stagedStat.isFile() || stagedStat.isSymbolicLink()) {
-    throw new Error(`atomic publish source is not a physical regular file: ${stagedFile}`);
+  const stagedStat = lstatSync(stage.path);
+  if (
+    !stagedStat.isFile() ||
+    stagedStat.isSymbolicLink() ||
+    !samePathIdentity(stage.stat, stagedStat) ||
+    !readFileSync(stage.path).equals(stage.bytes)
+  ) {
+    throw new Error(`atomic publish source is not the expected physical regular file: ${stage.path}`);
   }
-  const stagedPath = Buffer.from(`${stagedFile}\0`);
-  const targetPath = Buffer.from(`${targetFile}\0`);
-  if (!forcePortable && process.platform === 'linux') {
-    const rn = probeLinuxRenameat2(deps);
-    if (rn !== null) {
-      if (rn(stagedPath, targetPath) !== 0) {
-        const detail = lstatSafe(targetFile) === null ? 'rename failed' : 'target exists';
-        throw new NoClobberPublishError(
-          `atomic regular-file no-clobber publish failed (${detail}); target preserved: ${targetFile}`,
-        );
-      }
-      return 'renamed';
-    }
-  } else if (!forcePortable && process.platform === 'darwin') {
-    const libc = dlopen('/usr/lib/libSystem.B.dylib', {
-      renamex_np: { args: ['cstring', 'cstring', 'u32'], returns: 'i32' },
-    } as const);
-    let result: number;
-    try {
-      result = libc.symbols.renamex_np(stagedPath, targetPath, DARWIN_RENAME_EXCL);
-    } finally {
-      libc.close();
-    }
-    if (result !== 0) {
-      const detail = lstatSafe(targetFile) === null ? 'rename failed' : 'target exists';
-      throw new NoClobberPublishError(
-        `atomic regular-file no-clobber publish failed (${detail}); target preserved: ${targetFile}`,
-      );
-    }
-    return 'renamed';
+  if (!forcePortable) {
+    const nativeRename = resolveRegularFileNativeRename(deps);
+    if (nativeRename !== null) return publishRegularFileViaNativeNoClobber(stage, targetFile, nativeRename);
   }
   try {
-    linkSync(stagedFile, targetFile);
+    linkSync(stage.path, targetFile);
     return 'linked';
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code ?? 'UNKNOWN';
@@ -4063,9 +4160,9 @@ function publishFlatAgentManifestStage(
   let publish: RegularFileNoClobberPublish;
   try {
     publish = atomicRenameRegularFileNoClobber(
-      stage.path,
+      stage,
       manifestPath,
-      {},
+      ctx.seams.manifestPublishOptions?.noClobberDeps,
       ctx.seams.manifestPublishOptions?.forcePortable,
     );
   } catch (error) {
@@ -6140,11 +6237,37 @@ function removeExactEmptyStagedHome(stagePath: string, expected: Stats): void {
   }
 }
 
-/** Native NOREPLACE is safe to move the pre-statted generation; every other path uses mkdir as the commit. */
-function hasNativeAgentSyncHomePublish(options: AgentSyncLockOptions): boolean {
-  if (options.forcePortableHomePublish === true) return false;
-  if (process.platform === 'darwin') return true;
-  return process.platform === 'linux' && probeLinuxRenameat2({}) !== null;
+type AgentSyncHomePublisher = (stagedDir: string, targetDir: string) => void;
+
+/** Resolve native NOREPLACE before any publish call; unavailable setup selects the dedicated portable commit. */
+function resolveNativeAgentSyncHomePublisher(options: AgentSyncLockOptions): AgentSyncHomePublisher | null {
+  if (options.forcePortableHomePublish === true) return null;
+  const deps = options.homePublishDeps ?? {};
+  if (process.platform === 'darwin' || deps.darwinOpener !== undefined) {
+    const renameExclusive = resolveDarwinRenameExclusive(deps);
+    if (renameExclusive === null) return null;
+    return (stagedDir, targetDir) => {
+      const result = renameExclusive(Buffer.from(`${stagedDir}\0`), Buffer.from(`${targetDir}\0`));
+      if (result !== 0) {
+        const detail = lstatSafe(targetDir) === null ? 'rename failed' : 'target exists';
+        throw new NoClobberPublishError(
+          `atomic agent-sync home publish failed (${detail}); target preserved: ${targetDir}`,
+        );
+      }
+    };
+  }
+  if (process.platform !== 'linux') return null;
+  const renameNoReplace = probeLinuxRenameat2(deps);
+  if (renameNoReplace === null) return null;
+  return (stagedDir, targetDir) => {
+    const result = renameNoReplace(Buffer.from(`${stagedDir}\0`), Buffer.from(`${targetDir}\0`));
+    if (result !== 0) {
+      const detail = lstatSafe(targetDir) === null ? 'rename failed' : 'target exists';
+      throw new NoClobberPublishError(
+        `atomic agent-sync home publish failed (${detail}); target preserved: ${targetDir}`,
+      );
+    }
+  };
 }
 
 /**
@@ -6211,11 +6334,12 @@ function ensurePhysicalAgentSyncHome(genieHome: string, options: AgentSyncLockOp
       error,
     );
   }
-  if (!hasNativeAgentSyncHomePublish(options)) {
+  const nativePublish = resolveNativeAgentSyncHomePublisher(options);
+  if (nativePublish === null) {
     return publishPortableEmptyAgentSyncHome(genieHome, stagePath, stagedStat, options);
   }
   try {
-    atomicRenameDirectoryNoClobber(stagePath, genieHome);
+    nativePublish(stagePath, genieHome);
   } catch (error) {
     removeExactEmptyStagedHome(stagePath, stagedStat);
     const winner = inspectPhysicalAgentSyncHome(genieHome);

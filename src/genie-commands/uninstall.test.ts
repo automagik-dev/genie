@@ -1106,6 +1106,33 @@ describe('agent-sync managed-asset removal', () => {
     expect(readFileSync(own)).toEqual(ownBytes);
   });
 
+  test('full uninstall preserves a foreign empty GENIE_HOME swapped in while its lock is held', () => {
+    const displacedHome = join(tmp, 'displaced-lock-home');
+    const foreignIdentity = { dev: -1, ino: -1, mode: -1 };
+    let runtimeRemovalCalls = 0;
+    rmSync(genieHome, { recursive: true, force: true });
+
+    performUninstall(false, [], genieHome, false, false, true, {
+      agentSyncTargets: { genieHome },
+      removeRuntimeIntegrations: () => {
+        runtimeRemovalCalls += 1;
+        expect(existsSync(join(genieHome, '.agent-sync.lock'))).toBe(true);
+        renameSync(genieHome, displacedHome);
+        mkdirSync(genieHome);
+        const stat = lstatSync(genieHome);
+        foreignIdentity.dev = stat.dev;
+        foreignIdentity.ino = stat.ino;
+        foreignIdentity.mode = stat.mode;
+      },
+    });
+
+    expect(runtimeRemovalCalls).toBe(1);
+    const after = lstatSync(genieHome);
+    expect({ dev: after.dev, ino: after.ino, mode: after.mode }).toEqual(foreignIdentity);
+    expect(readdirSync(genieHome)).toEqual([]);
+    expect(existsSync(join(displacedHome, '.agent-sync.lock'))).toBe(true);
+  });
+
   test('INV1: uninstall preserves captured bytes mutated after validation instead of discarding them', () => {
     const scout = managedAgent('scout.md', '# shipped scout\n');
     const agentsDir = join(claudeDir, 'agents');
