@@ -24,6 +24,7 @@ import {
   readlinkSync,
   renameSync,
   rmSync,
+  rmdirSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -32,17 +33,29 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { confirm } from '@inquirer/prompts';
 import { z } from 'zod';
 import {
+  AGENT_SYNC_LOCK_NAME,
+  type AgentFileMutationEvent,
+  type AgentManifestCommitEvent,
+  type AgentPathSnapshot,
   CODEX_FALLBACK_RETIREMENT_ROOT,
+  type FlatAgentOp,
+  type FlatAgentOutcome,
+  KEPT_SUFFIX,
   TARGET_NAME,
+  acquireAgentSyncLock,
   acquireLifecycleLease,
+  allocateExclusiveBackupRoot,
+  captureAgentPathSnapshot,
   codexLegacyCuratedDir,
   inspectManagedSkillTree,
   inspectManagedWorkflow,
+  readAgentFilesManifest,
   recoverManagedSkillTransactions,
   recoverManagedWorkflowTransactions,
   removeManagedSkillTree,
   removeManagedWorkflow,
   resolveAgentsSkillsDir,
+  runFlatAgentTransaction,
 } from '../lib/agent-sync.js';
 import { hookScriptExists } from '../lib/claude-settings.js';
 import { contractPath, getGenieDir } from '../lib/genie-config.js';
@@ -86,6 +99,15 @@ const absolutePathSchema = z
 const digestSchema = z.string().regex(/^[a-f0-9]{64}$/);
 const physicalModeSchema = z.number().int().min(0).max(0o7777);
 const codexRoleNameSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/);
+const agentOwnedDigestSchema = z.string().min(1).max(256);
+
+const agentSnapshotIdentitySchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('absent') }).strict(),
+  z.object({ kind: z.literal('file'), digest: digestSchema, mode: physicalModeSchema }).strict(),
+  z.object({ kind: z.literal('directory'), digest: digestSchema, mode: physicalModeSchema }).strict(),
+  z.object({ kind: z.literal('symlink'), target: z.string().max(4096) }).strict(),
+  z.object({ kind: z.literal('other'), mode: physicalModeSchema }).strict(),
+]);
 
 // Per-kind physical identity the classifier already computed at plan time. Every
 // removable managed asset carries the exact identity uninstall is authorized to
@@ -102,9 +124,17 @@ const agentAssetIdentitySchema = z.discriminatedUnion('kind', [
     })
     .strict(),
   z.object({ kind: z.literal('link'), target: z.string().min(1).max(4096) }).strict(),
+  z
+    .object({
+      kind: z.literal('agent'),
+      ownedDigest: agentOwnedDigestSchema,
+      snapshot: agentSnapshotIdentitySchema,
+    })
+    .strict(),
 ]);
 
 export type AgentAssetIdentity = z.infer<typeof agentAssetIdentitySchema>;
+type AgentSnapshotIdentity = z.infer<typeof agentSnapshotIdentitySchema>;
 
 // A removable asset records its identity; a kept (modified/corrupt) asset records
 // none because it holds user data now and is never a deletion candidate.
@@ -546,12 +576,30 @@ function hasRuntimeIntegrationWork(scope: UninstallBatchScope): boolean {
   );
 }
 
+function flatAgentBatchMember(scope: UninstallBatchScope): string | null {
+  const agentPaths = scope.agentAssets
+    .filter((asset) => asset.disposition === 'remove' && asset.identity.kind === 'agent')
+    .map((asset) => asset.path);
+  if (agentPaths.length === 0) return null;
+  const roots = new Set(agentPaths.map((path) => dirname(path)));
+  if (roots.size !== 1) throw new Error('uninstall batch flat-agent actions span multiple manifest directories');
+  return uninstallBatchMemberId(
+    'asset',
+    `flat-agents:${agentPaths
+      .map((path) => resolve(path))
+      .sort()
+      .join('\n')}`,
+  );
+}
+
 function uninstallBatchMembers(scope: UninstallBatchScope, genieHome: string): Set<string> {
   const members = new Set(
     scope.agentAssets
-      .filter((asset) => asset.disposition === 'remove')
+      .filter((asset) => asset.disposition === 'remove' && asset.identity.kind !== 'agent')
       .map((asset) => uninstallBatchMemberId('asset', asset.path)),
   );
+  const agentMember = flatAgentBatchMember(scope);
+  if (agentMember !== null) members.add(agentMember);
   if (scope.ownedRulesPath !== null) members.add(uninstallBatchMemberId('rules', scope.ownedRulesPath));
   if (hasRuntimeIntegrationWork(scope)) members.add(uninstallBatchRuntimeMemberId(scope));
   if (scope.genieHomePresent) members.add(uninstallBatchMemberId('home', resolve(genieHome)));
@@ -657,7 +705,16 @@ export interface AgentSyncRemovalTargets {
   agentsSkillsDir?: string;
   hermesHome?: string;
   genieHome?: string;
+  /** Injectable clock for deterministic state-backup and kept-aside paths in tests. */
+  now?: () => Date;
+  /** Deterministic race barrier after classification/capture and before a flat-agent mutation. */
+  beforeAgentFileMutation?: (event: AgentSyncRemovalMutationEvent) => void;
+  /** Deterministic barrier inside the single manifest commit of the flat-agent transaction. */
+  beforeAgentManifestCommit?: (event: AgentManifestCommitEvent) => void;
 }
+
+/** Uninstall shares the transaction core's mutation event verbatim. */
+export type AgentSyncRemovalMutationEvent = AgentFileMutationEvent;
 
 function directoryHasMatchingEntry(path: string, matches: (name: string) => boolean): boolean {
   try {
@@ -777,7 +834,7 @@ const LEGACY_KEPT_MARKER = '.genie-kept';
 
 interface AgentSyncAsset {
   agent: 'claude' | 'codex' | 'hermes';
-  kind: 'skill' | 'workflow' | 'link';
+  kind: 'skill' | 'agent' | 'workflow' | 'link';
   path: string;
   /** True when content diverged or ownership metadata is corrupt; uninstall preserves it. */
   modified?: boolean;
@@ -789,6 +846,12 @@ interface AgentSyncAsset {
    * refuse a replacement occupying the same path (F43).
    */
   identity?: AgentAssetIdentity;
+  /** Flat Claude agents only: the shared manifest entry that owns this path. */
+  manifestEntry?: { dir: string; name: string; digest: string };
+  /** Flat Claude agents only: ownership exists but the live file is already absent. */
+  missing?: boolean;
+  /** Flat Claude agents only: exact snapshot captured at classification — the removal CAS target. */
+  agentSnapshot?: AgentPathSnapshot;
 }
 
 function collectManagedSkillDirs(
@@ -837,6 +900,62 @@ function collectManagedSkillDirs(
     } else {
       out.push({ agent, kind: 'skill', path: dir, modified: true });
     }
+  }
+}
+
+function agentSnapshotIdentity(snapshot: AgentPathSnapshot): AgentSnapshotIdentity {
+  if (snapshot.kind === 'absent') return { kind: 'absent' };
+  if (snapshot.kind === 'file') {
+    return { kind: 'file', digest: snapshot.digest, mode: snapshot.stat.mode & 0o7777 };
+  }
+  if (snapshot.kind === 'directory') {
+    return { kind: 'directory', digest: snapshot.digest, mode: snapshot.stat.mode & 0o7777 };
+  }
+  if (snapshot.kind === 'symlink') return { kind: 'symlink', target: snapshot.target };
+  return { kind: 'other', mode: snapshot.stat.mode & 0o7777 };
+}
+
+function agentIdentityMatches(expected: AgentAssetIdentity, asset: AgentSyncAsset): boolean {
+  if (expected.kind !== 'agent' || asset.identity?.kind !== 'agent') return false;
+  return (
+    expected.ownedDigest === asset.identity.ownedDigest &&
+    JSON.stringify(expected.snapshot) === JSON.stringify(asset.identity.snapshot)
+  );
+}
+
+/** Collect only flat Claude-agent names explicitly owned by the shared per-file manifest. */
+function collectManagedAgentFiles(parent: string, out: AgentSyncAsset[], restrictToPaths?: ReadonlySet<string>): void {
+  const manifest = readAgentFilesManifest(parent);
+  if (manifest === null) return;
+  for (const [name, entry] of Object.entries(manifest.files).sort(([left], [right]) => left.localeCompare(right))) {
+    const path = join(parent, name);
+    if (restrictToPaths !== undefined && !restrictToPaths.has(resolve(path))) continue;
+    let snapshot: AgentPathSnapshot | undefined;
+    try {
+      snapshot = captureAgentPathSnapshot(path);
+    } catch {
+      // Uninspectable manifest-owned data is never a deletion/action candidate.
+      out.push({
+        agent: 'claude',
+        kind: 'agent',
+        path,
+        modified: true,
+        manifestEntry: { dir: parent, name, digest: entry.digest },
+      });
+      continue;
+    }
+    const missing = snapshot.kind === 'absent';
+    const clean = snapshot.kind === 'file' && snapshot.digest === entry.digest;
+    out.push({
+      agent: 'claude',
+      kind: 'agent',
+      path,
+      modified: !missing && !clean,
+      missing,
+      agentSnapshot: snapshot,
+      manifestEntry: { dir: parent, name, digest: entry.digest },
+      identity: { kind: 'agent', ownedDigest: entry.digest, snapshot: agentSnapshotIdentity(snapshot) },
+    });
   }
 }
 
@@ -945,6 +1064,7 @@ export function collectAgentSyncAssets(
   const genieHome = targets.genieHome ?? resolveGenieHome();
   const out: AgentSyncAsset[] = [];
   collectManagedSkillDirs(join(claudeDir, 'skills'), 'claude', out, restrictToPaths);
+  collectManagedAgentFiles(join(claudeDir, 'agents'), out, restrictToPaths);
   // Live codex tier + the retired `.curated` lane (machines that never synced
   // post-migration still carry managed dirs there). Manifest-gated either way —
   // unmanaged siblings in the shared ~/.agents/skills tier are invisible.
@@ -964,6 +1084,10 @@ export interface AgentSyncRemovalResult {
   identityMismatch: string[];
   /** Per-asset failures. Callers keep Genie installed so cleanup can be retried. */
   failures: Array<{ path: string; detail: string }>;
+  /** Non-fatal transaction/concurrency details for paths left safe and visible. */
+  advisories?: string[];
+  /** Set when the shared sync/uninstall lock was held by another process. */
+  skipped?: string;
 }
 
 export interface AgentSyncRemovalOptions {
@@ -997,6 +1121,43 @@ function recoverTransactionsBeforeRemoval(targets: AgentSyncRemovalTargets): { p
  * disable, rewrite, or relinquish ownership of a user-modified artifact.
  */
 export function removeAgentSyncAssets(
+  targets: AgentSyncRemovalTargets = {},
+  options: AgentSyncRemovalOptions = {},
+): AgentSyncRemovalResult {
+  const genieHome = targets.genieHome ?? resolveGenieHome();
+  let lock: { release: () => void } | null;
+  try {
+    lock = acquireAgentSyncLock(genieHome);
+  } catch (error) {
+    const skipped = `agent-sync lock acquisition failed closed; uninstall left synced assets untouched: ${errorMessage(error)}`;
+    return {
+      removed: [],
+      kept: [],
+      identityMismatch: [],
+      failures: [{ path: genieHome, detail: skipped }],
+      advisories: [skipped],
+      skipped,
+    };
+  }
+  if (lock === null) {
+    const skipped = 'another agent-sync mutation holds the lock; uninstall left synced assets untouched';
+    return {
+      removed: [],
+      kept: [],
+      identityMismatch: [],
+      failures: [{ path: genieHome, detail: skipped }],
+      advisories: [skipped],
+      skipped,
+    };
+  }
+  try {
+    return removeAgentSyncAssetsLocked(targets, options);
+  } finally {
+    lock.release();
+  }
+}
+
+function removeAgentSyncAssetsLocked(
   targets: AgentSyncRemovalTargets = {},
   options: AgentSyncRemovalOptions = {},
 ): AgentSyncRemovalResult {
@@ -1060,6 +1221,148 @@ function removeManagedLink(linkPath: string, expectedTarget: string | undefined,
   result.removed.push(linkPath);
 }
 
+function pushAgentAdvisory(result: AgentSyncRemovalResult, advisory: string): void {
+  if (result.advisories === undefined) result.advisories = [];
+  result.advisories.push(advisory);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** Lazily allocate one exclusive backup generation and persist the exact validated bytes. */
+function createAgentFileBackup(targets: AgentSyncRemovalTargets): (name: string, bytes: Buffer) => string {
+  const genieHome = targets.genieHome ?? resolveGenieHome();
+  const stamp = (targets.now ?? (() => new Date()))().toISOString();
+  let backupRoot: string | null = null;
+  return (name, bytes) => {
+    if (backupRoot === null) backupRoot = allocateExclusiveBackupRoot(genieHome, `agent-sync-uninstall-${stamp}`);
+    const destination = join(backupRoot, 'claude', 'agents', name);
+    mkdirSync(dirname(destination), { recursive: true });
+    writeFileSync(destination, bytes, { flag: 'wx' });
+    return destination;
+  };
+}
+
+function planAgentRemoval(
+  asset: AgentSyncAsset,
+  backupAgentBytes: (name: string, bytes: Buffer) => string,
+  result: AgentSyncRemovalResult,
+): FlatAgentOp | null {
+  const entry = asset.manifestEntry;
+  if (entry === undefined) return null;
+  if (asset.missing) return { kind: 'disown', name: entry.name, ownedDigest: entry.digest, prune: true };
+  const snapshot = asset.agentSnapshot;
+  if (snapshot === undefined || snapshot.kind === 'absent') {
+    result.failures.push({ path: asset.path, detail: 'could not inspect the manifest-owned agent during removal' });
+    return null;
+  }
+  if (asset.modified !== true && snapshot.kind === 'file') {
+    let backupPath: string;
+    try {
+      backupPath = backupAgentBytes(entry.name, snapshot.bytes);
+    } catch (error) {
+      result.failures.push({ path: asset.path, detail: `durable backup failed: ${errorMessage(error)}` });
+      return null;
+    }
+    return {
+      kind: 'retire',
+      name: entry.name,
+      expected: snapshot,
+      ownedDigest: entry.digest,
+      disposal: 'discard',
+      operation: 'remove',
+      backupPath,
+    };
+  }
+  return {
+    kind: 'retire',
+    name: entry.name,
+    expected: snapshot,
+    ownedDigest: entry.digest,
+    disposal: 'keep-aside',
+    operation: 'keep',
+  };
+}
+
+function reportAgentRemovalOutcome(
+  outcome: FlatAgentOutcome,
+  committed: boolean,
+  dir: string,
+  result: AgentSyncRemovalResult,
+): void {
+  const operation = outcome.op;
+  const path = join(dir, operation.name);
+  if (outcome.status === 'failed' || outcome.status === 'stale') {
+    const detail = outcome.reason ?? 'flat-agent transaction did not settle this path';
+    result.failures.push({ path, detail });
+    pushAgentAdvisory(result, `kept ${path}: ${detail}`);
+    return;
+  }
+  if (!committed) return;
+  if (operation.kind === 'disown') return;
+  if (operation.kind === 'publish') return;
+  if (outcome.status === 'applied') {
+    if (outcome.keptPath !== undefined) result.kept.push(outcome.keptPath);
+    if (operation.disposal === 'discard') result.removed.push(path);
+    if (operation.disposal === 'keep-aside' && outcome.keptPath === undefined) {
+      result.failures.push({ path, detail: 'modified agent was disowned without a visible kept-aside path' });
+    }
+    return;
+  }
+  if (outcome.conflict === 'changed-before-capture') {
+    pushAgentAdvisory(result, `left concurrently changed agent ${path} live and unowned`);
+    return;
+  }
+  if (outcome.keptPath !== undefined) {
+    result.kept.push(outcome.keptPath);
+    pushAgentAdvisory(
+      result,
+      `left concurrently appeared agent ${path} live and unowned; preserved prior bytes at ${outcome.keptPath}`,
+    );
+    return;
+  }
+  pushAgentAdvisory(result, `left concurrently appeared agent ${path} live and unowned`);
+}
+
+/** Execute all selected flat-agent actions in one shared manifest transaction. */
+function removeManagedAgentAssets(
+  assets: AgentSyncAsset[],
+  targets: AgentSyncRemovalTargets,
+  result: AgentSyncRemovalResult,
+): void {
+  const dir = assets[0]?.manifestEntry?.dir;
+  if (dir === undefined) return;
+  const backupAgentBytes = createAgentFileBackup(targets);
+  const operations: FlatAgentOp[] = [];
+  for (const asset of assets) {
+    const operation = planAgentRemoval(asset, backupAgentBytes, result);
+    if (operation !== null) operations.push(operation);
+  }
+  if (operations.length === 0) return;
+  try {
+    const transaction = runFlatAgentTransaction(dir, operations, {
+      now: targets.now ?? (() => new Date()),
+      beforeFileMutation: targets.beforeAgentFileMutation,
+      beforeManifestCommit: targets.beforeAgentManifestCommit,
+    });
+    for (const advisory of transaction.advisories) pushAgentAdvisory(result, advisory);
+    for (const outcome of transaction.outcomes) {
+      reportAgentRemovalOutcome(outcome, transaction.committed, dir, result);
+    }
+    if (!transaction.committed && !transaction.outcomes.some((outcome) => outcome.status === 'failed')) {
+      result.failures.push({
+        path: dir,
+        detail: transaction.advisories.join('; ') || 'flat-agent manifest transaction did not commit',
+      });
+    }
+  } catch (error) {
+    const detail = `flat-agent removal transaction failed: ${errorMessage(error)}`;
+    result.failures.push({ path: dir, detail });
+    pushAgentAdvisory(result, detail);
+  }
+}
+
 function removeCollectedAgentAssets(
   assets: AgentSyncAsset[],
   targets: AgentSyncRemovalTargets,
@@ -1067,6 +1370,7 @@ function removeCollectedAgentAssets(
   plannedByPath: Map<string, AgentAssetIdentity> | null,
   result: AgentSyncRemovalResult,
 ): void {
+  const agentAssets: AgentSyncAsset[] = [];
   for (const asset of assets) {
     const expectedIdentity = plannedByPath?.get(resolve(asset.path));
     // Defense in depth: a recorded identity whose kind does not match the object
@@ -1075,6 +1379,15 @@ function removeCollectedAgentAssets(
     if (expectedIdentity !== undefined && expectedIdentity.kind !== asset.kind) {
       result.kept.push(asset.path);
       result.identityMismatch.push(asset.path);
+      continue;
+    }
+    if (asset.kind === 'agent') {
+      if (expectedIdentity !== undefined && !agentIdentityMatches(expectedIdentity, asset)) {
+        result.kept.push(asset.path);
+        result.identityMismatch.push(asset.path);
+      } else {
+        agentAssets.push(asset);
+      }
       continue;
     }
     try {
@@ -1099,6 +1412,7 @@ function removeCollectedAgentAssets(
       result.failures.push({ path: asset.path, detail: error instanceof Error ? error.message : String(error) });
     }
   }
+  removeManagedAgentAssets(agentAssets, targets, result);
 }
 
 export interface UninstallFailure {
@@ -1385,7 +1699,7 @@ export function inspectUninstallPlan(
   const runtimeClients = (inspectors.inspectRuntimeClientAvailability ?? inspectRuntimeClientAvailability)();
   return {
     genieDir,
-    hasGenieDir: (inspectors.hasGenieDir ?? existsSync)(genieDir),
+    hasGenieDir: (inspectors.hasGenieDir ?? hasRemovableGenieInstallState)(genieDir),
     hasUnprovenHookScript: (inspectors.hookScriptExists ?? hookScriptExists)(),
     legacyReport,
     hasOwnedRules: legacyReport.rulesFile.status === 'v4-markers',
@@ -1404,6 +1718,114 @@ export function inspectUninstallPlan(
   };
 }
 
+interface PlannedRemovalAsset {
+  path: string;
+  identity: AgentAssetIdentity;
+}
+
+interface PlannedFlatAgent extends PlannedRemovalAsset {
+  identity: Extract<AgentAssetIdentity, { kind: 'agent' }>;
+}
+
+function recordRemovalFailures(removal: AgentSyncRemovalResult, label: string, result: UninstallResult): void {
+  for (const failure of removal.failures) {
+    result.failures.push({ step: `${label} ${contractPath(failure.path)}`, detail: failure.detail });
+  }
+}
+
+function removeOneNonAgentAsset(
+  asset: PlannedRemovalAsset,
+  result: UninstallResult,
+  progress: UninstallBatchProgressController,
+): void {
+  const member = uninstallBatchMemberId('asset', asset.path);
+  if (progress.isCompleted(member) || progress.isPreserved(member)) return;
+  progress.begin(member);
+  const removal = removeAgentSyncAssetsLocked({}, { plannedAssets: [{ path: asset.path, identity: asset.identity }] });
+  if (removal.failures.length > 0) {
+    if (removal.removed.length === 0) progress.abort(member);
+    recordRemovalFailures(removal, 'Removing synced asset', result);
+    return;
+  }
+  if (removal.kept.length === 0) {
+    progress.complete(member);
+    if (removal.removed.length > 0) {
+      console.log(`  \x1b[32m+\x1b[0m Removed managed asset: ${contractPath(asset.path)}`);
+    }
+    return;
+  }
+  const detail =
+    removal.identityMismatch.length > 0
+      ? 'recorded removable asset was replaced by a different managed object after the uninstall batch; preserved it byte-identical'
+      : 'recorded removable asset was modified after the uninstall batch; preserved it byte-identical';
+  console.log(`  \x1b[33m!\x1b[0m Preserved managed asset byte-identical: ${contractPath(asset.path)}`);
+  recordPreservation(result, { step: `Preserving synced asset ${contractPath(asset.path)}`, detail });
+  progress.preserve(member);
+}
+
+function appendRemovalAdvisories(removal: AgentSyncRemovalResult, result: UninstallResult): void {
+  if (removal.advisories === undefined || removal.advisories.length === 0) return;
+  if (result.notes === undefined) result.notes = [];
+  result.notes.push(...removal.advisories);
+}
+
+function settleFlatAgentProgress(
+  member: string,
+  removal: AgentSyncRemovalResult,
+  result: UninstallResult,
+  progress: UninstallBatchProgressController,
+): void {
+  if (removal.identityMismatch.length === 0) {
+    progress.complete(member);
+    return;
+  }
+  for (const path of removal.identityMismatch) {
+    recordPreservation(result, {
+      step: `Preserving flat agent ${contractPath(path)}`,
+      detail: 'recorded flat-agent identity changed after the uninstall batch; preserved it byte-identical',
+    });
+  }
+  progress.preserve(member);
+}
+
+function reportFlatAgentRemoval(removal: AgentSyncRemovalResult): void {
+  for (const path of removal.removed) {
+    console.log(`  \x1b[32m+\x1b[0m Removed managed flat agent: ${contractPath(path)}`);
+  }
+  for (const path of removal.kept.filter((path) => !removal.identityMismatch.includes(path))) {
+    console.log(`  \x1b[33m!\x1b[0m Preserved modified flat agent at ${contractPath(path)}`);
+  }
+}
+
+function removeFlatAgentBatch(
+  plannedAgents: PlannedFlatAgent[],
+  result: UninstallResult,
+  progress: UninstallBatchProgressController,
+): void {
+  if (plannedAgents.length === 0) return;
+  const member = uninstallBatchMemberId(
+    'asset',
+    `flat-agents:${plannedAgents
+      .map((asset) => resolve(asset.path))
+      .sort()
+      .join('\n')}`,
+  );
+  if (progress.isCompleted(member) || progress.isPreserved(member)) return;
+  progress.begin(member);
+  const removal = removeAgentSyncAssetsLocked(
+    {},
+    { plannedAssets: plannedAgents.map((asset) => ({ path: asset.path, identity: asset.identity })) },
+  );
+  appendRemovalAdvisories(removal, result);
+  if (removal.failures.length > 0) {
+    if (removal.removed.length === 0 && removal.kept.length === 0) progress.abort(member);
+    recordRemovalFailures(removal, 'Removing flat agent', result);
+    return;
+  }
+  settleFlatAgentProgress(member, removal, result, progress);
+  reportFlatAgentRemoval(removal);
+}
+
 function removeSyncedAgentAssets(
   agentAssets: UninstallBatchScope['agentAssets'],
   result: UninstallResult,
@@ -1412,35 +1834,17 @@ function removeSyncedAgentAssets(
   if (!agentAssets.some((asset) => asset.disposition === 'remove')) return;
   console.log('\x1b[2mRemoving synced agent assets...\x1b[0m');
   for (const asset of agentAssets) {
-    if (asset.disposition !== 'remove') continue;
-    const member = uninstallBatchMemberId('asset', asset.path);
-    // A member already settled on a prior attempt (removed or preserved) is never
-    // reprocessed; restoring the original bytes cannot resurrect removal authority.
-    if (progress.isCompleted(member) || progress.isPreserved(member)) continue;
-    progress.begin(member);
-    const removal = removeAgentSyncAssets({}, { plannedAssets: [{ path: asset.path, identity: asset.identity }] });
-    if (removal.failures.length > 0) {
-      if (removal.removed.length === 0) progress.abort(member);
-      for (const failure of removal.failures) {
-        result.failures.push({ step: `Removing synced asset ${contractPath(failure.path)}`, detail: failure.detail });
-      }
-      return;
-    }
-    if (removal.kept.length > 0) {
-      const detail =
-        removal.identityMismatch.length > 0
-          ? 'recorded removable asset was replaced by a different managed object after the uninstall batch; preserved it byte-identical'
-          : 'recorded removable asset was modified after the uninstall batch; preserved it byte-identical';
-      console.log(`  \x1b[33m!\x1b[0m Preserved managed asset byte-identical: ${contractPath(asset.path)}`);
-      recordPreservation(result, { step: `Preserving synced asset ${contractPath(asset.path)}`, detail });
-      progress.preserve(member);
-      continue;
-    }
-    progress.complete(member);
-    if (removal.removed.length > 0) {
-      console.log(`  \x1b[32m+\x1b[0m Removed managed asset: ${contractPath(asset.path)}`);
+    if (asset.disposition !== 'remove' || asset.identity.kind === 'agent') continue;
+    removeOneNonAgentAsset({ path: asset.path, identity: asset.identity }, result, progress);
+    if (result.failures.length > 0) return;
+  }
+  const flatAgents: PlannedFlatAgent[] = [];
+  for (const asset of agentAssets) {
+    if (asset.disposition === 'remove' && asset.identity.kind === 'agent') {
+      flatAgents.push({ path: asset.path, identity: asset.identity });
     }
   }
+  removeFlatAgentBatch(flatAgents, result, progress);
 }
 
 export function uninstallBatchIntegrationViolations(
@@ -1589,6 +1993,57 @@ function removeRulesMember(
   return failure;
 }
 
+function isNodeErrorCode(error: unknown, code: string): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === code;
+}
+
+function preservedGenieDirEntry(name: string): boolean {
+  return name === 'state-backups' || name === AGENT_SYNC_LOCK_NAME;
+}
+
+/** Remove canonical install state while retaining durable backups and the active sync lock generation. */
+function removeGenieDirPreservingStateBackups(genieDir: string): void {
+  let stat: Stats;
+  try {
+    stat = lstatSync(genieDir);
+  } catch (error) {
+    if (isNodeErrorCode(error, 'ENOENT')) return;
+    throw error;
+  }
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    rmSync(genieDir, { recursive: true, force: true });
+    return;
+  }
+  const names = readdirSync(genieDir);
+  if (!names.some(preservedGenieDirEntry)) {
+    rmSync(genieDir, { recursive: true, force: true });
+    return;
+  }
+  for (const name of names) {
+    if (!preservedGenieDirEntry(name)) rmSync(join(genieDir, name), { recursive: true, force: true });
+  }
+}
+
+function removeGenieDirIfEmpty(genieDir: string): void {
+  try {
+    rmdirSync(genieDir);
+  } catch {
+    // Durable backups, another safe retained object, or an already-absent root are all valid.
+  }
+}
+
+/** A durable-backups/active-lock-only root is recovery state, not an installed Genie tree. */
+export function hasRemovableGenieInstallState(genieDir: string): boolean {
+  try {
+    const stat = lstatSync(genieDir);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) return true;
+    return readdirSync(genieDir).some((name) => !preservedGenieDirEntry(name));
+  } catch (error) {
+    if (isNodeErrorCode(error, 'ENOENT')) return false;
+    return true;
+  }
+}
+
 function removeGenieHomeMember(
   genieDir: string,
   genieHomePresent: boolean,
@@ -1598,8 +2053,8 @@ function removeGenieHomeMember(
   const member = uninstallBatchMemberId('home', resolve(genieDir));
   if (progress.isCompleted(member)) return null;
   progress.begin(member);
-  const failure = tryRemoveStep('Removing genie directory...', 'Directory removed', () =>
-    rmSync(genieDir, { recursive: true, force: true }),
+  const failure = tryRemoveStep('Removing genie directory...', 'Install state removed (state backups preserved)', () =>
+    removeGenieDirPreservingStateBackups(genieDir),
   );
   if (failure === null) progress.complete(member);
   return failure;
@@ -1634,7 +2089,7 @@ function removeSymlinkMembers(
 /**
  * Uninstall Genie CLI entirely
  */
-function performUninstall(
+function performUninstallScope(
   genieDir: string,
   scope: UninstallBatchScope,
   progress: UninstallBatchProgressController,
@@ -1668,13 +2123,77 @@ function performUninstall(
   return result;
 }
 
+export interface PerformUninstallDependencies {
+  /** Fully injected external agent roots for noninteractive full-flow tests. */
+  agentSyncTargets?: AgentSyncRemovalTargets;
+  /** Avoid consulting process-global legacy rules state in isolated tests. */
+  orchestrationRulesPath?: string;
+  /** Avoid process-global runtime integration mutation in isolated tests. */
+  removeRuntimeIntegrations?: (removeMarketplace: boolean) => void;
+}
+
+/**
+ * Fully injected compatibility seam retained for noninteractive uninstall-flow
+ * tests. Production uses the authenticated batch path below; both paths hold the
+ * same sync lock through flat-agent removal, runtime cleanup, and source deletion.
+ */
+export function performUninstall(
+  _hasHookScript: boolean,
+  existingSymlinks: string[],
+  genieDir: string,
+  hasGenieDir: boolean,
+  hasAgentAssets: boolean,
+  removeMarketplace: boolean,
+  dependencies: PerformUninstallDependencies = {},
+): void {
+  const targets = dependencies.agentSyncTargets ?? {};
+  const genieHome = targets.genieHome ?? resolveGenieHome();
+  const hasCurrentAgentAssets = hasAgentAssets && collectAgentSyncAssets(targets).length > 0;
+  const hasRemovableGenieDir = hasGenieDir && hasRemovableGenieInstallState(genieDir);
+  const hasInjectedRules =
+    dependencies.orchestrationRulesPath !== undefined && existsSync(dependencies.orchestrationRulesPath);
+  if (
+    !hasCurrentAgentAssets &&
+    !hasRemovableGenieDir &&
+    !hasInjectedRules &&
+    existingSymlinks.length === 0 &&
+    !removeMarketplace
+  ) {
+    return;
+  }
+
+  let lock: { release: () => void } | null;
+  try {
+    lock = acquireAgentSyncLock(genieHome);
+  } catch {
+    return;
+  }
+  if (lock === null) return;
+  try {
+    if (hasCurrentAgentAssets) {
+      const removal = removeAgentSyncAssetsLocked(targets);
+      if (removal.failures.length > 0) return;
+    }
+    if (hasInjectedRules) unlinkSync(dependencies.orchestrationRulesPath as string);
+    (dependencies.removeRuntimeIntegrations ?? removeRuntimeIntegrations)(removeMarketplace);
+    if (hasRemovableGenieDir) removeGenieDirPreservingStateBackups(genieDir);
+    const plannedNames = existingSymlinks.filter((name): name is (typeof SYMLINKS)[number] =>
+      SYMLINKS.some((candidate) => candidate === name),
+    );
+    if (plannedNames.length > 0) removeSymlinks(LOCAL_BIN, genieDir, plannedNames);
+  } finally {
+    lock.release();
+    removeGenieDirIfEmpty(genieDir);
+  }
+}
+
 function uninstallBatchScope(plan: UninstallPlan): UninstallBatchScope {
   return {
     agentAssets: plan.agentAssets
       .map((asset): UninstallBatchScope['agentAssets'][number] =>
-        // Only a clean asset carries a proven identity; a modified/corrupt one is
-        // recorded as keep and never becomes a deletion candidate.
-        !asset.modified && asset.identity !== undefined
+        // Flat agents carry an identity for clean deletion, missing-entry pruning,
+        // and modified-content keep-aside. Other modified/corrupt assets stay put.
+        asset.identity !== undefined && (asset.kind === 'agent' || !asset.modified)
           ? { path: resolve(asset.path), disposition: 'remove', identity: asset.identity }
           : { path: resolve(asset.path), disposition: 'keep' },
       )
@@ -1727,7 +2246,7 @@ export function performFreshUninstallPlan(
     throw new Error(`uninstall preflight found unreadable or corrupt integration state: ${unsafeState.join('; ')}`);
   }
   const batch = executeUninstallBatch(genieDir, uninstallBatchScope(execution), (scope, progress) =>
-    performUninstall(genieDir, scope, progress),
+    performUninstallScope(genieDir, scope, progress),
   );
   return {
     execution,
@@ -1782,6 +2301,54 @@ function reportPendingBatchPreview(genieDir: string): void {
   }
 }
 
+function reportAgentSyncLockFailure(error?: unknown): void {
+  process.exitCode = 1;
+  const suffix =
+    error === undefined ? 'another agent-sync mutation is active.' : 'the shared agent-sync lock is unsafe.';
+  console.log(`\x1b[31m!\x1b[0m Genie CLI uninstall is incomplete; ${suffix}`);
+  if (error !== undefined) console.log(`  \x1b[31m-\x1b[0m ${errorMessage(error)}`);
+  console.log();
+}
+
+function executeFreshUninstall(genieDir: string, removeMarketplace: boolean): void {
+  console.log();
+  // The prompt may remain open while another lifecycle process finishes.
+  // Discard every preview decision and rebuild the complete plan under both
+  // locks; destructive helpers still perform their per-artifact CAS checks.
+  let execution: UninstallPlan;
+  let result: UninstallResult;
+  try {
+    ({ execution, result } = performFreshUninstallPlan(genieDir, removeMarketplace));
+  } catch (error) {
+    process.exitCode = 1;
+    console.log('\x1b[31m!\x1b[0m Genie CLI uninstall is incomplete; recovery or batch validation failed.');
+    console.log(`  \x1b[31m-\x1b[0m ${errorMessage(error)}`);
+    console.log();
+    return;
+  }
+  reportUninstallResult(execution, result, genieDir);
+}
+
+function executeConfirmedUninstall(genieDir: string, removeMarketplace: boolean): void {
+  let agentSyncLock: { release: () => void } | null;
+  try {
+    agentSyncLock = acquireAgentSyncLock(genieDir);
+  } catch (error) {
+    reportAgentSyncLockFailure(error);
+    return;
+  }
+  if (agentSyncLock === null) {
+    reportAgentSyncLockFailure();
+    return;
+  }
+  try {
+    executeFreshUninstall(genieDir, removeMarketplace);
+  } finally {
+    agentSyncLock.release();
+    removeGenieDirIfEmpty(genieDir);
+  }
+}
+
 export async function uninstallCommand(options: { removeMarketplace?: boolean } = {}): Promise<void> {
   console.log();
   console.log('\x1b[1m\x1b[33m Uninstall Genie CLI\x1b[0m');
@@ -1820,17 +2387,28 @@ export async function uninstallCommand(options: { removeMarketplace?: boolean } 
   if (hasGenieDir) console.log(`  \x1b[31m-\x1b[0m Genie directory (${contractPath(genieDir)})`);
   if (existingSymlinks.length > 0)
     console.log(`  \x1b[31m-\x1b[0m Symlinks from ~/.local/bin: ${existingSymlinks.join(', ')}`);
-  const keptAssets = agentAssets.filter((asset) => asset.modified);
+  const keptAssets = agentAssets.filter(
+    (asset) => asset.modified && (asset.kind !== 'agent' || asset.identity === undefined),
+  );
+  const keptAsideAgents = agentAssets.filter(
+    (asset) => asset.kind === 'agent' && asset.modified && asset.identity?.kind === 'agent',
+  );
   const removableAssets = agentAssets.length - keptAssets.length;
   if (removableAssets > 0)
     console.log(
-      `  \x1b[31m-\x1b[0m Synced agent assets: ${removableAssets} unmodified managed skill dir(s)/council.js/hermes link across claude/codex/hermes`,
+      `  \x1b[31m-\x1b[0m Synced agent assets: ${removableAssets} managed skill dir(s)/agent file(s)/council.js/hermes link across claude/codex/hermes`,
     );
   if (keptAssets.length > 0) {
     console.log(
       `  \x1b[33m~\x1b[0m KEPT byte-identical (modified or ownership metadata needs review): ${keptAssets.length} managed asset(s):`,
     );
     for (const asset of keptAssets) console.log(`      \x1b[33m${contractPath(asset.path)}\x1b[0m`);
+  }
+  if (keptAsideAgents.length > 0) {
+    console.log(
+      `  \x1b[33m~\x1b[0m Modified flat agents will be preserved under *${KEPT_SUFFIX} and disowned: ${keptAsideAgents.length} file(s):`,
+    );
+    for (const asset of keptAsideAgents) console.log(`      \x1b[33m${contractPath(asset.path)}\x1b[0m`);
   }
   if (managedRoleAgents.length > 0) {
     const modified = managedRoleAgents.filter((entry) => entry.ownership === 'managed-modified').length;
@@ -1878,23 +2456,7 @@ export async function uninstallCommand(options: { removeMarketplace?: boolean } 
   if ('skipped' in lifecycleLease)
     throw new Error(`Another Genie lifecycle command is active: ${lifecycleLease.skipped}`);
   try {
-    console.log();
-    // The prompt may remain open while another lifecycle process finishes.
-    // Discard every preview decision and rebuild the complete plan under the
-    // lease; destructive helpers still perform their per-artifact CAS checks.
-    let execution: UninstallPlan;
-    let result: UninstallResult;
-    try {
-      ({ execution, result } = performFreshUninstallPlan(genieDir, options.removeMarketplace ?? false));
-    } catch (error) {
-      process.exitCode = 1;
-      console.log('\x1b[31m!\x1b[0m Genie CLI uninstall is incomplete; recovery or batch validation failed.');
-      console.log(`  \x1b[31m-\x1b[0m ${error instanceof Error ? error.message : String(error)}`);
-      console.log();
-      return;
-    }
-
-    reportUninstallResult(execution, result, genieDir);
+    executeConfirmedUninstall(genieDir, options.removeMarketplace ?? false);
   } finally {
     lifecycleLease.release();
   }

@@ -27,11 +27,15 @@ import {
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import {
+  type AgentFileManifestEntry,
   CLAUDE_EXCLUDED_SKILLS,
   MANAGED_BY,
   MANIFEST_NAME,
   TARGET_NAME,
   computeDirDigest,
+  computeFileDigest,
+  enumerateSourceAgentFiles,
+  readAgentFilesManifestState,
   resolveAgentsSkillsDir,
   resolveGenieSource,
   resolveHermesConfigPath,
@@ -73,11 +77,48 @@ type CheckStatus = 'pass' | 'warn' | 'fail';
 
 export const MINIMUM_BUN_VERSION = '1.3.10';
 
+/**
+ * Per-file delivery state of one Claude role agent in `~/.claude/agents/`,
+ * derived from the Group-A `.genie-sync.json` manifest + the canonical source
+ * `agents/` dir. These four names are the STABLE machine-readable contract the
+ * execution-optimization dashboard parses off `genie doctor --json` — do NOT
+ * rename them without updating that consumer:
+ *   - genie-managed-current : manifest entry present, on-disk == manifest == source.
+ *   - genie-managed-stale   : manifest entry present, but on-disk / source drifted
+ *                             (edited target, moved-on source, or an orphaned managed file).
+ *   - present-unmanaged     : source role agent present on disk with NO manifest entry
+ *                             (the 2026-07-11 hand-copy — NOT healthy genie-managed).
+ *   - missing-from-target   : source role agent absent from `~/.claude/agents/`.
+ */
+export type RoleAgentFileState =
+  | 'genie-managed-current'
+  | 'genie-managed-stale'
+  | 'present-unmanaged'
+  | 'missing-from-target';
+
+/** Structured rider carried on the role-agent check for dashboard consumers. */
+export interface RoleAgentDelivery {
+  /** Trust verdict on the shared `~/.claude/agents/.genie-sync.json` manifest. */
+  manifestStatus: 'managed' | 'foreign' | 'absent' | 'unsafe';
+  /** Present only when `manifestStatus === 'unsafe'`. */
+  manifestReason?: string;
+  /** One entry per source role agent (and any managed manifest entry), name-sorted. */
+  files: Array<{ name: string; state: RoleAgentFileState }>;
+  /** True when the `genie@automagik` plugin is ALSO enabled — plugin `genie:*` and fanned bare names both surface. */
+  duplicateSurface: boolean;
+}
+
 interface CheckResult {
   name: string;
   status: CheckStatus;
   detail?: string;
   suggestion?: string;
+  /**
+   * Machine-readable payload rider (survives `--json` as `checks[].roleAgents`).
+   * Only the `agent sync: claude role agents` check sets it; see
+   * {@link RoleAgentDelivery} for the stable field/state-name contract.
+   */
+  roleAgents?: RoleAgentDelivery;
 }
 
 // ============================================================================
@@ -795,7 +836,154 @@ function councilStampState(councilPath: string, pluginRoot: string): { stale: bo
   return { stale: true, label: `stale (LENS_ROOT ${root ?? 'unreadable'})` };
 }
 
-function checkClaudeSync(pluginRoot: string, claudeDir: string): CheckResult[] {
+// ============================================================================
+// Claude role-agent delivery (~/.claude/agents) — per-file classifier
+//
+// summarizeManagedSkills() cannot be reused here: it is subdir-based (a manifest
+// INSIDE each skill dir) and so it is blind to flat `<name>.md` agent files and
+// cannot express a "present-unmanaged" state. Role agents are flat files under a
+// SINGLE shared dir-level manifest (Group A), so this classifier is per-FILE.
+// ============================================================================
+
+/** Digest of each flat source role agent under `<pluginRoot>/agents`; unreadable files are skipped. */
+function sourceAgentDigests(pluginRoot: string): Map<string, string> {
+  const digests = new Map<string, string>();
+  for (const agent of enumerateSourceAgentFiles(pluginRoot)) {
+    try {
+      digests.set(agent.name, computeFileDigest(agent.path));
+    } catch {
+      /* unreadable source file — omit rather than misclassify */
+    }
+  }
+  return digests;
+}
+
+function isRegularFile(path: string): boolean {
+  try {
+    return lstatSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function safeFileDigest(path: string): string | null {
+  try {
+    return computeFileDigest(path);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * State of one role-agent filename from the source digest set + manifest entries.
+ * "current" mirrors the skills contract (on-disk == manifest == source). Returns
+ * null for a name genie does not speak for (a user-authored agent absent from
+ * both source and the manifest is never reported).
+ */
+function classifyRoleAgentFile(
+  agentsDir: string,
+  name: string,
+  source: Map<string, string>,
+  entries: Record<string, AgentFileManifestEntry>,
+): RoleAgentFileState | null {
+  const present = isRegularFile(join(agentsDir, name));
+  const entry = entries[name];
+  const inSource = source.has(name);
+  if (entry === undefined) {
+    if (present) return inSource ? 'present-unmanaged' : null;
+    return inSource ? 'missing-from-target' : null;
+  }
+  if (!present) return inSource ? 'missing-from-target' : null;
+  const onDisk = safeFileDigest(join(agentsDir, name));
+  const current = inSource && onDisk !== null && onDisk === entry.digest && entry.digest === source.get(name);
+  return current ? 'genie-managed-current' : 'genie-managed-stale';
+}
+
+/** Classify every source role agent (and any managed manifest entry) under `<claudeDir>/agents`. */
+function classifyRoleAgents(pluginRoot: string, agentsDir: string): Omit<RoleAgentDelivery, 'duplicateSurface'> {
+  const source = sourceAgentDigests(pluginRoot);
+  const manifest = readAgentFilesManifestState(agentsDir);
+  const entries = manifest.kind === 'managed' ? manifest.files : {};
+  const names = new Set<string>([...source.keys(), ...Object.keys(entries)]);
+  const files: RoleAgentDelivery['files'] = [];
+  for (const name of [...names].sort()) {
+    const state = classifyRoleAgentFile(agentsDir, name, source, entries);
+    if (state !== null) files.push({ name, state });
+  }
+  return {
+    manifestStatus: manifest.kind,
+    manifestReason: manifest.kind === 'unsafe' ? manifest.reason : undefined,
+    files,
+  };
+}
+
+/** Human-facing summary + a stale flag (any non-current state, or an unusable manifest, warns). */
+function roleAgentSummary(delivery: Omit<RoleAgentDelivery, 'duplicateSurface'>): { detail: string; stale: boolean } {
+  if (delivery.manifestStatus === 'unsafe') {
+    return {
+      detail: `manifest unusable (${delivery.manifestReason}) — every role agent treated as unmanaged`,
+      stale: true,
+    };
+  }
+  if (delivery.files.length === 0) return { detail: 'no genie role agents detected', stale: false };
+  const counts: Record<RoleAgentFileState, number> = {
+    'genie-managed-current': 0,
+    'genie-managed-stale': 0,
+    'present-unmanaged': 0,
+    'missing-from-target': 0,
+  };
+  for (const file of delivery.files) counts[file.state] += 1;
+  const detail =
+    `${counts['genie-managed-current']}/${delivery.files.length} genie-managed-current, ` +
+    `${counts['present-unmanaged']} present-unmanaged, ${counts['genie-managed-stale']} stale, ` +
+    `${counts['missing-from-target']} missing-from-target`;
+  const stale = counts['genie-managed-current'] !== delivery.files.length;
+  return { detail, stale };
+}
+
+/** `enabledPlugins["genie@automagik"] === true` in Claude Code's settings.json (unreadable → false). */
+function roleAgentDuplicateSurface(settingsPath: string): boolean {
+  try {
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as { enabledPlugins?: Record<string, boolean> };
+    return settings.enabledPlugins?.['genie@automagik'] === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Per-file role-agent delivery check + the duplicate-surface warning. The
+ * structured {@link RoleAgentDelivery} rides `--json` as `checks[].roleAgents`
+ * so the dashboard reads the four state names without parsing prose; the
+ * duplicate warning is emitted as its own line ONLY when the plugin is enabled.
+ */
+function checkRoleAgents(pluginRoot: string, claudeDir: string, settingsPath: string): CheckResult[] {
+  const classification = classifyRoleAgents(pluginRoot, join(claudeDir, 'agents'));
+  const duplicateSurface = roleAgentDuplicateSurface(settingsPath);
+  const { detail, stale } = roleAgentSummary(classification);
+  const results: CheckResult[] = [
+    {
+      name: 'agent sync: claude role agents',
+      status: stale ? 'warn' : 'pass',
+      detail,
+      suggestion: stale ? SYNC_SUGGESTION : undefined,
+      roleAgents: { ...classification, duplicateSurface },
+    },
+  ];
+  if (duplicateSurface) {
+    results.push({
+      name: 'agent sync: duplicate role-agent surface',
+      status: 'warn',
+      detail:
+        'genie@automagik plugin enabled — plugin `genie:*` agents and fanned bare-named agents both surface (duplicate listings)',
+      suggestion:
+        'Keep the genie plugin disabled (bare-named agents are fanned by `genie update`), or expect duplicates.',
+    });
+  }
+  return results;
+}
+
+function checkClaudeSync(pluginRoot: string, claudeDir: string, settingsPath: string): CheckResult[] {
   if (!existsSync(claudeDir)) return [{ name: 'agent sync: claude', status: 'pass', detail: 'not detected' }];
   // Claude legitimately excludes `council` (the /council native workflow owns
   // that name), so its expected source set is source minus CLAUDE_EXCLUDED_SKILLS
@@ -810,6 +998,7 @@ function checkClaudeSync(pluginRoot: string, claudeDir: string): CheckResult[] {
       detail: `${skills.detail}; council.js ${council.label}`,
       suggestion: stale ? SYNC_SUGGESTION : undefined,
     },
+    ...checkRoleAgents(pluginRoot, claudeDir, settingsPath),
   ];
 }
 
@@ -1227,7 +1416,7 @@ export function checkAgentSync(paths: AgentSyncPaths = {}): CheckResult[] {
   const pluginRoot = source.pluginRoot;
   const hermesBinary = paths.hermesBinary !== undefined ? paths.hermesBinary : whichBinary('hermes');
   return [
-    ...safeAgentChecks('claude', () => checkClaudeSync(pluginRoot, claudeDir)),
+    ...safeAgentChecks('claude', () => checkClaudeSync(pluginRoot, claudeDir, settingsPath)),
     ...safeAgentChecks('codex', () => checkCodexSync(codexDir, agentsSkillsDir, pluginRoot)),
     ...safeAgentChecks('hermes', () =>
       checkHermesSync({
