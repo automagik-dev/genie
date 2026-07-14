@@ -686,6 +686,176 @@ describe('claude agent fan-out', () => {
     expect(lstatSync(manifestPath).nlink).toBe(1);
   });
 
+  test('unavailable Darwin FFI setup falls back to the verified portable manifest commit', () => {
+    present(fixture.claudeDir);
+    const agentsDir = join(fixture.claudeDir, 'agents');
+    const manifestPath = join(agentsDir, MANIFEST_NAME);
+    let setupAttempts = 0;
+
+    const claude = agentReport(
+      run({
+        agentManifestPublishOptions: {
+          noClobberDeps: {
+            darwinOpener: () => {
+              setupAttempts += 1;
+              throw new Error('injected Bun --no-ffi setup denial');
+            },
+          },
+        },
+      }),
+      'claude',
+    );
+
+    expect(setupAttempts).toBe(1);
+    expect(claude.failures).toBeUndefined();
+    expect(readAgentFilesManifest(agentsDir)?.files['scout.md']).toBeDefined();
+    expect(lstatSync(manifestPath).nlink).toBe(1);
+  });
+
+  test('a completed Darwin native call returning failure stays NoClobber and never retries portably', () => {
+    present(fixture.claudeDir);
+    const agentsDir = join(fixture.claudeDir, 'agents');
+    const manifestPath = join(agentsDir, MANIFEST_NAME);
+    let nativeCalls = 0;
+
+    const claude = agentReport(
+      run({
+        agentManifestPublishOptions: {
+          noClobberDeps: {
+            darwinOpener: () => () => {
+              nativeCalls += 1;
+              return -1;
+            },
+          },
+        },
+      }),
+      'claude',
+    );
+
+    expect(nativeCalls).toBe(1);
+    expect(existsSync(manifestPath)).toBe(false);
+    expect(existsSync(join(agentsDir, 'scout.md'))).toBe(false);
+    expect(claude.failures?.join('\n')).toContain('agent transaction did not commit');
+    expect(claude.advisories.some((line) => line.includes('no-clobber publish failed'))).toBe(true);
+  });
+
+  test('a Darwin native invocation exception fails closed without a portable retry', () => {
+    present(fixture.claudeDir);
+    const agentsDir = join(fixture.claudeDir, 'agents');
+    const manifestPath = join(agentsDir, MANIFEST_NAME);
+    let nativeCalls = 0;
+
+    const claude = agentReport(
+      run({
+        agentManifestPublishOptions: {
+          noClobberDeps: {
+            darwinOpener: () => () => {
+              nativeCalls += 1;
+              throw new Error('injected native invocation failure');
+            },
+          },
+        },
+      }),
+      'claude',
+    );
+
+    expect(nativeCalls).toBe(1);
+    expect(existsSync(manifestPath)).toBe(false);
+    expect(existsSync(join(agentsDir, 'scout.md'))).toBe(false);
+    expect(claude.advisories.join('\n')).toContain('injected native invocation failure');
+  });
+
+  test('a Darwin exception after the native rename reconciles the exact committed manifest', () => {
+    present(fixture.claudeDir);
+    const agentsDir = join(fixture.claudeDir, 'agents');
+    const manifestPath = join(agentsDir, MANIFEST_NAME);
+    const scoutPath = join(agentsDir, 'scout.md');
+    let nativeCalls = 0;
+
+    const claude = agentReport(
+      run({
+        agentManifestPublishOptions: {
+          noClobberDeps: {
+            darwinOpener: () => (staged, target) => {
+              nativeCalls += 1;
+              renameSync(staged.subarray(0, -1).toString(), target.subarray(0, -1).toString());
+              throw new Error('injected exception after native rename committed');
+            },
+          },
+        },
+      }),
+      'claude',
+    );
+
+    expect(nativeCalls).toBe(1);
+    expect(claude.failures).toBeUndefined();
+    expect(existsSync(scoutPath)).toBe(true);
+    expect(readAgentFilesManifest(agentsDir)?.files['scout.md']).toBeDefined();
+    expect(lstatSync(manifestPath).nlink).toBe(1);
+    expect(readdirSync(agentsDir).some((name) => name.includes(`${MANIFEST_NAME}.genie-sync.staging-`))).toBe(false);
+  });
+
+  test('a Linux native invocation exception before rename fails closed without a portable retry', () => {
+    present(fixture.claudeDir);
+    const agentsDir = join(fixture.claudeDir, 'agents');
+    const manifestPath = join(agentsDir, MANIFEST_NAME);
+    let nativeCalls = 0;
+
+    const claude = agentReport(
+      run({
+        agentManifestPublishOptions: {
+          noClobberDeps: {
+            platform: 'linux',
+            probe: {},
+            opener: () => () => {
+              nativeCalls += 1;
+              throw new Error('injected Linux exception before native rename');
+            },
+          },
+        },
+      }),
+      'claude',
+    );
+
+    expect(nativeCalls).toBe(1);
+    expect(existsSync(manifestPath)).toBe(false);
+    expect(existsSync(join(agentsDir, 'scout.md'))).toBe(false);
+    expect(claude.failures?.join('\n')).toContain('agent transaction did not commit');
+    expect(claude.advisories.join('\n')).toContain('injected Linux exception before native rename');
+  });
+
+  test('a Linux exception after the native rename reconciles the exact committed manifest', () => {
+    present(fixture.claudeDir);
+    const agentsDir = join(fixture.claudeDir, 'agents');
+    const manifestPath = join(agentsDir, MANIFEST_NAME);
+    const scoutPath = join(agentsDir, 'scout.md');
+    let nativeCalls = 0;
+
+    const claude = agentReport(
+      run({
+        agentManifestPublishOptions: {
+          noClobberDeps: {
+            platform: 'linux',
+            probe: {},
+            opener: () => (staged, target) => {
+              nativeCalls += 1;
+              renameSync(staged.subarray(0, -1).toString(), target.subarray(0, -1).toString());
+              throw new Error('injected Linux exception after native rename committed');
+            },
+          },
+        },
+      }),
+      'claude',
+    );
+
+    expect(nativeCalls).toBe(1);
+    expect(claude.failures).toBeUndefined();
+    expect(existsSync(scoutPath)).toBe(true);
+    expect(readAgentFilesManifest(agentsDir)?.files['scout.md']).toBeDefined();
+    expect(lstatSync(manifestPath).nlink).toBe(1);
+    expect(readdirSync(agentsDir).some((name) => name.includes(`${MANIFEST_NAME}.genie-sync.staging-`))).toBe(false);
+  });
+
   test('portable manifest cleanup failure unpublishes the linked inode and restores the prior base', () => {
     present(fixture.claudeDir);
     run();
@@ -2557,6 +2727,60 @@ describe('cross-process sync lock', () => {
     expect(readlinkSync(racedHome)).toBe(victim);
     expect(readdirSync(victim)).toEqual([]);
     expect(lstatSync(displacedClaim).isDirectory()).toBe(true);
+  });
+
+  test('unavailable Darwin FFI setup selects the dedicated portable missing-home commit', () => {
+    const absentHome = join(fixture.root, 'darwin-ffi-unavailable-home');
+    let portableClaimed = false;
+    let setupAttempts = 0;
+
+    const lock = acquireAgentSyncLock(absentHome, {
+      homePublishDeps: {
+        darwinOpener: () => {
+          setupAttempts += 1;
+          throw new Error('injected Bun --no-ffi home setup denial');
+        },
+      },
+      afterPortableHomeClaim: () => {
+        portableClaimed = true;
+      },
+    });
+
+    expect(setupAttempts).toBe(1);
+    expect(portableClaimed).toBe(true);
+    expect(lock).not.toBeNull();
+    lock?.release();
+    expect(readdirSync(absentHome)).toEqual([]);
+  });
+
+  test('a Darwin home native invocation exception fails closed without a portable retry', () => {
+    const absentHome = join(fixture.root, 'darwin-native-home-invocation-failure');
+    let portableClaimed = false;
+    let stagedHome = '';
+    let nativeCalls = 0;
+
+    expect(() =>
+      acquireAgentSyncLock(absentHome, {
+        homePublishDeps: {
+          darwinOpener: () => () => {
+            nativeCalls += 1;
+            throw new Error('injected native home invocation failure');
+          },
+        },
+        beforeHomePublish: ({ stagePath }) => {
+          stagedHome = stagePath;
+        },
+        afterPortableHomeClaim: () => {
+          portableClaimed = true;
+        },
+      }),
+    ).toThrow(AgentSyncLockError);
+
+    expect(nativeCalls).toBe(1);
+    expect(portableClaimed).toBe(false);
+    expect(existsSync(absentHome)).toBe(false);
+    expect(stagedHome).not.toBe('');
+    expect(existsSync(stagedHome)).toBe(false);
   });
 
   test('a foreign owner replacement installed after release capture survives byte-for-byte', () => {
