@@ -26,6 +26,7 @@ import {
   readFileSync,
   readdirSync,
   readlinkSync,
+  realpathSync,
   renameSync,
   rmSync,
   symlinkSync,
@@ -68,6 +69,7 @@ import {
   planCodexFallbackRetirement,
   publishDirectoryViaNameClaim,
   readAgentFilesManifest,
+  readAgentFilesManifestState,
   recoverCodexFallbackRetirements,
   recoverManagedSkillTransactions,
   recoverManagedWorkflowTransactions,
@@ -151,7 +153,7 @@ interface SetupOptions {
 }
 
 function setup(opts: SetupOptions = {}): Fixture {
-  const root = mkdtempSync(join(tmpdir(), 'agent-sync-'));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'agent-sync-')));
   const genieHome = join(root, 'genie');
   const pluginsBase = opts.binLayout ? join(genieHome, 'bin', 'plugins') : join(genieHome, 'plugins');
   const pluginRoot = join(pluginsBase, 'genie');
@@ -443,12 +445,34 @@ describe('claude agent fan-out', () => {
     expect(claude.advisories.some((line) => line.includes('manifest') && line.includes('hard links'))).toBe(true);
   });
 
-  test('a foreign regular manifest is backed up byte-for-byte before safe adoption', () => {
+  test('invalid non-JSON manifest bytes fail closed without adoption', () => {
     present(fixture.claudeDir);
     const agentsDir = join(fixture.claudeDir, 'agents');
     mkdirSync(agentsDir, { recursive: true });
     const manifestPath = join(agentsDir, MANIFEST_NAME);
     const foreignBytes = Buffer.from('foreign manifest bytes\n');
+    writeFileSync(manifestPath, foreignBytes);
+
+    const report = run();
+
+    expect(readFileSync(manifestPath)).toEqual(foreignBytes);
+    expect(readAgentFilesManifest(agentsDir)).toBeNull();
+    expect(existsSync(join(agentsDir, 'scout.md'))).toBe(false);
+    expect(existsSync(join(agentsDir, 'reviewer.md'))).toBe(false);
+    expect(report.backupsDir).toBeNull();
+    expect(
+      agentReport(report, 'claude').advisories.some(
+        (line) => line.includes('manifest') && line.includes('invalid JSON'),
+      ),
+    ).toBe(true);
+  });
+
+  test('valid foreign JSON remains adoptable with an exact backup', () => {
+    present(fixture.claudeDir);
+    const agentsDir = join(fixture.claudeDir, 'agents');
+    mkdirSync(agentsDir, { recursive: true });
+    const manifestPath = join(agentsDir, MANIFEST_NAME);
+    const foreignBytes = Buffer.from('{"owner":"user"}\n');
     writeFileSync(manifestPath, foreignBytes);
 
     const report = run();
@@ -460,6 +484,47 @@ describe('claude agent fan-out', () => {
     expect(
       agentReport(report, 'claude').advisories.some((line) => line.includes('adopted foreign agent manifest')),
     ).toBe(true);
+  });
+
+  test('malformed per-file ownership fields never become managed evidence', () => {
+    const agentsDir = join(fixture.claudeDir, 'agents');
+    mkdirSync(agentsDir, { recursive: true });
+    const base = {
+      managedBy: 'genie-agent-sync',
+      files: {
+        'scout.md': {
+          digest: 'a'.repeat(64),
+          version: '9.9.9',
+          syncedAt: '2026-07-10T12:00:00.000Z',
+        },
+      },
+    };
+    const corruptions: Array<(value: typeof base) => void> = [
+      (value) => {
+        value.files['scout.md'].digest = 'not-a-digest';
+      },
+      (value) => {
+        value.files['scout.md'].version = 'v9';
+      },
+      (value) => {
+        value.files['scout.md'].syncedAt = 'now';
+      },
+    ];
+    for (const corrupt of corruptions) {
+      const value = structuredClone(base);
+      corrupt(value);
+      writeFileSync(join(agentsDir, MANIFEST_NAME), JSON.stringify(value));
+      expect(readAgentFilesManifest(agentsDir)).toBeNull();
+      expect(readAgentFilesManifestState(agentsDir)).toEqual({
+        kind: 'unsafe',
+        reason: 'it is invalid JSON or claims Genie ownership with an invalid schema',
+      });
+    }
+    writeFileSync(join(agentsDir, MANIFEST_NAME), '{"managedBy":"genie-agent-sync","files":{');
+    expect(readAgentFilesManifestState(agentsDir)).toEqual({
+      kind: 'unsafe',
+      reason: 'it is invalid JSON or claims Genie ownership with an invalid schema',
+    });
   });
 
   function backupCollisionPath(): string {
@@ -1125,6 +1190,117 @@ describe('claude agent fan-out', () => {
     expect(readFileSync(tamperedStagePath)).toEqual(tamperedBytes); // preserved byte-for-byte
     expect(claude.advisories.some((line) => line.includes('preserved replaced staged payload'))).toBe(true);
     expect(claude.advisories.some((line) => line.includes('commit failed'))).toBe(true);
+  });
+
+  test('a multiply-linked agent stage is never published or manifest-owned', () => {
+    present(fixture.claudeDir);
+    const agentsDir = join(fixture.claudeDir, 'agents');
+    const scoutPath = join(agentsDir, 'scout.md');
+    const aliasPath = join(fixture.root, 'foreign-agent-stage-alias');
+    let stagePath = '';
+
+    const claude = agentReport(
+      run({
+        beforeAgentFileMutation: (event) => {
+          if (event.operation !== 'replace' || event.path !== scoutPath) return;
+          const stageDir = readdirSync(agentsDir).find((name) => name.startsWith('.scout.md.genie-sync.staging-'));
+          if (stageDir === undefined) throw new Error('agent stage directory not found');
+          stagePath = join(agentsDir, stageDir, 'payload');
+          linkSync(stagePath, aliasPath);
+        },
+      }),
+      'claude',
+    );
+
+    expect(stagePath).not.toBe('');
+    expect(existsSync(scoutPath)).toBe(false);
+    expect(readFileSync(aliasPath, 'utf8')).toBe('# scout\n');
+    expect(lstatSync(aliasPath).nlink).toBe(2);
+    expect(readAgentFilesManifest(agentsDir)?.files['scout.md']).toBeUndefined();
+    expect(claude.failures?.join('\n')).toContain('staged payload changed');
+  });
+
+  test('a multiply-linked native manifest stage rolls back data and restores the exact base', () => {
+    present(fixture.claudeDir);
+    run();
+    const agentsDir = join(fixture.claudeDir, 'agents');
+    const scoutPath = join(agentsDir, 'scout.md');
+    const manifestPath = join(agentsDir, MANIFEST_NAME);
+    const scoutBefore = readFileSync(scoutPath);
+    const manifestBefore = readFileSync(manifestPath);
+    const aliasPath = join(fixture.root, 'foreign-manifest-stage-alias');
+    writeSourceAgent(fixture.pluginRoot, 'scout', '# scout v2\n');
+
+    const claude = agentReport(
+      run({
+        beforeAgentManifestPublish: ({ stagePath }) => linkSync(stagePath, aliasPath),
+      }),
+      'claude',
+    );
+
+    expect(readFileSync(scoutPath)).toEqual(scoutBefore);
+    expect(readFileSync(manifestPath)).toEqual(manifestBefore);
+    expect(readFileSync(aliasPath)).not.toEqual(manifestBefore);
+    // The external alias and original staged name are both preserved; neither
+    // is the live manifest pathname or owned by its restored base manifest.
+    expect(lstatSync(aliasPath).nlink).toBe(2);
+    expect(claude.failures?.join('\n')).toContain('agent transaction did not commit');
+    expect(claude.advisories.join('\n')).toContain('staged manifest payload changed before publish');
+  });
+
+  test('successful manifest publication preserves a replacement at the captured-base pathname', () => {
+    present(fixture.claudeDir);
+    run();
+    const agentsDir = join(fixture.claudeDir, 'agents');
+    const scoutPath = join(agentsDir, 'scout.md');
+    const replacementBytes = Buffer.from('foreign captured-base replacement\n');
+    let capturedBasePath = '';
+    writeSourceAgent(fixture.pluginRoot, 'scout', '# scout v2\n');
+
+    const claude = agentReport(
+      run({
+        beforeAgentManifestPublish: () => {
+          const captureDir = readdirSync(agentsDir).find((name) => name.startsWith(`.${MANIFEST_NAME}.manifest-old-`));
+          if (captureDir === undefined) throw new Error('captured base manifest not found');
+          capturedBasePath = join(agentsDir, captureDir, 'object');
+          rmSync(capturedBasePath);
+          writeFileSync(capturedBasePath, replacementBytes);
+        },
+      }),
+      'claude',
+    );
+
+    expect(readFileSync(scoutPath, 'utf8')).toBe('# scout v2\n');
+    expect(readFileSync(capturedBasePath)).toEqual(replacementBytes);
+    expect(readAgentFilesManifest(agentsDir)?.files['scout.md']?.digest).toBe(computeFileDigest(scoutPath));
+    expect(claude.failures).toBeUndefined();
+    expect(claude.advisories.join('\n')).toContain('preserved replaced previous manifest');
+  });
+
+  test('a failed retire callback that installs a live replacement still relinquishes manifest ownership', () => {
+    present(fixture.claudeDir);
+    run();
+    const agentsDir = join(fixture.claudeDir, 'agents');
+    const scoutPath = join(agentsDir, 'scout.md');
+    const replacementBytes = Buffer.from('# foreign replacement during failed retire\n');
+    rmSync(join(fixture.pluginRoot, 'agents', 'scout.md'));
+
+    const claude = agentReport(
+      run({
+        beforeAgentFileMutation: (event) => {
+          if (event.operation !== 'remove' || event.path !== scoutPath) return;
+          writeFileSync(scoutPath, replacementBytes);
+          throw new Error('retire callback failed after foreign replacement');
+        },
+      }),
+      'claude',
+    );
+
+    expect(readFileSync(scoutPath)).toEqual(replacementBytes);
+    expect(readFileSync(`${scoutPath}.genie-kept`, 'utf8')).toBe('# scout\n');
+    expect(readAgentFilesManifest(agentsDir)?.files['scout.md']).toBeUndefined();
+    expect(readAgentFilesManifest(agentsDir)?.files['reviewer.md']).toBeDefined();
+    expect(claude.failures?.join('\n')).toContain('retire callback failed after foreign replacement');
   });
 });
 
@@ -2565,7 +2741,7 @@ describe('cross-process sync lock', () => {
   test('a stale legacy regular-file lock is captured safely and upgraded', () => {
     present(fixture.claudeDir);
     const lockPath = join(fixture.genieHome, LOCK_NAME);
-    const legacyBytes = Buffer.from('999:legacy-token\n');
+    const legacyBytes = Buffer.from(`${DEAD_PID}:${'a'.repeat(32)}:unknown\n`);
     writeFileSync(lockPath, legacyBytes);
     const staleSec = (Date.now() - 11 * 60 * 1000) / 1000;
     utimesSync(lockPath, staleSec, staleSec);
@@ -2624,6 +2800,98 @@ describe('cross-process sync lock', () => {
     symlinkSync(physicalHome, symlinkHome);
     expect(() => acquireAgentSyncLock(symlinkHome)).toThrow(AgentSyncLockError);
     expect(lstatSync(symlinkHome).isSymbolicLink()).toBe(true);
+  });
+
+  test('lock publication treats a foreign empty directory as contention and never replaces it', () => {
+    const lockPath = join(fixture.genieHome, LOCK_NAME);
+    const foreignIdentity = { dev: -1, ino: -1, mode: -1 };
+
+    const lock = acquireAgentSyncLock(fixture.genieHome, {
+      beforePublish: ({ path }) => {
+        expect(path).toBe(lockPath);
+        mkdirSync(path);
+        const stat = lstatSync(path);
+        foreignIdentity.dev = stat.dev;
+        foreignIdentity.ino = stat.ino;
+        foreignIdentity.mode = stat.mode;
+      },
+    });
+
+    expect(lock).toBeNull();
+    const after = lstatSync(lockPath);
+    expect({ dev: after.dev, ino: after.ino, mode: after.mode }).toEqual(foreignIdentity);
+    expect(readdirSync(lockPath)).toEqual([]);
+    expect(readdirSync(fixture.genieHome).some((name) => name.startsWith(`${LOCK_NAME}.stage-`))).toBe(false);
+  });
+
+  test('portable lock publication uses one O_EXCL file and excludes a concurrent contender', () => {
+    const lockPath = join(fixture.genieHome, LOCK_NAME);
+
+    const holder = acquireAgentSyncLock(fixture.genieHome, { forcePortableLockPublish: true });
+
+    expect(holder).not.toBeNull();
+    expect(lstatSync(lockPath).isFile()).toBe(true);
+    expect(readFileSync(lockPath, 'utf8')).toMatch(/^\d+:[a-f0-9]{32}:(?:unknown|[a-f0-9]{64}):[a-f0-9]{64}\n$/);
+    expect(acquireAgentSyncLock(fixture.genieHome, { forcePortableLockPublish: true })).toBeNull();
+    holder?.release();
+    expect(existsSync(lockPath)).toBe(false);
+  });
+
+  test('portable lock writes remain bound to the claimed inode and never clobber a pathname replacement', () => {
+    const lockPath = join(fixture.genieHome, LOCK_NAME);
+    const displacedClaim = join(fixture.root, 'portable-lock-displaced-claim');
+    const foreignBytes = Buffer.from('foreign replacement\n');
+
+    expect(() =>
+      acquireAgentSyncLock(fixture.genieHome, {
+        forcePortableLockPublish: true,
+        afterPortableLockClaim: ({ path }) => {
+          renameSync(path, displacedClaim);
+          writeFileSync(path, foreignBytes);
+        },
+      }),
+    ).toThrow('ownership could not be verified');
+
+    expect(readFileSync(lockPath)).toEqual(foreignBytes);
+    expect(readFileSync(displacedClaim, 'utf8')).toMatch(/^\d+:[a-f0-9]{32}:(?:unknown|[a-f0-9]{64}):[a-f0-9]{64}\n$/);
+  });
+
+  test('a SIGKILL after the portable O_EXCL claim leaves stale debris that the next acquisition recovers', async () => {
+    const lockPath = join(fixture.genieHome, LOCK_NAME);
+    const runnerPath = join(fixture.root, 'portable-lock-crash-runner.ts');
+    writeFileSync(
+      runnerPath,
+      [
+        `import { acquireAgentSyncLock } from ${JSON.stringify(join(import.meta.dir, 'agent-sync.ts'))};`,
+        'acquireAgentSyncLock(process.env.CRASH_GENIE_HOME as string, {',
+        '  forcePortableLockPublish: true,',
+        "  afterPortableLockClaim: () => process.kill(process.pid, 'SIGKILL'),",
+        '});',
+        'process.exit(99);',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    const proc = Bun.spawn(['bun', runnerPath], {
+      env: { ...process.env, CRASH_GENIE_HOME: fixture.genieHome },
+      stdout: 'ignore',
+      stderr: 'ignore',
+    });
+
+    expect(await proc.exited).not.toBe(0);
+    const debris = lstatSync(lockPath);
+    expect(debris.isFile()).toBe(true);
+    expect(debris.size).toBe(0);
+    const staleSec = (Date.now() - 11 * 60 * 1000) / 1000;
+    utimesSync(lockPath, staleSec, staleSec);
+
+    const recovered = acquireAgentSyncLock(fixture.genieHome, { forcePortableLockPublish: true });
+
+    expect(recovered).not.toBeNull();
+    expect(lstatSync(lockPath).isFile()).toBe(true);
+    expect(lstatSync(lockPath).size).toBeGreaterThan(0);
+    recovered?.release();
+    expect(existsSync(lockPath)).toBe(false);
   });
 
   test('an absent GENIE_HOME is created for locking and released without lock or staging debris', () => {
@@ -2919,12 +3187,22 @@ describe('cross-process sync lock', () => {
     writeFile(lockPath, `${process.pid}:${TOKEN}:${'0'.repeat(64)}:${HOST}\n`);
     const staleSec = (Date.now() - 11 * 60 * 1000) / 1000;
     utimesSync(lockPath, staleSec, staleSec);
+    let identityLookups = 0;
 
-    const report = run();
+    const report = run({
+      lockOptions: {
+        processStartIdentity: (pid) => {
+          expect(pid).toBe(process.pid);
+          identityLookups += 1;
+          return 'f'.repeat(64);
+        },
+      },
+    });
 
     expect(report.skipped).toBeUndefined();
     expect(skillAction(agentReport(report, 'claude'), 'alpha')).toBe('created');
     expect(existsSync(lockPath)).toBe(false);
+    expect(identityLookups).toBeGreaterThanOrEqual(3); // initial check, guarded recheck, replacement owner record
   });
 
   test('a far-future lock timestamp is treated as invalid debris rather than suppressing sync indefinitely', () => {
@@ -4785,11 +5063,19 @@ describe('no-clobber directory publish (G5 musl portability)', () => {
     const staged = stagedTree('rn-src');
     const digest = computeDirDigest(staged);
     const target = join(fixture.root, 'rn-target');
-    atomicRenameDirectoryNoClobber(staged, target, { opener: () => noReplaceRenamer, probe: {} });
+    atomicRenameDirectoryNoClobber(staged, target, {
+      platform: 'linux',
+      opener: () => noReplaceRenamer,
+      probe: {},
+    });
     expect(computeDirDigest(target)).toBe(digest);
     const staged2 = stagedTree('rn-src2');
     expect(() =>
-      atomicRenameDirectoryNoClobber(staged2, target, { opener: () => noReplaceRenamer, probe: {} }),
+      atomicRenameDirectoryNoClobber(staged2, target, {
+        platform: 'linux',
+        opener: () => noReplaceRenamer,
+        probe: {},
+      }),
     ).toThrow('target preserved');
     expect(computeDirDigest(target)).toBe(digest); // pre-existing target bytes untouched
   });
@@ -4798,7 +5084,7 @@ describe('no-clobber directory publish (G5 musl portability)', () => {
     const staged = stagedTree('portable-src');
     const digest = computeDirDigest(staged);
     const target = join(fixture.root, 'portable-target'); // absent
-    atomicRenameDirectoryNoClobber(staged, target, { opener: () => null, probe: {} });
+    atomicRenameDirectoryNoClobber(staged, target, { platform: 'linux', opener: () => null, probe: {} });
     expect(computeDirDigest(target)).toBe(digest); // mkdir-claim + rename-onto-empty reproduces the tree
   });
 
@@ -4807,9 +5093,9 @@ describe('no-clobber directory publish (G5 musl portability)', () => {
     const target = join(fixture.root, 'portable-target2');
     writeFile(join(target, 'EXISTING.txt'), 'user bytes\n');
     const before = computeDirDigest(target);
-    expect(() => atomicRenameDirectoryNoClobber(staged, target, { opener: () => null, probe: {} })).toThrow(
-      'portable directory claim failed',
-    );
+    expect(() =>
+      atomicRenameDirectoryNoClobber(staged, target, { platform: 'linux', opener: () => null, probe: {} }),
+    ).toThrow('portable directory claim failed');
     expect(computeDirDigest(target)).toBe(before); // target never clobbered
     expect(readFileSync(join(target, 'EXISTING.txt'), 'utf8')).toBe('user bytes\n');
   });
@@ -4826,6 +5112,14 @@ describe('no-clobber directory publish (G5 musl portability)', () => {
     expect(computeDirDigest(target)).toBe(before); // a real (non-empty) target is never touched
   });
 
+  test('Darwin falls back safely when native rename setup is unavailable before invocation', () => {
+    const staged = stagedTree('darwin-portable-src');
+    const digest = computeDirDigest(staged);
+    const target = join(fixture.root, 'darwin-portable-target');
+    atomicRenameDirectoryNoClobber(staged, target, { platform: 'darwin', darwinOpener: () => null });
+    expect(computeDirDigest(target)).toBe(digest);
+  });
+
   test('feature detection is memoized at first use across publishes', () => {
     let calls = 0;
     const probe = {}; // fresh probe cache shared across both publishes
@@ -4833,11 +5127,19 @@ describe('no-clobber directory publish (G5 musl portability)', () => {
       calls += 1;
       return null; // simulate musl: no candidate resolves
     };
-    atomicRenameDirectoryNoClobber(stagedTree('cache-1'), join(fixture.root, 'cache-t1'), { opener, probe });
+    atomicRenameDirectoryNoClobber(stagedTree('cache-1'), join(fixture.root, 'cache-t1'), {
+      platform: 'linux',
+      opener,
+      probe,
+    });
     const afterFirst = calls;
-    atomicRenameDirectoryNoClobber(stagedTree('cache-2'), join(fixture.root, 'cache-t2'), { opener, probe });
+    atomicRenameDirectoryNoClobber(stagedTree('cache-2'), join(fixture.root, 'cache-t2'), {
+      platform: 'linux',
+      opener,
+      probe,
+    });
     expect(calls).toBe(afterFirst); // the second publish reuses the memoized probe — no re-detection
-    if (process.platform === 'linux') expect(afterFirst).toBeGreaterThan(0);
+    expect(afterFirst).toBeGreaterThan(0);
   });
 });
 

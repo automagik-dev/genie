@@ -6,8 +6,9 @@
 #
 # Trust anchor (cosign keyless OIDC). Verification pins the certificate
 # identity + OIDC issuer — there is no long-lived public key to pin.
-#   cert-identity: ^https://github.com/automagik-dev/genie/.github/workflows/sign-attest.yml@
-#   issuer:        https://token.actions.githubusercontent.com
+# certificate-identity-regexp: ^https://github\.com/automagik-dev/genie/\.github/workflows/sign-attest\.yml@refs/heads/main$
+# certificate-oidc-issuer:     https://token.actions.githubusercontent.com
+# provenance source-uri:       github.com/automagik-dev/genie
 #
 # Default flow (gh attestation verify, falls back to cosign verify-blob):
 #   curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash
@@ -25,26 +26,27 @@ REPO="automagik-dev/genie"
 # `GENIE_CHANNEL=dev curl ... | bash` reads .well-known/dev.json. See wish
 # release-channel-dev (2026-05-11) for the producer-side wiring.
 MANIFEST_BASE="https://raw.githubusercontent.com/${REPO}/main/.well-known"
-EXPECTED_COSIGN_IDENTITY="^https://github.com/${REPO}/.github/workflows/sign-attest.yml@"
+EXPECTED_COSIGN_IDENTITY="^https://github\\.com/${REPO}/\\.github/workflows/sign-attest\\.yml@refs/heads/main$"
 EXPECTED_COSIGN_ISSUER="https://token.actions.githubusercontent.com"
 COSIGN_VERSION="v2.4.1"
 GENIE_HOME="${GENIE_HOME:-$HOME/.genie}"
 LOCAL_BIN="$HOME/.local/bin"
-TMP_DIR="$(mktemp -d -t genie-install-XXXXXX)"
+TMP_DIR="$(umask 077; mktemp -d -t genie-install-XXXXXX)"
 COSIGN_BIN=""
 COSIGN_BOOTSTRAPPED=0
 LIFECYCLE_LOCK=""
 LIFECYCLE_OWNER_FILE=""
 LIFECYCLE_OWNER_RECORD=""
 LIFECYCLE_LOCK_STALE_SECONDS=600
-# Set while a transactional extract is in flight so the EXIT trap disposes of a
-# half-populated staging tree without ever touching the live install (F31a).
+# Set while extraction is in flight. This is private disposable source input;
+# durable recovery authority lives only in the promoter's internal transaction.
 STAGING_DIR=""
 
 cleanup() {
+  local status=$?
   release_lifecycle_lock
-  [[ -n "$STAGING_DIR" ]] && rm -rf "$STAGING_DIR"
   rm -rf "$TMP_DIR"
+  return "$status"
 }
 trap cleanup EXIT
 
@@ -68,6 +70,38 @@ sha256_text() {
     printf '%s' "$1" | shasum -a 256 | awk '{print $1}'
   fi
 }
+
+portable_stat_fields() {
+  if stat -f '%Lp %u %l' "$1" >/dev/null 2>&1; then
+    stat -f '%Lp %u %l' "$1"
+  else
+    stat -c '%a %u %h' "$1"
+  fi
+}
+
+validate_private_temp_root() {
+  local path="$1" parent fields mode owner links mode_value uid
+  parent="$(dirname "$path")"
+  [[ -d "$path" && ! -L "$path" && -d "$parent" && ! -L "$parent" ]] ||
+    die "installer temp boundary is not physical" 1
+  fields="$(portable_stat_fields "$path")" || die "could not inspect installer temp directory" 1
+  read -r mode owner links <<<"$fields"
+  uid="$(id -u)"
+  [[ "$mode" == "700" && "$owner" == "$uid" && "$links" -ge 1 ]] ||
+    die "installer temp directory is not current-user-owned mode 0700" 1
+  fields="$(portable_stat_fields "$parent")" || die "could not inspect installer temp parent" 1
+  read -r mode owner links <<<"$fields"
+  mode_value=$((8#$mode))
+  if [[ $((mode_value & 8#022)) -eq 0 ]]; then
+    return
+  fi
+  if [[ "$owner" == "0" && $((mode_value & 8#1000)) -ne 0 ]]; then
+    return
+  fi
+  die "installer temp parent permits unsafe cross-principal replacement" 1
+}
+
+validate_private_temp_root "$TMP_DIR"
 
 # Resolve like Node's path.resolve without creating or dereferencing GENIE_HOME.
 # The parent must already exist so a losing installer cannot mutate protected
@@ -111,6 +145,23 @@ lock_mtime_seconds() {
   fi
 }
 
+# Return success when a numeric PID is confirmed live OR process inspection is
+# unavailable. Only ps's ordinary "no such process" status (1) proves death;
+# command denial/missing ps/internal errors are unknown and therefore fail
+# closed as live, matching TypeScript's EPERM/unknown-identity rule.
+pid_is_live_or_unknown() {
+  local pid="$1" output status
+  if output="$(ps -p "$pid" -o pid= 2>&1)"; then
+    return 0
+  else
+    status=$?
+  fi
+  # Status 1 with no diagnostic is the portable `ps -p` no-match outcome.
+  # Any output or different status means inspection itself was unavailable.
+  [[ "$status" -eq 1 && -z "$output" ]] && return 1
+  return 0
+}
+
 lock_record_is_stale() {
   local path="$1" expected_record="$2" current_record mtime now age pid
   [[ -f "$path" && ! -L "$path" ]] || return 1
@@ -128,7 +179,7 @@ lock_record_is_stale() {
   # lockHasLiveOwner enforces in src/lib/agent-sync.ts. An empty or unparseable
   # record has no live pid to pin it, so it is a dead owner recoverable once
   # aged — the same debris TS lockOwner maps to null.
-  if [[ "$pid" =~ ^[0-9]+$ ]] && ps -p "$pid" >/dev/null 2>&1; then return 1; fi
+  if [[ "$pid" =~ ^[0-9]+$ ]] && pid_is_live_or_unknown "$pid"; then return 1; fi
   mtime="$(lock_mtime_seconds "$path" 2>/dev/null)" || return 1
   now="$(date +%s)"
   age=$((now - mtime))
@@ -155,7 +206,7 @@ foreign_lock_record_is_stale() {
   esac
   # A parseable, live pid pins the guard as owned regardless of age; an empty or
   # unparseable pid falls through as a dead owner subject only to the mtime gate.
-  if [[ "$pid" =~ ^[0-9]+$ ]] && ps -p "$pid" >/dev/null 2>&1; then return 1; fi
+  if [[ "$pid" =~ ^[0-9]+$ ]] && pid_is_live_or_unknown "$pid"; then return 1; fi
   mtime="$(lock_mtime_seconds "$path" 2>/dev/null)" || return 1
   now="$(date +%s)"
   age=$((now - mtime))
@@ -458,9 +509,8 @@ download_and_verify() {
 verify_staged_binary() {
   local staging="$1" expected_version="$2" staged_bin actual_version expected_token actual_token
   staged_bin="${staging}/genie"
-  [[ -f "$staged_bin" && ! -L "$staged_bin" ]] ||
-    die "staged tarball has no genie binary; refusing to promote a corrupt artifact" 4
-  chmod +x "$staged_bin"
+  [[ -f "$staged_bin" && ! -L "$staged_bin" && -x "$staged_bin" ]] ||
+    die "staged tarball has no physical executable genie binary; refusing to promote a corrupt artifact" 4
   actual_version="$("$staged_bin" --version 2>/dev/null)" ||
     die "staged genie binary failed to execute; refusing to promote a corrupt artifact" 4
   expected_token="$(parse_version_token "$expected_version")" ||
@@ -471,102 +521,54 @@ verify_staged_binary() {
     die "staged genie version mismatch (expected ${expected_token}, got ${actual_token}); refusing to promote" 4
 }
 
-# Post-swap correctness guard: run the live binary and confirm it reports the
-# version we intended to install. Returns non-zero (never dies) so the caller
-# can roll back before failing.
-verify_promoted_binary() {
-  local expected_version="$1" actual expected_token actual_token
-  actual="$("${GENIE_HOME}/bin/genie" --version 2>/dev/null)" || return 1
-  expected_token="$(parse_version_token "$expected_version")" || return 1
-  actual_token="$(parse_version_token "$actual")" || return 1
-  [[ "$actual_token" == "$expected_token" ]]
+# Transactional install (F31a). The shell performs no live-path swap,
+# rollback, backup, chmod, canonical-link replacement, or staging cleanup.
+# Mutation authority is the already verified staged executable, which borrows
+# this shell's exact lifecycle lease and uses native durable no-clobber renames.
+ensure_physical_install_directory() {
+  local path="$1" parent
+  parent="$(dirname "$path")"
+  [[ -d "$parent" && ! -L "$parent" ]] ||
+    die "install directory parent is not physical: $parent" 1
+  if [[ -e "$path" || -L "$path" ]]; then
+    [[ -d "$path" && ! -L "$path" ]] ||
+      die "install path is not a physical directory: $path" 1
+    return
+  fi
+  (umask 077; mkdir "$path") ||
+    die "could not create physical install directory: $path" 1
+  [[ -d "$path" && ! -L "$path" ]] ||
+    die "new install directory was replaced before validation: $path" 1
 }
 
-# Restore the newest backup from bin/.previous over the live binary. Used only
-# when a promoted binary fails its post-swap verification.
-rollback_binary() {
-  local previous_dir="${GENIE_HOME}/bin/.previous" newest
-  [[ -d "$previous_dir" ]] || return 1
-  newest="$(ls -1t "$previous_dir"/genie-* 2>/dev/null | head -n1)"
-  [[ -n "$newest" && -f "$newest" ]] || return 1
-  cp -p "$newest" "${GENIE_HOME}/bin/genie.rollback.$$" &&
-    mv -f "${GENIE_HOME}/bin/genie.rollback.$$" "${GENIE_HOME}/bin/genie" &&
-    chmod +x "${GENIE_HOME}/bin/genie"
-}
-
-# Promote a verified staging tree over the live install. The single
-# rename-over-live of the `genie` binary is the atomic commit: the old
-# executable is runnable up to that instant, the new one immediately after, and
-# a crash mid-rename can never yield a partial file. Sidecars (VERSION, plugins,
-# skills, templates, marketplaces) are moved into place first so the freshly
-# promoted binary reads its own VERSION during verification; the old binary is
-# backed up to bin/.previous so a failed post-swap verification rolls back.
-promote_staged_install() {
-  local staging="$1" expected_version="$2"
-  local bin="$GENIE_HOME/bin" previous_dir="${GENIE_HOME}/bin/.previous"
-  local staged_bin="${staging}/genie" old_version backup entry base
-  mkdir -p "$previous_dir"
-
-  # Capture the currently-installed version BEFORE any sidecar (incl. VERSION)
-  # moves, so the backup filename reflects the binary actually being replaced.
-  if [[ -f "${bin}/genie" && ! -L "${bin}/genie" ]]; then
-    old_version="$(parse_version_token "$("${bin}/genie" --version 2>/dev/null || true)" 2>/dev/null || true)"
-    [[ -n "$old_version" ]] || old_version="previous"
-    backup="${previous_dir}/genie-${old_version}"
-    cp -p "${bin}/genie" "${backup}.staging.$$" &&
-      mv -f "${backup}.staging.$$" "$backup" ||
-      die "could not back up the current binary before promotion; leaving install untouched" 1
-  fi
-
-  # Move every sidecar (all tarball entries except the binary itself) into the
-  # live install. `find` covers dotfiles (.agents, .claude-plugin).
-  while IFS= read -r entry; do
-    base="$(basename "$entry")"
-    [[ "$base" == "genie" ]] && continue
-    rm -rf "${bin:?}/${base}"
-    mv "$entry" "${bin}/${base}"
-  done < <(find "$staging" -mindepth 1 -maxdepth 1)
-
-  # Destructive-failure injection seam (tests only, F31a). Simulates a kill
-  # between backup and the atomic rename; the live binary must stay runnable.
-  if [[ "${GENIE_INSTALL_SWAP_FAULT:-}" == "before-promote" ]]; then
-    die "swap fault injected before promotion (test seam)" 1
-  fi
-
-  chmod +x "$staged_bin"
-  mv -f "$staged_bin" "${bin}/genie" ||
-    die "atomic binary promotion failed; previous install left intact" 1
-  chmod +x "${bin}/genie"
-
-  if ! verify_promoted_binary "$expected_version"; then
-    if rollback_binary; then
-      die "post-swap verification failed; rolled back to the previous binary" 4
-    fi
-    die "post-swap verification failed and no rollback candidate was available" 4
-  fi
-}
-
-# Transactional install (F31a). Extract to a same-filesystem staging tree,
-# verify it, atomically promote it (with rollback), then point $PATH at it. A
-# corrupt tarball or an interrupted swap never leaves a half-written binary at
-# $GENIE_HOME/bin/genie.
 extract_and_link() {
   local tarball="$1" expected_version="$2" bin="$GENIE_HOME/bin"
-  mkdir -p "$bin" "$LOCAL_BIN"
-  STAGING_DIR="$(mktemp -d "${bin}/.install-staging-XXXXXX")" ||
-    die "could not create staging directory under ${bin}" 1
-  log "extracting to staging ${STAGING_DIR##*/}"
+  ensure_physical_install_directory "$GENIE_HOME"
+  ensure_physical_install_directory "$bin"
+  STAGING_DIR="${TMP_DIR}/release-payload"
+  (umask 077; mkdir "$STAGING_DIR") ||
+    die "could not create private external release staging" 1
+  [[ -d "$STAGING_DIR" && ! -L "$STAGING_DIR" ]] ||
+    die "install staging path is not a physical directory: $STAGING_DIR" 1
+  validate_private_temp_root "$STAGING_DIR"
+  log "extracting verified release in private temporary staging"
   tar -xzf "$tarball" -C "$STAGING_DIR" ||
     die "extraction failed (corrupt tarball?): ${tarball}" 5
   verify_staged_binary "$STAGING_DIR" "$expected_version"
-  promote_staged_install "$STAGING_DIR" "$expected_version"
-  ln -sfn "$bin/genie" "$LOCAL_BIN/genie"
-  log "symlink: $LOCAL_BIN/genie → $bin/genie"
-  rm -rf "$STAGING_DIR"
+  [[ -n "$LIFECYCLE_LOCK" && -n "$LIFECYCLE_OWNER_RECORD" ]] ||
+    die "lifecycle lease was lost before transactional promotion" 1
+  if ! GENIE_LIFECYCLE_LEASE_PATH="$LIFECYCLE_LOCK" \
+    GENIE_LIFECYCLE_LEASE_OWNER="$LIFECYCLE_OWNER_RECORD" \
+    "$STAGING_DIR/genie" __install-promote \
+      --staging-root "$STAGING_DIR" \
+      --expected-version "$expected_version"; then
+    die "verified staged promoter could not complete the install transaction; retained artifacts are retryable" 1
+  fi
   STAGING_DIR=""
+  log "canonical link: $LOCAL_BIN/genie → $bin/genie"
 }
 
-# Detect pre-cutover (bun-global / npm-global) installs and surface the
+# Detect pre-cutover# Detect pre-cutover (bun-global / npm-global) installs and surface the
 # exact uninstall command. install.sh writes the new binary at
 # ${GENIE_HOME}/bin/genie + a symlink at ${LOCAL_BIN}/genie, but if the
 # legacy bin directory ranks ahead of ${LOCAL_BIN} on PATH the shell
@@ -707,7 +709,7 @@ verify_installation() {
 }
 
 main() {
-  need curl; need tar; need uname
+  need curl; need tar; need uname; need link
   local platform channel payload version tarball_base tarball
   platform="$(detect_platform)"
   channel="$(resolve_channel)"

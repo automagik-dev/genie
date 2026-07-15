@@ -6,16 +6,17 @@ name: Version
 #   -----------------------------------  -------  ------
 #   workflow_run (CI success on dev)     dev      yes
 #   workflow_run (merge PR to main)      main     no
-#   workflow_dispatch (manual)           dev      yes
 #
 # On dev triggers we DERIVE a fresh version (today + build-count),
-# commit + tag + push back to dev. The pushed tag triggers
-# release-publish.yml which attaches the signed GitHub Release
-# tarballs.
+# commit + tag + push back to dev, then call the main-controlled reusable
+# release workflow with the successful parent CI run. The release guard accepts
+# the child only when all six changed fields are the deterministic version bump.
 #
 # On main triggers (merge from dev) we DO NOT bump — the version is
-# already in package.json from the dev tag. The pushed tag (also
-# from the merge) drives the @latest release-publish run.
+# already in package.json from the dev tag. The successful main CI run and
+# tree-equivalent existing tag produce a human-initiation handoff. A maintainer
+# must start the stable Release workflow, then a different maintainer approves
+# the protected production environment.
 #
 # npm distribution is discontinued (2026-05-09 hard cutover, wish
 # genie-distribution-cutover G6). Operators install via install.sh
@@ -23,7 +24,8 @@ name: Version
 # See docs/release-process.mdx.
 #
 # SHA-pin invariant (Invariant A — correctness over completeness):
-# Version always tags the commit that passed CI, never branch HEAD.
+# Dev tags a deterministic version-only child of the commit that passed CI;
+# stable/homolog build the exact promotion commit that passed CI.
 # Concurrent runs QUEUE per branch+event (no cancellation — see the
 # concurrency block below). When dev advances past the SHA a queued
 # run checked out, the
@@ -35,12 +37,11 @@ on:
   workflow_run:
     workflows: ["CI"]
     types: [completed]
-    branches: [main, dev]
-  workflow_dispatch:
+    branches: [main, homolog, dev]
 
 permissions:
   contents: write          # commit + push version bump + tag
-  actions: write           # `gh workflow run` to dispatch Build Tarballs after tag push
+  actions: write           # dispatch trusted release.yml control on main
 
 # RACE (observed 2026-07-04T23:11:46Z, missed dev release): CI completes twice
 # per dev merge (push-event run + pull_request-event run); both trigger this
@@ -49,7 +50,8 @@ permissions:
 # in-flight push-event bump. Scope the group by triggering event, and never
 # cancel: killing a version bump mid-tag-push is unsafe regardless — queue instead.
 concurrency:
-  group: version-${{ github.event.workflow_run.head_branch || 'manual' }}-${{ github.event.workflow_run.event || 'dispatch' }}
+  group: version-${{ github.event.workflow_run.head_branch }}-${{ github.event.workflow_run.event }}
+  queue: max
   cancel-in-progress: false
 
 jobs:
@@ -57,11 +59,18 @@ jobs:
     name: Auto Version
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 5
+    outputs:
+      release_ready: ${{ steps.commit_and_tag.outputs.release_ready || steps.promoted_tag.outputs.release_ready }}
+      version: ${{ steps.commit_and_tag.outputs.version || steps.promoted_tag.outputs.version }}
+      channel: ${{ steps.commit_and_tag.outputs.channel || steps.promoted_tag.outputs.channel }}
+      source_sha: ${{ steps.commit_and_tag.outputs.source_sha || steps.promoted_tag.outputs.source_sha }}
+      source_branch: ${{ steps.commit_and_tag.outputs.source_branch || steps.promoted_tag.outputs.source_branch }}
+      source_ci_run_id: ${{ steps.commit_and_tag.outputs.source_ci_run_id || steps.promoted_tag.outputs.source_ci_run_id }}
     if: >-
-      (github.event_name == 'workflow_dispatch') ||
       (github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.event == 'push' &&
        !contains(github.event.workflow_run.head_commit.message, '[auto-version]') &&
+       !contains(github.event.workflow_run.head_commit.message, '[release-manifest]') &&
        (
          (github.event.workflow_run.head_branch == 'main') ||
          (github.event.workflow_run.head_branch == 'homolog') ||
@@ -78,7 +87,7 @@ jobs:
       - name: Determine branch and version prefix
         id: context
         run: |
-          BRANCH="${{ github.event.workflow_run.head_branch || 'dev' }}"
+          BRANCH="${{ github.event.workflow_run.head_branch }}"
           case "$BRANCH" in
             main)
               # Main push: tag whatever release.yml just landed.
@@ -98,11 +107,15 @@ jobs:
               echo "branch=homolog" >> "$GITHUB_OUTPUT"
               echo "should_bump=false" >> "$GITHUB_OUTPUT"
               ;;
-            *)
-              # Dev push (or manual dispatch): derive + bump.
+            dev)
+              # Dev push: derive + bump.
               # Channel: dev (advances dev only).
               echo "branch=dev" >> "$GITHUB_OUTPUT"
               echo "should_bump=true" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "::error ::release-trigger.branch_untrusted unsupported branch '${BRANCH}'"
+              exit 1
               ;;
           esac
           # v5 version scheme: 5.YYMMDD.N (daily counter preserved from v4;
@@ -111,23 +124,23 @@ jobs:
           echo "prefix=5" >> "$GITHUB_OUTPUT"
           echo "Resolved: branch=${BRANCH}"
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           # Pin to the SHA that triggered CI, not the moving branch HEAD,
           # so back-to-back merges never publish a sibling commit's build.
-          # workflow_dispatch has no workflow_run.head_sha — fall back to
-          # github.sha (the dispatched ref's HEAD).
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # The triggering commit is data until its successful push-CI identity
+          # is bound below. Never leave a write credential in this checkout.
+          persist-credentials: false
 
       # Promotion gate for the no-bump (main/homolog) path. A promotion is a
       # push whose head commit is a dev merge commit ("Merge pull request …
       # /dev") OR whose content equals dev's tip — the latter is what a
       # rebase- or squash-merged dev→main PR produces (no merge commit, so
-      # message checks can never see it). `.well-known` is excluded from the
-      # content diff: release-publish commits channel manifests to main only,
-      # so a rebased promotion's tree always differs from dev exactly there.
+      # message checks can never see it). The three generated channel manifests
+      # are excluded from the content diff: release-publish commits them to main
+      # only, so a rebased promotion's tree always differs from dev there.
       # If dev advanced past the PR head before this runs, the content check
       # misses and we skip with a notice — the next promotion catches up
       # (same posture as the atomic tag-push race below).
@@ -143,7 +156,10 @@ jobs:
             REASON="dev merge commit"
           else
             git fetch origin dev --quiet
-            if git diff --quiet origin/dev HEAD -- ':(exclude).well-known'; then
+            if git diff --quiet origin/dev HEAD -- . \
+                ':(exclude).well-known/latest.json' \
+                ':(exclude).well-known/homolog.json' \
+                ':(exclude).well-known/dev.json'; then
               PROMOTED=true
               REASON="content matches dev tip (rebase/squash promotion)"
             fi
@@ -154,13 +170,6 @@ jobs:
           else
             echo "::notice ::release-trigger.promotion_unverified head commit is neither a dev merge commit nor content-identical to dev — stable/homolog dispatch skipped"
           fi
-
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version: "1.3.10"
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
 
       - name: Configure git
         if: steps.context.outputs.should_bump == 'true'
@@ -181,127 +190,149 @@ jobs:
           echo "build_number=${BUILD_NUMBER}" >> "$GITHUB_OUTPUT"
           echo "Derived version: ${VERSION}"
 
-      - name: Sync all version files
+      # SECURITY: every command in this step is trusted workflow control loaded
+      # from main. Do not run package scripts, dependency installers, hooks, or
+      # any executable from the dev checkout in this write-capable workflow.
+      - name: Synchronize the exact six version fields
         if: steps.context.outputs.should_bump == 'true'
-        run: bun run version
         env:
-          GENIE_BUILD_NUMBER: ${{ steps.version.outputs.build_number }}
-
-      - name: Format versioned JSON (Biome)
-        if: steps.context.outputs.should_bump == 'true'
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          bunx biome format --write package.json plugins/genie/.claude-plugin/plugin.json plugins/genie/.codex-plugin/plugin.json plugins/genie/package.json .claude-plugin/marketplace.json 2>/dev/null || true
+          set -euo pipefail
+          JSON_FILES=(
+            package.json
+            plugins/genie/.claude-plugin/plugin.json
+            plugins/genie/.codex-plugin/plugin.json
+            plugins/genie/package.json
+          )
+          MARKETPLACE=.claude-plugin/marketplace.json
+          HERMES=plugins/hermes-genie/plugin.yaml
 
-      - name: Commit and tag
-        if: steps.context.outputs.should_bump == 'true'
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          BRANCH="${{ steps.context.outputs.branch }}"
-
-          git add -A '*.json' 'src/lib/version.ts'
-          if git diff --cached --quiet; then
-            echo "No version changes to commit"
-          else
-            git commit -m "chore(version): bump to ${VERSION} [auto-version]"
+          # Validate every input before the first write. Symlinks are rejected
+          # so an allowlisted path cannot redirect a trusted rewrite.
+          for path in "${JSON_FILES[@]}" "$MARKETPLACE" "$HERMES"; do
+            if [[ ! -f "$path" || -L "$path" ]]; then
+              echo "::error ::release-version.invalid_path ${path} must be a regular non-symlink file"
+              exit 1
+            fi
+          done
+          for path in "${JSON_FILES[@]}"; do
+            jq -e 'type == "object" and (.version | type == "string")' "$path" >/dev/null || {
+              echo "::error ::release-version.invalid_json ${path} needs one top-level string version"
+              exit 1
+            }
+          done
+          jq -e '
+            type == "object" and
+            (.plugins | type == "array") and
+            ([.plugins[]? | select(type == "object" and .name == "genie")] | length) == 1 and
+            ([.plugins[]? | select(type == "object" and .name == "genie")][0].version | type == "string")
+          ' "$MARKETPLACE" >/dev/null || {
+            echo "::error ::release-version.invalid_marketplace expected exactly one versioned genie entry"
+            exit 1
+          }
+          if [[ "$(grep -Ec '^version: [^[:space:]]+$' "$HERMES")" != 1 ]]; then
+            echo "::error ::release-version.invalid_yaml ${HERMES} needs exactly one top-level version"
+            exit 1
           fi
 
+          for path in "${JSON_FILES[@]}"; do
+            tmp="$(mktemp)"
+            jq --arg version "$VERSION" '.version = $version' "$path" > "$tmp"
+            mv "$tmp" "$path"
+          done
+          tmp="$(mktemp)"
+          jq --arg version "$VERSION" '
+            .plugins |= map(if type == "object" and .name == "genie" then .version = $version else . end)
+          ' "$MARKETPLACE" > "$tmp"
+          mv "$tmp" "$MARKETPLACE"
+          tmp="$(mktemp)"
+          sed -E "s/^version: [^[:space:]]+$/version: ${VERSION}/" "$HERMES" > "$tmp"
+          mv "$tmp" "$HERMES"
+
+          VERSION_PATHS=("${JSON_FILES[@]}" "$MARKETPLACE" "$HERMES")
+          git add -- "${VERSION_PATHS[@]}"
+          EXPECTED="$(printf '%s\n' "${VERSION_PATHS[@]}" | LC_ALL=C sort)"
+          ACTUAL="$(git diff --cached --name-only -- | LC_ALL=C sort)"
+          if [[ "$ACTUAL" != "$EXPECTED" ]]; then
+            echo "::error ::release-version.delta_untrusted expected exactly six version files"
+            printf 'expected:\n%s\nactual:\n%s\n' "$EXPECTED" "$ACTUAL" >&2
+            exit 1
+          fi
+
+      - name: Commit and bind the version-only child
+        if: steps.context.outputs.should_bump == 'true'
+        id: version_child
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          git commit --no-verify -m "chore(version): bump to ${VERSION} [auto-version]"
+          PARENT_SHA="$(git rev-parse HEAD^)"
+          if [[ "$PARENT_SHA" != "${{ github.event.workflow_run.head_sha }}" ]]; then
+            echo "::error ::release-version.parent_mismatch version child is not based on the successful CI head"
+            exit 1
+          fi
           git tag "v${VERSION}"
+          echo "source_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # This is the only dev-bump step that receives a credential. All source
+      # data has already been rewritten and committed by trusted inline control;
+      # no source-controlled executable runs after authentication is installed.
+      - name: Atomically push the CI-bound dev release identity
+        if: steps.context.outputs.should_bump == 'true'
+        id: commit_and_tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          SOURCE_SHA: ${{ steps.version_child.outputs.source_sha }}
+          SOURCE_CI_RUN_ID: ${{ github.event.workflow_run.id }}
+          TRIGGER_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          gh auth setup-git
           # If dev advanced past the SHA we checked out, --atomic rejects
           # the push. That's the desired Invariant A behavior: skip rather
           # than mis-tag. Emit a structured notice so the skip is visible
           # in CI logs and detector-greppable. The next merge's run catches
           # up.
-          SHORT_SHA="${GITHUB_SHA:0:7}"
-          if ! git push --atomic origin "HEAD:refs/heads/${BRANCH}" "refs/tags/v${VERSION}"; then
+          SHORT_SHA="${TRIGGER_SHA:0:7}"
+          if ! git push --atomic origin "HEAD:refs/heads/dev" "refs/tags/v${VERSION}"; then
             echo "::notice ::release-race.next-tag-pin-skipped.detected dev advanced past triggering SHA ${SHORT_SHA}; tag push skipped — next merge will republish"
             exit 0
           fi
           echo "tag_pushed=true" >> "$GITHUB_OUTPUT"
-        id: commit_and_tag
-
-      # Dispatches the full release pipeline (build → sign-attest →
-      # publish) via release.yml's workflow_dispatch entry. Triggered
-      # after a tag push since GITHUB_TOKEN-pushed tags don't fire
-      # push:tags workflows (anti-recursion guard — see GitHub docs:
-      # "Triggering a workflow from a workflow"). workflow_dispatch and
-      # repository_dispatch are the documented exceptions — both CAN be
-      # invoked by GITHUB_TOKEN, so this step kicks the orchestrator
-      # without requiring a PAT.
-      #
-      # `--ref refs/tags/v${VERSION}` makes release.yml check out the
-      # tagged commit; each called workflow then inherits that ref. The
-      # cosign keyless OIDC SAN URI for binary tarballs stays bound to
-      # `sign-attest.yml@refs/tags/v<version>` (Decision #1 — cosign
-      # step ownership preserved) which matches install.sh:24's pin.
-      #
-      # The bump-path dispatch below only fires on dev (should_bump=true,
-      # channel=dev → prerelease). The main/homolog no-bump path needs its
-      # OWN dispatch to publish the stable/homolog channel — see the
-      # "promoted tag" step further down. Gating the ONLY stable-channel
-      # dispatch behind should_bump==true is what froze the stable
-      # .well-known/latest.json pointer at v4.260511.5: every main merge
-      # ran Version, resolved branch=main, then skipped every step.
-      - name: Trigger release pipeline for the new tag
-        if: steps.context.outputs.should_bump == 'true' && steps.commit_and_tag.outputs.tag_pushed == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          TAG="refs/tags/v${VERSION}"
-          # Canonical channel taxonomy (Felipe directive 2026-05-12,
-          # unified across the automagik sibling projects):
-          #   main    → stable  → .well-known/latest.json
-          #   homolog → homolog → .well-known/homolog.json
-          #   dev/*   → dev     → .well-known/dev.json
-          # The branch identity comes from steps.context.outputs.branch,
-          # which was already resolved from workflow_run.head_branch
-          # (or the 'dev' default for workflow_dispatch). genie may not
-          # have an active homolog branch yet; the case is wired for
-          # cross-repo parity + future operator dispatch.
-          BRANCH="${{ steps.context.outputs.branch }}"
-          case "$BRANCH" in
-            main)    CHANNEL="stable" ;;
-            homolog) CHANNEL="homolog" ;;
-            *)       CHANNEL="dev" ;;
-          esac
-          echo "Dispatching release pipeline against ${TAG} (channel=${CHANNEL})..."
-          # The dispatch is fire-and-forget — release.yml sequences the
-          # build → sign-attest → publish chain inside a single run via
-          # workflow_call. A failed dispatch is a release-pipeline
-          # outage; surface loudly.
-          if ! gh workflow run release.yml --repo "${GITHUB_REPOSITORY}" --ref "${TAG}" --field version="${VERSION}" --field channel="${CHANNEL}"; then
-            echo "::error ::release-trigger.dispatch_failed release.yml dispatch failed for ${TAG} — investigate gh CLI auth or workflow availability before re-running manually"
+          # GITHUB_TOKEN-authored pushes do not trigger CI recursively. Run the
+          # read-only gate at the immutable tag (never moving dev) so the exact
+          # version child receives the Quality Gate required for promotion.
+          if ! gh workflow run ci.yml --repo "${GITHUB_REPOSITORY}" --ref "v${VERSION}"; then
+            echo "::error ::release-trigger.child_ci_dispatch_failed CI dispatch failed for exact child v${VERSION}"
             exit 1
           fi
+          echo "release_ready=true" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "channel=dev" >> "$GITHUB_OUTPUT"
+          echo "source_sha=${SOURCE_SHA}" >> "$GITHUB_OUTPUT"
+          echo "source_branch=dev" >> "$GITHUB_OUTPUT"
+          echo "source_ci_run_id=${SOURCE_CI_RUN_ID}" >> "$GITHUB_OUTPUT"
 
-      # Stable/homolog publish — the no-bump path (a main or homolog
-      # merge). should_bump=false here: package.json already carries the
-      # dev-derived version the promotion brought over, and the dev chain
-      # already pushed tag v<version>. We do NOT bump, commit, or push a
-      # tag — we only re-dispatch release.yml against the EXISTING tag with
-      # the stable (or homolog) channel so .well-known/latest.json
-      # advances. This is the ONLY code path that publishes the stable
-      # channel; without it a main merge produces no stable release.
-      - name: Trigger release pipeline for the promoted tag (stable/homolog)
+      # The no-bump path only resolves an existing dev-derived tag. Homolog is
+      # dispatched automatically below. Stable deliberately is not: if this
+      # GITHUB_TOKEN-authored workflow initiated the production deployment,
+      # GitHub's prevent-self-review control would exclude only the bot, not the
+      # maintainer who authored/promoted the change. A human workflow_dispatch
+      # makes that human the deployment initiator, so production approval must
+      # come from a different configured reviewer.
+      - name: Resolve promoted tag identity
+        id: promoted_tag
         if: steps.context.outputs.should_bump == 'false' && steps.promotion.outputs.promoted == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="$(bun --print "require('./package.json').version")"
-          if [ -z "${VERSION}" ] || [ "${VERSION}" = "null" ] || [ "${VERSION}" = "undefined" ]; then
+          set -euo pipefail
+          VERSION="$(jq -er '.version | select(type == "string")' package.json)"
+          if [[ ! "$VERSION" =~ ^5\.[0-9]{6}\.[1-9][0-9]{0,3}$ ]]; then
             echo "::error ::release-trigger.version_unresolved package.json has no version on the no-bump path — promotion is malformed"
             exit 1
           fi
-          TAG="refs/tags/v${VERSION}"
-          # Canonical channel taxonomy (Felipe directive 2026-05-12):
-          #   main    → stable  → .well-known/latest.json
-          #   homolog → homolog → .well-known/homolog.json
-          BRANCH="${{ steps.context.outputs.branch }}"
-          case "$BRANCH" in
-            main)    CHANNEL="stable" ;;
-            homolog) CHANNEL="homolog" ;;
-            *)       CHANNEL="dev" ;;
-          esac
           # The dev chain that derived this version must have already
           # pushed v${VERSION}. If it is missing, the promotion raced ahead
           # of the dev tag — surface loudly rather than dispatch a tag
@@ -310,17 +341,49 @@ jobs:
             echo "::error ::release-trigger.tag_missing v${VERSION} not on origin — dev derivation chain has not landed its tag; re-run after the dev release completes"
             exit 1
           fi
-          echo "Dispatching release pipeline against ${TAG} (channel=${CHANNEL})..."
-          if ! gh workflow run release.yml --repo "${GITHUB_REPOSITORY}" --ref "${TAG}" --field version="${VERSION}" --field channel="${CHANNEL}"; then
-            echo "::error ::release-trigger.dispatch_failed release.yml dispatch failed for ${TAG} (channel=${CHANNEL}) — investigate gh CLI auth or workflow availability before re-running manually"
-            exit 1
-          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "source_branch=${{ steps.context.outputs.branch }}" >> "$GITHUB_OUTPUT"
+          echo "source_ci_run_id=${{ github.event.workflow_run.id }}" >> "$GITHUB_OUTPUT"
+          case "${{ steps.context.outputs.branch }}" in
+            main)
+              echo "channel=stable" >> "$GITHUB_OUTPUT"
+              echo "release_ready=false" >> "$GITHUB_OUTPUT"
+              ;;
+            homolog)
+              echo "channel=homolog" >> "$GITHUB_OUTPUT"
+              echo "release_ready=true" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
+      - name: Require human initiation for stable release
+        if: >-
+          steps.context.outputs.should_bump == 'false' &&
+          steps.promotion.outputs.promoted == 'true' &&
+          steps.context.outputs.branch == 'main'
+        env:
+          VERSION: ${{ steps.promoted_tag.outputs.version }}
+          SOURCE_SHA: ${{ steps.promoted_tag.outputs.source_sha }}
+          SOURCE_CI_RUN_ID: ${{ steps.promoted_tag.outputs.source_ci_run_id }}
+        run: |
+          set -euo pipefail
+          echo "::notice ::release-trigger.stable_manual_approval_required v${VERSION} passed main CI; a maintainer must start Release and a different maintainer must approve production"
+          {
+            printf '%s\n' '## Stable release awaiting maintainer initiation'
+            printf '%s\n' 'Open **Actions → Release → Run workflow** on `main` and provide:'
+            printf '%s\n' "- version: \`${VERSION}\`"
+            printf '%s\n' '- channel: `stable`'
+            printf '%s\n' "- source_sha: \`${SOURCE_SHA}\`"
+            printf '%s\n' '- source_branch: `main`'
+            printf '%s\n' "- source_ci_run_id: \`${SOURCE_CI_RUN_ID}\`"
+            printf '%s\n' '' 'The initiator cannot approve the protected production environment.'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # npm distribution was discontinued 2026-05-09 (wish
       # genie-distribution-cutover G6). The previous npm-publish, audit,
       # and deprecate steps have been deleted. Tag pushes from this
-      # workflow drive release.yml via the gh-workflow-run dispatch
-      # above; release.yml then sequences build-tarballs + sign-attest +
+      # workflow drive the reusable release job below; release.yml then
+      # sequences build-tarballs + sign-attest +
       # release-publish in one run via workflow_call (wish:
       # release-pipeline-collapse).
       # The npm OIDC trusted-publisher entry on npmjs.com and any
@@ -328,3 +391,23 @@ jobs:
       # removed from repo + org settings.
       # See docs/release-process.mdx for the full posture and the
       # operator-side `npm deprecate` runbook.
+
+  # Automated dev/homolog publication is a local reusable-workflow call from
+  # trusted version.yml on main. A dev-controlled workflow cannot forge this
+  # caller identity or choose a version/tag. Stable never uses this job.
+  release-automated:
+    name: Release ${{ needs.auto-version.outputs.channel }} v${{ needs.auto-version.outputs.version }}
+    needs: auto-version
+    if: needs.auto-version.outputs.release_ready == 'true'
+    uses: ./.github/workflows/release.yml
+    permissions:
+      contents: write
+      actions: read
+      id-token: write
+      attestations: write
+    with:
+      version: ${{ needs.auto-version.outputs.version }}
+      channel: ${{ needs.auto-version.outputs.channel }}
+      source_sha: ${{ needs.auto-version.outputs.source_sha }}
+      source_branch: ${{ needs.auto-version.outputs.source_branch }}
+      source_ci_run_id: ${{ needs.auto-version.outputs.source_ci_run_id }}

@@ -66,13 +66,15 @@ describe('standalone install.sh lifecycle lease', () => {
   afterEach(() => rmSync(root, { recursive: true, force: true }));
 
   function shell(script: string) {
-    return spawnSync('bash', ['-c', script, 'bash', installer], {
+    const deterministicProcessProbe = `ps() { [[ "$1" == "-p" && "$2" == "$GENIE_TEST_LIVE_PID" ]]; }; ${script}`;
+    return spawnSync('bash', ['-c', deterministicProcessProbe, 'bash', installer], {
       encoding: 'utf8',
       env: {
         ...process.env,
         HOME: home,
         GENIE_HOME: genieHome,
         GENIE_INSTALL_SOURCE_ONLY: '1',
+        GENIE_TEST_LIVE_PID: String(process.pid),
       },
     });
   }
@@ -198,7 +200,7 @@ describe('standalone install.sh lifecycle lease', () => {
     utimesSync(lock, aged, aged);
     writeFileSync(guard, '999999:abcdefabcdefabcdefabcdefabcdefab:unknown\n', { mode: 0o600 }); // fresh mtime
 
-    const result = shell('source "$1"; acquire_lifecycle_lock');
+    const result = shell(`source "$1"; ps() { [[ "$2" == "${process.pid}" ]]; }; acquire_lifecycle_lock`);
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('another Genie lifecycle command is active');
@@ -222,6 +224,38 @@ describe('standalone install.sh lifecycle lease', () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('another Genie lifecycle command is active');
     expect(existsSync(guard)).toBe(true); // live owner is never reaped regardless of age
+  });
+
+  test('an unavailable ps probe fails closed instead of reaping an aged lock', () => {
+    const lock = lifecycleLockPath(genieHome);
+    writeFileSync(lock, '999999:0123456789abcdef0123456789abcdef:unknown\n', { mode: 0o600 });
+    const aged = new Date(Date.now() - 11 * 60 * 1_000);
+    utimesSync(lock, aged, aged);
+
+    const result = shell('source "$1"; ps() { return 126; }; acquire_lifecycle_lock');
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('another Genie lifecycle command is active');
+    expect(existsSync(lock)).toBe(true); // unknown liveness never authorizes removal
+  });
+
+  test('an unavailable guard-owner probe preserves both the aged guard and stale lock', () => {
+    const lock = lifecycleLockPath(genieHome);
+    const guard = `${lock}.steal`;
+    writeFileSync(lock, '999999:0123456789abcdef0123456789abcdef:unknown\n', { mode: 0o600 });
+    writeFileSync(guard, '888888:abcdefabcdefabcdefabcdefabcdefab:unknown\n', { mode: 0o600 });
+    const aged = new Date(Date.now() - 11 * 60 * 1_000);
+    utimesSync(lock, aged, aged);
+    utimesSync(guard, aged, aged);
+
+    const result = shell(
+      'source "$1"; ps() { [[ "$2" == "999999" ]] && return 1; return 126; }; acquire_lifecycle_lock',
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('another Genie lifecycle command is active');
+    expect(existsSync(lock)).toBe(true);
+    expect(existsSync(guard)).toBe(true);
   });
 
   test('a single-digit pid lock record parses (regression for the two-digit-minimum glob)', () => {
@@ -266,7 +300,7 @@ describe('standalone install.sh lifecycle lease', () => {
     writeFileSync(target, '999999:abcdefabcdefabcdefabcdefabcdefab:unknown\n', { mode: 0o600 });
     symlinkSync(target, guard); // a guard we must refuse to follow/unlink
 
-    const result = shell('source "$1"; acquire_lifecycle_lock');
+    const result = shell(`source "$1"; ps() { [[ "$2" == "${process.pid}" ]]; }; acquire_lifecycle_lock`);
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('another Genie lifecycle command is active');

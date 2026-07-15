@@ -9,6 +9,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -290,7 +291,9 @@ describe('Codex doctor lifecycle results', () => {
       const linked = join(root, 'linked');
       execFileSync('git', ['worktree', 'add', '-q', '-b', 'doctor-linked', linked], { cwd: repo });
       const roots = resolveGitProjectRoots(linked);
-      expect(roots).toEqual({ worktreeRoot: linked, commonRoot: repo });
+      if (roots === null) throw new Error('linked worktree roots were not resolved');
+      expect(realpathSync(roots.worktreeRoot)).toBe(realpathSync(linked));
+      expect(realpathSync(roots.commonRoot)).toBe(realpathSync(repo));
       reconcileCodexProjectMcp(
         linked,
         { cliAvailable: true, status: 'ok', installed: true, enabled: false, usable: false, detail: 'disabled' },
@@ -1254,7 +1257,7 @@ describe('checkAgentSync — claude role agents', () => {
     const entries = Object.fromEntries(
       Object.entries(files).map(([name, e]) => [
         name,
-        { digest: e.digest, version: e.version ?? '1', syncedAt: e.syncedAt ?? '2026-01-01T00:00:00.000Z' },
+        { digest: e.digest, version: e.version ?? '5.0.0', syncedAt: e.syncedAt ?? '2026-01-01T00:00:00.000Z' },
       ]),
     );
     writeFileSync(
@@ -1282,6 +1285,46 @@ describe('checkAgentSync — claude role agents', () => {
 
   afterEach(() => {
     rmSync(tmp, { recursive: true, force: true });
+  });
+
+  test('an empty canonical source inventory warns instead of reporting an empty set healthy', () => {
+    const check = find(checkAgentSync(paths()), ROLE_CHECK);
+
+    expect(check?.status).toBe('warn');
+    expect(check?.detail).toContain('source role-agent inventory is empty');
+    expect(check?.roleAgents?.sourceIssues).toEqual([
+      `source role-agent inventory is empty at ${join(pluginRoot, 'agents')}`,
+    ]);
+    expect(check?.roleAgents?.files).toEqual([]);
+  });
+
+  test('a source inventory enumeration error is preserved in the warning', () => {
+    writeFileSync(join(pluginRoot, 'agents'), 'not a directory', 'utf8');
+
+    const check = find(checkAgentSync(paths()), ROLE_CHECK);
+
+    expect(check?.status).toBe('warn');
+    expect(check?.detail).toContain('cannot enumerate source role agents');
+    expect(check?.roleAgents?.sourceIssues).toHaveLength(1);
+    expect(check?.roleAgents?.sourceIssues[0]).toContain(join(pluginRoot, 'agents'));
+    expect(check?.roleAgents?.files).toEqual([]);
+  });
+
+  test('an unreadable source agent is not silently omitted from a healthy result', () => {
+    writeSourceAgent('scout', '# scout\n');
+    const sourcePath = join(pluginRoot, 'agents', 'scout.md');
+    chmodSync(sourcePath, 0o000);
+    try {
+      const check = find(checkAgentSync(paths()), ROLE_CHECK);
+
+      expect(check?.status).toBe('warn');
+      expect(check?.detail).toContain('cannot read source role agent scout.md');
+      expect(check?.roleAgents?.sourceIssues).toHaveLength(1);
+      expect(check?.roleAgents?.sourceIssues[0]).toContain('scout.md');
+      expect(check?.roleAgents?.files).toEqual([]);
+    } finally {
+      chmodSync(sourcePath, 0o600);
+    }
   });
 
   test('hand-copy (no manifest) reports present-unmanaged, NOT healthy genie-managed', () => {
@@ -1329,6 +1372,16 @@ describe('checkAgentSync — claude role agents', () => {
     expect(stateMap(check)['fixer.md']).toBe('missing-from-target');
   });
 
+  test('manifest-owned entry absent from both source and target remains visible as missing', () => {
+    writeAgentManifest({ 'retired.md': { digest: 'a'.repeat(64) } });
+
+    const check = find(checkAgentSync(paths()), ROLE_CHECK);
+    expect(check?.status).toBe('warn');
+    expect(check?.detail).toContain('missing-from-target');
+    expect(check?.roleAgents?.manifestStatus).toBe('managed');
+    expect(stateMap(check)['retired.md']).toBe('missing-from-target');
+  });
+
   test('a user-authored agent (not in source, unmanaged) is never reported', () => {
     writeSourceAgent('scout', '# scout\n');
     writeTargetAgent('scout', '# scout\n');
@@ -1350,6 +1403,33 @@ describe('checkAgentSync — claude role agents', () => {
     const check = find(checkAgentSync(paths()), ROLE_CHECK);
     expect(check?.status).toBe('warn');
     expect(check?.roleAgents?.manifestStatus).toBe('unsafe');
+    expect(check?.detail).toContain('manifest unusable');
+  });
+
+  test('a malformed Genie-owned manifest is unsafe rather than foreign', () => {
+    writeSourceAgent('scout', '# scout\n');
+    writeTargetAgent('scout', '# scout\n');
+    writeAgentManifest({ 'scout.md': { digest: 'not-a-sha256' } });
+
+    const check = find(checkAgentSync(paths()), ROLE_CHECK);
+
+    expect(check?.status).toBe('warn');
+    expect(check?.roleAgents?.manifestStatus).toBe('unsafe');
+    expect(check?.roleAgents?.manifestReason).toContain('claims Genie ownership');
+    expect(check?.detail).toContain('manifest unusable');
+  });
+
+  test('a truncated ownership manifest is unsafe rather than unproven foreign state', () => {
+    writeSourceAgent('scout', '# scout\n');
+    writeTargetAgent('scout', '# scout\n');
+    mkdirSync(agentsDir, { recursive: true });
+    writeFileSync(join(agentsDir, '.genie-sync.json'), '{"managedBy":"genie-agent-sync","files":{', 'utf8');
+
+    const check = find(checkAgentSync(paths()), ROLE_CHECK);
+
+    expect(check?.status).toBe('warn');
+    expect(check?.roleAgents?.manifestStatus).toBe('unsafe');
+    expect(check?.roleAgents?.manifestReason).toContain('invalid JSON');
     expect(check?.detail).toContain('manifest unusable');
   });
 

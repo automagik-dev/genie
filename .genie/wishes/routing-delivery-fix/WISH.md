@@ -25,8 +25,8 @@ all seven as bare-named agent types in fresh and reloaded sessions.
 
 ### IN
 
-- agent-sync fans the canonical source's `agents/` dir into `~/.claude/agents/` on `genie update` /
-  `genie install` (and the SessionStart sync-only trigger), with: managed stamp (`.genie-sync.json`,
+- agent-sync fans the canonical source's `agents/` dir into `~/.claude/agents/` on explicit
+  `genie update` / `genie install`, with: managed stamp (`.genie-sync.json`,
   `managedBy: genie-agent-sync`), backup-first adoption of pre-existing unmanaged files (covers the
   2026-07-11 hand-copy), stale refresh, orphan removal of genie-stamped agents whose source vanished,
   and unmanaged (user-authored) entries never touched.
@@ -55,12 +55,14 @@ all seven as bare-named agent types in fresh and reloaded sessions.
 | 2 | Acceptance discriminator = the managed stamp, not file presence | The 2026-07-11 hand-copy already makes "files present + agents surface" pass; only `genie update` writing the stamp (or a clean-host QA) proves the fan-out itself (plan-review MEDIUM) |
 | 3 | Doctor warns (not blocks) on enabled genie plugin | Duplicate `genie:*` + bare-name agents degrade UX but break nothing; warn + document the resolution (design Risk 7) |
 | 4 | Adopt-with-backup for pre-existing files, never overwrite silently | Same contract as skills; the hand-copy must be adopted under the stamp, and user-authored agents with colliding names must be backed up before replacement, never lost |
+| 5 | SessionStart remains diagnostic-only and read-only | Hook trust and workspace trust are explicit user decisions. Lifecycle hooks must not mutate global delivery state; install/update are the consented synchronization surfaces. |
+| 6 | Recovery backups live beside, not inside, `GENIE_HOME` | `~/.genie-recovery/agent-sync-*` survives a full uninstall and cannot be erased with the tree whose removal it protects. |
 
 ## Success Criteria
 
 - [ ] After `genie update`, `~/.claude/agents/` contains all seven role files AND the
       `.genie-sync.json` managed stamp (`managedBy: genie-agent-sync`); the pre-existing hand-copy is
-      adopted with backups under `~/.genie/state-backups/`.
+      adopted with backups under `~/.genie-recovery/agent-sync-*`.
 - [ ] Fresh session (or `/reload-plugins`) lists all seven bare-named agent types sourced from the
       stamped files (verify on this host post-update; mechanism itself already proven 2026-07-11).
 - [ ] `genie doctor` output distinguishes genie-managed vs merely-present vs stale role agents, and
@@ -113,7 +115,7 @@ all seven as bare-named agent types in fresh and reloaded sessions.
      (`SyncManifest` :179–184 field shapes reused).
    - **Create/update:** write the file + record its digest. **Adopt-with-backup:** an existing target
      file not in the manifest (the 2026-07-11 hand-copy, or a user's colliding name) is backed up via
-     the `backupInto` closure pattern (:768–776 → `~/.genie/state-backups/…`) before replacement.
+     the `backupInto` closure pattern (:768–776 → `~/.genie-recovery/agent-sync-*`) before replacement.
    - **Orphans:** a manifest-recorded filename whose source vanished is backed-up-then-removed if its
      digest matches (unmodified); a digest-mismatched (user-edited) managed file is KEPT with an
      advisory, never deleted (semantics of `removeManagedOrphans` :418–440, per-file).
@@ -137,7 +139,7 @@ all seven as bare-named agent types in fresh and reloaded sessions.
 
 **Acceptance Criteria:**
 - [ ] Running the sync twice is idempotent (second run reports no changes).
-- [ ] A pre-existing unmanaged `scout.md` is adopted: backup exists under the state-backups dir, file
+- [ ] A pre-existing unmanaged `scout.md` is adopted: backup exists under the sibling recovery root, file
       becomes stamped-managed.
 - [ ] A user file `my-own-agent.md` in `~/.claude/agents/` survives sync and uninstall untouched.
 - [ ] Deleting `scout.md` from the source and re-syncing removes the target copy (orphan removal),
@@ -250,7 +252,7 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 
 | Risk | Severity | Mitigation |
 |------|----------|------------|
-| Name collision with a user-authored agent of the same name (e.g. their own `reviewer.md`) | Medium | Adopt-with-backup, never silent overwrite; doctor lists the adoption; backups under `~/.genie/state-backups/` |
+| Name collision with a user-authored agent of the same name (e.g. their own `reviewer.md`) | Medium | Adopt-with-backup, never silent overwrite; doctor lists the adoption; backups under `~/.genie-recovery/agent-sync-*` |
 | Hosts with the plugin ENABLED get duplicates (`genie:*` + bare) | Medium | Group B warning + documented resolution (design Risk 7) |
 | `CLAUDE_CODE_SUBAGENT_MODEL` env silently overrides pins | Medium | Carried from umbrella — doctor env check exists per routing-matrix wish; re-verify in Group C evidence |
 | Day-3 share numbers noise-dominated by thread mix | Low | Fingerprint check is primary; shares directional with top-3 exclusion (plan-review MEDIUM) |

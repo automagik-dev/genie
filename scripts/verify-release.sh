@@ -18,7 +18,7 @@
 # Requires: cosign (>=2.2), slsa-verifier (>=2.6). gh is required for <TAG> mode
 # and, when present, adds a GitHub-native attestation cross-check.
 #
-# Exit codes mirror `genie sec verify-install` semantics (Group 2):
+# Exit codes are the public contract consumed by SECURITY.md:
 #   0 = verified
 #   2 = cosign signature verification failed
 #   4 = SLSA provenance verification failed
@@ -33,12 +33,12 @@ set -euo pipefail
 # script. Rotating the pin requires editing this block AND every witness
 # listed in scripts/check-fingerprint-pinning.sh WITNESSES array.
 #
-# certificate-identity-regexp: ^https://github.com/automagik-dev/genie/.github/workflows/sign-attest.yml@
+# certificate-identity-regexp: ^https://github\.com/automagik-dev/genie/\.github/workflows/sign-attest\.yml@refs/heads/main$
 # certificate-oidc-issuer:     https://token.actions.githubusercontent.com
 # provenance source-uri:       github.com/automagik-dev/genie
 REPO="automagik-dev/genie"
 OWNER="${REPO%%/*}"
-WORKFLOW_IDENTITY_REGEXP="^https://github.com/${REPO}/.github/workflows/sign-attest.yml@"
+WORKFLOW_IDENTITY_REGEXP="^https://github\\.com/${REPO}/\\.github/workflows/sign-attest\\.yml@refs/heads/main$"
 OIDC_ISSUER="https://token.actions.githubusercontent.com"
 SOURCE_URI="github.com/${REPO}"
 
@@ -53,6 +53,26 @@ need() {
 usage() {
   sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
   exit 64
+}
+
+# Resolve the containing directory physically without GNU-only `readlink -f`.
+# Keep the final basename unchanged so its adjacent .bundle/.intoto.jsonl files
+# remain the verification inputs on both macOS and Linux.
+physical_local_path() {
+  local input="$1" directory basename
+  case "$input" in
+    */*)
+      directory="${input%/*}"
+      basename="${input##*/}"
+      [[ -n "$directory" ]] || directory='/'
+      ;;
+    *)
+      directory='.'
+      basename="$input"
+      ;;
+  esac
+  [[ -n "$basename" ]] || return 1
+  (cd -P "$directory" 2>/dev/null && printf '%s/%s\n' "$PWD" "$basename")
 }
 
 # Verify a single tarball against its sidecar cosign bundle + SLSA provenance,
@@ -114,7 +134,10 @@ main() {
     --local)
       [ -n "${2:-}" ] || usage
       local one
-      one="$(readlink -f "$2")"
+      one="$(physical_local_path "$2")" || {
+        echo "error: no tarball found: ${2} — exit 5" >&2
+        exit 5
+      }
       [ -f "${one}" ] || { echo "error: no tarball found: ${2} — exit 5" >&2; exit 5; }
       tarballs=("${one}")
       ;;

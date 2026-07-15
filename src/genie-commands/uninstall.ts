@@ -12,18 +12,19 @@ import {
   type Dirent,
   type Stats,
   closeSync,
-  copyFileSync,
   existsSync,
   fsyncSync,
   linkSync,
   lstatSync,
   mkdirSync,
+  mkdtempSync,
   openSync,
   readFileSync,
   readdirSync,
   readlinkSync,
   renameSync,
   rmSync,
+  rmdirSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -34,12 +35,14 @@ import { z } from 'zod';
 import {
   AGENT_SYNC_LOCK_NAME,
   type AgentFileMutationEvent,
+  type AgentFilesManifestView,
   type AgentManifestCommitEvent,
   type AgentPathSnapshot,
   CODEX_FALLBACK_RETIREMENT_ROOT,
   type FlatAgentOp,
   type FlatAgentOutcome,
   KEPT_SUFFIX,
+  MANIFEST_NAME,
   TARGET_NAME,
   acquireAgentSyncLock,
   acquireLifecycleLease,
@@ -48,7 +51,7 @@ import {
   codexLegacyCuratedDir,
   inspectManagedSkillTree,
   inspectManagedWorkflow,
-  readAgentFilesManifest,
+  readAgentFilesManifestState,
   recoverManagedSkillTransactions,
   recoverManagedWorkflowTransactions,
   removeManagedSkillTree,
@@ -99,6 +102,35 @@ const digestSchema = z.string().regex(/^[a-f0-9]{64}$/);
 const physicalModeSchema = z.number().int().min(0).max(0o7777);
 const codexRoleNameSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/);
 const agentOwnedDigestSchema = z.string().min(1).max(256);
+const physicalRootIdentitySchema = z
+  .object({
+    dev: z.number().int().nonnegative(),
+    ino: z.number().int().nonnegative(),
+    mode: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export type PhysicalRootIdentity = z.infer<typeof physicalRootIdentitySchema>;
+
+const provenV4RulesSchema = z
+  .object({
+    path: absolutePathSchema,
+    digest: digestSchema,
+    identity: physicalRootIdentitySchema,
+  })
+  .strict();
+
+export type ProvenV4Rules = z.infer<typeof provenV4RulesSchema>;
+
+const ownedSourceSymlinkSchema = z
+  .object({
+    name: z.enum(['genie', 'term']),
+    target: z.string().min(1).max(4096),
+    identity: physicalRootIdentitySchema,
+  })
+  .strict();
+
+export type OwnedSourceSymlink = z.infer<typeof ownedSourceSymlinkSchema>;
 
 const agentSnapshotIdentitySchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('absent') }).strict(),
@@ -122,7 +154,13 @@ const agentAssetIdentitySchema = z.discriminatedUnion('kind', [
       manifestMode: physicalModeSchema,
     })
     .strict(),
-  z.object({ kind: z.literal('link'), target: z.string().min(1).max(4096) }).strict(),
+  z
+    .object({
+      kind: z.literal('link'),
+      target: z.string().min(1).max(4096),
+      identity: physicalRootIdentitySchema,
+    })
+    .strict(),
   z
     .object({
       kind: z.literal('agent'),
@@ -168,12 +206,15 @@ const uninstallBatchScopeSchema = z
     agentAssets: z.array(agentAssetSchema).max(512),
     codexRoleAgents: z.array(codexRoleAgentSchema).max(128),
     codexRoleInventoryStatus: z.enum(['missing', 'valid', 'corrupt']),
-    genieHomePresent: z.boolean(),
-    ownedRulesPath: absolutePathSchema.nullable(),
+    genieHomeIdentity: physicalRootIdentitySchema.nullable(),
+    // SHA-256 commitment to the exact, exclusion-free physical snapshots of
+    // every removable GENIE_HOME child at authoritative planning time.
+    genieHomeRemovalDigest: digestSchema.nullable(),
+    ownedRules: provenV4RulesSchema.nullable(),
     removeMarketplace: z.boolean(),
     runtimeClients: z.object({ codex: z.boolean(), claude: z.boolean() }).strict(),
     runtimePlugins: z.object({ codex: z.boolean(), claude: z.boolean() }).strict(),
-    symlinks: z.array(z.enum(['genie', 'term'])).max(2),
+    symlinks: z.array(ownedSourceSymlinkSchema).max(2),
   })
   .strict();
 
@@ -181,7 +222,7 @@ export type UninstallBatchScope = z.infer<typeof uninstallBatchScopeSchema>;
 
 const uninstallBatchDecisionSchema = z
   .object({
-    schemaVersion: z.literal(2),
+    schemaVersion: z.literal(3),
     genieHome: absolutePathSchema,
     scope: uninstallBatchScopeSchema,
     progress: uninstallBatchProgressSchema,
@@ -194,10 +235,11 @@ export type UninstallBatchDecision = z.infer<typeof uninstallBatchDecisionSchema
 type UninstallBatchPayload = Omit<UninstallBatchDecision, 'digest'>;
 
 // ---------------------------------------------------------------------------
-// v1 (legacy) read-only shape. An authentic v1 journal from a prior release is
-// discarded and re-recorded as v2 from current live state (executeUninstallBatch);
-// this schema exists only so that migration can authenticate it before discard,
-// never to act on a v1 record. Unauthentic/corrupt journals still fail closed.
+// Legacy read-only shapes. Authentic v1/v2 journals are discarded and
+// re-recorded as v3 from current live state (executeUninstallBatch); these
+// schemas exist only so migration can authenticate them before discard, never
+// to act on stale pathname-only authority. Unauthentic/corrupt journals fail
+// closed.
 // ---------------------------------------------------------------------------
 const uninstallBatchScopeSchemaV1 = z
   .object({
@@ -233,15 +275,44 @@ const uninstallBatchDecisionSchemaV1 = z
 
 type UninstallBatchDecisionV1 = z.infer<typeof uninstallBatchDecisionSchemaV1>;
 
+const uninstallBatchScopeSchemaV2 = z
+  .object({
+    agentAssets: z.array(agentAssetSchema).max(512),
+    codexRoleAgents: z.array(codexRoleAgentSchema).max(128),
+    codexRoleInventoryStatus: z.enum(['missing', 'valid', 'corrupt']),
+    genieHomePresent: z.boolean(),
+    ownedRulesPath: absolutePathSchema.nullable(),
+    removeMarketplace: z.boolean(),
+    runtimeClients: z.object({ codex: z.boolean(), claude: z.boolean() }).strict(),
+    runtimePlugins: z.object({ codex: z.boolean(), claude: z.boolean() }).strict(),
+    symlinks: z.array(z.enum(['genie', 'term'])).max(2),
+  })
+  .strict();
+const uninstallBatchDecisionSchemaV2 = z
+  .object({
+    schemaVersion: z.literal(2),
+    genieHome: absolutePathSchema,
+    scope: uninstallBatchScopeSchemaV2,
+    progress: uninstallBatchProgressSchema,
+    digest: digestSchema,
+  })
+  .strict();
+
+type UninstallBatchDecisionV2 = z.infer<typeof uninstallBatchDecisionSchemaV2>;
+
 type UninstallBatchReadState =
   | { kind: 'none' }
-  | { kind: 'v2'; decision: UninstallBatchDecision }
-  | { kind: 'legacy-v1'; decision: UninstallBatchDecisionV1 };
+  | { kind: 'v3'; decision: UninstallBatchDecision; journalIdentity: PhysicalRootIdentity }
+  | { kind: 'legacy-v2'; decision: UninstallBatchDecisionV2; journalIdentity: PhysicalRootIdentity }
+  | { kind: 'legacy-v1'; decision: UninstallBatchDecisionV1; journalIdentity: PhysicalRootIdentity };
 
-/** Thrown by {@link readUninstallBatchDecision} for an authentic v1 journal that must be migrated. */
+/** Thrown for an authentic legacy journal that must be safely re-planned. */
 export class LegacyUninstallBatchJournalError extends Error {
-  constructor(readonly interruptedMember: string | null) {
-    super('uninstall batch journal is an authentic legacy v1 record awaiting migration');
+  constructor(
+    readonly schemaVersion: 1 | 2,
+    readonly interruptedMember: string | null,
+  ) {
+    super(`uninstall batch journal is an authentic legacy v${schemaVersion} record awaiting migration`);
     this.name = 'LegacyUninstallBatchJournalError';
   }
 }
@@ -266,6 +337,33 @@ function lstatOrNull(path: string): Stats | null {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw error;
   }
+}
+
+function physicalRootIdentity(stat: Stats): PhysicalRootIdentity {
+  return physicalRootIdentitySchema.parse({ dev: stat.dev, ino: stat.ino, mode: stat.mode });
+}
+
+function capturePhysicalRootIdentity(path: string): PhysicalRootIdentity | null {
+  const stat = lstatOrNull(path);
+  return stat === null ? null : physicalRootIdentity(stat);
+}
+
+function samePhysicalRootIdentity(left: PhysicalRootIdentity | null, right: PhysicalRootIdentity | null): boolean {
+  return (
+    left === right ||
+    (left !== null && right !== null && left.dev === right.dev && left.ino === right.ino && left.mode === right.mode)
+  );
+}
+
+/** Capture only a removable root whose identity stays stable across classification. */
+function inspectRemovableGenieRoot(genieDir: string): PhysicalRootIdentity | null {
+  const before = capturePhysicalRootIdentity(genieDir);
+  const removable = hasRemovableGenieInstallState(genieDir);
+  const after = capturePhysicalRootIdentity(genieDir);
+  if (!samePhysicalRootIdentity(before, after)) {
+    throw new Error(`Genie install root changed while it was being inspected: ${genieDir}`);
+  }
+  return removable ? after : null;
 }
 
 function fsyncDirectoryBestEffort(path: string): void {
@@ -307,6 +405,9 @@ function uninstallBatchDigest(payload: object): string {
 }
 
 function assertExactUninstallScope(scope: UninstallBatchScope): void {
+  if ((scope.genieHomeIdentity === null) !== (scope.genieHomeRemovalDigest === null)) {
+    throw new Error('uninstall batch must bind Genie root identity and exact removal commitment together');
+  }
   const assetPaths = scope.agentAssets.map((asset) => asset.path);
   if (new Set(assetPaths).size !== assetPaths.length) {
     throw new Error('uninstall batch journal contains duplicate agent-asset paths');
@@ -315,7 +416,8 @@ function assertExactUninstallScope(scope: UninstallBatchScope): void {
   if (new Set(roleNames).size !== roleNames.length) {
     throw new Error('uninstall batch journal contains duplicate Codex role-agent names');
   }
-  if (new Set(scope.symlinks).size !== scope.symlinks.length) {
+  const symlinkNames = scope.symlinks.map((symlink) => symlink.name);
+  if (new Set(symlinkNames).size !== symlinkNames.length) {
     throw new Error('uninstall batch journal contains duplicate symlink names');
   }
 }
@@ -354,7 +456,7 @@ function authenticatedUninstallBatch(genieHome: string, scope: UninstallBatchSco
   const parsedScope = uninstallBatchScopeSchema.parse(scope);
   assertExactUninstallScope(parsedScope);
   const payload: UninstallBatchPayload = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     genieHome: resolve(genieHome),
     scope: parsedScope,
     progress: { active: null, completed: [], preserved: [] },
@@ -411,18 +513,33 @@ function authenticateUninstallDigest(payload: object, digest: string, journalPat
 }
 
 /**
- * Authenticate a parsed journal as v2 or a legacy v1 record. A v2 record is
- * fully cross-checked; a v1 record is authenticated only enough to prove it is
- * ours before migration discards it. Any other shape/digest fails closed.
+ * Authenticate a parsed journal as v3 or a legacy v1/v2 record. The current
+ * record is fully cross-checked; a legacy record is authenticated only enough
+ * to prove it is ours before migration discards its stale authority.
  */
-function authenticateUninstallBatch(parsed: unknown, genieHome: string, journalPath: string): UninstallBatchReadState {
-  const v2 = uninstallBatchDecisionSchema.safeParse(parsed);
-  if (v2.success && v2.data.genieHome === resolve(genieHome)) {
-    const decision = v2.data;
+function authenticateUninstallBatch(
+  parsed: unknown,
+  genieHome: string,
+  journalPath: string,
+  journalIdentity: PhysicalRootIdentity,
+): UninstallBatchReadState {
+  const v3 = uninstallBatchDecisionSchema.safeParse(parsed);
+  if (v3.success && v3.data.genieHome === resolve(genieHome)) {
+    const decision = v3.data;
     assertExactUninstallScope(decision.scope);
     assertExactUninstallProgress(decision.progress, decision.scope, decision.genieHome);
     authenticateUninstallDigest(uninstallBatchPayload(decision), decision.digest, journalPath);
-    return { kind: 'v2', decision };
+    return { kind: 'v3', decision, journalIdentity };
+  }
+  const v2 = uninstallBatchDecisionSchemaV2.safeParse(parsed);
+  if (v2.success && v2.data.genieHome === resolve(genieHome)) {
+    const decision = v2.data;
+    authenticateUninstallDigest(
+      { schemaVersion: 2, genieHome: decision.genieHome, scope: decision.scope, progress: decision.progress },
+      decision.digest,
+      journalPath,
+    );
+    return { kind: 'legacy-v2', decision, journalIdentity };
   }
   const v1 = uninstallBatchDecisionSchemaV1.safeParse(parsed);
   if (v1.success && v1.data.genieHome === resolve(genieHome)) {
@@ -434,7 +551,7 @@ function authenticateUninstallBatch(parsed: unknown, genieHome: string, journalP
       decision.digest,
       journalPath,
     );
-    return { kind: 'legacy-v1', decision };
+    return { kind: 'legacy-v1', decision, journalIdentity };
   }
   throw new Error('uninstall batch journal has an invalid schema or target');
 }
@@ -455,7 +572,12 @@ function readUninstallBatchState(genieHome: string): UninstallBatchReadState {
   }
   assertPrivateRecoveryObject(journalPath, stat, 'uninstall batch journal');
   try {
-    return authenticateUninstallBatch(JSON.parse(readFileSync(journalPath, 'utf8')), genieHome, journalPath);
+    const bytes = readFileSync(journalPath, 'utf8');
+    const after = lstatSync(journalPath);
+    if (!samePhysicalRootIdentity(physicalRootIdentity(stat), physicalRootIdentity(after))) {
+      throw new Error(`uninstall batch journal changed while it was authenticated: ${journalPath}`);
+    }
+    return authenticateUninstallBatch(JSON.parse(bytes), genieHome, journalPath, physicalRootIdentity(after));
   } catch (error) {
     if (error instanceof SyntaxError) throw new Error(`uninstall batch journal is unreadable: ${journalPath}`);
     throw error;
@@ -464,13 +586,15 @@ function readUninstallBatchState(genieHome: string): UninstallBatchReadState {
 
 /**
  * Read and authenticate a durable uninstall decision without mutating it. An
- * authentic legacy v1 journal raises {@link LegacyUninstallBatchJournalError}
+ * authentic legacy journal raises {@link LegacyUninstallBatchJournalError}
  * so the caller can migrate it; unauthentic/corrupt journals still throw.
  */
 export function readUninstallBatchDecision(genieHome = getGenieDir()): UninstallBatchDecision | null {
   const state = readUninstallBatchState(genieHome);
   if (state.kind === 'none') return null;
-  if (state.kind === 'legacy-v1') throw new LegacyUninstallBatchJournalError(state.decision.progress.active);
+  if (state.kind === 'legacy-v1' || state.kind === 'legacy-v2') {
+    throw new LegacyUninstallBatchJournalError(state.decision.schemaVersion, state.decision.progress.active);
+  }
   return state.decision;
 }
 
@@ -484,14 +608,44 @@ export function pendingUninstallBatchInterruptedMember(genieHome = getGenieDir()
   }
 }
 
-/** Re-authenticate the exact v1 journal, then discard it so a fresh v2 decision can be recorded. */
-function discardLegacyUninstallBatchDecision(genieHome: string): void {
+/** Re-authenticate the exact legacy journal, then discard it so a fresh v3 decision can be recorded. */
+export interface UninstallJournalMutationOptions {
+  beforeCapture?: (journalPath: string) => void;
+  afterCapture?: (journalPath: string, capturedPath: string) => void;
+}
+
+function authenticateCapturedJournal(
+  capture: CapturedRemovalPath,
+  genieHome: string,
+  expectedKind: UninstallBatchReadState['kind'],
+  expectedDigest: string,
+): void {
+  assertCapturedRemovalPath(capture);
+  const parsed = JSON.parse(readFileSync(capture.capturedPath, 'utf8')) as unknown;
+  const state = authenticateUninstallBatch(parsed, genieHome, capture.capturedPath, capture.capturedIdentity);
+  if (state.kind !== expectedKind || state.kind === 'none' || state.decision.digest !== expectedDigest) {
+    throw new Error(`captured uninstall journal is not the exact authenticated generation: ${capture.capturedPath}`);
+  }
+}
+
+export function discardLegacyUninstallBatchDecision(
+  genieHome: string,
+  options: UninstallJournalMutationOptions = {},
+): void {
   const state = readUninstallBatchState(genieHome);
-  if (state.kind !== 'legacy-v1') {
-    throw new Error('uninstall batch journal is no longer an authentic legacy v1 record');
+  if (state.kind !== 'legacy-v1' && state.kind !== 'legacy-v2') {
+    throw new Error('uninstall batch journal is no longer an authentic legacy record');
   }
   const journalPath = uninstallBatchJournalPath(genieHome);
-  unlinkSync(journalPath);
+  const capture = captureExpectedRemovalPath(
+    journalPath,
+    state.journalIdentity,
+    'journal-discard',
+    options.beforeCapture,
+  );
+  options.afterCapture?.(journalPath, capture.capturedPath);
+  authenticateCapturedJournal(capture, genieHome, state.kind, state.decision.digest);
+  deleteCapturedRemovalPath(capture);
   fsyncDirectoryBestEffort(dirname(journalPath));
 }
 
@@ -599,10 +753,10 @@ function uninstallBatchMembers(scope: UninstallBatchScope, genieHome: string): S
   );
   const agentMember = flatAgentBatchMember(scope);
   if (agentMember !== null) members.add(agentMember);
-  if (scope.ownedRulesPath !== null) members.add(uninstallBatchMemberId('rules', scope.ownedRulesPath));
+  if (scope.ownedRules !== null) members.add(uninstallBatchMemberId('rules', scope.ownedRules.path));
   if (hasRuntimeIntegrationWork(scope)) members.add(uninstallBatchRuntimeMemberId(scope));
-  if (scope.genieHomePresent) members.add(uninstallBatchMemberId('home', resolve(genieHome)));
-  for (const name of scope.symlinks) members.add(uninstallBatchMemberId('symlink', name));
+  if (scope.genieHomeIdentity !== null) members.add(uninstallBatchMemberId('home', resolve(genieHome)));
+  for (const symlink of scope.symlinks) members.add(uninstallBatchMemberId('symlink', symlink.name));
   return members;
 }
 
@@ -611,9 +765,11 @@ export function updateUninstallBatchProgress(
   genieHome: string,
   expectedDigest: string,
   progress: UninstallBatchDecision['progress'],
+  options: UninstallJournalMutationOptions = {},
 ): UninstallBatchDecision {
-  const current = readUninstallBatchDecision(genieHome);
-  if (current === null) throw new Error('uninstall batch journal disappeared during progress update');
+  const currentState = readUninstallBatchState(genieHome);
+  if (currentState.kind !== 'v3') throw new Error('uninstall batch journal disappeared during progress update');
+  const current = currentState.decision;
   if (current.digest !== expectedDigest) throw new Error('uninstall batch journal changed during progress update');
   const parsedProgress = uninstallBatchProgressSchema.parse(progress);
   assertExactUninstallProgress(parsedProgress, current.scope, current.genieHome);
@@ -630,12 +786,27 @@ export function updateUninstallBatchProgress(
     } finally {
       closeSync(fd);
     }
-    renameSync(staging, journalPath);
+    const capture = captureExpectedRemovalPath(
+      journalPath,
+      currentState.journalIdentity,
+      'journal-progress',
+      options.beforeCapture,
+    );
+    options.afterCapture?.(journalPath, capture.capturedPath);
+    authenticateCapturedJournal(capture, genieHome, 'v3', expectedDigest);
+    try {
+      linkSync(staging, journalPath);
+    } catch {
+      restoreCapturedNoClobber(capture, 'uninstall journal publication raced with another live generation');
+    }
     fsyncDirectoryBestEffort(recoveryRoot);
     const published = readUninstallBatchDecision(genieHome);
     if (published === null || published.digest !== next.digest) {
-      throw new Error('uninstall batch progress generation was not published intact');
+      throw new Error(
+        `uninstall batch progress generation was not published intact; prior generation at ${capture.capturedPath}`,
+      );
     }
+    deleteCapturedRemovalPath(capture, false);
     return published;
   } finally {
     rmSync(staging, { force: true });
@@ -644,27 +815,193 @@ export function updateUninstallBatchProgress(
 }
 
 /** Authenticate and remove only the exact completed batch as the final step. */
-export function clearUninstallBatchDecision(genieHome: string, expectedDigest: string): void {
-  const decision = readUninstallBatchDecision(genieHome);
-  if (decision === null) throw new Error('uninstall batch journal disappeared before finalization');
+export function clearUninstallBatchDecision(
+  genieHome: string,
+  expectedDigest: string,
+  options: UninstallJournalMutationOptions = {},
+): void {
+  const state = readUninstallBatchState(genieHome);
+  if (state.kind !== 'v3') throw new Error('uninstall batch journal disappeared before finalization');
+  const decision = state.decision;
   if (decision.digest !== expectedDigest) throw new Error('uninstall batch journal changed before finalization');
   const journalPath = uninstallBatchJournalPath(genieHome);
-  unlinkSync(journalPath);
+  const capture = captureExpectedRemovalPath(
+    journalPath,
+    state.journalIdentity,
+    'journal-clear',
+    options.beforeCapture,
+  );
+  options.afterCapture?.(journalPath, capture.capturedPath);
+  authenticateCapturedJournal(capture, genieHome, 'v3', expectedDigest);
+  deleteCapturedRemovalPath(capture);
   fsyncDirectoryBestEffort(dirname(journalPath));
 }
 
 /** Prove a named link resolves to the corresponding canonical Genie binary, including dangling links. */
 export function isGenieSymlink(path: string, genieDir = getGenieDir()): boolean {
   try {
-    const stat = lstatSync(path);
-    if (!stat.isSymbolicLink()) return false;
-    const name = path.slice(path.lastIndexOf(sep) + 1);
-    if (!SYMLINKS.some((candidate) => candidate === name)) return false;
-    const resolvedTarget = resolve(dirname(path), readlinkSync(path));
-    return resolvedTarget === resolve(genieDir, 'bin', name);
+    return ownedSourceSymlink(path, genieDir) !== null;
   } catch {
     return false;
   }
+}
+
+interface CapturedRemovalPath {
+  sourcePath: string;
+  quarantineRoot: string;
+  quarantineIdentity: PhysicalRootIdentity;
+  capturedPath: string;
+  capturedIdentity: PhysicalRootIdentity;
+}
+
+class UninstallIdentityMismatchError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'UninstallIdentityMismatchError';
+  }
+}
+
+function createRemovalQuarantine(
+  sourcePath: string,
+  label: string,
+): {
+  root: string;
+  identity: PhysicalRootIdentity;
+} {
+  const parent = dirname(sourcePath);
+  for (let attempt = 0; attempt < 16; attempt += 1) {
+    const root = join(parent, `.genie-uninstall-${label}-${process.pid}-${randomBytes(12).toString('hex')}`);
+    try {
+      mkdirSync(root, { mode: 0o700 });
+      const stat = lstatSync(root);
+      if (!stat.isDirectory() || stat.isSymbolicLink()) {
+        throw new Error(`uninstall quarantine is not a physical directory: ${root}`);
+      }
+      assertPrivateRecoveryObject(root, stat, 'uninstall quarantine');
+      return { root, identity: physicalRootIdentity(stat) };
+    } catch (error) {
+      if (isNodeErrorCode(error, 'EEXIST')) continue;
+      throw error;
+    }
+  }
+  throw new Error(`could not allocate an exclusive uninstall quarantine beside ${sourcePath}`);
+}
+
+function assertCapturedRemovalPath(capture: CapturedRemovalPath): void {
+  const quarantineIdentity = capturePhysicalRootIdentity(capture.quarantineRoot);
+  const capturedIdentity = capturePhysicalRootIdentity(capture.capturedPath);
+  if (!samePhysicalRootIdentity(quarantineIdentity, capture.quarantineIdentity)) {
+    throw new Error(`uninstall quarantine identity changed; preserved it for recovery: ${capture.quarantineRoot}`);
+  }
+  if (!samePhysicalRootIdentity(capturedIdentity, capture.capturedIdentity)) {
+    throw new Error(`captured uninstall object identity changed; preserved quarantine: ${capture.quarantineRoot}`);
+  }
+}
+
+function removeEmptyQuarantineBestEffort(capture: Pick<CapturedRemovalPath, 'quarantineRoot'>): void {
+  try {
+    rmdirSync(capture.quarantineRoot);
+    fsyncDirectoryBestEffort(dirname(capture.quarantineRoot));
+  } catch {
+    // A non-empty or concurrently changed quarantine is recovery evidence.
+  }
+}
+
+function restoreCapturedNoClobber(capture: CapturedRemovalPath, reason: string): never {
+  let disposition = `preserved replacement visibly in quarantine: ${capture.capturedPath}`;
+  try {
+    assertCapturedRemovalPath(capture);
+    // link(2) is an atomic no-clobber publication for both regular files and
+    // symlink inodes. Never use rename here: POSIX rename would overwrite a
+    // concurrent user object at the live pathname.
+    linkSync(capture.capturedPath, capture.sourcePath);
+    unlinkSync(capture.capturedPath);
+    fsyncDirectoryBestEffort(dirname(capture.sourcePath));
+    removeEmptyQuarantineBestEffort(capture);
+    disposition = `restored captured replacement without clobbering ${capture.sourcePath}`;
+  } catch (error) {
+    if (!isNodeErrorCode(error, 'EEXIST')) {
+      disposition += ` (automatic no-clobber restore failed: ${errorMessage(error)})`;
+    }
+  }
+  throw new UninstallIdentityMismatchError(`${reason}; ${disposition}`);
+}
+
+function captureExpectedRemovalPath(
+  sourcePath: string,
+  expectedIdentity: PhysicalRootIdentity,
+  label: string,
+  beforeCapture?: (path: string) => void,
+): CapturedRemovalPath {
+  const before = capturePhysicalRootIdentity(sourcePath);
+  if (!samePhysicalRootIdentity(before, expectedIdentity)) {
+    throw new UninstallIdentityMismatchError(
+      `recorded uninstall object identity changed before capture: ${sourcePath}`,
+    );
+  }
+  const quarantine = createRemovalQuarantine(sourcePath, label);
+  const capturedPath = join(quarantine.root, 'captured');
+  try {
+    beforeCapture?.(sourcePath);
+    renameSync(sourcePath, capturedPath);
+  } catch (error) {
+    removeEmptyQuarantineBestEffort({ quarantineRoot: quarantine.root });
+    throw error;
+  }
+  const capturedIdentity = capturePhysicalRootIdentity(capturedPath);
+  if (capturedIdentity === null) {
+    throw new Error(`captured uninstall object disappeared; preserved quarantine: ${quarantine.root}`);
+  }
+  const capture: CapturedRemovalPath = {
+    sourcePath,
+    quarantineRoot: quarantine.root,
+    quarantineIdentity: quarantine.identity,
+    capturedPath,
+    capturedIdentity,
+  };
+  if (!samePhysicalRootIdentity(capturedIdentity, expectedIdentity)) {
+    restoreCapturedNoClobber(
+      capture,
+      `live uninstall object was replaced at the atomic capture boundary: ${sourcePath}`,
+    );
+  }
+  return capture;
+}
+
+function deleteCapturedRemovalPath(capture: CapturedRemovalPath, requireSourceAbsent = true): void {
+  assertCapturedRemovalPath(capture);
+  if (requireSourceAbsent && lstatOrNull(capture.sourcePath) !== null) {
+    restoreCapturedNoClobber(
+      capture,
+      `a replacement appeared at the live path after atomic capture: ${capture.sourcePath}`,
+    );
+  }
+  unlinkSync(capture.capturedPath);
+  fsyncDirectoryBestEffort(capture.quarantineRoot);
+  removeEmptyQuarantineBestEffort(capture);
+}
+
+function ownedSourceSymlink(path: string, genieDir: string): OwnedSourceSymlink | null {
+  const before = lstatOrNull(path);
+  if (before === null || !before.isSymbolicLink()) return null;
+  const name = basename(path);
+  if (!SYMLINKS.some((candidate) => candidate === name)) return null;
+  const target = readlinkSync(path);
+  const after = lstatOrNull(path);
+  if (!samePhysicalRootIdentity(physicalRootIdentity(before), after === null ? null : physicalRootIdentity(after))) {
+    throw new Error(`source-install symlink changed while it was inspected: ${path}`);
+  }
+  if (resolve(dirname(path), target) !== resolve(genieDir, 'bin', name)) return null;
+  return {
+    name: name as OwnedSourceSymlink['name'],
+    target,
+    identity: physicalRootIdentity(after as Stats),
+  };
+}
+
+export interface SourceSymlinkRemovalOptions {
+  planned?: ReadonlyMap<OwnedSourceSymlink['name'], OwnedSourceSymlink>;
+  beforeCapture?: (path: string) => void;
 }
 
 /**
@@ -674,23 +1011,52 @@ export function removeSymlinks(
   localBin = LOCAL_BIN,
   genieDir = getGenieDir(),
   plannedNames: readonly (typeof SYMLINKS)[number][] = SYMLINKS,
-): { removed: string[]; failures: Array<{ path: string; detail: string }> } {
+  options: SourceSymlinkRemovalOptions = {},
+): { removed: string[]; preserved: string[]; failures: Array<{ path: string; detail: string }> } {
   const removed: string[] = [];
+  const preserved: string[] = [];
   const failures: Array<{ path: string; detail: string }> = [];
 
   for (const name of plannedNames) {
     const symlinkPath = join(localBin, name);
-    if (isGenieSymlink(symlinkPath, genieDir)) {
-      try {
-        unlinkSync(symlinkPath);
-        removed.push(name);
-      } catch (error) {
-        failures.push({ path: symlinkPath, detail: error instanceof Error ? error.message : String(error) });
+    try {
+      const planned = options.planned?.get(name);
+      const live = ownedSourceSymlink(symlinkPath, genieDir);
+      if (live === null) {
+        if (planned !== undefined && lstatOrNull(symlinkPath) !== null) {
+          throw new UninstallIdentityMismatchError(
+            `recorded source-install symlink was replaced before capture: ${symlinkPath}`,
+          );
+        }
+        continue;
       }
+      if (
+        planned !== undefined &&
+        (planned.target !== live.target || !samePhysicalRootIdentity(planned.identity, live.identity))
+      ) {
+        throw new UninstallIdentityMismatchError(
+          `recorded source-install symlink identity changed before capture: ${symlinkPath}`,
+        );
+      }
+      const capture = captureExpectedRemovalPath(
+        symlinkPath,
+        planned?.identity ?? live.identity,
+        'source-link',
+        options.beforeCapture,
+      );
+      const capturedTarget = readlinkSync(capture.capturedPath);
+      if (!lstatSync(capture.capturedPath).isSymbolicLink() || capturedTarget !== (planned?.target ?? live.target)) {
+        restoreCapturedNoClobber(capture, `captured source-install link content changed: ${symlinkPath}`);
+      }
+      deleteCapturedRemovalPath(capture);
+      removed.push(name);
+    } catch (error) {
+      if (error instanceof UninstallIdentityMismatchError) preserved.push(name);
+      failures.push({ path: symlinkPath, detail: error instanceof Error ? error.message : String(error) });
     }
   }
 
-  return { removed, failures };
+  return { removed, preserved, failures };
 }
 
 // ============================================================================
@@ -725,8 +1091,52 @@ function directoryHasMatchingEntry(path: string, matches: (name: string) => bool
   }
 }
 
+const REMOVAL_QUARANTINE_PREFIX = '.genie-uninstall-';
+
+function retainedRemovalQuarantines(targets: AgentSyncRemovalTargets = {}): string[] {
+  const claudeDir = targets.claudeDir ?? resolveClaudeDir();
+  const hermesHome = targets.hermesHome ?? resolveHermesHome();
+  const genieHome = targets.genieHome ?? resolveGenieHome();
+  const genieCaptureParent = dirname(genieHome);
+  const genieCapturePrefix = `.${basename(genieHome)}.uninstall-capture-`;
+  const parents = new Set<string>([
+    LOCAL_BIN,
+    join(claudeDir, 'rules'),
+    join(hermesHome, 'plugins'),
+    dirname(uninstallBatchJournalPath(genieHome)),
+    genieCaptureParent,
+  ]);
+  try {
+    for (const profile of readdirSync(join(hermesHome, 'profiles'), { withFileTypes: true })) {
+      if (profile.isDirectory() && !profile.isSymbolicLink()) {
+        parents.add(join(hermesHome, 'profiles', profile.name, 'plugins'));
+      }
+    }
+  } catch {
+    // Missing profiles are normal; unreadable parents are surfaced elsewhere.
+  }
+  const retained: string[] = [];
+  for (const parent of parents) {
+    try {
+      for (const name of readdirSync(parent)) {
+        if (
+          name.startsWith(REMOVAL_QUARANTINE_PREFIX) ||
+          (resolve(parent) === resolve(genieCaptureParent) && name.startsWith(genieCapturePrefix))
+        ) {
+          retained.push(join(parent, name));
+        }
+      }
+    } catch {
+      // A missing parent has no retained capture. Existing unreadable ownership
+      // roots are caught by their authoritative inspectors.
+    }
+  }
+  return retained.sort();
+}
+
 /** Pure pending-transaction evidence for the pre-confirmation preview. */
 export function hasPendingUninstallTransactions(targets: AgentSyncRemovalTargets = {}): boolean {
+  if (retainedRemovalQuarantines(targets).length > 0) return true;
   const claudeDir = targets.claudeDir ?? resolveClaudeDir();
   const codexDir = targets.codexDir ?? resolveCodexDir();
   const skillParents = [
@@ -825,6 +1235,10 @@ export function recoverUninstallTransactions(targets: AgentSyncRemovalTargets = 
     }
   }
   failures.push(...unresolvedTransactionConflictFailures(claudeDir, codexDir, agentsSkillsDir));
+  const retained = retainedRemovalQuarantines(targets);
+  if (retained.length > 0) {
+    failures.push(`retained uninstall capture requires no-clobber recovery review: ${retained.join(', ')}`);
+  }
   if (failures.length > 0) throw new Error(failures.join('; '));
 }
 
@@ -923,9 +1337,13 @@ function agentIdentityMatches(expected: AgentAssetIdentity, asset: AgentSyncAsse
 }
 
 /** Collect only flat Claude-agent names explicitly owned by the shared per-file manifest. */
-function collectManagedAgentFiles(parent: string, out: AgentSyncAsset[], restrictToPaths?: ReadonlySet<string>): void {
-  const manifest = readAgentFilesManifest(parent);
-  if (manifest === null) return;
+function collectManagedAgentFiles(
+  parent: string,
+  manifest: AgentFilesManifestView,
+  out: AgentSyncAsset[],
+  restrictToPaths?: ReadonlySet<string>,
+): void {
+  if (manifest.kind !== 'managed') return;
   for (const [name, entry] of Object.entries(manifest.files).sort(([left], [right]) => left.localeCompare(right))) {
     const path = join(parent, name);
     if (restrictToPaths !== undefined && !restrictToPaths.has(resolve(path))) continue;
@@ -1011,12 +1429,21 @@ function collectHermesLinkPath(
   if (!stat.isSymbolicLink()) return;
   try {
     const target = readlinkSync(linkPath);
+    const after = lstatSync(linkPath);
+    if (!after.isSymbolicLink() || !samePhysicalRootIdentity(physicalRootIdentity(stat), physicalRootIdentity(after))) {
+      return;
+    }
     const resolved = resolve(dirname(linkPath), target);
     const home = resolve(genieHome);
     // Record the raw link target as identity so removal re-verifies the exact
     // pointer before unlinking a symlink the user may have repointed since.
     if (isSameOrContainedPath(home, resolved)) {
-      out.push({ agent: 'hermes', kind: 'link', path: linkPath, identity: { kind: 'link', target } });
+      out.push({
+        agent: 'hermes',
+        kind: 'link',
+        path: linkPath,
+        identity: { kind: 'link', target, identity: physicalRootIdentity(after) },
+      });
     }
   } catch {
     /* unreadable symlink → leave it */
@@ -1057,13 +1484,27 @@ export function collectAgentSyncAssets(
   targets: AgentSyncRemovalTargets = {},
   restrictToPaths?: ReadonlySet<string>,
 ): AgentSyncAsset[] {
+  return inspectAgentSyncAssets(targets, restrictToPaths).assets;
+}
+
+export interface AgentSyncAssetInspection {
+  assets: AgentSyncAsset[];
+  claudeAgentManifest: AgentFilesManifestView;
+}
+
+/** Preserve strict manifest state alongside the asset list for fail-closed callers. */
+export function inspectAgentSyncAssets(
+  targets: AgentSyncRemovalTargets = {},
+  restrictToPaths?: ReadonlySet<string>,
+): AgentSyncAssetInspection {
   const claudeDir = targets.claudeDir ?? resolveClaudeDir();
   const codexDir = targets.codexDir ?? resolveCodexDir();
   const hermesHome = targets.hermesHome ?? resolveHermesHome();
   const genieHome = targets.genieHome ?? resolveGenieHome();
   const out: AgentSyncAsset[] = [];
+  const claudeAgentManifest = readAgentFilesManifestState(join(claudeDir, 'agents'));
   collectManagedSkillDirs(join(claudeDir, 'skills'), 'claude', out, restrictToPaths);
-  collectManagedAgentFiles(join(claudeDir, 'agents'), out, restrictToPaths);
+  collectManagedAgentFiles(join(claudeDir, 'agents'), claudeAgentManifest, out, restrictToPaths);
   // Live codex tier + the retired `.curated` lane (machines that never synced
   // post-migration still carry managed dirs there). Manifest-gated either way —
   // unmanaged siblings in the shared ~/.agents/skills tier are invisible.
@@ -1071,7 +1512,7 @@ export function collectAgentSyncAssets(
   collectManagedSkillDirs(codexLegacyCuratedDir(codexDir), 'codex', out, restrictToPaths);
   collectManagedCouncil(claudeDir, out, restrictToPaths);
   collectHermesLinks(hermesHome, genieHome, out, restrictToPaths);
-  return out;
+  return { assets: out, claudeAgentManifest };
 }
 
 export interface AgentSyncRemovalResult {
@@ -1092,6 +1533,8 @@ export interface AgentSyncRemovalResult {
 export interface AgentSyncRemovalOptions {
   beforeManagedDirRemoval?: (destDir: string, stage: 'before-park' | 'before-delete') => void;
   beforeWorkflowRemoval?: (stage: 'before-park' | 'before-delete') => void;
+  /** Deterministic boundary after a Hermes link is proven and before atomic capture. */
+  beforeManagedLinkCapture?: (path: string) => void;
   /**
    * Durable uninstall-batch allowlist with the recorded identity per planned path.
    * Membership filters which assets are candidates; identity binds removal so a
@@ -1174,9 +1617,16 @@ function removeAgentSyncAssetsLocked(
   // paths. The resulting membership is identical to collecting everything then
   // filtering, but a per-member batch call no longer digests every sibling.
   const restrictToPaths = plannedByPath === null ? undefined : new Set(plannedByPath.keys());
-  const assets = collectAgentSyncAssets(targets, restrictToPaths).filter(
-    (asset) => plannedByPath === null || plannedByPath.has(resolve(asset.path)),
-  );
+  const inspection = inspectAgentSyncAssets(targets, restrictToPaths);
+  if (inspection.claudeAgentManifest.kind === 'unsafe') {
+    const manifestPath = join(targets.claudeDir ?? resolveClaudeDir(), 'agents', MANIFEST_NAME);
+    result.failures.push({
+      path: manifestPath,
+      detail: `Claude agent ownership manifest is unsafe: ${inspection.claudeAgentManifest.reason}`,
+    });
+    return result;
+  }
+  const assets = inspection.assets.filter((asset) => plannedByPath === null || plannedByPath.has(resolve(asset.path)));
   removeCollectedAgentAssets(assets, targets, options, plannedByPath, result);
   return result;
 }
@@ -1194,9 +1644,15 @@ function recordAgentAssetDisposition(
   if (disposition === 'kept-identity-mismatch') result.identityMismatch.push(path);
 }
 
-/** Re-verify a recorded hermes link still points where the batch recorded before unlinking it. */
-function removeManagedLink(linkPath: string, expectedTarget: string | undefined, result: AgentSyncRemovalResult): void {
+/** Atomically capture and remove only the exact recorded Hermes link inode. */
+function removeManagedLink(
+  linkPath: string,
+  expected: Extract<AgentAssetIdentity, { kind: 'link' }> | undefined,
+  result: AgentSyncRemovalResult,
+  beforeCapture?: (path: string) => void,
+): void {
   let liveTarget: string;
+  let liveIdentity: PhysicalRootIdentity;
   try {
     const stat = lstatSync(linkPath);
     if (!stat.isSymbolicLink()) {
@@ -1205,18 +1661,33 @@ function removeManagedLink(linkPath: string, expectedTarget: string | undefined,
       result.identityMismatch.push(linkPath);
       return;
     }
+    liveIdentity = physicalRootIdentity(stat);
     liveTarget = readlinkSync(linkPath);
   } catch (error) {
     // Already gone before we reached it: an idempotent no-op, not a failure.
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
     throw error;
   }
-  if (expectedTarget !== undefined && liveTarget !== expectedTarget) {
+  if (
+    expected !== undefined &&
+    (liveTarget !== expected.target || !samePhysicalRootIdentity(liveIdentity, expected.identity))
+  ) {
     result.kept.push(linkPath);
     result.identityMismatch.push(linkPath);
     return;
   }
-  unlinkSync(linkPath);
+  const capture = captureExpectedRemovalPath(
+    linkPath,
+    expected?.identity ?? liveIdentity,
+    'hermes-link',
+    beforeCapture,
+  );
+  const capturedStat = lstatSync(capture.capturedPath);
+  const capturedTarget = capturedStat.isSymbolicLink() ? readlinkSync(capture.capturedPath) : null;
+  if (!capturedStat.isSymbolicLink() || capturedTarget !== (expected?.target ?? liveTarget)) {
+    restoreCapturedNoClobber(capture, `captured Hermes link content changed: ${linkPath}`);
+  }
+  deleteCapturedRemovalPath(capture);
   result.removed.push(linkPath);
 }
 
@@ -1362,6 +1833,77 @@ function removeManagedAgentAssets(
   }
 }
 
+function recordAgentAssetIdentityMismatch(path: string, result: AgentSyncRemovalResult, advisory?: string): void {
+  result.kept.push(path);
+  result.identityMismatch.push(path);
+  if (advisory !== undefined) pushAgentAdvisory(result, advisory);
+}
+
+/** Reconcile and mutate one collected non-agent asset against its recorded authority. */
+function removeCollectedManagedAsset(
+  asset: AgentSyncAsset,
+  expectedIdentity: AgentAssetIdentity | undefined,
+  targets: AgentSyncRemovalTargets,
+  options: AgentSyncRemovalOptions,
+  result: AgentSyncRemovalResult,
+): void {
+  try {
+    if (asset.kind === 'workflow' && asset.metadataPath) {
+      const disposition = removeManagedWorkflow(join(targets.claudeDir ?? resolveClaudeDir(), 'workflows'), {
+        beforeRemoval: options.beforeWorkflowRemoval,
+        expectedIdentity: expectedIdentity?.kind === 'workflow' ? expectedIdentity : undefined,
+      });
+      recordAgentAssetDisposition(disposition, asset.path, result);
+      return;
+    }
+    if (asset.kind === 'skill') {
+      const disposition = removeManagedSkillTree(asset.path, {
+        genieHome: targets.genieHome,
+        agent: asset.agent,
+        beforeManagedDirRemoval: options.beforeManagedDirRemoval,
+        expectedIdentity: expectedIdentity?.kind === 'skill' ? expectedIdentity : undefined,
+      });
+      recordAgentAssetDisposition(disposition, asset.path, result);
+      return;
+    }
+    removeManagedLink(
+      asset.path,
+      expectedIdentity?.kind === 'link' ? expectedIdentity : undefined,
+      result,
+      options.beforeManagedLinkCapture,
+    );
+  } catch (error) {
+    if (error instanceof UninstallIdentityMismatchError) {
+      recordAgentAssetIdentityMismatch(asset.path, result, error.message);
+      return;
+    }
+    result.failures.push({ path: asset.path, detail: errorMessage(error) });
+  }
+}
+
+/** Settle recorded links that disappeared from live collection without widening the plan. */
+function removeUncollectedPlannedLinks(
+  assets: AgentSyncAsset[],
+  plannedByPath: Map<string, AgentAssetIdentity> | null,
+  options: AgentSyncRemovalOptions,
+  result: AgentSyncRemovalResult,
+): void {
+  if (plannedByPath === null) return;
+  const collectedPaths = new Set(assets.map((asset) => resolve(asset.path)));
+  for (const [path, identity] of plannedByPath) {
+    if (identity.kind !== 'link' || collectedPaths.has(path)) continue;
+    try {
+      removeManagedLink(path, identity, result, options.beforeManagedLinkCapture);
+    } catch (error) {
+      if (error instanceof UninstallIdentityMismatchError) {
+        recordAgentAssetIdentityMismatch(path, result, error.message);
+      } else {
+        result.failures.push({ path, detail: errorMessage(error) });
+      }
+    }
+  }
+}
+
 function removeCollectedAgentAssets(
   assets: AgentSyncAsset[],
   targets: AgentSyncRemovalTargets,
@@ -1376,41 +1918,20 @@ function removeCollectedAgentAssets(
     // now occupying the path is a physical replacement of a different kind. Refuse
     // it as an identity mismatch rather than degrading to an unbound removal.
     if (expectedIdentity !== undefined && expectedIdentity.kind !== asset.kind) {
-      result.kept.push(asset.path);
-      result.identityMismatch.push(asset.path);
+      recordAgentAssetIdentityMismatch(asset.path, result);
       continue;
     }
     if (asset.kind === 'agent') {
       if (expectedIdentity !== undefined && !agentIdentityMatches(expectedIdentity, asset)) {
-        result.kept.push(asset.path);
-        result.identityMismatch.push(asset.path);
+        recordAgentAssetIdentityMismatch(asset.path, result);
       } else {
         agentAssets.push(asset);
       }
       continue;
     }
-    try {
-      if (asset.kind === 'workflow' && asset.metadataPath) {
-        const disposition = removeManagedWorkflow(join(targets.claudeDir ?? resolveClaudeDir(), 'workflows'), {
-          beforeRemoval: options.beforeWorkflowRemoval,
-          expectedIdentity: expectedIdentity?.kind === 'workflow' ? expectedIdentity : undefined,
-        });
-        recordAgentAssetDisposition(disposition, asset.path, result);
-      } else if (asset.kind === 'skill') {
-        const disposition = removeManagedSkillTree(asset.path, {
-          genieHome: targets.genieHome,
-          agent: asset.agent,
-          beforeManagedDirRemoval: options.beforeManagedDirRemoval,
-          expectedIdentity: expectedIdentity?.kind === 'skill' ? expectedIdentity : undefined,
-        });
-        recordAgentAssetDisposition(disposition, asset.path, result);
-      } else {
-        removeManagedLink(asset.path, expectedIdentity?.kind === 'link' ? expectedIdentity.target : undefined, result);
-      }
-    } catch (error) {
-      result.failures.push({ path: asset.path, detail: error instanceof Error ? error.message : String(error) });
-    }
+    removeCollectedManagedAsset(asset, expectedIdentity, targets, options, result);
   }
+  removeUncollectedPlannedLinks(assets, plannedByPath, options, result);
   removeManagedAgentAssets(agentAssets, targets, result);
 }
 
@@ -1447,6 +1968,7 @@ export interface UninstallBatchExecutionOperations {
     progress: UninstallBatchDecision['progress'],
   ) => UninstallBatchDecision;
   clearDecision?: (genieHome: string, digest: string) => void;
+  discardLegacyDecision?: (genieHome: string) => void;
 }
 
 export interface UninstallBatchProgressController {
@@ -1475,21 +1997,24 @@ export function executeUninstallBatch(
   const recordDecision = operations.recordDecision ?? recordUninstallBatchDecision;
   const updateDecision = operations.updateDecision ?? updateUninstallBatchProgress;
   const clearDecision = operations.clearDecision ?? clearUninstallBatchDecision;
+  const discardLegacyDecision = operations.discardLegacyDecision ?? discardLegacyUninstallBatchDecision;
   let decision: UninstallBatchDecision;
   let legacyMigrationNote: string | null = null;
   try {
     decision = readDecision(genieHome) ?? recordDecision(genieHome, requestedScope);
   } catch (error) {
     if (!(error instanceof LegacyUninstallBatchJournalError)) throw error;
-    // Authentic v1 journal from a prior release: discard it and re-record a fresh
-    // v2 decision from the CURRENT live scope. Safe because every published
+    // Authentic legacy journal from a prior release: discard it and re-record a
+    // fresh v3 decision from the CURRENT live scope. In particular, v2 carried
+    // only a pathname-presence boolean for GENIE_HOME and can never authorize a
+    // deletion. Safe because every published
     // external transaction was recovered before this ran and each member removal
     // is independently idempotent/transactional; an in-flight v1 member is only
     // noted (recovered transactionally), never replayed from stale authority.
     if (error.interruptedMember !== null) {
-      legacyMigrationNote = `Re-planned a legacy uninstall batch from current live state; its interrupted member ${error.interruptedMember} was recovered transactionally, not replayed.`;
+      legacyMigrationNote = `Re-planned a legacy v${error.schemaVersion} uninstall batch from current live state; its interrupted member ${error.interruptedMember} was recovered transactionally, not replayed.`;
     }
-    discardLegacyUninstallBatchDecision(genieHome);
+    discardLegacyDecision(genieHome);
     decision = recordDecision(genieHome, requestedScope);
   }
   if (decision.progress.active !== null) {
@@ -1658,11 +2183,16 @@ export function inspectRuntimeClientAvailability(cwd = process.cwd()): RuntimeCl
 export interface UninstallPlan {
   genieDir: string;
   hasGenieDir: boolean;
+  genieHomeIdentity: PhysicalRootIdentity | null;
+  genieHomeRemovalDigest: string | null;
   hasUnprovenHookScript: boolean;
   legacyReport: ReturnType<typeof detectV4Install>;
   hasOwnedRules: boolean;
+  ownedRules: ProvenV4Rules | null;
   existingSymlinks: string[];
+  ownedSourceSymlinks: OwnedSourceSymlink[];
   agentAssets: AgentSyncAsset[];
+  claudeAgentManifest: AgentFilesManifestView;
   hasAgentAssets: boolean;
   codexRoleAgents: ReturnType<typeof inspectCodexAgentOwnership>;
   managedRoleAgents: ReturnType<typeof inspectCodexAgentOwnership>['entries'];
@@ -1675,15 +2205,37 @@ export interface UninstallPlan {
 
 export interface UninstallPlanInspectors {
   hasGenieDir?: (path: string) => boolean;
+  captureGenieHomeIdentity?: (path: string) => PhysicalRootIdentity | null;
+  captureGenieHomeRemovalDigest?: (path: string, identity: PhysicalRootIdentity) => string;
   hookScriptExists?: () => boolean;
   detectV4Install?: typeof detectV4Install;
   existingSymlinks?: (genieDir: string) => string[];
   collectAgentSyncAssets?: typeof collectAgentSyncAssets;
+  inspectAgentFilesManifestState?: (dir: string) => AgentFilesManifestView;
   inspectCodexAgentOwnership?: typeof inspectCodexAgentOwnership;
   inspectRuntimeClientAvailability?: typeof inspectRuntimeClientAvailability;
   inspectRuntimeIntegrationEvidence?: typeof inspectRuntimeIntegrationEvidence;
   hasPendingBatch?: (genieDir: string) => boolean;
   hasPendingTransactions?: typeof hasPendingUninstallTransactions;
+}
+
+function captureProvenV4RulesIdentity(path: string): ProvenV4Rules {
+  const before = lstatSync(path);
+  if (!before.isFile() || before.isSymbolicLink()) {
+    throw new Error(`marker-proven v4 rules are not a physical regular file: ${path}`);
+  }
+  const digest = createHash('sha256').update(readFileSync(path)).digest('hex');
+  const after = lstatSync(path);
+  if (!samePhysicalRootIdentity(physicalRootIdentity(before), physicalRootIdentity(after))) {
+    throw new Error(`marker-proven v4 rules changed while their identity was captured: ${path}`);
+  }
+  return { path: resolve(path), digest, identity: physicalRootIdentity(after) };
+}
+
+function sameProvenV4Rules(left: ProvenV4Rules, right: ProvenV4Rules): boolean {
+  return (
+    left.path === right.path && left.digest === right.digest && samePhysicalRootIdentity(left.identity, right.identity)
+  );
 }
 
 /** Build a complete read-only uninstall plan. Call again under the lease before mutation. */
@@ -1692,20 +2244,74 @@ export function inspectUninstallPlan(
   removeMarketplace = false,
   inspectors: UninstallPlanInspectors = {},
 ): UninstallPlan {
-  const legacyReport = (inspectors.detectV4Install ?? detectV4Install)();
-  const agentAssets = (inspectors.collectAgentSyncAssets ?? collectAgentSyncAssets)();
+  const detectLegacy = inspectors.detectV4Install ?? detectV4Install;
+  const legacyReport = detectLegacy();
+  let ownedRules: ProvenV4Rules | null = null;
+  if (legacyReport.rulesFile.status === 'v4-markers') {
+    const before = captureProvenV4RulesIdentity(legacyReport.rulesFile.path);
+    const confirmed = detectLegacy();
+    if (confirmed.rulesFile.status !== 'v4-markers' || resolve(confirmed.rulesFile.path) !== before.path) {
+      throw new Error('marker-proven v4 rules changed while the uninstall plan was inspected');
+    }
+    const after = captureProvenV4RulesIdentity(confirmed.rulesFile.path);
+    if (!sameProvenV4Rules(before, after)) {
+      throw new Error('marker-proven v4 rules changed while the uninstall plan was inspected');
+    }
+    ownedRules = after;
+  }
+  // Production consumes one manifest inspection for both the asset allowlist
+  // and source-retirement gate. Test-only legacy injectors remain paired with
+  // an explicit manifest seam instead of causing a second production read.
+  const agentInspection =
+    inspectors.collectAgentSyncAssets === undefined && inspectors.inspectAgentFilesManifestState === undefined
+      ? inspectAgentSyncAssets()
+      : {
+          assets: (inspectors.collectAgentSyncAssets ?? collectAgentSyncAssets)(),
+          claudeAgentManifest:
+            inspectors.inspectAgentFilesManifestState?.(join(resolveClaudeDir(), 'agents')) ??
+            ({ kind: 'absent' } as const),
+        };
+  const agentAssets = agentInspection.assets;
+  const claudeAgentManifest = agentInspection.claudeAgentManifest;
   const codexRoleAgents = (inspectors.inspectCodexAgentOwnership ?? inspectCodexAgentOwnership)();
   const runtimeClients = (inspectors.inspectRuntimeClientAvailability ?? inspectRuntimeClientAvailability)();
+  const genieHomeIdentity =
+    inspectors.captureGenieHomeIdentity !== undefined || inspectors.hasGenieDir !== undefined
+      ? (inspectors.captureGenieHomeIdentity?.(genieDir) ?? null)
+      : inspectRemovableGenieRoot(genieDir);
+  const hasGenieDir = inspectors.hasGenieDir?.(genieDir) ?? genieHomeIdentity !== null;
+  if (hasGenieDir !== (genieHomeIdentity !== null)) {
+    throw new Error('uninstall plan must bind every removable Genie root to its physical identity');
+  }
+  const genieHomeRemovalDigest =
+    genieHomeIdentity === null
+      ? null
+      : (inspectors.captureGenieHomeRemovalDigest ?? captureGenieHomeRemovalDigest)(genieDir, genieHomeIdentity);
+  const existingSymlinks =
+    inspectors.existingSymlinks?.(genieDir) ??
+    SYMLINKS.filter((name) => isGenieSymlink(join(LOCAL_BIN, name), genieDir));
+  const ownedSourceSymlinks = existingSymlinks.map((name) => {
+    if (!SYMLINKS.some((candidate) => candidate === name)) {
+      throw new Error(`uninstall plan contains an unsupported source symlink name: ${name}`);
+    }
+    const owned = ownedSourceSymlink(join(LOCAL_BIN, name), genieDir);
+    if (owned === null)
+      throw new Error(`source-install symlink changed while the uninstall plan was recorded: ${name}`);
+    return owned;
+  });
   return {
     genieDir,
-    hasGenieDir: (inspectors.hasGenieDir ?? hasRemovableGenieInstallState)(genieDir),
+    hasGenieDir,
+    genieHomeIdentity,
+    genieHomeRemovalDigest,
     hasUnprovenHookScript: (inspectors.hookScriptExists ?? hookScriptExists)(),
     legacyReport,
-    hasOwnedRules: legacyReport.rulesFile.status === 'v4-markers',
-    existingSymlinks:
-      inspectors.existingSymlinks?.(genieDir) ??
-      SYMLINKS.filter((name) => isGenieSymlink(join(LOCAL_BIN, name), genieDir)),
+    hasOwnedRules: ownedRules !== null,
+    ownedRules,
+    existingSymlinks,
+    ownedSourceSymlinks,
     agentAssets,
+    claudeAgentManifest,
     hasAgentAssets: agentAssets.length > 0,
     codexRoleAgents,
     managedRoleAgents: codexRoleAgents.entries.filter((entry) => entry.ownership.startsWith('managed-')),
@@ -1817,7 +2423,12 @@ function removeFlatAgentBatch(
   );
   appendRemovalAdvisories(removal, result);
   if (removal.failures.length > 0) {
-    if (removal.removed.length === 0 && removal.kept.length === 0) progress.abort(member);
+    // removeAgentSyncAssetsLocked has returned, so there is no ambiguous in-flight
+    // mutation left behind. Any successful per-file outcomes are idempotent and
+    // the immutable batch scope can safely retry the still-present members.
+    // Clear the active receipt on every structured failure; retaining it here
+    // permanently strands the batch after a partial success.
+    progress.abort(member);
     recordRemovalFailures(removal, 'Removing flat agent', result);
     return;
   }
@@ -1962,34 +2573,110 @@ function tryRemoveStep(label: string, successMsg: string, fn: () => void): Unins
   }
 }
 
-/** Remove only marker-proven v4 rules, with recovery outside the deleted Genie home. */
-function removeProvenV4Rules(genieDir: string): void {
-  const report = detectV4Install();
-  if (report.rulesFile.status !== 'v4-markers') return;
-  const recoveryRoot = join(dirname(resolve(genieDir)), '.genie-recovery', 'uninstall-v4');
-  mkdirSync(recoveryRoot, { recursive: true });
-  const backup = join(recoveryRoot, `${basename(report.rulesFile.path)}.${Date.now()}`);
-  copyFileSync(report.rulesFile.path, backup);
-  unlinkSync(report.rulesFile.path);
+export interface V4RulesRemovalOptions {
+  /** Runs after the exact inode is proven and before it is atomically captured. */
+  beforeCapture?: (path: string) => void;
+  /** Runs after the captured bytes are durably backed up but before disposal. */
+  afterBackup?: (path: string, backupPath: string) => void;
 }
 
-function removeRulesMember(
+/** Atomically capture and remove only the exact marker-proven v4 rules object. */
+export function removeProvenV4Rules(
   genieDir: string,
-  ownedRulesPath: string | null,
+  rules: ProvenV4Rules,
+  options: V4RulesRemovalOptions = {},
+): string | null {
+  const initialStat = lstatOrNull(rules.path);
+  // A user or a prior idempotent attempt may remove the recorded object before
+  // this member begins. There is then no live pathname authority to exercise.
+  if (initialStat === null) return null;
+  if (!initialStat.isFile() || initialStat.isSymbolicLink()) {
+    throw new UninstallIdentityMismatchError(
+      `recorded marker-proven v4 rules were replaced before capture: ${rules.path}`,
+    );
+  }
+  let live: ProvenV4Rules;
+  try {
+    live = captureProvenV4RulesIdentity(rules.path);
+  } catch (error) {
+    const after = lstatOrNull(rules.path);
+    if (after === null) return null;
+    if (!samePhysicalRootIdentity(physicalRootIdentity(initialStat), physicalRootIdentity(after))) {
+      throw new UninstallIdentityMismatchError(
+        `recorded marker-proven v4 rules were replaced while being inspected: ${rules.path}`,
+      );
+    }
+    throw error;
+  }
+  if (!sameProvenV4Rules(live, rules)) {
+    throw new UninstallIdentityMismatchError(`recorded marker-proven v4 rules changed before capture: ${rules.path}`);
+  }
+  const capture = captureExpectedRemovalPath(rules.path, rules.identity, 'v4-rules', options.beforeCapture);
+  const capturedStat = lstatSync(capture.capturedPath);
+  const capturedBytes =
+    capturedStat.isFile() && !capturedStat.isSymbolicLink() ? readFileSync(capture.capturedPath) : null;
+  const capturedDigest = capturedBytes === null ? null : createHash('sha256').update(capturedBytes).digest('hex');
+  if (capturedBytes === null || capturedDigest !== rules.digest) {
+    restoreCapturedNoClobber(capture, `captured marker-proven v4 rules content changed: ${rules.path}`);
+  }
+  const recoveryRoot = join(dirname(resolve(genieDir)), '.genie-recovery', 'uninstall-v4');
+  ensurePhysicalRecoveryRoot(recoveryRoot);
+  const backup = join(recoveryRoot, `${basename(rules.path)}.${randomBytes(12).toString('hex')}`);
+  writeFileSync(backup, capturedBytes, { flag: 'wx', mode: capturedStat.mode & 0o777 });
+  const backupFd = openSync(backup, 'r');
+  try {
+    fsyncSync(backupFd);
+  } finally {
+    closeSync(backupFd);
+  }
+  fsyncDirectoryBestEffort(recoveryRoot);
+  options.afterBackup?.(rules.path, backup);
+  const finalStat = lstatSync(capture.capturedPath);
+  const finalDigest = finalStat.isFile()
+    ? createHash('sha256').update(readFileSync(capture.capturedPath)).digest('hex')
+    : null;
+  if (
+    !samePhysicalRootIdentity(physicalRootIdentity(finalStat), capture.capturedIdentity) ||
+    finalDigest !== rules.digest
+  ) {
+    throw new UninstallIdentityMismatchError(
+      `captured v4 rules changed after backup; preserved quarantine: ${capture.quarantineRoot}`,
+    );
+  }
+  deleteCapturedRemovalPath(capture);
+  return backup;
+}
+
+export function removeRulesMember(
+  genieDir: string,
+  ownedRules: ProvenV4Rules | null,
+  result: UninstallResult,
   progress: UninstallBatchProgressController,
+  options: V4RulesRemovalOptions = {},
 ): UninstallFailure | null {
-  if (ownedRulesPath === null) return null;
-  const member = uninstallBatchMemberId('rules', ownedRulesPath);
-  if (progress.isCompleted(member)) return null;
+  if (ownedRules === null) return null;
+  const member = uninstallBatchMemberId('rules', ownedRules.path);
+  if (progress.isCompleted(member) || progress.isPreserved(member)) return null;
   progress.begin(member);
-  const failure = tryRemoveStep(
-    'Backing up and removing marker-proven v4 orchestration rules...',
-    `Marker-proven orchestration rules removed (${contractPath(ownedRulesPath)})`,
-    () => removeProvenV4Rules(genieDir),
-  );
-  if (failure) progress.abort(member);
-  else progress.complete(member);
-  return failure;
+  console.log('\x1b[2mBacking up and removing marker-proven v4 orchestration rules...\x1b[0m');
+  try {
+    removeProvenV4Rules(genieDir, ownedRules, options);
+    progress.complete(member);
+    console.log(`  \x1b[32m+\x1b[0m Marker-proven orchestration rules removed (${contractPath(ownedRules.path)})`);
+    return null;
+  } catch (error) {
+    const detail = errorMessage(error);
+    if (error instanceof UninstallIdentityMismatchError) {
+      progress.preserve(member);
+      recordPreservation(result, {
+        step: `Preserving v4 rules ${contractPath(ownedRules.path)}`,
+        detail,
+      });
+      return null;
+    }
+    progress.abort(member);
+    return { step: 'Backing up and removing marker-proven v4 orchestration rules', detail };
+  }
 }
 
 function isNodeErrorCode(error: unknown, code: string): boolean {
@@ -2000,26 +2687,269 @@ function preservedGenieDirEntry(name: string): boolean {
   return name === 'state-backups' || name === AGENT_SYNC_LOCK_NAME;
 }
 
-/** Remove canonical install state while retaining durable backups and the active sync lock generation. */
-function removeGenieDirPreservingStateBackups(genieDir: string): void {
-  let stat: Stats;
+export interface GenieHomeRemovalOptions {
+  /** Deterministic barrier after authenticated planning but before the live-tree commitment check. */
+  beforeRemovalSnapshot?: (genieDir: string) => void;
+  /** Deterministic race barrier used by destructive-path fixtures. */
+  beforeEntryCapture?: (entryPath: string) => void;
+  /** Runs after the live name is captured but before root identity is revalidated. */
+  afterEntryCapture?: (entryPath: string, capturedPath: string) => void;
+  /** Runs after expected children are removed but before a validated directory is removed. */
+  beforeDirectoryRemoval?: (directoryPath: string) => void;
+}
+
+interface GenieRemovalSnapshotBase {
+  identity: PhysicalRootIdentity;
+  nlink: number;
+}
+
+type GenieRemovalSnapshot =
+  | (GenieRemovalSnapshotBase & {
+      kind: 'directory';
+      entries: Array<{ name: string; snapshot: GenieRemovalSnapshot }>;
+    })
+  | (GenieRemovalSnapshotBase & { kind: 'file'; digest: string })
+  | (GenieRemovalSnapshotBase & { kind: 'symlink'; target: string })
+  | (GenieRemovalSnapshotBase & { kind: 'other'; physicalKind: string });
+
+function sameStringList(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function sameRemovalSnapshotBase(expected: GenieRemovalSnapshotBase, current: GenieRemovalSnapshotBase): boolean {
+  return expected.nlink === current.nlink && samePhysicalRootIdentity(expected.identity, current.identity);
+}
+
+function specialPhysicalKind(stat: Stats): string {
+  if (stat.isFIFO()) return 'fifo';
+  if (stat.isSocket()) return 'socket';
+  if (stat.isBlockDevice()) return 'block-device';
+  if (stat.isCharacterDevice()) return 'character-device';
+  return 'other';
+}
+
+function assertStableRemovalNode(path: string, before: Stats, after: Stats): void {
+  if (
+    !samePhysicalRootIdentity(physicalRootIdentity(before), physicalRootIdentity(after)) ||
+    before.nlink !== after.nlink
+  ) {
+    throw new Error(`Genie install entry changed while its exact removal snapshot was captured: ${path}`);
+  }
+}
+
+/**
+ * Capture an exact physical tree. Unlike managed-skill digests this intentionally
+ * has no manifest exclusions: every descendant name, physical identity, mode,
+ * file byte, and symlink target is part of source-removal authority.
+ */
+function captureGenieRemovalSnapshot(path: string): GenieRemovalSnapshot {
+  const before = lstatSync(path);
+  const base = { identity: physicalRootIdentity(before), nlink: before.nlink };
+  if (before.isDirectory() && !before.isSymbolicLink()) {
+    const names = readdirSync(path).sort();
+    const entries = names.map((name) => ({ name, snapshot: captureGenieRemovalSnapshot(join(path, name)) }));
+    const afterNames = readdirSync(path).sort();
+    const after = lstatSync(path);
+    assertStableRemovalNode(path, before, after);
+    if (!sameStringList(names, afterNames)) {
+      throw new Error(`Genie install directory changed while its exact removal snapshot was captured: ${path}`);
+    }
+    return { ...base, kind: 'directory', entries };
+  }
+  if (before.isFile()) {
+    const digest = createHash('sha256').update(readFileSync(path)).digest('hex');
+    assertStableRemovalNode(path, before, lstatSync(path));
+    return { ...base, kind: 'file', digest };
+  }
+  if (before.isSymbolicLink()) {
+    const target = readlinkSync(path);
+    assertStableRemovalNode(path, before, lstatSync(path));
+    return { ...base, kind: 'symlink', target };
+  }
+  assertStableRemovalNode(path, before, lstatSync(path));
+  return { ...base, kind: 'other', physicalKind: specialPhysicalKind(before) };
+}
+
+function sameGenieRemovalSnapshot(expected: GenieRemovalSnapshot, current: GenieRemovalSnapshot): boolean {
+  if (expected.kind !== current.kind || !sameRemovalSnapshotBase(expected, current)) return false;
+  if (expected.kind === 'file') return current.kind === 'file' && expected.digest === current.digest;
+  if (expected.kind === 'symlink') return current.kind === 'symlink' && expected.target === current.target;
+  if (expected.kind === 'other') {
+    return current.kind === 'other' && expected.physicalKind === current.physicalKind;
+  }
+  if (current.kind !== 'directory' || expected.entries.length !== current.entries.length) return false;
+  return expected.entries.every((entry, index) => {
+    const currentEntry = current.entries[index];
+    return (
+      currentEntry !== undefined &&
+      entry.name === currentEntry.name &&
+      sameGenieRemovalSnapshot(entry.snapshot, currentEntry.snapshot)
+    );
+  });
+}
+
+function assertGenieRemovalSnapshot(path: string, expected: GenieRemovalSnapshot): void {
+  let current: GenieRemovalSnapshot;
   try {
-    stat = lstatSync(genieDir);
+    current = captureGenieRemovalSnapshot(path);
   } catch (error) {
-    if (isNodeErrorCode(error, 'ENOENT')) return;
+    throw new Error(`captured Genie install tree could not be revalidated: ${errorMessage(error)}`);
+  }
+  if (!sameGenieRemovalSnapshot(expected, current)) {
+    throw new Error('captured Genie install tree changed from its exact root-bound snapshot');
+  }
+}
+
+interface GenieRemovalEntrySnapshot {
+  name: string;
+  snapshot: GenieRemovalSnapshot;
+}
+
+function removalSnapshotDigest(entries: readonly GenieRemovalEntrySnapshot[]): string {
+  return createHash('sha256').update(JSON.stringify(entries)).digest('hex');
+}
+
+function captureGenieRemovalEntries(
+  genieDir: string,
+  expectedIdentity: PhysicalRootIdentity,
+): GenieRemovalEntrySnapshot[] {
+  if (assertExpectedGenieRoot(genieDir, expectedIdentity) !== 'present') return [];
+  const names = readdirSync(genieDir)
+    .filter((name) => !preservedGenieDirEntry(name))
+    .sort();
+  const entries = names.map((name) => ({ name, snapshot: captureGenieRemovalSnapshot(join(genieDir, name)) }));
+  if (assertExpectedGenieRoot(genieDir, expectedIdentity) !== 'present') return [];
+  const afterNames = readdirSync(genieDir)
+    .filter((name) => !preservedGenieDirEntry(name))
+    .sort();
+  if (!sameStringList(names, afterNames)) {
+    throw new Error('Genie install root changed while its exact removal commitment was captured');
+  }
+  return entries;
+}
+
+function captureGenieHomeRemovalDigest(genieDir: string, expectedIdentity: PhysicalRootIdentity): string {
+  return removalSnapshotDigest(captureGenieRemovalEntries(genieDir, expectedIdentity));
+}
+
+/**
+ * Delete a preflight-matched tree without a recursive pathname removal. Every
+ * subtree is revalidated immediately before it is touched, and rmdir is the
+ * final fail-closed check: a late foreign descendant makes it fail and survive.
+ */
+function removeValidatedGenieTree(
+  path: string,
+  expected: GenieRemovalSnapshot,
+  options: GenieHomeRemovalOptions,
+): void {
+  assertGenieRemovalSnapshot(path, expected);
+  if (expected.kind !== 'directory') {
+    unlinkSync(path);
+    return;
+  }
+  for (const entry of expected.entries) {
+    removeValidatedGenieTree(join(path, entry.name), entry.snapshot, options);
+  }
+  options.beforeDirectoryRemoval?.(path);
+  rmdirSync(path);
+}
+
+function removeEmptyCaptureDir(path: string): void {
+  try {
+    rmdirSync(path);
+  } catch (error) {
+    if (!isNodeErrorCode(error, 'ENOENT') && !isNodeErrorCode(error, 'ENOTEMPTY')) throw error;
+  }
+}
+
+function assertExpectedGenieRoot(genieDir: string, expectedIdentity: PhysicalRootIdentity): 'present' | 'absent' {
+  const current = lstatOrNull(genieDir);
+  if (current === null) return 'absent';
+  if (!samePhysicalRootIdentity(expectedIdentity, physicalRootIdentity(current))) {
+    throw new Error(`recorded Genie install root was replaced; preserved the replacement at ${genieDir}`);
+  }
+  if (!current.isDirectory() || current.isSymbolicLink()) {
+    throw new Error(`recorded Genie install root is no longer a physical directory: ${genieDir}`);
+  }
+  return 'present';
+}
+
+/**
+ * Remove only attempt-owned captures, never the live GENIE_HOME pathname.
+ *
+ * Each removable child is atomically parked outside the root. The root's
+ * physical identity is then revalidated before that captured object may be
+ * deleted. A pathname replacement therefore survives (at its live name or at
+ * the reported capture path), while state-backups and the active lock never
+ * leave the original root.
+ */
+function removeOneCommittedGenieEntry(
+  genieDir: string,
+  expectedIdentity: PhysicalRootIdentity,
+  entry: GenieRemovalEntrySnapshot,
+  options: GenieHomeRemovalOptions,
+): 'removed' | 'root-absent' {
+  const entryPath = join(genieDir, entry.name);
+  const captureDir = mkdtempSync(join(dirname(genieDir), `.${basename(genieDir)}.uninstall-capture-`));
+  const capturedPath = join(captureDir, 'object');
+  let captured = false;
+  let capturedFromExpectedRoot = false;
+  try {
+    options.beforeEntryCapture?.(entryPath);
+    try {
+      renameSync(entryPath, capturedPath);
+      captured = true;
+      capturedFromExpectedRoot = samePhysicalRootIdentity(expectedIdentity, capturePhysicalRootIdentity(genieDir));
+      fsyncDirectoryBestEffort(dirname(genieDir));
+      fsyncDirectoryBestEffort(captureDir);
+    } catch (error) {
+      if (!isNodeErrorCode(error, 'ENOENT')) throw error;
+      const state = assertExpectedGenieRoot(genieDir, expectedIdentity);
+      if (state === 'absent') return 'root-absent';
+      throw new Error(`Genie install entry changed before capture; preserved live state at ${entryPath}`);
+    }
+    options.afterEntryCapture?.(entryPath, capturedPath);
+    if (assertExpectedGenieRoot(genieDir, expectedIdentity) !== 'present') {
+      throw new Error('Genie install root disappeared after capture');
+    }
+    // Compare the entire parked tree before consulting the root observation.
+    // This makes nested-ABA regressions exercise the full-tree boundary rather
+    // than passing only because the replacement root happened to be observed.
+    assertGenieRemovalSnapshot(capturedPath, entry.snapshot);
+    if (!capturedFromExpectedRoot) throw new Error('Genie install entry was captured from a replacement root');
+    removeValidatedGenieTree(capturedPath, entry.snapshot, options);
+    captured = false;
+    fsyncDirectoryBestEffort(captureDir);
+    fsyncDirectoryBestEffort(dirname(genieDir));
+    return 'removed';
+  } catch (error) {
+    if (captured) throw new Error(`${errorMessage(error)}; captured bytes preserved at ${capturedPath}`);
     throw error;
+  } finally {
+    if (!captured) removeEmptyCaptureDir(captureDir);
   }
-  if (!stat.isDirectory() || stat.isSymbolicLink()) {
-    rmSync(genieDir, { recursive: true, force: true });
-    return;
+}
+
+function removeGenieDirPreservingStateBackups(
+  genieDir: string,
+  expectedIdentity: PhysicalRootIdentity,
+  expectedRemovalDigest: string,
+  options: GenieHomeRemovalOptions = {},
+): void {
+  if (assertExpectedGenieRoot(genieDir, expectedIdentity) === 'absent') return;
+  options.beforeRemovalSnapshot?.(genieDir);
+  const entries = captureGenieRemovalEntries(genieDir, expectedIdentity);
+  if (removalSnapshotDigest(entries) !== expectedRemovalDigest) {
+    throw new Error('Genie install tree changed after its authenticated removal commitment; preserved live bytes');
   }
-  const names = readdirSync(genieDir);
-  if (!names.some(preservedGenieDirEntry)) {
-    rmSync(genieDir, { recursive: true, force: true });
-    return;
+  if (assertExpectedGenieRoot(genieDir, expectedIdentity) !== 'present') return;
+  for (const entry of entries) {
+    if (removeOneCommittedGenieEntry(genieDir, expectedIdentity, entry, options) === 'root-absent') return;
   }
-  for (const name of names) {
-    if (!preservedGenieDirEntry(name)) rmSync(join(genieDir, name), { recursive: true, force: true });
+  if (assertExpectedGenieRoot(genieDir, expectedIdentity) === 'absent') return;
+  const unexpected = readdirSync(genieDir).filter((name) => !preservedGenieDirEntry(name));
+  if (unexpected.length > 0) {
+    throw new Error(`new Genie install state appeared during removal and was preserved: ${unexpected.join(', ')}`);
   }
 }
 
@@ -2037,33 +2967,63 @@ export function hasRemovableGenieInstallState(genieDir: string): boolean {
 
 function removeGenieHomeMember(
   genieDir: string,
-  genieHomePresent: boolean,
+  expectedIdentity: PhysicalRootIdentity | null,
+  expectedRemovalDigest: string | null,
   progress: UninstallBatchProgressController,
+  options: GenieHomeRemovalOptions = {},
 ): UninstallFailure | null {
-  if (!genieHomePresent) return null;
+  if (expectedIdentity === null && expectedRemovalDigest === null) return null;
+  if (expectedIdentity === null || expectedRemovalDigest === null) {
+    throw new Error('Genie root removal authority is incomplete; identity and exact commitment are both required');
+  }
   const member = uninstallBatchMemberId('home', resolve(genieDir));
-  if (progress.isCompleted(member)) return null;
+  if (progress.isCompleted(member) || progress.isPreserved(member)) return null;
+  const manifest = readAgentFilesManifestState(join(resolveClaudeDir(), 'agents'));
+  if (manifest.kind === 'unsafe' || (manifest.kind === 'managed' && Object.keys(manifest.files).length > 0)) {
+    return {
+      step: 'Validating Claude agent ownership manifest before source removal',
+      detail:
+        manifest.kind === 'unsafe'
+          ? `manifest is unsafe: ${manifest.reason}`
+          : `manifest still owns ${Object.keys(manifest.files).length} role-agent file(s)`,
+    };
+  }
   progress.begin(member);
   const failure = tryRemoveStep('Removing genie directory...', 'Install state removed (state backups preserved)', () =>
-    removeGenieDirPreservingStateBackups(genieDir),
+    removeGenieDirPreservingStateBackups(genieDir, expectedIdentity, expectedRemovalDigest, options),
   );
   if (failure === null) progress.complete(member);
+  else progress.abort(member);
   return failure;
 }
 
-function removeSymlinkMembers(
+export function removeSymlinkMembers(
   genieDir: string,
   names: UninstallBatchScope['symlinks'],
+  result: UninstallResult,
   progress: UninstallBatchProgressController,
+  localBin = LOCAL_BIN,
+  options: Pick<SourceSymlinkRemovalOptions, 'beforeCapture'> = {},
 ): UninstallFailure[] {
   const failures: UninstallFailure[] = [];
   if (names.length === 0) return failures;
   console.log('\x1b[2mRemoving symlinks...\x1b[0m');
-  for (const name of names) {
-    const member = uninstallBatchMemberId('symlink', name);
-    if (progress.isCompleted(member)) continue;
+  for (const symlink of names) {
+    const member = uninstallBatchMemberId('symlink', symlink.name);
+    if (progress.isCompleted(member) || progress.isPreserved(member)) continue;
     progress.begin(member);
-    const symlinks = removeSymlinks(LOCAL_BIN, genieDir, [name]);
+    const symlinks = removeSymlinks(localBin, genieDir, [symlink.name], {
+      planned: new Map([[symlink.name, symlink]]),
+      beforeCapture: options.beforeCapture,
+    });
+    if (symlinks.preserved.includes(symlink.name)) {
+      progress.preserve(member);
+      recordPreservation(result, {
+        step: `Preserving source symlink ${symlink.name}`,
+        detail: symlinks.failures.map((failure) => failure.detail).join('; '),
+      });
+      continue;
+    }
     if (symlinks.failures.length > 0) {
       progress.abort(member);
       for (const failure of symlinks.failures) {
@@ -2072,7 +3032,7 @@ function removeSymlinkMembers(
       return failures;
     }
     progress.complete(member);
-    if (symlinks.removed.length > 0) console.log(`  \x1b[32m+\x1b[0m Removed: ${name}`);
+    if (symlinks.removed.length > 0) console.log(`  \x1b[32m+\x1b[0m Removed: ${symlink.name}`);
   }
   return failures;
 }
@@ -2084,9 +3044,10 @@ function performUninstallScope(
   genieDir: string,
   scope: UninstallBatchScope,
   progress: UninstallBatchProgressController,
+  homeRemovalOptions: GenieHomeRemovalOptions = {},
 ): UninstallResult {
   const result: UninstallResult = { failures: [], preserved: [], notes: [] };
-  const rulesFailure = removeRulesMember(genieDir, scope.ownedRulesPath, progress);
+  const rulesFailure = removeRulesMember(genieDir, scope.ownedRules, result, progress);
   if (rulesFailure) {
     result.failures.push(rulesFailure);
     return result;
@@ -2102,7 +3063,13 @@ function performUninstallScope(
 
   // Preserve the CLI and external recovery root while any requested removal is
   // incomplete, otherwise the user loses the easiest retry path.
-  const homeFailure = removeGenieHomeMember(genieDir, scope.genieHomePresent, progress);
+  const homeFailure = removeGenieHomeMember(
+    genieDir,
+    scope.genieHomeIdentity,
+    scope.genieHomeRemovalDigest,
+    progress,
+    homeRemovalOptions,
+  );
   if (homeFailure) {
     result.failures.push(homeFailure);
     return result;
@@ -2110,7 +3077,7 @@ function performUninstallScope(
   // Keep the normal command path available whenever any failure-prone cleanup
   // or GENIE_HOME removal failed. Once the home is gone, only dangling source-
   // install links remain and can be removed as the final commit step.
-  result.failures.push(...removeSymlinkMembers(genieDir, scope.symlinks, progress));
+  result.failures.push(...removeSymlinkMembers(genieDir, scope.symlinks, result, progress));
   return result;
 }
 
@@ -2119,8 +3086,121 @@ export interface PerformUninstallDependencies {
   agentSyncTargets?: AgentSyncRemovalTargets;
   /** Avoid consulting process-global legacy rules state in isolated tests. */
   orchestrationRulesPath?: string;
+  /** Deterministic capture/backup boundaries for injected v4 rules fixtures. */
+  v4RulesRemoval?: V4RulesRemovalOptions;
+  /** Injected source-link directory and capture boundary for compatibility fixtures. */
+  sourceSymlinkLocalBin?: string;
+  sourceSymlinkRemoval?: Pick<SourceSymlinkRemovalOptions, 'beforeCapture'>;
   /** Avoid process-global runtime integration mutation in isolated tests. */
   removeRuntimeIntegrations?: (removeMarketplace: boolean) => void;
+  /** Deterministic barriers for source-root replacement fixtures. */
+  genieHomeRemoval?: GenieHomeRemovalOptions;
+}
+
+interface CompatibilityUninstallPlan {
+  targets: AgentSyncRemovalTargets;
+  genieHome: string;
+  genieHomeIdentity: PhysicalRootIdentity | null;
+  genieHomeRemovalDigest: string | null;
+  hasCurrentAgentAssets: boolean;
+  injectedRules: ProvenV4Rules | null;
+  removeMarketplace: boolean;
+  sourceSymlinkLocalBin: string;
+  sourceSymlinks: Map<OwnedSourceSymlink['name'], OwnedSourceSymlink>;
+}
+
+/** Build the immutable authority used by the legacy injected test seam. */
+function planCompatibilityUninstall(
+  existingSymlinks: string[],
+  genieDir: string,
+  hasGenieDir: boolean,
+  hasAgentAssets: boolean,
+  removeMarketplace: boolean,
+  dependencies: PerformUninstallDependencies,
+): CompatibilityUninstallPlan | null {
+  const targets = dependencies.agentSyncTargets ?? {};
+  const genieHome = targets.genieHome ?? resolveGenieHome();
+  const agentInspection = inspectAgentSyncAssets(targets);
+  if (agentInspection.claudeAgentManifest.kind === 'unsafe') return null;
+  const hasCurrentAgentAssets = hasAgentAssets && agentInspection.assets.length > 0;
+  const genieHomeIdentity = hasGenieDir ? inspectRemovableGenieRoot(genieDir) : null;
+  const genieHomeRemovalDigest =
+    genieHomeIdentity === null ? null : captureGenieHomeRemovalDigest(genieDir, genieHomeIdentity);
+  const injectedRules =
+    dependencies.orchestrationRulesPath !== undefined && existsSync(dependencies.orchestrationRulesPath)
+      ? captureProvenV4RulesIdentity(dependencies.orchestrationRulesPath)
+      : null;
+  const sourceSymlinkLocalBin = dependencies.sourceSymlinkLocalBin ?? LOCAL_BIN;
+  const plannedNames = existingSymlinks.filter((name): name is (typeof SYMLINKS)[number] =>
+    SYMLINKS.some((candidate) => candidate === name),
+  );
+  const sourceSymlinks = new Map<OwnedSourceSymlink['name'], OwnedSourceSymlink>();
+  for (const name of plannedNames) {
+    const owned = ownedSourceSymlink(join(sourceSymlinkLocalBin, name), genieDir);
+    if (owned !== null) sourceSymlinks.set(name, owned);
+  }
+  if (
+    !hasCurrentAgentAssets &&
+    genieHomeIdentity === null &&
+    injectedRules === null &&
+    existingSymlinks.length === 0 &&
+    !removeMarketplace
+  ) {
+    return null;
+  }
+  return {
+    targets,
+    genieHome,
+    genieHomeIdentity,
+    genieHomeRemovalDigest,
+    hasCurrentAgentAssets,
+    injectedRules,
+    removeMarketplace,
+    sourceSymlinkLocalBin,
+    sourceSymlinks,
+  };
+}
+
+/** Execute a compatibility plan while its lifecycle lock remains held. */
+function executeCompatibilityUninstall(
+  genieDir: string,
+  plan: CompatibilityUninstallPlan,
+  dependencies: PerformUninstallDependencies,
+): void {
+  if (plan.hasCurrentAgentAssets) {
+    const removal = removeAgentSyncAssetsLocked(plan.targets);
+    if (removal.failures.length > 0) return;
+  }
+  if (plan.injectedRules !== null) {
+    try {
+      removeProvenV4Rules(genieDir, plan.injectedRules, dependencies.v4RulesRemoval);
+    } catch (error) {
+      console.log(`  \x1b[33m!\x1b[0m Preserved v4 rules: ${errorMessage(error)}`);
+      return;
+    }
+  }
+  (dependencies.removeRuntimeIntegrations ?? removeRuntimeIntegrations)(plan.removeMarketplace);
+  const manifest = readAgentFilesManifestState(join(plan.targets.claudeDir ?? resolveClaudeDir(), 'agents'));
+  if (manifest.kind === 'unsafe' || (manifest.kind === 'managed' && Object.keys(manifest.files).length > 0)) return;
+  if (plan.genieHomeIdentity !== null && plan.genieHomeRemovalDigest !== null) {
+    try {
+      removeGenieDirPreservingStateBackups(
+        genieDir,
+        plan.genieHomeIdentity,
+        plan.genieHomeRemovalDigest,
+        dependencies.genieHomeRemoval,
+      );
+    } catch (error) {
+      console.log(`  \x1b[33m!\x1b[0m Preserved Genie install state: ${errorMessage(error)}`);
+      return;
+    }
+  }
+  if (plan.sourceSymlinks.size > 0) {
+    removeSymlinks(plan.sourceSymlinkLocalBin, genieDir, [...plan.sourceSymlinks.keys()], {
+      planned: plan.sourceSymlinks,
+      beforeCapture: dependencies.sourceSymlinkRemoval?.beforeCapture,
+    });
+  }
 }
 
 /**
@@ -2137,41 +3217,25 @@ export function performUninstall(
   removeMarketplace: boolean,
   dependencies: PerformUninstallDependencies = {},
 ): void {
-  const targets = dependencies.agentSyncTargets ?? {};
-  const genieHome = targets.genieHome ?? resolveGenieHome();
-  const hasCurrentAgentAssets = hasAgentAssets && collectAgentSyncAssets(targets).length > 0;
-  const hasRemovableGenieDir = hasGenieDir && hasRemovableGenieInstallState(genieDir);
-  const hasInjectedRules =
-    dependencies.orchestrationRulesPath !== undefined && existsSync(dependencies.orchestrationRulesPath);
-  if (
-    !hasCurrentAgentAssets &&
-    !hasRemovableGenieDir &&
-    !hasInjectedRules &&
-    existingSymlinks.length === 0 &&
-    !removeMarketplace
-  ) {
-    return;
-  }
+  const plan = planCompatibilityUninstall(
+    existingSymlinks,
+    genieDir,
+    hasGenieDir,
+    hasAgentAssets,
+    removeMarketplace,
+    dependencies,
+  );
+  if (plan === null) return;
 
   let lock: { release: () => void } | null;
   try {
-    lock = acquireAgentSyncLock(genieHome);
+    lock = acquireAgentSyncLock(plan.genieHome);
   } catch {
     return;
   }
   if (lock === null) return;
   try {
-    if (hasCurrentAgentAssets) {
-      const removal = removeAgentSyncAssetsLocked(targets);
-      if (removal.failures.length > 0) return;
-    }
-    if (hasInjectedRules) unlinkSync(dependencies.orchestrationRulesPath as string);
-    (dependencies.removeRuntimeIntegrations ?? removeRuntimeIntegrations)(removeMarketplace);
-    if (hasRemovableGenieDir) removeGenieDirPreservingStateBackups(genieDir);
-    const plannedNames = existingSymlinks.filter((name): name is (typeof SYMLINKS)[number] =>
-      SYMLINKS.some((candidate) => candidate === name),
-    );
-    if (plannedNames.length > 0) removeSymlinks(LOCAL_BIN, genieDir, plannedNames);
+    executeCompatibilityUninstall(genieDir, plan, dependencies);
   } finally {
     lock.release();
   }
@@ -2200,18 +3264,20 @@ function uninstallBatchScope(plan: UninstallPlan): UninstallBatchScope {
       )
       .sort((left, right) => left.name.localeCompare(right.name)),
     codexRoleInventoryStatus: plan.codexRoleAgents.status,
-    genieHomePresent: plan.hasGenieDir,
-    ownedRulesPath: plan.hasOwnedRules ? resolve(plan.legacyReport.rulesFile.path) : null,
+    genieHomeIdentity: plan.genieHomeIdentity,
+    genieHomeRemovalDigest: plan.genieHomeRemovalDigest,
+    ownedRules: plan.ownedRules,
     removeMarketplace: plan.removeMarketplace,
     runtimeClients: { codex: plan.runtimeClients.codex, claude: plan.runtimeClients.claude },
     runtimePlugins: { codex: plan.runtimeEvidence.codex, claude: plan.runtimeEvidence.claude },
-    symlinks: SYMLINKS.filter((name) => plan.existingSymlinks.includes(name)),
+    symlinks: plan.ownedSourceSymlinks,
   };
 }
 
 export function performFreshUninstallPlan(
   genieDir: string,
   removeMarketplace: boolean,
+  homeRemovalOptions: GenieHomeRemovalOptions = {},
 ): {
   execution: UninstallPlan;
   result: UninstallResult;
@@ -2222,6 +3288,9 @@ export function performFreshUninstallPlan(
   recoverUninstallTransactions();
   const execution = inspectUninstallPlan(genieDir, removeMarketplace);
   const unsafeState = [
+    ...(execution.claudeAgentManifest.kind === 'unsafe'
+      ? [`Claude agent ownership manifest is unsafe: ${execution.claudeAgentManifest.reason}`]
+      : []),
     ...(execution.codexRoleAgents.status === 'corrupt'
       ? [
           `Codex role-agent ownership inventory is corrupt: ${execution.codexRoleAgents.error ?? execution.codexRoleAgents.inventoryPath}`,
@@ -2236,7 +3305,7 @@ export function performFreshUninstallPlan(
     throw new Error(`uninstall preflight found unreadable or corrupt integration state: ${unsafeState.join('; ')}`);
   }
   const batch = executeUninstallBatch(genieDir, uninstallBatchScope(execution), (scope, progress) =>
-    performUninstallScope(genieDir, scope, progress),
+    performUninstallScope(genieDir, scope, progress, homeRemovalOptions),
   );
   return {
     execution,

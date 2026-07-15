@@ -8,6 +8,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -87,6 +88,10 @@ function healthyCodexProof(activePluginRoot = '/fixture/plugin/root'): CodexHeal
   }) as CodexHealthProof;
 }
 
+function canonicalTempDir(prefix: string): string {
+  return realpathSync(mkdtempSync(join(tmpdir(), prefix)));
+}
+
 /** Default plugin-only seams: healthy probe/proof/session against a fresh isolated fallback tier. */
 function healthyCodexPluginOnly(overrides: CodexPluginOnlyDeps = {}): CodexPluginOnlyDeps {
   return {
@@ -98,7 +103,7 @@ function healthyCodexPluginOnly(overrides: CodexPluginOnlyDeps = {}): CodexPlugi
       tools: [...REQUIRED_GENIE_MCP_TOOLS],
       wishStatusReadOnly: true,
     }),
-    fallbackSkillsDir: mkdtempSync(join(tmpdir(), 'genie-fallback-skills-')),
+    fallbackSkillsDir: canonicalTempDir('genie-fallback-skills-'),
     ...overrides,
   };
 }
@@ -2259,7 +2264,7 @@ function baseConvergeOptions(fallbackSkillsDir: string, overrides: Partial<Codex
 
 describe('convergeCodexPluginOnly ordering and single-proof (R1)', () => {
   test('orders converge → single probe → prove → retire → role agents, with exactly one probe', () => {
-    const fallback = mkdtempSync(join(tmpdir(), 'genie-fallback-order-'));
+    const fallback = canonicalTempDir('genie-fallback-order-');
     const trace: string[] = [];
     let probes = 0;
     const options = baseConvergeOptions(fallback, {
@@ -2310,7 +2315,7 @@ describe('convergeCodexPluginOnly ordering and single-proof (R1)', () => {
   });
 
   test('a deliberately disabled plugin skips health + retirement and is never enabled (R3)', () => {
-    const fallback = mkdtempSync(join(tmpdir(), 'genie-fallback-disabled-'));
+    const fallback = canonicalTempDir('genie-fallback-disabled-');
     let proved = false;
     let retired = false;
     const outcome = convergeCodexPluginOnly(
@@ -2336,7 +2341,7 @@ describe('convergeCodexPluginOnly ordering and single-proof (R1)', () => {
   });
 
   test('a failed convergence returns the failure without retiring any fallback (R9)', () => {
-    const fallback = mkdtempSync(join(tmpdir(), 'genie-fallback-failed-'));
+    const fallback = canonicalTempDir('genie-fallback-failed-');
     let retired = false;
     const outcome = convergeCodexPluginOnly(
       baseConvergeOptions(fallback, {
@@ -2353,7 +2358,7 @@ describe('convergeCodexPluginOnly ordering and single-proof (R1)', () => {
   });
 
   test('retires a proven-clean fallback then a second run is a no-op with no new transaction (R7/A11)', () => {
-    const fallback = mkdtempSync(join(tmpdir(), 'genie-fallback-idem-'));
+    const fallback = canonicalTempDir('genie-fallback-idem-');
     // Target skill dir uses mkdirSync so its physical-tree digest (which includes
     // the root directory mode) matches the mkdirSync-created fallback skill dir.
     const targetParent = mkdtempSync(join(tmpdir(), 'genie-target-skill-'));
@@ -2400,7 +2405,7 @@ describe('convergeCodexPluginOnly preservedCollisions counts only real on-disk c
   // "preserved N personal collision(s)" note when the count is > 0, so a count
   // of 0 keeps the phantom collision phrase out of the user-facing detail.
   test('post-migration second run: only the quarantine root remains, all canonical skills migrated → 0 collisions', () => {
-    const fallback = mkdtempSync(join(tmpdir(), 'genie-fallback-postmigration-'));
+    const fallback = canonicalTempDir('genie-fallback-postmigration-');
     // Post-migration steady state: every canonical skill has left the top level
     // (moved under the retirement transaction root during the first run).
     mkdirSync(join(fallback, CODEX_FALLBACK_RETIREMENT_ROOT), { recursive: true });
@@ -2411,7 +2416,7 @@ describe('convergeCodexPluginOnly preservedCollisions counts only real on-disk c
   });
 
   test('fallback dir exists with no top-level canonical skills present → 0 collisions', () => {
-    const fallback = mkdtempSync(join(tmpdir(), 'genie-fallback-noncanonical-'));
+    const fallback = canonicalTempDir('genie-fallback-noncanonical-');
     // A non-canonical personal skill name never enters the plan (it is not in
     // skillNames), so it can neither be retired nor inflate the collision count.
     mkdirSync(join(fallback, 'my-personal-skill'), { recursive: true });
@@ -2422,7 +2427,7 @@ describe('convergeCodexPluginOnly preservedCollisions counts only real on-disk c
   });
 
   test('a real modified-managed collision still counts', () => {
-    const fallback = mkdtempSync(join(tmpdir(), 'genie-fallback-realcollision-'));
+    const fallback = canonicalTempDir('genie-fallback-realcollision-');
     // A managed 'wish' skill whose on-disk tree diverges from its recorded
     // marker digest classifies as modified-tree: a genuine personal collision.
     const skillDir = join(fallback, 'wish');
@@ -2437,7 +2442,7 @@ describe('convergeCodexPluginOnly preservedCollisions counts only real on-disk c
   });
 
   test('a well-formed but unrecognized marker is preserved distinctly, not counted as a personal collision', () => {
-    const fallback = mkdtempSync(join(tmpdir(), 'genie-fallback-unrecognized-'));
+    const fallback = canonicalTempDir('genie-fallback-unrecognized-');
     // A well-formed genie marker (managedBy/identityVersion/digest all
     // self-consistent, so the tree was never locally modified) whose
     // (skillName, digest) is not in the frozen historical allowlist and has
@@ -2458,7 +2463,7 @@ describe('convergeCodexPluginOnly preservedCollisions counts only real on-disk c
 
 describe('describeCodexIntegration reports unrecognized fallbacks distinctly from personal collisions', () => {
   test('install detail text separates "unrecognized managed fallback" from "personal collision"', () => {
-    const fallback = mkdtempSync(join(tmpdir(), 'genie-fallback-unrecognized-detail-'));
+    const fallback = canonicalTempDir('genie-fallback-unrecognized-detail-');
     const skillDir = join(fallback, 'wish');
     mkdirSync(skillDir, { recursive: true });
     writeFileSync(join(skillDir, 'SKILL.md'), '# unrecognized wish content, never shipped by genie\n');
@@ -2492,7 +2497,7 @@ describe('describeCodexIntegration reports unrecognized fallbacks distinctly fro
   });
 
   test('install detail text still reports a genuine collision as "personal collision"', () => {
-    const fallback = mkdtempSync(join(tmpdir(), 'genie-fallback-collision-detail-'));
+    const fallback = canonicalTempDir('genie-fallback-collision-detail-');
     const skillDir = join(fallback, 'wish');
     mkdirSync(skillDir, { recursive: true });
     writeFileSync(join(skillDir, 'SKILL.md'), '# wish skill\n');
@@ -2715,7 +2720,7 @@ describe('R8 retirement-conflict contract producer drift (agent-sync ↔ runtime
   }
 
   test('provoked end-to-end: a source edited after planning throws the pinned message and is translated', () => {
-    const tmp = mkdtempSync(join(tmpdir(), 'r8-drift-'));
+    const tmp = canonicalTempDir('r8-drift-');
     try {
       const fallback = join(tmp, 'agents', 'skills');
       const skill = join(fallback, 'wish');

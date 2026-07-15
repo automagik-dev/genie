@@ -1,123 +1,178 @@
 name: Release
 
-# Orchestrator: tag push (or workflow_dispatch) → build → sign-attest →
-# publish. Single workflow run, three sequenced jobs via workflow_call.
-# No workflow_run chaining (anti-recursion guard). Cosign step lives in
-# sign-attest.yml — release.yml is signature-free.
-#
-# Trigger contract — refs/tags/v* (or operator-invoked workflow_dispatch).
-# build-tarballs.yml derives version from package.json at build time;
-# sign-attest.yml + release-publish.yml receive version via workflow_call
-# inputs. Per-job `permissions:` blocks declare the union of the called
-# workflow's inner needs (caller is the ceiling — workflow_call does NOT
-# auto-inherit, per Decision #7 of the wish). Blanket `secrets: inherit` was
-# removed (F18 least-privilege): the called workflows use only GITHUB_TOKEN,
-# which reusable workflows receive automatically.
-#
-# The cosign keyless OIDC SAN URI remains
-# `.github/workflows/sign-attest.yml@<ref>` because the cosign step
-# physically lives inside sign-attest.yml — install.sh:24's identity pin
-# is preserved by construction (Decision #1).
+# Trusted release orchestrator. The workflow itself is always dispatched on
+# refs/heads/main; a release tag is an explicitly validated source identity,
+# never the workflow/control ref. version.yml supplies the exact tag SHA and
+# successful source CI run. Automated dev/homolog calls come only from the
+# trusted local version.yml workflow. Stable is always a first-attempt human
+# dispatch; the production environment then requires a different reviewer.
 
 on:
-  push:
-    tags: ['v*']
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version (e.g. 5.260702.1 — no v prefix)'
+        description: 'Version (for example 5.260702.1, without a v prefix)'
         required: true
         type: string
       channel:
-        description: 'Release channel — stable publishes to @latest; homolog + dev are prereleases. All channel manifests live on MAIN (.well-known/); the channel only selects which file is written'
-        required: false
+        description: 'Release channel (stable is the only manual channel)'
+        required: true
         type: choice
-        default: stable
-        # Canonical channel taxonomy (Felipe directive 2026-05-12,
-        # unified across the automagik sibling projects):
-        # ALL channel manifests are committed to MAIN — matching
-        # install.sh's MANIFEST_BASE=.../main/.well-known for every
-        # channel. The channel selects WHICH file, never the branch:
-        #   stable  → main:.well-known/latest.json
-        #   homolog → main:.well-known/homolog.json
-        #   dev     → main:.well-known/dev.json
-        # beta + canary retired. genie may not have an active homolog
-        # branch yet (omni does); the channel surface is kept for
-        # cross-repo taxonomy parity + future operator dispatch.
         options:
           - stable
+      source_sha:
+        description: 'Exact commit SHA to build (the v<version> commit for dev)'
+        required: true
+        type: string
+      source_branch:
+        description: 'Branch on the successful source CI run'
+        required: true
+        type: choice
+        options:
+          - main
           - homolog
           - dev
+      source_ci_run_id:
+        description: 'Authorizing CI run ID (exact promotion SHA, or parent of a deterministic dev version child)'
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      version:
+        description: 'Version without a v prefix'
+        required: true
+        type: string
+      channel:
+        description: 'Automated release channel'
+        required: true
+        type: string
+      source_sha:
+        description: 'Exact commit SHA to build'
+        required: true
+        type: string
+      source_branch:
+        description: 'Branch on the successful source CI run'
+        required: true
+        type: string
+      source_ci_run_id:
+        description: 'Authorizing CI run ID'
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  # Serialize retries/promotions of one immutable version. Cross-version runs
+  # stay independent so a stable approval wait cannot block automated dev or
+  # homolog delivery; manifest reconciliation is monotonic and CAS-retried.
+  group: release-${{ inputs.version }}
+  queue: max
   cancel-in-progress: false
 
 jobs:
-  # F16 gate (wish stable-release-security-gate): a stable-capable
-  # workflow_dispatch must target a protected `v<version>` tag, never a
-  # free-form branch ref. The automated dev release dispatches this workflow on
-  # the freshly-pushed tag (version.yml), so dev is never blocked — the guard is
-  # a tag-ref requirement on manual dispatch only (HARD INVARIANT preserved). A
-  # bare `push: tags: v*` trigger is already tag-bound, so the guard no-ops for
-  # it. Extracted into scripts/release-guard.sh so it is unit-tested
-  # (scripts/release-guard.test.ts) rather than an unverifiable inline `${{ }}`.
   guard:
-    name: Guard stable-capable dispatch
+    name: Bind trusted control + source provenance
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
+      actions: read
     steps:
-      - uses: actions/checkout@v5
-      - name: Require a protected tag for stable-capable dispatch
+      # This checkout is the workflow/control ref (main), not source_sha. It
+      # loads the guard from the same protected control commit as this workflow.
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require trusted main control and CI-approved tag SHA
         shell: bash
-        run: bash scripts/release-guard.sh require-dispatch-tag
         env:
           EVENT: ${{ github.event_name }}
-          REF: ${{ github.ref }}
+          CONTROL_REF: ${{ github.ref }}
+          CONTROL_SHA: ${{ github.sha }}
+          CALLER_WORKFLOW_REF: ${{ github.workflow_ref }}
+          CALLER_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          DISPATCH_ACTOR: ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
           VERSION: ${{ inputs.version }}
           CHANNEL: ${{ inputs.channel }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          SOURCE_BRANCH: ${{ inputs.source_branch }}
+          SOURCE_CI_RUN_ID: ${{ inputs.source_ci_run_id }}
+          EXPECTED_REPO: ${{ github.repository }}
+          EXPECTED_WORKFLOW: .github/workflows/ci.yml
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/release-guard.sh guard-trusted-release
+
+  # Stable approval is deliberately before build/sign, not only before the
+  # final upload. Keep it in a stable-only job so dev/homolog automation never
+  # relies on undocumented empty-environment behavior. Rollout requirement:
+  # production's deployment policy allows protected main, the control ref.
+  approve-stable:
+    needs: guard
+    if: inputs.channel == 'stable'
+    name: Approve stable release identity
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment:
+      name: production
+    steps:
+      - name: Record approved identity
+        env:
+          VERSION: ${{ inputs.version }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: echo "Approved stable v${VERSION} from ${SOURCE_SHA}"
+
+  authorize:
+    needs: [guard, approve-stable]
+    if: >-
+      always() &&
+      needs.guard.result == 'success' &&
+      (inputs.channel != 'stable' || needs.approve-stable.result == 'success')
+    name: Authorize release identity
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Record authorized identity
+        env:
+          VERSION: ${{ inputs.version }}
+          CHANNEL: ${{ inputs.channel }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: echo "Authorized v${VERSION} (${CHANNEL}) from ${SOURCE_SHA}"
 
   build:
-    needs: guard
+    needs: authorize
     uses: ./.github/workflows/build-tarballs.yml
     permissions:
       contents: read
-    # GITHUB_TOKEN is provided to reusable workflows automatically; the called
-    # workflows use no other secret (F18 — blanket `secrets: inherit` removed).
+    with:
+      version: ${{ inputs.version }}
+      source_sha: ${{ inputs.source_sha }}
 
   sign-attest:
     needs: build
     uses: ./.github/workflows/sign-attest.yml
     permissions:
-      contents: write       # SLSA reusable nested upload-assets check (#1740)
-      id-token: write       # cosign keyless + attest-build-provenance OIDC
-      attestations: write   # GitHub Attestations API registration
-      actions: read         # cross-run artifact metadata
-    # No `with.version:` — sign-attest.yml derives the bare version from
-    # tarball filenames (genie-<VERSION>-<PLATFORM>.tar.gz). Passing
-    # github.ref_name on tag pushes would leak the `v` prefix and fail
-    # sign-attest's input/derived version equality check at line 129-132.
-    # secrets: inherit removed (F18) — sign-attest only reads GITHUB_TOKEN.
+      contents: write
+      id-token: write
+      attestations: write
+      actions: read
+    with:
+      version: ${{ inputs.version }}
+      channel: ${{ inputs.channel }}
+      source_sha: ${{ inputs.source_sha }}
+      source_branch: ${{ inputs.source_branch }}
+      source_ci_run_id: ${{ inputs.source_ci_run_id }}
 
   publish:
     needs: sign-attest
     uses: ./.github/workflows/release-publish.yml
     permissions:
-      contents: write       # gh release create/upload + push latest.json commit
-      id-token: write       # reserved for any OIDC-using publish-time verifiers
-      actions: read         # release-publish's guard job reads upstream run records;
-                            # a called workflow cannot elevate past the caller, so the
-                            # orchestrated path fails at init without this grant
-    # secrets: inherit removed (F18) — release-publish only reads GITHUB_TOKEN.
+      contents: write
+      attestations: read
     with:
-      version: ${{ needs.sign-attest.outputs.version }}
-      # workflow_dispatch supplies the channel (version.yml passes 'dev' for
-      # dev-branch dispatches, 'stable' for main-branch dispatches). Bare
-      # tag pushes fall through to stable. See wish release-channel-dev.
-      channel: ${{ inputs.channel || 'stable' }}
+      version: ${{ inputs.version }}
+      channel: ${{ inputs.channel }}
       draft: false

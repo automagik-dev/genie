@@ -12,6 +12,7 @@
 
 import { Command, Option } from 'commander';
 import { doctorCommand } from './genie-commands/doctor.js';
+import { type InstallPromoteCommandOptions, installPromoteCommand } from './genie-commands/install-promote.js';
 import { type InstallOptions, installCommand } from './genie-commands/install.js';
 import { type SetupOptions, setupCommand } from './genie-commands/setup.js';
 import {
@@ -34,6 +35,13 @@ import { registerV5TaskCommands } from './term-commands/v5-task.js';
 const program = new Command();
 
 program.name('genie').description('Genie CLI - AI-assisted development').version(VERSION);
+
+program
+  .command('__install-promote', { hidden: true })
+  .option('--staging-root <path>')
+  .option('--expected-version <version>')
+  .option('--self-test')
+  .action((options: InstallPromoteCommandOptions) => installPromoteCommand(options));
 
 // Global --no-interactive flag: disables all interactive prompts (scripting safety)
 program.option('--no-interactive', 'Disable interactive prompts (exit 2 instead of prompting)');
@@ -88,7 +96,9 @@ program
   .option('--no-verify', 'Skip the post-update binary verify probe')
   .option('--skip-maintenance', 'Skip the post-update binary verify probe (or set GENIE_UPDATE_SKIP_MAINTENANCE=1)')
   .addOption(
-    new Option('--rollback', 'Restore the most recent ~/.genie/bin/.previous binary backup').conflicts('syncOnly'),
+    new Option('--rollback', 'Check legacy rollback state and print signed-version reinstall guidance').conflicts(
+      'syncOnly',
+    ),
   )
   .addOption(
     new Option(

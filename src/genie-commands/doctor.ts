@@ -102,6 +102,8 @@ export interface RoleAgentDelivery {
   manifestStatus: 'managed' | 'foreign' | 'absent' | 'unsafe';
   /** Present only when `manifestStatus === 'unsafe'`. */
   manifestReason?: string;
+  /** Source-inventory failures that make a seemingly empty/current delivery untrustworthy. */
+  sourceIssues: string[];
   /** One entry per source role agent (and any managed manifest entry), name-sorted. */
   files: Array<{ name: string; state: RoleAgentFileState }>;
   /** True when the `genie@automagik` plugin is ALSO enabled — plugin `genie:*` and fanned bare names both surface. */
@@ -845,17 +847,38 @@ function councilStampState(councilPath: string, pluginRoot: string): { stale: bo
 // SINGLE shared dir-level manifest (Group A), so this classifier is per-FILE.
 // ============================================================================
 
-/** Digest of each flat source role agent under `<pluginRoot>/agents`; unreadable files are skipped. */
-function sourceAgentDigests(pluginRoot: string): Map<string, string> {
+interface SourceAgentDigests {
+  digests: Map<string, string>;
+  issues: string[];
+}
+
+function diagnosticError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** Digest each flat source role agent without discarding enumeration/read failures. */
+function sourceAgentDigests(pluginRoot: string): SourceAgentDigests {
   const digests = new Map<string, string>();
-  for (const agent of enumerateSourceAgentFiles(pluginRoot)) {
+  const issues: string[] = [];
+  const agentsRoot = join(pluginRoot, 'agents');
+  let agents: ReturnType<typeof enumerateSourceAgentFiles>;
+  try {
+    agents = enumerateSourceAgentFiles(pluginRoot);
+  } catch (error) {
+    return {
+      digests,
+      issues: [`cannot enumerate source role agents at ${agentsRoot}: ${diagnosticError(error)}`],
+    };
+  }
+  if (agents.length === 0) issues.push(`source role-agent inventory is empty at ${agentsRoot}`);
+  for (const agent of agents) {
     try {
       digests.set(agent.name, computeFileDigest(agent.path));
-    } catch {
-      /* unreadable source file — omit rather than misclassify */
+    } catch (error) {
+      issues.push(`cannot read source role agent ${agent.name}: ${diagnosticError(error)}`);
     }
   }
-  return digests;
+  return { digests, issues };
 }
 
 function isRegularFile(path: string): boolean {
@@ -893,7 +916,10 @@ function classifyRoleAgentFile(
     if (present) return inSource ? 'present-unmanaged' : null;
     return inSource ? 'missing-from-target' : null;
   }
-  if (!present) return inSource ? 'missing-from-target' : null;
+  // A manifest entry is durable ownership evidence even after both the source
+  // and live file disappear. Report it as missing so doctor never hides stale
+  // ownership metadata behind a healthy empty inventory.
+  if (!present) return 'missing-from-target';
   const onDisk = safeFileDigest(join(agentsDir, name));
   const current = inSource && onDisk !== null && onDisk === entry.digest && entry.digest === source.get(name);
   return current ? 'genie-managed-current' : 'genie-managed-stale';
@@ -901,7 +927,8 @@ function classifyRoleAgentFile(
 
 /** Classify every source role agent (and any managed manifest entry) under `<claudeDir>/agents`. */
 function classifyRoleAgents(pluginRoot: string, agentsDir: string): Omit<RoleAgentDelivery, 'duplicateSurface'> {
-  const source = sourceAgentDigests(pluginRoot);
+  const sourceState = sourceAgentDigests(pluginRoot);
+  const source = sourceState.digests;
   const manifest = readAgentFilesManifestState(agentsDir);
   const entries = manifest.kind === 'managed' ? manifest.files : {};
   const names = new Set<string>([...source.keys(), ...Object.keys(entries)]);
@@ -913,19 +940,28 @@ function classifyRoleAgents(pluginRoot: string, agentsDir: string): Omit<RoleAge
   return {
     manifestStatus: manifest.kind,
     manifestReason: manifest.kind === 'unsafe' ? manifest.reason : undefined,
+    sourceIssues: sourceState.issues,
     files,
   };
 }
 
 /** Human-facing summary + a stale flag (any non-current state, or an unusable manifest, warns). */
 function roleAgentSummary(delivery: Omit<RoleAgentDelivery, 'duplicateSurface'>): { detail: string; stale: boolean } {
+  const sourceProblem =
+    delivery.sourceIssues.length === 0 ? null : `source inventory unavailable (${delivery.sourceIssues.join('; ')})`;
   if (delivery.manifestStatus === 'unsafe') {
     return {
-      detail: `manifest unusable (${delivery.manifestReason}) — every role agent treated as unmanaged`,
+      detail: `${sourceProblem === null ? '' : `${sourceProblem}; `}manifest unusable (${delivery.manifestReason}) — every role agent treated as unmanaged`,
       stale: true,
     };
   }
-  if (delivery.files.length === 0) return { detail: 'no genie role agents detected', stale: false };
+  if (delivery.files.length === 0) {
+    return {
+      detail:
+        sourceProblem === null ? 'no genie role agents detected' : `${sourceProblem}; no genie role agents detected`,
+      stale: sourceProblem !== null,
+    };
+  }
   const counts: Record<RoleAgentFileState, number> = {
     'genie-managed-current': 0,
     'genie-managed-stale': 0,
@@ -933,11 +969,12 @@ function roleAgentSummary(delivery: Omit<RoleAgentDelivery, 'duplicateSurface'>)
     'missing-from-target': 0,
   };
   for (const file of delivery.files) counts[file.state] += 1;
-  const detail =
+  const fileDetail =
     `${counts['genie-managed-current']}/${delivery.files.length} genie-managed-current, ` +
     `${counts['present-unmanaged']} present-unmanaged, ${counts['genie-managed-stale']} stale, ` +
     `${counts['missing-from-target']} missing-from-target`;
-  const stale = counts['genie-managed-current'] !== delivery.files.length;
+  const detail = sourceProblem === null ? fileDetail : `${sourceProblem}; ${fileDetail}`;
+  const stale = sourceProblem !== null || counts['genie-managed-current'] !== delivery.files.length;
   return { detail, stale };
 }
 

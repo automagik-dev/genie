@@ -12,7 +12,7 @@
  * while its exact user bytes survive.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import {
   chmodSync,
@@ -30,7 +30,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve, win32 } from 'node:path';
+import { basename, dirname, join, resolve, win32 } from 'node:path';
 import {
   MANAGED_BY,
   PHYSICAL_TREE_IDENTITY_VERSION,
@@ -42,9 +42,12 @@ import {
   stampWorkflow,
 } from '../lib/agent-sync.js';
 import {
+  type ProvenV4Rules,
   type UninstallBatchScope,
+  type UninstallResult,
   clearUninstallBatchDecision,
   collectAgentSyncAssets,
+  discardLegacyUninstallBatchDecision,
   executeUninstallBatch,
   hasPendingUninstallTransactions,
   hasRemovableGenieInstallState,
@@ -52,16 +55,21 @@ import {
   inspectUninstallPlan,
   isGenieSymlink,
   isSameOrContainedPath,
+  performFreshUninstallPlan,
   performUninstall,
   readUninstallBatchDecision,
   recordUninstallBatchDecision,
   recoverUninstallTransactions,
   removeAgentSyncAssets,
+  removeProvenV4Rules,
+  removeRulesMember,
+  removeSymlinkMembers,
   removeSymlinks,
   uninstallBatchIntegrationViolations,
   uninstallBatchJournalPath,
   uninstallBatchMemberId,
   uninstallBatchRuntimeTargets,
+  updateUninstallBatchProgress,
 } from './uninstall.js';
 
 describe('path containment', () => {
@@ -87,6 +95,30 @@ describe('agent-sync managed-asset removal', () => {
 
   function targets() {
     return { claudeDir, codexDir, agentsSkillsDir, hermesHome, genieHome, now: fixedNow };
+  }
+
+  function withIsolatedHomes<T>(run: () => T): T {
+    const overrides = {
+      GENIE_HOME: genieHome,
+      CLAUDE_CONFIG_DIR: claudeDir,
+      CODEX_HOME: codexDir,
+      HERMES_HOME: hermesHome,
+    };
+    const prior = Object.fromEntries(Object.keys(overrides).map((name) => [name, process.env[name]]));
+    Object.assign(process.env, overrides);
+    try {
+      return run();
+    } finally {
+      for (const [name, value] of Object.entries(prior)) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
+  }
+
+  function requireCapturedPath(path: string | null): string {
+    if (path === null) throw new Error('expected destructive-path fixture to capture an object');
+    return path;
   }
 
   function uninstallBackupCollisionPath(): string {
@@ -151,7 +183,7 @@ describe('agent-sync managed-asset removal', () => {
     const manifest = readAgentFilesManifest(parent) ?? { managedBy: MANAGED_BY, files: {} };
     manifest.files[name] = {
       digest: computeFileDigest(path),
-      version: '1',
+      version: '1.0.0',
       syncedAt: '2026-07-11T10:00:00.000Z',
     };
     writeFileSync(join(parent, '.genie-sync.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
@@ -241,6 +273,19 @@ describe('agent-sync managed-asset removal', () => {
     expect(result.removed).toContain(managed);
     expect(existsSync(managed)).toBe(false);
     expect(existsSync(transaction)).toBe(false);
+  });
+
+  test('retained Genie-home capture is visible pending evidence and blocks automatic recovery', () => {
+    const capture = mkdtempSync(join(dirname(genieHome), `.${basename(genieHome)}.uninstall-capture-`));
+    const precious = join(capture, 'object', 'FOREIGN.txt');
+    mkdirSync(dirname(precious));
+    writeFileSync(precious, 'retained root capture\n');
+
+    expect(hasPendingUninstallTransactions(targets())).toBe(true);
+    expect(() => recoverUninstallTransactions(targets())).toThrow(
+      `retained uninstall capture requires no-clobber recovery review: ${capture}`,
+    );
+    expect(readFileSync(precious, 'utf8')).toBe('retained root capture\n');
   });
 
   test('user-modified managed dir is kept byte-identical at the same path', () => {
@@ -673,7 +718,12 @@ describe('agent-sync managed-asset removal', () => {
     const link = join(hermesHome, 'plugins', 'genie');
     const originalTarget = join(genieHome, 'plugins', 'hermes-genie');
     symlinkSync(originalTarget, link);
-    const recorded = { kind: 'link' as const, target: originalTarget };
+    const recordedStat = lstatSync(link);
+    const recorded = {
+      kind: 'link' as const,
+      target: originalTarget,
+      identity: { dev: recordedStat.dev, ino: recordedStat.ino, mode: recordedStat.mode },
+    };
     // Repoint to a different owned target inside the genie home (still collected).
     const otherTarget = join(genieHome, 'plugins', 'hermes-genie-2');
     mkdirSync(otherTarget, { recursive: true });
@@ -698,8 +748,9 @@ describe('agent-sync managed-asset removal', () => {
       agentAssets: [{ path: skill, disposition: 'remove', identity }],
       codexRoleAgents: [],
       codexRoleInventoryStatus: 'missing',
-      genieHomePresent: false,
-      ownedRulesPath: null,
+      genieHomeIdentity: null,
+      genieHomeRemovalDigest: null,
+      ownedRules: null,
       removeMarketplace: false,
       runtimeClients: { codex: false, claude: false },
       runtimePlugins: { codex: false, claude: false },
@@ -928,7 +979,7 @@ describe('agent-sync managed-asset removal', () => {
         if (event.operation !== 'remove' || event.path !== scout) return;
         const manifest = readAgentFilesManifest(agentsDir);
         if (manifest === null) throw new Error('fixture manifest missing at CAS barrier');
-        changedDigest = 'concurrently-reowned-digest';
+        changedDigest = 'f'.repeat(64);
         manifest.files['scout.md'] = { ...manifest.files['scout.md']!, digest: changedDigest };
         writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
       },
@@ -1048,8 +1099,8 @@ describe('agent-sync managed-asset removal', () => {
     const manifest = readAgentFilesManifest(parent);
     if (manifest === null) throw new Error('fixture manifest missing');
     manifest.files['missing.md'] = {
-      digest: 'deadbeef',
-      version: '1',
+      digest: 'd'.repeat(64),
+      version: '1.0.0',
       syncedAt: '2026-07-11T10:00:00.000Z',
     };
     writeFileSync(join(parent, '.genie-sync.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
@@ -1133,6 +1184,215 @@ describe('agent-sync managed-asset removal', () => {
     expect(existsSync(join(displacedHome, '.agent-sync.lock'))).toBe(true);
   });
 
+  test('compatibility uninstall preserves nested foreign bytes when the original child inode transits a replacement root', () => {
+    const originalPayload = join(genieHome, 'plugins', 'genie', 'payload.txt');
+    mkdirSync(dirname(originalPayload), { recursive: true });
+    writeFileSync(originalPayload, 'original\n');
+    const displacedHome = join(tmp, 'displaced-home');
+    const displacedForeignHome = join(tmp, 'displaced-foreign-home');
+    const foreignBytes = Buffer.from('foreign must survive\n');
+    const output: string[] = [];
+    let capturedPath: string | null = null;
+    let swapped = false;
+    const log = spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      output.push(args.map(String).join(' '));
+    });
+
+    try {
+      performUninstall(false, [], genieHome, true, false, false, {
+        agentSyncTargets: targets(),
+        removeRuntimeIntegrations: () => {},
+        genieHomeRemoval: {
+          beforeEntryCapture: () => {
+            if (swapped) return;
+            swapped = true;
+            renameSync(genieHome, displacedHome);
+            mkdirSync(genieHome);
+            // Move A's already-authorized top-level inode into replacement root
+            // B, then add foreign nested bytes beneath that SAME inode.
+            renameSync(join(displacedHome, 'plugins'), join(genieHome, 'plugins'));
+            writeFileSync(join(genieHome, 'plugins', 'FOREIGN.txt'), foreignBytes);
+            writeFileSync(join(genieHome, 'root-marker.txt'), foreignBytes);
+          },
+          afterEntryCapture: (_entry, captured) => {
+            capturedPath = captured;
+            renameSync(genieHome, displacedForeignHome);
+            renameSync(displacedHome, genieHome);
+          },
+        },
+      });
+    } finally {
+      log.mockRestore();
+    }
+
+    expect(swapped).toBe(true);
+    expect(readFileSync(join(displacedForeignHome, 'root-marker.txt'))).toEqual(foreignBytes);
+    const preservedCapture = requireCapturedPath(capturedPath);
+    expect(readFileSync(join(preservedCapture, 'FOREIGN.txt'))).toEqual(foreignBytes);
+    expect(readFileSync(join(preservedCapture, 'genie', 'payload.txt'), 'utf8')).toBe('original\n');
+    expect(
+      output.some((line) => line.includes('captured Genie install tree changed from its exact root-bound snapshot')),
+    ).toBe(true);
+    expect(output.some((line) => line.includes('Install state removed'))).toBe(false);
+  });
+
+  test('authenticated production batch preserves nested foreign bytes when the original child inode transits B', () => {
+    const originalPayload = join(genieHome, 'plugins', 'genie', 'payload.txt');
+    mkdirSync(dirname(originalPayload), { recursive: true });
+    writeFileSync(originalPayload, 'original\n');
+    const displacedHome = join(tmp, 'batch-displaced-home');
+    const displacedForeignHome = join(tmp, 'batch-displaced-foreign-home');
+    const foreignBytes = Buffer.from('batch foreign must survive\n');
+    let capturedPath: string | null = null;
+    let swapped = false;
+
+    const outcome = withIsolatedHomes(() =>
+      performFreshUninstallPlan(genieHome, false, {
+        beforeEntryCapture: () => {
+          if (swapped) return;
+          swapped = true;
+          renameSync(genieHome, displacedHome);
+          mkdirSync(genieHome);
+          renameSync(join(displacedHome, 'plugins'), join(genieHome, 'plugins'));
+          writeFileSync(join(genieHome, 'plugins', 'FOREIGN.txt'), foreignBytes);
+          writeFileSync(join(genieHome, 'root-marker.txt'), foreignBytes);
+        },
+        afterEntryCapture: (_entry, captured) => {
+          capturedPath = captured;
+          renameSync(genieHome, displacedForeignHome);
+          renameSync(displacedHome, genieHome);
+        },
+      }),
+    );
+
+    expect(swapped).toBe(true);
+    expect(
+      outcome.result.failures.some((failure) =>
+        failure.detail.includes('captured Genie install tree changed from its exact root-bound snapshot'),
+      ),
+    ).toBe(true);
+    expect(readFileSync(join(displacedForeignHome, 'root-marker.txt'))).toEqual(foreignBytes);
+    const preservedCapture = requireCapturedPath(capturedPath);
+    expect(readFileSync(join(preservedCapture, 'FOREIGN.txt'))).toEqual(foreignBytes);
+    expect(readFileSync(join(preservedCapture, 'genie', 'payload.txt'), 'utf8')).toBe('original\n');
+    const homeMember = uninstallBatchMemberId('home', resolve(genieHome));
+    expect(readUninstallBatchDecision(genieHome)?.progress.completed).not.toContain(homeMember);
+    expect(existsSync(uninstallBatchJournalPath(genieHome))).toBe(true);
+  });
+
+  test('authenticated home commitment rejects a same-root descendant inserted after planning', () => {
+    const payload = join(genieHome, 'plugins', 'genie', 'payload.txt');
+    const foreign = join(genieHome, 'plugins', 'FOREIGN.txt');
+    const foreignBytes = Buffer.from('same-run foreign must survive\n');
+    mkdirSync(dirname(payload), { recursive: true });
+    writeFileSync(payload, 'planned source\n');
+    let injected = false;
+
+    const outcome = withIsolatedHomes(() =>
+      performFreshUninstallPlan(genieHome, false, {
+        beforeRemovalSnapshot: () => {
+          if (injected) return;
+          injected = true;
+          writeFileSync(foreign, foreignBytes);
+        },
+      }),
+    );
+
+    expect(injected).toBe(true);
+    expect(
+      outcome.result.failures.some((failure) =>
+        failure.detail.includes('changed after its authenticated removal commitment'),
+      ),
+    ).toBe(true);
+    expect(readFileSync(foreign)).toEqual(foreignBytes);
+    expect(readFileSync(payload, 'utf8')).toBe('planned source\n');
+    const homeMember = uninstallBatchMemberId('home', resolve(genieHome));
+    expect(readUninstallBatchDecision(genieHome)?.progress.completed).not.toContain(homeMember);
+    expect(existsSync(uninstallBatchJournalPath(genieHome))).toBe(true);
+  });
+
+  test('pending authenticated home commitment never widens to a descendant added before retry', () => {
+    const payload = join(genieHome, 'plugins', 'genie', 'payload.txt');
+    const foreign = join(genieHome, 'plugins', 'FOREIGN-on-retry.txt');
+    const foreignBytes = Buffer.from('pending-batch foreign must survive\n');
+    mkdirSync(dirname(payload), { recursive: true });
+    writeFileSync(payload, 'planned before interruption\n');
+    const execution = withIsolatedHomes(() => inspectUninstallPlan(genieHome, false));
+    if (execution.genieHomeIdentity === null || execution.genieHomeRemovalDigest === null) {
+      throw new Error('fixture did not produce Genie home removal authority');
+    }
+    const pendingScope: UninstallBatchScope = {
+      agentAssets: [],
+      codexRoleAgents: [],
+      codexRoleInventoryStatus: 'missing',
+      genieHomeIdentity: execution.genieHomeIdentity,
+      genieHomeRemovalDigest: execution.genieHomeRemovalDigest,
+      ownedRules: null,
+      removeMarketplace: false,
+      runtimeClients: { codex: false, claude: false },
+      runtimePlugins: { codex: false, claude: false },
+      symlinks: [],
+    };
+    recordUninstallBatchDecision(genieHome, pendingScope);
+    writeFileSync(foreign, foreignBytes);
+
+    const firstRetry = withIsolatedHomes(() => performFreshUninstallPlan(genieHome, false));
+    const secondRetry = withIsolatedHomes(() => performFreshUninstallPlan(genieHome, false));
+
+    for (const retry of [firstRetry, secondRetry]) {
+      expect(
+        retry.result.failures.some((failure) =>
+          failure.detail.includes('changed after its authenticated removal commitment'),
+        ),
+      ).toBe(true);
+    }
+    expect(readFileSync(foreign)).toEqual(foreignBytes);
+    expect(readFileSync(payload, 'utf8')).toBe('planned before interruption\n');
+    const decision = readUninstallBatchDecision(genieHome);
+    expect(decision?.scope.genieHomeRemovalDigest).toBe(execution.genieHomeRemovalDigest);
+    expect(decision?.progress.completed).not.toContain(uninstallBatchMemberId('home', resolve(genieHome)));
+    expect(existsSync(uninstallBatchJournalPath(genieHome))).toBe(true);
+  });
+
+  test('late nested insertion survives the final non-recursive rmdir check without a completion receipt', () => {
+    const payload = join(genieHome, 'plugins', 'genie', 'payload.txt');
+    const foreignBytes = Buffer.from('late foreign must survive\n');
+    mkdirSync(dirname(payload), { recursive: true });
+    writeFileSync(payload, 'planned source\n');
+    let foreign: string | null = null;
+
+    const outcome = withIsolatedHomes(() =>
+      performFreshUninstallPlan(genieHome, false, {
+        beforeDirectoryRemoval: (directory) => {
+          if (foreign !== null) return;
+          foreign = join(directory, 'LATE-FOREIGN.txt');
+          writeFileSync(foreign, foreignBytes);
+        },
+      }),
+    );
+
+    const preservedForeign = requireCapturedPath(foreign);
+    expect(readFileSync(preservedForeign)).toEqual(foreignBytes);
+    expect(outcome.result.failures.some((failure) => failure.detail.includes('ENOTEMPTY'))).toBe(true);
+    const homeMember = uninstallBatchMemberId('home', resolve(genieHome));
+    expect(readUninstallBatchDecision(genieHome)?.progress.completed).not.toContain(homeMember);
+    expect(existsSync(uninstallBatchJournalPath(genieHome))).toBe(true);
+  });
+
+  test('authenticated uninstall rejects truncated ownership state before source removal', () => {
+    const originalPayload = join(genieHome, 'plugins', 'genie', 'payload.txt');
+    mkdirSync(dirname(originalPayload), { recursive: true });
+    writeFileSync(originalPayload, 'keep source\n');
+    const agentsDir = join(claudeDir, 'agents');
+    mkdirSync(agentsDir, { recursive: true });
+    writeFileSync(join(agentsDir, '.genie-sync.json'), '{"managedBy":"genie-agent-sync","files":{');
+
+    expect(() => withIsolatedHomes(() => performFreshUninstallPlan(genieHome, false))).toThrow(
+      'Claude agent ownership manifest is unsafe',
+    );
+    expect(readFileSync(originalPayload, 'utf8')).toBe('keep source\n');
+  });
+
   test('INV1: uninstall preserves captured bytes mutated after validation instead of discarding them', () => {
     const scout = managedAgent('scout.md', '# shipped scout\n');
     const agentsDir = join(claudeDir, 'agents');
@@ -1165,7 +1425,13 @@ describe('agent-sync managed-asset removal', () => {
     const manifestPath = join(agentsDir, '.genie-sync.json');
     const replacement = {
       managedBy: MANAGED_BY,
-      files: { 'scout.md': { digest: 'replacement-owner', version: '2', syncedAt: 'later' } },
+      files: {
+        'scout.md': {
+          digest: 'e'.repeat(64),
+          version: '2.0.0',
+          syncedAt: '2026-07-11T11:00:00.000Z',
+        },
+      },
     };
     const replacementBytes = Buffer.from(`${JSON.stringify(replacement, null, 2)}\n`);
 
@@ -1254,7 +1520,7 @@ describe('durable uninstall batch', () => {
   let genieHome: string;
 
   // The journal-mechanics tests exercise member ids (path-based), not physical
-  // removal, so a synthetic-but-valid skill identity satisfies the v2 schema.
+  // removal, so a synthetic-but-valid skill identity satisfies the v3 schema.
   const syntheticSkillIdentity = {
     kind: 'skill' as const,
     contentDigest: 'a'.repeat(64),
@@ -1266,8 +1532,9 @@ describe('durable uninstall batch', () => {
       agentAssets: agentPaths.map((path) => ({ path, disposition: 'remove', identity: syntheticSkillIdentity })),
       codexRoleAgents: [],
       codexRoleInventoryStatus: 'missing',
-      genieHomePresent: false,
-      ownedRulesPath: null,
+      genieHomeIdentity: null,
+      genieHomeRemovalDigest: null,
+      ownedRules: null,
       removeMarketplace: false,
       runtimeClients: { codex: false, claude: false },
       runtimePlugins: { codex: false, claude: false },
@@ -1300,6 +1567,76 @@ describe('durable uninstall batch', () => {
     mkdirSync(dirname(journalPath), { recursive: true, mode: 0o700 });
     writeFileSync(journalPath, `${JSON.stringify({ ...payload, digest }, null, 2)}\n`, { mode: 0o600 });
     return journalPath;
+  }
+
+  /** Write an authentic legacy v2 journal whose pathname boolean grants no v3 deletion authority. */
+  function writeLegacyV2Journal(active: string | null = null): string {
+    const payload = {
+      schemaVersion: 2 as const,
+      genieHome: resolve(genieHome),
+      scope: {
+        agentAssets: [] as unknown[],
+        codexRoleAgents: [] as unknown[],
+        codexRoleInventoryStatus: 'missing',
+        genieHomePresent: true,
+        ownedRulesPath: null,
+        removeMarketplace: false,
+        runtimeClients: { codex: false, claude: false },
+        runtimePlugins: { codex: false, claude: false },
+        symlinks: [] as unknown[],
+      },
+      progress: { active, completed: [] as unknown[], preserved: [] as unknown[] },
+    };
+    const digest = createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+    const journalPath = uninstallBatchJournalPath(genieHome);
+    mkdirSync(dirname(journalPath), { recursive: true, mode: 0o700 });
+    writeFileSync(journalPath, `${JSON.stringify({ ...payload, digest }, null, 2)}\n`, { mode: 0o600 });
+    return journalPath;
+  }
+
+  function journalReplacementRace(
+    boundary: 'beforeCapture' | 'afterCapture',
+    caseName: string,
+    replacementBytes: Buffer,
+  ): {
+    displacedPath: string;
+    wasInvoked: () => boolean;
+    options: {
+      beforeCapture?: (journalPath: string) => void;
+      afterCapture?: (journalPath: string) => void;
+    };
+  } {
+    const displacedPath = join(root, `${caseName}-authenticated-original.json`);
+    let invoked = false;
+    const replace = (journalPath: string) => {
+      invoked = true;
+      if (boundary === 'beforeCapture') renameSync(journalPath, displacedPath);
+      writeFileSync(journalPath, replacementBytes, { flag: 'wx', mode: 0o600 });
+    };
+    return {
+      displacedPath,
+      wasInvoked: () => invoked,
+      options: boundary === 'beforeCapture' ? { beforeCapture: replace } : { afterCapture: replace },
+    };
+  }
+
+  function expectRetainedJournalRaceEvidence(
+    journalPath: string,
+    boundary: 'beforeCapture' | 'afterCapture',
+    displacedPath: string,
+    quarantineLabel: 'journal-discard' | 'journal-progress' | 'journal-clear',
+    replacementBytes: Buffer,
+  ): void {
+    expect(readFileSync(journalPath).equals(replacementBytes)).toBe(true);
+    if (boundary === 'beforeCapture') {
+      expect(existsSync(displacedPath)).toBe(true);
+      return;
+    }
+    const quarantine = readdirSync(dirname(journalPath)).find((name) =>
+      name.startsWith(`.genie-uninstall-${quarantineLabel}-`),
+    );
+    expect(quarantine).toBeDefined();
+    expect(existsSync(join(dirname(journalPath), quarantine as string, 'captured'))).toBe(true);
   }
 
   beforeEach(() => {
@@ -1390,6 +1727,52 @@ describe('durable uninstall batch', () => {
     expect(replayed).toBe(false);
     expect(retried.result.failures[0]?.detail).toContain('refused to replay that slot');
     expect(readUninstallBatchDecision(genieHome)?.progress.active).toBe(member);
+  });
+
+  test('a returned partial flat-agent failure clears its active receipt so retry can converge', () => {
+    const firstAsset = join(root, 'claude', 'agents', 'reviewer.md');
+    const secondAsset = join(root, 'claude', 'agents', 'scout.md');
+    mkdirSync(dirname(firstAsset), { recursive: true });
+    writeFileSync(firstAsset, '# reviewer\n');
+    writeFileSync(secondAsset, '# scout\n');
+    const plannedScope = scope();
+    plannedScope.agentAssets = [firstAsset, secondAsset].map((path) => ({
+      path,
+      disposition: 'remove' as const,
+      identity: {
+        kind: 'agent' as const,
+        ownedDigest: 'a'.repeat(64),
+        snapshot: { kind: 'file' as const, digest: 'a'.repeat(64), mode: 0o600 },
+      },
+    }));
+    const member = uninstallBatchMemberId('asset', `flat-agents:${[firstAsset, secondAsset].sort().join('\n')}`);
+
+    const first = executeUninstallBatch(genieHome, plannedScope, (_decisionScope, progress) => {
+      progress.begin(member);
+      rmSync(firstAsset);
+      // Mirrors removeFlatAgentBatch after removeAgentSyncAssetsLocked returns a
+      // structured partial result: completed effects are durable, no syscall is
+      // still in flight, and retry authority must remain available.
+      progress.abort(member);
+      return { failures: [{ step: 'Removing flat agent', detail: 'injected reviewer failure' }] };
+    });
+
+    expect(first.result.failures).toHaveLength(1);
+    expect(readUninstallBatchDecision(genieHome)?.progress.active).toBeNull();
+    expect(existsSync(firstAsset)).toBe(false);
+    expect(existsSync(secondAsset)).toBe(true);
+
+    const retried = executeUninstallBatch(genieHome, plannedScope, (_decisionScope, progress) => {
+      progress.begin(member);
+      expect(existsSync(firstAsset)).toBe(false); // already-removed slot is an idempotent no-op
+      rmSync(secondAsset);
+      progress.complete(member);
+      return { failures: [] };
+    });
+
+    expect(retried.result.failures).toEqual([]);
+    expect(existsSync(secondAsset)).toBe(false);
+    expect(readUninstallBatchDecision(genieHome)).toBeNull();
   });
 
   test('never clears a batch while a requested member lacks a completion receipt', () => {
@@ -1515,7 +1898,7 @@ describe('durable uninstall batch', () => {
     expect(existsSync(uninstallBatchJournalPath(genieHome))).toBe(false);
   });
 
-  test('an authentic legacy v1 journal is discarded and re-recorded as v2, then execution proceeds', () => {
+  test('an authentic legacy v1 journal is discarded and re-recorded as v3, then execution proceeds', () => {
     const asset = join(root, 'legacy-asset');
     mkdirSync(asset, { recursive: true });
     writeLegacyV1Journal();
@@ -1524,17 +1907,30 @@ describe('durable uninstall batch', () => {
 
     const outcome = executeUninstallBatch(genieHome, scope([asset]), (decisionScope, progress) => {
       events.push('cleanup');
-      // The fresh v2 scope is the CURRENT live scope, not the empty migrated v1 one.
+      // The fresh v3 scope is the CURRENT live scope, not the empty migrated v1 one.
       expect(decisionScope.agentAssets.map((a) => a.path)).toEqual([asset]);
       progress.begin(member);
       progress.complete(member);
       return { failures: [] };
     });
 
-    expect(outcome.decision.schemaVersion).toBe(2);
+    expect(outcome.decision.schemaVersion).toBe(3);
     expect(outcome.result.failures).toEqual([]);
     expect(events).toEqual(['cleanup']);
     expect(existsSync(uninstallBatchJournalPath(genieHome))).toBe(false);
+  });
+
+  test('an authentic legacy v2 pathname journal is re-planned as v3 before execution', () => {
+    writeLegacyV2Journal();
+    const outcome = executeUninstallBatch(genieHome, scope(), (decisionScope) => {
+      expect(decisionScope.genieHomeIdentity).toBeNull();
+      return { failures: [] };
+    });
+
+    expect(outcome.decision.schemaVersion).toBe(3);
+    expect(outcome.result.failures).toEqual([]);
+    expect(existsSync(uninstallBatchJournalPath(genieHome))).toBe(false);
+    expect(existsSync(genieHome)).toBe(true);
   });
 
   test('a migrated legacy v1 journal with an interrupted member surfaces a note', () => {
@@ -1556,6 +1952,49 @@ describe('durable uninstall batch', () => {
     expect(() => executeUninstallBatch(genieHome, scope(), () => ({ failures: [] }))).toThrow('authentication failed');
     expect(existsSync(journalPath)).toBe(true);
   });
+
+  for (const boundary of ['beforeCapture', 'afterCapture'] as const) {
+    test(`legacy journal discard refuses a ${boundary} pathname replacement without clobbering it`, () => {
+      const journalPath = writeLegacyV1Journal();
+      const replacementBytes = Buffer.from(`foreign legacy replacement at ${boundary}\n`);
+      const race = journalReplacementRace(boundary, `discard-${boundary}`, replacementBytes);
+
+      expect(() => discardLegacyUninstallBatchDecision(genieHome, race.options)).toThrow();
+      expect(race.wasInvoked()).toBe(true);
+
+      expectRetainedJournalRaceEvidence(journalPath, boundary, race.displacedPath, 'journal-discard', replacementBytes);
+    });
+
+    test(`progress update refuses a ${boundary} pathname replacement without clobbering it`, () => {
+      const decision = recordUninstallBatchDecision(genieHome, scope());
+      const journalPath = uninstallBatchJournalPath(genieHome);
+      const replacementBytes = Buffer.from(`foreign progress replacement at ${boundary}\n`);
+      const race = journalReplacementRace(boundary, `progress-${boundary}`, replacementBytes);
+
+      expect(() => updateUninstallBatchProgress(genieHome, decision.digest, decision.progress, race.options)).toThrow();
+      expect(race.wasInvoked()).toBe(true);
+
+      expectRetainedJournalRaceEvidence(
+        journalPath,
+        boundary,
+        race.displacedPath,
+        'journal-progress',
+        replacementBytes,
+      );
+    });
+
+    test(`final journal clear refuses a ${boundary} pathname replacement without clobbering it`, () => {
+      const decision = recordUninstallBatchDecision(genieHome, scope());
+      const journalPath = uninstallBatchJournalPath(genieHome);
+      const replacementBytes = Buffer.from(`foreign clear replacement at ${boundary}\n`);
+      const race = journalReplacementRace(boundary, `clear-${boundary}`, replacementBytes);
+
+      expect(() => clearUninstallBatchDecision(genieHome, decision.digest, race.options)).toThrow();
+      expect(race.wasInvoked()).toBe(true);
+
+      expectRetainedJournalRaceEvidence(journalPath, boundary, race.displacedPath, 'journal-clear', replacementBytes);
+    });
+  }
 });
 
 describe('durable runtime integration allowlist', () => {
@@ -1566,8 +2005,9 @@ describe('durable runtime integration allowlist', () => {
         { name: 'genie-review.toml', disposition: 'remove', identity: { digest: 'a'.repeat(64), mode: 0o600 } },
       ],
       codexRoleInventoryStatus: 'valid',
-      genieHomePresent: true,
-      ownedRulesPath: null,
+      genieHomeIdentity: { dev: 1, ino: 1, mode: 0o40700 },
+      genieHomeRemovalDigest: 'f'.repeat(64),
+      ownedRules: null,
       removeMarketplace: false,
       runtimeClients: { codex: true, claude: true },
       runtimePlugins: { codex: false, claude: true },
@@ -1631,7 +2071,7 @@ describe('uninstall ownership and work detection', () => {
     expect(isGenieSymlink(owned, genieHome)).toBe(true);
     expect(isGenieSymlink(foreign, genieHome)).toBe(false);
     const result = removeSymlinks(localBin, genieHome);
-    expect(result).toEqual({ removed: ['genie'], failures: [] });
+    expect(result).toEqual({ removed: ['genie'], preserved: [], failures: [] });
     expect(lstatSync(foreign).isSymbolicLink()).toBe(true);
     expect(isGenieSymlink(foreign, genieHome)).toBe(false);
   });
@@ -1645,7 +2085,11 @@ describe('uninstall ownership and work detection', () => {
     symlinkSync(join(genieHome, 'bin', 'genie'), genieLink);
     symlinkSync(join(genieHome, 'bin', 'term'), laterTermLink);
 
-    expect(removeSymlinks(localBin, genieHome, ['genie'])).toEqual({ removed: ['genie'], failures: [] });
+    expect(removeSymlinks(localBin, genieHome, ['genie'])).toEqual({
+      removed: ['genie'],
+      preserved: [],
+      failures: [],
+    });
     expect(existsSync(genieLink)).toBe(false);
     expect(lstatSync(laterTermLink).isSymbolicLink()).toBe(true);
   });
@@ -1672,6 +2116,7 @@ describe('uninstall ownership and work detection', () => {
     let present = false;
     const inspectors = {
       hasGenieDir: () => present,
+      captureGenieHomeIdentity: () => (present ? { dev: 1, ino: 1, mode: 0o40700 } : null),
       hookScriptExists: () => false,
       detectV4Install: () => ({
         rulesFile: { path: join(root, 'rules.md'), status: 'absent' as const },
@@ -1717,5 +2162,250 @@ describe('uninstall ownership and work detection', () => {
         removeMarketplace: false,
       }),
     ).toBe(true);
+  });
+});
+
+describe('atomic external uninstall captures', () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'uninstall-capture-races-'));
+  });
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  function rulesIdentity(path: string): ProvenV4Rules {
+    const stat = lstatSync(path);
+    return {
+      path: resolve(path),
+      digest: createHash('sha256').update(readFileSync(path)).digest('hex'),
+      identity: { dev: stat.dev, ino: stat.ino, mode: stat.mode },
+    };
+  }
+
+  function scope(options: {
+    rules?: ProvenV4Rules;
+    symlinks?: UninstallBatchScope['symlinks'];
+  }): UninstallBatchScope {
+    return {
+      agentAssets: [],
+      codexRoleAgents: [],
+      codexRoleInventoryStatus: 'missing',
+      genieHomeIdentity: null,
+      genieHomeRemovalDigest: null,
+      ownedRules: options.rules ?? null,
+      removeMarketplace: false,
+      runtimeClients: { codex: false, claude: false },
+      runtimePlugins: { codex: false, claude: false },
+      symlinks: options.symlinks ?? [],
+    };
+  }
+
+  test('direct source-link capture restores a regular-file replacement and reports no removal', () => {
+    const genieHome = join(root, 'genie');
+    const localBin = join(root, 'bin');
+    const link = join(localBin, 'genie');
+    const parked = join(root, 'parked-link');
+    mkdirSync(localBin, { recursive: true });
+    symlinkSync(join(genieHome, 'bin', 'genie'), link);
+
+    const result = removeSymlinks(localBin, genieHome, ['genie'], {
+      beforeCapture(path) {
+        renameSync(path, parked);
+        writeFileSync(path, 'foreign-source-link\n');
+      },
+    });
+
+    expect(result.removed).toEqual([]);
+    expect(result.preserved).toEqual(['genie']);
+    expect(result.failures).toHaveLength(1);
+    expect(readFileSync(link, 'utf8')).toBe('foreign-source-link\n');
+    expect(lstatSync(parked).isSymbolicLink()).toBe(true);
+  });
+
+  test('authenticated source-link swap records preservation, never completion', () => {
+    const genieHome = join(root, 'genie');
+    const localBin = join(root, 'bin');
+    const link = join(localBin, 'genie');
+    mkdirSync(localBin, { recursive: true });
+    symlinkSync(join(genieHome, 'bin', 'genie'), link);
+    const stat = lstatSync(link);
+    const planned = {
+      name: 'genie' as const,
+      target: readlinkSync(link),
+      identity: { dev: stat.dev, ino: stat.ino, mode: stat.mode },
+    };
+    const member = uninstallBatchMemberId('symlink', 'genie');
+
+    const outcome = executeUninstallBatch(genieHome, scope({ symlinks: [planned] }), (_scope, progress) => {
+      const result: UninstallResult = { failures: [], preserved: [], notes: [] };
+      result.failures.push(
+        ...removeSymlinkMembers(genieHome, [planned], result, progress, localBin, {
+          beforeCapture(path) {
+            renameSync(path, join(root, 'parked-batch-link'));
+            writeFileSync(path, 'foreign-batch-link\n');
+          },
+        }),
+      );
+      return result;
+    });
+
+    expect(outcome.result.failures).toEqual([]);
+    expect(outcome.decision.progress.completed).not.toContain(member);
+    expect(outcome.decision.progress.preserved).toContain(member);
+    expect(readFileSync(link, 'utf8')).toBe('foreign-batch-link\n');
+  });
+
+  test('Hermes boundary replacement is kept as an identity mismatch', () => {
+    const claudeDir = join(root, 'claude');
+    const codexDir = join(root, 'codex');
+    const agentsSkillsDir = join(root, 'agents-skills');
+    const hermesHome = join(root, 'hermes');
+    const genieHome = join(root, 'genie');
+    const link = join(hermesHome, 'plugins', 'genie');
+    mkdirSync(dirname(link), { recursive: true });
+    symlinkSync(join(genieHome, 'plugins', 'hermes-genie'), link);
+    const targets = { claudeDir, codexDir, agentsSkillsDir, hermesHome, genieHome };
+    const identity = collectAgentSyncAssets(targets).find((asset) => asset.path === link)?.identity;
+    if (identity?.kind !== 'link') throw new Error('expected Hermes link identity');
+
+    const result = removeAgentSyncAssets(targets, {
+      plannedAssets: [{ path: link, identity }],
+      beforeManagedLinkCapture(path) {
+        renameSync(path, join(root, 'parked-hermes-link'));
+        writeFileSync(path, 'foreign-hermes\n');
+      },
+    });
+
+    expect(result.failures).toEqual([]);
+    expect(result.removed).toEqual([]);
+    expect(result.identityMismatch).toEqual([link]);
+    expect(readFileSync(link, 'utf8')).toBe('foreign-hermes\n');
+  });
+
+  test('authenticated Hermes replacement records preservation and clears the settled batch', () => {
+    const claudeDir = join(root, 'claude');
+    const codexDir = join(root, 'codex');
+    const agentsSkillsDir = join(root, 'agents-skills');
+    const hermesHome = join(root, 'hermes');
+    const genieHome = join(root, 'genie');
+    const link = join(hermesHome, 'plugins', 'genie');
+    const ownedTarget = join(genieHome, 'plugins', 'hermes-genie');
+    const foreignTarget = join(root, 'foreign-hermes-plugin');
+    mkdirSync(dirname(link), { recursive: true });
+    mkdirSync(foreignTarget, { recursive: true });
+    symlinkSync(ownedTarget, link);
+    const targets = { claudeDir, codexDir, agentsSkillsDir, hermesHome, genieHome };
+    const identity = collectAgentSyncAssets(targets).find((asset) => asset.path === link)?.identity;
+    if (identity?.kind !== 'link') throw new Error('expected Hermes link identity');
+    const plannedScope = scope({});
+    plannedScope.agentAssets = [{ path: link, disposition: 'remove', identity }];
+    const priorEnvironment = {
+      GENIE_HOME: process.env.GENIE_HOME,
+      CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR,
+      CODEX_HOME: process.env.CODEX_HOME,
+      HERMES_HOME: process.env.HERMES_HOME,
+      GENIE_AGENTS_SKILLS_DIR: process.env.GENIE_AGENTS_SKILLS_DIR,
+    };
+
+    try {
+      process.env.GENIE_HOME = genieHome;
+      process.env.CLAUDE_CONFIG_DIR = claudeDir;
+      process.env.CODEX_HOME = codexDir;
+      process.env.HERMES_HOME = hermesHome;
+      process.env.GENIE_AGENTS_SKILLS_DIR = agentsSkillsDir;
+      recordUninstallBatchDecision(genieHome, plannedScope);
+      rmSync(link);
+      symlinkSync(foreignTarget, link);
+
+      const outcome = performFreshUninstallPlan(genieHome, false);
+
+      expect(outcome.result.failures).toEqual([]);
+      expect(outcome.result.preserved?.some((receipt) => receipt.step.includes('Preserving synced asset'))).toBe(true);
+      expect(readUninstallBatchDecision(genieHome)).toBeNull();
+      expect(existsSync(uninstallBatchJournalPath(genieHome))).toBe(false);
+      expect(lstatSync(link).isSymbolicLink()).toBe(true);
+      expect(readlinkSync(link)).toBe(foreignTarget);
+    } finally {
+      for (const [name, value] of Object.entries(priorEnvironment)) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
+  });
+
+  test('v4 replacement at capture becomes a durable preserved receipt', () => {
+    const genieHome = join(root, 'genie');
+    const path = join(root, 'rules.md');
+    writeFileSync(path, 'owned-rules\n');
+    const planned = rulesIdentity(path);
+    const member = uninstallBatchMemberId('rules', path);
+
+    const outcome = executeUninstallBatch(genieHome, scope({ rules: planned }), (_scope, progress) => {
+      const result: UninstallResult = { failures: [], preserved: [], notes: [] };
+      const failure = removeRulesMember(genieHome, planned, result, progress, {
+        beforeCapture(livePath) {
+          renameSync(livePath, join(root, 'parked-rules'));
+          writeFileSync(livePath, 'foreign-rules\n');
+        },
+      });
+      if (failure !== null) result.failures.push(failure);
+      return result;
+    });
+
+    expect(outcome.result.failures).toEqual([]);
+    expect(outcome.decision.progress.completed).not.toContain(member);
+    expect(outcome.decision.progress.preserved).toContain(member);
+    expect(readFileSync(path, 'utf8')).toBe('foreign-rules\n');
+  });
+
+  test('v4 replacement after backup survives and prevents a false removal', () => {
+    const genieHome = join(root, 'genie');
+    const path = join(root, 'rules.md');
+    writeFileSync(path, 'owned-after-backup\n');
+    const planned = rulesIdentity(path);
+    let backup = '';
+
+    expect(() =>
+      removeProvenV4Rules(genieHome, planned, {
+        afterBackup(livePath, backupPath) {
+          backup = backupPath;
+          writeFileSync(livePath, 'foreign-after-backup\n');
+        },
+      }),
+    ).toThrow('replacement appeared');
+    expect(readFileSync(path, 'utf8')).toBe('foreign-after-backup\n');
+    expect(readFileSync(backup, 'utf8')).toBe('owned-after-backup\n');
+  });
+
+  test('v4 absent completes idempotently while preexisting changed content is preserved', () => {
+    const absentHome = join(root, 'absent-home');
+    const absentPath = join(root, 'absent-rules.md');
+    writeFileSync(absentPath, 'owned-absent\n');
+    const absent = rulesIdentity(absentPath);
+    rmSync(absentPath);
+    const absentMember = uninstallBatchMemberId('rules', absentPath);
+    const absentOutcome = executeUninstallBatch(absentHome, scope({ rules: absent }), (_scope, progress) => {
+      const result: UninstallResult = { failures: [], preserved: [], notes: [] };
+      const failure = removeRulesMember(absentHome, absent, result, progress);
+      if (failure !== null) result.failures.push(failure);
+      return result;
+    });
+    expect(absentOutcome.decision.progress.completed).toContain(absentMember);
+
+    const changedHome = join(root, 'changed-home');
+    const changedPath = join(root, 'changed-rules.md');
+    writeFileSync(changedPath, 'owned-before-change\n');
+    const changed = rulesIdentity(changedPath);
+    writeFileSync(changedPath, 'foreign-preexisting-change\n');
+    const changedMember = uninstallBatchMemberId('rules', changedPath);
+    const changedOutcome = executeUninstallBatch(changedHome, scope({ rules: changed }), (_scope, progress) => {
+      const result: UninstallResult = { failures: [], preserved: [], notes: [] };
+      const failure = removeRulesMember(changedHome, changed, result, progress);
+      if (failure !== null) result.failures.push(failure);
+      return result;
+    });
+    expect(changedOutcome.decision.progress.completed).not.toContain(changedMember);
+    expect(changedOutcome.decision.progress.preserved).toContain(changedMember);
+    expect(readFileSync(changedPath, 'utf8')).toBe('foreign-preexisting-change\n');
   });
 });

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 // Fixtures for scripts/verify-release.sh realigned to the real release asset
 // scheme (wish stable-release-security-gate, F31b): per-tarball
@@ -33,7 +33,10 @@ function fixture(stubs: Stubs & { bundle?: boolean; intoto?: boolean }) {
   writeFileSync(join(stub, 'cosign'), `#!/bin/sh\nexit ${stubs.cosignExit ?? 0}\n`);
   writeFileSync(join(stub, 'slsa-verifier'), `#!/bin/sh\nexit ${stubs.slsaExit ?? 0}\n`);
   writeFileSync(join(stub, 'gh'), '#!/bin/sh\nexit 1\n');
-  for (const name of ['cosign', 'slsa-verifier', 'gh']) chmodSync(join(stub, name), 0o755);
+  // Stock macOS readlink has no -f. Any accidental dependency on readlink is
+  // therefore a portability failure even when these tests run on GNU hosts.
+  writeFileSync(join(stub, 'readlink'), '#!/bin/sh\nexit 99\n');
+  for (const name of ['cosign', 'slsa-verifier', 'gh', 'readlink']) chmodSync(join(stub, name), 0o755);
 
   const assets = join(root, 'assets');
   mkdirSync(assets, { recursive: true });
@@ -61,6 +64,18 @@ describe('verify-release.sh (F31b — real asset scheme)', () => {
     expect(out).toContain('cosign verify-blob --bundle');
     expect(out).toContain('slsa-verifier verify-artifact');
     expect(out).toContain('cosign-signed AND SLSA-attested');
+  });
+
+  test('local verification resolves a relative path without GNU readlink -f', () => {
+    const { stub, tarball } = fixture({});
+    const run = Bun.spawnSync(['bash', SCRIPT, '--local', basename(tarball)], {
+      cwd: dirname(tarball),
+      env: { PATH: `${stub}:${process.env.PATH ?? ''}` },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    expect(run.exitCode).toBe(0);
+    expect(run.stdout.toString()).toContain('verified 1 tarball');
   });
 
   test('a failed cosign signature check exits 2', () => {

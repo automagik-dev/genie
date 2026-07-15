@@ -1,6 +1,18 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  readlinkSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -11,6 +23,7 @@ import { join } from 'node:path';
 // needs same-filesystem rename primitives, so nothing is mocked.
 
 const INSTALL_SH = join(import.meta.dir, '..', 'install.sh');
+const INSTALL_PROMOTER = join(import.meta.dir, '..', 'src', 'genie-commands', 'install-promote.ts');
 const roots: string[] = [];
 
 afterEach(() => {
@@ -23,24 +36,48 @@ function mkroot(): string {
   return root;
 }
 
-/** A fake `genie` that ignores args and prints a version — stands in for the
- *  real bun-compiled binary so the swap mechanics can be exercised hermetically. */
-function fakeBinary(version: string): string {
-  return `#!/bin/sh\necho "${version}"\n`;
+/** Release-shaped executable fixture. The hidden command dispatches into the
+ * real promoter module while binding runtime authority to this exact script. */
+function fakeBinary(version: string, driver: string): string {
+  return `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "${version}"; exit 0; fi
+if [ "$1" = "__install-promote" ]; then
+  shift
+  GENIE_TEST_STAGED_BINARY="$0" GENIE_TEST_VERSION="${version}" exec ${JSON.stringify(process.execPath)} ${JSON.stringify(driver)} "$@"
+fi
+echo "${version}"
+`;
 }
 
-/** Build a release-shaped tarball: `genie` at the root plus VERSION + a sidecar
- *  tree, matching scripts/build-binary.sh's layout. */
+/** Build the exact eight-member release payload consumed by the promoter. */
 function buildTarball(root: string, opts: { version: string; withBinary?: boolean; sidecar?: string }): string {
   const tree = mkdtempSync(join(root, 'tree-'));
+  const driver = join(root, 'promoter-driver.ts');
+  writeFileSync(
+    driver,
+    [
+      `import { installPromoteCommand } from ${JSON.stringify(INSTALL_PROMOTER)};`,
+      'const args = process.argv.slice(2);',
+      'const value = (name: string) => { const index = args.indexOf(name); return index < 0 ? undefined : args[index + 1]; };',
+      "installPromoteCommand({ stagingRoot: value('--staging-root'), expectedVersion: value('--expected-version') }, {",
+      '  runtimeExecutable: process.env.GENIE_TEST_STAGED_BINARY,',
+      '  runtimeVersion: process.env.GENIE_TEST_VERSION,',
+      '  userHome: process.env.HOME,',
+      '});',
+      '',
+    ].join('\n'),
+  );
   if (opts.withBinary !== false) {
     const bin = join(tree, 'genie');
-    writeFileSync(bin, fakeBinary(opts.version));
+    writeFileSync(bin, fakeBinary(opts.version, driver));
     chmodSync(bin, 0o755);
   }
   writeFileSync(join(tree, 'VERSION'), `${opts.version}\n`);
-  mkdirSync(join(tree, 'plugins'), { recursive: true });
-  writeFileSync(join(tree, 'plugins', opts.sidecar ?? 'marker.txt'), 'sidecar');
+  writeFileSync(join(tree, 'LICENSE'), 'fixture license\n');
+  for (const name of ['plugins', 'skills', 'templates', '.agents', '.claude-plugin']) {
+    mkdirSync(join(tree, name), { recursive: true });
+    writeFileSync(join(tree, name, opts.sidecar ?? 'marker.txt'), `sidecar:${name}\n`);
+  }
   const tarball = join(root, `genie-${opts.version}.tar.gz`);
   const packed = Bun.spawnSync(['tar', '-czf', tarball, '-C', tree, '.'], { stdout: 'pipe', stderr: 'pipe' });
   if (packed.exitCode !== 0) throw new Error(`tar failed: ${packed.stderr.toString()}`);
@@ -62,7 +99,7 @@ function scaffold(root: string, opts: { liveVersion?: string } = {}): Layout {
   mkdirSync(join(homeRoot, '.local', 'bin'), { recursive: true });
   const liveBinary = join(bin, 'genie');
   if (opts.liveVersion) {
-    writeFileSync(liveBinary, fakeBinary(opts.liveVersion));
+    writeFileSync(liveBinary, fakeBinary(opts.liveVersion, join(root, 'old-driver-unused.ts')));
     chmodSync(liveBinary, 0o755);
     writeFileSync(join(bin, 'VERSION'), `${opts.liveVersion}\n`);
     mkdirSync(join(bin, 'plugins'), { recursive: true });
@@ -75,7 +112,15 @@ function scaffold(root: string, opts: { liveVersion?: string } = {}): Layout {
  *  propagates as the process exit code, so exit codes are directly assertable. */
 function runExtract(layout: Layout, tarball: string, version: string, extraEnv: Record<string, string> = {}) {
   return Bun.spawnSync(
-    ['bash', '-c', 'source "$1"; extract_and_link "$2" "$3"', 'bash', INSTALL_SH, tarball, version],
+    [
+      'bash',
+      '-c',
+      'source "$1"; acquire_lifecycle_lock; extract_and_link "$2" "$3"',
+      'bash',
+      INSTALL_SH,
+      tarball,
+      version,
+    ],
     {
       env: {
         PATH: process.env.PATH ?? '',
@@ -103,13 +148,14 @@ describe('install.sh .steal lifecycle-lock protocol (F42/F45–F47/F50 — must 
   const PROTECTED_FUNCTIONS = [
     'logical_absolute_path',
     'lock_mtime_seconds',
+    'pid_is_live_or_unknown',
     'lock_record_is_stale',
     'foreign_lock_record_is_stale',
     'recover_stale_lifecycle_lock',
     'acquire_lifecycle_lock',
     'release_lifecycle_lock',
   ];
-  const PINNED_DIGEST = 'c6d5c4bd29f8c42a51300633f371fbe99fb293813c274d17286762d5f277194e';
+  const PINNED_DIGEST = '022718a55602d39044e19a31905a280290e260d36a17d2bccad9ca9ee472c200';
 
   function extractFunction(source: string, name: string): string {
     const lines = source.split('\n');
@@ -134,77 +180,138 @@ describe('install.sh .steal lifecycle-lock protocol (F42/F45–F47/F50 — must 
 // ---------------------------------------------------------------------------
 
 describe('install.sh transactional binary promotion (F31a)', () => {
-  test('happy path: stages, backs up the old binary, promotes the new one, wires PATH', () => {
+  test('happy path delegates to the verified promoter, preserves the prior binary, and wires PATH', () => {
     const root = mkroot();
     const layout = scaffold(root, { liveVersion: '5.260713.1' });
     const tarball = buildTarball(root, { version: '5.260714.1', sidecar: 'new.txt' });
 
     const run = runExtract(layout, tarball, '5.260714.1');
     expect(run.exitCode).toBe(0);
-    expect(readFileSync(layout.liveBinary, 'utf-8')).toBe(fakeBinary('5.260714.1'));
-    // Old binary preserved for rollback.
-    expect(readdirSync(join(layout.bin, '.previous'))).toContain('genie-5.260713.1');
-    expect(readFileSync(join(layout.bin, '.previous', 'genie-5.260713.1'), 'utf-8')).toBe(fakeBinary('5.260713.1'));
-    // Sidecars swapped: new present, old gone.
+    expect(readFileSync(layout.liveBinary, 'utf8')).toBe(fakeBinary('5.260714.1', join(root, 'promoter-driver.ts')));
+    const backups = readdirSync(join(layout.bin, '.previous')).filter((name) => name.startsWith('genie-prior-'));
+    expect(backups).toHaveLength(1);
+    expect(readFileSync(join(layout.bin, '.previous', backups[0] as string), 'utf8')).toBe(
+      fakeBinary('5.260713.1', join(root, 'old-driver-unused.ts')),
+    );
     expect(readdirSync(join(layout.bin, 'plugins'))).toEqual(['new.txt']);
-    // Symlink wired to the canonical binary.
-    expect(readFileSync(join(layout.homeRoot, '.local', 'bin', 'genie'), 'utf-8')).toBe(fakeBinary('5.260714.1'));
-    // Staging cleaned up.
-    expect(readdirSync(layout.bin).filter((e) => e.startsWith('.install-staging'))).toEqual([]);
+    const canonical = join(layout.homeRoot, '.local', 'bin', 'genie');
+    expect(lstatSync(canonical).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(canonical)).toBe(layout.liveBinary);
+    const retained = readdirSync(layout.bin).filter((entry) => entry.startsWith('.install-staging-'));
+    expect(retained).toEqual([]);
   });
 
-  test('first install (no live binary) promotes without a backup', () => {
+  test('first install promotes every physical release member without manufacturing a backup', () => {
     const root = mkroot();
     const layout = scaffold(root);
     const tarball = buildTarball(root, { version: '5.260714.1' });
+
     const run = runExtract(layout, tarball, '5.260714.1');
+
     expect(run.exitCode).toBe(0);
-    expect(readFileSync(layout.liveBinary, 'utf-8')).toBe(fakeBinary('5.260714.1'));
-    expect(readdirSync(join(layout.bin, '.previous')).filter((e) => e.startsWith('genie-'))).toEqual([]);
+    expect(readFileSync(join(layout.bin, 'VERSION'), 'utf8')).toBe('5.260714.1\n');
+    const previous = join(layout.bin, '.previous');
+    expect(existsSync(previous) ? readdirSync(previous) : []).toEqual([]);
+    for (const name of ['plugins', 'skills', 'templates', '.agents', '.claude-plugin']) {
+      expect(lstatSync(join(layout.bin, name)).isDirectory()).toBe(true);
+      expect(lstatSync(join(layout.bin, name)).isSymbolicLink()).toBe(false);
+    }
   });
 
-  test('corrupt artifact (tarball has no genie binary) fails closed; live binary intact', () => {
+  test('corrupt artifact with no Genie executable fails closed and leaves live bytes intact', () => {
     const root = mkroot();
     const layout = scaffold(root, { liveVersion: '5.260713.1' });
     const tarball = buildTarball(root, { version: '5.260714.1', withBinary: false });
+
     const run = runExtract(layout, tarball, '5.260714.1');
+
     expect(run.exitCode).toBe(4);
-    expect(run.stderr.toString()).toContain('corrupt artifact');
-    expect(readFileSync(layout.liveBinary, 'utf-8')).toBe(fakeBinary('5.260713.1'));
+    expect(run.stderr.toString()).toContain('physical executable');
+    expect(readFileSync(layout.liveBinary, 'utf8')).toBe(fakeBinary('5.260713.1', join(root, 'old-driver-unused.ts')));
   });
 
-  test('corrupt tarball (not a gzip archive) fails closed; live binary intact', () => {
+  test('corrupt tarball fails closed and leaves live bytes intact', () => {
     const root = mkroot();
     const layout = scaffold(root, { liveVersion: '5.260713.1' });
     const tarball = join(root, 'garbage.tar.gz');
-    writeFileSync(tarball, 'this is not a gzip archive');
+    writeFileSync(tarball, 'not a gzip archive');
+
     const run = runExtract(layout, tarball, '5.260714.1');
+
     expect(run.exitCode).toBe(5);
-    expect(readFileSync(layout.liveBinary, 'utf-8')).toBe(fakeBinary('5.260713.1'));
+    expect(readFileSync(layout.liveBinary, 'utf8')).toBe(fakeBinary('5.260713.1', join(root, 'old-driver-unused.ts')));
   });
 
-  test('version mismatch (wrong tarball) fails closed; live binary intact', () => {
+  test('version mismatch fails before the hidden promoter receives mutation authority', () => {
     const root = mkroot();
     const layout = scaffold(root, { liveVersion: '5.260713.1' });
     const tarball = buildTarball(root, { version: '9.999999.9' });
+
     const run = runExtract(layout, tarball, '5.260714.1');
+
     expect(run.exitCode).toBe(4);
     expect(run.stderr.toString()).toContain('version mismatch');
-    expect(readFileSync(layout.liveBinary, 'utf-8')).toBe(fakeBinary('5.260713.1'));
+    expect(readFileSync(layout.liveBinary, 'utf8')).toBe(fakeBinary('5.260713.1', join(root, 'old-driver-unused.ts')));
   });
 
-  test('kill mid-swap (fault injected before the atomic rename) leaves the old binary runnable', () => {
+  test('an occupied canonical pathname is preserved and blocks live promotion', () => {
+    const root = mkroot();
+    const layout = scaffold(root, { liveVersion: '5.260713.1' });
+    const canonical = join(layout.homeRoot, '.local', 'bin', 'genie');
+    writeFileSync(canonical, 'foreign canonical file');
+    const tarball = buildTarball(root, { version: '5.260714.1' });
+
+    const run = runExtract(layout, tarball, '5.260714.1');
+
+    expect(run.exitCode).toBe(1);
+    expect(readFileSync(canonical, 'utf8')).toBe('foreign canonical file');
+    expect(readFileSync(layout.liveBinary, 'utf8')).toBe(fakeBinary('5.260713.1', join(root, 'old-driver-unused.ts')));
+  });
+
+  test('a symlinked GENIE_HOME/bin is rejected without writing through it', () => {
+    const root = mkroot();
+    const layout = scaffold(root);
+    const victim = join(root, 'bin-victim');
+    rmSync(layout.bin, { recursive: true });
+    mkdirSync(victim);
+    writeFileSync(join(victim, 'sentinel'), 'untouched');
+    symlinkSync(victim, layout.bin, 'dir');
+    const tarball = buildTarball(root, { version: '5.260714.1' });
+
+    const run = runExtract(layout, tarball, '5.260714.1');
+
+    expect(run.exitCode).toBe(1);
+    expect(readFileSync(join(victim, 'sentinel'), 'utf8')).toBe('untouched');
+    expect(readdirSync(victim)).toEqual(['sentinel']);
+  });
+
+  test('a second install converges without clobbering the existing canonical link', () => {
     const root = mkroot();
     const layout = scaffold(root, { liveVersion: '5.260713.1' });
     const tarball = buildTarball(root, { version: '5.260714.1' });
-    const run = runExtract(layout, tarball, '5.260714.1', { GENIE_INSTALL_SWAP_FAULT: 'before-promote' });
-    expect(run.exitCode).toBe(1);
-    // The old binary is still the live one, byte-for-byte, and still runs.
-    expect(readFileSync(layout.liveBinary, 'utf-8')).toBe(fakeBinary('5.260713.1'));
-    const probe = Bun.spawnSync([layout.liveBinary, '--version'], { stdout: 'pipe' });
-    expect(probe.stdout.toString().trim()).toBe('5.260713.1');
-    // A rollback candidate was captured before the injected failure.
-    expect(readdirSync(join(layout.bin, '.previous'))).toContain('genie-5.260713.1');
+    expect(runExtract(layout, tarball, '5.260714.1').exitCode).toBe(0);
+    const link = join(layout.homeRoot, '.local', 'bin', 'genie');
+    const firstInode = lstatSync(link).ino;
+
+    const retry = runExtract(layout, tarball, '5.260714.1');
+
+    expect(retry.exitCode).toBe(0);
+    expect(lstatSync(link).ino).toBe(firstInode);
+    expect(readlinkSync(link)).toBe(layout.liveBinary);
+    expect(readdirSync(join(layout.bin, '.previous')).filter((name) => name.startsWith('genie-prior-'))).toHaveLength(
+      2,
+    );
+  });
+
+  test('extract_and_link contains no shell live-swap, clobber-link, chmod, or staging-delete primitive', () => {
+    const source = readFileSync(INSTALL_SH, 'utf8');
+    const body = source.slice(source.indexOf('extract_and_link() {'), source.indexOf('\n}\n\n# Detect pre-cutover'));
+
+    expect(body).toContain('"$STAGING_DIR/genie" __install-promote');
+    expect(body).toContain('GENIE_LIFECYCLE_LEASE_PATH="$LIFECYCLE_LOCK"');
+    expect(body).toContain('GENIE_LIFECYCLE_LEASE_OWNER="$LIFECYCLE_OWNER_RECORD"');
+    expect(body).not.toMatch(/\b(?:rm|mv|cp|chmod)\b/);
+    expect(body).not.toContain('ln -sfn');
   });
 });
 

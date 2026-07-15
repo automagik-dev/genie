@@ -1,109 +1,105 @@
 {
-  "captured_at": "2026-07-14T15:50Z",
+  "captured_at": "2026-07-15T15:53:53Z",
   "captured_by": "gh api via namastex888 (operator-directed)",
-  "environment": {
-    "id": 18140927752,
-    "node_id": "EN_kwDOPWUnhs8AAAAEOUiXCA",
+  "production_environment": {
     "name": "production",
-    "url": "https://api.github.com/repos/automagik-dev/genie/environments/production",
-    "html_url": "https://github.com/automagik-dev/genie/deployments/activity_log?environments_filter=production",
-    "created_at": "2026-07-14T15:47:46Z",
-    "updated_at": "2026-07-14T15:49:13Z",
     "can_admins_bypass": false,
-    "protection_rules": [
-      {
-        "id": 59926737,
-        "node_id": "GA_kwDOPWUnhs4DkmjR",
-        "type": "required_reviewers",
-        "prevent_self_review": true,
-        "reviewers": [
-          {
-            "type": "User",
-            "reviewer": {
-              "login": "namastex888",
-              "id": 105755034,
-              "node_id": "U_kgDOBk2xmg",
-              "avatar_url": "https://avatars.githubusercontent.com/u/105755034?v=4",
-              "gravatar_id": "",
-              "url": "https://api.github.com/users/namastex888",
-              "html_url": "https://github.com/namastex888",
-              "followers_url": "https://api.github.com/users/namastex888/followers",
-              "following_url": "https://api.github.com/users/namastex888/following{/other_user}",
-              "gists_url": "https://api.github.com/users/namastex888/gists{/gist_id}",
-              "starred_url": "https://api.github.com/users/namastex888/starred{/owner}{/repo}",
-              "subscriptions_url": "https://api.github.com/users/namastex888/subscriptions",
-              "organizations_url": "https://api.github.com/users/namastex888/orgs",
-              "repos_url": "https://api.github.com/users/namastex888/repos",
-              "events_url": "https://api.github.com/users/namastex888/events{/privacy}",
-              "received_events_url": "https://api.github.com/users/namastex888/received_events",
-              "type": "User",
-              "user_view_type": "public",
-              "site_admin": false
-            }
-          },
-          {
-            "type": "User",
-            "reviewer": {
-              "login": "vasconceloscezar",
-              "id": 97035956,
-              "node_id": "U_kgDOBcimtA",
-              "avatar_url": "https://avatars.githubusercontent.com/u/97035956?v=4",
-              "gravatar_id": "",
-              "url": "https://api.github.com/users/vasconceloscezar",
-              "html_url": "https://github.com/vasconceloscezar",
-              "followers_url": "https://api.github.com/users/vasconceloscezar/followers",
-              "following_url": "https://api.github.com/users/vasconceloscezar/following{/other_user}",
-              "gists_url": "https://api.github.com/users/vasconceloscezar/gists{/gist_id}",
-              "starred_url": "https://api.github.com/users/vasconceloscezar/starred{/owner}{/repo}",
-              "subscriptions_url": "https://api.github.com/users/vasconceloscezar/subscriptions",
-              "organizations_url": "https://api.github.com/users/vasconceloscezar/orgs",
-              "repos_url": "https://api.github.com/users/vasconceloscezar/repos",
-              "events_url": "https://api.github.com/users/vasconceloscezar/events{/privacy}",
-              "received_events_url": "https://api.github.com/users/vasconceloscezar/received_events",
-              "type": "User",
-              "user_view_type": "public",
-              "site_admin": false
-            }
-          }
-        ]
-      },
-      {
-        "id": 59926738,
-        "node_id": "GA_kwDOPWUnhs4DkmjS",
-        "type": "branch_policy"
-      }
+    "prevent_self_review": true,
+    "required_reviewers": [
+      "namastex888",
+      "vasconceloscezar"
     ],
     "deployment_branch_policy": {
       "protected_branches": false,
-      "custom_branch_policies": true
+      "custom_branch_policies": true,
+      "policies": [
+        {
+          "id": 54725291,
+          "name": "main",
+          "type": "branch"
+        }
+      ]
     }
   },
-  "deployment_branch_policies": {
-    "total_count": 1,
-    "branch_policies": [
-      {
-        "id": 54625915,
-        "node_id": "MDE2OkdhdGVCcmFuY2hQb2xpY3k1NDYyNTkxNQ==",
-        "name": "v*",
-        "type": "tag"
-      }
-    ]
+  "release_manifests_environment": {
+    "name": "release-manifests",
+    "required_reviewers": [],
+    "deployment_branch_policy": {
+      "protected_branches": false,
+      "custom_branch_policies": true,
+      "policies": [
+        {
+          "id": 54725330,
+          "name": "main",
+          "type": "branch"
+        }
+      ]
+    },
+    "release_manifests_deploy_key_secret_configured": false
   },
-  "ruleset": {
-    "id": 18938286,
-    "name": "v-tags-immutable",
-    "target": "tag",
-    "source_type": "Repository",
-    "source": "automagik-dev/genie",
+  "main_ruleset": {
+    "id": 9203218,
+    "name": "main",
+    "target": "branch",
     "enforcement": "active",
     "conditions": {
       "ref_name": {
-        "exclude": [],
         "include": [
-          "refs/tags/v*"
-        ]
+          "refs/heads/main"
+        ],
+        "exclude": []
       }
     },
+    "bypass_actors": [],
+    "rules": [
+      {
+        "type": "deletion"
+      },
+      {
+        "type": "non_fast_forward"
+      },
+      {
+        "type": "pull_request",
+        "parameters": {
+          "allowed_merge_methods": [
+            "merge"
+          ],
+          "dismiss_stale_reviews_on_push": true,
+          "require_code_owner_review": false,
+          "require_last_push_approval": true,
+          "required_approving_review_count": 1,
+          "required_review_thread_resolution": true
+        }
+      },
+      {
+        "type": "required_status_checks",
+        "parameters": {
+          "do_not_enforce_on_create": false,
+          "strict_required_status_checks_policy": true,
+          "required_status_checks": [
+            {
+              "context": "Quality Gate (typecheck + lint + test)",
+              "integration_id": 15368
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "immutable_tag_ruleset": {
+    "id": 18938286,
+    "name": "v-tags-immutable",
+    "target": "tag",
+    "enforcement": "active",
+    "conditions": {
+      "ref_name": {
+        "include": [
+          "refs/tags/v*"
+        ],
+        "exclude": []
+      }
+    },
+    "bypass_actors": [],
     "rules": [
       {
         "type": "deletion"
@@ -114,19 +110,28 @@
       {
         "type": "update"
       }
-    ],
-    "node_id": "RRS_lACqUmVwb3NpdG9yec49ZSeGzgEg-a4",
-    "created_at": "2026-07-14T12:49:48.021-03:00",
-    "updated_at": "2026-07-14T12:49:48.051-03:00",
-    "bypass_actors": [],
-    "current_user_can_bypass": "never",
-    "_links": {
-      "self": {
-        "href": "https://api.github.com/repos/automagik-dev/genie/rulesets/18938286"
-      },
-      "html": {
-        "href": "https://github.com/automagik-dev/genie/rules/18938286"
-      }
+    ]
+  },
+  "immutable_releases": {
+    "enabled": true,
+    "enforced_by_owner": false
+  },
+  "release_automation_cutover": {
+    "version_workflow": {
+      "id": 242892197,
+      "state": "disabled_manually",
+      "active_runs": []
+    },
+    "release_workflow": {
+      "id": 200480001,
+      "state": "disabled_manually",
+      "active_runs": []
     }
+  },
+  "blocked_control": {
+    "organization_deploy_keys_enabled_for_repositories": false,
+    "repository_deploy_keys": [],
+    "reason": "The organization policy rejects repository deploy keys. Enabling that organization-wide policy requires separate owner approval.",
+    "safe_state": "No main-ruleset bypass actor is configured, no release-manifests write secret exists, and Version/Release remain disabled."
   }
 }

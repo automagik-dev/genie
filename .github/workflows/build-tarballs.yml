@@ -29,21 +29,18 @@ name: Build Tarballs
 # 2022; Intel-Mac users run via Rosetta or the linux-x64 path under Docker.
 
 on:
-  # No `push: tags: ['v*']` — release.yml is the only tag entry-point. A
-  # tag-push would otherwise fire BOTH release.yml (orchestrator) and this
-  # workflow standalone, causing duplicate artifact uploads with the same
-  # name and wasted runner minutes. Tag-triggered execution flows
-  # exclusively through release.yml's workflow_call invocation below.
-  workflow_dispatch:
+  # Privileged release builds enter only through trusted release.yml. The
+  # source checkout is an explicit CI-approved SHA; github.ref remains main.
+  workflow_call:
     inputs:
       version:
-        description: 'Version override (default: package.json)'
-        required: false
+        description: 'Version stamped into the release payload'
+        required: true
         type: string
-  # Reusable from release.yml orchestrator. No inputs/outputs — version
-  # derives from package.json at build time; artifacts pass via the
-  # run-shared store (see actions/upload-artifact / download-artifact).
-  workflow_call: {}
+      source_sha:
+        description: 'Exact CI-approved source commit to build'
+        required: true
+        type: string
   pull_request:
     paths:
       - 'src/**'
@@ -70,39 +67,14 @@ on:
       - '.github/workflows/build-tarballs.yml'
 
 concurrency:
-  group: build-tarballs-${{ github.ref }}
-  cancel-in-progress: true
+  group: build-tarballs-${{ inputs.source_sha || github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
-  # F16 gate (wish stable-release-security-gate): the standalone
-  # workflow_dispatch entry is stable-capable (its tarballs feed sign + publish),
-  # so a manual dispatch must target a protected `v<version>` tag, never a
-  # free-form branch. The `pull_request` and orchestrated `workflow_call` paths
-  # are exempt — the guard no-ops for them. github.event_name inside a
-  # release.yml-dispatched workflow_call is `workflow_dispatch`, and release.yml
-  # is always dispatched on the tag, so the orchestrated dev/stable flow passes.
-  guard:
-    name: Guard standalone dispatch
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v5
-      - name: Require a protected tag for standalone dispatch
-        shell: bash
-        run: bash scripts/release-guard.sh require-dispatch-tag
-        env:
-          EVENT: ${{ github.event_name }}
-          REF: ${{ github.ref }}
-          VERSION: ${{ inputs.version }}
-          CHANNEL: ''
-
   build:
-    needs: guard
     name: Build ${{ matrix.platform }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
@@ -120,7 +92,11 @@ jobs:
             runner:   macos-latest
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          # pull_request runs have no workflow_call inputs; release calls do.
+          ref: ${{ inputs.source_sha || github.sha }}
+          persist-credentials: false
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
@@ -128,7 +104,7 @@ jobs:
           bun-version: 1.3.11
 
       - name: Setup Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: '22'
 
@@ -139,20 +115,33 @@ jobs:
       - name: Resolve version
         id: ver
         shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          if [[ -n "${{ inputs.version }}" ]]; then
-            VERSION="${{ inputs.version }}"
-          elif [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            VERSION="${GITHUB_REF_NAME#v}"
+          set -euo pipefail
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          if [[ -n "${INPUT_VERSION}" ]]; then
+            VERSION="${INPUT_VERSION}"
           else
-            VERSION=$(node -p "require('./package.json').version")
+            VERSION="${PACKAGE_VERSION}"
+          fi
+          [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]] || {
+            echo "::error::invalid release version '${VERSION}'"
+            exit 1
+          }
+          if [[ "${VERSION}" != "${PACKAGE_VERSION}" ]]; then
+            echo "::error::requested release version '${VERSION}' does not match source package '${PACKAGE_VERSION}'"
+            exit 1
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Resolved version: ${VERSION}"
 
       - name: Build tarball
         shell: bash
-        run: bash scripts/build-binary.sh --platform ${{ matrix.platform }} --version ${{ steps.ver.outputs.version }}
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: bash scripts/build-binary.sh --platform "${PLATFORM}" --version "${VERSION}"
 
       - name: Smoke test (extract + --version on linux runners)
         if: matrix.platform == 'linux-x64-glibc' || matrix.platform == 'linux-arm64'
@@ -170,6 +159,7 @@ jobs:
             exit 1
           fi
           "${STAGE}/genie" --help >/dev/null
+          "${STAGE}/genie" __install-promote --self-test >/dev/null
           echo "smoke ok: --version=${ACTUAL}; --help exit 0"
 
       - name: Smoke test (musl binary in alpine container)
@@ -193,6 +183,7 @@ jobs:
               exit 1
             fi
             /app/genie --help >/dev/null
+            /app/genie __install-promote --self-test >/dev/null
             echo "smoke ok (alpine): --version=${ACTUAL}; --help exit 0"
           '
 
@@ -212,6 +203,7 @@ jobs:
             exit 1
           fi
           "${STAGE}/genie" --help >/dev/null
+          "${STAGE}/genie" __install-promote --self-test >/dev/null
           echo "smoke ok: --version=${ACTUAL}; --help exit 0"
 
       - name: Verify size budget (≤80 MB compressed)
@@ -226,7 +218,7 @@ jobs:
           fi
 
       - name: Upload tarball artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: genie-${{ steps.ver.outputs.version }}-${{ matrix.platform }}-tarball
           path: dist/genie-${{ steps.ver.outputs.version }}-${{ matrix.platform }}.tar.gz
