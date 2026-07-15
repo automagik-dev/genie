@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "channel": "homolog",
-  "version": "5.260713.1",
-  "released_at": "2026-07-13T04:25:44Z",
-  "tarball_base": "https://github.com/automagik-dev/genie/releases/download/v5.260713.1",
+  "version": "5.260714.3",
+  "released_at": "2026-07-14T15:28:02Z",
+  "tarball_base": "https://github.com/automagik-dev/genie/releases/download/v5.260714.3",
   "platforms": ["linux-x64-glibc", "linux-x64-musl", "linux-arm64", "darwin-arm64"]
 }
