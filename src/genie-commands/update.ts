@@ -541,6 +541,13 @@ interface DownloadAndVerifyOptions {
  */
 const ATTESTATION_VERIFY_TIMEOUT_MS = 60_000;
 const COSIGN_VERIFY_TIMEOUT_MS = 30_000;
+/**
+ * The tarball download moves ~37MB+ per platform and outgrew runCommandSilent's
+ * 4s default the same way the verify steps did: genie update v5.260714.8 timed
+ * out at 4000ms on a healthy connection (Felipe, 2026-07-14). 5 minutes bounds
+ * a genuinely slow link without hanging forever.
+ */
+const RELEASE_DOWNLOAD_TIMEOUT_MS = 300_000;
 
 interface SignatureVerificationResult {
   method: 'gh-attestation' | 'cosign-bundle';
@@ -625,22 +632,26 @@ export async function downloadAndVerifyTarball(
 
   // gh release download retries by name; --pattern lets us pull the tarball
   // and its sidecar (.bundle, .intoto.jsonl) in one shot via wildcards.
-  const downloadResult = await runner('gh', [
-    'release',
-    'download',
-    versionTag,
-    '--repo',
-    `${RELEASES_OWNER}/${RELEASES_REPO}`,
-    '--dir',
-    destDir,
-    '--pattern',
-    tarballName,
-    '--pattern',
-    `${tarballName}.bundle`,
-    '--pattern',
-    `${tarballName}.intoto.jsonl`,
-    '--clobber',
-  ]);
+  const downloadResult = await runner(
+    'gh',
+    [
+      'release',
+      'download',
+      versionTag,
+      '--repo',
+      `${RELEASES_OWNER}/${RELEASES_REPO}`,
+      '--dir',
+      destDir,
+      '--pattern',
+      tarballName,
+      '--pattern',
+      `${tarballName}.bundle`,
+      '--pattern',
+      `${tarballName}.intoto.jsonl`,
+      '--clobber',
+    ],
+    RELEASE_DOWNLOAD_TIMEOUT_MS,
+  );
   if (!downloadResult.success) {
     throw new Error(
       `gh release download ${versionTag} failed for ${platform}: ${downloadResult.output.trim() || 'no output'}`,
