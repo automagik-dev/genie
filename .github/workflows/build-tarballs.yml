@@ -174,7 +174,8 @@ jobs:
           # bun's musl binary dynamically links to libstdc++ (libgcc); alpine
           # ships musl libc but not libstdc++ by default — install it before
           # exec'ing the binary.
-          docker run --rm -v "${STAGE}:/app:ro" -e VERSION="${VERSION}" alpine:3.19 sh -c '
+          docker run --rm -v "${STAGE}:/app:ro" -e VERSION="${VERSION}" \
+            alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1 sh -c '
             set -e
             apk add --no-cache libstdc++ >/dev/null
             ACTUAL=$(/app/genie --version 2>&1 | tail -n1)

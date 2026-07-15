@@ -19,6 +19,7 @@ import {
   NativeNoReplaceUnavailableError,
   NoClobberRenameError,
   inspectPhysicalPath,
+  linuxLibcCandidates,
   nativeNoReplaceCapability,
   parsePhysicalPathIdentity,
   renamePathNoClobber,
@@ -59,6 +60,78 @@ function injectedNative(
 }
 
 describe('strict native no-clobber transaction primitive', () => {
+  test('uses only the versioned glibc soname and architecture-matched absolute musl loader', () => {
+    expect(linuxLibcCandidates('x64')).toEqual(['libc.so.6', '/lib/ld-musl-x86_64.so.1']);
+    expect(linuxLibcCandidates('arm64')).toEqual(['libc.so.6', '/lib/ld-musl-aarch64.so.1']);
+    expect(linuxLibcCandidates('riscv64')).toEqual(['libc.so.6']);
+  });
+
+  test('uses the architecture-specific renameat2 syscall when musl has no wrapper symbol', () => {
+    const root = fixture();
+    const source = join(root, 'source');
+    const target = join(root, 'target');
+    writeFileSync(source, 'payload');
+    const expected = inspectPhysicalPath(source);
+    if (expected === null) throw new Error('source missing');
+    const wrapperAttempts: string[] = [];
+    const syscallAttempts: Array<{ soname: string; syscallNumber: number }> = [];
+    const dependencies = injectedNative(root, {
+      architecture: 'x64',
+      linuxCandidates: ['musl-libc'],
+      linuxOpener: (soname) => {
+        wrapperAttempts.push(soname);
+        return null;
+      },
+      linuxSyscallOpener: (soname, syscallNumber) => {
+        syscallAttempts.push({ soname, syscallNumber });
+        return (_sourceParentFd, sourceBuffer, _targetParentFd, targetBuffer) => {
+          renameSync(join(root, decode(sourceBuffer)), join(root, decode(targetBuffer)));
+          return 0;
+        };
+      },
+    });
+
+    renamePathNoClobber(source, target, expected, dependencies);
+
+    expect(wrapperAttempts).toEqual(['musl-libc']);
+    expect(syscallAttempts).toEqual([{ soname: 'musl-libc', syscallNumber: 316 }]);
+    expect(readFileSync(target, 'utf8')).toBe('payload');
+  });
+
+  test('maps Linux arm64 to its renameat2 syscall without invoking a wrong architecture number', () => {
+    const attempts: Array<{ soname: string; syscallNumber: number }> = [];
+    const capability = nativeNoReplaceCapability({
+      platform: 'linux',
+      architecture: 'arm64',
+      linuxCandidates: ['musl-libc'],
+      linuxOpener: () => null,
+      linuxSyscallOpener: (soname, syscallNumber) => {
+        attempts.push({ soname, syscallNumber });
+        return () => 0;
+      },
+    });
+
+    expect(capability.available).toBe(true);
+    expect(attempts).toEqual([{ soname: 'musl-libc', syscallNumber: 276 }]);
+  });
+
+  test('an unsupported Linux architecture never invents or invokes a renameat2 syscall number', () => {
+    let syscallAttempted = false;
+    const capability = nativeNoReplaceCapability({
+      platform: 'linux',
+      architecture: 'riscv64',
+      linuxCandidates: ['libc.so.6'],
+      linuxOpener: () => null,
+      linuxSyscallOpener: () => {
+        syscallAttempted = true;
+        return () => 0;
+      },
+    });
+
+    expect(capability.available).toBe(false);
+    expect(syscallAttempted).toBe(false);
+  });
+
   test('strictly parses exact physical identities and rejects extra or malformed authority', () => {
     const root = fixture();
     const path = join(root, 'payload');

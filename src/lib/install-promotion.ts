@@ -22,6 +22,7 @@ import {
   type NativeNoReplaceDependencies,
   type PhysicalPathIdentity,
   inspectPhysicalPath,
+  linuxLibcCandidates,
   nativeNoReplaceCapability,
   parsePhysicalPathIdentity,
   physicalPathIdentitiesEqual,
@@ -192,15 +193,6 @@ const VERSION_PATTERN = /(?:^|[^0-9A-Za-z.+-])v?([0-9]+\.[0-9]+\.[0-9]+(?:[-+][0
 const INSTALL_STAGING_NAME_PATTERN =
   /^\.install-staging-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const AT_REMOVEDIR = process.platform === 'darwin' ? 0x80 : 0x200;
-const LINUX_LIBC_CANDIDATES = [
-  'libc.so.6',
-  'libc.so',
-  'ld-musl-x86_64.so.1',
-  'libc.musl-x86_64.so.1',
-  'ld-musl-aarch64.so.1',
-  'libc.musl-aarch64.so.1',
-] as const;
-
 let cachedInstallStagingAtApi: InstallStagingAtApi | null | undefined;
 const activeInstallStagingGuards = new WeakSet<InstallStagingDirectoryGuard>();
 const installStagingContentDigests = new WeakMap<InstallStagingDirectoryGuard, string | null>();
@@ -338,7 +330,7 @@ function installStagingAtApi(): InstallStagingAtApi {
     }
     return cachedInstallStagingAtApi;
   }
-  const candidates = process.platform === 'darwin' ? ['/usr/lib/libSystem.B.dylib'] : LINUX_LIBC_CANDIDATES;
+  const candidates = process.platform === 'darwin' ? ['/usr/lib/libSystem.B.dylib'] : linuxLibcCandidates(process.arch);
   for (const candidate of candidates) {
     const api = openInstallStagingAtApi(candidate);
     if (api !== null) {
@@ -822,12 +814,15 @@ function assertSafeOwnedDirectory(path: string, label: string, exactMode?: numbe
 
 function assertSafeOwnedNode(path: string, allowSymlink: boolean): void {
   const stat = lstatSync(path, { bigint: true });
-  if (stat.uid !== currentUid() || stat.nlink < 1n || Number(stat.mode & 0o022n) !== 0) {
-    throw new InstallPromotionError(`transaction object has unsafe ownership, links, or permissions: ${path}`);
+  if (stat.uid !== currentUid() || stat.nlink < 1n) {
+    throw new InstallPromotionError(`transaction object has unsafe ownership or links: ${path}`);
   }
   if (stat.isSymbolicLink()) {
     if (!allowSymlink) throw new InstallPromotionError(`staged payload contains a symlink: ${path}`);
     return;
+  }
+  if (Number(stat.mode & 0o022n) !== 0) {
+    throw new InstallPromotionError(`transaction object has unsafe permissions: ${path}`);
   }
   if (stat.isFile()) return;
   if (!stat.isDirectory()) throw new InstallPromotionError(`transaction object is a special node: ${path}`);
@@ -953,11 +948,10 @@ function sameRootObject(actual: PhysicalPathIdentity | null, expected: PhysicalP
 }
 
 function assertSafeJournalIdentity(identity: PhysicalPathIdentity, label: string): void {
-  if (
-    identity.uid !== currentUid().toString() ||
-    BigInt(identity.links) < 1n ||
-    (BigInt(identity.mode) & 0o022n) !== 0n
-  ) {
+  // POSIX symlink mode bits are not access-control bits and are commonly
+  // reported as 0777 on Linux; ownership and link identity remain binding.
+  const permissionsUnsafe = identity.kind !== 'symlink' && (BigInt(identity.mode) & 0o022n) !== 0n;
+  if (identity.uid !== currentUid().toString() || BigInt(identity.links) < 1n || permissionsUnsafe) {
     throw new InstallPromotionError(`${label} has unsafe ownership, links, or permissions`);
   }
 }

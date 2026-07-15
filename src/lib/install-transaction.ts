@@ -16,14 +16,11 @@ import { basename, dirname, join, resolve } from 'node:path';
 
 const LINUX_RENAME_NOREPLACE = 1;
 const DARWIN_RENAME_EXCL = 4;
-const LINUX_LIBC_CANDIDATES = [
-  'libc.so.6',
-  'libc.so',
-  'ld-musl-x86_64.so.1',
-  'libc.musl-x86_64.so.1',
-  'ld-musl-aarch64.so.1',
-  'libc.musl-aarch64.so.1',
-] as const;
+export function linuxLibcCandidates(architecture: NodeJS.Architecture): readonly string[] {
+  if (architecture === 'x64') return ['libc.so.6', '/lib/ld-musl-x86_64.so.1'];
+  if (architecture === 'arm64') return ['libc.so.6', '/lib/ld-musl-aarch64.so.1'];
+  return ['libc.so.6'];
+}
 
 type BigStat = ReturnType<typeof lstatBigInt>;
 export type NativeNoReplaceRename = (
@@ -35,7 +32,9 @@ export type NativeNoReplaceRename = (
 
 export interface NativeNoReplaceDependencies {
   platform?: NodeJS.Platform;
+  architecture?: NodeJS.Architecture;
   linuxOpener?: (soname: string) => NativeNoReplaceRename | null;
+  linuxSyscallOpener?: (soname: string, syscallNumber: number) => NativeNoReplaceRename | null;
   linuxCandidates?: readonly string[];
   darwinOpener?: () => NativeNoReplaceRename | null;
   /** Resolve the current path of a held directory fd (test seam for cross-platform simulation). */
@@ -417,6 +416,36 @@ const defaultLinuxOpener: NonNullable<NativeNoReplaceDependencies['linuxOpener']
   }
 };
 
+const defaultLinuxSyscallOpener: NonNullable<NativeNoReplaceDependencies['linuxSyscallOpener']> = (
+  soname,
+  syscallNumber,
+) => {
+  try {
+    const libc = dlopen(soname, {
+      syscall: { args: ['i64', 'i32', 'cstring', 'i32', 'cstring', 'u32'], returns: 'i64' },
+    } as const);
+    return (sourceParentFd, source, targetParentFd, target) =>
+      Number(
+        libc.symbols.syscall(
+          BigInt(syscallNumber),
+          sourceParentFd,
+          source,
+          targetParentFd,
+          target,
+          LINUX_RENAME_NOREPLACE,
+        ),
+      );
+  } catch {
+    return null;
+  }
+};
+
+function linuxRenameat2SyscallNumber(architecture: NodeJS.Architecture): number | null {
+  if (architecture === 'x64') return 316;
+  if (architecture === 'arm64') return 276;
+  return null;
+}
+
 const defaultDarwinOpener: NonNullable<NativeNoReplaceDependencies['darwinOpener']> = () => {
   try {
     const libc = dlopen('/usr/lib/libSystem.B.dylib', {
@@ -432,19 +461,34 @@ const defaultDarwinOpener: NonNullable<NativeNoReplaceDependencies['darwinOpener
 let cachedLinuxRename: NativeNoReplaceRename | null | undefined;
 let cachedDarwinRename: NativeNoReplaceRename | null | undefined;
 
-function resolveLinuxRename(dependencies: NativeNoReplaceDependencies): NativeNoReplaceRename | null {
-  const injected = dependencies.linuxOpener !== undefined || dependencies.linuxCandidates !== undefined;
-  if (!injected && cachedLinuxRename !== undefined) return cachedLinuxRename;
-  const opener = dependencies.linuxOpener ?? defaultLinuxOpener;
-  const candidates = dependencies.linuxCandidates ?? LINUX_LIBC_CANDIDATES;
-  let resolved: NativeNoReplaceRename | null = null;
+function firstResolvedLinuxRename(
+  candidates: readonly string[],
+  opener: (soname: string) => NativeNoReplaceRename | null,
+): NativeNoReplaceRename | null {
   for (const soname of candidates) {
     try {
-      resolved = opener(soname);
+      const resolved = opener(soname);
+      if (resolved !== null) return resolved;
     } catch {
-      resolved = null;
+      // A rejected candidate is not capability; continue through the fixed allowlist.
     }
-    if (resolved !== null) break;
+  }
+  return null;
+}
+
+function resolveLinuxRename(dependencies: NativeNoReplaceDependencies): NativeNoReplaceRename | null {
+  const openerInjected = dependencies.linuxOpener !== undefined || dependencies.linuxSyscallOpener !== undefined;
+  const injected =
+    openerInjected || dependencies.linuxCandidates !== undefined || dependencies.architecture !== undefined;
+  if (!injected && cachedLinuxRename !== undefined) return cachedLinuxRename;
+  const opener = dependencies.linuxOpener ?? (openerInjected ? () => null : defaultLinuxOpener);
+  const syscallOpener = dependencies.linuxSyscallOpener ?? (openerInjected ? () => null : defaultLinuxSyscallOpener);
+  const architecture = dependencies.architecture ?? process.arch;
+  const candidates = dependencies.linuxCandidates ?? linuxLibcCandidates(architecture);
+  let resolved = firstResolvedLinuxRename(candidates, opener);
+  const syscallNumber = linuxRenameat2SyscallNumber(architecture);
+  if (resolved === null && syscallNumber !== null) {
+    resolved = firstResolvedLinuxRename(candidates, (soname) => syscallOpener(soname, syscallNumber));
   }
   if (!injected) cachedLinuxRename = resolved;
   return resolved;

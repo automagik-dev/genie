@@ -15,6 +15,7 @@ import {
   type NativeNoReplaceDependencies,
   type PhysicalPathIdentity,
   inspectPhysicalPath,
+  linuxLibcCandidates,
   physicalPathIdentitiesEqual,
   renamePathNoClobber,
 } from './install-transaction.js';
@@ -52,15 +53,6 @@ interface AtApi {
   mkdir: (parentFd: number, name: string, mode: number) => number;
   symlink: (target: string, parentFd: number, name: string) => number;
 }
-
-const LINUX_LIBC_CANDIDATES = [
-  'libc.so.6',
-  'libc.so',
-  'ld-musl-x86_64.so.1',
-  'libc.musl-x86_64.so.1',
-  'ld-musl-aarch64.so.1',
-  'libc.musl-aarch64.so.1',
-] as const;
 
 let cachedAtApi: AtApi | null | undefined;
 
@@ -115,7 +107,7 @@ function atApi(): AtApi {
     if (cachedAtApi === null) throw new CanonicalInstallLinkError('dirfd-bound libc operations are unavailable');
     return cachedAtApi;
   }
-  const candidates = process.platform === 'darwin' ? ['/usr/lib/libSystem.B.dylib'] : LINUX_LIBC_CANDIDATES;
+  const candidates = process.platform === 'darwin' ? ['/usr/lib/libSystem.B.dylib'] : linuxLibcCandidates(process.arch);
   for (const candidate of candidates) {
     const api = openAtApi(candidate);
     if (api !== null) {
