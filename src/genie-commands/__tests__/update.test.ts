@@ -1014,6 +1014,9 @@ describe('downloadAndVerifyTarball (G5)', () => {
       expect(argString).toContain(`genie-${manifest.version}-linux-x64-glibc.tar.gz`);
       expect(argString).toContain('.bundle');
       expect(argString).toContain('.intoto.jsonl');
+      // 37MB+ tarballs outgrew runCommandSilent's 4s default (v5.260714.8
+      // timeout regression) — the download must carry its own generous bound.
+      expect(calls[0].timeoutMs).toBe(300_000);
       // Second call — gh attestation verify with workflow identity pinned.
       expect(calls[1].cmd).toBe('gh');
       expect(calls[1].args).toEqual([
