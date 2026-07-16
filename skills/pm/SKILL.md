@@ -36,7 +36,7 @@ The lifecycle is owned by its skills — route to them, never restate them here:
 | Explore | `brainstorm` | Dispatch when scope is fuzzy |
 | Plan | `wish` | Dispatch when scope is clear; the wish creates per-group tasks |
 | Execute | `work` | Dispatch orchestration; waves come from WISH.md |
-| Validate | `review` | Gate every group; FIX-FIRST → `fix` (max 2 loops) |
+| Validate | `review` | Gate every group; FIX-FIRST → `fix` (max 3 loops) |
 | Investigate | `trace`, `report` | Unknown failure: diagnose before fixing |
 | Ship | PR to `dev` | Request or consume task-scoped PR/merge authority; merge only when CI green + review SHIP |
 
@@ -51,7 +51,7 @@ Default chain: engineer → reviewer → qa → fix. Augment when the work calls
 | Docs deliverables in scope | docs subagent, parallel with engineer |
 | Architecture restructuring | refactor-briefed engineer for that group |
 | Failure with unknown root cause | `trace` before `fix` |
-| Review returns FIX-FIRST | `fix` (max 2 loops, then escalate) |
+| Review returns FIX-FIRST | Diagnose first; simplify an overdesigned plan, otherwise `fix` (max 3 loops) |
 | High-stakes decision with tradeoffs | `council` (advisory) |
 
 ## Dispatch

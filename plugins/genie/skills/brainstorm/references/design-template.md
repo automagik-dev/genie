@@ -25,6 +25,13 @@
 
 <Chosen approach with rationale. Name the alternatives considered and why they lost.>
 
+## Simplicity Case
+
+- **Simplest complete design:** <smallest design that satisfies current user stories>
+- **Added machinery:** <none, or each mechanism with the present requirement/measurement that justifies it>
+- **Deferred until measured:** <plausible future complexity and the concrete trigger for reconsidering it>
+- **Complexity removed:** <states, failure modes, options, or dependencies deliberately avoided>
+
 ## Decisions
 
 | # | Decision | Rationale |
