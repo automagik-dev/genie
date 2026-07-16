@@ -26,8 +26,8 @@ When you are spawned as a subagent for a group, your dispatch prompt carries the
    ```
    If two agents race one task, exactly one wins; the loser gets a conflict error and stands down.
 4. **Await completion — never poll:** background subagents notify you when they finish. Inspect `genie board --wish <slug>` on demand; completion is push, not poll.
-5. **Local review:** per finished group, dispatch a reviewer subagent (reviewer ≠ engineer) to run `review` against that group's acceptance criteria. The orchestrator appends each returned evidence block under `## Review Results`; the reviewer never edits it. On FIX-FIRST, dispatch a fix subagent (max 2 loops); if unresolved, apply Escalation Diagnosis instead of automatically changing model or effort.
-6. **Quality review:** dispatch a reviewer for a quality pass (security, maintainability, perf). On FIX-FIRST, one fix loop.
+5. **Local review:** per finished group, dispatch a reviewer subagent (reviewer ≠ engineer) to run `review` against that group's acceptance criteria. The orchestrator appends each returned evidence block under `## Review Results`; the reviewer never edits it. Diagnose before fixing: `overdesigned-plan` returns to wish/design review without consuming a fix attempt; other FIX-FIRST gaps may use at most 3 fix loops.
+6. **Quality review:** dispatch a reviewer for a quality pass (security, maintainability, perf). On FIX-FIRST, use the same maximum of 3 fix loops.
 7. **Validate:** run the group's validation command yourself (Bash); record the output as evidence.
 8. **Group done** — only after clean review AND passing validation:
    ```bash
@@ -80,6 +80,7 @@ Extract the group's context from WISH.md and paste it into the dispatch prompt �
 ## State Management
 
 - **Engineers claim** via `genie task checkout <task-id> --worker <name>` as the first step of their brief.
+- **Environment setup is feature work.** Read-only discovery may precede a claim, but before mutating shared host state—installing toolchains or runtimes, starting services or emulators, provisioning credentials, or preparing test infrastructure—claim the group that owns the setup and keep it `in_progress` until setup and validation finish. The visible claim is the concurrency lock: if another live worker owns it, coordinate or stand down; reclaim only a stale claim. When setup is a prerequisite shared by multiple groups, give it an explicit group/task in the wish instead of running untracked preflight. Never let multiple threads independently prepare the same environment.
 - **Engineers signal** completion in their final message; the native team notifies the orchestrator — no manual send.
 - **Orchestrator tracks** via `genie task list --wish <slug>` / `genie board --wish <slug>` (on demand) and completes each verified group with `genie task done <task-id>`. Engineers never call `genie task done`.
 - **The dependency DAG is doc-only.** The v5 CLI has no dependency-edge commands — every CLI-created task is `ready` from birth, so DB status is NOT a dependency signal. Sequence waves from the WISH.md Execution Strategy alone; never dispatch a group just because its task shows `ready`.
@@ -95,6 +96,7 @@ Use this policy before any model or effort change; keep this contract identical 
 | `missing-context` | The attempt identifies absent files, history, criteria, logs, or other inputs needed to decide. | Supply the missing context and retry at the same model and effort; MUST NOT escalate model or effort. |
 | `ambiguous-spec` | Two or more materially different behaviors remain consistent with the stated criteria. | Request a human decision or wish clarification; MUST NOT escalate model or effort. |
 | `env-tool-failure` | A reproducible environment, dependency, permission, timeout, or tool error prevents valid execution. | Repair or retry the environment/tool, or report blocked with the error; MUST NOT escalate model or effort. |
+| `overdesigned-plan` | Gaps cluster in optional machinery that lacks a current criterion or measurement, while a simpler design satisfies the user stories with fewer durable states or recovery paths. | Stop the fix loop and return to `brainstorm`/`wish` to remove or defer the mechanism. Re-review the amended design/plan; MUST NOT spend retries or model escalation defending it. |
 
 Escalation eligibility requires **new evidence** produced since the previous attempt: attach the new failing output or diagnostic result, the correction already tried, and why it rules out the other three causes. A repeated verdict or unchanged failure is not new evidence and cannot authorize a model or effort change.
 
@@ -104,9 +106,12 @@ If an ordinary reviewer and the `final-gate` disagree, log an appeal with the wi
 
 When a subagent fails or a fix-loop limit is exhausted, the orchestrator records the cause, evidence, selected route, and current cap counters before another dispatch. It leaves the task `in_progress`, keeps dispatching ready groups that do not depend on the blocked one, and includes unresolved diagnoses and appeals in the final handoff.
 
+A user-approved simplification invalidates the superseded plan/review evidence and starts a fresh plan review; it is not an extra fix attempt. Preserve useful completed work only when it still satisfies the simpler contract, and delete machinery that exists solely for the rejected design.
+
 ## Rules
 - Never execute group work directly — always dispatch via the native delegation surface.
 - Never expand scope during execution; never skip validation commands.
+- Never spend fix loops preserving optional complexity; route an `overdesigned-plan` diagnosis back through wish/design review.
 - Never overwrite WISH.md from subagent output — curated prompts are runtime context; the WISH.md in git is the source of truth.
 - Reviewer ≠ engineer, always.
 - `genie task done` only after clean review and passing validation — and only by the orchestrator.

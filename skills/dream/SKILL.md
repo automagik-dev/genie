@@ -61,7 +61,7 @@ Each worker, independently:
 
 1. Dispatch one reviewer subagent per PR via the native delegation surface (reviewer ≠ worker) to run `review` against the wish's acceptance criteria.
 2. Read bot comments critically — never blindly accept automated findings.
-3. On FIX-FIRST: dispatch `fix` for valid gaps (max 2 loops per PR). On an architectural issue: escalate in the report, no fix attempt.
+3. On FIX-FIRST: diagnose first; return an overdesigned plan to wish/design review, otherwise dispatch `fix` for valid gaps (max 3 loops per PR). On another architectural issue: escalate in the report, no fix attempt.
 4. CI must be green before proceeding — poll status, do not sleep.
 5. On SHIP: mark the PR review-complete.
 

@@ -329,6 +329,28 @@ describe('Group E release and documentation contracts', () => {
     expect(pm).toMatch(/Selecting Autopilot\s+does not itself authorize external repository writes/);
   });
 
+  test('lifecycle treats simplicity as a hard gate and replans overdesigned work', () => {
+    const architecture = read('skills/architecture/SKILL.md');
+    const brainstorm = read('skills/brainstorm/SKILL.md');
+    const designTemplate = read('skills/brainstorm/references/design-template.md');
+    const wish = read('skills/wish/SKILL.md');
+    const wishTemplate = read('skills/wish/templates/wish-template.md');
+    const review = read('skills/review/SKILL.md');
+    const fix = read('skills/fix/SKILL.md');
+    const work = read('skills/work/SKILL.md');
+
+    expect(architecture).toContain('KISS comes first');
+    expect(brainstorm).toContain('## Simplicity Gate');
+    expect(designTemplate).toContain('## Simplicity Case');
+    expect(wish).toContain('Pass the simplicity gate');
+    expect(wishTemplate).toContain('## Simplicity Case');
+    expect(review).toContain('unjustified stateful machinery');
+    expect(review).toContain('a HIGH gap');
+    for (const lifecycleSkill of [review, fix, work]) expect(lifecycleSkill).toContain('`overdesigned-plan`');
+    expect(fix).toContain('up to 3 loops');
+    expect(work).toContain('A user-approved simplification invalidates the superseded plan/review evidence');
+  });
+
   test('wizard discloses init MCP writes and owner-qualified lifecycle order', () => {
     const wizard = read('skills/wizard/SKILL.md');
     for (const path of ['.mcp.json', '.warp/.mcp.json', '.codex/config.toml']) expect(wizard).toContain(path);
