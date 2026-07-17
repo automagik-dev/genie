@@ -21,7 +21,7 @@ Assess and report by default. Apply changes only when the invocation explicitly 
 
 Never judge against generic convention when the repo states its own. Before any verdict, read what exists of: `CLAUDE.md` / `AGENTS.md`, `README`, `CONTRIBUTING`, the package manifest, `.gitignore`, git hook tooling (husky, pre-commit, commitlint or equivalents), and CI config. These define the repo's *intended* contracts — your job is to find where reality has drifted from them, and where a contract is missing entirely. Deliberate tradeoffs documented there (bot commits, generated files kept on purpose, submodule workflows) are design, not defects.
 
-**Genie-framework repos**: if `.genie/` exists, its contract is: `wishes/`, `brainstorms/`, and `INDEX.md` are git-tracked; `genie.db` (and WAL/SHM siblings) must be ignored. Verify with `git check-ignore` and `git ls-files .genie/`.
+**Genie-framework repos**: if `.genie/` exists, its contract is: `wishes/`, `brainstorms/`, and `INDEX.md` are git-tracked; `genie.db` (and WAL/SHM siblings) plus per-worktree `launch/` prompts must be ignored. Verify with `git check-ignore` and `git ls-files .genie/`.
 
 **Repo profile — recall, verify, persist.** Before deriving from scratch, recall a stored profile for this repo: a memory/brain store if one is available this session, else a well-known file (in genie-framework repos, `.genie/repo-profile.md`). For this lane the profile records the ignore contracts, config-to-enforcement map, commit conventions, and documented tradeoffs. Recalled anchors are hypotheses, not truth — spot-check them against current code and report drift as a finding. After the audit, persist what discovery learned back to the store: update rather than duplicate, delete what proved wrong.
 

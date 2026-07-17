@@ -352,14 +352,16 @@ function buildPrompt(slug: string, group: string, tasks: TaskRow[]): string {
     `Group: ${group}`,
     '',
     `You own group "${group}" of wish "${slug}". It has ${tasks.length} ready task(s).`,
-    'Claim each task before you work it. When complete, report evidence to the PM; only the PM marks tasks done:',
+    'This checkout is the dedicated mutable lane for this group. Do not edit another checkout.',
+    'Claim each task before you work it. Commit the validated review candidate, then report its commit and evidence',
+    'to the PM; only the PM integrates, cleans up the lane, and marks tasks done:',
     '',
   ];
   for (const task of tasks) {
     lines.push(`- ${task.id}  ${task.title}`);
     lines.push(`    claim:  genie task checkout ${task.id} --worker ${group}`);
     lines.push(
-      '    finish: report implementation and validation evidence to the PM (do not mutate task completion state)',
+      '    finish: commit and report the candidate plus validation evidence (do not mutate task completion state)',
     );
   }
   lines.push('');

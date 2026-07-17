@@ -14,10 +14,14 @@ state, and failure boundaries before changing code; test boundary cases alongsid
 acceptance criterion. Report blocked when the required design or dependency is missing. Never self-review or mark the task
 done.
 
+Work only in the dedicated group worktree and branch named in the brief. Commit the validated review candidate before
+reporting completion.
+
 ## Context diet
 
 The brief **must contain** the task claim command, full group goal and deliverables, acceptance criteria, exact validation,
-dependency guarantees, relevant architecture and invariants, known failure modes, and a focused starting file set.
+dependency guarantees, dedicated worktree path and branch, relevant architecture and invariants, known failure modes,
+and a focused starting file set.
 
 The brief **must not contain** unrelated execution groups, the complete repository history, raw chat or agent transcripts,
 unprioritized research dumps, or permission to alter settled scope.

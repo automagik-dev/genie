@@ -15,8 +15,8 @@ Resolve FIX-FIRST gaps from `review`: dispatch a fix subagent, re-review, repeat
 
 ## Flow
 1. **Parse and diagnose gaps:** severity, files, failing checks from the FIX-FIRST verdict. If the evidence is `overdesigned-plan`, stop and return to `brainstorm`/`wish`; removing optional machinery is a plan correction, not a code-fix attempt.
-2. **Dispatch fixer:** native delegation surface → fix subagent, briefed with the gap list, the original wish criteria, and any `trace` diagnosis.
-3. **Re-review:** native delegation surface → a separate reviewer subagent (never the fixer) running `review` on the same pipeline.
+2. **Dispatch fixer:** native delegation surface → fix subagent in the existing group worktree, briefed with its path and branch, the gap list, the original wish criteria, and any `trace` diagnosis. The fixer commits the new review candidate.
+3. **Re-review:** native delegation surface → a separate reviewer subagent (never the fixer) running `review` against that exact commit in an ephemeral read-only worktree; remove the review worktree afterward.
 4. **Evaluate verdict:**
 
 | Verdict | Condition | Action |
@@ -32,7 +32,7 @@ Resolve FIX-FIRST gaps from `review`: dispatch a fix subagent, re-review, repeat
 
 Fix and re-review are **separate native-dispatch dispatches** — never combined in one subagent, and the re-reviewer is never the fixer. Subagents notify on completion — no polling. Follow-ups to a running fixer go through native follow-up messaging.
 
-The fixer's brief must carry: the severity-tagged gaps (file:line), the original wish acceptance criteria, the validation command(s) to re-run, and stop conditions — fix only the listed gaps; report blocked rather than expand scope.
+The fixer's brief must carry: the existing group worktree path and branch, the severity-tagged gaps (file:line), the original wish acceptance criteria, the validation command(s) to re-run, and stop conditions — edit only that worktree, fix only the listed gaps, commit the review candidate, and report blocked rather than expand scope.
 
 ## Escalation Diagnosis
 
@@ -54,7 +54,7 @@ If an ordinary reviewer and the `final-gate` disagree, log an appeal with the wi
 
 ## Task State
 
-The fix loop never mutates task state. The group's task stays `in_progress` through every loop; the orchestrator calls `genie task done <task-id>` only after a clean re-review. During any diagnosed route or appeal, the task remains `in_progress` with the remaining gaps recorded in the wish notes/handoff. If no task row exists for the work, proceed — the loop runs off the review verdict alone.
+The fix loop never mutates task state. The group's task stays `in_progress` through every loop; after a clean re-review, the orchestrator must still integrate the reviewed commit, validate the integrated tree, and garbage-collect the clean merged lane before calling `genie task done <task-id>`. During any diagnosed route or appeal, the task remains `in_progress` with the remaining gaps recorded in the wish notes/handoff. If no task row exists for the work, proceed — the loop runs off the review verdict alone.
 
 ## Diagnosis / Appeal Format
 

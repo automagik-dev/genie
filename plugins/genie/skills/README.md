@@ -30,7 +30,12 @@ All runtimes share the same durable contracts:
 - operational task state is in the per-repository `.genie/genie.db`;
 - implementation is delegated through the runtime's native named roles;
 - the engineer and reviewer are always different agents;
-- the orchestrator alone marks a task done after review and validation.
+- every concurrent execution group owns a dedicated branch and worktree with one active writer;
+- the orchestrator merges reviewed group commits into the wish integration branch and owns conflict decisions;
+- the orchestrator alone marks a task done after integrated validation and garbage collection of the clean merged lane.
+- a GitHub-backed `main` is updated only by fast-forwarding to its authoritative remote after reviewed PR merge;
+- with no remotes, the PM validates a temporary candidate, archives that exact integrated closure under
+  `archive/wish/<slug>`, removes its clean active lanes, and then fast-forwards unchanged local `main` to it.
 
 ## Distribution contract
 

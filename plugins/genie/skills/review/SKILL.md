@@ -11,7 +11,7 @@ Validate a design, wish plan, completed execution, or PR against its governing c
 
 ## Context Injection
 
-When spawned as a reviewer subagent, your dispatch prompt carries the curated scope: the target (DESIGN.md, wish draft, completed work, or PR diff), its exact path, and the extracted design or acceptance criteria. A design review does not require a wish path; later pipelines include `.genie/wishes/<slug>/WISH.md`. Use the supplied context directly — do not re-parse information already provided.
+When spawned as a reviewer subagent, your dispatch prompt carries the curated scope: the target (DESIGN.md, wish draft, completed work, or PR diff), its exact path or commit, and the extracted design or acceptance criteria. Implementation review uses an ephemeral, detached, read-only worktree at the exact candidate commit; it never inspects a concurrently mutable engineer checkout. A design review does not require a wish path; later pipelines include `.genie/wishes/<slug>/WISH.md`. Use the supplied context directly — do not re-parse information already provided.
 
 ## When to Use
 - After `brainstorm` — validate DESIGN.md before converting it into a wish
@@ -110,12 +110,13 @@ orchestrator passes that value unchanged to the stamp command as
 `--reviewed-sha256`. Stamping rejects a current design that differs from the
 reviewed content, verification rejects any later edit, and the reviewer never
 recomputes a digest for content it did not review. For plan,
-execution, and PR review, the orchestrator appends the block under the wish's
+execution, PR, and local integration review, the orchestrator appends the block under the wish's
 `## Review Results` and owns every durable transition:
 
 - plan SHIP → `APPROVED`; plan FIX-FIRST → `FIX-FIRST`; plan BLOCKED → `BLOCKED`;
 - execution and PR verdicts are appended while the wish remains `IN_PROGRESS`;
-- only an authorized merge plus required QA changes the wish to `SHIPPED`.
+- only proven mainline integration plus required QA changes the wish to `SHIPPED`; unresolved post-merge local mirroring,
+  archival, or lane cleanup is recorded separately and must not be hidden.
 
 Do not claim the next stage is active until the orchestrator confirms the
 write. Never edit WISH.md, the brainstorm jar, or task state as the reviewer.
@@ -126,8 +127,9 @@ write. Never edit WISH.md, the brainstorm jar, or task state as the reviewer.
 |---------------|---------|
 | Design review (after `brainstorm`) | Proceed to `wish` to create the executable plan |
 | Plan review (after `wish`) | Proceed to `work` to execute the plan |
-| Execution review (after `work`) | Create PR targeting `dev` |
-| PR review (before merge) | Merge to `dev` (agents) or approve for human merge |
+| Execution review (after `work`) | GitHub-backed → create PR targeting authoritative `main`; zero remotes → prepare the validated local integration candidate |
+| PR review (before merge) | Record SHIP evidence for third-party GitHub merge; never merge locally into GitHub-backed `main` |
+| Local integration review | After candidate QA, review the closure commit containing staged `SHIPPED`; archive that exact commit and clean its lanes before fast-forwarding unchanged local `main` to it |
 
 ### FIX-FIRST loop
 1. Diagnose first. For `overdesigned-plan`, return to `brainstorm`/`wish` without consuming a fix attempt.
@@ -166,11 +168,11 @@ The verdict plus severity-tagged gaps ARE the review output — deliver them in 
 
 | Verdict | Orchestrator's next move |
 |---------|-------------------------|
-| **SHIP** | Execution review → complete the group with `genie task done <task-id>`; plan review → advance to the next lifecycle stage |
+| **SHIP** | Execution review → return the exact reviewed commit for PM integration, validation, lane cleanup, and `genie task done <task-id>`; plan review → advance to the next lifecycle stage |
 | **FIX-FIRST** | Auto-invoke `fix` with the gap list; the task stays `in_progress` until a clean re-review |
 | **BLOCKED** | Take the diagnosed corrective route; the task stays `in_progress` |
 
-`genie task done` belongs to the orchestrator, after a clean verdict — never to the reviewer.
+`genie task done` belongs to the orchestrator after a clean verdict, integration, validation, and lane cleanup — never to the reviewer.
 
 ## Rules
 - Never mark PASS without evidence from this session — verify, don't assume.

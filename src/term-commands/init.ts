@@ -72,8 +72,8 @@ const INDEX_SKELETON = `# Plans Index
 ## Poured
 `;
 
-/** SQLite state artifacts that must never be committed. */
-const GITIGNORE_RULES = ['.genie/genie.db', '.genie/genie.db-wal', '.genie/genie.db-shm'];
+/** Operational artifacts that must never be committed. */
+const GITIGNORE_RULES = ['.genie/genie.db', '.genie/genie.db-wal', '.genie/genie.db-shm', '.genie/launch/'];
 
 // ============================================================================
 // Git repo resolution
@@ -108,7 +108,7 @@ function scaffoldIndex(root: string): ArtifactAction {
 }
 
 /**
- * Append any missing SQLite ignore rules to `.gitignore`, creating the file
+ * Append any missing operational ignore rules to `.gitignore`, creating the file
  * when absent. Existing content is preserved byte-for-byte; rules already
  * present are left untouched, so a second run writes nothing.
  */

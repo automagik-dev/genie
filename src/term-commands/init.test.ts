@@ -7,7 +7,7 @@ import { mergeCodexMcpFallback, removeCodexMcpFallback } from './init.js';
 
 const CLI = join(import.meta.dir, '..', 'genie.ts');
 const INTERPRETED_MCP_ARGS = [realpathSync(CLI), 'mcp'];
-const GITIGNORE_RULES = ['.genie/genie.db', '.genie/genie.db-wal', '.genie/genie.db-shm'];
+const GITIGNORE_RULES = ['.genie/genie.db', '.genie/genie.db-wal', '.genie/genie.db-shm', '.genie/launch/'];
 
 let dir: string;
 
@@ -57,6 +57,14 @@ describe('genie init', () => {
     for (const rule of GITIGNORE_RULES) {
       expect(gitignore).toContain(rule);
     }
+    mkdirSync(join(dir, '.genie', 'launch'), { recursive: true });
+    writeFileSync(join(dir, '.genie', 'launch', 'group.prompt'), 'kickoff\n');
+    expect(
+      execFileSync('git', ['check-ignore', '.genie/launch/group.prompt'], {
+        cwd: dir,
+        encoding: 'utf-8',
+      }).trim(),
+    ).toBe('.genie/launch/group.prompt');
     expect(stdout).toContain('brainstorm');
     expect(stdout).toContain('$genie:brainstorm');
     expect(stdout).toContain('$genie:review');

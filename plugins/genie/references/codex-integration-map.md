@@ -85,9 +85,9 @@ The 2026-07-11 dogfood incident demonstrated the failure mode: `5.260710.13` sel
 
 ## Native orchestration
 
-The active client supplies its native spawn/follow-up/wait/interrupt tools; shared skills do not name undocumented functions. Codex uses installed `genie_*` profiles when available, but native subagents share the caller's workspace unless the runtime explicitly provides isolation. For guaranteed per-group Git isolation, use `genie launch`/worktrees.
+The active client supplies its native spawn/follow-up/wait/interrupt tools; shared skills do not name undocumented functions. Codex uses installed `genie_*` profiles when available. Every concurrent execution group must be placed in a dedicated runtime-managed or ordinary Git worktree; use `genie launch` for a human-supervised isolated wave, and sequence groups when isolated dispatch is unavailable.
 
-Each engineer claims with `genie task checkout <task-id> --worker <name>`, reports completion, and remains `in_progress`. An independent reviewer validates the group. Only the orchestrator calls `genie task done` after SHIP and passing evidence.
+Each engineer claims with `genie task checkout <task-id> --worker <name>`, commits in its group worktree, reports completion, and remains `in_progress`. An independent reviewer validates that exact commit from an ephemeral read-only worktree. The PM merges it into the wish integration worktree, resolves conflicts, validates the integrated tree, and removes the clean group worktree and merged branch. Only then does the orchestrator call `genie task done`.
 
 Reviewer verdicts and WISH status are distinct. Reviewers return read-only
 SHIP/FIX-FIRST/BLOCKED evidence; the invoking orchestrator appends it and owns

@@ -126,7 +126,7 @@ describe('genie launch --dry-run', () => {
     const apiGroup = plan.groups.find((g) => g.name === 'api');
     expect(apiGroup?.prompt).toContain(a.id);
     expect(apiGroup?.prompt).not.toContain('genie task done');
-    expect(apiGroup?.prompt).toContain('only the PM marks tasks done');
+    expect(apiGroup?.prompt).toContain('only the PM integrates, cleans up the lane, and marks tasks done');
     const uiGroup = plan.groups.find((g) => g.name === 'ui');
     expect(uiGroup?.prompt).toContain(b.id);
 
@@ -346,6 +346,9 @@ describe('genie launch (real run, --no-open)', () => {
     const corePrompt = readFileSync(join(coreWt, '.genie', 'launch', 'core.prompt'), 'utf-8');
     expect(corePrompt).toContain(t1.id);
     expect(corePrompt).toContain(t2.id);
+    expect(corePrompt).toContain('dedicated mutable lane for this group');
+    expect(corePrompt).toContain('Commit the validated review candidate');
+    expect(corePrompt).toContain('only the PM integrates, cleans up the lane, and marks tasks done');
     const docsPrompt = readFileSync(join(docsWt, '.genie', 'launch', 'docs.prompt'), 'utf-8');
     expect(docsPrompt).toContain(t3.id);
 

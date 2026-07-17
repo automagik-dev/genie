@@ -17,10 +17,13 @@ Investigate a bug end-to-end: collect symptoms, run `trace` for root cause, capt
 
 ## QA Loop Integration
 
-When invoked during the QA loop (after merge to dev):
+When invoked during pre-promotion QA against the exact PR or local integration candidate:
 1. Read the wish's criteria from `.genie/wishes/<slug>/WISH.md`.
 2. Map each failure to the criterion it violates: `Criterion: "<text>" — FAIL`.
-3. Chain: QA failure → `report` → `trace` → `fix` → retest.
+3. Chain: QA failure → `report` → `trace` → `fix` in the candidate lane → retest and independent review.
+
+A defect discovered after authoritative mainline promotion starts a new corrective wish; `report` never routes fixes
+directly onto hosted or local `main`.
 
 ## Flow
 

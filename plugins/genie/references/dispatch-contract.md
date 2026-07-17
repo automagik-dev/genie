@@ -14,13 +14,24 @@ Use the native subagent tools actually exposed in the current session. Do not in
 
 1. The orchestrator creates one task per execution group.
 2. The engineer's first command is `genie task checkout <task-id> --worker <name>`.
-3. Parallel writers require disjoint file ownership or separate worktrees.
-4. The engineer reports completion; it never marks the task done.
-5. A different reviewer checks the exact criteria and evidence.
-6. FIX-FIRST dispatches a separate fixer and then a separate re-reviewer, at most two loops.
-7. Only the orchestrator runs `genie task done <task-id>` after SHIP and passing validation.
+3. Every concurrent execution group owns a dedicated branch and worktree, even when expected file scopes are disjoint.
+4. A group worktree has one writer at a time and persists across engineer and fixer handoffs.
+5. The engineer commits and reports completion; it never marks the task done.
+6. A different reviewer checks that exact commit in an ephemeral read-only worktree.
+7. FIX-FIRST returns a separate fixer to the group worktree and then uses a fresh reviewer, at most three loops.
+8. The PM merges reviewed group commits into the wish integration worktree and owns merge order and conflict resolution.
+9. Only the orchestrator runs `genie task done <task-id>` after integrated validation and removal of the clean group
+   worktree and merged branch.
 
 Task completion notifications are push-based. Do not poll a running subagent. Use the active runtime's native follow-up or interrupt surface when it is exposed; if it is not, re-dispatch once with curated context rather than claiming an undocumented cross-client API.
+
+## Wish mainline boundary
+
+- When `main` tracks a GitHub remote's `main`, wishes ship through reviewed PRs. Local `main` is fast-forwarded and
+  proven equal to that fetched ref before work and after merge evidence; direct local feature merges are forbidden.
+- With zero configured remotes, the PM validates a temporary merge candidate, archives the exact integrated closure
+  commit, removes its clean active lanes, and then fast-forwards unchanged local `main` to that archived commit.
+- Non-GitHub or ambiguous remote topology requires an explicit user decision.
 
 ## Role map
 
@@ -34,4 +45,4 @@ Task completion notifications are push-based. Do not poll a running subagent. Us
 | Surgical correction | `genie_fixer` | Workspace write; never self-review |
 | Aggregate gate | `genie_final_gate` | Read-only |
 
-The profile pins reasoning/sandbox policy, not the lifecycle decision. The wish owns complexity, acceptance criteria, dependencies, and file scope.
+The profile pins reasoning/sandbox policy, not the lifecycle decision. The wish owns complexity, acceptance criteria, and dependencies; the dispatch brief owns the group's worktree path and branch.
