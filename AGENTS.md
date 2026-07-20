@@ -26,6 +26,7 @@ Genie v5 is zero-daemon except for the explicitly launched `genie omni serve` br
 
 ## Engineering rules
 
+- KISS is a release gate, not a preference. Start with the simplest complete design that satisfies current user stories. Caches, deltas, sharding, background coordination, configurable policy, and other stateful machinery require a present contractual need or measured threshold; hypothetical future scale is not evidence. Prefer bounding data and separating history from current state before adding synchronization protocols.
 - Define type and error boundaries before implementation.
 - Preserve user-owned config and unrelated dirty-worktree changes.
 - Config migrations are narrow, backup-first, idempotent, and covered by fixtures.

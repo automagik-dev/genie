@@ -9,7 +9,7 @@ description: Use when reviewing architecture in any codebase — module boundari
 
 ## Lens
 
-This lane treats complexity as anything that makes a system hard to understand or modify — it accumulates as dependencies and obscurity. The unit of judgment is the module: deep modules (simple interface, substantial implementation) are good; shallow modules (interface as complicated as what they hide) are architecture debt. Information leakage, pass-through methods, and temporal decomposition are the smells to hunt. Prize "define errors out of existence" and design-it-twice thinking.
+This lane treats complexity as anything that makes a system hard to understand or modify — it accumulates as dependencies and obscurity. KISS comes first: begin with the simplest complete design that satisfies current user stories, and make every added mechanism earn its carrying cost with a present contractual need or measurement. Hypothetical future scale is not evidence. The unit of judgment is the module: deep modules (simple interface, substantial implementation) are good; shallow modules (interface as complicated as what they hide) are architecture debt. Information leakage, pass-through methods, temporal decomposition, and speculative optimization are the smells to hunt. Prize "define errors out of existence" and design-it-twice thinking.
 
 This lane's lens is inspired by the work of John Ousterhout, author of *A Philosophy of Software Design*.
 
@@ -30,19 +30,20 @@ Architecture is judged against the repo's own stated intent, then against first 
 
 ## Workflow
 
-1. **Map the module graph.** Trace imports from the entry points; identify layers, cycles, and upward imports. Done when you have the real dependency picture, not the README's.
-2. **Verify the stated contracts.** For each documented invariant found in discovery, read the code that must uphold it. Done when each is confirmed intact or broken with file:line evidence.
-3. **Depth-score the key interfaces.** For the repo's central abstractions: interface surface vs implementation hidden, leakage of internals to callers, pass-throughs. Done when each has a deep/shallow verdict with the specific signature that decides it.
-4. **Hunt the classic smells**: information leakage (two modules that must change together), temporal decomposition (modules named after steps, not capabilities), exceptions where errors could be defined away, configuration knobs exporting decisions the module should make. Done when each smell has a concrete instance or the category is declared clean.
-5. **Rank by change amplification** — how many places must be touched when the underlying decision changes — and report.
+1. **Establish the simplicity baseline.** State the current user stories, realistic scale, and smallest complete design. For every cache, delta, shard, queue, retry state machine, abstraction, or configuration surface, name the present evidence that requires it and the simpler alternative it displaces. Prefer bounding current state and moving history behind pagination before distributing synchronization. Done when speculative machinery is deleted, deferred behind a measurable trigger, or justified.
+2. **Map the module graph.** Trace imports from the entry points; identify layers, cycles, and upward imports. Done when you have the real dependency picture, not the README's.
+3. **Verify the stated contracts.** For each documented invariant found in discovery, read the code that must uphold it. Done when each is confirmed intact or broken with file:line evidence.
+4. **Depth-score the key interfaces.** For the repo's central abstractions: interface surface vs implementation hidden, leakage of internals to callers, pass-throughs. Done when each has a deep/shallow verdict with the specific signature that decides it.
+5. **Hunt the classic smells**: information leakage (two modules that must change together), temporal decomposition (modules named after steps, not capabilities), exceptions where errors could be defined away, configuration knobs exporting decisions the module should make, and optimizations without measurements or present requirements. Done when each smell has a concrete instance or the category is declared clean.
+6. **Rank by change amplification** — how many places must be touched when the underlying decision changes — and report.
 
 ## Grounded Reporting
 
-Every structural claim traces to code read this session, cited file:line. A design opinion is only a defect if you can name the modification scenario it makes expensive; interfaces judged without reading their implementation are labeled as such.
+Every structural claim traces to code read this session, cited file:line. A design opinion is only a defect if you can name the modification scenario it makes expensive; interfaces judged without reading their implementation are labeled as such. Conversely, added machinery without a current user story, contract, or measurement is itself a grounded complexity finding: the evidence is the absent requirement plus the concrete states and failure modes the machinery introduces.
 
 ## Output Format
 
-Lead with a one-sentence verdict on architectural health. Then findings ranked by change-amplification risk, each with evidence, the modification scenario it hurts, and one recommended structural move. Explicitly list contracts verified intact — a review that only lists problems hides where the design is strong. Cross-lane handoffs last. In a genie-framework repo, use CRITICAL/HIGH/MEDIUM/LOW for finding severities and SHIP/FIX-FIRST/BLOCKED only for the overall verdict and note which findings warrant a refactor wish via `wish` rather than opportunistic edits.
+Lead with a one-sentence verdict on architectural health and name the simplest viable design. Then findings ranked by change-amplification risk, each with evidence, the modification scenario it hurts, and one recommended structural move. Explicitly list contracts verified intact — a review that only lists problems hides where the design is strong. Cross-lane handoffs last. In a genie-framework repo, treat unjustified stateful machinery as a blocking HIGH plan/design gap, use CRITICAL/HIGH/MEDIUM/LOW for finding severities and SHIP/FIX-FIRST/BLOCKED only for the overall verdict, and note which findings warrant a refactor wish via `wish` rather than opportunistic edits.
 
 ## Pitfalls
 
