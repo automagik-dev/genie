@@ -236,16 +236,35 @@ jobs:
             exit 1
           fi
 
+          # Rewrite ONLY the version line in place. `jq '.version = $version'`
+          # re-serializes the whole document in jq's own style, which expands
+          # biome's single-line arrays and fails `bun run lint` on every bump
+          # (observed 2026-07-20: v5.260720.2 broke the Quality Gate and blocked
+          # promotion). A line-scoped edit also honors this job's own contract:
+          # the child commit must be a version-ONLY delta of its parent.
           for path in "${JSON_FILES[@]}"; do
-            tmp="$(mktemp)"
-            jq --arg version "$VERSION" '.version = $version' "$path" > "$tmp"
-            mv "$tmp" "$path"
+            perl -i -pe '
+              BEGIN { $version = $ENV{VERSION}; $done = 0 }
+              if (!$done && s/^(\s*"version":\s*)"[^"]*"/$1"$version"/) { $done = 1 }
+            ' "$path"
+            jq -e --arg version "$VERSION" '.version == $version' "$path" >/dev/null || {
+              echo "::error ::release-version.write_failed ${path} version was not updated in place"
+              exit 1
+            }
           done
-          tmp="$(mktemp)"
-          jq --arg version "$VERSION" '
-            .plugins |= map(if type == "object" and .name == "genie" then .version = $version else . end)
-          ' "$MARKETPLACE" > "$tmp"
-          mv "$tmp" "$MARKETPLACE"
+          # marketplace.json carries the version inside the single genie entry,
+          # so scope the edit to the line following that entry's name.
+          perl -i -pe '
+            BEGIN { $version = $ENV{VERSION}; $seen = 0; $done = 0 }
+            $seen = 1 if /^\s*"name":\s*"genie"\s*,?\s*$/;
+            if ($seen && !$done && s/^(\s*"version":\s*)"[^"]*"/$1"$version"/) { $done = 1 }
+          ' "$MARKETPLACE"
+          jq -e --arg version "$VERSION" '
+            [.plugins[]? | select(.name == "genie") | .version] == [$version]
+          ' "$MARKETPLACE" >/dev/null || {
+            echo "::error ::release-version.write_failed ${MARKETPLACE} genie version was not updated in place"
+            exit 1
+          }
           tmp="$(mktemp)"
           sed -E "s/^version: [^[:space:]]+$/version: ${VERSION}/" "$HERMES" > "$tmp"
           mv "$tmp" "$HERMES"
