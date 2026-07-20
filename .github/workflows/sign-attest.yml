@@ -427,7 +427,6 @@ jobs:
             --source-ref refs/heads/main \
             --source-digest "$CONTROL_SHA" \
             --signer-digest "$CONTROL_SHA" \
-            --signer-workflow "${RELEASE_REPOSITORY}/.github/workflows/sign-attest.yml" \
             --format json >"$RESULT"
           bash scripts/release-native-predicate.sh verify "$RESULT"
 
@@ -496,8 +495,7 @@ jobs:
               --cert-identity "https://github.com/${{ github.repository }}/.github/workflows/sign-attest.yml@refs/heads/main" \
               --source-ref refs/heads/main \
               --source-digest "$CONTROL_SHA" \
-              --signer-digest "$CONTROL_SHA" \
-              --signer-workflow "${{ github.repository }}/.github/workflows/sign-attest.yml" > /tmp/gh-tamper.log 2>&1; then
+              --signer-digest "$CONTROL_SHA" > /tmp/gh-tamper.log 2>&1; then
             echo "::error::gh attestation verify accepted a mutated tarball — Attestations API contract broken"
             cat /tmp/gh-tamper.log >&2 || true
             exit 1
