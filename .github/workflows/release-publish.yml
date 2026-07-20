@@ -2,7 +2,7 @@ name: Release Publish
 
 # Group 3 of genie-distribution-cutover — attaches the signed tarballs +
 # cosign bundles + SLSA attestations produced by sign-attest.yml to the
-# v<version> GitHub Release, and (for stable, non-draft tag pushes) writes
+# v<version> GitHub Release, and (for non-draft trusted releases) writes
 # .well-known/latest.json into the repo so install.sh + `genie update` can
 # resolve the latest version per channel without a CDN.
 #
@@ -10,14 +10,11 @@ name: Release Publish
 # is free, maintained by GitHub, and `gh attestation verify` reads cosign
 # signatures from Sigstore Rekor without any custom verification server.
 #
-# Trigger chain (adapted for Sign + Attest upstream):
-#   tag push v* → Build Tarballs → Sign + Attest Tarballs → THIS workflow
-#                                  (workflow_run, success only)
-#
-# workflow_dispatch is the manual override for re-publishing or promoting
-# a draft release; it requires the upstream sign-attest run-id so the
-# 12 signed assets (4 platforms × {tarball, bundle, intoto.jsonl}) can
-# be downloaded from that run.
+# Trigger chain:
+#   guarded release.yml@main (stable) OR version.yml@main (dev/homolog)
+#     → Build Tarballs → Sign + Attest → THIS
+# All artifacts are from one workflow run; there is no standalone dispatch or
+# external run-id recovery path.
 #
 # Verification by consumers:
 #   gh release download v<version> --repo automagik-dev/genie --pattern '*.tar.gz'
@@ -25,16 +22,13 @@ name: Release Publish
 #   # OR via cosign:
 #   cosign verify-blob \
 #     --bundle genie-<version>-<platform>.tar.gz.bundle \
-#     --certificate-identity-regexp "^https://github.com/automagik-dev/genie/.github/workflows/sign-attest.yml@" \
+#     --certificate-identity-regexp "^https://github\\.com/automagik-dev/genie/\\.github/workflows/sign-attest\\.yml@refs/heads/main$" \
 #     --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
 #     genie-<version>-<platform>.tar.gz
 
 on:
-  # Reusable from release.yml orchestrator. The orchestrator drives the full
-  # build → sign → publish chain in one run, so signed artifacts pass via the
-  # run-shared store (no run_id input). draft defaults to false here because
-  # the orchestrator path is the production-safe automated path; the
-  # workflow_dispatch escape hatch keeps draft=true for replay safety.
+  # Reusable only from the trusted main-controlled release chain. Stable manual
+  # recovery routes through release.yml; dev/homolog route through version.yml.
   workflow_call:
     inputs:
       version:
@@ -42,7 +36,7 @@ on:
         required: true
         type: string
       channel:
-        description: 'Release channel (stable / beta / canary)'
+        description: 'Release channel (stable / homolog / dev)'
         required: false
         type: string
         default: stable
@@ -51,78 +45,83 @@ on:
         required: false
         type: boolean
         default: false
-  # Manual-recovery escape hatch — operators can re-publish from a stranded
-  # sign-attest run by passing version + run_id explicitly. draft defaults
-  # to true here so a replay never auto-promotes by accident.
-  workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version to publish (must match upstream artifact version)'
-        required: true
-        type: string
-      run_id:
-        description: 'sign-attest.yml run ID to download signed artifacts from'
-        required: true
-        type: string
-      channel:
-        description: 'Release channel (stable = no --prerelease; homolog/dev = --prerelease)'
-        required: true
-        type: choice
-        default: stable
-        # Canonical channel taxonomy (Felipe directive 2026-05-12,
-        # unified across the automagik sibling projects). beta + canary retired.
-        options:
-          - stable
-          - homolog
-          - dev
-      draft:
-        description: 'Create as draft (require manual promotion)?'
-        required: true
-        type: boolean
-        default: true
 
 concurrency:
-  group: release-publish-${{ github.ref }}-${{ inputs.version || github.sha }}
+  # Only publication is globally serialized. Approval/build/sign jobs for other
+  # versions remain parallel, while manifest selection cannot reorder.
+  group: release-publish
+  queue: max
   cancel-in-progress: false   # never cancel an in-flight publish
 
 permissions:
-  contents: write              # gh release create/upload + push latest.json commit
+  contents: read               # each privileged job narrows/elevates explicitly
+  attestations: read           # verify any complete published inventory before reuse
 
 jobs:
-  publish:
-    name: Publish to GitHub Releases
+  # contents:write is useful only after the reusable workflow proves its
+  # caller. A dev workflow calling release-publish.yml@main must not inherit a
+  # trusted publisher merely because the called file itself lives on main.
+  admit:
+    name: Admit trusted release orchestrator
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 2
+    permissions: {}
     steps:
-      - uses: actions/checkout@v5
-
-      - name: Resolve upstream sign-attest run-id
-        id: src
+      - name: Bind caller workflow and control commit
         shell: bash
+        env:
+          CALLER_EVENT: ${{ github.event_name }}
+          CALLER_REF: ${{ github.ref }}
+          CALLER_SHA: ${{ github.sha }}
+          CALLER_WORKFLOW_REF: ${{ github.workflow_ref }}
+          CALLER_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          EXPECTED_STABLE_CALLER: automagik-dev/genie/.github/workflows/release.yml@refs/heads/main
+          EXPECTED_AUTOMATED_CALLER: automagik-dev/genie/.github/workflows/version.yml@refs/heads/main
+          INPUT_CHANNEL: ${{ inputs.channel }}
         run: |
           set -euo pipefail
-          # Resolve the upstream run-id that holds the signed artifacts:
-          #  - workflow_dispatch break-glass: operator supplies inputs.run_id
-          #    pointing at a prior sign-attest run.
-          #  - workflow_call from release.yml orchestrator: sign-attest ran
-          #    in THIS run; default to github.run_id so download-artifact pulls
-          #    from the current run's shared artifact store.
-          if [[ -n "${{ inputs.run_id }}" ]]; then
-            RUN_ID="${{ inputs.run_id }}"
-          else
-            RUN_ID="${{ github.run_id }}"
+          case "$INPUT_CHANNEL" in
+            stable)
+              EXPECTED_EVENT=workflow_dispatch
+              EXPECTED_CALLER="$EXPECTED_STABLE_CALLER"
+              ;;
+            homolog|dev)
+              EXPECTED_EVENT=workflow_run
+              EXPECTED_CALLER="$EXPECTED_AUTOMATED_CALLER"
+              ;;
+            *)
+              echo "::error ::release-caller.channel unknown channel '${INPUT_CHANNEL}'"
+              exit 1
+              ;;
+          esac
+          if [[ "$CALLER_EVENT" != "$EXPECTED_EVENT" ||
+                "$CALLER_REF" != refs/heads/main ||
+                "$CALLER_WORKFLOW_REF" != "$EXPECTED_CALLER" ||
+                "$CALLER_WORKFLOW_SHA" != "$CALLER_SHA" ]]; then
+            echo "::error ::release-caller.untrusted release-publish rejected caller ${CALLER_WORKFLOW_REF:-<empty>} (${CALLER_EVENT:-<empty>})"
+            exit 1
           fi
-          echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
-          echo "Upstream sign-attest run-id: ${RUN_ID}"
+          echo "Trusted release caller admitted at ${CALLER_SHA}"
+
+  publish:
+    name: Publish to GitHub Releases
+    needs: admit
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      attestations: read
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
 
       - name: Download all signed artifacts (sign-attest.yml)
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: genie-*-signed
           merge-multiple: true
           path: dist
-          run-id: ${{ steps.src.outputs.run_id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Resolve version + channel + asset inventory
         id: meta
@@ -165,7 +164,15 @@ jobs:
           echo "=== dist/ inventory (expect 12 files: 4× tarball + 4× bundle + 4× intoto.jsonl) ==="
           ls -la
 
-      - name: Create or update GitHub Release with all 12 signed assets
+      - name: Install cosign for published-asset reuse verification
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+        with:
+          cosign-release: 'v2.4.1'
+
+      - name: Install slsa-verifier for published-asset reuse verification
+        uses: slsa-framework/slsa-verifier/actions/installer@ea584f4502babc6f60d9bc799dbbb13c1caa9ee6 # v2.7.1
+
+      - name: Prepare draft, reconcile exact assets, and finalize non-latest
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.meta.outputs.version }}
@@ -175,26 +182,38 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Testable/idempotent create, migration-note, and promotion logic.
-          # The helper preserves human-authored bodies and propagates gh errors.
-          bash scripts/reconcile-release-note.sh
-
-          if [[ -d dist && -n "$(ls -A dist 2>/dev/null)" ]]; then
-            gh release upload "v${VERSION}" \
-              --repo "${{ github.repository }}" \
-              --clobber \
-              dist/*
-          else
-            echo "::error::dist/ is empty — nothing to upload"
-            exit 1
+          # New releases remain draft/non-latest until all 12 exact assets are
+          # remotely verified. Existing complete releases are reused byte for
+          # byte; partial published releases and mismatches fail closed. The
+          # repository setting is an externally verified cutover prerequisite:
+          # GITHUB_TOKEN cannot read the Administration API that exposes it.
+          bash scripts/reconcile-release-note.sh prepare
+          bash scripts/reconcile-release-assets.sh
+          bash scripts/reconcile-release-note.sh finalize
+          if [[ "$DRAFT" == false ]]; then
+            bash scripts/release-immutability.sh release
+            # Re-verify the now-locked remote bytes and all three provenance
+            # channels. This closes the draft verification→publish TOCTOU.
+            bash scripts/reconcile-release-assets.sh
           fi
 
-          # Sanity: confirm release page now lists all 12 assets.
-          ASSET_COUNT=$(gh release view "v${VERSION}" --repo "${{ github.repository }}" --json assets --jq '.assets | length')
-          echo "v${VERSION} now lists ${ASSET_COUNT} assets"
-          if [[ "${ASSET_COUNT}" -lt 12 ]]; then
-            echo "::warning::expected 12 assets, found ${ASSET_COUNT}"
-          fi
+  manifests:
+    name: Advance authoritative channel manifests
+    needs: publish
+    if: ${{ !inputs.draft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      # No reviewers: dev/homolog stay automatic. The environment is restricted
+      # to main and holds the sole write deploy key allowed through main rules.
+      name: release-manifests
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ssh-key: ${{ secrets.RELEASE_MANIFESTS_DEPLOY_KEY }}
+          persist-credentials: true
 
       # ---------------------------------------------------------------------
       # Per-channel manifest pointers — committed to main so install.sh +
@@ -204,8 +223,7 @@ jobs:
       # Filename map (per wish release-channel-dev, 2026-05-11):
       #   stable → latest.json     (kept for back-compat with v1 manifest layout)
       #   dev    → dev.json        (replaces the old "next.json" producer concept)
-      #   beta   → beta.json
-      #   canary → canary.json
+      #   homolog → homolog.json
       #
       # The stable-only gate that lived here through v4.260511.3 was lifted —
       # every non-draft publish writes the manifest(s) for the channel(s) it
@@ -215,90 +233,53 @@ jobs:
       # writes ONLY dev.json and latest.json stays at the prior stable.
       # ---------------------------------------------------------------------
       - name: Update channel manifests (.well-known/*.json — non-draft only)
-        if: ${{ !inputs.draft }}
         env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.meta.outputs.version }}
-          CHANNEL: ${{ steps.meta.outputs.channel }}
+          VERSION: ${{ inputs.version }}
+          CHANNEL: ${{ inputs.channel }}
         shell: bash
         run: |
           set -euo pipefail
-          # Switch to a fresh checkout of main; the workflow_run trigger
-          # may have checked out a tag commit (head_branch=v...).
-          git fetch origin main
-          git checkout main
-          git pull --ff-only origin main
-
-          # stable keeps the historical filename `latest.json`; every other
-          # channel uses its own name. install.sh + genie update's
-          # `manifestUrlForChannel` consume the same convention.
-          # Channels to advance on this release. A stable release is also
-          # the latest dev release (today we have a single release pipeline
-          # — every release advances both pointers). Future dev-only
-          # releases (channel=dev with --prerelease) only advance dev.json.
-          # latest.json is the back-compat name for stable; dev.json is the
-          # new dev-channel pointer (wish release-channel-dev).
-          # Canonical taxonomy: stable / homolog / dev (Felipe directive
-          # 2026-05-12, cross-repo unified). Promotion subsumes downstream:
-          # - stable advances latest.json + homolog.json + dev.json
-          # - homolog advances homolog.json + dev.json
-          # - dev advances only dev.json
-          declare -A MANIFEST_FILES=()
-          case "$CHANNEL" in
-            stable)
-              MANIFEST_FILES[stable]="latest.json"
-              MANIFEST_FILES[homolog]="homolog.json"
-              MANIFEST_FILES[dev]="dev.json"
-              ;;
-            homolog)
-              MANIFEST_FILES[homolog]="homolog.json"
-              MANIFEST_FILES[dev]="dev.json"
-              ;;
-            dev)
-              MANIFEST_FILES[dev]="dev.json"
-              ;;
-            *)
-              echo "::error::unknown channel: $CHANNEL (valid: stable, homolog, dev)"
-              exit 1
-              ;;
-          esac
-
-          mkdir -p .well-known
-          for manifest_channel in "${!MANIFEST_FILES[@]}"; do
-            FILE="${MANIFEST_FILES[$manifest_channel]}"
-            cat > ".well-known/${FILE}" <<EOF
-          {
-            "schema_version": 1,
-            "channel": "${manifest_channel}",
-            "version": "${VERSION}",
-            "released_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "tarball_base": "https://github.com/${{ github.repository }}/releases/download/v${VERSION}",
-            "platforms": ["linux-x64-glibc", "linux-x64-musl", "linux-arm64", "darwin-arm64"]
-          }
-          EOF
-          done
-
           git config user.name "release-bot"
           git config user.email "release-bot@namastex.com"
-          # Stage first, then compare against HEAD. `git diff --quiet <path>`
-          # returns 0 (no diff) for *untracked* files because they aren't in
-          # the index at all — so the bootstrap case ("file has never existed
-          # on main") fell through and silently no-op'd every release until
-          # PR #2412 bootstrapped manually. Staging registers the path; then
-          # `git diff --cached --quiet HEAD --` correctly reports "differs from
-          # HEAD" for both new and modified files.
-          MANIFEST_PATHS=()
-          for f in "${MANIFEST_FILES[@]}"; do
-            MANIFEST_PATHS+=(".well-known/${f}")
+          # Preserve the helper from this admitted control commit. Each retry
+          # evaluates it against a freshly fetched main tree; a concurrent
+          # writer can cause a non-fast-forward, never a lost/downgraded update.
+          MANIFEST_RECONCILER="${RUNNER_TEMP}/reconcile-channel-manifests-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.sh"
+          cp scripts/reconcile-channel-manifests.sh "$MANIFEST_RECONCILER"
+          RELEASED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          manifests_reconciled=false
+
+          for attempt in 1 2 3 4 5; do
+            git fetch origin main
+            git switch --detach origin/main
+
+            # Stable/homolog fan out to downstream pointers, but each file
+            # moves independently and monotonically. An older delayed release
+            # may advance stable while preserving newer downstream pointers.
+            RELEASE_REPOSITORY="${{ github.repository }}" RELEASED_AT="$RELEASED_AT" \
+              bash "$MANIFEST_RECONCILER"
+
+            # Stage the complete fixed allowlist. Staging before diff handles
+            # both modified and bootstrap/untracked manifests.
+            MANIFEST_PATHS=()
+            for f in latest.json homolog.json dev.json; do
+              [[ -f ".well-known/${f}" && ! -L ".well-known/${f}" ]] && MANIFEST_PATHS+=(".well-known/${f}")
+            done
+            git add -- "${MANIFEST_PATHS[@]}"
+            if git diff --cached --quiet HEAD -- "${MANIFEST_PATHS[@]}"; then
+              echo "manifests already monotonic — nothing to commit"
+              manifests_reconciled=true
+              break
+            fi
+            git commit -m "chore(release): advance eligible manifests (${CHANNEL}) → v${VERSION} [release-manifest]"
+            if git push origin "HEAD:refs/heads/main"; then
+              manifests_reconciled=true
+              break
+            fi
+            echo "::warning ::release-manifest.cas_retry attempt ${attempt}/5 lost a concurrent main update; recomputing"
           done
-          git add "${MANIFEST_PATHS[@]}"
-          if git diff --cached --quiet HEAD -- "${MANIFEST_PATHS[@]}"; then
-            echo "manifests unchanged — nothing to commit"
-            exit 0
+
+          if [[ "$manifests_reconciled" != true ]]; then
+            echo "::error::manifest push to main failed after 5 monotonic retries; release pointer was not advanced"
+            exit 1
           fi
-          MANIFEST_LIST=$(IFS=','; echo "${!MANIFEST_FILES[*]}")
-          git commit -m "chore(release): update manifests (${MANIFEST_LIST}) → v${VERSION}"
-          git push origin main || {
-            echo "::warning::push to main failed (likely branch protection or permission); update ${MANIFEST_PATHS[*]} manually"
-            exit 0
-          }

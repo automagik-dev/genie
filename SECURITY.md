@@ -33,41 +33,19 @@ We will credit reporters publicly (with their permission) in the released adviso
 
 | Version line | Status |
 |--------------|--------|
-| `4.260422.x` and later | ✅ Supported — current |
-| `4.260421.1` – `4.260421.32` | ⚠️ Legacy — security patches only |
+| `5.x` | ✅ Supported — current GitHub Releases line |
 | `4.260421.33` – `4.260421.40` | ❌ **COMPROMISED — do not use** |
-| `4.260420.x` and earlier 4.x releases | ❌ End of life |
+| All other `4.x` releases | ❌ End of life — npm distribution is retired |
 | `3.x` | ❌ End of life |
 | `0.x` | ❌ End of life |
 
-Always install from the current stable line. Pin explicit versions in your `package.json` and avoid `latest` for supply-chain sensitive packages.
+Install the current stable 5.x line through the repository installer. The repository-hosted stable manifest, not an npm tag or GitHub's `/releases/latest` route, selects the stable version.
 
 ---
 
-## Self-Service Host Triage
+## Host triage
 
-If you installed a compromised version or need to assess a workstation, developer VM, CI runner, or WSL environment, start with:
-
-```bash
-genie sec scan --all-homes --root "$PWD"
-```
-
-Add one `--root` per repository or application directory you want scanned. Use `--json` for machine-readable output.
-
-Interpretation:
-
-- `LIKELY COMPROMISED` — execution, persistence, `.pth`, dropped payload, or live-process evidence exists.
-- `LIKELY AFFECTED` — compromised versions were installed or fetched and the host should be treated as exposed.
-- `OBSERVED ONLY` — logs, caches, or lockfiles reference the malicious versions, but stronger execution evidence was not found.
-- `NO FINDINGS` — no incident-specific evidence was found in the scanned scope.
-
-The scanner inventories:
-
-- compromised versions in npm and bun caches plus installed package directories
-- shell history, shell startup files, persistence locations, Python `.pth` injection paths, temp drops, and suspicious live processes
-- `at-risk local material present on host` so operators can see which secret stores, browser profiles, wallets, and local app files were present and should be considered during rotation
-
-If `genie` is not available, use the manual procedure in the incident response guide below.
+The current Genie CLI does not contain a host-compromise scanner. If a host may have executed a compromised version, isolate it, preserve volatile and filesystem evidence, consult the current public advisory or GitHub Security Advisory, and rotate exposed credentials from a separate trusted host. Do not install another Genie build on the affected host as a substitute for incident-response tooling.
 
 ---
 
@@ -82,11 +60,10 @@ Between 2026-04-21 (~22:14 UTC) and 2026-04-22 (~14:00 UTC), versions `4.260421.
 - **Estimated base affected:** ≤ 2% of weekly download volume
 - **Current status:** malicious versions `npm unpublish`-ed and no longer installable
 
-**If you installed any version in that range between April 21–22, 2026, run `genie sec scan --all-homes --root "$PWD"` immediately.** If the host shows `LIKELY COMPROMISED` or `LIKELY AFFECTED`, follow the remediation guide linked below.
+**If you installed any version in that range between April 21–22, 2026, treat the host as potentially affected.** Isolate it, preserve evidence, and follow the current public advisory or contact the security team above from a separate trusted host.
 
 **Resources:**
 
-- 📖 [Incident response manual](./docs/incident-response/canisterworm.mdx)
 - 🌐 [Public advisory (English)](https://automagik.dev/security)
 - 🌐 [Aviso público (Português)](https://automagik.dev/seguranca)
 - 🛡️ [GitHub Security Advisories](https://github.com/automagik-dev/genie/security/advisories) for this repository
@@ -108,27 +85,18 @@ We also thank the Automagik team that ran the end-to-end response during the inc
 
 ## Our Commitments
 
-Effective 2026-04-23, all `@automagik/genie` releases are governed by:
+Current 5.x GitHub Releases are governed by:
 
-- **Provenance attestation** — every publication is signed with `npm --provenance` and verifiable via Sigstore.
-- **OIDC trusted publishing** — migrating to GitHub Actions OIDC publish, eliminating long-lived npm tokens. (in progress)
-- **Mandatory 2FA** on every maintainer account with publish rights.
-- **Environment protection** — production publishes require manual approval from a second maintainer.
-- **Quarterly token audit** — scope and permission review.
-- **External pentest** — scheduled ahead of the original roadmap.
+- **Per-platform verification material** — every tarball has a cosign keyless bundle, SLSA provenance, and a GitHub-native attestation bound to the release source and trusted workflow control.
+- **OIDC signing** — release signing uses GitHub Actions OIDC; there is no long-lived signing key.
+- **Environment protection** — stable publication requires the protected production environment approval described below.
+- **Immutable publication** — published asset bytes are never replaced; repository-hosted channel manifests advance only after exact remote verification.
 
 ---
 
-## Scanner and Remediation Invariants
+## Host remediation
 
-The security-tooling surface shipped with `@automagik/genie` is governed by four architectural invariants. Any change that weakens an invariant requires a security-reviewed PR and a SECURITY.md entry documenting the regression.
-
-- **The scanner is read-only by design.** `genie sec scan`, `genie sec print-cleanup-commands`, and `genie sec quarantine list` inspect the host and emit findings — they never mutate state on the scanned target. `GENIE_SEC_SCAN_DISABLED=1` is honored as a global opt-out; the scanner never bypasses it.
-- **`genie sec remediate` is the only mutating verb.** Any future mutating subcommand MUST obey the same six-part contract: (1) dry-run default — `--apply` is opt-in; (2) frozen plan manifest — actions are materialized once and consented to once; (3) typed per-action consent — the operator acknowledges each mutation class verbatim, not a blanket yes/no; (4) quarantine-by-move — nothing is deleted without a recoverable copy under `$GENIE_SEC_QUARANTINE_DIR`; (5) signed-channel verification — `genie sec verify-install` must pass before `--apply` proceeds, or the invocation must use the `--unsafe-unverified <INCIDENT_ID>` escape hatch with a typed ack; (6) audit-log append-only — every action lands in `$GENIE_SEC_AUDIT_LOG` with a monotonic sequence number and cannot be rewritten in place.
-- **Distribution-channel risk is declared, not hidden.** `@automagik/genie` appears on the scanner's own IOC list for the CanisterWorm compromise window (see [Supported Versions](#supported-versions)). Operators are advised to (a) pin to a post-incident release from the current stable line, (b) run `genie sec verify-install` after install to confirm the binary matches the signed release identity, and (c) treat any `--unsafe-unverified` invocation as an incident — it must be recorded in the audit log with a typed `I_ACKNOWLEDGE_UNSIGNED_GENIE_<INCIDENT_ID>` ack and a matching post-mortem. "The prompt is annoying" is explicitly not a legitimate context for `--unsafe-unverified` — see [`docs/incident-response/canisterworm.md`](./docs/incident-response/canisterworm.mdx) for the allow-list.
-- **IOC-list freshness is tied to release cadence.** The scanner's IOC catalogue is baked into the shipped binary; there is no mutable online IOC feed to race against. Operators responding to a fresh advisory must upgrade to a release whose CHANGELOG references the new IOC set, then re-run `genie sec scan --all-homes --root /`. The incident runbook tells operators when to pin to a specific post-incident release.
-
-These invariants apply to every release from `4.260422.x` forward. Legacy lines (`4.260421.x`) predate the invariants and are listed under Supported Versions with appropriate status.
+The current Genie CLI does not ship a `genie sec` command. Do not treat older roadmap text, copied commands, or a successful Genie install as host-compromise clearance. Verify release artifacts with the repository script below; for incident investigation or remediation, preserve evidence and follow the current public advisory or contact the security address above. There is no supported flag that bypasses failed release verification.
 
 ---
 
@@ -136,10 +104,14 @@ These invariants apply to every release from `4.260422.x` forward. Legacy lines 
 
 `@automagik/genie` releases are signed with **cosign keyless** via GitHub Actions OIDC. There is no long-lived public key to pin — no private key in repo secrets, no hardware-backed offline key, no two-officer key-custody ceremony. What operators pin instead is the **certificate identity + OIDC issuer + provenance source-uri** tuple that `cosign verify-blob` and `slsa-verifier` must accept. If all three values match across all three pinning channels, the release was signed by the repo's own Actions workflow and by nothing else.
 
+Release-channel authority comes from the repository-hosted `.well-known/latest.json`, `homolog.json`, and `dev.json` manifests. GitHub's `/releases/latest` route and prerelease label are non-authoritative. Promotion advances only the eligible monotonic manifest after exact remote asset verification; it never replaces published bytes or edits published draft/prerelease/latest state. A fixed migration caveat may be appended to human-authored release notes. This separation permits repository-level immutable releases while retaining one verified version across dev, homolog, and stable channels.
+
+Immutable-release cutover order is security-critical. Seal the candidate and drain every Version and Release run started under the old `main` workflows before enabling repository immutability; enable it before the separately approved merge to `main`. Immutability protects only releases created after enablement, so any release published by the mutable predecessor must fail closed and must not advance a channel manifest. The first version eligible for stable promotion after cutover must be freshly built and published by the merged draft-first release control.
+
 <!-- BEGIN SIGNING_IDENTITY_PIN -->
 
 ```
-certificate-identity-regexp: ^https://github.com/automagik-dev/genie/.github/workflows/sign-attest.yml@
+certificate-identity-regexp: ^https://github\.com/automagik-dev/genie/\.github/workflows/sign-attest\.yml@refs/heads/main$
 certificate-oidc-issuer:     https://token.actions.githubusercontent.com
 provenance source-uri:       github.com/automagik-dev/genie
 ```
@@ -152,21 +124,22 @@ provenance source-uri:       github.com/automagik-dev/genie
 |---------|------------|---------|
 | In-repo canonical | [`SECURITY.md`](./SECURITY.md) (this file) | Ships with every release tarball; read-only after tag |
 | Project site | [`/.well-known/security.txt`](./.well-known/security.txt) | RFC 9116 discovery path served at the project site |
-| Out-of-band | [Pinned issue: `SIGNING_CERT_IDENTITY_*`](https://github.com/automagik-dev/genie/issues?q=is%3Aissue+label%3Apinned+label%3Asigning-identity) | Independent mirror; rotated via two-officer PR per [`docs/security/key-rotation.md`](./docs/security/key-rotation.mdx) |
+| Out-of-band | [Pinned issue: `SIGNING_CERT_IDENTITY_*`](https://github.com/automagik-dev/genie/issues?q=is%3Aissue+label%3Apinned+label%3Asigning-identity) | Independent mirror for cross-checking identity changes |
 
-A fourth in-repo witness — [`.github/cosign.pub`](./.github/cosign.pub) — carries the same values inside a NO-PINNED-KEY sentinel so tooling that naively reads a PEM file fails closed rather than trusting a fabricated key. The CI gate (`scripts/check-fingerprint-pinning.sh`) asserts all four witnesses agree on every PR that touches any of them.
+A fourth in-repo witness — [`.github/cosign.pub`](./.github/cosign.pub) — carries the same values inside a NO-PINNED-KEY sentinel so tooling that naively reads a PEM file fails closed rather than trusting a fabricated key. The shipped verifier and installer are the fifth and sixth required in-repo witnesses. The CI gate (`scripts/check-fingerprint-pinning.sh`) asserts all six required in-repo witnesses agree on every PR that touches any of them.
 
 ### Verify a release locally
 
-The canonical verification entry point is `scripts/verify-release.sh`, which wraps `cosign verify-blob` + `slsa-verifier` using the pinned identity above. Exit codes mirror `genie sec verify-install` (Group 2 of `genie-supply-chain-signing`).
+The canonical verification entry point is `scripts/verify-release.sh`, which wraps `cosign verify-blob` + `slsa-verifier` using the pinned identity above.
 
 ```bash
 # End-to-end: downloads release assets from GitHub, verifies cosign signature
 # + SLSA provenance against the pinned identity.
-scripts/verify-release.sh v4.260422.4
+scripts/verify-release.sh v5.260715.1
 
-# If you already downloaded the tarball + .sig + .cert + provenance.intoto.jsonl:
-scripts/verify-release.sh --local /path/to/automagik-genie-4.260422.4.tgz
+# If you already downloaded one tarball and its adjacent .bundle and
+# .intoto.jsonl sidecars:
+scripts/verify-release.sh --local /path/to/genie-5.260715.1-darwin-arm64.tar.gz
 ```
 
 If you cannot run the wrapper — for example, a locked-down incident-response host — the underlying cosign invocation is the ground truth:
@@ -176,31 +149,25 @@ If you cannot run the wrapper — for example, a locked-down incident-response h
 # Paste the three pinned lines above into your check; never accept a
 # value from any other source.
 cosign verify-blob \
-  --certificate-identity-regexp "^https://github.com/automagik-dev/genie/.github/workflows/sign-attest.yml@" \
+  --certificate-identity-regexp "^https://github\.com/automagik-dev/genie/\.github/workflows/sign-attest\.yml@refs/heads/main$" \
   --certificate-oidc-issuer     "https://token.actions.githubusercontent.com" \
-  --signature  automagik-genie-4.260422.4.tgz.sig \
-  --certificate automagik-genie-4.260422.4.tgz.cert \
-  automagik-genie-4.260422.4.tgz
+  --bundle genie-5.260715.1-darwin-arm64.tar.gz.bundle \
+  genie-5.260715.1-darwin-arm64.tar.gz
 
 # SLSA provenance verification.
-slsa-verifier verify-artifact automagik-genie-4.260422.4.tgz \
-  --provenance-path provenance.intoto.jsonl \
+slsa-verifier verify-artifact genie-5.260715.1-darwin-arm64.tar.gz \
+  --provenance-path genie-5.260715.1-darwin-arm64.tar.gz.intoto.jsonl \
   --source-uri github.com/automagik-dev/genie
-```
-
-On a host that already has `@automagik/genie` installed from a release channel, the shortest check is:
-
-```bash
-genie sec verify-install
 ```
 
 Exit codes:
 
 - `0` — verified: signature + provenance both pass against the pinned identity
 - `2` — cosign signature verification failed
-- `3` — signer identity does not match the pinned regex
 - `4` — SLSA provenance verification failed
-- `5` — signature material missing (no `.sig` / `.cert` / provenance found)
+- `5` — `.bundle` or `.intoto.jsonl` verification material is missing
+- `64` — invalid arguments
+- `127` — a required verifier is unavailable
 
 ### Cross-check the three channels match
 
@@ -211,7 +178,7 @@ Before trusting a release during incident response, confirm the pin has not drif
 scripts/check-fingerprint-pinning.sh
 ```
 
-The script greps each of the four in-repo witnesses (`SECURITY.md`, `.well-known/security.txt`, `.github/ISSUE_TEMPLATE/signing-key-fingerprint.md`, `.github/cosign.pub`) for the three canonical lines above and exits non-zero if any witness is missing a line or carries a divergent value. The same script runs as a GitHub Actions gate (`.github/workflows/signing-identity-pin.yml`) on every PR that touches any of the pinning channels.
+The script greps each of the six required in-repo witnesses (`SECURITY.md`, `.well-known/security.txt`, `.github/ISSUE_TEMPLATE/signing-key-fingerprint.md`, `.github/cosign.pub`, `scripts/verify-release.sh`, and `install.sh`) for the three canonical lines above and exits non-zero if any witness is missing a line or carries a divergent value. The same script runs as a GitHub Actions gate (`.github/workflows/signing-identity-pin.yml`) on every PR that touches any of the pinning channels.
 
 One-liner for operators without the repo cloned (checks the in-repo canonical + the project-site copy):
 
@@ -227,19 +194,18 @@ diff <(curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/SEC
 
 ### If the pin has drifted
 
-1. **Do not run `genie sec remediate --apply`** on any host — you cannot distinguish a legitimate rotation from a compromise until the out-of-band channel is reconciled.
-2. Check the pinned GitHub issue: a legitimate rotation lands a new `SIGNING_CERT_IDENTITY_<YYYYMMDD>` issue co-authored by two Namastex security officers (verified GPG signatures). The rotation procedure lives in [`docs/security/key-rotation.md`](./docs/security/key-rotation.mdx).
+1. **Do not install or execute the suspect release** — you cannot distinguish a legitimate rotation from a compromise until the out-of-band channel is reconciled.
+2. Check the pinned `SIGNING_CERT_IDENTITY_<YYYYMMDD>` GitHub issue for an independently published replacement identity.
 3. Email `privacidade@namastex.ai` with the diverging channel, the observed value, and the expected value. Response SLA is two business hours (see [Reporting a Vulnerability](#reporting-a-vulnerability)).
-4. While triage is in flight, operators who must mutate a compromised host use the `--unsafe-unverified <INCIDENT_ID>` escape hatch documented in [`docs/incident-response/canisterworm.md`](./docs/incident-response/canisterworm.mdx). Every invocation lands in the audit log.
+4. Preserve the suspect artifacts and affected-host evidence while triage is in flight. There is no supported verification bypass.
 
 ---
 
 ## Hardening Recommendations for Consumers
 
-- Pin explicit versions, not `latest`: `"@automagik/genie": "4.260422.4"`.
-- Use `npm ci` in CI. It enforces lockfile-based installs by default.
-- Evaluate `--ignore-scripts` per-package for untrusted dependencies. Note: `@automagik/genie` relies on a `postinstall` step to download the bundled `tmux` binary; if you disable scripts, run `node scripts/postinstall-tmux.js` manually after install.
-- Verify package provenance: `npm view @automagik/genie --json | jq '.dist.attestations'`.
+- Install only through the repository installer and authoritative stable manifest; npm distribution is retired.
+- Verify a downloaded tarball with `scripts/verify-release.sh` before manual execution.
+- Preserve the adjacent `.bundle` and `.intoto.jsonl` sidecars with any archived tarball.
 - Monitor advisories: subscribe to GitHub security alerts for this repository.
 
 ---

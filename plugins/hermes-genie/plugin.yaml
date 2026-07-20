@@ -1,5 +1,5 @@
 name: genie
-version: 5.260714.3
+version: 5.260720.1
 description: "Native Hermes surface for Genie orchestration: read-only status plus work-plan and review-plan gap tools that the MCP board surface does not cover, hooks, commands, and a thin cockpit skill. Board/task truth comes from the genie MCP tools."
 provides_tools:
   # Default surface: exactly the three gap tools the MCP board surface does not cover.

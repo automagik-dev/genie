@@ -31,7 +31,7 @@ assignees: []
 ## Current Certificate-Identity Pin
 
 ```
-certificate-identity-regexp: ^https://github.com/automagik-dev/genie/.github/workflows/sign-attest.yml@
+certificate-identity-regexp: ^https://github\.com/automagik-dev/genie/\.github/workflows/sign-attest\.yml@refs/heads/main$
 certificate-oidc-issuer:     https://token.actions.githubusercontent.com
 provenance source-uri:       github.com/automagik-dev/genie
 ```
@@ -52,9 +52,8 @@ Operators MUST verify the values above match all three channels:
 - [ ] `/.well-known/security.txt` on the project site
 - [ ] This pinned issue
 
-If any channel diverges, treat the release as unsigned and follow the
-`--unsafe-unverified <INCIDENT_ID>` contract documented in
-`src/sec/unsafe-verify.ts`.
+If any channel diverges, treat the release as unverified, do not install or run
+it, preserve the evidence, and contact the security address in `SECURITY.md`.
 
 ## Previous Pinning
 
@@ -66,25 +65,25 @@ If any channel diverges, treat the release as unsigned and follow the
 ```bash
 # Cosign keyless verification (sole verification path)
 cosign verify-blob \
-  --certificate-identity-regexp "^https://github.com/automagik-dev/genie/.github/workflows/sign-attest.yml@" \
+  --certificate-identity-regexp "^https://github\.com/automagik-dev/genie/\.github/workflows/sign-attest\.yml@refs/heads/main$" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-  --signature <artifact>.sig \
-  --certificate <artifact>.cert \
-  <artifact>
+  --bundle genie-5.260715.1-darwin-arm64.tar.gz.bundle \
+  genie-5.260715.1-darwin-arm64.tar.gz
 
 # SLSA provenance verification
-slsa-verifier verify-artifact <artifact> \
-  --provenance-path provenance.intoto.jsonl \
+slsa-verifier verify-artifact genie-5.260715.1-darwin-arm64.tar.gz \
+  --provenance-path genie-5.260715.1-darwin-arm64.tar.gz.intoto.jsonl \
   --source-uri github.com/automagik-dev/genie
 
-# End-to-end
-genie sec verify-install
+# Canonical end-to-end wrapper (download by tag or verify local sidecars)
+scripts/verify-release.sh v5.260715.1
+scripts/verify-release.sh --local genie-5.260715.1-darwin-arm64.tar.gz
 ```
 
 ## Reporting a Suspected Compromise
 
 If the certificate-identity or OIDC issuer appears altered, or a release
 verifies under an identity that does NOT appear here, email
-`security@namastex.com` immediately. Do NOT run `genie sec remediate --apply`
-against any host until a new pinning issue is filed and the three channels
-re-converge.
+`privacidade@namastex.ai` immediately. Do not install or execute the suspect
+artifact; preserve it as evidence until a new pinning issue is filed and the
+six required witnesses re-converge.

@@ -31,10 +31,12 @@ import {
   copyFileSync,
   cpSync,
   existsSync,
+  fstatSync,
   fsyncSync,
   linkSync,
   lstatSync,
   mkdirSync,
+  mkdtempSync,
   openSync,
   readFileSync,
   readdirSync,
@@ -42,13 +44,15 @@ import {
   realpathSync,
   renameSync,
   rmSync,
+  rmdirSync,
   statSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
   writeSync,
 } from 'node:fs';
 import { homedir, hostname } from 'node:os';
-import { dirname, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import historicalCodexFallbackAllowlist from '../fixtures/codex-fallback-allowlist.json';
 import { resolveClaudeDir, resolveCodexDir, resolveGenieHome, resolveHermesHome } from './genie-home.js';
 import { HermesConfigError, mergeMcpServersGenie } from './hermes-mcp-config.js';
@@ -113,8 +117,14 @@ const LINUX_LIBC_CANDIDATES = ['libc.so.6', 'ld-musl-x86_64.so.1', 'libc.musl-x8
 export const LIFECYCLE_LEASE_PATH_ENV = 'GENIE_LIFECYCLE_LEASE_PATH';
 /** Exact on-disk owner record paired with {@link LIFECYCLE_LEASE_PATH_ENV}. */
 export const LIFECYCLE_LEASE_OWNER_ENV = 'GENIE_LIFECYCLE_LEASE_OWNER';
+/**
+ * Suffix a preserved managed object gets when its original pathname must be
+ * released (uninstall keep, conflict preservation): the runtime stops loading
+ * it, the user's bytes survive. Exported: uninstall shares the convention.
+ */
+export const KEPT_SUFFIX = '.genie-kept';
 /** Cross-process mutual-exclusion lockfile under genieHome — one sync writer per GENIE_HOME. */
-const LOCK_NAME = '.agent-sync.lock';
+export const AGENT_SYNC_LOCK_NAME = '.agent-sync.lock';
 /** A lock older than this is a crashed run's debris and may be stolen. */
 const LOCK_STALE_MS = 10 * 60 * 1000;
 /**
@@ -172,6 +182,93 @@ export interface AgentSyncOptions {
   beforeManagedDirPublish?: (destDir: string) => void;
   /** Failure-injection seam around managed-directory removal quarantine. */
   beforeManagedDirRemoval?: (destDir: string, stage: 'before-park' | 'before-delete') => void;
+  /** Deterministic barrier immediately before a flat agent pathname is replaced or removed. */
+  beforeAgentFileMutation?: (event: AgentFileMutationEvent) => void;
+  /** Fault-injection barrier after the shared manifest transaction is staged and before its atomic commit. */
+  beforeAgentManifestCommit?: (event: AgentManifestCommitEvent) => void;
+  /** Deterministic race barrier after the old manifest is captured and immediately before no-replace publish. */
+  beforeAgentManifestPublish?: (event: AgentManifestCommitEvent) => void;
+  /** Injectable portable-manifest publication dependencies for boundary regressions. */
+  agentManifestPublishOptions?: AgentManifestPublishOptions;
+  /** Deterministic lock lifecycle seams used by boundary-level regression tests. */
+  lockOptions?: AgentSyncLockOptions;
+}
+
+/**
+ * One barrier event per flat-agent mutation. `replace`/`remove` fire from sync;
+ * `remove`/`keep`/`prune` fire from uninstall — both through the same
+ * transaction core, after the live object is captured and before it is
+ * irreversibly published or disposed.
+ */
+export interface AgentFileMutationEvent {
+  operation: 'replace' | 'remove' | 'keep' | 'prune';
+  path: string;
+  backupPath?: string;
+}
+
+/**
+ * Fires once per transaction, inside the manifest commit: after the staged
+ * payload (write path) or the captured manifest (removal path) exists, and
+ * before the atomic publish decides the transaction outcome.
+ */
+export interface AgentManifestCommitEvent {
+  path: string;
+  stagePath: string;
+}
+
+export interface PortableManifestStageCleanupEvent {
+  path: string;
+  stagePath: string;
+  capturedStagePath: string;
+}
+
+export interface AgentManifestPublishOptions {
+  /** Force the hard-link fallback even when the host exposes native NOREPLACE rename. */
+  forcePortable?: boolean;
+  /** Injectable native capability setup for deterministic fallback tests. */
+  noClobberDeps?: NoClobberDeps;
+  /** Deterministic failure/race barrier after the stage name is captured but before it is retired. */
+  beforePortableStageNameCleanup?: (event: PortableManifestStageCleanupEvent) => void;
+}
+
+export interface AgentSyncLockMutationEvent {
+  operation: 'release' | 'stale-remove';
+  path: string;
+  capturedPath: string;
+}
+
+export interface AgentSyncLockOptions {
+  /** Deterministic barrier after a generation is prepared and before its atomic publish. */
+  beforePublish?: (event: { path: string }) => void;
+  /** Force lock publication through the portable O_EXCL regular-file protocol (test seam). */
+  forcePortableLockPublish?: boolean;
+  /** Injectable native capability setup for lock-generation publication. */
+  lockPublishDeps?: NoClobberDeps;
+  /** Deterministic barrier after the portable lock pathname is claimed and before its bytes are written. */
+  afterPortableLockClaim?: (event: { path: string }) => void;
+  /** Deterministic barrier after a missing GENIE_HOME is staged and before its atomic publish. */
+  beforeHomePublish?: (event: { path: string; stagePath: string }) => void;
+  /** Force missing-home publication through the portable mkdir commit (test seam). */
+  forcePortableHomePublish?: boolean;
+  /** Injectable native capability setup for missing-home publication. */
+  homePublishDeps?: NoClobberDeps;
+  /** Deterministic barrier after the portable mkdir commit and before the live home is inspected. */
+  afterPortableHomeClaim?: (event: { path: string; stagePath: string }) => void;
+  /** Deterministic barrier after the lock pathname is captured and before the captured object is finalized. */
+  afterCapture?: (event: AgentSyncLockMutationEvent) => void;
+  /** Injectable process-start resolver for deterministic PID-reuse boundary tests. */
+  processStartIdentity?: (pid: number) => string | null;
+}
+
+/** A protected mutation must never proceed when the shared lock cannot be created or verified. */
+export class AgentSyncLockError extends Error {
+  constructor(
+    message: string,
+    readonly cause?: unknown,
+  ) {
+    super(message);
+    this.name = 'AgentSyncLockError';
+  }
 }
 
 export type AgentSyncSelection = 'auto' | 'codex' | 'claude' | 'all' | 'none';
@@ -215,6 +312,33 @@ export interface GenieSource {
   version: string | null;
 }
 
+/** Digest stamp for one flat Claude agent file in {@link AgentFilesManifest}. */
+export interface AgentFileManifestEntry {
+  digest: string;
+  version: string | null;
+  syncedAt: string;
+}
+
+/** Shared manifest stored at `~/.claude/agents/.genie-sync.json`. */
+export interface AgentFilesManifest {
+  managedBy: 'genie-agent-sync';
+  files: Record<string, AgentFileManifestEntry>;
+}
+
+interface ManifestFileSnapshot {
+  path: string;
+  bytes: Buffer;
+  stat: Stats;
+}
+
+type SafeManifestFile = ManifestFileSnapshot &
+  ({ kind: 'managed'; manifest: AgentFilesManifest } | { kind: 'foreign'; manifest: null });
+
+type AgentManifestState =
+  | SafeManifestFile
+  | { kind: 'absent'; path: string }
+  | { kind: 'unsafe'; path: string; reason: string };
+
 // ============================================================================
 // Internal types
 // ============================================================================
@@ -239,12 +363,22 @@ interface RunContext {
   targets: { claude: string; codex: string; hermes: string; agentsSkills: string };
   /** Copy `existingDir` into the run's backup root and return the backup path. */
   backupInto: (agent: string, name: string, existingDir: string) => string;
+  /**
+   * Write already-validated bytes into the run's backup root exclusively and
+   * return the backup path — the backup IS the validated snapshot, so no
+   * re-read of the live path can diverge from what the policy decided on.
+   */
+  backupBytes: (agent: string, name: string, bytes: Buffer) => string;
   /** The backup root path, or null when nothing has been backed up this run. */
   backupsDirIfCreated: () => string | null;
   renameManagedDir: typeof renameSync;
   beforeManagedDirPromotion?: (destDir: string) => void;
   beforeManagedDirPublish?: (destDir: string) => void;
   beforeManagedDirRemoval?: (destDir: string, stage: 'before-park' | 'before-delete') => void;
+  beforeAgentFileMutation?: AgentSyncOptions['beforeAgentFileMutation'];
+  beforeAgentManifestCommit?: AgentSyncOptions['beforeAgentManifestCommit'];
+  beforeAgentManifestPublish?: AgentSyncOptions['beforeAgentManifestPublish'];
+  agentManifestPublishOptions?: AgentSyncOptions['agentManifestPublishOptions'];
 }
 
 interface SourceSkill {
@@ -256,6 +390,18 @@ interface SkillOutcome {
   action: SkillAction;
   detail?: string;
 }
+
+export interface SourceAgentFile {
+  name: string;
+  path: string;
+}
+
+export type AgentPathSnapshot =
+  | { kind: 'absent' }
+  | { kind: 'file'; stat: Stats; bytes: Buffer; digest: string }
+  | { kind: 'directory'; stat: Stats; digest: string }
+  | { kind: 'symlink'; stat: Stats; target: string }
+  | { kind: 'other'; stat: Stats };
 
 // ============================================================================
 // Source resolution
@@ -439,6 +585,10 @@ function hashFile(path: string): string {
   return createHash('sha256').update(readFileSync(path)).digest('hex');
 }
 
+export function computeFileDigest(path: string): string {
+  return hashFile(path);
+}
+
 // ============================================================================
 // Manifest + atomic managed-dir writes
 // ============================================================================
@@ -474,6 +624,444 @@ function readManifest(dir: string): { manifest: SyncManifest; fileDigest: string
 
 function writeManifest(dir: string, manifest: SyncManifest): void {
   writeFileSync(join(dir, MANIFEST_NAME), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+}
+
+/**
+ * Read the shared per-file Claude agent manifest. A malformed entry invalidates
+ * the whole ownership claim: callers then fail closed and leave every target
+ * untouched because corrupt state cannot prove either foreign or Genie ownership.
+ */
+export function readAgentFilesManifest(dir: string): AgentFilesManifest | null {
+  const state = inspectAgentFilesManifest(dir);
+  return state.kind === 'managed' ? state.manifest : null;
+}
+
+/**
+ * Lightweight, read-only view of the shared agent manifest for external
+ * consumers (doctor). Distinguishes a genie-managed manifest (with its per-file
+ * entries) from foreign / absent / unsafe WITHOUT exposing the raw byte+stat
+ * snapshot. `unsafe` mirrors {@link inspectAgentFilesManifest}'s fail-closed
+ * verdict (symlink, non-regular file, multiple hard links, or unreadable) so a
+ * diagnostic can surface it as a warning instead of silently reporting healthy.
+ */
+export type AgentFilesManifestView =
+  | { kind: 'managed'; files: Record<string, AgentFileManifestEntry> }
+  | { kind: 'foreign' }
+  | { kind: 'absent' }
+  | { kind: 'unsafe'; reason: string };
+
+export function readAgentFilesManifestState(dir: string): AgentFilesManifestView {
+  const state = inspectAgentFilesManifest(dir);
+  switch (state.kind) {
+    case 'managed':
+      return { kind: 'managed', files: state.manifest.files };
+    case 'foreign':
+      return { kind: 'foreign' };
+    case 'absent':
+      return { kind: 'absent' };
+    default:
+      return { kind: 'unsafe', reason: state.reason };
+  }
+}
+
+function inspectAgentFilesManifest(dir: string): AgentManifestState {
+  const path = join(dir, MANIFEST_NAME);
+  let stat: Stats;
+  try {
+    stat = lstatSync(path);
+  } catch (error) {
+    if (isNodeErrorCode(error, 'ENOENT')) return { kind: 'absent', path };
+    return { kind: 'unsafe', path, reason: `cannot inspect it: ${errMsg(error)}` };
+  }
+  if (stat.isSymbolicLink()) return { kind: 'unsafe', path, reason: 'it is a symlink' };
+  if (!stat.isFile()) return { kind: 'unsafe', path, reason: 'it is not a regular file' };
+  if (stat.nlink !== 1) return { kind: 'unsafe', path, reason: `it has ${stat.nlink} hard links` };
+
+  let bytes: Buffer;
+  try {
+    bytes = readFileSync(path);
+  } catch (error) {
+    return { kind: 'unsafe', path, reason: `cannot read it: ${errMsg(error)}` };
+  }
+  const manifest = parseAgentFilesManifest(bytes);
+  if (manifest === null) {
+    if (isInvalidOrGenieOwnedAgentManifest(bytes)) {
+      return { kind: 'unsafe', path, reason: 'it is invalid JSON or claims Genie ownership with an invalid schema' };
+    }
+    return { kind: 'foreign', path, bytes, stat, manifest: null };
+  }
+  return { kind: 'managed', path, bytes, stat, manifest };
+}
+
+/** Invalid JSON cannot prove foreign ownership; valid JSON is unsafe only when Genie claims it. */
+function isInvalidOrGenieOwnedAgentManifest(bytes: Buffer): boolean {
+  try {
+    const parsed = JSON.parse(bytes.toString('utf8')) as unknown;
+    return (
+      typeof parsed === 'object' &&
+      parsed !== null &&
+      !Array.isArray(parsed) &&
+      (parsed as Record<string, unknown>).managedBy === MANAGED_BY
+    );
+  } catch {
+    return true;
+  }
+}
+
+function parseAgentFileManifestEntry(rawEntry: unknown): AgentFileManifestEntry | null {
+  if (typeof rawEntry !== 'object' || rawEntry === null || Array.isArray(rawEntry)) return null;
+  const entry = rawEntry as Record<string, unknown>;
+  if (Object.keys(entry).sort().join('\0') !== ['digest', 'syncedAt', 'version'].join('\0')) return null;
+  if (typeof entry.digest !== 'string' || !/^[a-f0-9]{64}$/.test(entry.digest)) return null;
+  if (
+    entry.version !== null &&
+    (typeof entry.version !== 'string' || !/^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$/.test(entry.version))
+  ) {
+    return null;
+  }
+  if (typeof entry.syncedAt !== 'string') return null;
+  try {
+    if (new Date(entry.syncedAt).toISOString() !== entry.syncedAt) return null;
+  } catch {
+    return null;
+  }
+  return { digest: entry.digest, version: entry.version, syncedAt: entry.syncedAt };
+}
+
+function parseAgentFilesManifest(bytes: Buffer): AgentFilesManifest | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(bytes.toString('utf8'));
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
+  const record = parsed as Record<string, unknown>;
+  if (record.managedBy !== MANAGED_BY) return null;
+  if (typeof record.files !== 'object' || record.files === null || Array.isArray(record.files)) return null;
+  if (Object.keys(record).sort().join('\0') !== ['files', 'managedBy'].join('\0')) return null;
+
+  const files: Record<string, AgentFileManifestEntry> = {};
+  for (const [name, rawEntry] of Object.entries(record.files)) {
+    if (!isFlatAgentFilename(name)) return null;
+    const entry = parseAgentFileManifestEntry(rawEntry);
+    if (entry === null) return null;
+    files[name] = entry;
+  }
+  return { managedBy: MANAGED_BY, files };
+}
+
+/**
+ * CAS predicate for the manifest commit: the captured object must still be the
+ * exact regular file (identity + bytes) the transaction inspected at its start.
+ */
+function manifestStillBase(path: string, base: AgentManifestState): boolean {
+  if (base.kind !== 'managed' && base.kind !== 'foreign') return false;
+  const current = inspectManifestPath(path);
+  return current !== null && sameManifestFile(base, current);
+}
+
+function inspectManifestPath(path: string): SafeManifestFile | null {
+  try {
+    const stat = lstatSync(path);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) return null;
+    const bytes = readFileSync(path);
+    const manifest = parseAgentFilesManifest(bytes);
+    return manifest === null
+      ? { kind: 'foreign', path, bytes, stat, manifest: null }
+      : { kind: 'managed', path, bytes, stat, manifest };
+  } catch {
+    return null;
+  }
+}
+
+function sameManifestFile(expected: SafeManifestFile, current: SafeManifestFile): boolean {
+  return (
+    expected.stat.dev === current.stat.dev &&
+    expected.stat.ino === current.stat.ino &&
+    expected.stat.nlink === current.stat.nlink &&
+    expected.bytes.equals(current.bytes)
+  );
+}
+
+function writeExclusiveFile(path: string, content: Buffer, afterOpen?: () => void): Stats {
+  const fd = openSync(path, 'wx');
+  const identity = fstatSync(fd);
+  let complete = false;
+  try {
+    afterOpen?.();
+    writeFileSync(fd, content);
+    fsyncSync(fd);
+    complete = true;
+  } finally {
+    closeSync(fd);
+    if (!complete) cleanupFailedExclusiveWrite(path, identity);
+  }
+  return identity;
+}
+
+function cleanupFailedExclusiveWrite(path: string, expected: Stats): void {
+  const captured = capturePath(path, 'write-cleanup');
+  if (captured === null) return;
+  const current = lstatSafe(captured.path);
+  if (current !== null && sameObjectIdentity(expected, current)) removeCapturedPath(captured);
+  else restoreOrPreserveCaptured(captured, path);
+}
+
+/**
+ * One staged payload in a uniquely and exclusively allocated sibling directory.
+ * Crashed-run debris is never reused or removed, so it cannot wedge a retry.
+ */
+interface FileStage {
+  dir: string;
+  path: string;
+  stat: Stats;
+  bytes: Buffer;
+}
+
+function createFileStage(targetPath: string, content: Buffer): FileStage {
+  const stageDir = mkdtempSync(join(dirname(targetPath), `.${basename(targetPath)}${STAGING_SUFFIX}-`));
+  const stagePath = join(stageDir, 'payload');
+  try {
+    writeExclusiveFile(stagePath, content);
+  } catch (error) {
+    removeEmptyDirSafe(stageDir);
+    throw error;
+  }
+  return { dir: stageDir, path: stagePath, stat: lstatSync(stagePath), bytes: content };
+}
+
+/** The staged payload is still the exact object this run wrote (identity + bytes). */
+function fileStageOwned(stage: FileStage): boolean {
+  return stage.stat.nlink === 1 && fileStagePayloadMatches(stage, stage.path, 1);
+}
+
+/** Identity + byte check for a staged inode after one of its names has moved. */
+function fileStagePayloadMatches(stage: FileStage, path: string, requiredLinks?: number): boolean {
+  try {
+    const before = lstatSync(path);
+    if (
+      !before.isFile() ||
+      before.isSymbolicLink() ||
+      (requiredLinks !== undefined && before.nlink !== requiredLinks) ||
+      !sameObjectIdentity(stage.stat, before)
+    ) {
+      return false;
+    }
+    const bytes = readFileSync(path);
+    const after = lstatSync(path);
+    return (
+      samePathIdentity(before, after) &&
+      (requiredLinks === undefined || after.nlink === requiredLinks) &&
+      sameObjectIdentity(stage.stat, after) &&
+      bytes.equals(stage.bytes)
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Failure-path stage disposal: our own payload is removed; a payload someone
+ * replaced is preserved byte-for-byte and reported, never discarded.
+ */
+function cleanupFileStage(stage: FileStage): string | null {
+  if (fileStageOwned(stage)) {
+    try {
+      unlinkSync(stage.path);
+    } catch (error) {
+      if (!isNodeErrorCode(error, 'ENOENT')) {
+        removeEmptyDirSafe(stage.dir);
+        return `could not remove staged payload ${stage.path}: ${errMsg(error)}`;
+      }
+    }
+    removeEmptyDirSafe(stage.dir);
+    return null;
+  }
+  if (lstatSafe(stage.path) === null) {
+    removeEmptyDirSafe(stage.dir);
+    return null;
+  }
+  return `preserved replaced staged payload at ${stage.path}`;
+}
+
+/**
+ * Success-path stage disposal after a link-publish: the stage name is only an
+ * extra name for the now-live inode, so dropping it can never discard bytes.
+ */
+function consumeFileStageName(stage: FileStage, targetPath: string): string | null {
+  const captured = capturePath(stage.path, 'agent-stage-name');
+  if (captured === null) return `staged name disappeared before cleanup: ${stage.path}`;
+  if (!portableLinkPairIsExact(stage, captured.path, targetPath)) {
+    restoreOrPreserveCaptured(captured, stage.path);
+    return `published agent link pair changed before stage-name cleanup: ${targetPath}`;
+  }
+  try {
+    unlinkSync(captured.path);
+  } catch (error) {
+    return `could not remove staged name ${captured.path}: ${errMsg(error)}`;
+  }
+  try {
+    removeEmptyDirSafe(captured.dir);
+    removeEmptyDirSafe(stage.dir);
+  } catch (error) {
+    return `could not remove staged directory ${stage.dir}: ${errMsg(error)}`;
+  }
+  return fileStagePayloadMatches(stage, targetPath, 1)
+    ? null
+    : `published agent target was not a safe single-link file after cleanup: ${targetPath}`;
+}
+
+/** Roll back only the staged inode's live name; every replacement is restored or preserved. */
+function unpublishFileStageTarget(stage: FileStage, targetPath: string): string | null {
+  const captured = capturePath(targetPath, 'agent-stage-rollback');
+  if (captured === null) return null;
+  if (!fileStagePayloadMatches(stage, captured.path)) {
+    const preserved = restoreOrPreserveCaptured(captured, targetPath);
+    return preserved === targetPath ? null : `preserved concurrent agent replacement at ${preserved ?? captured.path}`;
+  }
+  removeCapturedPath(captured);
+  return null;
+}
+
+/** Cleanup after a native atomic manifest publish; the staged name was consumed by rename. */
+function finishNativeCommittedFileStage(stage: FileStage): string | null {
+  try {
+    removeEmptyDirSafe(stage.dir);
+    return null;
+  } catch (error) {
+    return `could not remove staged directory ${stage.dir}: ${errMsg(error)}`;
+  }
+}
+
+function removeEmptyDirSafe(path: string): void {
+  try {
+    rmdirSync(path);
+  } catch (error) {
+    if (
+      !isNodeErrorCode(error, 'ENOENT') &&
+      !isNodeErrorCode(error, 'ENOTEMPTY') &&
+      !isNodeErrorCode(error, 'EEXIST')
+    ) {
+      throw error;
+    }
+  }
+}
+
+interface CapturedPath {
+  dir: string;
+  path: string;
+}
+
+/** Atomically move the current pathname into a fresh attempt-owned directory. */
+function capturePath(path: string, label: string): CapturedPath | null {
+  const captureDir = mkdtempSync(join(dirname(path), `.${basename(path)}.${label}-`));
+  const capturedPath = join(captureDir, 'object');
+  try {
+    renameSync(path, capturedPath);
+    return { dir: captureDir, path: capturedPath };
+  } catch (error) {
+    removeEmptyDirSafe(captureDir);
+    if (isNodeErrorCode(error, 'ENOENT')) return null;
+    throw error;
+  }
+}
+
+/** Restore a captured file/symlink without replacing anything that appeared meanwhile. */
+function restoreCapturedPathNoReplace(capturedPath: string, originalPath: string): boolean {
+  const stat = lstatSync(capturedPath);
+  try {
+    if (stat.isFile()) {
+      linkSync(capturedPath, originalPath);
+      unlinkSync(capturedPath);
+      return true;
+    }
+    if (stat.isSymbolicLink()) {
+      symlinkSync(readlinkSync(capturedPath), originalPath);
+      unlinkSync(capturedPath);
+      return true;
+    }
+    return false;
+  } catch (error) {
+    if (isNodeErrorCode(error, 'EEXIST')) return false;
+    throw error;
+  }
+}
+
+/** Prefer restoring the original pathname; otherwise leave the object safely quarantined. */
+function restoreOrPreserveCaptured(captured: CapturedPath, originalPath: string): string | null {
+  if (restoreCapturedPathNoReplace(captured.path, originalPath)) {
+    removeEmptyDirSafe(captured.dir);
+    return originalPath;
+  }
+  return captured.path;
+}
+
+function removeCapturedPath(captured: CapturedPath): void {
+  const stat = lstatSafe(captured.path);
+  if (stat?.isDirectory()) rmSync(captured.path, { recursive: true, force: true });
+  else if (stat !== null) unlinkSync(captured.path);
+  removeEmptyDirSafe(captured.dir);
+}
+
+function sameObjectIdentity(expected: Stats, current: Stats): boolean {
+  return expected.dev === current.dev && expected.ino === current.ino && expected.mode === current.mode;
+}
+
+function isFlatAgentFilename(name: string): boolean {
+  return name === basename(name) && name.endsWith('.md') && name !== '.' && name !== '..';
+}
+
+/**
+ * Park a captured object at an exclusively allocated `<target>.genie-kept[-…]`
+ * sibling so the runtime stops loading it while the bytes stay visible on disk.
+ * Type-aware (file / symlink / directory); collisions advance to a timestamped
+ * candidate, never overwrite. Returns the kept path, or null when the object
+ * could not be parked and remains quarantined at `captured.path`.
+ */
+function keepAsideCaptured(captured: CapturedPath, targetPath: string, now: () => Date): string | null {
+  const base = `${targetPath}${KEPT_SUFFIX}`;
+  const timestamp = now().getTime();
+  const stat = lstatSafe(captured.path);
+  if (stat === null) {
+    removeEmptyDirSafe(captured.dir);
+    return null;
+  }
+  for (let collision = 0; collision < 10_000; collision += 1) {
+    const candidate =
+      collision === 0 ? base : collision === 1 ? `${base}-${timestamp}` : `${base}-${timestamp}-${collision - 1}`;
+    if (tryParkCapturedAt(captured.path, candidate, stat)) {
+      removeEmptyDirSafe(captured.dir);
+      return candidate;
+    }
+  }
+  return null;
+}
+
+/** Exclusive no-replace park of one captured object; false only on candidate collision. */
+function tryParkCapturedAt(capturedPath: string, candidate: string, stat: Stats): boolean {
+  try {
+    if (stat.isFile()) {
+      linkSync(capturedPath, candidate);
+      unlinkSync(capturedPath);
+      return true;
+    }
+    if (stat.isSymbolicLink()) {
+      symlinkSync(readlinkSync(capturedPath), candidate);
+      unlinkSync(capturedPath);
+      return true;
+    }
+    if (stat.isDirectory()) {
+      mkdirSync(candidate, { mode: stat.mode & 0o777 });
+      for (const name of readdirSync(capturedPath)) renameSync(join(capturedPath, name), join(candidate, name));
+      rmdirSync(capturedPath);
+      return true;
+    }
+    throw new Error(`cannot safely keep non-regular agent path ${candidate}`);
+  } catch (error) {
+    if (isNodeErrorCode(error, 'EEXIST')) return false;
+    throw error;
+  }
 }
 
 function buildManifest(ctx: RunContext, digest: string): SyncManifest {
@@ -528,6 +1116,10 @@ export function publishRegularFileNoClobber(stagedPath: string, targetPath: stri
   } finally {
     rmSync(candidate, { force: true });
   }
+}
+
+function buildAgentFileManifestEntry(ctx: RunContext, digest: string): AgentFileManifestEntry {
+  return { version: ctx.version, digest, syncedAt: ctx.now().toISOString() };
 }
 
 /**
@@ -1567,11 +2159,15 @@ type LibcRenameOpener = (soname: string) => Renameat2 | null;
 interface RenameProbe {
   resolved?: Renameat2 | null;
 }
-/** Dependency-injection seam for the Linux no-clobber fast path — no global mutable state, no test-only setter. */
+/** Native no-clobber capability seams — no global mutable state or test-only setter. */
 export interface NoClobberDeps {
   opener?: LibcRenameOpener;
   candidates?: readonly string[];
   probe?: RenameProbe;
+  /** Deterministically select the native no-clobber family without mutating global process state. */
+  platform?: NodeJS.Platform;
+  /** Regular-file and lock-home callers use an explicit opener to select the Darwin branch on test hosts. */
+  darwinOpener?: () => ((staged: Buffer, target: Buffer) => number) | null;
 }
 
 const defaultLibcOpener: LibcRenameOpener = (soname) => {
@@ -1600,9 +2196,67 @@ export function resolveLinuxRenameat2(
 
 const defaultLinuxProbe: RenameProbe = {};
 function probeLinuxRenameat2(deps: NoClobberDeps): Renameat2 | null {
-  const probe = deps.probe ?? defaultLinuxProbe;
-  if (!('resolved' in probe)) probe.resolved = resolveLinuxRenameat2(deps.opener, deps.candidates);
+  const hasInjectedResolution = deps.opener !== undefined || deps.candidates !== undefined;
+  const probe = deps.probe ?? (hasInjectedResolution ? {} : defaultLinuxProbe);
+  if (!('resolved' in probe)) {
+    try {
+      probe.resolved = resolveLinuxRenameat2(deps.opener, deps.candidates);
+    } catch {
+      probe.resolved = null;
+    }
+  }
   return probe.resolved ?? null;
+}
+
+const defaultDarwinRenameOpener: NonNullable<NoClobberDeps['darwinOpener']> = () => {
+  try {
+    const libc = dlopen('/usr/lib/libSystem.B.dylib', {
+      renamex_np: { args: ['cstring', 'cstring', 'u32'], returns: 'i32' },
+    } as const);
+    try {
+      const renamex = libc.symbols.renamex_np;
+      if (typeof renamex !== 'function') {
+        libc.close();
+        return null;
+      }
+      return (staged, target) => {
+        let result: number;
+        try {
+          result = renamex(staged, target, DARWIN_RENAME_EXCL);
+        } catch (error) {
+          try {
+            libc.close();
+          } catch {
+            // Preserve the native invocation error; cleanup cannot authorize a portable retry.
+          }
+          throw error;
+        }
+        try {
+          libc.close();
+        } catch {
+          // The native result is already known; close-only failure cannot rewrite the commit outcome.
+        }
+        return result;
+      };
+    } catch {
+      try {
+        libc.close();
+      } catch {
+        // Setup already failed; inability to close the incomplete handle does not make the capability available.
+      }
+      return null;
+    }
+  } catch {
+    return null;
+  }
+};
+
+function resolveDarwinRenameExclusive(deps: NoClobberDeps): ((staged: Buffer, target: Buffer) => number) | null {
+  try {
+    return (deps.darwinOpener ?? defaultDarwinRenameOpener)();
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -1638,7 +2292,8 @@ export function atomicRenameDirectoryNoClobber(stagedDir: string, targetDir: str
   }
   const stagedPath = Buffer.from(`${stagedDir}\0`);
   const targetPath = Buffer.from(`${targetDir}\0`);
-  if (process.platform === 'linux') {
+  const platform = selectedNoClobberPlatform(deps);
+  if (platform === 'linux') {
     const rn = probeLinuxRenameat2(deps);
     if (rn === null) {
       publishDirectoryViaNameClaim(stagedDir, targetDir); // musl / no renameat2 => portable
@@ -1650,16 +2305,13 @@ export function atomicRenameDirectoryNoClobber(stagedDir: string, targetDir: str
     }
     return;
   }
-  if (process.platform === 'darwin') {
-    const libc = dlopen('/usr/lib/libSystem.B.dylib', {
-      renamex_np: { args: ['cstring', 'cstring', 'u32'], returns: 'i32' },
-    } as const);
-    let result: number;
-    try {
-      result = libc.symbols.renamex_np(stagedPath, targetPath, DARWIN_RENAME_EXCL);
-    } finally {
-      libc.close();
+  if (platform === 'darwin') {
+    const renameExclusive = resolveDarwinRenameExclusive(deps);
+    if (renameExclusive === null) {
+      publishDirectoryViaNameClaim(stagedDir, targetDir);
+      return;
     }
+    const result = renameExclusive(stagedPath, targetPath);
     if (result !== 0) {
       const detail = lstatSafe(targetDir) === null ? 'rename failed' : 'target exists';
       throw new NoClobberPublishError(`atomic no-clobber publish failed (${detail}); target preserved: ${targetDir}`);
@@ -1667,6 +2319,98 @@ export function atomicRenameDirectoryNoClobber(stagedDir: string, targetDir: str
     return;
   }
   publishDirectoryViaNameClaim(stagedDir, targetDir); // was: throw unsupported — now portable & no-clobber
+}
+
+type RegularFileNoClobberPublish = 'renamed' | 'linked';
+
+/** Reconcile an exception only when the exact staged payload moved completely onto the target name. */
+function exactFileStageMovedToTarget(stage: FileStage, targetFile: string): boolean {
+  if (lstatSafe(stage.path) !== null) return false;
+  try {
+    const before = lstatSync(targetFile);
+    if (
+      !before.isFile() ||
+      before.isSymbolicLink() ||
+      !samePathIdentity(stage.stat, before) ||
+      !readFileSync(targetFile).equals(stage.bytes)
+    ) {
+      return false;
+    }
+    return samePathIdentity(before, lstatSync(targetFile));
+  } catch {
+    return false;
+  }
+}
+
+function selectedNoClobberPlatform(deps: NoClobberDeps): NodeJS.Platform {
+  return deps.platform ?? (deps.darwinOpener === undefined ? process.platform : 'darwin');
+}
+
+/** Null means native setup was unavailable before invocation, so the portable commit remains safe to select. */
+function resolveRegularFileNativeRename(deps: NoClobberDeps): Renameat2 | null {
+  const platform = selectedNoClobberPlatform(deps);
+  if (platform === 'darwin') return resolveDarwinRenameExclusive(deps);
+  if (platform === 'linux') return probeLinuxRenameat2(deps);
+  return null;
+}
+
+/** Once invoked, native return and exception outcomes are authoritative and never select a portable retry. */
+function publishRegularFileViaNativeNoClobber(
+  stage: FileStage,
+  targetFile: string,
+  renameExclusive: Renameat2,
+): RegularFileNoClobberPublish {
+  let result: number;
+  try {
+    result = renameExclusive(Buffer.from(`${stage.path}\0`), Buffer.from(`${targetFile}\0`));
+  } catch (error) {
+    if (exactFileStageMovedToTarget(stage, targetFile)) return 'renamed';
+    throw error;
+  }
+  if (result !== 0) {
+    const detail = lstatSafe(targetFile) === null ? 'rename failed' : 'target exists';
+    throw new NoClobberPublishError(
+      `atomic regular-file no-clobber publish failed (${detail}); target preserved: ${targetFile}`,
+    );
+  }
+  return 'renamed';
+}
+
+/**
+ * Publish one staged regular file while atomically rejecting every existing
+ * target inode. Linux and Darwin consume the staged name with their native
+ * no-replace rename primitive. Other platforms (and Linux without renameat2)
+ * use a hard link as an exclusive reservation; the caller treats it as
+ * committed only after retiring the extra name and verifying a safe nlink=1.
+ */
+function atomicRenameRegularFileNoClobber(
+  stage: FileStage,
+  targetFile: string,
+  deps: NoClobberDeps = {},
+  forcePortable = false,
+): RegularFileNoClobberPublish {
+  const stagedStat = lstatSync(stage.path);
+  if (
+    !stagedStat.isFile() ||
+    stagedStat.isSymbolicLink() ||
+    !samePathIdentity(stage.stat, stagedStat) ||
+    !readFileSync(stage.path).equals(stage.bytes)
+  ) {
+    throw new Error(`atomic publish source is not the expected physical regular file: ${stage.path}`);
+  }
+  if (!forcePortable) {
+    const nativeRename = resolveRegularFileNativeRename(deps);
+    if (nativeRename !== null) return publishRegularFileViaNativeNoClobber(stage, targetFile, nativeRename);
+  }
+  try {
+    linkSync(stage.path, targetFile);
+    return 'linked';
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code ?? 'UNKNOWN';
+    throw new NoClobberPublishError(
+      `portable regular-file no-clobber publish failed (${code}); target preserved: ${targetFile}`,
+    );
+  }
 }
 
 function writeRestoreConflict(
@@ -2242,16 +2986,16 @@ function retirementLockWaitMs(): number {
 }
 
 /**
- * Bounded-blocking wrapper over the whole tested {@link acquireSyncLock}
+ * Bounded-blocking wrapper over the whole tested {@link acquireFileLock}
  * (reuses its O_EXCL create, pid + process-start-identity liveness, staleness,
  * and guard-file stealing verbatim). A stale/dead holder is stolen inside
- * `acquireSyncLock`; a live holder is retried until the deadline, then this
+ * `acquireFileLock`; a live holder is retried until the deadline, then this
  * fails closed having mutated nothing on disk.
  */
 function acquireRetirementLock(lockPath: string): { release: () => void } {
   const deadline = Date.now() + retirementLockWaitMs();
   for (;;) {
-    const lock = acquireSyncLock(lockPath);
+    const lock = acquireFileLock(lockPath);
     if (!('skipped' in lock)) return lock;
     if (Date.now() >= deadline) {
       throw new Error(`fallback retirement lock contended; no data changed: ${lockPath}`);
@@ -2863,7 +3607,1189 @@ function removeManagedOrphans(
 }
 
 // ============================================================================
-// Workflow stamp (output parity-locked to council-stamp.cjs)
+// Claude agent enumeration + per-file policy
+// ============================================================================
+
+/**
+ * Source agents are flat Markdown files directly under `<pluginRoot>/agents`.
+ * Exported so doctor's read-only role-agent classifier enumerates the exact same
+ * source set the sync engine fans out (no divergent reimplementation).
+ */
+export function enumerateSourceAgentFiles(pluginRoot: string): SourceAgentFile[] {
+  const agentsRoot = join(pluginRoot, 'agents');
+  if (!existsSync(agentsRoot)) return [];
+  return readdirSync(agentsRoot, { withFileTypes: true })
+    .filter((entry) => isFlatAgentFilename(entry.name) && classifyEntry(join(agentsRoot, entry.name), entry) === 'file')
+    .map((entry) => ({ name: entry.name, path: join(agentsRoot, entry.name) }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// ============================================================================
+// Flat-agent transaction core
+//
+// One clearly-bounded transaction per target dir:
+//   capture → validate → publish → manifest CAS (single commit) → finalize/rollback
+// Sync and uninstall both run through {@link runFlatAgentTransaction} while
+// holding the shared per-GENIE_HOME lock, so the core only defends against
+// non-genie writers. Invariants closed by construction:
+//   - every irreversible unlink re-verifies the exact captured identity first;
+//   - ownership moves in ONE manifest commit whose claim set is re-verified
+//     against the live objects after the commit barrier;
+//   - the manifest publishes NOREPLACE from an exclusively staged payload;
+//     native rename consumes it, while the portable hard-link path commits only
+//     after identity-checked cleanup proves the live manifest has nlink=1;
+//   - final-entry relinquish verifies post-state before reporting success.
+// ============================================================================
+
+/** One planned mutation of a flat agent name inside a single transaction. */
+export type FlatAgentOp =
+  | {
+      kind: 'publish';
+      name: string;
+      payload: Buffer;
+      entry: AgentFileManifestEntry;
+      /** Live-path snapshot the policy decision validated; the publish CAS target. */
+      expected: AgentPathSnapshot;
+      action: 'created' | 'updated' | 'adopted';
+      backupPath?: string;
+    }
+  | {
+      kind: 'retire';
+      name: string;
+      expected: AgentPathSnapshot;
+      /** Base-manifest digest this op assumes; ownership drift aborts the op. */
+      ownedDigest: string;
+      disposal: 'discard' | 'keep-aside';
+      operation: 'remove' | 'keep';
+      backupPath?: string;
+    }
+  | { kind: 'disown'; name: string; ownedDigest: string; prune: boolean };
+
+export type FlatAgentConflict = 'changed-before-capture' | 'replaced-before-publish' | 'replaced-before-commit';
+
+export interface FlatAgentOutcome {
+  op: FlatAgentOp;
+  /**
+   * applied — mutation performed and its ownership delta committed;
+   * conflict — a non-genie writer won the pathname: the foreign object stays
+   *            live and unowned, prior managed bytes stay visible;
+   * stale   — ownership/classification drifted before mutation; nothing changed;
+   * failed  — an exception fired; the live path was restored or kept visible.
+   */
+  status: 'applied' | 'conflict' | 'stale' | 'failed';
+  conflict?: FlatAgentConflict;
+  reason?: string;
+  /** Where prior bytes were preserved when the disposal was keep-aside. */
+  keptPath?: string;
+}
+
+export interface FlatAgentTransactionResult {
+  /**
+   * False when a required manifest commit did not happen: every op carrying an
+   * ownership delta was rolled back and must not be reported as performed.
+   */
+  committed: boolean;
+  outcomes: FlatAgentOutcome[];
+  advisories: string[];
+}
+
+export interface FlatAgentTransactionSeams {
+  now: () => Date;
+  beforeFileMutation?: (event: AgentFileMutationEvent) => void;
+  beforeManifestCommit?: (event: AgentManifestCommitEvent) => void;
+  beforeManifestPublish?: (event: AgentManifestCommitEvent) => void;
+  manifestPublishOptions?: AgentManifestPublishOptions;
+}
+
+interface FlatAgentTxnCtx {
+  dir: string;
+  baseFiles: Record<string, AgentFileManifestEntry>;
+  seams: FlatAgentTransactionSeams;
+  advisories: string[];
+}
+
+interface FlatAgentOpState {
+  op: FlatAgentOp;
+  status: FlatAgentOutcome['status'];
+  conflict?: FlatAgentConflict;
+  reason?: string;
+  captured: CapturedPath | null;
+  published: AgentPathSnapshot | null;
+  delta: 'set' | 'delete' | null;
+  keptPath?: string;
+}
+
+/**
+ * Execute one batch of flat-agent ops against `dir` and its shared manifest.
+ * The base manifest is inspected once; every mutation CASes against the exact
+ * object it validated; ownership moves in ONE commit; commit failure rolls the
+ * data phase back. Callers translate outcomes into their own report shape.
+ */
+export function runFlatAgentTransaction(
+  dir: string,
+  ops: FlatAgentOp[],
+  seams: FlatAgentTransactionSeams,
+): FlatAgentTransactionResult {
+  const base = inspectAgentFilesManifest(dir);
+  if (base.kind === 'unsafe') {
+    return {
+      committed: false,
+      advisories: [`agent manifest ${base.path} is unsafe (${base.reason}); left untouched`],
+      outcomes: ops.map((op) => ({ op, status: 'stale', reason: 'manifest unsafe' })),
+    };
+  }
+  const ctx: FlatAgentTxnCtx = {
+    dir,
+    baseFiles: base.kind === 'managed' ? base.manifest.files : {},
+    seams,
+    advisories: [],
+  };
+  const states = ops.map((op) => executeFlatAgentOp(ctx, op));
+  let committed: boolean;
+  try {
+    committed = commitFlatAgentManifest(ctx, base, states);
+  } catch (error) {
+    // An unexpected commit exception is a failed commit, never a stranded batch.
+    ctx.advisories.push(`agent manifest ${join(dir, MANIFEST_NAME)} commit failed: ${errMsg(error)}`);
+    committed = false;
+  }
+  if (committed) finalizeFlatAgentOps(ctx, states);
+  else rollbackFlatAgentOps(ctx, states);
+  return {
+    committed,
+    advisories: ctx.advisories,
+    outcomes: states.map((state) => ({
+      op: state.op,
+      status: state.status,
+      conflict: state.conflict,
+      reason: state.reason,
+      keptPath: state.keptPath,
+    })),
+  };
+}
+
+// ---- file phase ------------------------------------------------------------
+
+function executeFlatAgentOp(ctx: FlatAgentTxnCtx, op: FlatAgentOp): FlatAgentOpState {
+  const state: FlatAgentOpState = { op, status: 'applied', captured: null, published: null, delta: null };
+  if (op.kind !== 'publish' && ctx.baseFiles[op.name]?.digest !== op.ownedDigest) {
+    state.status = 'stale';
+    state.reason = 'manifest ownership changed before staging';
+    return state;
+  }
+  try {
+    if (op.kind === 'publish') executePublishOp(ctx, op, state);
+    else if (op.kind === 'retire') executeRetireOp(ctx, op, state);
+    else executeDisownOp(ctx, op, state);
+  } catch (error) {
+    state.status = 'failed';
+    state.reason = state.reason ?? errMsg(error);
+    quarantinedCapturedToKeepAside(ctx, state);
+  }
+  return state;
+}
+
+/** Last-resort failure handling: captured bytes must never stay hidden in quarantine. */
+function quarantinedCapturedToKeepAside(ctx: FlatAgentTxnCtx, state: FlatAgentOpState): void {
+  const captured = state.captured;
+  if (captured === null) return;
+  state.captured = null;
+  const targetPath = join(ctx.dir, state.op.name);
+  try {
+    const kept = keepAsideCaptured(captured, targetPath, ctx.seams.now);
+    state.keptPath = kept ?? undefined;
+    ctx.advisories.push(`preserved prior agent bytes at ${kept ?? captured.path}`);
+  } catch (error) {
+    ctx.advisories.push(`prior agent bytes for ${targetPath} left quarantined at ${captured.path}: ${errMsg(error)}`);
+  }
+}
+
+function executePublishOp(
+  ctx: FlatAgentTxnCtx,
+  op: Extract<FlatAgentOp, { kind: 'publish' }>,
+  state: FlatAgentOpState,
+): void {
+  const targetPath = join(ctx.dir, op.name);
+  const stage = createFileStage(targetPath, op.payload);
+  try {
+    if (op.expected.kind !== 'absent' && captureValidatedTarget(ctx, op, state, 'agent-old') !== 'captured') {
+      markConflict(ctx, state, 'changed-before-capture');
+      pushAdvisory(ctx, cleanupFileStage(stage));
+      return;
+    }
+    ctx.seams.beforeFileMutation?.({ operation: 'replace', path: targetPath, backupPath: op.backupPath });
+    if (!fileStageOwned(stage)) throw new Error(`staged payload changed: ${stage.path}`);
+    try {
+      linkSync(stage.path, targetPath);
+    } catch (error) {
+      if (!isNodeErrorCode(error, 'EEXIST')) throw error;
+      markConflict(ctx, state, 'replaced-before-publish');
+      pushAdvisory(ctx, cleanupFileStage(stage));
+      return;
+    }
+    const cleanupFailure = consumeFileStageName(stage, targetPath);
+    if (cleanupFailure !== null) {
+      pushAdvisory(ctx, unpublishFileStageTarget(stage, targetPath));
+      throw new Error(cleanupFailure);
+    }
+    const published = captureAgentPathSnapshot(targetPath);
+    if (published.kind !== 'file' || published.stat.nlink !== 1 || !published.bytes.equals(op.payload)) {
+      pushAdvisory(ctx, unpublishFileStageTarget(stage, targetPath));
+      throw new Error(`published agent target was not an exact single-link payload: ${targetPath}`);
+    }
+    state.published = published;
+    state.delta = 'set';
+  } catch (error) {
+    const restored = restoreCapturedAfterFailure(ctx, state, targetPath);
+    if (!restored && ctx.baseFiles[op.name] !== undefined) state.delta = 'delete';
+    pushAdvisory(ctx, cleanupFileStage(stage));
+    state.status = 'failed';
+    state.reason = errMsg(error);
+  }
+}
+
+function executeRetireOp(
+  ctx: FlatAgentTxnCtx,
+  op: Extract<FlatAgentOp, { kind: 'retire' }>,
+  state: FlatAgentOpState,
+): void {
+  const targetPath = join(ctx.dir, op.name);
+  const capture = captureValidatedTarget(ctx, op, state, 'agent-retire');
+  if (capture === 'conflict') {
+    markConflict(ctx, state, 'changed-before-capture');
+    return;
+  }
+  if (capture === 'captured') {
+    try {
+      ctx.seams.beforeFileMutation?.({ operation: op.operation, path: targetPath, backupPath: op.backupPath });
+    } catch (error) {
+      const restored = restoreCapturedAfterFailure(ctx, state, targetPath);
+      // If a foreign object won the live name while the callback failed, the
+      // old ownership claim must still be deleted. The prior managed bytes are
+      // kept aside and the manifest commit relinquishes the foreign live name.
+      if (!restored) state.delta = 'delete';
+      state.status = 'failed';
+      state.reason = errMsg(error);
+      return;
+    }
+  }
+  state.delta = 'delete';
+}
+
+function executeDisownOp(
+  ctx: FlatAgentTxnCtx,
+  op: Extract<FlatAgentOp, { kind: 'disown' }>,
+  state: FlatAgentOpState,
+): void {
+  if (op.prune) {
+    const targetPath = join(ctx.dir, op.name);
+    ctx.seams.beforeFileMutation?.({ operation: 'prune', path: targetPath });
+    if (lstatSafe(targetPath) !== null) {
+      state.status = 'stale';
+      state.reason = 'it appeared after classification';
+      return;
+    }
+  }
+  state.delta = 'delete';
+}
+
+/**
+ * Atomically capture the live object and verify it is exactly the validated
+ * snapshot. On mismatch the concurrent object is restored (or quarantined
+ * visibly) and the caller records a conflict; on absence nothing is captured.
+ */
+function captureValidatedTarget(
+  ctx: FlatAgentTxnCtx,
+  op: Extract<FlatAgentOp, { kind: 'publish' | 'retire' }>,
+  state: FlatAgentOpState,
+  label: string,
+): 'captured' | 'absent' | 'conflict' {
+  const targetPath = join(ctx.dir, op.name);
+  const captured = capturePath(targetPath, label);
+  if (captured === null) return 'absent';
+  if (agentPathSnapshotMatches(captured.path, op.expected)) {
+    state.captured = captured;
+    return 'captured';
+  }
+  try {
+    if (restoreCapturedPathNoReplace(captured.path, targetPath)) {
+      removeEmptyDirSafe(captured.dir);
+    } else {
+      const kept = keepAsideCaptured(captured, targetPath, ctx.seams.now);
+      ctx.advisories.push(`preserved concurrently changed agent at ${kept ?? captured.path}`);
+    }
+  } catch (error) {
+    ctx.advisories.push(`concurrently changed agent left quarantined at ${captured.path}: ${errMsg(error)}`);
+  }
+  return 'conflict';
+}
+
+/** A conflict relinquishes any base ownership of the name; the foreign object is never claimed. */
+function markConflict(ctx: FlatAgentTxnCtx, state: FlatAgentOpState, conflict: FlatAgentConflict): void {
+  state.status = 'conflict';
+  state.conflict = conflict;
+  state.delta = ctx.baseFiles[state.op.name] === undefined ? null : 'delete';
+}
+
+/** Failure path: the live pathname is restored, or the bytes stay visible at a kept path. */
+function restoreCapturedAfterFailure(ctx: FlatAgentTxnCtx, state: FlatAgentOpState, targetPath: string): boolean {
+  const captured = state.captured;
+  if (captured === null) return true;
+  state.captured = null;
+  try {
+    return restoreCapturedForFailure(ctx, state, captured, targetPath);
+  } catch (error) {
+    ctx.advisories.push(`prior agent bytes for ${targetPath} left quarantined at ${captured.path}: ${errMsg(error)}`);
+    return false;
+  }
+}
+
+function restoreCapturedForFailure(
+  ctx: FlatAgentTxnCtx,
+  state: FlatAgentOpState,
+  captured: CapturedPath,
+  targetPath: string,
+): boolean {
+  if (restoreCapturedPathNoReplace(captured.path, targetPath)) {
+    removeEmptyDirSafe(captured.dir);
+    return true;
+  }
+  const kept = keepAsideCaptured(captured, targetPath, ctx.seams.now);
+  state.keptPath = kept ?? undefined;
+  ctx.advisories.push(`preserved prior agent bytes at ${kept ?? captured.path}`);
+  return false;
+}
+
+function pushAdvisory(ctx: FlatAgentTxnCtx, advisory: string | null): void {
+  if (advisory !== null) ctx.advisories.push(advisory);
+}
+
+// ---- commit phase ----------------------------------------------------------
+
+/**
+ * Re-verify, immediately before ownership moves, that every published object is
+ * still the exact one this transaction created and every retired pathname is
+ * still free. A non-genie writer that raced the gap demotes the op to a
+ * conflict: the foreign object stays live and unowned.
+ */
+function reverifyFlatAgentOps(ctx: FlatAgentTxnCtx, states: FlatAgentOpState[]): void {
+  for (const state of states) {
+    if (state.status !== 'applied') continue;
+    const targetPath = join(ctx.dir, state.op.name);
+    if (state.published !== null) {
+      if (!agentPathSnapshotMatches(targetPath, state.published)) {
+        state.published = null;
+        markConflict(ctx, state, 'replaced-before-commit');
+      }
+    } else if (state.op.kind === 'retire' && lstatSafe(targetPath) !== null) {
+      // The delta stays 'delete': ownership of the foreign replacement is relinquished.
+      state.status = 'conflict';
+      state.conflict = 'replaced-before-commit';
+    }
+  }
+}
+
+function buildFlatAgentClaim(ctx: FlatAgentTxnCtx, states: FlatAgentOpState[]): Record<string, AgentFileManifestEntry> {
+  const files: Record<string, AgentFileManifestEntry> = { ...ctx.baseFiles };
+  for (const state of states) {
+    if (state.delta === null) continue;
+    if (state.delta === 'set' && state.op.kind === 'publish') files[state.op.name] = state.op.entry;
+    else delete files[state.op.name];
+  }
+  return files;
+}
+
+function manifestPayload(files: Record<string, AgentFileManifestEntry>): Buffer {
+  const manifest: AgentFilesManifest = { managedBy: MANAGED_BY, files };
+  return Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+}
+
+interface ManifestCommitResult {
+  committed: boolean;
+  reason?: string;
+}
+
+function preserveCapturedManifestObject(
+  ctx: FlatAgentTxnCtx,
+  captured: CapturedPath,
+  livePath: string,
+  label: string,
+): void {
+  try {
+    const preserved = restoreOrPreserveCaptured(captured, livePath);
+    if (preserved !== livePath) ctx.advisories.push(`preserved ${label} at ${preserved ?? captured.path}`);
+  } catch (error) {
+    ctx.advisories.push(`${label} left quarantined at ${captured.path}: ${errMsg(error)}`);
+  }
+}
+
+/** Unlink only a captured private name that still denotes this exact staged payload. */
+function discardCapturedStagePayload(
+  ctx: FlatAgentTxnCtx,
+  stage: FileStage,
+  captured: CapturedPath,
+  restorePath: string,
+  label: string,
+): void {
+  if (!fileStagePayloadMatches(stage, captured.path)) {
+    preserveCapturedManifestObject(ctx, captured, restorePath, `replaced ${label}`);
+    return;
+  }
+  try {
+    unlinkSync(captured.path);
+    removeEmptyDirSafe(captured.dir);
+  } catch (error) {
+    ctx.advisories.push(`${label} left quarantined at ${captured.path}: ${errMsg(error)}`);
+  }
+}
+
+/** Remove the live target only after capturing and proving it is the exact linked staged inode. */
+function unpublishPortableManifestTarget(ctx: FlatAgentTxnCtx, stage: FileStage, manifestPath: string): void {
+  let captured: CapturedPath | null;
+  try {
+    captured = capturePath(manifestPath, 'manifest-portable-rollback');
+  } catch (error) {
+    ctx.advisories.push(`portable manifest target could not be captured safely: ${errMsg(error)}`);
+    return;
+  }
+  if (captured === null) return;
+  if (!fileStagePayloadMatches(stage, captured.path)) {
+    preserveCapturedManifestObject(ctx, captured, manifestPath, 'foreign manifest replacement');
+    return;
+  }
+  try {
+    unlinkSync(captured.path);
+    removeEmptyDirSafe(captured.dir);
+  } catch (error) {
+    ctx.advisories.push(`linked manifest payload left quarantined at ${captured.path}: ${errMsg(error)}`);
+  }
+}
+
+function capturePortableStageName(stage: FileStage): CapturedPath | null {
+  try {
+    return capturePath(stage.path, 'manifest-stage-name');
+  } catch {
+    return null;
+  }
+}
+
+function portableLinkPairIsExact(stage: FileStage, capturedStagePath: string, manifestPath: string): boolean {
+  try {
+    const capturedStat = lstatSync(capturedStagePath);
+    const targetStat = lstatSync(manifestPath);
+    return (
+      capturedStat.nlink === 2 &&
+      targetStat.nlink === 2 &&
+      sameObjectIdentity(capturedStat, targetStat) &&
+      fileStagePayloadMatches(stage, capturedStagePath) &&
+      fileStagePayloadMatches(stage, manifestPath)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function cleanupPortableStageContainers(ctx: FlatAgentTxnCtx, stage: FileStage, capturedStage: CapturedPath): void {
+  try {
+    removeEmptyDirSafe(capturedStage.dir);
+    removeEmptyDirSafe(stage.dir);
+  } catch (error) {
+    ctx.advisories.push(`portable manifest stage directory cleanup deferred: ${errMsg(error)}`);
+  }
+}
+
+function retirePortableManifestStageName(
+  ctx: FlatAgentTxnCtx,
+  stage: FileStage,
+  capturedStage: CapturedPath,
+  manifestPath: string,
+): string | null {
+  try {
+    ctx.seams.manifestPublishOptions?.beforePortableStageNameCleanup?.({
+      path: manifestPath,
+      stagePath: stage.path,
+      capturedStagePath: capturedStage.path,
+    });
+  } catch (error) {
+    return errMsg(error);
+  }
+  if (!portableLinkPairIsExact(stage, capturedStage.path, manifestPath)) {
+    return 'portable manifest link pair changed before stage-name cleanup';
+  }
+  try {
+    unlinkSync(capturedStage.path);
+  } catch (error) {
+    return `portable manifest stage-name cleanup failed: ${errMsg(error)}`;
+  }
+  try {
+    const targetStat = lstatSync(manifestPath);
+    return targetStat.nlink === 1 && fileStagePayloadMatches(stage, manifestPath)
+      ? null
+      : 'portable manifest target was not a safe single-link file after cleanup';
+  } catch (error) {
+    return `portable manifest target verification failed: ${errMsg(error)}`;
+  }
+}
+
+function rollbackPortableManifestReservation(
+  ctx: FlatAgentTxnCtx,
+  stage: FileStage,
+  manifestPath: string,
+  capturedStage: CapturedPath | null,
+): void {
+  unpublishPortableManifestTarget(ctx, stage, manifestPath);
+  if (capturedStage === null) {
+    try {
+      pushAdvisory(ctx, cleanupFileStage(stage));
+    } catch (error) {
+      ctx.advisories.push(`portable manifest stage cleanup deferred: ${errMsg(error)}`);
+    }
+    return;
+  }
+  discardCapturedStagePayload(ctx, stage, capturedStage, stage.path, 'portable manifest stage payload');
+  try {
+    removeEmptyDirSafe(stage.dir);
+  } catch (error) {
+    ctx.advisories.push(`portable manifest stage directory cleanup deferred: ${errMsg(error)}`);
+  }
+}
+
+/**
+ * Complete the hard-link fallback. The transaction is committed only after the
+ * extra staged name is identity-checked, removed, and the live manifest is
+ * verified as the same regular inode with nlink=1.
+ */
+function completePortableManifestPublish(
+  ctx: FlatAgentTxnCtx,
+  stage: FileStage,
+  manifestPath: string,
+): ManifestCommitResult {
+  const capturedStage = capturePortableStageName(stage);
+  const reason =
+    capturedStage === null
+      ? 'could not capture portable manifest stage name'
+      : retirePortableManifestStageName(ctx, stage, capturedStage, manifestPath);
+  if (reason === null && capturedStage !== null) {
+    // Safe nlink=1 is the commit point. Directory cleanup below is advisory-only.
+    cleanupPortableStageContainers(ctx, stage, capturedStage);
+    return { committed: true };
+  }
+  rollbackPortableManifestReservation(ctx, stage, manifestPath, capturedStage);
+  return { committed: false, reason: reason ?? 'portable manifest stage-name cleanup failed' };
+}
+
+/** The single ownership commit; false means every ownership delta must roll back. */
+function commitFlatAgentManifest(ctx: FlatAgentTxnCtx, base: AgentManifestState, states: FlatAgentOpState[]): boolean {
+  if (!states.some((state) => state.delta !== null)) return true;
+  const provisional = buildFlatAgentClaim(ctx, states);
+  const result =
+    Object.keys(provisional).length > 0
+      ? commitFlatAgentManifestWrite(ctx, base, states, provisional)
+      : commitFlatAgentManifestRemoval(ctx, base, states);
+  if (!result.committed) {
+    ctx.advisories.push(`agent manifest ${join(ctx.dir, MANIFEST_NAME)} commit failed: ${result.reason}`);
+  }
+  return result.committed;
+}
+
+function invokeManifestBarrier(
+  barrier: ((event: AgentManifestCommitEvent) => void) | undefined,
+  event: AgentManifestCommitEvent,
+): string | null {
+  try {
+    barrier?.(event);
+    return null;
+  } catch (error) {
+    return errMsg(error);
+  }
+}
+
+function failStagedManifestPublish(ctx: FlatAgentTxnCtx, stage: FileStage, reason: string): ManifestCommitResult {
+  try {
+    pushAdvisory(ctx, cleanupFileStage(stage));
+  } catch (error) {
+    ctx.advisories.push(`manifest stage cleanup deferred: ${errMsg(error)}`);
+  }
+  return { committed: false, reason };
+}
+
+interface ManifestBaseCaptureResult {
+  captured: CapturedPath | null;
+  reason: string | null;
+}
+
+function captureBaseManifestForWrite(
+  ctx: FlatAgentTxnCtx,
+  base: AgentManifestState,
+  manifestPath: string,
+): ManifestBaseCaptureResult {
+  if (base.kind === 'absent') return { captured: null, reason: null };
+  let captured: CapturedPath | null;
+  try {
+    captured = capturePath(manifestPath, 'manifest-old');
+  } catch (error) {
+    return { captured: null, reason: errMsg(error) };
+  }
+  if (captured !== null && manifestStillBase(captured.path, base)) return { captured, reason: null };
+  if (captured !== null) restorePreviousManifest(ctx, captured, manifestPath);
+  return { captured: null, reason: 'manifest ownership changed before commit' };
+}
+
+function publishFlatAgentManifestStage(
+  ctx: FlatAgentTxnCtx,
+  stage: FileStage,
+  manifestPath: string,
+): ManifestCommitResult {
+  const barrierFailure = invokeManifestBarrier(ctx.seams.beforeManifestPublish, {
+    path: manifestPath,
+    stagePath: stage.path,
+  });
+  if (barrierFailure !== null) return failStagedManifestPublish(ctx, stage, barrierFailure);
+  if (!fileStageOwned(stage)) {
+    return failStagedManifestPublish(ctx, stage, 'staged manifest payload changed before publish');
+  }
+  let publish: RegularFileNoClobberPublish;
+  try {
+    publish = atomicRenameRegularFileNoClobber(
+      stage,
+      manifestPath,
+      ctx.seams.manifestPublishOptions?.noClobberDeps,
+      ctx.seams.manifestPublishOptions?.forcePortable,
+    );
+  } catch (error) {
+    return failStagedManifestPublish(ctx, stage, errMsg(error));
+  }
+  if (publish === 'linked') return completePortableManifestPublish(ctx, stage, manifestPath);
+  // Native NOREPLACE consumes the staged name, but an alias created on the
+  // staged inode before publication must never become a mutable ownership
+  // claim. Commit only after the live name is the exact single-link payload.
+  if (!fileStagePayloadMatches(stage, manifestPath, 1)) {
+    unpublishPortableManifestTarget(ctx, stage, manifestPath);
+    pushAdvisory(ctx, finishNativeCommittedFileStage(stage));
+    return { committed: false, reason: 'published manifest was not an exact single-link staged payload' };
+  }
+  pushAdvisory(ctx, finishNativeCommittedFileStage(stage));
+  return { committed: true };
+}
+
+/**
+ * Dispose a captured base only after re-capturing its private name and proving
+ * the second capture is still the exact manifest object the transaction read.
+ * A same-UID writer replacing the first quarantine name is preserved, never
+ * deleted merely because publication already committed.
+ */
+function discardCapturedManifestBase(ctx: FlatAgentTxnCtx, captured: CapturedPath, base: AgentManifestState): boolean {
+  if (base.kind !== 'managed' && base.kind !== 'foreign') return false;
+  let disposal: CapturedPath | null;
+  try {
+    disposal = capturePath(captured.path, 'manifest-dispose');
+  } catch (error) {
+    ctx.advisories.push(`previous manifest left quarantined at ${captured.path}: ${errMsg(error)}`);
+    return false;
+  }
+  if (disposal === null) {
+    removeEmptyDirSafe(captured.dir);
+    return true;
+  }
+  if (!manifestStillBase(disposal.path, base)) {
+    const preserved = restoreOrPreserveCaptured(disposal, captured.path);
+    ctx.advisories.push(`preserved replaced previous manifest at ${preserved ?? disposal.path}`);
+    return false;
+  }
+  removeCapturedPath(disposal);
+  if (lstatSafe(captured.path) !== null) {
+    ctx.advisories.push(`preserved concurrent replacement in previous-manifest quarantine at ${captured.path}`);
+  }
+  removeEmptyDirSafe(captured.dir);
+  return true;
+}
+
+function disposePreviousManifestAfterCommit(
+  ctx: FlatAgentTxnCtx,
+  captured: CapturedPath | null,
+  base: AgentManifestState,
+): void {
+  if (captured === null) return;
+  try {
+    discardCapturedManifestBase(ctx, captured, base);
+  } catch (error) {
+    ctx.advisories.push(`previous manifest left quarantined at ${captured.path}: ${errMsg(error)}`);
+  }
+}
+
+/**
+ * Write path: stage exclusively → barrier → re-verify live objects → CAS the
+ * base manifest out of the way → publish the payload NOREPLACE. Native rename
+ * consumes the staged name; the portable hard-link fallback does not commit
+ * until its extra name is retired and the live target verifies at nlink=1.
+ */
+function commitFlatAgentManifestWrite(
+  ctx: FlatAgentTxnCtx,
+  base: AgentManifestState,
+  states: FlatAgentOpState[],
+  provisional: Record<string, AgentFileManifestEntry>,
+): ManifestCommitResult {
+  const manifestPath = join(ctx.dir, MANIFEST_NAME);
+  let stage = createFileStage(manifestPath, manifestPayload(provisional));
+  const barrierFailure = invokeManifestBarrier(ctx.seams.beforeManifestCommit, {
+    path: manifestPath,
+    stagePath: stage.path,
+  });
+  if (barrierFailure !== null) return failStagedManifestPublish(ctx, stage, barrierFailure);
+  if (!fileStageOwned(stage)) {
+    return failStagedManifestPublish(ctx, stage, 'staged manifest payload changed before commit');
+  }
+  reverifyFlatAgentOps(ctx, states);
+  const claim = buildFlatAgentClaim(ctx, states);
+  if (Object.keys(claim).length === 0) {
+    // every remaining claim was demoted at the barrier — fall back to removal
+    pushAdvisory(ctx, cleanupFileStage(stage));
+    if (base.kind === 'absent') return { committed: true };
+    return removeBaseManifestExact(ctx, base, manifestPath, false);
+  }
+  const payload = manifestPayload(claim);
+  if (!payload.equals(stage.bytes)) {
+    pushAdvisory(ctx, cleanupFileStage(stage));
+    stage = createFileStage(manifestPath, payload);
+  }
+  const baseCapture = captureBaseManifestForWrite(ctx, base, manifestPath);
+  if (baseCapture.reason !== null) return failStagedManifestPublish(ctx, stage, baseCapture.reason);
+  const publication = publishFlatAgentManifestStage(ctx, stage, manifestPath);
+  if (!publication.committed) {
+    if (baseCapture.captured !== null) restorePreviousManifest(ctx, baseCapture.captured, manifestPath);
+    return publication;
+  }
+  // Native rename or verified portable nlink=1 decided the outcome. Nothing below may roll back.
+  disposePreviousManifestAfterCommit(ctx, baseCapture.captured, base);
+  return publication;
+}
+
+/** Removal path: the transaction ends with zero owned names — the manifest itself goes. */
+function commitFlatAgentManifestRemoval(
+  ctx: FlatAgentTxnCtx,
+  base: AgentManifestState,
+  states: FlatAgentOpState[],
+): ManifestCommitResult {
+  reverifyFlatAgentOps(ctx, states);
+  if (base.kind === 'absent') return { committed: true };
+  return removeBaseManifestExact(ctx, base, join(ctx.dir, MANIFEST_NAME), true);
+}
+
+/**
+ * Remove the base manifest as the final ownership relinquish. The live pathname
+ * is re-checked before AND after the unlink: success is reported only when no
+ * manifest object exists there anymore, so a concurrently installed replacement
+ * can never ride a false-success relinquish.
+ */
+function removeBaseManifestExact(
+  ctx: FlatAgentTxnCtx,
+  base: AgentManifestState,
+  manifestPath: string,
+  fireBarrier: boolean,
+): ManifestCommitResult {
+  const captured = capturePath(manifestPath, 'manifest-remove');
+  if (fireBarrier) {
+    try {
+      ctx.seams.beforeManifestCommit?.({ path: manifestPath, stagePath: captured?.path ?? manifestPath });
+    } catch (error) {
+      if (captured !== null) restorePreviousManifest(ctx, captured, manifestPath);
+      return { committed: false, reason: errMsg(error) };
+    }
+  }
+  if (captured === null || !manifestStillBase(captured.path, base)) {
+    if (captured !== null) restorePreviousManifest(ctx, captured, manifestPath);
+    return { committed: false, reason: 'manifest ownership changed before commit' };
+  }
+  if (lstatSafe(manifestPath) !== null) {
+    restorePreviousManifest(ctx, captured, manifestPath);
+    return { committed: false, reason: 'manifest ownership changed before commit: a replacement manifest appeared' };
+  }
+  if (!discardCapturedManifestBase(ctx, captured, base)) {
+    return { committed: false, reason: 'captured manifest changed before exact disposal' };
+  }
+  if (lstatSafe(manifestPath) !== null) {
+    return { committed: false, reason: 'manifest ownership changed before commit: a replacement manifest appeared' };
+  }
+  return { committed: true };
+}
+
+function restorePreviousManifest(ctx: FlatAgentTxnCtx, captured: CapturedPath, manifestPath: string): void {
+  const preserved = restoreOrPreserveCaptured(captured, manifestPath);
+  if (preserved !== null && preserved !== manifestPath) {
+    ctx.advisories.push(`preserved previous manifest at ${preserved}`);
+  }
+}
+
+// ---- finalize / rollback ----------------------------------------------------
+
+/**
+ * Success path: dispose captured prior objects. Discard re-verifies the exact
+ * captured identity at the instant of unlink — bytes that changed after
+ * validation are parked visibly instead of being discarded.
+ */
+function finalizeFlatAgentOps(ctx: FlatAgentTxnCtx, states: FlatAgentOpState[]): void {
+  for (const state of states) {
+    const captured = state.captured;
+    if (captured === null) continue;
+    state.captured = null;
+    const targetPath = join(ctx.dir, state.op.name);
+    try {
+      finalizeCapturedDisposal(ctx, state, captured, targetPath);
+    } catch (error) {
+      // Disposal failure never fails the committed transaction or hides bytes.
+      ctx.advisories.push(`prior agent bytes for ${targetPath} left quarantined at ${captured.path}: ${errMsg(error)}`);
+    }
+  }
+}
+
+function finalizeCapturedDisposal(
+  ctx: FlatAgentTxnCtx,
+  state: FlatAgentOpState,
+  captured: CapturedPath,
+  targetPath: string,
+): void {
+  const keepAside = state.op.kind === 'retire' ? state.op.disposal === 'keep-aside' : state.status === 'conflict';
+  if (keepAside) {
+    const kept = keepAsideCaptured(captured, targetPath, ctx.seams.now);
+    state.keptPath = kept ?? undefined;
+    if (kept === null) ctx.advisories.push(`preserved prior agent bytes at ${captured.path}`);
+    return;
+  }
+  disposeCapturedExact(ctx, state, captured, targetPath);
+}
+
+function disposeCapturedExact(
+  ctx: FlatAgentTxnCtx,
+  state: FlatAgentOpState,
+  captured: CapturedPath,
+  targetPath: string,
+): void {
+  if (state.op.kind !== 'disown' && agentPathSnapshotMatches(captured.path, state.op.expected)) {
+    removeCapturedPath(captured);
+    return;
+  }
+  const kept = keepAsideCaptured(captured, targetPath, ctx.seams.now);
+  state.keptPath = kept ?? undefined;
+  ctx.advisories.push(
+    `agent bytes for ${targetPath} changed after validation; preserved at ${kept ?? captured.path} instead of discarding`,
+  );
+}
+
+/**
+ * Commit-failure path: every published object that is still exactly ours is
+ * un-published and the prior object restored; foreign objects that appeared
+ * meanwhile stay live while prior bytes are parked visibly.
+ */
+function rollbackFlatAgentOps(ctx: FlatAgentTxnCtx, states: FlatAgentOpState[]): void {
+  for (const state of [...states].reverse()) {
+    const targetPath = join(ctx.dir, state.op.name);
+    try {
+      rollbackFlatAgentOp(ctx, state, targetPath);
+    } catch (error) {
+      // A rollback failure on one name never strands the rest of the batch.
+      const captured = state.captured;
+      state.captured = null;
+      ctx.advisories.push(
+        `rollback for ${targetPath} incomplete${
+          captured === null ? '' : `; prior bytes quarantined at ${captured.path}`
+        }: ${errMsg(error)}`,
+      );
+    }
+  }
+}
+
+function rollbackFlatAgentOp(ctx: FlatAgentTxnCtx, state: FlatAgentOpState, targetPath: string): void {
+  if (state.published !== null) unpublishFlatAgent(ctx, state, targetPath);
+  const captured = state.captured;
+  if (captured === null) return;
+  state.captured = null;
+  try {
+    if (restoreCapturedPathNoReplace(captured.path, targetPath)) {
+      removeEmptyDirSafe(captured.dir);
+      return;
+    }
+    const kept = keepAsideCaptured(captured, targetPath, ctx.seams.now);
+    state.keptPath = kept ?? undefined;
+    ctx.advisories.push(`manifest commit failed; preserved prior managed agent at ${kept ?? captured.path}`);
+  } catch (error) {
+    ctx.advisories.push(`prior agent bytes for ${targetPath} left quarantined at ${captured.path}: ${errMsg(error)}`);
+  }
+}
+
+function unpublishFlatAgent(ctx: FlatAgentTxnCtx, state: FlatAgentOpState, targetPath: string): void {
+  const current = capturePath(targetPath, 'agent-rollback');
+  if (current === null) return;
+  if (state.published !== null && agentPathSnapshotMatches(current.path, state.published)) {
+    removeCapturedPath(current);
+    return;
+  }
+  const preserved = restoreOrPreserveCaptured(current, targetPath);
+  if (preserved !== null && preserved !== targetPath) {
+    ctx.advisories.push(`preserved concurrent agent replacement at ${preserved}`);
+  }
+}
+
+// ---- sync driver -----------------------------------------------------------
+
+/**
+ * Converge flat source agent files without replacing their shared parent dir.
+ * Only names in source or in the shared manifest are candidates for mutation;
+ * every unrelated sibling in `~/.claude/agents` remains invisible. All ops run
+ * in ONE transaction with a single ownership commit.
+ */
+function syncClaudeAgentFiles(ctx: RunContext, claudeDir: string, report: AgentReport): void {
+  const sourceAgents = enumerateSourceAgentFiles(ctx.pluginRoot);
+  const targetDir = join(claudeDir, 'agents');
+  const initialState = inspectAgentFilesManifest(targetDir);
+  if (initialState.kind === 'unsafe') {
+    report.advisories.push(`agent manifest ${initialState.path} is unsafe (${initialState.reason}); left untouched`);
+    return;
+  }
+  const existingManifest = initialState.kind === 'managed' ? initialState.manifest : null;
+  if (sourceAgents.length === 0 && existingManifest === null) return;
+
+  mkdirSync(targetDir, { recursive: true });
+  if (initialState.kind === 'foreign') {
+    const backup = ctx.backupBytes('claude', join('agents', MANIFEST_NAME), initialState.bytes);
+    report.advisories.push(`adopted foreign agent manifest after backing it up to ${backup}`);
+  }
+  const plan = buildClaudeAgentPlan(ctx, sourceAgents, targetDir, existingManifest?.files ?? {}, report);
+  if (plan.ops.length === 0) return;
+  const result = runFlatAgentTransaction(targetDir, plan.ops, {
+    now: ctx.now,
+    beforeFileMutation: ctx.beforeAgentFileMutation,
+    beforeManifestCommit: ctx.beforeAgentManifestCommit,
+    beforeManifestPublish: ctx.beforeAgentManifestPublish,
+    manifestPublishOptions: ctx.agentManifestPublishOptions,
+  });
+  report.advisories.push(...result.advisories);
+  if (!result.committed) {
+    recordFailure(report, `claude agent transaction did not commit under ${targetDir}`);
+  }
+  reportClaudeAgentOutcomes(result, plan.orphanActions, report);
+}
+
+interface ClaudeAgentPlan {
+  ops: FlatAgentOp[];
+  /** Reporting action for each disown op: absent orphans read as removed. */
+  orphanActions: Map<string, 'removed' | 'kept-modified-orphan'>;
+}
+
+function buildClaudeAgentPlan(
+  ctx: RunContext,
+  sourceAgents: SourceAgentFile[],
+  targetDir: string,
+  baseFiles: Record<string, AgentFileManifestEntry>,
+  report: AgentReport,
+): ClaudeAgentPlan {
+  const ops: FlatAgentOp[] = [];
+  const orphanActions: ClaudeAgentPlan['orphanActions'] = new Map();
+  const sourceNames = new Set(sourceAgents.map((agent) => agent.name));
+  for (const source of sourceAgents) {
+    try {
+      const op = planAgentPublish(ctx, source, targetDir, baseFiles[source.name]);
+      if (op === 'unchanged') report.extras.push({ kind: 'agent', action: 'unchanged', detail: source.name });
+      else if (op === 'symlink-kept') {
+        report.extras.push({ kind: 'agent', action: 'skipped-unmanaged-kept', detail: source.name });
+        report.advisories.push(`agent ${source.name} (claude): same-name symlink preserved and never followed`);
+      } else ops.push(op);
+    } catch (err) {
+      const failure = `agent ${source.name} (claude) failed: ${errMsg(err)}`;
+      report.advisories.push(failure);
+      recordFailure(report, failure);
+    }
+  }
+  for (const [name, entry] of Object.entries(baseFiles).sort(([a], [b]) => a.localeCompare(b))) {
+    if (sourceNames.has(name)) continue;
+    try {
+      ops.push(planAgentOrphan(ctx, targetDir, name, entry, orphanActions));
+    } catch (err) {
+      const failure = `agent orphan ${name} (claude) failed: ${errMsg(err)}`;
+      report.advisories.push(failure);
+      recordFailure(report, failure);
+    }
+  }
+  return { ops, orphanActions };
+}
+
+/**
+ * Per-file policy mirrors managed skill dirs without ever swapping the parent:
+ * missing creates; clean+same skips; clean+changed updates; a same-name
+ * symlink is never followed, adopted, or replaced; anything else is backed up
+ * before adoption. The snapshot the policy validated is the exact CAS target
+ * of the later publish.
+ */
+function planAgentPublish(
+  ctx: RunContext,
+  source: SourceAgentFile,
+  targetDir: string,
+  entry: AgentFileManifestEntry | undefined,
+): FlatAgentOp | 'unchanged' | 'symlink-kept' {
+  // Read first: a source read failure must leave an existing target untouched.
+  const payload = readFileSync(source.path);
+  const sourceDigest = hashBytes(payload);
+  const targetPath = join(targetDir, source.name);
+  const expected = captureAgentPathSnapshot(targetPath);
+  const manifestEntry = buildAgentFileManifestEntry(ctx, sourceDigest);
+  if (expected.kind === 'absent') {
+    return { kind: 'publish', name: source.name, payload, entry: manifestEntry, expected, action: 'created' };
+  }
+  // Same policy as the skills lane: a user-placed symlink (e.g. a dotfiles
+  // repo link) stays live — adoption would destroy the link itself even though
+  // the pointed-to bytes survive in backup.
+  if (expected.kind === 'symlink') return 'symlink-kept';
+  const targetDigest = expected.kind === 'file' ? expected.digest : null;
+  if (entry !== undefined && targetDigest === entry.digest) {
+    if (sourceDigest === entry.digest) return 'unchanged';
+    return { kind: 'publish', name: source.name, payload, entry: manifestEntry, expected, action: 'updated' };
+  }
+  const backupPath = backupAgentSnapshot(ctx, source.name, targetPath, expected);
+  return { kind: 'publish', name: source.name, payload, entry: manifestEntry, expected, action: 'adopted', backupPath };
+}
+
+/** Back up exactly the bytes the policy validated; non-file objects fall back to a path copy. */
+function backupAgentSnapshot(ctx: RunContext, name: string, targetPath: string, expected: AgentPathSnapshot): string {
+  if (expected.kind === 'file') return ctx.backupBytes('claude', join('agents', name), expected.bytes);
+  return ctx.backupInto('claude', join('agents', name), targetPath);
+}
+
+/**
+ * A source orphan is deleted only when its live regular-file bytes still match
+ * the entry that owns it. Modified/non-file targets stay byte-for-byte in place
+ * and only lose their manifest entry, relinquishing ownership.
+ */
+function planAgentOrphan(
+  ctx: RunContext,
+  targetDir: string,
+  name: string,
+  entry: AgentFileManifestEntry,
+  orphanActions: ClaudeAgentPlan['orphanActions'],
+): FlatAgentOp {
+  const targetPath = join(targetDir, name);
+  const expected = captureAgentPathSnapshot(targetPath);
+  if (expected.kind === 'file' && expected.digest === entry.digest) {
+    const backupPath = ctx.backupBytes('claude', join('agents', name), expected.bytes);
+    return {
+      kind: 'retire',
+      name,
+      expected,
+      ownedDigest: entry.digest,
+      disposal: 'discard',
+      operation: 'remove',
+      backupPath,
+    };
+  }
+  orphanActions.set(name, expected.kind === 'absent' ? 'removed' : 'kept-modified-orphan');
+  return { kind: 'disown', name, ownedDigest: entry.digest, prune: false };
+}
+
+function reportClaudeAgentOutcomes(
+  result: FlatAgentTransactionResult,
+  orphanActions: ClaudeAgentPlan['orphanActions'],
+  report: AgentReport,
+): void {
+  for (const outcome of result.outcomes) {
+    const name = outcome.op.name;
+    if (outcome.status === 'failed') {
+      const failure = `agent ${name} (claude) failed: ${outcome.reason ?? 'unknown failure'}`;
+      report.advisories.push(failure);
+      recordFailure(report, failure);
+      continue;
+    }
+    if (outcome.status === 'stale') {
+      report.advisories.push(`agent ${name} (claude) skipped: ${outcome.reason ?? 'stale classification'}`);
+      continue;
+    }
+    if (!result.committed) continue; // rolled back — nothing happened for this name
+    report.extras.push({ kind: 'agent', action: claudeAgentAction(outcome, orphanActions), detail: name });
+    pushClaudeAgentConflictAdvisories(outcome, report);
+    if (outcome.op.kind === 'disown' && orphanActions.get(name) === 'kept-modified-orphan') {
+      report.advisories.push(`kept modified orphan ${name} (claude agents); relinquished manifest ownership`);
+    }
+  }
+}
+
+function claudeAgentAction(outcome: FlatAgentOutcome, orphanActions: ClaudeAgentPlan['orphanActions']): SkillAction {
+  const { op, status } = outcome;
+  if (op.kind === 'publish') return status === 'applied' ? op.action : 'skipped-unmanaged-kept';
+  if (op.kind === 'retire') return status === 'applied' ? 'removed' : 'kept-modified-orphan';
+  return orphanActions.get(op.name) ?? 'removed';
+}
+
+function pushClaudeAgentConflictAdvisories(outcome: FlatAgentOutcome, report: AgentReport): void {
+  if (outcome.status !== 'conflict') return;
+  const name = outcome.op.name;
+  if (outcome.op.kind === 'publish') {
+    report.advisories.push(
+      `kept concurrently changed agent ${name} (claude agents); it was not published or claimed by the managed manifest`,
+    );
+    return;
+  }
+  report.advisories.push(
+    outcome.conflict === 'changed-before-capture'
+      ? `kept concurrently changed orphan ${name} (claude agents)`
+      : `kept concurrently changed orphan ${name} (claude agents); relinquished ownership`,
+  );
+}
+
+/**
+ * Type-aware stable snapshot of one live path: identity (dev/ino/mode/nlink)
+ * plus content (bytes / dir digest / symlink target). Exported: uninstall
+ * classification captures the exact snapshots its removal ops later CAS on.
+ */
+export function captureAgentPathSnapshot(path: string): AgentPathSnapshot {
+  let before: Stats;
+  try {
+    before = lstatSync(path);
+  } catch (error) {
+    if (isNodeErrorCode(error, 'ENOENT')) return { kind: 'absent' };
+    throw error;
+  }
+  if (before.isFile()) {
+    const bytes = readFileSync(path);
+    const after = lstatSync(path);
+    if (!samePathIdentity(before, after)) throw new Error(`agent path changed while reading ${path}`);
+    return { kind: 'file', stat: after, bytes, digest: hashBytes(bytes) };
+  }
+  if (before.isDirectory()) return { kind: 'directory', stat: before, digest: computeDirDigest(path) };
+  if (before.isSymbolicLink()) return { kind: 'symlink', stat: before, target: readlinkSync(path) };
+  return { kind: 'other', stat: before };
+}
+
+/** Any inspection failure reads as a mismatch, biasing every caller toward preservation. */
+function agentPathSnapshotMatches(path: string, expected: AgentPathSnapshot): boolean {
+  try {
+    return sameAgentPathSnapshot(expected, captureAgentPathSnapshot(path));
+  } catch {
+    return false;
+  }
+}
+
+function sameAgentPathSnapshot(expected: AgentPathSnapshot, current: AgentPathSnapshot): boolean {
+  if (expected.kind !== current.kind) return false;
+  if (expected.kind === 'absent' || current.kind === 'absent') return true;
+  if (!samePathIdentity(expected.stat, current.stat)) return false;
+  if (expected.kind === 'file' && current.kind === 'file') return expected.bytes.equals(current.bytes);
+  if (expected.kind === 'directory' && current.kind === 'directory') return expected.digest === current.digest;
+  if (expected.kind === 'symlink' && current.kind === 'symlink') return expected.target === current.target;
+  return true;
+}
+
+function samePathIdentity(expected: Stats, current: Stats): boolean {
+  return (
+    expected.dev === current.dev &&
+    expected.ino === current.ino &&
+    expected.mode === current.mode &&
+    expected.nlink === current.nlink
+  );
+}
+
+function hashBytes(bytes: Buffer): string {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+// ============================================================================
+// Workflow stamp (parity-locked to council-stamp.cjs)
 // ============================================================================
 
 export type ManagedWorkflowState = 'unmanaged' | 'managed-clean' | 'managed-modified' | 'corrupt-metadata';
@@ -3703,6 +5629,7 @@ function syncClaude(ctx: RunContext, report: AgentReport): void {
   if (!existsSync(claudeDir)) return;
   report.detected = true;
   syncSkillDirsInto(ctx, 'claude', join(claudeDir, 'skills'), report, CLAUDE_EXCLUDED_SKILLS);
+  syncClaudeAgentFiles(ctx, claudeDir, report);
   stampClaudeWorkflow(ctx, claudeDir, report);
 }
 
@@ -3934,9 +5861,9 @@ function detectHermesBinary(opts: AgentSyncOptions): string | null {
  * live. Stealing is serialized by another token-owned lock. Any other lock I/O
  * failure fails closed; a destructive sync never runs without ownership.
  */
-function acquireSyncLock(lockPath: string): { release: () => void } | { skipped: string } {
+function acquireFileLock(lockPath: string): { release: () => void } | { skipped: string } {
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const created = tryInitializeSyncLock(lockPath);
+    const created = tryInitializeFileLock(lockPath);
     if (created.status === 'acquired') return created.lock;
     if (created.status === 'failed') return { skipped: created.reason };
     const stat = statSafe(lockPath);
@@ -3945,7 +5872,7 @@ function acquireSyncLock(lockPath: string): { release: () => void } | { skipped:
     // Age alone never proves abandonment. A slow or clock-skewed live owner
     // retains the lock regardless of whether its timestamp is old or future.
     if (lockHasLiveOwner(lockPath)) return heldLockSkip();
-    if (stealStaleLock(lockPath) === 'contended') return heldLockSkip();
+    if (stealStaleFileLock(lockPath) === 'contended') return heldLockSkip();
     // stale debris cleared — loop and retry the exclusive create
   }
   return { skipped: 'agent-sync lock remained contended after retries; skipped safely' };
@@ -3956,7 +5883,7 @@ type LockCreateAttempt =
   | { status: 'exists' }
   | { status: 'failed'; reason: string };
 
-function tryInitializeSyncLock(lockPath: string): LockCreateAttempt {
+function tryInitializeFileLock(lockPath: string): LockCreateAttempt {
   let fd: number;
   const token = randomBytes(16).toString('hex');
   const processIdentity = processStartIdentity(process.pid) ?? 'unknown';
@@ -4012,14 +5939,23 @@ function isStaleOrInvalidLockTime(mtimeMs: number, nowMs = Date.now()): boolean 
  * `host` is absent (→ null) for any record written before this field existed or
  * by the shell installer; a null host is treated as "unknown host" downstream.
  */
-function lockOwner(lockPath: string): { pid: number; processIdentity: string | null; host: string | null } | null {
-  const raw = readTrimmed(lockPath);
+interface LockOwner {
+  pid: number;
+  processIdentity: string | null;
+  host: string | null;
+}
+
+function parseLockOwner(raw: string | null): LockOwner | null {
   const match = raw?.match(/^(\d+)(?::[a-f0-9]{32})?(?::([a-f0-9]{64}|unknown))?(?::([a-f0-9]{64}))?$/);
   if (!match) return null;
   const pid = Number(match[1]);
   return Number.isSafeInteger(pid) && pid > 0
     ? { pid, processIdentity: match[2] ?? null, host: match[3] ?? null }
     : null;
+}
+
+function lockOwner(lockPath: string): LockOwner | null {
+  return parseLockOwner(readTrimmed(lockPath));
 }
 
 /**
@@ -4045,8 +5981,17 @@ function lockOwner(lockPath: string): { pid: number; processIdentity: string | n
  * transient legacy/shell-shaped records retain the prior semantics, in lockstep
  * with the shell.
  */
-function lockHasLiveOwner(lockPath: string): boolean {
-  const owner = lockOwner(lockPath);
+function lockHasLiveOwner(
+  lockPath: string,
+  resolveProcessStartIdentity: (pid: number) => string | null = processStartIdentity,
+): boolean {
+  return lockOwnerIsLive(lockOwner(lockPath), resolveProcessStartIdentity);
+}
+
+function lockOwnerIsLive(
+  owner: LockOwner | null,
+  resolveProcessStartIdentity: (pid: number) => string | null = processStartIdentity,
+): boolean {
   if (owner === null) return false; // empty / unparseable record is genuine dead-writer debris
   if (owner.host !== null && owner.host !== currentSyncLockHostId()) return true; // host-bearing + cross-host → never steal
   try {
@@ -4055,7 +6000,7 @@ function lockHasLiveOwner(lockPath: string): boolean {
     if ((error as NodeJS.ErrnoException).code !== 'EPERM') return false;
   }
   if (owner.processIdentity === null || owner.processIdentity === 'unknown') return true;
-  const currentIdentity = processStartIdentity(owner.pid);
+  const currentIdentity = resolveProcessStartIdentity(owner.pid);
   return currentIdentity === null || currentIdentity === owner.processIdentity;
 }
 
@@ -4175,7 +6120,7 @@ export function acquireLifecycleLease(genieHome = resolveGenieHome()): Lifecycle
       },
     };
   }
-  const acquired = acquireSyncLock(path);
+  const acquired = acquireFileLock(path);
   if ('skipped' in acquired) return acquired;
   const releaseOnExit = () => acquired.release();
   process.once('exit', releaseOnExit);
@@ -4237,9 +6182,9 @@ export function acquireLifecycleLease(genieHome = resolveGenieHome()): Lifecycle
  *     still let two acquirers proceed as concurrent owners. This is pre-existing
  *     in the TS path; the shell matches it at parity rather than widening it.
  */
-function stealStaleLock(lockPath: string): 'cleared' | 'contended' {
+function stealStaleFileLock(lockPath: string): 'cleared' | 'contended' {
   const guardPath = `${lockPath}.steal`;
-  const guardAttempt = tryInitializeSyncLock(guardPath);
+  const guardAttempt = tryInitializeFileLock(guardPath);
   if (guardAttempt.status !== 'acquired') {
     // lstat (never follow): a symlinked or otherwise non-regular guard is never
     // ours to reap — refuse it, matching the shell's `! -L` guard, so neither
@@ -4263,6 +6208,668 @@ function stealStaleLock(lockPath: string): 'cleared' | 'contended' {
   } finally {
     guardAttempt.lock.release();
   }
+}
+
+// ============================================================================
+// Generation-safe shared agent mutation lock
+// ============================================================================
+
+/**
+ * Acquire the per-GENIE_HOME sync lock via O_EXCL create. Returns a release
+ * handle, or null when another live sync holds the lock (the caller must skip).
+ * An out-of-window lock is stealable only when its host/PID/start record is not
+ * live. It is captured via {@link stealStaleAgentLock}, then exclusive create
+ * is retried. Any acquisition failure other than contention fails closed with
+ * an {@link AgentSyncLockError}; protected mutation never proceeds unlocked.
+ */
+function acquireAgentMutationLock(lockPath: string, options: AgentSyncLockOptions): { release: () => void } | null {
+  const resolveProcessStartIdentity = options.processStartIdentity ?? processStartIdentity;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const owned = createOwnedAgentSyncLock(lockPath, options);
+    if (owned !== null) {
+      return { release: () => releaseOwnedSyncLock(lockPath, owned, options, 'release') };
+    }
+    const observed = inspectLockObject(lockPath);
+    if (observed === null) continue; // holder released between exclusive-create and inspection
+    if (!isStaleOrInvalidLockTime(observed.stat.mtimeMs)) return null;
+    if (observed.kind === 'foreign') return null;
+    if (clearStaleLockObject(lockPath, observed, options, resolveProcessStartIdentity) === 'contended') return null;
+    // stale object was cleared; retry the atomic generation publish
+  }
+  return null; // lost the steal race to another process whose lock is now fresh
+}
+
+/** Clear one re-verified stale lock object by kind; 'contended' defers to a live (or unverifiable) holder. */
+function clearStaleLockObject(
+  lockPath: string,
+  observed: OwnedLockDirectory | LegacyLockFile | EmptyLockDirectory,
+  options: AgentSyncLockOptions,
+  resolveProcessStartIdentity: typeof processStartIdentity,
+): 'cleared' | 'contended' {
+  if (observed.kind === 'empty-directory') {
+    // Crash debris from a two-step release/steal (owner unlinked, rmdir never
+    // ran). Reaping is intrinsically safe: rmdir cannot remove a directory
+    // that regained content, so a concurrent fresh publish is never harmed.
+    return removeEmptyLockGeneration(lockPath) ? 'cleared' : 'contended';
+  }
+  if (observed.kind === 'legacy-file') {
+    // Upgrade compatibility retains the current dev lock protocol's
+    // cross-host/PID liveness rule. A generation lock is self-identifying by
+    // its owner pathname, while a legacy file carries this record in bytes.
+    if (lockHasLiveOwner(lockPath, resolveProcessStartIdentity)) return 'contended';
+    return stealLegacyStaleLock(lockPath, observed, options);
+  }
+  if (lockOwnerIsLive(parseLockOwner(observed.token.trim()), resolveProcessStartIdentity)) return 'contended';
+  return stealStaleAgentLock(lockPath, observed, options);
+}
+
+interface OwnedLockDirectory {
+  kind: 'owned-directory';
+  ownerName: string;
+  ownerPath: string;
+  stat: Stats;
+  token: string;
+}
+
+interface OwnedPortableLockFile {
+  kind: 'owned-file';
+  stat: Stats;
+  bytes: Buffer;
+}
+
+type OwnedAgentSyncLock = OwnedLockDirectory | OwnedPortableLockFile;
+
+interface LegacyLockFile {
+  kind: 'legacy-file';
+  stat: Stats;
+  bytes: Buffer;
+}
+
+interface ForeignLockObject {
+  kind: 'foreign';
+  stat: Stats;
+}
+
+/**
+ * An empty generation directory is never a legitimate in-flight state: lock
+ * publication renames a staged directory that already contains its owner file,
+ * while release/steal unlink the owner and rmdir the generation as two steps.
+ * A crash between those steps strands an empty directory that no future owner
+ * file can ever join, so the acquire loop may reap it once stale.
+ */
+interface EmptyLockDirectory {
+  kind: 'empty-directory';
+  stat: Stats;
+}
+
+type AgentSyncLockPublisher = (stagedDir: string, targetDir: string) => void;
+
+function makeAgentSyncLockPublisher(renameExclusive: Renameat2): AgentSyncLockPublisher {
+  return (stagedDir, targetDir) => {
+    const result = renameExclusive(Buffer.from(`${stagedDir}\0`), Buffer.from(`${targetDir}\0`));
+    if (result !== 0) {
+      const detail = lstatSafe(targetDir) === null ? 'rename failed' : 'target exists';
+      throw new NoClobberPublishError(
+        `atomic agent-sync lock publish failed (${detail}); target preserved: ${targetDir}`,
+      );
+    }
+  };
+}
+
+/** Resolve native directory NOREPLACE before publication; unavailable setup selects the O_EXCL file protocol. */
+function resolveNativeAgentSyncLockPublisher(options: AgentSyncLockOptions): AgentSyncLockPublisher | null {
+  if (options.forcePortableLockPublish === true) return null;
+  const deps = options.lockPublishDeps ?? {};
+  const platform = selectedNoClobberPlatform(deps);
+  if (platform === 'darwin') {
+    const renameExclusive = resolveDarwinRenameExclusive(deps);
+    return renameExclusive === null ? null : makeAgentSyncLockPublisher(renameExclusive);
+  }
+  if (platform !== 'linux') return null;
+  const renameNoReplace = probeLinuxRenameat2(deps);
+  return renameNoReplace === null ? null : makeAgentSyncLockPublisher(renameNoReplace);
+}
+
+/**
+ * Portable lock publication uses one O_EXCL regular file, never a transient
+ * empty directory. The name is claimed before bytes are written, but all writes
+ * stay bound to the opened inode: a pathname replacement cannot be clobbered.
+ * A crash before the complete owner record lands leaves an ordinary legacy-file
+ * generation, which the existing age + steal protocol can recover safely.
+ */
+function createOwnedPortableLockFile(
+  lockPath: string,
+  token: string,
+  options: AgentSyncLockOptions,
+): OwnedPortableLockFile | null {
+  const bytes = Buffer.from(token);
+  let opened: Stats;
+  try {
+    options.beforePublish?.({ path: lockPath });
+    opened = writeExclusiveFile(lockPath, bytes, () => options.afterPortableLockClaim?.({ path: lockPath }));
+  } catch (error) {
+    if (isNodeErrorCode(error, 'EEXIST') || lstatSafe(lockPath) !== null) return null;
+    throw new AgentSyncLockError(
+      `portable agent-sync lock publish failed closed for ${lockPath}: ${errMsg(error)}`,
+      error,
+    );
+  }
+  const current = inspectLegacyLockFile(lockPath);
+  if (current === null || !samePathIdentity(opened, current.stat) || !bytes.equals(current.bytes)) {
+    throw new AgentSyncLockError(`portable agent-sync lock ownership could not be verified for ${lockPath}`);
+  }
+  return { kind: 'owned-file', stat: current.stat, bytes };
+}
+
+/** Publish one complete lock generation without replacing any existing pathname. */
+function createOwnedAgentSyncLock(lockPath: string, options: AgentSyncLockOptions): OwnedAgentSyncLock | null {
+  const token = `${process.pid}:${randomBytes(16).toString('hex')}:${
+    (options.processStartIdentity ?? processStartIdentity)(process.pid) ?? 'unknown'
+  }:${currentSyncLockHostId()}\n`;
+  const nativePublish = resolveNativeAgentSyncLockPublisher(options);
+  if (nativePublish === null) return createOwnedPortableLockFile(lockPath, token, options);
+
+  let stageDir: string;
+  try {
+    stageDir = mkdtempSync(`${lockPath}.stage-`);
+  } catch (error) {
+    throw new AgentSyncLockError(
+      `could not acquire agent-sync lock; acquisition failed closed for ${lockPath}: ${errMsg(error)}`,
+      error,
+    );
+  }
+  const ownerName = `owner-${hashBytes(Buffer.from(token)).slice(0, 32)}`;
+  const stagedOwnerPath = join(stageDir, ownerName);
+  try {
+    writeExclusiveFile(stagedOwnerPath, Buffer.from(token));
+  } catch (error) {
+    removeEmptyDirSafe(stageDir);
+    throw new AgentSyncLockError(
+      `agent-sync lock initialization failed closed for ${lockPath}: ${errMsg(error)}`,
+      error,
+    );
+  }
+  const stagedStat = lstatSync(stagedOwnerPath);
+  try {
+    options.beforePublish?.({ path: lockPath });
+    // Plain rename(2) may replace an existing empty directory on POSIX. Lock
+    // publication must be a genuine NOREPLACE operation: every foreign lock
+    // object, including an empty directory, is contention and stays untouched.
+    nativePublish(stageDir, lockPath);
+  } catch (error) {
+    unlinkExactOwnedLockFile(stagedOwnerPath, stagedStat, token);
+    removeEmptyDirSafe(stageDir);
+    if (lstatSafe(lockPath) !== null) return null;
+    throw new AgentSyncLockError(`agent-sync lock publish failed closed for ${lockPath}: ${errMsg(error)}`, error);
+  }
+  const ownerPath = join(lockPath, ownerName);
+  const current = inspectOwnedLockFile(ownerPath);
+  if (current === null || !sameOwnedLock(stagedStat, token, current)) {
+    throw new AgentSyncLockError(`agent-sync lock ownership could not be verified for ${lockPath}`);
+  }
+  return { kind: 'owned-directory', ownerName, ownerPath, stat: current.stat, token };
+}
+
+function inspectLockObject(
+  lockPath: string,
+): OwnedLockDirectory | LegacyLockFile | ForeignLockObject | EmptyLockDirectory | null {
+  try {
+    const stat = lstatSync(lockPath);
+    if (stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1) {
+      const bytes = readFileSync(lockPath);
+      const after = lstatSync(lockPath);
+      if (!samePathIdentity(stat, after)) throw new AgentSyncLockError('legacy agent-sync lock changed while reading');
+      return { kind: 'legacy-file', stat: after, bytes };
+    }
+    if (!stat.isDirectory() || stat.isSymbolicLink()) return { kind: 'foreign', stat };
+    const entries = readdirSync(lockPath);
+    if (entries.length === 0) return { kind: 'empty-directory', stat };
+    const owners = entries.filter((name) => name.startsWith('owner-'));
+    if (owners.length !== 1 || entries.length !== 1) return { kind: 'foreign', stat };
+    const ownerName = owners[0] as string;
+    const ownerPath = join(lockPath, ownerName);
+    const owner = inspectOwnedLockFile(ownerPath);
+    if (owner === null) throw new AgentSyncLockError(`agent-sync lock owner disappeared at ${ownerPath}`);
+    return { kind: 'owned-directory', ownerName, ownerPath, stat: owner.stat, token: owner.token };
+  } catch (error) {
+    if (isNodeErrorCode(error, 'ENOENT')) return null;
+    if (error instanceof AgentSyncLockError) throw error;
+    throw new AgentSyncLockError(`agent-sync lock inspection failed closed for ${lockPath}: ${errMsg(error)}`, error);
+  }
+}
+
+function inspectOwnedLockFile(ownerPath: string): { stat: Stats; token: string } | null {
+  try {
+    const before = lstatSync(ownerPath);
+    if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1) return null;
+    const token = readFileSync(ownerPath, 'utf8');
+    const after = lstatSync(ownerPath);
+    if (!samePathIdentity(before, after)) return null;
+    return { stat: after, token };
+  } catch (error) {
+    if (isNodeErrorCode(error, 'ENOENT')) return null;
+    throw error;
+  }
+}
+
+interface AgentSyncHomeState {
+  path: string;
+  created: boolean;
+  stat: Stats;
+}
+
+/** Inspect the final GENIE_HOME component without following it. */
+function inspectPhysicalAgentSyncHome(genieHome: string): AgentSyncHomeState | null {
+  try {
+    const stat = lstatSync(genieHome);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+      throw new AgentSyncLockError(`agent-sync lock home is not a physical directory: ${genieHome}`);
+    }
+    return { path: genieHome, created: false, stat };
+  } catch (error) {
+    if (error instanceof AgentSyncLockError) throw error;
+    if (isNodeErrorCode(error, 'ENOENT')) return null;
+    throw new AgentSyncLockError(
+      `agent-sync lock home inspection failed closed for ${genieHome}: ${errMsg(error)}`,
+      error,
+    );
+  }
+}
+
+function removeExactEmptyStagedHome(stagePath: string, expected: Stats): void {
+  try {
+    const current = lstatSync(stagePath);
+    if (
+      current.isDirectory() &&
+      !current.isSymbolicLink() &&
+      samePathIdentity(expected, current) &&
+      readdirSync(stagePath).length === 0
+    ) {
+      rmdirSync(stagePath);
+    }
+  } catch {
+    // Replaced, non-empty, or unreadable staging is preserved for inspection.
+  }
+}
+
+type AgentSyncHomePublisher = (stagedDir: string, targetDir: string) => void;
+
+function makeAgentSyncHomePublisher(renameExclusive: Renameat2): AgentSyncHomePublisher {
+  return (stagedDir, targetDir) => {
+    const result = renameExclusive(Buffer.from(`${stagedDir}\0`), Buffer.from(`${targetDir}\0`));
+    if (result !== 0) {
+      const detail = lstatSafe(targetDir) === null ? 'rename failed' : 'target exists';
+      throw new NoClobberPublishError(
+        `atomic agent-sync home publish failed (${detail}); target preserved: ${targetDir}`,
+      );
+    }
+  };
+}
+
+/** Resolve native NOREPLACE before any publish call; unavailable setup selects the dedicated portable commit. */
+function resolveNativeAgentSyncHomePublisher(options: AgentSyncLockOptions): AgentSyncHomePublisher | null {
+  if (options.forcePortableHomePublish === true) return null;
+  const deps = options.homePublishDeps ?? {};
+  const platform = selectedNoClobberPlatform(deps);
+  if (platform === 'darwin') {
+    const renameExclusive = resolveDarwinRenameExclusive(deps);
+    return renameExclusive === null ? null : makeAgentSyncHomePublisher(renameExclusive);
+  }
+  if (platform !== 'linux') return null;
+  const renameNoReplace = probeLinuxRenameat2(deps);
+  return renameNoReplace === null ? null : makeAgentSyncHomePublisher(renameNoReplace);
+}
+
+/**
+ * Portably claim a missing GENIE_HOME without ever renaming over its pathname.
+ * The mkdir itself is the atomic commit. Even when the live directory still
+ * has our identity after inspection, it is conservatively returned as
+ * existing state so release never removes a later replacement by pathname.
+ */
+function publishPortableEmptyAgentSyncHome(
+  genieHome: string,
+  stagePath: string,
+  stagedStat: Stats,
+  options: AgentSyncLockOptions,
+): AgentSyncHomeState {
+  try {
+    mkdirSync(genieHome, { mode: 0o700 });
+  } catch (error) {
+    removeExactEmptyStagedHome(stagePath, stagedStat);
+    if (isNodeErrorCode(error, 'EEXIST')) {
+      const winner = inspectPhysicalAgentSyncHome(genieHome);
+      if (winner !== null) return winner;
+    }
+    throw new AgentSyncLockError(
+      `portable agent-sync lock home claim failed closed for ${genieHome}: ${errMsg(error)}`,
+      error,
+    );
+  }
+  try {
+    options.afterPortableHomeClaim?.({ path: genieHome, stagePath });
+  } catch (error) {
+    removeExactEmptyStagedHome(stagePath, stagedStat);
+    throw new AgentSyncLockError(
+      `portable agent-sync lock home claim barrier failed for ${genieHome}: ${errMsg(error)}`,
+      error,
+    );
+  }
+  removeExactEmptyStagedHome(stagePath, stagedStat);
+  const live = inspectPhysicalAgentSyncHome(genieHome);
+  if (live !== null) return live;
+  throw new AgentSyncLockError(`portable agent-sync lock home disappeared after claim: ${genieHome}`);
+}
+
+/**
+ * Ensure the final GENIE_HOME component is one physical directory. A missing
+ * home is prepared as a pre-statted sibling generation and published
+ * NOREPLACE; a concurrent directory winner is existing state, never ours.
+ */
+function ensurePhysicalAgentSyncHome(genieHome: string, options: AgentSyncLockOptions): AgentSyncHomeState {
+  const existing = inspectPhysicalAgentSyncHome(genieHome);
+  if (existing !== null) return existing;
+  let stagePath: string;
+  try {
+    stagePath = mkdtempSync(join(dirname(genieHome), `.${basename(genieHome)}.agent-sync-home-stage-`));
+  } catch (error) {
+    throw new AgentSyncLockError(`could not stage agent-sync lock home ${genieHome}: ${errMsg(error)}`, error);
+  }
+  const stagedStat = lstatSync(stagePath);
+  try {
+    options.beforeHomePublish?.({ path: genieHome, stagePath });
+  } catch (error) {
+    removeExactEmptyStagedHome(stagePath, stagedStat);
+    throw new AgentSyncLockError(
+      `agent-sync lock home publish barrier failed for ${genieHome}: ${errMsg(error)}`,
+      error,
+    );
+  }
+  const nativePublish = resolveNativeAgentSyncHomePublisher(options);
+  if (nativePublish === null) {
+    return publishPortableEmptyAgentSyncHome(genieHome, stagePath, stagedStat, options);
+  }
+  try {
+    nativePublish(stagePath, genieHome);
+  } catch (error) {
+    removeExactEmptyStagedHome(stagePath, stagedStat);
+    const winner = inspectPhysicalAgentSyncHome(genieHome);
+    if (winner !== null) return winner;
+    throw new AgentSyncLockError(
+      `agent-sync lock home publish failed closed for ${genieHome}: ${errMsg(error)}`,
+      error,
+    );
+  }
+  try {
+    const published = lstatSync(genieHome);
+    if (!published.isDirectory() || published.isSymbolicLink() || !samePathIdentity(stagedStat, published)) {
+      throw new AgentSyncLockError(`created agent-sync lock home ownership could not be verified for ${genieHome}`);
+    }
+    return { path: genieHome, created: true, stat: stagedStat };
+  } catch (error) {
+    if (error instanceof AgentSyncLockError) throw error;
+    throw new AgentSyncLockError(
+      `created agent-sync lock home could not be verified for ${genieHome}: ${errMsg(error)}`,
+      error,
+    );
+  }
+}
+
+/** Remove only the same empty home this acquisition created solely to host its lock. */
+function removeCreatedAgentSyncHome(state: AgentSyncHomeState): void {
+  if (!state.created) return;
+  try {
+    const current = lstatSync(state.path);
+    if (!current.isDirectory() || current.isSymbolicLink() || !samePathIdentity(state.stat, current)) return;
+    if (readdirSync(state.path).length !== 0) return;
+  } catch {
+    return;
+  }
+  let captured: CapturedPath | null;
+  try {
+    captured = capturePath(state.path, 'lock-home-release');
+  } catch {
+    return;
+  }
+  if (captured === null) return;
+  try {
+    const current = lstatSync(captured.path);
+    if (
+      current.isDirectory() &&
+      !current.isSymbolicLink() &&
+      samePathIdentity(state.stat, current) &&
+      readdirSync(captured.path).length === 0
+    ) {
+      rmdirSync(captured.path);
+      removeEmptyDirSafe(captured.dir);
+      return;
+    }
+  } catch {
+    // Restore below; an unreadable or changed home is never discarded.
+  }
+  try {
+    atomicRenameDirectoryNoClobber(captured.path, state.path);
+    removeEmptyDirSafe(captured.dir);
+  } catch {
+    // A replacement won the live pathname; preserve the captured home in place.
+  }
+}
+
+/** Acquire the same per-GENIE_HOME mutation lock used by sync and uninstall. */
+export function acquireAgentSyncLock(
+  genieHome: string,
+  options: AgentSyncLockOptions = {},
+): { release: () => void } | null {
+  const home = ensurePhysicalAgentSyncHome(genieHome, options);
+  let lock: { release: () => void } | null;
+  try {
+    lock = acquireAgentMutationLock(join(genieHome, AGENT_SYNC_LOCK_NAME), options);
+  } catch (error) {
+    removeCreatedAgentSyncHome(home);
+    throw error;
+  }
+  if (lock === null) {
+    removeCreatedAgentSyncHome(home);
+    return null;
+  }
+  let released = false;
+  return {
+    release: () => {
+      if (released) return;
+      released = true;
+      try {
+        lock.release();
+      } finally {
+        removeCreatedAgentSyncHome(home);
+      }
+    },
+  };
+}
+
+/**
+ * Clear a stale lock safely under a `.steal` guard file. The previous
+ * unlink-then-retry steal let two processes both "win": between one stealer's
+ * unlink and its re-create, a second stealer's unlink silently removed the
+ * first's FRESH lock (observed as two concurrent writers in the regression
+ * test). The guard closes that hole with two properties: (a) the O_EXCL guard
+ * admits exactly one stealer at a time, and (b) the lock's staleness is
+ * RE-verified while holding the guard, so a fresh lock created after the
+ * caller's first observation is never removed. A guard left by a crashed
+ * stealer ages out via {@link LOCK_STALE_MS} like the lock itself.
+ */
+function stealStaleAgentLock(
+  lockPath: string,
+  observed: OwnedLockDirectory,
+  options: AgentSyncLockOptions,
+): 'cleared' | 'contended' {
+  if (!unlinkExactOwnedLockFile(observed.ownerPath, observed.stat, observed.token, options, 'stale-remove')) {
+    return 'contended';
+  }
+  return removeEmptyLockGeneration(lockPath) ? 'cleared' : 'contended';
+}
+
+/** Upgrade-safe stale removal for the regular-file lock format shipped before generation directories. */
+function stealLegacyStaleLock(
+  lockPath: string,
+  observed: LegacyLockFile,
+  options: AgentSyncLockOptions,
+): 'cleared' | 'contended' {
+  const guard = acquireLegacyStealGuard(lockPath);
+  if (guard === null) return 'contended';
+  try {
+    const current = inspectLegacyLockFile(lockPath);
+    if (current === null) return 'cleared';
+    if (
+      !samePathIdentity(observed.stat, current.stat) ||
+      !observed.bytes.equals(current.bytes) ||
+      !isStaleOrInvalidLockTime(current.stat.mtimeMs) ||
+      lockHasLiveOwner(lockPath, options.processStartIdentity ?? processStartIdentity)
+    ) {
+      return 'contended';
+    }
+    const captured = capturePath(lockPath, 'legacy-lock-stale');
+    if (captured === null) return 'cleared';
+    options.afterCapture?.({ operation: 'stale-remove', path: lockPath, capturedPath: captured.path });
+    const capturedState = inspectLegacyLockFile(captured.path);
+    if (
+      capturedState === null ||
+      !samePathIdentity(observed.stat, capturedState.stat) ||
+      !observed.bytes.equals(capturedState.bytes)
+    ) {
+      restoreOrPreserveCaptured(captured, lockPath);
+      return 'contended';
+    }
+    removeCapturedPath(captured);
+    return 'cleared';
+  } finally {
+    guard.release();
+  }
+}
+
+/** Preserve the current file-lock guard protocol while upgrading the payload capture to a pathname CAS. */
+function acquireLegacyStealGuard(lockPath: string): { release: () => void } | null {
+  const guardPath = `${lockPath}.steal`;
+  const attempt = tryInitializeFileLock(guardPath);
+  if (attempt.status === 'acquired') return attempt.lock;
+  if (attempt.status === 'exists') {
+    const guardStat = lstatSafe(guardPath);
+    if (guardStat?.isFile() && isStaleOrInvalidLockTime(guardStat.mtimeMs) && !lockHasLiveOwner(guardPath)) {
+      rmSyncSafe(guardPath);
+    }
+  }
+  return null;
+}
+
+function inspectLegacyLockFile(path: string): LegacyLockFile | null {
+  try {
+    const before = lstatSync(path);
+    if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1) return null;
+    const bytes = readFileSync(path);
+    const after = lstatSync(path);
+    if (!samePathIdentity(before, after)) return null;
+    return { kind: 'legacy-file', stat: after, bytes };
+  } catch (error) {
+    if (isNodeErrorCode(error, 'ENOENT')) return null;
+    throw error;
+  }
+}
+
+/** The token pathname is the ownership CAS; a replacement generation has a different owner name. */
+function releaseOwnedSyncLock(
+  lockPath: string,
+  expected: OwnedAgentSyncLock,
+  options: AgentSyncLockOptions,
+  operation: AgentSyncLockMutationEvent['operation'],
+): void {
+  try {
+    if (expected.kind === 'owned-file') {
+      removeExactPortableLockFile(lockPath, expected, options, operation);
+      return;
+    }
+    if (!unlinkExactOwnedLockFile(expected.ownerPath, expected.stat, expected.token, options, operation)) return;
+    removeEmptyLockGeneration(lockPath);
+  } catch {
+    // Release is best-effort but fail-closed: any unverified object remains preserved.
+  }
+}
+
+function removeExactPortableLockFile(
+  lockPath: string,
+  expected: OwnedPortableLockFile,
+  options: AgentSyncLockOptions,
+  operation: AgentSyncLockMutationEvent['operation'],
+): boolean {
+  const current = inspectLegacyLockFile(lockPath);
+  if (current === null || !samePathIdentity(expected.stat, current.stat) || !expected.bytes.equals(current.bytes)) {
+    return false;
+  }
+  const captured = capturePath(lockPath, 'portable-lock-release');
+  if (captured === null) return false;
+  options.afterCapture?.({ operation, path: lockPath, capturedPath: captured.path });
+  const capturedState = inspectLegacyLockFile(captured.path);
+  if (
+    capturedState === null ||
+    !samePathIdentity(expected.stat, capturedState.stat) ||
+    !expected.bytes.equals(capturedState.bytes)
+  ) {
+    restoreOrPreserveCaptured(captured, lockPath);
+    return false;
+  }
+  removeCapturedPath(captured);
+  return true;
+}
+
+function unlinkExactOwnedLockFile(
+  ownerPath: string,
+  expectedStat: Stats,
+  expectedToken: string,
+  options: AgentSyncLockOptions = {},
+  operation: AgentSyncLockMutationEvent['operation'] = 'release',
+): boolean {
+  const lockPath = dirname(ownerPath);
+  let quarantineDir: string;
+  try {
+    // Sibling, never child: a child quarantine dir makes lockPath non-empty, so a
+    // concurrent stealer's transient quarantine fails the winner's rmdir(lockPath)
+    // with ENOTEMPTY (steal skipped, lock orphaned) and misclassifies the lock as
+    // 'foreign' in inspectLockObject. Mirrors the `.stage-` sibling pattern.
+    quarantineDir = mkdtempSync(`${lockPath}.owner-quarantine-`);
+  } catch (error) {
+    if (isNodeErrorCode(error, 'ENOENT') || isNodeErrorCode(error, 'ENOTDIR')) return false;
+    throw error;
+  }
+  const capturedPath = join(quarantineDir, 'object');
+  try {
+    renameSync(ownerPath, capturedPath);
+  } catch (error) {
+    removeEmptyDirSafe(quarantineDir);
+    if (isNodeErrorCode(error, 'ENOENT')) return false;
+    throw error;
+  }
+  options.afterCapture?.({ operation, path: lockPath, capturedPath });
+  const current = inspectOwnedLockFile(capturedPath);
+  if (current === null || !sameOwnedLock(expectedStat, expectedToken, current)) {
+    restoreCapturedPathNoReplace(capturedPath, ownerPath);
+    removeEmptyDirSafe(quarantineDir);
+    return false;
+  }
+  unlinkSync(capturedPath);
+  removeEmptyDirSafe(quarantineDir);
+  return true;
+}
+
+function removeEmptyLockGeneration(lockPath: string): boolean {
+  try {
+    rmdirSync(lockPath);
+    return true;
+  } catch (error) {
+    if (isNodeErrorCode(error, 'ENOENT')) return true;
+    if (isNodeErrorCode(error, 'ENOTEMPTY') || isNodeErrorCode(error, 'EEXIST')) return false;
+    throw error;
+  }
+}
+
+function sameOwnedLock(expectedStat: Stats, expectedToken: string, current: { stat: Stats; token: string }): boolean {
+  return samePathIdentity(expectedStat, current.stat) && expectedToken === current.token;
 }
 
 // ============================================================================
@@ -4290,10 +6897,18 @@ export function runAgentSync(opts: AgentSyncOptions = {}): AgentSyncReport {
     log('agent-sync: no genie plugin source found (looked for plugins/genie); skipping');
     return { source, agents: [], backupsDir: null };
   }
-  const lock = acquireSyncLock(join(genieHome, LOCK_NAME));
-  if ('skipped' in lock) {
-    log(`agent-sync: ${lock.skipped}`);
-    return { source, agents: [], backupsDir: null, skipped: lock.skipped };
+  let lock: { release: () => void } | null;
+  try {
+    lock = acquireAgentSyncLock(genieHome, opts.lockOptions);
+  } catch (error) {
+    const skipped = `agent-sync lock acquisition failed closed: ${errMsg(error)}`;
+    log(`agent-sync: ${skipped}`);
+    return { source, agents: [], backupsDir: null, skipped };
+  }
+  if (lock === null) {
+    const skipped = 'another agent-sync run holds the lock; skipped (the holder converges the same targets)';
+    log(`agent-sync: ${skipped}`);
+    return { source, agents: [], backupsDir: null, skipped };
   }
   try {
     const ctx = createRunContext(genieHome, source.pluginRoot, source, opts);
@@ -4326,19 +6941,27 @@ function createRunContext(
   };
   const stamp = now().toISOString().replace(/[:.]/g, '-');
   let backupsDir: string | null = null;
-  const backupInto = (agent: string, name: string, existingDir: string): string => {
+  const backupDest = (agent: string, name: string): string => {
     if (backupsDir === null) {
       // Uninstall removes GENIE_HOME. Recovery material therefore lives in a
       // sibling root so a later uninstall cannot erase the only surviving copy.
-      const recoveryRoot = join(dirname(resolve(genieHome)), '.genie-recovery');
-      const base = join(recoveryRoot, `agent-sync-${stamp}-${process.pid}`);
-      backupsDir = base;
-      for (let suffix = 1; existsSync(backupsDir); suffix += 1) backupsDir = `${base}-${suffix}`;
-      mkdirSync(backupsDir, { recursive: true });
+      backupsDir = allocateExclusiveBackupRootAt(
+        join(dirname(resolve(genieHome)), '.genie-recovery'),
+        `agent-sync-${stamp}-${process.pid}`,
+      );
     }
     const dest = join(backupsDir, agent, name);
     mkdirSync(dirname(dest), { recursive: true });
-    cpSync(existingDir, dest, { recursive: true });
+    return dest;
+  };
+  const backupInto = (agent: string, name: string, existingDir: string): string => {
+    const dest = backupDest(agent, name);
+    copyPathExclusive(existingDir, dest);
+    return dest;
+  };
+  const backupBytes = (agent: string, name: string, bytes: Buffer): string => {
+    const dest = backupDest(agent, name);
+    writeExclusiveFile(dest, bytes);
     return dest;
   };
   return {
@@ -4349,12 +6972,55 @@ function createRunContext(
     now,
     targets,
     backupInto,
+    backupBytes,
     backupsDirIfCreated: () => backupsDir,
     renameManagedDir: opts.renameManagedDir ?? renameSync,
     beforeManagedDirPromotion: opts.beforeManagedDirPromotion,
     beforeManagedDirPublish: opts.beforeManagedDirPublish,
     beforeManagedDirRemoval: opts.beforeManagedDirRemoval,
+    beforeAgentFileMutation: opts.beforeAgentFileMutation,
+    beforeAgentManifestCommit: opts.beforeAgentManifestCommit,
+    beforeAgentManifestPublish: opts.beforeAgentManifestPublish,
+    agentManifestPublishOptions: opts.agentManifestPublishOptions,
   };
+}
+
+/**
+ * Allocate a durable backup attempt root without opening or replacing any
+ * existing artifact. Timestamp collisions simply advance to a fresh suffix.
+ */
+export function allocateExclusiveBackupRoot(genieHome: string, baseName: string): string {
+  return allocateExclusiveBackupRootAt(join(genieHome, 'state-backups'), baseName);
+}
+
+function allocateExclusiveBackupRootAt(parent: string, baseName: string): string {
+  mkdirSync(parent, { recursive: true, mode: 0o700 });
+  const parentStat = lstatSync(parent);
+  if (!parentStat.isDirectory() || parentStat.isSymbolicLink()) {
+    throw new Error(`unsafe backup root path: ${parent}`);
+  }
+  for (let collision = 0; collision < 10_000; collision += 1) {
+    const candidate = collision === 0 ? join(parent, baseName) : join(parent, `${baseName}-${collision}`);
+    try {
+      mkdirSync(candidate, { mode: 0o700 });
+      return candidate;
+    } catch (error) {
+      if (isNodeErrorCode(error, 'EEXIST')) continue;
+      throw error;
+    }
+  }
+  throw new Error(`could not allocate backup root for ${baseName}`);
+}
+
+/** Copy to a path that must not already exist; links and regular collisions are never followed or overwritten. */
+function copyPathExclusive(source: string, destination: string): void {
+  try {
+    lstatSync(destination);
+    throw new Error(`backup destination already exists: ${destination}`);
+  } catch (error) {
+    if (!isNodeErrorCode(error, 'ENOENT')) throw error;
+  }
+  cpSync(source, destination, { recursive: true, force: false, errorOnExist: true });
 }
 
 /**
@@ -4465,14 +7131,6 @@ function quarantineTransactionDebris(parent: string, path: string): void {
   renameSync(path, destination);
 }
 
-function removeEmptyDirSafe(path: string): void {
-  try {
-    if (readdirSync(path).length === 0) rmSync(path, { recursive: true, force: true });
-  } catch {
-    // Already absent, non-directory, or concurrently populated: leave it fail-safe.
-  }
-}
-
 function lstatSafe(path: string): Stats | null {
   try {
     return lstatSync(path);
@@ -4517,4 +7175,8 @@ function readTrimmed(path: string): string | null {
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function isNodeErrorCode(error: unknown, code: string): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === code;
 }

@@ -5,7 +5,7 @@
 <p align="center"><strong>Wishes in, PRs out.</strong></p>
 
 <p align="center">
-  <a href="https://github.com/automagik-dev/genie/releases/latest"><img alt="release" src="https://img.shields.io/github/v/release/automagik-dev/genie?style=flat-square&color=00D9FF" /></a>
+  <a href="https://github.com/automagik-dev/genie/releases"><img alt="signed release channels" src="https://img.shields.io/badge/releases-signed%20channels-00D9FF?style=flat-square" /></a>
   <a href="https://github.com/automagik-dev/genie/stargazers"><img alt="stars" src="https://img.shields.io/github/stars/automagik-dev/genie?style=flat-square&color=00D9FF" /></a>
   <a href="LICENSE"><img alt="license" src="https://img.shields.io/github/license/automagik-dev/genie?style=flat-square&color=00D9FF" /></a>
   <a href="https://discord.gg/xcW8c7fF3R"><img alt="discord" src="https://img.shields.io/discord/1095114867012292758?style=flat-square&color=00D9FF&label=discord" /></a>
@@ -24,6 +24,8 @@ curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh
 ```
 
 Every release is cosign-signed (keyless OIDC) with SLSA provenance; the installer verifies the binary — via `gh attestation verify`, falling back to `cosign verify-blob` — before it runs.
+
+The repository-hosted `.well-known/latest.json`, `homolog.json`, and `dev.json` manifests are the authoritative channel pointers. GitHub's `/releases/latest` route and prerelease badge are deliberately not channel authority: a promotion advances only a monotonic manifest and never rewrites already-published assets or channel-significant draft/prerelease/latest metadata.
 
 The installer detects Claude Code and Codex and installs the version-matched Genie plugin for each. Control this with `--integrations auto|codex|claude|all|none` or `--skip-integrations`. When Codex is selected, the installed plugin is the **only** Genie-managed skill provider: a fresh install writes zero Genie product skills into `~/.agents/skills/` and requires one enabled, exact-version plugin with a usable MCP launcher and complete skill payload before it mutates anything. An upgrade from a release that still seeded user-tier fallbacks quarantines only provably clean historical copies — and only after a single post-convergence plugin health proof passes; same-name unmanaged, modified, malformed-marker, or symlinked user copies are preserved in place and reported as user-owned collisions. Automatic integration failures warn after the verified binary succeeds; explicitly requested failures are fatal.
 
@@ -221,7 +223,7 @@ v5 is a deliberate cutover to a lightweight body. The v4 harness — a Postgres 
 
 <p align="center">
   <a href="https://automagik.dev/genie"><strong>Docs</strong></a> &middot;
-  <a href="https://github.com/automagik-dev/genie/releases/latest"><strong>Releases</strong></a> &middot;
+  <a href="https://github.com/automagik-dev/genie/releases"><strong>Releases</strong></a> &middot;
   <a href="https://discord.gg/xcW8c7fF3R"><strong>Discord</strong></a> &middot;
   <a href="LICENSE"><strong>MIT License</strong></a>
 </p>

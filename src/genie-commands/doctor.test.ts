@@ -9,6 +9,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -16,7 +17,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { computeDirDigest } from '../lib/agent-sync.js';
+import { computeDirDigest, computeFileDigest } from '../lib/agent-sync.js';
 import { reconcileCodexProjectMcp, resolveGitProjectRoots } from '../lib/codex-project-mcp.js';
 import { CANONICAL_GENIE_SKILL_NAMES } from '../lib/runtime-integrations.js';
 import {
@@ -290,7 +291,9 @@ describe('Codex doctor lifecycle results', () => {
       const linked = join(root, 'linked');
       execFileSync('git', ['worktree', 'add', '-q', '-b', 'doctor-linked', linked], { cwd: repo });
       const roots = resolveGitProjectRoots(linked);
-      expect(roots).toEqual({ worktreeRoot: linked, commonRoot: repo });
+      if (roots === null) throw new Error('linked worktree roots were not resolved');
+      expect(realpathSync(roots.worktreeRoot)).toBe(realpathSync(linked));
+      expect(realpathSync(roots.commonRoot)).toBe(realpathSync(repo));
       reconcileCodexProjectMcp(
         linked,
         { cliAvailable: true, status: 'ok', installed: true, enabled: false, usable: false, detail: 'disabled' },
@@ -1200,5 +1203,283 @@ describe('checkAgentSync', () => {
     const results = checkAgentSync(paths());
     expect(find(results, 'agent sync: hermes mcp')?.status).toBe('pass');
     expect(find(results, 'agent sync: hermes skills')?.status).toBe('pass');
+  });
+});
+
+// ============================================================================
+// Claude role-agent delivery (wish routing-delivery-fix, Group B) — per-file
+// classifier over the Group-A `~/.claude/agents/.genie-sync.json` manifest.
+// Read-only, all paths injected via checkAgentSync — the real $HOME is untouched.
+// ============================================================================
+
+describe('checkAgentSync — claude role agents', () => {
+  const ROLE_CHECK = 'agent sync: claude role agents';
+  const DUP_CHECK = 'agent sync: duplicate role-agent surface';
+
+  let tmp: string;
+  let genieHome: string;
+  let pluginRoot: string;
+  let claudeDir: string;
+  let agentsDir: string;
+
+  function paths() {
+    return {
+      genieHome,
+      claudeDir,
+      codexDir: join(tmp, 'codex'),
+      agentsSkillsDir: join(tmp, 'agents', 'skills'),
+      hermesHome: join(tmp, 'hermes'),
+      settingsPath: join(claudeDir, 'settings.json'),
+    };
+  }
+
+  const find = (results: ReturnType<typeof checkAgentSync>, name: string) => results.find((r) => r.name === name);
+
+  /** name → state map off the machine-readable rider (what `--json` carries). */
+  function stateMap(check: ReturnType<typeof checkAgentSync>[number] | undefined): Record<string, string> {
+    const files = check?.roleAgents?.files ?? [];
+    return Object.fromEntries(files.map((f) => [f.name, f.state]));
+  }
+
+  function writeSourceAgent(name: string, body: string): void {
+    mkdirSync(join(pluginRoot, 'agents'), { recursive: true });
+    writeFileSync(join(pluginRoot, 'agents', `${name}.md`), body, 'utf8');
+  }
+
+  function writeTargetAgent(name: string, body: string): void {
+    mkdirSync(agentsDir, { recursive: true });
+    writeFileSync(join(agentsDir, `${name}.md`), body, 'utf8');
+  }
+
+  /** Stamp the shared dir-level agent manifest (Group A shape: filename → digest entry). */
+  function writeAgentManifest(files: Record<string, { digest: string; version?: string; syncedAt?: string }>): void {
+    mkdirSync(agentsDir, { recursive: true });
+    const entries = Object.fromEntries(
+      Object.entries(files).map(([name, e]) => [
+        name,
+        { digest: e.digest, version: e.version ?? '5.0.0', syncedAt: e.syncedAt ?? '2026-01-01T00:00:00.000Z' },
+      ]),
+    );
+    writeFileSync(
+      join(agentsDir, '.genie-sync.json'),
+      JSON.stringify({ managedBy: 'genie-agent-sync', files: entries }),
+      'utf8',
+    );
+  }
+
+  function writeSettings(value: unknown): void {
+    mkdirSync(claudeDir, { recursive: true });
+    writeFileSync(join(claudeDir, 'settings.json'), JSON.stringify(value), 'utf8');
+  }
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), 'doctor-roleagents-'));
+    genieHome = join(tmp, 'genie');
+    pluginRoot = join(genieHome, 'plugins', 'genie');
+    claudeDir = join(tmp, 'claude');
+    agentsDir = join(claudeDir, 'agents');
+    mkdirSync(pluginRoot, { recursive: true });
+    mkdirSync(claudeDir, { recursive: true }); // claude "detected" so role-agent checks run
+    writeFileSync(join(genieHome, 'VERSION'), '5.0.0\n', 'utf8');
+  });
+
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  test('an empty canonical source inventory warns instead of reporting an empty set healthy', () => {
+    const check = find(checkAgentSync(paths()), ROLE_CHECK);
+
+    expect(check?.status).toBe('warn');
+    expect(check?.detail).toContain('source role-agent inventory is empty');
+    expect(check?.roleAgents?.sourceIssues).toEqual([
+      `source role-agent inventory is empty at ${join(pluginRoot, 'agents')}`,
+    ]);
+    expect(check?.roleAgents?.files).toEqual([]);
+  });
+
+  test('a source inventory enumeration error is preserved in the warning', () => {
+    writeFileSync(join(pluginRoot, 'agents'), 'not a directory', 'utf8');
+
+    const check = find(checkAgentSync(paths()), ROLE_CHECK);
+
+    expect(check?.status).toBe('warn');
+    expect(check?.detail).toContain('cannot enumerate source role agents');
+    expect(check?.roleAgents?.sourceIssues).toHaveLength(1);
+    expect(check?.roleAgents?.sourceIssues[0]).toContain(join(pluginRoot, 'agents'));
+    expect(check?.roleAgents?.files).toEqual([]);
+  });
+
+  test('an unreadable source agent is not silently omitted from a healthy result', () => {
+    writeSourceAgent('scout', '# scout\n');
+    const sourcePath = join(pluginRoot, 'agents', 'scout.md');
+    chmodSync(sourcePath, 0o000);
+    try {
+      const check = find(checkAgentSync(paths()), ROLE_CHECK);
+
+      expect(check?.status).toBe('warn');
+      expect(check?.detail).toContain('cannot read source role agent scout.md');
+      expect(check?.roleAgents?.sourceIssues).toHaveLength(1);
+      expect(check?.roleAgents?.sourceIssues[0]).toContain('scout.md');
+      expect(check?.roleAgents?.files).toEqual([]);
+    } finally {
+      chmodSync(sourcePath, 0o600);
+    }
+  });
+
+  test('hand-copy (no manifest) reports present-unmanaged, NOT healthy genie-managed', () => {
+    // The 2026-07-11 false-PASS discriminator: files present + agents surface,
+    // but no stamp → doctor must NOT call it genie-managed-current.
+    writeSourceAgent('scout', '# scout\n');
+    writeTargetAgent('scout', '# scout\n');
+
+    const check = find(checkAgentSync(paths()), ROLE_CHECK);
+    expect(check?.status).toBe('warn');
+    expect(check?.detail).toContain('present-unmanaged'); // human output carries the state
+    expect(check?.roleAgents?.manifestStatus).toBe('absent');
+    expect(stateMap(check)['scout.md']).toBe('present-unmanaged');
+    expect(stateMap(check)['scout.md']).not.toBe('genie-managed-current');
+  });
+
+  test('stamped + byte-matching target reports genie-managed-current → pass', () => {
+    writeSourceAgent('scout', '# scout\n');
+    writeTargetAgent('scout', '# scout\n');
+    writeAgentManifest({ 'scout.md': { digest: computeFileDigest(join(agentsDir, 'scout.md')) } });
+
+    const check = find(checkAgentSync(paths()), ROLE_CHECK);
+    expect(check?.status).toBe('pass');
+    expect(check?.roleAgents?.manifestStatus).toBe('managed');
+    expect(stateMap(check)['scout.md']).toBe('genie-managed-current');
+  });
+
+  test('source drifted past a stamped target reports genie-managed-stale → warn', () => {
+    writeTargetAgent('scout', '# scout v1\n');
+    const v1Digest = computeFileDigest(join(agentsDir, 'scout.md'));
+    writeAgentManifest({ 'scout.md': { digest: v1Digest } }); // on-disk == manifest
+    writeSourceAgent('scout', '# scout v2\n'); // but source moved on
+
+    const check = find(checkAgentSync(paths()), ROLE_CHECK);
+    expect(check?.status).toBe('warn');
+    expect(check?.suggestion).toContain('genie update');
+    expect(stateMap(check)['scout.md']).toBe('genie-managed-stale');
+  });
+
+  test('source agent absent from the target reports missing-from-target → warn', () => {
+    writeSourceAgent('fixer', '# fixer\n'); // no target file, no manifest entry
+
+    const check = find(checkAgentSync(paths()), ROLE_CHECK);
+    expect(check?.status).toBe('warn');
+    expect(stateMap(check)['fixer.md']).toBe('missing-from-target');
+  });
+
+  test('manifest-owned entry absent from both source and target remains visible as missing', () => {
+    writeAgentManifest({ 'retired.md': { digest: 'a'.repeat(64) } });
+
+    const check = find(checkAgentSync(paths()), ROLE_CHECK);
+    expect(check?.status).toBe('warn');
+    expect(check?.detail).toContain('missing-from-target');
+    expect(check?.roleAgents?.manifestStatus).toBe('managed');
+    expect(stateMap(check)['retired.md']).toBe('missing-from-target');
+  });
+
+  test('a user-authored agent (not in source, unmanaged) is never reported', () => {
+    writeSourceAgent('scout', '# scout\n');
+    writeTargetAgent('scout', '# scout\n');
+    writeAgentManifest({ 'scout.md': { digest: computeFileDigest(join(agentsDir, 'scout.md')) } });
+    writeTargetAgent('my-own-agent', '# mine\n'); // genie does not speak for it
+
+    const check = find(checkAgentSync(paths()), ROLE_CHECK);
+    const states = stateMap(check);
+    expect(states['my-own-agent.md']).toBeUndefined();
+    expect(states['scout.md']).toBe('genie-managed-current');
+    expect(check?.status).toBe('pass');
+  });
+
+  test('an unsafe (symlinked) manifest warns instead of silently reporting healthy', () => {
+    writeSourceAgent('scout', '# scout\n');
+    writeTargetAgent('scout', '# scout\n');
+    symlinkSync(join(tmp, 'elsewhere.json'), join(agentsDir, '.genie-sync.json'));
+
+    const check = find(checkAgentSync(paths()), ROLE_CHECK);
+    expect(check?.status).toBe('warn');
+    expect(check?.roleAgents?.manifestStatus).toBe('unsafe');
+    expect(check?.detail).toContain('manifest unusable');
+  });
+
+  test('a malformed Genie-owned manifest is unsafe rather than foreign', () => {
+    writeSourceAgent('scout', '# scout\n');
+    writeTargetAgent('scout', '# scout\n');
+    writeAgentManifest({ 'scout.md': { digest: 'not-a-sha256' } });
+
+    const check = find(checkAgentSync(paths()), ROLE_CHECK);
+
+    expect(check?.status).toBe('warn');
+    expect(check?.roleAgents?.manifestStatus).toBe('unsafe');
+    expect(check?.roleAgents?.manifestReason).toContain('claims Genie ownership');
+    expect(check?.detail).toContain('manifest unusable');
+  });
+
+  test('a truncated ownership manifest is unsafe rather than unproven foreign state', () => {
+    writeSourceAgent('scout', '# scout\n');
+    writeTargetAgent('scout', '# scout\n');
+    mkdirSync(agentsDir, { recursive: true });
+    writeFileSync(join(agentsDir, '.genie-sync.json'), '{"managedBy":"genie-agent-sync","files":{', 'utf8');
+
+    const check = find(checkAgentSync(paths()), ROLE_CHECK);
+
+    expect(check?.status).toBe('warn');
+    expect(check?.roleAgents?.manifestStatus).toBe('unsafe');
+    expect(check?.roleAgents?.manifestReason).toContain('invalid JSON');
+    expect(check?.detail).toContain('manifest unusable');
+  });
+
+  test('plugin enabled → duplicate-surface warning + duplicateSurface flag true', () => {
+    writeSourceAgent('scout', '# scout\n');
+    writeTargetAgent('scout', '# scout\n');
+    writeAgentManifest({ 'scout.md': { digest: computeFileDigest(join(agentsDir, 'scout.md')) } });
+    writeSettings({ enabledPlugins: { 'genie@automagik': true } });
+
+    const results = checkAgentSync(paths());
+    const dup = find(results, DUP_CHECK);
+    expect(dup?.status).toBe('warn');
+    expect(dup?.detail).toContain('both surface');
+    expect(find(results, ROLE_CHECK)?.roleAgents?.duplicateSurface).toBe(true);
+  });
+
+  test('plugin disabled or absent → no duplicate warning, duplicateSurface flag false', () => {
+    writeSourceAgent('scout', '# scout\n');
+    writeTargetAgent('scout', '# scout\n');
+    writeAgentManifest({ 'scout.md': { digest: computeFileDigest(join(agentsDir, 'scout.md')) } });
+
+    writeSettings({ enabledPlugins: { 'genie@automagik': false } });
+    let results = checkAgentSync(paths());
+    expect(find(results, DUP_CHECK)).toBeUndefined();
+    expect(find(results, ROLE_CHECK)?.roleAgents?.duplicateSurface).toBe(false);
+
+    // absent settings.json → still no warning, flag false
+    rmSync(join(claudeDir, 'settings.json'), { force: true });
+    results = checkAgentSync(paths());
+    expect(find(results, DUP_CHECK)).toBeUndefined();
+    expect(find(results, ROLE_CHECK)?.roleAgents?.duplicateSurface).toBe(false);
+  });
+
+  test('--json carries the per-file states under stable field names (dashboard-consumable)', () => {
+    // Drive the exact document doctorCommand serializes: { ok, checks: results }.
+    writeSourceAgent('scout', '# scout\n'); // hand-copy → present-unmanaged
+    writeTargetAgent('scout', '# scout\n');
+    writeSourceAgent('reviewer', '# reviewer\n'); // stamped-current
+    writeTargetAgent('reviewer', '# reviewer\n');
+    writeSourceAgent('fixer', '# fixer\n'); // missing-from-target
+    writeAgentManifest({ 'reviewer.md': { digest: computeFileDigest(join(agentsDir, 'reviewer.md')) } });
+
+    const results = checkAgentSync(paths());
+    const doc = JSON.parse(JSON.stringify({ ok: true, checks: results })) as {
+      checks: Array<{ name: string; roleAgents?: { files: Array<{ name: string; state: string }> } }>;
+    };
+    const rider = doc.checks.find((c) => c.name === ROLE_CHECK)?.roleAgents;
+    const states = Object.fromEntries((rider?.files ?? []).map((f) => [f.name, f.state]));
+    expect(states['scout.md']).toBe('present-unmanaged');
+    expect(states['reviewer.md']).toBe('genie-managed-current');
+    expect(states['fixer.md']).toBe('missing-from-target');
   });
 });

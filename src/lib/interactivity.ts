@@ -43,6 +43,7 @@ export function isInteractive(): boolean {
  * the host. Hooks must never gate on environmental state.
  */
 const WORKSPACE_EXEMPT = new Set([
+  '__install-promote',
   'init',
   'setup',
   'doctor',

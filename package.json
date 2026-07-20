@@ -1,6 +1,6 @@
 {
   "name": "@automagik/genie",
-  "version": "5.260714.3",
+  "version": "5.260720.1",
   "description": "Collaborative terminal toolkit for human + AI workflows. NOTE: npm distribution discontinued 2026-05-09 — install via `curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash` (cosign + SLSA verified). See https://automagik.dev/genie/release-process",
   "license": "MIT",
   "type": "module",
@@ -18,6 +18,8 @@
     "build-and-sync": "npm run build:plugin && npm run sync",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
+    "lint:docs-links": "markdown-link-check --config .github/markdown-link-check.json SECURITY.md && markdown-link-check --config .github/markdown-link-check.json docs/incident-response/canisterworm.mdx",
+    "lint:docs-markdown": "markdownlint-cli2 SECURITY.md docs/incident-response/canisterworm.mdx",
     "format": "biome format --write .",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
@@ -52,6 +54,8 @@
     "esbuild": "^0.27.3",
     "husky": "^9.1.7",
     "knip": "^5.86.0",
+    "markdown-link-check": "3.14.2",
+    "markdownlint-cli2": "0.23.0",
     "typescript": "^5.8.0"
   },
   "repository": {

@@ -12,7 +12,9 @@ interface FakeReleaseState {
   calls?: string[][];
   draft?: boolean;
   prerelease?: boolean;
-  latest?: boolean;
+  id?: number;
+  makeLatest?: string;
+  verifiedTag?: boolean;
   failOn?: string;
 }
 
@@ -20,7 +22,11 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-function run(state: FakeReleaseState, overrides: Record<string, string> = {}) {
+function run(
+  state: FakeReleaseState,
+  mode: 'prepare' | 'finalize' = 'prepare',
+  overrides: Record<string, string> = {},
+) {
   const root = mkdtempSync(join(tmpdir(), 'genie-release-note-'));
   roots.push(root);
   const statePath = join(root, 'state.json');
@@ -38,27 +44,48 @@ state.calls.push(args);
 const save = () => writeFileSync(path, JSON.stringify(state));
 const value = (flag) => { const index = args.indexOf(flag); return index >= 0 ? args[index + 1] : undefined; };
 const assigned = (flag) => args.find((arg) => arg.startsWith(flag + '='))?.slice(flag.length + 1);
+const field = (flag, name) => {
+  for (let index = 0; index < args.length - 1; index += 1) {
+    if (args[index] === flag && args[index + 1].startsWith(name + '=')) return args[index + 1].slice(name.length + 1);
+  }
+};
 if (state.failOn && args.join(' ').includes(state.failOn)) { save(); process.exit(42); }
-if (args[0] !== 'release') { save(); process.exit(2); }
-if (args[1] === 'view') {
+if (args[0] === 'release' && args[1] === 'view') {
   if (!state.exists) { save(); process.exit(1); }
-  if (value('--json') === 'body') console.log(state.body ?? '');
+  const json = value('--json');
+  if (json === 'body') console.log(state.body ?? '');
+  if (json === 'isPrerelease,isDraft') {
+    console.log(String(state.prerelease === true) + '\\t' + String(state.draft === true));
+  }
+  if (json === 'databaseId,isDraft,isPrerelease') {
+    console.log(String(state.id ?? 101) + '\\t' + String(state.draft === true) + '\\t' + String(state.prerelease === true));
+  }
   save();
   process.exit(0);
 }
-if (args[1] === 'create') {
+if (args[0] === 'release' && args[1] === 'create') {
   state.exists = true;
+  state.id ??= 101;
   state.body = value('--notes') ?? '';
   state.draft = args.includes('--draft');
   state.prerelease = args.includes('--prerelease');
+  state.makeLatest = assigned('--latest');
+  state.verifiedTag = args.includes('--verify-tag');
   save();
   process.exit(0);
 }
-if (args[1] === 'edit') {
+if (args[0] === 'release' && args[1] === 'edit') {
   if (value('--notes') !== undefined) state.body = value('--notes');
-  if (assigned('--prerelease') !== undefined) state.prerelease = assigned('--prerelease') === 'true';
-  if (args.includes('--latest')) state.latest = true;
-  if (assigned('--latest') !== undefined) state.latest = assigned('--latest') === 'true';
+  save();
+  process.exit(0);
+}
+if (args[0] === 'api') {
+  const draft = field('-F', 'draft');
+  const prerelease = field('-F', 'prerelease');
+  const makeLatest = field('-f', 'make_latest');
+  if (draft !== undefined) state.draft = draft === 'true';
+  if (prerelease !== undefined) state.prerelease = prerelease === 'true';
+  if (makeLatest !== undefined) state.makeLatest = makeLatest;
   save();
   process.exit(0);
 }
@@ -67,7 +94,7 @@ process.exit(2);
 `,
   );
   chmodSync(ghPath, 0o755);
-  const result = Bun.spawnSync(['bash', SCRIPT], {
+  const result = Bun.spawnSync(['bash', SCRIPT, mode], {
     cwd: join(import.meta.dir, '..'),
     env: {
       ...process.env,
@@ -89,16 +116,19 @@ process.exit(2);
 }
 
 describe('release migration-note reconciliation', () => {
-  test('creates a new release with one version-bounded migration note', () => {
+  test('prepare creates a verified-tag draft that is explicitly non-latest', () => {
     const { result, state } = run({ exists: false, body: '' });
     expect(result.exitCode).toBe(0);
     expect(state.body.match(/genie-agent-sync-migration-v1/g)).toHaveLength(1);
     expect(state.body).toContain('older than `5.260711.6`');
+    expect(state.draft).toBe(true);
+    expect(state.makeLatest).toBe('false');
+    expect(state.verifiedTag).toBe(true);
     expect(state.calls?.filter((args) => args[1] === 'create')).toHaveLength(1);
   });
 
-  test('preserves an existing human body and is idempotent', () => {
-    const first = run({ exists: true, body: 'Human-authored release notes.' });
+  test('prepare preserves an existing human body and is idempotent', () => {
+    const first = run({ exists: true, body: 'Human-authored release notes.', draft: true });
     expect(first.result.exitCode).toBe(0);
     expect(first.state.body).toStartWith('Human-authored release notes.');
     expect(first.state.body.match(/genie-agent-sync-migration-v1/g)).toHaveLength(1);
@@ -106,26 +136,106 @@ describe('release migration-note reconciliation', () => {
     const second = run(first.state);
     expect(second.result.exitCode).toBe(0);
     expect(second.state.body.match(/genie-agent-sync-migration-v1/g)).toHaveLength(1);
-    expect(second.state.calls?.filter((args) => args.includes('--notes'))).toHaveLength(1);
+    expect(second.state.calls?.filter((args) => args[1] === 'edit')).toHaveLength(1);
   });
 
-  test('promotes stable releases and keeps non-stable releases prerelease', () => {
-    const stable = run({ exists: true, body: '<!-- genie-agent-sync-migration-v1 -->', prerelease: true });
+  test('finalize publishes stable and prerelease candidates without selecting either as latest', () => {
+    const stable = run(
+      { exists: true, id: 77, body: '<!-- genie-agent-sync-migration-v1 -->', draft: true, prerelease: false },
+      'finalize',
+    );
     expect(stable.result.exitCode).toBe(0);
+    expect(stable.state.draft).toBe(false);
     expect(stable.state.prerelease).toBe(false);
-    expect(stable.state.latest).toBe(true);
+    expect(stable.state.makeLatest).toBe('false');
 
     const dev = run(
-      { exists: true, body: '<!-- genie-agent-sync-migration-v1 -->', prerelease: false },
+      { exists: true, id: 78, body: '<!-- genie-agent-sync-migration-v1 -->', draft: true, prerelease: true },
+      'finalize',
       { CHANNEL: 'dev' },
     );
     expect(dev.result.exitCode).toBe(0);
+    expect(dev.state.draft).toBe(false);
     expect(dev.state.prerelease).toBe(true);
-    expect(dev.state.latest).toBe(false);
+    expect(dev.state.makeLatest).toBe('false');
   });
 
-  test('propagates gh failures instead of reporting reconciliation success', () => {
-    const { result } = run({ exists: true, body: 'needs note', failOn: 'release edit' });
-    expect(result.exitCode).toBe(42);
+  test('every promotion/replay preserves already-published release metadata', () => {
+    const stable = run(
+      {
+        exists: true,
+        id: 77,
+        body: '<!-- genie-agent-sync-migration-v1 -->',
+        draft: false,
+        prerelease: false,
+        makeLatest: 'true',
+      },
+      'finalize',
+    );
+    expect(stable.result.exitCode).toBe(0);
+    expect(stable.state.makeLatest).toBe('true');
+    expect(stable.state.calls?.filter((args) => args[0] === 'api')).toHaveLength(0);
+
+    const devToStable = run(
+      {
+        exists: true,
+        id: 78,
+        body: '<!-- genie-agent-sync-migration-v1 -->',
+        draft: false,
+        prerelease: true,
+        makeLatest: 'false',
+      },
+      'finalize',
+      { CHANNEL: 'stable' },
+    );
+    expect(devToStable.result.exitCode).toBe(0);
+    expect(devToStable.state.prerelease).toBe(true);
+    expect(devToStable.state.makeLatest).toBe('false');
+    expect(devToStable.state.calls?.filter((args) => args[0] === 'api')).toHaveLength(0);
+  });
+
+  test('DRAFT=true leaves the fully prepared release unpublished', () => {
+    const draft = run({ exists: true, body: '<!-- genie-agent-sync-migration-v1 -->', draft: true }, 'finalize', {
+      DRAFT: 'true',
+    });
+    expect(draft.result.exitCode).toBe(0);
+    expect(draft.state.draft).toBe(true);
+    expect(draft.state.calls?.filter((args) => args[0] === 'api')).toHaveLength(0);
+  });
+
+  test('refuses to replay an existing stable release through a prerelease channel', () => {
+    const dev = run(
+      { exists: true, body: '<!-- genie-agent-sync-migration-v1 -->', prerelease: false, draft: false },
+      'prepare',
+      { CHANNEL: 'dev' },
+    );
+    expect(dev.result.exitCode).toBe(3);
+    expect(dev.result.stderr.toString()).toContain('refusing to demote existing stable release');
+  });
+
+  test('finalize refuses missing releases and missing reconciled notes', () => {
+    const missing = run({ exists: false, body: '' }, 'finalize');
+    expect(missing.result.exitCode).toBe(3);
+    expect(missing.result.stderr.toString()).toContain('cannot finalize missing release');
+
+    const missingNote = run({ exists: true, body: 'human only', draft: true }, 'finalize');
+    expect(missingNote.result.exitCode).toBe(3);
+    expect(missingNote.result.stderr.toString()).toContain('without the reconciled migration note');
+  });
+
+  test('propagates GitHub API failures instead of reporting success', () => {
+    const edit = run({ exists: true, body: 'needs note', draft: true, failOn: 'release edit' });
+    expect(edit.result.exitCode).toBe(42);
+
+    const publish = run(
+      {
+        exists: true,
+        body: '<!-- genie-agent-sync-migration-v1 -->',
+        draft: true,
+        failOn: 'api -X PATCH',
+      },
+      'finalize',
+    );
+    expect(publish.result.exitCode).toBe(42);
   });
 });
