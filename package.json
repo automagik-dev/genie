@@ -1,6 +1,6 @@
 {
   "name": "@automagik/genie",
-  "version": "5.260720.6",
+  "version": "5.260720.10",
   "description": "Collaborative terminal toolkit for human + AI workflows. NOTE: npm distribution discontinued 2026-05-09 — install via `curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash` (cosign + SLSA verified). See https://automagik.dev/genie/release-process",
   "license": "MIT",
   "type": "module",

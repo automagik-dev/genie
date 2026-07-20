@@ -1047,6 +1047,11 @@ describe('downloadAndVerifyTarball (G5)', () => {
         tarballPath,
         '--repo',
         'automagik-dev/genie',
+        // Must match the custom predicate type registered by sign-attest.yml,
+        // else `gh attestation verify` defaults to slsa.dev/provenance/v1 and
+        // 404s the by-digest lookup (the shipped-tarball regression).
+        '--predicate-type',
+        'https://github.com/automagik-dev/genie/release-tarballs/v1',
         '--cert-identity-regex',
         '^https://github\\.com/automagik-dev/genie/\\.github/workflows/sign-attest\\.yml@refs/heads/main$',
         '--cert-oidc-issuer',

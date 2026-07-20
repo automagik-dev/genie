@@ -41,11 +41,11 @@ afterEach(() => {
 
 function writePayload(root: string, version: string): void {
   for (const name of ['.agents', '.claude-plugin', 'plugins', 'skills', 'templates']) {
-    mkdirSync(join(root, name), { recursive: true });
-    writeFileSync(join(root, name, 'generation.txt'), `${version}:${name}\n`);
+    mkdirSync(join(root, name), { recursive: true, mode: 0o755 });
+    writeFileSync(join(root, name, 'generation.txt'), `${version}:${name}\n`, { mode: 0o644 });
   }
-  writeFileSync(join(root, 'LICENSE'), `${version}:license\n`);
-  writeFileSync(join(root, 'VERSION'), `${version}\n`);
+  writeFileSync(join(root, 'LICENSE'), `${version}:license\n`, { mode: 0o644 });
+  writeFileSync(join(root, 'VERSION'), `${version}\n`, { mode: 0o644 });
   writeFileSync(join(root, 'genie'), `#!/bin/sh\necho genie ${version}\n`);
   chmodSync(join(root, 'genie'), 0o755);
 }
@@ -57,7 +57,7 @@ function fixture(withLive = true) {
   const genieHome = join(userHome, '.genie');
   const bin = join(genieHome, 'bin');
   const staging = join(root, 'release-payload');
-  mkdirSync(bin, { recursive: true });
+  mkdirSync(bin, { recursive: true, mode: 0o700 });
   mkdirSync(staging, { mode: 0o700 });
   if (withLive) writePayload(bin, '1.0.0');
   writePayload(staging, '2.0.0');
@@ -144,7 +144,7 @@ describe('hidden installer promoter command', () => {
   test('a foreign canonical pathname is preserved and blocks promotion', () => {
     const f = fixture();
     const link = join(f.userHome, '.local', 'bin', 'genie');
-    mkdirSync(join(f.userHome, '.local', 'bin'), { recursive: true });
+    mkdirSync(join(f.userHome, '.local', 'bin'), { recursive: true, mode: 0o755 });
     writeFileSync(link, 'foreign canonical file');
 
     expect(() => run(f)).toThrow();

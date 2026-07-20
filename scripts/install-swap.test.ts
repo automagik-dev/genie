@@ -72,11 +72,11 @@ function buildTarball(root: string, opts: { version: string; withBinary?: boolea
     writeFileSync(bin, fakeBinary(opts.version, driver));
     chmodSync(bin, 0o755);
   }
-  writeFileSync(join(tree, 'VERSION'), `${opts.version}\n`);
-  writeFileSync(join(tree, 'LICENSE'), 'fixture license\n');
+  writeFileSync(join(tree, 'VERSION'), `${opts.version}\n`, { mode: 0o644 });
+  writeFileSync(join(tree, 'LICENSE'), 'fixture license\n', { mode: 0o644 });
   for (const name of ['plugins', 'skills', 'templates', '.agents', '.claude-plugin']) {
-    mkdirSync(join(tree, name), { recursive: true });
-    writeFileSync(join(tree, name, opts.sidecar ?? 'marker.txt'), `sidecar:${name}\n`);
+    mkdirSync(join(tree, name), { recursive: true, mode: 0o755 });
+    writeFileSync(join(tree, name, opts.sidecar ?? 'marker.txt'), `sidecar:${name}\n`, { mode: 0o644 });
   }
   const tarball = join(root, `genie-${opts.version}.tar.gz`);
   const packed = Bun.spawnSync(['tar', '-czf', tarball, '-C', tree, '.'], { stdout: 'pipe', stderr: 'pipe' });
@@ -95,15 +95,15 @@ function scaffold(root: string, opts: { liveVersion?: string } = {}): Layout {
   const homeRoot = join(root, 'home');
   const genieHome = join(homeRoot, '.genie');
   const bin = join(genieHome, 'bin');
-  mkdirSync(bin, { recursive: true });
-  mkdirSync(join(homeRoot, '.local', 'bin'), { recursive: true });
+  mkdirSync(bin, { recursive: true, mode: 0o700 });
+  mkdirSync(join(homeRoot, '.local', 'bin'), { recursive: true, mode: 0o755 });
   const liveBinary = join(bin, 'genie');
   if (opts.liveVersion) {
     writeFileSync(liveBinary, fakeBinary(opts.liveVersion, join(root, 'old-driver-unused.ts')));
     chmodSync(liveBinary, 0o755);
-    writeFileSync(join(bin, 'VERSION'), `${opts.liveVersion}\n`);
-    mkdirSync(join(bin, 'plugins'), { recursive: true });
-    writeFileSync(join(bin, 'plugins', 'old.txt'), 'old-sidecar');
+    writeFileSync(join(bin, 'VERSION'), `${opts.liveVersion}\n`, { mode: 0o644 });
+    mkdirSync(join(bin, 'plugins'), { recursive: true, mode: 0o755 });
+    writeFileSync(join(bin, 'plugins', 'old.txt'), 'old-sidecar', { mode: 0o644 });
   }
   return { home: genieHome, bin, liveBinary, homeRoot };
 }
@@ -303,15 +303,21 @@ describe('install.sh transactional binary promotion (F31a)', () => {
     );
   });
 
-  test('extract_and_link contains no shell live-swap, clobber-link, chmod, or staging-delete primitive', () => {
+  test('extract_and_link contains no shell live-swap, clobber-link, or staging-delete primitive', () => {
     const source = readFileSync(INSTALL_SH, 'utf8');
     const body = source.slice(source.indexOf('extract_and_link() {'), source.indexOf('\n}\n\n# Detect pre-cutover'));
 
     expect(body).toContain('"$STAGING_DIR/genie" __install-promote');
     expect(body).toContain('GENIE_LIFECYCLE_LEASE_PATH="$LIFECYCLE_LOCK"');
     expect(body).toContain('GENIE_LIFECYCLE_LEASE_OWNER="$LIFECYCLE_OWNER_RECORD"');
-    expect(body).not.toMatch(/\b(?:rm|mv|cp|chmod)\b/);
+    expect(body).not.toMatch(/\b(?:rm|mv|cp)\b/);
     expect(body).not.toContain('ln -sfn');
+    // The shell's only permitted chmod relocks the PRIVATE staging root it
+    // created (tar's archived root entry clobbers the 0700 mode). It must never
+    // chmod a live path, so every chmod line must target "$STAGING_DIR".
+    for (const line of body.split('\n')) {
+      if (/\bchmod\b/.test(line)) expect(line).toContain('"$STAGING_DIR"');
+    }
   });
 });
 

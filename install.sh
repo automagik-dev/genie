@@ -28,6 +28,13 @@ REPO="automagik-dev/genie"
 MANIFEST_BASE="https://raw.githubusercontent.com/${REPO}/main/.well-known"
 EXPECTED_COSIGN_IDENTITY="^https://github\\.com/${REPO}/\\.github/workflows/sign-attest\\.yml@refs/heads/main$"
 EXPECTED_COSIGN_ISSUER="https://token.actions.githubusercontent.com"
+# sign-attest.yml registers the GitHub-native attestation under a CUSTOM
+# predicate type (NOT https://slsa.dev/provenance/v1 — GitHub's persistence API
+# runs SLSA validation for that URI and rejects our custom buildType). The
+# verifier MUST pass the same --predicate-type or `gh attestation verify`
+# defaults to slsa.dev/provenance/v1 and 404s the lookup. Keep this in lockstep
+# with scripts/release-native-predicate.sh + sign-attest.yml.
+EXPECTED_ATTESTATION_PREDICATE_TYPE="https://github.com/${REPO}/release-tarballs/v1"
 COSIGN_VERSION="v2.4.1"
 GENIE_HOME="${GENIE_HOME:-$HOME/.genie}"
 LOCAL_BIN="$HOME/.local/bin"
@@ -391,6 +398,7 @@ verify_with_gh_attestation() {
   log "verifying via gh attestation (repo=${REPO}, identity pinned)"
   gh attestation verify "$1" \
     --repo "$REPO" \
+    --predicate-type "$EXPECTED_ATTESTATION_PREDICATE_TYPE" \
     --cert-identity-regex "$EXPECTED_COSIGN_IDENTITY" \
     --cert-oidc-issuer "$EXPECTED_COSIGN_ISSUER" \
     >/dev/null 2>&1
@@ -522,9 +530,12 @@ verify_staged_binary() {
 }
 
 # Transactional install (F31a). The shell performs no live-path swap,
-# rollback, backup, chmod, canonical-link replacement, or staging cleanup.
-# Mutation authority is the already verified staged executable, which borrows
-# this shell's exact lifecycle lease and uses native durable no-clobber renames.
+# rollback, backup, canonical-link replacement, or staging cleanup. Its only
+# chmod relocks the private staging root it created to 0700 after extraction
+# (tar clobbers that mode via the archived root entry); it never chmods a live
+# path. Mutation authority is the already verified staged executable, which
+# borrows this shell's exact lifecycle lease and uses native durable
+# no-clobber renames.
 ensure_physical_install_directory() {
   local path="$1" parent
   parent="$(dirname "$path")"
@@ -554,6 +565,14 @@ extract_and_link() {
   log "extracting verified release in private temporary staging"
   tar -xzf "$tarball" -C "$STAGING_DIR" ||
     die "extraction failed (corrupt tarball?): ${tarball}" 5
+  # tar restores the archived root "./" entry's recorded mode (0755 on every
+  # published tarball) onto the extraction directory, clobbering the 0700 we
+  # created $STAGING_DIR with. The transactional promoter asserts the staging
+  # root is *exactly* 0700, so relock the private staging sandbox before
+  # promotion. This normalizes only the shell's own staging root — it performs
+  # no live-path mutation and touches no promotion object.
+  chmod 700 "$STAGING_DIR" ||
+    die "could not relock private staging root after extraction: $STAGING_DIR" 1
   verify_staged_binary "$STAGING_DIR" "$expected_version"
   [[ -n "$LIFECYCLE_LOCK" && -n "$LIFECYCLE_OWNER_RECORD" ]] ||
     die "lifecycle lease was lost before transactional promotion" 1

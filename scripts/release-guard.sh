@@ -201,7 +201,8 @@ check_version_child() {
   note "ok — deterministic version-only child ${child_sha}"
 }
 
-# release-publish advances main through a dedicated deploy key. The resulting
+# release-publish advances main through a dedicated fine-grained PAT
+# (RELEASE_MANIFESTS_TOKEN in the release-manifests environment). The resulting
 # push runs CI but is explicitly excluded from auto-version recursion by its
 # `[release-manifest]` marker. A concurrent/later release may still begin before
 # that CI completes, so a main control descendant inherits authority only when

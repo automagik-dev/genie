@@ -308,7 +308,13 @@ describe('Group E release and documentation contracts', () => {
     expect(workflow).not.toContain('/immutable-releases');
     expect(workflow).not.toContain('--clobber');
     expect(workflow).toContain('name: release-manifests');
-    expect(workflow).toContain('ssh-key: ${{ secrets.RELEASE_MANIFESTS_DEPLOY_KEY }}');
+    // Manifest push authenticates with a fine-grained PAT, not a deploy key
+    // (deploy keys are disabled org-wide; the ssh-key model silently fell back
+    // to the bot token and 403'd on protected main). The stale deploy-key
+    // secret must be gone.
+    expect(workflow).toContain('token: ${{ secrets.RELEASE_MANIFESTS_TOKEN }}');
+    expect(workflow).not.toContain('RELEASE_MANIFESTS_DEPLOY_KEY: ${{');
+    expect(workflow).not.toContain('ssh-key: ${{ secrets.RELEASE_MANIFESTS_DEPLOY_KEY }}');
     expect(workflow).toContain('[release-manifest]');
     expect(workflow).toContain('cp scripts/reconcile-channel-manifests.sh "$MANIFEST_RECONCILER"');
     expect(workflow).toContain('bash "$MANIFEST_RECONCILER"');

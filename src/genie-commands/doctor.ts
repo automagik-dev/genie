@@ -32,6 +32,7 @@ import {
   MANAGED_BY,
   MANIFEST_NAME,
   TARGET_NAME,
+  claudeGeniePluginEnabled,
   computeDirDigest,
   computeFileDigest,
   enumerateSourceAgentFiles,
@@ -1025,14 +1026,24 @@ function checkClaudeSync(pluginRoot: string, claudeDir: string, settingsPath: st
   // Claude legitimately excludes `council` (the /council native workflow owns
   // that name), so its expected source set is source minus CLAUDE_EXCLUDED_SKILLS
   // — otherwise doctor reports "N-1/N current" and advises `genie update` forever.
-  const skills = skillsFreshness(summarizeManagedSkills(pluginRoot, join(claudeDir, 'skills'), CLAUDE_EXCLUDED_SKILLS));
+  // With the genie@automagik plugin enabled, sync suppresses the WHOLE bare-name
+  // skills mirror (skills load as genie:* from the plugin), so the expected
+  // source set is empty and any leftover managed mirror is prunable stale state.
+  const pluginEnabled = claudeGeniePluginEnabled(settingsPath);
+  const excluded = pluginEnabled ? new Set([...sourceSkillDigests(pluginRoot).keys()]) : CLAUDE_EXCLUDED_SKILLS;
+  const skills = skillsFreshness(summarizeManagedSkills(pluginRoot, join(claudeDir, 'skills'), excluded));
+  const skillsDetail = pluginEnabled
+    ? skills.stale
+      ? `${skills.detail} (mirror suppressed — leftover mirrors, run \`genie update\` to prune)`
+      : 'skills mirror suppressed (genie@automagik plugin enabled)'
+    : skills.detail;
   const council = councilStampState(join(claudeDir, 'workflows', COUNCIL_WORKFLOW_FILE), pluginRoot);
   const stale = skills.stale || council.stale;
   return [
     {
       name: 'agent sync: claude',
       status: stale ? 'warn' : 'pass',
-      detail: `${skills.detail}; council.js ${council.label}`,
+      detail: `${skillsDetail}; council.js ${council.label}`,
       suggestion: stale ? SYNC_SUGGESTION : undefined,
     },
     ...checkRoleAgents(pluginRoot, claudeDir, settingsPath),

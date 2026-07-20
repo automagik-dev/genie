@@ -89,6 +89,22 @@ export const MANAGED_BY = 'genie-agent-sync';
  */
 export const CLAUDE_EXCLUDED_SKILLS = new Set(['council']);
 /**
+ * True iff Claude Code's settings.json enables the genie marketplace plugin.
+ * Lenient by design: missing/unreadable/malformed settings, or a non-boolean
+ * value, all return false — sync must never abort or change behavior on a
+ * broken settings file. GENIE_FORCE_CLAUDE_SKILLS_MIRROR=1 is the ops
+ * kill-switch: forces pre-hotfix behavior (mirror + doctor expects mirror).
+ */
+export function claudeGeniePluginEnabled(settingsPath: string): boolean {
+  if (process.env.GENIE_FORCE_CLAUDE_SKILLS_MIRROR === '1') return false;
+  try {
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as { enabledPlugins?: Record<string, unknown> };
+    return settings.enabledPlugins?.['genie@automagik'] === true;
+  } catch {
+    return false;
+  }
+}
+/**
  * Collision-proof staging suffixes for atomic managed-dir writes. Chosen so no
  * human backup convention (e.g. `mv review review.old`, or a `review.new`) can
  * ever collide with genie's staging tree — the pre-clean rmSync then only ever
@@ -5628,7 +5644,24 @@ function syncClaude(ctx: RunContext, report: AgentReport): void {
   const claudeDir = ctx.targets.claude;
   if (!existsSync(claudeDir)) return;
   report.detected = true;
-  syncSkillDirsInto(ctx, 'claude', join(claudeDir, 'skills'), report, CLAUDE_EXCLUDED_SKILLS);
+  const pluginEnabled = claudeGeniePluginEnabled(join(claudeDir, 'settings.json'));
+  // Plugin enabled → Claude Code already serves every skill as genie:*; the
+  // bare-name mirror double-lists them (~4.5k tokens/msg). Excluding ALL
+  // source skills makes syncSkillDirsInto see an empty source set, so
+  // removeManagedOrphans backs up + prunes existing managed mirrors and
+  // preserves user-edited/unmanaged dirs — the council-exclusion semantics,
+  // just total. Absent/unreadable settings → mirror exactly as today.
+  const exclude = pluginEnabled
+    ? new Set(enumerateSourceSkills(ctx.pluginRoot).map((s) => s.name))
+    : CLAUDE_EXCLUDED_SKILLS;
+  syncSkillDirsInto(ctx, 'claude', join(claudeDir, 'skills'), report, exclude);
+  if (pluginEnabled) {
+    report.extras.push({
+      kind: 'skills-mirror',
+      action: 'suppressed',
+      detail: 'genie@automagik plugin enabled — bare-name skills mirror pruned; skills load as genie:* from the plugin',
+    });
+  }
   syncClaudeAgentFiles(ctx, claudeDir, report);
   stampClaudeWorkflow(ctx, claudeDir, report);
 }

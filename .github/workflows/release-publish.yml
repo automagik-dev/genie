@@ -205,14 +205,47 @@ jobs:
     timeout-minutes: 10
     environment:
       # No reviewers: dev/homolog stay automatic. The environment is restricted
-      # to main and holds the sole write deploy key allowed through main rules.
+      # to main and holds the sole credential (RELEASE_MANIFESTS_TOKEN) allowed
+      # to push the .well-known manifests through main branch protection.
       name: release-manifests
     permissions:
       contents: read
+    # -----------------------------------------------------------------------
+    # HUMAN SETUP (one-time) — the manifest push authenticates with a
+    # fine-grained PAT, NOT a deploy key. Deploy keys are DISABLED org-wide
+    # (repos/automagik-dev/genie/keys POST → 422 "Deploy keys are disabled"),
+    # so the old ssh-key model silently fell back to github-actions[bot]'s
+    # token, whose push to protected main 403s. That broke 4 releases.
+    #
+    # To provision (repo/org admin):
+    #   1. Create a FINE-GRAINED PAT scoped to automagik-dev/genie ONLY, with
+    #      Repository permissions → Contents: Read and write (nothing else).
+    #   2. Store it as the environment secret RELEASE_MANIFESTS_TOKEN in the
+    #      `release-manifests` GitHub environment (Settings → Environments).
+    #   3. Allow the PAT's identity through main branch protection (add it to
+    #      the bypass/allow list for "Restrict who can push to matching
+    #      branches"), or the push will 403 exactly as the deploy key did.
+    #   4. Delete the now-unused RELEASE_MANIFESTS_DEPLOY_KEY environment
+    #      secret and any orphaned deploy key.
+    # (Kept in the workflow header because docs/ is a submodule; mirror this
+    #  into docs/release-process.mdx when that submodule is next updated.)
+    # -----------------------------------------------------------------------
     steps:
+      - name: Preflight — require the manifest push token
+        env:
+          RELEASE_MANIFESTS_TOKEN: ${{ secrets.RELEASE_MANIFESTS_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${RELEASE_MANIFESTS_TOKEN}" ]]; then
+            echo "::error::RELEASE_MANIFESTS_TOKEN is not set in the 'release-manifests' environment." >&2
+            echo "::error::Without it actions/checkout silently falls back to github-actions[bot], whose push to protected main is rejected 403 (misreported below as a CAS race)." >&2
+            echo "::error::Fix: create a fine-grained PAT (contents:read+write on automagik-dev/genie only), store it as the RELEASE_MANIFESTS_TOKEN environment secret, allow it through main branch protection, then delete the stale RELEASE_MANIFESTS_DEPLOY_KEY. See this job's HUMAN SETUP header." >&2
+            exit 1
+          fi
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
-          ssh-key: ${{ secrets.RELEASE_MANIFESTS_DEPLOY_KEY }}
+          token: ${{ secrets.RELEASE_MANIFESTS_TOKEN }}
           persist-credentials: true
 
       # ---------------------------------------------------------------------
@@ -272,11 +305,22 @@ jobs:
               break
             fi
             git commit -m "chore(release): advance eligible manifests (${CHANNEL}) → v${VERSION} [release-manifest]"
-            if git push origin "HEAD:refs/heads/main"; then
+            # Classify the push failure: a non-fast-forward is a genuine CAS
+            # race worth retrying; a permission/branch-protection rejection is
+            # NOT — retry-looping on it just wastes 5 attempts and misreports a
+            # 403 as "lost a concurrent main update" (the historic misdiagnosis
+            # that hid the missing-credential bug). Fail loudly and immediately.
+            if push_output="$(git push origin "HEAD:refs/heads/main" 2>&1)"; then
+              printf '%s\n' "$push_output"
               manifests_reconciled=true
               break
             fi
-            echo "::warning ::release-manifest.cas_retry attempt ${attempt}/5 lost a concurrent main update; recomputing"
+            printf '%s\n' "$push_output" >&2
+            if printf '%s' "$push_output" | grep -qiE 'protected branch|GH006|permission to .* denied|not authorized|403|forbidden|remote rejected'; then
+              echo "::error::manifest push to main was REJECTED for lack of permission — this is NOT a concurrent-update CAS race. RELEASE_MANIFESTS_TOKEN lacks contents:write on ${GITHUB_REPOSITORY} or is not allowed through main branch protection. See this job's HUMAN SETUP header." >&2
+              exit 1
+            fi
+            echo "::warning ::release-manifest.cas_retry attempt ${attempt}/5: non-fast-forward from a concurrent main update; recomputing"
           done
 
           if [[ "$manifests_reconciled" != true ]]; then
