@@ -22,8 +22,9 @@ All artifacts live in `.genie/` within the shared worktree. When spawned as a na
 3. **Scope-size check:** if the request spans multiple independent subsystems, decompose before refining (see Scope Size).
 4. **Refine:** fill WRS dimensions. Ask only what an unfilled dimension needs — when the request or context already settles a dimension, mark it filled and move on; never re-litigate decisions the user already made. Prefer concrete options over open questions.
 5. **Show the WRS bar** after every exchange; persist DRAFT.md whenever WRS changes.
-6. **Propose approaches:** 2-3 options with trade-offs, applying Design for Isolation. Recommend one and proceed when the choice follows from the request.
-7. **Crystallize** when WRS = 100 (see Crystallize).
+6. **Pass the Simplicity Gate:** establish the simplest complete approach before considering more machinery. Reject speculative complexity or defer it behind a measurable trigger (see Simplicity Gate).
+7. **Propose approaches:** 2-3 options with trade-offs, applying Design for Isolation. Recommend one and proceed when the choice follows from the request.
+8. **Crystallize** when WRS = 100 (see Crystallize).
 
 ## WRS — Wish Readiness Score
 
@@ -33,7 +34,7 @@ Five dimensions, 20 points each:
 |-----------|-------------|
 | **Problem** | One-sentence problem statement is clear |
 | **Scope** | IN and OUT boundaries defined |
-| **Decisions** | Key technical/design choices made with rationale |
+| **Decisions** | Key technical/design choices made with rationale and the Simplicity Gate passes |
 | **Risks** | Assumptions, constraints, failure modes identified |
 | **Criteria** | At least one testable acceptance criterion exists |
 
@@ -59,6 +60,18 @@ Apply to proposed approaches and the DESIGN.md Approach section:
 - Explicit interfaces and dependencies — contracts, not shared mutable state or hidden coupling.
 - Independent testability — each unit understandable without loading the whole system.
 - File size is a complexity signal — propose splits before a unit becomes unmanageable.
+
+## Simplicity Gate
+
+Before recommending an approach or declaring **Decisions** filled:
+
+1. State the simplest complete design that satisfies the current user stories.
+2. For every added cache, delta, shard, queue, retry state machine, abstraction, or configuration option, name the present requirement or measurement that pays for it.
+3. Count the new durable states, recovery paths, and cross-component invariants each option introduces; treat them as product cost, not implementation detail.
+4. Prefer bounding current data, separating history behind pagination, recomputing, replacement, and opinionated defaults before synchronization or configurability.
+5. Put plausible future machinery under a measurable adoption trigger instead of building it now. “This may scale later” is not evidence.
+
+If the more complex approach lacks present evidence, recommend the simpler one. Do not split the difference by shipping dormant machinery: unused branches still impose protocol, test, security, and maintenance cost.
 
 ## Index
 
@@ -89,7 +102,7 @@ it was tracked. Never update or retain both indexes after a successful merge.
 At WRS = 100:
 
 1. Write `.genie/brainstorms/<slug>/DESIGN.md` from DRAFT.md using `references/design-template.md` (in this skill dir) — fill every placeholder.
-2. **Spec self-review** — fix inline before handing off: no TBD/TODO leftovers (fill or mark explicit OUT), no contradictions between sections, scope fits a single wish (split if not), no requirement readable two different ways.
+2. **Spec self-review** — fix inline before handing off: no TBD/TODO leftovers (fill or mark explicit OUT), no contradictions between sections, scope fits a single wish (split if not), no requirement readable two different ways, and the Simplicity Case justifies every mechanism beyond the simplest complete design.
 3. Stage the design, draft, and canonical index:
    ```bash
    git add .genie/brainstorms/<slug>/DESIGN.md .genie/brainstorms/<slug>/DRAFT.md .genie/INDEX.md
@@ -135,7 +148,7 @@ Never reuse design-review evidence after editing DESIGN.md. `verify` must pass i
 Note cross-repo or cross-agent dependencies — they become `depends-on`/`blocks` fields in the wish.
 
 ## Rules
-- YAGNI and simplicity first; propose alternatives before recommending.
+- KISS and YAGNI are gates, not tie-breakers; speculative machinery blocks crystallization.
 - No implementation during brainstorm.
 - Persist early and often — never wait until the end.
 - Never present an unconfirmed assumption as a settled decision — confirm it or list it under Risks.

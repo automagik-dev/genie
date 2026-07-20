@@ -600,6 +600,81 @@ describe('Group E release and documentation contracts', () => {
     expect(pm).toMatch(/Selecting Autopilot\s+does not itself authorize external repository writes/);
   });
 
+  test('parallel execution uses isolated group lanes and garbage-collects only verified merged work', () => {
+    const agents = read('AGENTS.md');
+    const work = read('skills/work/SKILL.md');
+    const pm = read('skills/pm/SKILL.md');
+    const review = read('skills/review/SKILL.md');
+    const dispatch = read('plugins/genie/references/dispatch-contract.md');
+    const launch = read('src/term-commands/launch.ts');
+
+    expect(agents).toContain('each concurrently active execution group as an isolated delivery lane');
+    expect(work).toContain('even when expected file scopes are disjoint');
+    expect(work).toContain('Any failed proof or cleanup leaves the task `in_progress` and the lane intact');
+    expect(pm).toContain('A blocked, dirty, unmerged, or unreviewed lane remains active');
+    expect(review).toContain('ephemeral, detached, read-only worktree at the exact candidate commit');
+    expect(dispatch).toContain('The PM merges reviewed group commits into the wish integration worktree');
+    expect(launch).toContain('only the PM integrates, cleans up the lane, and marks tasks done');
+  });
+
+  test('mainline ownership follows GitHub-backed and zero-remote repository modes', () => {
+    const agents = read('AGENTS.md');
+    const lifecycle = read('skills/genie/reference/lifecycle.md');
+    const pm = read('skills/pm/SKILL.md');
+    const dream = read('skills/dream/SKILL.md');
+    const review = read('skills/review/SKILL.md');
+    const report = read('skills/report/SKILL.md');
+    const dispatch = read('plugins/genie/references/dispatch-contract.md');
+
+    expect(agents).toMatch(/local `main` is a\s+clean fast-forward mirror/);
+    expect(lifecycle).toMatch(/Before work, local `main` must be\s+clean, fast-forwarded, and proven equal/);
+    expect(pm).toMatch(/Never locally merge the\s+wish branch into `main`/);
+    expect(pm).toContain('Any other configured upstream requires an explicit user decision');
+    expect(pm).toContain('fast-forward it to `<remote>/main`, and prove both refs resolve to the same commit');
+    expect(pm).toContain('With zero remotes, the PM may integrate a finished wish autonomously');
+    expect(pm).toContain('annotated tag `archive/wish/<slug>`');
+    expect(pm).toContain('compare-and-swap');
+    expect(pm.indexOf('Archive that exact closure commit')).toBeLessThan(
+      pm.indexOf('Only after archival and cleanup succeed'),
+    );
+    expect(pm).toMatch(/branch-local status is\s+staged evidence only/);
+    expect(lifecycle).toMatch(/not authoritative until third-party merge/);
+    expect(lifecycle).toContain('hosted mirror, archive, or cleanup failure after remote merge is recorded lifecycle');
+    expect(lifecycle).toContain('failed local mirroring is recorded lifecycle debt');
+    expect(dream).toMatch(/PR targeting authoritative `main`/);
+    expect(dream).toContain('final closure commit');
+    expect(dream).toContain('Report a wish shipped only with authoritative mainline and QA evidence');
+    expect(review).toContain('zero remotes → prepare the validated local integration candidate');
+    expect(report).toContain('during pre-promotion QA against the exact PR or local integration candidate');
+    expect(dispatch).toContain('fresh reviewer, at most three loops');
+    for (const doc of [pm, dream, review]) {
+      expect(doc).not.toContain('targeting `dev`');
+      expect(doc).not.toContain('merge to `dev`');
+    }
+  });
+
+  test('lifecycle treats simplicity as a hard gate and replans overdesigned work', () => {
+    const architecture = read('skills/architecture/SKILL.md');
+    const brainstorm = read('skills/brainstorm/SKILL.md');
+    const designTemplate = read('skills/brainstorm/references/design-template.md');
+    const wish = read('skills/wish/SKILL.md');
+    const wishTemplate = read('skills/wish/templates/wish-template.md');
+    const review = read('skills/review/SKILL.md');
+    const fix = read('skills/fix/SKILL.md');
+    const work = read('skills/work/SKILL.md');
+
+    expect(architecture).toContain('KISS comes first');
+    expect(brainstorm).toContain('## Simplicity Gate');
+    expect(designTemplate).toContain('## Simplicity Case');
+    expect(wish).toContain('Pass the simplicity gate');
+    expect(wishTemplate).toContain('## Simplicity Case');
+    expect(review).toContain('unjustified stateful machinery');
+    expect(review).toContain('a HIGH gap');
+    for (const lifecycleSkill of [review, fix, work]) expect(lifecycleSkill).toContain('`overdesigned-plan`');
+    expect(fix).toContain('up to 3 loops');
+    expect(work).toContain('A user-approved simplification invalidates the superseded plan/review evidence');
+  });
+
   test('wizard discloses init MCP writes and owner-qualified lifecycle order', () => {
     const wizard = read('skills/wizard/SKILL.md');
     for (const path of ['.mcp.json', '.warp/.mcp.json', '.codex/config.toml']) expect(wizard).toContain(path);

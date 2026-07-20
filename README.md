@@ -93,7 +93,9 @@ Skills are the product. Invoke them as `/name` in Claude, `$genie:name` from the
 | `review` | Severity-gated verdict — SHIP, FIX-FIRST, or BLOCKED |
 | `council` | Independent architecture, delivery, product, security, and dissent assessment |
 
-Shared skill bodies use a runtime-neutral delegation contract. Codex maps it to the optional `genie_*` custom-agent profiles installed by the CLI; a plugin-only install still has skills but no custom agents. Codex subagents share a workspace, so task claims own scope; use `genie launch` when worktree isolation is required. The engineer reports completion, an independent reviewer returns a verdict, and only the orchestrator runs `genie task done`. `/level-up` remains Claude-only because it evaluates Claude Code mastery.
+Shared skill bodies use a runtime-neutral delegation contract. Codex maps it to the optional `genie_*` custom-agent profiles installed by the CLI; a plugin-only install still has skills but no custom agents. Every concurrent execution group uses its own branch and worktree; native subagents that cannot be placed in isolated worktrees must be sequenced or dispatched through `genie launch`. The PM owns the wish integration worktree, merges reviewed group commits, resolves conflicts, and removes merged group worktrees and branches. The engineer reports completion, an independent reviewer returns a verdict, and only the orchestrator runs `genie task done` after integration, validation, and cleanup. `/level-up` remains Claude-only because it evaluates Claude Code mastery.
+
+At the wish boundary, Genie derives mainline ownership from Git topology. If `main` tracks a GitHub remote's `main`, local `main` is fast-forwarded and proven equal to that upstream, and completed wishes enter through reviewed GitHub PRs. A repository with no remotes is local-only: the PM validates a temporary merge candidate, archives that exact integrated closure as `archive/wish/<slug>`, removes its clean active lanes, and then fast-forwards unchanged `main` to the archived commit. Other or ambiguous remote layouts require an explicit user decision.
 
 ### Codex surface boundaries
 

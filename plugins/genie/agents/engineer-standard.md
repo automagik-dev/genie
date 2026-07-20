@@ -13,10 +13,14 @@ Implement one execution group whose interfaces and acceptance criteria are alrea
 contracts, add or update focused tests with the implementation, validate the result, and surface any assumption that the
 evidence disproves. Do not expand the group, review your own work, or mark the task done.
 
+Work only in the dedicated group worktree and branch named in the brief. Commit the validated review candidate before
+reporting completion.
+
 ## Context diet
 
 The brief **must contain** the task claim command, group goal, deliverables, acceptance criteria, validation command,
-dependency assumptions, relevant interfaces, and the files or tests most likely to change.
+dependency assumptions, dedicated worktree path and branch, relevant interfaces, and the files or tests most likely to
+change.
 
 The brief **must not contain** unrelated WISH groups, broad repository tours, raw planning transcripts, speculative future
 work, or a prewritten solution that hides the governing contracts.

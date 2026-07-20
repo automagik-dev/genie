@@ -20,9 +20,13 @@ Spawn one fresh-context decision-maker subagent at run start. Route ship/no-ship
 
 Entry: human says "run autonomously" / "autopilot". That phrase grants decision
 autonomy only; external repository writes still require the bounded scope from
-`../SKILL.md` (repository, target branch, eligible wishes/PRs, and cleanup
-policy). Exit: all authorized tasks shipped, or a decision/action exceeds that
-scope.
+`../SKILL.md` (repository, target branch, and eligible wishes/PRs). Verified
+cleanup of Genie-managed group lanes follows the normal lifecycle; cleanup of
+any other branch must be explicitly included in the grant. In a repository
+with zero remotes, validated candidate integration into local `main` and
+`archive/wish/<slug>` lifecycle cleanup are autonomous; GitHub PR creation and
+merge remain externally gated. Exit: all authorized tasks shipped, or a
+decision/action exceeds that scope.
 
 ### Default persona: pragmatic engineering manager
 

@@ -89,10 +89,18 @@ For non-trivial work, brainstorm automatically invokes read-only design review b
 separate plan review and persisted `APPROVED` status before work, followed by an independent implementation review. Design SHIP is persisted in DESIGN.md with reviewer identity, UTC timestamp, and a SHA-256 of the exact reviewed content; wish creation and lint reject missing, non-SHIP, or stale evidence. Codex
 invokes the plugin copies as `$genie:brainstorm`, `$genie:wish`, `$genie:review`, and `$genie:work`; bare selectors
 intentionally select the user tier, which now only ever holds a separately installed personal copy. Claude Code uses the
-equivalent slash skills. Native subagents do not imply separate worktrees. Every engineer first claims its assigned task
-with `genie task checkout <id> --worker <name>`, reports completion without mutating task state, and is reviewed by a
-different agent. Only the orchestrator calls `genie task done <id>` after a SHIP verdict and passing validation. Use
-`genie launch` when separate worktrees or a human-supervised Warp cockpit are required.
+equivalent slash skills. Every concurrent execution group uses a dedicated branch and worktree; native subagents that
+cannot be placed in isolated worktrees must be sequenced or dispatched through `genie launch`. Every engineer first
+claims its assigned task with `genie task checkout <id> --worker <name>`, commits in its group worktree, reports
+completion without mutating task state, and is reviewed by a different agent against that exact commit. The PM merges
+reviewed group commits into the wish integration worktree, resolves conflicts, validates the integrated tree, and
+removes each clean group worktree and merged branch. Only then does the orchestrator call `genie task done <id>`.
+
+At the wish boundary, a local `main` tracking a GitHub remote's `main` is fast-forwarded and proven equal to that
+upstream, and accepts completed wishes only after reviewed PR merge. With no configured remotes, the PM validates a
+temporary merge candidate, archives that exact integrated closure as `archive/wish/<slug>`, removes its clean active
+lanes, and then fast-forwards unchanged local `main` to the archived commit. Non-GitHub or ambiguous remotes require an
+explicit user-selected policy.
 
 Those selectors are for manual invocation. Each physical skill's `agents/openai.yaml` starter card is selector-free, so selecting a plugin-tier or user-tier card executes that already-selected physical skill instead of naming and potentially redirecting to the other tier.
 

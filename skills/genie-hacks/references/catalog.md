@@ -42,7 +42,7 @@ The local registry powering `genie-hacks list|search|show|help`. Canonical publi
 - **Title:** Multi-Team Coordination at Scale
 - **Category:** teams
 - **Problem:** You have multiple wishes that depend on each other, and running them sequentially wastes time.
-- **Solution:** Use `dream` to batch-execute wishes with dependency ordering, or open one `genie launch` cockpit per independent wish. Use the active runtime's native subagents for independent work, steer the same thread with follow-up messaging, and isolate parallel writers in disjoint scopes or separate worktrees. Track shared wish state in the task DB.
+- **Solution:** Use `dream` to batch-execute wishes with dependency ordering, or open one `genie launch` cockpit per independent wish. Use the active runtime's native subagents for independent work, steer the same thread with follow-up messaging, and give every concurrent execution group a dedicated branch and worktree. The PM merges reviewed commits into the wish integration branch and removes clean merged lanes so worktrees and branches reflect active work. Track shared wish state in the task DB.
 - **Code:**
   ```bash
   # Queue wishes for overnight execution

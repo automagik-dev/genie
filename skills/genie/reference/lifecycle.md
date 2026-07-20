@@ -3,7 +3,7 @@
 Every piece of work follows this flow:
 
 ```
- Idea → brainstorm → design review → wish → plan review → work → implementation review → PR → Ship
+ Idea → brainstorm → design review → wish → plan review → work → implementation review → mainline integration → Ship
          (explore)   (design gate)    (plan)   (plan gate)  (build)       (verify)
 ```
 
@@ -25,18 +25,43 @@ and `BLOCKED` are evidence returned by a reviewer. The `Status` field in
 | `DRAFT` | Plan exists but has not passed plan review | `wish`, then plan `review` |
 | `FIX-FIRST` | Plan review found blocking gaps | `fix`, then plan `review` |
 | `APPROVED` | Plan review returned SHIP and the plan is ready | `work` or `genie launch <slug>` |
-| `IN_PROGRESS` | At least one execution group has started; execution/PR gates are not complete | resume `work` or the recorded corrective route |
+| `IN_PROGRESS` | At least one execution group has started; execution/mainline gates are not complete | resume `work` or the recorded corrective route |
 | `BLOCKED` | A recorded external, environment, or specification blocker prevents progress | resolve the recorded blocker, then resume the prior stage |
-| `SHIPPED` | The authorized merge and required QA/release gate completed | terminal/history only |
+| `SHIPPED` | Authoritative mainline integration and required QA/release gate completed | terminal delivery; finish any recorded archive/cleanup debt |
 
 The invoking orchestrator is the single mutation owner. After a reviewer sends
 its final evidence, the orchestrator appends a timestamped entry under
 `## Review Results` and applies the transition: plan SHIP → `APPROVED`; plan
 FIX-FIRST → `FIX-FIRST`; plan BLOCKED → `BLOCKED`; beginning execution →
 `IN_PROGRESS`; execution FIX-FIRST/BLOCKED stays `IN_PROGRESS` unless a real
-external blocker is recorded; authorized merge plus required QA → `SHIPPED`.
+external blocker is recorded; proven mainline integration plus required QA → `SHIPPED`.
 The reviewer remains read-only and never edits WISH.md or task state. A chat
 verdict that was not persisted does not advance the lifecycle.
+
+## Mainline ownership
+
+The PM resolves repository mode before shipping:
+
+- **GitHub-backed:** a configured `<remote>/main` GitHub upstream is authoritative. Before work, local `main` must be
+  clean, fast-forwarded, and proven equal to that ref. Third-party PR merge makes remote `main` authoritative; the PM
+  then attempts the same clean fast-forward/equality proof locally. A failed post-merge mirror is lifecycle debt. Genie
+  never resets, force-pushes, or locally merges the wish into hosted `main`.
+- **Local-only:** exactly zero configured remotes. The PM merges the finished wish in a temporary candidate worktree,
+  resolves conflicts there, validates the exact candidate, records the closure commit, archives and cleans its lanes,
+  then fast-forwards unchanged local `main` to that exact archived commit.
+- **Other or ambiguous remotes:** require an explicit user-selected integration policy.
+
+The GitHub PR plus archive tag, or the local archive tag, is durable closure evidence. Worktrees and local feature
+branches represent active work only. A local failure before mainline promotion keeps the wish `IN_PROGRESS` and
+preserves or recreates its lane. A hosted mirror, archive, or cleanup failure after remote merge is recorded lifecycle
+debt: it cannot undo authoritative history, so the wish stays `SHIPPED`, any affected lane remains for retry, and
+closure is not reported as fully clean.
+
+Because WISH status is git-tracked, the PM stages `SHIPPED` plus completion evidence only in an exact candidate that has
+already passed required QA, then reruns the candidate's final checks. In GitHub-backed mode that branch-local status is
+not authoritative until third-party merge places it on remote `main`; failed local mirroring is recorded lifecycle debt.
+In local-only mode archival and clean-lane removal happen first; it becomes authoritative only when unchanged local
+`main` fast-forwards to that archived closure commit.
 
 ## Skill Catalog
 
@@ -46,7 +71,7 @@ verdict that was not persisted does not advance the lifecycle.
 | `wish` | Convert a design into a structured plan at `.genie/wishes/<slug>/WISH.md` — scope, execution groups, acceptance criteria, validation | Idea is concrete, needs a plan |
 | `review` | Genie criteria gate — SHIP / FIX-FIRST / BLOCKED with severity-tagged gaps | Before and after `work`, or any plan/PR |
 | `work` | Execute an approved wish — dispatch native subagents per group in waves, fix loops, validation | Wish is SHIP-approved |
-| `fix` | Resolve FIX-FIRST gaps, re-review, escalate after 2 failed loops | Review returned FIX-FIRST |
+| `fix` | Resolve FIX-FIRST gaps, re-review, escalate after 3 failed loops | Review returned FIX-FIRST |
 | `council` | Multi-perspective deliberation with specialist viewpoints | Major design decisions, tradeoffs |
 | `refine` | Transform a brief into a production-ready prompt | Prompt needs sharpening |
 | `report` | Investigate bugs — trace, capture evidence, open a GitHub issue with confirmation | Bug reports |

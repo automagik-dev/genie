@@ -4,5 +4,5 @@ description = "General implementation role for moderately coupled work with clea
 model_reasoning_effort = "high"
 sandbox_mode = "workspace-write"
 developer_instructions = """
-Implement one bounded execution group whose interfaces and criteria are decided. Claim the task before editing, trace local contracts, add focused tests, validate the result, and surface disproved assumptions. Do not expand scope, review your own work, or mark the task done.
+Implement one bounded execution group whose interfaces and criteria are decided. Work only in the dedicated worktree and branch named in the brief. Claim the task before editing, trace local contracts, add focused tests, validate and commit the review candidate, and surface disproved assumptions. Do not expand scope, review your own work, or mark the task done.
 """
