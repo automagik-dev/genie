@@ -100,6 +100,13 @@ const RAW_BASE_URL = 'https://raw.githubusercontent.com';
 const RELEASES_SLUG = `${RELEASES_OWNER}/${RELEASES_REPO}`;
 const EXPECTED_COSIGN_IDENTITY = `^https://github\\.com/${RELEASES_SLUG}/\\.github/workflows/sign-attest\\.yml@refs/heads/main$`;
 const EXPECTED_COSIGN_ISSUER = 'https://token.actions.githubusercontent.com';
+// sign-attest.yml registers the GitHub-native attestation under a CUSTOM
+// predicate type (NOT https://slsa.dev/provenance/v1 — GitHub's persistence API
+// runs SLSA validation for that URI and rejects our custom buildType). The
+// verifier MUST pass the same --predicate-type or `gh attestation verify`
+// defaults to slsa.dev/provenance/v1, so the by-digest lookup 404s even though
+// the attestation exists. Keep in lockstep with scripts/release-native-predicate.sh.
+const EXPECTED_ATTESTATION_PREDICATE_TYPE = `https://github.com/${RELEASES_SLUG}/release-tarballs/v1`;
 
 // ============================================================================
 // Verify decision shape. v5 is zero-daemon — the atomic binary swap IS the
@@ -576,6 +583,8 @@ async function verifyTarballSignature(
       tarballPath,
       '--repo',
       RELEASES_SLUG,
+      '--predicate-type',
+      EXPECTED_ATTESTATION_PREDICATE_TYPE,
       '--cert-identity-regex',
       EXPECTED_COSIGN_IDENTITY,
       '--cert-oidc-issuer',
@@ -611,7 +620,9 @@ async function verifyTarballSignature(
   if (cosignVerifyResult.success) return { method: 'cosign-bundle' };
 
   failures.push(`cosign verify-blob: ${cosignVerifyResult.output.trim() || 'no output'}`);
-  throw new Error(`signature verification failed for ${tarballName}: ${failures.join('; ')}`);
+  throw new Error(
+    `signature verification failed for ${tarballName}: ${failures.join('; ')}. Install the GitHub CLI (\`gh\`, with \`gh attestation\` support) or cosign v2.4.1+ (https://docs.sigstore.dev/cosign/installation) and retry \`genie update\`.`,
+  );
 }
 
 /**
@@ -2293,6 +2304,13 @@ async function runDelivery(
 
   log('Extracting exact release payload...');
   await extractTarball(tarballPath, extractedRoot);
+  // tar restores the archived root "./" entry's recorded mode (0755 on every
+  // published tarball) onto extractedRoot, clobbering the 0700 it was created
+  // with. admitExternalInstallStaging -> verifyPayloadLayout asserts the
+  // staging root is *exactly* 0700, so relock the private extraction sandbox
+  // before admission. This normalizes only our own staging root.
+  chmodSync(extractedRoot, 0o700);
+  assertPrivateUpdateTempRoot(extractedRoot);
 
   log('Promoting verified release generation...');
   recoverPendingInstallPromotions({ genieHome: GENIE_HOME });

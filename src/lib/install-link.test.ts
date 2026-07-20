@@ -29,7 +29,7 @@ function fixture() {
   const home = join(root, 'home');
   const target = join(home, '.genie', 'bin', 'genie');
   const link = join(home, '.local', 'bin', 'genie');
-  mkdirSync(join(home, '.genie', 'bin'), { recursive: true });
+  mkdirSync(join(home, '.genie', 'bin'), { recursive: true, mode: 0o700 });
   writeFileSync(target, 'binary');
   return { root, home, target, link };
 }
@@ -59,7 +59,7 @@ describe('canonical installer link', () => {
 
   test('preserves an occupied foreign file', () => {
     const f = fixture();
-    mkdirSync(join(f.home, '.local', 'bin'), { recursive: true });
+    mkdirSync(join(f.home, '.local', 'bin'), { recursive: true, mode: 0o755 });
     writeFileSync(f.link, 'foreign');
 
     expect(() => prepareCanonicalInstallLink({ trustedHome: f.home, linkPath: f.link, targetPath: f.target })).toThrow(
@@ -71,7 +71,7 @@ describe('canonical installer link', () => {
   test('preserves a foreign symlink target', () => {
     const f = fixture();
     const victim = join(f.root, 'victim');
-    mkdirSync(join(f.home, '.local', 'bin'), { recursive: true });
+    mkdirSync(join(f.home, '.local', 'bin'), { recursive: true, mode: 0o755 });
     writeFileSync(victim, 'victim');
     symlinkSync(victim, f.link);
 
@@ -133,7 +133,7 @@ describe('canonical installer link', () => {
     test(`rejects a group/world-writable ${unsafeAncestor} PATH ancestor`, () => {
       const f = fixture();
       const localBin = join(f.home, '.local', 'bin');
-      mkdirSync(localBin, { recursive: true });
+      mkdirSync(localBin, { recursive: true, mode: 0o755 });
       chmodSync(join(f.home, unsafeAncestor), 0o777);
 
       expect(() =>
@@ -149,7 +149,7 @@ describe('canonical installer link', () => {
     const localBin = join(local, 'bin');
     const heldBin = join(f.root, 'held-bin');
     const victim = join(f.root, 'victim-bin');
-    mkdirSync(localBin, { recursive: true });
+    mkdirSync(localBin, { recursive: true, mode: 0o755 });
     mkdirSync(victim);
     writeFileSync(join(victim, 'sentinel'), 'victim\n');
 

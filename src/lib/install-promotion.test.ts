@@ -52,11 +52,14 @@ function makeRoot(): string {
 
 function writePayload(root: string, generation: string): void {
   for (const name of ['.agents', '.claude-plugin', 'plugins', 'skills', 'templates']) {
-    mkdirSync(join(root, name), { recursive: true });
-    writeFileSync(join(root, name, 'generation.txt'), `${generation}:${name}\n`);
+    // Explicit 0o755 so the payload member dirs never inherit a group/other
+    // write bit under a loose caller umask (umask 002 → 0o775), which the
+    // promotion guards reject. Mirrors the modes real release tarballs ship.
+    mkdirSync(join(root, name), { recursive: true, mode: 0o755 });
+    writeFileSync(join(root, name, 'generation.txt'), `${generation}:${name}\n`, { mode: 0o644 });
   }
-  writeFileSync(join(root, 'LICENSE'), `${generation}:license\n`);
-  writeFileSync(join(root, 'VERSION'), `${generation}\n`);
+  writeFileSync(join(root, 'LICENSE'), `${generation}:license\n`, { mode: 0o644 });
+  writeFileSync(join(root, 'VERSION'), `${generation}\n`, { mode: 0o644 });
   writeFileSync(join(root, 'genie'), `#!/bin/sh\necho genie ${generation}\n`);
   chmodSync(join(root, 'genie'), 0o755);
 }
@@ -65,7 +68,7 @@ function makeFixture(withLive = true): Fixture {
   const root = makeRoot();
   const home = join(root, 'home');
   const bin = join(home, 'bin');
-  mkdirSync(bin, { recursive: true });
+  mkdirSync(bin, { recursive: true, mode: 0o700 });
   if (withLive) writePayload(bin, '1.0.0');
   const staging = join(bin, '.install-staging-test');
   mkdirSync(staging, { mode: 0o700 });
@@ -440,7 +443,7 @@ describe('installer promotion transaction', () => {
           injected = true;
           const bytes = readFileSync(live);
           renameSync(live, originalPath);
-          writeFileSync(live, bytes);
+          writeFileSync(live, bytes, { mode: 0o644 });
         }
       },
     });
@@ -457,8 +460,8 @@ describe('installer promotion transaction', () => {
     expect(() => promote(fixture, { dependencies: interruption('publish-incoming', '.agents') })).toThrow(
       InstallPromotionInterruptedError,
     );
-    mkdirSync(join(fixture.staging, '.agents'));
-    writeFileSync(join(fixture.staging, '.agents', 'foreign.txt'), 'foreign\n');
+    mkdirSync(join(fixture.staging, '.agents'), { mode: 0o755 });
+    writeFileSync(join(fixture.staging, '.agents', 'foreign.txt'), 'foreign\n', { mode: 0o644 });
 
     expect(() => recoverPendingInstallPromotions({ genieHome: fixture.home, dependencies: dependencies() })).toThrow(
       'could not be recovered safely',
@@ -706,7 +709,7 @@ describe('installer promotion transaction', () => {
   test('creates and removes an empty direct private stage through held descriptors', () => {
     const root = makeRoot();
     const home = join(root, 'home');
-    mkdirSync(join(home, 'bin'), { recursive: true });
+    mkdirSync(join(home, 'bin'), { recursive: true, mode: 0o700 });
     const guard = createInstallStagingDirectory({
       genieHome: home,
       randomId: () => '44444444-4444-4444-8444-444444444444',
@@ -726,7 +729,7 @@ describe('installer promotion transaction', () => {
     const bin = join(home, 'bin');
     const name = '.install-staging-55555555-5555-4555-8555-555555555555';
     const displaced = join(bin, '.held-stage');
-    mkdirSync(bin, { recursive: true });
+    mkdirSync(bin, { recursive: true, mode: 0o700 });
 
     expect(() =>
       createInstallStagingDirectory({
@@ -749,7 +752,7 @@ describe('installer promotion transaction', () => {
     const bin = join(home, 'bin');
     const heldBin = join(home, 'held-bin');
     const victim = join(root, 'victim');
-    mkdirSync(bin, { recursive: true });
+    mkdirSync(bin, { recursive: true, mode: 0o700 });
     mkdirSync(victim, { mode: 0o700 });
     writeFileSync(join(victim, 'sentinel'), 'safe\n');
 
@@ -775,7 +778,7 @@ describe('installer promotion transaction', () => {
     const victim = join(root, 'victim');
     const name = '.install-staging-77777777-7777-4777-8777-777777777777';
     const quarantined = join(bin, '.quarantined-held-stage');
-    mkdirSync(bin, { recursive: true });
+    mkdirSync(bin, { recursive: true, mode: 0o700 });
     mkdirSync(external, { mode: 0o700 });
     mkdirSync(victim, { mode: 0o700 });
     writePayload(external, '2.0.0');
@@ -802,7 +805,7 @@ describe('installer promotion transaction', () => {
     const root = makeRoot();
     const home = join(root, 'home');
     const external = join(root, 'external');
-    mkdirSync(join(home, 'bin'), { recursive: true });
+    mkdirSync(join(home, 'bin'), { recursive: true, mode: 0o700 });
     mkdirSync(external, { mode: 0o700 });
     writePayload(external, '2.0.0');
     const guard = admitExternalInstallStaging({
