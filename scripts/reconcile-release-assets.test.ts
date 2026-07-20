@@ -90,7 +90,7 @@ if (args[0] === 'attestation' && args[1] === 'verify') {
   const sourceSha = state.invalidNative ? 'not-a-sha' : 'a'.repeat(40);
   const predicateControlSha = digest && state.secondControlSha ? state.secondControlSha : state.controlSha;
   const statement = {
-    predicateType: 'https://slsa.dev/provenance/v1',
+    predicateType: 'https://github.com/automagik-dev/genie/release-tarballs@v1',
     predicate: {
       runDetails: { builder: { id: 'https://github.com/automagik-dev/genie/.github/workflows/sign-attest.yml@refs/heads/main' } },
       buildDefinition: {
