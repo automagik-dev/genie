@@ -68,7 +68,7 @@ describe('native release attestation predicate', () => {
     const verification = [
       {
         verificationResult: {
-          statement: { predicateType: 'https://slsa.dev/provenance/v1', predicate },
+          statement: { predicateType: 'https://github.com/automagik-dev/genie/release-tarballs@v1', predicate },
         },
       },
     ];
@@ -101,7 +101,7 @@ describe('native release attestation predicate', () => {
     const result = [
       {
         verificationResult: {
-          statement: { predicateType: 'https://slsa.dev/provenance/v1', predicate },
+          statement: { predicateType: 'https://github.com/automagik-dev/genie/release-tarballs@v1', predicate },
         },
       },
     ];
