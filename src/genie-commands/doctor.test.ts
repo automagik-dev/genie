@@ -823,6 +823,50 @@ describe('checkAgentSync', () => {
     expect(claude?.suggestion).toBeUndefined();
   });
 
+  test('genie@automagik plugin enabled + no mirrors → pass, "skills mirror suppressed"', () => {
+    mkdirSync(claudeDir, { recursive: true });
+    writeFileSync(
+      join(claudeDir, 'settings.json'),
+      JSON.stringify({ enabledPlugins: { 'genie@automagik': true } }),
+      'utf8',
+    );
+    stampCouncil(pluginRoot);
+
+    const claude = find(checkAgentSync(paths()), 'agent sync: claude');
+    expect(claude?.status).toBe('pass');
+    expect(claude?.detail).toContain('skills mirror suppressed (genie@automagik plugin enabled)');
+    expect(claude?.detail).toContain('council.js current');
+    expect(claude?.suggestion).toBeUndefined();
+  });
+
+  test('genie@automagik plugin enabled + leftover managed mirror → warn advising genie update to prune', () => {
+    seedManaged(join(pluginRoot, 'skills', 'wish'), join(claudeDir, 'skills', 'wish'));
+    stampCouncil(pluginRoot);
+    writeFileSync(
+      join(claudeDir, 'settings.json'),
+      JSON.stringify({ enabledPlugins: { 'genie@automagik': true } }),
+      'utf8',
+    );
+
+    const claude = find(checkAgentSync(paths()), 'agent sync: claude');
+    expect(claude?.status).toBe('warn');
+    expect(claude?.detail).toContain('mirror suppressed — leftover mirrors');
+    expect(claude?.detail).toContain('genie update');
+    expect(claude?.suggestion).toContain('genie update');
+  });
+
+  test('malformed settings.json behaves as not-enabled: mirror freshness expectations hold (fail-open)', () => {
+    seedManaged(join(pluginRoot, 'skills', 'wish'), join(claudeDir, 'skills', 'wish'));
+    seedManaged(join(pluginRoot, 'skills', 'review'), join(claudeDir, 'skills', 'review'));
+    stampCouncil(pluginRoot);
+    writeFileSync(join(claudeDir, 'settings.json'), '{oops', 'utf8');
+
+    const claude = find(checkAgentSync(paths()), 'agent sync: claude');
+    expect(claude?.status).toBe('pass');
+    expect(claude?.detail).toContain('2/2 source skills current');
+    expect(claude?.suggestion).toBeUndefined();
+  });
+
   test('stale managed skill + wrong council stamp → warn + genie-update advice', () => {
     seedManaged(join(pluginRoot, 'skills', 'wish'), join(claudeDir, 'skills', 'wish'));
     seedManaged(join(pluginRoot, 'skills', 'review'), join(claudeDir, 'skills', 'review'), 'deadbeef');

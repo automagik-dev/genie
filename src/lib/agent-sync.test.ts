@@ -1621,6 +1621,135 @@ describe('claude council exclusion', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Claude skills-mirror suppression (genie@automagik plugin enabled)
+// ---------------------------------------------------------------------------
+
+describe('claude skills mirror suppression', () => {
+  /** Claude Code settings.json with the genie marketplace plugin toggled. */
+  function writeClaudeSettings(value: boolean | string): void {
+    writeFile(
+      join(fixture.claudeDir, 'settings.json'),
+      JSON.stringify({ enabledPlugins: { 'genie@automagik': value } }),
+    );
+  }
+
+  test('enabling the plugin after a prior sync prunes managed mirrors with backups; agents + stamp still delivered', () => {
+    present(fixture.claudeDir);
+    run(); // seed alpha + beta as managed mirrors
+    writeClaudeSettings(true);
+
+    const report = run();
+    const claude = agentReport(report, 'claude');
+    expect(skillAction(claude, 'alpha')).toBe('removed');
+    expect(skillAction(claude, 'beta')).toBe('removed');
+    expect(existsSync(join(fixture.claudeDir, 'skills', 'alpha'))).toBe(false);
+    expect(existsSync(join(fixture.claudeDir, 'skills', 'beta'))).toBe(false);
+    expect(readFileSync(join(report.backupsDir as string, 'claude', 'beta', 'SKILL.md'), 'utf8')).toBe('# beta\n');
+    expect(extraAction(claude, 'skills-mirror')).toBe('suppressed');
+    // Non-skill deliveries are untouched by the suppression.
+    expect(existsSync(join(fixture.claudeDir, 'agents', 'reviewer.md'))).toBe(true);
+    expect(existsSync(join(fixture.claudeDir, 'workflows', 'council.js'))).toBe(true);
+  });
+
+  test('enabled on a fresh target: no mirrors are ever created', () => {
+    present(fixture.claudeDir);
+    writeClaudeSettings(true);
+
+    const claude = agentReport(run(), 'claude');
+    expect(claude.skills.filter((skill) => skill.action === 'created')).toHaveLength(0);
+    expect(existsSync(join(fixture.claudeDir, 'skills', 'alpha'))).toBe(false);
+    expect(existsSync(join(fixture.claudeDir, 'skills', 'beta'))).toBe(false);
+    expect(extraAction(claude, 'skills-mirror')).toBe('suppressed');
+    // Agents fan-out and the council stamp are independent of the skills mirror.
+    expect(agentFileAction(claude, 'reviewer')).toBe('created');
+    expect(extraAction(claude, 'stamp')).toBe('written');
+  });
+
+  test('a user-modified mirror is preserved with an advisory while clean siblings are pruned', () => {
+    present(fixture.claudeDir);
+    run();
+    writeFile(join(fixture.claudeDir, 'skills', 'beta', 'SKILL.md'), '# beta hand-edited\n');
+    writeClaudeSettings(true);
+
+    const claude = agentReport(run(), 'claude');
+    expect(skillAction(claude, 'beta')).toBe('kept-modified-orphan');
+    expect(readFileSync(join(fixture.claudeDir, 'skills', 'beta', 'SKILL.md'), 'utf8')).toBe('# beta hand-edited\n');
+    expect(claude.advisories.some((line) => line.includes('kept modified orphan beta'))).toBe(true);
+    expect(skillAction(claude, 'alpha')).toBe('removed');
+    expect(existsSync(join(fixture.claudeDir, 'skills', 'alpha'))).toBe(false);
+  });
+
+  test('fail-open: disabled, non-boolean, and malformed settings all mirror exactly as today', () => {
+    const rawSettings = [
+      JSON.stringify({ enabledPlugins: { 'genie@automagik': false } }),
+      JSON.stringify({ enabledPlugins: { 'genie@automagik': 'yes' } }),
+      '{oops',
+    ];
+    for (const raw of rawSettings) {
+      rmSync(fixture.root, { recursive: true, force: true });
+      fixture = setup();
+      present(fixture.claudeDir);
+      writeFile(join(fixture.claudeDir, 'settings.json'), raw);
+
+      const claude = agentReport(run(), 'claude');
+      expect(skillAction(claude, 'alpha')).toBe('created');
+      expect(skillAction(claude, 'beta')).toBe('created');
+      expect(extraAction(claude, 'skills-mirror')).toBeUndefined();
+    }
+  });
+
+  test('re-disabling the plugin after a prune brings the mirrors back', () => {
+    present(fixture.claudeDir);
+    run(); // seed
+    writeClaudeSettings(true);
+    const pruned = agentReport(run(), 'claude');
+    expect(skillAction(pruned, 'alpha')).toBe('removed');
+    writeClaudeSettings(false);
+
+    const claude = agentReport(run(), 'claude');
+    expect(skillAction(claude, 'alpha')).toBe('created');
+    expect(skillAction(claude, 'beta')).toBe('created');
+    expect(extraAction(claude, 'skills-mirror')).toBeUndefined();
+    expect(readFileSync(join(fixture.claudeDir, 'skills', 'alpha', 'SKILL.md'), 'utf8')).toBe('# alpha\n');
+  });
+
+  test('council stays excluded whether the plugin is enabled or not', () => {
+    rmSync(fixture.root, { recursive: true, force: true });
+    fixture = setup({
+      skills: { alpha: { 'SKILL.md': '# alpha\n' }, council: { 'SKILL.md': '# council (portable)\n' } },
+    });
+    present(fixture.claudeDir);
+
+    let claude = agentReport(run(), 'claude');
+    expect(skillAction(claude, 'council')).toBeUndefined();
+    expect(existsSync(join(fixture.claudeDir, 'skills', 'council'))).toBe(false);
+
+    writeClaudeSettings(true);
+    claude = agentReport(run(), 'claude');
+    expect(skillAction(claude, 'council')).toBeUndefined();
+    expect(existsSync(join(fixture.claudeDir, 'skills', 'council'))).toBe(false);
+  });
+
+  test('GENIE_FORCE_CLAUDE_SKILLS_MIRROR=1 kill-switch forces the mirror despite an enabled plugin', () => {
+    present(fixture.claudeDir);
+    writeClaudeSettings(true);
+    const prior = process.env.GENIE_FORCE_CLAUDE_SKILLS_MIRROR;
+    process.env.GENIE_FORCE_CLAUDE_SKILLS_MIRROR = '1';
+    try {
+      const claude = agentReport(run(), 'claude');
+      expect(skillAction(claude, 'alpha')).toBe('created');
+      expect(skillAction(claude, 'beta')).toBe('created');
+      expect(extraAction(claude, 'skills-mirror')).toBeUndefined();
+    } finally {
+      if (prior === undefined) {
+        // biome-ignore lint/performance/noDelete: process.env assignment coerces undefined→"undefined"; delete is the only correct unset
+        delete process.env.GENIE_FORCE_CLAUDE_SKILLS_MIRROR;
+      } else process.env.GENIE_FORCE_CLAUDE_SKILLS_MIRROR = prior;
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Missing agents
 // ---------------------------------------------------------------------------
 
