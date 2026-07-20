@@ -48,6 +48,7 @@ Lead with a one-sentence verdict: did the repo pass its contributor test, and wh
 ## Pitfalls
 
 - Never evaluate docs by reading them — a page can read beautifully and be unfollowable; every "docs are good" claim must trace to a followed procedure.
+- Treat mechanism leakage as reader friction. If a reader can act safely from an observable promise, do not require them to learn internal components, protocols, state, or recovery machinery. Keep details only when they change a decision, safety boundary, troubleshooting step, or extension point; move the rest to internal explanation or architecture docs.
 - Internal-only docs deliberately excluded from a public site are design, not gaps — check the exclusion mechanism before reporting "missing" pages.
 - If docs live in a submodule or separate repo, a fix recommendation that says "edit and commit here" strands changes — name the real workflow in the fix.
 - Agent-context files (CLAUDE.md and kin) drifting from the product is real drift, but its fix lands in this repo, not the docs pipeline — route the two drift classes separately.
