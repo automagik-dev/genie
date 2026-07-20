@@ -54,7 +54,8 @@
       "plugins/genie/scripts",
       "plugins/genie/workflows",
       ".docs-vendor",
-      "docs"
+      "docs",
+      ".well-known"
     ]
   },
   "overrides": [
