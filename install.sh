@@ -568,7 +568,7 @@ extract_and_link() {
   log "canonical link: $LOCAL_BIN/genie → $bin/genie"
 }
 
-# Detect pre-cutover# Detect pre-cutover (bun-global / npm-global) installs and surface the
+# Detect pre-cutover (bun-global / npm-global) installs and surface the
 # exact uninstall command. install.sh writes the new binary at
 # ${GENIE_HOME}/bin/genie + a symlink at ${LOCAL_BIN}/genie, but if the
 # legacy bin directory ranks ahead of ${LOCAL_BIN} on PATH the shell
@@ -709,7 +709,7 @@ verify_installation() {
 }
 
 main() {
-  need curl; need tar; need uname; need link
+  need curl; need tar; need uname; need ln
   local platform channel payload version tarball_base tarball
   platform="$(detect_platform)"
   channel="$(resolve_channel)"

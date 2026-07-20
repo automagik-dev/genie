@@ -26,12 +26,16 @@ const originalLeaseOwner = process.env[LIFECYCLE_LEASE_OWNER_ENV];
 const originalGenieHome = process.env.GENIE_HOME;
 
 afterEach(() => {
-  if (originalLeasePath === undefined) process.env[LIFECYCLE_LEASE_PATH_ENV] = undefined;
+  // `process.env[X] = undefined` would store the literal string "undefined";
+  // delete restores the genuinely-unset state for later test files.
+  if (originalLeasePath === undefined) delete process.env[LIFECYCLE_LEASE_PATH_ENV];
   else process.env[LIFECYCLE_LEASE_PATH_ENV] = originalLeasePath;
-  if (originalLeaseOwner === undefined) process.env[LIFECYCLE_LEASE_OWNER_ENV] = undefined;
+  if (originalLeaseOwner === undefined) delete process.env[LIFECYCLE_LEASE_OWNER_ENV];
   else process.env[LIFECYCLE_LEASE_OWNER_ENV] = originalLeaseOwner;
-  if (originalGenieHome === undefined) process.env.GENIE_HOME = undefined;
-  else process.env.GENIE_HOME = originalGenieHome;
+  if (originalGenieHome === undefined) {
+    // biome-ignore lint/performance/noDelete: process.env assignment coerces undefined→"undefined"; delete is the only correct unset
+    delete process.env.GENIE_HOME;
+  } else process.env.GENIE_HOME = originalGenieHome;
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
@@ -109,7 +113,7 @@ describe('hidden installer promoter command', () => {
 
   test('missing borrowed authority fails before any live or link mutation', () => {
     const f = fixture();
-    process.env[LIFECYCLE_LEASE_OWNER_ENV] = undefined;
+    delete process.env[LIFECYCLE_LEASE_OWNER_ENV];
 
     expect(() => run(f)).toThrow(InstallPromoteCommandError);
     expect(readFileSync(join(f.bin, 'VERSION'), 'utf8')).toBe('1.0.0\n');
@@ -174,8 +178,8 @@ describe('hidden installer promoter command', () => {
   });
 
   test('native self-test is isolated from production lease authority', () => {
-    process.env[LIFECYCLE_LEASE_PATH_ENV] = undefined;
-    process.env[LIFECYCLE_LEASE_OWNER_ENV] = undefined;
+    delete process.env[LIFECYCLE_LEASE_PATH_ENV];
+    delete process.env[LIFECYCLE_LEASE_OWNER_ENV];
     const output: string[] = [];
 
     installPromoteCommand({ selfTest: true }, { emit: (line) => output.push(line) });

@@ -1789,7 +1789,13 @@ function verifyVersion(
   }
   let output: string;
   try {
-    output = execFileSync(binaryPath, ['--version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    // Bounded: a hanging staged binary must fail the transaction, not stall it
+    // while the lifecycle lease blocks every other lifecycle command.
+    output = execFileSync(binaryPath, ['--version'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 30_000,
+    });
   } catch (error) {
     throw new InstallPromotionError(`${phase} Genie binary failed to execute for version verification`, {
       cause: error,

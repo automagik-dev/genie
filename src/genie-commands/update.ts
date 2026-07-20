@@ -738,78 +738,6 @@ function assertOwnedPhysicalDirectory(path: string, label: string): void {
 }
 
 /**
- * Post-swap correctness guard: execute the freshly-swapped binary and confirm
- * its `--version` output normalises to the version we intended to install.
- *
- * Why this exists: on 2026-05-22 we observed an update that printed
- * "✔ Genie binary updated → v4.260522.2" while the on-disk file at
- * `~/.genie/bin/genie` remained v4.260520.3 with an mtime predating the
- * update run. `atomicBinarySwap` returned `{ swapped: true }` without
- * throwing, but the bytes never landed (cause: cleaned-up `.staging/`, no
- * forensics). The success message was a lie produced from the *intent*
- * (`manifest.version`), not from re-reading the result.
- *
- * The fix is belt-and-suspenders: never claim success without proof. This
- * helper executes the binary at `targetBin` (injectable via `opts.runVersion`
- * for tests) and throws a structured `Error` when the reported version does
- * not match the manifest. The thrown error includes the staging + previous
- * directories the operator can inspect.
- */
-export interface VerifySwappedBinaryOptions {
-  /** Test seam — replaces the `execFileSync(targetBin, ['--version'])` call. */
-  runVersion?: (targetBin: string) => string;
-  stagingDir?: string;
-  previousDir?: string;
-}
-
-export function verifySwappedBinary(
-  targetBin: string,
-  expectedVersion: string,
-  opts: VerifySwappedBinaryOptions = {},
-): void {
-  const runner =
-    opts.runVersion ??
-    ((path: string) => execFileSync(path, ['--version'], { encoding: 'utf-8', timeout: 3000 }).toString());
-
-  let raw: string;
-  try {
-    raw = runner(targetBin);
-  } catch (err) {
-    throw new Error(
-      `Post-swap verification failed — could not execute ${targetBin}: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
-  }
-  const match = raw.trim().match(/\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)*/);
-  if (!match) {
-    throw new Error(
-      `Post-swap verification failed — ${targetBin} ran but emitted no parsable version (got: ${JSON.stringify(
-        raw.slice(0, 200),
-      )})`,
-    );
-  }
-  const actual = normalizeVersion(match[0]);
-  const intended = normalizeVersion(expectedVersion);
-  if (actual !== intended) {
-    const hints: string[] = [];
-    if (opts.stagingDir) hints.push(`  Staging : ${opts.stagingDir}`);
-    if (opts.previousDir) hints.push(`  Previous: ${opts.previousDir}`);
-    throw new Error(
-      [
-        'Post-swap verification failed — the atomic swap reported success but the',
-        'on-disk binary holds the wrong version. This usually means the staged file',
-        'was the wrong version or the swap was rolled back by an external watcher.',
-        `  Intended: v${intended}`,
-        `  On disk : v${actual}`,
-        `  Path    : ${targetBin}`,
-        ...hints,
-      ].join('\n'),
-    );
-  }
-}
-
-/**
  * Decide whether the post-update "PATH `genie` is NOT the binary that was
  * just updated" advisory should be emitted.
  *
@@ -822,7 +750,7 @@ export function verifySwappedBinary(
  *   3. Versions match — PATH is fine.
  *   4. **`live` and `canonical` resolve to the same canonical path** —
  *      a version mismatch in that case means the swap silently failed
- *      (caught by `verifySwappedBinary`). The advisory's
+ *      (caught by the promotion transaction's version verification). The advisory's
  *      `ln -sf <canonical> <live>` suggestion would devolve into
  *      `ln -sf X X` — a useless self-symlink — and mislead the operator
  *      into thinking PATH is the problem when the real defect is upstream.
@@ -2092,7 +2020,7 @@ export function runV4CleanupSafe(runner: typeof cleanupV4 = cleanupV4): void {
  * failure; partial work therefore remains immediately retryable.
  *
  * `sync` / `log` / `markerPath` / `now` are injection seams (mirrors
- * runV4CleanupSafe + verifySwappedBinary) so the wiring is unit-testable without
+ * runV4CleanupSafe) so the wiring is unit-testable without
  * touching a real home directory.
  */
 export interface RunAgentSyncSafeOptions {
@@ -2392,6 +2320,7 @@ async function runDelivery(
           const output = execFileSync(binaryPath, ['--version'], {
             encoding: 'utf8',
             stdio: ['ignore', 'pipe', 'ignore'],
+            timeout: 30_000,
           });
           const reported = output.match(/\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)*/)?.[0];
           return reported !== undefined && normalizeVersion(reported) === normalizeVersion(expectedVersion);
@@ -2411,8 +2340,8 @@ async function runDelivery(
     // tell them exactly how to fix it rather than silently "succeeding".
     //
     // Suppression: when `live` and `canonical` resolve to the same file, a
-    // version mismatch is upstream swap corruption (already caught by
-    // verifySwappedBinary above), not a PATH problem. The legacy heuristic
+    // version mismatch is upstream swap corruption (already caught by the
+    // staged-promotion version verification above), not a PATH problem. The legacy heuristic
     // generated `ln -sf canonical canonical` — a useless self-symlink. See
     // shouldEmitPathDivergenceWarning for the full rule set.
     try {

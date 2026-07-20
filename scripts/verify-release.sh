@@ -100,9 +100,12 @@ verify_one() {
   fi
 
   echo "-> slsa-verifier verify-artifact"
+  # --source-branch main matches reconcile-release-assets.sh: provenance
+  # generated from any other branch of the repo must not satisfy this leg.
   if ! slsa-verifier verify-artifact "${tarball}" \
       --provenance-path "${provenance}" \
-      --source-uri "${SOURCE_URI}"; then
+      --source-uri "${SOURCE_URI}" \
+      --source-branch main; then
     echo "error: SLSA provenance verification failed — exit 4" >&2
     exit 4
   fi

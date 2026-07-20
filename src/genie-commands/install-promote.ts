@@ -168,7 +168,13 @@ function assertRunningVerifiedStage(stagingBinary: string, runtimeExecutable: st
 
 function verifyExecutableVersion(binaryPath: string, expectedVersion: string): boolean {
   try {
-    const output = execFileSync(binaryPath, ['--version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    // Bounded: a hanging live binary must fail verification, not stall the
+    // promotion while the borrowed lifecycle lease blocks other commands.
+    const output = execFileSync(binaryPath, ['--version'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 30_000,
+    });
     return versionToken(output) === expectedVersion;
   } catch {
     return false;

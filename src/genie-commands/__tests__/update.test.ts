@@ -81,7 +81,6 @@ import {
   shouldEmitPathDivergenceWarning,
   summarizeJsonlSignals,
   syncAuxiliaryContent,
-  verifySwappedBinary,
 } from '../update.js';
 
 function healthyUpdateCodexProbe(): CodexPluginProbe {
@@ -1645,75 +1644,15 @@ describe('Knip-clean exports (PR #1733 follow-up)', () => {
 //
 // Root causes:
 //   1. runDelivery printed success based on `manifest.version` (intent),
-//      never re-reading the swapped binary.
+//      never re-reading the swapped binary. (Now owned by the staged-promotion
+//      transaction's mandatory version verification.)
 //   2. The PATH heuristic did not guard against `live === canonical`, so a
 //      version mismatch caused by a botched swap was misdiagnosed as a PATH
 //      problem and rendered as `ln -sf X X`.
 //
-// Both helpers below are pure and injectable so the regression is locked in
+// The helper below is pure and injectable so the regression is locked in
 // without spawning a real `genie` binary.
 // ============================================================================
-
-describe('verifySwappedBinary (post-swap correctness guard)', () => {
-  test('returns void when reported version matches expected', () => {
-    expect(() =>
-      verifySwappedBinary('/fake/path/genie', '4.260522.2', {
-        runVersion: () => '4.260522.2\n',
-      }),
-    ).not.toThrow();
-  });
-
-  test('strips build metadata before comparison (normalizeVersion parity)', () => {
-    expect(() =>
-      verifySwappedBinary('/fake/path/genie', '4.260522.2', {
-        runVersion: () => '4.260522.2+abc1234\n',
-      }),
-    ).not.toThrow();
-  });
-
-  test('throws with intended-vs-on-disk diff when version mismatches', () => {
-    expect(() =>
-      verifySwappedBinary('/fake/path/genie', '4.260522.2', {
-        runVersion: () => '4.260520.3\n',
-        stagingDir: '/tmp/staging',
-        previousDir: '/tmp/previous',
-      }),
-    ).toThrow(/Intended: v4\.260522\.2[\s\S]*On disk : v4\.260520\.3/);
-  });
-
-  test('mismatch message includes staging + previous hints for forensics', () => {
-    let captured: string | null = null;
-    try {
-      verifySwappedBinary('/fake/path/genie', '4.260522.2', {
-        runVersion: () => '4.260520.3\n',
-        stagingDir: '/home/genie/.genie/bin/.staging',
-        previousDir: '/home/genie/.genie/bin/.previous',
-      });
-    } catch (err) {
-      captured = err instanceof Error ? err.message : String(err);
-    }
-    expect(captured).toContain('/home/genie/.genie/bin/.staging');
-    expect(captured).toContain('/home/genie/.genie/bin/.previous');
-  });
-
-  test('throws when binary cannot be executed (wraps underlying error)', () => {
-    expect(() =>
-      verifySwappedBinary('/fake/path/genie', '4.260522.2', {
-        runVersion: () => {
-          throw new Error('ENOENT: no such file');
-        },
-      }),
-    ).toThrow(/Post-swap verification failed.*could not execute.*ENOENT/);
-  });
-
-  test('throws when binary runs but emits no parseable version', () => {
-    expect(() =>
-      verifySwappedBinary('/fake/path/genie', '4.260522.2', {
-        runVersion: () => 'banner with no version string\n',
-      }),
-    ).toThrow(/emitted no parsable version/);
-  });
-});
 
 describe('shouldEmitPathDivergenceWarning (self-symlink suppression)', () => {
   const canonical = '/home/genie/.genie/bin/genie';

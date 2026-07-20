@@ -372,6 +372,25 @@ describe('claude agent fan-out', () => {
     expect(readFileSync(backup, 'utf8')).toBe('# pre-existing hand copy\n');
   });
 
+  test('a same-name agent symlink is never followed, adopted, or replaced', () => {
+    present(fixture.claudeDir);
+    const agentsDir = join(fixture.claudeDir, 'agents');
+    const outside = join(fixture.root, 'personal-scout.md');
+    writeFile(outside, '# personal symlink target\n');
+    mkdirSync(agentsDir, { recursive: true });
+    symlinkSync(outside, join(agentsDir, 'scout.md'));
+
+    const report = run();
+    const claude = agentReport(report, 'claude');
+
+    expect(agentFileAction(claude, 'scout')).toBe('skipped-unmanaged-kept');
+    expect(claude.advisories.some((line) => line.includes('symlink preserved and never followed'))).toBe(true);
+    expect(lstatSync(join(agentsDir, 'scout.md')).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(join(agentsDir, 'scout.md'))).toBe(outside);
+    expect(readFileSync(outside, 'utf8')).toBe('# personal symlink target\n');
+    expect(readAgentFilesManifest(agentsDir)?.files['scout.md']).toBeUndefined();
+  });
+
   test('an unmodified source orphan is backed up, removed, and dropped from the manifest', () => {
     present(fixture.claudeDir);
     run();
@@ -2822,6 +2841,30 @@ describe('cross-process sync lock', () => {
     expect({ dev: after.dev, ino: after.ino, mode: after.mode }).toEqual(foreignIdentity);
     expect(readdirSync(lockPath)).toEqual([]);
     expect(readdirSync(fixture.genieHome).some((name) => name.startsWith(`${LOCK_NAME}.stage-`))).toBe(false);
+  });
+
+  test('stale empty-generation crash debris is reaped and the sync recovers', () => {
+    present(fixture.claudeDir);
+    const lockPath = join(fixture.genieHome, LOCK_NAME);
+    // Crash debris: a release/steal unlinked the owner file but died before the
+    // generation rmdir, leaving an empty directory no owner file can ever join.
+    mkdirSync(lockPath);
+    const staleSec = (Date.now() - 11 * 60 * 1000) / 1000; // 11 min > 10 min age-out
+    utimesSync(lockPath, staleSec, staleSec);
+
+    const report = run();
+
+    expect(report.skipped).toBeUndefined();
+    expect(skillAction(agentReport(report, 'claude'), 'alpha')).toBe('created');
+    expect(existsSync(lockPath)).toBe(false); // released after the run
+  });
+
+  test('a fresh empty-generation directory stays contention until it ages out', () => {
+    const lockPath = join(fixture.genieHome, LOCK_NAME);
+    mkdirSync(lockPath);
+
+    expect(acquireAgentSyncLock(fixture.genieHome)).toBeNull();
+    expect(existsSync(lockPath)).toBe(true); // fresh debris is never reaped early
   });
 
   test('portable lock publication uses one O_EXCL file and excludes a concurrent contender', () => {

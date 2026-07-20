@@ -2556,7 +2556,23 @@ function removeIntegrationState(
   for (const step of integrations.steps) {
     if (!step.ok) result.failures.push({ step: `Removing ${step.runtime} ${step.operation}`, detail: step.detail });
   }
-  if (result.failures.length === failureCount) progress.complete(member);
+  settleRuntimeIntegrationProgress(member, result.failures.length !== failureCount, progress);
+}
+
+/**
+ * Settle the runtime-integration member's durable receipt once
+ * removeRuntimeIntegrations has returned. At that point there is no ambiguous
+ * in-flight mutation left behind and successful per-step outcomes are
+ * idempotent, so a structured failure must clear the active receipt; retaining
+ * it permanently strands the batch behind the interrupted-slot replay guard.
+ */
+export function settleRuntimeIntegrationProgress(
+  member: string,
+  hadFailures: boolean,
+  progress: UninstallBatchProgressController,
+): void {
+  if (hadFailures) progress.abort(member);
+  else progress.complete(member);
 }
 
 /** Try an uninstall step, logging success or warning and returning structured failure. */

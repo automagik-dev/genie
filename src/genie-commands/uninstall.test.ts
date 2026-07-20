@@ -65,9 +65,11 @@ import {
   removeRulesMember,
   removeSymlinkMembers,
   removeSymlinks,
+  settleRuntimeIntegrationProgress,
   uninstallBatchIntegrationViolations,
   uninstallBatchJournalPath,
   uninstallBatchMemberId,
+  uninstallBatchRuntimeMemberId,
   uninstallBatchRuntimeTargets,
   updateUninstallBatchProgress,
 } from './uninstall.js';
@@ -1772,6 +1774,37 @@ describe('durable uninstall batch', () => {
 
     expect(retried.result.failures).toEqual([]);
     expect(existsSync(secondAsset)).toBe(false);
+    expect(readUninstallBatchDecision(genieHome)).toBeNull();
+  });
+
+  test('a structured runtime-integration failure clears its active receipt so retry can converge', () => {
+    const plannedScope = scope();
+    plannedScope.runtimePlugins = { codex: true, claude: false };
+    const member = uninstallBatchRuntimeMemberId(plannedScope);
+
+    const first = executeUninstallBatch(genieHome, plannedScope, (_decisionScope, progress) => {
+      progress.begin(member);
+      // Mirrors removeIntegrationState after removeRuntimeIntegrations returns a
+      // structured failure (e.g. a transient codex/claude CLI timeout): no
+      // mutation is in flight, per-step outcomes are idempotent, and the batch
+      // must stay retryable rather than stranding behind the replay guard.
+      settleRuntimeIntegrationProgress(member, true, progress);
+      return { failures: [{ step: 'Removing codex plugin', detail: 'injected runtime failure' }] };
+    });
+
+    expect(first.result.failures).toHaveLength(1);
+    expect(readUninstallBatchDecision(genieHome)?.progress.active).toBeNull();
+
+    let replayed = false;
+    const retried = executeUninstallBatch(genieHome, plannedScope, (_decisionScope, progress) => {
+      replayed = true;
+      progress.begin(member);
+      settleRuntimeIntegrationProgress(member, false, progress);
+      return { failures: [] };
+    });
+
+    expect(replayed).toBe(true);
+    expect(retried.result.failures).toEqual([]);
     expect(readUninstallBatchDecision(genieHome)).toBeNull();
   });
 

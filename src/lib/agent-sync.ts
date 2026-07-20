@@ -4589,7 +4589,10 @@ function buildClaudeAgentPlan(
     try {
       const op = planAgentPublish(ctx, source, targetDir, baseFiles[source.name]);
       if (op === 'unchanged') report.extras.push({ kind: 'agent', action: 'unchanged', detail: source.name });
-      else ops.push(op);
+      else if (op === 'symlink-kept') {
+        report.extras.push({ kind: 'agent', action: 'skipped-unmanaged-kept', detail: source.name });
+        report.advisories.push(`agent ${source.name} (claude): same-name symlink preserved and never followed`);
+      } else ops.push(op);
     } catch (err) {
       const failure = `agent ${source.name} (claude) failed: ${errMsg(err)}`;
       report.advisories.push(failure);
@@ -4611,16 +4614,17 @@ function buildClaudeAgentPlan(
 
 /**
  * Per-file policy mirrors managed skill dirs without ever swapping the parent:
- * missing creates; clean+same skips; clean+changed updates; anything else is
- * backed up before adoption. The snapshot the policy validated is the exact
- * CAS target of the later publish.
+ * missing creates; clean+same skips; clean+changed updates; a same-name
+ * symlink is never followed, adopted, or replaced; anything else is backed up
+ * before adoption. The snapshot the policy validated is the exact CAS target
+ * of the later publish.
  */
 function planAgentPublish(
   ctx: RunContext,
   source: SourceAgentFile,
   targetDir: string,
   entry: AgentFileManifestEntry | undefined,
-): FlatAgentOp | 'unchanged' {
+): FlatAgentOp | 'unchanged' | 'symlink-kept' {
   // Read first: a source read failure must leave an existing target untouched.
   const payload = readFileSync(source.path);
   const sourceDigest = hashBytes(payload);
@@ -4630,6 +4634,10 @@ function planAgentPublish(
   if (expected.kind === 'absent') {
     return { kind: 'publish', name: source.name, payload, entry: manifestEntry, expected, action: 'created' };
   }
+  // Same policy as the skills lane: a user-placed symlink (e.g. a dotfiles
+  // repo link) stays live — adoption would destroy the link itself even though
+  // the pointed-to bytes survive in backup.
+  if (expected.kind === 'symlink') return 'symlink-kept';
   const targetDigest = expected.kind === 'file' ? expected.digest : null;
   if (entry !== undefined && targetDigest === entry.digest) {
     if (sourceDigest === entry.digest) return 'unchanged';
@@ -6225,19 +6233,34 @@ function acquireAgentMutationLock(lockPath: string, options: AgentSyncLockOption
     if (observed === null) continue; // holder released between exclusive-create and inspection
     if (!isStaleOrInvalidLockTime(observed.stat.mtimeMs)) return null;
     if (observed.kind === 'foreign') return null;
-    if (observed.kind === 'legacy-file') {
-      // Upgrade compatibility retains the current dev lock protocol's
-      // cross-host/PID liveness rule. A generation lock is self-identifying by
-      // its owner pathname, while a legacy file carries this record in bytes.
-      if (lockHasLiveOwner(lockPath, resolveProcessStartIdentity)) return null;
-      if (stealLegacyStaleLock(lockPath, observed, options) === 'contended') return null;
-      continue;
-    }
-    if (lockOwnerIsLive(parseLockOwner(observed.token.trim()), resolveProcessStartIdentity)) return null;
-    if (stealStaleAgentLock(lockPath, observed, options) === 'contended') return null;
-    // stale owner token was removed; retry the atomic generation publish
+    if (clearStaleLockObject(lockPath, observed, options, resolveProcessStartIdentity) === 'contended') return null;
+    // stale object was cleared; retry the atomic generation publish
   }
   return null; // lost the steal race to another process whose lock is now fresh
+}
+
+/** Clear one re-verified stale lock object by kind; 'contended' defers to a live (or unverifiable) holder. */
+function clearStaleLockObject(
+  lockPath: string,
+  observed: OwnedLockDirectory | LegacyLockFile | EmptyLockDirectory,
+  options: AgentSyncLockOptions,
+  resolveProcessStartIdentity: typeof processStartIdentity,
+): 'cleared' | 'contended' {
+  if (observed.kind === 'empty-directory') {
+    // Crash debris from a two-step release/steal (owner unlinked, rmdir never
+    // ran). Reaping is intrinsically safe: rmdir cannot remove a directory
+    // that regained content, so a concurrent fresh publish is never harmed.
+    return removeEmptyLockGeneration(lockPath) ? 'cleared' : 'contended';
+  }
+  if (observed.kind === 'legacy-file') {
+    // Upgrade compatibility retains the current dev lock protocol's
+    // cross-host/PID liveness rule. A generation lock is self-identifying by
+    // its owner pathname, while a legacy file carries this record in bytes.
+    if (lockHasLiveOwner(lockPath, resolveProcessStartIdentity)) return 'contended';
+    return stealLegacyStaleLock(lockPath, observed, options);
+  }
+  if (lockOwnerIsLive(parseLockOwner(observed.token.trim()), resolveProcessStartIdentity)) return 'contended';
+  return stealStaleAgentLock(lockPath, observed, options);
 }
 
 interface OwnedLockDirectory {
@@ -6264,6 +6287,18 @@ interface LegacyLockFile {
 
 interface ForeignLockObject {
   kind: 'foreign';
+  stat: Stats;
+}
+
+/**
+ * An empty generation directory is never a legitimate in-flight state: lock
+ * publication renames a staged directory that already contains its owner file,
+ * while release/steal unlink the owner and rmdir the generation as two steps.
+ * A crash between those steps strands an empty directory that no future owner
+ * file can ever join, so the acquire loop may reap it once stale.
+ */
+interface EmptyLockDirectory {
+  kind: 'empty-directory';
   stat: Stats;
 }
 
@@ -6375,7 +6410,9 @@ function createOwnedAgentSyncLock(lockPath: string, options: AgentSyncLockOption
   return { kind: 'owned-directory', ownerName, ownerPath, stat: current.stat, token };
 }
 
-function inspectLockObject(lockPath: string): OwnedLockDirectory | LegacyLockFile | ForeignLockObject | null {
+function inspectLockObject(
+  lockPath: string,
+): OwnedLockDirectory | LegacyLockFile | ForeignLockObject | EmptyLockDirectory | null {
   try {
     const stat = lstatSync(lockPath);
     if (stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1) {
@@ -6385,8 +6422,10 @@ function inspectLockObject(lockPath: string): OwnedLockDirectory | LegacyLockFil
       return { kind: 'legacy-file', stat: after, bytes };
     }
     if (!stat.isDirectory() || stat.isSymbolicLink()) return { kind: 'foreign', stat };
-    const owners = readdirSync(lockPath).filter((name) => name.startsWith('owner-'));
-    if (owners.length !== 1 || readdirSync(lockPath).length !== 1) return { kind: 'foreign', stat };
+    const entries = readdirSync(lockPath);
+    if (entries.length === 0) return { kind: 'empty-directory', stat };
+    const owners = entries.filter((name) => name.startsWith('owner-'));
+    if (owners.length !== 1 || entries.length !== 1) return { kind: 'foreign', stat };
     const ownerName = owners[0] as string;
     const ownerPath = join(lockPath, ownerName);
     const owner = inspectOwnedLockFile(ownerPath);
