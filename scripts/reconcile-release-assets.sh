@@ -151,7 +151,7 @@ if remote_is_complete; then
     result="$WORK_ROOT/native-${platform}.json"
     gh attestation verify "$tarball" \
       --repo "$RELEASE_REPOSITORY" \
-      --predicate-type "https://github.com/${RELEASE_REPOSITORY}/release-tarballs@v1" \
+      --predicate-type "https://github.com/${RELEASE_REPOSITORY}/release-tarballs/v1" \
       --cert-identity "https://github.com/${RELEASE_REPOSITORY}/.github/workflows/sign-attest.yml@refs/heads/main" \
       --source-ref refs/heads/main \
       --format json >"$result"
@@ -160,7 +160,7 @@ if remote_is_complete; then
     exact_result="$WORK_ROOT/native-exact-${platform}.json"
     gh attestation verify "$tarball" \
       --repo "$RELEASE_REPOSITORY" \
-      --predicate-type "https://github.com/${RELEASE_REPOSITORY}/release-tarballs@v1" \
+      --predicate-type "https://github.com/${RELEASE_REPOSITORY}/release-tarballs/v1" \
       --cert-identity "https://github.com/${RELEASE_REPOSITORY}/.github/workflows/sign-attest.yml@refs/heads/main" \
       --source-ref refs/heads/main \
       --source-digest "$remote_control_sha" \
