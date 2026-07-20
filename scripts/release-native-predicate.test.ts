@@ -68,7 +68,7 @@ describe('native release attestation predicate', () => {
     const verification = [
       {
         verificationResult: {
-          statement: { predicateType: 'https://github.com/automagik-dev/genie/release-tarballs@v1', predicate },
+          statement: { predicateType: 'https://github.com/automagik-dev/genie/release-tarballs/v1', predicate },
         },
       },
     ];
@@ -101,7 +101,7 @@ describe('native release attestation predicate', () => {
     const result = [
       {
         verificationResult: {
-          statement: { predicateType: 'https://github.com/automagik-dev/genie/release-tarballs@v1', predicate },
+          statement: { predicateType: 'https://github.com/automagik-dev/genie/release-tarballs/v1', predicate },
         },
       },
     ];
@@ -115,7 +115,7 @@ describe('native release attestation predicate', () => {
     writeFileSync(resultPath, JSON.stringify(result));
     expect(invoke('reusable-control-sha', resultPath).exitCode).not.toBe(0);
 
-    predicate.buildDefinition.buildType = 'https://github.com/automagik-dev/genie/release-tarballs@v1';
+    predicate.buildDefinition.buildType = 'https://github.com/automagik-dev/genie/release-tarballs/v1';
     predicate.buildDefinition.resolvedDependencies[1].digest.gitCommit = 'd'.repeat(40);
     writeFileSync(resultPath, JSON.stringify(result));
     expect(invoke('reusable-control-sha', resultPath).exitCode).not.toBe(0);

@@ -9,13 +9,16 @@ set -euo pipefail
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 2
 
 BUILDER_ID="https://github.com/${RELEASE_REPOSITORY}/.github/workflows/sign-attest.yml@refs/heads/main"
-BUILD_TYPE="https://github.com/${RELEASE_REPOSITORY}/release-tarballs@v1"
+BUILD_TYPE="https://github.com/${RELEASE_REPOSITORY}/release-tarballs/v1"
 # The statement predicateType is the custom buildType URI, NOT
 # https://slsa.dev/provenance/v1: GitHub's attestation persistence API runs
 # SLSA-provenance validation for that type and rejects non-allowlisted
 # buildTypes ("unsupported build type", observed 2026-07-20 on the first
 # stable run). A custom predicate type skips that validation while keeping
 # the SLSA-v1-shaped body; every verifier passes the same --predicate-type.
+# The URI must not contain '@': the attestations QUERY API rejects it as an
+# invalid predicate_type (HTTP 422, observed 2026-07-20) even though the
+# write API accepts it — hence /v1, not @v1.
 PREDICATE_TYPE="$BUILD_TYPE"
 
 require_exact_identity() {
