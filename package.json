@@ -7,14 +7,7 @@
   "bin": {
     "genie": "./dist/genie.js"
   },
-  "files": [
-    "dist/",
-    "skills/",
-    "plugins/genie/",
-    "templates/",
-    "README.md",
-    "LICENSE"
-  ],
+  "files": ["dist/", "skills/", "plugins/genie/", "templates/", "README.md", "LICENSE"],
   "scripts": {
     "prepare": "test \"$CI\" = true || husky",
     "version": "bun run scripts/version.ts",
@@ -72,8 +65,5 @@
   "engines": {
     "bun": ">=1.3.10"
   },
-  "trustedDependencies": [
-    "@biomejs/biome",
-    "bun"
-  ]
+  "trustedDependencies": ["@biomejs/biome", "bun"]
 }
