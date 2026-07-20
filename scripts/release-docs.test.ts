@@ -132,7 +132,11 @@ describe('Group E release and documentation contracts', () => {
     );
     expect(read('scripts/release-generic-provenance.sh')).toContain('workflow_run');
     expect(signing).toContain('--source-digest "$CONTROL_SHA"');
-    expect(signing).toContain('--signer-workflow "${RELEASE_REPOSITORY}/.github/workflows/sign-attest.yml"');
+    // gh's flag group [cert-identity cert-identity-regex signer-repo
+    // signer-workflow] is mutually exclusive; --cert-identity is the pinned
+    // identity, so --signer-workflow must never reappear beside it (observed
+    // 2026-07-20: the combination hard-fails gh attestation verify).
+    expect(signing).not.toContain('--signer-workflow');
   });
 
   test('stable approval is explicit while dev and homolog remain automated', () => {

@@ -154,7 +154,6 @@ if remote_is_complete; then
       --predicate-type "https://github.com/${RELEASE_REPOSITORY}/release-tarballs@v1" \
       --cert-identity "https://github.com/${RELEASE_REPOSITORY}/.github/workflows/sign-attest.yml@refs/heads/main" \
       --source-ref refs/heads/main \
-      --signer-workflow "${RELEASE_REPOSITORY}/.github/workflows/sign-attest.yml" \
       --format json >"$result"
     native_helper="$(dirname "$0")/release-native-predicate.sh"
     remote_control_sha="$(bash "$native_helper" reusable-control-sha "$result")"
@@ -166,7 +165,6 @@ if remote_is_complete; then
       --source-ref refs/heads/main \
       --source-digest "$remote_control_sha" \
       --signer-digest "$remote_control_sha" \
-      --signer-workflow "${RELEASE_REPOSITORY}/.github/workflows/sign-attest.yml" \
       --format json >"$exact_result"
     exact_control_sha="$(bash "$native_helper" reusable-control-sha "$exact_result")"
     [[ "$exact_control_sha" == "$remote_control_sha" ]] || {
