@@ -341,7 +341,10 @@ jobs:
         uses: actions/attest@67422f5511b7ff725f4dbd6fb9bd2cd925c65a8d # v1.4.1
         with:
           subject-path: dist/genie-${{ needs.prepare.outputs.version }}-${{ matrix.platform }}.tar.gz
-          predicate-type: https://slsa.dev/provenance/v1
+          # Custom predicate type (same URI as the predicate's buildType):
+          # claiming https://slsa.dev/provenance/v1 makes GitHub's attestation
+          # API run SLSA validation, which rejects our custom buildType.
+          predicate-type: https://github.com/${{ github.repository }}/release-tarballs@v1
           predicate-path: ${{ runner.temp }}/genie-native-${{ matrix.platform }}.json
 
       - name: Verify cosign bundle (self-check)
@@ -419,7 +422,7 @@ jobs:
           RESULT="${RUNNER_TEMP}/genie-native-result-${PLATFORM}.json"
           gh attestation verify "${TARBALL}" \
             --repo "$RELEASE_REPOSITORY" \
-            --predicate-type https://slsa.dev/provenance/v1 \
+            --predicate-type "https://github.com/${RELEASE_REPOSITORY}/release-tarballs@v1" \
             --cert-identity "https://github.com/${RELEASE_REPOSITORY}/.github/workflows/sign-attest.yml@refs/heads/main" \
             --source-ref refs/heads/main \
             --source-digest "$CONTROL_SHA" \
@@ -489,7 +492,7 @@ jobs:
           echo "-> Expecting gh attestation verify to REJECT mutated tarball"
           if gh attestation verify "${MUTATED}" \
               --repo "${{ github.repository }}" \
-              --predicate-type https://slsa.dev/provenance/v1 \
+              --predicate-type "https://github.com/${{ github.repository }}/release-tarballs@v1" \
               --cert-identity "https://github.com/${{ github.repository }}/.github/workflows/sign-attest.yml@refs/heads/main" \
               --source-ref refs/heads/main \
               --source-digest "$CONTROL_SHA" \
