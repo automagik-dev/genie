@@ -35,13 +35,16 @@ import {
   createWishGroups,
   exportState,
   getBoardByName,
+  getHire,
   getStageLog,
   getTask,
   getTaskCard,
   getTaskEvents,
   getTaskLane,
   getWishGroups,
+  hireAgent,
   listBoards,
+  listHires,
   listTasks,
   livenessFromHeartbeat,
   moveTask,
@@ -51,6 +54,7 @@ import {
   releaseTask,
   startWishGroup,
   unblockTask,
+  unhireAgent,
 } from './task-state.js';
 
 const HUMAN = { author: 'felipe', authorKind: 'human' };
@@ -590,6 +594,146 @@ describe('stage_log → task_events one-time backfill (idempotent)', () => {
     ensureSchema(db);
     expect(getTaskEvents(db, a.id).length).toBe(count);
   });
+});
+
+describe('hire roster (single-row upsert / delete)', () => {
+  test('hireAgent creates a row and round-trips', () => {
+    const hired = hireAgent(db, {
+      wish: 'genie-ui-bridge',
+      agentAdapterId: 'claude',
+      profile: 'opus',
+      worktree: '/wt/g1',
+    });
+    expect(hired).toEqual({
+      wish: 'genie-ui-bridge',
+      agentAdapterId: 'claude',
+      profile: 'opus',
+      worktree: '/wt/g1',
+      hiredAt: hired.hiredAt,
+      state: 'hired',
+    });
+    expect(getHire(db, 'genie-ui-bridge', 'claude')).toEqual(hired);
+  });
+
+  test('profile is nullable', () => {
+    const hired = hireAgent(db, { wish: 'w', agentAdapterId: 'codex', worktree: '/wt/x' });
+    expect(hired.profile).toBeNull();
+  });
+
+  test('hireAgent is idempotent — re-hire keeps one row and preserves hired_at', () => {
+    const first = hireAgent(db, { wish: 'w', agentAdapterId: 'a', worktree: '/wt/1', state: 'hired' });
+    // Re-hire with changed fields: still exactly one row, original hired_at preserved.
+    const second = hireAgent(db, { wish: 'w', agentAdapterId: 'a', worktree: '/wt/2', state: 'active' });
+    expect(listHires(db, 'w').length).toBe(1);
+    expect(second.hiredAt).toBe(first.hiredAt);
+    expect(second.worktree).toBe('/wt/2');
+    expect(second.state).toBe('active');
+  });
+
+  test('unhireAgent removes the row and is idempotent', () => {
+    hireAgent(db, { wish: 'w', agentAdapterId: 'a', worktree: '/wt/1' });
+    expect(unhireAgent(db, 'w', 'a')).toBe(true);
+    expect(getHire(db, 'w', 'a')).toBeNull();
+    // Deleting an absent hire is a no-op returning false, never an error.
+    expect(unhireAgent(db, 'w', 'a')).toBe(false);
+  });
+
+  test('listHires scopes by wish and orders stably', () => {
+    hireAgent(db, { wish: 'w1', agentAdapterId: 'b', worktree: '/wt/b' });
+    hireAgent(db, { wish: 'w1', agentAdapterId: 'a', worktree: '/wt/a' });
+    hireAgent(db, { wish: 'w2', agentAdapterId: 'c', worktree: '/wt/c' });
+    expect(listHires(db, 'w1').map((h) => h.agentAdapterId)).toEqual(['a', 'b']);
+    expect(listHires(db).map((h) => `${h.wish}:${h.agentAdapterId}`)).toEqual(['w1:a', 'w1:b', 'w2:c']);
+  });
+
+  test('exportState includes hire_roster rows', () => {
+    hireAgent(db, { wish: 'w', agentAdapterId: 'a', profile: 'p', worktree: '/wt/a', state: 'hired' });
+    const snapshot = exportState(db);
+    expect(snapshot.hire_roster).toEqual([
+      {
+        wish: 'w',
+        agent_adapter_id: 'a',
+        profile: 'p',
+        worktree: '/wt/a',
+        hired_at: snapshot.hire_roster[0].hired_at,
+        state: 'hired',
+      },
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Multi-PROCESS roster write vs task-create race: concurrent bun processes hire
+// agents and create tasks against the same on-disk WAL database. Every writer
+// must succeed cleanly — WAL + busy_timeout serialize them into ordered commits,
+// never a SQLITE_BUSY failure or a corrupt row. Proves the single-statement
+// roster upsert inherits the handle's concurrency contract (sqlite-open.ts).
+// ---------------------------------------------------------------------------
+describe('multi-process roster write vs task-create concurrency', () => {
+  test('concurrent hires and task-creates all commit with no busy-failure', async () => {
+    const dbPath = join(dir, 'roster-race.db');
+    const seed = openDb({ path: dbPath });
+    seed.close(); // checkpoint so child processes see a committed, current schema
+
+    const gdbPath = join(import.meta.dir, 'genie-db.ts');
+    const tsPath = join(import.meta.dir, 'task-state.ts');
+    const workerPath = join(dir, 'roster-worker.ts');
+    writeFileSync(
+      workerPath,
+      `
+import { openDb } from ${JSON.stringify(gdbPath)};
+import { hireAgent, createTask } from ${JSON.stringify(tsPath)};
+const [dbPath, op, idx] = process.argv.slice(2);
+const db = openDb({ path: dbPath });
+try {
+  if (op === 'hire') hireAgent(db, { wish: 'race', agentAdapterId: 'a' + idx, worktree: '/wt/' + idx });
+  else createTask(db, { title: 'task-' + idx, wish: 'race' });
+  process.stdout.write('OK');
+} catch (e) {
+  process.stdout.write('ERR:' + (e && e.message));
+  process.exitCode = 3;
+} finally {
+  db.close();
+}
+`,
+    );
+
+    const N = 8;
+    const runs = Array.from({ length: N }, (_, i) => {
+      const op = i % 2 === 0 ? 'hire' : 'create';
+      const proc = Bun.spawn(['bun', 'run', workerPath, dbPath, op, String(i)], { stdout: 'pipe', stderr: 'pipe' });
+      return (async () => {
+        const out = await new Response(proc.stdout).text();
+        const err = await new Response(proc.stderr).text();
+        const code = await proc.exited;
+        return { out, err, code };
+      })();
+    });
+
+    const settled = await Promise.allSettled(runs);
+    const outcomes = settled.map((s) =>
+      s.status === 'fulfilled' ? `${s.value.out}(exit ${s.value.code})` : `REJECTED:${s.reason}`,
+    );
+
+    const ok = outcomes.filter((o) => o.startsWith('OK')).length;
+    if (ok !== N) {
+      console.error('roster-race outcomes:', JSON.stringify(outcomes));
+      for (const s of settled) {
+        if (s.status === 'fulfilled' && !s.value.out.startsWith('OK')) console.error('straggler stderr:', s.value.err);
+      }
+    }
+    // Every writer committed cleanly — no SQLITE_BUSY leak, no corruption.
+    expect(ok).toBe(N);
+    expect(outcomes.some((o) => o.includes('SQLITE_BUSY'))).toBe(false);
+
+    // Final state is consistent: 4 hires + 4 tasks, all under the 'race' wish.
+    const verify = openDb({ path: dbPath });
+    const snapshot = exportState(verify);
+    verify.close();
+    expect(snapshot.hire_roster.length).toBe(N / 2);
+    expect(snapshot.tasks.length).toBe(N / 2);
+    expect(snapshot.hire_roster.every((h) => h.wish === 'race')).toBe(true);
+  }, 30_000);
 });
 
 // ---------------------------------------------------------------------------

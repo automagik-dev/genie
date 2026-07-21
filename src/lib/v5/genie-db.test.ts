@@ -53,7 +53,43 @@ describe('openDb schema init', () => {
     db2.close();
 
     expect(userVersion(path)).toBe(CURRENT_SCHEMA_VERSION);
-    expect(tables).toEqual(['boards', 'meta', 'stage_log', 'task_dependencies', 'task_events', 'tasks', 'wish_groups']);
+    expect(tables).toEqual([
+      'boards',
+      'hire_roster',
+      'meta',
+      'stage_log',
+      'task_dependencies',
+      'task_events',
+      'tasks',
+      'wish_groups',
+    ]);
+  });
+
+  test('a fresh DB carries hire_roster', () => {
+    const path = join(dir, 'genie.db');
+    const db = openDb({ path });
+    const has = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='hire_roster'").get();
+    db.close();
+    expect(has).not.toBeNull();
+  });
+
+  test('adds hire_roster to a pre-existing current DB via the schemaIsCurrent path', () => {
+    const path = join(dir, 'genie.db');
+    // Simulate a DB stamped by an earlier build: already at user_version=1 but
+    // missing the additive hire_roster table. schemaIsCurrent must return false
+    // (hire_roster ∈ EXPECTED_TABLES) so ensureSchema re-runs and creates it —
+    // no user_version bump.
+    const db1 = openDb({ path });
+    db1.exec('DROP TABLE hire_roster');
+    db1.close();
+    expect(userVersion(path)).toBe(CURRENT_SCHEMA_VERSION);
+
+    const db2 = openDb({ path });
+    const has = db2.query("SELECT name FROM sqlite_master WHERE type='table' AND name='hire_roster'").get();
+    db2.close();
+    expect(has).not.toBeNull();
+    // Additive migration — the schema version is unchanged.
+    expect(userVersion(path)).toBe(CURRENT_SCHEMA_VERSION);
   });
 
   test('creates the .genie parent directory when absent', () => {

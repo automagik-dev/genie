@@ -80,6 +80,10 @@ const WORKSPACE_EXEMPT = new Set([
   // read-only and DEGRADES to an empty board when the file is absent, so the
   // legacy workspace gate must not exit 2 before the JSON-RPC loop even starts.
   'mcp',
+  // `ui-bridge` is the UI-owned stdio MCP bridge (reads + roster writes + push).
+  // Like `mcp` it self-resolves the shared genie.db and speaks JSON-RPC on stdio;
+  // the legacy workspace gate must not exit 2 before the handshake can happen.
+  'ui-bridge',
 ]);
 
 /**
