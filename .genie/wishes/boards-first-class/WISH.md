@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED — plan review SHIP 2026-07-21 (1 fix loop: M1 local-build validation, M2 deterministic render tests, 4 LOWs) |
+| **Status** | EXECUTED — final execution review SHIP 2026-07-21; all 3 groups done; PR to dev pending (Felipe-gated) |
 | **Slug** | `boards-first-class` |
 | **Date** | 2026-07-21 |
 | **Author** | Felipe + team-lead brainstorm session |
@@ -226,7 +226,47 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 
 ## Review Results
 
-_Populated by `/review` after execution completes._
+**Final execution review: SHIP (2026-07-21)** — branch `wish/boards-first-class` @ `22d36078`, base `ddb54fdb`. All 15 Success Criteria evidenced; load-bearing spot-checks re-verified in code by the final reviewer (carved checkout exception sole added predicate; byte-freeze 10-key TaskRow; no `user_version` bump; `task_events` in `EXPECTED_TABLES`/`schemaIsCurrent` lockstep; `stage_log_backfill_v1` idempotency guard).
+
+### Execution ledger
+
+| Group | Engineer | Review | Commits |
+|---|---|---|---|
+| A: board engine | eng-A-board-engine (opus) | **SHIP** loop 0 | `8ab4d0e5`, `9386accc` |
+| B: timeline + runtime | eng-B-timeline-runtime (opus) | **SHIP** loop 0 (TOCTOU-audited) | `8368705c` |
+| C: jar unification | eng-C-jar-unification (opus, worktree) | **SHIP** loop 0 | `45ab48a8` (cherry-pick), orchestrator halves `1ca40d21` |
+
+Routing: `Human override: approver=felipe; wish/group=boards-first-class#B; cap=routing.fableGate; old=fable-high; new=opus; reason=preserve fable tokens; timestamp=2026-07-21T18:30Z` (ultracode session directive "in opus to preserve fable tokens").
+
+### Wish-level adversarial verify (ultracode)
+
+4-lens workflow (migration / execution-machine / contract-freeze / wish-fidelity) over the full diff: 13 findings → 11 refuted → 2 confirmed:
+
+1. **HIGH — `releaseTask` done→ready resurrection race** (stale pre-transaction status read + unconditional UPDATE; empirically reproduced with two processes). **Fixed `56e59632`**: CAS `WHERE id=? AND status='in_progress'`, typed `TaskReleaseError`, release event only in the winning transaction, two-process regression test with discriminating proof (reverting the CAS reproduces the resurrection). Verb audit: all other 8368705c verbs safe (no status-branch on stale reads).
+2. **LOW — surrogate-pair display slice** in `truncateIndexEntry` (doctor). Waived: display-only, never affects slug/state/lane join.
+
+### Post-review regression caught by full-suite validation
+
+C's `skills/brainstorm/SKILL.md` edit shipped without regenerating the committed plugin mirror; `fresh-install-smoke` (scripts/, outside every group's scoped validation) correctly failed 9 tests on digest drift. **Fixed `22d36078`** (mirror regenerated, byte-identical, zero assertions weakened). Root-caused by orchestrator bisect: 17/0 at `8368705c`, 8/9-fail at `45ab48a8`.
+
+### Live evidence
+
+- Roadmap board seeded via real CLI at `9386accc`: 13 cards in lifecycle lanes, 13 `kind='move'` events ([qa/jar-drift-live-evidence-20260721.md](qa/jar-drift-live-evidence-20260721.md)).
+- Drift lint's first live run caught **2 real INDEX drifts** (codex-plugin-update-handoff, routing-delivery-fix in Ready with Work/Review lanes) — fixed in `1ca40d21`. The tool paid for itself before merging.
+- `genie idea` first real-world use: card `t_mrv19mpx` (board-edit-lanes gap) captured in one command.
+- Final doctor on branch: `36 INDEX entries: 13 ok, 0 drift, 23 unlinked`.
+
+### Gates
+
+Full `bun test` **2067 pass / 0 fail** (82 files); typecheck clean; biome clean (193 files); complexity-budget 0/7; all downstream lints green (run individually — see caveat). `bun run check` as a single command still aborts at knip's documented pre-existing devDep false positives before its later steps; every constituent gate verified green directly. Follow-up recommended: suppress knip's known FPs so `check` reaches its full chain.
+
+### Residue (non-blocking, recorded)
+
+(a) `parseLanes` lacks per-element shape validation — LOW; (b) doctor.test.ts commit-message count 12-vs-13 — LOW; (c) missing-lane-column degradation untested — LOW; (d) ANSI passthrough in operator reason text — NIT (pre-existing pattern); (e) surrogate-pair slice — LOW cosmetic.
+
+### Open post-merge QA (by design — Felipe's live ritual)
+
+Fresh-repo idea→move-through-lanes e2e; real `/work` leaving claim+heartbeat+report; cross-runtime author_kind (Claude Code + Codex on one card); dev regression sweep (laneless board, checkout/done, MCP, export); live roadmap renders 13 cards no data loss.
 
 ---
 
