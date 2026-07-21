@@ -270,3 +270,12 @@ event stream genuinely needs a table). All lost.
 ## Next Step
 
 Run `/wish` to convert this design into an executable plan.
+
+<!-- genie-design-review:start -->
+## Design Review Evidence
+
+- **Verdict:** SHIP
+- **Reviewed content SHA-256:** `6d1ff5b13b6e22989b8bda3d0b8203c60c3e56390c219f89e7bf8d89a7e7686b`
+- **Reviewer:** genie:reviewer subagent a93069f66c1512e41 (plan review, 3 fix loops, closure verified)
+- **Reviewed at:** 2026-07-21T18:20:00.000Z
+<!-- genie-design-review:end -->

@@ -2,7 +2,8 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | COMPLETE (2026-07-04 — @latest published as v2.260704.7, release pipeline dispatched) |
+| **Status** | DONE |
+| **Completed** | 2026-07-04 — @latest published as v2.260704.7, release pipeline dispatched |
 | **Slug** | `omni-branch-drift-sync` |
 | **Date** | 2026-07-04 |
 | **Author** | genie (for Felipe) |
