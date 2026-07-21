@@ -1,0 +1,12 @@
+{
+  "name": "@automagik/genie-ui",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "genie-ui — the fleet floor: a browser-served, PTY-faithful terminal pane per fleet member (bare-ws PTY server + vanilla-TS xterm client). No Electron/Tauri, no Vite.",
+  "license": "MIT",
+  "scripts": {
+    "serve": "bun run server/index.ts"
+  },
+  "$comment": "Runtime deps (node-pty, ws, @xterm/*) live in the ROOT package.json: the genie repo has NO workspaces field, so a package-local `dependencies` block would not be installed by the root `bun install`. Following the repo's single-node_modules precedent keeps one lockfile and one gate surface. See README.md."
+}

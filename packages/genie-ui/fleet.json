@@ -1,0 +1,50 @@
+{
+  "$comment": "SOURCE OF TRUTH for the pane fleet. Each entry is one agent's real terminal face. The genie lane (G2) grows the seams already declared here: `role`, `wish_id` (and a worktree binding resolved from `genie launch`). Commands here are stand-ins — swap them for the real agent CLIs (fable, hermes -p <profile> --tui, codex, rlmx/pi TUI) without touching any other module. This box has btop + nano (no htop/vim); localhost ssh key auth works for the ssh -t pane.",
+  "defaults": {
+    "cwd": "~",
+    "cols": 100,
+    "rows": 30
+  },
+  "panes": [
+    {
+      "id": "fable",
+      "name": "fable",
+      "role": "author",
+      "wish_id": "genie-ui",
+      "command": "bash",
+      "args": ["--login", "-i"],
+      "cwd": "~",
+      "env": { "PS1": "\\[\\e[35m\\]fable\\[\\e[0m\\]:\\[\\e[36m\\]\\w\\[\\e[0m\\]$ ", "TERM": "xterm-256color" }
+    },
+    {
+      "id": "hermes-reviewer",
+      "name": "hermes-reviewer",
+      "role": "reviewer",
+      "wish_id": "genie-ui",
+      "command": "btop",
+      "args": [],
+      "cwd": "~",
+      "env": {}
+    },
+    {
+      "id": "codex",
+      "name": "codex",
+      "role": "coder",
+      "wish_id": "genie-ui",
+      "command": "bash",
+      "args": ["--login", "-i"],
+      "cwd": "~",
+      "env": { "PS1": "\\[\\e[32m\\]codex\\[\\e[0m\\]:\\w$ ", "TERM": "xterm-256color" }
+    },
+    {
+      "id": "rlmx",
+      "name": "rlmx (ssh)",
+      "role": "remote",
+      "wish_id": "genie-ui",
+      "command": "ssh",
+      "args": ["-t", "localhost", "btop"],
+      "cwd": "~",
+      "env": {}
+    }
+  ]
+}

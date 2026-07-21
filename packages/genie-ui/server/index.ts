@@ -1,0 +1,162 @@
+// index.ts — composition root. Wires fleet-config -> PtySessionManager -> ws transport,
+// and serves the browser client with NO Vite (design deliverable 4).
+//
+// Serve path (the pinned G1 decision): ONE node `http` server both (a) serves the
+// client assets — index.html, styles.css, the salvaged xterm CSS, and the client TS
+// bundled on the fly by `Bun.build` (a single entry, @xterm resolved from
+// node_modules) — and (b) upgrades to the bare `ws` PTY protocol on the SAME port.
+// No second port, no import-map juggling, no build step in the tree. `bun run
+// packages/genie-ui/server/index.ts` is the whole dev loop.
+//
+// Deliberately thin: every real concern lives in a single-purpose module beside it.
+
+import http from 'node:http';
+import { createRequire } from 'node:module';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { type WebSocket, WebSocketServer } from 'ws';
+import { CONFIG_PATH, loadFleet } from './fleet-config';
+import { PtySessionManager } from './pty-session';
+import { type ClientMsg, MSG, type ServerMsg, decode, encode } from './transport';
+
+const require = createRequire(import.meta.url);
+const HERE = dirname(fileURLToPath(import.meta.url));
+const PKG_ROOT = resolve(HERE, '..');
+const PORT = Number(process.env.PORT ?? 8787);
+
+interface Asset {
+  type: string;
+  body: string;
+}
+
+/** Bundle the single client entry with Bun.build (no Vite) — @xterm resolved from node_modules. */
+async function buildClient(): Promise<string> {
+  const result = await Bun.build({
+    entrypoints: [resolve(PKG_ROOT, 'client', 'main.ts')],
+    target: 'browser',
+    minify: false,
+  });
+  if (!result.success) {
+    throw new AggregateError(result.logs, 'client build failed');
+  }
+  return result.outputs[0].text();
+}
+
+/** Precompute the static asset table once at boot. */
+async function loadAssets(): Promise<Map<string, Asset>> {
+  const xtermCss = require.resolve('@xterm/xterm/css/xterm.css');
+  const read = (p: string) => Bun.file(p).text();
+  const assets = new Map<string, Asset>();
+  assets.set('/', { type: 'text/html; charset=utf-8', body: await read(resolve(PKG_ROOT, 'index.html')) });
+  assets.set('/client/main.js', { type: 'text/javascript; charset=utf-8', body: await buildClient() });
+  assets.set('/client/styles.css', {
+    type: 'text/css; charset=utf-8',
+    body: await read(resolve(PKG_ROOT, 'client', 'styles.css')),
+  });
+  assets.set('/xterm.css', { type: 'text/css; charset=utf-8', body: await read(xtermCss) });
+  return assets;
+}
+
+function serveAsset(assets: Map<string, Asset>, req: http.IncomingMessage, res: http.ServerResponse): void {
+  const path = (req.url ?? '/').split('?')[0];
+  const asset = assets.get(path);
+  if (!asset) {
+    res.writeHead(404, { 'content-type': 'text/plain' });
+    res.end('not found\n');
+    return;
+  }
+  res.writeHead(200, { 'content-type': asset.type });
+  res.end(asset.body);
+}
+
+/** On attach: send the roster, then replay each pane's snapshot from its TerminalMirror. */
+async function attachClient(ws: WebSocket, manager: PtySessionManager): Promise<void> {
+  const send = (m: ServerMsg) => ws.send(encode(m));
+  send({ t: MSG.FLEET, panes: manager.list() });
+  for (const p of manager.list()) {
+    const data = await manager.replay(p.id);
+    if (data) send({ t: MSG.REPLAY, id: p.id, data });
+  }
+}
+
+function handleClientMsg(manager: PtySessionManager, m: ClientMsg, ws: WebSocket): void {
+  switch (m.t) {
+    case MSG.INPUT:
+      manager.write(m.id, m.data);
+      break;
+    case MSG.RESIZE:
+      manager.resize(m.id, m.cols, m.rows);
+      break;
+    case MSG.SPAWN:
+      manager.spawn(m.id);
+      break;
+    case MSG.KILL:
+      manager.kill(m.id);
+      break;
+    case MSG.RESTART:
+      manager.restart(m.id);
+      break;
+    case MSG.LIST:
+      ws.send(encode({ t: MSG.FLEET, panes: manager.list() }));
+      break;
+  }
+}
+
+async function main(): Promise<void> {
+  const fleet = loadFleet();
+  const manager = new PtySessionManager(fleet);
+  manager.startAll();
+
+  console.log(`[genie-ui] fleet loaded from ${CONFIG_PATH}`);
+  for (const p of manager.list()) {
+    console.log(`  - ${p.id.padEnd(16)} ${p.command} ${p.args.join(' ')}`);
+  }
+
+  const assets = await loadAssets();
+  const server = http.createServer((req, res) => serveAsset(assets, req, res));
+  const wss = new WebSocketServer({ server });
+  const clients = new Set<WebSocket>();
+
+  const broadcast = (m: ServerMsg) => {
+    const raw = encode(m);
+    for (const ws of clients) {
+      if (ws.readyState === ws.OPEN) ws.send(raw);
+    }
+  };
+
+  // Fan manager events out to every connected browser; a single broadcast keeps
+  // every tab (and every device) rendering the whole fleet in sync.
+  manager.on('data', (id: string, data: string) => broadcast({ t: MSG.DATA, id, data }));
+  manager.on('exit', (id: string, code: number) => broadcast({ t: MSG.EXIT, id, code }));
+  manager.on('status', (id: string, status) => broadcast({ t: MSG.STATUS, id, status }));
+
+  wss.on('connection', (ws) => {
+    clients.add(ws);
+    void attachClient(ws, manager);
+    ws.on('message', (raw: Buffer) => {
+      const m = decode(raw.toString());
+      if (m?.t) handleClientMsg(manager, m, ws);
+    });
+    ws.on('close', () => clients.delete(ws));
+  });
+
+  server.listen(PORT, () => {
+    console.log(`[genie-ui] serving client + ws on http://localhost:${PORT}`);
+  });
+
+  const shutdown = () => {
+    console.log('\n[genie-ui] shutting down, killing sessions...');
+    manager.killAll();
+    manager.disposeAll();
+    process.exit(0);
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+}
+
+if (import.meta.main) {
+  main().catch((err) => {
+    console.error('[genie-ui] fatal:', err);
+    process.exit(1);
+  });
+}
