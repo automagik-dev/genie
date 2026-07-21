@@ -61,6 +61,7 @@ import {
   resolveRuntimeExecutable,
   runBoundedIntegrationCommand,
 } from '../lib/runtime-integrations.js';
+import { printUpdateCapabilities } from '../lib/update-capabilities.js';
 import { VERSION } from '../lib/version.js';
 import { GenieConfigSchema } from '../types/genie-config.js';
 import {
@@ -1470,6 +1471,14 @@ export interface UpdateCommandOptions {
   /** Hidden child protocol used only after a verified binary delivery. A
    *  pre-contract binary must reject this argv flag before doing any work. */
   postDeliveryConverge?: boolean;
+  /** Hidden read-only capability probe. Emits exactly one schema-valid JSON
+   *  object describing this binary's activation-protocol floor and exits 0. A
+   *  pre-contract binary rejects the unknown argv flag at commander parse time,
+   *  which is how a rollback distinguishes a protocol-1+ backup. */
+  printUpdateCapabilities?: boolean;
+  /** Companion `--json` flag for `--print-update-capabilities`; the probe output
+   *  is always JSON, so this only pins the contract explicit. */
+  json?: boolean;
 }
 
 export type UpdateExecutionMode = 'normal' | 'rollback' | 'sync-only' | 'post-delivery-converge';
@@ -1899,6 +1908,15 @@ function recoverInstallPromotionAndConvergePayload(): void {
 }
 
 export async function updateCommand(options: UpdateCommandOptions = {}): Promise<void> {
+  // The read-only capability probe is answered before mode resolution and any
+  // mutation: it self-hashes this binary, prints exactly one JSON object, and
+  // exits 0. A pre-contract binary never reaches here — it rejects the unknown
+  // `--print-update-capabilities` flag at commander parse, which is precisely
+  // the signal the rollback capability floor relies on.
+  if (options.printUpdateCapabilities) {
+    printUpdateCapabilities();
+    return;
+  }
   const mode = resolveUpdateExecutionMode(options);
   if (mode !== 'normal') {
     await runExplicitUpdateMode(mode);

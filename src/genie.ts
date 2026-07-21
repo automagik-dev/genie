@@ -124,6 +124,8 @@ program
         'skipMaintenance',
       ]),
   )
+  .addOption(new Option('--print-update-capabilities').hideHelp())
+  .addOption(new Option('--json').hideHelp())
   .action(updateCommand);
 
 program
