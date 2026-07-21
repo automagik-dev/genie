@@ -55,6 +55,22 @@ imports instead of flagging them unused. `node-pty` is in root `trustedDependenc
 fresh `bun install` builds its native binary (needs a working `node-gyp`/toolchain — no
 prebuild ships for linux-x64 on this node-pty version).
 
+**Trust boundary — loopback by default, Origin-checked ws.** `MSG.INPUT` feeds arbitrary
+keystrokes into live login shells (`fable`, `codex`), so the ws upgrade is a remote-control
+surface, not a read-only view. Two guards keep it closed by default:
+
+- **Bind loopback unless opted in.** `server.listen(PORT, HOST)` with `HOST` defaulting to
+  `127.0.0.1`, so a fresh run is reachable only from the box itself. The multi-device goal
+  (mac + phone on the LAN) is **opt-in** via `HOST=0.0.0.0` (or a specific interface). This
+  is the seam G2 (genie state) and G3 (ACP control faces) build on, so the boundary is
+  explicit here rather than retrofitted later.
+- **Origin allowlist on the ws upgrade.** `verifyClient` accepts a browser connection only
+  when its `Origin` is same-origin with the page's own host (works for any LAN hostname with
+  no config) or is listed in `GENIE_UI_ALLOWED_ORIGINS` (comma-separated, for a reverse
+  proxy). Browsers always send `Origin`, so this defeats a cross-origin drive-by — an open
+  website cannot `new WebSocket('ws://localhost:PORT')` into the shells. Non-browser clients
+  (CLI, tests) send no `Origin` and are gated by the loopback bind instead.
+
 ## Gate wiring (done first, deliverable 5)
 
 - `tsconfig.json` `include` gained `packages/**/*`; `lib` gained `DOM`/`DOM.Iterable` (the client).

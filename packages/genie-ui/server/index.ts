@@ -24,6 +24,37 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = resolve(HERE, '..');
 const PORT = Number(process.env.PORT ?? 8787);
 
+// Trust boundary (see README "Trust boundary" decision). MSG.INPUT feeds arbitrary
+// keystrokes into live login shells, so the ws upgrade is a remote-control surface.
+// Two guards keep it closed by default:
+//   1. Bind loopback unless HOST is set — the fleet is a single-operator tool; LAN
+//      reach (mac + phone) is opt-in via HOST=0.0.0.0 (or a specific interface).
+//   2. Origin allowlist on the ws upgrade — browsers always send Origin, so a
+//      same-origin check defeats a cross-origin drive-by (any open website could
+//      otherwise `new WebSocket('ws://localhost:PORT')` and type into the shells).
+const HOST = process.env.HOST ?? '127.0.0.1';
+const ALLOWED_ORIGINS = (process.env.GENIE_UI_ALLOWED_ORIGINS ?? '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+/**
+ * Accept a ws upgrade only from a trusted Origin. Non-browser clients (CLI, tests)
+ * send no Origin and are gated by the loopback bind; browsers must be same-origin
+ * (the page's own host) or on the explicit GENIE_UI_ALLOWED_ORIGINS allowlist.
+ */
+export function verifyClient(info: { origin?: string; req: http.IncomingMessage }): boolean {
+  const { origin } = info;
+  if (!origin) return true;
+  const host = info.req.headers.host;
+  try {
+    if (host && new URL(origin).host === host) return true;
+  } catch {
+    return false;
+  }
+  return ALLOWED_ORIGINS.includes(origin);
+}
+
 interface Asset {
   type: string;
   body: string;
@@ -114,7 +145,7 @@ async function main(): Promise<void> {
 
   const assets = await loadAssets();
   const server = http.createServer((req, res) => serveAsset(assets, req, res));
-  const wss = new WebSocketServer({ server });
+  const wss = new WebSocketServer({ server, verifyClient });
   const clients = new Set<WebSocket>();
 
   const broadcast = (m: ServerMsg) => {
@@ -140,8 +171,9 @@ async function main(): Promise<void> {
     ws.on('close', () => clients.delete(ws));
   });
 
-  server.listen(PORT, () => {
-    console.log(`[genie-ui] serving client + ws on http://localhost:${PORT}`);
+  server.listen(PORT, HOST, () => {
+    const reach = HOST === '127.0.0.1' || HOST === 'localhost' ? 'loopback only' : `bound ${HOST} (LAN)`;
+    console.log(`[genie-ui] serving client + ws on http://localhost:${PORT} — ${reach}`);
   });
 
   const shutdown = () => {
