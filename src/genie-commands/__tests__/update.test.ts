@@ -2319,26 +2319,18 @@ describe('operator-driven plugin refresh', () => {
     expect(calls).toEqual(['codex plugin list --json', 'claude plugin list --json']);
   });
 
-  test('recaches Codex plugin/hooks from the local bundle and preserves disabled state', () => {
+  test('D1/D3: N≠T delivery defers activation — no plugin add, no cache advance, exit-2 action-required', () => {
     const root = mkdtempSync(join(tmpdir(), 'genie-update-plugin-refresh-'));
     const configPath = join(root, 'config.toml');
     writeFileSync(configPath, '[plugins."genie@automagik"]\nenabled = true\n');
     const calls: string[] = [];
-    let lists = 0;
     const runner: CommandRunner = (command, args) => {
       calls.push(`${command} ${args.join(' ')}`);
       if (args.join(' ') === 'plugin list --json') {
-        lists += 1;
         return {
           exitCode: 0,
           stdout: JSON.stringify({
-            installed: [
-              {
-                pluginId: 'genie@automagik',
-                enabled: lists === 2,
-                version: lists === 1 ? '5.260710.2' : '5.260711.3',
-              },
-            ],
+            installed: [{ pluginId: 'genie@automagik', enabled: true, version: '5.260710.2' }],
           }),
           stderr: '',
         };
@@ -2355,16 +2347,21 @@ describe('operator-driven plugin refresh', () => {
         runner,
       });
       expect(results).toHaveLength(1);
+      // Delivered but NOT activated: the installed N generation is left intact.
       expect(results[0]).toMatchObject({
         runtime: 'codex',
         ok: true,
-        detail: 'plugin/hooks refreshed to v5.260711.3',
-        preservedDisabled: true,
-        hookReviewRequired: false,
+        deliveryComplete: true,
+        actionRequired: true,
       });
-      expect(calls).toContain(`codex plugin marketplace add ${root} --json`);
-      expect(calls).toContain('codex plugin add genie@automagik --json');
-      expect(readFileSync(configPath, 'utf8')).toContain('enabled = false');
+      expect(results[0].detail).toContain('Codex plugin left at v5.260710.2 (no cache advance)');
+      expect(results[0].detail).toContain('retire tasks → genie setup --codex → /hooks → new task');
+      // The classification is the ONLY codex command; NO cache-advancing add/marketplace.
+      expect(calls).toEqual(['codex plugin list --json']);
+      expect(calls).not.toContain('codex plugin add genie@automagik --json');
+      expect(calls).not.toContain(`codex plugin marketplace add ${root} --json`);
+      // The plugin enabled flag is never touched by a deferred delivery.
+      expect(readFileSync(configPath, 'utf8')).toContain('enabled = true');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -2382,11 +2379,11 @@ describe('operator-driven plugin refresh', () => {
     expect(results[0].detail).toContain('timed out');
   });
 
-  test('malformed Codex post-refresh state fails and still restores the prior disabled state', () => {
+  test('D1/D3: an indeterminate (malformed) plugin query fails closed — never cache-advances', () => {
     const root = mkdtempSync(join(tmpdir(), 'genie-update-plugin-failed-refresh-'));
     const configPath = join(root, 'config.toml');
     writeFileSync(configPath, '[plugins."genie@automagik"]\nenabled = true\n');
-    let lists = 0;
+    const calls: string[] = [];
     try {
       const results = refreshUpdatePlugins({
         bundleRoot: root,
@@ -2395,30 +2392,26 @@ describe('operator-driven plugin refresh', () => {
         detected: { codex: true, claude: false },
         codexConfigPath: configPath,
         runner(_command, args) {
+          calls.push(args.join(' '));
           if (args.join(' ') === 'plugin list --json') {
-            lists += 1;
-            return {
-              exitCode: 0,
-              stdout:
-                lists === 1
-                  ? '{"installed":[{"pluginId":"genie@automagik","enabled":false,"version":"5.260710.2"}]}'
-                  : '{"unexpected":[]}',
-              stderr: '',
-            };
+            return { exitCode: 0, stdout: '{"unexpected":[]}', stderr: '' };
           }
           return { exitCode: 0, stdout: '', stderr: '' };
         },
       });
 
-      expect(results[0]).toMatchObject({ runtime: 'codex', ok: false });
-      expect(results[0]?.detail).toMatch(/malformed JSON.*after plugin add/);
-      expect(readFileSync(configPath, 'utf8')).toContain('enabled = false');
+      // A state the gate cannot classify fails closed with zero mutation.
+      expect(results[0]).toMatchObject({ runtime: 'codex', ok: false, deliveryComplete: true, actionRequired: true });
+      expect(results[0]?.detail).toContain('cannot classify plugin state');
+      expect(calls).toEqual(['plugin list --json']);
+      expect(calls).not.toContain('plugin add genie@automagik --json');
+      expect(readFileSync(configPath, 'utf8')).toContain('enabled = true');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  test('stale Codex update refresh never removes/re-adds or mutates the old cache', () => {
+  test('D1/D3: stale (N≠T) delivery makes ZERO plugin add/remove and leaves the old cache byte-identical', () => {
     const root = mkdtempSync(join(tmpdir(), 'genie-update-plugin-stale-generation-'));
     const codexHome = join(root, 'codex');
     const oldCache = join(codexHome, 'plugins', 'cache', 'automagik', 'genie', '5.260710.2', 'payload.txt');
@@ -2446,12 +2439,15 @@ describe('operator-driven plugin refresh', () => {
         codexHome,
         runner,
       });
-      expect(result[0]).toMatchObject({ runtime: 'codex', ok: false });
-      expect(result[0]?.detail).toContain('after one non-destructive add attempt');
-      expect(result[0]?.detail).toContain('Close all Codex tasks first');
-      expect(calls.filter((call) => call === 'plugin add genie@automagik --json')).toHaveLength(1);
+      // Delivered, activation deferred: N stays present and physically unverified.
+      expect(result[0]).toMatchObject({ runtime: 'codex', ok: true, deliveryComplete: true, actionRequired: true });
+      expect(result[0]?.detail).toContain('Codex plugin left at v5.260710.2 (no cache advance)');
+      // ZERO cache-advancing commands — not even a single "non-destructive" add.
+      expect(calls).not.toContain('plugin add genie@automagik --json');
       expect(calls).not.toContain('plugin remove genie@automagik --json');
+      expect(calls).not.toContain('plugin marketplace add');
       expect(readFileSync(oldCache, 'utf8')).toBe('old-cache-bytes\n');
+      // A pure delivery deferral opens no durable convergence intent journal.
       expect(existsSync(join(pluginStateDir, '.integration-refresh-codex.json'))).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
