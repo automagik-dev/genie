@@ -6,6 +6,6 @@
     "types": ["bun"],
     "outDir": "dist"
   },
-  "include": ["server/**/*", "client/**/*", "build.ts"],
+  "include": ["server/**/*", "client/**/*", "capability-table.ts", "build.ts"],
   "exclude": ["node_modules", "dist"]
 }

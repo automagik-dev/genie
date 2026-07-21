@@ -312,3 +312,114 @@ button.act.danger {
 #statusbar .hint {
   color: var(--dim);
 }
+
+/* ============================================================================
+   Group chat drawer (G3): the ACP control channel's face — wish-scoped, right side.
+   ============================================================================ */
+#chat {
+  width: 340px;
+  flex-shrink: 0;
+  min-height: 0;
+  background: var(--panel);
+  border-left: 1px solid var(--edge);
+  display: flex;
+  flex-direction: column;
+}
+.chat-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--edge);
+}
+.chat-title {
+  font-weight: 600;
+}
+.chat-wish {
+  color: var(--accent);
+  font-size: 12px;
+}
+.chat-roster {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--edge);
+}
+.chat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  padding: 2px 8px;
+}
+.chat-badge {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ok);
+  background: rgba(152, 195, 121, 0.12);
+  border-radius: 6px;
+  padding: 0 5px;
+}
+.chat-log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.chat-line {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+  line-height: 1.35;
+}
+.chat-from {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--dim);
+}
+.chat-line.human .chat-from {
+  color: var(--accent);
+}
+.chat-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.chat-line.live .chat-text {
+  color: var(--dim);
+}
+.chat-line.error .chat-from {
+  color: var(--bad);
+}
+.chat-line.error .chat-text {
+  color: var(--bad);
+  background: rgba(224, 108, 117, 0.1);
+  border-left: 2px solid var(--bad);
+  padding: 4px 8px;
+}
+.chat-input {
+  display: flex;
+  border-top: 1px solid var(--edge);
+}
+.chat-input input {
+  flex: 1;
+  background: var(--bg);
+  color: var(--fg);
+  border: none;
+  padding: 10px;
+  font: inherit;
+  outline: none;
+}
+.chat-input input:disabled {
+  opacity: 0.5;
+}

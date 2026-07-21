@@ -5,6 +5,7 @@
     "": {
       "name": "@namastexlabs/claudio",
       "dependencies": {
+        "@agentclientprotocol/sdk": "0.26.0",
         "@inquirer/prompts": "7.10.1",
         "@xterm/addon-clipboard": "^0.2.0",
         "@xterm/addon-fit": "^0.10.0",
@@ -34,9 +35,12 @@
     },
   },
   "trustedDependencies": [
+    "node-pty",
     "@biomejs/biome",
   ],
   "packages": {
+    "@agentclientprotocol/sdk": ["@agentclientprotocol/sdk@0.26.0", "", { "peerDependencies": { "zod": "^3.25.0 || ^4.0.0" } }, "sha512-ialrcI+RzKOYe+fw+TfpyTdRmEoqIkXLlwbTi6XgaXXfdhNcdod7TmE1VsTnG3yTlox8TMTSMQgWbLLbz3r86Q=="],
+
     "@babel/code-frame": ["@babel/code-frame@7.29.0", "", { "dependencies": { "@babel/helper-validator-identifier": "^7.28.5", "js-tokens": "^4.0.0", "picocolors": "^1.1.1" } }, "sha512-9NhCeYjq9+3uxgdtp20LSiJXJvN0FeCtNGpJxuMFZ1Kv3cWUNb6DOhJwUvcVCzKGR66cw4njwM6hrJLqgOwbcw=="],
 
     "@babel/helper-validator-identifier": ["@babel/helper-validator-identifier@7.28.5", "", {}, "sha512-qSs4ifwzKJSV39ucNjsvc6WVHs6b7S03sOh2OcHF9UHfVPqWWALUsNUVzhSBiItjRZoLHx7nIarVjqKVusUZ1Q=="],

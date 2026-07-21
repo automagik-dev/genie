@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { Harness } from './genie-lane';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CONFIG_PATH = resolve(HERE, '..', 'fleet.json');
@@ -23,6 +24,9 @@ export interface PaneSpec {
   role: string | null;
   /** SEAM (genie): the wish this pane is hired onto (G2 binds it). */
   wishId: string | null;
+  /** SEAM (genie, G3): which ACP adapter the chat control channel spawns for this agent's
+   * read-only chat face. `null` ⇒ terminal-only (no chat face; e.g. a plain monitor pane). */
+  harness: Harness | null;
   /** Executable to spawn under a PTY. */
   command: string;
   /** argv for the command. */
@@ -40,6 +44,7 @@ interface RawPane {
   name?: string;
   role?: string;
   wish_id?: string;
+  harness?: Harness;
   command: string;
   args?: string[];
   cwd?: string;
@@ -69,6 +74,7 @@ export function loadFleet(configPath: string = CONFIG_PATH): PaneSpec[] {
     name: p.name ?? p.id,
     role: p.role ?? null,
     wishId: p.wish_id ?? null,
+    harness: p.harness ?? null,
     command: p.command,
     args: Array.isArray(p.args) ? p.args : [],
     cwd: expandHome(p.cwd ?? defaults.cwd ?? '~'),

@@ -6,6 +6,7 @@
 // SEAM: this tab strip is where the genie lane (G2 — wishes / roster / roles) slots in;
 // group tabs by PaneInfo.wishId/role or add a second nav. The pane grid stays as-is.
 
+import { ChatDrawer } from './chat-drawer';
 import { LayoutManager } from './layout';
 import { Pane } from './pane';
 import { type PaneInfo, type SessionStatus, Transport } from './transport';
@@ -16,6 +17,7 @@ const stageEl = document.getElementById('stage') as HTMLElement;
 const connEl = document.getElementById('conn') as HTMLElement;
 const metaEl = document.getElementById('active-meta') as HTMLElement;
 const wishesEl = document.getElementById('wishes') as HTMLElement;
+const chatEl = document.getElementById('chat') as HTMLElement;
 
 const panes = new Map<string, Pane>();
 const infos = new Map<string, PaneInfo>();
@@ -40,6 +42,11 @@ const layout = new LayoutManager(stageEl, (id) => {
 
 const wishMenu = new WishMenu(wishesEl, (slug) => selectWish(slug));
 
+// The G3 chat drawer needs the transport (to send), and the transport handlers need the
+// drawer (to route incoming chat). A holder closes the cycle: handlers reach the drawer via
+// `chat.drawer` (assigned once the transport exists), so `chatDrawer` itself stays const.
+const chat: { drawer?: ChatDrawer } = {};
+
 const transport = new Transport({
   onOpen: () => setConn(true),
   onClose: () => setConn(false),
@@ -50,7 +57,13 @@ const transport = new Transport({
   onExit: (id, code) => updateStatus(id, 'exited', code),
   onWishes: (wishes) => wishMenu.setWishes(wishes),
   onWishContext: (context) => wishMenu.setContext(context),
+  onChatRoster: (agents) => chat.drawer?.setRoster(agents),
+  onChatMessage: (line) => chat.drawer?.addLine(line),
+  onChatEvent: (wish, event) => chat.drawer?.applyEvent(wish, event),
 });
+
+const chatDrawer = new ChatDrawer(chatEl, transport);
+chat.drawer = chatDrawer;
 
 /**
  * Select a wish in the left lane: open its worktree-bound context (server reads it
@@ -61,6 +74,7 @@ const transport = new Transport({
 function selectWish(slug: WishSelection): void {
   activeWish = slug;
   if (slug !== null) transport.wishOpen(slug);
+  chatDrawer.setWish(slug);
   applyWishFilter();
 }
 

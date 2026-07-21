@@ -36,9 +36,50 @@ export const MSG = Object.freeze({
   WISHES: 'wishes',
   WISH_OPEN: 'wish-open',
   WISH_CONTEXT: 'wish-context',
+  // G3 (ACP control channel): the wish group chat. Serialization ONLY — the schema knows
+  // NOTHING about chat-backend's internals; index.ts (the composition root) maps
+  // chat-backend's ChatEvents onto CHAT_EVENT and routes CHAT_SEND into it. This keeps the
+  // chat wall intact: transport never imports chat-backend, chat-backend never imports transport.
+  CHAT_ROSTER: 'chat-roster', // server → client: which hired agents have a chat face + badges
+  CHAT_SEND: 'chat-send', // client → server: a human line typed into the drawer
+  CHAT_MESSAGE: 'chat-message', // server → client: a completed room line (human or agent)
+  CHAT_EVENT: 'chat-event', // server → client: a streamed chat event (chunk / done / fail-loud)
 } as const);
 
 export type SessionStatus = 'idle' | 'running' | 'exited';
+
+/** Which real harness a chat agent runs — mirrors genie-lane's `Harness`. */
+export type HarnessName = 'claude' | 'codex' | 'hermes' | 'rlmx';
+
+/** A hired agent that has a read-only ACP chat face, rendered in the drawer's roster (G3). */
+export interface ChatAgentRow {
+  id: string;
+  name: string;
+  harness: HarnessName;
+  /** Minimal hire-time badges from the capability table ("shared memory" for Hermes only). */
+  badges: string[];
+  /** The wish this agent's chat face is scoped to. */
+  wish: string | null;
+}
+
+/** A completed room line rendered in the drawer transcript (G3). */
+export interface ChatLine {
+  wish: string;
+  from: string; // 'human' or an agent id
+  text: string;
+}
+
+/**
+ * A streamed chat event mapped 1:1 from chat-backend's `ChatEvent` (the composition root does
+ * the mapping — transport never imports chat-backend). The named fail-loud variants
+ * (`spawn-failed` / `delivery-failed`) are what the drawer renders instead of silence (D9).
+ */
+export type ChatEventWire =
+  | { kind: 'message-chunk'; agentId: string; text: string }
+  | { kind: 'thought-chunk'; agentId: string; text: string }
+  | { kind: 'reply-done'; agentId: string; stopReason: string }
+  | { kind: 'spawn-failed'; agentId: string; message: string }
+  | { kind: 'delivery-failed'; agentId: string; message: string };
 
 /** One row of the genie-lane left menu (G2). */
 export interface WishRow {
@@ -81,7 +122,8 @@ export type ClientMsg =
   | { t: 'kill'; id: string }
   | { t: 'restart'; id: string }
   | { t: 'list' }
-  | { t: 'wish-open'; slug: string };
+  | { t: 'wish-open'; slug: string }
+  | { t: 'chat-send'; wish: string; text: string };
 
 export type ServerMsg =
   | { t: 'fleet'; panes: PaneInfo[] }
@@ -90,7 +132,10 @@ export type ServerMsg =
   | { t: 'status'; id: string; status: SessionStatus }
   | { t: 'exit'; id: string; code: number }
   | { t: 'wishes'; wishes: WishRow[] }
-  | { t: 'wish-context'; context: WishContextMsg };
+  | { t: 'wish-context'; context: WishContextMsg }
+  | { t: 'chat-roster'; agents: ChatAgentRow[] }
+  | { t: 'chat-message'; line: ChatLine }
+  | { t: 'chat-event'; wish: string; event: ChatEventWire };
 
 export function encode(obj: ServerMsg | ClientMsg): string {
   return JSON.stringify(obj);

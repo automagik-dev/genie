@@ -14,7 +14,11 @@
       "command": "bash",
       "args": ["--login", "-i"],
       "cwd": "~",
-      "env": { "PS1": "\\[\\e[35m\\]fable\\[\\e[0m\\]:\\[\\e[36m\\]\\w\\[\\e[0m\\]$ ", "TERM": "xterm-256color" }
+      "env": {
+        "PS1": "\\[\\e[35m\\]fable\\[\\e[0m\\]:\\[\\e[36m\\]\\w\\[\\e[0m\\]$ ",
+        "TERM": "xterm-256color"
+      },
+      "harness": "claude"
     },
     {
       "id": "hermes-reviewer",
@@ -24,7 +28,8 @@
       "command": "btop",
       "args": [],
       "cwd": "~",
-      "env": {}
+      "env": {},
+      "harness": "hermes"
     },
     {
       "id": "codex",
@@ -34,7 +39,11 @@
       "command": "bash",
       "args": ["--login", "-i"],
       "cwd": "~",
-      "env": { "PS1": "\\[\\e[32m\\]codex\\[\\e[0m\\]:\\w$ ", "TERM": "xterm-256color" }
+      "env": {
+        "PS1": "\\[\\e[32m\\]codex\\[\\e[0m\\]:\\w$ ",
+        "TERM": "xterm-256color"
+      },
+      "harness": "codex"
     },
     {
       "id": "rlmx",
@@ -44,7 +53,8 @@
       "command": "ssh",
       "args": ["-t", "localhost", "btop"],
       "cwd": "~",
-      "env": {}
+      "env": {},
+      "harness": "rlmx"
     }
   ]
 }

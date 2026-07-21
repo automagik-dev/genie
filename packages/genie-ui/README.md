@@ -25,7 +25,7 @@ Edit `fleet.json` to point panes at the real agent CLIs (`fable`, `hermes -p <pr
 
 | Module | Origin | Role |
 |--------|--------|------|
-| `server/fleet-config.ts` | fresh `server/fleet-config.mjs` | `loadFleet() → PaneSpec[]`; grows genie keys `wishId`, `role` |
+| `server/fleet-config.ts` | fresh `server/fleet-config.mjs` | `loadFleet() → PaneSpec[]`; grows genie keys `wishId`, `role`, and the G3 seam `harness` |
 | `server/pty-session.ts` | fresh `server/pty-session.mjs` | PTY boundary — **the single `node-pty` importer**; `startAll/spawn/kill/restart/write/resize/replay/list/killAll`; events `data`/`exit`/`status` (`idle`/`running`/`exited`) |
 | `server/reused/TerminalMirror.ts` | dash `src/main/services/TerminalMirror.ts` (MIT, salvaged verbatim) | headless-xterm + `SerializeAddon` snapshot engine — the **replay path**, replacing fresh's 256 KB raw-byte ring; imported only by `pty-session` |
 | `server/transport.ts` | fresh `server/transport.mjs` + `client/transport.ts` | the `ws` protocol codec: `FLEET/DATA/EXIT/STATUS/REPLAY/INPUT/RESIZE/SPAWN/KILL/RESTART/LIST` |
@@ -34,6 +34,11 @@ Edit `fleet.json` to point panes at the real agent CLIs (`fable`, `hermes -p <pr
 | `client/layout.ts` | Lane A grid concept (vanilla reimpl) | tabs + horizontal splits + maximize |
 | `client/main.ts` / `client/transport.ts` | fresh `client/*` | roster-driven UI; talks to the server exclusively over `transport` |
 | `client/reused/{Utf8Base64,FitScheduler}.ts` | dash `src/renderer/terminal/*` (MIT, salvaged verbatim) | UTF-8 OSC-52 clipboard codec + debounced fit |
+| `server/chat-backend.ts` | new (G3) | the ACP control channel — a pool of one read-only `ClientSideConnection` per hired agent, lazy spawn on first `@mention`, @-mention routing, named fail-loud events. **The load-bearing wall: no PTY-layer imports.** |
+| `server/acp.ts` | new (G3) | re-exports the `@agentclientprotocol/sdk` surface behind a local name (the real ACP-SDK seam; also keeps the AC6 grep honest — the vendor package name contains "client") |
+| `server/chat-room.ts` | new (G3) | composition-root glue binding `chat-backend` ↔ `transport` (per-wish transcript + roster) so neither imports the other |
+| `capability-table.ts` | new (G3) | checked-in per-harness capability data → minimal hire-time badges ("shared memory" for Hermes only, where demonstrated) |
+| `client/chat-drawer.ts` | new (G3) | the wish-scoped group chat drawer: roster + badges, streamed replies, named fail-loud lines |
 
 ## Pinned G1 decisions
 
@@ -147,3 +152,55 @@ formula verbatim (`src/term-commands/launch.ts buildLaunchPlan`):
 `mkdir`s, and returns `null` for an unlaunched group. `launch.ts` is not imported (it pulls in
 `bun:sqlite` via `openDb` and `Bun.which`, both dead under node); the formula is the contract,
 replicated with a pointer back to its source.
+
+## The wish group chat + ACP control channel (Group 3)
+
+The second channel: alongside each agent's PTY tab (the *viewing* channel), a hired agent gets
+one **lazily-spawned, read-only ACP chat face** (one `ClientSideConnection` per agent). `@agent`
+in the drawer delivers the message + room transcript to that face as an ACP `session/prompt`;
+the reply streams back from `session/update` chunks. Delivery is **@-mention-only** — undelivered
+chat is visible history, not implicit agent context.
+
+**The chat wall (load-bearing, AC6/D7).** `chat-backend.ts` imports **nothing** from
+`pty-session` / `TerminalMirror` / `transport` / `client`. Its whole surface is *deliver
+message / stream reply*, which is exactly the shape the future conductor wish routes on — so wish
+one is the literal substrate of wish two. Proven by a greppable test, not an aspiration:
+
+```bash
+! grep -RnE "from ['\"].*(pty-session|TerminalMirror|transport|client)" packages/genie-ui/server/chat-backend.ts
+```
+
+`index.ts` composes `chat-backend` beside `pty-session` without either importing the other;
+`chat-room.ts` is the only module that touches both (the composition-root seam).
+
+**Non-mutating in v1 (AC4a/D5).** The chat face advertises no filesystem write capability and
+**cancels every permission request** — the terminal face is the sole worktree mutator. This
+defines the two-writers-one-worktree race out of existence; write-promotion is a documented OUT.
+
+**Lazy + seeded + fail-loud (AC5/D6/D9).** Hiring is a roster row only; the ACP process spawns on
+the *first* `@mention`, seeded with wish context (once) + the room transcript (so the first reply
+is not amnesiac). A missing adapter, an unlaunched worktree, or a mid-turn crash surface as
+**named** chat-drawer events — never silence — e.g. `@codex could not start: codex exited (code
+127); check PATH`. Prompts to one agent are serialized (a second `@mention` queues), which also
+sidesteps single-session adapters that reject a concurrent prompt with JSON-RPC `-32600` (rlmx).
+
+**Capability table → badges (AC7/D10).** `capability-table.ts` is the single checked-in source of
+truth (shared-memory? / write-capable? / session-bridging-demonstrated?). v1 renders exactly one
+badge — **"shared memory"**, Hermes only, where its `~/.hermes/state.db` bridge is demonstrated.
+Everything else is the honest default: coherence is the shared worktree + git artifacts, not
+session identity. v1 depends on `session/prompt` + streamed `session/update` only — the one
+primitive all four adapters expose.
+
+**R1 proof (the load-bearing unknown, de-risked first).** The full ACP round-trip
+(`initialize → session/new → session/prompt → session/update`) was proven **live over an
+`ssh localhost … acp` subprocess** against two real adapters on this box: `hermes acp` (clean
+streamed `PONG`) and `node …/rlmx/dist/src/cli.js acp` (handshake + streamed reply; its local
+station LLM returned an empty-response error — transport proven regardless). The v1 default is the
+documented **co-located** fallback (chat faces run beside the server; only remote *viewing*
+crosses the wire); the launcher is injectable to point at an absolute path or an `ssh …` wrap.
+
+**AC4b — Hermes session bridging (best-effort, never a gate).** Demonstrated live: a read-only ACP
+chat-face conversation is persisted into `~/.hermes/state.db` — the same db the terminal
+`hermes --tui` face reads (`sessions`+1, `messages` grew, the seeded codeword present) — so the two
+faces of a Hermes agent share durable memory via the vendor contract. Codex/rlmx exempt; CC
+JSONL-resume remains a stretch, not demonstrated.

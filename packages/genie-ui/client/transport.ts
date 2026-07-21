@@ -37,6 +37,30 @@ export interface WishContextMsg {
   taskCount: number;
 }
 
+/** A hired agent's chat face + minimal badges (G3). Mirrors server `ChatAgentRow`. */
+export interface ChatAgentRow {
+  id: string;
+  name: string;
+  harness: 'claude' | 'codex' | 'hermes' | 'rlmx';
+  badges: string[];
+  wish: string | null;
+}
+
+/** A completed room line (G3). Mirrors server `ChatLine`. */
+export interface ChatLine {
+  wish: string;
+  from: string;
+  text: string;
+}
+
+/** A streamed chat event (G3). Mirrors server `ChatEventWire` — includes the named fail-loud ones. */
+export type ChatEventWire =
+  | { kind: 'message-chunk'; agentId: string; text: string }
+  | { kind: 'thought-chunk'; agentId: string; text: string }
+  | { kind: 'reply-done'; agentId: string; stopReason: string }
+  | { kind: 'spawn-failed'; agentId: string; message: string }
+  | { kind: 'delivery-failed'; agentId: string; message: string };
+
 type ServerMsg =
   | { t: 'fleet'; panes: PaneInfo[] }
   | { t: 'replay'; id: string; data: string }
@@ -44,7 +68,10 @@ type ServerMsg =
   | { t: 'status'; id: string; status: SessionStatus }
   | { t: 'exit'; id: string; code: number }
   | { t: 'wishes'; wishes: WishRow[] }
-  | { t: 'wish-context'; context: WishContextMsg };
+  | { t: 'wish-context'; context: WishContextMsg }
+  | { t: 'chat-roster'; agents: ChatAgentRow[] }
+  | { t: 'chat-message'; line: ChatLine }
+  | { t: 'chat-event'; wish: string; event: ChatEventWire };
 
 interface Handlers {
   onFleet?: (panes: PaneInfo[]) => void;
@@ -54,6 +81,9 @@ interface Handlers {
   onExit?: (id: string, code: number) => void;
   onWishes?: (wishes: WishRow[]) => void;
   onWishContext?: (context: WishContextMsg) => void;
+  onChatRoster?: (agents: ChatAgentRow[]) => void;
+  onChatMessage?: (line: ChatLine) => void;
+  onChatEvent?: (wish: string, event: ChatEventWire) => void;
   onOpen?: () => void;
   onClose?: () => void;
 }
@@ -105,6 +135,15 @@ export class Transport {
       case 'wish-context':
         this.h.onWishContext?.(m.context);
         break;
+      case 'chat-roster':
+        this.h.onChatRoster?.(m.agents);
+        break;
+      case 'chat-message':
+        this.h.onChatMessage?.(m.line);
+        break;
+      case 'chat-event':
+        this.h.onChatEvent?.(m.wish, m.event);
+        break;
     }
   }
 
@@ -130,5 +169,9 @@ export class Transport {
   /** Open a wish's worktree-bound context (G2 genie lane). */
   wishOpen(slug: string): void {
     this.send({ t: 'wish-open', slug });
+  }
+  /** Send a human line into a wish's group chat (G3). @-mentions route it to agents. */
+  chatSend(wish: string, text: string): void {
+    this.send({ t: 'chat-send', wish, text });
   }
 }

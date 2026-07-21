@@ -18,6 +18,7 @@ import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { type WebSocket, WebSocketServer } from 'ws';
+import { ChatRoom } from './chat-room';
 import { CONFIG_PATH, loadFleet } from './fleet-config';
 import { listWishes, wishContext } from './genie-lane';
 import { PtySessionManager } from './pty-session';
@@ -127,18 +128,20 @@ function openWishContext(slug: string): WishContextMsg {
   }
 }
 
-/** On attach: send the wish menu + roster, then replay each pane's snapshot from its TerminalMirror. */
-async function attachClient(ws: WebSocket, manager: PtySessionManager): Promise<void> {
+/** On attach: send the wish menu + roster + chat roster/history, then replay each pane's snapshot. */
+async function attachClient(ws: WebSocket, manager: PtySessionManager, room: ChatRoom): Promise<void> {
   const send = (m: ServerMsg) => ws.send(encode(m));
   send({ t: MSG.WISHES, wishes: loadWishRows() });
   send({ t: MSG.FLEET, panes: manager.list() });
+  send({ t: MSG.CHAT_ROSTER, agents: room.agentRoster() });
+  for (const line of room.history()) send({ t: MSG.CHAT_MESSAGE, line });
   for (const p of manager.list()) {
     const data = await manager.replay(p.id);
     if (data) send({ t: MSG.REPLAY, id: p.id, data });
   }
 }
 
-function handleClientMsg(manager: PtySessionManager, m: ClientMsg, ws: WebSocket): void {
+function handleClientMsg(manager: PtySessionManager, room: ChatRoom, m: ClientMsg, ws: WebSocket): void {
   switch (m.t) {
     case MSG.INPUT:
       manager.write(m.id, m.data);
@@ -161,12 +164,19 @@ function handleClientMsg(manager: PtySessionManager, m: ClientMsg, ws: WebSocket
     case MSG.WISH_OPEN:
       ws.send(encode({ t: MSG.WISH_CONTEXT, context: openWishContext(m.slug) }));
       break;
+    case MSG.CHAT_SEND:
+      room.send(m.wish, m.text);
+      break;
   }
 }
 
 async function main(): Promise<void> {
   const fleet = loadFleet();
   const manager = new PtySessionManager(fleet);
+  // The ACP control channel (G3): one read-only chat face per hired agent, lazily spawned on
+  // first @-mention. Composed here beside the PTY manager but WITHOUT either importing the
+  // other — the chat wall. `chat-room` is the only module that touches both.
+  const room = new ChatRoom(fleet);
   manager.startAll();
 
   console.log(`[genie-ui] fleet loaded from ${CONFIG_PATH}`);
@@ -192,12 +202,15 @@ async function main(): Promise<void> {
   manager.on('exit', (id: string, code: number) => broadcast({ t: MSG.EXIT, id, code }));
   manager.on('status', (id: string, status) => broadcast({ t: MSG.STATUS, id, status }));
 
+  // Fan the chat room's streamed events + completed lines out to every drawer.
+  room.onOutbound((m) => broadcast(m));
+
   wss.on('connection', (ws) => {
     clients.add(ws);
-    void attachClient(ws, manager);
+    void attachClient(ws, manager, room);
     ws.on('message', (raw: Buffer) => {
       const m = decode(raw.toString());
-      if (m?.t) handleClientMsg(manager, m, ws);
+      if (m?.t) handleClientMsg(manager, room, m, ws);
     });
     ws.on('close', () => clients.delete(ws));
   });
@@ -209,6 +222,7 @@ async function main(): Promise<void> {
 
   const shutdown = () => {
     console.log('\n[genie-ui] shutting down, killing sessions...');
+    room.shutdown();
     manager.killAll();
     manager.disposeAll();
     process.exit(0);

@@ -23,6 +23,7 @@ function spec(overrides: Partial<PaneSpec>): PaneSpec {
     name: 't',
     role: null,
     wishId: null,
+    harness: null,
     command: 'bash',
     args: [],
     cwd: process.cwd(),
