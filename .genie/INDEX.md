@@ -14,6 +14,7 @@
 - [cross-agent-delegate](brainstorms/cross-agent-delegate/DRAFT.md) — delegate skill (Codex+Hermes), wish companion sessions, refine style cards, auto plan-gate counter-read (umbrella G6, 2026-07-09)
 
 ## Ready
+- [genie-ui — DESIGN](brainstorms/genie-ui/DESIGN.md) — WRS 100/100, design review SHIP (digest-stamped 2026-07-21). The genie UI: dash-pattern PTY fleet + wish left-menu + hired agents + wish group chat (council-ratified Model B corrected); fresh A/B substrate + salvaged TerminalMirror; G1-G4; conductor = follow-up wish.
 
 - [WISH: hook-injection-hardening](wishes/hook-injection-hardening/WISH.md) — BLOCKED-clearing safety edit: `execFileSync` at 3 hook sites (audit-context, freshness×2) + hostile-filename regression tests + `core.bare` probe removal; flips panel verdict BLOCKED→FIX-FIRST — SHIPPED → PR #2536 (wish/hook-injection-hardening→main), G1+G2+whole-wish reviews SHIP, 729 pass/0 fail (2026-07-09)
 - [WISH: v5-completion](wishes/v5-completion/WISH.md) — **DONE** (all 3 groups SHIP-reviewed 2026-07-02; reconcile scope w/ cross-agent-delegate + agent-sync per HANDOFF §4): CLAUDE.md-for-v5 rewrite ∥ Codex launch target + Hermes decision ∥ distribution 5.x
