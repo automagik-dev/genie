@@ -15,17 +15,6 @@
 
 ## Ready
 
-- [codex-plugin-update-handoff](brainstorms/codex-plugin-update-handoff/DESIGN.md) ·
-  [WISH](wishes/codex-plugin-update-handoff/WISH.md) — WRS 100; plan gate SHIP 2026-07-12 (fix loop
-  1/2, digest `4c71ab68…`). **Criterion classification 2026-07-21:** Groups A+B execution-SHIP on
-  the wish branch (tip `ac264911`; A after 2 fix loops, B all 7 ACs) with a blocking handback — C
-  must rewire the three cache-advancing call sites before anything merges; Groups C–E not started;
-  NONE of the activation protocol on dev (dev independently shipped only the plugin-only delivery layer, B1
-  `3b4faa3b` / B2 `6f423869`). Merge gate: A–E each SHIP → PR to dev as a whole; live dogfood
-  ritual blocked until then (renamed from sessionstart-hook-reliability, 2026-07-12)
-
-- [WISH: routing-delivery-fix](wishes/routing-delivery-fix/WISH.md) — **CODE COMPLETE — Groups A+B SHIP (2026-07-12), PR pending** — `genie update` fans the seven pinned role agents into `~/.claude/agents/` (per-file manifest, adopt-with-backup, doctor truth-telling + enabledPlugins duplicate warning); wish 1 of [token-efficiency-rebaseline](brainstorms/token-efficiency-rebaseline/DESIGN.md). Group A: attempts 1–3 (opus-xhigh) FIX-FIRST on transaction-boundary races → Felipe-authorized attempt 4 at Fable tier (effort escalation 1/2) rebuilt it architecture-first (one flat-agent transaction core: capture → validate → publish → manifest CAS → finalize/rollback; one lock across full uninstall) → independent Fable-tier review **SHIP**, all six invariants closed, `5c29b2b1` (2 MEDIUM + 3 LOW hardening advisories in WISH.md). Group B: doctor per-file states + duplicate warning + stable `--json` roleAgents payload → review **SHIP** loop 0, `127e08e3`; 976 suite pass. Remaining: PR → release → Group C day-3 QA (user-gated live ritual: stamped-surface check + LangWatch fingerprints with resolved model IDs) (2026-07-12)
-
 - [WISH: hook-injection-hardening](wishes/hook-injection-hardening/WISH.md) — BLOCKED-clearing safety edit: `execFileSync` at 3 hook sites (audit-context, freshness×2) + hostile-filename regression tests + `core.bare` probe removal; flips panel verdict BLOCKED→FIX-FIRST — SHIPPED → PR #2536 (wish/hook-injection-hardening→main), G1+G2+whole-wish reviews SHIP, 729 pass/0 fail (2026-07-09)
 - [WISH: v5-completion](wishes/v5-completion/WISH.md) — **DONE** (all 3 groups SHIP-reviewed 2026-07-02; reconcile scope w/ cross-agent-delegate + agent-sync per HANDOFF §4): CLAUDE.md-for-v5 rewrite ∥ Codex launch target + Hermes decision ∥ distribution 5.x
 - [WISH: dispatch-inproc-default](wishes/dispatch-inproc-default/WISH.md) — **DONE** (both groups SHIP-reviewed 2026-07-02; branch-guard re-armed, regression-gated — hooks demonstrably armed tonight): v5 hooks no longer fall open by default; re-arm branch-guard + unblock omni approvals
@@ -34,6 +23,16 @@
 - [WISH: warp-integration](wishes/warp-integration/WISH.md) — **DONE** (all 4 groups SHIP-reviewed 2026-07-02; pane-render checklist awaiting Felipe): genie init, Warp launch-config emitter, genie launch, /work multi-session opt-in
 
 ## Poured
+- [ledger-rebaseline](brainstorms/ledger-rebaseline/DRAFT.md) — **EXECUTED 2026-07-21** (`24ea5aa7`): full .genie ledger reconciled against origin/dev reality — supersession verdicts, umbrella-brainstorm sweep, file dispositions; decisions applied same-day
+- [codex-plugin-update-handoff](brainstorms/codex-plugin-update-handoff/DESIGN.md) ·
+  [WISH](wishes/codex-plugin-update-handoff/WISH.md) — WRS 100; plan gate SHIP 2026-07-12 (fix loop
+  1/2, digest `4c71ab68…`). **Criterion classification 2026-07-21:** Groups A+B execution-SHIP on
+  the wish branch (tip `ac264911`; A after 2 fix loops, B all 7 ACs) with a blocking handback — C
+  must rewire the three cache-advancing call sites before anything merges; Groups C–E not started;
+  NONE of the activation protocol on dev (dev independently shipped only the plugin-only delivery layer, B1
+  `3b4faa3b` / B2 `6f423869`). Merge gate: A–E each SHIP → PR to dev as a whole; live dogfood
+  ritual blocked until then (renamed from sessionstart-hook-reliability, 2026-07-12)
+- [WISH: routing-delivery-fix](wishes/routing-delivery-fix/WISH.md) — **CODE COMPLETE — Groups A+B SHIP (2026-07-12), PR pending** — `genie update` fans the seven pinned role agents into `~/.claude/agents/` (per-file manifest, adopt-with-backup, doctor truth-telling + enabledPlugins duplicate warning); wish 1 of [token-efficiency-rebaseline](brainstorms/token-efficiency-rebaseline/DESIGN.md). Group A: attempts 1–3 (opus-xhigh) FIX-FIRST on transaction-boundary races → Felipe-authorized attempt 4 at Fable tier (effort escalation 1/2) rebuilt it architecture-first (one flat-agent transaction core: capture → validate → publish → manifest CAS → finalize/rollback; one lock across full uninstall) → independent Fable-tier review **SHIP**, all six invariants closed, `5c29b2b1` (2 MEDIUM + 3 LOW hardening advisories in WISH.md). Group B: doctor per-file states + duplicate warning + stable `--json` roleAgents payload → review **SHIP** loop 0, `127e08e3`; 976 suite pass. Remaining: PR → release → Group C day-3 QA (user-gated live ritual: stamped-surface check + LangWatch fingerprints with resolved model IDs) (2026-07-12)
 - [boards-first-class](brainstorms/boards-first-class/DESIGN.md) · [WISH](wishes/boards-first-class/WISH.md) — **APPROVED 2026-07-21, plan review SHIP (1 fix loop)**: genie lifecycle as kanban — board create/list + lifecycle lanes (Idea→Brainstorm→Wish→Work→Review→Done), `genie idea` capture, task_events timeline (new additive table; stage_log retained+backfilled), runtime identity + heartbeat liveness (▶/⏸/☠), enforced blocks (single carved checkout exception), meeseeks report events, jar↔INDEX drift lint via lifecycle-slug join. 3 groups: A engine → B timeline+runtime (Fable gate) ∥ C jar unification
 - [token-efficiency-rebaseline](brainstorms/token-efficiency-rebaseline/DESIGN.md) — WRS 100;
   ratified Fix → Spend → Workflows sequence; first wish is routing-delivery-fix (2026-07-11)
