@@ -29,6 +29,7 @@ import { registerInitCommand } from './term-commands/init.js';
 import { registerLaunchCommand } from './term-commands/launch.js';
 import { registerMcpCommand } from './term-commands/mcp.js';
 import { registerOmniCommands } from './term-commands/omni.js';
+import { registerUiBridgeCommand } from './term-commands/ui-bridge.js';
 import { registerV5BoardCommands } from './term-commands/v5-board.js';
 import { registerV5TaskCommands } from './term-commands/v5-task.js';
 
@@ -160,6 +161,7 @@ registerHookNamespace(program);
 registerInitCommand(program);
 registerLaunchCommand(program);
 registerMcpCommand(program);
+registerUiBridgeCommand(program);
 registerV5TaskCommands(program);
 registerV5BoardCommands(program);
 registerOmniCommands(program);
