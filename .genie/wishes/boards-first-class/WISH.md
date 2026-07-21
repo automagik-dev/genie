@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | EXECUTED — final execution review SHIP 2026-07-21; all 3 groups done; PR to dev pending (Felipe-gated) |
+| **Status** | SHIPPED — PR [#2611](https://github.com/automagik-dev/genie/pull/2611) merged to dev `fa163bd2` (2026-07-21, 16/16 CI); post-merge live QA ritual open (card in Review lane) |
 | **Slug** | `boards-first-class` |
 | **Date** | 2026-07-21 |
 | **Author** | Felipe + team-lead brainstorm session |
