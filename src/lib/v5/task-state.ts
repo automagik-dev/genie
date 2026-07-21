@@ -42,14 +42,80 @@ export interface CreateTaskInput {
   wish?: string;
   /** Wish-group name this task belongs to. */
   group?: string;
+  /** Initial lifecycle lane placement (only meaningful on a lane-defining board). */
+  lane?: string;
   /** IDs of existing tasks this task depends on. Non-empty ⇒ starts `blocked`. */
   dependsOn?: string[];
+}
+
+/**
+ * A lifecycle lane on a board. `name` is the stored key; `label` overrides the
+ * rendered header; `action` names the skill that advances a card out of the lane
+ * and is DISPLAY-ONLY — no code path executes it (WISH Decision 1, Scope OUT).
+ */
+export interface Lane {
+  name: string;
+  label?: string;
+  action?: string;
 }
 
 export interface BoardRow {
   id: string;
   name: string;
+  /** Ordered lifecycle lanes, or null for a laneless (execution-status) board. */
+  lanes: Lane[] | null;
   createdAt: number;
+}
+
+/**
+ * The canonical genie lifecycle lanes, assigned to a board when `--lanes` is
+ * omitted. `action` is a display-only hint (WISH Decision 1). Review/Done carry
+ * no advancing skill.
+ */
+export const DEFAULT_LIFECYCLE_LANES: Lane[] = [
+  { name: 'Idea', action: '/brainstorm' },
+  { name: 'Brainstorm', action: '/wish' },
+  { name: 'Wish', action: '/work' },
+  { name: 'Work', action: '/review' },
+  { name: 'Review' },
+  { name: 'Done' },
+];
+
+/** Name of the default board `genie idea` captures into. */
+export const ROADMAP_BOARD = 'roadmap';
+
+/**
+ * A task row plus its lane placement. Kept SEPARATE from {@link TaskRow} so the
+ * frozen TaskRow contract — and the byte-identical laneless board `--json`,
+ * MCP, and `task export` shapes that serialize it — never gains a `lane` field.
+ * Only the additive lane-grouped render consumes this projection.
+ */
+export interface LaneTaskRow extends TaskRow {
+  lane: string | null;
+}
+
+/** An authored, append-only card timeline event. */
+export interface TaskEvent {
+  id: number;
+  taskId: string;
+  kind: string;
+  note: string | null;
+  authorKind: string | null;
+  author: string | null;
+  createdAt: number;
+}
+
+export interface AppendEventInput {
+  kind: string;
+  note?: string;
+  authorKind?: string;
+  author?: string;
+}
+
+/** Author attribution for a card event. */
+export interface EventAuthor {
+  author: string | null;
+  authorKind: string | null;
 }
 
 export interface StageEntry {
@@ -119,6 +185,24 @@ export class UnknownBoardError extends Error {
     super(`Board not found: ${ref}`);
     this.name = 'UnknownBoardError';
     this.ref = ref;
+  }
+}
+
+/** A board with this (UNIQUE) name already exists. */
+export class DuplicateBoardError extends Error {
+  readonly boardName: string;
+  constructor(name: string) {
+    super(`Board "${name}" already exists`);
+    this.name = 'DuplicateBoardError';
+    this.boardName = name;
+  }
+}
+
+/** An invalid lane reference or a move against a board that defines no lanes. */
+export class LaneError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'LaneError';
   }
 }
 
@@ -205,29 +289,65 @@ function mapTask(row: RawTask): TaskRow {
 // Boards
 // ============================================================================
 
-export function createBoard(db: Database, name: string): BoardRow {
+interface RawBoardRow {
+  id: string;
+  name: string;
+  lanes: string | null;
+  created_at: number;
+}
+
+/** Parse the stored lanes JSON back into `Lane[]`, tolerating malformed data. */
+function parseLanes(raw: string | null): Lane[] | null {
+  if (raw == null) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as Lane[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+function mapBoard(row: RawBoardRow): BoardRow {
+  return { id: row.id, name: row.name, lanes: parseLanes(row.lanes), createdAt: row.created_at };
+}
+
+/**
+ * Create a board, optionally with lifecycle lanes (stored as JSON in the
+ * additive `boards.lanes` column). Rejects a duplicate name up front with a
+ * typed {@link DuplicateBoardError} rather than surfacing a raw UNIQUE-constraint
+ * SqliteError. An empty lane list is normalized to null (laneless board).
+ */
+export function createBoard(db: Database, name: string, lanes?: Lane[]): BoardRow {
+  if (getBoardByName(db, name)) throw new DuplicateBoardError(name);
   const id = newId('b');
   const createdAt = Date.now();
-  db.query('INSERT INTO boards (id, name, created_at) VALUES (?, ?, ?)').run(id, name, createdAt);
-  return { id, name, createdAt };
+  const normalizedLanes = lanes && lanes.length > 0 ? lanes : null;
+  const lanesJson = normalizedLanes ? JSON.stringify(normalizedLanes) : null;
+  db.query('INSERT INTO boards (id, name, lanes, created_at) VALUES (?, ?, ?, ?)').run(id, name, lanesJson, createdAt);
+  return { id, name, lanes: normalizedLanes, createdAt };
 }
 
 export function getBoard(db: Database, id: string): BoardRow | null {
-  const row = db.query('SELECT id, name, created_at FROM boards WHERE id = ?').get(id) as {
-    id: string;
-    name: string;
-    created_at: number;
-  } | null;
-  return row ? { id: row.id, name: row.name, createdAt: row.created_at } : null;
+  const row = db.query('SELECT id, name, lanes, created_at FROM boards WHERE id = ?').get(id) as RawBoardRow | null;
+  return row ? mapBoard(row) : null;
 }
 
 export function getBoardByName(db: Database, name: string): BoardRow | null {
-  const row = db.query('SELECT id, name, created_at FROM boards WHERE name = ?').get(name) as {
-    id: string;
-    name: string;
-    created_at: number;
-  } | null;
-  return row ? { id: row.id, name: row.name, createdAt: row.created_at } : null;
+  const row = db.query('SELECT id, name, lanes, created_at FROM boards WHERE name = ?').get(name) as RawBoardRow | null;
+  return row ? mapBoard(row) : null;
+}
+
+/** Every board, oldest first. Powers `genie board list`. */
+export function listBoards(db: Database): BoardRow[] {
+  const rows = db
+    .query('SELECT id, name, lanes, created_at FROM boards ORDER BY created_at, id')
+    .all() as RawBoardRow[];
+  return rows.map(mapBoard);
+}
+
+/** Count of tasks assigned to a board — the card count for `board list`. */
+export function countBoardTasks(db: Database, boardId: string): number {
+  return (db.query('SELECT count(*) AS n FROM tasks WHERE board_id = ?').get(boardId) as { n: number }).n;
 }
 
 /**
@@ -258,9 +378,19 @@ export function createTask(db: Database, input: CreateTaskInput): TaskRow {
 
   const insert = db.transaction(() => {
     db.query(
-      `INSERT INTO tasks (id, board_id, title, status, wish, group_name, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(id, input.boardId ?? null, input.title, status, input.wish ?? null, input.group ?? null, now, now);
+      `INSERT INTO tasks (id, board_id, title, status, wish, group_name, lane, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      id,
+      input.boardId ?? null,
+      input.title,
+      status,
+      input.wish ?? null,
+      input.group ?? null,
+      input.lane ?? null,
+      now,
+      now,
+    );
     for (const depId of deps) {
       addDependencyInTx(db, id, depId);
     }
@@ -281,7 +411,7 @@ export interface TaskFilter {
   wish?: string;
 }
 
-export function listTasks(db: Database, filter: TaskFilter = {}): TaskRow[] {
+function buildTaskWhere(filter: TaskFilter): { where: string; params: string[] } {
   const clauses: string[] = [];
   const params: string[] = [];
   if (filter.status) {
@@ -296,9 +426,32 @@ export function listTasks(db: Database, filter: TaskFilter = {}): TaskRow[] {
     clauses.push('wish = ?');
     params.push(filter.wish);
   }
-  const where = clauses.length > 0 ? ` WHERE ${clauses.join(' AND ')}` : '';
+  return { where: clauses.length > 0 ? ` WHERE ${clauses.join(' AND ')}` : '', params };
+}
+
+export function listTasks(db: Database, filter: TaskFilter = {}): TaskRow[] {
+  const { where, params } = buildTaskWhere(filter);
   const rows = db.query(`SELECT * FROM tasks${where} ORDER BY created_at`).all(...params) as RawTask[];
   return rows.map(mapTask);
+}
+
+/**
+ * Lane-aware task listing — the same rows as {@link listTasks} plus each card's
+ * `lane`. Consumed ONLY by the additive lane-grouped board render; the frozen
+ * {@link TaskRow} path (board `--json`, MCP, export) stays byte-identical.
+ */
+export function listTasksWithLane(db: Database, filter: TaskFilter = {}): LaneTaskRow[] {
+  const { where, params } = buildTaskWhere(filter);
+  const rows = db.query(`SELECT * FROM tasks${where} ORDER BY created_at`).all(...params) as Array<
+    RawTask & { lane: string | null }
+  >;
+  return rows.map((r) => ({ ...mapTask(r), lane: r.lane ?? null }));
+}
+
+/** The card's current lane, or null when unplaced. */
+export function getTaskLane(db: Database, id: string): string | null {
+  const row = db.query('SELECT lane FROM tasks WHERE id = ?').get(id) as { lane: string | null } | null;
+  return row ? (row.lane ?? null) : null;
 }
 
 // ============================================================================
@@ -478,6 +631,108 @@ export function getStageLog(db: Database, taskId: string): StageEntry[] {
     created_at: number;
   }>;
   return rows.map((r) => ({ id: r.id, taskId: r.task_id, stage: r.stage, note: r.note, createdAt: r.created_at }));
+}
+
+// ============================================================================
+// Append-only card timeline (task_events)
+// ============================================================================
+
+interface RawTaskEvent {
+  id: number;
+  task_id: string;
+  kind: string;
+  note: string | null;
+  author_kind: string | null;
+  author: string | null;
+  created_at: number;
+}
+
+function mapTaskEvent(row: RawTaskEvent): TaskEvent {
+  return {
+    id: row.id,
+    taskId: row.task_id,
+    kind: row.kind,
+    note: row.note,
+    authorKind: row.author_kind,
+    author: row.author,
+    createdAt: row.created_at,
+  };
+}
+
+/**
+ * Append one authored event to a card's timeline. This is the MINIMAL API the
+ * move verb needs; the full verb surface (comment/block/release/report) lands in
+ * a later group on top of this table.
+ */
+export function appendTaskEvent(db: Database, taskId: string, event: AppendEventInput): TaskEvent {
+  requireTask(db, taskId);
+  const createdAt = Date.now();
+  const res = db
+    .query('INSERT INTO task_events (task_id, kind, note, author_kind, author, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(taskId, event.kind, event.note ?? null, event.authorKind ?? null, event.author ?? null, createdAt);
+  return {
+    id: Number(res.lastInsertRowid),
+    taskId,
+    kind: event.kind,
+    note: event.note ?? null,
+    authorKind: event.authorKind ?? null,
+    author: event.author ?? null,
+    createdAt,
+  };
+}
+
+/** A card's timeline events in append order. */
+export function getTaskEvents(db: Database, taskId: string): TaskEvent[] {
+  const rows = db.query('SELECT * FROM task_events WHERE task_id = ? ORDER BY id').all(taskId) as RawTaskEvent[];
+  return rows.map(mapTaskEvent);
+}
+
+// ============================================================================
+// Lane moves
+// ============================================================================
+
+export interface MoveResult {
+  task: TaskRow;
+  from: string | null;
+  to: string;
+}
+
+/**
+ * Move a card to a lane defined by its board, recording a `move` event on the
+ * card timeline. Rejects (typed {@link LaneError}) a card with no board, a board
+ * that defines no lanes, or an undefined target lane — the error lists the valid
+ * lanes so the CLI can surface them. The lane write + event append are one
+ * transaction so a card can never show a lane without a matching timeline entry.
+ */
+export function moveTask(db: Database, taskId: string, toLane: string, author: EventAuthor): MoveResult {
+  const task = getTask(db, taskId);
+  if (!task) throw new UnknownTaskError(taskId);
+  if (!task.boardId) {
+    throw new LaneError(`Task ${taskId} is not on a board — moving between lanes requires a lane-defining board.`);
+  }
+  const board = getBoard(db, task.boardId);
+  if (!board?.lanes || board.lanes.length === 0) {
+    throw new LaneError(`Board "${board?.name ?? task.boardId}" defines no lanes — nothing to move between.`);
+  }
+  const laneNames = board.lanes.map((l) => l.name);
+  if (!laneNames.includes(toLane)) {
+    throw new LaneError(`Unknown lane "${toLane}". Valid lanes: ${laneNames.join(', ')}.`);
+  }
+
+  const from = getTaskLane(db, taskId);
+  const note = `${from ?? '(none)'}→${toLane}`;
+  const now = Date.now();
+  const move = db.transaction(() => {
+    db.query('UPDATE tasks SET lane = ?, updated_at = ? WHERE id = ?').run(toLane, now, taskId);
+    appendTaskEvent(db, taskId, {
+      kind: 'move',
+      note,
+      authorKind: author.authorKind ?? undefined,
+      author: author.author ?? undefined,
+    });
+  });
+  move();
+  return { task: getTask(db, taskId) as TaskRow, from, to: toLane };
 }
 
 // ============================================================================

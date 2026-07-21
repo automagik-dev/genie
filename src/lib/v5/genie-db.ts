@@ -102,14 +102,24 @@ export function openDb(opts: OpenOptions = {}): Database {
 }
 
 /** Tables a fully-initialized `user_version = 1` DB must carry. */
-const EXPECTED_TABLES = ['boards', 'meta', 'stage_log', 'task_dependencies', 'tasks', 'wish_groups'] as const;
+const EXPECTED_TABLES = [
+  'boards',
+  'meta',
+  'stage_log',
+  'task_dependencies',
+  'task_events',
+  'tasks',
+  'wish_groups',
+] as const;
 
 /**
  * True when the DB is already at the current schema — every expected table plus
- * the additive `wish`/`group_name` columns on `tasks`. Pure reads (no write
- * lock), so a known-current DB opens without contending on the schema lock.
- * A pre-column v1 DB (missing wish/group_name) returns false → ensureSchema runs
- * and backfills, preserving {@link ensureTaskColumns} semantics.
+ * the additive lane/wish columns backfilled by {@link ensureTaskColumns} and
+ * {@link ensureBoardColumns}. Pure reads (no write lock), so a known-current DB
+ * opens without contending on the schema lock. A pre-column v1 DB (missing any
+ * of these) returns false → ensureSchema runs and backfills. This MUST stay in
+ * lockstep with the ensure* helpers: an added column absent here would let an
+ * already-initialized DB short-circuit past the backfill.
  */
 function schemaIsCurrent(db: Database): boolean {
   const tables = new Set(
@@ -120,8 +130,12 @@ function schemaIsCurrent(db: Database): boolean {
     ).map((r) => r.name),
   );
   for (const t of EXPECTED_TABLES) if (!tables.has(t)) return false;
-  const cols = new Set((db.query('PRAGMA table_info(tasks)').all() as Array<{ name: string }>).map((c) => c.name));
-  return cols.has('wish') && cols.has('group_name');
+  const taskCols = new Set((db.query('PRAGMA table_info(tasks)').all() as Array<{ name: string }>).map((c) => c.name));
+  if (!taskCols.has('wish') || !taskCols.has('group_name') || !taskCols.has('lane')) return false;
+  const boardCols = new Set(
+    (db.query('PRAGMA table_info(boards)').all() as Array<{ name: string }>).map((c) => c.name),
+  );
+  return boardCols.has('lanes');
 }
 
 const SCHEMA_SQL = `
@@ -163,6 +177,16 @@ CREATE TABLE IF NOT EXISTS stage_log (
   created_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS task_events (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id     TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  kind        TEXT NOT NULL,
+  note        TEXT,
+  author_kind TEXT,
+  author      TEXT,
+  created_at  INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS wish_groups (
   wish         TEXT NOT NULL,
   name         TEXT NOT NULL,
@@ -179,23 +203,36 @@ CREATE TABLE IF NOT EXISTS wish_groups (
 CREATE INDEX IF NOT EXISTS idx_task_deps_dep ON task_dependencies(depends_on_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_stage_log_task ON stage_log(task_id);
+CREATE INDEX IF NOT EXISTS idx_task_events_task ON task_events(task_id);
 `;
 
 /** Create every table/index if absent. Idempotent — pure `IF NOT EXISTS`. */
 export function ensureSchema(db: Database): void {
   db.exec(SCHEMA_SQL);
   ensureTaskColumns(db);
+  ensureBoardColumns(db);
 }
 
 /**
  * Additive, in-place column backfill for `tasks`. `CREATE TABLE IF NOT EXISTS`
  * never alters an existing table, so a DB stamped by an earlier build (which
- * lacked `wish`/`group_name`) needs the columns added. Both are nullable, so
- * this stays within `user_version = 1` — no destructive migration, no version
+ * lacked `wish`/`group_name`/`lane`) needs the columns added. All are nullable,
+ * so this stays within `user_version = 1` — no destructive migration, no version
  * bump. Idempotent: a table that already has the columns is left untouched.
  */
 function ensureTaskColumns(db: Database): void {
   const cols = new Set((db.query('PRAGMA table_info(tasks)').all() as Array<{ name: string }>).map((c) => c.name));
   if (!cols.has('wish')) db.exec('ALTER TABLE tasks ADD COLUMN wish TEXT');
   if (!cols.has('group_name')) db.exec('ALTER TABLE tasks ADD COLUMN group_name TEXT');
+  if (!cols.has('lane')) db.exec('ALTER TABLE tasks ADD COLUMN lane TEXT');
+}
+
+/**
+ * Additive, in-place column backfill for `boards`. Adds the nullable `lanes`
+ * JSON column to a DB stamped before lifecycle lanes existed. Nullable ⇒ stays
+ * within `user_version = 1`. Idempotent: a no-op once the column is present.
+ */
+function ensureBoardColumns(db: Database): void {
+  const cols = new Set((db.query('PRAGMA table_info(boards)').all() as Array<{ name: string }>).map((c) => c.name));
+  if (!cols.has('lanes')) db.exec('ALTER TABLE boards ADD COLUMN lanes TEXT');
 }
