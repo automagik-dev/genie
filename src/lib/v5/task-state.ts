@@ -285,6 +285,23 @@ export class TaskNotReadyError extends Error {
   }
 }
 
+/**
+ * A release was refused because the card is not `in_progress` — there is no live
+ * claim to hand back. The status is carried so the CLI can tell the operator why
+ * (a completed card is the load-bearing case: releasing it would resurrect it).
+ */
+export class TaskReleaseError extends Error {
+  readonly taskId: string;
+  readonly status: TaskStatus;
+  constructor(taskId: string, status: TaskStatus) {
+    const detail = status === 'done' ? 'it is already done' : `it is ${status}, not in progress`;
+    super(`Cannot release task ${taskId}: ${detail} — nothing to release`);
+    this.name = 'TaskReleaseError';
+    this.taskId = taskId;
+    this.status = status;
+  }
+}
+
 /** An invalid wish-group transition was attempted. */
 export class WishGroupStateError extends Error {
   constructor(message: string) {
@@ -742,32 +759,45 @@ export function completeTask(db: Database, taskId: string, author?: EventAuthor)
   return getTask(db, taskId) as TaskRow;
 }
 
-/**
- * Release a claim WITHOUT completing — returns an `in_progress` card to the
- * `ready` queue and clears the claim so another runtime can pick it up. Emits a
- * `release` timeline event carrying the acting runtime. A card that is not
- * in_progress simply loses any stale claim fields; its status is left intact.
- */
-export function releaseTask(db: Database, taskId: string, author: EventAuthor): TaskRow {
+/** Translate a refused release (CAS matched no `in_progress` row) into a typed error. */
+function releaseFailure(db: Database, taskId: string): never {
   const task = getTask(db, taskId);
   if (!task) throw new UnknownTaskError(taskId);
+  throw new TaskReleaseError(taskId, task.status);
+}
+
+/**
+ * Release a claim WITHOUT completing — returns an `in_progress` card to the
+ * `ready` queue and clears the claim so another runtime can pick it up. The state
+ * check lives IN the SQL (`WHERE ... AND status = 'in_progress'`) exactly like
+ * {@link claimTask}, so a concurrent `done`/re-claim that transitions the card out
+ * of `in_progress` between decision and write can never be clobbered: the
+ * conditional UPDATE simply affects zero rows and we refuse with a typed
+ * {@link TaskReleaseError} — critically, a completed card is NEVER resurrected to
+ * `ready`. The `release` timeline event is emitted ONLY inside the winning
+ * transaction, so a refused release leaves no phantom event.
+ */
+export function releaseTask(db: Database, taskId: string, author: EventAuthor): TaskRow {
   const now = Date.now();
-  const tx = db.transaction(() => {
-    if (task.status === 'in_progress') {
-      db.query(
-        "UPDATE tasks SET status = 'ready', claimed_by = NULL, claimed_at = NULL, updated_at = ? WHERE id = ?",
-      ).run(now, taskId);
-    } else {
-      db.query('UPDATE tasks SET claimed_by = NULL, claimed_at = NULL, updated_at = ? WHERE id = ?').run(now, taskId);
+  const release = db.transaction(() => {
+    const res = db
+      .query(
+        `UPDATE tasks
+         SET status = 'ready', claimed_by = NULL, claimed_at = NULL, updated_at = ?
+         WHERE id = ? AND status = 'in_progress'`,
+      )
+      .run(now, taskId);
+    if (res.changes === 1) {
+      appendTaskEvent(db, taskId, {
+        kind: 'release',
+        note: 'released',
+        authorKind: author.authorKind ?? undefined,
+        author: author.author ?? undefined,
+      });
     }
-    appendTaskEvent(db, taskId, {
-      kind: 'release',
-      note: 'released',
-      authorKind: author.authorKind ?? undefined,
-      author: author.author ?? undefined,
-    });
+    return res.changes;
   });
-  tx();
+  if (release.immediate() !== 1) releaseFailure(db, taskId);
   return getTask(db, taskId) as TaskRow;
 }
 

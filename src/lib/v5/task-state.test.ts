@@ -15,6 +15,7 @@ import {
   LaneError,
   TaskBlockedError,
   TaskNotReadyError,
+  TaskReleaseError,
   UnknownTaskError,
   WishGroupDriftError,
   WishGroupStateError,
@@ -444,6 +445,25 @@ describe('runtime layer — claim / release timeline events', () => {
     expect(getTaskEvents(db, a.id).at(-1)?.kind).toBe('release');
   });
 
+  test('releaseTask REFUSES a done card — never resurrects it, emits no release event', () => {
+    const a = createTask(db, { title: 'a' });
+    claimTask(db, a.id, 'w1');
+    completeTask(db, a.id); // in_progress → done (+ one 'release' event, note 'completed')
+    const releaseEventsBefore = getTaskEvents(db, a.id).filter((e) => e.kind === 'release').length;
+
+    expect(() => releaseTask(db, a.id, HUMAN)).toThrow(TaskReleaseError);
+    expect(getTask(db, a.id)!.status).toBe('done'); // NOT resurrected to ready
+    // The refused release must leave no phantom timeline event.
+    expect(getTaskEvents(db, a.id).filter((e) => e.kind === 'release').length).toBe(releaseEventsBefore);
+  });
+
+  test('releaseTask REFUSES a ready card (no live claim to hand back)', () => {
+    const a = createTask(db, { title: 'a' }); // starts ready, never claimed
+    expect(() => releaseTask(db, a.id, HUMAN)).toThrow(TaskReleaseError);
+    expect(getTask(db, a.id)!.status).toBe('ready');
+    expect(getTaskEvents(db, a.id).some((e) => e.kind === 'release')).toBe(false);
+  });
+
   test('commentCounts tallies only comment events, keyed by task', () => {
     const a = createTask(db, { title: 'a' });
     const b = createTask(db, { title: 'b' });
@@ -710,5 +730,101 @@ try {
     verify.close();
     expect(finalTask.status).toBe('ready'); // untouched — still blocked, never claimed
     expect(finalTask.claimedBy).toBeNull();
+  }, 30_000);
+
+  // Two real processes race `done` vs `release` on ONE in_progress card. The
+  // release worker spins (bounded, no fixed sleep) until it observes `done`
+  // committed, then attempts its release — this reproduces the EXACT reported
+  // corruption window: a completed card whose concurrent release once fired an
+  // unconditional `status='ready'` write, resurrecting it. With the conditional
+  // CAS the release must refuse: final status stays `done`, exactly one release
+  // event exists (completeTask's), and no `ready` is ever observable.
+  test('done vs release race — a completed card is NEVER resurrected to ready', async () => {
+    const dbPath = join(dir, 'done-release-race.db');
+    const seed = openDb({ path: dbPath });
+    const task = createTask(seed, { title: 'contended-done-release' });
+    claimTask(seed, task.id, 'w1'); // in_progress, held by w1
+    seed.close();
+
+    const gdbPath = join(import.meta.dir, 'genie-db.ts');
+    const tsPath = join(import.meta.dir, 'task-state.ts');
+
+    const doneWorkerPath = join(dir, 'done-worker.ts');
+    writeFileSync(
+      doneWorkerPath,
+      `
+import { openDb } from ${JSON.stringify(gdbPath)};
+import { completeTask } from ${JSON.stringify(tsPath)};
+const [dbPath, taskId] = process.argv.slice(2);
+const db = openDb({ path: dbPath });
+try {
+  completeTask(db, taskId, { author: 'w1', authorKind: 'human' });
+  process.stdout.write('WON');
+} catch (e) { process.stdout.write('ERR:' + (e && e.message)); process.exitCode = 3; }
+finally { db.close(); }
+`,
+    );
+
+    const releaseWorkerPath = join(dir, 'release-worker.ts');
+    writeFileSync(
+      releaseWorkerPath,
+      `
+import { openDb } from ${JSON.stringify(gdbPath)};
+import { getTask, releaseTask, TaskReleaseError } from ${JSON.stringify(tsPath)};
+const [dbPath, taskId] = process.argv.slice(2);
+const db = openDb({ path: dbPath });
+try {
+  // Spin (bounded, WAL readers never block) until the concurrent \`done\` commits —
+  // this lands the release attempt squarely in the post-completion window.
+  let sawDone = false;
+  for (let i = 0; i < 5_000_000; i++) {
+    if (getTask(db, taskId)?.status === 'done') { sawDone = true; break; }
+  }
+  if (!sawDone) { process.stdout.write('NO_DONE'); process.exitCode = 4; }
+  else {
+    try {
+      releaseTask(db, taskId, { author: 'eng-B', authorKind: 'claude-code' });
+      process.stdout.write('WON'); // a WON here is a resurrection — the bug
+    } catch (e) {
+      if (e instanceof TaskReleaseError) process.stdout.write('REFUSED');
+      else { process.stdout.write('ERR:' + (e && e.message)); process.exitCode = 3; }
+    }
+  }
+} finally { db.close(); }
+`,
+    );
+
+    const spawnWorker = (path: string) => {
+      const proc = Bun.spawn(['bun', 'run', path, dbPath, task.id], { stdout: 'pipe', stderr: 'pipe' });
+      return (async () => {
+        const out = await new Response(proc.stdout).text();
+        const err = await new Response(proc.stderr).text();
+        const code = await proc.exited;
+        return { out, err, code };
+      })();
+    };
+
+    const settled = await Promise.allSettled([spawnWorker(doneWorkerPath), spawnWorker(releaseWorkerPath)]);
+    const [doneRes, releaseRes] = settled.map((s) =>
+      s.status === 'fulfilled' ? s.value : { out: 'REJECTED', err: String(s.reason), code: -1 },
+    );
+
+    if (doneRes.out !== 'WON' || releaseRes.out !== 'REFUSED') {
+      console.error('done-vs-release outcomes:', JSON.stringify({ doneRes, releaseRes }));
+    }
+
+    // done wins; release is refused — exactly one winner, the loser gets the typed error.
+    expect(doneRes.out).toBe('WON');
+    expect(releaseRes.out).toBe('REFUSED');
+
+    const verify = openDb({ path: dbPath });
+    const finalTask = getTask(verify, task.id)!;
+    const releaseEvents = getTaskEvents(verify, task.id).filter((e) => e.kind === 'release');
+    verify.close();
+
+    expect(finalTask.status).toBe('done'); // terminal — no 'ready' resurrection survived
+    // Exactly one release event, from completeTask; the refused release added none.
+    expect(releaseEvents.length).toBe(1);
+    expect(releaseEvents[0].note).toBe('completed');
   }, 30_000);
 });
