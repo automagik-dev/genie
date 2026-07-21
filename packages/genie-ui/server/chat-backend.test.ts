@@ -13,7 +13,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { type AcpLauncher, ChatBackend, type ChatEvent, parseMentions } from './chat-backend';
+import { type AcpLauncher, ChatBackend, type ChatEvent, defaultAcpLauncher, parseMentions } from './chat-backend';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STUB = join(HERE, 'chat-backend.stub-agent.mjs');
@@ -275,5 +275,37 @@ describe('AC5 fail-loud events', () => {
     b.deliverMessage('nobody', 'hello', '');
     const evt = (await failedP).at(-1) as Extract<ChatEvent, { type: 'delivery-failed' }>;
     expect(evt.message).toContain('not on the roster');
+  });
+
+  test('a missing adapter emits EXACTLY ONE spawn-failed event (child-error + handshake-catch dedup)', async () => {
+    // A missing binary makes the child emit 'error' (→ onChildDown → failFace) AND the ACP
+    // handshake reject (→ startFace catch → failFace). Without the face.failed idempotency
+    // guard both paths fire and one failure surfaces as TWO spawn-failed events.
+    const b = makeBackend(() => ({ command: 'genie-nonexistent-adapter-xyz', args: [] }));
+    b.registerAgent({ agentId: 'codex', harness: 'codex', cwd: HERE, wishContext: '' });
+
+    const spawnFailed: ChatEvent[] = [];
+    b.onEvent((e) => {
+      if (e.agentId === 'codex' && e.type === 'spawn-failed') spawnFailed.push(e);
+    });
+    b.deliverMessage('codex', '@codex hi', '');
+
+    // Settle both async failure paths (child 'error' tick + rejected initialize/newSession).
+    await new Promise((r) => setTimeout(r, 500));
+    expect(spawnFailed).toHaveLength(1);
+  });
+});
+
+// ============================================================================
+// Default launcher — the co-located adapter binary per harness (D9 / R1)
+// ============================================================================
+
+describe('defaultAcpLauncher', () => {
+  test('codex resolves to the codex-acp Zed adapter binary (not a "codex acp" subcommand)', () => {
+    // The installed `codex` has no `acp` subcommand; the ACP adapter is the `codex-acp`
+    // binary (@agentclientprotocol/codex-acp). The D9 example names `codex-acp exited …`.
+    expect(defaultAcpLauncher('codex')).toEqual({ command: 'codex-acp', args: [] });
+    // Mirror-shape sanity: claude uses the same zero-arg adapter-binary form.
+    expect(defaultAcpLauncher('claude')).toEqual({ command: 'claude-code-acp', args: [] });
   });
 });

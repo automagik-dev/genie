@@ -97,7 +97,7 @@ export const defaultAcpLauncher: AcpLauncher = (harness) => {
     case 'claude':
       return { command: 'claude-code-acp', args: [] };
     case 'codex':
-      return { command: 'codex', args: ['acp'] };
+      return { command: 'codex-acp', args: [] };
     case 'hermes':
       return { command: 'hermes', args: ['acp'] };
     case 'rlmx':
@@ -345,6 +345,7 @@ export class ChatBackend {
   }
 
   private failFace(face: AgentFace, message: string): void {
+    if (face.failed) return; // idempotency: one child-down + one handshake-catch must emit ONE spawn-failed
     face.failed = true;
     face.child?.kill('SIGKILL');
     this.dispatch({ type: 'spawn-failed', agentId: face.reg.agentId, harness: face.reg.harness, message });
