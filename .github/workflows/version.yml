@@ -430,3 +430,6 @@ jobs:
       source_sha: ${{ needs.auto-version.outputs.source_sha }}
       source_branch: ${{ needs.auto-version.outputs.source_branch }}
       source_ci_run_id: ${{ needs.auto-version.outputs.source_ci_run_id }}
+    # Propagate secrets through the call chain so release-publish.yml's
+    # manifests job can read RELEASE_MANIFESTS_TOKEN (see release.yml publish).
+    secrets: inherit
