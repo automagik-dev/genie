@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | IN_PROGRESS |
+| **Status** | SHIPPED |
 | **Slug** | `genie-ui-bridge` |
 | **Date** | 2026-07-21 |
 | **Author** | Felipe (channel/home/timing ratified via explicit picker 2026-07-21) + Fable orchestrator |
@@ -202,6 +202,11 @@ _Orchestrator disposition (2026-07-21): SHIP + orchestrator-run validation (bun 
 - Gaps (optional): garbage-version case at ui-bridge test level; non-string bridgeProtocolVersion treated as undeclared; ss -tlnp TCP-only in socket test; roster inputs validated as non-empty strings only (matches G1 design, dash client owns validity)
 
 _Orchestrator disposition (2026-07-21): SHIP + orchestrator-run validation (bun test src/term-commands/ src/lib/v5/ → 265/265; full-gate 4 failures = known agent-sync baseline, titles matched). Task t_mrv087ldf5bdb175 marked done. G1 LOW-2 (worktree-at-hire) closed by G2: `roster_hire` requires `worktree` in its input schema and UI-BRIDGE.md documents the bound-at-hire rationale (commit 2ff71abe) — the NOT NULL design is confirmed. All bridge groups complete — proceeding to PR targeting dev; the 4 optional G2 LOWs recorded for a future hardening pass._
+
+### Merge + QA — 2026-07-21 → Status SHIPPED
+- PR #2610 → dev: CI 16/16 green; PR checklist (file list = wish map exactly; secrets scan clean); **MERGED 2026-07-21T20:05:25Z, dev @ 600c18fe** (authorized merge per work-skill flow, agents-may-merge-to-dev).
+- Post-merge QA against the QA Criteria: scratch-client stdio round-trip on this box — initialize handshake returned `bridgeProtocolVersion "1.0"` + `genieVersion 5.260721.4` + `experimental.genieChangeNotifications`; `roster_hire` round-tripped a real row in a scratch repo (GENIE_HOME-isolated). Regression leg: `genie mcp` byte-pin + zero-write-tools tests green in the merged suite; dev CI green. Downstream integration proof: genie-ui-dash G4/G5 real-bridge integration tests exercised the full contract (reads, notifications ≤1s, hire/unhire via export round-trip, no-orphan teardown) — all green.
+- Status transitioned IN_PROGRESS → **SHIPPED** on merge + the above QA evidence. This satisfies the "G4 and G5 additionally wait on the bridge wish shipping" gate in genie-ui-dash — chronology: merge 20:05:25Z preceded the dash G4 review (21:28:53Z) and G5 review (22:13:09Z)._
 
 ---
 
