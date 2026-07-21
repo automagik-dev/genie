@@ -10,8 +10,8 @@
 //                     importer. No ACP, no genie.db imports.
 
 import { EventEmitter } from 'node:events';
-import type { IPty } from 'node-pty';
-import * as pty from 'node-pty';
+import type { IPty } from '@homebridge/node-pty-prebuilt-multiarch';
+import * as pty from '@homebridge/node-pty-prebuilt-multiarch';
 import type { PaneSpec } from './fleet-config';
 import { TerminalMirror } from './reused/TerminalMirror';
 import type { PaneInfo, SessionStatus } from './transport';

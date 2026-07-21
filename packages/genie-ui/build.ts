@@ -16,7 +16,13 @@ const OUT = resolve(ROOT, 'dist');
 
 // node-pty is a native addon and @xterm/headless + @xterm/addon-serialize are loaded
 // via createRequire at runtime; keep them (and ws) external so node loads them itself.
-const SERVER_EXTERNAL = ['node-pty', 'ws', '@xterm/headless', '@xterm/addon-serialize', '@xterm/xterm'];
+const SERVER_EXTERNAL = [
+  '@homebridge/node-pty-prebuilt-multiarch',
+  'ws',
+  '@xterm/headless',
+  '@xterm/addon-serialize',
+  '@xterm/xterm',
+];
 
 async function build(name: string, entry: string, target: 'browser' | 'node', external: string[] = []): Promise<void> {
   const result = await Bun.build({

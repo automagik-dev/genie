@@ -73,7 +73,13 @@ beforeAll(async () => {
     entrypoints: [resolve(SERVER_DIR, 'pty-session.ts')],
     target: 'node',
     outdir: OUT,
-    external: ['node-pty', 'ws', '@xterm/headless', '@xterm/addon-serialize', '@xterm/xterm'],
+    external: [
+      '@homebridge/node-pty-prebuilt-multiarch',
+      'ws',
+      '@xterm/headless',
+      '@xterm/addon-serialize',
+      '@xterm/xterm',
+    ],
   });
   if (!built.success) throw new AggregateError(built.logs, 'pty-session bundle failed');
   writeFileSync(DRIVER, DRIVER_SRC);
