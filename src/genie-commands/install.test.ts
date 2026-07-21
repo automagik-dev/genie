@@ -8,7 +8,7 @@
  * cleanup/normalize/sync from a test would target the actual home directory.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import {
   chmodSync,
@@ -1064,5 +1064,74 @@ describe('transactional auxiliary-tree convergence', () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe('installCommand — Group C install gate (item 2)', () => {
+  let logs: string[];
+  let logSpy: ReturnType<typeof spyOn>;
+  const savedExit = process.exitCode;
+
+  beforeEach(() => {
+    process.exitCode = 0;
+    logs = [];
+    logSpy = spyOn(console, 'log').mockImplementation((...a: unknown[]) => {
+      logs.push(a.map(String).join(' '));
+    });
+  });
+  afterEach(() => {
+    logSpy.mockRestore();
+    process.exitCode = savedExit;
+  });
+
+  test('a pending Codex generation (N≠T) is deferred: role agents only, exit 2 + trailer, no plugin convergence for codex', () => {
+    const runScopes: Array<string | undefined> = [];
+    installCommand(
+      { integrations: 'all' },
+      makeCleanupSpy().runner,
+      () => undefined,
+      () => undefined,
+      (options) => {
+        runScopes.push(options?.selection);
+        // runIntegrations is called with the claude-only scope; it converges claude, never codex.
+        return [{ runtime: 'claude', ok: true, detail: 'plugin refreshed' }];
+      },
+      noopLease,
+      noopConsent,
+      // Force the pending classification (installed N=5.260710.2 ≠ delivered T).
+      () => ({ installedVersion: '5.260710.2' }),
+    );
+    // runIntegrations was scoped to claude — codex is NEVER plugin-converged here.
+    expect(runScopes).toEqual(['claude']);
+    // Exit 2, one result trailer, and the deferral names N + the retire recovery.
+    expect(process.exitCode).toBe(2);
+    expect(logs.filter((l) => l.includes('"deliveryComplete":true'))).toHaveLength(1);
+    const codexLine = logs.find((l) => l.includes('codex:'));
+    expect(codexLine).toContain('Codex plugin left at v5.260710.2 (no cache advance)');
+    expect(codexLine).toContain('retire tasks → genie setup --codex → /hooks → new task');
+  });
+
+  test('a fresh/absent or same-version install (classifier null) converges the full selection normally, exit 0', () => {
+    const runScopes: Array<string | undefined> = [];
+    installCommand(
+      { integrations: 'all' },
+      makeCleanupSpy().runner,
+      () => undefined,
+      () => undefined,
+      (options) => {
+        runScopes.push(options?.selection);
+        return [
+          { runtime: 'codex', ok: true, detail: 'plugin/hooks refreshed' },
+          { runtime: 'claude', ok: true, detail: 'plugin refreshed' },
+        ];
+      },
+      noopLease,
+      noopConsent,
+      () => null, // classifier: not pending → normal convergence
+    );
+    // Full selection reaches runIntegrations; no deferral, no exit-2 trailer.
+    expect(runScopes).toEqual(['all']);
+    expect(process.exitCode).toBe(0);
+    expect(logs.join('\n')).not.toContain('deliveryComplete');
   });
 });

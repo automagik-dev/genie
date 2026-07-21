@@ -26,6 +26,18 @@
  * and the exact miss is reported. This module holds no permit, begins no
  * activation, and runs no Codex plugin command — it only restores a proven
  * binary generation.
+ *
+ * SECURITY BOUNDARY (wish decision 7 / AC6). The threat this closes is a SINGLE
+ * corrupted, replayed, or tampered state file: the capability floor, the
+ * digest-bound sidecar, the no-shell probe, and the dual-identity TOCTOU
+ * revalidation all fail closed on one forged/swapped artifact, so a lone bad
+ * backup or sidecar can never authorize an exchange. What is EXPLICITLY OUTSIDE
+ * the boundary is a same-user adversary who can rewrite EVERY Genie state file
+ * AND the live binary at once: a principal with write access to the whole
+ * ~/.genie tree and the running binary already controls the process and does not
+ * need rollback to subvert it. Rollback defends generation integrity against
+ * corruption/replay/tamper of individual artifacts, not against a same-uid
+ * attacker who owns the entire installation.
  */
 
 import { createHash, randomBytes } from 'node:crypto';
