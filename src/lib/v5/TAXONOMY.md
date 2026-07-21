@@ -87,8 +87,21 @@ Generic unit of work with checkout-claim + ready-set semantics.
 | `status` | TEXT NOT NULL | `blocked` \| `ready` \| `in_progress` \| `done` |
 | `claimed_by` | TEXT | worker holding the checkout, or NULL |
 | `claimed_at` | INTEGER | epoch-ms of claim, or NULL |
+| `wish` | TEXT | the lifecycle slug this task tracks, or NULL (see below) |
+| `group_name` | TEXT | wish-group this task belongs to, or NULL |
 | `created_at` | INTEGER NOT NULL | |
 | `updated_at` | INTEGER NOT NULL | |
+
+**`tasks.wish` is the lifecycle slug a card tracks — broadened semantic.** It is
+no longer "the WISH.md slug once a wish exists"; it is the single stable slug
+for a line of work, **valid from the moment the `.genie/brainstorms/<slug>/`
+directory is created**, long before any `WISH.md`. One slug threads a card from
+Idea → Brainstorm → Wish → Work → Review → Done. This is what lets the roadmap
+board be the single tracker: the `jar: index-lane drift` doctor check joins a
+hand-written `.genie/INDEX.md` entry to its roadmap card `WHERE tasks.wish =
+slug` and lint-checks the card's lane against the INDEX section. A card may
+carry a `wish` slug while still sitting in an early lane; the slug is an
+identity, not a claim that a wish document exists yet.
 
 ### `task_dependencies`
 Directed edges: `task_id` depends on `depends_on_id`.
