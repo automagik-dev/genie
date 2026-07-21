@@ -1,0 +1,208 @@
+:root {
+  --bg: #0b0e14;
+  --panel: #11151f;
+  --edge: #1e2536;
+  --fg: #c5c8c6;
+  --dim: #6b7280;
+  --accent: #c678dd;
+  --ok: #98c379;
+  --warn: #e5c07b;
+  --bad: #e06c75;
+}
+
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: ui-monospace, "JetBrains Mono", Menlo, monospace;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+#topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--edge);
+}
+.brand {
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+.brand .dim {
+  color: var(--dim);
+  font-weight: 400;
+}
+.tag {
+  color: var(--dim);
+  font-size: 12px;
+}
+.conn {
+  margin-left: auto;
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+.conn.on {
+  color: var(--ok);
+  background: rgba(152, 195, 121, 0.12);
+}
+.conn.off {
+  color: var(--bad);
+  background: rgba(224, 108, 117, 0.12);
+}
+
+#tabs {
+  display: flex;
+  gap: 2px;
+  padding: 6px 10px 0;
+  background: var(--panel);
+  border-bottom: 1px solid var(--edge);
+  overflow-x: auto;
+}
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  color: var(--dim);
+  border: 1px solid transparent;
+  border-bottom: none;
+  padding: 7px 14px;
+  border-radius: 8px 8px 0 0;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.tab:hover {
+  color: var(--fg);
+}
+.tab.active {
+  color: var(--fg);
+  background: var(--bg);
+  border-color: var(--edge);
+}
+.tab .tname {
+  font-weight: 600;
+}
+.tab .role {
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--dim);
+  display: inline-block;
+}
+.dot.running {
+  background: var(--ok);
+  box-shadow: 0 0 6px var(--ok);
+}
+.dot.exited {
+  background: var(--bad);
+}
+.dot.idle {
+  background: var(--warn);
+}
+
+/* stage is a horizontal split row; cells share the width evenly. */
+#stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+  gap: 6px;
+  padding: 8px;
+}
+.cell {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg);
+}
+.cell.active {
+  border-color: var(--accent);
+}
+.cell-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--edge);
+  font-size: 12px;
+}
+.cell-head .cname {
+  font-weight: 600;
+}
+.cell-head .role {
+  color: var(--dim);
+  font-size: 11px;
+}
+.cell-head .spacer {
+  flex: 1;
+}
+.cell .term {
+  flex: 1;
+  min-height: 0;
+  padding: 4px;
+}
+.cell .term .xterm {
+  height: 100%;
+}
+
+button.act {
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 8px;
+  background: var(--edge);
+  color: var(--fg);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+button.act:hover {
+  background: #2a3350;
+}
+button.act.danger {
+  color: var(--bad);
+}
+
+#statusbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 14px;
+  background: var(--panel);
+  border-top: 1px solid var(--edge);
+  font-size: 12px;
+  color: var(--dim);
+}
+#statusbar code {
+  color: var(--accent);
+}
+#statusbar .spacer {
+  flex: 1;
+}
+#statusbar .hint {
+  color: var(--dim);
+}
