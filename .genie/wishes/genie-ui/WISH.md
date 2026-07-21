@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | APPROVED (plan review SHIP 2026-07-21, first pass, 4 minors recorded; design digest-stamped SHIP) |
 | **Slug** | `genie-ui` |
 | **Date** | 2026-07-21 |
 | **Author** | Felipe + Genie |
@@ -303,3 +303,25 @@ src/genie.ts and the single-file bun bundle          # the CLI stays untouched (
 CHANGELOG.md / .genie/wishes/v5-demolition/WISH.md   # historical record — preserve, never scrub (G4)
 conductor auto-advance / write-promotion / broadcast # follow-up wishes (OUT)
 ```
+
+---
+
+## Review Results
+
+### Plan review — 2026-07-21 — **SHIP** → Status APPROVED
+
+- **Reviewer:** independent plan gate (Opus 4.8, wf_e86aab80-f2a). First-pass SHIP. Digest verified
+  (`e9eb1e12…1145fb` recomputed on disk); AC1-8 verbatim vs DESIGN + council DRAFT; all validation
+  commands confirmed runnable; task rows verified; A/B source paths verified; gate-scoping premise
+  (tsconfig/biome/complexity-budget all src-scoped — G1 must wire packages/genie-ui into the gates)
+  confirmed TRUE; G2→G3 sequential ordering rationale confirmed honest (G3 consumes G2's roster).
+- **Minors (orchestrator-handled at dispatch):** (1) wave-table column labels vs sibling convention —
+  cosmetic; (2) G1 salvage provenance restated in the dispatch brief: port from
+  `~/prod/genie-ui-ab/fresh`, salvage `~/prod/genie-ui-ab/dash-fork/fleet/server/reused/TerminalMirror.ts`
+  (NOT the `src/main/services/` copy) + `Utf8Base64.ts` + `FitScheduler.ts`; (3) genie.db rows are all
+  `ready` from birth — the G1→G2→G3→G4 chain is orchestrator-enforced from this document, never
+  dispatch on DB status alone (do not `genie launch` all four); (4) G4's `docs/_internal/` target
+  lives in the `.docs-vendor` submodule — the doc requires the submodule branch/PR/pointer-bump flow,
+  not a plain wish commit (G4 brief must carry this).
+
+_Execution and PR review evidence appended below as they occur._
