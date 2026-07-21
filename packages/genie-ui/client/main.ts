@@ -20,6 +20,14 @@ const infos = new Map<string, PaneInfo>();
 const tabs = new Map<string, HTMLButtonElement>();
 let activeId: string | null = null;
 
+// Escape config-/state-derived strings before they touch innerHTML. Trusted today
+// (operator owns fleet.json), but G2 feeds this strip from genie state (wish slugs,
+// markdown-derived roles) per the SEAM above — a wish title must not inject markup.
+const HTML_ESCAPES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+function esc(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => HTML_ESCAPES[c]);
+}
+
 const layout = new LayoutManager(stageEl, (id) => {
   activeId = id;
   syncTabs();
@@ -67,8 +75,8 @@ function refreshTab(id: string): void {
   const info = infos.get(id);
   const btn = tabs.get(id);
   if (!info || !btn) return;
-  const role = info.role ? `<span class="role">${info.role}</span>` : '';
-  btn.innerHTML = `<span class="dot ${info.status}"></span><span class="tname">${info.name}</span>${role}`;
+  const role = info.role ? `<span class="role">${esc(info.role)}</span>` : '';
+  btn.innerHTML = `<span class="dot ${info.status}"></span><span class="tname">${esc(info.name)}</span>${role}`;
   btn.classList.toggle('active', id === activeId);
 }
 
@@ -89,8 +97,8 @@ function updateStatus(id: string, status: SessionStatus, code?: number): void {
 function renderMeta(id: string): void {
   const info = infos.get(id);
   if (!info) return;
-  const cmd = `${info.command} ${info.args.join(' ')}`.trim();
+  const cmd = `${esc(info.command)} ${info.args.map(esc).join(' ')}`.trim();
   const exit = info.status === 'exited' && info.exitCode !== null ? ` (exit ${info.exitCode})` : '';
-  const wish = info.wishId ? ` · wish <code>${info.wishId}</code>` : '';
-  metaEl.innerHTML = `<b>${info.name}</b> · <code>${cmd}</code> · ${info.status}${exit}${wish}`;
+  const wish = info.wishId ? ` · wish <code>${esc(info.wishId)}</code>` : '';
+  metaEl.innerHTML = `<b>${esc(info.name)}</b> · <code>${cmd}</code> · ${info.status}${exit}${wish}`;
 }
