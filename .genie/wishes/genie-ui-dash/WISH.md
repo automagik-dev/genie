@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED |
+| **Status** | IN_PROGRESS |
 | **Slug** | `genie-ui-dash` |
 | **Date** | 2026-07-21 |
 | **Author** | Felipe (ratified verbatim) + Fable orchestrator |
@@ -300,6 +300,28 @@ Residual stale references (amendment sweep incomplete):
 - LOW-E: "(dash → genie.db)" direct-write risk phrasing + migration-conflict risk described genie-side work now owned by the bridge wish.
 Gaps blocking a later wave: MEDIUM-A before Group 5. Groups 1–3 unaffected.
 Task rows: genie task list --wish genie-ui-dash → 5 (group-1..5), ready.
+
+### Execution Review (G1) — 2026-07-21T19:13:26Z
+- Reviewer: independent read-only (genie:review execution pipeline)
+- Target: ~/prod/genie-ui-ab/dash-fork branch genie-dash @ 0fd0ac5 (parent 20cf1ec)
+- Verdict: SHIP (LOW-1 accepted-by-wish; one optional nit)
+- Branch provably upstream 20cf1ec + one docs-only commit (git diff --stat origin/main genie-dash → GENIE.md only); no fleet path (recursive ls-tree); khal/genie-dash pushed @ 0fd0ac5.
+- pnpm test independently re-run → 99 files, 928 passed | 1 skipped | 0 failed (better-sqlite3 ABI rebuild persistent); AppImage valid ELF 147.8M + unpacked binary 207.4M; boot.log corroborated against main.ts whenReady→HookServer→createWindow ordering + userData tree.
+- GENIE.md verified accurate + public-safe: base SHA, slug, genie additions, private/no-gates status, relocate intent, electron-rebuild gotcha (`pnpm run rebuild` documented); real GUI launch honestly deferred as manual maintainer step (permitted by wish AC).
+- Gaps: LOW-1 interactive Claude-terminal spawn deferred to Felipe's manual launch (wish-permitted). Nit: ephemeral port 37063 hard-coded in GENIE.md boot note — genericize at polish pass.
+
+_Orchestrator disposition (2026-07-21): SHIP + orchestrator-run validation (no fleet path; one genie commit; pnpm install --frozen-lockfile clean; pnpm test 928 pass/1 skip/0 fail). Task t_mruxc5gvd0c00325 marked done. Manual GUI-launch check remains on Felipe's list; nit deferred to the polish pass._
+
+### Execution Review (G2) — 2026-07-21T19:58:46Z
+- Reviewer: independent read-only (genie:review execution pipeline)
+- Target: ~/prod/genie-ui-ab/dash-fork branch genie-dash @ 7268cae (commits 4d1663b + 7268cae) vs base 0fd0ac5; pushed khal/genie-dash @ 7268cae
+- Verdict: SHIP (3 LOW advisory notes for G3; none block G2)
+- Zero-behavior-change bar MET: startDirectPty traced line-by-line vs parent — resolveBinary(=findClaudePath) same timing + byte-identical error; resumeSessionId(??null provable no-op); consumeInitialPrompt exactly-once preserved; buildClaudeArgs never in diff; buildDirectEnv body unchanged; ordering + Windows wrap + post-spawn code preserved.
+- AC1 PASS (git diff --name-status: both test files Added, 7 modified files all non-test; 943 pass/1 skip/0 fail = baseline 928 + exactly 15 new agents tests) · AC2 PASS (spawnIdentity goldens are frozen literals, not helper-routed — non-tautological) · AC3 PASS (dummy adapter self-contained in registry.test.ts).
+- Decisions assessed sound: insert-only agent_id matches dash's immutable-field pattern (no clobber path); ctx.platform threads process.platform; NO_FLICKER unchanged. Migration idiom identical to adjacent total_tokens migration, idempotent, correct legacy backfill. No import cycles; registerBuiltinAgents single prod caller. No scope creep; agents/ lint-clean; 3 touched-file warnings pre-existing on untouched lines.
+- G3 handoffs (advisory): LOW-1 optional startDirectPty-wiring integration test; LOW-2 codex/hermes/rlmx adapters must build their own env (not inherit Claude-specific NO_FLICKER/COLORFGBG/TERM_PROGRAM from buildDirectEnv); LOW-3 insert-only agent_id → picker must set agentId at task CREATION or add a dedicated setter.
+
+_Orchestrator disposition (2026-07-21): SHIP + orchestrator-run validation (pnpm test → 943 passed / 1 skipped / 0 failed). Task t_mruxc5iv51303ef4 marked done. LOW-1/2/3 handed to G3's brief verbatim._
 
 _Orchestrator disposition (2026-07-21): all five amendment findings applied — G5 wave row rescored to 4 with schema ownership noted (MEDIUM-A), Repos-touched corrected (LOW-B), amendment note states groups not waves (LOW-C), G4 grep gate no longer references the G5 file (LOW-D), both stale risk rows reframed to bridge ownership (LOW-E). Status restored to APPROVED on the SHIP verdict; G4/G5 additionally gated on genie-ui-bridge shipping._
 

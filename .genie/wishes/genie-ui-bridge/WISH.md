@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED |
+| **Status** | IN_PROGRESS |
 | **Slug** | `genie-ui-bridge` |
 | **Date** | 2026-07-21 |
 | **Author** | Felipe (channel/home/timing ratified via explicit picker 2026-07-21) + Fable orchestrator |
@@ -178,6 +178,30 @@ Task rows: genie task list --wish genie-ui-bridge → 2 (group-1, group-2), read
 Advisory: G2 is a broad group; treat its sub-deliverables as internal seams (Risks table already names the split-at-boundaries mitigation).
 
 _Orchestrator disposition (2026-07-21): SHIP persisted, status set to APPROVED. G2's sub-deliverables to be treated as internal seams per the advisory._
+
+### Execution Review — G1 hire_roster substrate — 2026-07-21T19:11:56Z
+- Reviewer: independent read-only (genie:review execution pipeline)
+- Context: Execution Review · Target: wish/genie-ui-bridge @ aadbae83 (code), 63a02161 (docs-only, verified) vs dev a3211fa0
+- Verdict: SHIP
+- Scope: aadbae83 = src/lib/v5/{genie-db,task-state}.{ts,test.ts} only; 63a02161 = .genie/ docs only. No creep. No global-db cross-import.
+- AC1 fresh+schemaIsCurrent migration ✓ (genie-db.test.ts:59,67) · AC2 export+round-trip ✓ (task-state.test.ts:287–326) · AC3 multi-process concurrency, no SQLITE_BUSY ✓ (task-state.test.ts:336)
+- Commands: `bun test src/lib/v5/` → 142 pass / 0 fail · typecheck clean · biome clean (4 files) · complexity-budget intact (0/7) · no console.log · SQL parameterized
+- Regression: 4 agent-sync.test.ts failures VERIFIED pre-existing on pristine dev a3211fa0 (251 pass/4 fail identical; branch byte-identical to dev on agent-sync) — NOT a G1 regression
+- Judgment call: PK (wish, agent_adapter_id) + free-text state = minimal correct reading; compatible with G2 roster_hire/unhire + dash re-hire refresh; forecloses nothing
+- Gaps: LOW-1 docstring "COALESCE idiom" misdescribes column-omission mechanism (behavior correct/tested); LOW-2 worktree NOT NULL — confirm hire-time worktree with G2. Neither blocking.
+
+_Orchestrator disposition (2026-07-21): SHIP + orchestrator-run validation (bun test src/lib/v5/ → 142/142; full-gate 4 failures reproduced on clean dev worktree = baseline). Task t_mrv087jca37acdd9 marked done. LOW-1 (docstring reword) and LOW-2 (worktree-at-hire confirmation) handed to G2's brief._
+
+### Execution Review — G2 ui-bridge command — 2026-07-21T19:43:41Z
+- Reviewer: independent read-only (genie:review execution pipeline)
+- Target: wish/genie-ui-bridge @ 2ff71abe (base aadbae83). Files: +mcp-server.ts +bridge-watcher.ts(+test) +ui-bridge.ts(+test) +UI-BRIDGE.md; ~mcp.ts (delegation refactor) ~genie.ts ~interactivity.ts ~task-state.ts (LOW-1 comment-only)
+- Verdict: SHIP (4 LOW/INFO optional gaps, none blocking)
+- SC1 handshake ✓ (bridgeProtocolVersion "1.0" + genieVersion; incompatible major → structured -32001; live adversarial probes: garbage/non-string/malformed → graceful, no crash/hang) · SC2 read parity vs exportState() ✓ · SC3 roster round-trip + 8-writer race, no SQLITE_BUSY, single canonical sqlite-open path ✓ · SC4 push ≤1s (300ms poll, in design range) ✓ · SC5 EOF exit ≤2s, subreaper-aware ppid backstop, zero socket code by construction ✓ · SC6 mcp byte-identical initialize (strong key-order pin), lazy-load probe holds ✓
+- Gates: 265/265 scoped tests · typecheck clean · biome clean · complexity budget 0/7 · knip exit 0 · timing tests deadline-polled (flake-resistant)
+- G1 LOW-1 carry-over verified fixed (docstring now matches column-omission SQL at task-state.ts:785)
+- Gaps (optional): garbage-version case at ui-bridge test level; non-string bridgeProtocolVersion treated as undeclared; ss -tlnp TCP-only in socket test; roster inputs validated as non-empty strings only (matches G1 design, dash client owns validity)
+
+_Orchestrator disposition (2026-07-21): SHIP + orchestrator-run validation (bun test src/term-commands/ src/lib/v5/ → 265/265; full-gate 4 failures = known agent-sync baseline, titles matched). Task t_mrv087ldf5bdb175 marked done. G1 LOW-2 (worktree-at-hire) closed by G2: `roster_hire` requires `worktree` in its input schema and UI-BRIDGE.md documents the bound-at-hire rationale (commit 2ff71abe) — the NOT NULL design is confirmed. All bridge groups complete — proceeding to PR targeting dev; the 4 optional G2 LOWs recorded for a future hardening pass._
 
 ---
 
