@@ -24,10 +24,12 @@ import {
   MINIMUM_BUN_VERSION,
   checkAgentSync,
   checkCodexIntegration,
+  checkIndexLaneDrift,
   checkSubagentModelOverride,
   checkV4Residue,
   doctorCommand,
   evaluateBunVersion,
+  evaluateIndexLaneDrift,
   evaluateOmniHookTimeout,
   findDispatchHookTimeoutSec,
 } from './doctor.js';
@@ -1525,5 +1527,217 @@ describe('checkAgentSync — claude role agents', () => {
     expect(states['scout.md']).toBe('present-unmanaged');
     expect(states['reviewer.md']).toBe('genie-managed-current');
     expect(states['fixer.md']).toBe('missing-from-target');
+  });
+});
+
+// ============================================================================
+// jar: index-lane drift
+// ============================================================================
+
+describe('evaluateIndexLaneDrift (pure section↔lane parser)', () => {
+  const INDEX = [
+    '# Plans Index',
+    '',
+    '## Raw',
+    '- [alpha](brainstorms/alpha/DRAFT.md) — an idea',
+    '- a linkless note with no slug',
+    '',
+    '## Simmering',
+    '- [beta](brainstorms/beta/DRAFT.md) — refining',
+    '',
+    '## Ready',
+    '- [WISH: gamma](wishes/gamma/WISH.md) — ready to pour',
+    '',
+    '## Poured',
+    '- [delta](brainstorms/delta/DESIGN.md) · [WISH](wishes/delta/WISH.md) — first link wins',
+    '- [epsilon](wishes/epsilon/WISH.md) — laneless card',
+    '',
+    '## Some Other Heading',
+    '- [zeta](brainstorms/zeta/DRAFT.md) — ignored, not a lifecycle section',
+  ].join('\n');
+
+  const lanes = new Map<string, string>([
+    ['alpha', 'Idea'], // Raw → Idea = ok
+    ['beta', 'Wish'], // Simmering allows only Brainstorm → drift
+    ['gamma', 'Wish'], // Ready allows Brainstorm|Wish → ok
+    ['delta', 'Review'], // Poured allows Wish|Work|Review|Done → ok (via wishes/delta first link)
+    // epsilon: card exists but no lane → laneForSlug returns null → unlinked
+  ]);
+  const laneForSlug = (slug: string): string | null => lanes.get(slug) ?? null;
+
+  test('agreeing lane → ok; contradicting lane → drift', () => {
+    const entries = evaluateIndexLaneDrift(INDEX, laneForSlug);
+    const byEntry = Object.fromEntries(entries.map((e) => [e.entry, e]));
+    expect(byEntry.alpha.state).toBe('ok');
+    expect(byEntry.alpha.lane).toBe('Idea');
+    expect(byEntry.beta.state).toBe('drift');
+    expect(byEntry['WISH: gamma'].state).toBe('ok');
+  });
+
+  test('the FIRST brainstorms/wishes link decides the slug', () => {
+    const entries = evaluateIndexLaneDrift(INDEX, laneForSlug);
+    const delta = entries.find((e) => e.entry === 'delta');
+    expect(delta?.slug).toBe('delta');
+    expect(delta?.state).toBe('ok');
+  });
+
+  test('linkless entries and laneless cards are unlinked, never drift', () => {
+    const entries = evaluateIndexLaneDrift(INDEX, laneForSlug);
+    const linkless = entries.find((e) => e.slug === null);
+    expect(linkless?.state).toBe('unlinked');
+    expect(linkless?.section).toBe('Raw');
+    const epsilon = entries.find((e) => e.entry === 'epsilon');
+    expect(epsilon?.state).toBe('unlinked');
+    expect(epsilon?.lane).toBeNull();
+    // No entry is ever both resolved-with-lane and unlinked.
+    for (const e of entries) if (e.state === 'unlinked') expect(e.lane).toBeNull();
+  });
+
+  test('bullets under non-lifecycle headings are excluded', () => {
+    const entries = evaluateIndexLaneDrift(INDEX, laneForSlug);
+    expect(entries.some((e) => e.slug === 'zeta')).toBe(false);
+    // Raw(2) + Simmering(1) + Ready(1) + Poured(2) = 6 entries.
+    expect(entries).toHaveLength(6);
+  });
+
+  test('order is stable (INDEX document order)', () => {
+    const slugs = evaluateIndexLaneDrift(INDEX, laneForSlug).map((e) => e.slug);
+    expect(slugs).toEqual(['alpha', null, 'beta', 'gamma', 'delta', 'epsilon']);
+  });
+});
+
+describe('checkIndexLaneDrift (DB-backed, warning-level)', () => {
+  let dir: string;
+
+  function seedDb(cards: Array<{ title: string; wish: string | null; lane: string | null }>): void {
+    mkdirSync(join(dir, '.genie'), { recursive: true });
+    const db = new Database(join(dir, '.genie', 'genie.db'));
+    db.run(
+      'CREATE TABLE boards (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL, lanes TEXT)',
+    );
+    db.run(
+      'CREATE TABLE tasks (id TEXT PRIMARY KEY, board_id TEXT, title TEXT NOT NULL, status TEXT NOT NULL, wish TEXT, lane TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)',
+    );
+    db.run("INSERT INTO boards VALUES ('b_road', 'roadmap', 0, NULL)");
+    let i = 0;
+    for (const c of cards) {
+      db.query('INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(
+        `t_${i}`,
+        'b_road',
+        c.title,
+        'ready',
+        c.wish,
+        c.lane,
+        i,
+        i,
+      );
+      i += 1;
+    }
+    db.close();
+  }
+
+  function writeIndex(text: string): void {
+    mkdirSync(join(dir, '.genie'), { recursive: true });
+    writeFileSync(join(dir, '.genie', 'INDEX.md'), text);
+  }
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'genie-jar-'));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('a resolved card whose lane agrees passes with a per-entry ok state', () => {
+    writeIndex('# Plans Index\n## Poured\n- [WISH: boards](wishes/boards-first-class/WISH.md) — shipped\n');
+    seedDb([{ title: 'Boards first-class', wish: 'boards-first-class', lane: 'Wish' }]);
+    const [result] = checkIndexLaneDrift(dir, dir);
+    expect(result.name).toBe('jar: index-lane drift');
+    expect(result.status).toBe('pass');
+    const entry = result.indexLane?.entries[0];
+    expect(entry?.slug).toBe('boards-first-class');
+    expect(entry?.lane).toBe('Wish');
+    expect(entry?.state).toBe('ok');
+  });
+
+  test('a contradicting lane warns (never flips ok:false) and reports drift', () => {
+    // Card sits in the Idea lane but the INDEX files it under Poured → drift.
+    writeIndex('# Plans Index\n## Poured\n- [WISH: boards](wishes/boards-first-class/WISH.md)\n');
+    seedDb([{ title: 'Boards first-class', wish: 'boards-first-class', lane: 'Idea' }]);
+    const [result] = checkIndexLaneDrift(dir, dir);
+    expect(result.status).toBe('warn'); // warn, not fail
+    expect(result.detail).toContain('1 drift');
+    expect(result.indexLane?.entries[0].state).toBe('drift');
+    expect(result.suggestion).toBeDefined();
+  });
+
+  test('a laneless card is unlinked, not drift', () => {
+    writeIndex('# Plans Index\n## Raw\n- [alpha](brainstorms/alpha/DRAFT.md)\n');
+    seedDb([{ title: 'Alpha', wish: 'alpha', lane: null }]);
+    const [result] = checkIndexLaneDrift(dir, dir);
+    expect(result.status).toBe('pass');
+    expect(result.indexLane?.entries[0].state).toBe('unlinked');
+  });
+
+  test('absent INDEX.md is a benign pass (nothing to lint)', () => {
+    seedDb([{ title: 'Alpha', wish: 'alpha', lane: 'Idea' }]);
+    const [result] = checkIndexLaneDrift(dir, dir);
+    expect(result.status).toBe('pass');
+    expect(result.detail).toContain('nothing to lint');
+    expect(result.indexLane).toBeUndefined();
+  });
+
+  test('absent DB degrades every linked entry to unlinked (never throws, never drift)', () => {
+    writeIndex('# Plans Index\n## Raw\n- [alpha](brainstorms/alpha/DRAFT.md)\n');
+    const [result] = checkIndexLaneDrift(dir, dir); // no seedDb → no genie.db
+    expect(result.status).toBe('pass');
+    expect(result.indexLane?.entries[0].state).toBe('unlinked');
+  });
+
+  test('mixed board: ≥1 live resolving entry alongside drift and unlinked', () => {
+    writeIndex(
+      [
+        '# Plans Index',
+        '## Raw',
+        '- [alpha](brainstorms/alpha/DRAFT.md)', // lane Idea → ok
+        '## Poured',
+        '- [beta](wishes/beta/WISH.md)', // lane Idea (should be Wish-ish) → drift
+        '- [orphan](wishes/orphan/WISH.md)', // no card → unlinked
+      ].join('\n'),
+    );
+    seedDb([
+      { title: 'Alpha', wish: 'alpha', lane: 'Idea' },
+      { title: 'Beta', wish: 'beta', lane: 'Idea' },
+    ]);
+    const [result] = checkIndexLaneDrift(dir, dir);
+    expect(result.status).toBe('warn');
+    expect(result.detail).toBe('3 INDEX entries: 1 ok, 1 drift, 1 unlinked');
+    const states = Object.fromEntries((result.indexLane?.entries ?? []).map((e) => [e.slug, e.state]));
+    expect(states.alpha).toBe('ok');
+    expect(states.beta).toBe('drift');
+    expect(states.orphan).toBe('unlinked');
+  });
+
+  test('--json rider is present under the stable name with per-entry states', () => {
+    writeIndex('# Plans Index\n## Poured\n- [WISH: boards](wishes/boards-first-class/WISH.md)\n');
+    seedDb([{ title: 'Boards first-class', wish: 'boards-first-class', lane: 'Wish' }]);
+    const results = checkIndexLaneDrift(dir, dir);
+    // Serialize exactly as doctorCommand does and re-parse — the rider must survive.
+    const doc = JSON.parse(JSON.stringify({ ok: true, checks: results })) as {
+      checks: Array<{
+        name: string;
+        indexLane?: {
+          entries: Array<{ entry: string; slug: string | null; section: string; lane: string | null; state: string }>;
+        };
+      }>;
+    };
+    const rider = doc.checks.find((c) => c.name === 'jar: index-lane drift')?.indexLane;
+    expect(rider?.entries[0]).toEqual({
+      entry: 'WISH: boards',
+      slug: 'boards-first-class',
+      section: 'Poured',
+      lane: 'Wish',
+      state: 'ok',
+    });
   });
 });

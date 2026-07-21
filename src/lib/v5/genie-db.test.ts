@@ -53,7 +53,16 @@ describe('openDb schema init', () => {
     db2.close();
 
     expect(userVersion(path)).toBe(CURRENT_SCHEMA_VERSION);
-    expect(tables).toEqual(['boards', 'hire_roster', 'meta', 'stage_log', 'task_dependencies', 'tasks', 'wish_groups']);
+    expect(tables).toEqual([
+      'boards',
+      'hire_roster',
+      'meta',
+      'stage_log',
+      'task_dependencies',
+      'task_events',
+      'tasks',
+      'wish_groups',
+    ]);
   });
 
   test('a fresh DB carries hire_roster', () => {
@@ -130,6 +139,102 @@ describe('openDb refusal', () => {
     const db = openDb({ path });
     db.close();
     expect(userVersion(path)).toBe(CURRENT_SCHEMA_VERSION);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Additive backfill on a pre-lanes DB: a DB stamped at user_version=1 by an
+// EARLIER build (no task_events table, no tasks.lane, no boards.lanes) must open
+// WITHOUT a version bump, backfill the additive columns/table via ensureSchema,
+// and preserve every existing row. This is the worktree-shared-DB rollout
+// guarantee — an older binary's DB opens clean under the new code.
+// ---------------------------------------------------------------------------
+describe('pre-lanes DB backfill (additive, no version bump)', () => {
+  /** The exact `boards/tasks/...` schema that shipped BEFORE lifecycle lanes. */
+  function seedOldSchemaDb(path: string): void {
+    const seed = new Database(path);
+    seed.exec('PRAGMA user_version = 1');
+    seed.exec(`
+      CREATE TABLE boards (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL);
+      CREATE TABLE tasks (
+        id TEXT PRIMARY KEY,
+        board_id TEXT REFERENCES boards(id) ON DELETE SET NULL,
+        title TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('blocked','ready','in_progress','done')),
+        claimed_by TEXT, claimed_at INTEGER, wish TEXT, group_name TEXT,
+        created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE task_dependencies (
+        task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+        depends_on_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+        PRIMARY KEY (task_id, depends_on_id)
+      );
+      CREATE TABLE stage_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+        stage TEXT NOT NULL, note TEXT, created_at INTEGER NOT NULL
+      );
+      CREATE TABLE wish_groups (
+        wish TEXT NOT NULL, name TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('blocked','ready','in_progress','done')),
+        depends_on TEXT NOT NULL DEFAULT '[]', assignee TEXT,
+        started_at INTEGER, completed_at INTEGER,
+        created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+        PRIMARY KEY (wish, name)
+      );
+      CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    `);
+    // A board + task written by the old binary — must survive the backfill.
+    seed.query('INSERT INTO boards (id, name, created_at) VALUES (?, ?, ?)').run('b_old', 'legacy', 1);
+    seed
+      .query('INSERT INTO tasks (id, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
+      .run('t_old', 'seeded before lanes', 'ready', 1, 1);
+    seed.close();
+  }
+
+  test('opens without a version bump, backfills columns/table, preserves rows', () => {
+    const path = join(dir, 'pre-lanes.db');
+    seedOldSchemaDb(path);
+
+    // Must NOT be refused as foreign — it is a genuine user_version=1 genie DB.
+    const db = openDb({ path });
+
+    // No version bump — still 1.
+    expect((db.query('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(
+      CURRENT_SCHEMA_VERSION,
+    );
+
+    // The additive schema was backfilled.
+    const tables = new Set(
+      (db.query("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{ name: string }>).map(
+        (r) => r.name,
+      ),
+    );
+    expect(tables.has('task_events')).toBe(true);
+    const taskCols = new Set(
+      (db.query('PRAGMA table_info(tasks)').all() as Array<{ name: string }>).map((c) => c.name),
+    );
+    expect(taskCols.has('lane')).toBe(true);
+    const boardCols = new Set(
+      (db.query('PRAGMA table_info(boards)').all() as Array<{ name: string }>).map((c) => c.name),
+    );
+    expect(boardCols.has('lanes')).toBe(true);
+
+    // The pre-existing rows survived; the new columns read back as NULL.
+    const task = db.query('SELECT id, title, lane FROM tasks WHERE id = ?').get('t_old') as {
+      id: string;
+      title: string;
+      lane: string | null;
+    };
+    expect(task.title).toBe('seeded before lanes');
+    expect(task.lane).toBeNull();
+    const board = db.query('SELECT name, lanes FROM boards WHERE id = ?').get('b_old') as {
+      name: string;
+      lanes: string | null;
+    };
+    expect(board.name).toBe('legacy');
+    expect(board.lanes).toBeNull();
+    db.close();
   });
 });
 

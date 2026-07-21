@@ -67,6 +67,10 @@ const WORKSPACE_EXEMPT = new Set([
   // behavior.
   'task',
   'board',
+  // `idea` is the one-verb quick-capture (roadmap board's Idea lane). Same v5
+  // sqlite-backed self-resolving DB as `task`/`board`; it must work in a fresh
+  // repo with no workspace.json (QA: `genie idea` on a fresh repo).
+  'idea',
   'launch',
   // `omni` is the resident runner + its status/inbox/handshake helpers. Like
   // `task`/`board` it self-resolves the global genie.db and never reads the

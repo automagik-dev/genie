@@ -9,6 +9,7 @@
     "packages/genie-ui/**/*.test.ts"
   ],
   "project": ["src/**/*.ts", "packages/**/*.ts"],
-  "ignoreBinaries": ["which", "scripts/verify-release.sh"],
+  "ignoreBinaries": ["which", "scripts/verify-release.sh", "markdown-link-check", "markdownlint-cli2"],
+  "ignoreDependencies": ["markdown-link-check", "markdownlint-cli2"],
   "ignoreExportsUsedInFile": true
 }

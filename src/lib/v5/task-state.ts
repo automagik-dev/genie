@@ -42,14 +42,119 @@ export interface CreateTaskInput {
   wish?: string;
   /** Wish-group name this task belongs to. */
   group?: string;
+  /** Initial lifecycle lane placement (only meaningful on a lane-defining board). */
+  lane?: string;
   /** IDs of existing tasks this task depends on. Non-empty ⇒ starts `blocked`. */
   dependsOn?: string[];
+}
+
+/**
+ * A lifecycle lane on a board. `name` is the stored key; `label` overrides the
+ * rendered header; `action` names the skill that advances a card out of the lane
+ * and is DISPLAY-ONLY — no code path executes it (WISH Decision 1, Scope OUT).
+ */
+export interface Lane {
+  name: string;
+  label?: string;
+  action?: string;
 }
 
 export interface BoardRow {
   id: string;
   name: string;
+  /** Ordered lifecycle lanes, or null for a laneless (execution-status) board. */
+  lanes: Lane[] | null;
   createdAt: number;
+}
+
+/**
+ * The canonical genie lifecycle lanes, assigned to a board when `--lanes` is
+ * omitted. `action` is a display-only hint (WISH Decision 1). Review/Done carry
+ * no advancing skill.
+ */
+export const DEFAULT_LIFECYCLE_LANES: Lane[] = [
+  { name: 'Idea', action: '/brainstorm' },
+  { name: 'Brainstorm', action: '/wish' },
+  { name: 'Wish', action: '/work' },
+  { name: 'Work', action: '/review' },
+  { name: 'Review' },
+  { name: 'Done' },
+];
+
+/** Name of the default board `genie idea` captures into. */
+export const ROADMAP_BOARD = 'roadmap';
+
+/**
+ * A task row plus its lane placement. Kept SEPARATE from {@link TaskRow} so the
+ * frozen TaskRow contract — and the byte-identical laneless board `--json`,
+ * MCP, and `task export` shapes that serialize it — never gains a `lane` field.
+ * Only the additive lane-grouped render consumes this projection.
+ */
+export interface LaneTaskRow extends TaskRow {
+  lane: string | null;
+}
+
+/**
+ * A task row plus its lane placement AND runtime layer (identity, heartbeat,
+ * enforced block). This is the SEPARATE projection the human board render and
+ * `task status` consume so they can badge liveness/blocks — the frozen
+ * {@link TaskRow} (board `--json`, MCP, `task export` tasks) never gains these
+ * fields (WISH Decision 7). Every field beyond {@link LaneTaskRow} is nullable.
+ */
+export interface TaskCardRow extends LaneTaskRow {
+  agentKind: string | null;
+  heartbeatAt: number | null;
+  blockedBy: string | null;
+  blockedReason: string | null;
+}
+
+/**
+ * Heartbeat-derived liveness of a claimed card. Never self-reported — a dead
+ * session renders dead, killing the zombie `in_progress` lie (WISH Decision 8).
+ */
+export type Liveness = 'running' | 'idle' | 'stale';
+
+/** A heartbeat newer than this reads as actively running (▶). */
+export const LIVENESS_RUNNING_MS = 5 * 60 * 1000;
+/** A heartbeat older than this reads as stale/dead (☠); between the two is idle (⏸). */
+export const LIVENESS_STALE_MS = 2 * 60 * 60 * 1000;
+
+/**
+ * Pure liveness classification from a heartbeat timestamp and the current time.
+ * A missing heartbeat on a claimed card is treated as stale — a claim that never
+ * pulsed is exactly the zombie this render exists to expose. Deterministic:
+ * tests inject `heartbeatAt`/`now`, never sleep.
+ */
+export function livenessFromHeartbeat(heartbeatAt: number | null, now: number): Liveness {
+  if (heartbeatAt == null) return 'stale';
+  const age = now - heartbeatAt;
+  if (age < LIVENESS_RUNNING_MS) return 'running';
+  if (age < LIVENESS_STALE_MS) return 'idle';
+  return 'stale';
+}
+
+/** An authored, append-only card timeline event. */
+export interface TaskEvent {
+  id: number;
+  taskId: string;
+  kind: string;
+  note: string | null;
+  authorKind: string | null;
+  author: string | null;
+  createdAt: number;
+}
+
+export interface AppendEventInput {
+  kind: string;
+  note?: string;
+  authorKind?: string;
+  author?: string;
+}
+
+/** Author attribution for a card event. */
+export interface EventAuthor {
+  author: string | null;
+  authorKind: string | null;
 }
 
 export interface StageEntry {
@@ -68,6 +173,8 @@ export interface ClaimOptions {
   staleMs?: number;
   /** Injectable clock for deterministic tests. Defaults to `Date.now`. */
   now?: number;
+  /** Runtime identity recorded on the emitted `claim` timeline event. */
+  author?: EventAuthor;
 }
 
 /** Default stale-claim horizon: 15 minutes. */
@@ -146,6 +253,24 @@ export class UnknownBoardError extends Error {
   }
 }
 
+/** A board with this (UNIQUE) name already exists. */
+export class DuplicateBoardError extends Error {
+  readonly boardName: string;
+  constructor(name: string) {
+    super(`Board "${name}" already exists`);
+    this.name = 'DuplicateBoardError';
+    this.boardName = name;
+  }
+}
+
+/** An invalid lane reference or a move against a board that defines no lanes. */
+export class LaneError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'LaneError';
+  }
+}
+
 /** Lost the race to claim a task — another worker holds a live claim. */
 export class CheckoutConflictError extends Error {
   readonly taskId: string;
@@ -156,6 +281,24 @@ export class CheckoutConflictError extends Error {
   }
 }
 
+/**
+ * A task with an enforced block (`blocked_by` set) refused checkout — the single
+ * carved exception to the otherwise-untouched claim machine (WISH Decision 5).
+ * Carries the provenance and reason so the CLI can tell the operator why.
+ */
+export class TaskBlockedError extends Error {
+  readonly taskId: string;
+  readonly blockedBy: string;
+  readonly reason: string | null;
+  constructor(taskId: string, blockedBy: string, reason: string | null) {
+    super(`Task ${taskId} is blocked by ${blockedBy}${reason ? `: ${reason}` : ''} — cannot check out`);
+    this.name = 'TaskBlockedError';
+    this.taskId = taskId;
+    this.blockedBy = blockedBy;
+    this.reason = reason;
+  }
+}
+
 /** A `blocked` task (unmet dependencies) cannot be completed. */
 export class TaskNotReadyError extends Error {
   readonly taskId: string;
@@ -163,6 +306,23 @@ export class TaskNotReadyError extends Error {
     super(`Task ${taskId} is blocked — its dependencies are not all done; cannot complete`);
     this.name = 'TaskNotReadyError';
     this.taskId = taskId;
+  }
+}
+
+/**
+ * A release was refused because the card is not `in_progress` — there is no live
+ * claim to hand back. The status is carried so the CLI can tell the operator why
+ * (a completed card is the load-bearing case: releasing it would resurrect it).
+ */
+export class TaskReleaseError extends Error {
+  readonly taskId: string;
+  readonly status: TaskStatus;
+  constructor(taskId: string, status: TaskStatus) {
+    const detail = status === 'done' ? 'it is already done' : `it is ${status}, not in progress`;
+    super(`Cannot release task ${taskId}: ${detail} — nothing to release`);
+    this.name = 'TaskReleaseError';
+    this.taskId = taskId;
+    this.status = status;
   }
 }
 
@@ -206,6 +366,11 @@ interface RawTask {
   claimed_at: number | null;
   wish: string | null;
   group_name: string | null;
+  lane: string | null;
+  agent_kind: string | null;
+  heartbeat_at: number | null;
+  blocked_by: string | null;
+  blocked_reason: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -229,29 +394,65 @@ function mapTask(row: RawTask): TaskRow {
 // Boards
 // ============================================================================
 
-export function createBoard(db: Database, name: string): BoardRow {
+interface RawBoardRow {
+  id: string;
+  name: string;
+  lanes: string | null;
+  created_at: number;
+}
+
+/** Parse the stored lanes JSON back into `Lane[]`, tolerating malformed data. */
+function parseLanes(raw: string | null): Lane[] | null {
+  if (raw == null) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as Lane[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+function mapBoard(row: RawBoardRow): BoardRow {
+  return { id: row.id, name: row.name, lanes: parseLanes(row.lanes), createdAt: row.created_at };
+}
+
+/**
+ * Create a board, optionally with lifecycle lanes (stored as JSON in the
+ * additive `boards.lanes` column). Rejects a duplicate name up front with a
+ * typed {@link DuplicateBoardError} rather than surfacing a raw UNIQUE-constraint
+ * SqliteError. An empty lane list is normalized to null (laneless board).
+ */
+export function createBoard(db: Database, name: string, lanes?: Lane[]): BoardRow {
+  if (getBoardByName(db, name)) throw new DuplicateBoardError(name);
   const id = newId('b');
   const createdAt = Date.now();
-  db.query('INSERT INTO boards (id, name, created_at) VALUES (?, ?, ?)').run(id, name, createdAt);
-  return { id, name, createdAt };
+  const normalizedLanes = lanes && lanes.length > 0 ? lanes : null;
+  const lanesJson = normalizedLanes ? JSON.stringify(normalizedLanes) : null;
+  db.query('INSERT INTO boards (id, name, lanes, created_at) VALUES (?, ?, ?, ?)').run(id, name, lanesJson, createdAt);
+  return { id, name, lanes: normalizedLanes, createdAt };
 }
 
 export function getBoard(db: Database, id: string): BoardRow | null {
-  const row = db.query('SELECT id, name, created_at FROM boards WHERE id = ?').get(id) as {
-    id: string;
-    name: string;
-    created_at: number;
-  } | null;
-  return row ? { id: row.id, name: row.name, createdAt: row.created_at } : null;
+  const row = db.query('SELECT id, name, lanes, created_at FROM boards WHERE id = ?').get(id) as RawBoardRow | null;
+  return row ? mapBoard(row) : null;
 }
 
 export function getBoardByName(db: Database, name: string): BoardRow | null {
-  const row = db.query('SELECT id, name, created_at FROM boards WHERE name = ?').get(name) as {
-    id: string;
-    name: string;
-    created_at: number;
-  } | null;
-  return row ? { id: row.id, name: row.name, createdAt: row.created_at } : null;
+  const row = db.query('SELECT id, name, lanes, created_at FROM boards WHERE name = ?').get(name) as RawBoardRow | null;
+  return row ? mapBoard(row) : null;
+}
+
+/** Every board, oldest first. Powers `genie board list`. */
+export function listBoards(db: Database): BoardRow[] {
+  const rows = db
+    .query('SELECT id, name, lanes, created_at FROM boards ORDER BY created_at, id')
+    .all() as RawBoardRow[];
+  return rows.map(mapBoard);
+}
+
+/** Count of tasks assigned to a board — the card count for `board list`. */
+export function countBoardTasks(db: Database, boardId: string): number {
+  return (db.query('SELECT count(*) AS n FROM tasks WHERE board_id = ?').get(boardId) as { n: number }).n;
 }
 
 /**
@@ -282,9 +483,19 @@ export function createTask(db: Database, input: CreateTaskInput): TaskRow {
 
   const insert = db.transaction(() => {
     db.query(
-      `INSERT INTO tasks (id, board_id, title, status, wish, group_name, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(id, input.boardId ?? null, input.title, status, input.wish ?? null, input.group ?? null, now, now);
+      `INSERT INTO tasks (id, board_id, title, status, wish, group_name, lane, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      id,
+      input.boardId ?? null,
+      input.title,
+      status,
+      input.wish ?? null,
+      input.group ?? null,
+      input.lane ?? null,
+      now,
+      now,
+    );
     for (const depId of deps) {
       addDependencyInTx(db, id, depId);
     }
@@ -305,7 +516,7 @@ export interface TaskFilter {
   wish?: string;
 }
 
-export function listTasks(db: Database, filter: TaskFilter = {}): TaskRow[] {
+function buildTaskWhere(filter: TaskFilter): { where: string; params: string[] } {
   const clauses: string[] = [];
   const params: string[] = [];
   if (filter.status) {
@@ -320,9 +531,61 @@ export function listTasks(db: Database, filter: TaskFilter = {}): TaskRow[] {
     clauses.push('wish = ?');
     params.push(filter.wish);
   }
-  const where = clauses.length > 0 ? ` WHERE ${clauses.join(' AND ')}` : '';
+  return { where: clauses.length > 0 ? ` WHERE ${clauses.join(' AND ')}` : '', params };
+}
+
+export function listTasks(db: Database, filter: TaskFilter = {}): TaskRow[] {
+  const { where, params } = buildTaskWhere(filter);
   const rows = db.query(`SELECT * FROM tasks${where} ORDER BY created_at`).all(...params) as RawTask[];
   return rows.map(mapTask);
+}
+
+/**
+ * Lane-aware task listing — the same rows as {@link listTasks} plus each card's
+ * `lane`. Consumed ONLY by the additive lane-grouped board render; the frozen
+ * {@link TaskRow} path (board `--json`, MCP, export) stays byte-identical.
+ */
+export function listTasksWithLane(db: Database, filter: TaskFilter = {}): LaneTaskRow[] {
+  const { where, params } = buildTaskWhere(filter);
+  const rows = db.query(`SELECT * FROM tasks${where} ORDER BY created_at`).all(...params) as Array<
+    RawTask & { lane: string | null }
+  >;
+  return rows.map((r) => ({ ...mapTask(r), lane: r.lane ?? null }));
+}
+
+/** The card's current lane, or null when unplaced. */
+export function getTaskLane(db: Database, id: string): string | null {
+  const row = db.query('SELECT lane FROM tasks WHERE id = ?').get(id) as { lane: string | null } | null;
+  return row ? (row.lane ?? null) : null;
+}
+
+function mapTaskCard(row: RawTask): TaskCardRow {
+  return {
+    ...mapTask(row),
+    lane: row.lane ?? null,
+    agentKind: row.agent_kind ?? null,
+    heartbeatAt: row.heartbeat_at ?? null,
+    blockedBy: row.blocked_by ?? null,
+    blockedReason: row.blocked_reason ?? null,
+  };
+}
+
+/**
+ * Card listing with lane + runtime layer — the projection the human board render
+ * and `task status` consume. The frozen {@link TaskRow} path (board `--json`,
+ * MCP, export) stays byte-identical because it maps through {@link mapTask}, not
+ * this one.
+ */
+export function listTaskCards(db: Database, filter: TaskFilter = {}): TaskCardRow[] {
+  const { where, params } = buildTaskWhere(filter);
+  const rows = db.query(`SELECT * FROM tasks${where} ORDER BY created_at`).all(...params) as RawTask[];
+  return rows.map(mapTaskCard);
+}
+
+/** One card with its lane + runtime layer, or null when unknown. */
+export function getTaskCard(db: Database, id: string): TaskCardRow | null {
+  const row = db.query('SELECT * FROM tasks WHERE id = ?').get(id) as RawTask | null;
+  return row ? mapTaskCard(row) : null;
 }
 
 // ============================================================================
@@ -412,12 +675,36 @@ export function readyTasks(db: Database): TaskRow[] {
 // Atomic checkout claim
 // ============================================================================
 
+/** Read a task's enforced-block provenance without widening the frozen TaskRow. */
+function readBlock(db: Database, taskId: string): { blockedBy: string | null; blockedReason: string | null } | null {
+  const row = db.query('SELECT blocked_by, blocked_reason FROM tasks WHERE id = ?').get(taskId) as {
+    blocked_by: string | null;
+    blocked_reason: string | null;
+  } | null;
+  return row ? { blockedBy: row.blocked_by ?? null, blockedReason: row.blocked_reason ?? null } : null;
+}
+
 /**
- * Atomically claim a task for a worker. Wins iff the task is `ready`, or is a
- * stale `in_progress` claim past `staleMs`. Exactly one concurrent claimant
- * wins (conditional UPDATE affects one row); losers get `CheckoutConflictError`.
- * Runs in an IMMEDIATE transaction so the write lock is held for the whole
- * read-modify-write.
+ * Translate a lost/blocked claim into the right typed error. An enforced block
+ * (`blocked_by` set) is the single carved exception — it takes precedence over a
+ * plain conflict so the operator sees the reason, not a generic "not claimable".
+ */
+function claimFailure(db: Database, taskId: string): never {
+  const block = readBlock(db, taskId);
+  if (!block) throw new UnknownTaskError(taskId);
+  if (block.blockedBy != null) throw new TaskBlockedError(taskId, block.blockedBy, block.blockedReason);
+  throw new CheckoutConflictError(taskId);
+}
+
+/**
+ * Atomically claim a task for a worker. Wins iff the task is `ready` with no
+ * enforced block, or is a stale `in_progress` claim past `staleMs`. The
+ * `blocked_by IS NULL` guard is the SINGLE carved exception to the claim machine
+ * (WISH Decision 5); the ready-set/dependency logic is otherwise untouched.
+ * Exactly one concurrent claimant wins (conditional UPDATE affects one row);
+ * losers get `CheckoutConflictError`, or `TaskBlockedError` when an enforced
+ * block is what stopped them. A winning claim appends a `claim` timeline event
+ * inside the same transaction so the card can never show a claim without it.
  */
 export function claimTask(db: Database, taskId: string, worker: string, opts: ClaimOptions = {}): TaskRow {
   const now = opts.now ?? Date.now();
@@ -429,12 +716,21 @@ export function claimTask(db: Database, taskId: string, worker: string, opts: Cl
         `UPDATE tasks
          SET claimed_by = ?, claimed_at = ?, status = 'in_progress', updated_at = ?
          WHERE id = ?
+           AND blocked_by IS NULL
            AND (
              status = 'ready'
              OR (status = 'in_progress' AND claimed_at IS NOT NULL AND claimed_at <= ?)
            )`,
       )
       .run(worker, now, now, taskId, staleBefore);
+    if (res.changes === 1) {
+      appendTaskEvent(db, taskId, {
+        kind: 'claim',
+        note: `claimed by ${worker}`,
+        authorKind: opts.author?.authorKind ?? undefined,
+        author: opts.author?.author ?? undefined,
+      });
+    }
     return res.changes;
   });
   let changes: number;
@@ -444,25 +740,27 @@ export function claimTask(db: Database, taskId: string, worker: string, opts: Cl
     // Under heavy cross-process contention a straggler can exhaust
     // busy_timeout and surface SQLITE_BUSY instead of a clean 0-change
     // result. If the task is meanwhile gone or no longer claimable, that IS
-    // a lost race — translate to the typed conflict the claim contract
-    // promises. A still-claimable task (or any other error) stays a real error.
+    // a lost race — translate to the typed error the claim contract promises.
+    // A still-claimable task (or any other error) stays a real error.
     if (err instanceof Error && err.message.includes('SQLITE_BUSY')) {
       const current = getTask(db, taskId);
       if (!current) throw new UnknownTaskError(taskId);
-      if (current.status !== 'ready') throw new CheckoutConflictError(taskId);
+      // Not claimable (already claimed) OR under an enforced block → typed error.
+      if (current.status !== 'ready' || readBlock(db, taskId)?.blockedBy != null) claimFailure(db, taskId);
     }
     throw err;
   }
 
-  if (changes !== 1) {
-    if (!getTask(db, taskId)) throw new UnknownTaskError(taskId);
-    throw new CheckoutConflictError(taskId);
-  }
+  if (changes !== 1) claimFailure(db, taskId);
   return getTask(db, taskId) as TaskRow;
 }
 
-/** Transition a claimed/in-progress task to `done`, then recompute the ready set. */
-export function completeTask(db: Database, taskId: string): TaskRow {
+/**
+ * Transition a claimed/in-progress task to `done`, then recompute the ready set.
+ * Completion releases the card, so it appends a `release` timeline event. The
+ * recompute/dependency logic itself is untouched — only the audit event is added.
+ */
+export function completeTask(db: Database, taskId: string, author?: EventAuthor): TaskRow {
   const task = getTask(db, taskId);
   if (!task) throw new UnknownTaskError(taskId);
   // A `blocked` task's dependencies are not all `done`; completing it would let
@@ -473,10 +771,113 @@ export function completeTask(db: Database, taskId: string): TaskRow {
   const now = Date.now();
   const done = db.transaction(() => {
     db.query("UPDATE tasks SET status = 'done', updated_at = ? WHERE id = ?").run(now, taskId);
+    appendTaskEvent(db, taskId, {
+      kind: 'release',
+      note: 'completed',
+      authorKind: author?.authorKind ?? undefined,
+      author: author?.author ?? undefined,
+    });
     recomputeReady(db);
   });
   done();
   return getTask(db, taskId) as TaskRow;
+}
+
+/** Translate a refused release (CAS matched no `in_progress` row) into a typed error. */
+function releaseFailure(db: Database, taskId: string): never {
+  const task = getTask(db, taskId);
+  if (!task) throw new UnknownTaskError(taskId);
+  throw new TaskReleaseError(taskId, task.status);
+}
+
+/**
+ * Release a claim WITHOUT completing — returns an `in_progress` card to the
+ * `ready` queue and clears the claim so another runtime can pick it up. The state
+ * check lives IN the SQL (`WHERE ... AND status = 'in_progress'`) exactly like
+ * {@link claimTask}, so a concurrent `done`/re-claim that transitions the card out
+ * of `in_progress` between decision and write can never be clobbered: the
+ * conditional UPDATE simply affects zero rows and we refuse with a typed
+ * {@link TaskReleaseError} — critically, a completed card is NEVER resurrected to
+ * `ready`. The `release` timeline event is emitted ONLY inside the winning
+ * transaction, so a refused release leaves no phantom event.
+ */
+export function releaseTask(db: Database, taskId: string, author: EventAuthor): TaskRow {
+  const now = Date.now();
+  const release = db.transaction(() => {
+    const res = db
+      .query(
+        `UPDATE tasks
+         SET status = 'ready', claimed_by = NULL, claimed_at = NULL, updated_at = ?
+         WHERE id = ? AND status = 'in_progress'`,
+      )
+      .run(now, taskId);
+    if (res.changes === 1) {
+      appendTaskEvent(db, taskId, {
+        kind: 'release',
+        note: 'released',
+        authorKind: author.authorKind ?? undefined,
+        author: author.author ?? undefined,
+      });
+    }
+    return res.changes;
+  });
+  if (release.immediate() !== 1) releaseFailure(db, taskId);
+  return getTask(db, taskId) as TaskRow;
+}
+
+/**
+ * Place an enforced block on a card: stores `blocked_by` (the acting runtime's
+ * identity, which drives the checkout refusal) and `blocked_reason`, and appends
+ * a `block` event. `blocked_by` is always non-null so the checkout gate can never
+ * be defeated by a missing identity — an anonymous human falls back to its kind.
+ */
+export function blockTask(db: Database, taskId: string, reason: string, author: EventAuthor): TaskRow {
+  requireTask(db, taskId);
+  const blockedBy = author.author ?? author.authorKind ?? 'unknown';
+  const now = Date.now();
+  const tx = db.transaction(() => {
+    db.query('UPDATE tasks SET blocked_by = ?, blocked_reason = ?, updated_at = ? WHERE id = ?').run(
+      blockedBy,
+      reason,
+      now,
+      taskId,
+    );
+    appendTaskEvent(db, taskId, {
+      kind: 'block',
+      note: reason,
+      authorKind: author.authorKind ?? undefined,
+      author: author.author ?? undefined,
+    });
+  });
+  tx();
+  return getTask(db, taskId) as TaskRow;
+}
+
+/** Clear an enforced block and append an `unblock` event. */
+export function unblockTask(db: Database, taskId: string, author: EventAuthor): TaskRow {
+  requireTask(db, taskId);
+  const now = Date.now();
+  const tx = db.transaction(() => {
+    db.query('UPDATE tasks SET blocked_by = NULL, blocked_reason = NULL, updated_at = ? WHERE id = ?').run(now, taskId);
+    appendTaskEvent(db, taskId, {
+      kind: 'unblock',
+      authorKind: author.authorKind ?? undefined,
+      author: author.author ?? undefined,
+    });
+  });
+  tx();
+  return getTask(db, taskId) as TaskRow;
+}
+
+/**
+ * Record a liveness heartbeat for a claimed card — a bare `heartbeat_at` write,
+ * NOT a timeline event (liveness is render-derived from this timestamp, never
+ * self-reported). Returns the timestamp written. Injectable clock for tests.
+ */
+export function recordHeartbeat(db: Database, taskId: string, now: number = Date.now()): number {
+  requireTask(db, taskId);
+  db.query('UPDATE tasks SET heartbeat_at = ?, updated_at = ? WHERE id = ?').run(now, now, taskId);
+  return now;
 }
 
 // ============================================================================
@@ -502,6 +903,120 @@ export function getStageLog(db: Database, taskId: string): StageEntry[] {
     created_at: number;
   }>;
   return rows.map((r) => ({ id: r.id, taskId: r.task_id, stage: r.stage, note: r.note, createdAt: r.created_at }));
+}
+
+// ============================================================================
+// Append-only card timeline (task_events)
+// ============================================================================
+
+interface RawTaskEvent {
+  id: number;
+  task_id: string;
+  kind: string;
+  note: string | null;
+  author_kind: string | null;
+  author: string | null;
+  created_at: number;
+}
+
+function mapTaskEvent(row: RawTaskEvent): TaskEvent {
+  return {
+    id: row.id,
+    taskId: row.task_id,
+    kind: row.kind,
+    note: row.note,
+    authorKind: row.author_kind,
+    author: row.author,
+    createdAt: row.created_at,
+  };
+}
+
+/**
+ * Append one authored event to a card's timeline. This is the MINIMAL API the
+ * move verb needs; the full verb surface (comment/block/release/report) lands in
+ * a later group on top of this table.
+ */
+export function appendTaskEvent(db: Database, taskId: string, event: AppendEventInput): TaskEvent {
+  requireTask(db, taskId);
+  const createdAt = Date.now();
+  const res = db
+    .query('INSERT INTO task_events (task_id, kind, note, author_kind, author, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(taskId, event.kind, event.note ?? null, event.authorKind ?? null, event.author ?? null, createdAt);
+  return {
+    id: Number(res.lastInsertRowid),
+    taskId,
+    kind: event.kind,
+    note: event.note ?? null,
+    authorKind: event.authorKind ?? null,
+    author: event.author ?? null,
+    createdAt,
+  };
+}
+
+/** A card's timeline events in append order. */
+export function getTaskEvents(db: Database, taskId: string): TaskEvent[] {
+  const rows = db.query('SELECT * FROM task_events WHERE task_id = ? ORDER BY id').all(taskId) as RawTaskEvent[];
+  return rows.map(mapTaskEvent);
+}
+
+/**
+ * Comment-event counts per task, as a `taskId → count` map (one grouped query,
+ * so the board can badge 💬 without a per-card round-trip). Tasks with no
+ * comments are absent from the map — callers default to 0.
+ */
+export function commentCounts(db: Database): Map<string, number> {
+  const rows = db
+    .query("SELECT task_id, count(*) AS n FROM task_events WHERE kind = 'comment' GROUP BY task_id")
+    .all() as Array<{ task_id: string; n: number }>;
+  return new Map(rows.map((r) => [r.task_id, r.n]));
+}
+
+// ============================================================================
+// Lane moves
+// ============================================================================
+
+export interface MoveResult {
+  task: TaskRow;
+  from: string | null;
+  to: string;
+}
+
+/**
+ * Move a card to a lane defined by its board, recording a `move` event on the
+ * card timeline. Rejects (typed {@link LaneError}) a card with no board, a board
+ * that defines no lanes, or an undefined target lane — the error lists the valid
+ * lanes so the CLI can surface them. The lane write + event append are one
+ * transaction so a card can never show a lane without a matching timeline entry.
+ */
+export function moveTask(db: Database, taskId: string, toLane: string, author: EventAuthor): MoveResult {
+  const task = getTask(db, taskId);
+  if (!task) throw new UnknownTaskError(taskId);
+  if (!task.boardId) {
+    throw new LaneError(`Task ${taskId} is not on a board — moving between lanes requires a lane-defining board.`);
+  }
+  const board = getBoard(db, task.boardId);
+  if (!board?.lanes || board.lanes.length === 0) {
+    throw new LaneError(`Board "${board?.name ?? task.boardId}" defines no lanes — nothing to move between.`);
+  }
+  const laneNames = board.lanes.map((l) => l.name);
+  if (!laneNames.includes(toLane)) {
+    throw new LaneError(`Unknown lane "${toLane}". Valid lanes: ${laneNames.join(', ')}.`);
+  }
+
+  const from = getTaskLane(db, taskId);
+  const note = `${from ?? '(none)'}→${toLane}`;
+  const now = Date.now();
+  const move = db.transaction(() => {
+    db.query('UPDATE tasks SET lane = ?, updated_at = ? WHERE id = ?').run(toLane, now, taskId);
+    appendTaskEvent(db, taskId, {
+      kind: 'move',
+      note,
+      authorKind: author.authorKind ?? undefined,
+      author: author.author ?? undefined,
+    });
+  });
+  move();
+  return { task: getTask(db, taskId) as TaskRow, from, to: toLane };
 }
 
 // ============================================================================
@@ -836,6 +1351,7 @@ export interface StateExport {
   tasks: RawTask[];
   task_dependencies: Array<{ task_id: string; depends_on_id: string }>;
   stage_log: RawStage[];
+  task_events: RawTaskEvent[];
   wish_groups: RawWishGroup[];
   hire_roster: RawHire[];
 }
@@ -843,6 +1359,7 @@ export interface StateExport {
 interface RawBoard {
   id: string;
   name: string;
+  lanes: string | null;
   created_at: number;
 }
 
@@ -877,6 +1394,7 @@ export function exportState(db: Database): StateExport {
       .query('SELECT task_id, depends_on_id FROM task_dependencies ORDER BY task_id, depends_on_id')
       .all() as StateExport['task_dependencies'],
     stage_log: db.query('SELECT * FROM stage_log ORDER BY id').all() as RawStage[],
+    task_events: db.query('SELECT * FROM task_events ORDER BY id').all() as RawTaskEvent[],
     wish_groups: db.query('SELECT * FROM wish_groups ORDER BY wish, name').all() as RawWishGroup[],
     hire_roster: db.query('SELECT * FROM hire_roster ORDER BY wish, agent_adapter_id').all() as RawHire[],
   };

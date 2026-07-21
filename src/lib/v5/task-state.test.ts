@@ -3,38 +3,61 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { openDb } from './genie-db.js';
+import { ensureSchema, openDb } from './genie-db.js';
 import {
   CheckoutConflictError,
   CycleError,
+  DEFAULT_LIFECYCLE_LANES,
   DEFAULT_STALE_MS,
+  DuplicateBoardError,
+  LIVENESS_RUNNING_MS,
+  LIVENESS_STALE_MS,
+  LaneError,
+  TaskBlockedError,
   TaskNotReadyError,
+  TaskReleaseError,
   UnknownTaskError,
   WishGroupDriftError,
   WishGroupStateError,
   addDependency,
   appendStage,
+  appendTaskEvent,
   assertWishSignature,
+  blockTask,
   claimTask,
+  commentCounts,
   completeTask,
   completeWishGroup,
   computeGroupsSignature,
+  countBoardTasks,
   createBoard,
   createTask,
   createWishGroups,
   exportState,
+  getBoardByName,
   getHire,
   getStageLog,
   getTask,
+  getTaskCard,
+  getTaskEvents,
+  getTaskLane,
   getWishGroups,
   hireAgent,
+  listBoards,
   listHires,
   listTasks,
+  livenessFromHeartbeat,
+  moveTask,
   readyTasks,
   recomputeReady,
+  recordHeartbeat,
+  releaseTask,
   startWishGroup,
+  unblockTask,
   unhireAgent,
 } from './task-state.js';
+
+const HUMAN = { author: 'felipe', authorKind: 'human' };
 
 let dir: string;
 let db: Database;
@@ -77,6 +100,124 @@ describe('task CRUD', () => {
 
   test('getTask returns null for unknown id', () => {
     expect(getTask(db, 't_missing')).toBeNull();
+  });
+});
+
+describe('boards with lifecycle lanes', () => {
+  test('createBoard persists lanes and round-trips them', () => {
+    const board = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    expect(board.lanes?.map((l) => l.name)).toEqual(['Idea', 'Brainstorm', 'Wish', 'Work', 'Review', 'Done']);
+    const fetched = getBoardByName(db, 'roadmap');
+    expect(fetched?.lanes).toEqual(DEFAULT_LIFECYCLE_LANES);
+    // Display-only action hints survive the JSON round-trip.
+    expect(fetched?.lanes?.find((l) => l.name === 'Brainstorm')?.action).toBe('/wish');
+  });
+
+  test('a laneless board round-trips lanes as null', () => {
+    const board = createBoard(db, 'plain');
+    expect(board.lanes).toBeNull();
+    expect(getBoardByName(db, 'plain')?.lanes).toBeNull();
+  });
+
+  test('an empty lane list normalizes to a laneless board', () => {
+    const board = createBoard(db, 'empty-lanes', []);
+    expect(board.lanes).toBeNull();
+  });
+
+  test('a duplicate board name throws DuplicateBoardError (UNIQUE surfaced cleanly)', () => {
+    createBoard(db, 'dup');
+    expect(() => createBoard(db, 'dup')).toThrow(DuplicateBoardError);
+  });
+
+  test('listBoards + countBoardTasks report lane and card counts', () => {
+    const road = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    createBoard(db, 'plain');
+    createTask(db, { title: 'c1', boardId: road.id });
+    createTask(db, { title: 'c2', boardId: road.id });
+
+    const boards = listBoards(db);
+    expect(boards.map((b) => b.name).sort()).toEqual(['plain', 'roadmap']);
+    expect(countBoardTasks(db, road.id)).toBe(2);
+    const plain = boards.find((b) => b.name === 'plain');
+    expect(countBoardTasks(db, plain!.id)).toBe(0);
+  });
+});
+
+describe('lane moves + task_events timeline', () => {
+  test('createTask honors an initial lane placement', () => {
+    const board = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    const task = createTask(db, { title: 'idea', boardId: board.id, lane: 'Idea' });
+    expect(getTaskLane(db, task.id)).toBe('Idea');
+  });
+
+  test('moveTask sets the lane and appends a move event with from→to', () => {
+    const board = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    const task = createTask(db, { title: 'idea', boardId: board.id, lane: 'Idea' });
+
+    const result = moveTask(db, task.id, 'Brainstorm', HUMAN);
+    expect(result.from).toBe('Idea');
+    expect(result.to).toBe('Brainstorm');
+    expect(getTaskLane(db, task.id)).toBe('Brainstorm');
+
+    const events = getTaskEvents(db, task.id);
+    expect(events).toHaveLength(1);
+    expect(events[0].kind).toBe('move');
+    expect(events[0].note).toBe('Idea→Brainstorm');
+    expect(events[0].author).toBe('felipe');
+    expect(events[0].authorKind).toBe('human');
+  });
+
+  test('moving an unplaced card records the (none)→lane origin', () => {
+    const board = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    const task = createTask(db, { title: 'unplaced', boardId: board.id });
+    const result = moveTask(db, task.id, 'Wish', HUMAN);
+    expect(result.from).toBeNull();
+    expect(getTaskEvents(db, task.id)[0].note).toBe('(none)→Wish');
+  });
+
+  test('rejects an undefined lane, listing the valid lanes', () => {
+    const board = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    const task = createTask(db, { title: 'idea', boardId: board.id, lane: 'Idea' });
+    expect(() => moveTask(db, task.id, 'Nope', HUMAN)).toThrow(LaneError);
+    try {
+      moveTask(db, task.id, 'Nope', HUMAN);
+    } catch (err) {
+      expect((err as Error).message).toContain('Idea, Brainstorm, Wish, Work, Review, Done');
+    }
+    // A rejected move leaves the lane and timeline untouched.
+    expect(getTaskLane(db, task.id)).toBe('Idea');
+    expect(getTaskEvents(db, task.id)).toHaveLength(0);
+  });
+
+  test('rejects a move for a card with no board', () => {
+    const task = createTask(db, { title: 'boardless' });
+    expect(() => moveTask(db, task.id, 'Idea', HUMAN)).toThrow(LaneError);
+  });
+
+  test('rejects a move on a board that defines no lanes', () => {
+    const board = createBoard(db, 'plain');
+    const task = createTask(db, { title: 'on plain', boardId: board.id });
+    expect(() => moveTask(db, task.id, 'Idea', HUMAN)).toThrow(LaneError);
+  });
+
+  test('rejects a move for an unknown task', () => {
+    expect(() => moveTask(db, 't_nope', 'Idea', HUMAN)).toThrow(UnknownTaskError);
+  });
+
+  test('appendTaskEvent + getTaskEvents round-trip in append order', () => {
+    const task = createTask(db, { title: 'a' });
+    appendTaskEvent(db, task.id, { kind: 'comment', note: 'first', author: 'x', authorKind: 'human' });
+    appendTaskEvent(db, task.id, { kind: 'comment', note: 'second' });
+    const events = getTaskEvents(db, task.id);
+    expect(events.map((e) => e.note)).toEqual(['first', 'second']);
+    expect(events[0].id < events[1].id).toBe(true);
+    // Unset author fields round-trip as null.
+    expect(events[1].author).toBeNull();
+    expect(events[1].authorKind).toBeNull();
+  });
+
+  test('appendTaskEvent rejects an unknown task', () => {
+    expect(() => appendTaskEvent(db, 't_nope', { kind: 'move' })).toThrow(UnknownTaskError);
   });
 });
 
@@ -192,6 +333,154 @@ describe('atomic checkout claim (single process)', () => {
   });
 });
 
+describe('runtime layer — liveness (pure, injected timestamps)', () => {
+  const NOW = 10_000_000;
+
+  test('classifies running / idle / stale purely from heartbeat age', () => {
+    expect(livenessFromHeartbeat(NOW, NOW)).toBe('running');
+    expect(livenessFromHeartbeat(NOW - (LIVENESS_RUNNING_MS - 1), NOW)).toBe('running');
+    // At exactly the running boundary it is no longer running → idle.
+    expect(livenessFromHeartbeat(NOW - LIVENESS_RUNNING_MS, NOW)).toBe('idle');
+    expect(livenessFromHeartbeat(NOW - (LIVENESS_STALE_MS - 1), NOW)).toBe('idle');
+    // At/after the stale boundary → stale.
+    expect(livenessFromHeartbeat(NOW - LIVENESS_STALE_MS, NOW)).toBe('stale');
+    expect(livenessFromHeartbeat(NOW - 9 * 24 * 60 * 60 * 1000, NOW)).toBe('stale');
+  });
+
+  test('a claimed card that never pulsed (null heartbeat) reads stale — the zombie', () => {
+    expect(livenessFromHeartbeat(null, NOW)).toBe('stale');
+  });
+
+  test('recordHeartbeat writes heartbeat_at, visible on the card projection', () => {
+    const a = createTask(db, { title: 'a' });
+    expect(getTaskCard(db, a.id)?.heartbeatAt).toBeNull();
+    const t = recordHeartbeat(db, a.id, NOW);
+    expect(t).toBe(NOW);
+    expect(getTaskCard(db, a.id)?.heartbeatAt).toBe(NOW);
+  });
+
+  test('recordHeartbeat rejects an unknown task', () => {
+    expect(() => recordHeartbeat(db, 't_nope')).toThrow(UnknownTaskError);
+  });
+});
+
+describe('runtime layer — enforced blocks + carved checkout exception', () => {
+  test('blockTask stores provenance + reason and appends a block event', () => {
+    const a = createTask(db, { title: 'a' });
+    blockTask(db, a.id, 'waiting on design', { author: 'felipe', authorKind: 'human' });
+    const card = getTaskCard(db, a.id);
+    expect(card?.blockedBy).toBe('felipe');
+    expect(card?.blockedReason).toBe('waiting on design');
+    const events = getTaskEvents(db, a.id);
+    expect(events.at(-1)?.kind).toBe('block');
+    expect(events.at(-1)?.note).toBe('waiting on design');
+  });
+
+  test('an anonymous blocker still sets a non-null blocked_by (gate can never be defeated)', () => {
+    const a = createTask(db, { title: 'a' });
+    blockTask(db, a.id, 'r', { author: null, authorKind: 'human' });
+    expect(getTaskCard(db, a.id)?.blockedBy).toBe('human');
+  });
+
+  test('checkout refuses a blocked card with TaskBlockedError carrying the reason', () => {
+    const a = createTask(db, { title: 'a' });
+    blockTask(db, a.id, 'needs review', { author: 'eng-B', authorKind: 'claude-code' });
+    expect(getTask(db, a.id)?.status).toBe('ready'); // block does not change status
+    try {
+      claimTask(db, a.id, 'w1');
+      throw new Error('expected TaskBlockedError');
+    } catch (err) {
+      expect(err).toBeInstanceOf(TaskBlockedError);
+      expect((err as TaskBlockedError).blockedBy).toBe('eng-B');
+      expect((err as TaskBlockedError).reason).toBe('needs review');
+      expect((err as Error).message).toContain('needs review');
+    }
+    // Refusal leaves the card unclaimed — the gate did not partially mutate.
+    expect(getTask(db, a.id)?.claimedBy).toBeNull();
+    expect(getTask(db, a.id)?.status).toBe('ready');
+  });
+
+  test('unblock clears the block and restores checkout', () => {
+    const a = createTask(db, { title: 'a' });
+    blockTask(db, a.id, 'r', HUMAN);
+    unblockTask(db, a.id, HUMAN);
+    const card = getTaskCard(db, a.id);
+    expect(card?.blockedBy).toBeNull();
+    expect(card?.blockedReason).toBeNull();
+    expect(getTaskEvents(db, a.id).at(-1)?.kind).toBe('unblock');
+    // Now claimable again.
+    expect(claimTask(db, a.id, 'w1').status).toBe('in_progress');
+  });
+});
+
+describe('runtime layer — claim / release timeline events', () => {
+  test('a winning checkout appends a claim event carrying the runtime author', () => {
+    const a = createTask(db, { title: 'a' });
+    claimTask(db, a.id, 'w1', { author: { author: 'eng-B', authorKind: 'claude-code' } });
+    const claim = getTaskEvents(db, a.id).find((e) => e.kind === 'claim');
+    expect(claim).toBeDefined();
+    expect(claim?.author).toBe('eng-B');
+    expect(claim?.authorKind).toBe('claude-code');
+  });
+
+  test('a lost claim appends NO claim event (event is inside the winning transaction)', () => {
+    const a = createTask(db, { title: 'a' });
+    claimTask(db, a.id, 'w1');
+    const before = getTaskEvents(db, a.id).filter((e) => e.kind === 'claim').length;
+    expect(() => claimTask(db, a.id, 'w2')).toThrow(CheckoutConflictError);
+    const after = getTaskEvents(db, a.id).filter((e) => e.kind === 'claim').length;
+    expect(after).toBe(before); // no phantom claim from the loser
+  });
+
+  test('completeTask appends a release event; recompute still runs', () => {
+    const a = createTask(db, { title: 'a' });
+    const b = createTask(db, { title: 'b', dependsOn: [a.id] });
+    completeTask(db, a.id, HUMAN);
+    expect(getTaskEvents(db, a.id).at(-1)?.kind).toBe('release');
+    expect(getTask(db, b.id)?.status).toBe('ready'); // dependency gate untouched
+  });
+
+  test('releaseTask returns an in_progress card to ready and appends a release event', () => {
+    const a = createTask(db, { title: 'a' });
+    claimTask(db, a.id, 'w1');
+    const released = releaseTask(db, a.id, HUMAN);
+    expect(released.status).toBe('ready');
+    expect(released.claimedBy).toBeNull();
+    expect(getTaskEvents(db, a.id).at(-1)?.kind).toBe('release');
+  });
+
+  test('releaseTask REFUSES a done card — never resurrects it, emits no release event', () => {
+    const a = createTask(db, { title: 'a' });
+    claimTask(db, a.id, 'w1');
+    completeTask(db, a.id); // in_progress → done (+ one 'release' event, note 'completed')
+    const releaseEventsBefore = getTaskEvents(db, a.id).filter((e) => e.kind === 'release').length;
+
+    expect(() => releaseTask(db, a.id, HUMAN)).toThrow(TaskReleaseError);
+    expect(getTask(db, a.id)!.status).toBe('done'); // NOT resurrected to ready
+    // The refused release must leave no phantom timeline event.
+    expect(getTaskEvents(db, a.id).filter((e) => e.kind === 'release').length).toBe(releaseEventsBefore);
+  });
+
+  test('releaseTask REFUSES a ready card (no live claim to hand back)', () => {
+    const a = createTask(db, { title: 'a' }); // starts ready, never claimed
+    expect(() => releaseTask(db, a.id, HUMAN)).toThrow(TaskReleaseError);
+    expect(getTask(db, a.id)!.status).toBe('ready');
+    expect(getTaskEvents(db, a.id).some((e) => e.kind === 'release')).toBe(false);
+  });
+
+  test('commentCounts tallies only comment events, keyed by task', () => {
+    const a = createTask(db, { title: 'a' });
+    const b = createTask(db, { title: 'b' });
+    appendTaskEvent(db, a.id, { kind: 'comment', note: '1' });
+    appendTaskEvent(db, a.id, { kind: 'comment', note: '2' });
+    appendTaskEvent(db, a.id, { kind: 'move', note: 'x' }); // not counted
+    appendTaskEvent(db, b.id, { kind: 'report', note: 'r' }); // not counted
+    const counts = commentCounts(db);
+    expect(counts.get(a.id)).toBe(2);
+    expect(counts.has(b.id)).toBe(false);
+  });
+});
+
 describe('append-only stage log', () => {
   test('appends entries in order and reads them back', () => {
     const a = createTask(db, { title: 'a' });
@@ -257,6 +546,53 @@ describe('wish-group state machine', () => {
     // Structural change (new dep) → drift.
     const drifted = [{ name: 'g1' }, { name: 'g2', dependsOn: ['g1'] }, { name: 'g3', dependsOn: ['g1', 'g2'] }];
     expect(() => assertWishSignature(db, 'demo', drifted)).toThrow(WishGroupDriftError);
+  });
+});
+
+describe('exportState — task_events additive, stage_log retained', () => {
+  test('export carries BOTH stage_log and task_events (row 12: keep stage_log, gain task_events)', () => {
+    const a = createTask(db, { title: 'a' });
+    appendStage(db, a.id, 'planned', 'kickoff'); // legacy stage_log
+    appendTaskEvent(db, a.id, { kind: 'comment', note: 'live event', author: 'x', authorKind: 'human' });
+
+    const state = exportState(db);
+    expect(state.stage_log.map((s) => s.stage)).toContain('planned');
+    expect(state.task_events.map((e) => e.note)).toContain('live event');
+    // The board `boards` export gains the additive lanes column (typed-export NIT fix).
+    const road = createBoard(db, 'road', DEFAULT_LIFECYCLE_LANES);
+    createTask(db, { title: 'c', boardId: road.id });
+    const withLanes = exportState(db).boards.find((b) => b.name === 'road');
+    expect(withLanes?.lanes).toBeTypeOf('string'); // JSON-encoded lane list, not undefined
+  });
+});
+
+describe('stage_log → task_events one-time backfill (idempotent)', () => {
+  test('migrates existing stage_log rows once, preserving created_at and mapping kinds', () => {
+    const a = createTask(db, { title: 'a' });
+    // Simulate a pre-backfill DB: real stage_log history + guard removed so the
+    // next ensureSchema performs the one-time migration (as an old DB would).
+    appendStage(db, a.id, 'planned', 'kickoff'); // unknown kind → comment, label preserved
+    appendStage(db, a.id, 'report', 'meeseeks done'); // known kind → report
+    appendStage(db, a.id, 'implemented'); // unknown kind, no note → comment, note = label
+    db.query("DELETE FROM meta WHERE key = 'stage_log_backfill_v1'").run();
+    const stageRows = getStageLog(db, a.id);
+
+    ensureSchema(db); // triggers the guarded backfill
+
+    const events = getTaskEvents(db, a.id);
+    const byNote = Object.fromEntries(events.map((e) => [e.note, e]));
+    expect(byNote['planned: kickoff']?.kind).toBe('comment'); // label folded into note
+    expect(byNote['meeseeks done']?.kind).toBe('report'); // known kind mapped directly
+    expect(byNote.implemented?.kind).toBe('comment'); // label becomes the note
+    // created_at is preserved from the source stage rows.
+    expect(events.map((e) => e.createdAt).sort()).toEqual(stageRows.map((s) => s.createdAt).sort());
+    // Historical rows carry no author attribution.
+    expect(events.every((e) => e.author === null && e.authorKind === null)).toBe(true);
+
+    // Idempotent: a second ensureSchema (guard now set) duplicates nothing.
+    const count = events.length;
+    ensureSchema(db);
+    expect(getTaskEvents(db, a.id).length).toBe(count);
   });
 });
 
@@ -477,5 +813,162 @@ try {
     verify.close();
     expect(finalTask.status).toBe('in_progress');
     expect(finalTask.claimedBy).toMatch(/^worker-\d+$/);
+  }, 30_000);
+
+  test('two concurrent checkouts of a BLOCKED card both refuse cleanly (no SQLITE_BUSY flake)', async () => {
+    const dbPath = join(dir, 'blocked-race.db');
+    const seed = openDb({ path: dbPath });
+    const task = createTask(seed, { title: 'contended-blocked' });
+    blockTask(seed, task.id, 'held for review', { author: 'eng-B', authorKind: 'claude-code' });
+    seed.close();
+
+    const gdbPath = join(import.meta.dir, 'genie-db.ts');
+    const tsPath = join(import.meta.dir, 'task-state.ts');
+    const workerPath = join(dir, 'blocked-worker.ts');
+    writeFileSync(
+      workerPath,
+      `
+import { openDb } from ${JSON.stringify(gdbPath)};
+import { claimTask, TaskBlockedError, CheckoutConflictError } from ${JSON.stringify(tsPath)};
+const [dbPath, taskId, worker] = process.argv.slice(2);
+const db = openDb({ path: dbPath });
+try {
+  claimTask(db, taskId, worker);
+  process.stdout.write('WON');
+} catch (e) {
+  if (e instanceof TaskBlockedError) process.stdout.write('BLOCKED');
+  else if (e instanceof CheckoutConflictError) process.stdout.write('CONFLICT');
+  else { process.stdout.write('ERR:' + (e && e.message)); process.exitCode = 3; }
+} finally {
+  db.close();
+}
+`,
+    );
+
+    const runs = Array.from({ length: 2 }, (_, i) => {
+      const proc = Bun.spawn(['bun', 'run', workerPath, dbPath, task.id, `worker-${i}`], {
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+      return (async () => {
+        const out = await new Response(proc.stdout).text();
+        const err = await new Response(proc.stderr).text();
+        const code = await proc.exited;
+        return { out, err, code };
+      })();
+    });
+
+    const settled = await Promise.allSettled(runs);
+    const outcomes = settled.map((s) =>
+      s.status === 'fulfilled' ? `${s.value.out}(exit ${s.value.code})` : 'REJECTED',
+    );
+    if (!outcomes.every((o) => o.startsWith('BLOCKED')))
+      console.error('blocked-race outcomes:', JSON.stringify(outcomes));
+
+    // Both refuse with the typed enforced-block error — never a win, never a raw SQLITE_BUSY leak.
+    expect(outcomes.filter((o) => o.startsWith('BLOCKED')).length).toBe(2);
+    expect(outcomes.some((o) => o.startsWith('WON') || o.startsWith('ERR'))).toBe(false);
+
+    const verify = openDb({ path: dbPath });
+    const finalTask = getTask(verify, task.id)!;
+    verify.close();
+    expect(finalTask.status).toBe('ready'); // untouched — still blocked, never claimed
+    expect(finalTask.claimedBy).toBeNull();
+  }, 30_000);
+
+  // Two real processes race `done` vs `release` on ONE in_progress card. The
+  // release worker spins (bounded, no fixed sleep) until it observes `done`
+  // committed, then attempts its release — this reproduces the EXACT reported
+  // corruption window: a completed card whose concurrent release once fired an
+  // unconditional `status='ready'` write, resurrecting it. With the conditional
+  // CAS the release must refuse: final status stays `done`, exactly one release
+  // event exists (completeTask's), and no `ready` is ever observable.
+  test('done vs release race — a completed card is NEVER resurrected to ready', async () => {
+    const dbPath = join(dir, 'done-release-race.db');
+    const seed = openDb({ path: dbPath });
+    const task = createTask(seed, { title: 'contended-done-release' });
+    claimTask(seed, task.id, 'w1'); // in_progress, held by w1
+    seed.close();
+
+    const gdbPath = join(import.meta.dir, 'genie-db.ts');
+    const tsPath = join(import.meta.dir, 'task-state.ts');
+
+    const doneWorkerPath = join(dir, 'done-worker.ts');
+    writeFileSync(
+      doneWorkerPath,
+      `
+import { openDb } from ${JSON.stringify(gdbPath)};
+import { completeTask } from ${JSON.stringify(tsPath)};
+const [dbPath, taskId] = process.argv.slice(2);
+const db = openDb({ path: dbPath });
+try {
+  completeTask(db, taskId, { author: 'w1', authorKind: 'human' });
+  process.stdout.write('WON');
+} catch (e) { process.stdout.write('ERR:' + (e && e.message)); process.exitCode = 3; }
+finally { db.close(); }
+`,
+    );
+
+    const releaseWorkerPath = join(dir, 'release-worker.ts');
+    writeFileSync(
+      releaseWorkerPath,
+      `
+import { openDb } from ${JSON.stringify(gdbPath)};
+import { getTask, releaseTask, TaskReleaseError } from ${JSON.stringify(tsPath)};
+const [dbPath, taskId] = process.argv.slice(2);
+const db = openDb({ path: dbPath });
+try {
+  // Spin (bounded, WAL readers never block) until the concurrent \`done\` commits —
+  // this lands the release attempt squarely in the post-completion window.
+  let sawDone = false;
+  for (let i = 0; i < 5_000_000; i++) {
+    if (getTask(db, taskId)?.status === 'done') { sawDone = true; break; }
+  }
+  if (!sawDone) { process.stdout.write('NO_DONE'); process.exitCode = 4; }
+  else {
+    try {
+      releaseTask(db, taskId, { author: 'eng-B', authorKind: 'claude-code' });
+      process.stdout.write('WON'); // a WON here is a resurrection — the bug
+    } catch (e) {
+      if (e instanceof TaskReleaseError) process.stdout.write('REFUSED');
+      else { process.stdout.write('ERR:' + (e && e.message)); process.exitCode = 3; }
+    }
+  }
+} finally { db.close(); }
+`,
+    );
+
+    const spawnWorker = (path: string) => {
+      const proc = Bun.spawn(['bun', 'run', path, dbPath, task.id], { stdout: 'pipe', stderr: 'pipe' });
+      return (async () => {
+        const out = await new Response(proc.stdout).text();
+        const err = await new Response(proc.stderr).text();
+        const code = await proc.exited;
+        return { out, err, code };
+      })();
+    };
+
+    const settled = await Promise.allSettled([spawnWorker(doneWorkerPath), spawnWorker(releaseWorkerPath)]);
+    const [doneRes, releaseRes] = settled.map((s) =>
+      s.status === 'fulfilled' ? s.value : { out: 'REJECTED', err: String(s.reason), code: -1 },
+    );
+
+    if (doneRes.out !== 'WON' || releaseRes.out !== 'REFUSED') {
+      console.error('done-vs-release outcomes:', JSON.stringify({ doneRes, releaseRes }));
+    }
+
+    // done wins; release is refused — exactly one winner, the loser gets the typed error.
+    expect(doneRes.out).toBe('WON');
+    expect(releaseRes.out).toBe('REFUSED');
+
+    const verify = openDb({ path: dbPath });
+    const finalTask = getTask(verify, task.id)!;
+    const releaseEvents = getTaskEvents(verify, task.id).filter((e) => e.kind === 'release');
+    verify.close();
+
+    expect(finalTask.status).toBe('done'); // terminal — no 'ready' resurrection survived
+    // Exactly one release event, from completeTask; the refused release added none.
+    expect(releaseEvents.length).toBe(1);
+    expect(releaseEvents[0].note).toBe('completed');
   }, 30_000);
 });
