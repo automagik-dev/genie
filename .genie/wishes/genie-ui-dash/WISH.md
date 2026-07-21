@@ -323,6 +323,40 @@ _Orchestrator disposition (2026-07-21): SHIP + orchestrator-run validation (no f
 
 _Orchestrator disposition (2026-07-21): SHIP + orchestrator-run validation (pnpm test → 943 passed / 1 skipped / 0 failed). Task t_mruxc5iv51303ef4 marked done. LOW-1/2/3 handed to G3's brief verbatim._
 
+### Execution Review (G3) — 2026-07-21T20:37:01Z
+- Reviewer: independent read-only (genie:review execution pipeline)
+- Target: genie-dash @ 0f9aacf (9f6470f adapters+agent_profile · 11a1dfe picker+badge · 0f9aacf tests) vs 7268cae; pushed khal/genie-dash @ 0f9aacf
+- Verdict: SHIP (3 optional LOWs; none block)
+- ACs PASS **with one disclosed evidence limit**: codex (codex-cli 0.144.6) + hermes (`-p default --tui` live; invalid profile → profile-specific error proving `-p` real though absent from --help; strict unknown-flag rejection as control) spawn verified on box; the **rlmx live-spawn leg did NOT run** — `command -v rlmx` genuinely empty → ENVIRONMENT-LIMITED (unit coverage real; live spawn owed when rlmx is installed, tracked with Felipe's GUI QA); persistence via nullable insert-only `agent_profile` + reopen path reading SQLite at the single startDirectPty call site; btop grep clean; 106 files / 983 pass / 1 skip = baseline + 5 added test files, 0 existing modified.
+- G2 handoffs met: env built fresh (never spreads process.env — Claude vars structurally absent, test asserts absence); agentProfile excluded from onConflictDoUpdate.set with rename-invariant test; wiring test spies real node-pty.spawn. Claude path untouched (3 additive lines). Args-array spawn = shell-injection safe. catalogParity guards renderer/main drift bidirectionally. No G4/G5 scope creep.
+- Optional LOWs: pin ctx.platform/resumeSessionId in wiring test; LANG/LC_* omission note (matches Claude syncShellEnv=false default); document hermes `-p` as real-but-hidden flag.
+
+_Orchestrator disposition (2026-07-21): SHIP + orchestrator-run validation (pnpm test → 983 passed / 1 skipped; btop grep clean). Task t_mruxc5l659685893 marked done. Optional LOWs recorded for the polish pass; hermes `-p` doc note handed to G4/G5 era housekeeping._
+
+### Execution Review (G4) — 2026-07-21T21:28:53Z
+- Reviewer: independent read-only (genie:review execution pipeline)
+- Target: genie-dash @ 171811d (a6eec69 service · b1776b5 renderer · 171811d tests) vs 0f9aacf; pushed khal @ 171811d
+- Verdict: SHIP (MEDIUM-1 to close before polish; LOW-1 GENIE_BIN space-path parse note; LOW-2 genie_active unused, informational)
+- All 4 ACs verified independently, real-bridge integration tests genuinely executed (not skipped): handshake 1.0, real-repo READ-ONLY spot-check (genie-ui-dash=IN_PROGRESS, hermes-homogeneous-integration=SHIPPED, v4-home-residue-doctor=DRAFT), external-change notification refresh (deadline-polled), no-orphan teardown + before-quit closeAll. Read-only wall grep over ENTIRE diff clean (no sqlite driver, no genie.db access, write tools only in comments). Notification coalescing leading+trailing — no stampede. rawStatus visible on card when ≠ column (EXECUTED/DONE folding does not overclaim). GENIE_BIN injection-safe (args-array spawn, no shell). 109 files / 1009 pass / 1 skip; type-check + eslint clean; zero existing test files modified.
+- MEDIUM-1: renderer never called genieCloseProject on project deletion → bridge child idled until app quit (hard no-orphan-after-quit guarantee still held via closeAll).
+
+_Fix loop (2026-07-21): fixer commit `002a929` — deleteProject now calls genieCloseProject(project.path) failure-tolerantly before deletion; additive mock + 2 test cases; only renderer removal path confirmed. Orchestrator re-validation: pnpm test → 1011 passed / 1 skipped / 0 failed; type-check clean; pushed khal @ 002a929._
+
+_Orchestrator disposition (2026-07-21): SHIP + fix verified. Task t_mruxc5mz0a9ee3f5 marked done. LOW-1/LOW-2 recorded for the polish pass._
+
+### Execution Review (G5 — final group) — 2026-07-21T22:13:09Z
+- Reviewer: independent read-only (genie:review execution pipeline)
+- Target: genie-dash @ 9bf43fc (46b0762 service · 3bda271 IPC/preload · 9b52d3d GenieHirePanel · 9bf43fc tests) vs 002a929; pushed khal @ 9bf43fc
+- Verdict: SHIP (6 LOW advisory; none block)
+- AC1 ✓ real-bridge integration genuinely ran (23/23, 0 skipped): hire → `genie task export` hire_roster=1 → unhire → 0, re-hire idempotent, bound to pre-existing git worktree. AC2 ✓ grep gate clean; roster mutation exclusively via bridge tools. AC3 ✓ resolveHireWorktrees = bridge context ∩ `git worktree list` (read-only); never-mint structurally guaranteed (saveTask useWorktree:false = insert-only; createWorktree unreachable from HireRosterService); branch pattern verified against genie launch.ts:414 (`wish/<slug>-<group>`), data-driven not guessed.
+- Write-surface discipline: tool-name constants only in HireRosterService.ts; only production invokeBridgeTool caller is HireRosterService; IPC exposes actions not tool names (zod-validated); no CLI roster writer exists — dash genuinely sole roster writer today.
+- Ordering/rollback: roster_hire before any dash mutation; conflict → idempotent roster_unhire rollback; PTY reattach on re-hire (no duplicate spawn); spawn best-effort.
+- 6 LOWs (polish pass): mechanize tool-name-localization grep; wish-scope the unhire taskId fallback; surface terminalSpawned in hire result; profile-changing re-hire silently keeps old dash profile; disclose dash-derived roster view in panel copy; double-fault orphan row messaging.
+
+_Orchestrator disposition (2026-07-21): SHIP + orchestrator-run validation (pnpm test → 1034 passed / 1 skipped / 0 failed; grep gate clean; 4 commits verified pushed). Task t_mruxc5ora3add7b8 marked done. **The G4/G5 dependency gate ("wait on the bridge wish shipping") was SATISFIED before either group's review closed:** genie-ui-bridge PR [#2610](https://github.com/automagik-dev/genie/pull/2610) merged to dev `600c18fe` at 2026-07-21T20:05:25Z with post-merge QA — chronologically before the G4 review (21:28:53Z) and G5 review (22:13:09Z); the bridge wish's own ledger records the SHIPPED transition. **All five execution groups complete** — wish remains IN_PROGRESS pending Felipe's QA (GUI click-through of the packaged app: kanban → hire codex → terminal in worktree → unhire, plus the owed rlmx live-spawn once installed) per QA Criteria; the six G5 LOWs join the consolidated polish-pass backlog (bridge 4 LOWs · G3 3 LOWs · G4 LOW-1/2 · G5 LOW-1..6 · GENIE.md port nit).
+
+**Ledger ordering note:** blocks in this section are grouped by review chain, NOT in strict chronological order — each block's timestamp is authoritative, and later timestamps supersede earlier ones regardless of document position. In particular the "Plan Review (Amendment)" block (18:50:26Z) and its "Status restored to APPROVED" disposition are earlier events than the G4/G5 blocks above them; they are historical, and the current durable status is the header's (IN_PROGRESS as of this 22:13Z-era disposition)._
+
 _Orchestrator disposition (2026-07-21): all five amendment findings applied — G5 wave row rescored to 4 with schema ownership noted (MEDIUM-A), Repos-touched corrected (LOW-B), amendment note states groups not waves (LOW-C), G4 grep gate no longer references the G5 file (LOW-D), both stale risk rows reframed to bridge ownership (LOW-E). Status restored to APPROVED on the SHIP verdict; G4/G5 additionally gated on genie-ui-bridge shipping._
 
 ---
