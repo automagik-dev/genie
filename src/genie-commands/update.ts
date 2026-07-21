@@ -600,7 +600,9 @@ async function verifyTarballSignature(
 
   if (!existsSync(bundlePath)) {
     failures.push(`cosign verify-blob: missing bundle ${bundlePath}`);
-    throw new Error(`signature verification failed for ${tarballName}: ${failures.join('; ')}`);
+    throw new Error(
+      `signature verification failed for ${tarballName}: ${failures.join('; ')}. Install the GitHub CLI (\`gh\`, with \`gh attestation\` support) and retry \`genie update\`; the cosign fallback needs the .bundle release asset, which was not downloaded.`,
+    );
   }
 
   const cosignVerifyResult = await runner(
