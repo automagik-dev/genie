@@ -75,6 +75,7 @@ import {
   CodexLifecycleBusyError,
   publishCodexDelivery,
 } from './codex-delivery.js';
+import { performProtocolSafeRollback } from './codex-rollback.js';
 import { cleanupV4 } from './legacy-v4.js';
 import { type RefreshUpdatePluginsOptions, refreshUpdatePlugins } from './update-integrations.js';
 const GENIE_HOME = process.env.GENIE_HOME || join(homedir(), '.genie');
@@ -814,10 +815,6 @@ export function rollbackBinaryAt(
   throw new Error(
     'Automatic rollback is disabled: legacy .previous entries do not authenticate an exact genie+VERSION generation. Reinstall the desired signed version explicitly.',
   );
-}
-
-export function rollbackBinary(): { restored: string; from: string } {
-  return rollbackBinaryAt(GENIE_BIN);
 }
 
 // ============================================================================
@@ -2840,16 +2837,32 @@ function printAuxiliaryOutcome(outcome: AuxiliaryTreeOutcome): void {
 }
 
 async function runRollback(): Promise<void> {
-  log('Checking legacy rollback eligibility...');
-  try {
-    const result = rollbackBinary();
-    success(`Restored ${result.from} → ${result.restored}`);
-    console.log();
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    error(`Rollback failed: ${msg}`);
-    console.log();
-    process.exit(1);
+  log('Checking protocol-safe rollback eligibility...');
+  const result = performProtocolSafeRollback({ genieBin: GENIE_BIN, genieHome: GENIE_HOME });
+  switch (result.status) {
+    case 'rolled-back':
+      success(`Rolled back to v${result.restoredVersion} (digest ${result.binarySha256.slice(0, 12)}…)`);
+      console.log();
+      return;
+    case 'busy':
+      error(
+        `codex-lifecycle-busy: the ${result.holderKind ?? 'unknown'} lifecycle command holds the Codex lease; rollback refused before any exchange with zero mutation.`,
+      );
+      log(CODEX_LIFECYCLE_BUSY_TRAILER);
+      console.log();
+      process.exit(2);
+      return;
+    case 'no-backup':
+    case 'refused':
+      error(`Rollback refused: ${result.detail}`);
+      console.log();
+      process.exit(1);
+      return;
+    case 'aborted':
+      error(`Rollback aborted before completion (the live binary is unchanged): ${result.detail}`);
+      console.log();
+      process.exit(1);
+      return;
   }
 }
 
