@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED (plan review SHIP 2026-07-21, first pass, 4 minors recorded; design digest-stamped SHIP) |
+| **Status** | IN_PROGRESS (execution started 2026-07-21; plan review SHIP; design digest-stamped SHIP) |
 | **Slug** | `genie-ui` |
 | **Date** | 2026-07-21 |
 | **Author** | Felipe + Genie |
