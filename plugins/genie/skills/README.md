@@ -6,7 +6,7 @@
 Shared skill bodies name semantic routes without a host-specific prefix. Invoke them through the active owner tier:
 
 - Codex plugin: `$genie:brainstorm`, `$genie:wish`, `$genie:review`, `$genie:work`
-- Codex user tier (a CLI-managed product fallback or separately installed personal copy): `$brainstorm`, `$wish`, `$review`, `$work`
+- Codex user tier (only a separately installed personal copy; Genie no longer seeds this tier): `$brainstorm`, `$wish`, `$review`, `$work`
 - Claude Code and Hermes: `/brainstorm`, `/wish`, `/review`, `/work`
 
 The `agents/openai.yaml` starter prompt inside each skill is deliberately selector-free. A starter card already belongs to one discovered physical skill, and repeating either `$genie:<name>` or `$<name>` inside that card could redirect execution to a different tier. Manual invocation still uses the explicit selector mapping above.
@@ -48,8 +48,10 @@ The build and version paths run the parity check before producing release state.
 therefore requires an intentional update to `SHIPPED_SKILL_NAMES` in `scripts/sync-plugin-skills.ts`.
 
 An explicit successful `genie setup --codex` persists Codex maintenance consent. A later explicit `genie update` may
-therefore refresh clean CLI-managed user-tier fallbacks alongside the plugin, MCP, and optional role profiles. Unmanaged,
-modified, or separately installed personal skills remain user-owned and are never adopted by that consent.
+therefore refresh the plugin, MCP, and optional role profiles. The installed plugin is the sole Genie-managed skill
+provider — no supported path writes product skills into the user tier; the only user-tier mutation is retiring provably
+clean historical fallbacks into a hidden quarantine transaction after a plugin health proof. Unmanaged, modified, or
+separately installed personal skills remain user-owned and are never adopted by that consent.
 
 ## Shipped inventory
 

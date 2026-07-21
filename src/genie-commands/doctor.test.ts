@@ -2,29 +2,34 @@ import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import {
+  chmodSync,
   cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { computeDirDigest } from '../lib/agent-sync.js';
+import { dirname, join } from 'node:path';
+import { computeDirDigest, computeFileDigest } from '../lib/agent-sync.js';
 import { reconcileCodexProjectMcp, resolveGitProjectRoots } from '../lib/codex-project-mcp.js';
+import { CANONICAL_GENIE_SKILL_NAMES } from '../lib/runtime-integrations.js';
 import {
   MINIMUM_BUN_VERSION,
   checkAgentSync,
   checkCodexIntegration,
+  checkIndexLaneDrift,
   checkSubagentModelOverride,
   checkV4Residue,
   doctorCommand,
   evaluateBunVersion,
+  evaluateIndexLaneDrift,
   evaluateOmniHookTimeout,
   findDispatchHookTimeoutSec,
 } from './doctor.js';
@@ -236,6 +241,46 @@ describe('Codex doctor lifecycle results', () => {
     }
   });
 
+  test('plugin payload completeness reports canonical skill presence from the active plugin root (R5, read-only)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'doctor-payload-'));
+    try {
+      const activePluginRoot = join(root, 'active-plugin');
+      const skillsRoot = join(activePluginRoot, 'skills');
+      // Ship every canonical skill except one → payload is short, not healthy.
+      for (const name of CANONICAL_GENIE_SKILL_NAMES.slice(0, -1)) {
+        mkdirSync(join(skillsRoot, name), { recursive: true });
+      }
+      const missing = CANONICAL_GENIE_SKILL_NAMES[CANONICAL_GENIE_SKILL_NAMES.length - 1];
+      const probe = {
+        cliAvailable: true,
+        status: 'ok' as const,
+        installed: true,
+        enabled: true,
+        usable: true,
+        version: '5.0.0',
+        activePluginRoot,
+        detail: 'installed',
+      };
+      const checks = await checkCodexIntegration(root, probe);
+      const payload = checks.find((check) => check.name === 'Codex Genie plugin payload');
+      expect(payload?.status).toBe('warn');
+      expect(payload?.detail).toContain(
+        `${CANONICAL_GENIE_SKILL_NAMES.length - 1}/${CANONICAL_GENIE_SKILL_NAMES.length}`,
+      );
+      expect(payload?.detail).toContain(missing);
+
+      // Complete payload → pass, no remediation.
+      mkdirSync(join(skillsRoot, missing), { recursive: true });
+      const complete = (await checkCodexIntegration(root, probe)).find(
+        (check) => check.name === 'Codex Genie plugin payload',
+      );
+      expect(complete?.status).toBe('pass');
+      expect(complete?.suggestion).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('linked worktree routes stay local while the database check uses the common checkout', async () => {
     const root = mkdtempSync(join(tmpdir(), 'doctor-linked-worktree-'));
     try {
@@ -248,7 +293,9 @@ describe('Codex doctor lifecycle results', () => {
       const linked = join(root, 'linked');
       execFileSync('git', ['worktree', 'add', '-q', '-b', 'doctor-linked', linked], { cwd: repo });
       const roots = resolveGitProjectRoots(linked);
-      expect(roots).toEqual({ worktreeRoot: linked, commonRoot: repo });
+      if (roots === null) throw new Error('linked worktree roots were not resolved');
+      expect(realpathSync(roots.worktreeRoot)).toBe(realpathSync(linked));
+      expect(realpathSync(roots.commonRoot)).toBe(realpathSync(repo));
       reconcileCodexProjectMcp(
         linked,
         { cliAvailable: true, status: 'ok', installed: true, enabled: false, usable: false, detail: 'disabled' },
@@ -657,7 +704,14 @@ describe('checkAgentSync', () => {
     writeFileSync(join(pluginRoot, 'skills', name, 'SKILL.md'), body, 'utf8');
   }
 
-  /** Copy a source skill into a target parent + stamp a manifest (current unless a digest is forced). */
+  /**
+   * Copy a source skill into a target parent + stamp a manifest (current unless
+   * a digest is forced). Stamps `identityVersion: 2`, matching what the real
+   * `buildManifest` always writes — the Codex-fallback ownership gate
+   * (`strictFallbackMarker`) requires that exact tag, so an untagged manifest
+   * would misrepresent a byte-identical, freshly-synced managed dir as
+   * unrecognized instead of clean.
+   */
   function seedManaged(sourceDir: string, destDir: string, digest?: string): void {
     cpSync(sourceDir, destDir, { recursive: true });
     writeFileSync(
@@ -667,6 +721,7 @@ describe('checkAgentSync', () => {
         version: '1',
         digest: digest ?? computeDirDigest(sourceDir),
         syncedAt: '2026-01-01T00:00:00.000Z',
+        identityVersion: 2,
       }),
       'utf8',
     );
@@ -688,6 +743,9 @@ describe('checkAgentSync', () => {
       codexDir,
       agentsSkillsDir,
       hermesHome,
+      // Disable the best-effort `hermes plugins list` enable probe by default so no
+      // test ever spawns a real process; probe-specific tests inject a reader.
+      hermesBinary: null as string | null,
       settingsPath: join(claudeDir, 'settings.json'),
     };
   }
@@ -767,6 +825,50 @@ describe('checkAgentSync', () => {
     expect(claude?.suggestion).toBeUndefined();
   });
 
+  test('genie@automagik plugin enabled + no mirrors → pass, "skills mirror suppressed"', () => {
+    mkdirSync(claudeDir, { recursive: true });
+    writeFileSync(
+      join(claudeDir, 'settings.json'),
+      JSON.stringify({ enabledPlugins: { 'genie@automagik': true } }),
+      'utf8',
+    );
+    stampCouncil(pluginRoot);
+
+    const claude = find(checkAgentSync(paths()), 'agent sync: claude');
+    expect(claude?.status).toBe('pass');
+    expect(claude?.detail).toContain('skills mirror suppressed (genie@automagik plugin enabled)');
+    expect(claude?.detail).toContain('council.js current');
+    expect(claude?.suggestion).toBeUndefined();
+  });
+
+  test('genie@automagik plugin enabled + leftover managed mirror → warn advising genie update to prune', () => {
+    seedManaged(join(pluginRoot, 'skills', 'wish'), join(claudeDir, 'skills', 'wish'));
+    stampCouncil(pluginRoot);
+    writeFileSync(
+      join(claudeDir, 'settings.json'),
+      JSON.stringify({ enabledPlugins: { 'genie@automagik': true } }),
+      'utf8',
+    );
+
+    const claude = find(checkAgentSync(paths()), 'agent sync: claude');
+    expect(claude?.status).toBe('warn');
+    expect(claude?.detail).toContain('mirror suppressed — leftover mirrors');
+    expect(claude?.detail).toContain('genie update');
+    expect(claude?.suggestion).toContain('genie update');
+  });
+
+  test('malformed settings.json behaves as not-enabled: mirror freshness expectations hold (fail-open)', () => {
+    seedManaged(join(pluginRoot, 'skills', 'wish'), join(claudeDir, 'skills', 'wish'));
+    seedManaged(join(pluginRoot, 'skills', 'review'), join(claudeDir, 'skills', 'review'));
+    stampCouncil(pluginRoot);
+    writeFileSync(join(claudeDir, 'settings.json'), '{oops', 'utf8');
+
+    const claude = find(checkAgentSync(paths()), 'agent sync: claude');
+    expect(claude?.status).toBe('pass');
+    expect(claude?.detail).toContain('2/2 source skills current');
+    expect(claude?.suggestion).toBeUndefined();
+  });
+
   test('stale managed skill + wrong council stamp → warn + genie-update advice', () => {
     seedManaged(join(pluginRoot, 'skills', 'wish'), join(claudeDir, 'skills', 'wish'));
     seedManaged(join(pluginRoot, 'skills', 'review'), join(claudeDir, 'skills', 'review'), 'deadbeef');
@@ -796,11 +898,119 @@ describe('checkAgentSync', () => {
     expect(hermes?.detail).toContain('points elsewhere');
   });
 
-  test('codex detected but ~/.agents/skills tier empty → warn (not populated)', () => {
+  // Codex Genie skills are plugin-only (R5): an EMPTY user tier is the healthy
+  // state, and a clean managed fallback there is repairable duplicate state.
+  test('codex detected, empty ~/.agents/skills tier → pass (plugin-only)', () => {
     mkdirSync(codexDir, { recursive: true });
     const codex = find(checkAgentSync(paths()), 'agent sync: codex');
+    expect(codex?.status).toBe('pass');
+    expect(codex?.detail).toContain('plugin-only');
+    expect(codex?.suggestion).toBeUndefined();
+  });
+
+  test('codex clean managed fallback → warn repairable duplicate (run genie update)', () => {
+    mkdirSync(codexDir, { recursive: true });
+    seedManaged(join(pluginRoot, 'skills', 'wish'), join(agentsSkillsDir, 'wish'));
+    const codex = find(checkAgentSync(paths()), 'agent sync: codex');
     expect(codex?.status).toBe('warn');
-    expect(codex?.detail).toContain('.agents/skills not populated');
+    expect(codex?.detail).toContain('repairable duplicate provider state');
+    expect(codex?.detail).toContain('wish');
+    expect(codex?.suggestion).toContain('genie update');
+  });
+
+  test('codex preserved personal collision → DISTINCT manual remediation', () => {
+    mkdirSync(codexDir, { recursive: true });
+    // Valid managed marker but content diverged from its digest → managed-modified.
+    seedManaged(join(pluginRoot, 'skills', 'wish'), join(agentsSkillsDir, 'wish'));
+    writeFileSync(join(agentsSkillsDir, 'wish', 'SKILL.md'), '# my personal edit\n', 'utf8');
+    const results = checkAgentSync(paths());
+    const codex = find(results, 'agent sync: codex');
+    expect(codex?.status).toBe('pass'); // no CLEAN fallback → main line stays plugin-only
+    const collision = find(results, 'agent sync: codex collisions');
+    expect(collision?.status).toBe('warn');
+    expect(collision?.detail).toContain('collide with plugin names');
+    expect(collision?.suggestion).toContain('manually');
+    // DISTINCT from the repairable-duplicate remediation: personal collisions are
+    // never retired by `genie update`, only reviewed/removed by the user.
+    expect(collision?.suggestion).not.toContain('retire');
+  });
+
+  test('codex retirement quarantine with retained evidence → R8 manual-recovery line naming the actual evidence path', () => {
+    mkdirSync(codexDir, { recursive: true });
+    const txn = join(agentsSkillsDir, '.genie-codex-fallback-retirement', 'txn-abc');
+    mkdirSync(join(txn, 'quarantine'), { recursive: true });
+    mkdirSync(join(txn, 'evidence', 'wish'), { recursive: true });
+    writeFileSync(join(txn, 'evidence', 'wish', 'SKILL.md'), '# changed copy\n', 'utf8');
+    const results = checkAgentSync(paths());
+    const codex = find(results, 'agent sync: codex');
+    expect(codex?.status).toBe('pass');
+    expect(codex?.detail).toContain('retired quarantine transaction(s) retained');
+    const evidence = find(results, 'agent sync: codex quarantine evidence');
+    expect(evidence?.status).toBe('warn');
+    expect(evidence?.detail).toContain('retained changed-tree evidence');
+    expect(evidence?.detail).toContain('txn-abc');
+    // Item 3(b): naming the transaction id alone leaves the user to guess where
+    // the archived copy actually lives — the message must carry the real path.
+    expect(evidence?.detail).toContain(join(txn, 'evidence'));
+    expect(evidence?.suggestion).toContain('reconcile it manually');
+  });
+
+  test('codex well-formed but unrecognized fallback → distinct "review manually" warn, main line stays plugin-only, never advises `genie update`', () => {
+    // identityVersion:2, digest self-consistent with its own manifest — but the
+    // content is NOT the installed plugin's payload and not in the frozen
+    // historical allowlist, so `planCodexFallbackRetirement` would refuse it
+    // ('ambiguous-ownership'). This is the PR #2575 no-op-loop bug: doctor must
+    // never call this "clean" or tell the user `genie update` fixes it.
+    mkdirSync(codexDir, { recursive: true });
+    const dir = join(agentsSkillsDir, 'orphaned-content');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'SKILL.md'), '# not the installed plugin payload\n', 'utf8');
+    writeFileSync(
+      join(dir, '.genie-sync.json'),
+      JSON.stringify({
+        managedBy: 'genie-agent-sync',
+        version: '1',
+        digest: computeDirDigest(dir),
+        syncedAt: '2026-01-01T00:00:00.000Z',
+        identityVersion: 2,
+      }),
+      'utf8',
+    );
+
+    const results = checkAgentSync(paths());
+    const codex = find(results, 'agent sync: codex');
+    expect(codex?.status).toBe('pass'); // no RECOGNIZED clean fallback → main line stays plugin-only
+    expect(codex?.detail).toContain('plugin-only');
+    const unrecognized = find(results, 'agent sync: codex unrecognized');
+    expect(unrecognized?.status).toBe('warn');
+    expect(unrecognized?.detail).toContain('unrecognized managed fallback');
+    expect(unrecognized?.detail).toContain('review manually');
+    expect(unrecognized?.detail).toContain('orphaned-content');
+    // The whole point: this warning must never send the user down the same
+    // no-op loop `genie update` already refuses to close.
+    expect(unrecognized?.suggestion).not.toContain('Run `genie update` to retire');
+  });
+
+  test('codex ~/.agents/skills exists but is unreadable → warn, never a false-healthy plugin-only pass', () => {
+    mkdirSync(codexDir, { recursive: true });
+    // A regular file at the fallback-tier path makes readdirSync fail ENOTDIR —
+    // portable across CI/root vs non-root, unlike permission-bit simulation.
+    mkdirSync(dirname(agentsSkillsDir), { recursive: true });
+    writeFileSync(agentsSkillsDir, '', 'utf8');
+
+    const codex = find(checkAgentSync(paths()), 'agent sync: codex');
+    expect(codex?.status).toBe('warn');
+    expect(codex?.detail).toContain(agentsSkillsDir);
+    expect(codex?.suggestion).toContain('permissions');
+  });
+
+  test('codex quarantine root is never counted as a managed fallback', () => {
+    mkdirSync(codexDir, { recursive: true });
+    // A retirement root with a committed txn but no live fallbacks stays plugin-only.
+    mkdirSync(join(agentsSkillsDir, '.genie-codex-fallback-retirement', 'txn-xyz', 'quarantine'), { recursive: true });
+    const codex = find(checkAgentSync(paths()), 'agent sync: codex');
+    expect(codex?.status).toBe('pass');
+    expect(codex?.detail).toContain('plugin-only');
   });
 
   test('marketplace plugin: disabled/absent → optional pass note; enabled → silent', () => {
@@ -821,5 +1031,713 @@ describe('checkAgentSync', () => {
     );
     mkt = find(checkAgentSync(paths()), 'agent sync: marketplace plugin');
     expect(mkt).toBeUndefined();
+  });
+
+  // -------------------------------------------------------------------------
+  // Hermes per-leg health: link / mcp / skills / enable probe — independent
+  // -------------------------------------------------------------------------
+
+  /** The product-skills root doctor resolves in this fixture (plugin mirror). */
+  function productSkillsRoot(): string {
+    return join(pluginRoot, 'skills');
+  }
+
+  function presentHermes(): void {
+    mkdirSync(join(hermesHome, 'plugins'), { recursive: true });
+    symlinkSync(join(genieHome, 'plugins', 'hermes-genie'), join(hermesHome, 'plugins', 'genie'));
+  }
+
+  function writeHermesConfig(text: string): void {
+    mkdirSync(hermesHome, { recursive: true });
+    writeFileSync(join(hermesHome, 'config.yaml'), text, 'utf8');
+  }
+
+  /** An absolute, executable fake genie binary for the MCP command check. */
+  function presentGenieBinary(): string {
+    const bin = join(tmp, 'bin', 'genie');
+    mkdirSync(dirname(bin), { recursive: true });
+    writeFileSync(bin, '#!/usr/bin/env bun\n', { mode: 0o755 });
+    chmodSync(bin, 0o755);
+    return bin;
+  }
+
+  const mcpConfig = (command: string) =>
+    `mcp_servers:\n  genie:\n    command: ${JSON.stringify(command)}\n    args:\n      - mcp\n`;
+  const skillsConfig = (dir: string) => `skills:\n  external_dirs:\n    - ${JSON.stringify(dir)}\n`;
+
+  test('hermes mcp leg: absolute executable command → pass; each unhealthy shape → warn', () => {
+    presentHermes();
+    const bin = presentGenieBinary();
+
+    writeHermesConfig(mcpConfig(bin));
+    let mcp = find(checkAgentSync(paths()), 'agent sync: hermes mcp');
+    expect(mcp?.status).toBe('pass');
+    expect(mcp?.detail).toContain(bin);
+
+    // Relative command → warn.
+    writeHermesConfig(mcpConfig('genie'));
+    mcp = find(checkAgentSync(paths()), 'agent sync: hermes mcp');
+    expect(mcp?.status).toBe('warn');
+    expect(mcp?.detail).toContain('not absolute');
+
+    // Absolute but non-existent/non-executable → warn.
+    writeHermesConfig(mcpConfig(join(tmp, 'bin', 'nope')));
+    mcp = find(checkAgentSync(paths()), 'agent sync: hermes mcp');
+    expect(mcp?.status).toBe('warn');
+    expect(mcp?.detail).toContain('not executable');
+
+    // Config absent entirely → warn advising genie update.
+    rmSync(join(hermesHome, 'config.yaml'), { force: true });
+    mcp = find(checkAgentSync(paths()), 'agent sync: hermes mcp');
+    expect(mcp?.status).toBe('warn');
+    expect(mcp?.detail).toContain('config.yaml absent');
+    expect(mcp?.suggestion).toContain('genie update');
+  });
+
+  test('hermes skills leg: external_dirs contains the product root → pass', () => {
+    presentHermes();
+    writeHermesConfig(skillsConfig(productSkillsRoot()));
+    const skills = find(checkAgentSync(paths()), 'agent sync: hermes skills');
+    expect(skills?.status).toBe('pass');
+    expect(skills?.detail).toContain(productSkillsRoot());
+  });
+
+  test('hermes skills leg: managed-copy fallback count ≥ product count → pass', () => {
+    presentHermes();
+    // No external_dirs entry; instead seed a managed copy under <configHome>/skills
+    // with at least as many SKILL.md dirs as the product source (wish + review = 2).
+    writeHermesConfig('other: {}\n');
+    for (const name of ['wish', 'review']) {
+      mkdirSync(join(hermesHome, 'skills', name), { recursive: true });
+      writeFileSync(join(hermesHome, 'skills', name, 'SKILL.md'), `# ${name}\n`, 'utf8');
+    }
+    const skills = find(checkAgentSync(paths()), 'agent sync: hermes skills');
+    expect(skills?.status).toBe('pass');
+    expect(skills?.detail).toContain('managed copy 2/2');
+  });
+
+  test('hermes skills leg: neither external_dirs nor a full managed copy → warn', () => {
+    presentHermes();
+    writeHermesConfig('other: {}\n');
+    const skills = find(checkAgentSync(paths()), 'agent sync: hermes skills');
+    expect(skills?.status).toBe('warn');
+    expect(skills?.suggestion).toContain('genie update');
+  });
+
+  test('hermes legs are independent: healthy MCP + unhealthy skills', () => {
+    presentHermes();
+    const bin = presentGenieBinary();
+    // MCP block healthy, skills block absent → mcp pass, skills warn.
+    writeHermesConfig(mcpConfig(bin));
+    const results = checkAgentSync(paths());
+    expect(find(results, 'agent sync: hermes mcp')?.status).toBe('pass');
+    expect(find(results, 'agent sync: hermes skills')?.status).toBe('warn');
+    // The link leg stays independently healthy.
+    expect(find(results, 'agent sync: hermes')?.status).toBe('pass');
+  });
+
+  test('hermes inline top-level mcp_servers → WARN (never FAIL) with block-mapping hint', () => {
+    presentHermes();
+    writeHermesConfig(`mcp_servers: {}\nskills:\n  external_dirs:\n    - ${JSON.stringify(productSkillsRoot())}\n`);
+    const results = checkAgentSync(paths());
+    const mcp = find(results, 'agent sync: hermes mcp');
+    expect(mcp?.status).toBe('warn');
+    expect(mcp?.detail).toContain('inline value');
+    expect(mcp?.suggestion).toContain('block mapping');
+    // The skills leg (block-shaped) still evaluates healthy — inline is per-leg.
+    expect(find(results, 'agent sync: hermes skills')?.status).toBe('pass');
+    // No hermes check is ever a hard failure.
+    expect(results.filter((r) => r.name.startsWith('agent sync: hermes')).every((r) => r.status !== 'fail')).toBe(true);
+  });
+
+  test('hermes inline top-level skills → WARN with block-mapping hint', () => {
+    presentHermes();
+    writeHermesConfig('skills: {}\n');
+    const skills = find(checkAgentSync(paths()), 'agent sync: hermes skills');
+    expect(skills?.status).toBe('warn');
+    expect(skills?.detail).toContain('inline value');
+    expect(skills?.suggestion).toContain('block mapping');
+  });
+
+  test('hermes enable probe: enabled → pass, disabled → warn, CLI absent → no check emitted', () => {
+    presentHermes();
+    const base = paths();
+
+    let hermes = checkAgentSync({
+      ...base,
+      hermesBinary: '/fake/hermes',
+      hermesPluginsList: () => 'genie   enabled\n',
+    });
+    expect(find(hermes, 'agent sync: hermes plugin enabled')?.status).toBe('pass');
+
+    hermes = checkAgentSync({ ...base, hermesBinary: '/fake/hermes', hermesPluginsList: () => 'genie   disabled\n' });
+    const disabled = find(hermes, 'agent sync: hermes plugin enabled');
+    expect(disabled?.status).toBe('warn');
+    expect(disabled?.detail).toContain('not enabled');
+
+    // CLI absent (binary null) → probe is skipped silently, no check line.
+    hermes = checkAgentSync({ ...base, hermesBinary: null });
+    expect(find(hermes, 'agent sync: hermes plugin enabled')).toBeUndefined();
+  });
+
+  test('hermes enable probe: a throwing CLI is best-effort, never a failure', () => {
+    presentHermes();
+    const hermes = checkAgentSync({
+      ...paths(),
+      hermesBinary: '/fake/hermes',
+      hermesPluginsList: () => {
+        throw new Error('hermes wedged');
+      },
+    });
+    const probe = find(hermes, 'agent sync: hermes plugin enabled');
+    expect(probe?.status).toBe('pass');
+    expect(probe?.detail).toContain('unknown');
+  });
+
+  // -------------------------------------------------------------------------
+  // Textual duplicate-key detection (DF-1): the mcp/skills legs must WARN when
+  // a spec-invalid duplicate child key is present under mcp_servers:/skills: —
+  // even when the last-wins PARSED value looks perfectly healthy, since that
+  // is exactly what let the duplicate persist forever before the repair.
+  // -------------------------------------------------------------------------
+
+  const dupMcpConfig = (command: string) =>
+    `mcp_servers:\n  genie:\n  genie:\n    command: ${JSON.stringify(command)}\n    args:\n      - mcp\n`;
+  const dupSkillsConfig = (dir: string) =>
+    `skills:\n  external_dirs: []\n  external_dirs:\n    - ${JSON.stringify(dir)}\n`;
+
+  test('hermes mcp leg: textual duplicate genie key → warn naming the config path, even though the parsed value is healthy', () => {
+    presentHermes();
+    const bin = presentGenieBinary();
+    writeHermesConfig(dupMcpConfig(bin));
+
+    // The parsed (last-wins) value looks completely correct...
+    const parsed = Bun.YAML.parse(readFileSync(join(hermesHome, 'config.yaml'), 'utf8')) as {
+      mcp_servers: { genie: { command: string } };
+    };
+    expect(parsed.mcp_servers.genie.command).toBe(bin);
+
+    // ...but doctor must still flag the textual duplicate.
+    const mcp = find(checkAgentSync(paths()), 'agent sync: hermes mcp');
+    expect(mcp?.status).toBe('warn');
+    expect(mcp?.detail).toContain('duplicate');
+    expect(mcp?.detail).toContain(join(hermesHome, 'config.yaml'));
+    expect(mcp?.suggestion).toContain('genie update');
+  });
+
+  test('hermes skills leg: textual duplicate external_dirs key → warn naming the config path, even though the parsed value is healthy', () => {
+    presentHermes();
+    writeHermesConfig(dupSkillsConfig(productSkillsRoot()));
+
+    const parsed = Bun.YAML.parse(readFileSync(join(hermesHome, 'config.yaml'), 'utf8')) as {
+      skills: { external_dirs: string[] };
+    };
+    expect(parsed.skills.external_dirs).toEqual([productSkillsRoot()]);
+
+    const skills = find(checkAgentSync(paths()), 'agent sync: hermes skills');
+    expect(skills?.status).toBe('warn');
+    expect(skills?.detail).toContain('duplicate');
+    expect(skills?.detail).toContain(join(hermesHome, 'config.yaml'));
+    expect(skills?.suggestion).toContain('genie update');
+  });
+
+  test('after repair (single key, no duplicate): both legs pass, no duplicate warning', () => {
+    presentHermes();
+    const bin = presentGenieBinary();
+    writeHermesConfig(`${mcpConfig(bin)}${skillsConfig(productSkillsRoot())}`);
+
+    const results = checkAgentSync(paths());
+    expect(find(results, 'agent sync: hermes mcp')?.status).toBe('pass');
+    expect(find(results, 'agent sync: hermes skills')?.status).toBe('pass');
+  });
+});
+
+// ============================================================================
+// Claude role-agent delivery (wish routing-delivery-fix, Group B) — per-file
+// classifier over the Group-A `~/.claude/agents/.genie-sync.json` manifest.
+// Read-only, all paths injected via checkAgentSync — the real $HOME is untouched.
+// ============================================================================
+
+describe('checkAgentSync — claude role agents', () => {
+  const ROLE_CHECK = 'agent sync: claude role agents';
+  const DUP_CHECK = 'agent sync: duplicate role-agent surface';
+
+  let tmp: string;
+  let genieHome: string;
+  let pluginRoot: string;
+  let claudeDir: string;
+  let agentsDir: string;
+
+  function paths() {
+    return {
+      genieHome,
+      claudeDir,
+      codexDir: join(tmp, 'codex'),
+      agentsSkillsDir: join(tmp, 'agents', 'skills'),
+      hermesHome: join(tmp, 'hermes'),
+      settingsPath: join(claudeDir, 'settings.json'),
+    };
+  }
+
+  const find = (results: ReturnType<typeof checkAgentSync>, name: string) => results.find((r) => r.name === name);
+
+  /** name → state map off the machine-readable rider (what `--json` carries). */
+  function stateMap(check: ReturnType<typeof checkAgentSync>[number] | undefined): Record<string, string> {
+    const files = check?.roleAgents?.files ?? [];
+    return Object.fromEntries(files.map((f) => [f.name, f.state]));
+  }
+
+  function writeSourceAgent(name: string, body: string): void {
+    mkdirSync(join(pluginRoot, 'agents'), { recursive: true });
+    writeFileSync(join(pluginRoot, 'agents', `${name}.md`), body, 'utf8');
+  }
+
+  function writeTargetAgent(name: string, body: string): void {
+    mkdirSync(agentsDir, { recursive: true });
+    writeFileSync(join(agentsDir, `${name}.md`), body, 'utf8');
+  }
+
+  /** Stamp the shared dir-level agent manifest (Group A shape: filename → digest entry). */
+  function writeAgentManifest(files: Record<string, { digest: string; version?: string; syncedAt?: string }>): void {
+    mkdirSync(agentsDir, { recursive: true });
+    const entries = Object.fromEntries(
+      Object.entries(files).map(([name, e]) => [
+        name,
+        { digest: e.digest, version: e.version ?? '5.0.0', syncedAt: e.syncedAt ?? '2026-01-01T00:00:00.000Z' },
+      ]),
+    );
+    writeFileSync(
+      join(agentsDir, '.genie-sync.json'),
+      JSON.stringify({ managedBy: 'genie-agent-sync', files: entries }),
+      'utf8',
+    );
+  }
+
+  function writeSettings(value: unknown): void {
+    mkdirSync(claudeDir, { recursive: true });
+    writeFileSync(join(claudeDir, 'settings.json'), JSON.stringify(value), 'utf8');
+  }
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), 'doctor-roleagents-'));
+    genieHome = join(tmp, 'genie');
+    pluginRoot = join(genieHome, 'plugins', 'genie');
+    claudeDir = join(tmp, 'claude');
+    agentsDir = join(claudeDir, 'agents');
+    mkdirSync(pluginRoot, { recursive: true });
+    mkdirSync(claudeDir, { recursive: true }); // claude "detected" so role-agent checks run
+    writeFileSync(join(genieHome, 'VERSION'), '5.0.0\n', 'utf8');
+  });
+
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  test('an empty canonical source inventory warns instead of reporting an empty set healthy', () => {
+    const check = find(checkAgentSync(paths()), ROLE_CHECK);
+
+    expect(check?.status).toBe('warn');
+    expect(check?.detail).toContain('source role-agent inventory is empty');
+    expect(check?.roleAgents?.sourceIssues).toEqual([
+      `source role-agent inventory is empty at ${join(pluginRoot, 'agents')}`,
+    ]);
+    expect(check?.roleAgents?.files).toEqual([]);
+  });
+
+  test('a source inventory enumeration error is preserved in the warning', () => {
+    writeFileSync(join(pluginRoot, 'agents'), 'not a directory', 'utf8');
+
+    const check = find(checkAgentSync(paths()), ROLE_CHECK);
+
+    expect(check?.status).toBe('warn');
+    expect(check?.detail).toContain('cannot enumerate source role agents');
+    expect(check?.roleAgents?.sourceIssues).toHaveLength(1);
+    expect(check?.roleAgents?.sourceIssues[0]).toContain(join(pluginRoot, 'agents'));
+    expect(check?.roleAgents?.files).toEqual([]);
+  });
+
+  test('an unreadable source agent is not silently omitted from a healthy result', () => {
+    writeSourceAgent('scout', '# scout\n');
+    const sourcePath = join(pluginRoot, 'agents', 'scout.md');
+    chmodSync(sourcePath, 0o000);
+    try {
+      const check = find(checkAgentSync(paths()), ROLE_CHECK);
+
+      expect(check?.status).toBe('warn');
+      expect(check?.detail).toContain('cannot read source role agent scout.md');
+      expect(check?.roleAgents?.sourceIssues).toHaveLength(1);
+      expect(check?.roleAgents?.sourceIssues[0]).toContain('scout.md');
+      expect(check?.roleAgents?.files).toEqual([]);
+    } finally {
+      chmodSync(sourcePath, 0o600);
+    }
+  });
+
+  test('hand-copy (no manifest) reports present-unmanaged, NOT healthy genie-managed', () => {
+    // The 2026-07-11 false-PASS discriminator: files present + agents surface,
+    // but no stamp → doctor must NOT call it genie-managed-current.
+    writeSourceAgent('scout', '# scout\n');
+    writeTargetAgent('scout', '# scout\n');
+
+    const check = find(checkAgentSync(paths()), ROLE_CHECK);
+    expect(check?.status).toBe('warn');
+    expect(check?.detail).toContain('present-unmanaged'); // human output carries the state
+    expect(check?.roleAgents?.manifestStatus).toBe('absent');
+    expect(stateMap(check)['scout.md']).toBe('present-unmanaged');
+    expect(stateMap(check)['scout.md']).not.toBe('genie-managed-current');
+  });
+
+  test('stamped + byte-matching target reports genie-managed-current → pass', () => {
+    writeSourceAgent('scout', '# scout\n');
+    writeTargetAgent('scout', '# scout\n');
+    writeAgentManifest({ 'scout.md': { digest: computeFileDigest(join(agentsDir, 'scout.md')) } });
+
+    const check = find(checkAgentSync(paths()), ROLE_CHECK);
+    expect(check?.status).toBe('pass');
+    expect(check?.roleAgents?.manifestStatus).toBe('managed');
+    expect(stateMap(check)['scout.md']).toBe('genie-managed-current');
+  });
+
+  test('source drifted past a stamped target reports genie-managed-stale → warn', () => {
+    writeTargetAgent('scout', '# scout v1\n');
+    const v1Digest = computeFileDigest(join(agentsDir, 'scout.md'));
+    writeAgentManifest({ 'scout.md': { digest: v1Digest } }); // on-disk == manifest
+    writeSourceAgent('scout', '# scout v2\n'); // but source moved on
+
+    const check = find(checkAgentSync(paths()), ROLE_CHECK);
+    expect(check?.status).toBe('warn');
+    expect(check?.suggestion).toContain('genie update');
+    expect(stateMap(check)['scout.md']).toBe('genie-managed-stale');
+  });
+
+  test('source agent absent from the target reports missing-from-target → warn', () => {
+    writeSourceAgent('fixer', '# fixer\n'); // no target file, no manifest entry
+
+    const check = find(checkAgentSync(paths()), ROLE_CHECK);
+    expect(check?.status).toBe('warn');
+    expect(stateMap(check)['fixer.md']).toBe('missing-from-target');
+  });
+
+  test('manifest-owned entry absent from both source and target remains visible as missing', () => {
+    writeAgentManifest({ 'retired.md': { digest: 'a'.repeat(64) } });
+
+    const check = find(checkAgentSync(paths()), ROLE_CHECK);
+    expect(check?.status).toBe('warn');
+    expect(check?.detail).toContain('missing-from-target');
+    expect(check?.roleAgents?.manifestStatus).toBe('managed');
+    expect(stateMap(check)['retired.md']).toBe('missing-from-target');
+  });
+
+  test('a user-authored agent (not in source, unmanaged) is never reported', () => {
+    writeSourceAgent('scout', '# scout\n');
+    writeTargetAgent('scout', '# scout\n');
+    writeAgentManifest({ 'scout.md': { digest: computeFileDigest(join(agentsDir, 'scout.md')) } });
+    writeTargetAgent('my-own-agent', '# mine\n'); // genie does not speak for it
+
+    const check = find(checkAgentSync(paths()), ROLE_CHECK);
+    const states = stateMap(check);
+    expect(states['my-own-agent.md']).toBeUndefined();
+    expect(states['scout.md']).toBe('genie-managed-current');
+    expect(check?.status).toBe('pass');
+  });
+
+  test('an unsafe (symlinked) manifest warns instead of silently reporting healthy', () => {
+    writeSourceAgent('scout', '# scout\n');
+    writeTargetAgent('scout', '# scout\n');
+    symlinkSync(join(tmp, 'elsewhere.json'), join(agentsDir, '.genie-sync.json'));
+
+    const check = find(checkAgentSync(paths()), ROLE_CHECK);
+    expect(check?.status).toBe('warn');
+    expect(check?.roleAgents?.manifestStatus).toBe('unsafe');
+    expect(check?.detail).toContain('manifest unusable');
+  });
+
+  test('a malformed Genie-owned manifest is unsafe rather than foreign', () => {
+    writeSourceAgent('scout', '# scout\n');
+    writeTargetAgent('scout', '# scout\n');
+    writeAgentManifest({ 'scout.md': { digest: 'not-a-sha256' } });
+
+    const check = find(checkAgentSync(paths()), ROLE_CHECK);
+
+    expect(check?.status).toBe('warn');
+    expect(check?.roleAgents?.manifestStatus).toBe('unsafe');
+    expect(check?.roleAgents?.manifestReason).toContain('claims Genie ownership');
+    expect(check?.detail).toContain('manifest unusable');
+  });
+
+  test('a truncated ownership manifest is unsafe rather than unproven foreign state', () => {
+    writeSourceAgent('scout', '# scout\n');
+    writeTargetAgent('scout', '# scout\n');
+    mkdirSync(agentsDir, { recursive: true });
+    writeFileSync(join(agentsDir, '.genie-sync.json'), '{"managedBy":"genie-agent-sync","files":{', 'utf8');
+
+    const check = find(checkAgentSync(paths()), ROLE_CHECK);
+
+    expect(check?.status).toBe('warn');
+    expect(check?.roleAgents?.manifestStatus).toBe('unsafe');
+    expect(check?.roleAgents?.manifestReason).toContain('invalid JSON');
+    expect(check?.detail).toContain('manifest unusable');
+  });
+
+  test('plugin enabled → duplicate-surface warning + duplicateSurface flag true', () => {
+    writeSourceAgent('scout', '# scout\n');
+    writeTargetAgent('scout', '# scout\n');
+    writeAgentManifest({ 'scout.md': { digest: computeFileDigest(join(agentsDir, 'scout.md')) } });
+    writeSettings({ enabledPlugins: { 'genie@automagik': true } });
+
+    const results = checkAgentSync(paths());
+    const dup = find(results, DUP_CHECK);
+    expect(dup?.status).toBe('warn');
+    expect(dup?.detail).toContain('both surface');
+    expect(find(results, ROLE_CHECK)?.roleAgents?.duplicateSurface).toBe(true);
+  });
+
+  test('plugin disabled or absent → no duplicate warning, duplicateSurface flag false', () => {
+    writeSourceAgent('scout', '# scout\n');
+    writeTargetAgent('scout', '# scout\n');
+    writeAgentManifest({ 'scout.md': { digest: computeFileDigest(join(agentsDir, 'scout.md')) } });
+
+    writeSettings({ enabledPlugins: { 'genie@automagik': false } });
+    let results = checkAgentSync(paths());
+    expect(find(results, DUP_CHECK)).toBeUndefined();
+    expect(find(results, ROLE_CHECK)?.roleAgents?.duplicateSurface).toBe(false);
+
+    // absent settings.json → still no warning, flag false
+    rmSync(join(claudeDir, 'settings.json'), { force: true });
+    results = checkAgentSync(paths());
+    expect(find(results, DUP_CHECK)).toBeUndefined();
+    expect(find(results, ROLE_CHECK)?.roleAgents?.duplicateSurface).toBe(false);
+  });
+
+  test('--json carries the per-file states under stable field names (dashboard-consumable)', () => {
+    // Drive the exact document doctorCommand serializes: { ok, checks: results }.
+    writeSourceAgent('scout', '# scout\n'); // hand-copy → present-unmanaged
+    writeTargetAgent('scout', '# scout\n');
+    writeSourceAgent('reviewer', '# reviewer\n'); // stamped-current
+    writeTargetAgent('reviewer', '# reviewer\n');
+    writeSourceAgent('fixer', '# fixer\n'); // missing-from-target
+    writeAgentManifest({ 'reviewer.md': { digest: computeFileDigest(join(agentsDir, 'reviewer.md')) } });
+
+    const results = checkAgentSync(paths());
+    const doc = JSON.parse(JSON.stringify({ ok: true, checks: results })) as {
+      checks: Array<{ name: string; roleAgents?: { files: Array<{ name: string; state: string }> } }>;
+    };
+    const rider = doc.checks.find((c) => c.name === ROLE_CHECK)?.roleAgents;
+    const states = Object.fromEntries((rider?.files ?? []).map((f) => [f.name, f.state]));
+    expect(states['scout.md']).toBe('present-unmanaged');
+    expect(states['reviewer.md']).toBe('genie-managed-current');
+    expect(states['fixer.md']).toBe('missing-from-target');
+  });
+});
+
+// ============================================================================
+// jar: index-lane drift
+// ============================================================================
+
+describe('evaluateIndexLaneDrift (pure section↔lane parser)', () => {
+  const INDEX = [
+    '# Plans Index',
+    '',
+    '## Raw',
+    '- [alpha](brainstorms/alpha/DRAFT.md) — an idea',
+    '- a linkless note with no slug',
+    '',
+    '## Simmering',
+    '- [beta](brainstorms/beta/DRAFT.md) — refining',
+    '',
+    '## Ready',
+    '- [WISH: gamma](wishes/gamma/WISH.md) — ready to pour',
+    '',
+    '## Poured',
+    '- [delta](brainstorms/delta/DESIGN.md) · [WISH](wishes/delta/WISH.md) — first link wins',
+    '- [epsilon](wishes/epsilon/WISH.md) — laneless card',
+    '',
+    '## Some Other Heading',
+    '- [zeta](brainstorms/zeta/DRAFT.md) — ignored, not a lifecycle section',
+  ].join('\n');
+
+  const lanes = new Map<string, string>([
+    ['alpha', 'Idea'], // Raw → Idea = ok
+    ['beta', 'Wish'], // Simmering allows only Brainstorm → drift
+    ['gamma', 'Wish'], // Ready allows Brainstorm|Wish → ok
+    ['delta', 'Review'], // Poured allows Wish|Work|Review|Done → ok (via wishes/delta first link)
+    // epsilon: card exists but no lane → laneForSlug returns null → unlinked
+  ]);
+  const laneForSlug = (slug: string): string | null => lanes.get(slug) ?? null;
+
+  test('agreeing lane → ok; contradicting lane → drift', () => {
+    const entries = evaluateIndexLaneDrift(INDEX, laneForSlug);
+    const byEntry = Object.fromEntries(entries.map((e) => [e.entry, e]));
+    expect(byEntry.alpha.state).toBe('ok');
+    expect(byEntry.alpha.lane).toBe('Idea');
+    expect(byEntry.beta.state).toBe('drift');
+    expect(byEntry['WISH: gamma'].state).toBe('ok');
+  });
+
+  test('the FIRST brainstorms/wishes link decides the slug', () => {
+    const entries = evaluateIndexLaneDrift(INDEX, laneForSlug);
+    const delta = entries.find((e) => e.entry === 'delta');
+    expect(delta?.slug).toBe('delta');
+    expect(delta?.state).toBe('ok');
+  });
+
+  test('linkless entries and laneless cards are unlinked, never drift', () => {
+    const entries = evaluateIndexLaneDrift(INDEX, laneForSlug);
+    const linkless = entries.find((e) => e.slug === null);
+    expect(linkless?.state).toBe('unlinked');
+    expect(linkless?.section).toBe('Raw');
+    const epsilon = entries.find((e) => e.entry === 'epsilon');
+    expect(epsilon?.state).toBe('unlinked');
+    expect(epsilon?.lane).toBeNull();
+    // No entry is ever both resolved-with-lane and unlinked.
+    for (const e of entries) if (e.state === 'unlinked') expect(e.lane).toBeNull();
+  });
+
+  test('bullets under non-lifecycle headings are excluded', () => {
+    const entries = evaluateIndexLaneDrift(INDEX, laneForSlug);
+    expect(entries.some((e) => e.slug === 'zeta')).toBe(false);
+    // Raw(2) + Simmering(1) + Ready(1) + Poured(2) = 6 entries.
+    expect(entries).toHaveLength(6);
+  });
+
+  test('order is stable (INDEX document order)', () => {
+    const slugs = evaluateIndexLaneDrift(INDEX, laneForSlug).map((e) => e.slug);
+    expect(slugs).toEqual(['alpha', null, 'beta', 'gamma', 'delta', 'epsilon']);
+  });
+});
+
+describe('checkIndexLaneDrift (DB-backed, warning-level)', () => {
+  let dir: string;
+
+  function seedDb(cards: Array<{ title: string; wish: string | null; lane: string | null }>): void {
+    mkdirSync(join(dir, '.genie'), { recursive: true });
+    const db = new Database(join(dir, '.genie', 'genie.db'));
+    db.run(
+      'CREATE TABLE boards (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL, lanes TEXT)',
+    );
+    db.run(
+      'CREATE TABLE tasks (id TEXT PRIMARY KEY, board_id TEXT, title TEXT NOT NULL, status TEXT NOT NULL, wish TEXT, lane TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)',
+    );
+    db.run("INSERT INTO boards VALUES ('b_road', 'roadmap', 0, NULL)");
+    let i = 0;
+    for (const c of cards) {
+      db.query('INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(
+        `t_${i}`,
+        'b_road',
+        c.title,
+        'ready',
+        c.wish,
+        c.lane,
+        i,
+        i,
+      );
+      i += 1;
+    }
+    db.close();
+  }
+
+  function writeIndex(text: string): void {
+    mkdirSync(join(dir, '.genie'), { recursive: true });
+    writeFileSync(join(dir, '.genie', 'INDEX.md'), text);
+  }
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'genie-jar-'));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('a resolved card whose lane agrees passes with a per-entry ok state', () => {
+    writeIndex('# Plans Index\n## Poured\n- [WISH: boards](wishes/boards-first-class/WISH.md) — shipped\n');
+    seedDb([{ title: 'Boards first-class', wish: 'boards-first-class', lane: 'Wish' }]);
+    const [result] = checkIndexLaneDrift(dir, dir);
+    expect(result.name).toBe('jar: index-lane drift');
+    expect(result.status).toBe('pass');
+    const entry = result.indexLane?.entries[0];
+    expect(entry?.slug).toBe('boards-first-class');
+    expect(entry?.lane).toBe('Wish');
+    expect(entry?.state).toBe('ok');
+  });
+
+  test('a contradicting lane warns (never flips ok:false) and reports drift', () => {
+    // Card sits in the Idea lane but the INDEX files it under Poured → drift.
+    writeIndex('# Plans Index\n## Poured\n- [WISH: boards](wishes/boards-first-class/WISH.md)\n');
+    seedDb([{ title: 'Boards first-class', wish: 'boards-first-class', lane: 'Idea' }]);
+    const [result] = checkIndexLaneDrift(dir, dir);
+    expect(result.status).toBe('warn'); // warn, not fail
+    expect(result.detail).toContain('1 drift');
+    expect(result.indexLane?.entries[0].state).toBe('drift');
+    expect(result.suggestion).toBeDefined();
+  });
+
+  test('a laneless card is unlinked, not drift', () => {
+    writeIndex('# Plans Index\n## Raw\n- [alpha](brainstorms/alpha/DRAFT.md)\n');
+    seedDb([{ title: 'Alpha', wish: 'alpha', lane: null }]);
+    const [result] = checkIndexLaneDrift(dir, dir);
+    expect(result.status).toBe('pass');
+    expect(result.indexLane?.entries[0].state).toBe('unlinked');
+  });
+
+  test('absent INDEX.md is a benign pass (nothing to lint)', () => {
+    seedDb([{ title: 'Alpha', wish: 'alpha', lane: 'Idea' }]);
+    const [result] = checkIndexLaneDrift(dir, dir);
+    expect(result.status).toBe('pass');
+    expect(result.detail).toContain('nothing to lint');
+    expect(result.indexLane).toBeUndefined();
+  });
+
+  test('absent DB degrades every linked entry to unlinked (never throws, never drift)', () => {
+    writeIndex('# Plans Index\n## Raw\n- [alpha](brainstorms/alpha/DRAFT.md)\n');
+    const [result] = checkIndexLaneDrift(dir, dir); // no seedDb → no genie.db
+    expect(result.status).toBe('pass');
+    expect(result.indexLane?.entries[0].state).toBe('unlinked');
+  });
+
+  test('mixed board: ≥1 live resolving entry alongside drift and unlinked', () => {
+    writeIndex(
+      [
+        '# Plans Index',
+        '## Raw',
+        '- [alpha](brainstorms/alpha/DRAFT.md)', // lane Idea → ok
+        '## Poured',
+        '- [beta](wishes/beta/WISH.md)', // lane Idea (should be Wish-ish) → drift
+        '- [orphan](wishes/orphan/WISH.md)', // no card → unlinked
+      ].join('\n'),
+    );
+    seedDb([
+      { title: 'Alpha', wish: 'alpha', lane: 'Idea' },
+      { title: 'Beta', wish: 'beta', lane: 'Idea' },
+    ]);
+    const [result] = checkIndexLaneDrift(dir, dir);
+    expect(result.status).toBe('warn');
+    expect(result.detail).toBe('3 INDEX entries: 1 ok, 1 drift, 1 unlinked');
+    const states = Object.fromEntries((result.indexLane?.entries ?? []).map((e) => [e.slug, e.state]));
+    expect(states.alpha).toBe('ok');
+    expect(states.beta).toBe('drift');
+    expect(states.orphan).toBe('unlinked');
+  });
+
+  test('--json rider is present under the stable name with per-entry states', () => {
+    writeIndex('# Plans Index\n## Poured\n- [WISH: boards](wishes/boards-first-class/WISH.md)\n');
+    seedDb([{ title: 'Boards first-class', wish: 'boards-first-class', lane: 'Wish' }]);
+    const results = checkIndexLaneDrift(dir, dir);
+    // Serialize exactly as doctorCommand does and re-parse — the rider must survive.
+    const doc = JSON.parse(JSON.stringify({ ok: true, checks: results })) as {
+      checks: Array<{
+        name: string;
+        indexLane?: {
+          entries: Array<{ entry: string; slug: string | null; section: string; lane: string | null; state: string }>;
+        };
+      }>;
+    };
+    const rider = doc.checks.find((c) => c.name === 'jar: index-lane drift')?.indexLane;
+    expect(rider?.entries[0]).toEqual({
+      entry: 'WISH: boards',
+      slug: 'boards-first-class',
+      section: 'Poured',
+      lane: 'Wish',
+      state: 'ok',
+    });
   });
 });

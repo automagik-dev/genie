@@ -43,6 +43,7 @@ export function isInteractive(): boolean {
  * the host. Hooks must never gate on environmental state.
  */
 const WORKSPACE_EXEMPT = new Set([
+  '__install-promote',
   'init',
   'setup',
   'doctor',
@@ -66,6 +67,10 @@ const WORKSPACE_EXEMPT = new Set([
   // behavior.
   'task',
   'board',
+  // `idea` is the one-verb quick-capture (roadmap board's Idea lane). Same v5
+  // sqlite-backed self-resolving DB as `task`/`board`; it must work in a fresh
+  // repo with no workspace.json (QA: `genie idea` on a fresh repo).
+  'idea',
   'launch',
   // `omni` is the resident runner + its status/inbox/handshake helpers. Like
   // `task`/`board` it self-resolves the global genie.db and never reads the
@@ -75,6 +80,10 @@ const WORKSPACE_EXEMPT = new Set([
   // read-only and DEGRADES to an empty board when the file is absent, so the
   // legacy workspace gate must not exit 2 before the JSON-RPC loop even starts.
   'mcp',
+  // `ui-bridge` is the UI-owned stdio MCP bridge (reads + roster writes + push).
+  // Like `mcp` it self-resolves the shared genie.db and speaks JSON-RPC on stdio;
+  // the legacy workspace gate must not exit 2 before the handshake can happen.
+  'ui-bridge',
 ]);
 
 /**

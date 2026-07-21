@@ -57,7 +57,7 @@ tag `v<version>`) → tag `v*` fires `release.yml` orchestrator → `build-tarba
 `genie-<v>-<platform>.tar.gz` (build) → `+.bundle` `+.intoto.jsonl` (sign) → upload
 `dist/*` = 12 assets (publish) → `install.sh` downloads `genie-<v>-<platform>.tar.gz` +
 `.bundle` and runs `cosign verify-blob` / `gh attestation verify` with cert-identity
-pinned to `^https://github.com/automagik-dev/genie/.github/workflows/sign-attest.yml@`
+pinned to `^https://github\.com/automagik-dev/genie/\.github/workflows/sign-attest\.yml@refs/heads/main$`
 + github OIDC issuer — matches the workflow that physically holds the cosign step.
 
 **Manifest chain consistent:** publish writes `.well-known/{latest,homolog,dev}.json`

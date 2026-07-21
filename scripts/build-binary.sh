@@ -150,6 +150,15 @@ bun "${REPO_ROOT}/scripts/fresh-install-smoke.ts" \
   --plugin-root "${STAGE}/plugins/genie"
 bun "${REPO_ROOT}/scripts/release-payload-version.ts" --verify "${STAGE}" "${VERSION}"
 
+# Defense-in-depth for the consumer's exact-0700 staging-root assertion: `tar`
+# records the archived root "./" entry's mode, and `tar -x` restores that mode
+# onto the extraction directory. STAGE was created 0755 (build-host umask), so
+# without this the published tarball carries a 0755 root entry that clobbers
+# the private 0700 staging root install.sh / `genie update` extract into. Lock
+# the root entry to 0700 here so a fresh tarball needs no consumer relock. (The
+# consumer-side relock stays mandatory for already-published 0755 tarballs.)
+chmod 700 "${STAGE}"
+
 tar czf "${TARBALL}" -C "${STAGE}" .
 
 # Archive boundaries can lose files, modes, or paths even when the staging

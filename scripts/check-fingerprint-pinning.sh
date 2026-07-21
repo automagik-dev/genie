@@ -15,7 +15,7 @@
 #   3. .github/ISSUE_TEMPLATE/signing-key-fingerprint.md      out-of-band tmpl
 #   4. .github/cosign.pub                                     NO-KEY sentinel
 #   5. scripts/verify-release.sh                              shipped verifier
-#   6. src/term-commands/sec.ts                               in-binary const
+#   6. install.sh                                             shipped verifier
 #
 # The script greps each witness for three verbatim lines. Prefix characters
 # (`- `, `# `, ``` ` ```) are tolerated because grep uses substring matching;
@@ -25,7 +25,7 @@
 # candidate match so operators can locate drift quickly.
 #
 # Exit codes:
-#   0 — all four witnesses agree
+#   0 — all required witnesses agree
 #   1 — drift detected (one or more witnesses missing or divergent)
 #   2 — misuse / missing witness file / run outside a git repo
 #
@@ -50,7 +50,7 @@ cd "${REPO_ROOT}"
 # and update this constant list in the same two-officer PR that updates the
 # witnesses.
 CANONICAL=(
-  "certificate-identity-regexp: ^https://github.com/automagik-dev/genie/.github/workflows/sign-attest.yml@"
+  "certificate-identity-regexp: ^https://github\\.com/automagik-dev/genie/\\.github/workflows/sign-attest\\.yml@refs/heads/main$"
   "certificate-oidc-issuer:     https://token.actions.githubusercontent.com"
   "provenance source-uri:       github.com/automagik-dev/genie"
 )
@@ -61,7 +61,7 @@ WITNESSES=(
   ".github/ISSUE_TEMPLATE/signing-key-fingerprint.md"
   ".github/cosign.pub"
   "scripts/verify-release.sh"
-  "src/term-commands/sec.ts"
+  "install.sh"
 )
 
 # Optional witnesses: warn-if-absent now, will become required once they
@@ -74,7 +74,7 @@ WITNESSES=(
 #                                   CANONICAL line so operators reading the
 #                                   bootstrap script before piping to bash
 #                                   can cross-check the trust anchor against
-#                                   the other four witnesses.
+#                                   the other required witnesses.
 OPTIONAL_WITNESSES=(
   "scripts/installer/install.sh"
 )

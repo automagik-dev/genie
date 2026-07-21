@@ -12,7 +12,6 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   chmodSync,
@@ -24,13 +23,21 @@ import {
   renameSync,
   rmSync,
   statSync,
-  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { type AgentSyncReport, acquireLifecycleLease } from '../../lib/agent-sync';
-import type { CommandRunner } from '../../lib/runtime-integrations';
+import { type AgentSyncReport, acquireLifecycleLease, runAgentSync } from '../../lib/agent-sync';
+import { REQUIRED_GENIE_MCP_TOOLS } from '../../lib/codex-mcp-health-session';
+import type { CodexPluginProbe } from '../../lib/codex-project-mcp';
+import {
+  CANONICAL_GENIE_SKILL_NAMES,
+  type CodexHealthProof,
+  type CodexPluginOnlyDeps,
+  type CommandRunner,
+  type IntegrationSelection,
+} from '../../lib/runtime-integrations';
+import { VERSION } from '../../lib/version';
 import type { AuxiliaryTreeOutcome, AuxiliaryTreeStage } from '../auxiliary-trees.js';
 import {
   type RefreshUpdatePluginsOptions,
@@ -40,30 +47,30 @@ import {
   type LatestManifest,
   type VerifyResult,
   _resetNextDeprecationLatchForTest,
-  atomicBinarySwap,
   compareVersions,
+  createPrivateUpdateTempRoot,
   decideDowngrade,
   decideVerify,
   downloadAndVerifyTarball,
   ensureCanonicalInstall,
+  extractTarball,
   fetchLatestManifest,
   finalizeAuxiliaryDelivery,
   formatVerifyBanner,
   hashPhysicalFileIncrementally,
+  inspectSyncOnlyCodexHealth,
   isGenieProcessSnapshotLine,
   legacySyncOnlyPluginAdvisory,
   manifestUrlForChannel,
+  narrowUpdateAgentSyncSelection,
   normalizeVersion,
   persistChannel,
-  pruneSameVersionBackups,
-  quarantinePendingDelivery,
-  recordPendingDelivery,
   resolveChannel,
   resolveLiveBinaryPath,
   resolvePlatformId,
   resolveUpdateExecutionMode,
   resumePendingDelivery,
-  rollbackBinary,
+  rollbackBinaryAt,
   runAgentSyncSafe,
   runFreshBinaryPostDeliveryConvergence,
   runLegacySyncOnlyConvergence,
@@ -74,9 +81,52 @@ import {
   shouldEmitPathDivergenceWarning,
   summarizeJsonlSignals,
   syncAuxiliaryContent,
-  syncBinaryVersionStamp,
-  verifySwappedBinary,
 } from '../update.js';
+
+function healthyUpdateCodexProbe(): CodexPluginProbe {
+  return {
+    cliAvailable: true,
+    status: 'ok',
+    installed: true,
+    enabled: true,
+    version: '5.260711.3',
+    activePluginRoot: '/fixture/plugin/root',
+    usable: true,
+    usabilityDetail: 'fixture usable',
+    detail: 'fixture healthy codex plugin',
+  };
+}
+
+/**
+ * Full-update codex now converges through convergeCodexPluginOnly. These refresh
+ * suites drive fake bundles, so stub the health/probe/retire/role-agent seams and
+ * point retirement at an isolated empty fallback tier — convergeCodexPlugin itself
+ * still runs for real against the injected runner.
+ */
+function healthyUpdateCodexPluginOnly(overrides: CodexPluginOnlyDeps = {}): CodexPluginOnlyDeps {
+  return {
+    probe: () => healthyUpdateCodexProbe(),
+    prove: () =>
+      Object.freeze({
+        version: 1,
+        snapshot: healthyUpdateCodexProbe(),
+        activePluginRoot: '/fixture/plugin/root',
+        expectedVersion: '5.260711.3',
+        skillInventory: CANONICAL_GENIE_SKILL_NAMES,
+        payload: [],
+        mcp: { initialized: true, tools: [...REQUIRED_GENIE_MCP_TOOLS], wishStatusReadOnly: true },
+      }) as CodexHealthProof,
+    runSession: () => ({
+      ok: true,
+      detail: 'fixture session',
+      tools: [...REQUIRED_GENIE_MCP_TOOLS],
+      wishStatusReadOnly: true,
+    }),
+    installAgents: () => ({ installed: 0, skippedUserOwned: [], keptModified: [], removed: [], backedUp: [] }),
+    fallbackSkillsDir: mkdtempSync(join(tmpdir(), 'genie-update-fallback-')),
+    ...overrides,
+  };
+}
 
 function refreshUpdatePlugins(options: RefreshUpdatePluginsOptions) {
   return refreshUpdatePluginsWithPhysicalVerification({
@@ -84,6 +134,7 @@ function refreshUpdatePlugins(options: RefreshUpdatePluginsOptions) {
     resolveExecutable: options.resolveExecutable ?? ((name) => name),
     verifyCodexPayload: options.verifyCodexPayload ?? (() => undefined),
     verifyClaudePayload: options.verifyClaudePayload ?? (() => undefined),
+    codexPluginOnly: healthyUpdateCodexPluginOnly(options.codexPluginOnly),
   });
 }
 
@@ -705,6 +756,28 @@ describe('persistChannel — sticky channel persistence (release-channel-dev)', 
   // schema test above (write "dev" → read back as "dev") plus the
   // resolveChannel test (which reads from genie-config). We just assert
   // that persistChannel does not throw on either channel input.
+  //
+  // Isolated under a tmp GENIE_HOME so persistChannel never reads or writes the
+  // developer's real ~/.genie/config.json (which would flip a dev-channel user
+  // to stable and could materialize a default config on a clean machine).
+  let dir: string;
+  let prevGenieHome: string | undefined;
+
+  beforeEach(() => {
+    prevGenieHome = process.env.GENIE_HOME;
+    dir = mkdtempSync(join(tmpdir(), 'update-channel-sticky-'));
+    process.env.GENIE_HOME = dir;
+  });
+
+  afterEach(() => {
+    if (prevGenieHome === undefined) {
+      Reflect.deleteProperty(process.env, 'GENIE_HOME');
+    } else {
+      process.env.GENIE_HOME = prevGenieHome;
+    }
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   test('persistChannel("dev") does not throw', async () => {
     await expect(persistChannel('dev')).resolves.toBeUndefined();
   });
@@ -897,6 +970,35 @@ describe('resolvePlatformId (G5)', () => {
   });
 });
 
+describe('private external update staging', () => {
+  test('creates one current-user mode-0700 root beneath a protected namespace', () => {
+    const namespace = mkdtempSync(join(tmpdir(), 'genie-update-temp-parent-'));
+    const base = join(namespace, 'base');
+    mkdirSync(base, { mode: 0o700 });
+    try {
+      const root = createPrivateUpdateTempRoot(base);
+      expect(statSync(root).mode & 0o777).toBe(0o700);
+      expect(root.startsWith(`${base}/genie-update-`)).toBe(true);
+    } finally {
+      rmSync(namespace, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects a private-looking base whose namespace parent is world-writable and non-sticky', () => {
+    const namespace = mkdtempSync(join(tmpdir(), 'genie-update-temp-unsafe-'));
+    const base = join(namespace, 'base');
+    mkdirSync(base, { mode: 0o700 });
+    chmodSync(namespace, 0o777);
+    try {
+      expect(() => createPrivateUpdateTempRoot(base)).toThrow('unsafe cross-principal replacement');
+      expect(readdirSync(base)).toEqual([]);
+    } finally {
+      chmodSync(namespace, 0o700);
+      rmSync(namespace, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('downloadAndVerifyTarball (G5)', () => {
   const manifest: LatestManifest = {
     schema_version: 1,
@@ -934,6 +1036,9 @@ describe('downloadAndVerifyTarball (G5)', () => {
       expect(argString).toContain(`genie-${manifest.version}-linux-x64-glibc.tar.gz`);
       expect(argString).toContain('.bundle');
       expect(argString).toContain('.intoto.jsonl');
+      // 37MB+ tarballs outgrew runCommandSilent's 4s default (v5.260714.8
+      // timeout regression) — the download must carry its own generous bound.
+      expect(calls[0].timeoutMs).toBe(300_000);
       // Second call — gh attestation verify with workflow identity pinned.
       expect(calls[1].cmd).toBe('gh');
       expect(calls[1].args).toEqual([
@@ -942,8 +1047,13 @@ describe('downloadAndVerifyTarball (G5)', () => {
         tarballPath,
         '--repo',
         'automagik-dev/genie',
+        // Must match the custom predicate type registered by sign-attest.yml,
+        // else `gh attestation verify` defaults to slsa.dev/provenance/v1 and
+        // 404s the by-digest lookup (the shipped-tarball regression).
+        '--predicate-type',
+        'https://github.com/automagik-dev/genie/release-tarballs/v1',
         '--cert-identity-regex',
-        '^https://github.com/automagik-dev/genie/.github/workflows/sign-attest.yml@',
+        '^https://github\\.com/automagik-dev/genie/\\.github/workflows/sign-attest\\.yml@refs/heads/main$',
         '--cert-oidc-issuer',
         'https://token.actions.githubusercontent.com',
       ]);
@@ -1013,7 +1123,7 @@ describe('downloadAndVerifyTarball (G5)', () => {
         '--bundle',
         bundlePath,
         '--certificate-identity-regexp',
-        '^https://github.com/automagik-dev/genie/.github/workflows/sign-attest.yml@',
+        '^https://github\\.com/automagik-dev/genie/\\.github/workflows/sign-attest\\.yml@refs/heads/main$',
         '--certificate-oidc-issuer',
         'https://token.actions.githubusercontent.com',
         tarballPath,
@@ -1066,388 +1176,48 @@ describe('downloadAndVerifyTarball (G5)', () => {
 });
 
 // ============================================================================
-// G5 — Atomic binary swap + rollback.
-// Real fs operations on tmp dir; no mocks. The swap needs same-fs primitives,
-// so tmp dir is on the test runner's filesystem.
+// G5 — Corrupt artifact (F31a destructive-failure fixture). A tarball that is
+// not a valid gzip archive must make `extractTarball` throw so the update never
+// reaches the atomic swap with a half-extracted payload.
 // ============================================================================
 
-describe('atomicBinarySwap (G5)', () => {
-  test('standalone install.sh and TypeScript update contend on the same lifecycle lease', () => {
-    const tmp = mkdtempSync(join(tmpdir(), 'genie-installer-lifecycle-'));
-    const home = join(tmp, 'home', '.genie');
-    const installer = join(import.meta.dir, '..', '..', '..', 'install.sh');
-    mkdirSync(home, { recursive: true });
-    const lease = acquireLifecycleLease(home);
-    expect('skipped' in lease).toBe(false);
+describe('extractTarball (G5 — corrupt artifact)', () => {
+  test('throws on a corrupt (non-gzip) tarball', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'genie-extract-corrupt-'));
     try {
-      const blocked = spawnSync('bash', ['-c', 'source "$1"; acquire_lifecycle_lock', 'bash', installer], {
-        encoding: 'utf8',
-        env: { ...process.env, GENIE_HOME: home, GENIE_INSTALL_SOURCE_ONLY: '1' },
-      });
-      expect(blocked.status).toBe(1);
-      expect(blocked.stderr).toContain('another Genie lifecycle command is active');
-    } finally {
-      if (!('skipped' in lease)) lease.release();
-    }
-
-    const acquired = spawnSync(
-      'bash',
-      [
-        '-c',
-        'source "$1"; acquire_lifecycle_lock; test -f "$LIFECYCLE_LOCK"; release_lifecycle_lock',
-        'bash',
-        installer,
-      ],
-      {
-        encoding: 'utf8',
-        env: { ...process.env, GENIE_HOME: home, GENIE_INSTALL_SOURCE_ONLY: '1' },
-      },
-    );
-    expect(acquired.status).toBe(0);
-    rmSync(tmp, { recursive: true, force: true });
-  });
-
-  test('happy path: stages binary, backs up old, swaps in new', () => {
-    const tmp = mkdtempSync(join(tmpdir(), 'genie-swap-'));
-    try {
-      const stagedBin = join(tmp, 'staged', 'genie');
-      const targetBin = join(tmp, 'bin', 'genie');
-      const previousDir = join(tmp, 'bin', '.previous');
-      mkdirSync(join(tmp, 'staged'), { recursive: true });
-      mkdirSync(join(tmp, 'bin'), { recursive: true });
-      writeFileSync(stagedBin, 'NEW_BINARY');
-      writeFileSync(targetBin, 'OLD_BINARY');
-
-      const result = atomicBinarySwap(stagedBin, targetBin, previousDir, '4.260507.0');
-      expect(result.swapped).toBe(true);
-      expect(result.oldVersionBackup).toBe(join(previousDir, 'genie-4.260507.0'));
-      expect(readFileSync(targetBin, 'utf-8')).toBe('NEW_BINARY');
-      expect(readFileSync(result.oldVersionBackup as string, 'utf-8')).toBe('OLD_BINARY');
-      // staging consumed
-      expect(existsSync(stagedBin)).toBe(false);
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  test('first-time install (no current binary) skips backup', () => {
-    const tmp = mkdtempSync(join(tmpdir(), 'genie-swap-'));
-    try {
-      const stagedBin = join(tmp, 'staged', 'genie');
-      const targetBin = join(tmp, 'bin', 'genie');
-      const previousDir = join(tmp, 'bin', '.previous');
-      mkdirSync(join(tmp, 'staged'), { recursive: true });
-      writeFileSync(stagedBin, 'FIRST_BINARY');
-
-      const result = atomicBinarySwap(stagedBin, targetBin, previousDir, '4.260507.0');
-      expect(result.swapped).toBe(true);
-      expect(result.oldVersionBackup).toBeNull();
-      expect(readFileSync(targetBin, 'utf-8')).toBe('FIRST_BINARY');
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  test('throws when the staged binary is missing', () => {
-    const tmp = mkdtempSync(join(tmpdir(), 'genie-swap-'));
-    try {
-      const stagedBin = join(tmp, 'staged', 'genie');
-      const targetBin = join(tmp, 'bin', 'genie');
-      const previousDir = join(tmp, 'bin', '.previous');
-      expect(() => atomicBinarySwap(stagedBin, targetBin, previousDir, '4.260507.0')).toThrow(/staged binary missing/);
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  test('overwrites a stale backup at the same version', () => {
-    const tmp = mkdtempSync(join(tmpdir(), 'genie-swap-'));
-    try {
-      const stagedBin = join(tmp, 'staged', 'genie');
-      const targetBin = join(tmp, 'bin', 'genie');
-      const previousDir = join(tmp, 'bin', '.previous');
-      mkdirSync(join(tmp, 'staged'), { recursive: true });
-      mkdirSync(join(tmp, 'bin'), { recursive: true });
-      mkdirSync(previousDir, { recursive: true });
-      writeFileSync(stagedBin, 'NEW');
-      writeFileSync(targetBin, 'CURRENT');
-      // Stale backup from a prior run at the same old version.
-      writeFileSync(join(previousDir, 'genie-4.260507.0'), 'STALE_BACKUP');
-
-      const result = atomicBinarySwap(stagedBin, targetBin, previousDir, '4.260507.0');
-      expect(readFileSync(result.oldVersionBackup as string, 'utf-8')).toBe('CURRENT');
-      expect(readdirSync(previousDir)).toHaveLength(2);
-      expect(pruneSameVersionBackups(previousDir, '4.260507.0', result.oldVersionBackup as string)).toHaveLength(1);
-      expect(readdirSync(previousDir)).toEqual([expect.stringMatching(/^genie-4\.260507\.0(?:\.|$)/)]);
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  test('preserves a journal-bound source while removing the redundant swap copy', () => {
-    const tmp = mkdtempSync(join(tmpdir(), 'genie-swap-journal-source-'));
-    try {
-      const stagedBin = join(tmp, 'staged', 'genie');
-      const targetBin = join(tmp, 'bin', 'genie');
-      mkdirSync(join(tmp, 'staged'), { recursive: true });
-      writeFileSync(stagedBin, 'NEW');
-      atomicBinarySwap(stagedBin, targetBin, join(tmp, 'bin', '.previous'), '4.260507.0', {
-        preserveSource: true,
-      });
-      expect(readFileSync(stagedBin, 'utf8')).toBe('NEW');
-      expect(readFileSync(targetBin, 'utf8')).toBe('NEW');
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  test('preserves 0o755 permissions on the swapped-in binary', () => {
-    const tmp = mkdtempSync(join(tmpdir(), 'genie-swap-'));
-    try {
-      const stagedBin = join(tmp, 'staged', 'genie');
-      const targetBin = join(tmp, 'bin', 'genie');
-      const previousDir = join(tmp, 'bin', '.previous');
-      mkdirSync(join(tmp, 'staged'), { recursive: true });
-      writeFileSync(stagedBin, 'NEW');
-
-      atomicBinarySwap(stagedBin, targetBin, previousDir, '4.260507.0');
-      const mode = statSync(targetBin).mode & 0o777;
-      // 0o755 — owner rwx, group/other rx
-      expect(mode & 0o100).toBe(0o100); // owner exec bit
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  test('an interruption before promotion leaves the old canonical binary runnable', () => {
-    const tmp = mkdtempSync(join(tmpdir(), 'genie-swap-interrupt-'));
-    try {
-      const stagedBin = join(tmp, 'staged', 'genie');
-      const targetBin = join(tmp, 'bin', 'genie');
-      const previousDir = join(tmp, 'bin', '.previous');
-      mkdirSync(join(tmp, 'staged'), { recursive: true });
-      mkdirSync(join(tmp, 'bin'), { recursive: true });
-      writeFileSync(stagedBin, 'NEW_BINARY');
-      writeFileSync(targetBin, 'OLD_BINARY');
-
-      expect(() =>
-        atomicBinarySwap(stagedBin, targetBin, previousDir, '4.260507.0', {
-          beforePromote: () => {
-            expect(readFileSync(targetBin, 'utf8')).toBe('OLD_BINARY');
-            throw new Error('power loss injected');
-          },
-        }),
-      ).toThrow('power loss injected');
-
-      expect(readFileSync(targetBin, 'utf8')).toBe('OLD_BINARY');
-      expect(readFileSync(stagedBin, 'utf8')).toBe('NEW_BINARY');
-      expect(readFileSync(join(previousDir, 'genie-4.260507.0'), 'utf8')).toBe('OLD_BINARY');
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  test('normal delivery consumes the journaled preimage and rejects a last-boundary binary replacement', () => {
-    const tmp = mkdtempSync(join(tmpdir(), 'genie-swap-preimage-race-'));
-    try {
-      const bin = join(tmp, 'bin');
-      const staging = join(bin, '.staging');
-      const extract = join(staging, 'extract-5.260711.7');
-      const stagedBin = join(extract, 'genie');
-      const targetBin = join(bin, 'genie');
-      const tarball = join(staging, 'genie.tar.gz');
-      const pendingPath = join(tmp, '.pending-delivery.json');
-      const previousDir = join(bin, '.previous');
-      mkdirSync(extract, { recursive: true });
-      writeFileSync(stagedBin, 'NEW_BINARY');
-      writeFileSync(targetBin, 'AUTHENTIC_OLD_BINARY');
-      writeFileSync(tarball, 'verified tarball');
-      chmodSync(stagedBin, 0o755);
-      chmodSync(targetBin, 0o755);
-      const pending = recordPendingDelivery(
-        {
-          version: '5.260711.7',
-          previousVersion: '5.260711.6',
-          previousBinaryPath: targetBin,
-          extractDir: extract,
-          tarballPath: tarball,
-        },
-        pendingPath,
-        staging,
-      );
-      expect(pending.payload.previousBinary).toBeDefined();
-
-      expect(() =>
-        atomicBinarySwap(stagedBin, targetBin, previousDir, '5.260711.6', {
-          preserveSource: true,
-          expectedPreimage: pending.payload.previousBinary,
-          expectedPayloadFingerprint: pending.payload.binary,
-          beforePromote: () => writeFileSync(targetBin, 'CONCURRENT_INSTALLER_BINARY'),
-        }),
-      ).toThrow('preimage changed immediately before promotion');
-      expect(readFileSync(targetBin, 'utf8')).toBe('CONCURRENT_INSTALLER_BINARY');
-      expect(readFileSync(stagedBin, 'utf8')).toBe('NEW_BINARY');
-      expect(readFileSync(join(previousDir, 'genie-5.260711.6'), 'utf8')).toBe('AUTHENTIC_OLD_BINARY');
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  test('normal delivery re-authenticates its rollback backup at the final promotion boundary', () => {
-    const tmp = mkdtempSync(join(tmpdir(), 'genie-swap-backup-race-'));
-    try {
-      const bin = join(tmp, 'bin');
-      const staging = join(bin, '.staging');
-      const extract = join(staging, 'extract-5.260711.7');
-      const stagedBin = join(extract, 'genie');
-      const targetBin = join(bin, 'genie');
-      const tarball = join(staging, 'genie.tar.gz');
-      const previousDir = join(bin, '.previous');
-      mkdirSync(extract, { recursive: true });
-      writeFileSync(stagedBin, 'NEW_BINARY');
-      writeFileSync(targetBin, 'AUTHENTIC_OLD_BINARY');
-      writeFileSync(tarball, 'verified tarball');
-      chmodSync(stagedBin, 0o755);
-      chmodSync(targetBin, 0o755);
-      const pending = recordPendingDelivery(
-        {
-          version: '5.260711.7',
-          previousVersion: '5.260711.6',
-          previousBinaryPath: targetBin,
-          extractDir: extract,
-          tarballPath: tarball,
-        },
-        join(tmp, '.pending-delivery.json'),
-        staging,
-      );
-
-      expect(() =>
-        atomicBinarySwap(stagedBin, targetBin, previousDir, '5.260711.6', {
-          preserveSource: true,
-          expectedPreimage: pending.payload.previousBinary,
-          expectedPayloadFingerprint: pending.payload.binary,
-          beforePromote: () => writeFileSync(join(previousDir, 'genie-5.260711.6'), 'TAMPERED_BACKUP'),
-        }),
-      ).toThrow('rollback backup does not match');
-      expect(readFileSync(targetBin, 'utf8')).toBe('AUTHENTIC_OLD_BINARY');
-      expect(readFileSync(stagedBin, 'utf8')).toBe('NEW_BINARY');
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  test('normal delivery rejects a replacement changed after copy but before promotion', () => {
-    const tmp = mkdtempSync(join(tmpdir(), 'genie-swap-payload-race-'));
-    try {
-      const bin = join(tmp, 'bin');
-      const staging = join(bin, '.staging');
-      const extract = join(staging, 'extract-5.260711.7');
-      const stagedBin = join(extract, 'genie');
-      const targetBin = join(bin, 'genie');
-      const tarball = join(staging, 'genie.tar.gz');
-      const journal = join(tmp, '.pending-delivery.json');
-      const previousDir = join(bin, '.previous');
-      mkdirSync(extract, { recursive: true });
-      writeFileSync(stagedBin, 'AUTHENTIC_NEW_BINARY');
-      writeFileSync(targetBin, 'AUTHENTIC_OLD_BINARY');
-      writeFileSync(tarball, 'verified tarball');
-      chmodSync(stagedBin, 0o755);
-      chmodSync(targetBin, 0o755);
-      const pending = recordPendingDelivery(
-        {
-          version: '5.260711.7',
-          previousVersion: '5.260711.6',
-          previousBinaryPath: targetBin,
-          extractDir: extract,
-          tarballPath: tarball,
-        },
-        journal,
-        staging,
-      );
-
-      expect(() =>
-        atomicBinarySwap(stagedBin, targetBin, previousDir, '5.260711.6', {
-          preserveSource: true,
-          expectedPreimage: pending.payload.previousBinary,
-          expectedPayloadFingerprint: pending.payload.binary,
-          beforePromote: (replacementPath) => writeFileSync(replacementPath, 'SUBSTITUTED_NEW_BINARY'),
-        }),
-      ).toThrow('journaled payload fingerprint immediately before promotion');
-      expect(readFileSync(targetBin, 'utf8')).toBe('AUTHENTIC_OLD_BINARY');
-      expect(readFileSync(stagedBin, 'utf8')).toBe('AUTHENTIC_NEW_BINARY');
-      expect(readFileSync(join(previousDir, 'genie-5.260711.6'), 'utf8')).toBe('AUTHENTIC_OLD_BINARY');
-      expect(existsSync(journal)).toBe(true);
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  test('normal delivery authenticates the canonical target after promotion', () => {
-    const tmp = mkdtempSync(join(tmpdir(), 'genie-swap-post-promote-race-'));
-    try {
-      const bin = join(tmp, 'bin');
-      const staging = join(bin, '.staging');
-      const extract = join(staging, 'extract-5.260711.7');
-      const stagedBin = join(extract, 'genie');
-      const targetBin = join(bin, 'genie');
-      const tarball = join(staging, 'genie.tar.gz');
-      const journal = join(tmp, '.pending-delivery.json');
-      const previousDir = join(bin, '.previous');
-      mkdirSync(extract, { recursive: true });
-      writeFileSync(stagedBin, 'AUTHENTIC_NEW_BINARY');
-      writeFileSync(targetBin, 'AUTHENTIC_OLD_BINARY');
-      writeFileSync(tarball, 'verified tarball');
-      chmodSync(stagedBin, 0o755);
-      chmodSync(targetBin, 0o755);
-      const pending = recordPendingDelivery(
-        {
-          version: '5.260711.7',
-          previousVersion: '5.260711.6',
-          previousBinaryPath: targetBin,
-          extractDir: extract,
-          tarballPath: tarball,
-        },
-        journal,
-        staging,
-      );
-
-      expect(() =>
-        atomicBinarySwap(stagedBin, targetBin, previousDir, '5.260711.6', {
-          preserveSource: true,
-          expectedPreimage: pending.payload.previousBinary,
-          expectedPayloadFingerprint: pending.payload.binary,
-          afterPromote: (targetPath) => writeFileSync(targetPath, 'SUBSTITUTED_LIVE_BINARY'),
-        }),
-      ).toThrow('journaled payload fingerprint after promotion');
-      expect(readFileSync(targetBin, 'utf8')).toBe('SUBSTITUTED_LIVE_BINARY');
-      expect(readFileSync(stagedBin, 'utf8')).toBe('AUTHENTIC_NEW_BINARY');
-      expect(readFileSync(join(previousDir, 'genie-5.260711.6'), 'utf8')).toBe('AUTHENTIC_OLD_BINARY');
-      expect(existsSync(journal)).toBe(true);
+      const tarball = join(tmp, 'genie-5.260714.1-linux-x64-glibc.tar.gz');
+      writeFileSync(tarball, 'this is not a gzip archive');
+      await expect(extractTarball(tarball, join(tmp, 'extract'))).rejects.toThrow(/tar -xzf/);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
   });
 });
 
-describe('rollbackBinary (G5)', () => {
-  // rollbackBinary reads from `~/.genie/bin/.previous` directly via the
-  // module-level GENIE_HOME constant. We override GENIE_HOME via env BEFORE
-  // re-importing so the test sees a temp directory. The single import at the
-  // top of this file already captured the real GENIE_HOME; therefore these
-  // tests run against the real ~/.genie path. To keep them hermetic we create
-  // a backup, run rollback, then assert + clean up. If a real .previous
-  // directory exists with newer entries the test would conflict; gate the
-  // tests behind an explicit env so CI runs them and dev workstations can
-  // skip when needed.
-  const SHOULD_RUN =
-    process.env.GENIE_TEST_RUN_ROLLBACK === '1' ||
-    !existsSync(join(process.env.HOME ?? '', '.genie', 'bin', '.previous'));
+// ============================================================================
+// G5 — Atomic binary swap + rollback.
+// Real fs operations on tmp dir; no mocks. The swap needs same-fs primitives,
+// so tmp dir is on the test runner's filesystem.
+// ============================================================================
 
-  test.skipIf(!SHOULD_RUN)('throws when no .previous directory exists', () => {
-    // Best-effort: only assert when the directory is genuinely absent.
-    const previousDir = join(process.env.HOME ?? '', '.genie', 'bin', '.previous');
-    if (existsSync(previousDir)) return;
-    expect(() => rollbackBinary()).toThrow(/No rollback target/);
+describe('rollbackBinary (G5)', () => {
+  test('fails closed without mutating a legacy binary-only backup', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-rollback-read-only-'));
+    const bin = join(root, 'bin');
+    const previous = join(bin, '.previous');
+    mkdirSync(previous, { recursive: true });
+    writeFileSync(join(bin, 'genie'), 'LIVE');
+    writeFileSync(join(bin, 'VERSION'), '5.260714.3\n');
+    writeFileSync(join(previous, 'genie-5.260714.2'), 'LEGACY');
+    const before = readdirSync(previous);
+    try {
+      expect(() => rollbackBinaryAt(bin)).toThrow(/exact genie\+VERSION generation/);
+      expect(readFileSync(join(bin, 'genie'), 'utf8')).toBe('LIVE');
+      expect(readFileSync(join(bin, 'VERSION'), 'utf8')).toBe('5.260714.3\n');
+      expect(readdirSync(previous)).toEqual(before);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
@@ -1553,42 +1323,23 @@ describe('Plugin sync — .orphaned_at filter (skills regression 2026-05-06)', (
 // Pinning the bug fixes so a future regression can't slip them back in.
 // ============================================================================
 
-describe('atomicBinarySwap canonical-path safety', () => {
-  test('promotes a complete target-directory replacement with one rename-over-live', () => {
+describe('update install-promotion authority', () => {
+  test('normal delivery delegates the exact release generation to the proven installer engine', () => {
     const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
-    const fnStart = source.indexOf('export function atomicBinarySwap');
-    const fnEnd = source.indexOf('\nexport function ', fnStart + 1);
-    const body = source.slice(fnStart, fnEnd === -1 ? undefined : fnEnd);
-    expect(body).toContain('.genie-replacement-');
-    expect(body).toContain('fsyncFile(replacementPath)');
-    expect(body).toContain('renameSync(replacementPath, targetBinPath)');
-    expect(body).not.toContain('rmSync(targetBinPath');
-    expect(body).not.toContain('renameSync(targetBinPath');
+    expect(source).toContain('createPrivateUpdateTempRoot()');
+    expect(source).toContain('admitExternalInstallStaging({');
+    expect(source).not.toContain("mkdtempSync(join(GENIE_BIN, '.install-staging-'))");
+    expect(source).toContain('recoverPendingInstallPromotions({ genieHome: GENIE_HOME })');
+    expect(source).toContain('promoteStagedInstall({');
+    expect(source).toContain('syncAuxiliaryContent(GENIE_BIN, GENIE_HOME, undefined, true)');
+    expect(source).not.toContain('export function atomicBinarySwap');
   });
 
-  test('backs up by copy so the old canonical path remains live before promotion', () => {
+  test('legacy pending delivery and rollback are production fail-closed', () => {
     const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
-    const fnStart = source.indexOf('export function atomicBinarySwap');
-    const fnEnd = source.indexOf('\nexport function ', fnStart + 1);
-    const body = source.slice(fnStart, fnEnd === -1 ? undefined : fnEnd);
-    expect(body).toContain('copyFileSync(targetBinPath, backupStaging');
-    expect(body).toContain('renameSync(backupStaging, oldBackup)');
-    expect(body).not.toContain('renameSync(targetBinPath, oldBackup)');
-  });
-});
-
-describe('fsyncSync import (review fix #1)', () => {
-  test('fsyncSync is in the named imports list, not loaded via require()', () => {
-    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
-    // Match the node:fs import block.
-    const importBlockMatch = source.match(/from\s+'node:fs';/);
-    expect(importBlockMatch).not.toBeNull();
-    const blockEnd = source.indexOf("from 'node:fs';");
-    const blockStart = source.lastIndexOf('import {', blockEnd);
-    const block = source.slice(blockStart, blockEnd);
-    expect(block).toContain('fsyncSync');
-    // Belt + suspenders: make sure no `require('node:fs').fsyncSync` lurks.
-    expect(source).not.toContain("require('node:fs').fsyncSync");
+    expect(source).toContain('legacy pending delivery is retained read-only');
+    expect(source).toContain('Automatic rollback is disabled');
+    expect(source).not.toContain('atomicBinarySwap(');
   });
 });
 
@@ -1733,7 +1484,7 @@ describe('auxiliary VERSION and extraction finalization gate', () => {
   });
 });
 
-describe('durable pending delivery recovery', () => {
+describe('legacy pending delivery compatibility', () => {
   test('incremental hashing matches SHA-256 across multiple fixed-size reads', () => {
     const root = mkdtempSync(join(tmpdir(), 'genie-incremental-hash-'));
     const path = join(root, 'payload');
@@ -1755,312 +1506,80 @@ describe('durable pending delivery recovery', () => {
     expect(() => resolveUpdateExecutionMode({ rollback: true, syncOnly: true }, undefined)).toThrow(
       '--rollback and --sync-only cannot be used together',
     );
-    for (const options of [
-      { postDeliveryConverge: true, rollback: true },
-      { postDeliveryConverge: true, syncOnly: true },
-      { postDeliveryConverge: true, stable: true },
-      { postDeliveryConverge: true, verify: false },
-    ]) {
-      expect(() => resolveUpdateExecutionMode(options, undefined)).toThrow(
-        '--post-delivery-converge cannot be combined',
-      );
-    }
-    expect(() => resolveUpdateExecutionMode({ postDeliveryConverge: true }, '1')).toThrow(
-      '--post-delivery-converge cannot be combined',
-    );
   });
 
-  test('rollback quarantine atomically removes a pending journal from the recovery path', () => {
-    const root = mkdtempSync(join(tmpdir(), 'genie-pending-cancel-'));
-    const journal = join(root, '.pending-delivery.json');
-    writeFileSync(journal, '{"schemaVersion":2}\n', { mode: 0o600 });
+  test('an absent legacy journal is a read-only no-op', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-pending-absent-'));
     try {
-      const quarantined = quarantinePendingDelivery(journal);
-      expect(quarantined).not.toBeNull();
-      expect(existsSync(journal)).toBe(false);
-      expect(quarantined && existsSync(quarantined)).toBe(true);
-      expect(quarantinePendingDelivery(journal)).toBeNull();
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test('resumes local auxiliary convergence before clearing the journal', () => {
-    const root = mkdtempSync(join(tmpdir(), 'genie-pending-delivery-'));
-    const home = join(root, 'home');
-    const staging = join(home, 'bin', '.staging');
-    const extract = join(staging, 'extract-5.260711.7');
-    const tarball = join(staging, 'genie.tar.gz');
-    const journal = join(home, '.pending-delivery.json');
-    mkdirSync(join(extract, 'plugins', 'genie'), { recursive: true });
-    writeFileSync(join(extract, 'genie'), 'verified binary');
-    writeFileSync(join(extract, 'plugins', 'genie', 'payload.txt'), 'fresh');
-    writeFileSync(tarball, 'verified');
-    try {
-      recordPendingDelivery({ version: '5.260711.7', extractDir: extract, tarballPath: tarball }, journal, staging);
-      let binaryChecks = 0;
       expect(
         resumePendingDelivery({
-          genieHome: home,
-          stagingRoot: staging,
-          pendingPath: journal,
-          ensureBinary: () => {
-            binaryChecks += 1;
-          },
+          genieHome: root,
+          genieBin: join(root, 'bin'),
+          stagingRoot: join(root, 'bin', '.staging'),
+          pendingPath: join(root, '.pending-delivery.json'),
         }),
-      ).toBe(true);
-      expect(binaryChecks).toBe(1);
-      expect(readFileSync(join(home, 'plugins', 'genie', 'payload.txt'), 'utf8')).toBe('fresh');
-      expect(readFileSync(join(home, 'VERSION'), 'utf8')).toBe('5.260711.7\n');
-      expect(existsSync(journal)).toBe(false);
-      expect(resumePendingDelivery({ genieHome: home, stagingRoot: staging, pendingPath: journal })).toBe(false);
+      ).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  test('successful pending-delivery recovery prunes older backups for the recorded previous version', () => {
-    const root = mkdtempSync(join(tmpdir(), 'genie-pending-prune-'));
-    const home = join(root, 'home');
-    const staging = join(home, 'bin', '.staging');
-    const extract = join(staging, 'extract-5.260711.7');
-    const tarball = join(staging, 'genie.tar.gz');
-    const journal = join(home, '.pending-delivery.json');
-    const previous = join(home, 'bin', '.previous');
-    mkdirSync(join(extract, 'plugins', 'genie'), { recursive: true });
-    mkdirSync(previous, { recursive: true });
-    writeFileSync(join(extract, 'genie'), 'verified binary');
-    writeFileSync(join(extract, 'plugins', 'genie', 'payload.txt'), 'fresh');
-    writeFileSync(tarball, 'verified');
-    const older = join(previous, 'genie-5.260711.6');
-    const retained = join(previous, 'genie-5.260711.6.retry');
-    writeFileSync(older, 'older rollback');
-    writeFileSync(retained, 'new rollback');
-    utimesSync(older, 1, 1);
-    utimesSync(retained, 2, 2);
-    try {
-      recordPendingDelivery(
-        {
-          version: '5.260711.7',
-          previousVersion: '5.260711.6',
-          extractDir: extract,
-          tarballPath: tarball,
-        },
-        journal,
-        staging,
-      );
-      expect(
-        resumePendingDelivery({
-          genieHome: home,
-          stagingRoot: staging,
-          pendingPath: journal,
-          ensureBinary: () => undefined,
-        }),
-      ).toBe(true);
-      expect(existsSync(older)).toBe(false);
-      expect(readFileSync(retained, 'utf8')).toBe('new rollback');
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test('a crash after binary swap but before VERSION stamping repairs metadata without swapping new over new', () => {
-    const root = mkdtempSync(join(tmpdir(), 'genie-pending-post-swap-crash-'));
+  test('a valid present legacy journal fails closed without changing live, auxiliary, or journal bytes', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-pending-read-only-'));
     const home = join(root, 'home');
     const bin = join(home, 'bin');
     const staging = join(bin, '.staging');
-    const extract = join(staging, 'extract-5.260711.7');
+    const extract = join(staging, 'extract-5.260714.4');
     const tarball = join(staging, 'genie.tar.gz');
     const journal = join(home, '.pending-delivery.json');
-    const target = join(bin, 'genie');
-    const previous = join(bin, '.previous');
+    mkdirSync(join(home, 'plugins'), { recursive: true });
     mkdirSync(extract, { recursive: true });
-    mkdirSync(bin, { recursive: true });
-    writeFileSync(target, 'authentic old binary');
-    writeFileSync(join(bin, 'VERSION'), '5.260711.6\n');
-    writeFileSync(join(extract, 'genie'), 'verified new binary');
-    writeFileSync(join(extract, 'VERSION'), '5.260711.7\n');
-    writeFileSync(tarball, 'verified tarball');
-    chmodSync(target, 0o755);
-    chmodSync(join(extract, 'genie'), 0o755);
-    try {
-      const pending = recordPendingDelivery(
-        {
-          version: '5.260711.7',
-          previousVersion: '5.260711.6',
-          previousBinaryPath: target,
-          extractDir: extract,
-          tarballPath: tarball,
-        },
-        journal,
-        staging,
-      );
-      const firstSwap = atomicBinarySwap(join(extract, 'genie'), target, previous, '5.260711.6', {
-        preserveSource: true,
-        expectedPreimage: pending.payload.previousBinary,
-        expectedPayloadFingerprint: pending.payload.binary,
-      });
-      expect(firstSwap.oldVersionBackup).not.toBeNull();
-      const authenticBackup = firstSwap.oldVersionBackup as string;
-      const decoy = join(previous, 'genie-5.260711.6.newer-decoy');
-      writeFileSync(decoy, 'verified new binary');
-      chmodSync(decoy, 0o755);
-      utimesSync(authenticBackup, 1, 1);
-      utimesSync(decoy, 2, 2);
-
-      expect(
-        resumePendingDelivery({
-          genieHome: home,
-          genieBin: bin,
-          stagingRoot: staging,
-          pendingPath: journal,
-          runVersion: () => `genie ${readFileSync(join(bin, 'VERSION'), 'utf8')}`,
-        }),
-      ).toBe(true);
-
-      expect(readFileSync(target, 'utf8')).toBe('verified new binary');
-      expect(readFileSync(join(bin, 'VERSION'), 'utf8')).toBe('5.260711.7\n');
-      expect(readFileSync(authenticBackup, 'utf8')).toBe('authentic old binary');
-      expect(readFileSync(decoy, 'utf8')).toBe('verified new binary');
-      expect(readdirSync(previous).filter((name) => name.startsWith('genie-5.260711.6'))).toHaveLength(2);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test('schema-v4 already-new recovery retains its journal without an authenticated prior backup', () => {
-    for (const backupState of ['missing', 'mismatched'] as const) {
-      const root = mkdtempSync(join(tmpdir(), `genie-pending-already-new-${backupState}-`));
-      const home = join(root, 'home');
-      const bin = join(home, 'bin');
-      const staging = join(bin, '.staging');
-      const extract = join(staging, 'extract-5.260711.7');
-      const tarball = join(staging, 'genie.tar.gz');
-      const journal = join(home, '.pending-delivery.json');
-      const target = join(bin, 'genie');
-      const previous = join(bin, '.previous');
-      mkdirSync(extract, { recursive: true });
-      writeFileSync(target, 'AUTHENTIC_OLD_BINARY');
-      writeFileSync(join(bin, 'VERSION'), '5.260711.6\n');
-      writeFileSync(join(extract, 'genie'), 'AUTHENTIC_NEW_BINARY');
-      writeFileSync(join(extract, 'VERSION'), '5.260711.7\n');
-      writeFileSync(tarball, 'verified tarball');
-      chmodSync(target, 0o755);
-      chmodSync(join(extract, 'genie'), 0o755);
-      try {
-        recordPendingDelivery(
-          {
-            version: '5.260711.7',
-            previousVersion: '5.260711.6',
-            previousBinaryPath: target,
-            extractDir: extract,
-            tarballPath: tarball,
-          },
-          journal,
-          staging,
-        );
-        writeFileSync(target, 'AUTHENTIC_NEW_BINARY');
-        chmodSync(target, 0o755);
-        if (backupState === 'mismatched') {
-          mkdirSync(previous, { recursive: true });
-          writeFileSync(join(previous, 'genie-5.260711.6'), 'UNAUTHENTICATED_BACKUP');
-          chmodSync(join(previous, 'genie-5.260711.6'), 0o755);
-        }
-
-        expect(() =>
-          resumePendingDelivery({
-            genieHome: home,
-            genieBin: bin,
-            stagingRoot: staging,
-            pendingPath: journal,
-          }),
-        ).toThrow('no authenticated rollback backup matches the journaled preimage');
-        expect(readFileSync(join(bin, 'VERSION'), 'utf8')).toBe('5.260711.6\n');
-        expect(existsSync(journal)).toBe(true);
-      } finally {
-        rmSync(root, { recursive: true, force: true });
-      }
-    }
-  });
-
-  test('a failed resume retains the verified journal and succeeds on a normal retry', () => {
-    const root = mkdtempSync(join(tmpdir(), 'genie-pending-retry-'));
-    const home = join(root, 'home');
-    const staging = join(home, 'bin', '.staging');
-    const extract = join(staging, 'extract-5.260711.7');
-    const tarball = join(staging, 'genie.tar.gz');
-    const journal = join(home, '.pending-delivery.json');
-    mkdirSync(join(extract, 'plugins', 'genie'), { recursive: true });
-    writeFileSync(join(extract, 'genie'), 'verified binary');
-    writeFileSync(join(extract, 'plugins', 'genie', 'payload.txt'), 'fresh');
-    writeFileSync(tarball, 'verified');
-    recordPendingDelivery({ version: '5.260711.7', extractDir: extract, tarballPath: tarball }, journal, staging);
+    writeFileSync(join(bin, 'genie'), 'LIVE_BINARY');
+    writeFileSync(join(bin, 'VERSION'), '5.260714.3\n');
+    writeFileSync(join(home, 'plugins', 'live.txt'), 'LIVE_AUX');
+    writeFileSync(join(extract, 'genie'), 'STAGED_BINARY');
+    writeFileSync(join(extract, 'VERSION'), '5.260714.4\n');
+    writeFileSync(tarball, 'SIGNED_TARBALL');
+    const fingerprint = (path: string) => ({
+      sha256: createHash('sha256').update(readFileSync(path)).digest('hex'),
+      mode: statSync(path).mode & 0o7777,
+    });
+    const payload = {
+      binary: fingerprint(join(extract, 'genie')),
+      previousBinary: { present: true, fingerprint: fingerprint(join(bin, 'genie')) },
+      versionStamp: { present: true, fingerprint: fingerprint(join(extract, 'VERSION')) },
+      tarball: fingerprint(tarball),
+      auxiliary: ['plugins', 'skills', 'templates', '.agents', '.claude-plugin'].map((name) => ({
+        name,
+        present: false,
+        digest: null,
+      })),
+    };
+    writeFileSync(
+      journal,
+      `${JSON.stringify({
+        schemaVersion: 4,
+        version: '5.260714.4',
+        previousVersion: '5.260714.3',
+        extractDir: extract,
+        tarballPath: tarball,
+        createdAt: '2026-07-15T00:00:00.000Z',
+        payload,
+      })}\n`,
+      { mode: 0o600 },
+    );
+    const paths = [join(bin, 'genie'), join(bin, 'VERSION'), join(home, 'plugins', 'live.txt'), journal];
+    const before = paths.map((path) => readFileSync(path));
     try {
       expect(() =>
-        resumePendingDelivery({
-          genieHome: home,
-          stagingRoot: staging,
-          pendingPath: journal,
-          ensureBinary: () => undefined,
-          operations: {
-            rename() {
-              throw new Error('promotion unavailable');
-            },
-          },
-        }),
-      ).toThrow('auxiliary payload convergence failed');
-      expect(existsSync(journal)).toBe(true);
-      expect(
-        resumePendingDelivery({
-          genieHome: home,
-          stagingRoot: staging,
-          pendingPath: journal,
-          ensureBinary: () => undefined,
-        }),
-      ).toBe(true);
-      expect(existsSync(journal)).toBe(false);
+        resumePendingDelivery({ genieHome: home, genieBin: bin, stagingRoot: staging, pendingPath: journal }),
+      ).toThrow(/retained read-only/);
+      expect(paths.map((path) => readFileSync(path))).toEqual(before);
     } finally {
       rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test('rejects binary and auxiliary tampering before any live mutation', () => {
-    for (const tamper of ['binary', 'auxiliary'] as const) {
-      const root = mkdtempSync(join(tmpdir(), `genie-pending-tamper-${tamper}-`));
-      const home = join(root, 'home');
-      const staging = join(home, 'bin', '.staging');
-      const extract = join(staging, 'extract-5.260711.7');
-      const tarball = join(staging, 'genie.tar.gz');
-      const journal = join(home, '.pending-delivery.json');
-      mkdirSync(join(extract, 'plugins', 'genie'), { recursive: true });
-      writeFileSync(join(extract, 'genie'), 'verified binary');
-      writeFileSync(join(extract, 'plugins', 'genie', 'payload.txt'), 'verified auxiliary');
-      writeFileSync(tarball, 'verified tarball');
-      try {
-        recordPendingDelivery({ version: '5.260711.7', extractDir: extract, tarballPath: tarball }, journal, staging);
-        if (tamper === 'binary') writeFileSync(join(extract, 'genie'), 'substituted binary');
-        else writeFileSync(join(extract, 'plugins', 'genie', 'payload.txt'), 'substituted auxiliary');
-        let binaryChecks = 0;
-        expect(() =>
-          resumePendingDelivery({
-            genieHome: home,
-            stagingRoot: staging,
-            pendingPath: journal,
-            ensureBinary: () => {
-              binaryChecks += 1;
-            },
-          }),
-        ).toThrow('pending delivery payload fingerprint mismatch');
-        expect(binaryChecks).toBe(0);
-        expect(existsSync(join(home, 'plugins'))).toBe(false);
-        expect(existsSync(journal)).toBe(true);
-      } finally {
-        rmSync(root, { recursive: true, force: true });
-      }
     }
   });
 });
-
 describe('ensureCanonicalInstall + resolveLiveBinaryPath (review fix #3)', () => {
   test('resolveLiveBinaryPath returns null or a string (which-genie probe)', () => {
     // Smoke test: the function must not throw on any host. If genie isn't on
@@ -2130,175 +1649,15 @@ describe('Knip-clean exports (PR #1733 follow-up)', () => {
 //
 // Root causes:
 //   1. runDelivery printed success based on `manifest.version` (intent),
-//      never re-reading the swapped binary.
+//      never re-reading the swapped binary. (Now owned by the staged-promotion
+//      transaction's mandatory version verification.)
 //   2. The PATH heuristic did not guard against `live === canonical`, so a
 //      version mismatch caused by a botched swap was misdiagnosed as a PATH
 //      problem and rendered as `ln -sf X X`.
 //
-// Both helpers below are pure and injectable so the regression is locked in
+// The helper below is pure and injectable so the regression is locked in
 // without spawning a real `genie` binary.
 // ============================================================================
-
-describe('verifySwappedBinary (post-swap correctness guard)', () => {
-  test('returns void when reported version matches expected', () => {
-    expect(() =>
-      verifySwappedBinary('/fake/path/genie', '4.260522.2', {
-        runVersion: () => '4.260522.2\n',
-      }),
-    ).not.toThrow();
-  });
-
-  test('strips build metadata before comparison (normalizeVersion parity)', () => {
-    expect(() =>
-      verifySwappedBinary('/fake/path/genie', '4.260522.2', {
-        runVersion: () => '4.260522.2+abc1234\n',
-      }),
-    ).not.toThrow();
-  });
-
-  test('throws with intended-vs-on-disk diff when version mismatches', () => {
-    expect(() =>
-      verifySwappedBinary('/fake/path/genie', '4.260522.2', {
-        runVersion: () => '4.260520.3\n',
-        stagingDir: '/tmp/staging',
-        previousDir: '/tmp/previous',
-      }),
-    ).toThrow(/Intended: v4\.260522\.2[\s\S]*On disk : v4\.260520\.3/);
-  });
-
-  test('mismatch message includes staging + previous hints for forensics', () => {
-    let captured: string | null = null;
-    try {
-      verifySwappedBinary('/fake/path/genie', '4.260522.2', {
-        runVersion: () => '4.260520.3\n',
-        stagingDir: '/home/genie/.genie/bin/.staging',
-        previousDir: '/home/genie/.genie/bin/.previous',
-      });
-    } catch (err) {
-      captured = err instanceof Error ? err.message : String(err);
-    }
-    expect(captured).toContain('/home/genie/.genie/bin/.staging');
-    expect(captured).toContain('/home/genie/.genie/bin/.previous');
-  });
-
-  test('throws when binary cannot be executed (wraps underlying error)', () => {
-    expect(() =>
-      verifySwappedBinary('/fake/path/genie', '4.260522.2', {
-        runVersion: () => {
-          throw new Error('ENOENT: no such file');
-        },
-      }),
-    ).toThrow(/Post-swap verification failed.*could not execute.*ENOENT/);
-  });
-
-  test('throws when binary runs but emits no parseable version', () => {
-    expect(() =>
-      verifySwappedBinary('/fake/path/genie', '4.260522.2', {
-        runVersion: () => 'banner with no version string\n',
-      }),
-    ).toThrow(/emitted no parsable version/);
-  });
-});
-
-describe('syncBinaryVersionStamp (binary-sibling VERSION file)', () => {
-  // The compiled binary reads `dirname(process.execPath)/VERSION` at startup
-  // (src/lib/version.ts). The atomic swap replaces `genie` but leaves the
-  // sibling VERSION stamp untouched — so without this sync, the new binary
-  // reports the OLD version until something else rewrites the stamp. These
-  // tests pin the contract so a future "simplification" can't remove it.
-
-  test('copies VERSION from extractDir → binDir when the tarball ships one', () => {
-    const tmp = mkdtempSync(join(tmpdir(), 'genie-stamp-'));
-    try {
-      const extractDir = join(tmp, 'extract');
-      const binDir = join(tmp, 'bin');
-      mkdirSync(extractDir, { recursive: true });
-      mkdirSync(binDir, { recursive: true });
-      writeFileSync(join(extractDir, 'VERSION'), '4.260522.3\n');
-      // Pre-existing stale stamp the swap left behind:
-      writeFileSync(join(binDir, 'VERSION'), '4.260520.3\n');
-
-      syncBinaryVersionStamp(extractDir, binDir, '4.260522.3');
-
-      expect(readFileSync(join(binDir, 'VERSION'), 'utf-8').trim()).toBe('4.260522.3');
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  test('falls back to writing manifestVersion when tarball is missing VERSION', () => {
-    const tmp = mkdtempSync(join(tmpdir(), 'genie-stamp-'));
-    try {
-      const extractDir = join(tmp, 'extract');
-      const binDir = join(tmp, 'bin');
-      mkdirSync(extractDir, { recursive: true });
-      mkdirSync(binDir, { recursive: true });
-      // No VERSION file in extractDir — simulates an older build that
-      // pre-dates the G1 stamp convention.
-      writeFileSync(join(binDir, 'VERSION'), '4.260520.3\n');
-
-      syncBinaryVersionStamp(extractDir, binDir, '4.260522.3');
-
-      expect(readFileSync(join(binDir, 'VERSION'), 'utf-8').trim()).toBe('4.260522.3');
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  test('first install (binDir has no prior VERSION) — creates the stamp', () => {
-    const tmp = mkdtempSync(join(tmpdir(), 'genie-stamp-'));
-    try {
-      const extractDir = join(tmp, 'extract');
-      const binDir = join(tmp, 'bin');
-      mkdirSync(extractDir, { recursive: true });
-      mkdirSync(binDir, { recursive: true });
-      writeFileSync(join(extractDir, 'VERSION'), '4.260522.3\n');
-
-      syncBinaryVersionStamp(extractDir, binDir, '4.260522.3');
-
-      expect(existsSync(join(binDir, 'VERSION'))).toBe(true);
-      expect(readFileSync(join(binDir, 'VERSION'), 'utf-8').trim()).toBe('4.260522.3');
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  test('preserves the tarball stamp byte-for-byte (no normalisation)', () => {
-    // The G1 build pipeline may include build metadata (`+sha`) or trailing
-    // newlines we don't want to silently strip. Copy verbatim.
-    const tmp = mkdtempSync(join(tmpdir(), 'genie-stamp-'));
-    try {
-      const extractDir = join(tmp, 'extract');
-      const binDir = join(tmp, 'bin');
-      mkdirSync(extractDir, { recursive: true });
-      mkdirSync(binDir, { recursive: true });
-      const exotic = '4.260522.3+abc1234\n';
-      writeFileSync(join(extractDir, 'VERSION'), exotic);
-
-      syncBinaryVersionStamp(extractDir, binDir, '4.260522.3');
-
-      expect(readFileSync(join(binDir, 'VERSION'), 'utf-8')).toBe(exotic);
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  test('swallows fs errors (best-effort; verifySwappedBinary catches mismatch)', () => {
-    // Pass an extractDir that exists but a binDir that doesn't — copy will
-    // fail, write fallback will also fail. Should not throw.
-    const tmp = mkdtempSync(join(tmpdir(), 'genie-stamp-'));
-    try {
-      const extractDir = join(tmp, 'extract');
-      const binDir = join(tmp, 'nonexistent', 'bin');
-      mkdirSync(extractDir, { recursive: true });
-      writeFileSync(join(extractDir, 'VERSION'), '4.260522.3\n');
-
-      expect(() => syncBinaryVersionStamp(extractDir, binDir, '4.260522.3')).not.toThrow();
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-});
 
 describe('shouldEmitPathDivergenceWarning (self-symlink suppression)', () => {
   const canonical = '/home/genie/.genie/bin/genie';
@@ -2741,6 +2100,9 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
           stdout: '{"installed":[{"pluginId":"genie@automagik","enabled":true,"version":"5.260711.6"}]}',
           stderr: '',
         }),
+        // Isolate the advisory→sync ordering; the codex INSPECT gate is proven by
+        // its own byte-identity failure tests below.
+        inspectCodex: () => {},
         log: (line) => events.push(`advisory:${line}`),
         sync: () => {
           events.push('sync');
@@ -2751,6 +2113,137 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
     expect(events).toHaveLength(2);
     expect(events[0]).toContain('advisory:Legacy --sync-only');
     expect(events[1]).toBe('sync');
+  });
+});
+
+describe('runManualUpdateConvergence — hermes leg restored end-to-end (restore-hermes-sync-leg regression)', () => {
+  // A prior release (#2572) narrowed every production selection to 'claude'
+  // before it reached runAgentSync, so `genie update`'s hermes leg (which
+  // only fires on a verbatim 'auto'/'all' selection) silently stopped
+  // converging — confirmed live via `genie update --sync-only` printing only
+  // 'agent-sync: claude'. This suite drives the REAL runSync path (no `sync`
+  // mock) through real GENIE_HOME/HERMES_HOME fixtures, isolated the way
+  // doctor.test.ts isolates its lifecycle env, to prove the hermes leg
+  // converges again and that the PR #2576 duplicate-external_dirs repair is
+  // reachable from the update lifecycle, not just the low-level helper test.
+  const ENV_KEYS = ['HOME', 'GENIE_HOME', 'HERMES_HOME', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME'] as const;
+  let isolatedHome: string;
+  let savedEnv: Partial<Record<(typeof ENV_KEYS)[number], string>>;
+  let genieHome: string;
+  let hermesHome: string;
+  let genieBin: string;
+
+  beforeEach(() => {
+    isolatedHome = mkdtempSync(join(tmpdir(), 'genie-update-hermes-'));
+    savedEnv = {};
+    for (const key of ENV_KEYS) {
+      if (process.env[key] !== undefined) savedEnv[key] = process.env[key];
+    }
+    genieHome = join(isolatedHome, 'genie');
+    hermesHome = join(isolatedHome, 'hermes');
+    process.env.HOME = isolatedHome;
+    process.env.GENIE_HOME = genieHome;
+    process.env.HERMES_HOME = hermesHome;
+    process.env.CLAUDE_CONFIG_DIR = join(isolatedHome, 'claude'); // absent: claude leg simply undetected
+    process.env.CODEX_HOME = join(isolatedHome, 'codex');
+
+    // Minimal real genie plugin source: a populated skills root + VERSION +
+    // an executable bin/genie (resolveGenieBinaryPath / resolveProductSkillsRoot
+    // both require real files, not injected targets, since this test exercises
+    // the default env-resolved paths exactly like production `genie update`).
+    mkdirSync(join(genieHome, 'plugins', 'genie', 'skills', 'alpha'), { recursive: true });
+    writeFileSync(join(genieHome, 'plugins', 'genie', 'skills', 'alpha', 'SKILL.md'), '# alpha\n');
+    // resolveGenieSource requires plugins/hermes-genie NEXT TO plugins/genie for
+    // ctx.hermesRoot to resolve — without it, syncHermes bails before either
+    // config leg runs (see the 'hermes source ... not found' advisory).
+    mkdirSync(join(genieHome, 'plugins', 'hermes-genie'), { recursive: true });
+    writeFileSync(join(genieHome, 'plugins', 'hermes-genie', 'plugin.json'), '{"name":"hermes-genie"}\n');
+    writeFileSync(join(genieHome, 'VERSION'), '9.9.9\n');
+    mkdirSync(join(genieHome, 'bin'), { recursive: true });
+    genieBin = join(genieHome, 'bin', 'genie');
+    writeFileSync(genieBin, '#!/usr/bin/env bun\n');
+    chmodSync(genieBin, 0o755);
+    mkdirSync(hermesHome, { recursive: true });
+  });
+
+  afterEach(() => {
+    for (const key of ENV_KEYS) {
+      const saved = savedEnv[key];
+      if (saved === undefined) Reflect.deleteProperty(process.env, key);
+      else process.env[key] = saved;
+    }
+    rmSync(isolatedHome, { recursive: true, force: true });
+  });
+
+  /**
+   * Mirrors `runManualUpdateConvergence`'s own default `runSync` closure
+   * (narrow the selection, then `runAgentSyncSafe`), but pins `markerPath`
+   * inside the isolated tmpdir. `update.ts`'s `GENIE_HOME` constant is
+   * captured once at module import time, before this suite's `beforeEach` can
+   * repoint `process.env.GENIE_HOME` — the default marker path would
+   * otherwise write `.last-agent-sync` outside this test's sandbox. The sync
+   * engine itself is unaffected: `runAgentSync` resolves every target via the
+   * live `resolveGenieHome()`/`resolveHermesHome()` env reads, so this still
+   * exercises the real narrowing + the real engine end-to-end.
+   */
+  function realRunSync(selection: IntegrationSelection): () => void {
+    return () => {
+      const agentSyncSelection = narrowUpdateAgentSyncSelection(selection);
+      if (agentSyncSelection !== null) {
+        runAgentSyncSafe({
+          strict: true,
+          selection: agentSyncSelection,
+          markerPath: join(isolatedHome, '.last-agent-sync'),
+          // hermesBinary: null keeps this test-safe (no `hermes plugins enable`
+          // exec) — the same posture agent-sync.test.ts's `run()` fixture takes.
+          sync: (opts) => runAgentSync({ ...opts, hermesBinary: null }),
+        });
+      }
+    };
+  }
+
+  test('selection auto converges the hermes leg (mcp_servers.genie + skills.external_dirs) into a fresh config', () => {
+    const result = runManualUpdateConvergence({
+      expectedVersion: '9.9.9',
+      selection: 'auto',
+      runSync: realRunSync('auto'),
+      refreshPlugins: () => [],
+      log: () => undefined,
+    });
+    expect(result.integrations).toEqual([]);
+
+    const configPath = join(hermesHome, 'config.yaml');
+    const text = readFileSync(configPath, 'utf8');
+    expect(text).toContain('mcp_servers:');
+    expect(text).toContain(genieBin);
+    expect(text).toContain('skills:');
+    expect(text).toContain('external_dirs:');
+    expect(text).toContain(join(genieHome, 'plugins', 'genie', 'skills'));
+  });
+
+  test('selection auto repairs a config damaged with the duplicate-external_dirs shape (PR #2576)', () => {
+    const configPath = join(hermesHome, 'config.yaml');
+    const skillsRoot = join(genieHome, 'plugins', 'genie', 'skills');
+    // Exact damaged shape from an earlier buggy release: `skills:` carries BOTH
+    // an inline empty `external_dirs: []` and a later block-style `external_dirs`
+    // holding the genie-marked managed entry — spec-invalid duplicate-key YAML.
+    const damaged = `skills:\n  external_dirs: []\n  template_vars: true\n  external_dirs:\n    - ${JSON.stringify(skillsRoot)}  # genie:managed:skills.external_dirs\n`;
+    writeFileSync(configPath, damaged);
+
+    runManualUpdateConvergence({
+      expectedVersion: '9.9.9',
+      selection: 'auto',
+      runSync: realRunSync('auto'),
+      refreshPlugins: () => [],
+      log: () => undefined,
+    });
+
+    const text = readFileSync(configPath, 'utf8');
+    expect(text.match(/external_dirs:/g)?.length).toBe(1);
+    expect(text).toContain('template_vars: true');
+    const parsed = Bun.YAML.parse(text) as { skills: { external_dirs: string[]; template_vars: boolean } };
+    expect(parsed.skills.external_dirs).toEqual([skillsRoot]);
+    expect(parsed.skills.template_vars).toBe(true);
   });
 });
 
@@ -2901,15 +2394,14 @@ describe('operator-driven plugin refresh', () => {
         codexConfigPath: configPath,
         runner,
       });
-      expect(results).toEqual([
-        {
-          runtime: 'codex',
-          ok: true,
-          detail: 'plugin/hooks refreshed to v5.260711.3',
-          preservedDisabled: true,
-          hookReviewRequired: false,
-        },
-      ]);
+      expect(results).toHaveLength(1);
+      expect(results[0]).toMatchObject({
+        runtime: 'codex',
+        ok: true,
+        detail: 'plugin/hooks refreshed to v5.260711.3',
+        preservedDisabled: true,
+        hookReviewRequired: false,
+      });
       expect(calls).toContain(`codex plugin marketplace add ${root} --json`);
       expect(calls).toContain('codex plugin add genie@automagik --json');
       expect(readFileSync(configPath, 'utf8')).toContain('enabled = false');
@@ -3186,4 +2678,146 @@ describe('summarizeJsonlSignals age filter', () => {
     expect(summary.signals.map((s) => s.event)).toEqual(['no.timestamp']);
     expect(summary.newestStaleTimestamp).toBeNull();
   });
+});
+
+// ===========================================================================
+// A14/R3: --sync-only INSPECTS codex health and fails nonzero + byte-identical
+// on a missing / disabled / stale plugin, never enabling or swapping anything.
+// ===========================================================================
+describe('--sync-only codex inspection (A14/R3)', () => {
+  function digestTree(dir: string): string {
+    const digest = createHash('sha256');
+    const walk = (current: string): void => {
+      for (const name of readdirSync(current).sort()) {
+        const abs = join(current, name);
+        const stat = statSync(abs);
+        digest.update(`${name}\0${stat.isDirectory() ? 'd' : 'f'}\0${stat.isDirectory() ? '' : readFileSync(abs)}\0`);
+        if (stat.isDirectory()) walk(abs);
+      }
+    };
+    walk(dir);
+    return digest.digest('hex');
+  }
+
+  const healthyProbe = (): CodexPluginProbe => ({ ...healthyUpdateCodexProbe(), version: VERSION });
+  const disabledProbe = (): CodexPluginProbe => ({
+    ...healthyUpdateCodexProbe(),
+    version: VERSION,
+    enabled: false,
+    usable: false,
+  });
+  const missingProbe = (): CodexPluginProbe => ({
+    cliAvailable: true,
+    status: 'ok',
+    installed: false,
+    usable: false,
+    usabilityDetail: 'plugin is not installed',
+    detail: 'not installed',
+  });
+  const staleProbe = (): CodexPluginProbe => ({ ...healthyUpdateCodexProbe(), version: '0.0.0' });
+
+  test('narrowUpdateAgentSyncSelection passes the real selection through (restore-hermes-sync-leg)', () => {
+    // codex/none: agent-sync has nothing to do (codex is plugin-only; none is none).
+    expect(narrowUpdateAgentSyncSelection('codex')).toBeNull();
+    expect(narrowUpdateAgentSyncSelection('none')).toBeNull();
+    // auto/all/claude pass through UNCHANGED. Collapsing these to 'claude' (the
+    // prior behavior) silently killed runAgentSync's hermes leg, which only
+    // fires on a verbatim 'auto'/'all' — see runAgentSync in agent-sync.ts.
+    expect(narrowUpdateAgentSyncSelection('auto')).toBe('auto');
+    expect(narrowUpdateAgentSyncSelection('all')).toBe('all');
+    expect(narrowUpdateAgentSyncSelection('claude')).toBe('claude');
+  });
+
+  test('a healthy exact plugin passes inspection', () => {
+    expect(() =>
+      inspectSyncOnlyCodexHealth({
+        selection: 'codex',
+        expectedVersion: VERSION,
+        resolveExecutable: () => '/fixture/codex',
+        probe: healthyProbe,
+        prove: () => ({}) as never,
+      }),
+    ).not.toThrow();
+  });
+
+  test('inspection is skipped entirely when codex is not in scope', () => {
+    let probed = false;
+    inspectSyncOnlyCodexHealth({
+      selection: 'claude',
+      expectedVersion: VERSION,
+      resolveExecutable: () => '/fixture/codex',
+      probe: () => {
+        probed = true;
+        return healthyProbe();
+      },
+    });
+    expect(probed).toBe(false);
+  });
+
+  test('under auto with no codex CLI on PATH, inspection is skipped but prints an explicit advisory (not a silent pass)', () => {
+    let probed = false;
+    const lines: string[] = [];
+    inspectSyncOnlyCodexHealth({
+      selection: 'auto',
+      expectedVersion: VERSION,
+      resolveExecutable: () => null,
+      probe: () => {
+        probed = true;
+        return healthyProbe();
+      },
+      log: (line) => lines.push(line),
+    });
+    expect(probed).toBe(false);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('Codex checks skipped');
+    expect(lines[0]).toContain('no codex CLI found');
+  });
+
+  test('an explicit codex/all selection with no codex CLI on PATH still throws (auto is the only silent-skip scope)', () => {
+    expect(() =>
+      inspectSyncOnlyCodexHealth({
+        selection: 'codex',
+        expectedVersion: VERSION,
+        resolveExecutable: () => null,
+        probe: healthyProbe,
+      }),
+    ).toThrow('--sync-only requires the Codex CLI');
+  });
+
+  for (const [label, probe] of [
+    ['disabled', disabledProbe],
+    ['missing', missingProbe],
+    ['stale', staleProbe],
+  ] as const) {
+    test(`a ${label} plugin fails --sync-only nonzero and leaves fallback + claude trees byte-identical, never enabling`, () => {
+      const fallback = mkdtempSync(join(tmpdir(), `genie-synconly-fallback-${label}-`));
+      mkdirSync(join(fallback, 'wish'), { recursive: true });
+      writeFileSync(join(fallback, 'wish', 'SKILL.md'), '# personal wish\n');
+      const claude = mkdtempSync(join(tmpdir(), `genie-synconly-claude-${label}-`));
+      writeFileSync(join(claude, 'note.md'), 'claude skill\n');
+      const beforeFallback = digestTree(fallback);
+      const beforeClaude = digestTree(claude);
+      let synced = false;
+      try {
+        expect(() =>
+          runLegacySyncOnlyConvergence({
+            selection: 'codex',
+            expectedVersion: VERSION,
+            resolveExecutable: () => '/fixture/codex',
+            runner: () => ({ exitCode: 0, stdout: '{"installed":[]}', stderr: '' }),
+            probe,
+            sync: () => {
+              synced = true;
+            },
+          }),
+        ).toThrow('--sync-only cannot converge the Codex plugin');
+        expect(synced).toBe(false);
+        expect(digestTree(fallback)).toBe(beforeFallback);
+        expect(digestTree(claude)).toBe(beforeClaude);
+      } finally {
+        rmSync(fallback, { recursive: true, force: true });
+        rmSync(claude, { recursive: true, force: true });
+      }
+    });
+  }
 });

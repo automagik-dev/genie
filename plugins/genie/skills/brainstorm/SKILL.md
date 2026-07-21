@@ -5,7 +5,7 @@ description: "Explore ambiguous or early-stage ideas interactively — tracks wi
 
 # brainstorm — Explore Before Planning
 
-**Runtime syntax:** in Codex, invoke the plugin copy with the owner-qualified `$genie:<skill>` selector; use bare `$<skill>` only when intentionally selecting a user-tier copy (CLI-managed fallback or separately installed personal skill). Claude Code and Hermes use `/<skill>`. Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active tier.
+**Runtime syntax:** in Codex, invoke the plugin copy with the owner-qualified `$genie:<skill>` selector; use bare `$<skill>` only when intentionally selecting a user-tier copy (a separately installed personal copy; Genie no longer seeds this tier). Claude Code and Hermes use `/<skill>`. Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active tier.
 
 Collaborate on fuzzy ideas until they are concrete enough for `wish`.
 
@@ -17,7 +17,7 @@ Collaborate on fuzzy ideas until they are concrete enough for `wish`.
 All artifacts live in `.genie/` within the shared worktree. When spawned as a native subagent, the dispatcher curates seed context (file path + extracted section) into your prompt — use it directly; do not re-read what was already provided.
 
 ## Flow
-1. **Read context:** scan relevant code, docs, conventions. Check the canonical `.genie/INDEX.md` for an existing entry matching this slug/topic — seed from it if found. If the legacy `.genie/brainstorm.md` exists, migrate it first (see Index).
+1. **Read context:** scan relevant code, docs, conventions. Check the canonical `.genie/INDEX.md` for an existing entry matching this slug/topic — seed from it if found. If a legacy flat brainstorm jar (the pre-`INDEX.md` single-file index some repos still carry under `.genie/`) exists, migrate it first (see Index).
 2. **Init persistence:** create `.genie/brainstorms/<slug>/DRAFT.md` immediately; create `.genie/INDEX.md` if missing (see Index).
 3. **Scope-size check:** if the request spans multiple independent subsystems, decompose before refining (see Scope Size).
 4. **Refine:** fill WRS dimensions. Ask only what an unfilled dimension needs — when the request or context already settles a dimension, mark it filled and move on; never re-litigate decisions the user already made. Prefer concrete options over open questions.
@@ -72,10 +72,13 @@ The single brainstorm/planning index is `.genie/INDEX.md`; auto-create it if mis
 ## Poured
 ```
 
-Legacy migration is idempotent: if `.genie/brainstorm.md` exists, merge each
-unique entry into the matching section of `.genie/INDEX.md`, verify every
-legacy entry is present, then remove the legacy file and stage that deletion if
-it was tracked. Never update or retain both indexes after a successful merge.
+Legacy migration is idempotent: if a repo still carries the pre-`INDEX.md` flat
+brainstorm jar under `.genie/`, merge each unique entry into the matching
+section of `.genie/INDEX.md`, verify every legacy entry is present, then remove
+the legacy file and stage that deletion if it was tracked. Never update or
+retain both indexes after a successful merge. (The genie repo itself has already
+completed this migration — its jar is retired; `.genie/INDEX.md` is the sole
+tracker here.)
 
 | Event | Action |
 |-------|--------|
@@ -94,7 +97,7 @@ At WRS = 100:
    ```bash
    git add .genie/brainstorms/<slug>/DESIGN.md .genie/brainstorms/<slug>/DRAFT.md .genie/INDEX.md
    ```
-   If migration removed a tracked `.genie/brainstorm.md`, stage that deletion too. The genie repo's wish linter fails any wish whose design link doesn't resolve to a real file — uncommitted brainstorms are missing in CI and sibling worktrees, so never skip the stage.
+   If migration removed a tracked legacy flat jar, stage that deletion too. The genie repo's wish linter fails any wish whose design link doesn't resolve to a real file — uncommitted brainstorms are missing in CI and sibling worktrees, so never skip the stage.
 4. Update `.genie/INDEX.md` — keep the entry under Ready and link the staged DESIGN.md. Do not move it to Poured before a WISH.md exists and its plan review is persisted as `APPROVED`.
 5. Create a board pointer; if this fails (no `.genie/genie.db` yet, CLI unavailable), warn and continue — DESIGN.md and `.genie/INDEX.md` in git are the source of truth:
    ```bash

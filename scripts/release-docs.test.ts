@@ -45,6 +45,210 @@ function buildHelperInputs(): string[] {
 }
 
 describe('Group E release and documentation contracts', () => {
+  test('auto-version never executes dev-controlled code or accepts manual mutation', () => {
+    const workflow = read('.github/workflows/version.yml');
+    expect(workflow).not.toContain('workflow_dispatch:');
+    expect(workflow).toContain('persist-credentials: false');
+    for (const forbidden of [
+      'bun install',
+      'bun run version',
+      'bunx ',
+      'bun --print',
+      'token: ${{ secrets.GITHUB_TOKEN }}',
+    ]) {
+      expect(workflow).not.toContain(forbidden);
+    }
+    for (const path of [
+      'package.json',
+      'plugins/genie/.claude-plugin/plugin.json',
+      'plugins/genie/.codex-plugin/plugin.json',
+      'plugins/genie/package.json',
+      '.claude-plugin/marketplace.json',
+      'plugins/hermes-genie/plugin.yaml',
+    ]) {
+      expect(workflow).toContain(path);
+    }
+    expect(workflow).toContain('git diff --cached --name-only');
+    expect(workflow).toContain('git commit --no-verify');
+    expect(workflow).toContain('git push --atomic origin "HEAD:refs/heads/dev"');
+    expect(workflow).toContain('gh workflow run ci.yml --repo "${GITHUB_REPOSITORY}" --ref "v${VERSION}"');
+    expect(workflow).not.toContain('gh workflow run ci.yml --repo "${GITHUB_REPOSITORY}" --ref dev');
+    expect(workflow.indexOf('GH_TOKEN: ${{ github.token }}')).toBeGreaterThan(
+      workflow.indexOf('git commit --no-verify'),
+    );
+    expect(read('.github/workflows/ci.yml')).toContain('workflow_dispatch:');
+  });
+
+  test('privileged reusable workflows admit only the exact channel-specific main caller', () => {
+    for (const path of ['.github/workflows/sign-attest.yml', '.github/workflows/release-publish.yml']) {
+      const workflow = read(path);
+      expect(workflow).toContain('permissions: {}');
+      expect(workflow).toContain(
+        'EXPECTED_STABLE_CALLER: automagik-dev/genie/.github/workflows/release.yml@refs/heads/main',
+      );
+      expect(workflow).toContain(
+        'EXPECTED_AUTOMATED_CALLER: automagik-dev/genie/.github/workflows/version.yml@refs/heads/main',
+      );
+      expect(workflow).toContain('EXPECTED_EVENT=workflow_dispatch');
+      expect(workflow).toContain('EXPECTED_EVENT=workflow_run');
+      expect(workflow).toContain('"$CALLER_REF" != refs/heads/main');
+      expect(workflow).toContain('"$CALLER_WORKFLOW_REF" != "$EXPECTED_CALLER"');
+      expect(workflow).toContain('"$CALLER_WORKFLOW_SHA" != "$CALLER_SHA"');
+      expect(workflow).toContain('needs: admit');
+    }
+  });
+
+  test('release stages consume only artifacts from their current orchestrator run', () => {
+    for (const path of ['.github/workflows/sign-attest.yml', '.github/workflows/release-publish.yml']) {
+      const workflow = read(path);
+      expect(workflow).toContain('actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093');
+      for (const crossRunInput of ['github-token:', 'run-id:', 'steps.runid', 'steps.src.outputs.run_id']) {
+        expect(workflow).not.toContain(crossRunInput);
+      }
+    }
+    expect(read('.github/workflows/sign-attest.yml')).toContain('pattern: genie-*-tarball');
+    expect(read('.github/workflows/release-publish.yml')).toContain('pattern: genie-*-signed');
+
+    const publishCall = read('.github/workflows/release.yml').split('\n  publish:')[1]?.split('\n    with:')[0];
+    expect(publishCall).toBeDefined();
+    expect(publishCall).not.toContain('actions: read');
+  });
+
+  test('release attestations bind the built source and trusted control identities', () => {
+    const release = read('.github/workflows/release.yml');
+    const signing = read('.github/workflows/sign-attest.yml');
+    for (const input of ['channel', 'source_sha', 'source_branch', 'source_ci_run_id']) {
+      expect(release).toContain(`${input}: \${{ inputs.${input} }}`);
+      expect(signing).toContain(`--build-workflow-input "${input}=\${${input.toUpperCase()}}"`);
+    }
+    expect(signing).not.toContain('actions/attest-build-provenance@');
+    expect(signing).toContain('actions/attest@67422f5511b7ff725f4dbd6fb9bd2cd925c65a8d');
+    expect(signing).toContain('bash scripts/release-native-predicate.sh create');
+    expect(signing).toContain('bash scripts/release-native-predicate.sh verify');
+    expect(signing).toContain('bash scripts/release-generic-provenance.sh verify-exact');
+    expect(signing).toContain('if [[ "$CHANNEL" == "stable" ]]');
+    expect(read('scripts/release-generic-provenance.sh')).toContain(
+      "AUTOMATED_ENTRY_POINT='.github/workflows/version.yml'",
+    );
+    expect(read('scripts/release-generic-provenance.sh')).toContain('workflow_run');
+    expect(signing).toContain('--source-digest "$CONTROL_SHA"');
+    // gh's flag group [cert-identity cert-identity-regex signer-repo
+    // signer-workflow] is mutually exclusive; --cert-identity is the pinned
+    // identity, so --signer-workflow must never reappear beside it (observed
+    // 2026-07-20: the combination hard-fails gh attestation verify).
+    expect(signing).not.toContain('--signer-workflow');
+  });
+
+  test('stable approval is explicit while dev and homolog remain automated', () => {
+    const release = read('.github/workflows/release.yml');
+    const version = read('.github/workflows/version.yml');
+    const manualInputs = release.split('workflow_dispatch:')[1]?.split('workflow_call:')[0] ?? '';
+    const manualChannel = manualInputs.split('channel:')[1]?.split('source_sha:')[0] ?? '';
+    expect(release).toContain('workflow_call:');
+    expect(manualChannel).toContain('- stable');
+    expect(manualChannel).not.toContain('- homolog');
+    expect(manualChannel).not.toContain('- dev');
+    expect(release).toContain('CALLER_WORKFLOW_REF: ${{ github.workflow_ref }}');
+    expect(release).toContain('CALLER_WORKFLOW_SHA: ${{ github.workflow_sha }}');
+    expect(release).toContain('group: release-${{ inputs.version }}');
+    expect(release).toContain('queue: max');
+    expect(release).toContain('cancel-in-progress: false');
+    expect(release).toContain('approve-stable:');
+    expect(release).toContain("if: inputs.channel == 'stable'");
+    expect(release).toContain('name: production');
+    expect(release).toContain('needs: [guard, approve-stable]');
+    expect(release).toContain("(inputs.channel != 'stable' || needs.approve-stable.result == 'success')");
+    expect(release).not.toContain("&& 'production' || ''");
+    expect(release).toContain('DISPATCH_ACTOR: ${{ github.actor }}');
+    expect(release).toContain('TRIGGERING_ACTOR: ${{ github.triggering_actor }}');
+    expect(release).toContain('RUN_ATTEMPT: ${{ github.run_attempt }}');
+
+    expect(version).toContain('release-trigger.stable_manual_approval_required');
+    expect(version).toContain("steps.context.outputs.branch == 'main'");
+    expect(version).toContain('uses: ./.github/workflows/release.yml');
+    expect(version).toContain("if: needs.auto-version.outputs.release_ready == 'true'");
+    expect(version).toContain('channel: ${{ needs.auto-version.outputs.channel }}');
+    expect(version).not.toContain('gh workflow run release.yml');
+    expect(version).not.toContain('CHANNEL="stable"');
+    expect(version).not.toContain('--field channel=stable');
+
+    for (const path of ['.github/workflows/ci.yml', '.github/workflows/version.yml']) {
+      expect(read(path)).toContain('branches: [main, homolog, dev]');
+    }
+    expect(read('.github/workflows/version.yml')).toContain(
+      "!contains(github.event.workflow_run.head_commit.message, '[release-manifest]')",
+    );
+  });
+
+  test('promotion and tag equivalence exclude only generated channel manifests', () => {
+    for (const path of ['.github/workflows/version.yml', 'scripts/release-guard.sh']) {
+      const source = read(path);
+      expect(source).not.toContain("':(exclude).well-known'");
+      for (const manifest of ['latest.json', 'homolog.json', 'dev.json']) {
+        expect(source).toContain(`':(exclude).well-known/${manifest}'`);
+      }
+    }
+  });
+
+  test('docs and commit lint use immutable actions and locked local tools', () => {
+    const commitlint = read('.github/workflows/commitlint.yml');
+    expect(commitlint).not.toContain('wagoid/commitlint-github-action');
+    expect(commitlint).toContain('bun install --frozen-lockfile --ignore-scripts');
+    expect(commitlint).toContain('bun x --no-install commitlint');
+    expect(commitlint).toContain('git cat-file -e "${BASE_SHA}^{commit}"');
+    const docs = read('.github/workflows/docs-lint.yml');
+    expect(docs).toContain('oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6');
+    expect(docs).toContain('bun install --frozen-lockfile --ignore-scripts');
+    expect(docs).not.toContain('bunx ');
+    const pkg = JSON.parse(read('package.json')) as { devDependencies: Record<string, string> };
+    expect(pkg.devDependencies['@commitlint/cli']).toBeDefined();
+    expect(pkg.devDependencies['@commitlint/config-conventional']).toBeDefined();
+    expect(pkg.devDependencies['markdownlint-cli2']).toBe('0.23.0');
+    expect(pkg.devDependencies['markdown-link-check']).toBe('3.14.2');
+  });
+
+  test('secret-bearing CI never delegates to a mutable container tag', () => {
+    const workflow = read('.github/workflows/ci.yml');
+    const action = read('.github/actions/ggshield/action.yml');
+    expect(workflow).toContain('uses: ./.github/actions/ggshield');
+    expect(workflow).not.toContain('GitGuardian/ggshield-action@');
+    expect(action).toContain(
+      'docker://gitguardian/ggshield@sha256:11057725f4a47b587735351b69b1873435bf393050f946916ef05b1b0c4b1cf4',
+    );
+    expect(action).not.toMatch(/image:\s*docker:\/\/[^\s@]+:[^\s]+/);
+  });
+
+  test('every workflow pins its top-level token permissions in repository code', () => {
+    for (const name of readdirSync(join(ROOT, '.github/workflows')).filter((entry) => entry.endsWith('.yml'))) {
+      expect(read(`.github/workflows/${name}`), name).toMatch(/^permissions:(?:\s*\{\}|\n)/m);
+    }
+  });
+
+  test('Node setup is immutable in every workflow, including the signed release build', () => {
+    const pin = 'actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444';
+    for (const path of [
+      '.github/workflows/audit-next-tag.yml',
+      '.github/workflows/build-tarballs.yml',
+      '.github/workflows/ci.yml',
+    ]) {
+      expect(read(path)).toContain(pin);
+      expect(read(path)).not.toMatch(/actions\/setup-node@(?![a-f0-9]{40}\b)/);
+    }
+  });
+
+  test('every remote workflow dependency is commit-pinned except the required exact SLSA builder tag', () => {
+    const slsaTagException =
+      'slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0';
+    for (const name of readdirSync(join(ROOT, '.github/workflows')).filter((entry) => entry.endsWith('.yml'))) {
+      const workflow = read(`.github/workflows/${name}`);
+      for (const match of workflow.matchAll(/^\s*(?:-\s*)?uses:\s*([^\s#]+)/gm)) {
+        const reference = match[1];
+        if (reference.startsWith('./') || reference === slsaTagException) continue;
+        expect(reference, `${name}: ${reference}`).toMatch(/@[a-f0-9]{40}$/);
+      }
+    }
+  });
+
   test('Build Tarballs PR filter covers every release-payload input class', () => {
     const workflow = read('.github/workflows/build-tarballs.yml');
     for (const path of [
@@ -79,14 +283,87 @@ describe('Group E release and documentation contracts', () => {
     for (const helper of buildHelperInputs()) expect(workflow).toContain(`- '${helper}'`);
   });
 
+  test('every native release-binary smoke proves the hidden installer transaction syscall', () => {
+    const workflow = read('.github/workflows/build-tarballs.yml');
+    expect(workflow.match(/__install-promote --self-test/g)).toHaveLength(3);
+    expect(workflow).toContain('"${STAGE}/genie" __install-promote --self-test');
+    expect(workflow).toContain('/app/genie __install-promote --self-test');
+    expect(read('src/genie.ts')).toContain(".command('__install-promote', { hidden: true })");
+  });
+
   test('release create and promotion paths retain the one-time convergence caveat', () => {
     const workflow = read('.github/workflows/release-publish.yml');
     const helper = read('scripts/reconcile-release-note.sh');
-    expect(workflow).toContain('bash scripts/reconcile-release-note.sh');
+    const prepare = workflow.indexOf('bash scripts/reconcile-release-note.sh prepare');
+    const firstAssets = workflow.indexOf('bash scripts/reconcile-release-assets.sh');
+    const finalize = workflow.indexOf('bash scripts/reconcile-release-note.sh finalize');
+    const locked = workflow.indexOf('bash scripts/release-immutability.sh release');
+    const lockedAssets = workflow.lastIndexOf('bash scripts/reconcile-release-assets.sh');
+    expect(prepare).toBeGreaterThan(-1);
+    expect(firstAssets).toBeGreaterThan(prepare);
+    expect(finalize).toBeGreaterThan(firstAssets);
+    expect(locked).toBeGreaterThan(finalize);
+    expect(lockedAssets).toBeGreaterThan(locked);
+    expect(workflow).not.toContain('release-immutability.sh repository');
+    expect(workflow).not.toContain('/immutable-releases');
+    expect(workflow).not.toContain('--clobber');
+    expect(workflow).toContain('name: release-manifests');
+    // Manifest push authenticates with a fine-grained PAT, not a deploy key
+    // (deploy keys are disabled org-wide; the ssh-key model silently fell back
+    // to the bot token and 403'd on protected main). The stale deploy-key
+    // secret must be gone.
+    expect(workflow).toContain('token: ${{ secrets.RELEASE_MANIFESTS_TOKEN }}');
+    expect(workflow).not.toContain('RELEASE_MANIFESTS_DEPLOY_KEY: ${{');
+    expect(workflow).not.toContain('ssh-key: ${{ secrets.RELEASE_MANIFESTS_DEPLOY_KEY }}');
+    expect(workflow).toContain('[release-manifest]');
+    expect(workflow).toContain('cp scripts/reconcile-channel-manifests.sh "$MANIFEST_RECONCILER"');
+    expect(workflow).toContain('bash "$MANIFEST_RECONCILER"');
+    expect(workflow).toContain('for attempt in 1 2 3 4 5; do');
+    expect(workflow).toContain('git push origin "HEAD:refs/heads/main"');
     expect(helper).toContain('genie-agent-sync-migration-v1');
     expect(helper).toContain('older than `5.260711.6`');
     expect(helper).toContain('create_args=(release create');
     expect(helper).toContain('gh release edit');
+  });
+
+  test('channel documentation does not claim unsigned manifests are signed or use GitHub latest as authority', () => {
+    for (const path of ['README.md', 'SECURITY.md']) {
+      const source = read(path);
+      expect(source).not.toContain('signed `.well-known');
+      expect(source).toContain('repository-hosted `.well-known');
+      expect(source).toContain("GitHub's `/releases/latest`");
+    }
+  });
+
+  test('immutable-release bootstrap ordering remains explicit and fail-closed', () => {
+    const security = read('SECURITY.md');
+    expect(security).toContain('drain every Version and Release run started under the old `main` workflows');
+    expect(security).toContain('before enabling repository immutability');
+    expect(security).toContain('before the separately approved merge to `main`');
+    expect(security).toContain('must fail closed and must not advance a channel manifest');
+    expect(security).toContain('freshly built and published by the merged draft-first release control');
+  });
+
+  test('operator verification docs name only the shipped bundle/provenance verifier', () => {
+    for (const path of ['SECURITY.md', '.github/ISSUE_TEMPLATE/signing-key-fingerprint.md']) {
+      const source = read(path);
+      expect(source).toContain('scripts/verify-release.sh');
+      expect(source).toContain('.tar.gz.bundle');
+      expect(source).toContain('.tar.gz.intoto.jsonl');
+      expect(source).not.toContain('genie sec verify-install');
+      expect(source).not.toContain('.tgz.sig');
+      expect(source).not.toContain('.tgz.cert');
+      expect(source).not.toContain('provenance.intoto.jsonl');
+    }
+    expect(read('scripts/verify-release.sh')).not.toContain('genie sec verify-install');
+    for (const path of ['.well-known/security.txt', '.github/cosign.pub']) {
+      expect(read(path)).not.toContain('genie sec verify-install');
+    }
+    const issueTemplate = read('.github/ISSUE_TEMPLATE/signing-key-fingerprint.md');
+    expect(issueTemplate).toContain('privacidade@namastex.ai');
+    expect(issueTemplate).not.toContain('security@namastex.com');
+    expect(read('SECURITY.md')).toContain('six required in-repo witnesses');
+    expect(read('scripts/check-fingerprint-pinning.sh')).not.toContain('all four witnesses');
   });
 
   test('release packaging validates generated hooks and the extracted archive payload', () => {
@@ -242,9 +519,14 @@ describe('Group E release and documentation contracts', () => {
     ]) {
       expect(docs).toContain(statement);
     }
-    expect(read('README.md')).toContain('synchronizes up to 23 digest-managed product-skill fallbacks');
-    expect(read('README.md')).toContain('CLI-managed product skills');
-    expect(read('plugins/genie/README.md')).toContain('CLI-managed product fallbacks');
+    // Plugin-only contract: the installed plugin is the sole Genie-managed skill provider.
+    expect(read('README.md')).toContain('the installed plugin is the **only** Genie-managed skill provider');
+    expect(read('README.md')).toContain('Fallback retirement');
+    expect(read('plugins/genie/README.md')).toContain('the only Genie-managed skill provider');
+    // The retired CLI-managed-fallback promise must be gone from operator docs.
+    expect(docs).not.toContain('synchronizes up to 23 digest-managed product-skill fallbacks');
+    expect(docs).not.toContain('CLI-managed product skills');
+    expect(docs).not.toContain('CLI-managed product fallbacks');
     expect(docs).toContain('at most 64 candidate');
     expect(docs).toContain('network-free');
     expect(docs).toContain('no Codex network lookup');
@@ -274,8 +556,9 @@ describe('Group E release and documentation contracts', () => {
 
     const skillsOverview = read('skills/README.md');
     expect(skillsOverview).toContain(
-      'Codex user tier (a CLI-managed product fallback or separately installed personal copy)',
+      'Codex user tier (only a separately installed personal copy; Genie no longer seeds this tier)',
     );
+    expect(skillsOverview).not.toContain('CLI-managed product fallback');
     expect(skillsOverview).toContain('persists Codex maintenance consent');
     expect(skillsOverview).toContain('later explicit `genie update`');
   });
@@ -292,8 +575,11 @@ describe('Group E release and documentation contracts', () => {
     expect(lifecycle).toContain('automatically routes the completed DESIGN.md');
     expect(plugin).toContain('successful `genie setup --codex` persists Codex maintenance consent');
     expect(root).toContain('successful Codex setup also persists Codex maintenance consent');
-    expect(plugin).toContain('clean digest-managed product-skill');
-    expect(root).toContain('digest-managed product-skill fallbacks');
+    // Consent no longer authorizes CLI-managed user-tier fallbacks; it refreshes only plugin surfaces.
+    expect(plugin).toContain('No supported path writes new product');
+    expect(root).toContain('never writes new product skills into the user tier');
+    expect(plugin).not.toContain('digest-managed product-skill');
+    expect(root).not.toContain('digest-managed product-skill fallbacks');
   });
 
   test('lifecycle skills share persisted WISH state and keep reviewers read-only', () => {

@@ -6,8 +6,9 @@
 #
 # Trust anchor (cosign keyless OIDC). Verification pins the certificate
 # identity + OIDC issuer — there is no long-lived public key to pin.
-#   cert-identity: ^https://github.com/automagik-dev/genie/.github/workflows/sign-attest.yml@
-#   issuer:        https://token.actions.githubusercontent.com
+# certificate-identity-regexp: ^https://github\.com/automagik-dev/genie/\.github/workflows/sign-attest\.yml@refs/heads/main$
+# certificate-oidc-issuer:     https://token.actions.githubusercontent.com
+# provenance source-uri:       github.com/automagik-dev/genie
 #
 # Default flow (gh attestation verify, falls back to cosign verify-blob):
 #   curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash
@@ -25,22 +26,44 @@ REPO="automagik-dev/genie"
 # `GENIE_CHANNEL=dev curl ... | bash` reads .well-known/dev.json. See wish
 # release-channel-dev (2026-05-11) for the producer-side wiring.
 MANIFEST_BASE="https://raw.githubusercontent.com/${REPO}/main/.well-known"
-EXPECTED_COSIGN_IDENTITY="^https://github.com/${REPO}/.github/workflows/sign-attest.yml@"
+EXPECTED_COSIGN_IDENTITY="^https://github\\.com/${REPO}/\\.github/workflows/sign-attest\\.yml@refs/heads/main$"
 EXPECTED_COSIGN_ISSUER="https://token.actions.githubusercontent.com"
+# sign-attest.yml registers the GitHub-native attestation under a CUSTOM
+# predicate type (NOT https://slsa.dev/provenance/v1 — GitHub's persistence API
+# runs SLSA validation for that URI and rejects our custom buildType). The
+# verifier MUST pass the same --predicate-type or `gh attestation verify`
+# defaults to slsa.dev/provenance/v1 and 404s the lookup. Keep this in lockstep
+# with scripts/release-native-predicate.sh + sign-attest.yml.
+EXPECTED_ATTESTATION_PREDICATE_TYPE="https://github.com/${REPO}/release-tarballs/v1"
 COSIGN_VERSION="v2.4.1"
+# `gh attestation verify` is the PRIMARY provenance verifier (cosign verify-blob
+# is the fallback). gh is therefore a verification prerequisite: when the system
+# gh is missing or too old to support `gh attestation` (needs gh >= 2.49), we
+# bootstrap a pinned official gh into TMP_DIR rather than silently degrading to
+# cosign-only. Mirrors the cosign bootstrap: pinned version, pinned per-platform
+# SHA256, OFFICIAL source only, checksum-verified before execution, never
+# installed system-wide. Note gh ships macOS as a .zip (no macOS tarball); Linux
+# is a .tar.gz — bootstrap_gh selects the archive tool per platform.
+GH_VERSION="v2.96.0"
 GENIE_HOME="${GENIE_HOME:-$HOME/.genie}"
 LOCAL_BIN="$HOME/.local/bin"
-TMP_DIR="$(mktemp -d -t genie-install-XXXXXX)"
+TMP_DIR="$(umask 077; mktemp -d -t genie-install-XXXXXX)"
 COSIGN_BIN=""
 COSIGN_BOOTSTRAPPED=0
+GH_BIN=""
 LIFECYCLE_LOCK=""
 LIFECYCLE_OWNER_FILE=""
 LIFECYCLE_OWNER_RECORD=""
 LIFECYCLE_LOCK_STALE_SECONDS=600
+# Set while extraction is in flight. This is private disposable source input;
+# durable recovery authority lives only in the promoter's internal transaction.
+STAGING_DIR=""
 
 cleanup() {
+  local status=$?
   release_lifecycle_lock
   rm -rf "$TMP_DIR"
+  return "$status"
 }
 trap cleanup EXIT
 
@@ -64,6 +87,38 @@ sha256_text() {
     printf '%s' "$1" | shasum -a 256 | awk '{print $1}'
   fi
 }
+
+portable_stat_fields() {
+  if stat -f '%Lp %u %l' "$1" >/dev/null 2>&1; then
+    stat -f '%Lp %u %l' "$1"
+  else
+    stat -c '%a %u %h' "$1"
+  fi
+}
+
+validate_private_temp_root() {
+  local path="$1" parent fields mode owner links mode_value uid
+  parent="$(dirname "$path")"
+  [[ -d "$path" && ! -L "$path" && -d "$parent" && ! -L "$parent" ]] ||
+    die "installer temp boundary is not physical" 1
+  fields="$(portable_stat_fields "$path")" || die "could not inspect installer temp directory" 1
+  read -r mode owner links <<<"$fields"
+  uid="$(id -u)"
+  [[ "$mode" == "700" && "$owner" == "$uid" && "$links" -ge 1 ]] ||
+    die "installer temp directory is not current-user-owned mode 0700" 1
+  fields="$(portable_stat_fields "$parent")" || die "could not inspect installer temp parent" 1
+  read -r mode owner links <<<"$fields"
+  mode_value=$((8#$mode))
+  if [[ $((mode_value & 8#022)) -eq 0 ]]; then
+    return
+  fi
+  if [[ "$owner" == "0" && $((mode_value & 8#1000)) -ne 0 ]]; then
+    return
+  fi
+  die "installer temp parent permits unsafe cross-principal replacement" 1
+}
+
+validate_private_temp_root "$TMP_DIR"
 
 # Resolve like Node's path.resolve without creating or dereferencing GENIE_HOME.
 # The parent must already exist so a losing installer cannot mutate protected
@@ -107,17 +162,68 @@ lock_mtime_seconds() {
   fi
 }
 
+# Return success when a numeric PID is confirmed live OR process inspection is
+# unavailable. Only ps's ordinary "no such process" status (1) proves death;
+# command denial/missing ps/internal errors are unknown and therefore fail
+# closed as live, matching TypeScript's EPERM/unknown-identity rule.
+pid_is_live_or_unknown() {
+  local pid="$1" output status
+  if output="$(ps -p "$pid" -o pid= 2>&1)"; then
+    return 0
+  else
+    status=$?
+  fi
+  # Status 1 with no diagnostic is the portable `ps -p` no-match outcome.
+  # Any output or different status means inspection itself was unavailable.
+  [[ "$status" -eq 1 && -z "$output" ]] && return 1
+  return 0
+}
+
 lock_record_is_stale() {
   local path="$1" expected_record="$2" current_record mtime now age pid
   [[ -f "$path" && ! -L "$path" ]] || return 1
-  IFS= read -r current_record < "$path" || return 1
+  # EOF without a trailing newline still populates the record; only a genuinely
+  # empty read collapses to "". A zero-byte lock (a crash between openSync('wx')
+  # and writeSync) is thus observed as "" and matched by an "" expected record.
+  IFS= read -r current_record < "$path" || [ -n "$current_record" ] || current_record=""
   [[ "$current_record" == "$expected_record" ]] || return 1
   case "$current_record" in
-    [1-9][0-9]*:*) pid="${current_record%%:*}" ;;
-    *) return 1 ;;
+    *:*) pid="${current_record%%:*}" ;;
+    *) pid="$current_record" ;;
   esac
-  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
-  if kill -0 "$pid" 2>/dev/null; then return 1; fi
+  # Liveness via `ps -p`, not `kill -0`, so a lock owned by another user (EPERM
+  # under `kill -0`) still counts as alive — the EPERM-is-alive rule
+  # lockHasLiveOwner enforces in src/lib/agent-sync.ts. An empty or unparseable
+  # record has no live pid to pin it, so it is a dead owner recoverable once
+  # aged — the same debris TS lockOwner maps to null.
+  if [[ "$pid" =~ ^[0-9]+$ ]] && pid_is_live_or_unknown "$pid"; then return 1; fi
+  mtime="$(lock_mtime_seconds "$path" 2>/dev/null)" || return 1
+  now="$(date +%s)"
+  age=$((now - mtime))
+  [[ "$age" -gt "$LIFECYCLE_LOCK_STALE_SECONDS" || "$age" -lt "-$LIFECYCLE_LOCK_STALE_SECONDS" ]]
+}
+
+# Judge an EXISTING `.steal` guard we do not own for reaping. Mirrors the TS
+# aged-guard-recovery branch in stealStaleLock (src/lib/agent-sync.ts): a guard
+# is reapable only when BOTH its mtime is outside the ±stale window AND its
+# owner is dead. An empty or unparseable record — the debris a crash between
+# guard create and record write leaves — is a dead owner (TS lockOwner returns
+# null for the same records). A symlinked or non-regular guard is never
+# reapable. Liveness uses `ps -p` so another user's live process (EPERM under
+# `kill -0`) still counts as alive, matching lockHasLiveOwner.
+foreign_lock_record_is_stale() {
+  local path="$1" record pid mtime now age
+  [[ -f "$path" && ! -L "$path" ]] || return 1
+  # EOF without a trailing newline keeps the partial record (a live pid must not
+  # be clobbered to "" and mis-reaped); only a truly empty read yields "".
+  IFS= read -r record < "$path" || [ -n "$record" ] || record=""
+  case "$record" in
+    *:*) pid="${record%%:*}" ;;
+    *) pid="$record" ;;
+  esac
+  # A parseable, live pid pins the guard as owned regardless of age; an empty or
+  # unparseable pid falls through as a dead owner subject only to the mtime gate.
+  if [[ "$pid" =~ ^[0-9]+$ ]] && pid_is_live_or_unknown "$pid"; then return 1; fi
   mtime="$(lock_mtime_seconds "$path" 2>/dev/null)" || return 1
   now="$(date +%s)"
   age=$((now - mtime))
@@ -125,12 +231,19 @@ lock_record_is_stale() {
 }
 
 # Clear abandoned lease debris under the same token-owned `.steal` guard used
-# by TypeScript. The lock record is checked again while the guard is held, so a
-# newly acquired owner can never be removed by an old observation.
+# by TypeScript's stealStaleLock (src/lib/agent-sync.ts) — keep the two in
+# lockstep. The lock record is checked again while the guard is held, so a
+# newly acquired owner can never be removed by an old observation. An abandoned
+# guard (aged mtime AND dead/empty owner) is itself reaped and the caller backs
+# off so the outer loop can re-win the guard; a fresh or live-owned guard fails
+# closed. A guard is only ever unlinked, never renamed or quarantined.
 recover_stale_lifecycle_lock() {
   local observed guard guard_owner guard_token guard_record current
   [[ -f "$LIFECYCLE_LOCK" && ! -L "$LIFECYCLE_LOCK" ]] || return 1
-  IFS= read -r observed < "$LIFECYCLE_LOCK" || return 1
+  # A zero-byte lock reads as observed="" (dead-owner debris); a no-newline
+  # record is preserved rather than clobbered. lock_record_is_stale re-verifies
+  # observed against the live bytes before anything is removed.
+  IFS= read -r observed < "$LIFECYCLE_LOCK" || [ -n "$observed" ] || observed=""
   lock_record_is_stale "$LIFECYCLE_LOCK" "$observed" || return 1
   guard="${LIFECYCLE_LOCK}.steal"
   guard_token="$(sha256_text "installer-steal:$$:${TMP_DIR}:$(date +%s):${observed}")"
@@ -138,11 +251,16 @@ recover_stale_lifecycle_lock() {
   guard_record="$$:${guard_token:0:32}:unknown"
   ( umask 077; printf '%s\n' "$guard_record" > "$guard_owner" )
   if ! ln "$guard_owner" "$guard" 2>/dev/null; then
+    # An abandoned guard (aged mtime AND dead/empty owner) is the F42 debris that
+    # otherwise blocks acquisition forever; reap it and back off so the next
+    # outer attempt can win the guard. A fresh or live-owned guard is left in
+    # place (fail-closed).
+    if foreign_lock_record_is_stale "$guard"; then rm -f "$guard"; fi
     rm -f "$guard_owner"
     return 1
   fi
   if lock_record_is_stale "$LIFECYCLE_LOCK" "$observed"; then
-    IFS= read -r current < "$LIFECYCLE_LOCK" || current=""
+    IFS= read -r current < "$LIFECYCLE_LOCK" || [ -n "$current" ] || current=""
     if [[ "$current" == "$observed" ]]; then rm -f "$LIFECYCLE_LOCK"; fi
   fi
   if [[ -e "$guard" && -e "$guard_owner" && "$guard" -ef "$guard_owner" ]]; then rm -f "$guard"; fi
@@ -165,7 +283,10 @@ acquire_lifecycle_lock() {
   LIFECYCLE_OWNER_FILE="${LIFECYCLE_LOCK}.installer-$$-${token:0:16}"
   LIFECYCLE_OWNER_RECORD="$$:${token:0:32}:unknown"
   attempt=0
-  while [[ "$attempt" -lt 3 ]]; do
+  # A stale lock behind an abandoned guard consumes three attempts in the worst
+  # case (reap the guard, then win the guard + clear the lock, then win the
+  # lock); budget one extra so transient contention still has slack.
+  while [[ "$attempt" -lt 4 ]]; do
     ( umask 077; printf '%s\n' "$LIFECYCLE_OWNER_RECORD" > "$LIFECYCLE_OWNER_FILE" )
     if ln "$LIFECYCLE_OWNER_FILE" "$LIFECYCLE_LOCK" 2>/dev/null; then return 0; fi
     rm -f "$LIFECYCLE_OWNER_FILE"
@@ -277,16 +398,95 @@ audit_log() {
   printf '%s\n' "$1" >> "$GENIE_HOME/audit/install.jsonl"
 }
 
-gh_attestation_available() {
-  command -v gh >/dev/null 2>&1 || return 1
-  gh attestation verify --help >/dev/null 2>&1
+# Map a detected platform to the gh release asset infix + archive extension.
+# gh publishes Linux as .tar.gz and macOS ONLY as .zip (there is no macOS
+# tarball), so the extension travels with the slug and bootstrap_gh picks the
+# matching extractor.
+gh_asset_for_platform() {
+  case "$1" in
+    linux-x64-glibc|linux-x64-musl) echo "linux_amd64 tar.gz" ;;
+    linux-arm64) echo "linux_arm64 tar.gz" ;;
+    darwin-arm64) echo "macOS_arm64 zip" ;;
+    *) return 1 ;;
+  esac
+}
+
+# Pinned SHA256s for gh ${GH_VERSION}, taken verbatim from the official
+# gh_<ver>_checksums.txt on the cli/cli release (NOT invented). Linux entries are
+# the *_linux_*.tar.gz assets; the macOS entry is the *_macOS_arm64.zip asset.
+gh_sha_for_asset() {
+  case "$1" in
+    linux_amd64) echo "83d5c2ccad5498f58bf6368acb1ab32588cf43ab3a4b1c301bf36328b1c8bd60" ;;
+    linux_arm64) echo "06f86ec7103d41993b76cd78072f43595c34aaa56506d971d9860e67140bf909" ;;
+    macOS_arm64) echo "f23a0c37d963aacc3bed703ccbd59b41c5ca22101fab7f00eb2b7cad23aba463" ;;
+    *) return 1 ;;
+  esac
+}
+
+# Download + checksum-verify the pinned official gh into TMP_DIR and extract its
+# `bin/gh`. Never installed system-wide; used from TMP_DIR for this run only.
+# Mirrors bootstrap_cosign: verify the archive checksum BEFORE extracting or
+# executing anything from it.
+bootstrap_gh() {
+  local platform="$1" slug ext asset expected actual out url ver extract_dir gh_path spec
+  spec="$(gh_asset_for_platform "$platform")" || return 1
+  read -r slug ext <<<"$spec"
+  expected="$(gh_sha_for_asset "$slug")" || return 1
+  ver="${GH_VERSION#v}"
+  asset="gh_${ver}_${slug}.${ext}"
+  out="$TMP_DIR/$asset"
+  url="https://github.com/cli/cli/releases/download/${GH_VERSION}/${asset}"
+  log "bootstrapping gh CLI ${GH_VERSION} (${slug}) for attestation verification"
+  curl -fsSL -o "$out" "$url" || return 1
+  actual="$(sha256_file "$out")"
+  [[ "$actual" == "$expected" ]] || {
+    warn "gh CLI checksum mismatch for ${asset}"
+    warn "  expected: ${expected}"
+    warn "  actual:   ${actual}"
+    return 1
+  }
+  extract_dir="$TMP_DIR/gh-cli"
+  (umask 077; mkdir -p "$extract_dir") || return 1
+  case "$ext" in
+    tar.gz) tar -xzf "$out" -C "$extract_dir" || return 1 ;;
+    zip)
+      # macOS: prefer unzip; bsdtar (`tar -xf`) also reads .zip if unzip is absent.
+      if command -v unzip >/dev/null 2>&1; then
+        unzip -q "$out" -d "$extract_dir" || return 1
+      else
+        tar -xf "$out" -C "$extract_dir" || return 1
+      fi ;;
+    *) return 1 ;;
+  esac
+  gh_path="${extract_dir}/gh_${ver}_${slug}/bin/gh"
+  [[ -x "$gh_path" ]] || return 1
+  "$gh_path" --version >/dev/null 2>&1 || return 1
+  GH_BIN="$gh_path"
+}
+
+# Resolve a gh capable of `gh attestation`. Prefer an attestation-capable system
+# gh (no download); otherwise bootstrap the pinned official gh. INSECURE=1 skips
+# all attestation upstream in download_and_verify, so this is never reached under
+# the bypass — consistent with how cosign is only bootstrapped when verifying.
+ensure_gh_verifier() {
+  local platform="$1"
+  if [[ -n "$GH_BIN" ]]; then
+    return 0
+  fi
+  if command -v gh >/dev/null 2>&1 && gh attestation --help >/dev/null 2>&1; then
+    GH_BIN="$(command -v gh)"
+    return 0
+  fi
+  bootstrap_gh "$platform"
 }
 
 verify_with_gh_attestation() {
-  gh_attestation_available || return 1
+  local tarball="$1" platform="$2"
+  ensure_gh_verifier "$platform" || return 1
   log "verifying via gh attestation (repo=${REPO}, identity pinned)"
-  gh attestation verify "$1" \
+  "$GH_BIN" attestation verify "$tarball" \
     --repo "$REPO" \
+    --predicate-type "$EXPECTED_ATTESTATION_PREDICATE_TYPE" \
     --cert-identity-regex "$EXPECTED_COSIGN_IDENTITY" \
     --cert-oidc-issuer "$EXPECTED_COSIGN_ISSUER" \
     >/dev/null 2>&1
@@ -380,7 +580,7 @@ download_and_verify() {
     emit_insecure_banner >&2
     audit_log "$(printf '{"ts":"%s","event":"insecure_install","version":"%s","platform":"%s","sha256":"%s","expected_identity":"%s"}' \
       "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$version" "$platform" "$sha" "$EXPECTED_COSIGN_IDENTITY")"
-  elif verify_with_gh_attestation "$tarball"; then
+  elif verify_with_gh_attestation "$tarball" "$platform"; then
     log "gh attestation: OK (sha256=${sha:0:12}...)"
   elif ensure_cosign_verifier "$platform"; then
     if verify_with_cosign "$tarball" "$bundle"; then
@@ -399,14 +599,80 @@ download_and_verify() {
   printf '%s\n' "$tarball"
 }
 
+# Verify a freshly-extracted staging tree before it is allowed to replace the
+# live install. Rejects a corrupt artifact (no binary / non-executable) and a
+# version mismatch (wrong tarball) so a broken payload never reaches promotion.
+verify_staged_binary() {
+  local staging="$1" expected_version="$2" staged_bin actual_version expected_token actual_token
+  staged_bin="${staging}/genie"
+  [[ -f "$staged_bin" && ! -L "$staged_bin" && -x "$staged_bin" ]] ||
+    die "staged tarball has no physical executable genie binary; refusing to promote a corrupt artifact" 4
+  actual_version="$("$staged_bin" --version 2>/dev/null)" ||
+    die "staged genie binary failed to execute; refusing to promote a corrupt artifact" 4
+  expected_token="$(parse_version_token "$expected_version")" ||
+    die "installation manifest supplied an invalid version token: ${expected_version:-empty}" 1
+  actual_token="$(parse_version_token "$actual_version")" ||
+    die "staged genie emitted no valid version token (got ${actual_version:-empty}); refusing to promote" 4
+  [[ "$actual_token" == "$expected_token" ]] ||
+    die "staged genie version mismatch (expected ${expected_token}, got ${actual_token}); refusing to promote" 4
+}
+
+# Transactional install (F31a). The shell performs no live-path swap,
+# rollback, backup, canonical-link replacement, or staging cleanup. Its only
+# chmod relocks the private staging root it created to 0700 after extraction
+# (tar clobbers that mode via the archived root entry); it never chmods a live
+# path. Mutation authority is the already verified staged executable, which
+# borrows this shell's exact lifecycle lease and uses native durable
+# no-clobber renames.
+ensure_physical_install_directory() {
+  local path="$1" parent
+  parent="$(dirname "$path")"
+  [[ -d "$parent" && ! -L "$parent" ]] ||
+    die "install directory parent is not physical: $parent" 1
+  if [[ -e "$path" || -L "$path" ]]; then
+    [[ -d "$path" && ! -L "$path" ]] ||
+      die "install path is not a physical directory: $path" 1
+    return
+  fi
+  (umask 077; mkdir "$path") ||
+    die "could not create physical install directory: $path" 1
+  [[ -d "$path" && ! -L "$path" ]] ||
+    die "new install directory was replaced before validation: $path" 1
+}
+
 extract_and_link() {
-  local tarball="$1"
-  mkdir -p "$GENIE_HOME/bin" "$LOCAL_BIN"
-  log "extracting to $GENIE_HOME/bin"
-  tar -xzf "$tarball" -C "$GENIE_HOME/bin"
-  chmod +x "$GENIE_HOME/bin/genie"
-  ln -sfn "$GENIE_HOME/bin/genie" "$LOCAL_BIN/genie"
-  log "symlink: $LOCAL_BIN/genie → $GENIE_HOME/bin/genie"
+  local tarball="$1" expected_version="$2" bin="$GENIE_HOME/bin"
+  ensure_physical_install_directory "$GENIE_HOME"
+  ensure_physical_install_directory "$bin"
+  STAGING_DIR="${TMP_DIR}/release-payload"
+  (umask 077; mkdir "$STAGING_DIR") ||
+    die "could not create private external release staging" 1
+  [[ -d "$STAGING_DIR" && ! -L "$STAGING_DIR" ]] ||
+    die "install staging path is not a physical directory: $STAGING_DIR" 1
+  validate_private_temp_root "$STAGING_DIR"
+  log "extracting verified release in private temporary staging"
+  tar -xzf "$tarball" -C "$STAGING_DIR" ||
+    die "extraction failed (corrupt tarball?): ${tarball}" 5
+  # tar restores the archived root "./" entry's recorded mode (0755 on every
+  # published tarball) onto the extraction directory, clobbering the 0700 we
+  # created $STAGING_DIR with. The transactional promoter asserts the staging
+  # root is *exactly* 0700, so relock the private staging sandbox before
+  # promotion. This normalizes only the shell's own staging root — it performs
+  # no live-path mutation and touches no promotion object.
+  chmod 700 "$STAGING_DIR" ||
+    die "could not relock private staging root after extraction: $STAGING_DIR" 1
+  verify_staged_binary "$STAGING_DIR" "$expected_version"
+  [[ -n "$LIFECYCLE_LOCK" && -n "$LIFECYCLE_OWNER_RECORD" ]] ||
+    die "lifecycle lease was lost before transactional promotion" 1
+  if ! GENIE_LIFECYCLE_LEASE_PATH="$LIFECYCLE_LOCK" \
+    GENIE_LIFECYCLE_LEASE_OWNER="$LIFECYCLE_OWNER_RECORD" \
+    "$STAGING_DIR/genie" __install-promote \
+      --staging-root "$STAGING_DIR" \
+      --expected-version "$expected_version"; then
+    die "verified staged promoter could not complete the install transaction; retained artifacts are retryable" 1
+  fi
+  STAGING_DIR=""
+  log "canonical link: $LOCAL_BIN/genie → $bin/genie"
 }
 
 # Detect pre-cutover (bun-global / npm-global) installs and surface the
@@ -550,7 +816,7 @@ verify_installation() {
 }
 
 main() {
-  need curl; need tar; need uname
+  need curl; need tar; need uname; need ln
   local platform channel payload version tarball_base tarball
   platform="$(detect_platform)"
   channel="$(resolve_channel)"
@@ -566,7 +832,7 @@ main() {
   # extraction, PATH, child-finisher, and final-verification mutation.
   acquire_lifecycle_lock
   tarball="$(download_and_verify "$version" "$platform" "$tarball_base")"
-  extract_and_link "$tarball"
+  extract_and_link "$tarball" "$version"
   detect_legacy_install
   ensure_path_wired
   handoff_to_subcommand "$@"

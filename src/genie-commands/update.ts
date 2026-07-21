@@ -1,25 +1,24 @@
 import { execFileSync, execSync, spawn } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import {
   constants,
+  type BigIntStats,
   chmodSync,
   closeSync,
-  copyFileSync,
   existsSync,
-  fsyncSync,
+  fstatSync,
   lstatSync,
   mkdirSync,
+  mkdtempSync,
   openSync,
   readFileSync,
   readSync,
-  readdirSync,
   realpathSync,
-  renameSync,
   rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import {
   type AgentSyncReport,
@@ -30,17 +29,33 @@ import {
   acquireLifecycleLease,
   runAgentSync,
 } from '../lib/agent-sync.js';
+import { getCodexHome } from '../lib/codex-config.js';
+import { type CodexPluginProbe, type CodexPluginProbeDeps, probeCodexGeniePlugin } from '../lib/codex-project-mcp.js';
 import { contractPath, genieConfigExists, getGenieConfigPath, saveGenieConfig } from '../lib/genie-config.js';
 import {
+  type InstallStagingDirectoryGuard,
+  admitExternalInstallStaging,
+  closeInstallStagingDirectory,
+  promoteStagedInstall,
+  recoverPendingInstallPromotions,
+  removeInstallStagingDirectory,
+  verifyAdmittedInstallStagingPayload,
+  verifyInstallStagingDirectory,
+} from '../lib/install-promotion.js';
+import { inspectPhysicalPath } from '../lib/install-transaction.js';
+import {
   type CodexAgentInstallResult,
+  type CodexHealthProof,
   type CommandRunner,
   type IntegrationResult,
   type IntegrationSelection,
+  type ProveCodexPluginHealthOptions,
   type RuntimeExecutableResolver,
   type RuntimeName,
   installCodexAgents,
   parseClaudePluginState,
   parseCodexPluginState,
+  proveCodexPluginHealth,
   readIntegrationConsent,
   resolveBundleRoot,
   resolveRuntimeExecutable,
@@ -56,7 +71,6 @@ import {
 } from './auxiliary-trees.js';
 import { cleanupV4 } from './legacy-v4.js';
 import { type RefreshUpdatePluginsOptions, refreshUpdatePlugins } from './update-integrations.js';
-
 const GENIE_HOME = process.env.GENIE_HOME || join(homedir(), '.genie');
 const GENIE_BIN = join(GENIE_HOME, 'bin');
 const GENIE_BIN_STAGING = join(GENIE_BIN, '.staging');
@@ -84,8 +98,15 @@ const RELEASES_OWNER = 'automagik-dev';
 const RELEASES_REPO = 'genie';
 const RAW_BASE_URL = 'https://raw.githubusercontent.com';
 const RELEASES_SLUG = `${RELEASES_OWNER}/${RELEASES_REPO}`;
-const EXPECTED_COSIGN_IDENTITY = `^https://github.com/${RELEASES_SLUG}/.github/workflows/sign-attest.yml@`;
+const EXPECTED_COSIGN_IDENTITY = `^https://github\\.com/${RELEASES_SLUG}/\\.github/workflows/sign-attest\\.yml@refs/heads/main$`;
 const EXPECTED_COSIGN_ISSUER = 'https://token.actions.githubusercontent.com';
+// sign-attest.yml registers the GitHub-native attestation under a CUSTOM
+// predicate type (NOT https://slsa.dev/provenance/v1 — GitHub's persistence API
+// runs SLSA validation for that URI and rejects our custom buildType). The
+// verifier MUST pass the same --predicate-type or `gh attestation verify`
+// defaults to slsa.dev/provenance/v1, so the by-digest lookup 404s even though
+// the attestation exists. Keep in lockstep with scripts/release-native-predicate.sh.
+const EXPECTED_ATTESTATION_PREDICATE_TYPE = `https://github.com/${RELEASES_SLUG}/release-tarballs/v1`;
 
 // ============================================================================
 // Verify decision shape. v5 is zero-daemon — the atomic binary swap IS the
@@ -536,6 +557,13 @@ interface DownloadAndVerifyOptions {
  */
 const ATTESTATION_VERIFY_TIMEOUT_MS = 60_000;
 const COSIGN_VERIFY_TIMEOUT_MS = 30_000;
+/**
+ * The tarball download moves ~37MB+ per platform and outgrew runCommandSilent's
+ * 4s default the same way the verify steps did: genie update v5.260714.8 timed
+ * out at 4000ms on a healthy connection (Felipe, 2026-07-14). 5 minutes bounds
+ * a genuinely slow link without hanging forever.
+ */
+const RELEASE_DOWNLOAD_TIMEOUT_MS = 300_000;
 
 interface SignatureVerificationResult {
   method: 'gh-attestation' | 'cosign-bundle';
@@ -555,6 +583,8 @@ async function verifyTarballSignature(
       tarballPath,
       '--repo',
       RELEASES_SLUG,
+      '--predicate-type',
+      EXPECTED_ATTESTATION_PREDICATE_TYPE,
       '--cert-identity-regex',
       EXPECTED_COSIGN_IDENTITY,
       '--cert-oidc-issuer',
@@ -570,7 +600,9 @@ async function verifyTarballSignature(
 
   if (!existsSync(bundlePath)) {
     failures.push(`cosign verify-blob: missing bundle ${bundlePath}`);
-    throw new Error(`signature verification failed for ${tarballName}: ${failures.join('; ')}`);
+    throw new Error(
+      `signature verification failed for ${tarballName}: ${failures.join('; ')}. Install the GitHub CLI (\`gh\`, with \`gh attestation\` support) and retry \`genie update\`; the cosign fallback needs the .bundle release asset, which was not downloaded.`,
+    );
   }
 
   const cosignVerifyResult = await runner(
@@ -590,7 +622,9 @@ async function verifyTarballSignature(
   if (cosignVerifyResult.success) return { method: 'cosign-bundle' };
 
   failures.push(`cosign verify-blob: ${cosignVerifyResult.output.trim() || 'no output'}`);
-  throw new Error(`signature verification failed for ${tarballName}: ${failures.join('; ')}`);
+  throw new Error(
+    `signature verification failed for ${tarballName}: ${failures.join('; ')}. Install the GitHub CLI (\`gh\`, with \`gh attestation\` support) or cosign v2.4.1+ (https://docs.sigstore.dev/cosign/installation) and retry \`genie update\`.`,
+  );
 }
 
 /**
@@ -620,22 +654,26 @@ export async function downloadAndVerifyTarball(
 
   // gh release download retries by name; --pattern lets us pull the tarball
   // and its sidecar (.bundle, .intoto.jsonl) in one shot via wildcards.
-  const downloadResult = await runner('gh', [
-    'release',
-    'download',
-    versionTag,
-    '--repo',
-    `${RELEASES_OWNER}/${RELEASES_REPO}`,
-    '--dir',
-    destDir,
-    '--pattern',
-    tarballName,
-    '--pattern',
-    `${tarballName}.bundle`,
-    '--pattern',
-    `${tarballName}.intoto.jsonl`,
-    '--clobber',
-  ]);
+  const downloadResult = await runner(
+    'gh',
+    [
+      'release',
+      'download',
+      versionTag,
+      '--repo',
+      `${RELEASES_OWNER}/${RELEASES_REPO}`,
+      '--dir',
+      destDir,
+      '--pattern',
+      tarballName,
+      '--pattern',
+      `${tarballName}.bundle`,
+      '--pattern',
+      `${tarballName}.intoto.jsonl`,
+      '--clobber',
+    ],
+    RELEASE_DOWNLOAD_TIMEOUT_MS,
+  );
   if (!downloadResult.success) {
     throw new Error(
       `gh release download ${versionTag} failed for ${platform}: ${downloadResult.output.trim() || 'no output'}`,
@@ -664,323 +702,52 @@ export async function extractTarball(tarballPath: string, destDir: string): Prom
   }
 }
 
-/**
- * Inode/device id of the directory that contains `path`. Returns `null` if
- * `path` (or its parent) does not exist. Used by the atomic-swap pre-flight
- * to confirm staging + target share a filesystem.
- */
-function deviceIdFor(path: string): number | null {
-  const probe = existsSync(path) ? path : dirname(path);
-  try {
-    return statSync(probe).dev;
-  } catch {
-    return null;
+function sameBigStat(left: BigIntStats, right: BigIntStats): boolean {
+  return (
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.mode === right.mode &&
+    left.uid === right.uid &&
+    left.gid === right.gid &&
+    left.nlink === right.nlink &&
+    left.size === right.size &&
+    left.mtimeNs === right.mtimeNs
+  );
+}
+
+function assertPrivatePhysicalFileStat(stat: BigIntStats, path: string): void {
+  const currentUid = typeof process.getuid === 'function' ? BigInt(process.getuid()) : stat.uid;
+  if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o777n) !== 0o600n || stat.nlink !== 1n) {
+    throw new Error(`private transaction file has an unsafe shape: ${path}`);
   }
+  if (stat.uid !== currentUid) throw new Error(`private transaction file has another owner: ${path}`);
 }
 
-interface AtomicSwapResult {
-  oldVersionBackup: string | null;
-  swapped: boolean;
-  fallbackUsed: boolean;
-}
-
-export interface AtomicBinarySwapOptions {
-  /** Failure-injection seam immediately before rename-over-live. */
-  beforePromote?: (replacementPath: string, targetPath: string) => void;
-  /** Failure-injection seam immediately after rename-over-live. */
-  afterPromote?: (targetPath: string) => void;
-  /** Keep a journal-bound source until the surrounding delivery commits. */
-  preserveSource?: boolean;
-  /** Authenticated journal preimage consumed by this swap. */
-  expectedPreimage?: PendingOptionalFileFingerprint;
-  /** Authenticated journal fingerprint of the binary being promoted. */
-  expectedPayloadFingerprint?: PendingFileFingerprint;
-}
-
-function fsyncFile(path: string): void {
-  const fd = openSync(path, 'r');
+function readPrivatePhysicalFile(path: string): Buffer {
+  const beforePath = lstatSync(path, { bigint: true });
+  assertPrivatePhysicalFileStat(beforePath, path);
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
-    fsyncSync(fd);
+    const before = fstatSync(fd, { bigint: true });
+    assertPrivatePhysicalFileStat(before, path);
+    if (!sameBigStat(beforePath, before)) throw new Error(`private transaction file changed before read: ${path}`);
+    const bytes = readFileSync(fd);
+    const after = fstatSync(fd, { bigint: true });
+    const afterPath = lstatSync(path, { bigint: true });
+    if (!sameBigStat(before, after) || !sameBigStat(after, afterPath)) {
+      throw new Error(`private transaction file changed during read: ${path}`);
+    }
+    return bytes;
   } finally {
     closeSync(fd);
   }
 }
 
-function fsyncDirectory(path: string): void {
-  try {
-    const fd = openSync(path, 'r');
-    try {
-      fsyncSync(fd);
-    } finally {
-      closeSync(fd);
-    }
-  } catch {
-    // Directory fsync is unavailable on some supported platforms.
-  }
-}
-
-/**
- * Atomic binary swap.
- *
- * A complete replacement is first copied and fsynced beside the canonical
- * target. The prior executable is copied (not moved) into `.previous`, then
- * one rename-over-live atomically promotes the replacement. Consequently an
- * interruption before promotion always leaves the old canonical executable
- * runnable, regardless of the filesystem that held the downloaded staging
- * file. The source staging file is only removed after successful promotion.
- */
-export function atomicBinarySwap(
-  stagedBinPath: string,
-  targetBinPath: string,
-  previousDir: string,
-  oldVersion: string,
-  options: AtomicBinarySwapOptions = {},
-): AtomicSwapResult {
-  let stagedStat: ReturnType<typeof lstatSync>;
-  try {
-    stagedStat = lstatSync(stagedBinPath);
-  } catch {
-    throw new Error(`staged binary missing: ${stagedBinPath}`);
-  }
-  if (!stagedStat.isFile() || stagedStat.isSymbolicLink())
-    throw new Error(`staged binary is not a physical file: ${stagedBinPath}`);
-
-  const targetDir = dirname(targetBinPath);
-  mkdirSync(targetDir, { recursive: true });
-  mkdirSync(previousDir, { recursive: true });
-
-  const stagingDev = deviceIdFor(stagedBinPath);
-  const targetDev = deviceIdFor(targetBinPath);
-  const sameFs = stagingDev !== null && targetDev !== null && stagingDev === targetDev;
-
-  const transactionId = `${process.pid}-${randomUUID()}`;
-  const replacementPath = join(targetDir, `.genie-replacement-${transactionId}`);
-  let backupStaging: string | null = null;
-  let oldBackup: string | null = null;
-  const expectedPreimage =
-    options.expectedPreimage ?? fingerprintOptionalPhysicalFile(targetBinPath, 'live binary preimage');
-  try {
-    // The replacement is fully copied, executable, and durable in the target
-    // directory before the live canonical path is touched.
-    copyFileSync(stagedBinPath, replacementPath, constants.COPYFILE_EXCL);
-    chmodSync(replacementPath, 0o755);
-    fsyncFile(replacementPath);
-    const expectedPayloadFingerprint =
-      options.expectedPayloadFingerprint ?? fingerprintPhysicalFile(replacementPath, 'replacement binary baseline');
-
-    assertExpectedBinaryPreimage(targetBinPath, expectedPreimage, 'before backup');
-    let targetStat: ReturnType<typeof lstatSync> | null = null;
-    try {
-      targetStat = lstatSync(targetBinPath);
-    } catch {
-      targetStat = null;
-    }
-    if (targetStat !== null) {
-      if (!targetStat.isFile() || targetStat.isSymbolicLink())
-        throw new Error(`live binary is not a physical file: ${targetBinPath}`);
-      const canonicalBackup = join(previousDir, `genie-${oldVersion}`);
-      oldBackup = existsSync(canonicalBackup) ? `${canonicalBackup}.${Date.now()}-${randomUUID()}` : canonicalBackup;
-      backupStaging = `${oldBackup}.staging-${transactionId}`;
-      copyFileSync(targetBinPath, backupStaging, constants.COPYFILE_EXCL);
-      chmodSync(backupStaging, targetStat.mode & 0o777);
-      fsyncFile(backupStaging);
-      renameSync(backupStaging, oldBackup);
-      backupStaging = null;
-      fsyncDirectory(previousDir);
-      assertAuthenticatedBinaryBackup(oldBackup, expectedPreimage);
-    }
-
-    options.beforePromote?.(replacementPath, targetBinPath);
-    if (oldBackup !== null) assertAuthenticatedBinaryBackup(oldBackup, expectedPreimage);
-    // Consume exactly the journaled preimage at the last boundary available to
-    // portable Node. The lifecycle lease excludes Genie/install.sh writers;
-    // this recheck rejects any other writer observed before rename-over-live.
-    assertExpectedBinaryPreimage(targetBinPath, expectedPreimage, 'immediately before promotion');
-    assertAuthenticatedBinaryPayload(replacementPath, expectedPayloadFingerprint, 'immediately before promotion');
-    // rename-over-live is the only mutation of the canonical path. If the
-    // process dies before this call, the old executable remains runnable; if
-    // it dies after, the complete replacement is already live.
-    renameSync(replacementPath, targetBinPath);
-    options.afterPromote?.(targetBinPath);
-    assertAuthenticatedBinaryPayload(targetBinPath, expectedPayloadFingerprint, 'after promotion');
-    fsyncDirectory(targetDir);
-    if (!options.preserveSource) {
-      try {
-        rmSync(stagedBinPath);
-      } catch {
-        // A disposable staging source may survive a successful promotion.
-      }
-    }
-    return { oldVersionBackup: oldBackup, swapped: true, fallbackUsed: !sameFs };
-  } catch (error) {
-    rmSync(replacementPath, { force: true });
-    if (backupStaging !== null) rmSync(backupStaging, { force: true });
-    throw error;
-  }
-}
-
-function assertExpectedBinaryPreimage(
-  targetPath: string,
-  expected: PendingOptionalFileFingerprint,
-  phase: string,
-): void {
-  const actual = fingerprintOptionalPhysicalFile(targetPath, `live binary ${phase}`);
-  const matches =
-    actual.present === expected.present &&
-    (!actual.present ||
-      (actual.fingerprint !== null &&
-        expected.fingerprint !== null &&
-        fingerprintsEqual(actual.fingerprint, expected.fingerprint)));
-  if (!matches) throw new Error(`live binary preimage changed ${phase}; refusing to overwrite ${targetPath}`);
-}
-
-function assertAuthenticatedBinaryBackup(backupPath: string, expected: PendingOptionalFileFingerprint): void {
-  if (!expected.present || expected.fingerprint === null) {
-    throw new Error(`unexpected rollback backup for an absent binary preimage: ${backupPath}`);
-  }
-  const actual = fingerprintPhysicalFile(backupPath, 'previous binary backup');
-  if (!fingerprintsEqual(actual, expected.fingerprint)) {
-    throw new Error(`rollback backup does not match the authenticated binary preimage: ${backupPath}`);
-  }
-}
-
-function assertAuthenticatedBinaryPayload(path: string, expected: PendingFileFingerprint, phase: string): void {
-  const actual = fingerprintPhysicalFile(path, `binary payload ${phase}`);
-  if (!fingerprintsEqual(actual, expected)) {
-    throw new Error(`binary does not match the journaled payload fingerprint ${phase}: ${path}`);
-  }
-}
-
-/**
- * Keep only the backup created by the verified promotion for one old version.
- * Pruning happens after live-binary verification, never before the new binary
- * is known-good, so a failed promotion retains every rollback candidate.
- */
-export function pruneSameVersionBackups(previousDir: string, oldVersion: string, retainedPath: string): string[] {
-  const canonicalPrefix = `genie-${oldVersion}`;
-  const retained = resolve(retainedPath);
-  const removed: string[] = [];
-  for (const entry of readdirSync(previousDir)) {
-    if (entry !== canonicalPrefix && !entry.startsWith(`${canonicalPrefix}.`)) continue;
-    const path = join(previousDir, entry);
-    if (resolve(path) === retained) continue;
-    const stat = lstatSync(path);
-    if (!stat.isFile() || stat.isSymbolicLink()) {
-      throw new Error(`refusing to prune non-physical binary backup: ${path}`);
-    }
-    rmSync(path);
-    removed.push(path);
-  }
-  if (removed.length > 0) fsyncDirectory(previousDir);
-  return removed;
-}
-
-/**
- * Sync the per-binary VERSION stamp the compiled binary reads at startup.
- *
- * Why this exists: `src/lib/version.ts` resolves the running version by
- * reading `dirname(process.execPath)/VERSION` — i.e. `~/.genie/bin/VERSION`,
- * a sibling of the binary itself. The atomic swap replaces `~/.genie/bin/genie`
- * but never touches that file. Result: a freshly-installed v<new> binary
- * reports v<old> on `--version` until the next time something rewrites the
- * stamp. The 2026-05-22 incident on khal-os triggered exactly this — the
- * release tarball was correct, the swap was correct, but the stale stamp
- * masqueraded as a swap failure for three consecutive `genie update` runs.
- *
- * The G1 tarball convention ships a `VERSION` file at the root of the
- * extracted tree. Prefer copying that file (preserves whatever format
- * `build-tarballs.yml` produced); fall back to writing `manifestVersion`
- * directly when the tarball pre-dates the convention.
- *
- * Best-effort by design: write failures don't throw — the immediately-
- * following `verifySwappedBinary` will catch any resulting mismatch and
- * surface the structured error with full forensic context.
- */
-export function syncBinaryVersionStamp(extractDir: string, binDir: string, manifestVersion: string): void {
-  const targetStamp = join(binDir, 'VERSION');
-  const stagedStamp = join(extractDir, 'VERSION');
-  try {
-    if (existsSync(stagedStamp)) {
-      copyFileSync(stagedStamp, targetStamp);
-    } else {
-      writeFileSync(targetStamp, `${manifestVersion}\n`);
-    }
-  } catch {
-    // verifySwappedBinary below will detect any version mismatch loudly;
-    // never abort the update over a non-essential metadata write.
-  }
-}
-
-/**
- * Post-swap correctness guard: execute the freshly-swapped binary and confirm
- * its `--version` output normalises to the version we intended to install.
- *
- * Why this exists: on 2026-05-22 we observed an update that printed
- * "✔ Genie binary updated → v4.260522.2" while the on-disk file at
- * `~/.genie/bin/genie` remained v4.260520.3 with an mtime predating the
- * update run. `atomicBinarySwap` returned `{ swapped: true }` without
- * throwing, but the bytes never landed (cause: cleaned-up `.staging/`, no
- * forensics). The success message was a lie produced from the *intent*
- * (`manifest.version`), not from re-reading the result.
- *
- * The fix is belt-and-suspenders: never claim success without proof. This
- * helper executes the binary at `targetBin` (injectable via `opts.runVersion`
- * for tests) and throws a structured `Error` when the reported version does
- * not match the manifest. The thrown error includes the staging + previous
- * directories the operator can inspect.
- */
-export interface VerifySwappedBinaryOptions {
-  /** Test seam — replaces the `execFileSync(targetBin, ['--version'])` call. */
-  runVersion?: (targetBin: string) => string;
-  stagingDir?: string;
-  previousDir?: string;
-}
-
-export function verifySwappedBinary(
-  targetBin: string,
-  expectedVersion: string,
-  opts: VerifySwappedBinaryOptions = {},
-): void {
-  const runner =
-    opts.runVersion ??
-    ((path: string) => execFileSync(path, ['--version'], { encoding: 'utf-8', timeout: 3000 }).toString());
-
-  let raw: string;
-  try {
-    raw = runner(targetBin);
-  } catch (err) {
-    throw new Error(
-      `Post-swap verification failed — could not execute ${targetBin}: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
-  }
-  const match = raw.trim().match(/\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)*/);
-  if (!match) {
-    throw new Error(
-      `Post-swap verification failed — ${targetBin} ran but emitted no parsable version (got: ${JSON.stringify(
-        raw.slice(0, 200),
-      )})`,
-    );
-  }
-  const actual = normalizeVersion(match[0]);
-  const intended = normalizeVersion(expectedVersion);
-  if (actual !== intended) {
-    const hints: string[] = [];
-    if (opts.stagingDir) hints.push(`  Staging : ${opts.stagingDir}`);
-    if (opts.previousDir) hints.push(`  Previous: ${opts.previousDir}`);
-    throw new Error(
-      [
-        'Post-swap verification failed — the atomic swap reported success but the',
-        'on-disk binary holds the wrong version. This usually means the staged file',
-        'was the wrong version or the swap was rolled back by an external watcher.',
-        `  Intended: v${intended}`,
-        `  On disk : v${actual}`,
-        `  Path    : ${targetBin}`,
-        ...hints,
-      ].join('\n'),
-    );
-  }
+function assertOwnedPhysicalDirectory(path: string, label: string): void {
+  const identity = inspectPhysicalPath(path);
+  if (identity?.kind !== 'directory') throw new Error(`${label} is not a physical directory: ${path}`);
+  const currentUid = typeof process.getuid === 'function' ? String(process.getuid()) : identity.uid;
+  if (identity.uid !== currentUid) throw new Error(`${label} has another owner: ${path}`);
 }
 
 /**
@@ -996,7 +763,7 @@ export function verifySwappedBinary(
  *   3. Versions match — PATH is fine.
  *   4. **`live` and `canonical` resolve to the same canonical path** —
  *      a version mismatch in that case means the swap silently failed
- *      (caught by `verifySwappedBinary`). The advisory's
+ *      (caught by the promotion transaction's version verification). The advisory's
  *      `ln -sf <canonical> <live>` suggestion would devolve into
  *      `ln -sf X X` — a useless self-symlink — and mislead the operator
  *      into thinking PATH is the problem when the real defect is upstream.
@@ -1029,51 +796,22 @@ export function shouldEmitPathDivergenceWarning(input: PathDivergenceInput): boo
   return true;
 }
 
-/**
- * Restore the most recent backup from `~/.genie/bin/.previous/` to the live
- * binary path. Throws if no backup exists.
- */
+/** Read-only compatibility surface. Legacy backups contain only `genie`, not
+ * the exact sibling VERSION generation, so they cannot authorize mutation. */
+export function rollbackBinaryAt(
+  genieBin: string,
+  _currentVersion = normalizeVersion(VERSION),
+): { restored: string; from: string } {
+  assertOwnedPhysicalDirectory(genieBin, 'rollback binary root');
+  const previousDir = join(genieBin, '.previous');
+  if (existsSync(previousDir)) assertOwnedPhysicalDirectory(previousDir, 'rollback backup root');
+  throw new Error(
+    'Automatic rollback is disabled: legacy .previous entries do not authenticate an exact genie+VERSION generation. Reinstall the desired signed version explicitly.',
+  );
+}
+
 export function rollbackBinary(): { restored: string; from: string } {
-  if (!existsSync(GENIE_BIN_PREVIOUS)) {
-    throw new Error(`No rollback target: ${GENIE_BIN_PREVIOUS} does not exist`);
-  }
-  const candidates = readdirSync(GENIE_BIN_PREVIOUS)
-    .filter((entry) => entry.startsWith('genie-'))
-    .map((entry) => ({ entry, mtime: statSync(join(GENIE_BIN_PREVIOUS, entry)).mtimeMs }))
-    .sort((a, b) => b.mtime - a.mtime);
-  if (candidates.length === 0) {
-    throw new Error(`No rollback target: ${GENIE_BIN_PREVIOUS} is empty`);
-  }
-  const newest = candidates[0].entry;
-  const source = join(GENIE_BIN_PREVIOUS, newest);
-  const target = join(GENIE_BIN, 'genie');
-  mkdirSync(GENIE_BIN, { recursive: true });
-
-  const sourceDev = deviceIdFor(source);
-  const targetDev = deviceIdFor(target);
-  const sameFs = sourceDev !== null && targetDev !== null && sourceDev === targetDev;
-
-  // The current live binary is being supplanted — move it aside (so an
-  // interrupted rollback can be re-run) before swapping in the backup.
-  if (existsSync(target)) {
-    const replacedAt = join(GENIE_BIN_PREVIOUS, `${newest}.replaced.${Date.now()}`);
-    if (sameFs) renameSync(target, replacedAt);
-    else {
-      copyFileSync(target, replacedAt);
-      rmSync(target);
-    }
-  }
-  if (sameFs) renameSync(source, target);
-  else {
-    copyFileSync(source, target);
-    rmSync(source);
-  }
-  try {
-    chmodSync(target, 0o755);
-  } catch {
-    // best-effort
-  }
-  return { restored: target, from: source };
+  return rollbackBinaryAt(GENIE_BIN);
 }
 
 // ============================================================================
@@ -1722,7 +1460,7 @@ export interface UpdateCommandOptions {
   restart?: boolean;
   /** `--no-verify`. Skips the post-update binary verify probe. */
   verify?: boolean;
-  /** `--rollback`. Restore the most recent ~/.genie/bin/.previous backup. */
+  /** `--rollback`. Read-only legacy check; directs operators to an explicit signed-version reinstall. */
   rollback?: boolean;
   /** `--sync-only`. Converge agent integrations and return — no manifest
    *  fetch, no binary swap. Equivalent to GENIE_UPDATE_SYNC_ONLY=1; the flag
@@ -1940,17 +1678,117 @@ export function legacySyncOnlyPluginAdvisory(options: LegacySyncOnlyAdvisoryOpti
   return `Legacy --sync-only left selected plugin integration${stale.length === 1 ? '' : 's'} stale (${stale.join(', ')}; CLI/source v${normalizeVersion(options.expectedVersion)}). Close all Codex tasks first. Then, from an external terminal, run \`genie update\` (or \`genie setup --codex\`), review \`/hooks\`, and start a new Codex task.`;
 }
 
-export interface LegacySyncOnlyConvergenceOptions extends LegacySyncOnlyAdvisoryOptions {
-  sync?: () => void;
+/**
+ * Gate the agent-sync scope for update. R2/A1 (agent-sync must never write
+ * codex product skills into ~/.agents/skills) is structural in `runAgentSync`
+ * itself now — there is no `codex` arm to narrow away from — so this only
+ * skips agent-sync where it has nothing to do: `none` and `codex` (codex
+ * converges entirely through the plugin-only integration refresh, never
+ * through agent-sync). `auto`/`all`/`claude` pass through UNCHANGED so
+ * `runAgentSync` sees the real selection and converges hermes on `auto`/`all`.
+ */
+export function narrowUpdateAgentSyncSelection(selection: IntegrationSelection): IntegrationSelection | null {
+  return selection === 'none' || selection === 'codex' ? null : selection;
+}
+
+export interface SyncOnlyCodexInspectionOptions {
+  selection: IntegrationSelection;
+  expectedVersion: string;
+  cwd?: string;
+  bundleRoot?: string;
+  codexHome?: string;
+  resolveExecutable?: RuntimeExecutableResolver;
+  probe?: (deps: CodexPluginProbeDeps) => CodexPluginProbe;
+  prove?: (options: ProveCodexPluginHealthOptions) => CodexHealthProof;
+  runSession?: ProveCodexPluginHealthOptions['runSession'];
   log?: (line: string) => void;
 }
 
-/** Emit version-drift recovery before strict skill/role convergence so a sync
- * failure cannot hide the plugin advisory needed by first-release upgrades. */
+/**
+ * R3/A14: `--sync-only` INSPECTS codex rather than converging it. A missing,
+ * deliberately disabled, stale, duplicate, or unhealthy exact plugin throws
+ * BEFORE any skill/role mutation, so all trees stay byte-identical. It never
+ * enables the plugin, never fetches/swaps the binary. The bounded MCP session
+ * proveCodexPluginHealth runs is side-effect-free (isolated cwd, read-only db).
+ */
+export function inspectSyncOnlyCodexHealth(options: SyncOnlyCodexInspectionOptions): void {
+  if (!selectedLegacySyncRuntimes(options.selection).includes('codex')) return;
+  const cwd = options.cwd ?? process.cwd();
+  let command: string | null;
+  try {
+    command = resolveRuntimeExecutable('codex', cwd, options.resolveExecutable);
+  } catch (cause) {
+    throw new Error(`--sync-only cannot inspect the Codex plugin: ${errMsg(cause)}`);
+  }
+  if (command === null) {
+    // Under auto, an absent Codex CLI is simply not selected; explicit codex/all requires it.
+    if (options.selection === 'auto') {
+      // A possibly-installed plugin still goes uninspected here — say so
+      // rather than passing silently, so the operator knows why no codex
+      // drift/health advisory appeared.
+      (options.log ?? log)(
+        'Codex checks skipped: no codex CLI found on PATH (--integrations auto never installs it; the plugin, if installed, was not inspected).',
+      );
+      return;
+    }
+    throw new Error(
+      '--sync-only requires the Codex CLI for the selected scope, but it was not found; --sync-only never installs it',
+    );
+  }
+  const snapshot = (options.probe ?? probeCodexGeniePlugin)({ codexHome: options.codexHome, cwd });
+  try {
+    (options.prove ?? proveCodexPluginHealth)({
+      snapshot,
+      bundleRoot: options.bundleRoot ?? GENIE_HOME,
+      codexHome: options.codexHome ?? getCodexHome(),
+      expectedVersion: options.expectedVersion,
+      runSession: options.runSession,
+    });
+  } catch (cause) {
+    throw new Error(
+      `--sync-only cannot converge the Codex plugin (${errMsg(cause)}). --sync-only inspects only: it never installs, enables, or swaps the binary. Close all Codex tasks first. Then, from an external terminal, run \`genie update\` (or \`genie setup --codex\`), review \`/hooks\`, and start a new Codex task.`,
+    );
+  }
+}
+
+export interface LegacySyncOnlyConvergenceOptions extends LegacySyncOnlyAdvisoryOptions {
+  sync?: () => void;
+  log?: (line: string) => void;
+  inspectCodex?: (options: SyncOnlyCodexInspectionOptions) => void;
+  probe?: (deps: CodexPluginProbeDeps) => CodexPluginProbe;
+  prove?: (options: ProveCodexPluginHealthOptions) => CodexHealthProof;
+  codexHome?: string;
+  bundleRoot?: string;
+}
+
+/**
+ * Emit version-drift recovery, INSPECT codex health (R3/A14 — fail nonzero and
+ * byte-identical before any write on a missing/disabled/stale/unhealthy plugin),
+ * then run the strict agent-sync skill sync for the requested scope. Codex
+ * product skills are never rewritten under ~/.agents/skills (R2/A1) — that
+ * guarantee is structural in `runAgentSync`, not a Claude-only narrowing here.
+ */
 export function runLegacySyncOnlyConvergence(options: LegacySyncOnlyConvergenceOptions): void {
   const advisory = legacySyncOnlyPluginAdvisory(options);
   if (advisory !== null) (options.log ?? log)(advisory);
-  (options.sync ?? (() => runAgentSyncSafe({ strict: true, selection: options.selection })))();
+  (options.inspectCodex ?? inspectSyncOnlyCodexHealth)({
+    selection: options.selection,
+    expectedVersion: options.expectedVersion,
+    cwd: options.cwd,
+    bundleRoot: options.bundleRoot,
+    codexHome: options.codexHome,
+    resolveExecutable: options.resolveExecutable,
+    probe: options.probe,
+    prove: options.prove,
+    log: options.log,
+  });
+  const agentSyncSelection = narrowUpdateAgentSyncSelection(options.selection);
+  (
+    options.sync ??
+    (() => {
+      if (agentSyncSelection !== null) runAgentSyncSafe({ strict: true, selection: agentSyncSelection });
+    })
+  )();
 }
 
 function announceUpdatePlanOrExit(
@@ -2023,6 +1861,43 @@ function runFreshConvergenceOrReport(lifecycleLease: LifecycleLease): boolean {
   }
 }
 
+function recoverInstallPromotionAndConvergePayload(): void {
+  const genuinelyAbsent = (path: string): boolean => {
+    try {
+      lstatSync(path);
+      return false;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return true;
+      throw error;
+    }
+  };
+  if (genuinelyAbsent(GENIE_HOME) || genuinelyAbsent(GENIE_BIN)) return;
+  const reports = recoverPendingInstallPromotions({ genieHome: GENIE_HOME });
+  const outcomes = syncAuxiliaryContent(GENIE_BIN, GENIE_HOME, undefined, true);
+  const failures = outcomes.filter((outcome) => outcome.status === 'failed');
+  if (failures.length > 0) {
+    throw new Error(
+      `committed install payload convergence failed: ${failures
+        .map((outcome) => `${outcome.label} (${outcome.stage})`)
+        .join(', ')}`,
+    );
+  }
+  if (reports.length === 0 && outcomes.every((outcome) => outcome.status === 'skipped')) return;
+  const versionPath = join(GENIE_BIN, 'VERSION');
+  const fd = openSync(versionPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+  let exactVersion: Buffer;
+  try {
+    const before = fstatSync(fd, { bigint: true });
+    if (!before.isFile() || before.isSymbolicLink()) throw new Error('live bin/VERSION is not a physical file');
+    exactVersion = readFileSync(fd);
+    const after = fstatSync(fd, { bigint: true });
+    if (!sameBigStat(before, after)) throw new Error('live bin/VERSION changed while recovery read it');
+  } finally {
+    closeSync(fd);
+  }
+  writeFileSync(join(GENIE_HOME, 'VERSION'), exactVersion);
+}
+
 export async function updateCommand(options: UpdateCommandOptions = {}): Promise<void> {
   const mode = resolveUpdateExecutionMode(options);
   if (mode !== 'normal') {
@@ -2072,6 +1947,7 @@ export async function updateCommand(options: UpdateCommandOptions = {}): Promise
     // Revalidate durable recovery and the installed binary immediately after
     // acquiring the lease, before the first mutation owned by this plan.
     try {
+      recoverInstallPromotionAndConvergePayload();
       resumePendingDelivery();
     } catch (err) {
       error(`Pending update recovery failed: ${errMsg(err)}`);
@@ -2157,7 +2033,7 @@ export function runV4CleanupSafe(runner: typeof cleanupV4 = cleanupV4): void {
  * failure; partial work therefore remains immediately retryable.
  *
  * `sync` / `log` / `markerPath` / `now` are injection seams (mirrors
- * runV4CleanupSafe + verifySwappedBinary) so the wiring is unit-testable without
+ * runV4CleanupSafe) so the wiring is unit-testable without
  * touching a real home directory.
  */
 export interface RunAgentSyncSafeOptions {
@@ -2302,7 +2178,19 @@ export function runManualUpdateConvergence(options: ManualUpdateConvergenceOptio
   const emit = options.log ?? log;
   const selection = options.selection ?? readIntegrationConsent(GENIE_HOME);
   if (selection === 'none') return { integrations: [] };
-  (options.runSync ?? (() => runAgentSyncSafe({ strict: true, selection })))();
+  // R2/A1/A13: `runAgentSync` has no codex arm, so it structurally never
+  // writes ~/.agents/skills — a full update passes the real selection through
+  // (converging claude + hermes on auto/all) and only gates the codex-only /
+  // none cases, where agent-sync has nothing to do. Codex product skills stay
+  // plugin-only, and codex role agents + fallback retirement are refreshed by
+  // refreshUpdatePlugins → convergeCodexPluginOnly below.
+  const agentSyncSelection = narrowUpdateAgentSyncSelection(selection);
+  (
+    options.runSync ??
+    (() => {
+      if (agentSyncSelection !== null) runAgentSyncSafe({ strict: true, selection: agentSyncSelection });
+    })
+  )();
   const integrations = (options.refreshPlugins ?? refreshUpdatePlugins)({
     bundleRoot: options.bundleRoot ?? GENIE_HOME,
     expectedVersion: options.expectedVersion,
@@ -2324,6 +2212,75 @@ function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+function currentUpdateUid(): bigint {
+  if (process.getuid === undefined) throw new Error('private update staging requires a POSIX user identity');
+  return BigInt(process.getuid());
+}
+
+function sameDirectoryObject(left: BigIntStats, right: BigIntStats): boolean {
+  return (
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.mode === right.mode &&
+    left.uid === right.uid &&
+    left.gid === right.gid
+  );
+}
+
+function assertTrustedUpdateTempParent(stat: BigIntStats, path: string): void {
+  if (!stat.isDirectory() || stat.isSymbolicLink() || stat.nlink < 1n) {
+    throw new Error(`update temp parent is not a physical directory: ${path}`);
+  }
+  const permissions = Number(stat.mode & 0o7777n);
+  const nonWritableByOtherPrincipals = (permissions & 0o022) === 0;
+  const rootSticky = stat.uid === 0n && (permissions & 0o1000) !== 0;
+  if (!nonWritableByOtherPrincipals && !rootSticky) {
+    throw new Error(`update temp parent permits unsafe cross-principal replacement: ${path}`);
+  }
+}
+
+function assertPrivateUpdateTempRoot(path: string): void {
+  const stat = lstatSync(path, { bigint: true });
+  if (
+    !stat.isDirectory() ||
+    stat.isSymbolicLink() ||
+    stat.uid !== currentUpdateUid() ||
+    stat.nlink < 1n ||
+    (stat.mode & 0o777n) !== 0o700n
+  ) {
+    throw new Error(`update temp root is not an owned physical mode-0700 directory: ${path}`);
+  }
+}
+
+/** Create private external download/extraction staging without touching GENIE_HOME. */
+export function createPrivateUpdateTempRoot(baseDir = tmpdir()): string {
+  const base = resolve(baseDir);
+  const namespaceParent = dirname(base);
+  const namespaceFd = openSync(namespaceParent, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  let parentFd: number | null = null;
+  try {
+    assertTrustedUpdateTempParent(fstatSync(namespaceFd, { bigint: true }), namespaceParent);
+    parentFd = openSync(base, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    const heldParent = fstatSync(parentFd, { bigint: true });
+    assertTrustedUpdateTempParent(heldParent, base);
+    const root = mkdtempSync(join(base, 'genie-update-'));
+    chmodSync(root, 0o700);
+    assertPrivateUpdateTempRoot(root);
+    const visibleParentFd = openSync(base, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    try {
+      if (!sameDirectoryObject(heldParent, fstatSync(visibleParentFd, { bigint: true }))) {
+        throw new Error('update temp parent changed while private staging was created');
+      }
+    } finally {
+      closeSync(visibleParentFd);
+    }
+    return root;
+  } finally {
+    if (parentFd !== null) closeSync(parentFd);
+    closeSync(namespaceFd);
+  }
+}
+
 /**
  * Tarball delivery + binary swap. Linear flow extracted from `updateCommand`
  * to keep the command body readable: download → verify → extract → swap →
@@ -2334,144 +2291,141 @@ async function runDelivery(
   platform: string,
   diagnosticsCtx: UpdateDiagnosticsContext,
 ): Promise<AuxiliaryTreeOutcome[]> {
+  const externalRoot = createPrivateUpdateTempRoot();
+  const extractedRoot = join(externalRoot, 'release-payload');
+  mkdirSync(extractedRoot, { mode: 0o700 });
+  chmodSync(extractedRoot, 0o700);
+  assertPrivateUpdateTempRoot(extractedRoot);
+  let admitted: InstallStagingDirectoryGuard | null = null;
+  let promotionComplete = false;
   log('Downloading signed tarball from GitHub Releases...');
-  const tarballPath = await downloadAndVerifyTarball(manifest, platform, GENIE_BIN_STAGING);
+  const tarballPath = await downloadAndVerifyTarball(manifest, platform, externalRoot);
   diagnosticsCtx.tarballPath = tarballPath;
   diagnosticsCtx.attestationVerified = true;
   success(`Verified signed tarball for ${tarballPath.split('/').pop()}`);
 
-  log('Extracting tarball...');
-  const extractDir = join(GENIE_BIN_STAGING, `extract-${manifest.version}`);
-  if (existsSync(extractDir)) rmSync(extractDir, { recursive: true, force: true });
-  await extractTarball(tarballPath, extractDir);
+  log('Extracting exact release payload...');
+  await extractTarball(tarballPath, extractedRoot);
+  // tar restores the archived root "./" entry's recorded mode (0755 on every
+  // published tarball) onto extractedRoot, clobbering the 0700 it was created
+  // with. admitExternalInstallStaging -> verifyPayloadLayout asserts the
+  // staging root is *exactly* 0700, so relock the private extraction sandbox
+  // before admission. This normalizes only our own staging root.
+  chmodSync(extractedRoot, 0o700);
+  assertPrivateUpdateTempRoot(extractedRoot);
 
-  const stagedBin = join(extractDir, 'genie');
-  if (!existsSync(stagedBin)) {
-    throw new Error(`tarball did not contain a 'genie' binary at ${stagedBin}`);
-  }
+  log('Promoting verified release generation...');
+  recoverPendingInstallPromotions({ genieHome: GENIE_HOME });
+  admitted = admitExternalInstallStaging({
+    genieHome: GENIE_HOME,
+    externalStagingRoot: extractedRoot,
+    expectedVersion: manifest.version,
+  });
   try {
-    chmodSync(stagedBin, 0o755);
-  } catch {
-    // best-effort
-  }
+    verifyAdmittedInstallStagingPayload(admitted);
+    const promotion = promoteStagedInstall({
+      genieHome: GENIE_HOME,
+      stagingRoot: admitted.stagingRoot,
+      expectedVersion: manifest.version,
+      dependencies: {
+        beforeRename: () => verifyInstallStagingDirectory(admitted as InstallStagingDirectoryGuard),
+      },
+      verifyVersion: ({ binaryPath, expectedVersion, phase }) => {
+        verifyInstallStagingDirectory(admitted as InstallStagingDirectoryGuard);
+        if (phase === 'staged') {
+          verifyAdmittedInstallStagingPayload(admitted as InstallStagingDirectoryGuard);
+        }
+        if (expectedVersion === null) return false;
+        try {
+          const output = execFileSync(binaryPath, ['--version'], {
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'ignore'],
+            timeout: 30_000,
+          });
+          const reported = output.match(/\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)*/)?.[0];
+          return reported !== undefined && normalizeVersion(reported) === normalizeVersion(expectedVersion);
+        } catch {
+          return false;
+        }
+      },
+    });
+    promotionComplete = true;
+    diagnosticsCtx.previousBackup = promotion.priorBinaryPath ?? null;
+    success(`Genie release generation updated → v${manifest.version}`);
 
-  const oldVersion = normalizeVersion(VERSION);
-  log('Atomically swapping binary...');
-  const targetBin = join(GENIE_BIN, 'genie');
-  const pending = recordPendingDelivery({
-    version: manifest.version,
-    previousVersion: oldVersion,
-    previousBinaryPath: targetBin,
-    extractDir,
-    tarballPath,
-  });
-  const expectedPreimage = pending.payload.previousBinary;
-  if (expectedPreimage === undefined) throw new Error('pending delivery did not record the live binary preimage');
-  const swapResult = atomicBinarySwap(stagedBin, targetBin, GENIE_BIN_PREVIOUS, oldVersion, {
-    preserveSource: true,
-    expectedPreimage,
-    expectedPayloadFingerprint: pending.payload.binary,
-  });
-  diagnosticsCtx.previousBackup = swapResult.oldVersionBackup;
-
-  // Sync the per-binary VERSION stamp BEFORE verifying. The compiled binary
-  // reads `dirname(process.execPath)/VERSION` at startup (see src/lib/version.ts
-  // readVersionFromPackageJson). The atomic swap replaces `genie` but leaves
-  // its sibling VERSION file untouched — so `targetBin --version` would still
-  // report the OLD version even when the bytes on disk match the new release.
-  // That's what bit us on 2026-05-22 (host khal-os): three consecutive updates
-  // landed the correct binary but reported the stale version, tripping the
-  // post-swap guard and the PATH advisory both as collateral. Copy the
-  // tarball's VERSION file next to the binary so the executable agrees with
-  // what we just installed; fall back to writing manifest.version directly if
-  // the tarball is missing it (older builds).
-  syncBinaryVersionStamp(extractDir, GENIE_BIN, manifest.version);
-
-  // Belt-and-suspenders: re-read the on-disk binary BEFORE printing success.
-  // `atomicBinarySwap` returning `{ swapped: true }` is necessary but not
-  // sufficient — see verifySwappedBinary for the silent-failure case observed
-  // on 2026-05-22. Any mismatch here throws and aborts the delivery so the
-  // operator never sees a misleading "✔ Genie binary updated" banner.
-  verifySwappedBinary(targetBin, manifest.version, {
-    stagingDir: GENIE_BIN_STAGING,
-    previousDir: GENIE_BIN_PREVIOUS,
-  });
-  if (swapResult.oldVersionBackup !== null) {
-    assertAuthenticatedBinaryBackup(swapResult.oldVersionBackup, expectedPreimage);
+    // Post-swap divergence guard: ~/.genie/bin/genie now holds the new
+    // binary, but if $PATH resolves `genie` to a different file (a pre-G5
+    // copy or a shadowing shim) the user keeps running the old version and
+    // would never escape the update prompt. Measure the actual outcome and
+    // tell them exactly how to fix it rather than silently "succeeding".
+    //
+    // Suppression: when `live` and `canonical` resolve to the same file, a
+    // version mismatch is upstream swap corruption (already caught by the
+    // staged-promotion version verification above), not a PATH problem. The legacy heuristic
+    // generated `ln -sf canonical canonical` — a useless self-symlink. See
+    // shouldEmitPathDivergenceWarning for the full rule set.
     try {
-      pruneSameVersionBackups(GENIE_BIN_PREVIOUS, oldVersion, swapResult.oldVersionBackup);
-    } catch (pruneError) {
-      log(`Backup retention cleanup deferred: ${errMsg(pruneError)}`);
+      const live = resolveLiveBinaryPath();
+      if (live) {
+        let liveVer: string | null = null;
+        try {
+          liveVer =
+            execFileSync(live, ['--version'], { encoding: 'utf-8', timeout: 3000 })
+              .trim()
+              .match(/\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)*/)?.[0] ?? null;
+        } catch {
+          // unknowable — skip the advisory
+        }
+        const canonical = join(GENIE_BIN, 'genie');
+        let canonicalReal = canonical;
+        try {
+          canonicalReal = realpathSync(canonical);
+        } catch {
+          // canonical may not be a symlink — keep as-is
+        }
+        const emit = shouldEmitPathDivergenceWarning({
+          live,
+          canonical,
+          canonicalReal,
+          liveVersion: liveVer,
+          intendedVersion: manifest.version,
+        });
+        if (emit) {
+          log('');
+          log('⚠ Your PATH `genie` is NOT the binary that was just updated.');
+          log(`  Updated    : ${canonical} → v${manifest.version}`);
+          log(`  which genie: ${live} (still v${liveVer ?? 'unknown'})`);
+          log('  Fix it:');
+          log(`    ln -sf ${canonical} ${live} && hash -r`);
+          log('  (or put ~/.genie/bin first on $PATH)');
+        }
+      }
+    } catch {
+      // advisory only — never fail the update for this
+    }
+
+    const auxiliaryOutcomes = syncAuxiliaryContent(GENIE_BIN, GENIE_HOME, undefined, true);
+    finalizeAuxiliaryDelivery(auxiliaryOutcomes, {
+      writeVersion: () => {
+        // This stamp follows verified content convergence. It is never used as
+        // a substitute for per-tree digest comparison, and a failed stamp keeps
+        // the durable transaction retryable.
+        writeFileSync(join(GENIE_HOME, 'VERSION'), `${manifest.version}\n`);
+      },
+      cleanupExtraction: () => {
+        cleanupStagingArtifacts(externalRoot, tarballPath);
+      },
+    });
+    return auxiliaryOutcomes;
+  } finally {
+    if (admitted !== null) {
+      try {
+        if (promotionComplete) removeInstallStagingDirectory(admitted);
+      } finally {
+        closeInstallStagingDirectory(admitted);
+      }
     }
   }
-
-  success(`Genie binary updated → v${manifest.version}${swapResult.fallbackUsed ? ' (cross-device fallback)' : ''}`);
-
-  // Post-swap divergence guard: ~/.genie/bin/genie now holds the new
-  // binary, but if $PATH resolves `genie` to a different file (a pre-G5
-  // copy or a shadowing shim) the user keeps running the old version and
-  // would never escape the update prompt. Measure the actual outcome and
-  // tell them exactly how to fix it rather than silently "succeeding".
-  //
-  // Suppression: when `live` and `canonical` resolve to the same file, a
-  // version mismatch is upstream swap corruption (already caught by
-  // verifySwappedBinary above), not a PATH problem. The legacy heuristic
-  // generated `ln -sf canonical canonical` — a useless self-symlink. See
-  // shouldEmitPathDivergenceWarning for the full rule set.
-  try {
-    const live = resolveLiveBinaryPath();
-    if (live) {
-      let liveVer: string | null = null;
-      try {
-        liveVer =
-          execFileSync(live, ['--version'], { encoding: 'utf-8', timeout: 3000 })
-            .trim()
-            .match(/\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)*/)?.[0] ?? null;
-      } catch {
-        // unknowable — skip the advisory
-      }
-      const canonical = join(GENIE_BIN, 'genie');
-      let canonicalReal = canonical;
-      try {
-        canonicalReal = realpathSync(canonical);
-      } catch {
-        // canonical may not be a symlink — keep as-is
-      }
-      const emit = shouldEmitPathDivergenceWarning({
-        live,
-        canonical,
-        canonicalReal,
-        liveVersion: liveVer,
-        intendedVersion: manifest.version,
-      });
-      if (emit) {
-        log('');
-        log('⚠ Your PATH `genie` is NOT the binary that was just updated.');
-        log(`  Updated    : ${canonical} → v${manifest.version}`);
-        log(`  which genie: ${live} (still v${liveVer ?? 'unknown'})`);
-        log('  Fix it:');
-        log(`    ln -sf ${canonical} ${live} && hash -r`);
-        log('  (or put ~/.genie/bin first on $PATH)');
-      }
-    }
-  } catch {
-    // advisory only — never fail the update for this
-  }
-
-  const auxiliaryOutcomes = syncAuxiliaryContent(extractDir);
-  finalizeAuxiliaryDelivery(auxiliaryOutcomes, {
-    writeVersion: () => {
-      // This stamp follows verified content convergence. It is never used as
-      // a substitute for per-tree digest comparison, and a failed stamp keeps
-      // the durable transaction retryable.
-      writeFileSync(join(GENIE_HOME, 'VERSION'), `${manifest.version}\n`);
-    },
-    cleanupExtraction: () => {
-      clearPendingDelivery();
-      cleanupStagingArtifacts(extractDir, tarballPath);
-    },
-  });
-  return auxiliaryOutcomes;
 }
 
 interface PendingFileFingerprint {
@@ -2508,7 +2462,7 @@ export interface PendingDeliveryRecord {
   };
 }
 
-export interface PendingDeliveryPaths {
+interface PendingDeliveryPaths {
   version: string;
   extractDir: string;
   tarballPath: string;
@@ -2522,61 +2476,11 @@ export interface ResumePendingDeliveryOptions {
   genieBin?: string;
   stagingRoot?: string;
   pendingPath?: string;
-  operations?: Partial<AuxiliaryTreeOperations>;
-  ensureBinary?: (record: PendingDeliveryRecord) => void;
-  /** Test seam for the post-stamp executable version check. */
-  runVersion?: (targetBin: string) => string;
-}
-
-/** Persist the verified extracted payload before the first live mutation. */
-export function recordPendingDelivery(
-  pending: PendingDeliveryPaths,
-  pendingPath = join(GENIE_HOME, PENDING_DELIVERY_NAME),
-  stagingRoot = GENIE_BIN_STAGING,
-): PendingDeliveryRecord {
-  assertPendingDeliveryPaths(pending, stagingRoot);
-  const payload = fingerprintPendingPayload(pending);
-  payload.previousBinary = fingerprintOptionalPhysicalFile(
-    pending.previousBinaryPath ?? join(dirname(stagingRoot), 'genie'),
-    'previous live binary',
-  );
-  const record: PendingDeliveryRecord = {
-    schemaVersion: 4,
-    version: pending.version,
-    extractDir: pending.extractDir,
-    tarballPath: pending.tarballPath,
-    previousVersion: pending.previousVersion ?? normalizeVersion(VERSION),
-    createdAt: new Date().toISOString(),
-    payload,
-  };
-  mkdirSync(dirname(pendingPath), { recursive: true });
-  const staging = `${pendingPath}.staging-${process.pid}`;
-  writeFileSync(staging, `${JSON.stringify(record, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
-  const stagingFd = openSync(staging, 'r');
-  try {
-    fsyncSync(stagingFd);
-  } finally {
-    closeSync(stagingFd);
-  }
-  renameSync(staging, pendingPath);
-  try {
-    const directoryFd = openSync(dirname(pendingPath), 'r');
-    try {
-      fsyncSync(directoryFd);
-    } finally {
-      closeSync(directoryFd);
-    }
-  } catch {
-    // Some platforms do not support opening directories; the file fsync and
-    // atomic rename still provide the strongest available journal durability.
-  }
-  return record;
 }
 
 /**
- * Complete a previously verified release transaction. This includes the
- * binary when a process died between journaling and swap, then every auxiliary
- * tree and the root VERSION stamp. The journal is cleared last.
+ * Read and revalidate legacy pending-delivery evidence, but never replay it.
+ * Only the install-promotion journal can authorize release mutation now.
  */
 export function resumePendingDelivery(options: ResumePendingDeliveryOptions = {}): boolean {
   const genieHome = options.genieHome ?? GENIE_HOME;
@@ -2586,145 +2490,24 @@ export function resumePendingDelivery(options: ResumePendingDeliveryOptions = {}
   const record = readPendingDelivery(pendingPath, stagingRoot);
   if (record === null) return false;
 
-  // Revalidate every retained artifact before the first live mutation. The
-  // journal records physical bytes/modes and complete auxiliary-tree digests,
-  // including absence, so a modified or substituted extraction cannot be
-  // resumed merely because its paths and version string still match.
+  // Revalidate all retained artifacts before reporting the actionable stop.
   revalidatePendingPayload(record);
-
-  const ensureBinary =
-    options.ensureBinary ??
-    (() => {
-      const targetBin = join(genieBin, 'genie');
-      const previousDir = join(genieBin, '.previous');
-      const live = fingerprintOptionalPhysicalFile(targetBin, 'live binary');
-      const liveAlreadyNew =
-        live.present && live.fingerprint !== null && fingerprintsEqual(live.fingerprint, record.payload.binary);
-      if (liveAlreadyNew) {
-        assertAuthenticatedAlreadyNewBackup(record, previousDir);
-      } else {
-        const expectedPrevious = record.payload.previousBinary;
-        if (expectedPrevious !== undefined) {
-          const samePresence = live.present === expectedPrevious.present;
-          const sameFingerprint =
-            !live.present ||
-            (live.fingerprint !== null &&
-              expectedPrevious.fingerprint !== null &&
-              fingerprintsEqual(live.fingerprint, expectedPrevious.fingerprint));
-          if (!samePresence || !sameFingerprint) {
-            throw new Error('pending delivery live binary does not match either the authenticated preimage or payload');
-          }
-        }
-        const stagedBin = join(record.extractDir, 'genie');
-        if (!existsSync(stagedBin)) throw new Error(`pending delivery binary is missing at ${stagedBin}`);
-        chmodSync(stagedBin, 0o755);
-        const swap = atomicBinarySwap(
-          stagedBin,
-          targetBin,
-          previousDir,
-          record.previousVersion ?? normalizeVersion(VERSION),
-          {
-            preserveSource: true,
-            expectedPreimage: record.payload.previousBinary,
-            expectedPayloadFingerprint: record.payload.binary,
-          },
-        );
-        const expectedPreviousFingerprint = record.payload.previousBinary?.fingerprint;
-        if (
-          swap.oldVersionBackup !== null &&
-          expectedPreviousFingerprint !== undefined &&
-          expectedPreviousFingerprint !== null &&
-          !fingerprintsEqual(
-            fingerprintPhysicalFile(swap.oldVersionBackup, 'previous binary backup'),
-            expectedPreviousFingerprint,
-          )
-        ) {
-          throw new Error(
-            `pending delivery rollback backup does not match the authenticated preimage: ${swap.oldVersionBackup}`,
-          );
-        }
-      }
-      // A crash after swap but before this stamp reaches this branch with the
-      // payload bytes already live. Repair metadata only; never swap new over
-      // new or manufacture a mislabeled rollback backup.
-      syncBinaryVersionStamp(record.extractDir, genieBin, record.version);
-      verifySwappedBinary(targetBin, record.version, {
-        runVersion: options.runVersion,
-        stagingDir: stagingRoot,
-        previousDir,
-      });
-    });
-  ensureBinary(record);
-
-  const previousDir = join(genieBin, '.previous');
-  const priorFingerprint = record.payload.previousBinary?.fingerprint ?? null;
-  const retainedBackup =
-    record.previousVersion === null
-      ? null
-      : priorFingerprint === null
-        ? newestSameVersionBackup(previousDir, record.previousVersion)
-        : matchingSameVersionBackup(previousDir, record.previousVersion, priorFingerprint);
-  if (retainedBackup !== null && record.previousVersion !== null) {
-    if (priorFingerprint === null) pruneSameVersionBackups(previousDir, record.previousVersion, retainedBackup);
-    else pruneMatchingSameVersionBackups(previousDir, record.previousVersion, retainedBackup, priorFingerprint);
-  }
-
-  const outcomes = syncAuxiliaryContent(record.extractDir, genieHome, options.operations);
-  finalizeAuxiliaryDelivery(outcomes, {
-    writeVersion: () => writeFileSync(join(genieHome, 'VERSION'), `${record.version}\n`),
-    cleanupExtraction: () => {
-      clearPendingDelivery(pendingPath);
-      cleanupStagingArtifacts(record.extractDir, record.tarballPath);
-    },
-  });
-  return true;
-}
-
-/**
- * An explicit rollback supersedes any forward-delivery journal. Quarantine the
- * journal atomically before touching the live binary so a crash cannot replay
- * the superseded release on the next update.
- */
-export function quarantinePendingDelivery(pendingPath = join(GENIE_HOME, PENDING_DELIVERY_NAME)): string | null {
-  let stat: ReturnType<typeof lstatSync>;
-  try {
-    stat = lstatSync(pendingPath);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
-    throw error;
-  }
-  if (!stat.isFile() || stat.isSymbolicLink()) {
-    throw new Error(`pending delivery journal is not a physical file: ${pendingPath}`);
-  }
-  const quarantined = `${pendingPath}.cancelled-${Date.now()}-${process.pid}`;
-  renameSync(pendingPath, quarantined);
-  try {
-    const directoryFd = openSync(dirname(pendingPath), 'r');
-    try {
-      fsyncSync(directoryFd);
-    } finally {
-      closeSync(directoryFd);
-    }
-  } catch {
-    // Directory fsync is unavailable on some supported platforms; rename still
-    // prevents ordinary recovery from observing the superseded journal.
-  }
-  return quarantined;
+  throw new Error(
+    `legacy pending delivery is retained read-only at ${pendingPath}; its executable transaction cannot authenticate an exact genie+VERSION generation. Inspect the retained artifacts, relocate the legacy journal, and rerun \`genie update\` for a signed install`,
+  );
 }
 
 function readPendingDelivery(path: string, stagingRoot: string): PendingDeliveryRecord | null {
-  let stat: ReturnType<typeof lstatSync>;
+  let bytes: Buffer;
   try {
-    stat = lstatSync(path);
+    bytes = readPrivatePhysicalFile(path);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw error;
   }
-  if (!stat.isFile() || stat.isSymbolicLink())
-    throw new Error(`pending delivery journal is not a physical file: ${path}`);
   let parsed: unknown;
   try {
-    parsed = JSON.parse(readFileSync(path, 'utf8'));
+    parsed = JSON.parse(bytes.toString('utf8'));
   } catch (error) {
     throw new Error(`pending delivery journal is unreadable: ${errMsg(error)}`);
   }
@@ -2753,88 +2536,6 @@ function readPendingDelivery(path: string, stagingRoot: string): PendingDelivery
   };
   assertPendingDeliveryPaths(record, stagingRoot);
   return record;
-}
-
-function newestSameVersionBackup(previousDir: string, version: string): string | null {
-  let entries: string[];
-  try {
-    entries = readdirSync(previousDir);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
-    throw error;
-  }
-  const prefix = `genie-${version}`;
-  const candidates = entries
-    .filter((entry) => entry === prefix || entry.startsWith(`${prefix}.`))
-    .map((entry) => {
-      const path = join(previousDir, entry);
-      const stat = lstatSync(path);
-      if (!stat.isFile() || stat.isSymbolicLink()) {
-        throw new Error(`refusing to inspect non-physical binary backup: ${path}`);
-      }
-      return { path, mtimeMs: stat.mtimeMs };
-    })
-    .sort((left, right) => right.mtimeMs - left.mtimeMs || right.path.localeCompare(left.path));
-  return candidates[0]?.path ?? null;
-}
-
-function matchingSameVersionBackup(
-  previousDir: string,
-  version: string,
-  expected: PendingFileFingerprint,
-): string | null {
-  const candidates = sameVersionBackupPaths(previousDir, version);
-  return (
-    candidates.find((path) => fingerprintsEqual(fingerprintPhysicalFile(path, 'previous binary backup'), expected)) ??
-    null
-  );
-}
-
-function assertAuthenticatedAlreadyNewBackup(record: PendingDeliveryRecord, previousDir: string): void {
-  const expectedPrevious = record.payload.previousBinary;
-  if (record.schemaVersion !== 4 || expectedPrevious?.present !== true) return;
-  if (
-    expectedPrevious.fingerprint === null ||
-    record.previousVersion === null ||
-    matchingSameVersionBackup(previousDir, record.previousVersion, expectedPrevious.fingerprint) === null
-  ) {
-    throw new Error(
-      'pending delivery binary is already live but no authenticated rollback backup matches the journaled preimage',
-    );
-  }
-}
-
-function pruneMatchingSameVersionBackups(
-  previousDir: string,
-  version: string,
-  retainedPath: string,
-  expected: PendingFileFingerprint,
-): string[] {
-  const retained = resolve(retainedPath);
-  const removed: string[] = [];
-  for (const path of sameVersionBackupPaths(previousDir, version)) {
-    if (resolve(path) === retained) continue;
-    if (!fingerprintsEqual(fingerprintPhysicalFile(path, 'previous binary backup'), expected)) continue;
-    rmSync(path);
-    removed.push(path);
-  }
-  if (removed.length > 0) fsyncDirectory(previousDir);
-  return removed;
-}
-
-function sameVersionBackupPaths(previousDir: string, version: string): string[] {
-  let entries: string[];
-  try {
-    entries = readdirSync(previousDir);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
-    throw error;
-  }
-  const prefix = `genie-${version}`;
-  return entries
-    .filter((entry) => entry === prefix || entry.startsWith(`${prefix}.`))
-    .map((entry) => join(previousDir, entry))
-    .sort();
 }
 
 function assertPendingDeliveryPaths(pending: PendingDeliveryPaths, stagingRoot: string): void {
@@ -3016,10 +2717,6 @@ function isPendingPayloadFingerprint(value: unknown): value is PendingDeliveryRe
   });
 }
 
-function clearPendingDelivery(path = join(GENIE_HOME, PENDING_DELIVERY_NAME)): void {
-  rmSync(path, { force: true });
-}
-
 export interface AuxiliaryDeliveryFinalizers {
   writeVersion: () => void;
   cleanupExtraction: () => void;
@@ -3077,6 +2774,7 @@ export function syncAuxiliaryContent(
   extractDir: string,
   genieHome = GENIE_HOME,
   operations?: Partial<AuxiliaryTreeOperations>,
+  removeSourceOnSuccess = false,
 ): AuxiliaryTreeOutcome[] {
   const targets: Array<{ src: string; dest: string; label: string }> = [
     { src: join(extractDir, 'plugins'), dest: join(genieHome, 'plugins'), label: 'plugins' },
@@ -3090,6 +2788,7 @@ export function syncAuxiliaryContent(
       label: target.label,
       source: target.src,
       destination: target.dest,
+      removeSourceOnSuccess,
       excludedEntryNames: FRAMEWORK_MARKER_FILES,
       operations,
     }),
@@ -3114,12 +2813,10 @@ function printAuxiliaryOutcome(outcome: AuxiliaryTreeOutcome): void {
 }
 
 async function runRollback(): Promise<void> {
-  log('Rolling back to previous binary...');
+  log('Checking legacy rollback eligibility...');
   try {
-    const quarantined = quarantinePendingDelivery();
     const result = rollbackBinary();
     success(`Restored ${result.from} → ${result.restored}`);
-    if (quarantined) log(`Superseded pending delivery quarantined at ${quarantined}`);
     console.log();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

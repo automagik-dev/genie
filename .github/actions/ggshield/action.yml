@@ -1,0 +1,14 @@
+name: GitGuardian Shield (digest pinned)
+description: Scan commits with the repository-approved immutable ggshield image.
+
+inputs:
+  args:
+    description: Arguments passed to ggshield secret scan ci.
+    required: false
+
+runs:
+  using: docker
+  image: docker://gitguardian/ggshield@sha256:11057725f4a47b587735351b69b1873435bf393050f946916ef05b1b0c4b1cf4
+  entrypoint: /app/docker/actions-secret-entrypoint.sh
+  args:
+    - ${{ inputs.args }}

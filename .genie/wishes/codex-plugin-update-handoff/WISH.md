@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | IN_PROGRESS — plan gate SHIP 2026-07-12 at fix loop 1/2 (reviewed digest `4c71ab68…`); executing in an isolated worktree from refreshed main @ `5.260712.1` |
+| **Status** | IN_PROGRESS — A+B execution-SHIP on this branch (tip `ac264911`) now rebased context onto current dev; Groups C–E remain. Dev independently shipped the delivery-adjacent plugin-only layer (B1 `3b4faa3b`, B2 `6f423869`); NONE of the activation protocol is on dev. Merge gate holds: A–E must each independently SHIP before the PR merges to dev. Plan gate SHIP 2026-07-12 at fix loop 1/2 (reviewed digest `4c71ab68…`) |
 | **Slug** | `codex-plugin-update-handoff` |
 | **Date** | 2026-07-12 |
 | **Author** | Felipe + Codex brainstorm session |
@@ -10,6 +10,32 @@
 | **Branch** | `wish/codex-plugin-update-handoff` |
 | **Repos touched** | genie |
 | **Design** | [DESIGN.md](../../brainstorms/codex-plugin-update-handoff/DESIGN.md) |
+
+## Status Update: Handoff Criterion Classification — 2026-07-21
+
+Execution proceeded on the wish branch while delivery-adjacent plugin-only work landed on origin/dev
+(`3b4faa3b` "stage B1 plugin-only convergence, health proof, lifecycle wiring", `6f423869` "stage B2
+doctor + uninstall plugin-only classifier semantics", and related).
+
+**Shipped to origin/dev:** plugin-only convergence orchestrator, one shared health-proof per
+snapshot, agent-sync scoping to Claude skills, install.sh verification hardening, and narrower
+delivery guards: verify-before-mutate, refusal to mutate a same-version payload in place, no
+automatic remove/reinstall. Dev's delivery path still executes cache-advancing `codex plugin add`
+on a stale installed version with no permit machinery — by this wish's contract that remains an
+unpermitted cache-advancing mutation; the core hazard is NOT closed on dev.
+
+**Not shipped to dev:** the entire activation protocol. On the wish branch, Groups A and B are
+complete and execution-SHIP-reviewed — A: SHIP after 2 fix loops (`84fab8bf`, `c490aabe`,
+`9fd46bcb`, `f410ddea`; full check 1481 pass/0 fail); B: SHIP, all 7 ACs pass (`b46d3b03`,
+`ac264911`; full gate 1514 pass/0 fail); branch tip `ac264911`. None of it is on dev. Groups C–E
+(delivery/rollback API + evidence validator, doctor integrationSummary + refusal gates, release
+readiness) are not started anywhere.
+
+**Unblocking sequence:** execute Group C next on the wish branch — it must rewire the three legacy
+cache-advancing call sites (update/install/setup) per the Group B handback, which forbids shipping
+or merging A–B standalone before C lands. Then Groups D–E. Per the merge gate (A–E must each
+independently SHIP before the PR merges to dev), the branch reaches dev only as a whole. The
+post-release user-gated live dogfood ritual stays blocked until A–E reach dev.
 
 ## Summary
 
@@ -931,6 +957,60 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 - **Validation evidence:** wishes lint OK (41 files, 0 broken links); digest exact match.
 - Zero CRITICAL/HIGH gaps remain; all three original loop-2/2 HIGH gaps and fresh-gate HIGH-1 are
   closed with mechanically checkable, singly-owned requirements. Plan is ready for `/work`.
+
+### Execution — Group A (activation-protocol-core) — 2026-07-12
+
+- **Verdict:** SHIP after 2 fix loops. Reviewer: independent subagent; engineer: separate subagent.
+- Commits: `84fab8bf`, `c490aabe`, `9fd46bcb`, `f410ddea` (+ `c58fceb5` wish-status doc fix).
+- Fix loop 1: exported brand classes exposed public static `mint` → forgery (empirically proven);
+  closed via type-only export. Fix loop 2: residual `instance.constructor.mint` route (empirically
+  proven, incl. fresh-fingerprint permit forgery accepted by `beginActivation`); closed by removing
+  the statics for module-private free factories — sole WeakSet registrars. Reviewer re-probed HEAD:
+  all forgery routes dead at all three consumption sites (authorize, beginActivation, quarantine).
+- Validation: focused suites 85 pass/0 fail; full `bun run check` 1481 pass/0 fail (exit 0).
+- LOW carried: optional dedicated quarantine-path forgery test; `new Date()` injectability nit.
+- Task `t_mri2bsh8f2617d39` done.
+
+### Execution — Group B (permit-gated-executor) — 2026-07-12 — SHIP
+
+- **Final verdict: SHIP** after fix loop 1/2 (commit `ac264911`). Reviewer empirically confirmed:
+  the bricked-Codex scenario (removal-observed, N gone, T absent) recovers end-to-end → activated →
+  `current`; fingerprint gate not skippable on resume; re-stamped operation ID keeps fencing sound
+  (foreign-lease mid-resume swap → `codex-lifecycle-fenced`); phase never resets backward to
+  planned; single-journal invariant held; handback edit bounded to the 4 authorized files with A's
+  brand guarantees re-probed intact. All 7 ACs pass. Orchestrator validation: focused 118 pass/0
+  fail; full gate 1514 pass/0 fail (exit 0). Task `t_mri2bsj07c8c4964` done.
+- LOW carried: H3 poison/Node-root-replacement coverage extensions; Windows env branch structural;
+  observe/beginActivation throw escapes as exception (lease still released); inert
+  `*.genie-backup-*` sidecar accumulation (pre-existing).
+
+### Group B review detail (historical)
+
+- Engineer commit `b46d3b03` (executor + 20-test suite; real two-process race exactly-one-winner).
+  Orchestrator validation: focused suites 141 pass/0 fail; full gate 1501 pass/0 fail (exit 0).
+- **Review verdict: FIX-FIRST** — one HIGH: post-command phases (`command-started`,
+  `removal-observed`, `ambiguous-absent`) were activation-ineligible in A's `ACTIVATION_ELIGIBLE`,
+  contradicting the DESIGN truth table's recovery authority and B deliverable 3; a failed add after
+  removal bricked Codex with no tool path. Fix loop 1/2 dispatched: align code with DESIGN (widen
+  eligibility + resume the existing bound intent in `beginActivation`; executor drives idempotent
+  re-add → parity → H3 → finalize), under an explicit orchestrator handback authorizing the bounded
+  Group A edit with mandatory A-suite revalidation.
+- **Adjudication (binding for AC interpretation):** downgrade-receipt consumption at
+  `finalizeActivation` (terminal) is COMPLIANT with the normative DESIGN ordering ("intent first,
+  then receipt after all postconditions") and crash-window-safe (reviewer traced both branches: an
+  interrupted add leaves the receipt either inert under `installed-newer` matching rules or locked
+  to the same bound target; `publishDelivery` clears stale receipts; the finalize tombstone defeats
+  single-file replay). Group B's AC "tombstoned before the first plugin command" is read per the
+  DESIGN; wording is reconciled here rather than by weakening any replay guarantee.
+- **Hard handback to Group C (blocking):** the legacy unpermitted cache-advancing mutator
+  `convergeCodexPlugin` (runtime-integrations.ts) remains wired into update/install/setup at
+  `b46d3b03`. C's deliverable 1 MUST remove/rewire all three call sites onto B's permit-gated
+  facade; the branch must not ship or merge standalone before C lands. Escalates to HIGH if
+  violated.
+- MEDIUM/LOW carried: failure injection extended in fix loop 1 (beforeParity/beforeH3/
+  beforeEnabledRestore/afterPluginAdd/beforeRemovalObserved); H3 poison-coverage extensions
+  (PATH/HOME/TMP*/ComSpec, Node/root replacement post-validation); Windows env branch structural
+  (per WSL boundary); observe/beginActivation throw escapes as exception (lease still released).
 
 ---
 

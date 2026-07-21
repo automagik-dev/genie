@@ -35,7 +35,8 @@ except ImportError:  # flat import (module loaded from a file location)
         _genie_work_plan,
     )
 
-_Runner = Callable[[list[str], dict[str, Any]], str]
+_Invoke = Callable[[str, Callable[..., str], dict[str, Any]], str]
+_Runner = Callable[[list[str], dict[str, Any], _Invoke], str]
 
 _HELP = """\
 Genie — read-only Hermes surface for the Genie CLI (mutation: none).
@@ -128,8 +129,8 @@ def _usage(usage: str) -> str:
     return f"Error — missing required argument. Usage: {usage}. See /genie help."
 
 
-def _run_status(rest: list[str], base: dict[str, Any]) -> str:
-    payload = _payload_of(_genie_status(dict(base)))
+def _run_status(rest: list[str], base: dict[str, Any], invoke: _Invoke) -> str:
+    payload = _payload_of(invoke("genie_status", _genie_status, dict(base)))
     data = payload.get("data")
     fact: str | None = None
     if isinstance(data, dict) and "genie_dir_present" in data:
@@ -138,23 +139,23 @@ def _run_status(rest: list[str], base: dict[str, Any]) -> str:
     return _render("genie status", payload, [fact])
 
 
-def _run_board(rest: list[str], base: dict[str, Any]) -> str:
+def _run_board(rest: list[str], base: dict[str, Any], invoke: _Invoke) -> str:
     args = dict(base)
     title = "genie board"
     if rest:
         args["wish"] = rest[0]
         title = f"genie board (wish {rest[0]})"
-    payload = _payload_of(_genie_board(args))
+    payload = _payload_of(invoke("genie_board", _genie_board, args))
     return _render(title, payload, [_data_summary(payload)])
 
 
-def _run_wish(rest: list[str], base: dict[str, Any]) -> str:
+def _run_wish(rest: list[str], base: dict[str, Any], invoke: _Invoke) -> str:
     if not rest:
         return _usage("/genie wish <slug>")
     slug = rest[0]
     args = dict(base)
     args["slug"] = slug
-    payload = _payload_of(_genie_wish_status(args))
+    payload = _payload_of(invoke("genie_wish_status", _genie_wish_status, args))
     data = payload.get("data")
     facts: list[str | None] = []
     if isinstance(data, dict):
@@ -162,7 +163,7 @@ def _run_wish(rest: list[str], base: dict[str, Any]) -> str:
     return _render(f"genie wish {slug}", payload, facts)
 
 
-def _run_work_plan(rest: list[str], base: dict[str, Any]) -> str:
+def _run_work_plan(rest: list[str], base: dict[str, Any], invoke: _Invoke) -> str:
     if not rest:
         return _usage("/genie work-plan <slug> [groups]")
     slug = rest[0]
@@ -175,17 +176,17 @@ def _run_work_plan(rest: list[str], base: dict[str, Any]) -> str:
         groups = [group for group in tail[0].split(",") if group]
         if groups:
             args["groups"] = groups
-    payload = _payload_of(_genie_work_plan(args))
+    payload = _payload_of(invoke("genie_work_plan", _genie_work_plan, args))
     return _render(f"genie work-plan {slug}", payload, ["mode: dry-run (nothing executed)", _data_summary(payload)])
 
 
-def _run_review_plan(rest: list[str], base: dict[str, Any]) -> str:
+def _run_review_plan(rest: list[str], base: dict[str, Any], invoke: _Invoke) -> str:
     if not rest:
         return _usage("/genie review-plan <slug>")
     slug = rest[0]
     args = dict(base)
     args["slug"] = slug
-    payload = _payload_of(_genie_review_plan(args))
+    payload = _payload_of(invoke("genie_review_plan", _genie_review_plan, args))
     data = payload.get("data")
     facts: list[str | None] = []
     if isinstance(data, dict):
@@ -215,6 +216,31 @@ def _base_args(kwargs: dict[str, Any]) -> dict[str, Any]:
     return {"cwd": str(cwd)} if cwd else {}
 
 
+def _resolve_invoker(kwargs: dict[str, Any]) -> _Invoke:
+    """Prefer the MCP tool via the plugin context; fall back to the legacy bridge.
+
+    When Hermes passes a plugin context that can invoke tools (``call_tool``),
+    dispatch board/task/status subcommands to the first-class MCP tool name so
+    the human surface rides the same truth as the model. During the transition
+    the context may be absent (or the MCP call may fail) — then we fall back to
+    the plugin-local read-only bridge handler, preserving today's behavior.
+    """
+    ctx = kwargs.get("context") or kwargs.get("ctx") or kwargs.get("plugin_context")
+    caller = getattr(ctx, "call_tool", None) if ctx is not None else None
+
+    def invoke(tool_name: str, local_handler: Callable[..., str], args: dict[str, Any]) -> str:
+        if callable(caller):
+            try:
+                result = caller(tool_name, args)
+            except Exception:  # noqa: BLE001 — any MCP failure degrades to the legacy bridge
+                result = None
+            if isinstance(result, str):
+                return result
+        return local_handler(args)
+
+    return invoke
+
+
 def slash_genie(args_text: str = "", **kwargs: Any) -> str:
     """Dispatch /genie <subcommand> to the matching read-only tool handler."""
     tokens = str(args_text or "").split()
@@ -224,7 +250,7 @@ def slash_genie(args_text: str = "", **kwargs: Any) -> str:
     runner = _RUNNERS.get(sub)
     if runner is None:
         return f"Unknown /genie subcommand: {sub!r}. See /genie help for the available subcommands."
-    return runner(tokens[1:], _base_args(kwargs))
+    return runner(tokens[1:], _base_args(kwargs), _resolve_invoker(kwargs))
 
 
 def slash_genie_board(args_text: str = "", **kwargs: Any) -> str:

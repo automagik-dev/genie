@@ -6,13 +6,31 @@ This directory is the shared release payload for Claude Code and Codex. The two 
 
 | Surface | Delivery | Contract |
 |---------|----------|----------|
-| Product skills | The plugin contains 23 physical in-root skill directories, each with `SKILL.md` and `agents/openai.yaml` | Available to a plugin-only install; no escaping symlink and no user-tier copy required |
-| CLI-managed product fallbacks | A Codex-selected `genie install` and later `genie update` synchronize up to 23 digest-owned copies under `~/.agents/skills/<name>` | Bare selectors resolve this user tier; unmanaged, malformed, symlinked, or modified collisions are preserved rather than adopted |
+| Product skills | The plugin contains 23 physical in-root skill directories, each with `SKILL.md` and `agents/openai.yaml` | The **sole** Genie-managed skill provider; no escaping symlink and no user-tier copy — nothing is written to `~/.agents/skills` |
+| Fallback retirement | Hidden `~/.agents/skills/.genie-codex-fallback-retirement/` quarantine transaction | Never written on fresh install. Upgrades from a fallback-seeding release move only provably clean, digest-owned historical copies here after one plugin health proof; `txn-<id>/evidence/` archives retain changed trees for recovery |
 | Hooks | `.codex-plugin/plugin.json` points to `hooks/codex-hooks.json` | Three untrusted definitions only: H3 SessionStart context, H4 local PreToolUse guardrails, H6 PermissionRequest approval |
 | MCP | `.mcp.json` starts `scripts/mcp-launcher.cjs` | The launcher accepts only the canonical `$GENIE_HOME/bin/genie` (default `~/.genie/bin/genie`) and fails closed if it is absent or unsafe |
-| Role agents | Seven TOMLs are staged in `codex-agents/` | Plugins cannot install custom agents. `genie install` or `genie setup --codex` copies the optional profiles into `~/.codex/agents/` |
+| Role agents | Seven TOMLs are staged in `codex-agents/` | Plugins cannot install custom agents. `genie install` or `genie setup --codex` copies the optional profiles into `~/.codex/agents/` behind the same plugin health gate |
 
-The CLI-managed product fallback is not the user's personal skill library. A maintainer may separately have 36 adapted skills under `~/.agents/skills`; those are user-owned, are not bundled here, and must survive update/uninstall byte-for-byte when unmanaged or modified. A plugin-only installation does not need or create the fallback; explicit Codex-selected install/update convergence does.
+The plugin is the only Genie-managed skill provider. A fresh Codex install writes zero user-tier skills; bare `$<skill>` now resolves only a personal copy the user installed themselves. A maintainer may separately have 36 adapted skills under `~/.agents/skills`; those are user-owned, are not bundled here, and must survive update/uninstall byte-for-byte. An upgrade from a release that seeded digest-managed fallbacks retires only provably clean, Genie-owned copies into the hidden quarantine transaction after one health proof — a physical non-symlink directory with a valid versioned `.genie-sync.json`, a recomputed digest equal to the marker, and a match against the verified target payload or a committed verified-release historical tuple. Modified-managed, malformed-marker, symlinked, and unmanaged same-name collisions are preserved in place and reported, never adopted or deleted.
+
+### Quarantine layout and manual recovery
+
+```text
+~/.agents/skills/.genie-codex-fallback-retirement/
+  .retirement.lock          single-writer lock for the retirement root
+  txn-<id>/journal.json     fsynced full-batch record of every retired identity
+  txn-<id>/quarantine/<skill>/   retired skill trees, moved intact
+  txn-<id>/evidence/<skill>/     changed trees archived aside during recovery races
+```
+
+The transaction is idempotent and crash-safe: repeated updates recognize the committed transaction (no second transaction, no accumulating quarantine); an interrupted run reverse-restores every pre-commit move without clobbering conflicts. Committed quarantine and journal evidence are retained. Manual recovery:
+
+- **Restore a retired skill:** move it back from `txn-<id>/quarantine/<skill>/` to `~/.agents/skills/<skill>/` (only if you want a bare user-tier copy; the plugin already serves `$genie:<skill>`).
+- **"Source changed after planning":** if the live skill was edited between the health proof and the move, retirement aborts before any move — the changed personal copy stays in place at `~/.agents/skills/<skill>`; nothing is moved or archived. Review it, then rerun.
+- **"Changed evidence retained":** the republish-to-live + archive behavior belongs to this class — when a quarantined tree changed during restore or disposal, the changed copy is retained under `txn-<id>/evidence/<skill>/` (nested inside the transaction dir, beside `quarantine/`) as a durable backup of that exact content; diff it against the live path before removing it.
+
+`genie doctor` reports the quarantined count and every preserved collision (name, classification, effective precedence, and remediation). Restart Codex after any Codex convergence so it drops stale bare providers and loads only owner-qualified `genie:*` plugin skills.
 
 ## Codex hook trust and side effects
 
@@ -46,9 +64,10 @@ genie update                        # explicit binary/payload/integration conver
 ```
 
 A successful `genie setup --codex` persists Codex maintenance consent. Future explicit `genie update` invocations use
-that scope to refresh the Codex plugin, MCP route, optional role profiles, and clean digest-managed product-skill
-fallbacks in the user tier. Unmanaged, modified, and separately installed personal skills stay user-owned; persisted
-maintenance scope does not authorize hooks or background updates.
+that scope to refresh the Codex plugin, MCP route, and optional role profiles. No supported path writes new product
+skills into the user tier; the only user-tier mutation is retiring provably clean historical fallbacks into the hidden
+quarantine transaction after a health proof. Unmanaged, modified, and separately installed personal skills stay
+user-owned; persisted maintenance scope does not authorize hooks or background updates.
 
 When crossing from a release older than `5.260711.6` to `5.260711.6` or later, the first update may only deliver the new binary/payload because the already-running old process does not yet know the new convergence phase. After that command returns, run `genie update` once more explicitly. The second invocation runs the newly installed contract; confirm the plugin exposes exactly H3/H4/H6, review hashes with `/hooks`, and start a new task. Later updates converge in one operator-driven path. Do not rely on SessionStart for this compatibility hop.
 
@@ -69,7 +88,7 @@ brainstorm -> design review -> wish -> plan review -> work -> implementation rev
 For non-trivial work, brainstorm automatically invokes read-only design review before wish. The WISH then requires a
 separate plan review and persisted `APPROVED` status before work, followed by an independent implementation review. Design SHIP is persisted in DESIGN.md with reviewer identity, UTC timestamp, and a SHA-256 of the exact reviewed content; wish creation and lint reject missing, non-SHIP, or stale evidence. Codex
 invokes the plugin copies as `$genie:brainstorm`, `$genie:wish`, `$genie:review`, and `$genie:work`; bare selectors
-intentionally select the user tier (a CLI-managed fallback or separately installed personal copy). Claude Code uses the
+intentionally select the user tier, which now only ever holds a separately installed personal copy. Claude Code uses the
 equivalent slash skills. Native subagents do not imply separate worktrees. Every engineer first claims its assigned task
 with `genie task checkout <id> --worker <name>`, reports completion without mutating task state, and is reviewed by a
 different agent. Only the orchestrator calls `genie task done <id>` after a SHIP verdict and passing validation. Use

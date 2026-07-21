@@ -2,7 +2,7 @@ name: Sign + Attest Tarballs
 
 # Group 2 of genie-distribution-cutover — signs every tarball produced by
 # build-tarballs.yml with cosign keyless OIDC, registers a GitHub-native
-# build-provenance attestation, and emits a SLSA Level 3 provenance via the
+# source/control-bound native attestation, and emits SLSA Level 3 provenance via the
 # upstream slsa-github-generator reusable workflow. Each tarball is then
 # self-verified by cosign + slsa-verifier + gh-attestation-verify, and a
 # byte-flip tamper-detection self-test asserts all three verifiers REJECT
@@ -10,9 +10,9 @@ name: Sign + Attest Tarballs
 # artifacts (Decision 10) are uploaded for Group 3 (release-publish) to
 # consume.
 #
-# Trigger: runs after build-tarballs.yml completes successfully on a tag
-# push or main push (workflow_run); also dispatchable manually via
-# workflow_dispatch with the upstream run-id.
+# Trigger: reusable only inside the trusted main-branch release chain, after
+# the explicit source build succeeds. Stable begins at release.yml; automated
+# dev/homolog begins at version.yml. It consumes same-run artifacts.
 #
 # Signing model is cosign KEYLESS — the OIDC identity is bound to this
 # workflow file path + ref (Fulcio SAN URI). There is no long-lived key.
@@ -23,37 +23,38 @@ name: Sign + Attest Tarballs
 #   genie-${VERSION}-<platform>.tar.gz.bundle          (cosign keyless sigstore bundle)
 #   genie-${VERSION}-<platform>.tar.gz.intoto.jsonl    (SLSA L3 DSSE envelope)
 #
-# The GitHub-native attestation produced by actions/attest-build-provenance
-# is NOT a separate file — it is registered in the GitHub Attestations API
-# and looked up by digest via `gh attestation verify`.
+# The GitHub-native SLSA v1 attestation is registered in GitHub's Attestations
+# API and looked up by digest via `gh attestation verify`.
 
 on:
-  # Reusable from release.yml orchestrator. The orchestrator calls this
-  # workflow inside the same run, so artifacts pass through the run-shared
-  # store (no run_id input needed). Version is derivable from artifact
-  # filenames; the optional input lets the orchestrator pin it explicitly.
+  # Reusable only from the trusted main-branch release orchestrator. Manual
+  # recovery routes through release.yml and cannot bypass source provenance.
   workflow_call:
     inputs:
       version:
-        description: 'Version (derivable from artifact filenames if omitted)'
-        required: false
+        description: 'Version (must match same-run build artifacts)'
+        required: true
+        type: string
+      channel:
+        description: 'Release channel bound by the trusted orchestrator'
+        required: true
+        type: string
+      source_sha:
+        description: 'Exact CI-approved commit that produced the tarballs'
+        required: true
+        type: string
+      source_branch:
+        description: 'Approved branch for the source CI run'
+        required: true
+        type: string
+      source_ci_run_id:
+        description: 'Authorizing source CI run ID'
+        required: true
         type: string
     outputs:
       version:
         description: 'Resolved version (parsed from upstream tarball filenames)'
         value: ${{ jobs.prepare.outputs.version }}
-  # Manual-recovery escape hatch — operators can re-sign tarballs from a
-  # stranded build-tarballs run by passing version + run_id explicitly.
-  workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version to sign (must match upstream build artifacts)'
-        required: true
-        type: string
-      run_id:
-        description: 'build-tarballs.yml run ID to download artifacts from'
-        required: true
-        type: string
 
 concurrency:
   group: sign-attest-${{ github.ref }}-${{ inputs.version || github.sha }}
@@ -63,46 +64,81 @@ permissions:
   contents: read
 
 jobs:
+  # The OIDC identity belongs to this called workflow, so the called workflow
+  # itself must verify its caller. Otherwise an untrusted branch could call
+  # sign-attest.yml@main and obtain the same client-trusted signing identity.
+  admit:
+    name: Admit trusted release orchestrator
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - name: Bind caller workflow and control commit
+        shell: bash
+        env:
+          CALLER_EVENT: ${{ github.event_name }}
+          CALLER_REF: ${{ github.ref }}
+          CALLER_SHA: ${{ github.sha }}
+          CALLER_WORKFLOW_REF: ${{ github.workflow_ref }}
+          CALLER_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          EXPECTED_STABLE_CALLER: automagik-dev/genie/.github/workflows/release.yml@refs/heads/main
+          EXPECTED_AUTOMATED_CALLER: automagik-dev/genie/.github/workflows/version.yml@refs/heads/main
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_CHANNEL: ${{ inputs.channel }}
+          INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
+          INPUT_SOURCE_BRANCH: ${{ inputs.source_branch }}
+          INPUT_SOURCE_CI_RUN_ID: ${{ inputs.source_ci_run_id }}
+        run: |
+          set -euo pipefail
+          case "$INPUT_CHANNEL" in
+            stable)
+              EXPECTED_EVENT=workflow_dispatch
+              EXPECTED_CALLER="$EXPECTED_STABLE_CALLER"
+              ;;
+            homolog|dev)
+              EXPECTED_EVENT=workflow_run
+              EXPECTED_CALLER="$EXPECTED_AUTOMATED_CALLER"
+              ;;
+            *)
+              echo "::error ::release-caller.channel unknown channel '${INPUT_CHANNEL}'"
+              exit 1
+              ;;
+          esac
+          if [[ "$CALLER_EVENT" != "$EXPECTED_EVENT" ||
+                "$CALLER_REF" != refs/heads/main ||
+                "$CALLER_WORKFLOW_REF" != "$EXPECTED_CALLER" ||
+                "$CALLER_WORKFLOW_SHA" != "$CALLER_SHA" ]]; then
+            echo "::error ::release-caller.untrusted sign-attest rejected caller ${CALLER_WORKFLOW_REF:-<empty>} (${CALLER_EVENT:-<empty>})"
+            exit 1
+          fi
+          if [[ ! "$INPUT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ||
+                ! "$INPUT_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ||
+                ! "$INPUT_SOURCE_CI_RUN_ID" =~ ^[0-9]+$ ]]; then
+            echo "::error ::release-caller.inputs sign-attest received malformed release identity inputs"
+            exit 1
+          fi
+          case "$INPUT_SOURCE_BRANCH" in main|homolog|dev) ;; *) exit 1 ;; esac
+          echo "Trusted release caller admitted at ${CALLER_SHA}"
+
   # ---------------------------------------------------------------------------
-  # prepare — resolve version + upstream run-id, download every tarball,
+  # prepare — resolve version, download every same-run tarball,
   # build the multi-subject base64 input the SLSA generator consumes.
   # ---------------------------------------------------------------------------
   prepare:
     name: Prepare hashes for SLSA
+    needs: admit
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
       version: ${{ steps.hash.outputs.version }}
-      run_id:  ${{ steps.runid.outputs.run_id }}
       hashes:  ${{ steps.hash.outputs.hashes }}
     steps:
-      - name: Resolve upstream run-id
-        id: runid
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Resolve the upstream run-id that holds the tarball artifacts:
-          #  - workflow_dispatch break-glass: operator supplies inputs.run_id
-          #    pointing at a prior build-tarballs run.
-          #  - workflow_call from release.yml orchestrator: build-tarballs ran
-          #    in THIS run; default to github.run_id so download-artifact pulls
-          #    from the current run's shared artifact store.
-          if [[ -n "${{ inputs.run_id }}" ]]; then
-            RUN_ID="${{ inputs.run_id }}"
-          else
-            RUN_ID="${{ github.run_id }}"
-          fi
-          echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
-          echo "Upstream run-id: ${RUN_ID}"
-
       - name: Download all tarball artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: genie-*-tarball
           merge-multiple: true
           path: dist
-          run-id: ${{ steps.runid.outputs.run_id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Resolve version + compute base64 subjects
         id: hash
@@ -113,7 +149,7 @@ jobs:
           shopt -s nullglob
           TARBALLS=( genie-*.tar.gz )
           if [[ ${#TARBALLS[@]} -eq 0 ]]; then
-            echo "::error::no genie-*.tar.gz tarballs downloaded from upstream run-id ${{ steps.runid.outputs.run_id }}"
+            echo "::error::no genie-*.tar.gz tarballs downloaded from the current release run"
             ls -la
             exit 1
           fi
@@ -165,6 +201,13 @@ jobs:
       # check requires the elevated grant.
       contents: write
       actions: read      # read upstream workflow run metadata
+    # SHA-PINNING EXCEPTION (wish stable-release-security-gate, F18): the SLSA
+    # generator reusable workflow MUST be referenced by an exact `@vX.Y.Z`
+    # semver tag and CANNOT be pinned to a commit SHA. slsa-verifier derives the
+    # trusted builder identity from this tag, and the generator FAILS THE BUILD
+    # if referenced by a hash or a shorter tag (`@vX` / `@vX.Y`). See
+    # slsa-github-generator README ("It also needs to be referred as `@vX.Y.Z`")
+    # and slsa-verifier issue #12. Pinning here would break stable provenance.
     uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
     with:
       base64-subjects: ${{ needs.prepare.outputs.hashes }}
@@ -173,7 +216,7 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # sign — per-platform: cosign keyless sign-blob + GitHub-native
-  # attest-build-provenance + self-verify (3 verifiers) + tamper-detection
+  # source/control-bound native attestation + self-verify (3 verifiers) + tamper-detection
   # self-test + per-platform signed artifact upload.
   # ---------------------------------------------------------------------------
   sign:
@@ -183,8 +226,8 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
-      id-token: write       # OIDC for cosign keyless + attest-build-provenance
-      attestations: write   # actions/attest-build-provenance@v1 registration
+      id-token: write       # OIDC for cosign keyless + actions/attest
+      attestations: write   # register the source/control-bound native predicate
     strategy:
       fail-fast: false
       matrix:
@@ -195,18 +238,18 @@ jobs:
           - darwin-arm64
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
 
       - name: Download tarball artifact (${{ matrix.platform }})
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: genie-${{ needs.prepare.outputs.version }}-${{ matrix.platform }}-tarball
           path: dist
-          run-id: ${{ needs.prepare.outputs.run_id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Download SLSA provenance artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           # SLSA generator v2.1.0 uploads the provenance as an artifact whose
           # name == the provenance-name input. The artifact contains one file
@@ -244,12 +287,12 @@ jobs:
           ls -la "${DEST}"
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@v3
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
         with:
           cosign-release: 'v2.4.1'
 
       - name: Install slsa-verifier
-        uses: slsa-framework/slsa-verifier/actions/installer@v2.7.1
+        uses: slsa-framework/slsa-verifier/actions/installer@ea584f4502babc6f60d9bc799dbbb13c1caa9ee6 # v2.7.1
 
       - name: cosign sign-blob (keyless OIDC, sigstore bundle)
         shell: bash
@@ -280,11 +323,29 @@ jobs:
           fi
           echo "::notice::signed ${TARBALL} -> ${BUNDLE}"
 
-      - name: GitHub-native build-provenance attestation
-        id: attest
-        uses: actions/attest-build-provenance@v1
+      - name: Build source/control-bound native SLSA predicate
+        shell: bash
+        env:
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          CHANNEL: ${{ inputs.channel }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          SOURCE_BRANCH: ${{ inputs.source_branch }}
+          SOURCE_CI_RUN_ID: ${{ inputs.source_ci_run_id }}
+          CONTROL_SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: bash scripts/release-native-predicate.sh create "${RUNNER_TEMP}/genie-native-${{ matrix.platform }}.json"
+
+      - name: GitHub-native source/control attestation
+        uses: actions/attest@67422f5511b7ff725f4dbd6fb9bd2cd925c65a8d # v1.4.1
         with:
           subject-path: dist/genie-${{ needs.prepare.outputs.version }}-${{ matrix.platform }}.tar.gz
+          # Custom predicate type (same URI as the predicate's buildType):
+          # claiming https://slsa.dev/provenance/v1 makes GitHub's attestation
+          # API run SLSA validation, which rejects our custom buildType.
+          predicate-type: https://github.com/${{ github.repository }}/release-tarballs/v1
+          predicate-path: ${{ runner.temp }}/genie-native-${{ matrix.platform }}.json
 
       - name: Verify cosign bundle (self-check)
         shell: bash
@@ -300,48 +361,90 @@ jobs:
           # the ref while keeping the workflow path immutable.
           cosign verify-blob \
             --bundle "${TARBALL}.bundle" \
-            --certificate-identity-regexp "^https://github.com/${{ github.repository }}/.github/workflows/sign-attest.yml@" \
+            --certificate-identity-regexp "^https://github\\.com/${{ github.repository }}/\\.github/workflows/sign-attest\\.yml@refs/heads/main$" \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             "${TARBALL}"
 
       - name: Verify SLSA provenance (self-check)
         shell: bash
         env:
-          VERSION:  ${{ needs.prepare.outputs.version }}
-          PLATFORM: ${{ matrix.platform }}
+          VERSION:          ${{ needs.prepare.outputs.version }}
+          PLATFORM:         ${{ matrix.platform }}
+          CHANNEL:          ${{ inputs.channel }}
+          SOURCE_SHA:       ${{ inputs.source_sha }}
+          SOURCE_BRANCH:    ${{ inputs.source_branch }}
+          SOURCE_CI_RUN_ID: ${{ inputs.source_ci_run_id }}
+          CONTROL_SHA:      ${{ github.sha }}
         run: |
           set -euo pipefail
           TARBALL="dist/genie-${VERSION}-${PLATFORM}.tar.gz"
-          slsa-verifier verify-artifact "${TARBALL}" \
-            --provenance-path "${TARBALL}.intoto.jsonl" \
+          VERIFIED_PROVENANCE="${RUNNER_TEMP}/genie-generic-${PLATFORM}.json"
+          VERIFY_ARGS=(
+            verify-artifact "${TARBALL}"
+            --provenance-path "${TARBALL}.intoto.jsonl"
             --source-uri "github.com/${{ github.repository }}"
+            --source-branch main
+          )
+          # slsa-verifier's --build-workflow-input applies only to a top-level
+          # workflow_dispatch. Automated dev/homolog runs have version.yml's
+          # workflow_run context; the helper below binds that signed event to
+          # the exact successful CI run instead.
+          if [[ "$CHANNEL" == "stable" ]]; then
+            VERIFY_ARGS+=(
+              --build-workflow-input "version=${VERSION}"
+              --build-workflow-input "channel=${CHANNEL}"
+              --build-workflow-input "source_sha=${SOURCE_SHA}"
+              --build-workflow-input "source_branch=${SOURCE_BRANCH}"
+              --build-workflow-input "source_ci_run_id=${SOURCE_CI_RUN_ID}"
+            )
+          fi
+          slsa-verifier "${VERIFY_ARGS[@]}" --print-provenance >"$VERIFIED_PROVENANCE"
+          RELEASE_REPOSITORY="${{ github.repository }}" \
+            bash scripts/release-generic-provenance.sh verify-exact "$VERIFIED_PROVENANCE"
 
       - name: Verify GitHub-native attestation (self-check)
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION:  ${{ needs.prepare.outputs.version }}
-          PLATFORM: ${{ matrix.platform }}
+          GH_TOKEN:          ${{ github.token }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          VERSION:           ${{ needs.prepare.outputs.version }}
+          PLATFORM:          ${{ matrix.platform }}
+          CHANNEL:           ${{ inputs.channel }}
+          SOURCE_SHA:        ${{ inputs.source_sha }}
+          SOURCE_BRANCH:     ${{ inputs.source_branch }}
+          SOURCE_CI_RUN_ID:  ${{ inputs.source_ci_run_id }}
+          CONTROL_SHA:       ${{ github.sha }}
+          RUN_ID:            ${{ github.run_id }}
+          RUN_ATTEMPT:       ${{ github.run_attempt }}
         run: |
           set -euo pipefail
           TARBALL="dist/genie-${VERSION}-${PLATFORM}.tar.gz"
-          OWNER="${{ github.repository_owner }}"
-          # `gh attestation verify` queries the GitHub Attestations API by
-          # the artifact's sha256 digest. attest-build-provenance@v1 above
-          # has registered the attestation; this checks it round-trips.
-          gh attestation verify "${TARBALL}" --owner "${OWNER}"
+          RESULT="${RUNNER_TEMP}/genie-native-result-${PLATFORM}.json"
+          gh attestation verify "${TARBALL}" \
+            --repo "$RELEASE_REPOSITORY" \
+            --predicate-type "https://github.com/${RELEASE_REPOSITORY}/release-tarballs/v1" \
+            --cert-identity "https://github.com/${RELEASE_REPOSITORY}/.github/workflows/sign-attest.yml@refs/heads/main" \
+            --source-ref refs/heads/main \
+            --source-digest "$CONTROL_SHA" \
+            --signer-digest "$CONTROL_SHA" \
+            --format json >"$RESULT"
+          bash scripts/release-native-predicate.sh verify "$RESULT"
 
       - name: Tamper-detection self-test (all 3 verifiers must REJECT)
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION:  ${{ needs.prepare.outputs.version }}
-          PLATFORM: ${{ matrix.platform }}
+          GH_TOKEN:          ${{ github.token }}
+          VERSION:           ${{ needs.prepare.outputs.version }}
+          PLATFORM:          ${{ matrix.platform }}
+          CHANNEL:           ${{ inputs.channel }}
+          SOURCE_SHA:        ${{ inputs.source_sha }}
+          SOURCE_BRANCH:     ${{ inputs.source_branch }}
+          SOURCE_CI_RUN_ID:  ${{ inputs.source_ci_run_id }}
+          CONTROL_SHA:       ${{ github.sha }}
         run: |
           set -euo pipefail
           TARBALL="dist/genie-${VERSION}-${PLATFORM}.tar.gz"
           MUTATED="dist/tampered-genie-${VERSION}-${PLATFORM}.tar.gz"
-          OWNER="${{ github.repository_owner }}"
           cp "${TARBALL}" "${MUTATED}"
 
           # Flip the last byte. Any single-byte mutation invalidates the
@@ -360,7 +463,7 @@ jobs:
           echo "-> Expecting cosign verify-blob to REJECT mutated tarball"
           if cosign verify-blob \
               --bundle "${TARBALL}.bundle" \
-              --certificate-identity-regexp "^https://github.com/${{ github.repository }}/.github/workflows/sign-attest.yml@" \
+              --certificate-identity-regexp "^https://github\\.com/${{ github.repository }}/\\.github/workflows/sign-attest\\.yml@refs/heads/main$" \
               --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
               "${MUTATED}" > /tmp/cosign-tamper.log 2>&1; then
             echo "::error::cosign verify-blob accepted a mutated tarball — signing contract broken"
@@ -372,7 +475,13 @@ jobs:
           echo "-> Expecting slsa-verifier verify-artifact to REJECT mutated tarball"
           if slsa-verifier verify-artifact "${MUTATED}" \
               --provenance-path "${TARBALL}.intoto.jsonl" \
-              --source-uri "github.com/${{ github.repository }}" > /tmp/slsa-tamper.log 2>&1; then
+              --source-uri "github.com/${{ github.repository }}" \
+              --source-branch main \
+              --build-workflow-input "version=${VERSION}" \
+              --build-workflow-input "channel=${CHANNEL}" \
+              --build-workflow-input "source_sha=${SOURCE_SHA}" \
+              --build-workflow-input "source_branch=${SOURCE_BRANCH}" \
+              --build-workflow-input "source_ci_run_id=${SOURCE_CI_RUN_ID}" > /tmp/slsa-tamper.log 2>&1; then
             echo "::error::slsa-verifier accepted a mutated tarball — provenance contract broken"
             cat /tmp/slsa-tamper.log >&2 || true
             exit 1
@@ -380,7 +489,13 @@ jobs:
           echo "OK: slsa-verifier rejected mutated tarball"
 
           echo "-> Expecting gh attestation verify to REJECT mutated tarball"
-          if gh attestation verify "${MUTATED}" --owner "${OWNER}" > /tmp/gh-tamper.log 2>&1; then
+          if gh attestation verify "${MUTATED}" \
+              --repo "${{ github.repository }}" \
+              --predicate-type "https://github.com/${{ github.repository }}/release-tarballs/v1" \
+              --cert-identity "https://github.com/${{ github.repository }}/.github/workflows/sign-attest.yml@refs/heads/main" \
+              --source-ref refs/heads/main \
+              --source-digest "$CONTROL_SHA" \
+              --signer-digest "$CONTROL_SHA" > /tmp/gh-tamper.log 2>&1; then
             echo "::error::gh attestation verify accepted a mutated tarball — Attestations API contract broken"
             cat /tmp/gh-tamper.log >&2 || true
             exit 1
@@ -390,7 +505,7 @@ jobs:
           rm -f "${MUTATED}"
 
       - name: Upload signed artifact (${{ matrix.platform }})
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: genie-${{ needs.prepare.outputs.version }}-${{ matrix.platform }}-signed
           path: |

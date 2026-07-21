@@ -54,12 +54,43 @@
       "plugins/genie/scripts",
       "plugins/genie/workflows",
       ".docs-vendor",
-      "docs"
+      "docs",
+      ".well-known"
     ]
   },
   "overrides": [
     {
       "include": ["src/**"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noConsole": "off",
+            "noExplicitAny": "warn",
+            "noArrayIndexKey": "warn",
+            "noAssignInExpressions": "warn",
+            "noImplicitAnyLet": "warn",
+            "noControlCharactersInRegex": "warn",
+            "noMisleadingCharacterClass": "warn"
+          },
+          "complexity": {
+            "noExcessiveCognitiveComplexity": {
+              "level": "warn",
+              "options": { "maxAllowedComplexity": 25 }
+            },
+            "noForEach": "warn"
+          },
+          "style": {
+            "noNonNullAssertion": "warn",
+            "noParameterAssign": "warn"
+          },
+          "correctness": {
+            "noUnusedVariables": "warn"
+          }
+        }
+      }
+    },
+    {
+      "include": ["packages/**"],
       "linter": {
         "rules": {
           "suspicious": {

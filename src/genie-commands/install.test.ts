@@ -13,6 +13,7 @@ import { spawnSync } from 'node:child_process';
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -65,13 +66,15 @@ describe('standalone install.sh lifecycle lease', () => {
   afterEach(() => rmSync(root, { recursive: true, force: true }));
 
   function shell(script: string) {
-    return spawnSync('bash', ['-c', script, 'bash', installer], {
+    const deterministicProcessProbe = `ps() { [[ "$1" == "-p" && "$2" == "$GENIE_TEST_LIVE_PID" ]]; }; ${script}`;
+    return spawnSync('bash', ['-c', deterministicProcessProbe, 'bash', installer], {
       encoding: 'utf8',
       env: {
         ...process.env,
         HOME: home,
         GENIE_HOME: genieHome,
         GENIE_INSTALL_SOURCE_ONLY: '1',
+        GENIE_TEST_LIVE_PID: String(process.pid),
       },
     });
   }
@@ -154,6 +157,186 @@ describe('standalone install.sh lifecycle lease', () => {
     expect(result.status).toBe(0);
     expect(existsSync(lock)).toBe(false);
     expect(existsSync(`${lock}.steal`)).toBe(false);
+  });
+
+  test('an abandoned steal guard (dead owner, aged) no longer permanently blocks acquisition', () => {
+    const lock = lifecycleLockPath(genieHome);
+    const guard = `${lock}.steal`;
+    writeFileSync(lock, '999999:0123456789abcdef0123456789abcdef:unknown\n', { mode: 0o600 });
+    writeFileSync(guard, '999999:abcdefabcdefabcdefabcdefabcdefab:unknown\n', { mode: 0o600 });
+    const aged = new Date(Date.now() - 11 * 60 * 1_000);
+    utimesSync(lock, aged, aged);
+    utimesSync(guard, aged, aged);
+
+    const result = shell('source "$1"; acquire_lifecycle_lock; test -f "$LIFECYCLE_LOCK"; release_lifecycle_lock');
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).not.toContain('another Genie lifecycle command');
+    expect(existsSync(lock)).toBe(false); // stale lock cleared once the guard was reaped
+    expect(existsSync(guard)).toBe(false); // abandoned guard reaped, installer's own guard released
+  });
+
+  test('a zero-length aged steal guard is reaped like an abandoned owner record', () => {
+    const lock = lifecycleLockPath(genieHome);
+    const guard = `${lock}.steal`;
+    writeFileSync(lock, '999999:0123456789abcdef0123456789abcdef:unknown\n', { mode: 0o600 });
+    writeFileSync(guard, '', { mode: 0o600 }); // crash between guard create and record write
+    const aged = new Date(Date.now() - 11 * 60 * 1_000);
+    utimesSync(lock, aged, aged);
+    utimesSync(guard, aged, aged);
+
+    const result = shell('source "$1"; acquire_lifecycle_lock; release_lifecycle_lock');
+
+    expect(result.status).toBe(0);
+    expect(existsSync(lock)).toBe(false);
+    expect(existsSync(guard)).toBe(false);
+  });
+
+  test('a fresh steal guard still fails closed (never reaped)', () => {
+    const lock = lifecycleLockPath(genieHome);
+    const guard = `${lock}.steal`;
+    writeFileSync(lock, '999999:0123456789abcdef0123456789abcdef:unknown\n', { mode: 0o600 });
+    const aged = new Date(Date.now() - 11 * 60 * 1_000);
+    utimesSync(lock, aged, aged);
+    writeFileSync(guard, '999999:abcdefabcdefabcdefabcdefabcdefab:unknown\n', { mode: 0o600 }); // fresh mtime
+
+    const result = shell(`source "$1"; ps() { [[ "$2" == "${process.pid}" ]]; }; acquire_lifecycle_lock`);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('another Genie lifecycle command is active');
+    expect(existsSync(guard)).toBe(true); // an in-window guard is a live stealer — untouched
+    expect(existsSync(lock)).toBe(true); // the stale lock is never stolen behind a live guard
+  });
+
+  test('a live-owner steal guard (aged mtime) still blocks — ps liveness, EPERM-safe', () => {
+    const lock = lifecycleLockPath(genieHome);
+    const guard = `${lock}.steal`;
+    writeFileSync(lock, '999999:0123456789abcdef0123456789abcdef:unknown\n', { mode: 0o600 });
+    // This test process is a controlled live owner: `ps -p` sees it alive even
+    // though age says the guard is old, so it must never be reaped.
+    writeFileSync(guard, `${process.pid}:abcdefabcdefabcdefabcdefabcdefab:unknown\n`, { mode: 0o600 });
+    const aged = new Date(Date.now() - 11 * 60 * 1_000);
+    utimesSync(lock, aged, aged);
+    utimesSync(guard, aged, aged);
+
+    const result = shell('source "$1"; acquire_lifecycle_lock');
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('another Genie lifecycle command is active');
+    expect(existsSync(guard)).toBe(true); // live owner is never reaped regardless of age
+  });
+
+  test('an unavailable ps probe fails closed instead of reaping an aged lock', () => {
+    const lock = lifecycleLockPath(genieHome);
+    writeFileSync(lock, '999999:0123456789abcdef0123456789abcdef:unknown\n', { mode: 0o600 });
+    const aged = new Date(Date.now() - 11 * 60 * 1_000);
+    utimesSync(lock, aged, aged);
+
+    const result = shell('source "$1"; ps() { return 126; }; acquire_lifecycle_lock');
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('another Genie lifecycle command is active');
+    expect(existsSync(lock)).toBe(true); // unknown liveness never authorizes removal
+  });
+
+  test('an unavailable guard-owner probe preserves both the aged guard and stale lock', () => {
+    const lock = lifecycleLockPath(genieHome);
+    const guard = `${lock}.steal`;
+    writeFileSync(lock, '999999:0123456789abcdef0123456789abcdef:unknown\n', { mode: 0o600 });
+    writeFileSync(guard, '888888:abcdefabcdefabcdefabcdefabcdefab:unknown\n', { mode: 0o600 });
+    const aged = new Date(Date.now() - 11 * 60 * 1_000);
+    utimesSync(lock, aged, aged);
+    utimesSync(guard, aged, aged);
+
+    const result = shell(
+      'source "$1"; ps() { [[ "$2" == "999999" ]] && return 1; return 126; }; acquire_lifecycle_lock',
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('another Genie lifecycle command is active');
+    expect(existsSync(lock)).toBe(true);
+    expect(existsSync(guard)).toBe(true);
+  });
+
+  test('a single-digit pid lock record parses (regression for the two-digit-minimum glob)', () => {
+    const lock = lifecycleLockPath(genieHome);
+    writeFileSync(lock, '5:0123456789abcdef0123456789abcdef:unknown\n', { mode: 0o600 });
+    const aged = new Date(Date.now() - 11 * 60 * 1_000);
+    utimesSync(lock, aged, aged);
+
+    // Stub `ps` to report every pid dead so the outcome turns solely on whether
+    // the single-digit record is PARSED. The old `[1-9][0-9]*:*` glob required
+    // two leading digits and left a single-digit-pid lock unrecoverable forever.
+    const result = shell('source "$1"; ps() { return 1; }; acquire_lifecycle_lock; release_lifecycle_lock');
+
+    expect(result.status).toBe(0);
+    expect(existsSync(lock)).toBe(false);
+  });
+
+  test('a future-mtime abandoned guard (dead owner) is reaped per the ± window', () => {
+    const lock = lifecycleLockPath(genieHome);
+    const guard = `${lock}.steal`;
+    writeFileSync(lock, '999999:0123456789abcdef0123456789abcdef:unknown\n', { mode: 0o600 });
+    writeFileSync(guard, '999999:abcdefabcdefabcdefabcdefabcdefab:unknown\n', { mode: 0o600 });
+    const agedPast = new Date(Date.now() - 11 * 60 * 1_000);
+    const agedFuture = new Date(Date.now() + 11 * 60 * 1_000); // implausibly far future = debris too
+    utimesSync(lock, agedPast, agedPast);
+    utimesSync(guard, agedFuture, agedFuture);
+
+    const result = shell('source "$1"; acquire_lifecycle_lock; test -f "$LIFECYCLE_LOCK"; release_lifecycle_lock');
+
+    expect(result.status).toBe(0);
+    expect(existsSync(lock)).toBe(false);
+    expect(existsSync(guard)).toBe(false);
+  });
+
+  test('a symlinked steal guard is never reaped and still blocks (fail-closed on ! -L)', () => {
+    const lock = lifecycleLockPath(genieHome);
+    const guard = `${lock}.steal`;
+    const target = join(root, 'guard-symlink-target');
+    writeFileSync(lock, '999999:0123456789abcdef0123456789abcdef:unknown\n', { mode: 0o600 });
+    const aged = new Date(Date.now() - 11 * 60 * 1_000);
+    utimesSync(lock, aged, aged);
+    writeFileSync(target, '999999:abcdefabcdefabcdefabcdefabcdefab:unknown\n', { mode: 0o600 });
+    symlinkSync(target, guard); // a guard we must refuse to follow/unlink
+
+    const result = shell(`source "$1"; ps() { [[ "$2" == "${process.pid}" ]]; }; acquire_lifecycle_lock`);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('another Genie lifecycle command is active');
+    expect(lstatSync(guard).isSymbolicLink()).toBe(true); // symlink node untouched
+    expect(existsSync(lock)).toBe(true); // stale lock never stolen behind a symlink guard
+  });
+
+  test('a no-trailing-newline live-owner guard is preserved and not mis-reaped', () => {
+    const lock = lifecycleLockPath(genieHome);
+    const guard = `${lock}.steal`;
+    writeFileSync(lock, '999999:0123456789abcdef0123456789abcdef:unknown\n', { mode: 0o600 });
+    // A live owner (this test process) with NO trailing newline: the read idiom
+    // must keep the record instead of clobbering it to "" and reaping a live guard.
+    writeFileSync(guard, `${process.pid}:abcdefabcdefabcdefabcdefabcdefab:unknown`, { mode: 0o600 });
+    const aged = new Date(Date.now() - 11 * 60 * 1_000);
+    utimesSync(lock, aged, aged);
+    utimesSync(guard, aged, aged);
+
+    const result = shell('source "$1"; acquire_lifecycle_lock');
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('another Genie lifecycle command is active');
+    expect(existsSync(guard)).toBe(true); // live owner preserved despite the missing newline
+  });
+
+  test('an empty aged lock (crash between create and record write) is recovered', () => {
+    const lock = lifecycleLockPath(genieHome);
+    writeFileSync(lock, '', { mode: 0o600 }); // zero-byte lock, as TS leaves on a mid-write crash
+    const aged = new Date(Date.now() - 11 * 60 * 1_000);
+    utimesSync(lock, aged, aged);
+
+    const result = shell('source "$1"; acquire_lifecycle_lock; test -f "$LIFECYCLE_LOCK"; release_lifecycle_lock');
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).not.toContain('another Genie lifecycle command');
+    expect(existsSync(lock)).toBe(false);
   });
 
   test('final verification compares one exact normalized version token, never a substring', () => {
@@ -273,27 +456,69 @@ describe('installCommand', () => {
     expect(selection).toBe('none');
   });
 
-  test('selection bounds agent-sync homes and none performs no client sync', () => {
+  test('agent-sync selection passes through unchanged (restore-hermes-sync-leg): codex/none skip it, auto/all/claude reach it as-is', () => {
+    const observed: string[] = [];
+    const runFor = (integrations: 'codex' | 'none' | 'auto' | 'all' | 'claude') =>
+      installCommand(
+        { integrations },
+        makeCleanupSpy().runner,
+        () => undefined,
+        (selection) => observed.push(selection),
+        () => [],
+        noopLease,
+        noopConsent,
+      );
+    // codex converges through runIntegrations only — agent-sync never writes
+    // ~/.agents/skills at all now (R2/A1 is structural in runAgentSync), so
+    // codex/none simply have nothing for agent-sync to do.
+    runFor('codex');
+    runFor('none');
+    expect(observed).toEqual([]);
+    // auto/all/claude pass through UNCHANGED — narrowAgentSyncSelection no
+    // longer collapses them to 'claude', which is what silently killed the
+    // hermes leg (runAgentSync's hermes gate needs 'auto'/'all' verbatim).
+    runFor('auto');
+    runFor('all');
+    runFor('claude');
+    expect(observed).toEqual(['auto', 'all', 'claude']);
+  });
+
+  test('a failed codex integration gates the Claude skill sync so Claude trees stay byte-identical (A2)', () => {
     const observed: string[] = [];
     installCommand(
-      { integrations: 'codex' },
+      { integrations: 'auto' },
       makeCleanupSpy().runner,
       () => undefined,
       (selection) => observed.push(selection),
-      () => [],
+      () => [{ runtime: 'codex' as const, ok: false, detail: 'plugin-incapable Codex' }],
       noopLease,
       noopConsent,
     );
-    installCommand(
-      { integrations: 'none' },
-      makeCleanupSpy().runner,
-      () => undefined,
-      (selection) => observed.push(selection),
-      () => [],
-      noopLease,
-      noopConsent,
-    );
-    expect(observed).toEqual(['codex']);
+    expect(observed).toEqual([]);
+  });
+
+  test('a codex-gated Claude skip under --integrations auto prints an explicit advisory (not a silent exit 0)', () => {
+    const lines: string[] = [];
+    const originalLog = console.log;
+    console.log = (...args: unknown[]) => lines.push(args.map(String).join(' '));
+    try {
+      installCommand(
+        { integrations: 'auto' },
+        makeCleanupSpy().runner,
+        () => undefined,
+        () => {
+          throw new Error('runSync must not be called when codex gates the Claude sync');
+        },
+        () => [{ runtime: 'codex' as const, ok: false, detail: 'plugin-incapable Codex' }],
+        noopLease,
+        noopConsent,
+      );
+      const output = lines.join('\n');
+      expect(output).toContain('Skipped agent-sync');
+      expect(output).toContain('codex integration failed');
+    } finally {
+      console.log = originalLog;
+    }
   });
 
   test('explicit integration failures are fatal while auto failures warn', () => {

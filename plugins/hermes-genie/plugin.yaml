@@ -1,18 +1,18 @@
 name: genie
-version: 0.1.0
-description: "Native Hermes surface for Genie orchestration: read-only status, board, wish, task, work-plan, and review-plan tools plus KHAW bridge hooks, commands, and skills."
+version: 5.260721.8
+description: "Native Hermes surface for Genie orchestration: read-only status plus work-plan and review-plan gap tools that the MCP board surface does not cover, hooks, commands, and a thin cockpit skill. Board/task truth comes from the genie MCP tools."
 provides_tools:
+  # Default surface: exactly the three gap tools the MCP board surface does not cover.
   - genie_status
-  - genie_board
-  - genie_wish_status
-  - genie_task_list
-  - genie_task_status
   - genie_work_plan
   - genie_review_plan
+  # Legacy tools (genie_board, genie_wish_status, genie_task_list, genie_task_status)
+  # duplicate MCP board/task truth. They only register when
+  # GENIE_HERMES_LEGACY_TOOLS=1 is set, for one transition release.
 provides_hooks:
   - on_session_start
   - pre_tool_call
-  - post_tool_call
+  - pre_llm_call
 provides_commands:
   - genie
   - genie-board
@@ -23,6 +23,3 @@ provides_cli_commands:
   - genie
 provides_skills:
   - genie
-  - genie-work
-  - genie-review
-  - genie-khaw-bridge

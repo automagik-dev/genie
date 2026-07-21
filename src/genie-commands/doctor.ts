@@ -13,17 +13,34 @@
  * non-zero if any check is a hard failure.
  */
 
-import { existsSync, lstatSync, readFileSync, readdirSync, readlinkSync, statSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { Database } from 'bun:sqlite';
+import { execFileSync } from 'node:child_process';
 import {
+  constants,
+  accessSync,
+  existsSync,
+  lstatSync,
+  readFileSync,
+  readdirSync,
+  readlinkSync,
+  statSync,
+} from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
+import {
+  type AgentFileManifestEntry,
   CLAUDE_EXCLUDED_SKILLS,
   MANAGED_BY,
   MANIFEST_NAME,
   TARGET_NAME,
+  claudeGeniePluginEnabled,
   computeDirDigest,
+  computeFileDigest,
+  enumerateSourceAgentFiles,
+  readAgentFilesManifestState,
   resolveAgentsSkillsDir,
   resolveGenieSource,
+  resolveHermesConfigPath,
 } from '../lib/agent-sync.js';
 import { DEAD_GENIE_OTEL_EXPORTER, getCodexConfigPath } from '../lib/codex-config.js';
 import {
@@ -39,8 +56,14 @@ import {
   resolveGenieHome as resolveGlobalGenieHome,
   resolveHermesHome,
 } from '../lib/genie-home.js';
+import { hasDuplicateMcpGenieKeys } from '../lib/hermes-mcp-config.js';
+import { hasDuplicateSkillsExternalDirsKeys, resolveProductSkillsRoot } from '../lib/hermes-skills-config.js';
 import { resolveOmniRuntimeConfig } from '../lib/omni-config.js';
-import { inspectCodexAgentOwnership } from '../lib/runtime-integrations.js';
+import {
+  CANONICAL_GENIE_SKILL_NAMES,
+  inspectCodexAgentOwnership,
+  inspectCodexFallbackTier,
+} from '../lib/runtime-integrations.js';
 import { CURRENT_SCHEMA_VERSION, GenieDbError, openDb } from '../lib/v5/genie-db.js';
 import { VERSION } from '../lib/version.js';
 import {
@@ -56,11 +79,56 @@ type CheckStatus = 'pass' | 'warn' | 'fail';
 
 export const MINIMUM_BUN_VERSION = '1.3.10';
 
+/**
+ * Per-file delivery state of one Claude role agent in `~/.claude/agents/`,
+ * derived from the Group-A `.genie-sync.json` manifest + the canonical source
+ * `agents/` dir. These four names are the STABLE machine-readable contract the
+ * execution-optimization dashboard parses off `genie doctor --json` — do NOT
+ * rename them without updating that consumer:
+ *   - genie-managed-current : manifest entry present, on-disk == manifest == source.
+ *   - genie-managed-stale   : manifest entry present, but on-disk / source drifted
+ *                             (edited target, moved-on source, or an orphaned managed file).
+ *   - present-unmanaged     : source role agent present on disk with NO manifest entry
+ *                             (the 2026-07-11 hand-copy — NOT healthy genie-managed).
+ *   - missing-from-target   : source role agent absent from `~/.claude/agents/`.
+ */
+export type RoleAgentFileState =
+  | 'genie-managed-current'
+  | 'genie-managed-stale'
+  | 'present-unmanaged'
+  | 'missing-from-target';
+
+/** Structured rider carried on the role-agent check for dashboard consumers. */
+export interface RoleAgentDelivery {
+  /** Trust verdict on the shared `~/.claude/agents/.genie-sync.json` manifest. */
+  manifestStatus: 'managed' | 'foreign' | 'absent' | 'unsafe';
+  /** Present only when `manifestStatus === 'unsafe'`. */
+  manifestReason?: string;
+  /** Source-inventory failures that make a seemingly empty/current delivery untrustworthy. */
+  sourceIssues: string[];
+  /** One entry per source role agent (and any managed manifest entry), name-sorted. */
+  files: Array<{ name: string; state: RoleAgentFileState }>;
+  /** True when the `genie@automagik` plugin is ALSO enabled — plugin `genie:*` and fanned bare names both surface. */
+  duplicateSurface: boolean;
+}
+
 interface CheckResult {
   name: string;
   status: CheckStatus;
   detail?: string;
   suggestion?: string;
+  /**
+   * Machine-readable payload rider (survives `--json` as `checks[].roleAgents`).
+   * Only the `agent sync: claude role agents` check sets it; see
+   * {@link RoleAgentDelivery} for the stable field/state-name contract.
+   */
+  roleAgents?: RoleAgentDelivery;
+  /**
+   * Machine-readable payload rider (survives `--json` as `checks[].indexLane`).
+   * Only the `jar: index-lane drift` check sets it; see {@link IndexLaneEntry}
+   * for the stable per-entry state contract.
+   */
+  indexLane?: { entries: IndexLaneEntry[] };
 }
 
 // ============================================================================
@@ -365,6 +433,31 @@ function codexProjectRouteCheck(root: string | null, probe: CodexPluginProbe): C
   }
 }
 
+/**
+ * Payload completeness (R5): how many of the exact canonical Genie skills the
+ * active plugin root physically ships. Pure read of `<activePluginRoot>/skills`
+ * — never launches the MCP (A9). A short payload is repairable, not health.
+ */
+function codexPluginPayloadCheck(probe: CodexPluginProbe): CheckResult | null {
+  if (!probe.installed || probe.activePluginRoot === undefined) return null;
+  const skillsRoot = join(probe.activePluginRoot, 'skills');
+  const present = CANONICAL_GENIE_SKILL_NAMES.filter((name) => {
+    try {
+      return statSync(join(skillsRoot, name)).isDirectory();
+    } catch {
+      return false;
+    }
+  });
+  const complete = present.length === CANONICAL_GENIE_SKILL_NAMES.length;
+  const missing = CANONICAL_GENIE_SKILL_NAMES.filter((name) => !present.includes(name));
+  return {
+    name: 'Codex Genie plugin payload',
+    status: complete ? 'pass' : 'warn',
+    detail: `${present.length}/${CANONICAL_GENIE_SKILL_NAMES.length} canonical skills present in active plugin${complete ? '' : ` (missing: ${missing.join(', ')})`}`,
+    suggestion: complete ? undefined : 'Run `genie setup --codex` to reinstall the active plugin payload.',
+  };
+}
+
 function codexPluginSurfaceChecks(probe: CodexPluginProbe): CheckResult[] {
   if (!probe.installed) return [];
   const manifest = probe.activePluginRoot ? join(probe.activePluginRoot, '.codex-plugin', 'plugin.json') : null;
@@ -381,7 +474,9 @@ function codexPluginSurfaceChecks(probe: CodexPluginProbe): CheckResult[] {
       declared = false;
     }
   }
+  const payload = codexPluginPayloadCheck(probe);
   return [
+    ...(payload ? [payload] : []),
     {
       name: 'Codex Genie MCP capability',
       status: declared ? 'pass' : 'warn',
@@ -630,6 +725,8 @@ const SYNC_MANIFEST_NAME = MANIFEST_NAME;
 const SYNC_MANAGED_BY = MANAGED_BY;
 const COUNCIL_WORKFLOW_FILE = TARGET_NAME;
 const SYNC_SUGGESTION = 'Run `genie update` to converge all detected coding agents.';
+const HERMES_INLINE_SUGGESTION =
+  'Rewrite the inline top-level key as a block mapping so genie can merge without deleting your entries, then run `genie update`.';
 
 interface AgentSyncPaths {
   genieHome?: string;
@@ -638,6 +735,13 @@ interface AgentSyncPaths {
   /** Shared `~/.agents/skills` tier codex skills are synced into (detection root stays `codexDir`). */
   agentsSkillsDir?: string;
   hermesHome?: string;
+  /**
+   * Hermes CLI detection override for the best-effort enable probe. `undefined`
+   * probes PATH; `null` explicitly skips the probe (hermes CLI absent → silent).
+   */
+  hermesBinary?: string | null;
+  /** Injectable `hermes plugins list` reader so tests never spawn a process. */
+  hermesPluginsList?: (binary: string) => string;
   settingsPath?: string;
 }
 
@@ -742,53 +846,332 @@ function councilStampState(councilPath: string, pluginRoot: string): { stale: bo
   return { stale: true, label: `stale (LENS_ROOT ${root ?? 'unreadable'})` };
 }
 
-function checkClaudeSync(pluginRoot: string, claudeDir: string): CheckResult[] {
+// ============================================================================
+// Claude role-agent delivery (~/.claude/agents) — per-file classifier
+//
+// summarizeManagedSkills() cannot be reused here: it is subdir-based (a manifest
+// INSIDE each skill dir) and so it is blind to flat `<name>.md` agent files and
+// cannot express a "present-unmanaged" state. Role agents are flat files under a
+// SINGLE shared dir-level manifest (Group A), so this classifier is per-FILE.
+// ============================================================================
+
+interface SourceAgentDigests {
+  digests: Map<string, string>;
+  issues: string[];
+}
+
+function diagnosticError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** Digest each flat source role agent without discarding enumeration/read failures. */
+function sourceAgentDigests(pluginRoot: string): SourceAgentDigests {
+  const digests = new Map<string, string>();
+  const issues: string[] = [];
+  const agentsRoot = join(pluginRoot, 'agents');
+  let agents: ReturnType<typeof enumerateSourceAgentFiles>;
+  try {
+    agents = enumerateSourceAgentFiles(pluginRoot);
+  } catch (error) {
+    return {
+      digests,
+      issues: [`cannot enumerate source role agents at ${agentsRoot}: ${diagnosticError(error)}`],
+    };
+  }
+  if (agents.length === 0) issues.push(`source role-agent inventory is empty at ${agentsRoot}`);
+  for (const agent of agents) {
+    try {
+      digests.set(agent.name, computeFileDigest(agent.path));
+    } catch (error) {
+      issues.push(`cannot read source role agent ${agent.name}: ${diagnosticError(error)}`);
+    }
+  }
+  return { digests, issues };
+}
+
+function isRegularFile(path: string): boolean {
+  try {
+    return lstatSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function safeFileDigest(path: string): string | null {
+  try {
+    return computeFileDigest(path);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * State of one role-agent filename from the source digest set + manifest entries.
+ * "current" mirrors the skills contract (on-disk == manifest == source). Returns
+ * null for a name genie does not speak for (a user-authored agent absent from
+ * both source and the manifest is never reported).
+ */
+function classifyRoleAgentFile(
+  agentsDir: string,
+  name: string,
+  source: Map<string, string>,
+  entries: Record<string, AgentFileManifestEntry>,
+): RoleAgentFileState | null {
+  const present = isRegularFile(join(agentsDir, name));
+  const entry = entries[name];
+  const inSource = source.has(name);
+  if (entry === undefined) {
+    if (present) return inSource ? 'present-unmanaged' : null;
+    return inSource ? 'missing-from-target' : null;
+  }
+  // A manifest entry is durable ownership evidence even after both the source
+  // and live file disappear. Report it as missing so doctor never hides stale
+  // ownership metadata behind a healthy empty inventory.
+  if (!present) return 'missing-from-target';
+  const onDisk = safeFileDigest(join(agentsDir, name));
+  const current = inSource && onDisk !== null && onDisk === entry.digest && entry.digest === source.get(name);
+  return current ? 'genie-managed-current' : 'genie-managed-stale';
+}
+
+/** Classify every source role agent (and any managed manifest entry) under `<claudeDir>/agents`. */
+function classifyRoleAgents(pluginRoot: string, agentsDir: string): Omit<RoleAgentDelivery, 'duplicateSurface'> {
+  const sourceState = sourceAgentDigests(pluginRoot);
+  const source = sourceState.digests;
+  const manifest = readAgentFilesManifestState(agentsDir);
+  const entries = manifest.kind === 'managed' ? manifest.files : {};
+  const names = new Set<string>([...source.keys(), ...Object.keys(entries)]);
+  const files: RoleAgentDelivery['files'] = [];
+  for (const name of [...names].sort()) {
+    const state = classifyRoleAgentFile(agentsDir, name, source, entries);
+    if (state !== null) files.push({ name, state });
+  }
+  return {
+    manifestStatus: manifest.kind,
+    manifestReason: manifest.kind === 'unsafe' ? manifest.reason : undefined,
+    sourceIssues: sourceState.issues,
+    files,
+  };
+}
+
+/** Human-facing summary + a stale flag (any non-current state, or an unusable manifest, warns). */
+function roleAgentSummary(delivery: Omit<RoleAgentDelivery, 'duplicateSurface'>): { detail: string; stale: boolean } {
+  const sourceProblem =
+    delivery.sourceIssues.length === 0 ? null : `source inventory unavailable (${delivery.sourceIssues.join('; ')})`;
+  if (delivery.manifestStatus === 'unsafe') {
+    return {
+      detail: `${sourceProblem === null ? '' : `${sourceProblem}; `}manifest unusable (${delivery.manifestReason}) — every role agent treated as unmanaged`,
+      stale: true,
+    };
+  }
+  if (delivery.files.length === 0) {
+    return {
+      detail:
+        sourceProblem === null ? 'no genie role agents detected' : `${sourceProblem}; no genie role agents detected`,
+      stale: sourceProblem !== null,
+    };
+  }
+  const counts: Record<RoleAgentFileState, number> = {
+    'genie-managed-current': 0,
+    'genie-managed-stale': 0,
+    'present-unmanaged': 0,
+    'missing-from-target': 0,
+  };
+  for (const file of delivery.files) counts[file.state] += 1;
+  const fileDetail =
+    `${counts['genie-managed-current']}/${delivery.files.length} genie-managed-current, ` +
+    `${counts['present-unmanaged']} present-unmanaged, ${counts['genie-managed-stale']} stale, ` +
+    `${counts['missing-from-target']} missing-from-target`;
+  const detail = sourceProblem === null ? fileDetail : `${sourceProblem}; ${fileDetail}`;
+  const stale = sourceProblem !== null || counts['genie-managed-current'] !== delivery.files.length;
+  return { detail, stale };
+}
+
+/** `enabledPlugins["genie@automagik"] === true` in Claude Code's settings.json (unreadable → false). */
+function roleAgentDuplicateSurface(settingsPath: string): boolean {
+  try {
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as { enabledPlugins?: Record<string, boolean> };
+    return settings.enabledPlugins?.['genie@automagik'] === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Per-file role-agent delivery check + the duplicate-surface warning. The
+ * structured {@link RoleAgentDelivery} rides `--json` as `checks[].roleAgents`
+ * so the dashboard reads the four state names without parsing prose; the
+ * duplicate warning is emitted as its own line ONLY when the plugin is enabled.
+ */
+function checkRoleAgents(pluginRoot: string, claudeDir: string, settingsPath: string): CheckResult[] {
+  const classification = classifyRoleAgents(pluginRoot, join(claudeDir, 'agents'));
+  const duplicateSurface = roleAgentDuplicateSurface(settingsPath);
+  const { detail, stale } = roleAgentSummary(classification);
+  const results: CheckResult[] = [
+    {
+      name: 'agent sync: claude role agents',
+      status: stale ? 'warn' : 'pass',
+      detail,
+      suggestion: stale ? SYNC_SUGGESTION : undefined,
+      roleAgents: { ...classification, duplicateSurface },
+    },
+  ];
+  if (duplicateSurface) {
+    results.push({
+      name: 'agent sync: duplicate role-agent surface',
+      status: 'warn',
+      detail:
+        'genie@automagik plugin enabled — plugin `genie:*` agents and fanned bare-named agents both surface (duplicate listings)',
+      suggestion:
+        'Keep the genie plugin disabled (bare-named agents are fanned by `genie update`), or expect duplicates.',
+    });
+  }
+  return results;
+}
+
+function checkClaudeSync(pluginRoot: string, claudeDir: string, settingsPath: string): CheckResult[] {
   if (!existsSync(claudeDir)) return [{ name: 'agent sync: claude', status: 'pass', detail: 'not detected' }];
   // Claude legitimately excludes `council` (the /council native workflow owns
   // that name), so its expected source set is source minus CLAUDE_EXCLUDED_SKILLS
   // — otherwise doctor reports "N-1/N current" and advises `genie update` forever.
-  const skills = skillsFreshness(summarizeManagedSkills(pluginRoot, join(claudeDir, 'skills'), CLAUDE_EXCLUDED_SKILLS));
+  // With the genie@automagik plugin enabled, sync suppresses the WHOLE bare-name
+  // skills mirror (skills load as genie:* from the plugin), so the expected
+  // source set is empty and any leftover managed mirror is prunable stale state.
+  const pluginEnabled = claudeGeniePluginEnabled(settingsPath);
+  const excluded = pluginEnabled ? new Set([...sourceSkillDigests(pluginRoot).keys()]) : CLAUDE_EXCLUDED_SKILLS;
+  const skills = skillsFreshness(summarizeManagedSkills(pluginRoot, join(claudeDir, 'skills'), excluded));
+  const skillsDetail = pluginEnabled
+    ? skills.stale
+      ? `${skills.detail} (mirror suppressed — leftover mirrors, run \`genie update\` to prune)`
+      : 'skills mirror suppressed (genie@automagik plugin enabled)'
+    : skills.detail;
   const council = councilStampState(join(claudeDir, 'workflows', COUNCIL_WORKFLOW_FILE), pluginRoot);
   const stale = skills.stale || council.stale;
   return [
     {
       name: 'agent sync: claude',
       status: stale ? 'warn' : 'pass',
-      detail: `${skills.detail}; council.js ${council.label}`,
+      detail: `${skillsDetail}; council.js ${council.label}`,
       suggestion: stale ? SYNC_SUGGESTION : undefined,
     },
+    ...checkRoleAgents(pluginRoot, claudeDir, settingsPath),
   ];
 }
 
 /**
- * Codex detection stays keyed on `~/.codex` (the CODEX_HOME root), but the
- * skills agent-sync writes live in the shared `~/.agents/skills` tier — the
- * only user tier codex-rs actually loads (the legacy `.curated` lane is
- * retired and migrated away on sync; see agent-sync.ts).
+ * Codex Genie skills are plugin-only (R5). The shared `~/.agents/skills` tier
+ * must therefore hold NO Genie-managed product fallbacks: an empty tier is the
+ * healthy plugin-only state, and any managed-clean fallback there is repairable
+ * duplicate provider state, not health. Doctor reports the shared classifier's
+ * counts (A9: pure read, never launches the plugin MCP) with DISTINCT
+ * remediations — a clean fallback is repairable via `genie update`, a
+ * well-formed-but-unrecognized fallback is manual review (never `genie update`
+ * — the planner refuses it too, so recommending update would be an infinite
+ * no-op loop), and a preserved personal collision is manual — and surfaces
+ * retained changed-evidence as a manual-recovery line (R8) rather than a raw
+ * recovery-sweep error.
  */
-function checkCodexSync(pluginRoot: string, codexDir: string, agentsSkillsDir: string): CheckResult[] {
+function checkCodexSync(codexDir: string, agentsSkillsDir: string, pluginRoot: string | null): CheckResult[] {
   if (!existsSync(codexDir)) return [{ name: 'agent sync: codex', status: 'pass', detail: 'not detected' }];
-  const summary = summarizeManagedSkills(pluginRoot, agentsSkillsDir);
-  const populated = summary.current + summary.stale > 0;
-  const skills = skillsFreshness(summary);
-  const stale = skills.stale || !populated;
-  return [
-    {
+  const tier = inspectCodexFallbackTier(agentsSkillsDir, pluginRoot);
+  if (tier.unreadable) {
+    return [
+      {
+        name: 'agent sync: codex',
+        status: 'warn',
+        detail: `~/.agents/skills (${agentsSkillsDir}) exists but could not be listed — fallback state is unknown`,
+        suggestion:
+          'Check read permissions on ~/.agents/skills; genie cannot classify Codex fallback state until it is readable.',
+      },
+    ];
+  }
+  const quarantineNote =
+    tier.quarantinedTransactions > 0
+      ? `; ${tier.quarantinedTransactions} retired quarantine transaction(s) retained`
+      : '';
+  const results: CheckResult[] = [];
+  if (tier.cleanFallbacks.length === 0) {
+    results.push({
       name: 'agent sync: codex',
-      status: stale ? 'warn' : 'pass',
-      detail: populated ? skills.detail : '~/.agents/skills not populated',
-      suggestion: stale ? SYNC_SUGGESTION : undefined,
-    },
-  ];
+      status: 'pass',
+      detail: `plugin-only — no managed ~/.agents/skills fallbacks${quarantineNote}`,
+    });
+  } else {
+    results.push({
+      name: 'agent sync: codex',
+      status: 'warn',
+      detail: `${tier.cleanFallbacks.length} clean managed fallback(s) in ~/.agents/skills — repairable duplicate provider state (${tier.cleanFallbacks.join(', ')})${quarantineNote}`,
+      suggestion: 'Run `genie update` to retire these clean fallbacks; the installed plugin already provides them.',
+    });
+  }
+  if (tier.unrecognizedFallbacks.length > 0) {
+    // #2575 vocabulary: well-formed identityVersion:2, self-consistent,
+    // genie-managed content the planner does not recognize (not in the frozen
+    // allowlist and no matching live-plugin payload). Era-A fallbacks (v1
+    // legacy digest, no identityVersion) do NOT land here — their marker fails
+    // the v2 self-consistency check, so they surface as preservedCollisions.
+    // Never user-edited, so NOT a personal collision — but `genie update`
+    // refuses to retire it, so recommending that here would be a no-op loop.
+    results.push({
+      name: 'agent sync: codex unrecognized',
+      status: 'warn',
+      detail: `${tier.unrecognizedFallbacks.length} unrecognized managed fallback(s) in ~/.agents/skills (review manually): ${tier.unrecognizedFallbacks.join(', ')}`,
+      suggestion:
+        '`genie update` will NOT retire these — the content is well-formed genie provenance but not in the frozen allowlist and does not match the installed plugin payload. Review each manually; do not expect `genie update` to clear this warning.',
+    });
+  }
+  if (tier.preservedCollisions.length > 0) {
+    // Decision 5: report each collision's name + classification + effective precedence + remediation.
+    const classified = tier.preservedCollisions
+      .map((name) => `${name} (${tier.preservedCollisionClass[name] ?? 'preserved'})`)
+      .join(', ');
+    results.push({
+      name: 'agent sync: codex collisions',
+      status: 'warn',
+      detail: `${tier.preservedCollisions.length} preserved personal skill(s) collide with plugin names: ${classified}`,
+      suggestion:
+        'Effective precedence: the installed plugin owns the owner-qualified `genie:<name>` selector; each preserved copy owns bare `<name>`. Personal edits are preserved in place; `genie update` never touches them. Review each and remove or rename it manually.',
+    });
+  }
+  if (tier.retainedEvidence.length > 0) {
+    const evidenceList = tier.retainedEvidence
+      .map((entry) => `${entry.transactionId} (${entry.evidencePath})`)
+      .join(', ');
+    results.push({
+      name: 'agent sync: codex quarantine evidence',
+      status: 'warn',
+      detail: `${tier.retainedEvidence.length} retirement transaction(s) retained changed-tree evidence: ${evidenceList}`,
+      suggestion:
+        'A Codex fallback changed during retirement; the changed copy was archived aside under the quarantine evidence directory. Review the retained evidence and reconcile it manually.',
+    });
+  }
+  return results;
 }
 
-function checkHermesSync(hermesRoot: string | null, hermesHome: string): CheckResult[] {
+interface HermesCheckInput {
+  hermesRoot: string | null;
+  hermesHome: string;
+  genieHome: string;
+  pluginRoot: string;
+  binary: string | null;
+  pluginsList?: (binary: string) => string;
+}
+
+/**
+ * Independent per-leg Hermes health: the plugin symlink, the `mcp_servers.genie`
+ * entry, the skills external-dir (or managed-copy fallback), and a best-effort
+ * `hermes plugins list` enable probe. Each leg is a separate {@link CheckResult}
+ * so `genie doctor` distinguishes which leg is unhealthy. An inline/flow-style
+ * top-level `mcp_servers:`/`skills:` — the shape the merge helpers refuse — is a
+ * WARN (never a FAIL) carrying the block-mapping remediation hint.
+ */
+function checkHermesSync(input: HermesCheckInput): CheckResult[] {
+  const { hermesRoot, hermesHome } = input;
   if (!existsSync(hermesHome)) return [{ name: 'agent sync: hermes', status: 'pass', detail: 'not detected' }];
   if (hermesRoot === null) {
     return [{ name: 'agent sync: hermes', status: 'pass', detail: 'hermes-genie source absent — link check skipped' }];
   }
   const link = hermesLinkState(join(hermesHome, 'plugins', 'genie'), hermesRoot);
-  return [
+  const results: CheckResult[] = [
     {
       name: 'agent sync: hermes',
       status: link.ok ? 'pass' : 'warn',
@@ -796,6 +1179,213 @@ function checkHermesSync(hermesRoot: string | null, hermesHome: string): CheckRe
       suggestion: link.ok ? undefined : SYNC_SUGGESTION,
     },
   ];
+  // Config-driven legs read the live profile's config.yaml (sticky-profile-aware),
+  // exactly where the agent-sync lane writes it.
+  const configPath = resolveHermesConfigPath(hermesHome);
+  const configText = readTextOrNull(configPath);
+  results.push(checkHermesMcp(configText, configPath));
+  results.push(checkHermesSkills(configText, input.genieHome, input.pluginRoot, configPath));
+  const enabled = checkHermesPluginEnabled(input.binary, input.pluginsList);
+  if (enabled !== null) results.push(enabled);
+  return results;
+}
+
+/** `mcp_servers.genie.command` must be an absolute path to an existing, executable file. */
+function checkHermesMcp(configText: string | null, configPath: string): CheckResult {
+  const name = 'agent sync: hermes mcp';
+  if (configText === null) {
+    return { name, status: 'warn', detail: `config.yaml absent (${configPath})`, suggestion: SYNC_SUGGESTION };
+  }
+  const inline = detectInlineTopLevelKey(configText, 'mcp_servers');
+  if (inline) return { name, status: 'warn', detail: inline, suggestion: HERMES_INLINE_SUGGESTION };
+  if (hasDuplicateMcpGenieKeys(configText)) {
+    return {
+      name,
+      status: 'warn',
+      detail: `duplicate "mcp_servers.genie" key detected in ${configPath} — a stale duplicate can persist even when the parsed value looks correct`,
+      suggestion: SYNC_SUGGESTION,
+    };
+  }
+  const command = readMcpGenieCommand(configText);
+  if (command === null) {
+    return { name, status: 'warn', detail: 'mcp_servers.genie absent', suggestion: SYNC_SUGGESTION };
+  }
+  if (!isAbsolute(command)) {
+    return {
+      name,
+      status: 'warn',
+      detail: `mcp_servers.genie.command not absolute (${command})`,
+      suggestion: SYNC_SUGGESTION,
+    };
+  }
+  if (!isExecutableFile(command)) {
+    return {
+      name,
+      status: 'warn',
+      detail: `mcp_servers.genie.command missing or not executable (${command})`,
+      suggestion: SYNC_SUGGESTION,
+    };
+  }
+  return { name, status: 'pass', detail: `mcp_servers.genie → ${command}` };
+}
+
+/**
+ * Skills leg passes when `skills.external_dirs` contains the resolved product
+ * skills root, OR the older-Hermes managed copy under `<configHome>/skills` holds
+ * at least as many skills as the product source.
+ */
+function checkHermesSkills(
+  configText: string | null,
+  genieHome: string,
+  pluginRoot: string,
+  configPath: string,
+): CheckResult {
+  const name = 'agent sync: hermes skills';
+  if (configText !== null) {
+    const inline = detectInlineTopLevelKey(configText, 'skills');
+    if (inline) return { name, status: 'warn', detail: inline, suggestion: HERMES_INLINE_SUGGESTION };
+    if (hasDuplicateSkillsExternalDirsKeys(configText)) {
+      return {
+        name,
+        status: 'warn',
+        detail: `duplicate "skills.external_dirs" key detected in ${configPath} — a stale duplicate can persist even when the parsed value looks correct`,
+        suggestion: SYNC_SUGGESTION,
+      };
+    }
+  }
+  const skillsRoot = safeResolveProductSkillsRoot(genieHome);
+  const externalDirs = configText === null ? [] : readSkillsExternalDirs(configText);
+  if (skillsRoot !== null && externalDirs.includes(skillsRoot)) {
+    return { name, status: 'pass', detail: `external_dirs → ${skillsRoot}` };
+  }
+  const productCount = countSkillDirs(join(pluginRoot, 'skills'));
+  const copyDir = join(dirname(configPath), 'skills');
+  const copyCount = countSkillDirs(copyDir);
+  if (productCount > 0 && copyCount >= productCount) {
+    return { name, status: 'pass', detail: `managed copy ${copyCount}/${productCount} skills (${copyDir})` };
+  }
+  const detail =
+    skillsRoot === null
+      ? `product skills root unresolved; managed copy ${copyCount}/${productCount}`
+      : `external_dirs missing ${skillsRoot}; managed copy ${copyCount}/${productCount}`;
+  return { name, status: 'warn', detail, suggestion: SYNC_SUGGESTION };
+}
+
+/**
+ * Best-effort enable probe. Silent (null) when the hermes CLI is absent; otherwise
+ * a WARN when `hermes plugins list` shows genie disabled, and a benign pass when
+ * the probe is inconclusive or the CLI call fails — never a hard failure.
+ */
+function checkHermesPluginEnabled(binary: string | null, pluginsList?: (binary: string) => string): CheckResult | null {
+  if (binary === null) return null;
+  const name = 'agent sync: hermes plugin enabled';
+  let output: string;
+  try {
+    output = (pluginsList ?? defaultHermesPluginsList)(binary);
+  } catch {
+    return { name, status: 'pass', detail: 'enable state unknown (hermes plugins list unavailable)' };
+  }
+  const enabled = hermesPluginsListShowsGenieEnabled(output);
+  if (enabled === true) return { name, status: 'pass', detail: 'genie enabled' };
+  if (enabled === false) {
+    return { name, status: 'warn', detail: 'genie present but not enabled', suggestion: SYNC_SUGGESTION };
+  }
+  return { name, status: 'pass', detail: 'genie enable state unknown (not listed)' };
+}
+
+function defaultHermesPluginsList(binary: string): string {
+  return execFileSync(binary, ['plugins', 'list'], {
+    encoding: 'utf8',
+    timeout: 5_000,
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
+}
+
+/** Fuzzy, best-effort read of an `enabled`/`disabled` marker on a genie line. */
+function hermesPluginsListShowsGenieEnabled(output: string): boolean | null {
+  for (const line of output.split('\n')) {
+    if (!/genie/i.test(line)) continue;
+    if (/disabled/i.test(line)) return false;
+    if (/enabled/i.test(line)) return true;
+  }
+  return null;
+}
+
+/**
+ * Mirror of the merge helpers' `assertNoInlineTopLevelKey`: returns the WARN hint
+ * when a top-level `key:` carries an inline/flow/scalar value on the same line,
+ * else null. Read-only — doctor never rewrites config.
+ */
+function detectInlineTopLevelKey(text: string, key: string): string | null {
+  const keyLine = new RegExp(`^${key}:(?:\\s|$)`);
+  const blockHeader = new RegExp(`^${key}:\\s*(#.*)?$`);
+  for (const line of text.split('\n')) {
+    if (keyLine.test(line) && !blockHeader.test(line)) {
+      return `top-level "${key}" has an inline value (${line.trim()}); genie cannot merge it`;
+    }
+  }
+  return null;
+}
+
+function readMcpGenieCommand(text: string): string | null {
+  const genie = readYamlPath(text, ['mcp_servers', 'genie']);
+  if (!isPlainObject(genie)) return null;
+  return typeof genie.command === 'string' ? genie.command : null;
+}
+
+function readSkillsExternalDirs(text: string): string[] {
+  const skills = readYamlPath(text, ['skills']);
+  if (!isPlainObject(skills) || !Array.isArray(skills.external_dirs)) return [];
+  return skills.external_dirs.filter((d): d is string => typeof d === 'string');
+}
+
+/** Walk a dotted path through a parsed YAML document; undefined on any miss/parse error. */
+function readYamlPath(text: string, path: string[]): unknown {
+  let node: unknown;
+  try {
+    node = Bun.YAML.parse(text);
+  } catch {
+    return undefined;
+  }
+  for (const key of path) {
+    if (!isPlainObject(node)) return undefined;
+    node = node[key];
+  }
+  return node;
+}
+
+function safeResolveProductSkillsRoot(genieHome: string): string | null {
+  try {
+    return resolveProductSkillsRoot({ genieHome });
+  } catch {
+    return null;
+  }
+}
+
+function countSkillDirs(dir: string): number {
+  return listSubdirs(dir).filter((name) => existsSync(join(dir, name, 'SKILL.md'))).length;
+}
+
+function isExecutableFile(path: string): boolean {
+  try {
+    if (!statSync(path).isFile()) return false;
+    accessSync(path, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function readTextOrNull(path: string): string | null {
+  try {
+    return readFileSync(path, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function hermesLinkState(linkPath: string, hermesRoot: string): { ok: boolean; detail: string } {
@@ -840,7 +1430,7 @@ function checkMarketplacePlugin(settingsPath: string): CheckResult[] {
       name,
       status: 'pass',
       detail:
-        'genie@automagik not enabled — optional; `genie update` converges skills directly (never auto-re-enabled)',
+        'genie@automagik not enabled — optional; the installed plugin provides Genie skills (never auto-re-enabled)',
     },
   ];
 }
@@ -879,11 +1469,170 @@ export function checkAgentSync(paths: AgentSyncPaths = {}): CheckResult[] {
     ];
   }
   const pluginRoot = source.pluginRoot;
+  const hermesBinary = paths.hermesBinary !== undefined ? paths.hermesBinary : whichBinary('hermes');
   return [
-    ...safeAgentChecks('claude', () => checkClaudeSync(pluginRoot, claudeDir)),
-    ...safeAgentChecks('codex', () => checkCodexSync(pluginRoot, codexDir, agentsSkillsDir)),
-    ...safeAgentChecks('hermes', () => checkHermesSync(source.hermesRoot, hermesHome)),
+    ...safeAgentChecks('claude', () => checkClaudeSync(pluginRoot, claudeDir, settingsPath)),
+    ...safeAgentChecks('codex', () => checkCodexSync(codexDir, agentsSkillsDir, pluginRoot)),
+    ...safeAgentChecks('hermes', () =>
+      checkHermesSync({
+        hermesRoot: source.hermesRoot,
+        hermesHome,
+        genieHome,
+        pluginRoot,
+        binary: hermesBinary,
+        pluginsList: paths.hermesPluginsList,
+      }),
+    ),
     ...safeAgentChecks('marketplace', () => checkMarketplacePlugin(settingsPath)),
+  ];
+}
+
+// ============================================================================
+// jar: index-lane drift — INDEX.md sections vs roadmap board lanes
+//
+// One tracker: the `roadmap` board owns placement truth; `.genie/INDEX.md` prose
+// stays hand-written. This WARNING-LEVEL check joins each INDEX entry's FIRST
+// `brainstorms/<slug>/` or `wishes/<slug>/` link to the roadmap card WHERE
+// `tasks.wish = slug`, then verifies that card's lane against the section it sits
+// under. It never flips doctor `ok:false`. An entry with no such link, no
+// matching card, or a laneless card is 'unlinked' (NEVER 'drift') — drift is
+// reserved for a resolved card whose lane contradicts its INDEX section.
+// ============================================================================
+
+/**
+ * One INDEX entry's placement verdict. Rides `--json` as
+ * `checks[].indexLane.entries` — deterministic and order-stable (INDEX order).
+ * The four state names are the machine-readable contract:
+ *   - ok       : the resolved roadmap card's lane agrees with the section.
+ *   - drift    : the resolved card's lane contradicts the section.
+ *   - unlinked : no first brainstorms/wishes link, no matching roadmap card,
+ *                or the card carries no lane — never counted as drift.
+ */
+export interface IndexLaneEntry {
+  /** Stable text prefix: the first link's label, else the trimmed line prefix. */
+  entry: string;
+  /** Resolved lifecycle slug, or null when the entry has no brainstorms/wishes link. */
+  slug: string | null;
+  /** INDEX section: Raw | Simmering | Ready | Poured. */
+  section: string;
+  /** The roadmap card's lane, or null when nothing resolves. */
+  lane: string | null;
+  state: 'ok' | 'drift' | 'unlinked';
+}
+
+/** Section → the set of roadmap lanes that AGREE with it (the group brief's contract). */
+const INDEX_SECTION_LANES: Record<string, ReadonlySet<string>> = {
+  Raw: new Set(['Idea']),
+  Simmering: new Set(['Brainstorm']),
+  Ready: new Set(['Brainstorm', 'Wish']),
+  Poured: new Set(['Wish', 'Work', 'Review', 'Done']),
+};
+
+/** First markdown link into `brainstorms/<slug>/…` or `wishes/<slug>/…`; slug is group 2. */
+const INDEX_ENTRY_LINK = /\[([^\]]*)\]\((?:\.\/)?(?:brainstorms|wishes)\/([^/)]+)\/[^)]*\)/;
+
+function truncateIndexEntry(text: string): string {
+  const clean = text.replace(/\s+/g, ' ').trim();
+  return clean.length > 80 ? `${clean.slice(0, 79)}…` : clean;
+}
+
+/**
+ * Parse INDEX.md into per-entry lane verdicts. Pure: the caller supplies
+ * `laneForSlug`, which returns the resolving roadmap card's lane or null. Only
+ * the four lifecycle sections are inspected; any other heading is ignored (its
+ * bullets are skipped). Every `- ` bullet under a lifecycle section — including
+ * indented sub-bullets — is one entry.
+ */
+export function evaluateIndexLaneDrift(
+  indexText: string,
+  laneForSlug: (slug: string) => string | null,
+): IndexLaneEntry[] {
+  const entries: IndexLaneEntry[] = [];
+  let section: string | null = null;
+  for (const line of indexText.split('\n')) {
+    const heading = /^##\s+(.+?)\s*$/.exec(line);
+    if (heading) {
+      section = heading[1] in INDEX_SECTION_LANES ? heading[1] : null;
+      continue;
+    }
+    if (section === null || !/^\s*-\s+/.test(line)) continue;
+    const content = line.replace(/^\s*-\s+/, '');
+    const link = INDEX_ENTRY_LINK.exec(line);
+    if (link === null) {
+      entries.push({ entry: truncateIndexEntry(content), slug: null, section, lane: null, state: 'unlinked' });
+      continue;
+    }
+    const label = link[1].trim();
+    const slug = link[2];
+    const lane = laneForSlug(slug);
+    const state: IndexLaneEntry['state'] =
+      lane === null ? 'unlinked' : INDEX_SECTION_LANES[section].has(lane) ? 'ok' : 'drift';
+    entries.push({ entry: label.length > 0 ? label : truncateIndexEntry(content), slug, section, lane, state });
+  }
+  return entries;
+}
+
+/**
+ * wish → lane for every `roadmap` card that carries both. Read-only: opens the
+ * shared DB read-only (no schema mutation, no write lock), tolerating a missing
+ * DB, a missing `lane` column, or any read failure by degrading to an empty map
+ * (every linked entry then reports 'unlinked', never 'drift'). First wish wins.
+ */
+function roadmapLanesByWish(dbPath: string): Map<string, string> {
+  const map = new Map<string, string>();
+  if (!existsSync(dbPath)) return map;
+  let db: Database | null = null;
+  try {
+    db = new Database(dbPath, { readonly: true });
+    const rows = db
+      .query(
+        "SELECT t.wish AS wish, t.lane AS lane FROM tasks t JOIN boards b ON t.board_id = b.id WHERE b.name = 'roadmap' AND t.wish IS NOT NULL AND t.lane IS NOT NULL",
+      )
+      .all() as Array<{ wish: string; lane: string }>;
+    for (const row of rows) if (!map.has(row.wish)) map.set(row.wish, row.lane);
+  } catch {
+    return new Map();
+  } finally {
+    db?.close();
+  }
+  return map;
+}
+
+/**
+ * The `jar: index-lane drift` warning-level check. Absent INDEX.md → a single
+ * pass line (nothing to lint). Otherwise one line summarizing ok/drift/unlinked
+ * counts, WARN only when ≥1 entry drifts, plus the stable per-entry payload.
+ */
+export function checkIndexLaneDrift(root: string | null, databaseRoot: string | null): CheckResult[] {
+  const name = 'jar: index-lane drift';
+  const base = root ?? process.cwd();
+  const indexPath = join(base, '.genie', 'INDEX.md');
+  if (!existsSync(indexPath)) {
+    return [{ name, status: 'pass', detail: `no ${indexPath} (nothing to lint)` }];
+  }
+  let indexText: string;
+  try {
+    indexText = readFileSync(indexPath, 'utf8');
+  } catch (err) {
+    return [{ name, status: 'pass', detail: `INDEX.md unreadable (${diagnosticError(err)})` }];
+  }
+  const dbPath = join(databaseRoot ?? base, '.genie', 'genie.db');
+  const lanes = roadmapLanesByWish(dbPath);
+  const entries = evaluateIndexLaneDrift(indexText, (slug) => lanes.get(slug) ?? null);
+  const drift = entries.filter((e) => e.state === 'drift').length;
+  const unlinked = entries.filter((e) => e.state === 'unlinked').length;
+  const ok = entries.filter((e) => e.state === 'ok').length;
+  return [
+    {
+      name,
+      status: drift > 0 ? 'warn' : 'pass',
+      detail: `${entries.length} INDEX entries: ${ok} ok, ${drift} drift, ${unlinked} unlinked`,
+      suggestion:
+        drift > 0
+          ? 'An INDEX section disagrees with its roadmap card lane — move the card to the matching lane or the entry to the matching section.'
+          : undefined,
+      indexLane: { entries },
+    },
   ];
 }
 
@@ -934,6 +1683,7 @@ export async function doctorCommand(options?: { json?: boolean; fix?: boolean },
     ...checkV4Residue(),
     ...checkAgentSync(),
     ...(await checkOmniHookTimeout()),
+    ...checkIndexLaneDrift(root, databaseRoot),
   ];
 
   const failed = results.filter((r) => r.status === 'fail');

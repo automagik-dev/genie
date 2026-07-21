@@ -1,0 +1,137 @@
+{
+  "captured_at": "2026-07-15T15:53:53Z",
+  "captured_by": "gh api via namastex888 (operator-directed)",
+  "production_environment": {
+    "name": "production",
+    "can_admins_bypass": false,
+    "prevent_self_review": true,
+    "required_reviewers": [
+      "namastex888",
+      "vasconceloscezar"
+    ],
+    "deployment_branch_policy": {
+      "protected_branches": false,
+      "custom_branch_policies": true,
+      "policies": [
+        {
+          "id": 54725291,
+          "name": "main",
+          "type": "branch"
+        }
+      ]
+    }
+  },
+  "release_manifests_environment": {
+    "name": "release-manifests",
+    "required_reviewers": [],
+    "deployment_branch_policy": {
+      "protected_branches": false,
+      "custom_branch_policies": true,
+      "policies": [
+        {
+          "id": 54725330,
+          "name": "main",
+          "type": "branch"
+        }
+      ]
+    },
+    "release_manifests_deploy_key_secret_configured": false
+  },
+  "main_ruleset": {
+    "id": 9203218,
+    "name": "main",
+    "target": "branch",
+    "enforcement": "active",
+    "conditions": {
+      "ref_name": {
+        "include": [
+          "refs/heads/main"
+        ],
+        "exclude": []
+      }
+    },
+    "bypass_actors": [],
+    "rules": [
+      {
+        "type": "deletion"
+      },
+      {
+        "type": "non_fast_forward"
+      },
+      {
+        "type": "pull_request",
+        "parameters": {
+          "allowed_merge_methods": [
+            "merge"
+          ],
+          "dismiss_stale_reviews_on_push": true,
+          "require_code_owner_review": false,
+          "require_last_push_approval": true,
+          "required_approving_review_count": 1,
+          "required_review_thread_resolution": true
+        }
+      },
+      {
+        "type": "required_status_checks",
+        "parameters": {
+          "do_not_enforce_on_create": false,
+          "strict_required_status_checks_policy": true,
+          "required_status_checks": [
+            {
+              "context": "Quality Gate (typecheck + lint + test)",
+              "integration_id": 15368
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "immutable_tag_ruleset": {
+    "id": 18938286,
+    "name": "v-tags-immutable",
+    "target": "tag",
+    "enforcement": "active",
+    "conditions": {
+      "ref_name": {
+        "include": [
+          "refs/tags/v*"
+        ],
+        "exclude": []
+      }
+    },
+    "bypass_actors": [],
+    "rules": [
+      {
+        "type": "deletion"
+      },
+      {
+        "type": "non_fast_forward"
+      },
+      {
+        "type": "update"
+      }
+    ]
+  },
+  "immutable_releases": {
+    "enabled": true,
+    "enforced_by_owner": false
+  },
+  "release_automation_cutover": {
+    "version_workflow": {
+      "id": 242892197,
+      "state": "disabled_manually",
+      "active_runs": []
+    },
+    "release_workflow": {
+      "id": 200480001,
+      "state": "disabled_manually",
+      "active_runs": []
+    }
+  },
+  "blocked_control": {
+    "organization_deploy_keys_enabled_for_repositories": false,
+    "repository_deploy_keys": [],
+    "reason": "The organization policy rejects repository deploy keys. Enabling that organization-wide policy requires separate owner approval.",
+    "safe_state": "No main-ruleset bypass actor is configured, no release-manifests write secret exists, and Version/Release remain disabled."
+  }
+}

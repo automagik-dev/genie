@@ -2,15 +2,26 @@ name: CI
 
 on:
   push:
-    branches: [main, dev]
+    branches: [main, homolog, dev]
   pull_request:
-    branches: [main, dev]
+    branches: [main, homolog, dev]
+  # version.yml pushes its deterministic child with GITHUB_TOKEN, so GitHub
+  # intentionally suppresses push/pull_request recursion. It dispatches this
+  # read-only gate against the child's immutable v<version> ref explicitly;
+  # the resulting checks attach to the exact promotion commit.
+  workflow_dispatch:
 
 # Group the CI jobs under a single ref-scoped key so a new push cancels the
 # full gate in one sweep rather than leaving a stale job running.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
+
+# Least-privilege default (wish stable-release-security-gate, F18). CI only ever
+# reads the repo — no job here writes contents, packages, or attestations. Any
+# future job that needs more must opt in with its own job-level `permissions:`.
+permissions:
+  contents: read
 
 jobs:
   secrets-scan:
@@ -20,11 +31,12 @@ jobs:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - uses: GitGuardian/ggshield-action@v1
+      - uses: ./.github/actions/ggshield
         if: ${{ env.GITGUARDIAN_API_KEY != '' }}
         env:
           GITHUB_PUSH_BEFORE_SHA: ${{ github.event.before }}
@@ -43,18 +55,19 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           submodules: recursive
+          persist-credentials: false
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: "1.3.11"
 
       - name: Install dependencies
         env:
           BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache-${{ github.run_id }}-${{ github.run_attempt }}
-        run: bun install
+        run: bun install --frozen-lockfile
 
       - name: Build
         run: bun run build
@@ -104,21 +117,65 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           submodules: recursive
+          persist-credentials: false
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: "1.3.11"
 
       - name: Install dependencies
         env:
           BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache-${{ github.run_id }}-${{ github.run_attempt }}
-        run: bun install
+        run: bun install --frozen-lockfile
 
       - name: v5 lifecycle e2e
         run: V5_E2E_BUILD=1 bash tests/e2e/v5-lifecycle.sh
+
+  # Black-box proof that the BUILT CLI makes Codex product skills plugin-only
+  # (wish `repair-genie-codex-hooks-and-dedupe-skills`, Group C). Runs against
+  # a real codex CLI (pinned via `@openai/codex` on npm — the same package
+  # that ships the platform-specific `codex-cli` binary installed locally) in
+  # a fully isolated $HOME/$CODEX_HOME the smoke harness creates per-run.
+  # `ubuntu-latest` (not the blacksmith runner used elsewhere) because this
+  # job's feasibility was verified specifically against a stock GH-hosted
+  # Linux runner; see PR body for the verification evidence.
+  codex-smoke:
+    name: Codex Plugin Smoke (black-box)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.11"
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        env:
+          BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache-${{ github.run_id }}-${{ github.run_attempt }}
+        run: bun install --frozen-lockfile
+
+      - name: Install codex CLI (pinned, unauthenticated — the smokes never call `codex login`)
+        run: npm install -g @openai/codex@0.144.1
+
+      - name: Build
+        run: bun run build
+
+      - name: Codex plugin-only smoke
+        run: bun run smoke:codex
+
+      - name: Codex debug discovery smoke
+        run: bun run smoke:codex-discovery
 
   # Umbrella status check. Branch protection is configured to require
   # "Quality Gate (typecheck + lint + test)" as a required status, so the
