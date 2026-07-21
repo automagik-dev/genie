@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | IN_PROGRESS — plan gate SHIP 2026-07-12 at fix loop 1/2 (reviewed digest `4c71ab68…`); executing in an isolated worktree from refreshed main @ `5.260712.1` |
+| **Status** | IN_PROGRESS — criterion classification 2026-07-21: Groups A+B execution-SHIP-reviewed on the wish branch (tip `ac264911`); Groups C–E not started; NONE of the activation protocol is on dev. Dev independently shipped the delivery-adjacent plugin-only layer (B1 `3b4faa3b`, B2 `6f423869`). Plan gate SHIP 2026-07-12 at fix loop 1/2 (reviewed digest `4c71ab68…`) |
 | **Slug** | `codex-plugin-update-handoff` |
 | **Date** | 2026-07-12 |
 | **Author** | Felipe + Codex brainstorm session |
@@ -10,6 +10,32 @@
 | **Branch** | `wish/codex-plugin-update-handoff` |
 | **Repos touched** | genie |
 | **Design** | [DESIGN.md](../../brainstorms/codex-plugin-update-handoff/DESIGN.md) |
+
+## Status Update: Handoff Criterion Classification — 2026-07-21
+
+Execution proceeded on the wish branch while delivery-adjacent plugin-only work landed on origin/dev
+(`3b4faa3b` "stage B1 plugin-only convergence, health proof, lifecycle wiring", `6f423869` "stage B2
+doctor + uninstall plugin-only classifier semantics", and related).
+
+**Shipped to origin/dev:** plugin-only convergence orchestrator, one shared health-proof per
+snapshot, agent-sync scoping to Claude skills, install.sh verification hardening, and narrower
+delivery guards: verify-before-mutate, refusal to mutate a same-version payload in place, no
+automatic remove/reinstall. Dev's delivery path still executes cache-advancing `codex plugin add`
+on a stale installed version with no permit machinery — by this wish's contract that remains an
+unpermitted cache-advancing mutation; the core hazard is NOT closed on dev.
+
+**Not shipped to dev:** the entire activation protocol. On the wish branch, Groups A and B are
+complete and execution-SHIP-reviewed — A: SHIP after 2 fix loops (`84fab8bf`, `c490aabe`,
+`9fd46bcb`, `f410ddea`; full check 1481 pass/0 fail); B: SHIP, all 7 ACs pass (`b46d3b03`,
+`ac264911`; full gate 1514 pass/0 fail); branch tip `ac264911`. None of it is on dev. Groups C–E
+(delivery/rollback API + evidence validator, doctor integrationSummary + refusal gates, release
+readiness) are not started anywhere.
+
+**Unblocking sequence:** execute Group C next on the wish branch — it must rewire the three legacy
+cache-advancing call sites (update/install/setup) per the Group B handback, which forbids shipping
+or merging A–B standalone before C lands. Then Groups D–E. Per the merge gate (A–E must each
+independently SHIP before the PR merges to dev), the branch reaches dev only as a whole. The
+post-release user-gated live dogfood ritual stays blocked until A–E reach dev.
 
 ## Summary
 

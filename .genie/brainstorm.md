@@ -4,6 +4,9 @@
 
 ## Simmering
 
+- [Ledger re-baseline 2026-07-21](brainstorms/ledger-rebaseline/DRAFT.md) — reconcile every wish/
+  brainstorm status against origin/dev reality; WRS 60, deciding dispositions.
+
 ## Ready
 
 ## Poured

@@ -2,23 +2,27 @@
 
 ## Raw
 
-- [control-plane-contract](brainstorms/control-plane-contract/DRAFT.md) — single executable dispatch+routing contract; global↔repo lifecycle convergence by layer; work/review policy refactor (umbrella G2+G3, 2026-07-09)
-- [skill-absorbs](brainstorms/skill-absorbs/DRAFT.md) — trace→fix, wizard→genie, pm→work-ref, council→[council-workflow](brainstorms/council-workflow/DESIGN.md) (poured), report→LangWatch (umbrella G4, 2026-07-09)
-- [always-on-genie](brainstorms/always-on-genie/DRAFT.md) — SessionStart identity/state inject, hook contract w/ fixtures, worktree isolation policy (umbrella G5+G10, 2026-07-09)
-- [genie-spend](brainstorms/genie-spend/DRAFT.md) — LangWatch-backed spend report + decision-level cost join (umbrella G7, 2026-07-09)
-- [dream-replatform](brainstorms/dream-replatform/DRAFT.md) — scheduler adapter + genie.db ledger; cron = trigger never authority; omni approval gates (umbrella G9, 2026-07-09)
+- [control-plane-contract](brainstorms/control-plane-contract/DRAFT.md) — **re-scoped 2026-07-21:** narrow to dispatch routing + work/review policy tiers; agent-sync (#2541) already solved global↔repo skill convergence orthogonally (umbrella G2+G3)
+- [skill-absorbs](brainstorms/skill-absorbs/DRAFT.md) — **re-scoped 2026-07-21:** council disposition delivered via [council-workflow](brainstorms/council-workflow/DESIGN.md) (native workflow, not absorption; its live QA + final execution review still open per that wish); remaining live: trace→fix, wizard→genie, pm→work-ref, report→LangWatch (umbrella G4)
+- [always-on-genie](brainstorms/always-on-genie/DRAFT.md) — **re-scoped 2026-07-21:** SessionStart wish/status enumerator SHIPPED (`session-context.ts`, read-only); remaining: identity-rules inject, wizard branch, worktree isolation policy (G10), hook-contract fixtures (umbrella G5+G10)
+- [genie-spend](brainstorms/genie-spend/DRAFT.md) — **LIVE as drafted (re-verified 2026-07-21):** LangWatch-backed spend trends + model/effort/session/day splits; Phase 1 <5s CLI, Phase 2 outcome labels joined to traces (umbrella G7, calibration 07-10/11 archived)
+- [dream-replatform](brainstorms/dream-replatform/DRAFT.md) — **LIVE as drafted (re-verified 2026-07-21):** scheduler adapter + genie.db run ledger; cron = trigger never authority; omni approval gates for overnight wish execution (umbrella G9)
 
 ## Simmering
-- [intent-to-wish-compiler](brainstorms/intent-to-wish-compiler/DRAFT.md) — WRS 92; Shape Up spine + Working Backwards intake + Impact Mapping roadmap + Genie proof compiler; invisible Incident/Patch/Small/Standard/Program/Spike routing; breaker contract RATIFIED ("cut breadth/attempts, never proof; only humans cut payout"; autonomous flex cuts, human-only partial-ship) — program-scale, splits at pour time (2026-07-09)
-- [brainstorm-domain-map](brainstorms/brainstorm-domain-map/DRAFT.md) — WRS 80; executable-specification compiler: stakeholder intent → requirement/oracle graph → bounded execution → proof packet → residual-risk review; open boundary is ownership of irreducibly subjective truth (umbrella G8, resumed 2026-07-09)
-- [cross-agent-delegate](brainstorms/cross-agent-delegate/DRAFT.md) — delegate skill (Codex+Hermes), wish companion sessions, refine style cards, auto plan-gate counter-read (umbrella G6, 2026-07-09)
+- [intent-to-wish-compiler](brainstorms/intent-to-wish-compiler/DRAFT.md) — **LIVE (re-verified 2026-07-21):** WRS 92; Demand→Patch/Standard/Program router + circuit-breaker (flex cuts autonomous, payout cuts human-only); invisible routing compiled from intent — program-scale, splits at pour time
+- [brainstorm-domain-map](brainstorms/brainstorm-domain-map/DRAFT.md) — **LIVE (re-verified 2026-07-21):** WRS 80; executable spec compiler (intent → requirement-ID → oracle-class → execution → proof-packet); deterministic gates, residual-risk review only; subjective-truth ownership still open (umbrella G8)
+- [cross-agent-delegate](brainstorms/cross-agent-delegate/DRAFT.md) — **re-scoped 2026-07-21:** Codex skill-distribution prerequisite solved by agent-sync (#2541); remaining live: delegate skill (Codex+Hermes), wish companion sessions, refine style cards, auto plan-gate counter-read (umbrella G6)
 
 ## Ready
 
 - [codex-plugin-update-handoff](brainstorms/codex-plugin-update-handoff/DESIGN.md) ·
-  [WISH](wishes/codex-plugin-update-handoff/WISH.md) — WRS 100; design review SHIP; plan review
-  **BLOCKED after fix loop 2/2** on lifecycle serialization, executable installer exit-2 proof, and
-  structural candidate-evidence validation (renamed from sessionstart-hook-reliability, 2026-07-12)
+  [WISH](wishes/codex-plugin-update-handoff/WISH.md) — WRS 100; plan gate SHIP 2026-07-12 (fix loop
+  1/2, digest `4c71ab68…`). **Criterion classification 2026-07-21:** Groups A+B execution-SHIP on
+  the wish branch (tip `ac264911`; A after 2 fix loops, B all 7 ACs) with a blocking handback — C
+  must rewire the three cache-advancing call sites before anything merges; Groups C–E not started;
+  NONE of the activation protocol on dev (dev independently shipped only the plugin-only delivery layer, B1
+  `3b4faa3b` / B2 `6f423869`). Merge gate: A–E each SHIP → PR to dev as a whole; live dogfood
+  ritual blocked until then (renamed from sessionstart-hook-reliability, 2026-07-12)
 
 - [WISH: routing-delivery-fix](wishes/routing-delivery-fix/WISH.md) — **CODE COMPLETE — Groups A+B SHIP (2026-07-12), PR pending** — `genie update` fans the seven pinned role agents into `~/.claude/agents/` (per-file manifest, adopt-with-backup, doctor truth-telling + enabledPlugins duplicate warning); wish 1 of [token-efficiency-rebaseline](brainstorms/token-efficiency-rebaseline/DESIGN.md). Group A: attempts 1–3 (opus-xhigh) FIX-FIRST on transaction-boundary races → Felipe-authorized attempt 4 at Fable tier (effort escalation 1/2) rebuilt it architecture-first (one flat-agent transaction core: capture → validate → publish → manifest CAS → finalize/rollback; one lock across full uninstall) → independent Fable-tier review **SHIP**, all six invariants closed, `5c29b2b1` (2 MEDIUM + 3 LOW hardening advisories in WISH.md). Group B: doctor per-file states + duplicate warning + stable `--json` roleAgents payload → review **SHIP** loop 0, `127e08e3`; 976 suite pass. Remaining: PR → release → Group C day-3 QA (user-gated live ritual: stamped-surface check + LangWatch fingerprints with resolved model IDs) (2026-07-12)
 
