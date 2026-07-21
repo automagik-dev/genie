@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -341,5 +341,61 @@ describe('real no-shell probe', () => {
   test('real probe refuses a relative path without spawning', () => {
     const outcome = runBackupCapabilityProbe('genie');
     expect(outcome.status).toBe('spawn-failed');
+  });
+});
+
+describe('pre-contract backup ⇒ no sidecar ⇒ rollback refusal (D8/D9 guardrail)', () => {
+  /** Mirror the parent's gate: publish a sidecar ONLY when the backup probes protocol-1+. */
+  function publishSidecarIfProtocolCapable(backupPath: string, deliveryId: string): boolean {
+    const probe = runBackupCapabilityProbe(backupPath);
+    if (probe.status !== 'ok' || probe.report === undefined) return false;
+    if (probe.report.codexActivationProtocol < CODEX_ACTIVATION_PROTOCOL) return false;
+    publishBackupCapabilitySidecar({
+      backupBinaryPath: backupPath,
+      expectedPreviousVersion: probe.report.reportedVersion,
+      deliveryId,
+    });
+    return true;
+  }
+
+  function writeSelfHashingBinary(name: string, version: string): { path: string; digest: string } {
+    const path = join(root, name);
+    const script = [
+      `#!${process.execPath}`,
+      "const { createHash } = require('node:crypto');",
+      "const { readFileSync } = require('node:fs');",
+      'const digest = createHash("sha256").update(readFileSync(__filename)).digest("hex");',
+      `const report = { schemaVersion: 1, reportedVersion: ${JSON.stringify(version)}, binarySha256: digest, codexActivationProtocol: 1, readableIntentSchemas: [1] };`,
+      'process.stdout.write(JSON.stringify(report) + "\\n");',
+      '',
+    ].join('\n');
+    writeFileSync(path, script, { mode: 0o755 });
+    return { path, digest: sha256File(path) };
+  }
+
+  test('a PRE-CONTRACT backup (unknown probe flag ⇒ nonzero) gets NO sidecar and the floor refuses it', () => {
+    // A pre-contract genie rejects `update --print-update-capabilities`.
+    const path = join(root, 'genie-precontract');
+    writeFileSync(path, '#!/bin/sh\necho "unknown option" 1>&2\nexit 2\n', { mode: 0o755 });
+
+    const published = publishSidecarIfProtocolCapable(path, 'a'.repeat(32));
+    expect(published).toBe(false);
+    // No sidecar was written next to the backup.
+    expect(existsSync(capabilitySidecarPath(path))).toBe(false);
+
+    // Therefore the rollback capability floor refuses to restore this backup.
+    const result = enforceRollbackCapabilityFloor({ backupBinaryPath: path });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toMatch(/pre-contract|sidecar/i);
+  });
+
+  test('a protocol-1+ backup gets a sidecar and the floor passes end-to-end', () => {
+    const bin = writeSelfHashingBinary('genie-fixed', '5.260711.6');
+    const published = publishSidecarIfProtocolCapable(bin.path, 'b'.repeat(32));
+    expect(published).toBe(true);
+    expect(existsSync(capabilitySidecarPath(bin.path))).toBe(true);
+
+    const result = enforceRollbackCapabilityFloor({ backupBinaryPath: bin.path });
+    expect(result).toEqual({ ok: true, restoredVersion: '5.260711.6', binarySha256: bin.digest });
   });
 });

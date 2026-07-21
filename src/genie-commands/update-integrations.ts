@@ -15,10 +15,10 @@ import {
   resolveRuntimeExecutable,
   runBoundedIntegrationCommand,
 } from '../lib/runtime-integrations.js';
+import { CODEX_RETIRE_RECOVERY, classifyCodexDelivery } from './codex-delivery.js';
 
 const UPDATE_INTEGRATION_TIMEOUT_MS = 15_000;
 const CODEX_PLUGIN_LIST_MAX_BYTES = 64 * 1024;
-const RETIRE_RECOVERY = 'retire tasks → genie setup --codex → /hooks → new task';
 
 export interface RefreshUpdatePluginsOptions {
   bundleRoot: string;
@@ -125,9 +125,12 @@ function refreshOneRuntime(
  *   proof, fallback retirement, and role-agent refresh. An absent plugin stays
  *   absent (null); update never installs it.
  *
- * The installed-vs-expected comparison mirrors `convergeCodexPlugin`'s own
- * `before.version === expectedVersion` check exactly, so this gate reproduces its
- * "would it cache-advance?" decision without duplicating any mutation logic.
+ * Routing runs through the shared `classifyCodexDelivery` gate (absent / current
+ * / pending / indeterminate). The safe convergence is delegated ONLY on an exact
+ * version-string match — the same predicate `convergeCodexPlugin` uses for its
+ * no-cache-advance short-circuit — so a canonical-equal but string-divergent
+ * version defers rather than risking a `plugin add` on a generation the
+ * orchestrator would treat as N ≠ T.
  */
 function convergeCodexForUpdateDelivery(
   options: RefreshUpdatePluginsOptions,
@@ -148,17 +151,27 @@ function convergeCodexForUpdateDelivery(
       timedOut: installed.timedOut,
     };
   }
-  if (installed.version === null) {
+  const installedVersion = installed.version;
+  if (installedVersion === null) {
     // Absent plugin: update never installs it and never cache-advances. Leave it
     // exactly as found (null), matching convergeCodexPluginOnly's own absent path
     // without a redundant plugin command.
     return null;
   }
-  if (installed.version !== options.expectedVersion) {
-    // N ≠ T: defer the cache-advancing activation. Converge role agents only.
-    return deferCodexActivation(options, installed.version);
+  const state = classifyCodexDelivery(installedVersion, options.expectedVersion);
+  if (state.kind === 'indeterminate') {
+    return {
+      runtime: 'codex',
+      ok: false,
+      detail: `codex delivery cannot classify plugin state (${state.detail}); refusing to advance the cache`,
+    };
   }
-  // installed === expected: the safe, non-cache-advancing path.
+  if (installedVersion !== options.expectedVersion) {
+    // N ≠ T (pending, or a canonical-equal string mismatch): defer the
+    // cache-advancing activation. Converge role agents only.
+    return deferCodexActivation(options, installedVersion);
+  }
+  // installed === expected (exact): the safe, non-cache-advancing path.
   const outcome = convergeCodexPluginOnly({
     runner,
     command,
@@ -217,7 +230,7 @@ function deferCodexActivation(options: RefreshUpdatePluginsOptions, installedVer
     ok: true,
     detail:
       `delivered v${options.expectedVersion}; Codex plugin left at v${installedVersion} (no cache advance). ` +
-      `${RETIRE_RECOVERY}${agentDetail}`,
+      `${CODEX_RETIRE_RECOVERY}${agentDetail}`,
     deliveryComplete: true,
     actionRequired: true,
   };

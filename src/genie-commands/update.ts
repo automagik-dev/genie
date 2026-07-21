@@ -29,7 +29,11 @@ import {
   acquireLifecycleLease,
   runAgentSync,
 } from '../lib/agent-sync.js';
-import { serializeActivationResultTrailer } from '../lib/codex-activation-executor.js';
+import { observeCodexActivation, openCodexActivationStore } from '../lib/codex-activation-executor.js';
+import {
+  type HeldLifecycleLease,
+  acquireLifecycleLease as acquireCodexLifecycleLease,
+} from '../lib/codex-lifecycle-lease.js';
 import { contractPath, genieConfigExists, getGenieConfigPath, saveGenieConfig } from '../lib/genie-config.js';
 import {
   type InstallStagingDirectoryGuard,
@@ -49,8 +53,14 @@ import {
   installCodexAgents,
   readIntegrationConsent,
   resolveBundleRoot,
+  resolveRuntimeExecutable,
 } from '../lib/runtime-integrations.js';
-import { printUpdateCapabilities } from '../lib/update-capabilities.js';
+import {
+  CODEX_ACTIVATION_PROTOCOL,
+  printUpdateCapabilities,
+  publishBackupCapabilitySidecar,
+  runBackupCapabilityProbe,
+} from '../lib/update-capabilities.js';
 import { VERSION } from '../lib/version.js';
 import { GenieConfigSchema } from '../types/genie-config.js';
 import {
@@ -59,6 +69,7 @@ import {
   convergeAuxiliaryTree,
   fingerprintAuxiliaryTree,
 } from './auxiliary-trees.js';
+import { CODEX_DELIVERY_RESULT_TRAILER, publishCodexDelivery } from './codex-delivery.js';
 import { cleanupV4 } from './legacy-v4.js';
 import { type RefreshUpdatePluginsOptions, refreshUpdatePlugins } from './update-integrations.js';
 const GENIE_HOME = process.env.GENIE_HOME || join(homedir(), '.genie');
@@ -1547,20 +1558,6 @@ function applyDowngradeGuard(
 }
 
 /**
- * The one stable, ANSI-free, single-line JSON exit-2 result trailer (A-owned
- * serializer) every delivered-but-action-required Codex path emits so automation
- * has a machine-readable `deliveryComplete` carrier. Group D's `doctor --json`
- * carries the same facts inside `integrationSummary` instead of this line.
- */
-const CODEX_DELIVERY_RESULT_TRAILER = serializeActivationResultTrailer({
-  schemaVersion: 1,
-  code: 'activation-pending',
-  deliveryComplete: true,
-  retry: false,
-  nextAction: 'retire tasks → genie setup --codex → /hooks → new task',
-});
-
-/**
  * Map a convergence outcome to the process exit code (deliverable 3):
  *   - any failed integration  → exit 1 (retry)
  *   - else any action-required (delivered, activation deferred) → exit 2 with the
@@ -1569,7 +1566,7 @@ const CODEX_DELIVERY_RESULT_TRAILER = serializeActivationResultTrailer({
  * `emitTrailer` is false on the fresh-binary parent, whose child already printed
  * the trailer over inherited stdio — the parent only mirrors the exit code.
  */
-function applyConvergenceExitSignal(convergence: ManualUpdateConvergenceResult, emitTrailer = true): void {
+export function applyConvergenceExitSignal(convergence: ManualUpdateConvergenceResult, emitTrailer = true): void {
   if (convergence.integrations.some((result) => !result.ok)) {
     process.exitCode = 1;
     return;
@@ -2220,6 +2217,83 @@ export function createPrivateUpdateTempRoot(baseDir = tmpdir()): string {
  * to keep the command body readable: download → verify → extract → swap →
  * sync aux content → clean staging.
  */
+/**
+ * Acquire the Codex lifecycle lease for a delivery, or refuse before any binary
+ * swap. A busy lease means another lifecycle command (setup/rollback/uninstall/
+ * another update) holds it: zero mutation, and the caller must not proceed. (The
+ * exit-2 `codex-lifecycle-busy` loser projection is finalized with the two-
+ * process race work; here we fail closed before the swap.)
+ */
+function acquireCodexDeliveryLeaseOrRefuse(): HeldLifecycleLease {
+  const lease = acquireCodexLifecycleLease('update-delivery', { genieHome: GENIE_HOME });
+  if (!lease.ok) {
+    throw new Error(
+      `codex-lifecycle-busy: another Genie lifecycle command holds the Codex lease (${lease.holderKind ?? 'unknown'}); delivery refused before any swap. Retry once it completes.`,
+    );
+  }
+  return lease;
+}
+
+/**
+ * Parent-side attestation (deliverable 4/5): after the binary is delivered and
+ * the payload is synced into GENIE_HOME, publish the exact delivery facts through
+ * A's `publishDelivery` under the held lease, using OBSERVED reality — the
+ * installed generation N from a live `codex plugin list` and the delivered T +
+ * digest from a physical scan of the delivered tree (never the raw manifest).
+ * When the delivery is pending (N ≠ T) and the prior binary is a protocol-1+
+ * backup, also publish its digest-bound rollback capability sidecar. A pre-
+ * contract backup gets NO sidecar, which makes the rollback capability floor
+ * refuse to restore it. Best-effort: a codex-CLI-absent or payload-unreadable
+ * environment simply attests nothing (the child gate still defers activation).
+ */
+function publishCodexDeliveryFacts(channel: string, previousBackup: string | null, lease: HeldLifecycleLease): void {
+  let command: string | null = null;
+  try {
+    command = resolveRuntimeExecutable('codex', process.cwd());
+  } catch {
+    return;
+  }
+  if (command === null) return;
+  const snapshot = observeCodexActivation({ genieHome: GENIE_HOME, command });
+  if (snapshot.canonical.status !== 'ok') return;
+  const registration = snapshot.query.status === 'ok' ? snapshot.query.registration : { present: false as const };
+  const installedVersion = registration.present && registration.version ? registration.version.canonical : null;
+  const store = openCodexActivationStore({ genieHome: GENIE_HOME });
+  const published = publishCodexDelivery({
+    lease,
+    store,
+    installedVersion,
+    targetVersion: snapshot.canonical.version.canonical,
+    canonicalPayloadSha256: snapshot.canonical.digest,
+    channel,
+  });
+  if (published.published && published.record !== null && previousBackup !== null) {
+    publishBackupSidecarIfProtocolCapable(previousBackup, published.record.deliveryId);
+  }
+}
+
+/**
+ * Publish the rollback capability sidecar ONLY when the backup binary itself
+ * proves protocol-1+ via its no-shell probe. A pre-contract backup (unknown
+ * flag ⇒ nonzero/unparsable probe) or a sub-floor protocol yields NO sidecar, so
+ * `enforceRollbackCapabilityFloor` later refuses to restore it — the explicit
+ * first-fixed→pre-contract rollback refusal.
+ */
+function publishBackupSidecarIfProtocolCapable(backupPath: string, deliveryId: string): void {
+  const probe = runBackupCapabilityProbe(backupPath);
+  if (probe.status !== 'ok' || probe.report === undefined) return;
+  if (probe.report.codexActivationProtocol < CODEX_ACTIVATION_PROTOCOL) return;
+  try {
+    publishBackupCapabilitySidecar({
+      backupBinaryPath: backupPath,
+      expectedPreviousVersion: probe.report.reportedVersion,
+      deliveryId,
+    });
+  } catch {
+    // Best-effort: a missing sidecar only means rollback refuses this backup.
+  }
+}
+
 async function runDelivery(
   manifest: LatestManifest,
   platform: string,
@@ -2255,8 +2329,12 @@ async function runDelivery(
     externalStagingRoot: extractedRoot,
     expectedVersion: manifest.version,
   });
+  let codexLease: HeldLifecycleLease | null = null;
   try {
     verifyAdmittedInstallStagingPayload(admitted);
+    // Acquire the Codex lifecycle lease after signed-download verification and
+    // before the first binary swap; hold it through the delivery publication.
+    codexLease = acquireCodexDeliveryLeaseOrRefuse();
     const promotion = promoteStagedInstall({
       genieHome: GENIE_HOME,
       stagingRoot: admitted.stagingRoot,
@@ -2350,8 +2428,14 @@ async function runDelivery(
         cleanupStagingArtifacts(externalRoot, tarballPath);
       },
     });
+    // The payload is now in GENIE_HOME; publish attested delivery facts (and the
+    // rollback sidecar for a protocol-capable backup) under the held lease.
+    publishCodexDeliveryFacts(diagnosticsCtx.channel, diagnosticsCtx.previousBackup, codexLease);
     return auxiliaryOutcomes;
   } finally {
+    // Release the Codex lifecycle lease on every terminal path (success, refusal,
+    // handled failure) before the staging cleanup.
+    codexLease?.release();
     if (admitted !== null) {
       try {
         if (promotionComplete) removeInstallStagingDirectory(admitted);

@@ -11,7 +11,7 @@
  * Run with: bun test src/genie-commands/__tests__/update.test.ts
  */
 
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import {
   chmodSync,
@@ -46,6 +46,7 @@ import {
   type LatestManifest,
   type VerifyResult,
   _resetNextDeprecationLatchForTest,
+  applyConvergenceExitSignal,
   compareVersions,
   createPrivateUpdateTempRoot,
   decideDowngrade,
@@ -2704,5 +2705,64 @@ describe('--sync-only is agent-sync only (D2 — wish decision 3)', () => {
     expect(body).not.toContain('plugin');
     expect(body).not.toContain('probe');
     expect(body).not.toContain('inspect');
+  });
+});
+
+describe('applyConvergenceExitSignal — exit 2 only on delivery-pending (D3 guardrail)', () => {
+  let logs: string[];
+  let spy: ReturnType<typeof spyOn>;
+  const savedExitCode = process.exitCode;
+
+  beforeEach(() => {
+    process.exitCode = 0;
+    logs = [];
+    spy = spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      logs.push(args.map(String).join(' '));
+    });
+  });
+  afterEach(() => {
+    spy.mockRestore();
+    process.exitCode = savedExitCode;
+  });
+
+  test('a non-codex (claude) failure exits 1 and emits NO trailer', () => {
+    applyConvergenceExitSignal({ integrations: [{ runtime: 'claude', ok: false, detail: 'boom' }] });
+    expect(process.exitCode).toBe(1);
+    expect(logs.join('\n')).not.toContain('deliveryComplete');
+  });
+
+  test('an all-ok convergence sets no failure/action-required code and emits no trailer', () => {
+    applyConvergenceExitSignal({ integrations: [{ runtime: 'claude', ok: true, detail: 'refreshed' }] });
+    // Neither the exit-1 (failure) nor exit-2 (action-required) code is set.
+    expect(process.exitCode).toBe(0);
+    expect(logs.join('\n')).not.toContain('deliveryComplete');
+  });
+
+  test('a codex action-required delivery exits 2 and emits the trailer exactly once', () => {
+    applyConvergenceExitSignal({
+      integrations: [{ runtime: 'codex', ok: true, detail: 'deferred', deliveryComplete: true, actionRequired: true }],
+    });
+    expect(process.exitCode).toBe(2);
+    expect(logs.filter((line) => line.includes('"deliveryComplete":true'))).toHaveLength(1);
+  });
+
+  test('a failed integration wins over action-required (exit 1, no trailer)', () => {
+    applyConvergenceExitSignal({
+      integrations: [
+        { runtime: 'codex', ok: true, detail: 'deferred', actionRequired: true },
+        { runtime: 'claude', ok: false, detail: 'boom' },
+      ],
+    });
+    expect(process.exitCode).toBe(1);
+    expect(logs.join('\n')).not.toContain('deliveryComplete');
+  });
+
+  test('emitTrailer=false (fresh-binary parent) sets exit 2 without printing the trailer', () => {
+    applyConvergenceExitSignal(
+      { integrations: [{ runtime: 'codex', ok: true, detail: 'deferred', actionRequired: true }] },
+      false,
+    );
+    expect(process.exitCode).toBe(2);
+    expect(logs.join('\n')).not.toContain('deliveryComplete');
   });
 });
