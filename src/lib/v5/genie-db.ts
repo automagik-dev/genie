@@ -102,7 +102,15 @@ export function openDb(opts: OpenOptions = {}): Database {
 }
 
 /** Tables a fully-initialized `user_version = 1` DB must carry. */
-const EXPECTED_TABLES = ['boards', 'meta', 'stage_log', 'task_dependencies', 'tasks', 'wish_groups'] as const;
+const EXPECTED_TABLES = [
+  'boards',
+  'hire_roster',
+  'meta',
+  'stage_log',
+  'task_dependencies',
+  'tasks',
+  'wish_groups',
+] as const;
 
 /**
  * True when the DB is already at the current schema — every expected table plus
@@ -174,6 +182,16 @@ CREATE TABLE IF NOT EXISTS wish_groups (
   created_at   INTEGER NOT NULL,
   updated_at   INTEGER NOT NULL,
   PRIMARY KEY (wish, name)
+);
+
+CREATE TABLE IF NOT EXISTS hire_roster (
+  wish             TEXT NOT NULL,
+  agent_adapter_id TEXT NOT NULL,
+  profile          TEXT,
+  worktree         TEXT NOT NULL,
+  hired_at         INTEGER NOT NULL,
+  state            TEXT NOT NULL,
+  PRIMARY KEY (wish, agent_adapter_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_task_deps_dep ON task_dependencies(depends_on_id);

@@ -90,6 +90,30 @@ export interface WishGroupRow {
   completedAt: number | null;
 }
 
+/** A single hire-roster entry: one agent adapter hired into one wish. */
+export interface HireRosterRow {
+  /** Wish slug this hire belongs to. */
+  wish: string;
+  /** Agent adapter id (the runtime/provider slot) hired into the wish. */
+  agentAdapterId: string;
+  /** Optional provider profile; null when unset. */
+  profile: string | null;
+  /** Worktree binding for this hire. */
+  worktree: string;
+  hiredAt: number;
+  /** Free-form lifecycle state of the hire (defaults to `hired`). */
+  state: string;
+}
+
+export interface HireAgentInput {
+  wish: string;
+  agentAdapterId: string;
+  profile?: string;
+  worktree: string;
+  /** Lifecycle state to stamp. Defaults to `hired`. */
+  state?: string;
+}
+
 // ============================================================================
 // Typed errors
 // ============================================================================
@@ -725,6 +749,76 @@ function promoteReadyGroups(db: Database, wish: string, now: number): void {
 }
 
 // ============================================================================
+// Hire roster (single-row upsert / delete — the bridge's write surface)
+// ============================================================================
+
+interface RawHire {
+  wish: string;
+  agent_adapter_id: string;
+  profile: string | null;
+  worktree: string;
+  hired_at: number;
+  state: string;
+}
+
+function mapHire(row: RawHire): HireRosterRow {
+  return {
+    wish: row.wish,
+    agentAdapterId: row.agent_adapter_id,
+    profile: row.profile,
+    worktree: row.worktree,
+    hiredAt: row.hired_at,
+    state: row.state,
+  };
+}
+
+/**
+ * Hire an agent adapter into a wish. Idempotent single-row upsert keyed on
+ * `(wish, agent_adapter_id)`: a re-hire refreshes profile/worktree/state but
+ * preserves the original `hired_at` (COALESCE idiom, mirroring
+ * {@link startWishGroup}), so repeating the call converges on one row. A single
+ * statement is atomic on its own; the WAL + busy_timeout the handle carries
+ * (see sqlite-open.ts) serializes it against concurrent writers.
+ */
+export function hireAgent(db: Database, input: HireAgentInput): HireRosterRow {
+  const now = Date.now();
+  const state = input.state ?? 'hired';
+  db.query(
+    `INSERT INTO hire_roster (wish, agent_adapter_id, profile, worktree, hired_at, state)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(wish, agent_adapter_id) DO UPDATE SET
+       profile  = excluded.profile,
+       worktree = excluded.worktree,
+       state    = excluded.state`,
+  ).run(input.wish, input.agentAdapterId, input.profile ?? null, input.worktree, now, state);
+  return getHire(db, input.wish, input.agentAdapterId) as HireRosterRow;
+}
+
+/**
+ * Unhire an agent adapter from a wish. Idempotent single-row delete: removing an
+ * absent hire is a no-op that returns false; a real removal returns true.
+ */
+export function unhireAgent(db: Database, wish: string, agentAdapterId: string): boolean {
+  const res = db.query('DELETE FROM hire_roster WHERE wish = ? AND agent_adapter_id = ?').run(wish, agentAdapterId);
+  return res.changes > 0;
+}
+
+export function getHire(db: Database, wish: string, agentAdapterId: string): HireRosterRow | null {
+  const row = db
+    .query('SELECT * FROM hire_roster WHERE wish = ? AND agent_adapter_id = ?')
+    .get(wish, agentAdapterId) as RawHire | null;
+  return row ? mapHire(row) : null;
+}
+
+/** Hires for a wish, or the whole roster when `wish` is omitted. Order-stable. */
+export function listHires(db: Database, wish?: string): HireRosterRow[] {
+  const rows = wish
+    ? (db.query('SELECT * FROM hire_roster WHERE wish = ? ORDER BY agent_adapter_id').all(wish) as RawHire[])
+    : (db.query('SELECT * FROM hire_roster ORDER BY wish, agent_adapter_id').all() as RawHire[]);
+  return rows.map(mapHire);
+}
+
+// ============================================================================
 // Full-state export
 // ============================================================================
 
@@ -742,6 +836,7 @@ export interface StateExport {
   task_dependencies: Array<{ task_id: string; depends_on_id: string }>;
   stage_log: RawStage[];
   wish_groups: RawWishGroup[];
+  hire_roster: RawHire[];
 }
 
 interface RawBoard {
@@ -782,5 +877,6 @@ export function exportState(db: Database): StateExport {
       .all() as StateExport['task_dependencies'],
     stage_log: db.query('SELECT * FROM stage_log ORDER BY id').all() as RawStage[],
     wish_groups: db.query('SELECT * FROM wish_groups ORDER BY wish, name').all() as RawWishGroup[],
+    hire_roster: db.query('SELECT * FROM hire_roster ORDER BY wish, agent_adapter_id').all() as RawHire[],
   };
 }
