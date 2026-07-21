@@ -19,8 +19,9 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { type WebSocket, WebSocketServer } from 'ws';
 import { CONFIG_PATH, loadFleet } from './fleet-config';
+import { listWishes, wishContext } from './genie-lane';
 import { PtySessionManager } from './pty-session';
-import { type ClientMsg, MSG, type ServerMsg, decode, encode } from './transport';
+import { type ClientMsg, MSG, type ServerMsg, type WishContextMsg, type WishRow, decode, encode } from './transport';
 
 const require = createRequire(import.meta.url);
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -95,9 +96,41 @@ function serveAsset(assets: Map<string, Asset>, req: http.IncomingMessage, res: 
   res.end(asset.body);
 }
 
-/** On attach: send the roster, then replay each pane's snapshot from its TerminalMirror. */
+/**
+ * The genie lane (G2): the left menu's wishes, read from `.genie/wishes` markdown + the
+ * read-only `.genie/genie.db`. Best-effort — a lane failure (no genie state on the box)
+ * must never take down the fleet floor, so it degrades to an empty menu.
+ */
+function loadWishRows(): WishRow[] {
+  try {
+    return listWishes().map((w) => ({ slug: w.slug, title: w.title, status: w.status }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Open a wish's worktree-bound context: its group + task state, read READ-ONLY from
+ * `.genie/genie.db` (degrade-to-empty when absent). Best-effort — a lane read failure must
+ * never take down the fleet floor, so it degrades to an empty context.
+ */
+function openWishContext(slug: string): WishContextMsg {
+  try {
+    const ctx = wishContext(slug);
+    return {
+      slug,
+      groups: ctx.groups.map((g) => ({ name: g.name, status: g.status, assignee: g.assignee })),
+      taskCount: ctx.tasks.length,
+    };
+  } catch {
+    return { slug, groups: [], taskCount: 0 };
+  }
+}
+
+/** On attach: send the wish menu + roster, then replay each pane's snapshot from its TerminalMirror. */
 async function attachClient(ws: WebSocket, manager: PtySessionManager): Promise<void> {
   const send = (m: ServerMsg) => ws.send(encode(m));
+  send({ t: MSG.WISHES, wishes: loadWishRows() });
   send({ t: MSG.FLEET, panes: manager.list() });
   for (const p of manager.list()) {
     const data = await manager.replay(p.id);
@@ -124,6 +157,9 @@ function handleClientMsg(manager: PtySessionManager, m: ClientMsg, ws: WebSocket
       break;
     case MSG.LIST:
       ws.send(encode({ t: MSG.FLEET, panes: manager.list() }));
+      break;
+    case MSG.WISH_OPEN:
+      ws.send(encode({ t: MSG.WISH_CONTEXT, context: openWishContext(m.slug) }));
       break;
   }
 }

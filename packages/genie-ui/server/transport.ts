@@ -30,9 +30,36 @@ export const MSG = Object.freeze({
   DATA: 'data',
   STATUS: 'status',
   EXIT: 'exit',
+  // G2 (genie lane): the left menu's wish list + a selected wish's worktree-bound context.
+  // Serialization only — the schema stays agnostic of genie-lane's internals (index.ts maps
+  // its WishSummary/WishContext onto these rows).
+  WISHES: 'wishes',
+  WISH_OPEN: 'wish-open',
+  WISH_CONTEXT: 'wish-context',
 } as const);
 
 export type SessionStatus = 'idle' | 'running' | 'exited';
+
+/** One row of the genie-lane left menu (G2). */
+export interface WishRow {
+  slug: string;
+  title: string;
+  status: string;
+}
+
+/** A wish-group's state row in a wish's opened context (G2). */
+export interface WishGroupRow {
+  name: string;
+  status: string;
+  assignee: string | null;
+}
+
+/** The worktree-bound context selecting a wish opens: its group + task state (G2). */
+export interface WishContextMsg {
+  slug: string;
+  groups: WishGroupRow[];
+  taskCount: number;
+}
 
 /** The roster row the client renders as a tab. */
 export interface PaneInfo {
@@ -53,14 +80,17 @@ export type ClientMsg =
   | { t: 'spawn'; id: string }
   | { t: 'kill'; id: string }
   | { t: 'restart'; id: string }
-  | { t: 'list' };
+  | { t: 'list' }
+  | { t: 'wish-open'; slug: string };
 
 export type ServerMsg =
   | { t: 'fleet'; panes: PaneInfo[] }
   | { t: 'replay'; id: string; data: string }
   | { t: 'data'; id: string; data: string }
   | { t: 'status'; id: string; status: SessionStatus }
-  | { t: 'exit'; id: string; code: number };
+  | { t: 'exit'; id: string; code: number }
+  | { t: 'wishes'; wishes: WishRow[] }
+  | { t: 'wish-context'; context: WishContextMsg };
 
 export function encode(obj: ServerMsg | ClientMsg): string {
   return JSON.stringify(obj);

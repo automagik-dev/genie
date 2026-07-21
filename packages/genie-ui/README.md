@@ -110,3 +110,40 @@ surface, not a read-only view. Two guards keep it closed by default:
 - `knip.json` `entry`/`project` extended to the package.
 
 CLAUDE.md's claim that the complexity budget covers `src/** AND packages/**` is now true.
+
+## The genie lane (Group 2)
+
+`server/genie-lane.ts` adds the left menu of genie WISHES + a hire roster + worktree binding
+that composes with `genie launch`. `listWishes()` reads git-tracked `.genie/wishes/<slug>/WISH.md`
+markdown; `wishContext(slug)` opens that wish's board/task state; `hire(wishSlug, member)` is a
+roster entry ONLY (no process, no db write); `worktreeFor(entry)` resolves the per-group worktree
+`genie launch` already mints — or `null` before launch.
+
+**The read-only DB path — runtime-adaptive (the one real G2 design call).** genie board/task
+state lives in `.genie/genie.db` (bun:sqlite). The problem: this module RUNS in the **node**
+server process (see "Runtime split") where `bun:sqlite` does not exist, but its colocated tests
+RUN under **bun** where `node:sqlite` does not exist (`require('node:sqlite')` → "No such built-in
+module"). Neither engine is importable in the other runtime, so a single static `import` cannot
+serve both — proven on the box: `node → node:sqlite ✓ / bun:sqlite ✗`, `bun → bun:sqlite ✓ /
+node:sqlite ✗`. Reusing `task-state.ts` directly is also out: its functions call `db.query()`
+(a bun:sqlite-only method; `node:sqlite` exposes only `.prepare()`), so passing it a node handle
+needs an unsafe cast + drags the whole write-capable module into the node bundle.
+
+**Chosen:** a tiny read replica that picks the sqlite engine at CALL time — `node:sqlite`
+(`{ readOnly: true }`) under the node server, `bun:sqlite` (`{ readonly: true }`) under `bun test` —
+using only the `.prepare(sql).get()/.all()` surface **both engines expose identically**. It is
+SELECT-only (never a second write path — the `genie mcp` precedent), degrades to empty when
+`.genie/genie.db` is absent, and resolves the worktree-shared DB via
+`git rev-parse --git-common-dir` (mirrors `genie-db.resolveRepoRoot`). The dynamic `require` is
+kept runtime-resolved by `createRequire` (the same escape `TerminalMirror` uses for `@xterm`), so
+it survives `Bun.build` and neither engine string is statically bundled. Proven end-to-end: the
+bundled node server reads the real `.genie/genie.db` read-only over `ws` (`taskCount: 4`).
+
+**The worktree wall — reuse, never mint.** `worktreeFor` REPLICATES `genie launch`'s deterministic
+formula verbatim (`src/term-commands/launch.ts buildLaunchPlan`):
+`<GENIE_WORKTREES_DIR ?? $GENIE_HOME/worktrees>/<repo>-<slug>-<group>`, branch
+`wish/<slug>-<group>`. It only ever REPORTS the path once that group's worktree exists on disk
+(probe: the dir + the `.git` file every `git worktree add` writes) — it never runs `git`, never
+`mkdir`s, and returns `null` for an unlaunched group. `launch.ts` is not imported (it pulls in
+`bun:sqlite` via `openDb` and `Bun.which`, both dead under node); the formula is the contract,
+replicated with a pointer back to its source.

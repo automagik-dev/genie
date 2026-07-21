@@ -9,16 +9,20 @@
 import { LayoutManager } from './layout';
 import { Pane } from './pane';
 import { type PaneInfo, type SessionStatus, Transport } from './transport';
+import { WishMenu, type WishSelection } from './wish-menu';
 
 const tabsEl = document.getElementById('tabs') as HTMLElement;
 const stageEl = document.getElementById('stage') as HTMLElement;
 const connEl = document.getElementById('conn') as HTMLElement;
 const metaEl = document.getElementById('active-meta') as HTMLElement;
+const wishesEl = document.getElementById('wishes') as HTMLElement;
 
 const panes = new Map<string, Pane>();
 const infos = new Map<string, PaneInfo>();
 const tabs = new Map<string, HTMLButtonElement>();
 let activeId: string | null = null;
+// The genie lane (G2): null ⇒ show the whole fleet; a slug ⇒ show only that wish's hires.
+let activeWish: WishSelection = null;
 
 // Escape config-/state-derived strings before they touch innerHTML. Trusted today
 // (operator owns fleet.json), but G2 feeds this strip from genie state (wish slugs,
@@ -34,6 +38,8 @@ const layout = new LayoutManager(stageEl, (id) => {
   renderMeta(id);
 });
 
+const wishMenu = new WishMenu(wishesEl, (slug) => selectWish(slug));
+
 const transport = new Transport({
   onOpen: () => setConn(true),
   onClose: () => setConn(false),
@@ -42,7 +48,39 @@ const transport = new Transport({
   onData: (id, data) => panes.get(id)?.write(data),
   onStatus: (id, status) => updateStatus(id, status),
   onExit: (id, code) => updateStatus(id, 'exited', code),
+  onWishes: (wishes) => wishMenu.setWishes(wishes),
+  onWishContext: (context) => wishMenu.setContext(context),
 });
+
+/**
+ * Select a wish in the left lane: open its worktree-bound context (server reads it
+ * read-only from genie.db) and filter the tab strip to that wish's hired agents (panes
+ * whose `wishId` matches). `null` restores the whole fleet. A pane with no `wishId` belongs
+ * to no wish, so it is hidden under a wish filter and shown only in "All fleet".
+ */
+function selectWish(slug: WishSelection): void {
+  activeWish = slug;
+  if (slug !== null) transport.wishOpen(slug);
+  applyWishFilter();
+}
+
+/** Whether a pane is visible under the current wish filter. */
+function paneInWish(info: PaneInfo): boolean {
+  return activeWish === null || info.wishId === activeWish;
+}
+
+/** Show/hide tabs by the wish filter; solo the first visible pane if the active one is hidden. */
+function applyWishFilter(): void {
+  let firstVisible: string | null = null;
+  for (const [id, btn] of tabs) {
+    const info = infos.get(id);
+    const visible = info ? paneInWish(info) : true;
+    btn.style.display = visible ? '' : 'none';
+    if (visible && firstVisible === null) firstVisible = id;
+  }
+  const activeInfo = activeId ? infos.get(activeId) : undefined;
+  if (firstVisible && (!activeInfo || !paneInWish(activeInfo))) layout.solo(firstVisible);
+}
 
 function setConn(on: boolean): void {
   connEl.textContent = on ? 'connected' : 'disconnected';
@@ -55,6 +93,8 @@ function syncFleet(list: PaneInfo[]): void {
     if (panes.has(info.id)) refreshTab(info.id);
     else createPane(info);
   }
+  // Keep the tab strip consistent with the active wish filter when panes (re)arrive.
+  if (activeWish !== null) applyWishFilter();
 }
 
 function createPane(info: PaneInfo): void {

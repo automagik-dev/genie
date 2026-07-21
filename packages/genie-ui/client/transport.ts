@@ -16,12 +16,35 @@ export interface PaneInfo {
   exitCode: number | null;
 }
 
+/** One row of the genie-lane left menu (G2). Mirrors server/transport.ts `WishRow`. */
+export interface WishRow {
+  slug: string;
+  title: string;
+  status: string;
+}
+
+/** A wish-group's state row in a wish's opened context (G2). */
+export interface WishGroupRow {
+  name: string;
+  status: string;
+  assignee: string | null;
+}
+
+/** The worktree-bound context selecting a wish opens (G2). Mirrors server `WishContextMsg`. */
+export interface WishContextMsg {
+  slug: string;
+  groups: WishGroupRow[];
+  taskCount: number;
+}
+
 type ServerMsg =
   | { t: 'fleet'; panes: PaneInfo[] }
   | { t: 'replay'; id: string; data: string }
   | { t: 'data'; id: string; data: string }
   | { t: 'status'; id: string; status: SessionStatus }
-  | { t: 'exit'; id: string; code: number };
+  | { t: 'exit'; id: string; code: number }
+  | { t: 'wishes'; wishes: WishRow[] }
+  | { t: 'wish-context'; context: WishContextMsg };
 
 interface Handlers {
   onFleet?: (panes: PaneInfo[]) => void;
@@ -29,6 +52,8 @@ interface Handlers {
   onData?: (id: string, data: string) => void;
   onStatus?: (id: string, status: SessionStatus) => void;
   onExit?: (id: string, code: number) => void;
+  onWishes?: (wishes: WishRow[]) => void;
+  onWishContext?: (context: WishContextMsg) => void;
   onOpen?: () => void;
   onClose?: () => void;
 }
@@ -74,6 +99,12 @@ export class Transport {
       case 'exit':
         this.h.onExit?.(m.id, m.code);
         break;
+      case 'wishes':
+        this.h.onWishes?.(m.wishes);
+        break;
+      case 'wish-context':
+        this.h.onWishContext?.(m.context);
+        break;
     }
   }
 
@@ -95,5 +126,9 @@ export class Transport {
   }
   restart(id: string): void {
     this.send({ t: 'restart', id });
+  }
+  /** Open a wish's worktree-bound context (G2 genie lane). */
+  wishOpen(slug: string): void {
+    this.send({ t: 'wish-open', slug });
   }
 }

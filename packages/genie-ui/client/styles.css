@@ -63,6 +63,112 @@ body {
   background: rgba(224, 108, 117, 0.12);
 }
 
+/* body = the genie lane (left) beside the fleet floor (right). */
+#body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+}
+#fleet {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* genie lane (G2): the left wish menu, replacing dash's Projects. */
+#wishes {
+  width: 220px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  padding: 8px 8px 12px;
+  background: var(--panel);
+  border-right: 1px solid var(--edge);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.wish {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  color: var(--dim);
+  border: 1px solid transparent;
+  padding: 7px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  width: 100%;
+}
+.wish:hover {
+  color: var(--fg);
+}
+.wish.active {
+  color: var(--fg);
+  background: var(--bg);
+  border-color: var(--edge);
+}
+.wish .wname {
+  flex: 1;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wish .wstatus {
+  color: var(--dim);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* opened wish context: group state read from genie.db, rendered under the selected wish. */
+.wctx {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 4px 6px 8px 14px;
+  font-size: 11px;
+}
+.wgroup {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.wgroup.dim {
+  color: var(--dim);
+}
+.wgroup .gname {
+  flex: 1;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wgroup .gstatus {
+  color: var(--dim);
+  font-size: 10px;
+}
+.wgroup .gstatus.in_progress {
+  color: var(--warn);
+}
+.wgroup .gstatus.done {
+  color: var(--ok);
+}
+.wgroup .gstatus.blocked {
+  color: var(--bad);
+}
+.wctx .wtasks {
+  color: var(--dim);
+  font-size: 10px;
+  margin-top: 2px;
+}
+
 #tabs {
   display: flex;
   gap: 2px;
