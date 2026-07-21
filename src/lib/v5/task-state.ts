@@ -775,10 +775,11 @@ function mapHire(row: RawHire): HireRosterRow {
 /**
  * Hire an agent adapter into a wish. Idempotent single-row upsert keyed on
  * `(wish, agent_adapter_id)`: a re-hire refreshes profile/worktree/state but
- * preserves the original `hired_at` (COALESCE idiom, mirroring
- * {@link startWishGroup}), so repeating the call converges on one row. A single
- * statement is atomic on its own; the WAL + busy_timeout the handle carries
- * (see sqlite-open.ts) serializes it against concurrent writers.
+ * preserves the original `hired_at` by OMITTING `hired_at` from the `ON CONFLICT
+ * DO UPDATE SET` list — an unset column keeps its stored value, so the first
+ * hire's timestamp survives every re-hire and the call converges on one row. A
+ * single statement is atomic on its own; the WAL + busy_timeout the handle
+ * carries (see sqlite-open.ts) serializes it against concurrent writers.
  */
 export function hireAgent(db: Database, input: HireAgentInput): HireRosterRow {
   const now = Date.now();
