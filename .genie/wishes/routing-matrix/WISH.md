@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | EXECUTED — execution review SHIP (2026-07-09); day-1 live pin QA recorded 2026-07-10 — **inconclusive by delivery gap** (Fable share rose on every measure, but the 7 pinned role agents did NOT appear as subagent types under plugin cache 5.260710.2, so pins were applied by hand, not mechanically; properly-pinned wish ran ~11% Fable). Re-test after next stable release carrying agent-sync + `genie update` ×2 — see [qa/routing-pin-qa-20260710.md](qa/routing-pin-qa-20260710.md) |
+| **Status** | DONE — QA CLOSED on model identity 2026-07-21: fresh-session resolved model IDs **7/7 PASS** (haiku/opus×5/fable exactly per pins) — [qa/routing-pin-qa-20260721.md](qa/routing-pin-qa-20260721.md); delivery/discovery/doctor/auth PASS 07-14; effort observation optional follow-up (shared LangWatch key not on host). History: day-1 inconclusive-by-delivery-gap (07-10), day-3 FAIL-by-logout (07-14) |
 | **Slug** | `routing-matrix` |
 | **Date** | 2026-07-09 |
 | **Author** | Felipe (planned with Fable 5 + Hermes counter-read) |
