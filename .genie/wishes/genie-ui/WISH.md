@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | IN_PROGRESS (execution started 2026-07-21; plan review SHIP; design digest-stamped SHIP) |
+| **Status** | IN_PROGRESS (all 4 groups + final gate SHIP 2026-07-21; PR-ready; SHIPPED on merge+QA) |
 | **Slug** | `genie-ui` |
 | **Date** | 2026-07-21 |
 | **Author** | Felipe + Genie |
@@ -325,3 +325,25 @@ conductor auto-advance / write-promotion / broadcast # follow-up wishes (OUT)
   not a plain wish commit (G4 brief must carry this).
 
 _Execution and PR review evidence appended below as they occur._
+
+### Execution — all 4 groups + final gate — 2026-07-21 — **SHIP**
+
+- **G1 shell substrate** (commits through `ad08f54d`): `packages/genie-ui` — node-runtime PTY server (bun builds via `build.ts`, node runs; **bun's node-pty `onData` is dead** — isolated 40454-vs-0 bytes, real-pty regression test guards it), vanilla xterm client (tabs/splits/maximize), salvaged dash `TerminalMirror` replay, loopback+Origin-guarded ws, gates wired to cover `packages/**`. Review SHIP; quality caught + fixed a ws trust-boundary hole (`549fc408`) + HTML-escape (`fab7cdd6`). AC2 substrate proven (btop local + `ssh -t` streams, TerminalMirror replay).
+- **G2 genie lane** (`3938a115`): `server/genie-lane.ts` — `listWishes()`/`wishContext()`/`hire()` (pure roster entry)/`worktreeFor()` (reuses genie-launch group worktrees, null before launch, never mints). Runtime-adaptive READ-ONLY sqlite (`createRequire`: node:sqlite server / bun:sqlite tests) — proven reading 25 real wishes + 4 real tasks, db mtime unchanged. Review + quality SHIP.
+- **G3 chat + ACP backend** (`8c1e9589`): separable `chat-backend.ts` (one lazy read-only `ClientSideConnection` per hired agent, @-mention-only, named fail-loud events) behind the isolation wall; `capability-table.ts` → badges (shared-memory = Hermes only); wish-scoped chat drawer. **R1 ssh-ACP proven LIVE**: `hermes acp` over `ssh localhost` → real "PONG"; `rlmx acp` over ssh → full transport; **Hermes two-faces `state.db` bridging demonstrated** (chat face wrote a codeword the terminal face's db shows). Review + quality SHIP.
+- **G4 residue + docs** (submodule `b8942eb`): residue confirmed clean (no live `packages/genie-app`/`src/tui/` refs; history preserved); two-faces contract doc at `docs/_internal/genie-ui-two-faces.mdx` (in `.docs-vendor` submodule) matching shipped boundaries. Review SHIP.
+- **Final gate (Fable 5)** — **SHIP**: all four isolation walls verified greppably on shipped code (PTY/chat/state/worktree); composed server booted under **node** serving PTY panes + lane + chat concurrently over one ws (live probe); Origin guard held live (401 on cross-origin); no chat-driven command injection (harness-keyed launcher, no shell); non-mutating chat face structural (`fs{read:false,write:false}` + `requestPermission→cancelled`). AC1/AC3-AC8 SATISFIED; AC2 satisfied in substance, **letter caveat**: fleet panes eager-start via `startAll()` rather than tab-open lazy (documented follow-up). Three MINOR follow-ups (codex-acp launch default, spawn-failed dedup — both being fixed pre-PR; eager-vs-lazy PTY start — follow-up).
+
+## Success Criteria — status
+
+- [x] AC1 wishes menu replaces Projects; wish → worktree-bound context.
+- [x] AC2 hired agents render real TUIs (PTY-faithful, ssh proven); splits — manual QA. *(letter caveat: eager-start, not tab-open lazy — follow-up)*
+- [x] AC3 @-mention-only chat delivers message + transcript, streams reply.
+- [x] AC4a chat face non-mutating (structural); AC4b Hermes `state.db` bridging demonstrated, Codex/rlmx exempt.
+- [x] AC5 lazy ACP spawn + named fail-loud events.
+- [x] AC6 chat-backend separable (isolation wall greppable).
+- [x] AC7 capability table → badges (Hermes shared-memory only).
+- [x] AC8 residue clean, history preserved; two-faces doc exists.
+- [x] Gate: bun run check at the pre-existing 4-failure baseline, zero genie-ui failures.
+
+_Status → SHIPPED pending PR merge + docs-submodule PR + the browser manual-QA checklist (final-gate report) on dev._
