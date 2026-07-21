@@ -37,7 +37,6 @@ import {
   type CommandRunner,
   type IntegrationSelection,
 } from '../../lib/runtime-integrations';
-import { VERSION } from '../../lib/version';
 import type { AuxiliaryTreeOutcome, AuxiliaryTreeStage } from '../auxiliary-trees.js';
 import {
   type RefreshUpdatePluginsOptions,
@@ -58,9 +57,7 @@ import {
   finalizeAuxiliaryDelivery,
   formatVerifyBanner,
   hashPhysicalFileIncrementally,
-  inspectSyncOnlyCodexHealth,
   isGenieProcessSnapshotLine,
-  legacySyncOnlyPluginAdvisory,
   manifestUrlForChannel,
   narrowUpdateAgentSyncSelection,
   normalizeVersion,
@@ -1915,9 +1912,13 @@ describe('runAgentSyncSafe (agent-sync phase)', () => {
     const convergenceStart = source.indexOf('export function runLegacySyncOnlyConvergence(');
     const convergenceEnd = source.indexOf('function announceUpdatePlanOrExit(', convergenceStart);
     const convergence = source.slice(convergenceStart, convergenceEnd);
-    expect(convergence.indexOf('legacySyncOnlyPluginAdvisory(options)')).toBeLessThan(
-      convergence.indexOf('runAgentSyncSafe({ strict: true'),
-    );
+    // D2: sync-only is agent-sync ONLY — no Codex plugin query/inspection/advisory
+    // and no plugin convergence at all. A genuine agent-sync failure is the only
+    // nonzero result.
+    expect(convergence).toContain('runAgentSyncSafe({ strict: true');
+    expect(convergence).not.toContain('legacySyncOnlyPluginAdvisory');
+    expect(convergence).not.toContain('inspectSyncOnlyCodexHealth');
+    expect(convergence).not.toContain('plugin');
     expect(convergence).not.toContain('runManualUpdateConvergence(');
     expect(convergence).not.toContain('refreshUpdatePlugins(');
   });
@@ -2029,90 +2030,49 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
     }
   });
 
-  test('legacy sync-only advisory is read-only and reports selected version drift', () => {
-    const calls: string[] = [];
-    const advisory = legacySyncOnlyPluginAdvisory({
+  test('D2: sync-only runs ONLY agent-sync — no Codex plugin query/inspection/advisory', () => {
+    const events: string[] = [];
+    runLegacySyncOnlyConvergence({
       selection: 'codex',
       expectedVersion: '5.260711.7',
-      resolveExecutable: () => '/fixture/codex',
-      runner(command, args) {
-        calls.push(`${command} ${args.join(' ')}`);
-        return {
-          exitCode: 0,
-          stdout: '{"installed":[{"pluginId":"genie@automagik","enabled":true,"version":"5.260711.6"}]}',
-          stderr: '',
-        };
+      log: (line) => events.push(`log:${line}`),
+      sync: () => {
+        events.push('sync');
       },
     });
-    expect(calls).toEqual(['/fixture/codex plugin list --json']);
-    expect(advisory).toContain('codex v5.260711.6');
-    expect(advisory).toContain('external terminal');
-    expect(advisory).toContain('review `/hooks`');
-
-    const disabled = legacySyncOnlyPluginAdvisory({
-      selection: 'codex',
-      expectedVersion: '5.260711.7',
-      resolveExecutable: () => '/fixture/codex',
-      runner: () => ({
-        exitCode: 0,
-        stdout: '{"installed":[{"pluginId":"genie@automagik","enabled":false,"version":"5.260711.6"}]}',
-        stderr: '',
-      }),
-    });
-    expect(disabled).toContain('codex v5.260711.6 (disabled; preserved)');
-
-    for (const state of [
-      { installed: [] },
-      { installed: [{ pluginId: 'genie@automagik', enabled: true, version: '5.260711.7' }] },
-    ]) {
-      expect(
-        legacySyncOnlyPluginAdvisory({
-          selection: 'codex',
-          expectedVersion: '5.260711.7',
-          resolveExecutable: () => '/fixture/codex',
-          runner: () => ({ exitCode: 0, stdout: JSON.stringify(state), stderr: '' }),
-        }),
-      ).toBeNull();
-    }
-    let invoked = false;
-    expect(
-      legacySyncOnlyPluginAdvisory({
-        selection: 'none',
-        expectedVersion: '5.260711.7',
-        resolveExecutable: () => {
-          invoked = true;
-          return '/fixture/codex';
-        },
-      }),
-    ).toBeNull();
-    expect(invoked).toBe(false);
+    // The only observable effect is the injected agent-sync. No plugin advisory
+    // was emitted, and no plugin query/inspection ran (the spy `sync` is the sole
+    // side effect). A real run would only call runAgentSyncSafe.
+    expect(events).toEqual(['sync']);
   });
 
-  test('legacy sync-only emits stale-plugin recovery even when strict agent sync fails', () => {
-    const events: string[] = [];
+  test("D2: a genuine agent-sync failure is sync-only's ONLY nonzero result", () => {
     expect(() =>
       runLegacySyncOnlyConvergence({
         selection: 'codex',
         expectedVersion: '5.260711.7',
-        resolveExecutable: () => '/fixture/codex',
-        runner: () => ({
-          exitCode: 0,
-          stdout: '{"installed":[{"pluginId":"genie@automagik","enabled":true,"version":"5.260711.6"}]}',
-          stderr: '',
-        }),
-        // Isolate the advisory→sync ordering; the codex INSPECT gate is proven by
-        // its own byte-identity failure tests below.
-        inspectCodex: () => {},
-        log: (line) => events.push(`advisory:${line}`),
         sync: () => {
-          events.push('sync');
           throw new Error('strict sync failed');
         },
       }),
     ).toThrow('strict sync failed');
-    expect(events).toHaveLength(2);
-    expect(events[0]).toContain('advisory:Legacy --sync-only');
-    expect(events[1]).toBe('sync');
+  });
+
+  test('D2: a missing/stale/disabled Codex plugin never makes sync-only fail (it never inspects one)', () => {
+    // No `runner`/`resolveExecutable`/`probe` seams are consulted — sync-only
+    // branches before every plugin observer. Even with codex selected and no
+    // Codex CLI reachable, the only work is agent-sync, which succeeds here.
+    let synced = false;
+    expect(() =>
+      runLegacySyncOnlyConvergence({
+        selection: 'codex',
+        expectedVersion: '5.260711.7',
+        sync: () => {
+          synced = true;
+        },
+      }),
+    ).not.toThrow();
+    expect(synced).toBe(true);
   });
 });
 
@@ -2684,38 +2644,7 @@ describe('summarizeJsonlSignals age filter', () => {
 // A14/R3: --sync-only INSPECTS codex health and fails nonzero + byte-identical
 // on a missing / disabled / stale plugin, never enabling or swapping anything.
 // ===========================================================================
-describe('--sync-only codex inspection (A14/R3)', () => {
-  function digestTree(dir: string): string {
-    const digest = createHash('sha256');
-    const walk = (current: string): void => {
-      for (const name of readdirSync(current).sort()) {
-        const abs = join(current, name);
-        const stat = statSync(abs);
-        digest.update(`${name}\0${stat.isDirectory() ? 'd' : 'f'}\0${stat.isDirectory() ? '' : readFileSync(abs)}\0`);
-        if (stat.isDirectory()) walk(abs);
-      }
-    };
-    walk(dir);
-    return digest.digest('hex');
-  }
-
-  const healthyProbe = (): CodexPluginProbe => ({ ...healthyUpdateCodexProbe(), version: VERSION });
-  const disabledProbe = (): CodexPluginProbe => ({
-    ...healthyUpdateCodexProbe(),
-    version: VERSION,
-    enabled: false,
-    usable: false,
-  });
-  const missingProbe = (): CodexPluginProbe => ({
-    cliAvailable: true,
-    status: 'ok',
-    installed: false,
-    usable: false,
-    usabilityDetail: 'plugin is not installed',
-    detail: 'not installed',
-  });
-  const staleProbe = (): CodexPluginProbe => ({ ...healthyUpdateCodexProbe(), version: '0.0.0' });
-
+describe('--sync-only is agent-sync only (D2 — wish decision 3)', () => {
   test('narrowUpdateAgentSyncSelection passes the real selection through (restore-hermes-sync-leg)', () => {
     // codex/none: agent-sync has nothing to do (codex is plugin-only; none is none).
     expect(narrowUpdateAgentSyncSelection('codex')).toBeNull();
@@ -2728,96 +2657,20 @@ describe('--sync-only codex inspection (A14/R3)', () => {
     expect(narrowUpdateAgentSyncSelection('claude')).toBe('claude');
   });
 
-  test('a healthy exact plugin passes inspection', () => {
-    expect(() =>
-      inspectSyncOnlyCodexHealth({
-        selection: 'codex',
-        expectedVersion: VERSION,
-        resolveExecutable: () => '/fixture/codex',
-        probe: healthyProbe,
-        prove: () => ({}) as never,
-      }),
-    ).not.toThrow();
+  test('the convergence option surface + body carry NO Codex plugin query/inspection seam', () => {
+    const source = readFileSync(join(import.meta.dir, '..', 'update.ts'), 'utf-8');
+    // Option interface: no runner/resolveExecutable/probe/prove/inspectCodex hook.
+    const ifaceStart = source.indexOf('export interface LegacySyncOnlyConvergenceOptions');
+    const iface = source.slice(ifaceStart, source.indexOf('\n}', ifaceStart));
+    for (const field of ['inspectCodex', 'probe', 'prove', 'runner', 'resolveExecutable']) {
+      expect(iface).not.toContain(field);
+    }
+    // Function body (past its docstring): agent-sync only, no plugin command.
+    const fnStart = source.indexOf('export function runLegacySyncOnlyConvergence(');
+    const body = source.slice(fnStart, source.indexOf('\n}', fnStart));
+    expect(body).toContain('runAgentSyncSafe({ strict: true');
+    expect(body).not.toContain('plugin');
+    expect(body).not.toContain('probe');
+    expect(body).not.toContain('inspect');
   });
-
-  test('inspection is skipped entirely when codex is not in scope', () => {
-    let probed = false;
-    inspectSyncOnlyCodexHealth({
-      selection: 'claude',
-      expectedVersion: VERSION,
-      resolveExecutable: () => '/fixture/codex',
-      probe: () => {
-        probed = true;
-        return healthyProbe();
-      },
-    });
-    expect(probed).toBe(false);
-  });
-
-  test('under auto with no codex CLI on PATH, inspection is skipped but prints an explicit advisory (not a silent pass)', () => {
-    let probed = false;
-    const lines: string[] = [];
-    inspectSyncOnlyCodexHealth({
-      selection: 'auto',
-      expectedVersion: VERSION,
-      resolveExecutable: () => null,
-      probe: () => {
-        probed = true;
-        return healthyProbe();
-      },
-      log: (line) => lines.push(line),
-    });
-    expect(probed).toBe(false);
-    expect(lines).toHaveLength(1);
-    expect(lines[0]).toContain('Codex checks skipped');
-    expect(lines[0]).toContain('no codex CLI found');
-  });
-
-  test('an explicit codex/all selection with no codex CLI on PATH still throws (auto is the only silent-skip scope)', () => {
-    expect(() =>
-      inspectSyncOnlyCodexHealth({
-        selection: 'codex',
-        expectedVersion: VERSION,
-        resolveExecutable: () => null,
-        probe: healthyProbe,
-      }),
-    ).toThrow('--sync-only requires the Codex CLI');
-  });
-
-  for (const [label, probe] of [
-    ['disabled', disabledProbe],
-    ['missing', missingProbe],
-    ['stale', staleProbe],
-  ] as const) {
-    test(`a ${label} plugin fails --sync-only nonzero and leaves fallback + claude trees byte-identical, never enabling`, () => {
-      const fallback = mkdtempSync(join(tmpdir(), `genie-synconly-fallback-${label}-`));
-      mkdirSync(join(fallback, 'wish'), { recursive: true });
-      writeFileSync(join(fallback, 'wish', 'SKILL.md'), '# personal wish\n');
-      const claude = mkdtempSync(join(tmpdir(), `genie-synconly-claude-${label}-`));
-      writeFileSync(join(claude, 'note.md'), 'claude skill\n');
-      const beforeFallback = digestTree(fallback);
-      const beforeClaude = digestTree(claude);
-      let synced = false;
-      try {
-        expect(() =>
-          runLegacySyncOnlyConvergence({
-            selection: 'codex',
-            expectedVersion: VERSION,
-            resolveExecutable: () => '/fixture/codex',
-            runner: () => ({ exitCode: 0, stdout: '{"installed":[]}', stderr: '' }),
-            probe,
-            sync: () => {
-              synced = true;
-            },
-          }),
-        ).toThrow('--sync-only cannot converge the Codex plugin');
-        expect(synced).toBe(false);
-        expect(digestTree(fallback)).toBe(beforeFallback);
-        expect(digestTree(claude)).toBe(beforeClaude);
-      } finally {
-        rmSync(fallback, { recursive: true, force: true });
-        rmSync(claude, { recursive: true, force: true });
-      }
-    });
-  }
 });

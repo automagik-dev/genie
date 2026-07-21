@@ -29,8 +29,6 @@ import {
   acquireLifecycleLease,
   runAgentSync,
 } from '../lib/agent-sync.js';
-import { getCodexHome } from '../lib/codex-config.js';
-import { type CodexPluginProbe, type CodexPluginProbeDeps, probeCodexGeniePlugin } from '../lib/codex-project-mcp.js';
 import { contractPath, genieConfigExists, getGenieConfigPath, saveGenieConfig } from '../lib/genie-config.js';
 import {
   type InstallStagingDirectoryGuard,
@@ -45,21 +43,11 @@ import {
 import { inspectPhysicalPath } from '../lib/install-transaction.js';
 import {
   type CodexAgentInstallResult,
-  type CodexHealthProof,
-  type CommandRunner,
   type IntegrationResult,
   type IntegrationSelection,
-  type ProveCodexPluginHealthOptions,
-  type RuntimeExecutableResolver,
-  type RuntimeName,
   installCodexAgents,
-  parseClaudePluginState,
-  parseCodexPluginState,
-  proveCodexPluginHealth,
   readIntegrationConsent,
   resolveBundleRoot,
-  resolveRuntimeExecutable,
-  runBoundedIntegrationCommand,
 } from '../lib/runtime-integrations.js';
 import { printUpdateCapabilities } from '../lib/update-capabilities.js';
 import { VERSION } from '../lib/version.js';
@@ -1631,62 +1619,6 @@ export function runFreshBinaryPostDeliveryConvergence(options: FreshBinaryConver
   }
 }
 
-function selectedLegacySyncRuntimes(selection: IntegrationSelection): RuntimeName[] {
-  if (selection === 'none') return [];
-  if (selection === 'codex' || selection === 'claude') return [selection];
-  return ['codex', 'claude'];
-}
-
-export interface LegacySyncOnlyAdvisoryOptions {
-  selection: IntegrationSelection;
-  expectedVersion: string;
-  runner?: CommandRunner;
-  resolveExecutable?: RuntimeExecutableResolver;
-  cwd?: string;
-}
-
-function legacySyncRuntimeDrift(
-  runtime: RuntimeName,
-  options: LegacySyncOnlyAdvisoryOptions,
-  cwd: string,
-  runner: CommandRunner,
-): string | null {
-  let executable: string | null;
-  try {
-    executable = resolveRuntimeExecutable(runtime, cwd, options.resolveExecutable);
-  } catch {
-    return null;
-  }
-  if (executable === null) return null;
-  try {
-    const result = runner(executable, ['plugin', 'list', '--json'], { timeoutMs: 15_000 });
-    if (result.exitCode !== 0 || result.timedOut || result.outputOverflow) return null;
-    const parsed = runtime === 'codex' ? parseCodexPluginState(result.stdout) : parseClaudePluginState(result.stdout);
-    if (!parsed.ok || !parsed.state.installed || !parsed.state.version) return null;
-    if (normalizeVersion(parsed.state.version) === normalizeVersion(options.expectedVersion)) return null;
-    return `${runtime} v${parsed.state.version}${parsed.state.enabled === false ? ' (disabled; preserved)' : ''}`;
-  } catch {
-    return null;
-  }
-}
-
-/** Read-only plugin-state probe used by the first release carrying the fresh
- * child protocol. Legacy `--sync-only` remains skills/role-only; it merely
- * tells the operator when that compatibility path left a selected plugin on
- * the previous version. */
-export function legacySyncOnlyPluginAdvisory(options: LegacySyncOnlyAdvisoryOptions): string | null {
-  if (options.selection === 'none') return null;
-  const cwd = options.cwd ?? process.cwd();
-  const runner = options.runner ?? runBoundedIntegrationCommand;
-  const stale: string[] = [];
-  for (const runtime of selectedLegacySyncRuntimes(options.selection)) {
-    const drift = legacySyncRuntimeDrift(runtime, options, cwd, runner);
-    if (drift !== null) stale.push(drift);
-  }
-  if (stale.length === 0) return null;
-  return `Legacy --sync-only left selected plugin integration${stale.length === 1 ? '' : 's'} stale (${stale.join(', ')}; CLI/source v${normalizeVersion(options.expectedVersion)}). Close all Codex tasks first. Then, from an external terminal, run \`genie update\` (or \`genie setup --codex\`), review \`/hooks\`, and start a new Codex task.`;
-}
-
 /**
  * Gate the agent-sync scope for update. R2/A1 (agent-sync must never write
  * codex product skills into ~/.agents/skills) is structural in `runAgentSync`
@@ -1700,97 +1632,24 @@ export function narrowUpdateAgentSyncSelection(selection: IntegrationSelection):
   return selection === 'none' || selection === 'codex' ? null : selection;
 }
 
-export interface SyncOnlyCodexInspectionOptions {
+export interface LegacySyncOnlyConvergenceOptions {
   selection: IntegrationSelection;
+  /** Retained for the call signature and structure tests; sync-only never reads a version. */
   expectedVersion: string;
-  cwd?: string;
-  bundleRoot?: string;
-  codexHome?: string;
-  resolveExecutable?: RuntimeExecutableResolver;
-  probe?: (deps: CodexPluginProbeDeps) => CodexPluginProbe;
-  prove?: (options: ProveCodexPluginHealthOptions) => CodexHealthProof;
-  runSession?: ProveCodexPluginHealthOptions['runSession'];
-  log?: (line: string) => void;
-}
-
-/**
- * R3/A14: `--sync-only` INSPECTS codex rather than converging it. A missing,
- * deliberately disabled, stale, duplicate, or unhealthy exact plugin throws
- * BEFORE any skill/role mutation, so all trees stay byte-identical. It never
- * enables the plugin, never fetches/swaps the binary. The bounded MCP session
- * proveCodexPluginHealth runs is side-effect-free (isolated cwd, read-only db).
- */
-export function inspectSyncOnlyCodexHealth(options: SyncOnlyCodexInspectionOptions): void {
-  if (!selectedLegacySyncRuntimes(options.selection).includes('codex')) return;
-  const cwd = options.cwd ?? process.cwd();
-  let command: string | null;
-  try {
-    command = resolveRuntimeExecutable('codex', cwd, options.resolveExecutable);
-  } catch (cause) {
-    throw new Error(`--sync-only cannot inspect the Codex plugin: ${errMsg(cause)}`);
-  }
-  if (command === null) {
-    // Under auto, an absent Codex CLI is simply not selected; explicit codex/all requires it.
-    if (options.selection === 'auto') {
-      // A possibly-installed plugin still goes uninspected here — say so
-      // rather than passing silently, so the operator knows why no codex
-      // drift/health advisory appeared.
-      (options.log ?? log)(
-        'Codex checks skipped: no codex CLI found on PATH (--integrations auto never installs it; the plugin, if installed, was not inspected).',
-      );
-      return;
-    }
-    throw new Error(
-      '--sync-only requires the Codex CLI for the selected scope, but it was not found; --sync-only never installs it',
-    );
-  }
-  const snapshot = (options.probe ?? probeCodexGeniePlugin)({ codexHome: options.codexHome, cwd });
-  try {
-    (options.prove ?? proveCodexPluginHealth)({
-      snapshot,
-      bundleRoot: options.bundleRoot ?? GENIE_HOME,
-      codexHome: options.codexHome ?? getCodexHome(),
-      expectedVersion: options.expectedVersion,
-      runSession: options.runSession,
-    });
-  } catch (cause) {
-    throw new Error(
-      `--sync-only cannot converge the Codex plugin (${errMsg(cause)}). --sync-only inspects only: it never installs, enables, or swaps the binary. Close all Codex tasks first. Then, from an external terminal, run \`genie update\` (or \`genie setup --codex\`), review \`/hooks\`, and start a new Codex task.`,
-    );
-  }
-}
-
-export interface LegacySyncOnlyConvergenceOptions extends LegacySyncOnlyAdvisoryOptions {
   sync?: () => void;
   log?: (line: string) => void;
-  inspectCodex?: (options: SyncOnlyCodexInspectionOptions) => void;
-  probe?: (deps: CodexPluginProbeDeps) => CodexPluginProbe;
-  prove?: (options: ProveCodexPluginHealthOptions) => CodexHealthProof;
-  codexHome?: string;
-  bundleRoot?: string;
 }
 
 /**
- * Emit version-drift recovery, INSPECT codex health (R3/A14 — fail nonzero and
- * byte-identical before any write on a missing/disabled/stale/unhealthy plugin),
- * then run the strict agent-sync skill sync for the requested scope. Codex
- * product skills are never rewritten under ~/.agents/skills (R2/A1) — that
- * guarantee is structural in `runAgentSync`, not a Claude-only narrowing here.
+ * D2 (wish decision 3, Felipe-ratified): legacy `--sync-only` is a pure
+ * agent-sync compatibility path. It branches BEFORE every Codex activation
+ * observer, classifier, authorization, plugin query, or mutation — it never
+ * lists, probes, inspects, enables, installs, or swaps the Codex plugin — and a
+ * genuine agent-sync failure is its ONLY nonzero result. Codex product skills
+ * are never rewritten under ~/.agents/skills (R2/A1) — that guarantee is
+ * structural in `runAgentSync`, not a Claude-only narrowing here.
  */
 export function runLegacySyncOnlyConvergence(options: LegacySyncOnlyConvergenceOptions): void {
-  const advisory = legacySyncOnlyPluginAdvisory(options);
-  if (advisory !== null) (options.log ?? log)(advisory);
-  (options.inspectCodex ?? inspectSyncOnlyCodexHealth)({
-    selection: options.selection,
-    expectedVersion: options.expectedVersion,
-    cwd: options.cwd,
-    bundleRoot: options.bundleRoot,
-    codexHome: options.codexHome,
-    resolveExecutable: options.resolveExecutable,
-    probe: options.probe,
-    prove: options.prove,
-    log: options.log,
-  });
   const agentSyncSelection = narrowUpdateAgentSyncSelection(options.selection);
   (
     options.sync ??
