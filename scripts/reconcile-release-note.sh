@@ -80,10 +80,14 @@ body="$(gh release view "${TAG}" --repo "${RELEASE_REPOSITORY}" --json body --jq
 }
 
 # Drafts intentionally remain unpublished. Non-drafts are finalized only after
-# exact remote asset verification, and are never selected as GitHub latest.
-# Channel authority lives exclusively in the monotonic .well-known manifests.
-# Once published, release assets and draft/prerelease/latest metadata are left
-# untouched so repository-level immutable releases can enforce that boundary.
+# exact remote asset verification. Channel authority lives in the monotonic
+# .well-known manifests, but GitHub's "Latest" pointer is a separate surface the
+# stable channel MUST advance: stable finalize publishes as prerelease=false +
+# make_latest=true, promoting to Latest even when the dev channel already
+# published the very same tag as a prerelease. dev/homolog finalize is unchanged
+# — they publish as prerelease (flag preserved) and are never Latest. A release
+# already in its channel's terminal published state is left immutable so
+# repository-level immutable releases can enforce that boundary.
 if [[ "${DRAFT}" == "false" ]]; then
   final_state="$(gh release view "${TAG}" --repo "${RELEASE_REPOSITORY}" \
     --json databaseId,isDraft,isPrerelease --jq '[.databaseId,.isDraft,.isPrerelease] | @tsv')"
@@ -92,6 +96,22 @@ if [[ "${DRAFT}" == "false" ]]; then
     echo "invalid release state for ${TAG}" >&2
     exit 3
   }
+  if [[ "${CHANNEL}" == "stable" ]]; then
+    # Stable is the promotion channel. Publish (or promote an already-published
+    # dev prerelease) to the sole GitHub Latest: prerelease=false + latest=true.
+    # `make_latest` is the legacy string field ("true"/"false") — pass it with
+    # -f, not -F. Idempotent: a release already published as non-prerelease
+    # Latest is left untouched.
+    if [[ "$is_draft" == false && "$is_prerelease" == false ]]; then
+      echo "${TAG} is already published as the latest stable release; preserving its metadata"
+      exit 0
+    fi
+    gh api -X PATCH "repos/${RELEASE_REPOSITORY}/releases/${release_id}" \
+      -F draft=false -F prerelease=false -f make_latest=true >/dev/null
+    exit 0
+  fi
+  # dev/homolog: prerelease flag preserved, never Latest. A published release is
+  # left immutable.
   if [[ "$is_draft" == false ]]; then
     echo "${TAG} is already published; preserving its immutable release metadata"
     exit 0
