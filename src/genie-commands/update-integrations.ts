@@ -1,5 +1,15 @@
 import { join } from 'node:path';
 import {
+  buildActivationResultTrailer,
+  classifyCodexActivation,
+  describeState,
+  observeCodexActivation,
+  projectHumanStatus,
+} from '../lib/codex-activation-executor.js';
+
+/** The A-owned exit-2 result trailer shape, taken from its canonical builder. */
+type ActivationResultTrailer = ReturnType<typeof buildActivationResultTrailer>;
+import {
   type ClaudePayloadVerifier,
   type CodexPayloadVerifier,
   type CommandRunner,
@@ -8,7 +18,6 @@ import {
   type RuntimeExecutableResolver,
   type RuntimeName,
   convergeClaudePlugin,
-  convergeCodexPlugin,
   resolveRuntimeExecutable,
   runBoundedIntegrationCommand,
 } from '../lib/runtime-integrations.js';
@@ -36,10 +45,15 @@ export interface RefreshUpdatePluginsOptions {
 }
 
 /**
- * Refresh plugin registrations after an operator-driven full update. This is a
- * thin policy-free adapter over the same durable convergence state machines
- * install/setup use. An absent plugin remains absent unless a pending repair
- * proves a prior installation was removed by an interrupted refresh.
+ * Refresh non-Codex plugin registrations after an operator-driven full update.
+ *
+ * The Codex plugin generation is DELIBERATELY NOT converged here: `genie update`
+ * (and its fresh-binary child) are delivery/discovery-only for Codex — advancing
+ * and pruning a versioned Codex plugin cache while a live task holds paths into
+ * the old generation is exactly the failure this wish mitigates. Codex plugin
+ * state is instead observed/classified/reported through {@link reportCodexPluginDelivery}
+ * (Group B's stable facade) with zero cache-advancing command. Claude convergence
+ * is unrelated non-Codex agent convergence and is preserved unchanged.
  */
 export function refreshUpdatePlugins(options: RefreshUpdatePluginsOptions): IntegrationResult[] {
   const runner = options.runner ?? runBoundedIntegrationCommand;
@@ -56,14 +70,15 @@ export function refreshUpdatePlugins(options: RefreshUpdatePluginsOptions): Inte
   return results;
 }
 
+/** Only non-Codex runtimes are convergence targets; Codex is observe/report-only. */
 function selectedRefreshTargets(
   selection: Exclude<IntegrationSelection, 'none'>,
   detected: RefreshUpdatePluginsOptions['detected'],
 ): RuntimeName[] {
-  if (selection === 'all') return ['codex', 'claude'];
-  if (selection === 'auto')
-    return (['codex', 'claude'] as RuntimeName[]).filter((runtime) => detected?.[runtime] !== false);
-  return [selection];
+  if (selection === 'codex') return [];
+  if (selection === 'all') return ['claude'];
+  if (selection === 'auto') return (['claude'] as RuntimeName[]).filter((runtime) => detected?.[runtime] !== false);
+  return selection === 'claude' ? ['claude'] : [];
 }
 
 function refreshOneRuntime(
@@ -83,20 +98,7 @@ function refreshOneRuntime(
   }
   if (command === null) return null;
   try {
-    if (runtime === 'codex') {
-      return convergeCodexPlugin({
-        runner,
-        command,
-        bundleRoot: options.bundleRoot,
-        expectedVersion: options.expectedVersion,
-        installIfAbsent: false,
-        configPath: options.codexConfigPath,
-        statePath: join(stateDir, '.integration-refresh-codex.json'),
-        timeoutMs,
-        codexHome: options.codexHome,
-        verifyCodexPayload: options.verifyCodexPayload,
-      });
-    }
+    // Codex plugin cache is never advanced by update (see refreshUpdatePlugins).
     return convergeClaudePlugin({
       runner,
       command,
@@ -111,4 +113,74 @@ function refreshOneRuntime(
   } catch (error) {
     return { runtime, ok: false, detail: error instanceof Error ? error.message : String(error) };
   }
+}
+
+// ============================================================================
+// Codex plugin delivery report (observe/classify/report only — no permit,
+// no cache-advancing command)
+// ============================================================================
+
+export interface CodexPluginDeliveryReport {
+  /** The classified state's stable machine code. */
+  machineCode: string;
+  /** 0 = current, 1 = broken/indeterminate, 2 = action-required (pending). */
+  exit: 0 | 1 | 2;
+  actionRequired: boolean;
+  /** The invocation's requested canonical delivery was verified/already verified. */
+  deliveryComplete: boolean;
+  installedVersion: string | null;
+  targetVersion: string | null;
+  recovery: string;
+  humanStream: 'stdout' | 'stderr';
+  humanText: string;
+  trailer: ActivationResultTrailer;
+}
+
+export interface ReportCodexPluginDeliveryOptions {
+  genieHome?: string;
+  codexHome?: string;
+  runner?: CommandRunner;
+  /** Resolved codex executable; when absent the query is reported as failed. */
+  command?: string | null;
+  /** TEST-ONLY canonical payload root override; production refuses caller/env roots. */
+  canonicalRoot?: string;
+  allowRootOverride?: boolean;
+  /** Delivery-completion flag for this invocation. Defaults to true (delivery succeeded). */
+  deliveryComplete?: boolean;
+}
+
+/**
+ * Observe, classify, and project the Codex plugin state through Group B's stable
+ * facade. Performs bounded reads and one read-only `plugin list --json` query
+ * only; never obtains a permit, writes an intent, or runs a cache-advancing
+ * command. The returned exit/human/trailer surface is what update/install use to
+ * report `Codex activation pending` and propagate action-required exit 2.
+ */
+export function reportCodexPluginDelivery(options: ReportCodexPluginDeliveryOptions = {}): CodexPluginDeliveryReport {
+  const snapshot = observeCodexActivation({
+    genieHome: options.genieHome,
+    codexHome: options.codexHome,
+    runner: options.runner,
+    command: options.command,
+    canonicalRoot: options.canonicalRoot,
+    allowRootOverride: options.allowRootOverride,
+  });
+  const state = classifyCodexActivation(snapshot);
+  const descriptor = describeState(state);
+  const human = projectHumanStatus(state, snapshot);
+  const deliveryComplete = options.deliveryComplete ?? true;
+  const registration = snapshot.query.status === 'ok' ? snapshot.query.registration : { present: false as const };
+  const installedVersion = registration.present && registration.version ? registration.version.canonical : null;
+  return {
+    machineCode: descriptor.machineCode,
+    exit: descriptor.exit,
+    actionRequired: descriptor.actionRequired,
+    deliveryComplete,
+    installedVersion,
+    targetVersion: snapshot.canonical.status === 'ok' ? snapshot.canonical.version.canonical : null,
+    recovery: descriptor.recovery,
+    humanStream: human.stream,
+    humanText: human.text,
+    trailer: buildActivationResultTrailer(state, deliveryComplete),
+  };
 }

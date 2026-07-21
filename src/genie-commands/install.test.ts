@@ -26,8 +26,9 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { acquireLifecycleLease, lifecycleLockPath } from '../lib/agent-sync.js';
+import type { InstallIntegrationsOptions } from '../lib/runtime-integrations.js';
 import { convergeAuxiliaryTree } from './auxiliary-trees.js';
-import { type InstallOptions, installCommand, normalizeAuxLayout } from './install.js';
+import { type InstallOptions, installCommand, normalizeAuxLayout, reportInstallCodexPlugin } from './install.js';
 import type { cleanupV4 } from './legacy-v4.js';
 
 function makeCleanupSpy(): { runner: typeof cleanupV4; calls: () => number } {
@@ -322,35 +323,95 @@ describe('installCommand', () => {
     ).toThrow('Requested integration failed');
   });
 
-  test('install prints hook review guidance only when hook definition bytes changed', () => {
+  test('install passes codexPluginMode:observe so the plugin cache is never advanced', () => {
+    const seen: Array<InstallIntegrationsOptions | undefined> = [];
+    installCommand(
+      { integrations: 'codex' },
+      makeCleanupSpy().runner,
+      () => undefined,
+      () => undefined,
+      (options) => {
+        seen.push(options);
+        return [{ runtime: 'codex', ok: true, detail: 'role agents converged (plugin observe-only)' }];
+      },
+      noopLease,
+      noopConsent,
+    );
+    expect(seen[0]?.codexPluginMode).toBe('observe');
+  });
+
+  test('reportInstallCodexPlugin emits pending recovery + trailer and sets exit 2, current is silent', () => {
+    const prevExit = process.exitCode;
     const lines: string[] = [];
+    const errs: string[] = [];
     const originalLog = console.log;
+    const originalError = console.error;
     console.log = (...args: unknown[]) => lines.push(args.map(String).join(' '));
-    const run = (hookReviewRequired: boolean) =>
-      installCommand(
-        { integrations: 'codex' },
-        makeCleanupSpy().runner,
-        () => undefined,
-        () => undefined,
-        () => [
-          {
-            runtime: 'codex',
-            ok: true,
-            detail: 'fixture integration current',
-            hookReviewRequired,
-          },
-        ],
-        noopLease,
-        noopConsent,
-      );
+    console.error = (...args: unknown[]) => errs.push(args.map(String).join(' '));
+    const readExit = (): number | string | null | undefined => process.exitCode;
     try {
-      run(false);
-      expect(lines.join('\n')).not.toContain('Review Genie hooks with /hooks');
+      // Pending: names N/T + retire recovery, emits the A-owned trailer, exit 2.
+      process.exitCode = 0;
+      reportInstallCodexPlugin('codex', () => ({
+        machineCode: 'activation-pending',
+        exit: 2,
+        actionRequired: true,
+        deliveryComplete: true,
+        installedVersion: '5.260710.2',
+        targetVersion: '5.260711.3',
+        recovery: 'retire tasks → genie setup --codex → /hooks → new task',
+        humanStream: 'stdout',
+        humanText:
+          'Codex plugin: activation-pending (installed=5.260710.2, target=5.260711.3)\nretire tasks → genie setup --codex → /hooks → new task',
+        trailer: {
+          schemaVersion: 1,
+          code: 'activation-pending',
+          deliveryComplete: true,
+          retry: false,
+          nextAction: 'retire tasks → genie setup --codex → /hooks → new task',
+        },
+      }));
+      const out = lines.join('\n');
+      expect(out).toContain('installed=5.260710.2');
+      expect(out).toContain('target=5.260711.3');
+      expect(out).toContain('retire tasks → genie setup --codex → /hooks → new task');
+      const trailer = JSON.parse(lines.find((line) => line.trim().startsWith('{')) ?? '{}');
+      expect(trailer.deliveryComplete).toBe(true);
+      expect(trailer.code).toBe('activation-pending');
+      expect(readExit()).toBe(2);
+
+      // Current: nothing printed, no exit change from the sentinel.
       lines.length = 0;
-      run(true);
-      expect(lines.join('\n')).toContain('Review Genie hooks with /hooks, then start a new Codex task.');
+      process.exitCode = 0;
+      reportInstallCodexPlugin('codex', () => ({
+        machineCode: 'current',
+        exit: 0,
+        actionRequired: false,
+        deliveryComplete: true,
+        installedVersion: '5.260711.3',
+        targetVersion: '5.260711.3',
+        recovery: 'Current; no mutation',
+        humanStream: 'stdout',
+        humanText: 'Codex plugin: current',
+        trailer: {
+          schemaVersion: 1,
+          code: 'current',
+          deliveryComplete: true,
+          retry: false,
+          nextAction: 'Current; no mutation',
+        },
+      }));
+      expect(lines).toEqual([]);
+      expect(readExit()).toBe(0);
+
+      // Skipped (null): nothing printed, no exit change.
+      reportInstallCodexPlugin('none', () => null);
+      expect(lines).toEqual([]);
+      expect(readExit()).toBe(0);
     } finally {
       console.log = originalLog;
+      console.error = originalError;
+      process.exitCode = prevExit;
     }
   });
 

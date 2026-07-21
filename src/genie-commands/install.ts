@@ -16,14 +16,18 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { type LifecycleLease, acquireLifecycleLease } from '../lib/agent-sync.js';
+import { serializeActivationResultTrailer } from '../lib/codex-activation-executor.js';
+import { getCodexHome } from '../lib/codex-config.js';
 import {
   type InstallIntegrationsOptions,
   type IntegrationSelection,
   installRuntimeIntegrations,
   persistIntegrationConsent,
+  resolveRuntimeExecutable,
 } from '../lib/runtime-integrations.js';
 import { type AuxiliaryTreeOperations, type AuxiliaryTreeOutcome, convergeAuxiliaryTree } from './auxiliary-trees.js';
 import { cleanupV4 } from './legacy-v4.js';
+import { type CodexPluginDeliveryReport, reportCodexPluginDelivery } from './update-integrations.js';
 import { runAgentSyncSafe } from './update.js';
 
 const GENIE_HOME = process.env.GENIE_HOME || join(homedir(), '.genie');
@@ -143,7 +147,11 @@ export function installCommand(
     }
     if (selection !== 'none') runSync(selection);
 
-    const results = runIntegrations({ selection });
+    // Install is delivery/discovery-only for Codex: role agents + config are
+    // converged, but the versioned plugin cache is NEVER advanced by an installer
+    // wrapper (which is commonly piped and can never assert task retirement). The
+    // Codex plugin generation is observed/classified/reported separately below.
+    const results = runIntegrations({ selection, codexPluginMode: 'observe' });
     for (const result of results) {
       const glyph = result.ok ? '\x1b[32m+\x1b[0m' : '\x1b[33m!\x1b[0m';
       const disabled = result.preservedDisabled ? '; disabled state preserved' : '';
@@ -154,12 +162,43 @@ export function installCommand(
       if (failed.length > 0)
         throw new Error(`Requested integration failed: ${failed.map((r) => r.runtime).join(', ')}`);
     }
-    if (results.some((result) => result.runtime === 'codex' && result.ok && result.hookReviewRequired)) {
-      console.log('  \x1b[33m!\x1b[0m Review Genie hooks with /hooks, then start a new Codex task.');
-    }
+    reportInstallCodexPlugin(selection);
   } finally {
     lease.release();
   }
+}
+
+/** Default install-time Codex plugin observation, or null when Codex is not selected/detected. */
+function defaultInstallCodexReport(selection: IntegrationSelection): CodexPluginDeliveryReport | null {
+  if (selection === 'claude' || selection === 'none') return null;
+  let command: string | null;
+  try {
+    command = resolveRuntimeExecutable('codex', process.cwd());
+  } catch {
+    command = null;
+  }
+  if (command === null) return null; // Codex CLI not detected — install does not touch it.
+  return reportCodexPluginDelivery({ genieHome: GENIE_HOME, codexHome: getCodexHome(), command });
+}
+
+/**
+ * Observe/classify/report the Codex plugin generation for `genie install` through
+ * Group B's stable facade — no permit, no cache-advancing command. Absent/stale
+ * is action-required (exit 2, deliveryComplete:true) so the installer wrapper
+ * treats it as delivered-not-activated without an all-green footer; a broken
+ * generation is exit 1. When the plugin is current there is nothing to report.
+ * `report` is an injection seam (null = skip).
+ */
+export function reportInstallCodexPlugin(
+  selection: IntegrationSelection,
+  report: (selection: IntegrationSelection) => CodexPluginDeliveryReport | null = defaultInstallCodexReport,
+): void {
+  const result = report(selection);
+  if (result === null || result.exit === 0) return; // skipped or current — nothing action-required.
+  if (result.humanStream === 'stderr') console.error(result.humanText);
+  else console.log(`  \x1b[33m!\x1b[0m ${result.humanText}`);
+  console.log(serializeActivationResultTrailer(result.trailer));
+  process.exitCode = result.exit;
 }
 
 /** Validate raw Commander input before cleanup, synchronization, or install side effects. */

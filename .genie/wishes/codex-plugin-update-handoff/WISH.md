@@ -932,6 +932,60 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 - Zero CRITICAL/HIGH gaps remain; all three original loop-2/2 HIGH gaps and fresh-gate HIGH-1 are
   closed with mechanically checkable, singly-owned requirements. Plan is ready for `/work`.
 
+### Execution — Group A (activation-protocol-core) — 2026-07-12
+
+- **Verdict:** SHIP after 2 fix loops. Reviewer: independent subagent; engineer: separate subagent.
+- Commits: `84fab8bf`, `c490aabe`, `9fd46bcb`, `f410ddea` (+ `c58fceb5` wish-status doc fix).
+- Fix loop 1: exported brand classes exposed public static `mint` → forgery (empirically proven);
+  closed via type-only export. Fix loop 2: residual `instance.constructor.mint` route (empirically
+  proven, incl. fresh-fingerprint permit forgery accepted by `beginActivation`); closed by removing
+  the statics for module-private free factories — sole WeakSet registrars. Reviewer re-probed HEAD:
+  all forgery routes dead at all three consumption sites (authorize, beginActivation, quarantine).
+- Validation: focused suites 85 pass/0 fail; full `bun run check` 1481 pass/0 fail (exit 0).
+- LOW carried: optional dedicated quarantine-path forgery test; `new Date()` injectability nit.
+- Task `t_mri2bsh8f2617d39` done.
+
+### Execution — Group B (permit-gated-executor) — 2026-07-12 — SHIP
+
+- **Final verdict: SHIP** after fix loop 1/2 (commit `ac264911`). Reviewer empirically confirmed:
+  the bricked-Codex scenario (removal-observed, N gone, T absent) recovers end-to-end → activated →
+  `current`; fingerprint gate not skippable on resume; re-stamped operation ID keeps fencing sound
+  (foreign-lease mid-resume swap → `codex-lifecycle-fenced`); phase never resets backward to
+  planned; single-journal invariant held; handback edit bounded to the 4 authorized files with A's
+  brand guarantees re-probed intact. All 7 ACs pass. Orchestrator validation: focused 118 pass/0
+  fail; full gate 1514 pass/0 fail (exit 0). Task `t_mri2bsj07c8c4964` done.
+- LOW carried: H3 poison/Node-root-replacement coverage extensions; Windows env branch structural;
+  observe/beginActivation throw escapes as exception (lease still released); inert
+  `*.genie-backup-*` sidecar accumulation (pre-existing).
+
+### Group B review detail (historical)
+
+- Engineer commit `b46d3b03` (executor + 20-test suite; real two-process race exactly-one-winner).
+  Orchestrator validation: focused suites 141 pass/0 fail; full gate 1501 pass/0 fail (exit 0).
+- **Review verdict: FIX-FIRST** — one HIGH: post-command phases (`command-started`,
+  `removal-observed`, `ambiguous-absent`) were activation-ineligible in A's `ACTIVATION_ELIGIBLE`,
+  contradicting the DESIGN truth table's recovery authority and B deliverable 3; a failed add after
+  removal bricked Codex with no tool path. Fix loop 1/2 dispatched: align code with DESIGN (widen
+  eligibility + resume the existing bound intent in `beginActivation`; executor drives idempotent
+  re-add → parity → H3 → finalize), under an explicit orchestrator handback authorizing the bounded
+  Group A edit with mandatory A-suite revalidation.
+- **Adjudication (binding for AC interpretation):** downgrade-receipt consumption at
+  `finalizeActivation` (terminal) is COMPLIANT with the normative DESIGN ordering ("intent first,
+  then receipt after all postconditions") and crash-window-safe (reviewer traced both branches: an
+  interrupted add leaves the receipt either inert under `installed-newer` matching rules or locked
+  to the same bound target; `publishDelivery` clears stale receipts; the finalize tombstone defeats
+  single-file replay). Group B's AC "tombstoned before the first plugin command" is read per the
+  DESIGN; wording is reconciled here rather than by weakening any replay guarantee.
+- **Hard handback to Group C (blocking):** the legacy unpermitted cache-advancing mutator
+  `convergeCodexPlugin` (runtime-integrations.ts) remains wired into update/install/setup at
+  `b46d3b03`. C's deliverable 1 MUST remove/rewire all three call sites onto B's permit-gated
+  facade; the branch must not ship or merge standalone before C lands. Escalates to HIGH if
+  violated.
+- MEDIUM/LOW carried: failure injection extended in fix loop 1 (beforeParity/beforeH3/
+  beforeEnabledRestore/afterPluginAdd/beforeRemovalObserved); H3 poison-coverage extensions
+  (PATH/HOME/TMP*/ComSpec, Node/root replacement post-validation); Windows env branch structural
+  (per WSL boundary); observe/beginActivation throw escapes as exception (lease still released).
+
 ---
 
 ## Files to Create/Modify

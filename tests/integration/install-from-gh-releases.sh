@@ -139,14 +139,16 @@ EOF
 jq -e --arg p "$PLATFORM" '.platforms | index($p)' "$WORK/latest.json" >/dev/null \
   || { echo "FAIL: platform $PLATFORM missing from latest.json.platforms (drift)" >&2; exit 1; }
 
-# Copy install.sh and rewrite LATEST_URL to file://. Production install.sh is
-# never modified; the test owns its mutated copy under $WORK.
+# Copy install.sh and rewrite MANIFEST_BASE to a local file:// root. Production
+# install.sh is never modified; the test owns its mutated copy under $WORK.
+# `resolve_manifest_url stable` reads "${MANIFEST_BASE}/latest.json", so the
+# manifest must live at $WORK/latest.json.
 sed \
-  -e "s|^LATEST_URL=.*|LATEST_URL=\"file://${WORK}/latest.json\"|" \
+  -e "s|^MANIFEST_BASE=.*|MANIFEST_BASE=\"file://${WORK}\"|" \
   "$INSTALL_SH" > "$WORK/install.sh"
 chmod +x "$WORK/install.sh"
-grep -q "^LATEST_URL=\"file://" "$WORK/install.sh" \
-  || { echo "FAIL: LATEST_URL rewrite did not stick" >&2; exit 1; }
+grep -q "^MANIFEST_BASE=\"file://" "$WORK/install.sh" \
+  || { echo "FAIL: MANIFEST_BASE rewrite did not stick" >&2; exit 1; }
 
 # ---------------------------------------------------------------------------
 # Tamper case: no INSECURE, no .bundle, no Sigstore attestation. install.sh

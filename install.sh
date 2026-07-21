@@ -15,7 +15,7 @@
 # INSECURE=1 (audit-logged bypass; SHA256 floor only — DO NOT USE in production):
 #   INSECURE=1 curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash
 #
-# Exit codes: 0 ok | 1 generic | 2 unsupported platform | 3 missing prereq | 4 verification failed | 5 download failed
+# Exit codes: 0 ok | 1 generic | 2 unsupported platform (early) OR delivered-not-activated (post-finisher: binary+payload installed, Codex activation required) | 3 missing prereq | 4 verification failed | 5 download failed
 #
 set -euo pipefail
 
@@ -37,6 +37,11 @@ LIFECYCLE_LOCK=""
 LIFECYCLE_OWNER_FILE=""
 LIFECYCLE_OWNER_RECORD=""
 LIFECYCLE_LOCK_STALE_SECONDS=600
+# Set to 1 when `genie install` exits 2: the signed binary + canonical payload
+# were delivered and verified, but the Codex plugin generation needs a separate
+# human activation (`genie setup --codex`). Delivered-not-activated, not a
+# failure — the installer propagates exit 2 without an all-green footer.
+DELIVERED_NOT_ACTIVATED=0
 
 cleanup() {
   release_lifecycle_lock
@@ -515,9 +520,19 @@ handoff_to_subcommand() {
   log "handing off to: genie install (post-install finishing)"
   [[ -n "$LIFECYCLE_LOCK" && -n "$LIFECYCLE_OWNER_RECORD" ]] ||
     die "lifecycle lease was lost before the post-install finisher" 1
-  if ! GENIE_LIFECYCLE_LEASE_PATH="$LIFECYCLE_LOCK" \
+  local rc=0
+  GENIE_LIFECYCLE_LEASE_PATH="$LIFECYCLE_LOCK" \
     GENIE_LIFECYCLE_LEASE_OWNER="$LIFECYCLE_OWNER_RECORD" \
-    "$LOCAL_BIN/genie" install "$@"; then
+    "$LOCAL_BIN/genie" install "$@" || rc=$?
+  if [[ "$rc" -eq 0 ]]; then
+    return 0
+  elif [[ "$rc" -eq 2 ]]; then
+    # Delivered-not-activated: the finisher delivered + reported the state and
+    # emitted its result trailer. Not fatal — verification still runs, then main
+    # propagates exit 2 with no all-green footer.
+    DELIVERED_NOT_ACTIVATED=1
+    return 0
+  else
     die "genie install finishing failed; installation remains incomplete and retryable" 1
   fi
 }
@@ -571,6 +586,14 @@ main() {
   ensure_path_wired
   handoff_to_subcommand "$@"
   verify_installation "$version"
+  if [[ "$DELIVERED_NOT_ACTIVATED" -eq 1 ]]; then
+    # No all-green footer: the binary + payload are installed and verified, but
+    # Codex plugin activation is an explicit, human-gated next step.
+    warn "genie v${version} delivered; Codex plugin activation is required (action-required)."
+    warn "  retire tasks -> genie setup --codex -> /hooks -> new task"
+    release_lifecycle_lock
+    exit 2
+  fi
   log "genie v${version} installed"
   release_lifecycle_lock
 }

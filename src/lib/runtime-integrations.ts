@@ -1746,6 +1746,15 @@ export interface InstallIntegrationsOptions {
   cwd?: string;
   /** Deterministic test seam; production resolves and validates PATH once. */
   resolveExecutable?: RuntimeExecutableResolver;
+  /**
+   * How the Codex plugin generation is handled during install/setup:
+   *   - 'converge' (default): the legacy cache-advancing convergence (setup path).
+   *   - 'observe': install the Codex role agents + config migration only and DO
+   *     NOT run any cache-advancing plugin command. `genie install` uses this so
+   *     an installer wrapper never advances/prunes a generation a live task holds.
+   *     The caller observes/classifies/reports the Codex plugin separately.
+   */
+  codexPluginMode?: 'converge' | 'observe';
 }
 
 export function installRuntimeIntegrations(options: InstallIntegrationsOptions = {}): IntegrationResult[] {
@@ -1786,6 +1795,7 @@ export function installRuntimeIntegrations(options: InstallIntegrationsOptions =
               options.timeoutMs,
               options.stateDir ?? genieHome,
               options.verifyCodexPayload,
+              options.codexPluginMode ?? 'converge',
             )
           : installClaudeIntegration(
               runner,
@@ -2549,11 +2559,22 @@ function installCodexIntegration(
   timeoutMs = INTEGRATION_TIMEOUT_MS,
   stateDir = resolveGenieHome(),
   verifyCodexPayload?: CodexPayloadVerifier,
+  codexPluginMode: 'converge' | 'observe' = 'converge',
 ): IntegrationResult {
   const configPath = join(codexHome ?? getCodexHome(), 'config.toml');
   const migration = migrateDeadGenieOtel(configPath);
   if (migration.status === 'error') throw new Error(`Codex config migration failed: ${migration.error}`);
   const agents = installCodexAgents(bundleRoot, codexHome);
+  const notes = [`${agents.installed} role agents installed`];
+  if (agents.removed.length > 0) notes.push(`removed obsolete: ${agents.removed.join(', ')}`);
+  if (agents.keptModified.length > 0) notes.push(`kept modified: ${agents.keptModified.join(', ')}`);
+  if (agents.skippedUserOwned.length > 0) notes.push(`kept user-owned: ${agents.skippedUserOwned.join(', ')}`);
+  if (codexPluginMode === 'observe') {
+    // Observe/report mode (installer wrappers): converge role agents + config
+    // only, and NEVER run a cache-advancing plugin command. The caller classifies
+    // and reports the Codex plugin generation separately.
+    return { runtime: 'codex', ok: true, detail: `role agents converged (plugin observe-only); ${notes.join('; ')}` };
+  }
   const plugin = convergeCodexPlugin({
     runner,
     command,
@@ -2568,10 +2589,6 @@ function installCodexIntegration(
   });
   if (plugin === null) throw new Error('Codex plugin convergence returned no result for explicit install');
   if (!plugin.ok) throw new IntegrationCommandError(plugin.detail, plugin.timedOut);
-  const notes = [`${agents.installed} role agents installed`];
-  if (agents.removed.length > 0) notes.push(`removed obsolete: ${agents.removed.join(', ')}`);
-  if (agents.keptModified.length > 0) notes.push(`kept modified: ${agents.keptModified.join(', ')}`);
-  if (agents.skippedUserOwned.length > 0) notes.push(`kept user-owned: ${agents.skippedUserOwned.join(', ')}`);
   return {
     runtime: 'codex',
     ok: true,

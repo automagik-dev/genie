@@ -30,11 +30,11 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type AgentSyncReport, acquireLifecycleLease } from '../../lib/agent-sync';
-import type { CommandRunner } from '../../lib/runtime-integrations';
 import type { AuxiliaryTreeOutcome, AuxiliaryTreeStage } from '../auxiliary-trees.js';
 import {
   type RefreshUpdatePluginsOptions,
   refreshUpdatePlugins as refreshUpdatePluginsWithPhysicalVerification,
+  reportCodexPluginDelivery,
 } from '../update-integrations.js';
 import {
   type LatestManifest,
@@ -51,7 +51,6 @@ import {
   formatVerifyBanner,
   hashPhysicalFileIncrementally,
   isGenieProcessSnapshotLine,
-  legacySyncOnlyPluginAdvisory,
   manifestUrlForChannel,
   normalizeVersion,
   persistChannel,
@@ -75,6 +74,7 @@ import {
   summarizeJsonlSignals,
   syncAuxiliaryContent,
   syncBinaryVersionStamp,
+  updateCommand,
   verifySwappedBinary,
 } from '../update.js';
 
@@ -85,6 +85,56 @@ function refreshUpdatePlugins(options: RefreshUpdatePluginsOptions) {
     verifyCodexPayload: options.verifyCodexPayload ?? (() => undefined),
     verifyClaudePayload: options.verifyClaudePayload ?? (() => undefined),
   });
+}
+
+interface CodexActivationFixture {
+  root: string;
+  genieHome: string;
+  codexHome: string;
+  canonicalRoot: string;
+  cachePayloadPath: string;
+  pluginListJson: string;
+  cleanup: () => void;
+}
+
+/**
+ * Build a self-contained Codex activation fixture: a canonical payload root
+ * (`plugins/genie` + `VERSION`), a Codex cache generation for the registered
+ * version, an empty GENIE_HOME (no intent/receipt), and a matching plugin-list
+ * JSON. Used to drive `reportCodexPluginDelivery` deterministically.
+ */
+function makeCodexActivationFixture(opts: {
+  canonicalVersion: string;
+  registeredVersion: string;
+  cacheVersion: string;
+  enabled: boolean;
+  mirrorCanonicalIntoCache?: boolean;
+}): CodexActivationFixture {
+  const root = mkdtempSync(join(tmpdir(), 'genie-codex-activation-fixture-'));
+  const genieHome = join(root, 'genie-home');
+  const codexHome = join(root, 'codex-home');
+  const canonicalRoot = join(root, 'canonical');
+  mkdirSync(genieHome, { recursive: true });
+  const canonicalPayloadDir = join(canonicalRoot, 'plugins', 'genie');
+  mkdirSync(canonicalPayloadDir, { recursive: true });
+  writeFileSync(join(canonicalPayloadDir, 'payload.txt'), 'canonical-bytes\n');
+  writeFileSync(join(canonicalRoot, 'VERSION'), `${opts.canonicalVersion}\n`);
+  const cacheDir = join(codexHome, 'plugins', 'cache', 'automagik', 'genie', opts.cacheVersion);
+  mkdirSync(cacheDir, { recursive: true });
+  const cachePayloadPath = join(cacheDir, 'payload.txt');
+  writeFileSync(cachePayloadPath, opts.mirrorCanonicalIntoCache ? 'canonical-bytes\n' : 'old-cache-bytes\n');
+  const pluginListJson = JSON.stringify({
+    installed: [{ pluginId: 'genie@automagik', enabled: opts.enabled, version: opts.registeredVersion }],
+  });
+  return {
+    root,
+    genieHome,
+    codexHome,
+    canonicalRoot,
+    cachePayloadPath,
+    pluginListJson,
+    cleanup: () => rmSync(root, { recursive: true, force: true }),
+  };
 }
 
 // ============================================================================
@@ -1451,6 +1501,69 @@ describe('rollbackBinary (G5)', () => {
   });
 });
 
+describe('rollback capability floor + probe wiring', () => {
+  test('the hidden --print-update-capabilities probe emits exactly one schema-valid JSON object', async () => {
+    const writes: string[] = [];
+    const stdout = process.stdout as unknown as { write: (chunk: string | Uint8Array) => boolean };
+    const original = stdout.write;
+    stdout.write = (chunk: string | Uint8Array) => {
+      writes.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'));
+      return true;
+    };
+    try {
+      await updateCommand({ printUpdateCapabilities: true });
+    } finally {
+      stdout.write = original;
+    }
+    expect(writes.length).toBe(1);
+    const parsed = JSON.parse(writes[0].trim());
+    expect(parsed.schemaVersion).toBe(1);
+    expect(parsed.codexActivationProtocol).toBe(1);
+    expect(parsed.readableIntentSchemas).toEqual([1]);
+    expect(typeof parsed.binarySha256).toBe('string');
+    expect(parsed.binarySha256).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  test('the capability probe runs before any mode resolution, lease, or network', () => {
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    const cmdStart = source.indexOf('export async function updateCommand');
+    const body = source.slice(cmdStart);
+    const probeIdx = body.indexOf('printUpdateCapabilities()');
+    const modeIdx = body.indexOf('resolveUpdateExecutionMode(options)');
+    expect(probeIdx).toBeGreaterThan(-1);
+    expect(probeIdx).toBeLessThan(modeIdx);
+  });
+
+  test('runRollback enforces the capability floor before any exchange and refuses with exit 2', () => {
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    const start = source.indexOf('async function runRollback(');
+    const body = source.slice(start, source.indexOf('\n}\n', start));
+    const floorIdx = body.indexOf('enforceRollbackCapabilityFloor(');
+    const leaseIdx = body.indexOf("acquireCodexLifecycleLease('rollback'");
+    const rollbackIdx = body.indexOf('rollbackBinary(candidate)');
+    // Floor first, then the lease, then the exchange.
+    expect(floorIdx).toBeGreaterThan(-1);
+    expect(leaseIdx).toBeGreaterThan(floorIdx);
+    expect(rollbackIdx).toBeGreaterThan(leaseIdx);
+    // Refusal is a zero-mutation exit-2 with deliveryComplete:false.
+    expect(body).toContain('process.exitCode = 2');
+    expect(body).toContain("emitRollbackTrailer('rollback-capability-floor'");
+    expect(body).toContain('unchanged');
+  });
+
+  test('delivery acquires the codex lifecycle lease after verification and before the swap/publishDelivery', () => {
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    const start = source.indexOf('async function runDelivery(');
+    const body = source.slice(start, source.indexOf('async function runDeliverySwap('));
+    const verifyIdx = body.indexOf('downloadAndVerifyTarball(');
+    const leaseIdx = body.indexOf("acquireCodexLifecycleLease('update-delivery'");
+    expect(verifyIdx).toBeGreaterThan(-1);
+    expect(leaseIdx).toBeGreaterThan(verifyIdx);
+    // A busy lease is a typed refusal mapped to exit 2 (never a swap).
+    expect(body).toContain('CodexDeliveryBusyError');
+  });
+});
+
 // ============================================================================
 // Diagnostics schema lock (G5: bumped 2 → 3).
 // ============================================================================
@@ -2550,15 +2663,19 @@ describe('runAgentSyncSafe (agent-sync phase)', () => {
     const legacyModeStart = source.indexOf('function runLegacySyncOnlyMode()');
     const postDeliveryModeStart = source.indexOf('function runPostDeliveryConvergenceMode()', legacyModeStart);
     const legacyMode = source.slice(legacyModeStart, postDeliveryModeStart);
-    expect(legacyMode).toContain('runLegacySyncOnlyConvergence({ selection, expectedVersion: VERSION })');
+    expect(legacyMode).toContain('runLegacySyncOnlyConvergence({ selection })');
     expect(legacyMode).not.toContain('runManualUpdateConvergence(');
     expect(legacyMode).not.toContain('refreshUpdatePlugins(');
     const convergenceStart = source.indexOf('export function runLegacySyncOnlyConvergence(');
     const convergenceEnd = source.indexOf('function announceUpdatePlanOrExit(', convergenceStart);
     const convergence = source.slice(convergenceStart, convergenceEnd);
-    expect(convergence.indexOf('legacySyncOnlyPluginAdvisory(options)')).toBeLessThan(
-      convergence.indexOf('runAgentSyncSafe({ strict: true'),
-    );
+    // Sync-only branches before any activation observation/classification and
+    // performs NO plugin query, advisory, drift check, or activation report.
+    expect(convergence).toContain('runAgentSyncSafe({ strict: true');
+    expect(convergence).not.toContain('legacySyncOnlyPluginAdvisory');
+    expect(convergence).not.toContain('plugin list');
+    expect(convergence).not.toContain('reportCodexPluginDelivery');
+    expect(convergence).not.toContain('observeCodexActivation');
     expect(convergence).not.toContain('runManualUpdateConvergence(');
     expect(convergence).not.toContain('refreshUpdatePlugins(');
   });
@@ -2572,21 +2689,66 @@ describe('runAgentSyncSafe (agent-sync phase)', () => {
 });
 
 describe('manual post-update convergence (2026-07-11 cascade regression)', () => {
-  test('runs the canonical convergence APIs and returns structured integration outcomes', () => {
+  test('converges non-Codex surfaces then observes/reports Codex (never converges it)', () => {
     const calls: string[] = [];
     const result = runManualUpdateConvergence({
       expectedVersion: '5.260711.3',
       bundleRoot: '/tmp/verified-bundle',
+      selection: 'auto',
       runSync: () => calls.push('parent-safe-sync'),
       refreshPlugins: (options) => {
         calls.push(`parent-plugin-refresh:${options.expectedVersion}`);
-        return [{ runtime: 'codex', ok: true, detail: 'plugin/hooks refreshed' }];
+        return [{ runtime: 'claude', ok: true, detail: 'plugin/hooks refreshed' }];
+      },
+      // Codex is observe/report-only through B's facade — never converged.
+      resolveExecutable: () => '/fixture/codex',
+      reportCodexPlugin: (opts) => {
+        calls.push(`codex-observe:${opts.command}`);
+        return {
+          machineCode: 'activation-pending',
+          exit: 2,
+          actionRequired: true,
+          deliveryComplete: true,
+          installedVersion: '5.260710.2',
+          targetVersion: '5.260711.3',
+          recovery: 'retire tasks → genie setup --codex → /hooks → new task',
+          humanStream: 'stdout',
+          humanText: 'Codex plugin: activation-pending (installed=5.260710.2, target=5.260711.3)',
+          trailer: {
+            schemaVersion: 1,
+            code: 'activation-pending',
+            deliveryComplete: true,
+            retry: false,
+            nextAction: 'x',
+          },
+        };
       },
       log: (line) => calls.push(`log:${line}`),
     });
     expect(calls[0]).toBe('parent-safe-sync');
     expect(calls[1]).toBe('parent-plugin-refresh:5.260711.3');
-    expect(result.integrations).toEqual([{ runtime: 'codex', ok: true, detail: 'plugin/hooks refreshed' }]);
+    // Codex observation runs after non-Codex convergence, never before it.
+    expect(calls.indexOf('parent-plugin-refresh:5.260711.3')).toBeLessThan(
+      calls.indexOf('codex-observe:/fixture/codex'),
+    );
+    expect(calls).toContain('codex-observe:/fixture/codex');
+    expect(result.integrations).toEqual([{ runtime: 'claude', ok: true, detail: 'plugin/hooks refreshed' }]);
+    expect(result.codexPlugin?.exit).toBe(2);
+    expect(result.codexPlugin?.machineCode).toBe('activation-pending');
+  });
+
+  test('skips Codex observation entirely when the Codex CLI is not detected', () => {
+    const result = runManualUpdateConvergence({
+      expectedVersion: '5.260711.3',
+      selection: 'auto',
+      runSync: () => {},
+      refreshPlugins: () => [],
+      resolveExecutable: () => null,
+      reportCodexPlugin: () => {
+        throw new Error('must not observe Codex when the CLI is absent');
+      },
+    });
+    expect(result.codexPlugin).toBeNull();
   });
 
   test('normal delivery invokes the fresh binary only through the explicit child protocol', () => {
@@ -2633,6 +2795,7 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
             if (previousOwner === undefined) process.env.GENIE_LIFECYCLE_LEASE_OWNER = undefined;
             else process.env.GENIE_LIFECYCLE_LEASE_OWNER = previousOwner;
           }
+          return 0;
         },
       });
       expect(called).toBe(true);
@@ -2670,87 +2833,46 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
     }
   });
 
-  test('legacy sync-only advisory is read-only and reports selected version drift', () => {
-    const calls: string[] = [];
-    const advisory = legacySyncOnlyPluginAdvisory({
-      selection: 'codex',
-      expectedVersion: '5.260711.7',
-      resolveExecutable: () => '/fixture/codex',
-      runner(command, args) {
-        calls.push(`${command} ${args.join(' ')}`);
-        return {
-          exitCode: 0,
-          stdout: '{"installed":[{"pluginId":"genie@automagik","enabled":true,"version":"5.260711.6"}]}',
-          stderr: '',
-        };
-      },
-    });
-    expect(calls).toEqual(['/fixture/codex plugin list --json']);
-    expect(advisory).toContain('codex v5.260711.6');
-    expect(advisory).toContain('external terminal');
-    expect(advisory).toContain('review `/hooks`');
-
-    const disabled = legacySyncOnlyPluginAdvisory({
-      selection: 'codex',
-      expectedVersion: '5.260711.7',
-      resolveExecutable: () => '/fixture/codex',
-      runner: () => ({
-        exitCode: 0,
-        stdout: '{"installed":[{"pluginId":"genie@automagik","enabled":false,"version":"5.260711.6"}]}',
-        stderr: '',
-      }),
-    });
-    expect(disabled).toContain('codex v5.260711.6 (disabled; preserved)');
-
-    for (const state of [
-      { installed: [] },
-      { installed: [{ pluginId: 'genie@automagik', enabled: true, version: '5.260711.7' }] },
-    ]) {
-      expect(
-        legacySyncOnlyPluginAdvisory({
-          selection: 'codex',
-          expectedVersion: '5.260711.7',
-          resolveExecutable: () => '/fixture/codex',
-          runner: () => ({ exitCode: 0, stdout: JSON.stringify(state), stderr: '' }),
-        }),
-      ).toBeNull();
+  test('fresh-child action-required exit 2 is not a hard failure', () => {
+    const home = mkdtempSync(join(tmpdir(), 'genie-fresh-converge-pending-'));
+    const lease = acquireLifecycleLease(home);
+    expect('skipped' in lease).toBe(false);
+    if ('skipped' in lease) return;
+    try {
+      // A child that exits 2 (delivered, Codex activation pending) returns the
+      // code to the parent instead of throwing — the parent owns exit-2.
+      const exit = runFreshBinaryPostDeliveryConvergence({
+        lifecycleLease: lease,
+        run: () => 2,
+      });
+      expect(exit).toBe(2);
+    } finally {
+      lease.release();
+      rmSync(home, { recursive: true, force: true });
     }
-    let invoked = false;
-    expect(
-      legacySyncOnlyPluginAdvisory({
-        selection: 'none',
-        expectedVersion: '5.260711.7',
-        resolveExecutable: () => {
-          invoked = true;
-          return '/fixture/codex';
-        },
-      }),
-    ).toBeNull();
-    expect(invoked).toBe(false);
   });
 
-  test('legacy sync-only emits stale-plugin recovery even when strict agent sync fails', () => {
+  test('legacy sync-only converges agents only — no plugin query, advisory, or activation report', () => {
     const events: string[] = [];
+    runLegacySyncOnlyConvergence({
+      selection: 'codex',
+      sync: () => events.push('sync'),
+      log: (line) => events.push(`log:${line}`),
+    });
+    // The ONLY effect is the strict agent sync; there is no plugin list query,
+    // no drift advisory, and no Codex activation observation/classification.
+    expect(events).toEqual(['sync']);
+  });
+
+  test('legacy sync-only surfaces a genuine agent-sync failure as the sole nonzero result', () => {
     expect(() =>
       runLegacySyncOnlyConvergence({
         selection: 'codex',
-        expectedVersion: '5.260711.7',
-        resolveExecutable: () => '/fixture/codex',
-        runner: () => ({
-          exitCode: 0,
-          stdout: '{"installed":[{"pluginId":"genie@automagik","enabled":true,"version":"5.260711.6"}]}',
-          stderr: '',
-        }),
-        log: (line) => events.push(`advisory:${line}`),
         sync: () => {
-          events.push('sync');
           throw new Error('strict sync failed');
         },
       }),
     ).toThrow('strict sync failed');
-    expect(events).toHaveLength(2);
-    expect(events[0]).toContain('advisory:Legacy --sync-only');
-    expect(events[1]).toBe('sync');
   });
 });
 
@@ -2765,245 +2887,124 @@ describe('operator-driven plugin refresh', () => {
     rmSync(pluginStateDir, { recursive: true, force: true });
   });
 
-  test('CLI detection is not consent: validly absent integrations remain absent', () => {
+  test('refreshUpdatePlugins issues ZERO Codex commands — Codex is never a convergence target', () => {
     const calls: string[] = [];
     const results = refreshUpdatePlugins({
       bundleRoot: '/tmp/fixture-bundle',
       expectedVersion: '5.260711.3',
       stateDir: pluginStateDir,
+      selection: 'all',
       detected: { codex: true, claude: true },
+      resolveExecutable: (name) => name,
       runner(command, args) {
         calls.push(`${command} ${args.join(' ')}`);
-        if (command === 'codex') return { exitCode: 0, stdout: '{"installed":[]}', stderr: '' };
         return { exitCode: 0, stdout: '[]', stderr: '' };
       },
     });
+    // The Codex plugin cache is never advanced or even queried by update refresh.
+    expect(results.some((result) => result.runtime === 'codex')).toBe(false);
+    expect(calls.some((call) => call.startsWith('codex '))).toBe(false);
+    // Claude was consulted (it is the only convergence target left).
+    expect(calls.some((call) => call.startsWith('claude '))).toBe(true);
+  });
 
+  test('a selected Codex-only refresh performs no plugin work at all', () => {
+    const calls: string[] = [];
+    const results = refreshUpdatePlugins({
+      bundleRoot: '/tmp/fixture-bundle',
+      expectedVersion: '5.260711.3',
+      stateDir: pluginStateDir,
+      selection: 'codex',
+      detected: { codex: true, claude: true },
+      resolveExecutable: (name) => name,
+      runner(command, args) {
+        calls.push(`${command} ${args.join(' ')}`);
+        return { exitCode: 0, stdout: '[]', stderr: '' };
+      },
+    });
     expect(results).toEqual([]);
-    expect(calls).toEqual(['codex plugin list --json', 'claude plugin list --json']);
+    expect(calls).toEqual([]);
   });
 
-  test('a Codex resolver failure does not suppress the independently selected Claude refresh', () => {
-    const resolved: string[] = [];
-    const calls: string[] = [];
-    const results = refreshUpdatePlugins({
-      bundleRoot: '/tmp/fixture-bundle',
-      expectedVersion: '5.260711.3',
-      stateDir: pluginStateDir,
-      selection: 'all',
-      detected: { codex: true, claude: true },
-      resolveExecutable(name) {
-        resolved.push(name);
-        if (name === 'codex') throw new Error('unsafe Codex executable');
-        return '/fixture/claude';
-      },
-      runner(command, args) {
-        calls.push(`${command} ${args.join(' ')}`);
-        return { exitCode: 0, stdout: '[]', stderr: '' };
-      },
+  test('reportCodexPluginDelivery classifies N<T as activation-pending with exit 2 and names N/T', () => {
+    const fixture = makeCodexActivationFixture({
+      canonicalVersion: '5.260711.3',
+      registeredVersion: '5.260710.2',
+      cacheVersion: '5.260710.2',
+      enabled: true,
     });
-
-    expect(resolved).toEqual(['codex', 'claude']);
-    expect(calls).toEqual(['/fixture/claude plugin list --json']);
-    expect(results).toEqual([{ runtime: 'codex', ok: false, detail: 'unsafe Codex executable' }]);
-  });
-
-  test('a Codex convergence cleanup exception is isolated and Claude still runs', () => {
-    const root = mkdtempSync(join(tmpdir(), 'genie-update-cross-runtime-'));
-    const configPath = join(root, 'config.toml');
-    const statePath = join(pluginStateDir, '.integration-refresh-codex.json');
-    writeFileSync(configPath, '[plugins."genie@automagik"]\nenabled = false\n');
-    let codexLists = 0;
-    const calls: string[] = [];
-    const results = refreshUpdatePlugins({
-      bundleRoot: root,
-      expectedVersion: '5.260711.3',
-      stateDir: pluginStateDir,
-      selection: 'all',
-      codexConfigPath: configPath,
-      detected: { codex: true, claude: true },
-      runner(command, args) {
-        calls.push(`${command} ${args.join(' ')}`);
-        if (command === 'claude') return { exitCode: 0, stdout: '[]', stderr: '' };
-        if (args.join(' ') === 'plugin list --json') {
-          codexLists += 1;
-          if (codexLists === 2) {
-            rmSync(statePath, { force: true });
-            mkdirSync(statePath);
-          }
-          return {
-            exitCode: 0,
-            stdout: JSON.stringify({
-              installed: [{ pluginId: 'genie@automagik', enabled: false, version: '5.260711.3' }],
-            }),
-            stderr: '',
-          };
-        }
-        return { exitCode: 0, stdout: '{}', stderr: '' };
+    const calls: string[][] = [];
+    const report = reportCodexPluginDelivery({
+      genieHome: fixture.genieHome,
+      codexHome: fixture.codexHome,
+      command: '/fixture/codex',
+      canonicalRoot: fixture.canonicalRoot,
+      allowRootOverride: true,
+      runner: (_command, args) => {
+        calls.push(args);
+        return { exitCode: 0, stdout: fixture.pluginListJson, stderr: '' };
       },
     });
-
-    expect(results[0]).toMatchObject({ runtime: 'codex', ok: false });
-    expect(calls).toContain('claude plugin list --json');
-    rmSync(root, { recursive: true, force: true });
+    // Observation is read-only: the ONLY Codex command is `plugin list --json`.
+    expect(calls).toEqual([['plugin', 'list', '--json']]);
+    expect(report.machineCode).toBe('activation-pending');
+    expect(report.exit).toBe(2);
+    expect(report.actionRequired).toBe(true);
+    expect(report.deliveryComplete).toBe(true);
+    expect(report.installedVersion).toBe('5.260710.2');
+    expect(report.targetVersion).toBe('5.260711.3');
+    expect(report.humanStream).toBe('stdout');
+    expect(report.humanText).toContain('installed=5.260710.2');
+    expect(report.humanText).toContain('target=5.260711.3');
+    expect(report.recovery).toBe('retire tasks → genie setup --codex → /hooks → new task');
+    expect(report.trailer.code).toBe('activation-pending');
+    expect(report.trailer.deliveryComplete).toBe(true);
+    // The N generation is left physically present-unverified (never pruned/mutated).
+    expect(readFileSync(fixture.cachePayloadPath, 'utf8')).toBe('old-cache-bytes\n');
+    fixture.cleanup();
   });
 
-  test('indeterminate pre-update state fails closed without installing either integration', () => {
-    const calls: string[] = [];
-    const results = refreshUpdatePlugins({
-      bundleRoot: '/tmp/fixture-bundle',
-      expectedVersion: '5.260711.3',
-      stateDir: pluginStateDir,
-      detected: { codex: true, claude: true },
-      runner(command, args) {
-        calls.push(`${command} ${args.join(' ')}`);
-        return { exitCode: 0, stdout: '{}', stderr: '' };
-      },
+  test('reportCodexPluginDelivery classifies matching current generation as exit 0', () => {
+    const fixture = makeCodexActivationFixture({
+      canonicalVersion: '5.260711.3',
+      registeredVersion: '5.260711.3',
+      cacheVersion: '5.260711.3',
+      enabled: true,
+      mirrorCanonicalIntoCache: true,
     });
-
-    expect(results).toHaveLength(2);
-    expect(results.every((result) => !result.ok && result.detail.includes('malformed JSON'))).toBe(true);
-    expect(calls).toEqual(['codex plugin list --json', 'claude plugin list --json']);
-  });
-
-  test('recaches Codex plugin/hooks from the local bundle and preserves disabled state', () => {
-    const root = mkdtempSync(join(tmpdir(), 'genie-update-plugin-refresh-'));
-    const configPath = join(root, 'config.toml');
-    writeFileSync(configPath, '[plugins."genie@automagik"]\nenabled = true\n');
-    const calls: string[] = [];
-    let lists = 0;
-    const runner: CommandRunner = (command, args) => {
-      calls.push(`${command} ${args.join(' ')}`);
-      if (args.join(' ') === 'plugin list --json') {
-        lists += 1;
-        return {
-          exitCode: 0,
-          stdout: JSON.stringify({
-            installed: [
-              {
-                pluginId: 'genie@automagik',
-                enabled: lists === 2,
-                version: lists === 1 ? '5.260710.2' : '5.260711.3',
-              },
-            ],
-          }),
-          stderr: '',
-        };
-      }
-      return { exitCode: 0, stdout: '', stderr: '' };
-    };
-    try {
-      const results = refreshUpdatePlugins({
-        bundleRoot: root,
-        expectedVersion: '5.260711.3',
-        stateDir: pluginStateDir,
-        detected: { codex: true, claude: false },
-        codexConfigPath: configPath,
-        runner,
-      });
-      expect(results).toEqual([
-        {
-          runtime: 'codex',
-          ok: true,
-          detail: 'plugin/hooks refreshed to v5.260711.3',
-          preservedDisabled: true,
-          hookReviewRequired: false,
-        },
-      ]);
-      expect(calls).toContain(`codex plugin marketplace add ${root} --json`);
-      expect(calls).toContain('codex plugin add genie@automagik --json');
-      expect(readFileSync(configPath, 'utf8')).toContain('enabled = false');
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test('returns a structured timed-out integration result', () => {
-    const results = refreshUpdatePlugins({
-      bundleRoot: '/tmp/fixture-bundle',
-      expectedVersion: '5.260711.3',
-      stateDir: pluginStateDir,
-      detected: { codex: true, claude: false },
-      runner: () => ({ exitCode: 1, stdout: '', stderr: '', timedOut: true }),
+    const report = reportCodexPluginDelivery({
+      genieHome: fixture.genieHome,
+      codexHome: fixture.codexHome,
+      command: '/fixture/codex',
+      canonicalRoot: fixture.canonicalRoot,
+      allowRootOverride: true,
+      runner: () => ({ exitCode: 0, stdout: fixture.pluginListJson, stderr: '' }),
     });
-    expect(results[0]).toMatchObject({ runtime: 'codex', ok: false, timedOut: true });
-    expect(results[0].detail).toContain('timed out');
+    expect(report.machineCode).toBe('current');
+    expect(report.exit).toBe(0);
+    expect(report.actionRequired).toBe(false);
+    fixture.cleanup();
   });
 
-  test('malformed Codex post-refresh state fails and still restores the prior disabled state', () => {
-    const root = mkdtempSync(join(tmpdir(), 'genie-update-plugin-failed-refresh-'));
-    const configPath = join(root, 'config.toml');
-    writeFileSync(configPath, '[plugins."genie@automagik"]\nenabled = true\n');
-    let lists = 0;
-    try {
-      const results = refreshUpdatePlugins({
-        bundleRoot: root,
-        expectedVersion: '5.260711.3',
-        stateDir: pluginStateDir,
-        detected: { codex: true, claude: false },
-        codexConfigPath: configPath,
-        runner(_command, args) {
-          if (args.join(' ') === 'plugin list --json') {
-            lists += 1;
-            return {
-              exitCode: 0,
-              stdout:
-                lists === 1
-                  ? '{"installed":[{"pluginId":"genie@automagik","enabled":false,"version":"5.260710.2"}]}'
-                  : '{"unexpected":[]}',
-              stderr: '',
-            };
-          }
-          return { exitCode: 0, stdout: '', stderr: '' };
-        },
-      });
-
-      expect(results[0]).toMatchObject({ runtime: 'codex', ok: false });
-      expect(results[0]?.detail).toMatch(/malformed JSON.*after plugin add/);
-      expect(readFileSync(configPath, 'utf8')).toContain('enabled = false');
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test('stale Codex update refresh never removes/re-adds or mutates the old cache', () => {
-    const root = mkdtempSync(join(tmpdir(), 'genie-update-plugin-stale-generation-'));
-    const codexHome = join(root, 'codex');
-    const oldCache = join(codexHome, 'plugins', 'cache', 'automagik', 'genie', '5.260710.2', 'payload.txt');
-    mkdirSync(join(oldCache, '..'), { recursive: true });
-    writeFileSync(oldCache, 'old-cache-bytes\n');
-    const calls: string[] = [];
-    const runner: CommandRunner = (_command, args) => {
-      const command = args.join(' ');
-      calls.push(command);
-      if (command === 'plugin list --json') {
-        return {
-          exitCode: 0,
-          stdout: '{"installed":[{"pluginId":"genie@automagik","enabled":true,"version":"5.260710.2"}]}',
-          stderr: '',
-        };
-      }
-      return { exitCode: 0, stdout: '', stderr: '' };
-    };
-    try {
-      const result = refreshUpdatePlugins({
-        bundleRoot: root,
-        expectedVersion: '5.260711.3',
-        stateDir: pluginStateDir,
-        detected: { codex: true, claude: false },
-        codexHome,
-        runner,
-      });
-      expect(result[0]).toMatchObject({ runtime: 'codex', ok: false });
-      expect(result[0]?.detail).toContain('after one non-destructive add attempt');
-      expect(result[0]?.detail).toContain('Close all Codex tasks first');
-      expect(calls.filter((call) => call === 'plugin add genie@automagik --json')).toHaveLength(1);
-      expect(calls).not.toContain('plugin remove genie@automagik --json');
-      expect(readFileSync(oldCache, 'utf8')).toBe('old-cache-bytes\n');
-      expect(existsSync(join(pluginStateDir, '.integration-refresh-codex.json'))).toBe(false);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
+  test('reportCodexPluginDelivery classifies a failed plugin query as broken (exit 1, stderr)', () => {
+    const fixture = makeCodexActivationFixture({
+      canonicalVersion: '5.260711.3',
+      registeredVersion: '5.260710.2',
+      cacheVersion: '5.260710.2',
+      enabled: true,
+    });
+    const report = reportCodexPluginDelivery({
+      genieHome: fixture.genieHome,
+      codexHome: fixture.codexHome,
+      command: '/fixture/codex',
+      canonicalRoot: fixture.canonicalRoot,
+      allowRootOverride: true,
+      runner: () => ({ exitCode: 3, stdout: '', stderr: 'boom' }),
+    });
+    expect(report.machineCode).toBe('query-failed');
+    expect(report.exit).toBe(1);
+    expect(report.humanStream).toBe('stderr');
+    fixture.cleanup();
   });
 
   test('actively restores and verifies a disabled Claude plugin after refresh', () => {
