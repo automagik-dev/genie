@@ -5,6 +5,7 @@
     "src/hooks/dispatch-command.ts",
     "packages/genie-ui/server/index.ts",
     "packages/genie-ui/client/main.ts",
+    "packages/genie-ui/build.ts",
     "packages/genie-ui/**/*.test.ts"
   ],
   "project": ["src/**/*.ts", "packages/**/*.ts"],

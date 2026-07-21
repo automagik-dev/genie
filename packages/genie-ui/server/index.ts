@@ -1,15 +1,18 @@
 // index.ts — composition root. Wires fleet-config -> PtySessionManager -> ws transport,
 // and serves the browser client with NO Vite (design deliverable 4).
 //
-// Serve path (the pinned G1 decision): ONE node `http` server both (a) serves the
-// client assets — index.html, styles.css, the salvaged xterm CSS, and the client TS
-// bundled on the fly by `Bun.build` (a single entry, @xterm resolved from
-// node_modules) — and (b) upgrades to the bare `ws` PTY protocol on the SAME port.
-// No second port, no import-map juggling, no build step in the tree. `bun run
-// packages/genie-ui/server/index.ts` is the whole dev loop.
+// Serve path (the pinned G1 decision, amended — see README "Runtime split"): ONE
+// `http` server both (a) serves the client assets — index.html, styles.css, the
+// salvaged xterm CSS, and the client bundle (`dist/main.js`, produced ahead of time
+// by `Bun.build` in `build.ts`) — and (b) upgrades to the bare `ws` PTY protocol on
+// the SAME port. No second port, no import-map juggling. This process is the PTY host,
+// so it runs under **node** (bun's node-pty `onData` never fires — see README); `bun`
+// remains the builder (`build.ts` bundles both client and this server into `dist/`).
 //
 // Deliberately thin: every real concern lives in a single-purpose module beside it.
+// No `Bun.*` at runtime — this file must run under plain node.
 
+import { readFileSync } from 'node:fs';
 import http from 'node:http';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
@@ -60,31 +63,23 @@ interface Asset {
   body: string;
 }
 
-/** Bundle the single client entry with Bun.build (no Vite) — @xterm resolved from node_modules. */
-async function buildClient(): Promise<string> {
-  const result = await Bun.build({
-    entrypoints: [resolve(PKG_ROOT, 'client', 'main.ts')],
-    target: 'browser',
-    minify: false,
-  });
-  if (!result.success) {
-    throw new AggregateError(result.logs, 'client build failed');
-  }
-  return result.outputs[0].text();
-}
-
-/** Precompute the static asset table once at boot. */
-async function loadAssets(): Promise<Map<string, Asset>> {
+/**
+ * Precompute the static asset table once at boot. The client bundle (`main.js`) is
+ * produced ahead of time by `build.ts` (Bun.build) and sits next to this file in
+ * `dist/`; everything else is read from the source tree. Plain node `fs` only — this
+ * process is the PTY host and runs under node, where `Bun.file`/`Bun.build` do not exist.
+ */
+function loadAssets(): Map<string, Asset> {
   const xtermCss = require.resolve('@xterm/xterm/css/xterm.css');
-  const read = (p: string) => Bun.file(p).text();
+  const read = (p: string) => readFileSync(p, 'utf8');
   const assets = new Map<string, Asset>();
-  assets.set('/', { type: 'text/html; charset=utf-8', body: await read(resolve(PKG_ROOT, 'index.html')) });
-  assets.set('/client/main.js', { type: 'text/javascript; charset=utf-8', body: await buildClient() });
+  assets.set('/', { type: 'text/html; charset=utf-8', body: read(resolve(PKG_ROOT, 'index.html')) });
+  assets.set('/client/main.js', { type: 'text/javascript; charset=utf-8', body: read(resolve(HERE, 'main.js')) });
   assets.set('/client/styles.css', {
     type: 'text/css; charset=utf-8',
-    body: await read(resolve(PKG_ROOT, 'client', 'styles.css')),
+    body: read(resolve(PKG_ROOT, 'client', 'styles.css')),
   });
-  assets.set('/xterm.css', { type: 'text/css; charset=utf-8', body: await read(xtermCss) });
+  assets.set('/xterm.css', { type: 'text/css; charset=utf-8', body: read(xtermCss) });
   return assets;
 }
 
@@ -143,7 +138,7 @@ async function main(): Promise<void> {
     console.log(`  - ${p.id.padEnd(16)} ${p.command} ${p.args.join(' ')}`);
   }
 
-  const assets = await loadAssets();
+  const assets = loadAssets();
   const server = http.createServer((req, res) => serveAsset(assets, req, res));
   const wss = new WebSocketServer({ server, verifyClient });
   const clients = new Set<WebSocket>();

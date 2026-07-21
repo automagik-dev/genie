@@ -7,10 +7,16 @@ substrate — the bare-`ws` PTY server + the vanilla-TS xterm client. The genie 
 
 ## Run it
 
+**bun builds, node runs** (see "Runtime split" below — this is not cosmetic: under bun
+the served UI renders nothing from real agents):
+
 ```bash
-bun run packages/genie-ui/server/index.ts     # serves client + ws on http://localhost:8787
+bun run packages/genie-ui/build.ts            # bun bundles client + server -> dist/
+node packages/genie-ui/dist/index.js          # node serves client + ws on http://localhost:8787
 # then open http://localhost:8787 (works from mac + phone on the LAN)
 ```
+
+Or from the package dir: `bun run build && bun run serve` (or the combined `bun run start`).
 
 Edit `fleet.json` to point panes at the real agent CLIs (`fable`, `hermes -p <profile>
 --tui`, `codex`, `rlmx`/`pi` TUI) — no other module changes.
@@ -31,12 +37,34 @@ Edit `fleet.json` to point panes at the real agent CLIs (`fable`, `hermes -p <pr
 
 ## Pinned G1 decisions
 
-**Serve path — no Vite (deliverable 4).** ONE node `http` server both serves the client
-assets (`index.html`, `styles.css`, the salvaged `xterm.css`, and the client TS bundled
-on the fly by **`Bun.build`** — a single entry, `@xterm` resolved from `node_modules`)
-**and** upgrades to the bare-`ws` PTY protocol on the **same port**. No second port, no
-import-map juggling, no build artifact in the tree. The prototype's `vite` /
-`concurrently` dev-server is gone; `! grep -q '"vite"'` passes.
+**Runtime split — bun builds, node runs (amends the original "bun-native serve"
+decision; corrected at review-time).** The original G1 pin ran the whole thing under bun
+(`bun run server/index.ts`). That decision was **wrong at runtime**: under **bun 1.3.14**,
+`node-pty`'s `onData` **never fires** — an identical `pty.spawn('btop')` streams under node
+but delivers **zero bytes** under bun (isolated on the real box: `node → 40454 bytes, clean
+exit`; `bun → 0 bytes, exit 0 signal 1`; the orchestrator saw 38283 vs 0). Consequently the
+served UI would render **nothing** from real agents. The earlier "sandbox SIGHUPs
+interactive PTYs" note in `qa.md` was **this same bug misdiagnosed** (the `signal 1` is
+node-pty's own teardown under bun, not a sandbox). The G1 unit tests stayed green because
+they only assert lifecycle status/exit **events** and scripted exits — never real `onData`
+byte delivery — and the original `qa.md` render evidence used direct `TerminalMirror`
+writes, not a real PTY. `server/pty-realstream.test.ts` now closes that gap and pins the
+runtime.
+
+**The fix:** the PTY-host process (`server/index.ts`) runs under **node** (Node 22 on the
+box, where `onData` streams). **bun stays the builder**: `build.ts` bundles the client
+(`client/main.ts` → `dist/main.js`, `@xterm` inlined) **and** the server
+(`server/index.ts` → `dist/index.js`, `node-pty`/`ws`/`@xterm` kept external so node loads
+the native addon + CJS packages from `node_modules`). No `Bun.*` remains at server runtime
+(`Bun.file` → node `fs`; the on-the-fly `Bun.build` moved to `build.ts`). This is the
+simplest split that keeps every gate green — no experimental `.ts` import-extension flags,
+one build path (bun), one runtime (node).
+
+**Serve path — no Vite (deliverable 4).** ONE `http` server both serves the client
+assets (`index.html`, `styles.css`, the salvaged `xterm.css`, and the prebuilt client
+bundle `dist/main.js`) **and** upgrades to the bare-`ws` PTY protocol on the **same port**.
+No second port, no import-map juggling. The prototype's `vite` / `concurrently` dev-server
+is gone; `! grep -q '"vite"'` passes.
 
 **TerminalMirror under bun — verified, no fallback (design R4).** The salvaged engine
 loads `@xterm/headless` + `@xterm/addon-serialize` via `createRequire` (their CJS entries
@@ -44,7 +72,10 @@ ship no ESM `exports` map). Verified under **bun 1.3.x**: `SerializeAddon.serial
 round-trips buffer + SGR styling correctly (see `reused/TerminalMirror.test.ts`). No
 loader adaptation beyond the `createRequire` the salvage already carried, and the bounded
 ring fallback was **not** needed. `pty-session` is the only importer, so any future
-adaptation stays contained to one module.
+adaptation stays contained to one module. **Post-runtime-split:** it now loads under the
+**node** server runtime too — the QA below reattaches a fresh client and `SerializeAddon`
+reconstructs a live `btop` screen (15408 bytes, SGR preserved), so `createRequire` +
+serialize round-trip work identically under node.
 
 **Dependencies / no workspaces.** `package.json` at the repo root has **no `workspaces`
 field**, so the runtime deps (`node-pty`, `ws`, `@xterm/xterm`, `@xterm/addon-fit`,
