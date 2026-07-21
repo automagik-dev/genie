@@ -11,7 +11,16 @@ import { mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb, resolveDbPath } from '../lib/v5/genie-db.js';
-import { type StateExport, appendStage, createBoard, createTask, createWishGroups } from '../lib/v5/task-state.js';
+import {
+  DEFAULT_LIFECYCLE_LANES,
+  type StateExport,
+  appendStage,
+  createBoard,
+  createTask,
+  createWishGroups,
+  getTaskEvents,
+  getTaskLane,
+} from '../lib/v5/task-state.js';
 
 const GENIE = join(import.meta.dir, '..', 'genie.ts');
 
@@ -162,6 +171,56 @@ describe('task status / done / checkout', () => {
     const bad = await cli(repo, 'done', 't_missing');
     expect(bad.code).toBe(1);
     expect(bad.stderr).toContain('Task not found: t_missing');
+  });
+});
+
+describe('task move', () => {
+  async function seedLaneCard(): Promise<string> {
+    const db = openDb({ cwd: repo });
+    const board = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    const task = createTask(db, { title: 'lane card', boardId: board.id, lane: 'Idea' });
+    db.close();
+    return task.id;
+  }
+
+  test('moves a card to a valid lane and appends a move event', async () => {
+    const id = await seedLaneCard();
+    const r = await cli(repo, 'move', id, '--to', 'Brainstorm');
+    expect(r.code).toBe(0);
+    expect(r.stderr).toBe('');
+    expect(r.stdout).toContain('Idea → Brainstorm');
+
+    const db = openDb({ cwd: repo });
+    expect(getTaskLane(db, id)).toBe('Brainstorm');
+    const events = getTaskEvents(db, id);
+    db.close();
+    expect(events).toHaveLength(1);
+    expect(events[0].kind).toBe('move');
+    expect(events[0].note).toBe('Idea→Brainstorm');
+  });
+
+  test('an undefined lane fails with exit 1 and lists the valid lanes', async () => {
+    const id = await seedLaneCard();
+    const r = await cli(repo, 'move', id, '--to', 'Nope');
+    expect(r.code).toBe(1);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toContain('Unknown lane "Nope"');
+    expect(r.stderr).toContain('Idea, Brainstorm, Wish, Work, Review, Done');
+
+    // The failed move left the card and its timeline untouched.
+    const db = openDb({ cwd: repo });
+    expect(getTaskLane(db, id)).toBe('Idea');
+    expect(getTaskEvents(db, id)).toHaveLength(0);
+    db.close();
+  });
+
+  test('moving a card that is not on a board fails with exit 1', async () => {
+    const db = openDb({ cwd: repo });
+    const task = createTask(db, { title: 'boardless' });
+    db.close();
+    const r = await cli(repo, 'move', task.id, '--to', 'Idea');
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain('not on a board');
   });
 });
 

@@ -10,7 +10,14 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb } from '../lib/v5/genie-db.js';
-import { claimTask, completeTask, createBoard, createTask } from '../lib/v5/task-state.js';
+import {
+  DEFAULT_LIFECYCLE_LANES,
+  claimTask,
+  completeTask,
+  createBoard,
+  createTask,
+  moveTask,
+} from '../lib/v5/task-state.js';
 
 const GENIE = join(import.meta.dir, '..', 'genie.ts');
 
@@ -141,5 +148,158 @@ describe('board scoping', () => {
     const r = await board(repo, '--board', 'ghost');
     expect(r.code).toBe(1);
     expect(r.stderr).toContain('Board not found: ghost');
+  });
+});
+
+describe('board create', () => {
+  test('defaults to the 6 lifecycle lanes', async () => {
+    const r = await board(repo, 'create', 'roadmap');
+    expect(r.code).toBe(0);
+    expect(r.stderr).toBe('');
+    expect(r.stdout).toContain('6 lanes');
+    expect(r.stdout).toContain('Idea, Brainstorm, Wish, Work, Review, Done');
+
+    const db = openDb({ cwd: repo });
+    const row = db.query('SELECT lanes FROM boards WHERE name = ?').get('roadmap') as { lanes: string };
+    db.close();
+    expect(JSON.parse(row.lanes).map((l: { name: string }) => l.name)).toEqual([
+      'Idea',
+      'Brainstorm',
+      'Wish',
+      'Work',
+      'Review',
+      'Done',
+    ]);
+  });
+
+  test('--lanes "A,B,C" creates name-only lanes', async () => {
+    const r = await board(repo, 'create', 'custom', '--lanes', 'A, B ,C');
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('3 lanes');
+    expect(r.stdout).toContain('A, B, C');
+  });
+
+  test('a duplicate board name fails with exit 1 and a clean message', async () => {
+    const first = await board(repo, 'create', 'dup');
+    expect(first.code).toBe(0);
+    const second = await board(repo, 'create', 'dup');
+    expect(second.code).toBe(1);
+    expect(second.stdout).toBe('');
+    expect(second.stderr).toContain('already exists');
+  });
+});
+
+describe('board list', () => {
+  test('reports lane count and card count per board', async () => {
+    const db = openDb({ cwd: repo });
+    const road = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    createBoard(db, 'plain');
+    createTask(db, { title: 'c1', boardId: road.id });
+    db.close();
+
+    const r = await board(repo, 'list');
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('roadmap');
+    expect(r.stdout).toContain('plain');
+    expect(r.stdout).toContain('2 boards');
+
+    const j = await board(repo, 'list', '--json');
+    const rows = JSON.parse(j.stdout) as Array<{ name: string; laneCount: number; cardCount: number }>;
+    const road2 = rows.find((x) => x.name === 'roadmap');
+    expect(road2?.laneCount).toBe(6);
+    expect(road2?.cardCount).toBe(1);
+    expect(rows.find((x) => x.name === 'plain')?.laneCount).toBe(0);
+  });
+
+  test('reports "No boards found." on an empty repo', async () => {
+    const r = await board(repo, 'list');
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('No boards found.');
+  });
+});
+
+describe('lane-grouped render', () => {
+  test('groups by lane and prints action hints; a moved card lands in its lane', async () => {
+    const db = openDb({ cwd: repo });
+    const road = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    const t = createTask(db, { title: 'lane card', boardId: road.id, lane: 'Idea' });
+    moveTask(db, t.id, 'Brainstorm', { author: 'felipe', authorKind: 'human' });
+    db.close();
+
+    const r = await board(repo, '--board', 'roadmap');
+    expect(r.code).toBe(0);
+    expect(r.stderr).toBe('');
+    // Lane-header action hints render (substring, not eyeball).
+    expect(r.stdout).toContain('Idea → /brainstorm');
+    expect(r.stdout).toContain('Brainstorm → /wish');
+    expect(r.stdout).toContain('Wish → /work');
+    expect(r.stdout).toContain('Work → /review');
+    // Review/Done carry no advancing action → no arrow hint on their headers.
+    expect(r.stdout).toMatch(/── Review \(\d+ cards?\) ──/);
+    expect(r.stdout).toMatch(/── Done \(\d+ cards?\) ──/);
+    // The card moved into Brainstorm; that lane header reports one card.
+    expect(r.stdout).toContain('Brainstorm → /wish (1 card)');
+    expect(r.stdout).toContain('lane card');
+  });
+
+  test('a NULL-lane card lands in the first lane (Idea)', async () => {
+    const db = openDb({ cwd: repo });
+    const road = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    createTask(db, { title: 'unplaced card', boardId: road.id }); // lane NULL
+    db.close();
+
+    const r = await board(repo, '--board', 'roadmap');
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('Idea → /brainstorm (1 card)');
+  });
+
+  test('--json for a lane board groups additively by lane', async () => {
+    const db = openDb({ cwd: repo });
+    const road = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    createTask(db, { title: 'idea card', boardId: road.id, lane: 'Idea' });
+    db.close();
+
+    const r = await board(repo, '--board', 'roadmap', '--json');
+    expect(r.code).toBe(0);
+    const payload = JSON.parse(r.stdout) as {
+      scope: string;
+      lanes: Array<{ name: string; action: string | null; cards: Array<{ title: string; lane: string | null }> }>;
+    };
+    const idea = payload.lanes.find((l) => l.name === 'Idea');
+    expect(idea?.action).toBe('/brainstorm');
+    expect(idea?.cards[0].title).toBe('idea card');
+    expect(payload.lanes.map((l) => l.name)).toEqual(['Idea', 'Brainstorm', 'Wish', 'Work', 'Review', 'Done']);
+  });
+});
+
+// A laneless board (no lanes column) must keep the EXACT four-status render and
+// the status-keyed --json shape — adding lane support must not perturb it.
+describe('laneless board render is unchanged', () => {
+  test('a board without lanes still renders four status columns', async () => {
+    const db = openDb({ cwd: repo });
+    const plain = createBoard(db, 'plain');
+    createTask(db, { title: 'plain task', boardId: plain.id });
+    db.close();
+
+    const r = await board(repo, '--board', 'plain');
+    expect(r.code).toBe(0);
+    for (const label of ['Blocked', 'Ready', 'In Progress', 'Done']) {
+      expect(r.stdout).toContain(label);
+    }
+    expect(r.stdout).not.toContain('/brainstorm');
+  });
+
+  test('--json for a laneless board keeps the status-keyed shape with no lane field', async () => {
+    const db = openDb({ cwd: repo });
+    const plain = createBoard(db, 'plain');
+    createTask(db, { title: 'plain task', boardId: plain.id });
+    db.close();
+
+    const r = await board(repo, '--board', 'plain', '--json');
+    expect(r.code).toBe(0);
+    const payload = JSON.parse(r.stdout) as { columns: Record<string, Array<Record<string, unknown>>> };
+    expect(Object.keys(payload.columns).sort()).toEqual(['blocked', 'done', 'in_progress', 'ready']);
+    // The frozen TaskRow shape never gains a `lane` key on the laneless path.
+    expect('lane' in payload.columns.ready[0]).toBe(false);
   });
 });

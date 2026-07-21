@@ -19,6 +19,7 @@ import type { Command } from 'commander';
 import { color, formatTimestamp, padRight, truncate } from '../lib/term-format.js';
 import { openDb } from '../lib/v5/genie-db.js';
 import {
+  type EventAuthor,
   type TaskFilter,
   type TaskRow,
   type TaskStatus,
@@ -31,6 +32,7 @@ import {
   getStageLog,
   getTask,
   listTasks,
+  moveTask,
   resolveBoard,
 } from '../lib/v5/task-state.js';
 
@@ -207,6 +209,35 @@ function handleDone(id: string): void {
   });
 }
 
+/**
+ * Resolve the acting author for a card event from the environment. `author_kind`
+ * defaults to 'human'; a later group refines it with runtime (ACP) detection.
+ */
+function resolveEventAuthor(): EventAuthor {
+  return {
+    author: process.env.GENIE_AGENT_NAME ?? process.env.GENIE_AGENT_ID ?? null,
+    authorKind: 'human',
+  };
+}
+
+interface MoveOptions {
+  to?: string;
+}
+
+function handleMove(id: string, opts: MoveOptions): void {
+  const toLane = opts.to?.trim();
+  if (!toLane) fail('--to <lane> is required.');
+  run(() => {
+    const db = openDb();
+    try {
+      const result = moveTask(db, id, toLane, resolveEventAuthor());
+      out(`Moved task ${result.task.id}: ${result.from ?? '(none)'} → ${result.to}.`);
+    } finally {
+      db.close();
+    }
+  });
+}
+
 interface CheckoutOptions {
   worker?: string;
 }
@@ -269,6 +300,12 @@ export function registerV5TaskCommands(v5: Command): void {
     .command('done <id>')
     .description('Mark a task done and recompute the ready set')
     .action((id: string) => handleDone(id));
+
+  task
+    .command('move <id>')
+    .description('Move a card to a lane defined by its board (appends a move event)')
+    .requiredOption('--to <lane>', 'Target lane name')
+    .action((id: string, opts: MoveOptions) => handleMove(id, opts));
 
   task
     .command('checkout <id>')
