@@ -2030,6 +2030,41 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
     }
   });
 
+  test('D3: a fresh-child exit 2 is delivered-but-action-required, not a failure', () => {
+    const home = mkdtempSync(join(tmpdir(), 'genie-fresh-converge-deferred-'));
+    const lease = acquireLifecycleLease(home);
+    expect('skipped' in lease).toBe(false);
+    if ('skipped' in lease) return;
+    try {
+      // The child (--post-delivery-converge) exits 2 when installed N ≠ delivered
+      // T; execFileSync surfaces that as an error carrying `status: 2`.
+      const outcome = runFreshBinaryPostDeliveryConvergence({
+        lifecycleLease: lease,
+        run: () => {
+          throw Object.assign(new Error('Command failed'), { status: 2 });
+        },
+      });
+      expect(outcome).toBe('action-required');
+    } finally {
+      lease.release();
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('D3: a converged fresh-child returns converged', () => {
+    const home = mkdtempSync(join(tmpdir(), 'genie-fresh-converge-ok-'));
+    const lease = acquireLifecycleLease(home);
+    expect('skipped' in lease).toBe(false);
+    if ('skipped' in lease) return;
+    try {
+      const outcome = runFreshBinaryPostDeliveryConvergence({ lifecycleLease: lease, run: () => {} });
+      expect(outcome).toBe('converged');
+    } finally {
+      lease.release();
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   test('D2: sync-only runs ONLY agent-sync — no Codex plugin query/inspection/advisory', () => {
     const events: string[] = [];
     runLegacySyncOnlyConvergence({
@@ -2400,8 +2435,9 @@ describe('operator-driven plugin refresh', () => {
         },
       });
 
-      // A state the gate cannot classify fails closed with zero mutation.
-      expect(results[0]).toMatchObject({ runtime: 'codex', ok: false, deliveryComplete: true, actionRequired: true });
+      // A state the gate cannot classify fails closed (exit 1) with zero mutation.
+      expect(results[0]).toMatchObject({ runtime: 'codex', ok: false });
+      expect(results[0]?.actionRequired).toBeUndefined();
       expect(results[0]?.detail).toContain('cannot classify plugin state');
       expect(calls).toEqual(['plugin list --json']);
       expect(calls).not.toContain('plugin add genie@automagik --json');

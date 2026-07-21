@@ -138,13 +138,13 @@ function convergeCodexForUpdateDelivery(
 ): IntegrationResult | null {
   const installed = readInstalledCodexPluginVersion(runner, command, timeoutMs);
   if (installed.status === 'indeterminate') {
-    // Fail closed: never cache-advance on an unreadable/timed-out/overflowed query.
+    // Fail closed (exit 1, broken/retry): never cache-advance on an unreadable/
+    // timed-out/overflowed query. This is NOT action-required delivery — the
+    // plugin state could not be classified at all.
     return {
       runtime: 'codex',
       ok: false,
       detail: `codex delivery cannot classify plugin state (${installed.detail}); refusing to advance the cache`,
-      deliveryComplete: true,
-      actionRequired: true,
       timedOut: installed.timedOut,
     };
   }

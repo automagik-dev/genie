@@ -29,6 +29,7 @@ import {
   acquireLifecycleLease,
   runAgentSync,
 } from '../lib/agent-sync.js';
+import { serializeActivationResultTrailer } from '../lib/codex-activation-executor.js';
 import { contractPath, genieConfigExists, getGenieConfigPath, saveGenieConfig } from '../lib/genie-config.js';
 import {
   type InstallStagingDirectoryGuard,
@@ -1545,9 +1546,43 @@ function applyDowngradeGuard(
   return false;
 }
 
+/**
+ * The one stable, ANSI-free, single-line JSON exit-2 result trailer (A-owned
+ * serializer) every delivered-but-action-required Codex path emits so automation
+ * has a machine-readable `deliveryComplete` carrier. Group D's `doctor --json`
+ * carries the same facts inside `integrationSummary` instead of this line.
+ */
+const CODEX_DELIVERY_RESULT_TRAILER = serializeActivationResultTrailer({
+  schemaVersion: 1,
+  code: 'activation-pending',
+  deliveryComplete: true,
+  retry: false,
+  nextAction: 'retire tasks → genie setup --codex → /hooks → new task',
+});
+
+/**
+ * Map a convergence outcome to the process exit code (deliverable 3):
+ *   - any failed integration  → exit 1 (retry)
+ *   - else any action-required (delivered, activation deferred) → exit 2 with the
+ *     result trailer and NO all-green footer
+ *   - else success (exit 0), caller prints its own success line.
+ * `emitTrailer` is false on the fresh-binary parent, whose child already printed
+ * the trailer over inherited stdio — the parent only mirrors the exit code.
+ */
+function applyConvergenceExitSignal(convergence: ManualUpdateConvergenceResult, emitTrailer = true): void {
+  if (convergence.integrations.some((result) => !result.ok)) {
+    process.exitCode = 1;
+    return;
+  }
+  if (convergence.integrations.some((result) => result.actionRequired === true)) {
+    process.exitCode = 2;
+    if (emitTrailer) log(CODEX_DELIVERY_RESULT_TRAILER);
+  }
+}
+
 function runTrackedManualUpdateConvergence(expectedVersion: string): void {
   const convergence = runManualUpdateConvergence({ expectedVersion });
-  if (convergence.integrations.some((result) => !result.ok)) process.exitCode = 1;
+  applyConvergenceExitSignal(convergence);
 }
 
 function resolveUpdatePlatformOrExit(): string {
@@ -1589,7 +1624,9 @@ export interface FreshBinaryConvergenceOptions {
  * argv-only protocol that old binaries reject at parse time. The parent stays
  * the sole lease owner while the child performs integration convergence.
  */
-export function runFreshBinaryPostDeliveryConvergence(options: FreshBinaryConvergenceOptions): void {
+export function runFreshBinaryPostDeliveryConvergence(
+  options: FreshBinaryConvergenceOptions,
+): 'converged' | 'action-required' {
   const binaryPath = options.binaryPath ?? join(GENIE_BIN, 'genie');
   let owner: string;
   try {
@@ -1612,11 +1649,25 @@ export function runFreshBinaryPostDeliveryConvergence(options: FreshBinaryConver
     });
   try {
     run(binaryPath, ['update', '--post-delivery-converge'], environment);
+    return 'converged';
   } catch (cause) {
+    // Exit 2 from the child is delivered-but-action-required (installed N ≠
+    // delivered T), NOT a convergence failure. The child already printed its
+    // result trailer over inherited stdio; the parent only mirrors the code.
+    if (childExitStatus(cause) === 2) return 'action-required';
     throw new Error(
       `fresh Genie integration convergence failed: ${errMsg(cause)}. The verified CLI update is installed, but its integrations are not converged. Close all Codex tasks first. Then, from an external terminal, run \`genie update\` (or \`genie setup --codex\`), review \`/hooks\`, and start a new Codex task.`,
     );
   }
+}
+
+/** The child process exit code surfaced by `execFileSync` (or an injected runner) on non-zero exit. */
+function childExitStatus(cause: unknown): number | null {
+  if (typeof cause === 'object' && cause !== null && 'status' in cause) {
+    const status = (cause as { status?: unknown }).status;
+    return typeof status === 'number' ? status : null;
+  }
+  return null;
 }
 
 /**
@@ -1701,6 +1752,9 @@ function runPostDeliveryConvergenceMode(): void {
     if (failures.length > 0) {
       throw new Error(failures.map((result) => `${result.runtime}: ${result.detail}`).join('; '));
     }
+    // Delivered-but-action-required (installed N ≠ delivered T): exit 2 with the
+    // result trailer and no all-green footer. The parent mirrors this exit code.
+    applyConvergenceExitSignal(convergence);
   } catch (cause) {
     error(`Post-delivery convergence failed: ${errMsg(cause)}`);
     process.exitCode = 1;
@@ -1720,7 +1774,10 @@ async function runExplicitUpdateMode(mode: Exclude<UpdateExecutionMode, 'normal'
 
 function runFreshConvergenceOrReport(lifecycleLease: LifecycleLease): boolean {
   try {
-    runFreshBinaryPostDeliveryConvergence({ lifecycleLease });
+    const outcome = runFreshBinaryPostDeliveryConvergence({ lifecycleLease });
+    // The child already printed its trailer over inherited stdio; mirror exit 2
+    // without re-emitting (parent/child exit semantics agree).
+    if (outcome === 'action-required') process.exitCode = 2;
     return true;
   } catch (cause) {
     error(errMsg(cause));
