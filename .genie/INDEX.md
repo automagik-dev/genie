@@ -9,11 +9,13 @@
 - [dream-replatform](brainstorms/dream-replatform/DRAFT.md) — scheduler adapter + genie.db ledger; cron = trigger never authority; omni approval gates (umbrella G9, 2026-07-09)
 
 ## Simmering
+
 - [intent-to-wish-compiler](brainstorms/intent-to-wish-compiler/DRAFT.md) — WRS 92; Shape Up spine + Working Backwards intake + Impact Mapping roadmap + Genie proof compiler; invisible Incident/Patch/Small/Standard/Program/Spike routing; breaker contract RATIFIED ("cut breadth/attempts, never proof; only humans cut payout"; autonomous flex cuts, human-only partial-ship) — program-scale, splits at pour time (2026-07-09)
 - [brainstorm-domain-map](brainstorms/brainstorm-domain-map/DRAFT.md) — WRS 80; executable-specification compiler: stakeholder intent → requirement/oracle graph → bounded execution → proof packet → residual-risk review; open boundary is ownership of irreducibly subjective truth (umbrella G8, resumed 2026-07-09)
 - [cross-agent-delegate](brainstorms/cross-agent-delegate/DRAFT.md) — delegate skill (Codex+Hermes), wish companion sessions, refine style cards, auto plan-gate counter-read (umbrella G6, 2026-07-09)
 
 ## Ready
+
 
 - [WISH: hook-injection-hardening](wishes/hook-injection-hardening/WISH.md) — BLOCKED-clearing safety edit: `execFileSync` at 3 hook sites (audit-context, freshness×2) + hostile-filename regression tests + `core.bare` probe removal; flips panel verdict BLOCKED→FIX-FIRST — SHIPPED → PR #2536 (wish/hook-injection-hardening→main), G1+G2+whole-wish reviews SHIP, 729 pass/0 fail (2026-07-09)
 - [WISH: v5-completion](wishes/v5-completion/WISH.md) — **DONE** (all 3 groups SHIP-reviewed 2026-07-02; reconcile scope w/ cross-agent-delegate + agent-sync per HANDOFF §4): CLAUDE.md-for-v5 rewrite ∥ Codex launch target + Hermes decision ∥ distribution 5.x
@@ -23,6 +25,8 @@
 - [WISH: warp-integration](wishes/warp-integration/WISH.md) — **DONE** (all 4 groups SHIP-reviewed 2026-07-02; pane-render checklist awaiting Felipe): genie init, Warp launch-config emitter, genie launch, /work multi-session opt-in
 
 ## Poured
+
+- [genie-ui-bridge — DESIGN](brainstorms/genie-ui-bridge/DESIGN.md) → [WISH](wishes/genie-ui-bridge/WISH.md) — WRS 100/100, design SHIP (digest-stamped 1766eea7…), plan review SHIP, APPROVED 2026-07-21. UI-owned stdio bridge: sibling `genie ui-bridge` MCP command (reads + roster_hire/unhire + data_version push); blocks genie-ui-dash G4/G5 (amended + re-reviewed SHIP same day); Felipe ratified channel/home/timing via explicit picker
 
 - [genie-ui — DESIGN](brainstorms/genie-ui/DESIGN.md) → [WISH](wishes/genie-ui/WISH.md) — WRS 100/100, design SHIP (digest-stamped), plan review SHIP, APPROVED 2026-07-21. The genie UI: dash-pattern PTY fleet + wish left-menu + hired agents + wish group chat (council-ratified Model B corrected); fresh A/B substrate + salvaged TerminalMirror; G1-G4; conductor = follow-up wish.
 - [WISH: stable-release-security-gate](wishes/stable-release-security-gate/WISH.md) · [brainstorm](brainstorms/stable-release-security-gate/DRAFT.md) — **APPROVED 2026-07-14, plan review SHIP (1 FIX-FIRST loop)**: the stable-channel unblock for inherited Ultra findings F16 (CRITICAL arbitrary-ref stable publish, all 4 dispatch entry points) / F17 (unbound run_id/version inputs) / F18 (unpinned actions, unfrozen installs, broad permissions) / F31 (non-transactional swap; verify-release.sh can't verify real releases). G1 repo-code hardening dispatched to engineer on `wish/stable-release-security-gate`; G2 GitHub Environment (`production` + prevent-self-review) / `v*` ruleset + exported evidence is **Felipe-owned**, depends-on G1
