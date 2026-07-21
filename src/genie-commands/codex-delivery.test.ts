@@ -3,6 +3,8 @@ import type { CodexActivationStore, DeliveryRecord, PublishDeliveryInput } from 
 import type { HeldLifecycleLease } from '../lib/codex-lifecycle-lease.js';
 import {
   CODEX_DELIVERY_RESULT_TRAILER,
+  CODEX_LIFECYCLE_BUSY_TRAILER,
+  CodexLifecycleBusyError,
   buildDeliveryPublication,
   classifyCodexDelivery,
   publishCodexDelivery,
@@ -175,8 +177,8 @@ describe('publishCodexDelivery — parent publishes facts, nothing else', () => 
   });
 });
 
-describe('the shared result trailer', () => {
-  test('is the A-owned serializer output with deliveryComplete:true and the retire recovery', () => {
+describe('the shared result trailers', () => {
+  test('the delivery-pending trailer carries deliveryComplete:true and the retire recovery', () => {
     expect(JSON.parse(CODEX_DELIVERY_RESULT_TRAILER)).toEqual({
       schemaVersion: 1,
       code: 'activation-pending',
@@ -184,5 +186,22 @@ describe('the shared result trailer', () => {
       retry: false,
       nextAction: 'retire tasks → genie setup --codex → /hooks → new task',
     });
+  });
+
+  test('the lifecycle-busy trailer carries deliveryComplete:false and retry:true', () => {
+    expect(JSON.parse(CODEX_LIFECYCLE_BUSY_TRAILER)).toEqual({
+      schemaVersion: 1,
+      code: 'codex-lifecycle-busy',
+      deliveryComplete: false,
+      retry: true,
+      nextAction: 'another Genie lifecycle command is active; retry once it completes',
+    });
+  });
+
+  test('CodexLifecycleBusyError names the holder kind and carries the machine code', () => {
+    const err = new CodexLifecycleBusyError('setup-activation');
+    expect(err.code).toBe('codex-lifecycle-busy');
+    expect(err.holderKind).toBe('setup-activation');
+    expect(err.message).toContain('setup-activation');
   });
 });

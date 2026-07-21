@@ -69,7 +69,12 @@ import {
   convergeAuxiliaryTree,
   fingerprintAuxiliaryTree,
 } from './auxiliary-trees.js';
-import { CODEX_DELIVERY_RESULT_TRAILER, publishCodexDelivery } from './codex-delivery.js';
+import {
+  CODEX_DELIVERY_RESULT_TRAILER,
+  CODEX_LIFECYCLE_BUSY_TRAILER,
+  CodexLifecycleBusyError,
+  publishCodexDelivery,
+} from './codex-delivery.js';
 import { cleanupV4 } from './legacy-v4.js';
 import { type RefreshUpdatePluginsOptions, refreshUpdatePlugins } from './update-integrations.js';
 const GENIE_HOME = process.env.GENIE_HOME || join(homedir(), '.genie');
@@ -1924,6 +1929,14 @@ export async function updateCommand(options: UpdateCommandOptions = {}): Promise
     try {
       await runDelivery(resolvedManifest, platform, diagnosticsCtx);
     } catch (err) {
+      if (err instanceof CodexLifecycleBusyError) {
+        // Loser semantics (deliverable 9): refused before any swap with zero
+        // mutation. Exit 2 codex-lifecycle-busy with the busy trailer, not a
+        // generic failure.
+        error(err.message);
+        log(CODEX_LIFECYCLE_BUSY_TRAILER);
+        process.exit(2);
+      }
       const msg = err instanceof Error ? err.message : String(err);
       error(`Update failed: ${msg}`);
       process.exit(1);
@@ -2226,11 +2239,7 @@ export function createPrivateUpdateTempRoot(baseDir = tmpdir()): string {
  */
 function acquireCodexDeliveryLeaseOrRefuse(): HeldLifecycleLease {
   const lease = acquireCodexLifecycleLease('update-delivery', { genieHome: GENIE_HOME });
-  if (!lease.ok) {
-    throw new Error(
-      `codex-lifecycle-busy: another Genie lifecycle command holds the Codex lease (${lease.holderKind ?? 'unknown'}); delivery refused before any swap. Retry once it completes.`,
-    );
-  }
+  if (!lease.ok) throw new CodexLifecycleBusyError(lease.holderKind);
   return lease;
 }
 

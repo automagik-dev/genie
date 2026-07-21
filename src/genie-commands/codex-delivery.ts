@@ -50,6 +50,34 @@ export const CODEX_DELIVERY_RESULT_TRAILER = serializeActivationResultTrailer({
   nextAction: CODEX_RETIRE_RECOVERY,
 });
 
+/**
+ * The exit-2 result trailer for a lifecycle-lease loser (deliverable 9). Unlike
+ * the delivery-pending trailer, `deliveryComplete` is false and `retry` is true:
+ * nothing was delivered because another lifecycle command held the lease.
+ */
+export const CODEX_LIFECYCLE_BUSY_TRAILER = serializeActivationResultTrailer({
+  schemaVersion: 1,
+  code: 'codex-lifecycle-busy',
+  deliveryComplete: false,
+  retry: true,
+  nextAction: 'another Genie lifecycle command is active; retry once it completes',
+});
+
+/**
+ * Thrown when the Codex lifecycle lease is held by another command. The caller
+ * maps it to exit 2 with the `codex-lifecycle-busy` trailer and zero mutation —
+ * it is raised before any binary swap or protocol write.
+ */
+export class CodexLifecycleBusyError extends Error {
+  readonly code = 'codex-lifecycle-busy';
+  constructor(readonly holderKind: string | null) {
+    super(
+      `codex-lifecycle-busy: another Genie lifecycle command (${holderKind ?? 'unknown'}) holds the Codex lease; refused before any mutation.`,
+    );
+    this.name = 'CodexLifecycleBusyError';
+  }
+}
+
 export type CodexDeliveryState =
   | { kind: 'absent' }
   | { kind: 'current' }
