@@ -17,13 +17,17 @@
 import type { Database } from 'bun:sqlite';
 import type { Command } from 'commander';
 import { color, formatTimestamp, padRight, truncate } from '../lib/term-format.js';
+import { livenessBadge } from '../lib/v5/card-render.js';
 import { openDb } from '../lib/v5/genie-db.js';
 import {
   type EventAuthor,
+  type TaskCardRow,
   type TaskFilter,
   type TaskRow,
   type TaskStatus,
   UnknownTaskError,
+  appendTaskEvent,
+  blockTask,
   claimTask,
   completeTask,
   createTask,
@@ -31,9 +35,14 @@ import {
   getDependencies,
   getStageLog,
   getTask,
+  getTaskCard,
+  getTaskEvents,
   listTasks,
   moveTask,
+  recordHeartbeat,
+  releaseTask,
   resolveBoard,
+  unblockTask,
 } from '../lib/v5/task-state.js';
 
 // ============================================================================
@@ -92,7 +101,16 @@ function printTaskTable(tasks: TaskRow[]): void {
   out(`\n  ${tasks.length} task${tasks.length === 1 ? '' : 's'}`);
 }
 
-function printTaskDetail(db: Database, task: TaskRow): void {
+type TaskEvent = ReturnType<typeof getTaskEvents>[number];
+
+/** One timeline line: `<ts>  <kind> by <who>[ — note]`. Shared by detail + briefing. */
+function formatEventLine(e: TaskEvent): string {
+  const who = e.author ? `${e.author}${e.authorKind ? ` (${e.authorKind})` : ''}` : (e.authorKind ?? 'unknown');
+  const note = e.note ? ` — ${e.note}` : '';
+  return `${formatTimestamp(new Date(e.createdAt))}  ${e.kind} by ${who}${note}`;
+}
+
+function printDetailHeader(task: TaskCardRow): void {
   out('');
   out(`Task ${task.id}: ${task.title}`);
   out('─'.repeat(60));
@@ -100,24 +118,42 @@ function printTaskDetail(db: Database, task: TaskRow): void {
   if (task.boardId) out(`  Board:      ${task.boardId}`);
   if (task.wish) out(`  Wish:       ${task.group ? `${task.wish}#${task.group}` : task.wish}`);
   if (task.claimedBy) {
-    out(`  Claimed by: ${task.claimedBy} (since ${formatTimestamp(new Date(task.claimedAt ?? 0))})`);
+    const badge = livenessBadge(task, Date.now());
+    const liveness = badge ? ` ${badge}` : '';
+    out(`  Claimed by: ${task.claimedBy} (since ${formatTimestamp(new Date(task.claimedAt ?? 0))})${liveness}`);
+  }
+  if (task.blockedBy != null) {
+    const reason = task.blockedReason ? ` — ${task.blockedReason}` : '';
+    out(`  Blocked by: ${task.blockedBy}${reason}`);
   }
   out(`  Created:    ${formatTimestamp(new Date(task.createdAt))}`);
   out(`  Updated:    ${formatTimestamp(new Date(task.updatedAt))}`);
+}
 
-  const deps = getDependencies(db, task.id);
-  if (deps.length > 0) {
-    out('\n  Depends on:');
-    for (const depId of deps) {
-      const dep = getTask(db, depId);
-      const label = dep ? `${dep.id} — ${truncate(dep.title, 40)} [${dep.status}]` : `${depId} (missing)`;
-      out(`    ${label}`);
-    }
+function printDependencies(db: Database, taskId: string): void {
+  const deps = getDependencies(db, taskId);
+  if (deps.length === 0) return;
+  out('\n  Depends on:');
+  for (const depId of deps) {
+    const dep = getTask(db, depId);
+    const label = dep ? `${dep.id} — ${truncate(dep.title, 40)} [${dep.status}]` : `${depId} (missing)`;
+    out(`    ${label}`);
+  }
+}
+
+function printTaskDetail(db: Database, task: TaskCardRow): void {
+  printDetailHeader(task);
+  printDependencies(db, task.id);
+
+  const events = getTaskEvents(db, task.id);
+  if (events.length > 0) {
+    out('\n  Timeline:');
+    for (const e of events) out(`    ${formatEventLine(e)}`);
   }
 
   const log = getStageLog(db, task.id);
   if (log.length > 0) {
-    out('\n  Stage log:');
+    out('\n  Stage log (deprecated):');
     for (const entry of log) {
       const note = entry.note ? ` — ${entry.note}` : '';
       out(`    ${formatTimestamp(new Date(entry.createdAt))}  ${entry.stage}${note}`);
@@ -188,7 +224,7 @@ function handleStatus(id: string): void {
   run(() => {
     const db = openDb();
     try {
-      const task = getTask(db, id);
+      const task = getTaskCard(db, id);
       if (!task) throw new UnknownTaskError(id);
       printTaskDetail(db, task);
     } finally {
@@ -201,7 +237,7 @@ function handleDone(id: string): void {
   run(() => {
     const db = openDb();
     try {
-      const task = completeTask(db, id);
+      const task = completeTask(db, id, resolveEventAuthor());
       out(`Task ${task.id} marked done.`);
     } finally {
       db.close();
@@ -210,13 +246,30 @@ function handleDone(id: string): void {
 }
 
 /**
- * Resolve the acting author for a card event from the environment. `author_kind`
- * defaults to 'human'; a later group refines it with runtime (ACP) detection.
+ * Infer the acting runtime kind from the environment. An explicit
+ * `GENIE_AGENT_KIND` always wins; otherwise the coding-agent markers are probed
+ * in order (Claude Code, Codex, Hermes), falling back to 'human'. This is the
+ * ONE place runtime kind is resolved — every verb and `moveTask`'s CLI caller
+ * flow through {@link resolveEventAuthor}.
+ */
+function resolveAuthorKind(): string {
+  const env = process.env;
+  if (env.GENIE_AGENT_KIND) return env.GENIE_AGENT_KIND;
+  if (env.CLAUDECODE || env.CLAUDE_CODE) return 'claude-code';
+  if (env.CODEX_THREAD_ID) return 'codex';
+  if (env.HERMES || env.HERMES_HOME) return 'hermes';
+  return 'human';
+}
+
+/**
+ * Resolve the acting author for a card event from the environment: identity from
+ * `GENIE_AGENT_NAME`/`GENIE_AGENT_ID`, kind via {@link resolveAuthorKind}. The
+ * single author resolver shared by every authored verb and `moveTask`.
  */
 function resolveEventAuthor(): EventAuthor {
   return {
     author: process.env.GENIE_AGENT_NAME ?? process.env.GENIE_AGENT_ID ?? null,
-    authorKind: 'human',
+    authorKind: resolveAuthorKind(),
   };
 }
 
@@ -242,13 +295,120 @@ interface CheckoutOptions {
   worker?: string;
 }
 
+/** Print a card's prior timeline as a reassignment briefing at checkout. */
+function printTimelineBriefing(events: TaskEvent[]): void {
+  out('\n  Prior timeline (reassignment briefing):');
+  for (const e of events) out(`    ${formatEventLine(e)}`);
+}
+
 function handleCheckout(id: string, opts: CheckoutOptions): void {
   const worker = opts.worker ?? process.env.GENIE_AGENT_NAME ?? 'cli';
   run(() => {
     const db = openDb();
     try {
-      const task = claimTask(db, id, worker);
+      // Capture the timeline BEFORE claiming so the briefing reflects prior
+      // runtimes' history, not the claim event this checkout is about to append.
+      const priorEvents = getTaskEvents(db, id);
+      const task = claimTask(db, id, worker, { author: resolveEventAuthor() });
       out(`Claimed task ${task.id} for "${worker}" (${task.status}).`);
+      if (priorEvents.length > 0) printTimelineBriefing(priorEvents);
+    } finally {
+      db.close();
+    }
+  });
+}
+
+function handleComment(id: string, text: string): void {
+  const note = text?.trim();
+  if (!note) fail('a non-empty comment is required.');
+  run(() => {
+    const db = openDb();
+    try {
+      if (!getTask(db, id)) throw new UnknownTaskError(id);
+      const author = resolveEventAuthor();
+      appendTaskEvent(db, id, {
+        kind: 'comment',
+        note,
+        authorKind: author.authorKind ?? undefined,
+        author: author.author ?? undefined,
+      });
+      out(`Commented on task ${id}.`);
+    } finally {
+      db.close();
+    }
+  });
+}
+
+function handleReport(id: string, text: string): void {
+  const note = text?.trim();
+  if (!note) fail('a non-empty report is required.');
+  run(() => {
+    const db = openDb();
+    try {
+      if (!getTask(db, id)) throw new UnknownTaskError(id);
+      const author = resolveEventAuthor();
+      appendTaskEvent(db, id, {
+        kind: 'report',
+        note,
+        authorKind: author.authorKind ?? undefined,
+        author: author.author ?? undefined,
+      });
+      out(`Reported on task ${id} (${author.authorKind}).`);
+    } finally {
+      db.close();
+    }
+  });
+}
+
+interface BlockOptions {
+  reason?: string;
+}
+
+function handleBlock(id: string, opts: BlockOptions): void {
+  const reason = opts.reason?.trim();
+  if (!reason) fail('--reason <text> is required.');
+  run(() => {
+    const db = openDb();
+    try {
+      const task = blockTask(db, id, reason, resolveEventAuthor());
+      out(`Blocked task ${task.id} (${task.status}).`);
+    } finally {
+      db.close();
+    }
+  });
+}
+
+function handleUnblock(id: string): void {
+  run(() => {
+    const db = openDb();
+    try {
+      const task = unblockTask(db, id, resolveEventAuthor());
+      out(`Unblocked task ${task.id}.`);
+    } finally {
+      db.close();
+    }
+  });
+}
+
+function handleRelease(id: string): void {
+  run(() => {
+    const db = openDb();
+    try {
+      const task = releaseTask(db, id, resolveEventAuthor());
+      out(`Released task ${task.id} (${task.status}).`);
+    } finally {
+      db.close();
+    }
+  });
+}
+
+function handleHeartbeat(id: string): void {
+  run(() => {
+    const db = openDb();
+    try {
+      if (!getTask(db, id)) throw new UnknownTaskError(id);
+      recordHeartbeat(db, id);
+      out(`Heartbeat recorded for task ${id}.`);
     } finally {
       db.close();
     }
@@ -312,6 +472,37 @@ export function registerV5TaskCommands(v5: Command): void {
     .description('Atomically claim a ready task for a worker')
     .option('--worker <name>', 'Worker identity (defaults to $GENIE_AGENT_NAME or "cli")')
     .action((id: string, opts: CheckoutOptions) => handleCheckout(id, opts));
+
+  task
+    .command('comment <id> <text>')
+    .description('Append an authored comment to the card timeline')
+    .action((id: string, text: string) => handleComment(id, text));
+
+  task
+    .command('report <id> <text>')
+    .description('Append an authored worker report to the card timeline')
+    .action((id: string, text: string) => handleReport(id, text));
+
+  task
+    .command('block <id>')
+    .description('Place an enforced block on a card (refuses checkout until cleared)')
+    .requiredOption('--reason <text>', 'Why the card is blocked')
+    .action((id: string, opts: BlockOptions) => handleBlock(id, opts));
+
+  task
+    .command('unblock <id>')
+    .description('Clear an enforced block from a card')
+    .action((id: string) => handleUnblock(id));
+
+  task
+    .command('release <id>')
+    .description('Release a claim, returning the card to the ready queue')
+    .action((id: string) => handleRelease(id));
+
+  task
+    .command('heartbeat <id>')
+    .description('Record a liveness heartbeat for a claimed card')
+    .action((id: string) => handleHeartbeat(id));
 
   task
     .command('export')

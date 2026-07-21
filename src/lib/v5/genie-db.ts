@@ -132,6 +132,10 @@ function schemaIsCurrent(db: Database): boolean {
   for (const t of EXPECTED_TABLES) if (!tables.has(t)) return false;
   const taskCols = new Set((db.query('PRAGMA table_info(tasks)').all() as Array<{ name: string }>).map((c) => c.name));
   if (!taskCols.has('wish') || !taskCols.has('group_name') || !taskCols.has('lane')) return false;
+  // Runtime layer (additive-nullable): identity, heartbeat liveness, enforced block.
+  for (const c of ['agent_kind', 'heartbeat_at', 'blocked_by', 'blocked_reason']) {
+    if (!taskCols.has(c)) return false;
+  }
   const boardCols = new Set(
     (db.query('PRAGMA table_info(boards)').all() as Array<{ name: string }>).map((c) => c.name),
   );
@@ -211,6 +215,7 @@ export function ensureSchema(db: Database): void {
   db.exec(SCHEMA_SQL);
   ensureTaskColumns(db);
   ensureBoardColumns(db);
+  backfillStageLog(db);
 }
 
 /**
@@ -225,6 +230,52 @@ function ensureTaskColumns(db: Database): void {
   if (!cols.has('wish')) db.exec('ALTER TABLE tasks ADD COLUMN wish TEXT');
   if (!cols.has('group_name')) db.exec('ALTER TABLE tasks ADD COLUMN group_name TEXT');
   if (!cols.has('lane')) db.exec('ALTER TABLE tasks ADD COLUMN lane TEXT');
+  // Runtime layer: authored identity, heartbeat liveness, and the enforced block
+  // (blocked_by drives the single carved checkout exception). All nullable ⇒ no
+  // user_version bump; the card-projection render reads them, TaskRow stays frozen.
+  if (!cols.has('agent_kind')) db.exec('ALTER TABLE tasks ADD COLUMN agent_kind TEXT');
+  if (!cols.has('heartbeat_at')) db.exec('ALTER TABLE tasks ADD COLUMN heartbeat_at INTEGER');
+  if (!cols.has('blocked_by')) db.exec('ALTER TABLE tasks ADD COLUMN blocked_by TEXT');
+  if (!cols.has('blocked_reason')) db.exec('ALTER TABLE tasks ADD COLUMN blocked_reason TEXT');
+}
+
+/** Meta key marking the one-time stage_log → task_events backfill as complete. */
+const STAGE_LOG_BACKFILL_KEY = 'stage_log_backfill_v1';
+
+/** task_events kinds a legacy stage label maps to directly; anything else → comment. */
+const BACKFILLABLE_EVENT_KINDS = ['comment', 'move', 'claim', 'release', 'block', 'unblock', 'report'] as const;
+
+/**
+ * One-time migration of the deprecated `stage_log` into the `task_events`
+ * timeline. `stage_log` is retained (older binaries on the worktree-shared DB
+ * still read it), but the card timeline is now the source of truth, so existing
+ * history is mirrored across once. A legacy stage label that names a real event
+ * kind becomes that kind; every other label becomes a `comment` whose note keeps
+ * the original label so nothing is lost. `created_at` is preserved. Author fields
+ * are null (historical rows predate authored attribution).
+ *
+ * Idempotent via a `meta` guard: a re-open (or a second worktree opening the same
+ * DB) never duplicates rows. Runs inside {@link ensureSchema} under the write lock.
+ */
+function backfillStageLog(db: Database): void {
+  const done = db.query('SELECT 1 FROM meta WHERE key = ?').get(STAGE_LOG_BACKFILL_KEY);
+  if (done) return;
+  const kinds = BACKFILLABLE_EVENT_KINDS.map((k) => `'${k}'`).join(', ');
+  const tx = db.transaction(() => {
+    db.exec(
+      `INSERT INTO task_events (task_id, kind, note, author_kind, author, created_at)
+       SELECT task_id,
+              CASE WHEN stage IN (${kinds}) THEN stage ELSE 'comment' END,
+              CASE WHEN stage IN (${kinds}) THEN note
+                   WHEN note IS NOT NULL THEN stage || ': ' || note
+                   ELSE stage END,
+              NULL, NULL, created_at
+       FROM stage_log
+       ORDER BY id`,
+    );
+    db.query('INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)').run(STAGE_LOG_BACKFILL_KEY, String(Date.now()));
+  });
+  tx();
 }
 
 /**

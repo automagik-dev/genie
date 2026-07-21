@@ -3,14 +3,17 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { openDb } from './genie-db.js';
+import { ensureSchema, openDb } from './genie-db.js';
 import {
   CheckoutConflictError,
   CycleError,
   DEFAULT_LIFECYCLE_LANES,
   DEFAULT_STALE_MS,
   DuplicateBoardError,
+  LIVENESS_RUNNING_MS,
+  LIVENESS_STALE_MS,
   LaneError,
+  TaskBlockedError,
   TaskNotReadyError,
   UnknownTaskError,
   WishGroupDriftError,
@@ -19,7 +22,9 @@ import {
   appendStage,
   appendTaskEvent,
   assertWishSignature,
+  blockTask,
   claimTask,
+  commentCounts,
   completeTask,
   completeWishGroup,
   computeGroupsSignature,
@@ -27,18 +32,24 @@ import {
   createBoard,
   createTask,
   createWishGroups,
+  exportState,
   getBoardByName,
   getStageLog,
   getTask,
+  getTaskCard,
   getTaskEvents,
   getTaskLane,
   getWishGroups,
   listBoards,
   listTasks,
+  livenessFromHeartbeat,
   moveTask,
   readyTasks,
   recomputeReady,
+  recordHeartbeat,
+  releaseTask,
   startWishGroup,
+  unblockTask,
 } from './task-state.js';
 
 const HUMAN = { author: 'felipe', authorKind: 'human' };
@@ -317,6 +328,135 @@ describe('atomic checkout claim (single process)', () => {
   });
 });
 
+describe('runtime layer — liveness (pure, injected timestamps)', () => {
+  const NOW = 10_000_000;
+
+  test('classifies running / idle / stale purely from heartbeat age', () => {
+    expect(livenessFromHeartbeat(NOW, NOW)).toBe('running');
+    expect(livenessFromHeartbeat(NOW - (LIVENESS_RUNNING_MS - 1), NOW)).toBe('running');
+    // At exactly the running boundary it is no longer running → idle.
+    expect(livenessFromHeartbeat(NOW - LIVENESS_RUNNING_MS, NOW)).toBe('idle');
+    expect(livenessFromHeartbeat(NOW - (LIVENESS_STALE_MS - 1), NOW)).toBe('idle');
+    // At/after the stale boundary → stale.
+    expect(livenessFromHeartbeat(NOW - LIVENESS_STALE_MS, NOW)).toBe('stale');
+    expect(livenessFromHeartbeat(NOW - 9 * 24 * 60 * 60 * 1000, NOW)).toBe('stale');
+  });
+
+  test('a claimed card that never pulsed (null heartbeat) reads stale — the zombie', () => {
+    expect(livenessFromHeartbeat(null, NOW)).toBe('stale');
+  });
+
+  test('recordHeartbeat writes heartbeat_at, visible on the card projection', () => {
+    const a = createTask(db, { title: 'a' });
+    expect(getTaskCard(db, a.id)?.heartbeatAt).toBeNull();
+    const t = recordHeartbeat(db, a.id, NOW);
+    expect(t).toBe(NOW);
+    expect(getTaskCard(db, a.id)?.heartbeatAt).toBe(NOW);
+  });
+
+  test('recordHeartbeat rejects an unknown task', () => {
+    expect(() => recordHeartbeat(db, 't_nope')).toThrow(UnknownTaskError);
+  });
+});
+
+describe('runtime layer — enforced blocks + carved checkout exception', () => {
+  test('blockTask stores provenance + reason and appends a block event', () => {
+    const a = createTask(db, { title: 'a' });
+    blockTask(db, a.id, 'waiting on design', { author: 'felipe', authorKind: 'human' });
+    const card = getTaskCard(db, a.id);
+    expect(card?.blockedBy).toBe('felipe');
+    expect(card?.blockedReason).toBe('waiting on design');
+    const events = getTaskEvents(db, a.id);
+    expect(events.at(-1)?.kind).toBe('block');
+    expect(events.at(-1)?.note).toBe('waiting on design');
+  });
+
+  test('an anonymous blocker still sets a non-null blocked_by (gate can never be defeated)', () => {
+    const a = createTask(db, { title: 'a' });
+    blockTask(db, a.id, 'r', { author: null, authorKind: 'human' });
+    expect(getTaskCard(db, a.id)?.blockedBy).toBe('human');
+  });
+
+  test('checkout refuses a blocked card with TaskBlockedError carrying the reason', () => {
+    const a = createTask(db, { title: 'a' });
+    blockTask(db, a.id, 'needs review', { author: 'eng-B', authorKind: 'claude-code' });
+    expect(getTask(db, a.id)?.status).toBe('ready'); // block does not change status
+    try {
+      claimTask(db, a.id, 'w1');
+      throw new Error('expected TaskBlockedError');
+    } catch (err) {
+      expect(err).toBeInstanceOf(TaskBlockedError);
+      expect((err as TaskBlockedError).blockedBy).toBe('eng-B');
+      expect((err as TaskBlockedError).reason).toBe('needs review');
+      expect((err as Error).message).toContain('needs review');
+    }
+    // Refusal leaves the card unclaimed — the gate did not partially mutate.
+    expect(getTask(db, a.id)?.claimedBy).toBeNull();
+    expect(getTask(db, a.id)?.status).toBe('ready');
+  });
+
+  test('unblock clears the block and restores checkout', () => {
+    const a = createTask(db, { title: 'a' });
+    blockTask(db, a.id, 'r', HUMAN);
+    unblockTask(db, a.id, HUMAN);
+    const card = getTaskCard(db, a.id);
+    expect(card?.blockedBy).toBeNull();
+    expect(card?.blockedReason).toBeNull();
+    expect(getTaskEvents(db, a.id).at(-1)?.kind).toBe('unblock');
+    // Now claimable again.
+    expect(claimTask(db, a.id, 'w1').status).toBe('in_progress');
+  });
+});
+
+describe('runtime layer — claim / release timeline events', () => {
+  test('a winning checkout appends a claim event carrying the runtime author', () => {
+    const a = createTask(db, { title: 'a' });
+    claimTask(db, a.id, 'w1', { author: { author: 'eng-B', authorKind: 'claude-code' } });
+    const claim = getTaskEvents(db, a.id).find((e) => e.kind === 'claim');
+    expect(claim).toBeDefined();
+    expect(claim?.author).toBe('eng-B');
+    expect(claim?.authorKind).toBe('claude-code');
+  });
+
+  test('a lost claim appends NO claim event (event is inside the winning transaction)', () => {
+    const a = createTask(db, { title: 'a' });
+    claimTask(db, a.id, 'w1');
+    const before = getTaskEvents(db, a.id).filter((e) => e.kind === 'claim').length;
+    expect(() => claimTask(db, a.id, 'w2')).toThrow(CheckoutConflictError);
+    const after = getTaskEvents(db, a.id).filter((e) => e.kind === 'claim').length;
+    expect(after).toBe(before); // no phantom claim from the loser
+  });
+
+  test('completeTask appends a release event; recompute still runs', () => {
+    const a = createTask(db, { title: 'a' });
+    const b = createTask(db, { title: 'b', dependsOn: [a.id] });
+    completeTask(db, a.id, HUMAN);
+    expect(getTaskEvents(db, a.id).at(-1)?.kind).toBe('release');
+    expect(getTask(db, b.id)?.status).toBe('ready'); // dependency gate untouched
+  });
+
+  test('releaseTask returns an in_progress card to ready and appends a release event', () => {
+    const a = createTask(db, { title: 'a' });
+    claimTask(db, a.id, 'w1');
+    const released = releaseTask(db, a.id, HUMAN);
+    expect(released.status).toBe('ready');
+    expect(released.claimedBy).toBeNull();
+    expect(getTaskEvents(db, a.id).at(-1)?.kind).toBe('release');
+  });
+
+  test('commentCounts tallies only comment events, keyed by task', () => {
+    const a = createTask(db, { title: 'a' });
+    const b = createTask(db, { title: 'b' });
+    appendTaskEvent(db, a.id, { kind: 'comment', note: '1' });
+    appendTaskEvent(db, a.id, { kind: 'comment', note: '2' });
+    appendTaskEvent(db, a.id, { kind: 'move', note: 'x' }); // not counted
+    appendTaskEvent(db, b.id, { kind: 'report', note: 'r' }); // not counted
+    const counts = commentCounts(db);
+    expect(counts.get(a.id)).toBe(2);
+    expect(counts.has(b.id)).toBe(false);
+  });
+});
+
 describe('append-only stage log', () => {
   test('appends entries in order and reads them back', () => {
     const a = createTask(db, { title: 'a' });
@@ -382,6 +522,53 @@ describe('wish-group state machine', () => {
     // Structural change (new dep) → drift.
     const drifted = [{ name: 'g1' }, { name: 'g2', dependsOn: ['g1'] }, { name: 'g3', dependsOn: ['g1', 'g2'] }];
     expect(() => assertWishSignature(db, 'demo', drifted)).toThrow(WishGroupDriftError);
+  });
+});
+
+describe('exportState — task_events additive, stage_log retained', () => {
+  test('export carries BOTH stage_log and task_events (row 12: keep stage_log, gain task_events)', () => {
+    const a = createTask(db, { title: 'a' });
+    appendStage(db, a.id, 'planned', 'kickoff'); // legacy stage_log
+    appendTaskEvent(db, a.id, { kind: 'comment', note: 'live event', author: 'x', authorKind: 'human' });
+
+    const state = exportState(db);
+    expect(state.stage_log.map((s) => s.stage)).toContain('planned');
+    expect(state.task_events.map((e) => e.note)).toContain('live event');
+    // The board `boards` export gains the additive lanes column (typed-export NIT fix).
+    const road = createBoard(db, 'road', DEFAULT_LIFECYCLE_LANES);
+    createTask(db, { title: 'c', boardId: road.id });
+    const withLanes = exportState(db).boards.find((b) => b.name === 'road');
+    expect(withLanes?.lanes).toBeTypeOf('string'); // JSON-encoded lane list, not undefined
+  });
+});
+
+describe('stage_log → task_events one-time backfill (idempotent)', () => {
+  test('migrates existing stage_log rows once, preserving created_at and mapping kinds', () => {
+    const a = createTask(db, { title: 'a' });
+    // Simulate a pre-backfill DB: real stage_log history + guard removed so the
+    // next ensureSchema performs the one-time migration (as an old DB would).
+    appendStage(db, a.id, 'planned', 'kickoff'); // unknown kind → comment, label preserved
+    appendStage(db, a.id, 'report', 'meeseeks done'); // known kind → report
+    appendStage(db, a.id, 'implemented'); // unknown kind, no note → comment, note = label
+    db.query("DELETE FROM meta WHERE key = 'stage_log_backfill_v1'").run();
+    const stageRows = getStageLog(db, a.id);
+
+    ensureSchema(db); // triggers the guarded backfill
+
+    const events = getTaskEvents(db, a.id);
+    const byNote = Object.fromEntries(events.map((e) => [e.note, e]));
+    expect(byNote['planned: kickoff']?.kind).toBe('comment'); // label folded into note
+    expect(byNote['meeseeks done']?.kind).toBe('report'); // known kind mapped directly
+    expect(byNote.implemented?.kind).toBe('comment'); // label becomes the note
+    // created_at is preserved from the source stage rows.
+    expect(events.map((e) => e.createdAt).sort()).toEqual(stageRows.map((s) => s.createdAt).sort());
+    // Historical rows carry no author attribution.
+    expect(events.every((e) => e.author === null && e.authorKind === null)).toBe(true);
+
+    // Idempotent: a second ensureSchema (guard now set) duplicates nothing.
+    const count = events.length;
+    ensureSchema(db);
+    expect(getTaskEvents(db, a.id).length).toBe(count);
   });
 });
 
@@ -462,5 +649,66 @@ try {
     verify.close();
     expect(finalTask.status).toBe('in_progress');
     expect(finalTask.claimedBy).toMatch(/^worker-\d+$/);
+  }, 30_000);
+
+  test('two concurrent checkouts of a BLOCKED card both refuse cleanly (no SQLITE_BUSY flake)', async () => {
+    const dbPath = join(dir, 'blocked-race.db');
+    const seed = openDb({ path: dbPath });
+    const task = createTask(seed, { title: 'contended-blocked' });
+    blockTask(seed, task.id, 'held for review', { author: 'eng-B', authorKind: 'claude-code' });
+    seed.close();
+
+    const gdbPath = join(import.meta.dir, 'genie-db.ts');
+    const tsPath = join(import.meta.dir, 'task-state.ts');
+    const workerPath = join(dir, 'blocked-worker.ts');
+    writeFileSync(
+      workerPath,
+      `
+import { openDb } from ${JSON.stringify(gdbPath)};
+import { claimTask, TaskBlockedError, CheckoutConflictError } from ${JSON.stringify(tsPath)};
+const [dbPath, taskId, worker] = process.argv.slice(2);
+const db = openDb({ path: dbPath });
+try {
+  claimTask(db, taskId, worker);
+  process.stdout.write('WON');
+} catch (e) {
+  if (e instanceof TaskBlockedError) process.stdout.write('BLOCKED');
+  else if (e instanceof CheckoutConflictError) process.stdout.write('CONFLICT');
+  else { process.stdout.write('ERR:' + (e && e.message)); process.exitCode = 3; }
+} finally {
+  db.close();
+}
+`,
+    );
+
+    const runs = Array.from({ length: 2 }, (_, i) => {
+      const proc = Bun.spawn(['bun', 'run', workerPath, dbPath, task.id, `worker-${i}`], {
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+      return (async () => {
+        const out = await new Response(proc.stdout).text();
+        const err = await new Response(proc.stderr).text();
+        const code = await proc.exited;
+        return { out, err, code };
+      })();
+    });
+
+    const settled = await Promise.allSettled(runs);
+    const outcomes = settled.map((s) =>
+      s.status === 'fulfilled' ? `${s.value.out}(exit ${s.value.code})` : 'REJECTED',
+    );
+    if (!outcomes.every((o) => o.startsWith('BLOCKED')))
+      console.error('blocked-race outcomes:', JSON.stringify(outcomes));
+
+    // Both refuse with the typed enforced-block error — never a win, never a raw SQLITE_BUSY leak.
+    expect(outcomes.filter((o) => o.startsWith('BLOCKED')).length).toBe(2);
+    expect(outcomes.some((o) => o.startsWith('WON') || o.startsWith('ERR'))).toBe(false);
+
+    const verify = openDb({ path: dbPath });
+    const finalTask = getTask(verify, task.id)!;
+    verify.close();
+    expect(finalTask.status).toBe('ready'); // untouched — still blocked, never claimed
+    expect(finalTask.claimedBy).toBeNull();
   }, 30_000);
 });

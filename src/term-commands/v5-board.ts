@@ -10,18 +10,22 @@
 import type { Database } from 'bun:sqlite';
 import type { Command } from 'commander';
 import { color, padRight, truncate } from '../lib/term-format.js';
+import { cardBadges } from '../lib/v5/card-render.js';
 import { openDb } from '../lib/v5/genie-db.js';
 import {
   type BoardRow,
   DEFAULT_LIFECYCLE_LANES,
   type Lane,
   type LaneTaskRow,
+  type TaskCardRow,
   type TaskFilter,
   type TaskRow,
   type TaskStatus,
+  commentCounts,
   countBoardTasks,
   createBoard,
   listBoards,
+  listTaskCards,
   listTasks,
   listTasksWithLane,
   resolveBoard,
@@ -50,34 +54,59 @@ function run(handler: () => void): void {
 }
 
 // ============================================================================
-// Column model — the kanban pipeline is the task status enum, left to right.
+// Column model
 // ============================================================================
 
-const COLUMNS: Array<{ status: TaskStatus; label: string; tint: Parameters<typeof color>[0] }> = [
-  { status: 'blocked', label: 'Blocked', tint: 'red' },
-  { status: 'ready', label: 'Ready', tint: 'cyan' },
-  { status: 'in_progress', label: 'In Progress', tint: 'yellow' },
-  { status: 'done', label: 'Done', tint: 'green' },
-];
-
+/**
+ * The `--json` grouping key is the raw four-status enum — FROZEN. Byte-freeze
+ * (WISH Decision 7): the machine shape keeps all four keys and never gains a
+ * runtime/lane field, even though the human render below collapses to three
+ * columns. `groupByStatus` maps frozen {@link TaskRow}s (via {@link listTasks}),
+ * so the serialized shape is byte-identical to the pre-runtime board.
+ */
 function groupByStatus(tasks: TaskRow[]): Record<TaskStatus, TaskRow[]> {
   const groups: Record<TaskStatus, TaskRow[]> = { blocked: [], ready: [], in_progress: [], done: [] };
   for (const t of tasks) groups[t.status].push(t);
   return groups;
 }
 
-function printColumn(label: string, tint: Parameters<typeof color>[0], colTasks: TaskRow[]): void {
-  const count = colTasks.length;
-  out(`\n${color(tint, `── ${label} (${count} task${count === 1 ? '' : 's'}) ──`)}`);
+/**
+ * The HUMAN laneless render is three columns — `blocked` is a badge, never a
+ * column (WISH Decision 1). A `blocked`-status card folds into Ready badged ⛔;
+ * an enforced/agent block badges ⛔ inside whatever column its status lands it in.
+ */
+const LANELESS_COLUMNS: Array<{
+  label: string;
+  tint: Parameters<typeof color>[0];
+  statuses: readonly TaskStatus[];
+}> = [
+  { label: 'Ready', tint: 'cyan', statuses: ['ready', 'blocked'] },
+  { label: 'In Progress', tint: 'yellow', statuses: ['in_progress'] },
+  { label: 'Done', tint: 'green', statuses: ['done'] },
+];
+
+function printCardColumn(
+  label: string,
+  tint: Parameters<typeof color>[0],
+  cards: TaskCardRow[],
+  now: number,
+  comments: Map<string, number>,
+): void {
+  const count = cards.length;
+  out(`\n${color(tint, `── ${label} (${count} card${count === 1 ? '' : 's'}) ──`)}`);
   if (count === 0) {
     out('  (empty)');
     return;
   }
-  for (const t of colTasks) {
-    const claimed = t.claimedBy ? `  @${t.claimedBy}` : '';
-    const wish = t.wish ? `  ${color('gray', t.group ? `${t.wish}#${t.group}` : t.wish)}` : '';
-    out(`  ${padRight(t.id, 20)}  ${truncate(t.title, 40)}${claimed}${wish}`);
-  }
+  for (const t of cards) out(renderCardLine(t, now, comments));
+}
+
+/** One card's render line: id, title, claimant, wish, then runtime badges. */
+function renderCardLine(t: TaskCardRow, now: number, comments: Map<string, number>): string {
+  const claimed = t.claimedBy ? `  @${t.claimedBy}` : '';
+  const wish = t.wish ? `  ${color('gray', t.group ? `${t.wish}#${t.group}` : t.wish)}` : '';
+  const badges = cardBadges(t, now, comments.get(t.id) ?? 0);
+  return `  ${padRight(t.id, 20)}  ${truncate(t.title, 40)}${claimed}${wish}${badges}`;
 }
 
 // ============================================================================
@@ -114,22 +143,14 @@ function handleBoard(opts: BoardOptions): void {
       return;
     }
 
-    const tasks = listTasks(db, filter);
-    const grouped = groupByStatus(tasks);
-
+    // `--json` FROZEN path: frozen TaskRows grouped by the four raw statuses.
     if (opts.json) {
+      const grouped = groupByStatus(listTasks(db, filter));
       out(JSON.stringify({ scope: scopeLabel, columns: grouped }, null, 2));
       return;
     }
 
-    out(`\nBoard — ${scopeLabel}`);
-    out('═'.repeat(56));
-    const counts = COLUMNS.map((c) => `${c.label}: ${grouped[c.status].length}`).join('   ');
-    out(`  ${counts}`);
-    for (const column of COLUMNS) {
-      printColumn(column.label, column.tint, grouped[column.status]);
-    }
-    out('');
+    renderLanelessCards(db, filter, scopeLabel);
   } catch (err) {
     fail(err instanceof Error ? err.message : String(err));
   } finally {
@@ -137,33 +158,51 @@ function handleBoard(opts: BoardOptions): void {
   }
 }
 
+/**
+ * Human three-column render (Ready / In Progress / Done) with runtime badges.
+ * Cards carry the runtime projection so each can show liveness (▶/⏸/☠), an
+ * enforced/deps ⛔ block, and a 💬 comment count. `blocked`-status cards fold
+ * into Ready (badged ⛔), keeping blocked a badge and never a column.
+ */
+function renderLanelessCards(db: Database, filter: TaskFilter, scopeLabel: string): void {
+  const cards = listTaskCards(db, filter);
+  const comments = commentCounts(db);
+  const now = Date.now();
+  const byColumn = LANELESS_COLUMNS.map((c) => ({
+    ...c,
+    cards: cards.filter((t) => c.statuses.includes(t.status)),
+  }));
+
+  out(`\nBoard — ${scopeLabel}`);
+  out('═'.repeat(56));
+  out(`  ${byColumn.map((c) => `${c.label}: ${c.cards.length}`).join('   ')}`);
+  for (const column of byColumn) {
+    printCardColumn(column.label, column.tint, column.cards, now, comments);
+  }
+  out('');
+}
+
 // ============================================================================
 // Lane-grouped render — the lifecycle axis, additive to the status render.
 // ============================================================================
 
 /** Group cards into the board's lanes; NULL/unknown lanes fall into the first. */
-function groupByLane(lanes: Lane[], tasks: LaneTaskRow[]): Map<string, LaneTaskRow[]> {
-  const byLane = new Map<string, LaneTaskRow[]>();
+function groupByLane<T extends LaneTaskRow>(lanes: Lane[], tasks: T[]): Map<string, T[]> {
+  const byLane = new Map<string, T[]>();
   for (const lane of lanes) byLane.set(lane.name, []);
   const firstLane = lanes[0].name;
   for (const t of tasks) {
     const target = t.lane && byLane.has(t.lane) ? t.lane : firstLane;
-    (byLane.get(target) as LaneTaskRow[]).push(t);
+    (byLane.get(target) as T[]).push(t);
   }
   return byLane;
 }
 
-function printLaneCard(t: LaneTaskRow): void {
-  const claimed = t.claimedBy ? `  @${t.claimedBy}` : '';
-  const wish = t.wish ? `  ${color('gray', t.group ? `${t.wish}#${t.group}` : t.wish)}` : '';
-  out(`  ${padRight(t.id, 20)}  ${truncate(t.title, 40)}${claimed}${wish}`);
-}
-
 function renderLaneBoard(db: Database, lanes: Lane[], filter: TaskFilter, scopeLabel: string, json: boolean): void {
-  const tasks = listTasksWithLane(db, filter);
-  const byLane = groupByLane(lanes, tasks);
-
+  // `--json` keeps the additive lane shape with lane-only cards (no runtime
+  // fields), matching the frozen laneless `--json`'s runtime-free contract.
   if (json) {
+    const byLane = groupByLane(lanes, listTasksWithLane(db, filter));
     const laneGroups = lanes.map((l) => ({
       name: l.name,
       label: l.label ?? null,
@@ -174,6 +213,9 @@ function renderLaneBoard(db: Database, lanes: Lane[], filter: TaskFilter, scopeL
     return;
   }
 
+  const byLane = groupByLane(lanes, listTaskCards(db, filter));
+  const comments = commentCounts(db);
+  const now = Date.now();
   out(`\nBoard — ${scopeLabel}`);
   out('═'.repeat(56));
   const counts = lanes.map((l) => `${l.label ?? l.name}: ${(byLane.get(l.name) ?? []).length}`).join('   ');
@@ -188,7 +230,7 @@ function renderLaneBoard(db: Database, lanes: Lane[], filter: TaskFilter, scopeL
       out('  (empty)');
       continue;
     }
-    for (const t of cards) printLaneCard(t);
+    for (const t of cards) out(renderCardLine(t, now, comments));
   }
   out('');
 }

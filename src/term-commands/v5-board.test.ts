@@ -12,11 +12,16 @@ import { join } from 'node:path';
 import { openDb } from '../lib/v5/genie-db.js';
 import {
   DEFAULT_LIFECYCLE_LANES,
+  LIVENESS_RUNNING_MS,
+  LIVENESS_STALE_MS,
+  appendTaskEvent,
+  blockTask,
   claimTask,
   completeTask,
   createBoard,
   createTask,
   moveTask,
+  recordHeartbeat,
 } from '../lib/v5/task-state.js';
 
 const GENIE = join(import.meta.dir, '..', 'genie.ts');
@@ -67,16 +72,18 @@ afterEach(() => {
 });
 
 describe('board render', () => {
-  test('renders all four status columns on an empty repo', async () => {
+  test('renders the three laneless columns on an empty repo (blocked is a badge, never a column)', async () => {
     const r = await board(repo);
     expect(r.code).toBe(0);
     expect(r.stderr).toBe('');
-    for (const label of ['Blocked', 'Ready', 'In Progress', 'Done']) {
+    for (const label of ['Ready', 'In Progress', 'Done']) {
       expect(r.stdout).toContain(label);
     }
+    // Blocked is never a column header on the human render.
+    expect(r.stdout).not.toContain('── Blocked');
     // Counts line reflects an empty board.
-    expect(r.stdout).toContain('Blocked: 0');
     expect(r.stdout).toContain('Ready: 0');
+    expect(r.stdout).toContain('Done: 0');
   });
 
   test('places a fresh task in the Ready column', async () => {
@@ -275,7 +282,7 @@ describe('lane-grouped render', () => {
 // A laneless board (no lanes column) must keep the EXACT four-status render and
 // the status-keyed --json shape — adding lane support must not perturb it.
 describe('laneless board render is unchanged', () => {
-  test('a board without lanes still renders four status columns', async () => {
+  test('a board without lanes renders the three status columns (no Blocked column)', async () => {
     const db = openDb({ cwd: repo });
     const plain = createBoard(db, 'plain');
     createTask(db, { title: 'plain task', boardId: plain.id });
@@ -283,9 +290,10 @@ describe('laneless board render is unchanged', () => {
 
     const r = await board(repo, '--board', 'plain');
     expect(r.code).toBe(0);
-    for (const label of ['Blocked', 'Ready', 'In Progress', 'Done']) {
+    for (const label of ['Ready', 'In Progress', 'Done']) {
       expect(r.stdout).toContain(label);
     }
+    expect(r.stdout).not.toContain('── Blocked');
     expect(r.stdout).not.toContain('/brainstorm');
   });
 
@@ -299,7 +307,131 @@ describe('laneless board render is unchanged', () => {
     expect(r.code).toBe(0);
     const payload = JSON.parse(r.stdout) as { columns: Record<string, Array<Record<string, unknown>>> };
     expect(Object.keys(payload.columns).sort()).toEqual(['blocked', 'done', 'in_progress', 'ready']);
-    // The frozen TaskRow shape never gains a `lane` key on the laneless path.
-    expect('lane' in payload.columns.ready[0]).toBe(false);
+    // The frozen TaskRow shape never gains a `lane` key NOR any runtime field on
+    // the laneless path — the byte-freeze survives the runtime layer (Decision 7).
+    const card = payload.columns.ready[0];
+    for (const leaked of ['lane', 'agentKind', 'heartbeatAt', 'blockedBy', 'blockedReason']) {
+      expect(leaked in card).toBe(false);
+    }
+    // The exact frozen key set, sorted — a byte-level guard against additions.
+    expect(Object.keys(card).sort()).toEqual([
+      'boardId',
+      'claimedAt',
+      'claimedBy',
+      'createdAt',
+      'group',
+      'id',
+      'status',
+      'title',
+      'updatedAt',
+      'wish',
+    ]);
+  });
+});
+
+// Every visual state is asserted by substring against a fixture with injected
+// heartbeat_at / blocked_by / events — no criterion is eyeball-accepted. The
+// board computes `now` at render time; seeded ages use minute-scale margins so
+// the ~100ms subprocess delay never flips a threshold (deterministic, no sleep).
+describe('deterministic runtime badges (laneless render)', () => {
+  /** Claim a fresh card and seed its heartbeat to an absolute timestamp. */
+  function seedClaimed(title: string, heartbeatAt: number | null): string {
+    const db = openDb({ cwd: repo });
+    const t = createTask(db, { title });
+    claimTask(db, t.id, 'w1');
+    if (heartbeatAt != null) recordHeartbeat(db, t.id, heartbeatAt);
+    db.close();
+    return t.id;
+  }
+
+  test('a fresh heartbeat renders ▶ running on a claimed card', async () => {
+    seedClaimed('running card', Date.now());
+    const r = await board(repo);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('▶');
+    expect(r.stdout).not.toContain('☠');
+  });
+
+  test('a heartbeat past the running window but under stale renders ⏸ idle', async () => {
+    seedClaimed('idle card', Date.now() - (LIVENESS_RUNNING_MS + 60_000));
+    const r = await board(repo);
+    expect(r.stdout).toContain('⏸');
+  });
+
+  test('a stale heartbeat renders ☠ (the zombie in_progress lie, killed)', async () => {
+    seedClaimed('stale card', Date.now() - (LIVENESS_STALE_MS + 60_000));
+    const r = await board(repo);
+    expect(r.stdout).toContain('☠');
+  });
+
+  test('a claimed card that never pulsed renders ☠', async () => {
+    seedClaimed('never pulsed', null);
+    const r = await board(repo);
+    expect(r.stdout).toContain('☠');
+  });
+
+  test('an unclaimed card carries no liveness glyph', async () => {
+    const db = openDb({ cwd: repo });
+    createTask(db, { title: 'unclaimed' });
+    db.close();
+    const r = await board(repo);
+    expect(r.stdout).not.toContain('▶');
+    expect(r.stdout).not.toContain('⏸');
+    expect(r.stdout).not.toContain('☠');
+  });
+
+  test('a deps-blocked card renders ⛔ deps inside the Ready column (render-derived)', async () => {
+    const db = openDb({ cwd: repo });
+    const a = createTask(db, { title: 'dep' });
+    createTask(db, { title: 'downstream', dependsOn: [a.id] }); // status blocked
+    db.close();
+    const r = await board(repo);
+    expect(r.stdout).toContain('⛔ deps');
+    // Folds into Ready — Blocked is a badge, never a column.
+    const readyIdx = r.stdout.indexOf('── Ready');
+    const inProgIdx = r.stdout.indexOf('── In Progress');
+    const badgeIdx = r.stdout.indexOf('⛔ deps');
+    expect(badgeIdx).toBeGreaterThan(readyIdx);
+    expect(badgeIdx).toBeLessThan(inProgIdx);
+  });
+
+  test('an agent-blocked card renders ⛔ with the agent provenance + reason', async () => {
+    const db = openDb({ cwd: repo });
+    const t = createTask(db, { title: 'agent blocked' });
+    blockTask(db, t.id, 'awaiting design', { author: 'eng-B', authorKind: 'claude-code' });
+    db.close();
+    const r = await board(repo);
+    expect(r.stdout).toContain('⛔ eng-B: awaiting design');
+  });
+
+  test('a human-blocked card renders ⛔ with the human provenance + reason', async () => {
+    const db = openDb({ cwd: repo });
+    const t = createTask(db, { title: 'human blocked' });
+    blockTask(db, t.id, 'hold for release', { author: 'felipe', authorKind: 'human' });
+    db.close();
+    const r = await board(repo);
+    expect(r.stdout).toContain('⛔ felipe: hold for release');
+  });
+
+  test('comment events render a 💬 count badge', async () => {
+    const db = openDb({ cwd: repo });
+    const t = createTask(db, { title: 'chatty' });
+    appendTaskEvent(db, t.id, { kind: 'comment', note: 'one' });
+    appendTaskEvent(db, t.id, { kind: 'comment', note: 'two' });
+    appendTaskEvent(db, t.id, { kind: 'move', note: 'x' }); // not a comment
+    db.close();
+    const r = await board(repo);
+    expect(r.stdout).toContain('💬 2');
+  });
+
+  test('the three columns render and Blocked is never a column header', async () => {
+    const db = openDb({ cwd: repo });
+    createTask(db, { title: 'r' });
+    db.close();
+    const r = await board(repo);
+    expect(r.stdout).toContain('── Ready');
+    expect(r.stdout).toContain('── In Progress');
+    expect(r.stdout).toContain('── Done');
+    expect(r.stdout).not.toContain('── Blocked');
   });
 });

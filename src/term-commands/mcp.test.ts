@@ -314,6 +314,61 @@ describe('mcp tools/call', () => {
 });
 
 // ============================================================================
+// Backward-compat: the runtime layer is additive-only over the MCP surface
+// ============================================================================
+
+describe('mcp runtime-layer backward compatibility', () => {
+  test('genie_task keeps the frozen TaskRow shape — no runtime/lane fields leak', async () => {
+    const { taskId } = seed(repo);
+    // Add runtime state (block + claim) so a leak would actually surface if any.
+    const db = openDb({ cwd: repo });
+    db.query(
+      "UPDATE tasks SET blocked_by='x', blocked_reason='r', heartbeat_at=1, agent_kind='codex', lane='Idea' WHERE id=?",
+    ).run(taskId);
+    db.close();
+
+    const responses = await driveMcp(repo, [
+      INIT,
+      INITIALIZED,
+      { jsonrpc: '2.0', id: 40, method: 'tools/call', params: { name: 'genie_task', arguments: { id: taskId } } },
+    ]);
+    const task = toolPayload<Record<string, unknown>>(responses.find((r) => r.id === 40)!);
+    // The projection is byte-frozen: exactly the pre-runtime TaskRow keys.
+    expect(Object.keys(task).sort()).toEqual([
+      'boardId',
+      'claimedAt',
+      'claimedBy',
+      'createdAt',
+      'group',
+      'id',
+      'status',
+      'title',
+      'updatedAt',
+      'wish',
+    ]);
+    for (const leaked of ['lane', 'agentKind', 'heartbeatAt', 'blockedBy', 'blockedReason']) {
+      expect(leaked in task).toBe(false);
+    }
+  });
+
+  test('genie_board task summaries carry no runtime fields', async () => {
+    seed(repo);
+    const responses = await driveMcp(repo, [
+      INIT,
+      INITIALIZED,
+      { jsonrpc: '2.0', id: 41, method: 'tools/call', params: { name: 'genie_board', arguments: {} } },
+    ]);
+    const payload = toolPayload<{ tasks: Array<Record<string, unknown>> }>(responses.find((r) => r.id === 41)!);
+    expect(payload.tasks.length).toBeGreaterThan(0);
+    for (const summary of payload.tasks) {
+      for (const leaked of ['lane', 'agentKind', 'heartbeatAt', 'blockedBy', 'blockedReason']) {
+        expect(leaked in summary).toBe(false);
+      }
+    }
+  });
+});
+
+// ============================================================================
 // Absent-db degrade
 // ============================================================================
 
