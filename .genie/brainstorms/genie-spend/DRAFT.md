@@ -75,8 +75,47 @@ Measured via the `langwatch` CLI during the routing-pin day-1 QA. This window is
 
 **Phase-1 query shapes that proved WORKABLE (all via the CLI, existing key):** cost-by-model, cost-by-day (per-day windows; each query returns the prior period free), token-volume-by-model, trace-count-by-model, top-sessions-by-cost (`--group-by metadata.thread_id`), effort histogram + per-effort cost percentiles. **BROKEN/blocked tonight:** (1) direct REST 403 → use the CLI; (2) **effort-filtered analytics** unavailable (`analytics query` has no `--filter`; underlying effort-filter silently broken) → **effort splits must be computed client-side from trace search**; (3) **per-model p50/p90 NOT derivable** — trace search returns no per-trace model (spans empty; model lives only at span level in analytics) → **parked**; per-effort percentiles are the usable substitute, or span-level export the CLI doesn't expose; (4) **cache-read + `--group-by metadata.model`** hits a known ClickHouse bug → avoid (query cache-read without the model groupBy). Net: a CLI-backed Phase-1 covering model/day/thread/effort splits is achievable now; per-model percentiles and effort-filtered analytics are the two gaps to design around.
 
-## GAPS
-- [ ] Key/endpoint source for `genie spend`: read from CC settings env (OTEL_EXPORTER_OTLP_*), from genie config, or both with precedence? (Machine-portability: teammates' machines have the same settings?) — **2026-07-10 evidence: the OTLP-ingest key from `OTEL_EXPORTER_OTLP_HEADERS` in `~/.claude/settings.json` authenticates the CLI; endpoint `https://langwatch.khal.ai`.**
-- [ ] Cadence: on-demand only, or a scheduled snapshot (e.g. daily line into .genie/ or omni message)? You already run "live metrics" commits — integrate or keep separate?
-- [ ] Consumers: just you, or team/omni-channel reporting?
-- [ ] Should `genie doctor` warn when burn-rate exceeds a threshold (needs a threshold from you)?
+## CALIBRATION DELTA — 2026-07-11 day-2 pull ([full evidence](../../wishes/routing-matrix/qa/routing-pin-qa-20260711.md))
+
+- **Two cost figures must not be mixed** (design constraint for `genie spend` output): trace-level
+  ungrouped `total_cost`(=`cost_billed`) = day totals (07-09 $658 · 07-10 $2,499 · 07-11 $1,391@19.7h);
+  span-level grouped-by-model = ~1.7× higher (multi-model spans double-count) and is authoritative ONLY
+  for model shares. `genie spend` must label which lens each number uses.
+- Late-ingestion drift: totals pulled at 06:51Z differed from the same windows re-pulled at 19:42Z —
+  snapshots should carry their pull timestamp.
+- Per-effort percentiles move day to day (07-11: xhigh p90 $73.79, carries 54% of cost) — percentile
+  views need the window in the header.
+- Token composition view proved out: cache_read = 95.6% of processed tokens on 07-11 — a
+  `genie spend --composition` view (prompt/completion/cache-read/cache-write) is cheap and high-signal.
+
+## CONVERGENCE — parallel `genie-execution-optimization-dashboard` brainstorm (Felipe-directed, 2026-07-11)
+
+The execution-optimization lab (`.genie/brainstorms/genie-execution-optimization-dashboard/`) consumes
+the same telemetry this wish produces. Two binding constraints for the wish author:
+
+1. **Modeled $ is NOT the north star for a subscription account.** The lab's finding: LangWatch modeled
+   USD does not explain five-hour/seven-day quota depletion — quota %, captured by the lab's status-line
+   multiplexer, is the real constraint. `genie spend` keeps modeled $ (it's what LangWatch has) but must
+   present it as *modeled*, and the Phase-2 join schema must leave room for quota-% columns joined by
+   time window. `genie spend` does NOT own a quota collector — that layer is the lab's.
+2. **One event schema, two consumers.** Phase-2 outcome labels (wish_slug, group_id, role, model,
+   effort, verdicts, retries, escalation_from/reason, reopened, shipped) ≡ the dashboard's layer-1 typed
+   events. Define ONCE — natural home is the dispatch-contract work (umbrella G2) — and extend the
+   existing genie.db + `genie task export` + `genie mcp` read-only surfaces rather than a new store
+   (TAXONOMY.md: state-in-SQLite). The escalation-reason enum already exists as the review skill's
+   Escalation Diagnosis cause classes (model-capacity / missing-context / ambiguous-spec /
+   env-tool-failure) — reuse it, never a parallel enum.
+3. `--json` output (already ratified) doubles as the dashboard's spend interface — field names are a
+   stable contract from day one; record resolved model IDs alongside aliases.
+
+## GAPS — ALL RATIFIED (Felipe, 2026-07-11) → wish-ready
+- [x] **Key/endpoint source: CC settings env + genie-config override.** Default = the proven
+  `OTEL_EXPORTER_OTLP_HEADERS` bearer + endpoint from `~/.claude/settings.json`; a genie config block
+  overrides for machines without CC settings. (Evidence 2026-07-10: that key authenticates the CLI;
+  endpoint `https://langwatch.khal.ai`.)
+- [x] **Cadence: on-demand only** in Phase 1 (`genie spend`, <5s). Scheduled snapshots deferred to
+  Phase-2 / dream-replatform; live-metrics commits stay separate.
+- [x] **Consumers: Felipe only, CLI** (terminal + `--json`). Omni-channel reporting lands later via the
+  report→LangWatch absorb (G4).
+- [x] **No doctor burn check.** Doctor stays focused on install health; spend visibility lives in
+  `genie spend` only.

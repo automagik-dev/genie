@@ -106,3 +106,8 @@ yarn-error.log*
 .orphaned_at
 
 core
+
+# Machine-local agent/tool config — never shared. `.codex/config.toml` in
+# particular can hold live session tokens (e.g. BW_SESSION).
+.codex/
+.dash/
