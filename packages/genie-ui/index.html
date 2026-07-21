@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>genie-ui · fleet</title>
+    <link rel="stylesheet" href="/xterm.css" />
+    <link rel="stylesheet" href="/client/styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header id="topbar">
+        <span class="brand">genie<span class="dim">-ui</span></span>
+        <span class="tag">fleet · PTY-faithful</span>
+        <span id="conn" class="conn off">disconnected</span>
+      </header>
+      <div id="body">
+        <aside id="wishes"><!-- genie lane: wish menu injected here (G2) --></aside>
+        <div id="fleet">
+          <nav id="tabs"><!-- pane tabs injected here --></nav>
+          <main id="stage"><!-- xterm cells injected here, one per pane --></main>
+        </div>
+        <aside id="chat"><!-- genie group chat drawer injected here (G3, ACP control channel) --></aside>
+      </div>
+      <footer id="statusbar">
+        <span id="active-meta"></span>
+        <span class="spacer"></span>
+        <span class="hint">tab = swap · split = side-by-side · max = maximize · state is preserved</span>
+      </footer>
+    </div>
+    <script type="module" src="/client/main.js"></script>
+  </body>
+</html>
