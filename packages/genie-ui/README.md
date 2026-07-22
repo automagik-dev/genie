@@ -91,7 +91,7 @@ imports instead of flagging them unused. `node-pty` is in root `trustedDependenc
 fresh `bun install` builds its native binary (needs a working `node-gyp`/toolchain — no
 prebuild ships for linux-x64 on this node-pty version).
 
-**Trust boundary — loopback by default, Origin-checked ws.** `MSG.INPUT` feeds arbitrary
+**Trust boundary — loopback by default, rebinding-proof ws.** `MSG.INPUT` feeds arbitrary
 keystrokes into live login shells (`fable`, `codex`), so the ws upgrade is a remote-control
 surface, not a read-only view. Two guards keep it closed by default:
 
@@ -100,12 +100,19 @@ surface, not a read-only view. Two guards keep it closed by default:
   (mac + phone on the LAN) is **opt-in** via `HOST=0.0.0.0` (or a specific interface). This
   is the seam G2 (genie state) and G3 (ACP control faces) build on, so the boundary is
   explicit here rather than retrofitted later.
-- **Origin allowlist on the ws upgrade.** `verifyClient` accepts a browser connection only
-  when its `Origin` is same-origin with the page's own host (works for any LAN hostname with
-  no config) or is listed in `GENIE_UI_ALLOWED_ORIGINS` (comma-separated, for a reverse
-  proxy). Browsers always send `Origin`, so this defeats a cross-origin drive-by — an open
-  website cannot `new WebSocket('ws://localhost:PORT')` into the shells. Non-browser clients
-  (CLI, tests) send no `Origin` and are gated by the loopback bind instead.
+- **Loopback-Host same-origin OR explicit allowlist on the ws upgrade.** `verifyClient`
+  accepts a browser connection only when its `Origin` is same-origin with the page's own host
+  **and that Host is a loopback identity** (`localhost`, `127.0.0.1`, `[::1]`), or when its
+  `Origin` is listed in `GENIE_UI_ALLOWED_ORIGINS` (comma-separated, for a reverse proxy or a
+  LAN host). Browsers always send `Origin`, so this defeats a cross-origin drive-by — an open
+  website cannot `new WebSocket('ws://localhost:PORT')` into the shells. Crucially it also
+  defeats **DNS rebinding**: a naive same-origin check does *not*, because both `Origin` and
+  `Host` are browser-set and after rebinding (`evil.com` → `127.0.0.1`) they carry the same
+  attacker value, so the connection *presents as same-origin*. Requiring the real `Host` to be
+  loopback closes that hole — the rebound request still carries `Host: evil.com` (non-loopback),
+  which falls through to the allowlist and is rejected. A LAN host (`HOST=0.0.0.0`) therefore
+  reaches the shells only if its origin is explicitly allowlisted, not by same-origin alone.
+  Non-browser clients (CLI, tests) send no `Origin` and are gated by the loopback bind instead.
 
 ## Gate wiring (done first, deliverable 5)
 
