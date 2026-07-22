@@ -115,7 +115,9 @@ function runHarness(): { status: number | null; output: string } {
 
 describe('install.sh delivered-not-activated exit-2 propagation (executed)', () => {
   test('propagates exit 2 with the result trailer, no all-green footer, lock released, idempotent rerun', () => {
-    mkdirSync(join(work, 'tmp'), { recursive: true });
+    // install.sh's validate_private_temp_root rejects a group-writable temp parent,
+    // so pin the mode instead of inheriting the host umask (0002 hosts create 775).
+    mkdirSync(join(work, 'tmp'), { recursive: true, mode: 0o700 });
 
     const first = runHarness();
     // Delivered-not-activated is exit 2, NOT the die-1 failure path.
@@ -151,7 +153,9 @@ describe('install.sh delivered-not-activated exit-2 propagation (executed)', () 
       ].join('\n'),
       { mode: 0o755 },
     );
-    mkdirSync(join(work, 'tmp'), { recursive: true });
+    // install.sh's validate_private_temp_root rejects a group-writable temp parent,
+    // so pin the mode instead of inheriting the host umask (0002 hosts create 775).
+    mkdirSync(join(work, 'tmp'), { recursive: true, mode: 0o700 });
     const result = runHarness();
     expect(result.status).toBe(1);
     expect(result.output).toContain('installation remains incomplete and retryable');
