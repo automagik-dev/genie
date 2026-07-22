@@ -51,6 +51,10 @@ function seedDb(storageRoot: string): void {
   const db = openDb({ cwd: storageRoot });
   const board = createBoard(db, 'repo');
   createTask(db, { title: 'seed', boardId: board.id, wish: 'w', group: 'g' });
+  // Fold pending WAL frames into the main db and close before any reader opens,
+  // so readonly consumers aren't racing an open WAL writer under cross-file
+  // test contention (would otherwise surface as "database is locked").
+  db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
   db.close();
 }
 

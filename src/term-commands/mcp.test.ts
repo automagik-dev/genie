@@ -118,6 +118,10 @@ function seed(cwd: string): { taskId: string } {
   const t = createTask(db, { title: 'seed task', boardId: board.id, wish: 'genie-mcp', group: 'g2' });
   createTask(db, { title: 'other', boardId: board.id });
   createWishGroups(db, 'genie-mcp', [{ name: 'g1' }, { name: 'g2', dependsOn: ['g1'] }]);
+  // Fold pending WAL frames into the main db before the reader subprocess opens,
+  // so the readonly `genie mcp` server isn't racing an open WAL writer under
+  // cross-file test contention ("database is locked").
+  db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
   db.close();
   return { taskId: t.id };
 }
@@ -284,6 +288,7 @@ describe('mcp tools/call', () => {
       Date.now(),
       taskId,
     );
+    db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
     db.close();
     const responses = await driveMcp(repo, [
       INIT,
@@ -325,6 +330,7 @@ describe('mcp runtime-layer backward compatibility', () => {
     db.query(
       "UPDATE tasks SET blocked_by='x', blocked_reason='r', heartbeat_at=1, agent_kind='codex', lane='Idea' WHERE id=?",
     ).run(taskId);
+    db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
     db.close();
 
     const responses = await driveMcp(repo, [
@@ -505,6 +511,7 @@ describe('mcp worktree branch resolution', () => {
     createWishGroups(db, 'genie', [{ name: 'mcp' }]);
     createTask(db, { title: 'b', boardId: board.id, wish: 'genie-mcp', group: 'g1' });
     createWishGroups(db, 'genie-mcp', [{ name: 'g1' }]);
+    db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
     db.close();
     const res = await driveMcp(repo, [
       INIT,
