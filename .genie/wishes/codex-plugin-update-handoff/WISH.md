@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | IN_PROGRESS — A+B+C execution-SHIP on this branch (C: SHIP after fix loop 1/2, 2026-07-22, tip `2c2dceec`); Groups D–E remain. Dev independently shipped the delivery-adjacent plugin-only layer (B1 `3b4faa3b`, B2 `6f423869`); NONE of the activation protocol is on dev. Merge gate holds: A–E must each independently SHIP before the PR merges to dev. Plan gate SHIP 2026-07-12 at fix loop 1/2 (reviewed digest `4c71ab68…`) |
+| **Status** | IN_PROGRESS — A+B+C+D execution-SHIP on this branch (D: SHIP loop 0, 2026-07-22, tip `5f51f785` — Fork A ratified: setup is activation-only, UX change documented for Felipe's final-gate veto); Group E remains. Dev independently shipped the delivery-adjacent plugin-only layer (B1 `3b4faa3b`, B2 `6f423869`); NONE of the activation protocol is on dev. Merge gate holds: A–E must each independently SHIP before the PR merges to dev. Plan gate SHIP 2026-07-12 at fix loop 1/2 (reviewed digest `4c71ab68…`) |
 | **Slug** | `codex-plugin-update-handoff` |
 | **Date** | 2026-07-12 |
 | **Author** | Felipe + Codex brainstorm session |
@@ -957,6 +957,23 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 - **Validation evidence:** wishes lint OK (41 files, 0 broken links); digest exact match.
 - Zero CRITICAL/HIGH gaps remain; all three original loop-2/2 HIGH gaps and fresh-gate HIGH-1 are
   closed with mechanically checkable, singly-owned requirements. Plan is ready for `/work`.
+
+### Execution — Group D (lifecycle-surfaces) — 2026-07-22 — SHIP loop 0
+
+Engineer eng-D-lifecycle-surfaces (opus), 8 commits `da7359ae..5f51f785`. **Fork A ratified by
+orchestrator** (setup = pure activation surface: observe → A consent → A authorize → B executor;
+marketplace/delivery stays with update/install) under four conditions, all met: actionable
+refusal on undelivered payload, UX change documented (exit matrix + codex-integration-map.md +
+this note — **Felipe veto point at final gate/live QA:** `genie setup --codex` no longer
+performs from-scratch install), D-side sync-TTY helper (fail-closed /dev/tty read), and
+prove-not-accommodate re-specs (~19 setup tests). Delivered: doctor `integrationSummary`
+(add-only checks[], one bounded observation, pending exits 2 with ok:true), init fallback gated
+on fresh verified-current, uninstall task-breakage warning + `uninstall` lease (one additive
+A-file touch, reviewer-accepted) + call-graph isolation, real two-process cross-kind lease races
+(setup+setup, setup+update, uninstall+setup). Independent review (rev-D, opus): **SHIP loop 0**,
+all ACs met; PTY command-harness ruled NOT required (lease-primitive races + in-process busy
+translation close the seam by source); D3 single-observation interpretation accepted as honoring
+the stronger backward-compat constraint. D-scoped suites 262/0; typecheck/biome/budget clean.
 
 ### Execution — Group C (delivery-and-rollback) — 2026-07-21/22 — SHIP after fix loop 1/2
 
