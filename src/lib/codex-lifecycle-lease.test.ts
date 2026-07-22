@@ -247,6 +247,57 @@ describe('acquireLifecycleLease — real two-process race', () => {
   }, 20_000);
 });
 
+describe('acquireLifecycleLease — real two-process cross-kind races (Group D)', () => {
+  // The lifecycle lease is one file: setup, update, and uninstall serialise on it
+  // regardless of kind. These spawn REAL OS processes (not in-process simulation)
+  // for the D-owned pairs — setup+setup, setup+update, uninstall+setup — proving
+  // exactly one winner and a loser that reports the winner's holder kind.
+  async function raceTwoKinds(
+    genieHome: string,
+    kindA: string,
+    kindB: string,
+  ): Promise<Array<{ result: string; holderKind: string | null }>> {
+    const script = join(genieHome, `race-${kindA}-${kindB}.ts`);
+    const modulePath = join(import.meta.dir, 'codex-lifecycle-lease.ts');
+    writeFileSync(
+      script,
+      [
+        `import { acquireLifecycleLease } from ${JSON.stringify(modulePath)};`,
+        'const [genieHome, kind] = process.argv.slice(2);',
+        'const r = acquireLifecycleLease(kind, { genieHome });',
+        'process.stdout.write(JSON.stringify(r.ok ? { result: "WON", holderKind: kind } : { result: "BUSY", holderKind: r.holderKind }));',
+        'if (r.ok) { await new Promise((res) => setTimeout(res, 400)); }',
+      ].join('\n'),
+    );
+    const spawn = (kind: string) =>
+      Bun.spawn(['bun', 'run', script, genieHome, kind], { stdout: 'pipe', stderr: 'pipe', env: { ...process.env } });
+    const procs = [spawn(kindA), spawn(kindB)];
+    return Promise.all(
+      procs.map(async (proc) => {
+        const out = await new Response(proc.stdout).text();
+        await proc.exited;
+        return JSON.parse(out.trim()) as { result: string; holderKind: string | null };
+      }),
+    );
+  }
+
+  for (const [a, b] of [
+    ['setup-activation', 'setup-activation'],
+    ['setup-activation', 'update-delivery'],
+    ['uninstall', 'setup-activation'],
+  ] as const) {
+    test(`${a} + ${b}: exactly one winner, loser is codex-lifecycle-busy naming the holder`, async () => {
+      const outcomes = await raceTwoKinds(freshHome(), a, b);
+      const winners = outcomes.filter((o) => o.result === 'WON');
+      const losers = outcomes.filter((o) => o.result === 'BUSY');
+      expect(winners.length).toBe(1);
+      expect(losers.length).toBe(1);
+      // The loser names the winner's kind (or null on a same-directory rename race window).
+      expect([winners[0].holderKind, null]).toContain(losers[0].holderKind);
+    }, 20_000);
+  }
+});
+
 describe('fixture isolation', () => {
   test('all lease state stays under the fixture home', () => {
     const genieHome = freshHome();
