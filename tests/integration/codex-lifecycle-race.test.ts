@@ -17,11 +17,14 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { acquireLifecycleLease } from '../../src/lib/codex-lifecycle-lease.js';
 
 const LEASE_MODULE = join(import.meta.dir, '..', '..', 'src', 'lib', 'codex-lifecycle-lease.ts');
+const INSTALL_MODULE = join(import.meta.dir, '..', '..', 'src', 'genie-commands', 'install.ts');
 
 let home: string;
 let script: string;
+let installScript: string;
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'genie-lifecycle-race-'));
@@ -38,6 +41,33 @@ beforeEach(() => {
       'const result = acquireLifecycleLease(kind, { genieHome });',
       "if (result.ok) { process.stdout.write('WON:' + result.kind); await new Promise((r) => setTimeout(r, 500)); }",
       "else { process.stdout.write('BUSY:' + (result.holderKind ?? 'unknown')); }",
+      '',
+    ].join('\n'),
+  );
+  // A real `genie install` command path: GENIE_HOME is fixed BEFORE importing
+  // install.ts (it captures GENIE_HOME at module load) so the command's real
+  // default Codex-lifecycle-lease acquisition targets the fixture home. Every
+  // other seam is a noop, so if the lease is busy the command mutates nothing
+  // and projects the exit-2 codex-lifecycle-busy loser refusal.
+  installScript = join(home, 'install-cmd.ts');
+  writeFileSync(
+    installScript,
+    [
+      'process.env.GENIE_HOME = process.argv[2];',
+      `const mod = await import(${JSON.stringify(INSTALL_MODULE)});`,
+      'const noopLease = () => ({ path: process.argv[2] + "/.agent-sync.lock", release: () => {} });',
+      'mod.installCommand(',
+      "  { integrations: 'codex' },",
+      '  () => undefined,', // runV4Cleanup
+      '  () => undefined,', // normalizeLayout
+      '  () => undefined,', // runSync
+      '  () => [],', // runIntegrations (mutation seam — must never run when busy)
+      '  noopLease,', // agent-sync lease (free)
+      '  undefined,', // acquireCodexLease -> real default acquisition
+      '  () => undefined,', // writeConsent
+      '  () => null,', // classifyCodexInstall (no codex CLI probe)
+      ');',
+      "process.stdout.write(process.exitCode === 2 ? 'BUSY' : 'WON');",
       '',
     ].join('\n'),
   );
@@ -73,6 +103,29 @@ describe('cross-command Codex lifecycle races produce exactly one winner', () =>
     expect(losers).toHaveLength(1);
     // The loser names a valid held-kind (the winner's kind), never a corruption.
     expect(losers[0]).toMatch(/BUSY:(update-delivery|install-converge)/);
+  }, 20_000);
+
+  test('update (held lease) + REAL install command: install refuses at command level with exit 2 codex-lifecycle-busy, zero mutation', async () => {
+    // A concurrent `genie update` holds the Codex lifecycle lease (update-delivery).
+    const held = acquireLifecycleLease('update-delivery', { genieHome: home });
+    expect(held.ok).toBe(true);
+    try {
+      const proc = Bun.spawn(['bun', 'run', installScript, home], {
+        stdout: 'pipe',
+        stderr: 'pipe',
+        env: { ...process.env, GENIE_HOME: home },
+      });
+      const out = (await new Response(proc.stdout).text()).trim();
+      const exitCode = await proc.exited;
+      // The real install command projects the exit-2 loser refusal and mutates nothing.
+      expect(exitCode).toBe(2);
+      expect(out).toContain('codex-lifecycle-busy');
+      expect(out).toContain('update-delivery');
+      expect(out).toContain('"deliveryComplete":false');
+      expect(out.endsWith('BUSY')).toBe(true);
+    } finally {
+      if (held.ok) held.release();
+    }
   }, 20_000);
 
   test('update + rollback: exactly one winner, loser is codex-lifecycle-busy', async () => {
