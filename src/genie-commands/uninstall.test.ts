@@ -2442,3 +2442,159 @@ describe('atomic external uninstall captures', () => {
     expect(readFileSync(changedPath, 'utf8')).toBe('foreign-preexisting-change\n');
   });
 });
+
+// ============================================================================
+// Interactive uninstallCommand — warning, lifecycle-busy loser, isolation (D6/D8/D9)
+// ============================================================================
+
+import { readFileSync as readFileSyncForSource } from 'node:fs';
+import { type UninstallDeps, uninstallCommand } from './uninstall.js';
+
+describe('uninstallCommand — warning, lifecycle lease, isolation (Group D)', () => {
+  let root: string;
+  let priorEnv: Record<string, string | undefined>;
+  const ENV_KEYS = ['HOME', 'GENIE_HOME', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'HERMES_HOME'] as const;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'uninstall-cmd-'));
+    priorEnv = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
+    for (const key of ENV_KEYS) {
+      const dir = join(root, key.toLowerCase());
+      mkdirSync(dir, { recursive: true });
+      process.env[key] = dir;
+    }
+    // GENIE_HOME must contain some removable state so the plan reaches the prompt.
+    writeFileSync(join(process.env.GENIE_HOME as string, 'config.json'), '{}\n', 'utf8');
+  });
+
+  afterEach(() => {
+    for (const key of ENV_KEYS) {
+      const value = priorEnv[key];
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  async function capture(fn: () => Promise<void>): Promise<{ out: string; err: string; exitCode: number }> {
+    const priorExit = process.exitCode;
+    process.exitCode = 0;
+    let out = '';
+    let err = '';
+    // The source mixes console.log/console.error (Bun binds these to the original
+    // writer) with direct process.stdout.write (the machine trailer). Spy on both.
+    const realWrite = process.stdout.write.bind(process.stdout);
+    const logSpy = spyOn(console, 'log').mockImplementation((...a: unknown[]) => {
+      out += `${a.join(' ')}\n`;
+    });
+    const errSpy = spyOn(console, 'error').mockImplementation((...a: unknown[]) => {
+      err += `${a.join(' ')}\n`;
+    });
+    process.stdout.write = ((c: string) => {
+      out += c;
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      await fn();
+      return { out, err, exitCode: process.exitCode ?? 0 };
+    } finally {
+      process.stdout.write = realWrite;
+      logSpy.mockRestore();
+      errSpy.mockRestore();
+      process.exitCode = priorExit ?? 0;
+    }
+  }
+
+  test('prints the task-breakage warning BEFORE confirmation; a decline mutates nothing', async () => {
+    const { out } = await capture(() =>
+      uninstallCommand(
+        {},
+        {
+          // A sentinel emitted at prompt time proves the warning already printed.
+          confirm: (async () => {
+            process.stdout.write('<<CONFIRM-INVOKED>>\n');
+            return false;
+          }) as unknown as UninstallDeps['confirm'],
+          acquireCodexLifecycleLease: () => {
+            throw new Error('lease must not be acquired on a declined uninstall');
+          },
+        },
+      ),
+    );
+    expect(out).toContain('can break current or resumable tasks');
+    expect(out).toContain('Uninstall cancelled.');
+    // The warning was emitted before the confirmation prompt was invoked.
+    expect(out.indexOf('can break current or resumable tasks')).toBeLessThan(out.indexOf('<<CONFIRM-INVOKED>>'));
+    // Zero mutation: the GENIE_HOME artifact survives a decline.
+    expect(existsSync(join(process.env.GENIE_HOME as string, 'config.json'))).toBe(true);
+  });
+
+  test('a busy Codex lifecycle lease is a loser: exit 2, trailer, zero removal', async () => {
+    const { out, exitCode } = await capture(() =>
+      uninstallCommand(
+        {},
+        {
+          confirm: (async () => true) as unknown as UninstallDeps['confirm'],
+          acquireCodexLifecycleLease: () => ({
+            ok: false,
+            reason: 'codex-lifecycle-busy',
+            holderKind: 'setup-activation',
+            detail: 'held by setup-activation (pid 4242)',
+          }),
+        },
+      ),
+    );
+    expect(exitCode).toBe(2);
+    // The stable single-line trailer is present and machine-parseable.
+    const trailerLine = out.split('\n').find((l) => l.includes('"code":"codex-lifecycle-busy"'));
+    expect(trailerLine).toBeDefined();
+    const trailer = JSON.parse(trailerLine as string) as {
+      schemaVersion: number;
+      code: string;
+      deliveryComplete: boolean;
+      retry: boolean;
+      nextAction: string;
+    };
+    expect(trailer).toEqual({
+      schemaVersion: 1,
+      code: 'codex-lifecycle-busy',
+      deliveryComplete: false,
+      retry: true,
+      nextAction: 'retry after the current setup-activation lifecycle command releases the lease',
+    });
+    // Zero mutation: executeConfirmedUninstall never ran, so GENIE_HOME is intact.
+    expect(existsSync(join(process.env.GENIE_HOME as string, 'config.json'))).toBe(true);
+  });
+
+  test('uninstall never mints or accepts an activation assertion/permit', () => {
+    const source = readFileSyncForSource(join(import.meta.dir, 'uninstall.ts'), 'utf8');
+    for (const forbidden of [
+      'requestRetirementAssertion',
+      'authorizeCodexActivation',
+      'executeCodexActivation',
+      'beginActivation',
+      'mintActivationPermit',
+    ]) {
+      expect(source.includes(forbidden)).toBe(false);
+    }
+  });
+
+  test('uninstall is not callable from update/install/setup/doctor/init/post-delivery source', () => {
+    const dir = join(import.meta.dir);
+    const termDir = join(import.meta.dir, '..', 'term-commands');
+    const callers: Array<[string, string]> = [
+      [dir, 'update.ts'],
+      [dir, 'install.ts'],
+      [dir, 'setup.ts'],
+      [dir, 'doctor.ts'],
+      [dir, 'update-integrations.ts'],
+      [termDir, 'init.ts'],
+    ];
+    for (const [base, file] of callers) {
+      const source = readFileSyncForSource(join(base, file), 'utf8');
+      for (const forbidden of ['uninstallCommand', 'executeConfirmedUninstall', 'performUninstall']) {
+        expect(source.includes(forbidden)).toBe(false);
+      }
+    }
+  });
+});

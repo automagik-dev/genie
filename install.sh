@@ -781,11 +781,23 @@ handoff_to_subcommand() {
   log "handing off to: genie install (post-install finishing)"
   [[ -n "$LIFECYCLE_LOCK" && -n "$LIFECYCLE_OWNER_RECORD" ]] ||
     die "lifecycle lease was lost before the post-install finisher" 1
-  if ! GENIE_LIFECYCLE_LEASE_PATH="$LIFECYCLE_LOCK" \
+  local finisher_status=0
+  GENIE_LIFECYCLE_LEASE_PATH="$LIFECYCLE_LOCK" \
     GENIE_LIFECYCLE_LEASE_OWNER="$LIFECYCLE_OWNER_RECORD" \
-    "$LOCAL_BIN/genie" install "$@"; then
-    die "genie install finishing failed; installation remains incomplete and retryable" 1
+    "$LOCAL_BIN/genie" install "$@" || finisher_status=$?
+  # Exit 2 from the finisher is delivered-but-action-required (installed
+  # generation N ≠ delivered T): the signed binary/payload is installed, but the
+  # Codex plugin generation was NOT activated. The finisher already printed the
+  # single machine-readable result trailer over inherited stdout. Propagate it as
+  # exit 2 with no all-green footer — never as a failure (die 1). Exit 2 is
+  # disambiguated from an unsupported-platform exit 2 by that trailer
+  # (deliveryComplete:true), per the lifecycle exit-matrix contract.
+  if [[ "$finisher_status" -eq 2 ]]; then
+    DELIVERY_ACTION_REQUIRED=1
+    return 0
   fi
+  [[ "$finisher_status" -eq 0 ]] ||
+    die "genie install finishing failed; installation remains incomplete and retryable" 1
 }
 
 parse_version_token() {
@@ -837,6 +849,14 @@ main() {
   ensure_path_wired
   handoff_to_subcommand "$@"
   verify_installation "$version"
+  if [[ "${DELIVERY_ACTION_REQUIRED:-0}" -eq 1 ]]; then
+    # Delivered/action-required: the binary is installed and verified, but the
+    # Codex plugin generation is deferred to explicit activation. NO all-green
+    # "installed" footer — the finisher's result trailer is the machine signal.
+    warn "genie v${version} delivered; Codex activation deferred — retire tasks, then run: genie setup --codex → /hooks → new task"
+    release_lifecycle_lock
+    exit 2
+  fi
   log "genie v${version} installed"
   release_lifecycle_lock
 }

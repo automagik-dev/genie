@@ -1798,6 +1798,15 @@ export interface IntegrationResult {
   preservedCollisions?: number;
   /** Count of preserved well-formed-but-unrecognized fallback markers (distinct from a personal collision). */
   preservedUnrecognized?: number;
+  /**
+   * Group C delivery signal: the target was delivered but the plugin generation
+   * was NOT activated (installed N ≠ delivered T), so activation is deferred to
+   * external `genie setup --codex`. Callers propagate this as exit 2
+   * action-required with `deliveryComplete:true`, never as a failure.
+   */
+  actionRequired?: boolean;
+  /** Group C: the signed binary/payload is delivered (true even on an action-required deferral). */
+  deliveryComplete?: boolean;
 }
 
 export interface InstallIntegrationsOptions {

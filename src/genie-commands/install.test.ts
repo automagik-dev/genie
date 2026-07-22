@@ -8,7 +8,7 @@
  * cleanup/normalize/sync from a test would target the actual home directory.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import {
   chmodSync,
@@ -48,6 +48,14 @@ function makeCleanupSpy(): { runner: typeof cleanupV4; calls: () => number } {
 }
 
 const noopLease = () => ({ path: '/tmp/test-lifecycle.lock', release: () => undefined });
+const noopCodexLease = () =>
+  ({
+    ok: true,
+    operationId: '0'.repeat(32),
+    kind: 'install-converge',
+    assertOperation: () => undefined,
+    release: () => undefined,
+  }) as const;
 const noopConsent = () => undefined;
 
 describe('standalone install.sh lifecycle lease', () => {
@@ -397,6 +405,7 @@ describe('installCommand', () => {
       },
       () => [],
       noopLease,
+      noopCodexLease,
       noopConsent,
     );
     expect(spy.calls()).toBe(1);
@@ -420,6 +429,7 @@ describe('installCommand', () => {
       },
       () => [],
       noopLease,
+      noopCodexLease,
       noopConsent,
     );
     expect(spy.calls()).toBe(0);
@@ -439,6 +449,7 @@ describe('installCommand', () => {
         return [];
       },
       noopLease,
+      noopCodexLease,
       noopConsent,
     );
     installCommand(
@@ -451,6 +462,7 @@ describe('installCommand', () => {
         return [];
       },
       noopLease,
+      noopCodexLease,
       noopConsent,
     );
     expect(selection).toBe('none');
@@ -466,6 +478,7 @@ describe('installCommand', () => {
         (selection) => observed.push(selection),
         () => [],
         noopLease,
+        noopCodexLease,
         noopConsent,
       );
     // codex converges through runIntegrations only — agent-sync never writes
@@ -492,6 +505,7 @@ describe('installCommand', () => {
       (selection) => observed.push(selection),
       () => [{ runtime: 'codex' as const, ok: false, detail: 'plugin-incapable Codex' }],
       noopLease,
+      noopCodexLease,
       noopConsent,
     );
     expect(observed).toEqual([]);
@@ -511,6 +525,7 @@ describe('installCommand', () => {
         },
         () => [{ runtime: 'codex' as const, ok: false, detail: 'plugin-incapable Codex' }],
         noopLease,
+        noopCodexLease,
         noopConsent,
       );
       const output = lines.join('\n');
@@ -531,6 +546,7 @@ describe('installCommand', () => {
         () => undefined,
         failing,
         noopLease,
+        noopCodexLease,
         noopConsent,
       ),
     ).not.toThrow();
@@ -542,6 +558,7 @@ describe('installCommand', () => {
         () => {},
         failing,
         noopLease,
+        noopCodexLease,
         noopConsent,
       ),
     ).toThrow('Requested integration failed');
@@ -566,6 +583,7 @@ describe('installCommand', () => {
           },
         ],
         noopLease,
+        noopCodexLease,
         noopConsent,
       );
     try {
@@ -598,6 +616,7 @@ describe('installCommand', () => {
           return [];
         },
         noopLease,
+        noopCodexLease,
         noopConsent,
       ),
     ).toThrow('Invalid --integrations value: codxe');
@@ -1064,5 +1083,169 @@ describe('transactional auxiliary-tree convergence', () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe('installCommand — Group C install gate (item 2)', () => {
+  let logs: string[];
+  let logSpy: ReturnType<typeof spyOn>;
+  const savedExit = process.exitCode;
+
+  beforeEach(() => {
+    process.exitCode = 0;
+    logs = [];
+    logSpy = spyOn(console, 'log').mockImplementation((...a: unknown[]) => {
+      logs.push(a.map(String).join(' '));
+    });
+  });
+  afterEach(() => {
+    logSpy.mockRestore();
+    process.exitCode = savedExit;
+  });
+
+  test('a pending Codex generation (N≠T) is deferred: role agents only, exit 2 + trailer, no plugin convergence for codex', () => {
+    const runScopes: Array<string | undefined> = [];
+    installCommand(
+      { integrations: 'all' },
+      makeCleanupSpy().runner,
+      () => undefined,
+      () => undefined,
+      (options) => {
+        runScopes.push(options?.selection);
+        // runIntegrations is called with the claude-only scope; it converges claude, never codex.
+        return [{ runtime: 'claude', ok: true, detail: 'plugin refreshed' }];
+      },
+      noopLease,
+      noopCodexLease,
+      noopConsent,
+      // Force the pending classification (installed N=5.260710.2 ≠ delivered T).
+      () => ({ installedVersion: '5.260710.2' }),
+    );
+    // runIntegrations was scoped to claude — codex is NEVER plugin-converged here.
+    expect(runScopes).toEqual(['claude']);
+    // Exit 2, one result trailer, and the deferral names N + the retire recovery.
+    expect(process.exitCode).toBe(2);
+    expect(logs.filter((l) => l.includes('"deliveryComplete":true'))).toHaveLength(1);
+    const codexLine = logs.find((l) => l.includes('codex:'));
+    expect(codexLine).toContain('Codex plugin left at v5.260710.2 (no cache advance)');
+    expect(codexLine).toContain('retire tasks → genie setup --codex → /hooks → new task');
+  });
+
+  test('a fresh/absent or same-version install (classifier null) converges the full selection normally, exit 0', () => {
+    const runScopes: Array<string | undefined> = [];
+    installCommand(
+      { integrations: 'all' },
+      makeCleanupSpy().runner,
+      () => undefined,
+      () => undefined,
+      (options) => {
+        runScopes.push(options?.selection);
+        return [
+          { runtime: 'codex', ok: true, detail: 'plugin/hooks refreshed' },
+          { runtime: 'claude', ok: true, detail: 'plugin refreshed' },
+        ];
+      },
+      noopLease,
+      noopCodexLease,
+      noopConsent,
+      () => null, // classifier: not pending → normal convergence
+    );
+    // Full selection reaches runIntegrations; no deferral, no exit-2 trailer.
+    expect(runScopes).toEqual(['all']);
+    expect(process.exitCode).toBe(0);
+    expect(logs.join('\n')).not.toContain('deliveryComplete');
+  });
+
+  test('a busy Codex lifecycle lease projects exit 2 codex-lifecycle-busy / deliveryComplete:false with ZERO plugin convergence (AC8 loser)', () => {
+    let integrationsRan = false;
+    let syncRan = false;
+    let leaseAcquired = false;
+    installCommand(
+      { integrations: 'auto' },
+      makeCleanupSpy().runner,
+      () => undefined,
+      () => {
+        syncRan = true;
+      },
+      () => {
+        integrationsRan = true;
+        return [];
+      },
+      noopLease,
+      // Busy codex lifecycle lease: another lifecycle command (update-delivery) holds it.
+      () => {
+        leaseAcquired = true;
+        return {
+          ok: false,
+          reason: 'codex-lifecycle-busy',
+          holderKind: 'update-delivery',
+          detail: 'held by update-delivery (pid 4242)',
+        };
+      },
+      noopConsent,
+      // Classifier must not even be consulted for a mutation decision after a busy refusal.
+      () => null,
+    );
+    expect(leaseAcquired).toBe(true);
+    // Zero mutation: neither plugin convergence nor agent-sync ran after the refusal.
+    expect(integrationsRan).toBe(false);
+    expect(syncRan).toBe(false);
+    // Exit 2 with the codex-lifecycle-busy trailer (deliveryComplete:false, retry:true), naming the holder.
+    expect(process.exitCode).toBe(2);
+    const output = logs.join('\n');
+    expect(output).toContain('codex-lifecycle-busy');
+    expect(output).toContain('update-delivery');
+    const trailer = logs.find((l) => l.includes('"code":"codex-lifecycle-busy"'));
+    expect(trailer).toBeDefined();
+    expect(JSON.parse(trailer as string)).toMatchObject({ deliveryComplete: false, retry: true });
+  });
+
+  test('a claude/none install never acquires the Codex lifecycle lease (no spurious cross-command contention)', () => {
+    let leaseTouched = false;
+    const acquire = () => {
+      leaseTouched = true;
+      return noopCodexLease();
+    };
+    for (const integrations of ['claude', 'none'] as const) {
+      leaseTouched = false;
+      installCommand(
+        { integrations },
+        makeCleanupSpy().runner,
+        () => undefined,
+        () => undefined,
+        () => [],
+        noopLease,
+        acquire,
+        noopConsent,
+        () => null,
+      );
+      expect(leaseTouched).toBe(false);
+    }
+  });
+
+  test('a held Codex lifecycle lease is acquired for an in-scope install and released on the terminal path', () => {
+    let released = false;
+    const acquire = () => ({
+      ok: true as const,
+      operationId: 'a'.repeat(32),
+      kind: 'install-converge' as const,
+      assertOperation: () => undefined,
+      release: () => {
+        released = true;
+      },
+    });
+    installCommand(
+      { integrations: 'codex' },
+      makeCleanupSpy().runner,
+      () => undefined,
+      () => undefined,
+      () => [{ runtime: 'codex' as const, ok: true, detail: 'plugin/hooks refreshed' }],
+      noopLease,
+      acquire,
+      noopConsent,
+      () => null,
+    );
+    expect(process.exitCode).toBe(0);
+    expect(released).toBe(true);
   });
 });

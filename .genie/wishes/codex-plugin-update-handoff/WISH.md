@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | IN_PROGRESS — criterion classification 2026-07-21: Groups A+B execution-SHIP-reviewed on the wish branch (tip `ac264911`); Groups C–E not started; NONE of the activation protocol is on dev. Dev independently shipped the delivery-adjacent plugin-only layer (B1 `3b4faa3b`, B2 `6f423869`). Plan gate SHIP 2026-07-12 at fix loop 1/2 (reviewed digest `4c71ab68…`) |
+| **Status** | EXECUTED — final gate **SHIP** 2026-07-22 (Fable final-gate, independent full-suite rerun 2396/ruled-2; cache-advance invariant swept to exactly five gated entries; lifecycle traced end-to-end; no appeal). A-E merge gate OPEN — PR to dev created. WISH→SHIPPED + stable promotion remain gated on Felipe's live homolog dogfood ritual (structural evidence validator) incl. his ratified veto on Fork A (setup is activation-only). Dev independently shipped the delivery-adjacent plugin-only layer (B1 `3b4faa3b`, B2 `6f423869`); NONE of the activation protocol is on dev. Merge gate holds: A–E must each independently SHIP before the PR merges to dev. Plan gate SHIP 2026-07-12 at fix loop 1/2 (reviewed digest `4c71ab68…`) |
 | **Slug** | `codex-plugin-update-handoff` |
 | **Date** | 2026-07-12 |
 | **Author** | Felipe + Codex brainstorm session |
@@ -957,6 +957,95 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 - **Validation evidence:** wishes lint OK (41 files, 0 broken links); digest exact match.
 - Zero CRITICAL/HIGH gaps remain; all three original loop-2/2 HIGH gaps and fresh-gate HIGH-1 are
   closed with mechanically checkable, singly-owned requirements. Plan is ready for `/work`.
+
+### Final gate — whole wish (A-E) — 2026-07-22 — SHIP
+
+Independent Fable `final-gate` @ `ad26cb38`, after all five ordinary reviews. Evidence: (1) seam
+coherence traced end-to-end in code (update→exit-2→retire→setup-activate→doctor→rollback), no
+cross-group state disagreement; (2) cache-advance invariant swept exhaustively — every
+plugin-mutation path resolves to exactly five gated entries (B executor, update child via shared
+gate, leased install, leased uninstall, binary-only rollback), no ungated caller incl. the
+dev-inherited convergeCodexPluginOnly internal call; (3) five ratified decisions verified across
+group boundaries verbatim; (4) both ruled test fails independently re-run + root-caused as
+pre-existing and non-load-bearing (race flake = lease-file read-during-write, degrades holder
+NAME only); (5) residue honesty confirmed — two seam notes documented (Resolution-Y child lease
+extent; install pre-gate writes), both LOW within the ratified boundary; (6) merge-gate language
+satisfied; post-release dogfood sequencing explicitly supported by the wish text. Condition
+riding the verdict: Felipe's live-QA veto on Fork A must be surfaced at the ritual.
+
+### Execution — Group E (release-readiness) — 2026-07-22 — SHIP loop 0
+
+Engineer eng-E-release-readiness (opus), 4 commits `2ffbc915..c3edc1cf` + authorized fix
+`749a1e8f`. **Found a real shipped-binary defect mid-group:** the capability probe threw on
+`bun --compile` binaries (argv[1] = virtual `/$bunfs` path) — the rollback capability floor would
+have refused EVERY rollback on shipped binaries; invisible to all interpreted-mode tests, caught
+only by E's extracted-tarball verifier. Fixed by a separate fixer (execPath for compiled, argv[1]
+preserved for sidecar-binding fidelity, three-mode tests, real compiled-binary proof:
+probe binarySha256 == shasum of the on-disk binary). Delivered: extracted-root-only payload
+verifier (probe unavailable-vs-lying split; 16 field-by-field drift tests), plan-gate-hardened
+live-dogfood evidence validator (17 per-field rejection tests), H3 command pinned across all
+gates + verifier wired into tarball builds, operator contract docs (exit matrix / trailer /
+lease / homolog / N-non-resume) with a drift-failing release-docs gate. All 4 platform tarballs
+built + independently verified exit 0 (darwin probe ok, version-matched). Independent review
+(rev-E, opus): **SHIP loop 0**, all ACs met; reviewer independently extracted + verified two
+tarballs and re-proved the probe fix. 2 non-blocking LOWs (diagnostic-path polish + stale
+comment) captured on the roadmap. Full check 2396-2397 pass / ruled baseline fails only.
+
+### Execution — Group D (lifecycle-surfaces) — 2026-07-22 — SHIP loop 0
+
+Engineer eng-D-lifecycle-surfaces (opus), 8 commits `da7359ae..5f51f785`. **Fork A ratified by
+orchestrator** (setup = pure activation surface: observe → A consent → A authorize → B executor;
+marketplace/delivery stays with update/install) under four conditions, all met: actionable
+refusal on undelivered payload, UX change documented (exit matrix + codex-integration-map.md +
+this note — **Felipe veto point at final gate/live QA:** `genie setup --codex` no longer
+performs from-scratch install), D-side sync-TTY helper (fail-closed /dev/tty read), and
+prove-not-accommodate re-specs (~19 setup tests). Delivered: doctor `integrationSummary`
+(add-only checks[], one bounded observation, pending exits 2 with ok:true), init fallback gated
+on fresh verified-current, uninstall task-breakage warning + `uninstall` lease (one additive
+A-file touch, reviewer-accepted) + call-graph isolation, real two-process cross-kind lease races
+(setup+setup, setup+update, uninstall+setup). Independent review (rev-D, opus): **SHIP loop 0**,
+all ACs met; PTY command-harness ruled NOT required (lease-primitive races + in-process busy
+translation close the seam by source); D3 single-observation interpretation accepted as honoring
+the stronger backward-compat constraint. D-scoped suites 262/0; typecheck/biome/budget clean.
+
+### Execution — Group C (delivery-and-rollback) — 2026-07-21/22 — SHIP after fix loop 1/2
+
+Executed post dev-merge `79400467` (union sync; A+B 118 green throughout). Engineer
+eng-C-delivery-rollback (opus), 11 commits `4c1029cd..2c2dceec`; incremental green-tree
+discipline across 5 resumed sessions. Seam: **Resolution Y** (orchestrator-ratified) — one shared
+`classifyCodexDelivery` gate; parent publishes attested facts under `codex-lifecycle-lease`
+('update-delivery', post-verify/pre-swap, released in finally); child converges read-only
+agents-only on N≠T. Closes the 2026-07-11 incident class at both vectors (update `c07ba6c2`,
+install `7c7d98ce`+`2c2dceec`). Independent review (rev-C, opus): loop 0 FIX-FIRST — 1 HIGH
+(install never acquired the codex lease; AC8 proven only at primitive level) → fixed `2c2dceec`
+(install-converge lease, busy → exit 2 `codex-lifecycle-busy` `deliveryComplete:false`, zero
+Codex-cache mutation, real command-path race arm) → loop 1 **SHIP**, all 8 ACs met for real
+commands. Suite 2024 pass / 1 known macOS ui-bridge `ss` fail; typecheck/biome/complexity/knip
+clean. LOW follow-ups captured on the roadmap (lease-primitive TOCTOU hardening — A-owned;
+gate-above-writeConsent ordering). smart-install.js confirmed a retired non-issue.
+
+### Execution — Group D (lifecycle-surfaces) — 2026-07-22 — in progress (Fork A ratified)
+
+Engineer eng-D-lifecycle-surfaces (opus), incremental green-tree commits `da7359ae..`.
+Landed: doctor `--json` `integrationSummary` from one bounded observer with 0/1/2 exit and
+human stdout/stderr split (D3/D4); init project-fallback reconcile gated on a fresh
+`verified-current` observation (D5); uninstall task-breakage warning + codex lifecycle lease
+loser semantics + cross-command isolation (D6, uninstall D8/D9); the `uninstall` lifecycle-lease
+kind added additively to Group A's enum (the ratified contract names uninstall as a lease
+holder; flagged for reviewer); and the setup activation rewrite (D1/D2/D8/D9).
+
+**Ratified UX change (Fork A, team-lead-approved 2026-07-22).** `genie setup --codex` is now
+**activation-only**: it retires the active plugin generation and activates the delivered one
+through A's deep consent API (the sole retirement-assertion source) + B's permit-gated
+`executeCodexActivation` (which self-acquires the `setup-activation` lease). It no longer runs
+the legacy cache-advancing `installRuntimeIntegrations` convergence — **delivery of the plugin
+payload, marketplace registration, and role agents belongs to `genie update` / `genie install`**.
+On a host with nothing delivered, setup emits an actionable refusal pointing at `genie update`
+rather than dead-ending (never installs from a fresh machine without prior delivery). `--quick`,
+CI, `CODEX_THREAD_ID`, non-TTY, piped, and decline/EOF are unconditional activation refusals
+(exit 2, A-owned trailer, zero mutation). The per-command 0/1/2 exit matrix and result trailer
+are documented in `plugins/genie/references/codex-integration-map.md`. This change is surfaced
+to Felipe for final-gate veto; if vetoed it becomes a follow-up wish, not a re-revert.
 
 ### Execution — Group A (activation-protocol-core) — 2026-07-12
 

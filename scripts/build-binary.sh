@@ -215,6 +215,11 @@ bun "${REPO_ROOT}/scripts/fresh-install-smoke.ts" \
   --skills-dir "${VERIFY_ROOT}/skills" \
   --plugin-root "${VERIFY_ROOT}/plugins/genie"
 bun "${REPO_ROOT}/scripts/release-payload-version.ts" --verify "${VERIFY_ROOT}" "${VERSION}"
+# Independent extracted-payload activation contract: inventory/version/manifest
+# binding, physical plugin parity, exact platform H3 command, bounded H3 fixture,
+# and (natively) the capability probe. Fails the build on any cross-artifact drift.
+bun "${REPO_ROOT}/scripts/verify-codex-activation-payload.ts" \
+  --root "${VERIFY_ROOT}" --platform "${PLATFORM}" --version "${VERSION}"
 rm -rf "${VERIFY_ROOT}"
 trap - EXIT
 

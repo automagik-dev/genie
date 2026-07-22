@@ -29,8 +29,11 @@ import {
   acquireLifecycleLease,
   runAgentSync,
 } from '../lib/agent-sync.js';
-import { getCodexHome } from '../lib/codex-config.js';
-import { type CodexPluginProbe, type CodexPluginProbeDeps, probeCodexGeniePlugin } from '../lib/codex-project-mcp.js';
+import { observeCodexActivation, openCodexActivationStore } from '../lib/codex-activation-executor.js';
+import {
+  type HeldLifecycleLease,
+  acquireLifecycleLease as acquireCodexLifecycleLease,
+} from '../lib/codex-lifecycle-lease.js';
 import { contractPath, genieConfigExists, getGenieConfigPath, saveGenieConfig } from '../lib/genie-config.js';
 import {
   type InstallStagingDirectoryGuard,
@@ -45,22 +48,19 @@ import {
 import { inspectPhysicalPath } from '../lib/install-transaction.js';
 import {
   type CodexAgentInstallResult,
-  type CodexHealthProof,
-  type CommandRunner,
   type IntegrationResult,
   type IntegrationSelection,
-  type ProveCodexPluginHealthOptions,
-  type RuntimeExecutableResolver,
-  type RuntimeName,
   installCodexAgents,
-  parseClaudePluginState,
-  parseCodexPluginState,
-  proveCodexPluginHealth,
   readIntegrationConsent,
   resolveBundleRoot,
   resolveRuntimeExecutable,
-  runBoundedIntegrationCommand,
 } from '../lib/runtime-integrations.js';
+import {
+  CODEX_ACTIVATION_PROTOCOL,
+  printUpdateCapabilities,
+  publishBackupCapabilitySidecar,
+  runBackupCapabilityProbe,
+} from '../lib/update-capabilities.js';
 import { VERSION } from '../lib/version.js';
 import { GenieConfigSchema } from '../types/genie-config.js';
 import {
@@ -69,6 +69,13 @@ import {
   convergeAuxiliaryTree,
   fingerprintAuxiliaryTree,
 } from './auxiliary-trees.js';
+import {
+  CODEX_DELIVERY_RESULT_TRAILER,
+  CODEX_LIFECYCLE_BUSY_TRAILER,
+  CodexLifecycleBusyError,
+  publishCodexDelivery,
+} from './codex-delivery.js';
+import { performProtocolSafeRollback } from './codex-rollback.js';
 import { cleanupV4 } from './legacy-v4.js';
 import { type RefreshUpdatePluginsOptions, refreshUpdatePlugins } from './update-integrations.js';
 const GENIE_HOME = process.env.GENIE_HOME || join(homedir(), '.genie');
@@ -810,10 +817,6 @@ export function rollbackBinaryAt(
   );
 }
 
-export function rollbackBinary(): { restored: string; from: string } {
-  return rollbackBinaryAt(GENIE_BIN);
-}
-
 // ============================================================================
 // Verify probe — zero-daemon post-update check. v5 has no daemon to poll; the
 // atomic binary swap IS the update, so "verified" means the freshly-installed
@@ -1470,6 +1473,14 @@ export interface UpdateCommandOptions {
   /** Hidden child protocol used only after a verified binary delivery. A
    *  pre-contract binary must reject this argv flag before doing any work. */
   postDeliveryConverge?: boolean;
+  /** Hidden read-only capability probe. Emits exactly one schema-valid JSON
+   *  object describing this binary's activation-protocol floor and exits 0. A
+   *  pre-contract binary rejects the unknown argv flag at commander parse time,
+   *  which is how a rollback distinguishes a protocol-1+ backup. */
+  printUpdateCapabilities?: boolean;
+  /** Companion `--json` flag for `--print-update-capabilities`; the probe output
+   *  is always JSON, so this only pins the contract explicit. */
+  json?: boolean;
 }
 
 export type UpdateExecutionMode = 'normal' | 'rollback' | 'sync-only' | 'post-delivery-converge';
@@ -1548,9 +1559,29 @@ function applyDowngradeGuard(
   return false;
 }
 
+/**
+ * Map a convergence outcome to the process exit code (deliverable 3):
+ *   - any failed integration  → exit 1 (retry)
+ *   - else any action-required (delivered, activation deferred) → exit 2 with the
+ *     result trailer and NO all-green footer
+ *   - else success (exit 0), caller prints its own success line.
+ * `emitTrailer` is false on the fresh-binary parent, whose child already printed
+ * the trailer over inherited stdio — the parent only mirrors the exit code.
+ */
+export function applyConvergenceExitSignal(convergence: ManualUpdateConvergenceResult, emitTrailer = true): void {
+  if (convergence.integrations.some((result) => !result.ok)) {
+    process.exitCode = 1;
+    return;
+  }
+  if (convergence.integrations.some((result) => result.actionRequired === true)) {
+    process.exitCode = 2;
+    if (emitTrailer) log(CODEX_DELIVERY_RESULT_TRAILER);
+  }
+}
+
 function runTrackedManualUpdateConvergence(expectedVersion: string): void {
   const convergence = runManualUpdateConvergence({ expectedVersion });
-  if (convergence.integrations.some((result) => !result.ok)) process.exitCode = 1;
+  applyConvergenceExitSignal(convergence);
 }
 
 function resolveUpdatePlatformOrExit(): string {
@@ -1592,7 +1623,9 @@ export interface FreshBinaryConvergenceOptions {
  * argv-only protocol that old binaries reject at parse time. The parent stays
  * the sole lease owner while the child performs integration convergence.
  */
-export function runFreshBinaryPostDeliveryConvergence(options: FreshBinaryConvergenceOptions): void {
+export function runFreshBinaryPostDeliveryConvergence(
+  options: FreshBinaryConvergenceOptions,
+): 'converged' | 'action-required' {
   const binaryPath = options.binaryPath ?? join(GENIE_BIN, 'genie');
   let owner: string;
   try {
@@ -1615,67 +1648,25 @@ export function runFreshBinaryPostDeliveryConvergence(options: FreshBinaryConver
     });
   try {
     run(binaryPath, ['update', '--post-delivery-converge'], environment);
+    return 'converged';
   } catch (cause) {
+    // Exit 2 from the child is delivered-but-action-required (installed N ≠
+    // delivered T), NOT a convergence failure. The child already printed its
+    // result trailer over inherited stdio; the parent only mirrors the code.
+    if (childExitStatus(cause) === 2) return 'action-required';
     throw new Error(
       `fresh Genie integration convergence failed: ${errMsg(cause)}. The verified CLI update is installed, but its integrations are not converged. Close all Codex tasks first. Then, from an external terminal, run \`genie update\` (or \`genie setup --codex\`), review \`/hooks\`, and start a new Codex task.`,
     );
   }
 }
 
-function selectedLegacySyncRuntimes(selection: IntegrationSelection): RuntimeName[] {
-  if (selection === 'none') return [];
-  if (selection === 'codex' || selection === 'claude') return [selection];
-  return ['codex', 'claude'];
-}
-
-export interface LegacySyncOnlyAdvisoryOptions {
-  selection: IntegrationSelection;
-  expectedVersion: string;
-  runner?: CommandRunner;
-  resolveExecutable?: RuntimeExecutableResolver;
-  cwd?: string;
-}
-
-function legacySyncRuntimeDrift(
-  runtime: RuntimeName,
-  options: LegacySyncOnlyAdvisoryOptions,
-  cwd: string,
-  runner: CommandRunner,
-): string | null {
-  let executable: string | null;
-  try {
-    executable = resolveRuntimeExecutable(runtime, cwd, options.resolveExecutable);
-  } catch {
-    return null;
+/** The child process exit code surfaced by `execFileSync` (or an injected runner) on non-zero exit. */
+function childExitStatus(cause: unknown): number | null {
+  if (typeof cause === 'object' && cause !== null && 'status' in cause) {
+    const status = (cause as { status?: unknown }).status;
+    return typeof status === 'number' ? status : null;
   }
-  if (executable === null) return null;
-  try {
-    const result = runner(executable, ['plugin', 'list', '--json'], { timeoutMs: 15_000 });
-    if (result.exitCode !== 0 || result.timedOut || result.outputOverflow) return null;
-    const parsed = runtime === 'codex' ? parseCodexPluginState(result.stdout) : parseClaudePluginState(result.stdout);
-    if (!parsed.ok || !parsed.state.installed || !parsed.state.version) return null;
-    if (normalizeVersion(parsed.state.version) === normalizeVersion(options.expectedVersion)) return null;
-    return `${runtime} v${parsed.state.version}${parsed.state.enabled === false ? ' (disabled; preserved)' : ''}`;
-  } catch {
-    return null;
-  }
-}
-
-/** Read-only plugin-state probe used by the first release carrying the fresh
- * child protocol. Legacy `--sync-only` remains skills/role-only; it merely
- * tells the operator when that compatibility path left a selected plugin on
- * the previous version. */
-export function legacySyncOnlyPluginAdvisory(options: LegacySyncOnlyAdvisoryOptions): string | null {
-  if (options.selection === 'none') return null;
-  const cwd = options.cwd ?? process.cwd();
-  const runner = options.runner ?? runBoundedIntegrationCommand;
-  const stale: string[] = [];
-  for (const runtime of selectedLegacySyncRuntimes(options.selection)) {
-    const drift = legacySyncRuntimeDrift(runtime, options, cwd, runner);
-    if (drift !== null) stale.push(drift);
-  }
-  if (stale.length === 0) return null;
-  return `Legacy --sync-only left selected plugin integration${stale.length === 1 ? '' : 's'} stale (${stale.join(', ')}; CLI/source v${normalizeVersion(options.expectedVersion)}). Close all Codex tasks first. Then, from an external terminal, run \`genie update\` (or \`genie setup --codex\`), review \`/hooks\`, and start a new Codex task.`;
+  return null;
 }
 
 /**
@@ -1691,97 +1682,24 @@ export function narrowUpdateAgentSyncSelection(selection: IntegrationSelection):
   return selection === 'none' || selection === 'codex' ? null : selection;
 }
 
-export interface SyncOnlyCodexInspectionOptions {
+export interface LegacySyncOnlyConvergenceOptions {
   selection: IntegrationSelection;
+  /** Retained for the call signature and structure tests; sync-only never reads a version. */
   expectedVersion: string;
-  cwd?: string;
-  bundleRoot?: string;
-  codexHome?: string;
-  resolveExecutable?: RuntimeExecutableResolver;
-  probe?: (deps: CodexPluginProbeDeps) => CodexPluginProbe;
-  prove?: (options: ProveCodexPluginHealthOptions) => CodexHealthProof;
-  runSession?: ProveCodexPluginHealthOptions['runSession'];
-  log?: (line: string) => void;
-}
-
-/**
- * R3/A14: `--sync-only` INSPECTS codex rather than converging it. A missing,
- * deliberately disabled, stale, duplicate, or unhealthy exact plugin throws
- * BEFORE any skill/role mutation, so all trees stay byte-identical. It never
- * enables the plugin, never fetches/swaps the binary. The bounded MCP session
- * proveCodexPluginHealth runs is side-effect-free (isolated cwd, read-only db).
- */
-export function inspectSyncOnlyCodexHealth(options: SyncOnlyCodexInspectionOptions): void {
-  if (!selectedLegacySyncRuntimes(options.selection).includes('codex')) return;
-  const cwd = options.cwd ?? process.cwd();
-  let command: string | null;
-  try {
-    command = resolveRuntimeExecutable('codex', cwd, options.resolveExecutable);
-  } catch (cause) {
-    throw new Error(`--sync-only cannot inspect the Codex plugin: ${errMsg(cause)}`);
-  }
-  if (command === null) {
-    // Under auto, an absent Codex CLI is simply not selected; explicit codex/all requires it.
-    if (options.selection === 'auto') {
-      // A possibly-installed plugin still goes uninspected here — say so
-      // rather than passing silently, so the operator knows why no codex
-      // drift/health advisory appeared.
-      (options.log ?? log)(
-        'Codex checks skipped: no codex CLI found on PATH (--integrations auto never installs it; the plugin, if installed, was not inspected).',
-      );
-      return;
-    }
-    throw new Error(
-      '--sync-only requires the Codex CLI for the selected scope, but it was not found; --sync-only never installs it',
-    );
-  }
-  const snapshot = (options.probe ?? probeCodexGeniePlugin)({ codexHome: options.codexHome, cwd });
-  try {
-    (options.prove ?? proveCodexPluginHealth)({
-      snapshot,
-      bundleRoot: options.bundleRoot ?? GENIE_HOME,
-      codexHome: options.codexHome ?? getCodexHome(),
-      expectedVersion: options.expectedVersion,
-      runSession: options.runSession,
-    });
-  } catch (cause) {
-    throw new Error(
-      `--sync-only cannot converge the Codex plugin (${errMsg(cause)}). --sync-only inspects only: it never installs, enables, or swaps the binary. Close all Codex tasks first. Then, from an external terminal, run \`genie update\` (or \`genie setup --codex\`), review \`/hooks\`, and start a new Codex task.`,
-    );
-  }
-}
-
-export interface LegacySyncOnlyConvergenceOptions extends LegacySyncOnlyAdvisoryOptions {
   sync?: () => void;
   log?: (line: string) => void;
-  inspectCodex?: (options: SyncOnlyCodexInspectionOptions) => void;
-  probe?: (deps: CodexPluginProbeDeps) => CodexPluginProbe;
-  prove?: (options: ProveCodexPluginHealthOptions) => CodexHealthProof;
-  codexHome?: string;
-  bundleRoot?: string;
 }
 
 /**
- * Emit version-drift recovery, INSPECT codex health (R3/A14 — fail nonzero and
- * byte-identical before any write on a missing/disabled/stale/unhealthy plugin),
- * then run the strict agent-sync skill sync for the requested scope. Codex
- * product skills are never rewritten under ~/.agents/skills (R2/A1) — that
- * guarantee is structural in `runAgentSync`, not a Claude-only narrowing here.
+ * D2 (wish decision 3, Felipe-ratified): legacy `--sync-only` is a pure
+ * agent-sync compatibility path. It branches BEFORE every Codex activation
+ * observer, classifier, authorization, plugin query, or mutation — it never
+ * lists, probes, inspects, enables, installs, or swaps the Codex plugin — and a
+ * genuine agent-sync failure is its ONLY nonzero result. Codex product skills
+ * are never rewritten under ~/.agents/skills (R2/A1) — that guarantee is
+ * structural in `runAgentSync`, not a Claude-only narrowing here.
  */
 export function runLegacySyncOnlyConvergence(options: LegacySyncOnlyConvergenceOptions): void {
-  const advisory = legacySyncOnlyPluginAdvisory(options);
-  if (advisory !== null) (options.log ?? log)(advisory);
-  (options.inspectCodex ?? inspectSyncOnlyCodexHealth)({
-    selection: options.selection,
-    expectedVersion: options.expectedVersion,
-    cwd: options.cwd,
-    bundleRoot: options.bundleRoot,
-    codexHome: options.codexHome,
-    resolveExecutable: options.resolveExecutable,
-    probe: options.probe,
-    prove: options.prove,
-    log: options.log,
-  });
   const agentSyncSelection = narrowUpdateAgentSyncSelection(options.selection);
   (
     options.sync ??
@@ -1833,6 +1751,9 @@ function runPostDeliveryConvergenceMode(): void {
     if (failures.length > 0) {
       throw new Error(failures.map((result) => `${result.runtime}: ${result.detail}`).join('; '));
     }
+    // Delivered-but-action-required (installed N ≠ delivered T): exit 2 with the
+    // result trailer and no all-green footer. The parent mirrors this exit code.
+    applyConvergenceExitSignal(convergence);
   } catch (cause) {
     error(`Post-delivery convergence failed: ${errMsg(cause)}`);
     process.exitCode = 1;
@@ -1852,7 +1773,10 @@ async function runExplicitUpdateMode(mode: Exclude<UpdateExecutionMode, 'normal'
 
 function runFreshConvergenceOrReport(lifecycleLease: LifecycleLease): boolean {
   try {
-    runFreshBinaryPostDeliveryConvergence({ lifecycleLease });
+    const outcome = runFreshBinaryPostDeliveryConvergence({ lifecycleLease });
+    // The child already printed its trailer over inherited stdio; mirror exit 2
+    // without re-emitting (parent/child exit semantics agree).
+    if (outcome === 'action-required') process.exitCode = 2;
     return true;
   } catch (cause) {
     error(errMsg(cause));
@@ -1899,6 +1823,15 @@ function recoverInstallPromotionAndConvergePayload(): void {
 }
 
 export async function updateCommand(options: UpdateCommandOptions = {}): Promise<void> {
+  // The read-only capability probe is answered before mode resolution and any
+  // mutation: it self-hashes this binary, prints exactly one JSON object, and
+  // exits 0. A pre-contract binary never reaches here — it rejects the unknown
+  // `--print-update-capabilities` flag at commander parse, which is precisely
+  // the signal the rollback capability floor relies on.
+  if (options.printUpdateCapabilities) {
+    printUpdateCapabilities();
+    return;
+  }
   const mode = resolveUpdateExecutionMode(options);
   if (mode !== 'normal') {
     await runExplicitUpdateMode(mode);
@@ -1993,6 +1926,14 @@ export async function updateCommand(options: UpdateCommandOptions = {}): Promise
     try {
       await runDelivery(resolvedManifest, platform, diagnosticsCtx);
     } catch (err) {
+      if (err instanceof CodexLifecycleBusyError) {
+        // Loser semantics (deliverable 9): refused before any swap with zero
+        // mutation. Exit 2 codex-lifecycle-busy with the busy trailer, not a
+        // generic failure.
+        error(err.message);
+        log(CODEX_LIFECYCLE_BUSY_TRAILER);
+        process.exit(2);
+      }
       const msg = err instanceof Error ? err.message : String(err);
       error(`Update failed: ${msg}`);
       process.exit(1);
@@ -2286,6 +2227,79 @@ export function createPrivateUpdateTempRoot(baseDir = tmpdir()): string {
  * to keep the command body readable: download → verify → extract → swap →
  * sync aux content → clean staging.
  */
+/**
+ * Acquire the Codex lifecycle lease for a delivery, or refuse before any binary
+ * swap. A busy lease means another lifecycle command (setup/rollback/uninstall/
+ * another update) holds it: zero mutation, and the caller must not proceed. (The
+ * exit-2 `codex-lifecycle-busy` loser projection is finalized with the two-
+ * process race work; here we fail closed before the swap.)
+ */
+function acquireCodexDeliveryLeaseOrRefuse(): HeldLifecycleLease {
+  const lease = acquireCodexLifecycleLease('update-delivery', { genieHome: GENIE_HOME });
+  if (!lease.ok) throw new CodexLifecycleBusyError(lease.holderKind);
+  return lease;
+}
+
+/**
+ * Parent-side attestation (deliverable 4/5): after the binary is delivered and
+ * the payload is synced into GENIE_HOME, publish the exact delivery facts through
+ * A's `publishDelivery` under the held lease, using OBSERVED reality — the
+ * installed generation N from a live `codex plugin list` and the delivered T +
+ * digest from a physical scan of the delivered tree (never the raw manifest).
+ * When the delivery is pending (N ≠ T) and the prior binary is a protocol-1+
+ * backup, also publish its digest-bound rollback capability sidecar. A pre-
+ * contract backup gets NO sidecar, which makes the rollback capability floor
+ * refuse to restore it. Best-effort: a codex-CLI-absent or payload-unreadable
+ * environment simply attests nothing (the child gate still defers activation).
+ */
+function publishCodexDeliveryFacts(channel: string, previousBackup: string | null, lease: HeldLifecycleLease): void {
+  let command: string | null = null;
+  try {
+    command = resolveRuntimeExecutable('codex', process.cwd());
+  } catch {
+    return;
+  }
+  if (command === null) return;
+  const snapshot = observeCodexActivation({ genieHome: GENIE_HOME, command });
+  if (snapshot.canonical.status !== 'ok') return;
+  const registration = snapshot.query.status === 'ok' ? snapshot.query.registration : { present: false as const };
+  const installedVersion = registration.present && registration.version ? registration.version.canonical : null;
+  const store = openCodexActivationStore({ genieHome: GENIE_HOME });
+  const published = publishCodexDelivery({
+    lease,
+    store,
+    installedVersion,
+    targetVersion: snapshot.canonical.version.canonical,
+    canonicalPayloadSha256: snapshot.canonical.digest,
+    channel,
+  });
+  if (published.published && published.record !== null && previousBackup !== null) {
+    publishBackupSidecarIfProtocolCapable(previousBackup, published.record.deliveryId);
+  }
+}
+
+/**
+ * Publish the rollback capability sidecar ONLY when the backup binary itself
+ * proves protocol-1+ via its no-shell probe. A pre-contract backup (unknown
+ * flag ⇒ nonzero/unparsable probe) or a sub-floor protocol yields NO sidecar, so
+ * `enforceRollbackCapabilityFloor` later refuses to restore it — the explicit
+ * first-fixed→pre-contract rollback refusal.
+ */
+function publishBackupSidecarIfProtocolCapable(backupPath: string, deliveryId: string): void {
+  const probe = runBackupCapabilityProbe(backupPath);
+  if (probe.status !== 'ok' || probe.report === undefined) return;
+  if (probe.report.codexActivationProtocol < CODEX_ACTIVATION_PROTOCOL) return;
+  try {
+    publishBackupCapabilitySidecar({
+      backupBinaryPath: backupPath,
+      expectedPreviousVersion: probe.report.reportedVersion,
+      deliveryId,
+    });
+  } catch {
+    // Best-effort: a missing sidecar only means rollback refuses this backup.
+  }
+}
+
 async function runDelivery(
   manifest: LatestManifest,
   platform: string,
@@ -2321,8 +2335,12 @@ async function runDelivery(
     externalStagingRoot: extractedRoot,
     expectedVersion: manifest.version,
   });
+  let codexLease: HeldLifecycleLease | null = null;
   try {
     verifyAdmittedInstallStagingPayload(admitted);
+    // Acquire the Codex lifecycle lease after signed-download verification and
+    // before the first binary swap; hold it through the delivery publication.
+    codexLease = acquireCodexDeliveryLeaseOrRefuse();
     const promotion = promoteStagedInstall({
       genieHome: GENIE_HOME,
       stagingRoot: admitted.stagingRoot,
@@ -2416,8 +2434,14 @@ async function runDelivery(
         cleanupStagingArtifacts(externalRoot, tarballPath);
       },
     });
+    // The payload is now in GENIE_HOME; publish attested delivery facts (and the
+    // rollback sidecar for a protocol-capable backup) under the held lease.
+    publishCodexDeliveryFacts(diagnosticsCtx.channel, diagnosticsCtx.previousBackup, codexLease);
     return auxiliaryOutcomes;
   } finally {
+    // Release the Codex lifecycle lease on every terminal path (success, refusal,
+    // handled failure) before the staging cleanup.
+    codexLease?.release();
     if (admitted !== null) {
       try {
         if (promotionComplete) removeInstallStagingDirectory(admitted);
@@ -2813,16 +2837,32 @@ function printAuxiliaryOutcome(outcome: AuxiliaryTreeOutcome): void {
 }
 
 async function runRollback(): Promise<void> {
-  log('Checking legacy rollback eligibility...');
-  try {
-    const result = rollbackBinary();
-    success(`Restored ${result.from} → ${result.restored}`);
-    console.log();
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    error(`Rollback failed: ${msg}`);
-    console.log();
-    process.exit(1);
+  log('Checking protocol-safe rollback eligibility...');
+  const result = performProtocolSafeRollback({ genieBin: GENIE_BIN, genieHome: GENIE_HOME });
+  switch (result.status) {
+    case 'rolled-back':
+      success(`Rolled back to v${result.restoredVersion} (digest ${result.binarySha256.slice(0, 12)}…)`);
+      console.log();
+      return;
+    case 'busy':
+      error(
+        `codex-lifecycle-busy: the ${result.holderKind ?? 'unknown'} lifecycle command holds the Codex lease; rollback refused before any exchange with zero mutation.`,
+      );
+      log(CODEX_LIFECYCLE_BUSY_TRAILER);
+      console.log();
+      process.exit(2);
+      return;
+    case 'no-backup':
+    case 'refused':
+      error(`Rollback refused: ${result.detail}`);
+      console.log();
+      process.exit(1);
+      return;
+    case 'aborted':
+      error(`Rollback aborted before completion (the live binary is unchanged): ${result.detail}`);
+      console.log();
+      process.exit(1);
+      return;
   }
 }
 

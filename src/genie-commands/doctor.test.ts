@@ -1741,3 +1741,177 @@ describe('checkIndexLaneDrift (DB-backed, warning-level)', () => {
     });
   });
 });
+
+// ============================================================================
+// Codex integration summary — additive `doctor --json` rider (Group D, D3/D4)
+// ============================================================================
+
+import {
+  type CanonicalFact,
+  type CodexActivationSnapshot,
+  type FamilyWitness,
+  type PhysicalCacheFact,
+  type QueryFact,
+  parseReleaseVersion,
+} from '../lib/codex-activation.js';
+
+const DOC_T = '5.260712.1';
+const DOC_OLD = '5.260711.9';
+const DOC_DIGEST = 'a'.repeat(64);
+
+function docVer(s: string) {
+  const parsed = parseReleaseVersion(s);
+  if (!parsed) throw new Error(`bad test version ${s}`);
+  return parsed;
+}
+function docFamily(): FamilyWitness {
+  return { status: 'present', digest: 'f'.repeat(64), identity: '10:300' };
+}
+function docOkCanonical(): CanonicalFact {
+  return { status: 'ok', version: docVer(DOC_T), digest: DOC_DIGEST, identity: '10:100' };
+}
+function docRegPresent(version = DOC_T): QueryFact {
+  return { status: 'ok', registration: { present: true, enabled: true, version: docVer(version) } };
+}
+function docCachePresent(digest = DOC_DIGEST): PhysicalCacheFact {
+  return { kind: 'present', digest, identity: '10:200' };
+}
+function docCurrentSnapshot(): CodexActivationSnapshot {
+  return {
+    canonical: docOkCanonical(),
+    query: docRegPresent(),
+    cache: docCachePresent(),
+    receipt: { status: 'absent' },
+    delivery: { status: 'absent' },
+    intent: { status: 'absent' },
+    receiptConsumed: false,
+    observationWitness: { before: docFamily(), after: docFamily() },
+    observedAt: '2026-07-12T00:00:00.000Z',
+  };
+}
+function docPendingSnapshot(): CodexActivationSnapshot {
+  return { ...docCurrentSnapshot(), query: docRegPresent(DOC_OLD), cache: docCachePresent('b'.repeat(64)) };
+}
+function docQueryFailedSnapshot(): CodexActivationSnapshot {
+  return { ...docCurrentSnapshot(), query: { status: 'failed', detail: 'codex plugin list timed out' } };
+}
+function docAbsentSnapshot(): CodexActivationSnapshot {
+  return {
+    ...docCurrentSnapshot(),
+    query: { status: 'ok', registration: { present: false } },
+    cache: { kind: 'absent' },
+  };
+}
+
+function doctorDepsWith(snapshot: CodexActivationSnapshot | null) {
+  return {
+    root: join(tmpdir(), 'doc-int-nonexistent'),
+    databaseRoot: join(tmpdir(), 'doc-int-nonexistent'),
+    pluginProbe: NO_CODEX,
+    bunVersion: '1.3.10',
+    bunPath: '/usr/bin/bun',
+    codexActivation: snapshot,
+  };
+}
+
+interface DoctorJson {
+  ok: boolean;
+  checks: Array<{ name: string; status: string }>;
+  integrationSummary?: {
+    schemaVersion: number;
+    codexPlugin: {
+      state: string;
+      installedVersion: string | null;
+      targetVersion: string | null;
+      actionRequired: boolean;
+      deliveryComplete: boolean;
+      mutationAuthority: string;
+      authorization: { result: string; reason: string | null };
+      cache: string;
+      recovery: string;
+    };
+  };
+}
+
+describe('doctor --json integrationSummary (Group D)', () => {
+  test('current: integrationSummary present, ok:true, exit 0, actionRequired false', async () => {
+    const { output, exitCode } = await captureDoctor(() =>
+      doctorCommand({ json: true }, doctorDepsWith(docCurrentSnapshot())),
+    );
+    const json = JSON.parse(output) as DoctorJson;
+    expect(json.integrationSummary?.schemaVersion).toBe(1);
+    expect(json.integrationSummary?.codexPlugin.state).toBe('current');
+    expect(json.integrationSummary?.codexPlugin.actionRequired).toBe(false);
+    expect(json.integrationSummary?.codexPlugin.deliveryComplete).toBe(true);
+    expect(json.integrationSummary?.codexPlugin.cache).toBe('verified-current');
+    expect(json.ok).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
+  test('pending: ok stays true while the command exits 2 and actionRequired is true', async () => {
+    const { output, exitCode } = await captureDoctor(() =>
+      doctorCommand({ json: true }, doctorDepsWith(docPendingSnapshot())),
+    );
+    const json = JSON.parse(output) as DoctorJson;
+    expect(json.integrationSummary?.codexPlugin.state).toBe('activation-pending');
+    expect(json.integrationSummary?.codexPlugin.actionRequired).toBe(true);
+    expect(json.integrationSummary?.codexPlugin.deliveryComplete).toBe(true);
+    expect(json.integrationSummary?.codexPlugin.installedVersion).toBe(DOC_OLD);
+    expect(json.integrationSummary?.codexPlugin.targetVersion).toBe(DOC_T);
+    // Pending exit-2 authorization is 'required' via the doctor (non-setup) entry.
+    expect(json.integrationSummary?.codexPlugin.authorization.result).toBe('required');
+    expect(json.ok).toBe(true); // no failed hard checks — {ok} meaning unchanged
+    expect(exitCode).toBe(2);
+  });
+
+  test('registration-absent activation-required exits 2', async () => {
+    const { output, exitCode } = await captureDoctor(() =>
+      doctorCommand({ json: true }, doctorDepsWith(docAbsentSnapshot())),
+    );
+    const json = JSON.parse(output) as DoctorJson;
+    expect(json.integrationSummary?.codexPlugin.state).toBe('registration-absent');
+    expect(exitCode).toBe(2);
+  });
+
+  test('query-failed is broken/retry: exit 1, mutationAuthority none', async () => {
+    const { output, exitCode } = await captureDoctor(() =>
+      doctorCommand({ json: true }, doctorDepsWith(docQueryFailedSnapshot())),
+    );
+    const json = JSON.parse(output) as DoctorJson;
+    expect(json.integrationSummary?.codexPlugin.state).toBe('query-failed');
+    expect(json.integrationSummary?.codexPlugin.mutationAuthority).toBe('none');
+    expect(exitCode).toBe(1);
+  });
+
+  test('codex absent (explicit null): no integrationSummary key, exit 0', async () => {
+    const { output, exitCode } = await captureDoctor(() => doctorCommand({ json: true }, doctorDepsWith(null)));
+    const json = JSON.parse(output) as DoctorJson;
+    expect(json.integrationSummary).toBeUndefined();
+    expect(json.ok).toBe(true);
+    expect(exitCode).toBe(0);
+    // {ok,checks} shape unchanged.
+    expect(Array.isArray(json.checks)).toBe(true);
+  });
+
+  test('pending projection is identical across repeated runs (deterministic, inert)', async () => {
+    const first = await captureDoctor(() => doctorCommand({ json: true }, doctorDepsWith(docPendingSnapshot())));
+    const second = await captureDoctor(() => doctorCommand({ json: true }, doctorDepsWith(docPendingSnapshot())));
+    const a = JSON.parse(first.output) as DoctorJson;
+    const b = JSON.parse(second.output) as DoctorJson;
+    expect(a.integrationSummary).toEqual(b.integrationSummary);
+    expect(first.exitCode).toBe(2);
+    expect(second.exitCode).toBe(2);
+  });
+
+  test('human mode: pending status prints to stdout with the recovery path', async () => {
+    const { output } = await captureDoctor(() => doctorCommand({}, doctorDepsWith(docPendingSnapshot())));
+    expect(output).toContain('Codex integration:');
+    expect(output).toContain('activation-pending');
+    expect(output).toContain('genie setup --codex');
+  });
+
+  test('doctor.ts never touches the lifecycle lease (read-only observer path)', () => {
+    const source = readFileSync(join(import.meta.dir, 'doctor.ts'), 'utf8');
+    expect(source.includes('acquireLifecycleLease')).toBe(false);
+  });
+});

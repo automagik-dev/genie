@@ -401,6 +401,16 @@ describe('fresh-install-smoke', () => {
       },
       expected: 'must cover design, plan, execution, and PR contexts',
     },
+    {
+      label: 'drifted H3 SessionStart launcher',
+      mutate: (pluginRoot: string) => {
+        const manifestPath = join(pluginRoot, 'hooks', 'codex-hooks.json');
+        const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+        manifest.hooks.SessionStart[0].hooks[0].command = 'node "${PLUGIN_ROOT}/scripts/tampered.cjs"';
+        writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+      },
+      expected: 'H3 SessionStart launcher must be the exact bounded read-only',
+    },
   ]) {
     test(`rejects a ${fixture.label}`, () => {
       const root = mkdtempSync(join(tmpdir(), 'genie-role-inventory-fixture-'));

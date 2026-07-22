@@ -5,17 +5,32 @@
  * Supports full wizard, quick mode, and section-specific setup.
  */
 
+import { closeSync, openSync, readSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { confirm, input, select } from '@inquirer/prompts';
 import { acquireLifecycleLease } from '../lib/agent-sync.js';
-import { getCodexConfigPath } from '../lib/codex-config.js';
 import {
-  preflightCodexPluginMutation,
-  type probeCodexGeniePlugin,
-  reconcileCodexProjectMcp,
-  resolveGitWorktreeRoot,
-} from '../lib/codex-project-mcp.js';
+  type ActivationExecutionResult,
+  authorizeCodexActivation,
+  buildActivationResultTrailer,
+  classifyCodexActivation,
+  describeState,
+  executeCodexActivation,
+  observeCodexActivation,
+  openCodexActivationStore,
+  projectHumanStatus,
+  requestRetirementAssertion,
+  resolveSetupExitCode,
+  serializeActivationResultTrailer,
+} from '../lib/codex-activation-executor.js';
+// A's deep consent API + B's stable executor facade own the Codex activation path.
+// Setup never reimplements the TTY/env/flag guards, constructs a RetirementAssertion,
+// or retains a permit — it supplies a real-terminal ConsentContext and routes the
+// permit-gated cache advance through B's `executeCodexActivation`.
+import type { ActivationEntryPath, CodexActivationSnapshot, ConsentContext } from '../lib/codex-activation.js';
+import { getCodexConfigPath } from '../lib/codex-config.js';
+import { type CodexPluginProbe, reconcileCodexProjectMcp, resolveGitWorktreeRoot } from '../lib/codex-project-mcp.js';
 import {
   contractPath,
   getGenieConfigPath,
@@ -24,19 +39,14 @@ import {
   resetConfig,
   saveGenieConfig,
 } from '../lib/genie-config.js';
-import { resolveGenieHome } from '../lib/genie-home.js';
+import { resolveCodexDir, resolveGenieHome } from '../lib/genie-home.js';
 import {
-  type IntegrationConsentTransitionRef,
   type IntegrationSelection,
-  beginIntegrationConsentTransition,
-  clearIntegrationConsentTransition,
-  commitIntegrationConsentTransition,
-  installRuntimeIntegrations,
+  persistIntegrationConsent,
   readIntegrationConsent,
-  readIntegrationConsentState,
 } from '../lib/runtime-integrations.js';
 import { checkCommand } from '../lib/system-detect.js';
-import { resolveTrustedExecutable, validateTrustedExecutablePath } from '../lib/trusted-executable.js';
+import { resolveTrustedExecutable } from '../lib/trusted-executable.js';
 import { installShortcuts, isShortcutsInstalled } from '../term-commands/shortcuts.js';
 import type { GenieConfig } from '../types/genie-config.js';
 
@@ -52,22 +62,34 @@ export interface SetupOptions {
 
 export interface SetupDeps {
   checkCommand?: typeof checkCommand;
-  installRuntimeIntegrations?: typeof installRuntimeIntegrations;
   readIntegrationConsent?: typeof readIntegrationConsent;
-  readIntegrationConsentState?: typeof readIntegrationConsentState;
-  beginIntegrationConsentTransition?: typeof beginIntegrationConsentTransition;
-  clearIntegrationConsentTransition?: typeof clearIntegrationConsentTransition;
-  commitIntegrationConsentTransition?: typeof commitIntegrationConsentTransition;
+  persistIntegrationConsent?: typeof persistIntegrationConsent;
   /** Interactive confirmation seam; production uses @inquirer/prompts. */
   confirm?: typeof confirm;
-  /** One bounded post-install snapshot; tests inject this to avoid live Codex state. */
-  probeCodexGeniePlugin?: typeof probeCodexGeniePlugin;
   acquireLifecycleLease?: typeof acquireLifecycleLease;
   /** Test seam for the once-bound absolute Codex CLI path. */
   resolveExecutable?: (name: string, cwd: string) => string | null;
-  /** Test seam for revalidating that same path under the lifecycle lease. */
-  validateExecutable?: (name: string, path: string, cwd: string) => string;
   cwd?: string;
+  // --- Codex activation seams (Group D): all default to the real facade. ---
+  /** Bounded activation observation (B's facade). */
+  observeCodexActivation?: (options: {
+    command: string | null;
+    genieHome?: string;
+    codexHome?: string;
+  }) => CodexActivationSnapshot;
+  /** A's deep consent API — the ONLY source of a genuine retirement assertion. */
+  requestRetirementAssertion?: typeof requestRetirementAssertion;
+  /** Pure authorization overlay (A) returning a fingerprint-bound permit. */
+  authorizeCodexActivation?: typeof authorizeCodexActivation;
+  /** Open A's deep store for the permit-gated transaction. */
+  openCodexActivationStore?: typeof openCodexActivationStore;
+  /** The permit-gated executor (B) — the sole route to Codex cache mutation. */
+  executeCodexActivation?: typeof executeCodexActivation;
+  /** Synchronous real-TTY confirmation for the retirement assertion prompt. */
+  promptRetirementConfirmation?: (message: string) => boolean;
+  /** stdin/stdout TTY flags forwarded to A's consent guards (default: real streams). */
+  stdinIsTTY?: boolean;
+  stdoutIsTTY?: boolean;
 }
 
 export class SetupIntegrationError extends Error {
@@ -229,76 +251,81 @@ async function configureShortcuts(config: GenieConfig, quick: boolean, deps: Set
 }
 
 // ============================================================================
-// Codex Integration
+// Codex Integration — permit-gated activation (Group D, D1/D2/D8/D9)
 // ============================================================================
+//
+// Setup is ACTIVATION-ONLY. It retires the currently active Codex plugin
+// generation and activates the delivered one, gated behind A's deep consent API
+// (the sole source of a genuine retirement assertion) and executed through B's
+// permit-gated `executeCodexActivation` (the sole route to Codex cache mutation,
+// which acquires the `setup-activation` lifecycle lease itself). DELIVERY —
+// installing/refreshing the plugin payload, marketplace registration, role
+// agents — belongs to `genie update` / `genie install`. Every refusal (guard
+// failure, decline, EOF, unauthorized state) happens before any
+// marketplace/plugin/config/role-agent/project-fallback/intent/trust mutation.
 
-function reconcileSetupCodexProject(root: string | null, plugin: ReturnType<typeof probeCodexGeniePlugin>): void {
+/**
+ * Synchronous real-terminal confirmation for the retirement assertion. A's
+ * consent API owns the environment/TTY/flag guards and the prompt message; this
+ * helper only performs the blocking `/dev/tty` read A's `ConsentContext.prompt`
+ * requires (the wizard is otherwise async). It fails closed: any missing
+ * controlling terminal, read error, or non-affirmative answer returns false, so
+ * it can never synthesize consent. A already refused non-TTY/CI/quick before it.
+ */
+function promptRetirementConfirmationSync(message: string): boolean {
+  process.stdout.write(`\n  ${message}\n  Type "yes" to retire the prior generation and activate: `);
+  let fd: number;
+  try {
+    fd = openSync('/dev/tty', 'r');
+  } catch {
+    return false;
+  }
+  try {
+    const buf = Buffer.alloc(64);
+    const read = readSync(fd, buf, 0, buf.length, null);
+    return buf.toString('utf8', 0, read).trim().toLowerCase() === 'yes';
+  } catch {
+    return false;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** Build the ConsentContext A's guards consume; the `--quick` signal is reflected into argv. */
+function buildConsentContext(deps: SetupDeps, quick: boolean): ConsentContext {
+  const argv = quick ? [...process.argv, '--quick'] : process.argv;
+  return {
+    stdinIsTTY: deps.stdinIsTTY ?? Boolean(process.stdin.isTTY),
+    stdoutIsTTY: deps.stdoutIsTTY ?? Boolean(process.stdout.isTTY),
+    env: process.env,
+    argv,
+    prompt: deps.promptRetirementConfirmation ?? promptRetirementConfirmationSync,
+  };
+}
+
+function reconcileSetupCodexProject(root: string | null, plugin: CodexPluginProbe): void {
   if (root === null) {
     console.log('  \x1b[2mNo Git worktree detected; project MCP fallback was not changed.\x1b[0m');
     return;
   }
-
   const project = reconcileCodexProjectMcp(root, plugin);
   if (!project.ok) throw new SetupIntegrationError(project.detail ?? 'Codex project MCP reconciliation failed');
-  console.log(`  \x1b[32m\u2713\x1b[0m Project MCP route: ${project.route} (${project.detail ?? project.action})`);
-  if (!plugin.usable && plugin.enabled === true) {
-    console.log(
-      `  \x1b[33m!\x1b[0m Plugin MCP is not usable (${plugin.usabilityDetail ?? plugin.detail}); kept the absolute project fallback.`,
-    );
-  }
+  console.log(`  \x1b[32m✓\x1b[0m Project MCP route: ${project.route} (${project.detail ?? project.action})`);
 }
 
-function repairCodexIntegration(deps: SetupDeps, codexPath: string): void {
-  const cwd = deps.cwd ?? process.cwd();
-  const validate = deps.validateExecutable ?? validateTrustedExecutablePath;
-  validate('Codex CLI', codexPath, cwd);
-  const root = resolveGitWorktreeRoot(cwd);
-  if (root !== null) {
-    const preflight = preflightCodexPluginMutation(root);
-    if (!preflight.ok) throw new SetupIntegrationError(`${preflight.detail}: ${preflight.path}`);
-  }
-
-  const genieHome = resolveGenieHome();
-  const currentConsent = (deps.readIntegrationConsent ?? readIntegrationConsent)(genieHome);
-  const nextConsent = mergeCodexIntegrationConsent(currentConsent);
-  const transition = (deps.beginIntegrationConsentTransition ?? beginIntegrationConsentTransition)(
-    nextConsent,
-    genieHome,
-  );
-  let hookReviewRequired = false;
-
-  try {
-    const result = (deps.installRuntimeIntegrations ?? installRuntimeIntegrations)({
-      selection: 'codex',
-      cwd,
-      resolveExecutable: () => codexPath,
-    })[0];
-    if (!result?.ok) {
-      const detail = result?.detail ?? 'Codex integration failed without a diagnostic';
-      throw new SetupIntegrationError(detail);
-    }
-    hookReviewRequired = result.hookReviewRequired === true;
-    console.log(`  \x1b[32m\u2713\x1b[0m ${result.detail}`);
-    // R1/A5: reuse the SINGLE post-convergence snapshot surfaced by the codex
-    // integration; never take a second probe here.
-    const plugin = result.snapshot;
-    if (plugin === undefined) {
-      throw new SetupIntegrationError('Codex integration did not surface a post-convergence health snapshot');
-    }
-    reconcileSetupCodexProject(root, plugin);
-    if (result.preservedDisabled) console.log('  \x1b[2mExisting disabled plugin state was preserved.\x1b[0m');
-    (deps.commitIntegrationConsentTransition ?? commitIntegrationConsentTransition)(transition, genieHome);
-  } catch (error) {
-    throw new SetupIntegrationError(
-      `${error instanceof Error ? error.message : String(error)}; Codex maintenance consent is pending — rerun genie setup --codex to resume`,
-    );
-  }
-  if (hookReviewRequired) {
-    console.log('  \x1b[33m!\x1b[0m Review Genie hooks with /hooks, then start a new Codex task.');
-  }
+/** A synthetic verified-current probe: an activated plugin removes the project fallback. */
+function verifiedCurrentPluginProbe(): CodexPluginProbe {
+  return {
+    cliAvailable: true,
+    status: 'ok',
+    installed: true,
+    enabled: true,
+    usable: true,
+    detail: 'activation verified-current (plugin trusted, project fallback removed)',
+  };
 }
 
-/** Merge explicit Codex setup into the durable client-home maintenance scope. */
+/** Merge explicit Codex activation into the durable client-home maintenance scope. */
 export function mergeCodexIntegrationConsent(current: IntegrationSelection): IntegrationSelection {
   if (current === 'none') return 'codex';
   if (current === 'claude') return 'all';
@@ -311,78 +338,166 @@ function preserveRuntimeChoiceAfterCodex(config: GenieConfig): void {
   if (decision.hint) console.log(`  \x1b[2m${decision.hint}\x1b[0m`);
 }
 
-async function configureCodex(config: GenieConfig, quick: boolean, deps: SetupDeps): Promise<GenieConfig> {
-  printSection('5. Codex Integration', 'Configure OpenAI Codex for genie agents');
+interface ActivationOutcome {
+  exitCode: 0 | 1 | 2;
+  /** True when the plugin is verified-current (freshly activated or already current). */
+  activated: boolean;
+}
 
-  const cwd = deps.cwd ?? process.cwd();
-  let codexPath: string | null;
+function emitTrailer(trailer: ReturnType<typeof buildActivationResultTrailer>): void {
+  process.stdout.write(`${serializeActivationResultTrailer(trailer)}\n`);
+}
+
+function resolveCodexPath(deps: SetupDeps, cwd: string): string | null {
   try {
-    codexPath = deps.resolveExecutable
-      ? deps.resolveExecutable('codex', cwd)
-      : Bun.which('codex') === null
-        ? null
-        : resolveTrustedExecutable('codex', cwd);
+    if (deps.resolveExecutable) return deps.resolveExecutable('codex', cwd);
+    return Bun.which('codex') === null ? null : resolveTrustedExecutable('codex', cwd);
   } catch (error) {
     throw new SetupIntegrationError(error instanceof Error ? error.message : String(error));
   }
+}
+
+/**
+ * The permit-gated Codex activation transaction. Observes, classifies, gates on
+ * A's consent + authorization, then routes the cache advance through B's
+ * executor. Every refusal returns before any mutation with a deterministic exit
+ * code and (for exit-2/1 lifecycle paths) the A-owned result trailer.
+ */
+function runCodexActivation(
+  deps: SetupDeps,
+  codexPath: string,
+  entry: ActivationEntryPath,
+  quick: boolean,
+): ActivationOutcome {
+  const genieHome = resolveGenieHome();
+  const codexHome = resolveCodexDir();
+  const observe = deps.observeCodexActivation ?? ((options) => observeCodexActivation(options));
+  const snapshot = observe({ command: codexPath, genieHome, codexHome });
+  const state = classifyCodexActivation(snapshot);
+  const descriptor = describeState(state);
+  const deliveryComplete = snapshot.canonical.status === 'ok';
+
+  // Condition 1: no delivered payload -> actionable refusal, never a dead end.
+  if (!deliveryComplete) {
+    console.error('  \x1b[31m✖\x1b[0m Genie payload not found under GENIE_HOME (nothing delivered to activate).');
+    console.error(
+      '    Delivery is done by \x1b[36mgenie update\x1b[0m / \x1b[36mgenie install\x1b[0m — run one, then rerun \x1b[36mgenie setup --codex\x1b[0m.',
+    );
+    return { exitCode: 1, activated: false };
+  }
+  if (state.kind === 'current') {
+    console.log('  \x1b[32m✓\x1b[0m Codex plugin is already current; no activation needed.');
+    return { exitCode: 0, activated: true };
+  }
+  if (descriptor.authority === 'none') {
+    const projection = projectHumanStatus(state, snapshot);
+    (projection.stream === 'stderr' ? process.stderr : process.stdout).write(`  ${projection.text}\n`);
+    return { exitCode: projection.exitCode, activated: false };
+  }
+
+  // Activation authority — gate on A's deep consent API (owns TTY/env/flag/prompt).
+  const consent = (deps.requestRetirementAssertion ?? requestRetirementAssertion)(
+    snapshot,
+    buildConsentContext(deps, quick),
+  );
+  if (consent.result !== 'granted') {
+    console.error(`  \x1b[31m✖\x1b[0m Retirement assertion refused: ${consent.reason}`);
+    emitTrailer(buildActivationResultTrailer(state, deliveryComplete));
+    return { exitCode: resolveSetupExitCode(state, { result: 'refused', reason: consent.reason }), activated: false };
+  }
+  const authorization = (deps.authorizeCodexActivation ?? authorizeCodexActivation)({
+    state,
+    snapshot,
+    invocation: { entry, assertion: consent.assertion },
+  });
+  if (authorization.result !== 'granted') {
+    const reason = 'reason' in authorization ? authorization.reason : authorization.result;
+    console.error(`  \x1b[31m✖\x1b[0m Activation not authorized: ${reason}`);
+    emitTrailer(buildActivationResultTrailer(state, deliveryComplete));
+    return { exitCode: resolveSetupExitCode(state, authorization), activated: false };
+  }
+
+  // Permit granted — the executor acquires the `setup-activation` lease itself.
+  const store = (deps.openCodexActivationStore ?? openCodexActivationStore)({
+    genieHome,
+    codexHome,
+    command: codexPath,
+  });
+  const result = (deps.executeCodexActivation ?? executeCodexActivation)({
+    permit: authorization.permit,
+    store,
+    command: codexPath,
+    codexHome,
+    genieHome,
+    configPath: getCodexConfigPath(),
+  });
+  return reportActivationExecution(result);
+}
+
+function reportActivationExecution(result: ActivationExecutionResult): ActivationOutcome {
+  if (result.status === 'activated') {
+    console.log(`  \x1b[32m✓\x1b[0m Activated Codex plugin v${result.version} (enabled=${result.enabled}).`);
+    console.log(`  \x1b[33m!\x1b[0m ${result.recovery}`);
+    return { exitCode: 0, activated: true };
+  }
+  console.error(`  \x1b[31m✖\x1b[0m ${result.detail}`);
+  if (result.status === 'broken') {
+    console.error(
+      '    If the Codex plugin/marketplace was never delivered, run \x1b[36mgenie update\x1b[0m first, then retry.',
+    );
+  }
+  emitTrailer(result.trailer);
+  // busy/stale/refused are action-required (exit 2); broken is retry (exit 1).
+  return { exitCode: result.status === 'broken' ? 1 : 2, activated: false };
+}
+
+async function configureCodex(
+  config: GenieConfig,
+  quick: boolean,
+  deps: SetupDeps,
+  entry: ActivationEntryPath,
+): Promise<GenieConfig> {
+  printSection('5. Codex Integration', 'Activate the delivered Codex plugin generation for genie agents');
+
+  const cwd = deps.cwd ?? process.cwd();
+  const codexPath = resolveCodexPath(deps, cwd);
   if (codexPath === null) {
     console.log('  \x1b[33m!\x1b[0m Codex CLI not found. Skipping codex integration.');
     return config;
   }
   const codexCheck = await (deps.checkCommand ?? checkCommand)(codexPath, { which: () => codexPath });
-  if (codexCheck.timedOut) {
-    throw new SetupIntegrationError(codexCheck.error ?? 'Codex CLI detection timed out');
-  }
+  if (codexCheck.timedOut) throw new SetupIntegrationError(codexCheck.error ?? 'Codex CLI detection timed out');
   if (!codexCheck.exists) {
     console.log('  \x1b[33m!\x1b[0m Codex CLI not found. Skipping codex integration.');
     return config;
   }
-
-  console.log(`  \x1b[32m\u2713\x1b[0m Codex CLI found (${codexCheck.version ?? 'unknown version'})`);
-
+  console.log(`  \x1b[32m✓\x1b[0m Codex CLI found (${codexCheck.version ?? 'unknown version'})`);
   console.log();
-  console.log('  Genie installs or repairs the native Codex plugin, MCP server, and role agents.');
-  console.log('  Successful setup persists Codex maintenance consent for later explicit genie updates.');
-  console.log('  Genie product skills are served only by the installed plugin; no CLI-managed Codex');
-  console.log('  skill fallbacks are written under ~/.agents/skills.');
-  console.log('  The obsolete Genie loopback OTel exporter is removed with a backup when present.');
+  console.log('  \x1b[1mSetup activates\x1b[0m the delivered Codex plugin generation, retiring the prior one.');
+  console.log('  Delivery (plugin payload, marketplace, role agents, MCP) is done by');
+  console.log(
+    '  \x1b[36mgenie update\x1b[0m / \x1b[36mgenie install\x1b[0m — setup only activates what was already delivered.',
+  );
+  console.log('  Activation requires an interactive real terminal; --quick, CI, and piped input cannot activate.');
   console.log(`  Config: \x1b[2m${contractPath(getCodexConfigPath())}\x1b[0m`);
   console.log();
 
-  const genieHome = resolveGenieHome();
-  const observedConsent = (deps.readIntegrationConsentState ?? readIntegrationConsentState)(genieHome);
-  const observedTransition: IntegrationConsentTransitionRef | null =
-    observedConsent.state === 'pending'
-      ? { revision: observedConsent.revision, transitionToken: observedConsent.transitionToken }
-      : null;
-
-  if (quick) {
-    await withSetupLease(deps, () => repairCodexIntegration(deps, codexPath as string));
+  const outcome = runCodexActivation(deps, codexPath, entry, quick);
+  if (outcome.activated) {
+    // Post-activation, permitted mutations: reconcile the project MCP fallback
+    // (verified-current now) and persist durable maintenance consent for update.
+    await withSetupLease(deps, () => {
+      reconcileSetupCodexProject(resolveGitWorktreeRoot(cwd), verifiedCurrentPluginProbe());
+      const genieHome = resolveGenieHome();
+      const read = deps.readIntegrationConsent ?? readIntegrationConsent;
+      const persist = deps.persistIntegrationConsent ?? persistIntegrationConsent;
+      persist(mergeCodexIntegrationConsent(read(genieHome)), genieHome);
+    });
     config.codex = { configured: true };
     preserveRuntimeChoiceAfterCodex(config);
-    return config;
+  } else if (outcome.exitCode !== 0) {
+    process.exitCode = outcome.exitCode;
   }
-
-  const enableCodex = await (deps.confirm ?? confirm)({
-    message: 'Install or repair Codex and let later explicit genie updates maintain managed Codex assets?',
-    default: true,
-  });
-  if (enableCodex) {
-    await withSetupLease(deps, () => repairCodexIntegration(deps, codexPath as string));
-    config.codex = { configured: true };
-    preserveRuntimeChoiceAfterCodex(config);
-  } else {
-    if (observedTransition !== null) {
-      const restored = await withSetupLease(deps, () =>
-        (deps.clearIntegrationConsentTransition ?? clearIntegrationConsentTransition)(observedTransition, genieHome),
-      );
-      console.log(`  Pending Codex maintenance consent cleared; retained scope: ${restored}.`);
-    } else {
-      console.log('  No pending Codex maintenance consent was present.');
-    }
-    console.log('  Skipped. Run \x1b[36mgenie setup --codex\x1b[0m later.');
-  }
-
   return config;
 }
 
@@ -572,7 +687,7 @@ async function runSetupCommand(options: SetupOptions, deps: SetupDeps): Promise<
 
   if (options.codex) {
     printHeader();
-    config = await configureCodex(config, options.quick ?? false, deps);
+    config = await configureCodex(config, options.quick ?? false, deps, 'setup-codex');
     await saveSetupConfig(config, baseline, deps);
     if (config.codex?.configured) {
       console.log('\x1b[32m\u2713 Codex configuration saved.\x1b[0m');
@@ -593,7 +708,7 @@ async function runSetupCommand(options: SetupOptions, deps: SetupDeps): Promise<
   config = await configureSession(config, quick);
   config = await configureTerminal(config, quick);
   config = await configureShortcuts(config, quick, deps);
-  config = await configureCodex(config, quick, deps);
+  config = await configureCodex(config, quick, deps, 'full-setup-codex-step');
   config = await configureDebug(config, quick);
   config = await configurePromptMode(config, quick);
 

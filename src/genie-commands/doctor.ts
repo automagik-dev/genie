@@ -42,6 +42,17 @@ import {
   resolveGenieSource,
   resolveHermesConfigPath,
 } from '../lib/agent-sync.js';
+// Group D consumes B's stable observation/reporting facade (never A's internals
+// directly) for the additive `integrationSummary` on `doctor --json`.
+import {
+  authorizeCodexActivation,
+  classifyCodexActivation,
+  describeState,
+  observeCodexActivation,
+  projectHumanStatus,
+  projectIntegrationSummary,
+} from '../lib/codex-activation-executor.js';
+import type { CodexActivationSnapshot, IntegrationSummaryEnvelope } from '../lib/codex-activation.js';
 import { DEAD_GENIE_OTEL_EXPORTER, getCodexConfigPath } from '../lib/codex-config.js';
 import {
   type CodexPluginProbe,
@@ -1647,10 +1658,69 @@ export interface DoctorDeps {
   databaseRoot?: string | null;
   /** Injected one-shot plugin state keeps tests away from the live Codex home. */
   pluginProbe?: CodexPluginProbe;
+  /**
+   * Injected activation snapshot for the additive `integrationSummary`. Tests pass
+   * a snapshot (or explicit `null` = Codex integration not applicable) to stay off
+   * the live Codex home. When omitted, production runs the bounded observer ONCE
+   * iff the Codex CLI is available.
+   */
+  codexActivation?: CodexActivationSnapshot | null;
   /** Runtime-version seam so tests can cover the declared Bun engine boundary. */
   bunVersion?: string | null;
   /** PATH seam paired with bunVersion. */
   bunPath?: string | null;
+}
+
+// ============================================================================
+// Codex integration summary (additive `doctor --json` rider; Group D, D3/D4)
+// ============================================================================
+
+/**
+ * Resolve the single bounded activation observation for the integration summary.
+ * `deps.codexActivation` (a snapshot or explicit `null`) wins so tests never hit
+ * the live Codex home; otherwise production observes exactly ONCE — and only when
+ * the Codex CLI is present, so an all-Claude host reports no Codex integration.
+ * This is a pure observation that never acquires, probes, or blocks on the
+ * lifecycle lease.
+ */
+function resolveCodexActivationSnapshot(
+  deps: DoctorDeps,
+  pluginProbe: CodexPluginProbe,
+): CodexActivationSnapshot | null {
+  if (deps.codexActivation !== undefined) return deps.codexActivation;
+  if (!pluginProbe.cliAvailable) return null;
+  return observeCodexActivation({ command: whichBinary('codex') });
+}
+
+interface CodexIntegration {
+  summary: IntegrationSummaryEnvelope;
+  /** The activation state's own 0/1/2 exit; drives the command exit without flipping `ok`. */
+  exit: 0 | 1 | 2;
+  human: { stream: 'stdout' | 'stderr'; text: string };
+}
+
+/**
+ * Build the additive integration summary + human projection from one snapshot.
+ * Doctor never mutates, so `deliveryComplete` reflects only whether target payload
+ * T is physically delivered (canonical present) — the same fact the human and JSON
+ * projections share, so they agree across repeated runs.
+ */
+function buildCodexIntegration(snapshot: CodexActivationSnapshot): CodexIntegration {
+  const state = classifyCodexActivation(snapshot);
+  const authorization = authorizeCodexActivation({
+    state,
+    snapshot,
+    invocation: { entry: 'doctor', assertion: null },
+  });
+  const deliveryComplete = snapshot.canonical.status === 'ok';
+  const summary = projectIntegrationSummary(state, snapshot, authorization, deliveryComplete);
+  const descriptor = describeState(state);
+  const projection = projectHumanStatus(state, snapshot);
+  return {
+    summary,
+    exit: descriptor.exit,
+    human: { stream: projection.stream, text: projection.text },
+  };
 }
 
 export async function doctorCommand(options?: { json?: boolean; fix?: boolean }, deps: DoctorDeps = {}): Promise<void> {
@@ -1688,8 +1758,22 @@ export async function doctorCommand(options?: { json?: boolean; fix?: boolean },
 
   const failed = results.filter((r) => r.status === 'fail');
 
+  // One bounded activation observation feeds the additive integration summary.
+  // It is purely additive: `{ ok, checks }` meanings are unchanged, and a pending
+  // Codex generation keeps `ok:true` while the command exits 2.
+  const activationSnapshot = resolveCodexActivationSnapshot(deps, pluginProbe);
+  const integration = activationSnapshot ? buildCodexIntegration(activationSnapshot) : null;
+
   if (options?.json) {
-    out(JSON.stringify({ ok: failed.length === 0, checks: results }, null, 2));
+    out(
+      JSON.stringify(
+        integration
+          ? { ok: failed.length === 0, checks: results, integrationSummary: integration.summary }
+          : { ok: failed.length === 0, checks: results },
+        null,
+        2,
+      ),
+    );
   } else {
     out('genie doctor');
     out('');
@@ -1700,7 +1784,17 @@ export async function doctorCommand(options?: { json?: boolean; fix?: boolean },
     }
     out('');
     out(failed.length === 0 ? '\x1b[32mAll checks passed.\x1b[0m' : `\x1b[31m${failed.length} check(s) failed.\x1b[0m`);
+    // Broken Codex diagnostics go to stderr (no all-green footer); current/pending
+    // status goes to stdout — the same stream split the setup/JSON projections use.
+    if (integration) {
+      const sink = integration.human.stream === 'stderr' ? process.stderr : process.stdout;
+      sink.write(`Codex integration: ${integration.human.text}\n`);
+    }
   }
 
-  if (failed.length > 0) process.exitCode = 1;
+  // Exit code is 0/1/2. Pending (codex exit 2) dominates and exits 2 even when
+  // every check passes; a broken codex state contributes exit 1. Neither flips
+  // `ok`, which stays purely a function of failed hard checks.
+  const finalExit = Math.max(failed.length > 0 ? 1 : 0, integration?.exit ?? 0) as 0 | 1 | 2;
+  if (finalExit > 0) process.exitCode = finalExit;
 }
