@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "channel": "dev",
-  "version": "5.260722.2",
-  "released_at": "2026-07-22T06:35:51Z",
-  "tarball_base": "https://github.com/automagik-dev/genie/releases/download/v5.260722.2",
+  "version": "5.260722.3",
+  "released_at": "2026-07-22T15:40:14Z",
+  "tarball_base": "https://github.com/automagik-dev/genie/releases/download/v5.260722.3",
   "platforms": [
     "linux-x64-glibc",
     "linux-x64-musl",
