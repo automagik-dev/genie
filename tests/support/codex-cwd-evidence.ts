@@ -19,7 +19,7 @@
  * the control exec that carry the CWD facts.
  */
 
-import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
+import { type ChildProcessWithoutNullStreams, execFileSync, spawn } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -108,6 +108,16 @@ export class CodexCwdEvidence {
 
   /** Start the pinned app-server and complete the `initialize` handshake. */
   static async launch(codexCommand = 'codex'): Promise<CodexCwdEvidence> {
+    // Deterministic preflight: an absent/unrunnable codex must fail as a caught
+    // rejection HERE so callers skip honestly. Without it, spawn() below emits an
+    // async 'error' (ENOENT) with no listener, which Node throws unhandled at
+    // module load — escaping the caller's try/catch and aborting the whole file
+    // (observed on CI: "Executable not found in $PATH" + afterAll-after-complete).
+    try {
+      execFileSync(codexCommand, ['--version'], { stdio: 'ignore' });
+    } catch {
+      throw new Error(`codex binary not runnable in this environment: ${codexCommand}`);
+    }
     const harnessRoot = mkdtempSync(join(tmpdir(), 'genie-cwd-evidence-'));
     const codexHome = join(harnessRoot, 'codex-home');
     mkdirSync(codexHome, { recursive: true });
@@ -124,6 +134,9 @@ export class CodexCwdEvidence {
       env: { ...process.env, CODEX_HOME: codexHome, RUST_LOG: 'error' },
       stdio: ['pipe', 'pipe', 'pipe'],
     }) as ChildProcessWithoutNullStreams;
+    // A late spawn/runtime failure must surface as a rejected initialize (caught by
+    // callers), never as an unhandled 'error' event that throws and aborts the file.
+    child.on('error', () => {});
     const harness = new CodexCwdEvidence(
       child,
       harnessRoot,
