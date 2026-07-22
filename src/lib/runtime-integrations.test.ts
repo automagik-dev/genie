@@ -2577,7 +2577,6 @@ describe('proveCodexPluginHealth reject-before-retirement matrix (R4)', () => {
   const rejectCases: Array<[string, Partial<CodexPluginProbe>]> = [
     ['a disabled plugin', { enabled: false }],
     ['a wrong-version plugin', { version: '0.0.0' }],
-    ['an unusable launcher', { usable: false }],
     ['an ambiguous active root', { activePluginRoot: undefined }],
     ['an errored snapshot', { status: 'error' }],
   ];
@@ -2588,6 +2587,18 @@ describe('proveCodexPluginHealth reject-before-retirement matrix (R4)', () => {
       expect(() => proveCodexPluginHealth(opts)).toThrow('rejected before retirement');
     });
   }
+
+  test('accepts a snapshot with no Codex MCP route (usable:false) — plugin MCP is Claude-only now', () => {
+    // Group A removed the plugin's Codex MCP route, so a post-A snapshot reports
+    // usable:false. Plugin health is decoupled from Codex-MCP-route usability: a
+    // proven active root + verified payload + a working launcher session is
+    // healthy. The launcher (retained for Claude) is exercised by runSession.
+    const opts = healthyOpts();
+    opts.snapshot = { ...opts.snapshot, usable: false, usabilityDetail: 'plugin ships no Codex MCP route' };
+    const proof = proveCodexPluginHealth(opts);
+    expect(proof.version).toBe(1);
+    expect(proof.mcp.wishStatusReadOnly).toBe(true);
+  });
 
   test('rejects payload identity drift (verifyCodexPayload throws)', () => {
     const opts = healthyOpts();

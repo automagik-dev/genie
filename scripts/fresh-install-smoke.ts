@@ -440,39 +440,28 @@ function checkStarterPrompts(manifest: Record<string, unknown>, names: string[])
 }
 
 function checkPluginMcpLayout(pluginRoot: string, manifest: Record<string, unknown>): void {
-  if (manifest.mcpServers !== './.mcp.json') {
-    fail('Codex plugin manifest mcpServers must point to ./.mcp.json');
-  }
-  const configPath = join(pluginRoot, '.mcp.json');
-  if (!existsSync(configPath)) fail(`Codex plugin MCP config missing: ${configPath}`);
-  const config = JSON.parse(readFileSync(configPath, 'utf8')) as Record<string, unknown>;
-  if ('mcpServers' in config) fail('Codex plugin .mcp.json must not use unsupported camelCase mcpServers');
-  const wrapped = config.mcp_servers;
-  const serverMap =
-    typeof wrapped === 'object' && wrapped !== null && !Array.isArray(wrapped)
-      ? (wrapped as Record<string, unknown>)
-      : config;
-  const rawEntry = serverMap.genie;
-  const entry =
-    typeof rawEntry === 'object' && rawEntry !== null && !Array.isArray(rawEntry)
-      ? (rawEntry as { command?: unknown; args?: unknown; cwd?: unknown })
+  // Group A removed the Codex plugin MCP route: the manifest declares no mcpServers
+  // and no MCP capability, and the payload ships no `.mcp.json`. Codex MCP is
+  // provided ONLY by the marker-owned project route reconciled by `genie init`.
+  if ('mcpServers' in manifest) fail('Codex plugin manifest must not declare mcpServers (plugin MCP route removed)');
+  const iface = manifest.interface;
+  const capabilities =
+    typeof iface === 'object' && iface !== null && !Array.isArray(iface)
+      ? (iface as { capabilities?: unknown }).capabilities
       : undefined;
-  if (
-    entry?.command !== 'node' ||
-    !Array.isArray(entry.args) ||
-    entry.args.length !== 1 ||
-    entry.args[0] !== './scripts/mcp-launcher.cjs' ||
-    entry.cwd !== '.'
-  ) {
-    fail('Codex plugin MCP entry must run node ./scripts/mcp-launcher.cjs with cwd "."');
+  if (Array.isArray(capabilities) && capabilities.includes('MCP')) {
+    fail('Codex plugin must not advertise the MCP capability (plugin MCP route removed)');
   }
-  const launcher = resolve(pluginRoot, entry.args[0]);
+  if (existsSync(join(pluginRoot, '.mcp.json'))) fail('Codex plugin must not ship a .mcp.json route file');
+  // The plugin-local launcher persists — Claude drives it via its own inline
+  // ${CLAUDE_PLUGIN_ROOT}-anchored manifest entry (checked in checkClaudePluginMcpLayout).
+  const launcher = resolve(pluginRoot, 'scripts', 'mcp-launcher.cjs');
   if (!isWithin(resolve(pluginRoot), launcher)) fail('Codex MCP launcher escapes the plugin root');
   if (!existsSync(launcher) || !lstatSync(launcher).isFile() || lstatSync(launcher).isSymbolicLink()) {
-    fail(`Codex MCP launcher must be a physical plugin-local file: ${launcher}`);
+    fail(`plugin-local MCP launcher must be a physical file: ${launcher}`);
   }
   if (!isWithin(realpathSync(pluginRoot), realpathSync(launcher))) {
-    fail('Codex MCP launcher resolves outside the plugin root');
+    fail('plugin-local MCP launcher resolves outside the plugin root');
   }
 }
 

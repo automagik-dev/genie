@@ -14,9 +14,9 @@
  */
 
 import type { Database } from 'bun:sqlite';
-import { execSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { execFileSync, execSync } from 'node:child_process';
+import { existsSync, lstatSync } from 'node:fs';
+import { dirname, join, normalize } from 'node:path';
 import { openSqlite } from './sqlite-open.js';
 
 // Concurrency + typed-error primitives now live in sqlite-open.ts (shared with
@@ -74,6 +74,154 @@ export function resolveRepoRoot(cwd?: string): string {
 /** Absolute path to the shared genie.db for the repo containing `cwd`. */
 export function resolveDbPath(cwd?: string): string {
   return join(resolveRepoRoot(cwd), '.genie', 'genie.db');
+}
+
+// ============================================================================
+// Fail-closed project context (Group A: no outer/cache-root empty-board masquerade)
+// ============================================================================
+
+/**
+ * The typed states a project surface resolves BEFORE any MCP tool can serialize
+ * an empty board. A non-`ok` kind MUST surface as a structured error, never a
+ * healthy-looking empty projection. Bare/submodule/external-git-dir layouts are
+ * `unsupported-project-layout`; they never fall outward or to a plugin cache.
+ */
+export type ProjectContextKind =
+  | 'ok'
+  | 'project-context-unavailable'
+  | 'project-database-unavailable'
+  | 'unsupported-project-layout';
+
+export interface ProjectContextOk {
+  kind: 'ok';
+  /** The child's observable `process.cwd()`; Genie NEVER chdir's away from it. */
+  effectiveLaunchCwd: string;
+  /** Nearest containing worktree root; a linked worktree stays linked here. */
+  worktreeConfigRoot: string;
+  /** Absolute `git rev-parse --git-common-dir` (the MAIN repo's `.git` for a linked worktree). */
+  gitCommonDir: string;
+  /** `dirname(gitCommonDir)` — the repo that owns the shared genie.db. */
+  genieStorageRoot: string;
+  /** The ONLY database candidate: `<genieStorageRoot>/.genie/genie.db`. */
+  dbPath: string;
+}
+
+export interface ProjectContextError {
+  kind: Exclude<ProjectContextKind, 'ok'>;
+  /** The observable launch CWD is always known, even on failure. */
+  effectiveLaunchCwd: string;
+  detail: string;
+  /** Best-effort roots when they are resolvable (e.g. database-unavailable). */
+  worktreeConfigRoot?: string;
+  gitCommonDir?: string;
+  genieStorageRoot?: string;
+  dbPath?: string;
+}
+
+export type ProjectContext = ProjectContextOk | ProjectContextError;
+
+/** Trimmed stdout of a bounded, no-shell `git` invocation, or `null` on failure. */
+function runGit(cwd: string, args: string[]): string | null {
+  try {
+    return execFileSync('git', args, {
+      cwd,
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout: 5_000,
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
+/** A linked worktree's git dir lives under `<commonDir>/worktrees/<name>`. */
+function isLinkedWorktree(gitDir: string, gitCommonDir: string): boolean {
+  return normalize(dirname(gitDir)) === normalize(join(gitCommonDir, 'worktrees'));
+}
+
+/** A `.git` FILE at a non-linked worktree root marks an external/separate git dir. */
+function dotGitIsFile(worktreeRoot: string): boolean {
+  try {
+    return lstatSync(join(worktreeRoot, '.git')).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Resolve the four-value production path model for `cwd` WITHOUT ever changing
+ * the process CWD or considering a plugin cache. Git discovery stops at the
+ * nearest enclosing worktree, so a nested initialized repository resolves to its
+ * OWN storage root and a nested repo without a Genie database fails at that
+ * boundary rather than walking outward to an outer database.
+ *
+ * Bare repositories, submodules, and external/separate-Git-dir layouts return
+ * `unsupported-project-layout` BEFORE any database lookup. A resolvable layout
+ * whose `<genieStorageRoot>/.genie/genie.db` is absent returns
+ * `project-database-unavailable` — never an empty board.
+ */
+export function resolveProjectContext(cwd: string = process.cwd()): ProjectContext {
+  const effectiveLaunchCwd = cwd;
+  // Bare vs not-a-repo: `--is-bare-repository` succeeds inside a git dir even
+  // where `--show-toplevel` would abort, so it cleanly separates the two.
+  const isBare = runGit(cwd, ['rev-parse', '--is-bare-repository']);
+  if (isBare === null) {
+    return { kind: 'project-context-unavailable', effectiveLaunchCwd, detail: `no Git worktree contains ${cwd}` };
+  }
+  if (isBare === 'true') {
+    return {
+      kind: 'unsupported-project-layout',
+      effectiveLaunchCwd,
+      detail: 'bare Git repositories are not a supported Genie project layout',
+    };
+  }
+  // A non-empty superproject working tree means cwd is inside a submodule.
+  const superproject = runGit(cwd, ['rev-parse', '--path-format=absolute', '--show-superproject-working-tree']);
+  if (superproject) {
+    return {
+      kind: 'unsupported-project-layout',
+      effectiveLaunchCwd,
+      detail: 'Git submodules are not a supported Genie project layout',
+    };
+  }
+  const raw = runGit(cwd, ['rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir', '--git-dir']);
+  const [topRaw, commonRaw, gitDirRaw] = (raw ?? '').split('\n').map((line) => line.trim());
+  if (!topRaw || !commonRaw || !gitDirRaw) {
+    return {
+      kind: 'project-context-unavailable',
+      effectiveLaunchCwd,
+      detail: `unable to resolve Git roots for ${cwd}`,
+    };
+  }
+  const worktreeConfigRoot = normalizeGitPath(topRaw);
+  const gitCommonDir = normalizeGitPath(commonRaw);
+  const gitDir = normalizeGitPath(gitDirRaw);
+  // A non-linked worktree whose `.git` is a FILE points its common dir outside
+  // the project (`git init --separate-git-dir`); `dirname(gitCommonDir)` would
+  // then be an unrelated directory, so refuse it explicitly.
+  if (!isLinkedWorktree(gitDir, gitCommonDir) && dotGitIsFile(worktreeConfigRoot)) {
+    return {
+      kind: 'unsupported-project-layout',
+      effectiveLaunchCwd,
+      worktreeConfigRoot,
+      gitCommonDir,
+      detail: 'external/separate Git directory layouts are not a supported Genie project layout',
+    };
+  }
+  const genieStorageRoot = normalizeGitPath(dirname(gitCommonDir));
+  const dbPath = join(genieStorageRoot, '.genie', 'genie.db');
+  if (!existsSync(dbPath)) {
+    return {
+      kind: 'project-database-unavailable',
+      effectiveLaunchCwd,
+      worktreeConfigRoot,
+      gitCommonDir,
+      genieStorageRoot,
+      dbPath,
+      detail: `no Genie database at ${dbPath}; run \`genie init\` in ${genieStorageRoot}`,
+    };
+  }
+  return { kind: 'ok', effectiveLaunchCwd, worktreeConfigRoot, gitCommonDir, genieStorageRoot, dbPath };
 }
 
 // ============================================================================

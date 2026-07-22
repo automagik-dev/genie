@@ -15,7 +15,13 @@
 
 import { Database } from 'bun:sqlite';
 import { execFileSync } from 'node:child_process';
-import { resolveDbPath } from './genie-db.js';
+import { type ProjectContext, resolveDbPath } from './genie-db.js';
+import { BUSY_TIMEOUT_MS } from './sqlite-open.js';
+
+// Re-exported so `genie mcp` (mcp.ts) pulls the fail-closed context resolver in
+// the SAME lazy dynamic import that already loads the tool registry — keeping
+// the readonly bun:sqlite open out of the eager genie.ts import graph.
+export { type ProjectContext, resolveProjectContext } from './genie-db.js';
 import {
   type TaskFilter,
   type TaskRow,
@@ -36,10 +42,19 @@ import {
  * file does not exist (readonly open of a missing file throws) so callers can
  * degrade to an empty board instead of crashing the server. The handle is the
  * caller's to close.
+ *
+ * The read-only connection is given the SAME `busy_timeout` as the shared write
+ * primitive (see sqlite-open.ts): under concurrent access a straggling WAL
+ * writer must be waited out, not surfaced as an instant `-32603 "database is
+ * locked"`. `busy_timeout` is valid on a readonly connection and does not
+ * mutate the file. An absent-db open still throws before the pragma runs, so the
+ * degrade-to-`null` contract is preserved.
  */
 export function openReadonlyDb(cwd?: string): Database | null {
   try {
-    return new Database(resolveDbPath(cwd), { readonly: true });
+    const db = new Database(resolveDbPath(cwd), { readonly: true });
+    db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
+    return db;
   } catch {
     return null;
   }
@@ -145,6 +160,13 @@ export interface ToolContext {
   db: Database | null;
   /** Working directory for git branch resolution. Defaults to `process.cwd()`. */
   cwd: string;
+  /**
+   * The fail-closed project context resolved by the server loop when a resolver
+   * is injected. When its `kind` is not `ok`, the loop returns a typed error for
+   * every tool call instead of an empty board (see mcp-server.ts). Absent for
+   * consumers (e.g. ui-bridge) that do not opt into fail-closed resolution.
+   */
+  context?: ProjectContext;
 }
 
 export interface McpTool {

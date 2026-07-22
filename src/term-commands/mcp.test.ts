@@ -118,6 +118,10 @@ function seed(cwd: string): { taskId: string } {
   const t = createTask(db, { title: 'seed task', boardId: board.id, wish: 'genie-mcp', group: 'g2' });
   createTask(db, { title: 'other', boardId: board.id });
   createWishGroups(db, 'genie-mcp', [{ name: 'g1' }, { name: 'g2', dependsOn: ['g1'] }]);
+  // Fold pending WAL frames into the main db before the reader subprocess opens,
+  // so the readonly `genie mcp` server isn't racing an open WAL writer under
+  // cross-file test contention ("database is locked").
+  db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
   db.close();
   return { taskId: t.id };
 }
@@ -284,6 +288,7 @@ describe('mcp tools/call', () => {
       Date.now(),
       taskId,
     );
+    db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
     db.close();
     const responses = await driveMcp(repo, [
       INIT,
@@ -325,6 +330,7 @@ describe('mcp runtime-layer backward compatibility', () => {
     db.query(
       "UPDATE tasks SET blocked_by='x', blocked_reason='r', heartbeat_at=1, agent_kind='codex', lane='Idea' WHERE id=?",
     ).run(taskId);
+    db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
     db.close();
 
     const responses = await driveMcp(repo, [
@@ -369,22 +375,51 @@ describe('mcp runtime-layer backward compatibility', () => {
 });
 
 // ============================================================================
-// Absent-db degrade
+// Fail-closed: a missing genie.db is a typed error, never an empty board
 // ============================================================================
 
-describe('mcp absent-db degrade', () => {
-  test('genie_board degrades to an empty board when genie.db is absent', async () => {
-    // Fresh repo, never seeded → no .genie/genie.db. Readonly open throws → null.
+describe('mcp missing-database fail-closed', () => {
+  test('genie_board on a git repo with no genie.db returns project-database-unavailable, not empty success', async () => {
+    // Fresh git repo, never seeded → no .genie/genie.db. The old behavior served
+    // a healthy-looking empty board (the masquerade); Group A returns a typed error.
     const responses = await driveMcp(repo, [
       INIT,
       INITIALIZED,
       { jsonrpc: '2.0', id: 12, method: 'tools/call', params: { name: 'genie_board', arguments: {} } },
     ]);
     const res = responses.find((r) => r.id === 12);
-    expect(res?.result?.isError).toBe(false);
-    const payload = toolPayload<{ board: null; counts: { total: number }; tasks: unknown[] }>(res!);
-    expect(payload.counts.total).toBe(0);
-    expect(payload.tasks).toEqual([]);
+    expect(res?.result?.isError).toBe(true);
+    const payload = toolPayload<{ error: string; detail: string }>(res!);
+    expect(payload.error).toBe('project-database-unavailable');
+    // The error names the exact storage-root DB candidate, never a cache path.
+    expect(payload.detail).toContain('.genie/genie.db');
+    expect(payload).not.toHaveProperty('counts');
+    expect(payload).not.toHaveProperty('tasks');
+  });
+
+  test('every read tool fails closed identically when the database is absent', async () => {
+    const calls = [
+      { id: 13, name: 'genie_board', arguments: {} },
+      { id: 14, name: 'genie_wish_status', arguments: { wish: 'x' } },
+      { id: 15, name: 'genie_worktree_context', arguments: { branch: 'main' } },
+      { id: 16, name: 'genie_task', arguments: { id: 't_1' } },
+      { id: 17, name: 'genie_active', arguments: {} },
+    ];
+    const responses = await driveMcp(repo, [
+      INIT,
+      INITIALIZED,
+      ...calls.map((c) => ({
+        jsonrpc: '2.0',
+        id: c.id,
+        method: 'tools/call',
+        params: { name: c.name, arguments: c.arguments },
+      })),
+    ]);
+    for (const c of calls) {
+      const res = responses.find((r) => r.id === c.id);
+      expect(res?.result?.isError).toBe(true);
+      expect(toolPayload<{ error: string }>(res!).error).toBe('project-database-unavailable');
+    }
   });
 
   test('reopens a db created AFTER the server started (no stale empty board)', async () => {
@@ -476,6 +511,7 @@ describe('mcp worktree branch resolution', () => {
     createWishGroups(db, 'genie', [{ name: 'mcp' }]);
     createTask(db, { title: 'b', boardId: board.id, wish: 'genie-mcp', group: 'g1' });
     createWishGroups(db, 'genie-mcp', [{ name: 'g1' }]);
+    db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
     db.close();
     const res = await driveMcp(repo, [
       INIT,
