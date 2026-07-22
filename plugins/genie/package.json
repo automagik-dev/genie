@@ -1,6 +1,6 @@
 {
   "name": "genie-plugin",
-  "version": "5.260722.8",
+  "version": "5.260722.9",
   "private": true,
   "description": "Runtime dependencies for genie bundled CLIs",
   "license": "MIT",
