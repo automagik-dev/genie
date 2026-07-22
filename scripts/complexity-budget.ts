@@ -11,7 +11,7 @@
  *     suppression count
  *
  * No database, tmux, TUI, or network access required — only `biome check` and
- * a recursive grep over `src/` and `packages/`.
+ * a recursive grep over `src/`.
  */
 
 import { execSync } from 'node:child_process';
@@ -124,11 +124,11 @@ function runBiome(): string {
 }
 
 function countSuppressions(): string[] {
-  // Use git grep so we honor .gitignore and stay portable. Scope covers both the
-  // CLI (`src/`) and the UI package tree (`packages/`) so the budget sees the whole
-  // gated surface — `biome check .` already reports complexity warnings for both.
+  // Use git grep so we honor .gitignore and stay portable. Scope covers the CLI
+  // (`src/`) so the budget sees the gated surface — `biome check .` already reports
+  // complexity warnings for it.
   try {
-    const out = execSync('git grep -nE "biome-ignore lint/complexity/noExcessiveCognitiveComplexity" -- src packages', {
+    const out = execSync('git grep -nE "biome-ignore lint/complexity/noExcessiveCognitiveComplexity" -- src', {
       cwd: ROOT,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],

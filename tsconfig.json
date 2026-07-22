@@ -13,6 +13,5 @@
     "types": ["bun"]
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist"],
-  "references": [{ "path": "packages/genie-ui" }]
+  "exclude": ["node_modules", "dist"]
 }
