@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | IN_PROGRESS — A+B execution-SHIP on this branch (tip `ac264911`) now rebased context onto current dev; Groups C–E remain. Dev independently shipped the delivery-adjacent plugin-only layer (B1 `3b4faa3b`, B2 `6f423869`); NONE of the activation protocol is on dev. Merge gate holds: A–E must each independently SHIP before the PR merges to dev. Plan gate SHIP 2026-07-12 at fix loop 1/2 (reviewed digest `4c71ab68…`) |
+| **Status** | IN_PROGRESS — A+B+C execution-SHIP on this branch (C: SHIP after fix loop 1/2, 2026-07-22, tip `2c2dceec`); Groups D–E remain. Dev independently shipped the delivery-adjacent plugin-only layer (B1 `3b4faa3b`, B2 `6f423869`); NONE of the activation protocol is on dev. Merge gate holds: A–E must each independently SHIP before the PR merges to dev. Plan gate SHIP 2026-07-12 at fix loop 1/2 (reviewed digest `4c71ab68…`) |
 | **Slug** | `codex-plugin-update-handoff` |
 | **Date** | 2026-07-12 |
 | **Author** | Felipe + Codex brainstorm session |
@@ -957,6 +957,22 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 - **Validation evidence:** wishes lint OK (41 files, 0 broken links); digest exact match.
 - Zero CRITICAL/HIGH gaps remain; all three original loop-2/2 HIGH gaps and fresh-gate HIGH-1 are
   closed with mechanically checkable, singly-owned requirements. Plan is ready for `/work`.
+
+### Execution — Group C (delivery-and-rollback) — 2026-07-21/22 — SHIP after fix loop 1/2
+
+Executed post dev-merge `79400467` (union sync; A+B 118 green throughout). Engineer
+eng-C-delivery-rollback (opus), 11 commits `4c1029cd..2c2dceec`; incremental green-tree
+discipline across 5 resumed sessions. Seam: **Resolution Y** (orchestrator-ratified) — one shared
+`classifyCodexDelivery` gate; parent publishes attested facts under `codex-lifecycle-lease`
+('update-delivery', post-verify/pre-swap, released in finally); child converges read-only
+agents-only on N≠T. Closes the 2026-07-11 incident class at both vectors (update `c07ba6c2`,
+install `7c7d98ce`+`2c2dceec`). Independent review (rev-C, opus): loop 0 FIX-FIRST — 1 HIGH
+(install never acquired the codex lease; AC8 proven only at primitive level) → fixed `2c2dceec`
+(install-converge lease, busy → exit 2 `codex-lifecycle-busy` `deliveryComplete:false`, zero
+Codex-cache mutation, real command-path race arm) → loop 1 **SHIP**, all 8 ACs met for real
+commands. Suite 2024 pass / 1 known macOS ui-bridge `ss` fail; typecheck/biome/complexity/knip
+clean. LOW follow-ups captured on the roadmap (lease-primitive TOCTOU hardening — A-owned;
+gate-above-writeConsent ordering). smart-install.js confirmed a retired non-issue.
 
 ### Execution — Group A (activation-protocol-core) — 2026-07-12
 
