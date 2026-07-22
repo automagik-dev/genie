@@ -101,3 +101,44 @@ The review workflow uses isolated Git worktrees and can use `codex exec --epheme
 ## Known release boundary
 
 Source/extracted payload parity, hook protocol, and user-asset ownership belong to this follow-up. Inherited publication risks—arbitrary-ref stable publish, unvalidated privileged inputs/artifact provenance, mutable third-party actions, and the inherited live-binary transaction gap—remain BLOCKING in `stable-release-security-gate`. PR-scope remediation cannot authorize stable release.
+
+## Lifecycle exit matrix and result trailer (Group D — delivery/activation split)
+
+Genie separates signed **delivery** from cross-version **activation** (Decision 1).
+**`genie setup --codex` is activation-only**: it retires the currently active plugin
+generation and activates the delivered one behind an unforgeable real-TTY retirement
+assertion. It does NOT install or refresh the plugin payload, marketplace registration,
+or role agents — **delivery is done by `genie update` / `genie install`**. On a host
+where nothing was ever delivered, setup refuses with an actionable message pointing at
+`genie update`; it is never a dead end. (This is a deliberate UX change from the pre-split
+behavior where `setup --codex` also installed.)
+
+Every mutating lifecycle command serialises on one exclusive Codex lifecycle lease; a
+loser exits 2 with machine code `codex-lifecycle-busy`, `deliveryComplete:false`, and a
+retry action.
+
+### Per-command 0/1/2 exit matrix
+
+| Command | 0 | 1 | 2 |
+|---------|---|---|---|
+| `genie setup --codex` (and the full-wizard Codex step) | Activated, or already current | Broken/undelivered (no payload, `cache-missing`, `payload-mismatch`, `installed-newer`) — retry after `genie update` | Consent/authorization refused (quick, CI, `CODEX_THREAD_ID`, non-TTY, piped, decline/EOF), `activation-pending`/`registration-absent`/`intent-planned`/`intent-target-current`/`pending-downgrade-explicit` needing consent, or `codex-lifecycle-busy` |
+| `genie update` / `genie install` | Delivered + current | Delivery/verification failure | Delivered but action-required (`deliveryComplete:true`), or `codex-lifecycle-busy` |
+| `genie update --rollback` | Compatible rollback done | Rollback refused (capability floor) | `codex-lifecycle-busy` |
+| `genie uninstall` | Removed (or nothing to remove) | Safeguard/ownership failure | `codex-lifecycle-busy` (a lifecycle command holds the lease) |
+| `genie doctor` / `genie doctor --json` | All checks pass, Codex current | A hard check failed, or Codex broken (`query-failed`, `payload-mismatch`, …) | Codex `activation-pending`/`registration-absent`/recovery — `ok` stays a function of checks; `integrationSummary.actionRequired === true` |
+| `genie init` | Scaffolded | Not a git repo / MCP schema failure | — |
+
+### Result trailer
+
+Every exit-2/1 lifecycle path except `doctor --json` emits exactly one ANSI-free,
+single-line JSON **result trailer** on stdout, serialized once by Group A
+(`serializeActivationResultTrailer`):
+
+```json
+{"schemaVersion":1,"code":"codex-lifecycle-busy","deliveryComplete":false,"retry":true,"nextAction":"retry after the current setup-activation lifecycle command releases the lease"}
+```
+
+`doctor --json` is excluded: its exactly-one-object stdout contract carries the same
+`deliveryComplete` (and `actionRequired`) inside `integrationSummary.codexPlugin`. A
+pending `doctor --json` exiting 2 while `ok:true` is an intentional, backward-compatible
+compatibility change — automation keys off `integrationSummary`, not the process exit.

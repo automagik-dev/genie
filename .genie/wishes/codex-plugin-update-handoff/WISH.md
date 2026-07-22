@@ -974,6 +974,29 @@ commands. Suite 2024 pass / 1 known macOS ui-bridge `ss` fail; typecheck/biome/c
 clean. LOW follow-ups captured on the roadmap (lease-primitive TOCTOU hardening — A-owned;
 gate-above-writeConsent ordering). smart-install.js confirmed a retired non-issue.
 
+### Execution — Group D (lifecycle-surfaces) — 2026-07-22 — in progress (Fork A ratified)
+
+Engineer eng-D-lifecycle-surfaces (opus), incremental green-tree commits `da7359ae..`.
+Landed: doctor `--json` `integrationSummary` from one bounded observer with 0/1/2 exit and
+human stdout/stderr split (D3/D4); init project-fallback reconcile gated on a fresh
+`verified-current` observation (D5); uninstall task-breakage warning + codex lifecycle lease
+loser semantics + cross-command isolation (D6, uninstall D8/D9); the `uninstall` lifecycle-lease
+kind added additively to Group A's enum (the ratified contract names uninstall as a lease
+holder; flagged for reviewer); and the setup activation rewrite (D1/D2/D8/D9).
+
+**Ratified UX change (Fork A, team-lead-approved 2026-07-22).** `genie setup --codex` is now
+**activation-only**: it retires the active plugin generation and activates the delivered one
+through A's deep consent API (the sole retirement-assertion source) + B's permit-gated
+`executeCodexActivation` (which self-acquires the `setup-activation` lease). It no longer runs
+the legacy cache-advancing `installRuntimeIntegrations` convergence — **delivery of the plugin
+payload, marketplace registration, and role agents belongs to `genie update` / `genie install`**.
+On a host with nothing delivered, setup emits an actionable refusal pointing at `genie update`
+rather than dead-ending (never installs from a fresh machine without prior delivery). `--quick`,
+CI, `CODEX_THREAD_ID`, non-TTY, piped, and decline/EOF are unconditional activation refusals
+(exit 2, A-owned trailer, zero mutation). The per-command 0/1/2 exit matrix and result trailer
+are documented in `plugins/genie/references/codex-integration-map.md`. This change is surfaced
+to Felipe for final-gate veto; if vetoed it becomes a follow-up wish, not a re-revert.
+
 ### Execution — Group A (activation-protocol-core) — 2026-07-12
 
 - **Verdict:** SHIP after 2 fix loops. Reviewer: independent subagent; engineer: separate subagent.
