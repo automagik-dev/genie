@@ -60,6 +60,18 @@ import {
   runFlatAgentTransaction,
 } from '../lib/agent-sync.js';
 import { hookScriptExists } from '../lib/claude-settings.js';
+// A's canonical result-trailer serializer (via B's stable facade) + the codex
+// lifecycle lease. Uninstall is a deliberately separate destructive authority: it
+// acquires the lease after confirmation but before the first removal so it
+// serialises against setup/update/rollback/install, and it never mints or accepts
+// an activation assertion/permit.
+import { serializeActivationResultTrailer } from '../lib/codex-activation-executor.js';
+import {
+  type AcquireLeaseOptions,
+  type LifecycleLeaseKind,
+  type LifecycleLeaseResult,
+  acquireLifecycleLease as acquireCodexLifecycleLease,
+} from '../lib/codex-lifecycle-lease.js';
 import { contractPath, getGenieDir } from '../lib/genie-config.js';
 import { resolveClaudeDir, resolveCodexDir, resolveGenieHome, resolveHermesHome } from '../lib/genie-home.js';
 import {
@@ -3423,7 +3435,40 @@ function executeConfirmedUninstall(genieDir: string, removeMarketplace: boolean)
   }
 }
 
-export async function uninstallCommand(options: { removeMarketplace?: boolean } = {}): Promise<void> {
+/** Deterministic seams for the destructive uninstall path; production uses the real dependencies. */
+export interface UninstallDeps {
+  /** Interactive confirmation seam; production uses @inquirer/prompts. */
+  confirm?: typeof confirm;
+  /**
+   * Codex lifecycle-lease acquisition seam. Uninstall serialises against
+   * setup/update/rollback/install through the SAME lease (`resolveGenieHome`),
+   * so a busy holder makes uninstall a `codex-lifecycle-busy` loser.
+   */
+  acquireCodexLifecycleLease?: (kind: LifecycleLeaseKind, options?: AcquireLeaseOptions) => LifecycleLeaseResult;
+}
+
+/**
+ * The stable, ANSI-free single-line exit-2 trailer for a lifecycle-lease loser
+ * (D9). Built with A's canonical serializer — uninstall never redefines the
+ * trailer type. `deliveryComplete:false` because nothing was removed: another
+ * lifecycle command held the lease.
+ */
+function codexLifecycleBusyTrailer(holderKind: string | null): string {
+  return serializeActivationResultTrailer({
+    schemaVersion: 1,
+    code: 'codex-lifecycle-busy',
+    deliveryComplete: false,
+    retry: true,
+    nextAction: holderKind
+      ? `retry after the current ${holderKind} lifecycle command releases the lease`
+      : 'retry after the current lifecycle command releases the lease',
+  });
+}
+
+export async function uninstallCommand(
+  options: { removeMarketplace?: boolean } = {},
+  deps: UninstallDeps = {},
+): Promise<void> {
   console.log();
   console.log('\x1b[1m\x1b[33m Uninstall Genie CLI\x1b[0m');
   console.log();
@@ -3518,7 +3563,20 @@ export async function uninstallCommand(options: { removeMarketplace?: boolean } 
     return;
   }
 
-  const proceed = await confirm({ message: 'Are you sure you want to uninstall Genie CLI?', default: false });
+  // Deliberate destructive authority: warn BEFORE confirmation that removing the
+  // active plugin generation can break any currently active or resumable Codex
+  // task pinned to it. This is not the activation protocol — uninstall never
+  // mints or accepts an assertion/permit.
+  console.log(
+    '\x1b[1m\x1b[33m⚠ Warning:\x1b[0m removing Genie can break current or resumable tasks. A Codex task pinned to the',
+  );
+  console.log(
+    '\x1b[33m  active plugin generation may fail to resume after uninstall; retire such tasks first if they matter.\x1b[0m',
+  );
+  console.log();
+
+  const askConfirm = deps.confirm ?? confirm;
+  const proceed = await askConfirm({ message: 'Are you sure you want to uninstall Genie CLI?', default: false });
   if (!proceed) {
     console.log();
     console.log('\x1b[2mUninstall cancelled.\x1b[0m');
@@ -3526,11 +3584,30 @@ export async function uninstallCommand(options: { removeMarketplace?: boolean } 
     return;
   }
 
+  // Existing agent-sync safeguard lock (unchanged). Acquired after confirmation.
   const lifecycleLease = acquireLifecycleLease(genieDir);
   if ('skipped' in lifecycleLease)
     throw new Error(`Another Genie lifecycle command is active: ${lifecycleLease.skipped}`);
   try {
-    executeConfirmedUninstall(genieDir, options.removeMarketplace ?? false);
+    // Ratified acquisition point: the exclusive Codex lifecycle lease, after
+    // destructive confirmation but before the first removal, so uninstall
+    // serialises against setup/update/rollback/install on the shared GENIE_HOME.
+    const acquire = deps.acquireCodexLifecycleLease ?? acquireCodexLifecycleLease;
+    const codexLease = acquire('uninstall');
+    if (!codexLease.ok) {
+      // Loser: zero mutation. Emit the machine-readable trailer and exit 2.
+      process.stdout.write(`${codexLifecycleBusyTrailer(codexLease.holderKind)}\n`);
+      console.error(
+        `\x1b[33mcodex-lifecycle-busy:\x1b[0m ${codexLease.detail}. No files were removed; retry once it completes.`,
+      );
+      process.exitCode = 2;
+      return;
+    }
+    try {
+      executeConfirmedUninstall(genieDir, options.removeMarketplace ?? false);
+    } finally {
+      codexLease.release();
+    }
   } finally {
     lifecycleLease.release();
   }
