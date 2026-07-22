@@ -47,6 +47,7 @@ import {
   type VerifyResult,
   _resetNextDeprecationLatchForTest,
   applyConvergenceExitSignal,
+  attemptAlreadyCurrentDeliveryRepair,
   compareVersions,
   createPrivateUpdateTempRoot,
   decideDowngrade,
@@ -60,6 +61,7 @@ import {
   hashPhysicalFileIncrementally,
   isGenieProcessSnapshotLine,
   manifestUrlForChannel,
+  mapAlreadyCurrentRepairOutcome,
   narrowUpdateAgentSyncSelection,
   normalizeVersion,
   persistChannel,
@@ -2764,5 +2766,87 @@ describe('applyConvergenceExitSignal — exit 2 only on delivery-pending (D3 gua
     );
     expect(process.exitCode).toBe(2);
     expect(logs.join('\n')).not.toContain('deliveryComplete');
+  });
+});
+
+describe('mapAlreadyCurrentRepairOutcome — pure repair→directive mapping (Group D deliverable 1)', () => {
+  test('an old-parent publish (activation-pending) hands off to setup', () => {
+    expect(
+      mapAlreadyCurrentRepairOutcome({
+        kind: 'published',
+        record: {
+          schemaVersion: 1,
+          deliveryId: 'a'.repeat(32),
+          targetVersion: '5.260722.11',
+          canonicalPayloadSha256: 'a'.repeat(64),
+          channel: 'dev',
+          deliveredAt: '2026-07-22T00:00:00.000Z',
+        },
+        handoff: 'activation-pending',
+        artifactSha256: 'd'.repeat(64),
+      }),
+    ).toEqual({ action: 'exit-handoff' });
+  });
+
+  test('a target-current publish reports the repair and continues the current path', () => {
+    expect(
+      mapAlreadyCurrentRepairOutcome({
+        kind: 'published',
+        record: {
+          schemaVersion: 1,
+          deliveryId: 'a'.repeat(32),
+          targetVersion: '5.260722.11',
+          canonicalPayloadSha256: 'a'.repeat(64),
+          channel: 'dev',
+          deliveredAt: '2026-07-22T00:00:00.000Z',
+        },
+        handoff: 'current',
+        artifactSha256: 'd'.repeat(64),
+      }),
+    ).toEqual({ action: 'repaired-current' });
+  });
+
+  test('already-matching, channel-advanced, and failed all proceed unchanged', () => {
+    expect(mapAlreadyCurrentRepairOutcome({ kind: 'already-matching' })).toEqual({ action: 'proceed-current' });
+    expect(
+      mapAlreadyCurrentRepairOutcome({ kind: 'channel-advanced', from: '5.260722.11', to: '5.260722.12' }),
+    ).toEqual({ action: 'proceed-current' });
+    expect(
+      mapAlreadyCurrentRepairOutcome({
+        kind: 'failed',
+        stage: 'download-verify',
+        detail: 'x',
+        deliveryComplete: false,
+      }),
+    ).toEqual({ action: 'proceed-current' });
+  });
+});
+
+describe('attemptAlreadyCurrentDeliveryRepair — fail-closed skip with no install (CI-portable, no network/codex)', () => {
+  let prevGenieHome: string | undefined;
+  let dir: string;
+
+  beforeEach(() => {
+    prevGenieHome = process.env.GENIE_HOME;
+    dir = mkdtempSync(join(tmpdir(), 'update-repair-skip-'));
+    process.env.GENIE_HOME = dir;
+  });
+
+  afterEach(() => {
+    if (prevGenieHome === undefined) Reflect.deleteProperty(process.env, 'GENIE_HOME');
+    else process.env.GENIE_HOME = prevGenieHome;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('an empty GENIE_HOME (no installed payload) proceeds without any lease, download, or mutation', async () => {
+    // No plugins/genie payload and no binary ⇒ observeInstalledForRepair returns
+    // null ⇒ the repair is skipped entirely. This is the common already-current
+    // case in a CI environment: never touches the network or the codex CLI.
+    const directive = await attemptAlreadyCurrentDeliveryRepair('dev', 'linux-x64');
+    expect(directive).toEqual({ action: 'proceed-current' });
+    // No lease file was created (the skip returns before lease acquisition).
+    expect(existsSync(join(dir, '.codex-lifecycle.lock'))).toBe(false);
+    // No delivery record was minted.
+    expect(existsSync(join(dir, '.codex-plugin-delivery-record.json'))).toBe(false);
   });
 });

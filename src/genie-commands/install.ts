@@ -16,11 +16,14 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { type LifecycleLease, acquireLifecycleLease } from '../lib/agent-sync.js';
+import { observeCodexActivation, openCodexActivationStore } from '../lib/codex-activation-executor.js';
 import {
   type HeldLifecycleLease,
   type LifecycleLeaseResult,
   acquireLifecycleLease as acquireCodexLifecycleLease,
 } from '../lib/codex-lifecycle-lease.js';
+import { genieConfigExists, getGenieConfigPath } from '../lib/genie-config.js';
+import { retireInstallVersionMarker } from '../lib/install-version-marker.js';
 import {
   type InstallIntegrationsOptions,
   type IntegrationResult,
@@ -41,6 +44,7 @@ import {
   CODEX_RETIRE_RECOVERY,
   CodexLifecycleBusyError,
   classifyCodexDelivery,
+  publishCodexDelivery,
 } from './codex-delivery.js';
 import { cleanupV4 } from './legacy-v4.js';
 import { runAgentSyncSafe } from './update.js';
@@ -147,6 +151,85 @@ function buildInstallCodexDeferral(installedVersion: string): IntegrationResult 
     deliveryComplete: true,
     actionRequired: true,
   };
+}
+
+/** Best-effort channel token for the deferred-install delivery record (informational; inner guard binds core only). */
+function resolveDeliveryChannelForInstall(): string {
+  try {
+    if (!genieConfigExists()) return 'stable';
+    const raw = JSON.parse(readFileSync(getGenieConfigPath(), 'utf8')) as { updateChannel?: string };
+    if (raw.updateChannel === 'dev' || raw.updateChannel === 'next') return 'dev';
+    if (raw.updateChannel === 'homolog') return 'homolog';
+    return 'stable';
+  } catch {
+    return 'stable';
+  }
+}
+
+/**
+ * Deliverable 7: a deferred install (installed generation N ≠ delivered T)
+ * publishes its matching delivery record BEFORE the exit-2 handoff, so setup can
+ * later activate against a real record instead of exiting `delivery-incomplete`.
+ * Install re-fetches nothing — install.sh already downloaded and attestation-
+ * verified this exact tarball — so this only records the delivered fact through
+ * the shared publish gate under the held `install-converge` lease, using observed
+ * reality (N from the live query, T + digest from the canonical scan). A matching
+ * record is neither re-downloaded nor republished (idempotent); a payload-less or
+ * codex-absent environment publishes nothing.
+ */
+/**
+ * Group D install lifecycle finishers, both gated on convergence success
+ * (`!codexFailed` — a failed convergence threw earlier and never reaches here,
+ * preserving prior state): publish a deferred install's matching delivery record
+ * (deliverable 7) and retire the orphaned legacy `.install-version` marker
+ * (Decision 14). Both are best-effort so neither can fail a completed install.
+ */
+function finalizeInstallDeliveryLifecycle(
+  codexDeferral: CodexInstallDeferral | null,
+  lease: HeldLifecycleLease | null,
+  codexFailed: boolean,
+): void {
+  if (codexFailed) return;
+  if (codexDeferral !== null && lease !== null) {
+    try {
+      publishDeferredInstallDeliveryFacts(codexDeferral.installedVersion, lease);
+    } catch {
+      // Recording the delivered fact is best-effort; never fail a completed install over it.
+    }
+  }
+  try {
+    retireInstallVersionMarker(GENIE_HOME);
+  } catch {
+    // orphan-metadata cleanup must never fail a completed install.
+  }
+}
+
+function publishDeferredInstallDeliveryFacts(installedVersion: string, lease: HeldLifecycleLease): void {
+  let command: string | null = null;
+  try {
+    command = resolveRuntimeExecutable('codex', process.cwd());
+  } catch {
+    command = null;
+  }
+  const snapshot = observeCodexActivation({ genieHome: GENIE_HOME, command });
+  if (snapshot.canonical.status !== 'ok') return;
+  const targetVersion = snapshot.canonical.version.canonical;
+  const canonicalPayloadSha256 = snapshot.canonical.digest;
+  if (
+    snapshot.delivery.status === 'present' &&
+    snapshot.delivery.record.targetVersion === targetVersion &&
+    snapshot.delivery.record.canonicalPayloadSha256 === canonicalPayloadSha256
+  ) {
+    return; // matching record already published — never republish.
+  }
+  publishCodexDelivery({
+    lease,
+    store: openCodexActivationStore({ genieHome: GENIE_HOME }),
+    installedVersion,
+    targetVersion,
+    canonicalPayloadSha256,
+    channel: resolveDeliveryChannelForInstall(),
+  });
 }
 
 /**
@@ -323,6 +406,13 @@ export function installCommand(
     if (results.some((result) => result.runtime === 'codex' && result.ok && result.hookReviewRequired)) {
       console.log('  \x1b[33m!\x1b[0m Review Genie hooks with /hooks, then start a new Codex task.');
     }
+    // Deliverable 7: a deferred install publishes its matching delivery record
+    // (through the shared publish gate, under the held lease) BEFORE the exit-2
+    // handoff, so setup activates against a real record. Best-effort and
+    // idempotent — a payload-less env or a matching record publishes nothing —
+    // then retire the orphaned legacy `.install-version` marker on convergence
+    // success (Decision 14, Group D). Both are Group-D lifecycle finishers.
+    finalizeInstallDeliveryLifecycle(codexDeferral, codexLease, codexFailed);
     // Delivered-but-action-required (Codex generation deferred): exit 2 with the
     // one A-owned result trailer and no all-green footer. install.sh maps this to
     // an installer exit 2 (deliverable 3).
