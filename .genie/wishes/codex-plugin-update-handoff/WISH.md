@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | IN_PROGRESS — ALL FIVE GROUPS A-E execution-SHIP on this branch (E: SHIP loop 0, 2026-07-22, tip `c3edc1cf`); awaiting the independent wish-level final gate, then the A-E merge gate opens (PR to dev). Felipe veto point at live QA: setup is activation-only (Fork A). Dev independently shipped the delivery-adjacent plugin-only layer (B1 `3b4faa3b`, B2 `6f423869`); NONE of the activation protocol is on dev. Merge gate holds: A–E must each independently SHIP before the PR merges to dev. Plan gate SHIP 2026-07-12 at fix loop 1/2 (reviewed digest `4c71ab68…`) |
+| **Status** | EXECUTED — final gate **SHIP** 2026-07-22 (Fable final-gate, independent full-suite rerun 2396/ruled-2; cache-advance invariant swept to exactly five gated entries; lifecycle traced end-to-end; no appeal). A-E merge gate OPEN — PR to dev created. WISH→SHIPPED + stable promotion remain gated on Felipe's live homolog dogfood ritual (structural evidence validator) incl. his ratified veto on Fork A (setup is activation-only). Dev independently shipped the delivery-adjacent plugin-only layer (B1 `3b4faa3b`, B2 `6f423869`); NONE of the activation protocol is on dev. Merge gate holds: A–E must each independently SHIP before the PR merges to dev. Plan gate SHIP 2026-07-12 at fix loop 1/2 (reviewed digest `4c71ab68…`) |
 | **Slug** | `codex-plugin-update-handoff` |
 | **Date** | 2026-07-12 |
 | **Author** | Felipe + Codex brainstorm session |
@@ -957,6 +957,21 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 - **Validation evidence:** wishes lint OK (41 files, 0 broken links); digest exact match.
 - Zero CRITICAL/HIGH gaps remain; all three original loop-2/2 HIGH gaps and fresh-gate HIGH-1 are
   closed with mechanically checkable, singly-owned requirements. Plan is ready for `/work`.
+
+### Final gate — whole wish (A-E) — 2026-07-22 — SHIP
+
+Independent Fable `final-gate` @ `ad26cb38`, after all five ordinary reviews. Evidence: (1) seam
+coherence traced end-to-end in code (update→exit-2→retire→setup-activate→doctor→rollback), no
+cross-group state disagreement; (2) cache-advance invariant swept exhaustively — every
+plugin-mutation path resolves to exactly five gated entries (B executor, update child via shared
+gate, leased install, leased uninstall, binary-only rollback), no ungated caller incl. the
+dev-inherited convergeCodexPluginOnly internal call; (3) five ratified decisions verified across
+group boundaries verbatim; (4) both ruled test fails independently re-run + root-caused as
+pre-existing and non-load-bearing (race flake = lease-file read-during-write, degrades holder
+NAME only); (5) residue honesty confirmed — two seam notes documented (Resolution-Y child lease
+extent; install pre-gate writes), both LOW within the ratified boundary; (6) merge-gate language
+satisfied; post-release dogfood sequencing explicitly supported by the wish text. Condition
+riding the verdict: Felipe's live-QA veto on Fork A must be surfaced at the ritual.
 
 ### Execution — Group E (release-readiness) — 2026-07-22 — SHIP loop 0
 
