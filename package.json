@@ -24,7 +24,7 @@
     "lint:docs-markdown": "markdownlint-cli2 SECURITY.md docs/incident-response/canisterworm.mdx",
     "format": "biome format --write .",
     "test": "bun test",
-    "typecheck": "tsc --noEmit && tsc -p packages/genie-ui/tsconfig.json --noEmit",
+    "typecheck": "tsc --noEmit",
     "dead-code": "bunx knip",
     "skills:lint": "bun run scripts/skills-lint.ts",
     "wishes:lint": "bun run scripts/wishes-lint.ts",
@@ -42,17 +42,9 @@
     "verify:release": "scripts/verify-release.sh"
   },
   "dependencies": {
-    "@agentclientprotocol/sdk": "0.26.0",
-    "@homebridge/node-pty-prebuilt-multiarch": "^0.13.1",
     "@inquirer/prompts": "7.10.1",
-    "@xterm/addon-clipboard": "^0.2.0",
-    "@xterm/addon-fit": "^0.10.0",
-    "@xterm/addon-serialize": "^0.13.0",
-    "@xterm/headless": "^5.5.0",
-    "@xterm/xterm": "^5.5.0",
     "commander": "12.1.0",
     "nats": "2.29.3",
-    "ws": "^8.18.0",
     "zod": "3.25.76"
   },
   "devDependencies": {
@@ -61,7 +53,6 @@
     "@commitlint/config-conventional": "^20.4.1",
     "@types/bun": "^1.3.10",
     "@types/node": "^22.0.0",
-    "@types/ws": "^8.5.0",
     "esbuild": "^0.27.3",
     "husky": "^9.1.7",
     "knip": "^5.86.0",
