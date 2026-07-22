@@ -37,7 +37,25 @@ import {
   renameNonOverwriting,
   unlinkWithParentFsync,
 } from './codex-activation-persistence.js';
+// Group B (host-observation-attestation): the single pure delivery-attestation
+// classifier + its typed result. Imported here so the inner activation guard
+// (`beginActivationImpl`) applies exactly the same assessment the standalone
+// contract test exercises. `codex-host-observation.ts` imports only the leaf
+// `codex-release-version.ts` + `runtime-integrations.ts`, never this module, so
+// this dependency is one-directional (no import cycle).
+import {
+  type ActivationDeliveryExpectation,
+  type DeliveryAssessment,
+  type DeliveryRecordReadState,
+  assessAuthenticatedDelivery,
+} from './codex-host-observation.js';
 import { type HeldLifecycleLease, LifecycleFencingError } from './codex-lifecycle-lease.js';
+import {
+  type ParsedReleaseVersion,
+  compareReleaseVersions,
+  parseReleaseVersion,
+  stripControl,
+} from './codex-release-version.js';
 import { resolveCodexDir, resolveGenieHome } from './genie-home.js';
 import { type CommandRunner, parseCodexPluginState, runBoundedIntegrationCommand } from './runtime-integrations.js';
 
@@ -45,36 +63,10 @@ import { type CommandRunner, parseCodexPluginState, runBoundedIntegrationCommand
 // Release-version grammar and direction
 // ============================================================================
 
-/** Exact `MAJOR.YYMMDD.N` release grammar; build metadata is stripped only after a match. */
-const RELEASE_VERSION_RE = /^(\d+)\.(\d{6})\.(\d+)(?:\+[0-9A-Za-z][0-9A-Za-z.-]*)?$/;
-
-export interface ParsedReleaseVersion {
-  readonly major: number;
-  readonly ymd: number;
-  readonly n: number;
-  /** The `MAJOR.YYMMDD.N` triple with build metadata removed; used for equality. */
-  readonly canonical: string;
-}
-
-/** Parse a release version, returning null for anything that fails the exact grammar. */
-export function parseReleaseVersion(raw: unknown): ParsedReleaseVersion | null {
-  if (typeof raw !== 'string') return null;
-  const match = RELEASE_VERSION_RE.exec(raw);
-  if (!match) return null;
-  const major = Number(match[1]);
-  const ymd = Number(match[2]);
-  const n = Number(match[3]);
-  if (!Number.isSafeInteger(major) || !Number.isSafeInteger(ymd) || !Number.isSafeInteger(n)) return null;
-  return { major, ymd, n, canonical: `${major}.${match[2]}.${n}` };
-}
-
-/** Total numeric order over validated versions. */
-export function compareReleaseVersions(a: ParsedReleaseVersion, b: ParsedReleaseVersion): -1 | 0 | 1 {
-  if (a.major !== b.major) return a.major < b.major ? -1 : 1;
-  if (a.ymd !== b.ymd) return a.ymd < b.ymd ? -1 : 1;
-  if (a.n !== b.n) return a.n < b.n ? -1 : 1;
-  return 0;
-}
+// The pure `MAJOR.YYMMDD.N` grammar now lives in the leaf `codex-release-version.ts`
+// (shared with `codex-host-observation.ts` without an import cycle). Re-exported
+// here so every existing `from './codex-activation.js'` importer is unchanged.
+export { type ParsedReleaseVersion, compareReleaseVersions, parseReleaseVersion, stripControl };
 
 export type ActivationDirection = 'install' | 'upgrade' | 'downgrade' | 'repair';
 
@@ -1502,6 +1494,10 @@ export interface DeliveryRootOps {
 export type BeginActivationResult =
   | { status: 'started'; handle: ActivationHandle }
   | { status: 'stale'; mismatchField: keyof ActivationRequestFingerprint; detail: string }
+  // Group B inner guard: a re-observed non-matching authenticated delivery record
+  // refuses the transaction BEFORE the first journal write, so no stale permit can
+  // advance activation-owned state without a matching record.
+  | { status: 'delivery-incomplete'; assessment: Exclude<DeliveryAssessment, 'matching'>; detail: string }
   | { status: 'refused'; reason: string };
 
 export interface ActivationHandle {
@@ -1657,6 +1653,19 @@ function beginActivationImpl(
   const state = classifyCodexActivation(snapshot);
   const resolved = resolveActivationIntent(state, snapshot, lease.operationId);
   if ('refused' in resolved) return { status: 'refused', reason: resolved.refused };
+  // Group B inner guard (deliverable 5): immediately before the first journal
+  // write, re-assess the delivery record against THIS activation's intent. A
+  // non-matching record refuses with zero mutation — defense in depth so a stale
+  // permit (whose fingerprint bound the old deliveryId) still cannot advance
+  // activation-owned state without a re-observed matching authenticated record.
+  const assessment = assessActivationDelivery(snapshot, resolved.intent);
+  if (assessment !== 'matching') {
+    return {
+      status: 'delivery-incomplete',
+      assessment,
+      detail: `activation refused before the first write: delivery record is ${assessment}`,
+    };
+  }
   lease.assertOperation(lease.operationId);
   atomicWriteFileSync(intentPath, `${JSON.stringify(resolved.intent, null, 2)}\n`, { backup: true });
   return {
@@ -1669,6 +1678,32 @@ function beginActivationImpl(
       receiptId: resolved.intent.receiptId,
     },
   };
+}
+
+/**
+ * Apply Group B's pure authenticated-delivery assessment to the re-observed
+ * snapshot's delivery record against the intent being written. `targetVersion`
+ * and `canonicalPayloadSha256` are always bound; a downgrade additionally binds
+ * the delivery id to the consumed receipt id (preserving the downgrade binding).
+ * Rich attestation fields (platform/manifest/artifact/binary/root) are bound by
+ * Group D/E's richer expectation later; the core binding is enforced here today.
+ */
+function assessActivationDelivery(snapshot: CodexActivationSnapshot, intent: RefreshIntent): DeliveryAssessment {
+  const expectation: ActivationDeliveryExpectation = {
+    targetVersion: intent.targetVersion,
+    canonicalPayloadSha256: intent.canonicalPayloadSha256,
+  };
+  if (intent.direction === 'downgrade' && intent.receiptId !== null) {
+    expectation.deliveryId = intent.receiptId;
+  }
+  return assessAuthenticatedDelivery(deliveryReadState(snapshot.delivery), expectation);
+}
+
+/** Map the snapshot's delivery fact onto the assessment's read-state shape. */
+function deliveryReadState(fact: DeliveryFact): DeliveryRecordReadState {
+  if (fact.status === 'present') return { status: 'present', record: fact.record };
+  if (fact.status === 'invalid') return { status: 'invalid', detail: fact.detail };
+  return { status: 'absent' };
 }
 
 /**
@@ -1818,12 +1853,6 @@ function mint128(): string {
 
 function sha256Hex(content: string): string {
   return createHash('sha256').update(content).digest('hex');
-}
-
-/** Strip ANSI CSI and OSC control sequences from modeled diagnostics/output. */
-export function stripControl(text: string): string {
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: intentionally matching ESC/BEL control bytes.
-  return text.replace(/\][^]*(?:|\\)/g, '').replace(/\[[0-9;?]*[ -\/]*[@-~]/g, '');
 }
 
 function safeJson(content: string): unknown {
