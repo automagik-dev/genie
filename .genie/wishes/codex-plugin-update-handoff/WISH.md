@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | IN_PROGRESS — A+B+C+D execution-SHIP on this branch (D: SHIP loop 0, 2026-07-22, tip `5f51f785` — Fork A ratified: setup is activation-only, UX change documented for Felipe's final-gate veto); Group E remains. Dev independently shipped the delivery-adjacent plugin-only layer (B1 `3b4faa3b`, B2 `6f423869`); NONE of the activation protocol is on dev. Merge gate holds: A–E must each independently SHIP before the PR merges to dev. Plan gate SHIP 2026-07-12 at fix loop 1/2 (reviewed digest `4c71ab68…`) |
+| **Status** | IN_PROGRESS — ALL FIVE GROUPS A-E execution-SHIP on this branch (E: SHIP loop 0, 2026-07-22, tip `c3edc1cf`); awaiting the independent wish-level final gate, then the A-E merge gate opens (PR to dev). Felipe veto point at live QA: setup is activation-only (Fork A). Dev independently shipped the delivery-adjacent plugin-only layer (B1 `3b4faa3b`, B2 `6f423869`); NONE of the activation protocol is on dev. Merge gate holds: A–E must each independently SHIP before the PR merges to dev. Plan gate SHIP 2026-07-12 at fix loop 1/2 (reviewed digest `4c71ab68…`) |
 | **Slug** | `codex-plugin-update-handoff` |
 | **Date** | 2026-07-12 |
 | **Author** | Felipe + Codex brainstorm session |
@@ -957,6 +957,24 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 - **Validation evidence:** wishes lint OK (41 files, 0 broken links); digest exact match.
 - Zero CRITICAL/HIGH gaps remain; all three original loop-2/2 HIGH gaps and fresh-gate HIGH-1 are
   closed with mechanically checkable, singly-owned requirements. Plan is ready for `/work`.
+
+### Execution — Group E (release-readiness) — 2026-07-22 — SHIP loop 0
+
+Engineer eng-E-release-readiness (opus), 4 commits `2ffbc915..c3edc1cf` + authorized fix
+`749a1e8f`. **Found a real shipped-binary defect mid-group:** the capability probe threw on
+`bun --compile` binaries (argv[1] = virtual `/$bunfs` path) — the rollback capability floor would
+have refused EVERY rollback on shipped binaries; invisible to all interpreted-mode tests, caught
+only by E's extracted-tarball verifier. Fixed by a separate fixer (execPath for compiled, argv[1]
+preserved for sidecar-binding fidelity, three-mode tests, real compiled-binary proof:
+probe binarySha256 == shasum of the on-disk binary). Delivered: extracted-root-only payload
+verifier (probe unavailable-vs-lying split; 16 field-by-field drift tests), plan-gate-hardened
+live-dogfood evidence validator (17 per-field rejection tests), H3 command pinned across all
+gates + verifier wired into tarball builds, operator contract docs (exit matrix / trailer /
+lease / homolog / N-non-resume) with a drift-failing release-docs gate. All 4 platform tarballs
+built + independently verified exit 0 (darwin probe ok, version-matched). Independent review
+(rev-E, opus): **SHIP loop 0**, all ACs met; reviewer independently extracted + verified two
+tarballs and re-proved the probe fix. 2 non-blocking LOWs (diagnostic-path polish + stale
+comment) captured on the roadmap. Full check 2396-2397 pass / ruled baseline fails only.
 
 ### Execution — Group D (lifecycle-surfaces) — 2026-07-22 — SHIP loop 0
 
