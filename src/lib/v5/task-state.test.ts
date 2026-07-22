@@ -449,6 +449,21 @@ describe('runtime layer — claim / release timeline events', () => {
     expect(getTaskEvents(db, a.id).at(-1)?.kind).toBe('release');
   });
 
+  test('releaseTask clears heartbeat_at so the next owner does not inherit stale liveness', () => {
+    const a = createTask(db, { title: 'a' });
+    claimTask(db, a.id, 'w1');
+    recordHeartbeat(db, a.id, 10_000_000);
+    expect(getTaskCard(db, a.id)?.heartbeatAt).toBe(10_000_000);
+
+    releaseTask(db, a.id, HUMAN);
+    // The card is back to ready with no lingering pulse; a fresh checkout by
+    // worker B must read stale (never running) until B itself heartbeats.
+    expect(getTaskCard(db, a.id)?.heartbeatAt).toBeNull();
+
+    claimTask(db, a.id, 'w2');
+    expect(getTaskCard(db, a.id)?.heartbeatAt).toBeNull();
+  });
+
   test('releaseTask REFUSES a done card — never resurrects it, emits no release event', () => {
     const a = createTask(db, { title: 'a' });
     claimTask(db, a.id, 'w1');
