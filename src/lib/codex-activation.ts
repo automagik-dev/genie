@@ -133,6 +133,27 @@ export interface DeliveryRecord {
   canonicalPayloadSha256: string;
   channel: string;
   deliveredAt: string;
+  // Group D immutable attestation bindings (deliverables 1+2). All optional and
+  // additive: an ordinary pending publish omits them (legacy 6-field record); a
+  // same-version repair pins and persists the full authenticated tuple. Present
+  // fields are structurally validated on read so a persisted authenticated record
+  // round-trips as `present`, not `invalid`. Group B's `AuthenticatedDeliveryRecord`
+  // view already declares these, so the assessment can bind them when an
+  // expectation supplies them.
+  /** os-arch platform triple (`process.platform-process.arch`), matches PLATFORM_TRIPLE_RE. */
+  platformTriple?: string;
+  /** Release tag, e.g. `v5.260722.11`. */
+  releaseTag?: string;
+  /** Release/asset name pinned before download. */
+  releaseName?: string;
+  /** SHA-256 of the fetched release-manifest bytes (NOT an artifact digest source). */
+  releaseManifestSha256?: string;
+  /** SHA-256 computed over the downloaded asset AFTER download and authenticated via attestation/cosign. */
+  artifactSha256?: string;
+  /** SHA-256 of the installed binary the candidate was proven against. */
+  installedBinarySha256?: string;
+  /** Absolute canonical delivery root the payload was proven against. */
+  deliveryRoot?: string;
 }
 
 export interface ReceiptTombstone {
@@ -229,7 +250,21 @@ const DELIVERY_KEYS: ReadonlySet<string> = new Set([
   'canonicalPayloadSha256',
   'channel',
   'deliveredAt',
+  // Group D optional attestation bindings.
+  'platformTriple',
+  'releaseTag',
+  'releaseName',
+  'releaseManifestSha256',
+  'artifactSha256',
+  'installedBinarySha256',
+  'deliveryRoot',
 ]);
+
+const PLATFORM_TRIPLE_RE = /^[a-z0-9]+-[a-z0-9_]+$/;
+/** A bounded free-text attestation field (tag/name/root): non-empty and length-capped. */
+function isBoundedText(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 256;
+}
 
 export function parseDeliveryRecordStructure(content: string): DeliveryRecord | null {
   const parsed = safeJson(content);
@@ -242,6 +277,7 @@ export function parseDeliveryRecordStructure(content: string): DeliveryRecord | 
   if (!isHex256(record.canonicalPayloadSha256)) return null;
   if (typeof record.channel !== 'string' || record.channel.length === 0 || record.channel.length > 128) return null;
   if (typeof record.deliveredAt !== 'string' || record.deliveredAt.length === 0) return null;
+  if (!attestationFieldsValid(record)) return null;
   return {
     schemaVersion: 1,
     deliveryId: record.deliveryId as string,
@@ -249,6 +285,62 @@ export function parseDeliveryRecordStructure(content: string): DeliveryRecord | 
     canonicalPayloadSha256: record.canonicalPayloadSha256 as string,
     channel: record.channel as string,
     deliveredAt: record.deliveredAt as string,
+    ...pickAttestationFields(record),
+  };
+}
+
+/** Every PRESENT attestation field must satisfy its shape; absent fields are legal (legacy record). */
+function attestationFieldsValid(record: Record<string, unknown>): boolean {
+  if (
+    record.platformTriple !== undefined &&
+    !(typeof record.platformTriple === 'string' && PLATFORM_TRIPLE_RE.test(record.platformTriple))
+  ) {
+    return false;
+  }
+  if (record.releaseTag !== undefined && !isBoundedText(record.releaseTag)) return false;
+  if (record.releaseName !== undefined && !isBoundedText(record.releaseName)) return false;
+  if (record.deliveryRoot !== undefined && !isBoundedText(record.deliveryRoot)) return false;
+  for (const key of ['releaseManifestSha256', 'artifactSha256', 'installedBinarySha256'] as const) {
+    if (record[key] !== undefined && !isHex256(record[key])) return false;
+  }
+  return true;
+}
+
+/** Copy only the present, already-validated attestation fields onto the parsed record. */
+function pickAttestationFields(record: Record<string, unknown>): Partial<DeliveryRecord> {
+  const out: Partial<DeliveryRecord> = {};
+  if (record.platformTriple !== undefined) out.platformTriple = record.platformTriple as string;
+  if (record.releaseTag !== undefined) out.releaseTag = record.releaseTag as string;
+  if (record.releaseName !== undefined) out.releaseName = record.releaseName as string;
+  if (record.releaseManifestSha256 !== undefined) out.releaseManifestSha256 = record.releaseManifestSha256 as string;
+  if (record.artifactSha256 !== undefined) out.artifactSha256 = record.artifactSha256 as string;
+  if (record.installedBinarySha256 !== undefined) out.installedBinarySha256 = record.installedBinarySha256 as string;
+  if (record.deliveryRoot !== undefined) out.deliveryRoot = record.deliveryRoot as string;
+  return out;
+}
+
+/**
+ * Validate a publish-time attestation binding and return the fields, or throw so
+ * a malformed binding is rejected before it is written. Returns an empty object
+ * when no binding is supplied (ordinary pending publish keeps the legacy shape).
+ */
+function bindAttestation(binding: DeliveryAttestationBinding | undefined): Partial<DeliveryRecord> {
+  if (binding === undefined) return {};
+  if (!PLATFORM_TRIPLE_RE.test(binding.platformTriple)) throw new Error('attestation platformTriple is malformed');
+  if (!isBoundedText(binding.releaseTag)) throw new Error('attestation releaseTag is malformed');
+  if (!isBoundedText(binding.releaseName)) throw new Error('attestation releaseName is malformed');
+  if (!isBoundedText(binding.deliveryRoot)) throw new Error('attestation deliveryRoot is malformed');
+  if (!isHex256(binding.releaseManifestSha256)) throw new Error('attestation releaseManifestSha256 is malformed');
+  if (!isHex256(binding.artifactSha256)) throw new Error('attestation artifactSha256 is malformed');
+  if (!isHex256(binding.installedBinarySha256)) throw new Error('attestation installedBinarySha256 is malformed');
+  return {
+    platformTriple: binding.platformTriple,
+    releaseTag: binding.releaseTag,
+    releaseName: binding.releaseName,
+    releaseManifestSha256: binding.releaseManifestSha256,
+    artifactSha256: binding.artifactSha256,
+    installedBinarySha256: binding.installedBinarySha256,
+    deliveryRoot: binding.deliveryRoot,
   };
 }
 
@@ -1484,6 +1576,24 @@ export interface PublishDeliveryInput {
   downgradeFrom?: string;
   deliveryId?: string;
   now?: () => Date;
+  /**
+   * Group D's immutable attestation bindings (deliverables 1+2). Ordinary pending
+   * publishes omit them; a same-version repair pins and persists the full tuple.
+   * Each present value is structurally validated before it is written so a
+   * malformed binding is rejected at publish time rather than corrupting a record.
+   */
+  attestation?: DeliveryAttestationBinding;
+}
+
+/** The immutable attestation tuple a same-version repair persists into the delivery record. */
+export interface DeliveryAttestationBinding {
+  platformTriple: string;
+  releaseTag: string;
+  releaseName: string;
+  releaseManifestSha256: string;
+  artifactSha256: string;
+  installedBinarySha256: string;
+  deliveryRoot: string;
 }
 
 export interface DeliveryRootOps {
@@ -1575,6 +1685,7 @@ function publishDeliveryImpl(deliveryPath: string, receiptPath: string, input: P
     canonicalPayloadSha256: input.canonicalPayloadSha256,
     channel: input.channel,
     deliveredAt: now().toISOString(),
+    ...bindAttestation(input.attestation),
   };
   if (input.downgradeFrom !== undefined) {
     const from = parseReleaseVersion(input.downgradeFrom);

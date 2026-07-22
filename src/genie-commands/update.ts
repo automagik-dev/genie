@@ -30,6 +30,10 @@ import {
   runAgentSync,
 } from '../lib/agent-sync.js';
 import { observeCodexActivation, openCodexActivationStore } from '../lib/codex-activation-executor.js';
+import { assessAuthenticatedDelivery } from '../lib/codex-activation-executor.js';
+import { parseReleaseVersion, scanPhysicalTree } from '../lib/codex-activation.js';
+import type { DeliveryFact } from '../lib/codex-activation.js';
+import type { DeliveryRecordReadState } from '../lib/codex-host-observation.js';
 import {
   type HeldLifecycleLease,
   acquireLifecycleLease as acquireCodexLifecycleLease,
@@ -46,6 +50,7 @@ import {
   verifyInstallStagingDirectory,
 } from '../lib/install-promotion.js';
 import { inspectPhysicalPath } from '../lib/install-transaction.js';
+import { retireInstallVersionMarker } from '../lib/install-version-marker.js';
 import {
   type CodexAgentInstallResult,
   type IntegrationResult,
@@ -69,6 +74,15 @@ import {
   convergeAuxiliaryTree,
   fingerprintAuxiliaryTree,
 } from './auxiliary-trees.js';
+import {
+  type CandidateProof,
+  type DeliveryRepairOutcome,
+  type DeliveryRepairSeams,
+  type InstalledProof,
+  type RepairPinnedTarget,
+  buildLocalRepairExpectation,
+  repairMissingDelivery,
+} from './codex-delivery-repair.js';
 import {
   CODEX_DELIVERY_RESULT_TRAILER,
   CODEX_LIFECYCLE_BUSY_TRAILER,
@@ -1822,6 +1836,256 @@ function recoverInstallPromotionAndConvergePayload(): void {
   writeFileSync(join(GENIE_HOME, 'VERSION'), exactVersion);
 }
 
+// ============================================================================
+// Same-version delivery repair on the already-current path (Group D deliverable 1)
+// ============================================================================
+
+export type AlreadyCurrentRepairDirective =
+  | { action: 'proceed-current' }
+  | { action: 'repaired-current' }
+  | { action: 'exit-handoff' };
+
+/**
+ * Pure mapping of a repair outcome to the already-current directive. A published
+ * record whose registered generation still trails the target hands off to setup
+ * (exit 2 with the delivery trailer); a target-current publish reports the repair
+ * and continues the normal already-current success; already-matching /
+ * channel-advanced / failed all proceed unchanged — the repair is best-effort and
+ * leaves durable state untouched, so the next update retries or picks up an advance.
+ */
+export function mapAlreadyCurrentRepairOutcome(outcome: DeliveryRepairOutcome): AlreadyCurrentRepairDirective {
+  if (outcome.kind === 'published') {
+    return outcome.handoff === 'activation-pending' ? { action: 'exit-handoff' } : { action: 'repaired-current' };
+  }
+  return { action: 'proceed-current' };
+}
+
+/** The pinned, immutable repair target — every field is locally known at pin time. */
+function buildRepairPinnedTarget(channel: string, platformId: string): RepairPinnedTarget {
+  const version = normalizeVersion(VERSION);
+  return {
+    channel,
+    targetVersion: version,
+    platformTriple: `${process.platform}-${process.arch}`,
+    releaseTag: `v${version}`,
+    releaseName: `genie-${version}-${platformId}.tar.gz`,
+  };
+}
+
+/** The canonical installed payload root under GENIE_HOME, or null when no payload is present. */
+function resolveCanonicalPayloadRoot(): string | null {
+  for (const candidate of [GENIE_HOME, join(GENIE_HOME, 'bin')]) {
+    if (existsSync(join(candidate, 'plugins', 'genie'))) return candidate;
+  }
+  return null;
+}
+
+function hashFileSha256(path: string): string | null {
+  try {
+    return createHash('sha256').update(readFileSync(path)).digest('hex');
+  } catch {
+    return null;
+  }
+}
+
+/** Local canonical observation; null when the installed payload/binary cannot be safely observed. */
+function observeInstalledForRepair(): InstalledProof | null {
+  const snapshot = observeCodexActivation({ genieHome: GENIE_HOME, command: null });
+  if (snapshot.canonical.status !== 'ok') return null;
+  const root = resolveCanonicalPayloadRoot();
+  if (root === null) return null;
+  const binarySha256 = hashFileSha256(join(GENIE_BIN, 'genie'));
+  if (binarySha256 === null) return null;
+  return {
+    version: snapshot.canonical.version.canonical,
+    pluginTreeSha256: snapshot.canonical.digest,
+    binarySha256,
+    deliveryRoot: root,
+  };
+}
+
+/** Map the activation snapshot's delivery fact onto Group B's read-state shape. */
+function deliveryFactToReadState(fact: DeliveryFact): DeliveryRecordReadState {
+  if (fact.status === 'present') return { status: 'present', record: fact.record };
+  if (fact.status === 'invalid') return { status: 'invalid', detail: fact.detail };
+  return { status: 'absent' };
+}
+
+/** Re-scan a freshly extracted tarball into a candidate proof; throws on any unsafe/unreadable member. */
+async function proveCandidateFromTarball(tarballPath: string): Promise<CandidateProof> {
+  const extractRoot = createPrivateUpdateTempRoot();
+  try {
+    await extractTarball(tarballPath, extractRoot);
+    chmodSync(extractRoot, 0o700);
+    const tree = scanPhysicalTree(join(extractRoot, 'plugins', 'genie'));
+    if (tree.status !== 'ok' || tree.digest === undefined) {
+      throw new Error(`candidate plugin tree is not a safe physical tree: ${tree.status}`);
+    }
+    const version = parseReleaseVersion(readTrimmedFile(join(extractRoot, 'VERSION')));
+    if (version === null) throw new Error('candidate VERSION is missing or fails the release grammar');
+    const binarySha256 = hashFileSha256(join(extractRoot, 'genie'));
+    if (binarySha256 === null) throw new Error('candidate binary is unreadable');
+    return { version: version.canonical, pluginTreeSha256: tree.digest, binarySha256 };
+  } finally {
+    rmSync(extractRoot, { recursive: true, force: true });
+  }
+}
+
+function readTrimmedFile(path: string): string | null {
+  try {
+    const value = readFileSync(path, 'utf8').trim();
+    return value.length > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function manifestPinDigest(manifest: LatestManifest): string {
+  const canonical = JSON.stringify({
+    schema_version: manifest.schema_version,
+    channel: manifest.channel,
+    version: manifest.version,
+    released_at: manifest.released_at,
+    tarball_base: manifest.tarball_base,
+    platforms: manifest.platforms,
+  });
+  return createHash('sha256').update(canonical).digest('hex');
+}
+
+/**
+ * Attempt the same-version delivery repair before an already-current return.
+ * Wholly best-effort and fail-closed: a matching record, an unobservable install,
+ * a busy codex lease, or any repair failure all return `proceed-current` with zero
+ * durable mutation, so the already-current path is never regressed. The download
+ * and private extraction happen under the held codex lease and are cleaned up on
+ * every path; only the single `publishDelivery` mutates durable state.
+ */
+export async function attemptAlreadyCurrentDeliveryRepair(
+  channel: string,
+  platformId: string,
+): Promise<AlreadyCurrentRepairDirective> {
+  const installed = observeInstalledForRepair();
+  if (installed === null) return { action: 'proceed-current' };
+  const pinned = buildRepairPinnedTarget(channel, platformId);
+  // No-network, no-lease fast path: an already-bound record needs no repair.
+  const record = deliveryFactToReadState(observeCodexActivation({ genieHome: GENIE_HOME, command: null }).delivery);
+  if (assessAuthenticatedDelivery(record, buildLocalRepairExpectation(pinned, installed)) === 'matching') {
+    return { action: 'proceed-current' };
+  }
+  const lease = acquireCodexLifecycleLease('update-delivery', { genieHome: GENIE_HOME });
+  if (!lease.ok) return { action: 'proceed-current' }; // another lifecycle command holds it — retry later.
+  const tempRoots: string[] = [];
+  try {
+    const seams = buildAlreadyCurrentRepairSeams(platformId, installed, lease, tempRoots);
+    const outcome = await repairMissingDelivery(pinned, seams);
+    return mapAlreadyCurrentRepairOutcome(outcome);
+  } catch {
+    return { action: 'proceed-current' };
+  } finally {
+    lease.release();
+    for (const root of tempRoots) rmSync(root, { recursive: true, force: true });
+  }
+}
+
+/** Build the real repair seams; download roots are tracked in `tempRoots` for cleanup by the caller. */
+function buildAlreadyCurrentRepairSeams(
+  platformId: string,
+  installed: InstalledProof,
+  lease: HeldLifecycleLease,
+  tempRoots: string[],
+): DeliveryRepairSeams {
+  return {
+    readDeliveryRecord: () =>
+      deliveryFactToReadState(observeCodexActivation({ genieHome: GENIE_HOME, command: null }).delivery),
+    observeInstalled: () => installed,
+    fetchManifest: async (channel) => {
+      const manifest = await fetchLatestManifest(channel as ReleaseChannel);
+      if (manifest === null) return null;
+      return { version: normalizeVersion(manifest.version), manifestSha256: manifestPinDigest(manifest) };
+    },
+    downloadAndVerify: async (target) => {
+      const manifest = await fetchLatestManifest(target.channel as ReleaseChannel);
+      if (manifest === null) throw new Error('release manifest unavailable for asset download');
+      const destDir = createPrivateUpdateTempRoot();
+      tempRoots.push(destDir);
+      return downloadAndVerifyTarball(manifest, platformId, destDir);
+    },
+    hashArtifact: (path) => {
+      const digest = hashFileSha256(path);
+      if (digest === null) throw new Error('downloaded artifact is unreadable');
+      return digest;
+    },
+    proveCandidate: (path) => proveCandidateFromTarball(path),
+    reobserve: () => reobserveForRepair(),
+    store: openCodexActivationStore({ genieHome: GENIE_HOME }),
+    lease,
+  };
+}
+
+/** Re-observe the installed generation + canonical digest immediately before publication. */
+function reobserveForRepair(): {
+  installedGeneration: string | null;
+  canonicalVersion: string;
+  canonicalPayloadSha256: string;
+} | null {
+  let command: string | null = null;
+  try {
+    command = resolveRuntimeExecutable('codex', process.cwd());
+  } catch {
+    command = null;
+  }
+  const snapshot = observeCodexActivation({ genieHome: GENIE_HOME, command });
+  if (snapshot.canonical.status !== 'ok') return null;
+  const registration = snapshot.query.status === 'ok' ? snapshot.query.registration : { present: false as const };
+  const installedGeneration = registration.present && registration.version ? registration.version.canonical : null;
+  return {
+    installedGeneration,
+    canonicalVersion: snapshot.canonical.version.canonical,
+    canonicalPayloadSha256: snapshot.canonical.digest,
+  };
+}
+
+/** Best-effort retirement of the legacy `.install-version` marker after a proven-successful convergence. */
+function retireLegacyInstallMarkerSafe(): void {
+  try {
+    retireInstallVersionMarker(GENIE_HOME);
+  } catch {
+    // Orphan-metadata cleanup must never fail a completed update.
+  }
+}
+
+/**
+ * The already-current terminal path. Group D deliverable 1: before returning
+ * "Already up to date", repair a MISSING authenticated delivery record for the
+ * installed target exactly once (fail-closed, best-effort — a matching record or
+ * any failure proceeds unchanged with zero durable mutation). An old-parent
+ * repair hands off to setup (exit 2); every other case converges and retires the
+ * legacy marker as usual.
+ */
+async function handleAlreadyCurrentUpdate(
+  channel: string,
+  platform: string,
+  installedVersion: string,
+  latestVersion: string | null | undefined,
+): Promise<void> {
+  const repair = await attemptAlreadyCurrentDeliveryRepair(channel, platform);
+  if (repair.action === 'exit-handoff') {
+    // Old-parent repair published one bound record but the registered generation
+    // still trails the target: hand off to setup (exit 2) with the one delivery
+    // trailer and exact next action, keeping N registered.
+    process.exitCode = 2;
+    log(CODEX_DELIVERY_RESULT_TRAILER);
+    return;
+  }
+  success(`Already up to date (v${normalizeVersion(installedVersion)}, channel ${channel})`);
+  if (repair.action === 'repaired-current') {
+    log('Repaired the missing Codex delivery record for the installed generation.');
+  }
+  runTrackedManualUpdateConvergence(latestVersion ?? normalizeVersion(installedVersion));
+  retireLegacyInstallMarkerSafe();
+  console.log();
+}
+
 export async function updateCommand(options: UpdateCommandOptions = {}): Promise<void> {
   // The read-only capability probe is answered before mode resolution and any
   // mutation: it self-hashes this binary, prints exactly one JSON object, and
@@ -1894,9 +2158,7 @@ export async function updateCommand(options: UpdateCommandOptions = {}): Promise
     await persistChannel(channel);
 
     if (shortCircuitIfCurrent(installedVersion, latestVersion)) {
-      success(`Already up to date (v${normalizeVersion(installedVersion)}, channel ${channel})`);
-      runTrackedManualUpdateConvergence(latestVersion ?? normalizeVersion(installedVersion));
-      console.log();
+      await handleAlreadyCurrentUpdate(channel, platform, installedVersion, latestVersion);
       return;
     }
 
@@ -1942,6 +2204,10 @@ export async function updateCommand(options: UpdateCommandOptions = {}): Promise
     runV4CleanupSafe();
     if (!runFreshConvergenceOrReport(lifecycleLease)) return;
     await runPostUpdateVerifySafe({ ...options, noRestart, noVerify }, diagnosticsCtx);
+    // Convergence succeeded: retire the orphaned legacy `.install-version` marker
+    // (Decision 14). Canonical VERSION is the sole authority; this only runs after
+    // a proven-successful delivery + convergence, so a failed run preserves it.
+    retireLegacyInstallMarkerSafe();
   } finally {
     lifecycleLease.release();
   }
