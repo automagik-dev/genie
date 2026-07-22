@@ -63,6 +63,17 @@ import {
   resolveSetupExitCode,
   serializeActivationResultTrailer,
 } from './codex-activation.js';
+// Group B's delivery-attestation + host-observation contract, re-exported below as
+// part of the stable facade Groups C and D consume from this one module.
+import {
+  DELIVERY_INCOMPLETE_RECOVERY,
+  type DeliveryAssessment,
+  assessAuthenticatedDelivery,
+  buildDeliveryIncompleteResult,
+  parseCodexHostObservation,
+  projectHostQuery,
+  witnessCodexCacheFamily,
+} from './codex-host-observation.js';
 import { type HeldLifecycleLease, LifecycleFencingError, acquireLifecycleLease } from './codex-lifecycle-lease.js';
 import type { LifecycleLeaseKind, LifecycleLeaseResult } from './codex-lifecycle-lease.js';
 import { type CommandRunner, runBoundedIntegrationCommand, setCodexPluginEnabled } from './runtime-integrations.js';
@@ -89,6 +100,13 @@ export {
   requestRetirementAssertion,
   resolveSetupExitCode,
   serializeActivationResultTrailer,
+  // Group B's host-observation + delivery-attestation contract (deliverables 1, 4, 6).
+  DELIVERY_INCOMPLETE_RECOVERY,
+  assessAuthenticatedDelivery,
+  buildDeliveryIncompleteResult,
+  parseCodexHostObservation,
+  projectHostQuery,
+  witnessCodexCacheFamily,
 };
 
 // ============================================================================
@@ -168,6 +186,14 @@ export type ActivationExecutionResult =
       trailer: ActivationResultTrailer;
     }
   | { status: 'refused'; code: string; detail: string; trailer: ActivationResultTrailer }
+  | {
+      status: 'delivery-incomplete';
+      code: 'delivery-incomplete';
+      assessment: Exclude<DeliveryAssessment, 'matching'>;
+      detail: string;
+      recovery: string;
+      trailer: ActivationResultTrailer;
+    }
   | { status: 'broken'; code: string; detail: string; trailer: ActivationResultTrailer };
 
 /** A supported Codex CLI command failed; carries no host authority claim. */
@@ -227,6 +253,13 @@ function runActivationUnderLease(
       detail: begin.detail,
       trailer: staleTrailer(),
     };
+  }
+  if (begin.status === 'delivery-incomplete') {
+    // Group B inner guard: the re-observed delivery record is absent/invalid/
+    // mismatched. Nothing was written; report the stable delivery-incomplete
+    // result (authority none, exit 1, deliveryComplete false) with the one
+    // update/install recovery command.
+    return deliveryIncompleteResult(begin.assessment, begin.detail);
   }
   if (begin.status === 'refused') {
     // A genuine permit for a state that opens no activation transaction (e.g.
@@ -661,6 +694,32 @@ function brokenFromError(input: ExecuteCodexActivationInput, error: unknown): Ac
     code: fenced ? 'codex-lifecycle-fenced' : describeState(state).machineCode,
     detail: errorText(error),
     trailer: buildActivationResultTrailer(state, /* deliveryComplete */ true),
+  };
+}
+
+/**
+ * Map Group B's inner-guard refusal to the executor result: the stable
+ * delivery-incomplete outcome (authority none, exit 1, deliveryComplete false)
+ * carrying the one update/install recovery command. Nothing was mutated.
+ */
+function deliveryIncompleteResult(
+  assessment: Exclude<DeliveryAssessment, 'matching'>,
+  detail: string,
+): ActivationExecutionResult {
+  const result = buildDeliveryIncompleteResult(assessment, detail);
+  return {
+    status: 'delivery-incomplete',
+    code: 'delivery-incomplete',
+    assessment,
+    detail: result.detail,
+    recovery: result.recovery,
+    trailer: {
+      schemaVersion: 1,
+      code: 'delivery-incomplete',
+      deliveryComplete: false,
+      retry: true,
+      nextAction: result.recovery,
+    },
   };
 }
 

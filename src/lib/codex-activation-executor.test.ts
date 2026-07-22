@@ -310,6 +310,32 @@ describe('permit boundary', () => {
   });
 });
 
+describe('delivery-incomplete inner guard', () => {
+  test('activation without a delivery record refuses as delivery-incomplete with zero mutation', () => {
+    const fx = fixture({ from: FROM_VERSION, initialEnabled: true, createFromCache: true });
+    // Intentionally do NOT publishDelivery: the inner guard must refuse before any mutation.
+    const result = runActivation(fx);
+    expect(result.status).toBe('delivery-incomplete');
+    if (result.status !== 'delivery-incomplete') throw new Error('unreachable');
+    expect(result.code).toBe('delivery-incomplete');
+    expect(result.assessment).toBe('absent');
+    expect(result.trailer.deliveryComplete).toBe(false);
+    expect(result.recovery).toContain('genie update');
+    // No activation-owned mutation: no journal, no plugin add, released lease.
+    expect(existsSync(intentPath(fx))).toBe(false);
+    expect(addCalls(fx)).toBe(0);
+    expect(existsSync(leasePath(fx))).toBe(false);
+  });
+
+  test('a matching delivery record proceeds normally (control for the guard)', () => {
+    const fx = fixture({ from: FROM_VERSION, initialEnabled: true, createFromCache: true });
+    publishDelivery(fx);
+    const result = runActivation(fx);
+    expect(result.status).toBe('activated');
+    expect(addCalls(fx)).toBe(1);
+  });
+});
+
 describe('successful activation', () => {
   test('upgrade preserves enabled state, proves parity + H3, clears the journal, returns verified', () => {
     const fx = fixture({ from: FROM_VERSION, initialEnabled: true, createFromCache: true });

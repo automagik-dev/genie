@@ -852,6 +852,32 @@ function heldLease(genieHome: string) {
   return lease;
 }
 
+/**
+ * Publish a matching (upgrade) delivery record for a T-target fixture under its
+ * own short-lived delivery lease. The Group B inner guard requires a matching
+ * authenticated delivery record before `beginActivation` writes its journal, so
+ * every `beginActivation`-under-a-held-lease test seeds one first (mirrors how
+ * Group C/D publish delivery ahead of permit-gated activation).
+ */
+function publishMatchingDelivery(genieHome: string, codexHome: string): void {
+  const lease = acquireLifecycleLease('update-delivery', { genieHome });
+  if (!lease.ok) throw new Error('could not acquire delivery lease');
+  try {
+    openCodexActivationStore({
+      genieHome,
+      codexHome,
+      command: 'codex',
+      runner: listRunner({ stdout: '{}' }),
+    }).publishDelivery(lease, {
+      targetVersion: T,
+      canonicalPayloadSha256: canonicalDigest(genieHome),
+      channel: 'stable',
+    });
+  } finally {
+    lease.release();
+  }
+}
+
 describe('CodexActivationStore — delivery + downgrade receipt', () => {
   test('publishDelivery writes a delivery record and no receipt for an ordinary delivery', () => {
     const fx = makeFixture({ targetVersion: T, registeredVersion: T, sameBytes: true });
@@ -1011,6 +1037,7 @@ describe('CodexActivationStore — beginActivation fingerprint binding', () => {
 
   test('a fresh permit begins a planned transaction fenced by the lease operation id', () => {
     const fx = makeFixture({ targetVersion: T, registeredVersion: OLD });
+    publishMatchingDelivery(fx.genieHome, fx.codexHome);
     const store = openCodexActivationStore({
       genieHome: fx.genieHome,
       codexHome: fx.codexHome,
@@ -1082,8 +1109,73 @@ describe('CodexActivationStore — beginActivation fingerprint binding', () => {
     }
   });
 
+  // Group B inner guard (deliverable 5): a genuine, fresh permit still cannot open
+  // the transaction without a matching authenticated delivery record.
+  test('an absent delivery record refuses as delivery-incomplete and writes no journal', () => {
+    const fx = makeFixture({ targetVersion: T, registeredVersion: OLD });
+    // Intentionally NO publishMatchingDelivery.
+    const store = openCodexActivationStore({
+      genieHome: fx.genieHome,
+      codexHome: fx.codexHome,
+      command: 'codex',
+      runner: listRunner({ stdout: pluginListJson([{ version: OLD }]) }),
+    });
+    const permit = grantPermit(store);
+    const lease = heldLease(fx.genieHome);
+    try {
+      const result = store.beginActivation(lease, permit);
+      expect(result.status).toBe('delivery-incomplete');
+      if (result.status === 'delivery-incomplete') expect(result.assessment).toBe('absent');
+      expect(existsSync(join(fx.genieHome, '.codex-plugin-refresh-intent.json'))).toBe(false);
+    } finally {
+      lease.release();
+    }
+  });
+
+  // A stale permit cannot bypass the inner guard: the fingerprint binds the delivery
+  // id, so a record whose target was minted for a DIFFERENT activation still passes
+  // the fingerprint (same id) yet is caught by the re-observed delivery assessment.
+  test('a delivery record bound to a different target refuses as delivery-incomplete even when the fingerprint matches', () => {
+    const fx = makeFixture({ targetVersion: T, registeredVersion: OLD });
+    // Publish a record whose targetVersion is NOT the canonical target (mismatch),
+    // but whose delivery id the permit fingerprint will bind.
+    const deliveryLease = acquireLifecycleLease('update-delivery', { genieHome: fx.genieHome });
+    if (!deliveryLease.ok) throw new Error('could not acquire delivery lease');
+    try {
+      openCodexActivationStore({
+        genieHome: fx.genieHome,
+        codexHome: fx.codexHome,
+        command: 'codex',
+        runner: listRunner({ stdout: '{}' }),
+      }).publishDelivery(deliveryLease, {
+        targetVersion: NEWER,
+        canonicalPayloadSha256: canonicalDigest(fx.genieHome),
+        channel: 'stable',
+      });
+    } finally {
+      deliveryLease.release();
+    }
+    const store = openCodexActivationStore({
+      genieHome: fx.genieHome,
+      codexHome: fx.codexHome,
+      command: 'codex',
+      runner: listRunner({ stdout: pluginListJson([{ version: OLD }]) }),
+    });
+    const permit = grantPermit(store); // fingerprint binds the record's delivery id
+    const lease = heldLease(fx.genieHome);
+    try {
+      const result = store.beginActivation(lease, permit);
+      expect(result.status).toBe('delivery-incomplete');
+      if (result.status === 'delivery-incomplete') expect(result.assessment).toBe('mismatch');
+      expect(existsSync(join(fx.genieHome, '.codex-plugin-refresh-intent.json'))).toBe(false);
+    } finally {
+      lease.release();
+    }
+  });
+
   test('advance then finalize deletes the intent (crash-safe delete order)', () => {
     const fx = makeFixture({ targetVersion: T, registeredVersion: OLD });
+    publishMatchingDelivery(fx.genieHome, fx.codexHome);
     const store = openCodexActivationStore({
       genieHome: fx.genieHome,
       codexHome: fx.codexHome,
@@ -1107,6 +1199,7 @@ describe('CodexActivationStore — beginActivation fingerprint binding', () => {
 
   test('a superseded lease operation id fences an intent advance', () => {
     const fx = makeFixture({ targetVersion: T, registeredVersion: OLD });
+    publishMatchingDelivery(fx.genieHome, fx.codexHome);
     const store = openCodexActivationStore({
       genieHome: fx.genieHome,
       codexHome: fx.codexHome,
@@ -1132,6 +1225,7 @@ describe('CodexActivationStore — beginActivation fingerprint binding', () => {
   for (const phase of POST_COMMAND_PHASES) {
     test(`a fresh assertion resumes an intent-${phase} journal (same id, preserved phase)`, () => {
       const fx = makeFixture({ targetVersion: T, registeredVersion: OLD });
+      publishMatchingDelivery(fx.genieHome, fx.codexHome);
       const store = openCodexActivationStore({
         genieHome: fx.genieHome,
         codexHome: fx.codexHome,
@@ -1173,6 +1267,7 @@ describe('CodexActivationStore — beginActivation fingerprint binding', () => {
 
   test('a stale permit on a resumed post-command phase refuses and leaves the journal untouched', () => {
     const fx = makeFixture({ targetVersion: T, registeredVersion: OLD });
+    publishMatchingDelivery(fx.genieHome, fx.codexHome);
     const store = openCodexActivationStore({
       genieHome: fx.genieHome,
       codexHome: fx.codexHome,
