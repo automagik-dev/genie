@@ -2448,7 +2448,7 @@ describe('atomic external uninstall captures', () => {
 // ============================================================================
 
 import { readFileSync as readFileSyncForSource } from 'node:fs';
-import { uninstallCommand } from './uninstall.js';
+import { type UninstallDeps, uninstallCommand } from './uninstall.js';
 
 describe('uninstallCommand — warning, lifecycle lease, isolation (Group D)', () => {
   let root: string;
