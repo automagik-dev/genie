@@ -71,6 +71,25 @@ describe('acquireLifecycleLease — acquisition and mutual exclusion', () => {
     const invalidKind = 'totally-invalid' as unknown as Parameters<typeof acquireLifecycleLease>[0];
     expect(() => acquireLifecycleLease(invalidKind, { genieHome })).toThrow();
   });
+
+  test('uninstall is a valid lease kind and serialises against setup-activation (both directions)', () => {
+    const genieHome = freshHome();
+    const uninstall = hold(acquireLifecycleLease('uninstall', { genieHome }));
+    expect(uninstall.kind).toBe('uninstall');
+    const setupLoser = acquireLifecycleLease('setup-activation', { genieHome });
+    expect(setupLoser.ok).toBe(false);
+    if (setupLoser.ok) throw new Error('unreachable');
+    expect(setupLoser.reason).toBe('codex-lifecycle-busy');
+    expect(setupLoser.holderKind).toBe('uninstall');
+
+    uninstall.release();
+    // Reverse direction: a held setup-activation makes uninstall busy.
+    hold(acquireLifecycleLease('setup-activation', { genieHome }));
+    const uninstallLoser = acquireLifecycleLease('uninstall', { genieHome });
+    expect(uninstallLoser.ok).toBe(false);
+    if (uninstallLoser.ok) throw new Error('unreachable');
+    expect(uninstallLoser.holderKind).toBe('setup-activation');
+  });
 });
 
 describe('acquireLifecycleLease — stale holder supersession', () => {

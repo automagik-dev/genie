@@ -34,6 +34,7 @@ export type LifecycleLeaseKind =
   | 'setup-activation'
   | 'rollback'
   | 'install-converge'
+  | 'uninstall'
   | 'journal-quarantine';
 
 const LEASE_KINDS: ReadonlySet<string> = new Set<LifecycleLeaseKind>([
@@ -41,6 +42,7 @@ const LEASE_KINDS: ReadonlySet<string> = new Set<LifecycleLeaseKind>([
   'setup-activation',
   'rollback',
   'install-converge',
+  'uninstall',
   'journal-quarantine',
 ]);
 
