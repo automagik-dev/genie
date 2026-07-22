@@ -3010,10 +3010,18 @@ function bindActiveRootToCanonicalCache(activePluginRoot: string, codexHome: str
 
 /**
  * Reject health BEFORE any retirement unless the single snapshot is exactly one
- * enabled target-version plugin with a usable launcher, a canonically-verified
- * installed payload and exact inventory, and a bounded MCP session that
- * completes initialize / tools-list (all five tools) / read-only wish_status.
- * Returns a frozen {@link CodexHealthProof} whose payload feeds retirement.
+ * enabled target-version plugin with a proven active cache root, a
+ * canonically-verified installed payload and exact inventory, and a bounded MCP
+ * session that completes initialize / tools-list (all five tools) / read-only
+ * wish_status. Returns a frozen {@link CodexHealthProof} whose payload feeds
+ * retirement.
+ *
+ * Plugin health is deliberately DECOUPLED from Codex-MCP-route usability
+ * (`snapshot.usable`). The plugin no longer registers a Codex MCP route — that
+ * path is the marker-owned project `.codex/config.toml` reconciled by `genie
+ * init`. A healthy plugin provides skills + hooks + the retained Claude
+ * `mcp-launcher.cjs`; the launcher's ability to spawn and speak MCP is proven by
+ * the bounded session below, not by a plugin-declared MCP registration.
  */
 export function proveCodexPluginHealth(options: ProveCodexPluginHealthOptions): CodexHealthProof {
   const { snapshot } = options;
@@ -3028,7 +3036,9 @@ export function proveCodexPluginHealth(options: ProveCodexPluginHealthOptions): 
   if (snapshot.activePluginRoot === undefined) {
     rejectHealth(`active plugin root was not proven by the snapshot: ${snapshot.usabilityDetail ?? snapshot.detail}`);
   }
-  if (snapshot.usable !== true) rejectHealth(snapshot.usabilityDetail ?? 'plugin MCP launcher is not usable');
+  // NOTE: `snapshot.usable` (Codex-MCP-route usability) is intentionally NOT a
+  // health gate. The plugin ships no Codex MCP route; the launcher's health is
+  // proven by the bounded MCP session below.
 
   const activePluginRoot = snapshot.activePluginRoot;
   // Bind the consumed tree to the canonical cache BEFORE any digesting or MCP
@@ -3046,7 +3056,10 @@ export function proveCodexPluginHealth(options: ProveCodexPluginHealthOptions): 
 
   // A7: the session runs through the snapshot's own proven launcher (derived
   // from the single activePluginRoot, not a re-read), in an isolated throwaway
-  // cwd so a missing db degrades to an empty board without touching real state.
+  // cwd that is not a project. The fail-closed MCP server there returns a typed
+  // "no project context" result rather than a fabricated empty board; the health
+  // session accepts that as read-only-healthy — the launcher spawning and
+  // speaking MCP IS the signal, an absent board there is expected.
   const runSession = options.runSession ?? runBoundedCodexMcpSession;
   const sessionCwd = mkdtempSync(join(tmpdir(), 'genie-mcp-health-'));
   let session: McpSessionResult;
