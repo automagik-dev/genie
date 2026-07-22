@@ -293,138 +293,81 @@ describe('Codex MCP fallback merge', () => {
 });
 
 // ============================================================================
-// Verified-current fallback gate — B's observation facade (Group D, D5)
+// Marker-owned Codex route — plugin- and delivery-independent (Group A)
 // ============================================================================
 
-import {
-  type CanonicalFact,
-  type CodexActivationSnapshot,
-  type FamilyWitness,
-  type IntentFact,
-  type PhysicalCacheFact,
-  type QueryFact,
-  type RefreshIntent,
-  parseReleaseVersion,
-} from '../lib/codex-activation.js';
-import { isCodexVerifiedCurrent } from './init.js';
-
-const IT_T = '5.260712.1';
-const IT_OLD = '5.260711.9';
-const IT_NEWER = '5.260713.4';
-const IT_DIGEST = 'a'.repeat(64);
-
-function itVer(s: string) {
-  const parsed = parseReleaseVersion(s);
-  if (!parsed) throw new Error(`bad version ${s}`);
-  return parsed;
-}
-function itFamily(): FamilyWitness {
-  return { status: 'present', digest: 'f'.repeat(64), identity: '10:300' };
-}
-function itCanonical(): CanonicalFact {
-  return { status: 'ok', version: itVer(IT_T), digest: IT_DIGEST, identity: '10:100' };
-}
-function itReg(version = IT_T): QueryFact {
-  return { status: 'ok', registration: { present: true, enabled: true, version: itVer(version) } };
-}
-function itCache(digest = IT_DIGEST): PhysicalCacheFact {
-  return { kind: 'present', digest, identity: '10:200' };
-}
-function itIntentTargetCurrent(): IntentFact {
-  const intent: RefreshIntent = {
-    schemaVersion: 1,
-    refreshIntentId: '1'.repeat(32),
-    operationId: '2'.repeat(32),
-    fromPluginVersion: IT_OLD,
-    targetVersion: IT_T,
-    direction: 'upgrade',
-    priorEnabled: true,
-    canonicalPayloadSha256: IT_DIGEST,
-    phase: 'planned',
-    commandKind: 'codex-plugin-add',
-    lastFailure: '',
-    receiptId: null,
-  };
-  return { status: 'valid', intent, contentSha256: 'd'.repeat(64) };
-}
-function itSnapshot(over: Partial<CodexActivationSnapshot> = {}): CodexActivationSnapshot {
-  return {
-    canonical: itCanonical(),
-    query: itReg(),
-    cache: itCache(),
-    receipt: { status: 'absent' },
-    delivery: { status: 'absent' },
-    intent: { status: 'absent' },
-    receiptConsumed: false,
-    observationWitness: { before: itFamily(), after: itFamily() },
-    observedAt: '2026-07-12T00:00:00.000Z',
-    ...over,
-  };
-}
-function gate(snapshot: CodexActivationSnapshot, observed: string[] = []): boolean {
-  return isCodexVerifiedCurrent({
-    resolveCodexCommand: () => '/fake/codex',
-    observeCodexActivation: ({ command }) => {
-      observed.push(command ?? 'null');
-      return snapshot;
-    },
+/** Run `genie init` with an isolated GENIE_HOME and no Codex CLI on PATH. */
+function runInitWithHome(cwd: string, genieHome: string): { code: number; stderr: string } {
+  const res = Bun.spawnSync([process.execPath, CLI, 'init'], {
+    cwd,
+    stdout: 'pipe',
+    stderr: 'pipe',
+    // No Codex CLI on PATH: init must STILL write the marker (plugin-independent).
+    env: { ...process.env, PATH: '/usr/bin:/bin', GENIE_HOME: genieHome },
   });
+  return { code: res.exitCode, stderr: res.stderr.toString() };
 }
 
-describe('init verified-current fallback gate', () => {
-  test('a fresh `current` observation is the ONLY state that reconciles (true)', () => {
-    expect(gate(itSnapshot())).toBe(true);
+describe('init marker-owned Codex route', () => {
+  test('writes the stable <GENIE_HOME>/bin/genie facade with args ["mcp"] and no cwd override', () => {
+    initGitRepo(dir);
+    const home = join(dir, 'home-a');
+    expect(runInitWithHome(dir, home).code).toBe(0);
+    const toml = readFileSync(join(dir, '.codex', 'config.toml'), 'utf8');
+    expect(toml).toContain('# BEGIN GENIE MCP FALLBACK');
+    // The marker command is the canonical stable facade, never a versioned cache path.
+    expect(toml).toContain(`mcp_servers.genie.command = "${join(home, 'bin', 'genie')}"`);
+    expect(toml).toContain('mcp_servers.genie.args = ["mcp"]');
+    // No effective cwd override is written.
+    expect(toml).not.toContain('cwd');
   });
 
-  test('state matrix: pending / broken / indeterminate / recovery all retain fallback (false)', () => {
-    // activation-pending (N < T)
-    expect(gate(itSnapshot({ query: itReg(IT_OLD), cache: itCache('b'.repeat(64)) }))).toBe(false);
-    // query-failed (broken/indeterminate)
-    expect(gate(itSnapshot({ query: { status: 'failed', detail: 'timed out' } }))).toBe(false);
-    // registration-absent (activation required)
-    expect(
-      gate(itSnapshot({ query: { status: 'ok', registration: { present: false } }, cache: { kind: 'absent' } })),
-    ).toBe(false);
-    // cache-missing
-    expect(gate(itSnapshot({ cache: { kind: 'absent' } }))).toBe(false);
-    // installed-newer (implicit downgrade refused)
-    expect(gate(itSnapshot({ query: itReg(IT_NEWER) }))).toBe(false);
+  test('is created even with no Codex CLI present (plugin- and delivery-independent)', () => {
+    initGitRepo(dir);
+    // Default runInit already strips codex from PATH; the marker must still exist.
+    expect(runInit(dir).code).toBe(0);
+    expect(existsSync(join(dir, '.codex', 'config.toml'))).toBe(true);
+    expect(readFileSync(join(dir, '.codex', 'config.toml'), 'utf8')).toContain('mcp_servers.genie');
   });
 
-  test('a current-LOOKING but payload-mismatched snapshot is NOT fresh authority (false)', () => {
-    // same version string, divergent cache digest → payload-mismatch, never current.
-    expect(gate(itSnapshot({ cache: itCache('c'.repeat(64)) }))).toBe(false);
+  test('an explicit GENIE_HOME relocation is reconciled to the new facade by init', () => {
+    initGitRepo(dir);
+    const homeA = join(dir, 'home-a');
+    const homeB = join(dir, 'home-b');
+    expect(runInitWithHome(dir, homeA).code).toBe(0);
+    expect(runInitWithHome(dir, homeB).code).toBe(0);
+    const toml = readFileSync(join(dir, '.codex', 'config.toml'), 'utf8');
+    expect(toml).toContain(`mcp_servers.genie.command = "${join(homeB, 'bin', 'genie')}"`);
+    expect(toml).not.toContain(join(homeA, 'bin', 'genie'));
+    // Exactly one owned marker block — reconciliation never duplicates.
+    expect(toml.match(/BEGIN GENIE MCP FALLBACK/g)).toHaveLength(1);
   });
 
-  test('a current-version snapshot with an unresolved refresh intent is a recovery state, not current (false)', () => {
-    // intent-target-current dominates the ordinary `current` row: retain fallback.
-    expect(gate(itSnapshot({ intent: itIntentTargetCurrent() }))).toBe(false);
+  test('an unowned same-key Codex route is preserved byte-for-byte and reported, never overwritten', () => {
+    initGitRepo(dir);
+    const codexPath = join(dir, '.codex', 'config.toml');
+    mkdirSync(join(dir, '.codex'), { recursive: true });
+    const personal = '[mcp_servers.genie]\ncommand = "/my/own/genie"\nargs = ["mcp"]\n';
+    writeFileSync(codexPath, personal);
+    const { code, stderr } = runInitWithHome(dir, join(dir, 'home-a'));
+    expect(code).toBe(1);
+    expect(stderr.toLowerCase()).toMatch(/unverified|preserved/);
+    // The user file is untouched, and no scaffold leaked past the collision.
+    expect(readFileSync(codexPath, 'utf8')).toBe(personal);
+    expect(existsSync(join(dir, '.genie', 'INDEX.md'))).toBe(false);
   });
 
-  test('the observation is taken with the freshly resolved codex command (no stale authority)', () => {
-    const observed: string[] = [];
-    gate(itSnapshot(), observed);
-    expect(observed).toEqual(['/fake/codex']);
-  });
-
-  test('an absent codex CLI observes with a null command and never reconciles', () => {
-    const observed: string[] = [];
-    const result = isCodexVerifiedCurrent({
-      resolveCodexCommand: () => null,
-      observeCodexActivation: ({ command }) => {
-        observed.push(command === null ? 'null' : command);
-        return itSnapshot({ query: { status: 'failed', detail: 'codex CLI not found' } });
-      },
-    });
-    expect(result).toBe(false);
-    expect(observed).toEqual(['null']);
-  });
-
-  test('init.ts never mints an assertion/permit and never touches the lifecycle lease', () => {
+  test('init.ts never mints an assertion/permit and never touches the lifecycle lease or delivery', () => {
     const source = readFileSync(join(import.meta.dir, 'init.ts'), 'utf8');
-    expect(source.includes('acquireLifecycleLease')).toBe(false);
-    expect(source.includes('requestRetirementAssertion')).toBe(false);
-    expect(source.includes('authorizeCodexActivation')).toBe(false);
-    expect(source.includes('executeCodexActivation')).toBe(false);
+    for (const forbidden of [
+      'acquireLifecycleLease',
+      'requestRetirementAssertion',
+      'authorizeCodexActivation',
+      'executeCodexActivation',
+      'observeCodexActivation',
+      'beginActivation',
+    ]) {
+      expect(source.includes(forbidden)).toBe(false);
+    }
   });
 });

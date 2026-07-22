@@ -37,11 +37,14 @@ const PROTOCOL_VERSION = '2024-11-05';
  */
 export async function runMcpServer(): Promise<void> {
   // Lazy: the read-only bun:sqlite open + tools load here, not at genie startup.
-  const { MCP_TOOLS, openReadonlyDb } = await import('../lib/v5/mcp-tools.js');
+  const { MCP_TOOLS, openReadonlyDb, resolveProjectContext } = await import('../lib/v5/mcp-tools.js');
   const { runMcpServerLoop } = await import('../lib/v5/mcp-server.js');
   await runMcpServerLoop({
     tools: MCP_TOOLS,
     openReadonlyDb,
+    // Fail-closed: missing repository context / genie.db / unsupported layouts
+    // surface as a typed MCP error instead of a healthy-looking empty board.
+    resolveContext: resolveProjectContext,
     // Fixed reply that ignores the client's declared version — read-only `genie
     // mcp` does NOT negotiate. Key order pinned for byte-identical output.
     initialize: () => ({

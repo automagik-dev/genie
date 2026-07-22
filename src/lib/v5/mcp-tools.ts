@@ -15,7 +15,12 @@
 
 import { Database } from 'bun:sqlite';
 import { execFileSync } from 'node:child_process';
-import { resolveDbPath } from './genie-db.js';
+import { type ProjectContext, resolveDbPath } from './genie-db.js';
+
+// Re-exported so `genie mcp` (mcp.ts) pulls the fail-closed context resolver in
+// the SAME lazy dynamic import that already loads the tool registry — keeping
+// the readonly bun:sqlite open out of the eager genie.ts import graph.
+export { type ProjectContext, resolveProjectContext } from './genie-db.js';
 import {
   type TaskFilter,
   type TaskRow,
@@ -145,6 +150,13 @@ export interface ToolContext {
   db: Database | null;
   /** Working directory for git branch resolution. Defaults to `process.cwd()`. */
   cwd: string;
+  /**
+   * The fail-closed project context resolved by the server loop when a resolver
+   * is injected. When its `kind` is not `ok`, the loop returns a typed error for
+   * every tool call instead of an empty board (see mcp-server.ts). Absent for
+   * consumers (e.g. ui-bridge) that do not opt into fail-closed resolution.
+   */
+  context?: ProjectContext;
 }
 
 export interface McpTool {

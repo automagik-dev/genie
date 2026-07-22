@@ -188,18 +188,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function assertInstalledPluginMcpShape(iso: IsolatedHome, version: string): void {
   const root = join(iso.codexHome, 'plugins', 'cache', 'automagik', 'genie', version);
-  const config: unknown = JSON.parse(readFileSync(join(root, '.mcp.json'), 'utf8'));
-  const configRecord = isRecord(config) ? config : {};
-  const wrapped = configRecord.mcp_servers;
-  const servers = isRecord(wrapped) ? wrapped : configRecord;
-  const genie = servers.genie;
-  const command = isRecord(genie) ? genie.command : undefined;
-  const args = isRecord(genie) ? genie.args : undefined;
-  const cwd = isRecord(genie) ? genie.cwd : undefined;
-  if (command !== 'node' || !Array.isArray(args) || args[0] !== './scripts/mcp-launcher.cjs' || cwd !== '.') {
-    fail(`installed plugin MCP entry shape is wrong: ${JSON.stringify(genie)}`);
+  // Group A removed the Codex plugin MCP route: the installed manifest declares no
+  // mcpServers and no MCP capability, and ships no `.mcp.json`. Codex MCP now comes
+  // ONLY from the marker-owned project route reconciled by `genie init` (asserted
+  // separately as the project `.mcp.json`/`.codex/config.toml`).
+  const manifest: unknown = JSON.parse(readFileSync(join(root, '.codex-plugin', 'plugin.json'), 'utf8'));
+  const manifestRecord = isRecord(manifest) ? manifest : {};
+  if ('mcpServers' in manifestRecord) {
+    fail('installed Codex plugin manifest must not declare mcpServers (plugin MCP route removed)');
   }
-  if (!existsSync(join(root, 'scripts', 'mcp-launcher.cjs'))) fail('installed plugin MCP launcher is missing');
+  const iface = isRecord(manifestRecord.interface) ? manifestRecord.interface : {};
+  if (Array.isArray(iface.capabilities) && iface.capabilities.includes('MCP')) {
+    fail('installed Codex plugin must not advertise the MCP capability (plugin MCP route removed)');
+  }
+  if (existsSync(join(root, '.mcp.json'))) fail('installed Codex plugin must not ship a .mcp.json route file');
+  // The plugin-local launcher stays — Claude drives it via its own inline manifest entry.
+  if (!existsSync(join(root, 'scripts', 'mcp-launcher.cjs'))) fail('plugin MCP launcher (Claude) is missing');
 }
 
 function assertSessionStartHook(iso: IsolatedHome, version: string): void {
