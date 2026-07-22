@@ -22,6 +22,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { Worker } from 'node:worker_threads';
+import historicalRoleAgentAllowlist from '../fixtures/codex-role-agent-allowlist.json';
 import {
   CODEX_FALLBACK_RETIREMENT_ROOT,
   type CodexFallbackOwnership,
@@ -208,6 +209,18 @@ export function readIntegrationConsentState(genieHome = resolveGenieHome()): Int
 
 export function readIntegrationConsent(genieHome = resolveGenieHome()): IntegrationSelection {
   return readIntegrationConsentState(genieHome).selection;
+}
+
+/**
+ * Whether committed Codex consent authorizes adopting an exact frozen historical
+ * role profile. Adoption is a privileged claim on a previously user-owned file,
+ * so it requires an EXPLICIT committed `codex`/`all` selection — never the legacy
+ * `auto` default and never an in-flight `pending` transition. This is the sole
+ * consent gate the role-agent convergence consults; an exact allowlist match is
+ * still additionally required before any file is adopted.
+ */
+export function codexRoleAdoptionAllowed(consent: IntegrationConsentState): boolean {
+  return consent.state === 'committed' && (consent.selection === 'codex' || consent.selection === 'all');
 }
 
 /** Publish explicit maintenance consent before the first external setup mutation. */
@@ -652,6 +665,104 @@ const CODEX_AGENT_NAME_RE = /^genie-[A-Za-z0-9][A-Za-z0-9_-]*\.toml$/;
 const CODEX_AGENT_SENTINEL = '# Managed by Genie.';
 const CODEX_AGENT_INVENTORY_MODE = 0o600;
 
+/**
+ * The exact set of role agents the current Genie bundle fans into
+ * `~/.codex/agents/`, with each role's canonical current content digest and the
+ * physical mode every historical installer wrote (git-tracked 0644, preserved by
+ * the install tarball). These are the *current* delivered profiles: doctor reports
+ * this expected total and the reviewer digest, and the read-only ownership inspector
+ * uses them to distinguish an up-to-date managed role from a stale one. A
+ * parity test (`runtime-integrations.test.ts`) binds this map to the real
+ * `plugins/genie/codex-agents/*.toml` bytes so a role edit that forgets to update
+ * the frozen allowlist fails the gate rather than silently drifting.
+ */
+export const CANONICAL_CODEX_ROLE_AGENT_MODE = 0o644;
+
+export const CANONICAL_CODEX_ROLE_AGENT_DIGESTS: Readonly<Record<string, string>> = Object.freeze({
+  'genie-engineer-complex.toml': '62ecc570f1d77783511a9e7f0aa67b3a65d8bba292963409a02c7712c93ebc3b',
+  'genie-engineer-standard.toml': 'dc746813b9b4b6aa984c17fa2fd75d4dbe34eba08494a174c0715da07aa9dd30',
+  'genie-engineer-trivial.toml': '249deced5a02eb2cbe3303db566992d1336c75d853967f851bf1d0e85b6b0f47',
+  'genie-final-gate.toml': '10ef070db8aace75bd80ef9e060a6ec601e3768f177fdd843f4db11035738f7e',
+  'genie-fixer.toml': 'b3c1f407d4a3a2cfe204dee7b4a9c038e1a8f4644c446fcfa23f4a681bf0c7b3',
+  'genie-reviewer.toml': 'c7008dcaa1e31b46e2bb05ca13afb2e918ee483422c84386a1c8997485bcfea7',
+  'genie-scout.toml': '03a9fb3ca0e5f36c69c8f934d37adce1bae736e4c3895b144a0001ad31b1ba59',
+});
+
+/** The exact expected delivered role-agent filenames, name-sorted. */
+export const CANONICAL_CODEX_ROLE_AGENT_NAMES: readonly string[] = Object.freeze(
+  Object.keys(CANONICAL_CODEX_ROLE_AGENT_DIGESTS).sort(),
+);
+
+/** The current reviewer profile digest doctor surfaces so an operator can spot a stale reviewer. */
+export const CANONICAL_CODEX_REVIEWER_DIGEST = CANONICAL_CODEX_ROLE_AGENT_DIGESTS['genie-reviewer.toml'] as string;
+
+/** The number of delivered role agents; doctor reports live coverage against this. */
+export const EXPECTED_CODEX_ROLE_AGENT_TOTAL = CANONICAL_CODEX_ROLE_AGENT_NAMES.length;
+
+/**
+ * One frozen historical profile: the exact identity (name + regular file type +
+ * mode + content digest) of a role-agent file a Genie release legitimately fanned
+ * into `~/.codex/agents/`. The allowlist is the union across releases (the reviewer
+ * carries several), so a legacy install whose reviewer is an older-but-genuine
+ * profile is still recognizable. Membership alone never authorizes a write — see
+ * {@link installCodexAgents}: adoption additionally requires committed Codex consent.
+ */
+export interface RoleAgentHistoricalProfile {
+  name: string;
+  type: 'regular';
+  mode: number;
+  digest: string;
+}
+
+/** Ownership proof key for a historical role profile: (name, mode, content digest). */
+export function codexRoleAgentTupleKey(name: string, mode: number, digest: string): string {
+  return `${name}\0${mode}\0${digest}`;
+}
+
+function parseHistoricalRoleAgentMode(raw: unknown): number | null {
+  if (typeof raw !== 'string' || !/^0?[0-7]{3,4}$/.test(raw)) return null;
+  const mode = Number.parseInt(raw, 8);
+  return Number.isSafeInteger(mode) && mode >= 0 && mode <= 0o7777 ? mode : null;
+}
+
+/**
+ * Load and validate the frozen historical role-agent allowlist. A malformed
+ * fixture is a build defect, not a runtime condition to tolerate, so this throws
+ * rather than silently degrading adoption into "recognize nothing".
+ */
+export function loadHistoricalRoleAgentProfiles(): RoleAgentHistoricalProfile[] {
+  const raw = historicalRoleAgentAllowlist as unknown;
+  if (!Array.isArray(raw)) throw new Error('codex role-agent allowlist must be a JSON array');
+  const seen = new Set<string>();
+  return raw.map((entry, index) => {
+    const name = typeof entry === 'object' && entry !== null ? Reflect.get(entry, 'name') : undefined;
+    const type = typeof entry === 'object' && entry !== null ? Reflect.get(entry, 'type') : undefined;
+    const digest = typeof entry === 'object' && entry !== null ? Reflect.get(entry, 'digest') : undefined;
+    const mode = parseHistoricalRoleAgentMode(
+      typeof entry === 'object' && entry !== null ? Reflect.get(entry, 'mode') : undefined,
+    );
+    if (
+      typeof name !== 'string' ||
+      !CODEX_AGENT_NAME_RE.test(name) ||
+      type !== 'regular' ||
+      mode === null ||
+      typeof digest !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(digest)
+    ) {
+      throw new Error(`codex role-agent allowlist entry ${index} is malformed`);
+    }
+    const key = codexRoleAgentTupleKey(name, mode, digest);
+    if (seen.has(key)) throw new Error(`codex role-agent allowlist entry ${index} is a duplicate tuple`);
+    seen.add(key);
+    return { name, type, mode, digest };
+  });
+}
+
+/** The frozen allowlist as an ownership-key set: `name\0mode\0digest` for every legitimate historical profile. */
+export function loadHistoricalRoleAgentTupleKeys(): ReadonlySet<string> {
+  return new Set(loadHistoricalRoleAgentProfiles().map((p) => codexRoleAgentTupleKey(p.name, p.mode, p.digest)));
+}
+
 export type RegularRoleFileIdentity = { kind: 'regular'; mode: number; digest: string };
 
 type RoleFileIdentity =
@@ -678,10 +789,28 @@ type ReadCodexAgentInventory = LegacyCodexAgentInventory | CodexAgentInventory;
 
 export type CodexAgentOwnership = 'absent' | 'user-owned' | 'managed-clean' | 'managed-modified';
 
+/**
+ * Human-facing delivery state of one role-agent file, distinct from the
+ * mutation-authority {@link CodexAgentOwnership}. This is the vocabulary doctor
+ * and the ownership report speak so an operator can tell a healthy managed role
+ * from one that is merely adoptable, stale, or a collision Genie will not touch:
+ *
+ * - `managed`             — inventory-owned, clean, byte-identical to the current profile.
+ * - `stale`               — inventory-owned and clean, but an older profile than the current delivery.
+ * - `adoptable-historical`— no inventory, yet an exact frozen historical profile; adoptable under committed consent.
+ * - `collision`           — a genie-named file that looks managed (modified-managed, sentinel lookalike,
+ *                           symlink, or other non-regular) but is NOT an exact match; reported, never touched.
+ * - `personal`            — a genie-named file with no Genie provenance signal; the user's own, left untouched.
+ * - `absent`              — recorded in inventory but no longer on disk.
+ */
+export type CodexAgentDisplayState = 'managed' | 'stale' | 'adoptable-historical' | 'collision' | 'personal' | 'absent';
+
 export interface CodexAgentOwnershipEntry {
   name: string;
   path: string;
   ownership: CodexAgentOwnership;
+  /** Read-only delivery state for inventory/doctor output (managed/adoptable/collision/stale/personal). */
+  state: CodexAgentDisplayState;
   /** Live physical identity when the entry is a regular file; drives identity-bound uninstall. */
   identity?: RegularRoleFileIdentity;
 }
@@ -690,6 +819,10 @@ export interface CodexAgentOwnershipReport {
   inventoryPath: string;
   status: 'missing' | 'valid' | 'corrupt';
   entries: CodexAgentOwnershipEntry[];
+  /** The exact number of role agents the current Genie bundle delivers (coverage denominator). */
+  expectedDeliveredTotal: number;
+  /** The current canonical reviewer profile digest, surfaced so operators can spot a stale reviewer. */
+  reviewerDigest: string;
   error?: string;
 }
 
@@ -791,6 +924,61 @@ function classifyCodexAgentFile(
   return roleFileIdentityEquals(actual, safeLegacyIdentity) ? 'managed-clean' : 'managed-modified';
 }
 
+/** Read the head of a role file to detect the managed sentinel without a full re-hash. */
+function roleFileHasManagedSentinel(path: string): boolean {
+  try {
+    const stat = lstatSync(path);
+    if (!stat.isFile() || stat.isSymbolicLink()) return false;
+    const fd = openSync(path, 'r');
+    try {
+      const buffer = Buffer.allocUnsafe(CODEX_AGENT_SENTINEL.length);
+      const read = readSync(fd, buffer, 0, buffer.length, 0);
+      return buffer.subarray(0, read).toString('utf8') === CODEX_AGENT_SENTINEL;
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Read-only display classification of one role file (never mutates, never reads
+ * inventory a second time). This is the reporting analog of the mutation-authority
+ * {@link classifyCodexAgentFile}: it maps an entry to the operator-facing
+ * {@link CodexAgentDisplayState}. Adoptability is a pure identity fact here — the
+ * committed-consent gate lives in {@link installCodexAgents}, so doctor can show
+ * "adoptable-historical" without implying anything was (or will be) written.
+ */
+function classifyCodexAgentDisplayState(
+  path: string,
+  name: string,
+  recorded: RecordedCodexAgent | undefined,
+  historical: ReadonlySet<string>,
+  canonicalDigests: Readonly<Record<string, string>>,
+): CodexAgentDisplayState {
+  const actual = physicalRoleFileIdentity(path);
+  if (actual.kind === 'absent') return 'absent';
+  if (recorded !== undefined) {
+    const ownership = classifyCodexAgentFile(path, recorded);
+    if (ownership === 'absent') return 'absent';
+    if (ownership === 'managed-modified') return 'collision';
+    // managed-clean: current if it matches the delivered profile, otherwise stale.
+    const canonical = canonicalDigests[name];
+    if (actual.kind === 'regular' && canonical !== undefined && actual.digest !== canonical) return 'stale';
+    return 'managed';
+  }
+  // No inventory record. Bytes never grant ownership, so the most a file can earn
+  // is "adoptable" (exact frozen historical identity) — everything else is left
+  // exactly where it is and only classified for reporting.
+  if (actual.kind === 'regular') {
+    if (historical.has(codexRoleAgentTupleKey(name, actual.mode, actual.digest))) return 'adoptable-historical';
+    return roleFileHasManagedSentinel(path) ? 'collision' : 'personal';
+  }
+  // Symlink / directory / other / unreadable at a role path: never safe to act on.
+  return 'collision';
+}
+
 /** Shared digest-backed classifier for setup/update, doctor, and uninstall. */
 export function inspectCodexAgentOwnership(codexHome = getCodexHome()): CodexAgentOwnershipReport {
   const state = readCodexAgentInventory(codexHome);
@@ -799,10 +987,13 @@ export function inspectCodexAgentOwnership(codexHome = getCodexHome()): CodexAge
   if (existsSync(agentsDir)) {
     for (const name of readdirSync(agentsDir)) if (CODEX_AGENT_NAME_RE.test(name)) names.add(name);
   }
+  const historical = loadHistoricalRoleAgentTupleKeys();
   return {
     inventoryPath: inventoryPath(codexHome),
     status: state.status,
     error: state.error,
+    expectedDeliveredTotal: EXPECTED_CODEX_ROLE_AGENT_TOTAL,
+    reviewerDigest: CANONICAL_CODEX_REVIEWER_DIGEST,
     entries: [...names].sort().map((name) => {
       const path = join(agentsDir, name);
       // Surface the same physical identity the classifier reads so the uninstall
@@ -812,6 +1003,13 @@ export function inspectCodexAgentOwnership(codexHome = getCodexHome()): CodexAge
         name,
         path,
         ownership: classifyCodexAgentFile(path, state.inventory.files[name]),
+        state: classifyCodexAgentDisplayState(
+          path,
+          name,
+          state.inventory.files[name],
+          historical,
+          CANONICAL_CODEX_ROLE_AGENT_DIGESTS,
+        ),
         ...(identity.kind === 'regular' ? { identity } : {}),
       };
     }),
@@ -1605,6 +1803,49 @@ interface CodexAgentInstallPlan {
   writes: Map<string, RoleAgentWrite>;
   removals: string[];
   expected: Map<string, RoleFileIdentity>;
+  /** Whether committed Codex consent has unlocked adoption of exact frozen historical profiles. */
+  adopt: boolean;
+  /** Frozen historical allowlist keys (`name\0mode\0digest`) recognized for adoption. */
+  historical: ReadonlySet<string>;
+}
+
+/** Role-agent convergence policy inputs, distinct from failure-injection {@link CodexAgentTransactionOptions}. */
+export interface CodexRoleAgentConvergenceOptions {
+  /**
+   * Adopt an exact frozen historical profile found on disk without inventory.
+   * Adoption is a privileged claim on a previously user-owned file, so it defaults
+   * OFF and callers pass `true` only after committed Codex consent
+   * ({@link codexRoleAdoptionAllowed}). An exact allowlist match is still required.
+   */
+  adoptHistorical?: boolean;
+  /** Frozen historical allowlist keys; defaults to the shipped fixture. Injectable for deterministic tests. */
+  historicalTupleKeys?: ReadonlySet<string>;
+}
+
+/**
+ * Resolve the ownership record convergence should treat a role file under. A live
+ * inventory record always wins. Otherwise, ONLY when committed Codex consent has
+ * unlocked adoption AND the file is an exact frozen historical profile (name +
+ * regular type + mode + digest), adopt it: record its current on-disk identity as
+ * if already managed so the ordinary convergence refreshes a stale profile to the
+ * delivered one and writes the inventory inside the same backup-first transaction.
+ * Bytes never grant ownership, so any other inventory-free file stays user-owned.
+ */
+function resolveCodexRoleAgentRecord(
+  targetPath: string,
+  name: string,
+  plan: CodexAgentInstallPlan,
+): RecordedCodexAgent | undefined {
+  const recorded = plan.recorded.files[name];
+  if (recorded !== undefined) return recorded;
+  if (!plan.adopt) return undefined;
+  const live = physicalRoleFileIdentity(targetPath);
+  if (live.kind !== 'regular' || !plan.historical.has(codexRoleAgentTupleKey(name, live.mode, live.digest))) {
+    return undefined;
+  }
+  plan.result.adoptedLegacy = plan.result.adoptedLegacy ?? [];
+  plan.result.adoptedLegacy.push(name);
+  return { identity: live };
 }
 
 function collectCurrentCodexAgentPayloads(
@@ -1624,7 +1865,7 @@ function collectCurrentCodexAgentPayloads(
     if (sourceIdentity.kind !== 'regular') {
       throw new Error(`Codex role-agent source is not a regular readable file: ${sourcePath}`);
     }
-    const recorded = plan.recorded.files[name];
+    const recorded = resolveCodexRoleAgentRecord(targetPath, name, plan);
     const ownership = classifyCodexAgentFile(targetPath, recorded, sourceIdentity);
     if (ownership === 'user-owned') {
       // Bytes are not an ownership capability. An inventory-free file remains
@@ -1681,6 +1922,7 @@ export function installCodexAgents(
   bundleRoot: string,
   codexHome = getCodexHome(),
   transactionOptions: CodexAgentTransactionOptions = {},
+  convergence: CodexRoleAgentConvergenceOptions = {},
 ): CodexAgentInstallResult {
   const source = join(bundleRoot, 'plugins', 'genie', 'codex-agents');
   if (!existsSync(source)) throw new Error(`Codex agents are missing from bundle: ${source}`);
@@ -1707,6 +1949,8 @@ export function installCodexAgents(
     writes: new Map<string, RoleAgentWrite>(),
     removals: [],
     expected: new Map<string, RoleFileIdentity>(),
+    adopt: convergence.adoptHistorical === true,
+    historical: convergence.historicalTupleKeys ?? loadHistoricalRoleAgentTupleKeys(),
   };
   const sourceNames = readdirSync(source)
     .filter((name) => CODEX_AGENT_NAME_RE.test(name))
@@ -2918,10 +3162,25 @@ export interface CodexPluginOnlyDeps {
   /** Live Codex user-skills tier; defaults to resolveAgentsSkillsDir() (env-isolated in tests). */
   fallbackSkillsDir?: string;
   probeCwd?: string;
+  /**
+   * Explicit adoption override for tests. When omitted, adoption is derived from
+   * committed Codex consent read from `options.genieHome` (adoption stays OFF when
+   * no genieHome is supplied). Only the DEFAULT role-agent installer honors this;
+   * an injected `installAgents` seam is called with its original 2-arg signature.
+   */
+  adoptHistoricalRoleAgents?: boolean;
+  /** Consent reader seam; defaults to {@link readIntegrationConsentState}. */
+  readConsentState?: (genieHome: string) => IntegrationConsentState;
 }
 
 export interface ConvergeCodexPluginOnlyOptions extends ConvergePluginOptions {
   deps?: CodexPluginOnlyDeps;
+  /**
+   * GENIE_HOME used to read committed Codex consent for role-agent adoption. When
+   * present and consent is a committed `codex`/`all` selection, exact frozen
+   * historical profiles are adopted during convergence; otherwise adoption is off.
+   */
+  genieHome?: string;
 }
 
 export interface CodexPluginOnlyResult {
@@ -2954,7 +3213,14 @@ export function convergeCodexPluginOnly(options: ConvergeCodexPluginOnlyOptions)
   const deps = options.deps ?? {};
   const codexHome = options.codexHome ?? getCodexHome();
   const fallbackSkillsDir = deps.fallbackSkillsDir ?? resolveAgentsSkillsDir();
-  const installAgents = deps.installAgents ?? installCodexAgents;
+  // Adoption is off unless committed Codex consent explicitly unlocks it. An
+  // injected installAgents seam keeps its original 2-arg signature (ordering
+  // tests are unaffected); only the default installer receives the adoption flag.
+  const adopt = resolveConvergenceRoleAdoption(options, deps);
+  const runInstallAgents = (): CodexAgentInstallResult =>
+    deps.installAgents
+      ? deps.installAgents(options.bundleRoot, codexHome)
+      : installCodexAgents(options.bundleRoot, codexHome, {}, { adoptHistorical: adopt });
 
   const plugin = (deps.converge ?? convergeCodexPlugin)(options);
   if (plugin === null) return null;
@@ -2972,7 +3238,10 @@ export function convergeCodexPluginOnly(options: ConvergeCodexPluginOnlyOptions)
   const snapshot = (deps.probe ?? probeCodexGeniePlugin)({ codexHome, cwd: deps.probeCwd ?? process.cwd() });
 
   if (plugin.preservedDisabled === true) {
-    const agents = installAgents(options.bundleRoot, codexHome);
+    // R3: a deliberately disabled plugin still installs the fallback role TOMLs
+    // (before any health proof) — adoption of exact historical profiles applies
+    // here too, since role agents are CLI-owned and independent of plugin health.
+    const agents = runInstallAgents();
     return {
       result: { ...plugin, snapshot },
       proof: null,
@@ -3023,7 +3292,7 @@ export function convergeCodexPluginOnly(options: ConvergeCodexPluginOnlyOptions)
     }
   }
 
-  const agents = installAgents(options.bundleRoot, codexHome);
+  const agents = runInstallAgents();
   return {
     result: { ...plugin, snapshot, retiredFallbacks: retired, preservedCollisions, preservedUnrecognized },
     proof,
@@ -3032,6 +3301,18 @@ export function convergeCodexPluginOnly(options: ConvergeCodexPluginOnlyOptions)
     preservedCollisions,
     preservedUnrecognized,
   };
+}
+
+/**
+ * Resolve whether this convergence adopts exact frozen historical role profiles.
+ * An explicit deps override wins (tests); otherwise adoption is derived from
+ * committed Codex consent read from `genieHome`, and stays OFF when no genieHome
+ * is supplied so direct/unwired callers never silently claim user files.
+ */
+function resolveConvergenceRoleAdoption(options: ConvergeCodexPluginOnlyOptions, deps: CodexPluginOnlyDeps): boolean {
+  if (deps.adoptHistoricalRoleAgents !== undefined) return deps.adoptHistoricalRoleAgents;
+  if (options.genieHome === undefined) return false;
+  return codexRoleAdoptionAllowed((deps.readConsentState ?? readIntegrationConsentState)(options.genieHome));
 }
 
 function emptyAgentInstallResult(): CodexAgentInstallResult {
@@ -3260,6 +3541,9 @@ function installCodexIntegration(
     codexHome,
     verifyCodexPayload,
     deps,
+    // stateDir is GENIE_HOME on every production install/setup path; role-agent
+    // adoption reads committed Codex consent from it (off unless committed codex/all).
+    genieHome: stateDir,
   });
   if (outcome === null) throw new Error('Codex plugin convergence returned no result for explicit install');
   const plugin = outcome.result;

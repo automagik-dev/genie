@@ -72,6 +72,7 @@ import { hasDuplicateSkillsExternalDirsKeys, resolveProductSkillsRoot } from '..
 import { resolveOmniRuntimeConfig } from '../lib/omni-config.js';
 import {
   CANONICAL_GENIE_SKILL_NAMES,
+  type CodexAgentDisplayState,
   inspectCodexAgentOwnership,
   inspectCodexFallbackTier,
 } from '../lib/runtime-integrations.js';
@@ -400,20 +401,38 @@ function codexPluginCheck(state: CodexPluginProbe): CheckResult {
 
 function codexAgentCheck(): CheckResult {
   const report = inspectCodexAgentOwnership(resolveCodexDir());
+  const total = report.expectedDeliveredTotal;
+  const count = (state: CodexAgentDisplayState): number =>
+    report.entries.filter((entry) => entry.state === state).length;
   const counts = {
-    clean: report.entries.filter((entry) => entry.ownership === 'managed-clean').length,
-    modified: report.entries.filter((entry) => entry.ownership === 'managed-modified').length,
-    user: report.entries.filter((entry) => entry.ownership === 'user-owned').length,
-    absent: report.entries.filter((entry) => entry.ownership === 'absent').length,
+    managed: count('managed'),
+    stale: count('stale'),
+    adoptable: count('adoptable-historical'),
+    collision: count('collision'),
+    personal: count('personal'),
+    absent: count('absent'),
   };
-  const healthy = report.status === 'valid' && counts.clean === 7 && counts.modified === 0 && counts.absent === 0;
+  // Personal files are the operator's own unrelated agents — present is healthy.
+  // Every other non-managed state (stale/adoptable/collision/absent) is actionable.
+  const healthy =
+    report.status === 'valid' &&
+    counts.managed === total &&
+    counts.stale === 0 &&
+    counts.adoptable === 0 &&
+    counts.collision === 0 &&
+    counts.absent === 0;
+  const suggestion =
+    counts.adoptable > 0 || counts.stale > 0 || counts.managed < total
+      ? 'Run `genie setup --codex` to adopt and refresh delivered role agents; personal and collision files are never overwritten.'
+      : 'Review collision role agents (modified/symlinked/lookalike); Genie will not overwrite them, then run `genie setup --codex`.';
   return {
     name: 'Codex Genie role agents',
     status: healthy ? 'pass' : 'warn',
-    detail: `inventory ${report.status}; clean=${counts.clean}/7, modified=${counts.modified}, user-owned=${counts.user}, absent=${counts.absent}${report.error ? ` (${report.error})` : ''}`,
-    suggestion: healthy
-      ? undefined
-      : 'Review modified/user-owned collisions, then run `genie setup --codex`; Genie will not overwrite them.',
+    detail:
+      `inventory ${report.status}; managed=${counts.managed}/${total}, stale=${counts.stale}, ` +
+      `adoptable=${counts.adoptable}, collision=${counts.collision}, personal=${counts.personal}, absent=${counts.absent}; ` +
+      `reviewer digest ${report.reviewerDigest.slice(0, 12)}${report.error ? ` (${report.error})` : ''}`,
+    suggestion: healthy ? undefined : suggestion,
   };
 }
 
