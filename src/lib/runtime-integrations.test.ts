@@ -11,6 +11,7 @@ import {
   realpathSync,
   rmSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -24,9 +25,14 @@ import {
 import { REQUIRED_GENIE_MCP_TOOLS } from './codex-mcp-health-session.js';
 import type { CodexPluginProbe } from './codex-project-mcp.js';
 import {
+  CANONICAL_CODEX_REVIEWER_DIGEST,
+  CANONICAL_CODEX_ROLE_AGENT_DIGESTS,
+  CANONICAL_CODEX_ROLE_AGENT_MODE,
+  CANONICAL_CODEX_ROLE_AGENT_NAMES,
   CANONICAL_GENIE_SKILL_NAMES,
   type CodexHealthProof,
   type CodexPluginOnlyDeps,
+  EXPECTED_CODEX_ROLE_AGENT_TOTAL,
   type InstallIntegrationsOptions,
   type IntegrationResult,
   type ProveCodexPluginHealthOptions,
@@ -34,6 +40,8 @@ import {
   claudePluginState,
   clearIntegrationConsentTransition,
   codexPluginState,
+  codexRoleAdoptionAllowed,
+  codexRoleAgentTupleKey,
   commitIntegrationConsentTransition,
   convergeClaudePlugin,
   convergeCodexPlugin,
@@ -43,6 +51,8 @@ import {
   inspectRuntimeIntegrationEvidence,
   installCodexAgents,
   installRuntimeIntegrations as installRuntimeIntegrationsWithPhysicalVerification,
+  loadHistoricalRoleAgentProfiles,
+  loadHistoricalRoleAgentTupleKeys,
   parseClaudePluginState,
   parseCodexPluginState,
   persistIntegrationConsent,
@@ -2917,5 +2927,399 @@ describe('inspectCodexFallbackTier (shared doctor/uninstall classifier — read-
     // The quarantine root is never mistaken for a managed fallback.
     expect(report.cleanFallbacks).toEqual([]);
     expect(report.preservedCollisions).toEqual([]);
+  });
+});
+
+// ── Group C: managed-assets-convergence ─────────────────────────────────────
+// Adopt delivered Codex role agents + inventory without claiming or damaging
+// user-owned files. Real role bytes come straight from the committed bundle so
+// the frozen allowlist is exercised against the exact profiles it must recognize.
+
+const REAL_CODEX_AGENTS_DIR = resolve(import.meta.dir, '..', '..', 'plugins', 'genie', 'codex-agents');
+
+function sha256Hex(bytes: Buffer | string): string {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+/** Byte-exact buffer comparison (avoids the SharedArrayBuffer-union friction of `toEqual` on raw reads). */
+function expectSameBytes(actual: Buffer, expected: Buffer): void {
+  expect(actual.equals(expected)).toBe(true);
+}
+
+function realRoleNames(): string[] {
+  return readdirSync(REAL_CODEX_AGENTS_DIR)
+    .filter((name) => name.endsWith('.toml'))
+    .sort();
+}
+
+function realRoleBytes(name: string): Buffer {
+  return readFileSync(join(REAL_CODEX_AGENTS_DIR, name));
+}
+
+/** A temp bundle carrying the exact current role profiles at canonical mode 0644. */
+function makeRealCodexBundle(): string {
+  const bundleRoot = canonicalTempDir('genie-real-bundle-');
+  const dest = join(bundleRoot, 'plugins', 'genie', 'codex-agents');
+  mkdirSync(dest, { recursive: true });
+  for (const name of realRoleNames()) {
+    const path = join(dest, name);
+    writeFileSync(path, realRoleBytes(name), { mode: 0o644 });
+    chmodSync(path, 0o644);
+  }
+  return bundleRoot;
+}
+
+function seedRoleFile(codexHome: string, name: string, bytes: Buffer | string, mode = 0o644): string {
+  const path = join(codexHome, 'agents', name);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, bytes, { mode });
+  chmodSync(path, mode);
+  return path;
+}
+
+/** The (name, mode, digest) allowlist key for a file exactly as it currently sits on disk. */
+function liveTupleKey(codexHome: string, name: string): string {
+  const path = join(codexHome, 'agents', name);
+  const stat = lstatSync(path);
+  return codexRoleAgentTupleKey(name, stat.mode & 0o7777, sha256Hex(readFileSync(path)));
+}
+
+function stateByName(codexHome: string): Map<string, string> {
+  return new Map(inspectCodexAgentOwnership(codexHome).entries.map((entry) => [entry.name, entry.state]));
+}
+
+/** Real-installer convergence options (no injected installAgents, so adoption is exercised end-to-end). */
+function realConvergeOptions(input: {
+  codexHome: string;
+  genieHome: string;
+  bundleRoot: string;
+  deps?: Partial<CodexPluginOnlyDeps>;
+}) {
+  return {
+    runner: (() => ({ exitCode: 0, stdout: '{}', stderr: '' })) as never,
+    command: '/fixture/codex',
+    bundleRoot: input.bundleRoot,
+    expectedVersion: VERSION,
+    installIfAbsent: true,
+    statePath: join(input.genieHome, '.integration-refresh-codex.json'),
+    codexHome: input.codexHome,
+    genieHome: input.genieHome,
+    deps: {
+      converge: () => healthyPluginResult(),
+      probe: () => healthyCodexProbe(),
+      prove: () => healthyCodexProof(),
+      runSession: () => ({ ok: true, detail: 'ok', tools: [...REQUIRED_GENIE_MCP_TOOLS], wishStatusReadOnly: true }),
+      fallbackSkillsDir: canonicalTempDir('genie-fallback-conv-'),
+      ...input.deps,
+    } as CodexPluginOnlyDeps,
+  };
+}
+
+describe('codex role-agent frozen historical allowlist (Group C)', () => {
+  test('CANONICAL role digests/mode match the committed bundle bytes exactly (parity gate)', () => {
+    const onDisk = realRoleNames();
+    expect(onDisk).toEqual([...CANONICAL_CODEX_ROLE_AGENT_NAMES]);
+    expect(EXPECTED_CODEX_ROLE_AGENT_TOTAL).toBe(onDisk.length);
+    for (const name of CANONICAL_CODEX_ROLE_AGENT_NAMES) {
+      expect(sha256Hex(realRoleBytes(name))).toBe(CANONICAL_CODEX_ROLE_AGENT_DIGESTS[name]);
+      expect(lstatSync(join(REAL_CODEX_AGENTS_DIR, name)).mode & 0o7777).toBe(CANONICAL_CODEX_ROLE_AGENT_MODE);
+    }
+    expect(CANONICAL_CODEX_REVIEWER_DIGEST).toBe(CANONICAL_CODEX_ROLE_AGENT_DIGESTS['genie-reviewer.toml']);
+  });
+
+  test('the frozen allowlist is well-formed, covers every current profile, and carries historical reviewers', () => {
+    const profiles = loadHistoricalRoleAgentProfiles();
+    expect(profiles.every((profile) => profile.type === 'regular' && profile.mode === 0o644)).toBe(true);
+    const keys = loadHistoricalRoleAgentTupleKeys();
+    // Every current delivered profile is a member (a current-version fan-out is adoptable).
+    for (const name of CANONICAL_CODEX_ROLE_AGENT_NAMES) {
+      expect(keys.has(codexRoleAgentTupleKey(name, 0o644, CANONICAL_CODEX_ROLE_AGENT_DIGESTS[name]))).toBe(true);
+    }
+    // The reviewer legitimately fanned several profiles across releases; the union must recognize them.
+    const reviewerProfiles = profiles.filter((profile) => profile.name === 'genie-reviewer.toml');
+    expect(reviewerProfiles.length).toBeGreaterThan(1);
+    const reviewerDigests = new Set(reviewerProfiles.map((profile) => profile.digest));
+    expect(reviewerDigests.has(CANONICAL_CODEX_REVIEWER_DIGEST)).toBe(true);
+    // A known older reviewer profile (the introduction commit) stays recognizable as the "stale" case.
+    expect(reviewerDigests.has('91f40a07905834716311419375581e3245544a77eac3d93d082842652c6452bf')).toBe(true);
+  });
+
+  test('codexRoleAdoptionAllowed requires an explicit committed codex/all consent', () => {
+    expect(codexRoleAdoptionAllowed({ selection: 'codex', state: 'committed', revision: 1 })).toBe(true);
+    expect(codexRoleAdoptionAllowed({ selection: 'all', state: 'committed', revision: 1 })).toBe(true);
+    // Legacy auto default, sibling client, opt-out, and in-flight transitions never unlock adoption.
+    expect(codexRoleAdoptionAllowed({ selection: 'auto', state: 'committed', revision: 0 })).toBe(false);
+    expect(codexRoleAdoptionAllowed({ selection: 'claude', state: 'committed', revision: 1 })).toBe(false);
+    expect(codexRoleAdoptionAllowed({ selection: 'none', state: 'committed', revision: 1 })).toBe(false);
+    expect(
+      codexRoleAdoptionAllowed({
+        selection: 'codex',
+        state: 'pending',
+        revision: 2,
+        previousSelection: 'auto',
+        transitionToken: 'a'.repeat(32),
+      }),
+    ).toBe(false);
+  });
+});
+
+describe('installCodexAgents historical adoption (Group C)', () => {
+  test('live-shape 0/7 inventory: consent adopts every delivered role and refreshes the stale reviewer', () => {
+    const bundle = makeRealCodexBundle();
+    const codexHome = canonicalTempDir('genie-codex-liveshape-');
+    const names = realRoleNames();
+    const currentReviewer = realRoleBytes('genie-reviewer.toml');
+    // The observed state: seven fanned files, NO inventory, and one older-but-genuine reviewer profile.
+    const staleReviewer = Buffer.concat([currentReviewer, Buffer.from('\n# older delivered profile\n')]);
+    for (const name of names) {
+      seedRoleFile(codexHome, name, name === 'genie-reviewer.toml' ? staleReviewer : realRoleBytes(name));
+    }
+    // Two unrelated personal agents that must survive byte-, mode-, and timestamp-identically.
+    const personalPath = seedRoleFile(codexHome, 'genie-my-notes.toml', 'name = "my_notes"\n', 0o644);
+    const personalBytes = readFileSync(personalPath);
+    utimesSync(personalPath, new Date('2020-01-02T03:04:05Z'), new Date('2020-01-02T03:04:05Z'));
+    const personalMtime = lstatSync(personalPath).mtimeMs;
+    const nonRolePath = seedRoleFile(codexHome, 'genie-scratch.txt', 'scratch\n', 0o600);
+
+    // The stale reviewer is a genuine historical profile, so inject its live identity into the allowlist.
+    const historical = new Set([...loadHistoricalRoleAgentTupleKeys(), liveTupleKey(codexHome, 'genie-reviewer.toml')]);
+    const result = installCodexAgents(
+      bundle,
+      codexHome,
+      {},
+      { adoptHistorical: true, historicalTupleKeys: historical },
+    );
+
+    expect(result.adoptedLegacy?.sort()).toEqual([...names]);
+    expect(result.installed).toBe(names.length);
+    expect(result.skippedUserOwned).toEqual([]);
+    // The reviewer was refreshed to the delivered profile; every role is now one managed surface.
+    expectSameBytes(readFileSync(join(codexHome, 'agents', 'genie-reviewer.toml')), currentReviewer);
+    const report = inspectCodexAgentOwnership(codexHome);
+    expect(report.expectedDeliveredTotal).toBe(EXPECTED_CODEX_ROLE_AGENT_TOTAL);
+    expect(report.reviewerDigest).toBe(CANONICAL_CODEX_REVIEWER_DIGEST);
+    expect(report.entries.filter((entry) => entry.state === 'managed').map((entry) => entry.name)).toEqual([...names]);
+    // Personal files untouched: bytes, permissions, and timestamps preserved.
+    expectSameBytes(readFileSync(personalPath), personalBytes);
+    expect(lstatSync(personalPath).mode & 0o7777).toBe(0o644);
+    expect(lstatSync(personalPath).mtimeMs).toBe(personalMtime);
+    expect(stateByName(codexHome).get('genie-my-notes.toml')).toBe('personal');
+    expect(existsSync(nonRolePath)).toBe(true);
+  });
+
+  test('adoption of a byte-identical current profile records inventory without any refresh write', () => {
+    const bundle = makeRealCodexBundle();
+    const codexHome = canonicalTempDir('genie-codex-adopt-current-');
+    seedRoleFile(codexHome, 'genie-scout.toml', realRoleBytes('genie-scout.toml'));
+    const before = lstatSync(join(codexHome, 'agents', 'genie-scout.toml')).mtimeMs;
+    // Only converge scout by pointing the bundle's other names away is unnecessary: absent targets install fresh.
+    const result = installCodexAgents(bundle, codexHome, {}, { adoptHistorical: true });
+    expect(result.adoptedLegacy).toEqual(['genie-scout.toml']);
+    // scout adopted (no rewrite — mtime stable), the other six installed fresh.
+    expect(lstatSync(join(codexHome, 'agents', 'genie-scout.toml')).mtimeMs).toBe(before);
+    expect(stateByName(codexHome).get('genie-scout.toml')).toBe('managed');
+  });
+
+  test('without adoptHistorical, an exact historical profile stays user-owned but reports adoptable-historical', () => {
+    const bundle = makeRealCodexBundle();
+    const codexHome = canonicalTempDir('genie-codex-noadopt-');
+    seedRoleFile(codexHome, 'genie-reviewer.toml', realRoleBytes('genie-reviewer.toml'));
+    const result = installCodexAgents(bundle, codexHome); // default convergence: adoption OFF
+    expect(result.adoptedLegacy).toBeUndefined();
+    expect(result.skippedUserOwned).toContain('genie-reviewer.toml');
+    // Reporting never requires consent: the file is visibly adoptable, but untouched.
+    expect(stateByName(codexHome).get('genie-reviewer.toml')).toBe('adoptable-historical');
+    expectSameBytes(
+      readFileSync(join(codexHome, 'agents', 'genie-reviewer.toml')),
+      realRoleBytes('genie-reviewer.toml'),
+    );
+  });
+
+  test('adoptHistorical never adopts a lookalike, wrong-mode, symlink, or non-historical collision', () => {
+    const bundle = makeRealCodexBundle();
+    const codexHome = canonicalTempDir('genie-codex-collision-');
+    // Sentinel lookalike: managed header but content Genie never shipped.
+    const lookalike = '# Managed by Genie. Remove with `genie uninstall`.\nname = "genie_reviewer"\n# hand-tuned\n';
+    const reviewerPath = seedRoleFile(codexHome, 'genie-reviewer.toml', lookalike);
+    // Exact current profile but at the wrong mode — an identity mismatch, not an exact tuple.
+    const scoutPath = seedRoleFile(codexHome, 'genie-scout.toml', realRoleBytes('genie-scout.toml'), 0o600);
+    // A symlink at a role path is never followed or replaced.
+    const fixerPath = join(codexHome, 'agents', 'genie-fixer.toml');
+    mkdirSync(dirname(fixerPath), { recursive: true });
+    symlinkSync(join(codexHome, 'outside-target.toml'), fixerPath);
+
+    const result = installCodexAgents(bundle, codexHome, {}, { adoptHistorical: true });
+
+    expect(result.adoptedLegacy).toBeUndefined();
+    expect(result.skippedUserOwned.sort()).toEqual(['genie-fixer.toml', 'genie-reviewer.toml', 'genie-scout.toml']);
+    // Nothing was overwritten, adopted, or deleted.
+    expect(readFileSync(reviewerPath, 'utf8')).toBe(lookalike);
+    expectSameBytes(readFileSync(scoutPath), realRoleBytes('genie-scout.toml'));
+    expect(lstatSync(scoutPath).mode & 0o7777).toBe(0o600);
+    expect(lstatSync(fixerPath).isSymbolicLink()).toBe(true);
+    const states = stateByName(codexHome);
+    expect(states.get('genie-reviewer.toml')).toBe('collision');
+    expect(states.get('genie-scout.toml')).toBe('collision');
+    expect(states.get('genie-fixer.toml')).toBe('collision');
+  });
+
+  test('repeated adoption convergence is idempotent and produces no duplicate surfaces or transactions', () => {
+    const bundle = makeRealCodexBundle();
+    const codexHome = canonicalTempDir('genie-codex-idem-');
+    const names = realRoleNames();
+    for (const name of names) seedRoleFile(codexHome, name, realRoleBytes(name));
+
+    const first = installCodexAgents(bundle, codexHome, {}, { adoptHistorical: true });
+    expect(first.adoptedLegacy?.sort()).toEqual([...names]);
+
+    const second = installCodexAgents(bundle, codexHome, {}, { adoptHistorical: true });
+    // Already inventory-owned: nothing left to adopt, no writes, no duplicates.
+    expect(second).toEqual({
+      installed: names.length,
+      skippedUserOwned: [],
+      keptModified: [],
+      removed: [],
+      backedUp: [],
+    });
+    expect(
+      readdirSync(join(codexHome, 'agents'))
+        .filter((name) => name.endsWith('.toml'))
+        .sort(),
+    ).toEqual([...names]);
+    expect(() => recoverCodexAgentTransactions(codexHome)).not.toThrow();
+  });
+
+  test('an interrupted adoption transaction recovers to the converged state and stays idempotent', () => {
+    const bundle = makeRealCodexBundle();
+    const codexHome = canonicalTempDir('genie-codex-interrupt-');
+    const names = realRoleNames();
+    const currentReviewer = realRoleBytes('genie-reviewer.toml');
+    const staleReviewer = Buffer.concat([currentReviewer, Buffer.from('\n# older\n')]);
+    for (const name of names) {
+      seedRoleFile(codexHome, name, name === 'genie-reviewer.toml' ? staleReviewer : realRoleBytes(name));
+    }
+    const historical = new Set([...loadHistoricalRoleAgentTupleKeys(), liveTupleKey(codexHome, 'genie-reviewer.toml')]);
+
+    expect(() =>
+      installCodexAgents(
+        bundle,
+        codexHome,
+        {
+          afterCommit() {
+            throw new Error('injected crash after durable commit');
+          },
+        },
+        { adoptHistorical: true, historicalTupleKeys: historical },
+      ),
+    ).toThrow('injected crash after durable commit');
+
+    // The commit was durable; recovery finishes cleanup and the reviewer is refreshed.
+    recoverCodexAgentTransactions(codexHome);
+    expectSameBytes(readFileSync(join(codexHome, 'agents', 'genie-reviewer.toml')), currentReviewer);
+    const report = inspectCodexAgentOwnership(codexHome);
+    expect(report.status).toBe('valid');
+    expect(report.entries.filter((entry) => entry.state === 'managed').map((entry) => entry.name)).toEqual([...names]);
+    expect(installCodexAgents(bundle, codexHome, {}, { adoptHistorical: true }).adoptedLegacy).toBeUndefined();
+  });
+
+  test('inspectCodexAgentOwnership distinguishes managed, stale, and absent states with delivered totals', () => {
+    // A bundle whose reviewer is an older profile so the managed install is clean-but-stale.
+    const staleBundle = makeRealCodexBundle();
+    const stalePath = join(staleBundle, 'plugins', 'genie', 'codex-agents', 'genie-reviewer.toml');
+    writeFileSync(stalePath, Buffer.concat([realRoleBytes('genie-reviewer.toml'), Buffer.from('# older\n')]), {
+      mode: 0o644,
+    });
+    chmodSync(stalePath, 0o644);
+    const codexHome = canonicalTempDir('genie-codex-states-');
+    installCodexAgents(staleBundle, codexHome); // fresh managed install of six current + one stale profile
+    rmSync(join(codexHome, 'agents', 'genie-scout.toml')); // recorded but now missing on disk
+
+    const report = inspectCodexAgentOwnership(codexHome);
+    const states = new Map(report.entries.map((entry) => [entry.name, entry.state]));
+    expect(states.get('genie-reviewer.toml')).toBe('stale'); // managed-clean but not the delivered digest
+    expect(states.get('genie-scout.toml')).toBe('absent');
+    expect(states.get('genie-fixer.toml')).toBe('managed');
+    expect(report.expectedDeliveredTotal).toBe(EXPECTED_CODEX_ROLE_AGENT_TOTAL);
+    expect(report.reviewerDigest).toBe(CANONICAL_CODEX_REVIEWER_DIGEST);
+  });
+});
+
+describe('convergeCodexPluginOnly role adoption + fallback (Group C)', () => {
+  test('an enabled plugin adopts delivered roles under committed codex consent', () => {
+    const bundle = makeRealCodexBundle();
+    const codexHome = canonicalTempDir('genie-codex-conv-enabled-');
+    const genieHome = canonicalTempDir('genie-home-conv-enabled-');
+    const names = realRoleNames();
+    for (const name of names) seedRoleFile(codexHome, name, realRoleBytes(name));
+    persistIntegrationConsent('codex', genieHome);
+
+    const outcome = convergeCodexPluginOnly(realConvergeOptions({ codexHome, genieHome, bundleRoot: bundle }));
+    expect(outcome?.proof).not.toBeNull();
+    expect(outcome?.agents.adoptedLegacy?.sort()).toEqual([...names]);
+    expect(stateByName(codexHome).size).toBe(names.length);
+    expect(inspectCodexAgentOwnership(codexHome).entries.every((entry) => entry.state === 'managed')).toBe(true);
+  });
+
+  test('convergence does NOT adopt without committed codex consent (a committed sibling client is not consent)', () => {
+    const bundle = makeRealCodexBundle();
+    const codexHome = canonicalTempDir('genie-codex-conv-noconsent-');
+    const genieHome = canonicalTempDir('genie-home-conv-noconsent-');
+    const names = realRoleNames();
+    for (const name of names) seedRoleFile(codexHome, name, realRoleBytes(name));
+    persistIntegrationConsent('claude', genieHome);
+
+    const outcome = convergeCodexPluginOnly(realConvergeOptions({ codexHome, genieHome, bundleRoot: bundle }));
+    expect(outcome?.agents.adoptedLegacy).toBeUndefined();
+    expect(outcome?.agents.skippedUserOwned.sort()).toEqual([...names]);
+    // Files remain exactly as fanned — visibly adoptable, never claimed.
+    expect(inspectCodexAgentOwnership(codexHome).entries.every((entry) => entry.state === 'adoptable-historical')).toBe(
+      true,
+    );
+  });
+
+  test('a disabled plugin still installs the fallback role set (R3) and adopts under consent', () => {
+    const bundle = makeRealCodexBundle();
+    const names = realRoleNames();
+    const disabledDeps: Partial<CodexPluginOnlyDeps> = {
+      converge: () => ({ ...healthyPluginResult(), preservedDisabled: true }),
+      probe: () => ({ ...healthyCodexProbe(), enabled: false, usable: false }),
+    };
+
+    // Fresh home: the disabled path restores the fallback roles with no health proof.
+    const freshHome = canonicalTempDir('genie-codex-conv-disabled-fresh-');
+    const freshGenie = canonicalTempDir('genie-home-conv-disabled-fresh-');
+    const fresh = convergeCodexPluginOnly(
+      realConvergeOptions({ codexHome: freshHome, genieHome: freshGenie, bundleRoot: bundle, deps: disabledDeps }),
+    );
+    expect(fresh?.proof).toBeNull();
+    expect(fresh?.agents.installed).toBe(names.length);
+    expect(
+      readdirSync(join(freshHome, 'agents'))
+        .filter((name) => name.endsWith('.toml'))
+        .sort(),
+    ).toEqual([...names]);
+
+    // Legacy home under consent: the disabled path adopts the exact historical profiles too.
+    const legacyHome = canonicalTempDir('genie-codex-conv-disabled-legacy-');
+    const legacyGenie = canonicalTempDir('genie-home-conv-disabled-legacy-');
+    for (const name of names) seedRoleFile(legacyHome, name, realRoleBytes(name));
+    persistIntegrationConsent('all', legacyGenie);
+    const legacy = convergeCodexPluginOnly(
+      realConvergeOptions({ codexHome: legacyHome, genieHome: legacyGenie, bundleRoot: bundle, deps: disabledDeps }),
+    );
+    expect(legacy?.agents.adoptedLegacy?.sort()).toEqual([...names]);
+  });
+
+  test('an explicit deps override forces adoption independently of the consent file', () => {
+    const bundle = makeRealCodexBundle();
+    const codexHome = canonicalTempDir('genie-codex-conv-override-');
+    const genieHome = canonicalTempDir('genie-home-conv-override-');
+    const names = realRoleNames();
+    for (const name of names) seedRoleFile(codexHome, name, realRoleBytes(name));
+    // No consent persisted, but the override unlocks adoption deterministically for tests.
+    const outcome = convergeCodexPluginOnly(
+      realConvergeOptions({ codexHome, genieHome, bundleRoot: bundle, deps: { adoptHistoricalRoleAgents: true } }),
+    );
+    expect(outcome?.agents.adoptedLegacy?.sort()).toEqual([...names]);
   });
 });

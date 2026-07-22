@@ -2068,6 +2068,7 @@ describe('durable runtime integration allowlist', () => {
             name: 'genie-later.toml',
             path: '/tmp/genie-later.toml',
             ownership: 'managed-clean',
+            state: 'managed',
           },
         ],
       },
@@ -2162,6 +2163,8 @@ describe('uninstall ownership and work detection', () => {
         inventoryPath: join(root, 'inventory.json'),
         status: 'missing' as const,
         entries: [],
+        expectedDeliveredTotal: 7,
+        reviewerDigest: 'c7008dcaa1e31b46e2bb05ca13afb2e918ee483422c84386a1c8997485bcfea7',
       }),
       inspectRuntimeClientAvailability: () => ({
         codex: false,
