@@ -10,12 +10,14 @@
 
 ## Simmering
 
+
 - [genie-boards-ui](brainstorms/genie-boards-ui/DRAFT.md) — WRS 70; genie desktop boards module: ABSORB of the G4 kanban decided by Felipe; tab + split-toggle layout tentatively locked ("that looks good", confirm at crystallize); archive section + per-project .genie-commit checkboxes added to scope; roadmap shape (per-project board + groom-with-agent task) recommended, awaiting Felipe; depends on ui-bridge board-payload extension (protocol 1.1) + genie-ui-dash G5 (2026-07-21)
 - [intent-to-wish-compiler](brainstorms/intent-to-wish-compiler/DRAFT.md) — **LIVE (re-verified 2026-07-21):** WRS 92; Demand→Patch/Standard/Program router + circuit-breaker (flex cuts autonomous, payout cuts human-only); invisible routing compiled from intent — program-scale, splits at pour time
 - [brainstorm-domain-map](brainstorms/brainstorm-domain-map/DRAFT.md) — **LIVE (re-verified 2026-07-21):** WRS 80; executable spec compiler (intent → requirement-ID → oracle-class → execution → proof-packet); deterministic gates, residual-risk review only; subjective-truth ownership still open (umbrella G8)
 - [cross-agent-delegate](brainstorms/cross-agent-delegate/DRAFT.md) — **re-scoped 2026-07-21:** Codex skill-distribution prerequisite solved by agent-sync (#2541); remaining live: delegate skill (Codex+Hermes), wish companion sessions, refine style cards, auto plan-gate counter-read (umbrella G6)
 
 ## Ready
+
 
 
 - [WISH: hook-injection-hardening](wishes/hook-injection-hardening/WISH.md) — BLOCKED-clearing safety edit: `execFileSync` at 3 hook sites (audit-context, freshness×2) + hostile-filename regression tests + `core.bare` probe removal; flips panel verdict BLOCKED→FIX-FIRST — SHIPPED → PR #2536 (wish/hook-injection-hardening→main), G1+G2+whole-wish reviews SHIP, 729 pass/0 fail (2026-07-09)
@@ -26,6 +28,8 @@
 - [WISH: warp-integration](wishes/warp-integration/WISH.md) — **DONE** (all 4 groups SHIP-reviewed 2026-07-02; pane-render checklist awaiting Felipe): genie init, Warp launch-config emitter, genie launch, /work multi-session opt-in
 
 ## Poured
+
+- [live-dev-loop — DESIGN](brainstorms/live-dev-loop/DESIGN.md) → [WISH](wishes/live-dev-loop/WISH.md) — design SHIP (digest 84cb10c4…), plan SHIP after 2 fix loops; **ALL THREE GROUPS EXECUTED 2026-07-22** on khal-os/genie-desktop (G1 mock/seam/watermark 7a14343 · G3 watcher/toasts/ITERATE.md 0243948+fix 874f02f · G2 dev:web 3907347), all execution-reviewed SHIP, branch merged to fork main 5a17077; IN_PROGRESS pending Felipe-live QA (<2s browser, Mac toast/pull, restart health, iterate-mode behavioral check; inotify sysctl prerequisite). Decisions: 4 Felipe picker picks + 2 review-hardened orchestrator derivations. ITERATE.md is the durable loop contract; memory pointer written.
 - [ledger-rebaseline](brainstorms/ledger-rebaseline/DRAFT.md) — **EXECUTED 2026-07-21** (`24ea5aa7`): full .genie ledger reconciled against origin/dev reality — supersession verdicts, umbrella-brainstorm sweep, file dispositions; decisions applied same-day
 - [codex-plugin-update-handoff](brainstorms/codex-plugin-update-handoff/DESIGN.md) ·
   [WISH](wishes/codex-plugin-update-handoff/WISH.md) — WRS 100; plan gate SHIP 2026-07-12 (fix loop
