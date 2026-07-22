@@ -34,26 +34,40 @@ const PORT = Number(process.env.PORT ?? 8787);
 // Two guards keep it closed by default:
 //   1. Bind loopback unless HOST is set — the fleet is a single-operator tool; LAN
 //      reach (mac + phone) is opt-in via HOST=0.0.0.0 (or a specific interface).
-//   2. Origin allowlist on the ws upgrade — browsers always send Origin, so a
-//      same-origin check defeats a cross-origin drive-by (any open website could
-//      otherwise `new WebSocket('ws://localhost:PORT')` and type into the shells).
+//   2. Origin check on the ws upgrade — browsers always send Origin. Trust is
+//      loopback-Host same-origin OR the explicit allowlist (NOT Origin alone): a
+//      bare same-origin check is defeated by DNS rebinding, since Origin and Host
+//      are both browser-set and carry the same attacker value after a rebind. See
+//      verifyClient for the loopback-Host gate that closes that hole.
 const HOST = process.env.HOST ?? '127.0.0.1';
 const ALLOWED_ORIGINS = (process.env.GENIE_UI_ALLOWED_ORIGINS ?? '')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
 
+const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+
 /**
- * Accept a ws upgrade only from a trusted Origin. Non-browser clients (CLI, tests)
- * send no Origin and are gated by the loopback bind; browsers must be same-origin
- * (the page's own host) or on the explicit GENIE_UI_ALLOWED_ORIGINS allowlist.
+ * Accept a ws upgrade only from a trusted Origin. The trust model is
+ * loopback-Host same-origin OR an explicit GENIE_UI_ALLOWED_ORIGINS allowlist —
+ * NOT Origin alone. Both Origin and Host are browser-set, so a naive
+ * `new URL(origin).host === host` check is defeated by DNS rebinding: an attacker
+ * page on evil.com:PORT rebinds evil.com -> 127.0.0.1 and connects, presenting
+ * Origin === Host === evil.com:PORT, which a bare same-origin check accepts as
+ * genuine. We defeat that by trusting the same-origin branch only when the real
+ * Host hostname is a loopback identity — after rebinding the Host is still
+ * evil.com (non-loopback), so it falls through to the allowlist and is rejected.
+ * Non-browser clients (CLI, tests) send no Origin and are gated by the loopback
+ * bind; non-loopback LAN/remote browsers must be listed in the allowlist.
  */
 export function verifyClient(info: { origin?: string; req: http.IncomingMessage }): boolean {
   const { origin } = info;
   if (!origin) return true;
   const host = info.req.headers.host;
   try {
-    if (host && new URL(origin).host === host) return true;
+    if (host && new URL(origin).host === host && LOOPBACK_HOSTNAMES.has(new URL(`http://${host}`).hostname)) {
+      return true;
+    }
   } catch {
     return false;
   }
