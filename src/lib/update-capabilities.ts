@@ -24,7 +24,7 @@
 
 import { type SpawnSyncReturns, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { type Stats, closeSync, constants as fsConstants, fstatSync, openSync, readSync } from 'node:fs';
+import { type Stats, closeSync, existsSync, constants as fsConstants, fstatSync, openSync, readSync } from 'node:fs';
 import { basename, isAbsolute } from 'node:path';
 import { atomicWriteFileSync } from './codex-activation-persistence.js';
 import { VERSION } from './version.js';
@@ -54,16 +54,46 @@ const MAX_SIDECAR_BYTES = 8 * 1024;
 const CAPABILITIES_ARGS: readonly string[] = ['update', '--print-update-capabilities', '--json'];
 
 /**
- * The on-disk file this process runs AS. Genie ships as a single-file `bun`
- * bundle invoked through its shebang, so `process.execPath` is the `bun`
- * interpreter and `argv[1]` is the genie script itself — the file the sidecar
- * hashes and the rollback floor rehashes. Probing a backup spawns that backup
- * path, so `argv[1]` is exactly the backup binary being verified.
+ * The on-disk file this process runs AS — the file the sidecar hashes and the
+ * rollback floor rehashes. Two shapes exist and each must resolve to a real,
+ * hashable file:
+ *
+ * - Interpreted (`bun src/genie.ts`, or the shebang'd `dist/genie.js`):
+ *   `process.execPath` is the `bun` interpreter and `argv[1]` is the genie
+ *   script itself. The script is the payload, so we return `argv[1]`.
+ * - Compiled single-file (`bun build --compile`, the shipped release binary):
+ *   `argv[1]` is the virtual `/$bunfs/root/genie` entry embedded inside the
+ *   executable — absent on the real filesystem (a no-follow open ENOENTs) — and
+ *   `process.execPath` IS the real on-disk binary. We return `execPath`.
+ *
+ * Probing a backup spawns that backup path, so under a compiled backup this
+ * resolves to `execPath` = the backup binary being verified, which is exactly
+ * the file `publishBackupCapabilitySidecar` hashed. Preferring `execPath` when
+ * `argv[1]` is a virtual bunfs entry or is absent on disk keeps probe/sidecar
+ * hashes in agreement on shipped binaries while preserving script-hashing in
+ * interpreted mode.
  */
 export function resolveSelfBinaryPath(): string {
   const argvScript = process.argv[1];
-  if (typeof argvScript === 'string' && argvScript.length > 0) return argvScript;
+  if (
+    typeof argvScript === 'string' &&
+    argvScript.length > 0 &&
+    !isEmbeddedBunfsPath(argvScript) &&
+    existsSync(argvScript)
+  ) {
+    return argvScript;
+  }
   return process.execPath;
+}
+
+/**
+ * Detect the virtual entrypoint path a `bun --compile` single-file executable
+ * reports as `argv[1]`: `/$bunfs/root/...` on posix, `B:\~BUN\root\...` on
+ * Windows. Neither names a real on-disk file, so the self-hash must target the
+ * executable (`process.execPath`) instead.
+ */
+function isEmbeddedBunfsPath(path: string): boolean {
+  return path.startsWith('/$bunfs/') || /^[A-Za-z]:[\\/]~BUN[\\/]/.test(path);
 }
 
 // ============================================================================

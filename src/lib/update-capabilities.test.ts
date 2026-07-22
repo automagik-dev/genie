@@ -13,6 +13,7 @@ import {
   parseUpdateCapabilityReport,
   printUpdateCapabilities,
   publishBackupCapabilitySidecar,
+  resolveSelfBinaryPath,
   runBackupCapabilityProbe,
   serializeUpdateCapabilityReport,
 } from './update-capabilities.js';
@@ -42,6 +43,59 @@ const HEX128 = 'a'.repeat(32);
 function goodProbe(report: UpdateCapabilityReport): (path: string) => ProbeOutcome {
   return () => ({ status: 'ok', report, detail: 'probe ok' });
 }
+
+describe('resolveSelfBinaryPath (interpreted vs compiled self-hash target)', () => {
+  const savedArgv1 = process.argv[1];
+  const savedExecPath = process.execPath;
+
+  function withProcess(argv1: string | undefined, execPath: string, run: () => void) {
+    try {
+      if (argv1 === undefined) process.argv.length = 1;
+      else process.argv[1] = argv1;
+      process.execPath = execPath;
+      run();
+    } finally {
+      process.argv[1] = savedArgv1;
+      process.execPath = savedExecPath;
+    }
+  }
+
+  test('interpreted mode: a real on-disk argv[1] script is the hash target', () => {
+    const script = writeFakeBinary('genie.js').path; // a real file on disk
+    const exec = writeFakeBinary('bun-interpreter').path;
+    withProcess(script, exec, () => {
+      expect(resolveSelfBinaryPath()).toBe(script);
+    });
+  });
+
+  test('compiled mode: a virtual /$bunfs argv[1] falls back to execPath', () => {
+    const exec = writeFakeBinary('genie-compiled').path; // the real single-file binary
+    withProcess('/$bunfs/root/genie', exec, () => {
+      expect(resolveSelfBinaryPath()).toBe(exec);
+    });
+  });
+
+  test('compiled mode (Windows): a B:\\~BUN entry falls back to execPath', () => {
+    const exec = writeFakeBinary('genie-compiled-win').path;
+    withProcess('B:\\~BUN\\root\\genie', exec, () => {
+      expect(resolveSelfBinaryPath()).toBe(exec);
+    });
+  });
+
+  test('absent argv[1] falls back to execPath', () => {
+    const exec = writeFakeBinary('genie-execpath').path;
+    withProcess(undefined, exec, () => {
+      expect(resolveSelfBinaryPath()).toBe(exec);
+    });
+  });
+
+  test('an argv[1] that is not on disk falls back to execPath', () => {
+    const exec = writeFakeBinary('genie-fallback').path;
+    withProcess(join(root, 'does-not-exist-on-disk'), exec, () => {
+      expect(resolveSelfBinaryPath()).toBe(exec);
+    });
+  });
+});
 
 describe('capability report', () => {
   test('build/serialize/parse round-trips and self-hashes the given binary', () => {
