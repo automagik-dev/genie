@@ -11,7 +11,19 @@ import { mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb, resolveDbPath } from '../lib/v5/genie-db.js';
-import { type StateExport, appendStage, createBoard, createTask, createWishGroups } from '../lib/v5/task-state.js';
+import {
+  DEFAULT_LIFECYCLE_LANES,
+  type StateExport,
+  appendStage,
+  appendTaskEvent,
+  createBoard,
+  createTask,
+  createWishGroups,
+  getTask,
+  getTaskCard,
+  getTaskEvents,
+  getTaskLane,
+} from '../lib/v5/task-state.js';
 
 const GENIE = join(import.meta.dir, '..', 'genie.ts');
 
@@ -165,6 +177,56 @@ describe('task status / done / checkout', () => {
   });
 });
 
+describe('task move', () => {
+  async function seedLaneCard(): Promise<string> {
+    const db = openDb({ cwd: repo });
+    const board = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    const task = createTask(db, { title: 'lane card', boardId: board.id, lane: 'Idea' });
+    db.close();
+    return task.id;
+  }
+
+  test('moves a card to a valid lane and appends a move event', async () => {
+    const id = await seedLaneCard();
+    const r = await cli(repo, 'move', id, '--to', 'Brainstorm');
+    expect(r.code).toBe(0);
+    expect(r.stderr).toBe('');
+    expect(r.stdout).toContain('Idea → Brainstorm');
+
+    const db = openDb({ cwd: repo });
+    expect(getTaskLane(db, id)).toBe('Brainstorm');
+    const events = getTaskEvents(db, id);
+    db.close();
+    expect(events).toHaveLength(1);
+    expect(events[0].kind).toBe('move');
+    expect(events[0].note).toBe('Idea→Brainstorm');
+  });
+
+  test('an undefined lane fails with exit 1 and lists the valid lanes', async () => {
+    const id = await seedLaneCard();
+    const r = await cli(repo, 'move', id, '--to', 'Nope');
+    expect(r.code).toBe(1);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toContain('Unknown lane "Nope"');
+    expect(r.stderr).toContain('Idea, Brainstorm, Wish, Work, Review, Done');
+
+    // The failed move left the card and its timeline untouched.
+    const db = openDb({ cwd: repo });
+    expect(getTaskLane(db, id)).toBe('Idea');
+    expect(getTaskEvents(db, id)).toHaveLength(0);
+    db.close();
+  });
+
+  test('moving a card that is not on a board fails with exit 1', async () => {
+    const db = openDb({ cwd: repo });
+    const task = createTask(db, { title: 'boardless' });
+    db.close();
+    const r = await cli(repo, 'move', task.id, '--to', 'Idea');
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain('not on a board');
+  });
+});
+
 describe('subdirectory resolution (carried-over fix)', () => {
   test('invocation from a repo subdirectory hits the repo-root shared DB', async () => {
     const sub = join(repo, 'src', 'deep');
@@ -217,5 +279,200 @@ describe('task export round-trip', () => {
     const rootRow = state.tasks.find((x) => x.id === a.id);
     expect(rootRow?.wish).toBe('demo');
     expect(rootRow?.group_name).toBe('g1');
+  });
+});
+
+// Same subprocess invocation as `cli`, but with extra env vars layered on — used
+// to prove runtime identity flows from the environment into the stored event.
+async function cliEnv(cwd: string, env: Record<string, string>, ...args: string[]): Promise<CliResult> {
+  const proc = Bun.spawn(['bun', GENIE, 'task', ...args], {
+    cwd,
+    stdout: 'pipe',
+    stderr: 'pipe',
+    env: { ...process.env, NO_COLOR: '1', GENIE_TEST_SKIP_PGSERVE: '1', ...env },
+  });
+  const stdout = await new Response(proc.stdout).text();
+  const stderr = await new Response(proc.stderr).text();
+  const code = await proc.exited;
+  return { stdout, stderr, code };
+}
+
+describe('timeline verbs', () => {
+  async function seed(title: string): Promise<string> {
+    const db = openDb({ cwd: repo });
+    const task = createTask(db, { title });
+    db.close();
+    return task.id;
+  }
+
+  test('comment appends an authored comment event', async () => {
+    const id = await seed('chatty');
+    const r = await cli(repo, 'comment', id, 'looks good to me');
+    expect(r.code).toBe(0);
+    expect(r.stderr).toBe('');
+
+    const db = openDb({ cwd: repo });
+    const events = getTaskEvents(db, id);
+    db.close();
+    expect(events).toHaveLength(1);
+    expect(events[0].kind).toBe('comment');
+    expect(events[0].note).toBe('looks good to me');
+  });
+
+  test('comment on an unknown id fails with exit 1', async () => {
+    const r = await cli(repo, 'comment', 't_nope', 'x');
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain('Task not found: t_nope');
+  });
+
+  test('report appends a report event tagged with the runtime kind', async () => {
+    const id = await seed('meeseeks');
+    const r = await cliEnv(repo, { GENIE_AGENT_NAME: 'eng-B', CLAUDECODE: '1' }, 'report', id, 'implemented + tested');
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('claude-code');
+
+    const db = openDb({ cwd: repo });
+    const events = getTaskEvents(db, id);
+    db.close();
+    expect(events[0].kind).toBe('report');
+    expect(events[0].note).toBe('implemented + tested');
+    expect(events[0].author).toBe('eng-B');
+    expect(events[0].authorKind).toBe('claude-code');
+  });
+
+  test('author + runtime kind flow from env into the stored event (CLI boundary)', async () => {
+    const id = await seed('provenance');
+    // Codex runtime marker + agent identity → stored verbatim on the event.
+    // Clear any inherited Claude Code markers so the Codex signal is what resolves.
+    await cliEnv(
+      repo,
+      { GENIE_AGENT_NAME: 'codex-worker', CODEX_THREAD_ID: 'thr_123', CLAUDECODE: '', CLAUDE_CODE: '' },
+      'comment',
+      id,
+      'from codex',
+    );
+    const db = openDb({ cwd: repo });
+    const ev = getTaskEvents(db, id)[0];
+    db.close();
+    expect(ev.author).toBe('codex-worker');
+    expect(ev.authorKind).toBe('codex');
+  });
+
+  test('GENIE_AGENT_KIND overrides inferred runtime', async () => {
+    const id = await seed('override');
+    await cliEnv(repo, { GENIE_AGENT_NAME: 'x', CLAUDECODE: '1', GENIE_AGENT_KIND: 'hermes' }, 'comment', id, 'hi');
+    const db = openDb({ cwd: repo });
+    const ev = getTaskEvents(db, id)[0];
+    db.close();
+    expect(ev.authorKind).toBe('hermes');
+  });
+
+  test('heartbeat records a liveness pulse', async () => {
+    const id = await seed('pulse');
+    const before = Date.now();
+    const r = await cli(repo, 'heartbeat', id);
+    expect(r.code).toBe(0);
+    const db = openDb({ cwd: repo });
+    const card = getTaskCard(db, id);
+    db.close();
+    expect(card?.heartbeatAt).toBeGreaterThanOrEqual(before);
+  });
+});
+
+describe('enforced blocks — the carved checkout exception', () => {
+  async function seed(title: string): Promise<string> {
+    const db = openDb({ cwd: repo });
+    const task = createTask(db, { title });
+    db.close();
+    return task.id;
+  }
+
+  test('block then checkout refuses with exit 1 and the reason on stderr', async () => {
+    const id = await seed('blocked card');
+    const blocked = await cli(repo, 'block', id, '--reason', 'awaiting design review');
+    expect(blocked.code).toBe(0);
+
+    const co = await cli(repo, 'checkout', id, '--worker', 'w1');
+    expect(co.code).toBe(1);
+    expect(co.stdout).toBe('');
+    expect(co.stderr).toContain('awaiting design review');
+    expect(co.stderr).toContain('blocked');
+
+    // The refusal never claimed the card.
+    const db = openDb({ cwd: repo });
+    expect(getTask(db, id)?.claimedBy).toBeNull();
+    db.close();
+  });
+
+  test('block requires --reason', async () => {
+    const id = await seed('needs reason');
+    const r = await cli(repo, 'block', id);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain('--reason');
+  });
+
+  test('unblock restores checkout', async () => {
+    const id = await seed('unblock me');
+    await cli(repo, 'block', id, '--reason', 'hold');
+    const un = await cli(repo, 'unblock', id);
+    expect(un.code).toBe(0);
+    const co = await cli(repo, 'checkout', id, '--worker', 'w1');
+    expect(co.code).toBe(0);
+    expect(co.stdout).toContain('in_progress');
+  });
+
+  test('release returns a claimed card to ready', async () => {
+    const id = await seed('release me');
+    await cli(repo, 'checkout', id, '--worker', 'w1');
+    const rel = await cli(repo, 'release', id);
+    expect(rel.code).toBe(0);
+    expect(rel.stdout).toContain('ready');
+
+    const db = openDb({ cwd: repo });
+    expect(getTask(db, id)?.status).toBe('ready');
+    expect(getTaskEvents(db, id).some((e) => e.kind === 'release')).toBe(true);
+    db.close();
+  });
+});
+
+describe('checkout reassignment briefing + status timeline', () => {
+  test('a checkout of a card with prior events prints the timeline briefing', async () => {
+    const db = openDb({ cwd: repo });
+    const task = createTask(db, { title: 'reassigned' });
+    appendTaskEvent(db, task.id, {
+      kind: 'comment',
+      note: 'first runtime was here',
+      author: 'eng-A',
+      authorKind: 'codex',
+    });
+    db.close();
+
+    const r = await cli(repo, 'checkout', task.id, '--worker', 'eng-B');
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('reassignment briefing');
+    expect(r.stdout).toContain('first runtime was here');
+    expect(r.stdout).toContain('eng-A');
+  });
+
+  test('a checkout of a pristine card prints NO briefing', async () => {
+    const db = openDb({ cwd: repo });
+    const task = createTask(db, { title: 'pristine' });
+    db.close();
+    const r = await cli(repo, 'checkout', task.id, '--worker', 'w1');
+    expect(r.code).toBe(0);
+    expect(r.stdout).not.toContain('reassignment briefing');
+  });
+
+  test('task status renders a Timeline section with authored events', async () => {
+    const db = openDb({ cwd: repo });
+    const task = createTask(db, { title: 'timelined' });
+    appendTaskEvent(db, task.id, { kind: 'comment', note: 'a note', author: 'felipe', authorKind: 'human' });
+    db.close();
+
+    const r = await cli(repo, 'status', task.id);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('Timeline:');
+    expect(r.stdout).toContain('comment by felipe');
+    expect(r.stdout).toContain('a note');
   });
 });

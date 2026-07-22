@@ -507,6 +507,28 @@ function checkClaudePluginMcpLayout(pluginRoot: string): void {
   }
 }
 
+// The exact bounded read-only H3 launcher, pinned identically across the source
+// manifest and every extracted tarball. Release gates and the extracted-payload
+// verifier depend on this string not drifting between surfaces.
+const CANONICAL_H3_COMMAND = 'node "${PLUGIN_ROOT}/scripts/session-context.cjs"';
+const CANONICAL_H3_COMMAND_WINDOWS = 'node "%PLUGIN_ROOT%\\scripts\\session-context.cjs"';
+
+function checkH3SessionStartCommand(pluginRoot: string): void {
+  const manifestPath = join(pluginRoot, 'hooks', 'codex-hooks.json');
+  if (!existsSync(manifestPath)) fail(`Codex hook manifest missing: ${manifestPath}`);
+  const parsed = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+    hooks?: { SessionStart?: Array<{ hooks?: Array<{ command?: unknown; commandWindows?: unknown }> }> };
+  };
+  const sessionStart = parsed.hooks?.SessionStart;
+  const hook = sessionStart?.[0]?.hooks?.[0];
+  if (!sessionStart || sessionStart.length !== 1 || !hook) {
+    fail('Codex hook manifest must declare exactly one SessionStart (H3) hook');
+  }
+  if (hook.command !== CANONICAL_H3_COMMAND || hook.commandWindows !== CANONICAL_H3_COMMAND_WINDOWS) {
+    fail('Codex H3 SessionStart launcher must be the exact bounded read-only session-context.cjs command');
+  }
+}
+
 function checkPluginLayout(pluginRoot: string, canonicalSkills: string, expectedNames: string[]): void {
   const { skillsDir, manifest } = resolvePluginSkills(pluginRoot);
   const actual = listSkillNames(skillsDir);
@@ -521,6 +543,7 @@ function checkPluginLayout(pluginRoot: string, canonicalSkills: string, expected
   checkStarterPrompts(manifest, expectedNames);
   checkPluginMcpLayout(pluginRoot, manifest);
   checkClaudePluginMcpLayout(pluginRoot);
+  checkH3SessionStartCommand(pluginRoot);
   try {
     assertHookContentBinding(
       join(pluginRoot, 'hooks', 'codex-hooks.json'),

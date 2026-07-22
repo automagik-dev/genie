@@ -451,6 +451,48 @@ describe('Group E release and documentation contracts', () => {
     expect(archiveSmoke).toBeGreaterThan(extract);
   });
 
+  test('shipped Codex integration doc carries the exit matrix, trailer, lease, and homolog contract', () => {
+    const doc = read('plugins/genie/references/codex-integration-map.md');
+    // Exit matrix (per-command 0/1/2) with the busy code.
+    expect(doc).toContain('### Per-command 0/1/2 exit matrix');
+    expect(doc).toContain('`codex-lifecycle-busy`');
+    expect(doc).toContain('| `genie setup --codex`');
+    expect(doc).toContain('| `genie update --rollback`');
+    expect(doc).toContain('| `genie uninstall`');
+    expect(doc).toContain('| `genie doctor`');
+    // Result trailer, serialized once by Group A.
+    expect(doc).toContain('### Result trailer');
+    expect(doc).toContain('serializeActivationResultTrailer');
+    expect(doc).toContain('"schemaVersion":1');
+    expect(doc).toContain('"deliveryComplete":false');
+    expect(doc).toContain('"nextAction"');
+    // Lease busy/retry semantics.
+    expect(doc).toContain('exclusive lease');
+    expect(doc).toContain('no force override');
+    // Rollback floor, sync-only, verified-current init, uninstall isolation.
+    expect(doc).toContain('### Rollback floor');
+    expect(doc).toContain('cannot waive the protocol floor');
+    expect(doc).toContain('**Sync-only**');
+    expect(doc).toContain('exactly `verified-current`');
+    expect(doc).toContain('unreachable from update, install, setup, doctor, sync');
+    // Homolog candidate channel + the N-task non-guarantee.
+    expect(doc).toContain('Homolog is the canonical pre-stable candidate channel');
+    expect(doc).toContain('an activated N task is not');
+    expect(doc).toContain('cannot resume activated N tasks without');
+    expect(doc).toContain('scripts/validate-live-dogfood-evidence.ts');
+    expect(doc).toContain('scripts/verify-codex-activation-payload.ts');
+  });
+
+  test('release build independently verifies each extracted activation payload', () => {
+    const build = read('scripts/build-binary.sh');
+    const extract = build.indexOf('tar -xzf "${TARBALL}"');
+    const verifyPayload = build.indexOf('scripts/verify-codex-activation-payload.ts');
+    expect(verifyPayload).toBeGreaterThan(extract);
+    expect(build).toContain('--root "${VERIFY_ROOT}" --platform "${PLATFORM}" --version "${VERSION}"');
+    // The extracted-payload verifier must be a covered Build-Tarballs PR input.
+    expect(read('.github/workflows/build-tarballs.yml')).toContain("- 'scripts/verify-codex-activation-payload.ts'");
+  });
+
   test('resurrected metrics bot and incompatible generated state stay retired', () => {
     expect(read('README.md')).not.toContain('<!-- METRICS:START -->');
     for (const file of ['AGENT.md', 'runs.jsonl', 'state.json']) {

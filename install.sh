@@ -36,11 +36,21 @@ EXPECTED_COSIGN_ISSUER="https://token.actions.githubusercontent.com"
 # with scripts/release-native-predicate.sh + sign-attest.yml.
 EXPECTED_ATTESTATION_PREDICATE_TYPE="https://github.com/${REPO}/release-tarballs/v1"
 COSIGN_VERSION="v2.4.1"
+# `gh attestation verify` is the PRIMARY provenance verifier (cosign verify-blob
+# is the fallback). gh is therefore a verification prerequisite: when the system
+# gh is missing or too old to support `gh attestation` (needs gh >= 2.49), we
+# bootstrap a pinned official gh into TMP_DIR rather than silently degrading to
+# cosign-only. Mirrors the cosign bootstrap: pinned version, pinned per-platform
+# SHA256, OFFICIAL source only, checksum-verified before execution, never
+# installed system-wide. Note gh ships macOS as a .zip (no macOS tarball); Linux
+# is a .tar.gz — bootstrap_gh selects the archive tool per platform.
+GH_VERSION="v2.96.0"
 GENIE_HOME="${GENIE_HOME:-$HOME/.genie}"
 LOCAL_BIN="$HOME/.local/bin"
 TMP_DIR="$(umask 077; mktemp -d -t genie-install-XXXXXX)"
 COSIGN_BIN=""
 COSIGN_BOOTSTRAPPED=0
+GH_BIN=""
 LIFECYCLE_LOCK=""
 LIFECYCLE_OWNER_FILE=""
 LIFECYCLE_OWNER_RECORD=""
@@ -388,15 +398,93 @@ audit_log() {
   printf '%s\n' "$1" >> "$GENIE_HOME/audit/install.jsonl"
 }
 
-gh_attestation_available() {
-  command -v gh >/dev/null 2>&1 || return 1
-  gh attestation verify --help >/dev/null 2>&1
+# Map a detected platform to the gh release asset infix + archive extension.
+# gh publishes Linux as .tar.gz and macOS ONLY as .zip (there is no macOS
+# tarball), so the extension travels with the slug and bootstrap_gh picks the
+# matching extractor.
+gh_asset_for_platform() {
+  case "$1" in
+    linux-x64-glibc|linux-x64-musl) echo "linux_amd64 tar.gz" ;;
+    linux-arm64) echo "linux_arm64 tar.gz" ;;
+    darwin-arm64) echo "macOS_arm64 zip" ;;
+    *) return 1 ;;
+  esac
+}
+
+# Pinned SHA256s for gh ${GH_VERSION}, taken verbatim from the official
+# gh_<ver>_checksums.txt on the cli/cli release (NOT invented). Linux entries are
+# the *_linux_*.tar.gz assets; the macOS entry is the *_macOS_arm64.zip asset.
+gh_sha_for_asset() {
+  case "$1" in
+    linux_amd64) echo "83d5c2ccad5498f58bf6368acb1ab32588cf43ab3a4b1c301bf36328b1c8bd60" ;;
+    linux_arm64) echo "06f86ec7103d41993b76cd78072f43595c34aaa56506d971d9860e67140bf909" ;;
+    macOS_arm64) echo "f23a0c37d963aacc3bed703ccbd59b41c5ca22101fab7f00eb2b7cad23aba463" ;;
+    *) return 1 ;;
+  esac
+}
+
+# Download + checksum-verify the pinned official gh into TMP_DIR and extract its
+# `bin/gh`. Never installed system-wide; used from TMP_DIR for this run only.
+# Mirrors bootstrap_cosign: verify the archive checksum BEFORE extracting or
+# executing anything from it.
+bootstrap_gh() {
+  local platform="$1" slug ext asset expected actual out url ver extract_dir gh_path spec
+  spec="$(gh_asset_for_platform "$platform")" || return 1
+  read -r slug ext <<<"$spec"
+  expected="$(gh_sha_for_asset "$slug")" || return 1
+  ver="${GH_VERSION#v}"
+  asset="gh_${ver}_${slug}.${ext}"
+  out="$TMP_DIR/$asset"
+  url="https://github.com/cli/cli/releases/download/${GH_VERSION}/${asset}"
+  log "bootstrapping gh CLI ${GH_VERSION} (${slug}) for attestation verification"
+  curl -fsSL -o "$out" "$url" || return 1
+  actual="$(sha256_file "$out")"
+  [[ "$actual" == "$expected" ]] || {
+    warn "gh CLI checksum mismatch for ${asset}"
+    warn "  expected: ${expected}"
+    warn "  actual:   ${actual}"
+    return 1
+  }
+  extract_dir="$TMP_DIR/gh-cli"
+  (umask 077; mkdir -p "$extract_dir") || return 1
+  case "$ext" in
+    tar.gz) tar -xzf "$out" -C "$extract_dir" || return 1 ;;
+    zip)
+      # macOS: prefer unzip; bsdtar (`tar -xf`) also reads .zip if unzip is absent.
+      if command -v unzip >/dev/null 2>&1; then
+        unzip -q "$out" -d "$extract_dir" || return 1
+      else
+        tar -xf "$out" -C "$extract_dir" || return 1
+      fi ;;
+    *) return 1 ;;
+  esac
+  gh_path="${extract_dir}/gh_${ver}_${slug}/bin/gh"
+  [[ -x "$gh_path" ]] || return 1
+  "$gh_path" --version >/dev/null 2>&1 || return 1
+  GH_BIN="$gh_path"
+}
+
+# Resolve a gh capable of `gh attestation`. Prefer an attestation-capable system
+# gh (no download); otherwise bootstrap the pinned official gh. INSECURE=1 skips
+# all attestation upstream in download_and_verify, so this is never reached under
+# the bypass — consistent with how cosign is only bootstrapped when verifying.
+ensure_gh_verifier() {
+  local platform="$1"
+  if [[ -n "$GH_BIN" ]]; then
+    return 0
+  fi
+  if command -v gh >/dev/null 2>&1 && gh attestation --help >/dev/null 2>&1; then
+    GH_BIN="$(command -v gh)"
+    return 0
+  fi
+  bootstrap_gh "$platform"
 }
 
 verify_with_gh_attestation() {
-  gh_attestation_available || return 1
+  local tarball="$1" platform="$2"
+  ensure_gh_verifier "$platform" || return 1
   log "verifying via gh attestation (repo=${REPO}, identity pinned)"
-  gh attestation verify "$1" \
+  "$GH_BIN" attestation verify "$tarball" \
     --repo "$REPO" \
     --predicate-type "$EXPECTED_ATTESTATION_PREDICATE_TYPE" \
     --cert-identity-regex "$EXPECTED_COSIGN_IDENTITY" \
@@ -492,7 +580,7 @@ download_and_verify() {
     emit_insecure_banner >&2
     audit_log "$(printf '{"ts":"%s","event":"insecure_install","version":"%s","platform":"%s","sha256":"%s","expected_identity":"%s"}' \
       "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$version" "$platform" "$sha" "$EXPECTED_COSIGN_IDENTITY")"
-  elif verify_with_gh_attestation "$tarball"; then
+  elif verify_with_gh_attestation "$tarball" "$platform"; then
     log "gh attestation: OK (sha256=${sha:0:12}...)"
   elif ensure_cosign_verifier "$platform"; then
     if verify_with_cosign "$tarball" "$bundle"; then
@@ -693,11 +781,23 @@ handoff_to_subcommand() {
   log "handing off to: genie install (post-install finishing)"
   [[ -n "$LIFECYCLE_LOCK" && -n "$LIFECYCLE_OWNER_RECORD" ]] ||
     die "lifecycle lease was lost before the post-install finisher" 1
-  if ! GENIE_LIFECYCLE_LEASE_PATH="$LIFECYCLE_LOCK" \
+  local finisher_status=0
+  GENIE_LIFECYCLE_LEASE_PATH="$LIFECYCLE_LOCK" \
     GENIE_LIFECYCLE_LEASE_OWNER="$LIFECYCLE_OWNER_RECORD" \
-    "$LOCAL_BIN/genie" install "$@"; then
-    die "genie install finishing failed; installation remains incomplete and retryable" 1
+    "$LOCAL_BIN/genie" install "$@" || finisher_status=$?
+  # Exit 2 from the finisher is delivered-but-action-required (installed
+  # generation N ≠ delivered T): the signed binary/payload is installed, but the
+  # Codex plugin generation was NOT activated. The finisher already printed the
+  # single machine-readable result trailer over inherited stdout. Propagate it as
+  # exit 2 with no all-green footer — never as a failure (die 1). Exit 2 is
+  # disambiguated from an unsupported-platform exit 2 by that trailer
+  # (deliveryComplete:true), per the lifecycle exit-matrix contract.
+  if [[ "$finisher_status" -eq 2 ]]; then
+    DELIVERY_ACTION_REQUIRED=1
+    return 0
   fi
+  [[ "$finisher_status" -eq 0 ]] ||
+    die "genie install finishing failed; installation remains incomplete and retryable" 1
 }
 
 parse_version_token() {
@@ -749,6 +849,14 @@ main() {
   ensure_path_wired
   handoff_to_subcommand "$@"
   verify_installation "$version"
+  if [[ "${DELIVERY_ACTION_REQUIRED:-0}" -eq 1 ]]; then
+    # Delivered/action-required: the binary is installed and verified, but the
+    # Codex plugin generation is deferred to explicit activation. NO all-green
+    # "installed" footer — the finisher's result trailer is the machine signal.
+    warn "genie v${version} delivered; Codex activation deferred — retire tasks, then run: genie setup --codex → /hooks → new task"
+    release_lifecycle_lock
+    exit 2
+  fi
   log "genie v${version} installed"
   release_lifecycle_lock
 }

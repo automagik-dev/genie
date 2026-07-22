@@ -101,3 +101,98 @@ The review workflow uses isolated Git worktrees and can use `codex exec --epheme
 ## Known release boundary
 
 Source/extracted payload parity, hook protocol, and user-asset ownership belong to this follow-up. Inherited publication risks—arbitrary-ref stable publish, unvalidated privileged inputs/artifact provenance, mutable third-party actions, and the inherited live-binary transaction gap—remain BLOCKING in `stable-release-security-gate`. PR-scope remediation cannot authorize stable release.
+
+## Lifecycle exit matrix and result trailer (Group D — delivery/activation split)
+
+Genie separates signed **delivery** from cross-version **activation** (Decision 1).
+**`genie setup --codex` is activation-only**: it retires the currently active plugin
+generation and activates the delivered one behind an unforgeable real-TTY retirement
+assertion. It does NOT install or refresh the plugin payload, marketplace registration,
+or role agents — **delivery is done by `genie update` / `genie install`**. On a host
+where nothing was ever delivered, setup refuses with an actionable message pointing at
+`genie update`; it is never a dead end. (This is a deliberate UX change from the pre-split
+behavior where `setup --codex` also installed.)
+
+Every mutating lifecycle command serialises on one exclusive Codex lifecycle lease; a
+loser exits 2 with machine code `codex-lifecycle-busy`, `deliveryComplete:false`, and a
+retry action.
+
+### Per-command 0/1/2 exit matrix
+
+| Command | 0 | 1 | 2 |
+|---------|---|---|---|
+| `genie setup --codex` (and the full-wizard Codex step) | Activated, or already current | Broken/undelivered (no payload, `cache-missing`, `payload-mismatch`, `installed-newer`) — retry after `genie update` | Consent/authorization refused (quick, CI, `CODEX_THREAD_ID`, non-TTY, piped, decline/EOF), `activation-pending`/`registration-absent`/`intent-planned`/`intent-target-current`/`pending-downgrade-explicit` needing consent, or `codex-lifecycle-busy` |
+| `genie update` / `genie install` | Delivered + current | Delivery/verification failure | Delivered but action-required (`deliveryComplete:true`), or `codex-lifecycle-busy` |
+| `genie update --rollback` | Compatible rollback done | Rollback refused (capability floor) | `codex-lifecycle-busy` |
+| `genie uninstall` | Removed (or nothing to remove) | Safeguard/ownership failure | `codex-lifecycle-busy` (a lifecycle command holds the lease) |
+| `genie doctor` / `genie doctor --json` | All checks pass, Codex current | A hard check failed, or Codex broken (`query-failed`, `payload-mismatch`, …) | Codex `activation-pending`/`registration-absent`/recovery — `ok` stays a function of checks; `integrationSummary.actionRequired === true` |
+| `genie init` | Scaffolded | Not a git repo / MCP schema failure | — |
+
+### Result trailer
+
+Every exit-2/1 lifecycle path except `doctor --json` emits exactly one ANSI-free,
+single-line JSON **result trailer** on stdout, serialized once by Group A
+(`serializeActivationResultTrailer`):
+
+```json
+{"schemaVersion":1,"code":"codex-lifecycle-busy","deliveryComplete":false,"retry":true,"nextAction":"retry after the current setup-activation lifecycle command releases the lease"}
+```
+
+`doctor --json` is excluded: its exactly-one-object stdout contract carries the same
+`deliveryComplete` (and `actionRequired`) inside `integrationSummary.codexPlugin`. A
+pending `doctor --json` exiting 2 while `ok:true` is an intentional, backward-compatible
+compatibility change — automation keys off `integrationSummary`, not the process exit.
+
+### Two-phase operator flow, automation, and lease retry
+
+Delivery and activation are separate phases. Automation should treat exit 2 as
+**action-required, not failure**: parse the single-line result trailer (or, for
+`doctor --json`, `integrationSummary`) and branch on `deliveryComplete` and the
+machine `code` rather than on green success text. A `code:"codex-lifecycle-busy"`
+trailer (`deliveryComplete:false`) means another mutating lifecycle command holds
+the exclusive lease; the named `nextAction` says to retry after it releases. No
+TTL and no force override exist: a live or indeterminate holder stays busy, and
+only a dead-pid holder is superseded by atomic non-overwriting rename with
+fencing that rejects the superseded operation's late writes.
+
+### Rollback floor
+
+`genie update --rollback` restores a backup binary only after
+`enforceRollbackCapabilityFloor` proves, before any live-binary exchange, that the
+backup is digest-bound to its `<backup>.capabilities.json` sidecar, that its
+read-only capability probe reports `codexActivationProtocol >= 1` and covers every
+extant activation intent schema, and that both device/inode identities are
+unchanged immediately before the swap. A missing sidecar, protocol below the
+floor, tamper, or a TOCTOU replacement refuses with zero mutation — consent
+cannot waive the protocol floor, so a rollback can never reintroduce an updater
+that bypasses the Codex activation gate.
+
+### Lifecycle exceptions: sync-only, verified-current init, and uninstall
+
+- **Sync-only** (`genie update --sync-only`, legacy automation) is intentionally
+  limited to skills and role agents; it performs no cross-version Codex activation
+  and mints no retirement assertion or permit.
+- **Init** (`genie init`) reconciles the marker-owned project fallback ONLY when a
+  fresh observation is exactly `verified-current`. Pending, broken, indeterminate,
+  and observation-race states retain the fallback and make zero plugin/cache
+  mutation; init never requests an assertion/permit or treats a prior snapshot as
+  fresh authority.
+- **Uninstall** (`genie uninstall`) is a deliberately separate, user-requested
+  destructive-removal authority — not part of the activation protocol. It warns
+  before its confirmation that current or resumable tasks can break, keeps every
+  existing ownership/user-data/backup/lock safeguard, mints/accepts no
+  assertion/permit, and is unreachable from update, install, setup, doctor, sync,
+  post-delivery convergence, or init.
+
+### Homolog candidate channel and the N-task non-guarantee
+
+**Homolog is the canonical pre-stable candidate channel.** The post-release live
+dogfood runs against the exact homolog candidate commit before any stable
+promotion. Consent is authority, not liveness: **an activated N task is not
+guaranteed to resume.** After the delivered N+1 generation is activated, a
+previously retired or open N task may be gone; the operator still needs `/hooks`
+review and a genuinely new N+1 task, and cannot resume activated N tasks without
+the upstream host leases. The structural evidence for that ritual is owned by
+`scripts/validate-live-dogfood-evidence.ts` (never a nonempty-file check) and the
+extracted-tarball activation contract by
+`scripts/verify-codex-activation-payload.ts`.

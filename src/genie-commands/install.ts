@@ -17,12 +17,31 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { type LifecycleLease, acquireLifecycleLease } from '../lib/agent-sync.js';
 import {
+  type HeldLifecycleLease,
+  type LifecycleLeaseResult,
+  acquireLifecycleLease as acquireCodexLifecycleLease,
+} from '../lib/codex-lifecycle-lease.js';
+import {
   type InstallIntegrationsOptions,
+  type IntegrationResult,
   type IntegrationSelection,
+  installCodexAgents,
   installRuntimeIntegrations,
+  parseCodexPluginState,
   persistIntegrationConsent,
+  resolveBundleRoot,
+  resolveRuntimeExecutable,
+  runBoundedIntegrationCommand,
 } from '../lib/runtime-integrations.js';
+import { VERSION } from '../lib/version.js';
 import { type AuxiliaryTreeOperations, type AuxiliaryTreeOutcome, convergeAuxiliaryTree } from './auxiliary-trees.js';
+import {
+  CODEX_DELIVERY_RESULT_TRAILER,
+  CODEX_LIFECYCLE_BUSY_TRAILER,
+  CODEX_RETIRE_RECOVERY,
+  CodexLifecycleBusyError,
+  classifyCodexDelivery,
+} from './codex-delivery.js';
 import { cleanupV4 } from './legacy-v4.js';
 import { runAgentSyncSafe } from './update.js';
 
@@ -53,7 +72,82 @@ type NormalizeAuxLayoutFn = (genieHome: string) => AuxiliaryTreeOutcome[] | unde
 type AgentSyncRunner = (selection: IntegrationSelection) => void;
 type IntegrationRunner = (options?: InstallIntegrationsOptions) => ReturnType<typeof installRuntimeIntegrations>;
 type LifecycleLeaseAcquirer = () => LifecycleLease | { skipped: string };
+type CodexLifecycleLeaseAcquirer = () => LifecycleLeaseResult;
 type ConsentWriter = (selection: IntegrationSelection) => void;
+
+/** A pending install delivery: the installed generation N differs from the delivered T (=VERSION). */
+export interface CodexInstallDeferral {
+  installedVersion: string;
+}
+type CodexInstallClassifier = (selection: IntegrationSelection) => CodexInstallDeferral | null;
+
+/**
+ * Group C install gate (item 2). `genie install` runs on the freshly linked
+ * binary (T = VERSION). If a Codex plugin generation N is already installed and
+ * N ≠ T, an install would otherwise `plugin add` and advance the cache, pruning
+ * the generation a live task references — the same 2026-07-11 hazard as update,
+ * on the curl|bash reinstall vector. This classifier (shared `classifyCodexDelivery`,
+ * observed reality: N from a live `codex plugin list`) reports that pending case
+ * so the caller defers activation. A fresh install (absent plugin) or a
+ * same-version install returns null and activates/converges normally.
+ */
+function classifyCodexInstallDefault(selection: IntegrationSelection): CodexInstallDeferral | null {
+  if (!codexInScope(selection)) return null;
+  let command: string | null;
+  try {
+    command = resolveRuntimeExecutable('codex', process.cwd());
+  } catch {
+    return null;
+  }
+  if (command === null) return null;
+  const result = runBoundedIntegrationCommand(command, ['plugin', 'list', '--json'], {
+    timeoutMs: 15_000,
+    maxOutputBytes: 64 * 1024,
+  });
+  if (result.timedOut || result.outputOverflow || result.exitCode !== 0) return null;
+  const parsed = parseCodexPluginState(result.stdout);
+  if (!parsed.ok || !parsed.state.installed) return null;
+  const installedVersion = parsed.state.version ?? null;
+  if (installedVersion === null) return null;
+  const state = classifyCodexDelivery(installedVersion, VERSION);
+  return state.kind === 'pending' ? { installedVersion } : null;
+}
+
+function codexInScope(selection: IntegrationSelection): boolean {
+  return selection === 'auto' || selection === 'codex' || selection === 'all';
+}
+
+/** The claude/hermes scope for `runIntegrations` when Codex is deferred (never activate it here). */
+function claudeOnlyScope(selection: IntegrationSelection): InstallIntegrationsOptions {
+  if (selection === 'auto') return { selection: 'auto', detected: { codex: false } };
+  if (selection === 'all') return { selection: 'claude' };
+  return { selection: 'none' };
+}
+
+/**
+ * Deferred install of a pending Codex generation: converge only the non-plugin
+ * role agents and return an action-required exit-2 result (deliveryComplete:true)
+ * naming N and the retire recovery. Never runs a plugin/cache command.
+ */
+function buildInstallCodexDeferral(installedVersion: string): IntegrationResult {
+  let agentDetail = '';
+  const bundleRoot = resolveBundleRoot();
+  if (bundleRoot !== null) {
+    try {
+      const agents = installCodexAgents(bundleRoot);
+      agentDetail = agents.installed > 0 ? `; role agents refreshed (${agents.installed})` : '';
+    } catch (error) {
+      agentDetail = `; role-agent refresh failed: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
+  return {
+    runtime: 'codex',
+    ok: true,
+    detail: `delivered v${VERSION}; Codex plugin left at v${installedVersion} (no cache advance). ${CODEX_RETIRE_RECOVERY}${agentDetail}`,
+    deliveryComplete: true,
+    actionRequired: true,
+  };
+}
 
 /**
  * Converge the extracted `<home>/bin/{plugins,skills,templates}` trees into
@@ -108,6 +202,43 @@ function readVersionStamp(path: string): string | null {
 }
 
 /**
+ * Build the ordered install results: a pending Codex generation prepends the
+ * deferral result and converges only the claude-only scope (never advancing the
+ * cache); a fresh/absent or same-version install converges the full selection.
+ */
+function buildInstallResults(
+  codexDeferral: CodexInstallDeferral | null,
+  selection: IntegrationSelection,
+  runIntegrations: IntegrationRunner,
+): IntegrationResult[] {
+  if (codexDeferral === null) return runIntegrations({ selection });
+  return [buildInstallCodexDeferral(codexDeferral.installedVersion), ...runIntegrations(claudeOnlyScope(selection))];
+}
+
+/**
+ * Acquire the Codex lifecycle lease when Codex is in scope, or project the AC8
+ * loser refusal. A claude/none install advances no Codex cache, so it takes no
+ * lease (`lease: null`). On a busy lease another Codex lifecycle command (update/
+ * setup/rollback) holds it: refuse before any plugin convergence — zero Codex
+ * cache advance — with exit 2 and the codex-lifecycle-busy trailer
+ * (deliveryComplete:false), and the caller returns immediately.
+ */
+function acquireCodexLeaseOrRefuse(
+  selection: IntegrationSelection,
+  acquire: CodexLifecycleLeaseAcquirer,
+): { refused: true } | { refused: false; lease: HeldLifecycleLease | null } {
+  if (!codexInScope(selection)) return { refused: false, lease: null };
+  const lease = acquire();
+  if (!lease.ok) {
+    console.log(new CodexLifecycleBusyError(lease.holderKind).message);
+    console.log(CODEX_LIFECYCLE_BUSY_TRAILER);
+    process.exitCode = 2;
+    return { refused: true };
+  }
+  return { refused: false, lease };
+}
+
+/**
  * Run the post-install finishers. `runV4Cleanup` / `normalizeLayout` / `runSync`
  * are injection seams for tests (mirrors runV4CleanupSafe) — production callers
  * pass options only.
@@ -119,10 +250,18 @@ export function installCommand(
   runSync: AgentSyncRunner = (selection) => runAgentSyncSafe({ strict: true, selection }),
   runIntegrations: IntegrationRunner = installRuntimeIntegrations,
   acquireLease: LifecycleLeaseAcquirer = () => acquireLifecycleLease(GENIE_HOME),
+  acquireCodexLease: CodexLifecycleLeaseAcquirer = () =>
+    acquireCodexLifecycleLease('install-converge', { genieHome: GENIE_HOME }),
   writeConsent: ConsentWriter = (selection) => persistIntegrationConsent(selection, GENIE_HOME),
+  classifyCodexInstall: CodexInstallClassifier = classifyCodexInstallDefault,
 ): void {
   const lease = acquireLease();
   if ('skipped' in lease) throw new Error(`Another Genie lifecycle command is active: ${lease.skipped}`);
+  // The Codex lifecycle lease (.codex-lifecycle.lock) coexists with the agent-sync
+  // lease above (.agent-sync.lock): they guard different things and are always
+  // acquired agent-sync-first (identically in `genie update`), so no lock-ordering
+  // hazard. Acquired below once the selection is known; released in the finally.
+  let codexLease: HeldLifecycleLease | null = null;
   try {
     const selection = resolveIntegrationSelection(options);
     writeConsent(selection);
@@ -147,7 +286,15 @@ export function installCommand(
     // `runAgentSync` has no codex arm at all — structural, not selection-gated.
     // Integrations run BEFORE the Claude/hermes agent-sync so a plugin-incapable
     // Codex leaves Claude trees byte-identical (R1/A2).
-    const results = runIntegrations({ selection });
+    // Group C install gate: a pending Codex generation (installed N ≠ delivered
+    // T) is DEFERRED — converge role agents only and exclude Codex from the
+    // plugin convergence, so install never advances the cache. A fresh/absent or
+    // same-version plugin converges normally.
+    const codexDeferral = classifyCodexInstall(selection);
+    const gate = acquireCodexLeaseOrRefuse(selection, acquireCodexLease);
+    if (gate.refused) return; // exit 2 codex-lifecycle-busy already projected; zero mutation.
+    codexLease = gate.lease;
+    const results = buildInstallResults(codexDeferral, selection, runIntegrations);
     for (const result of results) {
       const glyph = result.ok ? '\x1b[32m+\x1b[0m' : '\x1b[33m!\x1b[0m';
       const disabled = result.preservedDisabled ? '; disabled state preserved' : '';
@@ -176,7 +323,17 @@ export function installCommand(
     if (results.some((result) => result.runtime === 'codex' && result.ok && result.hookReviewRequired)) {
       console.log('  \x1b[33m!\x1b[0m Review Genie hooks with /hooks, then start a new Codex task.');
     }
+    // Delivered-but-action-required (Codex generation deferred): exit 2 with the
+    // one A-owned result trailer and no all-green footer. install.sh maps this to
+    // an installer exit 2 (deliverable 3).
+    if (results.some((result) => result.actionRequired === true)) {
+      process.exitCode = 2;
+      console.log(CODEX_DELIVERY_RESULT_TRAILER);
+    }
   } finally {
+    // Release the Codex lifecycle lease (if held) before the agent-sync lease,
+    // the reverse of the agent-sync-first acquisition order.
+    codexLease?.release();
     lease.release();
   }
 }

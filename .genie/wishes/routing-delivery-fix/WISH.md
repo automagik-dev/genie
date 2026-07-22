@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | IN_PROGRESS — Groups A+B **SHIP** (2026-07-12); awaiting PR/release, then Group C day-3 QA (user-gated live ritual) |
+| **Status** | DONE — Groups A+B SHIP (2026-07-12), code landed on dev as `2315671a`/`3ffc3300` + hardening chain (superseding local `5c29b2b1`/`127e08e3`); Group C day-3 QA CLOSED 2026-07-21 with 7/7 resolved-model fingerprints — [routing-matrix qa/routing-pin-qa-20260721.md](../routing-matrix/qa/routing-pin-qa-20260721.md) |
 | **Slug** | `routing-delivery-fix` |
 | **Date** | 2026-07-11 |
 | **Author** | Felipe + team-lead session (rebaseline wish 1) |

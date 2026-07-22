@@ -124,7 +124,9 @@ function runBiome(): string {
 }
 
 function countSuppressions(): string[] {
-  // Use git grep so we honor .gitignore and stay portable.
+  // Use git grep so we honor .gitignore and stay portable. Scope covers the CLI
+  // (`src/`) so the budget sees the gated surface — `biome check .` already reports
+  // complexity warnings for it.
   try {
     const out = execSync('git grep -nE "biome-ignore lint/complexity/noExcessiveCognitiveComplexity" -- src', {
       cwd: ROOT,

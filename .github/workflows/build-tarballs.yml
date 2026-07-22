@@ -62,6 +62,7 @@ on:
       - 'scripts/fresh-install-smoke.ts'
       - 'scripts/skills-lint.ts'
       - 'scripts/release-payload-version.ts'
+      - 'scripts/verify-codex-activation-payload.ts'
       - '.agents/plugins/marketplace.json'
       - '.claude-plugin/marketplace.json'
       - '.github/workflows/build-tarballs.yml'

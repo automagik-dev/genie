@@ -13,6 +13,7 @@
  * non-zero if any check is a hard failure.
  */
 
+import { Database } from 'bun:sqlite';
 import { execFileSync } from 'node:child_process';
 import {
   constants,
@@ -41,6 +42,17 @@ import {
   resolveGenieSource,
   resolveHermesConfigPath,
 } from '../lib/agent-sync.js';
+// Group D consumes B's stable observation/reporting facade (never A's internals
+// directly) for the additive `integrationSummary` on `doctor --json`.
+import {
+  authorizeCodexActivation,
+  classifyCodexActivation,
+  describeState,
+  observeCodexActivation,
+  projectHumanStatus,
+  projectIntegrationSummary,
+} from '../lib/codex-activation-executor.js';
+import type { CodexActivationSnapshot, IntegrationSummaryEnvelope } from '../lib/codex-activation.js';
 import { DEAD_GENIE_OTEL_EXPORTER, getCodexConfigPath } from '../lib/codex-config.js';
 import {
   type CodexPluginProbe,
@@ -122,6 +134,12 @@ interface CheckResult {
    * {@link RoleAgentDelivery} for the stable field/state-name contract.
    */
   roleAgents?: RoleAgentDelivery;
+  /**
+   * Machine-readable payload rider (survives `--json` as `checks[].indexLane`).
+   * Only the `jar: index-lane drift` check sets it; see {@link IndexLaneEntry}
+   * for the stable per-entry state contract.
+   */
+  indexLane?: { entries: IndexLaneEntry[] };
 }
 
 // ============================================================================
@@ -1481,6 +1499,155 @@ export function checkAgentSync(paths: AgentSyncPaths = {}): CheckResult[] {
 }
 
 // ============================================================================
+// jar: index-lane drift — INDEX.md sections vs roadmap board lanes
+//
+// One tracker: the `roadmap` board owns placement truth; `.genie/INDEX.md` prose
+// stays hand-written. This WARNING-LEVEL check joins each INDEX entry's FIRST
+// `brainstorms/<slug>/` or `wishes/<slug>/` link to the roadmap card WHERE
+// `tasks.wish = slug`, then verifies that card's lane against the section it sits
+// under. It never flips doctor `ok:false`. An entry with no such link, no
+// matching card, or a laneless card is 'unlinked' (NEVER 'drift') — drift is
+// reserved for a resolved card whose lane contradicts its INDEX section.
+// ============================================================================
+
+/**
+ * One INDEX entry's placement verdict. Rides `--json` as
+ * `checks[].indexLane.entries` — deterministic and order-stable (INDEX order).
+ * The four state names are the machine-readable contract:
+ *   - ok       : the resolved roadmap card's lane agrees with the section.
+ *   - drift    : the resolved card's lane contradicts the section.
+ *   - unlinked : no first brainstorms/wishes link, no matching roadmap card,
+ *                or the card carries no lane — never counted as drift.
+ */
+export interface IndexLaneEntry {
+  /** Stable text prefix: the first link's label, else the trimmed line prefix. */
+  entry: string;
+  /** Resolved lifecycle slug, or null when the entry has no brainstorms/wishes link. */
+  slug: string | null;
+  /** INDEX section: Raw | Simmering | Ready | Poured. */
+  section: string;
+  /** The roadmap card's lane, or null when nothing resolves. */
+  lane: string | null;
+  state: 'ok' | 'drift' | 'unlinked';
+}
+
+/** Section → the set of roadmap lanes that AGREE with it (the group brief's contract). */
+const INDEX_SECTION_LANES: Record<string, ReadonlySet<string>> = {
+  Raw: new Set(['Idea']),
+  Simmering: new Set(['Brainstorm']),
+  Ready: new Set(['Brainstorm', 'Wish']),
+  Poured: new Set(['Wish', 'Work', 'Review', 'Done']),
+};
+
+/** First markdown link into `brainstorms/<slug>/…` or `wishes/<slug>/…`; slug is group 2. */
+const INDEX_ENTRY_LINK = /\[([^\]]*)\]\((?:\.\/)?(?:brainstorms|wishes)\/([^/)]+)\/[^)]*\)/;
+
+function truncateIndexEntry(text: string): string {
+  const clean = text.replace(/\s+/g, ' ').trim();
+  return clean.length > 80 ? `${clean.slice(0, 79)}…` : clean;
+}
+
+/**
+ * Parse INDEX.md into per-entry lane verdicts. Pure: the caller supplies
+ * `laneForSlug`, which returns the resolving roadmap card's lane or null. Only
+ * the four lifecycle sections are inspected; any other heading is ignored (its
+ * bullets are skipped). Every `- ` bullet under a lifecycle section — including
+ * indented sub-bullets — is one entry.
+ */
+export function evaluateIndexLaneDrift(
+  indexText: string,
+  laneForSlug: (slug: string) => string | null,
+): IndexLaneEntry[] {
+  const entries: IndexLaneEntry[] = [];
+  let section: string | null = null;
+  for (const line of indexText.split('\n')) {
+    const heading = /^##\s+(.+?)\s*$/.exec(line);
+    if (heading) {
+      section = heading[1] in INDEX_SECTION_LANES ? heading[1] : null;
+      continue;
+    }
+    if (section === null || !/^\s*-\s+/.test(line)) continue;
+    const content = line.replace(/^\s*-\s+/, '');
+    const link = INDEX_ENTRY_LINK.exec(line);
+    if (link === null) {
+      entries.push({ entry: truncateIndexEntry(content), slug: null, section, lane: null, state: 'unlinked' });
+      continue;
+    }
+    const label = link[1].trim();
+    const slug = link[2];
+    const lane = laneForSlug(slug);
+    const state: IndexLaneEntry['state'] =
+      lane === null ? 'unlinked' : INDEX_SECTION_LANES[section].has(lane) ? 'ok' : 'drift';
+    entries.push({ entry: label.length > 0 ? label : truncateIndexEntry(content), slug, section, lane, state });
+  }
+  return entries;
+}
+
+/**
+ * wish → lane for every `roadmap` card that carries both. Read-only: opens the
+ * shared DB read-only (no schema mutation, no write lock), tolerating a missing
+ * DB, a missing `lane` column, or any read failure by degrading to an empty map
+ * (every linked entry then reports 'unlinked', never 'drift'). First wish wins.
+ */
+function roadmapLanesByWish(dbPath: string): Map<string, string> {
+  const map = new Map<string, string>();
+  if (!existsSync(dbPath)) return map;
+  let db: Database | null = null;
+  try {
+    db = new Database(dbPath, { readonly: true });
+    const rows = db
+      .query(
+        "SELECT t.wish AS wish, t.lane AS lane FROM tasks t JOIN boards b ON t.board_id = b.id WHERE b.name = 'roadmap' AND t.wish IS NOT NULL AND t.lane IS NOT NULL",
+      )
+      .all() as Array<{ wish: string; lane: string }>;
+    for (const row of rows) if (!map.has(row.wish)) map.set(row.wish, row.lane);
+  } catch {
+    return new Map();
+  } finally {
+    db?.close();
+  }
+  return map;
+}
+
+/**
+ * The `jar: index-lane drift` warning-level check. Absent INDEX.md → a single
+ * pass line (nothing to lint). Otherwise one line summarizing ok/drift/unlinked
+ * counts, WARN only when ≥1 entry drifts, plus the stable per-entry payload.
+ */
+export function checkIndexLaneDrift(root: string | null, databaseRoot: string | null): CheckResult[] {
+  const name = 'jar: index-lane drift';
+  const base = root ?? process.cwd();
+  const indexPath = join(base, '.genie', 'INDEX.md');
+  if (!existsSync(indexPath)) {
+    return [{ name, status: 'pass', detail: `no ${indexPath} (nothing to lint)` }];
+  }
+  let indexText: string;
+  try {
+    indexText = readFileSync(indexPath, 'utf8');
+  } catch (err) {
+    return [{ name, status: 'pass', detail: `INDEX.md unreadable (${diagnosticError(err)})` }];
+  }
+  const dbPath = join(databaseRoot ?? base, '.genie', 'genie.db');
+  const lanes = roadmapLanesByWish(dbPath);
+  const entries = evaluateIndexLaneDrift(indexText, (slug) => lanes.get(slug) ?? null);
+  const drift = entries.filter((e) => e.state === 'drift').length;
+  const unlinked = entries.filter((e) => e.state === 'unlinked').length;
+  const ok = entries.filter((e) => e.state === 'ok').length;
+  return [
+    {
+      name,
+      status: drift > 0 ? 'warn' : 'pass',
+      detail: `${entries.length} INDEX entries: ${ok} ok, ${drift} drift, ${unlinked} unlinked`,
+      suggestion:
+        drift > 0
+          ? 'An INDEX section disagrees with its roadmap card lane — move the card to the matching lane or the entry to the matching section.'
+          : undefined,
+      indexLane: { entries },
+    },
+  ];
+}
+
+// ============================================================================
 // Entry point
 // ============================================================================
 
@@ -1491,10 +1658,69 @@ export interface DoctorDeps {
   databaseRoot?: string | null;
   /** Injected one-shot plugin state keeps tests away from the live Codex home. */
   pluginProbe?: CodexPluginProbe;
+  /**
+   * Injected activation snapshot for the additive `integrationSummary`. Tests pass
+   * a snapshot (or explicit `null` = Codex integration not applicable) to stay off
+   * the live Codex home. When omitted, production runs the bounded observer ONCE
+   * iff the Codex CLI is available.
+   */
+  codexActivation?: CodexActivationSnapshot | null;
   /** Runtime-version seam so tests can cover the declared Bun engine boundary. */
   bunVersion?: string | null;
   /** PATH seam paired with bunVersion. */
   bunPath?: string | null;
+}
+
+// ============================================================================
+// Codex integration summary (additive `doctor --json` rider; Group D, D3/D4)
+// ============================================================================
+
+/**
+ * Resolve the single bounded activation observation for the integration summary.
+ * `deps.codexActivation` (a snapshot or explicit `null`) wins so tests never hit
+ * the live Codex home; otherwise production observes exactly ONCE — and only when
+ * the Codex CLI is present, so an all-Claude host reports no Codex integration.
+ * This is a pure observation that never acquires, probes, or blocks on the
+ * lifecycle lease.
+ */
+function resolveCodexActivationSnapshot(
+  deps: DoctorDeps,
+  pluginProbe: CodexPluginProbe,
+): CodexActivationSnapshot | null {
+  if (deps.codexActivation !== undefined) return deps.codexActivation;
+  if (!pluginProbe.cliAvailable) return null;
+  return observeCodexActivation({ command: whichBinary('codex') });
+}
+
+interface CodexIntegration {
+  summary: IntegrationSummaryEnvelope;
+  /** The activation state's own 0/1/2 exit; drives the command exit without flipping `ok`. */
+  exit: 0 | 1 | 2;
+  human: { stream: 'stdout' | 'stderr'; text: string };
+}
+
+/**
+ * Build the additive integration summary + human projection from one snapshot.
+ * Doctor never mutates, so `deliveryComplete` reflects only whether target payload
+ * T is physically delivered (canonical present) — the same fact the human and JSON
+ * projections share, so they agree across repeated runs.
+ */
+function buildCodexIntegration(snapshot: CodexActivationSnapshot): CodexIntegration {
+  const state = classifyCodexActivation(snapshot);
+  const authorization = authorizeCodexActivation({
+    state,
+    snapshot,
+    invocation: { entry: 'doctor', assertion: null },
+  });
+  const deliveryComplete = snapshot.canonical.status === 'ok';
+  const summary = projectIntegrationSummary(state, snapshot, authorization, deliveryComplete);
+  const descriptor = describeState(state);
+  const projection = projectHumanStatus(state, snapshot);
+  return {
+    summary,
+    exit: descriptor.exit,
+    human: { stream: projection.stream, text: projection.text },
+  };
 }
 
 export async function doctorCommand(options?: { json?: boolean; fix?: boolean }, deps: DoctorDeps = {}): Promise<void> {
@@ -1527,12 +1753,27 @@ export async function doctorCommand(options?: { json?: boolean; fix?: boolean },
     ...checkV4Residue(),
     ...checkAgentSync(),
     ...(await checkOmniHookTimeout()),
+    ...checkIndexLaneDrift(root, databaseRoot),
   ];
 
   const failed = results.filter((r) => r.status === 'fail');
 
+  // One bounded activation observation feeds the additive integration summary.
+  // It is purely additive: `{ ok, checks }` meanings are unchanged, and a pending
+  // Codex generation keeps `ok:true` while the command exits 2.
+  const activationSnapshot = resolveCodexActivationSnapshot(deps, pluginProbe);
+  const integration = activationSnapshot ? buildCodexIntegration(activationSnapshot) : null;
+
   if (options?.json) {
-    out(JSON.stringify({ ok: failed.length === 0, checks: results }, null, 2));
+    out(
+      JSON.stringify(
+        integration
+          ? { ok: failed.length === 0, checks: results, integrationSummary: integration.summary }
+          : { ok: failed.length === 0, checks: results },
+        null,
+        2,
+      ),
+    );
   } else {
     out('genie doctor');
     out('');
@@ -1543,7 +1784,17 @@ export async function doctorCommand(options?: { json?: boolean; fix?: boolean },
     }
     out('');
     out(failed.length === 0 ? '\x1b[32mAll checks passed.\x1b[0m' : `\x1b[31m${failed.length} check(s) failed.\x1b[0m`);
+    // Broken Codex diagnostics go to stderr (no all-green footer); current/pending
+    // status goes to stdout — the same stream split the setup/JSON projections use.
+    if (integration) {
+      const sink = integration.human.stream === 'stderr' ? process.stderr : process.stdout;
+      sink.write(`Codex integration: ${integration.human.text}\n`);
+    }
   }
 
-  if (failed.length > 0) process.exitCode = 1;
+  // Exit code is 0/1/2. Pending (codex exit 2) dominates and exits 2 even when
+  // every check passes; a broken codex state contributes exit 1. Neither flips
+  // `ok`, which stays purely a function of failed hard checks.
+  const finalExit = Math.max(failed.length > 0 ? 1 : 0, integration?.exit ?? 0) as 0 | 1 | 2;
+  if (finalExit > 0) process.exitCode = finalExit;
 }

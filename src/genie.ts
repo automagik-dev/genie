@@ -25,10 +25,12 @@ import { updateCommand } from './genie-commands/update.js';
 import { registerHookNamespace } from './hooks/dispatch-command.js';
 import { installWorkspaceCheck } from './lib/interactivity.js';
 import { VERSION } from './lib/version.js';
+import { registerIdeaCommand } from './term-commands/idea.js';
 import { registerInitCommand } from './term-commands/init.js';
 import { registerLaunchCommand } from './term-commands/launch.js';
 import { registerMcpCommand } from './term-commands/mcp.js';
 import { registerOmniCommands } from './term-commands/omni.js';
+import { registerUiBridgeCommand } from './term-commands/ui-bridge.js';
 import { registerV5BoardCommands } from './term-commands/v5-board.js';
 import { registerV5TaskCommands } from './term-commands/v5-task.js';
 
@@ -122,6 +124,8 @@ program
         'skipMaintenance',
       ]),
   )
+  .addOption(new Option('--print-update-capabilities').hideHelp())
+  .addOption(new Option('--json').hideHelp())
   .action(updateCommand);
 
 program
@@ -160,8 +164,10 @@ registerHookNamespace(program);
 registerInitCommand(program);
 registerLaunchCommand(program);
 registerMcpCommand(program);
+registerUiBridgeCommand(program);
 registerV5TaskCommands(program);
 registerV5BoardCommands(program);
+registerIdeaCommand(program);
 registerOmniCommands(program);
 
 // ============================================================================

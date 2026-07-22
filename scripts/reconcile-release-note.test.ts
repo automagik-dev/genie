@@ -139,18 +139,33 @@ describe('release migration-note reconciliation', () => {
     expect(second.state.calls?.filter((args) => args[1] === 'edit')).toHaveLength(1);
   });
 
-  test('finalize publishes stable and prerelease candidates without selecting either as latest', () => {
-    const stable = run(
+  test('stable finalize promotes to Latest from a fresh draft or a dev-published prerelease', () => {
+    const fromDraft = run(
       { exists: true, id: 77, body: '<!-- genie-agent-sync-migration-v1 -->', draft: true, prerelease: false },
       'finalize',
     );
-    expect(stable.result.exitCode).toBe(0);
-    expect(stable.state.draft).toBe(false);
-    expect(stable.state.prerelease).toBe(false);
-    expect(stable.state.makeLatest).toBe('false');
+    expect(fromDraft.result.exitCode).toBe(0);
+    expect(fromDraft.state.draft).toBe(false);
+    expect(fromDraft.state.prerelease).toBe(false);
+    expect(fromDraft.state.makeLatest).toBe('true');
 
+    // The bug this fixes: the dev channel already published the tag as a
+    // prerelease (draft=false, prerelease=true). Stable finalize must still
+    // promote it — clear the prerelease flag AND select it as Latest.
+    const fromDevPublished = run(
+      { exists: true, id: 78, body: '<!-- genie-agent-sync-migration-v1 -->', draft: false, prerelease: true },
+      'finalize',
+    );
+    expect(fromDevPublished.result.exitCode).toBe(0);
+    expect(fromDevPublished.state.draft).toBe(false);
+    expect(fromDevPublished.state.prerelease).toBe(false);
+    expect(fromDevPublished.state.makeLatest).toBe('true');
+    expect(fromDevPublished.state.calls?.filter((args) => args[0] === 'api')).toHaveLength(1);
+  });
+
+  test('dev finalize publishes a prerelease that is never Latest', () => {
     const dev = run(
-      { exists: true, id: 78, body: '<!-- genie-agent-sync-migration-v1 -->', draft: true, prerelease: true },
+      { exists: true, id: 79, body: '<!-- genie-agent-sync-migration-v1 -->', draft: true, prerelease: true },
       'finalize',
       { CHANNEL: 'dev' },
     );
@@ -160,7 +175,9 @@ describe('release migration-note reconciliation', () => {
     expect(dev.state.makeLatest).toBe('false');
   });
 
-  test('every promotion/replay preserves already-published release metadata', () => {
+  test('finalize is idempotent on releases already in their channel terminal state', () => {
+    // A stable release already published as non-prerelease Latest is left
+    // untouched — no PATCH, metadata preserved.
     const stable = run(
       {
         exists: true,
@@ -173,10 +190,13 @@ describe('release migration-note reconciliation', () => {
       'finalize',
     );
     expect(stable.result.exitCode).toBe(0);
+    expect(stable.state.prerelease).toBe(false);
     expect(stable.state.makeLatest).toBe('true');
     expect(stable.state.calls?.filter((args) => args[0] === 'api')).toHaveLength(0);
 
-    const devToStable = run(
+    // A dev release already published as a prerelease is immutable on the dev
+    // channel — flags preserved, never Latest, no PATCH.
+    const devPublished = run(
       {
         exists: true,
         id: 78,
@@ -186,12 +206,12 @@ describe('release migration-note reconciliation', () => {
         makeLatest: 'false',
       },
       'finalize',
-      { CHANNEL: 'stable' },
+      { CHANNEL: 'dev' },
     );
-    expect(devToStable.result.exitCode).toBe(0);
-    expect(devToStable.state.prerelease).toBe(true);
-    expect(devToStable.state.makeLatest).toBe('false');
-    expect(devToStable.state.calls?.filter((args) => args[0] === 'api')).toHaveLength(0);
+    expect(devPublished.result.exitCode).toBe(0);
+    expect(devPublished.state.prerelease).toBe(true);
+    expect(devPublished.state.makeLatest).toBe('false');
+    expect(devPublished.state.calls?.filter((args) => args[0] === 'api')).toHaveLength(0);
   });
 
   test('DRAFT=true leaves the fully prepared release unpublished', () => {
