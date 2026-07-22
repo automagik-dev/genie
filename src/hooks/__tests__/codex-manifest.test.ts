@@ -93,6 +93,19 @@ describe('Codex hook manifest', () => {
     }
   });
 
+  test('the H3 SessionStart launcher is the exact bounded read-only command on every platform', () => {
+    // Release gates and the extracted-payload verifier both pin this exact
+    // string; drift here means a tarball could ship a divergent activation hook.
+    const sessionStart = manifest().hooks.SessionStart;
+    expect(sessionStart).toHaveLength(1);
+    expect(sessionStart[0].matcher).toBe('startup|resume|clear|compact');
+    expect(sessionStart[0].hooks).toHaveLength(1);
+    const h3 = sessionStart[0].hooks[0];
+    expect(h3.command).toBe('node "${PLUGIN_ROOT}/scripts/session-context.cjs"');
+    expect(h3.commandWindows).toBe('node "%PLUGIN_ROOT%\\scripts\\session-context.cjs"');
+    expect(h3.timeout).toBe(5);
+  });
+
   test('every retained command is portable and the approval timeout contains the poll budget', () => {
     const parsed = manifest();
     for (const groups of Object.values(parsed.hooks)) {
