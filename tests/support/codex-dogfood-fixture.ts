@@ -2,13 +2,14 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import packageMetadata from '../../package.json';
 import { scanPhysicalTree } from '../../src/lib/codex-activation.js';
 import { buildTestDeliveryEvidencePack } from '../../src/lib/codex-delivery-evidence.test-support.js';
 import type { DogfoodEntryInput, DogfoodHarnessDependencies } from './codex-dogfood-harness.js';
 
 const REPO_ROOT = join(import.meta.dir, '..', '..');
 export const FIXTURE_N = '5.260720.10';
-export const FIXTURE_T = '5.260723.8';
+export const FIXTURE_T = packageMetadata.version;
 
 function sha256(path: string): string {
   return createHash('sha256').update(readFileSync(path)).digest('hex');
