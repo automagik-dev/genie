@@ -483,6 +483,12 @@ describe('describeState — exit codes and mutation authority', () => {
     ).toBe('journal-quarantine-only');
     expect(describeState({ kind: 'activation-pending', from: OLD, target: T }).authority).toBe('external-tty-setup');
   });
+
+  test('a failed plugin query keeps explicit upgrade-or-repair guidance', () => {
+    expect(describeState({ kind: 'query-failed', detail: 'plugin subcommand unavailable' }).recovery).toMatch(
+      /upgrade.*Codex/i,
+    );
+  });
 });
 
 // ============================================================================
@@ -1339,6 +1345,38 @@ describe('CodexActivationStore — beginActivation fingerprint binding', () => {
     }
   });
 
+  test('a fresh absent registration plans enabled=true, while an existing disabled registration stays false', () => {
+    for (const fixtureCase of [
+      { name: 'fresh', registeredVersion: null, entries: [], expectedEnabled: true },
+      {
+        name: 'existing-disabled',
+        registeredVersion: OLD,
+        entries: [{ version: OLD, enabled: false }],
+        expectedEnabled: false,
+      },
+    ] as const) {
+      const fx = makeFixture({ targetVersion: T, registeredVersion: fixtureCase.registeredVersion });
+      publishMatchingDelivery(fx.genieHome, fx.codexHome);
+      const store = openCodexActivationStore({
+        genieHome: fx.genieHome,
+        codexHome: fx.codexHome,
+        command: 'codex',
+        runner: listRunner({ stdout: pluginListJson([...fixtureCase.entries]) }),
+      });
+      const lease = heldLease(fx.genieHome);
+      try {
+        const result = store.beginActivation(lease, grantPermit(store));
+        expect(result.status).toBe('started');
+        const observed = store.observe();
+        expect(observed.intent.status).toBe('valid');
+        if (observed.intent.status !== 'valid') throw new Error(`${fixtureCase.name}: intent missing`);
+        expect(observed.intent.intent.priorEnabled).toBe(fixtureCase.expectedEnabled);
+      } finally {
+        lease.release();
+      }
+    }
+  });
+
   test('a stale permit is detected on re-observation and performs zero mutation', () => {
     const fx = makeFixture({ targetVersion: T, registeredVersion: OLD });
     const store = openCodexActivationStore({
@@ -1401,13 +1439,13 @@ describe('CodexActivationStore — beginActivation fingerprint binding', () => {
     {
       name: 'platform id',
       mutate: (record) => {
-        record.platformId = 'linux-x64-musl';
+        record.platformId = record.platformId === 'darwin-arm64' ? 'linux-arm64' : 'darwin-arm64';
       },
     },
     {
       name: 'platform',
       mutate: (record) => {
-        record.platformTriple = 'linux-x64';
+        record.platformTriple = `${String(record.platformTriple)}-stale`;
       },
     },
     {

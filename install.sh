@@ -58,6 +58,11 @@ LIFECYCLE_LOCK_STALE_SECONDS=600
 # Set while extraction is in flight. This is private disposable source input;
 # durable recovery authority lives only in the promoter's internal transaction.
 STAGING_DIR=""
+# The only exit-2 result that means "delivery committed; activation deferred".
+# handoff_to_subcommand streams child stdout while capturing it privately and
+# requires it to be the sole lifecycle result line, byte-exact, before projecting
+# action-required.
+INSTALL_ACTION_REQUIRED_TRAILER='{"schemaVersion":1,"code":"activation-pending","deliveryComplete":true,"retry":false,"nextAction":"retire tasks → genie setup --codex → /hooks → new task"}'
 
 cleanup() {
   local status=$?
@@ -624,26 +629,8 @@ verify_staged_binary() {
 # path. Mutation authority is the already verified staged executable, which
 # borrows this shell's exact lifecycle lease and uses native durable
 # no-clobber renames.
-ensure_physical_install_directory() {
-  local path="$1" parent
-  parent="$(dirname "$path")"
-  [[ -d "$parent" && ! -L "$parent" ]] ||
-    die "install directory parent is not physical: $parent" 1
-  if [[ -e "$path" || -L "$path" ]]; then
-    [[ -d "$path" && ! -L "$path" ]] ||
-      die "install path is not a physical directory: $path" 1
-    return
-  fi
-  (umask 077; mkdir "$path") ||
-    die "could not create physical install directory: $path" 1
-  [[ -d "$path" && ! -L "$path" ]] ||
-    die "new install directory was replaced before validation: $path" 1
-}
-
 extract_and_link() {
   local tarball="$1" expected_version="$2" bin="$GENIE_HOME/bin"
-  ensure_physical_install_directory "$GENIE_HOME"
-  ensure_physical_install_directory "$bin"
   STAGING_DIR="${TMP_DIR}/release-payload"
   (umask 077; mkdir "$STAGING_DIR") ||
     die "could not create private external release staging" 1
@@ -768,6 +755,20 @@ ensure_path_wired() {
   warn "  open a new shell, or run:  export PATH=\"$LOCAL_BIN:\$PATH\" && hash -r"
 }
 
+# Return success only for a whole-line JSON-object-shaped lifecycle result.
+# Pure Bash matching keeps this classifier inside the authenticated installer:
+# no eval and no parser executable selected from the ambient PATH. Key order,
+# ordinary whitespace, schema generations, and future code values are
+# intentionally irrelevant. A prose line containing a JSON example, or JSON
+# without both lifecycle keys, remains ordinary human output.
+is_lifecycle_result_line() {
+  local line="$1"
+  local object_re='^[[:space:]]*\{.*\}[[:space:]]*$'
+  local schema_key_re='(^|[,{])[[:space:]]*"schemaVersion"[[:space:]]*:'
+  local code_key_re='(^|[,{])[[:space:]]*"code"[[:space:]]*:'
+  [[ "$line" =~ $object_re && "$line" =~ $schema_key_re && "$line" =~ $code_key_re ]]
+}
+
 # Post-install handoff: run the TypeScript-side finishing step on the binary
 # we just linked. The v4 legacy cleanup (stale ~/.claude/rules orchestration
 # file, orphaned automagik/genie/4.* plugin caches) lives there — see
@@ -783,7 +784,8 @@ handoff_to_subcommand() {
   log "handing off to: genie install (post-install finishing, channel=${delivery_channel})"
   [[ -n "$LIFECYCLE_LOCK" && -n "$LIFECYCLE_OWNER_RECORD" ]] ||
     die "lifecycle lease was lost before the post-install finisher" 1
-  local finisher_status=0 finisher_path="$PATH"
+  local finisher_status=0 finisher_path="$PATH" finisher_stdout finisher_line
+  local -a finisher_pipeline_status=()
   if [[ -n "$GH_BIN" ]]; then
     [[ "$GH_BIN" == /* && "${GH_BIN##*/}" == "gh" && -x "$GH_BIN" ]] ||
       die "verified gh became unavailable before the post-install finisher" 1
@@ -792,22 +794,52 @@ handoff_to_subcommand() {
     # still owned by this shell and is removed only after the child returns.
     finisher_path="${GH_BIN%/*}:$PATH"
   fi
+  finisher_stdout="$TMP_DIR/finisher-stdout"
+  (umask 077; set -o noclobber; : > "$finisher_stdout") 2>/dev/null ||
+    die "could not create private post-install result capture" 1
+  [[ -f "$finisher_stdout" && ! -L "$finisher_stdout" ]] ||
+    die "post-install result capture is not a physical file" 1
+  # A pipeline is intentional: the builtin-only read/printf leg preserves the
+  # child's live stdout while the private capture provides an exact, post-exit
+  # line-classification record. Disable errexit only across this pipeline so
+  # PIPESTATUS is available for both legs.
+  set +e
   GENIE_LIFECYCLE_LEASE_PATH="$LIFECYCLE_LOCK" \
     GENIE_LIFECYCLE_LEASE_OWNER="$LIFECYCLE_OWNER_RECORD" \
     GENIE_INSTALL_DELIVERY_CHANNEL="$delivery_channel" \
     GH_BIN="$GH_BIN" \
     PATH="$finisher_path" \
-    "$LOCAL_BIN/genie" install "$@" || finisher_status=$?
+    "$LOCAL_BIN/genie" install "$@" |
+    while IFS= read -r finisher_line || [[ -n "$finisher_line" ]]; do
+      printf '%s\n' "$finisher_line"
+      printf '%s\n' "$finisher_line" >> "$finisher_stdout"
+    done
+  finisher_pipeline_status=("${PIPESTATUS[@]}")
+  set -e
+  finisher_status="${finisher_pipeline_status[0]:-1}"
+  [[ "${finisher_pipeline_status[1]:-1}" -eq 0 ]] ||
+    die "could not capture post-install result; installation remains incomplete and retryable" 1
   # Exit 2 from the finisher is delivered-but-action-required (installed
   # generation N ≠ delivered T): the signed binary/payload is installed, but the
   # Codex plugin generation was NOT activated. The finisher already printed the
   # single machine-readable result trailer over inherited stdout. Propagate it as
   # exit 2 with no all-green footer — never as a failure (die 1). Exit 2 is
-  # disambiguated from an unsupported-platform exit 2 by that trailer
-  # (deliveryComplete:true), per the lifecycle exit-matrix contract.
+  # disambiguated from busy/incomplete/unsupported-platform exit 2 only when the
+  # byte-exact action-required trailer is the sole lifecycle result line.
+  # Contradictory or duplicate lifecycle trailers remain visible in the stream
+  # but are fatal to this installer invocation.
   if [[ "$finisher_status" -eq 2 ]]; then
-    DELIVERY_ACTION_REQUIRED=1
-    return 0
+    local action_required_count=0 lifecycle_result_count=0 captured_line
+    while IFS= read -r captured_line || [[ -n "$captured_line" ]]; do
+      is_lifecycle_result_line "$captured_line" &&
+        lifecycle_result_count=$((lifecycle_result_count + 1))
+      [[ "$captured_line" == "$INSTALL_ACTION_REQUIRED_TRAILER" ]] &&
+        action_required_count=$((action_required_count + 1))
+    done < "$finisher_stdout"
+    if [[ "$action_required_count" -eq 1 && "$lifecycle_result_count" -eq 1 ]]; then
+      DELIVERY_ACTION_REQUIRED=1
+      return 0
+    fi
   fi
   [[ "$finisher_status" -eq 0 ]] ||
     die "genie install finishing failed; installation remains incomplete and retryable" 1

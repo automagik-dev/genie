@@ -92,10 +92,12 @@ verify_result() {
     --arg source_uri "$SOURCE_URI" \
     --arg control_sha "$CONTROL_SHA" \
     --arg control_uri "$CONTROL_URI" \
+    --arg invocation_id "https://github.com/${RELEASE_REPOSITORY}/actions/runs/${RUN_ID}/attempts/${RUN_ATTEMPT}" \
     'type == "array" and length > 0 and any(.[];
       .verificationResult.statement as $statement |
       $statement.predicateType == $predicate_type and
       $statement.predicate.runDetails.builder.id == $builder_id and
+      $statement.predicate.runDetails.metadata.invocationId == $invocation_id and
       $statement.predicate.buildDefinition.buildType == $build_type and
       $statement.predicate.buildDefinition.externalParameters.version == $version and
       $statement.predicate.buildDefinition.externalParameters.channel == $channel and
@@ -109,6 +111,59 @@ verify_result() {
       any($statement.predicate.buildDefinition.resolvedDependencies[];
         .uri == $control_uri and .digest.gitCommit == $control_sha)
     )' "$input" >/dev/null
+}
+
+verify_exact_subject() {
+  local input="${1:-}"
+  : "${ARTIFACT_SHA256:?ARTIFACT_SHA256 is required}"
+  [[ "$ARTIFACT_SHA256" =~ ^[0-9a-f]{64}$ ]] || exit 2
+  verify_result "$input"
+  jq -ce \
+    --arg predicate_type "$PREDICATE_TYPE" \
+    --arg builder_id "$BUILDER_ID" \
+    --arg build_type "$BUILD_TYPE" \
+    --arg version "$VERSION" \
+    --arg channel "$CHANNEL" \
+    --arg source_sha "$SOURCE_SHA" \
+    --arg source_branch "$SOURCE_BRANCH" \
+    --arg source_ci_run_id "$SOURCE_CI_RUN_ID" \
+    --arg source_uri "$SOURCE_URI" \
+    --arg control_sha "$CONTROL_SHA" \
+    --arg control_uri "$CONTROL_URI" \
+    --arg invocation_id "https://github.com/${RELEASE_REPOSITORY}/actions/runs/${RUN_ID}/attempts/${RUN_ATTEMPT}" \
+    --arg artifact_sha256 "$ARTIFACT_SHA256" \
+    'first(
+      .[] |
+      .verificationResult.statement as $statement |
+      select(
+        $statement.predicateType == $predicate_type and
+        $statement.predicate.runDetails.builder.id == $builder_id and
+        $statement.predicate.runDetails.metadata.invocationId == $invocation_id and
+        $statement.predicate.buildDefinition.buildType == $build_type and
+        $statement.predicate.buildDefinition.externalParameters.version == $version and
+        $statement.predicate.buildDefinition.externalParameters.channel == $channel and
+        $statement.predicate.buildDefinition.externalParameters.source_sha == $source_sha and
+        $statement.predicate.buildDefinition.externalParameters.source_branch == $source_branch and
+        $statement.predicate.buildDefinition.externalParameters.source_ci_run_id == $source_ci_run_id and
+        $statement.predicate.buildDefinition.externalParameters.control_sha == $control_sha and
+        ($statement.predicate.buildDefinition.resolvedDependencies | length) == 2 and
+        any($statement.predicate.buildDefinition.resolvedDependencies[];
+          .uri == $source_uri and .digest.gitCommit == $source_sha) and
+        any($statement.predicate.buildDefinition.resolvedDependencies[];
+          .uri == $control_uri and .digest.gitCommit == $control_sha) and
+        any($statement.subject[]?; .digest.sha256 == $artifact_sha256)
+      ) |
+      {
+        artifactSha256: $artifact_sha256,
+        version: $statement.predicate.buildDefinition.externalParameters.version,
+        channel: $statement.predicate.buildDefinition.externalParameters.channel,
+        sourceSha: $statement.predicate.buildDefinition.externalParameters.source_sha,
+        sourceBranch: $statement.predicate.buildDefinition.externalParameters.source_branch,
+        sourceCiRunId: $statement.predicate.buildDefinition.externalParameters.source_ci_run_id,
+        controlSha: $statement.predicate.buildDefinition.externalParameters.control_sha,
+        invocationId: $statement.predicate.runDetails.metadata.invocationId
+      }
+    )' "$input"
 }
 
 # Promotion reuses the exact already-published assets. Their original source
@@ -157,6 +212,7 @@ verify_reusable_result() {
 case "${1:-}" in
   create) require_exact_identity; create_predicate "${2:-}" ;;
   verify) require_exact_identity; verify_result "${2:-}" ;;
+  verify-exact-subject) require_exact_identity; verify_exact_subject "${2:-}" ;;
   verify-reusable) verify_reusable_result "${2:-}" ;;
   reusable-control-sha) reusable_control_sha "${2:-}" ;;
   *) exit 64 ;;

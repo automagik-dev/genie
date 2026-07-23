@@ -99,7 +99,7 @@ interface PendingRequest {
 export class CodexCwdEvidence {
   private nextId = 1;
   private readonly pending = new Map<number, PendingRequest>();
-  private closed = false;
+  private closePromise: Promise<void> | null = null;
   private childClosed = false;
   private readonly childClosePromise: Promise<void>;
 
@@ -153,6 +153,9 @@ export class CodexCwdEvidence {
       const child = spawn(codexCommand, ['app-server'], {
         env: { ...process.env, CODEX_HOME: codexHome, RUST_LOG: 'error' },
         stdio: ['pipe', 'pipe', 'pipe'],
+        // A dedicated POSIX process group lets cleanup terminate app-server
+        // descendants (including MCP children), not merely their direct parent.
+        detached: process.platform !== 'win32',
       }) as ChildProcessWithoutNullStreams;
       // A late spawn/runtime failure must surface as a rejected initialize (caught by
       // callers), never as an unhandled 'error' event that throws and aborts the file.
@@ -273,19 +276,53 @@ export class CodexCwdEvidence {
   }
 
   async close(): Promise<void> {
-    if (this.closed) return;
-    this.closed = true;
+    this.closePromise ??= this.closeOnce();
+    await this.closePromise;
+  }
+
+  private async closeOnce(): Promise<void> {
     this.rejectPending(new Error('codex app-server harness closed'));
     try {
-      this.child.kill('SIGKILL');
-    } catch {
-      // already gone
+      this.killProcessTree();
+      await this.waitForChildClose();
+      await this.waitForProcessGroupExit();
+    } finally {
+      rmSync(this.harnessRoot, { recursive: true, force: true });
     }
-    await this.waitForChildClose();
-    rmSync(this.harnessRoot, { recursive: true, force: true });
   }
 
   // --------------------------------------------------------------------------
+
+  private killProcessTree(): void {
+    const pid = this.child.pid;
+    if (process.platform !== 'win32' && pid !== undefined && pid > 1) {
+      try {
+        process.kill(-pid, 'SIGKILL');
+      } catch {
+        // The process group may already be gone.
+      }
+    }
+    try {
+      this.child.kill('SIGKILL');
+    } catch {
+      // The direct child may already be gone.
+    }
+  }
+
+  private async waitForProcessGroupExit(timeoutMs = 2_000): Promise<void> {
+    const pid = this.child.pid;
+    if (process.platform === 'win32' || pid === undefined || pid <= 1) return;
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      try {
+        process.kill(-pid, 0);
+        process.kill(-pid, 'SIGKILL');
+      } catch {
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
 
   private async openThread(tag: string, requestedCwd: string, timeoutMs: number): Promise<string> {
     const params = {

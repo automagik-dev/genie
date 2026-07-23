@@ -20,7 +20,7 @@
 
 import type { Database } from 'bun:sqlite';
 import { createInterface } from 'node:readline';
-import type { ProjectContext } from './genie-db.js';
+import type { ProjectContext, ProjectDatabaseBinding } from './genie-db.js';
 import type { McpTool, ToolContext } from './mcp-tools.js';
 
 // ============================================================================
@@ -95,7 +95,7 @@ export interface McpServerConfig {
    * empty projection. Injected so this module never statically imports
    * `bun:sqlite` / `mcp-tools`.
    */
-  openReadonlyDb: (cwd: string) => Database | null;
+  openReadonlyDb: (target: string | ProjectDatabaseBinding) => Database | null;
   /**
    * Optional pure read-only schema validator. The fail-closed MCP command
    * supplies the per-repo Genie validator; legacy consumers may omit it.
@@ -133,8 +133,13 @@ export async function runMcpServerLoop(config: McpServerConfig): Promise<void> {
   // Resolve the fail-closed context up front when a resolver is injected; only an
   // `ok` context may hold a read handle. Without a resolver, keep the legacy open.
   const initialContext = config.resolveContext?.(cwd);
-  const openValidatedReadonlyDb = (): Database | null => {
-    const db = config.openReadonlyDb(cwd);
+  const openValidatedReadonlyDb = (context?: ProjectContext): Database | null => {
+    let target: string | ProjectDatabaseBinding = cwd;
+    if (context !== undefined) {
+      if (context.kind !== 'ok' || context.databaseBinding === undefined) return null;
+      target = context.databaseBinding;
+    }
+    const db = config.openReadonlyDb(target);
     if (db === null) return null;
     try {
       // Bun may construct a handle for malformed bytes and fail only on the
@@ -154,8 +159,7 @@ export async function runMcpServerLoop(config: McpServerConfig): Promise<void> {
       return null;
     }
   };
-  const openHandle = (context: ProjectContext | undefined): Database | null =>
-    context === undefined ? openValidatedReadonlyDb() : context.kind === 'ok' ? openValidatedReadonlyDb() : null;
+  const openHandle = (context: ProjectContext | undefined): Database | null => openValidatedReadonlyDb(context);
   // Single source of truth for the read handle: the per-call reopen below writes
   // back to ctx.db, and close() reads ctx.db — so a mid-session reopen is always
   // the one that gets closed (no stale/leaked handle).
@@ -203,7 +207,7 @@ export async function runMcpServerLoop(config: McpServerConfig): Promise<void> {
     // The db may have been absent when the server started. Re-attempt the
     // read-only open per call so a db created mid-session (e.g. a fresh
     // `genie init` or a bridge write) is picked up.
-    if (!ctx.db) ctx.db = openValidatedReadonlyDb();
+    if (!ctx.db) ctx.db = openValidatedReadonlyDb(ctx.context);
     // Existence is not openability: a directory, malformed file, unreadable
     // path, or failed readonly open can still arrive with an `ok` path context.
     // Never dispatch a fail-closed MCP tool with a null handle, because every

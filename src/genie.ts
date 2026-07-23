@@ -70,7 +70,7 @@ program
   .description('Configure genie settings')
   .option('--quick', 'Accept all defaults')
   .option('--shortcuts', 'Only configure keyboard shortcuts')
-  .option('--codex', 'Configure Codex and persist its scope for later explicit Genie updates')
+  .option('--codex', 'Activate the authenticated Codex delivery and converge its managed surfaces')
   .option('--terminal', 'Only configure terminal defaults')
   .option('--session', 'Only configure session settings')
   .option('--reset', 'Reset configuration to defaults')
@@ -122,17 +122,41 @@ program
         'restart',
         'verify',
         'skipMaintenance',
+        'publishLocalDelivery',
       ]),
   )
   .addOption(new Option('--print-update-capabilities').hideHelp())
   .addOption(new Option('--json').hideHelp())
+  .addOption(
+    new Option('--publish-local-delivery <request>')
+      .hideHelp()
+      .conflicts([
+        'rollback',
+        'syncOnly',
+        'postDeliveryConverge',
+        'printUpdateCapabilities',
+        'json',
+        'dev',
+        'homolog',
+        'next',
+        'stable',
+        'yes',
+        'restart',
+        'verify',
+        'skipMaintenance',
+      ]),
+  )
   .action(updateCommand);
 
 program
   .command('install')
   .description('Post-install finishing step — invoked by install.sh after the binary is linked')
   .option('--skip-v4-cleanup', 'Leave v4-era leftovers in place (orchestration rules, orphaned plugin caches)')
-  .option('--integrations <mode>', 'Install client integrations: auto, codex, claude, all, or none', 'auto')
+  .option(
+    '--integrations <mode>',
+    'Deliver client integrations: auto, codex, claude, all, or none (Codex activation requires setup --codex)',
+    'auto',
+  )
   .option('--skip-integrations', 'Alias for --integrations none')
   .action((options: InstallOptions) => installCommand(options));
 

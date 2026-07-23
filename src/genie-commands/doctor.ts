@@ -889,7 +889,7 @@ async function checkOmniHookTimeout(): Promise<CheckResult[]> {
 const SYNC_MANIFEST_NAME = MANIFEST_NAME;
 const SYNC_MANAGED_BY = MANAGED_BY;
 const COUNCIL_WORKFLOW_FILE = TARGET_NAME;
-const SYNC_SUGGESTION = 'Run `genie update` to converge all detected coding agents.';
+const SYNC_SUGGESTION = 'Run `genie update` to converge detected Claude and Hermes integrations.';
 const HERMES_INLINE_SUGGESTION =
   'Rewrite the inline top-level key as a block mapping so genie can merge without deleting your entries, then run `genie update`.';
 
@@ -1265,7 +1265,8 @@ function checkCodexSync(codexDir: string, agentsSkillsDir: string, pluginRoot: s
       name: 'agent sync: codex',
       status: 'warn',
       detail: `${tier.cleanFallbacks.length} clean managed fallback(s) in ~/.agents/skills — repairable duplicate provider state (${tier.cleanFallbacks.join(', ')})${quarantineNote}`,
-      suggestion: 'Run `genie update` to retire these clean fallbacks; the installed plugin already provides them.',
+      suggestion:
+        'Run `genie setup --codex` from an interactive terminal; setup requires the matching authenticated delivery and retires these clean fallbacks only after plugin health passes.',
     });
   }
   if (tier.unrecognizedFallbacks.length > 0) {
@@ -1274,14 +1275,14 @@ function checkCodexSync(codexDir: string, agentsSkillsDir: string, pluginRoot: s
     // allowlist and no matching live-plugin payload). Era-A fallbacks (v1
     // legacy digest, no identityVersion) do NOT land here — their marker fails
     // the v2 self-consistency check, so they surface as preservedCollisions.
-    // Never user-edited, so NOT a personal collision — but `genie update`
+    // Never user-edited, so NOT a personal collision — but authenticated setup
     // refuses to retire it, so recommending that here would be a no-op loop.
     results.push({
       name: 'agent sync: codex unrecognized',
       status: 'warn',
       detail: `${tier.unrecognizedFallbacks.length} unrecognized managed fallback(s) in ~/.agents/skills (review manually): ${tier.unrecognizedFallbacks.join(', ')}`,
       suggestion:
-        '`genie update` will NOT retire these — the content is well-formed genie provenance but not in the frozen allowlist and does not match the installed plugin payload. Review each manually; do not expect `genie update` to clear this warning.',
+        '`genie setup --codex` will NOT retire these — the content is well-formed genie provenance but not in the frozen allowlist and does not match the installed plugin payload. Review each manually; do not expect setup to clear this warning.',
     });
   }
   if (tier.preservedCollisions.length > 0) {

@@ -1007,14 +1007,16 @@ describe('checkAgentSync', () => {
     expect(codex?.suggestion).toBeUndefined();
   });
 
-  test('codex clean managed fallback → warn repairable duplicate (run genie update)', () => {
+  test('codex clean managed fallback → warn repairable duplicate (run authenticated setup)', () => {
     mkdirSync(codexDir, { recursive: true });
     seedManaged(join(pluginRoot, 'skills', 'wish'), join(agentsSkillsDir, 'wish'));
     const codex = find(checkAgentSync(paths()), 'agent sync: codex');
     expect(codex?.status).toBe('warn');
     expect(codex?.detail).toContain('repairable duplicate provider state');
     expect(codex?.detail).toContain('wish');
-    expect(codex?.suggestion).toContain('genie update');
+    expect(codex?.suggestion).toContain('genie setup --codex');
+    expect(codex?.suggestion).toContain('matching authenticated delivery');
+    expect(codex?.suggestion).toContain('plugin health');
   });
 
   test('codex preserved personal collision → DISTINCT manual remediation', () => {
@@ -1030,7 +1032,7 @@ describe('checkAgentSync', () => {
     expect(collision?.detail).toContain('collide with plugin names');
     expect(collision?.suggestion).toContain('manually');
     // DISTINCT from the repairable-duplicate remediation: personal collisions are
-    // never retired by `genie update`, only reviewed/removed by the user.
+    // never retired by setup, only reviewed/removed by the user.
     expect(collision?.suggestion).not.toContain('retire');
   });
 
@@ -1054,12 +1056,12 @@ describe('checkAgentSync', () => {
     expect(evidence?.suggestion).toContain('reconcile it manually');
   });
 
-  test('codex well-formed but unrecognized fallback → distinct "review manually" warn, main line stays plugin-only, never advises `genie update`', () => {
+  test('codex well-formed but unrecognized fallback → distinct manual warn, main line stays plugin-only, never advises setup will retire it', () => {
     // identityVersion:2, digest self-consistent with its own manifest — but the
     // content is NOT the installed plugin's payload and not in the frozen
     // historical allowlist, so `planCodexFallbackRetirement` would refuse it
     // ('ambiguous-ownership'). This is the PR #2575 no-op-loop bug: doctor must
-    // never call this "clean" or tell the user `genie update` fixes it.
+    // never call this "clean" or tell the user authenticated setup fixes it.
     mkdirSync(codexDir, { recursive: true });
     const dir = join(agentsSkillsDir, 'orphaned-content');
     mkdirSync(dir, { recursive: true });
@@ -1086,8 +1088,8 @@ describe('checkAgentSync', () => {
     expect(unrecognized?.detail).toContain('review manually');
     expect(unrecognized?.detail).toContain('orphaned-content');
     // The whole point: this warning must never send the user down the same
-    // no-op loop `genie update` already refuses to close.
-    expect(unrecognized?.suggestion).not.toContain('Run `genie update` to retire');
+    // no-op loop authenticated setup already refuses to close.
+    expect(unrecognized?.suggestion).toContain('`genie setup --codex` will NOT retire');
   });
 
   test('codex ~/.agents/skills exists but is unreadable → warn, never a false-healthy plugin-only pass', () => {

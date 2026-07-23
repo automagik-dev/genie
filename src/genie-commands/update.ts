@@ -40,6 +40,7 @@ import {
 } from '../lib/codex-delivery-evidence.js';
 import {
   type HeldLifecycleLease,
+  type LifecycleLeaseResult,
   acquireLifecycleLease as acquireCodexLifecycleLease,
 } from '../lib/codex-lifecycle-lease.js';
 import { snapshotDeliveryReadState } from '../lib/codex-lifecycle-truth.js';
@@ -96,6 +97,7 @@ import {
 } from './codex-delivery.js';
 import { performProtocolSafeRollback } from './codex-rollback.js';
 import { cleanupV4 } from './legacy-v4.js';
+import { assertLocalDeliveryRepairEnabled, materializeLocalDeliveryRepair } from './local-delivery-repair.js';
 import { type RefreshUpdatePluginsOptions, refreshUpdatePlugins } from './update-integrations.js';
 const GENIE_HOME = process.env.GENIE_HOME || join(homedir(), '.genie');
 const GENIE_BIN = join(GENIE_HOME, 'bin');
@@ -1512,15 +1514,46 @@ export interface UpdateCommandOptions {
   /** Companion `--json` flag for `--print-update-capabilities`; the probe output
    *  is always JSON, so this only pins the contract explicit. */
   json?: boolean;
+  /**
+   * Hidden release-dogfood boundary. The value is one bounded exact-schema JSON
+   * request naming a local artifact, raw manifest, signed descriptor, and
+   * Sigstore bundle. It is inert unless GENIE_RELEASE_DOGFOOD is exactly `1`.
+   */
+  publishLocalDelivery?: string;
 }
 
-export type UpdateExecutionMode = 'normal' | 'rollback' | 'sync-only' | 'post-delivery-converge';
+export type UpdateExecutionMode =
+  | 'normal'
+  | 'rollback'
+  | 'sync-only'
+  | 'post-delivery-converge'
+  | 'publish-local-delivery';
 
 function hasPostDeliveryModeConflict(options: UpdateCommandOptions, syncOnlyEnvironment: string | undefined): boolean {
   return Boolean(
     options.rollback ||
       options.syncOnly ||
       syncOnlyEnvironment === '1' ||
+      options.dev ||
+      options.homolog ||
+      options.next ||
+      options.stable ||
+      options.yes ||
+      options.restart === false ||
+      options.verify === false ||
+      options.skipMaintenance ||
+      options.publishLocalDelivery !== undefined,
+  );
+}
+
+function hasLocalDeliveryModeConflict(options: UpdateCommandOptions, syncOnlyEnvironment: string | undefined): boolean {
+  return Boolean(
+    options.rollback ||
+      options.syncOnly ||
+      syncOnlyEnvironment === '1' ||
+      options.postDeliveryConverge ||
+      options.printUpdateCapabilities ||
+      options.json ||
       options.dev ||
       options.homolog ||
       options.next ||
@@ -1537,6 +1570,12 @@ export function resolveUpdateExecutionMode(
   options: UpdateCommandOptions,
   syncOnlyEnvironment = process.env.GENIE_UPDATE_SYNC_ONLY,
 ): UpdateExecutionMode {
+  if (options.publishLocalDelivery !== undefined) {
+    if (hasLocalDeliveryModeConflict(options, syncOnlyEnvironment)) {
+      throw new Error('--publish-local-delivery cannot be combined with another update mode or delivery option');
+    }
+    return 'publish-local-delivery';
+  }
   if (options.postDeliveryConverge) {
     if (hasPostDeliveryModeConflict(options, syncOnlyEnvironment)) {
       throw new Error('--post-delivery-converge cannot be combined with another update mode or delivery option');
@@ -1624,17 +1663,10 @@ function resolveUpdatePlatformOrExit(): string {
   }
 }
 
-function requireCanonicalInstallOrExit(): void {
-  try {
-    ensureCanonicalInstall();
-  } catch (err) {
-    error(err instanceof Error ? err.message : String(err));
-    process.exit(1);
-  }
-}
-
-function acquireRequiredLifecycleLease(): LifecycleLease {
-  const lease = acquireLifecycleLease(GENIE_HOME);
+function acquireRequiredLifecycleLease(
+  acquire: () => LifecycleLease | { skipped: string } = () => acquireLifecycleLease(GENIE_HOME),
+): LifecycleLease {
+  const lease = acquire();
   if ('skipped' in lease) {
     throw new Error(`Another Genie lifecycle command is active: ${lease.skipped}`);
   }
@@ -1807,15 +1839,62 @@ function runPostDeliveryConvergenceMode(): void {
   }
 }
 
-async function runExplicitUpdateMode(mode: Exclude<UpdateExecutionMode, 'normal'>): Promise<void> {
+async function runExplicitUpdateMode(
+  mode: Exclude<UpdateExecutionMode, 'normal' | 'publish-local-delivery'>,
+): Promise<void> {
   const lifecycleLease = acquireRequiredLifecycleLease();
+  let terminal: DeferredUpdateTerminal | null = null;
   try {
-    if (mode === 'rollback') await runRollback();
+    if (mode === 'rollback') terminal = await runRollback();
     else if (mode === 'sync-only') runLegacySyncOnlyMode();
     else runPostDeliveryConvergenceMode();
   } finally {
     lifecycleLease.release();
   }
+  if (terminal !== null) projectDeferredUpdateTerminal(terminal);
+}
+
+async function dispatchNonNormalUpdateMode(options: UpdateCommandOptions): Promise<boolean> {
+  if (options.printUpdateCapabilities) {
+    if (options.publishLocalDelivery !== undefined) {
+      throw new Error('--print-update-capabilities cannot be combined with --publish-local-delivery');
+    }
+    printUpdateCapabilities();
+    return true;
+  }
+  const mode = resolveUpdateExecutionMode(options);
+  if (mode === 'publish-local-delivery') {
+    await runLocalDeliveryRepairMode(options.publishLocalDelivery as string);
+    return true;
+  }
+  if (mode !== 'normal') {
+    await runExplicitUpdateMode(mode);
+    return true;
+  }
+  return false;
+}
+
+async function confirmPlannedDelivery(
+  options: UpdateCommandOptions,
+  installedVersion: string,
+  latestVersion: string,
+): Promise<boolean> {
+  const decision = decideDowngrade({
+    installedVersion,
+    latestVersion,
+    explicitChannel: Boolean(options.stable || options.homolog || options.dev || options.next),
+  });
+  const needsDelivery =
+    normalizeVersion(installedVersion) !== normalizeVersion(latestVersion) && decision.kind !== 'block-downgrade';
+  if (!needsDelivery || shouldAutoConfirm(options)) return true;
+  const proceed = await promptConfirm(
+    `Update v${normalizeVersion(installedVersion)} → v${normalizeVersion(latestVersion)}?`,
+  );
+  if (proceed) return true;
+  console.log();
+  log('Update declined.');
+  console.log();
+  return false;
 }
 
 function runFreshConvergenceOrReport(lifecycleLease: LifecycleLease): boolean {
@@ -2030,6 +2109,132 @@ export interface AlreadyCurrentRepairAdapterDeps {
   createTempRoot?: typeof createPrivateUpdateTempRoot;
 }
 
+export interface LocalDeliveryRepairProjection {
+  exitCode: 0 | 1 | 2;
+  stdout: string[];
+  stderr: string[];
+}
+
+/**
+ * Map the production repair directive onto the same stable delivery trailers
+ * used by ordinary update. The local dogfood surface never routes a moving
+ * channel into the network-backed upgrade path.
+ */
+export function projectLocalDeliveryRepairDirective(
+  directive: AlreadyCurrentRepairDirective,
+  version = normalizeVersion(VERSION),
+): LocalDeliveryRepairProjection {
+  if (directive.action === 'busy') {
+    return {
+      exitCode: 2,
+      stdout: [CODEX_LIFECYCLE_BUSY_TRAILER],
+      stderr: [`Local Codex delivery publication is busy: ${directive.detail}`],
+    };
+  }
+  if (directive.action === 'failed') {
+    return {
+      exitCode: 1,
+      stdout: [CODEX_DELIVERY_INCOMPLETE_TRAILER],
+      stderr: [`Local Codex delivery publication failed: ${directive.detail}`],
+    };
+  }
+  if (directive.action === 'route-upgrade') {
+    return {
+      exitCode: 1,
+      stdout: [CODEX_DELIVERY_INCOMPLETE_TRAILER],
+      stderr: [
+        `Local Codex delivery publication refused a non-current manifest (${version} → ${directive.manifest.version})`,
+      ],
+    };
+  }
+  if (directive.action === 'exit-handoff') {
+    return {
+      exitCode: 2,
+      stdout: ['Authenticated Codex delivery published; activation is pending.', CODEX_DELIVERY_RESULT_TRAILER],
+      stderr: [],
+    };
+  }
+  if (directive.action === 'repaired-current') {
+    return {
+      exitCode: 0,
+      stdout: [`Authenticated Codex delivery published for current v${version}.`],
+      stderr: [],
+    };
+  }
+  return {
+    exitCode: 0,
+    stdout: [`Authenticated Codex delivery already matches current v${version}.`],
+    stderr: [],
+  };
+}
+
+function emitLocalDeliveryRepairProjection(projection: LocalDeliveryRepairProjection): void {
+  for (const line of projection.stdout) log(line);
+  for (const line of projection.stderr) process.stderr.write(`${line}\n`);
+  process.exitCode = projection.exitCode;
+}
+
+/**
+ * Offline release-dogfood entrypoint. External paths are snapshotted first,
+ * the Codex lifecycle lease is then held across the complete production
+ * `repairMissingDelivery` call, and no fetch/download implementation is
+ * reachable: both adapters return only the snapshotted bytes.
+ */
+async function runLocalDeliveryRepairMode(rawRequest: string): Promise<void> {
+  let snapshotRoot: string | null = null;
+  let lease: HeldLifecycleLease | null = null;
+  try {
+    assertLocalDeliveryRepairEnabled(process.env.GENIE_RELEASE_DOGFOOD);
+    const platformId = resolvePlatformId();
+    snapshotRoot = createPrivateUpdateTempRoot();
+    const local = materializeLocalDeliveryRepair(rawRequest, snapshotRoot, platformId, normalizeVersion(VERSION));
+    const acquired = acquireCodexLifecycleLease('update-delivery', { genieHome: GENIE_HOME });
+    if (!acquired.ok) {
+      emitLocalDeliveryRepairProjection({
+        exitCode: 2,
+        stdout: [CODEX_LIFECYCLE_BUSY_TRAILER],
+        stderr: [`Local Codex delivery publication is busy: ${acquired.detail}`],
+      });
+      return;
+    }
+    lease = acquired;
+    const directive = await attemptAlreadyCurrentDeliveryRepair(
+      local.manifest.channel,
+      local.platformId,
+      lease,
+      GENIE_HOME,
+      {
+        fetchManifest: async (channel) => {
+          if (channel !== local.manifest.channel) {
+            throw new Error(`local manifest channel ${local.manifest.channel} differs from requested ${channel}`);
+          }
+          return local.manifest;
+        },
+        downloadAndVerifyDeliveryAssets: async (manifest, requestedPlatform) => {
+          if (
+            requestedPlatform !== local.platformId ||
+            manifest.manifestSha256 !== local.manifest.manifestSha256 ||
+            manifest.manifestBytes !== local.manifest.manifestBytes
+          ) {
+            throw new Error('local delivery adapter received a target other than the snapshotted request');
+          }
+          return {
+            tarballPath: local.artifactPath,
+            descriptorBytes: local.descriptorBytes,
+            bundleBytes: local.bundleBytes,
+          };
+        },
+      },
+    );
+    emitLocalDeliveryRepairProjection(projectLocalDeliveryRepairDirective(directive));
+  } catch (cause) {
+    emitLocalDeliveryRepairProjection(projectLocalDeliveryRepairDirective({ action: 'failed', detail: errMsg(cause) }));
+  } finally {
+    lease?.release();
+    if (snapshotRoot !== null) rmSync(snapshotRoot, { recursive: true, force: true });
+  }
+}
+
 /** Build the real repair seams; download roots are tracked in `tempRoots` for cleanup by the caller. */
 export function buildAlreadyCurrentRepairSeams(
   platformId: string,
@@ -2138,8 +2343,13 @@ export async function handleAlreadyCurrentUpdate(
   installedVersion: string,
   latestVersion: string | null | undefined,
   dependencies: AlreadyCurrentUpdateDependencies = {},
+  heldLease?: HeldLifecycleLease,
 ): Promise<LatestManifest | null> {
-  const repair = await (dependencies.attemptRepair ?? attemptAlreadyCurrentDeliveryRepair)(channel, platform);
+  const repair = await (dependencies.attemptRepair ?? attemptAlreadyCurrentDeliveryRepair)(
+    channel,
+    platform,
+    heldLease,
+  );
   if (repair.action === 'route-upgrade') {
     log(`Channel advanced while repairing delivery (${installedVersion} → ${repair.manifest.version}); upgrading.`);
     return repair.manifest;
@@ -2217,8 +2427,87 @@ export interface UpdateCommandDependencies {
   finalizeSelectedDelivery?: () => Promise<boolean>;
   /** Read-only installed-version seam for command-boundary tests. */
   readInstalledVersion?: typeof resolveInstalledVersion;
+  /** Read-only platform seam for command-boundary tests. */
+  resolvePlatform?: () => string;
+  /** Recovery seam; production replays both durable delivery transactions under both locks. */
+  recoverPendingState?: () => void;
+  /** Channel persistence seam; production writes only after both locks are held. */
+  persistSelectedChannel?: (channel: ReleaseChannel) => Promise<void>;
   /** Canonical-install guard seam for command-boundary tests. */
   requireCanonicalInstall?: () => void;
+  /** Outer delivery lock seam; production acquires the shared agent-sync lifecycle lease. */
+  acquireLease?: () => LifecycleLease | { skipped: string };
+  /** Inner delivery lock seam; production acquires one Codex lease for the whole mutation phase. */
+  acquireCodexLease?: () => LifecycleLeaseResult;
+}
+
+type UpdateTerminalExitCode = 1 | 2;
+
+/**
+ * A terminal CLI projection discovered while lifecycle leases are held.
+ * Throwing/capturing this value unwinds both leases before stderr, trailer,
+ * and process status are projected at the command boundary.
+ */
+class DeferredUpdateTerminal extends Error {
+  constructor(
+    readonly exitCode: UpdateTerminalExitCode,
+    message: string,
+    readonly trailer?: string,
+    readonly trailingBlankLine = false,
+  ) {
+    super(message);
+    this.name = 'DeferredUpdateTerminal';
+  }
+}
+
+function projectDeferredUpdateTerminal(terminal: DeferredUpdateTerminal): void {
+  error(terminal.message);
+  if (terminal.trailer !== undefined) log(terminal.trailer);
+  if (terminal.trailingBlankLine) console.log();
+  process.exitCode = terminal.exitCode;
+}
+
+function captureDeferredUpdateTerminal(error: unknown): DeferredUpdateTerminal {
+  if (error instanceof DeferredUpdateTerminal) return error;
+  throw error;
+}
+
+function acquireCodexUpdateLeaseOrRefuse(
+  acquire: NonNullable<UpdateCommandDependencies['acquireCodexLease']> = () =>
+    acquireCodexLifecycleLease('update-delivery', { genieHome: GENIE_HOME }),
+): HeldLifecycleLease {
+  const acquired = acquire();
+  if (!acquired.ok) {
+    throw new DeferredUpdateTerminal(
+      2,
+      new CodexLifecycleBusyError(acquired.holderKind).message,
+      CODEX_LIFECYCLE_BUSY_TRAILER,
+    );
+  }
+  acquired.assertOperation(acquired.operationId);
+  return acquired;
+}
+
+function recoverPendingUpdateStateOrThrow(recover?: () => void): void {
+  try {
+    (
+      recover ??
+      (() => {
+        recoverInstallPromotionAndConvergePayload();
+        resumePendingDelivery();
+      })
+    )();
+  } catch (err) {
+    throw new DeferredUpdateTerminal(1, `Pending update recovery failed: ${errMsg(err)}`);
+  }
+}
+
+function releaseUpdateLifecycleLeases(codexLease: HeldLifecycleLease | null, lifecycleLease: LifecycleLease): void {
+  try {
+    codexLease?.release();
+  } finally {
+    lifecycleLease.release();
+  }
 }
 
 export async function updateCommand(
@@ -2230,15 +2519,7 @@ export async function updateCommand(
   // exits 0. A pre-contract binary never reaches here — it rejects the unknown
   // `--print-update-capabilities` flag at commander parse, which is precisely
   // the signal the rollback capability floor relies on.
-  if (options.printUpdateCapabilities) {
-    printUpdateCapabilities();
-    return;
-  }
-  const mode = resolveUpdateExecutionMode(options);
-  if (mode !== 'normal') {
-    await runExplicitUpdateMode(mode);
-    return;
-  }
+  if (await dispatchNonNormalUpdateMode(options)) return;
 
   console.log();
   console.log(`${colorize('\x1b[1m', '\x1b[0m', '🧞 Genie CLI Update')}`);
@@ -2254,117 +2535,106 @@ export async function updateCommand(
   // install/setup/uninstall in another process.
   let manifest = await (dependencies.fetchManifest ?? fetchLatestManifest)(channel);
   const plannedInstalledVersion = (dependencies.readInstalledVersion ?? resolveInstalledVersion)();
-  const platform = resolveUpdatePlatformOrExit();
+  const platform = (dependencies.resolvePlatform ?? resolveUpdatePlatformOrExit)();
   let latestVersion = announceUpdatePlanOrExit(channel, platform, plannedInstalledVersion, manifest?.version ?? null);
   console.log();
 
-  const plannedDecision = decideDowngrade({
-    installedVersion: plannedInstalledVersion,
-    latestVersion,
-    explicitChannel: Boolean(options.stable || options.homolog || options.dev || options.next),
-  });
-  const plannedNeedsDelivery =
-    normalizeVersion(plannedInstalledVersion) !== normalizeVersion(latestVersion as string) &&
-    plannedDecision.kind !== 'block-downgrade';
-  if (plannedNeedsDelivery && !shouldAutoConfirm(options)) {
-    const proceedQuestion = `Update v${normalizeVersion(plannedInstalledVersion)} → v${normalizeVersion(latestVersion as string)}?`;
-    const proceed = await promptConfirm(proceedQuestion);
-    if (!proceed) {
-      console.log();
-      log('Update declined.');
-      console.log();
-      return;
-    }
-  }
+  if (!(await confirmPlannedDelivery(options, plannedInstalledVersion, latestVersion))) return;
 
-  const lifecycleLease = acquireRequiredLifecycleLease();
+  const lifecycleLease = acquireRequiredLifecycleLease(dependencies.acquireLease);
+  let codexLease: HeldLifecycleLease | null = null;
+  let terminal: DeferredUpdateTerminal | null = null;
   try {
-    // Revalidate durable recovery and the installed binary immediately after
-    // acquiring the lease, before the first mutation owned by this plan.
     try {
-      recoverInstallPromotionAndConvergePayload();
-      resumePendingDelivery();
-    } catch (err) {
-      error(`Pending update recovery failed: ${errMsg(err)}`);
-      process.exitCode = 1;
-      return;
-    }
-    const installedVersion = (dependencies.readInstalledVersion ?? resolveInstalledVersion)();
+      const acquired = acquireCodexUpdateLeaseOrRefuse(dependencies.acquireCodexLease);
+      codexLease = acquired;
 
-    // Channel persistence is now inside the mutation lease and follows local
-    // state revalidation; the prompt itself never owns the lease.
-    await persistChannel(channel);
+      // Revalidate durable recovery and the installed binary immediately after
+      // acquiring both locks, before the first mutation owned by this plan.
+      recoverPendingUpdateStateOrThrow(dependencies.recoverPendingState);
+      const installedVersion = (dependencies.readInstalledVersion ?? resolveInstalledVersion)();
 
-    if (shortCircuitIfCurrent(installedVersion, latestVersion)) {
-      const advancedManifest = await handleAlreadyCurrentUpdate(
-        channel,
-        platform,
-        installedVersion,
-        latestVersion,
-        dependencies.alreadyCurrent,
-      );
-      if (advancedManifest === null) return;
-      manifest = advancedManifest;
-      latestVersion = advancedManifest.version;
-    }
+      // Channel persistence is now inside the mutation lease and follows local
+      // state revalidation; the prompt itself never owns the lease.
+      await (dependencies.persistSelectedChannel ?? persistChannel)(channel);
 
-    if (applyDowngradeGuard(installedVersion, latestVersion, channel, options)) {
-      runTrackedManualUpdateConvergence(normalizeVersion(installedVersion));
-      console.log();
-      return;
-    }
-
-    // A concurrent lifecycle operation may have moved or replaced the live
-    // binary while this process was prompting. Re-check canonical ownership
-    // under the lease immediately before delivery.
-    (dependencies.requireCanonicalInstall ?? requireCanonicalInstallOrExit)();
-
-    const diagnosticsCtx: UpdateDiagnosticsContext = {
-      channel,
-      manifest,
-      platform,
-      latestVersion,
-      cliVersion: VERSION,
-      tarballPath: null,
-      attestationVerified: false,
-      previousBackup: null,
-    };
-    const resolvedManifest = manifest as LatestManifest;
-
-    try {
-      const complete = await runNormalUpdatePublicationBoundary(
-        () =>
-          dependencies.deliverSelectedManifest?.(resolvedManifest, platform) ??
-          runDelivery(resolvedManifest, platform, diagnosticsCtx, dependencies),
-        dependencies.finalizeSelectedDelivery ??
-          (async () => {
-            runV4CleanupSafe();
-            if (!runFreshConvergenceOrReport(lifecycleLease)) return false;
-            await runPostUpdateVerifySafe({ ...options, noRestart, noVerify }, diagnosticsCtx);
-            // Convergence succeeded: retire the orphaned legacy `.install-version` marker
-            // (Decision 14). Canonical VERSION is the sole authority; this only runs after
-            // a proven-successful delivery + convergence, so a failed run preserves it.
-            retireLegacyInstallMarkerSafe();
-            return true;
-          }),
-      );
-      if (!complete) return;
-    } catch (err) {
-      if (err instanceof CodexLifecycleBusyError) {
-        // Loser semantics (deliverable 9): refused before any swap with zero
-        // mutation. Exit 2 codex-lifecycle-busy with the busy trailer, not a
-        // generic failure.
-        error(err.message);
-        log(CODEX_LIFECYCLE_BUSY_TRAILER);
-        process.exit(2);
+      if (shortCircuitIfCurrent(installedVersion, latestVersion)) {
+        const advancedManifest = await handleAlreadyCurrentUpdate(
+          channel,
+          platform,
+          installedVersion,
+          latestVersion,
+          dependencies.alreadyCurrent,
+          acquired,
+        );
+        if (advancedManifest === null) return;
+        manifest = advancedManifest;
+        latestVersion = advancedManifest.version;
       }
-      const msg = err instanceof Error ? err.message : String(err);
-      error(`Update failed: ${msg}`);
-      process.exit(1);
+
+      if (applyDowngradeGuard(installedVersion, latestVersion, channel, options)) {
+        runTrackedManualUpdateConvergence(normalizeVersion(installedVersion));
+        console.log();
+        return;
+      }
+
+      // A concurrent lifecycle operation may have moved or replaced the live
+      // binary while this process was prompting. Re-check canonical ownership
+      // under the lease immediately before delivery. Refusals are deferred so
+      // both leases unwind before process status is projected.
+      try {
+        (dependencies.requireCanonicalInstall ?? ensureCanonicalInstall)();
+      } catch (err) {
+        throw new DeferredUpdateTerminal(1, errMsg(err));
+      }
+
+      const diagnosticsCtx: UpdateDiagnosticsContext = {
+        channel,
+        manifest,
+        platform,
+        latestVersion,
+        cliVersion: VERSION,
+        tarballPath: null,
+        attestationVerified: false,
+        previousBackup: null,
+      };
+      const resolvedManifest = manifest as LatestManifest;
+
+      try {
+        acquired.assertOperation(acquired.operationId);
+        const complete = await runNormalUpdatePublicationBoundary(
+          () =>
+            dependencies.deliverSelectedManifest?.(resolvedManifest, platform) ??
+            runDelivery(resolvedManifest, platform, diagnosticsCtx, acquired, dependencies),
+          dependencies.finalizeSelectedDelivery ??
+            (async () => {
+              runV4CleanupSafe();
+              if (!runFreshConvergenceOrReport(lifecycleLease)) return false;
+              await runPostUpdateVerifySafe({ ...options, noRestart, noVerify }, diagnosticsCtx);
+              // Convergence succeeded: retire the orphaned legacy `.install-version` marker
+              // (Decision 14). Canonical VERSION is the sole authority; this only runs after
+              // a proven-successful delivery + convergence, so a failed run preserves it.
+              retireLegacyInstallMarkerSafe();
+              return true;
+            }),
+        );
+        if (!complete) return;
+      } catch (err) {
+        if (err instanceof CodexLifecycleBusyError) {
+          // Loser semantics (deliverable 9): refused before any swap with zero
+          // mutation. Exit 2 codex-lifecycle-busy with the busy trailer, not a
+          // generic failure.
+          throw new DeferredUpdateTerminal(2, err.message, CODEX_LIFECYCLE_BUSY_TRAILER);
+        }
+        throw new DeferredUpdateTerminal(1, `Update failed: ${errMsg(err)}`);
+      }
+    } catch (err) {
+      terminal = captureDeferredUpdateTerminal(err);
     }
   } finally {
-    lifecycleLease.release();
+    releaseUpdateLifecycleLeases(codexLease, lifecycleLease);
   }
+  if (terminal !== null) projectDeferredUpdateTerminal(terminal);
 }
 
 /**
@@ -2627,19 +2897,6 @@ export function createPrivateUpdateTempRoot(baseDir = tmpdir()): string {
  * sync aux content → clean staging.
  */
 /**
- * Acquire the Codex lifecycle lease for a delivery, or refuse before any binary
- * swap. A busy lease means another lifecycle command (setup/rollback/uninstall/
- * another update) holds it: zero mutation, and the caller must not proceed. (The
- * exit-2 `codex-lifecycle-busy` loser projection is finalized with the two-
- * process race work; here we fail closed before the swap.)
- */
-function acquireCodexDeliveryLeaseOrRefuse(): HeldLifecycleLease {
-  const lease = acquireCodexLifecycleLease('update-delivery', { genieHome: GENIE_HOME });
-  if (!lease.ok) throw new CodexLifecycleBusyError(lease.holderKind);
-  return lease;
-}
-
-/**
  * Parent-side attestation (deliverable 4/5): after the binary is delivered and
  * the payload is synced into GENIE_HOME, publish the exact delivery facts through
  * A's `publishDelivery` under the held lease, using OBSERVED reality — the
@@ -2737,6 +2994,7 @@ async function runDelivery(
   manifest: LatestManifest,
   platform: string,
   diagnosticsCtx: UpdateDiagnosticsContext,
+  codexLease: HeldLifecycleLease,
   dependencies: UpdateCommandDependencies = {},
 ): Promise<AuxiliaryTreeOutcome[]> {
   const externalRoot = createPrivateUpdateTempRoot();
@@ -2793,18 +3051,16 @@ async function runDelivery(
   );
 
   log('Promoting verified release generation...');
+  codexLease.assertOperation(codexLease.operationId);
   recoverPendingInstallPromotions({ genieHome: GENIE_HOME });
   admitted = admitExternalInstallStaging({
     genieHome: GENIE_HOME,
     externalStagingRoot: extractedRoot,
     expectedVersion: manifest.version,
   });
-  let codexLease: HeldLifecycleLease | null = null;
   try {
     verifyAdmittedInstallStagingPayload(admitted);
-    // Acquire the Codex lifecycle lease after signed-download verification and
-    // before the first binary swap; hold it through the delivery publication.
-    codexLease = acquireCodexDeliveryLeaseOrRefuse();
+    codexLease.assertOperation(codexLease.operationId);
     const promotion = promoteStagedInstall({
       genieHome: GENIE_HOME,
       stagingRoot: admitted.stagingRoot,
@@ -2922,9 +3178,8 @@ async function runDelivery(
     if (publication.kind === 'incomplete') throw new CodexDeliveryPublicationError(publication.detail);
     return auxiliaryOutcomes;
   } finally {
-    // Release the Codex lifecycle lease on every terminal path (success, refusal,
-    // handled failure) before the staging cleanup.
-    codexLease?.release();
+    // The command boundary owns both lifecycle leases. This scope only closes
+    // admitted staging; the caller releases Codex first, then agent-sync.
     if (admitted !== null) {
       try {
         if (promotionComplete) removeInstallStagingDirectory(admitted);
@@ -3319,33 +3574,31 @@ function printAuxiliaryOutcome(outcome: AuxiliaryTreeOutcome): void {
   for (const warning of outcome.warnings) log(`${outcome.label}/ cleanup warning: ${warning}`);
 }
 
-async function runRollback(): Promise<void> {
+async function runRollback(): Promise<DeferredUpdateTerminal | null> {
   log('Checking protocol-safe rollback eligibility...');
   const result = performProtocolSafeRollback({ genieBin: GENIE_BIN, genieHome: GENIE_HOME });
   switch (result.status) {
     case 'rolled-back':
       success(`Rolled back to v${result.restoredVersion} (digest ${result.binarySha256.slice(0, 12)}…)`);
       console.log();
-      return;
+      return null;
     case 'busy':
-      error(
+      return new DeferredUpdateTerminal(
+        2,
         `codex-lifecycle-busy: the ${result.holderKind ?? 'unknown'} lifecycle command holds the Codex lease; rollback refused before any exchange with zero mutation.`,
+        CODEX_LIFECYCLE_BUSY_TRAILER,
+        true,
       );
-      log(CODEX_LIFECYCLE_BUSY_TRAILER);
-      console.log();
-      process.exit(2);
-      return;
     case 'no-backup':
     case 'refused':
-      error(`Rollback refused: ${result.detail}`);
-      console.log();
-      process.exit(1);
-      return;
+      return new DeferredUpdateTerminal(1, `Rollback refused: ${result.detail}`, undefined, true);
     case 'aborted':
-      error(`Rollback aborted before completion (the live binary is unchanged): ${result.detail}`);
-      console.log();
-      process.exit(1);
-      return;
+      return new DeferredUpdateTerminal(
+        1,
+        `Rollback aborted before completion (the live binary is unchanged): ${result.detail}`,
+        undefined,
+        true,
+      );
   }
 }
 

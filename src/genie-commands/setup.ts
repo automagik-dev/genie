@@ -38,7 +38,10 @@ import { getCodexConfigPath } from '../lib/codex-config.js';
 import type { DeliveryEvidenceVerificationDependencies } from '../lib/codex-delivery-evidence.js';
 // The quarantine hop holds the SAME `setup-activation` lease kind the executor
 // acquires (aliased: agent-sync exports an unrelated same-named lease helper).
-import { acquireLifecycleLease as acquireActivationLifecycleLease } from '../lib/codex-lifecycle-lease.js';
+import {
+  type HeldLifecycleLease,
+  acquireLifecycleLease as acquireActivationLifecycleLease,
+} from '../lib/codex-lifecycle-lease.js';
 // Group E: the shared Decision-9 delivery gate — the same assessment the
 // executor's `beginActivation` inner guard re-applies before its first write.
 import { assessSnapshotDelivery } from '../lib/codex-lifecycle-truth.js';
@@ -62,6 +65,7 @@ import {
   type IntegrationSelection,
   createCodexMarketplaceRegistrationConsumer,
   createSetupCodexConsentCommitConsumer,
+  createSetupCodexFallbackRetirementConsumer,
   createSetupCodexRoleAgentConsumer,
   readIntegrationConsent,
 } from '../lib/runtime-integrations.js';
@@ -112,6 +116,8 @@ export interface SetupDeps {
   executeCodexActivation?: typeof executeCodexActivation;
   /** Current-state marketplace capability factory; only the deep store may consume it. */
   createCodexMarketplaceConsumer?: typeof createCodexMarketplaceRegistrationConsumer;
+  /** Setup-only fallback-retirement capability; only the deep store may consume it. */
+  createCodexFallbackRetirementConsumer?: typeof createSetupCodexFallbackRetirementConsumer;
   /** Post-activation role capability factory; only the deep store may consume it. */
   createCodexRoleAgentConsumer?: typeof createSetupCodexRoleAgentConsumer;
   /** Synchronous real-TTY confirmation for the retirement assertion prompt. */
@@ -119,12 +125,35 @@ export interface SetupDeps {
   /** stdin/stdout TTY flags forwarded to A's consent guards (default: real streams). */
   stdinIsTTY?: boolean;
   stdoutIsTTY?: boolean;
+  /** Deterministic race seams for the setup finalization transaction. Tests only. */
+  codexFinalizationHooks?: {
+    beforeLocks?: () => void;
+    afterAssets?: () => void;
+    afterRoute?: () => void;
+  };
 }
 
 export class SetupIntegrationError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'SetupIntegrationError';
+  }
+}
+
+/**
+ * The setup command boundary distinguishes lifecycle contention from an
+ * integration failure. Only this typed refusal projects exit 2 plus the
+ * canonical machine trailer; all other setup errors remain exit 1.
+ */
+export class SetupCodexLifecycleBusyError extends SetupIntegrationError {
+  readonly code = 'codex-lifecycle-busy';
+
+  constructor(
+    readonly holderKind: string | null,
+    detail: string,
+  ) {
+    super(`codex-lifecycle-busy: the ${holderKind ?? 'unknown'} lifecycle command holds the Codex lease: ${detail}`);
+    this.name = 'SetupCodexLifecycleBusyError';
   }
 }
 
@@ -292,8 +321,10 @@ async function configureShortcuts(config: GenieConfig, quick: boolean, deps: Set
 // facts belongs to `genie update` / `genie install`. Marketplace registration
 // and managed role convergence are activation-owned: the executor registers the
 // canonical marketplace only after `beginActivation`, and setup converges roles
-// only after activation/current verification plus committed Codex consent. Every
-// refusal happens before marketplace/plugin/config/role-agent/project-route
+// only after activation/current verification. Setup commits explicit Codex
+// maintenance consent, proves the exact enabled plugin and retires only clean
+// historical fallbacks, then adopts/converges managed roles. Every refusal
+// happens before marketplace/plugin/config/fallback/role-agent/project-route
 // mutation.
 
 /**
@@ -335,16 +366,15 @@ function buildConsentContext(deps: SetupDeps, quick: boolean): ConsentContext {
   };
 }
 
-function reconcileSetupCodexProject(root: string | null, plugin: CodexPluginProbe): void {
+function reconcileSetupCodexProject(root: string | null, plugin: CodexPluginProbe): string {
   if (root === null) {
-    console.log('  \x1b[2mNo Git worktree detected; project MCP fallback was not changed.\x1b[0m');
-    return;
+    return '  \x1b[2mNo Git worktree detected; project MCP fallback was not changed.\x1b[0m';
   }
   // Decision 2: the marker route carries the stable absolute GENIE_HOME facade,
   // exactly as trusted `genie init` writes it.
   const project = reconcileCodexProjectMcp(root, plugin, genieFacadeMcpEntry());
   if (!project.ok) throw new SetupIntegrationError(project.detail ?? 'Codex project MCP reconciliation failed');
-  console.log(`  \x1b[32m✓\x1b[0m Project MCP route: ${project.route} (${project.detail ?? project.action})`);
+  return `  \x1b[32m✓\x1b[0m Project MCP route: ${project.route} (${project.detail ?? project.action})`;
 }
 
 /**
@@ -375,10 +405,10 @@ export function mergeCodexIntegrationConsent(current: IntegrationSelection): Int
   return current;
 }
 
-function preserveRuntimeChoiceAfterCodex(config: GenieConfig): void {
+function preserveRuntimeChoiceAfterCodex(config: GenieConfig): string | undefined {
   const decision = resolveDefaultAgentAfterCodex(config.runtime.defaultAgent);
   config.runtime.defaultAgent = decision.agent;
-  if (decision.hint) console.log(`  \x1b[2m${decision.hint}\x1b[0m`);
+  return decision.hint;
 }
 
 /**
@@ -411,6 +441,18 @@ interface ActivationOutcome {
 
 function emitTrailer(trailer: ReturnType<typeof buildActivationResultTrailer>): void {
   process.stdout.write(`${serializeActivationResultTrailer(trailer)}\n`);
+}
+
+function emitCodexLifecycleBusyTrailer(holderKind: string | null): void {
+  emitTrailer({
+    schemaVersion: 1,
+    code: 'codex-lifecycle-busy',
+    deliveryComplete: false,
+    retry: true,
+    nextAction: holderKind
+      ? `retry after the current ${holderKind} lifecycle command releases the lease`
+      : 'retry after the current lifecycle command releases the lease',
+  });
 }
 
 function resolveCodexPath(deps: SetupDeps, cwd: string): string | null {
@@ -580,7 +622,10 @@ function runJournalQuarantine(
   const acquire = deps.acquireActivationLease ?? acquireActivationLifecycleLease;
   const lease = acquire('setup-activation', { genieHome });
   if (!lease.ok) {
-    console.error(`  \x1b[31m✖\x1b[0m Another Genie lifecycle command holds the Codex lease: ${lease.detail}`);
+    console.error(
+      `  \x1b[31m✖\x1b[0m codex-lifecycle-busy: the ${lease.holderKind ?? 'unknown'} lifecycle command holds the Codex lease: ${lease.detail}`,
+    );
+    emitCodexLifecycleBusyTrailer(lease.holderKind);
     return { exitCode: 2, activated: false, code: 'busy' };
   }
   let quarantined: { quarantinedTo: string } | { skipped: string };
@@ -624,73 +669,156 @@ function reportActivationExecution(result: ActivationExecutionResult): Activatio
   return { exitCode, activated: false, code: result.status };
 }
 
-function convergePostActivationCodexAssets(
+interface PostActivationCodexAssets {
+  agents: CodexAgentInstallResult;
+  retiredFallbacks: readonly string[];
+}
+
+function convergePostActivationCodexAssetsUnderLease(
   deps: SetupDeps,
   codexPath: string,
   outcome: ActivationOutcome,
-): CodexAgentInstallResult {
+  lease: HeldLifecycleLease,
+): PostActivationCodexAssets {
   const genieHome = resolveGenieHome();
   const codexHome = resolveCodexDir();
-  const acquire = deps.acquireActivationLease ?? acquireActivationLifecycleLease;
-  const lease = acquire('setup-activation', { genieHome });
-  if (!lease.ok) {
-    throw new SetupIntegrationError(`another Genie lifecycle command holds the Codex lease: ${lease.detail}`);
-  }
-  try {
-    const storeOptions = { genieHome, codexHome, command: codexPath };
-    const store = deps.openCodexActivationStore
-      ? deps.openCodexActivationStore(storeOptions)
-      : openCodexActivationStore({
-          ...storeOptions,
-          deliveryEvidenceVerification: deps.deliveryEvidenceVerification,
-        });
-    return store.withRevalidatedDeliveryRoot(lease, (ops) => {
-      // The executor released its lease before this post-activation pass. A
-      // delivery/update can win that gap, so both fresh activation and the
-      // already-current path must re-observe current+matching under the newly
-      // acquired lease before consent, roles, route, or success reporting.
-      const snapshot = store.observe();
-      if (
-        assessSnapshotDelivery(snapshot).kind !== 'matching' ||
-        classifyCodexActivation(snapshot).kind !== 'current'
-      ) {
-        throw new SetupIntegrationError('Codex current state changed before managed-asset convergence');
-      }
-
-      // Already-current is the sole no-permit path. Register its marketplace
-      // inside the callback-scoped authenticated delivery capability.
-      if (outcome.code === 'current') {
-        const marketplaceConsumer = (deps.createCodexMarketplaceConsumer ?? createCodexMarketplaceRegistrationConsumer)(
-          {
-            command: codexPath,
-          },
-        );
-        ops.consume(marketplaceConsumer);
-      }
-
-      // Explicit setup success commits Codex maintenance consent before the
-      // role installer may adopt an exact frozen historical profile.
-      const read = deps.readIntegrationConsent ?? readIntegrationConsent;
-      const consentConsumer = (deps.createCodexConsentCommitConsumer ?? createSetupCodexConsentCommitConsumer)({
-        selection: mergeCodexIntegrationConsent(read(genieHome)),
-        genieHome,
+  const storeOptions = { genieHome, codexHome, command: codexPath };
+  const store = deps.openCodexActivationStore
+    ? deps.openCodexActivationStore(storeOptions)
+    : openCodexActivationStore({
+        ...storeOptions,
+        deliveryEvidenceVerification: deps.deliveryEvidenceVerification,
       });
-      ops.consume(consentConsumer);
-      const roleConsumer = (deps.createCodexRoleAgentConsumer ?? createSetupCodexRoleAgentConsumer)({
-        genieHome,
-        codexHome,
+  return store.withRevalidatedDeliveryRoot(lease, (ops) => {
+    // The executor released its lease before this post-activation pass. A
+    // delivery/update can win that gap, so both fresh activation and the
+    // already-current path must re-observe current+matching under the newly
+    // acquired lease before consent, roles, route, or success reporting.
+    const snapshot = store.observe();
+    if (assessSnapshotDelivery(snapshot).kind !== 'matching' || classifyCodexActivation(snapshot).kind !== 'current') {
+      throw new SetupIntegrationError('Codex current state changed before managed-asset convergence');
+    }
+
+    // Already-current is the sole no-permit path. Register its marketplace
+    // inside the callback-scoped authenticated delivery capability.
+    if (outcome.code === 'current') {
+      const marketplaceConsumer = (deps.createCodexMarketplaceConsumer ?? createCodexMarketplaceRegistrationConsumer)({
+        command: codexPath,
       });
-      return ops.consume(roleConsumer);
+      ops.consume(marketplaceConsumer);
+    }
+
+    // Explicit setup success commits Codex maintenance consent before
+    // authenticated fallback retirement and managed-role adoption.
+    const read = deps.readIntegrationConsent ?? readIntegrationConsent;
+    const consentConsumer = (deps.createCodexConsentCommitConsumer ?? createSetupCodexConsentCommitConsumer)({
+      selection: mergeCodexIntegrationConsent(read(genieHome)),
+      genieHome,
     });
-  } finally {
-    lease.release();
+    ops.consume(consentConsumer);
+    const retirementConsumer = (
+      deps.createCodexFallbackRetirementConsumer ?? createSetupCodexFallbackRetirementConsumer
+    )({
+      command: codexPath,
+      expectedVersion: ops.deliveredVersion(),
+      codexHome,
+    });
+    const retirement = ops.consume(retirementConsumer);
+    const roleConsumer = (deps.createCodexRoleAgentConsumer ?? createSetupCodexRoleAgentConsumer)({
+      genieHome,
+      codexHome,
+    });
+    return {
+      agents: ops.consume(roleConsumer),
+      retiredFallbacks: retirement.retired,
+    };
+  });
+}
+
+interface PreparedCodexFinalization {
+  codexPath: string;
+  cwd: string;
+  outcome: ActivationOutcome;
+}
+
+interface FinalizedCodexSetup {
+  config: GenieConfig;
+  assets: PostActivationCodexAssets;
+  projectLine: string;
+  runtimeHint?: string;
+}
+
+/**
+ * Commit setup's successful Codex result as one serialized transaction.
+ *
+ * Lock order matches install/update: the outer agent-sync lifecycle lease is
+ * acquired first, then the Codex lifecycle lease. Holding both across the
+ * matching/current revalidation, assets, route, and config CAS prevents an
+ * update from publishing T+1 after asset convergence while setup still records
+ * T as configured. Release is always the exact reverse order.
+ */
+async function finalizeCodexSetup(
+  config: GenieConfig,
+  baseline: GenieConfig,
+  deps: SetupDeps,
+  prepared: PreparedCodexFinalization,
+): Promise<FinalizedCodexSetup> {
+  deps.codexFinalizationHooks?.beforeLocks?.();
+  const agentSyncLease = (deps.acquireLifecycleLease ?? acquireLifecycleLease)(resolveGenieHome());
+  if ('skipped' in agentSyncLease) {
+    throw new SetupCodexLifecycleBusyError('agent-sync', agentSyncLease.skipped);
   }
+  let codexLease: HeldLifecycleLease | null = null;
+  try {
+    const acquireCodexLease = deps.acquireActivationLease ?? acquireActivationLifecycleLease;
+    const acquiredCodexLease = acquireCodexLease('setup-activation', { genieHome: resolveGenieHome() });
+    if (!acquiredCodexLease.ok) {
+      throw new SetupCodexLifecycleBusyError(acquiredCodexLease.holderKind, acquiredCodexLease.detail);
+    }
+    codexLease = acquiredCodexLease;
+
+    const assets = convergePostActivationCodexAssetsUnderLease(deps, prepared.codexPath, prepared.outcome, codexLease);
+    deps.codexFinalizationHooks?.afterAssets?.();
+
+    const projectLine = reconcileSetupCodexProject(resolveGitWorktreeRoot(prepared.cwd), verifiedCurrentPluginProbe());
+    deps.codexFinalizationHooks?.afterRoute?.();
+
+    const nextConfig = structuredClone(config);
+    nextConfig.codex = { configured: true };
+    const runtimeHint = preserveRuntimeChoiceAfterCodex(nextConfig);
+    await saveSetupConfigUnderHeldLease(nextConfig, baseline);
+    return {
+      config: nextConfig,
+      assets,
+      projectLine,
+      ...(runtimeHint === undefined ? {} : { runtimeHint }),
+    };
+  } finally {
+    try {
+      codexLease?.release();
+    } finally {
+      agentSyncLease.release();
+    }
+  }
+}
+
+function reportFinalizedCodexSetup(finalized: FinalizedCodexSetup): void {
+  if (finalized.assets.retiredFallbacks.length > 0) {
+    console.log(
+      `  \x1b[32m✓\x1b[0m Retired ${finalized.assets.retiredFallbacks.length} clean historical Codex fallback skill${finalized.assets.retiredFallbacks.length === 1 ? '' : 's'}.`,
+    );
+  }
+  console.log(`  \x1b[32m✓\x1b[0m Codex managed roles converged (${finalized.assets.agents.installed} delivered).`);
+  console.log(finalized.projectLine);
+  if (finalized.runtimeHint !== undefined) console.log(`  \x1b[2m${finalized.runtimeHint}\x1b[0m`);
 }
 
 interface ConfigureCodexResult {
   config: GenieConfig;
   /** Null when the Codex CLI is absent/skipped — nothing was attempted this invocation. */
   outcome: ActivationOutcome | null;
+  /** Present only when matching/current state still needs atomic setup finalization. */
+  prepared: PreparedCodexFinalization | null;
 }
 
 async function configureCodex(
@@ -705,13 +833,13 @@ async function configureCodex(
   const codexPath = resolveCodexPath(deps, cwd);
   if (codexPath === null) {
     console.log('  \x1b[33m!\x1b[0m Codex CLI not found. Skipping codex integration.');
-    return { config, outcome: null };
+    return { config, outcome: null, prepared: null };
   }
   const codexCheck = await (deps.checkCommand ?? checkCommand)(codexPath, { which: () => codexPath });
   if (codexCheck.timedOut) throw new SetupIntegrationError(codexCheck.error ?? 'Codex CLI detection timed out');
   if (!codexCheck.exists) {
     console.log('  \x1b[33m!\x1b[0m Codex CLI not found. Skipping codex integration.');
-    return { config, outcome: null };
+    return { config, outcome: null, prepared: null };
   }
   console.log(`  \x1b[32m✓\x1b[0m Codex CLI found (${codexCheck.version ?? 'unknown version'})`);
   console.log();
@@ -725,21 +853,12 @@ async function configureCodex(
   console.log();
 
   const outcome = runCodexActivation(deps, codexPath, entry, quick);
-  if (outcome.activated) {
-    const agents = convergePostActivationCodexAssets(deps, codexPath, outcome);
-    console.log(`  \x1b[32m✓\x1b[0m Codex managed roles converged (${agents.installed} delivered).`);
-    // Project route reconciliation follows successful/current plugin and role
-    // convergence. It cannot run on a delivery, authorization, marketplace, or
-    // role failure.
-    await withSetupLease(deps, () => {
-      reconcileSetupCodexProject(resolveGitWorktreeRoot(cwd), verifiedCurrentPluginProbe());
-    });
-    config.codex = { configured: true };
-    preserveRuntimeChoiceAfterCodex(config);
-  } else if (outcome.exitCode !== 0) {
-    process.exitCode = outcome.exitCode;
-  }
-  return { config, outcome };
+  if (!outcome.activated && outcome.exitCode !== 0) process.exitCode = outcome.exitCode;
+  return {
+    config,
+    outcome,
+    prepared: outcome.activated ? { codexPath, cwd, outcome } : null,
+  };
 }
 
 type DefaultAgent = GenieConfig['runtime']['defaultAgent'];
@@ -829,13 +948,8 @@ async function configurePromptMode(config: GenieConfig, quick: boolean): Promise
 // Summary and Save
 // ============================================================================
 
-async function showSummaryAndSave(
-  config: GenieConfig,
-  baseline: GenieConfig,
-  deps: SetupDeps,
-  codexOutcome?: ActivationOutcome | null,
-): Promise<void> {
-  printSection('Summary', `Configuration will be saved to ${contractPath(getGenieConfigPath())}`);
+function showSummary(config: GenieConfig, codexOutcome?: ActivationOutcome | null): void {
+  printSection('Summary', `Configuration saved to ${contractPath(getGenieConfigPath())}`);
 
   // Decision 12: when this run attempted Codex, the summary states THIS run's
   // typed outcome; historical `configured` state cannot masquerade as success.
@@ -856,12 +970,19 @@ async function showSummaryAndSave(
   console.log(`  Debug: tmux=${config.logging.tmuxDebug}, verbose=${config.logging.verbose}`);
   console.log(`  Prompt mode: \x1b[36m${config.promptMode}\x1b[0m`);
   console.log();
+}
 
-  // Save config
+async function showSummaryAndSave(
+  config: GenieConfig,
+  baseline: GenieConfig,
+  deps: SetupDeps,
+  codexOutcome?: ActivationOutcome | null,
+): Promise<void> {
   config.setupComplete = true;
   config.lastSetupAt = new Date().toISOString();
   await saveSetupConfig(config, baseline, deps);
 
+  showSummary(config, codexOutcome);
   console.log('\x1b[32m\u2713 Configuration saved!\x1b[0m');
 }
 
@@ -949,8 +1070,10 @@ async function runSetupCommand(options: SetupOptions, deps: SetupDeps): Promise<
     // never from historical `codex.configured` state. A failed, pending, or
     // skipped standalone run performs no config write at all, preserving the
     // user's exact bytes (including formatting and unknown keys).
-    if (codexRun.outcome?.activated) {
-      await saveSetupConfig(config, baseline, deps);
+    if (codexRun.prepared !== null) {
+      const finalized = await finalizeCodexSetup(config, baseline, deps, codexRun.prepared);
+      config = finalized.config;
+      reportFinalizedCodexSetup(finalized);
       console.log('\x1b[32m\u2713 Codex configuration saved.\x1b[0m');
     }
     return;
@@ -976,7 +1099,17 @@ async function runSetupCommand(options: SetupOptions, deps: SetupDeps): Promise<
 
   // Save and show summary (unrelated completed sections save regardless; the
   // Codex line reflects THIS run's typed outcome, not historical state).
-  await showSummaryAndSave(config, baseline, deps, codexRun.outcome);
+  if (codexRun.prepared === null) {
+    await showSummaryAndSave(config, baseline, deps, codexRun.outcome);
+  } else {
+    config.setupComplete = true;
+    config.lastSetupAt = new Date().toISOString();
+    const finalized = await finalizeCodexSetup(config, baseline, deps, codexRun.prepared);
+    config = finalized.config;
+    reportFinalizedCodexSetup(finalized);
+    showSummary(config, codexRun.outcome);
+    console.log('\x1b[32m\u2713 Configuration saved!\x1b[0m');
+  }
 
   // This file mutation follows the same just-acquired/revalidated config
   // commit rather than extending a lease across any wizard prompt.
@@ -991,6 +1124,12 @@ export async function setupCommand(options: SetupOptions = {}, deps: SetupDeps =
   try {
     await runSetupCommand(options, deps);
   } catch (error) {
+    if (error instanceof SetupCodexLifecycleBusyError) {
+      console.error(`Error: Genie setup refused: ${error.message}`);
+      emitCodexLifecycleBusyTrailer(error.holderKind);
+      process.exitCode = 2;
+      return;
+    }
     const detail = error instanceof Error ? error.message : String(error);
     console.error(`Error: Genie setup failed: ${detail}`);
     process.exitCode = 1;
@@ -1010,13 +1149,16 @@ async function withSetupLease<T>(deps: SetupDeps, mutation: () => T | Promise<T>
 
 /** Fail closed instead of overwriting config changed while the wizard prompted. */
 async function saveSetupConfig(config: GenieConfig, baseline: GenieConfig, deps: SetupDeps): Promise<void> {
-  await withSetupLease(deps, async () => {
-    const current = await loadGenieConfig();
-    if (JSON.stringify(current) !== JSON.stringify(baseline)) {
-      throw new SetupIntegrationError('Genie configuration changed while setup was open; review it and retry setup');
-    }
-    await saveGenieConfig(config);
-  });
+  await withSetupLease(deps, () => saveSetupConfigUnderHeldLease(config, baseline));
+}
+
+/** Config CAS used after the caller has acquired the outer lifecycle lease. */
+async function saveSetupConfigUnderHeldLease(config: GenieConfig, baseline: GenieConfig): Promise<void> {
+  const current = await loadGenieConfig();
+  if (JSON.stringify(current) !== JSON.stringify(baseline)) {
+    throw new SetupIntegrationError('Genie configuration changed while setup was open; review it and retry setup');
+  }
+  await saveGenieConfig(config);
 }
 
 /** Copy shipped genie.tmux.conf to ~/.genie/tmux.conf if it doesn't exist yet. */

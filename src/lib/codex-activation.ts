@@ -1,8 +1,9 @@
 /**
  * Codex plugin activation protocol — the pure, fail-closed core.
  *
- * `genie update` can advance and prune a versioned Codex plugin cache while an
- * open Codex task still holds paths into the old generation. This module puts
+ * `genie update` can deliver a new canonical generation while an open Codex
+ * task still holds paths into the active old generation. A later authenticated
+ * `genie setup --codex` owns cache activation and pruning. This module puts
  * every activation-capable entry path behind three explicit layers:
  *
  *   1. `observeCodexActivation()` performs only bounded reads and returns a
@@ -690,7 +691,13 @@ const RETIRE_RECOVERY = 'retire tasks → genie setup --codex → /hooks → new
 export function describeState(state: CodexActivationState): StateDescriptor {
   switch (state.kind) {
     case 'query-failed':
-      return desc('query-failed', 1, 'none', true, 'Indeterminate; repair the Codex CLI/query, then rerun doctor');
+      return desc(
+        'query-failed',
+        1,
+        'none',
+        true,
+        'Indeterminate; upgrade or repair the Codex CLI/query, then rerun doctor',
+      );
     case 'registration-version-invalid':
       return desc(
         'registration-version-invalid',
@@ -930,6 +937,8 @@ export interface ActivationRequestFingerprint {
   registrationIdentity: string | null;
   cacheIdentity: string | null;
   enabled: boolean | null;
+  /** Digest of the exact valid journal bytes, binding every durable intent field. */
+  intentContentSha256: string | null;
   intentPhase: IntentPhase | null;
   intentId: string | null;
   receiptId: string | null;
@@ -965,6 +974,7 @@ const FINGERPRINT_FIELDS: readonly (keyof ActivationRequestFingerprint)[] = [
   'registrationIdentity',
   'cacheIdentity',
   'enabled',
+  'intentContentSha256',
   'intentPhase',
   'intentId',
   'receiptId',
@@ -1067,6 +1077,7 @@ export function computeActivationFingerprint(snapshot: CodexActivationSnapshot):
     registrationIdentity: cache.kind === 'present' ? cache.identity : null,
     cacheIdentity: family.status === 'present' ? family.identity : null,
     enabled: registration.present ? registration.enabled : null,
+    intentContentSha256: intent.status === 'valid' ? intent.contentSha256 : null,
     intentPhase: intent.status === 'valid' ? intent.intent.phase : null,
     intentId: intent.status === 'valid' ? intent.intent.refreshIntentId : null,
     receiptId: snapshot.receipt.status === 'present' ? snapshot.receipt.receipt.receiptId : null,
@@ -2212,11 +2223,12 @@ function deliveryReadState(fact: DeliveryFact): DeliveryRecordReadState {
 
 /**
  * Decide the journal a permitted activation writes. A post-command phase RESUMES
- * its existing bound journal — the same `refreshIntentId` and phase, re-stamped
- * onto the current lease operation — so a fresh external assertion continues the
- * interrupted transaction rather than opening a duplicate `planned` intent (the
- * fingerprint match already proved the bound intentPhase/intentId are current).
- * Every other eligible state opens a new planned transaction unchanged.
+ * its existing bound journal — the same `refreshIntentId`, phase, direction,
+ * prior-enabled choice, and receipt id, re-stamped onto the current lease operation
+ * — so a fresh external assertion continues the interrupted transaction rather than
+ * replanning from post-command live state. A planned target-current journal may
+ * reflect an external/operator activation before Genie's command began, so it still
+ * opens a newly derived planned transaction.
  */
 function resolveActivationIntent(
   state: CodexActivationState,
@@ -2228,13 +2240,15 @@ function resolveActivationIntent(
   return planIntentFromState(state, snapshot, operationId);
 }
 
-/** The three post-command phases (per the DESIGN truth table) resume their bound journal. */
+/** Post-command states resume their bound journal, including when the target is already current. */
 function resumeIntentForState(state: CodexActivationState): RefreshIntent | null {
   switch (state.kind) {
     case 'intent-command-started':
     case 'intent-removal-observed':
     case 'intent-ambiguous-absent':
       return state.intent;
+    case 'intent-target-current':
+      return state.intent.phase === 'planned' ? null : state.intent;
     default:
       return null;
   }
@@ -2262,7 +2276,10 @@ function planIntentFromState(
     fromPluginVersion: from ? from.canonical : null,
     targetVersion: target.canonical,
     direction,
-    priorEnabled: registration.present ? registration.enabled : false,
+    // A fresh activation has no operator disablement to preserve: plugin add is
+    // expected to leave the newly selected integration enabled. Only an
+    // existing registration can carry an explicit disabled choice forward.
+    priorEnabled: registration.present ? registration.enabled : true,
     canonicalPayloadSha256: snapshot.canonical.digest,
     phase: 'planned',
     commandKind: 'codex-plugin-add',

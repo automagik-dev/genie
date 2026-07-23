@@ -510,13 +510,18 @@ function restoreEnabledFlag(input: ExecuteCodexActivationInput): boolean {
   return desiredEnabled;
 }
 
-/** The prior enabled flag the permit's journal captured (via the planned intent). */
+/** Resolve the durable desired enabled state captured by the activation intent. */
 function readPriorEnabled(input: ExecuteCodexActivationInput): boolean {
   // The journal is A's private state; the executor reads the observed enabled flag
-  // rather than the raw journal file. `beginActivation` bound priorEnabled to this
-  // same observation, so the observed value is the authoritative desired flag.
+  // rather than the raw journal file. A fresh from=null intent represents a new
+  // integration, never a prior operator disablement. Deriving true from that
+  // durable fact also repairs older schema-1 journals which recorded false
+  // before their first add completed. Existing registrations retain their exact
+  // captured choice.
   const snapshot = input.store.observe();
-  if (snapshot.intent.status === 'valid') return snapshot.intent.intent.priorEnabled;
+  if (snapshot.intent.status === 'valid') {
+    return snapshot.intent.intent.fromPluginVersion === null ? true : snapshot.intent.intent.priorEnabled;
+  }
   return snapshot.query.status === 'ok' && snapshot.query.registration.present
     ? snapshot.query.registration.enabled
     : true;

@@ -14,6 +14,7 @@ import {
   type AuthorizationResult,
   type CodexActivationStore,
   type CodexActivationStoreOptions,
+  type RefreshIntent,
   authorizeCodexActivation,
   classifyCodexActivation,
   openCodexActivationStore,
@@ -283,6 +284,9 @@ function addCalls(fixture: Fixture): number {
 function marketplaceCalls(fixture: Fixture): number {
   return fixture.runnerCalls.filter((call) => call.includes('plugin marketplace add ')).length;
 }
+function readIntent(fixture: Fixture): RefreshIntent {
+  return JSON.parse(readFileSync(intentPath(fixture), 'utf8')) as RefreshIntent;
+}
 
 // ---------------------------------------------------------------------------
 
@@ -442,13 +446,15 @@ describe('successful activation', () => {
     expect(configEnabled(fx.configPath)).toBe(false);
   });
 
-  test('fresh install (registration absent) activates through a single add', () => {
+  test('fresh install (registration absent) activates enabled through a single add', () => {
     const fx = fixture({ from: null, initialEnabled: true });
     publishDelivery(fx);
     const result = runActivation(fx);
     expect(result.status).toBe('activated');
     if (result.status !== 'activated') throw new Error('unreachable');
     expect(result.direction).toBe('install');
+    expect(result.enabled).toBe(true);
+    expect(configEnabled(fx.configPath)).toBe(true);
     expect(addCalls(fx)).toBe(1);
   });
 });
@@ -476,6 +482,45 @@ describe('fingerprint freshness', () => {
     expect(existsSync(intentPath(fx))).toBe(false);
     expect(marketplaceCalls(fx)).toBe(0);
     expect(addCalls(fx)).toBe(0);
+    expect(existsSync(leasePath(fx))).toBe(false);
+  });
+
+  test('journal-byte tampering after consent makes the permit stale with zero mutation', () => {
+    const fx = fixture({ from: FROM_VERSION, initialEnabled: false, createFromCache: true });
+    publishDelivery(fx);
+    const first = runActivation(fx, {
+      hooks: {
+        beforeEnabledRestore() {
+          throw new Error('injected crash before enabled restore');
+        },
+      },
+    });
+    expect(first.status).toBe('broken');
+    expect(classifyCodexActivation(fx.openStore().observe()).kind).toBe('intent-target-current');
+
+    const store = fx.openStore();
+    const { permit } = mintPermit(store);
+    const tampered = { ...readIntent(fx), priorEnabled: true };
+    writeFileSync(intentPath(fx), `${JSON.stringify(tampered, null, 2)}\n`);
+    const tamperedBytes = readFileSync(intentPath(fx), 'utf8');
+    const addsBefore = addCalls(fx);
+    const marketplacesBefore = marketplaceCalls(fx);
+
+    const result = executeCodexActivation({
+      permit,
+      store,
+      command: STUB_COMMAND,
+      codexHome: fx.codexHome,
+      genieHome: fx.genieHome,
+      configPath: fx.configPath,
+      deps: { runner: fx.makeRunner() },
+    });
+    expect(result.status).toBe('stale');
+    if (result.status !== 'stale') throw new Error('unreachable');
+    expect(result.mismatchField).toBe('intentContentSha256');
+    expect(readFileSync(intentPath(fx), 'utf8')).toBe(tamperedBytes);
+    expect(addCalls(fx)).toBe(addsBefore);
+    expect(marketplaceCalls(fx)).toBe(marketplacesBefore);
     expect(existsSync(leasePath(fx))).toBe(false);
   });
 });
@@ -579,6 +624,101 @@ describe('crash recovery', () => {
     expect(existsSync(intentPath(fx))).toBe(false);
     expect(classifyCodexActivation(fx.openStore().observe()).kind).toBe('current');
   });
+
+  const TARGET_CURRENT_RECOVERY_CASES = [
+    {
+      name: 'disabled upgrade',
+      from: FROM_VERSION,
+      initialEnabled: false,
+      createFromCache: true,
+      downgradeFrom: undefined,
+      direction: 'upgrade',
+      priorEnabled: false,
+      finalEnabled: false,
+    },
+    {
+      name: 'fresh install',
+      from: null,
+      initialEnabled: false,
+      createFromCache: false,
+      downgradeFrom: undefined,
+      direction: 'install',
+      priorEnabled: true,
+      finalEnabled: true,
+    },
+    {
+      name: 'explicit downgrade',
+      from: NEWER_VERSION,
+      initialEnabled: true,
+      createFromCache: true,
+      downgradeFrom: NEWER_VERSION,
+      direction: 'downgrade',
+      priorEnabled: true,
+      finalEnabled: true,
+    },
+  ] as const;
+
+  for (const recoveryCase of TARGET_CURRENT_RECOVERY_CASES) {
+    test(`${recoveryCase.name} resumes the target-current journal without losing transaction identity`, () => {
+      const fx = fixture({
+        from: recoveryCase.from,
+        initialEnabled: recoveryCase.initialEnabled,
+        createFromCache: recoveryCase.createFromCache,
+      });
+      publishDelivery(
+        fx,
+        recoveryCase.downgradeFrom === undefined ? {} : { downgradeFrom: recoveryCase.downgradeFrom },
+      );
+      const first = runActivation(fx, {
+        hooks: {
+          beforeEnabledRestore() {
+            throw new Error('injected crash before enabled restore');
+          },
+        },
+      });
+      expect(first.status).toBe('broken');
+      expect(addCalls(fx)).toBe(1);
+      expect(classifyCodexActivation(fx.openStore().observe()).kind).toBe('intent-target-current');
+      const before = readIntent(fx);
+      expect(before.phase).toBe('removal-observed');
+      expect(before.direction).toBe(recoveryCase.direction);
+      expect(before.priorEnabled).toBe(recoveryCase.priorEnabled);
+      if (recoveryCase.direction === 'downgrade') expect(before.receiptId).not.toBeNull();
+      else expect(before.receiptId).toBeNull();
+
+      const rebound: RefreshIntent[] = [];
+      const second = runActivation(fx, {
+        hooks: {
+          afterBeginActivation() {
+            rebound.push(readIntent(fx));
+          },
+        },
+      });
+      expect(second.status).toBe('activated');
+      if (second.status !== 'activated') throw new Error('unreachable');
+      expect(second.direction).toBe(recoveryCase.direction);
+      expect(second.enabled).toBe(recoveryCase.finalEnabled);
+      expect(configEnabled(fx.configPath)).toBe(recoveryCase.finalEnabled);
+      expect(addCalls(fx)).toBe(1);
+      const reboundIntent = rebound[0];
+      if (reboundIntent === undefined) throw new Error('target-current journal was not rebound');
+      expect(reboundIntent.refreshIntentId).toBe(before.refreshIntentId);
+      expect(reboundIntent.phase).toBe(before.phase);
+      expect(reboundIntent.direction).toBe(before.direction);
+      expect(reboundIntent.priorEnabled).toBe(before.priorEnabled);
+      expect(reboundIntent.receiptId).toBe(before.receiptId);
+      expect(reboundIntent.operationId).not.toBe(before.operationId);
+      expect(existsSync(intentPath(fx))).toBe(false);
+
+      if (recoveryCase.direction === 'downgrade') {
+        if (before.receiptId === null) throw new Error('downgrade journal lost its receipt id');
+        expect(existsSync(receiptPath(fx))).toBe(false);
+        expect(existsSync(tombstonePath(fx))).toBe(true);
+        const tombstone = JSON.parse(readFileSync(tombstonePath(fx), 'utf8')) as { receiptId: string };
+        expect(tombstone.receiptId).toBe(before.receiptId);
+      }
+    });
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -655,6 +795,43 @@ function ambiguousAbsentRunner(fx: Fixture): CommandRunner {
 }
 
 describe('post-command phase resume', () => {
+  test('resumed fresh intent enables the plugin, while resumed existing-disabled intent preserves false', () => {
+    for (const fixtureCase of [
+      { name: 'fresh', from: null, initialEnabled: false, createFromCache: false, expectedEnabled: true },
+      {
+        name: 'existing-disabled',
+        from: FROM_VERSION,
+        initialEnabled: false,
+        createFromCache: true,
+        expectedEnabled: false,
+      },
+    ] as const) {
+      const fx = fixture(fixtureCase);
+      publishDelivery(fx);
+      const first = runActivation(fx, {
+        hooks: {
+          beforePluginAdd() {
+            throw new Error(`${fixtureCase.name}: injected pre-add crash`);
+          },
+        },
+      });
+      expect(first.status).toBe('broken');
+      const journal = JSON.parse(readFileSync(intentPath(fx), 'utf8')) as Record<string, unknown>;
+      if (fixtureCase.from === null) {
+        // Compatibility case: older planners persisted false for a fresh
+        // registration. Resume derives the desired state from from=null.
+        journal.priorEnabled = false;
+        writeFileSync(intentPath(fx), `${JSON.stringify(journal)}\n`);
+      }
+
+      const resumed = runActivation(fx);
+      expect(resumed.status).toBe('activated');
+      if (resumed.status !== 'activated') throw new Error(`${fixtureCase.name}: activation did not resume`);
+      expect(resumed.enabled).toBe(fixtureCase.expectedEnabled);
+      expect(configEnabled(fx.configPath)).toBe(fixtureCase.expectedEnabled);
+    }
+  });
+
   test('removal-observed resumes: a fresh authorized run reconciles through add + verify', () => {
     const fx = fixture({ from: FROM_VERSION, initialEnabled: true, createFromCache: true });
     publishDelivery(fx);

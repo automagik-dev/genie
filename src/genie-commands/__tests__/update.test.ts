@@ -98,6 +98,7 @@ import {
   shouldEmitPathDivergenceWarning,
   summarizeJsonlSignals,
   syncAuxiliaryContent,
+  updateCommand,
 } from '../update.js';
 
 function healthyUpdateCodexProbe(): CodexPluginProbe {
@@ -454,6 +455,17 @@ describe('updateCommand downgrade wiring (BUG B source-shape lock)', () => {
 // ============================================================================
 
 describe('updateCommand wiring', () => {
+  const commandManifest: LatestManifest = {
+    schema_version: 1,
+    channel: 'stable',
+    version: '5.260723.8',
+    released_at: '2026-07-23T00:00:00Z',
+    tarball_base: 'https://github.com/automagik-dev/genie/releases/download/v5.260723.8',
+    platforms: ['darwin-arm64'],
+    manifestBytes: '{"version":"5.260723.8"}\n',
+    manifestSha256: 'a'.repeat(64),
+  };
+
   test('npm-update path is gone — no `bun add @automagik/genie` references', () => {
     const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
     expect(source).not.toMatch(/bun add[^\n]*@automagik\/genie/);
@@ -510,16 +522,246 @@ describe('updateCommand wiring', () => {
     const cmdStart = source.indexOf('export async function updateCommand');
     expect(cmdStart).toBeGreaterThan(-1);
     const cmdBody = source.slice(cmdStart);
-    const explicitModeIdx = cmdBody.indexOf('await runExplicitUpdateMode(mode)');
+    const explicitModeIdx = cmdBody.indexOf('await dispatchNonNormalUpdateMode(options)');
     const fetchIdx = cmdBody.indexOf('dependencies.fetchManifest ?? fetchLatestManifest');
     expect(explicitModeIdx).toBeGreaterThan(-1);
     expect(fetchIdx).toBeGreaterThan(-1);
     expect(explicitModeIdx).toBeLessThan(fetchIdx);
+    const dispatcher = source.slice(
+      source.indexOf('async function dispatchNonNormalUpdateMode'),
+      source.indexOf('async function confirmPlannedDelivery'),
+    );
+    expect(dispatcher).toContain('await runExplicitUpdateMode(mode)');
     const explicitMode = source.slice(
       source.indexOf('async function runExplicitUpdateMode'),
-      source.indexOf('function runFreshConvergenceOrReport'),
+      source.indexOf('async function dispatchNonNormalUpdateMode'),
     );
-    expect(explicitMode).toContain("if (mode === 'rollback') await runRollback()");
+    expect(explicitMode).toContain("if (mode === 'rollback') terminal = await runRollback()");
+  });
+
+  test('no hard process exit is reachable while normal or explicit update leases are held', () => {
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    const normalStart = source.indexOf(
+      'const lifecycleLease = acquireRequiredLifecycleLease(dependencies.acquireLease)',
+    );
+    const normalEnd = source.indexOf('\n/**\n * Post-swap v4 legacy cleanup', normalStart);
+    const explicitStart = source.indexOf('async function runExplicitUpdateMode');
+    const explicitEnd = source.indexOf('\nasync function dispatchNonNormalUpdateMode', explicitStart);
+    expect(normalStart).toBeGreaterThan(-1);
+    expect(normalEnd).toBeGreaterThan(normalStart);
+    expect(explicitStart).toBeGreaterThan(-1);
+    expect(explicitEnd).toBeGreaterThan(explicitStart);
+    expect(source.slice(normalStart, normalEnd)).not.toContain('process.exit(');
+    expect(source.slice(explicitStart, explicitEnd)).not.toContain('process.exit(');
+    expect(source.slice(normalStart, normalEnd)).toContain('projectDeferredUpdateTerminal(terminal)');
+    expect(source.slice(explicitStart, explicitEnd)).toContain('projectDeferredUpdateTerminal(terminal)');
+  });
+
+  test('a setup-held Codex lease refuses update before recovery or any delivery-owned mutation', async () => {
+    const priorExitCode = process.exitCode;
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const events: string[] = [];
+    const logSpy = spyOn(console, 'log').mockImplementation((...args: unknown[]) => stdout.push(args.join(' ')));
+    const errorSpy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => stderr.push(args.join(' ')));
+    process.exitCode = undefined;
+    try {
+      await updateCommand(
+        { yes: true, stable: true },
+        {
+          fetchManifest: async () => commandManifest,
+          readInstalledVersion: () => '5.260700.1',
+          resolvePlatform: () => 'darwin-arm64',
+          acquireLease: () => {
+            events.push('agent-acquire');
+            return {
+              path: '/fixture/.agent-sync.lock',
+              release: () => events.push('agent-release'),
+            };
+          },
+          acquireCodexLease: () => {
+            events.push('codex-busy');
+            return {
+              ok: false,
+              reason: 'codex-lifecycle-busy',
+              holderKind: 'setup-activation',
+              detail: 'held by setup-activation',
+            };
+          },
+          recoverPendingState: () => events.push('MUTATION:recovery'),
+          persistSelectedChannel: async () => {
+            events.push('MUTATION:channel');
+          },
+          requireCanonicalInstall: () => events.push('MUTATION:canonical'),
+          deliverSelectedManifest: async () => {
+            events.push('MUTATION:delivery');
+            return [];
+          },
+          finalizeSelectedDelivery: async () => {
+            events.push('MUTATION:finalize');
+            return true;
+          },
+        },
+      );
+
+      expect(events).toEqual(['agent-acquire', 'codex-busy', 'agent-release']);
+      expect(events.some((event) => event.startsWith('MUTATION:'))).toBe(false);
+      expect(Number(process.exitCode)).toBe(2);
+      const output = [...stdout, ...stderr].join('\n');
+      expect(output).toContain('codex-lifecycle-busy');
+      expect(output).toContain('setup-activation');
+      expect(output).toContain('"deliveryComplete":false');
+    } finally {
+      logSpy.mockRestore();
+      errorSpy.mockRestore();
+      process.exitCode = priorExitCode;
+    }
+  });
+
+  test('normal update holds agent-sync then Codex through delivery and releases in reverse order', async () => {
+    const priorExitCode = process.exitCode;
+    const events: string[] = [];
+    const logSpy = spyOn(console, 'log').mockImplementation(() => undefined);
+    const errorSpy = spyOn(console, 'error').mockImplementation(() => undefined);
+    process.exitCode = undefined;
+    try {
+      await updateCommand(
+        { yes: true, stable: true },
+        {
+          fetchManifest: async () => {
+            events.push('fetch');
+            return commandManifest;
+          },
+          readInstalledVersion: () => {
+            events.push('read');
+            return '5.260700.1';
+          },
+          resolvePlatform: () => {
+            events.push('platform');
+            return 'darwin-arm64';
+          },
+          acquireLease: () => {
+            events.push('agent-acquire');
+            return {
+              path: '/fixture/.agent-sync.lock',
+              release: () => events.push('agent-release'),
+            };
+          },
+          acquireCodexLease: () => {
+            events.push('codex-acquire');
+            return {
+              ok: true,
+              operationId: 'c'.repeat(32),
+              kind: 'update-delivery',
+              assertOperation: () => events.push('codex-assert'),
+              release: () => events.push('codex-release'),
+            };
+          },
+          recoverPendingState: () => events.push('recover'),
+          persistSelectedChannel: async () => {
+            events.push('persist');
+          },
+          requireCanonicalInstall: () => events.push('canonical'),
+          deliverSelectedManifest: async () => {
+            events.push('deliver');
+            return [];
+          },
+          finalizeSelectedDelivery: async () => {
+            events.push('finalize');
+            return true;
+          },
+        },
+      );
+
+      expect(events).toEqual([
+        'fetch',
+        'read',
+        'platform',
+        'agent-acquire',
+        'codex-acquire',
+        'codex-assert',
+        'recover',
+        'read',
+        'persist',
+        'canonical',
+        'codex-assert',
+        'deliver',
+        'finalize',
+        'codex-release',
+        'agent-release',
+      ]);
+    } finally {
+      logSpy.mockRestore();
+      errorSpy.mockRestore();
+      process.exitCode = priorExitCode;
+    }
+  });
+
+  test('same-version repair borrows the one command-held Codex lease without nested acquisition', async () => {
+    const priorExitCode = process.exitCode;
+    const events: string[] = [];
+    const logSpy = spyOn(console, 'log').mockImplementation(() => undefined);
+    const errorSpy = spyOn(console, 'error').mockImplementation(() => undefined);
+    process.exitCode = undefined;
+    const held: HeldLifecycleLease = {
+      ok: true,
+      operationId: 'd'.repeat(32),
+      kind: 'update-delivery',
+      assertOperation: () => events.push('codex-assert'),
+      release: () => events.push('codex-release'),
+    };
+    try {
+      await updateCommand(
+        { yes: true, stable: true },
+        {
+          fetchManifest: async () => commandManifest,
+          readInstalledVersion: () => commandManifest.version,
+          resolvePlatform: () => 'darwin-arm64',
+          acquireLease: () => {
+            events.push('agent-acquire');
+            return {
+              path: '/fixture/.agent-sync.lock',
+              release: () => events.push('agent-release'),
+            };
+          },
+          acquireCodexLease: () => {
+            events.push('codex-acquire');
+            return held;
+          },
+          recoverPendingState: () => events.push('recover'),
+          persistSelectedChannel: async () => {
+            events.push('persist');
+          },
+          alreadyCurrent: {
+            attemptRepair: async (_channel, _platform, lease) => {
+              events.push('repair');
+              expect(lease).toBe(held);
+              return { action: 'repaired-current' };
+            },
+            retireLegacyMarker: () => events.push('retire'),
+          },
+          requireCanonicalInstall: () => {
+            throw new Error('same-version path reached normal delivery');
+          },
+        },
+      );
+
+      expect(events).toEqual([
+        'agent-acquire',
+        'codex-acquire',
+        'codex-assert',
+        'recover',
+        'persist',
+        'repair',
+        'retire',
+        'codex-release',
+        'agent-release',
+      ]);
+    } finally {
+      logSpy.mockRestore();
+      errorSpy.mockRestore();
+      process.exitCode = priorExitCode;
+    }
   });
 });
 
@@ -1795,7 +2037,7 @@ describe('ensureCanonicalInstall + resolveLiveBinaryPath (review fix #3)', () =>
     const cmdStart = source.indexOf('export async function updateCommand');
     expect(cmdStart).toBeGreaterThan(-1);
     const cmdBody = source.slice(cmdStart);
-    const ensureIdx = cmdBody.indexOf('dependencies.requireCanonicalInstall ?? requireCanonicalInstallOrExit');
+    const ensureIdx = cmdBody.indexOf('dependencies.requireCanonicalInstall ?? ensureCanonicalInstall');
     const deliveryIdx = cmdBody.indexOf('runDelivery(resolvedManifest');
     expect(ensureIdx).toBeGreaterThan(-1);
     expect(deliveryIdx).toBeGreaterThan(-1);
@@ -2094,17 +2336,21 @@ describe('runAgentSyncSafe (agent-sync phase)', () => {
     const source = readFileSync(join(import.meta.dir, '..', 'update.ts'), 'utf-8');
     const cmdStart = source.indexOf('export async function updateCommand');
     const cmdBody = source.slice(cmdStart);
-    const fastPathIdx = cmdBody.indexOf("mode !== 'normal'");
+    const fastPathIdx = cmdBody.indexOf('await dispatchNonNormalUpdateMode(options)');
     const fetchIdx = cmdBody.indexOf('dependencies.fetchManifest ?? fetchLatestManifest');
     const deliveryIdx = cmdBody.indexOf('runDelivery(resolvedManifest');
     expect(fastPathIdx).toBeGreaterThan(-1);
     expect(fastPathIdx).toBeLessThan(fetchIdx);
     expect(fastPathIdx).toBeLessThan(deliveryIdx);
     // The compatibility mode routes before fetch and remains skills/role-only.
-    const fastPath = cmdBody.slice(fastPathIdx, fetchIdx);
-    expect(fastPath).toContain('await runExplicitUpdateMode(mode)');
-    expect(fastPath).not.toContain('runTrackedManualUpdateConvergence(');
-    expect(fastPath).not.toContain('refreshUpdatePlugins(');
+    const dispatcher = source.slice(
+      source.indexOf('async function dispatchNonNormalUpdateMode'),
+      source.indexOf('async function confirmPlannedDelivery'),
+    );
+    expect(dispatcher).toContain("mode !== 'normal'");
+    expect(dispatcher).toContain('await runExplicitUpdateMode(mode)');
+    expect(dispatcher).not.toContain('runTrackedManualUpdateConvergence(');
+    expect(dispatcher).not.toContain('refreshUpdatePlugins(');
     const legacyModeStart = source.indexOf('function runLegacySyncOnlyMode()');
     const postDeliveryModeStart = source.indexOf('function runPostDeliveryConvergenceMode()', legacyModeStart);
     const legacyMode = source.slice(legacyModeStart, postDeliveryModeStart);

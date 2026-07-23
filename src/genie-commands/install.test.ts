@@ -378,6 +378,36 @@ describe('standalone install.sh lifecycle lease', () => {
     expect(collision.stderr).toContain('version mismatch (expected 5.9.0, got 15.9.0)');
   });
 
+  test('shell promotion refusal leaves an absent GENIE_HOME untouched before the staged promoter runs', () => {
+    const marker = join(home, 'promoter-refused');
+    const result = shell(`
+      source "$1"
+      tar() {
+        local destination=""
+        while (( "$#" )); do
+          if [[ "$1" == "-C" ]]; then destination="$2"; shift 2; else shift; fi
+        done
+        printf '%s\\n' \
+          '#!/usr/bin/env bash' \
+          'if [[ "\${1:-}" == "--version" ]]; then printf "genie v5.9.0\\\\n"; exit 0; fi' \
+          'if [[ "\${1:-}" == "__install-promote" ]]; then' \
+          '  [[ ! -e "$GENIE_HOME" ]] || exit 91' \
+          '  printf refused > "$HOME/promoter-refused"' \
+          '  exit 73' \
+          'fi' > "$destination/genie"
+        chmod 755 "$destination/genie"
+      }
+      acquire_lifecycle_lock
+      extract_and_link /fixture/payload.tar.gz 5.9.0
+    `);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('verified staged promoter could not complete the install transaction');
+    expect(readFileSync(marker, 'utf8')).toBe('refused');
+    expect(existsSync(genieHome)).toBe(false);
+    expect(existsSync(join(home, '.local'))).toBe(false);
+  });
+
   test('passes the exact owner record to the child finisher and treats failure as fatal', () => {
     const localBin = join(home, '.local', 'bin');
     const observed = join(root, 'observed-owner');
@@ -1398,12 +1428,16 @@ describe('installCommand — Group C install gate (item 2)', () => {
 
   test('a busy Codex lifecycle lease projects exit 2 codex-lifecycle-busy / deliveryComplete:false with ZERO plugin convergence (AC8 loser)', async () => {
     let integrationsRan = false;
+    let normalizeRan = false;
     let syncRan = false;
     let leaseAcquired = false;
     await installCommand(
       { integrations: 'auto' },
       makeCleanupSpy().runner,
-      () => undefined,
+      () => {
+        normalizeRan = true;
+        return undefined;
+      },
       () => {
         syncRan = true;
       },
@@ -1427,7 +1461,9 @@ describe('installCommand — Group C install gate (item 2)', () => {
       () => null,
     );
     expect(leaseAcquired).toBe(true);
-    // Zero mutation: neither plugin convergence nor agent-sync ran after the refusal.
+    // Zero payload mutation: normalization, plugin convergence, and agent-sync
+    // all remain behind the unconditional inner lease.
+    expect(normalizeRan).toBe(false);
     expect(integrationsRan).toBe(false);
     expect(syncRan).toBe(false);
     // Exit 2 with the codex-lifecycle-busy trailer (deliveryComplete:false, retry:true), naming the holder.
@@ -1440,27 +1476,131 @@ describe('installCommand — Group C install gate (item 2)', () => {
     expect(JSON.parse(trailer as string)).toMatchObject({ deliveryComplete: false, retry: true });
   });
 
-  test('a claude/none install never acquires the Codex lifecycle lease (no spurious cross-command contention)', async () => {
-    let leaseTouched = false;
-    const acquire = () => {
-      leaseTouched = true;
-      return noopCodexLease();
-    };
+  test('a claude/none install acquires Codex before payload normalization and releases inner then outer', async () => {
     for (const integrations of ['claude', 'none'] as const) {
-      leaseTouched = false;
+      const events: string[] = [];
       await installCommand(
         { integrations },
+        makeCleanupSpy().runner,
+        () => {
+          events.push('normalize');
+          return undefined;
+        },
+        () => undefined,
+        () => [],
+        () => {
+          events.push('agent-acquire');
+          return {
+            path: '/tmp/test-lifecycle.lock',
+            release: () => events.push('agent-release'),
+          };
+        },
+        () => {
+          events.push('codex-acquire');
+          return {
+            ok: true as const,
+            operationId: 'a'.repeat(32),
+            kind: 'install-converge' as const,
+            assertOperation: () => undefined,
+            release: () => events.push('codex-release'),
+          };
+        },
+        noopConsent,
+        () => null,
+      );
+      expect(events).toEqual(['agent-acquire', 'codex-acquire', 'normalize', 'codex-release', 'agent-release']);
+    }
+  });
+
+  test('an inner release failure still releases and immediately reacquires the outer lifecycle authority', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-install-release-failure-'));
+    const genieHome = join(root, '.genie');
+    const events: string[] = [];
+    try {
+      await expect(
+        installCommand(
+          { integrations: 'none' },
+          makeCleanupSpy().runner,
+          () => undefined,
+          () => undefined,
+          () => [],
+          () => {
+            const acquired = acquireLifecycleLease(genieHome);
+            if ('skipped' in acquired) throw new Error(`fixture could not acquire outer lease: ${acquired.skipped}`);
+            return {
+              path: acquired.path,
+              release: () => {
+                events.push('agent-release');
+                acquired.release();
+              },
+            };
+          },
+          () => ({
+            ok: true as const,
+            operationId: 'a'.repeat(32),
+            kind: 'install-converge' as const,
+            assertOperation: () => undefined,
+            release: () => {
+              events.push('codex-release');
+              throw new Error('inner release fixture');
+            },
+          }),
+          noopConsent,
+          () => null,
+        ),
+      ).rejects.toThrow('inner release fixture');
+
+      expect(events).toEqual(['codex-release', 'agent-release']);
+      expect(existsSync(lifecycleLockPath(genieHome))).toBe(false);
+      const reacquired = acquireLifecycleLease(genieHome);
+      if ('skipped' in reacquired) throw new Error(`outer lease remained stranded: ${reacquired.skipped}`);
+      reacquired.release();
+      expect(existsSync(lifecycleLockPath(genieHome))).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('dual release failures report both errors in reverse-release order', async () => {
+    const events: string[] = [];
+    let thrown: unknown;
+    try {
+      await installCommand(
+        { integrations: 'none' },
         makeCleanupSpy().runner,
         () => undefined,
         () => undefined,
         () => [],
-        noopLease,
-        acquire,
+        () => ({
+          path: '/tmp/test-lifecycle.lock',
+          release: () => {
+            events.push('agent-release');
+            throw new Error('outer release fixture');
+          },
+        }),
+        () => ({
+          ok: true as const,
+          operationId: 'a'.repeat(32),
+          kind: 'install-converge' as const,
+          assertOperation: () => undefined,
+          release: () => {
+            events.push('codex-release');
+            throw new Error('inner release fixture');
+          },
+        }),
         noopConsent,
         () => null,
       );
-      expect(leaseTouched).toBe(false);
+    } catch (error) {
+      thrown = error;
     }
+
+    expect(events).toEqual(['codex-release', 'agent-release']);
+    expect(thrown).toBeInstanceOf(AggregateError);
+    expect((thrown as AggregateError).errors.map((error) => (error as Error).message)).toEqual([
+      'inner release fixture',
+      'outer release fixture',
+    ]);
   });
 
   test('a held Codex lifecycle lease is acquired for an in-scope install and released on the terminal path', async () => {

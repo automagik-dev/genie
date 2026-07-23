@@ -11,7 +11,7 @@
 import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { openDb } from '../lib/v5/genie-db.js';
@@ -468,6 +468,28 @@ describe('mcp missing-database fail-closed', () => {
       expect(payload.detail).toContain(dbPath);
       expect(payload).not.toHaveProperty('counts');
       expect(payload).not.toHaveProperty('tasks');
+    });
+  }
+
+  for (const alias of ['genie-directory', 'database-file'] as const) {
+    test(`genie_board rejects a ${alias} symlink to another valid repository database`, async () => {
+      const other = mkdtempSync(join(tmpdir(), 'genie-mcp-alias-'));
+      git(other, 'init', '-b', 'main');
+      git(other, 'commit', '--allow-empty', '-m', 'init');
+      seed(other);
+      try {
+        if (alias === 'genie-directory') {
+          symlinkSync(join(other, '.genie'), join(repo, '.genie'), 'dir');
+        } else {
+          mkdirSync(join(repo, '.genie'));
+          symlinkSync(join(other, '.genie', 'genie.db'), join(repo, '.genie', 'genie.db'), 'file');
+        }
+
+        const payload = await expectProjectDatabaseUnavailable(alias === 'genie-directory' ? 51 : 52);
+        expect(payload.detail).toContain(alias === 'genie-directory' ? 'physical directory' : 'physical regular file');
+      } finally {
+        rmSync(other, { recursive: true, force: true });
+      }
     });
   }
 

@@ -426,7 +426,7 @@ describe('same-version repair failure matrix', () => {
     if (fact.status !== 'present') throw new Error('expected present fixture');
     const stale: DeliveryFact = {
       ...fact,
-      record: { ...fact.record, platformTriple: 'linux-x64' },
+      record: { ...fact.record, platformTriple: `${fact.record.platformTriple}-stale` },
     };
     const { seams, log } = makeSeams({ readDeliveryFact: () => stale, installedGeneration: T });
     expect((await repairMissingDelivery(PINNED, seams)).kind).toBe('published');

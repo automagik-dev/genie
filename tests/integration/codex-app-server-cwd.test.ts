@@ -40,7 +40,14 @@ import { CodexCwdEvidence, type CwdCaseEvidence, findPidCrossingDifferingCwd } f
 const CASE_TIMEOUT = 60_000;
 const HARNESS_ROOT_PREFIX = 'genie-cwd-evidence-';
 
-type FakeAppServerMode = 'success' | 'timeout' | 'reject' | 'early-exit' | 'spawn-error';
+type FakeAppServerMode =
+  | 'success'
+  | 'timeout'
+  | 'reject'
+  | 'early-exit'
+  | 'spawn-error'
+  | 'success-with-descendant'
+  | 'timeout-with-descendant';
 
 function makeFakeCodex(mode: FakeAppServerMode): { command: string; marker: string; root: string } {
   const root = mkdtempSync(join(tmpdir(), 'genie-fake-codex-'));
@@ -49,6 +56,7 @@ function makeFakeCodex(mode: FakeAppServerMode): { command: string; marker: stri
   writeFileSync(
     command,
     `#!${process.execPath}
+import { spawn } from 'node:child_process';
 import { unlinkSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -59,14 +67,21 @@ if (process.argv.includes('--version')) {
   process.exit(0);
 }
 const marker = ${JSON.stringify(marker)};
-writeFileSync(marker, JSON.stringify({ pid: process.pid, root: dirname(process.env.CODEX_HOME) }));
-if (mode === 'early-exit') process.exit(19);
-if (mode === 'reject' || mode === 'success') {
+const baseMode = mode.replace('-with-descendant', '');
+let descendantPid;
+if (mode.endsWith('-with-descendant')) {
+  const descendant = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1 << 30)'], { stdio: 'ignore' });
+  descendantPid = descendant.pid;
+  descendant.unref();
+}
+writeFileSync(marker, JSON.stringify({ pid: process.pid, descendantPid, root: dirname(process.env.CODEX_HOME) }));
+if (baseMode === 'early-exit') process.exit(19);
+if (baseMode === 'reject' || baseMode === 'success') {
   const rl = createInterface({ input: process.stdin });
   rl.on('line', (line) => {
     const message = JSON.parse(line);
     if (message.method === 'initialize') {
-      const response = mode === 'reject'
+      const response = baseMode === 'reject'
         ? { jsonrpc: '2.0', id: message.id, error: { code: -32000, message: 'forced initialize rejection' } }
         : { jsonrpc: '2.0', id: message.id, result: { capabilities: {} } };
       process.stdout.write(JSON.stringify(response) + '\\n');
@@ -89,6 +104,15 @@ function processExists(pid: number): boolean {
     if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
     throw error;
   }
+}
+
+async function waitForProcessExit(pid: number, timeoutMs = 2_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!processExists(pid)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return !processExists(pid);
 }
 
 function harnessRoots(): Set<string> {
@@ -225,6 +249,52 @@ test('successful launch cleanup remains idempotent and reaps the child before re
     rmSync(fake.root, { recursive: true, force: true });
   }
 });
+
+test.skipIf(process.platform === 'win32')(
+  'successful close terminates the app-server process group, including spawned descendants',
+  async () => {
+    const fake = makeFakeCodex('success-with-descendant');
+    try {
+      const launched = await CodexCwdEvidence.launch(fake.command, 250);
+      const record = JSON.parse(readFileSync(fake.marker, 'utf8')) as {
+        pid: number;
+        descendantPid: number;
+        root: string;
+      };
+      expect(processExists(record.pid)).toBe(true);
+      expect(processExists(record.descendantPid)).toBe(true);
+
+      await launched.close();
+
+      expect(await waitForProcessExit(record.pid)).toBe(true);
+      expect(await waitForProcessExit(record.descendantPid)).toBe(true);
+      expect(existsSync(record.root)).toBe(false);
+    } finally {
+      rmSync(fake.root, { recursive: true, force: true });
+    }
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'failed initialize terminates spawned descendants before removing the harness root',
+  async () => {
+    const fake = makeFakeCodex('timeout-with-descendant');
+    try {
+      const error = await captureLaunchFailure(fake.command, 75);
+      expect(error.message).toContain('initialize timed out');
+      const record = JSON.parse(readFileSync(fake.marker, 'utf8')) as {
+        pid: number;
+        descendantPid: number;
+        root: string;
+      };
+      expect(await waitForProcessExit(record.pid)).toBe(true);
+      expect(await waitForProcessExit(record.descendantPid)).toBe(true);
+      expect(existsSync(record.root)).toBe(false);
+    } finally {
+      rmSync(fake.root, { recursive: true, force: true });
+    }
+  },
+);
 
 describe.skipIf(!supported)('black-box CWD evidence — real codex app-server', () => {
   test(

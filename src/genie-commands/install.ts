@@ -184,13 +184,12 @@ function resolveDeliveryChannelForInstall(): DeliveryEvidenceChannel {
  * without a held lease is an internal fail-closed error.
  */
 async function finalizeInstallDeliveryLifecycle(
-  lease: HeldLifecycleLease | null,
+  lease: HeldLifecycleLease,
   target: CodexInstallTarget | null,
   deliveryChannel: DeliveryEvidenceChannel,
   repairDelivery: InstallDeliveryRepair,
 ): Promise<AlreadyCurrentRepairDirective | null> {
   if (target === null) return null;
-  if (lease === null) return { action: 'failed', detail: 'Codex delivery authentication lacked the lifecycle lease' };
   const delivery = await repairDelivery(deliveryChannel, resolvePlatformId(), lease);
   if (delivery.action === 'failed' || delivery.action === 'busy' || delivery.action === 'route-upgrade')
     return delivery;
@@ -372,18 +371,14 @@ function runPermittedPostDeliveryIntegrations(
 }
 
 /**
- * Acquire the Codex lifecycle lease when Codex is in scope, or project the AC8
- * loser refusal. A claude/none install advances no Codex cache, so it takes no
- * lease (`lease: null`). On a busy lease another Codex lifecycle command (update/
- * setup/rollback) holds it: refuse before any plugin convergence — zero Codex
- * cache advance — with exit 2 and the codex-lifecycle-busy trailer
- * (deliveryComplete:false), and the caller returns immediately.
+ * Acquire the Codex lifecycle lease unconditionally, or project the AC8 loser
+ * refusal. The release payload always owns plugins/bin normalization even when
+ * runtime selection is `none` or `claude`, so selection never bypasses this
+ * inner lock. A busy holder refuses before the first payload mutation.
  */
 function acquireCodexLeaseOrRefuse(
-  selection: IntegrationSelection,
   acquire: CodexLifecycleLeaseAcquirer,
-): { refused: true } | { refused: false; lease: HeldLifecycleLease | null } {
-  if (!codexInScope(selection)) return { refused: false, lease: null };
+): { refused: true } | { refused: false; lease: HeldLifecycleLease } {
   const lease = acquire();
   if (!lease.ok) {
     console.log(new CodexLifecycleBusyError(lease.holderKind).message);
@@ -392,6 +387,36 @@ function acquireCodexLeaseOrRefuse(
     return { refused: true };
   }
   return { refused: false, lease };
+}
+
+/**
+ * Release in reverse acquisition order without letting an inner-release
+ * failure strand the outer lifecycle authority. Preserve the first cleanup
+ * failure; if both releases fail, report both instead of replacing either one.
+ */
+function releaseInstallLifecycleLeases(codexLease: HeldLifecycleLease | null, lifecycleLease: LifecycleLease): void {
+  let codexReleaseFailed = false;
+  let codexReleaseError: unknown;
+  try {
+    codexLease?.release();
+  } catch (error) {
+    codexReleaseFailed = true;
+    codexReleaseError = error;
+  }
+
+  try {
+    lifecycleLease.release();
+  } catch (lifecycleReleaseError) {
+    if (codexReleaseFailed) {
+      throw new AggregateError(
+        [codexReleaseError, lifecycleReleaseError],
+        'Codex and agent-sync lifecycle lease releases both failed',
+      );
+    }
+    throw lifecycleReleaseError;
+  }
+
+  if (codexReleaseFailed) throw codexReleaseError;
 }
 
 /**
@@ -425,12 +450,17 @@ export async function installCommand(
   // The Codex lifecycle lease (.codex-lifecycle.lock) coexists with the agent-sync
   // lease above (.agent-sync.lock): they guard different things and are always
   // acquired agent-sync-first (identically in `genie update`), so no lock-ordering
-  // hazard. Acquired below once the selection is known; released in the finally.
+  // hazard. It is unconditional because payload normalization owns plugin trees
+  // regardless of the selected runtime; released in the finally.
   let codexLease: HeldLifecycleLease | null = null;
   try {
-    // Canonical payload staging is delivery-owned and may finish before the
-    // Codex record exists. No integration consent, legacy cache cleanup, plugin
-    // command, role write, or agent sync may happen until authentication below.
+    const gate = acquireCodexLeaseOrRefuse(acquireCodexLease);
+    if (gate.refused) return;
+    codexLease = gate.lease;
+    codexLease.assertOperation(codexLease.operationId);
+
+    // Both lifecycle locks are now held before canonical payload normalization,
+    // VERSION publication, delivery repair, or any later finisher.
     const normalized = normalizeLayout(GENIE_HOME);
     if (normalized !== undefined) {
       for (const outcome of normalized) printAuxiliaryOutcome(outcome);
@@ -440,9 +470,6 @@ export async function installCommand(
       }
     }
     const codexTarget = classifyCodexInstall(selection);
-    const gate = acquireCodexLeaseOrRefuse(selection, acquireCodexLease);
-    if (gate.refused) return; // exit 2 codex-lifecycle-busy already projected; zero mutation.
-    codexLease = gate.lease;
     const delivery = await finalizeInstallDeliveryLifecycle(codexLease, codexTarget, deliveryChannel, repairDelivery);
     // Failed, busy, or advanced authentication is terminal before every
     // activation-owned or integration-owned finisher. An advanced channel must
@@ -472,9 +499,9 @@ export async function installCommand(
     if (projectInstallDeliveryOutcome(delivery, actionRequired)) return;
   } finally {
     // Release the Codex lifecycle lease (if held) before the agent-sync lease,
-    // the reverse of the agent-sync-first acquisition order.
-    codexLease?.release();
-    lease.release();
+    // the reverse of the agent-sync-first acquisition order. A failed inner
+    // release must never strand the outer authority.
+    releaseInstallLifecycleLeases(codexLease, lease);
   }
 }
 

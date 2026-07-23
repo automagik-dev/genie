@@ -1,13 +1,13 @@
 /**
  * Project-scoped MCP lifecycle for Codex, Claude Code, and Warp.
  *
- * Codex has two possible routes to Genie's stdio MCP server:
- *   1. the enabled `genie@automagik` plugin; or
- *   2. a marker-owned `<worktree>/.codex/config.toml` fallback.
+ * Codex has one supported route to Genie's stdio MCP server: the marker-owned
+ * `<worktree>/.codex/config.toml` entry. The enabled `genie@automagik` plugin
+ * deliberately declares no MCP server.
  *
- * This module is the sole owner of choosing between them. It deliberately
- * treats disabled, unknown, malformed, and timed-out plugin state as
- * ineffective and keeps an absolute-command fallback in those cases.
+ * This module is the sole owner of reconciling and inspecting that route. Its
+ * legacy route-classification helpers remain fail-closed for older installed
+ * payloads, but production init/setup always retain the stable absolute facade.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -422,8 +422,8 @@ export function resolveGitWorktreeRoot(
 /**
  * Verify the exact active plugin MCP indirection plus the only binary the
  * plugin-local launcher is permitted to execute. This is a read-only check;
- * enabled metadata or a healthy source bundle never removes the absolute
- * project fallback.
+ * enabled metadata or a healthy source bundle never replaces the absolute
+ * project route.
  */
 export function inspectCodexPluginMcpUsability(options: CodexPluginMcpUsabilityOptions = {}): CodexPluginMcpUsability {
   const pluginRoot = options.pluginRoot;
