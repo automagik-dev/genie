@@ -31,7 +31,7 @@
 
 import { createHash } from 'node:crypto';
 import { type Stats, lstatSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { parseReleaseVersion, stripControl } from './codex-release-version.js';
 import { type CommandResult, parseCodexPluginState } from './runtime-integrations.js';
 
@@ -305,27 +305,25 @@ export function projectHostQuery(observation: CodexHostObservation): HostQueryPr
 export type DeliveryAssessment = 'matching' | 'absent' | 'invalid' | 'mismatch';
 
 /**
- * The rich, attestation-bound delivery record. `targetVersion`,
- * `canonicalPayloadSha256`, `channel`, and `deliveryId` are the core bindings a
- * legacy minimal record also carries; the remaining fields are the immutable
- * attestation bindings Group D publishes (platform triple, release tag/name,
- * fetched manifest digest, the computed & authenticated artifact digest, the
- * installed binary digest, and the delivery root). All present fields are
- * validated; the assessment compares them to the activation intent.
+ * The authenticated delivery record. Every field is mandatory: a legacy
+ * minimal/core-only record is structurally invalid and can never authorize
+ * activation.
  */
 export interface AuthenticatedDeliveryRecord {
   targetVersion: string;
   canonicalPayloadSha256: string;
   channel: string;
   deliveryId: string;
-  platformTriple?: string;
-  releaseTag?: string;
-  releaseName?: string;
-  releaseManifestSha256?: string;
-  artifactSha256?: string;
-  installedBinarySha256?: string;
-  deliveryRoot?: string;
-  deliveredAt?: string;
+  evidenceDigest: string;
+  platformId: string;
+  platformTriple: string;
+  releaseTag: string;
+  releaseName: string;
+  releaseManifestSha256: string;
+  artifactSha256: string;
+  installedBinarySha256: string;
+  deliveryRoot: string;
+  deliveredAt: string;
 }
 
 /** The read-state of the on-disk delivery record (mirrors the activation snapshot's delivery fact). */
@@ -334,25 +332,23 @@ export type DeliveryRecordReadState =
   | { status: 'invalid'; detail: string }
   | { status: 'present'; record: AuthenticatedDeliveryRecord };
 
-/**
- * What the CURRENT activation intent expects the record to bind to. `targetVersion`
- * and `canonicalPayloadSha256` are always known at activation; every other field
- * is checked only when the intent supplies it (so the inner guard can bind the
- * core today while Group D/E bind the full attestation surface later).
- */
+/** The complete authenticated tuple trusted by the current activation request. */
 export interface ActivationDeliveryExpectation {
   targetVersion: string;
   canonicalPayloadSha256: string;
-  channel?: string;
+  channel: string;
   /** Downgrade binding: the record's `deliveryId` must equal the consumed receipt id. */
-  deliveryId?: string;
-  platformTriple?: string;
-  releaseTag?: string;
-  releaseName?: string;
-  releaseManifestSha256?: string;
-  artifactSha256?: string;
-  installedBinarySha256?: string;
-  deliveryRoot?: string;
+  deliveryId: string;
+  evidenceDigest: string;
+  platformId: string;
+  platformTriple: string;
+  releaseTag: string;
+  releaseName: string;
+  releaseManifestSha256: string;
+  artifactSha256: string;
+  installedBinarySha256: string;
+  deliveryRoot: string;
+  deliveredAt: string;
 }
 
 /**
@@ -372,20 +368,33 @@ export function assessAuthenticatedDelivery(
   return matchesExpectation(record, expectation) ? 'matching' : 'mismatch';
 }
 
-/** Every present field must satisfy its grammar/hex shape; a malformed record is `invalid`, never `mismatch`. */
+/** Every field is mandatory and shape-consistent; malformed/legacy records are `invalid`. */
 function isStructurallyValidRecord(record: AuthenticatedDeliveryRecord): boolean {
-  if (parseReleaseVersion(record.targetVersion) === null) return false;
+  const version = parseReleaseVersion(record.targetVersion);
+  if (version === null) return false;
   if (!HEX_256_RE.test(record.canonicalPayloadSha256)) return false;
   if (!HEX_128_RE.test(record.deliveryId)) return false;
+  if (!HEX_256_RE.test(record.evidenceDigest)) return false;
   if (typeof record.channel !== 'string' || record.channel.length === 0 || record.channel.length > 128) return false;
-  if (record.platformTriple !== undefined && !PLATFORM_TRIPLE_RE.test(record.platformTriple)) return false;
+  if (typeof record.platformId !== 'string' || record.platformId.length === 0 || record.platformId.length > 64)
+    return false;
+  if (typeof record.platformTriple !== 'string' || !PLATFORM_TRIPLE_RE.test(record.platformTriple)) return false;
   for (const digest of [record.releaseManifestSha256, record.artifactSha256, record.installedBinarySha256]) {
-    if (digest !== undefined && !HEX_256_RE.test(digest)) return false;
+    if (!HEX_256_RE.test(digest)) return false;
   }
+  if (typeof record.releaseTag !== 'string' || record.releaseTag !== `v${version.canonical}`) return false;
+  if (
+    typeof record.releaseName !== 'string' ||
+    !record.releaseName.startsWith(`genie-${version.canonical}-`) ||
+    !record.releaseName.endsWith('.tar.gz')
+  )
+    return false;
+  if (typeof record.deliveryRoot !== 'string' || !isAbsolute(record.deliveryRoot)) return false;
+  if (typeof record.deliveredAt !== 'string' || !Number.isFinite(Date.parse(record.deliveredAt))) return false;
   return true;
 }
 
-/** Compare every field the expectation binds; a missing-on-record expected field is a mismatch. */
+/** Compare every field in the immutable authenticated tuple. */
 function matchesExpectation(record: AuthenticatedDeliveryRecord, expectation: ActivationDeliveryExpectation): boolean {
   const recordVersion = parseReleaseVersion(record.targetVersion);
   const expectVersion = parseReleaseVersion(expectation.targetVersion);
@@ -394,22 +403,19 @@ function matchesExpectation(record: AuthenticatedDeliveryRecord, expectation: Ac
   }
   if (record.canonicalPayloadSha256 !== expectation.canonicalPayloadSha256) return false;
   return (
-    fieldMatches(record.channel, expectation.channel) &&
-    fieldMatches(record.deliveryId, expectation.deliveryId) &&
-    fieldMatches(record.platformTriple, expectation.platformTriple) &&
-    fieldMatches(record.releaseTag, expectation.releaseTag) &&
-    fieldMatches(record.releaseName, expectation.releaseName) &&
-    fieldMatches(record.releaseManifestSha256, expectation.releaseManifestSha256) &&
-    fieldMatches(record.artifactSha256, expectation.artifactSha256) &&
-    fieldMatches(record.installedBinarySha256, expectation.installedBinarySha256) &&
-    fieldMatches(record.deliveryRoot, expectation.deliveryRoot)
+    record.channel === expectation.channel &&
+    record.deliveryId === expectation.deliveryId &&
+    record.evidenceDigest === expectation.evidenceDigest &&
+    record.platformId === expectation.platformId &&
+    record.platformTriple === expectation.platformTriple &&
+    record.releaseTag === expectation.releaseTag &&
+    record.releaseName === expectation.releaseName &&
+    record.releaseManifestSha256 === expectation.releaseManifestSha256 &&
+    record.artifactSha256 === expectation.artifactSha256 &&
+    record.installedBinarySha256 === expectation.installedBinarySha256 &&
+    record.deliveryRoot === expectation.deliveryRoot &&
+    record.deliveredAt === expectation.deliveredAt
   );
-}
-
-/** A field the intent does not bind is not checked; a bound field must be present and exactly equal. */
-function fieldMatches(recordValue: string | undefined, expected: string | undefined): boolean {
-  if (expected === undefined) return true;
-  return recordValue === expected;
 }
 
 // ============================================================================

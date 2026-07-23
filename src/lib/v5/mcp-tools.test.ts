@@ -13,13 +13,14 @@
  * against actual `git rev-parse` behavior, not mocks.
  */
 
+import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, linkSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { openDb } from './genie-db.js';
-import { MCP_TOOLS, openReadonlyDb, resolveProjectContext } from './mcp-tools.js';
+import { MCP_TOOLS, openReadonlyDb, readonlyDatabaseHandleMatchesPath, resolveProjectContext } from './mcp-tools.js';
 import { createBoard, createTask } from './task-state.js';
 
 let base: string;
@@ -168,6 +169,61 @@ describe('resolveProjectContext: fail-closed states', () => {
     expect(ctx.detail).toContain('.genie/genie.db');
   });
 
+  test('a .genie symlink to another repository with a valid database is rejected', () => {
+    const repo = initRepo(join(base, 'repo'));
+    const other = initRepo(join(base, 'other'));
+    seedDb(other);
+    symlinkSync(join(other, '.genie'), join(repo, '.genie'), 'dir');
+
+    const ctx = resolveProjectContext(repo);
+    expect(ctx.kind).toBe('project-database-unavailable');
+    if (ctx.kind === 'ok') throw new Error('expected error');
+    expect(ctx.detail).toContain('physical directory');
+    expect(openReadonlyDb(repo)).toBeNull();
+  });
+
+  test('a genie.db symlink to another repository valid database is rejected', () => {
+    const repo = initRepo(join(base, 'repo'));
+    const other = initRepo(join(base, 'other'));
+    seedDb(other);
+    mkdirSync(join(repo, '.genie'));
+    symlinkSync(join(other, '.genie', 'genie.db'), join(repo, '.genie', 'genie.db'), 'file');
+
+    const ctx = resolveProjectContext(repo);
+    expect(ctx.kind).toBe('project-database-unavailable');
+    if (ctx.kind === 'ok') throw new Error('expected error');
+    expect(ctx.detail).toContain('physical regular file');
+    expect(openReadonlyDb(repo)).toBeNull();
+  });
+
+  test('a hardlinked genie.db physical alias is rejected', () => {
+    const repo = initRepo(join(base, 'repo'));
+    const other = initRepo(join(base, 'other'));
+    seedDb(other);
+    mkdirSync(join(repo, '.genie'));
+    linkSync(join(other, '.genie', 'genie.db'), join(repo, '.genie', 'genie.db'));
+
+    const ctx = resolveProjectContext(repo);
+    expect(ctx.kind).toBe('project-database-unavailable');
+    if (ctx.kind === 'ok') throw new Error('expected error');
+    expect(ctx.detail).toContain('hardlink');
+    expect(openReadonlyDb(repo)).toBeNull();
+  });
+
+  test('an exact validated binding refuses a later genie.db substitution with another valid database', () => {
+    const repo = initRepo(join(base, 'repo'));
+    const other = initRepo(join(base, 'other'));
+    seedDb(repo);
+    seedDb(other);
+    const ctx = resolveProjectContext(repo);
+    if (ctx.kind !== 'ok' || ctx.databaseBinding === undefined) throw new Error('expected bound database');
+
+    rmSync(ctx.dbPath);
+    symlinkSync(join(other, '.genie', 'genie.db'), ctx.dbPath, 'file');
+
+    expect(openReadonlyDb(ctx.databaseBinding)).toBeNull();
+  });
+
   test('an uninitialized nested repository fails at its own boundary, never reading the outer db', () => {
     const outer = initRepo(join(base, 'outer'));
     seedDb(outer); // outer HAS a db — the nested boundary must not fall through to it
@@ -216,6 +272,82 @@ describe('resolveProjectContext: fail-closed states', () => {
     expect(ctx.kind).toBe('unsupported-project-layout');
     expect(ctx.dbPath).toBeUndefined();
   });
+});
+
+// ============================================================================
+// Opened-handle identity — SQLite VFS binding closes the swap/restore window
+// ============================================================================
+
+describe('openReadonlyDb: exact opened handle', () => {
+  test('HAS_MOVED accepts only a zero SQLite result with a zero moved flag', () => {
+    const handle = (result: number, moved: number, throws = false): Pick<Database, 'fileControl'> => ({
+      fileControl: ((_op: number, arg?: ArrayBufferView | number) => {
+        if (throws) throw new Error('fixture unsupported VFS');
+        if (arg instanceof Int32Array) arg[0] = moved;
+        return result;
+      }) as Database['fileControl'],
+    });
+
+    expect(readonlyDatabaseHandleMatchesPath(handle(0, 0))).toBe(true);
+    expect(readonlyDatabaseHandleMatchesPath(handle(0, 1))).toBe(false);
+    expect(readonlyDatabaseHandleMatchesPath(handle(12, 0))).toBe(false);
+    expect(readonlyDatabaseHandleMatchesPath(handle(0, 0, true))).toBe(false);
+  });
+
+  test('an injected moved-handle refusal closes the opened database', () => {
+    const repo = initRepo(join(base, 'repo'));
+    seedDb(repo);
+    const ctx = resolveProjectContext(repo);
+    if (ctx.kind !== 'ok' || ctx.databaseBinding === undefined) throw new Error('expected bound database');
+    let closed = false;
+    const fakeDb = {
+      close: () => {
+        closed = true;
+      },
+    } as Database;
+
+    const opened = openReadonlyDb(ctx.databaseBinding, {
+      openDatabase: () => fakeDb,
+      verifyOpenedHandle: () => false,
+    });
+
+    expect(opened).toBeNull();
+    expect(closed).toBe(true);
+  });
+
+  test.skipIf(process.platform === 'win32')(
+    'a real A→B constructor swap then B→A restore is rejected by the opened VFS handle',
+    () => {
+      const repo = initRepo(join(base, 'repo'));
+      const other = initRepo(join(base, 'other'));
+      seedDb(repo);
+      seedDb(other);
+      const ctx = resolveProjectContext(repo);
+      if (ctx.kind !== 'ok' || ctx.databaseBinding === undefined) throw new Error('expected bound database');
+      const otherDbPath = join(other, '.genie', 'genie.db');
+      const parkedOriginal = join(base, 'parked-original.db');
+
+      const raced = openReadonlyDb(ctx.databaseBinding, {
+        openDatabase: (path) => {
+          renameSync(path, parkedOriginal);
+          renameSync(otherDbPath, path);
+          let opened: Database;
+          try {
+            opened = new Database(path, { readonly: true });
+          } finally {
+            renameSync(path, otherDbPath);
+            renameSync(parkedOriginal, path);
+          }
+          return opened;
+        },
+      });
+
+      expect(raced).toBeNull();
+      const restored = openReadonlyDb(ctx.databaseBinding);
+      expect(restored).not.toBeNull();
+      restored?.close();
+    },
+  );
 });
 
 // ============================================================================

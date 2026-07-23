@@ -1,8 +1,9 @@
 /**
  * Codex plugin activation protocol — the pure, fail-closed core.
  *
- * `genie update` can advance and prune a versioned Codex plugin cache while an
- * open Codex task still holds paths into the old generation. This module puts
+ * `genie update` can deliver a new canonical generation while an open Codex
+ * task still holds paths into the active old generation. A later authenticated
+ * `genie setup --codex` owns cache activation and pruning. This module puts
  * every activation-capable entry path behind three explicit layers:
  *
  *   1. `observeCodexActivation()` performs only bounded reads and returns a
@@ -37,6 +38,15 @@ import {
   renameNonOverwriting,
   unlinkWithParentFsync,
 } from './codex-activation-persistence.js';
+import {
+  type DeliveryEvidenceVerificationDependencies,
+  type VerifiedDeliveryEvidence,
+  type VerifiedDeliveryEvidenceFacts,
+  deriveDeliveryId,
+  observePersistedDeliveryEvidence,
+  persistVerifiedDeliveryEvidence,
+  verifiedDeliveryEvidenceFacts,
+} from './codex-delivery-evidence.js';
 // Group B (host-observation-attestation): the single pure delivery-attestation
 // classifier + its typed result. Imported here so the inner activation guard
 // (`beginActivationImpl`) applies exactly the same assessment the standalone
@@ -57,7 +67,13 @@ import {
   stripControl,
 } from './codex-release-version.js';
 import { resolveCodexDir, resolveGenieHome } from './genie-home.js';
-import { type CommandRunner, parseCodexPluginState, runBoundedIntegrationCommand } from './runtime-integrations.js';
+import {
+  type CommandRunner,
+  type DeliveryRootConsumer,
+  parseCodexPluginState,
+  runBoundedIntegrationCommand,
+  runDeliveryRootConsumer,
+} from './runtime-integrations.js';
 
 // ============================================================================
 // Release-version grammar and direction
@@ -126,34 +142,31 @@ export interface DowngradeReceipt {
 }
 
 export interface DeliveryRecord {
-  schemaVersion: 1;
+  schemaVersion: 2;
   /** The 128-bit delivery transaction id; a downgrade receipt copies it as its receiptId. */
   deliveryId: string;
   targetVersion: string;
   canonicalPayloadSha256: string;
   channel: string;
   deliveredAt: string;
-  // Group D immutable attestation bindings (deliverables 1+2). All optional and
-  // additive: an ordinary pending publish omits them (legacy 6-field record); a
-  // same-version repair pins and persists the full authenticated tuple. Present
-  // fields are structurally validated on read so a persisted authenticated record
-  // round-trips as `present`, not `invalid`. Group B's `AuthenticatedDeliveryRecord`
-  // view already declares these, so the assessment can bind them when an
-  // expectation supplies them.
+  /** Digest of the exact descriptor/bundle/manifest evidence pack. */
+  evidenceDigest: string;
+  /** Release asset platform identity (`linux-x64-glibc`, etc.). */
+  platformId: string;
   /** os-arch platform triple (`process.platform-process.arch`), matches PLATFORM_TRIPLE_RE. */
-  platformTriple?: string;
+  platformTriple: string;
   /** Release tag, e.g. `v5.260722.11`. */
-  releaseTag?: string;
+  releaseTag: string;
   /** Release/asset name pinned before download. */
-  releaseName?: string;
+  releaseName: string;
   /** SHA-256 of the fetched release-manifest bytes (NOT an artifact digest source). */
-  releaseManifestSha256?: string;
+  releaseManifestSha256: string;
   /** SHA-256 computed over the downloaded asset AFTER download and authenticated via attestation/cosign. */
-  artifactSha256?: string;
+  artifactSha256: string;
   /** SHA-256 of the installed binary the candidate was proven against. */
-  installedBinarySha256?: string;
+  installedBinarySha256: string;
   /** Absolute canonical delivery root the payload was proven against. */
-  deliveryRoot?: string;
+  deliveryRoot: string;
 }
 
 export interface ReceiptTombstone {
@@ -250,7 +263,8 @@ const DELIVERY_KEYS: ReadonlySet<string> = new Set([
   'canonicalPayloadSha256',
   'channel',
   'deliveredAt',
-  // Group D optional attestation bindings.
+  'evidenceDigest',
+  'platformId',
   'platformTriple',
   'releaseTag',
   'releaseName',
@@ -271,76 +285,60 @@ export function parseDeliveryRecordStructure(content: string): DeliveryRecord | 
   if (!isPlainObject(parsed)) return null;
   if (Object.keys(parsed).some((key) => !DELIVERY_KEYS.has(key))) return null;
   const record = parsed;
-  if (record.schemaVersion !== 1) return null;
+  // Schema 1 is deliberately legacy-invalid: it has no signed evidence-pack
+  // binding and can never authorize activation.
+  if (record.schemaVersion !== 2) return null;
   if (!isHex128(record.deliveryId)) return null;
   if (parseReleaseVersion(record.targetVersion) === null) return null;
   if (!isHex256(record.canonicalPayloadSha256)) return null;
   if (typeof record.channel !== 'string' || record.channel.length === 0 || record.channel.length > 128) return null;
   if (typeof record.deliveredAt !== 'string' || record.deliveredAt.length === 0) return null;
+  if (!isHex256(record.evidenceDigest)) return null;
+  if (!isBoundedText(record.platformId)) return null;
   if (!attestationFieldsValid(record)) return null;
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     deliveryId: record.deliveryId as string,
     targetVersion: record.targetVersion as string,
     canonicalPayloadSha256: record.canonicalPayloadSha256 as string,
     channel: record.channel as string,
     deliveredAt: record.deliveredAt as string,
+    evidenceDigest: record.evidenceDigest as string,
+    platformId: record.platformId as string,
     ...pickAttestationFields(record),
   };
 }
 
-/** Every PRESENT attestation field must satisfy its shape; absent fields are legal (legacy record). */
+/** Every authenticated-delivery binding is mandatory and shape-valid. */
 function attestationFieldsValid(record: Record<string, unknown>): boolean {
-  if (
-    record.platformTriple !== undefined &&
-    !(typeof record.platformTriple === 'string' && PLATFORM_TRIPLE_RE.test(record.platformTriple))
-  ) {
-    return false;
-  }
-  if (record.releaseTag !== undefined && !isBoundedText(record.releaseTag)) return false;
-  if (record.releaseName !== undefined && !isBoundedText(record.releaseName)) return false;
-  if (record.deliveryRoot !== undefined && !isBoundedText(record.deliveryRoot)) return false;
+  if (!(typeof record.platformTriple === 'string' && PLATFORM_TRIPLE_RE.test(record.platformTriple))) return false;
+  if (!isBoundedText(record.releaseTag)) return false;
+  if (!isBoundedText(record.releaseName)) return false;
+  if (!isBoundedText(record.deliveryRoot) || !isAbsolute(record.deliveryRoot)) return false;
   for (const key of ['releaseManifestSha256', 'artifactSha256', 'installedBinarySha256'] as const) {
-    if (record[key] !== undefined && !isHex256(record[key])) return false;
+    if (!isHex256(record[key])) return false;
   }
+  if (record.releaseTag !== `v${record.targetVersion}`) return false;
+  if (
+    typeof record.releaseName !== 'string' ||
+    !record.releaseName.startsWith(`genie-${record.targetVersion}-`) ||
+    !record.releaseName.endsWith('.tar.gz')
+  )
+    return false;
+  if (typeof record.deliveredAt !== 'string' || !Number.isFinite(Date.parse(record.deliveredAt))) return false;
   return true;
 }
 
-/** Copy only the present, already-validated attestation fields onto the parsed record. */
-function pickAttestationFields(record: Record<string, unknown>): Partial<DeliveryRecord> {
-  const out: Partial<DeliveryRecord> = {};
-  if (record.platformTriple !== undefined) out.platformTriple = record.platformTriple as string;
-  if (record.releaseTag !== undefined) out.releaseTag = record.releaseTag as string;
-  if (record.releaseName !== undefined) out.releaseName = record.releaseName as string;
-  if (record.releaseManifestSha256 !== undefined) out.releaseManifestSha256 = record.releaseManifestSha256 as string;
-  if (record.artifactSha256 !== undefined) out.artifactSha256 = record.artifactSha256 as string;
-  if (record.installedBinarySha256 !== undefined) out.installedBinarySha256 = record.installedBinarySha256 as string;
-  if (record.deliveryRoot !== undefined) out.deliveryRoot = record.deliveryRoot as string;
-  return out;
-}
-
-/**
- * Validate a publish-time attestation binding and return the fields, or throw so
- * a malformed binding is rejected before it is written. Returns an empty object
- * when no binding is supplied (ordinary pending publish keeps the legacy shape).
- */
-function bindAttestation(binding: DeliveryAttestationBinding | undefined): Partial<DeliveryRecord> {
-  if (binding === undefined) return {};
-  if (!PLATFORM_TRIPLE_RE.test(binding.platformTriple)) throw new Error('attestation platformTriple is malformed');
-  if (!isBoundedText(binding.releaseTag)) throw new Error('attestation releaseTag is malformed');
-  if (!isBoundedText(binding.releaseName)) throw new Error('attestation releaseName is malformed');
-  if (!isBoundedText(binding.deliveryRoot)) throw new Error('attestation deliveryRoot is malformed');
-  if (!isHex256(binding.releaseManifestSha256)) throw new Error('attestation releaseManifestSha256 is malformed');
-  if (!isHex256(binding.artifactSha256)) throw new Error('attestation artifactSha256 is malformed');
-  if (!isHex256(binding.installedBinarySha256)) throw new Error('attestation installedBinarySha256 is malformed');
+/** Copy the already-validated mandatory attestation fields onto the parsed record. */
+function pickAttestationFields(record: Record<string, unknown>): DeliveryAttestationFields {
   return {
-    platformTriple: binding.platformTriple,
-    releaseTag: binding.releaseTag,
-    releaseName: binding.releaseName,
-    releaseManifestSha256: binding.releaseManifestSha256,
-    artifactSha256: binding.artifactSha256,
-    installedBinarySha256: binding.installedBinarySha256,
-    deliveryRoot: binding.deliveryRoot,
+    platformTriple: record.platformTriple as string,
+    releaseTag: record.releaseTag as string,
+    releaseName: record.releaseName as string,
+    releaseManifestSha256: record.releaseManifestSha256 as string,
+    artifactSha256: record.artifactSha256 as string,
+    installedBinarySha256: record.installedBinarySha256 as string,
+    deliveryRoot: record.deliveryRoot as string,
   };
 }
 
@@ -381,7 +379,15 @@ export type RegistrationFact =
 export type QueryFact = { status: 'failed'; detail: string } | { status: 'ok'; registration: RegistrationFact };
 
 export type CanonicalFact =
-  | { status: 'ok'; version: ParsedReleaseVersion; digest: string; identity: string }
+  | {
+      status: 'ok';
+      version: ParsedReleaseVersion;
+      digest: string;
+      identity: string;
+      deliveryRoot: string;
+      installedBinarySha256: string;
+      platformTriple: string;
+    }
   | { status: 'error'; detail: string };
 
 export type PhysicalCacheFact =
@@ -399,7 +405,7 @@ export type ReceiptFact =
 export type DeliveryFact =
   | { status: 'absent' }
   | { status: 'invalid'; detail: string }
-  | { status: 'present'; record: DeliveryRecord };
+  | { status: 'present'; record: DeliveryRecord; evidence: VerifiedDeliveryEvidenceFacts };
 
 export type IntentFact =
   | { status: 'absent' }
@@ -685,7 +691,13 @@ const RETIRE_RECOVERY = 'retire tasks → genie setup --codex → /hooks → new
 export function describeState(state: CodexActivationState): StateDescriptor {
   switch (state.kind) {
     case 'query-failed':
-      return desc('query-failed', 1, 'none', true, 'Indeterminate; repair the Codex CLI/query, then rerun doctor');
+      return desc(
+        'query-failed',
+        1,
+        'none',
+        true,
+        'Indeterminate; upgrade or repair the Codex CLI/query, then rerun doctor',
+      );
     case 'registration-version-invalid':
       return desc(
         'registration-version-invalid',
@@ -901,10 +913,32 @@ export interface ActivationRequestFingerprint {
   observedTarget: string | null;
   canonicalPayloadSha256: string | null;
   installedDeliveryDigest: string | null;
+  deliveryEvidenceSchemaVersion: number | null;
+  deliveryRepository: string | null;
+  deliveryEvidenceDigest: string | null;
   deliveryId: string | null;
+  deliveryTargetVersion: string | null;
+  deliveryCanonicalPayloadSha256: string | null;
+  deliveryChannel: string | null;
+  deliveryPlatformId: string | null;
+  deliveryPlatformTriple: string | null;
+  deliveryReleaseTag: string | null;
+  deliveryReleaseName: string | null;
+  deliveryManifestSha256: string | null;
+  deliveryArtifactSha256: string | null;
+  deliveryInstalledBinarySha256: string | null;
+  deliveryRoot: string | null;
+  deliveryPublishedAt: string | null;
+  deliverySourceSha: string | null;
+  deliverySourceBranch: string | null;
+  deliverySourceCiRunId: string | null;
+  deliveryControlSha: string | null;
+  deliveryDigestAlgorithm: string | null;
   registrationIdentity: string | null;
   cacheIdentity: string | null;
   enabled: boolean | null;
+  /** Digest of the exact valid journal bytes, binding every durable intent field. */
+  intentContentSha256: string | null;
   intentPhase: IntentPhase | null;
   intentId: string | null;
   receiptId: string | null;
@@ -916,14 +950,116 @@ const FINGERPRINT_FIELDS: readonly (keyof ActivationRequestFingerprint)[] = [
   'observedTarget',
   'canonicalPayloadSha256',
   'installedDeliveryDigest',
+  'deliveryEvidenceSchemaVersion',
+  'deliveryRepository',
+  'deliveryEvidenceDigest',
   'deliveryId',
+  'deliveryTargetVersion',
+  'deliveryCanonicalPayloadSha256',
+  'deliveryChannel',
+  'deliveryPlatformId',
+  'deliveryPlatformTriple',
+  'deliveryReleaseTag',
+  'deliveryReleaseName',
+  'deliveryManifestSha256',
+  'deliveryArtifactSha256',
+  'deliveryInstalledBinarySha256',
+  'deliveryRoot',
+  'deliveryPublishedAt',
+  'deliverySourceSha',
+  'deliverySourceBranch',
+  'deliverySourceCiRunId',
+  'deliveryControlSha',
+  'deliveryDigestAlgorithm',
   'registrationIdentity',
   'cacheIdentity',
   'enabled',
+  'intentContentSha256',
   'intentPhase',
   'intentId',
   'receiptId',
 ];
+
+type DeliveryFingerprintFields = Pick<
+  ActivationRequestFingerprint,
+  | 'deliveryEvidenceSchemaVersion'
+  | 'deliveryRepository'
+  | 'deliveryEvidenceDigest'
+  | 'deliveryId'
+  | 'deliveryTargetVersion'
+  | 'deliveryCanonicalPayloadSha256'
+  | 'deliveryChannel'
+  | 'deliveryPlatformId'
+  | 'deliveryPlatformTriple'
+  | 'deliveryReleaseTag'
+  | 'deliveryReleaseName'
+  | 'deliveryManifestSha256'
+  | 'deliveryArtifactSha256'
+  | 'deliveryInstalledBinarySha256'
+  | 'deliveryRoot'
+  | 'deliveryPublishedAt'
+  | 'deliverySourceSha'
+  | 'deliverySourceBranch'
+  | 'deliverySourceCiRunId'
+  | 'deliveryControlSha'
+  | 'deliveryDigestAlgorithm'
+>;
+
+function deliveryFingerprintFields(
+  snapshot: CodexActivationSnapshot,
+  canonical: Extract<CanonicalFact, { status: 'ok' }> | null,
+): DeliveryFingerprintFields {
+  if (snapshot.delivery.status !== 'present') {
+    return {
+      deliveryEvidenceSchemaVersion: null,
+      deliveryRepository: null,
+      deliveryEvidenceDigest: null,
+      deliveryId: null,
+      deliveryTargetVersion: null,
+      deliveryCanonicalPayloadSha256: null,
+      deliveryChannel: null,
+      deliveryPlatformId: null,
+      deliveryPlatformTriple: null,
+      deliveryReleaseTag: null,
+      deliveryReleaseName: null,
+      deliveryManifestSha256: null,
+      deliveryArtifactSha256: null,
+      deliveryInstalledBinarySha256: null,
+      deliveryRoot: canonical?.deliveryRoot ?? null,
+      deliveryPublishedAt: null,
+      deliverySourceSha: null,
+      deliverySourceBranch: null,
+      deliverySourceCiRunId: null,
+      deliveryControlSha: null,
+      deliveryDigestAlgorithm: null,
+    };
+  }
+  const evidence = snapshot.delivery.evidence;
+  const descriptor = evidence.descriptor;
+  return {
+    deliveryEvidenceSchemaVersion: descriptor.schemaVersion,
+    deliveryRepository: descriptor.repository,
+    deliveryEvidenceDigest: evidence.evidenceDigest,
+    deliveryId: canonical === null ? null : deriveDeliveryId(evidence.evidenceDigest, canonical.deliveryRoot),
+    deliveryTargetVersion: descriptor.version,
+    deliveryCanonicalPayloadSha256: descriptor.canonicalPayloadSha256,
+    deliveryChannel: descriptor.channel,
+    deliveryPlatformId: descriptor.platformId,
+    deliveryPlatformTriple: descriptor.platformTriple,
+    deliveryReleaseTag: descriptor.releaseTag,
+    deliveryReleaseName: descriptor.releaseName,
+    deliveryManifestSha256: descriptor.releaseManifestSha256,
+    deliveryArtifactSha256: descriptor.artifactSha256,
+    deliveryInstalledBinarySha256: descriptor.installedBinarySha256,
+    deliveryRoot: canonical?.deliveryRoot ?? null,
+    deliveryPublishedAt: evidence.deliveredAt,
+    deliverySourceSha: descriptor.sourceSha,
+    deliverySourceBranch: descriptor.sourceBranch,
+    deliverySourceCiRunId: descriptor.sourceCiRunId,
+    deliveryControlSha: descriptor.controlSha,
+    deliveryDigestAlgorithm: descriptor.digestAlgorithm,
+  };
+}
 
 export function computeActivationFingerprint(snapshot: CodexActivationSnapshot): ActivationRequestFingerprint {
   const registration = registrationOf(snapshot);
@@ -937,10 +1073,11 @@ export function computeActivationFingerprint(snapshot: CodexActivationSnapshot):
     observedTarget: canonical ? canonical.version.canonical : null,
     canonicalPayloadSha256: canonical ? canonical.digest : null,
     installedDeliveryDigest: cache.kind === 'present' ? cache.digest : null,
-    deliveryId: snapshot.delivery.status === 'present' ? snapshot.delivery.record.deliveryId : null,
+    ...deliveryFingerprintFields(snapshot, canonical),
     registrationIdentity: cache.kind === 'present' ? cache.identity : null,
     cacheIdentity: family.status === 'present' ? family.identity : null,
     enabled: registration.present ? registration.enabled : null,
+    intentContentSha256: intent.status === 'valid' ? intent.contentSha256 : null,
     intentPhase: intent.status === 'valid' ? intent.intent.phase : null,
     intentId: intent.status === 'valid' ? intent.intent.refreshIntentId : null,
     receiptId: snapshot.receipt.status === 'present' ? snapshot.receipt.receipt.receiptId : null,
@@ -1119,6 +1256,8 @@ export interface ObserveOptions {
   /** TEST-ONLY canonical payload root override; production refuses caller/env roots. */
   canonicalRoot?: string;
   allowRootOverride?: boolean;
+  /** TEST-ONLY cryptographic seam; production always uses embedded offline trust material. */
+  deliveryEvidenceVerification?: DeliveryEvidenceVerificationDependencies;
   now?: () => Date;
 }
 
@@ -1134,7 +1273,7 @@ export function observeCodexActivation(options: ObserveOptions = {}): CodexActiv
   const after = witnessFamily(familyDir);
   const cache = observeCache(query, codexHome);
   const receipt = observeReceipt(genieHome);
-  const delivery = observeDelivery(genieHome);
+  const delivery = observeDelivery(genieHome, options.deliveryEvidenceVerification);
   const receiptConsumed = receipt.status === 'present' && isReceiptConsumed(genieHome, receipt.receipt.receiptId);
   const intent = observeIntent(genieHome);
   return {
@@ -1158,7 +1297,25 @@ function observeCanonical(options: ObserveOptions): CanonicalFact {
   if (tree.status !== 'ok') return { status: 'error', detail: tree.detail ?? `payload ${tree.status}` };
   const version = parseReleaseVersion(readTrimmed(join(rootResult.root, 'VERSION')));
   if (version === null) return { status: 'error', detail: 'canonical VERSION is missing or fails the release grammar' };
-  return { status: 'ok', version, digest: tree.digest ?? '', identity: tree.identity ?? '' };
+  const binaryPath = existsFile(join(rootResult.root, 'genie'))
+    ? join(rootResult.root, 'genie')
+    : join(rootResult.root, 'bin', 'genie');
+  const installedBinarySha256 = hashPhysicalFile(binaryPath);
+  if (installedBinarySha256 === undefined) {
+    return { status: 'error', detail: 'canonical installed binary is missing, unsafe, or unreadable' };
+  }
+  const deliveryRoot = safeRealpath(rootResult.root);
+  if (deliveryRoot === null)
+    return { status: 'error', detail: 'canonical delivery root cannot be resolved physically' };
+  return {
+    status: 'ok',
+    version,
+    digest: tree.digest ?? '',
+    identity: tree.identity ?? '',
+    deliveryRoot,
+    installedBinarySha256,
+    platformTriple: `${process.platform}-${process.arch}`,
+  };
 }
 
 /**
@@ -1297,12 +1454,20 @@ function observeReceipt(genieHome: string): ReceiptFact {
   return receipt ? { status: 'present', receipt } : { status: 'invalid', detail: 'receipt failed schema-1 validation' };
 }
 
-function observeDelivery(genieHome: string): DeliveryFact {
+function observeDelivery(genieHome: string, verification: DeliveryEvidenceVerificationDependencies = {}): DeliveryFact {
   const read = readBoundedRegularFile(deliveryRecordPath(genieHome), MAX_DELIVERY_BYTES);
   if (read.status === 'absent') return { status: 'absent' };
   if (read.status !== 'ok') return { status: 'invalid', detail: `delivery ${read.status}` };
   const record = parseDeliveryRecordStructure(read.content);
-  return record ? { status: 'present', record } : { status: 'invalid', detail: 'delivery failed schema-1 validation' };
+  if (record === null) return { status: 'invalid', detail: 'delivery failed schema-2 validation' };
+  const evidence = observePersistedDeliveryEvidence(genieHome, record.evidenceDigest, verification);
+  if (evidence.status === 'absent') {
+    return { status: 'invalid', detail: 'delivery evidence pack is absent' };
+  }
+  if (evidence.status === 'invalid') {
+    return { status: 'invalid', detail: `delivery evidence pack is invalid: ${evidence.detail}` };
+  }
+  return { status: 'present', record, evidence: evidence.facts };
 }
 
 function isReceiptConsumed(genieHome: string, receiptId: string): boolean {
@@ -1569,24 +1734,15 @@ export interface CodexActivationStoreOptions extends ObserveOptions {
 }
 
 export interface PublishDeliveryInput {
-  targetVersion: string;
-  canonicalPayloadSha256: string;
-  channel: string;
+  /** Opaque evidence minted only after complete offline signature/binding verification. */
+  evidence: VerifiedDeliveryEvidence;
+  /** Installed delivery root; publication canonicalizes and re-hashes it before writing. */
+  deliveryRoot: string;
   /** Present only for an explicit channel downgrade; writes the matching receipt. */
   downgradeFrom?: string;
-  deliveryId?: string;
-  now?: () => Date;
-  /**
-   * Group D's immutable attestation bindings (deliverables 1+2). Ordinary pending
-   * publishes omit them; a same-version repair pins and persists the full tuple.
-   * Each present value is structurally validated before it is written so a
-   * malformed binding is rejected at publish time rather than corrupting a record.
-   */
-  attestation?: DeliveryAttestationBinding;
 }
 
-/** The immutable attestation tuple a same-version repair persists into the delivery record. */
-export interface DeliveryAttestationBinding {
+interface DeliveryAttestationFields {
   platformTriple: string;
   releaseTag: string;
   releaseName: string;
@@ -1599,6 +1755,7 @@ export interface DeliveryAttestationBinding {
 export interface DeliveryRootOps {
   inventoryDigest(): string;
   deliveredVersion(): string;
+  consume<T>(consumer: DeliveryRootConsumer<T>): T;
 }
 
 export type BeginActivationResult =
@@ -1651,7 +1808,7 @@ export function openCodexActivationStore(options: CodexActivationStoreOptions = 
     observe,
     publishDelivery(lease, input) {
       lease.assertOperation(lease.operationId);
-      return publishDeliveryImpl(deliveryPath, receiptPath, input);
+      return publishDeliveryImpl(genieHome, deliveryPath, receiptPath, input);
     },
     withRevalidatedDeliveryRoot(lease, callback) {
       lease.assertOperation(lease.operationId);
@@ -1672,24 +1829,40 @@ export function openCodexActivationStore(options: CodexActivationStoreOptions = 
   };
 }
 
-function publishDeliveryImpl(deliveryPath: string, receiptPath: string, input: PublishDeliveryInput): DeliveryRecord {
-  const now = input.now ?? (() => new Date());
-  const deliveryId = input.deliveryId ?? mint128();
-  if (input.deliveryId !== undefined && !HEX_128_RE.test(input.deliveryId)) {
-    throw new Error('deliveryId must be 32 lowercase hex characters');
-  }
+function publishDeliveryImpl(
+  genieHome: string,
+  deliveryPath: string,
+  receiptPath: string,
+  input: PublishDeliveryInput,
+): DeliveryRecord {
+  const facts = verifiedDeliveryEvidenceFacts(input.evidence);
+  const descriptor = facts.descriptor;
+  const physicalDeliveryRoot = validatePublishedDeliveryRoot(input.deliveryRoot, facts);
+  const deliveryId = deriveDeliveryId(facts.evidenceDigest, physicalDeliveryRoot);
+
+  // Evidence is the durable prerequisite. The delivery record remains the last
+  // commit point, so no record can name bytes that publication did not persist.
+  persistVerifiedDeliveryEvidence(genieHome, input.evidence);
   const record: DeliveryRecord = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     deliveryId,
-    targetVersion: input.targetVersion,
-    canonicalPayloadSha256: input.canonicalPayloadSha256,
-    channel: input.channel,
-    deliveredAt: now().toISOString(),
-    ...bindAttestation(input.attestation),
+    targetVersion: descriptor.version,
+    canonicalPayloadSha256: descriptor.canonicalPayloadSha256,
+    channel: descriptor.channel,
+    deliveredAt: facts.deliveredAt,
+    evidenceDigest: facts.evidenceDigest,
+    platformId: descriptor.platformId,
+    platformTriple: descriptor.platformTriple,
+    releaseTag: descriptor.releaseTag,
+    releaseName: descriptor.releaseName,
+    releaseManifestSha256: descriptor.releaseManifestSha256,
+    artifactSha256: descriptor.artifactSha256,
+    installedBinarySha256: descriptor.installedBinarySha256,
+    deliveryRoot: physicalDeliveryRoot,
   };
   if (input.downgradeFrom !== undefined) {
     const from = parseReleaseVersion(input.downgradeFrom);
-    const target = parseReleaseVersion(input.targetVersion);
+    const target = parseReleaseVersion(descriptor.version);
     if (from === null || target === null || compareReleaseVersions(from, target) <= 0) {
       throw new Error('downgrade delivery requires from > target with valid release versions');
     }
@@ -1697,9 +1870,9 @@ function publishDeliveryImpl(deliveryPath: string, receiptPath: string, input: P
       schemaVersion: 1,
       receiptId: deliveryId,
       fromPluginVersion: input.downgradeFrom,
-      targetVersion: input.targetVersion,
-      canonicalPayloadSha256: input.canonicalPayloadSha256,
-      channel: input.channel,
+      targetVersion: descriptor.version,
+      canonicalPayloadSha256: descriptor.canonicalPayloadSha256,
+      channel: descriptor.channel,
     };
     atomicWriteFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, { backup: true });
   } else {
@@ -1710,40 +1883,209 @@ function publishDeliveryImpl(deliveryPath: string, receiptPath: string, input: P
   return record;
 }
 
+function validatePublishedDeliveryRoot(deliveryRoot: string, evidence: VerifiedDeliveryEvidenceFacts): string {
+  if (!isAbsolute(deliveryRoot)) throw new Error('delivery root must be absolute');
+  let physicalDeliveryRoot: string;
+  try {
+    physicalDeliveryRoot = realpathSync(deliveryRoot);
+  } catch (error) {
+    throw new Error(`delivery root cannot be resolved physically: ${errorText(error)}`);
+  }
+  const descriptor = evidence.descriptor;
+  const version = parseReleaseVersion(readTrimmed(join(physicalDeliveryRoot, 'VERSION')));
+  if (version?.canonical !== descriptor.version) throw new Error('delivery root VERSION does not match evidence');
+  const tree = scanPhysicalTree(join(physicalDeliveryRoot, 'plugins', 'genie'));
+  if (tree.status !== 'ok' || tree.digest !== descriptor.canonicalPayloadSha256) {
+    throw new Error('delivery root payload does not match evidence');
+  }
+  const binaryPath = existsFile(join(physicalDeliveryRoot, 'genie'))
+    ? join(physicalDeliveryRoot, 'genie')
+    : join(physicalDeliveryRoot, 'bin', 'genie');
+  if (hashPhysicalFile(binaryPath) !== descriptor.installedBinarySha256) {
+    throw new Error('delivery root binary does not match evidence');
+  }
+  if (`${process.platform}-${process.arch}` !== descriptor.platformTriple) {
+    throw new Error('delivery evidence platform does not match the current runtime');
+  }
+  return physicalDeliveryRoot;
+}
+
 function withRevalidatedDeliveryRootImpl<T>(
   observeOptions: ObserveOptions,
   deliveryPath: string,
   callback: (ops: DeliveryRootOps) => T,
 ): T {
-  const rootResult = resolveCanonicalRoot(observeOptions);
-  if ('error' in rootResult) throw new Error(`delivery root revalidation failed: ${rootResult.error}`);
-  const payloadDir = join(rootResult.root, 'plugins', 'genie');
-  const tree = scanPhysicalTree(payloadDir);
-  if (tree.status !== 'ok') throw new Error(`delivery payload is not a safe physical tree: ${tree.status}`);
-  const version = parseReleaseVersion(readTrimmed(join(rootResult.root, 'VERSION')));
-  if (version === null) throw new Error('delivery root VERSION fails the release grammar');
-  const deliveryRead = readBoundedRegularFile(deliveryPath, MAX_DELIVERY_BYTES);
-  if (deliveryRead.status !== 'ok') throw new Error(`delivery record is not readable: ${deliveryRead.status}`);
-  const record = parseDeliveryRecordStructure(deliveryRead.content);
-  if (record === null) throw new Error('delivery record failed schema-1 validation');
-  if (record.canonicalPayloadSha256 !== tree.digest) throw new Error('delivery digest no longer matches the payload');
-  if (record.targetVersion !== version.canonical) throw new Error('delivery version no longer matches the payload');
-
+  const admitted = revalidateDeliveryRootState(observeOptions, deliveryPath);
   let live = true;
+  const assertLive = (): void => {
+    if (!live) throw new Error('delivery root capability used after the callback returned');
+  };
   const ops: DeliveryRootOps = {
     inventoryDigest(): string {
-      if (!live) throw new Error('delivery root capability used after the callback returned');
-      return tree.digest ?? '';
+      assertLive();
+      return admitted.payloadDigest;
     },
     deliveredVersion(): string {
-      if (!live) throw new Error('delivery root capability used after the callback returned');
-      return version.canonical;
+      assertLive();
+      return admitted.version;
+    },
+    consume<Result>(consumer: DeliveryRootConsumer<Result>): Result {
+      assertLive();
+      assertSameDeliveryRootState(admitted, revalidateDeliveryRootState(observeOptions, deliveryPath), 'before');
+
+      let result: Result | undefined;
+      let consumerFailure: unknown;
+      let consumerFailed = false;
+      try {
+        result = runDeliveryRootConsumer(consumer, admitted.physicalRoot);
+      } catch (error) {
+        consumerFailed = true;
+        consumerFailure = error;
+      }
+
+      assertSameDeliveryRootState(admitted, revalidateDeliveryRootState(observeOptions, deliveryPath), 'while');
+      if (consumerFailed) throw consumerFailure;
+      return result as Result;
     },
   };
   try {
     return callback(ops);
   } finally {
     live = false;
+  }
+}
+
+interface RevalidatedDeliveryRootState {
+  physicalRoot: string;
+  rootIdentity: string;
+  payloadDigest: string;
+  payloadIdentity: string;
+  version: string;
+  versionIdentity: string;
+  binaryRelativePath: 'genie' | 'bin/genie';
+  installedBinarySha256: string;
+  binaryIdentity: string;
+  deliveryRecordDigest: string;
+  deliveryRecordIdentity: string;
+  deliveryId: string;
+  evidenceDigest: string;
+}
+
+/**
+ * Recompute every physical and authenticated binding used to admit a privileged
+ * delivery-root consumer. This is deliberately the same full check at callback
+ * entry and immediately around every consumer invocation.
+ */
+function revalidateDeliveryRootState(
+  observeOptions: ObserveOptions,
+  deliveryPath: string,
+): RevalidatedDeliveryRootState {
+  const rootResult = resolveCanonicalRoot(observeOptions);
+  if ('error' in rootResult) throw new Error(`delivery root revalidation failed: ${rootResult.error}`);
+  const payloadDir = join(rootResult.root, 'plugins', 'genie');
+  const tree = scanPhysicalTree(payloadDir);
+  if (tree.status !== 'ok') throw new Error(`delivery payload is not a safe physical tree: ${tree.status}`);
+  const versionPath = join(rootResult.root, 'VERSION');
+  const version = parseReleaseVersion(readTrimmed(versionPath));
+  if (version === null) throw new Error('delivery root VERSION fails the release grammar');
+  const deliveryRead = readBoundedRegularFile(deliveryPath, MAX_DELIVERY_BYTES);
+  if (deliveryRead.status !== 'ok') throw new Error(`delivery record is not readable: ${deliveryRead.status}`);
+  const record = parseDeliveryRecordStructure(deliveryRead.content);
+  if (record === null) throw new Error('delivery record failed schema-2 validation');
+  const genieHome = observeOptions.genieHome ?? resolveGenieHome();
+  const evidence = observePersistedDeliveryEvidence(
+    genieHome,
+    record.evidenceDigest,
+    observeOptions.deliveryEvidenceVerification,
+  );
+  if (evidence.status !== 'present') throw new Error(`delivery evidence is ${evidence.status}`);
+  const physicalRoot = safeRealpath(rootResult.root);
+  if (physicalRoot === null) throw new Error('delivery root cannot be resolved physically');
+  const binaryRelativePath = existsFile(join(physicalRoot, 'genie')) ? 'genie' : 'bin/genie';
+  const binaryPath = join(physicalRoot, ...binaryRelativePath.split('/'));
+  const installedBinarySha256 = hashPhysicalFile(binaryPath);
+  if (installedBinarySha256 === undefined) throw new Error('delivery binary cannot be hashed safely');
+  const descriptor = evidence.facts.descriptor;
+  if (
+    descriptor.version !== version.canonical ||
+    descriptor.canonicalPayloadSha256 !== tree.digest ||
+    descriptor.installedBinarySha256 !== installedBinarySha256 ||
+    descriptor.platformTriple !== `${process.platform}-${process.arch}`
+  ) {
+    throw new Error('verified delivery evidence no longer matches the physical delivery root');
+  }
+  const assessment = assessAuthenticatedDelivery(
+    { status: 'present', record },
+    {
+      targetVersion: descriptor.version,
+      canonicalPayloadSha256: tree.digest ?? '',
+      channel: descriptor.channel,
+      deliveryId: deriveDeliveryId(evidence.facts.evidenceDigest, physicalRoot),
+      evidenceDigest: evidence.facts.evidenceDigest,
+      platformId: descriptor.platformId,
+      platformTriple: `${process.platform}-${process.arch}`,
+      releaseTag: descriptor.releaseTag,
+      releaseName: descriptor.releaseName,
+      releaseManifestSha256: descriptor.releaseManifestSha256,
+      artifactSha256: descriptor.artifactSha256,
+      installedBinarySha256,
+      deliveryRoot: physicalRoot,
+      deliveredAt: evidence.facts.deliveredAt,
+    },
+  );
+  if (assessment !== 'matching') throw new Error(`delivery record no longer matches verified evidence: ${assessment}`);
+  if (record.targetVersion !== version.canonical) throw new Error('delivery version no longer matches the payload');
+
+  const rootIdentity = physicalNodeIdentity(physicalRoot, 'directory');
+  const versionIdentity = physicalNodeIdentity(versionPath, 'file');
+  const binaryIdentity = physicalNodeIdentity(binaryPath, 'file');
+  const deliveryRecordIdentity = physicalNodeIdentity(deliveryPath, 'file');
+  if (
+    rootIdentity === null ||
+    tree.identity === undefined ||
+    versionIdentity === null ||
+    binaryIdentity === null ||
+    deliveryRecordIdentity === null
+  ) {
+    throw new Error('delivery root physical identity could not be authenticated');
+  }
+  return {
+    physicalRoot,
+    rootIdentity,
+    payloadDigest: tree.digest ?? '',
+    payloadIdentity: tree.identity,
+    version: version.canonical,
+    versionIdentity,
+    binaryRelativePath,
+    installedBinarySha256,
+    binaryIdentity,
+    deliveryRecordDigest: createHash('sha256').update(deliveryRead.content).digest('hex'),
+    deliveryRecordIdentity,
+    deliveryId: record.deliveryId,
+    evidenceDigest: evidence.facts.evidenceDigest,
+  };
+}
+
+function assertSameDeliveryRootState(
+  admitted: RevalidatedDeliveryRootState,
+  fresh: RevalidatedDeliveryRootState,
+  phase: 'before' | 'while',
+): void {
+  for (const key of Object.keys(admitted) as Array<keyof RevalidatedDeliveryRootState>) {
+    if (admitted[key] !== fresh[key]) {
+      throw new Error(`delivery root changed ${phase} scoped consumer execution (${key})`);
+    }
+  }
+}
+
+function physicalNodeIdentity(path: string, kind: 'directory' | 'file'): string | null {
+  try {
+    const stat = lstatSync(path);
+    if (stat.isSymbolicLink()) return null;
+    if (kind === 'directory' ? !stat.isDirectory() : !stat.isFile()) return null;
+    return `${stat.dev}:${stat.ino}`;
+  } catch {
+    return null;
   }
 }
 
@@ -1769,7 +2111,7 @@ function beginActivationImpl(
   // non-matching record refuses with zero mutation — defense in depth so a stale
   // permit (whose fingerprint bound the old deliveryId) still cannot advance
   // activation-owned state without a re-observed matching authenticated record.
-  const assessment = assessActivationDelivery(snapshot, resolved.intent);
+  const assessment = assessActivationDelivery(snapshot, resolved.intent, permit.fingerprint);
   if (assessment !== 'matching') {
     return {
       status: 'delivery-incomplete',
@@ -1793,21 +2135,83 @@ function beginActivationImpl(
 
 /**
  * Apply Group B's pure authenticated-delivery assessment to the re-observed
- * snapshot's delivery record against the intent being written. `targetVersion`
- * and `canonicalPayloadSha256` are always bound; a downgrade additionally binds
- * the delivery id to the consumed receipt id (preserving the downgrade binding).
- * Rich attestation fields (platform/manifest/artifact/binary/root) are bound by
- * Group D/E's richer expectation later; the core binding is enforced here today.
+ * snapshot's delivery record against the complete tuple fingerprinted before
+ * consent. This keeps the release provenance, physical installed bindings,
+ * publication identity/time, and downgrade receipt binding immutable through
+ * the first activation-owned write.
  */
-function assessActivationDelivery(snapshot: CodexActivationSnapshot, intent: RefreshIntent): DeliveryAssessment {
-  const expectation: ActivationDeliveryExpectation = {
-    targetVersion: intent.targetVersion,
-    canonicalPayloadSha256: intent.canonicalPayloadSha256,
+function assessActivationDelivery(
+  snapshot: CodexActivationSnapshot,
+  intent: RefreshIntent,
+  fingerprint: ActivationRequestFingerprint,
+): DeliveryAssessment {
+  const delivery = deliveryReadState(snapshot.delivery);
+  if (delivery.status === 'absent') return 'absent';
+  if (delivery.status === 'invalid') return 'invalid';
+  const expectation = deliveryExpectationFromFingerprint(fingerprint);
+  if (expectation === null) return 'mismatch';
+  if (
+    intent.targetVersion !== expectation.targetVersion ||
+    intent.canonicalPayloadSha256 !== expectation.canonicalPayloadSha256
+  )
+    return 'mismatch';
+  if (intent.direction === 'downgrade' && intent.receiptId !== expectation.deliveryId) return 'mismatch';
+  return assessAuthenticatedDelivery(delivery, expectation);
+}
+
+/** Rehydrate the trusted full tuple carried by the genuine activation permit. */
+function deliveryExpectationFromFingerprint(
+  fingerprint: ActivationRequestFingerprint,
+): ActivationDeliveryExpectation | null {
+  const {
+    deliveryTargetVersion: targetVersion,
+    deliveryCanonicalPayloadSha256: canonicalPayloadSha256,
+    deliveryChannel: channel,
+    deliveryId,
+    deliveryEvidenceDigest: evidenceDigest,
+    deliveryPlatformId: platformId,
+    deliveryPlatformTriple: platformTriple,
+    deliveryReleaseTag: releaseTag,
+    deliveryReleaseName: releaseName,
+    deliveryManifestSha256: releaseManifestSha256,
+    deliveryArtifactSha256: artifactSha256,
+    deliveryInstalledBinarySha256: installedBinarySha256,
+    deliveryRoot,
+    deliveryPublishedAt: deliveredAt,
+  } = fingerprint;
+  if (
+    targetVersion === null ||
+    canonicalPayloadSha256 === null ||
+    channel === null ||
+    deliveryId === null ||
+    evidenceDigest === null ||
+    platformId === null ||
+    platformTriple === null ||
+    releaseTag === null ||
+    releaseName === null ||
+    releaseManifestSha256 === null ||
+    artifactSha256 === null ||
+    installedBinarySha256 === null ||
+    deliveryRoot === null ||
+    deliveredAt === null
+  )
+    return null;
+  return {
+    targetVersion,
+    canonicalPayloadSha256,
+    channel,
+    deliveryId,
+    evidenceDigest,
+    platformId,
+    platformTriple,
+    releaseTag,
+    releaseName,
+    releaseManifestSha256,
+    artifactSha256,
+    installedBinarySha256,
+    deliveryRoot,
+    deliveredAt,
   };
-  if (intent.direction === 'downgrade' && intent.receiptId !== null) {
-    expectation.deliveryId = intent.receiptId;
-  }
-  return assessAuthenticatedDelivery(deliveryReadState(snapshot.delivery), expectation);
 }
 
 /** Map the snapshot's delivery fact onto the assessment's read-state shape. */
@@ -1819,11 +2223,12 @@ function deliveryReadState(fact: DeliveryFact): DeliveryRecordReadState {
 
 /**
  * Decide the journal a permitted activation writes. A post-command phase RESUMES
- * its existing bound journal — the same `refreshIntentId` and phase, re-stamped
- * onto the current lease operation — so a fresh external assertion continues the
- * interrupted transaction rather than opening a duplicate `planned` intent (the
- * fingerprint match already proved the bound intentPhase/intentId are current).
- * Every other eligible state opens a new planned transaction unchanged.
+ * its existing bound journal — the same `refreshIntentId`, phase, direction,
+ * prior-enabled choice, and receipt id, re-stamped onto the current lease operation
+ * — so a fresh external assertion continues the interrupted transaction rather than
+ * replanning from post-command live state. A planned target-current journal may
+ * reflect an external/operator activation before Genie's command began, so it still
+ * opens a newly derived planned transaction.
  */
 function resolveActivationIntent(
   state: CodexActivationState,
@@ -1835,13 +2240,15 @@ function resolveActivationIntent(
   return planIntentFromState(state, snapshot, operationId);
 }
 
-/** The three post-command phases (per the DESIGN truth table) resume their bound journal. */
+/** Post-command states resume their bound journal, including when the target is already current. */
 function resumeIntentForState(state: CodexActivationState): RefreshIntent | null {
   switch (state.kind) {
     case 'intent-command-started':
     case 'intent-removal-observed':
     case 'intent-ambiguous-absent':
       return state.intent;
+    case 'intent-target-current':
+      return state.intent.phase === 'planned' ? null : state.intent;
     default:
       return null;
   }
@@ -1869,7 +2276,10 @@ function planIntentFromState(
     fromPluginVersion: from ? from.canonical : null,
     targetVersion: target.canonical,
     direction,
-    priorEnabled: registration.present ? registration.enabled : false,
+    // A fresh activation has no operator disablement to preserve: plugin add is
+    // expected to leave the newly selected integration enabled. Only an
+    // existing registration can carry an explicit disabled choice forward.
+    priorEnabled: registration.present ? registration.enabled : true,
     canonicalPayloadSha256: snapshot.canonical.digest,
     phase: 'planned',
     commandKind: 'codex-plugin-add',
@@ -2001,6 +2411,21 @@ function existsDir(path: string): boolean {
   } catch {
     return false;
   }
+}
+
+function existsFile(path: string): boolean {
+  try {
+    const stat = lstatSync(path);
+    return stat.isFile() && !stat.isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+function hashPhysicalFile(path: string): string | undefined {
+  if (!existsFile(path)) return undefined;
+  const digest = hashFileBounded(path);
+  return HEX_256_RE.test(digest) ? digest : undefined;
 }
 
 function safeRealpath(path: string): string | null {

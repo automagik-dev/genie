@@ -6,13 +6,23 @@ set -euo pipefail
 : "${CHANNEL:?CHANNEL is required}"
 RELEASE_REPOSITORY="${RELEASE_REPOSITORY:-${GITHUB_REPOSITORY:-}}"
 : "${RELEASE_REPOSITORY:?RELEASE_REPOSITORY or GITHUB_REPOSITORY is required}"
-RELEASED_AT="${RELEASED_AT:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+CANDIDATE_MANIFEST_DIR="${CANDIDATE_MANIFEST_DIR:-}"
 
 VERSION_RE='^[0-9]+\.[0-9]+\.[0-9]+$'
 [[ "$VERSION" =~ $VERSION_RE ]] || {
   echo "invalid release manifest version: ${VERSION}" >&2
   exit 2
 }
+# Versions encode YYMMDD. Midnight UTC is retry-stable, unlike workflow wall
+# clock time, so descriptor endorsement and the later CAS commit can bind the
+# exact same raw bytes.
+version_date="${VERSION#*.}"
+version_date="${version_date%%.*}"
+[[ "$version_date" =~ ^[0-9]{6}$ ]] || {
+  echo "release manifest version has no deterministic date: ${VERSION}" >&2
+  exit 2
+}
+RELEASED_AT="${RELEASED_AT:-20${version_date:0:2}-${version_date:2:2}-${version_date:4:2}T00:00:00Z}"
 [[ "$RELEASE_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || {
   echo "invalid release repository: ${RELEASE_REPOSITORY}" >&2
   exit 2
@@ -52,6 +62,27 @@ case "$CHANNEL" in
   dev) TARGETS=('dev:dev.json') ;;
   *) echo "unknown channel: ${CHANNEL} (valid: stable, homolog, dev)" >&2; exit 2 ;;
 esac
+
+validate_candidate() {
+  local path="$1" manifest_channel="$2"
+  local expected_tarball_base="https://github.com/${RELEASE_REPOSITORY}/releases/download/v${VERSION}"
+  [[ -f "$path" && ! -L "$path" && -s "$path" ]] || return 1
+  jq -e \
+    --arg channel "$manifest_channel" \
+    --arg version "$VERSION" \
+    --arg released_at "$RELEASED_AT" \
+    --arg tarball_base "$expected_tarball_base" \
+    '
+      type == "object" and
+      (keys == ["channel", "platforms", "released_at", "schema_version", "tarball_base", "version"]) and
+      .schema_version == 1 and
+      .channel == $channel and
+      .version == $version and
+      .released_at == $released_at and
+      .tarball_base == $tarball_base and
+      .platforms == ["linux-x64-glibc", "linux-x64-musl", "linux-arm64", "darwin-arm64"]
+    ' "$path" >/dev/null
+}
 
 if [[ -e .well-known || -L .well-known ]]; then
   [[ -d .well-known && ! -L .well-known ]] || {
@@ -108,8 +139,15 @@ for target in "${TARGETS[@]}"; do
     case "$comparison" in
       1) ;;
       0)
+        if [[ -n "$CANDIDATE_MANIFEST_DIR" ]]; then
+          candidate="${CANDIDATE_MANIFEST_DIR}/${file}"
+          if ! validate_candidate "$candidate" "$manifest_channel" || ! cmp -- "$path" "$candidate"; then
+            echo "equal-version manifest differs from exact endorsed candidate bytes: ${path}" >&2
+            exit 3
+          fi
+        fi
         advance=false
-        echo "::notice ::release-manifest.equal ${manifest_channel} already points to v${VERSION}; preserving timestamp"
+        echo "::notice ::release-manifest.equal ${manifest_channel} already points to exact v${VERSION} bytes"
         ;;
       -1)
         advance=false
@@ -121,21 +159,31 @@ for target in "${TARGETS[@]}"; do
 
   if [[ "$advance" == true ]]; then
     temporary="$(mktemp ".well-known/.${file}.XXXXXX")"
-    if ! jq -n \
-      --arg channel "$manifest_channel" \
-      --arg version "$VERSION" \
-      --arg released_at "$RELEASED_AT" \
-      --arg tarball_base "https://github.com/${RELEASE_REPOSITORY}/releases/download/v${VERSION}" \
-      '{
-        schema_version: 1,
-        channel: $channel,
-        version: $version,
-        released_at: $released_at,
-        tarball_base: $tarball_base,
-        platforms: ["linux-x64-glibc", "linux-x64-musl", "linux-arm64", "darwin-arm64"]
-      }' >"$temporary"; then
-      rm -f "$temporary"
-      exit 3
+    if [[ -n "$CANDIDATE_MANIFEST_DIR" ]]; then
+      candidate="${CANDIDATE_MANIFEST_DIR}/${file}"
+      if ! validate_candidate "$candidate" "$manifest_channel"; then
+        rm -f "$temporary"
+        echo "candidate manifest is missing, unsafe, or does not match exact endorsed bytes: ${candidate}" >&2
+        exit 3
+      fi
+      cp "$candidate" "$temporary"
+    else
+      if ! jq -n \
+        --arg channel "$manifest_channel" \
+        --arg version "$VERSION" \
+        --arg released_at "$RELEASED_AT" \
+        --arg tarball_base "https://github.com/${RELEASE_REPOSITORY}/releases/download/v${VERSION}" \
+        '{
+          schema_version: 1,
+          channel: $channel,
+          version: $version,
+          released_at: $released_at,
+          tarball_base: $tarball_base,
+          platforms: ["linux-x64-glibc", "linux-x64-musl", "linux-arm64", "darwin-arm64"]
+        }' >"$temporary"; then
+        rm -f "$temporary"
+        exit 3
+      fi
     fi
     mv "$temporary" "$path"
     echo "advanced ${manifest_channel} manifest to v${VERSION}"

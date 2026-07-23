@@ -31,7 +31,16 @@ import {
   compareReleaseVersions,
   parseReleaseVersion,
 } from '../lib/codex-activation.js';
-import { type DeliveryRecordReadState, assessAuthenticatedDelivery } from '../lib/codex-host-observation.js';
+import {
+  type VerifiedDeliveryEvidence,
+  deriveDeliveryId,
+  verifiedDeliveryEvidenceFacts,
+} from '../lib/codex-delivery-evidence.js';
+import {
+  type AuthenticatedDeliveryRecord,
+  type DeliveryRecordReadState,
+  assessAuthenticatedDelivery,
+} from '../lib/codex-host-observation.js';
 import type { HeldLifecycleLease } from '../lib/codex-lifecycle-lease.js';
 
 /** The exact operator recovery every delivered-but-action-required Codex path names. */
@@ -62,6 +71,15 @@ export const CODEX_LIFECYCLE_BUSY_TRAILER = serializeActivationResultTrailer({
   deliveryComplete: false,
   retry: true,
   nextAction: 'another Genie lifecycle command is active; retry once it completes',
+});
+
+/** A verified binary/payload exists, but no authenticated delivery record was committed. */
+export const CODEX_DELIVERY_INCOMPLETE_TRAILER = serializeActivationResultTrailer({
+  schemaVersion: 1,
+  code: 'delivery-incomplete',
+  deliveryComplete: false,
+  retry: true,
+  nextAction: 'retry genie update (or genie install) to publish the authenticated delivery record',
 });
 
 /**
@@ -113,12 +131,10 @@ export function classifyCodexDelivery(installedVersion: string | null, targetVer
 export interface CodexDeliveryFacts {
   /** The installed generation N from a live `codex plugin list` (null = absent). */
   installedVersion: string | null;
-  /** The delivered target T, read from the physically scanned delivered tree (never the raw manifest). */
-  targetVersion: string;
-  /** SHA-256 of the delivered `plugins/genie` tree (scanPhysicalTree of the promoted root). */
-  canonicalPayloadSha256: string;
-  /** Delivery channel recorded in the published facts. */
-  channel: string;
+  /** Opaque proof minted only after the signed descriptor matches the downloaded candidate. */
+  evidence: VerifiedDeliveryEvidence;
+  /** Physical canonical root revalidated by the deep store immediately before publication. */
+  deliveryRoot: string;
   /**
    * The on-disk record read-state (Group E). Lets a verified delivery whose
    * plugin generation is already `current` (e.g. install converged the plugin
@@ -144,13 +160,13 @@ export interface CodexDeliveryFacts {
  * journal, activation, or cache mutation.
  */
 export function buildDeliveryPublication(facts: CodexDeliveryFacts): PublishDeliveryInput | null {
-  const state = classifyCodexDelivery(facts.installedVersion, facts.targetVersion);
+  const evidence = verifiedDeliveryEvidenceFacts(facts.evidence);
+  const state = classifyCodexDelivery(facts.installedVersion, evidence.descriptor.version);
   if (state.kind === 'indeterminate') return null;
-  if (state.kind === 'current' && !currentNeedsRepublication(facts)) return null;
+  if (existingDeliveryMatches(facts)) return null;
   const input: PublishDeliveryInput = {
-    targetVersion: facts.targetVersion,
-    canonicalPayloadSha256: facts.canonicalPayloadSha256,
-    channel: facts.channel,
+    evidence: facts.evidence,
+    deliveryRoot: facts.deliveryRoot,
   };
   if (state.kind === 'pending' && state.direction === 'downgrade' && facts.installedVersion !== null) {
     input.downgradeFrom = facts.installedVersion;
@@ -163,13 +179,28 @@ export function buildDeliveryPublication(facts: CodexDeliveryFacts): PublishDeli
  * record state and it fails the core binding (absent/invalid/mismatched). No
  * record state supplied → conservative no-publish (the pre-Group-E contract).
  */
-function currentNeedsRepublication(facts: CodexDeliveryFacts): boolean {
-  if (facts.existingRecord === undefined) return false;
-  const assessment = assessAuthenticatedDelivery(facts.existingRecord, {
-    targetVersion: facts.targetVersion,
-    canonicalPayloadSha256: facts.canonicalPayloadSha256,
-  });
-  return assessment !== 'matching';
+function existingDeliveryMatches(facts: CodexDeliveryFacts): boolean {
+  if (facts.existingRecord?.status !== 'present') return false;
+  const evidence = verifiedDeliveryEvidenceFacts(facts.evidence);
+  const descriptor = evidence.descriptor;
+  return (
+    assessAuthenticatedDelivery(facts.existingRecord, {
+      targetVersion: descriptor.version,
+      canonicalPayloadSha256: descriptor.canonicalPayloadSha256,
+      channel: descriptor.channel,
+      deliveryId: deriveDeliveryId(evidence.evidenceDigest, facts.deliveryRoot),
+      evidenceDigest: evidence.evidenceDigest,
+      platformId: descriptor.platformId,
+      platformTriple: descriptor.platformTriple,
+      releaseTag: descriptor.releaseTag,
+      releaseName: descriptor.releaseName,
+      releaseManifestSha256: descriptor.releaseManifestSha256,
+      artifactSha256: descriptor.artifactSha256,
+      installedBinarySha256: descriptor.installedBinarySha256,
+      deliveryRoot: facts.deliveryRoot,
+      deliveredAt: evidence.deliveredAt,
+    }) === 'matching'
+  );
 }
 
 export interface PublishCodexDeliveryInput extends CodexDeliveryFacts {
@@ -177,20 +208,39 @@ export interface PublishCodexDeliveryInput extends CodexDeliveryFacts {
   lease: HeldLifecycleLease;
   /** A's deep store, opened by the caller (`openCodexActivationStore`). */
   store: CodexActivationStore;
-  /** The 128-bit delivery transaction id; A mints one when omitted. */
-  deliveryId?: string;
-  now?: () => Date;
 }
 
-export interface PublishedCodexDelivery {
-  state: CodexDeliveryState;
-  /** True when this call wrote a delivery record (pending or absent-N delivery). */
-  published: boolean;
-  /** True when this call wrote a downgrade receipt (explicit-channel downgrade). */
-  wroteDowngradeReceipt: boolean;
-  /** The published record (null when nothing was published). */
-  record: DeliveryRecord | null;
-}
+export type PublishedCodexDelivery =
+  | {
+      outcome: 'matching';
+      state: CodexDeliveryState;
+      published: false;
+      wroteDowngradeReceipt: false;
+      record: AuthenticatedDeliveryRecord;
+    }
+  | {
+      outcome: 'published';
+      state: CodexDeliveryState;
+      published: true;
+      wroteDowngradeReceipt: boolean;
+      record: DeliveryRecord;
+    }
+  | {
+      outcome: 'skipped';
+      state: CodexDeliveryState;
+      published: false;
+      wroteDowngradeReceipt: false;
+      record: null;
+      detail: string;
+    }
+  | {
+      outcome: 'failed';
+      state: CodexDeliveryState;
+      published: false;
+      wroteDowngradeReceipt: false;
+      record: null;
+      detail: string;
+    };
 
 /**
  * Parent-side: publish attested delivery facts through A when the delivery is
@@ -200,20 +250,48 @@ export interface PublishedCodexDelivery {
  * at permit-gated setup activation.
  */
 export function publishCodexDelivery(input: PublishCodexDeliveryInput): PublishedCodexDelivery {
-  const state = classifyCodexDelivery(input.installedVersion, input.targetVersion);
+  const descriptor = verifiedDeliveryEvidenceFacts(input.evidence).descriptor;
+  const state = classifyCodexDelivery(input.installedVersion, descriptor.version);
+  if (existingDeliveryMatches(input) && input.existingRecord?.status === 'present') {
+    return {
+      outcome: 'matching',
+      state,
+      published: false,
+      wroteDowngradeReceipt: false,
+      record: input.existingRecord.record,
+    };
+  }
   const publication = buildDeliveryPublication(input);
   if (publication === null) {
-    return { state, published: false, wroteDowngradeReceipt: false, record: null };
+    return {
+      outcome: 'skipped',
+      state,
+      published: false,
+      wroteDowngradeReceipt: false,
+      record: null,
+      detail:
+        state.kind === 'indeterminate'
+          ? state.detail
+          : 'delivery publication lacked a determinable non-matching record state',
+    };
   }
-  const record = input.store.publishDelivery(input.lease, {
-    ...publication,
-    deliveryId: input.deliveryId,
-    now: input.now,
-  });
-  return {
-    state,
-    published: true,
-    wroteDowngradeReceipt: publication.downgradeFrom !== undefined,
-    record,
-  };
+  try {
+    const record = input.store.publishDelivery(input.lease, publication);
+    return {
+      outcome: 'published',
+      state,
+      published: true,
+      wroteDowngradeReceipt: publication.downgradeFrom !== undefined,
+      record,
+    };
+  } catch (cause) {
+    return {
+      outcome: 'failed',
+      state,
+      published: false,
+      wroteDowngradeReceipt: false,
+      record: null,
+      detail: cause instanceof Error ? cause.message : String(cause),
+    };
+  }
 }

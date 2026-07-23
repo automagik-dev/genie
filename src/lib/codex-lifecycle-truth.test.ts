@@ -2,6 +2,11 @@ import { describe, expect, test } from 'bun:test';
 import { join, resolve } from 'node:path';
 import type { CodexActivationSnapshot } from './codex-activation.js';
 import { parseReleaseVersion } from './codex-activation.js';
+import {
+  DELIVERY_EVIDENCE_DIGEST_ALGORITHM,
+  DELIVERY_EVIDENCE_REPOSITORY,
+  deriveDeliveryId,
+} from './codex-delivery-evidence.js';
 import { DELIVERY_INCOMPLETE_RECOVERY } from './codex-host-observation.js';
 import {
   type RouteLayerInput,
@@ -13,6 +18,10 @@ import {
 
 const T = '5.260722.1';
 const DIGEST = 'a'.repeat(64);
+const PLATFORM = 'darwin-arm64';
+const BINARY_DIGEST = 'd'.repeat(64);
+const DELIVERY_ROOT = '/home/test/.genie';
+const EVIDENCE_DIGEST = 'e'.repeat(64);
 
 function ver(s: string) {
   const parsed = parseReleaseVersion(s);
@@ -22,7 +31,15 @@ function ver(s: string) {
 
 function snapshot(over: Partial<CodexActivationSnapshot> = {}): CodexActivationSnapshot {
   return {
-    canonical: { status: 'ok', version: ver(T), digest: DIGEST, identity: '10:100' },
+    canonical: {
+      status: 'ok',
+      version: ver(T),
+      digest: DIGEST,
+      identity: '10:100',
+      platformTriple: PLATFORM,
+      installedBinarySha256: BINARY_DIGEST,
+      deliveryRoot: DELIVERY_ROOT,
+    },
     query: { status: 'ok', registration: { present: true, enabled: true, version: ver(T) } },
     cache: { kind: 'present', digest: DIGEST, identity: '10:200' },
     receipt: { status: 'absent' },
@@ -42,13 +59,45 @@ function matchingDelivery(over: Partial<Record<string, string>> = {}): CodexActi
   return {
     status: 'present',
     record: {
-      schemaVersion: 1,
-      deliveryId: 'c'.repeat(32),
+      schemaVersion: 2,
+      deliveryId: deriveDeliveryId(EVIDENCE_DIGEST, DELIVERY_ROOT),
       targetVersion: T,
       canonicalPayloadSha256: DIGEST,
       channel: 'stable',
       deliveredAt: '2026-07-22T00:00:00.000Z',
+      evidenceDigest: EVIDENCE_DIGEST,
+      platformId: 'darwin-arm64',
+      platformTriple: PLATFORM,
+      releaseTag: `v${T}`,
+      releaseName: `genie-${T}-darwin-arm64.tar.gz`,
+      releaseManifestSha256: 'b'.repeat(64),
+      artifactSha256: 'c'.repeat(64),
+      installedBinarySha256: BINARY_DIGEST,
+      deliveryRoot: DELIVERY_ROOT,
       ...over,
+    },
+    evidence: {
+      evidenceDigest: EVIDENCE_DIGEST,
+      deliveredAt: '2026-07-22T00:00:00.000Z',
+      descriptor: {
+        schemaVersion: 1,
+        repository: DELIVERY_EVIDENCE_REPOSITORY,
+        version: T,
+        channel: 'stable',
+        platformId: 'darwin-arm64',
+        platformTriple: PLATFORM,
+        releaseTag: `v${T}`,
+        releaseName: `genie-${T}-darwin-arm64.tar.gz`,
+        releaseManifestSha256: 'b'.repeat(64),
+        artifactSha256: 'c'.repeat(64),
+        installedBinarySha256: BINARY_DIGEST,
+        canonicalPayloadSha256: DIGEST,
+        sourceSha: '1'.repeat(40),
+        sourceBranch: 'main',
+        sourceCiRunId: '123',
+        controlSha: '2'.repeat(40),
+        digestAlgorithm: DELIVERY_EVIDENCE_DIGEST_ALGORITHM,
+      },
     },
   };
 }
@@ -78,7 +127,36 @@ describe('assessSnapshotDelivery (Decision 9 shared gate)', () => {
   });
 
   test('record bound to a different target version is a mismatch', () => {
-    const gate = assessSnapshotDelivery(snapshot({ delivery: matchingDelivery({ targetVersion: '5.260711.9' }) }));
+    const gate = assessSnapshotDelivery(
+      snapshot({
+        delivery: matchingDelivery({
+          targetVersion: '5.260711.9',
+          releaseTag: 'v5.260711.9',
+          releaseName: 'genie-5.260711.9-darwin-arm64.tar.gz',
+        }),
+      }),
+    );
+    if (gate.kind !== 'incomplete') throw new Error(`expected incomplete, got ${gate.kind}`);
+    expect(gate.result.assessment).toBe('mismatch');
+  });
+
+  test('an internally matching record/evidence tuple for a different version still mismatches canonical reality', () => {
+    const delivery = matchingDelivery();
+    if (delivery.status !== 'present') throw new Error('unreachable');
+    const older = '5.260711.9';
+    delivery.record.targetVersion = older;
+    delivery.record.releaseTag = `v${older}`;
+    delivery.record.releaseName = `genie-${older}-darwin-arm64.tar.gz`;
+    delivery.evidence = {
+      ...delivery.evidence,
+      descriptor: {
+        ...delivery.evidence.descriptor,
+        version: older,
+        releaseTag: `v${older}`,
+        releaseName: `genie-${older}-darwin-arm64.tar.gz`,
+      },
+    };
+    const gate = assessSnapshotDelivery(snapshot({ delivery }));
     if (gate.kind !== 'incomplete') throw new Error(`expected incomplete, got ${gate.kind}`);
     expect(gate.result.assessment).toBe('mismatch');
   });

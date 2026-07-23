@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,12 +14,14 @@ import {
   type AuthorizationResult,
   type CodexActivationStore,
   type CodexActivationStoreOptions,
+  type RefreshIntent,
   authorizeCodexActivation,
   classifyCodexActivation,
   openCodexActivationStore,
   requestRetirementAssertion,
   scanPhysicalTree,
 } from './codex-activation.js';
+import { mintTestDeliveryEvidence } from './codex-delivery-evidence.test-support.js';
 import { acquireLifecycleLease } from './codex-lifecycle-lease.js';
 import type { CommandResult, CommandRunner } from './runtime-integrations.js';
 
@@ -28,6 +31,10 @@ const FROM_VERSION = '5.260710.1';
 const TARGET_VERSION = '5.260712.1';
 const NEWER_VERSION = '5.260799.9';
 const STUB_COMMAND = '/stub/codex';
+
+const TEST_EVIDENCE_VERIFICATION = {
+  verifyBundle: () => ({ integratedTime: '1753228800' }),
+};
 
 // ---------------------------------------------------------------------------
 // Fixture isolation contract
@@ -115,12 +122,13 @@ function buildFixture(options: FixtureOptions): Fixture {
   const root = mkdtempSync(join(tmpdir(), 'genie-executor-fixture-'));
   const genieHome = join(root, 'genie-home');
   const codexHome = join(root, 'codex-home');
-  const canonicalRoot = join(root, 'canonical');
+  const canonicalRoot = genieHome;
   const canonicalPayloadDir = join(canonicalRoot, 'plugins', 'genie');
   const familyDir = join(codexHome, 'plugins', 'cache', 'automagik', 'genie');
   const targetCacheDir = join(familyDir, target);
   mkdirSync(genieHome, { recursive: true });
   mkdirSync(join(canonicalPayloadDir, 'scripts'), { recursive: true });
+  mkdirSync(join(canonicalPayloadDir, 'codex-agents'), { recursive: true });
   mkdirSync(familyDir, { recursive: true });
 
   // Canonical payload: the real H3 script plus a couple of physical files.
@@ -129,6 +137,7 @@ function buildFixture(options: FixtureOptions): Fixture {
   mkdirSync(join(canonicalPayloadDir, 'hooks'), { recursive: true });
   writeFileSync(join(canonicalPayloadDir, 'hooks', 'codex-hooks.json'), '{"hooks":{}}\n');
   writeFileSync(join(canonicalRoot, 'VERSION'), `${target}\n`);
+  writeFileSync(join(canonicalRoot, 'genie'), '#!/bin/sh\n');
 
   const configPath = join(codexHome, 'config.toml');
   setConfigEnabled(configPath, options.initialEnabled);
@@ -171,6 +180,7 @@ function buildFixture(options: FixtureOptions): Fixture {
     allowRootOverride: true,
     command: STUB_COMMAND,
     runner: makeRunner(),
+    deliveryEvidenceVerification: TEST_EVIDENCE_VERIFICATION,
   };
 
   return {
@@ -189,16 +199,30 @@ function buildFixture(options: FixtureOptions): Fixture {
 }
 
 /** Publish an installed-delivery (and optional downgrade receipt) exactly as Group C would. */
-function publishDelivery(fixture: Fixture, opts: { downgradeFrom?: string; deliveryId?: string } = {}): void {
+function publishDelivery(fixture: Fixture, opts: { downgradeFrom?: string } = {}): void {
   const lease = acquireLifecycleLease('update-delivery', { genieHome: fixture.genieHome });
   if (!lease.ok) throw new Error(`could not acquire delivery lease: ${lease.detail}`);
   try {
     fixture.openStore().publishDelivery(lease, {
-      targetVersion: TARGET_VERSION,
-      canonicalPayloadSha256: fixture.canonicalDigest,
-      channel: 'stable',
+      evidence: mintTestDeliveryEvidence({
+        descriptor: {
+          version: TARGET_VERSION,
+          releaseTag: `v${TARGET_VERSION}`,
+          releaseName: `genie-${TARGET_VERSION}-${
+            process.platform === 'darwin'
+              ? 'darwin-arm64'
+              : process.arch === 'arm64'
+                ? 'linux-arm64'
+                : 'linux-x64-glibc'
+          }.tar.gz`,
+          canonicalPayloadSha256: fixture.canonicalDigest,
+          installedBinarySha256: createHash('sha256')
+            .update(readFileSync(join(fixture.canonicalRoot, 'genie')))
+            .digest('hex'),
+        },
+      }).evidence,
+      deliveryRoot: fixture.canonicalRoot,
       downgradeFrom: opts.downgradeFrom,
-      deliveryId: opts.deliveryId,
     });
   } finally {
     lease.release();
@@ -257,6 +281,12 @@ function leasePath(fixture: Fixture): string {
 function addCalls(fixture: Fixture): number {
   return fixture.runnerCalls.filter((call) => call.endsWith('plugin add genie@automagik --json')).length;
 }
+function marketplaceCalls(fixture: Fixture): number {
+  return fixture.runnerCalls.filter((call) => call.includes('plugin marketplace add ')).length;
+}
+function readIntent(fixture: Fixture): RefreshIntent {
+  return JSON.parse(readFileSync(intentPath(fixture), 'utf8')) as RefreshIntent;
+}
 
 // ---------------------------------------------------------------------------
 
@@ -305,6 +335,7 @@ describe('permit boundary', () => {
     });
     expect(result.status === 'refused' || result.status === 'broken').toBe(true);
     expect(existsSync(intentPath(fx))).toBe(false);
+    expect(marketplaceCalls(fx)).toBe(0);
     expect(addCalls(fx)).toBe(0);
     expect(existsSync(leasePath(fx))).toBe(false); // released
   });
@@ -332,11 +363,62 @@ describe('delivery-incomplete inner guard', () => {
     publishDelivery(fx);
     const result = runActivation(fx);
     expect(result.status).toBe('activated');
+    expect(marketplaceCalls(fx)).toBe(1);
     expect(addCalls(fx)).toBe(1);
   });
 });
 
 describe('successful activation', () => {
+  test('inner begin precedes callback-scoped marketplace registration, which precedes plugin add', () => {
+    const fx = fixture({ from: null, initialEnabled: true });
+    publishDelivery(fx);
+    const order: string[] = [];
+    const runner = fx.makeRunner();
+    const result = runActivation(fx, {
+      hooks: {
+        afterBeginActivation: () => order.push('begin'),
+        beforeMarketplaceRegistration: () => order.push('marketplace-before'),
+        afterMarketplaceRegistration: () => order.push('marketplace-after'),
+        beforeCommandStarted: () => order.push('command-started'),
+        beforePluginAdd: () => order.push('plugin-add'),
+      },
+      runner: (command, args, options) => {
+        if (args.slice(0, 3).join(' ') === 'plugin marketplace add') order.push('marketplace-command');
+        return runner(command, args, options);
+      },
+    });
+
+    expect(result.status).toBe('activated');
+    expect(order).toEqual([
+      'begin',
+      'marketplace-before',
+      'marketplace-command',
+      'marketplace-after',
+      'command-started',
+      'plugin-add',
+    ]);
+  });
+
+  test('marketplace registration failure leaves plugin/cache untouched and roles remain outside the executor', () => {
+    const fx = fixture({ from: null, initialEnabled: true });
+    publishDelivery(fx);
+    const runner = fx.makeRunner();
+    const result = runActivation(fx, {
+      runner: (command, args, options) => {
+        if (args.slice(0, 3).join(' ') === 'plugin marketplace add') {
+          return { exitCode: 1, stdout: '', stderr: 'injected marketplace registration failure' };
+        }
+        return runner(command, args, options);
+      },
+    });
+
+    expect(result.status).toBe('broken');
+    expect(addCalls(fx)).toBe(0);
+    expect(existsSync(fx.targetCacheDir)).toBe(false);
+    expect(existsSync(join(fx.codexHome, 'agents'))).toBe(false);
+    expect(classifyCodexActivation(fx.openStore().observe()).kind).toBe('intent-planned');
+  });
+
   test('upgrade preserves enabled state, proves parity + H3, clears the journal, returns verified', () => {
     const fx = fixture({ from: FROM_VERSION, initialEnabled: true, createFromCache: true });
     publishDelivery(fx);
@@ -364,13 +446,15 @@ describe('successful activation', () => {
     expect(configEnabled(fx.configPath)).toBe(false);
   });
 
-  test('fresh install (registration absent) activates through a single add', () => {
+  test('fresh install (registration absent) activates enabled through a single add', () => {
     const fx = fixture({ from: null, initialEnabled: true });
     publishDelivery(fx);
     const result = runActivation(fx);
     expect(result.status).toBe('activated');
     if (result.status !== 'activated') throw new Error('unreachable');
     expect(result.direction).toBe('install');
+    expect(result.enabled).toBe(true);
+    expect(configEnabled(fx.configPath)).toBe(true);
     expect(addCalls(fx)).toBe(1);
   });
 });
@@ -396,7 +480,47 @@ describe('fingerprint freshness', () => {
     if (result.status !== 'stale') throw new Error('unreachable');
     expect(result.mismatchField).toBe('enabled');
     expect(existsSync(intentPath(fx))).toBe(false);
+    expect(marketplaceCalls(fx)).toBe(0);
     expect(addCalls(fx)).toBe(0);
+    expect(existsSync(leasePath(fx))).toBe(false);
+  });
+
+  test('journal-byte tampering after consent makes the permit stale with zero mutation', () => {
+    const fx = fixture({ from: FROM_VERSION, initialEnabled: false, createFromCache: true });
+    publishDelivery(fx);
+    const first = runActivation(fx, {
+      hooks: {
+        beforeEnabledRestore() {
+          throw new Error('injected crash before enabled restore');
+        },
+      },
+    });
+    expect(first.status).toBe('broken');
+    expect(classifyCodexActivation(fx.openStore().observe()).kind).toBe('intent-target-current');
+
+    const store = fx.openStore();
+    const { permit } = mintPermit(store);
+    const tampered = { ...readIntent(fx), priorEnabled: true };
+    writeFileSync(intentPath(fx), `${JSON.stringify(tampered, null, 2)}\n`);
+    const tamperedBytes = readFileSync(intentPath(fx), 'utf8');
+    const addsBefore = addCalls(fx);
+    const marketplacesBefore = marketplaceCalls(fx);
+
+    const result = executeCodexActivation({
+      permit,
+      store,
+      command: STUB_COMMAND,
+      codexHome: fx.codexHome,
+      genieHome: fx.genieHome,
+      configPath: fx.configPath,
+      deps: { runner: fx.makeRunner() },
+    });
+    expect(result.status).toBe('stale');
+    if (result.status !== 'stale') throw new Error('unreachable');
+    expect(result.mismatchField).toBe('intentContentSha256');
+    expect(readFileSync(intentPath(fx), 'utf8')).toBe(tamperedBytes);
+    expect(addCalls(fx)).toBe(addsBefore);
+    expect(marketplaceCalls(fx)).toBe(marketplacesBefore);
     expect(existsSync(leasePath(fx))).toBe(false);
   });
 });
@@ -500,6 +624,101 @@ describe('crash recovery', () => {
     expect(existsSync(intentPath(fx))).toBe(false);
     expect(classifyCodexActivation(fx.openStore().observe()).kind).toBe('current');
   });
+
+  const TARGET_CURRENT_RECOVERY_CASES = [
+    {
+      name: 'disabled upgrade',
+      from: FROM_VERSION,
+      initialEnabled: false,
+      createFromCache: true,
+      downgradeFrom: undefined,
+      direction: 'upgrade',
+      priorEnabled: false,
+      finalEnabled: false,
+    },
+    {
+      name: 'fresh install',
+      from: null,
+      initialEnabled: false,
+      createFromCache: false,
+      downgradeFrom: undefined,
+      direction: 'install',
+      priorEnabled: true,
+      finalEnabled: true,
+    },
+    {
+      name: 'explicit downgrade',
+      from: NEWER_VERSION,
+      initialEnabled: true,
+      createFromCache: true,
+      downgradeFrom: NEWER_VERSION,
+      direction: 'downgrade',
+      priorEnabled: true,
+      finalEnabled: true,
+    },
+  ] as const;
+
+  for (const recoveryCase of TARGET_CURRENT_RECOVERY_CASES) {
+    test(`${recoveryCase.name} resumes the target-current journal without losing transaction identity`, () => {
+      const fx = fixture({
+        from: recoveryCase.from,
+        initialEnabled: recoveryCase.initialEnabled,
+        createFromCache: recoveryCase.createFromCache,
+      });
+      publishDelivery(
+        fx,
+        recoveryCase.downgradeFrom === undefined ? {} : { downgradeFrom: recoveryCase.downgradeFrom },
+      );
+      const first = runActivation(fx, {
+        hooks: {
+          beforeEnabledRestore() {
+            throw new Error('injected crash before enabled restore');
+          },
+        },
+      });
+      expect(first.status).toBe('broken');
+      expect(addCalls(fx)).toBe(1);
+      expect(classifyCodexActivation(fx.openStore().observe()).kind).toBe('intent-target-current');
+      const before = readIntent(fx);
+      expect(before.phase).toBe('removal-observed');
+      expect(before.direction).toBe(recoveryCase.direction);
+      expect(before.priorEnabled).toBe(recoveryCase.priorEnabled);
+      if (recoveryCase.direction === 'downgrade') expect(before.receiptId).not.toBeNull();
+      else expect(before.receiptId).toBeNull();
+
+      const rebound: RefreshIntent[] = [];
+      const second = runActivation(fx, {
+        hooks: {
+          afterBeginActivation() {
+            rebound.push(readIntent(fx));
+          },
+        },
+      });
+      expect(second.status).toBe('activated');
+      if (second.status !== 'activated') throw new Error('unreachable');
+      expect(second.direction).toBe(recoveryCase.direction);
+      expect(second.enabled).toBe(recoveryCase.finalEnabled);
+      expect(configEnabled(fx.configPath)).toBe(recoveryCase.finalEnabled);
+      expect(addCalls(fx)).toBe(1);
+      const reboundIntent = rebound[0];
+      if (reboundIntent === undefined) throw new Error('target-current journal was not rebound');
+      expect(reboundIntent.refreshIntentId).toBe(before.refreshIntentId);
+      expect(reboundIntent.phase).toBe(before.phase);
+      expect(reboundIntent.direction).toBe(before.direction);
+      expect(reboundIntent.priorEnabled).toBe(before.priorEnabled);
+      expect(reboundIntent.receiptId).toBe(before.receiptId);
+      expect(reboundIntent.operationId).not.toBe(before.operationId);
+      expect(existsSync(intentPath(fx))).toBe(false);
+
+      if (recoveryCase.direction === 'downgrade') {
+        if (before.receiptId === null) throw new Error('downgrade journal lost its receipt id');
+        expect(existsSync(receiptPath(fx))).toBe(false);
+        expect(existsSync(tombstonePath(fx))).toBe(true);
+        const tombstone = JSON.parse(readFileSync(tombstonePath(fx), 'utf8')) as { receiptId: string };
+        expect(tombstone.receiptId).toBe(before.receiptId);
+      }
+    });
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -520,6 +739,7 @@ function activateWith(
     allowRootOverride: true,
     command: STUB_COMMAND,
     runner,
+    deliveryEvidenceVerification: TEST_EVIDENCE_VERIFICATION,
   });
   const { permit } = mintPermit(store);
   return executeCodexActivation({
@@ -575,6 +795,43 @@ function ambiguousAbsentRunner(fx: Fixture): CommandRunner {
 }
 
 describe('post-command phase resume', () => {
+  test('resumed fresh intent enables the plugin, while resumed existing-disabled intent preserves false', () => {
+    for (const fixtureCase of [
+      { name: 'fresh', from: null, initialEnabled: false, createFromCache: false, expectedEnabled: true },
+      {
+        name: 'existing-disabled',
+        from: FROM_VERSION,
+        initialEnabled: false,
+        createFromCache: true,
+        expectedEnabled: false,
+      },
+    ] as const) {
+      const fx = fixture(fixtureCase);
+      publishDelivery(fx);
+      const first = runActivation(fx, {
+        hooks: {
+          beforePluginAdd() {
+            throw new Error(`${fixtureCase.name}: injected pre-add crash`);
+          },
+        },
+      });
+      expect(first.status).toBe('broken');
+      const journal = JSON.parse(readFileSync(intentPath(fx), 'utf8')) as Record<string, unknown>;
+      if (fixtureCase.from === null) {
+        // Compatibility case: older planners persisted false for a fresh
+        // registration. Resume derives the desired state from from=null.
+        journal.priorEnabled = false;
+        writeFileSync(intentPath(fx), `${JSON.stringify(journal)}\n`);
+      }
+
+      const resumed = runActivation(fx);
+      expect(resumed.status).toBe('activated');
+      if (resumed.status !== 'activated') throw new Error(`${fixtureCase.name}: activation did not resume`);
+      expect(resumed.enabled).toBe(fixtureCase.expectedEnabled);
+      expect(configEnabled(fx.configPath)).toBe(fixtureCase.expectedEnabled);
+    }
+  });
+
   test('removal-observed resumes: a fresh authorized run reconciles through add + verify', () => {
     const fx = fixture({ from: FROM_VERSION, initialEnabled: true, createFromCache: true });
     publishDelivery(fx);
@@ -948,6 +1205,7 @@ const store = openCodexActivationStore({
   allowRootOverride: true,
   command: '/stub/codex',
   runner,
+  deliveryEvidenceVerification: { verifyBundle: () => ({ integratedTime: '1753228800' }) },
 });
 
 const snapshot = store.observe();

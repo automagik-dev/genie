@@ -7,8 +7,10 @@
  *   explicit new-task instruction → `genie doctor --json` state `current`,
  *   plus the real PATH advisory, stale historical config, route collision /
  *   shadowing, context states, and a hard query failure — all through the
- *   actual CLI (`bun src/genie.ts …`), a stateful fake `codex` executable, and
- *   the production GENIE_HOME payload layout (no canonical-root override).
+ *   actual setup/doctor command implementations, a stateful fake `codex`
+ *   executable, and the production GENIE_HOME payload layout (no canonical-root
+ *   override). An unshipped driver injects only deterministic bundle-signature
+ *   verification because production deliberately exposes no CLI/env bypass.
  *
  * PTY allocation uses the platform `script(1)`; the suite skips cleanly where
  * a pty cannot be allocated (no `script`, or Windows). The fake codex lives
@@ -17,6 +19,7 @@
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   chmodSync,
   cpSync,
@@ -31,13 +34,22 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { verifyDownloadedDeliveryEvidence } from '../../src/lib/codex-delivery-evidence.js';
+import { buildTestDeliveryEvidencePack } from '../../src/lib/codex-delivery-evidence.test-support.js';
 import { acquireLifecycleLease } from '../../src/lib/codex-lifecycle-lease.js';
 
 const REPO_ROOT = join(import.meta.dir, '..', '..');
-const GENIE_CLI = join(REPO_ROOT, 'src', 'genie.ts');
+const PRODUCTION_GENIE_CLI = join(REPO_ROOT, 'src', 'genie.ts');
+const LIFECYCLE_TEST_RUNNER = join(REPO_ROOT, 'tests', 'support', 'codex-lifecycle-test-runner.ts');
 const REAL_SESSION_CONTEXT = join(REPO_ROOT, 'plugins', 'genie', 'scripts', 'session-context.cjs');
+const REAL_MCP_LAUNCHER = join(REPO_ROOT, 'plugins', 'genie', 'scripts', 'mcp-launcher.cjs');
+const REAL_CODEX_AGENTS = join(REPO_ROOT, 'plugins', 'genie', 'codex-agents');
+const REAL_SKILLS = join(REPO_ROOT, 'plugins', 'genie', 'skills');
 const TARGET = '5.260722.1';
 const OLD = '5.260711.9';
+const PLATFORM_ID =
+  process.platform === 'darwin' ? 'darwin-arm64' : process.arch === 'arm64' ? 'linux-arm64' : 'linux-x64-glibc';
+const PLATFORM_TRIPLE = `${process.platform}-${process.arch}`;
 
 // PTY driver: GNU `script -qec` forwards piped stdin to the pty on Linux (the
 // CI condition); macOS `script` refuses a non-tty stdin (tcgetattr), so darwin
@@ -79,9 +91,19 @@ beforeAll(() => {
   mkdirSync(join(payload, 'scripts'), { recursive: true });
   mkdirSync(join(payload, 'hooks'), { recursive: true });
   cpSync(REAL_SESSION_CONTEXT, join(payload, 'scripts', 'session-context.cjs'));
+  cpSync(REAL_MCP_LAUNCHER, join(payload, 'scripts', 'mcp-launcher.cjs'));
+  cpSync(REAL_CODEX_AGENTS, join(payload, 'codex-agents'), { recursive: true });
+  cpSync(REAL_SKILLS, join(payload, 'skills'), { recursive: true });
   writeFileSync(join(payload, 'README.md'), 'genie codex payload\n');
   writeFileSync(join(payload, 'hooks', 'codex-hooks.json'), '{"hooks":{}}\n');
   writeFileSync(join(genieHome, 'VERSION'), `${TARGET}\n`);
+  mkdirSync(join(genieHome, 'bin'), { recursive: true });
+  const fixtureBinary = join(genieHome, 'bin', 'genie');
+  writeFileSync(
+    fixtureBinary,
+    `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(PRODUCTION_GENIE_CLI)} "$@"\n`,
+  );
+  chmodSync(fixtureBinary, 0o755);
 
   // Codex home: enabled plugin flag + an OLD physical cache generation so the
   // pre-activation state is genuinely activation-pending.
@@ -161,7 +183,7 @@ exit 0
 
   // `genie init` owns the marker-managed project route (the ONLY command that
   // may create it — authority matrix row 1). Route-only, delivery-independent.
-  const init = Bun.spawnSync([process.execPath, GENIE_CLI, 'init'], {
+  const init = Bun.spawnSync([process.execPath, PRODUCTION_GENIE_CLI, 'init'], {
     cwd: repo,
     env: childEnv,
     stdout: 'pipe',
@@ -181,7 +203,7 @@ function runCli(
   args: string[],
   opts: { env?: Record<string, string>; cwd?: string } = {},
 ): { exitCode: number; stdout: string; stderr: string } {
-  const proc = Bun.spawnSync([process.execPath, GENIE_CLI, ...args], {
+  const proc = Bun.spawnSync([process.execPath, LIFECYCLE_TEST_RUNNER, ...args], {
     cwd: opts.cwd ?? repo,
     env: opts.env ?? childEnv,
     stdout: 'pipe',
@@ -197,7 +219,7 @@ function runPty(
   input: string,
   opts: { env?: Record<string, string> } = {},
 ): { exitCode: number; output: string } {
-  const cli = [process.execPath, GENIE_CLI, ...args];
+  const cli = [process.execPath, LIFECYCLE_TEST_RUNNER, ...args];
   if (process.platform === 'darwin') {
     // expect(1): spawn on a pty, queue the consent answer, exit with the
     // child's status. Braced words keep tmp paths literal (no spaces in them).
@@ -275,14 +297,34 @@ describe.skipIf(!CAN_PTY)('codex lifecycle over a real PTY (Group E deliverable 
     );
     const snapshot = observeCodexActivation({ genieHome, codexHome, command: fakeCodex });
     if (snapshot.canonical.status !== 'ok') throw new Error(`canonical not ok: ${JSON.stringify(snapshot.canonical)}`);
+    const pack = buildTestDeliveryEvidencePack({
+      descriptor: {
+        version: TARGET,
+        channel: 'stable',
+        platformId: PLATFORM_ID,
+        platformTriple: PLATFORM_TRIPLE,
+        releaseTag: `v${TARGET}`,
+        releaseName: `genie-${TARGET}-${PLATFORM_ID}.tar.gz`,
+        artifactSha256: 'b'.repeat(64),
+        installedBinarySha256: createHash('sha256')
+          .update(readFileSync(join(genieHome, 'bin', 'genie')))
+          .digest('hex'),
+        canonicalPayloadSha256: snapshot.canonical.digest,
+      },
+    });
+    const evidence = verifyDownloadedDeliveryEvidence(pack.input, pack.dependencies);
     const lease = acquireLifecycleLease('update-delivery', { genieHome });
     if (!lease.ok) throw new Error(`lease: ${lease.detail}`);
     try {
-      const store = openCodexActivationStore({ genieHome, codexHome, command: fakeCodex });
+      const store = openCodexActivationStore({
+        genieHome,
+        codexHome,
+        command: fakeCodex,
+        deliveryEvidenceVerification: pack.dependencies,
+      });
       store.publishDelivery(lease, {
-        targetVersion: TARGET,
-        canonicalPayloadSha256: snapshot.canonical.digest,
-        channel: 'stable',
+        evidence,
+        deliveryRoot: realpathSync(genieHome),
       });
     } finally {
       lease.release();

@@ -27,11 +27,11 @@ Every release is cosign-signed (keyless OIDC) with SLSA provenance; the installe
 
 The repository-hosted `.well-known/latest.json`, `homolog.json`, and `dev.json` manifests are the authoritative channel pointers. GitHub's `/releases/latest` route and prerelease badge are deliberately not channel authority: a promotion advances only a monotonic manifest and never rewrites already-published assets or channel-significant draft/prerelease/latest metadata.
 
-The installer detects Claude Code and Codex and installs the version-matched Genie plugin for each. Control this with `--integrations auto|codex|claude|all|none` or `--skip-integrations`. When Codex is selected, the installed plugin is the **only** Genie-managed skill provider: a fresh install writes zero Genie product skills into `~/.agents/skills/` and requires one enabled, exact-version plugin with a usable MCP launcher and complete skill payload before it mutates anything. An upgrade from a release that still seeded user-tier fallbacks quarantines only provably clean historical copies — and only after a single post-convergence plugin health proof passes; same-name unmanaged, modified, malformed-marker, or symlinked user copies are preserved in place and reported as user-owned collisions. Automatic integration failures warn after the verified binary succeeds; explicitly requested failures are fatal.
+The installer detects Claude Code and Codex and delivers the selected, version-matched payloads. Control this with `--integrations auto|codex|claude|all|none` or `--skip-integrations`. Codex delivery is deliberately separate from activation: install/update verify the signed release and publish a complete authenticated delivery record, but never advance the Codex cache, change its enabled state, reconcile its project route, or write role agents. A delivered generation that still needs activation exits with an action-required result directing the operator to `genie setup --codex`.
 
-From inside a repo, run `genie init`. Use `genie setup --codex` to explicitly install or repair the Codex plugin, seven optional role-agent profiles, MCP routing, and the backup-first dead-OTel migration. A successful Codex setup also persists Codex maintenance consent: later, explicit `genie update` runs may refresh those Codex integration surfaces. That consent never writes new product skills into the user tier, never makes personal or modified skills managed, and it gives no authority to hooks. `genie update` is the explicit update/convergence path. When crossing from a release older than `5.260711.6` to `5.260711.6` or later, let the first update finish and run `genie update` one more time: the first process may only deliver the new binary/payload, while the second runs the new convergence contract. If the older release had seeded clean user-tier fallbacks, the convergence run retires them into a hidden quarantine transaction (see [Codex fallback quarantine and recovery](#codex-fallback-quarantine-and-recovery)) once one health proof passes. Verify that the plugin exposes exactly H3/H4/H6, then review their hashes with `/hooks` and start a new task. Later updates converge in one operator-driven path. No Codex hook or Claude SessionStart hook installs software, refreshes plugins, synchronizes skills, stamps workflows, or writes project instructions.
+From inside a trusted initialized repo, run `genie init` to reconcile the marker-owned project MCP route. Then run `genie setup --codex` from an external interactive terminal. Setup requires a matching authenticated delivery record before its first prompt or mutation; it activates the delivered plugin, proves the exact enabled payload and bounded MCP launcher, retires only clean historical user-tier fallbacks, converges seven optional role agents, and reconciles the project route. An already-current deliberately disabled plugin stays disabled, skips fallback retirement, and still repairs managed roles. Personal, modified, malformed-marker, and symlinked collisions remain untouched. Successful setup persists Codex delivery scope for later explicit updates, but those updates still deliver only; a new generation requires a fresh setup assertion. No hook installs software, activates plugins, synchronizes skills, or writes project instructions.
 
-Codex never auto-trusts plugin hooks. H4/H6 definitions bind the exact plugin launcher SHA-256 and the launcher verifies itself before spawning, so launcher changes produce new definitions; the current hook schema still cannot transitively bind the mutable platform-specific Genie binary. After setup or update, inspect the three Genie definitions with `/hooks`, approve only the hashes you understand, and start a new task so the reviewed definitions take effect. Until then they remain untrusted and do not run.
+Codex never auto-trusts plugin hooks. H4/H6 definitions bind the exact plugin launcher SHA-256 and the launcher verifies itself before spawning, so launcher changes produce new definitions; the current hook schema still cannot transitively bind the mutable platform-specific Genie binary. After successful Codex setup, inspect the three Genie definitions with `/hooks`, approve only the hashes you understand, and start a new task so the reviewed definitions take effect. Until then they remain untrusted and do not run.
 
 ## Quickstart
 
@@ -66,14 +66,14 @@ genie --help
 
 | Command | What it does |
 |---------|-------------|
-| `genie init` | Scaffold per-repo state and reconcile project MCP files (`.mcp.json`, `.warp/.mcp.json`, and a marker-owned `.codex/config.toml` fallback when no installed, enabled, usable Genie plugin route is proven) |
+| `genie init` | Scaffold per-repo state and reconcile project MCP files (`.mcp.json`, `.warp/.mcp.json`, and the marker-owned `.codex/config.toml` stable-facade route) |
 | `genie launch` | Open a Warp cockpit for a wish — one pane per ready group, each in its own worktree |
 | `genie board` | Kanban view of task state, derived live by query |
 | `genie task` | Inspect and drive task state (SQLite, zero-daemon) |
-| `genie install` | Run the installer-owned finishing step and explicitly install selected runtime integrations |
+| `genie install` | Finish a verified install and deliver selected integrations; Codex activation is deferred to setup |
 | `genie mcp` | Serve read-only Genie task/board state over stdio MCP |
 | `genie omni` | Bridge agents to WhatsApp via Omni — remote approvals + inbound one-shots (`serve`, `status`, `inbox`, `handshake`) |
-| `genie setup` | Configure Genie and install/repair runtime integrations |
+| `genie setup` | Configure Genie; `setup --codex` activates an authenticated delivery and converges Codex-owned surfaces |
 | `genie doctor` | Run diagnostic checks on the installation |
 | `genie hook` | Provider-neutral hook middleware with Claude/Codex wire adapters |
 | `genie shortcuts` | Manage terminal keyboard shortcuts |
@@ -101,11 +101,11 @@ These five inventories are intentionally separate:
 
 | Surface | What ships | Ownership |
 |---------|------------|-----------|
-| Codex plugin | 23 physical, in-root product skills with `agents/openai.yaml`; three untrusted hooks; MCP declaration | Versioned release payload; the **sole** Genie-managed skill provider — nothing is copied into the user tier |
-| Fallback retirement | Hidden `~/.agents/skills/.genie-codex-fallback-retirement/` quarantine transaction | Not written on fresh install. Upgrades from a fallback-seeding release move only provably clean historical copies here after one health proof; evidence is retained for recovery |
-| CLI integration | Seven optional `genie_*` role-agent TOMLs under `~/.codex/agents/` | Installed/repaired by `genie install` or `genie setup --codex` behind the same plugin health gate; clean managed copies refresh on explicit update |
+| Codex plugin | 23 physical, in-root product skills with `agents/openai.yaml`; three untrusted hooks; no Codex-owned MCP declaration | Versioned release payload; the **sole** Genie-managed skill provider — nothing is copied into the user tier |
+| Fallback retirement | Hidden `~/.agents/skills/.genie-codex-fallback-retirement/` quarantine transaction | Not written on fresh setup. After authenticated activation, setup moves only provably clean historical copies here after one health proof; evidence is retained for recovery |
+| CLI integration | Seven optional `genie_*` role-agent TOMLs under `~/.codex/agents/` | Installed/repaired only by successful `genie setup --codex`, after authenticated-root revalidation and fallback retirement |
 | Personal skills | This maintainer currently has 36 separately adapted skills under `~/.agents/skills` | User-owned; not bundled with Genie and never implied by plugin installation; preserved byte-for-byte even on same-name collision |
-| MCP launcher | Plugin-local Node launcher for `genie mcp` | Resolves only the canonical executable under `$GENIE_HOME/bin` (default `~/.genie/bin`) and fails closed if it is missing or unsafe |
+| Project MCP route | Marker-owned `.codex/config.toml` entry for `genie mcp` | Points at the stable absolute `$GENIE_HOME/bin/genie` facade with no `cwd` override; the plugin declares no Codex MCP route |
 
 The plugin's 23 skills and a user's personal 36-skill library are separate inventories even when names overlap. Genie never seeds the user tier and preserves unmanaged, modified, malformed-marker, and symlinked user copies instead of adopting them; use `$genie:<skill>` when the plugin copy is intended.
 
@@ -121,7 +121,7 @@ The removed hooks were the startup installer, first-run `AGENTS.md` writer, pre/
 
 ### Codex fallback quarantine and recovery
 
-Older Genie releases seeded up to 23 digest-managed product skills into `~/.agents/skills/`. When a plugin-only convergence run upgrades such a machine, it does **not** delete those copies. After one post-convergence plugin health proof passes, it moves only the provably clean, Genie-owned copies into a single durable quarantine transaction under:
+Older Genie releases seeded up to 23 digest-managed product skills into `~/.agents/skills/`. Authenticated `genie setup --codex` does **not** delete those copies. After one current-plugin health proof passes, it moves only the provably clean, Genie-owned copies into a single durable quarantine transaction under:
 
 ```text
 ~/.agents/skills/.genie-codex-fallback-retirement/
@@ -133,7 +133,7 @@ Older Genie releases seeded up to 23 digest-managed product skills into `~/.agen
 
 A copy is only retired when it is a physical non-symlink directory, carries a valid versioned `.genie-sync.json` marker, its recomputed canonical physical digest equals the marker digest, and it matches either the verified target-plugin payload or a committed verified-release historical tuple. Anything failing any predicate — modified-managed, malformed-marker, symlinked, or an unmanaged same-name personal skill — stays in place untouched and is reported as a user-owned collision.
 
-The transaction is idempotent and durable: repeated updates recognize the committed transaction and never create a second one or accumulate quarantine entries; an interrupted run reverse-restores every pre-commit move without clobbering conflicts. Quarantine and journal evidence are retained after commit so you can recover manually:
+The transaction is idempotent and durable: repeated setup runs recognize the committed transaction and never create a second one or accumulate quarantine entries; an interrupted run reverse-restores every pre-commit move without clobbering conflicts. Quarantine and journal evidence are retained after commit so you can recover manually:
 
 - **Recover a retired skill.** Move the tree back out of `txn-<id>/quarantine/<skill>/` into `~/.agents/skills/<skill>/`. This is only needed if you intentionally want a bare `$<skill>` user-tier copy; the plugin already serves it as `$genie:<skill>`.
 - **"Source changed after planning".** If your live skill was edited between the health proof and the move, retirement aborts before touching disk — the changed personal copy simply stays in place at `~/.agents/skills/<skill>`; nothing is moved, republished, or archived. Review that copy, then rerun the command.
@@ -143,7 +143,7 @@ The transaction is idempotent and durable: repeated updates recognize the commit
 
 ### Restart Codex after a Codex convergence
 
-Codex reads its plugin catalog and skill inventory at process start. After any `genie install --integrations codex`, `genie setup --codex`, or `genie update` that touched Codex, **restart Codex** so it drops any stale bare user-tier providers and loads only the owner-qualified `genie:*` plugin skills. Then review the three hook definitions with `/hooks` and start a new task.
+Codex reads its plugin catalog and skill inventory at process start. After a successful `genie setup --codex` activation or repair, **restart Codex** so it drops any stale bare user-tier providers and loads only the owner-qualified `genie:*` plugin skills. Then review the three hook definitions with `/hooks` and start a new task.
 
 ### Manual dogfood checklist
 
@@ -181,15 +181,15 @@ All linked worktrees of a repository share one `genie.db`, resolved from the git
 
 ## MCP server (Warp + Claude Code + Codex)
 
-`genie mcp` is a zero-dependency, read-only [MCP](https://modelcontextprotocol.io) server over stdio. The Codex plugin bundles a declaration and a small launcher, not another Genie binary. The launcher resolves only `$GENIE_HOME/bin/genie` (default `~/.genie/bin/genie`); missing, symlinked, or path-escaped executables fail closed. When no installed, enabled, usable Genie plugin route can be proven, `genie init` merges an absolute-path, marker-owned fallback into project `.codex/config.toml` without duplicating the server.
+`genie mcp` is a zero-dependency, read-only [MCP](https://modelcontextprotocol.io) server over stdio. Codex does not launch it from the versioned plugin cache. Instead, every trusted initialized repository owns one marker-managed `.codex/config.toml` route pointing at the stable absolute `$GENIE_HOME/bin/genie mcp` facade, with no `cwd` override. Missing, symlinked, or path-escaped executables fail closed.
 
-**How it gets picked up.** `genie init` reconciles Claude and Warp project configs and may change the three project files named below; review those project-scoped commands before trusting the workspace. Codex normally gets MCP from the plugin. The marker-owned project fallback is retained whenever Genie's probe cannot prove one installed, enabled, usable plugin route — including absent, disabled, malformed, timed-out, or unsafe plugin state. `genie launch` applies the same policy to its worktrees:
+**How it gets picked up.** `genie init` reconciles Claude, Warp, and Codex project configs and may change the three project files named below; review those project-scoped commands before trusting the workspace. The Codex route is plugin-independent and is created or repaired only when its marker proves Genie ownership. Unowned same-key routes, damaged markers, nested shadowing, and untrusted repositories are preserved and reported rather than overwritten. `genie launch` applies the same marker-owned policy to its worktrees:
 
 - `.mcp.json` — Claude Code's project MCP config. Project-scope servers are *pending approval* until you trust the workspace (accept the trust dialog in an interactive `claude` session) — expected, not a bug.
 - `.warp/.mcp.json` — Warp auto-detects this on save (no restart) and lists `genie` under Settings → AI/Agents → MCP servers.
-- `.codex/config.toml` — marker-owned absolute-path fallback, written whenever no installed, enabled, usable native Genie plugin route is proven.
+- `.codex/config.toml` — marker-owned absolute stable-facade route with no effective `cwd` override.
 
-The Claude and Warp JSON files use the identical `mcpServers` shape and are merged idempotently; the Codex TOML fallback uses marker-owned root-level dotted assignments so it cannot capture following keys. Re-running `genie init` preserves every other server and top-level key and rewrites byte-identical. A compiled Genie records the absolute executable plus `mcp`; an interpreted `bun src/genie.ts` or `bun dist/genie.js` run records the absolute Bun executable plus the absolute script and `mcp`. No route relies on bare `genie`, which is not reliably on PATH. Because `genie init`/`launch` run on the box that owns the repo, the recorded paths are correct even under Warp's SSH-remote feature, where Warp spawns the server on that same box.
+The Claude and Warp JSON files use the identical `mcpServers` shape and are merged idempotently; the Codex TOML route uses marker-owned root-level dotted assignments so it cannot capture following keys. Re-running `genie init` preserves every other server and top-level key and rewrites byte-identical. A compiled Genie records the absolute executable plus `mcp`; an interpreted `bun src/genie.ts` or `bun dist/genie.js` run records the absolute Bun executable plus the absolute script and `mcp`. No route relies on bare `genie`, which is not reliably on PATH. Because `genie init`/`launch` run on the box that owns the repo, the recorded paths are correct even under Warp's SSH-remote feature, where Warp spawns the server on that same box.
 
 **What it exposes** — five read-only tools backed by the per-repo `.genie/genie.db`:
 

@@ -15,7 +15,7 @@
  *
  * Coverage:
  *   1  fresh install (C1)                     — 1 enabled plugin + MCP, 0 fallbacks, 0 txn
- *   2  pure-23 upgrade + idempotency (C1)     — 23 retired, one committed txn, stable across 3 updates
+ *   2  pure-23 upgrade + idempotency (C1)     — 23 retired, one committed txn, stable across 3 setups
  *   3  mixed collisions + regressions (C4)    — personal classes + dangling symlink + Claude untouched, 7 role agents
  *   4  disabled-plugin path (C4/A7)           — role agents installed, retirement skipped, stays disabled
  *   5  health-failure path (C4/A7)            — nonzero, role agents + fallbacks untouched, no txn
@@ -42,7 +42,6 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { atomicRenameDirectoryNoClobber, resolveLinuxRenameat2 } from '../src/lib/agent-sync.ts';
 import {
-  type CliResult,
   DIST_CLI,
   type IsolatedHome,
   REPO_ROOT,
@@ -51,9 +50,11 @@ import {
   SmokeFailure,
   TARGET_VERSION,
   activePluginRoot,
+  assertEffectiveCodexProjectRoute,
   assertNoStaleTempHomes,
   assertPluginHealthy,
   assertProtectedUnchanged,
+  assertSingleCodexProjectRouteMarker,
   buildCliOnce,
   captureProtected,
   diffTree,
@@ -63,13 +64,17 @@ import {
   installGenieHome,
   linkRealCodex,
   readCodexGeniePlugin,
-  readDoctorChecks,
+  readLifecycleDoctorChecks,
   req,
   runCli,
+  runLifecycleCli,
+  runLifecycleSetup,
+  runRealCodex,
   seedPersonalFixtures,
   seedShippedFallbackLayout,
   snapshotNode,
   snapshotTree,
+  trustIsolatedCodexProject,
   withIsolatedHome,
 } from './codex-smoke-harness.ts';
 
@@ -79,11 +84,18 @@ const ROLE_AGENT_COUNT = 7;
 // Local helpers
 // ============================================================================
 
-function convergeUpdate(iso: IsolatedHome): CliResult {
-  // `update --post-delivery-converge` is the offline full-update convergence
-  // path: it re-proves plugin health and retires accepted fallbacks with no
-  // network manifest fetch or binary swap.
-  return runCli(iso, ['update', '--post-delivery-converge']);
+function publishDelivery(iso: IsolatedHome, phase: string): void {
+  const publish = runLifecycleCli(iso, ['publish-delivery']);
+  if (publish.exitCode !== 0) {
+    fail(`delivery fixture publication failed ${phase}: ${publish.stderr.trim() || publish.stdout.trim()}`);
+  }
+}
+
+function setupCodex(iso: IsolatedHome, phase: string): void {
+  const setup = runLifecycleSetup(iso);
+  if (setup.exitCode !== 0) {
+    fail(`setup --codex failed ${phase}: ${setup.output.trim()}`);
+  }
 }
 
 function assertCommittedTransaction(summary: RetirementSummary, expected: number): void {
@@ -110,8 +122,10 @@ function assertRoleAgents(iso: IsolatedHome, expected: number): void {
 }
 
 function codexTierDetail(iso: IsolatedHome, phase: string): string {
-  return req(findCheck(readDoctorChecks(iso), 'agent sync: codex'), `doctor missing 'agent sync: codex' ${phase}`)
-    .detail;
+  return req(
+    findCheck(readLifecycleDoctorChecks(iso), 'agent sync: codex'),
+    `doctor missing 'agent sync: codex' ${phase}`,
+  ).detail;
 }
 
 function seedDanglingSymlink(iso: IsolatedHome): string {
@@ -245,9 +259,8 @@ function stepFreshInstall(notes: string[]): void {
   withIsolatedHome((iso) => {
     installGenieHome(iso);
     linkRealCodex(iso);
-    const install = runCli(iso, ['install', '--integrations', 'codex']);
-    if (install.exitCode !== 0)
-      fail(`fresh install --integrations codex failed: ${install.stderr.trim() || install.stdout.trim()}`);
+    publishDelivery(iso, '(fresh)');
+    setupCodex(iso, '(fresh)');
     assertPluginHealthy(iso, TARGET_VERSION);
     const retirement = inspectRetirement(iso.skillsDir);
     if (retirement.txnIds.length !== 0)
@@ -270,36 +283,35 @@ function stepUpgradePure23(notes: string[]): void {
   withIsolatedHome((iso) => {
     installGenieHome(iso);
     linkRealCodex(iso);
-    if (runCli(iso, ['install', '--integrations', 'codex']).exitCode !== 0) fail('pure-23 home install codex failed');
     const seeded = seedShippedFallbackLayout(iso);
     if (seeded.length !== 23) fail(`expected 23 seeded fallbacks, got ${seeded.length}`);
     // Round-trip gate (A4): the built CLI must classify all 23 as clean.
     const beforeDetail = codexTierDetail(iso, '(pre-upgrade)');
     if (!beforeDetail.includes('23 clean managed fallback'))
       fail(`round-trip gate failed; doctor said: ${beforeDetail}`);
-    // Upgrade convergence retires all 23 into one committed transaction.
-    const upgrade = convergeUpdate(iso);
-    if (upgrade.exitCode !== 0) fail(`upgrade convergence failed: ${upgrade.stderr.trim() || upgrade.stdout.trim()}`);
+    // Authenticated setup activation proves the exact enabled plugin before
+    // retiring all 23, then converges managed roles.
+    publishDelivery(iso, '(pure-23)');
+    setupCodex(iso, '(pure-23 activation)');
     const first = inspectRetirement(iso.skillsDir);
     assertCommittedTransaction(first, 23);
     assertFallbacksRetired(iso, seeded);
     assertPluginHealthy(iso, TARGET_VERSION);
     const txnId = first.txnIds[0];
-    // Two further full updates: still exactly one transaction, same id (A5, idempotent).
+    // Two further setup runs: still exactly one transaction, same id (A5, idempotent).
     for (let run = 1; run <= 2; run++) {
-      const again = convergeUpdate(iso);
-      if (again.exitCode !== 0) fail(`idempotent update ${run} failed: ${again.stderr.trim() || again.stdout.trim()}`);
+      setupCodex(iso, `(pure-23 idempotent setup ${run})`);
       const summary = inspectRetirement(iso.skillsDir);
       assertCommittedTransaction(summary, 23);
       if (summary.txnIds[0] !== txnId)
-        fail(`idempotent update ${run} created a second transaction: ${summary.txnIds.join(', ')}`);
+        fail(`idempotent setup ${run} created a second transaction: ${summary.txnIds.join(', ')}`);
       assertFallbacksRetired(iso, seeded);
     }
     const afterDetail = codexTierDetail(iso, '(post-upgrade)');
     if (!afterDetail.includes('no managed') || !afterDetail.includes('1 retired quarantine')) {
       fail(`post-upgrade doctor should report plugin-only + one quarantine txn, got: ${afterDetail}`);
     }
-    notes.push('pure-23: 23 retired → one committed txn, stable across install + 3 updates');
+    notes.push('pure-23: 23 retired → one committed txn, stable across activation + 2 setup reruns');
   });
 }
 
@@ -311,7 +323,6 @@ function stepMixedCollisions(notes: string[]): void {
   withIsolatedHome((iso) => {
     installGenieHome(iso);
     linkRealCodex(iso);
-    if (runCli(iso, ['install', '--integrations', 'codex']).exitCode !== 0) fail('mixed home install codex failed');
     // 22 clean fallbacks (the `wish` slot is left for the unmanaged same-name collision).
     const seeded = seedShippedFallbackLayout(iso, ['wish']);
     if (seeded.length !== 22) fail(`expected 22 clean fallbacks, got ${seeded.length}`);
@@ -320,16 +331,16 @@ function stepMixedCollisions(notes: string[]): void {
     const claudeDir = seedClaudeSentinel(iso);
     const captured = captureProtected([...personal.protectedPaths, dangling, claudeDir]);
 
-    const upgrade = convergeUpdate(iso);
-    if (upgrade.exitCode !== 0) fail(`mixed upgrade failed: ${upgrade.stderr.trim() || upgrade.stdout.trim()}`);
-    assertProtectedUnchanged('mixed after first update', captured);
+    publishDelivery(iso, '(mixed)');
+    setupCodex(iso, '(mixed activation)');
+    assertProtectedUnchanged('mixed after first setup', captured);
     assertCommittedTransaction(inspectRetirement(iso.skillsDir), 22);
     assertFallbacksRetired(iso, seeded);
     if (!existsSync(join(iso.skillsDir, personal.names.unmanaged))) fail('personal same-name `wish` was removed');
 
-    const checks = readDoctorChecks(iso);
+    const checks = readLifecycleDoctorChecks(iso);
     const codexDetail = req(findCheck(checks, 'agent sync: codex'), 'mixed missing codex check').detail;
-    if (!codexDetail.includes('no managed')) fail(`mixed post-update codex tier not clean: ${codexDetail}`);
+    if (!codexDetail.includes('no managed')) fail(`mixed post-setup codex tier not clean: ${codexDetail}`);
     const collisions = req(findCheck(checks, 'agent sync: codex collisions'), 'mixed missing codex collisions check');
     if (
       !collisions.detail.includes(personal.names.modifiedManaged) ||
@@ -354,12 +365,11 @@ function stepMixedCollisions(notes: string[]): void {
     assertRoleAgents(iso, ROLE_AGENT_COUNT);
     assertPluginHealthy(iso, TARGET_VERSION);
 
-    // Second full update: protected trees still identical, still one transaction.
+    // Second setup: protected trees still identical, still one transaction.
     const txnId = inspectRetirement(iso.skillsDir).txnIds[0];
-    const again = convergeUpdate(iso);
-    if (again.exitCode !== 0) fail(`mixed second update failed: ${again.stderr.trim() || again.stdout.trim()}`);
-    assertProtectedUnchanged('mixed after second update', captured);
-    if (inspectRetirement(iso.skillsDir).txnIds[0] !== txnId) fail('mixed second update created a second transaction');
+    setupCodex(iso, '(mixed idempotent setup)');
+    assertProtectedUnchanged('mixed after second setup', captured);
+    if (inspectRetirement(iso.skillsDir).txnIds[0] !== txnId) fail('mixed second setup created a second transaction');
     notes.push('mixed: 22 retired, 4 personal classes + dangling symlink + Claude sentinel preserved, 7 role agents');
   });
 }
@@ -372,13 +382,13 @@ function stepRoleAgentDisabled(notes: string[]): void {
   withIsolatedHome((iso) => {
     installGenieHome(iso);
     linkRealCodex(iso);
-    if (runCli(iso, ['install', '--integrations', 'codex']).exitCode !== 0) fail('disabled home install codex failed');
+    publishDelivery(iso, '(disabled bootstrap)');
+    setupCodex(iso, '(disabled bootstrap)');
     disablePluginInConfig(iso);
     if (readCodexGeniePlugin(iso).enabled !== false) fail('plugin did not read as disabled after the config edit');
     rmSync(join(iso.codexHome, 'agents'), { recursive: true, force: true });
     const seeded = seedShippedFallbackLayout(iso);
-    const upd = convergeUpdate(iso);
-    if (upd.exitCode !== 0) fail(`disabled-plugin update failed: ${upd.stderr.trim() || upd.stdout.trim()}`);
+    setupCodex(iso, '(disabled preservation)');
     if (readCodexGeniePlugin(iso).enabled !== false) fail('disabled plugin was silently re-enabled');
     assertRoleAgents(iso, ROLE_AGENT_COUNT);
     if (inspectRetirement(iso.skillsDir).txnIds.length !== 0) fail('disabled path created a retirement transaction');
@@ -397,17 +407,17 @@ function stepRoleAgentHealthFailure(notes: string[]): void {
   withIsolatedHome((iso) => {
     installGenieHome(iso);
     linkRealCodex(iso);
-    if (runCli(iso, ['install', '--integrations', 'codex']).exitCode !== 0)
-      fail('health-failure home install codex failed');
+    publishDelivery(iso, '(health-failure bootstrap)');
+    setupCodex(iso, '(health-failure bootstrap)');
     const seeded = seedShippedFallbackLayout(iso);
     const agentsBefore = snapshotNode(join(iso.codexHome, 'agents'));
     const fallbackBefore = snapshotTree(iso.skillsDir);
     corruptInstalledPayload(iso);
-    const upd = convergeUpdate(iso);
-    if (upd.exitCode === 0) fail('health-failure path unexpectedly succeeded (corrupt payload accepted)');
+    const setup = runLifecycleSetup(iso);
+    if (setup.exitCode === 0) fail('health-failure path unexpectedly succeeded (corrupt payload accepted)');
     // Pin attribution: the nonzero exit must come from payload/health verification of the
     // corrupted plugin, not some unrelated convergence failure.
-    const failText = `${upd.stderr}\n${upd.stdout}`;
+    const failText = setup.output;
     if (!/payload/i.test(failText) || !/(mismatch|differ|canonical|health)/i.test(failText))
       fail(`health-failure exit not attributed to payload/health verification: ${failText.trim().slice(0, 300)}`);
     const agentsDiff = diffTree(agentsBefore, snapshotNode(join(iso.codexHome, 'agents')));
@@ -429,16 +439,15 @@ function stepPluginIncapable(notes: string[]): void {
   withIsolatedHome((iso) => {
     installGenieHome(iso);
     writeFakeCodex(iso, 'plugin-unknown');
+    publishDelivery(iso, '(plugin-incapable)');
     const seeded = seedShippedFallbackLayout(iso);
-    // Protected trees: the fallback tier (must never be read/mutated) and the
-    // GENIE_HOME plugin payload. `install` DOES persist `.integration-consent.json`
-    // before integrations run, so full GENIE_HOME identity is intentionally not
-    // claimed — A8 scopes byte-identity to the protected trees.
+    // A8's protected scope is the fallback tier (which must not be read or
+    // mutated) plus the installed plugin payload.
     const skillsBefore = snapshotTree(iso.skillsDir);
     const payloadBefore = snapshotTree(join(iso.genieHome, 'plugins'));
-    const install = runCli(iso, ['install', '--integrations', 'codex']);
-    if (install.exitCode === 0) fail('plugin-incapable install unexpectedly succeeded');
-    const output = `${install.stdout}\n${install.stderr}`;
+    const setup = runLifecycleSetup(iso);
+    if (setup.exitCode === 0) fail('plugin-incapable setup unexpectedly succeeded');
+    const output = setup.output;
     if (!/upgrade.*codex/i.test(output))
       fail(`plugin-incapable output lacks explicit upgrade-Codex guidance: ${output.slice(0, 400)}`);
     // Convergence aborts on the first codex command, before any fallback read (A8).
@@ -461,6 +470,7 @@ function stepForcedPluginFailure(notes: string[]): void {
   withIsolatedHome((iso) => {
     installGenieHome(iso);
     writeFakeCodex(iso, 'plugin-fails-add');
+    publishDelivery(iso, '(forced plugin-add failure)');
     const seeded = seedShippedFallbackLayout(iso, ['wish']);
     seedPersonalFixtures(iso);
     // A8: scope byte-identity to the PROTECTED trees (fallback + personal tier,
@@ -468,8 +478,8 @@ function stepForcedPluginFailure(notes: string[]): void {
     // touch codexHome/genieHome metadata, so those are not claimed byte-identical.
     const skillsBefore = snapshotTree(iso.skillsDir);
     const payloadBefore = snapshotTree(join(iso.genieHome, 'plugins'));
-    const install = runCli(iso, ['install', '--integrations', 'codex']);
-    if (install.exitCode === 0) fail('forced plugin-add failure install unexpectedly succeeded');
+    const setup = runLifecycleSetup(iso);
+    if (setup.exitCode === 0) fail('forced plugin-add failure setup unexpectedly succeeded');
     const skillsDiff = diffTree(skillsBefore, snapshotTree(iso.skillsDir));
     if (skillsDiff.length > 0)
       fail(`fallback/personal tree changed on forced plugin-add failure: ${skillsDiff.join(' | ')}`);
@@ -550,18 +560,44 @@ function stepEnvDependentSuites(notes: string[]): void {
   withIsolatedHome((iso) => {
     installGenieHome(iso);
     linkRealCodex(iso);
-    if (runCli(iso, ['install', '--integrations', 'codex']).exitCode !== 0) fail('C8 home install codex failed');
-    // C8 OR-path: the 2 env-dependent unit suites (codex-project-mcp.test.ts,
-    // codex-manifest.test.ts) build their own fixtures, so running them under
-    // iso.env changes nothing — they stay pre-existing red regardless (documented
-    // in CHANGELOG's "Known non-blocking red gate"). We therefore prove the SAME
-    // criteria black-box against the real installed plugin, which IS authoritative.
-    // 2a. Project-MCP reconciliation via `genie init` in the isolated project repo.
+    // C8 black-box proofs exercise the built artifact and real installed plugin
+    // inside the isolated home. First prove route-only init creates the route
+    // from actual absence, before delivery/setup has any opportunity to
+    // reconcile it as part of activation finalization.
+    const codexConfig = join(iso.project, '.codex', 'config.toml');
+    if (existsSync(codexConfig)) fail('C8 project route must be absent before the first genie init');
     const init = runCli(iso, ['init', '--json']);
     if (init.exitCode !== 0) fail(`genie init failed: ${init.stderr.trim() || init.stdout.trim()}`);
-    const projectMcp = join(iso.project, '.mcp.json');
-    if (!existsSync(projectMcp) || !readFileSync(projectMcp, 'utf8').includes('genie')) {
-      fail('genie init did not reconcile a project MCP route referencing genie');
+    if (!existsSync(codexConfig)) fail('genie init did not create the Codex project config');
+    const firstToml = readFileSync(codexConfig, 'utf8');
+    assertSingleCodexProjectRouteMarker(firstToml);
+    publishDelivery(iso, '(C8)');
+    setupCodex(iso, '(C8)');
+    const afterSetupToml = readFileSync(codexConfig, 'utf8');
+    if (afterSetupToml !== firstToml) {
+      fail('authenticated setup changed the already-current marker-owned route bytes');
+    }
+    trustIsolatedCodexProject(iso);
+    const firstRoute = assertEffectiveCodexProjectRoute(
+      runRealCodex(iso, ['mcp', 'get', 'genie', '--json']),
+      runRealCodex(iso, ['mcp', 'list', '--json']),
+      iso.genieBin,
+    );
+
+    const secondInit = runCli(iso, ['init', '--json']);
+    if (secondInit.exitCode !== 0) {
+      fail(`second genie init failed: ${secondInit.stderr.trim() || secondInit.stdout.trim()}`);
+    }
+    const secondToml = readFileSync(codexConfig, 'utf8');
+    if (secondToml !== firstToml) fail('second genie init changed the marker-owned Codex project config bytes');
+    assertSingleCodexProjectRouteMarker(secondToml);
+    const secondRoute = assertEffectiveCodexProjectRoute(
+      runRealCodex(iso, ['mcp', 'get', 'genie', '--json']),
+      runRealCodex(iso, ['mcp', 'list', '--json']),
+      iso.genieBin,
+    );
+    if (secondRoute.getJson !== firstRoute.getJson || secondRoute.listJson !== firstRoute.listJson) {
+      fail('Codex mcp get/list JSON changed after byte-idempotent second init');
     }
     // 2b. Manifest MCP shape via direct inspection of the installed plugin cache.
     assertInstalledPluginMcpShape(iso, readCodexGeniePlugin(iso).version);
@@ -570,9 +606,7 @@ function stepEnvDependentSuites(notes: string[]): void {
     assertPluginHealthy(iso, TARGET_VERSION);
     // 2d. SessionStart hook context emission (covers the codex-manifest criteria).
     assertSessionStartHook(iso, readCodexGeniePlugin(iso).version);
-    notes.push(
-      'C8: black-box project-MCP + manifest-shape + MCP-usability + SessionStart authoritative (env-dependent unit suites are pre-existing red regardless of iso.env — see CHANGELOG)',
-    );
+    notes.push('C8: black-box project-MCP + manifest-shape + MCP-usability + SessionStart proofs passed');
   });
 }
 

@@ -8,9 +8,10 @@
  * `genie.ts` except through the dynamic `import()` inside the `mcp` action.
  */
 
+import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { openDb } from '../lib/v5/genie-db.js';
@@ -379,6 +380,32 @@ describe('mcp runtime-layer backward compatibility', () => {
 // ============================================================================
 
 describe('mcp missing-database fail-closed', () => {
+  function seedRawDatabase(sql: string): string {
+    const dbPath = join(repo, '.genie', 'genie.db');
+    mkdirSync(dirname(dbPath), { recursive: true });
+    const db = new Database(dbPath);
+    db.exec(sql);
+    db.close();
+    return dbPath;
+  }
+
+  async function expectProjectDatabaseUnavailable(id: number): Promise<{ error: string; detail: string }> {
+    const responses = await driveMcp(repo, [
+      INIT,
+      INITIALIZED,
+      { jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'genie_board', arguments: {} } },
+    ]);
+    const response = responses.find((candidate) => candidate.id === id);
+    expect(response?.error).toBeUndefined();
+    expect(response?.result?.isError).toBe(true);
+    const payload = toolPayload<{ error: string; detail: string }>(response!);
+    expect(payload.error).toBe('project-database-unavailable');
+    expect(payload.detail).toContain(join(repo, '.genie', 'genie.db'));
+    expect(payload).not.toHaveProperty('counts');
+    expect(payload).not.toHaveProperty('tasks');
+    return payload;
+  }
+
   test('genie_board on a git repo with no genie.db returns project-database-unavailable, not empty success', async () => {
     // Fresh git repo, never seeded → no .genie/genie.db. The old behavior served
     // a healthy-looking empty board (the masquerade); Group A returns a typed error.
@@ -422,7 +449,89 @@ describe('mcp missing-database fail-closed', () => {
     }
   });
 
-  test('reopens a db created AFTER the server started (no stale empty board)', async () => {
+  for (const fixture of ['directory', 'malformed-file'] as const) {
+    test(`genie_board fails closed when genie.db is an existing ${fixture}`, async () => {
+      const dbPath = join(repo, '.genie', 'genie.db');
+      mkdirSync(join(repo, '.genie'), { recursive: true });
+      if (fixture === 'directory') mkdirSync(dbPath);
+      else writeFileSync(dbPath, 'not a sqlite database');
+
+      const responses = await driveMcp(repo, [
+        INIT,
+        INITIALIZED,
+        { jsonrpc: '2.0', id: 18, method: 'tools/call', params: { name: 'genie_board', arguments: {} } },
+      ]);
+      const res = responses.find((response) => response.id === 18);
+      expect(res?.result?.isError).toBe(true);
+      const payload = toolPayload<{ error: string; detail: string }>(res!);
+      expect(payload.error).toBe('project-database-unavailable');
+      expect(payload.detail).toContain(dbPath);
+      expect(payload).not.toHaveProperty('counts');
+      expect(payload).not.toHaveProperty('tasks');
+    });
+  }
+
+  for (const alias of ['genie-directory', 'database-file'] as const) {
+    test(`genie_board rejects a ${alias} symlink to another valid repository database`, async () => {
+      const other = mkdtempSync(join(tmpdir(), 'genie-mcp-alias-'));
+      git(other, 'init', '-b', 'main');
+      git(other, 'commit', '--allow-empty', '-m', 'init');
+      seed(other);
+      try {
+        if (alias === 'genie-directory') {
+          symlinkSync(join(other, '.genie'), join(repo, '.genie'), 'dir');
+        } else {
+          mkdirSync(join(repo, '.genie'));
+          symlinkSync(join(other, '.genie', 'genie.db'), join(repo, '.genie', 'genie.db'), 'file');
+        }
+
+        const payload = await expectProjectDatabaseUnavailable(alias === 'genie-directory' ? 51 : 52);
+        expect(payload.detail).toContain(alias === 'genie-directory' ? 'physical directory' : 'physical regular file');
+      } finally {
+        rmSync(other, { recursive: true, force: true });
+      }
+    });
+  }
+
+  test('rejects a foreign-version database with a lookalike tasks table instead of exposing its rows', async () => {
+    seedRawDatabase(`
+      CREATE TABLE tasks (
+        id TEXT PRIMARY KEY,
+        board_id TEXT,
+        title TEXT NOT NULL,
+        status TEXT NOT NULL,
+        claimed_by TEXT,
+        claimed_at INTEGER,
+        wish TEXT,
+        group_name TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      INSERT INTO tasks VALUES ('foreign', NULL, 'attacker row', 'ready', NULL, NULL, NULL, NULL, 1, 1);
+      PRAGMA user_version = 99;
+    `);
+
+    await expectProjectDatabaseUnavailable(50);
+  });
+
+  test('rejects a user_version=0 foreign SQLite database as a structured project database error', async () => {
+    seedRawDatabase(
+      "CREATE TABLE inventory (id TEXT PRIMARY KEY, secret TEXT); INSERT INTO inventory VALUES ('x', 'y')",
+    );
+
+    await expectProjectDatabaseUnavailable(51);
+  });
+
+  test('rejects a current-version database whose required Genie schema is incomplete', async () => {
+    seedRawDatabase(`
+      CREATE TABLE tasks (id TEXT PRIMARY KEY, title TEXT NOT NULL, status TEXT NOT NULL, created_at INTEGER NOT NULL);
+      PRAGMA user_version = 1;
+    `);
+
+    await expectProjectDatabaseUnavailable(52);
+  });
+
+  test('reopens a genuine current db created AFTER the server started (no stale empty board)', async () => {
     // Server starts against a repo with no genie.db (null handle), THEN the db
     // is created mid-session — a per-call reopen must pick it up, not serve empty.
     const proc = Bun.spawn(['bun', GENIE, 'mcp'], {
@@ -460,6 +569,7 @@ describe('mcp missing-database fail-closed', () => {
       .filter((l) => l.trim().length > 0)
       .map((l) => JSON.parse(l) as RpcResponse);
     const res = responses.find((r) => r.id === 20);
+    expect(res?.result?.isError).toBe(false);
     const payload = toolPayload<{ counts: { total: number } }>(res!);
     expect(payload.counts.total).toBeGreaterThan(0); // saw the db created mid-session
   });

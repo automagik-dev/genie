@@ -320,6 +320,60 @@ class IntegrationCommandError extends Error {
 
 const defaultRunner: CommandRunner = runBoundedIntegrationCommand;
 
+declare const DELIVERY_ROOT_CONSUMER_RESULT: unique symbol;
+
+/**
+ * Opaque synchronous consumer of one store-admitted physical delivery root.
+ * The implementation and root argument remain module-private; activation
+ * callers can select a narrow operation but cannot extract the root.
+ */
+export interface DeliveryRootConsumer<T> {
+  readonly [DELIVERY_ROOT_CONSUMER_RESULT]: T;
+}
+
+const DELIVERY_ROOT_CONSUMERS = new WeakMap<object, (physicalRoot: string) => unknown>();
+
+function createDeliveryRootConsumer<T>(consume: (physicalRoot: string) => T): DeliveryRootConsumer<T> {
+  const capability = Object.freeze({}) as DeliveryRootConsumer<T>;
+  DELIVERY_ROOT_CONSUMERS.set(capability, consume);
+  return capability;
+}
+
+/**
+ * Internal bridge for CodexActivationStore's freshness-checked `consume`.
+ * A structural lookalike is rejected by WeakMap identity.
+ */
+export function runDeliveryRootConsumer<T>(consumer: DeliveryRootConsumer<T>, physicalRoot: string): T {
+  const consume = DELIVERY_ROOT_CONSUMERS.get(consumer);
+  if (consume === undefined) throw new IntegrationCommandError('unrecognized delivery-root consumer capability');
+  // Capabilities are single-use even if a caller retains the opaque object.
+  DELIVERY_ROOT_CONSUMERS.delete(consumer);
+  return consume(physicalRoot) as T;
+}
+
+export interface SetupCodexConsentCommitOptions {
+  genieHome?: string;
+  selection: IntegrationSelection;
+  /** Test seam for the durable consent writer. */
+  persist?: typeof persistIntegrationConsent;
+}
+
+/**
+ * Create setup's narrow explicit-consent commit capability. The delivery root
+ * is intentionally not passed to the write: its only role is to force this
+ * privileged state transition through the store's immediate freshness checks.
+ */
+export function createSetupCodexConsentCommitConsumer(
+  options: SetupCodexConsentCommitOptions,
+): DeliveryRootConsumer<void> {
+  if (options.selection !== 'codex' && options.selection !== 'all') {
+    throw new IntegrationCommandError('setup Codex consent commit requires explicit codex/all scope');
+  }
+  return createDeliveryRootConsumer(() =>
+    (options.persist ?? persistIntegrationConsent)(options.selection, options.genieHome ?? resolveGenieHome()),
+  );
+}
+
 const BOUNDED_RUNNER_WORKER = String.raw`
   const { spawn } = require('node:child_process');
   const { workerData } = require('node:worker_threads');
@@ -1975,6 +2029,32 @@ export function installCodexAgents(
   return plan.result;
 }
 
+export interface ConvergeSetupCodexRoleAgentsOptions {
+  codexHome?: string;
+  genieHome?: string;
+}
+
+/**
+ * Create setup's narrow role-convergence consumer. The authenticated root is
+ * supplied only when CodexActivationStore admits this opaque capability; exact
+ * historical profiles are adopted only after setup has durably committed
+ * explicit Codex consent.
+ */
+export function createSetupCodexRoleAgentConsumer(
+  options: ConvergeSetupCodexRoleAgentsOptions,
+): DeliveryRootConsumer<CodexAgentInstallResult> {
+  return createDeliveryRootConsumer((physicalRoot) => {
+    const genieHome = options.genieHome ?? resolveGenieHome();
+    const consent = readIntegrationConsentState(genieHome);
+    if (!codexRoleAdoptionAllowed(consent)) {
+      throw new IntegrationCommandError(
+        'Codex role-agent convergence requires committed explicit Codex integration consent',
+      );
+    }
+    return installCodexAgents(physicalRoot, options.codexHome, {}, { adoptHistorical: true });
+  });
+}
+
 export interface CodexEnabledMutationResult {
   ok: boolean;
   detail: string;
@@ -2164,6 +2244,27 @@ function addCodexMarketplace(runner: CommandRunner, command: string, bundleRoot:
   if (!/already|exists|configured/i.test(output)) {
     throw new IntegrationCommandError(`codex ${args.join(' ')} failed: ${(result.stderr || result.stdout).trim()}`);
   }
+}
+
+export interface RegisterCodexMarketplaceOptions {
+  /** Once-bound absolute Codex executable. */
+  command: string;
+  runner?: CommandRunner;
+  timeoutMs?: number;
+}
+
+/**
+ * Build a one-operation capability that can register only the exact physical
+ * delivery root admitted by the activation store. The root is never exposed to
+ * setup/executor callers and cannot be rebound through GENIE_HOME resolution.
+ */
+export function createCodexMarketplaceRegistrationConsumer(
+  options: RegisterCodexMarketplaceOptions,
+): DeliveryRootConsumer<void> {
+  const timeoutMs = boundedPositiveInteger('timeout', options.timeoutMs ?? INTEGRATION_TIMEOUT_MS, 5 * 60_000);
+  return createDeliveryRootConsumer((physicalRoot) =>
+    addCodexMarketplace(options.runner ?? defaultRunner, options.command, physicalRoot, timeoutMs),
+  );
 }
 
 function requireCodexPluginState(raw: string, phase: string): RuntimePluginState {
@@ -3163,18 +3264,22 @@ export function translateRetirementConflicts<T>(step: () => T): T {
   }
 }
 
-export interface CodexPluginOnlyDeps {
-  converge?: (options: ConvergePluginOptions) => IntegrationResult | null;
+/** Narrow proof→retirement boundary shared by setup and the legacy orchestrator. */
+export interface CodexFallbackRetirementDeps {
   probe?: (deps: CodexPluginProbeDeps) => CodexPluginProbe;
   prove?: (options: ProveCodexPluginHealthOptions) => CodexHealthProof;
   recover?: (fallbackSkillsDir: string) => CodexFallbackRetirementResult[];
   plan?: (options: PlanCodexFallbackRetirementOptions) => CodexFallbackRetirementPlan;
   apply?: (plan: CodexFallbackRetirementPlan) => CodexFallbackRetirementResult;
-  installAgents?: (bundleRoot: string, codexHome?: string) => CodexAgentInstallResult;
   runSession?: (options: BoundedCodexMcpSessionOptions) => McpSessionResult;
   /** Live Codex user-skills tier; defaults to resolveAgentsSkillsDir() (env-isolated in tests). */
   fallbackSkillsDir?: string;
   probeCwd?: string;
+}
+
+export interface CodexPluginOnlyDeps extends CodexFallbackRetirementDeps {
+  converge?: (options: ConvergePluginOptions) => IntegrationResult | null;
+  installAgents?: (bundleRoot: string, codexHome?: string) => CodexAgentInstallResult;
   /**
    * Explicit adoption override for tests. When omitted, adoption is derived from
    * committed Codex consent read from `options.genieHome` (adoption stays OFF when
@@ -3209,6 +3314,116 @@ export interface CodexPluginOnlyResult {
 /** Absent fallback tier means a fresh install: nothing to retire, and R2/R7 forbid creating the lane. */
 function fallbackDirPresent(fallbackSkillsDir: string): boolean {
   return existsSync(fallbackSkillsDir);
+}
+
+export type SetupCodexFallbackRetirementResult =
+  | {
+      status: 'verified';
+      retired: readonly string[];
+      preservedCollisions: number;
+      preservedUnrecognized: number;
+    }
+  | {
+      /** A deliberate disabled state is healthy for setup, but never authorizes fallback mutation. */
+      status: 'skipped-disabled';
+      retired: readonly [];
+      preservedCollisions: 0;
+      preservedUnrecognized: 0;
+    };
+
+export interface SetupCodexFallbackRetirementOptions {
+  /** Once-bound absolute Codex executable used for the fresh health snapshot. */
+  command: string;
+  /** Exact authenticated generation admitted by the activation store. */
+  expectedVersion: string;
+  codexHome?: string;
+  verifyCodexPayload?: CodexPayloadVerifier;
+  deps?: CodexFallbackRetirementDeps;
+}
+
+interface ProvenFallbackRetirementResult {
+  retired: readonly string[];
+  preservedCollisions: number;
+  preservedUnrecognized: number;
+}
+
+/**
+ * Retire only fallbacks admitted by one immutable plugin-health proof. Recovery
+ * is the first fallback mutation; callers must obtain the proof before entering
+ * this helper.
+ */
+function retireProvenCodexFallbacks(
+  proof: CodexHealthProof,
+  fallbackSkillsDir: string,
+  deps: Pick<CodexFallbackRetirementDeps, 'recover' | 'plan' | 'apply'>,
+): ProvenFallbackRetirementResult {
+  if (!fallbackDirPresent(fallbackSkillsDir)) {
+    return { retired: [], preservedCollisions: 0, preservedUnrecognized: 0 };
+  }
+
+  translateRetirementConflicts(() => (deps.recover ?? recoverCodexFallbackRetirements)(fallbackSkillsDir));
+  const plan = (deps.plan ?? planCodexFallbackRetirement)({
+    fallbackSkillsDir,
+    skillNames: proof.skillInventory,
+    verifiedTargets: proof.payload,
+  });
+  // An absent canonical skill is a no-op, not a personal collision. A
+  // well-formed but unrecognized managed tree is reported separately.
+  const preservedCollisions = plan.preserved.filter(
+    (entry) => entry.reason !== 'missing' && entry.reason !== 'ambiguous-ownership',
+  ).length;
+  const preservedUnrecognized = plan.preserved.filter((entry) => entry.reason === 'ambiguous-ownership').length;
+  // A zero-accepted plan must not create an empty quarantine transaction.
+  const retired =
+    plan.accepted.length === 0
+      ? []
+      : translateRetirementConflicts(() => (deps.apply ?? applyCodexFallbackRetirement)(plan)).retired;
+  return { retired, preservedCollisions, preservedUnrecognized };
+}
+
+/**
+ * Setup-only fallback-retirement capability. The delivery root is supplied by
+ * CodexActivationStore only after its matching-evidence and physical-root
+ * checks. The consumer then takes one fresh plugin snapshot:
+ *
+ * - exact-version disabled → preserve the operator choice and every fallback;
+ * - anything else unhealthy/non-current → fail before fallback recovery;
+ * - exact-version enabled + full payload/MCP proof → retire only proven-owned
+ *   historical fallbacks.
+ */
+export function createSetupCodexFallbackRetirementConsumer(
+  options: SetupCodexFallbackRetirementOptions,
+): DeliveryRootConsumer<SetupCodexFallbackRetirementResult> {
+  return createDeliveryRootConsumer((physicalRoot) => {
+    const deps = options.deps ?? {};
+    const codexHome = options.codexHome ?? getCodexHome();
+    const snapshot = (deps.probe ?? probeCodexGeniePlugin)({
+      which: () => options.command,
+      codexHome,
+      cwd: deps.probeCwd ?? process.cwd(),
+    });
+    if (
+      snapshot.status === 'ok' &&
+      snapshot.installed &&
+      snapshot.version === options.expectedVersion &&
+      snapshot.enabled === false
+    ) {
+      return { status: 'skipped-disabled', retired: [], preservedCollisions: 0, preservedUnrecognized: 0 };
+    }
+
+    const proof = (deps.prove ?? proveCodexPluginHealth)({
+      snapshot,
+      bundleRoot: physicalRoot,
+      codexHome,
+      expectedVersion: options.expectedVersion,
+      verifyCodexPayload: options.verifyCodexPayload,
+      runSession: deps.runSession,
+    });
+    return {
+      status: 'verified',
+      ...retireProvenCodexFallbacks(proof, deps.fallbackSkillsDir ?? resolveAgentsSkillsDir(), deps),
+    };
+  });
 }
 
 /**
@@ -3274,45 +3489,20 @@ export function convergeCodexPluginOnly(options: ConvergeCodexPluginOnlyOptions)
     runSession: deps.runSession,
   });
 
-  let retired: readonly string[] = [];
-  let preservedCollisions = 0;
-  let preservedUnrecognized = 0;
-  if (fallbackDirPresent(fallbackSkillsDir)) {
-    translateRetirementConflicts(() => (deps.recover ?? recoverCodexFallbackRetirements)(fallbackSkillsDir));
-    const plan = (deps.plan ?? planCodexFallbackRetirement)({
-      fallbackSkillsDir,
-      skillNames: proof.skillInventory,
-      verifiedTargets: proof.payload,
-    });
-    // planCodexFallbackRetirement records an absent canonical skill as a
-    // {accepted:false, reason:'missing'} preserved entry, so after a full
-    // migration every subsequent run would otherwise report a phantom
-    // "preserved 23 personal collision(s)". Count only real on-disk collisions.
-    // 'ambiguous-ownership' is a well-formed genie marker whose (skillName,
-    // digest) is not yet in the frozen allowlist and has no matching verified
-    // target — that is unrecognized managed content, not a personal collision
-    // (the tree was never modified by the user), so it is counted and reported
-    // separately.
-    preservedCollisions = plan.preserved.filter(
-      (entry) => entry.reason !== 'missing' && entry.reason !== 'ambiguous-ownership',
-    ).length;
-    preservedUnrecognized = plan.preserved.filter((entry) => entry.reason === 'ambiguous-ownership').length;
-    // A11: a zero-accepted plan is a true no-op — never open a fresh transaction
-    // so a plugin-only second run cannot accumulate empty quarantine journals.
-    if (plan.accepted.length > 0) {
-      const retirement = translateRetirementConflicts(() => (deps.apply ?? applyCodexFallbackRetirement)(plan));
-      retired = retirement.retired;
-    }
-  }
+  const retirement = retireProvenCodexFallbacks(proof, fallbackSkillsDir, deps);
 
   const agents = runInstallAgents();
   return {
-    result: { ...plugin, snapshot, retiredFallbacks: retired, preservedCollisions, preservedUnrecognized },
+    result: {
+      ...plugin,
+      snapshot,
+      retiredFallbacks: retirement.retired,
+      preservedCollisions: retirement.preservedCollisions,
+      preservedUnrecognized: retirement.preservedUnrecognized,
+    },
     proof,
     agents,
-    retired,
-    preservedCollisions,
-    preservedUnrecognized,
+    ...retirement,
   };
 }
 
@@ -3340,7 +3530,7 @@ function emptyAgentInstallResult(): CodexAgentInstallResult {
  * whether {@link planCodexFallbackRetirement} will actually accept it, which
  * additionally requires the exact `identityVersion: 2` marker tag AND either a
  * frozen-allowlist historical tuple or a live-plugin verified-target digest
- * match. Reporting every structurally clean tree as "clean, run `genie update`"
+ * match. Reporting every structurally clean tree as "clean, run setup"
  * therefore lies to any tree the planner would refuse (an infinite no-op loop:
  * PR #2575's `ambiguous-ownership` case, and any pre-`identityVersion` era-A
  * marker). This inspector applies the SAME two-stage gate the planner uses —
@@ -3350,13 +3540,14 @@ function emptyAgentInstallResult(): CodexAgentInstallResult {
  * plugin MCP) — so doctor never promises a retirement the engine then refuses.
  *
  * - `cleanFallbacks` — recognized (historical-tuple or verified-target) genie
- *   skill dirs still in the user tier; `genie update` retires these.
+ *   skill dirs still in the user tier; authenticated `genie setup --codex`
+ *   retires these after plugin health succeeds.
  * - `unrecognizedFallbacks` — structurally well-formed identityVersion:2,
  *   self-consistent genie-managed dirs whose content the planner does NOT
  *   recognize (not in the frozen allowlist, no matching live-plugin payload).
  *   Era-A dirs (v1 legacy digest, no identityVersion) fail v2 self-consistency
  *   and land in `preservedCollisions` instead. Never user-modified, but not
- *   retirable either — manual review, not `genie update`, resolves these
+ *   retirable either — manual review, not setup, resolves these
  *   (#2575 vocabulary).
  * - `preservedCollisions` — managed-modified / corrupt-metadata dirs; personal
  *   content preserved in place that only manual review resolves.
@@ -3521,7 +3712,7 @@ function describeCodexIntegration(
   // Distinct from a personal collision: the marker is well-formed genie
   // provenance, but its (skillName, digest) is not in the frozen allowlist and
   // has no matching verified target — an unrecognized managed version/content,
-  // not user-modified content. Manual review, not `genie update`, resolves it.
+  // not user-modified content. Manual review, not automated retirement, resolves it.
   if (unrecognized > 0)
     notes.push(
       `preserved ${unrecognized} unrecognized managed fallback${unrecognized === 1 ? '' : 's'} (review manually)`,

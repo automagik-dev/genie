@@ -21,6 +21,7 @@ import {
   applyCodexFallbackRetirement,
   computeDirDigest,
   planCodexFallbackRetirement,
+  recoverCodexFallbackRetirements,
 } from './agent-sync.js';
 import { REQUIRED_GENIE_MCP_TOOLS } from './codex-mcp-health-session.js';
 import type { CodexPluginProbe } from './codex-project-mcp.js';
@@ -46,6 +47,8 @@ import {
   convergeClaudePlugin,
   convergeCodexPlugin,
   convergeCodexPluginOnly,
+  createSetupCodexFallbackRetirementConsumer,
+  createSetupCodexRoleAgentConsumer,
   inspectCodexAgentOwnership,
   inspectCodexFallbackTier,
   inspectRuntimeIntegrationEvidence,
@@ -64,6 +67,7 @@ import {
   removeRuntimeIntegrations as removeRuntimeIntegrationsWithTrustedResolution,
   resolveBundleRoot,
   runBoundedIntegrationCommand,
+  runDeliveryRootConsumer,
   setCodexPluginEnabled,
   translateRetirementConflicts,
   verifyClaudePhysicalPayload,
@@ -3026,6 +3030,216 @@ function realConvergeOptions(input: {
   };
 }
 
+describe('setup Codex fallback-retirement consumer', () => {
+  function targetPayload(
+    names: readonly string[],
+    bodies: Readonly<Record<string, string>>,
+  ): { root: string; proof: CodexHealthProof } {
+    const root = canonicalTempDir('genie-setup-retirement-target-');
+    const payload = names.map((skillName) => {
+      const path = join(root, skillName);
+      mkdirSync(path);
+      writeFileSync(join(path, 'SKILL.md'), bodies[skillName] ?? `# ${skillName}\n`);
+      return { skillName, path, physicalDigest: computeDirDigest(path), canonicalVerified: true as const };
+    });
+    return {
+      root,
+      proof: Object.freeze({
+        version: 1,
+        snapshot: healthyCodexProbe(),
+        activePluginRoot: '/fixture/plugin/root',
+        expectedVersion: VERSION,
+        skillInventory: [...names],
+        payload,
+        mcp: { initialized: true, tools: [...REQUIRED_GENIE_MCP_TOOLS], wishStatusReadOnly: true },
+      }) as CodexHealthProof,
+    };
+  }
+
+  test('uses the admitted physical root, proves health before recovery, and preserves every non-owned class', () => {
+    const fallback = canonicalTempDir('genie-setup-retirement-fallback-');
+    const codexHome = canonicalTempDir('genie-setup-retirement-codex-');
+    const names = ['wish', 'fix', 'review', 'work'] as const;
+    const bodies = {
+      wish: '# wish\n',
+      fix: '# fix\n',
+      review: '# review\n',
+      work: '# work\n',
+    };
+    const { root: deliveryRoot, proof } = targetPayload(names, bodies);
+
+    const clean = join(fallback, 'wish');
+    mkdirSync(clean);
+    writeFileSync(join(clean, 'SKILL.md'), bodies.wish);
+    stampFallbackSkill(clean);
+
+    const modified = join(fallback, 'fix');
+    mkdirSync(modified);
+    writeFileSync(join(modified, 'SKILL.md'), bodies.fix);
+    stampFallbackSkill(modified);
+    writeFileSync(join(modified, 'SKILL.md'), '# personal modification\n');
+    const modifiedBefore = readFileSync(join(modified, 'SKILL.md'));
+
+    const unmanaged = join(fallback, 'review');
+    mkdirSync(unmanaged);
+    writeFileSync(join(unmanaged, 'SKILL.md'), '# personal review\n');
+    const unmanagedBefore = readFileSync(join(unmanaged, 'SKILL.md'));
+
+    const external = canonicalTempDir('genie-setup-retirement-external-');
+    writeFileSync(join(external, 'SKILL.md'), '# external work\n');
+    const symlink = join(fallback, 'work');
+    symlinkSync(external, symlink);
+
+    const trace: string[] = [];
+    const result = runDeliveryRootConsumer(
+      createSetupCodexFallbackRetirementConsumer({
+        command: '/fixture/bin/codex',
+        expectedVersion: VERSION,
+        codexHome,
+        deps: {
+          fallbackSkillsDir: fallback,
+          probe: (options) => {
+            trace.push(`probe:${options.which?.('codex')}`);
+            return healthyCodexProbe();
+          },
+          prove: (options) => {
+            trace.push(`prove:${options.bundleRoot}`);
+            return proof;
+          },
+          recover: (dir) => {
+            trace.push('recover');
+            return recoverCodexFallbackRetirements(dir);
+          },
+          plan: (options) => {
+            trace.push('plan');
+            return planCodexFallbackRetirement(options);
+          },
+          apply: (plan) => {
+            trace.push('apply');
+            return applyCodexFallbackRetirement(plan);
+          },
+        },
+      }),
+      deliveryRoot,
+    );
+
+    expect(trace).toEqual(['probe:/fixture/bin/codex', `prove:${deliveryRoot}`, 'recover', 'plan', 'apply']);
+    expect(result.retired).toEqual(['wish']);
+    expect(result.status).toBe('verified');
+    expect(existsSync(clean)).toBe(false);
+    expectSameBytes(readFileSync(join(modified, 'SKILL.md')), modifiedBefore);
+    expectSameBytes(readFileSync(join(unmanaged, 'SKILL.md')), unmanagedBefore);
+    expect(lstatSync(symlink).isSymbolicLink()).toBe(true);
+    expect(realpathSync(symlink)).toBe(external);
+  });
+
+  test('an exact disabled plugin preserves fallbacks without proving health or entering recovery', () => {
+    const fallback = canonicalTempDir('genie-setup-retirement-disabled-');
+    const skill = join(fallback, 'wish');
+    mkdirSync(skill);
+    writeFileSync(join(skill, 'SKILL.md'), '# disabled fallback\n');
+    stampFallbackSkill(skill);
+    const before = readFileSync(join(skill, 'SKILL.md'));
+    let proveCalls = 0;
+    let recoverCalls = 0;
+
+    const result = runDeliveryRootConsumer(
+      createSetupCodexFallbackRetirementConsumer({
+        command: '/fixture/bin/codex',
+        expectedVersion: VERSION,
+        codexHome: canonicalTempDir('genie-setup-retirement-disabled-codex-'),
+        deps: {
+          fallbackSkillsDir: fallback,
+          probe: () => ({ ...healthyCodexProbe(), enabled: false }),
+          prove: () => {
+            proveCalls += 1;
+            return healthyCodexProof();
+          },
+          recover: () => {
+            recoverCalls += 1;
+            return [];
+          },
+        },
+      }),
+      canonicalTempDir('genie-setup-retirement-disabled-root-'),
+    );
+
+    expect(result).toEqual({
+      status: 'skipped-disabled',
+      retired: [],
+      preservedCollisions: 0,
+      preservedUnrecognized: 0,
+    });
+    expect(proveCalls).toBe(0);
+    expect(recoverCalls).toBe(0);
+    expectSameBytes(readFileSync(join(skill, 'SKILL.md')), before);
+    expect(existsSync(join(fallback, CODEX_FALLBACK_RETIREMENT_ROOT))).toBe(false);
+  });
+
+  test('a disabled wrong-version snapshot is not a preservation bypass', () => {
+    const fallback = canonicalTempDir('genie-setup-retirement-disabled-wrong-version-');
+    const skill = join(fallback, 'wish');
+    mkdirSync(skill);
+    writeFileSync(join(skill, 'SKILL.md'), '# wrong-version fallback\n');
+    stampFallbackSkill(skill);
+    let recoverCalls = 0;
+    const consumer = createSetupCodexFallbackRetirementConsumer({
+      command: '/fixture/bin/codex',
+      expectedVersion: VERSION,
+      codexHome: canonicalTempDir('genie-setup-retirement-disabled-wrong-version-codex-'),
+      deps: {
+        fallbackSkillsDir: fallback,
+        probe: () => ({ ...healthyCodexProbe(), version: '5.260711.1', enabled: false }),
+        recover: () => {
+          recoverCalls += 1;
+          return [];
+        },
+      },
+    });
+
+    expect(() =>
+      runDeliveryRootConsumer(consumer, canonicalTempDir('genie-setup-retirement-disabled-wrong-version-root-')),
+    ).toThrow('health rejected before retirement');
+    expect(recoverCalls).toBe(0);
+    expect(existsSync(skill)).toBe(true);
+    expect(existsSync(join(fallback, CODEX_FALLBACK_RETIREMENT_ROOT))).toBe(false);
+  });
+
+  test('an unhealthy enabled plugin fails before the first fallback mutation', () => {
+    const fallback = canonicalTempDir('genie-setup-retirement-unhealthy-');
+    const skill = join(fallback, 'wish');
+    mkdirSync(skill);
+    writeFileSync(join(skill, 'SKILL.md'), '# unhealthy fallback\n');
+    stampFallbackSkill(skill);
+    const before = readFileSync(join(skill, 'SKILL.md'));
+    let recoverCalls = 0;
+
+    const consumer = createSetupCodexFallbackRetirementConsumer({
+      command: '/fixture/bin/codex',
+      expectedVersion: VERSION,
+      codexHome: canonicalTempDir('genie-setup-retirement-unhealthy-codex-'),
+      deps: {
+        fallbackSkillsDir: fallback,
+        probe: () => healthyCodexProbe(),
+        prove: () => {
+          throw new Error('fixture health failure');
+        },
+        recover: () => {
+          recoverCalls += 1;
+          return [];
+        },
+      },
+    });
+
+    expect(() => runDeliveryRootConsumer(consumer, canonicalTempDir('genie-setup-retirement-unhealthy-root-'))).toThrow(
+      'fixture health failure',
+    );
+    expect(recoverCalls).toBe(0);
+    expectSameBytes(readFileSync(join(skill, 'SKILL.md')), before);
+    expect(existsSync(join(fallback, CODEX_FALLBACK_RETIREMENT_ROOT))).toBe(false);
+  });
+});
+
 describe('codex role-agent frozen historical allowlist (Group C)', () => {
   test('CANONICAL role digests/mode match the committed bundle bytes exactly (parity gate)', () => {
     const onDisk = realRoleNames();
@@ -3071,6 +3285,43 @@ describe('codex role-agent frozen historical allowlist (Group C)', () => {
         transitionToken: 'a'.repeat(32),
       }),
     ).toBe(false);
+  });
+
+  test('setup role convergence refuses before committed Codex consent with zero agent mutation', () => {
+    const genieHome = makeRealCodexBundle();
+    const codexHome = canonicalTempDir('genie-setup-roles-refused-');
+    const personal = seedRoleFile(codexHome, 'personal.toml', 'name = "personal"\n', 0o600);
+    const before = readFileSync(personal);
+    const beforeMode = lstatSync(personal).mode & 0o7777;
+
+    const consumer = createSetupCodexRoleAgentConsumer({ genieHome, codexHome });
+    expect(() => runDeliveryRootConsumer(consumer, genieHome)).toThrow(
+      'requires committed explicit Codex integration consent',
+    );
+    expectSameBytes(readFileSync(personal), before);
+    expect(lstatSync(personal).mode & 0o7777).toBe(beforeMode);
+    expect(readdirSync(join(codexHome, 'agents'))).toEqual(['personal.toml']);
+  });
+
+  test('setup role convergence adopts only frozen roles and preserves unrelated user agents exactly', () => {
+    const genieHome = makeRealCodexBundle();
+    const codexHome = canonicalTempDir('genie-setup-roles-authorized-');
+    for (const name of realRoleNames()) seedRoleFile(codexHome, name, realRoleBytes(name));
+    const personal = seedRoleFile(codexHome, 'personal.toml', 'name = "personal"\nmode = "custom"\n', 0o600);
+    const before = readFileSync(personal);
+    const beforeMode = lstatSync(personal).mode & 0o7777;
+    persistIntegrationConsent('codex', genieHome);
+
+    const result = runDeliveryRootConsumer(createSetupCodexRoleAgentConsumer({ genieHome, codexHome }), genieHome);
+
+    expect(result.adoptedLegacy?.sort()).toEqual(realRoleNames());
+    expect(JSON.stringify(result)).not.toContain(genieHome);
+    expect(JSON.stringify(result)).not.toContain(codexHome);
+    expect(inspectCodexAgentOwnership(codexHome).entries.filter((entry) => entry.state === 'managed')).toHaveLength(
+      realRoleNames().length,
+    );
+    expectSameBytes(readFileSync(personal), before);
+    expect(lstatSync(personal).mode & 0o7777).toBe(beforeMode);
   });
 });
 

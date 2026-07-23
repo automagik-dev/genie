@@ -265,9 +265,11 @@ function fullRecord(overrides: Partial<AuthenticatedDeliveryRecord> = {}): Authe
     canonicalPayloadSha256: DIGEST_A,
     channel: 'stable',
     deliveryId: ID_128,
+    evidenceDigest: DIGEST_E,
+    platformId: 'darwin-arm64',
     platformTriple: 'darwin-arm64',
     releaseTag: 'v5.260712.1',
-    releaseName: 'genie 5.260712.1',
+    releaseName: 'genie-5.260712.1-darwin-arm64.tar.gz',
     releaseManifestSha256: DIGEST_B,
     artifactSha256: DIGEST_C,
     installedBinarySha256: DIGEST_D,
@@ -282,13 +284,16 @@ function fullExpectation(overrides: Partial<ActivationDeliveryExpectation> = {})
     canonicalPayloadSha256: DIGEST_A,
     channel: 'stable',
     deliveryId: ID_128,
+    evidenceDigest: DIGEST_E,
+    platformId: 'darwin-arm64',
     platformTriple: 'darwin-arm64',
     releaseTag: 'v5.260712.1',
-    releaseName: 'genie 5.260712.1',
+    releaseName: 'genie-5.260712.1-darwin-arm64.tar.gz',
     releaseManifestSha256: DIGEST_B,
     artifactSha256: DIGEST_C,
     installedBinarySha256: DIGEST_D,
     deliveryRoot: '/home/.genie/deliveries/abc',
+    deliveredAt: '2026-07-12T00:00:00.000Z',
     ...overrides,
   };
 }
@@ -314,6 +319,8 @@ describe('assessAuthenticatedDelivery — matching | absent | invalid | mismatch
     { name: 'non-release targetVersion', record: { targetVersion: '1.2.3' } },
     { name: 'short payload digest', record: { canonicalPayloadSha256: 'abc' } },
     { name: 'non-hex deliveryId', record: { deliveryId: 'ZZZZ' } },
+    { name: 'malformed evidence digest', record: { evidenceDigest: 'nothex' } },
+    { name: 'empty platform id', record: { platformId: '' } },
     { name: 'empty channel', record: { channel: '' } },
     { name: 'malformed platform triple', record: { platformTriple: 'Darwin ARM' } },
     { name: 'malformed manifest digest', record: { releaseManifestSha256: 'nothex' } },
@@ -328,16 +335,23 @@ describe('assessAuthenticatedDelivery — matching | absent | invalid | mismatch
 
   // Tampering ANY bound field => mismatch (deliverable 7 + acceptance criterion).
   const tampers: Array<{ name: string; record: Partial<AuthenticatedDeliveryRecord> }> = [
-    { name: 'version', record: { targetVersion: '5.260799.9' } },
+    {
+      name: 'version',
+      record: {
+        targetVersion: '5.260799.9',
+        releaseTag: 'v5.260799.9',
+        releaseName: 'genie-5.260799.9-darwin-arm64.tar.gz',
+      },
+    },
     { name: 'platform', record: { platformTriple: 'linux-x64' } },
     { name: 'manifest', record: { releaseManifestSha256: DIGEST_E } },
     { name: 'artifact', record: { artifactSha256: DIGEST_E } },
     { name: 'binary', record: { installedBinarySha256: DIGEST_E } },
     { name: 'payload', record: { canonicalPayloadSha256: DIGEST_E } },
     { name: 'delivery id', record: { deliveryId: '2'.repeat(32) } },
+    { name: 'evidence digest', record: { evidenceDigest: 'f'.repeat(64) } },
+    { name: 'platform id', record: { platformId: 'linux-x64-glibc' } },
     { name: 'channel', record: { channel: 'homolog' } },
-    { name: 'release tag', record: { releaseTag: 'v9.9.9' } },
-    { name: 'release name', record: { releaseName: 'evil' } },
     { name: 'delivery root', record: { deliveryRoot: '/tmp/evil' } },
   ];
   for (const c of tampers) {
@@ -348,7 +362,11 @@ describe('assessAuthenticatedDelivery — matching | absent | invalid | mismatch
 
   test('intent binding: a record minted for a different activation intent (target) => mismatch', () => {
     // The record is internally consistent but bound to a different intent than the current activation.
-    const record = fullRecord({ targetVersion: '5.260799.9', releaseTag: 'v5.260799.9' });
+    const record = fullRecord({
+      targetVersion: '5.260799.9',
+      releaseTag: 'v5.260799.9',
+      releaseName: 'genie-5.260799.9-darwin-arm64.tar.gz',
+    });
     expect(assessAuthenticatedDelivery(present(record), fullExpectation({ targetVersion: T }))).toBe('mismatch');
   });
 
@@ -359,47 +377,44 @@ describe('assessAuthenticatedDelivery — matching | absent | invalid | mismatch
     expect(assessAuthenticatedDelivery(present(fullRecord({ deliveryId: ID_128 })), bound)).toBe('mismatch');
   });
 
-  // The inner-guard case: a core-only expectation (version + payload) matches a legacy
-  // minimal record with no rich attestation fields (Group D/E bind the rest later).
-  test('a core-only expectation matches a minimal record lacking rich attestation fields', () => {
-    const minimal: AuthenticatedDeliveryRecord = {
+  test('a full expectation rejects a minimal record lacking authenticated bindings', () => {
+    const minimal = {
       targetVersion: T,
       canonicalPayloadSha256: DIGEST_A,
       channel: 'stable',
       deliveryId: ID_128,
-    };
-    expect(assessAuthenticatedDelivery(present(minimal), { targetVersion: T, canonicalPayloadSha256: DIGEST_A })).toBe(
-      'matching',
-    );
+    } as AuthenticatedDeliveryRecord;
+    expect(assessAuthenticatedDelivery(present(minimal), fullExpectation())).toBe('invalid');
   });
 
-  test('a core-only expectation still catches a payload-digest mismatch on a minimal record', () => {
-    const minimal: AuthenticatedDeliveryRecord = {
-      targetVersion: T,
-      canonicalPayloadSha256: DIGEST_A,
-      channel: 'stable',
-      deliveryId: ID_128,
-    };
-    expect(assessAuthenticatedDelivery(present(minimal), { targetVersion: T, canonicalPayloadSha256: DIGEST_E })).toBe(
-      'mismatch',
-    );
-  });
+  for (const field of [
+    'evidenceDigest',
+    'platformId',
+    'platformTriple',
+    'releaseTag',
+    'releaseName',
+    'releaseManifestSha256',
+    'artifactSha256',
+    'installedBinarySha256',
+    'deliveryRoot',
+    'deliveredAt',
+  ] as const) {
+    test(`a record missing ${field} is invalid even for a full expectation`, () => {
+      const record = { ...fullRecord() };
+      Reflect.deleteProperty(record, field);
+      expect(assessAuthenticatedDelivery(present(record as AuthenticatedDeliveryRecord), fullExpectation())).toBe(
+        'invalid',
+      );
+    });
+  }
 
-  test('an expected rich field missing from the record => mismatch (declaration/consumption parity)', () => {
-    const minimal: AuthenticatedDeliveryRecord = {
-      targetVersion: T,
-      canonicalPayloadSha256: DIGEST_A,
-      channel: 'stable',
-      deliveryId: ID_128,
-    };
-    // The activation intent binds a platform, but the record does not carry one.
-    expect(
-      assessAuthenticatedDelivery(present(minimal), {
-        targetVersion: T,
-        canonicalPayloadSha256: DIGEST_A,
-        platformTriple: 'darwin-arm64',
-      }),
-    ).toBe('mismatch');
+  test('an internally inconsistent release tag/name is invalid', () => {
+    expect(assessAuthenticatedDelivery(present(fullRecord({ releaseTag: 'v9.9.9' })), fullExpectation())).toBe(
+      'invalid',
+    );
+    expect(assessAuthenticatedDelivery(present(fullRecord({ releaseName: 'evil' })), fullExpectation())).toBe(
+      'invalid',
+    );
   });
 });
 

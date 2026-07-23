@@ -13,15 +13,20 @@
  * every tool renders an empty board rather than erroring.
  */
 
-import { Database } from 'bun:sqlite';
+import { constants, Database } from 'bun:sqlite';
 import { execFileSync } from 'node:child_process';
-import { type ProjectContext, resolveDbPath } from './genie-db.js';
+import {
+  type ProjectContext,
+  type ProjectDatabaseBinding,
+  resolveDbPath,
+  resolveProjectDatabaseBinding,
+} from './genie-db.js';
 import { BUSY_TIMEOUT_MS } from './sqlite-open.js';
 
 // Re-exported so `genie mcp` (mcp.ts) pulls the fail-closed context resolver in
 // the SAME lazy dynamic import that already loads the tool registry — keeping
 // the readonly bun:sqlite open out of the eager genie.ts import graph.
-export { type ProjectContext, resolveProjectContext } from './genie-db.js';
+export { isCurrentGenieDb, type ProjectContext, resolveProjectContext } from './genie-db.js';
 import {
   type TaskFilter,
   type TaskRow,
@@ -34,28 +39,86 @@ import {
 } from './task-state.js';
 
 // ============================================================================
-// Read-only DB open (net-new; degrade to null when the file is absent)
+// Read-only DB open (exact validated binding; null on any mismatch)
 // ============================================================================
 
+export interface ReadonlyDbOpenDependencies {
+  /** Test seam around the constructor; production always opens Bun SQLite readonly. */
+  openDatabase?: (path: string) => Database;
+  /** Test seam for deterministic moved/unsupported-handle refusal. */
+  verifyOpenedHandle?: (db: Database) => boolean;
+}
+
 /**
- * Open the repo's shared `.genie/genie.db` READ-ONLY. Returns `null` when the
- * file does not exist (readonly open of a missing file throws) so callers can
- * degrade to an empty board instead of crashing the server. The handle is the
- * caller's to close.
+ * Ask SQLite's opened VFS handle whether its pathname still names that handle.
+ * A nonzero return code, moved flag, or exception (including an unsupported
+ * VFS) is a fail-closed mismatch.
+ */
+export function readonlyDatabaseHandleMatchesPath(db: Pick<Database, 'fileControl'>): boolean {
+  const moved = new Int32Array(1);
+  try {
+    const result = db.fileControl(constants.SQLITE_FCNTL_HAS_MOVED, moved);
+    return result === 0 && moved[0] === 0;
+  } catch {
+    return false;
+  }
+}
+
+function closeReadonlyDb(db: Database | null): void {
+  try {
+    db?.close();
+  } catch {
+    // The caller is already failing closed; cleanup must not turn null into a throw.
+  }
+}
+
+/**
+ * Open the repo's shared `.genie/genie.db` READ-ONLY. A project MCP caller
+ * supplies the exact physical binding produced by `resolveProjectContext`;
+ * legacy callers may supply cwd and receive the same path validation here.
+ * Symlinks, non-regular files, and identity substitutions return `null`.
  *
  * The read-only connection is given the SAME `busy_timeout` as the shared write
  * primitive (see sqlite-open.ts): under concurrent access a straggling WAL
  * writer must be waited out, not surfaced as an instant `-32603 "database is
  * locked"`. `busy_timeout` is valid on a readonly connection and does not
- * mutate the file. An absent-db open still throws before the pragma runs, so the
- * degrade-to-`null` contract is preserved.
+ * mutate the file. The binding is revalidated both before and after SQLite opens
+ * it. SQLite's `SQLITE_FCNTL_HAS_MOVED` check additionally binds the opened VFS
+ * handle itself, catching an A→B constructor race even if the path is restored
+ * to A before post-open lstat. Unsupported VFS implementations fail closed.
  */
-export function openReadonlyDb(cwd?: string): Database | null {
+export function openReadonlyDb(
+  target?: string | ProjectDatabaseBinding,
+  dependencies: ReadonlyDbOpenDependencies = {},
+): Database | null {
+  const initial =
+    typeof target === 'object'
+      ? resolveProjectDatabaseBinding(target.logicalPath, target)
+      : resolveProjectDatabaseBinding(resolveDbPath(target));
+  if (!initial.ok) return null;
+  let db: Database | null = null;
+  const verifyOpenedHandle = dependencies.verifyOpenedHandle ?? readonlyDatabaseHandleMatchesPath;
   try {
-    const db = new Database(resolveDbPath(cwd), { readonly: true });
+    db =
+      dependencies.openDatabase?.(initial.binding.physicalPath) ??
+      new Database(initial.binding.physicalPath, { readonly: true });
+    if (!verifyOpenedHandle(db)) {
+      closeReadonlyDb(db);
+      return null;
+    }
+    const revalidated = resolveProjectDatabaseBinding(initial.binding.logicalPath, initial.binding);
+    if (!revalidated.ok) {
+      closeReadonlyDb(db);
+      return null;
+    }
+    if (!verifyOpenedHandle(db)) {
+      closeReadonlyDb(db);
+      return null;
+    }
     db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
     return db;
   } catch {
+    closeReadonlyDb(db);
     return null;
   }
 }

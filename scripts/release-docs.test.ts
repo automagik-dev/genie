@@ -139,6 +139,158 @@ describe('Group E release and documentation contracts', () => {
     expect(signing).not.toContain('--signer-workflow');
   });
 
+  test('delivery evidence becomes publicly immutable before exact manifest CAS', () => {
+    const release = read('.github/workflows/release.yml');
+    const publish = read('.github/workflows/release-publish.yml');
+    for (const input of ['source_sha', 'source_branch', 'source_ci_run_id']) {
+      expect(release).toContain(`${input}: \${{ inputs.${input} }}`);
+      expect(publish).toContain(`${input}:`);
+      expect(publish).toContain(`\${{ inputs.${input} }}`);
+    }
+    expect(publish).toContain('bun scripts/build-delivery-evidence.ts');
+    expect(publish).toContain('bash scripts/materialize-release-subjects.sh');
+    expect(publish).toContain('bun-version: 1.3.11');
+    expect(publish).toContain('predicate-type: https://github.com/${{ github.repository }}/delivery-evidence/v1');
+    expect(publish).toContain('actions/attest@67422f5511b7ff725f4dbd6fb9bd2cd925c65a8d');
+    expect(publish).toContain('${DESCRIPTOR}.sigstore.json');
+    expect(publish).toContain('EVIDENCE_CHANNELS=(stable homolog dev)');
+    expect(publish).toContain('EVIDENCE_CHANNELS=(homolog dev)');
+    expect(publish).toContain('EVIDENCE_CHANNELS=(dev)');
+    expect(publish).toContain('name: delivery-candidate-manifests');
+    expect(publish).toContain('CANDIDATE_MANIFEST_DIR="$CANDIDATE_MANIFEST_DIR"');
+
+    const attest = publish.indexOf('id: endorse');
+    const materialize = publish.indexOf('bash scripts/materialize-release-subjects.sh');
+    const descriptorBuild = publish.indexOf('bun scripts/build-delivery-evidence.ts');
+    const compatibilityJob =
+      publish.split('\n  delivery-evidence-compatibility:')[1]?.split('\n  codex-native-dogfood:')[0] ?? '';
+    const publishJob = publish.split('\n  publish:')[1]?.split('\n  manifests:')[0] ?? '';
+    const releaseUpload = publish.indexOf('bash scripts/reconcile-release-assets.sh');
+    const manifestsJob = publish.split('\n  manifests:')[1]?.split('\n  finalize:')[0] ?? '';
+    const finalizeJob = publish.split('\n  finalize:')[1] ?? '';
+    expect(attest).toBeGreaterThan(-1);
+    expect(materialize).toBeGreaterThan(-1);
+    expect(descriptorBuild).toBeGreaterThan(materialize);
+    expect(attest).toBeGreaterThan(descriptorBuild);
+    expect(releaseUpload).toBeGreaterThan(attest);
+    expect(compatibilityJob).toContain('needs: [admit, attest-delivery-evidence]');
+    expect(compatibilityJob).toContain('permissions:\n      contents: read');
+    expect(compatibilityJob).not.toContain('id-token:');
+    expect(compatibilityJob).not.toContain('attestations:');
+    expect(compatibilityJob).toContain('ref: ${{ inputs.source_sha }}');
+    expect(compatibilityJob).toContain('bun install --frozen-lockfile --ignore-scripts');
+    expect(compatibilityJob).toContain('bun scripts/verify-delivery-evidence-pack.ts');
+    expect(compatibilityJob).toContain('name: delivery-candidate-manifests');
+    expect(publishJob).toContain('- codex-dogfood-completeness');
+    expect(publishJob).toContain('- stable-release-security-gate');
+    expect(publishJob).toContain("needs.codex-dogfood-completeness.result == 'success'");
+    expect(publishJob).toContain("needs.stable-release-security-gate.result == 'success'");
+    expect(publishJob).toContain('name: delivery-candidate-manifests');
+    expect(manifestsJob).toContain('needs: finalize');
+    expect(manifestsJob).toContain('git push origin "HEAD:refs/heads/main"');
+    expect(finalizeJob).toContain('needs: publish');
+    expect(finalizeJob).toContain('name: delivery-candidate-manifests');
+    expect(finalizeJob.indexOf('bash scripts/reconcile-release-note.sh finalize')).toBeGreaterThan(-1);
+    expect(finalizeJob.indexOf('bash scripts/release-immutability.sh release')).toBeGreaterThan(
+      finalizeJob.indexOf('bash scripts/reconcile-release-note.sh finalize'),
+    );
+    expect(finalizeJob.lastIndexOf('bash scripts/reconcile-release-assets.sh')).toBeGreaterThan(
+      finalizeJob.indexOf('bash scripts/release-immutability.sh release'),
+    );
+    const assetReconciliation = read('scripts/reconcile-release-assets.sh');
+    expect(assetReconciliation).toContain('manifest_path="${CANDIDATE_MANIFEST_DIR}/${manifest_name}"');
+    expect(assetReconciliation).toContain('.releaseManifestSha256 == $manifest_sha');
+  });
+
+  test('manifest-derived native dogfood and the independent security gate jointly block publication', () => {
+    const workflow = read('.github/workflows/release-publish.yml');
+    const prepare =
+      workflow.split('\n  prepare-delivery-evidence:')[1]?.split('\n  attest-delivery-evidence:')[0] ?? '';
+    const native = workflow.split('\n  codex-native-dogfood:')[1]?.split('\n  codex-dogfood-completeness:')[0] ?? '';
+    const completeness =
+      workflow.split('\n  codex-dogfood-completeness:')[1]?.split('\n  stable-release-security-gate:')[0] ?? '';
+    const security = workflow.split('\n  stable-release-security-gate:')[1]?.split('\n  publish:')[0] ?? '';
+    const publish = workflow.split('\n  publish:')[1]?.split('\n  manifests:')[0] ?? '';
+
+    // The selected candidate manifest is the sole platform inventory. A
+    // hand-written representative matrix cannot become promotion evidence.
+    expect(prepare).toContain('bun scripts/candidate-dogfood-matrix.ts');
+    expect(prepare).toContain('--manifest "$SELECTED_MANIFEST"');
+    expect(prepare).toContain('mapfile -t MANIFEST_PLATFORMS');
+    expect(prepare).toContain('for platform in "${MANIFEST_PLATFORMS[@]}"');
+    expect(prepare).not.toContain('PLATFORMS=(linux-x64-glibc');
+    expect(prepare).toContain('dogfood_matrix=${DOGFOOD_MATRIX}');
+    expect(prepare).toContain('candidate_manifest_sha256=${CANDIDATE_MANIFEST_SHA256}');
+    expect(prepare).toContain('name: codex-dogfood-candidate-matrix');
+    expect(prepare).toContain('name: codex-dogfood-previous-release');
+    expect(prepare).toContain('bash scripts/verify-release.sh --local');
+    expect(prepare).not.toContain('--previous-descriptor');
+
+    expect(native).toContain('matrix: ${{ fromJSON(needs.prepare-delivery-evidence.outputs.dogfood_matrix) }}');
+    expect(native).toContain('runs-on: ${{ matrix.runner }}');
+    expect(native).toContain('ref: ${{ github.sha }}');
+    expect(native).toContain('name: genie-${{ matrix.version }}-${{ matrix.platform }}-signed');
+    expect(native).toContain('--previous-provenance "${PREVIOUS_ARTIFACT}.intoto.jsonl"');
+    expect(native).toContain('--candidate-descriptor "$CANDIDATE_DESCRIPTOR"');
+    expect(native).toContain('--candidate-bundle "${CANDIDATE_DESCRIPTOR}.sigstore.json"');
+    expect(native).toContain('EXECUTION_KIND: ${{ matrix.execution }}');
+    expect(native).toContain('scripts/run-musl-dogfood.sh');
+    expect(native).toContain('--inputs-root dogfood-entry');
+    expect(native).toContain('name: codex-dogfood-evidence-${{ matrix.platform }}');
+
+    // Missing, skipped, duplicated, stale, or identity-mismatched native
+    // entries fail the aggregate instead of degrading to representative proof.
+    expect(completeness).toContain('if: ${{ always() }}');
+    expect(completeness).toContain('[[ "$PREPARE_RESULT" == success && "$NATIVE_RESULT" == success ]]');
+    expect(completeness).toContain('downloaded candidate matrix differs from the matrix used to schedule native jobs');
+    expect(completeness).toContain('bun scripts/validate-dogfood-matrix-evidence.ts');
+    expect(completeness).toContain('--evidence-dir aggregate/entries');
+    expect(completeness).toContain('--candidate-manifest-sha256 "$EXPECTED_MANIFEST_SHA256"');
+    const aggregate = read('scripts/validate-dogfood-matrix-evidence.ts');
+    expect(aggregate).toContain("entry.evidenceKind !== 'host-native'");
+    expect(aggregate).toContain('candidate.manifestSha256 !== options.candidateManifestSha256');
+    expect(aggregate).toContain('candidate.artifactSha256 !== matrixEntry.artifactSha256');
+    expect(aggregate).toContain("kind: 'codex-dogfood-completeness'");
+
+    // The machine security proof is read-only, protected-control-derived, and
+    // independent of dogfood while binding the same exact candidate digest.
+    expect(security).toContain('if: ${{ always() }}');
+    expect(security).toContain('permissions:\n      contents: read\n      attestations: read');
+    expect(security).toContain('ref: ${{ github.sha }}');
+    expect(security).toContain('bash scripts/verify-release.sh --local');
+    expect(security).toContain('bash scripts/release-generic-provenance.sh verify-exact-subject');
+    expect(security).toContain('gh attestation verify "$artifact_path"');
+    expect(security).toContain('--predicate-type "https://github.com/${RELEASE_REPOSITORY}/release-tarballs/v1"');
+    expect(security).toContain('--source-digest "$CONTROL_SHA"');
+    expect(security).toContain('--signer-digest "$CONTROL_SHA"');
+    expect(security).toContain('bash scripts/release-native-predicate.sh verify-exact-subject');
+    expect(security).toContain('RUN_ID: ${{ github.run_id }}');
+    expect(security).toContain('RUN_ATTEMPT: ${{ github.run_attempt }}');
+    expect(security).toContain('generic/native artifact digest disagreement');
+    expect(security).toContain('version: ([$entries[].native.version] | unique |');
+    expect(security).toContain('sourceSha: ([$entries[].native.sourceSha] | unique |');
+    const securitySummary = security.split('          jq -cs \\\n')[1] ?? '';
+    expect(securitySummary).not.toContain('--arg sourceSha "$SOURCE_SHA"');
+    expect(security).toContain('--print-provenance > "$verified_provenance"');
+    expect(security).toContain('scripts/release-guard.test.ts');
+    expect(security).toContain(
+      'EXPECTED_MANIFEST_SHA256: ${{ needs.prepare-delivery-evidence.outputs.candidate_manifest_sha256 }}',
+    );
+    expect(security).not.toContain('needs.codex-native-dogfood');
+    expect(security).not.toContain('contents: write');
+    expect(security).not.toContain('id-token: write');
+
+    // All channels use both gates. An unavailable/skipped gate is never
+    // equivalent to success, and the write-capable publication job stays shut.
+    expect(publish).toContain('always() &&');
+    expect(publish).toContain('- codex-dogfood-completeness');
+    expect(publish).toContain('- stable-release-security-gate');
+    expect(publish).toContain("needs.codex-dogfood-completeness.result == 'success'");
+    expect(publish).toContain("needs.stable-release-security-gate.result == 'success'");
+    expect(publish).not.toContain("inputs.channel == 'stable'");
+    expect(publish).not.toContain("inputs.channel == 'homolog'");
+  });
+
   test('stable approval is explicit while dev and homolog remain automated', () => {
     const release = read('.github/workflows/release.yml');
     const version = read('.github/workflows/version.yml');
@@ -178,6 +330,26 @@ describe('Group E release and documentation contracts', () => {
     expect(read('.github/workflows/version.yml')).toContain(
       "!contains(github.event.workflow_run.head_commit.message, '[release-manifest]')",
     );
+  });
+
+  test('each promotion uses a fresh build-accepted immutable release identity', () => {
+    const version = read('.github/workflows/version.yml');
+    const release = read('.github/workflows/release.yml');
+    const build = read('.github/workflows/build-tarballs.yml');
+    const assets = read('scripts/reconcile-release-assets.sh');
+    expect(version).toContain('group: version-release-identity-${{ github.event.workflow_run.event }}');
+    expect(version).toContain('queue: max');
+    expect(version).toContain('cancel-in-progress: false');
+    expect(version).toContain('MAX_COUNTER=');
+    expect(version).toContain('git tag "v${VERSION}" HEAD');
+    expect(version).toContain('name: Push fresh immutable promotion tag');
+    expect(version).toContain('git push origin "refs/tags/v${VERSION}"');
+    expect(build).toContain('homolog|stable)');
+    expect(build).toContain('Authenticated ${INPUT_CHANNEL} promotion stamps immutable version');
+    const buildCall = release.split('\n  build:')[1]?.split('\n  sign-attest:')[0] ?? '';
+    expect(buildCall).toContain('channel: ${{ inputs.channel }}');
+    expect(assets).toContain('refusing to mutate an incomplete published immutable release');
+    expect(assets).not.toContain('append-only promotion');
   });
 
   test('promotion and tag equivalence exclude only generated channel manifests', () => {
@@ -333,6 +505,13 @@ describe('Group E release and documentation contracts', () => {
       expect(source).toContain('repository-hosted `.well-known');
       expect(source).toContain("GitHub's `/releases/latest`");
     }
+    const security = read('SECURITY.md');
+    expect(security).toContain(
+      'Every dev, homolog, or stable promotion creates a fresh monotonic version and immutable tag',
+    );
+    expect(security).toContain('stable releases are non-prerelease and marked Latest');
+    expect(security).toContain('dev and homolog releases are prereleases and never Latest');
+    expect(security).not.toContain('one verified version across dev, homolog, and stable channels');
   });
 
   test('immutable-release bootstrap ordering remains explicit and fail-closed', () => {
@@ -469,11 +648,12 @@ describe('Group E release and documentation contracts', () => {
     // Lease busy/retry semantics.
     expect(doc).toContain('exclusive lease');
     expect(doc).toContain('no force override');
-    // Rollback floor, sync-only, verified-current init, uninstall isolation.
+    // Rollback floor, sync-only, route-only init, uninstall isolation.
     expect(doc).toContain('### Rollback floor');
     expect(doc).toContain('cannot waive the protocol floor');
     expect(doc).toContain('**Sync-only**');
-    expect(doc).toContain('exactly `verified-current`');
+    expect(doc).toContain('route-only init');
+    expect(doc).toContain('independent of plugin availability');
     expect(doc).toContain('unreachable from update, install, setup, doctor, sync');
     // Homolog candidate channel + the N-task non-guarantee.
     expect(doc).toContain('Homolog is the canonical pre-stable candidate channel');
@@ -552,7 +732,7 @@ describe('Group E release and documentation contracts', () => {
       '23 physical',
       'Seven optional',
       '36 adapted skills',
-      'mcp-launcher.cjs',
+      '.codex/config.toml',
       'H3',
       'H4',
       'H6',
@@ -562,9 +742,11 @@ describe('Group E release and documentation contracts', () => {
       expect(docs).toContain(statement);
     }
     // Plugin-only contract: the installed plugin is the sole Genie-managed skill provider.
-    expect(read('README.md')).toContain('the installed plugin is the **only** Genie-managed skill provider');
+    expect(read('README.md')).toContain('the **sole** Genie-managed skill provider');
     expect(read('README.md')).toContain('Fallback retirement');
     expect(read('plugins/genie/README.md')).toContain('the only Genie-managed skill provider');
+    expect(read('README.md')).toContain('the plugin declares no Codex MCP route');
+    expect(read('plugins/genie/README.md')).toContain('the plugin declares no Codex MCP route');
     // The retired CLI-managed-fallback promise must be gone from operator docs.
     expect(docs).not.toContain('synchronizes up to 23 digest-managed product-skill fallbacks');
     expect(docs).not.toContain('CLI-managed product skills');
@@ -615,11 +797,13 @@ describe('Group E release and documentation contracts', () => {
       expect(root).toContain(term);
     }
     expect(lifecycle).toContain('automatically routes the completed DESIGN.md');
-    expect(plugin).toContain('successful `genie setup --codex` persists Codex maintenance consent');
-    expect(root).toContain('successful Codex setup also persists Codex maintenance consent');
-    // Consent no longer authorizes CLI-managed user-tier fallbacks; it refreshes only plugin surfaces.
-    expect(plugin).toContain('No supported path writes new product');
-    expect(root).toContain('never writes new product skills into the user tier');
+    expect(plugin).toContain('successful `genie setup --codex` persists Codex delivery scope');
+    expect(root).toContain('Successful setup persists Codex delivery scope');
+    // Delivery scope authorizes later publication only; setup remains the sole activation/convergence owner.
+    expect(plugin).toContain('never advance the plugin cache');
+    expect(root).toContain('those updates still deliver only');
+    expect(plugin).toContain('nothing is written to `~/.agents/skills`');
+    expect(root).toContain('Genie never seeds the user tier');
     expect(plugin).not.toContain('digest-managed product-skill');
     expect(root).not.toContain('digest-managed product-skill fallbacks');
   });
@@ -703,12 +887,12 @@ describe('Group E release and documentation contracts', () => {
     }
   });
 
-  test('Omni and MCP operator instructions expose provider and fallback policy', () => {
+  test('Omni and MCP operator instructions expose provider and project-route ownership policy', () => {
     const omni = read('skills/omni/SKILL.md');
     expect(omni).toContain('{instance, chat, repo, agent, persona?}');
     expect(omni).toContain('"agent": "codex"');
     const readme = read('README.md');
-    expect(readme).toContain('no installed, enabled, usable Genie plugin route');
+    expect(readme).toContain('The Codex route is plugin-independent');
     for (const path of ['.mcp.json', '.warp/.mcp.json', '.codex/config.toml']) expect(readme).toContain(path);
   });
 });
