@@ -412,14 +412,21 @@ function codexPluginCheck(state: CodexPluginProbe): CheckResult {
     };
   }
   const current = state.version === VERSION;
-  const healthy = current && state.enabled === true && state.usable === true;
+  // Post-Group-A the plugin ships NO MCP declaration — the marker-owned project
+  // route is the only Codex route — so plugin health is installed+enabled+current.
+  // The probe still reports the OLD manifest expectation ("does not point
+  // mcpServers to ./.mcp.json"): on a post-A generation that IS the healthy
+  // shape, so it is filtered from diagnostics; every other usability detail
+  // (missing node/launcher/binary) stays visible as diagnostics.
+  const healthy = current && state.enabled === true;
+  const staleManifestComplaint = state.usabilityDetail?.includes('does not point mcpServers') === true;
+  const diagnostics =
+    state.usable === true || staleManifestComplaint ? '' : `; diagnostics: ${state.usabilityDetail ?? 'unknown'}`;
   return {
     name: 'Codex Genie plugin',
     status: healthy ? 'pass' : 'warn',
-    detail: `v${state.version ?? 'unknown'}; ${state.enabled === true ? 'enabled' : 'disabled or unknown'}; ${state.usable === true ? 'MCP launcher usable' : `MCP launcher unusable (${state.usabilityDetail ?? 'unknown reason'})`} (CLI v${VERSION})`,
-    suggestion: healthy
-      ? undefined
-      : 'Run `genie setup --codex` to refresh it; keep the absolute project fallback until launcher health passes.',
+    detail: `v${state.version ?? 'unknown'}; ${state.enabled === true ? 'enabled' : 'disabled or unknown'}; MCP route: marker-owned project route (plugin declares none)${diagnostics} (CLI v${VERSION})`,
+    suggestion: healthy ? undefined : 'Run `genie setup --codex` to activate the delivered generation.',
   };
 }
 
@@ -581,17 +588,22 @@ function codexPluginPayloadCheck(probe: CodexPluginProbe): CheckResult | null {
 function codexPluginSurfaceChecks(probe: CodexPluginProbe): CheckResult[] {
   if (!probe.installed) return [];
   const manifest = probe.activePluginRoot ? join(probe.activePluginRoot, '.codex-plugin', 'plugin.json') : null;
-  let declared = false;
-  if (manifest !== null && existsSync(manifest)) {
-    try {
-      const parsed = JSON.parse(readFileSync(manifest, 'utf8')) as unknown;
-      declared =
-        typeof parsed === 'object' &&
-        parsed !== null &&
-        !Array.isArray(parsed) &&
-        (parsed as Record<string, unknown>).mcpServers === './.mcp.json';
-    } catch {
-      declared = false;
+  // Post-Group-A contract (Decisions 1/7): the codex plugin manifest MUST NOT
+  // declare mcpServers — a declaration would re-create the second (cache-root)
+  // Genie route the wish removed. Absence is the healthy shape.
+  let manifestState: 'unproven' | 'unreadable' | 'declares-none' | 'declares-route' = 'unproven';
+  if (manifest !== null) {
+    manifestState = 'unreadable';
+    if (existsSync(manifest)) {
+      try {
+        const parsed = JSON.parse(readFileSync(manifest, 'utf8')) as unknown;
+        if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+          manifestState =
+            (parsed as Record<string, unknown>).mcpServers === undefined ? 'declares-none' : 'declares-route';
+        }
+      } catch {
+        manifestState = 'unreadable';
+      }
     }
   }
   const payload = codexPluginPayloadCheck(probe);
@@ -599,13 +611,21 @@ function codexPluginSurfaceChecks(probe: CodexPluginProbe): CheckResult[] {
     ...(payload ? [payload] : []),
     {
       name: 'Codex Genie MCP capability',
-      status: declared ? 'pass' : 'warn',
-      detail: declared
-        ? `stdio server declared by active plugin at ${probe.activePluginRoot}`
-        : manifest === null
-          ? 'active installed plugin root is unproven; source-bundle declarations do not establish runtime health'
-          : `active plugin manifest is missing, corrupt, or does not declare ./.mcp.json: ${manifest}`,
-      suggestion: declared ? undefined : 'Run `genie setup --codex` to refresh the active plugin cache.',
+      status: manifestState === 'declares-none' ? 'pass' : 'warn',
+      detail:
+        manifestState === 'declares-none'
+          ? `plugin declares no MCP route (marker-owned project route is authoritative) at ${probe.activePluginRoot}`
+          : manifestState === 'declares-route'
+            ? `active plugin manifest still declares mcpServers — a second Genie route risks cache-root routing: ${manifest}`
+            : manifestState === 'unreadable'
+              ? `active plugin manifest is missing or corrupt: ${manifest}`
+              : 'active installed plugin root is unproven; source-bundle declarations do not establish runtime health',
+      suggestion:
+        manifestState === 'declares-none'
+          ? undefined
+          : manifestState === 'declares-route'
+            ? 'Run `genie update` then `genie setup --codex` to activate a generation without a plugin MCP route.'
+            : 'Run `genie setup --codex` to refresh the active plugin cache.',
     },
     {
       name: 'Codex hook review',

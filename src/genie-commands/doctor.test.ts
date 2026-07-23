@@ -20,6 +20,7 @@ import { dirname, join } from 'node:path';
 import { computeDirDigest, computeFileDigest } from '../lib/agent-sync.js';
 import { reconcileCodexProjectMcp, resolveGitProjectRoots } from '../lib/codex-project-mcp.js';
 import { CANONICAL_GENIE_SKILL_NAMES } from '../lib/runtime-integrations.js';
+import { VERSION } from '../lib/version.js';
 import {
   MINIMUM_BUN_VERSION,
   checkAgentSync,
@@ -215,6 +216,53 @@ describe('Codex doctor lifecycle results', () => {
       expect(route?.detail).toContain('fallback');
       expect(readFileSync(join(root, '.codex', 'config.toml'), 'utf8')).toContain('/absolute/genie');
     } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('post-A manifest truth: declaring NO mcpServers is the healthy shape; declaring one warns (live-QA regression)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'doctor-manifest-truth-'));
+    const priorCodexHome = process.env.CODEX_HOME;
+    process.env.CODEX_HOME = join(root, 'codex-home');
+    try {
+      trustProjectInCodexConfig(root);
+      const activePluginRoot = join(root, 'active-plugin');
+      mkdirSync(join(activePluginRoot, '.codex-plugin'), { recursive: true });
+      const manifestPath = join(activePluginRoot, '.codex-plugin', 'plugin.json');
+      const probe = {
+        cliAvailable: true,
+        status: 'ok' as const,
+        installed: true,
+        enabled: true,
+        // The probe still reports the stale pre-A manifest expectation; doctor
+        // must not surface it as a defect on a post-A generation.
+        usable: false,
+        usabilityDetail: 'plugin manifest does not point mcpServers to ./.mcp.json',
+        version: VERSION,
+        activePluginRoot,
+        detail: 'installed',
+      };
+
+      // Post-A shape: no mcpServers key → capability pass, plugin check pass.
+      writeFileSync(manifestPath, JSON.stringify({ name: 'genie', version: VERSION, skills: './skills/' }));
+      const healthy = await checkCodexIntegration(root, probe);
+      const capability = healthy.find((check) => check.name === 'Codex Genie MCP capability');
+      const plugin = healthy.find((check) => check.name === 'Codex Genie plugin');
+      expect(capability).toMatchObject({ status: 'pass' });
+      expect(capability?.detail).toContain('declares no MCP route');
+      expect(plugin).toMatchObject({ status: 'pass' });
+      expect(plugin?.detail).not.toContain('does not point mcpServers');
+      expect(plugin?.detail).not.toContain('unusable');
+
+      // Regression shape: a declared route is the defect (second Genie route).
+      writeFileSync(manifestPath, JSON.stringify({ name: 'genie', version: VERSION, mcpServers: './.mcp.json' }));
+      const regressed = await checkCodexIntegration(root, probe);
+      const declared = regressed.find((check) => check.name === 'Codex Genie MCP capability');
+      expect(declared).toMatchObject({ status: 'warn' });
+      expect(declared?.detail).toContain('still declares mcpServers');
+    } finally {
+      if (priorCodexHome === undefined) Reflect.deleteProperty(process.env, 'CODEX_HOME');
+      else process.env.CODEX_HOME = priorCodexHome;
       rmSync(root, { recursive: true, force: true });
     }
   });
