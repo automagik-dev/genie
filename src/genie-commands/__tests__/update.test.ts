@@ -465,6 +465,19 @@ describe('updateCommand wiring', () => {
     expect(source).toContain('--rollback');
   });
 
+  test('the already-current handoff prints plain language and retries convergence (live-QA regression)', () => {
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    // A bare machine trailer must never be the whole human output: the pending
+    // handoff states its meaning in plain language, and the rerun path still
+    // performs the non-cache-advancing convergence so a failed integration
+    // refresh (e.g. claude) is actually retried as the error message promises.
+    expect(source).toContain('Codex plugin activation is pending: retire Codex tasks');
+    const handoffBranch = source.slice(source.indexOf('handleAlreadyCurrentUpdate'));
+    expect(handoffBranch).toContain('runTrackedManualUpdateConvergence');
+    // The old dead-end shape (trailer + immediate return, no convergence) is gone.
+    expect(source).not.toContain('process.exitCode = 2;\n    log(CODEX_DELIVERY_RESULT_TRAILER);\n    return;');
+  });
+
   test('"Already up to date" exit logs version and channel', () => {
     const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
     expect(source).toContain('Already up to date');
@@ -2024,9 +2037,11 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
         message = error instanceof Error ? error.message : String(error);
       }
       expect(message).toContain('fresh Genie integration convergence failed: exit 7');
-      expect(message).toContain('Close all Codex tasks first');
-      expect(message).toContain('external terminal');
-      expect(message.indexOf('Close all Codex tasks first')).toBeLessThan(message.indexOf('external terminal'));
+      // Integration-neutral operator recovery: retry the update itself first
+      // (the rerun re-converges), THEN the Codex activation steps if pending.
+      expect(message).toContain('Rerun `genie update`');
+      expect(message).toContain('genie setup --codex');
+      expect(message.indexOf('Rerun `genie update`')).toBeLessThan(message.indexOf('genie setup --codex'));
     } finally {
       lease.release();
       rmSync(home, { recursive: true, force: true });
