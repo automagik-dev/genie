@@ -25,6 +25,7 @@
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import type { CodexActivationSnapshot } from './codex-activation.js';
+import { deriveDeliveryId } from './codex-delivery-evidence.js';
 import {
   type ActivationDeliveryExpectation,
   type DeliveryIncompleteResult,
@@ -47,20 +48,49 @@ export type SnapshotDeliveryGate =
   | { kind: 'incomplete'; result: DeliveryIncompleteResult };
 
 /**
- * Assess the snapshot's delivery record against the installed canonical target
- * (core binding: exact target version + canonical payload tree digest). This is
- * the same expectation shape `beginActivation`'s inner guard enforces, so setup
- * refusing here and the executor refusing later can never disagree on why.
+ * Assess the snapshot's complete authenticated delivery tuple against the
+ * installed canonical target. Locally observable bindings come from the
+ * canonical payload; release-provenance bindings come from the one structurally
+ * valid record that a subsequent activation permit fingerprints in full.
  */
 export function assessSnapshotDelivery(snapshot: CodexActivationSnapshot): SnapshotDeliveryGate {
   if (snapshot.canonical.status !== 'ok') {
     return { kind: 'unassessable', detail: `canonical payload is unavailable: ${snapshot.canonical.detail}` };
   }
+  const readState = snapshotDeliveryReadState(snapshot);
+  if (readState.status !== 'present') {
+    return { kind: 'incomplete', result: buildDeliveryIncompleteResult(readState.status) };
+  }
+  if (snapshot.delivery.status !== 'present') {
+    return { kind: 'incomplete', result: buildDeliveryIncompleteResult('invalid') };
+  }
+  const evidence = snapshot.delivery.evidence;
+  const descriptor = evidence.descriptor;
+  if (
+    descriptor.version !== snapshot.canonical.version.canonical ||
+    descriptor.canonicalPayloadSha256 !== snapshot.canonical.digest ||
+    descriptor.installedBinarySha256 !== snapshot.canonical.installedBinarySha256 ||
+    descriptor.platformTriple !== snapshot.canonical.platformTriple
+  ) {
+    return { kind: 'incomplete', result: buildDeliveryIncompleteResult('mismatch') };
+  }
   const expectation: ActivationDeliveryExpectation = {
-    targetVersion: snapshot.canonical.version.canonical,
+    targetVersion: descriptor.version,
     canonicalPayloadSha256: snapshot.canonical.digest,
+    channel: descriptor.channel,
+    deliveryId: deriveDeliveryId(evidence.evidenceDigest, snapshot.canonical.deliveryRoot),
+    evidenceDigest: evidence.evidenceDigest,
+    platformId: descriptor.platformId,
+    platformTriple: snapshot.canonical.platformTriple,
+    releaseTag: descriptor.releaseTag,
+    releaseName: descriptor.releaseName,
+    releaseManifestSha256: descriptor.releaseManifestSha256,
+    artifactSha256: descriptor.artifactSha256,
+    installedBinarySha256: snapshot.canonical.installedBinarySha256,
+    deliveryRoot: snapshot.canonical.deliveryRoot,
+    deliveredAt: evidence.deliveredAt,
   };
-  const assessment = assessAuthenticatedDelivery(snapshotDeliveryReadState(snapshot), expectation);
+  const assessment = assessAuthenticatedDelivery(readState, expectation);
   if (assessment === 'matching') return { kind: 'matching' };
   return { kind: 'incomplete', result: buildDeliveryIncompleteResult(assessment) };
 }

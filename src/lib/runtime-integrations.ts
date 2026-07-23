@@ -320,6 +320,60 @@ class IntegrationCommandError extends Error {
 
 const defaultRunner: CommandRunner = runBoundedIntegrationCommand;
 
+declare const DELIVERY_ROOT_CONSUMER_RESULT: unique symbol;
+
+/**
+ * Opaque synchronous consumer of one store-admitted physical delivery root.
+ * The implementation and root argument remain module-private; activation
+ * callers can select a narrow operation but cannot extract the root.
+ */
+export interface DeliveryRootConsumer<T> {
+  readonly [DELIVERY_ROOT_CONSUMER_RESULT]: T;
+}
+
+const DELIVERY_ROOT_CONSUMERS = new WeakMap<object, (physicalRoot: string) => unknown>();
+
+function createDeliveryRootConsumer<T>(consume: (physicalRoot: string) => T): DeliveryRootConsumer<T> {
+  const capability = Object.freeze({}) as DeliveryRootConsumer<T>;
+  DELIVERY_ROOT_CONSUMERS.set(capability, consume);
+  return capability;
+}
+
+/**
+ * Internal bridge for CodexActivationStore's freshness-checked `consume`.
+ * A structural lookalike is rejected by WeakMap identity.
+ */
+export function runDeliveryRootConsumer<T>(consumer: DeliveryRootConsumer<T>, physicalRoot: string): T {
+  const consume = DELIVERY_ROOT_CONSUMERS.get(consumer);
+  if (consume === undefined) throw new IntegrationCommandError('unrecognized delivery-root consumer capability');
+  // Capabilities are single-use even if a caller retains the opaque object.
+  DELIVERY_ROOT_CONSUMERS.delete(consumer);
+  return consume(physicalRoot) as T;
+}
+
+export interface SetupCodexConsentCommitOptions {
+  genieHome?: string;
+  selection: IntegrationSelection;
+  /** Test seam for the durable consent writer. */
+  persist?: typeof persistIntegrationConsent;
+}
+
+/**
+ * Create setup's narrow explicit-consent commit capability. The delivery root
+ * is intentionally not passed to the write: its only role is to force this
+ * privileged state transition through the store's immediate freshness checks.
+ */
+export function createSetupCodexConsentCommitConsumer(
+  options: SetupCodexConsentCommitOptions,
+): DeliveryRootConsumer<void> {
+  if (options.selection !== 'codex' && options.selection !== 'all') {
+    throw new IntegrationCommandError('setup Codex consent commit requires explicit codex/all scope');
+  }
+  return createDeliveryRootConsumer(() =>
+    (options.persist ?? persistIntegrationConsent)(options.selection, options.genieHome ?? resolveGenieHome()),
+  );
+}
+
 const BOUNDED_RUNNER_WORKER = String.raw`
   const { spawn } = require('node:child_process');
   const { workerData } = require('node:worker_threads');
@@ -1975,6 +2029,32 @@ export function installCodexAgents(
   return plan.result;
 }
 
+export interface ConvergeSetupCodexRoleAgentsOptions {
+  codexHome?: string;
+  genieHome?: string;
+}
+
+/**
+ * Create setup's narrow role-convergence consumer. The authenticated root is
+ * supplied only when CodexActivationStore admits this opaque capability; exact
+ * historical profiles are adopted only after setup has durably committed
+ * explicit Codex consent.
+ */
+export function createSetupCodexRoleAgentConsumer(
+  options: ConvergeSetupCodexRoleAgentsOptions,
+): DeliveryRootConsumer<CodexAgentInstallResult> {
+  return createDeliveryRootConsumer((physicalRoot) => {
+    const genieHome = options.genieHome ?? resolveGenieHome();
+    const consent = readIntegrationConsentState(genieHome);
+    if (!codexRoleAdoptionAllowed(consent)) {
+      throw new IntegrationCommandError(
+        'Codex role-agent convergence requires committed explicit Codex integration consent',
+      );
+    }
+    return installCodexAgents(physicalRoot, options.codexHome, {}, { adoptHistorical: true });
+  });
+}
+
 export interface CodexEnabledMutationResult {
   ok: boolean;
   detail: string;
@@ -2164,6 +2244,27 @@ function addCodexMarketplace(runner: CommandRunner, command: string, bundleRoot:
   if (!/already|exists|configured/i.test(output)) {
     throw new IntegrationCommandError(`codex ${args.join(' ')} failed: ${(result.stderr || result.stdout).trim()}`);
   }
+}
+
+export interface RegisterCodexMarketplaceOptions {
+  /** Once-bound absolute Codex executable. */
+  command: string;
+  runner?: CommandRunner;
+  timeoutMs?: number;
+}
+
+/**
+ * Build a one-operation capability that can register only the exact physical
+ * delivery root admitted by the activation store. The root is never exposed to
+ * setup/executor callers and cannot be rebound through GENIE_HOME resolution.
+ */
+export function createCodexMarketplaceRegistrationConsumer(
+  options: RegisterCodexMarketplaceOptions,
+): DeliveryRootConsumer<void> {
+  const timeoutMs = boundedPositiveInteger('timeout', options.timeoutMs ?? INTEGRATION_TIMEOUT_MS, 5 * 60_000);
+  return createDeliveryRootConsumer((physicalRoot) =>
+    addCodexMarketplace(options.runner ?? defaultRunner, options.command, physicalRoot, timeoutMs),
+  );
 }
 
 function requireCodexPluginState(raw: string, phase: string): RuntimePluginState {

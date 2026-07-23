@@ -54,6 +54,7 @@ import {
 } from '../lib/codex-activation-executor.js';
 import type { CodexActivationSnapshot, IntegrationSummaryEnvelope } from '../lib/codex-activation.js';
 import { DEAD_GENIE_OTEL_EXPORTER, getCodexConfigPath } from '../lib/codex-config.js';
+import type { DeliveryEvidenceVerificationDependencies } from '../lib/codex-delivery-evidence.js';
 // Group E: ONE bounded host observation feeds probe, summary, advisory, and
 // replay runner; the lifecycle-truth seams keep delivery/route claims aligned.
 import { type DoctorCodexObservation, observeDoctorCodexHost } from '../lib/codex-doctor-observation.js';
@@ -529,6 +530,22 @@ function checkCodexProjectContext(root: string | null, injected?: ProjectContext
   if (root === null || injected === null) return [];
   const context = injected ?? resolveProjectContext(root);
   if (context.kind === 'ok') {
+    let db: Database | null = null;
+    try {
+      db = new Database(context.dbPath, { readonly: true });
+      db.query('PRAGMA user_version').get();
+    } catch {
+      return [
+        {
+          name: 'Codex project context',
+          status: 'fail',
+          detail: `Codex MCP returns typed 'project-database-unavailable': unable to open Genie database at ${context.dbPath}`,
+          suggestion: 'Repair or replace the repository .genie/genie.db, then rerun `genie doctor`.',
+        },
+      ];
+    } finally {
+      db?.close();
+    }
     return [
       {
         name: 'Codex project context',
@@ -1814,6 +1831,8 @@ export interface DoctorDeps {
    */
   codexHost?: Parameters<typeof observeDoctorCodexHost>[0];
   projectContext?: ProjectContext | null;
+  /** TEST-ONLY cryptographic seam for persisted delivery-evidence fixtures; no CLI/env path exposes it. */
+  deliveryEvidenceVerification?: DeliveryEvidenceVerificationDependencies;
 }
 
 // ============================================================================
@@ -1841,9 +1860,13 @@ function resolveCodexActivationSnapshot(
     return observeCodexActivation({
       command: hostObservation.codexCommand,
       runner: hostObservation.activationRunner,
+      deliveryEvidenceVerification: deps.deliveryEvidenceVerification,
     });
   }
-  return observeCodexActivation({ command: whichBinary('codex') });
+  return observeCodexActivation({
+    command: whichBinary('codex'),
+    deliveryEvidenceVerification: deps.deliveryEvidenceVerification,
+  });
 }
 
 interface CodexIntegration {

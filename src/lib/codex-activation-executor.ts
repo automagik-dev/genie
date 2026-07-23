@@ -13,11 +13,12 @@
  *   2. `store.beginActivation(lease, permit)` re-observes, exact-matches the
  *      permit fingerprint, and writes the `planned` journal. A stale permit or an
  *      ineligible state refuses before the first journal write.
- *   3. Drive the supported Codex CLI `plugin add` through A's typed phase
- *      transitions (`command-started` fsynced immediately before the cache-
- *      advancing command, `removal-observed`/`ambiguous-absent` on the failure
- *      probe), preserve the observed enabled flag, and handle `intent-target-
- *      current` finalization with no add/remove.
+ *   3. Register the revalidated canonical marketplace, then drive the supported
+ *      Codex CLI `plugin add` through A's typed phase transitions
+ *      (`command-started` fsynced immediately before the cache-advancing
+ *      command, `removal-observed`/`ambiguous-absent` on the failure probe),
+ *      preserve the observed enabled flag, and handle `intent-target-current`
+ *      finalization with no plugin add/remove.
  *   4. Verify full physical N+1 parity ONLY inside
  *      `store.withRevalidatedDeliveryRoot(callback)` — the canonical digest never
  *      leaves the callback as a raw root — then run the exact bounded H3
@@ -26,11 +27,10 @@
  *      tombstones and removes any downgrade receipt (one-time, durable).
  *   6. Release the lease on success, typed refusal, and handled failure alike.
  *
- * The executor never reads or writes A's private protocol files, the hook-trust
- * store, or the canonical bundle root directly: marketplace registration and the
- * raw root stay delivery-side (Group C) because A deliberately hides the root, so
- * the cache-advancing `plugin add` (resolved from the already-registered
- * marketplace) is the entire permit boundary.
+ * The executor never reads or writes A's private protocol files or the hook-trust
+ * store. Marketplace registration runs inside the deep store's revalidated
+ * delivery callback; role-agent convergence remains setup-owned and follows
+ * successful activation plus committed Codex consent.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -76,7 +76,12 @@ import {
 } from './codex-host-observation.js';
 import { type HeldLifecycleLease, LifecycleFencingError, acquireLifecycleLease } from './codex-lifecycle-lease.js';
 import type { LifecycleLeaseKind, LifecycleLeaseResult } from './codex-lifecycle-lease.js';
-import { type CommandRunner, runBoundedIntegrationCommand, setCodexPluginEnabled } from './runtime-integrations.js';
+import {
+  type CommandRunner,
+  createCodexMarketplaceRegistrationConsumer,
+  runBoundedIntegrationCommand,
+  setCodexPluginEnabled,
+} from './runtime-integrations.js';
 
 // A's permit is a type-only export: importers may name it, but the runtime class
 // never leaves A and only `beginActivation`/`quarantineIntent` can validate it.
@@ -128,6 +133,8 @@ const SMOKE_EXPECTED_CONTEXT =
 export interface ActivationPhaseHooks {
   afterLeaseAcquired?(operationId: string): void;
   afterBeginActivation?(handle: ActivationHandle): void;
+  beforeMarketplaceRegistration?(): void;
+  afterMarketplaceRegistration?(): void;
   beforeCommandStarted?(): void;
   beforePluginAdd?(): void;
   afterPluginAdd?(): void;
@@ -141,6 +148,8 @@ export interface ActivationPhaseHooks {
 export interface CodexActivationExecutorDeps {
   /** Injected command runner for the cache-advancing `plugin add`; defaults to the bounded runner. */
   runner?: CommandRunner;
+  /** Factory for the marketplace capability consumed only by the deep store. */
+  createMarketplaceConsumer?: typeof createCodexMarketplaceRegistrationConsumer;
   /** Resolve an absolute Node executable for the H3 replay; defaults to `Bun.which('node')`. */
   resolveNode?: () => string | null;
   now?: () => Date;
@@ -152,7 +161,7 @@ export interface CodexActivationExecutorDeps {
 export interface ExecuteCodexActivationInput {
   permit: ActivationPermit;
   store: CodexActivationStore;
-  /** Resolved absolute codex executable; the marketplace is already registered by delivery. */
+  /** Resolved absolute codex executable used for marketplace registration and plugin activation. */
   command: string;
   codexHome: string;
   genieHome: string;
@@ -270,8 +279,9 @@ function runActivationUnderLease(
     return refusedFromState(preState, begin.reason);
   }
   const handle = begin.handle;
-  deps.hooks?.afterBeginActivation?.(handle);
   try {
+    deps.hooks?.afterBeginActivation?.(handle);
+    registerAuthorizedMarketplace(input, lease, deps);
     if (preState.kind === 'intent-target-current') {
       return finalizeVerifiedGeneration(input, lease, handle, deps, /* ranCacheCommand */ false);
     }
@@ -279,6 +289,29 @@ function runActivationUnderLease(
   } catch (error) {
     return brokenFromError(input, error);
   }
+}
+
+/**
+ * Revalidate the authenticated delivery root after the inner begin guard and
+ * register its canonical marketplace inside the callback-scoped capability.
+ * Any drift or command failure stops before `command-started` and therefore
+ * before `plugin add`.
+ */
+function registerAuthorizedMarketplace(
+  input: ExecuteCodexActivationInput,
+  lease: HeldLifecycleLease,
+  deps: CodexActivationExecutorDeps,
+): void {
+  input.store.withRevalidatedDeliveryRoot(lease, (ops) => {
+    deps.hooks?.beforeMarketplaceRegistration?.();
+    const consumer = (deps.createMarketplaceConsumer ?? createCodexMarketplaceRegistrationConsumer)({
+      command: input.command,
+      runner: deps.runner,
+      timeoutMs: input.timeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS,
+    });
+    ops.consume(consumer);
+    deps.hooks?.afterMarketplaceRegistration?.();
+  });
 }
 
 // ============================================================================

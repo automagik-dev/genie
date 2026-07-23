@@ -46,6 +46,7 @@ import {
   convergeClaudePlugin,
   convergeCodexPlugin,
   convergeCodexPluginOnly,
+  createSetupCodexRoleAgentConsumer,
   inspectCodexAgentOwnership,
   inspectCodexFallbackTier,
   inspectRuntimeIntegrationEvidence,
@@ -64,6 +65,7 @@ import {
   removeRuntimeIntegrations as removeRuntimeIntegrationsWithTrustedResolution,
   resolveBundleRoot,
   runBoundedIntegrationCommand,
+  runDeliveryRootConsumer,
   setCodexPluginEnabled,
   translateRetirementConflicts,
   verifyClaudePhysicalPayload,
@@ -3071,6 +3073,43 @@ describe('codex role-agent frozen historical allowlist (Group C)', () => {
         transitionToken: 'a'.repeat(32),
       }),
     ).toBe(false);
+  });
+
+  test('setup role convergence refuses before committed Codex consent with zero agent mutation', () => {
+    const genieHome = makeRealCodexBundle();
+    const codexHome = canonicalTempDir('genie-setup-roles-refused-');
+    const personal = seedRoleFile(codexHome, 'personal.toml', 'name = "personal"\n', 0o600);
+    const before = readFileSync(personal);
+    const beforeMode = lstatSync(personal).mode & 0o7777;
+
+    const consumer = createSetupCodexRoleAgentConsumer({ genieHome, codexHome });
+    expect(() => runDeliveryRootConsumer(consumer, genieHome)).toThrow(
+      'requires committed explicit Codex integration consent',
+    );
+    expectSameBytes(readFileSync(personal), before);
+    expect(lstatSync(personal).mode & 0o7777).toBe(beforeMode);
+    expect(readdirSync(join(codexHome, 'agents'))).toEqual(['personal.toml']);
+  });
+
+  test('setup role convergence adopts only frozen roles and preserves unrelated user agents exactly', () => {
+    const genieHome = makeRealCodexBundle();
+    const codexHome = canonicalTempDir('genie-setup-roles-authorized-');
+    for (const name of realRoleNames()) seedRoleFile(codexHome, name, realRoleBytes(name));
+    const personal = seedRoleFile(codexHome, 'personal.toml', 'name = "personal"\nmode = "custom"\n', 0o600);
+    const before = readFileSync(personal);
+    const beforeMode = lstatSync(personal).mode & 0o7777;
+    persistIntegrationConsent('codex', genieHome);
+
+    const result = runDeliveryRootConsumer(createSetupCodexRoleAgentConsumer({ genieHome, codexHome }), genieHome);
+
+    expect(result.adoptedLegacy?.sort()).toEqual(realRoleNames());
+    expect(JSON.stringify(result)).not.toContain(genieHome);
+    expect(JSON.stringify(result)).not.toContain(codexHome);
+    expect(inspectCodexAgentOwnership(codexHome).entries.filter((entry) => entry.state === 'managed')).toHaveLength(
+      realRoleNames().length,
+    );
+    expectSameBytes(readFileSync(personal), before);
+    expect(lstatSync(personal).mode & 0o7777).toBe(beforeMode);
   });
 });
 

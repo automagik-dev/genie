@@ -21,7 +21,7 @@ import { BUSY_TIMEOUT_MS } from './sqlite-open.js';
 // Re-exported so `genie mcp` (mcp.ts) pulls the fail-closed context resolver in
 // the SAME lazy dynamic import that already loads the tool registry — keeping
 // the readonly bun:sqlite open out of the eager genie.ts import graph.
-export { type ProjectContext, resolveProjectContext } from './genie-db.js';
+export { isCurrentGenieDb, type ProjectContext, resolveProjectContext } from './genie-db.js';
 import {
   type TaskFilter,
   type TaskRow,

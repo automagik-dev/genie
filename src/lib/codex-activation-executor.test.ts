@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -19,6 +20,7 @@ import {
   requestRetirementAssertion,
   scanPhysicalTree,
 } from './codex-activation.js';
+import { mintTestDeliveryEvidence } from './codex-delivery-evidence.test-support.js';
 import { acquireLifecycleLease } from './codex-lifecycle-lease.js';
 import type { CommandResult, CommandRunner } from './runtime-integrations.js';
 
@@ -28,6 +30,10 @@ const FROM_VERSION = '5.260710.1';
 const TARGET_VERSION = '5.260712.1';
 const NEWER_VERSION = '5.260799.9';
 const STUB_COMMAND = '/stub/codex';
+
+const TEST_EVIDENCE_VERIFICATION = {
+  verifyBundle: () => ({ integratedTime: '1753228800' }),
+};
 
 // ---------------------------------------------------------------------------
 // Fixture isolation contract
@@ -115,12 +121,13 @@ function buildFixture(options: FixtureOptions): Fixture {
   const root = mkdtempSync(join(tmpdir(), 'genie-executor-fixture-'));
   const genieHome = join(root, 'genie-home');
   const codexHome = join(root, 'codex-home');
-  const canonicalRoot = join(root, 'canonical');
+  const canonicalRoot = genieHome;
   const canonicalPayloadDir = join(canonicalRoot, 'plugins', 'genie');
   const familyDir = join(codexHome, 'plugins', 'cache', 'automagik', 'genie');
   const targetCacheDir = join(familyDir, target);
   mkdirSync(genieHome, { recursive: true });
   mkdirSync(join(canonicalPayloadDir, 'scripts'), { recursive: true });
+  mkdirSync(join(canonicalPayloadDir, 'codex-agents'), { recursive: true });
   mkdirSync(familyDir, { recursive: true });
 
   // Canonical payload: the real H3 script plus a couple of physical files.
@@ -129,6 +136,7 @@ function buildFixture(options: FixtureOptions): Fixture {
   mkdirSync(join(canonicalPayloadDir, 'hooks'), { recursive: true });
   writeFileSync(join(canonicalPayloadDir, 'hooks', 'codex-hooks.json'), '{"hooks":{}}\n');
   writeFileSync(join(canonicalRoot, 'VERSION'), `${target}\n`);
+  writeFileSync(join(canonicalRoot, 'genie'), '#!/bin/sh\n');
 
   const configPath = join(codexHome, 'config.toml');
   setConfigEnabled(configPath, options.initialEnabled);
@@ -171,6 +179,7 @@ function buildFixture(options: FixtureOptions): Fixture {
     allowRootOverride: true,
     command: STUB_COMMAND,
     runner: makeRunner(),
+    deliveryEvidenceVerification: TEST_EVIDENCE_VERIFICATION,
   };
 
   return {
@@ -189,16 +198,30 @@ function buildFixture(options: FixtureOptions): Fixture {
 }
 
 /** Publish an installed-delivery (and optional downgrade receipt) exactly as Group C would. */
-function publishDelivery(fixture: Fixture, opts: { downgradeFrom?: string; deliveryId?: string } = {}): void {
+function publishDelivery(fixture: Fixture, opts: { downgradeFrom?: string } = {}): void {
   const lease = acquireLifecycleLease('update-delivery', { genieHome: fixture.genieHome });
   if (!lease.ok) throw new Error(`could not acquire delivery lease: ${lease.detail}`);
   try {
     fixture.openStore().publishDelivery(lease, {
-      targetVersion: TARGET_VERSION,
-      canonicalPayloadSha256: fixture.canonicalDigest,
-      channel: 'stable',
+      evidence: mintTestDeliveryEvidence({
+        descriptor: {
+          version: TARGET_VERSION,
+          releaseTag: `v${TARGET_VERSION}`,
+          releaseName: `genie-${TARGET_VERSION}-${
+            process.platform === 'darwin'
+              ? 'darwin-arm64'
+              : process.arch === 'arm64'
+                ? 'linux-arm64'
+                : 'linux-x64-glibc'
+          }.tar.gz`,
+          canonicalPayloadSha256: fixture.canonicalDigest,
+          installedBinarySha256: createHash('sha256')
+            .update(readFileSync(join(fixture.canonicalRoot, 'genie')))
+            .digest('hex'),
+        },
+      }).evidence,
+      deliveryRoot: fixture.canonicalRoot,
       downgradeFrom: opts.downgradeFrom,
-      deliveryId: opts.deliveryId,
     });
   } finally {
     lease.release();
@@ -257,6 +280,9 @@ function leasePath(fixture: Fixture): string {
 function addCalls(fixture: Fixture): number {
   return fixture.runnerCalls.filter((call) => call.endsWith('plugin add genie@automagik --json')).length;
 }
+function marketplaceCalls(fixture: Fixture): number {
+  return fixture.runnerCalls.filter((call) => call.includes('plugin marketplace add ')).length;
+}
 
 // ---------------------------------------------------------------------------
 
@@ -305,6 +331,7 @@ describe('permit boundary', () => {
     });
     expect(result.status === 'refused' || result.status === 'broken').toBe(true);
     expect(existsSync(intentPath(fx))).toBe(false);
+    expect(marketplaceCalls(fx)).toBe(0);
     expect(addCalls(fx)).toBe(0);
     expect(existsSync(leasePath(fx))).toBe(false); // released
   });
@@ -332,11 +359,62 @@ describe('delivery-incomplete inner guard', () => {
     publishDelivery(fx);
     const result = runActivation(fx);
     expect(result.status).toBe('activated');
+    expect(marketplaceCalls(fx)).toBe(1);
     expect(addCalls(fx)).toBe(1);
   });
 });
 
 describe('successful activation', () => {
+  test('inner begin precedes callback-scoped marketplace registration, which precedes plugin add', () => {
+    const fx = fixture({ from: null, initialEnabled: true });
+    publishDelivery(fx);
+    const order: string[] = [];
+    const runner = fx.makeRunner();
+    const result = runActivation(fx, {
+      hooks: {
+        afterBeginActivation: () => order.push('begin'),
+        beforeMarketplaceRegistration: () => order.push('marketplace-before'),
+        afterMarketplaceRegistration: () => order.push('marketplace-after'),
+        beforeCommandStarted: () => order.push('command-started'),
+        beforePluginAdd: () => order.push('plugin-add'),
+      },
+      runner: (command, args, options) => {
+        if (args.slice(0, 3).join(' ') === 'plugin marketplace add') order.push('marketplace-command');
+        return runner(command, args, options);
+      },
+    });
+
+    expect(result.status).toBe('activated');
+    expect(order).toEqual([
+      'begin',
+      'marketplace-before',
+      'marketplace-command',
+      'marketplace-after',
+      'command-started',
+      'plugin-add',
+    ]);
+  });
+
+  test('marketplace registration failure leaves plugin/cache untouched and roles remain outside the executor', () => {
+    const fx = fixture({ from: null, initialEnabled: true });
+    publishDelivery(fx);
+    const runner = fx.makeRunner();
+    const result = runActivation(fx, {
+      runner: (command, args, options) => {
+        if (args.slice(0, 3).join(' ') === 'plugin marketplace add') {
+          return { exitCode: 1, stdout: '', stderr: 'injected marketplace registration failure' };
+        }
+        return runner(command, args, options);
+      },
+    });
+
+    expect(result.status).toBe('broken');
+    expect(addCalls(fx)).toBe(0);
+    expect(existsSync(fx.targetCacheDir)).toBe(false);
+    expect(existsSync(join(fx.codexHome, 'agents'))).toBe(false);
+    expect(classifyCodexActivation(fx.openStore().observe()).kind).toBe('intent-planned');
+  });
+
   test('upgrade preserves enabled state, proves parity + H3, clears the journal, returns verified', () => {
     const fx = fixture({ from: FROM_VERSION, initialEnabled: true, createFromCache: true });
     publishDelivery(fx);
@@ -396,6 +474,7 @@ describe('fingerprint freshness', () => {
     if (result.status !== 'stale') throw new Error('unreachable');
     expect(result.mismatchField).toBe('enabled');
     expect(existsSync(intentPath(fx))).toBe(false);
+    expect(marketplaceCalls(fx)).toBe(0);
     expect(addCalls(fx)).toBe(0);
     expect(existsSync(leasePath(fx))).toBe(false);
   });
@@ -520,6 +599,7 @@ function activateWith(
     allowRootOverride: true,
     command: STUB_COMMAND,
     runner,
+    deliveryEvidenceVerification: TEST_EVIDENCE_VERIFICATION,
   });
   const { permit } = mintPermit(store);
   return executeCodexActivation({
@@ -948,6 +1028,7 @@ const store = openCodexActivationStore({
   allowRootOverride: true,
   command: '/stub/codex',
   runner,
+  deliveryEvidenceVerification: { verifyBundle: () => ({ integratedTime: '1753228800' }) },
 });
 
 const snapshot = store.observe();

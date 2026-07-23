@@ -90,12 +90,18 @@ const s = statSync(c);
 process.stdout.write(JSON.stringify({ cwd: c, dev: s.dev, ino: s.ino, pid: process.pid }) + '\n');
 `;
 
-type PendingResolver = (message: Record<string, unknown>) => void;
+interface PendingRequest {
+  resolve: (message: Record<string, unknown>) => void;
+  reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
 
 export class CodexCwdEvidence {
   private nextId = 1;
-  private readonly pending = new Map<number, PendingResolver>();
+  private readonly pending = new Map<number, PendingRequest>();
   private closed = false;
+  private childClosed = false;
+  private readonly childClosePromise: Promise<void>;
 
   private constructor(
     private readonly child: ChildProcessWithoutNullStreams,
@@ -104,10 +110,21 @@ export class CodexCwdEvidence {
     private readonly fakeMcpScript: string,
     private readonly controlReporter: string,
     private readonly nodeExecutable: string,
-  ) {}
+  ) {
+    this.childClosePromise = new Promise((resolve) => {
+      child.once('close', () => {
+        this.childClosed = true;
+        resolve();
+      });
+    });
+  }
 
   /** Start the pinned app-server and complete the `initialize` handshake. */
-  static async launch(codexCommand = 'codex'): Promise<CodexCwdEvidence> {
+  static async launch(
+    codexCommand = 'codex',
+    initializeTimeoutMs = 15_000,
+    beforeSpawnForTest?: (harnessRoot: string) => void,
+  ): Promise<CodexCwdEvidence> {
     // Deterministic preflight: an absent/unrunnable codex must fail as a caught
     // rejection HERE so callers skip honestly. Without it, spawn() below emits an
     // async 'error' (ENOENT) with no listener, which Node throws unhandled at
@@ -119,36 +136,42 @@ export class CodexCwdEvidence {
       throw new Error(`codex binary not runnable in this environment: ${codexCommand}`);
     }
     const harnessRoot = mkdtempSync(join(tmpdir(), 'genie-cwd-evidence-'));
-    const codexHome = join(harnessRoot, 'codex-home');
-    mkdirSync(codexHome, { recursive: true });
-    writeFileSync(join(codexHome, 'config.toml'), 'model = "gpt-5-codex"\n', 'utf8');
-    const sentinelFile = join(harnessRoot, 'sentinel.jsonl');
-    writeFileSync(sentinelFile, '', 'utf8');
-    const fakeMcpScript = join(harnessRoot, 'fake-mcp.mjs');
-    writeFileSync(fakeMcpScript, FAKE_MCP_SOURCE, 'utf8');
-    const controlReporter = join(harnessRoot, 'control-reporter.mjs');
-    writeFileSync(controlReporter, CONTROL_REPORTER_SOURCE, 'utf8');
-    const nodeExecutable = process.execPath;
+    let harness: CodexCwdEvidence | null = null;
+    try {
+      const codexHome = join(harnessRoot, 'codex-home');
+      mkdirSync(codexHome, { recursive: true });
+      writeFileSync(join(codexHome, 'config.toml'), 'model = "gpt-5-codex"\n', 'utf8');
+      const sentinelFile = join(harnessRoot, 'sentinel.jsonl');
+      writeFileSync(sentinelFile, '', 'utf8');
+      const fakeMcpScript = join(harnessRoot, 'fake-mcp.mjs');
+      writeFileSync(fakeMcpScript, FAKE_MCP_SOURCE, 'utf8');
+      const controlReporter = join(harnessRoot, 'control-reporter.mjs');
+      writeFileSync(controlReporter, CONTROL_REPORTER_SOURCE, 'utf8');
+      const nodeExecutable = process.execPath;
+      beforeSpawnForTest?.(harnessRoot);
 
-    const child = spawn(codexCommand, ['app-server'], {
-      env: { ...process.env, CODEX_HOME: codexHome, RUST_LOG: 'error' },
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }) as ChildProcessWithoutNullStreams;
-    // A late spawn/runtime failure must surface as a rejected initialize (caught by
-    // callers), never as an unhandled 'error' event that throws and aborts the file.
-    child.on('error', () => {});
-    const harness = new CodexCwdEvidence(
-      child,
-      harnessRoot,
-      sentinelFile,
-      fakeMcpScript,
-      controlReporter,
-      nodeExecutable,
-    );
-    harness.wireStdout();
-    await harness.request('initialize', { clientInfo: { name: 'genie-cwd-evidence', version: '0.0.0' } }, 15_000);
-    child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'initialized', params: {} })}\n`);
-    return harness;
+      const child = spawn(codexCommand, ['app-server'], {
+        env: { ...process.env, CODEX_HOME: codexHome, RUST_LOG: 'error' },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      }) as ChildProcessWithoutNullStreams;
+      // A late spawn/runtime failure must surface as a rejected initialize (caught by
+      // callers), never as an unhandled 'error' event that throws and aborts the file.
+      child.on('error', () => {});
+      harness = new CodexCwdEvidence(child, harnessRoot, sentinelFile, fakeMcpScript, controlReporter, nodeExecutable);
+      harness.wireLifecycle();
+      harness.wireStdout();
+      await harness.request(
+        'initialize',
+        { clientInfo: { name: 'genie-cwd-evidence', version: '0.0.0' } },
+        initializeTimeoutMs,
+      );
+      child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'initialized', params: {} })}\n`);
+      return harness;
+    } catch (error) {
+      if (harness === null) rmSync(harnessRoot, { recursive: true, force: true });
+      else await harness.close();
+      throw error;
+    }
   }
 
   /**
@@ -252,11 +275,13 @@ export class CodexCwdEvidence {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    this.rejectPending(new Error('codex app-server harness closed'));
     try {
       this.child.kill('SIGKILL');
     } catch {
       // already gone
     }
+    await this.waitForChildClose();
     rmSync(this.harnessRoot, { recursive: true, force: true });
   }
 
@@ -277,17 +302,29 @@ export class CodexCwdEvidence {
 
   private request(method: string, params: unknown, timeoutMs: number): Promise<Record<string, unknown>> {
     const id = this.nextId++;
-    this.child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
     return new Promise<Record<string, unknown>>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`${method} timed out after ${timeoutMs}ms`));
       }, timeoutMs);
-      this.pending.set(id, (message) => {
-        clearTimeout(timer);
-        if (message.error) reject(new Error(`${method} error: ${JSON.stringify(message.error).slice(0, 300)}`));
-        else resolve(message);
+      this.pending.set(id, { resolve, reject, timer });
+      this.child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`, (error) => {
+        if (error) this.rejectRequest(id, new Error(`${method} write failed: ${error.message}`));
       });
+    });
+  }
+
+  private wireLifecycle(): void {
+    this.child.on('error', (error) => {
+      this.rejectPending(new Error(`codex app-server process error: ${error.message}`));
+    });
+    this.child.on('exit', (code, signal) => {
+      this.rejectPending(
+        new Error(`codex app-server exited before replying (code=${String(code)}, signal=${String(signal)})`),
+      );
+    });
+    this.child.stdin.on('error', (error) => {
+      this.rejectPending(new Error(`codex app-server stdin error: ${error.message}`));
     });
   }
 
@@ -304,11 +341,33 @@ export class CodexCwdEvidence {
       }
       const id = message.id;
       if (typeof id === 'number' && this.pending.has(id)) {
-        const resolver = this.pending.get(id);
+        const request = this.pending.get(id);
         this.pending.delete(id);
-        resolver?.(message);
+        if (!request) return;
+        clearTimeout(request.timer);
+        if (message.error) request.reject(new Error(`request error: ${JSON.stringify(message.error).slice(0, 300)}`));
+        else request.resolve(message);
       }
     });
+  }
+
+  private rejectRequest(id: number, error: Error): void {
+    const request = this.pending.get(id);
+    if (!request) return;
+    this.pending.delete(id);
+    clearTimeout(request.timer);
+    request.reject(error);
+  }
+
+  private rejectPending(error: Error): void {
+    for (const id of [...this.pending.keys()]) {
+      this.rejectRequest(id, error);
+    }
+  }
+
+  private async waitForChildClose(): Promise<void> {
+    if (this.childClosed) return;
+    await this.childClosePromise;
   }
 
   private async waitForSentinel(

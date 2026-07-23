@@ -139,6 +139,65 @@ describe('Group E release and documentation contracts', () => {
     expect(signing).not.toContain('--signer-workflow');
   });
 
+  test('delivery evidence becomes publicly immutable before exact manifest CAS', () => {
+    const release = read('.github/workflows/release.yml');
+    const publish = read('.github/workflows/release-publish.yml');
+    for (const input of ['source_sha', 'source_branch', 'source_ci_run_id']) {
+      expect(release).toContain(`${input}: \${{ inputs.${input} }}`);
+      expect(publish).toContain(`${input}:`);
+      expect(publish).toContain(`\${{ inputs.${input} }}`);
+    }
+    expect(publish).toContain('bun scripts/build-delivery-evidence.ts');
+    expect(publish).toContain('bash scripts/materialize-release-subjects.sh');
+    expect(publish).toContain('bun-version: 1.3.11');
+    expect(publish).toContain('predicate-type: https://github.com/${{ github.repository }}/delivery-evidence/v1');
+    expect(publish).toContain('actions/attest@67422f5511b7ff725f4dbd6fb9bd2cd925c65a8d');
+    expect(publish).toContain('${DESCRIPTOR}.sigstore.json');
+    expect(publish).toContain('stable) EVIDENCE_CHANNELS=(stable homolog dev)');
+    expect(publish).toContain('homolog) EVIDENCE_CHANNELS=(homolog dev)');
+    expect(publish).toContain('dev) EVIDENCE_CHANNELS=(dev)');
+    expect(publish).toContain('name: delivery-candidate-manifests');
+    expect(publish).toContain('CANDIDATE_MANIFEST_DIR="$CANDIDATE_MANIFEST_DIR"');
+
+    const attest = publish.indexOf('id: endorse');
+    const materialize = publish.indexOf('bash scripts/materialize-release-subjects.sh');
+    const descriptorBuild = publish.indexOf('bun scripts/build-delivery-evidence.ts');
+    const compatibilityJob = publish.split('\n  delivery-evidence-compatibility:')[1]?.split('\n  publish:')[0] ?? '';
+    const publishJob = publish.split('\n  publish:')[1]?.split('\n  manifests:')[0] ?? '';
+    const releaseUpload = publish.indexOf('bash scripts/reconcile-release-assets.sh');
+    const manifestsJob = publish.split('\n  manifests:')[1]?.split('\n  finalize:')[0] ?? '';
+    const finalizeJob = publish.split('\n  finalize:')[1] ?? '';
+    expect(attest).toBeGreaterThan(-1);
+    expect(materialize).toBeGreaterThan(-1);
+    expect(descriptorBuild).toBeGreaterThan(materialize);
+    expect(attest).toBeGreaterThan(descriptorBuild);
+    expect(releaseUpload).toBeGreaterThan(attest);
+    expect(compatibilityJob).toContain('needs: [admit, attest-delivery-evidence]');
+    expect(compatibilityJob).toContain('permissions:\n      contents: read');
+    expect(compatibilityJob).not.toContain('id-token:');
+    expect(compatibilityJob).not.toContain('attestations:');
+    expect(compatibilityJob).toContain('ref: ${{ inputs.source_sha }}');
+    expect(compatibilityJob).toContain('bun install --frozen-lockfile --ignore-scripts');
+    expect(compatibilityJob).toContain('bun scripts/verify-delivery-evidence-pack.ts');
+    expect(compatibilityJob).toContain('name: delivery-candidate-manifests');
+    expect(publishJob).toContain('needs: [admit, attest-delivery-evidence, delivery-evidence-compatibility]');
+    expect(publishJob).toContain('name: delivery-candidate-manifests');
+    expect(manifestsJob).toContain('needs: finalize');
+    expect(manifestsJob).toContain('git push origin "HEAD:refs/heads/main"');
+    expect(finalizeJob).toContain('needs: publish');
+    expect(finalizeJob).toContain('name: delivery-candidate-manifests');
+    expect(finalizeJob.indexOf('bash scripts/reconcile-release-note.sh finalize')).toBeGreaterThan(-1);
+    expect(finalizeJob.indexOf('bash scripts/release-immutability.sh release')).toBeGreaterThan(
+      finalizeJob.indexOf('bash scripts/reconcile-release-note.sh finalize'),
+    );
+    expect(finalizeJob.lastIndexOf('bash scripts/reconcile-release-assets.sh')).toBeGreaterThan(
+      finalizeJob.indexOf('bash scripts/release-immutability.sh release'),
+    );
+    const assetReconciliation = read('scripts/reconcile-release-assets.sh');
+    expect(assetReconciliation).toContain('manifest_path="${CANDIDATE_MANIFEST_DIR}/${manifest_name}"');
+    expect(assetReconciliation).toContain('.releaseManifestSha256 == $manifest_sha');
+  });
+
   test('stable approval is explicit while dev and homolog remain automated', () => {
     const release = read('.github/workflows/release.yml');
     const version = read('.github/workflows/version.yml');
@@ -178,6 +237,26 @@ describe('Group E release and documentation contracts', () => {
     expect(read('.github/workflows/version.yml')).toContain(
       "!contains(github.event.workflow_run.head_commit.message, '[release-manifest]')",
     );
+  });
+
+  test('each promotion uses a fresh build-accepted immutable release identity', () => {
+    const version = read('.github/workflows/version.yml');
+    const release = read('.github/workflows/release.yml');
+    const build = read('.github/workflows/build-tarballs.yml');
+    const assets = read('scripts/reconcile-release-assets.sh');
+    expect(version).toContain('group: version-release-identity-${{ github.event.workflow_run.event }}');
+    expect(version).toContain('queue: max');
+    expect(version).toContain('cancel-in-progress: false');
+    expect(version).toContain('MAX_COUNTER=');
+    expect(version).toContain('git tag "v${VERSION}" HEAD');
+    expect(version).toContain('name: Push fresh immutable promotion tag');
+    expect(version).toContain('git push origin "refs/tags/v${VERSION}"');
+    expect(build).toContain('homolog|stable)');
+    expect(build).toContain('Authenticated ${INPUT_CHANNEL} promotion stamps immutable version');
+    const buildCall = release.split('\n  build:')[1]?.split('\n  sign-attest:')[0] ?? '';
+    expect(buildCall).toContain('channel: ${{ inputs.channel }}');
+    expect(assets).toContain('refusing to mutate an incomplete published immutable release');
+    expect(assets).not.toContain('append-only promotion');
   });
 
   test('promotion and tag equivalence exclude only generated channel manifests', () => {
@@ -333,6 +412,13 @@ describe('Group E release and documentation contracts', () => {
       expect(source).toContain('repository-hosted `.well-known');
       expect(source).toContain("GitHub's `/releases/latest`");
     }
+    const security = read('SECURITY.md');
+    expect(security).toContain(
+      'Every dev, homolog, or stable promotion creates a fresh monotonic version and immutable tag',
+    );
+    expect(security).toContain('stable releases are non-prerelease and marked Latest');
+    expect(security).toContain('dev and homolog releases are prereleases and never Latest');
+    expect(security).not.toContain('one verified version across dev, homolog, and stable channels');
   });
 
   test('immutable-release bootstrap ordering remains explicit and fail-closed', () => {

@@ -35,6 +35,7 @@ import type {
   ConsentContext,
 } from '../lib/codex-activation.js';
 import { getCodexConfigPath } from '../lib/codex-config.js';
+import type { DeliveryEvidenceVerificationDependencies } from '../lib/codex-delivery-evidence.js';
 // The quarantine hop holds the SAME `setup-activation` lease kind the executor
 // acquires (aliased: agent-sync exports an unrelated same-named lease helper).
 import { acquireLifecycleLease as acquireActivationLifecycleLease } from '../lib/codex-lifecycle-lease.js';
@@ -57,8 +58,11 @@ import {
 } from '../lib/genie-config.js';
 import { resolveCodexDir, resolveGenieHome } from '../lib/genie-home.js';
 import {
+  type CodexAgentInstallResult,
   type IntegrationSelection,
-  persistIntegrationConsent,
+  createCodexMarketplaceRegistrationConsumer,
+  createSetupCodexConsentCommitConsumer,
+  createSetupCodexRoleAgentConsumer,
   readIntegrationConsent,
 } from '../lib/runtime-integrations.js';
 import { checkCommand } from '../lib/system-detect.js';
@@ -79,7 +83,8 @@ export interface SetupOptions {
 export interface SetupDeps {
   checkCommand?: typeof checkCommand;
   readIntegrationConsent?: typeof readIntegrationConsent;
-  persistIntegrationConsent?: typeof persistIntegrationConsent;
+  /** Factory for the explicit-consent capability consumed only by the deep store. */
+  createCodexConsentCommitConsumer?: typeof createSetupCodexConsentCommitConsumer;
   /** Interactive confirmation seam; production uses @inquirer/prompts. */
   confirm?: typeof confirm;
   acquireLifecycleLease?: typeof acquireLifecycleLease;
@@ -88,6 +93,8 @@ export interface SetupDeps {
   /** Test seam for the once-bound absolute Codex CLI path. */
   resolveExecutable?: (name: string, cwd: string) => string | null;
   cwd?: string;
+  /** TEST-ONLY cryptographic seam for persisted delivery-evidence fixtures; no CLI/env path exposes it. */
+  deliveryEvidenceVerification?: DeliveryEvidenceVerificationDependencies;
   // --- Codex activation seams (Group D): all default to the real facade. ---
   /** Bounded activation observation (B's facade). */
   observeCodexActivation?: (options: {
@@ -103,6 +110,10 @@ export interface SetupDeps {
   openCodexActivationStore?: typeof openCodexActivationStore;
   /** The permit-gated executor (B) — the sole route to Codex cache mutation. */
   executeCodexActivation?: typeof executeCodexActivation;
+  /** Current-state marketplace capability factory; only the deep store may consume it. */
+  createCodexMarketplaceConsumer?: typeof createCodexMarketplaceRegistrationConsumer;
+  /** Post-activation role capability factory; only the deep store may consume it. */
+  createCodexRoleAgentConsumer?: typeof createSetupCodexRoleAgentConsumer;
   /** Synchronous real-TTY confirmation for the retirement assertion prompt. */
   promptRetirementConfirmation?: (message: string) => boolean;
   /** stdin/stdout TTY flags forwarded to A's consent guards (default: real streams). */
@@ -277,10 +288,13 @@ async function configureShortcuts(config: GenieConfig, quick: boolean, deps: Set
 // (the sole source of a genuine retirement assertion) and executed through B's
 // permit-gated `executeCodexActivation` (the sole route to Codex cache mutation,
 // which acquires the `setup-activation` lifecycle lease itself). DELIVERY —
-// installing/refreshing the plugin payload, marketplace registration, role
-// agents — belongs to `genie update` / `genie install`. Every refusal (guard
-// failure, decline, EOF, unauthorized state) happens before any
-// marketplace/plugin/config/role-agent/project-fallback/intent/trust mutation.
+// installing/refreshing the plugin payload and publishing authenticated delivery
+// facts belongs to `genie update` / `genie install`. Marketplace registration
+// and managed role convergence are activation-owned: the executor registers the
+// canonical marketplace only after `beginActivation`, and setup converges roles
+// only after activation/current verification plus committed Codex consent. Every
+// refusal happens before marketplace/plugin/config/role-agent/project-route
+// mutation.
 
 /**
  * Synchronous real-terminal confirmation for the retirement assertion. A's
@@ -357,6 +371,7 @@ function verifiedCurrentPluginProbe(): CodexPluginProbe {
 export function mergeCodexIntegrationConsent(current: IntegrationSelection): IntegrationSelection {
   if (current === 'none') return 'codex';
   if (current === 'claude') return 'all';
+  if (current === 'auto') return 'codex';
   return current;
 }
 
@@ -407,6 +422,34 @@ function resolveCodexPath(deps: SetupDeps, cwd: string): string | null {
   }
 }
 
+function observeSetupCodexActivation(
+  deps: SetupDeps,
+  options: { command: string; genieHome: string; codexHome: string },
+): CodexActivationSnapshot {
+  return deps.observeCodexActivation
+    ? deps.observeCodexActivation(options)
+    : observeCodexActivation({
+        ...options,
+        deliveryEvidenceVerification: deps.deliveryEvidenceVerification,
+      });
+}
+
+function reportDeliveryIncomplete(snapshot: CodexActivationSnapshot): ActivationOutcome | null {
+  const deliveryGate = assessSnapshotDelivery(snapshot);
+  if (deliveryGate.kind !== 'incomplete') return null;
+  const gate = deliveryGate.result;
+  console.error(`  \x1b[31m✖\x1b[0m ${gate.detail}`);
+  console.error(`    Recovery: \x1b[36m${gate.recovery}\x1b[0m`);
+  emitTrailer({
+    schemaVersion: 1,
+    code: 'delivery-incomplete',
+    deliveryComplete: false,
+    retry: true,
+    nextAction: gate.recovery,
+  });
+  return { exitCode: gate.exit, activated: false, code: 'delivery-incomplete' };
+}
+
 /**
  * The permit-gated Codex activation transaction. Observes, classifies, gates on
  * A's consent + authorization, then routes the cache advance through B's
@@ -422,8 +465,8 @@ function runCodexActivation(
 ): ActivationOutcome {
   const genieHome = resolveGenieHome();
   const codexHome = resolveCodexDir();
-  const observe = deps.observeCodexActivation ?? ((options) => observeCodexActivation(options));
-  const snapshot = observe({ command: codexPath, genieHome, codexHome });
+  const observeOptions = { command: codexPath, genieHome, codexHome };
+  const snapshot = observeSetupCodexActivation(deps, observeOptions);
   const state = classifyCodexActivation(snapshot);
   const descriptor = describeState(state);
   const deliveryComplete = snapshot.canonical.status === 'ok';
@@ -442,20 +485,8 @@ function runCodexActivation(
   // record and setup must not claim success it cannot attest. The executor's
   // `beginActivation` inner guard re-checks the same assessment immediately
   // before its first write (defense in depth).
-  const deliveryGate = assessSnapshotDelivery(snapshot);
-  if (deliveryGate.kind === 'incomplete') {
-    const gate = deliveryGate.result;
-    console.error(`  \x1b[31m✖\x1b[0m ${gate.detail}`);
-    console.error(`    Recovery: \x1b[36m${gate.recovery}\x1b[0m`);
-    emitTrailer({
-      schemaVersion: 1,
-      code: 'delivery-incomplete',
-      deliveryComplete: false,
-      retry: true,
-      nextAction: gate.recovery,
-    });
-    return { exitCode: gate.exit, activated: false, code: 'delivery-incomplete' };
-  }
+  const incomplete = reportDeliveryIncomplete(snapshot);
+  if (incomplete !== null) return incomplete;
   if (state.kind === 'current') {
     console.log('  \x1b[32m✓\x1b[0m Codex plugin is already current; no activation needed.');
     return { exitCode: 0, activated: true, code: 'current' };
@@ -503,11 +534,13 @@ function runCodexActivation(
   }
 
   // Permit granted — the executor acquires the `setup-activation` lease itself.
-  const store = (deps.openCodexActivationStore ?? openCodexActivationStore)({
-    genieHome,
-    codexHome,
-    command: codexPath,
-  });
+  const storeOptions = { genieHome, codexHome, command: codexPath };
+  const store = deps.openCodexActivationStore
+    ? deps.openCodexActivationStore(storeOptions)
+    : openCodexActivationStore({
+        ...storeOptions,
+        deliveryEvidenceVerification: deps.deliveryEvidenceVerification,
+      });
   const result = (deps.executeCodexActivation ?? executeCodexActivation)({
     permit: authorization.permit,
     store,
@@ -552,11 +585,13 @@ function runJournalQuarantine(
   }
   let quarantined: { quarantinedTo: string } | { skipped: string };
   try {
-    const store = (deps.openCodexActivationStore ?? openCodexActivationStore)({
-      genieHome,
-      codexHome,
-      command: codexPath,
-    });
+    const storeOptions = { genieHome, codexHome, command: codexPath };
+    const store = deps.openCodexActivationStore
+      ? deps.openCodexActivationStore(storeOptions)
+      : openCodexActivationStore({
+          ...storeOptions,
+          deliveryEvidenceVerification: deps.deliveryEvidenceVerification,
+        });
     quarantined = store.quarantineIntent(lease, permit);
   } finally {
     lease.release();
@@ -589,6 +624,69 @@ function reportActivationExecution(result: ActivationExecutionResult): Activatio
   return { exitCode, activated: false, code: result.status };
 }
 
+function convergePostActivationCodexAssets(
+  deps: SetupDeps,
+  codexPath: string,
+  outcome: ActivationOutcome,
+): CodexAgentInstallResult {
+  const genieHome = resolveGenieHome();
+  const codexHome = resolveCodexDir();
+  const acquire = deps.acquireActivationLease ?? acquireActivationLifecycleLease;
+  const lease = acquire('setup-activation', { genieHome });
+  if (!lease.ok) {
+    throw new SetupIntegrationError(`another Genie lifecycle command holds the Codex lease: ${lease.detail}`);
+  }
+  try {
+    const storeOptions = { genieHome, codexHome, command: codexPath };
+    const store = deps.openCodexActivationStore
+      ? deps.openCodexActivationStore(storeOptions)
+      : openCodexActivationStore({
+          ...storeOptions,
+          deliveryEvidenceVerification: deps.deliveryEvidenceVerification,
+        });
+    return store.withRevalidatedDeliveryRoot(lease, (ops) => {
+      // The executor released its lease before this post-activation pass. A
+      // delivery/update can win that gap, so both fresh activation and the
+      // already-current path must re-observe current+matching under the newly
+      // acquired lease before consent, roles, route, or success reporting.
+      const snapshot = store.observe();
+      if (
+        assessSnapshotDelivery(snapshot).kind !== 'matching' ||
+        classifyCodexActivation(snapshot).kind !== 'current'
+      ) {
+        throw new SetupIntegrationError('Codex current state changed before managed-asset convergence');
+      }
+
+      // Already-current is the sole no-permit path. Register its marketplace
+      // inside the callback-scoped authenticated delivery capability.
+      if (outcome.code === 'current') {
+        const marketplaceConsumer = (deps.createCodexMarketplaceConsumer ?? createCodexMarketplaceRegistrationConsumer)(
+          {
+            command: codexPath,
+          },
+        );
+        ops.consume(marketplaceConsumer);
+      }
+
+      // Explicit setup success commits Codex maintenance consent before the
+      // role installer may adopt an exact frozen historical profile.
+      const read = deps.readIntegrationConsent ?? readIntegrationConsent;
+      const consentConsumer = (deps.createCodexConsentCommitConsumer ?? createSetupCodexConsentCommitConsumer)({
+        selection: mergeCodexIntegrationConsent(read(genieHome)),
+        genieHome,
+      });
+      ops.consume(consentConsumer);
+      const roleConsumer = (deps.createCodexRoleAgentConsumer ?? createSetupCodexRoleAgentConsumer)({
+        genieHome,
+        codexHome,
+      });
+      return ops.consume(roleConsumer);
+    });
+  } finally {
+    lease.release();
+  }
+}
+
 interface ConfigureCodexResult {
   config: GenieConfig;
   /** Null when the Codex CLI is absent/skipped — nothing was attempted this invocation. */
@@ -618,9 +716,9 @@ async function configureCodex(
   console.log(`  \x1b[32m✓\x1b[0m Codex CLI found (${codexCheck.version ?? 'unknown version'})`);
   console.log();
   console.log('  \x1b[1mSetup activates\x1b[0m the delivered Codex plugin generation, retiring the prior one.');
-  console.log('  Delivery (plugin payload, marketplace, role agents, MCP) is done by');
+  console.log('  Delivery (plugin payload and authenticated delivery record) is done by');
   console.log(
-    '  \x1b[36mgenie update\x1b[0m / \x1b[36mgenie install\x1b[0m — setup only activates what was already delivered.',
+    '  \x1b[36mgenie update\x1b[0m / \x1b[36mgenie install\x1b[0m — setup registers and activates only those verified bytes.',
   );
   console.log('  Activation requires an interactive real terminal; --quick, CI, and piped input cannot activate.');
   console.log(`  Config: \x1b[2m${contractPath(getCodexConfigPath())}\x1b[0m`);
@@ -628,14 +726,13 @@ async function configureCodex(
 
   const outcome = runCodexActivation(deps, codexPath, entry, quick);
   if (outcome.activated) {
-    // Post-activation, permitted mutations: reconcile the project MCP fallback
-    // (verified-current now) and persist durable maintenance consent for update.
+    const agents = convergePostActivationCodexAssets(deps, codexPath, outcome);
+    console.log(`  \x1b[32m✓\x1b[0m Codex managed roles converged (${agents.installed} delivered).`);
+    // Project route reconciliation follows successful/current plugin and role
+    // convergence. It cannot run on a delivery, authorization, marketplace, or
+    // role failure.
     await withSetupLease(deps, () => {
       reconcileSetupCodexProject(resolveGitWorktreeRoot(cwd), verifiedCurrentPluginProbe());
-      const genieHome = resolveGenieHome();
-      const read = deps.readIntegrationConsent ?? readIntegrationConsent;
-      const persist = deps.persistIntegrationConsent ?? persistIntegrationConsent;
-      persist(mergeCodexIntegrationConsent(read(genieHome)), genieHome);
     });
     config.codex = { configured: true };
     preserveRuntimeChoiceAfterCodex(config);
@@ -848,11 +945,12 @@ async function runSetupCommand(options: SetupOptions, deps: SetupDeps): Promise<
     printHeader();
     const codexRun = await configureCodex(config, options.quick ?? false, deps, 'setup-codex');
     config = codexRun.config;
-    await saveSetupConfig(config, baseline, deps);
     // Decision 12: the green banner flows from THIS invocation's typed outcome,
-    // never from historical `codex.configured` state \u2014 a failed or pending run
-    // on a historically configured machine prints no success.
+    // never from historical `codex.configured` state. A failed, pending, or
+    // skipped standalone run performs no config write at all, preserving the
+    // user's exact bytes (including formatting and unknown keys).
     if (codexRun.outcome?.activated) {
+      await saveSetupConfig(config, baseline, deps);
       console.log('\x1b[32m\u2713 Codex configuration saved.\x1b[0m');
     }
     return;

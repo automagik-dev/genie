@@ -322,7 +322,7 @@ manifest_get() {
 manifest_channel_matches() {
   local payload="$1" wanted="$2" actual
   actual="$(manifest_get "$payload" channel)"
-  [[ "$actual" == "$wanted" || ( -z "$actual" && "$wanted" == "stable" ) ]]
+  [[ "$actual" == "$wanted" ]]
 }
 
 detect_platform() {
@@ -778,12 +778,25 @@ ensure_path_wired() {
 # reporting installation success would otherwise bless a partial lifecycle.
 # Not `exec` — exec would skip the EXIT trap and leak $TMP_DIR.
 handoff_to_subcommand() {
-  log "handing off to: genie install (post-install finishing)"
+  local delivery_channel="$1"
+  shift
+  log "handing off to: genie install (post-install finishing, channel=${delivery_channel})"
   [[ -n "$LIFECYCLE_LOCK" && -n "$LIFECYCLE_OWNER_RECORD" ]] ||
     die "lifecycle lease was lost before the post-install finisher" 1
-  local finisher_status=0
+  local finisher_status=0 finisher_path="$PATH"
+  if [[ -n "$GH_BIN" ]]; then
+    [[ "$GH_BIN" == /* && "${GH_BIN##*/}" == "gh" && -x "$GH_BIN" ]] ||
+      die "verified gh became unavailable before the post-install finisher" 1
+    # The finisher's same-version delivery repair invokes `gh` by name. Keep the
+    # exact verifier selected above first on its process-local PATH; TMP_DIR is
+    # still owned by this shell and is removed only after the child returns.
+    finisher_path="${GH_BIN%/*}:$PATH"
+  fi
   GENIE_LIFECYCLE_LEASE_PATH="$LIFECYCLE_LOCK" \
     GENIE_LIFECYCLE_LEASE_OWNER="$LIFECYCLE_OWNER_RECORD" \
+    GENIE_INSTALL_DELIVERY_CHANNEL="$delivery_channel" \
+    GH_BIN="$GH_BIN" \
+    PATH="$finisher_path" \
     "$LOCAL_BIN/genie" install "$@" || finisher_status=$?
   # Exit 2 from the finisher is delivered-but-action-required (installed
   # generation N ≠ delivered T): the signed binary/payload is installed, but the
@@ -847,7 +860,7 @@ main() {
   extract_and_link "$tarball" "$version"
   detect_legacy_install
   ensure_path_wired
-  handoff_to_subcommand "$@"
+  handoff_to_subcommand "$channel" "$@"
   verify_installation "$version"
   if [[ "${DELIVERY_ACTION_REQUIRED:-0}" -eq 1 ]]; then
     # Delivered/action-required: the binary is installed and verified, but the

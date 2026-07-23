@@ -249,17 +249,43 @@ export function openDb(opts: OpenOptions = {}): Database {
   });
 }
 
-/** Tables a fully-initialized `user_version = 1` DB must carry. */
-const EXPECTED_TABLES = [
-  'boards',
-  'hire_roster',
-  'meta',
-  'stage_log',
-  'task_dependencies',
-  'task_events',
-  'tasks',
-  'wish_groups',
-] as const;
+/** Required table/column shape of a fully-initialized per-repo Genie database. */
+const EXPECTED_SCHEMA = {
+  boards: ['id', 'name', 'created_at', 'lanes'],
+  hire_roster: ['wish', 'agent_adapter_id', 'profile', 'worktree', 'hired_at', 'state'],
+  meta: ['key', 'value'],
+  stage_log: ['id', 'task_id', 'stage', 'note', 'created_at'],
+  task_dependencies: ['task_id', 'depends_on_id'],
+  task_events: ['id', 'task_id', 'kind', 'note', 'author_kind', 'author', 'created_at'],
+  tasks: [
+    'id',
+    'board_id',
+    'title',
+    'status',
+    'claimed_by',
+    'claimed_at',
+    'wish',
+    'group_name',
+    'created_at',
+    'updated_at',
+    'lane',
+    'agent_kind',
+    'heartbeat_at',
+    'blocked_by',
+    'blocked_reason',
+  ],
+  wish_groups: [
+    'wish',
+    'name',
+    'status',
+    'depends_on',
+    'assignee',
+    'started_at',
+    'completed_at',
+    'created_at',
+    'updated_at',
+  ],
+} as const;
 
 /**
  * True when the DB is already at the current schema — every expected table plus
@@ -278,17 +304,29 @@ function schemaIsCurrent(db: Database): boolean {
       }>
     ).map((r) => r.name),
   );
-  for (const t of EXPECTED_TABLES) if (!tables.has(t)) return false;
-  const taskCols = new Set((db.query('PRAGMA table_info(tasks)').all() as Array<{ name: string }>).map((c) => c.name));
-  if (!taskCols.has('wish') || !taskCols.has('group_name') || !taskCols.has('lane')) return false;
-  // Runtime layer (additive-nullable): identity, heartbeat liveness, enforced block.
-  for (const c of ['agent_kind', 'heartbeat_at', 'blocked_by', 'blocked_reason']) {
-    if (!taskCols.has(c)) return false;
+  for (const [table, expectedColumns] of Object.entries(EXPECTED_SCHEMA)) {
+    if (!tables.has(table)) return false;
+    const columns = new Set(
+      (db.query(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((column) => column.name),
+    );
+    for (const column of expectedColumns) {
+      if (!columns.has(column)) return false;
+    }
   }
-  const boardCols = new Set(
-    (db.query('PRAGMA table_info(boards)').all() as Array<{ name: string }>).map((c) => c.name),
-  );
-  return boardCols.has('lanes');
+  return true;
+}
+
+/**
+ * Validate a read-only handle without applying migrations or taking a write
+ * lock. MCP uses this before exposing a database to any tool handler: both the
+ * per-repo user_version and the complete required schema must match this build.
+ *
+ * Malformed SQLite inputs may throw while being inspected; callers own closing
+ * the handle and translating that failure at their boundary.
+ */
+export function isCurrentGenieDb(db: Database): boolean {
+  const row = db.query('PRAGMA user_version').get() as { user_version: number } | null;
+  return row?.user_version === CURRENT_SCHEMA_VERSION && schemaIsCurrent(db);
 }
 
 const SCHEMA_SQL = `

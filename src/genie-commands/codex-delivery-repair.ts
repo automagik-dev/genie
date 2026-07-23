@@ -38,28 +38,44 @@
 // Group B's contract, consumed (not reimplemented) via the stable executor facade
 // for the assessment and directly from the leaf module for its record/expectation types.
 import { assessAuthenticatedDelivery } from '../lib/codex-activation-executor.js';
-import type { CodexActivationStore, DeliveryAttestationBinding, DeliveryRecord } from '../lib/codex-activation.js';
-import type { ActivationDeliveryExpectation, DeliveryRecordReadState } from '../lib/codex-host-observation.js';
+import type { CodexActivationStore, DeliveryFact, DeliveryRecord } from '../lib/codex-activation.js';
+import {
+  type DeliveryEvidenceChannel,
+  type DeliveryEvidencePlatformId,
+  type VerifiedDeliveryEvidence,
+  type VerifiedDeliveryEvidenceFacts,
+  type VerifyDownloadedDeliveryEvidenceInput,
+  deriveDeliveryId,
+} from '../lib/codex-delivery-evidence.js';
+import type { ActivationDeliveryExpectation } from '../lib/codex-host-observation.js';
 import type { HeldLifecycleLease } from '../lib/codex-lifecycle-lease.js';
 import { classifyCodexDelivery } from './codex-delivery.js';
 
 /** The immutable target pinned before any download; every field is locally known at pin time. */
 export interface RepairPinnedTarget {
-  channel: string;
+  channel: DeliveryEvidenceChannel;
   /** The installed/canonical VERSION being repaired (never a moving-channel value). */
   targetVersion: string;
   /** `process.platform-process.arch` (e.g. `linux-x64`, `darwin-arm64`). */
   platformTriple: string;
+  /** Exact release-manifest platform/asset identifier. */
+  platformId: string;
   /** Release tag, e.g. `v5.260722.11`. */
   releaseTag: string;
   /** Exact named asset, e.g. `genie-5.260722.11-darwin-arm64.tar.gz`. */
   releaseName: string;
 }
 
-/** The fetched release manifest, reduced to the fields the repair pins/rechecks. */
+/** The exact fetched release-manifest snapshot pinned/rechecked by the repair. */
 export interface PinnedManifest {
-  /** The channel's resolved target version at fetch time. */
+  schema_version: number;
+  channel: DeliveryEvidenceChannel;
   version: string;
+  released_at: string;
+  tarball_base: string;
+  platforms: string[];
+  /** Exact fetched manifest bytes retained for the signed evidence pack. */
+  manifestBytes: string;
   /** SHA-256 of the fetched manifest bytes (NOT an artifact digest source). */
   manifestSha256: string;
 }
@@ -86,30 +102,39 @@ export interface ReobservedTarget {
   installedGeneration: string | null;
   canonicalVersion: string;
   canonicalPayloadSha256: string;
+  installedBinarySha256: string;
+  deliveryRoot: string;
+}
+
+/** Exact downloaded release bytes retained until the signed evidence is verified. */
+export interface DownloadedRepairAsset {
+  tarballPath: string;
+  descriptorBytes: Uint8Array | string;
+  bundleBytes: Uint8Array | string;
 }
 
 /** Injected I/O seams so the orchestrator is pure of network/codex/home coupling in tests. */
 export interface DeliveryRepairSeams {
-  /** Current on-disk delivery record read-state (Group B assessment input). Local, no network. */
-  readDeliveryRecord(): DeliveryRecordReadState;
+  /** Current on-disk record plus independently reverified evidence pack. Local, no network. */
+  readDeliveryFact(): DeliveryFact;
   /** The canonical installed bytes — all locally computed; used for the fast path AND candidate proof. */
   observeInstalled(): InstalledProof;
   /** Fetch the pinned manifest for the channel (pre-download pin AND under-lease recheck). null = unavailable. */
   fetchManifest(channel: string): Promise<PinnedManifest | null>;
   /** Download + attestation-verify the exact named asset; resolves to the local path, rejects on any verify failure. */
-  downloadAndVerify(target: RepairPinnedTarget): Promise<string>;
+  downloadAndVerify(target: RepairPinnedTarget, manifest: PinnedManifest): Promise<DownloadedRepairAsset>;
   /** SHA-256 of the downloaded artifact, computed AFTER download. */
   hashArtifact(tarballPath: string): string;
   /** Extract privately and prove the candidate tree; rejects on unsafe extraction. */
   proveCandidate(tarballPath: string): Promise<CandidateProof>;
+  /** Mint opaque evidence only after every exact downloaded/candidate binding passes. */
+  verifyEvidence(input: VerifyDownloadedDeliveryEvidenceInput): VerifiedDeliveryEvidence;
   /** Re-observe the installed generation + canonical digest immediately before publish. null = unobservable. */
   reobserve(): ReobservedTarget | null;
   /** The deep delivery store, opened by the caller under the held lease. */
   store: CodexActivationStore;
   /** The held lifecycle lease (parent-owned; the repair never acquires its own). */
   lease: HeldLifecycleLease;
-  now?: () => Date;
-  deliveryId?: string;
 }
 
 /** After a successful publish, whether setup will find the target current or still pending activation. */
@@ -123,6 +148,7 @@ export type RepairFailureStage =
   | 'candidate-version'
   | 'candidate-payload'
   | 'candidate-binary'
+  | 'evidence-verify'
   | 'channel-recheck'
   | 'reobserve'
   | 'publish';
@@ -130,29 +156,35 @@ export type RepairFailureStage =
 export type DeliveryRepairOutcome =
   | { kind: 'already-matching' }
   | { kind: 'published'; record: DeliveryRecord; handoff: RepairHandoff; artifactSha256: string }
-  | { kind: 'channel-advanced'; from: string; to: string }
+  | { kind: 'channel-advanced'; from: string; to: string; manifest: PinnedManifest }
   | { kind: 'failed'; stage: RepairFailureStage; detail: string; deliveryComplete: false };
 
 /**
- * Build the LOCAL matching expectation — every field is known without a network
- * round-trip, so the fast path can prove a record `matching` and skip the
- * download entirely. The manifest and artifact digests are deliberately NOT bound
- * here: they were authenticated at publish time and require the network to
- * recompute, which would defeat the no-network fast path.
+ * Build the complete matching expectation for the no-network fast path. Values
+ * that cannot be recomputed locally remain bound to the one structurally valid
+ * authenticated record; the locally observable tuple must still match exactly.
  */
 export function buildLocalRepairExpectation(
   pinned: RepairPinnedTarget,
   installed: InstalledProof,
+  evidence: VerifiedDeliveryEvidenceFacts,
 ): ActivationDeliveryExpectation {
+  const descriptor = evidence.descriptor;
   return {
     targetVersion: pinned.targetVersion,
     canonicalPayloadSha256: installed.pluginTreeSha256,
     channel: pinned.channel,
+    deliveryId: deriveDeliveryId(evidence.evidenceDigest, installed.deliveryRoot),
+    evidenceDigest: evidence.evidenceDigest,
+    platformId: pinned.platformId,
     platformTriple: pinned.platformTriple,
     releaseTag: pinned.releaseTag,
     releaseName: pinned.releaseName,
+    releaseManifestSha256: descriptor.releaseManifestSha256,
+    artifactSha256: descriptor.artifactSha256,
     installedBinarySha256: installed.binarySha256,
     deliveryRoot: installed.deliveryRoot,
+    deliveredAt: evidence.deliveredAt,
   };
 }
 
@@ -169,8 +201,8 @@ export async function repairMissingDelivery(
 ): Promise<DeliveryRepairOutcome> {
   const installed = seams.observeInstalled();
   // No-network fast path: an already-bound record needs no download or publish.
-  const expectation = buildLocalRepairExpectation(pinned, installed);
-  if (assessAuthenticatedDelivery(seams.readDeliveryRecord(), expectation) === 'matching') {
+  const existing = seams.readDeliveryFact();
+  if (localDeliveryMatches(existing, pinned, installed)) {
     return { kind: 'already-matching' };
   }
 
@@ -179,58 +211,121 @@ export async function repairMissingDelivery(
   if (pinnedManifest === null) {
     return fail('manifest-pin', 'release manifest unavailable; cannot pin the repair target');
   }
-  const preAdvance = channelAdvance(pinnedManifest.version, pinned.targetVersion);
+  const pinMismatch = manifestTargetMismatch(pinnedManifest, pinned);
+  if (pinMismatch !== null) return fail('manifest-pin', pinMismatch);
+  const preAdvance = channelAdvance(pinnedManifest, pinned.targetVersion);
   if (preAdvance !== null) return preAdvance;
 
-  const verified = await downloadAndProve(pinned, installed, seams);
+  const verified = await downloadAndProve(pinned, pinnedManifest, installed, seams);
   if (verified.kind !== 'ok') return verified.outcome;
 
   // Recheck the pinned channel under the held lease immediately before publication.
   const recheck = await seams.fetchManifest(pinned.channel);
   if (recheck === null) return fail('channel-recheck', 'release manifest unavailable at the under-lease recheck');
-  const advance = channelAdvance(recheck.version, pinned.targetVersion);
+  const recheckMismatch = manifestTargetMismatch(recheck, pinned);
+  if (recheckMismatch !== null) return fail('channel-recheck', recheckMismatch);
+  const advance = channelAdvance(recheck, pinned.targetVersion);
   if (advance !== null) return advance;
   // Same version but different manifest bytes is manifest tampering — fail closed.
   if (recheck.manifestSha256 !== pinnedManifest.manifestSha256) {
     return fail('channel-recheck', 'release manifest bytes changed under the lease without a version advance');
   }
 
-  return publishRepair(pinned, installed, pinnedManifest, verified, seams);
+  return publishRepair(pinned, installed, verified, seams);
 }
 
 interface VerifiedCandidate {
   kind: 'ok';
   artifactSha256: string;
   candidate: CandidateProof;
+  evidence: VerifiedDeliveryEvidence;
 }
 
 /** Download → hash-after → extract/prove → prove-against-installed. Any failure returns before publish. */
 async function downloadAndProve(
   pinned: RepairPinnedTarget,
+  pinnedManifest: PinnedManifest,
   installed: InstalledProof,
   seams: DeliveryRepairSeams,
 ): Promise<VerifiedCandidate | { kind: 'fail'; outcome: DeliveryRepairOutcome }> {
-  let tarballPath: string;
+  let downloaded: DownloadedRepairAsset;
   try {
-    tarballPath = await seams.downloadAndVerify(pinned);
+    downloaded = await seams.downloadAndVerify(pinned, pinnedManifest);
   } catch (error) {
     return { kind: 'fail', outcome: fail('download-verify', errorText(error)) };
   }
   let artifactSha256: string;
   try {
-    artifactSha256 = seams.hashArtifact(tarballPath);
+    artifactSha256 = seams.hashArtifact(downloaded.tarballPath);
   } catch (error) {
     return { kind: 'fail', outcome: fail('artifact-digest', errorText(error)) };
   }
   let candidate: CandidateProof;
   try {
-    candidate = await seams.proveCandidate(tarballPath);
+    candidate = await seams.proveCandidate(downloaded.tarballPath);
   } catch (error) {
     return { kind: 'fail', outcome: fail('extract-prove', errorText(error)) };
   }
   const mismatch = proveCandidateAgainstInstalled(candidate, installed, pinned);
   if (mismatch !== null) return { kind: 'fail', outcome: mismatch };
-  return { kind: 'ok', artifactSha256, candidate };
+  let evidence: VerifiedDeliveryEvidence;
+  try {
+    evidence = seams.verifyEvidence({
+      descriptorBytes: downloaded.descriptorBytes,
+      bundleBytes: downloaded.bundleBytes,
+      manifestBytes: pinnedManifest.manifestBytes,
+      targetVersion: candidate.version,
+      channel: pinned.channel,
+      platformId: pinned.platformId as DeliveryEvidencePlatformId,
+      platformTriple: pinned.platformTriple,
+      releaseTag: pinned.releaseTag,
+      releaseName: pinned.releaseName,
+      artifactSha256,
+      installedBinarySha256: candidate.binarySha256,
+      canonicalPayloadSha256: candidate.pluginTreeSha256,
+    });
+  } catch (error) {
+    return { kind: 'fail', outcome: fail('evidence-verify', errorText(error)) };
+  }
+  return { kind: 'ok', artifactSha256, candidate, evidence };
+}
+
+/** Independently signed evidence + local physical bytes form the no-network matching proof. */
+export function localDeliveryMatches(
+  fact: DeliveryFact,
+  pinned: RepairPinnedTarget,
+  installed: InstalledProof,
+): boolean {
+  if (fact.status !== 'present' || !evidenceMatchesPinned(fact.evidence, pinned)) return false;
+  return (
+    assessAuthenticatedDelivery(
+      { status: 'present', record: fact.record },
+      buildLocalRepairExpectation(pinned, installed, fact.evidence),
+    ) === 'matching'
+  );
+}
+
+function evidenceMatchesPinned(evidence: VerifiedDeliveryEvidenceFacts, pinned: RepairPinnedTarget): boolean {
+  const descriptor = evidence.descriptor;
+  return (
+    descriptor.version === pinned.targetVersion &&
+    descriptor.channel === pinned.channel &&
+    descriptor.platformId === pinned.platformId &&
+    descriptor.platformTriple === pinned.platformTriple &&
+    descriptor.releaseTag === pinned.releaseTag &&
+    descriptor.releaseName === pinned.releaseName
+  );
+}
+
+/** The fetched snapshot must name the selected channel and exact target platform. */
+function manifestTargetMismatch(manifest: PinnedManifest, pinned: RepairPinnedTarget): string | null {
+  if (manifest.channel !== pinned.channel) {
+    return `release manifest channel ${manifest.channel} differs from selected ${pinned.channel}`;
+  }
+  if (!manifest.platforms.includes(pinned.platformId)) {
+    return `release manifest does not contain target platform ${pinned.platformId}`;
+  }
+  return null;
 }
 
 /** The candidate must reproduce the installed target exactly: version, payload tree, and binary. */
@@ -255,7 +350,6 @@ function proveCandidateAgainstInstalled(
 function publishRepair(
   pinned: RepairPinnedTarget,
   installed: InstalledProof,
-  pinnedManifest: PinnedManifest,
   verified: VerifiedCandidate,
   seams: DeliveryRepairSeams,
 ): DeliveryRepairOutcome {
@@ -263,28 +357,17 @@ function publishRepair(
   if (reobserved === null) return fail('reobserve', 'installed state unobservable before publication');
   if (
     reobserved.canonicalVersion !== pinned.targetVersion ||
-    reobserved.canonicalPayloadSha256 !== installed.pluginTreeSha256
+    reobserved.canonicalPayloadSha256 !== installed.pluginTreeSha256 ||
+    reobserved.installedBinarySha256 !== installed.binarySha256 ||
+    reobserved.deliveryRoot !== installed.deliveryRoot
   ) {
     return fail('reobserve', 'installed bytes changed between candidate proof and publication');
   }
-  const attestation: DeliveryAttestationBinding = {
-    platformTriple: pinned.platformTriple,
-    releaseTag: pinned.releaseTag,
-    releaseName: pinned.releaseName,
-    releaseManifestSha256: pinnedManifest.manifestSha256,
-    artifactSha256: verified.artifactSha256,
-    installedBinarySha256: installed.binarySha256,
-    deliveryRoot: installed.deliveryRoot,
-  };
   let record: DeliveryRecord;
   try {
     record = seams.store.publishDelivery(seams.lease, {
-      targetVersion: pinned.targetVersion,
-      canonicalPayloadSha256: reobserved.canonicalPayloadSha256,
-      channel: pinned.channel,
-      deliveryId: seams.deliveryId,
-      now: seams.now,
-      attestation,
+      evidence: verified.evidence,
+      deliveryRoot: reobserved.deliveryRoot,
     });
   } catch (error) {
     return fail('publish', errorText(error));
@@ -303,13 +386,13 @@ function publishRepair(
  * stale installed bytes. A manifest whose version equals the pinned target is not
  * an advance.
  */
-function channelAdvance(manifestVersion: string, targetVersion: string): DeliveryRepairOutcome | null {
-  if (manifestVersion === targetVersion) return null;
-  const order = classifyCodexDelivery(targetVersion, manifestVersion);
+function channelAdvance(manifest: PinnedManifest, targetVersion: string): DeliveryRepairOutcome | null {
+  if (manifest.version === targetVersion) return null;
+  const order = classifyCodexDelivery(targetVersion, manifest.version);
   // Any non-equal parseable pair (upgrade or downgrade) is an advance; an
   // unparseable manifest version is fail-closed as an advance so no stale record mints.
   if (order.kind === 'current') return null;
-  return { kind: 'channel-advanced', from: targetVersion, to: manifestVersion };
+  return { kind: 'channel-advanced', from: targetVersion, to: manifest.version, manifest };
 }
 
 /** After publish, setup finds `current` only when the registered generation already equals the target. */

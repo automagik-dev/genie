@@ -555,6 +555,44 @@ describe('doctorCommand — genie.db check branches', () => {
     expect(json.ok).toBe(false);
     expect(exitCode).toBe(1);
   });
+
+  for (const fixture of ['directory', 'malformed-file'] as const) {
+    test(`existing ${fixture} genie.db cannot produce a passing Codex project context`, async () => {
+      const dbPath = join(tmp, '.genie', 'genie.db');
+      mkdirSync(join(tmp, '.genie'), { recursive: true });
+      if (fixture === 'directory') mkdirSync(dbPath);
+      else writeFileSync(dbPath, 'not a sqlite database');
+      const roots = resolveGitProjectRoots(tmp);
+      if (roots === null) throw new Error('expected fixture roots');
+
+      const { output, exitCode } = await captureDoctor(() =>
+        doctorCommand(
+          { json: true },
+          {
+            ...isolatedDoctorDeps(tmp),
+            projectContext: {
+              kind: 'ok',
+              effectiveLaunchCwd: tmp,
+              worktreeConfigRoot: roots.worktreeRoot,
+              gitCommonDir: join(roots.commonRoot, '.git'),
+              genieStorageRoot: roots.commonRoot,
+              dbPath,
+            },
+          },
+        ),
+      );
+      const json = JSON.parse(output) as {
+        ok: boolean;
+        checks: Array<{ name: string; status: string; detail: string }>;
+      };
+      const context = json.checks.find((check) => check.name === 'Codex project context');
+      expect(context?.status).toBe('fail');
+      expect(context?.detail).toContain('project-database-unavailable');
+      expect(context?.detail).toContain(dbPath);
+      expect(json.ok).toBe(false);
+      expect(exitCode).toBe(1);
+    });
+  }
 });
 
 // ============================================================================
@@ -1815,10 +1853,22 @@ import {
   type QueryFact,
   parseReleaseVersion,
 } from '../lib/codex-activation.js';
+import {
+  DELIVERY_EVIDENCE_DIGEST_ALGORITHM,
+  DELIVERY_EVIDENCE_REPOSITORY,
+  type VerifiedDeliveryEvidenceFacts,
+  deriveDeliveryId,
+} from '../lib/codex-delivery-evidence.js';
 
 const DOC_T = '5.260712.1';
 const DOC_OLD = '5.260711.9';
 const DOC_DIGEST = 'a'.repeat(64);
+const DOC_BINARY_DIGEST = 'b'.repeat(64);
+const DOC_MANIFEST_DIGEST = 'c'.repeat(64);
+const DOC_ARTIFACT_DIGEST = 'd'.repeat(64);
+const DOC_PLATFORM = 'darwin-arm64';
+const DOC_DELIVERY_ROOT = '/fixture/genie/deliveries/current';
+const DOC_EVIDENCE_DIGEST = 'e'.repeat(64);
 
 function docVer(s: string) {
   const parsed = parseReleaseVersion(s);
@@ -1829,7 +1879,15 @@ function docFamily(): FamilyWitness {
   return { status: 'present', digest: 'f'.repeat(64), identity: '10:300' };
 }
 function docOkCanonical(): CanonicalFact {
-  return { status: 'ok', version: docVer(DOC_T), digest: DOC_DIGEST, identity: '10:100' };
+  return {
+    status: 'ok',
+    version: docVer(DOC_T),
+    digest: DOC_DIGEST,
+    identity: '10:100',
+    platformTriple: DOC_PLATFORM,
+    installedBinarySha256: DOC_BINARY_DIGEST,
+    deliveryRoot: DOC_DELIVERY_ROOT,
+  };
 }
 function docRegPresent(version = DOC_T): QueryFact {
   return { status: 'ok', registration: { present: true, enabled: true, version: docVer(version) } };
@@ -1842,12 +1900,48 @@ function docDeliveryPresent(): CodexActivationSnapshot['delivery'] {
   return {
     status: 'present',
     record: {
-      schemaVersion: 1,
-      deliveryId: 'c'.repeat(32),
+      schemaVersion: 2,
+      deliveryId: deriveDeliveryId(DOC_EVIDENCE_DIGEST, DOC_DELIVERY_ROOT),
       targetVersion: DOC_T,
       canonicalPayloadSha256: DOC_DIGEST,
       channel: 'stable',
       deliveredAt: '2026-07-12T00:00:00.000Z',
+      evidenceDigest: DOC_EVIDENCE_DIGEST,
+      platformId: 'darwin-arm64',
+      platformTriple: DOC_PLATFORM,
+      releaseTag: `v${DOC_T}`,
+      releaseName: `genie-${DOC_T}-${DOC_PLATFORM}.tar.gz`,
+      releaseManifestSha256: DOC_MANIFEST_DIGEST,
+      artifactSha256: DOC_ARTIFACT_DIGEST,
+      installedBinarySha256: DOC_BINARY_DIGEST,
+      deliveryRoot: DOC_DELIVERY_ROOT,
+    },
+    evidence: docDeliveryEvidenceFacts(),
+  };
+}
+
+function docDeliveryEvidenceFacts(): VerifiedDeliveryEvidenceFacts {
+  return {
+    evidenceDigest: DOC_EVIDENCE_DIGEST,
+    deliveredAt: '2026-07-12T00:00:00.000Z',
+    descriptor: {
+      schemaVersion: 1 as const,
+      repository: DELIVERY_EVIDENCE_REPOSITORY,
+      version: DOC_T,
+      channel: 'stable' as const,
+      platformId: 'darwin-arm64' as const,
+      platformTriple: DOC_PLATFORM,
+      releaseTag: `v${DOC_T}`,
+      releaseName: `genie-${DOC_T}-${DOC_PLATFORM}.tar.gz`,
+      releaseManifestSha256: DOC_MANIFEST_DIGEST,
+      artifactSha256: DOC_ARTIFACT_DIGEST,
+      installedBinarySha256: DOC_BINARY_DIGEST,
+      canonicalPayloadSha256: DOC_DIGEST,
+      sourceSha: '1'.repeat(40),
+      sourceBranch: 'main',
+      sourceCiRunId: '123',
+      controlSha: '2'.repeat(40),
+      digestAlgorithm: DELIVERY_EVIDENCE_DIGEST_ALGORITHM,
     },
   };
 }
@@ -2015,13 +2109,23 @@ describe('Group E lifecycle truth (doctor)', () => {
       delivery: {
         status: 'present' as const,
         record: {
-          schemaVersion: 1 as const,
-          deliveryId: 'c'.repeat(32),
+          schemaVersion: 2 as const,
+          deliveryId: deriveDeliveryId(DOC_EVIDENCE_DIGEST, DOC_DELIVERY_ROOT),
           targetVersion: DOC_OLD,
           canonicalPayloadSha256: DOC_DIGEST,
           channel: 'stable',
           deliveredAt: '2026-07-12T00:00:00.000Z',
+          evidenceDigest: DOC_EVIDENCE_DIGEST,
+          platformId: 'darwin-arm64',
+          platformTriple: DOC_PLATFORM,
+          releaseTag: `v${DOC_OLD}`,
+          releaseName: `genie-${DOC_OLD}-${DOC_PLATFORM}.tar.gz`,
+          releaseManifestSha256: DOC_MANIFEST_DIGEST,
+          artifactSha256: DOC_ARTIFACT_DIGEST,
+          installedBinarySha256: DOC_BINARY_DIGEST,
+          deliveryRoot: DOC_DELIVERY_ROOT,
         },
+        evidence: docDeliveryEvidenceFacts(),
       },
     };
     for (const snapshot of [invalid, mismatched]) {
@@ -2096,12 +2200,15 @@ describe('Group E lifecycle truth (doctor)', () => {
   });
 
   test('project context: ok / database-unavailable / unsupported-layout map to pass / warn / fail', async () => {
+    const openableDbPath = join(isolatedHome, 'project-context-openable.db');
+    const openableDb = new Database(openableDbPath);
+    openableDb.close();
     const base = {
       effectiveLaunchCwd: '/repo',
       worktreeConfigRoot: '/repo',
       gitCommonDir: '/repo/.git',
       genieStorageRoot: '/repo',
-      dbPath: '/repo/.genie/genie.db',
+      dbPath: openableDbPath,
     };
     const cases = [
       { context: { kind: 'ok' as const, ...base }, status: 'pass' },

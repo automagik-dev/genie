@@ -13,8 +13,19 @@ import type {
   QueryFact,
 } from '../lib/codex-activation.js';
 import { parseReleaseVersion } from '../lib/codex-activation.js';
+import {
+  DELIVERY_EVIDENCE_DIGEST_ALGORITHM,
+  DELIVERY_EVIDENCE_REPOSITORY,
+  type VerifiedDeliveryEvidenceFacts,
+  deriveDeliveryId,
+} from '../lib/codex-delivery-evidence.js';
 import { loadGenieConfig, saveGenieConfig } from '../lib/genie-config.js';
-import { persistIntegrationConsent, readIntegrationConsent } from '../lib/runtime-integrations.js';
+import {
+  createSetupCodexConsentCommitConsumer,
+  persistIntegrationConsent,
+  readIntegrationConsent,
+  runDeliveryRootConsumer,
+} from '../lib/runtime-integrations.js';
 import { type SetupDeps, mergeCodexIntegrationConsent, resolveDefaultAgentAfterCodex, setupCommand } from './setup.js';
 
 // resolveDefaultAgentAfterCodex is the single decision point `genie setup
@@ -46,7 +57,7 @@ describe('mergeCodexIntegrationConsent', () => {
     expect(mergeCodexIntegrationConsent('claude')).toBe('all');
     expect(mergeCodexIntegrationConsent('codex')).toBe('codex');
     expect(mergeCodexIntegrationConsent('all')).toBe('all');
-    expect(mergeCodexIntegrationConsent('auto')).toBe('auto');
+    expect(mergeCodexIntegrationConsent('auto')).toBe('codex');
   });
 });
 
@@ -58,6 +69,36 @@ const T = '5.260712.1';
 const OLD = '5.260711.9';
 const NEWER = '5.260713.4';
 const DIGEST = 'a'.repeat(64);
+const BINARY_DIGEST = 'b'.repeat(64);
+const MANIFEST_DIGEST = 'c'.repeat(64);
+const ARTIFACT_DIGEST = 'd'.repeat(64);
+const PLATFORM = 'darwin-arm64';
+const DELIVERY_ROOT = '/fixture/genie/deliveries/current';
+const EVIDENCE_DIGEST = 'e'.repeat(64);
+const MARKETPLACE_CONSUMER = Object.freeze({ kind: 'marketplace' }) as never;
+const ROLE_CONSUMER = Object.freeze({ kind: 'roles' }) as never;
+const ROLE_RESULT = {
+  installed: 7,
+  skippedUserOwned: [],
+  keptModified: [],
+  removed: [],
+  backedUp: [],
+};
+
+function setupDeliveryOps(consume?: (consumer: unknown) => unknown) {
+  return {
+    inventoryDigest: () => DIGEST,
+    deliveredVersion: () => T,
+    consume: (consumer: unknown) =>
+      consume !== undefined
+        ? consume(consumer)
+        : consumer === ROLE_CONSUMER
+          ? ROLE_RESULT
+          : consumer === MARKETPLACE_CONSUMER
+            ? undefined
+            : runDeliveryRootConsumer(consumer as never, DELIVERY_ROOT),
+  };
+}
 
 function ver(s: string) {
   const parsed = parseReleaseVersion(s);
@@ -68,7 +109,15 @@ function family(): FamilyWitness {
   return { status: 'present', digest: 'f'.repeat(64), identity: '10:300' };
 }
 function okCanonical(): CanonicalFact {
-  return { status: 'ok', version: ver(T), digest: DIGEST, identity: '10:100' };
+  return {
+    status: 'ok',
+    version: ver(T),
+    digest: DIGEST,
+    identity: '10:100',
+    platformTriple: PLATFORM,
+    installedBinarySha256: BINARY_DIGEST,
+    deliveryRoot: DELIVERY_ROOT,
+  };
 }
 function reg(version: string): QueryFact {
   return { status: 'ok', registration: { present: true, enabled: true, version: ver(version) } };
@@ -81,12 +130,48 @@ function deliveryPresent(): CodexActivationSnapshot['delivery'] {
   return {
     status: 'present',
     record: {
-      schemaVersion: 1,
-      deliveryId: 'c'.repeat(32),
+      schemaVersion: 2,
+      deliveryId: deriveDeliveryId(EVIDENCE_DIGEST, DELIVERY_ROOT),
       targetVersion: T,
       canonicalPayloadSha256: DIGEST,
       channel: 'stable',
       deliveredAt: '2026-07-12T00:00:00.000Z',
+      evidenceDigest: EVIDENCE_DIGEST,
+      platformId: 'darwin-arm64',
+      platformTriple: PLATFORM,
+      releaseTag: `v${T}`,
+      releaseName: `genie-${T}-${PLATFORM}.tar.gz`,
+      releaseManifestSha256: MANIFEST_DIGEST,
+      artifactSha256: ARTIFACT_DIGEST,
+      installedBinarySha256: BINARY_DIGEST,
+      deliveryRoot: DELIVERY_ROOT,
+    },
+    evidence: deliveryEvidenceFacts(),
+  };
+}
+
+function deliveryEvidenceFacts(): VerifiedDeliveryEvidenceFacts {
+  return {
+    evidenceDigest: EVIDENCE_DIGEST,
+    deliveredAt: '2026-07-12T00:00:00.000Z',
+    descriptor: {
+      schemaVersion: 1 as const,
+      repository: DELIVERY_EVIDENCE_REPOSITORY,
+      version: T,
+      channel: 'stable' as const,
+      platformId: 'darwin-arm64' as const,
+      platformTriple: PLATFORM,
+      releaseTag: `v${T}`,
+      releaseName: `genie-${T}-${PLATFORM}.tar.gz`,
+      releaseManifestSha256: MANIFEST_DIGEST,
+      artifactSha256: ARTIFACT_DIGEST,
+      installedBinarySha256: BINARY_DIGEST,
+      canonicalPayloadSha256: DIGEST,
+      sourceSha: '1'.repeat(40),
+      sourceBranch: 'main',
+      sourceCiRunId: '123',
+      controlSha: '2'.repeat(40),
+      digestAlgorithm: DELIVERY_EVIDENCE_DIGEST_ALGORITHM,
     },
   };
 }
@@ -212,7 +297,22 @@ describe('setup Codex activation (Group D)', () => {
       promptRetirementConfirmation: () => true,
       // Don't touch the real agent-sync lease or the deep store in unit tests.
       acquireLifecycleLease: () => ({ path: join(root, 'genie-home', '.lock'), release: () => {} }),
-      openCodexActivationStore: () => ({}) as never,
+      acquireActivationLease: (() => ({
+        ok: true,
+        kind: 'setup-activation',
+        operationId: 'op-setup-test',
+        assertOperation: () => {},
+        release: () => {},
+      })) as never,
+      openCodexActivationStore: (() => ({
+        observe: () => currentSnapshot(),
+        withRevalidatedDeliveryRoot: (
+          _lease: unknown,
+          callback: (ops: ReturnType<typeof setupDeliveryOps>) => unknown,
+        ) => callback(setupDeliveryOps()),
+      })) as never,
+      createCodexMarketplaceConsumer: () => MARKETPLACE_CONSUMER,
+      createCodexRoleAgentConsumer: () => ROLE_CONSUMER,
       ...over,
     };
   }
@@ -240,6 +340,99 @@ describe('setup Codex activation (Group D)', () => {
     expect((await loadGenieConfig()).codex?.configured).toBe(true);
     // Durable maintenance consent merged claude → all.
     expect(readIntegrationConsent(genieHome)).toBe('all');
+  });
+
+  test('fresh activation revalidates current before committing consent and converging roles', async () => {
+    const events: string[] = [];
+    const genieHome = process.env.GENIE_HOME as string;
+    const cap = capture();
+    await setupCommand(
+      { codex: true },
+      grantedDeps(ACTIVATED, {
+        executeCodexActivation: () => {
+          events.push('executor');
+          return ACTIVATED;
+        },
+        openCodexActivationStore: (() => ({
+          observe: () => {
+            events.push('reobserve-current');
+            return currentSnapshot();
+          },
+          withRevalidatedDeliveryRoot: (
+            _lease: unknown,
+            callback: (ops: ReturnType<typeof setupDeliveryOps>) => unknown,
+          ) => {
+            events.push('delivery-callback-enter');
+            const result = callback(
+              setupDeliveryOps((consumer) => {
+                if (consumer === ROLE_CONSUMER) {
+                  events.push(`roles:${readIntegrationConsent(genieHome)}`);
+                  return ROLE_RESULT;
+                }
+                return runDeliveryRootConsumer(consumer as never, DELIVERY_ROOT);
+              }),
+            );
+            events.push('delivery-callback-exit');
+            return result;
+          },
+        })) as never,
+        createCodexConsentCommitConsumer: (options) =>
+          createSetupCodexConsentCommitConsumer({
+            ...options,
+            persist: (selection, home) => {
+              events.push(`consent:${selection}`);
+              persistIntegrationConsent(selection, home);
+            },
+          }),
+      }),
+    );
+    const { exitCode } = cap.restore();
+
+    expect(exitCode).toBe(0);
+    expect(events).toEqual([
+      'executor',
+      'delivery-callback-enter',
+      'reobserve-current',
+      'consent:codex',
+      'roles:codex',
+      'delivery-callback-exit',
+    ]);
+  });
+
+  test('post-activation delivery advance refuses consent, roles, route, and config success', async () => {
+    let consentCalls = 0;
+    let roleCalls = 0;
+    const cap = capture();
+    await setupCommand(
+      { codex: true },
+      grantedDeps(ACTIVATED, {
+        openCodexActivationStore: (() => ({
+          observe: () => pendingSnapshot(),
+          withRevalidatedDeliveryRoot: (
+            _lease: unknown,
+            callback: (ops: ReturnType<typeof setupDeliveryOps>) => unknown,
+          ) => callback(setupDeliveryOps()),
+        })) as never,
+        createCodexConsentCommitConsumer: (options) =>
+          createSetupCodexConsentCommitConsumer({
+            ...options,
+            persist: () => {
+              consentCalls += 1;
+            },
+          }),
+        createCodexRoleAgentConsumer: () => {
+          roleCalls += 1;
+          return ROLE_CONSUMER;
+        },
+      }),
+    );
+    const { out, exitCode } = cap.restore();
+
+    expect(exitCode).toBe(1);
+    expect(consentCalls).toBe(0);
+    expect(roleCalls).toBe(0);
+    expect(out).not.toContain('Project MCP route');
+    expect(out).not.toContain('Codex configuration saved');
   });
 
   test("a granted activation flips a never-chosen 'auto' default agent to codex", async () => {
@@ -408,6 +601,64 @@ describe('setup Codex activation (Group D)', () => {
     expect((await loadGenieConfig()).codex?.configured).toBe(true);
   });
 
+  test('already-current setup revalidates before marketplace, then commits consent before roles', async () => {
+    const events: string[] = [];
+    const genieHome = process.env.GENIE_HOME as string;
+    const cap = capture();
+    await setupCommand(
+      { codex: true },
+      baseDeps({
+        observeCodexActivation: () => currentSnapshot(),
+        openCodexActivationStore: (() => ({
+          observe: () => {
+            events.push('reobserve-current');
+            return currentSnapshot();
+          },
+          withRevalidatedDeliveryRoot: (
+            _lease: unknown,
+            callback: (ops: ReturnType<typeof setupDeliveryOps>) => unknown,
+          ) => {
+            events.push('delivery-callback-enter');
+            const result = callback(
+              setupDeliveryOps((consumer) => {
+                if (consumer === MARKETPLACE_CONSUMER) {
+                  events.push('marketplace');
+                  return undefined;
+                }
+                if (consumer === ROLE_CONSUMER) {
+                  events.push(`roles:${readIntegrationConsent(genieHome)}`);
+                  return ROLE_RESULT;
+                }
+                return runDeliveryRootConsumer(consumer as never, DELIVERY_ROOT);
+              }),
+            );
+            events.push('delivery-callback-exit');
+            return result;
+          },
+        })) as never,
+        createCodexConsentCommitConsumer: (options) =>
+          createSetupCodexConsentCommitConsumer({
+            ...options,
+            persist: (selection, home) => {
+              events.push(`consent:${selection}`);
+              persistIntegrationConsent(selection, home);
+            },
+          }),
+      }),
+    );
+    const { exitCode } = cap.restore();
+
+    expect(exitCode).toBe(0);
+    expect(events).toEqual([
+      'delivery-callback-enter',
+      'reobserve-current',
+      'marketplace',
+      'consent:codex',
+      'roles:codex',
+      'delivery-callback-exit',
+    ]);
+  });
+
   test('an installed-newer plugin has no activation authority: exit 1, no consent prompt', async () => {
     let assertionRequested = 0;
     const cap = capture();
@@ -526,6 +777,11 @@ describe('setup Codex activation (Group D)', () => {
         // pass 1 mints a journal-quarantine permit, pass 2 an activation permit.
         acquireActivationLease: (() => FAKE_LEASE) as never,
         openCodexActivationStore: (() => ({
+          observe: () => currentSnapshot(),
+          withRevalidatedDeliveryRoot: (
+            _lease: unknown,
+            callback: (ops: ReturnType<typeof setupDeliveryOps>) => unknown,
+          ) => callback(setupDeliveryOps()),
           quarantineIntent: () => {
             quarantineCalls += 1;
             return { quarantinedTo: '/quarantine/intent.invalid-d' };
@@ -592,6 +848,8 @@ describe('setup Codex activation (Group D)', () => {
   test('Group E: an ABSENT delivery record refuses before any consent prompt with the recovery command (exit 1)', async () => {
     let assertionRequested = 0;
     let executeCalls = 0;
+    let marketplaceCalls = 0;
+    let roleCalls = 0;
     const cap = capture();
     await setupCommand(
       { codex: true },
@@ -605,12 +863,22 @@ describe('setup Codex activation (Group D)', () => {
           executeCalls += 1;
           return ACTIVATED;
         },
+        createCodexMarketplaceConsumer: () => {
+          marketplaceCalls += 1;
+          return MARKETPLACE_CONSUMER;
+        },
+        createCodexRoleAgentConsumer: () => {
+          roleCalls += 1;
+          return ROLE_CONSUMER;
+        },
       }),
     );
     const { err, trailer, exitCode } = cap.restore();
     expect(exitCode).toBe(1);
     expect(assertionRequested).toBe(0);
     expect(executeCalls).toBe(0);
+    expect(marketplaceCalls).toBe(0);
+    expect(roleCalls).toBe(0);
     expect(err).toContain('delivery record is absent');
     expect(err).toContain('genie update');
     const parsed = JSON.parse(trailer) as { code: string; deliveryComplete: boolean; retry: boolean };
@@ -621,13 +889,23 @@ describe('setup Codex activation (Group D)', () => {
     const mismatchedRecord: CodexActivationSnapshot['delivery'] = {
       status: 'present',
       record: {
-        schemaVersion: 1,
-        deliveryId: 'c'.repeat(32),
+        schemaVersion: 2,
+        deliveryId: deriveDeliveryId(EVIDENCE_DIGEST, DELIVERY_ROOT),
         targetVersion: OLD,
         canonicalPayloadSha256: DIGEST,
         channel: 'stable',
         deliveredAt: '2026-07-12T00:00:00.000Z',
+        evidenceDigest: EVIDENCE_DIGEST,
+        platformId: 'darwin-arm64',
+        platformTriple: PLATFORM,
+        releaseTag: `v${OLD}`,
+        releaseName: `genie-${OLD}-${PLATFORM}.tar.gz`,
+        releaseManifestSha256: MANIFEST_DIGEST,
+        artifactSha256: ARTIFACT_DIGEST,
+        installedBinarySha256: BINARY_DIGEST,
+        deliveryRoot: DELIVERY_ROOT,
       },
+      evidence: deliveryEvidenceFacts(),
     };
     const cases: Array<{ delivery: CodexActivationSnapshot['delivery']; assessment: string }> = [
       { delivery: { status: 'invalid', detail: 'corrupt json' }, assessment: 'invalid' },
@@ -678,6 +956,48 @@ describe('setup Codex activation (Group D)', () => {
     expect(second.exitCode).toBe(1);
     expect(second.out).not.toContain('Codex configuration saved');
     expect((await loadGenieConfig()).codex?.configured).toBe(true);
+  });
+
+  test('failed standalone setup preserves compact user config byte-for-byte, including unknown keys', async () => {
+    const configPath = join(process.env.GENIE_HOME as string, 'config.json');
+    mkdirSync(process.env.GENIE_HOME as string, { recursive: true });
+    const compact =
+      '{"version":2,"runtime":{"defaultAgent":"claude"},"codex":{"configured":true},"userOwned":{"keep":"exactly"}}\n';
+    writeFileSync(configPath, compact);
+    const before = readFileSync(configPath);
+
+    const cap = capture();
+    await setupCommand(
+      { codex: true },
+      baseDeps({ observeCodexActivation: () => ({ ...currentSnapshot(), delivery: { status: 'absent' } }) }),
+    );
+    const { out, exitCode } = cap.restore();
+
+    expect(exitCode).toBe(1);
+    expect(out).not.toContain('Codex configuration saved');
+    expect(readFileSync(configPath).equals(before)).toBe(true);
+  });
+
+  test('pending standalone setup preserves compact user config byte-for-byte and prints no success banner', async () => {
+    const configPath = join(process.env.GENIE_HOME as string, 'config.json');
+    mkdirSync(process.env.GENIE_HOME as string, { recursive: true });
+    const compact =
+      '{ "version": 2, "runtime": { "defaultAgent": "claude" }, "codex": { "configured": true }, "userOwned": 7 }\n';
+    writeFileSync(configPath, compact);
+    const before = readFileSync(configPath);
+
+    const cap = capture();
+    await setupCommand(
+      { codex: true },
+      baseDeps({
+        requestRetirementAssertion: () => ({ result: 'refused', reason: 'fixture pending' }),
+      }),
+    );
+    const { out, exitCode } = cap.restore();
+
+    expect(exitCode).toBe(2);
+    expect(out).not.toContain('Codex configuration saved');
+    expect(readFileSync(configPath).equals(before)).toBe(true);
   });
 
   test("full wizard summary reflects THIS run's typed outcome, not historical state", async () => {

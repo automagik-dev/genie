@@ -37,6 +37,10 @@ on:
         description: 'Version stamped into the release payload'
         required: true
         type: string
+      channel:
+        description: 'Release channel; promotions receive a fresh immutable version'
+        required: true
+        type: string
       source_sha:
         description: 'Exact CI-approved source commit to build'
         required: true
@@ -118,6 +122,7 @@ jobs:
         shell: bash
         env:
           INPUT_VERSION: ${{ inputs.version }}
+          INPUT_CHANNEL: ${{ inputs.channel }}
         run: |
           set -euo pipefail
           PACKAGE_VERSION="$(node -p "require('./package.json').version")"
@@ -131,8 +136,15 @@ jobs:
             exit 1
           }
           if [[ "${VERSION}" != "${PACKAGE_VERSION}" ]]; then
-            echo "::error::requested release version '${VERSION}' does not match source package '${PACKAGE_VERSION}'"
-            exit 1
+            case "${INPUT_CHANNEL}" in
+              homolog|stable)
+                echo "Authenticated ${INPUT_CHANNEL} promotion stamps immutable version ${VERSION} over source ${PACKAGE_VERSION}"
+                ;;
+              *)
+                echo "::error::requested release version '${VERSION}' does not match source package '${PACKAGE_VERSION}'"
+                exit 1
+                ;;
+            esac
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Resolved version: ${VERSION}"

@@ -19,13 +19,94 @@
 
 import { afterAll, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type HostCacheWitness, parseCodexHostObservation } from '../../src/lib/codex-host-observation.js';
 import type { CommandResult } from '../../src/lib/runtime-integrations.js';
 import { CodexCwdEvidence, type CwdCaseEvidence, findPidCrossingDifferingCwd } from '../support/codex-cwd-evidence.js';
 
 const CASE_TIMEOUT = 60_000;
+const HARNESS_ROOT_PREFIX = 'genie-cwd-evidence-';
+
+type FakeAppServerMode = 'success' | 'timeout' | 'reject' | 'early-exit' | 'spawn-error';
+
+function makeFakeCodex(mode: FakeAppServerMode): { command: string; marker: string; root: string } {
+  const root = mkdtempSync(join(tmpdir(), 'genie-fake-codex-'));
+  const command = join(root, 'codex.mjs');
+  const marker = join(root, 'app-server.json');
+  writeFileSync(
+    command,
+    `#!${process.execPath}
+import { unlinkSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { createInterface } from 'node:readline';
+import { fileURLToPath } from 'node:url';
+const mode = ${JSON.stringify(mode)};
+if (process.argv.includes('--version')) {
+  if (mode === 'spawn-error') unlinkSync(fileURLToPath(import.meta.url));
+  process.exit(0);
+}
+const marker = ${JSON.stringify(marker)};
+writeFileSync(marker, JSON.stringify({ pid: process.pid, root: dirname(process.env.CODEX_HOME) }));
+if (mode === 'early-exit') process.exit(19);
+if (mode === 'reject' || mode === 'success') {
+  const rl = createInterface({ input: process.stdin });
+  rl.on('line', (line) => {
+    const message = JSON.parse(line);
+    if (message.method === 'initialize') {
+      const response = mode === 'reject'
+        ? { jsonrpc: '2.0', id: message.id, error: { code: -32000, message: 'forced initialize rejection' } }
+        : { jsonrpc: '2.0', id: message.id, result: { capabilities: {} } };
+      process.stdout.write(JSON.stringify(response) + '\\n');
+    }
+  });
+}
+setInterval(() => {}, 1 << 30);
+`,
+    'utf8',
+  );
+  chmodSync(command, 0o755);
+  return { command, marker, root };
+}
+
+function processExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
+    throw error;
+  }
+}
+
+function harnessRoots(): Set<string> {
+  return new Set(readdirSync(tmpdir()).filter((entry) => entry.startsWith(HARNESS_ROOT_PREFIX)));
+}
+
+async function captureLaunchFailure(
+  command: string,
+  initializeTimeoutMs: number,
+  beforeSpawnForTest?: (harnessRoot: string) => void,
+): Promise<Error> {
+  try {
+    await CodexCwdEvidence.launch(command, initializeTimeoutMs, beforeSpawnForTest);
+  } catch (error) {
+    return error instanceof Error ? error : new Error(String(error));
+  }
+  throw new Error('fake Codex unexpectedly initialized');
+}
 
 // Launch ONE pinned app-server for the whole suite and decide support up-front, so
 // an environment without a runnable codex app-server skips honestly.
@@ -75,6 +156,73 @@ test('environment can host the black-box app-server CWD proof', () => {
   if (!supported) {
     // Surface the exact environmental gate in the assertion message.
     expect(`codex-app-server-unavailable: ${supportReason}`).toContain('codex-app-server-unavailable');
+  }
+});
+
+test('pre-spawn setup failure removes its harness root without launching an app-server child', async () => {
+  const fake = makeFakeCodex('timeout');
+  const before = harnessRoots();
+  let createdRoot: string | null = null;
+  try {
+    const error = await captureLaunchFailure(fake.command, 75, (harnessRoot) => {
+      createdRoot = harnessRoot;
+      throw new Error('forced pre-spawn setup failure');
+    });
+    expect(error.message).toContain('forced pre-spawn setup failure');
+    expect(createdRoot).not.toBeNull();
+    if (createdRoot === null) throw new Error('pre-spawn seam did not observe the harness root');
+    expect(existsSync(createdRoot)).toBe(false);
+    expect(existsSync(fake.marker)).toBe(false);
+    expect([...harnessRoots()].filter((root) => !before.has(root))).toEqual([]);
+  } finally {
+    rmSync(fake.root, { recursive: true, force: true });
+  }
+});
+
+for (const failureCase of [
+  { mode: 'timeout' as const, message: 'initialize timed out' },
+  { mode: 'reject' as const, message: 'forced initialize rejection' },
+  { mode: 'early-exit' as const, message: 'exited before replying' },
+]) {
+  test(`failed launch cleans the child and harness root after initialize ${failureCase.mode}`, async () => {
+    const fake = makeFakeCodex(failureCase.mode);
+    try {
+      const error = await captureLaunchFailure(fake.command, 75);
+      expect(error.message).toContain(failureCase.message);
+      const record = JSON.parse(readFileSync(fake.marker, 'utf8')) as { pid: number; root: string };
+      expect(processExists(record.pid)).toBe(false);
+      expect(existsSync(record.root)).toBe(false);
+    } finally {
+      rmSync(fake.root, { recursive: true, force: true });
+    }
+  });
+}
+
+test('failed launch removes its harness root after a late spawn error', async () => {
+  const fake = makeFakeCodex('spawn-error');
+  const before = harnessRoots();
+  try {
+    const error = await captureLaunchFailure(fake.command, 75);
+    expect(error.message).toContain('process error');
+    expect([...harnessRoots()].filter((root) => !before.has(root))).toEqual([]);
+  } finally {
+    rmSync(fake.root, { recursive: true, force: true });
+  }
+});
+
+test('successful launch cleanup remains idempotent and reaps the child before removing its root', async () => {
+  const fake = makeFakeCodex('success');
+  try {
+    const launched = await CodexCwdEvidence.launch(fake.command, 250);
+    const record = JSON.parse(readFileSync(fake.marker, 'utf8')) as { pid: number; root: string };
+    expect(processExists(record.pid)).toBe(true);
+    expect(existsSync(record.root)).toBe(true);
+    await launched.close();
+    await launched.close();
+    expect(processExists(record.pid)).toBe(false);
+    expect(existsSync(record.root)).toBe(false);
+  } finally {
+    rmSync(fake.root, { recursive: true, force: true });
   }
 });
 
