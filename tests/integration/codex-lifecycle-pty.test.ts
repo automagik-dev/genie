@@ -313,8 +313,12 @@ describe.skipIf(!CAN_PTY)('codex lifecycle over a real PTY (Group E deliverable 
     expect(JSON.stringify(failing, null, 2)).toBe('[]');
     const bunFails = json.checks.some((check) => check.status === 'fail' && check.name.startsWith('bun'));
     expect(exitCode).toBe(bunFails ? 1 : 0);
+    // The typed context state, end-to-end: init scaffolds no genie.db, so a
+    // Codex task would see the typed database-unavailable error (warn) —
+    // never a healthy empty board and never a hard context failure.
     const context = json.checks.find((check) => check.name === 'Codex project context');
-    expect(context).toBeDefined();
+    expect(context?.status).toBe('warn');
+    expect(context?.detail).toContain('project-database-unavailable');
     // Route: the marker-owned project route from `genie init` + trusted repo.
     const human = runCli(['doctor']);
     expect(human.stdout).toContain('Codex integration:');

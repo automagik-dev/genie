@@ -105,7 +105,11 @@ export interface RouteLayerInput {
 }
 
 const MAX_CONFIG_BYTES = 512 * 1024;
-const GENIE_SERVER_HEADER_RE = /^\s*\[mcp_servers\.(?:genie|"genie")\]\s*(?:#.*)?$/m;
+// A same-key genie route in either TOML spelling: the `[mcp_servers.genie]`
+// section header, or the dotted-key form (`mcp_servers.genie.command = …` /
+// `mcp_servers.genie = {…}`) that the marker block itself uses.
+const GENIE_SERVER_HEADER_RE =
+  /^\s*(?:\[mcp_servers\.(?:genie|"genie")\]\s*(?:#.*)?$|mcp_servers\.(?:genie|"genie")\s*(?:\.[A-Za-z0-9_.-]+\s*)?=)/m;
 
 function defaultReadFile(path: string): string | null {
   try {

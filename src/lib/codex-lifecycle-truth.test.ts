@@ -200,6 +200,44 @@ describe('classifyRouteLayers (typed config-layer diagnostics)', () => {
     expect(findings).toEqual([]);
   });
 
+  test('the dotted-key route spelling (the marker form) is detected in nested and global layers', () => {
+    const nested = join(root, 'packages');
+    const dottedConfig = 'mcp_servers.genie.command = "/elsewhere/genie"\nmcp_servers.genie.args = ["mcp"]\n';
+    const files: Record<string, string> = {
+      [join(nested, '.codex', 'config.toml')]: dottedConfig,
+      '/codex-home/config.toml': `${dottedConfig}${trustedGlobal}`,
+    };
+    const findings = classifyRouteLayers(
+      input({ cwd: nested, readFile: (path) => files[path] ?? null, exists: (path) => path in files }),
+    );
+    expect(findings.map((finding) => finding.kind).sort()).toEqual(['global-route-same-key', 'route-shadowed']);
+  });
+
+  test('a dotted-key inline-table route (mcp_servers.genie = {…}) is detected', () => {
+    const findings = classifyRouteLayers(
+      input({
+        readFile: (path) =>
+          path === '/codex-home/config.toml'
+            ? `mcp_servers.genie = { command = "/old/genie", args = [] }\n${trustedGlobal}`
+            : null,
+      }),
+    );
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ kind: 'global-route-same-key' });
+  });
+
+  test('a non-genie dotted key or unrelated assignment does not false-positive', () => {
+    const findings = classifyRouteLayers(
+      input({
+        readFile: (path) =>
+          path === '/codex-home/config.toml'
+            ? `mcp_servers.other.command = "/x"\nsome_genie_note = "mcp_servers.genie"\n${trustedGlobal}`
+            : null,
+      }),
+    );
+    expect(findings).toEqual([]);
+  });
+
   test('a global same-key route is reported and preserved', () => {
     const findings = classifyRouteLayers(
       input({
