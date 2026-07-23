@@ -30,6 +30,9 @@ import {
 // permit-gated cache advance through B's `executeCodexActivation`.
 import type { ActivationEntryPath, CodexActivationSnapshot, ConsentContext } from '../lib/codex-activation.js';
 import { getCodexConfigPath } from '../lib/codex-config.js';
+// Group E: the shared Decision-9 delivery gate — the same assessment the
+// executor's `beginActivation` inner guard re-applies before its first write.
+import { assessSnapshotDelivery } from '../lib/codex-lifecycle-truth.js';
 import { type CodexPluginProbe, reconcileCodexProjectMcp, resolveGitWorktreeRoot } from '../lib/codex-project-mcp.js';
 import {
   contractPath,
@@ -338,10 +341,31 @@ function preserveRuntimeChoiceAfterCodex(config: GenieConfig): void {
   if (decision.hint) console.log(`  \x1b[2m${decision.hint}\x1b[0m`);
 }
 
+/**
+ * The typed per-invocation setup outcome (Decision 12). Success (a green banner
+ * + persisted `codex.configured`) flows ONLY from this invocation's outcome —
+ * never from historical config state — so a failed or pending run can never
+ * print or persist success.
+ */
+type SetupCodexOutcomeCode =
+  | 'activated'
+  | 'current'
+  | 'payload-missing'
+  | 'delivery-incomplete'
+  | 'status-reported'
+  | 'consent-refused'
+  | 'not-authorized'
+  | 'busy'
+  | 'stale'
+  | 'refused'
+  | 'broken';
+
 interface ActivationOutcome {
   exitCode: 0 | 1 | 2;
   /** True when the plugin is verified-current (freshly activated or already current). */
   activated: boolean;
+  /** The one typed code this invocation ends with; `activated` is true only for 'activated' | 'current'. */
+  code: SetupCodexOutcomeCode;
 }
 
 function emitTrailer(trailer: ReturnType<typeof buildActivationResultTrailer>): void {
@@ -383,16 +407,36 @@ function runCodexActivation(
     console.error(
       '    Delivery is done by \x1b[36mgenie update\x1b[0m / \x1b[36mgenie install\x1b[0m — run one, then rerun \x1b[36mgenie setup --codex\x1b[0m.',
     );
-    return { exitCode: 1, activated: false };
+    return { exitCode: 1, activated: false, code: 'payload-missing' };
+  }
+  // Condition 2 (Group E, Decision 9): a matching authenticated delivery record
+  // is required BEFORE the first prompt or activation-owned mutation — even on
+  // an already-current machine, because only update/install may publish the
+  // record and setup must not claim success it cannot attest. The executor's
+  // `beginActivation` inner guard re-checks the same assessment immediately
+  // before its first write (defense in depth).
+  const deliveryGate = assessSnapshotDelivery(snapshot);
+  if (deliveryGate.kind === 'incomplete') {
+    const gate = deliveryGate.result;
+    console.error(`  \x1b[31m✖\x1b[0m ${gate.detail}`);
+    console.error(`    Recovery: \x1b[36m${gate.recovery}\x1b[0m`);
+    emitTrailer({
+      schemaVersion: 1,
+      code: 'delivery-incomplete',
+      deliveryComplete: false,
+      retry: true,
+      nextAction: gate.recovery,
+    });
+    return { exitCode: gate.exit, activated: false, code: 'delivery-incomplete' };
   }
   if (state.kind === 'current') {
     console.log('  \x1b[32m✓\x1b[0m Codex plugin is already current; no activation needed.');
-    return { exitCode: 0, activated: true };
+    return { exitCode: 0, activated: true, code: 'current' };
   }
   if (descriptor.authority === 'none') {
     const projection = projectHumanStatus(state, snapshot);
     (projection.stream === 'stderr' ? process.stderr : process.stdout).write(`  ${projection.text}\n`);
-    return { exitCode: projection.exitCode, activated: false };
+    return { exitCode: projection.exitCode, activated: false, code: 'status-reported' };
   }
 
   // Activation authority — gate on A's deep consent API (owns TTY/env/flag/prompt).
@@ -403,7 +447,11 @@ function runCodexActivation(
   if (consent.result !== 'granted') {
     console.error(`  \x1b[31m✖\x1b[0m Retirement assertion refused: ${consent.reason}`);
     emitTrailer(buildActivationResultTrailer(state, deliveryComplete));
-    return { exitCode: resolveSetupExitCode(state, { result: 'refused', reason: consent.reason }), activated: false };
+    return {
+      exitCode: resolveSetupExitCode(state, { result: 'refused', reason: consent.reason }),
+      activated: false,
+      code: 'consent-refused',
+    };
   }
   const authorization = (deps.authorizeCodexActivation ?? authorizeCodexActivation)({
     state,
@@ -414,7 +462,7 @@ function runCodexActivation(
     const reason = 'reason' in authorization ? authorization.reason : authorization.result;
     console.error(`  \x1b[31m✖\x1b[0m Activation not authorized: ${reason}`);
     emitTrailer(buildActivationResultTrailer(state, deliveryComplete));
-    return { exitCode: resolveSetupExitCode(state, authorization), activated: false };
+    return { exitCode: resolveSetupExitCode(state, authorization), activated: false, code: 'not-authorized' };
   }
 
   // Permit granted — the executor acquires the `setup-activation` lease itself.
@@ -438,7 +486,7 @@ function reportActivationExecution(result: ActivationExecutionResult): Activatio
   if (result.status === 'activated') {
     console.log(`  \x1b[32m✓\x1b[0m Activated Codex plugin v${result.version} (enabled=${result.enabled}).`);
     console.log(`  \x1b[33m!\x1b[0m ${result.recovery}`);
-    return { exitCode: 0, activated: true };
+    return { exitCode: 0, activated: true, code: 'activated' };
   }
   console.error(`  \x1b[31m✖\x1b[0m ${result.detail}`);
   if (result.status === 'broken') {
@@ -447,8 +495,16 @@ function reportActivationExecution(result: ActivationExecutionResult): Activatio
     );
   }
   emitTrailer(result.trailer);
-  // busy/stale/refused are action-required (exit 2); broken is retry (exit 1).
-  return { exitCode: result.status === 'broken' ? 1 : 2, activated: false };
+  // The executor's own delivery-incomplete inner-guard refusal is exit 1 like
+  // broken; busy/stale/refused stay action-required (exit 2).
+  const exitCode = result.status === 'broken' || result.status === 'delivery-incomplete' ? 1 : 2;
+  return { exitCode, activated: false, code: result.status };
+}
+
+interface ConfigureCodexResult {
+  config: GenieConfig;
+  /** Null when the Codex CLI is absent/skipped — nothing was attempted this invocation. */
+  outcome: ActivationOutcome | null;
 }
 
 async function configureCodex(
@@ -456,20 +512,20 @@ async function configureCodex(
   quick: boolean,
   deps: SetupDeps,
   entry: ActivationEntryPath,
-): Promise<GenieConfig> {
+): Promise<ConfigureCodexResult> {
   printSection('5. Codex Integration', 'Activate the delivered Codex plugin generation for genie agents');
 
   const cwd = deps.cwd ?? process.cwd();
   const codexPath = resolveCodexPath(deps, cwd);
   if (codexPath === null) {
     console.log('  \x1b[33m!\x1b[0m Codex CLI not found. Skipping codex integration.');
-    return config;
+    return { config, outcome: null };
   }
   const codexCheck = await (deps.checkCommand ?? checkCommand)(codexPath, { which: () => codexPath });
   if (codexCheck.timedOut) throw new SetupIntegrationError(codexCheck.error ?? 'Codex CLI detection timed out');
   if (!codexCheck.exists) {
     console.log('  \x1b[33m!\x1b[0m Codex CLI not found. Skipping codex integration.');
-    return config;
+    return { config, outcome: null };
   }
   console.log(`  \x1b[32m✓\x1b[0m Codex CLI found (${codexCheck.version ?? 'unknown version'})`);
   console.log();
@@ -498,7 +554,7 @@ async function configureCodex(
   } else if (outcome.exitCode !== 0) {
     process.exitCode = outcome.exitCode;
   }
-  return config;
+  return { config, outcome };
 }
 
 type DefaultAgent = GenieConfig['runtime']['defaultAgent'];
@@ -588,15 +644,30 @@ async function configurePromptMode(config: GenieConfig, quick: boolean): Promise
 // Summary and Save
 // ============================================================================
 
-async function showSummaryAndSave(config: GenieConfig, baseline: GenieConfig, deps: SetupDeps): Promise<void> {
+async function showSummaryAndSave(
+  config: GenieConfig,
+  baseline: GenieConfig,
+  deps: SetupDeps,
+  codexOutcome?: ActivationOutcome | null,
+): Promise<void> {
   printSection('Summary', `Configuration will be saved to ${contractPath(getGenieConfigPath())}`);
 
+  // Decision 12: when this run attempted Codex, the summary states THIS run's
+  // typed outcome; historical `configured` state cannot masquerade as success.
+  const codexLine =
+    codexOutcome === undefined || codexOutcome === null
+      ? config.codex?.configured
+        ? '\x1b[32mconfigured\x1b[0m'
+        : '\x1b[2mnot configured\x1b[0m'
+      : codexOutcome.activated
+        ? '\x1b[32mconfigured\x1b[0m'
+        : `\x1b[2mnot configured this run (${codexOutcome.code})\x1b[0m`;
   console.log(`  Session: \x1b[36m${config.session.name}\x1b[0m (window: ${config.session.defaultWindow})`);
   console.log(`  Terminal: timeout=${config.terminal.execTimeout}ms, lines=${config.terminal.readLines}`);
   console.log(
     `  Shortcuts: ${config.shortcuts.tmuxInstalled ? '\x1b[32minstalled\x1b[0m' : '\x1b[2mnot installed\x1b[0m'}`,
   );
-  console.log(`  Codex:   ${config.codex?.configured ? '\x1b[32mconfigured\x1b[0m' : '\x1b[2mnot configured\x1b[0m'}`);
+  console.log(`  Codex:   ${codexLine}`);
   console.log(`  Debug: tmux=${config.logging.tmuxDebug}, verbose=${config.logging.verbose}`);
   console.log(`  Prompt mode: \x1b[36m${config.promptMode}\x1b[0m`);
   console.log();
@@ -687,9 +758,13 @@ async function runSetupCommand(options: SetupOptions, deps: SetupDeps): Promise<
 
   if (options.codex) {
     printHeader();
-    config = await configureCodex(config, options.quick ?? false, deps, 'setup-codex');
+    const codexRun = await configureCodex(config, options.quick ?? false, deps, 'setup-codex');
+    config = codexRun.config;
     await saveSetupConfig(config, baseline, deps);
-    if (config.codex?.configured) {
+    // Decision 12: the green banner flows from THIS invocation's typed outcome,
+    // never from historical `codex.configured` state \u2014 a failed or pending run
+    // on a historically configured machine prints no success.
+    if (codexRun.outcome?.activated) {
       console.log('\x1b[32m\u2713 Codex configuration saved.\x1b[0m');
     }
     return;
@@ -708,12 +783,14 @@ async function runSetupCommand(options: SetupOptions, deps: SetupDeps): Promise<
   config = await configureSession(config, quick);
   config = await configureTerminal(config, quick);
   config = await configureShortcuts(config, quick, deps);
-  config = await configureCodex(config, quick, deps, 'full-setup-codex-step');
+  const codexRun = await configureCodex(config, quick, deps, 'full-setup-codex-step');
+  config = codexRun.config;
   config = await configureDebug(config, quick);
   config = await configurePromptMode(config, quick);
 
-  // Save and show summary
-  await showSummaryAndSave(config, baseline, deps);
+  // Save and show summary (unrelated completed sections save regardless; the
+  // Codex line reflects THIS run's typed outcome, not historical state).
+  await showSummaryAndSave(config, baseline, deps, codexRun.outcome);
 
   // This file mutation follows the same just-acquired/revalidated config
   // commit rather than extending a lease across any wizard prompt.
