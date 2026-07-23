@@ -68,7 +68,7 @@ describe('buildDeliveryPublication — publish facts only for pending', () => {
     ).toEqual({ targetVersion: T, canonicalPayloadSha256: DIGEST, channel: 'dev' });
   });
 
-  test('current publishes nothing', () => {
+  test('current without a record read-state publishes nothing (conservative pre-E contract)', () => {
     expect(
       buildDeliveryPublication({
         installedVersion: T,
@@ -77,6 +77,52 @@ describe('buildDeliveryPublication — publish facts only for pending', () => {
         channel: 'dev',
       }),
     ).toBeNull();
+  });
+
+  test('current with a MATCHING record never republishes (idempotent)', () => {
+    expect(
+      buildDeliveryPublication({
+        installedVersion: T,
+        targetVersion: T,
+        canonicalPayloadSha256: DIGEST,
+        channel: 'dev',
+        existingRecord: {
+          status: 'present',
+          record: {
+            targetVersion: T,
+            canonicalPayloadSha256: DIGEST,
+            channel: 'dev',
+            deliveryId: 'c'.repeat(32),
+          },
+        },
+      }),
+    ).toBeNull();
+  });
+
+  test('current with a STALE or absent record publishes the delivered facts (2026-07-23 live-QA regression)', () => {
+    // Install converged the plugin itself (N current with T) but the on-disk
+    // record still bound the prior generation — setup then refused `mismatch`
+    // while its recovery pointed at the very command that skipped publishing.
+    const stale = {
+      status: 'present' as const,
+      record: {
+        targetVersion: '5.260711.9',
+        canonicalPayloadSha256: 'b'.repeat(64),
+        channel: 'dev',
+        deliveryId: 'c'.repeat(32),
+      },
+    };
+    for (const existingRecord of [stale, { status: 'absent' as const }]) {
+      expect(
+        buildDeliveryPublication({
+          installedVersion: T,
+          targetVersion: T,
+          canonicalPayloadSha256: DIGEST,
+          channel: 'dev',
+          existingRecord,
+        }),
+      ).toEqual({ targetVersion: T, canonicalPayloadSha256: DIGEST, channel: 'dev' });
+    }
   });
 });
 
