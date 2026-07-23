@@ -558,15 +558,15 @@ activation, and doctor surfaces.
    doctor current, including PATH advisory, stale historical config, route collision, and context errors.
 
 **Acceptance Criteria:**
-- [ ] Missing/invalid/mismatched record reaches neither prompt nor activation-owned mutation and produces
+- [x] Missing/invalid/mismatched record reaches neither prompt nor activation-owned mutation and produces
       one consistent `delivery-incomplete` result with the update/install recovery command.
-- [ ] After target-current repair, setup performs zero second plugin add, completes parity/H3, restores
+- [x] After target-current repair, setup performs zero second plugin add, completes parity/H3, restores
       enabled state, and clears the journal only through normal protocol.
-- [ ] Failed/pending standalone setup preserves config bytes and omits the green banner even when
+- [x] Failed/pending standalone setup preserves config bytes and omits the green banner even when
       historical config says configured; only this invocation's current success persists that state.
-- [ ] Doctor spawns exactly one plugin observation and cannot combine PASS/current with query-failed,
+- [x] Doctor spawns exactly one plugin observation and cannot combine PASS/current with query-failed,
       unhealthy project context, route collision/shadowing, or missing delivery.
-- [ ] Real PATH advisory yields one ANSI-free JSON object and consistent human/trailer/exit; timeout,
+- [x] Real PATH advisory yields one ANSI-free JSON object and consistent human/trailer/exit; timeout,
       overflow, malformed/duplicate JSON, and nonzero exit fail consistently.
 
 **Validation:**
@@ -794,6 +794,40 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
   candidate execution read-only and secretless, pass one trusted candidate-inventory digest through
   dogfood/publication/channel advancement, and prevent write-capable jobs from executing candidate code.
   The advisory audit passed 258 focused tests with 0 failures and made no profile changes.
+
+### 2026-07-23T01:55:00Z — Group E execution review
+
+- **Context:** Group E (lifecycle-truth-integration) execution review, PR #2630 (`wish/dogfood-E` → dev)
+- **Branch commits:** fc96d3ee (handoff doc), f660d902 (doctor single observation), 51374f2c (setup
+  delivery gate + typed outcome), c73850cb (post-activation route fix + real-PTY flow), ed75b432
+  (uninstall-marker retirement), 6878189 (review LOW fixes: dotted-key route detection, typed
+  context-state PTY assertion)
+- **Reviewer:** independent adversarial execution reviewer (not the author); verdict **SHIP** —
+  CRITICAL none; HIGH none; MEDIUM two (both confirmed intended: doctor `deliveryComplete` now
+  requires a matching authenticated record per the authority matrix, so pre-record installs report
+  `delivery-incomplete` until one `genie update`; `project-trust-required` warns for never-trusted
+  projects per "never claim health for an untrusted project"); LOW three (two fixed in 6878189, one
+  noted: collision-after-activation throw is pre-existing polish debt)
+- **Reviewer validation (self-run):** 277/0 across the seven touched suites; 194/0 adjacent
+  executor/project-mcp/activation/host-observation suites; typecheck and lint exit 0; A/B/D contract
+  files byte-identical to origin/dev (empty diffstat)
+- **Orchestrator validation (own runs):** full `bun test` 2528 tests with the sole failure being the
+  pre-existing Linux-only `ss`-based ui-bridge socket test (green in CI); CI condition (codex stripped
+  from PATH) 277/0 including the real-PTY flow; `bun run smoke:codex` exit 0; PR CI rollup all
+  SUCCESS, merge state CLEAN
+- **Defect found by the new PTY flow and fixed in-wave:** setup's post-activation reconcile used the
+  pre-Group-A synthetic usable-plugin probe whose documented behavior removed the project fallback,
+  leaving a repository with NO Codex route after successful activation (Decision 1 violation); the
+  post-activation probe now declares route-unusability and reconciles the stable absolute
+  `GENIE_HOME/bin/genie` facade route exactly as trusted init writes it (Decision 2)
+- **Carry-forwards resolved:** A's deferred typed config-layer states shipped as the route-layer
+  classifier (`route-collision`, `route-shadowed`, `global-route-same-key`, `untrusted-config`,
+  `project-trust-required`) with doctor JSON riders; D's `uninstallInstallVersionMarker` retired with
+  documented digest-window rationale and both legacy layouts pinned through the real digest-verified
+  batch path; A's live-QA item (AC3 `codex mcp get genie --json`) remains reserved for the operator's
+  post-merge ritual
+- **Verdict:** **SHIP** — Group E awaits operator merge of PR #2630; durable wish status unchanged
+  until merge
 
 ---
 
