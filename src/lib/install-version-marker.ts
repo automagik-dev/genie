@@ -24,17 +24,20 @@
  *     partial write. An unsafe (symlink/non-regular) marker is preserved and
  *     reported rather than followed. Idempotent: an already-absent marker is a
  *     no-op success.
- *   - `uninstallInstallVersionMarker` — remove the marker during uninstall,
- *     tolerating either layout (present regular file, present symlink, or already
- *     absent) and honouring a dry-run. The symlink itself is unlinked, never its
- *     target.
+ * UNINSTALL deliberately has NO dedicated marker call (Group E decision): the
+ * digest-verified wholesale GENIE_HOME removal already deletes the marker in
+ * both legacy layouts (regular file, symlink — the link is unlinked, never its
+ * target; pinned by uninstall.test.ts). The marker is a snapshotted removable
+ * child of `genieHomeRemovalDigest`, so any extra delete inside the
+ * plan→execute window would poison that commitment and abort home removal;
+ * before the window it is redundant, after it a no-op.
  *
  * Canonical `VERSION` is authoritative: this module never writes a version into
  * the marker and never reads it back as the installed version.
  */
 
 import { randomBytes } from 'node:crypto';
-import { type Stats, copyFileSync, lstatSync, unlinkSync } from 'node:fs';
+import { copyFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fsyncParentDir, readBoundedRegularFile, unlinkWithParentFsync } from './codex-activation-persistence.js';
 import { resolveGenieHome } from './genie-home.js';
@@ -107,52 +110,6 @@ export function retireInstallVersionMarker(genieHome: string = resolveGenieHome(
   return { status: 'retired', previousValue: read.value.length > 0 ? read.value : null };
 }
 
-export interface UninstallMarkerOptions {
-  /** When true, report what would be removed without mutating anything. */
-  dryRun?: boolean;
-}
-
-export type UninstallMarkerResult =
-  | { status: 'absent' }
-  | { status: 'would-remove'; path: string }
-  | { status: 'removed'; path: string }
-  | { status: 'error'; path: string; detail: string };
-
-/**
- * Remove the legacy marker during uninstall, tolerating either layout so a
- * machine that already retired the marker (post-convergence) and one that still
- * carries it both uninstall cleanly and idempotently. A symlink is unlinked
- * (never followed); an already-absent marker is a benign `absent`. Uninstall does
- * NOT back the marker up — the whole install is being removed.
- */
-export function uninstallInstallVersionMarker(
-  genieHome: string = resolveGenieHome(),
-  options: UninstallMarkerOptions = {},
-): UninstallMarkerResult {
-  const path = resolveInstallVersionMarkerPath(genieHome);
-  let stat: Stats;
-  try {
-    stat = lstatSync(path);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { status: 'absent' };
-    return { status: 'error', path, detail: errorText(error) };
-  }
-  // A directory here is unexpected legacy corruption; unlinkSync would EISDIR.
-  // Report it rather than recursively removing an unknown tree.
-  if (stat.isDirectory()) {
-    return { status: 'error', path, detail: 'install-version marker is unexpectedly a directory' };
-  }
-  if (options.dryRun) return { status: 'would-remove', path };
-  try {
-    unlinkSync(path);
-    fsyncParentDir(path);
-    return { status: 'removed', path };
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { status: 'absent' };
-    return { status: 'error', path, detail: errorText(error) };
-  }
-}
-
 /** Best-effort copy of prior marker bytes to a unique sidecar; a backup failure never blocks retirement. */
 function backupRegularFile(path: string): void {
   const backup = `${path}.genie-backup-${new Date().toISOString().replace(/[:.]/g, '-')}-${randomBytes(6).toString('hex')}`;
@@ -163,8 +120,4 @@ function backupRegularFile(path: string): void {
     // Prior bytes are already durable on disk until the unlink below; a failed
     // forensic copy must not prevent retirement of a proven-current install.
   }
-}
-
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

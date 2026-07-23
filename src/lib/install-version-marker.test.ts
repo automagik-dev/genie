@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -7,7 +7,6 @@ import {
   readInstallVersionMarker,
   resolveInstallVersionMarkerPath,
   retireInstallVersionMarker,
-  uninstallInstallVersionMarker,
 } from './install-version-marker.js';
 
 let genieHome: string;
@@ -98,64 +97,5 @@ describe('retireInstallVersionMarker — retire only after success, preserve on 
   test('an empty marker retires with a null previous value', () => {
     writeMarker('   \n');
     expect(retireInstallVersionMarker(genieHome)).toEqual({ status: 'retired', previousValue: null });
-  });
-});
-
-describe('uninstallInstallVersionMarker — tolerates either layout, idempotent, dry-run safe', () => {
-  test('absent marker uninstalls cleanly (post-convergence layout)', () => {
-    expect(uninstallInstallVersionMarker(genieHome)).toEqual({ status: 'absent' });
-  });
-
-  test('present regular marker is removed (legacy layout)', () => {
-    writeMarker('5.260500.3');
-    expect(uninstallInstallVersionMarker(genieHome)).toEqual({ status: 'removed', path: markerPath() });
-    expect(readInstallVersionMarker(genieHome)).toEqual({ status: 'absent' });
-  });
-
-  test('dry-run reports would-remove and mutates nothing', () => {
-    writeMarker('5.260500.3');
-    expect(uninstallInstallVersionMarker(genieHome, { dryRun: true })).toEqual({
-      status: 'would-remove',
-      path: markerPath(),
-    });
-    expect(readInstallVersionMarker(genieHome)).toEqual({ status: 'present', value: '5.260500.3' });
-  });
-
-  test('a symlink marker is unlinked (never its target)', () => {
-    const target = join(genieHome, 'real-version');
-    writeFileSync(target, '9.9.9');
-    symlinkSync(target, markerPath());
-    expect(uninstallInstallVersionMarker(genieHome)).toEqual({ status: 'removed', path: markerPath() });
-    // Marker link gone; the target it pointed at is preserved on disk.
-    expect(readInstallVersionMarker(genieHome)).toEqual({ status: 'absent' });
-    expect(existsSync(target)).toBe(true);
-  });
-
-  test('uninstall is idempotent — a second removal is a benign absent', () => {
-    writeMarker('5.260500.3');
-    uninstallInstallVersionMarker(genieHome);
-    expect(uninstallInstallVersionMarker(genieHome)).toEqual({ status: 'absent' });
-  });
-
-  test('a directory in the marker slot is reported, never recursively removed', () => {
-    mkdirSync(markerPath());
-    const result = uninstallInstallVersionMarker(genieHome);
-    expect(result.status).toBe('error');
-  });
-});
-
-describe('retire → uninstall interplay proves both layouts are safe to rerun', () => {
-  test('successful convergence retires the marker so a later uninstall sees no marker', () => {
-    writeMarker('5.260500.3');
-    expect(retireInstallVersionMarker(genieHome).status).toBe('retired');
-    // Post-convergence machine: uninstall tolerates the already-retired layout.
-    expect(uninstallInstallVersionMarker(genieHome)).toEqual({ status: 'absent' });
-  });
-
-  test('a machine that never retired still uninstalls the legacy marker', () => {
-    writeMarker('4.260428.19');
-    // Interrupted/failed convergence never called retire — the legacy marker persists.
-    expect(readInstallVersionMarker(genieHome)).toEqual({ status: 'present', value: '4.260428.19' });
-    expect(uninstallInstallVersionMarker(genieHome)).toEqual({ status: 'removed', path: markerPath() });
   });
 });

@@ -76,13 +76,27 @@ function reg(version: string): QueryFact {
 function cache(digest = DIGEST): PhysicalCacheFact {
   return { kind: 'present', digest, identity: '10:200' };
 }
+/** A matching authenticated delivery record binding the canonical target (Group E delivery gate). */
+function deliveryPresent(): CodexActivationSnapshot['delivery'] {
+  return {
+    status: 'present',
+    record: {
+      schemaVersion: 1,
+      deliveryId: 'c'.repeat(32),
+      targetVersion: T,
+      canonicalPayloadSha256: DIGEST,
+      channel: 'stable',
+      deliveredAt: '2026-07-12T00:00:00.000Z',
+    },
+  };
+}
 function snapshot(over: Partial<CodexActivationSnapshot> = {}): CodexActivationSnapshot {
   return {
     canonical: okCanonical(),
     query: reg(T),
     cache: cache(),
     receipt: { status: 'absent' },
-    delivery: { status: 'absent' },
+    delivery: deliveryPresent(),
     intent: { status: 'absent' },
     receiptConsumed: false,
     observationWitness: { before: family(), after: family() },
@@ -472,5 +486,108 @@ describe('setup Codex activation (Group D)', () => {
       lease.release();
     }
     expect(existsSync(lockPath)).toBe(false);
+  });
+  // ==========================================================================
+  // Group E, Decision 9/12: the setup-side delivery gate + typed outcome
+  // ==========================================================================
+
+  test('Group E: an ABSENT delivery record refuses before any consent prompt with the recovery command (exit 1)', async () => {
+    let assertionRequested = 0;
+    let executeCalls = 0;
+    const cap = capture();
+    await setupCommand(
+      { codex: true },
+      baseDeps({
+        observeCodexActivation: () => ({ ...pendingSnapshot(), delivery: { status: 'absent' } }),
+        requestRetirementAssertion: () => {
+          assertionRequested += 1;
+          return { result: 'granted', assertion: {} as never };
+        },
+        executeCodexActivation: () => {
+          executeCalls += 1;
+          return ACTIVATED;
+        },
+      }),
+    );
+    const { err, trailer, exitCode } = cap.restore();
+    expect(exitCode).toBe(1);
+    expect(assertionRequested).toBe(0);
+    expect(executeCalls).toBe(0);
+    expect(err).toContain('delivery record is absent');
+    expect(err).toContain('genie update');
+    const parsed = JSON.parse(trailer) as { code: string; deliveryComplete: boolean; retry: boolean };
+    expect(parsed).toMatchObject({ code: 'delivery-incomplete', deliveryComplete: false, retry: true });
+  });
+
+  test('INVALID and MISMATCHED records produce the same consistent delivery-incomplete refusal', async () => {
+    const mismatchedRecord: CodexActivationSnapshot['delivery'] = {
+      status: 'present',
+      record: {
+        schemaVersion: 1,
+        deliveryId: 'c'.repeat(32),
+        targetVersion: OLD,
+        canonicalPayloadSha256: DIGEST,
+        channel: 'stable',
+        deliveredAt: '2026-07-12T00:00:00.000Z',
+      },
+    };
+    const cases: Array<{ delivery: CodexActivationSnapshot['delivery']; assessment: string }> = [
+      { delivery: { status: 'invalid', detail: 'corrupt json' }, assessment: 'invalid' },
+      { delivery: mismatchedRecord, assessment: 'mismatch' },
+    ];
+    for (const { delivery, assessment } of cases) {
+      const cap = capture();
+      await setupCommand(
+        { codex: true },
+        baseDeps({ observeCodexActivation: () => ({ ...pendingSnapshot(), delivery }) }),
+      );
+      const { err, exitCode } = cap.restore();
+      expect(exitCode).toBe(1);
+      expect(err).toContain(`delivery record is ${assessment}`);
+    }
+  });
+
+  test('even an already-current machine without a record is delivery-incomplete, never a success claim', async () => {
+    const cap = capture();
+    await setupCommand(
+      { codex: true },
+      baseDeps({ observeCodexActivation: () => ({ ...currentSnapshot(), delivery: { status: 'absent' } }) }),
+    );
+    const { out, err, exitCode } = cap.restore();
+    expect(exitCode).toBe(1);
+    expect(out).not.toContain('already current');
+    expect(out).not.toContain('Codex configuration saved');
+    expect(err).toContain('delivery record is absent');
+    expect((await loadGenieConfig()).codex?.configured).not.toBe(true);
+  });
+
+  test('historically configured machine: a failed run preserves config bytes and prints NO green banner (Decision 12)', async () => {
+    // Run 1: current + matching record → success, banner, configured persisted.
+    const capFirst = capture();
+    await setupCommand({ codex: true }, baseDeps({ observeCodexActivation: () => currentSnapshot() }));
+    const first = capFirst.restore();
+    expect(first.out).toContain('Codex configuration saved');
+    expect((await loadGenieConfig()).codex?.configured).toBe(true);
+
+    // Run 2: same machine, record now missing → failed run, historical
+    // configured stays persisted (bytes preserved) but no success banner.
+    const capSecond = capture();
+    await setupCommand(
+      { codex: true },
+      baseDeps({ observeCodexActivation: () => ({ ...currentSnapshot(), delivery: { status: 'absent' } }) }),
+    );
+    const second = capSecond.restore();
+    expect(second.exitCode).toBe(1);
+    expect(second.out).not.toContain('Codex configuration saved');
+    expect((await loadGenieConfig()).codex?.configured).toBe(true);
+  });
+
+  test("full wizard summary reflects THIS run's typed outcome, not historical state", async () => {
+    const cap = capture();
+    await setupCommand({ quick: true }, baseDeps());
+    const { out, exitCode } = cap.restore();
+    expect(exitCode).toBe(2);
+    expect(out).toContain('not configured this run (consent-refused)');
+    expect(out).not.toContain('Codex:   \x1b[32mconfigured');
   });
 });
