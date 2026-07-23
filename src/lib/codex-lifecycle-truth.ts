@@ -22,7 +22,7 @@
  *    or shadowing layer is preserved exactly as found (Decision 8).
  */
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import type { CodexActivationSnapshot } from './codex-activation.js';
 import {
@@ -188,8 +188,11 @@ function nearestShadowingConfig(
   readFile: (path: string) => string | null,
   exists: (path: string) => boolean,
 ): string | null {
-  const root = resolve(worktreeRoot);
-  let current = resolve(cwd);
+  // Physical identity: a logical root (e.g. macOS /var/...) and a physical CWD
+  // (/private/var/...) describe the same chain; without realpath the walk
+  // would silently skip and under-report shadowing.
+  const root = safeRealpath(worktreeRoot);
+  let current = safeRealpath(cwd);
   const rel = relative(root, current);
   if (rel.startsWith('..') || rel.split(sep).includes('..')) return null;
   while (current !== root) {
@@ -217,11 +220,21 @@ type ProjectTrustState = { state: 'trusted' } | { state: 'untrusted'; level: str
  */
 export function projectTrustState(globalConfig: string | null, worktreeRoot: string): ProjectTrustState {
   if (globalConfig === null) return { state: 'unknown' };
-  const escapedPath = resolve(worktreeRoot).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-  const lines = globalConfig.split('\n');
+  // Codex records the project path as it saw it; tolerate both the logical and
+  // the physical spelling of the same directory (macOS /var vs /private/var).
+  const candidates = [...new Set([resolve(worktreeRoot), safeRealpath(worktreeRoot)])];
+  for (const candidate of candidates) {
+    const found = trustEntryFor(globalConfig, candidate);
+    if (found !== null) return found;
+  }
+  return { state: 'unknown' };
+}
+
+function trustEntryFor(globalConfig: string, projectPath: string): ProjectTrustState | null {
+  const escapedPath = projectPath.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   const headerExact = `[projects."${escapedPath}"]`;
   let inSection = false;
-  for (const rawLine of lines) {
+  for (const rawLine of globalConfig.split('\n')) {
     const line = rawLine.trim();
     if (line.startsWith('[')) {
       inSection = line === headerExact;
@@ -233,5 +246,14 @@ export function projectTrustState(globalConfig: string | null, worktreeRoot: str
       return match[1] === 'trusted' ? { state: 'trusted' } : { state: 'untrusted', level: match[1] ?? '' };
     }
   }
-  return { state: 'unknown' };
+  return null;
+}
+
+/** Physical path identity with a logical fallback for not-yet-existing paths. */
+function safeRealpath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return resolve(path);
+  }
 }
