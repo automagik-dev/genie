@@ -28,8 +28,16 @@ import {
 // Setup never reimplements the TTY/env/flag guards, constructs a RetirementAssertion,
 // or retains a permit — it supplies a real-terminal ConsentContext and routes the
 // permit-gated cache advance through B's `executeCodexActivation`.
-import type { ActivationEntryPath, CodexActivationSnapshot, ConsentContext } from '../lib/codex-activation.js';
+import type {
+  ActivationEntryPath,
+  ActivationPermit,
+  CodexActivationSnapshot,
+  ConsentContext,
+} from '../lib/codex-activation.js';
 import { getCodexConfigPath } from '../lib/codex-config.js';
+// The quarantine hop holds the SAME `setup-activation` lease kind the executor
+// acquires (aliased: agent-sync exports an unrelated same-named lease helper).
+import { acquireLifecycleLease as acquireActivationLifecycleLease } from '../lib/codex-lifecycle-lease.js';
 // Group E: the shared Decision-9 delivery gate — the same assessment the
 // executor's `beginActivation` inner guard re-applies before its first write.
 import { assessSnapshotDelivery } from '../lib/codex-lifecycle-truth.js';
@@ -75,6 +83,8 @@ export interface SetupDeps {
   /** Interactive confirmation seam; production uses @inquirer/prompts. */
   confirm?: typeof confirm;
   acquireLifecycleLease?: typeof acquireLifecycleLease;
+  /** Test seam for the `setup-activation` codex lifecycle lease held during a journal quarantine. */
+  acquireActivationLease?: typeof acquireActivationLifecycleLease;
   /** Test seam for the once-bound absolute Codex CLI path. */
   resolveExecutable?: (name: string, cwd: string) => string | null;
   cwd?: string;
@@ -373,7 +383,8 @@ type SetupCodexOutcomeCode =
   | 'busy'
   | 'stale'
   | 'refused'
-  | 'broken';
+  | 'broken'
+  | 'quarantine-skipped';
 
 interface ActivationOutcome {
   exitCode: 0 | 1 | 2;
@@ -407,6 +418,7 @@ function runCodexActivation(
   codexPath: string,
   entry: ActivationEntryPath,
   quick: boolean,
+  attempt = 0,
 ): ActivationOutcome {
   const genieHome = resolveGenieHome();
   const codexHome = resolveCodexDir();
@@ -480,6 +492,16 @@ function runCodexActivation(
     return { exitCode: resolveSetupExitCode(state, authorization), activated: false, code: 'not-authorized' };
   }
 
+  // Group E (live-QA find): an intent-invalid/intent-mismatch state grants a
+  // JOURNAL-QUARANTINE permit, not an activation permit. Feeding it to the
+  // executor made beginActivation refuse ("permit lacks activation capability")
+  // and left the state's own recovery — "quarantine the mismatched intent after
+  // a fresh assertion, then re-observe" — unreachable, looping forever. Route
+  // the permit to A's quarantine API, then re-observe and continue once.
+  if (authorization.permit.capability === 'journal-quarantine') {
+    return runJournalQuarantine(deps, codexPath, entry, quick, authorization.permit, attempt);
+  }
+
   // Permit granted — the executor acquires the `setup-activation` lease itself.
   const store = (deps.openCodexActivationStore ?? openCodexActivationStore)({
     genieHome,
@@ -495,6 +517,57 @@ function runCodexActivation(
     configPath: getCodexConfigPath(),
   });
   return reportActivationExecution(result);
+}
+
+/**
+ * Consume a journal-quarantine permit: move the invalid/mismatched activation
+ * journal aside under the same `setup-activation` lifecycle lease the executor
+ * would hold, then re-observe with one fresh pass through `runCodexActivation`
+ * (the fresh state prompts its own consent for any actual activation). One hop
+ * only — a second quarantine grant in the same invocation reports instead of
+ * looping.
+ */
+function runJournalQuarantine(
+  deps: SetupDeps,
+  codexPath: string,
+  entry: ActivationEntryPath,
+  quick: boolean,
+  permit: ActivationPermit,
+  attempt: number,
+): ActivationOutcome {
+  const genieHome = resolveGenieHome();
+  const codexHome = resolveCodexDir();
+  if (attempt > 0) {
+    console.error('  \x1b[31m✖\x1b[0m A second quarantine was requested in one invocation; refusing to loop.');
+    console.error(
+      '    Rerun \x1b[36mgenie setup --codex\x1b[0m; if it recurs, include `genie doctor --json` in an issue.',
+    );
+    return { exitCode: 1, activated: false, code: 'quarantine-skipped' };
+  }
+  const acquire = deps.acquireActivationLease ?? acquireActivationLifecycleLease;
+  const lease = acquire('setup-activation', { genieHome });
+  if (!lease.ok) {
+    console.error(`  \x1b[31m✖\x1b[0m Another Genie lifecycle command holds the Codex lease: ${lease.detail}`);
+    return { exitCode: 2, activated: false, code: 'busy' };
+  }
+  let quarantined: { quarantinedTo: string } | { skipped: string };
+  try {
+    const store = (deps.openCodexActivationStore ?? openCodexActivationStore)({
+      genieHome,
+      codexHome,
+      command: codexPath,
+    });
+    quarantined = store.quarantineIntent(lease, permit);
+  } finally {
+    lease.release();
+  }
+  if ('skipped' in quarantined) {
+    console.error(`  \x1b[31m✖\x1b[0m Stale activation journal was not quarantined: ${quarantined.skipped}`);
+    return { exitCode: 1, activated: false, code: 'quarantine-skipped' };
+  }
+  console.log(`  \x1b[33m!\x1b[0m Quarantined stale activation journal → ${quarantined.quarantinedTo}`);
+  console.log('  Re-observing the delivered generation...');
+  return runCodexActivation(deps, codexPath, entry, quick, attempt + 1);
 }
 
 function reportActivationExecution(result: ActivationExecutionResult): ActivationOutcome {

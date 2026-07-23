@@ -24,6 +24,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -348,6 +349,27 @@ describe.skipIf(!CAN_PTY)('codex lifecycle over a real PTY (Group E deliverable 
       writeFileSync(deliveryRecordPath(), recordBytes);
     }
   }, 120_000);
+
+  test('stage 6b — a stale activation journal is quarantined under one consent, then re-observed (live-QA regression)', () => {
+    // The 2026-07-23 live-QA failure: a leftover journal from a prior
+    // generation made consent mint a quarantine permit that setup fed to the
+    // activation executor ("permit lacks activation capability"), leaving the
+    // prescribed recovery unreachable. One consented run must now quarantine
+    // the journal, re-observe, and land on the truthful current state.
+    const journalPath = join(genieHome, '.codex-plugin-refresh-intent.json');
+    writeFileSync(journalPath, 'not json at all\n');
+    const { exitCode, output } = runPty(['setup', '--codex'], 'yes\n');
+    expect(output).toContain('Quarantined stale activation journal');
+    expect(output).toContain('already current');
+    expect(output).not.toContain('permit lacks activation capability');
+    expect(exitCode).toBe(0);
+    expect(existsSync(journalPath)).toBe(false);
+    // The journal was moved aside (content-addressed), not destroyed.
+    const quarantinedSiblings = readdirSync(genieHome).filter((name) =>
+      name.startsWith('.codex-plugin-refresh-intent.json.invalid-'),
+    );
+    expect(quarantinedSiblings.length).toBe(1);
+  }, 180_000);
 
   test('stage 7 — route collision and nested shadowing are typed doctor failures, never green', () => {
     // Unmanaged same-key route: replace the project config with a user-owned one.
