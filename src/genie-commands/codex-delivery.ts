@@ -31,6 +31,7 @@ import {
   compareReleaseVersions,
   parseReleaseVersion,
 } from '../lib/codex-activation.js';
+import { type DeliveryRecordReadState, assessAuthenticatedDelivery } from '../lib/codex-host-observation.js';
 import type { HeldLifecycleLease } from '../lib/codex-lifecycle-lease.js';
 
 /** The exact operator recovery every delivered-but-action-required Codex path names. */
@@ -118,6 +119,15 @@ export interface CodexDeliveryFacts {
   canonicalPayloadSha256: string;
   /** Delivery channel recorded in the published facts. */
   channel: string;
+  /**
+   * The on-disk record read-state (Group E). Lets a verified delivery whose
+   * plugin generation is already `current` (e.g. install converged the plugin
+   * itself) republish a STALE record: without it, a prior-generation record
+   * survives the delivery and setup's Decision-9 gate refuses with `mismatch`
+   * while its recovery points back at the very command that skipped publishing
+   * (2026-07-23 live-QA finding). A matching record is never republished.
+   */
+  existingRecord?: DeliveryRecordReadState;
 }
 
 /**
@@ -135,7 +145,8 @@ export interface CodexDeliveryFacts {
  */
 export function buildDeliveryPublication(facts: CodexDeliveryFacts): PublishDeliveryInput | null {
   const state = classifyCodexDelivery(facts.installedVersion, facts.targetVersion);
-  if (state.kind !== 'pending' && state.kind !== 'absent') return null;
+  if (state.kind === 'indeterminate') return null;
+  if (state.kind === 'current' && !currentNeedsRepublication(facts)) return null;
   const input: PublishDeliveryInput = {
     targetVersion: facts.targetVersion,
     canonicalPayloadSha256: facts.canonicalPayloadSha256,
@@ -145,6 +156,20 @@ export function buildDeliveryPublication(facts: CodexDeliveryFacts): PublishDeli
     input.downgradeFrom = facts.installedVersion;
   }
   return input;
+}
+
+/**
+ * A `current` generation republishes ONLY when the caller supplied the on-disk
+ * record state and it fails the core binding (absent/invalid/mismatched). No
+ * record state supplied → conservative no-publish (the pre-Group-E contract).
+ */
+function currentNeedsRepublication(facts: CodexDeliveryFacts): boolean {
+  if (facts.existingRecord === undefined) return false;
+  const assessment = assessAuthenticatedDelivery(facts.existingRecord, {
+    targetVersion: facts.targetVersion,
+    canonicalPayloadSha256: facts.canonicalPayloadSha256,
+  });
+  return assessment !== 'matching';
 }
 
 export interface PublishCodexDeliveryInput extends CodexDeliveryFacts {

@@ -38,6 +38,7 @@ import {
   type HeldLifecycleLease,
   acquireLifecycleLease as acquireCodexLifecycleLease,
 } from '../lib/codex-lifecycle-lease.js';
+import { snapshotDeliveryReadState } from '../lib/codex-lifecycle-truth.js';
 import { contractPath, genieConfigExists, getGenieConfigPath, saveGenieConfig } from '../lib/genie-config.js';
 import {
   type InstallStagingDirectoryGuard,
@@ -2541,6 +2542,9 @@ function publishCodexDeliveryFacts(channel: string, previousBackup: string | nul
     targetVersion: snapshot.canonical.version.canonical,
     canonicalPayloadSha256: snapshot.canonical.digest,
     channel,
+    // Group E: a current-N delivery with a STALE record republishes (a matching
+    // record never does) — same fresh-host/converged-host truth as install.
+    existingRecord: snapshotDeliveryReadState(snapshot),
   });
   if (published.published && published.record !== null && previousBackup !== null) {
     publishBackupSidecarIfProtocolCapable(previousBackup, published.record.deliveryId);

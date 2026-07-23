@@ -22,6 +22,7 @@ import {
   type LifecycleLeaseResult,
   acquireLifecycleLease as acquireCodexLifecycleLease,
 } from '../lib/codex-lifecycle-lease.js';
+import { snapshotDeliveryReadState } from '../lib/codex-lifecycle-truth.js';
 import { genieConfigExists, getGenieConfigPath } from '../lib/genie-config.js';
 import { retireInstallVersionMarker } from '../lib/install-version-marker.js';
 import {
@@ -190,9 +191,15 @@ function finalizeInstallDeliveryLifecycle(
   codexFailed: boolean,
 ): void {
   if (codexFailed) return;
-  if (codexDeferral !== null && lease !== null) {
+  // Group E: publication is NOT deferral-only. The normal converged path
+  // (install refreshed the plugin itself, so N is now current with T) also just
+  // performed a verified delivery — skipping publication there left a stale
+  // prior-generation record in place and setup refused with `mismatch`
+  // (2026-07-23 live-QA finding). The shared seam stays idempotent: a matching
+  // record is never republished.
+  if (lease !== null) {
     try {
-      publishDeferredInstallDeliveryFacts(codexDeferral.installedVersion, lease);
+      publishInstallDeliveryFacts(codexDeferral?.installedVersion ?? null, lease);
     } catch {
       // Recording the delivered fact is best-effort; never fail a completed install over it.
     }
@@ -204,7 +211,7 @@ function finalizeInstallDeliveryLifecycle(
   }
 }
 
-function publishDeferredInstallDeliveryFacts(installedVersion: string, lease: HeldLifecycleLease): void {
+function publishInstallDeliveryFacts(deferredInstalledVersion: string | null, lease: HeldLifecycleLease): void {
   let command: string | null = null;
   try {
     command = resolveRuntimeExecutable('codex', process.cwd());
@@ -213,22 +220,19 @@ function publishDeferredInstallDeliveryFacts(installedVersion: string, lease: He
   }
   const snapshot = observeCodexActivation({ genieHome: GENIE_HOME, command });
   if (snapshot.canonical.status !== 'ok') return;
-  const targetVersion = snapshot.canonical.version.canonical;
-  const canonicalPayloadSha256 = snapshot.canonical.digest;
-  if (
-    snapshot.delivery.status === 'present' &&
-    snapshot.delivery.record.targetVersion === targetVersion &&
-    snapshot.delivery.record.canonicalPayloadSha256 === canonicalPayloadSha256
-  ) {
-    return; // matching record already published — never republish.
-  }
+  // Deferred path: N from the deferral's live query. Converged path: N from
+  // this snapshot's own registration (current with T after install's refresh).
+  const registration = snapshot.query.status === 'ok' ? snapshot.query.registration : { present: false as const };
+  const installedVersion =
+    deferredInstalledVersion ?? (registration.present && registration.version ? registration.version.canonical : null);
   publishCodexDelivery({
     lease,
     store: openCodexActivationStore({ genieHome: GENIE_HOME }),
     installedVersion,
-    targetVersion,
-    canonicalPayloadSha256,
+    targetVersion: snapshot.canonical.version.canonical,
+    canonicalPayloadSha256: snapshot.canonical.digest,
     channel: resolveDeliveryChannelForInstall(),
+    existingRecord: snapshotDeliveryReadState(snapshot),
   });
 }
 
