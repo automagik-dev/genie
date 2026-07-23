@@ -10,14 +10,14 @@
  */
 
 import { Database } from 'bun:sqlite';
-import { type ChildProcessWithoutNullStreams, type SpawnSyncReturns, spawn, spawnSync } from 'node:child_process';
+import { type SpawnSyncReturns, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
-import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { resolveProjectContext } from '../../src/lib/v5/genie-db.js';
+import { CodexAppServerTransport } from './codex-app-server-transport.js';
 
 export type CodexNativeMcpEvidenceErrorCode =
   | 'invalid-options'
@@ -205,21 +205,6 @@ export type CodexAppServerSupport =
   | { supported: true; reason: 'ok' }
   | { supported: false; reason: string; errorCode: CodexNativeMcpEvidenceErrorCode };
 
-interface PendingRequest {
-  method: string;
-  resolve: (message: JsonRpcEnvelope) => void;
-  reject: (error: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
-}
-
-interface JsonRpcEnvelope {
-  id?: number | string | null;
-  result?: unknown;
-  error?: unknown;
-  method?: string;
-  params?: unknown;
-}
-
 interface McpInventory {
   name: string;
   tools: string[];
@@ -245,206 +230,34 @@ const CONTROL_SOURCE =
   "const fs = require('node:fs'); const cwd = process.cwd(); const s = fs.statSync(cwd); " +
   "process.stdout.write(JSON.stringify({ pid: process.pid, cwd, dev: s.dev, ino: s.ino }) + '\\n');";
 
-class AppServerSession {
-  private readonly pending = new Map<number, PendingRequest>();
-  private readonly closePromise: Promise<void>;
-  private nextId = 1;
-  private closed = false;
-  private didClose = false;
-  private stderrTail = '';
+type AppServerSession = CodexAppServerTransport<CodexNativeMcpEvidenceError>;
 
-  private constructor(
-    private readonly child: ChildProcessWithoutNullStreams,
-    readonly pin: CodexAppServerPin,
-  ) {
-    this.closePromise = new Promise((resolve) => {
-      child.once('close', () => {
-        this.didClose = true;
-        resolve();
-      });
-    });
-    this.wireLifecycle();
-    this.wireProtocol();
-  }
-
-  static async launch(
-    pin: CodexAppServerPin,
-    env: NodeJS.ProcessEnv,
-    timeouts: CodexNativeMcpEvidenceTimeouts,
-  ): Promise<AppServerSession> {
-    assertCodexPin(pin, env, timeouts.preflightMs);
-    const child = spawn(pin.executable, ['app-server', '--stdio'], {
-      detached: process.platform !== 'win32',
-      env,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      windowsHide: true,
-    }) as ChildProcessWithoutNullStreams;
-    child.on('error', () => {});
-    const session = new AppServerSession(child, pin);
-    try {
-      await session.request(
-        'initialize',
-        { clientInfo: { name: 'genie-native-mcp-evidence', version: '1' } },
-        timeouts.initializeMs,
-      );
-      session.notify('initialized', {});
-      return session;
-    } catch (error) {
-      const cleanupError = await session.close(undefined, timeouts.cleanupGraceMs);
-      if (cleanupError) {
-        throw new AggregateError([asError(error), cleanupError], 'app-server initialize and cleanup both failed');
-      }
-      throw error;
-    }
-  }
-
-  pid(): number {
-    const pid = this.child.pid;
-    if (pid === undefined) {
-      throw new CodexNativeMcpEvidenceError('app-server-failure', 'codex app-server has no process id');
-    }
-    return pid;
-  }
-
-  async request(method: string, params: unknown, timeoutMs: number): Promise<JsonRpcEnvelope> {
-    if (this.closed) {
-      throw new CodexNativeMcpEvidenceError('app-server-failure', `${method} requested after app-server close`);
-    }
-    const id = this.nextId++;
-    return new Promise<JsonRpcEnvelope>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new CodexNativeMcpEvidenceError('rpc-timeout', `${method} timed out after ${timeoutMs}ms`));
-      }, timeoutMs);
-      this.pending.set(id, { method, resolve, reject, timer });
-      const message = `${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`;
-      try {
-        this.child.stdin.write(message, (error) => {
-          if (error) {
-            this.rejectRequest(
-              id,
-              new CodexNativeMcpEvidenceError('rpc-error', `${method} write failed: ${error.message}`),
-            );
-          }
-        });
-      } catch (error) {
-        this.rejectRequest(
-          id,
-          new CodexNativeMcpEvidenceError('rpc-error', `${method} write failed`, { cause: asError(error) }),
-        );
-      }
-    });
-  }
-
-  notify(method: string, params: unknown): void {
-    if (this.closed) return;
-    this.child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method, params })}\n`, () => {});
-  }
-
-  /**
-   * TERM then KILL the recorded candidate and the app-server process group.
-   * Returns a cleanup error instead of masking the primary evidence failure.
-   */
-  async close(candidatePid: number | undefined, graceMs: number): Promise<Error | null> {
-    if (this.closed) return null;
-    this.closed = true;
-    this.rejectPending(new CodexNativeMcpEvidenceError('app-server-failure', 'app-server evidence session closed'));
-    const failures: Error[] = [];
-
-    signalPid(candidatePid, 'SIGTERM', failures);
-    this.signalTree('SIGTERM', failures);
-    await waitUntilStopped([candidatePid, this.child.pid], graceMs);
-
-    if (isProcessAlive(candidatePid)) signalPid(candidatePid, 'SIGKILL', failures);
-    if (isProcessAlive(this.child.pid)) this.signalTree('SIGKILL', failures);
-    await Promise.race([this.closePromise, delay(graceMs)]);
-    await waitUntilStopped([candidatePid, this.child.pid], graceMs);
-
-    if (isProcessAlive(candidatePid)) {
-      failures.push(new Error(`candidate process ${String(candidatePid)} survived SIGKILL`));
-    }
-    if (isProcessAlive(this.child.pid) || !this.didClose) {
-      failures.push(new Error(`codex app-server process ${String(this.child.pid)} did not close`));
-    }
-    if (failures.length === 0) return null;
-    return new CodexNativeMcpEvidenceError(
-      'cleanup-failure',
-      `native MCP cleanup failed: ${failures.map((failure) => failure.message).join('; ')}`,
-      { cause: new AggregateError(failures) },
-    );
-  }
-
-  diagnostics(): string {
-    return this.stderrTail.trim().slice(-2_000);
-  }
-
-  private signalTree(signal: NodeJS.Signals, failures: Error[]): void {
-    const pid = this.child.pid;
-    if (pid === undefined) return;
-    if (process.platform !== 'win32') {
-      signalPid(-pid, signal, failures);
-      return;
-    }
-    signalPid(pid, signal, failures);
-  }
-
-  private wireLifecycle(): void {
-    this.child.stderr.on('data', (chunk: Buffer | string) => {
-      this.stderrTail = `${this.stderrTail}${String(chunk)}`.slice(-16_384);
-    });
-    this.child.on('error', (error) => {
-      this.rejectPending(
-        new CodexNativeMcpEvidenceError('app-server-failure', `codex app-server process error: ${error.message}`),
-      );
-    });
-    this.child.on('exit', (code, signal) => {
-      this.rejectPending(
-        new CodexNativeMcpEvidenceError(
-          'app-server-failure',
-          `codex app-server exited before reply (code=${String(code)}, signal=${String(signal)}): ${this.diagnostics()}`,
-        ),
-      );
-    });
-    this.child.stdin.on('error', (error) => {
-      this.rejectPending(
-        new CodexNativeMcpEvidenceError('rpc-error', `codex app-server stdin error: ${error.message}`),
-      );
-    });
-  }
-
-  private wireProtocol(): void {
-    const lines = createInterface({ input: this.child.stdout });
-    lines.on('line', (line) => {
-      const message = parseJsonEnvelope(line);
-      if (!message || typeof message.id !== 'number') return;
-      const pending = this.pending.get(message.id);
-      if (!pending) return;
-      this.pending.delete(message.id);
-      clearTimeout(pending.timer);
-      if (message.error !== undefined) {
-        pending.reject(
-          new CodexNativeMcpEvidenceError(
-            'rpc-error',
-            `${pending.method} error: ${truncateJson(message.error, 1_000)}`,
-          ),
-        );
-        return;
-      }
-      pending.resolve(message);
-    });
-  }
-
-  private rejectRequest(id: number, error: Error): void {
-    const pending = this.pending.get(id);
-    if (!pending) return;
-    this.pending.delete(id);
-    clearTimeout(pending.timer);
-    pending.reject(error);
-  }
-
-  private rejectPending(error: Error): void {
-    for (const id of [...this.pending.keys()]) this.rejectRequest(id, error);
-  }
+async function launchAppServer(
+  pin: CodexAppServerPin,
+  env: NodeJS.ProcessEnv,
+  timeouts: CodexNativeMcpEvidenceTimeouts,
+): Promise<AppServerSession> {
+  assertCodexPin(pin, env, timeouts.preflightMs);
+  return CodexAppServerTransport.launch({
+    executable: pin.executable,
+    args: ['app-server', '--stdio'],
+    env,
+    windowsHide: true,
+    initializeParams: { clientInfo: { name: 'genie-native-mcp-evidence', version: '1' } },
+    initializeTimeoutMs: timeouts.initializeMs,
+    cleanupGraceMs: timeouts.cleanupGraceMs,
+    initialSignal: 'SIGTERM',
+    label: 'native MCP',
+    error: (kind, message, cause) => {
+      const code = {
+        process: 'app-server-failure',
+        rpc: 'rpc-error',
+        timeout: 'rpc-timeout',
+        cleanup: 'cleanup-failure',
+      }[kind] as CodexNativeMcpEvidenceErrorCode;
+      return new CodexNativeMcpEvidenceError(code, message, cause ? { cause } : undefined);
+    },
+  });
 }
 
 /**
@@ -461,12 +274,12 @@ export async function probeCodexAppServer(
   let session: AppServerSession | null = null;
   try {
     assertEnvironment(env);
-    session = await AppServerSession.launch(pin, env, timeouts);
+    session = await launchAppServer(pin, env, timeouts);
   } catch (error) {
     const typed = toEvidenceError(error, 'codex-unavailable', 'codex app-server is unavailable');
     return { supported: false, reason: typed.message, errorCode: typed.code };
   }
-  const cleanupError = await session.close(undefined, timeouts.cleanupGraceMs);
+  const cleanupError = await session.close();
   if (cleanupError) return { supported: false, reason: cleanupError.message, errorCode: cleanupError.code };
   return { supported: true, reason: 'ok' };
 }
@@ -489,7 +302,7 @@ export async function captureCodexNativeMcpEvidence(
   let primaryError: Error | null = null;
 
   try {
-    session = await AppServerSession.launch(normalized.codex, normalized.env, normalized.timeouts);
+    session = await launchAppServer(normalized.codex, normalized.env, normalized.timeouts);
     const threadId = await startThread(session, normalized, launcherRecord);
     launcher = await waitForLauncherObservation(launcherRecord, normalized.candidate, normalized.timeouts.launcherMs);
     const inventory = await waitForMcpInventory(session, threadId, normalized.timeouts.inventoryMs);
@@ -520,7 +333,7 @@ export async function captureCodexNativeMcpEvidence(
   }
 
   if (!launcher) launcher = tryReadLauncherObservation(launcherRecord);
-  let cleanupError = await session?.close(launcher?.pid, normalized.timeouts.cleanupGraceMs);
+  let cleanupError = await session?.close(launcher?.pid);
   try {
     rmSync(tempRoot, { recursive: true, force: true });
   } catch (error) {
@@ -1108,17 +921,6 @@ function assertAbsolute(name: string, path: string): void {
   }
 }
 
-function parseJsonEnvelope(line: string): JsonRpcEnvelope | null {
-  const trimmed = line.trim();
-  if (!trimmed) return null;
-  try {
-    const parsed = JSON.parse(trimmed) as unknown;
-    return isRecord(parsed) ? (parsed as JsonRpcEnvelope) : null;
-  } catch {
-    return null;
-  }
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -1148,32 +950,6 @@ function toEvidenceError(
   return new CodexNativeMcpEvidenceError(fallbackCode, `${fallbackMessage}: ${asError(error).message}`, {
     cause: asError(error),
   });
-}
-
-function signalPid(pid: number | undefined, signal: NodeJS.Signals, failures: Error[]): void {
-  if (pid === undefined || pid === process.pid || pid === 0) return;
-  try {
-    process.kill(pid, signal);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ESRCH') failures.push(asError(error));
-  }
-}
-
-function isProcessAlive(pid: number | undefined): boolean {
-  if (pid === undefined || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code !== 'ESRCH';
-  }
-}
-
-async function waitUntilStopped(pids: Array<number | undefined>, timeoutMs: number): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (pids.some(isProcessAlive) && Date.now() < deadline) {
-    await delay(Math.min(25, Math.max(1, deadline - Date.now())));
-  }
 }
 
 function delay(ms: number): Promise<void> {

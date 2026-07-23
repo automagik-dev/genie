@@ -25,9 +25,8 @@
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import type { CodexActivationSnapshot } from './codex-activation.js';
-import { deriveDeliveryId } from './codex-delivery-evidence.js';
+import { authenticatedDeliveryRecordFields, createAuthenticatedDeliveryBinding } from './codex-delivery-evidence.js';
 import {
-  type ActivationDeliveryExpectation,
   type DeliveryIncompleteResult,
   type DeliveryRecordReadState,
   assessAuthenticatedDelivery,
@@ -74,22 +73,9 @@ export function assessSnapshotDelivery(snapshot: CodexActivationSnapshot): Snaps
   ) {
     return { kind: 'incomplete', result: buildDeliveryIncompleteResult('mismatch') };
   }
-  const expectation: ActivationDeliveryExpectation = {
-    targetVersion: descriptor.version,
-    canonicalPayloadSha256: snapshot.canonical.digest,
-    channel: descriptor.channel,
-    deliveryId: deriveDeliveryId(evidence.evidenceDigest, snapshot.canonical.deliveryRoot),
-    evidenceDigest: evidence.evidenceDigest,
-    platformId: descriptor.platformId,
-    platformTriple: snapshot.canonical.platformTriple,
-    releaseTag: descriptor.releaseTag,
-    releaseName: descriptor.releaseName,
-    releaseManifestSha256: descriptor.releaseManifestSha256,
-    artifactSha256: descriptor.artifactSha256,
-    installedBinarySha256: snapshot.canonical.installedBinarySha256,
-    deliveryRoot: snapshot.canonical.deliveryRoot,
-    deliveredAt: evidence.deliveredAt,
-  };
+  const expectation = authenticatedDeliveryRecordFields(
+    createAuthenticatedDeliveryBinding(evidence, snapshot.canonical.deliveryRoot),
+  );
   const assessment = assessAuthenticatedDelivery(readState, expectation);
   if (assessment === 'matching') return { kind: 'matching' };
   return { kind: 'incomplete', result: buildDeliveryIncompleteResult(assessment) };

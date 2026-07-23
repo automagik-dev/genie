@@ -971,18 +971,8 @@ describe('CodexActivationStore — delivery + downgrade receipt', () => {
       expect(existsSync(join(fx.genieHome, '.codex-plugin-delivery-record.json'))).toBe(true);
       expect(existsSync(join(fx.genieHome, '.codex-plugin-downgrade-receipt.json'))).toBe(false);
       const fingerprint = computeActivationFingerprint(store.observe());
-      expect(fingerprint.deliveryEvidenceDigest).toBe(record.evidenceDigest);
-      expect(fingerprint).toMatchObject({
-        deliveryEvidenceSchemaVersion: 1,
-        deliveryRepository: 'automagik-dev/genie',
-        deliveryTargetVersion: T,
-        deliveryPlatformId: record.platformId,
-        deliverySourceSha: 'a'.repeat(40),
-        deliverySourceBranch: 'main',
-        deliverySourceCiRunId: '123456789',
-        deliveryControlSha: 'b'.repeat(40),
-        deliveryDigestAlgorithm: 'genie-physical-tree-v1',
-      });
+      expect(fingerprint.deliveryBindingDigest).toMatch(/^[0-9a-f]{64}$/);
+      expect(Object.keys(fingerprint).filter((key) => key.startsWith('delivery'))).toEqual(['deliveryBindingDigest']);
     } finally {
       lease.release();
     }

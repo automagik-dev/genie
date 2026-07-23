@@ -19,11 +19,11 @@
  * the control exec that carry the CWD facts.
  */
 
-import { type ChildProcessWithoutNullStreams, execFileSync, spawn } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createInterface } from 'node:readline';
+import { CodexAppServerTransport } from './codex-app-server-transport.js';
 
 /** Per-case black-box evidence pairing the raw request with observed child facts. */
 export interface CwdCaseEvidence {
@@ -90,34 +90,17 @@ const s = statSync(c);
 process.stdout.write(JSON.stringify({ cwd: c, dev: s.dev, ino: s.ino, pid: process.pid }) + '\n');
 `;
 
-interface PendingRequest {
-  resolve: (message: Record<string, unknown>) => void;
-  reject: (error: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
-}
-
 export class CodexCwdEvidence {
-  private nextId = 1;
-  private readonly pending = new Map<number, PendingRequest>();
   private closePromise: Promise<void> | null = null;
-  private childClosed = false;
-  private readonly childClosePromise: Promise<void>;
 
   private constructor(
-    private readonly child: ChildProcessWithoutNullStreams,
+    private readonly transport: CodexAppServerTransport,
     private readonly harnessRoot: string,
     private readonly sentinelFile: string,
     private readonly fakeMcpScript: string,
     private readonly controlReporter: string,
     private readonly nodeExecutable: string,
-  ) {
-    this.childClosePromise = new Promise((resolve) => {
-      child.once('close', () => {
-        this.childClosed = true;
-        resolve();
-      });
-    });
-  }
+  ) {}
 
   /** Start the pinned app-server and complete the `initialize` handshake. */
   static async launch(
@@ -136,7 +119,6 @@ export class CodexCwdEvidence {
       throw new Error(`codex binary not runnable in this environment: ${codexCommand}`);
     }
     const harnessRoot = mkdtempSync(join(tmpdir(), 'genie-cwd-evidence-'));
-    let harness: CodexCwdEvidence | null = null;
     try {
       const codexHome = join(harnessRoot, 'codex-home');
       mkdirSync(codexHome, { recursive: true });
@@ -150,29 +132,20 @@ export class CodexCwdEvidence {
       const nodeExecutable = process.execPath;
       beforeSpawnForTest?.(harnessRoot);
 
-      const child = spawn(codexCommand, ['app-server'], {
+      const transport = await CodexAppServerTransport.launch({
+        executable: codexCommand,
+        args: ['app-server'],
         env: { ...process.env, CODEX_HOME: codexHome, RUST_LOG: 'error' },
-        stdio: ['pipe', 'pipe', 'pipe'],
-        // A dedicated POSIX process group lets cleanup terminate app-server
-        // descendants (including MCP children), not merely their direct parent.
-        detached: process.platform !== 'win32',
-      }) as ChildProcessWithoutNullStreams;
-      // A late spawn/runtime failure must surface as a rejected initialize (caught by
-      // callers), never as an unhandled 'error' event that throws and aborts the file.
-      child.on('error', () => {});
-      harness = new CodexCwdEvidence(child, harnessRoot, sentinelFile, fakeMcpScript, controlReporter, nodeExecutable);
-      harness.wireLifecycle();
-      harness.wireStdout();
-      await harness.request(
-        'initialize',
-        { clientInfo: { name: 'genie-cwd-evidence', version: '0.0.0' } },
+        initializeParams: { clientInfo: { name: 'genie-cwd-evidence', version: '0.0.0' } },
         initializeTimeoutMs,
-      );
-      child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'initialized', params: {} })}\n`);
-      return harness;
+        cleanupGraceMs: 2_000,
+        initialSignal: 'SIGKILL',
+        label: 'codex app-server harness',
+        error: (_kind, message, cause) => new Error(message, cause ? { cause } : undefined),
+      });
+      return new CodexCwdEvidence(transport, harnessRoot, sentinelFile, fakeMcpScript, controlReporter, nodeExecutable);
     } catch (error) {
-      if (harness === null) rmSync(harnessRoot, { recursive: true, force: true });
-      else await harness.close();
+      rmSync(harnessRoot, { recursive: true, force: true });
       throw error;
     }
   }
@@ -257,7 +230,7 @@ export class CodexCwdEvidence {
 
   /** Run a Codex-launched control process (`command/exec`) in a directory. */
   async runControl(requestedCwd: string, timeoutMs = 20_000): Promise<ControlEvidence> {
-    const response = await this.request(
+    const response = await this.transport.request(
       'command/exec',
       { command: [this.nodeExecutable, this.controlReporter], cwd: requestedCwd },
       timeoutMs,
@@ -281,46 +254,11 @@ export class CodexCwdEvidence {
   }
 
   private async closeOnce(): Promise<void> {
-    this.rejectPending(new Error('codex app-server harness closed'));
     try {
-      this.killProcessTree();
-      await this.waitForChildClose();
-      await this.waitForProcessGroupExit();
+      const cleanupError = await this.transport.close();
+      if (cleanupError) throw cleanupError;
     } finally {
       rmSync(this.harnessRoot, { recursive: true, force: true });
-    }
-  }
-
-  // --------------------------------------------------------------------------
-
-  private killProcessTree(): void {
-    const pid = this.child.pid;
-    if (process.platform !== 'win32' && pid !== undefined && pid > 1) {
-      try {
-        process.kill(-pid, 'SIGKILL');
-      } catch {
-        // The process group may already be gone.
-      }
-    }
-    try {
-      this.child.kill('SIGKILL');
-    } catch {
-      // The direct child may already be gone.
-    }
-  }
-
-  private async waitForProcessGroupExit(timeoutMs = 2_000): Promise<void> {
-    const pid = this.child.pid;
-    if (process.platform === 'win32' || pid === undefined || pid <= 1) return;
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      try {
-        process.kill(-pid, 0);
-        process.kill(-pid, 'SIGKILL');
-      } catch {
-        return;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 25));
     }
   }
 
@@ -331,80 +269,10 @@ export class CodexCwdEvidence {
         mcp_servers: { probe: { command: this.nodeExecutable, args: [this.fakeMcpScript, this.sentinelFile, tag] } },
       },
     };
-    const response = await this.request('thread/start', params, timeoutMs);
+    const response = await this.transport.request('thread/start', params, timeoutMs);
     const thread = (response.result as { thread?: { id?: string } } | undefined)?.thread;
     if (!thread?.id) throw new Error(`thread/start returned no thread id: ${JSON.stringify(response).slice(0, 300)}`);
     return thread.id;
-  }
-
-  private request(method: string, params: unknown, timeoutMs: number): Promise<Record<string, unknown>> {
-    const id = this.nextId++;
-    return new Promise<Record<string, unknown>>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new Error(`${method} timed out after ${timeoutMs}ms`));
-      }, timeoutMs);
-      this.pending.set(id, { resolve, reject, timer });
-      this.child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`, (error) => {
-        if (error) this.rejectRequest(id, new Error(`${method} write failed: ${error.message}`));
-      });
-    });
-  }
-
-  private wireLifecycle(): void {
-    this.child.on('error', (error) => {
-      this.rejectPending(new Error(`codex app-server process error: ${error.message}`));
-    });
-    this.child.on('exit', (code, signal) => {
-      this.rejectPending(
-        new Error(`codex app-server exited before replying (code=${String(code)}, signal=${String(signal)})`),
-      );
-    });
-    this.child.stdin.on('error', (error) => {
-      this.rejectPending(new Error(`codex app-server stdin error: ${error.message}`));
-    });
-  }
-
-  private wireStdout(): void {
-    const rl = createInterface({ input: this.child.stdout });
-    rl.on('line', (line) => {
-      const trimmed = line.trim();
-      if (!trimmed) return;
-      let message: Record<string, unknown>;
-      try {
-        message = JSON.parse(trimmed) as Record<string, unknown>;
-      } catch {
-        return;
-      }
-      const id = message.id;
-      if (typeof id === 'number' && this.pending.has(id)) {
-        const request = this.pending.get(id);
-        this.pending.delete(id);
-        if (!request) return;
-        clearTimeout(request.timer);
-        if (message.error) request.reject(new Error(`request error: ${JSON.stringify(message.error).slice(0, 300)}`));
-        else request.resolve(message);
-      }
-    });
-  }
-
-  private rejectRequest(id: number, error: Error): void {
-    const request = this.pending.get(id);
-    if (!request) return;
-    this.pending.delete(id);
-    clearTimeout(request.timer);
-    request.reject(error);
-  }
-
-  private rejectPending(error: Error): void {
-    for (const id of [...this.pending.keys()]) {
-      this.rejectRequest(id, error);
-    }
-  }
-
-  private async waitForChildClose(): Promise<void> {
-    if (this.childClosed) return;
-    await this.childClosePromise;
   }
 
   private async waitForSentinel(

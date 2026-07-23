@@ -18,6 +18,7 @@ import {
   type NativeMcpTaskSentinel,
   assertUniqueBoardSentinel,
   captureCodexNativeMcpEvidence,
+  probeCodexAppServer,
 } from './codex-native-mcp-evidence.js';
 
 const LAUNCHER = fileURLToPath(new URL('./codex-native-mcp-launcher.sh', import.meta.url));
@@ -133,6 +134,57 @@ test('launcher records exact target and preserves its PID through a native adapt
   expect(fields.slice(6)).toEqual([candidatePidFile]);
   expect(readFileSync(candidatePidFile, 'utf8')).toBe(String(child.pid));
 });
+
+test.skipIf(process.platform === 'win32')(
+  'initialize rejection reaps the native app-server process group',
+  async () => {
+    const root = makeRoot('genie-native-initialize-cleanup-');
+    const codexHome = join(root, 'codex-home');
+    const pidRecord = join(root, 'pids.json');
+    await Bun.$`mkdir -p ${codexHome}`.quiet();
+    const fakeCodex = join(root, 'fake-codex.mjs');
+    writeFileSync(
+      fakeCodex,
+      `#!${process.execPath}
+import { spawn } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+import { createInterface } from 'node:readline';
+if (process.argv.includes('--version')) {
+  process.stdout.write('codex-cli initialize-cleanup-test\\n');
+  process.exit(0);
+}
+const descendant = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1 << 30)'], { stdio: 'ignore' });
+writeFileSync(process.env.PID_RECORD, JSON.stringify({ appServer: process.pid, descendant: descendant.pid }));
+const rl = createInterface({ input: process.stdin });
+rl.on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.method === 'initialize') {
+    const error = { code: -32000, message: 'forced native initialize rejection' };
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: message.id, error }) + '\\n');
+  }
+});
+setInterval(() => {}, 1 << 30);
+`,
+      'utf8',
+    );
+    chmodSync(fakeCodex, 0o755);
+
+    const support = await probeCodexAppServer(
+      { executable: fakeCodex, version: 'codex-cli initialize-cleanup-test' },
+      { ...process.env, CODEX_HOME: codexHome, PID_RECORD: pidRecord },
+      { initializeMs: 1_000, cleanupGraceMs: 100 },
+    );
+
+    expect(support.supported).toBe(false);
+    if (support.supported) throw new Error('fake Codex unexpectedly initialized');
+    expect(support.errorCode).toBe('rpc-error');
+    expect(support.reason).toContain('forced native initialize rejection');
+    const pids = JSON.parse(readFileSync(pidRecord, 'utf8')) as { appServer: number; descendant: number };
+    await Promise.all([waitForExit(pids.appServer), waitForExit(pids.descendant)]);
+    expect(processExists(pids.appServer)).toBe(false);
+    expect(processExists(pids.descendant)).toBe(false);
+  },
+);
 
 test('RPC timeout TERM/KILLs an uncooperative app-server tree and removes the helper temp child', async () => {
   const root = makeRoot('genie-native-cleanup-');

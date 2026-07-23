@@ -58,6 +58,11 @@ import {
 import { inspectPhysicalPath } from '../lib/install-transaction.js';
 import { retireInstallVersionMarker } from '../lib/install-version-marker.js';
 import {
+  type HeldOrderedLifecycleLeases,
+  acquireOrderedLifecycleLeases,
+  releaseOrderedLifecycleLeases,
+} from '../lib/ordered-lifecycle-leases.js';
+import {
   type CodexAgentInstallResult,
   type IntegrationResult,
   type IntegrationSelection,
@@ -2467,25 +2472,38 @@ function projectDeferredUpdateTerminal(terminal: DeferredUpdateTerminal): void {
   process.exitCode = terminal.exitCode;
 }
 
+function acquireUpdateLifecycleLeasesOrProject(
+  dependencies: UpdateCommandDependencies,
+): HeldOrderedLifecycleLeases | null {
+  const acquired = acquireOrderedLifecycleLeases(
+    dependencies.acquireLease ?? (() => acquireLifecycleLease(GENIE_HOME)),
+    dependencies.acquireCodexLease ?? (() => acquireCodexLifecycleLease('update-delivery', { genieHome: GENIE_HOME })),
+  );
+  if (acquired.ok) return acquired;
+  if (acquired.busy === 'agent-sync') {
+    throw new Error(`Another Genie lifecycle command is active: ${acquired.detail}`);
+  }
+  projectDeferredUpdateTerminal(
+    new DeferredUpdateTerminal(
+      2,
+      new CodexLifecycleBusyError(acquired.refusal.holderKind).message,
+      CODEX_LIFECYCLE_BUSY_TRAILER,
+    ),
+  );
+  return null;
+}
+
+function assertInitialUpdateLifecycleAuthority(codexLease: HeldLifecycleLease): void {
+  try {
+    codexLease.assertOperation(codexLease.operationId);
+  } catch (err) {
+    throw new DeferredUpdateTerminal(1, `Update failed: ${errMsg(err)}`, CODEX_DELIVERY_INCOMPLETE_TRAILER);
+  }
+}
+
 function captureDeferredUpdateTerminal(error: unknown): DeferredUpdateTerminal {
   if (error instanceof DeferredUpdateTerminal) return error;
   throw error;
-}
-
-function acquireCodexUpdateLeaseOrRefuse(
-  acquire: NonNullable<UpdateCommandDependencies['acquireCodexLease']> = () =>
-    acquireCodexLifecycleLease('update-delivery', { genieHome: GENIE_HOME }),
-): HeldLifecycleLease {
-  const acquired = acquire();
-  if (!acquired.ok) {
-    throw new DeferredUpdateTerminal(
-      2,
-      new CodexLifecycleBusyError(acquired.holderKind).message,
-      CODEX_LIFECYCLE_BUSY_TRAILER,
-    );
-  }
-  acquired.assertOperation(acquired.operationId);
-  return acquired;
 }
 
 function recoverPendingUpdateStateOrThrow(recover?: () => void): void {
@@ -2499,14 +2517,6 @@ function recoverPendingUpdateStateOrThrow(recover?: () => void): void {
     )();
   } catch (err) {
     throw new DeferredUpdateTerminal(1, `Pending update recovery failed: ${errMsg(err)}`);
-  }
-}
-
-function releaseUpdateLifecycleLeases(codexLease: HeldLifecycleLease | null, lifecycleLease: LifecycleLease): void {
-  try {
-    codexLease?.release();
-  } finally {
-    lifecycleLease.release();
   }
 }
 
@@ -2541,13 +2551,16 @@ export async function updateCommand(
 
   if (!(await confirmPlannedDelivery(options, plannedInstalledVersion, latestVersion))) return;
 
-  const lifecycleLease = acquireRequiredLifecycleLease(dependencies.acquireLease);
-  let codexLease: HeldLifecycleLease | null = null;
+  const acquired = acquireUpdateLifecycleLeasesOrProject(dependencies);
+  if (acquired === null) return;
+  const { agentSyncLease: lifecycleLease, codexLease } = acquired;
   let terminal: DeferredUpdateTerminal | null = null;
   try {
     try {
-      const acquired = acquireCodexUpdateLeaseOrRefuse(dependencies.acquireCodexLease);
-      codexLease = acquired;
+      // The first fencing observation belongs inside the reverse-unwind
+      // boundary. A stale acquisition therefore releases both leases before
+      // projecting failure and cannot reach recovery or any later mutation.
+      assertInitialUpdateLifecycleAuthority(codexLease);
 
       // Revalidate durable recovery and the installed binary immediately after
       // acquiring both locks, before the first mutation owned by this plan.
@@ -2565,7 +2578,7 @@ export async function updateCommand(
           installedVersion,
           latestVersion,
           dependencies.alreadyCurrent,
-          acquired,
+          codexLease,
         );
         if (advancedManifest === null) return;
         manifest = advancedManifest;
@@ -2601,11 +2614,11 @@ export async function updateCommand(
       const resolvedManifest = manifest as LatestManifest;
 
       try {
-        acquired.assertOperation(acquired.operationId);
+        codexLease.assertOperation(codexLease.operationId);
         const complete = await runNormalUpdatePublicationBoundary(
           () =>
             dependencies.deliverSelectedManifest?.(resolvedManifest, platform) ??
-            runDelivery(resolvedManifest, platform, diagnosticsCtx, acquired, dependencies),
+            runDelivery(resolvedManifest, platform, diagnosticsCtx, codexLease, dependencies),
           dependencies.finalizeSelectedDelivery ??
             (async () => {
               runV4CleanupSafe();
@@ -2632,7 +2645,7 @@ export async function updateCommand(
       terminal = captureDeferredUpdateTerminal(err);
     }
   } finally {
-    releaseUpdateLifecycleLeases(codexLease, lifecycleLease);
+    releaseOrderedLifecycleLeases(codexLease, lifecycleLease);
   }
   if (terminal !== null) projectDeferredUpdateTerminal(terminal);
 }

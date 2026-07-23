@@ -32,15 +32,12 @@ import {
   parseReleaseVersion,
 } from '../lib/codex-activation.js';
 import {
+  type AuthenticatedDeliveryRecordFields,
   type VerifiedDeliveryEvidence,
-  deriveDeliveryId,
+  authenticatedDeliveryBindingFromRecord,
   verifiedDeliveryEvidenceFacts,
 } from '../lib/codex-delivery-evidence.js';
-import {
-  type AuthenticatedDeliveryRecord,
-  type DeliveryRecordReadState,
-  assessAuthenticatedDelivery,
-} from '../lib/codex-host-observation.js';
+import type { DeliveryRecordReadState } from '../lib/codex-host-observation.js';
 import type { HeldLifecycleLease } from '../lib/codex-lifecycle-lease.js';
 
 /** The exact operator recovery every delivered-but-action-required Codex path names. */
@@ -182,25 +179,7 @@ export function buildDeliveryPublication(facts: CodexDeliveryFacts): PublishDeli
 function existingDeliveryMatches(facts: CodexDeliveryFacts): boolean {
   if (facts.existingRecord?.status !== 'present') return false;
   const evidence = verifiedDeliveryEvidenceFacts(facts.evidence);
-  const descriptor = evidence.descriptor;
-  return (
-    assessAuthenticatedDelivery(facts.existingRecord, {
-      targetVersion: descriptor.version,
-      canonicalPayloadSha256: descriptor.canonicalPayloadSha256,
-      channel: descriptor.channel,
-      deliveryId: deriveDeliveryId(evidence.evidenceDigest, facts.deliveryRoot),
-      evidenceDigest: evidence.evidenceDigest,
-      platformId: descriptor.platformId,
-      platformTriple: descriptor.platformTriple,
-      releaseTag: descriptor.releaseTag,
-      releaseName: descriptor.releaseName,
-      releaseManifestSha256: descriptor.releaseManifestSha256,
-      artifactSha256: descriptor.artifactSha256,
-      installedBinarySha256: descriptor.installedBinarySha256,
-      deliveryRoot: facts.deliveryRoot,
-      deliveredAt: evidence.deliveredAt,
-    }) === 'matching'
-  );
+  return authenticatedDeliveryBindingFromRecord(facts.existingRecord.record, evidence, facts.deliveryRoot) !== null;
 }
 
 export interface PublishCodexDeliveryInput extends CodexDeliveryFacts {
@@ -216,7 +195,7 @@ export type PublishedCodexDelivery =
       state: CodexDeliveryState;
       published: false;
       wroteDowngradeReceipt: false;
-      record: AuthenticatedDeliveryRecord;
+      record: AuthenticatedDeliveryRecordFields;
     }
   | {
       outcome: 'published';

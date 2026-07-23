@@ -49,6 +49,7 @@ import {
   physicalPathIdentitiesEqual,
   renamePathNoClobber,
 } from '../lib/install-transaction.js';
+import { releaseOrderedLifecycleLeases } from '../lib/ordered-lifecycle-leases.js';
 import { VERSION } from '../lib/version.js';
 
 const VERSION_PATTERN = /(?:^|[^0-9A-Za-z.+-])v?([0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?)(?:[^0-9A-Za-z.+-]|$)/;
@@ -361,11 +362,7 @@ export function installPromoteCommand(
         }
       }
     } finally {
-      try {
-        codexLease?.release();
-      } finally {
-        lease.release();
-      }
+      releaseOrderedLifecycleLeases(codexLease, lease);
     }
   }
 }

@@ -25,6 +25,7 @@ import {
 } from '../lib/codex-lifecycle-lease.js';
 import { genieConfigExists, getGenieConfigPath } from '../lib/genie-config.js';
 import { retireInstallVersionMarker } from '../lib/install-version-marker.js';
+import { acquireOrderedLifecycleLeases, releaseOrderedLifecycleLeases } from '../lib/ordered-lifecycle-leases.js';
 import {
   type InstallIntegrationsOptions,
   type IntegrationResult,
@@ -371,55 +372,6 @@ function runPermittedPostDeliveryIntegrations(
 }
 
 /**
- * Acquire the Codex lifecycle lease unconditionally, or project the AC8 loser
- * refusal. The release payload always owns plugins/bin normalization even when
- * runtime selection is `none` or `claude`, so selection never bypasses this
- * inner lock. A busy holder refuses before the first payload mutation.
- */
-function acquireCodexLeaseOrRefuse(
-  acquire: CodexLifecycleLeaseAcquirer,
-): { refused: true } | { refused: false; lease: HeldLifecycleLease } {
-  const lease = acquire();
-  if (!lease.ok) {
-    console.log(new CodexLifecycleBusyError(lease.holderKind).message);
-    console.log(CODEX_LIFECYCLE_BUSY_TRAILER);
-    process.exitCode = 2;
-    return { refused: true };
-  }
-  return { refused: false, lease };
-}
-
-/**
- * Release in reverse acquisition order without letting an inner-release
- * failure strand the outer lifecycle authority. Preserve the first cleanup
- * failure; if both releases fail, report both instead of replacing either one.
- */
-function releaseInstallLifecycleLeases(codexLease: HeldLifecycleLease | null, lifecycleLease: LifecycleLease): void {
-  let codexReleaseFailed = false;
-  let codexReleaseError: unknown;
-  try {
-    codexLease?.release();
-  } catch (error) {
-    codexReleaseFailed = true;
-    codexReleaseError = error;
-  }
-
-  try {
-    lifecycleLease.release();
-  } catch (lifecycleReleaseError) {
-    if (codexReleaseFailed) {
-      throw new AggregateError(
-        [codexReleaseError, lifecycleReleaseError],
-        'Codex and agent-sync lifecycle lease releases both failed',
-      );
-    }
-    throw lifecycleReleaseError;
-  }
-
-  if (codexReleaseFailed) throw codexReleaseError;
-}
-
-/**
  * Run the post-install finishers. `runV4Cleanup` / `normalizeLayout` / `runSync`
  * are injection seams for tests (mirrors runV4CleanupSafe) — production callers
  * pass options only.
@@ -445,18 +397,18 @@ export async function installCommand(
   // stable and a malformed internal handoff cannot mutate anything.
   const deliveryChannel = resolveDeliveryChannelForInstall();
   const selection = resolveIntegrationSelection(options);
-  const lease = acquireLease();
-  if ('skipped' in lease) throw new Error(`Another Genie lifecycle command is active: ${lease.skipped}`);
-  // The Codex lifecycle lease (.codex-lifecycle.lock) coexists with the agent-sync
-  // lease above (.agent-sync.lock): they guard different things and are always
-  // acquired agent-sync-first (identically in `genie update`), so no lock-ordering
-  // hazard. It is unconditional because payload normalization owns plugin trees
-  // regardless of the selected runtime; released in the finally.
-  let codexLease: HeldLifecycleLease | null = null;
+  const acquired = acquireOrderedLifecycleLeases(acquireLease, acquireCodexLease);
+  if (!acquired.ok) {
+    if (acquired.busy === 'agent-sync') {
+      throw new Error(`Another Genie lifecycle command is active: ${acquired.detail}`);
+    }
+    console.log(new CodexLifecycleBusyError(acquired.refusal.holderKind).message);
+    console.log(CODEX_LIFECYCLE_BUSY_TRAILER);
+    process.exitCode = 2;
+    return;
+  }
+  const { agentSyncLease: lease, codexLease } = acquired;
   try {
-    const gate = acquireCodexLeaseOrRefuse(acquireCodexLease);
-    if (gate.refused) return;
-    codexLease = gate.lease;
     codexLease.assertOperation(codexLease.operationId);
 
     // Both lifecycle locks are now held before canonical payload normalization,
@@ -498,10 +450,7 @@ export async function installCommand(
     // an installer exit 2 (deliverable 3).
     if (projectInstallDeliveryOutcome(delivery, actionRequired)) return;
   } finally {
-    // Release the Codex lifecycle lease (if held) before the agent-sync lease,
-    // the reverse of the agent-sync-first acquisition order. A failed inner
-    // release must never strand the outer authority.
-    releaseInstallLifecycleLeases(codexLease, lease);
+    releaseOrderedLifecycleLeases(codexLease, lease);
   }
 }
 
