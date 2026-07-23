@@ -54,7 +54,10 @@ describe('buildDeliveryPublication — publish facts only for pending', () => {
       }),
     ).toEqual({ targetVersion: N, canonicalPayloadSha256: DIGEST, channel: 'stable', downgradeFrom: T });
   });
-  test('absent and current publish nothing', () => {
+  test('absent-N publishes the delivery facts (fresh host: setup gate needs the record); no downgrade binding', () => {
+    // Group E live-QA regression: without this, a fresh codex host required a
+    // SECOND `genie update` (already-current repair) before setup could pass
+    // the Decision-9 record gate.
     expect(
       buildDeliveryPublication({
         installedVersion: null,
@@ -62,7 +65,10 @@ describe('buildDeliveryPublication — publish facts only for pending', () => {
         canonicalPayloadSha256: DIGEST,
         channel: 'dev',
       }),
-    ).toBeNull();
+    ).toEqual({ targetVersion: T, canonicalPayloadSha256: DIGEST, channel: 'dev' });
+  });
+
+  test('current publishes nothing', () => {
     expect(
       buildDeliveryPublication({
         installedVersion: T,
@@ -159,21 +165,36 @@ describe('publishCodexDelivery — parent publishes facts, nothing else', () => 
     expect(forbidden).toEqual([]);
   });
 
-  test('absent and current publish nothing and never touch activation state', () => {
-    for (const installed of [null, T]) {
-      const { store, publishCalls, forbidden } = spyStore();
-      const result = publishCodexDelivery({
-        lease: spyLease(),
-        store,
-        installedVersion: installed,
-        targetVersion: T,
-        canonicalPayloadSha256: DIGEST,
-        channel: 'dev',
-      });
-      expect(result.published).toBe(false);
-      expect(publishCalls).toHaveLength(0);
-      expect(forbidden).toEqual([]);
-    }
+  test('current publishes nothing and never touches activation state', () => {
+    const { store, publishCalls, forbidden } = spyStore();
+    const result = publishCodexDelivery({
+      lease: spyLease(),
+      store,
+      installedVersion: T,
+      targetVersion: T,
+      canonicalPayloadSha256: DIGEST,
+      channel: 'dev',
+    });
+    expect(result.published).toBe(false);
+    expect(publishCalls).toHaveLength(0);
+    expect(forbidden).toEqual([]);
+  });
+
+  test('absent-N publishes the facts once, with no receipt and no activation-state touch', () => {
+    const { store, publishCalls, forbidden } = spyStore();
+    const result = publishCodexDelivery({
+      lease: spyLease(),
+      store,
+      installedVersion: null,
+      targetVersion: T,
+      canonicalPayloadSha256: DIGEST,
+      channel: 'dev',
+    });
+    expect(result.published).toBe(true);
+    expect(result.wroteDowngradeReceipt).toBe(false);
+    expect(publishCalls).toHaveLength(1);
+    expect(publishCalls[0]).toMatchObject({ targetVersion: T, canonicalPayloadSha256: DIGEST, channel: 'dev' });
+    expect(forbidden).toEqual([]);
   });
 });
 
