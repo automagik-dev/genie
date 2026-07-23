@@ -106,9 +106,13 @@ export {
   resolveSetupExitCode,
   serializeActivationResultTrailer,
   // Group B's host-observation + delivery-attestation contract (deliverables 1, 4, 6).
+  buildDeliveryIncompleteResult,
+};
+
+/** @public Stable delivery-attestation and host-observation facade for downstream lifecycle groups. */
+export {
   DELIVERY_INCOMPLETE_RECOVERY,
   assessAuthenticatedDelivery,
-  buildDeliveryIncompleteResult,
   parseCodexHostObservation,
   projectHostQuery,
   witnessCodexCacheFamily,

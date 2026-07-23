@@ -375,7 +375,7 @@ describe('Group E release and documentation contracts', () => {
     const pkg = JSON.parse(read('package.json')) as { devDependencies: Record<string, string> };
     expect(pkg.devDependencies['@commitlint/cli']).toBeDefined();
     expect(pkg.devDependencies['@commitlint/config-conventional']).toBeDefined();
-    expect(pkg.devDependencies['markdownlint-cli2']).toBe('0.23.0');
+    expect(pkg.devDependencies['markdownlint-cli2']).toBe('0.23.1');
     expect(pkg.devDependencies['markdown-link-check']).toBe('3.14.2');
   });
 

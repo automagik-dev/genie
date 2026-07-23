@@ -24,8 +24,8 @@
  * initialize the transport (proven by the {@link natsConnectionCount} marker).
  *
  * NATS is injected behind {@link NatsLike} so tests drive a fake with zero
- * network. The real transport is a dynamic `import('nats')` — never a top-level
- * import — so merely loading this module costs nothing.
+ * network. The real transport is a dynamic `import('@nats-io/transport-node')`
+ * — never a top-level import — so merely loading this module costs nothing.
  */
 
 import type { Database } from 'bun:sqlite';
@@ -1146,9 +1146,9 @@ export function makeDefaultOmniSetReaction(config: OmniRuntimeConfig): OmniSetRe
   };
 }
 
-/** Default factory — dynamically imports `nats`. Only invoked by `omni serve`. */
+/** Default factory — dynamically imports the Node NATS transport. Only invoked by `omni serve`. */
 export const defaultNatsFactory: NatsFactory = async ({ servers }) => {
-  const nats = await import('nats');
+  const nats = await import('@nats-io/transport-node');
   const nc = await nats.connect({ servers });
   natsConnections++;
   const enc = new TextEncoder();

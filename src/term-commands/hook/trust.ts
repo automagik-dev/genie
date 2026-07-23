@@ -187,7 +187,7 @@ export function registerHookTrustCommand(parent: Command): void {
     .action(trustAction);
 }
 
-/** Re-export defaultTrustPath for callers that want to display it. */
+/** @public Re-export defaultTrustPath for callers that want to display it. */
 export { defaultTrustPath } from '../../hooks/trust.js';
-/** Re-export readTrustFile for callers that want to inspect entries. */
+/** @public Re-export readTrustFile for callers that want to inspect entries. */
 export { readTrustFile } from '../../hooks/trust.js';
