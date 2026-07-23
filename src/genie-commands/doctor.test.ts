@@ -164,6 +164,17 @@ describe('doctorCommand', () => {
   });
 });
 
+/**
+ * Group E: mark a project trusted in the isolated CODEX_HOME global config so
+ * the route-layer classifier can claim route health for it.
+ */
+function trustProjectInCodexConfig(root: string): void {
+  const configPath = join(process.env.CODEX_HOME as string, 'config.toml');
+  mkdirSync(dirname(configPath), { recursive: true });
+  const existing = existsSync(configPath) ? readFileSync(configPath, 'utf8') : '';
+  writeFileSync(configPath, `${existing}[projects."${root}"]\ntrust_level = "trusted"\n`);
+}
+
 describe('Codex doctor lifecycle results', () => {
   test('a timed-out plugin query is a structured hard failure, not a false pass', async () => {
     const checks = await checkCodexIntegration(process.cwd(), {
@@ -182,6 +193,7 @@ describe('Codex doctor lifecycle results', () => {
   test('missing configured Node is actionable and never displaces the fallback', async () => {
     const root = mkdtempSync(join(tmpdir(), 'doctor-node-availability-'));
     try {
+      trustProjectInCodexConfig(root);
       reconcileCodexProjectMcp(
         root,
         { cliAvailable: true, status: 'ok', installed: true, enabled: false, usable: false, detail: 'disabled' },
@@ -212,6 +224,7 @@ describe('Codex doctor lifecycle results', () => {
     const priorCodexHome = process.env.CODEX_HOME;
     process.env.CODEX_HOME = join(root, 'codex-home');
     try {
+      trustProjectInCodexConfig(root);
       expect(existsSync(join(import.meta.dir, '..', '..', 'plugins', 'genie', '.codex-plugin', 'plugin.json'))).toBe(
         true,
       );
@@ -1776,13 +1789,27 @@ function docRegPresent(version = DOC_T): QueryFact {
 function docCachePresent(digest = DOC_DIGEST): PhysicalCacheFact {
   return { kind: 'present', digest, identity: '10:200' };
 }
+/** A matching authenticated delivery record binding the canonical target (Group E delivery gate). */
+function docDeliveryPresent(): CodexActivationSnapshot['delivery'] {
+  return {
+    status: 'present',
+    record: {
+      schemaVersion: 1,
+      deliveryId: 'c'.repeat(32),
+      targetVersion: DOC_T,
+      canonicalPayloadSha256: DOC_DIGEST,
+      channel: 'stable',
+      deliveredAt: '2026-07-12T00:00:00.000Z',
+    },
+  };
+}
 function docCurrentSnapshot(): CodexActivationSnapshot {
   return {
     canonical: docOkCanonical(),
     query: docRegPresent(),
     cache: docCachePresent(),
     receipt: { status: 'absent' },
-    delivery: { status: 'absent' },
+    delivery: docDeliveryPresent(),
     intent: { status: 'absent' },
     receiptConsumed: false,
     observationWitness: { before: docFamily(), after: docFamily() },
@@ -1913,5 +1940,145 @@ describe('doctor --json integrationSummary (Group D)', () => {
   test('doctor.ts never touches the lifecycle lease (read-only observer path)', () => {
     const source = readFileSync(join(import.meta.dir, 'doctor.ts'), 'utf8');
     expect(source.includes('acquireLifecycleLease')).toBe(false);
+  });
+});
+
+describe('Group E lifecycle truth (doctor)', () => {
+  test('current state with an ABSENT delivery record presents delivery-incomplete, exit 1, recovery command', async () => {
+    const missingRecord = { ...docCurrentSnapshot(), delivery: { status: 'absent' as const } };
+    const { output, exitCode } = await captureDoctor(() =>
+      doctorCommand({ json: true }, doctorDepsWith(missingRecord)),
+    );
+    const json = JSON.parse(output) as DoctorJson;
+    expect(json.integrationSummary?.codexPlugin).toMatchObject({
+      state: 'delivery-incomplete',
+      deliveryComplete: false,
+      actionRequired: true,
+      mutationAuthority: 'none',
+    });
+    expect(json.integrationSummary?.codexPlugin.recovery).toContain('genie update');
+    expect(exitCode).toBe(1);
+  });
+
+  test('an INVALID record and a MISMATCHED record present the same consistent delivery-incomplete state', async () => {
+    const invalid = { ...docCurrentSnapshot(), delivery: { status: 'invalid' as const, detail: 'corrupt' } };
+    const mismatched = {
+      ...docCurrentSnapshot(),
+      delivery: {
+        status: 'present' as const,
+        record: {
+          schemaVersion: 1 as const,
+          deliveryId: 'c'.repeat(32),
+          targetVersion: DOC_OLD,
+          canonicalPayloadSha256: DOC_DIGEST,
+          channel: 'stable',
+          deliveredAt: '2026-07-12T00:00:00.000Z',
+        },
+      },
+    };
+    for (const snapshot of [invalid, mismatched]) {
+      const { output, exitCode } = await captureDoctor(() => doctorCommand({ json: true }, doctorDepsWith(snapshot)));
+      const json = JSON.parse(output) as DoctorJson;
+      expect(json.integrationSummary?.codexPlugin.state).toBe('delivery-incomplete');
+      expect(json.integrationSummary?.codexPlugin.deliveryComplete).toBe(false);
+      expect(exitCode).toBe(1);
+    }
+  });
+
+  test('a harder exit-1 state (query-failed) keeps its own presentation; deliveryComplete still false', async () => {
+    const queryFailedNoRecord = { ...docQueryFailedSnapshot(), delivery: { status: 'absent' as const } };
+    const { output, exitCode } = await captureDoctor(() =>
+      doctorCommand({ json: true }, doctorDepsWith(queryFailedNoRecord)),
+    );
+    const json = JSON.parse(output) as DoctorJson;
+    expect(json.integrationSummary?.codexPlugin.state).toBe('query-failed');
+    expect(json.integrationSummary?.codexPlugin.deliveryComplete).toBe(false);
+    expect(exitCode).toBe(1);
+  });
+
+  test('matching record keeps current green: exit 0, deliveryComplete true (regression anchor)', async () => {
+    const { output, exitCode } = await captureDoctor(() =>
+      doctorCommand({ json: true }, doctorDepsWith(docCurrentSnapshot())),
+    );
+    const json = JSON.parse(output) as DoctorJson;
+    expect(json.integrationSummary?.codexPlugin).toMatchObject({ state: 'current', deliveryComplete: true });
+    expect(exitCode).toBe(0);
+  });
+
+  test('unified host path: one canned query feeds advisory rider AND a non-query-failed summary (Decision 11)', async () => {
+    const calls: string[][] = [];
+    const stdout = JSON.stringify({
+      installed: [{ pluginId: 'genie@automagik', version: '5.260722.1', enabled: true }],
+    });
+    const { output } = await captureDoctor(() =>
+      doctorCommand(
+        { json: true },
+        {
+          root: join(isolatedHome, 'repo'),
+          databaseRoot: join(isolatedHome, 'repo'),
+          bunVersion: '1.3.10',
+          bunPath: '/usr/bin/bun',
+          codexHost: {
+            which: () => process.execPath,
+            codexHome: join(isolatedHome, 'codex'),
+            runner: (command, args) => {
+              calls.push([command, ...args]);
+              return {
+                exitCode: 0,
+                stdout,
+                stderr: '\x1b[33mWARN: PATH advisory\x1b[0m',
+              };
+            },
+          },
+        },
+      ),
+    );
+    // Exactly one spawn fed the probe AND (via replay) the activation snapshot.
+    expect(calls).toEqual([[process.execPath, 'plugin', 'list', '--json']]);
+    const json = JSON.parse(output) as DoctorJson;
+    const cli = json.checks.find((check) => check.name === 'Codex CLI') as
+      | { name: string; status: string; advisory?: string; detail?: string }
+      | undefined;
+    expect(cli?.advisory).toBe('WARN: PATH advisory');
+    expect(cli?.detail).toContain('advisory: WARN: PATH advisory');
+    // The advisory did NOT flip the fail-closed activation parser to query-failed.
+    expect(json.integrationSummary?.codexPlugin.state).not.toBe('query-failed');
+    // One ANSI-free JSON document: the raw advisory's escape bytes never reach stdout.
+    expect(output).not.toContain('\x1b[33m');
+  });
+
+  test('project context: ok / database-unavailable / unsupported-layout map to pass / warn / fail', async () => {
+    const base = {
+      effectiveLaunchCwd: '/repo',
+      worktreeConfigRoot: '/repo',
+      gitCommonDir: '/repo/.git',
+      genieStorageRoot: '/repo',
+      dbPath: '/repo/.genie/genie.db',
+    };
+    const cases = [
+      { context: { kind: 'ok' as const, ...base }, status: 'pass' },
+      {
+        context: { kind: 'project-database-unavailable' as const, effectiveLaunchCwd: '/repo', detail: 'no db' },
+        status: 'warn',
+      },
+      {
+        context: { kind: 'unsupported-project-layout' as const, effectiveLaunchCwd: '/repo', detail: 'bare repo' },
+        status: 'fail',
+      },
+    ];
+    for (const { context, status } of cases) {
+      const { output } = await captureDoctor(() =>
+        doctorCommand({ json: true }, { ...doctorDepsWith(null), projectContext: context }),
+      );
+      const json = JSON.parse(output) as DoctorJson;
+      const check = json.checks.find((c) => c.name === 'Codex project context');
+      expect(check?.status).toBe(status);
+    }
+  });
+
+  test('injected root without injected context skips the context check (unit-test seam, not a repo)', async () => {
+    const { output } = await captureDoctor(() => doctorCommand({ json: true }, doctorDepsWith(null)));
+    const json = JSON.parse(output) as DoctorJson;
+    expect(json.checks.find((c) => c.name === 'Codex project context')).toBeUndefined();
   });
 });
