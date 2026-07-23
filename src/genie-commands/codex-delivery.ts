@@ -121,19 +121,27 @@ export interface CodexDeliveryFacts {
 }
 
 /**
- * Build the `publishDelivery` input for a pending delivery, or null when there
- * is nothing to publish (absent/current/indeterminate). A downgrade binds
+ * Build the `publishDelivery` input for a pending OR absent-N delivery, or null
+ * when there is nothing to publish (current/indeterminate). A downgrade binds
  * `downgradeFrom = N` so A writes the one-time downgrade receipt.
+ *
+ * Group E: `absent` (no installed plugin generation) publishes too. The record
+ * binds the DELIVERY facts, not an activation — and setup's Decision-9 gate
+ * refuses to activate a fresh host without a matching record, so a delivery
+ * that skipped publication forced a second `genie update` (already-current
+ * repair) before the first `genie setup --codex` could ever succeed
+ * (2026-07-23 live-QA finding). Publication remains a pure fact write: no
+ * journal, activation, or cache mutation.
  */
 export function buildDeliveryPublication(facts: CodexDeliveryFacts): PublishDeliveryInput | null {
   const state = classifyCodexDelivery(facts.installedVersion, facts.targetVersion);
-  if (state.kind !== 'pending') return null;
+  if (state.kind !== 'pending' && state.kind !== 'absent') return null;
   const input: PublishDeliveryInput = {
     targetVersion: facts.targetVersion,
     canonicalPayloadSha256: facts.canonicalPayloadSha256,
     channel: facts.channel,
   };
-  if (state.direction === 'downgrade' && facts.installedVersion !== null) {
+  if (state.kind === 'pending' && state.direction === 'downgrade' && facts.installedVersion !== null) {
     input.downgradeFrom = facts.installedVersion;
   }
   return input;
@@ -151,7 +159,7 @@ export interface PublishCodexDeliveryInput extends CodexDeliveryFacts {
 
 export interface PublishedCodexDelivery {
   state: CodexDeliveryState;
-  /** True when this call wrote a delivery record (pending only). */
+  /** True when this call wrote a delivery record (pending or absent-N delivery). */
   published: boolean;
   /** True when this call wrote a downgrade receipt (explicit-channel downgrade). */
   wroteDowngradeReceipt: boolean;
