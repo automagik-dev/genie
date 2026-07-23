@@ -1669,7 +1669,7 @@ export function runFreshBinaryPostDeliveryConvergence(
     // result trailer over inherited stdio; the parent only mirrors the code.
     if (childExitStatus(cause) === 2) return 'action-required';
     throw new Error(
-      `fresh Genie integration convergence failed: ${errMsg(cause)}. The verified CLI update is installed, but its integrations are not converged. Close all Codex tasks first. Then, from an external terminal, run \`genie update\` (or \`genie setup --codex\`), review \`/hooks\`, and start a new Codex task.`,
+      `fresh Genie integration convergence failed: ${errMsg(cause)}. The verified CLI update is installed, but the integration named above is not converged. Rerun \`genie update\` from a regular terminal to retry. If Codex activation is pending afterwards, close Codex tasks, run \`genie setup --codex\`, review \`/hooks\`, and start a new Codex task.`,
     );
   }
 }
@@ -2069,17 +2069,20 @@ async function handleAlreadyCurrentUpdate(
   latestVersion: string | null | undefined,
 ): Promise<void> {
   const repair = await attemptAlreadyCurrentDeliveryRepair(channel, platform);
-  if (repair.action === 'exit-handoff') {
-    // Old-parent repair published one bound record but the registered generation
-    // still trails the target: hand off to setup (exit 2) with the one delivery
-    // trailer and exact next action, keeping N registered.
-    process.exitCode = 2;
-    log(CODEX_DELIVERY_RESULT_TRAILER);
-    return;
-  }
   success(`Already up to date (v${normalizeVersion(installedVersion)}, channel ${channel})`);
   if (repair.action === 'repaired-current') {
     log('Repaired the missing Codex delivery record for the installed generation.');
+  }
+  if (repair.action === 'exit-handoff') {
+    // Old-parent repair published one bound record but the registered Codex
+    // generation still trails the target. Say so in PLAIN language BEFORE any
+    // machine trailer (live-QA: a bare JSON line as the whole output reads as
+    // a malfunction), and STILL run the non-cache-advancing convergence so a
+    // rerun after a failed integration refresh (e.g. claude) actually retries
+    // — the convergence exit signal carries the one delivery trailer.
+    log(
+      'Codex plugin activation is pending: retire Codex tasks, run `genie setup --codex`, review `/hooks`, then start a new Codex task.',
+    );
   }
   runTrackedManualUpdateConvergence(latestVersion ?? normalizeVersion(installedVersion));
   retireLegacyInstallMarkerSafe();
