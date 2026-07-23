@@ -20,14 +20,23 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type AgentSyncReport, acquireLifecycleLease, runAgentSync } from '../../lib/agent-sync';
+import { observeCodexActivation, openCodexActivationStore } from '../../lib/codex-activation';
+import type { DeliveryEvidencePlatformId } from '../../lib/codex-delivery-evidence';
+import { mintTestDeliveryEvidence } from '../../lib/codex-delivery-evidence.test-support';
+import {
+  type HeldLifecycleLease,
+  acquireLifecycleLease as acquireCodexLifecycleLease,
+} from '../../lib/codex-lifecycle-lease';
 import { REQUIRED_GENIE_MCP_TOOLS } from '../../lib/codex-mcp-health-session';
 import type { CodexPluginProbe } from '../../lib/codex-project-mcp';
 import {
@@ -37,16 +46,21 @@ import {
   type CommandRunner,
   type IntegrationSelection,
 } from '../../lib/runtime-integrations';
+import { VERSION } from '../../lib/version';
 import type { AuxiliaryTreeOutcome, AuxiliaryTreeStage } from '../auxiliary-trees.js';
+import type { PinnedManifest } from '../codex-delivery-repair.js';
 import {
   type RefreshUpdatePluginsOptions,
   refreshUpdatePlugins as refreshUpdatePluginsWithPhysicalVerification,
 } from '../update-integrations.js';
 import {
+  CodexDeliveryPublicationError,
   type LatestManifest,
   type VerifyResult,
   _resetNextDeprecationLatchForTest,
   applyConvergenceExitSignal,
+  attemptAlreadyCurrentDeliveryRepair,
+  buildAlreadyCurrentRepairSeams,
   compareVersions,
   createPrivateUpdateTempRoot,
   decideDowngrade,
@@ -57,10 +71,13 @@ import {
   fetchLatestManifest,
   finalizeAuxiliaryDelivery,
   formatVerifyBanner,
+  handleAlreadyCurrentUpdate,
   hashPhysicalFileIncrementally,
   isGenieProcessSnapshotLine,
   manifestUrlForChannel,
+  mapAlreadyCurrentRepairOutcome,
   narrowUpdateAgentSyncSelection,
+  narrowUpdatePluginRefreshSelection,
   normalizeVersion,
   persistChannel,
   resolveChannel,
@@ -73,12 +90,15 @@ import {
   runFreshBinaryPostDeliveryConvergence,
   runLegacySyncOnlyConvergence,
   runManualUpdateConvergence,
+  runNormalUpdatePublicationBoundary,
+  runUpdateAgentSync,
   runV4CleanupSafe,
   runVerifyProbe,
   shortCircuitIfCurrent,
   shouldEmitPathDivergenceWarning,
   summarizeJsonlSignals,
   syncAuxiliaryContent,
+  updateCommand,
 } from '../update.js';
 
 function healthyUpdateCodexProbe(): CodexPluginProbe {
@@ -407,7 +427,7 @@ describe('updateCommand downgrade wiring (BUG B source-shape lock)', () => {
     const cmdStart = source.indexOf('export async function updateCommand');
     const cmdBody = source.slice(cmdStart);
     const guardIdx = cmdBody.indexOf('applyDowngradeGuard(');
-    const downloadIdx = cmdBody.indexOf('await downloadAndVerifyTarball(');
+    const downloadIdx = cmdBody.indexOf('dependencies.downloadDeliveryAssets ?? downloadAndVerifyDeliveryAssets');
     // The guard must run BEFORE any tarball is fetched.
     expect(guardIdx).toBeGreaterThan(-1);
     expect(guardIdx).toBeLessThan(downloadIdx);
@@ -435,6 +455,17 @@ describe('updateCommand downgrade wiring (BUG B source-shape lock)', () => {
 // ============================================================================
 
 describe('updateCommand wiring', () => {
+  const commandManifest: LatestManifest = {
+    schema_version: 1,
+    channel: 'stable',
+    version: '5.260723.8',
+    released_at: '2026-07-23T00:00:00Z',
+    tarball_base: 'https://github.com/automagik-dev/genie/releases/download/v5.260723.8',
+    platforms: ['darwin-arm64'],
+    manifestBytes: '{"version":"5.260723.8"}\n',
+    manifestSha256: 'a'.repeat(64),
+  };
+
   test('npm-update path is gone — no `bun add @automagik/genie` references', () => {
     const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
     expect(source).not.toMatch(/bun add[^\n]*@automagik\/genie/);
@@ -463,6 +494,16 @@ describe('updateCommand wiring', () => {
     expect(source).toContain('--rollback');
   });
 
+  test('the already-current handoff prints plain language and returns before convergence', () => {
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    // A bare machine trailer must never be the whole human output. Publication
+    // returns its activation handoff without entering another authority.
+    expect(source).toContain('Codex plugin activation is pending: retire Codex tasks');
+    const handoffBranch = source.slice(source.indexOf('handleAlreadyCurrentUpdate'));
+    expect(handoffBranch).toContain('log(CODEX_DELIVERY_RESULT_TRAILER)');
+    expect(handoffBranch).toContain('process.exitCode = 2');
+  });
+
   test('"Already up to date" exit logs version and channel', () => {
     const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
     expect(source).toContain('Already up to date');
@@ -470,7 +511,9 @@ describe('updateCommand wiring', () => {
     // running process's compile-time VERSION — otherwise a stale shadowing
     // binary on $PATH re-offers the same update forever.
     expect(source).toContain('shortCircuitIfCurrent(installedVersion, latestVersion)');
-    expect(source).toContain('const installedVersion = resolveInstalledVersion()');
+    expect(source).toContain(
+      'const installedVersion = (dependencies.readInstalledVersion ?? resolveInstalledVersion)()',
+    );
   });
 
   test('--rollback short-circuits before downloading anything', () => {
@@ -479,16 +522,360 @@ describe('updateCommand wiring', () => {
     const cmdStart = source.indexOf('export async function updateCommand');
     expect(cmdStart).toBeGreaterThan(-1);
     const cmdBody = source.slice(cmdStart);
-    const explicitModeIdx = cmdBody.indexOf('await runExplicitUpdateMode(mode)');
-    const fetchIdx = cmdBody.indexOf('await fetchLatestManifest(');
+    const explicitModeIdx = cmdBody.indexOf('await dispatchNonNormalUpdateMode(options)');
+    const fetchIdx = cmdBody.indexOf('dependencies.fetchManifest ?? fetchLatestManifest');
     expect(explicitModeIdx).toBeGreaterThan(-1);
     expect(fetchIdx).toBeGreaterThan(-1);
     expect(explicitModeIdx).toBeLessThan(fetchIdx);
+    const dispatcher = source.slice(
+      source.indexOf('async function dispatchNonNormalUpdateMode'),
+      source.indexOf('async function confirmPlannedDelivery'),
+    );
+    expect(dispatcher).toContain('await runExplicitUpdateMode(mode)');
     const explicitMode = source.slice(
       source.indexOf('async function runExplicitUpdateMode'),
-      source.indexOf('function runFreshConvergenceOrReport'),
+      source.indexOf('async function dispatchNonNormalUpdateMode'),
     );
-    expect(explicitMode).toContain("if (mode === 'rollback') await runRollback()");
+    expect(explicitMode).toContain("if (mode === 'rollback') terminal = await runRollback()");
+  });
+
+  test('no hard process exit is reachable while normal or explicit update leases are held', () => {
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    const normalStart = source.indexOf('const acquired = acquireUpdateLifecycleLeasesOrProject(dependencies);');
+    const normalEnd = source.indexOf('\n/**\n * Post-swap v4 legacy cleanup', normalStart);
+    const explicitStart = source.indexOf('async function runExplicitUpdateMode');
+    const explicitEnd = source.indexOf('\nasync function dispatchNonNormalUpdateMode', explicitStart);
+    expect(normalStart).toBeGreaterThan(-1);
+    expect(normalEnd).toBeGreaterThan(normalStart);
+    expect(explicitStart).toBeGreaterThan(-1);
+    expect(explicitEnd).toBeGreaterThan(explicitStart);
+    expect(source.slice(normalStart, normalEnd)).not.toContain('process.exit(');
+    expect(source.slice(explicitStart, explicitEnd)).not.toContain('process.exit(');
+    expect(source.slice(normalStart, normalEnd)).toContain('projectDeferredUpdateTerminal(terminal)');
+    expect(source.slice(explicitStart, explicitEnd)).toContain('projectDeferredUpdateTerminal(terminal)');
+  });
+
+  test('a setup-held Codex lease refuses update before recovery or any delivery-owned mutation', async () => {
+    const priorExitCode = process.exitCode;
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const events: string[] = [];
+    const logSpy = spyOn(console, 'log').mockImplementation((...args: unknown[]) => stdout.push(args.join(' ')));
+    const errorSpy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => stderr.push(args.join(' ')));
+    process.exitCode = undefined;
+    try {
+      await updateCommand(
+        { yes: true, stable: true },
+        {
+          fetchManifest: async () => commandManifest,
+          readInstalledVersion: () => '5.260700.1',
+          resolvePlatform: () => 'darwin-arm64',
+          acquireLease: () => {
+            events.push('agent-acquire');
+            return {
+              path: '/fixture/.agent-sync.lock',
+              release: () => events.push('agent-release'),
+            };
+          },
+          acquireCodexLease: () => {
+            events.push('codex-busy');
+            return {
+              ok: false,
+              reason: 'codex-lifecycle-busy',
+              holderKind: 'setup-activation',
+              detail: 'held by setup-activation',
+            };
+          },
+          recoverPendingState: () => events.push('MUTATION:recovery'),
+          persistSelectedChannel: async () => {
+            events.push('MUTATION:channel');
+          },
+          requireCanonicalInstall: () => events.push('MUTATION:canonical'),
+          deliverSelectedManifest: async () => {
+            events.push('MUTATION:delivery');
+            return [];
+          },
+          finalizeSelectedDelivery: async () => {
+            events.push('MUTATION:finalize');
+            return true;
+          },
+        },
+      );
+
+      expect(events).toEqual(['agent-acquire', 'codex-busy', 'agent-release']);
+      expect(events.some((event) => event.startsWith('MUTATION:'))).toBe(false);
+      expect(Number(process.exitCode)).toBe(2);
+      const output = [...stdout, ...stderr].join('\n');
+      expect(output).toContain('codex-lifecycle-busy');
+      expect(output).toContain('setup-activation');
+      expect(output).toContain('"deliveryComplete":false');
+    } finally {
+      logSpy.mockRestore();
+      errorSpy.mockRestore();
+      process.exitCode = priorExitCode;
+    }
+  });
+
+  test('an initial Codex fencing failure releases in reverse order before projecting and runs no mutation', async () => {
+    const priorExitCode = process.exitCode;
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const events: string[] = [];
+    const logSpy = spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      const line = args.join(' ');
+      stdout.push(line);
+      if (line.includes('Update failed: stale lifecycle authority')) events.push('terminal-error');
+      if (line.includes('"deliveryComplete":false')) events.push('terminal-trailer');
+    });
+    const errorSpy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+      const line = args.join(' ');
+      stderr.push(line);
+      if (line.includes('Update failed: stale lifecycle authority')) events.push('terminal-error');
+    });
+    process.exitCode = undefined;
+    try {
+      await updateCommand(
+        { yes: true, stable: true },
+        {
+          fetchManifest: async () => commandManifest,
+          readInstalledVersion: () => '5.260700.1',
+          resolvePlatform: () => 'darwin-arm64',
+          acquireLease: () => {
+            events.push('agent-acquire');
+            return {
+              path: '/fixture/.agent-sync.lock',
+              release: () => events.push('agent-release'),
+            };
+          },
+          acquireCodexLease: () => {
+            events.push('codex-acquire');
+            return {
+              ok: true,
+              operationId: 'e'.repeat(32),
+              kind: 'update-delivery',
+              assertOperation: () => {
+                events.push('codex-assert');
+                throw new Error('stale lifecycle authority');
+              },
+              release: () => events.push('codex-release'),
+            };
+          },
+          recoverPendingState: () => events.push('MUTATION:recovery'),
+          persistSelectedChannel: async () => {
+            events.push('MUTATION:channel');
+          },
+          requireCanonicalInstall: () => events.push('MUTATION:canonical'),
+          deliverSelectedManifest: async () => {
+            events.push('MUTATION:delivery');
+            return [];
+          },
+          finalizeSelectedDelivery: async () => {
+            events.push('MUTATION:finalize');
+            return true;
+          },
+        },
+      );
+
+      expect(events).toEqual([
+        'agent-acquire',
+        'codex-acquire',
+        'codex-assert',
+        'codex-release',
+        'agent-release',
+        'terminal-error',
+        'terminal-trailer',
+      ]);
+      expect(events.some((event) => event.startsWith('MUTATION:'))).toBe(false);
+      expect(Number(process.exitCode)).toBe(1);
+      const output = [...stdout, ...stderr].join('\n');
+      expect(output).toContain('Update failed: stale lifecycle authority');
+      expect(output.match(/"deliveryComplete":false/g)).toHaveLength(1);
+    } finally {
+      logSpy.mockRestore();
+      errorSpy.mockRestore();
+      process.exitCode = priorExitCode ?? 0;
+    }
+  });
+
+  test('normal update holds agent-sync then Codex through delivery and releases in reverse order', async () => {
+    const priorExitCode = process.exitCode;
+    const events: string[] = [];
+    const logSpy = spyOn(console, 'log').mockImplementation(() => undefined);
+    const errorSpy = spyOn(console, 'error').mockImplementation(() => undefined);
+    process.exitCode = undefined;
+    try {
+      await updateCommand(
+        { yes: true, stable: true },
+        {
+          fetchManifest: async () => {
+            events.push('fetch');
+            return commandManifest;
+          },
+          readInstalledVersion: () => {
+            events.push('read');
+            return '5.260700.1';
+          },
+          resolvePlatform: () => {
+            events.push('platform');
+            return 'darwin-arm64';
+          },
+          acquireLease: () => {
+            events.push('agent-acquire');
+            return {
+              path: '/fixture/.agent-sync.lock',
+              release: () => events.push('agent-release'),
+            };
+          },
+          acquireCodexLease: () => {
+            events.push('codex-acquire');
+            return {
+              ok: true,
+              operationId: 'c'.repeat(32),
+              kind: 'update-delivery',
+              assertOperation: () => events.push('codex-assert'),
+              release: () => events.push('codex-release'),
+            };
+          },
+          recoverPendingState: () => events.push('recover'),
+          persistSelectedChannel: async () => {
+            events.push('persist');
+          },
+          requireCanonicalInstall: () => events.push('canonical'),
+          deliverSelectedManifest: async () => {
+            events.push('deliver');
+            return [];
+          },
+          finalizeSelectedDelivery: async () => {
+            events.push('finalize');
+            return true;
+          },
+        },
+      );
+
+      expect(events).toEqual([
+        'fetch',
+        'read',
+        'platform',
+        'agent-acquire',
+        'codex-acquire',
+        'codex-assert',
+        'recover',
+        'read',
+        'persist',
+        'canonical',
+        'codex-assert',
+        'deliver',
+        'finalize',
+        'codex-release',
+        'agent-release',
+      ]);
+    } finally {
+      logSpy.mockRestore();
+      errorSpy.mockRestore();
+      process.exitCode = priorExitCode;
+    }
+  });
+
+  test('same-version repair borrows the one command-held Codex lease without nested acquisition', async () => {
+    const priorExitCode = process.exitCode;
+    const events: string[] = [];
+    const logSpy = spyOn(console, 'log').mockImplementation(() => undefined);
+    const errorSpy = spyOn(console, 'error').mockImplementation(() => undefined);
+    process.exitCode = undefined;
+    const held: HeldLifecycleLease = {
+      ok: true,
+      operationId: 'd'.repeat(32),
+      kind: 'update-delivery',
+      assertOperation: () => events.push('codex-assert'),
+      release: () => events.push('codex-release'),
+    };
+    try {
+      await updateCommand(
+        { yes: true, stable: true },
+        {
+          fetchManifest: async () => commandManifest,
+          readInstalledVersion: () => commandManifest.version,
+          resolvePlatform: () => 'darwin-arm64',
+          acquireLease: () => {
+            events.push('agent-acquire');
+            return {
+              path: '/fixture/.agent-sync.lock',
+              release: () => events.push('agent-release'),
+            };
+          },
+          acquireCodexLease: () => {
+            events.push('codex-acquire');
+            return held;
+          },
+          recoverPendingState: () => events.push('recover'),
+          persistSelectedChannel: async () => {
+            events.push('persist');
+          },
+          alreadyCurrent: {
+            attemptRepair: async (_channel, _platform, lease) => {
+              events.push('repair');
+              expect(lease).toBe(held);
+              return { action: 'repaired-current' };
+            },
+            retireLegacyMarker: () => events.push('retire'),
+          },
+          requireCanonicalInstall: () => {
+            throw new Error('same-version path reached normal delivery');
+          },
+        },
+      );
+
+      expect(events).toEqual([
+        'agent-acquire',
+        'codex-acquire',
+        'codex-assert',
+        'recover',
+        'persist',
+        'repair',
+        'retire',
+        'codex-release',
+        'agent-release',
+      ]);
+    } finally {
+      logSpy.mockRestore();
+      errorSpy.mockRestore();
+      process.exitCode = priorExitCode;
+    }
+  });
+});
+
+describe('normal update publication terminal boundary', () => {
+  test('post-promotion publication failure is nonzero, emits one false trailer, and runs no success finalizer', async () => {
+    const priorExitCode = process.exitCode;
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const logSpy = spyOn(console, 'log').mockImplementation((...args: unknown[]) => stdout.push(args.join(' ')));
+    const errorSpy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => stderr.push(args.join(' ')));
+    let successFinalizers = 0;
+    process.exitCode = undefined;
+    try {
+      const complete = await runNormalUpdatePublicationBoundary(
+        async () => {
+          throw new CodexDeliveryPublicationError('delivery store is unwritable');
+        },
+        async () => {
+          successFinalizers += 1; // includes marker retirement in the real command boundary
+          return true;
+        },
+      );
+      expect(complete).toBe(false);
+      expect(Number(process.exitCode)).toBe(1);
+      expect(successFinalizers).toBe(0);
+      const output = [...stdout, ...stderr].join('\n');
+      expect(output).toContain('delivery store is unwritable');
+      expect(output.match(/"deliveryComplete":false/g)).toHaveLength(1);
+      expect(output).not.toContain('Already up to date');
+      expect(output).not.toContain('Update complete');
+    } finally {
+      logSpy.mockRestore();
+      errorSpy.mockRestore();
+      process.exitCode = priorExitCode ?? 0;
+    }
   });
 });
 
@@ -905,13 +1292,20 @@ describe('fetchLatestManifest (G5)', () => {
     released_at: '2026-05-09T22:11:00Z',
     tarball_base: 'https://github.com/automagik-dev/genie/releases/download/v4.260509.5',
     platforms: ['linux-x64-glibc', 'linux-x64-musl', 'linux-arm64', 'darwin-arm64'],
+    manifestBytes: '',
+    manifestSha256: '0'.repeat(64),
   };
 
   test('parses a valid latest.json payload', async () => {
+    const raw = JSON.stringify({ ...validManifest, manifestBytes: undefined, manifestSha256: undefined });
     const manifest = await fetchLatestManifest('stable', {
-      fetcher: async () => JSON.stringify(validManifest),
+      fetcher: async () => raw,
     });
-    expect(manifest).toEqual(validManifest);
+    expect(manifest).toEqual({
+      ...validManifest,
+      manifestBytes: raw,
+      manifestSha256: createHash('sha256').update(raw).digest('hex'),
+    });
   });
 
   test('returns null when fetcher resolves null (network failure)', async () => {
@@ -942,12 +1336,126 @@ describe('fetchLatestManifest (G5)', () => {
     expect(manifest).toBeNull();
   });
 
+  test('returns null when channel is omitted instead of inventing the requested channel binding', async () => {
+    const manifest = await fetchLatestManifest('stable', {
+      fetcher: async () =>
+        JSON.stringify({ ...validManifest, channel: undefined, manifestBytes: undefined, manifestSha256: undefined }),
+    });
+    expect(manifest).toBeNull();
+  });
+
+  test('returns null when the fetched manifest declares a different channel', async () => {
+    const manifest = await fetchLatestManifest('stable', {
+      fetcher: async () =>
+        JSON.stringify({ ...validManifest, channel: 'dev', manifestBytes: undefined, manifestSha256: undefined }),
+    });
+    expect(manifest).toBeNull();
+  });
+
+  test('returns null when a platform entry is not a string', async () => {
+    const manifest = await fetchLatestManifest('stable', {
+      fetcher: async () =>
+        JSON.stringify({
+          ...validManifest,
+          platforms: ['darwin-arm64', 42],
+          manifestBytes: undefined,
+          manifestSha256: undefined,
+        }),
+    });
+    expect(manifest).toBeNull();
+  });
+
   test('honors timeoutMs and resolves null when fetcher hangs', async () => {
     const manifest = await fetchLatestManifest('stable', {
       timeoutMs: 30,
       fetcher: () => new Promise((r) => setTimeout(() => r('{}'), 200)),
     });
     expect(manifest).toBeNull();
+  });
+});
+
+describe('buildAlreadyCurrentRepairSeams — immutable manifest/asset adapter', () => {
+  test('the first raw-byte manifest object drives the exact tag/name/platform download; the second fetch only rechecks', async () => {
+    const platformId = resolvePlatformId();
+    const raw = `{
+  "schema_version": 1,
+  "channel": "dev",
+  "version": "${VERSION}",
+  "released_at": "2026-07-23T00:00:00.000Z",
+  "tarball_base": "https://example.invalid/releases/v${VERSION}",
+  "platforms": ["${platformId}"],
+  "ignored_future_field": "raw-byte-binding"
+}\n`;
+    const expectedDigest = createHash('sha256').update(raw).digest('hex');
+    const fetched = { object: null as LatestManifest | null };
+    let fetches = 0;
+    let downloads = 0;
+    const tempRoot = mkdtempSync(join(tmpdir(), 'update-repair-adapter-'));
+    const tempRoots: string[] = [];
+    const lease: HeldLifecycleLease = {
+      ok: true,
+      operationId: 'f'.repeat(32),
+      kind: 'update-delivery',
+      assertOperation() {},
+      release() {},
+    };
+    try {
+      const seams = buildAlreadyCurrentRepairSeams(
+        platformId,
+        {
+          version: VERSION,
+          pluginTreeSha256: 'a'.repeat(64),
+          binarySha256: 'b'.repeat(64),
+          deliveryRoot: '/physical/genie-home',
+        },
+        lease,
+        tempRoots,
+        '/logical/genie-home',
+        {
+          fetchManifest: async (channel) => {
+            fetches += 1;
+            const manifest = await fetchLatestManifest(channel, { fetcher: async () => raw });
+            if (fetched.object === null) fetched.object = manifest;
+            return manifest;
+          },
+          createTempRoot: () => tempRoot,
+          downloadAndVerifyDeliveryAssets: async (manifest, platform, destination) => {
+            downloads += 1;
+            expect(manifest).toBe(fetched.object as LatestManifest);
+            expect(manifest.manifestSha256).toBe(expectedDigest);
+            expect(manifest.released_at).toBe('2026-07-23T00:00:00.000Z');
+            expect(manifest.tarball_base).toBe(`https://example.invalid/releases/v${VERSION}`);
+            expect(platform).toBe(platformId);
+            return {
+              tarballPath: join(destination, `genie-${VERSION}-${platformId}.tar.gz`),
+              descriptorBytes: Buffer.from('{}'),
+              bundleBytes: Buffer.from('{}'),
+            };
+          },
+        },
+      );
+      const first = await seams.fetchManifest('dev');
+      if (first === null) throw new Error('expected first pinned manifest');
+      expect(first).toBe(fetched.object as LatestManifest);
+      await seams.downloadAndVerify(
+        {
+          channel: 'dev',
+          targetVersion: VERSION,
+          platformTriple: `${process.platform}-${process.arch}`,
+          platformId,
+          releaseTag: `v${VERSION}`,
+          releaseName: `genie-${VERSION}-${platformId}.tar.gz`,
+        },
+        first,
+      );
+      const second = await seams.fetchManifest('dev');
+      expect(second?.manifestSha256).toBe(expectedDigest);
+      expect(fetches).toBe(2);
+      expect(downloads).toBe(1);
+      expect(tempRoots).toEqual([tempRoot]);
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
   });
 });
 
@@ -1005,6 +1513,8 @@ describe('downloadAndVerifyTarball (G5)', () => {
     released_at: '2026-05-09T22:11:00Z',
     tarball_base: 'https://github.com/automagik-dev/genie/releases/download/v4.260509.5',
     platforms: ['linux-x64-glibc', 'linux-x64-musl', 'linux-arm64', 'darwin-arm64'],
+    manifestBytes: '{}',
+    manifestSha256: '0'.repeat(64),
   };
 
   test('issues gh release download with the correct version tag and pattern set', async () => {
@@ -1095,7 +1605,7 @@ describe('downloadAndVerifyTarball (G5)', () => {
     }
   });
 
-  test('falls back to cosign bundle when gh attestation verify fails', async () => {
+  test('fails closed instead of minting delivery facts from the reduced cosign fallback', async () => {
     const tmp = mkdtempSync(join(tmpdir(), 'genie-update-dl-'));
     try {
       const tarballPath = join(tmp, `genie-${manifest.version}-linux-x64-glibc.tar.gz`);
@@ -1114,25 +1624,16 @@ describe('downloadAndVerifyTarball (G5)', () => {
         return { success: true, output: '' };
       };
 
-      await expect(downloadAndVerifyTarball(manifest, 'linux-x64-glibc', tmp, { runner })).resolves.toBe(tarballPath);
-      expect(calls.map((call) => call.cmd)).toEqual(['gh', 'gh', 'cosign']);
-      expect(calls[2].args).toEqual([
-        'verify-blob',
-        '--bundle',
-        bundlePath,
-        '--certificate-identity-regexp',
-        '^https://github\\.com/automagik-dev/genie/\\.github/workflows/sign-attest\\.yml@refs/heads/main$',
-        '--certificate-oidc-issuer',
-        'https://token.actions.githubusercontent.com',
-        tarballPath,
-      ]);
-      expect(calls[2].timeoutMs).toBe(30_000);
+      await expect(downloadAndVerifyTarball(manifest, 'linux-x64-glibc', tmp, { runner })).rejects.toThrow(
+        /reduced cosign verify-blob proof does not validate/,
+      );
+      expect(calls.map((call) => call.cmd)).toEqual(['gh', 'gh']);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
   });
 
-  test('throws with both verifier errors when gh and cosign verification fail', async () => {
+  test('reports the primary attestation failure and never invokes cosign', async () => {
     const tmp = mkdtempSync(join(tmpdir(), 'genie-update-dl-'));
     try {
       const tarballPath = join(tmp, `genie-${manifest.version}-linux-x64-glibc.tar.gz`);
@@ -1148,7 +1649,7 @@ describe('downloadAndVerifyTarball (G5)', () => {
         return { success: false, output: 'invalid signature' };
       };
       await expect(downloadAndVerifyTarball(manifest, 'linux-x64-glibc', tmp, { runner })).rejects.toThrow(
-        /cosign verify-blob: invalid signature/,
+        /gh attestation verify: no matching attestation/,
       );
     } finally {
       rmSync(tmp, { recursive: true, force: true });
@@ -1615,8 +2116,8 @@ describe('ensureCanonicalInstall + resolveLiveBinaryPath (review fix #3)', () =>
     const cmdStart = source.indexOf('export async function updateCommand');
     expect(cmdStart).toBeGreaterThan(-1);
     const cmdBody = source.slice(cmdStart);
-    const ensureIdx = cmdBody.indexOf('requireCanonicalInstallOrExit()');
-    const deliveryIdx = cmdBody.indexOf('await runDelivery(');
+    const ensureIdx = cmdBody.indexOf('dependencies.requireCanonicalInstall ?? ensureCanonicalInstall');
+    const deliveryIdx = cmdBody.indexOf('runDelivery(resolvedManifest');
     expect(ensureIdx).toBeGreaterThan(-1);
     expect(deliveryIdx).toBeGreaterThan(-1);
     // The check must run BEFORE we touch the binary on disk.
@@ -1889,21 +2390,46 @@ describe('runAgentSyncSafe (agent-sync phase)', () => {
     }
   });
 
+  test('a delivery-owned sync has no managed Codex role callback and remains strict-successful when Codex is detected', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'genie-asm-'));
+    const marker = join(dir, '.last-agent-sync');
+    try {
+      const report = makeReport();
+      const codex = report.agents.find((agent) => agent.agent === 'codex');
+      if (codex) codex.detected = true;
+      expect(() =>
+        runAgentSyncSafe({
+          sync: () => report,
+          strict: true,
+          log: () => {},
+          markerPath: marker,
+        }),
+      ).not.toThrow();
+      expect(existsSync(marker)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('updateCommand runs the sync-only fast path before any network/delivery', () => {
     const source = readFileSync(join(import.meta.dir, '..', 'update.ts'), 'utf-8');
     const cmdStart = source.indexOf('export async function updateCommand');
     const cmdBody = source.slice(cmdStart);
-    const fastPathIdx = cmdBody.indexOf("mode !== 'normal'");
-    const fetchIdx = cmdBody.indexOf('await fetchLatestManifest(');
-    const deliveryIdx = cmdBody.indexOf('await runDelivery(');
+    const fastPathIdx = cmdBody.indexOf('await dispatchNonNormalUpdateMode(options)');
+    const fetchIdx = cmdBody.indexOf('dependencies.fetchManifest ?? fetchLatestManifest');
+    const deliveryIdx = cmdBody.indexOf('runDelivery(resolvedManifest');
     expect(fastPathIdx).toBeGreaterThan(-1);
     expect(fastPathIdx).toBeLessThan(fetchIdx);
     expect(fastPathIdx).toBeLessThan(deliveryIdx);
     // The compatibility mode routes before fetch and remains skills/role-only.
-    const fastPath = cmdBody.slice(fastPathIdx, fetchIdx);
-    expect(fastPath).toContain('await runExplicitUpdateMode(mode)');
-    expect(fastPath).not.toContain('runTrackedManualUpdateConvergence(');
-    expect(fastPath).not.toContain('refreshUpdatePlugins(');
+    const dispatcher = source.slice(
+      source.indexOf('async function dispatchNonNormalUpdateMode'),
+      source.indexOf('async function confirmPlannedDelivery'),
+    );
+    expect(dispatcher).toContain("mode !== 'normal'");
+    expect(dispatcher).toContain('await runExplicitUpdateMode(mode)');
+    expect(dispatcher).not.toContain('runTrackedManualUpdateConvergence(');
+    expect(dispatcher).not.toContain('refreshUpdatePlugins(');
     const legacyModeStart = source.indexOf('function runLegacySyncOnlyMode()');
     const postDeliveryModeStart = source.indexOf('function runPostDeliveryConvergenceMode()', legacyModeStart);
     const legacyMode = source.slice(legacyModeStart, postDeliveryModeStart);
@@ -1916,7 +2442,7 @@ describe('runAgentSyncSafe (agent-sync phase)', () => {
     // D2: sync-only is agent-sync ONLY — no Codex plugin query/inspection/advisory
     // and no plugin convergence at all. A genuine agent-sync failure is the only
     // nonzero result.
-    expect(convergence).toContain('runAgentSyncSafe({ strict: true');
+    expect(convergence).toContain('runUpdateAgentSync(agentSyncSelection)');
     expect(convergence).not.toContain('legacySyncOnlyPluginAdvisory');
     expect(convergence).not.toContain('inspectSyncOnlyCodexHealth');
     expect(convergence).not.toContain('plugin');
@@ -1940,21 +2466,74 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
       bundleRoot: '/tmp/verified-bundle',
       runSync: () => calls.push('parent-safe-sync'),
       refreshPlugins: (options) => {
-        calls.push(`parent-plugin-refresh:${options.expectedVersion}`);
-        return [{ runtime: 'codex', ok: true, detail: 'plugin/hooks refreshed' }];
+        calls.push(`parent-plugin-refresh:${options.expectedVersion}:${options.selection}`);
+        return [{ runtime: 'claude', ok: true, detail: 'plugin refreshed' }];
       },
       log: (line) => calls.push(`log:${line}`),
     });
     expect(calls[0]).toBe('parent-safe-sync');
-    expect(calls[1]).toBe('parent-plugin-refresh:5.260711.3');
-    expect(result.integrations).toEqual([{ runtime: 'codex', ok: true, detail: 'plugin/hooks refreshed' }]);
+    expect(calls[1]).toBe('parent-plugin-refresh:5.260711.3:claude');
+    expect(result.integrations).toEqual([{ runtime: 'claude', ok: true, detail: 'plugin refreshed' }]);
+  });
+
+  test('structurally excludes Codex queries and writes while retaining Claude/Hermes convergence', () => {
+    expect(narrowUpdatePluginRefreshSelection('auto')).toBe('claude');
+    expect(narrowUpdatePluginRefreshSelection('all')).toBe('claude');
+    expect(narrowUpdatePluginRefreshSelection('claude')).toBe('claude');
+    expect(narrowUpdatePluginRefreshSelection('codex')).toBeNull();
+    expect(narrowUpdatePluginRefreshSelection('none')).toBeNull();
+
+    let codexOnlySyncs = 0;
+    let codexOnlyRefreshes = 0;
+    const codexOnly = runManualUpdateConvergence({
+      expectedVersion: VERSION,
+      selection: 'codex',
+      runSync: () => {
+        codexOnlySyncs += 1;
+      },
+      refreshPlugins: () => {
+        codexOnlyRefreshes += 1;
+        return [{ runtime: 'codex', ok: true, detail: 'must not run' }];
+      },
+    });
+    expect(codexOnly).toEqual({ integrations: [] });
+    expect(codexOnlySyncs).toBe(0);
+    expect(codexOnlyRefreshes).toBe(0);
+
+    let selectedRefresh: IntegrationSelection | undefined;
+    const auto = runManualUpdateConvergence({
+      expectedVersion: VERSION,
+      selection: 'auto',
+      runSync: () => {},
+      refreshPlugins: (options) => {
+        selectedRefresh = options.selection;
+        return [
+          { runtime: 'claude', ok: true, detail: 'refreshed' },
+          { runtime: 'codex', ok: true, detail: 'injected boundary violation' },
+        ];
+      },
+      log: () => {},
+    });
+    expect(selectedRefresh).toBe('claude');
+    expect(auto.integrations).toEqual([{ runtime: 'claude', ok: true, detail: 'refreshed' }]);
+  });
+
+  test('update-owned agent sync disables setup-owned Codex role convergence', () => {
+    let captured: Parameters<typeof runAgentSyncSafe>[0] | undefined;
+    runUpdateAgentSync('auto', (options) => {
+      captured = options;
+      return null;
+    });
+    expect(captured?.selection).toBe('auto');
+    expect(captured?.strict).toBe(true);
+    expect(captured?.codexRefresh).toBeUndefined();
   });
 
   test('normal delivery invokes the fresh binary only through the explicit child protocol', () => {
     const source = readFileSync(join(import.meta.dir, '..', 'update.ts'), 'utf-8');
     expect(source).not.toMatch(/execFileSync\([^\n]+,\s*\['update'\]\s*,/);
     expect(source).toContain("run(binaryPath, ['update', '--post-delivery-converge'], environment)");
-    const deliveryIdx = source.indexOf('await runDelivery(');
+    const deliveryIdx = source.indexOf('runDelivery(resolvedManifest');
     const convergeIdx = source.indexOf('runFreshConvergenceOrReport(lifecycleLease)', deliveryIdx);
     const verifyIdx = source.indexOf('await runPostUpdateVerifySafe(');
     expect(deliveryIdx).toBeGreaterThan(-1);
@@ -2022,9 +2601,11 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
         message = error instanceof Error ? error.message : String(error);
       }
       expect(message).toContain('fresh Genie integration convergence failed: exit 7');
-      expect(message).toContain('Close all Codex tasks first');
-      expect(message).toContain('external terminal');
-      expect(message.indexOf('Close all Codex tasks first')).toBeLessThan(message.indexOf('external terminal'));
+      // Integration-neutral operator recovery: retry the update itself first
+      // (the rerun re-converges), THEN the Codex activation steps if pending.
+      expect(message).toContain('Rerun `genie update`');
+      expect(message).toContain('genie setup --codex');
+      expect(message.indexOf('Rerun `genie update`')).toBeLessThan(message.indexOf('genie setup --codex'));
     } finally {
       lease.release();
       rmSync(home, { recursive: true, force: true });
@@ -2701,7 +3282,7 @@ describe('--sync-only is agent-sync only (D2 — wish decision 3)', () => {
     // Function body (past its docstring): agent-sync only, no plugin command.
     const fnStart = source.indexOf('export function runLegacySyncOnlyConvergence(');
     const body = source.slice(fnStart, source.indexOf('\n}', fnStart));
-    expect(body).toContain('runAgentSyncSafe({ strict: true');
+    expect(body).toContain('runUpdateAgentSync(agentSyncSelection)');
     expect(body).not.toContain('plugin');
     expect(body).not.toContain('probe');
     expect(body).not.toContain('inspect');
@@ -2722,7 +3303,7 @@ describe('applyConvergenceExitSignal — exit 2 only on delivery-pending (D3 gua
   });
   afterEach(() => {
     spy.mockRestore();
-    process.exitCode = savedExitCode;
+    process.exitCode = savedExitCode ?? 0;
   });
 
   test('a non-codex (claude) failure exits 1 and emits NO trailer', () => {
@@ -2764,5 +3345,258 @@ describe('applyConvergenceExitSignal — exit 2 only on delivery-pending (D3 gua
     );
     expect(process.exitCode).toBe(2);
     expect(logs.join('\n')).not.toContain('deliveryComplete');
+  });
+});
+
+describe('mapAlreadyCurrentRepairOutcome — pure repair→directive mapping (Group D deliverable 1)', () => {
+  test('an old-parent publish (activation-pending) hands off to setup', () => {
+    expect(
+      mapAlreadyCurrentRepairOutcome({
+        kind: 'published',
+        record: {
+          schemaVersion: 2,
+          deliveryId: 'a'.repeat(32),
+          targetVersion: '5.260722.11',
+          canonicalPayloadSha256: 'a'.repeat(64),
+          channel: 'dev',
+          deliveredAt: '2026-07-22T00:00:00.000Z',
+          evidenceDigest: 'e'.repeat(64),
+          platformId: 'darwin-arm64',
+          platformTriple: 'darwin-arm64',
+          releaseTag: 'v5.260722.11',
+          releaseName: 'genie-5.260722.11-darwin-arm64.tar.gz',
+          releaseManifestSha256: 'b'.repeat(64),
+          artifactSha256: 'd'.repeat(64),
+          installedBinarySha256: 'c'.repeat(64),
+          deliveryRoot: '/home/test/.genie',
+        },
+        handoff: 'activation-pending',
+        artifactSha256: 'd'.repeat(64),
+      }),
+    ).toEqual({ action: 'exit-handoff' });
+  });
+
+  test('a target-current publish reports the repair as an immediate terminal handoff', () => {
+    expect(
+      mapAlreadyCurrentRepairOutcome({
+        kind: 'published',
+        record: {
+          schemaVersion: 2,
+          deliveryId: 'a'.repeat(32),
+          targetVersion: '5.260722.11',
+          canonicalPayloadSha256: 'a'.repeat(64),
+          channel: 'dev',
+          deliveredAt: '2026-07-22T00:00:00.000Z',
+          evidenceDigest: 'e'.repeat(64),
+          platformId: 'darwin-arm64',
+          platformTriple: 'darwin-arm64',
+          releaseTag: 'v5.260722.11',
+          releaseName: 'genie-5.260722.11-darwin-arm64.tar.gz',
+          releaseManifestSha256: 'b'.repeat(64),
+          artifactSha256: 'd'.repeat(64),
+          installedBinarySha256: 'c'.repeat(64),
+          deliveryRoot: '/home/test/.genie',
+        },
+        handoff: 'current',
+        artifactSha256: 'd'.repeat(64),
+      }),
+    ).toEqual({ action: 'repaired-current' });
+  });
+
+  test('already-matching proceeds; channel advance routes upgrade; failure is explicit', () => {
+    expect(mapAlreadyCurrentRepairOutcome({ kind: 'already-matching' })).toEqual({ action: 'proceed-current' });
+    const advancedManifest: PinnedManifest = {
+      schema_version: 1,
+      channel: 'dev',
+      version: '5.260722.12',
+      released_at: '2026-07-22T01:00:00Z',
+      tarball_base: 'https://example.invalid',
+      platforms: ['darwin-arm64'],
+      manifestBytes: '{}',
+      manifestSha256: 'f'.repeat(64),
+    };
+    expect(
+      mapAlreadyCurrentRepairOutcome({
+        kind: 'channel-advanced',
+        from: '5.260722.11',
+        to: '5.260722.12',
+        manifest: advancedManifest,
+      }),
+    ).toEqual({ action: 'route-upgrade', manifest: advancedManifest });
+    expect(
+      mapAlreadyCurrentRepairOutcome({
+        kind: 'failed',
+        stage: 'download-verify',
+        detail: 'x',
+        deliveryComplete: false,
+      }),
+    ).toEqual({ action: 'failed', detail: 'download-verify: x' });
+  });
+});
+
+describe('handleAlreadyCurrentUpdate — same-version terminal authority', () => {
+  const advancedManifest: PinnedManifest = {
+    schema_version: 1,
+    channel: 'dev',
+    version: '5.260722.12',
+    released_at: '2026-07-22T01:00:00Z',
+    tarball_base: 'https://example.invalid',
+    platforms: ['darwin-arm64'],
+    manifestBytes: '{"version":"5.260722.12"}',
+    manifestSha256: 'f'.repeat(64),
+  };
+
+  async function runDirective(directive: Awaited<ReturnType<typeof attemptAlreadyCurrentDeliveryRepair>>) {
+    const priorExitCode = process.exitCode;
+    const output: string[] = [];
+    let convergenceRuns = 0;
+    let markerRetirements = 0;
+    const logSpy = spyOn(console, 'log').mockImplementation((...args: unknown[]) => output.push(args.join(' ')));
+    const errorSpy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => output.push(args.join(' ')));
+    process.exitCode = 0;
+    try {
+      const manifest = await handleAlreadyCurrentUpdate('dev', 'darwin-arm64', VERSION, VERSION, {
+        attemptRepair: async () => directive,
+        runConvergence: () => {
+          convergenceRuns += 1;
+        },
+        retireLegacyMarker: () => {
+          markerRetirements += 1;
+        },
+      });
+      return {
+        manifest,
+        output: output.join('\n'),
+        exitCode: process.exitCode,
+        convergenceRuns,
+        markerRetirements,
+      };
+    } finally {
+      logSpy.mockRestore();
+      errorSpy.mockRestore();
+      process.exitCode = priorExitCode ?? 0;
+    }
+  }
+
+  test('failed is terminal, nonzero, and performs no convergence or marker retirement', async () => {
+    const result = await runDirective({ action: 'failed', detail: 'download-verify: invalid provenance' });
+    expect(result.manifest).toBeNull();
+    expect(result.exitCode).toBe(1);
+    expect(result.convergenceRuns).toBe(0);
+    expect(result.markerRetirements).toBe(0);
+    expect(result.output).toContain('Codex delivery repair failed: download-verify: invalid provenance');
+    expect(result.output).toContain('"deliveryComplete":false');
+    expect(result.output).not.toContain('Already up to date');
+  });
+
+  test('route-upgrade returns the exact advanced manifest without same-version finalizers', async () => {
+    const result = await runDirective({ action: 'route-upgrade', manifest: advancedManifest });
+    expect(result.manifest).toBe(advancedManifest);
+    expect(result.exitCode).toBe(0);
+    expect(result.convergenceRuns).toBe(0);
+    expect(result.markerRetirements).toBe(0);
+    expect(result.output).toContain(`→ ${advancedManifest.version}`);
+    expect(result.output).not.toContain('Already up to date');
+  });
+
+  test('exit-handoff retires only delivery metadata before the typed activation handoff', async () => {
+    const result = await runDirective({ action: 'exit-handoff' });
+    expect(result.manifest).toBeNull();
+    expect(result.exitCode).toBe(2);
+    expect(result.convergenceRuns).toBe(0);
+    expect(result.markerRetirements).toBe(1);
+    expect(result.output).toContain('Codex plugin activation is pending');
+    expect(result.output.match(/"deliveryComplete":true/g)).toHaveLength(1);
+    expect(result.output).not.toContain('Already up to date');
+  });
+
+  test('repaired-current retires delivery metadata without convergence, trailer, or success masquerade', async () => {
+    const result = await runDirective({ action: 'repaired-current' });
+    expect(result.manifest).toBeNull();
+    expect(result.exitCode).toBe(0);
+    expect(result.convergenceRuns).toBe(0);
+    expect(result.markerRetirements).toBe(1);
+    expect(result.output).toContain('Repaired the missing Codex delivery record');
+    expect(result.output).not.toContain('deliveryComplete');
+    expect(result.output).not.toContain('Already up to date');
+  });
+
+  test('ordinary already-matching reruns retain convergence and marker-retirement semantics', async () => {
+    const result = await runDirective({ action: 'proceed-current' });
+    expect(result.manifest).toBeNull();
+    expect(result.exitCode).toBe(0);
+    expect(result.convergenceRuns).toBe(1);
+    expect(result.markerRetirements).toBe(1);
+    expect(result.output).toContain(`Already up to date (v${VERSION}, channel dev)`);
+  });
+});
+
+describe('attemptAlreadyCurrentDeliveryRepair — fail-closed skip with no install (CI-portable, no network/codex)', () => {
+  let prevGenieHome: string | undefined;
+  let dir: string;
+
+  beforeEach(() => {
+    prevGenieHome = process.env.GENIE_HOME;
+    dir = mkdtempSync(join(tmpdir(), 'update-repair-skip-'));
+    process.env.GENIE_HOME = dir;
+  });
+
+  afterEach(() => {
+    if (prevGenieHome === undefined) Reflect.deleteProperty(process.env, 'GENIE_HOME');
+    else process.env.GENIE_HOME = prevGenieHome;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('an empty GENIE_HOME reports an explicit incomplete repair without lease/download/mutation', async () => {
+    // No plugins/genie payload and no binary ⇒ observeInstalledForRepair returns
+    // null ⇒ the repair fails closed before network or codex CLI access.
+    const directive = await attemptAlreadyCurrentDeliveryRepair('dev', 'linux-x64', undefined, dir);
+    expect(directive).toEqual({ action: 'failed', detail: 'installed payload/binary could not be observed' });
+    // No lease file was created (the skip returns before lease acquisition).
+    expect(existsSync(join(dir, '.codex-lifecycle.lock'))).toBe(false);
+    // No delivery record was minted.
+    expect(existsSync(join(dir, '.codex-plugin-delivery-record.json'))).toBe(false);
+  });
+
+  test('a symlinked GENIE_HOME fast-path binds the physical canonical delivery root', async () => {
+    const physicalHome = join(dir, 'physical-genie-home');
+    const logicalHome = join(dir, 'logical-genie-home');
+    mkdirSync(join(physicalHome, 'plugins', 'genie'), { recursive: true });
+    mkdirSync(join(physicalHome, 'bin'), { recursive: true });
+    writeFileSync(join(physicalHome, 'plugins', 'genie', 'plugin.json'), '{"name":"genie"}\n');
+    writeFileSync(join(physicalHome, 'VERSION'), `${VERSION}\n`);
+    writeFileSync(join(physicalHome, 'bin', 'genie'), '#!/bin/sh\n');
+    symlinkSync(physicalHome, logicalHome);
+    const snapshot = observeCodexActivation({ genieHome: logicalHome, command: null });
+    if (snapshot.canonical.status !== 'ok') throw new Error(snapshot.canonical.detail);
+    const platformId = resolvePlatformId();
+    const { evidence, pack } = mintTestDeliveryEvidence({
+      descriptor: {
+        version: snapshot.canonical.version.canonical,
+        channel: 'dev',
+        platformId: platformId as DeliveryEvidencePlatformId,
+        platformTriple: snapshot.canonical.platformTriple,
+        releaseTag: `v${VERSION}`,
+        releaseName: `genie-${VERSION}-${platformId}.tar.gz`,
+        canonicalPayloadSha256: snapshot.canonical.digest,
+        installedBinarySha256: snapshot.canonical.installedBinarySha256,
+      },
+    });
+    const lease = acquireCodexLifecycleLease('update-delivery', { genieHome: logicalHome });
+    if (!lease.ok) throw new Error(lease.detail);
+    try {
+      openCodexActivationStore({ genieHome: logicalHome }).publishDelivery(lease, {
+        evidence,
+        deliveryRoot: snapshot.canonical.deliveryRoot,
+      });
+    } finally {
+      lease.release();
+    }
+    expect(snapshot.canonical.deliveryRoot).toBe(realpathSync(physicalHome));
+    expect(
+      await attemptAlreadyCurrentDeliveryRepair('dev', platformId, undefined, logicalHome, {
+        evidenceVerification: pack.dependencies,
+      }),
+    ).toEqual({ action: 'proceed-current' });
   });
 });

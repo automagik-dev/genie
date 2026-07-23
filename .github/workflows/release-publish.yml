@@ -40,6 +40,18 @@ on:
         required: false
         type: string
         default: stable
+      source_sha:
+        description: 'Exact admitted source commit SHA'
+        required: true
+        type: string
+      source_branch:
+        description: 'Branch of the admitted source CI run'
+        required: true
+        type: string
+      source_ci_run_id:
+        description: 'Authorizing source CI run ID'
+        required: true
+        type: string
       draft:
         description: 'Create as draft (require manual promotion)?'
         required: false
@@ -78,6 +90,10 @@ jobs:
           EXPECTED_STABLE_CALLER: automagik-dev/genie/.github/workflows/release.yml@refs/heads/main
           EXPECTED_AUTOMATED_CALLER: automagik-dev/genie/.github/workflows/version.yml@refs/heads/main
           INPUT_CHANNEL: ${{ inputs.channel }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
+          INPUT_SOURCE_BRANCH: ${{ inputs.source_branch }}
+          INPUT_SOURCE_CI_RUN_ID: ${{ inputs.source_ci_run_id }}
         run: |
           set -euo pipefail
           case "$INPUT_CHANNEL" in
@@ -101,11 +117,804 @@ jobs:
             echo "::error ::release-caller.untrusted release-publish rejected caller ${CALLER_WORKFLOW_REF:-<empty>} (${CALLER_EVENT:-<empty>})"
             exit 1
           fi
+          if [[ ! "$INPUT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ||
+                ! "$INPUT_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ||
+                ! "$INPUT_SOURCE_CI_RUN_ID" =~ ^[0-9]+$ ]]; then
+            echo "::error ::release-caller.inputs release-publish received malformed release identity inputs"
+            exit 1
+          fi
+          case "$INPUT_SOURCE_BRANCH" in main|homolog|dev) ;; *) exit 1 ;; esac
+          case "${INPUT_CHANNEL}:${INPUT_SOURCE_BRANCH}" in
+            stable:main|homolog:homolog|dev:dev) ;;
+            *)
+              echo "::error ::release-caller.inputs channel/source branch admission mismatch"
+              exit 1
+              ;;
+          esac
           echo "Trusted release caller admitted at ${CALLER_SHA}"
+
+  prepare-delivery-evidence:
+    name: Build canonical delivery descriptors
+    needs: admit
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      attestations: read
+    outputs:
+      matrix: ${{ steps.build.outputs.matrix }}
+      dogfood_matrix: ${{ steps.build.outputs.dogfood_matrix }}
+      candidate_manifest_name: ${{ steps.build.outputs.candidate_manifest_name }}
+      candidate_manifest_sha256: ${{ steps.build.outputs.candidate_manifest_sha256 }}
+      previous_version: ${{ steps.build.outputs.previous_version }}
+      previous_manifest_sha256: ${{ steps.build.outputs.previous_manifest_sha256 }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          # Release controls and gate code come from the admitted, protected
+          # main commit. Candidate bytes arrive only through signed artifacts.
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.11
+
+      - name: Download all signed artifacts (sign-attest.yml)
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: genie-*-signed
+          merge-multiple: true
+          path: dist
+
+      - name: Install cosign for effective-subject verification
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+        with:
+          cosign-release: 'v2.4.1'
+
+      - name: Install slsa-verifier for effective-subject verification
+        uses: slsa-framework/slsa-verifier/actions/installer@ea584f4502babc6f60d9bc799dbbb13c1caa9ee6 # v2.7.1
+
+      - name: Generate retry-stable candidate manifests and descriptors
+        id: build
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          CHANNEL: ${{ inputs.channel }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          SOURCE_BRANCH: ${{ inputs.source_branch }}
+          SOURCE_CI_RUN_ID: ${{ inputs.source_ci_run_id }}
+          CONTROL_SHA: ${{ github.sha }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Promotions must endorse the already-published immutable subject
+          # bytes, not a functionally equivalent current-run rebuild.
+          bash scripts/materialize-release-subjects.sh
+          mkdir -p candidate-manifests descriptors
+          (
+            cd candidate-manifests
+            bash "${GITHUB_WORKSPACE}/scripts/reconcile-channel-manifests.sh"
+          )
+          case "$CHANNEL" in
+            stable)
+              SELECTED_MANIFEST=candidate-manifests/.well-known/latest.json
+              EVIDENCE_CHANNELS=(stable homolog dev)
+              ;;
+            homolog)
+              SELECTED_MANIFEST=candidate-manifests/.well-known/homolog.json
+              EVIDENCE_CHANNELS=(homolog dev)
+              ;;
+            dev)
+              SELECTED_MANIFEST=candidate-manifests/.well-known/dev.json
+              EVIDENCE_CHANNELS=(dev)
+              ;;
+            *) exit 1 ;;
+          esac
+          bun scripts/candidate-dogfood-matrix.ts \
+            --manifest "$SELECTED_MANIFEST" \
+            --artifact-dir dist \
+            --output candidate-dogfood-matrix.json
+          DOGFOOD_MATRIX="$(tr -d '\n' < candidate-dogfood-matrix.json)"
+          CANDIDATE_MANIFEST_NAME="$(basename "$SELECTED_MANIFEST")"
+          CANDIDATE_MANIFEST_SHA256="$(jq -er '
+            [.include[].manifestSha256] | unique |
+            if length == 1 then .[0] else error("candidate manifest digest disagreement") end
+          ' candidate-dogfood-matrix.json)"
+          [[ "$(jq -er '.include[0].version' candidate-dogfood-matrix.json)" == "$VERSION" ]]
+          [[ "$(jq -er '.include[0].channel' candidate-dogfood-matrix.json)" == "$CHANNEL" ]]
+
+          mapfile -t MANIFEST_PLATFORMS < <(jq -er '.include[].platform' candidate-dogfood-matrix.json)
+
+          # The cross-version parent is the exact stable manifest committed at
+          # the admitted control SHA. Download its immutable release triplets
+          # once, verify them without execution, and pass those same bytes to
+          # every native matrix entry. Historical releases are never
+          # retro-attested or assigned fabricated delivery descriptors.
+          [[ -f .well-known/latest.json && ! -L .well-known/latest.json && -s .well-known/latest.json ]]
+          PREVIOUS_VERSION="$(jq -er '.version | strings | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))' \
+            .well-known/latest.json)"
+          [[ "$PREVIOUS_VERSION" != "$VERSION" ]] || {
+            echo "::error::dogfood requires a prior stable N distinct from candidate T"
+            exit 1
+          }
+          [[ "$(printf '%s\n%s\n' "$PREVIOUS_VERSION" "$VERSION" | sort -V | head -n 1)" == "$PREVIOUS_VERSION" ]] || {
+            echo "::error::dogfood previous stable N must be older than candidate T"
+            exit 1
+          }
+          mkdir previous-release
+          cp -- .well-known/latest.json previous-release/manifest.json
+          for platform in "${MANIFEST_PLATFORMS[@]}"; do
+            previous_tarball="genie-${PREVIOUS_VERSION}-${platform}.tar.gz"
+            for previous_name in \
+              "$previous_tarball" \
+              "${previous_tarball}.bundle" \
+              "${previous_tarball}.intoto.jsonl"; do
+              gh release download "v${PREVIOUS_VERSION}" \
+                --repo "$RELEASE_REPOSITORY" \
+                --pattern "$previous_name" \
+                --dir previous-release
+              [[ -f "previous-release/${previous_name}" &&
+                 ! -L "previous-release/${previous_name}" &&
+                 -s "previous-release/${previous_name}" ]] || {
+                echo "::error::prior stable input is missing or unsafe: ${previous_name}"
+                exit 1
+              }
+            done
+            bash scripts/verify-release.sh --local "previous-release/${previous_tarball}"
+          done
+          bun scripts/candidate-dogfood-matrix.ts \
+            --manifest previous-release/manifest.json \
+            --artifact-dir previous-release \
+            --output previous-dogfood-matrix.json
+          jq -e --slurpfile candidate candidate-dogfood-matrix.json '
+            [.include[].platform] == [$candidate[0].include[].platform]
+          ' previous-dogfood-matrix.json >/dev/null
+          PREVIOUS_MANIFEST_SHA256="$(jq -er '
+            [.include[].manifestSha256] | unique |
+            if length == 1 then .[0] else error("previous manifest digest disagreement") end
+          ' previous-dogfood-matrix.json)"
+
+          MATRIX='[]'
+          for platform in "${MANIFEST_PLATFORMS[@]}"; do
+            tarball="dist/genie-${VERSION}-${platform}.tar.gz"
+            [[ -f "$tarball" && ! -L "$tarball" && -s "$tarball" ]] || {
+              echo "::error::missing physical signed tarball ${tarball}"
+              exit 1
+            }
+            for evidence_channel in "${EVIDENCE_CHANNELS[@]}"; do
+              case "$evidence_channel" in
+                stable) manifest=candidate-manifests/.well-known/latest.json ;;
+                homolog) manifest=candidate-manifests/.well-known/homolog.json ;;
+                dev) manifest=candidate-manifests/.well-known/dev.json ;;
+              esac
+              descriptor="descriptors/genie-${VERSION}-${platform}.tar.gz.${evidence_channel}.delivery.json"
+              bun scripts/build-delivery-evidence.ts \
+                --tarball "$tarball" \
+                --manifest "$manifest" \
+                --output "$descriptor" \
+                --repository "$RELEASE_REPOSITORY" \
+                --version "$VERSION" \
+                --channel "$evidence_channel" \
+                --platform-id "$platform" \
+                --source-sha "$SOURCE_SHA" \
+                --source-branch "$SOURCE_BRANCH" \
+                --source-ci-run-id "$SOURCE_CI_RUN_ID" \
+                --control-sha "$CONTROL_SHA"
+              MATRIX="$(jq -cn \
+                --argjson current "$MATRIX" \
+                --arg platform "$platform" \
+                --arg channel "$evidence_channel" \
+                '$current + [{platform: $platform, channel: $channel}]')"
+            done
+          done
+          {
+            echo "matrix={\"include\":${MATRIX}}"
+            echo "dogfood_matrix=${DOGFOOD_MATRIX}"
+            echo "candidate_manifest_name=${CANDIDATE_MANIFEST_NAME}"
+            echo "candidate_manifest_sha256=${CANDIDATE_MANIFEST_SHA256}"
+            echo "previous_version=${PREVIOUS_VERSION}"
+            echo "previous_manifest_sha256=${PREVIOUS_MANIFEST_SHA256}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload manifest-derived native dogfood matrix
+        uses: actions/upload-artifact@b7c4aadc2c921a8ff42c1c6b0e8950fc060e7c7e # v4
+        with:
+          name: codex-dogfood-candidate-matrix
+          path: candidate-dogfood-matrix.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload exact verified previous-stable inputs
+        uses: actions/upload-artifact@b7c4aadc2c921a8ff42c1c6b0e8950fc060e7c7e # v4
+        with:
+          name: codex-dogfood-previous-release
+          path: previous-release
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload exact candidate manifest bytes
+        uses: actions/upload-artifact@b7c4aadc2c921a8ff42c1c6b0e8950fc060e7c7e # v4
+        with:
+          name: delivery-candidate-manifests
+          path: candidate-manifests/.well-known/*.json
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload canonical descriptor subjects
+        uses: actions/upload-artifact@b7c4aadc2c921a8ff42c1c6b0e8950fc060e7c7e # v4
+        with:
+          name: delivery-descriptors
+          path: descriptors/*.delivery.json
+          if-no-files-found: error
+          retention-days: 1
+
+  attest-delivery-evidence:
+    name: Endorse ${{ matrix.channel }} / ${{ matrix.platform }}
+    needs: prepare-delivery-evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare-delivery-evidence.outputs.matrix) }}
+    steps:
+      - name: Download canonical descriptor subjects
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: delivery-descriptors
+          path: descriptors
+
+      - name: Attest exact descriptor bytes
+        id: endorse
+        uses: actions/attest@67422f5511b7ff725f4dbd6fb9bd2cd925c65a8d # v1.4.1
+        with:
+          subject-path: descriptors/genie-${{ inputs.version }}-${{ matrix.platform }}.tar.gz.${{ matrix.channel }}.delivery.json
+          predicate-type: https://github.com/${{ github.repository }}/delivery-evidence/v1
+          predicate-path: descriptors/genie-${{ inputs.version }}-${{ matrix.platform }}.tar.gz.${{ matrix.channel }}.delivery.json
+
+      - name: Name the persisted Sigstore bundle beside its subject
+        shell: bash
+        env:
+          BUNDLE_PATH: ${{ steps.endorse.outputs.bundle-path }}
+          DESCRIPTOR: descriptors/genie-${{ inputs.version }}-${{ matrix.platform }}.tar.gz.${{ matrix.channel }}.delivery.json
+        run: |
+          set -euo pipefail
+          [[ -f "$BUNDLE_PATH" && ! -L "$BUNDLE_PATH" && -s "$BUNDLE_PATH" ]]
+          cp "$BUNDLE_PATH" "${DESCRIPTOR}.sigstore.json"
+
+      - name: Upload persisted endorsement
+        uses: actions/upload-artifact@b7c4aadc2c921a8ff42c1c6b0e8950fc060e7c7e # v4
+        with:
+          name: delivery-endorsement-${{ matrix.channel }}-${{ matrix.platform }}
+          path: descriptors/*.sigstore.json
+          if-no-files-found: error
+          retention-days: 1
+
+  delivery-evidence-compatibility:
+    name: Verify production delivery evidence compatibility
+    needs: [admit, attest-delivery-evidence]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.11
+
+      - name: Install the shipped production verifier dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Download canonical delivery descriptor subjects
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: delivery-descriptors
+          path: descriptors
+
+      - name: Download all persisted endorsement bundles
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: delivery-endorsement-*
+          merge-multiple: true
+          path: descriptors
+
+      - name: Download exact candidate manifests
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: delivery-candidate-manifests
+          path: candidate-manifests
+
+      - name: Verify every pack with the production offline verifier
+        shell: bash
+        env:
+          CHANNEL: ${{ inputs.channel }}
+        run: |
+          set -euo pipefail
+          case "$CHANNEL" in
+            stable) EXPECTED_PACKS=12 ;;
+            homolog) EXPECTED_PACKS=8 ;;
+            dev) EXPECTED_PACKS=4 ;;
+            *) exit 1 ;;
+          esac
+          shopt -s nullglob
+          DESCRIPTORS=(descriptors/*.delivery.json)
+          [[ ${#DESCRIPTORS[@]} -eq "$EXPECTED_PACKS" ]] || {
+            echo "::error::expected ${EXPECTED_PACKS} delivery descriptors, found ${#DESCRIPTORS[@]}"
+            exit 1
+          }
+          for descriptor in "${DESCRIPTORS[@]}"; do
+            case "$descriptor" in
+              *.stable.delivery.json) manifest=candidate-manifests/latest.json ;;
+              *.homolog.delivery.json) manifest=candidate-manifests/homolog.json ;;
+              *.dev.delivery.json) manifest=candidate-manifests/dev.json ;;
+              *) exit 1 ;;
+            esac
+            bundle="${descriptor}.sigstore.json"
+            [[ -f "$bundle" && ! -L "$bundle" && -s "$bundle" ]]
+            [[ -f "$manifest" && ! -L "$manifest" && -s "$manifest" ]]
+            bun scripts/verify-delivery-evidence-pack.ts \
+              --descriptor "$descriptor" \
+              --bundle "$bundle" \
+              --manifest "$manifest"
+          done
+
+  codex-native-dogfood:
+    name: Codex native dogfood / ${{ matrix.platform }}
+    needs: [prepare-delivery-evidence, attest-delivery-evidence, delivery-evidence-compatibility]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      attestations: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare-delivery-evidence.outputs.dogfood_matrix) }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          # The harness and validators are trusted release controls. The exact
+          # candidate from source_sha is consumed only as a signed archive.
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.11
+
+      - name: Install trusted harness dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Install pinned real Codex app-server
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install -g @openai/codex@0.144.1
+          CODEX_PATH="$(node -e 'console.log(require("node:fs").realpathSync(process.argv[1]))' "$(command -v codex)")"
+          [[ "$("$CODEX_PATH" --version)" == "codex-cli 0.144.1" ]]
+          echo "GENIE_DOGFOOD_REAL_CODEX=${CODEX_PATH}" >> "$GITHUB_ENV"
+
+      - name: Install cosign for previous-stable verification
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+        with:
+          cosign-release: 'v2.4.1'
+
+      - name: Install slsa-verifier for previous-stable verification
+        uses: slsa-framework/slsa-verifier/actions/installer@ea584f4502babc6f60d9bc799dbbb13c1caa9ee6 # v2.7.1
+
+      - name: Download exact verified previous-stable inputs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: codex-dogfood-previous-release
+          path: dogfood-entry/inputs/previous
+
+      - name: Download exact candidate signed triplet
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: genie-${{ matrix.version }}-${{ matrix.platform }}-signed
+          path: dogfood-entry/inputs/candidate
+
+      - name: Download exact candidate manifest
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: delivery-candidate-manifests
+          path: dogfood-entry/inputs/candidate/manifests
+
+      - name: Download canonical candidate descriptors
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: delivery-descriptors
+          path: dogfood-entry/inputs/candidate/descriptors
+
+      - name: Download exact candidate delivery endorsement
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: delivery-endorsement-${{ matrix.channel }}-${{ matrix.platform }}
+          path: dogfood-entry/inputs/candidate/descriptors
+
+      - name: Resolve native execution adapter
+        id: adapter
+        shell: bash
+        env:
+          EXECUTION_KIND: ${{ matrix.execution }}
+        run: |
+          set -euo pipefail
+          case "$EXECUTION_KIND" in
+            host-native)
+              echo 'path=' >> "$GITHUB_OUTPUT"
+              ;;
+            alpine-container)
+              ADAPTER="${GITHUB_WORKSPACE}/scripts/run-musl-dogfood.sh"
+              [[ -f "$ADAPTER" && ! -L "$ADAPTER" && -x "$ADAPTER" ]] || {
+                echo "::error::pinned musl execution adapter is unavailable"
+                exit 1
+              }
+              echo "path=${ADAPTER}" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "::error::manifest matrix selected unknown execution kind ${EXECUTION_KIND}"
+              exit 1
+              ;;
+          esac
+
+      - name: Run exact N to T lifecycle and emit reusable evidence
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          PREVIOUS_VERSION: ${{ needs.prepare-delivery-evidence.outputs.previous_version }}
+          CANDIDATE_VERSION: ${{ matrix.version }}
+          CANDIDATE_CHANNEL: ${{ matrix.channel }}
+          CANDIDATE_MANIFEST_NAME: ${{ matrix.manifest }}
+          EXECUTION_ADAPTER: ${{ steps.adapter.outputs.path }}
+        run: |
+          set -euo pipefail
+          PREVIOUS_ARTIFACT="dogfood-entry/inputs/previous/genie-${PREVIOUS_VERSION}-${PLATFORM}.tar.gz"
+          CANDIDATE_ARTIFACT="dogfood-entry/inputs/candidate/genie-${CANDIDATE_VERSION}-${PLATFORM}.tar.gz"
+          CANDIDATE_DESCRIPTOR="dogfood-entry/inputs/candidate/descriptors/genie-${CANDIDATE_VERSION}-${PLATFORM}.tar.gz.${CANDIDATE_CHANNEL}.delivery.json"
+          EVIDENCE="dogfood-entry/codex-dogfood-${CANDIDATE_VERSION}-${PLATFORM}.md"
+          RUNNER_ARGS=(
+            --previous-artifact "$PREVIOUS_ARTIFACT"
+            --previous-manifest dogfood-entry/inputs/previous/manifest.json
+            --previous-bundle "${PREVIOUS_ARTIFACT}.bundle"
+            --previous-provenance "${PREVIOUS_ARTIFACT}.intoto.jsonl"
+            --candidate-artifact "$CANDIDATE_ARTIFACT"
+            --candidate-manifest "dogfood-entry/inputs/candidate/manifests/${CANDIDATE_MANIFEST_NAME}"
+            --candidate-descriptor "$CANDIDATE_DESCRIPTOR"
+            --candidate-bundle "${CANDIDATE_DESCRIPTOR}.sigstore.json"
+            --platform-id "$PLATFORM"
+            --output-evidence "$EVIDENCE"
+          )
+          if [[ -n "$EXECUTION_ADAPTER" ]]; then
+            RUNNER_ARGS+=(--execution-adapter "$EXECUTION_ADAPTER")
+          fi
+          bun tests/support/codex-dogfood-entry-runner.ts "${RUNNER_ARGS[@]}"
+          bun scripts/validate-live-dogfood-evidence.ts \
+            --file "$EVIDENCE" \
+            --inputs-root dogfood-entry
+
+      - name: Upload exact per-entry evidence and referenced inputs
+        uses: actions/upload-artifact@b7c4aadc2c921a8ff42c1c6b0e8950fc060e7c7e # v4
+        with:
+          name: codex-dogfood-evidence-${{ matrix.platform }}
+          path: dogfood-entry
+          if-no-files-found: error
+          retention-days: 30
+
+  codex-dogfood-completeness:
+    name: Require complete Codex native dogfood matrix
+    needs: [prepare-delivery-evidence, codex-native-dogfood]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Reject failed, skipped, or unavailable native entries
+        shell: bash
+        env:
+          PREPARE_RESULT: ${{ needs.prepare-delivery-evidence.result }}
+          NATIVE_RESULT: ${{ needs.codex-native-dogfood.result }}
+          EXPECTED_MATRIX: ${{ needs.prepare-delivery-evidence.outputs.dogfood_matrix }}
+          EXPECTED_MANIFEST_SHA256: ${{ needs.prepare-delivery-evidence.outputs.candidate_manifest_sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "$PREPARE_RESULT" == success && "$NATIVE_RESULT" == success ]] || {
+            echo "::error::Codex dogfood is incomplete (prepare=${PREPARE_RESULT}, native=${NATIVE_RESULT})"
+            exit 1
+          }
+          [[ -n "$EXPECTED_MATRIX" && -n "$EXPECTED_MANIFEST_SHA256" ]] || {
+            echo "::error::Codex dogfood candidate identity is unavailable"
+            exit 1
+          }
+
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.11
+
+      - name: Download manifest-derived candidate matrix
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: codex-dogfood-candidate-matrix
+          path: aggregate
+
+      - name: Download every native entry
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: codex-dogfood-evidence-*
+          path: aggregate/entries
+
+      - name: Validate one-to-one evidence and persist candidate identity
+        shell: bash
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
+          EXPECTED_CHANNEL: ${{ inputs.channel }}
+          EXPECTED_SOURCE_SHA: ${{ inputs.source_sha }}
+          EXPECTED_MATRIX: ${{ needs.prepare-delivery-evidence.outputs.dogfood_matrix }}
+          EXPECTED_MANIFEST_SHA256: ${{ needs.prepare-delivery-evidence.outputs.candidate_manifest_sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "$(tr -d '\n' < aggregate/candidate-dogfood-matrix.json)" == "$EXPECTED_MATRIX" ]] || {
+            echo "::error::downloaded candidate matrix differs from the matrix used to schedule native jobs"
+            exit 1
+          }
+          bun scripts/validate-dogfood-matrix-evidence.ts \
+            --matrix aggregate/candidate-dogfood-matrix.json \
+            --evidence-dir aggregate/entries \
+            --version "$EXPECTED_VERSION" \
+            --channel "$EXPECTED_CHANNEL" \
+            --source-sha "$EXPECTED_SOURCE_SHA" \
+            --candidate-manifest-sha256 "$EXPECTED_MANIFEST_SHA256" \
+            --output aggregate/codex-dogfood-completeness.json
+
+      - name: Upload complete Codex dogfood evidence
+        uses: actions/upload-artifact@b7c4aadc2c921a8ff42c1c6b0e8950fc060e7c7e # v4
+        with:
+          name: codex-dogfood-completeness
+          path: aggregate/codex-dogfood-completeness.json
+          if-no-files-found: error
+          retention-days: 90
+
+  stable-release-security-gate:
+    name: Independent candidate security gate
+    needs: [prepare-delivery-evidence, attest-delivery-evidence, delivery-evidence-compatibility]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      attestations: read
+    steps:
+      - name: Reject missing prerequisite evidence
+        shell: bash
+        env:
+          PREPARE_RESULT: ${{ needs.prepare-delivery-evidence.result }}
+          ATTEST_RESULT: ${{ needs.attest-delivery-evidence.result }}
+          COMPATIBILITY_RESULT: ${{ needs.delivery-evidence-compatibility.result }}
+        run: |
+          set -euo pipefail
+          [[ "$PREPARE_RESULT" == success &&
+             "$ATTEST_RESULT" == success &&
+             "$COMPATIBILITY_RESULT" == success ]] || {
+            echo "::error::security gate prerequisites are incomplete"
+            exit 1
+          }
+
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          # Security policy is evaluated from protected main, independently of
+          # the candidate payload and independently of the dogfood result.
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.11
+
+      - name: Install trusted security-gate dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Install cosign for exact candidate verification
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+        with:
+          cosign-release: 'v2.4.1'
+
+      - name: Install slsa-verifier for exact candidate verification
+        uses: slsa-framework/slsa-verifier/actions/installer@ea584f4502babc6f60d9bc799dbbb13c1caa9ee6 # v2.7.1
+
+      - name: Download all exact signed candidate artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: genie-*-signed
+          merge-multiple: true
+          path: security-gate/dist
+
+      - name: Download exact candidate manifests
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: delivery-candidate-manifests
+          path: security-gate/manifests
+
+      - name: Download manifest-derived candidate matrix
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: codex-dogfood-candidate-matrix
+          path: security-gate
+
+      - name: Verify exact candidate identity with independent release controls
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          CHANNEL: ${{ inputs.channel }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          SOURCE_BRANCH: ${{ inputs.source_branch }}
+          SOURCE_CI_RUN_ID: ${{ inputs.source_ci_run_id }}
+          CONTROL_SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          CANDIDATE_MANIFEST_NAME: ${{ needs.prepare-delivery-evidence.outputs.candidate_manifest_name }}
+          EXPECTED_MANIFEST_SHA256: ${{ needs.prepare-delivery-evidence.outputs.candidate_manifest_sha256 }}
+        run: |
+          set -euo pipefail
+          MANIFEST="security-gate/manifests/${CANDIDATE_MANIFEST_NAME}"
+          [[ -f "$MANIFEST" && ! -L "$MANIFEST" && -s "$MANIFEST" ]]
+          [[ "$(sha256sum "$MANIFEST" | cut -d ' ' -f 1)" == "$EXPECTED_MANIFEST_SHA256" ]]
+          bun scripts/candidate-dogfood-matrix.ts \
+            --manifest "$MANIFEST" \
+            --artifact-dir security-gate/dist \
+            --output security-gate/rederived-matrix.json
+          cmp -- security-gate/candidate-dogfood-matrix.json security-gate/rederived-matrix.json
+          jq -e --arg version "$VERSION" --arg channel "$CHANNEL" --arg digest "$EXPECTED_MANIFEST_SHA256" '
+            all(.include[];
+              .version == $version and
+              .channel == $channel and
+              .manifestSha256 == $digest)
+          ' security-gate/rederived-matrix.json >/dev/null
+          mkdir -p security-gate/verified
+          while IFS= read -r artifact; do
+            artifact_path="security-gate/dist/${artifact}"
+            artifact_sha256="$(jq -er --arg artifact "$artifact" '
+              [.include[] | select(.artifact == $artifact) | .artifactSha256] |
+              if length == 1 then .[0] else error("candidate artifact is not unique") end
+            ' security-gate/rederived-matrix.json)"
+            [[ "$(sha256sum "$artifact_path" | cut -d ' ' -f 1)" == "$artifact_sha256" ]]
+            bash scripts/verify-release.sh --local "$artifact_path"
+            verified_provenance="${RUNNER_TEMP}/${artifact}.verified-provenance.json"
+            slsa-verifier verify-artifact "$artifact_path" \
+              --provenance-path "${artifact_path}.intoto.jsonl" \
+              --source-uri "github.com/${RELEASE_REPOSITORY}" \
+              --source-branch main \
+              --print-provenance > "$verified_provenance"
+            generic_identity="${RUNNER_TEMP}/${artifact}.generic-identity.json"
+            ARTIFACT_SHA256="$artifact_sha256" \
+              bash scripts/release-generic-provenance.sh verify-exact-subject "$verified_provenance" \
+              > "$generic_identity"
+            native_result="${RUNNER_TEMP}/${artifact}.native-result.json"
+            gh attestation verify "$artifact_path" \
+              --repo "$RELEASE_REPOSITORY" \
+              --predicate-type "https://github.com/${RELEASE_REPOSITORY}/release-tarballs/v1" \
+              --cert-identity "https://github.com/${RELEASE_REPOSITORY}/.github/workflows/sign-attest.yml@refs/heads/main" \
+              --source-ref refs/heads/main \
+              --source-digest "$CONTROL_SHA" \
+              --signer-digest "$CONTROL_SHA" \
+              --format json > "$native_result"
+            native_identity="${RUNNER_TEMP}/${artifact}.native-identity.json"
+            ARTIFACT_SHA256="$artifact_sha256" \
+              bash scripts/release-native-predicate.sh verify-exact-subject "$native_result" \
+              > "$native_identity"
+            jq -cn \
+              --arg artifact "$artifact" \
+              --slurpfile generic "$generic_identity" \
+              --slurpfile native "$native_identity" \
+              --arg sourceSha "$SOURCE_SHA" \
+              --arg sourceBranch "$SOURCE_BRANCH" \
+              --arg sourceCiRunId "$SOURCE_CI_RUN_ID" \
+              --arg controlSha "$CONTROL_SHA" \
+              '
+                ($generic[0] | [
+                  .sourceSha == $sourceSha,
+                  .sourceBranch == $sourceBranch,
+                  .sourceCiRunId == $sourceCiRunId,
+                  .controlSha == $controlSha
+                ] | all) or error("generic provenance identity disagreement") |
+                ($native[0] | [
+                  .sourceSha == $sourceSha,
+                  .sourceBranch == $sourceBranch,
+                  .sourceCiRunId == $sourceCiRunId,
+                  .controlSha == $controlSha
+                ] | all) or error("native predicate identity disagreement") |
+                ($generic[0].artifactSha256 == $native[0].artifactSha256) or
+                  error("generic/native artifact digest disagreement") |
+                {
+                  artifact: $artifact,
+                  artifactSha256: $native[0].artifactSha256,
+                  generic: $generic[0],
+                  native: $native[0]
+                }
+              ' > "security-gate/verified/${artifact}.json"
+          done < <(jq -er '.include[].artifact' security-gate/rederived-matrix.json)
+          bun test \
+            scripts/release-guard.test.ts \
+            scripts/install-swap.test.ts \
+            scripts/verify-release.test.ts \
+            scripts/build-delivery-evidence.test.ts \
+            scripts/verify-delivery-evidence-pack.test.ts \
+            scripts/candidate-dogfood-matrix.test.ts \
+            scripts/release-generic-provenance.test.ts \
+            scripts/release-native-predicate.test.ts
+          jq -cs \
+            --slurpfile matrix security-gate/rederived-matrix.json \
+            --arg candidateManifestSha256 "$EXPECTED_MANIFEST_SHA256" \
+            --arg matrixSha256 "$(sha256sum security-gate/rederived-matrix.json | cut -d ' ' -f 1)" \
+            '
+              sort_by(.artifact) as $entries |
+              if ($entries | length) != ($matrix[0].include | length) then
+                error("verified security entry count differs from candidate matrix")
+              else
+                {
+                  schemaVersion: 1,
+                  kind: "stable-release-security-gate",
+                  version: ([$entries[].native.version] | unique |
+                    if length == 1 then .[0] else error("verified version disagreement") end),
+                  channel: ([$entries[].native.channel] | unique |
+                    if length == 1 then .[0] else error("verified channel disagreement") end),
+                  sourceSha: ([$entries[].native.sourceSha] | unique |
+                    if length == 1 then .[0] else error("verified source SHA disagreement") end),
+                  sourceBranch: ([$entries[].native.sourceBranch] | unique |
+                    if length == 1 then .[0] else error("verified source branch disagreement") end),
+                  sourceCiRunId: ([$entries[].native.sourceCiRunId] | unique |
+                    if length == 1 then .[0] else error("verified source run disagreement") end),
+                  controlSha: ([$entries[].native.controlSha] | unique |
+                    if length == 1 then .[0] else error("verified control SHA disagreement") end),
+                  invocationId: ([$entries[].native.invocationId] | unique |
+                    if length == 1 then .[0] else error("verified signer run disagreement") end),
+                  candidateManifestSha256: $candidateManifestSha256,
+                  matrixSha256: $matrixSha256,
+                  entries: $entries
+                }
+              end
+            ' security-gate/verified/*.json > security-gate/stable-release-security-gate.json
+
+      - name: Upload independent security evidence
+        uses: actions/upload-artifact@b7c4aadc2c921a8ff42c1c6b0e8950fc060e7c7e # v4
+        with:
+          name: stable-release-security-gate
+          path: security-gate/stable-release-security-gate.json
+          if-no-files-found: error
+          retention-days: 90
 
   publish:
     name: Publish to GitHub Releases
-    needs: admit
+    needs:
+      - admit
+      - attest-delivery-evidence
+      - delivery-evidence-compatibility
+      - codex-dogfood-completeness
+      - stable-release-security-gate
+    if: >-
+      ${{
+        always() &&
+        needs.admit.result == 'success' &&
+        needs.attest-delivery-evidence.result == 'success' &&
+        needs.delivery-evidence-compatibility.result == 'success' &&
+        needs.codex-dogfood-completeness.result == 'success' &&
+        needs.stable-release-security-gate.result == 'success'
+      }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -122,6 +931,25 @@ jobs:
           pattern: genie-*-signed
           merge-multiple: true
           path: dist
+
+      - name: Download canonical delivery descriptor subjects
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: delivery-descriptors
+          path: dist
+
+      - name: Download all delivery endorsement bundles
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: delivery-endorsement-*
+          merge-multiple: true
+          path: dist
+
+      - name: Download exact candidate manifests for inventory binding
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: delivery-candidate-manifests
+          path: ${{ runner.temp }}/candidate-manifests
 
       - name: Resolve version + channel + asset inventory
         id: meta
@@ -161,7 +989,7 @@ jobs:
           echo "channel=${CHANNEL}" >> "$GITHUB_OUTPUT"
           echo "Resolved: VERSION=${VERSION} CHANNEL=${CHANNEL}"
           echo "Tarballs: ${#TARBALLS[@]}"
-          echo "=== dist/ inventory (expect 12 files: 4× tarball + 4× bundle + 4× intoto.jsonl) ==="
+          echo "=== dist/ exact inventory: 12 release assets plus selected-channel delivery evidence fanout ==="
           ls -la
 
       - name: Install cosign for published-asset reuse verification
@@ -172,34 +1000,30 @@ jobs:
       - name: Install slsa-verifier for published-asset reuse verification
         uses: slsa-framework/slsa-verifier/actions/installer@ea584f4502babc6f60d9bc799dbbb13c1caa9ee6 # v2.7.1
 
-      - name: Prepare draft, reconcile exact assets, and finalize non-latest
+      - name: Prepare draft and reconcile exact endorsed assets
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.meta.outputs.version }}
           CHANNEL: ${{ steps.meta.outputs.channel }}
           DRAFT: ${{ inputs.draft }}
           RELEASE_REPOSITORY: ${{ github.repository }}
+          CANDIDATE_MANIFEST_DIR: ${{ runner.temp }}/candidate-manifests
         shell: bash
         run: |
           set -euo pipefail
-          # New releases remain draft/non-latest until all 12 exact assets are
-          # remotely verified. Existing complete releases are reused byte for
+          # New releases remain draft/non-latest until every exact asset is
+          # remotely verified. Finalize then proves repository immutability
+          # before the endorsed manifest bytes may be reconciled.
+          # Existing complete releases are reused byte for
           # byte; partial published releases and mismatches fail closed. The
           # repository setting is an externally verified cutover prerequisite:
           # GITHUB_TOKEN cannot read the Administration API that exposes it.
           bash scripts/reconcile-release-note.sh prepare
           bash scripts/reconcile-release-assets.sh
-          bash scripts/reconcile-release-note.sh finalize
-          if [[ "$DRAFT" == false ]]; then
-            bash scripts/release-immutability.sh release
-            # Re-verify the now-locked remote bytes and all three provenance
-            # channels. This closes the draft verification→publish TOCTOU.
-            bash scripts/reconcile-release-assets.sh
-          fi
 
   manifests:
     name: Advance authoritative channel manifests
-    needs: publish
+    needs: finalize
     if: ${{ !inputs.draft }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -248,6 +1072,12 @@ jobs:
           token: ${{ secrets.RELEASE_MANIFESTS_TOKEN }}
           persist-credentials: true
 
+      - name: Download the exact pre-endorsed candidate manifest bytes
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: delivery-candidate-manifests
+          path: ${{ runner.temp }}/candidate-manifests
+
       # ---------------------------------------------------------------------
       # Per-channel manifest pointers — committed to main so install.sh +
       # `genie update` can resolve the current version for each channel via:
@@ -279,7 +1109,7 @@ jobs:
           # writer can cause a non-fast-forward, never a lost/downgraded update.
           MANIFEST_RECONCILER="${RUNNER_TEMP}/reconcile-channel-manifests-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.sh"
           cp scripts/reconcile-channel-manifests.sh "$MANIFEST_RECONCILER"
-          RELEASED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          CANDIDATE_MANIFEST_DIR="${RUNNER_TEMP}/candidate-manifests"
           manifests_reconciled=false
 
           for attempt in 1 2 3 4 5; do
@@ -289,7 +1119,7 @@ jobs:
             # Stable/homolog fan out to downstream pointers, but each file
             # moves independently and monotonically. An older delayed release
             # may advance stable while preserving newer downstream pointers.
-            RELEASE_REPOSITORY="${{ github.repository }}" RELEASED_AT="$RELEASED_AT" \
+            RELEASE_REPOSITORY="${{ github.repository }}" CANDIDATE_MANIFEST_DIR="$CANDIDATE_MANIFEST_DIR" \
               bash "$MANIFEST_RECONCILER"
 
             # Stage the complete fixed allowlist. Staging before diff handles
@@ -327,3 +1157,68 @@ jobs:
             echo "::error::manifest push to main failed after 5 monotonic retries; release pointer was not advanced"
             exit 1
           fi
+
+  finalize:
+    name: Finalize immutable release before manifest publication
+    needs: publish
+    if: ${{ !inputs.draft && needs.publish.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      attestations: read
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Download all signed artifacts (sign-attest.yml)
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: genie-*-signed
+          merge-multiple: true
+          path: dist
+
+      - name: Download canonical delivery descriptor subjects
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: delivery-descriptors
+          path: dist
+
+      - name: Download all delivery endorsement bundles
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: delivery-endorsement-*
+          merge-multiple: true
+          path: dist
+
+      - name: Download exact candidate manifests for final inventory binding
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: delivery-candidate-manifests
+          path: ${{ runner.temp }}/candidate-manifests
+
+      - name: Install cosign for final remote verification
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+        with:
+          cosign-release: 'v2.4.1'
+
+      - name: Install slsa-verifier for final remote verification
+        uses: slsa-framework/slsa-verifier/actions/installer@ea584f4502babc6f60d9bc799dbbb13c1caa9ee6 # v2.7.1
+
+      - name: Publish, lock, and reverify the complete remote inventory
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          CHANNEL: ${{ inputs.channel }}
+          DRAFT: ${{ inputs.draft }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          CANDIDATE_MANIFEST_DIR: ${{ runner.temp }}/candidate-manifests
+        run: |
+          set -euo pipefail
+          bash scripts/reconcile-release-note.sh finalize
+          # Every channel owns a fresh tag. Publish and lock the exact verified
+          # inventory before any public manifest can name it.
+          bash scripts/release-immutability.sh release
+          bash scripts/reconcile-release-assets.sh

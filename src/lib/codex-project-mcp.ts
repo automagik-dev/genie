@@ -1,13 +1,13 @@
 /**
  * Project-scoped MCP lifecycle for Codex, Claude Code, and Warp.
  *
- * Codex has two possible routes to Genie's stdio MCP server:
- *   1. the enabled `genie@automagik` plugin; or
- *   2. a marker-owned `<worktree>/.codex/config.toml` fallback.
+ * Codex has one supported route to Genie's stdio MCP server: the marker-owned
+ * `<worktree>/.codex/config.toml` entry. The enabled `genie@automagik` plugin
+ * deliberately declares no MCP server.
  *
- * This module is the sole owner of choosing between them. It deliberately
- * treats disabled, unknown, malformed, and timed-out plugin state as
- * ineffective and keeps an absolute-command fallback in those cases.
+ * This module is the sole owner of reconciling and inspecting that route. Its
+ * legacy route-classification helpers remain fail-closed for older installed
+ * payloads, but production init/setup always retain the stable absolute facade.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -120,7 +120,23 @@ export interface RegisterProjectMcpOptions {
   /** Reuse a caller's one-shot probe so a launch with N worktrees queries Codex once. */
   pluginProbe?: CodexPluginProbe;
   probeDeps?: CodexPluginProbeDeps;
+  /** Command written to the Claude/Warp JSON configs (`.mcp.json`, `.warp/.mcp.json`). */
   entry?: McpServerEntry;
+  /**
+   * Dedicated command for the marker-owned Codex `.codex/config.toml` route.
+   * Defaults to {@link RegisterProjectMcpOptions.entry}. Trusted `genie init`
+   * passes the stable {@link genieFacadeMcpEntry} facade here so the Codex marker
+   * uses the version-independent `<GENIE_HOME>/bin/genie` command even while
+   * Claude/Warp keep the running-executable entry.
+   */
+  codexEntry?: McpServerEntry;
+  /**
+   * Reconcile the marker-owned Codex route INDEPENDENT of plugin/delivery state
+   * (trusted `genie init`). A route name is not proof of ownership, so an
+   * unmanaged same-key route is still preserved and reported rather than
+   * overwritten.
+   */
+  forceCodexFallback?: boolean;
 }
 
 export interface GitProjectRoots {
@@ -406,8 +422,8 @@ export function resolveGitWorktreeRoot(
 /**
  * Verify the exact active plugin MCP indirection plus the only binary the
  * plugin-local launcher is permitted to execute. This is a read-only check;
- * enabled metadata or a healthy source bundle never removes the absolute
- * project fallback.
+ * enabled metadata or a healthy source bundle never replaces the absolute
+ * project route.
  */
 export function inspectCodexPluginMcpUsability(options: CodexPluginMcpUsabilityOptions = {}): CodexPluginMcpUsability {
   const pluginRoot = options.pluginRoot;
@@ -618,6 +634,22 @@ export function genieMcpEntry(command?: string, argv = process.argv): McpServerE
   const executable = realpathSync(process.execPath);
   const script = interpretedGenieEntry(argv);
   return { command: executable, args: script ? [script, 'mcp'] : ['mcp'] };
+}
+
+/**
+ * The stable marker-owned Codex route command: the canonical absolute
+ * `<GENIE_HOME>/bin/genie` facade with `args = ["mcp"]` and NO effective cwd
+ * override. Unlike {@link genieMcpEntry} (which records the running executable
+ * for Claude/Warp), this facade path is deliberately version- and
+ * plugin-independent: it survives plugin updates and symlinked invocation, and
+ * is rewritten only by trusted `genie init` after an explicit GENIE_HOME
+ * relocation. It never resolves to a versioned plugin-cache path.
+ */
+export function genieFacadeMcpEntry(
+  genieHome: string = resolveGenieHome(),
+  platform: NodeJS.Platform = process.platform,
+): McpServerEntry {
+  return { command: join(genieHome, 'bin', platform === 'win32' ? 'genie.exe' : 'genie'), args: ['mcp'] };
 }
 
 function isJsonObject(value: unknown): value is JsonObject {
@@ -973,14 +1005,18 @@ export function reconcileCodexProjectMcp(
  */
 export function registerProjectMcpConfigs(root: string, options: RegisterProjectMcpOptions = {}): McpConfigResult[] {
   const entry = options.entry ?? genieMcpEntry();
-  const plugin = options.pluginProbe ?? probeCodexGeniePlugin(options.probeDeps);
+  const codexEntry = options.codexEntry ?? entry;
   const preparedJson = [join(root, '.mcp.json'), join(root, '.warp', '.mcp.json')].map((path) =>
     prepareJsonMcpConfig(path, entry),
   );
-  // Explicit init must leave a discoverable route even before the Codex CLI is
-  // installed. The marker-owned fallback is lifecycle-owned and can later be
-  // removed atomically when a usable plugin is proven.
-  const preparedCodex = prepareCodexFallback(join(root, '.codex', 'config.toml'), entry, !isUsableCodexPlugin(plugin));
+  // Trusted init reconciles the marker-owned Codex route independent of plugin
+  // state (`forceCodexFallback`) — the `||` short-circuits so a forced call never
+  // spends a Codex query. Otherwise the marker is retained only when no usable
+  // plugin is proven. Either way an unowned same-key route is preserved.
+  const required =
+    options.forceCodexFallback === true ||
+    !isUsableCodexPlugin(options.pluginProbe ?? probeCodexGeniePlugin(options.probeDeps));
+  const preparedCodex = prepareCodexFallback(join(root, '.codex', 'config.toml'), codexEntry, required);
 
   if (!preparedCodex.ok) {
     throw new Error(`Cannot reconcile Codex project MCP at ${preparedCodex.path}: ${preparedCodex.detail}`);

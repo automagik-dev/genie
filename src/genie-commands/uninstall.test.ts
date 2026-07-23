@@ -1356,6 +1356,34 @@ describe('agent-sync managed-asset removal', () => {
     expect(existsSync(uninstallBatchJournalPath(genieHome))).toBe(true);
   });
 
+  // Group E carry-forward (Decision 14): the legacy `.install-version` marker
+  // has NO dedicated uninstall call — the digest-verified wholesale GENIE_HOME
+  // removal owns it. A dedicated delete inside the plan→execute window would
+  // poison `genieHomeRemovalDigest` (the marker is a snapshotted removable
+  // child); before the window it is redundant; after, a no-op. These pin both
+  // legacy layouts through the REAL batch path instead.
+  test('uninstall removes a GENIE_HOME carrying a legacy regular-file .install-version marker', () => {
+    mkdirSync(join(genieHome, 'plugins', 'genie'), { recursive: true });
+    writeFileSync(join(genieHome, 'plugins', 'genie', 'payload.txt'), 'delivered\n');
+    writeFileSync(join(genieHome, '.install-version'), '4.9.9\n');
+    const outcome = withIsolatedHomes(() => performFreshUninstallPlan(genieHome, false));
+    expect(outcome.result.failures).toEqual([]);
+    expect(existsSync(join(genieHome, '.install-version'))).toBe(false);
+    expect(existsSync(join(genieHome, 'plugins'))).toBe(false);
+  });
+
+  test('uninstall unlinks a symlinked .install-version marker without following it to its target', () => {
+    const target = join(tmp, 'outside-marker-target.txt');
+    writeFileSync(target, 'survives uninstall\n');
+    mkdirSync(join(genieHome, 'plugins', 'genie'), { recursive: true });
+    writeFileSync(join(genieHome, 'plugins', 'genie', 'payload.txt'), 'delivered\n');
+    symlinkSync(target, join(genieHome, '.install-version'));
+    const outcome = withIsolatedHomes(() => performFreshUninstallPlan(genieHome, false));
+    expect(outcome.result.failures).toEqual([]);
+    expect(existsSync(join(genieHome, '.install-version'))).toBe(false);
+    expect(readFileSync(target, 'utf8')).toBe('survives uninstall\n');
+  });
+
   test('late nested insertion survives the final non-recursive rmdir check without a completion receipt', () => {
     const payload = join(genieHome, 'plugins', 'genie', 'payload.txt');
     const foreignBytes = Buffer.from('late foreign must survive\n');
@@ -2068,6 +2096,7 @@ describe('durable runtime integration allowlist', () => {
             name: 'genie-later.toml',
             path: '/tmp/genie-later.toml',
             ownership: 'managed-clean',
+            state: 'managed',
           },
         ],
       },
@@ -2162,6 +2191,8 @@ describe('uninstall ownership and work detection', () => {
         inventoryPath: join(root, 'inventory.json'),
         status: 'missing' as const,
         entries: [],
+        expectedDeliveredTotal: 7,
+        reviewerDigest: 'c7008dcaa1e31b46e2bb05ca13afb2e918ee483422c84386a1c8997485bcfea7',
       }),
       inspectRuntimeClientAvailability: () => ({
         codex: false,

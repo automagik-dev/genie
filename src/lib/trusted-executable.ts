@@ -1,4 +1,5 @@
 import { constants, accessSync, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 const MAX_GIT_POINTER_BYTES = 4 * 1024;
@@ -11,6 +12,15 @@ function normalizeComparablePath(path: string): string {
     return realpathSync(logical) === path ? logical : path;
   } catch {
     return path;
+  }
+}
+
+/** Canonical (physical) form with a logical fallback for unresolvable paths. */
+function safeCanonical(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return resolve(path);
   }
 }
 
@@ -107,19 +117,31 @@ export function resolveEnclosingGitTrustRoots(cwd: string): string[] {
   return [...roots];
 }
 
-/** Validate an already-selected absolute executable against repository trust roots. */
+/**
+ * Validate an already-selected absolute executable against repository trust
+ * roots. The threat is a repository-local binary in an untrusted checkout — so
+ * a forbidden root that IS the user's home directory (or an ancestor of it,
+ * e.g. a dotfiles repo at `~`, or simply running from `$HOME`) is excluded:
+ * "contained in $HOME" bans every user-installed CLI (`~/.local/bin/claude`,
+ * `~/.bun/bin/...`) while providing no isolation, since effectively everything
+ * user-owned lives under home. Real project roots BELOW home stay forbidden.
+ */
 export function validateTrustedExecutablePath(
   name: string,
   candidate: string,
   childCwd: string,
   platform: NodeJS.Platform = process.platform,
+  home: string = homedir(),
 ): string {
   if (!isAbsolute(candidate)) throw new Error(`${name} did not resolve to an absolute executable`);
 
   const canonicalCwd = realpathSync(childCwd);
   const selectedPath = resolve(candidate);
   const canonical = realpathSync(candidate);
-  const forbiddenRoots = new Set([canonicalCwd, ...resolveEnclosingGitTrustRoots(canonicalCwd)]);
+  const canonicalHome = safeCanonical(home);
+  const forbiddenRoots = [...new Set([canonicalCwd, ...resolveEnclosingGitTrustRoots(canonicalCwd)])].filter(
+    (root) => !isSameOrContainedPath(root, canonicalHome),
+  );
   for (const root of forbiddenRoots) {
     if (isSameOrContainedPath(root, selectedPath) || isSameOrContainedPath(root, canonical)) {
       throw new Error(`Refusing repository-local ${name} executable: ${candidate}`);

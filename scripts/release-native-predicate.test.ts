@@ -6,6 +6,7 @@ import { join } from 'node:path';
 const SCRIPT = join(import.meta.dir, 'release-native-predicate.sh');
 const SOURCE_SHA = 'a'.repeat(40);
 const CONTROL_SHA = 'b'.repeat(40);
+const ARTIFACT_SHA256 = 'd'.repeat(64);
 const roots: string[] = [];
 
 afterEach(() => {
@@ -23,10 +24,11 @@ const env = {
   CONTROL_SHA,
   RUN_ID: '987654',
   RUN_ATTEMPT: '2',
+  ARTIFACT_SHA256,
 };
 
 function invoke(
-  mode: 'create' | 'verify' | 'verify-reusable' | 'reusable-control-sha',
+  mode: 'create' | 'verify' | 'verify-exact-subject' | 'verify-reusable' | 'reusable-control-sha',
   path: string,
   overrides: Record<string, string> = {},
 ) {
@@ -68,7 +70,11 @@ describe('native release attestation predicate', () => {
     const verification = [
       {
         verificationResult: {
-          statement: { predicateType: 'https://github.com/automagik-dev/genie/release-tarballs/v1', predicate },
+          statement: {
+            predicateType: 'https://github.com/automagik-dev/genie/release-tarballs/v1',
+            subject: [{ name: 'genie-5.260714.2-linux-x64-glibc.tar.gz', digest: { sha256: ARTIFACT_SHA256 } }],
+            predicate,
+          },
         },
       },
     ];
@@ -83,6 +89,53 @@ describe('native release attestation predicate', () => {
     predicate.buildDefinition.resolvedDependencies[1].digest.gitCommit = 'd'.repeat(40);
     writeFileSync(resultPath, JSON.stringify(verification));
     expect(invoke('verify', resultPath).exitCode).not.toBe(0);
+
+    predicate.buildDefinition.resolvedDependencies[1].digest.gitCommit = CONTROL_SHA;
+    predicate.runDetails.metadata.invocationId =
+      'https://github.com/automagik-dev/genie/actions/runs/987654/attempts/3';
+    writeFileSync(resultPath, JSON.stringify(verification));
+    expect(invoke('verify', resultPath).exitCode).not.toBe(0);
+  });
+
+  test('emits signed identity only when the native statement binds the exact artifact subject', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-native-subject-'));
+    roots.push(root);
+    const predicatePath = join(root, 'predicate.json');
+    const resultPath = join(root, 'result.json');
+    expect(invoke('create', predicatePath).exitCode).toBe(0);
+    const predicate = JSON.parse(readFileSync(predicatePath, 'utf8'));
+    writeFileSync(
+      resultPath,
+      JSON.stringify([
+        {
+          verificationResult: {
+            statement: {
+              predicateType: 'https://github.com/automagik-dev/genie/release-tarballs/v1',
+              subject: [{ digest: { sha256: ARTIFACT_SHA256 } }],
+              predicate,
+            },
+          },
+        },
+      ]),
+    );
+
+    const verified = invoke('verify-exact-subject', resultPath);
+    expect(verified.exitCode).toBe(0);
+    expect(JSON.parse(verified.stdout.toString())).toEqual({
+      artifactSha256: ARTIFACT_SHA256,
+      version: '5.260714.2',
+      channel: 'dev',
+      sourceSha: SOURCE_SHA,
+      sourceBranch: 'dev',
+      sourceCiRunId: '123456',
+      controlSha: CONTROL_SHA,
+      invocationId: 'https://github.com/automagik-dev/genie/actions/runs/987654/attempts/2',
+    });
+    expect(
+      invoke('verify-exact-subject', resultPath, {
+        ARTIFACT_SHA256: 'e'.repeat(64),
+      }).exitCode,
+    ).not.toBe(0);
   });
 
   test('malformed source identity is rejected before predicate creation', () => {

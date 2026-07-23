@@ -1,5 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import type { CodexActivationStore, DeliveryRecord, PublishDeliveryInput } from '../lib/codex-activation.js';
+import {
+  type DeliveryEvidenceChannel,
+  type VerifiedDeliveryEvidence,
+  deriveDeliveryId,
+  verifiedDeliveryEvidenceFacts,
+} from '../lib/codex-delivery-evidence.js';
+import { mintTestDeliveryEvidence } from '../lib/codex-delivery-evidence.test-support.js';
 import type { HeldLifecycleLease } from '../lib/codex-lifecycle-lease.js';
 import {
   CODEX_DELIVERY_RESULT_TRAILER,
@@ -13,6 +20,35 @@ import {
 const N = '5.260711.6';
 const T = '5.260712.1';
 const DIGEST = 'a'.repeat(64);
+const DELIVERY_ROOT = '/home/test/.genie';
+
+function testEvidence(version = T, channel: DeliveryEvidenceChannel = 'dev'): VerifiedDeliveryEvidence {
+  return mintTestDeliveryEvidence({
+    descriptor: { version, channel, canonicalPayloadSha256: DIGEST },
+  }).evidence;
+}
+
+function authenticatedRecord(evidence = testEvidence()): DeliveryRecord {
+  const facts = verifiedDeliveryEvidenceFacts(evidence);
+  const descriptor = facts.descriptor;
+  return {
+    schemaVersion: 2,
+    deliveryId: deriveDeliveryId(facts.evidenceDigest, DELIVERY_ROOT),
+    targetVersion: descriptor.version,
+    canonicalPayloadSha256: descriptor.canonicalPayloadSha256,
+    channel: descriptor.channel,
+    deliveredAt: facts.deliveredAt,
+    evidenceDigest: facts.evidenceDigest,
+    platformId: descriptor.platformId,
+    platformTriple: descriptor.platformTriple,
+    releaseTag: descriptor.releaseTag,
+    releaseName: descriptor.releaseName,
+    releaseManifestSha256: descriptor.releaseManifestSha256,
+    artifactSha256: descriptor.artifactSha256,
+    installedBinarySha256: descriptor.installedBinarySha256,
+    deliveryRoot: DELIVERY_ROOT,
+  };
+}
 
 describe('classifyCodexDelivery — the one delivery classifier', () => {
   test('absent installed generation', () => {
@@ -33,44 +69,68 @@ describe('classifyCodexDelivery — the one delivery classifier', () => {
   });
 });
 
-describe('buildDeliveryPublication — publish facts only for pending', () => {
+describe('buildDeliveryPublication — publish only opaque verified evidence', () => {
   test('upgrade publishes without a downgradeFrom', () => {
-    expect(
-      buildDeliveryPublication({
-        installedVersion: N,
-        targetVersion: T,
-        canonicalPayloadSha256: DIGEST,
-        channel: 'dev',
-      }),
-    ).toEqual({ targetVersion: T, canonicalPayloadSha256: DIGEST, channel: 'dev' });
+    const evidence = testEvidence();
+    expect(buildDeliveryPublication({ installedVersion: N, evidence, deliveryRoot: DELIVERY_ROOT })).toEqual({
+      evidence,
+      deliveryRoot: DELIVERY_ROOT,
+    });
   });
+
   test('downgrade binds downgradeFrom = N', () => {
-    expect(
-      buildDeliveryPublication({
-        installedVersion: T,
-        targetVersion: N,
-        canonicalPayloadSha256: DIGEST,
-        channel: 'stable',
-      }),
-    ).toEqual({ targetVersion: N, canonicalPayloadSha256: DIGEST, channel: 'stable', downgradeFrom: T });
+    const evidence = testEvidence(N, 'stable');
+    expect(buildDeliveryPublication({ installedVersion: T, evidence, deliveryRoot: DELIVERY_ROOT })).toEqual({
+      evidence,
+      deliveryRoot: DELIVERY_ROOT,
+      downgradeFrom: T,
+    });
   });
-  test('absent and current publish nothing', () => {
-    expect(
-      buildDeliveryPublication({
-        installedVersion: null,
-        targetVersion: T,
-        canonicalPayloadSha256: DIGEST,
-        channel: 'dev',
-      }),
-    ).toBeNull();
+
+  test('absent-N publishes the delivery facts (fresh host: setup gate needs the record); no downgrade binding', () => {
+    const evidence = testEvidence();
+    expect(buildDeliveryPublication({ installedVersion: null, evidence, deliveryRoot: DELIVERY_ROOT })).toEqual({
+      evidence,
+      deliveryRoot: DELIVERY_ROOT,
+    });
+  });
+
+  test('current without a record read-state republishes fail-closed because matching cannot be proved', () => {
+    const evidence = testEvidence();
+    expect(buildDeliveryPublication({ installedVersion: T, evidence, deliveryRoot: DELIVERY_ROOT })).toEqual({
+      evidence,
+      deliveryRoot: DELIVERY_ROOT,
+    });
+  });
+
+  test('current with a MATCHING record never republishes (idempotent)', () => {
+    const evidence = testEvidence();
     expect(
       buildDeliveryPublication({
         installedVersion: T,
-        targetVersion: T,
-        canonicalPayloadSha256: DIGEST,
-        channel: 'dev',
+        evidence,
+        deliveryRoot: DELIVERY_ROOT,
+        existingRecord: { status: 'present', record: authenticatedRecord(evidence) },
       }),
     ).toBeNull();
+  });
+
+  test('current with a STALE or absent record publishes the delivered facts (2026-07-23 live-QA regression)', () => {
+    const evidence = testEvidence();
+    const stale = {
+      status: 'present' as const,
+      record: authenticatedRecord(testEvidence('5.260711.9')),
+    };
+    for (const existingRecord of [stale, { status: 'absent' as const }]) {
+      expect(
+        buildDeliveryPublication({
+          installedVersion: T,
+          evidence,
+          deliveryRoot: DELIVERY_ROOT,
+          existingRecord,
+        }),
+      ).toEqual({ evidence, deliveryRoot: DELIVERY_ROOT });
+    }
   });
 });
 
@@ -85,14 +145,7 @@ function spyStore(): { store: CodexActivationStore; publishCalls: PublishDeliver
     },
     publishDelivery(_lease, input): DeliveryRecord {
       publishCalls.push(input);
-      return {
-        schemaVersion: 1,
-        deliveryId: input.deliveryId ?? 'd'.repeat(32),
-        targetVersion: input.targetVersion,
-        canonicalPayloadSha256: input.canonicalPayloadSha256,
-        channel: input.channel,
-        deliveredAt: '2026-07-21T00:00:00.000Z',
-      };
+      return authenticatedRecord(input.evidence);
     },
     withRevalidatedDeliveryRoot() {
       forbidden.push('withRevalidatedDeliveryRoot');
@@ -125,33 +178,32 @@ function spyLease(): HeldLifecycleLease {
 describe('publishCodexDelivery — parent publishes facts, nothing else', () => {
   test('pending upgrade publishes exactly one delivery record and no receipt', () => {
     const { store, publishCalls, forbidden } = spyStore();
+    const evidence = testEvidence();
     const result = publishCodexDelivery({
       lease: spyLease(),
       store,
       installedVersion: N,
-      targetVersion: T,
-      canonicalPayloadSha256: DIGEST,
-      channel: 'dev',
-      deliveryId: 'c'.repeat(32),
+      evidence,
+      deliveryRoot: DELIVERY_ROOT,
     });
     expect(result.published).toBe(true);
     expect(result.wroteDowngradeReceipt).toBe(false);
     expect(result.state).toEqual({ kind: 'pending', direction: 'upgrade' });
     expect(publishCalls).toHaveLength(1);
     expect(publishCalls[0].downgradeFrom).toBeUndefined();
-    expect(publishCalls[0].deliveryId).toBe('c'.repeat(32));
+    expect(publishCalls[0]).toEqual({ evidence, deliveryRoot: DELIVERY_ROOT });
     expect(forbidden).toEqual([]);
   });
 
   test('pending downgrade publishes with the receipt-binding downgradeFrom', () => {
     const { store, publishCalls, forbidden } = spyStore();
+    const evidence = testEvidence(N, 'stable');
     const result = publishCodexDelivery({
       lease: spyLease(),
       store,
       installedVersion: T,
-      targetVersion: N,
-      canonicalPayloadSha256: DIGEST,
-      channel: 'stable',
+      evidence,
+      deliveryRoot: DELIVERY_ROOT,
     });
     expect(result.published).toBe(true);
     expect(result.wroteDowngradeReceipt).toBe(true);
@@ -159,21 +211,56 @@ describe('publishCodexDelivery — parent publishes facts, nothing else', () => 
     expect(forbidden).toEqual([]);
   });
 
-  test('absent and current publish nothing and never touch activation state', () => {
-    for (const installed of [null, T]) {
-      const { store, publishCalls, forbidden } = spyStore();
-      const result = publishCodexDelivery({
-        lease: spyLease(),
-        store,
-        installedVersion: installed,
-        targetVersion: T,
-        canonicalPayloadSha256: DIGEST,
-        channel: 'dev',
-      });
-      expect(result.published).toBe(false);
-      expect(publishCalls).toHaveLength(0);
-      expect(forbidden).toEqual([]);
-    }
+  test('current without observable record state republishes fail-closed and never touches activation state', () => {
+    const { store, publishCalls, forbidden } = spyStore();
+    const evidence = testEvidence();
+    const result = publishCodexDelivery({
+      lease: spyLease(),
+      store,
+      installedVersion: T,
+      evidence,
+      deliveryRoot: DELIVERY_ROOT,
+    });
+    expect(result.published).toBe(true);
+    expect(publishCalls).toHaveLength(1);
+    expect(forbidden).toEqual([]);
+  });
+
+  test('absent-N publishes the facts once, with no receipt and no activation-state touch', () => {
+    const { store, publishCalls, forbidden } = spyStore();
+    const evidence = testEvidence();
+    const result = publishCodexDelivery({
+      lease: spyLease(),
+      store,
+      installedVersion: null,
+      evidence,
+      deliveryRoot: DELIVERY_ROOT,
+    });
+    expect(result.published).toBe(true);
+    expect(result.wroteDowngradeReceipt).toBe(false);
+    expect(publishCalls).toHaveLength(1);
+    expect(publishCalls[0]).toEqual({ evidence, deliveryRoot: DELIVERY_ROOT });
+    expect(forbidden).toEqual([]);
+  });
+
+  test('a store write failure is a typed incomplete publication outcome', () => {
+    const { store } = spyStore();
+    const evidence = testEvidence();
+    store.publishDelivery = () => {
+      throw new Error('delivery store is unwritable');
+    };
+    const result = publishCodexDelivery({
+      lease: spyLease(),
+      store,
+      installedVersion: N,
+      evidence,
+      deliveryRoot: DELIVERY_ROOT,
+    });
+    expect(result).toMatchObject({
+      outcome: 'failed',
+      published: false,
+      detail: 'delivery store is unwritable',
+    });
   });
 });
 

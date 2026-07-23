@@ -1,8 +1,9 @@
 /**
  * Codex plugin activation protocol — the pure, fail-closed core.
  *
- * `genie update` can advance and prune a versioned Codex plugin cache while an
- * open Codex task still holds paths into the old generation. This module puts
+ * `genie update` can deliver a new canonical generation while an open Codex
+ * task still holds paths into the active old generation. A later authenticated
+ * `genie setup --codex` owns cache activation and pruning. This module puts
  * every activation-capable entry path behind three explicit layers:
  *
  *   1. `observeCodexActivation()` performs only bounded reads and returns a
@@ -37,44 +38,57 @@ import {
   renameNonOverwriting,
   unlinkWithParentFsync,
 } from './codex-activation-persistence.js';
+import {
+  type AuthenticatedDeliveryBinding,
+  type DeliveryEvidenceVerificationDependencies,
+  type PersistedAuthenticatedDeliveryRecord,
+  type VerifiedDeliveryEvidence,
+  type VerifiedDeliveryEvidenceFacts,
+  authenticatedDeliveryBindingDigest,
+  authenticatedDeliveryBindingFromRecord,
+  authenticatedDeliveryRecordFields,
+  createAuthenticatedDeliveryBinding,
+  encodeAuthenticatedDeliveryRecord,
+  observePersistedDeliveryEvidence,
+  parseAuthenticatedDeliveryRecord,
+  persistVerifiedDeliveryEvidence,
+  verifiedDeliveryEvidenceFacts,
+} from './codex-delivery-evidence.js';
+// Group B (host-observation-attestation): the single pure delivery-attestation
+// classifier + its typed result. Imported here so the inner activation guard
+// (`beginActivationImpl`) applies exactly the same assessment the standalone
+// contract test exercises. `codex-host-observation.ts` delegates tuple validation
+// to the evidence-owned codec and never imports this module, so this dependency
+// is one-directional (no import cycle).
+import {
+  type DeliveryAssessment,
+  type DeliveryRecordReadState,
+  assessAuthenticatedDelivery,
+} from './codex-host-observation.js';
 import { type HeldLifecycleLease, LifecycleFencingError } from './codex-lifecycle-lease.js';
+import {
+  type ParsedReleaseVersion,
+  compareReleaseVersions,
+  parseReleaseVersion,
+  stripControl,
+} from './codex-release-version.js';
 import { resolveCodexDir, resolveGenieHome } from './genie-home.js';
-import { type CommandRunner, parseCodexPluginState, runBoundedIntegrationCommand } from './runtime-integrations.js';
+import {
+  type CommandRunner,
+  type DeliveryRootConsumer,
+  parseCodexPluginState,
+  runBoundedIntegrationCommand,
+  runDeliveryRootConsumer,
+} from './runtime-integrations.js';
 
 // ============================================================================
 // Release-version grammar and direction
 // ============================================================================
 
-/** Exact `MAJOR.YYMMDD.N` release grammar; build metadata is stripped only after a match. */
-const RELEASE_VERSION_RE = /^(\d+)\.(\d{6})\.(\d+)(?:\+[0-9A-Za-z][0-9A-Za-z.-]*)?$/;
-
-export interface ParsedReleaseVersion {
-  readonly major: number;
-  readonly ymd: number;
-  readonly n: number;
-  /** The `MAJOR.YYMMDD.N` triple with build metadata removed; used for equality. */
-  readonly canonical: string;
-}
-
-/** Parse a release version, returning null for anything that fails the exact grammar. */
-export function parseReleaseVersion(raw: unknown): ParsedReleaseVersion | null {
-  if (typeof raw !== 'string') return null;
-  const match = RELEASE_VERSION_RE.exec(raw);
-  if (!match) return null;
-  const major = Number(match[1]);
-  const ymd = Number(match[2]);
-  const n = Number(match[3]);
-  if (!Number.isSafeInteger(major) || !Number.isSafeInteger(ymd) || !Number.isSafeInteger(n)) return null;
-  return { major, ymd, n, canonical: `${major}.${match[2]}.${n}` };
-}
-
-/** Total numeric order over validated versions. */
-export function compareReleaseVersions(a: ParsedReleaseVersion, b: ParsedReleaseVersion): -1 | 0 | 1 {
-  if (a.major !== b.major) return a.major < b.major ? -1 : 1;
-  if (a.ymd !== b.ymd) return a.ymd < b.ymd ? -1 : 1;
-  if (a.n !== b.n) return a.n < b.n ? -1 : 1;
-  return 0;
-}
+// The pure `MAJOR.YYMMDD.N` grammar now lives in the leaf `codex-release-version.ts`
+// (shared with `codex-host-observation.ts` without an import cycle). Re-exported
+// here so every existing `from './codex-activation.js'` importer is unchanged.
+export { type ParsedReleaseVersion, compareReleaseVersions, parseReleaseVersion, stripControl };
 
 export type ActivationDirection = 'install' | 'upgrade' | 'downgrade' | 'repair';
 
@@ -133,15 +147,8 @@ export interface DowngradeReceipt {
   channel: string;
 }
 
-export interface DeliveryRecord {
-  schemaVersion: 1;
-  /** The 128-bit delivery transaction id; a downgrade receipt copies it as its receiptId. */
-  deliveryId: string;
-  targetVersion: string;
-  canonicalPayloadSha256: string;
-  channel: string;
-  deliveredAt: string;
-}
+/** Byte-compatible schema-2 record; its field set and codec live with delivery evidence. */
+export type DeliveryRecord = PersistedAuthenticatedDeliveryRecord;
 
 export interface ReceiptTombstone {
   schemaVersion: 1;
@@ -230,34 +237,8 @@ export function parseDowngradeReceiptStructure(content: string): DowngradeReceip
   };
 }
 
-const DELIVERY_KEYS: ReadonlySet<string> = new Set([
-  'schemaVersion',
-  'deliveryId',
-  'targetVersion',
-  'canonicalPayloadSha256',
-  'channel',
-  'deliveredAt',
-]);
-
 export function parseDeliveryRecordStructure(content: string): DeliveryRecord | null {
-  const parsed = safeJson(content);
-  if (!isPlainObject(parsed)) return null;
-  if (Object.keys(parsed).some((key) => !DELIVERY_KEYS.has(key))) return null;
-  const record = parsed;
-  if (record.schemaVersion !== 1) return null;
-  if (!isHex128(record.deliveryId)) return null;
-  if (parseReleaseVersion(record.targetVersion) === null) return null;
-  if (!isHex256(record.canonicalPayloadSha256)) return null;
-  if (typeof record.channel !== 'string' || record.channel.length === 0 || record.channel.length > 128) return null;
-  if (typeof record.deliveredAt !== 'string' || record.deliveredAt.length === 0) return null;
-  return {
-    schemaVersion: 1,
-    deliveryId: record.deliveryId as string,
-    targetVersion: record.targetVersion as string,
-    canonicalPayloadSha256: record.canonicalPayloadSha256 as string,
-    channel: record.channel as string,
-    deliveredAt: record.deliveredAt as string,
-  };
+  return parseAuthenticatedDeliveryRecord(content);
 }
 
 const TOMBSTONE_KEYS: ReadonlySet<string> = new Set(['schemaVersion', 'receiptId', 'consumedAt', 'operationId']);
@@ -297,7 +278,15 @@ export type RegistrationFact =
 export type QueryFact = { status: 'failed'; detail: string } | { status: 'ok'; registration: RegistrationFact };
 
 export type CanonicalFact =
-  | { status: 'ok'; version: ParsedReleaseVersion; digest: string; identity: string }
+  | {
+      status: 'ok';
+      version: ParsedReleaseVersion;
+      digest: string;
+      identity: string;
+      deliveryRoot: string;
+      installedBinarySha256: string;
+      platformTriple: string;
+    }
   | { status: 'error'; detail: string };
 
 export type PhysicalCacheFact =
@@ -315,7 +304,7 @@ export type ReceiptFact =
 export type DeliveryFact =
   | { status: 'absent' }
   | { status: 'invalid'; detail: string }
-  | { status: 'present'; record: DeliveryRecord };
+  | { status: 'present'; record: DeliveryRecord; evidence: VerifiedDeliveryEvidenceFacts };
 
 export type IntentFact =
   | { status: 'absent' }
@@ -601,7 +590,13 @@ const RETIRE_RECOVERY = 'retire tasks → genie setup --codex → /hooks → new
 export function describeState(state: CodexActivationState): StateDescriptor {
   switch (state.kind) {
     case 'query-failed':
-      return desc('query-failed', 1, 'none', true, 'Indeterminate; repair the Codex CLI/query, then rerun doctor');
+      return desc(
+        'query-failed',
+        1,
+        'none',
+        true,
+        'Indeterminate; upgrade or repair the Codex CLI/query, then rerun doctor',
+      );
     case 'registration-version-invalid':
       return desc(
         'registration-version-invalid',
@@ -817,10 +812,13 @@ export interface ActivationRequestFingerprint {
   observedTarget: string | null;
   canonicalPayloadSha256: string | null;
   installedDeliveryDigest: string | null;
-  deliveryId: string | null;
+  /** Commits the complete verified descriptor plus publication transaction/root. */
+  deliveryBindingDigest: string | null;
   registrationIdentity: string | null;
   cacheIdentity: string | null;
   enabled: boolean | null;
+  /** Digest of the exact valid journal bytes, binding every durable intent field. */
+  intentContentSha256: string | null;
   intentPhase: IntentPhase | null;
   intentId: string | null;
   receiptId: string | null;
@@ -832,14 +830,23 @@ const FINGERPRINT_FIELDS: readonly (keyof ActivationRequestFingerprint)[] = [
   'observedTarget',
   'canonicalPayloadSha256',
   'installedDeliveryDigest',
-  'deliveryId',
+  'deliveryBindingDigest',
   'registrationIdentity',
   'cacheIdentity',
   'enabled',
+  'intentContentSha256',
   'intentPhase',
   'intentId',
   'receiptId',
 ];
+
+function authenticatedDeliveryBindingForSnapshot(
+  snapshot: CodexActivationSnapshot,
+  canonical: Extract<CanonicalFact, { status: 'ok' }> | null,
+): AuthenticatedDeliveryBinding | null {
+  if (snapshot.delivery.status !== 'present' || canonical === null) return null;
+  return createAuthenticatedDeliveryBinding(snapshot.delivery.evidence, canonical.deliveryRoot);
+}
 
 export function computeActivationFingerprint(snapshot: CodexActivationSnapshot): ActivationRequestFingerprint {
   const registration = registrationOf(snapshot);
@@ -848,15 +855,17 @@ export function computeActivationFingerprint(snapshot: CodexActivationSnapshot):
   const cache = snapshot.cache;
   const intent = snapshot.intent;
   const family = snapshot.observationWitness.after;
+  const binding = authenticatedDeliveryBindingForSnapshot(snapshot, canonical);
   return {
     observedFrom: registered,
     observedTarget: canonical ? canonical.version.canonical : null,
     canonicalPayloadSha256: canonical ? canonical.digest : null,
     installedDeliveryDigest: cache.kind === 'present' ? cache.digest : null,
-    deliveryId: snapshot.delivery.status === 'present' ? snapshot.delivery.record.deliveryId : null,
+    deliveryBindingDigest: binding === null ? null : authenticatedDeliveryBindingDigest(binding),
     registrationIdentity: cache.kind === 'present' ? cache.identity : null,
     cacheIdentity: family.status === 'present' ? family.identity : null,
     enabled: registration.present ? registration.enabled : null,
+    intentContentSha256: intent.status === 'valid' ? intent.contentSha256 : null,
     intentPhase: intent.status === 'valid' ? intent.intent.phase : null,
     intentId: intent.status === 'valid' ? intent.intent.refreshIntentId : null,
     receiptId: snapshot.receipt.status === 'present' ? snapshot.receipt.receipt.receiptId : null,
@@ -1035,6 +1044,8 @@ export interface ObserveOptions {
   /** TEST-ONLY canonical payload root override; production refuses caller/env roots. */
   canonicalRoot?: string;
   allowRootOverride?: boolean;
+  /** TEST-ONLY cryptographic seam; production always uses embedded offline trust material. */
+  deliveryEvidenceVerification?: DeliveryEvidenceVerificationDependencies;
   now?: () => Date;
 }
 
@@ -1050,7 +1061,7 @@ export function observeCodexActivation(options: ObserveOptions = {}): CodexActiv
   const after = witnessFamily(familyDir);
   const cache = observeCache(query, codexHome);
   const receipt = observeReceipt(genieHome);
-  const delivery = observeDelivery(genieHome);
+  const delivery = observeDelivery(genieHome, options.deliveryEvidenceVerification);
   const receiptConsumed = receipt.status === 'present' && isReceiptConsumed(genieHome, receipt.receipt.receiptId);
   const intent = observeIntent(genieHome);
   return {
@@ -1074,7 +1085,25 @@ function observeCanonical(options: ObserveOptions): CanonicalFact {
   if (tree.status !== 'ok') return { status: 'error', detail: tree.detail ?? `payload ${tree.status}` };
   const version = parseReleaseVersion(readTrimmed(join(rootResult.root, 'VERSION')));
   if (version === null) return { status: 'error', detail: 'canonical VERSION is missing or fails the release grammar' };
-  return { status: 'ok', version, digest: tree.digest ?? '', identity: tree.identity ?? '' };
+  const binaryPath = existsFile(join(rootResult.root, 'genie'))
+    ? join(rootResult.root, 'genie')
+    : join(rootResult.root, 'bin', 'genie');
+  const installedBinarySha256 = hashPhysicalFile(binaryPath);
+  if (installedBinarySha256 === undefined) {
+    return { status: 'error', detail: 'canonical installed binary is missing, unsafe, or unreadable' };
+  }
+  const deliveryRoot = safeRealpath(rootResult.root);
+  if (deliveryRoot === null)
+    return { status: 'error', detail: 'canonical delivery root cannot be resolved physically' };
+  return {
+    status: 'ok',
+    version,
+    digest: tree.digest ?? '',
+    identity: tree.identity ?? '',
+    deliveryRoot,
+    installedBinarySha256,
+    platformTriple: `${process.platform}-${process.arch}`,
+  };
 }
 
 /**
@@ -1213,12 +1242,20 @@ function observeReceipt(genieHome: string): ReceiptFact {
   return receipt ? { status: 'present', receipt } : { status: 'invalid', detail: 'receipt failed schema-1 validation' };
 }
 
-function observeDelivery(genieHome: string): DeliveryFact {
+function observeDelivery(genieHome: string, verification: DeliveryEvidenceVerificationDependencies = {}): DeliveryFact {
   const read = readBoundedRegularFile(deliveryRecordPath(genieHome), MAX_DELIVERY_BYTES);
   if (read.status === 'absent') return { status: 'absent' };
   if (read.status !== 'ok') return { status: 'invalid', detail: `delivery ${read.status}` };
   const record = parseDeliveryRecordStructure(read.content);
-  return record ? { status: 'present', record } : { status: 'invalid', detail: 'delivery failed schema-1 validation' };
+  if (record === null) return { status: 'invalid', detail: 'delivery failed schema-2 validation' };
+  const evidence = observePersistedDeliveryEvidence(genieHome, record.evidenceDigest, verification);
+  if (evidence.status === 'absent') {
+    return { status: 'invalid', detail: 'delivery evidence pack is absent' };
+  }
+  if (evidence.status === 'invalid') {
+    return { status: 'invalid', detail: `delivery evidence pack is invalid: ${evidence.detail}` };
+  }
+  return { status: 'present', record, evidence: evidence.facts };
 }
 
 function isReceiptConsumed(genieHome: string, receiptId: string): boolean {
@@ -1485,23 +1522,27 @@ export interface CodexActivationStoreOptions extends ObserveOptions {
 }
 
 export interface PublishDeliveryInput {
-  targetVersion: string;
-  canonicalPayloadSha256: string;
-  channel: string;
+  /** Opaque evidence minted only after complete offline signature/binding verification. */
+  evidence: VerifiedDeliveryEvidence;
+  /** Installed delivery root; publication canonicalizes and re-hashes it before writing. */
+  deliveryRoot: string;
   /** Present only for an explicit channel downgrade; writes the matching receipt. */
   downgradeFrom?: string;
-  deliveryId?: string;
-  now?: () => Date;
 }
 
 export interface DeliveryRootOps {
   inventoryDigest(): string;
   deliveredVersion(): string;
+  consume<T>(consumer: DeliveryRootConsumer<T>): T;
 }
 
 export type BeginActivationResult =
   | { status: 'started'; handle: ActivationHandle }
   | { status: 'stale'; mismatchField: keyof ActivationRequestFingerprint; detail: string }
+  // Group B inner guard: a re-observed non-matching authenticated delivery record
+  // refuses the transaction BEFORE the first journal write, so no stale permit can
+  // advance activation-owned state without a matching record.
+  | { status: 'delivery-incomplete'; assessment: Exclude<DeliveryAssessment, 'matching'>; detail: string }
   | { status: 'refused'; reason: string };
 
 export interface ActivationHandle {
@@ -1545,7 +1586,7 @@ export function openCodexActivationStore(options: CodexActivationStoreOptions = 
     observe,
     publishDelivery(lease, input) {
       lease.assertOperation(lease.operationId);
-      return publishDeliveryImpl(deliveryPath, receiptPath, input);
+      return publishDeliveryImpl(genieHome, deliveryPath, receiptPath, input);
     },
     withRevalidatedDeliveryRoot(lease, callback) {
       lease.assertOperation(lease.operationId);
@@ -1566,33 +1607,34 @@ export function openCodexActivationStore(options: CodexActivationStoreOptions = 
   };
 }
 
-function publishDeliveryImpl(deliveryPath: string, receiptPath: string, input: PublishDeliveryInput): DeliveryRecord {
-  const now = input.now ?? (() => new Date());
-  const deliveryId = input.deliveryId ?? mint128();
-  if (input.deliveryId !== undefined && !HEX_128_RE.test(input.deliveryId)) {
-    throw new Error('deliveryId must be 32 lowercase hex characters');
-  }
-  const record: DeliveryRecord = {
-    schemaVersion: 1,
-    deliveryId,
-    targetVersion: input.targetVersion,
-    canonicalPayloadSha256: input.canonicalPayloadSha256,
-    channel: input.channel,
-    deliveredAt: now().toISOString(),
-  };
+function publishDeliveryImpl(
+  genieHome: string,
+  deliveryPath: string,
+  receiptPath: string,
+  input: PublishDeliveryInput,
+): DeliveryRecord {
+  const facts = verifiedDeliveryEvidenceFacts(input.evidence);
+  const descriptor = facts.descriptor;
+  const physicalDeliveryRoot = validatePublishedDeliveryRoot(input.deliveryRoot, facts);
+  const binding = createAuthenticatedDeliveryBinding(facts, physicalDeliveryRoot);
+
+  // Evidence is the durable prerequisite. The delivery record remains the last
+  // commit point, so no record can name bytes that publication did not persist.
+  persistVerifiedDeliveryEvidence(genieHome, input.evidence);
+  const record = encodeAuthenticatedDeliveryRecord(binding);
   if (input.downgradeFrom !== undefined) {
     const from = parseReleaseVersion(input.downgradeFrom);
-    const target = parseReleaseVersion(input.targetVersion);
+    const target = parseReleaseVersion(descriptor.version);
     if (from === null || target === null || compareReleaseVersions(from, target) <= 0) {
       throw new Error('downgrade delivery requires from > target with valid release versions');
     }
     const receipt: DowngradeReceipt = {
       schemaVersion: 1,
-      receiptId: deliveryId,
+      receiptId: binding.deliveryId,
       fromPluginVersion: input.downgradeFrom,
-      targetVersion: input.targetVersion,
-      canonicalPayloadSha256: input.canonicalPayloadSha256,
-      channel: input.channel,
+      targetVersion: descriptor.version,
+      canonicalPayloadSha256: descriptor.canonicalPayloadSha256,
+      channel: descriptor.channel,
     };
     atomicWriteFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, { backup: true });
   } else {
@@ -1603,40 +1645,191 @@ function publishDeliveryImpl(deliveryPath: string, receiptPath: string, input: P
   return record;
 }
 
+function validatePublishedDeliveryRoot(deliveryRoot: string, evidence: VerifiedDeliveryEvidenceFacts): string {
+  if (!isAbsolute(deliveryRoot)) throw new Error('delivery root must be absolute');
+  let physicalDeliveryRoot: string;
+  try {
+    physicalDeliveryRoot = realpathSync(deliveryRoot);
+  } catch (error) {
+    throw new Error(`delivery root cannot be resolved physically: ${errorText(error)}`);
+  }
+  const descriptor = evidence.descriptor;
+  const version = parseReleaseVersion(readTrimmed(join(physicalDeliveryRoot, 'VERSION')));
+  if (version?.canonical !== descriptor.version) throw new Error('delivery root VERSION does not match evidence');
+  const tree = scanPhysicalTree(join(physicalDeliveryRoot, 'plugins', 'genie'));
+  if (tree.status !== 'ok' || tree.digest !== descriptor.canonicalPayloadSha256) {
+    throw new Error('delivery root payload does not match evidence');
+  }
+  const binaryPath = existsFile(join(physicalDeliveryRoot, 'genie'))
+    ? join(physicalDeliveryRoot, 'genie')
+    : join(physicalDeliveryRoot, 'bin', 'genie');
+  if (hashPhysicalFile(binaryPath) !== descriptor.installedBinarySha256) {
+    throw new Error('delivery root binary does not match evidence');
+  }
+  if (`${process.platform}-${process.arch}` !== descriptor.platformTriple) {
+    throw new Error('delivery evidence platform does not match the current runtime');
+  }
+  return physicalDeliveryRoot;
+}
+
 function withRevalidatedDeliveryRootImpl<T>(
   observeOptions: ObserveOptions,
   deliveryPath: string,
   callback: (ops: DeliveryRootOps) => T,
 ): T {
-  const rootResult = resolveCanonicalRoot(observeOptions);
-  if ('error' in rootResult) throw new Error(`delivery root revalidation failed: ${rootResult.error}`);
-  const payloadDir = join(rootResult.root, 'plugins', 'genie');
-  const tree = scanPhysicalTree(payloadDir);
-  if (tree.status !== 'ok') throw new Error(`delivery payload is not a safe physical tree: ${tree.status}`);
-  const version = parseReleaseVersion(readTrimmed(join(rootResult.root, 'VERSION')));
-  if (version === null) throw new Error('delivery root VERSION fails the release grammar');
-  const deliveryRead = readBoundedRegularFile(deliveryPath, MAX_DELIVERY_BYTES);
-  if (deliveryRead.status !== 'ok') throw new Error(`delivery record is not readable: ${deliveryRead.status}`);
-  const record = parseDeliveryRecordStructure(deliveryRead.content);
-  if (record === null) throw new Error('delivery record failed schema-1 validation');
-  if (record.canonicalPayloadSha256 !== tree.digest) throw new Error('delivery digest no longer matches the payload');
-  if (record.targetVersion !== version.canonical) throw new Error('delivery version no longer matches the payload');
-
+  const admitted = revalidateDeliveryRootState(observeOptions, deliveryPath);
   let live = true;
+  const assertLive = (): void => {
+    if (!live) throw new Error('delivery root capability used after the callback returned');
+  };
   const ops: DeliveryRootOps = {
     inventoryDigest(): string {
-      if (!live) throw new Error('delivery root capability used after the callback returned');
-      return tree.digest ?? '';
+      assertLive();
+      return admitted.payloadDigest;
     },
     deliveredVersion(): string {
-      if (!live) throw new Error('delivery root capability used after the callback returned');
-      return version.canonical;
+      assertLive();
+      return admitted.version;
+    },
+    consume<Result>(consumer: DeliveryRootConsumer<Result>): Result {
+      assertLive();
+      assertSameDeliveryRootState(admitted, revalidateDeliveryRootState(observeOptions, deliveryPath), 'before');
+
+      let result: Result | undefined;
+      let consumerFailure: unknown;
+      let consumerFailed = false;
+      try {
+        result = runDeliveryRootConsumer(consumer, admitted.physicalRoot);
+      } catch (error) {
+        consumerFailed = true;
+        consumerFailure = error;
+      }
+
+      assertSameDeliveryRootState(admitted, revalidateDeliveryRootState(observeOptions, deliveryPath), 'while');
+      if (consumerFailed) throw consumerFailure;
+      return result as Result;
     },
   };
   try {
     return callback(ops);
   } finally {
     live = false;
+  }
+}
+
+interface RevalidatedDeliveryRootState {
+  physicalRoot: string;
+  rootIdentity: string;
+  payloadDigest: string;
+  payloadIdentity: string;
+  version: string;
+  versionIdentity: string;
+  binaryRelativePath: 'genie' | 'bin/genie';
+  installedBinarySha256: string;
+  binaryIdentity: string;
+  deliveryRecordDigest: string;
+  deliveryRecordIdentity: string;
+  deliveryId: string;
+  evidenceDigest: string;
+}
+
+/**
+ * Recompute every physical and authenticated binding used to admit a privileged
+ * delivery-root consumer. This is deliberately the same full check at callback
+ * entry and immediately around every consumer invocation.
+ */
+function revalidateDeliveryRootState(
+  observeOptions: ObserveOptions,
+  deliveryPath: string,
+): RevalidatedDeliveryRootState {
+  const rootResult = resolveCanonicalRoot(observeOptions);
+  if ('error' in rootResult) throw new Error(`delivery root revalidation failed: ${rootResult.error}`);
+  const payloadDir = join(rootResult.root, 'plugins', 'genie');
+  const tree = scanPhysicalTree(payloadDir);
+  if (tree.status !== 'ok') throw new Error(`delivery payload is not a safe physical tree: ${tree.status}`);
+  const versionPath = join(rootResult.root, 'VERSION');
+  const version = parseReleaseVersion(readTrimmed(versionPath));
+  if (version === null) throw new Error('delivery root VERSION fails the release grammar');
+  const deliveryRead = readBoundedRegularFile(deliveryPath, MAX_DELIVERY_BYTES);
+  if (deliveryRead.status !== 'ok') throw new Error(`delivery record is not readable: ${deliveryRead.status}`);
+  const record = parseDeliveryRecordStructure(deliveryRead.content);
+  if (record === null) throw new Error('delivery record failed schema-2 validation');
+  const genieHome = observeOptions.genieHome ?? resolveGenieHome();
+  const evidence = observePersistedDeliveryEvidence(
+    genieHome,
+    record.evidenceDigest,
+    observeOptions.deliveryEvidenceVerification,
+  );
+  if (evidence.status !== 'present') throw new Error(`delivery evidence is ${evidence.status}`);
+  const physicalRoot = safeRealpath(rootResult.root);
+  if (physicalRoot === null) throw new Error('delivery root cannot be resolved physically');
+  const binaryRelativePath = existsFile(join(physicalRoot, 'genie')) ? 'genie' : 'bin/genie';
+  const binaryPath = join(physicalRoot, ...binaryRelativePath.split('/'));
+  const installedBinarySha256 = hashPhysicalFile(binaryPath);
+  if (installedBinarySha256 === undefined) throw new Error('delivery binary cannot be hashed safely');
+  const descriptor = evidence.facts.descriptor;
+  if (
+    descriptor.version !== version.canonical ||
+    descriptor.canonicalPayloadSha256 !== tree.digest ||
+    descriptor.installedBinarySha256 !== installedBinarySha256 ||
+    descriptor.platformTriple !== `${process.platform}-${process.arch}`
+  ) {
+    throw new Error('verified delivery evidence no longer matches the physical delivery root');
+  }
+  const binding = authenticatedDeliveryBindingFromRecord(record, evidence.facts, physicalRoot);
+  if (binding === null) throw new Error('delivery record no longer matches verified evidence');
+  if (record.targetVersion !== version.canonical) throw new Error('delivery version no longer matches the payload');
+
+  const rootIdentity = physicalNodeIdentity(physicalRoot, 'directory');
+  const versionIdentity = physicalNodeIdentity(versionPath, 'file');
+  const binaryIdentity = physicalNodeIdentity(binaryPath, 'file');
+  const deliveryRecordIdentity = physicalNodeIdentity(deliveryPath, 'file');
+  if (
+    rootIdentity === null ||
+    tree.identity === undefined ||
+    versionIdentity === null ||
+    binaryIdentity === null ||
+    deliveryRecordIdentity === null
+  ) {
+    throw new Error('delivery root physical identity could not be authenticated');
+  }
+  return {
+    physicalRoot,
+    rootIdentity,
+    payloadDigest: tree.digest ?? '',
+    payloadIdentity: tree.identity,
+    version: version.canonical,
+    versionIdentity,
+    binaryRelativePath,
+    installedBinarySha256,
+    binaryIdentity,
+    deliveryRecordDigest: createHash('sha256').update(deliveryRead.content).digest('hex'),
+    deliveryRecordIdentity,
+    deliveryId: binding.deliveryId,
+    evidenceDigest: evidence.facts.evidenceDigest,
+  };
+}
+
+function assertSameDeliveryRootState(
+  admitted: RevalidatedDeliveryRootState,
+  fresh: RevalidatedDeliveryRootState,
+  phase: 'before' | 'while',
+): void {
+  for (const key of Object.keys(admitted) as Array<keyof RevalidatedDeliveryRootState>) {
+    if (admitted[key] !== fresh[key]) {
+      throw new Error(`delivery root changed ${phase} scoped consumer execution (${key})`);
+    }
+  }
+}
+
+function physicalNodeIdentity(path: string, kind: 'directory' | 'file'): string | null {
+  try {
+    const stat = lstatSync(path);
+    if (stat.isSymbolicLink()) return null;
+    if (kind === 'directory' ? !stat.isDirectory() : !stat.isFile()) return null;
+    return `${stat.dev}:${stat.ino}`;
+  } catch {
+    return null;
   }
 }
 
@@ -1657,6 +1850,19 @@ function beginActivationImpl(
   const state = classifyCodexActivation(snapshot);
   const resolved = resolveActivationIntent(state, snapshot, lease.operationId);
   if ('refused' in resolved) return { status: 'refused', reason: resolved.refused };
+  // Group B inner guard (deliverable 5): immediately before the first journal
+  // write, re-assess the delivery record against THIS activation's intent. A
+  // non-matching record refuses with zero mutation — defense in depth so a stale
+  // permit (whose fingerprint bound the complete delivery value) still cannot advance
+  // activation-owned state without a re-observed matching authenticated record.
+  const assessment = assessActivationDelivery(snapshot, resolved.intent, permit.fingerprint);
+  if (assessment !== 'matching') {
+    return {
+      status: 'delivery-incomplete',
+      assessment,
+      detail: `activation refused before the first write: delivery record is ${assessment}`,
+    };
+  }
   lease.assertOperation(lease.operationId);
   atomicWriteFileSync(intentPath, `${JSON.stringify(resolved.intent, null, 2)}\n`, { backup: true });
   return {
@@ -1672,12 +1878,48 @@ function beginActivationImpl(
 }
 
 /**
+ * Apply Group B's pure authenticated-delivery assessment to the re-observed
+ * snapshot's delivery record against the complete tuple fingerprinted before
+ * consent. This keeps the release provenance, physical installed bindings,
+ * publication identity/time, and downgrade receipt binding immutable through
+ * the first activation-owned write.
+ */
+function assessActivationDelivery(
+  snapshot: CodexActivationSnapshot,
+  intent: RefreshIntent,
+  fingerprint: ActivationRequestFingerprint,
+): DeliveryAssessment {
+  const delivery = deliveryReadState(snapshot.delivery);
+  if (delivery.status === 'absent') return 'absent';
+  if (delivery.status === 'invalid') return 'invalid';
+  if (snapshot.delivery.status !== 'present' || snapshot.canonical.status !== 'ok') return 'mismatch';
+  const binding = createAuthenticatedDeliveryBinding(snapshot.delivery.evidence, snapshot.canonical.deliveryRoot);
+  if (fingerprint.deliveryBindingDigest !== authenticatedDeliveryBindingDigest(binding)) return 'mismatch';
+  const expectation = authenticatedDeliveryRecordFields(binding);
+  if (
+    intent.targetVersion !== expectation.targetVersion ||
+    intent.canonicalPayloadSha256 !== expectation.canonicalPayloadSha256
+  )
+    return 'mismatch';
+  if (intent.direction === 'downgrade' && intent.receiptId !== expectation.deliveryId) return 'mismatch';
+  return assessAuthenticatedDelivery(delivery, expectation);
+}
+
+/** Map the snapshot's delivery fact onto the assessment's read-state shape. */
+function deliveryReadState(fact: DeliveryFact): DeliveryRecordReadState {
+  if (fact.status === 'present') return { status: 'present', record: fact.record };
+  if (fact.status === 'invalid') return { status: 'invalid', detail: fact.detail };
+  return { status: 'absent' };
+}
+
+/**
  * Decide the journal a permitted activation writes. A post-command phase RESUMES
- * its existing bound journal — the same `refreshIntentId` and phase, re-stamped
- * onto the current lease operation — so a fresh external assertion continues the
- * interrupted transaction rather than opening a duplicate `planned` intent (the
- * fingerprint match already proved the bound intentPhase/intentId are current).
- * Every other eligible state opens a new planned transaction unchanged.
+ * its existing bound journal — the same `refreshIntentId`, phase, direction,
+ * prior-enabled choice, and receipt id, re-stamped onto the current lease operation
+ * — so a fresh external assertion continues the interrupted transaction rather than
+ * replanning from post-command live state. A planned target-current journal may
+ * reflect an external/operator activation before Genie's command began, so it still
+ * opens a newly derived planned transaction.
  */
 function resolveActivationIntent(
   state: CodexActivationState,
@@ -1689,13 +1931,15 @@ function resolveActivationIntent(
   return planIntentFromState(state, snapshot, operationId);
 }
 
-/** The three post-command phases (per the DESIGN truth table) resume their bound journal. */
+/** Post-command states resume their bound journal, including when the target is already current. */
 function resumeIntentForState(state: CodexActivationState): RefreshIntent | null {
   switch (state.kind) {
     case 'intent-command-started':
     case 'intent-removal-observed':
     case 'intent-ambiguous-absent':
       return state.intent;
+    case 'intent-target-current':
+      return state.intent.phase === 'planned' ? null : state.intent;
     default:
       return null;
   }
@@ -1723,7 +1967,10 @@ function planIntentFromState(
     fromPluginVersion: from ? from.canonical : null,
     targetVersion: target.canonical,
     direction,
-    priorEnabled: registration.present ? registration.enabled : false,
+    // A fresh activation has no operator disablement to preserve: plugin add is
+    // expected to leave the newly selected integration enabled. Only an
+    // existing registration can carry an explicit disabled choice forward.
+    priorEnabled: registration.present ? registration.enabled : true,
     canonicalPayloadSha256: snapshot.canonical.digest,
     phase: 'planned',
     commandKind: 'codex-plugin-add',
@@ -1820,12 +2067,6 @@ function sha256Hex(content: string): string {
   return createHash('sha256').update(content).digest('hex');
 }
 
-/** Strip ANSI CSI and OSC control sequences from modeled diagnostics/output. */
-export function stripControl(text: string): string {
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: intentionally matching ESC/BEL control bytes.
-  return text.replace(/\][^]*(?:|\\)/g, '').replace(/\[[0-9;?]*[ -\/]*[@-~]/g, '');
-}
-
 function safeJson(content: string): unknown {
   try {
     return JSON.parse(content);
@@ -1861,6 +2102,21 @@ function existsDir(path: string): boolean {
   } catch {
     return false;
   }
+}
+
+function existsFile(path: string): boolean {
+  try {
+    const stat = lstatSync(path);
+    return stat.isFile() && !stat.isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+function hashPhysicalFile(path: string): string | undefined {
+  if (!existsFile(path)) return undefined;
+  const digest = hashFileBounded(path);
+  return HEX_256_RE.test(digest) ? digest : undefined;
 }
 
 function safeRealpath(path: string): string | null {

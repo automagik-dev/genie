@@ -68,6 +68,27 @@ describe('runBoundedCodexMcpSession', () => {
     expect(result.detail).toContain('read-only genie_wish_status did not return a non-error result');
   });
 
+  test('accepts a fail-closed typed "no project context" wish_status (throwaway non-project cwd)', () => {
+    // The probe cwd is not a project, so the fail-closed server returns a typed
+    // error rather than an empty board — that IS the read-only health signal.
+    for (const kind of ['project-context-unavailable', 'project-database-unavailable', 'unsupported-project-layout']) {
+      const stdout = `${[
+        { jsonrpc: '2.0', id: 1, result: { protocolVersion: '2024-11-05', serverInfo: { name: 'genie' } } },
+        { jsonrpc: '2.0', id: 2, result: { tools: REQUIRED_GENIE_MCP_TOOLS.map((name) => ({ name })) } },
+        {
+          jsonrpc: '2.0',
+          id: 3,
+          result: { isError: true, structuredContent: { error: kind, detail: kind } },
+        },
+      ]
+        .map((reply) => JSON.stringify(reply))
+        .join('\n')}\n`;
+      const result = runBoundedCodexMcpSession({ ...base, spawn: fakeSpawn({ stdout }) });
+      expect(result.ok).toBe(true);
+      expect(result.wishStatusReadOnly).toBe(true);
+    }
+  });
+
   test('rejects a session whose tools/list reply never arrived', () => {
     const stdout = `${JSON.stringify({ jsonrpc: '2.0', id: 1, result: { protocolVersion: '2024-11-05' } })}\n`;
     const result = runBoundedCodexMcpSession({ ...base, spawn: fakeSpawn({ stdout }) });

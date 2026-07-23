@@ -26,13 +26,20 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import {
+  CODEX_DELIVERY_INCOMPLETE_TRAILER,
+  CODEX_DELIVERY_RESULT_TRAILER,
+  CODEX_LIFECYCLE_BUSY_TRAILER,
+} from '../../src/genie-commands/codex-delivery.js';
 
 const REPO_ROOT = join(import.meta.dir, '..', '..');
 const INSTALL_SH = join(REPO_ROOT, 'install.sh');
+const INSTALL_MODULE = join(REPO_ROOT, 'src', 'genie-commands', 'install.ts');
+const LEASE_MODULE = join(REPO_ROOT, 'src', 'lib', 'codex-lifecycle-lease.ts');
 const VERSION = '0.0.0-exit2-test';
-const RESULT_TRAILER =
-  '{"schemaVersion":1,"code":"activation-pending","deliveryComplete":true,"retry":false,' +
-  '"nextAction":"retire tasks -> genie setup --codex -> /hooks -> new task"}';
+const RESULT_TRAILER = CODEX_DELIVERY_RESULT_TRAILER;
+const HUMAN_JSON_EXAMPLE = 'diagnostic example: {"schemaVersion":1,"code":"not-a-result"}';
+const UNRELATED_JSON = '{"message":"schemaVersion and code remain human words"}';
 
 let work: string;
 let binDir: string;
@@ -47,6 +54,8 @@ function writeStubGenie(): void {
     `  --version|-v) echo "${VERSION} (stub)"; exit 0 ;;`,
     '  install)',
     `    printf '  ! Codex plugin: activation-pending (installed=5.260710.2, target=${VERSION})\\n'`,
+    `    printf '%s\\n' '${HUMAN_JSON_EXAMPLE}'`,
+    `    printf '%s\\n' '${UNRELATED_JSON}'`,
     `    printf '%s\\n' '${RESULT_TRAILER}'`,
     '    exit 2 ;;',
     '  *) echo "stub-genie:${1:-}"; exit 0 ;;',
@@ -54,6 +63,72 @@ function writeStubGenie(): void {
     '',
   ].join('\n');
   writeFileSync(join(binDir, 'genie'), script, { mode: 0o755 });
+}
+
+/** An invalid exit-2 result stream containing both success and failure lifecycle trailers. */
+function writeMixedTrailerStubGenie(contradictoryTrailer: string): void {
+  const script = [
+    '#!/usr/bin/env bash',
+    'case "${1:-}" in',
+    `  --version|-v) echo "${VERSION} (stub)"; exit 0 ;;`,
+    '  install)',
+    `    printf '%s\\n' '${RESULT_TRAILER}'`,
+    `    printf '%s\\n' '${contradictoryTrailer}'`,
+    '    exit 2 ;;',
+    '  *) exit 0 ;;',
+    'esac',
+    '',
+  ].join('\n');
+  writeFileSync(join(binDir, 'genie'), script, { mode: 0o755 });
+}
+
+/** A real install command whose inner lease loses to setup immediately before the shell finisher handoff. */
+function writeSetupBusyStubGenie(): string {
+  const finisher = join(work, 'setup-busy-finisher.ts');
+  const mutationMarker = join(work, 'unexpected-finisher-mutation');
+  writeFileSync(
+    finisher,
+    [
+      "import { writeFileSync } from 'node:fs';",
+      `import { acquireLifecycleLease } from ${JSON.stringify(LEASE_MODULE)};`,
+      `import { installCommand } from ${JSON.stringify(INSTALL_MODULE)};`,
+      'const genieHome = process.env.GENIE_HOME as string;',
+      `const mutationMarker = ${JSON.stringify(mutationMarker)};`,
+      "const mark = (phase: string) => writeFileSync(mutationMarker, phase + '\\n');",
+      "const setup = acquireLifecycleLease('setup-activation', { genieHome });",
+      "if (!setup.ok) throw new Error('fixture setup could not acquire Codex lifecycle lease');",
+      'try {',
+      '  await installCommand(',
+      "    { integrations: 'codex' },",
+      "    () => mark('cleanup'),",
+      "    () => { mark('normalize'); return undefined; },",
+      "    () => mark('sync'),",
+      "    () => { mark('integrations'); return []; },",
+      "    () => ({ path: '/fixture/borrowed-agent-sync.lock', release: () => undefined }),",
+      '    undefined,',
+      "    () => mark('consent'),",
+      '    () => null,',
+      '  );',
+      '} finally {',
+      '  setup.release();',
+      '}',
+      '',
+    ].join('\n'),
+  );
+  writeFileSync(
+    join(binDir, 'genie'),
+    [
+      '#!/usr/bin/env bash',
+      'case "${1:-}" in',
+      `  --version|-v) echo "${VERSION} (stub)"; exit 0 ;;`,
+      `  install) exec ${JSON.stringify(process.execPath)} run ${JSON.stringify(finisher)} ;;`,
+      '  *) exit 0 ;;',
+      'esac',
+      '',
+    ].join('\n'),
+    { mode: 0o755 },
+  );
+  return mutationMarker;
 }
 
 /**
@@ -115,7 +190,9 @@ function runHarness(): { status: number | null; output: string } {
 
 describe('install.sh delivered-not-activated exit-2 propagation (executed)', () => {
   test('propagates exit 2 with the result trailer, no all-green footer, lock released, idempotent rerun', () => {
-    mkdirSync(join(work, 'tmp'), { recursive: true });
+    // install.sh's validate_private_temp_root rejects a group-writable temp parent,
+    // so pin the mode instead of inheriting the host umask (0002 hosts create 775).
+    mkdirSync(join(work, 'tmp'), { recursive: true, mode: 0o700 });
 
     const first = runHarness();
     // Delivered-not-activated is exit 2, NOT the die-1 failure path.
@@ -123,6 +200,9 @@ describe('install.sh delivered-not-activated exit-2 propagation (executed)', () 
     // The stable A-owned result trailer with deliveryComplete:true is relayed.
     expect(first.output).toContain('"deliveryComplete":true');
     expect(first.output).toContain('"code":"activation-pending"');
+    expect(first.output.split(RESULT_TRAILER)).toHaveLength(2);
+    expect(first.output).toContain(HUMAN_JSON_EXAMPLE);
+    expect(first.output).toContain(UNRELATED_JSON);
     // Delivered-but-deferred message, and explicitly NO all-green footer.
     expect(first.output).toContain('Codex activation deferred');
     expect(first.output).not.toContain(`genie v${VERSION} installed`);
@@ -133,11 +213,12 @@ describe('install.sh delivered-not-activated exit-2 propagation (executed)', () 
     const second = runHarness();
     expect(second.status).toBe(2);
     expect(second.output).toContain('"deliveryComplete":true');
+    expect(second.output.split(RESULT_TRAILER)).toHaveLength(2);
     expect(second.output).not.toContain(`genie v${VERSION} installed`);
     expect(existsSync(lockPath)).toBe(false);
   });
 
-  test('a genuine finisher failure (exit 1) still dies 1 — exit 2 is the ONLY action-required code', () => {
+  test('a genuine finisher failure (exit 1) still dies 1', () => {
     // Swap the stub genie's install to a hard failure; the real handoff must die 1.
     writeFileSync(
       join(binDir, 'genie'),
@@ -151,10 +232,71 @@ describe('install.sh delivered-not-activated exit-2 propagation (executed)', () 
       ].join('\n'),
       { mode: 0o755 },
     );
-    mkdirSync(join(work, 'tmp'), { recursive: true });
+    // install.sh's validate_private_temp_root rejects a group-writable temp parent,
+    // so pin the mode instead of inheriting the host umask (0002 hosts create 775).
+    mkdirSync(join(work, 'tmp'), { recursive: true, mode: 0o700 });
     const result = runHarness();
     expect(result.status).toBe(1);
     expect(result.output).toContain('installation remains incomplete and retryable');
     expect(existsSync(lockPath)).toBe(false);
   });
+
+  test('setup winning before the real finisher keeps exit-2 busy delivery-incomplete and emits no false green footer', () => {
+    const mutationMarker = writeSetupBusyStubGenie();
+    mkdirSync(join(work, 'tmp'), { recursive: true, mode: 0o700 });
+
+    const result = runHarness();
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain('"code":"codex-lifecycle-busy"');
+    expect(result.output).toContain('"deliveryComplete":false');
+    expect(result.output.split(CODEX_LIFECYCLE_BUSY_TRAILER)).toHaveLength(2);
+    expect(result.output).not.toContain(RESULT_TRAILER);
+    expect(result.output).not.toContain('Codex activation deferred');
+    expect(result.output).not.toContain(`genie v${VERSION} installed`);
+    expect(result.output).toContain('installation remains incomplete and retryable');
+    expect(existsSync(mutationMarker)).toBe(false);
+    expect(existsSync(lockPath)).toBe(false);
+    expect(existsSync(join(work, '.genie', '.codex-lifecycle.lock'))).toBe(false);
+  });
+
+  for (const [label, contradictoryTrailer] of [
+    ['busy', CODEX_LIFECYCLE_BUSY_TRAILER],
+    ['incomplete', CODEX_DELIVERY_INCOMPLETE_TRAILER],
+    ['duplicate canonical action', RESULT_TRAILER],
+    [
+      'canonical-prefix unknown lifecycle result',
+      '{"schemaVersion":1,"code":"future-lifecycle-result","deliveryComplete":true}',
+    ],
+    [
+      'reordered-key unknown lifecycle result',
+      '{"code":"future-lifecycle-result","deliveryComplete":true,"schemaVersion":1}',
+    ],
+    [
+      'whitespace-padded schema-first lifecycle result',
+      ' { "schemaVersion" : 2, "code" : "future-lifecycle-result", "deliveryComplete" : false } ',
+    ],
+    [
+      'whitespace-padded reordered lifecycle result',
+      '  {  "code" : "future-lifecycle-result" , "deliveryComplete" : false , "schemaVersion" : 2  }  ',
+    ],
+  ] as const) {
+    test(`an action-required trailer mixed with ${label} fails closed with no deferred or green result`, () => {
+      writeMixedTrailerStubGenie(contradictoryTrailer);
+      mkdirSync(join(work, 'tmp'), { recursive: true, mode: 0o700 });
+
+      const result = runHarness();
+
+      expect(result.status).toBe(1);
+      const outputLines = result.output.split(/\r?\n/);
+      expect(outputLines.filter((line) => line === RESULT_TRAILER)).toHaveLength(
+        contradictoryTrailer === RESULT_TRAILER ? 2 : 1,
+      );
+      expect(outputLines).toContain(contradictoryTrailer);
+      expect(result.output).not.toContain('Codex activation deferred');
+      expect(result.output).not.toContain(`genie v${VERSION} installed`);
+      expect(result.output).toContain('installation remains incomplete and retryable');
+      expect(existsSync(lockPath)).toBe(false);
+    });
+  }
 });

@@ -1,0 +1,62 @@
+[
+  {
+    "name": "genie-engineer-complex.toml",
+    "type": "regular",
+    "mode": "0644",
+    "digest": "62ecc570f1d77783511a9e7f0aa67b3a65d8bba292963409a02c7712c93ebc3b"
+  },
+  {
+    "name": "genie-engineer-standard.toml",
+    "type": "regular",
+    "mode": "0644",
+    "digest": "dc746813b9b4b6aa984c17fa2fd75d4dbe34eba08494a174c0715da07aa9dd30"
+  },
+  {
+    "name": "genie-engineer-trivial.toml",
+    "type": "regular",
+    "mode": "0644",
+    "digest": "249deced5a02eb2cbe3303db566992d1336c75d853967f851bf1d0e85b6b0f47"
+  },
+  {
+    "name": "genie-final-gate.toml",
+    "type": "regular",
+    "mode": "0644",
+    "digest": "10ef070db8aace75bd80ef9e060a6ec601e3768f177fdd843f4db11035738f7e"
+  },
+  {
+    "name": "genie-fixer.toml",
+    "type": "regular",
+    "mode": "0644",
+    "digest": "b3c1f407d4a3a2cfe204dee7b4a9c038e1a8f4644c446fcfa23f4a681bf0c7b3"
+  },
+  {
+    "name": "genie-reviewer.toml",
+    "type": "regular",
+    "mode": "0644",
+    "digest": "55bb2dea3da381f4d6ea210869f9a26ac1eed825097085a9bfa0f41a005c8d14"
+  },
+  {
+    "name": "genie-reviewer.toml",
+    "type": "regular",
+    "mode": "0644",
+    "digest": "91f40a07905834716311419375581e3245544a77eac3d93d082842652c6452bf"
+  },
+  {
+    "name": "genie-reviewer.toml",
+    "type": "regular",
+    "mode": "0644",
+    "digest": "c7008dcaa1e31b46e2bb05ca13afb2e918ee483422c84386a1c8997485bcfea7"
+  },
+  {
+    "name": "genie-reviewer.toml",
+    "type": "regular",
+    "mode": "0644",
+    "digest": "f0bf69fa70dc9e014305f155a024c4dadb6caf48ce217b8c31119506e244f844"
+  },
+  {
+    "name": "genie-scout.toml",
+    "type": "regular",
+    "mode": "0644",
+    "digest": "03a9fb3ca0e5f36c69c8f934d37adce1bae736e4c3895b144a0001ad31b1ba59"
+  }
+]
