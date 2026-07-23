@@ -23,6 +23,7 @@ import { openSqlite } from './sqlite-open.js';
 // the global DB). Re-exported here so existing importers of ./genie-db keep
 // working — this stays the public surface for the per-repo database.
 export {
+  /** @public Backward-compatible per-repo database facade export. */
   BUSY_TIMEOUT_MS,
   BusyDbError,
   ForeignDbError,

@@ -7,9 +7,10 @@
  *   omni inbox      List stored inbound messages (no network).
  *   omni handshake  Register this host with omni via a per-host ed25519 keypair.
  *
- * `nats` is imported ONLY dynamically inside `serve` (via omni-runner's default
- * factory) so `genie --help` / `status` / `inbox` / `handshake` never touch the
- * transport. Output goes to process.stdout/stderr (no console.* in source).
+ * `@nats-io/transport-node` is imported ONLY dynamically inside `serve` (via
+ * omni-runner's default factory) so `genie --help` / `status` / `inbox` /
+ * `handshake` never touch the transport. Output goes to process.stdout/stderr
+ * (no console.* in source).
  */
 
 import { generateKeyPairSync } from 'node:crypto';

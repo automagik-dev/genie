@@ -1,8 +1,7 @@
 {
-  "$schema": "https://unpkg.com/knip@5.85.0/schema.json",
-  "entry": ["src/genie.ts", "src/hooks/dispatch-command.ts"],
+  "$schema": "https://unpkg.com/knip@6.29.0/schema.json",
+  "entry": ["src/hooks/dispatch-command.ts"],
   "project": ["src/**/*.ts"],
-  "ignoreBinaries": ["which", "scripts/verify-release.sh", "markdown-link-check", "markdownlint-cli2"],
-  "ignoreDependencies": ["markdown-link-check", "markdownlint-cli2"],
+  "ignoreBinaries": ["ldd", "omni", "ss"],
   "ignoreExportsUsedInFile": true
 }
