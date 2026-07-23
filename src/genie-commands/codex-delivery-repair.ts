@@ -35,19 +35,18 @@
  * activation-owned prompt, journal, enabled-state, plugin, or role mutation.
  */
 
-// Group B's contract, consumed (not reimplemented) via the stable executor facade
-// for the assessment and directly from the leaf module for its record/expectation types.
-import { assessAuthenticatedDelivery } from '../lib/codex-activation-executor.js';
 import type { CodexActivationStore, DeliveryFact, DeliveryRecord } from '../lib/codex-activation.js';
 import {
+  type AuthenticatedDeliveryRecordFields,
   type DeliveryEvidenceChannel,
   type DeliveryEvidencePlatformId,
   type VerifiedDeliveryEvidence,
   type VerifiedDeliveryEvidenceFacts,
   type VerifyDownloadedDeliveryEvidenceInput,
-  deriveDeliveryId,
+  authenticatedDeliveryBindingFromRecord,
+  authenticatedDeliveryRecordFields,
+  createAuthenticatedDeliveryBinding,
 } from '../lib/codex-delivery-evidence.js';
-import type { ActivationDeliveryExpectation } from '../lib/codex-host-observation.js';
 import type { HeldLifecycleLease } from '../lib/codex-lifecycle-lease.js';
 import { classifyCodexDelivery } from './codex-delivery.js';
 
@@ -168,24 +167,11 @@ export function buildLocalRepairExpectation(
   pinned: RepairPinnedTarget,
   installed: InstalledProof,
   evidence: VerifiedDeliveryEvidenceFacts,
-): ActivationDeliveryExpectation {
-  const descriptor = evidence.descriptor;
-  return {
-    targetVersion: pinned.targetVersion,
-    canonicalPayloadSha256: installed.pluginTreeSha256,
-    channel: pinned.channel,
-    deliveryId: deriveDeliveryId(evidence.evidenceDigest, installed.deliveryRoot),
-    evidenceDigest: evidence.evidenceDigest,
-    platformId: pinned.platformId,
-    platformTriple: pinned.platformTriple,
-    releaseTag: pinned.releaseTag,
-    releaseName: pinned.releaseName,
-    releaseManifestSha256: descriptor.releaseManifestSha256,
-    artifactSha256: descriptor.artifactSha256,
-    installedBinarySha256: installed.binarySha256,
-    deliveryRoot: installed.deliveryRoot,
-    deliveredAt: evidence.deliveredAt,
-  };
+): AuthenticatedDeliveryRecordFields {
+  if (!evidenceMatchesPinned(evidence, pinned) || !evidenceMatchesInstalled(evidence, installed)) {
+    throw new Error('verified delivery evidence does not match the pinned installed target');
+  }
+  return authenticatedDeliveryRecordFields(createAuthenticatedDeliveryBinding(evidence, installed.deliveryRoot));
 }
 
 /**
@@ -296,12 +282,22 @@ export function localDeliveryMatches(
   pinned: RepairPinnedTarget,
   installed: InstalledProof,
 ): boolean {
-  if (fact.status !== 'present' || !evidenceMatchesPinned(fact.evidence, pinned)) return false;
+  if (
+    fact.status !== 'present' ||
+    !evidenceMatchesPinned(fact.evidence, pinned) ||
+    !evidenceMatchesInstalled(fact.evidence, installed)
+  ) {
+    return false;
+  }
+  return authenticatedDeliveryBindingFromRecord(fact.record, fact.evidence, installed.deliveryRoot) !== null;
+}
+
+function evidenceMatchesInstalled(evidence: VerifiedDeliveryEvidenceFacts, installed: InstalledProof): boolean {
+  const descriptor = evidence.descriptor;
   return (
-    assessAuthenticatedDelivery(
-      { status: 'present', record: fact.record },
-      buildLocalRepairExpectation(pinned, installed, fact.evidence),
-    ) === 'matching'
+    descriptor.version === installed.version &&
+    descriptor.canonicalPayloadSha256 === installed.pluginTreeSha256 &&
+    descriptor.installedBinarySha256 === installed.binarySha256
   );
 }
 

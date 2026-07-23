@@ -17,10 +17,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { chmodSync, lstatSync, mkdirSync, readdirSync, renameSync, rmSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
-import { bundleFromJSON, isBundleWithDsseEnvelope } from '@sigstore/bundle';
-import { TrustedRoot } from '@sigstore/protobuf-specs';
-import { Verifier, toSignedEntity, toTrustMaterial } from '@sigstore/verify';
-import publicGoodTrustedRoot from '../fixtures/codex-delivery-public-good-trusted-root.json';
 import { atomicWriteFileSync, fsyncParentDir, readBoundedRegularFile } from './codex-activation-persistence.js';
 import { parseReleaseVersion } from './codex-release-version.js';
 
@@ -44,9 +40,11 @@ const PACK_FILES = [BUNDLE_FILE, DESCRIPTOR_FILE, MANIFEST_FILE] as const;
 const MAX_DESCRIPTOR_BYTES = 32 * 1024;
 const MAX_MANIFEST_BYTES = 64 * 1024;
 const MAX_BUNDLE_BYTES = 2 * 1024 * 1024;
+const HEX_128_RE = /^[0-9a-f]{32}$/;
 const HEX_160_RE = /^[0-9a-f]{40}$/;
 const HEX_256_RE = /^[0-9a-f]{64}$/;
 const DECIMAL_RE = /^(?:0|[1-9]\d*)$/;
+const MAX_DELIVERY_ROOT_CHARACTERS = 256;
 const RELEASE_CHANNELS = ['stable', 'homolog', 'dev'] as const;
 const PLATFORM_IDS = ['linux-x64-glibc', 'linux-x64-musl', 'linux-arm64', 'darwin-arm64'] as const;
 
@@ -121,6 +119,51 @@ export interface VerifiedDeliveryEvidenceFacts {
   /** ISO timestamp derived from a transparency-log entry's verified integratedTime. */
   deliveredAt: string;
 }
+
+/**
+ * The durable flat record remains schema 2 for on-disk compatibility. This
+ * interface and its codec are the single owner of the record field set.
+ */
+export interface AuthenticatedDeliveryRecordFields {
+  targetVersion: string;
+  canonicalPayloadSha256: string;
+  channel: string;
+  deliveryId: string;
+  evidenceDigest: string;
+  platformId: string;
+  platformTriple: string;
+  releaseTag: string;
+  releaseName: string;
+  releaseManifestSha256: string;
+  artifactSha256: string;
+  installedBinarySha256: string;
+  deliveryRoot: string;
+  deliveredAt: string;
+}
+
+export interface PersistedAuthenticatedDeliveryRecord extends AuthenticatedDeliveryRecordFields {
+  schemaVersion: 2;
+}
+
+/**
+ * One complete authenticated delivery value. The evidence digest commits the
+ * exact descriptor, bundle, and manifest bytes, while the remaining fields bind
+ * that verified release provenance to its physical publication transaction.
+ */
+export interface AuthenticatedDeliveryBinding {
+  readonly descriptor: Readonly<DeliveryEvidenceDescriptor>;
+  readonly evidenceDigest: string;
+  readonly deliveryId: string;
+  readonly deliveryRoot: string;
+  readonly deliveredAt: string;
+}
+
+export type AuthenticatedDeliveryAssessment = 'matching' | 'absent' | 'invalid' | 'mismatch';
+
+export type AuthenticatedDeliveryRecordReadState =
+  | { status: 'absent' }
+  | { status: 'invalid'; detail: string }
+  | { status: 'present'; record: AuthenticatedDeliveryRecordFields };
 
 interface VerifiedDeliveryEvidenceState extends VerifiedDeliveryEvidenceFacts {
   descriptorBytes: Buffer;
@@ -285,6 +328,236 @@ export function deriveDeliveryId(evidenceDigest: string, physicalDeliveryRoot: s
     .slice(0, 32);
 }
 
+/**
+ * Bind independently verified release facts to one physical delivery root.
+ * Callers never reconstruct individual provenance fields.
+ */
+export function createAuthenticatedDeliveryBinding(
+  evidence: VerifiedDeliveryEvidenceFacts,
+  physicalDeliveryRoot: string,
+): AuthenticatedDeliveryBinding {
+  if (!HEX_256_RE.test(evidence.evidenceDigest)) throw new Error('evidence digest is malformed');
+  if (
+    physicalDeliveryRoot.length > MAX_DELIVERY_ROOT_CHARACTERS ||
+    !isAbsolute(physicalDeliveryRoot) ||
+    physicalDeliveryRoot.includes('\0')
+  ) {
+    throw new Error('physical delivery root is malformed');
+  }
+  if (!Number.isFinite(Date.parse(evidence.deliveredAt))) throw new Error('delivery timestamp is malformed');
+  return Object.freeze({
+    descriptor: evidence.descriptor,
+    evidenceDigest: evidence.evidenceDigest,
+    deliveryId: deriveDeliveryId(evidence.evidenceDigest, physicalDeliveryRoot),
+    deliveryRoot: physicalDeliveryRoot,
+    deliveredAt: evidence.deliveredAt,
+  });
+}
+
+/** Project the canonical binding onto the complete authenticated field tuple. */
+export function authenticatedDeliveryRecordFields(
+  binding: AuthenticatedDeliveryBinding,
+): AuthenticatedDeliveryRecordFields {
+  const descriptor = binding.descriptor;
+  return {
+    deliveryId: binding.deliveryId,
+    targetVersion: descriptor.version,
+    canonicalPayloadSha256: descriptor.canonicalPayloadSha256,
+    channel: descriptor.channel,
+    deliveredAt: binding.deliveredAt,
+    evidenceDigest: binding.evidenceDigest,
+    platformId: descriptor.platformId,
+    platformTriple: descriptor.platformTriple,
+    releaseTag: descriptor.releaseTag,
+    releaseName: descriptor.releaseName,
+    releaseManifestSha256: descriptor.releaseManifestSha256,
+    artifactSha256: descriptor.artifactSha256,
+    installedBinarySha256: descriptor.installedBinarySha256,
+    deliveryRoot: binding.deliveryRoot,
+  };
+}
+
+/** Encode the canonical binding as the byte-compatible schema-2 record. */
+export function encodeAuthenticatedDeliveryRecord(
+  binding: AuthenticatedDeliveryBinding,
+): PersistedAuthenticatedDeliveryRecord {
+  return { schemaVersion: 2, ...authenticatedDeliveryRecordFields(binding) };
+}
+
+/** Parse the legacy-compatible flat schema without accepting partial attestation. */
+export function parseAuthenticatedDeliveryRecord(content: string): PersistedAuthenticatedDeliveryRecord | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    return null;
+  }
+  if (!isPlainObject(parsed)) return null;
+  if (
+    Object.keys(parsed).length !== AUTHENTICATED_DELIVERY_RECORD_KEYS.size ||
+    Object.keys(parsed).some((key) => !AUTHENTICATED_DELIVERY_RECORD_KEYS.has(key))
+  ) {
+    return null;
+  }
+  if (parsed.schemaVersion !== 2 || !authenticatedDeliveryRecordFieldsValid(parsed)) return null;
+  return {
+    schemaVersion: 2,
+    deliveryId: parsed.deliveryId,
+    targetVersion: parsed.targetVersion,
+    canonicalPayloadSha256: parsed.canonicalPayloadSha256,
+    channel: parsed.channel,
+    deliveredAt: parsed.deliveredAt,
+    evidenceDigest: parsed.evidenceDigest,
+    platformId: parsed.platformId,
+    platformTriple: parsed.platformTriple,
+    releaseTag: parsed.releaseTag,
+    releaseName: parsed.releaseName,
+    releaseManifestSha256: parsed.releaseManifestSha256,
+    artifactSha256: parsed.artifactSha256,
+    installedBinarySha256: parsed.installedBinarySha256,
+    deliveryRoot: parsed.deliveryRoot,
+  };
+}
+
+/**
+ * Pure record assessment shared by lifecycle truth, repair, delivery, and the
+ * activation inner guard. Structural invalidity is distinct from tuple drift.
+ */
+export function assessAuthenticatedDeliveryRecord(
+  fact: AuthenticatedDeliveryRecordReadState,
+  expectation: AuthenticatedDeliveryRecordFields,
+): AuthenticatedDeliveryAssessment {
+  if (fact.status === 'absent') return 'absent';
+  if (fact.status === 'invalid') return 'invalid';
+  if (!authenticatedDeliveryRecordFieldsValid(fact.record)) return 'invalid';
+  return authenticatedDeliveryRecordFieldsMatch(fact.record, expectation) ? 'matching' : 'mismatch';
+}
+
+/**
+ * Return the canonical value only when the durable flat record agrees with all
+ * independently reverified evidence and physical-root facts.
+ */
+export function authenticatedDeliveryBindingFromRecord(
+  record: AuthenticatedDeliveryRecordFields,
+  evidence: VerifiedDeliveryEvidenceFacts,
+  physicalDeliveryRoot: string,
+): AuthenticatedDeliveryBinding | null {
+  const binding = createAuthenticatedDeliveryBinding(evidence, physicalDeliveryRoot);
+  return assessAuthenticatedDeliveryRecord(
+    { status: 'present', record },
+    authenticatedDeliveryRecordFields(binding),
+  ) === 'matching'
+    ? binding
+    : null;
+}
+
+/**
+ * Compact consent fingerprint. `evidenceDigest` already commits every exact
+ * descriptor/bundle/manifest byte, so descriptor provenance additions do not
+ * amplify into activation request fields.
+ */
+export function authenticatedDeliveryBindingDigest(binding: AuthenticatedDeliveryBinding): string {
+  return createHash('sha256')
+    .update('genie-authenticated-delivery-binding-v1\0')
+    .update(binding.evidenceDigest)
+    .update('\0')
+    .update(binding.deliveryId)
+    .update('\0')
+    .update(binding.deliveryRoot)
+    .update('\0')
+    .update(binding.deliveredAt)
+    .digest('hex');
+}
+
+const AUTHENTICATED_DELIVERY_RECORD_KEYS: ReadonlySet<string> = new Set([
+  'schemaVersion',
+  'deliveryId',
+  'targetVersion',
+  'canonicalPayloadSha256',
+  'channel',
+  'deliveredAt',
+  'evidenceDigest',
+  'platformId',
+  'platformTriple',
+  'releaseTag',
+  'releaseName',
+  'releaseManifestSha256',
+  'artifactSha256',
+  'installedBinarySha256',
+  'deliveryRoot',
+]);
+
+const PLATFORM_TRIPLE_RE = /^[a-z0-9]+-[a-z0-9_]+$/;
+
+function authenticatedDeliveryRecordFieldsValid(
+  record: Record<string, unknown> | AuthenticatedDeliveryRecordFields,
+): record is AuthenticatedDeliveryRecordFields {
+  const version = parseReleaseVersion(record.targetVersion);
+  if (version === null) return false;
+  if (typeof record.canonicalPayloadSha256 !== 'string' || !HEX_256_RE.test(record.canonicalPayloadSha256))
+    return false;
+  if (typeof record.deliveryId !== 'string' || !HEX_128_RE.test(record.deliveryId)) return false;
+  if (typeof record.evidenceDigest !== 'string' || !HEX_256_RE.test(record.evidenceDigest)) return false;
+  if (typeof record.channel !== 'string' || record.channel.length === 0 || record.channel.length > 128) return false;
+  if (typeof record.platformId !== 'string' || record.platformId.length === 0 || record.platformId.length > 64)
+    return false;
+  if (typeof record.platformTriple !== 'string' || !PLATFORM_TRIPLE_RE.test(record.platformTriple)) return false;
+  for (const key of ['releaseManifestSha256', 'artifactSha256', 'installedBinarySha256'] as const) {
+    if (typeof record[key] !== 'string' || !HEX_256_RE.test(record[key])) return false;
+  }
+  if (record.releaseTag !== `v${version.canonical}`) return false;
+  if (
+    typeof record.releaseName !== 'string' ||
+    !record.releaseName.startsWith(`genie-${version.canonical}-`) ||
+    !record.releaseName.endsWith('.tar.gz') ||
+    record.releaseName.length > 256
+  ) {
+    return false;
+  }
+  if (
+    typeof record.deliveryRoot !== 'string' ||
+    record.deliveryRoot.length === 0 ||
+    record.deliveryRoot.length > MAX_DELIVERY_ROOT_CHARACTERS ||
+    !isAbsolute(record.deliveryRoot) ||
+    record.deliveryRoot.includes('\0')
+  ) {
+    return false;
+  }
+  if (typeof record.deliveredAt !== 'string' || !Number.isFinite(Date.parse(record.deliveredAt))) return false;
+  return true;
+}
+
+function authenticatedDeliveryRecordFieldsMatch(
+  record: AuthenticatedDeliveryRecordFields,
+  expectation: AuthenticatedDeliveryRecordFields,
+): boolean {
+  const recordVersion = parseReleaseVersion(record.targetVersion);
+  const expectedVersion = parseReleaseVersion(expectation.targetVersion);
+  if (recordVersion === null || expectedVersion === null || recordVersion.canonical !== expectedVersion.canonical) {
+    return false;
+  }
+  for (const key of AUTHENTICATED_DELIVERY_BINDING_FIELDS) {
+    if (record[key] !== expectation[key]) return false;
+  }
+  return true;
+}
+
+const AUTHENTICATED_DELIVERY_BINDING_FIELDS: readonly (keyof AuthenticatedDeliveryRecordFields)[] = [
+  'canonicalPayloadSha256',
+  'channel',
+  'deliveryId',
+  'evidenceDigest',
+  'platformId',
+  'platformTriple',
+  'releaseTag',
+  'releaseName',
+  'releaseManifestSha256',
+  'artifactSha256',
+  'installedBinarySha256',
+  'deliveryRoot',
+  'deliveredAt',
+];
+
 function mintVerifiedEvidence(state: VerifiedDeliveryEvidenceState): VerifiedDeliveryEvidence {
   const evidence = Object.freeze({}) as VerifiedDeliveryEvidence;
   VERIFIED_EVIDENCE.set(evidence, state);
@@ -447,6 +720,15 @@ function parseDsseStatement(bundleJson: unknown): { subjectSha256: string } {
 }
 
 function verifyBundleWithEmbeddedTrustRoot(bundleJson: unknown): { integratedTime: string } {
+  const {
+    bundleFromJSON,
+    isBundleWithDsseEnvelope,
+    publicGoodTrustedRoot,
+    TrustedRoot,
+    Verifier,
+    toSignedEntity,
+    toTrustMaterial,
+  } = loadSigstoreVerifier();
   const bundle = bundleFromJSON(bundleJson);
   if (!isBundleWithDsseEnvelope(bundle)) throw new Error('delivery evidence bundle is not a DSSE bundle');
   const root = TrustedRoot.fromJSON(publicGoodTrustedRoot);
@@ -469,6 +751,36 @@ function verifyBundleWithEmbeddedTrustRoot(bundleJson: unknown): { integratedTim
   return {
     integratedTime: integratedTimes.reduce((earliest, value) => (BigInt(value) < BigInt(earliest) ? value : earliest)),
   };
+}
+
+type SigstoreVerifierModules = {
+  bundleFromJSON: typeof import('@sigstore/bundle')['bundleFromJSON'];
+  isBundleWithDsseEnvelope: typeof import('@sigstore/bundle')['isBundleWithDsseEnvelope'];
+  TrustedRoot: typeof import('@sigstore/protobuf-specs')['TrustedRoot'];
+  Verifier: typeof import('@sigstore/verify')['Verifier'];
+  toSignedEntity: typeof import('@sigstore/verify')['toSignedEntity'];
+  toTrustMaterial: typeof import('@sigstore/verify')['toTrustMaterial'];
+  publicGoodTrustedRoot: Parameters<typeof import('@sigstore/protobuf-specs')['TrustedRoot']['fromJSON']>[0];
+};
+
+let sigstoreVerifierModules: SigstoreVerifierModules | undefined;
+
+/** Load the heavy verifier graph only on a production cryptographic check. */
+function loadSigstoreVerifier(): SigstoreVerifierModules {
+  if (sigstoreVerifierModules !== undefined) return sigstoreVerifierModules;
+  const bundle = require('@sigstore/bundle') as typeof import('@sigstore/bundle');
+  const protobuf = require('@sigstore/protobuf-specs') as typeof import('@sigstore/protobuf-specs');
+  const verify = require('@sigstore/verify') as typeof import('@sigstore/verify');
+  sigstoreVerifierModules = {
+    bundleFromJSON: bundle.bundleFromJSON,
+    isBundleWithDsseEnvelope: bundle.isBundleWithDsseEnvelope,
+    TrustedRoot: protobuf.TrustedRoot,
+    Verifier: verify.Verifier,
+    toSignedEntity: verify.toSignedEntity,
+    toTrustMaterial: verify.toTrustMaterial,
+    publicGoodTrustedRoot: require('../fixtures/codex-delivery-public-good-trusted-root.json'),
+  };
+  return sigstoreVerifierModules;
 }
 
 function escapeRegexLiteral(value: string): string {

@@ -39,22 +39,28 @@ import {
   unlinkWithParentFsync,
 } from './codex-activation-persistence.js';
 import {
+  type AuthenticatedDeliveryBinding,
   type DeliveryEvidenceVerificationDependencies,
+  type PersistedAuthenticatedDeliveryRecord,
   type VerifiedDeliveryEvidence,
   type VerifiedDeliveryEvidenceFacts,
-  deriveDeliveryId,
+  authenticatedDeliveryBindingDigest,
+  authenticatedDeliveryBindingFromRecord,
+  authenticatedDeliveryRecordFields,
+  createAuthenticatedDeliveryBinding,
+  encodeAuthenticatedDeliveryRecord,
   observePersistedDeliveryEvidence,
+  parseAuthenticatedDeliveryRecord,
   persistVerifiedDeliveryEvidence,
   verifiedDeliveryEvidenceFacts,
 } from './codex-delivery-evidence.js';
 // Group B (host-observation-attestation): the single pure delivery-attestation
 // classifier + its typed result. Imported here so the inner activation guard
 // (`beginActivationImpl`) applies exactly the same assessment the standalone
-// contract test exercises. `codex-host-observation.ts` imports only the leaf
-// `codex-release-version.ts` + `runtime-integrations.ts`, never this module, so
-// this dependency is one-directional (no import cycle).
+// contract test exercises. `codex-host-observation.ts` delegates tuple validation
+// to the evidence-owned codec and never imports this module, so this dependency
+// is one-directional (no import cycle).
 import {
-  type ActivationDeliveryExpectation,
   type DeliveryAssessment,
   type DeliveryRecordReadState,
   assessAuthenticatedDelivery,
@@ -141,33 +147,8 @@ export interface DowngradeReceipt {
   channel: string;
 }
 
-export interface DeliveryRecord {
-  schemaVersion: 2;
-  /** The 128-bit delivery transaction id; a downgrade receipt copies it as its receiptId. */
-  deliveryId: string;
-  targetVersion: string;
-  canonicalPayloadSha256: string;
-  channel: string;
-  deliveredAt: string;
-  /** Digest of the exact descriptor/bundle/manifest evidence pack. */
-  evidenceDigest: string;
-  /** Release asset platform identity (`linux-x64-glibc`, etc.). */
-  platformId: string;
-  /** os-arch platform triple (`process.platform-process.arch`), matches PLATFORM_TRIPLE_RE. */
-  platformTriple: string;
-  /** Release tag, e.g. `v5.260722.11`. */
-  releaseTag: string;
-  /** Release/asset name pinned before download. */
-  releaseName: string;
-  /** SHA-256 of the fetched release-manifest bytes (NOT an artifact digest source). */
-  releaseManifestSha256: string;
-  /** SHA-256 computed over the downloaded asset AFTER download and authenticated via attestation/cosign. */
-  artifactSha256: string;
-  /** SHA-256 of the installed binary the candidate was proven against. */
-  installedBinarySha256: string;
-  /** Absolute canonical delivery root the payload was proven against. */
-  deliveryRoot: string;
-}
+/** Byte-compatible schema-2 record; its field set and codec live with delivery evidence. */
+export type DeliveryRecord = PersistedAuthenticatedDeliveryRecord;
 
 export interface ReceiptTombstone {
   schemaVersion: 1;
@@ -256,90 +237,8 @@ export function parseDowngradeReceiptStructure(content: string): DowngradeReceip
   };
 }
 
-const DELIVERY_KEYS: ReadonlySet<string> = new Set([
-  'schemaVersion',
-  'deliveryId',
-  'targetVersion',
-  'canonicalPayloadSha256',
-  'channel',
-  'deliveredAt',
-  'evidenceDigest',
-  'platformId',
-  'platformTriple',
-  'releaseTag',
-  'releaseName',
-  'releaseManifestSha256',
-  'artifactSha256',
-  'installedBinarySha256',
-  'deliveryRoot',
-]);
-
-const PLATFORM_TRIPLE_RE = /^[a-z0-9]+-[a-z0-9_]+$/;
-/** A bounded free-text attestation field (tag/name/root): non-empty and length-capped. */
-function isBoundedText(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0 && value.length <= 256;
-}
-
 export function parseDeliveryRecordStructure(content: string): DeliveryRecord | null {
-  const parsed = safeJson(content);
-  if (!isPlainObject(parsed)) return null;
-  if (Object.keys(parsed).some((key) => !DELIVERY_KEYS.has(key))) return null;
-  const record = parsed;
-  // Schema 1 is deliberately legacy-invalid: it has no signed evidence-pack
-  // binding and can never authorize activation.
-  if (record.schemaVersion !== 2) return null;
-  if (!isHex128(record.deliveryId)) return null;
-  if (parseReleaseVersion(record.targetVersion) === null) return null;
-  if (!isHex256(record.canonicalPayloadSha256)) return null;
-  if (typeof record.channel !== 'string' || record.channel.length === 0 || record.channel.length > 128) return null;
-  if (typeof record.deliveredAt !== 'string' || record.deliveredAt.length === 0) return null;
-  if (!isHex256(record.evidenceDigest)) return null;
-  if (!isBoundedText(record.platformId)) return null;
-  if (!attestationFieldsValid(record)) return null;
-  return {
-    schemaVersion: 2,
-    deliveryId: record.deliveryId as string,
-    targetVersion: record.targetVersion as string,
-    canonicalPayloadSha256: record.canonicalPayloadSha256 as string,
-    channel: record.channel as string,
-    deliveredAt: record.deliveredAt as string,
-    evidenceDigest: record.evidenceDigest as string,
-    platformId: record.platformId as string,
-    ...pickAttestationFields(record),
-  };
-}
-
-/** Every authenticated-delivery binding is mandatory and shape-valid. */
-function attestationFieldsValid(record: Record<string, unknown>): boolean {
-  if (!(typeof record.platformTriple === 'string' && PLATFORM_TRIPLE_RE.test(record.platformTriple))) return false;
-  if (!isBoundedText(record.releaseTag)) return false;
-  if (!isBoundedText(record.releaseName)) return false;
-  if (!isBoundedText(record.deliveryRoot) || !isAbsolute(record.deliveryRoot)) return false;
-  for (const key of ['releaseManifestSha256', 'artifactSha256', 'installedBinarySha256'] as const) {
-    if (!isHex256(record[key])) return false;
-  }
-  if (record.releaseTag !== `v${record.targetVersion}`) return false;
-  if (
-    typeof record.releaseName !== 'string' ||
-    !record.releaseName.startsWith(`genie-${record.targetVersion}-`) ||
-    !record.releaseName.endsWith('.tar.gz')
-  )
-    return false;
-  if (typeof record.deliveredAt !== 'string' || !Number.isFinite(Date.parse(record.deliveredAt))) return false;
-  return true;
-}
-
-/** Copy the already-validated mandatory attestation fields onto the parsed record. */
-function pickAttestationFields(record: Record<string, unknown>): DeliveryAttestationFields {
-  return {
-    platformTriple: record.platformTriple as string,
-    releaseTag: record.releaseTag as string,
-    releaseName: record.releaseName as string,
-    releaseManifestSha256: record.releaseManifestSha256 as string,
-    artifactSha256: record.artifactSha256 as string,
-    installedBinarySha256: record.installedBinarySha256 as string,
-    deliveryRoot: record.deliveryRoot as string,
-  };
+  return parseAuthenticatedDeliveryRecord(content);
 }
 
 const TOMBSTONE_KEYS: ReadonlySet<string> = new Set(['schemaVersion', 'receiptId', 'consumedAt', 'operationId']);
@@ -913,27 +812,8 @@ export interface ActivationRequestFingerprint {
   observedTarget: string | null;
   canonicalPayloadSha256: string | null;
   installedDeliveryDigest: string | null;
-  deliveryEvidenceSchemaVersion: number | null;
-  deliveryRepository: string | null;
-  deliveryEvidenceDigest: string | null;
-  deliveryId: string | null;
-  deliveryTargetVersion: string | null;
-  deliveryCanonicalPayloadSha256: string | null;
-  deliveryChannel: string | null;
-  deliveryPlatformId: string | null;
-  deliveryPlatformTriple: string | null;
-  deliveryReleaseTag: string | null;
-  deliveryReleaseName: string | null;
-  deliveryManifestSha256: string | null;
-  deliveryArtifactSha256: string | null;
-  deliveryInstalledBinarySha256: string | null;
-  deliveryRoot: string | null;
-  deliveryPublishedAt: string | null;
-  deliverySourceSha: string | null;
-  deliverySourceBranch: string | null;
-  deliverySourceCiRunId: string | null;
-  deliveryControlSha: string | null;
-  deliveryDigestAlgorithm: string | null;
+  /** Commits the complete verified descriptor plus publication transaction/root. */
+  deliveryBindingDigest: string | null;
   registrationIdentity: string | null;
   cacheIdentity: string | null;
   enabled: boolean | null;
@@ -950,27 +830,7 @@ const FINGERPRINT_FIELDS: readonly (keyof ActivationRequestFingerprint)[] = [
   'observedTarget',
   'canonicalPayloadSha256',
   'installedDeliveryDigest',
-  'deliveryEvidenceSchemaVersion',
-  'deliveryRepository',
-  'deliveryEvidenceDigest',
-  'deliveryId',
-  'deliveryTargetVersion',
-  'deliveryCanonicalPayloadSha256',
-  'deliveryChannel',
-  'deliveryPlatformId',
-  'deliveryPlatformTriple',
-  'deliveryReleaseTag',
-  'deliveryReleaseName',
-  'deliveryManifestSha256',
-  'deliveryArtifactSha256',
-  'deliveryInstalledBinarySha256',
-  'deliveryRoot',
-  'deliveryPublishedAt',
-  'deliverySourceSha',
-  'deliverySourceBranch',
-  'deliverySourceCiRunId',
-  'deliveryControlSha',
-  'deliveryDigestAlgorithm',
+  'deliveryBindingDigest',
   'registrationIdentity',
   'cacheIdentity',
   'enabled',
@@ -980,85 +840,12 @@ const FINGERPRINT_FIELDS: readonly (keyof ActivationRequestFingerprint)[] = [
   'receiptId',
 ];
 
-type DeliveryFingerprintFields = Pick<
-  ActivationRequestFingerprint,
-  | 'deliveryEvidenceSchemaVersion'
-  | 'deliveryRepository'
-  | 'deliveryEvidenceDigest'
-  | 'deliveryId'
-  | 'deliveryTargetVersion'
-  | 'deliveryCanonicalPayloadSha256'
-  | 'deliveryChannel'
-  | 'deliveryPlatformId'
-  | 'deliveryPlatformTriple'
-  | 'deliveryReleaseTag'
-  | 'deliveryReleaseName'
-  | 'deliveryManifestSha256'
-  | 'deliveryArtifactSha256'
-  | 'deliveryInstalledBinarySha256'
-  | 'deliveryRoot'
-  | 'deliveryPublishedAt'
-  | 'deliverySourceSha'
-  | 'deliverySourceBranch'
-  | 'deliverySourceCiRunId'
-  | 'deliveryControlSha'
-  | 'deliveryDigestAlgorithm'
->;
-
-function deliveryFingerprintFields(
+function authenticatedDeliveryBindingForSnapshot(
   snapshot: CodexActivationSnapshot,
   canonical: Extract<CanonicalFact, { status: 'ok' }> | null,
-): DeliveryFingerprintFields {
-  if (snapshot.delivery.status !== 'present') {
-    return {
-      deliveryEvidenceSchemaVersion: null,
-      deliveryRepository: null,
-      deliveryEvidenceDigest: null,
-      deliveryId: null,
-      deliveryTargetVersion: null,
-      deliveryCanonicalPayloadSha256: null,
-      deliveryChannel: null,
-      deliveryPlatformId: null,
-      deliveryPlatformTriple: null,
-      deliveryReleaseTag: null,
-      deliveryReleaseName: null,
-      deliveryManifestSha256: null,
-      deliveryArtifactSha256: null,
-      deliveryInstalledBinarySha256: null,
-      deliveryRoot: canonical?.deliveryRoot ?? null,
-      deliveryPublishedAt: null,
-      deliverySourceSha: null,
-      deliverySourceBranch: null,
-      deliverySourceCiRunId: null,
-      deliveryControlSha: null,
-      deliveryDigestAlgorithm: null,
-    };
-  }
-  const evidence = snapshot.delivery.evidence;
-  const descriptor = evidence.descriptor;
-  return {
-    deliveryEvidenceSchemaVersion: descriptor.schemaVersion,
-    deliveryRepository: descriptor.repository,
-    deliveryEvidenceDigest: evidence.evidenceDigest,
-    deliveryId: canonical === null ? null : deriveDeliveryId(evidence.evidenceDigest, canonical.deliveryRoot),
-    deliveryTargetVersion: descriptor.version,
-    deliveryCanonicalPayloadSha256: descriptor.canonicalPayloadSha256,
-    deliveryChannel: descriptor.channel,
-    deliveryPlatformId: descriptor.platformId,
-    deliveryPlatformTriple: descriptor.platformTriple,
-    deliveryReleaseTag: descriptor.releaseTag,
-    deliveryReleaseName: descriptor.releaseName,
-    deliveryManifestSha256: descriptor.releaseManifestSha256,
-    deliveryArtifactSha256: descriptor.artifactSha256,
-    deliveryInstalledBinarySha256: descriptor.installedBinarySha256,
-    deliveryRoot: canonical?.deliveryRoot ?? null,
-    deliveryPublishedAt: evidence.deliveredAt,
-    deliverySourceSha: descriptor.sourceSha,
-    deliverySourceBranch: descriptor.sourceBranch,
-    deliverySourceCiRunId: descriptor.sourceCiRunId,
-    deliveryControlSha: descriptor.controlSha,
-    deliveryDigestAlgorithm: descriptor.digestAlgorithm,
-  };
+): AuthenticatedDeliveryBinding | null {
+  if (snapshot.delivery.status !== 'present' || canonical === null) return null;
+  return createAuthenticatedDeliveryBinding(snapshot.delivery.evidence, canonical.deliveryRoot);
 }
 
 export function computeActivationFingerprint(snapshot: CodexActivationSnapshot): ActivationRequestFingerprint {
@@ -1068,12 +855,13 @@ export function computeActivationFingerprint(snapshot: CodexActivationSnapshot):
   const cache = snapshot.cache;
   const intent = snapshot.intent;
   const family = snapshot.observationWitness.after;
+  const binding = authenticatedDeliveryBindingForSnapshot(snapshot, canonical);
   return {
     observedFrom: registered,
     observedTarget: canonical ? canonical.version.canonical : null,
     canonicalPayloadSha256: canonical ? canonical.digest : null,
     installedDeliveryDigest: cache.kind === 'present' ? cache.digest : null,
-    ...deliveryFingerprintFields(snapshot, canonical),
+    deliveryBindingDigest: binding === null ? null : authenticatedDeliveryBindingDigest(binding),
     registrationIdentity: cache.kind === 'present' ? cache.identity : null,
     cacheIdentity: family.status === 'present' ? family.identity : null,
     enabled: registration.present ? registration.enabled : null,
@@ -1742,16 +1530,6 @@ export interface PublishDeliveryInput {
   downgradeFrom?: string;
 }
 
-interface DeliveryAttestationFields {
-  platformTriple: string;
-  releaseTag: string;
-  releaseName: string;
-  releaseManifestSha256: string;
-  artifactSha256: string;
-  installedBinarySha256: string;
-  deliveryRoot: string;
-}
-
 export interface DeliveryRootOps {
   inventoryDigest(): string;
   deliveredVersion(): string;
@@ -1838,28 +1616,12 @@ function publishDeliveryImpl(
   const facts = verifiedDeliveryEvidenceFacts(input.evidence);
   const descriptor = facts.descriptor;
   const physicalDeliveryRoot = validatePublishedDeliveryRoot(input.deliveryRoot, facts);
-  const deliveryId = deriveDeliveryId(facts.evidenceDigest, physicalDeliveryRoot);
+  const binding = createAuthenticatedDeliveryBinding(facts, physicalDeliveryRoot);
 
   // Evidence is the durable prerequisite. The delivery record remains the last
   // commit point, so no record can name bytes that publication did not persist.
   persistVerifiedDeliveryEvidence(genieHome, input.evidence);
-  const record: DeliveryRecord = {
-    schemaVersion: 2,
-    deliveryId,
-    targetVersion: descriptor.version,
-    canonicalPayloadSha256: descriptor.canonicalPayloadSha256,
-    channel: descriptor.channel,
-    deliveredAt: facts.deliveredAt,
-    evidenceDigest: facts.evidenceDigest,
-    platformId: descriptor.platformId,
-    platformTriple: descriptor.platformTriple,
-    releaseTag: descriptor.releaseTag,
-    releaseName: descriptor.releaseName,
-    releaseManifestSha256: descriptor.releaseManifestSha256,
-    artifactSha256: descriptor.artifactSha256,
-    installedBinarySha256: descriptor.installedBinarySha256,
-    deliveryRoot: physicalDeliveryRoot,
-  };
+  const record = encodeAuthenticatedDeliveryRecord(binding);
   if (input.downgradeFrom !== undefined) {
     const from = parseReleaseVersion(input.downgradeFrom);
     const target = parseReleaseVersion(descriptor.version);
@@ -1868,7 +1630,7 @@ function publishDeliveryImpl(
     }
     const receipt: DowngradeReceipt = {
       schemaVersion: 1,
-      receiptId: deliveryId,
+      receiptId: binding.deliveryId,
       fromPluginVersion: input.downgradeFrom,
       targetVersion: descriptor.version,
       canonicalPayloadSha256: descriptor.canonicalPayloadSha256,
@@ -2014,26 +1776,8 @@ function revalidateDeliveryRootState(
   ) {
     throw new Error('verified delivery evidence no longer matches the physical delivery root');
   }
-  const assessment = assessAuthenticatedDelivery(
-    { status: 'present', record },
-    {
-      targetVersion: descriptor.version,
-      canonicalPayloadSha256: tree.digest ?? '',
-      channel: descriptor.channel,
-      deliveryId: deriveDeliveryId(evidence.facts.evidenceDigest, physicalRoot),
-      evidenceDigest: evidence.facts.evidenceDigest,
-      platformId: descriptor.platformId,
-      platformTriple: `${process.platform}-${process.arch}`,
-      releaseTag: descriptor.releaseTag,
-      releaseName: descriptor.releaseName,
-      releaseManifestSha256: descriptor.releaseManifestSha256,
-      artifactSha256: descriptor.artifactSha256,
-      installedBinarySha256,
-      deliveryRoot: physicalRoot,
-      deliveredAt: evidence.facts.deliveredAt,
-    },
-  );
-  if (assessment !== 'matching') throw new Error(`delivery record no longer matches verified evidence: ${assessment}`);
+  const binding = authenticatedDeliveryBindingFromRecord(record, evidence.facts, physicalRoot);
+  if (binding === null) throw new Error('delivery record no longer matches verified evidence');
   if (record.targetVersion !== version.canonical) throw new Error('delivery version no longer matches the payload');
 
   const rootIdentity = physicalNodeIdentity(physicalRoot, 'directory');
@@ -2061,7 +1805,7 @@ function revalidateDeliveryRootState(
     binaryIdentity,
     deliveryRecordDigest: createHash('sha256').update(deliveryRead.content).digest('hex'),
     deliveryRecordIdentity,
-    deliveryId: record.deliveryId,
+    deliveryId: binding.deliveryId,
     evidenceDigest: evidence.facts.evidenceDigest,
   };
 }
@@ -2109,7 +1853,7 @@ function beginActivationImpl(
   // Group B inner guard (deliverable 5): immediately before the first journal
   // write, re-assess the delivery record against THIS activation's intent. A
   // non-matching record refuses with zero mutation — defense in depth so a stale
-  // permit (whose fingerprint bound the old deliveryId) still cannot advance
+  // permit (whose fingerprint bound the complete delivery value) still cannot advance
   // activation-owned state without a re-observed matching authenticated record.
   const assessment = assessActivationDelivery(snapshot, resolved.intent, permit.fingerprint);
   if (assessment !== 'matching') {
@@ -2148,8 +1892,10 @@ function assessActivationDelivery(
   const delivery = deliveryReadState(snapshot.delivery);
   if (delivery.status === 'absent') return 'absent';
   if (delivery.status === 'invalid') return 'invalid';
-  const expectation = deliveryExpectationFromFingerprint(fingerprint);
-  if (expectation === null) return 'mismatch';
+  if (snapshot.delivery.status !== 'present' || snapshot.canonical.status !== 'ok') return 'mismatch';
+  const binding = createAuthenticatedDeliveryBinding(snapshot.delivery.evidence, snapshot.canonical.deliveryRoot);
+  if (fingerprint.deliveryBindingDigest !== authenticatedDeliveryBindingDigest(binding)) return 'mismatch';
+  const expectation = authenticatedDeliveryRecordFields(binding);
   if (
     intent.targetVersion !== expectation.targetVersion ||
     intent.canonicalPayloadSha256 !== expectation.canonicalPayloadSha256
@@ -2157,61 +1903,6 @@ function assessActivationDelivery(
     return 'mismatch';
   if (intent.direction === 'downgrade' && intent.receiptId !== expectation.deliveryId) return 'mismatch';
   return assessAuthenticatedDelivery(delivery, expectation);
-}
-
-/** Rehydrate the trusted full tuple carried by the genuine activation permit. */
-function deliveryExpectationFromFingerprint(
-  fingerprint: ActivationRequestFingerprint,
-): ActivationDeliveryExpectation | null {
-  const {
-    deliveryTargetVersion: targetVersion,
-    deliveryCanonicalPayloadSha256: canonicalPayloadSha256,
-    deliveryChannel: channel,
-    deliveryId,
-    deliveryEvidenceDigest: evidenceDigest,
-    deliveryPlatformId: platformId,
-    deliveryPlatformTriple: platformTriple,
-    deliveryReleaseTag: releaseTag,
-    deliveryReleaseName: releaseName,
-    deliveryManifestSha256: releaseManifestSha256,
-    deliveryArtifactSha256: artifactSha256,
-    deliveryInstalledBinarySha256: installedBinarySha256,
-    deliveryRoot,
-    deliveryPublishedAt: deliveredAt,
-  } = fingerprint;
-  if (
-    targetVersion === null ||
-    canonicalPayloadSha256 === null ||
-    channel === null ||
-    deliveryId === null ||
-    evidenceDigest === null ||
-    platformId === null ||
-    platformTriple === null ||
-    releaseTag === null ||
-    releaseName === null ||
-    releaseManifestSha256 === null ||
-    artifactSha256 === null ||
-    installedBinarySha256 === null ||
-    deliveryRoot === null ||
-    deliveredAt === null
-  )
-    return null;
-  return {
-    targetVersion,
-    canonicalPayloadSha256,
-    channel,
-    deliveryId,
-    evidenceDigest,
-    platformId,
-    platformTriple,
-    releaseTag,
-    releaseName,
-    releaseManifestSha256,
-    artifactSha256,
-    installedBinarySha256,
-    deliveryRoot,
-    deliveredAt,
-  };
 }
 
 /** Map the snapshot's delivery fact onto the assessment's read-state shape. */

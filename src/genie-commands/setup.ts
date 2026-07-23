@@ -60,6 +60,7 @@ import {
   saveGenieConfig,
 } from '../lib/genie-config.js';
 import { resolveCodexDir, resolveGenieHome } from '../lib/genie-home.js';
+import { acquireOrderedLifecycleLeases, releaseOrderedLifecycleLeases } from '../lib/ordered-lifecycle-leases.js';
 import {
   type CodexAgentInstallResult,
   type IntegrationSelection,
@@ -764,19 +765,19 @@ async function finalizeCodexSetup(
   prepared: PreparedCodexFinalization,
 ): Promise<FinalizedCodexSetup> {
   deps.codexFinalizationHooks?.beforeLocks?.();
-  const agentSyncLease = (deps.acquireLifecycleLease ?? acquireLifecycleLease)(resolveGenieHome());
-  if ('skipped' in agentSyncLease) {
-    throw new SetupCodexLifecycleBusyError('agent-sync', agentSyncLease.skipped);
-  }
-  let codexLease: HeldLifecycleLease | null = null;
-  try {
-    const acquireCodexLease = deps.acquireActivationLease ?? acquireActivationLifecycleLease;
-    const acquiredCodexLease = acquireCodexLease('setup-activation', { genieHome: resolveGenieHome() });
-    if (!acquiredCodexLease.ok) {
-      throw new SetupCodexLifecycleBusyError(acquiredCodexLease.holderKind, acquiredCodexLease.detail);
+  const genieHome = resolveGenieHome();
+  const acquired = acquireOrderedLifecycleLeases(
+    () => (deps.acquireLifecycleLease ?? acquireLifecycleLease)(genieHome),
+    () => (deps.acquireActivationLease ?? acquireActivationLifecycleLease)('setup-activation', { genieHome }),
+  );
+  if (!acquired.ok) {
+    if (acquired.busy === 'agent-sync') {
+      throw new SetupCodexLifecycleBusyError('agent-sync', acquired.detail);
     }
-    codexLease = acquiredCodexLease;
-
+    throw new SetupCodexLifecycleBusyError(acquired.refusal.holderKind, acquired.refusal.detail);
+  }
+  const { agentSyncLease, codexLease } = acquired;
+  try {
     const assets = convergePostActivationCodexAssetsUnderLease(deps, prepared.codexPath, prepared.outcome, codexLease);
     deps.codexFinalizationHooks?.afterAssets?.();
 
@@ -794,11 +795,7 @@ async function finalizeCodexSetup(
       ...(runtimeHint === undefined ? {} : { runtimeHint }),
     };
   } finally {
-    try {
-      codexLease?.release();
-    } finally {
-      agentSyncLease.release();
-    }
+    releaseOrderedLifecycleLeases(codexLease, agentSyncLease);
   }
 }
 

@@ -1,12 +1,18 @@
 import { describe, expect, test } from 'bun:test';
+import { spawnSync } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   DELIVERY_EVIDENCE_WORKFLOW_IDENTITY,
   DELIVERY_EVIDENCE_WORKFLOW_IDENTITY_PATTERN,
+  authenticatedDeliveryBindingDigest,
+  authenticatedDeliveryBindingFromRecord,
+  createAuthenticatedDeliveryBinding,
   deriveDeliveryId,
+  encodeAuthenticatedDeliveryRecord,
   observePersistedDeliveryEvidence,
+  parseAuthenticatedDeliveryRecord,
   persistVerifiedDeliveryEvidence,
   verifiedDeliveryEvidenceFacts,
   verifyDownloadedDeliveryEvidence,
@@ -150,6 +156,86 @@ describe('Codex signed delivery evidence', () => {
     expect(deriveDeliveryId('a'.repeat(64), '/physical/a')).toBe(a);
     expect(deriveDeliveryId('b'.repeat(64), '/physical/a')).not.toBe(a);
     expect(deriveDeliveryId('a'.repeat(64), '/physical/b')).not.toBe(a);
+  });
+
+  test('round-trips the byte-compatible schema-2 record through the single binding codec', () => {
+    const { evidence } = mintTestDeliveryEvidence();
+    const facts = verifiedDeliveryEvidenceFacts(evidence);
+    const binding = createAuthenticatedDeliveryBinding(facts, '/physical/a');
+    const record = encodeAuthenticatedDeliveryRecord(binding);
+
+    expect(Object.keys(record)).toEqual([
+      'schemaVersion',
+      'deliveryId',
+      'targetVersion',
+      'canonicalPayloadSha256',
+      'channel',
+      'deliveredAt',
+      'evidenceDigest',
+      'platformId',
+      'platformTriple',
+      'releaseTag',
+      'releaseName',
+      'releaseManifestSha256',
+      'artifactSha256',
+      'installedBinarySha256',
+      'deliveryRoot',
+    ]);
+    expect(parseAuthenticatedDeliveryRecord(`${JSON.stringify(record, null, 2)}\n`)).toEqual(record);
+    expect(authenticatedDeliveryBindingFromRecord(record, facts, '/physical/a')).toEqual(binding);
+    expect(parseAuthenticatedDeliveryRecord(JSON.stringify({ ...record, schemaVersion: 1 }))).toBeNull();
+    expect(parseAuthenticatedDeliveryRecord(JSON.stringify({ ...record, unknown: true }))).toBeNull();
+    expect(
+      authenticatedDeliveryBindingFromRecord({ ...record, artifactSha256: 'f'.repeat(64) }, facts, '/physical/a'),
+    ).toBeNull();
+  });
+
+  test('keeps binding creation closed under the record delivery-root limit', () => {
+    const facts = verifiedDeliveryEvidenceFacts(mintTestDeliveryEvidence().evidence);
+    const acceptedRoot = `/${'x'.repeat(255)}`;
+
+    expect(acceptedRoot).toHaveLength(256);
+    expect(
+      parseAuthenticatedDeliveryRecord(
+        JSON.stringify(encodeAuthenticatedDeliveryRecord(createAuthenticatedDeliveryBinding(facts, acceptedRoot))),
+      )?.deliveryRoot,
+    ).toBe(acceptedRoot);
+    expect(() => createAuthenticatedDeliveryBinding(facts, `${acceptedRoot}x`)).toThrow(
+      'physical delivery root is malformed',
+    );
+  });
+
+  test('uses one compact digest to bind the complete evidence pack and physical publication transaction', () => {
+    const { evidence } = mintTestDeliveryEvidence();
+    const facts = verifiedDeliveryEvidenceFacts(evidence);
+    const binding = createAuthenticatedDeliveryBinding(facts, '/physical/a');
+    const digest = authenticatedDeliveryBindingDigest(binding);
+
+    expect(digest).toMatch(/^[0-9a-f]{64}$/);
+    expect(authenticatedDeliveryBindingDigest(createAuthenticatedDeliveryBinding(facts, '/physical/b'))).not.toBe(
+      digest,
+    );
+    expect(
+      authenticatedDeliveryBindingDigest(
+        createAuthenticatedDeliveryBinding({ ...facts, deliveredAt: '2025-07-23T00:00:01.000Z' }, '/physical/a'),
+      ),
+    ).not.toBe(digest);
+  });
+
+  test('does not initialize Sigstore modules or its trusted root when evidence support is only imported', () => {
+    const moduleUrl = new URL('./codex-delivery-evidence.ts', import.meta.url).href;
+    const child = spawnSync(
+      process.execPath,
+      [
+        '-e',
+        `await import(${JSON.stringify(moduleUrl)}); process.stdout.write(String(Object.keys(require.cache).filter((key) => key.includes('@sigstore') || key.endsWith('codex-delivery-public-good-trusted-root.json')).length));`,
+      ],
+      { encoding: 'utf8' },
+    );
+
+    expect(child.status).toBe(0);
+    expect(child.stderr).toBe('');
+    expect(child.stdout).toBe('0');
   });
 });
 

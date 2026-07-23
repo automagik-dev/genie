@@ -24,14 +24,21 @@
  *     activation protocol's inner guard (`beginActivation`) applies exactly this
  *     assessment before its first journal write.
  *
- * This module imports only the leaf `codex-release-version.ts` and the leaf
- * `runtime-integrations.ts`; it never imports `codex-activation.ts`, so the
- * activation protocol can import the assessment from here with no import cycle.
+ * This module imports the evidence-owned binding codec plus the leaf
+ * `codex-release-version.ts` and `runtime-integrations.ts`; it never imports
+ * `codex-activation.ts`, so the activation protocol can import the assessment
+ * from here with no import cycle.
  */
 
 import { createHash } from 'node:crypto';
 import { type Stats, lstatSync, readdirSync } from 'node:fs';
-import { isAbsolute, join } from 'node:path';
+import { join } from 'node:path';
+import {
+  type AuthenticatedDeliveryAssessment,
+  type AuthenticatedDeliveryRecordFields,
+  type AuthenticatedDeliveryRecordReadState,
+  assessAuthenticatedDeliveryRecord,
+} from './codex-delivery-evidence.js';
 import { parseReleaseVersion, stripControl } from './codex-release-version.js';
 import { type CommandResult, parseCodexPluginState } from './runtime-integrations.js';
 
@@ -39,10 +46,7 @@ import { type CommandResult, parseCodexPluginState } from './runtime-integration
 // Production host observation (facts observable from ONE bounded query)
 // ============================================================================
 
-const HEX_128_RE = /^[0-9a-f]{32}$/;
-const HEX_256_RE = /^[0-9a-f]{64}$/;
 const DEV_INO_RE = /^\d+:\d+$/;
-const PLATFORM_TRIPLE_RE = /^[a-z0-9]+-[a-z0-9_]+$/;
 const DEFAULT_MAX_ADVISORY_BYTES = 4 * 1024;
 
 /**
@@ -302,54 +306,20 @@ export function projectHostQuery(observation: CodexHostObservation): HostQueryPr
 // Authenticated delivery record + pure assessment
 // ============================================================================
 
-export type DeliveryAssessment = 'matching' | 'absent' | 'invalid' | 'mismatch';
+export type DeliveryAssessment = AuthenticatedDeliveryAssessment;
 
 /**
  * The authenticated delivery record. Every field is mandatory: a legacy
  * minimal/core-only record is structurally invalid and can never authorize
  * activation.
  */
-export interface AuthenticatedDeliveryRecord {
-  targetVersion: string;
-  canonicalPayloadSha256: string;
-  channel: string;
-  deliveryId: string;
-  evidenceDigest: string;
-  platformId: string;
-  platformTriple: string;
-  releaseTag: string;
-  releaseName: string;
-  releaseManifestSha256: string;
-  artifactSha256: string;
-  installedBinarySha256: string;
-  deliveryRoot: string;
-  deliveredAt: string;
-}
+export type AuthenticatedDeliveryRecord = AuthenticatedDeliveryRecordFields;
 
 /** The read-state of the on-disk delivery record (mirrors the activation snapshot's delivery fact). */
-export type DeliveryRecordReadState =
-  | { status: 'absent' }
-  | { status: 'invalid'; detail: string }
-  | { status: 'present'; record: AuthenticatedDeliveryRecord };
+export type DeliveryRecordReadState = AuthenticatedDeliveryRecordReadState;
 
 /** The complete authenticated tuple trusted by the current activation request. */
-export interface ActivationDeliveryExpectation {
-  targetVersion: string;
-  canonicalPayloadSha256: string;
-  channel: string;
-  /** Downgrade binding: the record's `deliveryId` must equal the consumed receipt id. */
-  deliveryId: string;
-  evidenceDigest: string;
-  platformId: string;
-  platformTriple: string;
-  releaseTag: string;
-  releaseName: string;
-  releaseManifestSha256: string;
-  artifactSha256: string;
-  installedBinarySha256: string;
-  deliveryRoot: string;
-  deliveredAt: string;
-}
+export type ActivationDeliveryExpectation = AuthenticatedDeliveryRecordFields;
 
 /**
  * Pure classifier: `absent` (no record), `invalid` (present but structurally
@@ -361,61 +331,7 @@ export function assessAuthenticatedDelivery(
   fact: DeliveryRecordReadState,
   expectation: ActivationDeliveryExpectation,
 ): DeliveryAssessment {
-  if (fact.status === 'absent') return 'absent';
-  if (fact.status === 'invalid') return 'invalid';
-  const record = fact.record;
-  if (!isStructurallyValidRecord(record)) return 'invalid';
-  return matchesExpectation(record, expectation) ? 'matching' : 'mismatch';
-}
-
-/** Every field is mandatory and shape-consistent; malformed/legacy records are `invalid`. */
-function isStructurallyValidRecord(record: AuthenticatedDeliveryRecord): boolean {
-  const version = parseReleaseVersion(record.targetVersion);
-  if (version === null) return false;
-  if (!HEX_256_RE.test(record.canonicalPayloadSha256)) return false;
-  if (!HEX_128_RE.test(record.deliveryId)) return false;
-  if (!HEX_256_RE.test(record.evidenceDigest)) return false;
-  if (typeof record.channel !== 'string' || record.channel.length === 0 || record.channel.length > 128) return false;
-  if (typeof record.platformId !== 'string' || record.platformId.length === 0 || record.platformId.length > 64)
-    return false;
-  if (typeof record.platformTriple !== 'string' || !PLATFORM_TRIPLE_RE.test(record.platformTriple)) return false;
-  for (const digest of [record.releaseManifestSha256, record.artifactSha256, record.installedBinarySha256]) {
-    if (!HEX_256_RE.test(digest)) return false;
-  }
-  if (typeof record.releaseTag !== 'string' || record.releaseTag !== `v${version.canonical}`) return false;
-  if (
-    typeof record.releaseName !== 'string' ||
-    !record.releaseName.startsWith(`genie-${version.canonical}-`) ||
-    !record.releaseName.endsWith('.tar.gz')
-  )
-    return false;
-  if (typeof record.deliveryRoot !== 'string' || !isAbsolute(record.deliveryRoot)) return false;
-  if (typeof record.deliveredAt !== 'string' || !Number.isFinite(Date.parse(record.deliveredAt))) return false;
-  return true;
-}
-
-/** Compare every field in the immutable authenticated tuple. */
-function matchesExpectation(record: AuthenticatedDeliveryRecord, expectation: ActivationDeliveryExpectation): boolean {
-  const recordVersion = parseReleaseVersion(record.targetVersion);
-  const expectVersion = parseReleaseVersion(expectation.targetVersion);
-  if (recordVersion === null || expectVersion === null || recordVersion.canonical !== expectVersion.canonical) {
-    return false;
-  }
-  if (record.canonicalPayloadSha256 !== expectation.canonicalPayloadSha256) return false;
-  return (
-    record.channel === expectation.channel &&
-    record.deliveryId === expectation.deliveryId &&
-    record.evidenceDigest === expectation.evidenceDigest &&
-    record.platformId === expectation.platformId &&
-    record.platformTriple === expectation.platformTriple &&
-    record.releaseTag === expectation.releaseTag &&
-    record.releaseName === expectation.releaseName &&
-    record.releaseManifestSha256 === expectation.releaseManifestSha256 &&
-    record.artifactSha256 === expectation.artifactSha256 &&
-    record.installedBinarySha256 === expectation.installedBinarySha256 &&
-    record.deliveryRoot === expectation.deliveryRoot &&
-    record.deliveredAt === expectation.deliveredAt
-  );
+  return assessAuthenticatedDeliveryRecord(fact, expectation);
 }
 
 // ============================================================================

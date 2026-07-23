@@ -1118,17 +1118,13 @@ describe('setup Codex activation (Group D)', () => {
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
     const finalization = source.slice(start, end);
-    const acquireAgentSync = finalization.indexOf('const agentSyncLease =');
-    const acquireCodex = finalization.indexOf('const acquiredCodexLease =');
+    const acquireOrdered = finalization.indexOf('const acquired = acquireOrderedLifecycleLeases(');
     const persistConfig = finalization.indexOf('await saveSetupConfigUnderHeldLease(');
-    const releaseCodex = finalization.indexOf('codexLease?.release()');
-    const releaseAgentSync = finalization.indexOf('agentSyncLease.release()');
+    const releaseOrdered = finalization.indexOf('releaseOrderedLifecycleLeases(codexLease, agentSyncLease)');
 
-    expect(acquireAgentSync).toBeGreaterThan(-1);
-    expect(acquireAgentSync).toBeLessThan(acquireCodex);
-    expect(acquireCodex).toBeLessThan(persistConfig);
-    expect(persistConfig).toBeLessThan(releaseCodex);
-    expect(releaseCodex).toBeLessThan(releaseAgentSync);
+    expect(acquireOrdered).toBeGreaterThan(-1);
+    expect(acquireOrdered).toBeLessThan(persistConfig);
+    expect(persistConfig).toBeLessThan(releaseOrdered);
   });
 
   test('source-checkout setup performs zero writes while another process owns the GENIE_HOME lease', () => {

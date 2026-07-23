@@ -541,9 +541,7 @@ describe('updateCommand wiring', () => {
 
   test('no hard process exit is reachable while normal or explicit update leases are held', () => {
     const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
-    const normalStart = source.indexOf(
-      'const lifecycleLease = acquireRequiredLifecycleLease(dependencies.acquireLease)',
-    );
+    const normalStart = source.indexOf('const acquired = acquireUpdateLifecycleLeasesOrProject(dependencies);');
     const normalEnd = source.indexOf('\n/**\n * Post-swap v4 legacy cleanup', normalStart);
     const explicitStart = source.indexOf('async function runExplicitUpdateMode');
     const explicitEnd = source.indexOf('\nasync function dispatchNonNormalUpdateMode', explicitStart);
@@ -615,6 +613,87 @@ describe('updateCommand wiring', () => {
       logSpy.mockRestore();
       errorSpy.mockRestore();
       process.exitCode = priorExitCode;
+    }
+  });
+
+  test('an initial Codex fencing failure releases in reverse order before projecting and runs no mutation', async () => {
+    const priorExitCode = process.exitCode;
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const events: string[] = [];
+    const logSpy = spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      const line = args.join(' ');
+      stdout.push(line);
+      if (line.includes('Update failed: stale lifecycle authority')) events.push('terminal-error');
+      if (line.includes('"deliveryComplete":false')) events.push('terminal-trailer');
+    });
+    const errorSpy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+      const line = args.join(' ');
+      stderr.push(line);
+      if (line.includes('Update failed: stale lifecycle authority')) events.push('terminal-error');
+    });
+    process.exitCode = undefined;
+    try {
+      await updateCommand(
+        { yes: true, stable: true },
+        {
+          fetchManifest: async () => commandManifest,
+          readInstalledVersion: () => '5.260700.1',
+          resolvePlatform: () => 'darwin-arm64',
+          acquireLease: () => {
+            events.push('agent-acquire');
+            return {
+              path: '/fixture/.agent-sync.lock',
+              release: () => events.push('agent-release'),
+            };
+          },
+          acquireCodexLease: () => {
+            events.push('codex-acquire');
+            return {
+              ok: true,
+              operationId: 'e'.repeat(32),
+              kind: 'update-delivery',
+              assertOperation: () => {
+                events.push('codex-assert');
+                throw new Error('stale lifecycle authority');
+              },
+              release: () => events.push('codex-release'),
+            };
+          },
+          recoverPendingState: () => events.push('MUTATION:recovery'),
+          persistSelectedChannel: async () => {
+            events.push('MUTATION:channel');
+          },
+          requireCanonicalInstall: () => events.push('MUTATION:canonical'),
+          deliverSelectedManifest: async () => {
+            events.push('MUTATION:delivery');
+            return [];
+          },
+          finalizeSelectedDelivery: async () => {
+            events.push('MUTATION:finalize');
+            return true;
+          },
+        },
+      );
+
+      expect(events).toEqual([
+        'agent-acquire',
+        'codex-acquire',
+        'codex-assert',
+        'codex-release',
+        'agent-release',
+        'terminal-error',
+        'terminal-trailer',
+      ]);
+      expect(events.some((event) => event.startsWith('MUTATION:'))).toBe(false);
+      expect(Number(process.exitCode)).toBe(1);
+      const output = [...stdout, ...stderr].join('\n');
+      expect(output).toContain('Update failed: stale lifecycle authority');
+      expect(output.match(/"deliveryComplete":false/g)).toHaveLength(1);
+    } finally {
+      logSpy.mockRestore();
+      errorSpy.mockRestore();
+      process.exitCode = priorExitCode ?? 0;
     }
   });
 
