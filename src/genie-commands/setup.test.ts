@@ -491,6 +491,104 @@ describe('setup Codex activation (Group D)', () => {
   // Group E, Decision 9/12: the setup-side delivery gate + typed outcome
   // ==========================================================================
 
+  // ==========================================================================
+  // Group E live-QA regression: a journal-quarantine permit must be consumed by
+  // A's quarantineIntent (then re-observe), never fed to the activation executor.
+  // ==========================================================================
+
+  /** A corrupt activation journal → state intent-invalid → authority journal-quarantine-only. */
+  function corruptIntentSnapshot(): CodexActivationSnapshot {
+    return {
+      ...pendingSnapshot(),
+      intent: { status: 'corrupt', contentSha256: 'd'.repeat(64), detail: 'not json' },
+    };
+  }
+  const FAKE_LEASE = {
+    ok: true,
+    kind: 'setup-activation',
+    operationId: 'op-quarantine-test',
+    assertOperation: () => {},
+    release: () => {},
+  };
+
+  test('Group E: a stale journal is quarantined via the REAL consent/authorize chain, then activation proceeds', async () => {
+    let observeCalls = 0;
+    let quarantineCalls = 0;
+    const cap = capture();
+    await setupCommand(
+      { codex: true },
+      baseDeps({
+        observeCodexActivation: () => {
+          observeCalls += 1;
+          return observeCalls === 1 ? corruptIntentSnapshot() : pendingSnapshot();
+        },
+        // REAL requestRetirementAssertion + REAL authorizeCodexActivation run:
+        // pass 1 mints a journal-quarantine permit, pass 2 an activation permit.
+        acquireActivationLease: (() => FAKE_LEASE) as never,
+        openCodexActivationStore: (() => ({
+          quarantineIntent: () => {
+            quarantineCalls += 1;
+            return { quarantinedTo: '/quarantine/intent.invalid-d' };
+          },
+        })) as never,
+        executeCodexActivation: () => ACTIVATED,
+      }),
+    );
+    const { out, exitCode } = cap.restore();
+    expect(exitCode).toBe(0);
+    expect(quarantineCalls).toBe(1);
+    expect(observeCalls).toBe(2);
+    expect(out).toContain('Quarantined stale activation journal');
+    expect(out).toContain('Activated Codex plugin');
+    expect((await loadGenieConfig()).codex?.configured).toBe(true);
+  });
+
+  test('Group E: a skipped quarantine reports and exits 1 without touching the executor', async () => {
+    let executeCalls = 0;
+    const cap = capture();
+    await setupCommand(
+      { codex: true },
+      baseDeps({
+        observeCodexActivation: () => corruptIntentSnapshot(),
+        acquireActivationLease: (() => FAKE_LEASE) as never,
+        openCodexActivationStore: (() => ({
+          quarantineIntent: () => ({ skipped: 'unsafe intent path is not quarantined (symlink)' }),
+        })) as never,
+        executeCodexActivation: () => {
+          executeCalls += 1;
+          return ACTIVATED;
+        },
+      }),
+    );
+    const { err, exitCode } = cap.restore();
+    expect(exitCode).toBe(1);
+    expect(executeCalls).toBe(0);
+    expect(err).toContain('not quarantined');
+  });
+
+  test('Group E: a second quarantine grant in one invocation refuses instead of looping', async () => {
+    let quarantineCalls = 0;
+    const cap = capture();
+    await setupCommand(
+      { codex: true },
+      baseDeps({
+        // The journal never clears: every pass re-observes the corrupt intent.
+        observeCodexActivation: () => corruptIntentSnapshot(),
+        acquireActivationLease: (() => FAKE_LEASE) as never,
+        openCodexActivationStore: (() => ({
+          quarantineIntent: () => {
+            quarantineCalls += 1;
+            return { quarantinedTo: '/quarantine/intent.invalid-d' };
+          },
+        })) as never,
+      }),
+    );
+    const { err, exitCode } = cap.restore();
+    expect(exitCode).toBe(1);
+    expect(quarantineCalls).toBe(1);
+    expect(err).toContain('refusing to loop');
+  });
+
   test('Group E: an ABSENT delivery record refuses before any consent prompt with the recovery command (exit 1)', async () => {
     let assertionRequested = 0;
     let executeCalls = 0;
