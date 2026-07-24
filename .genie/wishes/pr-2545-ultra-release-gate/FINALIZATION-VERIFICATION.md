@@ -30,6 +30,19 @@ Result: **14 findings, 10 must-fix (two distinct defects reported across lenses)
 
 Non-must-fix corrections also applied: stale 2026-07-11 status sentence anchored as superseded, F22's dangling snapshot cross-reference removed, F40 updated for the merged PR, and the Darwin ARM64 gate re-labeled "PASS at `d9b0afbd` only" since no package was rebuilt at the successor head.
 
+## Run 3 — 2026-07-24, wish closeout
+
+Inputs: uncommitted closeout edits (Status → DONE, success criteria checked, F01/F02/F05/F44 rows, INDEX entry); evidence bundle with the ledger diff, `gh` output for PR #2562, `main` ancestry and content proof, and the metrics-updater commit forensics.
+
+Result: **21 findings, 18 must-fix — all corrected before commit.** The two that mattered:
+
+| # | Must-fix defect | Correction |
+|---|-----------------|------------|
+| 1 | F01 closed against SHA `614219ee`, which is the *parent* of PR #2562's head — the gate is literally about the exact final SHA | Corrected to the real head `bd8c6128` across all three documents, and the supported-Bun claim grounded in CI's pinned Bun 1.3.11 |
+| 2 | F02 recorded as CLOSED by "the maintainer approved and merged", when the PR carries one `COMMENTED` review and no `APPROVED` one, and the merging identity is the same one the commits were authored under — a self-merge presented as independent approval | F02 recorded as **NOT MET** in the ledger, the gate table, the INDEX entry, and the standing-conditions list, so it can never be cited as precedent |
+
+Also corrected: metrics-routine closure softened from "the routine was removed" to closed-by-observation (the owning account was never identified, so deletion is inferred from ten days of silence); the INDEX bullet that simultaneously said DONE and listed the same gates as pending; the validation snapshot and both supersession-map rows that still called F01/F02 open; the "without interruption" cadence claim (2026-07-10's metrics commit is human-authored); and the never-rebuilt release package added to the standing conditions.
+
 ## Rerun instructions
 
 From a Claude Code session in this repository:
