@@ -6,6 +6,7 @@ import { join } from 'node:path';
 const SCRIPT = join(import.meta.dir, 'release-generic-provenance.sh');
 const CONTROL_SHA = 'b'.repeat(40);
 const SOURCE_SHA = 'a'.repeat(40);
+const ARTIFACT_SHA256 = 'd'.repeat(64);
 const roots: string[] = [];
 
 afterEach(() => {
@@ -15,6 +16,7 @@ afterEach(() => {
 function predicate<T extends Record<string, unknown>>(invocation: T) {
   return {
     predicateType: 'https://slsa.dev/provenance/v0.2',
+    subject: [{ name: 'genie-5.260714.2-linux-x64-glibc.tar.gz', digest: { sha256: ARTIFACT_SHA256 } }],
     predicate: {
       builder: {
         id: 'https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@refs/tags/v2.1.0',
@@ -49,6 +51,7 @@ function automatedStatement() {
           event: 'push',
           status: 'completed',
           conclusion: 'success',
+          head_sha: SOURCE_SHA,
           head_branch: 'dev',
           repository: { full_name: 'automagik-dev/genie' },
         },
@@ -82,7 +85,11 @@ function dispatchStatement() {
   });
 }
 
-function invoke(mode: 'verify-exact' | 'verify-reusable', value: unknown, overrides: Record<string, string> = {}) {
+function invoke(
+  mode: 'verify-exact' | 'verify-exact-subject' | 'verify-reusable',
+  value: unknown,
+  overrides: Record<string, string> = {},
+) {
   const root = mkdtempSync(join(tmpdir(), 'genie-generic-provenance-'));
   roots.push(root);
   const path = join(root, 'statement.json');
@@ -97,6 +104,7 @@ function invoke(mode: 'verify-exact' | 'verify-reusable', value: unknown, overri
       SOURCE_BRANCH: 'dev',
       SOURCE_CI_RUN_ID: '123456',
       CONTROL_SHA,
+      ARTIFACT_SHA256,
       ...overrides,
     },
     stdout: 'pipe',
@@ -139,6 +147,9 @@ describe('verified generic SLSA provenance policy', () => {
         value.predicate.invocation.environment.github_event_payload.workflow_run.id = 654321;
       },
       (value) => {
+        value.predicate.invocation.environment.github_event_payload.workflow_run.head_sha = 'c'.repeat(40);
+      },
+      (value) => {
         value.predicate.invocation.environment.github_event_payload.workflow_run.path =
           '.github/workflows/attacker.yml';
       },
@@ -155,6 +166,25 @@ describe('verified generic SLSA provenance policy', () => {
       mutate(value);
       expect(invoke('verify-exact', value).exitCode).not.toBe(0);
     }
+  });
+
+  test('emits identity only after the verified statement binds the exact artifact subject', () => {
+    const verified = invoke('verify-exact-subject', automatedStatement());
+    expect(verified.exitCode).toBe(0);
+    expect(JSON.parse(verified.stdout.toString())).toEqual({
+      artifactSha256: ARTIFACT_SHA256,
+      sourceSha: SOURCE_SHA,
+      sourceBranch: 'dev',
+      sourceCiRunId: '123456',
+      controlSha: CONTROL_SHA,
+      entryPoint: '.github/workflows/version.yml',
+    });
+
+    expect(
+      invoke('verify-exact-subject', automatedStatement(), {
+        ARTIFACT_SHA256: 'e'.repeat(64),
+      }).exitCode,
+    ).not.toBe(0);
   });
 
   test('reusable policy accepts both pipeline generations and rejects malformed signed identity', () => {

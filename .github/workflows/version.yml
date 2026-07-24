@@ -12,9 +12,9 @@ name: Version
 # release workflow with the successful parent CI run. The release guard accepts
 # the child only when all six changed fields are the deterministic version bump.
 #
-# On main triggers (merge from dev) we DO NOT bump — the version is
-# already in package.json from the dev tag. The successful main CI run and
-# tree-equivalent existing tag produce a human-initiation handoff. A maintainer
+# On homolog/main promotion triggers, derive a fresh immutable release identity
+# without rewriting the source tree. The successful branch CI run and a new
+# tag at that exact commit produce the automated/human-initiation handoff. A maintainer
 # must start the stable Release workflow, then a different maintainer approves
 # the protected production environment.
 #
@@ -43,14 +43,13 @@ permissions:
   contents: write          # commit + push version bump + tag
   actions: write           # dispatch trusted release.yml control on main
 
-# RACE (observed 2026-07-04T23:11:46Z, missed dev release): CI completes twice
-# per dev merge (push-event run + pull_request-event run); both trigger this
-# workflow. The PR-event run always fails the job `if` (event=='push') and shows
-# "skipped" — but in a shared group with cancel-in-progress it CANCELLED the
-# in-flight push-event bump. Scope the group by triggering event, and never
-# cancel: killing a version bump mid-tag-push is unsafe regardless — queue instead.
+# RACES: CI completes twice per dev merge (push + pull_request), so separate
+# those event classes and never cancel an in-flight version operation. Within
+# the push class, serialize main/homolog/dev globally: all three allocate from
+# one CalVer tag namespace, and branch-scoped groups could independently choose
+# the same max-plus-one tag. Queueing keeps allocation and push one transaction.
 concurrency:
-  group: version-${{ github.event.workflow_run.head_branch }}-${{ github.event.workflow_run.event }}
+  group: version-release-identity-${{ github.event.workflow_run.event }}
   queue: max
   cancel-in-progress: false
 
@@ -90,16 +89,14 @@ jobs:
           BRANCH="${{ github.event.workflow_run.head_branch }}"
           case "$BRANCH" in
             main)
-              # Main push: tag whatever release.yml just landed.
-              # Do NOT bump — package.json already carries the dev-derived
-              # version. Channel: stable (advances latest + homolog + dev).
+              # Main promotion gets a fresh immutable release tag without
+              # rewriting its CI-approved source tree.
               echo "branch=main" >> "$GITHUB_OUTPUT"
               echo "should_bump=false" >> "$GITHUB_OUTPUT"
               ;;
             homolog)
-              # Homolog push: tag whatever the dev→homolog promotion just
-              # landed. Same no-bump posture as main — package.json already
-              # carries the dev-derived version that homolog is promoting.
+              # Homolog promotion gets a fresh immutable release tag without
+              # rewriting its CI-approved source tree.
               # Channel: homolog (advances homolog + dev). Felipe directive
               # 2026-05-12 added homolog as the dev→homolog→stable middle
               # tier; genie inherits the surface for cross-repo parity even
@@ -335,8 +332,10 @@ jobs:
           echo "source_branch=dev" >> "$GITHUB_OUTPUT"
           echo "source_ci_run_id=${SOURCE_CI_RUN_ID}" >> "$GITHUB_OUTPUT"
 
-      # The no-bump path only resolves an existing dev-derived tag. Homolog is
-      # dispatched automatically below. Stable deliberately is not: if this
+      # Each promotion gets a new tag/version. Published GitHub Releases are
+      # immutable, so reusing the dev tag would make later evidence/metadata
+      # publication impossible. Homolog is dispatched automatically below.
+      # Stable deliberately is not: if this
       # GITHUB_TOKEN-authored workflow initiated the production deployment,
       # GitHub's prevent-self-review control would exclude only the bot, not the
       # maintainer who authored/promoted the change. A human workflow_dispatch
@@ -347,19 +346,20 @@ jobs:
         if: steps.context.outputs.should_bump == 'false' && steps.promotion.outputs.promoted == 'true'
         run: |
           set -euo pipefail
-          VERSION="$(jq -er '.version | select(type == "string")' package.json)"
-          if [[ ! "$VERSION" =~ ^5\.[0-9]{6}\.[1-9][0-9]{0,3}$ ]]; then
-            echo "::error ::release-trigger.version_unresolved package.json has no version on the no-bump path — promotion is malformed"
+          TODAY="$(date -u +%y%m%d)"
+          MAX_COUNTER="$(
+            git tag --list "v5.${TODAY}.*" |
+              sed -nE "s/^v5\\.${TODAY}\\.([1-9][0-9]{0,3})$/\\1/p" |
+              sort -n |
+              tail -1
+          )"
+          CURRENT_COUNTER="${MAX_COUNTER:-0}"
+          VERSION="5.${TODAY}.$((10#${CURRENT_COUNTER} + 1))"
+          [[ "${VERSION##*.}" -le 9999 ]] || {
+            echo "::error ::release-trigger.version_exhausted no daily release identities remain for ${TODAY}"
             exit 1
-          fi
-          # The dev chain that derived this version must have already
-          # pushed v${VERSION}. If it is missing, the promotion raced ahead
-          # of the dev tag — surface loudly rather than dispatch a tag
-          # release.yml cannot check out.
-          if ! git ls-remote --exit-code --tags origin "refs/tags/v${VERSION}" >/dev/null 2>&1; then
-            echo "::error ::release-trigger.tag_missing v${VERSION} not on origin — dev derivation chain has not landed its tag; re-run after the dev release completes"
-            exit 1
-          fi
+          }
+          git tag "v${VERSION}" HEAD
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "source_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           echo "source_branch=${{ steps.context.outputs.branch }}" >> "$GITHUB_OUTPUT"
@@ -374,6 +374,16 @@ jobs:
               echo "release_ready=true" >> "$GITHUB_OUTPUT"
               ;;
           esac
+
+      - name: Push fresh immutable promotion tag
+        if: steps.context.outputs.should_bump == 'false' && steps.promotion.outputs.promoted == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.promoted_tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh auth setup-git
+          git push origin "refs/tags/v${VERSION}"
 
       - name: Require human initiation for stable release
         if: >-

@@ -20,6 +20,7 @@
 
 import type { Database } from 'bun:sqlite';
 import { createInterface } from 'node:readline';
+import type { ProjectContext, ProjectDatabaseBinding } from './genie-db.js';
 import type { McpTool, ToolContext } from './mcp-tools.js';
 
 // ============================================================================
@@ -88,11 +89,26 @@ export interface McpServerConfig {
   /** The tool registry surfaced by `tools/list` and dispatched by `tools/call`. */
   tools: McpTool[];
   /**
-   * Read-only DB open (net-new; returns `null` when the file is absent so the
-   * server degrades to an empty projection). Injected so this module never
-   * statically imports `bun:sqlite` / `mcp-tools`.
+   * Read-only DB open (net-new; returns `null` when the file is absent or cannot
+   * be opened). A fail-closed consumer with `resolveContext` turns null into
+   * `project-database-unavailable`; legacy consumers may still degrade to an
+   * empty projection. Injected so this module never statically imports
+   * `bun:sqlite` / `mcp-tools`.
    */
-  openReadonlyDb: (cwd: string) => Database | null;
+  openReadonlyDb: (target: string | ProjectDatabaseBinding) => Database | null;
+  /**
+   * Optional pure read-only schema validator. The fail-closed MCP command
+   * supplies the per-repo Genie validator; legacy consumers may omit it.
+   */
+  validateReadonlyDb?: (db: Database) => boolean;
+  /**
+   * OPT-IN fail-closed resolver (net-new). When provided, the loop resolves the
+   * project context once per `tools/call` and, on any non-`ok` kind, returns a
+   * typed structured error (`{ error, detail }`, `isError: true`) instead of
+   * dispatching the tool against an outer/cache-root empty board. Consumers that
+   * omit it (e.g. `genie ui-bridge`) keep the legacy cwd-based degrade-to-empty.
+   */
+  resolveContext?: (cwd: string) => ProjectContext;
   /** Build the `initialize` reply from the client's declared params. */
   initialize: (params: Record<string, unknown> | undefined) => InitializeOutcome;
   /**
@@ -109,16 +125,56 @@ export interface McpServerConfig {
 
 /**
  * Drive the stdio MCP server until stdin closes. Opens a NET-NEW read-only db
- * handle (degrading to an empty board when the file is absent) and dispatches
- * each newline-delimited JSON-RPC message per {@link McpServerConfig}.
+ * handle and dispatches each newline-delimited JSON-RPC message per
+ * {@link McpServerConfig}. With a project resolver, a null open fails closed.
  */
 export async function runMcpServerLoop(config: McpServerConfig): Promise<void> {
   const cwd = process.cwd();
+  // Resolve the fail-closed context up front when a resolver is injected; only an
+  // `ok` context may hold a read handle. Without a resolver, keep the legacy open.
+  const initialContext = config.resolveContext?.(cwd);
+  const openValidatedReadonlyDb = (context?: ProjectContext): Database | null => {
+    let target: string | ProjectDatabaseBinding = cwd;
+    if (context !== undefined) {
+      if (context.kind !== 'ok' || context.databaseBinding === undefined) return null;
+      target = context.databaseBinding;
+    }
+    const db = config.openReadonlyDb(target);
+    if (db === null) return null;
+    try {
+      // Bun may construct a handle for malformed bytes and fail only on the
+      // first statement. Validate version + schema before any tool handler can
+      // see the handle. Legacy consumers retain the lightweight readability
+      // probe when they do not opt into a schema validator.
+      let valid = true;
+      if (config.validateReadonlyDb) valid = config.validateReadonlyDb(db);
+      else db.query('PRAGMA user_version').get();
+      if (!valid) {
+        db.close();
+        return null;
+      }
+      return db;
+    } catch {
+      db.close();
+      return null;
+    }
+  };
+  const openHandle = (context: ProjectContext | undefined): Database | null => openValidatedReadonlyDb(context);
   // Single source of truth for the read handle: the per-call reopen below writes
   // back to ctx.db, and close() reads ctx.db — so a mid-session reopen is always
   // the one that gets closed (no stale/leaked handle).
-  const ctx: ToolContext = { db: config.openReadonlyDb(cwd), cwd };
+  const ctx: ToolContext = { db: openHandle(initialContext), cwd, context: initialContext };
   const toolByName = new Map(config.tools.map((t) => [t.name, t] as const));
+
+  /**
+   * Serialize a non-`ok` project context as a stable structured MCP error. This
+   * is the ONE place the read-only server refuses to serve an empty board when
+   * repository context or the genie.db is missing/unsupported.
+   */
+  function failClosed(id: number | string | null, context: ProjectContext): void {
+    const payload = { error: context.kind, detail: (context as { detail?: string }).detail ?? context.kind };
+    ok(id, { content: [{ type: 'text', text: JSON.stringify(payload) }], structuredContent: payload, isError: true });
+  }
 
   function handleToolsCall(id: number | string | null, params: Record<string, unknown> | undefined): void {
     const name = typeof params?.name === 'string' ? params.name : '';
@@ -132,11 +188,42 @@ export async function runMcpServerLoop(config: McpServerConfig): Promise<void> {
       });
       return;
     }
-    // The db may have been absent when the server started (null handle → empty
-    // board). Re-attempt the read-only open per call so a db created mid-session
-    // (e.g. a fresh `genie init` or a bridge write) is picked up instead of
-    // serving empty forever.
-    if (!ctx.db) ctx.db = config.openReadonlyDb(cwd);
+    // Fail-closed gate (opt-in). Re-resolve ONLY while not yet `ok` so a db/context
+    // created mid-session (e.g. a fresh `genie init`) is picked up without spending
+    // git probes on every call once the context is settled. Any non-`ok` state
+    // becomes a typed error rather than an outer/cache-root empty board.
+    if (config.resolveContext) {
+      const context = ctx.context?.kind === 'ok' ? ctx.context : config.resolveContext(cwd);
+      ctx.context = context;
+      if (context.kind !== 'ok') {
+        if (ctx.db) {
+          ctx.db.close();
+          ctx.db = null;
+        }
+        failClosed(id, context);
+        return;
+      }
+    }
+    // The db may have been absent when the server started. Re-attempt the
+    // read-only open per call so a db created mid-session (e.g. a fresh
+    // `genie init` or a bridge write) is picked up.
+    if (!ctx.db) ctx.db = openValidatedReadonlyDb(ctx.context);
+    // Existence is not openability: a directory, malformed file, unreadable
+    // path, or failed readonly open can still arrive with an `ok` path context.
+    // Never dispatch a fail-closed MCP tool with a null handle, because every
+    // read tool interprets null as a healthy empty projection.
+    if (config.resolveContext && !ctx.db && ctx.context?.kind === 'ok') {
+      const unavailable: ProjectContext = {
+        ...ctx.context,
+        kind: 'project-database-unavailable',
+        detail: `unable to open Genie database at ${ctx.context.dbPath}`,
+      };
+      // Preserve retry behavior: a later call re-resolves this non-ok context
+      // and may recover after the path is repaired.
+      ctx.context = unavailable;
+      failClosed(id, unavailable);
+      return;
+    }
     const payload = tool.handler(ctx, args);
     ok(id, {
       content: [{ type: 'text', text: JSON.stringify(payload) }],

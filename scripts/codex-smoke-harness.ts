@@ -6,18 +6,23 @@
  *
  * Design contract (wish `repair-genie-codex-hooks-and-dedupe-skills`, Group C):
  *
- * - The BUILT CLI is the system under test. Every lifecycle assertion runs the
- *   installed binary at `$GENIE_HOME/bin/genie` and inspects the real bytes it
- *   wrote, exit codes, and parsed stdout/doctor JSON. No runtime-integration
- *   oracle (`proveCodexPluginHealth`, `runBoundedCodexMcpSession`,
- *   `inspectCodexFallbackTier`, `inspectManagedSkillTree`) is imported — those
- *   would re-run the code under test against the harness's OWN `process.env`
+ * - The BUILT CLI performs the isolated non-Codex bootstrap install and remains
+ *   the system under test for init/MCP surfaces. Fixture delivery publication,
+ *   activation, and delivery-aware doctor assertions use one unshipped lifecycle
+ *   driver because the deterministic Sigstore bundle is intentionally rejected
+ *   without its same-process crypto seam. Setup still runs through a real PTY
+ *   and the production consent/authorization/executor/store path. The black-box
+ *   inspector imports no runtime-integration oracle (`proveCodexPluginHealth`,
+ *   `runBoundedCodexMcpSession`, `inspectCodexFallbackTier`,
+ *   `inspectManagedSkillTree`) — those would re-run the code under test against
+ *   the harness's OWN `process.env`
  *   (the developer's real `~/.codex`/`~/.agents`). MCP health is proven
  *   black-box by driving `<activePluginRoot>/scripts/mcp-launcher.cjs` over a
  *   hand-rolled JSON-RPC session.
- * - The ONLY `src/` imports are deterministic FIXTURE BUILDERS with explicit
- *   path arguments and no env resolution: `computeDirDigest` (marker digest)
- *   and `materializeFrozenCodexFallbackRelease` (the frozen 5.260712.1 release).
+ * - This harness module's ONLY direct `src/` imports are deterministic FIXTURE
+ *   BUILDERS with explicit path arguments and no env resolution:
+ *   `computeDirDigest` (marker digest) and
+ *   `materializeFrozenCodexFallbackRelease` (the frozen 5.260712.1 release).
  * - Every isolated home lives under `os.homedir()` (a `/tmp` home makes real
  *   codex 0.144.1 emit an alias warning). Each is registered and swept on
  *   normal exit, failure, SIGINT, and uncaught errors, and the module refuses
@@ -28,6 +33,7 @@
 
 import { createHash } from 'node:crypto';
 import {
+  appendFileSync,
   chmodSync,
   copyFileSync,
   cpSync,
@@ -38,6 +44,7 @@ import {
   readFileSync,
   readdirSync,
   readlinkSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -69,6 +76,7 @@ export function repositoryRootFromModuleUrl(moduleUrl: string): string {
 
 export const REPO_ROOT = repositoryRootFromModuleUrl(import.meta.url);
 export const DIST_CLI = join(REPO_ROOT, 'dist', 'genie.js');
+const LIFECYCLE_TEST_RUNNER = join(REPO_ROOT, 'tests', 'support', 'codex-lifecycle-test-runner.ts');
 
 /** The five read-only Genie MCP tools a healthy plugin launcher must expose. */
 export const REQUIRED_GENIE_MCP_TOOLS = [
@@ -100,11 +108,11 @@ export const TARGET_VERSION = ((): string => {
   return version;
 })();
 
-export const REAL_CODEX = ((): string => {
+function resolveRealCodex(): string {
   const which = Bun.which('codex');
   if (which === null) fail('real codex CLI not found on PATH — Group C requires codex 0.144.1+');
   return which;
-})();
+}
 
 // ============================================================================
 // Temp-home lifecycle (A12): registry + sweep + preflight guard
@@ -190,7 +198,13 @@ function makeIsolatedHome(): IsolatedHome {
   const skillsDir = join(home, '.agents', 'skills');
   const bin = join(home, 'bin');
   const project = join(home, 'project');
+  const tempDir = join(home, 'tmp');
+  const xdgConfig = join(home, '.config');
+  const xdgCache = join(home, '.cache');
+  const xdgData = join(home, '.local', 'share');
+  const xdgState = join(home, '.local', 'state');
   const basePath = process.env.PATH ?? '';
+  for (const path of [tempDir, xdgConfig, xdgCache, xdgData, xdgState]) mkdirSync(path, { recursive: true });
   const env: Record<string, string> = {
     ...(process.env as Record<string, string>),
     HOME: home,
@@ -203,6 +217,15 @@ function makeIsolatedHome(): IsolatedHome {
     // via `process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude')`).
     CLAUDE_CONFIG_DIR: claudeConfigDir,
     GENIE_AGENTS_SKILLS_DIR: skillsDir,
+    TMPDIR: tempDir,
+    XDG_CONFIG_HOME: xdgConfig,
+    XDG_CACHE_HOME: xdgCache,
+    XDG_DATA_HOME: xdgData,
+    XDG_STATE_HOME: xdgState,
+    BUN_INSTALL_CACHE_DIR: join(xdgCache, 'bun'),
+    NPM_CONFIG_CACHE: join(xdgCache, 'npm'),
+    GIT_CONFIG_GLOBAL: join(home, '.gitconfig'),
+    GIT_CONFIG_NOSYSTEM: '1',
     PATH: `${bin}:${basePath}`,
   };
   return { home, genieHome, codexHome, skillsDir, bin, genieBin: join(genieHome, 'bin', 'genie'), project, env };
@@ -225,8 +248,8 @@ export interface CliResult {
   stderr: string;
 }
 
-function spawnCli(command: string[], iso: IsolatedHome): CliResult {
-  const result = Bun.spawnSync(command, { cwd: iso.project, env: iso.env, stdout: 'pipe', stderr: 'pipe' });
+function spawnCli(command: string[], iso: IsolatedHome, env = iso.env): CliResult {
+  const result = Bun.spawnSync(command, { cwd: iso.project, env, stdout: 'pipe', stderr: 'pipe' });
   return {
     exitCode: result.exitCode ?? -1,
     stdout: result.stdout.toString(),
@@ -239,9 +262,197 @@ export function runCli(iso: IsolatedHome, args: string[]): CliResult {
   return spawnCli([iso.genieBin, ...args], iso);
 }
 
+function lifecycleEnv(iso: IsolatedHome): Record<string, string> {
+  return { ...iso.env, CI: '', CODEX_THREAD_ID: '' };
+}
+
+/** Invoke the unshipped lifecycle driver with deterministic evidence verification. */
+export function runLifecycleCli(iso: IsolatedHome, args: string[]): CliResult {
+  return spawnCli([process.execPath, LIFECYCLE_TEST_RUNNER, ...args], iso, lifecycleEnv(iso));
+}
+
+export interface PtyCliResult {
+  exitCode: number;
+  output: string;
+}
+
+/** Invoke setup through a real PTY so A's genuine consent guards and brand minter remain live. */
+export function runLifecycleSetup(iso: IsolatedHome): PtyCliResult {
+  const cli = [process.execPath, LIFECYCLE_TEST_RUNNER, 'setup', '--codex'];
+  const env = lifecycleEnv(iso);
+  if (process.platform === 'darwin') {
+    const expect = Bun.which('expect');
+    if (expect === null) fail('real-PTY lifecycle smoke requires expect(1) on macOS');
+    const spawnWords = cli.map((part) => `{${part}}`).join(' ');
+    const script = [
+      'set timeout 120',
+      `spawn -noecho ${spawnWords}`,
+      'send -- "yes\\r"',
+      'expect eof',
+      'catch wait result',
+      'exit [lindex $result 3]',
+    ].join('\n');
+    const proc = Bun.spawnSync([expect, '-c', script], {
+      cwd: iso.project,
+      env,
+      stdout: 'pipe',
+      stderr: 'pipe',
+      timeout: 150_000,
+    });
+    return { exitCode: proc.exitCode ?? -1, output: proc.stdout.toString() + proc.stderr.toString() };
+  }
+  if (process.platform === 'linux') {
+    const script = Bun.which('script');
+    if (script === null) fail('real-PTY lifecycle smoke requires script(1) on Linux');
+    const command = cli.map((part) => `'${part.replaceAll("'", `'\\''`)}'`).join(' ');
+    const proc = Bun.spawnSync([script, '-qec', command, '/dev/null'], {
+      cwd: iso.project,
+      env,
+      stdin: Buffer.from('yes\n'),
+      stdout: 'pipe',
+      stderr: 'pipe',
+      timeout: 120_000,
+    });
+    return { exitCode: proc.exitCode ?? -1, output: proc.stdout.toString() + proc.stderr.toString() };
+  }
+  fail(`real-PTY lifecycle smoke is unsupported on ${process.platform}`);
+}
+
 /** Invoke the real codex on the isolated PATH. */
 export function runCodex(iso: IsolatedHome, args: string[]): CliResult {
   return spawnCli([join(iso.bin, 'codex'), ...args], iso);
+}
+
+/**
+ * Invoke the resolved real Codex executable directly. C8 uses this instead of
+ * relying on the isolated-PATH symlink, while preserving the isolated env and
+ * project cwd that determine Codex's effective project configuration.
+ */
+export function runRealCodex(iso: IsolatedHome, args: string[]): CliResult {
+  return spawnCli([resolveRealCodex(), ...args], iso);
+}
+
+/**
+ * Explicitly trust only the isolated project fixture so real Codex will load
+ * its project-scoped `.codex/config.toml`. Cover logical and physical spellings
+ * because macOS temp paths can differ by a `/private` prefix.
+ */
+export function trustIsolatedCodexProject(iso: IsolatedHome): void {
+  const spellings = [...new Set([iso.project, realpathSync(iso.project)])];
+  const trust = spellings
+    .map((spelling) => `[projects.${JSON.stringify(spelling)}]\ntrust_level = "trusted"\n`)
+    .join('');
+  appendFileSync(join(iso.codexHome, 'config.toml'), `\n${trust}`);
+}
+
+export interface EffectiveCodexMcpRoute {
+  name: 'genie';
+  enabled: true;
+  transport: {
+    type: 'stdio';
+    command: string;
+    args: ['mcp'];
+    cwd: null;
+  };
+}
+
+export interface EffectiveCodexMcpSnapshot {
+  route: EffectiveCodexMcpRoute;
+  getJson: string;
+  listJson: string;
+}
+
+function parseCodexJson(result: CliResult, command: string): unknown {
+  if (result.exitCode !== 0) {
+    fail(
+      `${command} failed with exit ${result.exitCode}: ${result.stderr.trim() || result.stdout.trim() || '<no output>'}`,
+    );
+  }
+  try {
+    return JSON.parse(result.stdout) as unknown;
+  } catch (error) {
+    fail(`${command} returned malformed JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (isRecord(value)) {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
+function assertGenieTransport(value: Record<string, unknown>, expectedCommand: string, source: string): void {
+  if (value.name !== 'genie') fail(`${source} route name must be "genie"`);
+  if (value.enabled !== true) fail(`${source} genie route must be enabled`);
+  const transport = asRecord(value.transport, `${source} genie transport is not an object`);
+  if (transport.type !== 'stdio') fail(`${source} genie transport type must be "stdio"`);
+  if (typeof transport.command !== 'string') fail(`${source} genie transport command must be a string`);
+  const normalizedCommand = transport.command.replaceAll('\\', '/');
+  if (normalizedCommand.includes('/plugins/cache/') || normalizedCommand.includes('/.codex/plugins/')) {
+    fail(`${source} genie command must not resolve through a plugin cache: ${transport.command}`);
+  }
+  if (transport.command !== expectedCommand) {
+    fail(
+      `${source} genie command is ${JSON.stringify(transport.command)}, expected ${JSON.stringify(expectedCommand)}`,
+    );
+  }
+  if (!Array.isArray(transport.args) || transport.args.length !== 1 || transport.args[0] !== 'mcp') {
+    fail(`${source} genie args must be exactly ["mcp"]`);
+  }
+  if ('cwd' in transport && transport.cwd !== null) {
+    fail(`${source} genie cwd must be absent or null`);
+  }
+}
+
+/**
+ * Parse and structurally prove Codex's effective project MCP route from both
+ * official JSON surfaces. This is intentionally independent of Genie's TOML
+ * parser and rejects duplicate, disabled, non-stdio, cache-root, cwd-overridden,
+ * or get/list-divergent routes.
+ */
+export function assertEffectiveCodexProjectRoute(
+  getResult: CliResult,
+  listResult: CliResult,
+  expectedCommand: string,
+): EffectiveCodexMcpSnapshot {
+  const getParsed = parseCodexJson(getResult, 'codex mcp get genie --json');
+  const listParsed = parseCodexJson(listResult, 'codex mcp list --json');
+  const getRoute = asRecord(getParsed, 'codex mcp get genie --json is not an object');
+  if (!Array.isArray(listParsed)) fail('codex mcp list --json is not an array');
+  const genieRoutes = listParsed
+    .map((entry) => asRecord(entry, 'codex mcp list --json entry is not an object'))
+    .filter((entry) => entry.name === 'genie');
+  if (genieRoutes.length !== 1) {
+    fail(`codex mcp list --json must contain exactly one genie route, found ${genieRoutes.length}`);
+  }
+  const listRoute = genieRoutes[0];
+  assertGenieTransport(getRoute, expectedCommand, 'codex mcp get');
+  assertGenieTransport(listRoute, expectedCommand, 'codex mcp list');
+  return {
+    route: {
+      name: 'genie',
+      enabled: true,
+      transport: { type: 'stdio', command: expectedCommand, args: ['mcp'], cwd: null },
+    },
+    getJson: canonicalJson(getParsed),
+    listJson: canonicalJson(listParsed),
+  };
+}
+
+/** Require one complete marker-owned route block, with no duplicate marker. */
+export function assertSingleCodexProjectRouteMarker(toml: string): void {
+  const begin = '# BEGIN GENIE MCP FALLBACK';
+  const end = '# END GENIE MCP FALLBACK';
+  const begins = toml.split(begin).length - 1;
+  const ends = toml.split(end).length - 1;
+  if (begins !== 1 || ends !== 1 || toml.indexOf(begin) >= toml.indexOf(end)) {
+    fail(`Codex project config must contain exactly one intact ${begin}/${end} block`);
+  }
 }
 
 // ============================================================================
@@ -265,6 +476,11 @@ export function installGenieHome(iso: IsolatedHome): void {
   // package.json makes `$GENIE_HOME/bin/genie --version` report the target
   // version so `update --post-delivery-converge` matches the installed plugin.
   copyFileSync(join(REPO_ROOT, 'package.json'), join(iso.genieHome, 'package.json'));
+  // A real release tarball installs VERSION beside plugins/ at the canonical
+  // delivery root. The black-box fixture must reproduce that authenticated
+  // layout; package.json affects CLI version reporting but is not delivery
+  // evidence and cannot substitute for the canonical VERSION stamp.
+  writeFileSync(join(iso.genieHome, 'VERSION'), `${TARGET_VERSION}\n`);
   for (const dir of AUX_LAYOUT_DIRS) {
     cpSync(join(REPO_ROOT, dir), join(iso.genieHome, dir), {
       recursive: true,
@@ -284,7 +500,7 @@ export function installGenieHome(iso: IsolatedHome): void {
 /** Symlink the real codex CLI onto the isolated PATH. */
 export function linkRealCodex(iso: IsolatedHome): void {
   mkdirSync(iso.bin, { recursive: true });
-  symlinkSync(REAL_CODEX, join(iso.bin, 'codex'));
+  symlinkSync(resolveRealCodex(), join(iso.bin, 'codex'));
 }
 
 const FALLBACK_MARKER_NAME = '.genie-sync.json';
@@ -716,7 +932,15 @@ export interface DoctorCheck {
 }
 
 export function readDoctorChecks(iso: IsolatedHome): DoctorCheck[] {
-  const result = runCli(iso, ['doctor', '--json']);
+  return parseDoctorChecks(runCli(iso, ['doctor', '--json']));
+}
+
+/** Delivery-aware doctor through the fixture's crypto-only verification seam. */
+export function readLifecycleDoctorChecks(iso: IsolatedHome): DoctorCheck[] {
+  return parseDoctorChecks(runLifecycleCli(iso, ['doctor', '--json']));
+}
+
+function parseDoctorChecks(result: CliResult): DoctorCheck[] {
   const parsed = asRecord(JSON.parse(result.stdout), 'doctor --json is not an object');
   const checks = parsed.checks;
   if (!Array.isArray(checks)) fail('doctor --json has no checks array');

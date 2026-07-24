@@ -4,6 +4,7 @@ import {
   closeSync,
   fstatSync,
   lstatSync,
+  mkdirSync,
   mkdtempSync,
   openSync,
   readFileSync,
@@ -19,6 +20,11 @@ import {
   acquireLifecycleLease,
   lifecycleLockPath,
 } from '../lib/agent-sync.js';
+import {
+  type HeldLifecycleLease,
+  type LifecycleLeaseResult,
+  acquireLifecycleLease as acquireCodexLifecycleLease,
+} from '../lib/codex-lifecycle-lease.js';
 import {
   type CanonicalInstallLinkGuard,
   preflightCanonicalInstallLink,
@@ -43,6 +49,7 @@ import {
   physicalPathIdentitiesEqual,
   renamePathNoClobber,
 } from '../lib/install-transaction.js';
+import { releaseOrderedLifecycleLeases } from '../lib/ordered-lifecycle-leases.js';
 import { VERSION } from '../lib/version.js';
 
 const VERSION_PATTERN = /(?:^|[^0-9A-Za-z.+-])v?([0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?)(?:[^0-9A-Za-z.+-]|$)/;
@@ -62,6 +69,7 @@ interface BorrowedLeaseGuard {
 
 export interface InstallPromoteCommandDependencies {
   acquireLease?: (genieHome: string) => LifecycleLease | { skipped: string };
+  acquireCodexLease?: (genieHome: string) => LifecycleLeaseResult;
   runtimeExecutable?: string;
   runtimeVersion?: string;
   userHome?: string;
@@ -166,6 +174,25 @@ function assertRunningVerifiedStage(stagingBinary: string, runtimeExecutable: st
   return staged;
 }
 
+function ensurePhysicalInstallDirectory(path: string, label: string): void {
+  try {
+    mkdirSync(path, { mode: 0o700 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
+      throw new InstallPromoteCommandError(`could not create ${label}`, { cause: error });
+    }
+  }
+  let stat: ReturnType<typeof lstatSync>;
+  try {
+    stat = lstatSync(path);
+  } catch (error) {
+    throw new InstallPromoteCommandError(`${label} disappeared during validation`, { cause: error });
+  }
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    throw new InstallPromoteCommandError(`${label} is not a physical directory`);
+  }
+}
+
 function verifyExecutableVersion(binaryPath: string, expectedVersion: string): boolean {
   try {
     // Bounded: a hanging live binary must fail verification, not stall the
@@ -240,11 +267,14 @@ export function installPromoteCommand(
   const stagingBinary = join(stagingRoot, 'genie');
   const stagedIdentity = assertRunningVerifiedStage(stagingBinary, runtimeExecutable);
   const lease = acquireExactBorrowedInstallLease(genieHome, dependencies.acquireLease);
+  let codexLease: HeldLifecycleLease | null = null;
   let linkGuard: CanonicalInstallLinkGuard | null = null;
   let admitted: InstallStagingDirectoryGuard | null = null;
   let promotionComplete = false;
   const assertAuthority = (): void => {
     assertBorrowedLeaseUnchanged(lease);
+    if (codexLease === null) throw new InstallPromoteCommandError('Codex lifecycle lease is not held');
+    codexLease.assertOperation(codexLease.operationId);
     if (linkGuard !== null) verifyCanonicalInstallLink(linkGuard);
     if (admitted !== null) verifyInstallStagingDirectory(admitted);
   };
@@ -256,6 +286,18 @@ export function installPromoteCommand(
     },
   };
   try {
+    const acquired = (
+      dependencies.acquireCodexLease ?? ((home) => acquireCodexLifecycleLease('install-converge', { genieHome: home }))
+    )(genieHome);
+    if (!acquired.ok) {
+      throw new InstallPromoteCommandError(
+        `Codex lifecycle lease is busy (${acquired.holderKind ?? 'unknown'}); refusing installer promotion`,
+      );
+    }
+    codexLease = acquired;
+    assertAuthority();
+    ensurePhysicalInstallDirectory(join(genieHome, 'bin'), 'GENIE_HOME/bin');
+    assertAuthority();
     recoverPendingInstallPromotions({ genieHome, dependencies: promotionDependencies });
     assertAuthority();
     const userHome = resolve(dependencies.userHome ?? homedir());
@@ -320,7 +362,7 @@ export function installPromoteCommand(
         }
       }
     } finally {
-      lease.release();
+      releaseOrderedLifecycleLeases(codexLease, lease);
     }
   }
 }

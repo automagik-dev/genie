@@ -128,7 +128,6 @@ for required in \
   ".agents/plugins/marketplace.json" \
   ".claude-plugin/marketplace.json" \
   "plugins/genie/.codex-plugin/plugin.json" \
-  "plugins/genie/.mcp.json" \
   "plugins/genie/scripts/mcp-launcher.cjs" \
   "plugins/genie/.claude-plugin/plugin.json" \
   "plugins/genie/hooks/hooks.json" \

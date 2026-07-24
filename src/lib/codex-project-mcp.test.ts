@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
   type CodexPluginProbe,
+  genieFacadeMcpEntry,
   genieMcpEntry,
   inspectCodexPluginMcpUsability,
   inspectCodexProjectMcp,
@@ -76,7 +77,16 @@ function seedActivePlugin(version = '1.2.3'): {
   const manifestPath = join(pluginRoot, '.codex-plugin', 'plugin.json');
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
   manifest.version = version;
+  // Group A removed the Codex plugin MCP route from the SHIPPED payload, so the
+  // fixture reconstructs a hypothetical plugin-with-MCP layout to keep exercising
+  // the fail-closed usability guard (launcher/node/binary). The removal itself is
+  // proven separately against the real source plugin.
+  manifest.mcpServers = './.mcp.json';
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  writeFileSync(
+    join(pluginRoot, '.mcp.json'),
+    `${JSON.stringify({ mcp_servers: { genie: { command: 'node', args: ['./scripts/mcp-launcher.cjs'], cwd: '.' } } }, null, 2)}\n`,
+  );
   const genieHome = join(root, 'genie-home');
   const binary = join(genieHome, 'bin', process.platform === 'win32' ? 'genie.exe' : 'genie');
   const nodePath = join(root, 'controlled-bin', 'node');
@@ -119,6 +129,71 @@ describe('project MCP executable entry', () => {
       command: '/absolute/compiled-genie',
       args: ['mcp'],
     });
+  });
+});
+
+describe('genieFacadeMcpEntry (marker-owned Codex route)', () => {
+  test('is the stable <GENIE_HOME>/bin/genie facade with args ["mcp"] and no cwd override', () => {
+    expect(genieFacadeMcpEntry('/home/u/.genie', 'linux')).toEqual({
+      command: '/home/u/.genie/bin/genie',
+      args: ['mcp'],
+    });
+    // No effective cwd override is part of the entry (source omits it entirely).
+    expect(genieFacadeMcpEntry('/home/u/.genie', 'linux')).not.toHaveProperty('cwd');
+  });
+
+  test('uses genie.exe on win32 and is independent of the running executable', () => {
+    expect(genieFacadeMcpEntry('C:/Users/u/.genie', 'win32')).toEqual({
+      command: 'C:/Users/u/.genie/bin/genie.exe',
+      args: ['mcp'],
+    });
+    // A relocated GENIE_HOME yields a different facade — the command is not the cache/execPath.
+    expect(genieFacadeMcpEntry('/relocated/home', 'linux').command).toBe('/relocated/home/bin/genie');
+  });
+});
+
+describe('Codex plugin MCP route removal (Group A)', () => {
+  test('the shipped Codex plugin manifest declares NO mcpServers and NO MCP capability', () => {
+    const manifest = JSON.parse(
+      readFileSync(join(import.meta.dir, '..', '..', 'plugins', 'genie', '.codex-plugin', 'plugin.json'), 'utf8'),
+    ) as { mcpServers?: unknown; interface?: { capabilities?: unknown } };
+    expect(manifest.mcpServers).toBeUndefined();
+    expect(manifest.interface?.capabilities).not.toContain('MCP');
+  });
+
+  test('the shipped Codex plugin payload ships no .mcp.json route file', () => {
+    expect(existsSync(join(import.meta.dir, '..', '..', 'plugins', 'genie', '.mcp.json'))).toBe(false);
+  });
+
+  test('a real (unaltered) plugin copy is never a usable MCP provider — the guard fails closed', () => {
+    const pluginRoot = join(root, 'real-plugin');
+    cpSync(join(import.meta.dir, '..', '..', 'plugins', 'genie'), pluginRoot, {
+      recursive: true,
+      dereference: false,
+      verbatimSymlinks: true,
+    });
+    const manifest = JSON.parse(readFileSync(join(pluginRoot, '.codex-plugin', 'plugin.json'), 'utf8')) as {
+      version: string;
+    };
+    const result = inspectCodexPluginMcpUsability({
+      pluginRoot,
+      expectedPluginName: 'genie',
+      expectedVersion: manifest.version,
+      genieHome: join(root, 'genie-home'),
+      resolveCommand: () => join(root, 'node'),
+    });
+    expect(result.usable).toBe(false);
+    // It fails at the manifest indirection because the route was removed.
+    expect(result.detail).toContain('mcpServers');
+  });
+
+  // Claude's separate inline launcher contract MUST remain intact.
+  test("Claude's plugin manifest still declares its own inline mcpServers launcher", () => {
+    const claude = JSON.parse(
+      readFileSync(join(import.meta.dir, '..', '..', 'plugins', 'genie', '.claude-plugin', 'plugin.json'), 'utf8'),
+    ) as { mcpServers?: { genie?: { command?: string; args?: string[] } } };
+    expect(claude.mcpServers?.genie?.command).toBe('node');
+    expect(claude.mcpServers?.genie?.args?.[0]).toContain('mcp-launcher.cjs');
   });
 });
 

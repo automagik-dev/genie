@@ -54,6 +54,11 @@ import {
 } from '../lib/codex-activation-executor.js';
 import type { CodexActivationSnapshot, IntegrationSummaryEnvelope } from '../lib/codex-activation.js';
 import { DEAD_GENIE_OTEL_EXPORTER, getCodexConfigPath } from '../lib/codex-config.js';
+import type { DeliveryEvidenceVerificationDependencies } from '../lib/codex-delivery-evidence.js';
+// Group E: ONE bounded host observation feeds probe, summary, advisory, and
+// replay runner; the lifecycle-truth seams keep delivery/route claims aligned.
+import { type DoctorCodexObservation, observeDoctorCodexHost } from '../lib/codex-doctor-observation.js';
+import { type RouteLayerFinding, assessSnapshotDelivery, classifyRouteLayers } from '../lib/codex-lifecycle-truth.js';
 import {
   type CodexPluginProbe,
   inspectCodexProjectMcp,
@@ -72,10 +77,17 @@ import { hasDuplicateSkillsExternalDirsKeys, resolveProductSkillsRoot } from '..
 import { resolveOmniRuntimeConfig } from '../lib/omni-config.js';
 import {
   CANONICAL_GENIE_SKILL_NAMES,
+  type CodexAgentDisplayState,
   inspectCodexAgentOwnership,
   inspectCodexFallbackTier,
 } from '../lib/runtime-integrations.js';
-import { CURRENT_SCHEMA_VERSION, GenieDbError, openDb } from '../lib/v5/genie-db.js';
+import {
+  CURRENT_SCHEMA_VERSION,
+  GenieDbError,
+  type ProjectContext,
+  openDb,
+  resolveProjectContext,
+} from '../lib/v5/genie-db.js';
 import { VERSION } from '../lib/version.js';
 import {
   cleanupV4,
@@ -140,6 +152,20 @@ interface CheckResult {
    * for the stable per-entry state contract.
    */
   indexLane?: { entries: IndexLaneEntry[] };
+  /**
+   * Machine-readable payload rider (survives `--json` as `checks[].routeLayers`).
+   * Only the `Codex Genie MCP registration` check sets it: the typed config-layer
+   * findings (collision, shadowing, global same-key, trust states) from the
+   * Group E route-layer classifier.
+   */
+  routeLayers?: RouteLayerFinding[];
+  /**
+   * Machine-readable payload rider (survives `--json` as `checks[].advisory`).
+   * Only the `Codex CLI` check sets it: the sanitized bounded advisory stderr
+   * (e.g. the real sandbox PATH advisory) from the single host observation.
+   * Diagnostic metadata only — never a policy decision (Decision 11).
+   */
+  advisory?: string;
 }
 
 // ============================================================================
@@ -387,37 +413,62 @@ function codexPluginCheck(state: CodexPluginProbe): CheckResult {
     };
   }
   const current = state.version === VERSION;
-  const healthy = current && state.enabled === true && state.usable === true;
+  // Post-Group-A the plugin ships NO MCP declaration — the marker-owned project
+  // route is the only Codex route — so plugin health is installed+enabled+current.
+  // The probe still reports the OLD manifest expectation ("does not point
+  // mcpServers to ./.mcp.json"): on a post-A generation that IS the healthy
+  // shape, so it is filtered from diagnostics; every other usability detail
+  // (missing node/launcher/binary) stays visible as diagnostics.
+  const healthy = current && state.enabled === true;
+  const staleManifestComplaint = state.usabilityDetail?.includes('does not point mcpServers') === true;
+  const diagnostics =
+    state.usable === true || staleManifestComplaint ? '' : `; diagnostics: ${state.usabilityDetail ?? 'unknown'}`;
   return {
     name: 'Codex Genie plugin',
     status: healthy ? 'pass' : 'warn',
-    detail: `v${state.version ?? 'unknown'}; ${state.enabled === true ? 'enabled' : 'disabled or unknown'}; ${state.usable === true ? 'MCP launcher usable' : `MCP launcher unusable (${state.usabilityDetail ?? 'unknown reason'})`} (CLI v${VERSION})`,
-    suggestion: healthy
-      ? undefined
-      : 'Run `genie setup --codex` to refresh it; keep the absolute project fallback until launcher health passes.',
+    detail: `v${state.version ?? 'unknown'}; ${state.enabled === true ? 'enabled' : 'disabled or unknown'}; MCP route: marker-owned project route (plugin declares none)${diagnostics} (CLI v${VERSION})`,
+    suggestion: healthy ? undefined : 'Run `genie setup --codex` to activate the delivered generation.',
   };
 }
 
 function codexAgentCheck(): CheckResult {
   const report = inspectCodexAgentOwnership(resolveCodexDir());
+  const total = report.expectedDeliveredTotal;
+  const count = (state: CodexAgentDisplayState): number =>
+    report.entries.filter((entry) => entry.state === state).length;
   const counts = {
-    clean: report.entries.filter((entry) => entry.ownership === 'managed-clean').length,
-    modified: report.entries.filter((entry) => entry.ownership === 'managed-modified').length,
-    user: report.entries.filter((entry) => entry.ownership === 'user-owned').length,
-    absent: report.entries.filter((entry) => entry.ownership === 'absent').length,
+    managed: count('managed'),
+    stale: count('stale'),
+    adoptable: count('adoptable-historical'),
+    collision: count('collision'),
+    personal: count('personal'),
+    absent: count('absent'),
   };
-  const healthy = report.status === 'valid' && counts.clean === 7 && counts.modified === 0 && counts.absent === 0;
+  // Personal files are the operator's own unrelated agents — present is healthy.
+  // Every other non-managed state (stale/adoptable/collision/absent) is actionable.
+  const healthy =
+    report.status === 'valid' &&
+    counts.managed === total &&
+    counts.stale === 0 &&
+    counts.adoptable === 0 &&
+    counts.collision === 0 &&
+    counts.absent === 0;
+  const suggestion =
+    counts.adoptable > 0 || counts.stale > 0 || counts.managed < total
+      ? 'Run `genie setup --codex` to adopt and refresh delivered role agents; personal and collision files are never overwritten.'
+      : 'Review collision role agents (modified/symlinked/lookalike); Genie will not overwrite them, then run `genie setup --codex`.';
   return {
     name: 'Codex Genie role agents',
     status: healthy ? 'pass' : 'warn',
-    detail: `inventory ${report.status}; clean=${counts.clean}/7, modified=${counts.modified}, user-owned=${counts.user}, absent=${counts.absent}${report.error ? ` (${report.error})` : ''}`,
-    suggestion: healthy
-      ? undefined
-      : 'Review modified/user-owned collisions, then run `genie setup --codex`; Genie will not overwrite them.',
+    detail:
+      `inventory ${report.status}; managed=${counts.managed}/${total}, stale=${counts.stale}, ` +
+      `adoptable=${counts.adoptable}, collision=${counts.collision}, personal=${counts.personal}, absent=${counts.absent}; ` +
+      `reviewer digest ${report.reviewerDigest.slice(0, 12)}${report.error ? ` (${report.error})` : ''}`,
+    suggestion: healthy ? undefined : suggestion,
   };
 }
 
-function codexProjectRouteCheck(root: string | null, probe: CodexPluginProbe): CheckResult {
+function codexProjectRouteCheck(root: string | null, probe: CodexPluginProbe, cwd = process.cwd()): CheckResult {
   if (root === null) {
     return {
       name: 'Codex Genie MCP registration',
@@ -428,11 +479,34 @@ function codexProjectRouteCheck(root: string | null, probe: CodexPluginProbe): C
   }
   try {
     const route = inspectCodexProjectMcp(root, probe);
+    // Group E: distinct typed config-layer findings. Collisions, shadowing, and
+    // a global same-key route are hard route defects (preserved, never edited);
+    // the trust states block a health CLAIM without failing intact route bytes.
+    const findings = classifyRouteLayers({ worktreeRoot: root, cwd, route, globalConfigPath: getCodexConfigPath() });
+    const hard = findings.filter(
+      (finding) =>
+        finding.kind === 'route-collision' ||
+        finding.kind === 'route-shadowed' ||
+        finding.kind === 'global-route-same-key',
+    );
+    const trust = findings.filter(
+      (finding) => finding.kind === 'untrusted-config' || finding.kind === 'project-trust-required',
+    );
+    const status: CheckStatus = !route.ok || hard.length > 0 ? 'fail' : trust.length > 0 ? 'warn' : 'pass';
+    const findingText = findings.map((finding) => `${finding.kind}: ${finding.detail}`).join('; ');
     return {
       name: 'Codex Genie MCP registration',
-      status: route.ok ? 'pass' : 'fail',
-      detail: `${route.route}: ${route.detail ?? 'no detail'}`,
-      suggestion: route.ok ? undefined : 'Run `genie init` in this worktree to reconcile the project fallback.',
+      status,
+      detail: `${route.route}: ${route.detail ?? 'no detail'}${findingText.length > 0 ? `; ${findingText}` : ''}`,
+      suggestion:
+        status === 'pass'
+          ? undefined
+          : hard.length > 0
+            ? 'Resolve the reported same-key/shadowing layer yourself (Genie never edits user-owned config), then run `genie init`.'
+            : trust.length > 0 && route.ok
+              ? 'Trust this project in Codex, then start a new Codex task.'
+              : 'Run `genie init` in this worktree to reconcile the project fallback.',
+      ...(findings.length > 0 ? { routeLayers: findings } : {}),
     };
   } catch (error) {
     return {
@@ -442,6 +516,65 @@ function codexProjectRouteCheck(root: string | null, probe: CodexPluginProbe): C
       suggestion: 'Repair the incomplete marker block, then run `genie init`.',
     };
   }
+}
+
+/**
+ * Group E: report what a Codex MCP child launched in this repository would
+ * resolve — the SAME `resolveProjectContext` the read-only MCP server uses, so
+ * doctor and the server can never disagree about project context. An absent
+ * database mirrors the `genie.db` check's "created on first use" stance as a
+ * warn (the MCP returns a typed error, never a healthy empty board); a
+ * bare/submodule/external layout or an unresolvable context is a hard fail.
+ */
+function checkCodexProjectContext(root: string | null, injected?: ProjectContext | null): CheckResult[] {
+  if (root === null || injected === null) return [];
+  const context = injected ?? resolveProjectContext(root);
+  if (context.kind === 'ok') {
+    let db: Database | null = null;
+    try {
+      db = new Database(context.dbPath, { readonly: true });
+      db.query('PRAGMA user_version').get();
+    } catch {
+      return [
+        {
+          name: 'Codex project context',
+          status: 'fail',
+          detail: `Codex MCP returns typed 'project-database-unavailable': unable to open Genie database at ${context.dbPath}`,
+          suggestion: 'Repair or replace the repository .genie/genie.db, then rerun `genie doctor`.',
+        },
+      ];
+    } finally {
+      db?.close();
+    }
+    return [
+      {
+        name: 'Codex project context',
+        status: 'pass',
+        detail: `storage root ${context.genieStorageRoot}; db ${context.dbPath}`,
+      },
+    ];
+  }
+  if (context.kind === 'project-database-unavailable') {
+    return [
+      {
+        name: 'Codex project context',
+        status: 'warn',
+        detail: `Codex MCP returns typed '${context.kind}' (never a healthy empty board): ${context.detail}`,
+        suggestion: 'Run `genie init` (or create the first task) to initialize .genie/genie.db.',
+      },
+    ];
+  }
+  return [
+    {
+      name: 'Codex project context',
+      status: 'fail',
+      detail: `Codex MCP returns typed '${context.kind}': ${context.detail}`,
+      suggestion:
+        context.kind === 'unsupported-project-layout'
+          ? 'Run Codex tasks from an ordinary or linked non-bare worktree; bare/submodule/external-git-dir layouts are a hard boundary.'
+          : 'Verify this is an initialized Git worktree, then run `genie init`.',
+    },
+  ];
 }
 
 /**
@@ -472,17 +605,22 @@ function codexPluginPayloadCheck(probe: CodexPluginProbe): CheckResult | null {
 function codexPluginSurfaceChecks(probe: CodexPluginProbe): CheckResult[] {
   if (!probe.installed) return [];
   const manifest = probe.activePluginRoot ? join(probe.activePluginRoot, '.codex-plugin', 'plugin.json') : null;
-  let declared = false;
-  if (manifest !== null && existsSync(manifest)) {
-    try {
-      const parsed = JSON.parse(readFileSync(manifest, 'utf8')) as unknown;
-      declared =
-        typeof parsed === 'object' &&
-        parsed !== null &&
-        !Array.isArray(parsed) &&
-        (parsed as Record<string, unknown>).mcpServers === './.mcp.json';
-    } catch {
-      declared = false;
+  // Post-Group-A contract (Decisions 1/7): the codex plugin manifest MUST NOT
+  // declare mcpServers — a declaration would re-create the second (cache-root)
+  // Genie route the wish removed. Absence is the healthy shape.
+  let manifestState: 'unproven' | 'unreadable' | 'declares-none' | 'declares-route' = 'unproven';
+  if (manifest !== null) {
+    manifestState = 'unreadable';
+    if (existsSync(manifest)) {
+      try {
+        const parsed = JSON.parse(readFileSync(manifest, 'utf8')) as unknown;
+        if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+          manifestState =
+            (parsed as Record<string, unknown>).mcpServers === undefined ? 'declares-none' : 'declares-route';
+        }
+      } catch {
+        manifestState = 'unreadable';
+      }
     }
   }
   const payload = codexPluginPayloadCheck(probe);
@@ -490,13 +628,21 @@ function codexPluginSurfaceChecks(probe: CodexPluginProbe): CheckResult[] {
     ...(payload ? [payload] : []),
     {
       name: 'Codex Genie MCP capability',
-      status: declared ? 'pass' : 'warn',
-      detail: declared
-        ? `stdio server declared by active plugin at ${probe.activePluginRoot}`
-        : manifest === null
-          ? 'active installed plugin root is unproven; source-bundle declarations do not establish runtime health'
-          : `active plugin manifest is missing, corrupt, or does not declare ./.mcp.json: ${manifest}`,
-      suggestion: declared ? undefined : 'Run `genie setup --codex` to refresh the active plugin cache.',
+      status: manifestState === 'declares-none' ? 'pass' : 'warn',
+      detail:
+        manifestState === 'declares-none'
+          ? `plugin declares no MCP route (marker-owned project route is authoritative) at ${probe.activePluginRoot}`
+          : manifestState === 'declares-route'
+            ? `active plugin manifest still declares mcpServers — a second Genie route risks cache-root routing: ${manifest}`
+            : manifestState === 'unreadable'
+              ? `active plugin manifest is missing or corrupt: ${manifest}`
+              : 'active installed plugin root is unproven; source-bundle declarations do not establish runtime health',
+      suggestion:
+        manifestState === 'declares-none'
+          ? undefined
+          : manifestState === 'declares-route'
+            ? 'Run `genie update` then `genie setup --codex` to activate a generation without a plugin MCP route.'
+            : 'Run `genie setup --codex` to refresh the active plugin cache.',
     },
     {
       name: 'Codex hook review',
@@ -510,11 +656,19 @@ function codexPluginSurfaceChecks(probe: CodexPluginProbe): CheckResult[] {
 export async function checkCodexIntegration(
   root: string | null,
   probe: CodexPluginProbe = probeCodexGeniePlugin(),
+  advisory: string | null = null,
 ): Promise<CheckResult[]> {
   if (!probe.cliAvailable)
     return [{ name: 'Codex CLI', status: 'warn', detail: 'not installed (Claude-only mode available)' }];
   const codex = whichBinary('codex');
-  const results: CheckResult[] = [{ name: 'Codex CLI', status: 'pass', detail: codex ?? 'detected by bounded probe' }];
+  const results: CheckResult[] = [
+    {
+      name: 'Codex CLI',
+      status: 'pass',
+      detail: `${codex ?? 'detected by bounded probe'}${advisory !== null ? `; advisory: ${advisory}` : ''}`,
+      ...(advisory !== null ? { advisory } : {}),
+    },
+  ];
   results.push(codexPluginCheck(probe), codexAgentCheck());
   const configPath = getCodexConfigPath();
   const obsolete = existsSync(configPath) && readFileSync(configPath, 'utf8').includes(DEAD_GENIE_OTEL_EXPORTER);
@@ -735,7 +889,7 @@ async function checkOmniHookTimeout(): Promise<CheckResult[]> {
 const SYNC_MANIFEST_NAME = MANIFEST_NAME;
 const SYNC_MANAGED_BY = MANAGED_BY;
 const COUNCIL_WORKFLOW_FILE = TARGET_NAME;
-const SYNC_SUGGESTION = 'Run `genie update` to converge all detected coding agents.';
+const SYNC_SUGGESTION = 'Run `genie update` to converge detected Claude and Hermes integrations.';
 const HERMES_INLINE_SUGGESTION =
   'Rewrite the inline top-level key as a block mapping so genie can merge without deleting your entries, then run `genie update`.';
 
@@ -1111,7 +1265,8 @@ function checkCodexSync(codexDir: string, agentsSkillsDir: string, pluginRoot: s
       name: 'agent sync: codex',
       status: 'warn',
       detail: `${tier.cleanFallbacks.length} clean managed fallback(s) in ~/.agents/skills — repairable duplicate provider state (${tier.cleanFallbacks.join(', ')})${quarantineNote}`,
-      suggestion: 'Run `genie update` to retire these clean fallbacks; the installed plugin already provides them.',
+      suggestion:
+        'Run `genie setup --codex` from an interactive terminal; setup requires the matching authenticated delivery and retires these clean fallbacks only after plugin health passes.',
     });
   }
   if (tier.unrecognizedFallbacks.length > 0) {
@@ -1120,14 +1275,14 @@ function checkCodexSync(codexDir: string, agentsSkillsDir: string, pluginRoot: s
     // allowlist and no matching live-plugin payload). Era-A fallbacks (v1
     // legacy digest, no identityVersion) do NOT land here — their marker fails
     // the v2 self-consistency check, so they surface as preservedCollisions.
-    // Never user-edited, so NOT a personal collision — but `genie update`
+    // Never user-edited, so NOT a personal collision — but authenticated setup
     // refuses to retire it, so recommending that here would be a no-op loop.
     results.push({
       name: 'agent sync: codex unrecognized',
       status: 'warn',
       detail: `${tier.unrecognizedFallbacks.length} unrecognized managed fallback(s) in ~/.agents/skills (review manually): ${tier.unrecognizedFallbacks.join(', ')}`,
       suggestion:
-        '`genie update` will NOT retire these — the content is well-formed genie provenance but not in the frozen allowlist and does not match the installed plugin payload. Review each manually; do not expect `genie update` to clear this warning.',
+        '`genie setup --codex` will NOT retire these — the content is well-formed genie provenance but not in the frozen allowlist and does not match the installed plugin payload. Review each manually; do not expect setup to clear this warning.',
     });
   }
   if (tier.preservedCollisions.length > 0) {
@@ -1669,6 +1824,16 @@ export interface DoctorDeps {
   bunVersion?: string | null;
   /** PATH seam paired with bunVersion. */
   bunPath?: string | null;
+  /**
+   * Group E seams for the single host observation. `codexHost` feeds
+   * `observeDoctorCodexHost` (inject a canned runner to drive the WHOLE unified
+   * derivation without a live Codex home); `projectContext` injects the typed
+   * project-context fact (explicit `null` = skip the check).
+   */
+  codexHost?: Parameters<typeof observeDoctorCodexHost>[0];
+  projectContext?: ProjectContext | null;
+  /** TEST-ONLY cryptographic seam for persisted delivery-evidence fixtures; no CLI/env path exposes it. */
+  deliveryEvidenceVerification?: DeliveryEvidenceVerificationDependencies;
 }
 
 // ============================================================================
@@ -1686,10 +1851,23 @@ export interface DoctorDeps {
 function resolveCodexActivationSnapshot(
   deps: DoctorDeps,
   pluginProbe: CodexPluginProbe,
+  hostObservation: DoctorCodexObservation | null,
 ): CodexActivationSnapshot | null {
   if (deps.codexActivation !== undefined) return deps.codexActivation;
   if (!pluginProbe.cliAvailable) return null;
-  return observeCodexActivation({ command: whichBinary('codex') });
+  // Group E: replay the single captured host query instead of spawning again —
+  // the check list and the integration summary always describe the same fact.
+  if (hostObservation?.codexCommand != null && hostObservation.activationRunner !== null) {
+    return observeCodexActivation({
+      command: hostObservation.codexCommand,
+      runner: hostObservation.activationRunner,
+      deliveryEvidenceVerification: deps.deliveryEvidenceVerification,
+    });
+  }
+  return observeCodexActivation({
+    command: whichBinary('codex'),
+    deliveryEvidenceVerification: deps.deliveryEvidenceVerification,
+  });
 }
 
 interface CodexIntegration {
@@ -1701,9 +1879,13 @@ interface CodexIntegration {
 
 /**
  * Build the additive integration summary + human projection from one snapshot.
- * Doctor never mutates, so `deliveryComplete` reflects only whether target payload
- * T is physically delivered (canonical present) — the same fact the human and JSON
- * projections share, so they agree across repeated runs.
+ * Doctor never mutates. Group E: `deliveryComplete` is true only when the
+ * canonical payload is physically delivered AND a matching authenticated
+ * delivery record binds it (Decision 9); a missing/invalid/mismatched record on
+ * an otherwise green state presents as the one consistent `delivery-incomplete`
+ * result with the update/install recovery command. A harder exit-1 state
+ * (query-failed, unsafe cache, ...) keeps its own presentation — the summary
+ * still carries `deliveryComplete: false`, so the surfaces cannot disagree.
  */
 function buildCodexIntegration(snapshot: CodexActivationSnapshot): CodexIntegration {
   const state = classifyCodexActivation(snapshot);
@@ -1712,10 +1894,29 @@ function buildCodexIntegration(snapshot: CodexActivationSnapshot): CodexIntegrat
     snapshot,
     invocation: { entry: 'doctor', assertion: null },
   });
-  const deliveryComplete = snapshot.canonical.status === 'ok';
+  const deliveryGate = assessSnapshotDelivery(snapshot);
+  const deliveryComplete = deliveryGate.kind === 'matching';
   const summary = projectIntegrationSummary(state, snapshot, authorization, deliveryComplete);
   const descriptor = describeState(state);
   const projection = projectHumanStatus(state, snapshot);
+  if (deliveryGate.kind === 'incomplete' && descriptor.exit !== 1) {
+    const result = deliveryGate.result;
+    return {
+      summary: {
+        ...summary,
+        codexPlugin: {
+          ...summary.codexPlugin,
+          state: result.code,
+          mutationAuthority: result.authority,
+          actionRequired: true,
+          deliveryComplete: false,
+          recovery: result.recovery,
+        },
+      },
+      exit: result.exit,
+      human: { stream: 'stderr', text: `${result.detail}; ${result.recovery}` },
+    };
+  }
   return {
     summary,
     exit: descriptor.exit,
@@ -1741,7 +1942,17 @@ export async function doctorCommand(options?: { json?: boolean; fix?: boolean },
     deps.databaseRoot === null || typeof deps.databaseRoot === 'string'
       ? deps.databaseRoot
       : (gitRoots?.commonRoot ?? root);
-  const pluginProbe = deps.pluginProbe?.cliAvailable !== undefined ? deps.pluginProbe : probeCodexGeniePlugin();
+  // Group E: ONE bounded host observation feeds the probe, the advisory, and
+  // (via the replay runner) the activation snapshot. It is skipped entirely
+  // only when tests inject both seams.
+  const hostObservation =
+    deps.pluginProbe?.cliAvailable !== undefined && deps.codexActivation !== undefined
+      ? null
+      : observeDoctorCodexHost(deps.codexHost);
+  const pluginProbe =
+    deps.pluginProbe?.cliAvailable !== undefined
+      ? deps.pluginProbe
+      : (hostObservation?.probe ?? probeCodexGeniePlugin());
   const results: CheckResult[] = [
     ...checkGenieBinary(),
     ...checkGit(root),
@@ -1749,7 +1960,13 @@ export async function doctorCommand(options?: { json?: boolean; fix?: boolean },
     ...checkSkills(root),
     ...checkBun(deps.bunVersion, deps.bunPath),
     ...checkSubagentModelOverride(),
-    ...(await checkCodexIntegration(root, pluginProbe)),
+    ...(await checkCodexIntegration(root, pluginProbe, hostObservation?.advisory ?? null)),
+    // Live context resolution only when the root itself was live-resolved: an
+    // injected root without an injected context is a unit-test seam, not a repo.
+    ...checkCodexProjectContext(
+      root,
+      deps.projectContext !== undefined ? deps.projectContext : injectedRoot ? null : undefined,
+    ),
     ...checkV4Residue(),
     ...checkAgentSync(),
     ...(await checkOmniHookTimeout()),
@@ -1761,7 +1978,7 @@ export async function doctorCommand(options?: { json?: boolean; fix?: boolean },
   // One bounded activation observation feeds the additive integration summary.
   // It is purely additive: `{ ok, checks }` meanings are unchanged, and a pending
   // Codex generation keeps `ok:true` while the command exits 2.
-  const activationSnapshot = resolveCodexActivationSnapshot(deps, pluginProbe);
+  const activationSnapshot = resolveCodexActivationSnapshot(deps, pluginProbe, hostObservation);
   const integration = activationSnapshot ? buildCodexIntegration(activationSnapshot) : null;
 
   if (options?.json) {

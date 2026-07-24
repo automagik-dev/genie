@@ -291,7 +291,7 @@ describe('fresh-install-smoke', () => {
     }
   });
 
-  test('rejects unsupported camelCase plugin MCP config before source/cache packaging passes', () => {
+  test('rejects any plugin .mcp.json route file (the Codex plugin MCP route was removed)', () => {
     const root = mkdtempSync(join(tmpdir(), 'genie-plugin-mcp-schema-fixture-'));
     try {
       const pluginRoot = join(root, 'plugin');
@@ -300,10 +300,12 @@ describe('fresh-install-smoke', () => {
         dereference: false,
         verbatimSymlinks: true,
       });
+      // A resurrected plugin `.mcp.json` (in any shape) must fail the smoke: the
+      // Codex plugin no longer provides an MCP route, so shipping one is a defect.
       writeFileSync(
         join(pluginRoot, '.mcp.json'),
         JSON.stringify({
-          mcpServers: {
+          mcp_servers: {
             genie: { command: 'node', args: ['./scripts/mcp-launcher.cjs'], cwd: '.' },
           },
         }),
@@ -311,7 +313,7 @@ describe('fresh-install-smoke', () => {
 
       const result = runSmoke(['--skills-dir', join(REPO_ROOT, 'skills'), '--plugin-root', pluginRoot]);
       expect(result.code).not.toBe(0);
-      expect(result.stderr).toContain('must not use unsupported camelCase mcpServers');
+      expect(result.stderr).toContain('must not ship a .mcp.json route file');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -792,7 +792,9 @@ function releaseFailure(db: Database, taskId: string): never {
 
 /**
  * Release a claim WITHOUT completing — returns an `in_progress` card to the
- * `ready` queue and clears the claim so another runtime can pick it up. The state
+ * `ready` queue and clears the claim (including `heartbeat_at`, so the next
+ * runtime to check the card out does not inherit the prior owner's liveness) so
+ * another runtime can pick it up. The state
  * check lives IN the SQL (`WHERE ... AND status = 'in_progress'`) exactly like
  * {@link claimTask}, so a concurrent `done`/re-claim that transitions the card out
  * of `in_progress` between decision and write can never be clobbered: the
@@ -807,7 +809,7 @@ export function releaseTask(db: Database, taskId: string, author: EventAuthor): 
     const res = db
       .query(
         `UPDATE tasks
-         SET status = 'ready', claimed_by = NULL, claimed_at = NULL, updated_at = ?
+         SET status = 'ready', claimed_by = NULL, claimed_at = NULL, heartbeat_at = NULL, updated_at = ?
          WHERE id = ? AND status = 'in_progress'`,
       )
       .run(now, taskId);

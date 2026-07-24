@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -31,7 +34,7 @@ import {
   deriveDirection,
   describeState,
   observeCodexActivation,
-  openCodexActivationStore,
+  openCodexActivationStore as openProductionCodexActivationStore,
   parseReleaseVersion,
   projectHumanStatus,
   projectIntegrationSummary,
@@ -41,13 +44,35 @@ import {
   serializeActivationResultTrailer,
   stripControl,
 } from './codex-activation.js';
+import type { CodexActivationStoreOptions } from './codex-activation.js';
+import { mintTestDeliveryEvidence } from './codex-delivery-evidence.test-support.js';
 import { acquireLifecycleLease } from './codex-lifecycle-lease.js';
-import type { CommandResult, CommandRunner } from './runtime-integrations.js';
+import * as runtimeMod from './runtime-integrations.js';
+import {
+  type CommandResult,
+  type CommandRunner,
+  createCodexMarketplaceRegistrationConsumer,
+  createSetupCodexConsentCommitConsumer,
+  createSetupCodexRoleAgentConsumer,
+  persistIntegrationConsent,
+  runDeliveryRootConsumer,
+} from './runtime-integrations.js';
 
 function canonicalDigest(genieHome: string): string {
   const tree = scanPhysicalTree(join(genieHome, 'plugins', 'genie'));
   if (tree.status !== 'ok' || !tree.digest) throw new Error('fixture canonical payload is not a safe tree');
   return tree.digest;
+}
+
+const TEST_EVIDENCE_VERIFICATION = {
+  verifyBundle: () => ({ integratedTime: '1753228800' }),
+};
+
+function openCodexActivationStore(options: CodexActivationStoreOptions = {}) {
+  return openProductionCodexActivationStore({
+    ...options,
+    deliveryEvidenceVerification: TEST_EVIDENCE_VERIFICATION,
+  });
 }
 
 // ============================================================================
@@ -115,6 +140,7 @@ function makeFixture(opts: {
   mkdirSync(codexHome, { recursive: true });
   writeFiles(join(genieHome, 'plugins', 'genie'), PAYLOAD_FILES);
   writeFileSync(join(genieHome, 'VERSION'), `${opts.targetVersion}\n`);
+  writeFileSync(join(genieHome, 'genie'), '#!/bin/sh\n');
   if (opts.registeredVersion) {
     const cacheDir = join(codexHome, 'plugins', 'cache', 'automagik', 'genie', opts.registeredVersion);
     const files =
@@ -153,6 +179,22 @@ const NEWER = '5.260713.4';
 const DIGEST = 'a'.repeat(64);
 const OTHER_DIGEST = 'c'.repeat(64);
 
+function deliveryEvidence(version: string, deliveryRoot: string, overrides: { canonicalPayloadSha256?: string } = {}) {
+  return mintTestDeliveryEvidence({
+    descriptor: {
+      version,
+      releaseTag: `v${version}`,
+      releaseName: `genie-${version}-${
+        process.platform === 'darwin' ? 'darwin-arm64' : process.arch === 'arm64' ? 'linux-arm64' : 'linux-x64-glibc'
+      }.tar.gz`,
+      canonicalPayloadSha256: overrides.canonicalPayloadSha256 ?? canonicalDigest(deliveryRoot),
+      installedBinarySha256: createHash('sha256')
+        .update(readFileSync(join(deliveryRoot, 'genie')))
+        .digest('hex'),
+    },
+  }).evidence;
+}
+
 function ver(s: string) {
   const parsed = parseReleaseVersion(s);
   if (!parsed) throw new Error(`bad test version ${s}`);
@@ -160,7 +202,15 @@ function ver(s: string) {
 }
 
 function okCanonical(version = T, digest = DIGEST): CanonicalFact {
-  return { status: 'ok', version: ver(version), digest, identity: '10:100' };
+  return {
+    status: 'ok',
+    version: ver(version),
+    digest,
+    identity: '10:100',
+    deliveryRoot: '/fixture/genie',
+    installedBinarySha256: '8'.repeat(64),
+    platformTriple: `${process.platform}-${process.arch}`,
+  };
 }
 function regPresent(version = T, enabled = true): QueryFact {
   return { status: 'ok', registration: { present: true, enabled, version: ver(version) } };
@@ -433,6 +483,12 @@ describe('describeState — exit codes and mutation authority', () => {
     ).toBe('journal-quarantine-only');
     expect(describeState({ kind: 'activation-pending', from: OLD, target: T }).authority).toBe('external-tty-setup');
   });
+
+  test('a failed plugin query keeps explicit upgrade-or-repair guidance', () => {
+    expect(describeState({ kind: 'query-failed', detail: 'plugin subcommand unavailable' }).recovery).toMatch(
+      /upgrade.*Codex/i,
+    );
+  });
 });
 
 // ============================================================================
@@ -683,6 +739,22 @@ describe('brand unforgeability — the consent entry point is the only route to 
 // ============================================================================
 
 describe('observeCodexActivation — bounded plugin query', () => {
+  test('canonical observation fails closed when the installed binary digest cannot be obtained', () => {
+    const fx = makeFixture({ targetVersion: T, registeredVersion: T, sameBytes: true });
+    rmSync(join(fx.genieHome, 'genie'));
+    const snapshot = observeCodexActivation({
+      genieHome: fx.genieHome,
+      codexHome: fx.codexHome,
+      command: 'codex',
+      runner: listRunner({ stdout: pluginListJson([{ version: T }]) }),
+    });
+    expect(snapshot.canonical).toEqual({
+      status: 'error',
+      detail: 'canonical installed binary is missing, unsafe, or unreadable',
+    });
+    expect(classifyCodexActivation(snapshot).kind).toBe('snapshot-inconsistent');
+  });
+
   test('a current fixture classifies as current with a verified cache', () => {
     const fx = makeFixture({ targetVersion: T, registeredVersion: T, sameBytes: true });
     const snapshot = observeCodexActivation({
@@ -852,6 +924,31 @@ function heldLease(genieHome: string) {
   return lease;
 }
 
+/**
+ * Publish a matching (upgrade) delivery record for a T-target fixture under its
+ * own short-lived delivery lease. The Group B inner guard requires a matching
+ * authenticated delivery record before `beginActivation` writes its journal, so
+ * every `beginActivation`-under-a-held-lease test seeds one first (mirrors how
+ * Group C/D publish delivery ahead of permit-gated activation).
+ */
+function publishMatchingDelivery(genieHome: string, codexHome: string): void {
+  const lease = acquireLifecycleLease('update-delivery', { genieHome });
+  if (!lease.ok) throw new Error('could not acquire delivery lease');
+  try {
+    openCodexActivationStore({
+      genieHome,
+      codexHome,
+      command: 'codex',
+      runner: listRunner({ stdout: '{}' }),
+    }).publishDelivery(lease, {
+      evidence: deliveryEvidence(T, genieHome),
+      deliveryRoot: genieHome,
+    });
+  } finally {
+    lease.release();
+  }
+}
+
 describe('CodexActivationStore — delivery + downgrade receipt', () => {
   test('publishDelivery writes a delivery record and no receipt for an ordinary delivery', () => {
     const fx = makeFixture({ targetVersion: T, registeredVersion: T, sameBytes: true });
@@ -864,13 +961,75 @@ describe('CodexActivationStore — delivery + downgrade receipt', () => {
     const lease = heldLease(fx.genieHome);
     try {
       const record = store.publishDelivery(lease, {
-        targetVersion: T,
-        canonicalPayloadSha256: DIGEST,
-        channel: 'stable',
+        evidence: deliveryEvidence(T, fx.genieHome),
+        deliveryRoot: fx.genieHome,
       });
+      expect(record.schemaVersion).toBe(2);
+      expect(record.evidenceDigest).toMatch(/^[0-9a-f]{64}$/);
+      expect(record.platformId.length).toBeGreaterThan(0);
       expect(record.deliveryId).toMatch(/^[0-9a-f]{32}$/);
       expect(existsSync(join(fx.genieHome, '.codex-plugin-delivery-record.json'))).toBe(true);
       expect(existsSync(join(fx.genieHome, '.codex-plugin-downgrade-receipt.json'))).toBe(false);
+      const fingerprint = computeActivationFingerprint(store.observe());
+      expect(fingerprint.deliveryBindingDigest).toMatch(/^[0-9a-f]{64}$/);
+      expect(Object.keys(fingerprint).filter((key) => key.startsWith('delivery'))).toEqual(['deliveryBindingDigest']);
+    } finally {
+      lease.release();
+    }
+  });
+
+  test('schema-1 delivery records are legacy-invalid even when their old tuple is otherwise complete', () => {
+    const fx = makeFixture({ targetVersion: T, registeredVersion: T, sameBytes: true });
+    const store = openCodexActivationStore({ genieHome: fx.genieHome });
+    const lease = heldLease(fx.genieHome);
+    try {
+      const record = store.publishDelivery(lease, {
+        evidence: deliveryEvidence(T, fx.genieHome),
+        deliveryRoot: fx.genieHome,
+      });
+      expect(mod.parseDeliveryRecordStructure(JSON.stringify({ ...record, schemaVersion: 1 }))).toBeNull();
+    } finally {
+      lease.release();
+    }
+  });
+
+  test('persists evidence before the record commit and never leaves a false record on record-write failure', () => {
+    const fx = makeFixture({ targetVersion: T, registeredVersion: T, sameBytes: true });
+    const recordPath = join(fx.genieHome, '.codex-plugin-delivery-record.json');
+    mkdirSync(recordPath);
+    const store = openCodexActivationStore({ genieHome: fx.genieHome });
+    const lease = heldLease(fx.genieHome);
+    try {
+      expect(() =>
+        store.publishDelivery(lease, {
+          evidence: deliveryEvidence(T, fx.genieHome),
+          deliveryRoot: fx.genieHome,
+        }),
+      ).toThrow();
+      expect(readdirSync(join(fx.genieHome, '.codex-delivery-evidence-v1'))).toHaveLength(1);
+      expect(lstatSync(recordPath).isDirectory()).toBe(true);
+    } finally {
+      lease.release();
+    }
+  });
+
+  test('a stored-pack tamper turns an otherwise valid record into an invalid delivery observation', () => {
+    const fx = makeFixture({ targetVersion: T, registeredVersion: T, sameBytes: true });
+    const store = openCodexActivationStore({ genieHome: fx.genieHome });
+    const lease = heldLease(fx.genieHome);
+    try {
+      const record = store.publishDelivery(lease, {
+        evidence: deliveryEvidence(T, fx.genieHome),
+        deliveryRoot: fx.genieHome,
+      });
+      const descriptorPath = join(
+        fx.genieHome,
+        '.codex-delivery-evidence-v1',
+        record.evidenceDigest,
+        'descriptor.json',
+      );
+      writeFileSync(descriptorPath, `${readFileSync(descriptorPath, 'utf8')} `, { mode: 0o600 });
+      expect(store.observe().delivery.status).toBe('invalid');
     } finally {
       lease.release();
     }
@@ -887,9 +1046,8 @@ describe('CodexActivationStore — delivery + downgrade receipt', () => {
     const lease = heldLease(fx.genieHome);
     try {
       const record = store.publishDelivery(lease, {
-        targetVersion: T,
-        canonicalPayloadSha256: canonicalDigest(fx.genieHome),
-        channel: 'stable',
+        evidence: deliveryEvidence(T, fx.genieHome),
+        deliveryRoot: fx.genieHome,
         downgradeFrom: NEWER,
       });
       const snapshot = store.observe();
@@ -914,9 +1072,8 @@ describe('CodexActivationStore — delivery + downgrade receipt', () => {
     try {
       expect(() =>
         store.publishDelivery(lease, {
-          targetVersion: T,
-          canonicalPayloadSha256: DIGEST,
-          channel: 'stable',
+          evidence: deliveryEvidence(T, fx.genieHome),
+          deliveryRoot: fx.genieHome,
           downgradeFrom: OLD,
         }),
       ).toThrow();
@@ -939,9 +1096,8 @@ describe('CodexActivationStore — withRevalidatedDeliveryRoot', () => {
     let escaped: mod.DeliveryRootOps | null = null;
     try {
       store.publishDelivery(lease, {
-        targetVersion: T,
-        canonicalPayloadSha256: canonicalDigest(fx.genieHome),
-        channel: 'stable',
+        evidence: deliveryEvidence(T, fx.genieHome),
+        deliveryRoot: fx.genieHome,
       });
       const version = store.withRevalidatedDeliveryRoot(lease, (ops) => {
         escaped = ops;
@@ -951,12 +1107,56 @@ describe('CodexActivationStore — withRevalidatedDeliveryRoot', () => {
       expect(version).toBe(T);
       // An escaped capability throws once the callback has returned.
       expect(() => escaped?.inventoryDigest()).toThrow();
+      expect(() =>
+        escaped?.consume(
+          createCodexMarketplaceRegistrationConsumer({ command: 'codex', runner: listRunner({ stdout: '{}' }) }),
+        ),
+      ).toThrow('after the callback returned');
     } finally {
       lease.release();
     }
   });
 
-  test('rejects a delivery record whose digest no longer matches the payload', () => {
+  test('a home-to-bin canonical-root swap is rejected before marketplace registration', () => {
+    const fx = makeFixture({ targetVersion: T, registeredVersion: T, sameBytes: true });
+    const store = openCodexActivationStore({
+      genieHome: fx.genieHome,
+      codexHome: fx.codexHome,
+      command: 'codex',
+      runner: listRunner({ stdout: pluginListJson([{ version: T }]) }),
+    });
+    const lease = heldLease(fx.genieHome);
+    let marketplaceCalls = 0;
+    try {
+      store.publishDelivery(lease, {
+        evidence: deliveryEvidence(T, fx.genieHome),
+        deliveryRoot: fx.genieHome,
+      });
+      expect(() =>
+        store.withRevalidatedDeliveryRoot(lease, (ops) => {
+          const binRoot = join(fx.genieHome, 'bin');
+          mkdirSync(binRoot, { recursive: true });
+          renameSync(join(fx.genieHome, 'plugins'), join(binRoot, 'plugins'));
+          renameSync(join(fx.genieHome, 'VERSION'), join(binRoot, 'VERSION'));
+          renameSync(join(fx.genieHome, 'genie'), join(binRoot, 'genie'));
+          ops.consume(
+            createCodexMarketplaceRegistrationConsumer({
+              command: 'codex',
+              runner: () => {
+                marketplaceCalls += 1;
+                return { exitCode: 0, stdout: '{}', stderr: '' };
+              },
+            }),
+          );
+        }),
+      ).toThrow();
+      expect(marketplaceCalls).toBe(0);
+    } finally {
+      lease.release();
+    }
+  });
+
+  test('an unsigned payload-tree replacement is rejected before role writes or adoption', () => {
     const fx = makeFixture({ targetVersion: T, registeredVersion: T, sameBytes: true });
     const store = openCodexActivationStore({
       genieHome: fx.genieHome,
@@ -966,8 +1166,108 @@ describe('CodexActivationStore — withRevalidatedDeliveryRoot', () => {
     });
     const lease = heldLease(fx.genieHome);
     try {
-      store.publishDelivery(lease, { targetVersion: T, canonicalPayloadSha256: DIGEST, channel: 'stable' }); // wrong digest
-      expect(() => store.withRevalidatedDeliveryRoot(lease, (ops) => ops.deliveredVersion())).toThrow();
+      store.publishDelivery(lease, {
+        evidence: deliveryEvidence(T, fx.genieHome),
+        deliveryRoot: fx.genieHome,
+      });
+      persistIntegrationConsent('codex', fx.genieHome);
+      expect(() =>
+        store.withRevalidatedDeliveryRoot(lease, (ops) => {
+          const payload = join(fx.genieHome, 'plugins', 'genie');
+          rmSync(payload, { recursive: true, force: true });
+          writeFiles(payload, {
+            'codex-agents/genie-reviewer.toml': '# genie-managed-codex-agent\nname = "unsigned"\n',
+            'plugin.json': '{"name":"unsigned"}\n',
+          });
+          ops.consume(createSetupCodexRoleAgentConsumer({ genieHome: fx.genieHome, codexHome: fx.codexHome }));
+        }),
+      ).toThrow();
+      expect(existsSync(join(fx.codexHome, 'agents'))).toBe(false);
+    } finally {
+      lease.release();
+    }
+  });
+
+  test('delivery drift is rejected before the narrow consent consumer can commit state', () => {
+    const fx = makeFixture({ targetVersion: T, registeredVersion: T, sameBytes: true });
+    const store = openCodexActivationStore({
+      genieHome: fx.genieHome,
+      codexHome: fx.codexHome,
+      command: 'codex',
+      runner: listRunner({ stdout: pluginListJson([{ version: T }]) }),
+    });
+    const lease = heldLease(fx.genieHome);
+    try {
+      store.publishDelivery(lease, {
+        evidence: deliveryEvidence(T, fx.genieHome),
+        deliveryRoot: fx.genieHome,
+      });
+      expect(() =>
+        store.withRevalidatedDeliveryRoot(lease, (ops) => {
+          writeFileSync(join(fx.genieHome, 'plugins', 'genie', 'plugin.json'), '{"name":"drifted"}\n');
+          ops.consume(createSetupCodexConsentCommitConsumer({ genieHome: fx.genieHome, selection: 'codex' }));
+        }),
+      ).toThrow();
+      expect(existsSync(join(fx.genieHome, '.integration-consent.json'))).toBe(false);
+    } finally {
+      lease.release();
+    }
+  });
+
+  test('consumer capabilities reject structural forgery and one-shot replay without duplicate effects', () => {
+    const fx = makeFixture({ targetVersion: T, registeredVersion: T, sameBytes: true });
+    const store = openCodexActivationStore({
+      genieHome: fx.genieHome,
+      codexHome: fx.codexHome,
+      command: 'codex',
+      runner: listRunner({ stdout: pluginListJson([{ version: T }]) }),
+    });
+    const lease = heldLease(fx.genieHome);
+    let marketplaceCalls = 0;
+    let consumed: ReturnType<typeof createCodexMarketplaceRegistrationConsumer> | null = null;
+    try {
+      store.publishDelivery(lease, {
+        evidence: deliveryEvidence(T, fx.genieHome),
+        deliveryRoot: fx.genieHome,
+      });
+      store.withRevalidatedDeliveryRoot(lease, (ops) => {
+        expect(() => ops.consume(Object.freeze({}) as never)).toThrow('unrecognized delivery-root consumer');
+        consumed = createCodexMarketplaceRegistrationConsumer({
+          command: 'codex',
+          runner: () => {
+            marketplaceCalls += 1;
+            return { exitCode: 0, stdout: '{}', stderr: '' };
+          },
+        });
+        expect(ops.consume(consumed)).toBeUndefined();
+        expect(() => ops.consume(consumed as never)).toThrow('unrecognized delivery-root consumer');
+      });
+      expect(marketplaceCalls).toBe(1);
+      expect(() => runDeliveryRootConsumer(consumed as never, fx.genieHome)).toThrow(
+        'unrecognized delivery-root consumer',
+      );
+    } finally {
+      lease.release();
+    }
+  });
+
+  test('rejects evidence whose digest does not match the physical delivery root before publication', () => {
+    const fx = makeFixture({ targetVersion: T, registeredVersion: T, sameBytes: true });
+    const store = openCodexActivationStore({
+      genieHome: fx.genieHome,
+      codexHome: fx.codexHome,
+      command: 'codex',
+      runner: listRunner({ stdout: pluginListJson([{ version: T }]) }),
+    });
+    const lease = heldLease(fx.genieHome);
+    try {
+      expect(() =>
+        store.publishDelivery(lease, {
+          evidence: deliveryEvidence(T, fx.genieHome, { canonicalPayloadSha256: DIGEST }),
+          deliveryRoot: fx.genieHome,
+        }),
+      ).toThrow('payload does not match evidence');
+      expect(existsSync(join(fx.genieHome, '.codex-plugin-delivery-record.json'))).toBe(false);
     } finally {
       lease.release();
     }
@@ -1011,6 +1311,7 @@ describe('CodexActivationStore — beginActivation fingerprint binding', () => {
 
   test('a fresh permit begins a planned transaction fenced by the lease operation id', () => {
     const fx = makeFixture({ targetVersion: T, registeredVersion: OLD });
+    publishMatchingDelivery(fx.genieHome, fx.codexHome);
     const store = openCodexActivationStore({
       genieHome: fx.genieHome,
       codexHome: fx.codexHome,
@@ -1031,6 +1332,38 @@ describe('CodexActivationStore — beginActivation fingerprint binding', () => {
       }
     } finally {
       lease.release();
+    }
+  });
+
+  test('a fresh absent registration plans enabled=true, while an existing disabled registration stays false', () => {
+    for (const fixtureCase of [
+      { name: 'fresh', registeredVersion: null, entries: [], expectedEnabled: true },
+      {
+        name: 'existing-disabled',
+        registeredVersion: OLD,
+        entries: [{ version: OLD, enabled: false }],
+        expectedEnabled: false,
+      },
+    ] as const) {
+      const fx = makeFixture({ targetVersion: T, registeredVersion: fixtureCase.registeredVersion });
+      publishMatchingDelivery(fx.genieHome, fx.codexHome);
+      const store = openCodexActivationStore({
+        genieHome: fx.genieHome,
+        codexHome: fx.codexHome,
+        command: 'codex',
+        runner: listRunner({ stdout: pluginListJson([...fixtureCase.entries]) }),
+      });
+      const lease = heldLease(fx.genieHome);
+      try {
+        const result = store.beginActivation(lease, grantPermit(store));
+        expect(result.status).toBe('started');
+        const observed = store.observe();
+        expect(observed.intent.status).toBe('valid');
+        if (observed.intent.status !== 'valid') throw new Error(`${fixtureCase.name}: intent missing`);
+        expect(observed.intent.intent.priorEnabled).toBe(fixtureCase.expectedEnabled);
+      } finally {
+        lease.release();
+      }
     }
   });
 
@@ -1057,6 +1390,123 @@ describe('CodexActivationStore — beginActivation fingerprint binding', () => {
     }
   });
 
+  const deliveryTupleTampers: Array<{
+    name: string;
+    mutate(record: Record<string, unknown>): void;
+  }> = [
+    {
+      name: 'target version',
+      mutate: (record) => {
+        record.targetVersion = NEWER;
+        record.releaseTag = `v${NEWER}`;
+        record.releaseName = `genie-${NEWER}-test.tar.gz`;
+      },
+    },
+    {
+      name: 'payload digest',
+      mutate: (record) => {
+        record.canonicalPayloadSha256 = '1'.repeat(64);
+      },
+    },
+    {
+      name: 'channel',
+      mutate: (record) => {
+        record.channel = 'homolog';
+      },
+    },
+    {
+      name: 'delivery id',
+      mutate: (record) => {
+        record.deliveryId = '2'.repeat(32);
+      },
+    },
+    {
+      name: 'evidence digest',
+      mutate: (record) => {
+        record.evidenceDigest = '2'.repeat(64);
+      },
+    },
+    {
+      name: 'platform id',
+      mutate: (record) => {
+        record.platformId = record.platformId === 'darwin-arm64' ? 'linux-arm64' : 'darwin-arm64';
+      },
+    },
+    {
+      name: 'platform',
+      mutate: (record) => {
+        record.platformTriple = `${String(record.platformTriple)}-stale`;
+      },
+    },
+    {
+      name: 'release tag',
+      mutate: (record) => {
+        record.releaseTag = `v${NEWER}`;
+      },
+    },
+    {
+      name: 'release name',
+      mutate: (record) => {
+        record.releaseName = `genie-${T}-linux-x64.tar.gz`;
+      },
+    },
+    {
+      name: 'manifest digest',
+      mutate: (record) => {
+        record.releaseManifestSha256 = '3'.repeat(64);
+      },
+    },
+    {
+      name: 'artifact digest',
+      mutate: (record) => {
+        record.artifactSha256 = '4'.repeat(64);
+      },
+    },
+    {
+      name: 'binary digest',
+      mutate: (record) => {
+        record.installedBinarySha256 = '5'.repeat(64);
+      },
+    },
+    {
+      name: 'delivery root',
+      mutate: (record) => {
+        record.deliveryRoot = '/tmp/other-delivery';
+      },
+    },
+    {
+      name: 'publication time',
+      mutate: (record) => {
+        record.deliveredAt = '2026-07-24T00:00:00.000Z';
+      },
+    },
+  ];
+
+  for (const tamper of deliveryTupleTampers) {
+    test(`a genuine permit rejects ${tamper.name} mutation before the first write`, () => {
+      const fx = makeFixture({ targetVersion: T, registeredVersion: OLD });
+      publishMatchingDelivery(fx.genieHome, fx.codexHome);
+      const store = openCodexActivationStore({
+        genieHome: fx.genieHome,
+        codexHome: fx.codexHome,
+        command: 'codex',
+        runner: listRunner({ stdout: pluginListJson([{ version: OLD }]) }),
+      });
+      const permit = grantPermit(store);
+      const recordPath = join(fx.genieHome, '.codex-plugin-delivery-record.json');
+      const record = JSON.parse(readFileSync(recordPath, 'utf8')) as Record<string, unknown>;
+      tamper.mutate(record);
+      writeFileSync(recordPath, `${JSON.stringify(record, null, 2)}\n`);
+      const lease = heldLease(fx.genieHome);
+      try {
+        expect(store.beginActivation(lease, permit).status).not.toBe('started');
+        expect(existsSync(join(fx.genieHome, '.codex-plugin-refresh-intent.json'))).toBe(false);
+      } finally {
+        lease.release();
+      }
+    });
+  }
+
   test('a forged permit is refused with zero mutation', () => {
     const fx = makeFixture({ targetVersion: T, registeredVersion: OLD });
     const store = openCodexActivationStore({
@@ -1082,8 +1532,74 @@ describe('CodexActivationStore — beginActivation fingerprint binding', () => {
     }
   });
 
+  // Group B inner guard (deliverable 5): a genuine, fresh permit still cannot open
+  // the transaction without a matching authenticated delivery record.
+  test('an absent delivery record refuses as delivery-incomplete and writes no journal', () => {
+    const fx = makeFixture({ targetVersion: T, registeredVersion: OLD });
+    // Intentionally NO publishMatchingDelivery.
+    const store = openCodexActivationStore({
+      genieHome: fx.genieHome,
+      codexHome: fx.codexHome,
+      command: 'codex',
+      runner: listRunner({ stdout: pluginListJson([{ version: OLD }]) }),
+    });
+    const permit = grantPermit(store);
+    const lease = heldLease(fx.genieHome);
+    try {
+      const result = store.beginActivation(lease, permit);
+      expect(result.status).toBe('delivery-incomplete');
+      if (result.status === 'delivery-incomplete') expect(result.assessment).toBe('absent');
+      expect(existsSync(join(fx.genieHome, '.codex-plugin-refresh-intent.json'))).toBe(false);
+    } finally {
+      lease.release();
+    }
+  });
+
+  // A record/evidence mix cannot bypass the inner guard: the fingerprint is
+  // independently derived from verified evidence while the pure assessment
+  // still compares every actual record field immediately before the write.
+  test('a record/evidence mix refuses as delivery-incomplete even when the evidence fingerprint matches', () => {
+    const fx = makeFixture({ targetVersion: T, registeredVersion: OLD });
+    const deliveryLease = acquireLifecycleLease('update-delivery', { genieHome: fx.genieHome });
+    if (!deliveryLease.ok) throw new Error('could not acquire delivery lease');
+    try {
+      openCodexActivationStore({
+        genieHome: fx.genieHome,
+        codexHome: fx.codexHome,
+        command: 'codex',
+        runner: listRunner({ stdout: '{}' }),
+      }).publishDelivery(deliveryLease, {
+        evidence: deliveryEvidence(T, fx.genieHome),
+        deliveryRoot: fx.genieHome,
+      });
+    } finally {
+      deliveryLease.release();
+    }
+    const deliveryPath = join(fx.genieHome, '.codex-plugin-delivery-record.json');
+    const mixed = JSON.parse(readFileSync(deliveryPath, 'utf8')) as mod.DeliveryRecord;
+    mixed.artifactSha256 = 'f'.repeat(64);
+    writeFileSync(deliveryPath, `${JSON.stringify(mixed, null, 2)}\n`);
+    const store = openCodexActivationStore({
+      genieHome: fx.genieHome,
+      codexHome: fx.codexHome,
+      command: 'codex',
+      runner: listRunner({ stdout: pluginListJson([{ version: OLD }]) }),
+    });
+    const permit = grantPermit(store); // fingerprint binds the record's delivery id
+    const lease = heldLease(fx.genieHome);
+    try {
+      const result = store.beginActivation(lease, permit);
+      expect(result.status).toBe('delivery-incomplete');
+      if (result.status === 'delivery-incomplete') expect(result.assessment).toBe('mismatch');
+      expect(existsSync(join(fx.genieHome, '.codex-plugin-refresh-intent.json'))).toBe(false);
+    } finally {
+      lease.release();
+    }
+  });
+
   test('advance then finalize deletes the intent (crash-safe delete order)', () => {
     const fx = makeFixture({ targetVersion: T, registeredVersion: OLD });
+    publishMatchingDelivery(fx.genieHome, fx.codexHome);
     const store = openCodexActivationStore({
       genieHome: fx.genieHome,
       codexHome: fx.codexHome,
@@ -1107,6 +1623,7 @@ describe('CodexActivationStore — beginActivation fingerprint binding', () => {
 
   test('a superseded lease operation id fences an intent advance', () => {
     const fx = makeFixture({ targetVersion: T, registeredVersion: OLD });
+    publishMatchingDelivery(fx.genieHome, fx.codexHome);
     const store = openCodexActivationStore({
       genieHome: fx.genieHome,
       codexHome: fx.codexHome,
@@ -1132,6 +1649,7 @@ describe('CodexActivationStore — beginActivation fingerprint binding', () => {
   for (const phase of POST_COMMAND_PHASES) {
     test(`a fresh assertion resumes an intent-${phase} journal (same id, preserved phase)`, () => {
       const fx = makeFixture({ targetVersion: T, registeredVersion: OLD });
+      publishMatchingDelivery(fx.genieHome, fx.codexHome);
       const store = openCodexActivationStore({
         genieHome: fx.genieHome,
         codexHome: fx.codexHome,
@@ -1173,6 +1691,7 @@ describe('CodexActivationStore — beginActivation fingerprint binding', () => {
 
   test('a stale permit on a resumed post-command phase refuses and leaves the journal untouched', () => {
     const fx = makeFixture({ targetVersion: T, registeredVersion: OLD });
+    publishMatchingDelivery(fx.genieHome, fx.codexHome);
     const store = openCodexActivationStore({
       genieHome: fx.genieHome,
       codexHome: fx.codexHome,
@@ -1369,5 +1888,27 @@ describe('module surface', () => {
   test('stripControl removes CSI and OSC sequences', () => {
     expect(stripControl('[31mred[0m')).toBe('red');
     expect(stripControl(']0;titlebody')).toBe('body');
+  });
+
+  test('the generic consumer factory is private and only the deep store calls the internal bridge', () => {
+    expect((runtimeMod as Record<string, unknown>).createDeliveryRootConsumer).toBeUndefined();
+    const sourceRoot = join(import.meta.dir, '..');
+    const pending = [sourceRoot];
+    const productionSources: string[] = [];
+    while (pending.length > 0) {
+      const current = pending.pop();
+      if (current === undefined) break;
+      for (const entry of readdirSync(current, { withFileTypes: true })) {
+        const path = join(current, entry.name);
+        if (entry.isDirectory()) pending.push(path);
+        else if (entry.name.endsWith('.ts') && !entry.name.endsWith('.test.ts')) productionSources.push(path);
+      }
+    }
+    const callers = productionSources
+      .filter((path) => !path.endsWith('/runtime-integrations.ts'))
+      .filter((path) => readFileSync(path, 'utf8').includes('runDeliveryRootConsumer'))
+      .map((path) => path.slice(sourceRoot.length + 1))
+      .sort();
+    expect(callers).toEqual(['lib/codex-activation.ts']);
   });
 });

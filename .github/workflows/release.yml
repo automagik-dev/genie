@@ -154,6 +154,7 @@ jobs:
       contents: read
     with:
       version: ${{ inputs.version }}
+      channel: ${{ inputs.channel }}
       source_sha: ${{ inputs.source_sha }}
 
   sign-attest:
@@ -178,10 +179,14 @@ jobs:
     uses: ./.github/workflows/release-publish.yml
     permissions:
       contents: write
-      attestations: read
+      id-token: write
+      attestations: write
     with:
       version: ${{ inputs.version }}
       channel: ${{ inputs.channel }}
+      source_sha: ${{ inputs.source_sha }}
+      source_branch: ${{ inputs.source_branch }}
+      source_ci_run_id: ${{ inputs.source_ci_run_id }}
       draft: false
     # Without inherit, the called workflow's secrets context is empty and the
     # manifests job sees RELEASE_MANIFESTS_TOKEN as unset even though the

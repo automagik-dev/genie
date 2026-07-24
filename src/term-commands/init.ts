@@ -14,16 +14,11 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { Command } from 'commander';
-// Group D consumes B's stable observation/reporting facade — never A's internals
-// directly — to gate init's project-fallback reconciliation on a fresh
-// `verified-current` observation.
-import { classifyCodexActivation, observeCodexActivation } from '../lib/codex-activation-executor.js';
-import type { CodexActivationSnapshot } from '../lib/codex-activation.js';
 import {
   type ArtifactAction,
-  type CodexPluginProbe,
   type McpConfigResult,
   type RegisterProjectMcpOptions,
+  genieFacadeMcpEntry,
   mergeCodexMcpFallback,
   registerProjectMcpConfigs,
   removeCodexMcpFallback,
@@ -144,69 +139,6 @@ export function registerMcpConfigs(root: string, options: RegisterProjectMcpOpti
 }
 
 // ============================================================================
-// Verified-current fallback gate (Group D, D5)
-// ============================================================================
-
-/** Test/observation seams for the read-only, permit-free verified-current gate. */
-export interface InitCodexObservationDeps {
-  /** Injected activation observer (defaults to B's facade over the resolved codex CLI). */
-  observeCodexActivation?: (options: { command: string | null }) => CodexActivationSnapshot;
-  /** Resolve the codex executable (defaults to `Bun.which('codex')`, null on failure). */
-  resolveCodexCommand?: () => string | null;
-}
-
-function defaultResolveCodexCommand(): string | null {
-  try {
-    return Bun.which('codex');
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Decide whether init may reconcile the project fallback (trust the plugin,
- * remove the marker-owned `.codex/config.toml` route). ONLY a fresh, unambiguous
- * `verified-current` activation observation grants that — the classifier's
- * `current` state, which requires the installed cache digest to equal the
- * canonical payload with no unresolved refresh intent. Pending, broken,
- * indeterminate, and current-LOOKING recovery states (e.g. `intent-target-current`)
- * all return false so the fallback is retained. This is a pure, read-only
- * observation: it never mints an assertion/permit, runs a plugin/cache mutator,
- * or touches the lifecycle lease. It never treats a prior/current-looking
- * snapshot as fresh authority — the observation is taken here, now.
- */
-export function isCodexVerifiedCurrent(deps: InitCodexObservationDeps = {}): boolean {
-  const resolveCommand = deps.resolveCodexCommand ?? defaultResolveCodexCommand;
-  const observe = deps.observeCodexActivation ?? ((options) => observeCodexActivation(options));
-  const snapshot = observe({ command: resolveCommand() });
-  return classifyCodexActivation(snapshot).kind === 'current';
-}
-
-/**
- * Project the verified-current verdict onto the codex-fallback decision
- * `registerProjectMcpConfigs` consumes: a verified-current observation is the
- * only usable-plugin signal (removes the fallback); everything else keeps
- * `isUsableCodexPlugin` false so the marker-owned fallback is retained.
- */
-function verifiedCurrentProbe(verifiedCurrent: boolean): CodexPluginProbe {
-  return verifiedCurrent
-    ? {
-        cliAvailable: true,
-        status: 'ok',
-        installed: true,
-        enabled: true,
-        usable: true,
-        detail: 'activation observer: verified-current (plugin trusted, project fallback removed)',
-      }
-    : {
-        cliAvailable: false,
-        status: 'unavailable',
-        installed: false,
-        detail: 'activation observer: not verified-current; project fallback retained',
-      };
-}
-
-// ============================================================================
 // Reporting
 // ============================================================================
 
@@ -253,21 +185,21 @@ interface InitOptions {
   json?: boolean;
 }
 
-function handleInit(opts: InitOptions, deps: InitCodexObservationDeps = {}): void {
+function handleInit(opts: InitOptions): void {
   run(() => {
     const root = resolveGitRoot(process.cwd());
     if (!root) throw new NotAGitRepoError();
 
-    // Init reconciles the Codex project fallback ONLY when a fresh observation is
-    // exactly `verified-current`; pending/broken/indeterminate/recovery states
-    // retain the fallback and make zero plugin/cache mutation. The observation is
-    // read-only and never mints an assertion/permit or acquires the lease.
-    const verifiedCurrent = isCodexVerifiedCurrent(deps);
-
-    // MCP config is planned and schema-checked before any scaffold mutation.
-    // A wrong-shaped existing JSON file therefore fails without leaving a new
-    // INDEX or gitignore rules behind.
-    const mcp = registerMcpConfigs(root, { pluginProbe: verifiedCurrentProbe(verifiedCurrent) });
+    // Trusted init ALWAYS reconciles one intact marker-owned Codex route using the
+    // stable `<GENIE_HOME>/bin/genie` facade with no effective cwd override —
+    // independent of plugin and delivery state, and never touching delivery,
+    // journal, plugin-enabled, agent, or cache state. A route name is not proof of
+    // ownership, so an unmanaged same-key route is preserved and reported.
+    //
+    // MCP config is planned and schema-checked before any scaffold mutation, so a
+    // wrong-shaped existing JSON file fails without leaving a new INDEX or
+    // gitignore rules behind.
+    const mcp = registerMcpConfigs(root, { codexEntry: genieFacadeMcpEntry(), forceCodexFallback: true });
     const index = scaffoldIndex(root);
     const gitignore = scaffoldGitignore(root);
     const result: InitResult = { root, index, gitignore: gitignore.action, rulesAdded: gitignore.added, mcp };

@@ -70,9 +70,10 @@ verify_dispatch_parameters() {
 
 verify_automated_event() {
   local input="$1" require_exact="$2"
-  local source_branch="${SOURCE_BRANCH:-}" source_ci_run_id="${SOURCE_CI_RUN_ID:-}"
+  local source_sha="${SOURCE_SHA:-}" source_branch="${SOURCE_BRANCH:-}" source_ci_run_id="${SOURCE_CI_RUN_ID:-}"
   jq -e \
     --arg repository "$RELEASE_REPOSITORY" \
+    --arg source_sha "$source_sha" \
     --arg source_branch "$source_branch" \
     --arg source_ci_run_id "$source_ci_run_id" \
     --argjson require_exact "$require_exact" \
@@ -86,7 +87,9 @@ verify_automated_event() {
       ($run.head_branch | test("^(dev|homolog)$")) and
       $run.repository.full_name == $repository and
       (if $require_exact then
-         $run.head_branch == $source_branch and ($run.id | tostring) == $source_ci_run_id
+         $run.head_sha == $source_sha and
+         $run.head_branch == $source_branch and
+         ($run.id | tostring) == $source_ci_run_id
        else true end)
     ' "$input" >/dev/null
 }
@@ -112,6 +115,43 @@ verify_exact() {
   fi
 }
 
+verify_exact_subject() {
+  local input="${1:-}"
+  : "${ARTIFACT_SHA256:?ARTIFACT_SHA256 is required}"
+  [[ "$ARTIFACT_SHA256" =~ ^[0-9a-f]{64}$ ]] || exit 2
+  verify_exact "$input"
+  jq -ce \
+    --arg channel "$CHANNEL" \
+    --arg artifact_sha256 "$ARTIFACT_SHA256" \
+    '
+      select(any(.subject[]?; .digest.sha256 == $artifact_sha256)) |
+      .predicate.invocation as $invocation |
+      (if $channel == "stable" then
+        $invocation.parameters.event_inputs |
+        {
+          sourceSha: .source_sha,
+          sourceBranch: .source_branch,
+          sourceCiRunId: .source_ci_run_id
+        }
+      else
+        $invocation.environment.github_event_payload.workflow_run |
+        {
+          sourceSha: .head_sha,
+          sourceBranch: .head_branch,
+          sourceCiRunId: (.id | tostring)
+        }
+      end) as $source |
+      {
+        artifactSha256: (first(.subject[] | select(.digest.sha256 == $artifact_sha256)) | .digest.sha256),
+        sourceSha: $source.sourceSha,
+        sourceBranch: $source.sourceBranch,
+        sourceCiRunId: $source.sourceCiRunId,
+        controlSha: $invocation.configSource.digest.sha1,
+        entryPoint: $invocation.configSource.entryPoint
+      }
+    ' "$input"
+}
+
 verify_reusable() {
   local input="${1:-}" control_sha entry_point
   [[ -f "$input" ]] || exit 64
@@ -133,6 +173,7 @@ verify_reusable() {
 
 case "${1:-}" in
   verify-exact) verify_exact "${2:-}" ;;
+  verify-exact-subject) verify_exact_subject "${2:-}" ;;
   verify-reusable) verify_reusable "${2:-}" ;;
   *) exit 64 ;;
 esac

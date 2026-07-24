@@ -326,6 +326,33 @@ describe('install.sh transactional binary promotion (F31a)', () => {
 // ---------------------------------------------------------------------------
 
 describe('install.sh download_and_verify refuses on failed provenance (F31a)', () => {
+  test('manifest binding requires the exact selected channel, including stable', () => {
+    const run = Bun.spawnSync(
+      [
+        'bash',
+        '-c',
+        [
+          'source "$1"',
+          'manifest_channel_matches \'{"channel":"stable"}\' stable',
+          '! manifest_channel_matches \'{"channel":"dev"}\' stable',
+          '! manifest_channel_matches \'{"version":"5.260714.1"}\' stable',
+        ].join('\n'),
+        'bash',
+        INSTALL_SH,
+      ],
+      {
+        env: {
+          ...process.env,
+          GENIE_INSTALL_SOURCE_ONLY: '1',
+          GENIE_HOME: join(mkroot(), '.genie'),
+        },
+        stdout: 'pipe',
+        stderr: 'pipe',
+      },
+    );
+    expect(run.exitCode).toBe(0);
+  });
+
   test('gh attestation unavailable + cosign verify failure fails closed with exit 4', () => {
     const root = mkroot();
     const stub = join(root, 'stub');

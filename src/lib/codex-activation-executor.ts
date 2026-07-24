@@ -13,11 +13,12 @@
  *   2. `store.beginActivation(lease, permit)` re-observes, exact-matches the
  *      permit fingerprint, and writes the `planned` journal. A stale permit or an
  *      ineligible state refuses before the first journal write.
- *   3. Drive the supported Codex CLI `plugin add` through A's typed phase
- *      transitions (`command-started` fsynced immediately before the cache-
- *      advancing command, `removal-observed`/`ambiguous-absent` on the failure
- *      probe), preserve the observed enabled flag, and handle `intent-target-
- *      current` finalization with no add/remove.
+ *   3. Register the revalidated canonical marketplace, then drive the supported
+ *      Codex CLI `plugin add` through A's typed phase transitions
+ *      (`command-started` fsynced immediately before the cache-advancing
+ *      command, `removal-observed`/`ambiguous-absent` on the failure probe),
+ *      preserve the observed enabled flag, and handle `intent-target-current`
+ *      finalization with no plugin add/remove.
  *   4. Verify full physical N+1 parity ONLY inside
  *      `store.withRevalidatedDeliveryRoot(callback)` — the canonical digest never
  *      leaves the callback as a raw root — then run the exact bounded H3
@@ -26,11 +27,10 @@
  *      tombstones and removes any downgrade receipt (one-time, durable).
  *   6. Release the lease on success, typed refusal, and handled failure alike.
  *
- * The executor never reads or writes A's private protocol files, the hook-trust
- * store, or the canonical bundle root directly: marketplace registration and the
- * raw root stay delivery-side (Group C) because A deliberately hides the root, so
- * the cache-advancing `plugin add` (resolved from the already-registered
- * marketplace) is the entire permit boundary.
+ * The executor never reads or writes A's private protocol files or the hook-trust
+ * store. Marketplace registration runs inside the deep store's revalidated
+ * delivery callback; role-agent convergence remains setup-owned and follows
+ * successful activation plus committed Codex consent.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -63,9 +63,25 @@ import {
   resolveSetupExitCode,
   serializeActivationResultTrailer,
 } from './codex-activation.js';
+// Group B's delivery-attestation + host-observation contract, re-exported below as
+// part of the stable facade Groups C and D consume from this one module.
+import {
+  DELIVERY_INCOMPLETE_RECOVERY,
+  type DeliveryAssessment,
+  assessAuthenticatedDelivery,
+  buildDeliveryIncompleteResult,
+  parseCodexHostObservation,
+  projectHostQuery,
+  witnessCodexCacheFamily,
+} from './codex-host-observation.js';
 import { type HeldLifecycleLease, LifecycleFencingError, acquireLifecycleLease } from './codex-lifecycle-lease.js';
 import type { LifecycleLeaseKind, LifecycleLeaseResult } from './codex-lifecycle-lease.js';
-import { type CommandRunner, runBoundedIntegrationCommand, setCodexPluginEnabled } from './runtime-integrations.js';
+import {
+  type CommandRunner,
+  createCodexMarketplaceRegistrationConsumer,
+  runBoundedIntegrationCommand,
+  setCodexPluginEnabled,
+} from './runtime-integrations.js';
 
 // A's permit is a type-only export: importers may name it, but the runtime class
 // never leaves A and only `beginActivation`/`quarantineIntent` can validate it.
@@ -89,6 +105,17 @@ export {
   requestRetirementAssertion,
   resolveSetupExitCode,
   serializeActivationResultTrailer,
+  // Group B's host-observation + delivery-attestation contract (deliverables 1, 4, 6).
+  buildDeliveryIncompleteResult,
+};
+
+/** @public Stable delivery-attestation and host-observation facade for downstream lifecycle groups. */
+export {
+  DELIVERY_INCOMPLETE_RECOVERY,
+  assessAuthenticatedDelivery,
+  parseCodexHostObservation,
+  projectHostQuery,
+  witnessCodexCacheFamily,
 };
 
 // ============================================================================
@@ -110,6 +137,8 @@ const SMOKE_EXPECTED_CONTEXT =
 export interface ActivationPhaseHooks {
   afterLeaseAcquired?(operationId: string): void;
   afterBeginActivation?(handle: ActivationHandle): void;
+  beforeMarketplaceRegistration?(): void;
+  afterMarketplaceRegistration?(): void;
   beforeCommandStarted?(): void;
   beforePluginAdd?(): void;
   afterPluginAdd?(): void;
@@ -123,6 +152,8 @@ export interface ActivationPhaseHooks {
 export interface CodexActivationExecutorDeps {
   /** Injected command runner for the cache-advancing `plugin add`; defaults to the bounded runner. */
   runner?: CommandRunner;
+  /** Factory for the marketplace capability consumed only by the deep store. */
+  createMarketplaceConsumer?: typeof createCodexMarketplaceRegistrationConsumer;
   /** Resolve an absolute Node executable for the H3 replay; defaults to `Bun.which('node')`. */
   resolveNode?: () => string | null;
   now?: () => Date;
@@ -134,7 +165,7 @@ export interface CodexActivationExecutorDeps {
 export interface ExecuteCodexActivationInput {
   permit: ActivationPermit;
   store: CodexActivationStore;
-  /** Resolved absolute codex executable; the marketplace is already registered by delivery. */
+  /** Resolved absolute codex executable used for marketplace registration and plugin activation. */
   command: string;
   codexHome: string;
   genieHome: string;
@@ -168,6 +199,14 @@ export type ActivationExecutionResult =
       trailer: ActivationResultTrailer;
     }
   | { status: 'refused'; code: string; detail: string; trailer: ActivationResultTrailer }
+  | {
+      status: 'delivery-incomplete';
+      code: 'delivery-incomplete';
+      assessment: Exclude<DeliveryAssessment, 'matching'>;
+      detail: string;
+      recovery: string;
+      trailer: ActivationResultTrailer;
+    }
   | { status: 'broken'; code: string; detail: string; trailer: ActivationResultTrailer };
 
 /** A supported Codex CLI command failed; carries no host authority claim. */
@@ -228,6 +267,13 @@ function runActivationUnderLease(
       trailer: staleTrailer(),
     };
   }
+  if (begin.status === 'delivery-incomplete') {
+    // Group B inner guard: the re-observed delivery record is absent/invalid/
+    // mismatched. Nothing was written; report the stable delivery-incomplete
+    // result (authority none, exit 1, deliveryComplete false) with the one
+    // update/install recovery command.
+    return deliveryIncompleteResult(begin.assessment, begin.detail);
+  }
   if (begin.status === 'refused') {
     // A genuine permit for a state that opens no activation transaction (e.g.
     // cache-missing/payload-mismatch, or a quarantine-only capability): report the
@@ -237,8 +283,9 @@ function runActivationUnderLease(
     return refusedFromState(preState, begin.reason);
   }
   const handle = begin.handle;
-  deps.hooks?.afterBeginActivation?.(handle);
   try {
+    deps.hooks?.afterBeginActivation?.(handle);
+    registerAuthorizedMarketplace(input, lease, deps);
     if (preState.kind === 'intent-target-current') {
       return finalizeVerifiedGeneration(input, lease, handle, deps, /* ranCacheCommand */ false);
     }
@@ -246,6 +293,29 @@ function runActivationUnderLease(
   } catch (error) {
     return brokenFromError(input, error);
   }
+}
+
+/**
+ * Revalidate the authenticated delivery root after the inner begin guard and
+ * register its canonical marketplace inside the callback-scoped capability.
+ * Any drift or command failure stops before `command-started` and therefore
+ * before `plugin add`.
+ */
+function registerAuthorizedMarketplace(
+  input: ExecuteCodexActivationInput,
+  lease: HeldLifecycleLease,
+  deps: CodexActivationExecutorDeps,
+): void {
+  input.store.withRevalidatedDeliveryRoot(lease, (ops) => {
+    deps.hooks?.beforeMarketplaceRegistration?.();
+    const consumer = (deps.createMarketplaceConsumer ?? createCodexMarketplaceRegistrationConsumer)({
+      command: input.command,
+      runner: deps.runner,
+      timeoutMs: input.timeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS,
+    });
+    ops.consume(consumer);
+    deps.hooks?.afterMarketplaceRegistration?.();
+  });
 }
 
 // ============================================================================
@@ -444,13 +514,18 @@ function restoreEnabledFlag(input: ExecuteCodexActivationInput): boolean {
   return desiredEnabled;
 }
 
-/** The prior enabled flag the permit's journal captured (via the planned intent). */
+/** Resolve the durable desired enabled state captured by the activation intent. */
 function readPriorEnabled(input: ExecuteCodexActivationInput): boolean {
   // The journal is A's private state; the executor reads the observed enabled flag
-  // rather than the raw journal file. `beginActivation` bound priorEnabled to this
-  // same observation, so the observed value is the authoritative desired flag.
+  // rather than the raw journal file. A fresh from=null intent represents a new
+  // integration, never a prior operator disablement. Deriving true from that
+  // durable fact also repairs older schema-1 journals which recorded false
+  // before their first add completed. Existing registrations retain their exact
+  // captured choice.
   const snapshot = input.store.observe();
-  if (snapshot.intent.status === 'valid') return snapshot.intent.intent.priorEnabled;
+  if (snapshot.intent.status === 'valid') {
+    return snapshot.intent.intent.fromPluginVersion === null ? true : snapshot.intent.intent.priorEnabled;
+  }
   return snapshot.query.status === 'ok' && snapshot.query.registration.present
     ? snapshot.query.registration.enabled
     : true;
@@ -661,6 +736,32 @@ function brokenFromError(input: ExecuteCodexActivationInput, error: unknown): Ac
     code: fenced ? 'codex-lifecycle-fenced' : describeState(state).machineCode,
     detail: errorText(error),
     trailer: buildActivationResultTrailer(state, /* deliveryComplete */ true),
+  };
+}
+
+/**
+ * Map Group B's inner-guard refusal to the executor result: the stable
+ * delivery-incomplete outcome (authority none, exit 1, deliveryComplete false)
+ * carrying the one update/install recovery command. Nothing was mutated.
+ */
+function deliveryIncompleteResult(
+  assessment: Exclude<DeliveryAssessment, 'matching'>,
+  detail: string,
+): ActivationExecutionResult {
+  const result = buildDeliveryIncompleteResult(assessment, detail);
+  return {
+    status: 'delivery-incomplete',
+    code: 'delivery-incomplete',
+    assessment,
+    detail: result.detail,
+    recovery: result.recovery,
+    trailer: {
+      schemaVersion: 1,
+      code: 'delivery-incomplete',
+      deliveryComplete: false,
+      retry: true,
+      nextAction: result.recovery,
+    },
   };
 }
 

@@ -23,7 +23,16 @@ import { openSqlite } from './sqlite-open.js';
 
 // The typed error taxonomy is shared with the per-repo DB. Re-exported so
 // callers of the global DB can catch failures without importing genie-db.
-export { BusyDbError, ForeignDbError, GenieDbError, isBusyError, MalformedDbError } from './sqlite-open.js';
+export {
+  /** @public Stable global-database error facade exports. */
+  BusyDbError,
+  ForeignDbError,
+  /** @public Stable global-database error facade export. */
+  GenieDbError,
+  /** @public Stable global-database error facade export. */
+  isBusyError,
+  MalformedDbError,
+} from './sqlite-open.js';
 
 /** Schema revision for the GLOBAL database. Independent of the per-repo version. */
 export const GLOBAL_SCHEMA_VERSION = 1;

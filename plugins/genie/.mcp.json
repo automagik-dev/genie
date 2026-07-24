@@ -1,7 +1,0 @@
-{
-  "genie": {
-    "command": "node",
-    "args": ["./scripts/mcp-launcher.cjs"],
-    "cwd": "."
-  }
-}

@@ -1533,7 +1533,8 @@ export function inspectManagedSkillTree(dir: string): ManagedSkillTreeReport {
 }
 
 // ============================================================================
-// Retired Codex fallback ownership + batch retirement (deliberately unwired)
+// Codex fallback ownership + batch retirement (setup wires this only after
+// authenticated delivery-root admission and an exact enabled-plugin proof)
 // ============================================================================
 
 export interface CodexFallbackHistoricalTuple {
@@ -1695,7 +1696,7 @@ export function loadHistoricalCodexFallbackTupleKeys(): ReadonlySet<string> {
 /**
  * Classify a single `~/.agents/skills/<name>` dir's Codex-fallback ownership.
  * Exported so doctor's read-only tier inspection can split a structurally
- * `managed-clean` tree into "recognized, retirable by `genie update`" vs
+ * `managed-clean` tree into "recognized, retirable by authenticated setup" vs
  * "well-formed but unrecognized, needs manual review" using the identical
  * marker/digest/allowlist gate {@link planCodexFallbackRetirement} uses to
  * decide what it will actually retire — so doctor never promises a retirement
@@ -1757,7 +1758,8 @@ export function retirementTransactionId(accepted: readonly CodexFallbackAccepted
 /**
  * Build a closed, deterministic ownership decision without changing disk.
  * Ambiguous names are reported under `preserved` and never enter the apply set.
- * No active install/update/setup path calls this boundary.
+ * The active setup path reaches this boundary only through its authenticated
+ * delivery-root consumer after an exact enabled-plugin health proof.
  */
 export function planCodexFallbackRetirement(options: PlanCodexFallbackRetirementOptions): CodexFallbackRetirementPlan {
   const fallbackSkillsDir = canonicalPhysicalFallbackRoot(options.fallbackSkillsDir);
@@ -1905,7 +1907,7 @@ export interface FsyncPathDeps {
  * byte durability is the load-bearing crash-safety guarantee, so a failure
  * propagates. DIRECTORY-metadata flush is best-effort: Windows (and some network
  * filesystems) refuse to open/fsync a directory fd (EISDIR/EPERM/EINVAL/ENOTSUP),
- * which must NOT brick the codex step of `genie update` at journal-prepare. On
+ * which must NOT brick Codex setup at retirement-journal preparation. On
  * win32 a directory fsync is skipped entirely; elsewhere the tolerable errors are
  * swallowed. A durable rename still lands; only the extra directory-entry flush
  * is skipped, exactly as on filesystems that never guaranteed it.

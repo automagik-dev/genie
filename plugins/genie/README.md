@@ -7,10 +7,10 @@ This directory is the shared release payload for Claude Code and Codex. The two 
 | Surface | Delivery | Contract |
 |---------|----------|----------|
 | Product skills | The plugin contains 23 physical in-root skill directories, each with `SKILL.md` and `agents/openai.yaml` | The **sole** Genie-managed skill provider; no escaping symlink and no user-tier copy — nothing is written to `~/.agents/skills` |
-| Fallback retirement | Hidden `~/.agents/skills/.genie-codex-fallback-retirement/` quarantine transaction | Never written on fresh install. Upgrades from a fallback-seeding release move only provably clean, digest-owned historical copies here after one plugin health proof; `txn-<id>/evidence/` archives retain changed trees for recovery |
+| Fallback retirement | Hidden `~/.agents/skills/.genie-codex-fallback-retirement/` quarantine transaction | Never written on fresh setup. Authenticated setup moves only provably clean, digest-owned historical copies here after one plugin health proof; `txn-<id>/evidence/` archives retain changed trees for recovery |
 | Hooks | `.codex-plugin/plugin.json` points to `hooks/codex-hooks.json` | Three untrusted definitions only: H3 SessionStart context, H4 local PreToolUse guardrails, H6 PermissionRequest approval |
-| MCP | `.mcp.json` starts `scripts/mcp-launcher.cjs` | The launcher accepts only the canonical `$GENIE_HOME/bin/genie` (default `~/.genie/bin/genie`) and fails closed if it is absent or unsafe |
-| Role agents | Seven TOMLs are staged in `codex-agents/` | Plugins cannot install custom agents. `genie install` or `genie setup --codex` copies the optional profiles into `~/.codex/agents/` behind the same plugin health gate |
+| MCP | Marker-owned project `.codex/config.toml` | Codex launches the stable absolute `$GENIE_HOME/bin/genie mcp` facade with no `cwd` override; the plugin declares no Codex MCP route |
+| Role agents | Seven TOMLs are staged in `codex-agents/` | Plugins cannot install custom agents. Authenticated `genie setup --codex` copies the optional profiles into `~/.codex/agents/` after enabled-plugin health/retirement; an exact deliberately disabled plugin skips retirement but still repairs roles |
 
 The plugin is the only Genie-managed skill provider. A fresh Codex install writes zero user-tier skills; bare `$<skill>` now resolves only a personal copy the user installed themselves. A maintainer may separately have 36 adapted skills under `~/.agents/skills`; those are user-owned, are not bundled here, and must survive update/uninstall byte-for-byte. An upgrade from a release that seeded digest-managed fallbacks retires only provably clean, Genie-owned copies into the hidden quarantine transaction after one health proof — a physical non-symlink directory with a valid versioned `.genie-sync.json`, a recomputed digest equal to the marker, and a match against the verified target payload or a committed verified-release historical tuple. Modified-managed, malformed-marker, symlinked, and unmanaged same-name collisions are preserved in place and reported, never adopted or deleted.
 
@@ -24,7 +24,7 @@ The plugin is the only Genie-managed skill provider. A fresh Codex install write
   txn-<id>/evidence/<skill>/     changed trees archived aside during recovery races
 ```
 
-The transaction is idempotent and crash-safe: repeated updates recognize the committed transaction (no second transaction, no accumulating quarantine); an interrupted run reverse-restores every pre-commit move without clobbering conflicts. Committed quarantine and journal evidence are retained. Manual recovery:
+The transaction is idempotent and crash-safe: repeated setup runs recognize the committed transaction (no second transaction, no accumulating quarantine); an interrupted run reverse-restores every pre-commit move without clobbering conflicts. Committed quarantine and journal evidence are retained. Manual recovery:
 
 - **Restore a retired skill:** move it back from `txn-<id>/quarantine/<skill>/` to `~/.agents/skills/<skill>/` (only if you want a bare user-tier copy; the plugin already serves `$genie:<skill>`).
 - **"Source changed after planning":** if the live skill was edited between the health proof and the move, retirement aborts before any move — the changed personal copy stays in place at `~/.agents/skills/<skill>`; nothing is moved or archived. Review it, then rerun.
@@ -58,24 +58,24 @@ PreToolUse is a guardrail, not complete interception. Sandbox policy and server-
 No hook installs or updates Genie. Operators use:
 
 ```bash
-genie install --integrations codex  # installer-owned finishing path
-genie setup --codex                 # install or repair Codex plugin, role agents, and MCP routing
-genie update                        # explicit binary/payload/integration convergence
+genie install --integrations codex  # verify and publish the Codex delivery
+genie setup --codex                 # activate it, retire clean fallbacks, converge roles + project route
+genie update                        # deliver a newer signed binary/payload; never activate Codex
 ```
 
-A successful `genie setup --codex` persists Codex maintenance consent. Future explicit `genie update` invocations use
-that scope to refresh the Codex plugin, MCP route, and optional role profiles. No supported path writes new product
-skills into the user tier; the only user-tier mutation is retiring provably clean historical fallbacks into the hidden
-quarantine transaction after a health proof. Unmanaged, modified, and separately installed personal skills stay
-user-owned; persisted maintenance scope does not authorize hooks or background updates.
-
-When crossing from a release older than `5.260711.6` to `5.260711.6` or later, the first update may only deliver the new binary/payload because the already-running old process does not yet know the new convergence phase. After that command returns, run `genie update` once more explicitly. The second invocation runs the newly installed contract; confirm the plugin exposes exactly H3/H4/H6, review hashes with `/hooks`, and start a new task. Later updates converge in one operator-driven path. Do not rely on SessionStart for this compatibility hop.
+A successful `genie setup --codex` persists Codex delivery scope. Future explicit updates use that scope to publish
+authenticated delivery facts but never advance the plugin cache, change enabled state, reconcile the project route, or
+write roles. When a delivered generation is pending, close or retire tasks pinned to the prior generation and run setup
+from an external real terminal. Setup requires the matching record before its first prompt or mutation, activates the
+exact delivered bytes, proves plugin health, retires only provably clean historical fallbacks, and then converges role
+profiles and the marker-owned project route. Unmanaged, modified, and personal skills stay user-owned; persisted scope
+does not authorize hooks or background updates.
 
 ### 2026-07-11 update incident
 
 One release-dogfood update exposed why that boundary matters. A `5.260710.13` process selected stale stable `5.260710.2`; its fresh child did not understand the environment-only sync request and performed another full update to `5.260711.3`. The ensuing legacy sync adopted 22 same-name personal skills and created a duplicate `review` skill.
 
-Containment recovered all 22 adapted directories from Genie's automatic backup, quarantined both recreated `review` copies, removed the old hook trust, and verified the 36 personal-skill digests plus 14 custom-agent TOMLs against the pre-incident baseline. The code fix keeps post-update convergence in the reviewed parent process and preserves user-owned collisions. This note intentionally contains no machine-specific paths, process ids, or credentials.
+Containment recovered all 22 adapted directories from Genie's automatic backup, quarantined both recreated `review` copies, removed the old hook trust, and verified the 36 personal-skill digests plus 14 custom-agent TOMLs against the pre-incident baseline. The current contract preserves user-owned collisions and separates signed update delivery from setup-owned activation and convergence. This note intentionally contains no machine-specific paths, process ids, or credentials.
 
 ## Skills and orchestration
 

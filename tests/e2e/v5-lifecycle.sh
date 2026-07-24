@@ -365,8 +365,8 @@ JOBS_AFTER="$(jobs -p || true)"
 #           so we import the source module directly and assert the marker is 0
 #           after loading it — proving that merely loading/using the runner
 #           never opens a connection; only `runOmniServe` does. A static grep
-#           backs this up: `nats` is a *dynamic* import inside the factory, not
-#           a top-level import.
+#           backs this up: `@nats-io/transport-node` is a *dynamic* import
+#           inside the factory, not a top-level import.
 # ============================================================================
 step "zero-omni guard (no omni config, transport never initialized)"
 NO_OMNI_HOME="$SCRATCH/no-omni-home"
@@ -414,12 +414,14 @@ bun -e '
   if (n !== 0) { process.stderr.write("natsConnectionCount()="+n+" after import\n"); process.exit(1); }
 ' "$RUNNER_SRC" || die "natsConnectionCount() was non-zero just from loading the runner module"
 
-# Static backstop: `nats` is dynamically imported inside the factory only — never
-# a top-level static import — so the module has zero transport cost until serve.
+# Static backstop: the Node NATS transport is dynamically imported inside the
+# factory only — never a top-level static import — so the module has zero
+# transport cost until serve.
 assert nats-import-is-dynamic-only
-grep -qE "await import\('nats'\)" "$RUNNER_SRC" || die "expected a dynamic import('nats') in the runner"
-if grep -nE "^import[^\n]*['\"]nats['\"]" "$RUNNER_SRC"; then
-  die "runner has a top-level static 'nats' import — transport would load eagerly"
+grep -qE "await import\('@nats-io/transport-node'\)" "$RUNNER_SRC" \
+  || die "expected a dynamic import('@nats-io/transport-node') in the runner"
+if grep -nE "^import[^\n]*['\"]@nats-io/transport-node['\"]" "$RUNNER_SRC"; then
+  die "runner has a top-level static '@nats-io/transport-node' import — transport would load eagerly"
 fi
 
 # ============================================================================

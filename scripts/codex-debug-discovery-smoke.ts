@@ -44,8 +44,9 @@ import {
   installGenieHome,
   linkRealCodex,
   readCodexGeniePlugin,
-  runCli,
   runCodex,
+  runLifecycleCli,
+  runLifecycleSetup,
   withIsolatedHome,
 } from './codex-smoke-harness.ts';
 
@@ -99,9 +100,12 @@ function main(): void {
     withIsolatedHome((iso) => {
       installGenieHome(iso);
       linkRealCodex(iso);
-      const install = runCli(iso, ['install', '--integrations', 'codex']);
-      if (install.exitCode !== 0)
-        fail(`install --integrations codex failed: ${install.stderr.trim() || install.stdout.trim()}`);
+      const publish = runLifecycleCli(iso, ['publish-delivery']);
+      if (publish.exitCode !== 0) {
+        fail(`delivery fixture publication failed: ${publish.stderr.trim() || publish.stdout.trim()}`);
+      }
+      const setup = runLifecycleSetup(iso);
+      if (setup.exitCode !== 0) fail(`setup --codex failed: ${setup.output.trim()}`);
 
       const version = readCodexGeniePlugin(iso).version;
       const canonicalNames = readdirSync(join(activePluginRoot(iso, version), 'skills'), { withFileTypes: true })

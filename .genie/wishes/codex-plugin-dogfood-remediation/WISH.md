@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED |
+| **Status** | IN_PROGRESS |
 | **Slug** | `codex-plugin-dogfood-remediation` |
 | **Date** | 2026-07-22 |
 | **Author** | Felipe Rosa + Codex dogfood investigation |
@@ -182,16 +182,16 @@ collision requiring user resolution rather than rewritten by this command.
 
 ## Success Criteria
 
-- [ ] An app-server black-box test proves `process.cwd()` in the MCP child exactly equals
+- [x] An app-server black-box test proves `process.cwd()` in the MCP child exactly equals
       a Codex control process's effective `process.cwd()` by string and OS directory identity for a
       repository root, nested directory, linked worktree, symlink/case-normalized path, and two repos;
       raw `thread/start.cwd` remains separately visible only in `CodexCwdEvidence`, not production
       `CodexHostObservation`.
-- [ ] One pinned long-lived Codex app-server runs sequential and concurrent threads in two repositories,
+- [x] One pinned long-lived Codex app-server runs sequential and concurrent threads in two repositories,
       records raw request plus child PID/CWD per harness case, and proves a child PID is never reused
       when the effective CWD string or OS identity differs. Reuse is allowed when both effective-CWD
       values match, irrespective of case labels; tagged sentinels still detect cross-talk.
-- [ ] The linked-worktree case keeps the child and marker config in the linked worktree while
+- [x] The linked-worktree case keeps the child and marker config in the linked worktree while
       `gitCommonDir` is the absolute main-repository Git directory,
       `genieStorageRoot = dirname(gitCommonDir)`, and `resolveDbPath` reads exactly
       `<genieStorageRoot>/.genie/genie.db`; neither main-worktree CWD nor plugin cache appears as launch
@@ -199,53 +199,53 @@ collision requiring user resolution rather than rewritten by this command.
 - [ ] `codex mcp get genie --json` reports the marker-owned absolute project command with no effective
       CWD override, accepting either absent or `null` host serialization, and the installed Codex plugin
       contributes no second Genie MCP route.
-- [ ] Group B's black-box proof receives independent execution-review SHIP before any Group A route
+- [x] Group B's black-box proof receives independent execution-review SHIP before any Group A route
       migration merges, activates, or removes the plugin MCP route; a failed proof leaves the old route
       intact and blocks migration.
-- [ ] Enabled, disabled, absent, malformed, and upgraded plugin fixtures retain exactly one owned project
+- [x] Enabled, disabled, absent, malformed, and upgraded plugin fixtures retain exactly one owned project
       route, preserve unrelated TOML byte-for-byte, and converge idempotently; user-owned project/global
       same-key routes, damaged markers, and shadowing are never overwritten.
-- [ ] A two-repository 5.260722.1 migration leaves reconciled A healthy, untouched B explicitly route
+- [x] A two-repository 5.260722.1 migration leaves reconciled A healthy, untouched B explicitly route
       absent with no cache fallback, and makes `cd B && genie init` the only one-command reconciliation;
       afterward B returns only B's sentinel.
-- [ ] The marker uses the canonical stable absolute `GENIE_HOME/bin/genie` facade across plugin updates
+- [x] The marker uses the canonical stable absolute `GENIE_HOME/bin/genie` facade across plugin updates
       and symlinked invocation; explicit home relocation is reconciled only by trusted init, and uninstall
       leaves an inert/actionable missing executable rather than a versioned-cache fallback.
-- [ ] Nested config shadowing and untrusted project config are reported distinctly; untrusted config is
+- [x] Nested config shadowing and untrusted project config are reported distinctly; untrusted config is
       left intact and doctor says trust is required rather than claiming MCP health.
-- [ ] A nested initialized repository uses its own common/storage root; a nested Git repository without
+- [x] A nested initialized repository uses its own common/storage root; a nested Git repository without
       Genie initialization fails at that boundary and never reads an outer database.
-- [ ] Bare repositories, submodules, and external/separate-Git-dir layouts return
+- [x] Bare repositories, submodules, and external/separate-Git-dir layouts return
       `unsupported-project-layout` before config/DB success and never use an outer repository or plugin
       cache as fallback.
-- [ ] Missing Git/Genie context or `.genie/genie.db` returns a stable structured MCP error and can never
+- [x] Missing Git/Genie context or `.genie/genie.db` returns a stable structured MCP error and can never
       serialize a healthy empty board.
-- [ ] Upgrade messaging requires a new Codex task after route changes; no claim is made that an existing
+- [x] Upgrade messaging requires a new Codex task after route changes; no claim is made that an existing
       task's already-started MCP process was rebound.
-- [ ] Outside trusted `genie init`, missing/invalid/mismatched attestation causes zero prompt or
+- [x] Outside trusted `genie init`, missing/invalid/mismatched attestation causes zero prompt or
       activation-owned journal, plugin, enabled-state, project-route, role-agent, or cache mutation and
       reports `deliveryComplete: false`; doctor remains read-only in every state.
-- [ ] A provenance-verified current-version repair handles both an old registered parent and the live
+- [x] A provenance-verified current-version repair handles both an old registered parent and the live
       target-current/removal-observed intent, publishes once, preserves the parent until activation,
       and remains idempotent with a matching record.
-- [ ] Same-version repair pins channel, immutable target version/platform, release tag/name, and fetched
+- [x] Same-version repair pins channel, immutable target version/platform, release tag/name, and fetched
       manifest bytes/digest before download; downloads that exact named asset, computes SHA-256 only
       afterward, authenticates the digest for repository `automagik-dev/genie`, predicate
       `https://github.com/automagik-dev/genie/release-tarballs/v1`, workflow identity
       `https://github.com/automagik-dev/genie/.github/workflows/sign-attest.yml@refs/heads/main`, and
       issuer `https://token.actions.githubusercontent.com`, then persists the authenticated digest.
-- [ ] Under the lifecycle lease, same-version repair rechecks the pinned channel and routes an advance to
+- [x] Under the lifecycle lease, same-version repair rechecks the pinned channel and routes an advance to
       ordinary upgrade; it never claims the release manifest supplied an artifact digest or relabels
       installed bytes.
-- [ ] Setup finalization after repair performs no second plugin add, restores enabled state, completes
+- [x] Setup finalization after repair performs no second plugin add, restores enabled state, completes
       parity/H3, clears the journal normally, and ends with doctor state `current`.
-- [ ] Doctor spawns exactly one Codex plugin query and never reports PASS together with a query-failed
+- [x] Doctor spawns exactly one Codex plugin query and never reports PASS together with a query-failed
       integration summary; the real bounded PATH advisory does not corrupt JSON stdout or force failure.
-- [ ] Failed or pending standalone `setup --codex` preserves config bytes and prints no green saved
+- [x] Failed or pending standalone `setup --codex` preserves config bytes and prints no green saved
       banner, including on a historically configured machine.
-- [ ] Missing-inventory migration ends with all delivered role agents current, including the reviewer,
+- [x] Missing-inventory migration ends with all delivered role agents current, including the reviewer,
       with one managed surface per role and every unrelated/personal agent byte- and mode-identical.
-- [ ] Group D's successful install/update convergence leaves no `.install-version`; interrupted/failed
+- [x] Group D's successful install/update convergence leaves no `.install-version`; interrupted/failed
       install/update preserves the prior marker and installed trees, uninstall tolerates both layouts,
       and every path is safe to rerun without Group C role writes.
 - [ ] Live evidence validation accepts only real nested doctor JSON, rejects the obsolete flat fixture,
@@ -353,23 +353,23 @@ and incapable of returning an outer/cache-root empty board.
    inert actionable marker, never a cache path.
 
 **Acceptance Criteria:**
-- [ ] Root, ordinary nested directory, initialized nested repository, uninitialized nested repository,
+- [x] Root, ordinary nested directory, initialized nested repository, uninitialized nested repository,
       and linked-worktree fixtures resolve the specified config root, absolute `gitCommonDir`, and exact
       `dirname(gitCommonDir)` storage root without changing effective launch CWD.
-- [ ] Linked worktree config is read from the linked root and its sentinel from the common-root DB;
+- [x] Linked worktree config is read from the linked root and its sentinel from the common-root DB;
       the DB path is exactly `<dirname(gitCommonDir)>/.genie/genie.db`, and neither outer,
       main-worktree-CWD, nor cache storage is substituted.
 - [ ] `codex mcp list/get --json` shows one owned project route with a stable absolute command and
       no effective CWD override (accepting absent or `null` serialization); no Codex plugin route remains
       and Claude's launcher remains covered.
-- [ ] User-owned project/global same-key routes, damaged markers, malformed config, trust boundaries,
+- [x] User-owned project/global same-key routes, damaged markers, malformed config, trust boundaries,
       and shadowing are byte-identical after inspection/reconciliation attempts and receive distinct
       actionable states.
-- [ ] Bare, submodule, and external/separate-Git-dir fixtures return `unsupported-project-layout` before
+- [x] Bare, submodule, and external/separate-Git-dir fixtures return `unsupported-project-layout` before
       DB/tool success and never probe an outer repository or plugin-cache database.
-- [ ] Two-repo migration proves reconciled A works, untouched B has explicit absence/no fallback, and
+- [x] Two-repo migration proves reconciled A works, untouched B has explicit absence/no fallback, and
       `cd B && genie init` safely reconciles only B.
-- [ ] Stable command fixtures cover plugin update, symlinked launch, explicit home relocation, and
+- [x] Stable command fixtures cover plugin update, symlinked launch, explicit home relocation, and
       uninstall without writing a versioned plugin-cache path or overwriting an unowned route.
 
 **Validation:**
@@ -415,18 +415,18 @@ and refuse activation before mutation without a matching authenticated record.
 7. Add mutation spies and record-tampering fixtures for every bound record field and stale permits.
 
 **Acceptance Criteria:**
-- [ ] One app-server proves root/nested/linked/symlink-normalized launch behavior and both sequential and
+- [x] One app-server proves root/nested/linked/symlink-normalized launch behavior and both sequential and
       concurrent two-repo threads; each harness case records raw request, child PID/effective CWD, and a
       tagged sentinel. A child PID never crosses differing effective-CWD strings or OS identities;
       same-effective-CWD reuse is allowed, and no cross-talk or cache-root context occurs.
-- [ ] Child and control effective CWDs have exact string and directory-identity equality; evidence keeps
+- [x] Child and control effective CWDs have exact string and directory-identity equality; evidence keeps
       the potentially different raw requested spelling rather than normalizing it away, while production
       `CodexHostObservation` contains neither raw request nor control-only fields.
-- [ ] No non-matching record path prompts or performs activation-owned journal, registration, enabled,
+- [x] No non-matching record path prompts or performs activation-owned journal, registration, enabled,
       project-route, role, or cache mutation; a stale permit cannot bypass the inner guard.
-- [ ] Matching records preserve downgrade binding and final callback revalidation; tampering with any
+- [x] Matching records preserve downgrade binding and final callback revalidation; tampering with any
       version/platform/manifest/artifact/binary/payload/delivery/intent binding becomes invalid/mismatch.
-- [ ] One bounded result supplies all downstream projections; the real PATH advisory succeeds only with
+- [x] One bounded result supplies all downstream projections; the real PATH advisory succeeds only with
       valid exit/stdout, and every failure remains one ANSI-free typed result.
 
 **Validation:**
@@ -459,12 +459,12 @@ bun test src/lib/codex-host-observation.test.ts \
    unrelated personal agents, interrupted role migration, and repeated role convergence.
 
 **Acceptance Criteria:**
-- [ ] The live-shape missing-inventory fixture converges every delivered role and the current reviewer
+- [x] The live-shape missing-inventory fixture converges every delivered role and the current reviewer
       while unrelated/personal files retain exact bytes, type, permissions, and timestamps where
       supported.
-- [ ] Enabled plugin state exposes one managed surface per role; disabled/absent state has the intended
+- [x] Enabled plugin state exposes one managed surface per role; disabled/absent state has the intended
       fallback, and reruns create no duplicates.
-- [ ] Modified, unknown, symlinked, or profile-lookalike collisions are reported and never overwritten,
+- [x] Modified, unknown, symlinked, or profile-lookalike collisions are reported and never overwritten,
       adopted, or deleted.
 
 **Validation:**
@@ -507,18 +507,18 @@ performing activation or redefining that target from a moving channel.
    repeated repair neither downloads nor republishes.
 
 **Acceptance Criteria:**
-- [ ] The old-parent fixture publishes one record bound to the pinned tuple, keeps N registered, and exits
+- [x] The old-parent fixture publishes one record bound to the pinned tuple, keeps N registered, and exits
       2 with the exact next action; a matching rerun performs no download/publication.
-- [ ] The live target-current/removal-observed fixture repairs without any plugin command or other
+- [x] The live target-current/removal-observed fixture repairs without any plugin command or other
       activation-owned mutation.
-- [ ] A channel advance routes to ordinary upgrade and never mints a record for stale installed bytes.
-- [ ] Repair pins channel/version/platform/release tag/name plus manifest bytes/digest before download,
+- [x] A channel advance routes to ordinary upgrade and never mints a record for stale installed bytes.
+- [x] Repair pins channel/version/platform/release tag/name plus manifest bytes/digest before download,
       downloads the exact named asset, computes SHA-256 afterward, authenticates it against every stated
       repository/predicate/workflow/OIDC anchor, and persists the computed authenticated digest.
-- [ ] Field, artifact, manifest, payload, platform, installed-byte, and intent tampering plus lease or
+- [x] Field, artifact, manifest, payload, platform, installed-byte, and intent tampering plus lease or
       reobservation failure leave record/journal/plugin/cache/config/roles unchanged and report
       `deliveryComplete: false`.
-- [ ] Successful install/update retires `.install-version`; injected failures preserve its prior bytes
+- [x] Successful install/update retires `.install-version`; injected failures preserve its prior bytes
       and installed tree, reruns converge safely, and uninstall accepts present/absent markers without
       any role-agent/inventory mutation.
 
@@ -558,15 +558,15 @@ activation, and doctor surfaces.
    doctor current, including PATH advisory, stale historical config, route collision, and context errors.
 
 **Acceptance Criteria:**
-- [ ] Missing/invalid/mismatched record reaches neither prompt nor activation-owned mutation and produces
+- [x] Missing/invalid/mismatched record reaches neither prompt nor activation-owned mutation and produces
       one consistent `delivery-incomplete` result with the update/install recovery command.
-- [ ] After target-current repair, setup performs zero second plugin add, completes parity/H3, restores
+- [x] After target-current repair, setup performs zero second plugin add, completes parity/H3, restores
       enabled state, and clears the journal only through normal protocol.
-- [ ] Failed/pending standalone setup preserves config bytes and omits the green banner even when
+- [x] Failed/pending standalone setup preserves config bytes and omits the green banner even when
       historical config says configured; only this invocation's current success persists that state.
-- [ ] Doctor spawns exactly one plugin observation and cannot combine PASS/current with query-failed,
+- [x] Doctor spawns exactly one plugin observation and cannot combine PASS/current with query-failed,
       unhealthy project context, route collision/shadowing, or missing delivery.
-- [ ] Real PATH advisory yields one ANSI-free JSON object and consistent human/trailer/exit; timeout,
+- [x] Real PATH advisory yields one ANSI-free JSON object and consistent human/trailer/exit; timeout,
       overflow, malformed/duplicate JSON, and nonzero exit fail consistently.
 
 **Validation:**
@@ -794,6 +794,74 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
   candidate execution read-only and secretless, pass one trusted candidate-inventory digest through
   dogfood/publication/channel advancement, and prevent write-capable jobs from executing candidate code.
   The advisory audit passed 258 focused tests with 0 failures and made no profile changes.
+
+### 2026-07-23T01:55:00Z — Group E execution review
+
+- **Context:** Group E (lifecycle-truth-integration) execution review, PR #2630 (`wish/dogfood-E` → dev)
+- **Branch commits:** fc96d3ee (handoff doc), f660d902 (doctor single observation), 51374f2c (setup
+  delivery gate + typed outcome), c73850cb (post-activation route fix + real-PTY flow), ed75b432
+  (uninstall-marker retirement), 6878189 (review LOW fixes: dotted-key route detection, typed
+  context-state PTY assertion)
+- **Reviewer:** independent adversarial execution reviewer (not the author); verdict **SHIP** —
+  CRITICAL none; HIGH none; MEDIUM two (both confirmed intended: doctor `deliveryComplete` now
+  requires a matching authenticated record per the authority matrix, so pre-record installs report
+  `delivery-incomplete` until one `genie update`; `project-trust-required` warns for never-trusted
+  projects per "never claim health for an untrusted project"); LOW three (two fixed in 6878189, one
+  noted: collision-after-activation throw is pre-existing polish debt)
+- **Reviewer validation (self-run):** 277/0 across the seven touched suites; 194/0 adjacent
+  executor/project-mcp/activation/host-observation suites; typecheck and lint exit 0; A/B/D contract
+  files byte-identical to origin/dev (empty diffstat)
+- **Orchestrator validation (own runs):** full `bun test` 2528 tests with the sole failure being the
+  pre-existing Linux-only `ss`-based ui-bridge socket test (green in CI); CI condition (codex stripped
+  from PATH) 277/0 including the real-PTY flow; `bun run smoke:codex` exit 0; PR CI rollup all
+  SUCCESS, merge state CLEAN
+- **Defect found by the new PTY flow and fixed in-wave:** setup's post-activation reconcile used the
+  pre-Group-A synthetic usable-plugin probe whose documented behavior removed the project fallback,
+  leaving a repository with NO Codex route after successful activation (Decision 1 violation); the
+  post-activation probe now declares route-unusability and reconciles the stable absolute
+  `GENIE_HOME/bin/genie` facade route exactly as trusted init writes it (Decision 2)
+- **Carry-forwards resolved:** A's deferred typed config-layer states shipped as the route-layer
+  classifier (`route-collision`, `route-shadowed`, `global-route-same-key`, `untrusted-config`,
+  `project-trust-required`) with doctor JSON riders; D's `uninstallInstallVersionMarker` retired with
+  documented digest-window rationale and both legacy layouts pinned through the real digest-verified
+  batch path; A's live-QA item (AC3 `codex mcp get genie --json`) remains reserved for the operator's
+  post-merge ritual
+- **Verdict:** **SHIP** — Group E awaits operator merge of PR #2630; durable wish status unchanged
+  until merge
+
+### 2026-07-23T05:30:00Z — Ledger maintenance: waves 1+2 execution evidence + live-QA follow-through
+
+- **Context:** the H3 SessionStart line surfaced ledger drift (status still APPROVED, 5/67 criteria,
+  waves 1+2 evidence never recorded here). This block backfills the durable record; no code changed.
+- **Status:** APPROVED → **IN_PROGRESS** (execution began 2026-07-22; upstream
+  `codex-plugin-update-handoff` code merged to dev, its WISH→SHIPPED remains gated on the operator's
+  homolog ritual, so the dependency-derived `blocked` flag persists by design).
+- **Waves 1+2 (merged to dev 2026-07-22, per-group execution review SHIP, validations reproduced by
+  the invoking orchestrator before merge):**
+  - Group B host-observation-attestation — PR #2625, 165/0 including the live pinned app-server
+    black-box proof; B SHIP preceded any Group A route change (Decision 3 honored).
+  - Group C managed-assets-convergence — PR #2626, 403/0; byte-identical preservation of
+    modified/unknown/symlinked/personal files; R3 intact.
+  - Group A project-route-context — PR #2629, 94/0; empty-board masquerade closed; plugin Codex MCP
+    route removed; marker-owned project route authoritative.
+  - Group D immutable-delivery-repair — PR #2628, 397/0; one-shot pinned repair + `.install-version`
+    retirement module.
+- **Wave 3 (Group E):** PR #2630 SHIP evidence recorded in the 2026-07-23T01:55Z block above; the
+  operator merge that block awaited landed as dev commit `4be6917f` (2026-07-23T02:22Z), which is
+  the merge the Group-E criterion ticks rest on.
+- **Live-QA follow-through (operator dogfood on two hosts, seven defects found and fixed same-day,
+  all merged to dev):** #2631 journal-quarantine permit consumption; #2632 `$HOME`
+  trusted-executable false positive + dead-end already-current recovery + codex-only recovery text
+  on a claude failure; #2633 post-A manifest false-warns in doctor; #2634 absent-N delivery-record
+  publication (fresh host); #2636 stale-record republication when a verified delivery lands on a
+  current generation.
+- **Open follow-up (deferred by #2633, previously tracked only in that PR body):** the route
+  probe's `usable`/`activeManifestError` semantics still encode the pre-A manifest expectation;
+  retiring those pre-A plugin-route arms wholesale needs its own reviewed pass (naively flipping
+  `usable` would resurrect route-conflict/fallback-removal behavior). Queued behind Group F.
+- **Checkbox policy applied:** ticked only criteria owned by merged groups with CI-reproduced or
+  PTY-flow evidence. Deliberately NOT ticked: the two live `codex mcp get genie --json` proofs (the
+  operator's AC3 ritual — output never captured), Group F/G criteria, and all post-merge QA rows.
 
 ---
 

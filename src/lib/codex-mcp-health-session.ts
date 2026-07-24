@@ -11,14 +11,30 @@
  * bounds the whole session.
  *
  * The server opens `.genie/genie.db` READ-ONLY and only writes to stdout, so the
- * probe never mutates disk. Callers still hand it an isolated throwaway `cwd` so
- * a missing db degrades to an empty board (never creating -wal/-shm siblings in
- * real home/state trees). runtime-integrations proves the zero-mutation
- * guarantee with a digest-around-session test.
+ * probe never mutates disk. Callers still hand it an isolated throwaway `cwd`
+ * that is not a project: the fail-closed server returns a typed "no project
+ * context" wish_status there rather than fabricating an empty board (never
+ * creating -wal/-shm siblings in real home/state trees), and this probe treats
+ * that typed refusal as read-only-healthy. runtime-integrations proves the
+ * zero-mutation guarantee with a digest-around-session test.
  */
 
 export const MCP_HEALTH_PROTOCOL_VERSION = '2024-11-05';
 export const DEFAULT_HEALTH_SESSION_TIMEOUT_MS = 10_000;
+
+/**
+ * The fail-closed project-context error kinds the read-only `genie mcp` server
+ * returns (structuredContent `{ error, detail }`, `isError: true`) instead of a
+ * fabricated empty board when the cwd is not a resolvable project. Source of
+ * truth: `ProjectContextKind` in `src/lib/v5/genie-db.ts`. The health probe runs
+ * in a throwaway non-project cwd, so one of these is the EXPECTED wish_status
+ * outcome and proves the read-only path works — it is not a failure.
+ */
+const NO_PROJECT_CONTEXT_ERROR_KINDS = new Set<string>([
+  'project-context-unavailable',
+  'project-database-unavailable',
+  'unsupported-project-layout',
+]);
 
 /** The five read-only Genie tools every healthy plugin launcher must expose. */
 export const REQUIRED_GENIE_MCP_TOOLS = [
@@ -138,6 +154,22 @@ function replyError(reply: JsonRpcReply | undefined, label: string): string | nu
   return null;
 }
 
+/**
+ * A read-only wish_status is healthy when it either returns a non-error board
+ * (`isError === false`) OR a well-formed fail-closed "no project context" typed
+ * error. The health probe deliberately runs in a throwaway non-project cwd where
+ * the latter is expected: the server correctly refuses to serve an empty board
+ * without mutating disk. Any other `isError: true` (an unrecognized/real tool
+ * failure) is still rejected.
+ */
+function wishStatusIsReadOnlyHealthy(result: { isError?: unknown; structuredContent?: unknown }): boolean {
+  if (result.isError === false) return true;
+  if (result.isError !== true) return false;
+  const structured = result.structuredContent;
+  const kind = structured && typeof structured === 'object' ? (structured as { error?: unknown }).error : undefined;
+  return typeof kind === 'string' && NO_PROJECT_CONTEXT_ERROR_KINDS.has(kind);
+}
+
 function listedToolNames(reply: JsonRpcReply): string[] {
   const result = reply.result as { tools?: unknown };
   if (!Array.isArray(result.tools)) return [];
@@ -199,8 +231,8 @@ export function runBoundedCodexMcpSession(options: BoundedCodexMcpSessionOptions
   const callReply = byId.get(3);
   const callError = replyError(callReply, 'genie_wish_status');
   if (callError !== null) return { ok: false, detail: callError };
-  const callResult = (callReply as JsonRpcReply).result as { isError?: unknown };
-  if (callResult.isError !== false) {
+  const callResult = (callReply as JsonRpcReply).result as { isError?: unknown; structuredContent?: unknown };
+  if (!wishStatusIsReadOnlyHealthy(callResult)) {
     return { ok: false, detail: 'read-only genie_wish_status did not return a non-error result' };
   }
 

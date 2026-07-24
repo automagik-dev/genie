@@ -28,16 +28,15 @@ Wish: `repair-genie-codex-hooks-and-dedupe-skills`.
   `genie:*` skills instead of both bare (`wish`) and qualified (`genie:wish`)
   duplicates. Bare `$<skill>` now resolves only a personal copy the user
   installed themselves.
-- **One health proof gates every mutation.** Install, full update, and setup
-  converge the target plugin (respecting explicit disablement), take exactly
-  one post-convergence health snapshot — one enabled exact-version plugin with
-  a canonically verified payload/inventory and a bounded JSON-RPC session
-  (`initialize`, `tools/list` with all five Genie tools, read-only
-  `wish_status`) — then retire accepted fallbacks and only then run remaining
-  integrations (including role-agent install). `update --sync-only` inspects
-  rather than converges: a missing, disabled, or stale exact plugin fails
-  nonzero and leaves all trees byte-identical. A deliberately disabled plugin
-  is never silently enabled.
+- **Signed delivery and activation have separate owners.** Install/update verify
+  and publish the selected release but never advance the Codex cache, change its
+  enabled state, reconcile its project route, or write roles. Authenticated
+  `setup --codex` activates the delivered generation, then takes exactly one
+  health proof — one enabled exact-version plugin with a canonically verified
+  payload/inventory and a bounded JSON-RPC session (`initialize`, `tools/list`
+  with all five Genie tools, read-only `wish_status`) — before retiring accepted
+  fallbacks and converging roles. A deliberately disabled exact generation stays
+  disabled, skips fallback retirement, and still repairs managed roles.
 
 #### Added — durable fallback retirement, quarantine, and recovery
 
@@ -75,29 +74,20 @@ Wish: `repair-genie-codex-hooks-and-dedupe-skills`.
 
 - `.codex/skills/.curated` is a legacy uninstall-only lane: `genie uninstall`
   still collects it, but no install/update/setup/sync path recreates it.
-- Restart Codex after any Codex convergence so it drops stale bare providers.
+- Restart Codex after successful authenticated setup so it drops stale bare providers.
 - Claude and Hermes skill synchronization, Codex hooks (H3/H4/H6), the MCP
   launcher, role-agent TOMLs, and the PR #2559 dangling-symlink preservation are
   unchanged and regression-gated.
 
-#### Known non-blocking red gate
-
-- `bun run check` exits 1 solely because of 6 pre-existing env-dependent unit
-  failures: `src/lib/codex-project-mcp.test.ts` (4) and
-  `src/hooks/__tests__/codex-manifest.test.ts` (2). They build their own
-  fixtures with an unpopulated `GENIE_HOME`, so `session-context.cjs` emits `{}`
-  and they fail identically with or without an isolated env; they are untouched
-  by this wish (`git log ed6b4249..HEAD` is empty on both files). The same
-  criteria are proven black-box against the real installed plugin in
-  `scripts/codex-plugin-only-smoke.ts` (project-MCP reconcile via `genie init`,
-  installed-manifest MCP shape, JSON-RPC MCP usability, and the bounded
-  SessionStart hook). Do not mistake this red for a regression; CI is not green.
-
 #### Before release promotion
 
 - The plugin-only smoke installs the built CLI plus the source `plugins/` tree
-  (matching release contents by proxy). Verify the actual packaged tarball
-  payload — not only the source checkout — before promoting a release.
+  (matching release contents by proxy). Because a source-built version has no
+  public signature, an unshipped fixture driver supplies only deterministic
+  delivery-signature verification and real-PTY setup entry; real Codex cache,
+  plugin, MCP, fallback-retirement, and preservation behavior remains externally
+  observed. Verify the actual packaged tarball payload — not only the source
+  checkout — before promoting a release.
 - Run the manual dogfood checklist (README, "Manual dogfood checklist") once
   from a restarted Codex session to confirm one plugin version, working
   MCP/hooks, and only owner-qualified `genie:*` skills.

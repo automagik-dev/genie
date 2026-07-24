@@ -75,6 +75,11 @@ import {
 import { contractPath, getGenieDir } from '../lib/genie-config.js';
 import { resolveClaudeDir, resolveCodexDir, resolveGenieHome, resolveHermesHome } from '../lib/genie-home.js';
 import {
+  type HeldOrderedLifecycleLeases,
+  acquireOrderedLifecycleLeases,
+  releaseOrderedLifecycleLeases,
+} from '../lib/ordered-lifecycle-leases.js';
+import {
   inspectCodexAgentOwnership,
   inspectRuntimeIntegrationEvidence,
   recoverCodexAgentTransactions,
@@ -3465,6 +3470,26 @@ function codexLifecycleBusyTrailer(holderKind: string | null): string {
   });
 }
 
+function acquireUninstallLifecycleLeasesOrProject(
+  genieDir: string,
+  deps: UninstallDeps,
+): HeldOrderedLifecycleLeases | null {
+  const acquired = acquireOrderedLifecycleLeases(
+    () => acquireLifecycleLease(genieDir),
+    () => (deps.acquireCodexLifecycleLease ?? acquireCodexLifecycleLease)('uninstall'),
+  );
+  if (acquired.ok) return acquired;
+  if (acquired.busy === 'agent-sync') {
+    throw new Error(`Another Genie lifecycle command is active: ${acquired.detail}`);
+  }
+  process.stdout.write(`${codexLifecycleBusyTrailer(acquired.refusal.holderKind)}\n`);
+  console.error(
+    `\x1b[33mcodex-lifecycle-busy:\x1b[0m ${acquired.refusal.detail}. No files were removed; retry once it completes.`,
+  );
+  process.exitCode = 2;
+  return null;
+}
+
 export async function uninstallCommand(
   options: { removeMarketplace?: boolean } = {},
   deps: UninstallDeps = {},
@@ -3585,30 +3610,13 @@ export async function uninstallCommand(
   }
 
   // Existing agent-sync safeguard lock (unchanged). Acquired after confirmation.
-  const lifecycleLease = acquireLifecycleLease(genieDir);
-  if ('skipped' in lifecycleLease)
-    throw new Error(`Another Genie lifecycle command is active: ${lifecycleLease.skipped}`);
+  // Ratified acquisition point: agent-sync first, then the exclusive Codex
+  // lifecycle lease, after destructive confirmation but before the first removal.
+  const acquired = acquireUninstallLifecycleLeasesOrProject(genieDir, deps);
+  if (acquired === null) return;
   try {
-    // Ratified acquisition point: the exclusive Codex lifecycle lease, after
-    // destructive confirmation but before the first removal, so uninstall
-    // serialises against setup/update/rollback/install on the shared GENIE_HOME.
-    const acquire = deps.acquireCodexLifecycleLease ?? acquireCodexLifecycleLease;
-    const codexLease = acquire('uninstall');
-    if (!codexLease.ok) {
-      // Loser: zero mutation. Emit the machine-readable trailer and exit 2.
-      process.stdout.write(`${codexLifecycleBusyTrailer(codexLease.holderKind)}\n`);
-      console.error(
-        `\x1b[33mcodex-lifecycle-busy:\x1b[0m ${codexLease.detail}. No files were removed; retry once it completes.`,
-      );
-      process.exitCode = 2;
-      return;
-    }
-    try {
-      executeConfirmedUninstall(genieDir, options.removeMarketplace ?? false);
-    } finally {
-      codexLease.release();
-    }
+    executeConfirmedUninstall(genieDir, options.removeMarketplace ?? false);
   } finally {
-    lifecycleLease.release();
+    releaseOrderedLifecycleLeases(acquired.codexLease, acquired.agentSyncLease);
   }
 }
