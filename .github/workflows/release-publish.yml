@@ -187,7 +187,6 @@ jobs:
           VERSION: ${{ inputs.version }}
           CHANNEL: ${{ inputs.channel }}
           SOURCE_SHA: ${{ inputs.source_sha }}
-          TRIGGER_SHA: ${{ inputs.trigger_sha }}
           SOURCE_BRANCH: ${{ inputs.source_branch }}
           SOURCE_CI_RUN_ID: ${{ inputs.source_ci_run_id }}
           CONTROL_SHA: ${{ github.sha }}
