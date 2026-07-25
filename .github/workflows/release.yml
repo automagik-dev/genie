@@ -189,7 +189,7 @@ jobs:
       source_ci_run_id: ${{ inputs.source_ci_run_id }}
       draft: false
     # Without inherit, the called workflow's secrets context is empty and the
-    # manifests job sees RELEASE_MANIFESTS_TOKEN as unset even though the
-    # release-manifests environment holds it (proven on the v5.260720.10
-    # stable run). Local trusted workflow — inherit is safe.
+    # manifests job sees RELEASE_MANIFESTS_APP_ID/_PRIVATE_KEY as unset even
+    # though the release-manifests environment holds them (proven on the
+    # v5.260720.10 stable run). Local trusted workflow — inherit is safe.
     secrets: inherit

@@ -480,11 +480,18 @@ describe('Group E release and documentation contracts', () => {
     expect(workflow).not.toContain('/immutable-releases');
     expect(workflow).not.toContain('--clobber');
     expect(workflow).toContain('name: release-manifests');
-    // Manifest push authenticates with a fine-grained PAT, not a deploy key
-    // (deploy keys are disabled org-wide; the ssh-key model silently fell back
-    // to the bot token and 403'd on protected main). The stale deploy-key
-    // secret must be gone.
-    expect(workflow).toContain('token: ${{ secrets.RELEASE_MANIFESTS_TOKEN }}');
+    // Manifest push authenticates as a GitHub App — not a deploy key (disabled
+    // org-wide; the ssh-key model silently fell back to the bot token and 403'd
+    // on protected main) and not a fine-grained PAT (which still cannot push:
+    // the `main` ruleset carries a pull_request rule with an EMPTY bypass_actors
+    // list, so every direct push is rejected GH013 regardless of token scope).
+    // Only an App identity can hold that ruleset bypass, and its token is minted
+    // per run rather than stored. Both stale credentials must be gone.
+    expect(workflow).toContain('uses: actions/create-github-app-token@');
+    expect(workflow).toContain('app-id: ${{ secrets.RELEASE_MANIFESTS_APP_ID }}');
+    expect(workflow).toContain('private-key: ${{ secrets.RELEASE_MANIFESTS_APP_PRIVATE_KEY }}');
+    expect(workflow).toContain('token: ${{ steps.manifest_app_token.outputs.token }}');
+    expect(workflow).not.toContain('token: ${{ secrets.RELEASE_MANIFESTS_TOKEN }}');
     expect(workflow).not.toContain('RELEASE_MANIFESTS_DEPLOY_KEY: ${{');
     expect(workflow).not.toContain('ssh-key: ${{ secrets.RELEASE_MANIFESTS_DEPLOY_KEY }}');
     expect(workflow).toContain('[release-manifest]');
