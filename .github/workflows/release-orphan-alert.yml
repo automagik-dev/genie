@@ -21,12 +21,18 @@ name: Release Orphan Alert
 # surface; this workflow makes it automatic.
 
 on:
-  # Schedule disabled while the false-positive backlog is being
-  # cleaned up. Re-enable after the cron logic is verified against
-  # a fresh sample of tags. Until then, this workflow only fires
-  # via manual workflow_dispatch.
-  # schedule:
-  #   - cron: '*/30 * * * *'
+  # Re-enabled 2026-07-25. The re-enable condition — "verified against
+  # a fresh sample of tags" — was met by manual dispatch run 30178531358
+  # against the debris of the 2026-07-20..25 release outage: it detected
+  # exactly the 8 genuine orphans (v5.260725.1-.8, tags pushed with no
+  # Release) and filed issues #2651-#2658, with zero false positives from
+  # the 1000+ historical v1.0.x tags the 24h upper bound excludes.
+  #
+  # That outage is precisely the scenario this alarm exists for: five days
+  # of releases died between tag-push and release-publish and nothing
+  # surfaced it automatically.
+  schedule:
+    - cron: '*/30 * * * *'
   workflow_dispatch:
 
 permissions:

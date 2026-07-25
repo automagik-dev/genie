@@ -324,7 +324,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Upload manifest-derived native dogfood matrix
-        uses: actions/upload-artifact@b7c4aadc2c921a8ff42c1c6b0e8950fc060e7c7e # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: codex-dogfood-candidate-matrix
           path: candidate-dogfood-matrix.json
@@ -332,7 +332,7 @@ jobs:
           retention-days: 30
 
       - name: Upload exact verified previous-stable inputs
-        uses: actions/upload-artifact@b7c4aadc2c921a8ff42c1c6b0e8950fc060e7c7e # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: codex-dogfood-previous-release
           path: previous-release
@@ -340,7 +340,7 @@ jobs:
           retention-days: 30
 
       - name: Upload exact candidate manifest bytes
-        uses: actions/upload-artifact@b7c4aadc2c921a8ff42c1c6b0e8950fc060e7c7e # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: delivery-candidate-manifests
           path: candidate-manifests/.well-known/*.json
@@ -348,7 +348,7 @@ jobs:
           retention-days: 1
 
       - name: Upload canonical descriptor subjects
-        uses: actions/upload-artifact@b7c4aadc2c921a8ff42c1c6b0e8950fc060e7c7e # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: delivery-descriptors
           path: descriptors/*.delivery.json
@@ -393,7 +393,7 @@ jobs:
           cp "$BUNDLE_PATH" "${DESCRIPTOR}.sigstore.json"
 
       - name: Upload persisted endorsement
-        uses: actions/upload-artifact@b7c4aadc2c921a8ff42c1c6b0e8950fc060e7c7e # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: delivery-endorsement-${{ matrix.channel }}-${{ matrix.platform }}
           path: descriptors/*.sigstore.json
@@ -607,7 +607,7 @@ jobs:
             --inputs-root dogfood-entry
 
       - name: Upload exact per-entry evidence and referenced inputs
-        uses: actions/upload-artifact@b7c4aadc2c921a8ff42c1c6b0e8950fc060e7c7e # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: codex-dogfood-evidence-${{ matrix.platform }}
           path: dogfood-entry
@@ -686,7 +686,7 @@ jobs:
             --output aggregate/codex-dogfood-completeness.json
 
       - name: Upload complete Codex dogfood evidence
-        uses: actions/upload-artifact@b7c4aadc2c921a8ff42c1c6b0e8950fc060e7c7e # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: codex-dogfood-completeness
           path: aggregate/codex-dogfood-completeness.json
@@ -908,7 +908,7 @@ jobs:
             ' security-gate/verified/*.json > security-gate/stable-release-security-gate.json
 
       - name: Upload independent security evidence
-        uses: actions/upload-artifact@b7c4aadc2c921a8ff42c1c6b0e8950fc060e7c7e # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: stable-release-security-gate
           path: security-gate/stable-release-security-gate.json
