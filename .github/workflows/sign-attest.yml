@@ -51,6 +51,11 @@ on:
         description: 'Authorizing source CI run ID'
         required: true
         type: string
+      trigger_sha:
+        description: 'Head SHA of the admitting CI run (automated channels only; source_sha is the built commit)'
+        required: false
+        type: string
+        default: ''
     outputs:
       version:
         description: 'Resolved version (parsed from upstream tarball filenames)'
@@ -332,6 +337,7 @@ jobs:
           SOURCE_SHA: ${{ inputs.source_sha }}
           SOURCE_BRANCH: ${{ inputs.source_branch }}
           SOURCE_CI_RUN_ID: ${{ inputs.source_ci_run_id }}
+          TRIGGER_SHA: ${{ inputs.trigger_sha }}
           CONTROL_SHA: ${{ github.sha }}
           RUN_ID: ${{ github.run_id }}
           RUN_ATTEMPT: ${{ github.run_attempt }}

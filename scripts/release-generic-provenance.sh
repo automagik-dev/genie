@@ -70,10 +70,22 @@ verify_dispatch_parameters() {
 
 verify_automated_event() {
   local input="$1" require_exact="$2"
-  local source_sha="${SOURCE_SHA:-}" source_branch="${SOURCE_BRANCH:-}" source_ci_run_id="${SOURCE_CI_RUN_ID:-}"
+  local source_branch="${SOURCE_BRANCH:-}" source_ci_run_id="${SOURCE_CI_RUN_ID:-}"
+  # The provenance embeds the workflow_run that TRIGGERED this release — CI on
+  # dev/homolog — whose head_sha is the commit CI ran on. That is NOT
+  # SOURCE_SHA: auto-version commits the version bump afterwards and the
+  # tarballs are built from that bump commit, so the two differ by exactly one
+  # commit on every automated release. Binding head_sha to SOURCE_SHA is
+  # therefore unsatisfiable (it broke every dev release from 2026-07-25); bind
+  # it to the trigger commit the orchestrator actually observed instead. The
+  # run id still pins the admitting run exactly.
+  local trigger_sha="${TRIGGER_SHA:-}"
+  if [[ "$require_exact" == true ]]; then
+    [[ "$trigger_sha" =~ ^[0-9a-f]{40}$ ]] || exit 2
+  fi
   jq -e \
     --arg repository "$RELEASE_REPOSITORY" \
-    --arg source_sha "$source_sha" \
+    --arg trigger_sha "$trigger_sha" \
     --arg source_branch "$source_branch" \
     --arg source_ci_run_id "$source_ci_run_id" \
     --argjson require_exact "$require_exact" \
@@ -87,7 +99,7 @@ verify_automated_event() {
       ($run.head_branch | test("^(dev|homolog)$")) and
       $run.repository.full_name == $repository and
       (if $require_exact then
-         $run.head_sha == $source_sha and
+         $run.head_sha == $trigger_sha and
          $run.head_branch == $source_branch and
          ($run.id | tostring) == $source_ci_run_id
        else true end)

@@ -440,6 +440,10 @@ jobs:
       source_sha: ${{ needs.auto-version.outputs.source_sha }}
       source_branch: ${{ needs.auto-version.outputs.source_branch }}
       source_ci_run_id: ${{ needs.auto-version.outputs.source_ci_run_id }}
+      # The CI run that admitted this release. Distinct from source_sha: this
+      # is the commit CI ran on, while source_sha is the [auto-version] bump
+      # commit built one later. Provenance embeds the former.
+      trigger_sha: ${{ github.event.workflow_run.head_sha }}
     # Propagate secrets through the call chain so release-publish.yml's
     # manifests job can read the RELEASE_MANIFESTS App credentials (see
     # release.yml publish).
