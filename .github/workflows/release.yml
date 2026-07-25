@@ -32,6 +32,11 @@ on:
           - main
           - homolog
           - dev
+      trigger_sha:
+        description: 'Head SHA of the admitting CI run (automated channels only; source_sha is the built commit)'
+        required: false
+        type: string
+        default: ''
       source_ci_run_id:
         description: 'Authorizing CI run ID (exact promotion SHA, or parent of a deterministic dev version child)'
         required: true
@@ -54,6 +59,11 @@ on:
         description: 'Branch on the successful source CI run'
         required: true
         type: string
+      trigger_sha:
+        description: 'Head SHA of the admitting CI run (automated channels only; source_sha is the built commit)'
+        required: false
+        type: string
+        default: ''
       source_ci_run_id:
         description: 'Authorizing CI run ID'
         required: true
@@ -172,6 +182,7 @@ jobs:
       source_sha: ${{ inputs.source_sha }}
       source_branch: ${{ inputs.source_branch }}
       source_ci_run_id: ${{ inputs.source_ci_run_id }}
+      trigger_sha: ${{ inputs.trigger_sha }}
 
   publish:
     needs: sign-attest
@@ -187,6 +198,7 @@ jobs:
       source_sha: ${{ inputs.source_sha }}
       source_branch: ${{ inputs.source_branch }}
       source_ci_run_id: ${{ inputs.source_ci_run_id }}
+      trigger_sha: ${{ inputs.trigger_sha }}
       draft: false
     # Without inherit, the called workflow's secrets context is empty and the
     # manifests job sees RELEASE_MANIFESTS_APP_ID/_PRIVATE_KEY as unset even

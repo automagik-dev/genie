@@ -52,6 +52,11 @@ on:
         description: 'Authorizing source CI run ID'
         required: true
         type: string
+      trigger_sha:
+        description: 'Head SHA of the admitting CI run (automated channels only; source_sha is the built commit)'
+        required: false
+        type: string
+        default: ''
       draft:
         description: 'Create as draft (require manual promotion)?'
         required: false
@@ -182,6 +187,7 @@ jobs:
           VERSION: ${{ inputs.version }}
           CHANNEL: ${{ inputs.channel }}
           SOURCE_SHA: ${{ inputs.source_sha }}
+          TRIGGER_SHA: ${{ inputs.trigger_sha }}
           SOURCE_BRANCH: ${{ inputs.source_branch }}
           SOURCE_CI_RUN_ID: ${{ inputs.source_ci_run_id }}
           CONTROL_SHA: ${{ github.sha }}
@@ -760,6 +766,7 @@ jobs:
           VERSION: ${{ inputs.version }}
           CHANNEL: ${{ inputs.channel }}
           SOURCE_SHA: ${{ inputs.source_sha }}
+          TRIGGER_SHA: ${{ inputs.trigger_sha }}
           SOURCE_BRANCH: ${{ inputs.source_branch }}
           SOURCE_CI_RUN_ID: ${{ inputs.source_ci_run_id }}
           CONTROL_SHA: ${{ github.sha }}
@@ -817,17 +824,28 @@ jobs:
             ARTIFACT_SHA256="$artifact_sha256" \
               bash scripts/release-native-predicate.sh verify-exact-subject "$native_result" \
               > "$native_identity"
+            # The generic SLSA provenance carries the TRIGGERING workflow_run for
+            # automated channels — CI's head commit, one before the
+            # [auto-version] bump the tarballs are built from. Only the stable
+            # dispatch records SOURCE_SHA itself. The native predicate always
+            # records SOURCE_SHA, so it stays compared against it below.
+            if [[ "$CHANNEL" == "stable" ]]; then
+              generic_expected_sha="$SOURCE_SHA"
+            else
+              generic_expected_sha="$TRIGGER_SHA"
+            fi
             jq -cn \
               --arg artifact "$artifact" \
               --slurpfile generic "$generic_identity" \
               --slurpfile native "$native_identity" \
               --arg sourceSha "$SOURCE_SHA" \
+              --arg genericSourceSha "$generic_expected_sha" \
               --arg sourceBranch "$SOURCE_BRANCH" \
               --arg sourceCiRunId "$SOURCE_CI_RUN_ID" \
               --arg controlSha "$CONTROL_SHA" \
               '
                 ($generic[0] | [
-                  .sourceSha == $sourceSha,
+                  .sourceSha == $genericSourceSha,
                   .sourceBranch == $sourceBranch,
                   .sourceCiRunId == $sourceCiRunId,
                   .controlSha == $controlSha
