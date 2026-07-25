@@ -337,7 +337,6 @@ jobs:
           SOURCE_SHA: ${{ inputs.source_sha }}
           SOURCE_BRANCH: ${{ inputs.source_branch }}
           SOURCE_CI_RUN_ID: ${{ inputs.source_ci_run_id }}
-          TRIGGER_SHA: ${{ inputs.trigger_sha }}
           CONTROL_SHA: ${{ github.sha }}
           RUN_ID: ${{ github.run_id }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
@@ -380,6 +379,10 @@ jobs:
           SOURCE_SHA:       ${{ inputs.source_sha }}
           SOURCE_BRANCH:    ${{ inputs.source_branch }}
           SOURCE_CI_RUN_ID: ${{ inputs.source_ci_run_id }}
+          # Required by release-generic-provenance.sh verify-exact on the
+          # automated channels: it binds the provenance's triggering
+          # workflow_run head to this value and exits 2 when it is absent.
+          TRIGGER_SHA:      ${{ inputs.trigger_sha }}
           CONTROL_SHA:      ${{ github.sha }}
         run: |
           set -euo pipefail

@@ -481,8 +481,32 @@ describe('Group E release and documentation contracts', () => {
     expect(release).toContain('trigger_sha:');
     expect(release).toContain('trigger_sha: ${{ inputs.trigger_sha }}');
     expect(signAttest).toContain('trigger_sha:');
-    expect(signAttest).toContain('TRIGGER_SHA: ${{ inputs.trigger_sha }}');
-    expect(publish).toContain('TRIGGER_SHA: ${{ inputs.trigger_sha }}');
+
+    // Substring checks are NOT enough: the first attempt at this fix put
+    // TRIGGER_SHA in the native-predicate step, whose script never reads it,
+    // while the step that actually runs verify-exact had none — a whole-file
+    // toContain() passed anyway and the next release died with the same silent
+    // exit 2. Assert the value reaches the env of the step that CONSUMES it.
+    const stepEnvFor = (workflow: string, needle: string): string => {
+      const lines = workflow.split('\n');
+      let start = -1;
+      for (let i = 0; i < lines.length; i += 1) {
+        if (/^\s+- name:/.test(lines[i])) start = i;
+        if (lines[i].includes(needle) && start >= 0) {
+          let end = start + 1;
+          while (end < lines.length && !/^\s+- name:/.test(lines[end])) end += 1;
+          return lines.slice(start, end).join('\n');
+        }
+      }
+      throw new Error(`no step found containing ${needle}`);
+    };
+
+    const verifyStep = stepEnvFor(signAttest, 'release-generic-provenance.sh verify-exact');
+    expect(verifyStep).toContain('TRIGGER_SHA:');
+    expect(verifyStep).toContain('${{ inputs.trigger_sha }}');
+
+    const gateStep = stepEnvFor(publish, 'generic_expected_sha');
+    expect(gateStep).toContain('TRIGGER_SHA:');
 
     // The verifier compares the trigger commit, and refuses to run exact
     // verification without a well-formed one.

@@ -180,8 +180,14 @@ jobs:
         run: |
           PREFIX="${{ steps.context.outputs.prefix }}"
           TODAY=$(date -u +%y%m%d)
-          EXISTING=$(git tag --list "v${PREFIX}.${TODAY}.*" | wc -l)
-          BUILD_NUMBER=$((EXISTING + 1))
+          # Highest existing build number + 1, never the count: a gap (a tag
+          # deleted, or a build number burned by a failed release) would make
+          # count+1 collide with an existing tag, and the push failure below is
+          # reported as a benign race, silently dropping the release.
+          HIGHEST=$(git tag --list "v${PREFIX}.${TODAY}.*" \
+            | sed -n "s|^v${PREFIX}\.${TODAY}\.\([0-9][0-9]*\)$|\1|p" \
+            | sort -n | tail -1)
+          BUILD_NUMBER=$(( ${HIGHEST:-0} + 1 ))
           VERSION="${PREFIX}.${TODAY}.${BUILD_NUMBER}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "build_number=${BUILD_NUMBER}" >> "$GITHUB_OUTPUT"
@@ -313,7 +319,14 @@ jobs:
           # in CI logs and detector-greppable. The next merge's run catches
           # up.
           SHORT_SHA="${TRIGGER_SHA:0:7}"
-          if ! git push --atomic origin "HEAD:refs/heads/dev" "refs/tags/v${VERSION}"; then
+          if ! push_output=$(git push --atomic origin "HEAD:refs/heads/dev" "refs/tags/v${VERSION}" 2>&1); then
+            printf '%s\n' "$push_output" >&2
+            # A tag collision is a version-derivation defect, not a race: exiting
+            # 0 here would drop the release with a green run and no diagnosis.
+            if printf '%s' "$push_output" | grep -qiE 'already exists|cannot lock ref|tag .* exists'; then
+              echo "::error ::release-version.tag-collision v${VERSION} already exists; version derivation picked a used build number"
+              exit 1
+            fi
             echo "::notice ::release-race.next-tag-pin-skipped.detected dev advanced past triggering SHA ${SHORT_SHA}; tag push skipped — next merge will republish"
             exit 0
           fi
