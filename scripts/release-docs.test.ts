@@ -463,6 +463,39 @@ describe('Group E release and documentation contracts', () => {
     expect(read('src/genie.ts')).toContain(".command('__install-promote', { hidden: true })");
   });
 
+  test('the admitting CI head is plumbed to provenance verification end to end', () => {
+    // The generic SLSA provenance embeds the workflow_run that TRIGGERED the
+    // release, whose head is the commit CI ran on — one BEFORE the
+    // [auto-version] bump the tarballs are built from. Verification must bind
+    // that field to the trigger commit, never to source_sha (they can never be
+    // equal, which silently broke every dev release on 2026-07-25). If any link
+    // in this chain drops trigger_sha, exact verification either mis-binds or
+    // hard-fails on an empty value, so the whole wiring is pinned here.
+    const version = read('.github/workflows/version.yml');
+    const release = read('.github/workflows/release.yml');
+    const signAttest = read('.github/workflows/sign-attest.yml');
+    const publish = read('.github/workflows/release-publish.yml');
+    const verifier = read('scripts/release-generic-provenance.sh');
+
+    expect(version).toContain('trigger_sha: ${{ github.event.workflow_run.head_sha }}');
+    expect(release).toContain('trigger_sha:');
+    expect(release).toContain('trigger_sha: ${{ inputs.trigger_sha }}');
+    expect(signAttest).toContain('trigger_sha:');
+    expect(signAttest).toContain('TRIGGER_SHA: ${{ inputs.trigger_sha }}');
+    expect(publish).toContain('TRIGGER_SHA: ${{ inputs.trigger_sha }}');
+
+    // The verifier compares the trigger commit, and refuses to run exact
+    // verification without a well-formed one.
+    expect(verifier).toContain('$run.head_sha == $trigger_sha');
+    expect(verifier).not.toContain('$run.head_sha == $source_sha');
+
+    // Stable records source_sha directly; automated channels cannot, so the
+    // generic descriptor is compared per channel.
+    expect(publish).toContain('generic_expected_sha="$SOURCE_SHA"');
+    expect(publish).toContain('generic_expected_sha="$TRIGGER_SHA"');
+    expect(publish).toContain('.sourceSha == $genericSourceSha');
+  });
+
   test('release create and promotion paths retain the one-time convergence caveat', () => {
     const workflow = read('.github/workflows/release-publish.yml');
     const helper = read('scripts/reconcile-release-note.sh');
