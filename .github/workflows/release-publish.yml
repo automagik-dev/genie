@@ -1029,47 +1029,82 @@ jobs:
     timeout-minutes: 10
     environment:
       # No reviewers: dev/homolog stay automatic. The environment is restricted
-      # to main and holds the sole credential (RELEASE_MANIFESTS_TOKEN) allowed
-      # to push the .well-known manifests through main branch protection.
+      # to main and holds the sole credential (the RELEASE_MANIFESTS App key)
+      # allowed to push the .well-known manifests through the main ruleset.
       name: release-manifests
     permissions:
       contents: read
     # -----------------------------------------------------------------------
-    # HUMAN SETUP (one-time) — the manifest push authenticates with a
-    # fine-grained PAT, NOT a deploy key. Deploy keys are DISABLED org-wide
-    # (repos/automagik-dev/genie/keys POST → 422 "Deploy keys are disabled"),
-    # so the old ssh-key model silently fell back to github-actions[bot]'s
-    # token, whose push to protected main 403s. That broke 4 releases.
+    # HUMAN SETUP (one-time) — the manifest push authenticates as a GitHub
+    # App, NOT a PAT and NOT a deploy key.
+    #
+    # History: deploy keys are DISABLED org-wide (repos/automagik-dev/genie/keys
+    # POST → 422 "Deploy keys are disabled"), so the ssh-key model silently fell
+    # back to github-actions[bot], whose push to protected main 403s. Replacing
+    # it with a fine-grained PAT did not help either: the `main` ruleset
+    # (id 9203218) carries a `pull_request` rule with an EMPTY bypass_actors
+    # list, so *every* direct push to main is rejected GH013 regardless of the
+    # token's contents:write scope. A ruleset bypass is required, and an App is
+    # the narrowest identity that can hold one — granting it to a RepositoryRole
+    # would hand every admin direct push to main.
     #
     # To provision (repo/org admin):
-    #   1. Create a FINE-GRAINED PAT scoped to automagik-dev/genie ONLY, with
-    #      Repository permissions → Contents: Read and write (nothing else).
-    #   2. Store it as the environment secret RELEASE_MANIFESTS_TOKEN in the
-    #      `release-manifests` GitHub environment (Settings → Environments).
-    #   3. Allow the PAT's identity through main branch protection (add it to
-    #      the bypass/allow list for "Restrict who can push to matching
-    #      branches"), or the push will 403 exactly as the deploy key did.
-    #   4. Delete the now-unused RELEASE_MANIFESTS_DEPLOY_KEY environment
-    #      secret and any orphaned deploy key.
+    #   1. Create an org-owned GitHub App (suggested name: genie-release-bot)
+    #      with Repository permissions → Contents: Read and write (nothing
+    #      else). Generate a private key.
+    #   2. Install it on automagik-dev/genie ONLY (no other repositories).
+    #   3. Store its credentials as environment secrets in the
+    #      `release-manifests` environment (Settings → Environments):
+    #      RELEASE_MANIFESTS_APP_ID and RELEASE_MANIFESTS_APP_PRIVATE_KEY.
+    #   4. Add the App as a bypass actor on the `main` ruleset:
+    #      gh api repos/automagik-dev/genie/rulesets/9203218 -X PUT \
+    #        -f 'bypass_actors[][actor_type=Integration]' \
+    #        -F 'bypass_actors[][actor_id]=<APP_ID>' \
+    #        -f 'bypass_actors[][bypass_mode]=always'
+    #      Without this the push fails GH013 exactly as the PAT did.
+    #   5. Delete the now-unused RELEASE_MANIFESTS_TOKEN and any stale
+    #      RELEASE_MANIFESTS_DEPLOY_KEY environment secret.
+    #
+    # The App token is minted per run and expires in ~1h, so no long-lived
+    # push credential to main exists anywhere.
     # (Kept in the workflow header because docs/ is a submodule; mirror this
     #  into docs/release-process.mdx when that submodule is next updated.)
     # -----------------------------------------------------------------------
     steps:
-      - name: Preflight — require the manifest push token
+      - name: Preflight — require the manifest push App credentials
         env:
-          RELEASE_MANIFESTS_TOKEN: ${{ secrets.RELEASE_MANIFESTS_TOKEN }}
+          RELEASE_MANIFESTS_APP_ID: ${{ secrets.RELEASE_MANIFESTS_APP_ID }}
+          RELEASE_MANIFESTS_APP_PRIVATE_KEY: ${{ secrets.RELEASE_MANIFESTS_APP_PRIVATE_KEY }}
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -z "${RELEASE_MANIFESTS_TOKEN}" ]]; then
-            echo "::error::RELEASE_MANIFESTS_TOKEN is not set in the 'release-manifests' environment." >&2
-            echo "::error::Without it actions/checkout silently falls back to github-actions[bot], whose push to protected main is rejected 403 (misreported below as a CAS race)." >&2
-            echo "::error::Fix: create a fine-grained PAT (contents:read+write on automagik-dev/genie only), store it as the RELEASE_MANIFESTS_TOKEN environment secret, allow it through main branch protection, then delete the stale RELEASE_MANIFESTS_DEPLOY_KEY. See this job's HUMAN SETUP header." >&2
+          missing=0
+          if [[ -z "${RELEASE_MANIFESTS_APP_ID:-}" ]]; then
+            echo "::error::RELEASE_MANIFESTS_APP_ID is not set in the 'release-manifests' environment." >&2
+            missing=1
+          fi
+          if [[ -z "${RELEASE_MANIFESTS_APP_PRIVATE_KEY:-}" ]]; then
+            echo "::error::RELEASE_MANIFESTS_APP_PRIVATE_KEY is not set in the 'release-manifests' environment." >&2
+            missing=1
+          fi
+          if [[ "${missing}" -ne 0 ]]; then
+            echo "::error::Without App credentials actions/checkout silently falls back to github-actions[bot], whose push to protected main is rejected (misreported below as a CAS race)." >&2
+            echo "::error::Fix: create an org-owned App with contents:read+write on automagik-dev/genie only, store its id/private key as the RELEASE_MANIFESTS_APP_ID and RELEASE_MANIFESTS_APP_PRIVATE_KEY environment secrets, and add the App as an Integration bypass actor on the 'main' ruleset. See this job's HUMAN SETUP header." >&2
             exit 1
           fi
+
+      - name: Mint a short-lived App token for the manifest push
+        id: manifest_app_token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v3.2.0
+        with:
+          app-id: ${{ secrets.RELEASE_MANIFESTS_APP_ID }}
+          private-key: ${{ secrets.RELEASE_MANIFESTS_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
-          token: ${{ secrets.RELEASE_MANIFESTS_TOKEN }}
+          token: ${{ steps.manifest_app_token.outputs.token }}
           persist-credentials: true
 
       - name: Download the exact pre-endorsed candidate manifest bytes
@@ -1147,7 +1182,7 @@ jobs:
             fi
             printf '%s\n' "$push_output" >&2
             if printf '%s' "$push_output" | grep -qiE 'protected branch|GH006|permission to .* denied|not authorized|403|forbidden|remote rejected'; then
-              echo "::error::manifest push to main was REJECTED for lack of permission — this is NOT a concurrent-update CAS race. RELEASE_MANIFESTS_TOKEN lacks contents:write on ${GITHUB_REPOSITORY} or is not allowed through main branch protection. See this job's HUMAN SETUP header." >&2
+              echo "::error::manifest push to main was REJECTED for lack of permission — this is NOT a concurrent-update CAS race. Either the RELEASE_MANIFESTS App lacks contents:write on ${GITHUB_REPOSITORY}, or it is not a bypass actor on the 'main' ruleset (an empty bypass_actors list rejects every direct push GH013). See this job's HUMAN SETUP header." >&2
               exit 1
             fi
             echo "::warning ::release-manifest.cas_retry attempt ${attempt}/5: non-fast-forward from a concurrent main update; recomputing"
