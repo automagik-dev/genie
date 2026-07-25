@@ -5,7 +5,13 @@ import { join } from 'node:path';
 
 const SCRIPT = join(import.meta.dir, 'release-generic-provenance.sh');
 const CONTROL_SHA = 'b'.repeat(40);
+// The commit the tarballs are built from: the [auto-version] bump.
 const SOURCE_SHA = 'a'.repeat(40);
+// The commit CI ran on, one BEFORE the bump. This is what the provenance's
+// triggering workflow_run carries, and the two are never equal on an
+// automated release — modelling them as equal is what hid the 2026-07-25
+// verification break.
+const TRIGGER_SHA = 'e'.repeat(40);
 const ARTIFACT_SHA256 = 'd'.repeat(64);
 const roots: string[] = [];
 
@@ -51,7 +57,7 @@ function automatedStatement() {
           event: 'push',
           status: 'completed',
           conclusion: 'success',
-          head_sha: SOURCE_SHA,
+          head_sha: TRIGGER_SHA,
           head_branch: 'dev',
           repository: { full_name: 'automagik-dev/genie' },
         },
@@ -101,6 +107,7 @@ function invoke(
       VERSION: '5.260714.2',
       CHANNEL: 'dev',
       SOURCE_SHA,
+      TRIGGER_SHA,
       SOURCE_BRANCH: 'dev',
       SOURCE_CI_RUN_ID: '123456',
       CONTROL_SHA,
@@ -168,12 +175,37 @@ describe('verified generic SLSA provenance policy', () => {
     }
   });
 
+  test('binds the triggering CI head, not the built bump commit (2026-07-25 regression)', () => {
+    // Realistic shape: provenance carries the CI head, the build carries the
+    // [auto-version] bump one commit later. This must PASS.
+    expect(invoke('verify-exact', automatedStatement()).exitCode).toBe(0);
+
+    // The pre-fix contract compared head_sha to SOURCE_SHA. That is
+    // unsatisfiable in production and broke every dev release; a statement
+    // whose trigger head equals the built commit must NOT be accepted as
+    // matching a different TRIGGER_SHA.
+    const built = automatedStatement();
+    built.predicate.invocation.environment.github_event_payload.workflow_run.head_sha = SOURCE_SHA;
+    expect(invoke('verify-exact', built).exitCode).not.toBe(0);
+
+    // A forged trigger commit is still rejected.
+    expect(invoke('verify-exact', automatedStatement(), { TRIGGER_SHA: 'f'.repeat(40) }).exitCode).not.toBe(0);
+
+    // Exact verification refuses to run at all without a well-formed trigger.
+    expect(invoke('verify-exact', automatedStatement(), { TRIGGER_SHA: '' }).exitCode).toBe(2);
+    expect(invoke('verify-exact', automatedStatement(), { TRIGGER_SHA: 'nope' }).exitCode).toBe(2);
+  });
+
   test('emits identity only after the verified statement binds the exact artifact subject', () => {
     const verified = invoke('verify-exact-subject', automatedStatement());
     expect(verified.exitCode).toBe(0);
     expect(JSON.parse(verified.stdout.toString())).toEqual({
       artifactSha256: ARTIFACT_SHA256,
-      sourceSha: SOURCE_SHA,
+      // On automated channels this field is the TRIGGER commit (the generic
+      // provenance has no record of the later bump commit). release-publish.yml
+      // compares it against TRIGGER_SHA for dev/homolog and SOURCE_SHA only for
+      // the stable dispatch.
+      sourceSha: TRIGGER_SHA,
       sourceBranch: 'dev',
       sourceCiRunId: '123456',
       controlSha: CONTROL_SHA,
