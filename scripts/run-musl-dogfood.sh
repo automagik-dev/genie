@@ -52,6 +52,15 @@ fi
 # write pull progress to stderr, which the harness's stderr-strict capability
 # probe treats as failure. The dogfood workflow pre-pulls the digest.
 docker_args=(run --rm -i --security-opt no-new-privileges)
+
+# The candidate must run AS THE HOST USER, not container root. The fixture tree
+# is bind-mounted and shared with host-side stages: git refuses a repository
+# whose on-disk owner differs from the effective uid ("dubious ownership", so
+# `genie init` reports "not a git repository"), genie's own fail-closed
+# ownership checks demand stat.uid == process uid, and any root-owned file the
+# container creates would poison every later host-side stage. Root is needed
+# only for the apk bootstrap; su-exec then drops to this exact identity.
+docker_args+=(--env "DOGFOOD_HOST_UID=$(id -u)" --env "DOGFOOD_HOST_GID=$(id -g)")
 container_candidate="/candidate/${candidate_name}"
 
 # The one-shot capability probe needs only a read-only candidate directory.
@@ -98,8 +107,10 @@ exec docker "${docker_args[@]}" \
     # Bootstrap noise must never reach stderr: the probe fails on any stderr
     # byte, and only the candidate binary output is meaningful to it. apk
     # failures still abort through set -e.
-    apk add --no-cache bash git libstdc++ >/dev/null 2>&1
+    apk add --no-cache bash git libstdc++ su-exec >/dev/null 2>&1
     candidate=$1
     shift
-    exec "$candidate" "$@"
+    # Drop from bootstrap root to the exact host identity that owns the
+    # bind-mounted fixture tree (see DOGFOOD_HOST_UID rationale above).
+    exec su-exec "${DOGFOOD_HOST_UID}:${DOGFOOD_HOST_GID}" "$candidate" "$@"
   ' sh "$container_candidate" "$@"

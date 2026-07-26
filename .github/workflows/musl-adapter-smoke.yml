@@ -1,0 +1,105 @@
+name: Musl Adapter Smoke
+
+# The Alpine execution adapter historically ran ONLY inside production release
+# dogfood jobs, so every adapter defect cost a full release cycle to discover
+# (docker pull noise on the stderr-strict probe, container-root vs host-uid git
+# ownership). This smoke exercises the adapter on a real amd64 runner with the
+# real previous-stable musl binary on every PR that touches it: seeding a git
+# repository through the container exactly as the dogfood harness does, and
+# asserting the probe's contract — exit 0 with a byte-empty stderr.
+on:
+  pull_request:
+    paths:
+      - 'scripts/run-musl-dogfood.sh'
+      - '.github/workflows/musl-adapter-smoke.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Seed a repository through the Alpine adapter
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Pre-pull the pinned Alpine image (mirrors the dogfood job)
+        run: docker pull -q 'alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1'
+
+      - name: Download the previous-stable musl release binary
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          PREVIOUS_TAG="v$(jq -r '.version' .well-known/latest.json 2>/dev/null || true)"
+          if [[ "$PREVIOUS_TAG" == "v" || "$PREVIOUS_TAG" == "vnull" ]]; then
+            echo "::error::could not resolve the previous stable version from .well-known/latest.json"
+            exit 1
+          fi
+          gh release download "$PREVIOUS_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern "genie-*-linux-x64-musl.tar.gz" --dir "$RUNNER_TEMP/previous"
+
+      - name: Probe-mode contract — exit 0 with a byte-empty stderr
+        run: |
+          set -euo pipefail
+          ROOT="${RUNNER_TEMP}/dogfood-root"
+          mkdir -p "$ROOT/repos/a" "$ROOT/home" "$ROOT/genie-home/bin" "$ROOT/tmp" "$ROOT/n-extract"
+          tar -xzf "$RUNNER_TEMP"/previous/genie-*-linux-x64-musl.tar.gz -C "$ROOT/n-extract"
+          cp "$ROOT/n-extract/genie" "$ROOT/genie-home/bin/genie"
+          chmod 755 "$ROOT/genie-home/bin/genie"
+          cp "$ROOT/n-extract/VERSION" "$ROOT/genie-home/bin/VERSION" || true
+          # The harness's verifyCapability runs the adapter WITHOUT DOGFOOD_ROOT
+          # (candidate mounted read-only at /candidate) and rejects any stderr
+          # byte. --version is quiet on every generation, so bootstrap noise
+          # (docker pull progress, apk output) is the only thing that could
+          # reach stderr — exactly the class this contract pins.
+          status=0
+          HOME="$ROOT/home" TMPDIR="$ROOT/tmp" TERM=xterm \
+            bash scripts/run-musl-dogfood.sh "$ROOT/genie-home/bin/genie" --version \
+            >"$RUNNER_TEMP/probe-out" 2>"$RUNNER_TEMP/probe-err" || status=$?
+          if [[ "$status" -ne 0 ]]; then
+            echo "::error::probe-mode adapter invocation exited ${status}"
+            cat "$RUNNER_TEMP/probe-out" "$RUNNER_TEMP/probe-err"
+            exit 1
+          fi
+          if [[ -s "$RUNNER_TEMP/probe-err" ]]; then
+            echo "::error::probe-mode adapter invocation wrote stderr (the capability probe fails on any stderr byte):"
+            cat "$RUNNER_TEMP/probe-err"
+            exit 1
+          fi
+          grep -q . "$RUNNER_TEMP/probe-out" || { echo "::error::--version produced no output"; exit 1; }
+
+      - name: Stateful-mode seeding — the exact leg that failed in v5.260726.9
+        run: |
+          set -euo pipefail
+          ROOT="${RUNNER_TEMP}/dogfood-root"
+          git init -q -b main "$ROOT/repos/a"
+          ADAPTER="$PWD/scripts/run-musl-dogfood.sh"
+          cd "$ROOT/repos/a"
+          run_via_adapter() {
+            local status=0
+            DOGFOOD_ROOT="$ROOT" HOME="$ROOT/home" GENIE_HOME="$ROOT/genie-home" \
+              TMPDIR="$ROOT/tmp" GENIE_RELEASE_DOGFOOD=1 TERM=xterm \
+              bash "$ADAPTER" "$ROOT/genie-home/bin/genie" "$@" \
+              >"$RUNNER_TEMP/cli-out" 2>"$RUNNER_TEMP/cli-err" || status=$?
+            if [[ "$status" -ne 0 ]]; then
+              echo "::error::adapter invocation 'genie $*' exited ${status}"
+              cat "$RUNNER_TEMP/cli-out" "$RUNNER_TEMP/cli-err"
+              exit 1
+            fi
+            cat "$RUNNER_TEMP/cli-out"
+          }
+          run_via_adapter init
+          run_via_adapter task create --title smoke-sentinel --wish smoke
+          run_via_adapter board
+          # The database seeded through the container must be owned by the
+          # runner user, or every later host-side stage fails closed on
+          # genie's stat.uid ownership checks.
+          [[ "$(stat -c %u "$ROOT/repos/a/.genie/genie.db")" == "$(id -u)" ]] || {
+            echo "::error::container-created database is not owned by the host user"
+            exit 1
+          }
+          echo "adapter smoke: OK"
