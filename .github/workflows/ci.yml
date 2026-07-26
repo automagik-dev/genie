@@ -44,6 +44,25 @@ jobs:
           GITHUB_DEFAULT_BRANCH: main
           GITGUARDIAN_API_KEY: ${{ secrets.GITGUARDIAN_API_KEY }}
 
+  # A 40-hex pin is not proof the SHA exists. actions/upload-artifact was pinned
+  # to b7c4aadc..., which resolves to no commit anywhere; it passed every static
+  # lint and failed only when the job first executed, taking down three
+  # release-publish jobs mid-outage. This resolves every pin against the API so
+  # that class fails here instead of in a release.
+  action-pins:
+    name: Action Pin Resolvability
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Resolve every pinned action SHA
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/check-action-pins.sh
+
   # The survivor gate — the same battery `bun run check` runs locally, plus a
   # build. v5 is a zero-daemon CLI over `.genie/genie.db`; there is no resident
   # database daemon, no TUI, and no generated tmux theme, so the whole suite

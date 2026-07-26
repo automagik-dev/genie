@@ -437,7 +437,18 @@ function verifyGeneration(
   const tree = scanPhysicalTree(payloadPath);
   if (tree.status !== 'ok' || tree.digest === undefined) throw new Error(`${label} extracted payload is invalid`);
   const binarySha256 = sha256File(binaryPath);
-  verifyCapability(binaryPath, manifest.version, binarySha256, executionAdapter, root);
+  // `genie update --print-update-capabilities` is part of the delivery-era CLI
+  // surface, so only a generation authenticated by a delivery descriptor is
+  // required to expose it. The previous stable N is authenticated by legacy
+  // SLSA provenance precisely because it predates that surface: N is pinned to
+  // `.well-known/latest.json` (v5.260720.10), which is older than the commit
+  // that added the flag, and N only advances on a stable release that must
+  // itself pass this gate. Probing N therefore deadlocks every channel.
+  // N still has to execute natively — runLifecycle runs its binary and
+  // requires it to report N's own version as the active parent.
+  if (paths.identityKind === 'delivery-descriptor') {
+    verifyCapability(binaryPath, manifest.version, binarySha256, executionAdapter, root);
+  }
 
   const bound = bindExtractedGeneration({
     label,
@@ -711,19 +722,47 @@ function verifyLegacyReleaseProvenance(input: {
     const statement = JSON.parse(verified) as {
       predicate?: {
         invocation?: {
-          configSource?: { digest?: { sha1?: unknown } };
+          configSource?: { entryPoint?: unknown; digest?: { sha1?: unknown } };
           parameters?: { event_inputs?: Record<string, unknown> };
+          environment?: { github_event_payload?: { workflow_run?: Record<string, unknown> } };
         };
       };
     };
-    const parameters = statement.predicate?.invocation?.parameters?.event_inputs;
-    const controlCommit = statement.predicate?.invocation?.configSource?.digest?.sha1;
-    const facts = {
-      sourceCommit: parameters?.source_sha,
-      sourceBranch: parameters?.source_branch,
-      sourceCiRunId: parameters?.source_ci_run_id,
-      controlCommit,
-    };
+    const invocation = statement.predicate?.invocation;
+    const controlCommit = invocation?.configSource?.digest?.sha1;
+    // Two provenance shapes reach this leg, exactly as
+    // scripts/release-generic-provenance.sh `verify_reusable` (run just above)
+    // discriminates them by entryPoint. A stable release.yml dispatch records
+    // the release identity in `event_inputs`; an automated version.yml run is a
+    // `workflow_run` and records it in the triggering CI event payload instead.
+    //
+    // The previous stable N is routinely the automated shape: a stable release
+    // promotes an already-published dev prerelease and preserves its immutable
+    // signed bytes (see release-publish.yml "Promotions must endorse the
+    // already-published immutable subject bytes" and reconcile-release-note.sh
+    // stable finalize), so N's generic provenance stays the dev build's.
+    // Reading only `event_inputs` therefore yields undefined for every real N.
+    const entryPoint = invocation?.configSource?.entryPoint;
+    let facts: Record<string, unknown>;
+    if (entryPoint === '.github/workflows/release.yml') {
+      const parameters = invocation?.parameters?.event_inputs;
+      facts = {
+        sourceCommit: parameters?.source_sha,
+        sourceBranch: parameters?.source_branch,
+        sourceCiRunId: parameters?.source_ci_run_id,
+        controlCommit,
+      };
+    } else if (entryPoint === '.github/workflows/version.yml') {
+      const run = invocation?.environment?.github_event_payload?.workflow_run;
+      facts = {
+        sourceCommit: run?.head_sha,
+        sourceBranch: run?.head_branch,
+        sourceCiRunId: typeof run?.id === 'number' || typeof run?.id === 'string' ? String(run.id) : undefined,
+        controlCommit,
+      };
+    } else {
+      throw new Error('verified previous-release provenance has an unknown release entry point');
+    }
     if (
       typeof facts.sourceCommit !== 'string' ||
       !/^[0-9a-f]{40}$/.test(facts.sourceCommit) ||
@@ -917,6 +956,15 @@ function installGeneration(generation: VerifiedGeneration, genieHome: string): s
   chmodSync(binary, 0o755);
   cpSync(generation.payloadPath, payload, { recursive: true });
   writeFileSync(join(genieHome, 'VERSION'), `${generation.facts.version}\n`);
+  // A real release binary resolves its own version from the VERSION file
+  // ADJACENT to the executable, which in the live layout is
+  // `$GENIE_HOME/bin/VERSION` — scripts/install-swap.test.ts asserts exactly
+  // that path. Writing only `$GENIE_HOME/VERSION` leaves the installed
+  // generation reporting "0.0.0-unknown", so runLifecycle's first assertion
+  // (that N is the active parent) can never hold for a real published
+  // tarball. The CI fixture hides this: its stand-in binary is a generated
+  // shim that hard-codes its version string instead of reading VERSION.
+  writeFileSync(join(dirname(binary), 'VERSION'), `${generation.facts.version}\n`);
   if (sha256File(binary) !== generation.binarySha256) throw new Error('installed generation binary digest drifted');
   const tree = scanPhysicalTree(payload);
   if (tree.status !== 'ok' || tree.digest !== generation.payloadSha256) {
