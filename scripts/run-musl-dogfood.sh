@@ -107,7 +107,10 @@ exec docker "${docker_args[@]}" \
     # Bootstrap noise must never reach stderr: the probe fails on any stderr
     # byte, and only the candidate binary output is meaningful to it. apk
     # failures still abort through set -e.
-    apk add --no-cache bash git libstdc++ su-exec >/dev/null 2>&1
+    # nodejs: the candidate activation H3 smoke resolves a Node executable
+    # from PATH (Bun.which). Every real Codex host has node — codex-cli is a
+    # Node program — so its presence is environmental fidelity, not a shim.
+    apk add --no-cache bash git libstdc++ nodejs su-exec >/dev/null 2>&1
     candidate=$1
     shift
     # Drop from bootstrap root to the exact host identity that owns the

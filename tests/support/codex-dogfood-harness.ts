@@ -896,8 +896,16 @@ function capturePtySetup(input: {
 
 function requireExit(observation: CapturedCommand, expected: number, label: string): CapturedCommand {
   if (observation.exit !== expected) {
+    // Both complete streams, with byte counts: a PTY stage merges the child's
+    // stderr into the transcript and an early spawn-chain death can produce
+    // almost nothing, so a truncated one-liner (historically just the echoed
+    // "yes") hides which link failed. exe/argv identify the exact invocation.
     throw new Error(
-      `${label} exited ${observation.exit}, expected ${expected}: ${observation.stderr.trim() || observation.stdout.trim()}`,
+      `${label} exited ${observation.exit}, expected ${expected}\n` +
+        `  exe: ${observation.executable}\n` +
+        `  argv: ${JSON.stringify(observation.argv)}\n` +
+        `  stderr[${observation.stderr.length}B]: ${observation.stderr.trim() || '<empty>'}\n` +
+        `  stdout[${observation.stdout.length}B]: ${observation.stdout.trim() || '<empty>'}`,
     );
   }
   return observation;
