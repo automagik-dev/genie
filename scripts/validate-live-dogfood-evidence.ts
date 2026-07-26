@@ -196,8 +196,27 @@ function validateProvenance(errors: string[], label: string, value: unknown, com
     COMMIT_SHA,
     'a 40-character lowercase commit sha',
   );
-  if (channel === 'stable') same(errors, `${label}.sourceBranch`, provenance.sourceBranch, 'main');
-  else same(errors, `${label}.sourceBranch`, provenance.sourceBranch, channel);
+  // Delivery-era provenance carries the release inputs the orchestrator
+  // admitted, so its branch is bound to its channel (`admit` accepts only
+  // stable:main / homolog:homolog / dev:dev).
+  //
+  // Legacy release-tarball provenance is the generic SLSA statement of an
+  // ALREADY-PUBLISHED release, so its branch records where that release was
+  // BUILT, not the channel it was later promoted into. A stable release
+  // promotes an already-published dev prerelease and preserves its immutable
+  // signed bytes, so the previous stable N legitimately carries sourceBranch
+  // "dev" while its manifest channel is "stable" — v5.260720.10, the currently
+  // pinned N, is exactly this. Demanding "main" there is unsatisfiable; accept
+  // any branch the release chain admits instead.
+  if (provenance.kind === 'release-tarball') {
+    if (!['main', 'homolog', 'dev'].includes(String(provenance.sourceBranch))) {
+      errors.push(`${label}.sourceBranch must be main, homolog, or dev`);
+    }
+  } else if (channel === 'stable') {
+    same(errors, `${label}.sourceBranch`, provenance.sourceBranch, 'main');
+  } else {
+    same(errors, `${label}.sourceBranch`, provenance.sourceBranch, channel);
+  }
   if (typeof provenance.sourceCiRunId !== 'string' || !/^(?:0|[1-9]\d*)$/.test(provenance.sourceCiRunId)) {
     errors.push(`${label}.sourceCiRunId must be an unsigned decimal string`);
   }
