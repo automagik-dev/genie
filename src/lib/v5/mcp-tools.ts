@@ -155,7 +155,18 @@ export function openReadonlyDbHealingStaleSchema(target?: string | ProjectDataba
   if (current) return db;
   closeReadonlyDb(db);
   try {
-    openDb({ path: typeof target === 'object' ? target.physicalPath : resolveDbPath(target) }).close();
+    if (typeof target === 'object') {
+      // The validated readonly handle is closed, so nothing pins the path's
+      // identity while openDb creates a WRITABLE handle. Revalidate the exact
+      // binding at the last moment so a racing substitution cannot route
+      // ensureSchema's DDL into a swapped file or symlink target; the
+      // post-heal hardened reopen below re-verifies both the binding and the
+      // opened handle before any tool can observe a healed database.
+      if (!resolveProjectDatabaseBinding(target.logicalPath, target).ok) return null;
+      openDb({ path: target.physicalPath }).close();
+    } else {
+      openDb({ path: resolveDbPath(target) }).close();
+    }
   } catch {
     return null;
   }
