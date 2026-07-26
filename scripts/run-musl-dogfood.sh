@@ -47,7 +47,11 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 1
 fi
 
-docker_args=(run --rm --pull=always -i --security-opt no-new-privileges)
+# The image reference is digest-pinned, so pull-if-missing already guarantees
+# exact bytes; `--pull=always` would re-resolve the manifest on EVERY run and
+# write pull progress to stderr, which the harness's stderr-strict capability
+# probe treats as failure. The dogfood workflow pre-pulls the digest.
+docker_args=(run --rm -i --security-opt no-new-privileges)
 container_candidate="/candidate/${candidate_name}"
 
 # The one-shot capability probe needs only a read-only candidate directory.
@@ -91,7 +95,10 @@ if [[ -t 0 && -t 1 ]]; then docker_args+=(-t); fi
 exec docker "${docker_args[@]}" \
   "$ALPINE_IMAGE" \
   sh -ec '
-    apk add --no-cache bash git libstdc++ >/dev/null
+    # Bootstrap noise must never reach stderr: the probe fails on any stderr
+    # byte, and only the candidate binary output is meaningful to it. apk
+    # failures still abort through set -e.
+    apk add --no-cache bash git libstdc++ >/dev/null 2>&1
     candidate=$1
     shift
     exec "$candidate" "$@"
