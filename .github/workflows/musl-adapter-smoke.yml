@@ -98,7 +98,7 @@ jobs:
             --candidate-descriptor "$CANDIDATE_DESCRIPTOR" \
             --candidate-bundle "${CANDIDATE_DESCRIPTOR}.sigstore.json" \
             --platform-id "$PLATFORM" \
-            --output-evidence dogfood-entry/codex-dogfood-replay.md \
+            --output-evidence "dogfood-entry/codex-dogfood-${CANDIDATE_VERSION}-${PLATFORM}.md" \
             --execution-adapter "$PWD/scripts/run-musl-dogfood.sh"
 
   smoke:
