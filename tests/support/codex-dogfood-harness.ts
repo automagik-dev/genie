@@ -437,7 +437,18 @@ function verifyGeneration(
   const tree = scanPhysicalTree(payloadPath);
   if (tree.status !== 'ok' || tree.digest === undefined) throw new Error(`${label} extracted payload is invalid`);
   const binarySha256 = sha256File(binaryPath);
-  verifyCapability(binaryPath, manifest.version, binarySha256, executionAdapter, root);
+  // `genie update --print-update-capabilities` is part of the delivery-era CLI
+  // surface, so only a generation authenticated by a delivery descriptor is
+  // required to expose it. The previous stable N is authenticated by legacy
+  // SLSA provenance precisely because it predates that surface: N is pinned to
+  // `.well-known/latest.json` (v5.260720.10), which is older than the commit
+  // that added the flag, and N only advances on a stable release that must
+  // itself pass this gate. Probing N therefore deadlocks every channel.
+  // N still has to execute natively — runLifecycle runs its binary and
+  // requires it to report N's own version as the active parent.
+  if (paths.identityKind === 'delivery-descriptor') {
+    verifyCapability(binaryPath, manifest.version, binarySha256, executionAdapter, root);
+  }
 
   const bound = bindExtractedGeneration({
     label,
