@@ -956,6 +956,15 @@ function installGeneration(generation: VerifiedGeneration, genieHome: string): s
   chmodSync(binary, 0o755);
   cpSync(generation.payloadPath, payload, { recursive: true });
   writeFileSync(join(genieHome, 'VERSION'), `${generation.facts.version}\n`);
+  // A real release binary resolves its own version from the VERSION file
+  // ADJACENT to the executable, which in the live layout is
+  // `$GENIE_HOME/bin/VERSION` — scripts/install-swap.test.ts asserts exactly
+  // that path. Writing only `$GENIE_HOME/VERSION` leaves the installed
+  // generation reporting "0.0.0-unknown", so runLifecycle's first assertion
+  // (that N is the active parent) can never hold for a real published
+  // tarball. The CI fixture hides this: its stand-in binary is a generated
+  // shim that hard-codes its version string instead of reading VERSION.
+  writeFileSync(join(dirname(binary), 'VERSION'), `${generation.facts.version}\n`);
   if (sha256File(binary) !== generation.binarySha256) throw new Error('installed generation binary digest drifted');
   const tree = scanPhysicalTree(payload);
   if (tree.status !== 'ok' || tree.digest !== generation.payloadSha256) {
