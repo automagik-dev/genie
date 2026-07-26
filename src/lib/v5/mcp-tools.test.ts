@@ -446,6 +446,26 @@ describe('openReadonlyDbHealingStaleSchema', () => {
     expect(existsSync(join(repo, '.genie', 'genie.db'))).toBe(false);
   });
 
+  test('refuses to heal through a binding whose database was substituted', () => {
+    const repo = initRepo(join(base, 'repo'));
+    makeAdditiveLagDb(repo);
+    const context = resolveProjectContext(repo);
+    if (context.kind !== 'ok' || context.databaseBinding === undefined) {
+      throw new Error(`expected ok context with binding, got ${context.kind}`);
+    }
+    const binding = context.databaseBinding;
+    // Replace the bound database with a different file (new inode) after the
+    // binding was captured — the heal must fail closed, never write-open the
+    // substituted file (openDb would otherwise run ensureSchema DDL on it).
+    rmSync(join(repo, '.genie'), { recursive: true, force: true });
+    makeAdditiveLagDb(repo);
+    expect(openReadonlyDbHealingStaleSchema(binding)).toBeNull();
+    // The substituted database was left untouched by any write-path open.
+    const untouched = openReadonlyDb(repo);
+    expect(isCurrentGenieDb(untouched as Database)).toBe(false);
+    untouched?.close();
+  });
+
   test('fails closed on a future user_version instead of healing it', () => {
     const repo = initRepo(join(base, 'repo'));
     seedDb(repo);
