@@ -15,8 +15,92 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
+  # Full-fidelity replay of the dogfood musl entry against the exact artifact
+  # set of a real failed release run — the real entry-runner, adapter, Codex,
+  # and inputs, executing in PR checks instead of costing a release cycle per
+  # observation. The pinned run id is updated when investigating a new failure.
+  replay:
+    name: Replay the dogfood musl entry from run 30220567504
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.11
+
+      - name: Install trusted harness dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Install pinned real Codex app-server
+        run: |
+          set -euo pipefail
+          npm install -g @openai/codex@0.144.1
+          CODEX_PATH="$(node -e 'console.log(require("node:fs").realpathSync(process.argv[1]))' "$(command -v codex)")"
+          echo "GENIE_DOGFOOD_REAL_CODEX=${CODEX_PATH}" >> "$GITHUB_ENV"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+        with:
+          cosign-release: 'v2.4.1'
+
+      - name: Install slsa-verifier (platform-correct, pinned)
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/slsa-verifier-bin"
+          curl -fsSL --retry 3 -o "${RUNNER_TEMP}/slsa-verifier-bin/slsa-verifier" \
+            "https://github.com/slsa-framework/slsa-verifier/releases/download/v2.7.1/slsa-verifier-linux-amd64"
+          echo "946dbec729094195e88ef78e1734324a27869f03e2c6bd2f61cbc06bd5350339  ${RUNNER_TEMP}/slsa-verifier-bin/slsa-verifier" | shasum -a 256 -c -
+          chmod +x "${RUNNER_TEMP}/slsa-verifier-bin/slsa-verifier"
+          echo "${RUNNER_TEMP}/slsa-verifier-bin" >> "$GITHUB_PATH"
+
+      - name: Allow the Codex bubblewrap sandbox to configure its network namespace
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Pre-pull the pinned Alpine image
+        run: docker pull -q 'alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1'
+
+      - name: Download the failed run's exact inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          RUN=30220567504
+          gh run download "$RUN" -R "$GITHUB_REPOSITORY" -n codex-dogfood-previous-release -D dogfood-entry/inputs/previous
+          gh run download "$RUN" -R "$GITHUB_REPOSITORY" -n genie-5.260726.11-linux-x64-musl-signed -D dogfood-entry/inputs/candidate
+          gh run download "$RUN" -R "$GITHUB_REPOSITORY" -n delivery-candidate-manifests -D dogfood-entry/inputs/candidate/manifests
+          gh run download "$RUN" -R "$GITHUB_REPOSITORY" -n delivery-descriptors -D dogfood-entry/inputs/candidate/descriptors
+          gh run download "$RUN" -R "$GITHUB_REPOSITORY" -n delivery-endorsement-dev-linux-x64-musl -D dogfood-entry/inputs/candidate/descriptors
+
+      - name: Run the exact entry the dogfood job runs
+        env:
+          PLATFORM: linux-x64-musl
+          PREVIOUS_VERSION: 5.260720.10
+          CANDIDATE_VERSION: 5.260726.11
+        run: |
+          set -euo pipefail
+          PREVIOUS_ARTIFACT="dogfood-entry/inputs/previous/genie-${PREVIOUS_VERSION}-${PLATFORM}.tar.gz"
+          CANDIDATE_ARTIFACT="dogfood-entry/inputs/candidate/genie-${CANDIDATE_VERSION}-${PLATFORM}.tar.gz"
+          CANDIDATE_DESCRIPTOR="dogfood-entry/inputs/candidate/descriptors/genie-${CANDIDATE_VERSION}-${PLATFORM}.tar.gz.dev.delivery.json"
+          bun tests/support/codex-dogfood-entry-runner.ts \
+            --previous-artifact "$PREVIOUS_ARTIFACT" \
+            --previous-manifest dogfood-entry/inputs/previous/manifest.json \
+            --previous-bundle "${PREVIOUS_ARTIFACT}.bundle" \
+            --previous-provenance "${PREVIOUS_ARTIFACT}.intoto.jsonl" \
+            --candidate-artifact "$CANDIDATE_ARTIFACT" \
+            --candidate-manifest dogfood-entry/inputs/candidate/manifests/dev.json \
+            --candidate-descriptor "$CANDIDATE_DESCRIPTOR" \
+            --candidate-bundle "${CANDIDATE_DESCRIPTOR}.sigstore.json" \
+            --platform-id "$PLATFORM" \
+            --output-evidence dogfood-entry/codex-dogfood-replay.md \
+            --execution-adapter "$PWD/scripts/run-musl-dogfood.sh"
+
   smoke:
     name: Seed a repository through the Alpine adapter
     runs-on: ubuntu-latest
