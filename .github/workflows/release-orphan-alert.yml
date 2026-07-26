@@ -104,13 +104,21 @@ jobs:
 
           echo "::warning::detected ${#ORPHANS[@]} orphan tag(s): ${ORPHANS[*]}"
 
-          # Open a release-incident issue for each orphan tag, unless
-          # an open issue with the same title already exists (idempotent).
+          # Open a release-incident issue for each orphan tag, unless an
+          # issue with the same exact title already exists in ANY state
+          # (idempotent). Closed issues count: closing an incident is an
+          # operator ack that the orphan tag is understood debris
+          # (versions auto-increment; pre-fanout failures are never
+          # re-dispatched — issue #2674), so the alarm must not refile
+          # it while the tag is still inside the 24h window. Exact-title
+          # grep (not search-substring) so v5.X.1 never suppresses v5.X.12.
           for TAG in "${ORPHANS[@]}"; do
             TITLE="release-incident: ${TAG} has no Release object"
-            EXISTS=$(gh issue list --repo "$REPO" --state open --search "$TITLE in:title" --json number --jq 'length')
+            EXISTS=$(gh issue list --repo "$REPO" --state all --limit 100 \
+              --search "\"$TITLE\" in:title" --json title --jq '.[].title' \
+              | grep -Fxc "$TITLE" || true)
             if [[ "$EXISTS" -gt 0 ]]; then
-              echo "issue already open for ${TAG}; skipping"
+              echo "issue already filed for ${TAG} (open or acked-closed); skipping"
               continue
             fi
             gh issue create \
