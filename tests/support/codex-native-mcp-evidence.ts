@@ -667,6 +667,14 @@ async function startThread(
           [MCP_SERVER_NAME]: {
             command: options.launcherExecutable,
             args: [launcherRecord, adapter, options.candidate.executable, ...options.candidate.args],
+            // Codex spawns MCP servers with a sanitized environment, so the
+            // execution adapter's stateful switch must be declared here — a
+            // clean env silently drops the adapter into probe mode (read-only
+            // /candidate mount, cwd=/ in the container) and every project
+            // resolution reports "no Git worktree contains /".
+            ...(options.candidate.adapter === undefined || options.env.DOGFOOD_ROOT === undefined
+              ? {}
+              : { env: { DOGFOOD_ROOT: options.env.DOGFOOD_ROOT } }),
           },
         },
       },
