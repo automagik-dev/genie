@@ -519,8 +519,46 @@ jobs:
         with:
           cosign-release: 'v2.4.1'
 
+      # The upstream installer action bootstraps through a linux-amd64 binary,
+      # so it can never run on this job's arm64 runners (darwin-arm64 ENOEXEC,
+      # ubuntu-24.04-arm exit 2). Install the platform-correct release asset
+      # directly, pinned to the upstream SHA256SUM.md ledger for v2.7.1.
       - name: Install slsa-verifier for previous-stable verification
-        uses: slsa-framework/slsa-verifier/actions/installer@ea584f4502babc6f60d9bc799dbbb13c1caa9ee6 # v2.7.1
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$(uname -s)-$(uname -m)" in
+            Linux-x86_64)  ASSET=slsa-verifier-linux-amd64  SHA256=946dbec729094195e88ef78e1734324a27869f03e2c6bd2f61cbc06bd5350339 ;;
+            Linux-aarch64) ASSET=slsa-verifier-linux-arm64  SHA256=5d3b2349ede7bfec19e7a21569f18b9f7410145ad12e9584b175370669e14061 ;;
+            Darwin-arm64)  ASSET=slsa-verifier-darwin-arm64 SHA256=39abfcf5f1d690c3e889ce3d2d6a8b87711424d83368511868d414e8f8bcb05c ;;
+            *)
+              echo "::error::unsupported runner platform for slsa-verifier: $(uname -s)-$(uname -m)"
+              exit 1
+              ;;
+          esac
+          mkdir -p "${RUNNER_TEMP}/slsa-verifier-bin"
+          curl -fsSL --retry 3 -o "${RUNNER_TEMP}/slsa-verifier-bin/slsa-verifier" \
+            "https://github.com/slsa-framework/slsa-verifier/releases/download/v2.7.1/${ASSET}"
+          echo "${SHA256}  ${RUNNER_TEMP}/slsa-verifier-bin/slsa-verifier" | shasum -a 256 -c -
+          chmod +x "${RUNNER_TEMP}/slsa-verifier-bin/slsa-verifier"
+          echo "${RUNNER_TEMP}/slsa-verifier-bin" >> "$GITHUB_PATH"
+
+      # Ubuntu 24.04 images permit creating unprivileged user namespaces but
+      # AppArmor denies capability use inside them, so the real Codex sandbox
+      # dies at loopback setup ("bwrap: loopback: Failed RTM_NEWADDR"). Lift the
+      # restriction so the dogfood exercises Codex's actual bubblewrap sandbox
+      # instead of disabling it.
+      - name: Allow the Codex bubblewrap sandbox to configure its network namespace
+        if: runner.os == 'Linux'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      # The harness fails a capability probe on ANY stderr output, and the
+      # adapter's first `docker run` of an unpulled image streams pull progress
+      # to stderr. Pull the exact pinned digest up front so probe stderr stays
+      # clean. Image pin must match scripts/run-musl-dogfood.sh.
+      - name: Pre-pull the pinned Alpine image for the musl execution adapter
+        if: matrix.execution == 'alpine-container'
+        run: docker pull -q 'alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1'
 
       - name: Download exact verified previous-stable inputs
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
