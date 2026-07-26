@@ -16,11 +16,27 @@
 import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { existsSync, linkSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  linkSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import { openDb } from './genie-db.js';
-import { MCP_TOOLS, openReadonlyDb, readonlyDatabaseHandleMatchesPath, resolveProjectContext } from './mcp-tools.js';
+import { isCurrentGenieDb, openDb } from './genie-db.js';
+import {
+  MCP_TOOLS,
+  openReadonlyDb,
+  openReadonlyDbHealingStaleSchema,
+  readonlyDatabaseHandleMatchesPath,
+  resolveProjectContext,
+} from './mcp-tools.js';
 import { createBoard, createTask } from './task-state.js';
 
 let base: string;
@@ -368,5 +384,115 @@ describe('tools serve real state under an ok context', () => {
     };
     expect(payload.counts.total).toBe(1);
     db?.close();
+  });
+});
+
+// ============================================================================
+// openReadonlyDbHealingStaleSchema — additive-lag self-heal (the N→T dogfood
+// regression: a DB stamped by an older build fails isCurrentGenieDb on the
+// readonly path until a write-path open backfills the additive columns, and a
+// pure-MCP consumer never performs one)
+// ============================================================================
+
+describe('openReadonlyDbHealingStaleSchema', () => {
+  /** Rewind a current DB to an older build's shape: same user_version, missing additive columns. */
+  function makeAdditiveLagDb(repo: string): string {
+    seedDb(repo);
+    const path = join(repo, '.genie', 'genie.db');
+    const db = new Database(path);
+    for (const column of ['agent_kind', 'heartbeat_at', 'blocked_by', 'blocked_reason']) {
+      db.exec(`ALTER TABLE tasks DROP COLUMN ${column}`);
+    }
+    db.exec('ALTER TABLE boards DROP COLUMN lanes');
+    db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    db.close();
+    return path;
+  }
+
+  test('heals an older build database in place and returns a validating handle', () => {
+    const repo = initRepo(join(base, 'repo'));
+    makeAdditiveLagDb(repo);
+
+    const stale = openReadonlyDb(repo);
+    expect(stale).not.toBeNull();
+    expect(isCurrentGenieDb(stale as Database)).toBe(false);
+    stale?.close();
+
+    const healed = openReadonlyDbHealingStaleSchema(repo);
+    expect(healed).not.toBeNull();
+    expect(isCurrentGenieDb(healed as Database)).toBe(true);
+    // The seeded task is served through the healed handle, additive columns included.
+    const row = (healed as Database).query('SELECT title, wish, agent_kind FROM tasks').get() as {
+      title: string;
+      wish: string;
+      agent_kind: string | null;
+    };
+    expect(row.title).toBe('seed');
+    expect(row.wish).toBe('w');
+    healed?.close();
+
+    // The heal is durable on disk: a plain readonly reopen validates current.
+    const reopened = openReadonlyDb(repo);
+    expect(isCurrentGenieDb(reopened as Database)).toBe(true);
+    reopened?.close();
+  });
+
+  test('accepts the databaseBinding target form the MCP loop passes', () => {
+    const repo = initRepo(join(base, 'repo'));
+    makeAdditiveLagDb(repo);
+    const context = resolveProjectContext(repo);
+    if (context.kind !== 'ok' || context.databaseBinding === undefined) {
+      throw new Error(`expected ok context with binding, got ${context.kind}`);
+    }
+    const healed = openReadonlyDbHealingStaleSchema(context.databaseBinding);
+    expect(healed).not.toBeNull();
+    expect(isCurrentGenieDb(healed as Database)).toBe(true);
+    healed?.close();
+  });
+
+  test('never creates an absent database', () => {
+    const repo = initRepo(join(base, 'repo'));
+    expect(openReadonlyDbHealingStaleSchema(repo)).toBeNull();
+    expect(existsSync(join(repo, '.genie', 'genie.db'))).toBe(false);
+  });
+
+  test('refuses to heal through a binding whose database was substituted', () => {
+    const repo = initRepo(join(base, 'repo'));
+    makeAdditiveLagDb(repo);
+    const context = resolveProjectContext(repo);
+    if (context.kind !== 'ok' || context.databaseBinding === undefined) {
+      throw new Error(`expected ok context with binding, got ${context.kind}`);
+    }
+    const binding = context.databaseBinding;
+    // Replace the bound database after the binding was captured — the heal
+    // must fail closed, never write-open the substituted file (openDb would
+    // otherwise run ensureSchema DDL on it). The substitute is created while
+    // the original still exists so it is guaranteed a distinct inode even on
+    // filesystems that recycle inode numbers immediately (ext4), then renamed
+    // over the original — the realistic atomic-swap shape.
+    const dbPath = join(repo, '.genie', 'genie.db');
+    const substitute = join(repo, '.genie', 'genie.db.substitute');
+    copyFileSync(dbPath, substitute);
+    renameSync(substitute, dbPath);
+    expect(openReadonlyDbHealingStaleSchema(binding)).toBeNull();
+    // The substituted database was left untouched by any write-path open.
+    const untouched = openReadonlyDb(repo);
+    expect(isCurrentGenieDb(untouched as Database)).toBe(false);
+    untouched?.close();
+  });
+
+  test('fails closed on a future user_version instead of healing it', () => {
+    const repo = initRepo(join(base, 'repo'));
+    seedDb(repo);
+    const path = join(repo, '.genie', 'genie.db');
+    const db = new Database(path);
+    db.exec('PRAGMA user_version = 99');
+    db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    db.close();
+    expect(openReadonlyDbHealingStaleSchema(repo)).toBeNull();
+    // The refusal left the foreign version untouched.
+    const check = new Database(path, { readonly: true });
+    expect((check.query('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(99);
+    check.close();
   });
 });

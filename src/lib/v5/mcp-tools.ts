@@ -18,6 +18,8 @@ import { execFileSync } from 'node:child_process';
 import {
   type ProjectContext,
   type ProjectDatabaseBinding,
+  isCurrentGenieDb,
+  openDb,
   resolveDbPath,
   resolveProjectDatabaseBinding,
 } from './genie-db.js';
@@ -121,6 +123,54 @@ export function openReadonlyDb(
     closeReadonlyDb(db);
     return null;
   }
+}
+
+/**
+ * Read-only open that self-heals an additive-lag schema before failing closed.
+ *
+ * Additive columns land within `user_version = 1` and are backfilled only by
+ * write-path opens (`openDb` → `ensureSchema`), so a database stamped by an
+ * earlier build stays permanently rejected by `isCurrentGenieDb` for a consumer
+ * that only ever reads — exactly the post-update Codex plugin, whose first
+ * contact with the repo is `genie mcp`. When (and only when) a successful
+ * readonly open validates stale, run the same idempotent write-path open every
+ * CLI command already performs, then reopen readonly through the full hardened
+ * binding path.
+ *
+ * An ABSENT database never reaches the write open (`openReadonlyDb` returns
+ * null first), preserving this module's no-create contract. A foreign, future
+ * (`user_version` ≠ current), or malformed database is refused by `openDb`'s
+ * typed guards, so everything that is not additive lag still fails closed.
+ */
+export function openReadonlyDbHealingStaleSchema(target?: string | ProjectDatabaseBinding): Database | null {
+  const db = openReadonlyDb(target);
+  if (db === null) return null;
+  let current = false;
+  try {
+    current = isCurrentGenieDb(db);
+  } catch {
+    closeReadonlyDb(db);
+    return null;
+  }
+  if (current) return db;
+  closeReadonlyDb(db);
+  try {
+    if (typeof target === 'object') {
+      // The validated readonly handle is closed, so nothing pins the path's
+      // identity while openDb creates a WRITABLE handle. Revalidate the exact
+      // binding at the last moment so a racing substitution cannot route
+      // ensureSchema's DDL into a swapped file or symlink target; the
+      // post-heal hardened reopen below re-verifies both the binding and the
+      // opened handle before any tool can observe a healed database.
+      if (!resolveProjectDatabaseBinding(target.logicalPath, target).ok) return null;
+      openDb({ path: target.physicalPath }).close();
+    } else {
+      openDb({ path: resolveDbPath(target) }).close();
+    }
+  } catch {
+    return null;
+  }
+  return openReadonlyDb(target);
 }
 
 // ============================================================================
