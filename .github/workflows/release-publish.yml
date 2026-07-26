@@ -343,6 +343,12 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: delivery-candidate-manifests
+          # `.well-known` is a dot-directory. actions/upload-artifact defaults
+          # include-hidden-files to false, which makes @actions/glob skip the
+          # traversal root itself (internal-globber.ts drops any item whose
+          # basename matches /^\./), so the manifests the previous step just
+          # wrote resolve to zero matches and `if-no-files-found: error` fires.
+          include-hidden-files: true
           path: candidate-manifests/.well-known/*.json
           if-no-files-found: error
           retention-days: 1
