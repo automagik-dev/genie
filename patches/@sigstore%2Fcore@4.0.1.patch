@@ -1,0 +1,22 @@
+diff --git a/dist/crypto.js b/dist/crypto.js
+index 8d8110ee4234766dc639b4c01b3cc6d6ba980d40..242d0d34690e76468be3119206b758b1aba10aff 100644
+--- a/dist/crypto.js
++++ b/dist/crypto.js
+@@ -48,6 +48,17 @@ function digest(algorithm, ...data) {
+     return hash.digest();
+ }
+ function verify(data, key, signature, algorithm) {
++    // Node/OpenSSL infers a default digest (SHA-256) for ECDSA and RSA keys
++    // when no algorithm is given; Bun/BoringSSL throws NO_DEFAULT_DIGEST
++    // instead, which the catch below would silently turn into a failed
++    // verification. Make the OpenSSL default explicit so both runtimes agree.
++    // Ed25519/Ed448 must keep an undefined algorithm.
++    if (algorithm === undefined) {
++        const keyType = typeof key === 'object' && key !== null ? key.asymmetricKeyType : undefined;
++        if (keyType === 'ec' || keyType === 'rsa') {
++            algorithm = 'sha256';
++        }
++    }
+     // The try/catch is to work around an issue in Node 14.x where verify throws
+     // an error in some scenarios if the signature is invalid.
+     try {

@@ -35,3 +35,4 @@ if [[ "$status" -ne 0 ]]; then
   echo "::error ::one or more actions are pinned to a SHA that does not exist" >&2
 fi
 exit "$status"
+
