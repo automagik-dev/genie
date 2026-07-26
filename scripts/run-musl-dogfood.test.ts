@@ -54,6 +54,13 @@ describe('musl dogfood execution adapter', () => {
     // the manifest every run and write pull progress to stderr, failing the
     // harness's stderr-strict capability probe.
     expect(args).not.toContain('--pull=always');
+    // The candidate must execute as the host identity, not container root:
+    // the bind-mounted fixture tree is shared with host-side stages, and both
+    // git (dubious ownership) and genie's own ownership checks fail-close on a
+    // uid mismatch. Root exists only for the apk bootstrap; su-exec drops it.
+    expect(args).toContain(`DOGFOOD_HOST_UID=${process.getuid?.()}`);
+    expect(args).toContain(`DOGFOOD_HOST_GID=${process.getgid?.()}`);
+    expect(args.some((line) => line.includes('su-exec "${DOGFOOD_HOST_UID}:${DOGFOOD_HOST_GID}"'))).toBe(true);
     expect(args).toContain('alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1');
     expect(args).toContain(`type=bind,src=${fx.root},dst=/candidate,readonly`);
     expect(args).toContain('$(touch should-not-exist); spaced');
