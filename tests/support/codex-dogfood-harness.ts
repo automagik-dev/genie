@@ -711,19 +711,47 @@ function verifyLegacyReleaseProvenance(input: {
     const statement = JSON.parse(verified) as {
       predicate?: {
         invocation?: {
-          configSource?: { digest?: { sha1?: unknown } };
+          configSource?: { entryPoint?: unknown; digest?: { sha1?: unknown } };
           parameters?: { event_inputs?: Record<string, unknown> };
+          environment?: { github_event_payload?: { workflow_run?: Record<string, unknown> } };
         };
       };
     };
-    const parameters = statement.predicate?.invocation?.parameters?.event_inputs;
-    const controlCommit = statement.predicate?.invocation?.configSource?.digest?.sha1;
-    const facts = {
-      sourceCommit: parameters?.source_sha,
-      sourceBranch: parameters?.source_branch,
-      sourceCiRunId: parameters?.source_ci_run_id,
-      controlCommit,
-    };
+    const invocation = statement.predicate?.invocation;
+    const controlCommit = invocation?.configSource?.digest?.sha1;
+    // Two provenance shapes reach this leg, exactly as
+    // scripts/release-generic-provenance.sh `verify_reusable` (run just above)
+    // discriminates them by entryPoint. A stable release.yml dispatch records
+    // the release identity in `event_inputs`; an automated version.yml run is a
+    // `workflow_run` and records it in the triggering CI event payload instead.
+    //
+    // The previous stable N is routinely the automated shape: a stable release
+    // promotes an already-published dev prerelease and preserves its immutable
+    // signed bytes (see release-publish.yml "Promotions must endorse the
+    // already-published immutable subject bytes" and reconcile-release-note.sh
+    // stable finalize), so N's generic provenance stays the dev build's.
+    // Reading only `event_inputs` therefore yields undefined for every real N.
+    const entryPoint = invocation?.configSource?.entryPoint;
+    let facts: Record<string, unknown>;
+    if (entryPoint === '.github/workflows/release.yml') {
+      const parameters = invocation?.parameters?.event_inputs;
+      facts = {
+        sourceCommit: parameters?.source_sha,
+        sourceBranch: parameters?.source_branch,
+        sourceCiRunId: parameters?.source_ci_run_id,
+        controlCommit,
+      };
+    } else if (entryPoint === '.github/workflows/version.yml') {
+      const run = invocation?.environment?.github_event_payload?.workflow_run;
+      facts = {
+        sourceCommit: run?.head_sha,
+        sourceBranch: run?.head_branch,
+        sourceCiRunId: typeof run?.id === 'number' || typeof run?.id === 'string' ? String(run.id) : undefined,
+        controlCommit,
+      };
+    } else {
+      throw new Error('verified previous-release provenance has an unknown release entry point');
+    }
     if (
       typeof facts.sourceCommit !== 'string' ||
       !/^[0-9a-f]{40}$/.test(facts.sourceCommit) ||
