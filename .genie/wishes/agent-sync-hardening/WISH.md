@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | BLOCKED — historical PR #2546 plan is superseded criterion-by-criterion by the PR #2545 remediation ledger; exact-SHA CI, human approval, and stable-release blockers remain recorded below |
+| **Status** | SUPERSEDED — criterion-by-criterion by the PR #2545 remediation ledger; its mapped gates closed with [pr-2545-ultra-release-gate](../pr-2545-ultra-release-gate/WISH.md) (DONE 2026-07-24) except F02 (no independent APPROVED review — recorded unmet, not waived). Nothing in this wish blocks the stable pointer anymore. Historical PR #2546 plan and blocker details remain recorded below. Header reconciled to INDEX 2026-07-26 (was BLOCKED) |
 | **Slug** | `agent-sync-hardening` |
 | **Date** | 2026-07-10 |
 | **Author** | Felipe (planned with Fable 5) |

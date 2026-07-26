@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | IN_PROGRESS (all 4 groups + final gate SHIP 2026-07-21; PR-ready; SHIPPED on merge+QA) |
+| **Status** | SUPERSEDED (2026-07-21) — Felipe rejected this substrate after seeing it live; the UI direction moved to [genie-ui-dash](../genie-ui-dash/WISH.md). The browser shell itself merged as PR #2609; salvage retained: the ~1,270-LoC chat backend (no PTY imports) as conductor-wish substrate. All 4 groups + final gate had SHIPped 2026-07-21. Header reconciled to INDEX 2026-07-26 (was IN_PROGRESS, inviting resumption of dead work) |
 | **Slug** | `genie-ui` |
 | **Date** | 2026-07-21 |
 | **Author** | Felipe + Genie |
