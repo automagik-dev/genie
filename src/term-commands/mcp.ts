@@ -38,11 +38,15 @@ const PROTOCOL_VERSION = '2024-11-05';
 export async function runMcpServer(): Promise<void> {
   // Lazy: the read-only bun:sqlite open + tools load here, not at genie startup.
   const mcpTools = await import('../lib/v5/mcp-tools.js');
-  const { isCurrentGenieDb, MCP_TOOLS, openReadonlyDb, resolveProjectContext } = mcpTools;
+  const { isCurrentGenieDb, MCP_TOOLS, openReadonlyDbHealingStaleSchema, resolveProjectContext } = mcpTools;
   const { runMcpServerLoop } = await import('../lib/v5/mcp-server.js');
   await runMcpServerLoop({
     tools: MCP_TOOLS,
-    openReadonlyDb,
+    // Heals an additive-lag schema (older build's DB, same user_version) via the
+    // standard idempotent write-path open before the readonly validator can
+    // fail-close it — the post-update Codex plugin's first contact with a repo
+    // is this server, so no CLI command has had a chance to run the backfill.
+    openReadonlyDb: openReadonlyDbHealingStaleSchema,
     validateReadonlyDb: isCurrentGenieDb,
     // Fail-closed: missing repository context / genie.db / unsupported layouts
     // surface as a typed MCP error instead of a healthy-looking empty board.
