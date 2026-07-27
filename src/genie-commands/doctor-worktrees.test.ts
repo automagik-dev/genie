@@ -424,6 +424,39 @@ describe('doctor wiring', () => {
     expect(branchExists(fx.root, 'wish/demo-alpha')).toBe(true);
   });
 
+  test('an ignored secret (.env) refuses removal; ignored node_modules does not', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'genie-doctor-wt-'));
+    scratchRoots.push(dir);
+    const root = join(dir, 'repo');
+    const base = join(dir, 'worktrees');
+    mkdirSync(root);
+    mkdirSync(base);
+    git(root, 'init', '-q');
+    git(root, 'config', 'user.email', 'test@example.com');
+    git(root, 'config', 'user.name', 'Test');
+    git(root, 'config', 'commit.gpgsign', 'false');
+    writeFileSync(join(root, '.gitignore'), '.env\nnode_modules/\n');
+    git(root, 'add', '-A');
+    git(root, 'commit', '-q', '-m', 'seed with ignores');
+    git(root, 'branch', 'dev');
+    const fx = { dir, root, base };
+    const wt = addWorktree(fx, 'repo-demo-alpha', 'wish/demo-alpha');
+
+    // node_modules alone: disclosed but removable.
+    mkdirSync(join(wt, 'node_modules'));
+    writeFileSync(join(wt, 'node_modules', 'dep.js'), 'x\n');
+    expect(only(fx).disposition).toBe('removable');
+
+    // A secret joins: refused, named, and --fix keeps everything.
+    writeFileSync(join(wt, '.env'), 'API_KEY=hunter2\n');
+    const entry = only(fx);
+    expect(entry.disposition).toBe('dirty');
+    expect(entry.reason).toContain('ignored secret present');
+    expect(entry.reason).toContain('.env');
+    expect(runFix(fx)).toEqual([]);
+    expect(existsSync(join(wt, '.env'))).toBe(true);
+  });
+
   test("a commit landing between cleanup's scan and the delete is not orphaned (ancestry re-proof)", () => {
     const fx = makeFixture();
     const wt = addWorktree(fx, 'repo-demo-alpha', 'wish/demo-alpha');

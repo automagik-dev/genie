@@ -138,7 +138,7 @@ bun test src/genie-commands/ && bun run check:fast
 **Goal:** Review verdicts anchor to an immutable tree even while writers continue in the primary checkout.
 
 **Deliverables:**
-1. Prose-only, deliberately: `skills/review/SKILL.md` (+ mirror) documents the snapshot contract with the EXACT commands — provision `git worktree add --detach <worktreesBase>/<repo>-review-<shortsha> <commit>`, teardown `git worktree remove <path>`. No helper module: a helper here would have no caller but its own test (the #2594 decoration pattern this wish condemns), and the commands are natively fail-safe — `worktree add --detach` creates without touching any branch, and `worktree remove` refuses a dirty tree by default. A crashed review's leftover snapshot is foreign to the doctor residue check (detached, never removed by `--fix`); remove it explicitly with `git worktree remove <path>`.
+1. Prose-only, deliberately: `skills/review/SKILL.md` (+ mirror) documents the snapshot contract with the EXACT commands — provision `git worktree add --detach <worktreesBase>/<repo>-review-<shortsha>-<unique> <commit>` (unique suffix — collision resistance across concurrent reviews), teardown `git worktree remove <path>`. No helper module: a helper here would have no caller but its own test (the #2594 decoration pattern this wish condemns), and the commands are natively fail-safe — `worktree add --detach` creates without touching any branch, and `worktree remove` refuses a dirty tree by default. A crashed review's leftover snapshot is foreign to the doctor residue check (detached, never removed by `--fix`); remove it explicitly with `git worktree remove <path>`.
 2. Reviewer contract in the same prose: work read-only in the snapshot path; verdicts cite the pinned commit.
 3. Precondition (owned by the policy group, not re-delivered here): the freeze text's snapshot carve-out (`git worktree add/remove/prune` is orchestrator-side plumbing, permitted; `checkout/switch/reset/stash/rebase` in the shared checkout remain forbidden).
 
@@ -150,6 +150,7 @@ bun test src/genie-commands/ && bun run check:fast
 ```bash
 bun run check:fast && bun scripts/sync-plugin-skills.ts --check
 ```
+_(Full `bun run check` — install, lint, complete `bun test` — runs on CI and is the required merge gate; `check:fast` is the local iteration gate.)_
 
 **depends-on:** policy
 
