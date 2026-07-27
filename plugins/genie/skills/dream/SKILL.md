@@ -46,7 +46,7 @@ For each `merge_order` layer, in order:
 ### Worker Contract
 
 Each worker, independently:
-1. Work in a dedicated branch and worktree for `feat/<slug>`; never let parallel writers share one checkout. Use Codex-managed or ordinary Git worktrees according to the active environment.
+1. Work in a dedicated branch and worktree for `feat/<slug>`, using Codex-managed or ordinary Git worktrees according to the active environment. The contract governing parallel writers and repo-level git state is stated once in AGENTS.md and the `work` skill's Dispatch section — follow it there.
 2. Execute the wish per `work` (its dispatch, review-gate, and task-state rules govern): dispatched engineers claim via `genie task checkout`; the worker leaves task state `in_progress` and reports evidence. Only the dream PM/orchestrator runs `genie task done` after clean review and passing validation.
 3. Run `review` per group against acceptance criteria.
 4. Run CI; on failure fix and retry (max 3 attempts; poll CI status, never sleep-loop). After 3 failures → blocked.

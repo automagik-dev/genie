@@ -40,7 +40,7 @@ When you are spawned as a subagent for a group, your dispatch prompt carries the
 
 Spawn subagents with the **native delegation surface**; never execute group work directly. Dispatch a wave together so independent groups can run concurrently. Subagents notify you on completion. Every dispatch selects one named role below; implicit or unnamed roles are forbidden.
 
-Use the active runtime's named roles. In Codex, use the matching `genie_*` custom-agent profile when installed; Claude and Hermes use their native named-role surfaces. Parallel writers must have disjoint file ownership or dedicated worktrees; otherwise sequence them. Reviewers and scouts stay read-only. Wait for completion notifications, steer a running thread with native follow-up messaging, and interrupt drift rather than spawning a duplicate worker.
+Use the active runtime's named roles. In Codex, use the matching `genie_*` custom-agent profile when installed; Claude and Hermes use their native named-role surfaces. Parallel writers must have disjoint file ownership or dedicated worktrees; otherwise sequence them. Shared-workspace subagents never mutate repo-level git state (no `checkout`/`switch`/`reset`/`stash`/`rebase`) — **only the orchestrator moves HEAD**; work needing repo-level mutation gets a worktree via `genie launch` or gets sequenced. `git worktree add/remove/prune` on snapshot/lane paths is orchestrator-side plumbing and permitted. Reviewers and scouts stay read-only. Wait for completion notifications, steer a running thread with native follow-up messaging, and interrupt drift rather than spawning a duplicate worker.
 
 | Need | Portable role (Codex profile) |
 |------|----------------------------|
@@ -75,7 +75,12 @@ Extract the group's context from WISH.md and paste it into the dispatch prompt �
 3. **Acceptance criteria** — the checkboxes to satisfy
 4. **Validation command** — the exact command proving the work (e.g. `bun run check`)
 5. **Depends-on** — what the engineer may assume already exists
-6. **Stop conditions** — claim the task first; report blocked instead of expanding scope; end with an outcome word (see Session close)
+6. **File scope** — the group's explicit file scope (the paths it owns), so disjoint ownership is legible to the engineer rather than inferred
+7. **Stop conditions** — claim the task first; report blocked instead of expanding scope; end with an outcome word (see Session close)
+
+When the wave shares one workspace, every brief carries the file scope from item 6 **and** the freeze rule verbatim:
+
+> You share this workspace with concurrent engineers on disjoint files. Shared-workspace subagents never mutate repo-level git state (no `checkout`/`switch`/`reset`/`stash`/`rebase`) — **only the orchestrator moves HEAD**. Work needing repo-level mutation gets a worktree via `genie launch` or gets sequenced. Leave your changes in the working tree; do not commit.
 
 ## State Management
 

@@ -14,7 +14,7 @@ Use the native subagent tools actually exposed in the current session. Do not in
 
 1. The orchestrator creates one task per execution group.
 2. The engineer's first command is `genie task checkout <task-id> --worker <name>`.
-3. Parallel writers require disjoint file ownership or separate worktrees.
+3. Parallel writers require disjoint file ownership or separate worktrees; otherwise sequence them. Shared-workspace subagents never mutate repo-level git state (no `checkout`/`switch`/`reset`/`stash`/`rebase`) — **only the orchestrator moves HEAD**; work needing repo-level mutation gets a worktree via `genie launch` or gets sequenced. `git worktree add/remove/prune` on snapshot/lane paths is orchestrator-side plumbing and permitted.
 4. The engineer reports completion; it never marks the task done.
 5. A different reviewer checks the exact criteria and evidence.
 6. FIX-FIRST dispatches a separate fixer and then a separate re-reviewer, at most two loops.
