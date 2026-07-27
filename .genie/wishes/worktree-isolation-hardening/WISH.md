@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED — plan review SHIP 2026-07-27 (independent reviewer, 2 fix loops: 7 HIGH → 1 HIGH → 0; H2 settled by live probe experiment; 4 advisory residuals applied post-verdict). Ready for /work |
+| **Status** | EXECUTED — all 3 groups SHIP (policy loop 0 +1 MEDIUM folded; doctor-residue after 1 fix loop — tag-shadow ancestry HIGH reproduced+fixed; review-snapshot after 1 fix loop — false doctor-janitor claim corrected), final gate SHIP 2026-07-27 (617 tests, grep gate 4, mirrors byte-identical). SHIPPED on merge to dev; post-merge: #2594 closure + manual QA. Plan review SHIP 2026-07-27 (2 fix loops; H2 settled by live probe) |
 | **Slug** | `worktree-isolation-hardening` |
 | **Date** | 2026-07-27 |
 | **Author** | Felipe + Genie (council deliberation 2026-07-27, adapting PR #2594 by lirazsiri) |
@@ -55,12 +55,12 @@ The simplest complete design is the policy sentence alone — one clause added t
 
 ## Success Criteria
 
-- [ ] AGENTS.md and `skills/work/SKILL.md` (+ mirror) carry the amended contract with the git-freeze clause and the four flip conditions; `plugins/genie/references/dispatch-contract.md` rule 3 is amended to match (it ships the parallel-writer rule to agents and is not covered by skill mirroring)
-- [ ] The freeze's canonical phrase (`only the orchestrator moves HEAD`) greps to exactly the canonical statement sites: `git grep -l "only the orchestrator moves HEAD"` returns AGENTS.md, `skills/work/SKILL.md`, its plugin mirror, and `plugins/genie/references/dispatch-contract.md` — no other file states it; known adjacent paraphrase sites (`skills/dream/SKILL.md`, `skills/work/references/native-surfaces.md`, `plugins/genie/references/codex-integration-map.md`, `skills/genie-hacks/references/catalog.md`) are updated to point, not restate
-- [ ] `genie doctor` reports launch-worktree residue with per-worktree disposition (merged-clean → removable; unmerged or dirty → kept, reason shown); `--fix` removes only the provably safe set and refuses the rest loudly
-- [ ] A dirty or unmerged worktree can NOT be removed by `doctor --fix` — regression test proves the fail-closed refusal (the #2594 fail-open class is unrepresentable)
-- [ ] Review dispatch provisions a detached read-only worktree at the exact reviewed commit and removes it after the verdict; snapshot immutability under a concurrent primary-checkout write is verified by the manual QA criterion below (prose-only group — no code test exists by design)
-- [ ] Shared-workspace dispatch briefs (work skill) include the scope stanza + freeze rule; `bun run check:fast` green AND `bun scripts/sync-plugin-skills.ts --check` green (parity is NOT covered by `bun run check` — verified during plan review; every group editing `skills/` runs `--write` then `--check`)
+- [x] AGENTS.md and `skills/work/SKILL.md` (+ mirror) carry the amended contract with the git-freeze clause and the four flip conditions; `plugins/genie/references/dispatch-contract.md` rule 3 is amended to match (it ships the parallel-writer rule to agents and is not covered by skill mirroring)
+- [x] The freeze's canonical phrase (`only the orchestrator moves HEAD`) greps to exactly the canonical statement sites: `git grep -l "only the orchestrator moves HEAD"` returns AGENTS.md, `skills/work/SKILL.md`, its plugin mirror, and `plugins/genie/references/dispatch-contract.md` — no other file states it; known adjacent paraphrase sites (`skills/dream/SKILL.md`, `skills/work/references/native-surfaces.md`, `plugins/genie/references/codex-integration-map.md`, `skills/genie-hacks/references/catalog.md`) are updated to point, not restate
+- [x] `genie doctor` reports launch-worktree residue with per-worktree disposition (merged-clean → removable; unmerged or dirty → kept, reason shown); `--fix` removes only the provably safe set and refuses the rest loudly
+- [x] A dirty or unmerged worktree can NOT be removed by `doctor --fix` — regression test proves the fail-closed refusal (the #2594 fail-open class is unrepresentable)
+- [x] Review dispatch provisions a detached read-only worktree at the exact reviewed commit and removes it after the verdict; snapshot immutability under a concurrent primary-checkout write is verified by the manual QA criterion below (prose-only group — no code test exists by design)
+- [x] Shared-workspace dispatch briefs (work skill) include the scope stanza + freeze rule; `bun run check:fast` green AND `bun scripts/sync-plugin-skills.ts --check` green (parity is NOT covered by `bun run check` — verified during plan review; every group editing `skills/` runs `--write` then `--check`)
 - [ ] #2594 closed in favor with credit comment; landing commits carry `Co-authored-by: Liraz Siri <liraz@liraz.org>` where his designs are implemented
 
 ## Execution Strategy
@@ -138,7 +138,7 @@ bun test src/genie-commands/ && bun run check:fast
 **Goal:** Review verdicts anchor to an immutable tree even while writers continue in the primary checkout.
 
 **Deliverables:**
-1. Prose-only, deliberately: `skills/review/SKILL.md` (+ mirror) documents the snapshot contract with the EXACT commands — provision `git worktree add --detach <worktreesBase>/<repo>-review-<shortsha> <commit>`, teardown `git worktree remove <path>`. No helper module: a helper here would have no caller but its own test (the #2594 decoration pattern this wish condemns), and the commands are natively fail-safe — `worktree add --detach` creates without touching any branch, and `worktree remove` refuses a dirty tree by default. A crashed review's leftover snapshot is classified and removed by the doctor residue check (snapshots are detached+clean → merged-clean class).
+1. Prose-only, deliberately: `skills/review/SKILL.md` (+ mirror) documents the snapshot contract with the EXACT commands — provision `git worktree add --detach <worktreesBase>/<repo>-review-<shortsha> <commit>`, teardown `git worktree remove <path>`. No helper module: a helper here would have no caller but its own test (the #2594 decoration pattern this wish condemns), and the commands are natively fail-safe — `worktree add --detach` creates without touching any branch, and `worktree remove` refuses a dirty tree by default. A crashed review's leftover snapshot is foreign to the doctor residue check (detached, never removed by `--fix`); remove it explicitly with `git worktree remove <path>`.
 2. Reviewer contract in the same prose: work read-only in the snapshot path; verdicts cite the pinned commit.
 3. Precondition (owned by the policy group, not re-delivered here): the freeze text's snapshot carve-out (`git worktree add/remove/prune` is orchestrator-side plumbing, permitted; `checkout/switch/reset/stash/rebase` in the shared checkout remain forbidden).
 
