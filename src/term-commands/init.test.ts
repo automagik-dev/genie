@@ -7,7 +7,7 @@ import { mergeCodexMcpFallback, removeCodexMcpFallback } from './init.js';
 
 const CLI = join(import.meta.dir, '..', 'genie.ts');
 const INTERPRETED_MCP_ARGS = [realpathSync(CLI), 'mcp'];
-const GITIGNORE_RULES = ['.genie/genie.db', '.genie/genie.db-wal', '.genie/genie.db-shm'];
+const GITIGNORE_RULES = ['.genie/genie.db', '.genie/genie.db-wal', '.genie/genie.db-shm', '.genie/launch/'];
 
 let dir: string;
 
@@ -62,6 +62,21 @@ describe('genie init', () => {
     expect(stdout).toContain('$genie:review');
     expect(stdout.indexOf('$genie:review')).toBeLessThan(stdout.indexOf('$genie:work'));
     expect(stdout).toContain('genie board');
+  });
+
+  test('the kickoff prompts `genie launch` writes into a worktree are ignored', () => {
+    initGitRepo(dir);
+    expect(runInit(dir).code).toBe(0);
+
+    mkdirSync(join(dir, '.genie', 'launch'), { recursive: true });
+    writeFileSync(join(dir, '.genie', 'launch', 'group.prompt'), 'kickoff\n');
+
+    expect(
+      execFileSync('git', ['check-ignore', '.genie/launch/group.prompt'], { cwd: dir, encoding: 'utf-8' }).trim(),
+    ).toBe('.genie/launch/group.prompt');
+    expect(execFileSync('git', ['status', '--porcelain'], { cwd: dir, encoding: 'utf-8' })).not.toContain(
+      '.genie/launch',
+    );
   });
 
   test('--help discloses every project MCP file class init may reconcile', () => {

@@ -367,6 +367,23 @@ describe('genie launch (real run, --no-open)', () => {
     expect(opened).toEqual([]);
   });
 
+  test('a launched worktree stays clean: the kickoff prompt is covered by the rule `genie init` scaffolds', () => {
+    writeFileSync(join(fx.repo, '.gitignore'), '.genie/launch/\n');
+    git(fx.repo, ['add', '.gitignore']);
+    git(fx.repo, ['commit', '-q', '-m', 'ignore launch prompts']);
+
+    const slug = 'clean-tree';
+    createTask(fx.db, { title: 'a task', wish: slug, group: 'main' });
+    executeLaunch(slug, { open: false }, deps());
+
+    const wt = worktreeFor(slug, 'main');
+    expect(existsSync(join(wt, '.genie', 'launch', 'main.prompt'))).toBe(true);
+    // -uall so git lists the prompt itself rather than collapsing to `?? .genie/`.
+    // The per-worktree MCP configs are a separate class of artifact; only the
+    // kickoff prompt is asserted here.
+    expect(git(wt, ['status', '--porcelain', '-uall'])).not.toContain('.genie/launch');
+  });
+
   test('opens Warp best-effort when open is enabled', () => {
     const slug = 'openable';
     createTask(fx.db, { title: 'a task', wish: slug, group: 'main' });
