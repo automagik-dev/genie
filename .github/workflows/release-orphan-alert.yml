@@ -114,10 +114,13 @@ jobs:
           # grep (not search-substring) so v5.X.1 never suppresses v5.X.12.
           for TAG in "${ORPHANS[@]}"; do
             TITLE="release-incident: ${TAG} has no Release object"
-            EXISTS=$(gh issue list --repo "$REPO" --state all --limit 100 \
-              --search "\"$TITLE\" in:title" --json title --jq '.[].title' \
-              | grep -Fxc "$TITLE" || true)
-            if [[ "$EXISTS" -gt 0 ]]; then
+            # The lookup must fail loudly (set -e aborts on the assignment):
+            # a transient API/rate-limit error killing the job is safer than
+            # an empty result being read as "no issue exists" and refiling
+            # an acknowledged incident. Only grep's no-match is expected.
+            KNOWN_TITLES=$(gh issue list --repo "$REPO" --state all --limit 100 \
+              --search "\"$TITLE\" in:title" --json title --jq '.[].title')
+            if grep -Fxq "$TITLE" <<<"$KNOWN_TITLES"; then
               echo "issue already filed for ${TAG} (open or acked-closed); skipping"
               continue
             fi
