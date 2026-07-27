@@ -61,7 +61,7 @@ The simplest complete design is the policy sentence alone — one clause added t
 - [x] A dirty or unmerged worktree can NOT be removed by `doctor --fix` — regression test proves the fail-closed refusal (the #2594 fail-open class is unrepresentable)
 - [x] Review dispatch provisions a detached read-only worktree at the exact reviewed commit and removes it after the verdict; snapshot immutability under a concurrent primary-checkout write is verified by the manual QA criterion below (prose-only group — no code test exists by design)
 - [x] Shared-workspace dispatch briefs (work skill) include the scope stanza + freeze rule; `bun run check:fast` green AND `bun scripts/sync-plugin-skills.ts --check` green (parity is NOT covered by `bun run check` — verified during plan review; every group editing `skills/` runs `--write` then `--check`)
-- [ ] #2594 closed in favor with credit comment; landing commits carry `Co-authored-by: Liraz Siri <liraz@liraz.org>` where his designs are implemented
+- [x] #2594 closed in favor with credit comment (2026-07-27, post-merge of #2707); landing commits carry `Co-authored-by: Liraz Siri <liraz@liraz.org>`
 
 ## Execution Strategy
 
@@ -157,7 +157,7 @@ bun run check:fast && bun scripts/sync-plugin-skills.ts --check
 
 ### Post-merge checklist (orchestrator-owned, after all groups land on dev)
 
-- [ ] Comment on and close #2594 in favor of this wish with the council reasoning + flip conditions; verify landing commits carry `Co-authored-by: Liraz Siri <liraz@liraz.org>` where his designs are implemented (success criterion 6)
+- [x] Done 2026-07-27: #2594 closed in favor with the council reasoning + flip conditions; all three landing commits carry the Co-authored-by trailer (success criterion 6)
 
 ---
 
