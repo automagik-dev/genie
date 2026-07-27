@@ -235,6 +235,81 @@ describe('git-freeze-guard', () => {
   });
 
   // =========================================================================
+  // Subshells — `(…)` scopes a cd, and its parens are not part of the command
+  // =========================================================================
+
+  describe('subshell grouping', () => {
+    test('allows a subshell that cd s into another repo before the frozen call', async () => {
+      expect(await run(subagent('(cd /other && git switch main)'))).toBeUndefined();
+    });
+
+    test('allows the same subshell written with the parens as their own tokens', async () => {
+      expect(await run(subagent('( cd /other && git switch main )'))).toBeUndefined();
+    });
+
+    test('allows a nested subshell', async () => {
+      expect(await run(subagent('((cd /other && git switch main))'))).toBeUndefined();
+    });
+
+    test('allows a subshell cd into an owned worktree', async () => {
+      expect(await run(subagent(`(cd ${LANE} && git switch -c feat/x)`))).toBeUndefined();
+    });
+
+    test('denies once the subshell closes, because its cd does not leak', async () => {
+      expect((await run(subagent(`(cd ${LANE} && git status) && git switch dev`)))?.decision).toBe('deny');
+    });
+
+    test('denies a frozen call that follows a closed subshell', async () => {
+      expect((await run(subagent('(cd /other && git switch main) ; git switch dev')))?.decision).toBe('deny');
+    });
+
+    test('a command substitution inside a subshell does not close it early', async () => {
+      expect(await run(subagent(`(cd ${LANE} && echo $(pwd) && git switch dev)`))).toBeUndefined();
+    });
+
+    test('still denies after a command substitution in an earlier statement', async () => {
+      expect((await run(subagent('echo $(date) && git switch dev')))?.decision).toBe('deny');
+      expect((await run(subagent('echo `date` && git switch dev')))?.decision).toBe('deny');
+    });
+
+    test('allows a git -C whose target is a command substitution', async () => {
+      expect(await run(subagent('git -C $(pwd) switch dev'))).toBeUndefined();
+    });
+  });
+
+  // =========================================================================
+  // Every frozen invocation is evaluated, not just the first
+  // =========================================================================
+
+  describe('multiple frozen invocations in one command', () => {
+    test('denies a shared-checkout call hidden behind a legitimate git -C', async () => {
+      expect((await run(subagent('git -C /other switch main && git switch dev')))?.decision).toBe('deny');
+    });
+
+    test('denies a shared-checkout call hidden behind a legitimate worktree call', async () => {
+      expect((await run(subagent(`cd ${LANE} && git switch x && cd ${SHARED} && git switch dev`)))?.decision).toBe(
+        'deny',
+      );
+    });
+
+    test('allows when every frozen invocation lands outside the shared checkout', async () => {
+      expect(await run(subagent(`git -C ${LANE} switch x && git -C /other switch y`))).toBeUndefined();
+    });
+
+    test('the deny names the invocation that targets the shared checkout', async () => {
+      const result = await run(subagent('git -C /other switch main && git reset --hard HEAD~1'));
+      expect(result?.decision).toBe('deny');
+      expect(result?.reason ?? '').toContain('`git reset`');
+    });
+
+    test('resolves each distinct directory at most once', async () => {
+      const mock = mockDeps();
+      expect(await gitFreezeGuard(subagent('cd /other && git switch a && git switch b'), mock.deps)).toBeUndefined();
+      expect(mock.calls).toEqual([SHARED, '/other']);
+    });
+  });
+
+  // =========================================================================
   // Quoting — a frozen command named inside an argument is not a command
   // =========================================================================
 
@@ -277,6 +352,15 @@ describe('git-freeze-guard', () => {
       const payload = subagent('git checkout dev');
       payload.tool_input = {};
       expect(await run(payload)).toBeUndefined();
+    });
+
+    test('allows a frozen call nested inside a substitution — the documented boundary', async () => {
+      // The guard masks a substitution's interior instead of walking it, so a
+      // frozen call in there is not seen. Pinned deliberately: see the module
+      // header. The freeze targets the accidental `git switch dev`, and this is
+      // not a form anyone reaches for by accident.
+      expect(await run(subagent('$(cd /repo && git switch dev)'))).toBeUndefined();
+      expect(await run(subagent('`git switch dev`'))).toBeUndefined();
     });
 
     test('does not shell out to git for commands that never mention git', async () => {

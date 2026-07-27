@@ -24,7 +24,17 @@
  *   - a `cd` / `git -C` target that isn't a literal path (variable, glob,
  *     `~`, command substitution, quoted-and-masked) → allow;
  *   - `git --git-dir` / `--work-tree` / `--namespace` overrides → allow;
- *   - a worktree root that git cannot resolve → allow.
+ *   - a worktree root that git cannot resolve → allow;
+ *   - a `cd` inside a subshell — `(cd /elsewhere && git switch main)` — moves
+ *     only that subshell, and the guard tracks it that way rather than judging
+ *     the git call against the session cwd;
+ *   - a frozen call nested *inside* a command substitution — `$(git switch dev)`
+ *     — is not descended into and so is allowed. The substitution's interior is
+ *     masked wholesale because its parentheses and separators are not the outer
+ *     statement's, and reading it would mean tracking a second scope's cwd
+ *     through the same walk. That is a knowing gap, and a cheap one: the freeze
+ *     exists to catch the accidental `git switch dev`, and nobody types the
+ *     substituted form by accident.
  *
  * This is the opposite of {@link branchGuard}'s fail-closed posture, and it is
  * the point. The freeze has no server-side backstop the way branch protection
@@ -42,6 +52,11 @@
  * compares `git rev-parse --show-toplevel` of the command's effective directory
  * against the same for the session `cwd`, and denies only when they are the
  * same working tree. Subagents operating in their own worktree are untouched.
+ *
+ * A compound command can hold several frozen invocations in several directories
+ * — `git -C /elsewhere switch main && git switch dev`. *Every* one is resolved
+ * and the deny is raised for the first that lands in the shared checkout, so a
+ * legitimate lead invocation cannot shield a frozen one behind it.
  *
  * Priority: 2 (a deny-guard — runs with branch-guard/orchestration-guard,
  * before omni-approval (5) and the context handlers (8)).
@@ -81,6 +96,9 @@ const NON_LITERAL_PATH = /[$`*?~!]|\\$/;
 
 /** Statement separators. `&&` and `||` must be tried before `&` and `|`. */
 const SEGMENT_SEPARATORS = /&&|\|\||;|\||&|\n/;
+
+/** Openers of a region that runs in its own shell and yields a value, not a statement. */
+const OPAQUE_REGION_OPENERS = ['$(', '<(', '>('];
 
 /** git must answer fast; a hook that stalls is worse than a hook that allows. */
 const GIT_TIMEOUT_MS = 2_000;
@@ -177,29 +195,117 @@ function isFrozenInvocation(invocation: GitInvocation): boolean {
   return verb === undefined ? true : !READ_ONLY_STASH_VERBS.has(verb);
 }
 
+/** Index just past the `)` that closes the group opened before `from`, or the end of `cmd`. */
+function closingParen(cmd: string, from: number): number {
+  let depth = 1;
+  for (let i = from; i < cmd.length; i += 1) {
+    if (cmd[i] === '(') depth += 1;
+    else if (cmd[i] === ')') {
+      depth -= 1;
+      if (depth === 0) return i + 1;
+    }
+  }
+  return cmd.length;
+}
+
+/**
+ * Mask command/process substitutions and backticks with `$`, preserving length
+ * the way {@link maskQuotedRegions} does.
+ *
+ * Two things would otherwise be misread. Their parentheses are not the subshell
+ * grouping {@link findFrozenInvocations} tracks, so the stray `)` of a `$(pwd)`
+ * would close a real `(…)` group early and leak its `cd` outward. And their
+ * result is not a literal path, so `$` — which {@link NON_LITERAL_PATH} already
+ * rejects — is the mask character that keeps `git -C $(pwd)` failing open.
+ *
+ * An unterminated region masks to end of string, matching the quote masker's
+ * treatment of a runaway quote.
+ */
+function maskOpaqueRegions(cmd: string): string {
+  let out = '';
+  let i = 0;
+  while (i < cmd.length) {
+    const opener = OPAQUE_REGION_OPENERS.find((candidate) => cmd.startsWith(candidate, i));
+    if (opener) {
+      const end = closingParen(cmd, i + opener.length);
+      out += '$'.repeat(end - i);
+      i = end;
+      continue;
+    }
+    if (cmd[i] === '`') {
+      const close = cmd.indexOf('`', i + 1);
+      const end = close === -1 ? cmd.length : close + 1;
+      out += '$'.repeat(end - i);
+      i = end;
+      continue;
+    }
+    out += cmd[i];
+    i += 1;
+  }
+  return out;
+}
+
+interface Statement {
+  tokens: string[];
+  /** Subshell groups this statement opens with `(` and closes with `)`. */
+  opened: number;
+  closed: number;
+}
+
+/**
+ * Tokenize one statement, peeling the subshell parentheses off its ends. Both
+ * spellings occur in the wild — `(cd /x` and `( cd /x` — so the parens are
+ * stripped character-wise rather than expected as tokens of their own.
+ */
+function parseStatement(segment: string): Statement {
+  const tokens = segment.trim().split(/\s+/).filter(Boolean);
+  let opened = 0;
+  while (tokens.length > 0 && tokens[0].startsWith('(')) {
+    const head = tokens[0].slice(1);
+    opened += 1;
+    if (head.length === 0) tokens.shift();
+    else tokens[0] = head;
+  }
+  let closed = 0;
+  while (tokens.length > 0 && tokens[tokens.length - 1].endsWith(')')) {
+    const tail = tokens[tokens.length - 1].slice(0, -1);
+    closed += 1;
+    if (tail.length === 0) tokens.pop();
+    else tokens[tokens.length - 1] = tail;
+  }
+  return { tokens, opened, closed };
+}
+
 /**
  * Walk the statements of a compound command left to right, tracking `cd` as it
- * goes, and return the first frozen git invocation found.
+ * goes, and return every frozen git invocation found.
+ *
+ * Directories are a stack rather than a single value because `(` opens a scope
+ * the shell discards at the matching `)`: a `cd` inside a subshell applies to
+ * the statements within it and to nothing after it.
  */
-function findFrozenInvocation(command: string, cwd: string | null): GitInvocation | null {
-  const masked = maskQuotedRegions(command);
-  if (!/\bgit\b/.test(masked)) return null;
-  let dir = cwd;
+function findFrozenInvocations(command: string, cwd: string | null): GitInvocation[] {
+  const masked = maskOpaqueRegions(maskQuotedRegions(command));
+  if (!/\bgit\b/.test(masked)) return [];
+  const scopes: (string | null)[] = [cwd];
+  const found: GitInvocation[] = [];
   for (const segment of masked.split(SEGMENT_SEPARATORS)) {
-    const tokens = segment.trim().split(/\s+/).filter(Boolean);
-    if (tokens.length === 0) continue;
-    if (tokens[0] === 'cd' || tokens[0] === 'pushd') {
-      dir = joinPath(dir, tokens[1]);
-      continue;
+    const { tokens, opened, closed } = parseStatement(segment);
+    for (let n = 0; n < opened; n += 1) scopes.push(scopes[scopes.length - 1]);
+    const dir = scopes[scopes.length - 1];
+    if (tokens.length > 0) {
+      if (tokens[0] === 'cd' || tokens[0] === 'pushd') {
+        scopes[scopes.length - 1] = joinPath(dir, tokens[1]);
+      } else if (tokens[0] === 'popd') {
+        scopes[scopes.length - 1] = null;
+      } else {
+        const invocation = parseGitInvocation(tokens, dir);
+        if (invocation && isFrozenInvocation(invocation)) found.push(invocation);
+      }
     }
-    if (tokens[0] === 'popd') {
-      dir = null;
-      continue;
-    }
-    const invocation = parseGitInvocation(tokens, dir);
-    if (invocation && isFrozenInvocation(invocation)) return invocation;
+    for (let n = 0; n < closed && scopes.length > 1; n += 1) scopes.pop();
   }
-  return null;
+  return found;
 }
 
 function denyReason(subcommand: string, sharedRoot: string): string {
@@ -233,16 +339,31 @@ export async function gitFreezeGuard(
   if (typeof command !== 'string' || command.length === 0) return;
 
   const sessionCwd = typeof payload.cwd === 'string' && payload.cwd.length > 0 ? payload.cwd : null;
-  const invocation = findFrozenInvocation(command, sessionCwd);
-  if (!invocation || invocation.dir === null || sessionCwd === null) return;
+  if (sessionCwd === null) return;
+
+  // Only invocations whose directory resolved are decidable; the rest fail open.
+  // Nothing below this point runs — no `git` subprocess — unless one survives.
+  const targets = findFrozenInvocations(command, sessionCwd).filter(
+    (invocation): invocation is GitInvocation & { dir: string } => invocation.dir !== null,
+  );
+  if (targets.length === 0) return;
 
   const sharedRoot = deps.resolveWorktreeRoot(sessionCwd);
   if (sharedRoot === null) return;
-  const targetRoot = deps.resolveWorktreeRoot(invocation.dir);
-  if (targetRoot === null || targetRoot !== sharedRoot) return;
 
-  return {
-    decision: 'deny',
-    reason: denyReason(invocation.subcommand, sharedRoot),
+  const rootCache = new Map<string, string | null>();
+  const rootOf = (dir: string): string | null => {
+    if (!rootCache.has(dir)) rootCache.set(dir, deps.resolveWorktreeRoot(dir));
+    return rootCache.get(dir) ?? null;
   };
+
+  for (const target of targets) {
+    if (rootOf(target.dir) === sharedRoot) {
+      return {
+        decision: 'deny',
+        reason: denyReason(target.subcommand, sharedRoot),
+      };
+    }
+  }
+  return;
 }
