@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | EXECUTED — final gate **SHIP** 2026-07-22 (Fable final-gate, independent full-suite rerun 2396/ruled-2; cache-advance invariant swept to exactly five gated entries; lifecycle traced end-to-end; no appeal). A-E merge gate OPEN — PR to dev created. WISH→SHIPPED + stable promotion remain gated on Felipe's live homolog dogfood ritual (structural evidence validator) incl. his ratified veto on Fork A (setup is activation-only). Dev independently shipped the delivery-adjacent plugin-only layer (B1 `3b4faa3b`, B2 `6f423869`); NONE of the activation protocol is on dev. Merge gate holds: A–E must each independently SHIP before the PR merges to dev. Plan gate SHIP 2026-07-12 at fix loop 1/2 (reviewed digest `4c71ab68…`) |
+| **Status** | SHIPPED — PR #2617 merged to dev 2026-07-22 (A–E merge gate closed; each group independently SHIPPED first); final gate **SHIP** 2026-07-22 (Fable final-gate, independent full-suite rerun 2396/ruled-2; cache-advance invariant swept to exactly five gated entries; lifecycle traced end-to-end; no appeal). Stable promotion remains gated on Felipe's live homolog dogfood ritual (structural evidence validator) incl. his ratified veto on Fork A (setup is activation-only). Before the merge, dev had independently shipped only the delivery-adjacent plugin-only layer (B1 `3b4faa3b`, B2 `6f423869`). Plan gate SHIP 2026-07-12 at fix loop 1/2 (reviewed digest `4c71ab68…`). Header reconciled 2026-07-26 (previously read "A-E merge gate OPEN — PR to dev created") |
 | **Slug** | `codex-plugin-update-handoff` |
 | **Date** | 2026-07-12 |
 | **Author** | Felipe + Codex brainstorm session |

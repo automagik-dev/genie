@@ -112,3 +112,11 @@ src/genie-commands/legacy-v4.test.ts   (new scenarios)
 <doctor command file>                   (v4-residue check + --fix)
 src/genie-commands/update.ts            (summarizeJsonlSignals age filter)
 ```
+
+## Scope input from the 2026-07-26 backlog sweep (pre-approval addendum)
+
+The full issue-backlog sweep (2026-07-26) found that the **only open product issue with live user impact** is v4 residue this wish's doctor check should own: #2450 — a v4→v5 upgraded host keeps the `pgserve` PM2 entry, which crash-loops forever after reboot. `src/lib/legacy-v4.ts` is a solid foundation but strictly **file-scoped**: it never runs `pm2 delete` (for `Genie` / `pgserve` / `autopg-ui` entries), never stops a live postmaster, and never touches `~/.autopg/data`.
+
+Proposed scope extension for the approval discussion (from #2450 + design input in #1697, #1695, #1742, #1694 — all closed as v4-obsolete but carrying real migration-path detail):
+- Extend the residue manifest to **process/service residue**: detect v4-owned PM2 entries and offer conservative removal; detect and stop a live v4 postmaster; report `~/.autopg/data` for manual disposal (never auto-delete data).
+- Surface it as a `genie doctor` "v4 residue" check so it is discoverable exactly where affected users look.
