@@ -93,7 +93,6 @@ program
   .command('update')
   .description('Update Genie CLI to the latest version (GitHub Releases)')
   .option('--dev', 'Switch to dev (pre-release) channel (.well-known/dev.json)')
-  .option('--homolog', 'Switch to homolog (staging) channel (.well-known/homolog.json)')
   .option('--next', 'Deprecated alias for --dev (will be removed in a future release)')
   .option('--stable', 'Switch to stable channel (.well-known/latest.json)')
   .option('-y, --yes', 'Skip the TTY confirmation prompt (or set GENIE_UPDATE_YES=1)')
@@ -118,7 +117,6 @@ program
         'rollback',
         'syncOnly',
         'dev',
-        'homolog',
         'next',
         'stable',
         'yes',
@@ -140,7 +138,6 @@ program
         'printUpdateCapabilities',
         'json',
         'dev',
-        'homolog',
         'next',
         'stable',
         'yes',

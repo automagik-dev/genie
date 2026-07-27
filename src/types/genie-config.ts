@@ -214,19 +214,33 @@ export const GenieConfigSchema = z.object({
   codex: CodexConfigSchema.optional(),
   runtime: RuntimeConfigSchema.default({}),
   installMethod: z.enum(['source', 'npm', 'bun']).optional(),
-  // Release channel preference. Canonical values: 'latest' (stable),
-  // 'homolog' (staging — middle tier in dev→homolog→stable promotion),
-  // or 'dev' (pre-release). 'next' is accepted as a read-time alias for
-  // 'dev' for configs written by pre-release-channel-dev binaries (where
-  // the channel was named 'next' before the rename — see wish
-  // release-channel-dev, decision #3). Writes always emit one of the
-  // three canonical tokens; the 'next' alias never round-trips back to
-  // disk. 'homolog' added 2026-05-12 per Felipe's cross-repo channel
-  // taxonomy unification.
+  // Release channel preference. Canonical values: 'latest' (stable) or
+  // 'dev' (pre-release). Two read-time aliases are accepted so configs
+  // written by older binaries still parse; neither round-trips to disk,
+  // because writes always emit a canonical token:
+  //   'next'    → 'dev'    pre-release-channel-dev binaries named the dev
+  //                        channel 'next' (see wish release-channel-dev,
+  //                        decision #3).
+  //   'homolog' → 'latest' the homolog channel (added 2026-05-12, removed
+  //                        2026-07-26) no longer exists and .well-known/
+  //                        homolog.json is gone, so a pinned homolog config
+  //                        cannot be honored. It resolves to stable rather
+  //                        than dev: homolog sat ABOVE dev in the old
+  //                        dev→homolog→stable ladder, so stable is the
+  //                        conservative direction. Silently subscribing
+  //                        these users to less-vetted dev builds would be a
+  //                        safety regression they never consented to.
+  // Dropping these from the enum instead would hard-fail the whole config
+  // parse — taking every unrelated field down with it — for anyone who ever
+  // ran `genie update --homolog`.
   updateChannel: z
     .enum(['latest', 'next', 'dev', 'homolog'])
     .default('latest')
-    .transform((v) => (v === 'next' ? ('dev' as const) : v)),
+    .transform((v) => {
+      if (v === 'next') return 'dev' as const;
+      if (v === 'homolog') return 'latest' as const;
+      return v;
+    }),
   setupComplete: z.boolean().default(false),
   lastSetupAt: z.string().optional(),
   // Path to genie-cli source directory (for dev mode sync)

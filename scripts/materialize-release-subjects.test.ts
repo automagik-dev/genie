@@ -95,10 +95,10 @@ process.exit(2);
     });
     expect(materialized.exitCode).toBe(0);
 
-    const manifest = join(root, 'homolog.json');
+    const manifest = join(root, 'dev.json');
     writeFileSync(
       manifest,
-      `{"schema_version":1,"channel":"homolog","version":"${VERSION}","released_at":"2026-07-23T00:00:00Z","tarball_base":"https://github.com/automagik-dev/genie/releases/download/v${VERSION}","platforms":["linux-x64-glibc","linux-x64-musl","linux-arm64","darwin-arm64"]}\n`,
+      `{"schema_version":1,"channel":"dev","version":"${VERSION}","released_at":"2026-07-23T00:00:00Z","tarball_base":"https://github.com/automagik-dev/genie/releases/download/v${VERSION}","platforms":["linux-x64-glibc","linux-x64-musl","linux-arm64","darwin-arm64"]}\n`,
     );
     for (const platform of PLATFORMS) {
       const tarball = join(dist, `genie-${VERSION}-${platform}.tar.gz`);
@@ -117,13 +117,13 @@ process.exit(2);
         '--version',
         VERSION,
         '--channel',
-        'homolog',
+        'dev',
         '--platform-id',
         platform,
         '--source-sha',
         'a'.repeat(40),
         '--source-branch',
-        'homolog',
+        'dev',
         '--source-ci-run-id',
         '123',
         '--control-sha',

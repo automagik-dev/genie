@@ -203,7 +203,7 @@ describe('verified generic SLSA provenance policy', () => {
       artifactSha256: ARTIFACT_SHA256,
       // On automated channels this field is the TRIGGER commit (the generic
       // provenance has no record of the later bump commit). release-publish.yml
-      // compares it against TRIGGER_SHA for dev/homolog and SOURCE_SHA only for
+      // compares it against TRIGGER_SHA for dev and SOURCE_SHA only for
       // the stable dispatch.
       sourceSha: TRIGGER_SHA,
       sourceBranch: 'dev',

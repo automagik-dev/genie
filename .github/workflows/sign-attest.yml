@@ -12,7 +12,7 @@ name: Sign + Attest Tarballs
 #
 # Trigger: reusable only inside the trusted main-branch release chain, after
 # the explicit source build succeeds. Stable begins at release.yml; automated
-# dev/homolog begins at version.yml. It consumes same-run artifacts.
+# dev begins at version.yml. It consumes same-run artifacts.
 #
 # Signing model is cosign KEYLESS — the OIDC identity is bound to this
 # workflow file path + ref (Fulcio SAN URI). There is no long-lived key.
@@ -100,7 +100,7 @@ jobs:
               EXPECTED_EVENT=workflow_dispatch
               EXPECTED_CALLER="$EXPECTED_STABLE_CALLER"
               ;;
-            homolog|dev)
+            dev)
               EXPECTED_EVENT=workflow_run
               EXPECTED_CALLER="$EXPECTED_AUTOMATED_CALLER"
               ;;
@@ -122,7 +122,7 @@ jobs:
             echo "::error ::release-caller.inputs sign-attest received malformed release identity inputs"
             exit 1
           fi
-          case "$INPUT_SOURCE_BRANCH" in main|homolog|dev) ;; *) exit 1 ;; esac
+          case "$INPUT_SOURCE_BRANCH" in main|dev) ;; *) exit 1 ;; esac
           echo "Trusted release caller admitted at ${CALLER_SHA}"
 
   # ---------------------------------------------------------------------------
@@ -395,7 +395,7 @@ jobs:
             --source-branch main
           )
           # slsa-verifier's --build-workflow-input applies only to a top-level
-          # workflow_dispatch. Automated dev/homolog runs have version.yml's
+          # workflow_dispatch. Automated dev runs have version.yml's
           # workflow_run context; the helper below binds that signed event to
           # the exact successful CI run instead.
           if [[ "$CHANNEL" == "stable" ]]; then

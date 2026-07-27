@@ -198,7 +198,7 @@ function validateProvenance(errors: string[], label: string, value: unknown, com
   );
   // Delivery-era provenance carries the release inputs the orchestrator
   // admitted, so its branch is bound to its channel (`admit` accepts only
-  // stable:main / homolog:homolog / dev:dev).
+  // stable:main / dev:dev).
   //
   // Legacy release-tarball provenance is the generic SLSA statement of an
   // ALREADY-PUBLISHED release, so its branch records where that release was
@@ -209,8 +209,8 @@ function validateProvenance(errors: string[], label: string, value: unknown, com
   // pinned N, is exactly this. Demanding "main" there is unsatisfiable; accept
   // any branch the release chain admits instead.
   if (provenance.kind === 'release-tarball') {
-    if (!['main', 'homolog', 'dev'].includes(String(provenance.sourceBranch))) {
-      errors.push(`${label}.sourceBranch must be main, homolog, or dev`);
+    if (!['main', 'dev'].includes(String(provenance.sourceBranch))) {
+      errors.push(`${label}.sourceBranch must be main or dev`);
     }
   } else if (channel === 'stable') {
     same(errors, `${label}.sourceBranch`, provenance.sourceBranch, 'main');
@@ -238,8 +238,8 @@ function validateArtifact(
   if (artifact === null) return null;
   same(errors, `${label}.version`, artifact.version, expectedVersion);
   if (channel === undefined) {
-    if (!['stable', 'homolog', 'dev'].includes(String(artifact.channel))) {
-      errors.push(`${label}.channel must be stable, homolog, or dev`);
+    if (!['stable', 'dev'].includes(String(artifact.channel))) {
+      errors.push(`${label}.channel must be stable or dev`);
     }
   } else {
     same(errors, `${label}.channel`, artifact.channel, channel);
@@ -721,8 +721,8 @@ function validateLifecycle(errors: string[], value: unknown, entry: JsonRecord |
   ) {
     errors.push('lifecycle previous stable N must be older than candidate T');
   }
-  if (!['stable', 'homolog', 'dev'].includes(String(lifecycle.channel))) {
-    errors.push('lifecycle.channel must be stable, homolog, or dev');
+  if (!['stable', 'dev'].includes(String(lifecycle.channel))) {
+    errors.push('lifecycle.channel must be stable or dev');
   }
   matches(errors, 'lifecycle.sourceCommit', lifecycle.sourceCommit, COMMIT_SHA, 'a 40-character lowercase commit sha');
   const artifacts = record(errors, 'lifecycle.artifacts', lifecycle.artifacts);

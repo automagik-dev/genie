@@ -137,7 +137,7 @@ jobs:
           }
           if [[ "${VERSION}" != "${PACKAGE_VERSION}" ]]; then
             case "${INPUT_CHANNEL}" in
-              homolog|stable)
+              stable)
                 echo "Authenticated ${INPUT_CHANNEL} promotion stamps immutable version ${VERSION} over source ${PACKAGE_VERSION}"
                 ;;
               *)

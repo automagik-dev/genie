@@ -8,11 +8,11 @@ function fixture(): { root: string; manifest: string; dist: string; value: Recor
   const root = mkdtempSync(join(tmpdir(), 'genie-candidate-dogfood-'));
   const dist = join(root, 'dist');
   mkdirSync(dist);
-  const manifest = join(root, 'homolog.json');
+  const manifest = join(root, 'dev.json');
   const platforms = Object.keys(NATIVE_DOGFOOD_TARGETS);
   const value = {
     schema_version: 1,
-    channel: 'homolog',
+    channel: 'dev',
     version: '5.260723.9',
     released_at: '2026-07-23T00:00:00Z',
     tarball_base: 'https://github.com/automagik-dev/genie/releases/download/v5.260723.9',

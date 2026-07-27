@@ -57,10 +57,9 @@ compare_numeric_versions() {
 }
 
 case "$CHANNEL" in
-  stable) TARGETS=('stable:latest.json' 'homolog:homolog.json' 'dev:dev.json') ;;
-  homolog) TARGETS=('homolog:homolog.json' 'dev:dev.json') ;;
+  stable) TARGETS=('stable:latest.json' 'dev:dev.json') ;;
   dev) TARGETS=('dev:dev.json') ;;
-  *) echo "unknown channel: ${CHANNEL} (valid: stable, homolog, dev)" >&2; exit 2 ;;
+  *) echo "unknown channel: ${CHANNEL} (valid: stable, dev)" >&2; exit 2 ;;
 esac
 
 validate_candidate() {

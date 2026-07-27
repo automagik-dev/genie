@@ -255,7 +255,6 @@ describe('local delivery update-mode and trailer boundary', () => {
     expect(resolveUpdateExecutionMode({ publishLocalDelivery: '{}' }, undefined)).toBe('publish-local-delivery');
     for (const conflict of [
       { dev: true },
-      { homolog: true },
       { next: true },
       { stable: true },
       { yes: true },

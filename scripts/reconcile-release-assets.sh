@@ -25,8 +25,7 @@ DIST_DIR="${DIST_DIR:-dist}"
 TAG="v${VERSION}"
 PLATFORMS=(linux-x64-glibc linux-x64-musl linux-arm64 darwin-arm64)
 case "$CHANNEL" in
-  stable) EVIDENCE_CHANNELS=(stable homolog dev) ;;
-  homolog) EVIDENCE_CHANNELS=(homolog dev) ;;
+  stable) EVIDENCE_CHANNELS=(stable dev) ;;
   dev) EVIDENCE_CHANNELS=(dev) ;;
   *) echo "invalid release asset channel: ${CHANNEL}" >&2; exit 2 ;;
 esac
@@ -95,7 +94,6 @@ validate_descriptor() {
   fi
   case "$evidence_channel" in
     stable) manifest_name=latest.json ;;
-    homolog) manifest_name=homolog.json ;;
     dev) manifest_name=dev.json ;;
     *) return 1 ;;
   esac
@@ -133,10 +131,8 @@ validate_descriptor() {
       .artifactSha256 == $artifact_sha and
       .releaseManifestSha256 == $manifest_sha and
       .digestAlgorithm == "genie-physical-tree-v1" and
-      (.sourceBranch == "main" or .sourceBranch == "homolog" or .sourceBranch == "dev") and
-      (if .channel == "stable" then .sourceBranch == "main"
-       elif .channel == "homolog" then (.sourceBranch == "main" or .sourceBranch == "homolog")
-       else true end) and
+      (.sourceBranch == "main" or .sourceBranch == "dev") and
+      (if .channel == "stable" then .sourceBranch == "main" else true end) and
       (.sourceCiRunId | type == "string" and test("^[0-9]+$")) and
       ([.releaseManifestSha256, .artifactSha256, .installedBinarySha256, .canonicalPayloadSha256]
         | all(type == "string" and test("^[0-9a-f]{64}$"))) and

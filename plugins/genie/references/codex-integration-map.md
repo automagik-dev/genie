@@ -141,8 +141,8 @@ and one native Group F lifecycle result bound to the same manifest/artifact dige
 version. The completeness gate rejects missing, duplicate, skipped, unavailable, empty-board, wrong-root,
 stale-task, out-of-order, or identity-inconsistent evidence.
 
-That Codex dogfood gate and the independent release-security gate are separate read-only jobs. Homolog and
-stable publication require both jobs to succeed for the same candidate; neither result can substitute for
+That Codex dogfood gate and the independent release-security gate are separate read-only jobs. Stable
+publication requires both jobs to succeed for the same candidate; neither result can substitute for
 or bypass the other. Repository code does not claim the still-human external two-maintainer demonstration
 tracked by `stable-release-security-gate`.
 
@@ -227,10 +227,10 @@ that bypasses the Codex activation gate.
   assertion/permit, and is unreachable from update, install, setup, doctor, sync,
   post-delivery convergence, or init.
 
-### Homolog candidate channel and the N-task non-guarantee
+### Dev candidate channel and the N-task non-guarantee
 
-**Homolog is the canonical pre-stable candidate channel.** The post-release live
-dogfood runs against the exact homolog candidate commit before any stable
+**Dev is the canonical pre-stable candidate channel.** The post-release live
+dogfood runs against the exact dev candidate commit before any stable
 promotion. Consent is authority, not liveness: **an activated N task is not
 guaranteed to resume.** After the delivered N+1 generation is activated, a
 previously retired or open N task may be gone; the operator still needs `/hooks`

@@ -211,8 +211,7 @@ describe('Group E release and documentation contracts', () => {
     expect(publish).toContain('predicate-type: https://github.com/${{ github.repository }}/delivery-evidence/v1');
     expect(publish).toContain('actions/attest@67422f5511b7ff725f4dbd6fb9bd2cd925c65a8d');
     expect(publish).toContain('${DESCRIPTOR}.sigstore.json');
-    expect(publish).toContain('EVIDENCE_CHANNELS=(stable homolog dev)');
-    expect(publish).toContain('EVIDENCE_CHANNELS=(homolog dev)');
+    expect(publish).toContain('EVIDENCE_CHANNELS=(stable dev)');
     expect(publish).toContain('EVIDENCE_CHANNELS=(dev)');
     expect(publish).toContain('name: delivery-candidate-manifests');
     expect(publish).toContain('CANDIDATE_MANIFEST_DIR="$CANDIDATE_MANIFEST_DIR"');
@@ -346,17 +345,15 @@ describe('Group E release and documentation contracts', () => {
     expect(publish).toContain("needs.codex-dogfood-completeness.result == 'success'");
     expect(publish).toContain("needs.stable-release-security-gate.result == 'success'");
     expect(publish).not.toContain("inputs.channel == 'stable'");
-    expect(publish).not.toContain("inputs.channel == 'homolog'");
   });
 
-  test('stable approval is explicit while dev and homolog remain automated', () => {
+  test('stable approval is explicit while dev remains automated', () => {
     const release = read('.github/workflows/release.yml');
     const version = read('.github/workflows/version.yml');
     const manualInputs = release.split('workflow_dispatch:')[1]?.split('workflow_call:')[0] ?? '';
     const manualChannel = manualInputs.split('channel:')[1]?.split('source_sha:')[0] ?? '';
     expect(release).toContain('workflow_call:');
     expect(manualChannel).toContain('- stable');
-    expect(manualChannel).not.toContain('- homolog');
     expect(manualChannel).not.toContain('- dev');
     expect(release).toContain('CALLER_WORKFLOW_REF: ${{ github.workflow_ref }}');
     expect(release).toContain('CALLER_WORKFLOW_SHA: ${{ github.workflow_sha }}');
@@ -383,7 +380,7 @@ describe('Group E release and documentation contracts', () => {
     expect(version).not.toContain('--field channel=stable');
 
     for (const path of ['.github/workflows/ci.yml', '.github/workflows/version.yml']) {
-      expect(read(path)).toContain('branches: [main, homolog, dev]');
+      expect(read(path)).toContain('branches: [main, dev]');
     }
     expect(read('.github/workflows/version.yml')).toContain(
       "!contains(github.event.workflow_run.head_commit.message, '[release-manifest]')",
@@ -402,7 +399,7 @@ describe('Group E release and documentation contracts', () => {
     expect(version).toContain('git tag "v${VERSION}" HEAD');
     expect(version).toContain('name: Push fresh immutable promotion tag');
     expect(version).toContain('git push origin "refs/tags/v${VERSION}"');
-    expect(build).toContain('homolog|stable)');
+    expect(build).toContain('stable)');
     expect(build).toContain('Authenticated ${INPUT_CHANNEL} promotion stamps immutable version');
     const buildCall = release.split('\n  build:')[1]?.split('\n  sign-attest:')[0] ?? '';
     expect(buildCall).toContain('channel: ${{ inputs.channel }}');
@@ -414,7 +411,7 @@ describe('Group E release and documentation contracts', () => {
     for (const path of ['.github/workflows/version.yml', 'scripts/release-guard.sh']) {
       const source = read(path);
       expect(source).not.toContain("':(exclude).well-known'");
-      for (const manifest of ['latest.json', 'homolog.json', 'dev.json']) {
+      for (const manifest of ['latest.json', 'dev.json']) {
         expect(source).toContain(`':(exclude).well-known/${manifest}'`);
       }
     }
@@ -628,12 +625,9 @@ describe('Group E release and documentation contracts', () => {
       expect(source).toContain("GitHub's `/releases/latest`");
     }
     const security = read('SECURITY.md');
-    expect(security).toContain(
-      'Every dev, homolog, or stable promotion creates a fresh monotonic version and immutable tag',
-    );
+    expect(security).toContain('Every dev or stable promotion creates a fresh monotonic version and immutable tag');
     expect(security).toContain('stable releases are non-prerelease and marked Latest');
-    expect(security).toContain('dev and homolog releases are prereleases and never Latest');
-    expect(security).not.toContain('one verified version across dev, homolog, and stable channels');
+    expect(security).toContain('dev releases are prereleases and never Latest');
   });
 
   test('immutable-release bootstrap ordering remains explicit and fail-closed', () => {
@@ -752,7 +746,7 @@ describe('Group E release and documentation contracts', () => {
     expect(archiveSmoke).toBeGreaterThan(extract);
   });
 
-  test('shipped Codex integration doc carries the exit matrix, trailer, lease, and homolog contract', () => {
+  test('shipped Codex integration doc carries the exit matrix, trailer, lease, and candidate-channel contract', () => {
     const doc = read('plugins/genie/references/codex-integration-map.md');
     // Exit matrix (per-command 0/1/2) with the busy code.
     expect(doc).toContain('### Per-command 0/1/2 exit matrix');
@@ -777,8 +771,8 @@ describe('Group E release and documentation contracts', () => {
     expect(doc).toContain('route-only init');
     expect(doc).toContain('independent of plugin availability');
     expect(doc).toContain('unreachable from update, install, setup, doctor, sync');
-    // Homolog candidate channel + the N-task non-guarantee.
-    expect(doc).toContain('Homolog is the canonical pre-stable candidate channel');
+    // Dev candidate channel + the N-task non-guarantee.
+    expect(doc).toContain('Dev is the canonical pre-stable candidate channel');
     expect(doc).toContain('an activated N task is not');
     expect(doc).toContain('cannot resume activated N tasks without');
     expect(doc).toContain('scripts/validate-live-dogfood-evidence.ts');
@@ -1039,4 +1033,16 @@ describe('Group E release and documentation contracts', () => {
     expect(readme).toContain('The Codex route is plugin-independent');
     for (const path of ['.mcp.json', '.warp/.mcp.json', '.codex/config.toml']) expect(readme).toContain(path);
   });
+});
+
+test('the retired homolog channel never reappears in release workflows', () => {
+  for (const wf of [
+    '.github/workflows/version.yml',
+    '.github/workflows/release.yml',
+    '.github/workflows/release-publish.yml',
+    '.github/workflows/sign-attest.yml',
+    '.github/workflows/build-tarballs.yml',
+  ]) {
+    expect(readFileSync(wf, 'utf-8')).not.toContain('homolog');
+  }
 });

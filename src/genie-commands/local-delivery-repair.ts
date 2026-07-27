@@ -37,7 +37,7 @@ const MAX_BUNDLE_BYTES = 2 * 1024 * 1024;
 const MAX_PATH_BYTES = 4096;
 const COPY_CHUNK_BYTES = 1024 * 1024;
 const O_NOFOLLOW = (constants.O_NOFOLLOW ?? 0) as number;
-const CHANNELS = new Set<DeliveryEvidenceChannel>(['stable', 'homolog', 'dev']);
+const CHANNELS = new Set<DeliveryEvidenceChannel>(['stable', 'dev']);
 const PLATFORM_IDS = new Set<DeliveryEvidencePlatformId>([
   'linux-x64-glibc',
   'linux-x64-musl',

@@ -1347,10 +1347,10 @@ describe('installCommand — Group C install gate (item 2)', () => {
     expect(captured?.codexRefresh).toBeUndefined();
   });
 
-  test('fresh dev and homolog installer handoffs authenticate the exact selected channel', async () => {
+  test('fresh dev and stable installer handoffs authenticate the exact selected channel', async () => {
     const priorChannel = process.env.GENIE_INSTALL_DELIVERY_CHANNEL;
     try {
-      for (const selectedChannel of ['dev', 'homolog'] as const) {
+      for (const selectedChannel of ['dev', 'stable'] as const) {
         process.env.GENIE_INSTALL_DELIVERY_CHANNEL = selectedChannel;
         let repairedChannel = '';
         await installCommand(

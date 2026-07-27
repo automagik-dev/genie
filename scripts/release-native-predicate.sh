@@ -31,8 +31,8 @@ require_exact_identity() {
   : "${RUN_ATTEMPT:?RUN_ATTEMPT is required}"
   [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ && "$CONTROL_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 2
   [[ "$SOURCE_CI_RUN_ID" =~ ^[0-9]+$ && "$RUN_ID" =~ ^[0-9]+$ && "$RUN_ATTEMPT" =~ ^[0-9]+$ ]] || exit 2
-  case "$CHANNEL" in stable|homolog|dev) ;; *) exit 2 ;; esac
-  case "$SOURCE_BRANCH" in main|homolog|dev) ;; *) exit 2 ;; esac
+  case "$CHANNEL" in stable|dev) ;; *) exit 2 ;; esac
+  case "$SOURCE_BRANCH" in main|dev) ;; *) exit 2 ;; esac
   SOURCE_URI="git+https://github.com/${RELEASE_REPOSITORY}@refs/heads/${SOURCE_BRANCH}"
   CONTROL_URI="git+https://github.com/${RELEASE_REPOSITORY}@refs/heads/main"
 }
@@ -188,9 +188,9 @@ reusable_control_sha() {
         $statement.predicate.runDetails.builder.id == $builder_id and
         $statement.predicate.buildDefinition.buildType == $build_type and
         $parameters.version == $version and
-        ($parameters.channel | test("^(stable|homolog|dev)$")) and
+        ($parameters.channel | test("^(stable|dev)$")) and
         ($parameters.source_sha | test("^[0-9a-f]{40}$")) and
-        ($parameters.source_branch | test("^(main|homolog|dev)$")) and
+        ($parameters.source_branch | test("^(main|dev)$")) and
         ($parameters.source_ci_run_id | test("^[0-9]+$")) and
         ($parameters.control_sha | test("^[0-9a-f]{40}$")) and
         ($statement.predicate.buildDefinition.resolvedDependencies | length) == 2 and

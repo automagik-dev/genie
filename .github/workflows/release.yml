@@ -3,7 +3,7 @@ name: Release
 # Trusted release orchestrator. The workflow itself is always dispatched on
 # refs/heads/main; a release tag is an explicitly validated source identity,
 # never the workflow/control ref. version.yml supplies the exact tag SHA and
-# successful source CI run. Automated dev/homolog calls come only from the
+# successful source CI run. Automated dev calls come only from the
 # trusted local version.yml workflow. Stable is always a first-attempt human
 # dispatch; the production environment then requires a different reviewer.
 
@@ -30,7 +30,6 @@ on:
         type: choice
         options:
           - main
-          - homolog
           - dev
       trigger_sha:
         description: 'Head SHA of the admitting CI run (automated channels only; source_sha is the built commit)'
@@ -74,8 +73,8 @@ permissions:
 
 concurrency:
   # Serialize retries/promotions of one immutable version. Cross-version runs
-  # stay independent so a stable approval wait cannot block automated dev or
-  # homolog delivery; manifest reconciliation is monotonic and CAS-retried.
+  # stay independent so a stable approval wait cannot block automated dev
+  # delivery; manifest reconciliation is monotonic and CAS-retried.
   group: release-${{ inputs.version }}
   queue: max
   cancel-in-progress: false
@@ -117,7 +116,7 @@ jobs:
         run: bash scripts/release-guard.sh guard-trusted-release
 
   # Stable approval is deliberately before build/sign, not only before the
-  # final upload. Keep it in a stable-only job so dev/homolog automation never
+  # final upload. Keep it in a stable-only job so dev automation never
   # relies on undocumented empty-environment behavior. Rollout requirement:
   # production's deployment policy allows protected main, the control ref.
   approve-stable:
@@ -155,7 +154,7 @@ jobs:
   build:
     needs: authorize
     # always() + explicit result check: the default success() status is
-    # poisoned transitively by the SKIPPED approve-stable job on dev/homolog
+    # poisoned transitively by the SKIPPED approve-stable job on dev
     # (observed 2026-07-20: the v5.260720.4 dev release chain silently skipped
     # build/sign/publish). authorize alone decides admission.
     if: always() && needs.authorize.result == 'success'

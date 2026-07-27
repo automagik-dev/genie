@@ -53,18 +53,14 @@ describe('channel manifest monotonic reconciliation', () => {
   test('stable advances only older pointers and preserves equal/newer downstream feeds byte-for-byte', () => {
     const cwd = root();
     const latest = join(cwd, '.well-known', 'latest.json');
-    const homolog = join(cwd, '.well-known', 'homolog.json');
     const dev = join(cwd, '.well-known', 'dev.json');
     writeFileSync(latest, manifest('stable', '5.260712.9'));
-    writeFileSync(homolog, manifest('homolog', '5.260713.1'));
     writeFileSync(dev, manifest('dev', '5.260714.1'));
-    const homologBefore = readFileSync(homolog, 'utf8');
     const devBefore = readFileSync(dev, 'utf8');
 
     const result = run(cwd, '5.260713.1', 'stable');
     expect(result.exitCode).toBe(0);
     expect(JSON.parse(readFileSync(latest, 'utf8')).version).toBe('5.260713.1');
-    expect(readFileSync(homolog, 'utf8')).toBe(homologBefore);
     expect(readFileSync(dev, 'utf8')).toBe(devBefore);
     expect(result.stdout.toString()).toContain('refusing downgrade to v5.260713.1');
   });
@@ -104,7 +100,7 @@ describe('channel manifest monotonic reconciliation', () => {
     };
     expect(Bun.spawnSync(['bash', SCRIPT], { cwd: first, env }).exitCode).toBe(0);
     expect(Bun.spawnSync(['bash', SCRIPT], { cwd: second, env }).exitCode).toBe(0);
-    for (const name of ['latest.json', 'homolog.json', 'dev.json']) {
+    for (const name of ['latest.json', 'dev.json']) {
       expect(readFileSync(join(first, '.well-known', name))).toEqual(readFileSync(join(second, '.well-known', name)));
     }
     expect(JSON.parse(readFileSync(join(first, '.well-known', 'latest.json'), 'utf8')).released_at).toBe(
@@ -114,15 +110,15 @@ describe('channel manifest monotonic reconciliation', () => {
 
   test('CAS reconciliation copies the exact pre-endorsed candidate bytes', () => {
     const candidateRoot = root();
-    expect(run(candidateRoot, '5.260714.2', 'homolog').exitCode).toBe(0);
+    expect(run(candidateRoot, '5.260714.2', 'stable').exitCode).toBe(0);
     const target = root();
-    writeFileSync(join(target, '.well-known', 'homolog.json'), manifest('homolog', '5.260714.1'));
+    writeFileSync(join(target, '.well-known', 'latest.json'), manifest('stable', '5.260714.1'));
     const result = Bun.spawnSync(['bash', SCRIPT], {
       cwd: target,
       env: {
         ...process.env,
         VERSION: '5.260714.2',
-        CHANNEL: 'homolog',
+        CHANNEL: 'stable',
         RELEASE_REPOSITORY: 'automagik-dev/genie',
         RELEASED_AT: '2026-07-14T12:00:00Z',
         CANDIDATE_MANIFEST_DIR: join(candidateRoot, '.well-known'),
@@ -131,8 +127,8 @@ describe('channel manifest monotonic reconciliation', () => {
       stderr: 'pipe',
     });
     expect(result.exitCode).toBe(0);
-    expect(readFileSync(join(target, '.well-known', 'homolog.json'))).toEqual(
-      readFileSync(join(candidateRoot, '.well-known', 'homolog.json')),
+    expect(readFileSync(join(target, '.well-known', 'latest.json'))).toEqual(
+      readFileSync(join(candidateRoot, '.well-known', 'latest.json')),
     );
     expect(readFileSync(join(target, '.well-known', 'dev.json'))).toEqual(
       readFileSync(join(candidateRoot, '.well-known', 'dev.json')),

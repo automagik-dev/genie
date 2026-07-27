@@ -30,7 +30,7 @@
 set -euo pipefail
 
 # Release publication uses Genie's exact numeric 5.YYMMDD.N scheme. Channels
-# carry dev/homolog semantics, so suffix-bearing tags are rejected before any
+# carry dev/stable semantics, so suffix-bearing tags are rejected before any
 # asset upload or manifest reconciliation can begin.
 VERSION_RE='^5\.[0-9]{6}\.[1-9][0-9]{0,3}$'
 TAG_REF_RE='^refs/tags/v5\.[0-9]{6}\.[1-9][0-9]{0,3}$'
@@ -84,8 +84,8 @@ require_release_inputs() {
     fail "caller workflow SHA '${caller_workflow_sha:-<empty>}' does not match trusted control SHA '${CONTROL_SHA:-<empty>}'"
   valid_release_version "$version" || fail "version input '${version:-<empty>}' fails the release version grammar"
   case "$channel" in
-    stable|homolog|dev) ;;
-    *) fail "unknown release channel '${channel:-<empty>}' (valid: stable, homolog, dev)" ;;
+    stable|dev) ;;
+    *) fail "unknown release channel '${channel:-<empty>}' (valid: stable, dev)" ;;
   esac
   if [[ "$channel" == "stable" ]]; then
     [[ "$event" == "workflow_dispatch" ]] ||
@@ -110,7 +110,7 @@ require_release_inputs() {
   fi
   [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]] || fail "source SHA '${source_sha:-<empty>}' is not a full lowercase commit SHA"
   case "$source_branch" in
-    main|homolog|dev) ;;
+    main|dev) ;;
     *) fail "source branch '${source_branch:-<empty>}' is not an approved release branch" ;;
   esac
   [[ "$source_ci_run_id" =~ ^[0-9]+$ ]] || fail "source CI run id '${source_ci_run_id:-<empty>}' is not numeric"
@@ -207,13 +207,12 @@ check_version_child() {
 # `[release-manifest]` marker. A concurrent/later release may still begin before
 # that CI completes, so a main control descendant inherits authority only when
 # an already-CI-approved main commit is an ancestor and the final tree differs
-# solely in the three generated channel manifests. Net tree equivalence keeps
+# solely in the two generated channel manifests. Net tree equivalence keeps
 # workflow code and every executable input byte-identical to that ancestor.
 trees_match_except_channel_manifests() {
   local left_sha="$1" right_sha="$2"
   git diff --quiet "$left_sha" "$right_sha" -- . \
     ':(exclude).well-known/latest.json' \
-    ':(exclude).well-known/homolog.json' \
     ':(exclude).well-known/dev.json'
 }
 
@@ -290,11 +289,6 @@ check_trusted_release() {
       [[ "$dev_ref_reachable" == "true" ]] ||
         fail "dev tag commit ${SOURCE_SHA} is not reachable from the authoritative dev branch"
       EXPECTED_SOURCE_EVENT=push check_ci_run_record "$source_json" "$source_ci_sha" dev
-      ;;
-    homolog)
-      [[ "$SOURCE_BRANCH" == "homolog" ]] || fail "homolog releases require source_branch=homolog"
-      [[ "$tag_tree_match" == "true" ]] || fail "homolog source tree does not match v${VERSION}"
-      EXPECTED_SOURCE_EVENT=push check_ci_run_record "$source_json" "$SOURCE_SHA" homolog
       ;;
     stable)
       [[ "$SOURCE_BRANCH" == "main" ]] || fail "stable releases require source_branch=main"
