@@ -2,18 +2,20 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT (2026-07-26; not plan-reviewed — needs Felipe approval + a plan gate before execution) |
+| **Status** | DRAFT — not plan-reviewed (2026-07-26); needs Felipe approval + a plan gate before execution |
 | **Slug** | `release-ops-hardening` |
 | **Date** | 2026-07-26 |
 | **Author** | Genie (roadmap triage session, from the 2026-07-20→26 outage post-mortem + stable-path study) |
 | **Appetite** | small-medium (fix wave over existing surfaces, no redesign) |
 | **Branch** | `wish/release-ops-hardening` |
 | **Repos touched** | `automagik-dev/genie` |
-| **Design** | No brainstorm — direct wish. Evidence base: issues #2669, #2674, #2675; stable-path study 2026-07-26 (risks R6/R7); runbook `/Users/feliperosa/workspace/genie-stable-release-runbook.md` |
+| **Design** | _No brainstorm — direct wish_ |
 
 ## The problem
 
 The 2026-07-20→26 release outage produced three hardening follow-ups (#2669, #2674, #2675) plus two structural findings from the stable-promotion study. Each is currently a *remembered* rule — enforced by handoff documents and operator discipline, not by the pipeline. Rules that live in prose get relearned the expensive way.
+
+Evidence base: issues #2669, #2674, #2675; the stable-path promotion study of 2026-07-26 (findings R6/R7); the operator runbook at `~/workspace/genie-stable-release-runbook.md`.
 
 ## Groups
 
@@ -55,6 +57,27 @@ Criteria:
 Criteria:
 - [ ] Fixture derives N from (or asserts against) `.well-known/latest.json` instead of a hard-coded literal
 - [ ] A stable release that advances latest.json causes a visible, attributable test signal — not silent staleness
+
+## Dependencies
+
+**depends-on:** stable-release-security-gate
+**blocks:** none
+
+## Execution Strategy
+
+### Wave 1 (parallel — disjoint surfaces)
+
+| Group | Agent | Complexity | Model | Description |
+|-------|-------|------------|-------|-------------|
+| G1 admit-refuse | engineer | 2 (+1 twin-PR workflow choreography) | engineer-standard / high | Publish admit fails fast on already-published versions (#2674) |
+| G4 fixture-N | engineer | 1 | engineer-trivial / medium | Dogfood fixture derives N from latest.json instead of a literal |
+
+### Wave 2 (after Wave 1 merges — same workflow files)
+
+| Group | Agent | Complexity | Model | Description |
+|-------|-------|------------|-------|-------------|
+| G2 orphan-exempt | engineer | 2 (+1 alarm-semantics validation) | engineer-standard / high | Orphan-alert exempts pending stable candidates |
+| G3 cleanups | engineer | 2 (+1 test-harness shapes) | engineer-standard / medium | #2675 dead default + multi-attestation/CAS-loop tests + #2669 pin-checker |
 
 ## Non-goals
 
