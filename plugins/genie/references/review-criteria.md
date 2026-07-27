@@ -44,6 +44,13 @@ For PASS criteria, evidence includes:
 - No dead code
 - No unresolved TODOs
 
+### Simplicity
+- Simplest complete design is stated
+- Every cache, delta, shard, queue, retry state machine, abstraction, and configuration surface has a current criterion or measurement
+- Current state is bounded and history is separated before synchronization machinery is added
+- Plausible future complexity is deferred behind a concrete adoption trigger
+- Repeated gaps in optional machinery route back to planning instead of consuming fix loops
+
 ### Performance
 - No obvious N+1 queries
 - No unnecessary loops/allocations

@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | EXECUTED — G1/G2/G3 all SHIP (G1 after 1 fix loop; G2/G3 with orchestrator follow-ups), final execution review SHIP (2026-07-10, gates green, 806 pass / 1 skip); remaining: user-gated live ritual + PR-topology decision |
+| **Status** | DONE — merged as PR #2541; original implementation since superseded by the current agent-sync safety contract (current proof lives in the [PR #2545 remediation ledger](../pr-2545-ultra-release-gate/REVIEW-DISPOSITION.md)). G1/G2/G3 all SHIP (G1 after 1 fix loop; G2/G3 with orchestrator follow-ups), final execution review SHIP (2026-07-10, gates green, 806 pass / 1 skip). Header reconciled to INDEX 2026-07-26 (was EXECUTED) |
 | **Slug** | `agent-sync` |
 | **Date** | 2026-07-10 |
 | **Author** | Felipe (planned with Fable 5) |

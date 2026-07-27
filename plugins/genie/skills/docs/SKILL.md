@@ -43,4 +43,5 @@ Example brief: "Audit README.md, CLAUDE.md, and skills/work/SKILL.md after PR #7
 ## Rules
 - Grounded progress: report only what was audited or generated in this session, each claim backed by a check actually run — "3 files verified current, 1 updated, 0 dead references", never just "docs written".
 - No fiction: never document features that don't exist yet; no dead paths or APIs.
+- Write to the reader's interface boundary: explain what they need to decide, do, observe, and verify. Prefer observable promises, outcomes, failure behavior, and next steps over internal machinery. Include implementation details only when the reader needs them to use the feature safely, troubleshoot it, or extend it; otherwise keep that mechanism in internal or architecture documentation.
 - Match existing project conventions for style and structure.

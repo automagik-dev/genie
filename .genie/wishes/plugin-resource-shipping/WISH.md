@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT — plan review SHIP (2026-07-09, 2 fix loops; Hermes counter-read unavailable — logged, retry next gate) |
+| **Status** | EXECUTED — PR #2540 merged 2026-07-10 (CI 10/10); remaining QA: live installed-plugin scaffold on next release. Plan review SHIP (2026-07-09, 2 fix loops; Hermes counter-read unavailable — logged, retry next gate). Header reconciled to INDEX 2026-07-26 (was stale at DRAFT) |
 | **Slug** | `plugin-resource-shipping` |
 | **Date** | 2026-07-09 |
 | **Author** | Felipe (planned with Fable 5) |

@@ -51,7 +51,7 @@ Default chain: engineer → reviewer → qa → fix. Augment when the work calls
 | Docs deliverables in scope | docs subagent, parallel with engineer |
 | Architecture restructuring | refactor-briefed engineer for that group |
 | Failure with unknown root cause | `trace` before `fix` |
-| Review returns FIX-FIRST | `fix` (max 2 loops, then escalate) |
+| Review returns FIX-FIRST | Diagnose first; simplify an overdesigned plan, otherwise `fix` (max 2 loops, then escalate) |
 | High-stakes decision with tradeoffs | `council` (advisory) |
 
 ## Dispatch
