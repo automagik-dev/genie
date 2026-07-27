@@ -8,6 +8,8 @@ Genie skills describe roles and coordination without inventing a cross-client to
 | Codex | Use the matching `genie_*` custom agent when the CLI-installed profiles are present; otherwise use an available generic subagent | Native subagents share the caller's workspace by default | Use the active native follow-up tool exposed in the session; do not hardcode an undocumented function name into a skill |
 | Warp cockpit | `genie launch <slug>` emits one pane per ready group | Dedicated Git worktree per pane | Human-supervised; panes are not awaitable native subagents |
 
+This table says what each runtime offers, not what dispatch is allowed to do with it. The concurrency contract — when parallel writers may share a workspace, and what a shared-workspace subagent must not touch — is stated once in AGENTS.md and the `work` skill's Dispatch section; apply it from there.
+
 Every implementation brief opens with the atomic claim:
 
 ```bash
