@@ -992,10 +992,9 @@ describe('manifestUrlForChannel (G5)', () => {
     );
   });
 
-  test('homolog/dev get their own per-channel files', () => {
-    // Canonical taxonomy (2026-05-12, cross-repo unified): stable / homolog / dev.
-    // beta + canary retired — no longer accepted by ReleaseChannel type.
-    expect(manifestUrlForChannel('homolog')).toContain('.well-known/homolog.json');
+  test('dev gets its own per-channel file', () => {
+    // Canonical taxonomy: stable / dev. beta + canary + homolog retired —
+    // no longer accepted by the ReleaseChannel type.
     expect(manifestUrlForChannel('dev')).toContain('.well-known/dev.json');
   });
 });
@@ -1075,29 +1074,6 @@ describe('resolveChannel — --dev flag + --next deprecation alias (release-chan
 
   test('--stable resolves to "stable" even if config previously set dev', async () => {
     expect(await resolveChannel({ stable: true })).toBe('stable');
-  });
-
-  // Canonical taxonomy (2026-05-12): stable / homolog / dev.
-  // homolog is the middle tier in the dev → homolog → stable promotion
-  // ladder. The flag ranks ABOVE --dev (closer to stable) but BELOW --stable.
-  test('--homolog resolves to channel "homolog"', async () => {
-    expect(await resolveChannel({ homolog: true })).toBe('homolog');
-    expect(stderrCapture).toBe('');
-  });
-
-  test('--stable wins over --homolog when both are set', async () => {
-    expect(await resolveChannel({ homolog: true, stable: true })).toBe('stable');
-    expect(stderrCapture).toBe('');
-  });
-
-  test('--homolog wins over --dev when both are set (closer to stable)', async () => {
-    expect(await resolveChannel({ homolog: true, dev: true })).toBe('homolog');
-    expect(stderrCapture).toBe('');
-  });
-
-  test('--homolog wins over --next without emitting deprecation', async () => {
-    expect(await resolveChannel({ homolog: true, next: true })).toBe('homolog');
-    expect(stderrCapture).toBe('');
   });
 });
 
@@ -1210,12 +1186,27 @@ describe('resolveChannel + persistChannel — config preservation (BUG A)', () =
   });
 
   test('valid persisted channel resolves back and persist preserves sibling keys', async () => {
-    writeFileSync(configPath, JSON.stringify({ updateChannel: 'homolog', setupComplete: true }, null, 2), 'utf-8');
-    expect(await resolveChannel({})).toBe('homolog');
+    writeFileSync(configPath, JSON.stringify({ updateChannel: 'dev', setupComplete: true }, null, 2), 'utf-8');
+    expect(await resolveChannel({})).toBe('dev');
     expect(stderrCapture).toBe(''); // happy path is silent
-    await persistChannel('homolog');
+    await persistChannel('dev');
     const saved = JSON.parse(readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
-    expect(saved.updateChannel).toBe('homolog');
+    expect(saved.updateChannel).toBe('dev');
+    expect(saved.setupComplete).toBe(true);
+  });
+
+  // The homolog channel was removed 2026-07-26. A config still pinned to it
+  // must keep PARSING (dropping it from the enum would fail the whole config,
+  // taking unrelated keys with it) and must resolve to stable, not dev —
+  // homolog sat above dev in the retired ladder, so stable is the conservative
+  // landing. The token never round-trips back to disk.
+  test('retired "homolog" channel resolves to stable and is rewritten on persist', async () => {
+    writeFileSync(configPath, JSON.stringify({ updateChannel: 'homolog', setupComplete: true }, null, 2), 'utf-8');
+    expect(await resolveChannel({})).toBe('stable');
+    expect(stderrCapture).toBe('');
+    await persistChannel('stable');
+    const saved = JSON.parse(readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
+    expect(saved.updateChannel).toBe('latest');
     expect(saved.setupComplete).toBe(true);
   });
 

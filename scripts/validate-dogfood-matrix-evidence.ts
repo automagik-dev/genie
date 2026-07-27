@@ -19,7 +19,7 @@ import { LIVE_DOGFOOD_SCHEMA_VERSION, validateLiveDogfoodEvidenceFile } from './
 const SHA256 = /^[0-9a-f]{64}$/;
 const SOURCE_SHA = /^[0-9a-f]{40}$/;
 const VERSION = /^\d+\.\d{6}\.\d+$/;
-const CHANNELS = new Set(['dev', 'homolog', 'stable']);
+const CHANNELS = new Set(['dev', 'stable']);
 
 type JsonRecord = Record<string, unknown>;
 export type DogfoodEntryValidator = (path: string, inputsRoot: string) => string[];

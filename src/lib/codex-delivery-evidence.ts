@@ -45,7 +45,7 @@ const HEX_160_RE = /^[0-9a-f]{40}$/;
 const HEX_256_RE = /^[0-9a-f]{64}$/;
 const DECIMAL_RE = /^(?:0|[1-9]\d*)$/;
 const MAX_DELIVERY_ROOT_CHARACTERS = 256;
-const RELEASE_CHANNELS = ['stable', 'homolog', 'dev'] as const;
+const RELEASE_CHANNELS = ['stable', 'dev'] as const;
 const PLATFORM_IDS = ['linux-x64-glibc', 'linux-x64-musl', 'linux-arm64', 'darwin-arm64'] as const;
 
 export type DeliveryEvidenceChannel = (typeof RELEASE_CHANNELS)[number];
@@ -911,8 +911,7 @@ function platformTripleFor(platformId: DeliveryEvidencePlatformId): string {
 function sourceBranchAllowedForChannel(branch: unknown, channel: DeliveryEvidenceChannel): branch is string {
   if (typeof branch !== 'string') return false;
   if (channel === 'stable') return branch === 'main';
-  if (channel === 'homolog') return branch === 'main' || branch === 'homolog';
-  return branch === 'main' || branch === 'homolog' || branch === 'dev';
+  return branch === 'main' || branch === 'dev';
 }
 
 function isReleaseChannel(value: unknown): value is DeliveryEvidenceChannel {

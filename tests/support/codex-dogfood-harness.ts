@@ -613,7 +613,7 @@ function parseReleaseManifest(
   };
   const valid =
     value.schema_version === 1 &&
-    ['stable', 'homolog', 'dev'].includes(String(value.channel)) &&
+    ['stable', 'dev'].includes(String(value.channel)) &&
     typeof value.version === 'string' &&
     Array.isArray(value.platforms) &&
     value.platforms.includes(platformId);
@@ -767,7 +767,7 @@ function verifyLegacyReleaseProvenance(input: {
       typeof facts.sourceCommit !== 'string' ||
       !/^[0-9a-f]{40}$/.test(facts.sourceCommit) ||
       typeof facts.sourceBranch !== 'string' ||
-      !/^(?:main|homolog|dev)$/.test(facts.sourceBranch) ||
+      !/^(?:main|dev)$/.test(facts.sourceBranch) ||
       typeof facts.sourceCiRunId !== 'string' ||
       !/^(?:0|[1-9]\d*)$/.test(facts.sourceCiRunId) ||
       typeof facts.controlCommit !== 'string' ||

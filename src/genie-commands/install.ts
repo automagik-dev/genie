@@ -163,7 +163,7 @@ function buildInstallCodexDeferral(target: CodexInstallTarget, actionRequired: b
 function resolveDeliveryChannelForInstall(): DeliveryEvidenceChannel {
   const handedOffChannel = process.env.GENIE_INSTALL_DELIVERY_CHANNEL;
   if (handedOffChannel !== undefined) {
-    if (handedOffChannel === 'stable' || handedOffChannel === 'homolog' || handedOffChannel === 'dev') {
+    if (handedOffChannel === 'stable' || handedOffChannel === 'dev') {
       return handedOffChannel;
     }
     throw new Error(`Invalid installer delivery channel: ${handedOffChannel}`);
@@ -172,7 +172,6 @@ function resolveDeliveryChannelForInstall(): DeliveryEvidenceChannel {
     if (!genieConfigExists()) return 'stable';
     const raw = JSON.parse(readFileSync(getGenieConfigPath(), 'utf8')) as { updateChannel?: string };
     if (raw.updateChannel === 'dev' || raw.updateChannel === 'next') return 'dev';
-    if (raw.updateChannel === 'homolog') return 'homolog';
     return 'stable';
   } catch {
     return 'stable';
@@ -393,7 +392,7 @@ export async function installCommand(
 ): Promise<void> {
   // install.sh passes the exact channel whose manifest selected the installed
   // bytes. Resolve and validate it before acquiring either lifecycle lease or
-  // running a finisher, so fresh dev/homolog installs cannot be relabeled as
+  // running a finisher, so fresh dev installs cannot be relabeled as
   // stable and a malformed internal handoff cannot mutate anything.
   const deliveryChannel = resolveDeliveryChannelForInstall();
   const selection = resolveIntegrationSelection(options);

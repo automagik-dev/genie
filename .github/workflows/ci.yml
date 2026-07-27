@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, homolog, dev]
+    branches: [main, dev]
   pull_request:
-    branches: [main, homolog, dev]
+    branches: [main, dev]
   # version.yml pushes its deterministic child with GITHUB_TOKEN, so GitHub
   # intentionally suppresses push/pull_request recursion. It dispatches this
   # read-only gate against the child's immutable v<version> ref explicitly;

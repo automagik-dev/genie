@@ -12,9 +12,9 @@ name: Version
 # release workflow with the successful parent CI run. The release guard accepts
 # the child only when all six changed fields are the deterministic version bump.
 #
-# On homolog/main promotion triggers, derive a fresh immutable release identity
+# On main promotion triggers, derive a fresh immutable release identity
 # without rewriting the source tree. The successful branch CI run and a new
-# tag at that exact commit produce the automated/human-initiation handoff. A maintainer
+# tag at that exact commit produce the human-initiation handoff. A maintainer
 # must start the stable Release workflow, then a different maintainer approves
 # the protected production environment.
 #
@@ -25,7 +25,7 @@ name: Version
 #
 # SHA-pin invariant (Invariant A — correctness over completeness):
 # Dev tags a deterministic version-only child of the commit that passed CI;
-# stable/homolog build the exact promotion commit that passed CI.
+# stable builds the exact promotion commit that passed CI.
 # Concurrent runs QUEUE per branch+event (no cancellation — see the
 # concurrency block below). When dev advances past the SHA a queued
 # run checked out, the
@@ -37,7 +37,7 @@ on:
   workflow_run:
     workflows: ["CI"]
     types: [completed]
-    branches: [main, homolog, dev]
+    branches: [main, dev]
 
 permissions:
   contents: write          # commit + push version bump + tag
@@ -45,7 +45,7 @@ permissions:
 
 # RACES: CI completes twice per dev merge (push + pull_request), so separate
 # those event classes and never cancel an in-flight version operation. Within
-# the push class, serialize main/homolog/dev globally: all three allocate from
+# the push class, serialize main/dev globally: both allocate from
 # one CalVer tag namespace, and branch-scoped groups could independently choose
 # the same max-plus-one tag. Queueing keeps allocation and push one transaction.
 concurrency:
@@ -72,10 +72,9 @@ jobs:
        !contains(github.event.workflow_run.head_commit.message, '[release-manifest]') &&
        (
          (github.event.workflow_run.head_branch == 'main') ||
-         (github.event.workflow_run.head_branch == 'homolog') ||
          (github.event.workflow_run.head_branch == 'dev')
        ))
-    # main/homolog promotion is verified by the "Verify dev promotion" STEP
+    # main promotion is verified by the "Verify dev promotion" STEP
     # below (merge-commit message OR content match against dev), not by a
     # message-only expression here. Message-only gating silently skipped the
     # stable release whenever a dev→main PR was rebase- or squash-merged
@@ -92,16 +91,6 @@ jobs:
               # Main promotion gets a fresh immutable release tag without
               # rewriting its CI-approved source tree.
               echo "branch=main" >> "$GITHUB_OUTPUT"
-              echo "should_bump=false" >> "$GITHUB_OUTPUT"
-              ;;
-            homolog)
-              # Homolog promotion gets a fresh immutable release tag without
-              # rewriting its CI-approved source tree.
-              # Channel: homolog (advances homolog + dev). Felipe directive
-              # 2026-05-12 added homolog as the dev→homolog→stable middle
-              # tier; genie inherits the surface for cross-repo parity even
-              # if its homolog branch is still dormant at PR-merge time.
-              echo "branch=homolog" >> "$GITHUB_OUTPUT"
               echo "should_bump=false" >> "$GITHUB_OUTPUT"
               ;;
             dev)
@@ -131,17 +120,17 @@ jobs:
           # is bound below. Never leave a write credential in this checkout.
           persist-credentials: false
 
-      # Promotion gate for the no-bump (main/homolog) path. A promotion is a
+      # Promotion gate for the no-bump (main) path. A promotion is a
       # push whose head commit is a dev merge commit ("Merge pull request …
       # /dev") OR whose content equals dev's tip — the latter is what a
       # rebase- or squash-merged dev→main PR produces (no merge commit, so
-      # message checks can never see it). The three generated channel manifests
+      # message checks can never see it). The two generated channel manifests
       # are excluded from the content diff: release-publish commits them to main
       # only, so a rebased promotion's tree always differs from dev there.
       # If dev advanced past the PR head before this runs, the content check
       # misses and we skip with a notice — the next promotion catches up
       # (same posture as the atomic tag-push race below).
-      - name: Verify dev promotion (main/homolog no-bump path)
+      - name: Verify dev promotion (main no-bump path)
         id: promotion
         if: steps.context.outputs.should_bump == 'false'
         run: |
@@ -155,7 +144,6 @@ jobs:
             git fetch origin dev --quiet
             if git diff --quiet origin/dev HEAD -- . \
                 ':(exclude).well-known/latest.json' \
-                ':(exclude).well-known/homolog.json' \
                 ':(exclude).well-known/dev.json'; then
               PROMOTED=true
               REASON="content matches dev tip (rebase/squash promotion)"
@@ -165,7 +153,7 @@ jobs:
           if [ "${PROMOTED}" = "true" ]; then
             echo "Promotion verified: ${REASON}"
           else
-            echo "::notice ::release-trigger.promotion_unverified head commit is neither a dev merge commit nor content-identical to dev — stable/homolog dispatch skipped"
+            echo "::notice ::release-trigger.promotion_unverified head commit is neither a dev merge commit nor content-identical to dev — stable dispatch skipped"
           fi
 
       - name: Configure git
@@ -347,7 +335,7 @@ jobs:
 
       # Each promotion gets a new tag/version. Published GitHub Releases are
       # immutable, so reusing the dev tag would make later evidence/metadata
-      # publication impossible. Homolog is dispatched automatically below.
+      # publication impossible. Dev is dispatched automatically below.
       # Stable deliberately is not: if this
       # GITHUB_TOKEN-authored workflow initiated the production deployment,
       # GitHub's prevent-self-review control would exclude only the bot, not the
@@ -377,16 +365,11 @@ jobs:
           echo "source_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           echo "source_branch=${{ steps.context.outputs.branch }}" >> "$GITHUB_OUTPUT"
           echo "source_ci_run_id=${{ github.event.workflow_run.id }}" >> "$GITHUB_OUTPUT"
-          case "${{ steps.context.outputs.branch }}" in
-            main)
-              echo "channel=stable" >> "$GITHUB_OUTPUT"
-              echo "release_ready=false" >> "$GITHUB_OUTPUT"
-              ;;
-            homolog)
-              echo "channel=homolog" >> "$GITHUB_OUTPUT"
-              echo "release_ready=true" >> "$GITHUB_OUTPUT"
-              ;;
-          esac
+          # main is the only branch that reaches the no-bump path. Stable is
+          # never auto-dispatched: a maintainer starts Release by hand and a
+          # different maintainer approves the protected production environment.
+          echo "channel=stable" >> "$GITHUB_OUTPUT"
+          echo "release_ready=false" >> "$GITHUB_OUTPUT"
 
       - name: Push fresh immutable promotion tag
         if: steps.context.outputs.should_bump == 'false' && steps.promotion.outputs.promoted == 'true'
@@ -434,7 +417,7 @@ jobs:
       # See docs/release-process.mdx for the full posture and the
       # operator-side `npm deprecate` runbook.
 
-  # Automated dev/homolog publication is a local reusable-workflow call from
+  # Automated dev publication is a local reusable-workflow call from
   # trusted version.yml on main. A dev-controlled workflow cannot forge this
   # caller identity or choose a version/tag. Stable never uses this job.
   release-automated:

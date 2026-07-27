@@ -297,7 +297,7 @@ function comparePrereleaseIdentifier(left: string, right: string): number {
  * - `upgrade`         — installed is older (or the manifest version is unknown); proceed.
  * - `current`         — installed equals the manifest version; short-circuit.
  * - `block-downgrade` — installed is NEWER and no explicit channel flag authorized it; refuse.
- * - `allow-downgrade` — installed is NEWER but an explicit `--stable/--dev/--homolog`
+ * - `allow-downgrade` — installed is NEWER but an explicit `--stable/--dev`
  *   signalled operator intent; proceed with a loud notice.
  */
 export type DowngradeDecision =
@@ -349,8 +349,7 @@ export function decideDowngrade(args: {
 /** Channel identifier resolved from CLI flags / config. Matches the
  *  workflow's `--channel` choices.
  *
- *  Canonical taxonomy (Felipe directive 2026-05-12, cross-repo unified):
- *  `stable` / `homolog` / `dev`. beta + canary retired.
+ *  Canonical taxonomy: `stable` / `dev`. beta + canary + homolog retired.
  *
  *  Naming history:
  *  - prior to wish `release-channel-dev` (2026-05-11) the dev/pre-release
@@ -360,11 +359,12 @@ export function decideDowngrade(args: {
  *    and operator mental model. `--next` is kept as a deprecated CLI
  *    alias for one release cycle and config-read backward-compat.
  *  - 2026-05-12: `beta` + `canary` retired (never had producer paths).
- *    `homolog` added for the dev→homolog→stable promotion ladder; matches
- *    the homolog branch posture omni uses today. genie may not have an
- *    active homolog branch yet, but the type surface is present for
- *    cross-repo taxonomy parity. */
-export type ReleaseChannel = 'stable' | 'homolog' | 'dev';
+ *    `homolog` added for the dev→homolog→stable promotion ladder.
+ *  - 2026-07-26: `homolog` removed. It never carried genie traffic — the
+ *    branch stayed dormant — so the middle tier was pure cost. A persisted
+ *    `updateChannel: 'homolog'` is still READ (it maps to stable; see
+ *    GenieConfigSchema), but no producer, manifest, or flag remains. */
+export type ReleaseChannel = 'stable' | 'dev';
 
 export interface LatestManifest {
   schema_version: number;
@@ -1321,17 +1321,17 @@ export function _resetNextDeprecationLatchForTest(): void {
  *  ReleaseChannel, or null when the token is absent or unrecognized. */
 function channelFromToken(token: unknown): ReleaseChannel | null {
   if (token === 'dev' || token === 'next') return 'dev';
-  if (token === 'homolog') return 'homolog';
-  if (token === 'latest') return 'stable';
+  // Retired channel: a config still pinned to homolog resolves to stable,
+  // matching GenieConfigSchema's read-time alias.
+  if (token === 'homolog' || token === 'latest') return 'stable';
   return null;
 }
 
 /** Map a ReleaseChannel back to its canonical persisted token. We always write
- *  one of the three canonical tokens ('latest' / 'homolog' / 'dev'); the legacy
- *  'next' alias is read-only and never round-trips to disk. */
-function channelToken(channel: ReleaseChannel): 'latest' | 'homolog' | 'dev' {
+ *  one of the two canonical tokens ('latest' / 'dev'); the legacy 'next' and
+ *  'homolog' aliases are read-only and never round-trip to disk. */
+function channelToken(channel: ReleaseChannel): 'latest' | 'dev' {
   if (channel === 'dev') return 'dev';
-  if (channel === 'homolog') return 'homolog';
   return 'latest';
 }
 
@@ -1373,12 +1373,11 @@ function readConfigTolerant(): RawConfigRead {
 
 export async function resolveChannel(options: {
   dev?: boolean;
-  homolog?: boolean;
   next?: boolean;
   stable?: boolean;
 }): Promise<ReleaseChannel> {
   // --stable is checked FIRST so an explicit override always wins over the
-  // prerelease channels (homolog / dev / next). Common case: wrappers /
+  // prerelease channels (dev / next). Common case: wrappers /
   // aliases / smoke scripts append `--stable` to force-pull-back from a
   // prerelease regardless of what other flags are on the command line.
   // (PR #2419 review: codex P2 + gemini medium — without this ordering,
@@ -1391,10 +1390,6 @@ export async function resolveChannel(options: {
     if (options.next) emitNextDeprecationOnce();
     return 'stable';
   }
-  // --homolog ranks ABOVE --dev so an explicit `--homolog --dev` picks
-  // homolog (the higher-tier prerelease channel; closer to stable in the
-  // dev→homolog→stable promotion ladder).
-  if (options.homolog) return 'homolog';
   if (options.dev) return 'dev';
   if (options.next) {
     emitNextDeprecationOnce();
@@ -1408,7 +1403,7 @@ export async function resolveChannel(options: {
  * Resolve the sticky channel from an EXISTING config file, degrading loudly — never
  * silently — when the file can't be fully read. A transient corruption (a truncated
  * concurrent write, or a schema-rejecting field written by another session) must NOT
- * silently reset a persisted 'dev'/'homolog' channel to stable: we recover the channel
+ * silently reset a persisted 'dev' channel to stable: we recover the channel
  * from the raw updateChannel key first, and only fall back to stable when even that is
  * impossible — saying so on stderr either way.
  */
@@ -1482,10 +1477,6 @@ export async function persistChannel(channel: ReleaseChannel): Promise<void> {
 export interface UpdateCommandOptions {
   /** `--dev`. Switch to the dev/pre-release channel (.well-known/dev.json). */
   dev?: boolean;
-  /** `--homolog`. Switch to the homolog/staging channel
-   *  (.well-known/homolog.json). Middle tier in the
-   *  dev → homolog → stable promotion ladder. */
-  homolog?: boolean;
   /** `--next`. Deprecated alias for `--dev`. Resolves to channel 'dev' and
    *  emits a single-line stderr deprecation notice. */
   next?: boolean;
@@ -1540,7 +1531,6 @@ function hasPostDeliveryModeConflict(options: UpdateCommandOptions, syncOnlyEnvi
       options.syncOnly ||
       syncOnlyEnvironment === '1' ||
       options.dev ||
-      options.homolog ||
       options.next ||
       options.stable ||
       options.yes ||
@@ -1560,7 +1550,6 @@ function hasLocalDeliveryModeConflict(options: UpdateCommandOptions, syncOnlyEnv
       options.printUpdateCapabilities ||
       options.json ||
       options.dev ||
-      options.homolog ||
       options.next ||
       options.stable ||
       options.yes ||
@@ -1600,7 +1589,7 @@ export function resolveUpdateExecutionMode(
  * backward-pointing manifest with no explicit operator intent — after emitting the
  * refusal line. Returns false to proceed with the swap: for an explicitly-authorized
  * downgrade it first prints a loud one-line notice so the backward move is never
- * silent. An explicit `--stable/--homolog/--dev/--next` on the command line is what
+ * silent. An explicit `--stable/--dev/--next` on the command line is what
  * counts as operator intent.
  */
 function applyDowngradeGuard(
@@ -1609,7 +1598,7 @@ function applyDowngradeGuard(
   channel: ReleaseChannel,
   options: UpdateCommandOptions,
 ): boolean {
-  const explicitChannel = Boolean(options.stable || options.homolog || options.dev || options.next);
+  const explicitChannel = Boolean(options.stable || options.dev || options.next);
   const downgrade = decideDowngrade({ installedVersion, latestVersion, explicitChannel });
   if (downgrade.kind === 'invalid-version') {
     if (downgrade.field === 'latest') {
@@ -1887,7 +1876,7 @@ async function confirmPlannedDelivery(
   const decision = decideDowngrade({
     installedVersion,
     latestVersion,
-    explicitChannel: Boolean(options.stable || options.homolog || options.dev || options.next),
+    explicitChannel: Boolean(options.stable || options.dev || options.next),
   });
   const needsDelivery =
     normalizeVersion(installedVersion) !== normalizeVersion(latestVersion) && decision.kind !== 'block-downgrade';

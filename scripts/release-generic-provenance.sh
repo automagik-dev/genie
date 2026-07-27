@@ -60,9 +60,9 @@ verify_dispatch_parameters() {
       '
         .predicate.invocation.parameters.event_inputs as $inputs |
         $inputs.version == $version and
-        ($inputs.channel | test("^(stable|homolog|dev)$")) and
+        ($inputs.channel | test("^(stable|dev)$")) and
         ($inputs.source_sha | test("^[0-9a-f]{40}$")) and
-        ($inputs.source_branch | test("^(main|homolog|dev)$")) and
+        ($inputs.source_branch | test("^(main|dev)$")) and
         ($inputs.source_ci_run_id | test("^[0-9]+$"))
       ' "$input" >/dev/null
   fi
@@ -72,7 +72,7 @@ verify_automated_event() {
   local input="$1" require_exact="$2"
   local source_branch="${SOURCE_BRANCH:-}" source_ci_run_id="${SOURCE_CI_RUN_ID:-}"
   # The provenance embeds the workflow_run that TRIGGERED this release — CI on
-  # dev/homolog — whose head_sha is the commit CI ran on. That is NOT
+  # dev — whose head_sha is the commit CI ran on. That is NOT
   # SOURCE_SHA: auto-version commits the version bump afterwards and the
   # tarballs are built from that bump commit, so the two differ by exactly one
   # commit on every automated release. Binding head_sha to SOURCE_SHA is
@@ -96,7 +96,7 @@ verify_automated_event() {
       $run.event == "push" and
       $run.status == "completed" and
       $run.conclusion == "success" and
-      ($run.head_branch | test("^(dev|homolog)$")) and
+      ($run.head_branch == "dev") and
       $run.repository.full_name == $repository and
       (if $require_exact then
          $run.head_sha == $trigger_sha and
@@ -116,8 +116,8 @@ verify_exact() {
   [[ -f "$input" ]] || exit 64
   [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ && "$CONTROL_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 2
   [[ "$SOURCE_CI_RUN_ID" =~ ^[0-9]+$ ]] || exit 2
-  case "$CHANNEL" in stable|homolog|dev) ;; *) exit 2 ;; esac
-  case "$SOURCE_BRANCH" in main|homolog|dev) ;; *) exit 2 ;; esac
+  case "$CHANNEL" in stable|dev) ;; *) exit 2 ;; esac
+  case "$SOURCE_BRANCH" in main|dev) ;; *) exit 2 ;; esac
   if [[ "$CHANNEL" == "stable" ]]; then
     verify_common "$input" "$CONTROL_SHA" "$STABLE_ENTRY_POINT" workflow_dispatch
     verify_dispatch_parameters "$input" true

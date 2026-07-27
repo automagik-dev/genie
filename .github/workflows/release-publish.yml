@@ -11,7 +11,7 @@ name: Release Publish
 # signatures from Sigstore Rekor without any custom verification server.
 #
 # Trigger chain:
-#   guarded release.yml@main (stable) OR version.yml@main (dev/homolog)
+#   guarded release.yml@main (stable) OR version.yml@main (dev)
 #     → Build Tarballs → Sign + Attest → THIS
 # All artifacts are from one workflow run; there is no standalone dispatch or
 # external run-id recovery path.
@@ -28,7 +28,7 @@ name: Release Publish
 
 on:
   # Reusable only from the trusted main-controlled release chain. Stable manual
-  # recovery routes through release.yml; dev/homolog route through version.yml.
+  # recovery routes through release.yml; dev routes through version.yml.
   workflow_call:
     inputs:
       version:
@@ -36,7 +36,7 @@ on:
         required: true
         type: string
       channel:
-        description: 'Release channel (stable / homolog / dev)'
+        description: 'Release channel (stable / dev)'
         required: false
         type: string
         default: stable
@@ -111,7 +111,7 @@ jobs:
               EXPECTED_EVENT=workflow_dispatch
               EXPECTED_CALLER="$EXPECTED_STABLE_CALLER"
               ;;
-            homolog|dev)
+            dev)
               EXPECTED_EVENT=workflow_run
               EXPECTED_CALLER="$EXPECTED_AUTOMATED_CALLER"
               ;;
@@ -133,9 +133,9 @@ jobs:
             echo "::error ::release-caller.inputs release-publish received malformed release identity inputs"
             exit 1
           fi
-          case "$INPUT_SOURCE_BRANCH" in main|homolog|dev) ;; *) exit 1 ;; esac
+          case "$INPUT_SOURCE_BRANCH" in main|dev) ;; *) exit 1 ;; esac
           case "${INPUT_CHANNEL}:${INPUT_SOURCE_BRANCH}" in
-            stable:main|homolog:homolog|dev:dev) ;;
+            stable:main|dev:dev) ;;
             *)
               echo "::error ::release-caller.inputs channel/source branch admission mismatch"
               exit 1
@@ -247,11 +247,7 @@ jobs:
           case "$CHANNEL" in
             stable)
               SELECTED_MANIFEST=candidate-manifests/.well-known/latest.json
-              EVIDENCE_CHANNELS=(stable homolog dev)
-              ;;
-            homolog)
-              SELECTED_MANIFEST=candidate-manifests/.well-known/homolog.json
-              EVIDENCE_CHANNELS=(homolog dev)
+              EVIDENCE_CHANNELS=(stable dev)
               ;;
             dev)
               SELECTED_MANIFEST=candidate-manifests/.well-known/dev.json
@@ -333,7 +329,6 @@ jobs:
             for evidence_channel in "${EVIDENCE_CHANNELS[@]}"; do
               case "$evidence_channel" in
                 stable) manifest=candidate-manifests/.well-known/latest.json ;;
-                homolog) manifest=candidate-manifests/.well-known/homolog.json ;;
                 dev) manifest=candidate-manifests/.well-known/dev.json ;;
               esac
               descriptor="descriptors/genie-${VERSION}-${platform}.tar.gz.${evidence_channel}.delivery.json"
@@ -494,8 +489,7 @@ jobs:
         run: |
           set -euo pipefail
           case "$CHANNEL" in
-            stable) EXPECTED_PACKS=12 ;;
-            homolog) EXPECTED_PACKS=8 ;;
+            stable) EXPECTED_PACKS=8 ;;
             dev) EXPECTED_PACKS=4 ;;
             *) exit 1 ;;
           esac
@@ -508,7 +502,6 @@ jobs:
           for descriptor in "${DESCRIPTORS[@]}"; do
             case "$descriptor" in
               *.stable.delivery.json) manifest=candidate-manifests/latest.json ;;
-              *.homolog.delivery.json) manifest=candidate-manifests/homolog.json ;;
               *.dev.delivery.json) manifest=candidate-manifests/dev.json ;;
               *) exit 1 ;;
             esac
@@ -1128,7 +1121,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
-      # No reviewers: dev/homolog stay automatic. The environment is restricted
+      # No reviewers: dev stays automatic. The environment is restricted
       # to main and holds the sole credential (the RELEASE_MANIFESTS App key)
       # allowed to push the .well-known manifests through the main ruleset.
       name: release-manifests
@@ -1221,7 +1214,6 @@ jobs:
       # Filename map (per wish release-channel-dev, 2026-05-11):
       #   stable → latest.json     (kept for back-compat with v1 manifest layout)
       #   dev    → dev.json        (replaces the old "next.json" producer concept)
-      #   homolog → homolog.json
       #
       # The stable-only gate that lived here through v4.260511.3 was lifted —
       # every non-draft publish writes the manifest(s) for the channel(s) it
@@ -1251,7 +1243,7 @@ jobs:
             git fetch origin main
             git switch --detach origin/main
 
-            # Stable/homolog fan out to downstream pointers, but each file
+            # Stable fans out to the downstream dev pointer, but each file
             # moves independently and monotonically. An older delayed release
             # may advance stable while preserving newer downstream pointers.
             RELEASE_REPOSITORY="${{ github.repository }}" CANDIDATE_MANIFEST_DIR="$CANDIDATE_MANIFEST_DIR" \
@@ -1260,7 +1252,7 @@ jobs:
             # Stage the complete fixed allowlist. Staging before diff handles
             # both modified and bootstrap/untracked manifests.
             MANIFEST_PATHS=()
-            for f in latest.json homolog.json dev.json; do
+            for f in latest.json dev.json; do
               [[ -f ".well-known/${f}" && ! -L ".well-known/${f}" ]] && MANIFEST_PATHS+=(".well-known/${f}")
             done
             git add -- "${MANIFEST_PATHS[@]}"

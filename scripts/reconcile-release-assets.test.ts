@@ -8,9 +8,8 @@ const SCRIPT = join(import.meta.dir, 'reconcile-release-assets.sh');
 const VERSION = '5.260714.3';
 const CHANNEL = 'dev';
 const PLATFORMS = ['linux-x64-glibc', 'linux-x64-musl', 'linux-arm64', 'darwin-arm64'];
-function namesFor(channel: 'stable' | 'homolog' | 'dev'): string[] {
-  const channels =
-    channel === 'stable' ? ['stable', 'homolog', 'dev'] : channel === 'homolog' ? ['homolog', 'dev'] : ['dev'];
+function namesFor(channel: 'stable' | 'dev'): string[] {
+  const channels = channel === 'stable' ? ['stable', 'dev'] : ['dev'];
   return PLATFORMS.flatMap((platform) => {
     const tarball = `genie-${VERSION}-${platform}.tar.gz`;
     return [
@@ -46,13 +45,13 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-function localAssets(prefix = 'local', channel: 'stable' | 'homolog' | 'dev' = CHANNEL): Record<string, string> {
+function localAssets(prefix = 'local', channel: 'stable' | 'dev' = CHANNEL): Record<string, string> {
   return Object.fromEntries(
     namesFor(channel).map((name) => {
       if (!name.endsWith('.delivery.json')) return [name, `${prefix}:${name}`];
       const platform = PLATFORMS.find((candidate) => name.includes(`-${candidate}.tar.gz`))!;
       const platformTriple = platform.startsWith('linux-x64') ? 'linux-x64' : platform;
-      const evidenceChannel = name.match(/\.tar\.gz\.(stable|homolog|dev)\.delivery\.json$/)?.[1];
+      const evidenceChannel = name.match(/\.tar\.gz\.(stable|dev)\.delivery\.json$/)?.[1];
       return [
         name,
         `${JSON.stringify({
@@ -82,7 +81,7 @@ function localAssets(prefix = 'local', channel: 'stable' | 'homolog' | 'dev' = C
 function run(
   state: FakeState,
   mutate?: (dist: string) => void,
-  channel: 'stable' | 'homolog' | 'dev' = CHANNEL,
+  channel: 'stable' | 'dev' = CHANNEL,
   localPrefix = 'local',
 ) {
   const root = mkdtempSync(join(tmpdir(), 'genie-release-assets-'));
@@ -92,7 +91,6 @@ function run(
   mkdirSync(dist);
   mkdirSync(candidates);
   writeFileSync(join(candidates, 'latest.json'), candidateBytes('stable'));
-  writeFileSync(join(candidates, 'homolog.json'), candidateBytes('homolog'));
   writeFileSync(join(candidates, 'dev.json'), candidateBytes('dev'));
   for (const [name, contents] of Object.entries(localAssets(localPrefix, channel)))
     writeFileSync(join(dist, name), contents);
@@ -271,23 +269,26 @@ describe('exact GitHub release asset reconciliation', () => {
   });
 
   test('expands exact descriptor inventory by selected-channel fanout', () => {
-    for (const channel of ['dev', 'homolog', 'stable'] as const) {
+    for (const channel of ['dev', 'stable'] as const) {
       const { result, state } = run({ draft: true, assets: {} }, undefined, channel);
       expect(result.exitCode).toBe(0);
       expect(Object.keys(state.assets).sort()).toEqual(namesFor(channel).sort());
     }
+    // Per platform: tarball + bundle + intoto (3) plus (descriptor +
+    // sigstore bundle) per evidence channel. 4 platforms:
+    //   dev    = 4 * (3 + 1*2) = 20
+    //   stable = 4 * (3 + 2*2) = 28
     expect(namesFor('dev')).toHaveLength(20);
-    expect(namesFor('homolog')).toHaveLength(28);
-    expect(namesFor('stable')).toHaveLength(36);
+    expect(namesFor('stable')).toHaveLength(28);
   }, 15_000);
 
   test('never mutates a published prerelease; channel promotions require fresh immutable tags', () => {
     const devAssets = localAssets('dev-release', 'dev');
-    const homolog = run({ draft: false, prerelease: true, assets: devAssets }, undefined, 'homolog', 'dev-release');
-    expect(homolog.result.exitCode).toBe(3);
-    expect(homolog.result.stderr.toString()).toContain('published immutable release');
-    expect(homolog.state.assets).toEqual(devAssets);
-    expect(calls(homolog.state, 'gh', 'release upload')).toHaveLength(0);
+    const stable = run({ draft: false, prerelease: true, assets: devAssets }, undefined, 'stable', 'dev-release');
+    expect(stable.result.exitCode).toBe(3);
+    expect(stable.result.stderr.toString()).toContain('published immutable release');
+    expect(stable.state.assets).toEqual(devAssets);
+    expect(calls(stable.state, 'gh', 'release upload')).toHaveLength(0);
   });
 
   test('rejects missing and extra local inventory before any GitHub mutation', () => {

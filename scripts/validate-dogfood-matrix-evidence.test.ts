@@ -27,8 +27,8 @@ function fixture(platforms = PLATFORMS): {
           platform === 'linux-arm64' ? 'ubuntu-24.04-arm' : platform === 'darwin-arm64' ? 'macos-15' : 'ubuntu-latest',
         execution: platform.endsWith('musl') ? 'alpine-container' : 'host-native',
         version: VERSION,
-        channel: 'homolog',
-        manifest: 'homolog.json',
+        channel: 'dev',
+        manifest: 'dev.json',
         manifestSha256: MANIFEST_SHA,
         artifact: `genie-${VERSION}-${platform}.tar.gz`,
         artifactSha256: String(index + 1).repeat(64),
@@ -60,7 +60,7 @@ function evidence(platform: string, artifactSha256: string): string {
     lifecycle: {
       previousVersion: '5.260720.10',
       candidateVersion: VERSION,
-      channel: 'homolog',
+      channel: 'dev',
       sourceCommit: SOURCE_SHA,
       artifacts: {
         previous: { channel: 'stable' },
@@ -79,7 +79,7 @@ function validate(fx: ReturnType<typeof fixture>, validator = accept) {
       matrixPath: fx.matrix,
       evidenceDir: fx.evidenceDir,
       version: VERSION,
-      channel: 'homolog',
+      channel: 'dev',
       sourceSha: SOURCE_SHA,
       candidateManifestSha256: MANIFEST_SHA,
     },

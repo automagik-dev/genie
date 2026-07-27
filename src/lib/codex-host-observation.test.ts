@@ -351,7 +351,7 @@ describe('assessAuthenticatedDelivery — matching | absent | invalid | mismatch
     { name: 'delivery id', record: { deliveryId: '2'.repeat(32) } },
     { name: 'evidence digest', record: { evidenceDigest: 'f'.repeat(64) } },
     { name: 'platform id', record: { platformId: 'linux-x64-glibc' } },
-    { name: 'channel', record: { channel: 'homolog' } },
+    { name: 'channel', record: { channel: 'dev' } },
     { name: 'delivery root', record: { deliveryRoot: '/tmp/evil' } },
   ];
   for (const c of tampers) {
