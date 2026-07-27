@@ -20,7 +20,7 @@ Adapts lirazsiri's PR #2594 per the 2026-07-27 four-lens council: the recorded c
 ### IN
 
 - Policy amendment, single-sourced: AGENTS.md (one sentence) + `skills/work/SKILL.md` dispatch paragraph (+ plugin mirrors) — keep "parallel writers must have disjoint file ownership OR dedicated worktrees", add: shared-workspace subagents never mutate repo-level git state (no `checkout`/`switch`/`reset`/`stash`/`rebase`; only the orchestrator moves HEAD); work needing repo-level mutation gets a worktree via `genie launch` or gets sequenced. All other docs point to the single source, never paraphrase.
-- Recorded flip conditions, written next to the policy: (i) native worktree isolation demonstrably supports the `/work` loop — task claim/done works from inside a placed worktree, guard ergonomics tolerate real engineering command patterns, placement is clean (ignored or external) → flip to isolation-by-default for parallel writers (probe 2026-07-27 confirmed the raw capability already exists; these three gaps are what remain); (ii) recorded corruption between disjoint-scope writers with no git-state mutation → freeze is the wrong abstraction, go full isolation + native-placement engineering; (iii) first orphaned-lane or wrong-order merge incident → land the full integration-worktree protocol from #2594; (iv) 3+ file-scope collision incidents → the disjoint-scope mode dies.
+- Recorded flip conditions, written next to the policy: (i) the isolation guard's ergonomics tolerate real engineering command patterns (compound commands, cwd-relative git) — the ONE remaining gap; probe 2026-07-27 confirmed the raw capability exists, placement is already gitignored, and shared task-state access is by-design (`genie-db.ts` common-dir resolution) → flip to isolation-by-default for parallel writers, confirming task claim/done in the pilot; (ii) recorded corruption between disjoint-scope writers with no git-state mutation → freeze is the wrong abstraction, go full isolation + native-placement engineering; (iii) first orphaned-lane or wrong-order merge incident → land the full integration-worktree protocol from #2594; (iv) 3+ file-scope collision incidents → the disjoint-scope mode dies.
 - `genie doctor` gains a **worktrees residue check**: enumerate launch-created worktrees (`<worktreesBase>/<repo>-<slug>-<group>/`, branch `wish/<slug>-<group>`), report those whose branch is fully merged into the repo's integration branch; `genie doctor --fix` removes them **fail-closed**: branch tip is an ancestor of the integration branch AND worktree tree is clean, else refuse with the reason. No new top-level command, no new noun.
 - Reviewer snapshot worktrees: the review dispatch path provisions a **read-only detached worktree pinned to the exact commit under review** (no install — read-only), and tears it down after the verdict. Documented in `skills/review/SKILL.md` (+ mirror).
 - Dispatch-brief scope stanza: shared-workspace parallel dispatch briefs carry the group's explicit file scope and the git-freeze rule verbatim (work skill template text).
@@ -38,7 +38,7 @@ Adapts lirazsiri's PR #2594 per the 2026-07-27 four-lens council: the recorded c
 
 | # | Decision | Rationale |
 |---|----------|-----------|
-| 1 | Adapt, don't adopt: add a git-state freeze instead of mandating worktrees everywhere | The founding incident was a checkout switch (repo-state mutation), which neither current policy nor #2594's file-scope framing names; the freeze kills the observed failure class in the shared-workspace mode we rely on today. **Probe evidence (2026-07-27, H2 experiment):** the harness CAN place subagents in worktrees (`isolation: "worktree"` — real linked worktree at `<repo>/.claude/worktrees/agent-<id>`, persists when changed, named branches + commits land in the shared object store), so the council's original "cannot" was wrong — but the capability is not `/work`-ready: (a) its command guard has a high false-positive rate (rejects compound and cwd-relative commands, forces `git -C` shapes) that materially changes engineer behavior; (b) placement is nested and untracked (`.claude/worktrees` not gitignored → pollutes the main tree); (c) task claim/done from inside is unverified (workspace walk-up should cross the nesting boundary, untested for the DB path). Adapt remains correct on evidence, not on incapability. |
+| 1 | Adapt, don't adopt: add a git-state freeze instead of mandating worktrees everywhere | The founding incident was a checkout switch (repo-state mutation), which neither current policy nor #2594's file-scope framing names; the freeze kills the observed failure class in the shared-workspace mode we rely on today. **Probe evidence (2026-07-27, H2 experiment):** the harness CAN place subagents in worktrees (`isolation: "worktree"` — real linked worktree at `<repo>/.claude/worktrees/agent-<id>`, persists when changed, named branches + commits land in the shared object store), so the council's original "cannot" was wrong — but one gap keeps it short of `/work`-ready: the isolation guard's high false-positive rate (rejects compound and cwd-relative commands, forces `git -C` shapes), which materially changes engineer behavior. Two suspected gaps dissolved under scrutiny: placement is already clean (`.gitignore` ignores `.claude/worktrees/` since `225a56d60` — the repo hit and closed that hygiene problem before), and shared task-state access is resolved by design, not by accident — `src/lib/v5/genie-db.ts` resolves the DB via `git rev-parse --git-common-dir` precisely so every linked worktree shares one `genie.db` (production precedent: launch panes). Adapt remains correct on evidence, not on incapability; the flip is one gap away. |
 | 2 | Residue cleanup lives in `genie doctor`, not a new command | Felipe: "I hate creating new commands without needing to"; doctor already owns the check/fix residue pattern (v4-home-residue-doctor directive). Fail-closed semantics live in code where they cannot be mis-pasted — the #2594 GC bug existed because the choreography was prose shell replicated across ~57 files. |
 | 3 | Reviewer snapshots pinned to a commit, adopt-now | Unanimous council: near-zero standing cost, read-only so no per-lane install, fixes a real present hazard (reviews rendered against a moving tree). |
 | 4 | Defer integration-worktree machinery behind a recorded trigger | Unpriced costs (per-worktree environment installs, PM resolving conflicts holding neither engineer's context) fail AGENTS.md's present-need evidence bar; one recorded incident lands it — cheap flip threshold, dissent recorded (dx-docs wanted it now). |
@@ -100,7 +100,7 @@ The simplest complete design is the policy sentence alone — one clause added t
 
 **Validation:**
 ```bash
-bun run check:fast && bun scripts/sync-plugin-skills.ts --check && test "$(git grep -l 'only the orchestrator moves HEAD' | wc -l | tr -d ' ')" -ge 4
+bun run check:fast && bun scripts/sync-plugin-skills.ts --check && test "$(git grep -l 'only the orchestrator moves HEAD' -- ':!.genie' | wc -l | tr -d ' ')" -eq 4
 ```
 
 **depends-on:** none
@@ -114,7 +114,7 @@ bun run check:fast && bun scripts/sync-plugin-skills.ts --check && test "$(git g
 **Deliverables:**
 1. New module `src/genie-commands/doctor-worktrees.ts` (+ colocated `doctor-worktrees.test.ts`) owning enumeration, classification, and fail-closed removal — `doctorCommand` is at the complexity ceiling (42/42, `scripts/complexity-budget.ts`), so its delta is exactly one spread into `results` plus one call inside the existing `if (options?.fix)` block (which must move after git-root resolution — today `--fix` runs before root is resolved).
 2. Enumeration via `git worktree list --porcelain` from the repo root (authoritative; `launch.ts:477` precedent) — NOT by parsing `<repo>-<slug>-<group>` directory names (hyphenated slugs make names unparseable and two repos sharing a basename collide in the shared `<GENIE_HOME>/worktrees`). Export `resolveWorktreesBase` from `launch.ts` so doctor honors `GENIE_WORKTREES_DIR` identically. Classify: merged+clean (removable), unmerged (kept: commits not in integration branch), dirty (kept: uncommitted changes), foreign (kept: not a launch worktree of this repo).
-3. Integration branch resolution rule, stated in code: the repo's configured integration branch (genie config where present) else `dev` if it exists else the default branch; if unresolvable, the check reports and `--fix` refuses all removals (fail-closed).
+3. Integration branch resolution rule, stated in code: `dev` if it exists, else the remote default branch; if unresolvable, the check reports and `--fix` refuses all removals (fail-closed). No config surface — none exists in `src/types/genie-config.ts` and inventing one fails AGENTS.md's present-need gate.
 4. `doctor --fix`: remove only merged+clean entries — ancestry proof AND cleanliness check chained in code; any git error → refuse that entry with the reason. Update the `--fix` flag description in `src/genie.ts` (currently v4-residue-only wording).
 5. Tests: fixture repo + real `git worktree add` fixtures (precedent: `doctor.test.ts:355`) covering all four classes; regression tests that a dirty tree, an unmerged branch, an unresolvable integration branch, and a git-error path each refuse removal.
 
@@ -138,18 +138,17 @@ bun test src/genie-commands/ && bun run check:fast
 **Goal:** Review verdicts anchor to an immutable tree even while writers continue in the primary checkout.
 
 **Deliverables:**
-1. New helper `src/lib/review-snapshot.ts` (+ colocated test) exporting `provisionReviewSnapshot(commit)` (`git worktree add --detach` at the exact commit, path under `<worktreesBase>/…-review-<shortsha>`) and `teardownReviewSnapshot(path)` (detached+clean by construction → trivially safe removal). Caller: the orchestrator's review dispatch (prose in `skills/review/SKILL.md` instructs invoking the helper); a crashed review's leftover snapshot is classified and removed by the doctor residue check.
-2. `skills/review/SKILL.md` (+ mirror) documents the snapshot contract: reviewer works read-only in the snapshot path; verdicts cite the pinned commit.
-3. The policy freeze text carves out snapshot mechanics explicitly: `git worktree add/remove/prune` on snapshot paths is orchestrator-side plumbing and permitted; `checkout/switch/reset/stash/rebase` in the shared checkout remain forbidden (without this carve-out the reviewer flow violates the freeze by construction).
+1. Prose-only, deliberately: `skills/review/SKILL.md` (+ mirror) documents the snapshot contract with the EXACT commands — provision `git worktree add --detach <worktreesBase>/<repo>-review-<shortsha> <commit>`, teardown `git worktree remove <path>`. No helper module: a helper here would have no caller but its own test (the #2594 decoration pattern this wish condemns), and the commands are natively fail-safe — `worktree add --detach` creates without touching any branch, and `worktree remove` refuses a dirty tree by default. A crashed review's leftover snapshot is classified and removed by the doctor residue check (snapshots are detached+clean → merged-clean class).
+2. Reviewer contract in the same prose: work read-only in the snapshot path; verdicts cite the pinned commit.
+3. Precondition (owned by the policy group, not re-delivered here): the freeze text's snapshot carve-out (`git worktree add/remove/prune` is orchestrator-side plumbing, permitted; `checkout/switch/reset/stash/rebase` in the shared checkout remain forbidden).
 
 **Acceptance Criteria:**
-- [ ] Colocated test proves a commit made in the primary checkout AFTER provisioning does not change the snapshot tree (compare `git rev-parse HEAD` + a file hash inside the snapshot before/after)
-- [ ] Teardown removes the snapshot; a provision→teardown cycle leaves zero leftovers (doctor residue check reports none)
+- [ ] Skill prose carries the exact provision/teardown commands and the read-only + pinned-commit reviewer contract
 - [ ] Skill docs updated; `bun scripts/sync-plugin-skills.ts --check` green
 
 **Validation:**
 ```bash
-bun test src/lib/review-snapshot.test.ts && bun run check:fast && bun scripts/sync-plugin-skills.ts --check
+bun run check:fast && bun scripts/sync-plugin-skills.ts --check
 ```
 
 **depends-on:** policy
@@ -175,7 +174,8 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 
 - [ ] Functional: on a repo with two finished launch worktrees (one merged+clean, one dirty), `genie doctor` shows both with correct dispositions and `--fix` removes exactly the merged one
 - [ ] Integration: a `/work` wave with two disjoint-scope native subagents runs in parallel in the shared checkout; briefs visibly carry the scope stanza + freeze rule; orchestrator commits land while HEAD never moves mid-wave
-- [ ] Regression: `genie launch <slug> --dry-run` output unchanged; existing doctor checks unaffected; full `bun run check` green
+- [ ] Snapshot immutability (manual, from the dropped helper test): provision a snapshot per the skill prose, commit in the primary checkout, verify the snapshot's `git rev-parse HEAD` and a file hash are unchanged; teardown; `genie doctor` reports zero snapshot leftovers
+- [ ] Regression: `genie launch <slug> --dry-run` output unchanged; existing doctor checks unaffected; full `bun run check` green **on CI** (locally on macOS the pre-existing `ui-bridge` test needs Linux `ss` and fails — not a gate for this wish)
 
 ---
 
@@ -214,6 +214,4 @@ src/genie-commands/doctor-worktrees.ts        # NEW: enumeration/classification/
 src/genie-commands/doctor-worktrees.test.ts   # NEW: colocated tests (repo convention: <module>.test.ts)
 src/genie.ts                                  # --fix flag description update
 src/term-commands/launch.ts                   # export resolveWorktreesBase
-src/lib/review-snapshot.ts                    # NEW: provision/teardown helper
-src/lib/review-snapshot.test.ts               # NEW: colocated test (concurrent-commit immutability)
 ```
