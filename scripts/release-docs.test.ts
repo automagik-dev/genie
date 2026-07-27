@@ -82,7 +82,6 @@ describe('Group E release and documentation contracts', () => {
   test('privileged reusable workflows admit only the exact channel-specific main caller', () => {
     for (const path of ['.github/workflows/sign-attest.yml', '.github/workflows/release-publish.yml']) {
       const workflow = read(path);
-      expect(workflow).toContain('permissions: {}');
       expect(workflow).toContain(
         'EXPECTED_STABLE_CALLER: automagik-dev/genie/.github/workflows/release.yml@refs/heads/main',
       );
@@ -96,6 +95,65 @@ describe('Group E release and documentation contracts', () => {
       expect(workflow).toContain('"$CALLER_WORKFLOW_SHA" != "$CALLER_SHA"');
       expect(workflow).toContain('needs: admit');
     }
+
+    // sign-attest's admit needs no token at all. release-publish's admit holds
+    // exactly contents:read — the least that lets the replay guard ask whether
+    // the tag already carries a published release — and never write, so an
+    // unproven caller still cannot mutate anything.
+    expect(read('.github/workflows/sign-attest.yml')).toContain('permissions: {}');
+    const publishAdmit =
+      read('.github/workflows/release-publish.yml')
+        .split('\n  admit:')[1]
+        ?.split('\n  prepare-delivery-evidence:')[0] ?? '';
+    expect(publishAdmit).toContain('permissions:\n      # Read-only');
+    expect(publishAdmit).toContain('contents: read');
+    expect(publishAdmit).not.toContain('contents: write');
+    expect(publishAdmit).not.toContain('id-token:');
+  });
+
+  // A published release is immutable and this pipeline can no longer replay
+  // one (asset fanout grew past the 12 assets pre-fanout releases carry, and
+  // released_at became deterministic), so re-dispatching a published version
+  // fails only AFTER the release is locked. Admit must refuse it up front,
+  // while still admitting a draft so an interrupted run can finish. #2674.
+  test('admit refuses re-dispatch of a version that already has a published release', () => {
+    const admit =
+      read('.github/workflows/release-publish.yml')
+        .split('\n  admit:')[1]
+        ?.split('\n  prepare-delivery-evidence:')[0] ?? '';
+    expect(admit).toContain('name: Refuse re-dispatch of an already published release');
+    expect(admit).toContain('GH_TOKEN: ${{ github.token }}');
+    expect(admit).toContain('gh api "repos/${RELEASE_REPOSITORY}/releases/tags/v${INPUT_VERSION}"');
+    // non-draft is the refusal, and the refusal cites the rule + issue
+    expect(admit).toContain(`jq -r '.draft'`);
+    expect(admit).toContain('release-replay.published');
+    expect(admit).toContain('allocate a fresh version');
+    expect(admit).toContain('automagik-dev/genie#2674');
+    // ambiguous API failures fail closed rather than silently admitting
+    expect(admit).toContain('release-replay.unknown');
+    expect(admit).toContain(`grep -q 'HTTP 404'`);
+    // the guard runs only after the caller is proven
+    expect(admit.indexOf('name: Refuse re-dispatch of an already published release')).toBeGreaterThan(
+      admit.indexOf('name: Bind caller workflow and control commit'),
+    );
+  });
+
+  // The publish job used to keep its own CHANNEL="${INPUT_CHANNEL:-}" default
+  // to stable. admit already rejects an empty/unknown channel, so it was dead;
+  // had it ever fired, publish would have uploaded a 36-asset stable inventory
+  // that finalize aborts on, leaving a published-but-unfinalized release. #2675
+  test('publish reads the channel input directly instead of defaulting it', () => {
+    const workflow = read('.github/workflows/release-publish.yml');
+    const publishJob = workflow.split('\n  publish:')[1]?.split('\n  manifests:')[0] ?? '';
+    expect(publishJob).not.toContain('INPUT_CHANNEL');
+    expect(publishJob).not.toContain('CHANNEL="stable"');
+    expect(publishJob).not.toContain('steps.meta.outputs.channel');
+    expect(publishJob).toContain('CHANNEL: ${{ inputs.channel }}');
+    expect(workflow).not.toContain('channel=${CHANNEL}');
+    const manifestsJob = workflow.split('\n  manifests:')[1]?.split('\n  finalize:')[0] ?? '';
+    const finalizeJob = workflow.split('\n  finalize:')[1] ?? '';
+    expect(manifestsJob).toContain('CHANNEL: ${{ inputs.channel }}');
+    expect(finalizeJob).toContain('CHANNEL: ${{ inputs.channel }}');
   });
 
   test('release stages consume only artifacts from their current orchestrator run', () => {

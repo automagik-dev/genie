@@ -33,6 +33,7 @@ interface FakeState {
   prerelease?: boolean;
   assets: Record<string, string>;
   calls?: Array<{ tool: string; args: string[] }>;
+  attestationBatchSizes?: number[];
   failOn?: string;
   controlSha?: string;
   secondControlSha?: string;
@@ -168,7 +169,24 @@ if (args[0] === 'attestation' && args[1] === 'verify') {
       },
     },
   };
-  console.log(JSON.stringify([{ verificationResult: { statement } }]));
+  // A published tarball carries TWO attestations for the same digest: GitHub's
+  // own in-toto immutable-release attestation (minted when the release is
+  // locked) and ours. The attestations API returns both, GitHub's first.
+  // Production must select by predicate type — never by position or by count.
+  const immutableRelease = {
+    verificationResult: {
+      statement: {
+        _type: 'https://in-toto.io/Statement/v1',
+        predicateType: 'https://in-toto.io/attestation/release/v0.2',
+        subject: [{ name: 'genie-${VERSION}', digest: { sha256: 'e'.repeat(64) } }],
+        predicate: { purl: 'pkg:github/automagik-dev/genie@v${VERSION}', releaseId: 4242 },
+      },
+    },
+  };
+  const attestations = [immutableRelease, { verificationResult: { statement } }];
+  state.attestationBatchSizes ??= [];
+  state.attestationBatchSizes.push(attestations.length);
+  console.log(JSON.stringify(attestations));
   save(); process.exit(0);
 }
 save(); process.exit(2);
@@ -375,6 +393,18 @@ describe('exact GitHub release asset reconciliation', () => {
         'https://github.com/automagik-dev/genie/.github/workflows/release-publish.yml@refs/heads/main',
       );
     }
+  });
+
+  test('selects our release predicate when GitHub also attests the immutable release', () => {
+    const publishedAssets = localAssets('published');
+    const { result, state } = run({ draft: false, assets: publishedAssets });
+    expect(result.exitCode).toBe(0);
+    expect(state.assets).toEqual(publishedAssets);
+    expect(calls(state, 'gh', 'release upload')).toHaveLength(0);
+    // 4 platforms x 2 passes (unfiltered, then certificate-filtered), each
+    // answered with GitHub's immutable-release attestation ahead of ours.
+    expect(state.attestationBatchSizes).toHaveLength(8);
+    expect(state.attestationBatchSizes?.every((size) => size === 2)).toBe(true);
   });
 
   test('never repairs a partial published release or accepts remote extras', () => {
