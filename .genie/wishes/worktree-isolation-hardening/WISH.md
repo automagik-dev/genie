@@ -185,7 +185,7 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 |------|----------|------------|
 | Freeze is prose-enforced; an agent can still violate it (the founding incident violated an implicit norm) | Medium | Follow-up investigate issue: dispatch-level mechanical guard; violation caught at review via diff/state audit; flip condition (ii) fires if mixing recurs despite the freeze |
 | Doctor `--fix` deletes something an operator wanted despite proofs | Medium | Ancestry checked against the integration branch tip at run time; refusal on ANY git error; tests pin every refusal path; `--fix` prints each removal with the proof it passed |
-| Reviewer snapshots accumulate if a review crashes before teardown | Low | Snapshots are detached+clean by construction → doctor residue check classifies and removes them on the next `--fix` |
+| Reviewer snapshots accumulate if a review crashes before teardown | Low | Teardown is the orchestrator's explicit job — execution review confirmed doctor classifies detached snapshots as `foreign` (never touched by `--fix`); the skill prose says so and instructs explicit `git worktree remove` for crash leftovers |
 | Scope stanza adds brief ceremony with zero recorded file-collision incidents (simplifier's dissent) | Low | Stanza is template text, not a new artifact class; flip condition (iv) records when it would matter; revisit if it proves noise |
 
 ---
