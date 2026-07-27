@@ -1,13 +1,13 @@
 ---
 name: fix
-description: "Dispatch fix subagent for FIX-FIRST gaps from review, re-review, then diagnose unresolved failures after 3 loops."
+description: "Dispatch fix subagent for FIX-FIRST gaps from review, re-review, then diagnose unresolved failures after 2 loops."
 ---
 
 # fix — Fix-Review Loop
 
 **Runtime syntax:** in Codex, invoke the plugin copy with the owner-qualified `$genie:<skill>` selector; use bare `$<skill>` only when intentionally selecting a user-tier copy (a separately installed personal copy; Genie no longer seeds this tier). Claude Code and Hermes use `/<skill>`. Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active tier.
 
-Resolve FIX-FIRST gaps from `review`: dispatch a fix subagent, re-review, repeat up to 3 loops, then diagnose and route any unresolved failure.
+Resolve FIX-FIRST gaps from `review`: dispatch a fix subagent, re-review, repeat up to 2 loops, then diagnose and route any unresolved failure.
 
 ## When to Use
 - `review` returned a **FIX-FIRST** verdict with CRITICAL or HIGH gaps
@@ -22,8 +22,8 @@ Resolve FIX-FIRST gaps from `review`: dispatch a fix subagent, re-review, repeat
 | Verdict | Condition | Action |
 |---------|-----------|--------|
 | SHIP | — | Done. Return to orchestrator. |
-| FIX-FIRST | loop < 3 | Increment loop, go to step 2. |
-| FIX-FIRST | loop = 3 | Stop fixing and run Escalation Diagnosis; max loops reached. |
+| FIX-FIRST | loop < 2 | Increment loop, go to step 2. |
+| FIX-FIRST | loop = 2 | Stop fixing and run Escalation Diagnosis; max loops reached. |
 | BLOCKED | — | Run Escalation Diagnosis and take the cause-specific route. |
 
 5. **Route the diagnosis:** report the remaining gaps with exact files, failing checks, cause class, and corrective route; the group's task stays `in_progress`.
@@ -59,14 +59,14 @@ The fix loop never mutates task state. The group's task stays `in_progress` thro
 ## Diagnosis / Appeal Format
 
 ```
-Fix loop exhausted (3/3). Group remains in progress.
+Fix loop exhausted (2/2). Group remains in progress.
 Remaining gaps:
 - [CRITICAL] <gap description> — <file>
 - [HIGH] <gap description> — <file>
 Cause: <model-capacity|missing-context|ambiguous-spec|env-tool-failure|overdesigned-plan>
 New evidence: <new output/diagnosis, or "none — model/effort escalation prohibited">
 Corrective route: <one cause-specific next step>
-Budget: attempts=<used>/3; effort_escalations=<used>/2
+Budget: attempts=<used>/2; effort_escalations=<used>/2
 Appeal: <reviewer/final-gate disagreement record, or "none">
 ```
 
@@ -79,12 +79,12 @@ Appeal: <reviewer/final-gate disagreement record, or "none">
 - [HIGH] sendMessage result not checked — dispatch.ts:541
 ```
 
-Loop 1: native delegation surface → fixer briefed with both gaps, the wish criteria, and `bun test` as validation. The fixer edits, runs the validation, reports its changes with outcomes, and ends `done`. Then native delegation surface → a fresh reviewer briefed to re-run `review` against the same criteria. SHIP → report success to the orchestrator. FIX-FIRST again → loops 2 and 3; after loop 3, classify the cause and take its corrective route. A model or effort raise is permitted only for evidenced `model-capacity` within both caps. An `overdesigned-plan` diagnosis stops immediately and returns to planning instead.
+Loop 1: native delegation surface → fixer briefed with both gaps, the wish criteria, and `bun test` as validation. The fixer edits, runs the validation, reports its changes with outcomes, and ends `done`. Then native delegation surface → a fresh reviewer briefed to re-run `review` against the same criteria. SHIP → report success to the orchestrator. FIX-FIRST again → loop 2; after that, classify the cause and take its corrective route. A model or effort raise is permitted only for evidenced `model-capacity` within both caps. An `overdesigned-plan` diagnosis stops immediately and returns to planning instead.
 
 ## Rules
 - Tight scope: fix exactly the tagged gaps — no unrequested refactors, features, or drive-by cleanups.
 - Never fix and review in the same session — always separate subagents.
-- Never exceed 3 fix loops — stop, diagnose, and take the cause-specific route.
+- Never exceed 2 fix loops — stop, diagnose, and take the cause-specific route.
 - Never use a fix loop to preserve optional machinery when a simpler plan satisfies the user stories.
 - Include the original wish criteria in every fix dispatch.
 - Identical gaps across loops = no progress; classify the cause. Repetition is not new evidence and never authorizes a model or effort raise.

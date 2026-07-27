@@ -75,5 +75,5 @@ For PASS criteria, evidence includes:
 ## Fix Loop Limits
 
 - Spec review fix loops: max 3
-- Quality review fix loops: max 3
+- Quality review fix loops: max 2
 - After max loops: mark task BLOCKED and continue

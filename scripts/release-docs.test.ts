@@ -914,7 +914,7 @@ describe('Group E release and documentation contracts', () => {
     expect(review).toContain('unjustified stateful machinery');
     expect(review).toContain('a HIGH gap');
     for (const lifecycleSkill of [review, fix, work]) expect(lifecycleSkill).toContain('`overdesigned-plan`');
-    expect(fix).toContain('up to 3 loops');
+    expect(fix).toContain('up to 2 loops');
     expect(work).toContain('A user-approved simplification invalidates the superseded plan/review evidence');
   });
 

@@ -132,8 +132,8 @@ write. Never edit WISH.md, the brainstorm jar, or task state as the reviewer.
 ### FIX-FIRST loop
 1. Diagnose first. For `overdesigned-plan`, return to `brainstorm`/`wish` without consuming a fix attempt.
 2. Otherwise auto-invoke `fix` with the severity-tagged gap list.
-3. After `fix` completes, re-run `review` (max 3 fix loops).
-4. Still FIX-FIRST after 3 loops → return BLOCKED with an Escalation Diagnosis; never raise model or effort automatically.
+3. After `fix` completes, re-run `review` (max 2 fix loops).
+4. Still FIX-FIRST after 2 loops → return BLOCKED with an Escalation Diagnosis; never raise model or effort automatically.
 
 When a failure's root cause is unclear, invoke `trace` before dispatching `fix` — `fix` then applies the cause-specific correction from the trace report. An unclear cause is not evidence of `model-capacity`.
 
