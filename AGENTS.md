@@ -32,10 +32,21 @@ Genie v5 is zero-daemon except for the explicitly launched `genie omni serve` br
 - Config migrations are narrow, backup-first, idempotent, and covered by fixtures.
 - Every new CLI surface tests success, error exit code, stderr, and idempotency.
 - Shared skills use roles and native delegation language, never a hardcoded client tool name.
-- Subagents share a workspace unless the client explicitly guarantees otherwise. Genie task claims own shared-workspace scope; `genie launch` owns worktree isolation.
+- Subagents share a workspace unless the client explicitly guarantees otherwise. Parallel writers must have disjoint file ownership or dedicated worktrees; otherwise sequence them. Shared-workspace subagents never mutate repo-level git state (no `checkout`/`switch`/`reset`/`stash`/`rebase`) — **only the orchestrator moves HEAD**; work needing repo-level mutation gets a worktree via `genie launch` or gets sequenced. `git worktree add/remove/prune` on snapshot/lane paths is orchestrator-side plumbing and permitted. Genie task claims own shared-workspace scope; `genie launch` owns worktree isolation.
 - Reviewer and engineer are different roles. Never accept self-review as independent evidence.
 - Codex agents inherit the active model; do not hardcode unstable model identifiers.
 - Hook trust and workspace trust remain explicit user decisions.
+
+### Flip conditions for the shared-workspace contract
+
+The two-mode contract plus git-state freeze is the current answer, not a permanent one. Any of the following flips it (council 2026-07-27, adapting PR #2594):
+
+(i) the isolation guard's ergonomics tolerate real engineering command patterns (compound commands, cwd-relative git) — the one remaining gap; probe 2026-07-27 confirmed the raw capability exists, placement is already gitignored, and shared task-state access is by-design (`genie-db.ts` common-dir resolution) → flip to isolation-by-default for parallel writers, confirming task claim/done in the pilot;
+(ii) recorded corruption between disjoint-scope writers with no git-state mutation → the freeze is the wrong abstraction; go full isolation + native-placement engineering;
+(iii) first orphaned-lane or wrong-order merge incident → land the full integration-worktree protocol from PR #2594;
+(iv) 3+ file-scope collision incidents → the disjoint-scope mode dies.
+
+Open investigations feeding these conditions: [#2706](https://github.com/automagik-dev/genie/issues/2706) pilots native `isolation: "worktree"` on one real `/work` group and closes (i)'s remaining gap; [#2705](https://github.com/automagik-dev/genie/issues/2705) asks whether the freeze can be enforced mechanically at dispatch — a recorded infeasibility there is itself evidence toward (i).
 
 ## Code style
 

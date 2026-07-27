@@ -141,6 +141,19 @@ When a failure's root cause is unclear, invoke `trace` before dispatching `fix` 
 
 **Reviewer ≠ engineer.** The orchestrator dispatches review as a separate subagent via the native delegation surface — an agent never reviews its own work. Follow-ups to a running reviewer go through native follow-up messaging. For change-types that warrant deeper scrutiny, the orchestrator also convenes a **Lens Panel** (below); those lenses advise, but the checklist still owns the verdict.
 
+### Reviewer snapshot
+
+When dispatching a review of committed work, the orchestrator pins the review to an immutable tree — a detached worktree at the exact commit under review — so that writers continuing in the primary checkout cannot move the ground under a verdict in progress. Pin by default when other groups are still writing in the primary checkout; skip it when reviewing an uncommitted working tree, which cannot be pinned:
+
+```bash
+git worktree add --detach <worktreesBase>/<repo>-review-<shortsha>-<unique> <commit>   # provision
+git worktree remove <path>                                                             # teardown, after the verdict
+```
+
+(`<worktreesBase>` is `$GENIE_WORKTREES_DIR`, else `<GENIE_HOME>/worktrees` — the same base `genie launch` uses. `<unique>` is a per-review disambiguator — the reviewer/group name or a `mktemp`-style random suffix — because a bare `<repo>-review-<shortsha>` collides across concurrent reviewers, repeated reviews of one commit, and repos sharing a basename.)
+
+No helper wraps these, because the commands are already fail-safe: `worktree add --detach` creates without touching any branch, and `worktree remove` refuses a dirty tree by default. Teardown is the orchestrator's job and nothing else does it — `genie doctor`'s launch-worktree check only classifies worktrees on a `wish/<slug>-<group>` branch, so a detached snapshot is foreign to it: surfaced only inside the aggregate "other checkouts" count and never removed by `--fix`. If a review crashes before teardown, remove the leftover explicitly with `git worktree remove <path>`. The reviewer works READ-ONLY in the snapshot path (no install, no build, no writes) and the verdict cites the pinned commit. Provisioning and teardown are orchestrator-side plumbing: the git-state freeze in AGENTS.md permits `git worktree add/remove/prune` on snapshot paths, while reviewers themselves never mutate git state.
+
 ## Lens Panels
 
 When the change-type warrants it, the orchestrator dispatches **lens reviewers** alongside the standard reviewer — each a separate subagent whose prompt carries its lens file (path + content) and the curated review scope. Convene a lens only when the change actually touches its surface; lenses advise, but the verdict still comes from the checklist above — never from a lens.

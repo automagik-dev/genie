@@ -329,7 +329,7 @@ function resolveRepoRoot(cwd: string): string {
 }
 
 /** Base dir for worktrees: explicit override, else `<GENIE_HOME>/worktrees`. */
-function resolveWorktreesBase(deps: LaunchDeps): string {
+export function resolveWorktreesBase(deps: LaunchDeps): string {
   return deps.worktreesDir ?? process.env.GENIE_WORKTREES_DIR ?? join(genieHome(), 'worktrees');
 }
 
