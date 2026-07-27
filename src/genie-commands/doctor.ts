@@ -89,6 +89,7 @@ import {
   resolveProjectContext,
 } from '../lib/v5/genie-db.js';
 import { VERSION } from '../lib/version.js';
+import { checkLaunchWorktrees, cleanupLaunchWorktrees } from './doctor-worktrees.js';
 import {
   cleanupV4,
   detectUncertainKeeps,
@@ -135,7 +136,7 @@ export interface RoleAgentDelivery {
   duplicateSurface: boolean;
 }
 
-interface CheckResult {
+export interface CheckResult {
   name: string;
   status: CheckStatus;
   detail?: string;
@@ -1925,14 +1926,6 @@ function buildCodexIntegration(snapshot: CodexActivationSnapshot): CodexIntegrat
 }
 
 export async function doctorCommand(options?: { json?: boolean; fix?: boolean }, deps: DoctorDeps = {}): Promise<void> {
-  // --fix: run the backup-first v4 cleanup BEFORE the checks so the report
-  // below reflects the post-fix state. Without --fix, detection only — the
-  // residue check is a pure read and nothing on disk changes. In --json mode
-  // stdout belongs to the JSON document, so cleanup chatter goes to stderr.
-  if (options?.fix) {
-    cleanupV4(options.json ? { logSink: (line) => process.stderr.write(`${line}\n`) } : {});
-  }
-
   // One bounded Git resolution and one bounded Codex plugin query feed every
   // downstream check. No doctor branch independently re-spawns either probe.
   const injectedRoot = deps.root === null || typeof deps.root === 'string';
@@ -1942,6 +1935,18 @@ export async function doctorCommand(options?: { json?: boolean; fix?: boolean },
     deps.databaseRoot === null || typeof deps.databaseRoot === 'string'
       ? deps.databaseRoot
       : (gitRoots?.commonRoot ?? root);
+
+  // --fix: run the cleanups BEFORE the checks so the report below reflects the
+  // post-fix state, and AFTER the Git resolution above because the worktree
+  // cleanup is scoped to the resolved repo root. Without --fix, detection only —
+  // both residue checks are pure reads and nothing on disk changes. In --json
+  // mode stdout belongs to the JSON document, so cleanup chatter goes to stderr.
+  const cleanupOptions = options?.json ? { logSink: (line: string) => process.stderr.write(`${line}\n`) } : {};
+  if (options?.fix) {
+    cleanupV4(cleanupOptions);
+    cleanupLaunchWorktrees(root, cleanupOptions);
+  }
+
   // Group E: ONE bounded host observation feeds the probe, the advisory, and
   // (via the replay runner) the activation snapshot. It is skipped entirely
   // only when tests inject both seams.
@@ -1968,6 +1973,7 @@ export async function doctorCommand(options?: { json?: boolean; fix?: boolean },
       deps.projectContext !== undefined ? deps.projectContext : injectedRoot ? null : undefined,
     ),
     ...checkV4Residue(),
+    ...checkLaunchWorktrees(root),
     ...checkAgentSync(),
     ...(await checkOmniHookTimeout()),
     ...checkIndexLaneDrift(root, databaseRoot),

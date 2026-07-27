@@ -83,7 +83,10 @@ program
   .command('doctor')
   .description('Run diagnostic checks on genie installation')
   .option('--json', 'Emit JSON instead of human output')
-  .option('--fix', 'Back up and remove detected v4 residue (backup-first, idempotent)')
+  .option(
+    '--fix',
+    'Remove detected residue: v4 leftovers (backup-first) and merged, clean `genie launch` worktrees (idempotent)',
+  )
   .action(doctorCommand);
 
 program
