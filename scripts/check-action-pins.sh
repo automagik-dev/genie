@@ -8,21 +8,25 @@
 # no repository, and it took down three release-publish jobs the first time
 # they ever executed.
 #
-# The matcher recognises all three YAML scalar spellings of `uses:` (bare,
-# 'single-quoted', "double-quoted") and requires the ref to span the WHOLE
-# scalar — an action ending in 40 hex chars followed by trailing garbage
-# (`@<sha>oops`) is not a pin and must not be silently accepted (#2669).
+# The matcher reads the scalar that follows the FIRST `uses:` key on the line,
+# recognises all three YAML spellings (bare, 'single-quoted', "double-quoted"),
+# and requires the ref to span the WHOLE scalar — an action ending in 40 hex
+# chars followed by trailing garbage (`@<sha>oops`) is not a pin and must not be
+# silently accepted (#2669).
 #
 # Usage: bash scripts/check-action-pins.sh   (needs gh auth; network required)
 #        bash scripts/check-action-pins.sh --extract < lines   (offline; prints
 #        the `owner/repo@sha` pin for every matching line, nothing for the rest)
 set -euo pipefail
 
-# YAML scalar spellings of the `uses:` value. Kept in variables because bash 3.2
-# treats quoted regex fragments as literals inside [[ =~ ]].
-uses_dquoted_re='uses:[[:space:]]*"([^"]*)"'
-uses_squoted_re="uses:[[:space:]]*'([^']*)'"
-uses_bare_re='uses:[[:space:]]*([^[:space:]#]+)'
+# YAML scalar spellings of the `uses:` value, matched against the text AFTER the
+# key. Kept in variables because bash 3.2 treats quoted regex fragments as
+# literals inside [[ =~ ]]. All three are anchored so a later `uses:` inside a
+# trailing comment cannot shadow the real scalar. A bare scalar also ends at `,`
+# and `}` so flow mappings (`- { uses: owner/repo@<sha>, name: X }`) extract.
+uses_dquoted_re='^"([^"]*)"'
+uses_squoted_re="^'([^']*)'"
+uses_bare_re='^([^][:space:]#,}]+)'
 # Anchored: the pin must be the ENTIRE scalar and end in exactly 40 hex chars.
 pin_re='^([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)(/[A-Za-z0-9./_-]+)?@([0-9a-f]{40})$'
 
@@ -30,13 +34,15 @@ pin_re='^([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)(/[A-Za-z0-9./_-]+)?@([0-9a-f]{40})$'
 # Returns 1 (printing nothing) for local (`./…`), docker://, tag/branch refs and
 # for a 40-hex run that does not terminate the scalar.
 extract_pin() {
-  local line="$1" scalar
+  local line="$1" rest scalar
   line="${line%$'\r'}"
-  if [[ $line =~ $uses_dquoted_re ]]; then
+  case $line in *uses:*) rest="${line#*uses:}" ;; *) return 1 ;; esac
+  rest="${rest#"${rest%%[![:space:]]*}"}"
+  if [[ $rest =~ $uses_dquoted_re ]]; then
     scalar="${BASH_REMATCH[1]}"
-  elif [[ $line =~ $uses_squoted_re ]]; then
+  elif [[ $rest =~ $uses_squoted_re ]]; then
     scalar="${BASH_REMATCH[1]}"
-  elif [[ $line =~ $uses_bare_re ]]; then
+  elif [[ $rest =~ $uses_bare_re ]]; then
     scalar="${BASH_REMATCH[1]}"
   else
     return 1

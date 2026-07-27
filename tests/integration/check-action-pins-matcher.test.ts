@@ -8,7 +8,11 @@
  * stay closed:
  *   - single-/double-quoted `uses:` scalars were skipped entirely;
  *   - a 40-hex run followed by trailing garbage (`@<sha>oops`) was accepted as
- *     a pin, because the SHA was not anchored to the end of the scalar.
+ *     a pin, because the SHA was not anchored to the end of the scalar;
+ *   - an unanchored match let a quoted pin inside a trailing comment shadow the
+ *     real bare pin on the same line;
+ *   - a flow-mapping step (`- { uses: owner/repo@<sha>, name: X }`) was skipped
+ *     because the comma stayed glued to the scalar.
  *
  * No network, no gh auth: `--extract` only runs the regex layer.
  */
@@ -21,6 +25,8 @@ import { join } from 'node:path';
 const REPO_ROOT = join(import.meta.dir, '..', '..');
 const SCRIPT = join(REPO_ROOT, 'scripts', 'check-action-pins.sh');
 const SHA = '93cb6efe18208431cddfb8368fd83d5badbf9bfd';
+/** A different well-formed SHA, used to prove which scalar the matcher picked. */
+const OTHER_SHA = '11b0e1c8d3d0f8f8d3ce4cd7d0d0a1b2c3d4e5f6';
 
 /** Feed raw YAML lines through the script's matcher; returns the pins it emitted. */
 function extract(...lines: string[]): string[] {
@@ -57,6 +63,21 @@ describe('check-action-pins matcher — accepted scalars', () => {
   test('CRLF line endings and extra spacing after the key', () => {
     expect(extract(`      - uses:    actions/checkout@${SHA}\r`)).toEqual([`actions/checkout@${SHA}`]);
     expect(extract(`      - uses: "actions/checkout@${SHA}"\r`)).toEqual([`actions/checkout@${SHA}`]);
+  });
+
+  test('a quoted pin in a trailing comment never shadows the real scalar', () => {
+    expect(extract(`      - uses: actions/checkout@${SHA} # was uses: "actions/checkout@${OTHER_SHA}"`)).toEqual([
+      `actions/checkout@${SHA}`,
+    ]);
+    expect(extract(`      - uses: actions/checkout@${SHA} # was uses: 'actions/checkout@${OTHER_SHA}'`)).toEqual([
+      `actions/checkout@${SHA}`,
+    ]);
+  });
+
+  test('flow mapping scalar ends at the comma or closing brace', () => {
+    expect(extract(`      - { uses: owner/repo@${SHA}, name: Build }`)).toEqual([`owner/repo@${SHA}`]);
+    expect(extract(`      - { uses: owner/repo@${SHA} }`)).toEqual([`owner/repo@${SHA}`]);
+    expect(extract(`      - { uses: "owner/repo@${SHA}", name: Build }`)).toEqual([`owner/repo@${SHA}`]);
   });
 });
 
