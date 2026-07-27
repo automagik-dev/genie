@@ -8,6 +8,7 @@ import {
   checkLaunchWorktrees,
   cleanupLaunchWorktrees,
   parseWorktreePorcelain,
+  removeLaunchWorktree,
   resolveIntegrationBranch,
   scanLaunchWorktrees,
 } from './doctor-worktrees.js';
@@ -369,7 +370,10 @@ describe('doctor wiring', () => {
     process.env.GENIE_WORKTREES_DIR = fx.base;
   }
 
-  async function runDoctor(fx: Fixture, options: { json?: boolean; fix?: boolean }): Promise<string> {
+  async function runDoctor(
+    fx: Fixture,
+    options: { json?: boolean; fix?: boolean },
+  ): Promise<{ output: string; exitCode: number }> {
     const realWrite = process.stdout.write.bind(process.stdout);
     const priorExit = process.exitCode;
     process.exitCode = 0;
@@ -388,7 +392,7 @@ describe('doctor wiring', () => {
         bunVersion: '1.3.10',
         bunPath: '/usr/bin/bun',
       });
-      return buffer;
+      return { output: buffer, exitCode: typeof process.exitCode === 'number' ? process.exitCode : 0 };
     } finally {
       process.stdout.write = realWrite;
       process.exitCode = priorExit ?? 0;
@@ -402,7 +406,10 @@ describe('doctor wiring', () => {
     const dirty = addWorktree(fx, 'repo-demo-beta', 'wish/demo-beta');
     writeFileSync(join(dirty, 'scratch.txt'), 'wip\n');
 
-    const json = JSON.parse(await runDoctor(fx, { json: true })) as {
+    const { output: detectOutput, exitCode } = await runDoctor(fx, { json: true });
+    // Residue is warn-only: it must never make `genie doctor` exit non-zero.
+    expect(exitCode).toBe(0);
+    const json = JSON.parse(detectOutput) as {
       checks: Array<{ name: string; status: string; detail?: string }>;
     };
     const worktreeChecks = json.checks.filter((check) => check.name.startsWith('launch worktrees'));
@@ -417,6 +424,31 @@ describe('doctor wiring', () => {
     expect(branchExists(fx.root, 'wish/demo-alpha')).toBe(true);
   });
 
+  test("a commit landing between cleanup's scan and the delete is not orphaned (ancestry re-proof)", () => {
+    const fx = makeFixture();
+    const wt = addWorktree(fx, 'repo-demo-alpha', 'wish/demo-alpha');
+
+    // Capture the entry exactly as cleanup's internal scan would see it:
+    // merged+clean, authorized for removal.
+    const entry = scanLaunchWorktrees(fx.root, fx.base).entries.find((e) => e.branch === 'wish/demo-alpha');
+    expect(entry?.disposition).toBe('removable');
+    if (!entry) throw new Error('unreachable');
+
+    // The race: a commit lands on the branch AFTER that scan, BEFORE removal.
+    // (cleanupLaunchWorktrees re-scans on entry, so only a direct call can
+    // place the mutation inside the window the re-proof exists to close.)
+    writeFileSync(join(wt, 'late.txt'), 'landed after the scan\n');
+    git(wt, 'add', 'late.txt');
+    git(wt, 'commit', '-q', '-m', 'late: after scan, before removal');
+
+    const failure = removeLaunchWorktree(fx.root, entry, { name: 'dev', ref: 'refs/heads/dev' });
+    // Fail-closed: the re-proof refuses; worktree, branch, and the late commit survive.
+    expect(failure).toContain('ancestry re-proof failed');
+    expect(existsSync(wt)).toBe(true);
+    expect(branchExists(fx.root, 'wish/demo-alpha')).toBe(true);
+    expect(existsSync(join(wt, 'late.txt'))).toBe(true);
+  });
+
   test('doctor --fix reclaims only the provably safe worktree', async () => {
     const fx = makeFixture();
     isolate(fx);
@@ -424,7 +456,8 @@ describe('doctor wiring', () => {
     const dirty = addWorktree(fx, 'repo-demo-beta', 'wish/demo-beta');
     writeFileSync(join(dirty, 'scratch.txt'), 'wip\n');
 
-    const output = await runDoctor(fx, { json: true, fix: true });
+    const { output, exitCode } = await runDoctor(fx, { json: true, fix: true });
+    expect(exitCode).toBe(0);
     expect(existsSync(clean)).toBe(false);
     expect(branchExists(fx.root, 'wish/demo-alpha')).toBe(false);
     expect(existsSync(dirty)).toBe(true);
