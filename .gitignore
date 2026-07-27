@@ -72,6 +72,9 @@ yarn-error.log*
 .genie/genie.db-wal
 .genie/genie.db-shm
 
+# Per-worktree kickoff prompts emitted by `genie launch`
+.genie/launch/
+
 # Local genie state (not part of the package)
 .genie/agents.json
 .genie/teams/
