@@ -14,7 +14,7 @@ Resolve FIX-FIRST gaps from `review`: dispatch a fix subagent, re-review, repeat
 - Orchestrator hands off unresolved gaps after execution review
 
 ## Flow
-1. **Parse gaps:** severity, files, failing checks from the FIX-FIRST verdict.
+1. **Parse and diagnose gaps:** severity, files, failing checks from the FIX-FIRST verdict. If the evidence is `overdesigned-plan`, stop and return to `brainstorm`/`wish`; removing optional machinery is a plan correction, not a code-fix attempt.
 2. **Dispatch fixer:** native delegation surface → fix subagent, briefed with the gap list, the original wish criteria, and any `trace` diagnosis.
 3. **Re-review:** native delegation surface → a separate reviewer subagent (never the fixer) running `review` on the same pipeline.
 4. **Evaluate verdict:**
@@ -44,8 +44,9 @@ Use this policy before any model or effort change; keep this contract identical 
 | `missing-context` | The attempt identifies absent files, history, criteria, logs, or other inputs needed to decide. | Supply the missing context and retry at the same model and effort; MUST NOT escalate model or effort. |
 | `ambiguous-spec` | Two or more materially different behaviors remain consistent with the stated criteria. | Request a human decision or wish clarification; MUST NOT escalate model or effort. |
 | `env-tool-failure` | A reproducible environment, dependency, permission, timeout, or tool error prevents valid execution. | Repair or retry the environment/tool, or report blocked with the error; MUST NOT escalate model or effort. |
+| `overdesigned-plan` | Gaps cluster in optional machinery that lacks a current criterion or measurement, while a simpler design satisfies the user stories with fewer durable states or recovery paths. | Stop the fix loop and return to `brainstorm`/`wish` to remove or defer the mechanism. Re-review the amended design/plan; MUST NOT spend retries or model escalation defending it. |
 
-Escalation eligibility requires **new evidence** produced since the previous attempt: attach the new failing output or diagnostic result, the correction already tried, and why it rules out the other three causes. A repeated verdict or unchanged failure is not new evidence and cannot authorize a model or effort change.
+Escalation eligibility requires **new evidence** produced since the previous attempt: attach the new failing output or diagnostic result, the correction already tried, and why it rules out the other four causes. A repeated verdict or unchanged failure is not new evidence and cannot authorize a model or effort change.
 
 Model and reasoning effort belong in the active runtime's session or named-agent configuration, never in skill frontmatter. Inherit the active model by default. Only an evidenced `model-capacity` diagnosis may justify one higher-effort fresh agent, with at most two escalation attempts per group. The runtime's highest supported effort is appropriate only for a final gate or similarly demanding review when the user requested it or the evidence warrants it. Further escalation requires an explicit human decision recorded with the wish/group, old and new settings, reason, approver, and timestamp.
 
@@ -62,7 +63,7 @@ Fix loop exhausted (2/2). Group remains in progress.
 Remaining gaps:
 - [CRITICAL] <gap description> — <file>
 - [HIGH] <gap description> — <file>
-Cause: <model-capacity|missing-context|ambiguous-spec|env-tool-failure>
+Cause: <model-capacity|missing-context|ambiguous-spec|env-tool-failure|overdesigned-plan>
 New evidence: <new output/diagnosis, or "none — model/effort escalation prohibited">
 Corrective route: <one cause-specific next step>
 Budget: attempts=<used>/2; effort_escalations=<used>/2
@@ -78,12 +79,13 @@ Appeal: <reviewer/final-gate disagreement record, or "none">
 - [HIGH] sendMessage result not checked — dispatch.ts:541
 ```
 
-Loop 1: native delegation surface → fixer briefed with both gaps, the wish criteria, and `bun test` as validation. The fixer edits, runs the validation, reports its changes with outcomes, and ends `done`. Then native delegation surface → a fresh reviewer briefed to re-run `review` against the same criteria. SHIP → report success to the orchestrator. FIX-FIRST again → loop 2; after that, classify the cause and take its corrective route. A model or effort raise is permitted only for evidenced `model-capacity` within both caps.
+Loop 1: native delegation surface → fixer briefed with both gaps, the wish criteria, and `bun test` as validation. The fixer edits, runs the validation, reports its changes with outcomes, and ends `done`. Then native delegation surface → a fresh reviewer briefed to re-run `review` against the same criteria. SHIP → report success to the orchestrator. FIX-FIRST again → loop 2; after that, classify the cause and take its corrective route. A model or effort raise is permitted only for evidenced `model-capacity` within both caps. An `overdesigned-plan` diagnosis stops immediately and returns to planning instead.
 
 ## Rules
 - Tight scope: fix exactly the tagged gaps — no unrequested refactors, features, or drive-by cleanups.
 - Never fix and review in the same session — always separate subagents.
 - Never exceed 2 fix loops — stop, diagnose, and take the cause-specific route.
+- Never use a fix loop to preserve optional machinery when a simpler plan satisfies the user stories.
 - Include the original wish criteria in every fix dispatch.
 - Identical gaps across loops = no progress; classify the cause. Repetition is not new evidence and never authorizes a model or effort raise.
 - Grounded progress: report only what tool output from this session verifies — state what was fixed, what failed, what was skipped. Never report an attempted fix as complete.

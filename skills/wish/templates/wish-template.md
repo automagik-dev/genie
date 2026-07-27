@@ -32,6 +32,13 @@
 |---|----------|-----------|
 | 1 | <TODO: decision> | <TODO: why this over alternatives> |
 
+## Simplicity Case
+
+- **Simplest complete design:** <TODO: smallest design that satisfies current user stories>
+- **Added machinery:** <TODO: none, or each mechanism and the present evidence that requires it>
+- **Deferred until measured:** <TODO: future complexity and its concrete adoption trigger>
+- **Complexity removed:** <TODO: states, failure modes, options, or dependencies deliberately avoided>
+
 ## Dependencies
 
 **depends-on:** none
