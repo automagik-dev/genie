@@ -229,3 +229,5 @@ v5 is a deliberate cutover to a lightweight body. The v4 harness — a Postgres 
 </p>
 
 <p align="center"><sub>You describe the problem. Genie does the rest.</sub></p>
+
+> **Channel migration (2026-07):** the `homolog` channel was retired. Configs pinned to `homolog` are migrated to **stable** automatically on next run; `genie update --homolog` no longer exists — use `--stable` or `--dev`.

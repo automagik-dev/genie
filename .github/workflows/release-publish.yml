@@ -153,7 +153,7 @@ jobs:
           set -euo pipefail
           # A published (non-draft) release is immutable, and this pipeline is
           # no longer able to replay one: reconcile-release-assets.sh expects
-          # the current 20/28/36-asset delivery fanout while every pre-fanout
+          # the current 20/28-asset delivery fanout while every pre-fanout
           # release carries 12 that can never be extended, and
           # reconcile-channel-manifests.sh now derives a deterministic
           # midnight-UTC released_at that no longer cmp-matches the wall-clock

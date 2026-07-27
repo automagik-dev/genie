@@ -1034,3 +1034,15 @@ describe('Group E release and documentation contracts', () => {
     for (const path of ['.mcp.json', '.warp/.mcp.json', '.codex/config.toml']) expect(readme).toContain(path);
   });
 });
+
+test('the retired homolog channel never reappears in release workflows', () => {
+  for (const wf of [
+    '.github/workflows/version.yml',
+    '.github/workflows/release.yml',
+    '.github/workflows/release-publish.yml',
+    '.github/workflows/sign-attest.yml',
+    '.github/workflows/build-tarballs.yml',
+  ]) {
+    expect(readFileSync(wf, 'utf-8')).not.toContain('homolog');
+  }
+});
