@@ -115,7 +115,15 @@ function gitFailure(stderr: string): GitOutcome {
  */
 function git(cwd: string, args: string[]): GitOutcome {
   try {
-    const res = spawnSync('git', args, { cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] });
+    const res = spawnSync('git', args, {
+      cwd,
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      // Bounded: a probe hanging on a lock, credential prompt, or network mount
+      // must not wedge `genie doctor`; a timeout surfaces as a refusal.
+      timeout: 10_000,
+      maxBuffer: 8 * 1024 * 1024,
+    });
     if (res.error) return gitFailure(res.error.message);
     return { ok: res.status === 0, status: res.status, stdout: res.stdout ?? '', stderr: (res.stderr ?? '').trim() };
   } catch (error) {
@@ -190,7 +198,7 @@ export function parseWorktreePorcelain(text: string): WorktreeRecord[] {
  * takes `ref`; only human output takes `name`. See {@link resolveIntegration}
  * for why the distinction is load-bearing.
  */
-interface IntegrationBranch {
+export interface IntegrationBranch {
   /** Short form, e.g. `dev` or `origin/main`. Display only — never a git argument. */
   name: string;
   /** Fully-qualified ref, e.g. `refs/heads/dev`. The only form a probe may use. */
@@ -235,6 +243,31 @@ export function resolveIntegrationBranch(root: string): string | null {
  * with a launch branch would prove ITS containment while the `git branch -D`
  * below still deletes the branch — orphaning every commit the branch carried.
  */
+/**
+ * Gitignored files are deleted by `git worktree remove` (git's documented
+ * semantics) and are usually the point of the reclaim — node_modules, build
+ * output. The exception is user-owned secret material, which must never ride a
+ * cleanup. The probe refuses removal when an ignored file's basename matches a
+ * small sensitive-pattern set; everything else stays disclosed-but-removable.
+ * A probe failure (timeout, oversized listing) refuses via the caller's
+ * fail-closed error class — an unanswered probe proves nothing.
+ */
+const SENSITIVE_IGNORED = [/^\.env(\..+)?$/, /\.pem$/, /\.key$/, /^id_(rsa|ed25519|ecdsa)/, /credential/i, /secret/i];
+
+function findIgnoredSecret(path: string): string | null {
+  // `traditional` collapses a fully-ignored directory (node_modules/) to one
+  // line, keeping the listing bounded on exactly the worktrees worth reclaiming.
+  const listing = git(path, ['status', '--porcelain', '--ignored=traditional']);
+  if (!listing.ok) return 'unlistable ignored files';
+  for (const line of listing.stdout.split('\n')) {
+    if (!line.startsWith('!!')) continue;
+    const rel = line.slice(2).trim().replace(/\/$/, '');
+    const base = rel.split('/').pop() ?? rel;
+    if (SENSITIVE_IGNORED.some((re) => re.test(base))) return rel;
+  }
+  return null;
+}
+
 function classifyEntry(
   root: string,
   path: string,
@@ -246,6 +279,8 @@ function classifyEntry(
   const status = git(path, ['status', '--porcelain']);
   if (!status.ok) return { ...entry, disposition: 'error', reason: firstLine(status.stderr, 'git status failed') };
   if (status.stdout.trim() !== '') return { ...entry, disposition: 'dirty', reason: 'uncommitted changes' };
+  const secret = findIgnoredSecret(path);
+  if (secret !== null) return { ...entry, disposition: 'dirty', reason: `ignored secret present (${secret})` };
   const ancestry = git(root, ['merge-base', '--is-ancestor', `refs/heads/${branch}`, integration.ref]);
   if (ancestry.ok) return { ...entry, disposition: 'removable', reason: 'merged+clean', sizeBytes: safeSizeOf(path) };
   // `--is-ancestor` exits 1 for a definitive "no"; anything else is a broken
@@ -410,11 +445,10 @@ export function removeLaunchWorktree(
   entry: LaunchWorktreeEntry,
   integration: IntegrationBranch,
 ): string | null {
-  // Re-prove ancestry at removal time: a commit landing on the branch between
-  // the scan and this call would leave the tree clean (so `worktree remove`
-  // would still succeed) while making `-D` an orphaning force-delete. Once the
-  // worktree is gone the branch can gain no commits — git refuses a second
-  // checkout of the same branch — so re-proving HERE closes the whole window.
+  // Early re-proof: a commit landed since the scan refuses BEFORE the worktree
+  // is touched, preserving it intact. This probe alone cannot close the race —
+  // a commit can still land after it — so it is an ergonomic guard, not the
+  // authoritative one.
   if (entry.branch !== null) {
     const ancestry = git(root, ['merge-base', '--is-ancestor', `refs/heads/${entry.branch}`, integration.ref]);
     if (!ancestry.ok) return `kept: branch advanced past ${integration.name} after the scan (ancestry re-proof failed)`;
@@ -422,6 +456,15 @@ export function removeLaunchWorktree(
   const removed = git(root, ['worktree', 'remove', entry.path]);
   if (!removed.ok) return `git worktree remove refused: ${firstLine(removed.stderr, 'unknown git error')}`;
   if (entry.branch === null) return null;
+  // AUTHORITATIVE re-proof, after removal and before the forced delete: with
+  // the worktree gone the branch is frozen (git refuses a second checkout of a
+  // checked-out branch, and no checkout holds it now), so an ancestry answer
+  // taken HERE cannot be invalidated before `-D` — this is the only point in
+  // the sequence where the proof and the delete are race-free.
+  const frozen = git(root, ['merge-base', '--is-ancestor', `refs/heads/${entry.branch}`, integration.ref]);
+  if (!frozen.ok) {
+    return `worktree removed; branch ${entry.branch} kept: commits landed mid-removal (post-removal ancestry re-proof failed)`;
+  }
   const deleted = git(root, ['branch', '-D', entry.branch]);
   if (!deleted.ok) {
     return `worktree removed; branch ${entry.branch} kept: ${firstLine(deleted.stderr, 'unknown git error')}`;

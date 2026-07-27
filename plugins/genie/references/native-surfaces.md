@@ -9,7 +9,7 @@ Genie skills describe roles and coordination without inventing a cross-client to
 | Hermes | Chat/reasoning cockpit; drives the shared skills through `skills.external_dirs` and reads task truth via the read-only MCP tools plus native `genie_status`/`genie_work_plan`/`genie_review_plan` | Genie remains the execution system — Hermes issues no isolated worktrees itself; use `genie launch`/worktrees for per-group Git isolation | Read-only surface: every payload reports `mutation: "none"`; mutations are deferred behind an explicit human gate (see `plugins/hermes-genie/references/mutation-gates.md`) |
 | Warp cockpit | `genie launch <slug>` emits one pane per ready group | Dedicated Git worktree per pane | Human-supervised; panes are not awaitable native subagents |
 
-This table says what each runtime offers, not what dispatch is allowed to do with it. The concurrency contract — when parallel writers may share a workspace, and what a shared-workspace subagent must not touch — is stated once in AGENTS.md and the `work` skill's Dispatch section; apply it from there.
+This table says what each runtime offers, not what dispatch is allowed to do with it. The concurrency contract — when parallel writers may share a workspace, and what a shared-workspace subagent must not touch — is stated once in AGENTS.md and the `work` skill's Dispatch section (shipped to agents as rule 3 of `references/dispatch-contract.md`); apply it from there.
 
 Every implementation brief opens with the atomic claim:
 
