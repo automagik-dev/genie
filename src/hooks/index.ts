@@ -26,6 +26,7 @@ import { codexPermissionDecision } from './codex-adapter.js';
 import { auditContext } from './handlers/audit-context.js';
 import { branchGuard } from './handlers/branch-guard.js';
 import { freshness } from './handlers/freshness.js';
+import { gitFreezeGuard } from './handlers/git-freeze-guard.js';
 import { identityInject } from './handlers/identity-inject.js';
 import { omniApproval } from './handlers/omni-approval.js';
 import { orchestrationGuard } from './handlers/orchestration-guard.js';
@@ -56,6 +57,16 @@ const builtinHandlers: ReadonlyArray<Handler> = [
     matcher: /^Bash$/,
     priority: 1,
     fn: branchGuard,
+  },
+  {
+    version: '1',
+    source: 'builtin',
+    manifest_path: BUILTIN_MANIFEST_PATH,
+    name: 'git-freeze-guard',
+    event: 'PreToolUse',
+    matcher: /^Bash$/,
+    priority: 2,
+    fn: gitFreezeGuard,
   },
   {
     version: '1',
