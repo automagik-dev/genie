@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | APPROVED — plan review SHIP 2026-07-27 (independent reviewer, 2 fix loops: 7 HIGH → 1 HIGH → 0; H2 settled by live probe experiment; 4 advisory residuals applied post-verdict). Ready for /work |
 | **Slug** | `worktree-isolation-hardening` |
 | **Date** | 2026-07-27 |
 | **Author** | Felipe + Genie (council deliberation 2026-07-27, adapting PR #2594 by lirazsiri) |
@@ -50,7 +50,7 @@ The simplest complete design is the policy sentence alone — one clause added t
 
 - **policy** — pure amendment of existing prose; no new machinery.
 - **doctor-residue** — present need, not hypothetical: `genie launch` mints worktrees today and nothing removes them (verified: no cleanup path exists in `src/`), so residue accumulates on every launched wish now. The fail-closed proof lives in code because the #2594 prose version demonstrably failed open.
-- **review-snapshot** — present hazard: reviews today run against a moving tree; a concurrent write between read and verdict silently invalidates the review. Prose + one thin helper; no standing service.
+- **review-snapshot** — present hazard: reviews today run against a moving tree; a concurrent write between read and verdict silently invalidates the review. Prose only — the exact commands, no helper; no standing service.
 - **Deferred as not-yet-needed** (pointed at the flip conditions in Scope IN): the PM integration worktree, merge-order protocol, and mechanical freeze enforcement — each waits for its recorded trigger rather than shipping on speculation.
 
 ## Success Criteria
@@ -59,7 +59,7 @@ The simplest complete design is the policy sentence alone — one clause added t
 - [ ] The freeze's canonical phrase (`only the orchestrator moves HEAD`) greps to exactly the canonical statement sites: `git grep -l "only the orchestrator moves HEAD"` returns AGENTS.md, `skills/work/SKILL.md`, its plugin mirror, and `plugins/genie/references/dispatch-contract.md` — no other file states it; known adjacent paraphrase sites (`skills/dream/SKILL.md`, `skills/work/references/native-surfaces.md`, `plugins/genie/references/codex-integration-map.md`, `skills/genie-hacks/references/catalog.md`) are updated to point, not restate
 - [ ] `genie doctor` reports launch-worktree residue with per-worktree disposition (merged-clean → removable; unmerged or dirty → kept, reason shown); `--fix` removes only the provably safe set and refuses the rest loudly
 - [ ] A dirty or unmerged worktree can NOT be removed by `doctor --fix` — regression test proves the fail-closed refusal (the #2594 fail-open class is unrepresentable)
-- [ ] Review dispatch provisions a detached read-only worktree at the exact reviewed commit and removes it after the verdict; a concurrent write to the primary checkout during review provably does not alter the reviewed tree (test)
+- [ ] Review dispatch provisions a detached read-only worktree at the exact reviewed commit and removes it after the verdict; snapshot immutability under a concurrent primary-checkout write is verified by the manual QA criterion below (prose-only group — no code test exists by design)
 - [ ] Shared-workspace dispatch briefs (work skill) include the scope stanza + freeze rule; `bun run check:fast` green AND `bun scripts/sync-plugin-skills.ts --check` green (parity is NOT covered by `bun run check` — verified during plan review; every group editing `skills/` runs `--write` then `--check`)
 - [ ] #2594 closed in favor with credit comment; landing commits carry `Co-authored-by: Liraz Siri <liraz@liraz.org>` where his designs are implemented
 
@@ -76,7 +76,7 @@ The simplest complete design is the policy sentence alone — one clause added t
 
 | Group | Agent | Complexity | Model | Description |
 |-------|-------|------------|-------|-------------|
-| review-snapshot | engineer | 3 (+2 orchestration/agent-lifecycle: review dispatch contract, +1 prompt-skill change) | opus-high | `review-snapshot.ts` helper + teardown + skill docs; depends only on policy (carve-out), not doctor-residue |
+| review-snapshot | engineer | 1 (+1 prompt-skill change) | opus-low | Skill prose: snapshot contract + exact commands (+ mirror); depends only on policy (carve-out), not doctor-residue |
 
 ## Execution Groups
 
@@ -88,7 +88,7 @@ The simplest complete design is the policy sentence alone — one clause added t
 1. AGENTS.md: amend the isolation sentence — keep the two-mode contract, add the freeze (workers never `checkout`/`switch`/`reset`/`stash`/`rebase`; only the orchestrator moves HEAD), link the flip conditions.
 2. `skills/work/SKILL.md` (+ `plugins/genie/` mirror): dispatch paragraph updated; shared-workspace brief template gains the scope stanza + freeze rule verbatim.
 3. Flip conditions (i)–(iv) recorded adjacent to the policy text.
-4. Two follow-up investigate items filed as GitHub issues, linked from the flip-conditions text: (a) mechanical dispatch-level enforcement of the freeze; (b) pilot native `isolation: "worktree"` on one real `/work` group to close the three flip-condition-(i) gaps (task-state access from inside, guard ergonomics, placement hygiene).
+4. Two follow-up investigate items filed as GitHub issues, linked from the flip-conditions text: (a) mechanical dispatch-level enforcement of the freeze; (b) pilot native `isolation: "worktree"` on one real `/work` group to close the one remaining flip-condition-(i) gap (guard ergonomics), confirming task claim/done from inside during the pilot.
 
 **Acceptance Criteria:**
 - [ ] Canonical freeze phrase greps to exactly the four canonical sites (see Success Criteria); known paraphrase sites updated to point
