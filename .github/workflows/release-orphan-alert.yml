@@ -120,9 +120,16 @@ jobs:
             # an acknowledged incident. Only grep's no-match is expected.
             KNOWN_TITLES=$(gh issue list --repo "$REPO" --state all --limit 100 \
               --search "\"$TITLE\" in:title" --json title --jq '.[].title')
-            if grep -Fxq "$TITLE" <<<"$KNOWN_TITLES"; then
+            # Fail closed on the match too: only status 1 means "not found";
+            # anything else (grep error) must abort, never file a duplicate.
+            MATCH_STATUS=0
+            grep -Fxq "$TITLE" <<<"$KNOWN_TITLES" || MATCH_STATUS=$?
+            if [[ "$MATCH_STATUS" -eq 0 ]]; then
               echo "issue already filed for ${TAG} (open or acked-closed); skipping"
               continue
+            elif [[ "$MATCH_STATUS" -ne 1 ]]; then
+              echo "::error::issue-title match for ${TAG} failed with status ${MATCH_STATUS}"
+              exit "$MATCH_STATUS"
             fi
             gh issue create \
               --repo "$REPO" \
