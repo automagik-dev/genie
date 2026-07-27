@@ -399,7 +399,26 @@ export function checkLaunchWorktrees(root: string | null, deps: LaunchWorktreeDe
  * integration branch. `-D` deletes a ref whose every commit is reachable
  * elsewhere; nothing is lost.
  */
-function removeLaunchWorktree(root: string, entry: LaunchWorktreeEntry): string | null {
+/**
+ * Exported for direct testing: the ancestry re-proof below guards the window
+ * BETWEEN cleanup's own scan and this removal, which no public-API test can
+ * reach deterministically (cleanupLaunchWorktrees re-scans on entry, so a
+ * commit landed before the call is already filtered by classification).
+ */
+export function removeLaunchWorktree(
+  root: string,
+  entry: LaunchWorktreeEntry,
+  integration: IntegrationBranch,
+): string | null {
+  // Re-prove ancestry at removal time: a commit landing on the branch between
+  // the scan and this call would leave the tree clean (so `worktree remove`
+  // would still succeed) while making `-D` an orphaning force-delete. Once the
+  // worktree is gone the branch can gain no commits — git refuses a second
+  // checkout of the same branch — so re-proving HERE closes the whole window.
+  if (entry.branch !== null) {
+    const ancestry = git(root, ['merge-base', '--is-ancestor', `refs/heads/${entry.branch}`, integration.ref]);
+    if (!ancestry.ok) return `kept: branch advanced past ${integration.name} after the scan (ancestry re-proof failed)`;
+  }
   const removed = git(root, ['worktree', 'remove', entry.path]);
   if (!removed.ok) return `git worktree remove refused: ${firstLine(removed.stderr, 'unknown git error')}`;
   if (entry.branch === null) return null;
@@ -423,10 +442,18 @@ export function cleanupLaunchWorktrees(root: string | null, deps: LaunchWorktree
     (entry) => entry.disposition === 'removable',
   );
   if (removable.length === 0) return;
+  // A `removable` disposition implies the scan resolved an integration branch;
+  // re-resolve rather than thread it through, and refuse everything if it
+  // vanished mid-run (fail-closed, same posture as the scan).
+  const integration = resolveIntegration(root);
   const emit = deps.logSink ?? ((line: string) => process.stdout.write(`${line}\n`));
+  if (integration === null) {
+    emit(`  \x1b[33m!\x1b[0m kept all ${removable.length}: integration branch no longer resolvable`);
+    return;
+  }
   emit(`\x1b[2mRemoving ${removable.length} merged, clean launch worktree(s)...\x1b[0m`);
   for (const entry of removable) {
-    const failure = removeLaunchWorktree(root, entry);
+    const failure = removeLaunchWorktree(root, entry, integration);
     if (failure === null) emit(`  \x1b[32m✔\x1b[0m removed ${entry.path} (${entry.branch})`);
     else emit(`  \x1b[33m!\x1b[0m kept ${entry.path}: ${failure}`);
   }
