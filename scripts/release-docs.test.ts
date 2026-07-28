@@ -980,17 +980,16 @@ describe('Group E release and documentation contracts', () => {
 
     expect(router).toContain('## Lightweight Bypass Check');
     expect(router).toContain('Honor explicit Genie intent');
-    expect(router).toContain('Merely mentioning Genie while asking to avoid or change its use is not an invocation');
+    expect(router).toContain('Route cheap categories normally');
     expect(router).toContain('Check for related lifecycle work');
     expect(router).toContain('Test whether the lifecycle adds value');
-    expect(router).toContain('do the minimum cheap read-only repository inspection needed to decide');
-    expect(router).toContain(
-      'A request being a feature, bug, security-sensitive change, or multi-file edit does not by itself justify Genie',
-    );
+    expect(router).toContain('Announce the bypass in one line');
+    expect(router).toContain('Security-sensitive changes do not bypass by default');
     expect(router).toContain('must not create or update `.genie` artifacts');
     expect(lifecycle).toContain('Ordinary requests unrelated to an existing wish or brainstorm bypass this lifecycle');
+    expect(lifecycle).toContain('Security-sensitive changes do not bypass by default');
     expect(lifecycle).toContain('Related existing work always resumes through its persisted state');
-    expect(metadata).toContain('warranted by durable planning or coordination needs; otherwise bypass it');
+    expect(metadata).toContain('otherwise bypass it with a one-line notice');
   });
 
   test('wizard discloses init MCP writes and owner-qualified lifecycle order', () => {
