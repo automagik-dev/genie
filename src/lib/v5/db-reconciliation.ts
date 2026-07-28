@@ -12,8 +12,20 @@
 import { FFIType, dlopen } from 'bun:ffi';
 import { Database, constants as sqliteConstants } from 'bun:sqlite';
 import { createHash, randomUUID } from 'node:crypto';
-import { closeSync, existsSync, constants as fsConstants, fstatSync, openSync, realpathSync, statSync } from 'node:fs';
-import { normalize } from 'node:path';
+import {
+  closeSync,
+  existsSync,
+  constants as fsConstants,
+  fstatSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  realpathSync,
+  statSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, normalize } from 'node:path';
+import { linuxLibcCandidates } from '../install-transaction.js';
 import { CURRENT_SCHEMA_VERSION } from './genie-db.js';
 import { BUSY_TIMEOUT_MS, isBusyError } from './sqlite-open.js';
 
@@ -342,8 +354,22 @@ export interface ReconciliationApplyOptions {
   readonly onEvent?: (event: ReconciliationApplyEvent) => void;
   /** Deterministic constructor seam for physical-identity regression tests. */
   readonly openDatabase?: (path: string, options: ConstructorParameters<typeof Database>[1]) => Database;
+  /** Lazy native advisory-lock resolution seam for libc portability tests. */
+  readonly advisoryFlock?: ReconciliationAdvisoryFlockDependencies;
+  /** Descriptor ownership observation after open and before object validation. */
+  readonly onAdvisoryDescriptorOpened?: (descriptor: number) => void;
   /** Deterministic lifecycle seam; production always calls descriptor-bound flock. */
   readonly advisoryUnlock?: (descriptor: number) => number;
+}
+
+export type ReconciliationAdvisoryFlock = (descriptor: number, operation: number) => number;
+
+export interface ReconciliationAdvisoryFlockDependencies {
+  readonly platform?: NodeJS.Platform;
+  readonly architecture?: NodeJS.Architecture;
+  readonly linuxCandidates?: readonly string[];
+  readonly linuxOpener?: (candidate: string) => ReconciliationAdvisoryFlock | null;
+  readonly darwinOpener?: () => ReconciliationAdvisoryFlock | null;
 }
 
 type SqliteScalar = string | bigint | number | Uint8Array | null;
@@ -428,6 +454,7 @@ interface DatabaseImage {
 interface AdvisoryLock {
   readonly path: string;
   readonly descriptor: number;
+  readonly flock: ReconciliationAdvisoryFlock;
 }
 
 interface LockedDatabase {
@@ -747,19 +774,83 @@ const FLOCK_SYMBOL = {
     returns: FFIType.i32,
   },
 } as const;
-const LIBC =
-  process.platform === 'linux'
-    ? dlopen('libc.so.6', FLOCK_SYMBOL)
-    : process.platform === 'darwin'
-      ? dlopen('/usr/lib/libSystem.B.dylib', FLOCK_SYMBOL)
-      : null;
+const ADVISORY_LOCK_ROOT_NAME = `genie-reconciliation-locks-${process.getuid?.() ?? 'unknown'}-v1`;
+let defaultAdvisoryFlock: ReconciliationAdvisoryFlock | null | undefined;
 
 function sleepMs(ms: number): void {
   Atomics.wait(SLEEP_SIGNAL, 0, 0, ms);
 }
 
-function advisoryLockPath(canonicalPath: string): string {
-  return `${canonicalPath}.genie-reconciliation.lock`;
+function openFlock(candidate: string): ReconciliationAdvisoryFlock | null {
+  try {
+    const library = dlopen(candidate, FLOCK_SYMBOL);
+    return (descriptor, operation) => library.symbols.flock(descriptor, operation);
+  } catch {
+    return null;
+  }
+}
+
+function openDarwinFlock(): ReconciliationAdvisoryFlock | null {
+  return openFlock('/usr/lib/libSystem.B.dylib');
+}
+
+function resolveAdvisoryFlock(
+  dependencies?: ReconciliationAdvisoryFlockDependencies,
+): ReconciliationAdvisoryFlock | null {
+  if (dependencies === undefined && defaultAdvisoryFlock !== undefined) return defaultAdvisoryFlock;
+  const platform = dependencies?.platform ?? process.platform;
+  const architecture = dependencies?.architecture ?? process.arch;
+  let resolved: ReconciliationAdvisoryFlock | null = null;
+  if (platform === 'linux') {
+    const opener = dependencies?.linuxOpener ?? openFlock;
+    const candidates = dependencies?.linuxCandidates ?? linuxLibcCandidates(architecture);
+    for (const candidate of candidates) {
+      try {
+        resolved = opener(candidate);
+      } catch {
+        resolved = null;
+      }
+      if (resolved !== null) break;
+    }
+  } else if (platform === 'darwin') {
+    try {
+      resolved = (dependencies?.darwinOpener ?? openDarwinFlock)();
+    } catch {
+      resolved = null;
+    }
+  }
+  if (dependencies === undefined) defaultAdvisoryFlock = resolved;
+  return resolved;
+}
+
+function advisoryLockRoot(): string {
+  const requestedRoot = join(tmpdir(), ADVISORY_LOCK_ROOT_NAME);
+  try {
+    mkdirSync(requestedRoot, { mode: 0o700 });
+  } catch (caught) {
+    if (!(caught instanceof Error) || !('code' in caught) || (caught as NodeJS.ErrnoException).code !== 'EEXIST') {
+      throw caught;
+    }
+  }
+  const stats = lstatSync(requestedRoot);
+  const expectedUid = process.getuid?.();
+  if (
+    !stats.isDirectory() ||
+    stats.isSymbolicLink() ||
+    (stats.mode & 0o077) !== 0 ||
+    (expectedUid !== undefined && stats.uid !== expectedUid)
+  ) {
+    throw new Error('Advisory lock root must be a private owned directory.');
+  }
+  return realpathSync(requestedRoot);
+}
+
+export function reconciliationAdvisoryLockPath(canonicalPath: string): string {
+  const digest = createHash('sha256')
+    .update('genie-reconciliation-advisory-lock-v1\0')
+    .update(normalize(canonicalPath))
+    .digest('hex');
+  return join(advisoryLockRoot(), `${digest}.lock`);
 }
 
 function databaseHandleMatchesPath(db: Pick<Database, 'fileControl'>): boolean {
@@ -784,31 +875,46 @@ function requireDatabaseHandleMatchesPath(
   }
 }
 
-function acquireAdvisoryLock(canonicalPath: string, timeoutMs: number): AdvisoryLock {
-  const path = advisoryLockPath(canonicalPath);
-  if (LIBC === null) {
+function acquireAdvisoryLock(
+  canonicalPath: string,
+  timeoutMs: number,
+  options: ReconciliationApplyOptions,
+): AdvisoryLock {
+  const path = reconciliationAdvisoryLockPath(canonicalPath);
+  const flock = resolveAdvisoryFlock(options.advisoryFlock);
+  if (flock === null) {
     throw new ApplyBoundaryError({ code: 'unexpected-failure', phase: 'advisory-lock' });
   }
-  let descriptor: number;
+  let descriptor: number | null = null;
   try {
     descriptor = openSync(
       path,
       fsConstants.O_RDWR | fsConstants.O_CREAT | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK,
       0o600,
     );
+    options.onAdvisoryDescriptorOpened?.(descriptor);
     const stats = fstatSync(descriptor);
     if (!stats.isFile() || stats.size !== 0) {
       throw new Error('Advisory lock path must be an empty regular file.');
     }
   } catch (caught) {
+    if (descriptor !== null) {
+      try {
+        closeSync(descriptor);
+      } catch {
+        // The validation failure remains primary; descriptor close was still attempted.
+      }
+    }
     throw new ApplyBoundaryError({ code: 'unexpected-failure', phase: 'advisory-lock' }, caught);
   }
 
   const deadline = Date.now() + timeoutMs;
+  let ownershipTransferred = false;
   try {
     for (;;) {
-      if (LIBC.symbols.flock(descriptor, LOCK_EXCLUSIVE_NONBLOCKING) === 0) {
-        return { path, descriptor };
+      if (flock(descriptor, LOCK_EXCLUSIVE_NONBLOCKING) === 0) {
+        ownershipTransferred = true;
+        return { path, descriptor, flock };
       }
       const remaining = deadline - Date.now();
       if (remaining <= 0) {
@@ -816,15 +922,18 @@ function acquireAdvisoryLock(canonicalPath: string, timeoutMs: number): Advisory
       }
       sleepMs(Math.min(ADVISORY_RETRY_MS, remaining));
     }
-  } catch (caught) {
-    closeSync(descriptor);
-    throw caught;
+  } finally {
+    if (!ownershipTransferred) closeSync(descriptor);
   }
 }
 
 function releaseAdvisoryLock(lock: AdvisoryLock, options?: ReconciliationApplyOptions): void {
-  const result = options?.advisoryUnlock?.(lock.descriptor) ?? LIBC?.symbols.flock(lock.descriptor, LOCK_UNLOCK) ?? -1;
-  closeSync(lock.descriptor);
+  let result = -1;
+  try {
+    result = options?.advisoryUnlock?.(lock.descriptor) ?? lock.flock(lock.descriptor, LOCK_UNLOCK);
+  } finally {
+    closeSync(lock.descriptor);
+  }
   if (result !== 0) throw new Error('Advisory descriptor unlock failed.');
 }
 
@@ -2372,11 +2481,12 @@ function resolvePlannedInputs(plan: ReconciliationPlan): Array<{
 function acquirePlannedAdvisoryLocks(
   inputs: readonly { readonly physical: PhysicalInput }[],
   deadline: number,
+  options: ReconciliationApplyOptions,
 ): AdvisoryLock[] {
   const locks: AdvisoryLock[] = [];
   const paths = [...new Set(inputs.map((input) => input.physical.canonicalPath))].sort(compareCanonical);
   try {
-    for (const path of paths) locks.push(acquireAdvisoryLock(path, remainingLockWait(deadline)));
+    for (const path of paths) locks.push(acquireAdvisoryLock(path, remainingLockWait(deadline), options));
     return locks;
   } catch (caught) {
     const cleanupFailures: ReconciliationApplyFailure[] = [];
@@ -2474,9 +2584,7 @@ function openLockedDatabases(
     }
     return locked;
   } catch (caught) {
-    rollbackOpenTransactions(locked);
-    closeLockedDatabases(locked);
-    throw caught;
+    throwWithLockedCleanup(caught, locked);
   }
 }
 
@@ -2516,6 +2624,21 @@ function closeLockedDatabases(locked: readonly LockedDatabase[]): boolean {
     }
   }
   return complete;
+}
+
+function throwWithLockedCleanup(caught: unknown, locked: readonly LockedDatabase[]): never {
+  const cleanupFailures: ReconciliationApplyFailure[] = [];
+  if (!rollbackOpenTransactions(locked)) {
+    cleanupFailures.push({ code: 'rollback-failed', phase: 'rollback' });
+  }
+  if (!closeLockedDatabases(locked)) {
+    cleanupFailures.push({ code: 'close-failed', phase: 'cleanup' });
+  }
+  if (caught instanceof ApplyBoundaryError) {
+    caught.cleanupFailures.push(...cleanupFailures);
+    throw caught;
+  }
+  throw new ApplyBoundaryError({ code: 'unexpected-failure', phase: 'sqlite-lock' }, caught, cleanupFailures);
 }
 
 function releaseAdvisoryLocks(locks: readonly AdvisoryLock[], options?: ReconciliationApplyOptions): boolean {
@@ -2587,7 +2710,11 @@ function lockedInputsForHook(
         requireDatabaseHandleMatchesPath(item.db, input.role);
         revalidateApplyInput(item.input, input.role);
         requireDatabaseHandleMatchesPath(item.db, input.role);
-        return new Uint8Array(item.db.serialize());
+        const bytes = new Uint8Array(item.db.serialize());
+        requireDatabaseHandleMatchesPath(item.db, input.role);
+        revalidateApplyInput(item.input, input.role);
+        requireDatabaseHandleMatchesPath(item.db, input.role);
+        return bytes;
       },
     });
   });
@@ -3053,7 +3180,7 @@ export function applyDatabaseReconciliation(
   try {
     const inputs = resolvePlannedInputs(plan);
     const lockDeadline = Date.now() + timeoutMs;
-    advisoryLocks = acquirePlannedAdvisoryLocks(inputs, lockDeadline);
+    advisoryLocks = acquirePlannedAdvisoryLocks(inputs, lockDeadline, options);
     locked = openLockedDatabases(inputs, lockDeadline, options);
     revalidateLockedPlan(plan, locked);
     runLockedHook(plan, locked, options);
