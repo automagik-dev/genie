@@ -1,11 +1,17 @@
 # Genie Lifecycle & v5 Execution Model
 
-Every piece of work follows this flow:
+Genie-managed work follows this flow:
 
 ```
  Idea → brainstorm → design review → wish → plan review → work → implementation review → PR → Ship
          (explore)   (design gate)    (plan)   (plan gate)  (build)       (verify)
 ```
+
+Ordinary requests unrelated to an existing wish or brainstorm bypass this lifecycle unless the user explicitly asks for
+Genie or the work demonstrably needs durable planning, unresolved product or architecture decisions, multiple coordinated
+workstreams, or tracking across sessions. When uncertain, use cheap read-only inspection and escalate only when it finds
+one of those needs. The bypass adds no Genie artifacts, roles, or gates; ordinary repository safety and validation rules
+still apply. Related existing work always resumes through its persisted state.
 
 The gates review different artifacts. For non-trivial work, `brainstorm` automatically routes the completed DESIGN.md
 through read-only design review before `wish` may consume it. The resulting WISH.md must then pass plan review and persist
