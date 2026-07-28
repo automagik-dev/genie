@@ -11,5 +11,20 @@ if [ -n "$branch" ] && [ "${SKIP_CI_CHECK:-}" != "1" ] && command -v gh >/dev/nu
   fi
 fi
 
+# Refresh the committed board snapshot from genie.db (fail-open: a broken
+# export must not block unrelated commits). Skipped in linked worktrees —
+# resolveRoadmapPath targets the main checkout, whose file this worktree
+# cannot stage — and when no genie.db exists, so a fresh clone never
+# clobbers the committed snapshot with empty state.
+git_dir=$(git rev-parse --path-format=absolute --git-dir 2>/dev/null)
+git_common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+if [ "$git_dir" = "$git_common" ] && [ -f .genie/genie.db ] && [ -f src/genie.ts ]; then
+  if bun src/genie.ts task export --write >/dev/null 2>&1; then
+    git add .genie/roadmap.json
+  else
+    echo "warn: board snapshot refresh failed (bun src/genie.ts task export --write) — committing without it" >&2
+  fi
+fi
+
 # Lint staged files
 bunx biome check --staged --no-errors-on-unmatched
