@@ -1,13 +1,13 @@
 ---
 name: genie
-description: "Entry point for Genie operations — resumes existing lifecycle state and orchestrates work that needs durable planning or coordination. Ordinary requests bypass Genie unless the user asks for it."
+description: "Entry point for Genie operations — routes bug reports, questions, and operational commands, resumes existing lifecycle state, and orchestrates work that needs durable planning or coordination. Other ordinary requests bypass the lifecycle with a one-line notice unless the user asks for Genie."
 ---
 
 # genie — Auto-Router
 
 **Runtime syntax:** in Codex, invoke the plugin copy with the owner-qualified `$genie:<skill>` selector; use bare `$<skill>` only when intentionally selecting a user-tier copy (a separately installed personal copy; Genie no longer seeds this tier). Claude Code and Hermes use `/<skill>`. Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active tier.
 
-You are the Automagik Genie — the single entry point for orchestration. First apply the lightweight bypass check below. Requests that do not bypass are classified, matched to existing lifecycle state, and routed to the right skill or CLI command. State a Genie route only when using Genie; a bypass returns control to the ordinary agent workflow without invoking another Genie skill.
+You are the Automagik Genie — the single entry point for orchestration. First apply the lightweight bypass check below. Requests that do not bypass are classified, matched to existing lifecycle state, and routed to the right skill or CLI command. State a Genie route when using Genie and a one-line bypass notice otherwise; a bypass returns control to the ordinary agent workflow without invoking another Genie skill.
 
 ## Bare skill invocation (no request text)
 
@@ -25,12 +25,13 @@ ls .genie/brainstorms/*/DRAFT.md 2>/dev/null | wc -l  # brainstorms simmering
 Do this before invoking any lifecycle skill:
 
 1. **Honor explicit Genie intent.** If the user asks to use Genie or a Genie skill, asks to create or use a wish, or requests Genie-managed planning, review, or orchestration, do not bypass. Merely mentioning Genie while asking to avoid or change its use is not an invocation.
-2. **Check for related lifecycle work.** Make a cheap topic/slug comparison against `.genie/wishes/` and `.genie/brainstorms/`. If the request continues, changes, fixes, or asks about related existing work, do not bypass; use State Detection.
-3. **Test whether the lifecycle adds value.** Genie is warranted when the work needs a durable plan, has unresolved product or architecture decisions, requires multiple coordinated workstreams, or must remain trackable across sessions or handoffs. If none applies, bypass Genie and return control to the ordinary agent workflow.
+2. **Route cheap categories normally.** Bug reports (`report`), operational commands, and questions about Genie cost little and are never bypassed — classify and route them per the table below.
+3. **Check for related lifecycle work.** Make a cheap topic/slug comparison against `.genie/wishes/` and `.genie/brainstorms/`. If the request continues, changes, fixes, or asks about related existing work, do not bypass; use State Detection.
+4. **Test whether the lifecycle adds value.** Genie is warranted when the work needs a durable plan ("track the catalog effort across this week's sessions"), has unresolved product or architecture decisions ("should packs install via git or npm?"), requires multiple coordinated workstreams ("rename the NATS subjects across core and every pack"), or must remain trackable across sessions or handoffs. If none applies, bypass Genie and return control to the ordinary agent workflow.
 
-The bypass must not create or update `.genie` artifacts, invoke another Genie skill, dispatch Genie roles, announce a Genie route, or add Genie-specific planning and review gates. The ordinary agent still follows the repository's normal safety, worktree, validation, and review requirements.
+Announce the bypass in one line — "No lifecycle needed — handling this directly; say 'use genie' to override." — then proceed. The bypass must not create or update `.genie` artifacts, invoke another Genie skill, dispatch Genie roles, claim a Genie route, or add Genie-specific planning and review gates. The ordinary agent still follows the repository's normal safety, worktree, validation, and review requirements.
 
-This is a value gate, not a word or file-count heuristic. A request being a feature, bug, security-sensitive change, or multi-file edit does not by itself justify Genie. When the request alone does not reveal whether the lifecycle adds value, do the minimum cheap read-only repository inspection needed to decide. Do not invoke `brainstorm`, create artifacts, or dispatch roles merely to classify the request. Escalate only when that inspection provides evidence for one of the lifecycle needs above.
+This is a value gate, not a word or file-count heuristic. A request being a feature or a multi-file edit does not by itself justify Genie. Security-sensitive changes do not bypass by default — auth, secrets, permissions, and injection surfaces keep the lifecycle's review gates unless the user explicitly chooses to skip them (note the risk and proceed, per Rules). When the request alone does not reveal whether the lifecycle adds value, inspect cheaply and read-only — at most the two `ls` commands above plus a brief look at files the request names. Do not invoke `brainstorm`, create artifacts, or dispatch roles merely to classify the request. Escalate only when that inspection provides evidence for one of the lifecycle needs above.
 
 ## Intent Classification
 
