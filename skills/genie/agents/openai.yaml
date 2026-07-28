@@ -1,4 +1,4 @@
 interface:
   display_name: "Genie Router"
-  short_description: "Route requests to the right Genie lifecycle step"
-  default_prompt: "Route this request through the appropriate Genie workflow."
+  short_description: "Route work that warrants the Genie lifecycle"
+  default_prompt: "Use Genie only when explicitly requested, related to existing lifecycle work, or warranted by durable planning or coordination needs; otherwise bypass it."
