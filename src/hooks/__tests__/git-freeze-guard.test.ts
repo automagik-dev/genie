@@ -235,6 +235,38 @@ describe('git-freeze-guard', () => {
   });
 
   // =========================================================================
+  // Separators decide whether a cd moves the shell the git call runs in
+  // =========================================================================
+
+  // Regression: PR #2722 review (CodeRabbit 3662114937, Codex 3661572682).
+  // The walk applied every `cd` to every later statement whatever operators
+  // sat around it. A `cd` beside `|` or `&` is its own process and moves
+  // nothing; a `cd` before `||` only takes effect when it succeeded, in which
+  // case the else-branch never runs at all. Reading either as effective let a
+  // frozen call through while bash ran it in the shared checkout.
+  describe('cd propagates only across separators that keep the parent shell', () => {
+    const blocked = [
+      'cd /other | git switch dev',
+      'cd /other & git reset --hard HEAD~1',
+      'cd /missing || git rebase origin/dev',
+      'foo | cd /other && git switch dev',
+    ];
+
+    for (const cmd of blocked) {
+      test(`denies: ${cmd}`, async () => {
+        expect((await run(subagent(cmd)))?.decision).toBe('deny');
+      });
+    }
+
+    // The counterweight: `cd <worktree> || exit 1` is the ordinary way to make
+    // a lane script abort on a bad path, and the git call after it genuinely
+    // runs in the worktree. A blanket "`||` never propagates" rule would deny it.
+    test('allows the guarded-cd idiom into an owned worktree', async () => {
+      expect(await run(subagent(`cd ${LANE} || exit 1; git switch dev`))).toBeUndefined();
+    });
+  });
+
+  // =========================================================================
   // Subshells — `(…)` scopes a cd, and its parens are not part of the command
   // =========================================================================
 

@@ -94,8 +94,22 @@ const REPO_REDIRECTING_GLOBAL_FLAGS = ['--git-dir', '--work-tree', '--namespace'
 /** Shell metacharacters that make a path argument non-literal. */
 const NON_LITERAL_PATH = /[$`*?~!]|\\$/;
 
-/** Statement separators. `&&` and `||` must be tried before `&` and `|`. */
-const SEGMENT_SEPARATORS = /&&|\|\||;|\||&|\n/;
+/**
+ * Statement separators. `&&` and `||` must be tried before `&` and `|`.
+ *
+ * The group is capturing so `String.split` interleaves each operator between
+ * the statements it joins: a `cd`'s effect on the parent shell depends on which
+ * separators sit either side of it, and that is unreadable from the statements
+ * alone.
+ */
+const SEGMENT_SEPARATORS = /(&&|\|\||;|\||&|\n)/;
+
+/**
+ * Separators that put the statement beside them in a subshell: a pipeline
+ * component and a backgrounded job both get their own process, so a `cd` there
+ * never moves the parent shell's directory and must not move the guard's.
+ */
+const SUBSHELL_SEPARATORS = new Set(['|', '&']);
 
 /** Openers of a region that runs in its own shell and yields a value, not a statement. */
 const OPAQUE_REGION_OPENERS = ['$(', '<(', '>('];
@@ -276,6 +290,37 @@ function parseStatement(segment: string): Statement {
   return { tokens, opened, closed };
 }
 
+/** True when this separator makes the statement beside it run in its own shell. */
+function isSubshellEdge(separator: string | undefined): boolean {
+  return separator !== undefined && SUBSHELL_SEPARATORS.has(separator);
+}
+
+/** How far a `cd`/`pushd` statement reaches, given the operators around it. */
+interface DirectoryChange {
+  /** The scope's directory afterwards — unchanged when the `cd` ran in a subshell. */
+  scope: string | null;
+  /** Pre-`cd` directory the `||` else-branch runs in, when one follows. */
+  elseDir?: string | null;
+}
+
+/**
+ * Decide what a `cd <target>` does to the directories the walk tracks.
+ *
+ * Beside `|` or `&` it does nothing: that `cd` is a separate process, and the
+ * parent shell — where the later statements run — never moves. Before `||` it
+ * applies, but the else-branch it guards runs only on failure, so that one
+ * statement belongs to the directory the shell was in beforehand.
+ */
+function applyDirectoryChange(
+  target: string | undefined,
+  dir: string | null,
+  before: string | undefined,
+  after: string | undefined,
+): DirectoryChange {
+  if (isSubshellEdge(before) || isSubshellEdge(after)) return { scope: dir };
+  return { scope: joinPath(dir, target), elseDir: after === '||' ? dir : undefined };
+}
+
 /**
  * Walk the statements of a compound command left to right, tracking `cd` as it
  * goes, and return every frozen git invocation found.
@@ -283,25 +328,41 @@ function parseStatement(segment: string): Statement {
  * Directories are a stack rather than a single value because `(` opens a scope
  * the shell discards at the matching `)`: a `cd` inside a subshell applies to
  * the statements within it and to nothing after it.
+ *
+ * A `cd`'s reach also depends on the separators around it, so the walk reads
+ * the operators as well as the statements:
+ *   - beside `|` or `&` the `cd` is its own process and moves nothing the later
+ *     statements can see (`cd /other | git switch dev` runs git in the *shared*
+ *     checkout, and treating the `cd` as effective let it through);
+ *   - before `||` the `cd` does apply, but the statement guarded by the `||`
+ *     runs only when the `cd` *failed*, so that one statement is judged against
+ *     the directory the shell was in beforehand. Both halves matter: without
+ *     the first, `cd /missing || git rebase origin/dev` slips past; without the
+ *     second, the routine `cd <worktree> || exit 1; git switch dev` is denied.
  */
 function findFrozenInvocations(command: string, cwd: string | null): GitInvocation[] {
   const masked = maskOpaqueRegions(maskQuotedRegions(command));
   if (!/\bgit\b/.test(masked)) return [];
+  // Capturing separators, so even indices are statements and odd are operators.
+  const parts = masked.split(SEGMENT_SEPARATORS);
   const scopes: (string | null)[] = [cwd];
   const found: GitInvocation[] = [];
-  for (const segment of masked.split(SEGMENT_SEPARATORS)) {
-    const { tokens, opened, closed } = parseStatement(segment);
+  /** One-shot override: the pre-`cd` directory an `||` else-branch runs in. */
+  let elseDir: string | null | undefined;
+  for (let p = 0; p < parts.length; p += 2) {
+    const { tokens, opened, closed } = parseStatement(parts[p]);
     for (let n = 0; n < opened; n += 1) scopes.push(scopes[scopes.length - 1]);
-    const dir = scopes[scopes.length - 1];
-    if (tokens.length > 0) {
-      if (tokens[0] === 'cd' || tokens[0] === 'pushd') {
-        scopes[scopes.length - 1] = joinPath(dir, tokens[1]);
-      } else if (tokens[0] === 'popd') {
-        scopes[scopes.length - 1] = null;
-      } else {
-        const invocation = parseGitInvocation(tokens, dir);
-        if (invocation && isFrozenInvocation(invocation)) found.push(invocation);
-      }
+    const dir = elseDir === undefined ? scopes[scopes.length - 1] : elseDir;
+    elseDir = undefined;
+    if (tokens[0] === 'cd' || tokens[0] === 'pushd') {
+      const change = applyDirectoryChange(tokens[1], dir, parts[p - 1], parts[p + 1]);
+      scopes[scopes.length - 1] = change.scope;
+      elseDir = change.elseDir;
+    } else if (tokens[0] === 'popd') {
+      scopes[scopes.length - 1] = null;
+    } else {
+      const invocation = parseGitInvocation(tokens, dir);
+      if (invocation && isFrozenInvocation(invocation)) found.push(invocation);
     }
     for (let n = 0; n < closed && scopes.length > 1; n += 1) scopes.pop();
   }
