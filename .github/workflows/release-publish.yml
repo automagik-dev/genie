@@ -11,7 +11,7 @@ name: Release Publish
 # signatures from Sigstore Rekor without any custom verification server.
 #
 # Trigger chain:
-#   guarded release.yml@main (stable) OR version.yml@main (dev/homolog)
+#   guarded release.yml@main (stable) OR version.yml@main (dev)
 #     → Build Tarballs → Sign + Attest → THIS
 # All artifacts are from one workflow run; there is no standalone dispatch or
 # external run-id recovery path.
@@ -28,7 +28,7 @@ name: Release Publish
 
 on:
   # Reusable only from the trusted main-controlled release chain. Stable manual
-  # recovery routes through release.yml; dev/homolog route through version.yml.
+  # recovery routes through release.yml; dev routes through version.yml.
   workflow_call:
     inputs:
       version:
@@ -36,7 +36,7 @@ on:
         required: true
         type: string
       channel:
-        description: 'Release channel (stable / homolog / dev)'
+        description: 'Release channel (stable / dev)'
         required: false
         type: string
         default: stable
@@ -82,7 +82,12 @@ jobs:
     name: Admit trusted release orchestrator
     runs-on: ubuntu-latest
     timeout-minutes: 2
-    permissions: {}
+    permissions:
+      # Read-only, and only so the replay guard below can ask whether the tag
+      # already carries a published release. contents:write still starts at the
+      # publish job: nothing may mutate the repository before the caller is
+      # proven, and the guard runs after the binding step for the same reason.
+      contents: read
     steps:
       - name: Bind caller workflow and control commit
         shell: bash
@@ -106,7 +111,7 @@ jobs:
               EXPECTED_EVENT=workflow_dispatch
               EXPECTED_CALLER="$EXPECTED_STABLE_CALLER"
               ;;
-            homolog|dev)
+            dev)
               EXPECTED_EVENT=workflow_run
               EXPECTED_CALLER="$EXPECTED_AUTOMATED_CALLER"
               ;;
@@ -128,15 +133,52 @@ jobs:
             echo "::error ::release-caller.inputs release-publish received malformed release identity inputs"
             exit 1
           fi
-          case "$INPUT_SOURCE_BRANCH" in main|homolog|dev) ;; *) exit 1 ;; esac
+          case "$INPUT_SOURCE_BRANCH" in main|dev) ;; *) exit 1 ;; esac
           case "${INPUT_CHANNEL}:${INPUT_SOURCE_BRANCH}" in
-            stable:main|homolog:homolog|dev:dev) ;;
+            stable:main|dev:dev) ;;
             *)
               echo "::error ::release-caller.inputs channel/source branch admission mismatch"
               exit 1
               ;;
           esac
           echo "Trusted release caller admitted at ${CALLER_SHA}"
+
+      - name: Refuse re-dispatch of an already published release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          # A published (non-draft) release is immutable, and this pipeline is
+          # no longer able to replay one: reconcile-release-assets.sh expects
+          # the current 20/28-asset delivery fanout while every pre-fanout
+          # release carries 12 that can never be extended, and
+          # reconcile-channel-manifests.sh now derives a deterministic
+          # midnight-UTC released_at that no longer cmp-matches the wall-clock
+          # timestamps already committed to main. Both failures land AFTER the
+          # release is published and locked, so refuse the run here instead.
+          # Always allocate a fresh version (version.yml allocates max-plus-one
+          # and pushes a fresh tag). See automagik-dev/genie#2674.
+          # Drafts stay admissible on purpose: an interrupted run must still be
+          # able to finish the release it already opened.
+          RELEASE_JSON="$(mktemp)"
+          RELEASE_ERROR="$(mktemp)"
+          if gh api "repos/${RELEASE_REPOSITORY}/releases/tags/v${INPUT_VERSION}" \
+            >"$RELEASE_JSON" 2>"$RELEASE_ERROR"; then
+            if [[ "$(jq -r '.draft' "$RELEASE_JSON")" != true ]]; then
+              echo "::error ::release-replay.published v${INPUT_VERSION} already has a published GitHub Release — published releases are non-replayable (immutable asset inventory + deterministic released_at); allocate a fresh version instead. See automagik-dev/genie#2674"
+              exit 1
+            fi
+            echo "v${INPUT_VERSION} exists only as a draft release; admitting so the interrupted publish can complete"
+          elif grep -q 'HTTP 404' "$RELEASE_ERROR"; then
+            echo "v${INPUT_VERSION} has no GitHub Release yet"
+          else
+            cat "$RELEASE_ERROR" >&2
+            echo "::error ::release-replay.unknown could not determine whether v${INPUT_VERSION} already has a published release; failing closed. See automagik-dev/genie#2674"
+            exit 1
+          fi
 
   prepare-delivery-evidence:
     name: Build canonical delivery descriptors
@@ -205,11 +247,7 @@ jobs:
           case "$CHANNEL" in
             stable)
               SELECTED_MANIFEST=candidate-manifests/.well-known/latest.json
-              EVIDENCE_CHANNELS=(stable homolog dev)
-              ;;
-            homolog)
-              SELECTED_MANIFEST=candidate-manifests/.well-known/homolog.json
-              EVIDENCE_CHANNELS=(homolog dev)
+              EVIDENCE_CHANNELS=(stable dev)
               ;;
             dev)
               SELECTED_MANIFEST=candidate-manifests/.well-known/dev.json
@@ -291,7 +329,6 @@ jobs:
             for evidence_channel in "${EVIDENCE_CHANNELS[@]}"; do
               case "$evidence_channel" in
                 stable) manifest=candidate-manifests/.well-known/latest.json ;;
-                homolog) manifest=candidate-manifests/.well-known/homolog.json ;;
                 dev) manifest=candidate-manifests/.well-known/dev.json ;;
               esac
               descriptor="descriptors/genie-${VERSION}-${platform}.tar.gz.${evidence_channel}.delivery.json"
@@ -452,8 +489,7 @@ jobs:
         run: |
           set -euo pipefail
           case "$CHANNEL" in
-            stable) EXPECTED_PACKS=12 ;;
-            homolog) EXPECTED_PACKS=8 ;;
+            stable) EXPECTED_PACKS=8 ;;
             dev) EXPECTED_PACKS=4 ;;
             *) exit 1 ;;
           esac
@@ -466,7 +502,6 @@ jobs:
           for descriptor in "${DESCRIPTORS[@]}"; do
             case "$descriptor" in
               *.stable.delivery.json) manifest=candidate-manifests/latest.json ;;
-              *.homolog.delivery.json) manifest=candidate-manifests/homolog.json ;;
               *.dev.delivery.json) manifest=candidate-manifests/dev.json ;;
               *) exit 1 ;;
             esac
@@ -1012,12 +1047,15 @@ jobs:
           name: delivery-candidate-manifests
           path: ${{ runner.temp }}/candidate-manifests
 
-      - name: Resolve version + channel + asset inventory
+      # Channel is NOT resolved here: admit already rejects an empty/unknown
+      # channel, and finalize/manifests read inputs.channel raw. A local
+      # default would only let publish upload a stable-sized inventory that
+      # finalize then aborts on, leaving a published-but-unfinalized release.
+      - name: Resolve version + asset inventory
         id: meta
         shell: bash
         env:
           INPUT_VERSION: ${{ inputs.version }}
-          INPUT_CHANNEL: ${{ inputs.channel }}
         run: |
           set -euo pipefail
           cd dist
@@ -1041,14 +1079,8 @@ jobs:
             echo "::error::workflow_dispatch input version='${INPUT_VERSION}' does not match upstream artifact version='${VERSION}'"
             exit 1
           fi
-          # Channel: workflow_dispatch picks; workflow_run defaults to stable.
-          CHANNEL="${INPUT_CHANNEL:-}"
-          if [[ -z "${CHANNEL}" ]]; then
-            CHANNEL="stable"
-          fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "channel=${CHANNEL}" >> "$GITHUB_OUTPUT"
-          echo "Resolved: VERSION=${VERSION} CHANNEL=${CHANNEL}"
+          echo "Resolved: VERSION=${VERSION}"
           echo "Tarballs: ${#TARBALLS[@]}"
           echo "=== dist/ exact inventory: 12 release assets plus selected-channel delivery evidence fanout ==="
           ls -la
@@ -1065,7 +1097,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.meta.outputs.version }}
-          CHANNEL: ${{ steps.meta.outputs.channel }}
+          CHANNEL: ${{ inputs.channel }}
           DRAFT: ${{ inputs.draft }}
           RELEASE_REPOSITORY: ${{ github.repository }}
           CANDIDATE_MANIFEST_DIR: ${{ runner.temp }}/candidate-manifests
@@ -1089,7 +1121,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
-      # No reviewers: dev/homolog stay automatic. The environment is restricted
+      # No reviewers: dev stays automatic. The environment is restricted
       # to main and holds the sole credential (the RELEASE_MANIFESTS App key)
       # allowed to push the .well-known manifests through the main ruleset.
       name: release-manifests
@@ -1182,7 +1214,6 @@ jobs:
       # Filename map (per wish release-channel-dev, 2026-05-11):
       #   stable → latest.json     (kept for back-compat with v1 manifest layout)
       #   dev    → dev.json        (replaces the old "next.json" producer concept)
-      #   homolog → homolog.json
       #
       # The stable-only gate that lived here through v4.260511.3 was lifted —
       # every non-draft publish writes the manifest(s) for the channel(s) it
@@ -1212,7 +1243,7 @@ jobs:
             git fetch origin main
             git switch --detach origin/main
 
-            # Stable/homolog fan out to downstream pointers, but each file
+            # Stable fans out to the downstream dev pointer, but each file
             # moves independently and monotonically. An older delayed release
             # may advance stable while preserving newer downstream pointers.
             RELEASE_REPOSITORY="${{ github.repository }}" CANDIDATE_MANIFEST_DIR="$CANDIDATE_MANIFEST_DIR" \
@@ -1221,7 +1252,7 @@ jobs:
             # Stage the complete fixed allowlist. Staging before diff handles
             # both modified and bootstrap/untracked manifests.
             MANIFEST_PATHS=()
-            for f in latest.json homolog.json dev.json; do
+            for f in latest.json dev.json; do
               [[ -f ".well-known/${f}" && ! -L ".well-known/${f}" ]] && MANIFEST_PATHS+=(".well-known/${f}")
             done
             git add -- "${MANIFEST_PATHS[@]}"

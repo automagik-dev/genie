@@ -82,7 +82,6 @@ describe('Group E release and documentation contracts', () => {
   test('privileged reusable workflows admit only the exact channel-specific main caller', () => {
     for (const path of ['.github/workflows/sign-attest.yml', '.github/workflows/release-publish.yml']) {
       const workflow = read(path);
-      expect(workflow).toContain('permissions: {}');
       expect(workflow).toContain(
         'EXPECTED_STABLE_CALLER: automagik-dev/genie/.github/workflows/release.yml@refs/heads/main',
       );
@@ -96,6 +95,68 @@ describe('Group E release and documentation contracts', () => {
       expect(workflow).toContain('"$CALLER_WORKFLOW_SHA" != "$CALLER_SHA"');
       expect(workflow).toContain('needs: admit');
     }
+
+    // sign-attest's admit needs no token at all. release-publish's admit holds
+    // exactly contents:read — the least that lets the replay guard ask whether
+    // the tag already carries a published release — and never write, so an
+    // unproven caller still cannot mutate anything.
+    const signAdmit = read('.github/workflows/sign-attest.yml').split('\n  admit:')[1]?.split('\n  prepare:')[0] ?? '';
+    expect(signAdmit).toContain('permissions: {}');
+    expect(signAdmit).not.toContain('contents: write');
+    expect(signAdmit).not.toContain('id-token:');
+    const publishAdmit =
+      read('.github/workflows/release-publish.yml')
+        .split('\n  admit:')[1]
+        ?.split('\n  prepare-delivery-evidence:')[0] ?? '';
+    expect(publishAdmit).toContain('permissions:\n      # Read-only');
+    expect(publishAdmit).toContain('contents: read');
+    expect(publishAdmit).not.toContain('contents: write');
+    expect(publishAdmit).not.toContain('id-token:');
+  });
+
+  // A published release is immutable and this pipeline can no longer replay
+  // one (asset fanout grew past the 12 assets pre-fanout releases carry, and
+  // released_at became deterministic), so re-dispatching a published version
+  // fails only AFTER the release is locked. Admit must refuse it up front,
+  // while still admitting a draft so an interrupted run can finish. #2674.
+  test('admit refuses re-dispatch of a version that already has a published release', () => {
+    const admit =
+      read('.github/workflows/release-publish.yml')
+        .split('\n  admit:')[1]
+        ?.split('\n  prepare-delivery-evidence:')[0] ?? '';
+    expect(admit).toContain('name: Refuse re-dispatch of an already published release');
+    expect(admit).toContain('GH_TOKEN: ${{ github.token }}');
+    expect(admit).toContain('gh api "repos/${RELEASE_REPOSITORY}/releases/tags/v${INPUT_VERSION}"');
+    // non-draft is the refusal, and the refusal cites the rule + issue
+    expect(admit).toContain(`jq -r '.draft'`);
+    expect(admit).toContain('release-replay.published');
+    expect(admit).toContain('allocate a fresh version');
+    expect(admit).toContain('automagik-dev/genie#2674');
+    // ambiguous API failures fail closed rather than silently admitting
+    expect(admit).toContain('release-replay.unknown');
+    expect(admit).toContain(`grep -q 'HTTP 404'`);
+    // the guard runs only after the caller is proven
+    expect(admit.indexOf('name: Refuse re-dispatch of an already published release')).toBeGreaterThan(
+      admit.indexOf('name: Bind caller workflow and control commit'),
+    );
+  });
+
+  // The publish job used to keep its own CHANNEL="${INPUT_CHANNEL:-}" default
+  // to stable. admit already rejects an empty/unknown channel, so it was dead;
+  // had it ever fired, publish would have uploaded a 36-asset stable inventory
+  // that finalize aborts on, leaving a published-but-unfinalized release. #2675
+  test('publish reads the channel input directly instead of defaulting it', () => {
+    const workflow = read('.github/workflows/release-publish.yml');
+    const publishJob = workflow.split('\n  publish:')[1]?.split('\n  manifests:')[0] ?? '';
+    expect(publishJob).not.toContain('INPUT_CHANNEL');
+    expect(publishJob).not.toContain('CHANNEL="stable"');
+    expect(publishJob).not.toContain('steps.meta.outputs.channel');
+    expect(publishJob).toContain('CHANNEL: ${{ inputs.channel }}');
+    expect(workflow).not.toContain('channel=${CHANNEL}');
+    const manifestsJob = workflow.split('\n  manifests:')[1]?.split('\n  finalize:')[0] ?? '';
+    const finalizeJob = workflow.split('\n  finalize:')[1] ?? '';
+    expect(manifestsJob).toContain('CHANNEL: ${{ inputs.channel }}');
+    expect(finalizeJob).toContain('CHANNEL: ${{ inputs.channel }}');
   });
 
   test('release stages consume only artifacts from their current orchestrator run', () => {
@@ -153,8 +214,7 @@ describe('Group E release and documentation contracts', () => {
     expect(publish).toContain('predicate-type: https://github.com/${{ github.repository }}/delivery-evidence/v1');
     expect(publish).toContain('actions/attest@67422f5511b7ff725f4dbd6fb9bd2cd925c65a8d');
     expect(publish).toContain('${DESCRIPTOR}.sigstore.json');
-    expect(publish).toContain('EVIDENCE_CHANNELS=(stable homolog dev)');
-    expect(publish).toContain('EVIDENCE_CHANNELS=(homolog dev)');
+    expect(publish).toContain('EVIDENCE_CHANNELS=(stable dev)');
     expect(publish).toContain('EVIDENCE_CHANNELS=(dev)');
     expect(publish).toContain('name: delivery-candidate-manifests');
     expect(publish).toContain('CANDIDATE_MANIFEST_DIR="$CANDIDATE_MANIFEST_DIR"');
@@ -288,17 +348,15 @@ describe('Group E release and documentation contracts', () => {
     expect(publish).toContain("needs.codex-dogfood-completeness.result == 'success'");
     expect(publish).toContain("needs.stable-release-security-gate.result == 'success'");
     expect(publish).not.toContain("inputs.channel == 'stable'");
-    expect(publish).not.toContain("inputs.channel == 'homolog'");
   });
 
-  test('stable approval is explicit while dev and homolog remain automated', () => {
+  test('stable approval is explicit while dev remains automated', () => {
     const release = read('.github/workflows/release.yml');
     const version = read('.github/workflows/version.yml');
     const manualInputs = release.split('workflow_dispatch:')[1]?.split('workflow_call:')[0] ?? '';
     const manualChannel = manualInputs.split('channel:')[1]?.split('source_sha:')[0] ?? '';
     expect(release).toContain('workflow_call:');
     expect(manualChannel).toContain('- stable');
-    expect(manualChannel).not.toContain('- homolog');
     expect(manualChannel).not.toContain('- dev');
     expect(release).toContain('CALLER_WORKFLOW_REF: ${{ github.workflow_ref }}');
     expect(release).toContain('CALLER_WORKFLOW_SHA: ${{ github.workflow_sha }}');
@@ -325,7 +383,7 @@ describe('Group E release and documentation contracts', () => {
     expect(version).not.toContain('--field channel=stable');
 
     for (const path of ['.github/workflows/ci.yml', '.github/workflows/version.yml']) {
-      expect(read(path)).toContain('branches: [main, homolog, dev]');
+      expect(read(path)).toContain('branches: [main, dev]');
     }
     expect(read('.github/workflows/version.yml')).toContain(
       "!contains(github.event.workflow_run.head_commit.message, '[release-manifest]')",
@@ -344,7 +402,7 @@ describe('Group E release and documentation contracts', () => {
     expect(version).toContain('git tag "v${VERSION}" HEAD');
     expect(version).toContain('name: Push fresh immutable promotion tag');
     expect(version).toContain('git push origin "refs/tags/v${VERSION}"');
-    expect(build).toContain('homolog|stable)');
+    expect(build).toContain('stable)');
     expect(build).toContain('Authenticated ${INPUT_CHANNEL} promotion stamps immutable version');
     const buildCall = release.split('\n  build:')[1]?.split('\n  sign-attest:')[0] ?? '';
     expect(buildCall).toContain('channel: ${{ inputs.channel }}');
@@ -356,7 +414,7 @@ describe('Group E release and documentation contracts', () => {
     for (const path of ['.github/workflows/version.yml', 'scripts/release-guard.sh']) {
       const source = read(path);
       expect(source).not.toContain("':(exclude).well-known'");
-      for (const manifest of ['latest.json', 'homolog.json', 'dev.json']) {
+      for (const manifest of ['latest.json', 'dev.json']) {
         expect(source).toContain(`':(exclude).well-known/${manifest}'`);
       }
     }
@@ -570,12 +628,9 @@ describe('Group E release and documentation contracts', () => {
       expect(source).toContain("GitHub's `/releases/latest`");
     }
     const security = read('SECURITY.md');
-    expect(security).toContain(
-      'Every dev, homolog, or stable promotion creates a fresh monotonic version and immutable tag',
-    );
+    expect(security).toContain('Every dev or stable promotion creates a fresh monotonic version and immutable tag');
     expect(security).toContain('stable releases are non-prerelease and marked Latest');
-    expect(security).toContain('dev and homolog releases are prereleases and never Latest');
-    expect(security).not.toContain('one verified version across dev, homolog, and stable channels');
+    expect(security).toContain('dev releases are prereleases and never Latest');
   });
 
   test('immutable-release bootstrap ordering remains explicit and fail-closed', () => {
@@ -694,7 +749,7 @@ describe('Group E release and documentation contracts', () => {
     expect(archiveSmoke).toBeGreaterThan(extract);
   });
 
-  test('shipped Codex integration doc carries the exit matrix, trailer, lease, and homolog contract', () => {
+  test('shipped Codex integration doc carries the exit matrix, trailer, lease, and candidate-channel contract', () => {
     const doc = read('plugins/genie/references/codex-integration-map.md');
     // Exit matrix (per-command 0/1/2) with the busy code.
     expect(doc).toContain('### Per-command 0/1/2 exit matrix');
@@ -719,8 +774,8 @@ describe('Group E release and documentation contracts', () => {
     expect(doc).toContain('route-only init');
     expect(doc).toContain('independent of plugin availability');
     expect(doc).toContain('unreachable from update, install, setup, doctor, sync');
-    // Homolog candidate channel + the N-task non-guarantee.
-    expect(doc).toContain('Homolog is the canonical pre-stable candidate channel');
+    // Dev candidate channel + the N-task non-guarantee.
+    expect(doc).toContain('Dev is the canonical pre-stable candidate channel');
     expect(doc).toContain('an activated N task is not');
     expect(doc).toContain('cannot resume activated N tasks without');
     expect(doc).toContain('scripts/validate-live-dogfood-evidence.ts');
@@ -980,5 +1035,11 @@ describe('Group E release and documentation contracts', () => {
     const readme = read('README.md');
     expect(readme).toContain('The Codex route is plugin-independent');
     for (const path of ['.mcp.json', '.warp/.mcp.json', '.codex/config.toml']) expect(readme).toContain(path);
+  });
+
+  test('the retired homolog channel never reappears in any workflow', () => {
+    for (const name of readdirSync(join(ROOT, '.github/workflows')).filter((entry) => entry.endsWith('.yml'))) {
+      expect(read(`.github/workflows/${name}`), name).not.toContain('homolog');
+    }
   });
 });

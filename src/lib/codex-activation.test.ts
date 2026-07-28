@@ -1411,7 +1411,7 @@ describe('CodexActivationStore — beginActivation fingerprint binding', () => {
     {
       name: 'channel',
       mutate: (record) => {
-        record.channel = 'homolog';
+        record.channel = 'dev';
       },
     },
     {

@@ -25,7 +25,7 @@ curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh
 
 Every release is cosign-signed (keyless OIDC) with SLSA provenance; the installer verifies the binary — via `gh attestation verify`, falling back to `cosign verify-blob` — before it runs.
 
-The repository-hosted `.well-known/latest.json`, `homolog.json`, and `dev.json` manifests are the authoritative channel pointers. GitHub's `/releases/latest` route and prerelease badge are deliberately not channel authority: a promotion advances only a monotonic manifest and never rewrites already-published assets or channel-significant draft/prerelease/latest metadata.
+The repository-hosted `.well-known/latest.json` and `dev.json` manifests are the authoritative channel pointers. GitHub's `/releases/latest` route and prerelease badge are deliberately not channel authority: a promotion advances only a monotonic manifest and never rewrites already-published assets or channel-significant draft/prerelease/latest metadata.
 
 The installer detects Claude Code and Codex and delivers the selected, version-matched payloads. Control this with `--integrations auto|codex|claude|all|none` or `--skip-integrations`. Codex delivery is deliberately separate from activation: install/update verify the signed release and publish a complete authenticated delivery record, but never advance the Codex cache, change its enabled state, reconcile its project route, or write role agents. A delivered generation that still needs activation exits with an action-required result directing the operator to `genie setup --codex`.
 
@@ -229,3 +229,5 @@ v5 is a deliberate cutover to a lightweight body. The v4 harness — a Postgres 
 </p>
 
 <p align="center"><sub>You describe the problem. Genie does the rest.</sub></p>
+
+> **Channel migration (2026-07):** the `homolog` channel was retired. Configs pinned to `homolog` are migrated to **stable** automatically on next run; `genie update --homolog` no longer exists — use `--stable` or `--dev`.

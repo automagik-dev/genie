@@ -357,10 +357,8 @@ detect_platform() {
 resolve_channel() {
   local channel="${GENIE_CHANNEL:-stable}"
   case "$channel" in
-    # Canonical taxonomy (Felipe directive 2026-05-12, cross-repo unified).
-    # beta + canary retired; homolog added for the dev→homolog→stable
-    # promotion ladder.
-    stable|homolog|dev) echo "$channel" ;;
+    # Canonical taxonomy: stable + dev. beta + canary + homolog retired.
+    stable|dev) echo "$channel" ;;
     next)
       # Back-compat: --next was the pre-rename name. Map silently to dev and
       # warn so the operator updates their muscle memory.
@@ -372,9 +370,17 @@ resolve_channel() {
       # the corresponding .well-known files; fall back to dev so existing
       # GENIE_CHANNEL=beta/canary scripts keep installing something
       # reasonable instead of hard-failing.
-      warn "GENIE_CHANNEL=$channel is retired; use GENIE_CHANNEL=dev or homolog (mapping to dev for this run)"
+      warn "GENIE_CHANNEL=$channel is retired; use GENIE_CHANNEL=dev (mapping to dev for this run)"
       echo "dev" ;;
-    *) die "unknown channel: $channel (valid: stable|homolog|dev)" 1 ;;
+    homolog)
+      # Back-compat: homolog was the dev→homolog→stable middle tier from
+      # 2026-05-12 until its removal on 2026-07-26. .well-known/homolog.json
+      # no longer exists, so the pin cannot be honored. Fall back to STABLE,
+      # not dev: homolog ranked above dev, so stable is the conservative
+      # landing rather than silently downgrading trust.
+      warn "GENIE_CHANNEL=homolog is retired; use GENIE_CHANNEL=stable or dev (mapping to stable for this run)"
+      echo "stable" ;;
+    *) die "unknown channel: $channel (valid: stable|dev)" 1 ;;
   esac
 }
 

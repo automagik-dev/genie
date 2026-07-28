@@ -54,7 +54,7 @@ Biome enforces single quotes, two-space indentation, 120-column lines, and trail
 
 ## Release contract
 
-Release tarballs contain the binary, shared plugin, both plugin manifests, both marketplaces, skills, templates, and `VERSION`. Plugin and marketplace versions must match `package.json`. Stable is the default channel; dev and homolog require explicit selection. Build and verify every supported release tarball before promotion.
+Release tarballs contain the binary, shared plugin, both plugin manifests, both marketplaces, skills, templates, and `VERSION`. Plugin and marketplace versions must match `package.json`. Stable is the default channel; dev requires explicit selection. Build and verify every supported release tarball before promotion.
 
 ## Runtime-specific notes
 

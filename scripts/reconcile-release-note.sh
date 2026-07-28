@@ -15,7 +15,7 @@ RELEASE_REPOSITORY="${RELEASE_REPOSITORY:-${GITHUB_REPOSITORY:-}}"
   exit 2
 }
 case "$CHANNEL" in
-  stable|homolog|dev) ;;
+  stable|dev) ;;
   *) echo "invalid release channel: ${CHANNEL}" >&2; exit 2 ;;
 esac
 DRAFT="${DRAFT:-false}"
@@ -84,7 +84,7 @@ body="$(gh release view "${TAG}" --repo "${RELEASE_REPOSITORY}" --json body --jq
 # .well-known manifests, but GitHub's "Latest" pointer is a separate surface the
 # stable channel MUST advance: stable finalize publishes as prerelease=false +
 # make_latest=true, promoting to Latest even when the dev channel already
-# published the very same tag as a prerelease. dev/homolog finalize is unchanged
+# published the very same tag as a prerelease. dev finalize is unchanged
 # — they publish as prerelease (flag preserved) and are never Latest. A release
 # already in its channel's terminal published state is left immutable so
 # repository-level immutable releases can enforce that boundary.
@@ -110,7 +110,7 @@ if [[ "${DRAFT}" == "false" ]]; then
       -F draft=false -F prerelease=false -f make_latest=true >/dev/null
     exit 0
   fi
-  # dev/homolog: prerelease flag preserved, never Latest. A published release is
+  # dev: prerelease flag preserved, never Latest. A published release is
   # left immutable.
   if [[ "$is_draft" == false ]]; then
     echo "${TAG} is already published; preserving its immutable release metadata"

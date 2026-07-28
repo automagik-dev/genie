@@ -33,10 +33,10 @@ interface Arguments {
   output: string;
   repository: string;
   version: string;
-  channel: 'stable' | 'homolog' | 'dev';
+  channel: 'stable' | 'dev';
   platformId: keyof typeof PLATFORMS;
   sourceSha: string;
-  sourceBranch: 'main' | 'homolog' | 'dev';
+  sourceBranch: 'main' | 'dev';
   sourceCiRunId: string;
   controlSha: string;
 }
@@ -72,12 +72,10 @@ function parseArguments(argv: string[]): Arguments {
   if (values.size !== 11) fail('unknown argument');
   if (!REPOSITORY_RE.test(args.repository)) fail('invalid repository');
   if (!VERSION_RE.test(args.version)) fail('invalid version');
-  if (!['stable', 'homolog', 'dev'].includes(args.channel)) fail('invalid channel');
+  if (!['stable', 'dev'].includes(args.channel)) fail('invalid channel');
   if (!(args.platformId in PLATFORMS)) fail('invalid platform id');
-  if (!['main', 'homolog', 'dev'].includes(args.sourceBranch)) fail('invalid source branch');
+  if (!['main', 'dev'].includes(args.sourceBranch)) fail('invalid source branch');
   if (args.channel === 'stable' && args.sourceBranch !== 'main') fail('stable evidence requires a main source');
-  if (args.channel === 'homolog' && args.sourceBranch === 'dev')
-    fail('homolog evidence requires main or homolog source');
   if (!SHA_RE.test(args.sourceSha) || !SHA_RE.test(args.controlSha)) fail('invalid source/control SHA');
   if (!RUN_ID_RE.test(args.sourceCiRunId)) fail('invalid source CI run ID');
   return args as Arguments;

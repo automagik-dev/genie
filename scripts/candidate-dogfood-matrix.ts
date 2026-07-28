@@ -14,7 +14,7 @@ import { type Stats, lstatSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 
 const VERSION = /^\d+\.\d{6}\.\d+$/;
-const CHANNELS = new Set(['dev', 'homolog', 'stable']);
+const CHANNELS = new Set(['dev', 'stable']);
 
 export const NATIVE_DOGFOOD_TARGETS = Object.freeze({
   'linux-x64-glibc': { runner: 'ubuntu-latest', execution: 'host-native' },
@@ -30,7 +30,7 @@ export interface CandidateDogfoodMatrixEntry {
   runner: (typeof NATIVE_DOGFOOD_TARGETS)[NativeDogfoodPlatform]['runner'];
   execution: (typeof NATIVE_DOGFOOD_TARGETS)[NativeDogfoodPlatform]['execution'];
   version: string;
-  channel: 'dev' | 'homolog' | 'stable';
+  channel: 'dev' | 'stable';
   manifest: string;
   manifestSha256: string;
   artifact: string;
@@ -66,7 +66,7 @@ function readPhysicalFile(path: string, label: string): Buffer {
 
 function parseManifest(bytes: Uint8Array): {
   version: string;
-  channel: 'dev' | 'homolog' | 'stable';
+  channel: 'dev' | 'stable';
   platforms: NativeDogfoodPlatform[];
 } {
   let value: unknown;
@@ -109,7 +109,7 @@ function parseManifest(bytes: Uint8Array): {
   }
   return {
     version: value.version,
-    channel: value.channel as 'dev' | 'homolog' | 'stable',
+    channel: value.channel as 'dev' | 'stable',
     platforms: platforms as NativeDogfoodPlatform[],
   };
 }
