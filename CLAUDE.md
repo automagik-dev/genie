@@ -100,8 +100,9 @@ genie task checkout <id> --worker w   # Atomically claim a ready task for a work
 genie task status <id>                # Task detail, dependencies, stage log
 genie task done <id>                  # Orchestrator only: mark reviewed work done + recompute ready set
 genie task export                     # Emit the complete DB state as JSON
-genie task export --write             # Write the snapshot to .genie/roadmap.json (committed board snapshot)
-genie task import [--replace]         # Restore genie.db from .genie/roadmap.json (fresh-clone resume)
+genie task export --write             # Write .genie/roadmap.json (diverged-sync resolution: keep local board)
+genie task import [--replace]         # Restore genie.db from .genie/roadmap.json (resolution: take snapshot)
+genie task sync                       # Three-way reconcile genie.db <-> roadmap.json (auto-runs before task/board verbs)
 ```
 
 ### Omni subcommands
@@ -120,7 +121,7 @@ genie omni inbox                      # List stored inbound Omni messages (no ne
 | Task / board / wish state | `<repo>/.genie/genie.db` | Per-repo, shared across worktrees | SQLite (bun:sqlite) |
 | Omni approvals + inbox | `~/.genie/genie.db` | Global (machine-wide) | SQLite (bun:sqlite) |
 | Wishes / brainstorms / INDEX | `<repo>/.genie/{wishes,brainstorms,INDEX.md}` | Per-repo, git-tracked | Markdown |
-| Board snapshot (resume/publish) | `<repo>/.genie/roadmap.json` | Per-repo, git-tracked | JSON (`task export --write` / `task import`) |
+| Board snapshot (CANONICAL roadmap) | `<repo>/.genie/roadmap.json` | Per-repo, git-tracked | JSON — genie.db materializes from it via three-way `task sync` (auto before task/board verbs; machine-local baseline in gitignored `.genie/roadmap-sync`) |
 
 Worktrees share the main repo's `.genie/genie.db` via `git rev-parse --git-common-dir`. The two `genie.db` files are wholly separate databases: different paths, different schemas, independent `PRAGMA user_version` — `global-db.ts` deliberately imports NONE of `genie-db.ts`'s path constants; the only shared code is the open primitive in `sqlite-open.ts`. Both use WAL. Documents live in git; operational state lives in SQLite.
 

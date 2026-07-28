@@ -12,6 +12,7 @@ import type { Command } from 'commander';
 import { color, padRight, truncate } from '../lib/term-format.js';
 import { cardBadges } from '../lib/v5/card-render.js';
 import { openDb } from '../lib/v5/genie-db.js';
+import { autoSyncBeforeCommand } from '../lib/v5/roadmap-sync.js';
 import {
   type BoardRow,
   DEFAULT_LIFECYCLE_LANES,
@@ -317,6 +318,10 @@ export function registerV5BoardCommands(v5: Command): void {
     .option('--wish <slug>', 'Scope to a wish slug')
     .option('--json', 'Output as JSON')
     .action((opts: BoardOptions) => handleBoard(opts));
+
+  // roadmap.json is canonical: reconcile before rendering so a freshly pulled
+  // snapshot (or fresh clone) materializes into genie.db first (fail-open).
+  board.hook('preAction', () => autoSyncBeforeCommand());
 
   board
     .command('create <name>')

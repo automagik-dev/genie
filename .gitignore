@@ -72,6 +72,9 @@ yarn-error.log*
 .genie/genie.db-wal
 .genie/genie.db-shm
 
+# Machine-local roadmap sync baseline (pairs genie.db with roadmap.json)
+.genie/roadmap-sync
+
 # Per-worktree kickoff prompts emitted by `genie launch`
 .genie/launch/
 

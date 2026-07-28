@@ -11,18 +11,19 @@ if [ -n "$branch" ] && [ "${SKIP_CI_CHECK:-}" != "1" ] && command -v gh >/dev/nu
   fi
 fi
 
-# Refresh the committed board snapshot from genie.db (fail-open: a broken
-# export must not block unrelated commits). Skipped in linked worktrees —
-# resolveRoadmapPath targets the main checkout, whose file this worktree
-# cannot stage — and when no genie.db exists, so a fresh clone never
-# clobbers the committed snapshot with empty state.
+# Reconcile the committed board snapshot (.genie/roadmap.json — canonical) with
+# the local genie.db via three-way sync: `task sync` imports when the snapshot
+# moved, exports when only the local board moved, and refuses to touch anything
+# on divergence — so a stale local db can never clobber the roadmap. Fail-open:
+# sync trouble warns but never blocks a commit. Skipped in linked worktrees
+# (the snapshot lives in the main checkout) and when no genie.db exists yet.
 git_dir=$(git rev-parse --path-format=absolute --git-dir 2>/dev/null)
 git_common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
 if [ "$git_dir" = "$git_common" ] && [ -f .genie/genie.db ] && [ -f src/genie.ts ]; then
-  if bun src/genie.ts task export --write >/dev/null 2>&1; then
-    git add .genie/roadmap.json
+  if bun src/genie.ts task sync; then
+    [ -f .genie/roadmap.json ] && git add .genie/roadmap.json
   else
-    echo "warn: board snapshot refresh failed (bun src/genie.ts task export --write) — committing without it" >&2
+    echo "warn: board snapshot not refreshed (see message above) — committing without it" >&2
   fi
 fi
 

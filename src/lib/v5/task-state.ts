@@ -1468,7 +1468,7 @@ function validateSnapshot(db: Database, snapshot: unknown): StateExport {
 }
 
 /** True when any operational table holds rows (meta alone does not count). */
-function hasOperationalState(db: Database): boolean {
+export function hasOperationalState(db: Database): boolean {
   for (const table of ['boards', 'tasks', 'task_events', 'stage_log', 'wish_groups', 'hire_roster']) {
     const row = db.query(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number };
     if (row.n > 0) return true;
@@ -1563,7 +1563,9 @@ export function importState(db: Database, snapshot: unknown, opts: { replace?: b
   const apply = db.transaction(() => {
     if (hasOperationalState(db)) {
       if (!opts.replace) throw new NonEmptyImportError();
-      // Children before parents so FK cascades never fire mid-wipe.
+      // Children before parents so FK cascades never fire mid-wipe. Meta is
+      // wiped too: replace means EXACT snapshot state, and stale local
+      // wish_sig/backfill markers would misdescribe the imported rows.
       for (const table of [
         'task_events',
         'stage_log',
@@ -1572,6 +1574,7 @@ export function importState(db: Database, snapshot: unknown, opts: { replace?: b
         'hire_roster',
         'wish_groups',
         'boards',
+        'meta',
       ]) {
         db.query(`DELETE FROM ${table}`).run();
       }

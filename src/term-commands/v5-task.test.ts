@@ -382,6 +382,100 @@ describe('task import', () => {
   });
 });
 
+describe('roadmap.json canonical sync', () => {
+  function snapshotOf(dir: string): string {
+    return readFileSync(join(dir, '.genie', 'roadmap.json'), 'utf-8');
+  }
+
+  async function plantSnapshot(dir: string, snapshot: string): Promise<void> {
+    await mkdir(join(dir, '.genie'), { recursive: true });
+    writeFileSync(join(dir, '.genie', 'roadmap.json'), snapshot);
+  }
+
+  test('fresh clone: any task command materializes the board from the snapshot', async () => {
+    const db = openDb({ cwd: repo });
+    createTask(db, { title: 'canonical card' });
+    db.close();
+    const published = await cli(repo, 'sync');
+    expect(published.code).toBe(0);
+    expect(published.stdout).toContain('Published board snapshot');
+
+    const clone = mkdtempSync(join(tmpdir(), 'genie-v5-sync-'));
+    try {
+      git(clone, 'init', '-b', 'main');
+      git(clone, 'commit', '--allow-empty', '-m', 'init');
+      await plantSnapshot(clone, snapshotOf(repo));
+
+      // No genie.db exists in the clone yet: `task list` must auto-import.
+      const r = await cli(clone, 'list');
+      expect(r.code).toBe(0);
+      expect(r.stderr).toBe('');
+      expect(r.stdout).toContain('canonical card');
+    } finally {
+      rmSync(clone, { recursive: true, force: true });
+    }
+  });
+
+  test('pulled snapshot auto-imports; local mutation auto-exports; divergence is refused then resolvable', async () => {
+    // Machine A (repo): publish F1, then F2 with one more card.
+    const db = openDb({ cwd: repo });
+    createTask(db, { title: 'first card' });
+    db.close();
+    await cli(repo, 'sync');
+    const f1 = snapshotOf(repo);
+    const db2 = openDb({ cwd: repo });
+    createTask(db2, { title: 'second card' });
+    db2.close();
+    await cli(repo, 'sync');
+    const f2 = snapshotOf(repo);
+
+    // Machine B (clone): start from F1.
+    const clone = mkdtempSync(join(tmpdir(), 'genie-v5-sync-'));
+    try {
+      git(clone, 'init', '-b', 'main');
+      git(clone, 'commit', '--allow-empty', '-m', 'init');
+      await plantSnapshot(clone, f1);
+      await cli(clone, 'list'); // materialize + baseline
+
+      // Simulated pull: F2 arrives while B's db is untouched → auto-import.
+      writeFileSync(join(clone, '.genie', 'roadmap.json'), f2);
+      const pulled = await cli(clone, 'list');
+      expect(pulled.stderr).toBe('');
+      expect(pulled.stdout).toContain('second card');
+
+      // Local mutation on B → db ahead → sync exports.
+      const created = await cli(clone, 'create', '--title', 'b-only card');
+      expect(created.code).toBe(0);
+      const exported = await cli(clone, 'sync');
+      expect(exported.code).toBe(0);
+      expect(snapshotOf(clone)).toContain('b-only card');
+
+      // Divergence: local db mutates AND a foreign snapshot lands → refuse both ways.
+      await cli(clone, 'create', '--title', 'b-diverging card');
+      writeFileSync(join(clone, '.genie', 'roadmap.json'), f2);
+      const diverged = await cli(clone, 'sync');
+      expect(diverged.code).toBe(1);
+      expect(diverged.stdout).toContain('Nothing was overwritten');
+      expect(snapshotOf(clone)).toBe(f2); // snapshot untouched
+      const listed = await cli(clone, 'list');
+      expect(listed.stderr).toContain('warn:'); // ordinary commands warn…
+      expect(listed.stdout).toContain('b-diverging card'); // …and keep local state
+
+      // Resolution: take the snapshot wholesale.
+      const resolved = await cli(clone, 'import', '--replace');
+      expect(resolved.code).toBe(0);
+      const settled = await cli(clone, 'sync');
+      expect(settled.code).toBe(0);
+      const after = await cli(clone, 'list');
+      expect(after.stderr).toBe('');
+      expect(after.stdout).not.toContain('b-diverging card');
+      expect(after.stdout).toContain('second card');
+    } finally {
+      rmSync(clone, { recursive: true, force: true });
+    }
+  });
+});
+
 // Same subprocess invocation as `cli`, but with extra env vars layered on — used
 // to prove runtime identity flows from the environment into the stored event.
 async function cliEnv(cwd: string, env: Record<string, string>, ...args: string[]): Promise<CliResult> {
