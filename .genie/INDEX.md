@@ -1,5 +1,7 @@
 # Plans Index
 
+> **Board snapshot:** the genie.db task/board state (the roadmap behind `genie board`) is committed as [roadmap.json](roadmap.json) so it survives clones and publishes with the repo. On a fresh machine: `genie task import` rebuilds `.genie/genie.db` from it. After board changes: `genie task export --write`, then commit the refreshed snapshot.
+
 ## Raw
 
 - [control-plane-contract](brainstorms/control-plane-contract/DRAFT.md) — **re-scoped 2026-07-21:** narrow to dispatch routing + work/review policy tiers; agent-sync (#2541) already solved global↔repo skill convergence orthogonally (umbrella G2+G3)

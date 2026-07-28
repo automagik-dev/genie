@@ -77,6 +77,16 @@ export function resolveDbPath(cwd?: string): string {
   return join(resolveRepoRoot(cwd), '.genie', 'genie.db');
 }
 
+/**
+ * Absolute path to the git-tracked roadmap snapshot for the repo containing
+ * `cwd`. Unlike genie.db (gitignored, binary, WAL), this JSON snapshot is
+ * committed so the board survives a clone: refresh with
+ * `genie task export --write`, restore with `genie task import`.
+ */
+export function resolveRoadmapPath(cwd?: string): string {
+  return join(resolveRepoRoot(cwd), '.genie', 'roadmap.json');
+}
+
 // ============================================================================
 // Fail-closed project context (Group A: no outer/cache-root empty-board masquerade)
 // ============================================================================

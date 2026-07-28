@@ -11,14 +11,16 @@
  *   task status <id>
  *   task done <id>
  *   task checkout <id> [--worker <name>]
- *   task export
+ *   task export [--write [file]]
+ *   task import [file] [--replace]
  */
 
 import type { Database } from 'bun:sqlite';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import type { Command } from 'commander';
 import { color, formatTimestamp, padRight, truncate } from '../lib/term-format.js';
 import { livenessBadge } from '../lib/v5/card-render.js';
-import { openDb } from '../lib/v5/genie-db.js';
+import { openDb, resolveRoadmapPath } from '../lib/v5/genie-db.js';
 import {
   type EventAuthor,
   type TaskCardRow,
@@ -37,6 +39,7 @@ import {
   getTask,
   getTaskCard,
   getTaskEvents,
+  importState,
   listTasks,
   moveTask,
   recordHeartbeat,
@@ -415,11 +418,50 @@ function handleHeartbeat(id: string): void {
   });
 }
 
-function handleExport(): void {
+interface ExportOptions {
+  write?: string | boolean;
+}
+
+function handleExport(opts: ExportOptions): void {
   run(() => {
     const db = openDb();
     try {
-      out(JSON.stringify(exportState(db), null, 2));
+      const json = `${JSON.stringify(exportState(db), null, 2)}\n`;
+      if (opts.write) {
+        const target = typeof opts.write === 'string' ? opts.write : resolveRoadmapPath();
+        writeFileSync(target, json);
+        out(`Wrote board snapshot to ${target}.`);
+        return;
+      }
+      process.stdout.write(json);
+    } finally {
+      db.close();
+    }
+  });
+}
+
+interface ImportOptions {
+  replace?: boolean;
+}
+
+function handleImport(file: string | undefined, opts: ImportOptions): void {
+  run(() => {
+    const source = file ?? resolveRoadmapPath();
+    if (!existsSync(source)) {
+      fail(`Snapshot not found: ${source}. Generate one with \`genie task export --write\` and commit it.`);
+    }
+    let snapshot: unknown;
+    try {
+      snapshot = JSON.parse(readFileSync(source, 'utf-8'));
+    } catch (err) {
+      fail(`Snapshot at ${source} is not valid JSON: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    const db = openDb();
+    try {
+      const summary = importState(db, snapshot, { replace: opts.replace });
+      out(
+        `Imported ${summary.tasks} tasks, ${summary.boards} boards, ${summary.dependencies} dependencies, ${summary.events} events, ${summary.wishGroups} wish groups, ${summary.hires} hires from ${source}.`,
+      );
     } finally {
       db.close();
     }
@@ -507,5 +549,12 @@ export function registerV5TaskCommands(v5: Command): void {
   task
     .command('export')
     .description('Emit the complete database state as JSON')
-    .action(() => handleExport());
+    .option('--write [file]', 'Write the snapshot to a file instead of stdout (default: .genie/roadmap.json)')
+    .action((opts: ExportOptions) => handleExport(opts));
+
+  task
+    .command('import [file]')
+    .description('Restore database state from an export snapshot (default: .genie/roadmap.json)')
+    .option('--replace', 'Overwrite existing state instead of refusing a non-empty database')
+    .action((file: string | undefined, opts: ImportOptions) => handleImport(file, opts));
 }
