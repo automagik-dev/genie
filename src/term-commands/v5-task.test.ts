@@ -6,7 +6,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -279,6 +279,106 @@ describe('task export round-trip', () => {
     const rootRow = state.tasks.find((x) => x.id === a.id);
     expect(rootRow?.wish).toBe('demo');
     expect(rootRow?.group_name).toBe('g1');
+  });
+});
+
+describe('task import', () => {
+  /** Seed a representative slice of every table into `repo`'s db. */
+  function seedState(): { rootId: string; depId: string } {
+    const db = openDb({ cwd: repo });
+    const board = createBoard(db, 'main-board');
+    const a = createTask(db, { title: 'root', boardId: board.id, wish: 'demo', group: 'g1' });
+    const b = createTask(db, { title: 'dependent', dependsOn: [a.id] });
+    appendStage(db, a.id, 'planned', 'kickoff');
+    appendTaskEvent(db, a.id, { kind: 'comment', note: 'hello', author: 'tester', authorKind: 'human' });
+    createWishGroups(db, 'demo', [{ name: 'g1' }, { name: 'g2', dependsOn: ['g1'] }]);
+    db.close();
+    return { rootId: a.id, depId: b.id };
+  }
+
+  /** A second throwaway git repo simulating the other machine's fresh clone. */
+  function makeCloneRepo(): string {
+    const clone = mkdtempSync(join(tmpdir(), 'genie-v5-import-'));
+    git(clone, 'init', '-b', 'main');
+    git(clone, 'commit', '--allow-empty', '-m', 'init');
+    return clone;
+  }
+
+  test('export --write then import on a fresh repo is a lossless round-trip', async () => {
+    seedState();
+    const w = await cli(repo, 'export', '--write');
+    expect(w.code).toBe(0);
+    expect(w.stderr).toBe('');
+    const snapshotPath = join(repo, '.genie', 'roadmap.json');
+    expect(w.stdout).toContain(snapshotPath);
+
+    const clone = makeCloneRepo();
+    try {
+      await mkdir(join(clone, '.genie'), { recursive: true });
+      const snapshot = readFileSync(snapshotPath, 'utf-8');
+      writeFileSync(join(clone, '.genie', 'roadmap.json'), snapshot);
+
+      const r = await cli(clone, 'import');
+      expect(r.code).toBe(0);
+      expect(r.stderr).toBe('');
+      expect(r.stdout).toMatch(/Imported 2 tasks, 1 boards, 1 dependencies/);
+
+      // Byte-identical state: re-exporting the clone reproduces the snapshot.
+      const reExport = await cli(clone, 'export');
+      expect(reExport.code).toBe(0);
+      expect(JSON.parse(reExport.stdout)).toEqual(JSON.parse(snapshot));
+    } finally {
+      rmSync(clone, { recursive: true, force: true });
+    }
+  });
+
+  test('refuses a database that already holds state, and --replace overwrites it', async () => {
+    seedState();
+    const w = await cli(repo, 'export', '--write');
+    expect(w.code).toBe(0);
+
+    // Same repo, same db: state exists, plain import must refuse.
+    const refused = await cli(repo, 'import');
+    expect(refused.code).toBe(1);
+    expect(refused.stderr).toContain('--replace');
+
+    // Diverge the local db, then restore the snapshot wholesale.
+    const db = openDb({ cwd: repo });
+    createTask(db, { title: 'local-only drift' });
+    db.close();
+    const replaced = await cli(repo, 'import', '--replace');
+    expect(replaced.code).toBe(0);
+    expect(replaced.stdout).toMatch(/Imported 2 tasks/);
+    const after = openDb({ cwd: repo });
+    const titles = (after.query('SELECT title FROM tasks ORDER BY title').all() as Array<{ title: string }>).map(
+      (t) => t.title,
+    );
+    after.close();
+    expect(titles).toEqual(['dependent', 'root']);
+  });
+
+  test('missing snapshot and schemaVersion mismatch both fail with clear stderr', async () => {
+    const missing = await cli(repo, 'import');
+    expect(missing.code).toBe(1);
+    expect(missing.stderr).toContain('Snapshot not found');
+    expect(missing.stderr).toContain('export --write');
+
+    await mkdir(join(repo, '.genie'), { recursive: true });
+    const empty: StateExport = {
+      schemaVersion: 999,
+      meta: [],
+      boards: [],
+      tasks: [],
+      task_dependencies: [],
+      stage_log: [],
+      task_events: [],
+      wish_groups: [],
+      hire_roster: [],
+    };
+    writeFileSync(join(repo, '.genie', 'roadmap.json'), JSON.stringify(empty));
+    const mismatch = await cli(repo, 'import');
+    expect(mismatch.code).toBe(1);
+    expect(mismatch.stderr).toContain('schemaVersion 999');
   });
 });
 
