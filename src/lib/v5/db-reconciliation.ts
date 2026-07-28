@@ -342,6 +342,57 @@ export interface ReconciliationLockedInput {
   serialize(): Uint8Array;
 }
 
+export interface ReconciliationDatabaseObservation {
+  readonly schemaFingerprint: string;
+  readonly logicalDigest: string;
+}
+
+export interface ReconciliationLockedDatabaseInput {
+  readonly role: ReconciliationInputRole;
+  readonly canonicalPath: string;
+  observe(): ReconciliationDatabaseObservation;
+  serialize(): Uint8Array;
+  restoreFrom(source: Database): ReconciliationDatabaseObservation;
+}
+
+export type ReconciliationLockedOperationEvent = {
+  readonly phase: 'commit';
+  readonly role: ReconciliationInputRole;
+  readonly state: 'before' | 'after';
+};
+
+export interface ReconciliationLockedOperationOptions {
+  readonly busyTimeoutMs?: number;
+  readonly onEvent?: (event: ReconciliationLockedOperationEvent) => void;
+  readonly openDatabase?: ReconciliationApplyOptions['openDatabase'];
+  readonly advisoryFlock?: ReconciliationAdvisoryFlockDependencies;
+  readonly onAdvisoryDescriptorOpened?: (descriptor: number) => void;
+  readonly advisoryUnlock?: (descriptor: number) => number;
+}
+
+export interface ReconciliationLockedOperationResult<T> {
+  readonly value: T;
+  readonly afterCommit?: () => void;
+}
+
+export class ReconciliationLockedOperationError extends Error {
+  readonly failure: ReconciliationApplyFailure;
+  readonly cleanupFailures: readonly ReconciliationApplyFailure[];
+  readonly operationCause: unknown;
+
+  constructor(
+    failure: ReconciliationApplyFailure,
+    cause?: unknown,
+    cleanupFailures: readonly ReconciliationApplyFailure[] = [],
+  ) {
+    super(cause instanceof Error ? cause.message : failure.code);
+    this.name = 'ReconciliationLockedOperationError';
+    this.failure = failure;
+    this.cleanupFailures = cleanupFailures;
+    this.operationCause = cause;
+  }
+}
+
 export interface ReconciliationApplyOptions {
   /** Shared total wait bound for all advisory and SQLite lock acquisition. */
   readonly busyTimeoutMs?: number;
@@ -1597,6 +1648,12 @@ function readDatabaseImage(db: Database): DatabaseImage {
   const schemaFingerprint = digestCanonical(['genie-schema-v1', schema]);
   const logicalDigest = logicalStateDigest(schemaFingerprint, state);
   return { schemaFingerprint, logicalDigest, state };
+}
+
+/** Validate and identify an already-open exact-current reconciliation image. */
+export function inspectReconciliationDatabase(db: Database): ReconciliationDatabaseObservation {
+  const image = readDatabaseImage(db);
+  return { schemaFingerprint: image.schemaFingerprint, logicalDigest: image.logicalDigest };
 }
 
 function loadDatabaseImage(input: PhysicalInput, busyTimeoutMs = READ_BUSY_TIMEOUT_MS): DatabaseImage {
@@ -2868,6 +2925,41 @@ function applyTargetChanges(db: Database, changes: ReconciliationTargetChanges):
   applyMeta(db, changes.meta);
 }
 
+function completeStateChanges(state: LogicalState): ReconciliationTargetChanges {
+  return {
+    boards: [...state.boards.values()],
+    tasks: [...state.tasks.values()],
+    wishGroups: [...state.wishGroups.values()],
+    hireRoster: [...state.hireRoster.values()],
+    meta: [...state.meta.values()],
+    taskDependencies: [...state.taskDependencies.values()],
+    stageLog: [...state.stageLog.values()].map(({ value, count }) => ({ value, count })),
+    taskEvents: [...state.taskEvents.values()].map(({ value, count }) => ({ value, count })),
+  };
+}
+
+function replaceLogicalState(db: Database, source: DatabaseImage): DatabaseImage {
+  db.exec(`
+    DELETE FROM task_dependencies;
+    DELETE FROM stage_log;
+    DELETE FROM task_events;
+    DELETE FROM hire_roster;
+    DELETE FROM wish_groups;
+    DELETE FROM tasks;
+    DELETE FROM boards;
+    DELETE FROM meta;
+  `);
+  applyTargetChanges(db, completeStateChanges(source.state));
+  const restored = readDatabaseImage(db);
+  if (restored.schemaFingerprint !== source.schemaFingerprint || restored.logicalDigest !== source.logicalDigest) {
+    throw new ReconciliationError(
+      'integrity-failed',
+      'A logical snapshot restore did not reproduce its validated image.',
+    );
+  }
+  return restored;
+}
+
 function runPostimageCheck(
   phase: 'foreign-key-check' | 'integrity-check' | 'logical-postimage-check',
   role: ReconciliationTargetRole,
@@ -3203,4 +3295,133 @@ export function applyDatabaseReconciliation(
   }
   const classified = classifyApplyStatus(plan, targets, failure);
   return makeApplyReport(plan, classified.status, classified.converged, targets, failure, cleanupFailures);
+}
+
+function lockedOperationInputs(
+  requested: readonly { readonly planned: ReconciliationPlanInput }[],
+  locked: readonly LockedDatabase[],
+): readonly ReconciliationLockedDatabaseInput[] {
+  return requested.map(({ planned }) => {
+    const item = lockedDatabaseForRole(locked, planned.role);
+    const guarded = <T>(operation: () => T): T => {
+      requireDatabaseHandleMatchesPath(item.db, planned.role);
+      revalidateApplyInput(item.input, planned.role);
+      requireDatabaseHandleMatchesPath(item.db, planned.role);
+      const value = operation();
+      requireDatabaseHandleMatchesPath(item.db, planned.role);
+      revalidateApplyInput(item.input, planned.role);
+      requireDatabaseHandleMatchesPath(item.db, planned.role);
+      return value;
+    };
+    return Object.freeze({
+      role: planned.role,
+      canonicalPath: planned.canonicalPath,
+      observe: () =>
+        guarded(() => {
+          const image = readDatabaseImage(item.db);
+          return { schemaFingerprint: image.schemaFingerprint, logicalDigest: image.logicalDigest };
+        }),
+      serialize: () => guarded(() => new Uint8Array(item.db.serialize())),
+      restoreFrom: (source: Database) =>
+        guarded(() => {
+          const restored = replaceLogicalState(item.db, readDatabaseImage(source));
+          return { schemaFingerprint: restored.schemaFingerprint, logicalDigest: restored.logicalDigest };
+        }),
+    });
+  });
+}
+
+function emitLockedOperationEvent(
+  options: ReconciliationLockedOperationOptions,
+  event: ReconciliationLockedOperationEvent,
+): void {
+  try {
+    options.onEvent?.(event);
+  } catch (caught) {
+    throw new ApplyBoundaryError({ code: 'commit-failed', phase: 'commit', role: event.role }, caught);
+  }
+}
+
+/**
+ * Run a bounded operation while both reconciliation inputs are held by the
+ * same canonical advisory and SQLite write-lock contract as normal apply.
+ *
+ * The callback may restore logical contents only through the provided live
+ * handles. Its optional afterCommit callback runs while advisory locks remain
+ * held, after every SQLite transaction committed, which is the safe boundary
+ * for durable snapshot-state transitions.
+ */
+export function withLockedReconciliationDatabases<T>(
+  request: ReconciliationRequest,
+  operation: (inputs: readonly ReconciliationLockedDatabaseInput[]) => ReconciliationLockedOperationResult<T>,
+  options: ReconciliationLockedOperationOptions = {},
+): T {
+  let advisoryLocks: AdvisoryLock[] = [];
+  let locked: LockedDatabase[] = [];
+  const cleanupFailures: ReconciliationApplyFailure[] = [];
+  const lockOptions: ReconciliationApplyOptions = {
+    busyTimeoutMs: options.busyTimeoutMs,
+    openDatabase: options.openDatabase,
+    advisoryFlock: options.advisoryFlock,
+    onAdvisoryDescriptorOpened: options.onAdvisoryDescriptorOpened,
+    advisoryUnlock: options.advisoryUnlock,
+  };
+  try {
+    const timeoutMs = validateBusyTimeout(options.busyTimeoutMs);
+    const roles: readonly [ReconciliationInputRole, ReconciliationInputRole] =
+      request.mode === 'bidirectional' ? ['left', 'right'] : ['source', 'destination'];
+    const paths: readonly [string, string] =
+      request.mode === 'bidirectional'
+        ? [request.leftPath, request.rightPath]
+        : [request.sourcePath, request.destinationPath];
+    const requested = paths.map((path, index) => {
+      const physical = resolvePhysicalInput(path);
+      return {
+        planned: {
+          role: roles[index],
+          canonicalPath: physical.canonicalPath,
+          logicalDigest: '',
+        },
+        physical,
+      };
+    });
+    if (samePhysicalInput(requested[0].physical, requested[1].physical)) {
+      throw new ApplyBoundaryError({ code: 'invalid-plan', phase: 'plan-validation' });
+    }
+    const deadline = Date.now() + timeoutMs;
+    advisoryLocks = acquirePlannedAdvisoryLocks(requested, deadline, lockOptions);
+    locked = openLockedDatabases(requested, deadline, lockOptions);
+    const inputs = lockedOperationInputs(requested, locked);
+    const initial = inputs.map((input) => input.observe());
+    if (initial[0].schemaFingerprint !== initial[1].schemaFingerprint) unsupportedSchema();
+    const result = operation(inputs);
+    const final = inputs.map((input) => input.observe());
+    if (final.some((image) => image.schemaFingerprint !== initial[0].schemaFingerprint)) unsupportedSchema();
+    for (const item of locked) {
+      const role = item.roles[0];
+      emitLockedOperationEvent(options, { phase: 'commit', role, state: 'before' });
+      requireDatabaseHandleMatchesPath(item.db, role);
+      revalidateApplyInput(item.input, role);
+      requireDatabaseHandleMatchesPath(item.db, role);
+      item.db.exec('COMMIT');
+      item.transactionOpen = false;
+      emitLockedOperationEvent(options, { phase: 'commit', role, state: 'after' });
+    }
+    result.afterCommit?.();
+    return result.value;
+  } catch (caught) {
+    if (caught instanceof ApplyBoundaryError) cleanupFailures.push(...caught.cleanupFailures);
+    if (!rollbackOpenTransactions(locked)) {
+      cleanupFailures.push({ code: 'rollback-failed', phase: 'rollback' });
+    }
+    const failure = failureFrom(caught, { code: 'apply-failed', phase: 'mutation' });
+    throw new ReconciliationLockedOperationError(failure, caught, cleanupFailures);
+  } finally {
+    if (!closeLockedDatabases(locked)) {
+      cleanupFailures.push({ code: 'close-failed', phase: 'cleanup' });
+    }
+    if (!releaseAdvisoryLocks(advisoryLocks, lockOptions)) {
+      cleanupFailures.push({ code: 'advisory-lock-release-failed', phase: 'cleanup' });
+    }
+  }
 }
