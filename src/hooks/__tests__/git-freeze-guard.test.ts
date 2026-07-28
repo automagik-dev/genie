@@ -19,6 +19,7 @@ const TOPOLOGY: Record<string, string> = {
   [LANE]: LANE,
   [`${LANE}/src`]: LANE,
   '/other': '/other',
+  '/other2': '/other2',
 };
 
 interface CallLog {
@@ -264,6 +265,51 @@ describe('git-freeze-guard', () => {
     test('allows the guarded-cd idiom into an owned worktree', async () => {
       expect(await run(subagent(`cd ${LANE} || exit 1; git switch dev`))).toBeUndefined();
     });
+  });
+
+  // =========================================================================
+  // A cd can fail, so every directory it could leave the shell in is checked
+  // =========================================================================
+
+  // Regression: PR #2726 review (CodeRabbit 3667949005). Tracking only the
+  // `cd` target assumed the `cd` worked. When it doesn't, the shell stays put
+  // and the git call lands in the shared checkout — the exact case the freeze
+  // exists for. Verified against bash: `cd /nonexistent || true && pwd` prints
+  // the *original* directory, because `||` consumes the failure and `&&` then
+  // proceeds. So the walk keeps every reachable directory and denies if any of
+  // them is the shared root.
+  describe('denies when the shared checkout is still reachable after a cd', () => {
+    const blocked = [
+      // The reported bypass: `||` swallows the failure, `&&` carries on.
+      'cd /definitely-missing || true && git reset --hard',
+      // Neither branch of the `||` rules the shared checkout out.
+      'cd /other || cd /other2; git switch dev',
+      // `;` does not depend on the cd at all, so a failed cd reaches the git.
+      'cd /definitely-missing; git switch dev',
+      // `&&` suspends the failure branch; the later `;` resumes it.
+      `cd ${LANE} && echo ok ; git switch dev`,
+    ];
+
+    for (const cmd of blocked) {
+      test(`denies: ${cmd}`, async () => {
+        expect((await run(subagent(cmd)))?.decision).toBe('deny');
+      });
+    }
+
+    // The counterweights. `&&` genuinely rules the shared checkout out — the
+    // git call cannot run unless the cd succeeded — and a terminator ends the
+    // failure branch outright. Both must stay allowed or the guard is unusable.
+    const allowed = [
+      `cd ${LANE} && git switch dev`,
+      `cd ${LANE} || exit 1; git switch dev`,
+      `cd ${LANE} || return 1; git switch dev`,
+    ];
+
+    for (const cmd of allowed) {
+      test(`allows: ${cmd}`, async () => {
+        expect(await run(subagent(cmd))).toBeUndefined();
+      });
+    }
   });
 
   // =========================================================================

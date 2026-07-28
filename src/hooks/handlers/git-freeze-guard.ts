@@ -18,7 +18,7 @@
  *
  * ## Fail-open, deliberately
  *
- * Every ambiguity resolves to *allow*, not deny:
+ * Ambiguity about *what the command is* resolves to allow:
  *   - no `agent_id` on the payload (main thread, Codex, an older/newer client
  *     that drops the field) → allow;
  *   - a `cd` / `git -C` target that isn't a literal path (variable, glob,
@@ -35,6 +35,15 @@
  *     through the same walk. That is a knowing gap, and a cheap one: the freeze
  *     exists to catch the accidental `git switch dev`, and nobody types the
  *     substituted form by accident.
+ *
+ * Ambiguity about *where a known frozen command runs* is the one exception, and
+ * it resolves to deny. A `cd` can fail, and when it does the git call after it
+ * lands in the shared checkout — which is exactly the case the freeze exists
+ * for. So {@link findFrozenInvocations} keeps every directory the shell could
+ * be in and denies if any of them is the shared root. The cost is that
+ * `cd <dir>; git switch x` is denied where `cd <dir> && git switch x` is
+ * allowed; that is the same distinction bash itself draws, and `&&` is the
+ * correct way to write it.
  *
  * This is the opposite of {@link branchGuard}'s fail-closed posture, and it is
  * the point. The freeze has no server-side backstop the way branch protection
@@ -295,76 +304,135 @@ function isSubshellEdge(separator: string | undefined): boolean {
   return separator !== undefined && SUBSHELL_SEPARATORS.has(separator);
 }
 
-/** How far a `cd`/`pushd` statement reaches, given the operators around it. */
-interface DirectoryChange {
-  /** The scope's directory afterwards — unchanged when the `cd` ran in a subshell. */
-  scope: string | null;
-  /** Pre-`cd` directory the `||` else-branch runs in, when one follows. */
-  elseDir?: string | null;
-}
-
 /**
- * Decide what a `cd <target>` does to the directories the walk tracks.
- *
- * Beside `|` or `&` it does nothing: that `cd` is a separate process, and the
- * parent shell — where the later statements run — never moves. Before `||` it
- * applies, but the else-branch it guards runs only on failure, so that one
- * statement belongs to the directory the shell was in beforehand.
+ * Directories a statement may be running in. More than one means the walk could
+ * not tell the shell's branches apart, and `null` is one it could not resolve.
  */
-function applyDirectoryChange(
-  target: string | undefined,
-  dir: string | null,
-  before: string | undefined,
-  after: string | undefined,
-): DirectoryChange {
-  if (isSubshellEdge(before) || isSubshellEdge(after)) return { scope: dir };
-  return { scope: joinPath(dir, target), elseDir: after === '||' ? dir : undefined };
+type DirSet = Set<string | null>;
+
+function union(a: DirSet, b: DirSet): DirSet {
+  return new Set([...a, ...b]);
+}
+
+/** One shell scope's reachable directories — a `(…)` group pushes a fresh one. */
+interface Scope {
+  /** Where the next statement can run. */
+  live: DirSet;
+  /**
+   * Directories a short-circuit suspended rather than ruled out. `a && b` skips
+   * `b` when `a` fails, but a later `;` resumes with the shell exactly where the
+   * failure left it, so those directories rejoin at the next unconditional
+   * boundary instead of being dropped.
+   */
+  pending: DirSet;
+}
+
+/** Where a statement leaves the shell, split by whether it succeeded. */
+interface Outcome {
+  ok: DirSet;
+  failed: DirSet;
 }
 
 /**
- * Walk the statements of a compound command left to right, tracking `cd` as it
- * goes, and return every frozen git invocation found.
+ * Commands that abandon the path they are on, so nothing downstream inherits
+ * their directories. This is what keeps `cd <worktree> || exit 1` from leaving
+ * the pre-`cd` directory reachable.
+ */
+const PATH_TERMINATORS = new Set(['exit', 'return']);
+
+/**
+ * Where one statement leaves the shell.
  *
- * Directories are a stack rather than a single value because `(` opens a scope
- * the shell discards at the matching `)`: a `cd` inside a subshell applies to
- * the statements within it and to nothing after it.
+ * `movesParent` is false for a statement beside `|` or `&`: it runs in its own
+ * process, so neither its `cd` nor its `exit` reaches the parent shell.
+ */
+function statementOutcome(tokens: string[], live: DirSet, movesParent: boolean): Outcome {
+  const verb = tokens[0];
+  if (!movesParent) return { ok: new Set(live), failed: new Set(live) };
+  if (verb !== undefined && PATH_TERMINATORS.has(verb)) return { ok: new Set(), failed: new Set() };
+  if (verb === 'cd' || verb === 'pushd') {
+    const moved: DirSet = new Set();
+    for (const dir of live) moved.add(joinPath(dir, tokens[1]));
+    // A `cd` that fails leaves the shell where it was, and nothing here can
+    // prove it succeeded — so both directories stay reachable.
+    return { ok: moved, failed: new Set(live) };
+  }
+  if (verb === 'popd') return { ok: new Set([null]), failed: new Set(live) };
+  return { ok: new Set(live), failed: new Set(live) };
+}
+
+/** Fold a statement's outcome into its scope according to the operator that follows. */
+function advance(scope: Scope, outcome: Outcome, after: string | undefined): void {
+  if (after === '&&') {
+    scope.live = outcome.ok;
+    scope.pending = union(scope.pending, outcome.failed);
+    return;
+  }
+  if (after === '||') {
+    scope.live = outcome.failed;
+    scope.pending = union(scope.pending, outcome.ok);
+    return;
+  }
+  // `;`, a newline, `|`, `&`, or end of command: the next statement runs however
+  // this one turned out, so every suspended branch rejoins here.
+  scope.live = union(union(outcome.ok, outcome.failed), scope.pending);
+  scope.pending = new Set();
+}
+
+/** Record every frozen invocation this statement could be, one per reachable directory. */
+function collectFrozen(tokens: string[], live: DirSet, found: GitInvocation[]): void {
+  if (tokens[0] !== 'git') return;
+  for (const dir of live) {
+    const invocation = parseGitInvocation(tokens, dir);
+    if (invocation && isFrozenInvocation(invocation)) found.push(invocation);
+  }
+}
+
+/**
+ * Walk the statements of a compound command left to right, tracking where the
+ * shell can be, and return every frozen git invocation found.
  *
- * A `cd`'s reach also depends on the separators around it, so the walk reads
- * the operators as well as the statements:
- *   - beside `|` or `&` the `cd` is its own process and moves nothing the later
- *     statements can see (`cd /other | git switch dev` runs git in the *shared*
- *     checkout, and treating the `cd` as effective let it through);
- *   - before `||` the `cd` does apply, but the statement guarded by the `||`
- *     runs only when the `cd` *failed*, so that one statement is judged against
- *     the directory the shell was in beforehand. Both halves matter: without
- *     the first, `cd /missing || git rebase origin/dev` slips past; without the
- *     second, the routine `cd <worktree> || exit 1; git switch dev` is denied.
+ * Two things make "where the shell is" a *set* rather than a single directory.
+ *
+ * A `(` opens a scope the shell discards at the matching `)`, so directories
+ * are a stack: a `cd` inside a subshell applies within it and to nothing after.
+ *
+ * And a `cd` can fail. Nothing here can prove one succeeded, so both the target
+ * and the directory the shell came from stay reachable until the branch that
+ * kept the old one provably ends — which is what `exit`/`return` do and what
+ * `&&`/`||` only *look* like they do. The freeze then denies if **any**
+ * reachable directory is the shared checkout, failing closed on the ambiguity:
+ * in `cd /nowhere || true && git reset --hard` the `cd` fails, `true` succeeds,
+ * `&&` proceeds, and bash resets the shared checkout. Tracking only the target
+ * let that through, and `cd /nowhere; git switch dev` with it.
+ *
+ * The operators are read as well as the statements, because they decide which
+ * branch reaches the next statement: `&&` forwards only success (suspending the
+ * failure branch until a later `;` resumes it), `||` forwards only failure, and
+ * `|`/`&` put the statement in its own process so its `cd` moves nothing the
+ * parent shell can see.
  */
 function findFrozenInvocations(command: string, cwd: string | null): GitInvocation[] {
   const masked = maskOpaqueRegions(maskQuotedRegions(command));
   if (!/\bgit\b/.test(masked)) return [];
   // Capturing separators, so even indices are statements and odd are operators.
   const parts = masked.split(SEGMENT_SEPARATORS);
-  const scopes: (string | null)[] = [cwd];
+  const scopes: Scope[] = [{ live: new Set([cwd]), pending: new Set() }];
   const found: GitInvocation[] = [];
-  /** One-shot override: the pre-`cd` directory an `||` else-branch runs in. */
-  let elseDir: string | null | undefined;
   for (let p = 0; p < parts.length; p += 2) {
     const { tokens, opened, closed } = parseStatement(parts[p]);
-    for (let n = 0; n < opened; n += 1) scopes.push(scopes[scopes.length - 1]);
-    const dir = elseDir === undefined ? scopes[scopes.length - 1] : elseDir;
-    elseDir = undefined;
-    if (tokens[0] === 'cd' || tokens[0] === 'pushd') {
-      const change = applyDirectoryChange(tokens[1], dir, parts[p - 1], parts[p + 1]);
-      scopes[scopes.length - 1] = change.scope;
-      elseDir = change.elseDir;
-    } else if (tokens[0] === 'popd') {
-      scopes[scopes.length - 1] = null;
-    } else {
-      const invocation = parseGitInvocation(tokens, dir);
-      if (invocation && isFrozenInvocation(invocation)) found.push(invocation);
+    for (let n = 0; n < opened; n += 1) {
+      scopes.push({ live: new Set(scopes[scopes.length - 1].live), pending: new Set() });
     }
+    const inner = scopes[scopes.length - 1];
+    const movesParent = !isSubshellEdge(parts[p - 1]) && !isSubshellEdge(parts[p + 1]);
+    collectFrozen(tokens, inner.live, found);
+    const outcome = statementOutcome(tokens, inner.live, movesParent);
     for (let n = 0; n < closed && scopes.length > 1; n += 1) scopes.pop();
+    const scope = scopes[scopes.length - 1];
+    // A statement that closed its subshell leaves the enclosing shell untouched.
+    const reaching = scope === inner ? outcome : { ok: new Set(scope.live), failed: new Set(scope.live) };
+    advance(scope, reaching, parts[p + 1]);
   }
   return found;
 }
