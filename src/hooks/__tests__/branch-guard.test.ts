@@ -432,6 +432,20 @@ describe('branch-guard', () => {
       expect(result!.decision).toBe('deny');
     });
 
+    // Regression: PR #2726 review (CodeRabbit 3667949010). An escaped `;` is an
+    // argument, not a separator — bash runs one `git checkout` whose args
+    // include a literal `;`, and never reaches a commit. The chained-mutation
+    // pattern must not read it as `checkout main && commit`.
+    test('an escaped separator is not a command chain', async () => {
+      expect(await branchGuard(makePayload('git checkout main \\; git commit -m x'))).toBeUndefined();
+    });
+
+    test('but a real separator still blocks the same chain', async () => {
+      const result = await branchGuard(makePayload('git checkout main ; git commit -m x'));
+      expect(result).toBeDefined();
+      expect(result!.decision).toBe('deny');
+    });
+
     test('still blocks real gh pr merge targeting main (quoted args do not shield the actual command)', async () => {
       const result = await branchGuard(makePayload('gh pr merge 123 --squash --body "some note"'), mockDeps('main'));
       expect(result).toBeDefined();
