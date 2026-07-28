@@ -104,7 +104,8 @@ model and effort in runtime session/agent configuration, never skill frontmatter
 - [x] Shared runtime/core behavior, dependency/lockfile, generated executable/runtime artifact, config/schema,
   CI/release, broad refactor, or uncertain impact explicitly widen to `bun run check` and any affected build/e2e gate;
   deterministic documentation/plugin mirrors may use focused generator, parity, and content checks.
-- [x] Review rejects both under-validation and unexplained full-suite validation.
+- [x] Review rejects under-validation and zero validation; a passing full suite missing only its scope rationale is at
+  most a MEDIUM gap, never by itself a blocker.
 - [x] Canonical and mirrored skills pass their focused structural/parity checks.
 
 **Validation:**

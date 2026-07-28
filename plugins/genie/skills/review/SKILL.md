@@ -29,8 +29,9 @@ When spawned as a reviewer subagent, your dispatch prompt carries the curated sc
    focused behavior tests and add type, lint, or build checks for boundaries reached. Shared runtime/core behavior,
    dependency or lockfile, generated executable or runtime artifact, configuration or schema, CI or release,
    broad-refactor, or uncertain-impact changes require the repository full gate plus affected build or end-to-end checks.
-   Reject zero validation, under-validation, and unexplained full-suite validation. Preserve required aggregate
-   integration and release gates.
+   Reject zero validation and under-validation. A passing full-suite run is always valid evidence; a missing scope
+   rationale is at most a MEDIUM gap, never by itself grounds for FIX-FIRST. A repository-documented gate is by itself
+   sufficient justification for its scope. Preserve required aggregate integration and release gates.
 5. **Tag gaps** — classify every unmet criterion by severity.
 6. **Return verdict** — SHIP, FIX-FIRST, or BLOCKED, with exact fixes (files, commands, what to change) for each gap.
 
@@ -78,7 +79,7 @@ If an ordinary reviewer and the `final-gate` disagree, log an appeal with the wi
 ### Execution Review (after `work`)
 - [ ] All acceptance criteria met with evidence
 - [ ] Validation commands run and passing; their recorded scope matches the actual diff's risk and reach
-- [ ] No under-validation, zero validation, or unexplained full-suite validation
+- [ ] No under-validation or zero validation; full-suite runs carry a scope rationale (a missing rationale is at most MEDIUM)
 - [ ] No scope creep — only wish-scoped changes
 - [ ] Work is auditable — commands and outcomes captured
 - [ ] Quality pass: security, maintainability, correctness
