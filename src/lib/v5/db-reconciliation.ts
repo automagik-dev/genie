@@ -243,6 +243,7 @@ interface PhysicalInput {
   readonly canonicalPath: string;
   readonly device: string;
   readonly inode: string;
+  readonly hasSidecars: boolean;
 }
 
 interface ColumnFingerprint {
@@ -540,11 +541,17 @@ function resolvePhysicalInput(path: string): PhysicalInput {
     const stats = statSync(canonicalPath);
     if (!stats.isFile()) throw new Error('not a regular file');
     const walPath = `${canonicalPath}-wal`;
+    const hasWal = existsSync(walPath);
     let walBytes = 0;
-    if (existsSync(walPath)) {
+    if (hasWal) {
       const walStats = statSync(walPath);
       if (!walStats.isFile()) throw new Error('WAL is not a regular file');
       walBytes = walStats.size;
+    }
+    const shmPath = `${canonicalPath}-shm`;
+    const hasShm = existsSync(shmPath);
+    if (hasShm && !statSync(shmPath).isFile()) {
+      throw new Error('SHM is not a regular file');
     }
     const logicalBytes = stats.size + walBytes;
     if (logicalBytes > MAX_DATABASE_BYTES) {
@@ -555,6 +562,7 @@ function resolvePhysicalInput(path: string): PhysicalInput {
       canonicalPath,
       device: String(stats.dev),
       inode: String(stats.ino),
+      hasSidecars: hasWal || hasShm,
     };
   } catch (caught) {
     if (caught instanceof ReconciliationError) throw caught;
@@ -579,7 +587,12 @@ function revalidatePhysicalInput(input: PhysicalInput): void {
 }
 
 function samePhysicalInput(left: PhysicalInput, right: PhysicalInput): boolean {
-  return left.canonicalPath === right.canonicalPath || (left.device === right.device && left.inode === right.inode);
+  if (left.canonicalPath === right.canonicalPath) return true;
+  if (left.device !== right.device || left.inode !== right.inode) return false;
+  if (left.hasSidecars || right.hasSidecars) {
+    throw error('invalid-data', 'Hardlink aliases with path-specific SQLite sidecars are ambiguous.');
+  }
+  return true;
 }
 
 function readInventory(db: Database): Array<{ type: string; name: string; tableName: string; sql: string | null }> {
@@ -1652,6 +1665,29 @@ function validatePlannedTargetIntegrity(
   }
 }
 
+function sortConflicts(conflicts: readonly ReconciliationConflict[]): ReconciliationConflict[] {
+  return conflicts
+    .map((conflict) => ({ conflict, key: JSON.stringify(conflict) }))
+    .sort((leftConflict, rightConflict) => compareCanonical(leftConflict.key, rightConflict.key))
+    .map((item) => item.conflict);
+}
+
+function validateSameDatabase(
+  mode: ReconciliationMode,
+  state: LogicalState,
+): { left: LogicalState; right: LogicalState; conflicts: ReconciliationConflict[] } {
+  const conflicts: ReconciliationConflict[] = [];
+  const firstRole: ReconciliationInputRole = mode === 'bidirectional' ? 'left' : 'source';
+  const secondRole: ReconciliationInputRole = mode === 'bidirectional' ? 'right' : 'destination';
+  validateExistingMarker(state, firstRole, conflicts);
+  validateExistingMarker(state, secondRole, conflicts);
+  return {
+    left: cloneState(state),
+    right: cloneState(state),
+    conflicts: sortConflicts(conflicts),
+  };
+}
+
 function reconcileStates(
   mode: ReconciliationMode,
   leftInput: LogicalState,
@@ -1688,11 +1724,7 @@ function reconcileStates(
     if (mode === 'bidirectional') validatePlannedTargetIntegrity(left, 'left', conflicts);
     validatePlannedTargetIntegrity(right, mode === 'bidirectional' ? 'right' : 'destination', conflicts);
   }
-  const sortedConflicts = conflicts
-    .map((conflict) => ({ conflict, key: JSON.stringify(conflict) }))
-    .sort((leftConflict, rightConflict) => compareCanonical(leftConflict.key, rightConflict.key))
-    .map((item) => item.conflict);
-  return { left, right, conflicts: sortedConflicts };
+  return { left, right, conflicts: sortConflicts(conflicts) };
 }
 
 function changedRows<T>(
@@ -1867,7 +1899,7 @@ export function planDatabaseReconciliation(request: ReconciliationRequest): Reco
   if (firstImage.schemaFingerprint !== secondImage.schemaFingerprint) unsupportedSchema();
 
   const reconciled = sameDatabase
-    ? { left: cloneState(firstImage.state), right: cloneState(firstImage.state), conflicts: [] }
+    ? validateSameDatabase(mode, firstImage.state)
     : reconcileStates(mode, firstImage.state, secondImage.state);
   const inputs: ReconciliationPlanInput[] = [
     {

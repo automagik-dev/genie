@@ -1,6 +1,15 @@
 import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { linkSync, mkdtempSync, readFileSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  linkSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  truncateSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -968,15 +977,16 @@ describe('stage_log_backfill_v1 marker semantics', () => {
 
 describe('same-file, idempotency, and bounded failures', () => {
   test('symlink and hardlink aliases are true same-database no-ops in both modes', () => {
-    const path = currentDb('one', '000100');
     for (const aliasKind of ['symlink', 'hardlink'] as const) {
-      const alias = join(fixtureRoot, `${aliasKind}.db`);
-      if (aliasKind === 'symlink') symlinkSync(path, alias);
-      else linkSync(path, alias);
-      for (const request of [
-        bidirectional(path, alias),
-        { mode: 'directional', sourcePath: alias, destinationPath: path } as const,
-      ]) {
+      for (const mode of ['bidirectional', 'directional'] as const) {
+        const path = currentDb(`${aliasKind}-${mode}`, '000100');
+        const alias = join(fixtureRoot, `${aliasKind}-${mode}-alias.db`);
+        if (aliasKind === 'symlink') symlinkSync(path, alias);
+        else linkSync(path, alias);
+        const request =
+          mode === 'bidirectional'
+            ? bidirectional(path, alias)
+            : ({ mode, sourcePath: alias, destinationPath: path } as const);
         const plan = planDatabaseReconciliation(request);
         expect(plan.status).toBe('same-database');
         expect(plan.sameDatabase).toBe(true);
@@ -984,6 +994,77 @@ describe('same-file, idempotency, and bounded failures', () => {
         expect(plan.inputs[0].logicalDigest).toBe(plan.inputs[1].logicalDigest);
         expect(plan.targets.every((item) => !Object.values(item.changes).some((rows) => rows.length > 0))).toBe(true);
       }
+    }
+  });
+
+  test.each(
+    (['invalid-marker', 'marker-invariant-failed'] as const).flatMap((failure) =>
+      (['symlink', 'hardlink'] as const).flatMap((aliasKind) =>
+        (['bidirectional', 'directional'] as const).map((mode) => [failure, aliasKind, mode] as const),
+      ),
+    ),
+  )('same-physical %s %s aliases validate markers in %s mode', (failure, aliasKind, mode) => {
+    const path = currentDb(`${failure}-${aliasKind}-${mode}`, failure === 'invalid-marker' ? 'not-decimal' : '100');
+    if (failure === 'marker-invariant-failed') {
+      mutate(path, (db) => {
+        insertTask(db, { id: 't' });
+        insertStage(db, 1, { taskId: 't', stage: 'report', note: 'missing event', createdAt: 1 });
+      });
+    }
+    const alias = join(fixtureRoot, `${failure}-${aliasKind}-${mode}-alias.db`);
+    if (aliasKind === 'symlink') symlinkSync(path, alias);
+    else linkSync(path, alias);
+    const request =
+      mode === 'bidirectional'
+        ? bidirectional(path, alias)
+        : ({ mode, sourcePath: alias, destinationPath: path } as const);
+
+    const plan = planDatabaseReconciliation(request);
+
+    expect(plan.status).toBe('conflict');
+    expect(plan.sameDatabase).toBe(true);
+    expect(plan.report.status).toBe('conflict');
+    expect(plan.conflicts).toHaveLength(2);
+    expect(plan.conflicts.every((conflict) => conflict.reason === failure)).toBe(true);
+    expect(plan.targets.every((item) => !Object.values(item.changes).some((rows) => rows.length > 0))).toBe(true);
+  });
+
+  test('hardlink aliases with a committed path-specific WAL are rejected independent of order and mode', () => {
+    const path = currentDb('wal-alias');
+    const alias = join(fixtureRoot, 'wal-hardlink.db');
+    linkSync(path, alias);
+    const writer = new Database(path);
+    try {
+      writer.exec('PRAGMA journal_mode = WAL');
+      writer.exec('PRAGMA wal_autocheckpoint = 0');
+      writer.exec('BEGIN IMMEDIATE');
+      insertBoard(writer, { id: 'wal-only', name: 'committed in WAL' });
+      writer.exec('COMMIT');
+      expect(existsSync(`${path}-wal`)).toBe(true);
+      expect(existsSync(`${path}-shm`)).toBe(true);
+
+      const bidirectionalForward = dryRunDatabaseReconciliation(bidirectional(path, alias));
+      const bidirectionalReverse = dryRunDatabaseReconciliation(bidirectional(alias, path));
+      const directionalForward = dryRunDatabaseReconciliation({
+        mode: 'directional',
+        sourcePath: path,
+        destinationPath: alias,
+      });
+      const directionalReverse = dryRunDatabaseReconciliation({
+        mode: 'directional',
+        sourcePath: alias,
+        destinationPath: path,
+      });
+
+      expect(bidirectionalForward).toEqual(bidirectionalReverse);
+      expect(directionalForward).toEqual(directionalReverse);
+      for (const report of [bidirectionalForward, directionalForward]) {
+        expect(report.status).toBe('operational-failure');
+        expect(report.operationalFailure?.code).toBe('invalid-data');
+        expect(report.targets).toEqual([]);
+      }
+    } finally {
+      writer.close();
     }
   });
 
