@@ -39,9 +39,7 @@ on:
     types: [completed]
     branches: [main, dev]
 
-permissions:
-  contents: write          # commit + push version bump + tag
-  actions: write           # dispatch trusted release.yml control on main
+permissions: {}
 
 # RACES: CI completes twice per dev merge (push + pull_request), so separate
 # those event classes and never cancel an in-flight version operation. Within
@@ -58,6 +56,9 @@ jobs:
     name: Auto Version
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 5
+    permissions:
+      contents: write        # commit + push version bump + tag
+      actions: write         # gh workflow run ci.yml at the version-child tag
     outputs:
       release_ready: ${{ steps.commit_and_tag.outputs.release_ready || steps.promoted_tag.outputs.release_ready }}
       version: ${{ steps.commit_and_tag.outputs.version || steps.promoted_tag.outputs.version }}
