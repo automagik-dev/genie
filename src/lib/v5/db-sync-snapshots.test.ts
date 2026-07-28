@@ -24,11 +24,13 @@ import {
 } from './db-reconciliation.js';
 import {
   SnapshotError,
+  type SnapshotPosixDirectoryApi,
   applyDatabaseReconciliationWithSnapshots,
   databaseSyncSnapshotIdentity,
   deserializeSnapshotBytes,
   normalizeSerializedSqliteForDeserialize,
   recoverDatabaseReconciliation,
+  resolveSnapshotPosixDirectory,
   rollbackDatabaseReconciliation,
 } from './db-sync-snapshots.js';
 import { openDb } from './genie-db.js';
@@ -109,6 +111,34 @@ function generationDirectories(root: string): string[] {
     .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.staging-'))
     .map((entry) => join(root, entry.name))
     .sort();
+}
+
+function nativePosixDirectory(): SnapshotPosixDirectoryApi {
+  const api = resolveSnapshotPosixDirectory();
+  expect(api).not.toBeNull();
+  return api as SnapshotPosixDirectoryApi;
+}
+
+function delegatePosix(
+  api: SnapshotPosixDirectoryApi,
+  overrides: Partial<SnapshotPosixDirectoryApi>,
+): SnapshotPosixDirectoryApi {
+  return {
+    openAt: overrides.openAt ?? ((...args) => api.openAt(...args)),
+    mkdirAt: overrides.mkdirAt ?? ((...args) => api.mkdirAt(...args)),
+    renameAt: overrides.renameAt ?? ((...args) => api.renameAt(...args)),
+    unlinkAt: overrides.unlinkAt ?? ((...args) => api.unlinkAt(...args)),
+    list: overrides.list ?? ((...args) => api.list(...args)),
+  };
+}
+
+function descriptorCount(): number {
+  const directory = process.platform === 'darwin' ? '/dev/fd' : '/proc/self/fd';
+  return readdirSync(directory).length;
+}
+
+function privateSnapshotDirectories(): string[] {
+  return readdirSync(tmpdir()).filter((name) => name.startsWith('genie-db-sync-private-'));
 }
 
 function leaveCompleteGeneration(left: string, right: string): { root: string; directory: string } {
@@ -301,6 +331,46 @@ describe('database sync snapshots', () => {
     }
   });
 
+  test('root and ancestor substitution at descriptor-relative creation cannot redirect publication writes', () => {
+    for (const kind of ['root', 'ancestor'] as const) {
+      const left = currentDb(`bound-${kind}-left`);
+      const right = currentDb(`bound-${kind}-right`);
+      insertBoard(right, 'planned');
+      const request = { mode: 'bidirectional' as const, leftPath: left, rightPath: right };
+      const ancestor = join(fixtureRoot, `bound-${kind}-ancestor`);
+      const root = join(ancestor, 'snapshots');
+      const moved = kind === 'root' ? `${root}.owned` : `${ancestor}.owned`;
+      let substituted = false;
+      const native = nativePosixDirectory();
+      const api = delegatePosix(native, {
+        mkdirAt: (descriptor, name, mode) => {
+          if (!substituted && name.startsWith('.staging-')) {
+            substituted = true;
+            if (kind === 'root') {
+              renameSync(root, moved);
+              mkdirSync(root, { mode: 0o700 });
+            } else {
+              renameSync(ancestor, moved);
+              mkdirSync(root, { recursive: true, mode: 0o700 });
+            }
+            writeFileSync(join(root, 'sentinel'), 'replacement');
+          }
+          native.mkdirAt(descriptor, name, mode);
+        },
+      });
+      const report = applyDatabaseReconciliationWithSnapshots(planDatabaseReconciliation(request), {
+        snapshotRoot: root,
+        posixDirectory: { api },
+      });
+      expect(substituted).toBe(true);
+      expect(['rolled-back', 'operational-failure']).toContain(report.status);
+      expect(readFileSync(join(root, 'sentinel'), 'utf8')).toBe('replacement');
+      expect(readdirSync(root)).toEqual(['sentinel']);
+      expect(boardNames(left)).toEqual([]);
+      expect(boardNames(right)).toEqual(['planned']);
+    }
+  });
+
   test('publishes normalized complete payloads in the durable order and finalizes both-post as converged', () => {
     const left = currentDb('publish-left');
     const right = currentDb('publish-right');
@@ -358,6 +428,49 @@ describe('database sync snapshots', () => {
     expect(events).toContain('root-fsync:after');
     expect(events).toContain('state-rewrite-rename:after');
     expect(events).toContain('generation-fsync:after');
+  });
+
+  test('publication staging, generation, and manifest substitution cannot redirect a write', () => {
+    for (const kind of ['staging', 'generation', 'manifest'] as const) {
+      const left = currentDb(`publish-substitute-${kind}-left`);
+      const right = currentDb(`publish-substitute-${kind}-right`);
+      insertBoard(right, 'planned');
+      const request = { mode: 'bidirectional' as const, leftPath: left, rightPath: right };
+      const root = databaseSyncSnapshotIdentity(request).root;
+      const victim = join(fixtureRoot, `publish-substitute-${kind}-victim`);
+      writeFileSync(victim, 'victim');
+      let substituted = false;
+      const report = applyDatabaseReconciliationWithSnapshots(planDatabaseReconciliation(request), {
+        onEvent: (event) => {
+          if (substituted || event.state !== 'before') return;
+          if (kind === 'manifest' && event.phase === 'complete-manifest-write') {
+            const stagingName = readdirSync(root).find((name) => name.startsWith('.staging-')) as string;
+            const manifest = join(root, stagingName, 'manifest.json');
+            renameSync(manifest, `${manifest}.owned`);
+            symlinkSync(victim, manifest);
+            substituted = true;
+          } else if (kind === 'staging' && event.phase === 'generation-rename') {
+            const stagingName = readdirSync(root).find((name) => name.startsWith('.staging-')) as string;
+            const staging = join(root, stagingName);
+            renameSync(staging, `${staging}.owned`);
+            mkdirSync(staging, { mode: 0o700 });
+            writeFileSync(join(staging, 'sentinel'), 'replacement');
+            substituted = true;
+          } else if (kind === 'generation' && event.phase === 'root-fsync') {
+            const generation = generationDirectories(root)[0];
+            renameSync(generation, `${generation}.owned`);
+            mkdirSync(generation, { mode: 0o700 });
+            writeFileSync(join(generation, 'sentinel'), 'replacement');
+            substituted = true;
+          }
+        },
+      });
+      expect(substituted).toBe(true);
+      expect(['rolled-back', 'operational-failure']).toContain(report.status);
+      expect(readFileSync(victim, 'utf8')).toBe('victim');
+      expect(boardNames(left)).toEqual([]);
+      expect(boardNames(right)).toEqual(['planned']);
+    }
   });
 
   test('a first-commit cut is recovered immediately by restoring the post side to its preimage', () => {
@@ -1151,6 +1264,55 @@ describe('database sync snapshots', () => {
     }
   });
 
+  test('injected Darwin descriptor operations clean stale staging, prune retention, and delete private N=0 state', () => {
+    const native = nativePosixDirectory();
+    let directoryRemovals = 0;
+    const api = delegatePosix(native, {
+      unlinkAt: (descriptor, name, directory) => {
+        if (directory) directoryRemovals++;
+        native.unlinkAt(descriptor, name, directory);
+      },
+    });
+    const candidates: string[] = [];
+    const darwin = {
+      platform: 'darwin' as const,
+      darwinOpener: (candidate: string, platform: 'darwin') => {
+        candidates.push(`${platform}:${candidate}`);
+        return api;
+      },
+    };
+    const left = currentDb('darwin-cleanup-left');
+    const right = currentDb('darwin-cleanup-right');
+    const request = { mode: 'bidirectional' as const, leftPath: left, rightPath: right };
+    const root = databaseSyncSnapshotIdentity(request).root;
+    mkdirSync(join(root, '.staging-darwin'), { recursive: true });
+    writeFileSync(join(root, '.staging-darwin', 'partial'), 'partial');
+
+    for (const id of ['first', 'second']) {
+      insertBoard(right, id);
+      expect(
+        applyDatabaseReconciliationWithSnapshots(planDatabaseReconciliation(request), {
+          keepSnapshots: 1,
+          posixDirectory: darwin,
+        }).status,
+      ).toBe('changed');
+    }
+    expect(existsSync(join(root, '.staging-darwin'))).toBe(false);
+    expect(generationDirectories(root)).toHaveLength(1);
+
+    const privateBefore = privateSnapshotDirectories();
+    insertBoard(right, 'private');
+    expect(
+      applyDatabaseReconciliationWithSnapshots(planDatabaseReconciliation(request), {
+        keepSnapshots: 0,
+        posixDirectory: darwin,
+      }).status,
+    ).toBe('changed');
+    expect(privateSnapshotDirectories()).toEqual(privateBefore);
+    expect(directoryRemovals).toBeGreaterThanOrEqual(3);
+    expect(candidates).toContain('darwin:/usr/lib/libSystem.B.dylib');
+  });
+
   test('zero retention uses private 0700 state, never publishes, cleans on success, and cannot recover later', () => {
     const left = currentDb('private-left');
     const right = currentDb('private-right');
@@ -1208,6 +1370,113 @@ describe('database sync snapshots', () => {
     expect(leakedRoot === undefined ? false : existsSync(leakedRoot)).toBe(true);
     expect(recoverDatabaseReconciliation(request)).toMatchObject({ status: 'none', generationId: null });
     if (leakedRoot !== undefined) rmSync(leakedRoot, { recursive: true, force: true });
+  });
+
+  test('POSIX resolution falls through Linux libc candidates and selects Darwin libSystem lazily', () => {
+    const native = nativePosixDirectory();
+    const linuxAttempts: string[] = [];
+    expect(
+      resolveSnapshotPosixDirectory({
+        platform: 'linux',
+        architecture: 'x64',
+        linuxCandidates: ['missing-glibc', 'working-musl'],
+        linuxOpener: (candidate, platform) => {
+          linuxAttempts.push(`${platform}:${candidate}`);
+          return candidate === 'working-musl' ? native : null;
+        },
+      }),
+    ).toBe(native);
+    expect(linuxAttempts).toEqual(['linux:missing-glibc', 'linux:working-musl']);
+
+    const darwinAttempts: string[] = [];
+    expect(
+      resolveSnapshotPosixDirectory({
+        platform: 'darwin',
+        architecture: 'arm64',
+        darwinOpener: (candidate, platform) => {
+          darwinAttempts.push(`${platform}:${candidate}`);
+          return native;
+        },
+      }),
+    ).toBe(native);
+    expect(darwinAttempts).toEqual(['darwin:/usr/lib/libSystem.B.dylib']);
+    expect(resolveSnapshotPosixDirectory({ platform: 'win32', architecture: 'x64' })).toBeNull();
+  });
+
+  test('root and child descriptors close on invalid options, staging faults, and reacquisition', () => {
+    const native = nativePosixDirectory();
+    const left = currentDb('descriptor-lifetime-left');
+    const right = currentDb('descriptor-lifetime-right');
+    insertBoard(right, 'planned');
+    const request = { mode: 'bidirectional' as const, leftPath: left, rightPath: right };
+    const plan = planDatabaseReconciliation(request);
+    const root = join(fixtureRoot, 'descriptor-lifetime-root');
+    Bun.gc(true);
+    const before = descriptorCount();
+
+    for (let attempt = 0; attempt < 8; attempt++) {
+      expect(
+        applyDatabaseReconciliationWithSnapshots(plan, {
+          snapshotRoot: root,
+          randomId: () => 'invalid',
+        }),
+      ).toMatchObject({ status: 'rolled-back', apply: { failure: { code: 'apply-failed', phase: 'locked' } } });
+    }
+    const mkdirFault = delegatePosix(native, {
+      mkdirAt: () => {
+        throw new Error('mkdirat fault');
+      },
+    });
+    for (let attempt = 0; attempt < 8; attempt++) {
+      expect(
+        applyDatabaseReconciliationWithSnapshots(plan, {
+          snapshotRoot: root,
+          posixDirectory: { api: mkdirFault },
+        }).status,
+      ).toBe('rolled-back');
+    }
+    const bindFault = delegatePosix(native, {
+      openAt: (descriptor, name, flags, mode) => {
+        if (name.startsWith('.staging-')) throw new Error('staging bind fault');
+        return native.openAt(descriptor, name, flags, mode);
+      },
+    });
+    for (let attempt = 0; attempt < 8; attempt++) {
+      expect(
+        applyDatabaseReconciliationWithSnapshots(plan, {
+          snapshotRoot: root,
+          posixDirectory: { api: bindFault },
+        }).status,
+      ).toBe('rolled-back');
+    }
+    Bun.gc(true);
+    expect(descriptorCount()).toBeLessThanOrEqual(before + 1);
+
+    const recovered = applyDatabaseReconciliationWithSnapshots(plan, {
+      snapshotRoot: root,
+      posixDirectory: { api: native },
+    });
+    expect(recovered.status).toBe('changed');
+    expect(boardNames(left)).toEqual(['planned']);
+    Bun.gc(true);
+    expect(descriptorCount()).toBeLessThanOrEqual(before + 1);
+
+    const validationLeft = currentDb('descriptor-validation-left');
+    const validationRight = currentDb('descriptor-validation-right');
+    const complete = leaveCompleteGeneration(validationLeft, validationRight);
+    const manifest = JSON.parse(readFileSync(join(complete.directory, 'manifest.json'), 'utf8'));
+    writeFileSync(join(complete.directory, manifest.targets[0].snapshot_file), 'invalid');
+    const validationRequest = {
+      mode: 'bidirectional' as const,
+      leftPath: validationLeft,
+      rightPath: validationRight,
+    };
+    const validationBefore = descriptorCount();
+    for (let attempt = 0; attempt < 8; attempt++) {
+      expect(recoverDatabaseReconciliation(validationRequest).status).toBe('operational-failure');
+    }
+    Bun.gc(true);
+    expect(descriptorCount()).toBeLessThanOrEqual(validationBefore + 1);
   });
 
   test('negative, fractional, and unsafe retention fail before snapshots or writes', () => {
