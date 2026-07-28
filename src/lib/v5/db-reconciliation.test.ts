@@ -3,13 +3,14 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   existsSync,
   linkSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   rmSync,
   statSync,
   symlinkSync,
   truncateSync,
-  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -50,6 +51,30 @@ function currentDb(name: string, marker: string | null = '100'): string {
   }
   db.close();
   return path;
+}
+
+async function spawnFlockHolder(lockPath: string, holdMs: number): Promise<ReturnType<typeof Bun.spawn>> {
+  const readyPath = `${lockPath}.ready`;
+  writeFileSync(lockPath, '');
+  const code = `
+    import { dlopen, FFIType } from 'bun:ffi';
+    import { openSync } from 'node:fs';
+    const libc = dlopen('libc.so.6', {
+      flock: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
+    });
+    const fd = openSync(Bun.argv[1], 'r+');
+    if (libc.symbols.flock(fd, 2) !== 0) process.exit(9);
+    await Bun.write(Bun.argv[2], 'ready');
+    await Bun.sleep(Number(Bun.argv[3]));
+  `;
+  const child = Bun.spawn({
+    cmd: [process.execPath, '-e', code, lockPath, readyPath, String(holdMs)],
+    stderr: 'pipe',
+    stdout: 'pipe',
+  });
+  for (let attempt = 0; attempt < 400 && !existsSync(readyPath); attempt++) await Bun.sleep(5);
+  expect(existsSync(readyPath)).toBe(true);
+  return child;
 }
 
 function mutate(path: string, callback: (db: Database) => void): void {
@@ -1362,6 +1387,65 @@ describe('canonical locking and transactional apply', () => {
     expect(metaValue(destination, 'trigger-fired')).toBeNull();
   });
 
+  test('an opened SQLite handle fails closed across an A-to-B-open/B-to-A pathname restore', () => {
+    const source = currentDb('aba-source', null);
+    const destination = currentDb('aba-destination', null);
+    mutate(source, (db) => db.query("INSERT INTO meta (key, value) VALUES ('planned', 'source')").run());
+    const plan = planDatabaseReconciliation(directional(source, destination));
+    let injected = false;
+
+    const report = applyDatabaseReconciliation(plan, {
+      openDatabase: (path, options) => {
+        if (injected) return new Database(path, options);
+        injected = true;
+        const other = path === source ? destination : source;
+        const saved = `${path}.saved`;
+        renameSync(path, saved);
+        renameSync(other, path);
+        const opened = new Database(path, options);
+        renameSync(path, other);
+        renameSync(saved, path);
+        return opened;
+      },
+    });
+
+    expect(report).toMatchObject({
+      status: 'preimage-changed',
+      converged: false,
+      failure: { code: 'input-changed', phase: 'revalidation' },
+    });
+    expect(metaValue(destination, 'planned')).toBeNull();
+  });
+
+  test('locked serialization rechecks the exact opened handle before reading bytes', () => {
+    const source = currentDb('serialize-source', null);
+    const destination = currentDb('serialize-destination', null);
+    mutate(source, (db) => insertTask(db, { id: 'planned' }));
+    const plan = planDatabaseReconciliation(directional(source, destination));
+
+    const report = applyDatabaseReconciliation(plan, {
+      onLocked: (inputs) => {
+        const destinationInput = inputs.find((input) => input.role === 'destination');
+        if (destinationInput === undefined) throw new Error('missing destination');
+        const saved = `${destination}.saved`;
+        renameSync(destination, saved);
+        renameSync(source, destination);
+        try {
+          destinationInput.serialize();
+        } finally {
+          renameSync(destination, source);
+          renameSync(saved, destination);
+        }
+      },
+    });
+
+    expect(report).toMatchObject({
+      status: 'preimage-changed',
+      failure: { code: 'input-changed', phase: 'revalidation', role: 'destination' },
+    });
+    expect(taskTitle(destination, 'planned')).toBeNull();
+  });
+
   test('SQLite contention is bounded and rolls back earlier canonical locks without mutation', () => {
     const { left, right } = seedBidirectionalApplyPair();
     const plan = planDatabaseReconciliation(bidirectional(right, left));
@@ -1385,23 +1469,125 @@ describe('canonical locking and transactional apply', () => {
     }
   });
 
-  test('reversed arguments stop on the first canonical advisory lock without taking the second', () => {
+  test('reversed arguments stop on the first canonical advisory descriptor lock without taking the second', async () => {
     const { left, right } = seedBidirectionalApplyPair();
     const plan = planDatabaseReconciliation(bidirectional(right, left));
     const [first, second] = [left, right].sort();
     const firstLock = `${first}.genie-reconciliation.lock`;
     const secondLock = `${second}.genie-reconciliation.lock`;
-    writeFileSync(firstLock, JSON.stringify({ pid: process.pid, token: 'test-holder' }));
-    try {
+    const holder = await spawnFlockHolder(firstLock, 250);
+    const report = applyDatabaseReconciliation(plan, { busyTimeoutMs: 20 });
+    expect(report).toMatchObject({
+      status: 'lock-timeout',
+      failure: { code: 'advisory-lock-timeout', phase: 'advisory-lock' },
+    });
+    expect(existsSync(secondLock)).toBe(false);
+    expect(await holder.exited).toBe(0);
+  });
+
+  test('second advisory-lock contention releases the first lock and a retry succeeds', async () => {
+    const { left, right } = seedBidirectionalApplyPair();
+    const plan = planDatabaseReconciliation(bidirectional(right, left));
+    const [, second] = [left, right].sort();
+    const holder = await spawnFlockHolder(`${second}.genie-reconciliation.lock`, 250);
+
+    const blocked = applyDatabaseReconciliation(plan, { busyTimeoutMs: 20 });
+    expect(blocked).toMatchObject({
+      status: 'lock-timeout',
+      failure: { code: 'advisory-lock-timeout', phase: 'advisory-lock' },
+      cleanupFailures: [],
+    });
+    expect(await holder.exited).toBe(0);
+
+    const retried = applyDatabaseReconciliation(plan, { busyTimeoutMs: 500 });
+    expect(retried).toMatchObject({ status: 'changed', converged: true, failure: null, cleanupFailures: [] });
+  });
+
+  test('an advisory writer that finishes during the shared wait bound is followed safely', async () => {
+    const { left, right } = seedBidirectionalApplyPair();
+    const plan = planDatabaseReconciliation(bidirectional(left, right));
+    const [first] = [left, right].sort();
+    const holder = await spawnFlockHolder(`${first}.genie-reconciliation.lock`, 75);
+
+    const report = applyDatabaseReconciliation(plan, { busyTimeoutMs: 1_000 });
+
+    expect(await holder.exited).toBe(0);
+    expect(report).toMatchObject({ status: 'changed', converged: true, failure: null, cleanupFailures: [] });
+  });
+
+  test('advisory inputs are no-follow, regular, empty, and bounded without parsing owner data', () => {
+    const cases: Array<{ name: string; prepare(path: string): void }> = [
+      {
+        name: 'symlink',
+        prepare(path) {
+          const target = `${path}.target`;
+          writeFileSync(target, '');
+          symlinkSync(target, path);
+        },
+      },
+      {
+        name: 'directory',
+        prepare(path) {
+          mkdirSync(path);
+        },
+      },
+      {
+        name: 'fifo',
+        prepare(path) {
+          const made = Bun.spawnSync({ cmd: ['mkfifo', path], stderr: 'pipe', stdout: 'pipe' });
+          expect(made.exitCode).toBe(0);
+        },
+      },
+      {
+        name: 'malformed',
+        prepare(path) {
+          writeFileSync(path, '{not-json');
+        },
+      },
+      {
+        name: 'oversized',
+        prepare(path) {
+          writeFileSync(path, new Uint8Array(1024 * 1024));
+        },
+      },
+    ];
+
+    for (const fixture of cases) {
+      const left = currentDb(`${fixture.name}-left`, null);
+      const right = currentDb(`${fixture.name}-right`, null);
+      mutate(left, (db) => insertTask(db, { id: fixture.name }));
+      const plan = planDatabaseReconciliation(bidirectional(left, right));
+      const [first] = [left, right].sort();
+      const lockPath = `${first}.genie-reconciliation.lock`;
+      fixture.prepare(lockPath);
+      const started = Date.now();
+
       const report = applyDatabaseReconciliation(plan, { busyTimeoutMs: 20 });
+
       expect(report).toMatchObject({
-        status: 'lock-timeout',
-        failure: { code: 'advisory-lock-timeout', phase: 'advisory-lock' },
+        status: 'uncertain',
+        failure: { code: 'unexpected-failure', phase: 'advisory-lock' },
       });
-      expect(existsSync(secondLock)).toBe(false);
-    } finally {
-      unlinkSync(firstLock);
+      expect(Date.now() - started).toBeLessThan(500);
+      rmSync(lockPath, { recursive: true, force: true });
     }
+  });
+
+  test('release never removes a replacement advisory pathname', () => {
+    const { left, right } = seedBidirectionalApplyPair();
+    const replacements: string[] = [];
+    const report = applyDatabaseReconciliation(planDatabaseReconciliation(bidirectional(left, right)), {
+      onLocked: (inputs) => {
+        for (const path of new Set(inputs.map((input) => `${input.canonicalPath}.genie-reconciliation.lock`))) {
+          renameSync(path, `${path}.held-inode`);
+          writeFileSync(path, '');
+          replacements.push(path);
+        }
+      },
+    });
+
+    expect(report).toMatchObject({ status: 'changed', converged: true, cleanupFailures: [] });
+    expect(replacements.every((path) => existsSync(path))).toBe(true);
   });
 
   test('opposite-order lock-aware reconcilers serialize without deadlock or overwrite', async () => {
@@ -1542,6 +1728,50 @@ describe('canonical locking and transactional apply', () => {
     expect(scalarCount(right, 'boards')).toBe(1);
   });
 
+  test('a precommit failure with one no-op target is rolled back with zero commits', () => {
+    const left = currentDb('a-no-op-target', null);
+    const right = currentDb('z-changing-target', null);
+    mutate(left, (db) => insertTask(db, { id: 'left-only' }));
+    const plan = planDatabaseReconciliation(bidirectional(left, right));
+    expect(plan.targets.filter((target) => target.preimageDigest === target.postimageDigest)).toHaveLength(1);
+
+    const report = applyDatabaseReconciliation(plan, {
+      onEvent: (event) => {
+        if (event.phase === 'commit' && event.state === 'before') throw new Error('before first commit');
+      },
+    });
+
+    expect(report).toMatchObject({ status: 'rolled-back', converged: false });
+    expect(report.targets.every((target) => !target.committed)).toBe(true);
+    expect(report.targets.map((target) => target.observation).sort()).toEqual([
+      'expected-pre-and-postimage',
+      'expected-preimage',
+    ]);
+    expect(taskTitle(left, 'left-only')).toBe('left-only');
+    expect(taskTitle(right, 'left-only')).toBeNull();
+  });
+
+  test('the first-commit boundary records a committed no-op target without claiming rollback', () => {
+    const left = currentDb('a-no-op-target', null);
+    const right = currentDb('z-changing-target', null);
+    mutate(left, (db) => insertTask(db, { id: 'left-only' }));
+    const plan = planDatabaseReconciliation(bidirectional(left, right));
+    let commits = 0;
+
+    const report = applyDatabaseReconciliation(plan, {
+      onEvent: (event) => {
+        if (event.phase === 'commit' && event.state === 'after' && ++commits === 1) {
+          throw new Error('after first commit');
+        }
+      },
+    });
+
+    expect(report).toMatchObject({ status: 'partial-commit', converged: false });
+    expect(report.targets.filter((target) => target.committed)).toHaveLength(1);
+    expect(report.targets.find((target) => target.committed)?.observation).toBe('expected-pre-and-postimage');
+    expect(taskTitle(right, 'left-only')).toBeNull();
+  });
+
   test('a failure after the first destination commit reports a known partial commit', () => {
     const { left, right } = seedBidirectionalApplyPair();
     const plan = planDatabaseReconciliation(bidirectional(left, right));
@@ -1621,6 +1851,51 @@ describe('canonical locking and transactional apply', () => {
 
     expect(report).toMatchObject({ status: 'uncertain', converged: false });
     expect(report.targets.some((item) => item.observation === 'not-observed')).toBe(true);
+  });
+
+  test('a primary apply failure is preserved alongside rollback, close, and advisory cleanup failures', () => {
+    const source = currentDb('cleanup-source', null);
+    const destination = currentDb('cleanup-destination', null);
+    mutate(source, (db) => insertTask(db, { id: 'planned' }));
+
+    const report = applyDatabaseReconciliation(planDatabaseReconciliation(directional(source, destination)), {
+      openDatabase: (path, options) => {
+        const db = new Database(path, options);
+        return new Proxy(db, {
+          get(target, property) {
+            if (property === 'exec') {
+              return (sql: string) => {
+                if (sql === 'ROLLBACK') throw new Error('injected rollback cleanup failure');
+                return target.exec(sql);
+              };
+            }
+            if (property === 'close') {
+              return () => {
+                target.close();
+                throw new Error('injected close cleanup failure');
+              };
+            }
+            const value = Reflect.get(target, property, target);
+            return typeof value === 'function' ? value.bind(target) : value;
+          },
+        });
+      },
+      advisoryUnlock: () => -1,
+      onEvent: (event) => {
+        if (event.phase === 'commit' && event.state === 'before') throw new Error('primary commit failure');
+      },
+    });
+
+    expect(report).toMatchObject({
+      status: 'rolled-back',
+      failure: { code: 'commit-failed', phase: 'commit' },
+      cleanupFailures: [
+        { code: 'rollback-failed', phase: 'rollback' },
+        { code: 'close-failed', phase: 'cleanup' },
+        { code: 'advisory-lock-release-failed', phase: 'cleanup' },
+      ],
+    });
+    expect(taskTitle(destination, 'planned')).toBeNull();
   });
 
   test('directional board-name swaps use a transaction-local parking order', () => {

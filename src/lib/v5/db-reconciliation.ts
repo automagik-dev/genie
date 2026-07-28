@@ -9,21 +9,11 @@
  * this module.
  */
 
-import { Database } from 'bun:sqlite';
+import { FFIType, dlopen } from 'bun:ffi';
+import { Database, constants as sqliteConstants } from 'bun:sqlite';
 import { createHash, randomUUID } from 'node:crypto';
-import {
-  closeSync,
-  existsSync,
-  linkSync,
-  openSync,
-  readFileSync,
-  realpathSync,
-  renameSync,
-  statSync,
-  unlinkSync,
-  writeFileSync,
-} from 'node:fs';
-import { basename, dirname, join, normalize } from 'node:path';
+import { closeSync, existsSync, constants as fsConstants, fstatSync, openSync, realpathSync, statSync } from 'node:fs';
+import { normalize } from 'node:path';
 import { CURRENT_SCHEMA_VERSION } from './genie-db.js';
 import { BUSY_TIMEOUT_MS, isBusyError } from './sqlite-open.js';
 
@@ -32,6 +22,8 @@ const REPORT_VERSION = 1 as const;
 const READ_BUSY_TIMEOUT_MS = 5_000;
 const MAX_BUSY_TIMEOUT_MS = 2_147_483_647;
 const ADVISORY_RETRY_MS = 10;
+const LOCK_EXCLUSIVE_NONBLOCKING = 2 | 4;
+const LOCK_UNLOCK = 8;
 const MAX_DATABASE_BYTES = 256 * 1024 * 1024;
 const MAX_ROWS_PER_TABLE = 1_000_000;
 const MAX_TOTAL_ROWS = 2_000_000;
@@ -75,6 +67,7 @@ export type ReconciliationApplyPhase =
   | 'logical-postimage-check'
   | 'commit'
   | 'rollback'
+  | 'cleanup'
   | 'observation';
 export type ReconciliationApplyFailureCode =
   | ReconciliationErrorCode
@@ -85,12 +78,15 @@ export type ReconciliationApplyFailureCode =
   | 'postimage-mismatch'
   | 'commit-failed'
   | 'rollback-failed'
+  | 'close-failed'
+  | 'advisory-lock-release-failed'
   | 'observation-failed'
   | 'unexpected-failure';
 export type ReconciliationTargetObservation =
   | 'not-observed'
   | 'expected-preimage'
   | 'expected-postimage'
+  | 'expected-pre-and-postimage'
   | 'unexpected';
 export type ReconciliationInputRole = 'left' | 'right' | 'source' | 'destination';
 export type ReconciliationTargetRole = 'left' | 'right' | 'destination';
@@ -316,6 +312,7 @@ export interface ReconciliationApplyReport {
   readonly converged: boolean;
   readonly targets: readonly ReconciliationApplyTargetReport[];
   readonly failure: ReconciliationApplyFailure | null;
+  readonly cleanupFailures: readonly ReconciliationApplyFailure[];
 }
 
 export type ReconciliationApplyEvent =
@@ -343,6 +340,10 @@ export interface ReconciliationApplyOptions {
   readonly onLocked?: (inputs: readonly ReconciliationLockedInput[]) => void;
   /** Bounded lifecycle observation and deterministic failure injection for tests. */
   readonly onEvent?: (event: ReconciliationApplyEvent) => void;
+  /** Deterministic constructor seam for physical-identity regression tests. */
+  readonly openDatabase?: (path: string, options: ConstructorParameters<typeof Database>[1]) => Database;
+  /** Deterministic lifecycle seam; production always calls descriptor-bound flock. */
+  readonly advisoryUnlock?: (descriptor: number) => number;
 }
 
 type SqliteScalar = string | bigint | number | Uint8Array | null;
@@ -426,7 +427,7 @@ interface DatabaseImage {
 
 interface AdvisoryLock {
   readonly path: string;
-  readonly token: string;
+  readonly descriptor: number;
 }
 
 interface LockedDatabase {
@@ -444,11 +445,17 @@ interface ApplyFailureContext {
 
 class ApplyBoundaryError extends Error {
   readonly context: ApplyFailureContext;
+  readonly cleanupFailures: ReconciliationApplyFailure[];
 
-  constructor(context: ApplyFailureContext, cause?: unknown) {
+  constructor(
+    context: ApplyFailureContext,
+    cause?: unknown,
+    cleanupFailures: readonly ReconciliationApplyFailure[] = [],
+  ) {
     super(cause instanceof Error ? cause.message : context.code);
     this.name = 'ApplyBoundaryError';
     this.context = context;
+    this.cleanupFailures = [...cleanupFailures];
   }
 }
 
@@ -734,123 +741,91 @@ function samePhysicalInput(left: PhysicalInput, right: PhysicalInput): boolean {
 }
 
 const SLEEP_SIGNAL = new Int32Array(new SharedArrayBuffer(4));
+const FLOCK_SYMBOL = {
+  flock: {
+    args: [FFIType.i32, FFIType.i32],
+    returns: FFIType.i32,
+  },
+} as const;
+const LIBC =
+  process.platform === 'linux'
+    ? dlopen('libc.so.6', FLOCK_SYMBOL)
+    : process.platform === 'darwin'
+      ? dlopen('/usr/lib/libSystem.B.dylib', FLOCK_SYMBOL)
+      : null;
 
 function sleepMs(ms: number): void {
   Atomics.wait(SLEEP_SIGNAL, 0, 0, ms);
-}
-
-function errnoCode(caught: unknown): string | undefined {
-  if (!(caught instanceof Error)) return undefined;
-  const code = (caught as NodeJS.ErrnoException).code;
-  return typeof code === 'string' ? code : undefined;
 }
 
 function advisoryLockPath(canonicalPath: string): string {
   return `${canonicalPath}.genie-reconciliation.lock`;
 }
 
-function advisoryOwner(pid: number, token: string): string {
-  return JSON.stringify({ pid, token });
-}
-
-function parseAdvisoryOwner(path: string): { pid: number; token: string } | null {
+function databaseHandleMatchesPath(db: Pick<Database, 'fileControl'>): boolean {
+  const moved = new Int32Array(1);
   try {
-    const value: unknown = JSON.parse(readFileSync(path, 'utf8'));
-    if (
-      typeof value !== 'object' ||
-      value === null ||
-      !('pid' in value) ||
-      !('token' in value) ||
-      !Number.isSafeInteger(value.pid) ||
-      (value.pid as number) <= 0 ||
-      typeof value.token !== 'string'
-    ) {
-      return null;
-    }
-    return { pid: value.pid as number, token: value.token };
+    return db.fileControl(sqliteConstants.SQLITE_FCNTL_HAS_MOVED, moved) === 0 && moved[0] === 0;
   } catch {
-    return null;
-  }
-}
-
-function processIsAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (caught) {
-    return errnoCode(caught) !== 'ESRCH';
-  }
-}
-
-function removeStaleAdvisoryLock(path: string): boolean {
-  const owner = parseAdvisoryOwner(path);
-  if (owner === null || processIsAlive(owner.pid)) return false;
-  const stalePath = `${path}.${randomUUID()}.stale`;
-  try {
-    renameSync(path, stalePath);
-  } catch (caught) {
-    if (errnoCode(caught) === 'ENOENT') return true;
     return false;
   }
-  try {
-    unlinkSync(stalePath);
-  } catch {
-    // The stable name is already free. A stranded uniquely named stale inode
-    // does not grant authority and cannot block another reconciler.
+}
+
+function requireDatabaseHandleMatchesPath(
+  db: Pick<Database, 'fileControl'>,
+  role?: ReconciliationInputRole | ReconciliationTargetRole,
+): void {
+  if (!databaseHandleMatchesPath(db)) {
+    throw new ApplyBoundaryError({
+      code: 'input-changed',
+      phase: 'revalidation',
+      ...(role === undefined ? {} : { role }),
+    });
   }
-  return true;
 }
 
 function acquireAdvisoryLock(canonicalPath: string, timeoutMs: number): AdvisoryLock {
   const path = advisoryLockPath(canonicalPath);
-  const token = randomUUID();
-  const candidatePath = join(dirname(path), `.${basename(path)}.${process.pid}.${token}.candidate`);
-  const descriptor = openSync(candidatePath, 'wx', 0o600);
+  if (LIBC === null) {
+    throw new ApplyBoundaryError({ code: 'unexpected-failure', phase: 'advisory-lock' });
+  }
+  let descriptor: number;
   try {
-    writeFileSync(descriptor, advisoryOwner(process.pid, token));
-  } finally {
-    closeSync(descriptor);
+    descriptor = openSync(
+      path,
+      fsConstants.O_RDWR | fsConstants.O_CREAT | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK,
+      0o600,
+    );
+    const stats = fstatSync(descriptor);
+    if (!stats.isFile() || stats.size !== 0) {
+      throw new Error('Advisory lock path must be an empty regular file.');
+    }
+  } catch (caught) {
+    throw new ApplyBoundaryError({ code: 'unexpected-failure', phase: 'advisory-lock' }, caught);
   }
 
   const deadline = Date.now() + timeoutMs;
   try {
     for (;;) {
-      try {
-        linkSync(candidatePath, path);
-        return { path, token };
-      } catch (caught) {
-        if (errnoCode(caught) !== 'EEXIST') {
-          throw new ApplyBoundaryError({ code: 'unexpected-failure', phase: 'advisory-lock' }, caught);
-        }
-        if (removeStaleAdvisoryLock(path)) continue;
-        const remaining = deadline - Date.now();
-        if (remaining <= 0) {
-          throw new ApplyBoundaryError({ code: 'advisory-lock-timeout', phase: 'advisory-lock' }, caught);
-        }
-        sleepMs(Math.min(ADVISORY_RETRY_MS, remaining));
+      if (LIBC.symbols.flock(descriptor, LOCK_EXCLUSIVE_NONBLOCKING) === 0) {
+        return { path, descriptor };
       }
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        throw new ApplyBoundaryError({ code: 'advisory-lock-timeout', phase: 'advisory-lock' });
+      }
+      sleepMs(Math.min(ADVISORY_RETRY_MS, remaining));
     }
-  } finally {
-    try {
-      unlinkSync(candidatePath);
-    } catch {
-      // The stable hard link, not this unique candidate name, owns exclusion.
-    }
+  } catch (caught) {
+    closeSync(descriptor);
+    throw caught;
   }
 }
 
-function releaseAdvisoryLock(lock: AdvisoryLock): void {
-  const owner = parseAdvisoryOwner(lock.path);
-  if (owner === null) {
-    if (!existsSync(lock.path)) return;
-    throw new Error('Advisory lock ownership became unreadable.');
-  }
-  if (owner.pid !== process.pid || owner.token !== lock.token) {
-    throw new Error('Advisory lock ownership changed before release.');
-  }
-  const releasePath = `${lock.path}.${lock.token}.release`;
-  renameSync(lock.path, releasePath);
-  unlinkSync(releasePath);
+function releaseAdvisoryLock(lock: AdvisoryLock, options?: ReconciliationApplyOptions): void {
+  const result = options?.advisoryUnlock?.(lock.descriptor) ?? LIBC?.symbols.flock(lock.descriptor, LOCK_UNLOCK) ?? -1;
+  closeSync(lock.descriptor);
+  if (result !== 0) throw new Error('Advisory descriptor unlock failed.');
 }
 
 function readInventory(db: Database): Array<{ type: string; name: string; tableName: string; sql: string | null }> {
@@ -1524,12 +1499,22 @@ function loadDatabaseImage(input: PhysicalInput, busyTimeoutMs = READ_BUSY_TIMEO
   }
   let transactionOpen = false;
   try {
+    if (!databaseHandleMatchesPath(db)) {
+      throw error('input-changed', 'A reconciliation input changed identity while it was being opened.');
+    }
+    revalidatePhysicalInput(input);
+    if (!databaseHandleMatchesPath(db)) {
+      throw error('input-changed', 'A reconciliation input changed identity while it was being opened.');
+    }
     db.exec(`PRAGMA busy_timeout = ${busyTimeoutMs}`);
     db.exec('PRAGMA query_only = ON');
     db.exec('PRAGMA trusted_schema = OFF');
     db.exec('PRAGMA foreign_keys = ON');
     db.exec('BEGIN');
     transactionOpen = true;
+    if (!databaseHandleMatchesPath(db)) {
+      throw error('input-changed', 'A reconciliation input changed identity while it was being read.');
+    }
     const image = readDatabaseImage(db);
     db.exec('COMMIT');
     transactionOpen = false;
@@ -2298,6 +2283,7 @@ function makeApplyReport(
   converged: boolean,
   targets: readonly ReconciliationApplyTargetReport[],
   failure: ReconciliationApplyFailure | null,
+  cleanupFailures: readonly ReconciliationApplyFailure[] = [],
 ): ReconciliationApplyReport {
   return deepFreeze({
     reportVersion: REPORT_VERSION,
@@ -2307,6 +2293,7 @@ function makeApplyReport(
     converged,
     targets,
     failure,
+    cleanupFailures,
   });
 }
 
@@ -2392,11 +2379,18 @@ function acquirePlannedAdvisoryLocks(
     for (const path of paths) locks.push(acquireAdvisoryLock(path, remainingLockWait(deadline)));
     return locks;
   } catch (caught) {
+    const cleanupFailures: ReconciliationApplyFailure[] = [];
     for (const lock of locks.reverse()) {
       try {
         releaseAdvisoryLock(lock);
       } catch {
-        // The acquisition failure remains authoritative.
+        cleanupFailures.push({ code: 'advisory-lock-release-failed', phase: 'cleanup' });
+      }
+    }
+    if (cleanupFailures.length > 0) {
+      if (caught instanceof ApplyBoundaryError) caught.cleanupFailures.push(...cleanupFailures);
+      else {
+        throw new ApplyBoundaryError({ code: 'unexpected-failure', phase: 'advisory-lock' }, caught, cleanupFailures);
       }
     }
     throw caught;
@@ -2422,6 +2416,7 @@ function revalidateApplyInput(input: PhysicalInput, role: ReconciliationInputRol
 function openLockedDatabases(
   inputs: readonly { readonly planned: ReconciliationPlanInput; readonly physical: PhysicalInput }[],
   deadline: number,
+  options: ReconciliationApplyOptions,
 ): LockedDatabase[] {
   for (const input of inputs) revalidateApplyInput(input.physical, input.planned.role);
   const grouped = new Map<string, { input: PhysicalInput; roles: ReconciliationInputRole[]; paths: PhysicalInput[] }>();
@@ -2447,16 +2442,23 @@ function openLockedDatabases(
     for (const group of ordered) {
       let db: Database | null = null;
       try {
-        db = new Database(group.input.canonicalPath, {
+        const databaseOptions = {
           readwrite: true,
           create: false,
           strict: true,
           safeIntegers: true,
-        });
+        } as const;
+        db =
+          options.openDatabase?.(group.input.canonicalPath, databaseOptions) ??
+          new Database(group.input.canonicalPath, databaseOptions);
+        requireDatabaseHandleMatchesPath(db, group.roles[0]);
+        for (const path of group.paths) revalidateApplyInput(path, group.roles[0]);
+        requireDatabaseHandleMatchesPath(db, group.roles[0]);
         db.exec(`PRAGMA busy_timeout = ${remainingLockWait(deadline)}`);
         db.exec('PRAGMA trusted_schema = OFF');
         db.exec('PRAGMA foreign_keys = ON');
         db.exec('BEGIN IMMEDIATE');
+        requireDatabaseHandleMatchesPath(db, group.roles[0]);
       } catch (caught) {
         db?.close();
         throw new ApplyBoundaryError(
@@ -2469,7 +2471,6 @@ function openLockedDatabases(
         );
       }
       locked.push({ input: group.input, roles: group.roles, db, transactionOpen: true });
-      for (const path of group.paths) revalidateApplyInput(path, group.roles[0]);
     }
     return locked;
   } catch (caught) {
@@ -2505,21 +2506,23 @@ function rollbackOpenTransactions(locked: readonly LockedDatabase[]): boolean {
   return complete;
 }
 
-function closeLockedDatabases(locked: readonly LockedDatabase[]): void {
+function closeLockedDatabases(locked: readonly LockedDatabase[]): boolean {
+  let complete = true;
   for (const item of [...locked].reverse()) {
     try {
       item.db.close();
     } catch {
-      // Observation classifies the durable logical state after close failure.
+      complete = false;
     }
   }
+  return complete;
 }
 
-function releaseAdvisoryLocks(locks: readonly AdvisoryLock[]): boolean {
+function releaseAdvisoryLocks(locks: readonly AdvisoryLock[], options?: ReconciliationApplyOptions): boolean {
   let complete = true;
   for (const lock of [...locks].reverse()) {
     try {
-      releaseAdvisoryLock(lock);
+      releaseAdvisoryLock(lock, options);
     } catch {
       complete = false;
     }
@@ -2535,6 +2538,9 @@ function revalidateLockedPlan(
   for (const item of locked) {
     let image: DatabaseImage;
     try {
+      requireDatabaseHandleMatchesPath(item.db, item.roles[0]);
+      revalidateApplyInput(item.input, item.roles[0]);
+      requireDatabaseHandleMatchesPath(item.db, item.roles[0]);
       image = readDatabaseImage(item.db);
     } catch (caught) {
       throw new ApplyBoundaryError(
@@ -2577,7 +2583,12 @@ function lockedInputsForHook(
       role: input.role,
       canonicalPath: input.canonicalPath,
       target,
-      serialize: () => new Uint8Array(item.db.serialize()),
+      serialize: () => {
+        requireDatabaseHandleMatchesPath(item.db, input.role);
+        revalidateApplyInput(item.input, input.role);
+        requireDatabaseHandleMatchesPath(item.db, input.role);
+        return new Uint8Array(item.db.serialize());
+      },
     });
   });
 }
@@ -2591,6 +2602,7 @@ function runLockedHook(
   try {
     options.onLocked?.(lockedInputsForHook(plan, locked));
   } catch (caught) {
+    if (caught instanceof ApplyBoundaryError) throw caught;
     throw new ApplyBoundaryError({ code: 'apply-failed', phase: 'locked' }, caught);
   }
 }
@@ -2829,6 +2841,9 @@ function commitTarget(
   committed: Set<ReconciliationTargetRole>,
 ): void {
   emitApplyEvent(options, { phase: 'commit', role: target.role, state: 'before' });
+  requireDatabaseHandleMatchesPath(item.db, target.role);
+  revalidateApplyInput(item.input, target.role);
+  requireDatabaseHandleMatchesPath(item.db, target.role);
   try {
     item.db.exec('COMMIT');
     item.transactionOpen = false;
@@ -2847,6 +2862,9 @@ function commitNonTargetTransactions(
   for (const item of locked) {
     if (!item.transactionOpen) continue;
     try {
+      requireDatabaseHandleMatchesPath(item.db, item.roles[0]);
+      revalidateApplyInput(item.input, item.roles[0]);
+      requireDatabaseHandleMatchesPath(item.db, item.roles[0]);
       item.db.exec('COMMIT');
       item.transactionOpen = false;
     } catch (caught) {
@@ -2875,6 +2893,9 @@ function mutateValidateAndCommit(
   for (const target of targets) {
     const item = lockedDatabaseForRole(locked, target.role);
     emitApplyEvent(options, { phase: 'mutation', role: target.role, state: 'before' });
+    requireDatabaseHandleMatchesPath(item.db, target.role);
+    revalidateApplyInput(item.input, target.role);
+    requireDatabaseHandleMatchesPath(item.db, target.role);
     applyTargetChanges(item.db, target.changes);
     emitApplyEvent(options, { phase: 'mutation', role: target.role, state: 'after' });
   }
@@ -2907,12 +2928,16 @@ function observeTarget(
       committed: committed.has(target.role),
     };
   }
+  const equalsPreimage = observedDigest === target.preimageDigest;
+  const equalsPostimage = target.postimageDigest !== null && observedDigest === target.postimageDigest;
   const observation: ReconciliationTargetObservation =
-    target.postimageDigest !== null && observedDigest === target.postimageDigest
-      ? 'expected-postimage'
-      : observedDigest === target.preimageDigest
-        ? 'expected-preimage'
-        : 'unexpected';
+    equalsPreimage && equalsPostimage
+      ? 'expected-pre-and-postimage'
+      : equalsPostimage
+        ? 'expected-postimage'
+        : equalsPreimage
+          ? 'expected-preimage'
+          : 'unexpected';
   return {
     role: target.role,
     preimageDigest: target.preimageDigest,
@@ -2951,21 +2976,43 @@ function classifyApplyStatus(
   if (failure === null) {
     if (plan.status === 'same-database') return { status: 'same-database', converged: true };
     if (plan.status === 'no-op') return { status: 'no-op', converged: true };
-    if (targets.every((target) => target.observation === 'expected-postimage')) {
+    if (
+      targets.every(
+        (target) => target.observation === 'expected-postimage' || target.observation === 'expected-pre-and-postimage',
+      )
+    ) {
       return { status: 'changed', converged: true };
     }
     return { status: 'uncertain', converged: false };
   }
-  if (targets.every((target) => target.observation === 'expected-postimage')) {
+  const hasPostCommitEvidence = targets.some(
+    (target) => target.committed || target.observation === 'expected-postimage',
+  );
+  if (
+    hasPostCommitEvidence &&
+    targets.every(
+      (target) => target.observation === 'expected-postimage' || target.observation === 'expected-pre-and-postimage',
+    )
+  ) {
     return { status: 'expected-postimage', converged: false };
   }
   if (
-    targets.some((target) => target.observation === 'expected-postimage') &&
-    targets.every((target) => target.observation === 'expected-postimage' || target.observation === 'expected-preimage')
+    hasPostCommitEvidence &&
+    targets.every(
+      (target) =>
+        target.observation === 'expected-postimage' ||
+        target.observation === 'expected-preimage' ||
+        target.observation === 'expected-pre-and-postimage',
+    )
   ) {
     return { status: 'partial-commit', converged: false };
   }
-  if (targets.every((target) => target.observation === 'expected-preimage')) {
+  if (
+    targets.every((target) => !target.committed) &&
+    targets.every(
+      (target) => target.observation === 'expected-preimage' || target.observation === 'expected-pre-and-postimage',
+    )
+  ) {
     return { status: 'rolled-back', converged: false };
   }
   return { status: 'uncertain', converged: false };
@@ -2989,6 +3036,7 @@ export function applyDatabaseReconciliation(
   let advisoryLocks: AdvisoryLock[] = [];
   let locked: LockedDatabase[] = [];
   const committed = new Set<ReconciliationTargetRole>();
+  const cleanupFailures: ReconciliationApplyFailure[] = [];
 
   try {
     timeoutMs = validateBusyTimeout(options.busyTimeoutMs);
@@ -3006,23 +3054,26 @@ export function applyDatabaseReconciliation(
     const inputs = resolvePlannedInputs(plan);
     const lockDeadline = Date.now() + timeoutMs;
     advisoryLocks = acquirePlannedAdvisoryLocks(inputs, lockDeadline);
-    locked = openLockedDatabases(inputs, lockDeadline);
+    locked = openLockedDatabases(inputs, lockDeadline, options);
     revalidateLockedPlan(plan, locked);
     runLockedHook(plan, locked, options);
     mutateValidateAndCommit(plan, locked, options, committed);
   } catch (caught) {
+    if (caught instanceof ApplyBoundaryError) cleanupFailures.push(...caught.cleanupFailures);
     failure = failureFrom(caught, { code: 'apply-failed', phase: 'mutation' });
     if (!rollbackOpenTransactions(locked)) {
-      failure = { code: 'rollback-failed', phase: 'rollback' };
+      cleanupFailures.push({ code: 'rollback-failed', phase: 'rollback' });
     }
   } finally {
-    closeLockedDatabases(locked);
+    if (!closeLockedDatabases(locked)) {
+      cleanupFailures.push({ code: 'close-failed', phase: 'cleanup' });
+    }
   }
 
   const targets = advisoryLocks.length > 0 ? observeTargets(plan, committed, timeoutMs) : initialApplyTargets(plan);
-  if (!releaseAdvisoryLocks(advisoryLocks)) {
-    failure = failure ?? { code: 'unexpected-failure', phase: 'advisory-lock' };
+  if (!releaseAdvisoryLocks(advisoryLocks, options)) {
+    cleanupFailures.push({ code: 'advisory-lock-release-failed', phase: 'cleanup' });
   }
   const classified = classifyApplyStatus(plan, targets, failure);
-  return makeApplyReport(plan, classified.status, classified.converged, targets, failure);
+  return makeApplyReport(plan, classified.status, classified.converged, targets, failure, cleanupFailures);
 }
