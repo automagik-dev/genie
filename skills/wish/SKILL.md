@@ -57,7 +57,15 @@ node "<wish-skill-dir>/references/design-review-evidence.mjs" verify ".genie/bra
    <!-- wish-scaffold-command:end -->
 
    The template ships inside this skill as the single source of truth for wish structure — a plain document, no runtime scaffolder. Copying guarantees the skeleton the parser and linter expect; ad-hoc wishes regularly fail structural lint.
-7. **Fill:** replace the `{{slug}}`/`{{date}}` tokens and every `<TODO: …>` marker with real content. Every group gets acceptance criteria plus a validation command.
+7. **Fill:** replace the `{{slug}}`/`{{date}}` tokens and every `<TODO: …>` marker with real content. Every group gets
+   acceptance criteria plus a non-zero validation command proportional to the planned diff's risk and reach. Start with
+   the narrowest checks that can disprove the changed behavior or contract: documentation-only groups, including
+   deterministic generated documentation or plugin skill mirrors, use relevant format, link, example, generator, parity,
+   or content-contract checks; runtime groups use focused behavior tests and add type, lint, or build checks only for
+   boundaries they reach. Escalate shared runtime/core behavior, dependency or lockfile, generated executable or runtime
+   artifact, configuration or schema, CI or release, broad-refactor, or uncertain-impact groups to the repository full
+   gate plus affected build or end-to-end checks. State why the command scope fits; do not prescribe an unexplained full
+   suite. Preserve any repository-defined aggregate integration or release gate separately from per-group validation.
 8. **Declare dependencies:** use the wish-level `## Dependencies` keys
    `**depends-on:** <comma-separated slugs or none>` and
    `**blocks:** <comma-separated slugs or none>` for cross-wish edges. Keep
@@ -96,5 +104,7 @@ node "<wish-skill-dir>/references/design-review-evidence.mjs" verify ".genie/bra
 - No implementation during `wish` — planning only.
 - No speculative optimization: caches, deltas, sharding, background coordination, and configuration surfaces require a current criterion or measurement in the Simplicity Case.
 - Every group testable, bite-sized, and independently shippable; no vague tasks ("improve everything").
+- Every group has non-zero, risk-proportional validation with its scope explained; aggregate integration and release
+  gates remain intact.
 - OUT scope must contain at least one concrete exclusion.
 - Declare cross-wish dependencies early.

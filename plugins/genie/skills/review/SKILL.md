@@ -23,7 +23,14 @@ When spawned as a reviewer subagent, your dispatch prompt carries the curated sc
 1. **Detect target** — DESIGN.md, wish draft, completed work, or PR diff.
 2. **Select pipeline** — the matching checklist below.
 3. **Run checklist** — evaluate each criterion, collecting evidence.
-4. **Run validations** — execute validation commands; capture pass/fail output.
+4. **Run validations** — execute validation commands; capture pass/fail output and confirm their scope is proportional
+   to the diff's risk and reach. Documentation-only changes, including deterministic generated documentation or plugin
+   skill mirrors, use relevant format, link, example, generator, parity, or content-contract checks; runtime changes use
+   focused behavior tests and add type, lint, or build checks for boundaries reached. Shared runtime/core behavior,
+   dependency or lockfile, generated executable or runtime artifact, configuration or schema, CI or release,
+   broad-refactor, or uncertain-impact changes require the repository full gate plus affected build or end-to-end checks.
+   Reject zero validation, under-validation, and unexplained full-suite validation. Preserve required aggregate
+   integration and release gates.
 5. **Tag gaps** — classify every unmet criterion by severity.
 6. **Return verdict** — SHIP, FIX-FIRST, or BLOCKED, with exact fixes (files, commands, what to change) for each gap.
 
@@ -64,12 +71,14 @@ If an ordinary reviewer and the `final-gate` disagree, log an appeal with the wi
 - [ ] Every task has testable acceptance criteria
 - [ ] Tasks are bite-sized and independently shippable
 - [ ] Dependencies tagged (`depends-on` / `blocks`)
-- [ ] Validation commands exist for each execution group
+- [ ] Every group has non-zero validation proportional to its planned risk and reach, with escalation and scope rationale
+- [ ] Aggregate integration and release gates remain present where the repository requires them
 - [ ] Simplicity Case is executable: no group builds machinery marked deferred, and every stateful mechanism maps to a current success criterion
 
 ### Execution Review (after `work`)
 - [ ] All acceptance criteria met with evidence
-- [ ] Validation commands run and passing
+- [ ] Validation commands run and passing; their recorded scope matches the actual diff's risk and reach
+- [ ] No under-validation, zero validation, or unexplained full-suite validation
 - [ ] No scope creep — only wish-scoped changes
 - [ ] Work is auditable — commands and outcomes captured
 - [ ] Quality pass: security, maintainability, correctness
@@ -80,7 +89,7 @@ If an ordinary reviewer and the `final-gate` disagree, log an appeal with the wi
 - [ ] Diff matches wish scope — no unrelated changes
 - [ ] File list matches wish's "Files to Create/Modify"
 - [ ] No secrets, credentials, or hardcoded tokens in diff
-- [ ] Tests pass (if applicable)
+- [ ] Risk-proportional validation passes, and required aggregate gates remain intact
 - [ ] Commit messages reference wish slug
 
 ## Severity & Verdicts
