@@ -51,6 +51,14 @@ yarn-error.log*
 # Misc
 .cache/
 .temp/
+.dev/
+
+# Repository-local Hermes profile: keep the portable contract in git and
+# exclude plans, sessions, memories, credentials, logs, and other runtime state.
+.hermes/*
+!.hermes/config.yaml
+!.hermes/profile.yaml
+!.hermes/SOUL.md
 
 # Legacy worktrees (now default to ~/.genie/worktrees/)
 .worktrees/

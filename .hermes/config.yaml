@@ -1,0 +1,11 @@
+model:
+  default: gpt-5.6-sol
+  provider: openai-codex
+  base_url: https://chatgpt.com/backend-api/codex
+
+terminal:
+  backend: local
+  timeout: 300
+
+security:
+  redact_secrets: true
