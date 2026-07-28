@@ -16,10 +16,11 @@ fi
 # moved, exports when only the local board moved, and refuses to touch anything
 # on divergence — so a stale local db can never clobber the roadmap. Fail-open:
 # sync trouble warns but never blocks a commit. Skipped in linked worktrees
-# (the snapshot lives in the main checkout) and when no genie.db exists yet.
+# (the snapshot lives in the main checkout). post-merge/post-rewrite run the
+# same sync after pulls.
 git_dir=$(git rev-parse --path-format=absolute --git-dir 2>/dev/null)
 git_common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
-if [ "$git_dir" = "$git_common" ] && [ -f .genie/genie.db ] && [ -f src/genie.ts ]; then
+if [ "$git_dir" = "$git_common" ] && [ -f src/genie.ts ]; then
   if bun src/genie.ts task sync; then
     [ -f .genie/roadmap.json ] && git add .genie/roadmap.json
   else

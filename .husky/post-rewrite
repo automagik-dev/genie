@@ -1,0 +1,10 @@
+# Reconcile the local genie.db with the canonical board snapshot
+# (.genie/roadmap.json) after a pull delivered a new snapshot. Three-way sync:
+# imports when only the snapshot moved, exports when only the local board
+# moved, refuses and warns on divergence. Fail-open; skipped in linked
+# worktrees (the snapshot lives in the main checkout).
+git_dir=$(git rev-parse --path-format=absolute --git-dir 2>/dev/null)
+git_common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+if [ "$git_dir" = "$git_common" ] && [ -f src/genie.ts ] && [ -f .genie/roadmap.json ]; then
+  bun src/genie.ts task sync || true
+fi
