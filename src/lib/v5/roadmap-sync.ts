@@ -23,8 +23,8 @@ import type { Database } from 'bun:sqlite';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { openDb, resolveRepoRoot, resolveRoadmapPath } from './genie-db.js';
-import { exportState, hasOperationalState, importState } from './task-state.js';
+import { resolveRepoRoot, resolveRoadmapPath } from './genie-db.js';
+import { type StateExport, exportState, hasOperationalState, importState } from './task-state.js';
 
 export type SyncAction = 'none' | 'imported' | 'exported' | 'diverged';
 
@@ -42,6 +42,16 @@ export function resolveSyncMarkerPath(cwd?: string): string {
 /** Content hash over the canonical (whitespace-independent) JSON form. */
 function canonicalHash(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
+/**
+ * The published slice of the database: everything EXCEPT hire_roster, whose
+ * rows carry machine-local worktree paths that must never travel between
+ * machines. This is what roadmap.json holds and what sync hashes compare —
+ * local hires can neither dirty the snapshot nor be destroyed by an import.
+ */
+export function roadmapSnapshot(db: Database): StateExport {
+  return { ...exportState(db), hire_roster: [] };
 }
 
 interface SyncMarker {
@@ -78,7 +88,7 @@ function serializeSnapshot(state: unknown): string {
  */
 export function recordSyncBaseline(db: Database, cwd?: string): void {
   const filePath = resolveRoadmapPath(cwd);
-  const dbHash = canonicalHash(exportState(db));
+  const dbHash = canonicalHash(roadmapSnapshot(db));
   let fileHash = dbHash;
   if (existsSync(filePath)) {
     try {
@@ -93,13 +103,13 @@ export function recordSyncBaseline(db: Database, cwd?: string): void {
 /**
  * Reconcile genie.db with the canonical roadmap.json. Acts only when exactly
  * one side changed since the last baseline (see module doc); never destroys
- * state on divergence. Cheap enough to run before every board/task command:
- * one full-state serialization of a small database plus one file hash.
+ * state on divergence. Invoked by `genie task sync`, which the git hooks run
+ * on pull (post-merge / post-rewrite) and before commit (pre-commit).
  */
 export function syncRoadmap(db: Database, cwd?: string): SyncResult {
   const filePath = resolveRoadmapPath(cwd);
   const markerPath = resolveSyncMarkerPath(cwd);
-  const dbState = exportState(db);
+  const dbState = roadmapSnapshot(db);
   const dbHash = canonicalHash(dbState);
 
   if (!existsSync(filePath)) {
@@ -130,8 +140,8 @@ export function syncRoadmap(db: Database, cwd?: string): SyncResult {
   const dbChanged = marker === null || dbHash !== marker.dbHash;
 
   if (fileChanged && (!dbChanged || !hasOperationalState(db))) {
-    importState(db, parsed, { replace: true });
-    writeMarker(markerPath, { fileHash, dbHash: canonicalHash(exportState(db)) });
+    importState(db, parsed, { replace: true, preserveHireRoster: true });
+    writeMarker(markerPath, { fileHash, dbHash: canonicalHash(roadmapSnapshot(db)) });
     return { action: 'imported', message: `Board refreshed from ${filePath}.` };
   }
   if (dbChanged && !fileChanged) {
@@ -145,26 +155,4 @@ export function syncRoadmap(db: Database, cwd?: string): SyncResult {
     action: 'diverged',
     message: `Both the local board (genie.db) and ${filePath} changed since the last sync. Nothing was overwritten. ${resolution}`,
   };
-}
-
-/**
- * Fail-open sync for command preAction hooks: reconcile silently (an import or
- * export that worked needs no announcement, and stdout must stay clean for
- * --json consumers), warn on stderr only when the sides diverged, and never
- * let a sync failure break the board/task command the user actually ran.
- */
-export function autoSyncBeforeCommand(): void {
-  try {
-    const db = openDb();
-    try {
-      const result = syncRoadmap(db);
-      if (result.action === 'diverged' && result.message) {
-        process.stderr.write(`warn: ${result.message}\n`);
-      }
-    } finally {
-      db.close();
-    }
-  } catch {
-    // Sync is a convenience layer; the command itself surfaces real db errors.
-  }
 }

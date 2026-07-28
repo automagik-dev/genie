@@ -1558,28 +1558,32 @@ function insertSnapshotRows(db: Database, state: StateExport): void {
  * transaction. Row ids (including event/stage autoincrement ids) are preserved
  * exactly, so an export → import round-trip is lossless.
  */
-export function importState(db: Database, snapshot: unknown, opts: { replace?: boolean } = {}): ImportSummary {
+export interface ImportOptions {
+  replace?: boolean;
+  /**
+   * Leave the local hire_roster untouched (neither wiped nor inserted). Set for
+   * roadmap-scoped snapshots: hires carry machine-local worktree paths that
+   * must never travel between machines.
+   */
+  preserveHireRoster?: boolean;
+}
+
+export function importState(db: Database, snapshot: unknown, opts: ImportOptions = {}): ImportSummary {
   const state = validateSnapshot(db, snapshot);
+  const hires = opts.preserveHireRoster ? [] : state.hire_roster;
   const apply = db.transaction(() => {
     if (hasOperationalState(db)) {
       if (!opts.replace) throw new NonEmptyImportError();
       // Children before parents so FK cascades never fire mid-wipe. Meta is
       // wiped too: replace means EXACT snapshot state, and stale local
       // wish_sig/backfill markers would misdescribe the imported rows.
-      for (const table of [
-        'task_events',
-        'stage_log',
-        'task_dependencies',
-        'tasks',
-        'hire_roster',
-        'wish_groups',
-        'boards',
-        'meta',
-      ]) {
+      const wipe = ['task_events', 'stage_log', 'task_dependencies', 'tasks', 'wish_groups', 'boards', 'meta'];
+      if (!opts.preserveHireRoster) wipe.splice(4, 0, 'hire_roster');
+      for (const table of wipe) {
         db.query(`DELETE FROM ${table}`).run();
       }
     }
-    insertSnapshotRows(db, state);
+    insertSnapshotRows(db, { ...state, hire_roster: hires });
   });
   apply();
   return {
@@ -1588,6 +1592,6 @@ export function importState(db: Database, snapshot: unknown, opts: { replace?: b
     dependencies: state.task_dependencies.length,
     events: state.task_events.length,
     wishGroups: state.wish_groups.length,
-    hires: state.hire_roster.length,
+    hires: hires.length,
   };
 }

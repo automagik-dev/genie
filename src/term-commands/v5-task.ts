@@ -13,6 +13,7 @@
  *   task checkout <id> [--worker <name>]
  *   task export [--write [file]]
  *   task import [file] [--replace]
+ *   task sync
  */
 
 import type { Database } from 'bun:sqlite';
@@ -21,7 +22,7 @@ import type { Command } from 'commander';
 import { color, formatTimestamp, padRight, truncate } from '../lib/term-format.js';
 import { livenessBadge } from '../lib/v5/card-render.js';
 import { openDb, resolveRoadmapPath } from '../lib/v5/genie-db.js';
-import { autoSyncBeforeCommand, recordSyncBaseline, syncRoadmap } from '../lib/v5/roadmap-sync.js';
+import { recordSyncBaseline, roadmapSnapshot, syncRoadmap } from '../lib/v5/roadmap-sync.js';
 import {
   type EventAuthor,
   type TaskCardRow,
@@ -427,7 +428,10 @@ function handleExport(opts: ExportOptions): void {
   run(() => {
     const db = openDb();
     try {
-      const json = `${JSON.stringify(exportState(db), null, 2)}\n`;
+      // --write publishes the roadmap slice (no hire_roster — machine-local
+      // worktree paths); the plain stdout dump stays the complete database.
+      const state = opts.write ? roadmapSnapshot(db) : exportState(db);
+      const json = `${JSON.stringify(state, null, 2)}\n`;
       if (opts.write) {
         const target = typeof opts.write === 'string' ? opts.write : resolveRoadmapPath();
         writeFileSync(target, json);
@@ -475,8 +479,10 @@ function handleImport(file: string | undefined, opts: ImportOptions): void {
     }
     const db = openDb();
     try {
-      const summary = importState(db, snapshot, { replace: opts.replace });
-      if (source === resolveRoadmapPath()) recordSyncBaseline(db);
+      // The canonical snapshot is roadmap-scoped: local hires stay untouched.
+      const canonical = source === resolveRoadmapPath();
+      const summary = importState(db, snapshot, { replace: opts.replace, preserveHireRoster: canonical });
+      if (canonical) recordSyncBaseline(db);
       out(
         `Imported ${summary.tasks} tasks, ${summary.boards} boards, ${summary.dependencies} dependencies, ${summary.events} events, ${summary.wishGroups} wish groups, ${summary.hires} hires from ${source}.`,
       );
@@ -490,17 +496,8 @@ function handleImport(file: string | undefined, opts: ImportOptions): void {
 // Registration
 // ============================================================================
 
-/** Subcommands that ARE the sync surface — auto-syncing first would tangle them. */
-const AUTO_SYNC_EXEMPT = new Set(['import', 'export', 'sync']);
-
 export function registerV5TaskCommands(v5: Command): void {
   const task = v5.command('task').description('task state (SQLite, zero-daemon)');
-
-  // roadmap.json is canonical: reconcile before every ordinary task verb so a
-  // pulled snapshot materializes and local mutations publish (fail-open).
-  task.hook('preAction', (_thisCommand, actionCommand) => {
-    if (!AUTO_SYNC_EXEMPT.has(actionCommand.name())) autoSyncBeforeCommand();
-  });
 
   task
     .command('create')

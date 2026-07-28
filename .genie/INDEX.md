@@ -1,6 +1,6 @@
 # Plans Index
 
-> **Board snapshot (canonical):** [roadmap.json](roadmap.json) is the canonical roadmap board (`genie board`); the local `.genie/genie.db` is a materialization of it. Every `genie board`/`genie task` command auto-syncs three-way: a pulled snapshot imports into genie.db, local board mutations export back (and the pre-commit hook commits the refresh), and if BOTH moved since the last sync genie touches nothing and warns — resolve with `genie task import --replace` (take the snapshot) or `genie task export --write` (keep the local board). Fresh clone: just run `genie board`.
+> **Board snapshot (canonical):** [roadmap.json](roadmap.json) is the canonical roadmap board (`genie board`); the local `.genie/genie.db` materializes from it. Git hooks keep them reconciled via three-way `genie task sync`: post-merge/post-rewrite import a pulled snapshot, pre-commit exports local board changes into the commit, and if BOTH moved since the last sync nothing is touched and the hook warns — resolve with `genie task import --replace` (take the snapshot) or `genie task export --write` (keep the local board). Fresh clone: run `genie task sync` once. Scope: roadmap content only (tasks, dependencies, wish groups, boards, timelines) — `hire_roster` worktree state stays machine-local.
 
 ## Raw
 

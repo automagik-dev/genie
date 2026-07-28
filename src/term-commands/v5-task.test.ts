@@ -23,6 +23,7 @@ import {
   getTaskCard,
   getTaskEvents,
   getTaskLane,
+  hireAgent,
 } from '../lib/v5/task-state.js';
 
 const GENIE = join(import.meta.dir, '..', 'genie.ts');
@@ -392,7 +393,7 @@ describe('roadmap.json canonical sync', () => {
     writeFileSync(join(dir, '.genie', 'roadmap.json'), snapshot);
   }
 
-  test('fresh clone: any task command materializes the board from the snapshot', async () => {
+  test('fresh clone: one `task sync` materializes the board from the snapshot', async () => {
     const db = openDb({ cwd: repo });
     createTask(db, { title: 'canonical card' });
     db.close();
@@ -406,7 +407,10 @@ describe('roadmap.json canonical sync', () => {
       git(clone, 'commit', '--allow-empty', '-m', 'init');
       await plantSnapshot(clone, snapshotOf(repo));
 
-      // No genie.db exists in the clone yet: `task list` must auto-import.
+      // No genie.db exists in the clone yet: sync must bootstrap it.
+      const synced = await cli(clone, 'sync');
+      expect(synced.code).toBe(0);
+      expect(synced.stdout).toContain('Board refreshed');
       const r = await cli(clone, 'list');
       expect(r.code).toBe(0);
       expect(r.stderr).toBe('');
@@ -416,7 +420,30 @@ describe('roadmap.json canonical sync', () => {
     }
   });
 
-  test('pulled snapshot auto-imports; local mutation auto-exports; divergence is refused then resolvable', async () => {
+  test('snapshot excludes hire_roster; canonical import preserves local hires', async () => {
+    const db = openDb({ cwd: repo });
+    createTask(db, { title: 'card' });
+    hireAgent(db, { wish: 'w', agentAdapterId: 'claude', worktree: '/tmp/wt' });
+    db.close();
+
+    const w = await cli(repo, 'export', '--write');
+    expect(w.code).toBe(0);
+    const snap = JSON.parse(snapshotOf(repo)) as StateExport;
+    expect(snap.hire_roster).toEqual([]);
+    expect(snap.tasks).toHaveLength(1);
+
+    const r = await cli(repo, 'import', '--replace');
+    expect(r.code).toBe(0);
+    const db2 = openDb({ cwd: repo });
+    const hires = db2.query('SELECT wish, worktree FROM hire_roster').all() as Array<{
+      wish: string;
+      worktree: string;
+    }>;
+    db2.close();
+    expect(hires).toEqual([{ wish: 'w', worktree: '/tmp/wt' }]);
+  });
+
+  test('pulled snapshot imports on sync; local mutation exports; divergence is refused then resolvable', async () => {
     // Machine A (repo): publish F1, then F2 with one more card.
     const db = openDb({ cwd: repo });
     createTask(db, { title: 'first card' });
@@ -435,13 +462,16 @@ describe('roadmap.json canonical sync', () => {
       git(clone, 'init', '-b', 'main');
       git(clone, 'commit', '--allow-empty', '-m', 'init');
       await plantSnapshot(clone, f1);
-      await cli(clone, 'list'); // materialize + baseline
+      await cli(clone, 'sync'); // materialize + baseline
 
-      // Simulated pull: F2 arrives while B's db is untouched → auto-import.
+      // Simulated pull: F2 arrives while B's db is untouched → sync imports
+      // (post-merge/post-rewrite run this after real pulls).
       writeFileSync(join(clone, '.genie', 'roadmap.json'), f2);
-      const pulled = await cli(clone, 'list');
-      expect(pulled.stderr).toBe('');
-      expect(pulled.stdout).toContain('second card');
+      const pulled = await cli(clone, 'sync');
+      expect(pulled.code).toBe(0);
+      expect(pulled.stdout).toContain('Board refreshed');
+      const listed2 = await cli(clone, 'list');
+      expect(listed2.stdout).toContain('second card');
 
       // Local mutation on B → db ahead → sync exports.
       const created = await cli(clone, 'create', '--title', 'b-only card');
@@ -458,8 +488,7 @@ describe('roadmap.json canonical sync', () => {
       expect(diverged.stdout).toContain('Nothing was overwritten');
       expect(snapshotOf(clone)).toBe(f2); // snapshot untouched
       const listed = await cli(clone, 'list');
-      expect(listed.stderr).toContain('warn:'); // ordinary commands warn…
-      expect(listed.stdout).toContain('b-diverging card'); // …and keep local state
+      expect(listed.stdout).toContain('b-diverging card'); // local state kept
 
       // Resolution: take the snapshot wholesale.
       const resolved = await cli(clone, 'import', '--replace');
