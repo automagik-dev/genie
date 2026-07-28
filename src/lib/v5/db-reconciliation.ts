@@ -8,7 +8,7 @@
 
 import { Database } from 'bun:sqlite';
 import { createHash } from 'node:crypto';
-import { realpathSync, statSync } from 'node:fs';
+import { existsSync, realpathSync, statSync } from 'node:fs';
 import { normalize } from 'node:path';
 import { CURRENT_SCHEMA_VERSION } from './genie-db.js';
 
@@ -18,6 +18,8 @@ const READ_BUSY_TIMEOUT_MS = 5_000;
 const MAX_DATABASE_BYTES = 256 * 1024 * 1024;
 const MAX_ROWS_PER_TABLE = 1_000_000;
 const MAX_TOTAL_ROWS = 2_000_000;
+const MAX_CONFLICTS = 10_000;
+const MAX_SCHEMA_OBJECTS = 64;
 const BACKFILL_MARKER = 'stage_log_backfill_v1';
 const DIRECT_BACKFILL_KINDS = new Set(['comment', 'move', 'claim', 'release', 'block', 'unblock', 'report']);
 
@@ -276,7 +278,7 @@ interface IndexFingerprint {
 interface TableFingerprint {
   readonly name: string;
   readonly columns: readonly ColumnFingerprint[];
-  readonly foreignKeys: readonly ForeignKeyFingerprint[];
+  readonly foreignKeys: readonly (readonly ForeignKeyFingerprint[])[];
   readonly indexes: readonly IndexFingerprint[];
   readonly checks: readonly string[];
   readonly autoIncrement: boolean;
@@ -379,19 +381,20 @@ const EXPECTED_COLUMNS: Readonly<
   ],
 };
 
-const EXPECTED_FOREIGN_KEYS: Readonly<Record<ReconciliationTableName, readonly ForeignKeyFingerprint[]>> = {
-  boards: [],
-  hire_roster: [],
-  meta: [],
-  stage_log: [foreignKey('tasks', 'task_id', 'id', 'NO ACTION', 'CASCADE')],
-  task_dependencies: [
-    foreignKey('tasks', 'depends_on_id', 'id', 'NO ACTION', 'CASCADE'),
-    foreignKey('tasks', 'task_id', 'id', 'NO ACTION', 'CASCADE'),
-  ],
-  task_events: [foreignKey('tasks', 'task_id', 'id', 'NO ACTION', 'CASCADE')],
-  tasks: [foreignKey('boards', 'board_id', 'id', 'NO ACTION', 'SET NULL')],
-  wish_groups: [],
-};
+const EXPECTED_FOREIGN_KEYS: Readonly<Record<ReconciliationTableName, readonly (readonly ForeignKeyFingerprint[])[]>> =
+  {
+    boards: [],
+    hire_roster: [],
+    meta: [],
+    stage_log: [foreignKey('tasks', 'task_id', 'id', 'NO ACTION', 'CASCADE')],
+    task_dependencies: [
+      foreignKey('tasks', 'depends_on_id', 'id', 'NO ACTION', 'CASCADE'),
+      foreignKey('tasks', 'task_id', 'id', 'NO ACTION', 'CASCADE'),
+    ],
+    task_events: [foreignKey('tasks', 'task_id', 'id', 'NO ACTION', 'CASCADE')],
+    tasks: [foreignKey('boards', 'board_id', 'id', 'NO ACTION', 'SET NULL')],
+    wish_groups: [],
+  };
 
 const EXPECTED_INDEXES: Readonly<Record<ReconciliationTableName, readonly IndexFingerprint[]>> = {
   boards: [index(null, 'pk', true, ['id']), index(null, 'u', true, ['name'])],
@@ -452,8 +455,8 @@ function foreignKey(
   to: string,
   onUpdate: string,
   onDelete: string,
-): ForeignKeyFingerprint {
-  return { table, from, to, onUpdate, onDelete, match: 'NONE' };
+): readonly ForeignKeyFingerprint[] {
+  return [{ table, from, to, onUpdate, onDelete, match: 'NONE' }];
 }
 
 function index(name: string | null, origin: string, unique: boolean, columns: readonly string[]): IndexFingerprint {
@@ -536,7 +539,15 @@ function resolvePhysicalInput(path: string): PhysicalInput {
     const canonicalPath = normalize(realpathSync(path));
     const stats = statSync(canonicalPath);
     if (!stats.isFile()) throw new Error('not a regular file');
-    if (stats.size > MAX_DATABASE_BYTES) {
+    const walPath = `${canonicalPath}-wal`;
+    let walBytes = 0;
+    if (existsSync(walPath)) {
+      const walStats = statSync(walPath);
+      if (!walStats.isFile()) throw new Error('WAL is not a regular file');
+      walBytes = walStats.size;
+    }
+    const logicalBytes = stats.size + walBytes;
+    if (logicalBytes > MAX_DATABASE_BYTES) {
       throw error('input-too-large', 'The database exceeds the bounded reconciliation input size.');
     }
     return {
@@ -573,8 +584,9 @@ function samePhysicalInput(left: PhysicalInput, right: PhysicalInput): boolean {
 
 function readInventory(db: Database): Array<{ type: string; name: string; tableName: string; sql: string | null }> {
   const rows = db
-    .query('SELECT type, name, tbl_name AS tableName, sql FROM sqlite_schema ORDER BY type, name')
-    .all() as Array<Record<string, SqliteScalar>>;
+    .query('SELECT type, name, tbl_name AS tableName, sql FROM sqlite_schema ORDER BY type, name LIMIT ?')
+    .all(MAX_SCHEMA_OBJECTS + 1) as Array<Record<string, SqliteScalar>>;
+  if (rows.length > MAX_SCHEMA_OBJECTS) unsupportedSchema();
   return rows.map((row) => {
     const type = rowString(row, 'type');
     const name = rowString(row, 'name');
@@ -663,18 +675,34 @@ function tableColumns(db: Database, table: ReconciliationTableName): readonly Co
   return observed;
 }
 
-function tableForeignKeys(db: Database, table: ReconciliationTableName): readonly ForeignKeyFingerprint[] {
+function tableForeignKeys(db: Database, table: ReconciliationTableName): readonly (readonly ForeignKeyFingerprint[])[] {
   const rows = db.query(`PRAGMA foreign_key_list(${table})`).all() as Array<Record<string, SqliteScalar>>;
-  const observed = rows
-    .map((row) => ({
-      table: rowString(row, 'table'),
-      from: rowString(row, 'from'),
-      to: rowString(row, 'to'),
-      onUpdate: rowString(row, 'on_update'),
-      onDelete: rowString(row, 'on_delete'),
-      match: rowString(row, 'match'),
-    }))
-    .sort((left, right) => compareCanonical(JSON.stringify(left), JSON.stringify(right)));
+  const rawGroups = new Map<number, Array<{ sequence: number; fingerprint: ForeignKeyFingerprint }>>();
+  for (const row of rows) {
+    const id = schemaInteger(row.id);
+    const group = rawGroups.get(id) ?? [];
+    group.push({
+      sequence: schemaInteger(row.seq),
+      fingerprint: {
+        table: rowString(row, 'table'),
+        from: rowString(row, 'from'),
+        to: rowString(row, 'to'),
+        onUpdate: rowString(row, 'on_update'),
+        onDelete: rowString(row, 'on_delete'),
+        match: rowString(row, 'match'),
+      },
+    });
+    rawGroups.set(id, group);
+  }
+  const observed = [...rawGroups.values()]
+    .map((group) => {
+      group.sort((left, right) => left.sequence - right.sequence);
+      if (group.some((item, index) => item.sequence !== index)) unsupportedSchema();
+      return group.map((item) => item.fingerprint);
+    })
+    .map((group) => ({ group, key: JSON.stringify(group) }))
+    .sort((left, right) => compareCanonical(left.key, right.key))
+    .map((item) => item.group);
   if (JSON.stringify(observed) !== JSON.stringify(EXPECTED_FOREIGN_KEYS[table])) unsupportedSchema();
   return observed;
 }
@@ -884,7 +912,13 @@ function readSchemaFingerprint(db: Database): SchemaFingerprint {
     }
     const sql = tableSql.get(name);
     if (sql === undefined) staleSchema();
-    if (hasKeyword(sql, 'deferrable') || hasKeyword(sql, 'initially')) unsupportedSchema();
+    if (
+      ['collate', 'conflict', 'deferrable', 'generated', 'initially', 'match'].some((keyword) =>
+        hasKeyword(sql, keyword),
+      )
+    ) {
+      unsupportedSchema();
+    }
     const checks = normalizeChecks(sql);
     if (JSON.stringify(checks) !== JSON.stringify(EXPECTED_CHECKS[name])) unsupportedSchema();
     const autoIncrement = hasKeyword(sql, 'autoincrement');
@@ -915,15 +949,25 @@ function checkIntegrity(db: Database): void {
 
 function boundedTableRows(
   db: Database,
-  table: ReconciliationTableName,
+  _table: ReconciliationTableName,
   sql: string,
 ): Array<Record<string, SqliteScalar>> {
-  const countRow = db.query(`SELECT count(*) AS rowCount FROM ${table}`).get() as Record<string, SqliteScalar>;
-  const count = rowInteger(countRow, 'rowCount');
-  if (count > BigInt(MAX_ROWS_PER_TABLE)) {
-    throw error('invalid-data', 'A reconciliation input exceeds the bounded row-count limit.');
-  }
   return db.query(sql).all() as Array<Record<string, SqliteScalar>>;
+}
+
+function preflightRowCounts(db: Database): void {
+  let total = 0n;
+  for (const table of TABLE_NAMES) {
+    const countRow = db.query(`SELECT count(*) AS rowCount FROM ${table}`).get() as Record<string, SqliteScalar>;
+    const count = rowInteger(countRow, 'rowCount');
+    if (count > BigInt(MAX_ROWS_PER_TABLE)) {
+      throw error('invalid-data', 'A reconciliation input exceeds the bounded row-count limit.');
+    }
+    total += count;
+    if (total > BigInt(MAX_TOTAL_ROWS)) {
+      throw error('invalid-data', 'A reconciliation input exceeds the bounded total row-count limit.');
+    }
+  }
 }
 
 function countValues<T>(values: readonly T[], key: (value: T) => string): Map<string, CountedValue<T>> {
@@ -971,6 +1015,72 @@ function dependencyGraphIsAcyclic(dependencies: ReadonlyMap<string, TaskDependen
     }
   }
   return visited === incomingCount.size;
+}
+
+interface ParsedWishGroup {
+  readonly name: string;
+  readonly dependencies: readonly string[] | null;
+}
+
+function parseWishGroupDependencies(value: string): readonly string[] | null {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) && parsed.every((dependency) => typeof dependency === 'string')
+      ? (parsed as string[])
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function wishGroupGraphIsValid(groups: readonly ParsedWishGroup[]): boolean {
+  const names = new Set(groups.map((group) => group.name));
+  const incomingCount = new Map(groups.map((group) => [group.name, 0]));
+  const dependents = new Map<string, string[]>();
+  for (const group of groups) {
+    if (
+      group.dependencies === null ||
+      group.dependencies.includes(group.name) ||
+      group.dependencies.some((dependency) => !names.has(dependency))
+    ) {
+      return false;
+    }
+    incomingCount.set(group.name, group.dependencies.length);
+    for (const dependency of group.dependencies) {
+      const rows = dependents.get(dependency) ?? [];
+      rows.push(group.name);
+      dependents.set(dependency, rows);
+    }
+  }
+
+  const ready = [...incomingCount].filter(([, count]) => count === 0).map(([name]) => name);
+  let visited = 0;
+  while (ready.length > 0) {
+    const name = ready.pop() as string;
+    visited++;
+    for (const dependent of dependents.get(name) ?? []) {
+      const count = (incomingCount.get(dependent) as number) - 1;
+      incomingCount.set(dependent, count);
+      if (count === 0) ready.push(dependent);
+    }
+  }
+  return visited === groups.length;
+}
+
+function invalidWishGroupGraphs(groups: ReadonlyMap<string, WishGroupReconciliationRow>): Set<string> {
+  const byWish = new Map<string, ParsedWishGroup[]>();
+  for (const group of groups.values()) {
+    const wishKey = canonicalTuple([group.wish]);
+    const wishGroups = byWish.get(wishKey) ?? [];
+    wishGroups.push({ name: group.name, dependencies: parseWishGroupDependencies(group.dependsOn) });
+    byWish.set(wishKey, wishGroups);
+  }
+
+  const invalid = new Set<string>();
+  for (const [wishKey, wishGroups] of byWish) {
+    if (!wishGroupGraphIsValid(wishGroups)) invalid.add(wishKey);
+  }
+  return invalid;
 }
 
 function readLogicalState(db: Database): LogicalState {
@@ -1108,6 +1218,9 @@ function readLogicalState(db: Database): LogicalState {
   if (!dependencyGraphIsAcyclic(state.taskDependencies)) {
     throw error('invalid-data', 'A reconciliation input contains an invalid task dependency graph.');
   }
+  if (invalidWishGroupGraphs(state.wishGroups).size > 0) {
+    throw error('invalid-data', 'A reconciliation input contains an invalid wish-group dependency graph.');
+  }
   return state;
 }
 
@@ -1130,6 +1243,7 @@ function loadDatabaseImage(input: PhysicalInput): DatabaseImage {
     // Integrity is intentionally after the closed inventory: a guest trigger or
     // virtual object is rejected before any logical data receives authority.
     checkIntegrity(db);
+    preflightRowCounts(db);
     const state = readLogicalState(db);
     const schemaFingerprint = digestCanonical(['genie-schema-v1', schema]);
     const logicalDigest = logicalStateDigest(schemaFingerprint, state);
@@ -1244,7 +1358,9 @@ function eventValues(row: TaskEventReconciliationValue): readonly (string | bigi
 function mapDigestRows<T>(map: ReadonlyMap<string, T>, values: (row: T) => readonly (string | bigint | null)[]) {
   return [...map.values()]
     .map((row) => values(row).map(canonicalScalar))
-    .sort((left, right) => compareCanonical(JSON.stringify(left), JSON.stringify(right)));
+    .map((row) => ({ row, key: JSON.stringify(row) }))
+    .sort((left, right) => compareCanonical(left.key, right.key))
+    .map((item) => item.row);
 }
 
 function mapDigestCounts<T>(
@@ -1253,7 +1369,9 @@ function mapDigestCounts<T>(
 ) {
   return [...map.values()]
     .map((entry) => [values(entry.value).map(canonicalScalar), entry.count] as const)
-    .sort((left, right) => compareCanonical(JSON.stringify(left[0]), JSON.stringify(right[0])));
+    .map((row) => ({ row, key: JSON.stringify(row[0]) }))
+    .sort((left, right) => compareCanonical(left.key, right.key))
+    .map((item) => item.row);
 }
 
 function logicalStateDigest(schemaFingerprint: string, state: LogicalState): string {
@@ -1301,6 +1419,9 @@ function addConflict(
   key: string,
   side?: ReconciliationConflict['side'],
 ): void {
+  if (conflicts.length >= MAX_CONFLICTS) {
+    throw error('invalid-data', 'Reconciliation exceeds the bounded conflict diagnostic limit.');
+  }
   conflicts.push({ table, reason, keyDigest: conflictKeyDigest(table, key), ...(side === undefined ? {} : { side }) });
 }
 
@@ -1516,6 +1637,9 @@ function validatePlannedTargetIntegrity(
   if (!dependencyGraphIsAcyclic(state.taskDependencies)) {
     addConflict(conflicts, 'task_dependencies', 'planned-integrity-failed', canonicalTuple(['dependency-cycle']), side);
   }
+  for (const wishKey of invalidWishGroupGraphs(state.wishGroups)) {
+    addConflict(conflicts, 'wish_groups', 'planned-integrity-failed', wishKey, side);
+  }
   for (const [key, stage] of state.stageLog) {
     if (!state.tasks.has(canonicalTuple([stage.value.taskId]))) {
       addConflict(conflicts, 'stage_log', 'planned-integrity-failed', key, side);
@@ -1564,8 +1688,11 @@ function reconcileStates(
     if (mode === 'bidirectional') validatePlannedTargetIntegrity(left, 'left', conflicts);
     validatePlannedTargetIntegrity(right, mode === 'bidirectional' ? 'right' : 'destination', conflicts);
   }
-  conflicts.sort((a, b) => compareCanonical(JSON.stringify(a), JSON.stringify(b)));
-  return { left, right, conflicts };
+  const sortedConflicts = conflicts
+    .map((conflict) => ({ conflict, key: JSON.stringify(conflict) }))
+    .sort((leftConflict, rightConflict) => compareCanonical(leftConflict.key, rightConflict.key))
+    .map((item) => item.conflict);
+  return { left, right, conflicts: sortedConflicts };
 }
 
 function changedRows<T>(
@@ -1739,7 +1866,9 @@ export function planDatabaseReconciliation(request: ReconciliationRequest): Reco
   revalidatePhysicalInput(second);
   if (firstImage.schemaFingerprint !== secondImage.schemaFingerprint) unsupportedSchema();
 
-  const reconciled = reconcileStates(mode, firstImage.state, secondImage.state);
+  const reconciled = sameDatabase
+    ? { left: cloneState(firstImage.state), right: cloneState(firstImage.state), conflicts: [] }
+    : reconcileStates(mode, firstImage.state, secondImage.state);
   const inputs: ReconciliationPlanInput[] = [
     {
       role: firstRole,

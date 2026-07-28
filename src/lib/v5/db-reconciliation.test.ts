@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { linkSync, mkdtempSync, readFileSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -235,9 +235,14 @@ function seedPreRuntime(path: string): void {
   db.close();
 }
 
-function seedReorderedCurrent(path: string, taskStatuses = "'done', 'blocked', 'ready', 'in_progress'"): void {
+function seedReorderedCurrent(
+  path: string,
+  taskStatuses = "'done', 'blocked', 'ready', 'in_progress'",
+  transform: (sql: string) => string = (sql) => sql,
+): void {
   const db = new Database(path);
-  db.exec(`
+  db.exec(
+    transform(`
     PRAGMA user_version = 1;
     CREATE TABLE meta (value TEXT NOT NULL, key TEXT, PRIMARY KEY (key));
     CREATE TABLE boards (
@@ -300,7 +305,8 @@ function seedReorderedCurrent(path: string, taskStatuses = "'done', 'blocked', '
     CREATE INDEX idx_stage_log_task ON stage_log(task_id);
     CREATE INDEX idx_tasks_status ON tasks(status);
     CREATE INDEX idx_task_deps_dep ON task_dependencies(depends_on_id);
-  `);
+  `),
+  );
   db.close();
 }
 
@@ -410,6 +416,33 @@ describe('closed normalized current schema', () => {
     const wrongCheck = pathFor('wrong-check');
     seedReorderedCurrent(wrongCheck, "'done', 'blocked', 'ready', 'paused'");
     expect(dryRunDatabaseReconciliation(bidirectional(wrongCheck, peer)).status).toBe('operational-failure');
+  });
+
+  test.each([
+    ['declared collation', (sql: string) => sql.replace('title TEXT NOT NULL', 'title TEXT COLLATE NOCASE NOT NULL')],
+    [
+      'constraint conflict policy',
+      (sql: string) => sql.replace('name TEXT NOT NULL UNIQUE', 'name TEXT NOT NULL UNIQUE ON CONFLICT IGNORE'),
+    ],
+    [
+      'regrouped foreign keys',
+      (sql: string) =>
+        sql.replace(
+          /depends_on_id TEXT NOT NULL REFERENCES tasks\(id\) ON DELETE CASCADE,\s*task_id TEXT NOT NULL REFERENCES tasks\(id\) ON DELETE CASCADE,/,
+          `task_id TEXT NOT NULL,
+      depends_on_id TEXT NOT NULL,
+      FOREIGN KEY (task_id, depends_on_id) REFERENCES tasks(id, id) ON DELETE CASCADE,`,
+        ),
+    ],
+  ])('%s is rejected by the closed schema fingerprint', (_name, transform) => {
+    const altered = pathFor('altered');
+    const peer = currentDb('peer');
+    seedReorderedCurrent(altered, "'done', 'blocked', 'ready', 'in_progress'", transform);
+
+    const report = dryRunDatabaseReconciliation(bidirectional(altered, peer));
+
+    expect(report.status).toBe('operational-failure');
+    expect(report.operationalFailure?.code).toBe('unsupported-schema');
   });
 });
 
@@ -572,6 +605,55 @@ describe('keyed, edge-set, and history-multiset planning', () => {
     ]);
     expect(target(plan, 'left').changes.taskDependencies).toEqual([]);
     expect(target(plan, 'right').changes.taskDependencies).toEqual([]);
+  });
+
+  test('invalid loaded wish-group dependency graphs are rejected while valid per-wish graphs reconcile', () => {
+    const invalidFixtures = [
+      { name: 'malformed', rows: [['w', 'a', '{']] },
+      { name: 'non-array', rows: [['w', 'a', '{}']] },
+      { name: 'non-string', rows: [['w', 'a', '[1]']] },
+      { name: 'dangling', rows: [['w', 'a', '["missing"]']] },
+      { name: 'self', rows: [['w', 'a', '["a"]']] },
+      {
+        name: 'cycle',
+        rows: [
+          ['w', 'a', '["b"]'],
+          ['w', 'b', '["a"]'],
+        ],
+      },
+    ] as const;
+    const peer = currentDb('peer');
+    for (const fixture of invalidFixtures) {
+      const invalid = currentDb(fixture.name);
+      mutate(invalid, (db) => {
+        for (const [wish, name, dependsOn] of fixture.rows) {
+          db.query(
+            `INSERT INTO wish_groups
+               (wish, name, status, depends_on, created_at, updated_at)
+             VALUES (?, ?, 'ready', ?, 1, 1)`,
+          ).run(wish, name, dependsOn);
+        }
+      });
+      expect(() => planDatabaseReconciliation(bidirectional(invalid, peer))).toThrow(
+        expect.objectContaining({ code: 'invalid-data' }),
+      );
+    }
+
+    const valid = currentDb('valid');
+    mutate(valid, (db) => {
+      for (const [wish, name, dependsOn] of [
+        ['w1', 'a', '[]'],
+        ['w1', 'b', '["a"]'],
+        ['w2', 'a', '[]'],
+      ]) {
+        db.query(
+          `INSERT INTO wish_groups
+             (wish, name, status, depends_on, created_at, updated_at)
+           VALUES (?, ?, 'ready', ?, 1, 1)`,
+        ).run(wish, name, dependsOn);
+      }
+    });
+    expect(planDatabaseReconciliation(bidirectional(valid, peer)).status).toBe('changed');
   });
 
   test('bidirectional same-key differences conflict without exposing hostile payloads', () => {
@@ -885,18 +967,24 @@ describe('stage_log_backfill_v1 marker semantics', () => {
 });
 
 describe('same-file, idempotency, and bounded failures', () => {
-  test('canonical aliases of the same physical database are a safe same-database no-op', () => {
-    const path = currentDb('one');
-    const alias = join(fixtureRoot, 'alias.db');
-    symlinkSync(path, alias);
-
-    const plan = planDatabaseReconciliation(bidirectional(path, alias));
-
-    expect(plan.status).toBe('same-database');
-    expect(plan.sameDatabase).toBe(true);
-    expect(plan.report.status).toBe('no-op');
-    expect(plan.inputs[0].logicalDigest).toBe(plan.inputs[1].logicalDigest);
-    expect(plan.targets.every((item) => !Object.values(item.changes).some((rows) => rows.length > 0))).toBe(true);
+  test('symlink and hardlink aliases are true same-database no-ops in both modes', () => {
+    const path = currentDb('one', '000100');
+    for (const aliasKind of ['symlink', 'hardlink'] as const) {
+      const alias = join(fixtureRoot, `${aliasKind}.db`);
+      if (aliasKind === 'symlink') symlinkSync(path, alias);
+      else linkSync(path, alias);
+      for (const request of [
+        bidirectional(path, alias),
+        { mode: 'directional', sourcePath: alias, destinationPath: path } as const,
+      ]) {
+        const plan = planDatabaseReconciliation(request);
+        expect(plan.status).toBe('same-database');
+        expect(plan.sameDatabase).toBe(true);
+        expect(plan.report.status).toBe('no-op');
+        expect(plan.inputs[0].logicalDigest).toBe(plan.inputs[1].logicalDigest);
+        expect(plan.targets.every((item) => !Object.values(item.changes).some((rows) => rows.length > 0))).toBe(true);
+      }
+    }
   });
 
   test('equal logical images are idempotent despite local history IDs', () => {
@@ -966,5 +1054,63 @@ describe('same-file, idempotency, and bounded failures', () => {
     const report = dryRunDatabaseReconciliation(bidirectional(missing, peer));
     expect(report.operationalFailure).toEqual({ code: 'input-unavailable' });
     expect(JSON.stringify(report)).not.toContain(missing);
+  });
+
+  test('WAL-backed bytes and row counts are bounded before logical row materialization', () => {
+    const peer = currentDb('peer');
+    const walHeavy = currentDb('wal-heavy');
+    writeFileSync(`${walHeavy}-wal`, '');
+    truncateSync(`${walHeavy}-wal`, 256 * 1024 * 1024 + 1);
+    expect(dryRunDatabaseReconciliation(bidirectional(walHeavy, peer)).operationalFailure?.code).toBe(
+      'input-too-large',
+    );
+
+    const rowHeavy = currentDb('row-heavy');
+    mutate(rowHeavy, (db) => {
+      db.exec("INSERT INTO boards (id, name, created_at) VALUES ('bad', X'01', 1)");
+      db.exec(`
+        WITH RECURSIVE seq(value) AS (
+          VALUES(0)
+          UNION ALL
+          SELECT value + 1 FROM seq WHERE value < 1000000
+        )
+        INSERT INTO meta (key, value)
+        SELECT printf('key-%07d', value), 'v' FROM seq
+      `);
+    });
+    expect(() => planDatabaseReconciliation(bidirectional(rowHeavy, peer))).toThrow(
+      expect.objectContaining({
+        code: 'invalid-data',
+        message: expect.stringContaining('row-count'),
+      }),
+    );
+  }, 30_000);
+
+  test('conflict diagnostics have a bounded cardinality', () => {
+    const left = currentDb('many-left');
+    const right = currentDb('many-right');
+    for (const [path, prefix] of [
+      [left, 'left'],
+      [right, 'right'],
+    ] as const) {
+      mutate(path, (db) => {
+        db.exec(`
+          WITH RECURSIVE seq(value) AS (
+            VALUES(0)
+            UNION ALL
+            SELECT value + 1 FROM seq WHERE value < 10000
+          )
+          INSERT INTO boards (id, name, created_at)
+          SELECT printf('id-%05d', value), '${prefix}-' || value, 1 FROM seq
+        `);
+      });
+    }
+
+    expect(() => planDatabaseReconciliation(bidirectional(left, right))).toThrow(
+      expect.objectContaining({
+        code: 'invalid-data',
+        message: expect.stringContaining('diagnostic'),
+      }),
+    );
   });
 });
