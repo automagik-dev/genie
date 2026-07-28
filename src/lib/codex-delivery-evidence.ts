@@ -911,6 +911,13 @@ function platformTripleFor(platformId: DeliveryEvidencePlatformId): string {
 function sourceBranchAllowedForChannel(branch: unknown, channel: DeliveryEvidenceChannel): branch is string {
   if (typeof branch !== 'string') return false;
   if (channel === 'stable') return branch === 'main';
+  // Accepting "main" on the dev channel is LOAD-BEARING, not a loose check: a
+  // stable release cross-publishes dev (reconcile-channel-manifests.sh advances
+  // both latest.json and dev.json; release-publish.yml builds descriptors for
+  // EVIDENCE_CHANNELS=(stable dev) with SOURCE_BRANCH=main), so dev clients on a
+  // stable-promoted version verify a {channel:'dev', sourceBranch:'main'}
+  // descriptor. Narrowing this to "dev" aborts every dev update after a stable
+  // release. Same asymmetry documented in validate-live-dogfood-evidence.ts.
   return branch === 'main' || branch === 'dev';
 }
 

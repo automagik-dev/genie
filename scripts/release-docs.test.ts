@@ -100,7 +100,10 @@ describe('Group E release and documentation contracts', () => {
     // exactly contents:read — the least that lets the replay guard ask whether
     // the tag already carries a published release — and never write, so an
     // unproven caller still cannot mutate anything.
-    expect(read('.github/workflows/sign-attest.yml')).toContain('permissions: {}');
+    const signAdmit = read('.github/workflows/sign-attest.yml').split('\n  admit:')[1]?.split('\n  prepare:')[0] ?? '';
+    expect(signAdmit).toContain('permissions: {}');
+    expect(signAdmit).not.toContain('contents: write');
+    expect(signAdmit).not.toContain('id-token:');
     const publishAdmit =
       read('.github/workflows/release-publish.yml')
         .split('\n  admit:')[1]
@@ -1033,16 +1036,10 @@ describe('Group E release and documentation contracts', () => {
     expect(readme).toContain('The Codex route is plugin-independent');
     for (const path of ['.mcp.json', '.warp/.mcp.json', '.codex/config.toml']) expect(readme).toContain(path);
   });
-});
 
-test('the retired homolog channel never reappears in release workflows', () => {
-  for (const wf of [
-    '.github/workflows/version.yml',
-    '.github/workflows/release.yml',
-    '.github/workflows/release-publish.yml',
-    '.github/workflows/sign-attest.yml',
-    '.github/workflows/build-tarballs.yml',
-  ]) {
-    expect(readFileSync(wf, 'utf-8')).not.toContain('homolog');
-  }
+  test('the retired homolog channel never reappears in any workflow', () => {
+    for (const name of readdirSync(join(ROOT, '.github/workflows')).filter((entry) => entry.endsWith('.yml'))) {
+      expect(read(`.github/workflows/${name}`), name).not.toContain('homolog');
+    }
+  });
 });
