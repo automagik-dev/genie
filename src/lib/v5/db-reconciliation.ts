@@ -36,7 +36,7 @@ const MAX_BUSY_TIMEOUT_MS = 2_147_483_647;
 const ADVISORY_RETRY_MS = 10;
 const LOCK_EXCLUSIVE_NONBLOCKING = 2 | 4;
 const LOCK_UNLOCK = 8;
-const MAX_DATABASE_BYTES = 256 * 1024 * 1024;
+export const MAX_RECONCILIATION_DATABASE_BYTES = 256 * 1024 * 1024;
 const MAX_ROWS_PER_TABLE = 1_000_000;
 const MAX_TOTAL_ROWS = 2_000_000;
 const MAX_CONFLICTS = 10_000;
@@ -777,7 +777,7 @@ function resolvePhysicalInput(path: string): PhysicalInput {
       throw new Error('SHM is not a regular file');
     }
     const logicalBytes = stats.size + walBytes;
-    if (logicalBytes > MAX_DATABASE_BYTES) {
+    if (logicalBytes > MAX_RECONCILIATION_DATABASE_BYTES) {
       throw error('input-too-large', 'The database exceeds the bounded reconciliation input size.');
     }
     return {
@@ -3359,6 +3359,8 @@ export function withLockedReconciliationDatabases<T>(
   let advisoryLocks: AdvisoryLock[] = [];
   let locked: LockedDatabase[] = [];
   const cleanupFailures: ReconciliationApplyFailure[] = [];
+  let result: ReconciliationLockedOperationResult<T> | undefined;
+  let operationFailure: { readonly failure: ReconciliationApplyFailure; readonly cause: unknown } | undefined;
   const lockOptions: ReconciliationApplyOptions = {
     busyTimeoutMs: options.busyTimeoutMs,
     openDatabase: options.openDatabase,
@@ -3385,16 +3387,13 @@ export function withLockedReconciliationDatabases<T>(
         physical,
       };
     });
-    if (samePhysicalInput(requested[0].physical, requested[1].physical)) {
-      throw new ApplyBoundaryError({ code: 'invalid-plan', phase: 'plan-validation' });
-    }
     const deadline = Date.now() + timeoutMs;
     advisoryLocks = acquirePlannedAdvisoryLocks(requested, deadline, lockOptions);
     locked = openLockedDatabases(requested, deadline, lockOptions);
     const inputs = lockedOperationInputs(requested, locked);
     const initial = inputs.map((input) => input.observe());
     if (initial[0].schemaFingerprint !== initial[1].schemaFingerprint) unsupportedSchema();
-    const result = operation(inputs);
+    result = operation(inputs);
     const final = inputs.map((input) => input.observe());
     if (final.some((image) => image.schemaFingerprint !== initial[0].schemaFingerprint)) unsupportedSchema();
     for (const item of locked) {
@@ -3408,14 +3407,13 @@ export function withLockedReconciliationDatabases<T>(
       emitLockedOperationEvent(options, { phase: 'commit', role, state: 'after' });
     }
     result.afterCommit?.();
-    return result.value;
   } catch (caught) {
     if (caught instanceof ApplyBoundaryError) cleanupFailures.push(...caught.cleanupFailures);
     if (!rollbackOpenTransactions(locked)) {
       cleanupFailures.push({ code: 'rollback-failed', phase: 'rollback' });
     }
     const failure = failureFrom(caught, { code: 'apply-failed', phase: 'mutation' });
-    throw new ReconciliationLockedOperationError(failure, caught, cleanupFailures);
+    operationFailure = { failure, cause: caught };
   } finally {
     if (!closeLockedDatabases(locked)) {
       cleanupFailures.push({ code: 'close-failed', phase: 'cleanup' });
@@ -3424,4 +3422,14 @@ export function withLockedReconciliationDatabases<T>(
       cleanupFailures.push({ code: 'advisory-lock-release-failed', phase: 'cleanup' });
     }
   }
+  if (operationFailure !== undefined) {
+    throw new ReconciliationLockedOperationError(operationFailure.failure, operationFailure.cause, cleanupFailures);
+  }
+  if (cleanupFailures.length > 0) {
+    throw new ReconciliationLockedOperationError(cleanupFailures[0], undefined, cleanupFailures);
+  }
+  if (result === undefined) {
+    throw new ReconciliationLockedOperationError({ code: 'apply-failed', phase: 'mutation' });
+  }
+  return result.value;
 }
