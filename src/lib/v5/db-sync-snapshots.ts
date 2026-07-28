@@ -3,24 +3,28 @@ import { createHash, randomUUID } from 'node:crypto';
 import {
   closeSync,
   constants as fsConstants,
+  fstatSync,
   fsyncSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
   openSync,
-  readFileSync,
+  readSync,
   readdirSync,
   realpathSync,
   renameSync,
-  rmSync,
+  rmdirSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import type { Dirent } from 'node:fs';
+import type { Dirent, Stats } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, parse as parsePath, resolve } from 'node:path';
 import {
+  MAX_RECONCILIATION_DATABASE_BYTES,
   type ReconciliationApplyEvent,
+  type ReconciliationApplyFailure,
   type ReconciliationApplyOptions,
   type ReconciliationApplyReport,
   type ReconciliationDatabaseObservation,
@@ -66,15 +70,20 @@ export type SnapshotFailureCode =
   | 'generation-not-found'
   | 'recovery-uncertain'
   | 'locked-operation-failed'
+  | 'locked-rollback-failed'
+  | 'locked-close-failed'
+  | 'locked-advisory-release-failed'
   | 'snapshot-cleanup-failed';
 
 export class SnapshotError extends Error {
   readonly code: SnapshotFailureCode;
+  readonly cleanupFailures: readonly SnapshotFailureCode[];
 
-  constructor(code: SnapshotFailureCode, message: string) {
+  constructor(code: SnapshotFailureCode, message: string, cleanupFailures: readonly SnapshotFailureCode[] = []) {
     super(message);
     this.name = 'SnapshotError';
     this.code = code;
+    this.cleanupFailures = cleanupFailures;
   }
 }
 
@@ -247,7 +256,16 @@ interface GenerationCapture {
 interface PublishedGeneration {
   readonly manifest: SnapshotManifestV1;
   readonly directory: string;
+  readonly directoryIdentity: FileIdentity;
+  readonly manifestIdentity: FileIdentity;
   readonly privateRoot: string | null;
+}
+
+interface GenerationReference {
+  readonly manifest: SnapshotManifestV1;
+  readonly directory: string;
+  readonly directoryIdentity: FileIdentity;
+  readonly manifestIdentity: FileIdentity;
 }
 
 interface ValidatedGeneration {
@@ -261,6 +279,17 @@ interface RecoveryDecision {
   readonly generationId: string | null;
   readonly restoredPaths: string[];
   readonly cleanupFailures: SnapshotFailureCode[];
+}
+
+interface FileIdentity {
+  readonly dev: number;
+  readonly ino: number;
+}
+
+interface BoundDirectory {
+  readonly path: string;
+  readonly descriptor: number;
+  readonly identity: FileIdentity;
 }
 
 function sha256(value: string | Uint8Array): string {
@@ -294,8 +323,8 @@ function identityFromCanonical(
   canonicalPaths: readonly string[],
   snapshotRoot?: string,
 ): SnapshotStoreIdentity {
-  if (canonicalPaths.length !== 2 || canonicalPaths[0] === canonicalPaths[1]) {
-    throw new SnapshotError('invalid-snapshot-option', 'Database snapshot identity requires two distinct inputs.');
+  if (canonicalPaths.length !== 2) {
+    throw new SnapshotError('invalid-snapshot-option', 'Database snapshot identity requires exactly two inputs.');
   }
   if (mode === 'bidirectional') {
     const sorted = [...canonicalPaths].sort(compareText);
@@ -366,8 +395,121 @@ function around(
   emit(options, { ...event, state: 'after' });
 }
 
+function fileIdentity(stats: Stats): FileIdentity {
+  return { dev: stats.dev, ino: stats.ino };
+}
+
+function sameFileIdentity(left: FileIdentity, right: Stats | FileIdentity): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function filesystemCode(caught: unknown): unknown {
+  return isRecord(caught) ? caught.code : undefined;
+}
+
+function assertSafeDirectoryAncestors(path: string): void {
+  const absolute = resolve(path);
+  const root = parsePath(absolute).root;
+  const parts = absolute.slice(root.length).split('/').filter(Boolean);
+  let current = root;
+  for (const part of parts) {
+    current = join(current, part);
+    let stats: Stats;
+    try {
+      stats = lstatSync(current);
+    } catch (caught) {
+      if (filesystemCode(caught) === 'ENOENT') return;
+      throw caught;
+    }
+    if (stats.isSymbolicLink() || !stats.isDirectory()) {
+      throw new SnapshotError(
+        'manifest-invalid',
+        'Snapshot root and its existing ancestors must be physical directories.',
+      );
+    }
+  }
+}
+
+function assertPathIdentity(path: string, identity: FileIdentity, kind: 'directory' | 'file'): void {
+  let stats: Stats;
+  try {
+    stats = lstatSync(path);
+  } catch {
+    throw new SnapshotError('manifest-invalid', `Snapshot ${kind} identity changed during the operation.`);
+  }
+  const validType = kind === 'directory' ? stats.isDirectory() : stats.isFile();
+  if (stats.isSymbolicLink() || !validType || !sameFileIdentity(identity, stats)) {
+    throw new SnapshotError('manifest-invalid', `Snapshot ${kind} identity changed during the operation.`);
+  }
+}
+
+function openBoundDirectory(path: string, create: boolean, requirePrivate = false): BoundDirectory {
+  assertSafeDirectoryAncestors(path);
+  if (create) mkdirSync(path, { recursive: true, mode: 0o700 });
+  assertSafeDirectoryAncestors(path);
+  let descriptor: number;
+  try {
+    descriptor = openSync(path, fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | fsConstants.O_NOFOLLOW);
+  } catch (caught) {
+    if (!create && filesystemCode(caught) === 'ENOENT') throw caught;
+    throw new SnapshotError('manifest-invalid', 'Snapshot root is not a safe physical directory.');
+  }
+  try {
+    const stats = fstatSync(descriptor);
+    const currentUid = typeof process.getuid === 'function' ? process.getuid() : stats.uid;
+    const mode = stats.mode & 0o777;
+    if (!stats.isDirectory() || stats.uid !== currentUid || (requirePrivate ? mode !== 0o700 : (mode & 0o022) !== 0)) {
+      throw new SnapshotError('manifest-invalid', 'Snapshot root must be a private directory owned by this user.');
+    }
+    const identity = fileIdentity(stats);
+    assertPathIdentity(path, identity, 'directory');
+    return { path, descriptor, identity };
+  } catch (caught) {
+    closeSync(descriptor);
+    throw caught;
+  }
+}
+
+function closeBoundDirectory(directory: BoundDirectory): void {
+  closeSync(directory.descriptor);
+}
+
+function readBoundedRegularFile(
+  path: string,
+  maximumBytes: number,
+): { readonly bytes: Uint8Array; readonly identity: FileIdentity } {
+  let descriptor: number;
+  try {
+    descriptor = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | (fsConstants.O_NONBLOCK ?? 0));
+  } catch {
+    throw new SnapshotError('manifest-invalid', 'Snapshot input must be a no-follow physical regular file.');
+  }
+  try {
+    const initial = fstatSync(descriptor);
+    if (!initial.isFile() || initial.size > maximumBytes) {
+      throw new SnapshotError('manifest-invalid', 'Snapshot input is not a bounded physical regular file.');
+    }
+    const identity = fileIdentity(initial);
+    const bytes = new Uint8Array(initial.size);
+    let offset = 0;
+    while (offset < bytes.byteLength) {
+      const count = readSync(descriptor, bytes, offset, bytes.byteLength - offset, offset);
+      if (count === 0) break;
+      offset += count;
+    }
+    const final = fstatSync(descriptor);
+    if (offset !== bytes.byteLength || final.size !== initial.size || !sameFileIdentity(identity, final)) {
+      throw new SnapshotError('manifest-invalid', 'Snapshot input changed while it was read.');
+    }
+    assertPathIdentity(path, identity, 'file');
+    return { bytes, identity };
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
 function fsyncPath(path: string): void {
-  const descriptor = openSync(path, fsConstants.O_RDONLY);
+  const descriptor = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
   try {
     fsyncSync(descriptor);
   } finally {
@@ -380,7 +522,12 @@ function writeJson(path: string, manifest: SnapshotManifestV1): void {
 }
 
 function overwriteJson(path: string, manifest: SnapshotManifestV1): void {
-  writeFileSync(path, `${JSON.stringify(manifest, null, 2)}\n`, { flag: 'w', mode: 0o600 });
+  const descriptor = openSync(path, fsConstants.O_WRONLY | fsConstants.O_TRUNC | fsConstants.O_NOFOLLOW);
+  try {
+    writeFileSync(descriptor, `${JSON.stringify(manifest, null, 2)}\n`);
+  } finally {
+    closeSync(descriptor);
+  }
 }
 
 function generationId(
@@ -464,17 +611,22 @@ function makeManifest(
   };
 }
 
-function createPrivateRoot(): string {
+function createPrivateRoot(): { readonly path: string; readonly identity: FileIdentity } {
   const root = mkdtempSync(join(tmpdir(), 'genie-db-sync-private-'));
   const mode = statSync(root).mode & 0o777;
   if (mode !== 0o700) {
-    rmSync(root, { recursive: true, force: true });
+    rmdirSync(root);
     throw new SnapshotError(
       'snapshot-publication-failed',
       'Private snapshot directory was not created with mode 0700.',
     );
   }
-  return root;
+  const binding = openBoundDirectory(root, false, true);
+  try {
+    return { path: root, identity: binding.identity };
+  } finally {
+    closeBoundDirectory(binding);
+  }
 }
 
 function publishGeneration(
@@ -485,11 +637,12 @@ function publishGeneration(
   privateRoot: string | null = null,
 ): PublishedGeneration {
   const root = privateRoot ?? identity.root;
-  mkdirSync(root, { recursive: true, mode: 0o700 });
+  const rootBinding = openBoundDirectory(root, true, privateRoot !== null);
   const generated = generationId(identity, options);
   const staging = join(root, `${STAGING_PREFIX}${generated.id}-${randomUUID()}`);
   const finalDirectory = join(root, generated.id);
   mkdirSync(staging, { mode: 0o700 });
+  const stagingBinding = openBoundDirectory(staging, false, true);
   const provisional = makeManifest(
     identity,
     schemaFingerprint,
@@ -503,18 +656,29 @@ function publishGeneration(
     for (let index = 0; index < captures.length; index++) {
       const capture = captures[index];
       around(options, { phase: 'payload-write', generationId: generated.id, role: capture.role }, () =>
-        writeFileSync(join(staging, provisional.targets[index].snapshot_file), capture.normalizedBytes, {
-          flag: 'wx',
-          mode: 0o600,
-        }),
+        (() => {
+          assertPathIdentity(root, rootBinding.identity, 'directory');
+          assertPathIdentity(staging, stagingBinding.identity, 'directory');
+          writeFileSync(join(staging, provisional.targets[index].snapshot_file), capture.normalizedBytes, {
+            flag: 'wx',
+            mode: 0o600,
+          });
+        })(),
       );
     }
     around(options, { phase: 'provisional-manifest-write', generationId: generated.id }, () =>
-      writeJson(join(staging, MANIFEST_FILE), provisional),
+      (() => {
+        assertPathIdentity(root, rootBinding.identity, 'directory');
+        assertPathIdentity(staging, stagingBinding.identity, 'directory');
+        writeJson(join(staging, MANIFEST_FILE), provisional);
+      })(),
     );
     for (const target of provisional.targets) {
       around(options, { phase: 'payload-fsync', generationId: generated.id, role: target.role }, () =>
-        fsyncPath(join(staging, target.snapshot_file)),
+        (() => {
+          assertPathIdentity(staging, stagingBinding.identity, 'directory');
+          fsyncPath(join(staging, target.snapshot_file));
+        })(),
       );
     }
     const complete = makeManifest(
@@ -527,23 +691,49 @@ function publishGeneration(
       true,
     );
     around(options, { phase: 'complete-manifest-write', generationId: generated.id }, () =>
-      overwriteJson(join(staging, MANIFEST_FILE), complete),
+      (() => {
+        assertPathIdentity(staging, stagingBinding.identity, 'directory');
+        overwriteJson(join(staging, MANIFEST_FILE), complete);
+      })(),
     );
     around(options, { phase: 'complete-manifest-fsync', generationId: generated.id }, () =>
-      fsyncPath(join(staging, MANIFEST_FILE)),
+      (() => {
+        assertPathIdentity(staging, stagingBinding.identity, 'directory');
+        fsyncPath(join(staging, MANIFEST_FILE));
+      })(),
     );
-    around(options, { phase: 'staging-fsync', generationId: generated.id }, () => fsyncPath(staging));
-    around(options, { phase: 'generation-rename', generationId: generated.id }, () =>
-      renameSync(staging, finalDirectory),
-    );
-    around(options, { phase: 'root-fsync', generationId: generated.id }, () => fsyncPath(root));
-    return { manifest: complete, directory: finalDirectory, privateRoot };
+    around(options, { phase: 'staging-fsync', generationId: generated.id }, () => {
+      assertPathIdentity(staging, stagingBinding.identity, 'directory');
+      fsyncSync(stagingBinding.descriptor);
+    });
+    around(options, { phase: 'generation-rename', generationId: generated.id }, () => {
+      assertPathIdentity(root, rootBinding.identity, 'directory');
+      assertPathIdentity(staging, stagingBinding.identity, 'directory');
+      renameSync(staging, finalDirectory);
+      assertPathIdentity(finalDirectory, stagingBinding.identity, 'directory');
+    });
+    around(options, { phase: 'root-fsync', generationId: generated.id }, () => {
+      assertPathIdentity(root, rootBinding.identity, 'directory');
+      fsyncSync(rootBinding.descriptor);
+    });
+    const manifestPath = join(finalDirectory, MANIFEST_FILE);
+    const manifestIdentity = readBoundedRegularFile(manifestPath, MAX_MANIFEST_BYTES).identity;
+    return {
+      manifest: complete,
+      directory: finalDirectory,
+      directoryIdentity: stagingBinding.identity,
+      manifestIdentity,
+      privateRoot,
+    };
   } catch (caught) {
     if (caught instanceof SnapshotError) throw caught;
     throw new SnapshotError(
       'snapshot-publication-failed',
       caught instanceof Error ? caught.message : 'Snapshot publication failed.',
     );
+  } finally {
+    closeBoundDirectory(stagingBinding);
+    closeBoundDirectory(rootBinding);
   }
 }
 
@@ -687,30 +877,29 @@ function parseManifest(value: unknown): SnapshotManifestV1 {
   };
 }
 
-function readManifest(directory: string): SnapshotManifestV1 {
+function readManifest(directory: string): GenerationReference {
   const manifestPath = join(directory, MANIFEST_FILE);
-  const directoryStat = lstatSync(directory);
-  const manifestStat = lstatSync(manifestPath);
-  if (
-    !directoryStat.isDirectory() ||
-    directoryStat.isSymbolicLink() ||
-    !manifestStat.isFile() ||
-    manifestStat.isSymbolicLink() ||
-    manifestStat.size > MAX_MANIFEST_BYTES
-  ) {
-    throw new SnapshotError('manifest-invalid', 'Snapshot generation or manifest is not a bounded physical file.');
-  }
+  const directoryBinding = openBoundDirectory(directory, false, true);
   let parsed: unknown;
   try {
-    parsed = JSON.parse(readFileSync(manifestPath, 'utf8')) as unknown;
+    const loaded = readBoundedRegularFile(manifestPath, MAX_MANIFEST_BYTES);
+    parsed = JSON.parse(new TextDecoder().decode(loaded.bytes)) as unknown;
+    const manifest = parseManifest(parsed);
+    if (basename(directory) !== manifest.generation_id) {
+      throw new SnapshotError('manifest-invalid', 'Snapshot generation directory does not match its manifest.');
+    }
+    assertPathIdentity(directory, directoryBinding.identity, 'directory');
+    return {
+      manifest,
+      directory,
+      directoryIdentity: directoryBinding.identity,
+      manifestIdentity: loaded.identity,
+    };
   } catch {
     throw new SnapshotError('manifest-invalid', 'Snapshot manifest is not valid JSON.');
+  } finally {
+    closeBoundDirectory(directoryBinding);
   }
-  const manifest = parseManifest(parsed);
-  if (basename(directory) !== manifest.generation_id) {
-    throw new SnapshotError('manifest-invalid', 'Snapshot generation directory does not match its manifest.');
-  }
-  return manifest;
 }
 
 function validateManifestIdentity(manifest: SnapshotManifestV1, identity: SnapshotStoreIdentity): void {
@@ -728,8 +917,15 @@ function validateManifestIdentity(manifest: SnapshotManifestV1, identity: Snapsh
 }
 
 function matchingGenerationDirectories(identity: SnapshotStoreIdentity): string[] {
+  let rootBinding: BoundDirectory;
   try {
-    return readdirSync(identity.root, { withFileTypes: true })
+    rootBinding = openBoundDirectory(identity.root, false);
+  } catch (caught) {
+    if (filesystemCode(caught) === 'ENOENT') return [];
+    throw caught;
+  }
+  try {
+    const directories = readdirSync(identity.root, { withFileTypes: true })
       .filter(
         (entry) =>
           entry.isDirectory() &&
@@ -738,33 +934,30 @@ function matchingGenerationDirectories(identity: SnapshotStoreIdentity): string[
       )
       .map((entry) => join(identity.root, entry.name))
       .sort((left, right) => compareText(right, left));
-  } catch (caught) {
-    const code = isRecord(caught) ? caught.code : undefined;
-    if (code === 'ENOENT') return [];
-    throw caught;
+    assertPathIdentity(identity.root, rootBinding.identity, 'directory');
+    return directories;
+  } finally {
+    closeBoundDirectory(rootBinding);
   }
 }
 
-function newestUnresolved(identity: SnapshotStoreIdentity): { manifest: SnapshotManifestV1; directory: string } | null {
+function newestUnresolved(identity: SnapshotStoreIdentity): GenerationReference | null {
   for (const directory of matchingGenerationDirectories(identity)) {
-    const manifest = readManifest(directory);
-    validateManifestIdentity(manifest, identity);
-    if (manifest.state === 'complete' || manifest.state === 'uncertain') return { manifest, directory };
+    const generation = readManifest(directory);
+    validateManifestIdentity(generation.manifest, identity);
+    if (generation.manifest.state === 'complete' || generation.manifest.state === 'uncertain') return generation;
   }
   return null;
 }
 
-function selectedGeneration(
-  identity: SnapshotStoreIdentity,
-  selectedGenerationId: string,
-): { manifest: SnapshotManifestV1; directory: string } {
+function selectedGeneration(identity: SnapshotStoreIdentity, selectedGenerationId: string): GenerationReference {
   if (!GENERATION_ID_PATTERN.test(selectedGenerationId) || !selectedGenerationId.startsWith(identity.operationId)) {
     throw new SnapshotError('generation-not-found', 'Selected snapshot generation does not belong to this operation.');
   }
   const directory = join(identity.root, selectedGenerationId);
-  let manifest: SnapshotManifestV1;
+  let generation: GenerationReference;
   try {
-    manifest = readManifest(directory);
+    generation = readManifest(directory);
   } catch (caught) {
     const code = isRecord(caught) ? caught.code : undefined;
     if (code === 'ENOENT') {
@@ -772,14 +965,17 @@ function selectedGeneration(
     }
     throw caught;
   }
-  validateManifestIdentity(manifest, identity);
-  if (manifest.state === 'provisional' || manifest.targets.some((target) => target.snapshot_sha256 === null)) {
+  validateManifestIdentity(generation.manifest, identity);
+  if (
+    generation.manifest.state === 'provisional' ||
+    generation.manifest.targets.some((target) => target.snapshot_sha256 === null)
+  ) {
     throw new SnapshotError('manifest-invalid', 'Selected snapshot generation is incomplete.');
   }
-  return { manifest, directory };
+  return generation;
 }
 
-function validateGeneration(generation: { manifest: SnapshotManifestV1; directory: string }): ValidatedGeneration {
+function validateGeneration(generation: GenerationReference): ValidatedGeneration {
   const snapshots = new Map<string, Database>();
   try {
     for (const target of generation.manifest.targets) {
@@ -787,11 +983,9 @@ function validateGeneration(generation: { manifest: SnapshotManifestV1; director
         throw new SnapshotError('manifest-invalid', 'Complete snapshot manifest is missing a payload hash.');
       }
       const payloadPath = join(generation.directory, target.snapshot_file);
-      const payloadStat = lstatSync(payloadPath);
-      if (!payloadStat.isFile() || payloadStat.isSymbolicLink()) {
-        throw new SnapshotError('manifest-invalid', 'Snapshot payload is not a physical regular file.');
-      }
-      const bytes = new Uint8Array(readFileSync(payloadPath));
+      assertPathIdentity(generation.directory, generation.directoryIdentity, 'directory');
+      assertPathIdentity(join(generation.directory, MANIFEST_FILE), generation.manifestIdentity, 'file');
+      const bytes = readBoundedRegularFile(payloadPath, MAX_RECONCILIATION_DATABASE_BYTES).bytes;
       if (sha256(bytes) !== target.snapshot_sha256) {
         throw new SnapshotError('snapshot-hash-mismatch', 'Snapshot payload hash does not match its manifest.');
       }
@@ -816,6 +1010,8 @@ function validateGeneration(generation: { manifest: SnapshotManifestV1; director
         throw new SnapshotError('snapshot-image-mismatch', 'Snapshot payload does not match its manifest image.');
       }
       snapshots.set(target.path, db);
+      assertPathIdentity(generation.directory, generation.directoryIdentity, 'directory');
+      assertPathIdentity(join(generation.directory, MANIFEST_FILE), generation.manifestIdentity, 'file');
     }
     return { ...generation, snapshots };
   } catch (caught) {
@@ -828,26 +1024,99 @@ function closeValidatedGeneration(generation: ValidatedGeneration): void {
   for (const db of generation.snapshots.values()) db.close();
 }
 
+function safeRemoveTree(path: string, expected: FileIdentity): void {
+  assertPathIdentity(path, expected, 'directory');
+  const directory = openBoundDirectory(path, false);
+  try {
+    if (!sameFileIdentity(expected, directory.identity)) {
+      throw new SnapshotError('snapshot-cleanup-failed', 'Snapshot cleanup target identity changed.');
+    }
+    const descriptorPath = `/proc/self/fd/${directory.descriptor}`;
+    for (const entry of readdirSync(descriptorPath, { withFileTypes: true })) {
+      const descriptorChild = join(descriptorPath, entry.name);
+      const child = join(path, entry.name);
+      const stats = lstatSync(descriptorChild);
+      const identity = fileIdentity(stats);
+      const current = lstatSync(child);
+      if (!sameFileIdentity(identity, current)) {
+        throw new SnapshotError('snapshot-cleanup-failed', 'Snapshot cleanup child identity changed.');
+      }
+      if (stats.isDirectory() && !stats.isSymbolicLink()) {
+        safeRemoveTree(child, identity);
+      } else {
+        assertPathIdentity(child, identity, 'file');
+        unlinkSync(child);
+      }
+    }
+    fsyncSync(directory.descriptor);
+  } finally {
+    closeBoundDirectory(directory);
+  }
+  assertPathIdentity(path, expected, 'directory');
+  rmdirSync(path);
+}
+
+function removeBoundTree(path: string, expected: FileIdentity, options: DatabaseSyncSnapshotOptions): void {
+  assertPathIdentity(path, expected, 'directory');
+  if (options.removeTree !== undefined) {
+    options.removeTree(path);
+    try {
+      lstatSync(path);
+    } catch (caught) {
+      if (filesystemCode(caught) === 'ENOENT') return;
+      throw caught;
+    }
+    throw new SnapshotError('snapshot-cleanup-failed', 'Snapshot cleanup did not remove its exact target.');
+  }
+  safeRemoveTree(path, expected);
+}
+
 function rewriteManifestState(
-  generation: { manifest: SnapshotManifestV1; directory: string },
+  generation: GenerationReference,
   state: Exclude<SnapshotGenerationState, 'provisional' | 'complete'>,
   options: DatabaseSyncSnapshotOptions,
 ): SnapshotManifestV1 {
   const updated = { ...generation.manifest, state };
   const temporary = join(generation.directory, `.manifest-${randomUUID()}.tmp`);
-  around(options, { phase: 'state-rewrite-write', generationId: generation.manifest.generation_id }, () =>
-    writeJson(temporary, updated),
-  );
-  around(options, { phase: 'state-rewrite-fsync', generationId: generation.manifest.generation_id }, () =>
-    fsyncPath(temporary),
-  );
-  around(options, { phase: 'state-rewrite-rename', generationId: generation.manifest.generation_id }, () =>
-    renameSync(temporary, join(generation.directory, MANIFEST_FILE)),
-  );
-  around(options, { phase: 'generation-fsync', generationId: generation.manifest.generation_id }, () =>
-    fsyncPath(generation.directory),
-  );
-  return updated;
+  let temporaryIdentity: FileIdentity | null = null;
+  try {
+    assertPathIdentity(generation.directory, generation.directoryIdentity, 'directory');
+    assertPathIdentity(join(generation.directory, MANIFEST_FILE), generation.manifestIdentity, 'file');
+    around(options, { phase: 'state-rewrite-write', generationId: generation.manifest.generation_id }, () =>
+      writeJson(temporary, updated),
+    );
+    temporaryIdentity = readBoundedRegularFile(temporary, MAX_MANIFEST_BYTES).identity;
+    around(options, { phase: 'state-rewrite-fsync', generationId: generation.manifest.generation_id }, () => {
+      assertPathIdentity(temporary, temporaryIdentity as FileIdentity, 'file');
+      fsyncPath(temporary);
+    });
+    around(options, { phase: 'state-rewrite-rename', generationId: generation.manifest.generation_id }, () => {
+      assertPathIdentity(generation.directory, generation.directoryIdentity, 'directory');
+      assertPathIdentity(join(generation.directory, MANIFEST_FILE), generation.manifestIdentity, 'file');
+      assertPathIdentity(temporary, temporaryIdentity as FileIdentity, 'file');
+      renameSync(temporary, join(generation.directory, MANIFEST_FILE));
+      assertPathIdentity(join(generation.directory, MANIFEST_FILE), temporaryIdentity as FileIdentity, 'file');
+    });
+    around(options, { phase: 'generation-fsync', generationId: generation.manifest.generation_id }, () => {
+      assertPathIdentity(generation.directory, generation.directoryIdentity, 'directory');
+      fsyncPath(generation.directory);
+    });
+    return updated;
+  } catch (caught) {
+    const cleanupFailures: SnapshotFailureCode[] = [];
+    if (temporaryIdentity !== null) {
+      try {
+        assertPathIdentity(temporary, temporaryIdentity, 'file');
+        unlinkSync(temporary);
+      } catch (cleanupCaught) {
+        if (filesystemCode(cleanupCaught) !== 'ENOENT') cleanupFailures.push('snapshot-cleanup-failed');
+      }
+    }
+    if (caught instanceof SnapshotError) {
+      throw new SnapshotError(caught.code, caught.message, [...caught.cleanupFailures, ...cleanupFailures]);
+    }
+    throw new SnapshotError('snapshot-publication-failed', 'Snapshot manifest state rewrite failed.', cleanupFailures);
+  }
 }
 
 function cleanupStaging(
@@ -868,9 +1137,8 @@ function cleanupStaging(
     if (!entry.name.startsWith(STAGING_PREFIX) || !entry.isDirectory() || entry.isSymbolicLink()) continue;
     const path = join(root, entry.name);
     try {
-      around(options, { phase: 'staging-cleanup', path }, () =>
-        (options.removeTree ?? ((target) => rmSync(target, { recursive: true, force: true })))(path),
-      );
+      const identity = fileIdentity(lstatSync(path));
+      around(options, { phase: 'staging-cleanup', path }, () => removeBoundTree(path, identity, options));
     } catch {
       cleanupFailures.push('snapshot-cleanup-failed');
     }
@@ -890,10 +1158,10 @@ function pruneGenerations(
     if (retained.has(directory)) continue;
     try {
       const manifest = readManifest(directory);
-      validateManifestIdentity(manifest, identity);
-      if (manifest.state === 'complete' || manifest.state === 'uncertain') continue;
-      around(options, { phase: 'prune', generationId: manifest.generation_id, path: directory }, () =>
-        (options.removeTree ?? ((target) => rmSync(target, { recursive: true, force: true })))(directory),
+      validateManifestIdentity(manifest.manifest, identity);
+      if (manifest.manifest.state === 'complete' || manifest.manifest.state === 'uncertain') continue;
+      around(options, { phase: 'prune', generationId: manifest.manifest.generation_id, path: directory }, () =>
+        removeBoundTree(directory, manifest.directoryIdentity, options),
       );
       removed = true;
     } catch {
@@ -922,7 +1190,7 @@ function targetInput(
 
 function recoverValidatedGeneration(
   identity: SnapshotStoreIdentity,
-  generation: { manifest: SnapshotManifestV1; directory: string },
+  generation: GenerationReference,
   inputs: readonly ReconciliationLockedDatabaseInput[],
   options: DatabaseSyncSnapshotOptions,
   retention: number,
@@ -1023,6 +1291,27 @@ function recoveryReport(decision: RecoveryDecision): SnapshotRecoveryReport {
   };
 }
 
+function snapshotCleanupCode(failure: ReconciliationApplyFailure): SnapshotFailureCode {
+  switch (failure.code) {
+    case 'rollback-failed':
+      return 'locked-rollback-failed';
+    case 'close-failed':
+      return 'locked-close-failed';
+    case 'advisory-lock-release-failed':
+      return 'locked-advisory-release-failed';
+    default:
+      return 'locked-operation-failed';
+  }
+}
+
+function snapshotCleanupFailures(caught: unknown): SnapshotFailureCode[] {
+  if (caught instanceof SnapshotError) return [...caught.cleanupFailures];
+  if (caught instanceof ReconciliationLockedOperationError) {
+    return [...snapshotCleanupFailures(caught.operationCause), ...caught.cleanupFailures.map(snapshotCleanupCode)];
+  }
+  return [];
+}
+
 function failedRecovery(caught: unknown): SnapshotRecoveryReport {
   const failure =
     caught instanceof SnapshotError
@@ -1039,7 +1328,7 @@ function failedRecovery(caught: unknown): SnapshotRecoveryReport {
     generationId: null,
     restoredPaths: [],
     failure,
-    cleanupFailures: [],
+    cleanupFailures: snapshotCleanupFailures(caught),
   };
 }
 
@@ -1050,14 +1339,7 @@ export function recoverDatabaseReconciliation(
   let retention: number;
   try {
     retention = validateRetention(options.keepSnapshots);
-    if (retention === 0) {
-      return recoveryReport({
-        status: 'none',
-        generationId: null,
-        restoredPaths: [],
-        cleanupFailures: [],
-      });
-    }
+    const persistentRetention = retention === 0 ? DEFAULT_SNAPSHOT_RETENTION : retention;
     const decision = withLockedReconciliationDatabases(
       request,
       (inputs) => {
@@ -1079,7 +1361,7 @@ export function recoverDatabaseReconciliation(
             afterCommit: () => cleanupStaging(identity.root, options, cleanupFailures),
           };
         }
-        return recoverValidatedGeneration(identity, unresolved, inputs, options, retention);
+        return recoverValidatedGeneration(identity, unresolved, inputs, options, persistentRetention);
       },
       {
         busyTimeoutMs: options.busyTimeoutMs,
@@ -1122,12 +1404,13 @@ function capturesForPlan(
 
 function privateCleanup(
   root: string | null,
+  identity: FileIdentity | null,
   options: DatabaseSyncSnapshotOptions,
   cleanupFailures: SnapshotFailureCode[],
 ): void {
-  if (root === null) return;
+  if (root === null || identity === null) return;
   try {
-    (options.removeTree ?? ((target) => rmSync(target, { recursive: true, force: true })))(root);
+    removeBoundTree(root, identity, options);
   } catch {
     cleanupFailures.push('snapshot-cleanup-failed');
   }
@@ -1146,14 +1429,7 @@ function recoverPrivateGeneration(
   try {
     const decision = withLockedReconciliationDatabases(
       request,
-      (inputs) =>
-        recoverValidatedGeneration(
-          identity,
-          { manifest: readManifest(published.directory), directory: published.directory },
-          inputs,
-          options,
-          0,
-        ),
+      (inputs) => recoverValidatedGeneration(identity, readManifest(published.directory), inputs, options, 0),
       {
         busyTimeoutMs: options.busyTimeoutMs,
         onEvent: options.onLockedOperationEvent,
@@ -1186,29 +1462,6 @@ export function applyDatabaseReconciliationWithSnapshots(
     };
   }
   const request = requestFromPlan(plan);
-  if (plan.status !== 'changed') {
-    const apply = applyDatabaseReconciliation(plan, {
-      busyTimeoutMs: options.busyTimeoutMs,
-      onEvent: options.onApplyEvent,
-      ...options.applyOptions,
-    });
-    return {
-      reportVersion: SNAPSHOT_REPORT_VERSION,
-      operation: 'apply',
-      status: apply.status,
-      generationId: null,
-      recovery: recoveryReport({
-        status: 'none',
-        generationId: null,
-        restoredPaths: [],
-        cleanupFailures: [],
-      }),
-      apply,
-      failure: null,
-      cleanupFailures: [],
-    };
-  }
-
   const priorRecovery = recoverDatabaseReconciliation(request, options);
   if (priorRecovery.status !== 'none') {
     return {
@@ -1222,29 +1475,59 @@ export function applyDatabaseReconciliationWithSnapshots(
       cleanupFailures: priorRecovery.cleanupFailures,
     };
   }
+  if (plan.status !== 'changed') {
+    const apply = applyDatabaseReconciliation(plan, {
+      busyTimeoutMs: options.busyTimeoutMs,
+      onEvent: options.onApplyEvent,
+      ...options.applyOptions,
+    });
+    return {
+      reportVersion: SNAPSHOT_REPORT_VERSION,
+      operation: 'apply',
+      status: apply.status,
+      generationId: null,
+      recovery: priorRecovery,
+      apply,
+      failure: null,
+      cleanupFailures: apply.cleanupFailures.map(snapshotCleanupCode),
+    };
+  }
 
   const identity = identityFromCanonical(plan.mode, canonicalPathsFromPlan(plan), options.snapshotRoot);
   let published: PublishedGeneration | null = null;
   let privateRoot: string | null = null;
+  let privateRootIdentity: FileIdentity | null = null;
   const cleanupFailures: SnapshotFailureCode[] = [...priorRecovery.cleanupFailures];
   try {
-    if (retention === 0) privateRoot = createPrivateRoot();
+    if (retention === 0) {
+      const created = createPrivateRoot();
+      privateRoot = created.path;
+      privateRootIdentity = created.identity;
+    }
     const apply = applyDatabaseReconciliation(plan, {
       busyTimeoutMs: options.busyTimeoutMs,
       onEvent: options.onApplyEvent,
       ...options.applyOptions,
       onLocked: (inputs) => {
+        const unresolved = newestUnresolved(identity);
+        if (unresolved !== null) {
+          throw new SnapshotError(
+            'recovery-uncertain',
+            'A persistent snapshot generation became unresolved after recovery and before apply.',
+          );
+        }
         const captures = capturesForPlan(plan, inputs);
         published = publishGeneration(identity, plan.schemaFingerprint, captures, options, privateRoot);
       },
     });
+    cleanupFailures.push(...apply.cleanupFailures.map(snapshotCleanupCode));
     const recovery =
       retention === 0
         ? published === null
           ? recoveryReport({ status: 'none', generationId: null, restoredPaths: [], cleanupFailures: [] })
           : recoverPrivateGeneration(published, request, identity, options)
         : recoverDatabaseReconciliation(request, options);
-    privateCleanup(privateRoot, options, cleanupFailures);
+    privateCleanup(privateRoot, privateRootIdentity, options, cleanupFailures);
     const status =
       recovery.status === 'none'
         ? apply.status
@@ -1264,7 +1547,7 @@ export function applyDatabaseReconciliationWithSnapshots(
       cleanupFailures: [...recovery.cleanupFailures, ...cleanupFailures],
     };
   } catch (caught) {
-    privateCleanup(privateRoot, options, cleanupFailures);
+    privateCleanup(privateRoot, privateRootIdentity, options, cleanupFailures);
     return {
       reportVersion: SNAPSHOT_REPORT_VERSION,
       operation: 'apply',
@@ -1273,7 +1556,7 @@ export function applyDatabaseReconciliationWithSnapshots(
       recovery: failedRecovery(caught),
       apply: null,
       failure: caught instanceof SnapshotError ? caught.code : 'snapshot-publication-failed',
-      cleanupFailures,
+      cleanupFailures: [...cleanupFailures, ...snapshotCleanupFailures(caught)],
     };
   }
 }
@@ -1311,10 +1594,15 @@ export function rollbackDatabaseReconciliation(
   }
 
   let privateRoot: string | null = null;
+  let privateRootIdentity: FileIdentity | null = null;
   let published: PublishedGeneration | null = null;
   const cleanupFailures: SnapshotFailureCode[] = [...recovery.cleanupFailures];
   try {
-    if (retention === 0) privateRoot = createPrivateRoot();
+    if (retention === 0) {
+      const created = createPrivateRoot();
+      privateRoot = created.path;
+      privateRootIdentity = created.identity;
+    }
     const value = withLockedReconciliationDatabases(
       request,
       (inputs) => {
@@ -1323,6 +1611,13 @@ export function rollbackDatabaseReconciliation(
           inputs.map((input) => input.canonicalPath),
           options.snapshotRoot,
         );
+        const racedUnresolved = newestUnresolved(identity);
+        if (racedUnresolved !== null) {
+          throw new SnapshotError(
+            'recovery-uncertain',
+            'A persistent snapshot generation became unresolved after recovery and before rollback.',
+          );
+        }
         const selected = validateGeneration(selectedGeneration(identity, selectedGenerationId));
         try {
           const captures = selected.manifest.targets.map((target) => {
@@ -1381,7 +1676,7 @@ export function rollbackDatabaseReconciliation(
         ...options.applyOptions,
       },
     );
-    privateCleanup(privateRoot, options, cleanupFailures);
+    privateCleanup(privateRoot, privateRootIdentity, options, cleanupFailures);
     return {
       reportVersion: SNAPSHOT_REPORT_VERSION,
       operation: 'rollback',
@@ -1392,7 +1687,7 @@ export function rollbackDatabaseReconciliation(
       cleanupFailures,
     };
   } catch (caught) {
-    privateCleanup(privateRoot, options, cleanupFailures);
+    privateCleanup(privateRoot, privateRootIdentity, options, cleanupFailures);
     return {
       reportVersion: SNAPSHOT_REPORT_VERSION,
       operation: 'rollback',
@@ -1400,7 +1695,7 @@ export function rollbackDatabaseReconciliation(
       selectedGenerationId,
       safetyGenerationId: publishedGenerationId(published),
       failure: caught instanceof SnapshotError ? caught.code : 'locked-operation-failed',
-      cleanupFailures,
+      cleanupFailures: [...cleanupFailures, ...snapshotCleanupFailures(caught)],
     };
   }
 }

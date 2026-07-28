@@ -3,17 +3,25 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import {
   existsSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   statSync,
+  symlinkSync,
+  truncateSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { applyDatabaseReconciliation, planDatabaseReconciliation } from './db-reconciliation.js';
+import {
+  MAX_RECONCILIATION_DATABASE_BYTES,
+  applyDatabaseReconciliation,
+  planDatabaseReconciliation,
+} from './db-reconciliation.js';
 import {
   SnapshotError,
   applyDatabaseReconciliationWithSnapshots,
@@ -273,6 +281,26 @@ describe('database sync snapshots', () => {
     expect(existsSync(databaseSyncSnapshotIdentity(request).root)).toBe(false);
   });
 
+  test('persistent roots reject root and ancestor symlinks before publication or mutation', () => {
+    for (const kind of ['root', 'ancestor'] as const) {
+      const left = currentDb(`unsafe-${kind}-left`);
+      const right = currentDb(`unsafe-${kind}-right`);
+      insertBoard(right, 'planned');
+      const physical = join(fixtureRoot, `${kind}-physical`);
+      mkdirSync(physical, { mode: 0o700 });
+      const linked = join(fixtureRoot, `${kind}-linked`);
+      symlinkSync(physical, linked);
+      const snapshotRoot = kind === 'root' ? linked : join(linked, 'snapshots');
+      const report = applyDatabaseReconciliationWithSnapshots(
+        planDatabaseReconciliation({ mode: 'bidirectional', leftPath: left, rightPath: right }),
+        { snapshotRoot },
+      );
+      expect(report).toMatchObject({ status: 'operational-failure', apply: null });
+      expect(boardNames(left)).toEqual([]);
+      expect(boardNames(right)).toEqual(['planned']);
+    }
+  });
+
   test('publishes normalized complete payloads in the durable order and finalizes both-post as converged', () => {
     const left = currentDb('publish-left');
     const right = currentDb('publish-right');
@@ -372,6 +400,113 @@ describe('database sync snapshots', () => {
     expect(boardNames(right)).toEqual(['right-only']);
   });
 
+  test('unresolved persistent recovery runs before no-op, conflict, and same-database plan statuses', () => {
+    {
+      const left = currentDb('recovery-first-noop-left');
+      const right = currentDb('recovery-first-noop-right');
+      leaveCompleteGeneration(left, right);
+      const report = applyDatabaseReconciliationWithSnapshots(
+        planDatabaseReconciliation({ mode: 'bidirectional', leftPath: left, rightPath: right }),
+      );
+      expect(report).toMatchObject({ status: 'converged', apply: null, recovery: { status: 'converged' } });
+    }
+    {
+      const left = currentDb('recovery-first-conflict-left');
+      const right = currentDb('recovery-first-conflict-right');
+      leaveCompleteGeneration(left, right);
+      const leftDb = new Database(left);
+      const rightDb = new Database(right);
+      leftDb.query("UPDATE boards SET name = 'left' WHERE id = 'planned'").run();
+      rightDb.query("UPDATE boards SET name = 'right' WHERE id = 'planned'").run();
+      leftDb.close();
+      rightDb.close();
+      const plan = planDatabaseReconciliation({ mode: 'bidirectional', leftPath: left, rightPath: right });
+      expect(plan.status).toBe('conflict');
+      const report = applyDatabaseReconciliationWithSnapshots(plan);
+      expect(report).toMatchObject({ status: 'uncertain', apply: null, recovery: { status: 'uncertain' } });
+    }
+    {
+      const left = currentDb('recovery-first-alias-left');
+      const right = currentDb('recovery-first-alias-right');
+      leaveCompleteGeneration(left, right);
+      for (const path of [left, right]) {
+        const db = new Database(path);
+        db.query('PRAGMA wal_checkpoint(TRUNCATE)').get();
+        db.close();
+        rmSync(`${path}-wal`, { force: true });
+        rmSync(`${path}-shm`, { force: true });
+      }
+      rmSync(right);
+      linkSync(left, right);
+      const plan = planDatabaseReconciliation({ mode: 'bidirectional', leftPath: left, rightPath: right });
+      expect(plan.status).toBe('same-database');
+      const report = applyDatabaseReconciliationWithSnapshots(plan);
+      expect(report).toMatchObject({ status: 'converged', apply: null, recovery: { status: 'converged' } });
+    }
+  });
+
+  test('zero retention recovers retained generations before changed apply and rollback work', () => {
+    const left = currentDb('zero-existing-left');
+    const right = currentDb('zero-existing-right');
+    const request = { mode: 'bidirectional' as const, leftPath: left, rightPath: right };
+    const first = applyDatabaseReconciliationWithSnapshots(
+      (() => {
+        insertBoard(right, 'first');
+        return planDatabaseReconciliation(request);
+      })(),
+    );
+    expect(first.generationId).not.toBeNull();
+
+    insertBoard(right, 'second');
+    let leftComplete = false;
+    const interrupted = applyDatabaseReconciliationWithSnapshots(planDatabaseReconciliation(request), {
+      onEvent: (event) => {
+        if (!leftComplete && event.phase === 'recovery-classify' && event.state === 'before') {
+          leftComplete = true;
+          throw new Error('retain unresolved generation');
+        }
+      },
+    });
+    expect(interrupted.status).toBe('operational-failure');
+
+    insertBoard(right, 'third');
+    const changed = applyDatabaseReconciliationWithSnapshots(planDatabaseReconciliation(request), {
+      keepSnapshots: 0,
+    });
+    expect(changed).toMatchObject({ status: 'uncertain', apply: null, recovery: { status: 'uncertain' } });
+
+    const rollbackLeft = currentDb('zero-rollback-left');
+    const rollbackRight = currentDb('zero-rollback-right');
+    const rollbackRequest = {
+      mode: 'bidirectional' as const,
+      leftPath: rollbackLeft,
+      rightPath: rollbackRight,
+    };
+    insertBoard(rollbackRight, 'rollback-first');
+    const selected = applyDatabaseReconciliationWithSnapshots(planDatabaseReconciliation(rollbackRequest));
+    insertBoard(rollbackRight, 'rollback-second');
+    let rollbackComplete = false;
+    expect(
+      applyDatabaseReconciliationWithSnapshots(planDatabaseReconciliation(rollbackRequest), {
+        onEvent: (event) => {
+          if (!rollbackComplete && event.phase === 'recovery-classify' && event.state === 'before') {
+            rollbackComplete = true;
+            throw new Error('retain rollback generation');
+          }
+        },
+      }).status,
+    ).toBe('operational-failure');
+    const phases: string[] = [];
+    const rolledBack = rollbackDatabaseReconciliation(rollbackRequest, selected.generationId ?? '', {
+      keepSnapshots: 0,
+      onEvent: (event) => {
+        if (event.state === 'before') phases.push(event.phase);
+      },
+    });
+    expect(rolledBack.status).toBe('rolled-back');
+    expect(phases.indexOf('recovery-classify')).toBeLessThan(phases.indexOf('rollback-restore'));
+  });
+
   test('unexpected current digests persist uncertain and later recovery never overwrites them', () => {
     const left = currentDb('uncertain-left');
     const right = currentDb('uncertain-right');
@@ -455,6 +590,134 @@ describe('database sync snapshots', () => {
     expect(originalHash).toMatch(/^[a-f0-9]{64}$/);
     expect(boardNames(left)).toEqual(['planned']);
     expect(boardNames(right)).toEqual(['planned']);
+  });
+
+  test('payload reads reject oversized sparse, symlink, and FIFO inputs without blocking or allocation', () => {
+    for (const kind of ['sparse', 'symlink', 'fifo'] as const) {
+      const left = currentDb(`bounded-${kind}-left`);
+      const right = currentDb(`bounded-${kind}-right`);
+      const request = { mode: 'bidirectional' as const, leftPath: left, rightPath: right };
+      const { directory } = leaveCompleteGeneration(left, right);
+      const manifest = JSON.parse(readFileSync(join(directory, 'manifest.json'), 'utf8'));
+      const payload = join(directory, manifest.targets[0].snapshot_file);
+      rmSync(payload);
+      if (kind === 'sparse') {
+        writeFileSync(payload, '');
+        truncateSync(payload, MAX_RECONCILIATION_DATABASE_BYTES + 1);
+      } else if (kind === 'symlink') {
+        symlinkSync(left, payload);
+      } else {
+        expect(Bun.spawnSync(['mkfifo', payload]).exitCode).toBe(0);
+      }
+      const started = Date.now();
+      expect(recoverDatabaseReconciliation(request)).toMatchObject({
+        status: 'operational-failure',
+        failure: 'manifest-invalid',
+      });
+      expect(Date.now() - started).toBeLessThan(1_000);
+    }
+  });
+
+  test('generation and manifest substitutions refuse state rewrite without redirecting it', () => {
+    for (const kind of ['generation', 'manifest'] as const) {
+      const left = currentDb(`substitute-${kind}-left`);
+      const right = currentDb(`substitute-${kind}-right`);
+      const request = { mode: 'bidirectional' as const, leftPath: left, rightPath: right };
+      const { directory } = leaveCompleteGeneration(left, right);
+      let substituted = false;
+      const report = recoverDatabaseReconciliation(request, {
+        onEvent: (event) => {
+          if (substituted || event.phase !== 'recovery-classify' || event.state !== 'before') return;
+          substituted = true;
+          if (kind === 'generation') {
+            renameSync(directory, `${directory}.owned`);
+            mkdirSync(directory, { mode: 0o700 });
+            writeFileSync(join(directory, 'sentinel'), 'replacement');
+          } else {
+            const manifest = join(directory, 'manifest.json');
+            renameSync(manifest, `${manifest}.owned`);
+            symlinkSync('/dev/null', manifest);
+          }
+        },
+      });
+      expect(report.status).toBe('operational-failure');
+      if (kind === 'generation') expect(readFileSync(join(directory, 'sentinel'), 'utf8')).toBe('replacement');
+      else expect(statSync(join(directory, 'manifest.json.owned')).isFile()).toBe(true);
+    }
+  });
+
+  test('manifest reads are bounded and failed rewrites clean only their exact temporary inode', () => {
+    {
+      const left = currentDb('manifest-bounded-left');
+      const right = currentDb('manifest-bounded-right');
+      const request = { mode: 'bidirectional' as const, leftPath: left, rightPath: right };
+      const { directory } = leaveCompleteGeneration(left, right);
+      truncateSync(join(directory, 'manifest.json'), 1024 * 1024 + 1);
+      expect(recoverDatabaseReconciliation(request)).toMatchObject({
+        status: 'operational-failure',
+        failure: 'manifest-invalid',
+      });
+    }
+    {
+      const left = currentDb('manifest-temp-left');
+      const right = currentDb('manifest-temp-right');
+      const request = { mode: 'bidirectional' as const, leftPath: left, rightPath: right };
+      const { directory } = leaveCompleteGeneration(left, right);
+      let replacement: string | null = null;
+      const recovery = recoverDatabaseReconciliation(request, {
+        onEvent: (event) => {
+          if (replacement !== null || event.phase !== 'state-rewrite-fsync' || event.state !== 'before') return;
+          const temporary = readdirSync(directory).find(
+            (name) => name.startsWith('.manifest-') && name.endsWith('.tmp'),
+          );
+          expect(temporary).toBeDefined();
+          replacement = join(directory, temporary ?? '');
+          renameSync(replacement, `${replacement}.owned`);
+          writeFileSync(replacement, 'replacement');
+        },
+      });
+      expect(recovery.status).toBe('operational-failure');
+      expect(recovery.cleanupFailures).toContain('snapshot-cleanup-failed');
+      expect(readFileSync(replacement ?? '', 'utf8')).toBe('replacement');
+    }
+  });
+
+  test('snapshot recovery reports locked close and advisory-release cleanup evidence', () => {
+    const openWithFailingClose = (path: string, options: ConstructorParameters<typeof Database>[1]): Database => {
+      const db = new Database(path, options);
+      return new Proxy(db, {
+        get(target, property) {
+          if (property === 'close') {
+            return () => {
+              target.close();
+              throw new Error('injected close failure');
+            };
+          }
+          const value = Reflect.get(target, property, target);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+    };
+    for (const primaryFailure of [false, true]) {
+      const left = currentDb(`snapshot-cleanup-${primaryFailure}-left`);
+      const right = currentDb(`snapshot-cleanup-${primaryFailure}-right`);
+      const report = recoverDatabaseReconciliation(
+        { mode: 'bidirectional', leftPath: left, rightPath: right },
+        {
+          applyOptions: {
+            openDatabase: openWithFailingClose,
+            advisoryUnlock: () => -1,
+          },
+          onLockedOperationEvent: primaryFailure
+            ? (event) => {
+                if (event.state === 'before') throw new Error('primary commit failure');
+              }
+            : undefined,
+        },
+      );
+      expect(report.status).toBe('operational-failure');
+      expect(report.cleanupFailures).toEqual(['locked-close-failed', 'locked-advisory-release-failed']);
+    }
   });
 
   test('manifest version, shape, digest, identity, and state validation refuse recovery authority', () => {
@@ -829,6 +1092,62 @@ describe('database sync snapshots', () => {
         }).status,
       ).toBe('changed');
       expect(generationDirectories(databaseSyncSnapshotIdentity(request).root)).toHaveLength(1);
+    }
+  });
+
+  test('staging cleanup and pruning refuse directory substitutions instead of deleting replacements', () => {
+    {
+      const left = currentDb('cleanup-race-left');
+      const right = currentDb('cleanup-race-right');
+      const request = { mode: 'bidirectional' as const, leftPath: left, rightPath: right };
+      const root = databaseSyncSnapshotIdentity(request).root;
+      const staging = join(root, '.staging-owned');
+      const victim = join(fixtureRoot, 'cleanup-victim');
+      mkdirSync(staging, { recursive: true });
+      writeFileSync(join(staging, 'owned'), 'owned');
+      mkdirSync(victim);
+      writeFileSync(join(victim, 'sentinel'), 'victim');
+      let raced = false;
+      const recovery = recoverDatabaseReconciliation(request, {
+        onEvent: (event) => {
+          if (!raced && event.phase === 'staging-cleanup' && event.state === 'before') {
+            raced = true;
+            renameSync(staging, `${staging}.original`);
+            renameSync(victim, staging);
+          }
+        },
+      });
+      expect(recovery.cleanupFailures).toContain('snapshot-cleanup-failed');
+      expect(readFileSync(join(staging, 'sentinel'), 'utf8')).toBe('victim');
+    }
+    {
+      const left = currentDb('prune-race-left');
+      const right = currentDb('prune-race-right');
+      const request = { mode: 'bidirectional' as const, leftPath: left, rightPath: right };
+      for (const id of ['one', 'two']) {
+        insertBoard(right, id);
+        expect(
+          applyDatabaseReconciliationWithSnapshots(planDatabaseReconciliation(request), { keepSnapshots: 3 }).status,
+        ).toBe('changed');
+      }
+      const victim = join(fixtureRoot, 'prune-victim');
+      mkdirSync(victim);
+      writeFileSync(join(victim, 'sentinel'), 'victim');
+      insertBoard(right, 'three');
+      let replacement: string | null = null;
+      const report = applyDatabaseReconciliationWithSnapshots(planDatabaseReconciliation(request), {
+        keepSnapshots: 1,
+        onEvent: (event) => {
+          if (replacement !== null || event.phase !== 'prune' || event.state !== 'before' || event.path === undefined)
+            return;
+          replacement = event.path;
+          renameSync(event.path, `${event.path}.original`);
+          renameSync(victim, event.path);
+        },
+      });
+      expect(report.cleanupFailures).toContain('snapshot-cleanup-failed');
+      expect(replacement).not.toBeNull();
+      expect(readFileSync(join(replacement ?? '', 'sentinel'), 'utf8')).toBe('victim');
     }
   });
 

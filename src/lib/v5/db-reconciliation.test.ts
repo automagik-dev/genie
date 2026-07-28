@@ -22,12 +22,14 @@ import {
   IDENTICAL_HISTORY_ADDITION_LIMITATION,
   type ReconciliationApplyEvent,
   ReconciliationError,
+  ReconciliationLockedOperationError,
   type ReconciliationRequest,
   type TaskEventReconciliationValue,
   applyDatabaseReconciliation,
   dryRunDatabaseReconciliation,
   planDatabaseReconciliation,
   reconciliationAdvisoryLockPath,
+  withLockedReconciliationDatabases,
 } from './db-reconciliation.js';
 import { openDb } from './genie-db.js';
 
@@ -2088,6 +2090,53 @@ describe('canonical locking and transactional apply', () => {
       ],
     });
     expect(taskTitle(destination, 'planned')).toBeNull();
+  });
+
+  test('locked operations report close and advisory-release failures on success and preserve them on failure', () => {
+    const openWithFailingClose = (path: string, options: ConstructorParameters<typeof Database>[1]): Database => {
+      const db = new Database(path, options);
+      return new Proxy(db, {
+        get(target, property) {
+          if (property === 'close') {
+            return () => {
+              target.close();
+              throw new Error('injected close failure');
+            };
+          }
+          const value = Reflect.get(target, property, target);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+    };
+
+    for (const primaryFailure of [false, true]) {
+      const left = currentDb(`locked-cleanup-${primaryFailure}-left`, null);
+      const right = currentDb(`locked-cleanup-${primaryFailure}-right`, null);
+      const request = bidirectional(left, right);
+      let caught: unknown;
+      try {
+        withLockedReconciliationDatabases(
+          request,
+          () => {
+            if (primaryFailure) throw new Error('primary locked-operation failure');
+            return { value: 'success' };
+          },
+          {
+            openDatabase: openWithFailingClose,
+            advisoryUnlock: () => -1,
+          },
+        );
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(ReconciliationLockedOperationError);
+      const lockedError = caught as ReconciliationLockedOperationError;
+      expect(lockedError.failure.code).toBe(primaryFailure ? 'unexpected-failure' : 'close-failed');
+      expect(lockedError.cleanupFailures).toEqual([
+        { code: 'close-failed', phase: 'cleanup' },
+        { code: 'advisory-lock-release-failed', phase: 'cleanup' },
+      ]);
+    }
   });
 
   test('directional board-name swaps use a transaction-local parking order', () => {
