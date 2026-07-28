@@ -15,16 +15,21 @@
  * that doesn't generalize.
  *
  * Scope: handles single-quotes (no escapes), double-quotes with `\X` escapes,
- * unquoted `\X` escapes (a literal X — notably `\"`, which does *not* open a
- * quote region), and unterminated quotes (mask to end of string — safer than
- * the alternative of leaving a runaway region unmasked).
+ * unquoted `\X` escapes, and unterminated quotes (mask to end of string —
+ * safer than the alternative of leaving a runaway region unmasked).
  *
- * The unquoted-escape case is load-bearing, not cosmetic: reading `\"` as a
- * quote opener made `git commit -m \"fix\" && git checkout main` mask from the
- * first `\"` to end of string — the closing `\"` was swallowed by the
- * double-quoted `\X` rule — so the guards saw no `&& git checkout main` and
- * allowed a command bash runs in full. Backtick command substitution and
- * heredocs are intentionally not parsed — they're rare in agent-issued
+ * The unquoted-escape case is load-bearing in both directions, and both were
+ * live bugs. Reading `\"` as a quote *opener* made
+ * `git commit -m \"fix\" && git checkout main` mask from the first `\"` to end
+ * of string — the closing `\"` was swallowed by the double-quoted `\X` rule —
+ * so the guards never saw `&& git checkout main` and allowed a line bash runs
+ * in full. Passing `\X` through *unmasked* was the mirror error: callers read
+ * `;`, `|`, `&` and backticks as structure, so `echo \; git switch dev` split
+ * into two statements and denied, though bash runs one `echo` with a literal
+ * `;` argument. Masking it settles both — the character survives as a
+ * placeholder holding its position, but never as syntax.
+ *
+ * Heredocs are intentionally not parsed — they're rare in agent-issued
  * commands and falling back to fully unmasked treatment is fail-closed for
  * the original policy, which matches the hook's overall posture.
  */
@@ -37,9 +42,15 @@ interface MaskStep {
   consumed: number;
 }
 
-/** Unquoted char: pass through, or open a quote region. `\X` is a literal X, not a quote opener. */
+/**
+ * Unquoted char: pass through, or open a quote region.
+ *
+ * `\X` is masked rather than passed through. An escaped character is data, and
+ * escaping it is precisely how a shell author says "this is not syntax" — so it
+ * is masked for the same reason quoted text is.
+ */
 function stepUnquoted(ch: string, next: string | undefined): MaskStep {
-  if (ch === '\\' && next !== undefined) return { out: ch + next, next: 'none', consumed: 2 };
+  if (ch === '\\' && next !== undefined) return { out: '  ', next: 'none', consumed: 2 };
   if (ch === "'") return { out: ' ', next: 'single', consumed: 1 };
   if (ch === '"') return { out: ' ', next: 'double', consumed: 1 };
   return { out: ch, next: 'none', consumed: 1 };
