@@ -12,7 +12,9 @@
  *   - an unanchored match let a quoted pin inside a trailing comment shadow the
  *     real bare pin on the same line;
  *   - a flow-mapping step (`- { uses: owner/repo@<sha>, name: X }`) was skipped
- *     because the comma stayed glued to the scalar.
+ *     because the comma stayed glued to the scalar;
+ *   - a literal `uses:` inside an earlier quoted value shadowed the real key, so
+ *     the pin on that line was silently never validated (fail-open).
  *
  * No network, no gh auth: `--extract` only runs the regex layer.
  */
@@ -78,6 +80,12 @@ describe('check-action-pins matcher — accepted scalars', () => {
     expect(extract(`      - { uses: owner/repo@${SHA}, name: Build }`)).toEqual([`owner/repo@${SHA}`]);
     expect(extract(`      - { uses: owner/repo@${SHA} }`)).toEqual([`owner/repo@${SHA}`]);
     expect(extract(`      - { uses: "owner/repo@${SHA}", name: Build }`)).toEqual([`owner/repo@${SHA}`]);
+  });
+
+  test('a literal uses: inside an earlier quoted value never shadows the real key', () => {
+    expect(extract(`      - { name: "literal uses: x", uses: owner/repo@${SHA} }`)).toEqual([`owner/repo@${SHA}`]);
+    expect(extract(`      - { name: 'literal uses: x', uses: owner/repo@${SHA} }`)).toEqual([`owner/repo@${SHA}`]);
+    expect(extract(`      - { name: "literal uses: x", uses: "owner/repo@${SHA}" }`)).toEqual([`owner/repo@${SHA}`]);
   });
 });
 

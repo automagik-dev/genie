@@ -8,8 +8,9 @@
 # no repository, and it took down three release-publish jobs the first time
 # they ever executed.
 #
-# The matcher reads the scalar that follows the FIRST `uses:` key on the line,
-# recognises all three YAML spellings (bare, 'single-quoted', "double-quoted"),
+# The matcher reads the scalar that follows each `uses:` occurrence on the line
+# and keeps the first one that is a pin, recognises all three YAML spellings
+# (bare, 'single-quoted', "double-quoted"),
 # and requires the ref to span the WHOLE scalar — an action ending in 40 hex
 # chars followed by trailing garbage (`@<sha>oops`) is not a pin and must not be
 # silently accepted (#2669).
@@ -33,24 +34,38 @@ pin_re='^([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)(/[A-Za-z0-9./_-]+)?@([0-9a-f]{40})$'
 # extract_pin <line> — echo `owner/repo@sha` for a SHA-pinned `uses:` line.
 # Returns 1 (printing nothing) for local (`./…`), docker://, tag/branch refs and
 # for a 40-hex run that does not terminate the scalar.
+#
+# Every `uses:` occurrence is tried in order and the FIRST scalar that parses as
+# a pin wins. Stopping at the first occurrence failed open: a literal `uses:`
+# inside an earlier quoted value (`- { name: "literal uses: x", uses: o/r@<sha> }`)
+# shadowed the real key, so the pin was silently never validated. Returning on
+# the first VALID pin still keeps a trailing comment from shadowing a good
+# scalar, because the real pin is matched before the comment is reached.
 extract_pin() {
-  local line="$1" rest scalar
+  local line="$1" rest cand scalar
   line="${line%$'\r'}"
-  case $line in *uses:*) rest="${line#*uses:}" ;; *) return 1 ;; esac
-  rest="${rest#"${rest%%[![:space:]]*}"}"
-  if [[ $rest =~ $uses_dquoted_re ]]; then
-    scalar="${BASH_REMATCH[1]}"
-  elif [[ $rest =~ $uses_squoted_re ]]; then
-    scalar="${BASH_REMATCH[1]}"
-  elif [[ $rest =~ $uses_bare_re ]]; then
-    scalar="${BASH_REMATCH[1]}"
-  else
-    return 1
-  fi
-  [[ $scalar =~ $pin_re ]] || return 1
-  # BASH_REMATCH[2] is the optional subpath (`owner/repo/sub@sha`); the commit
-  # lives in the parent repository, so the API target and the dedupe key drop it.
-  printf '%s@%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[3]}"
+  rest="$line"
+  while [[ $rest == *uses:* ]]; do
+    rest="${rest#*uses:}"
+    cand="${rest#"${rest%%[![:space:]]*}"}"
+    if [[ $cand =~ $uses_dquoted_re ]]; then
+      scalar="${BASH_REMATCH[1]}"
+    elif [[ $cand =~ $uses_squoted_re ]]; then
+      scalar="${BASH_REMATCH[1]}"
+    elif [[ $cand =~ $uses_bare_re ]]; then
+      scalar="${BASH_REMATCH[1]}"
+    else
+      continue
+    fi
+    if [[ $scalar =~ $pin_re ]]; then
+      # BASH_REMATCH[2] is the optional subpath (`owner/repo/sub@sha`); the
+      # commit lives in the parent repository, so the API target and the dedupe
+      # key drop it.
+      printf '%s@%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[3]}"
+      return 0
+    fi
+  done
+  return 1
 }
 
 if [[ "${1:-}" == "--extract" ]]; then
