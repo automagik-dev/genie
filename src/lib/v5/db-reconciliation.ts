@@ -1,20 +1,37 @@
 /**
- * Read-only planning for reconciling two current Genie v5 databases.
+ * Planning and locked transactional apply for reconciling two current Genie
+ * v5 databases.
  *
- * This module deliberately owns no locks, snapshots, or writes. It turns two
- * transaction-consistent, structurally exact logical images into an immutable
- * plan that a later apply boundary can revalidate and execute.
+ * Read-only planning turns two transaction-consistent, structurally exact
+ * logical images into an immutable plan. Apply then takes stable advisory and
+ * SQLite write locks in canonical order, revalidates that exact plan, and
+ * writes only through the live handles. Snapshot publication remains outside
+ * this module.
  */
 
 import { Database } from 'bun:sqlite';
-import { createHash } from 'node:crypto';
-import { existsSync, realpathSync, statSync } from 'node:fs';
-import { normalize } from 'node:path';
+import { createHash, randomUUID } from 'node:crypto';
+import {
+  closeSync,
+  existsSync,
+  linkSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { basename, dirname, join, normalize } from 'node:path';
 import { CURRENT_SCHEMA_VERSION } from './genie-db.js';
+import { BUSY_TIMEOUT_MS, isBusyError } from './sqlite-open.js';
 
 const PLAN_VERSION = 1 as const;
 const REPORT_VERSION = 1 as const;
 const READ_BUSY_TIMEOUT_MS = 5_000;
+const MAX_BUSY_TIMEOUT_MS = 2_147_483_647;
+const ADVISORY_RETRY_MS = 10;
 const MAX_DATABASE_BYTES = 256 * 1024 * 1024;
 const MAX_ROWS_PER_TABLE = 1_000_000;
 const MAX_TOTAL_ROWS = 2_000_000;
@@ -34,6 +51,47 @@ export const IDENTICAL_HISTORY_ADDITION_LIMITATION =
 export type ReconciliationMode = 'bidirectional' | 'directional';
 export type ReconciliationPlanStatus = 'no-op' | 'changed' | 'conflict' | 'same-database';
 export type ReconciliationReportStatus = 'no-op' | 'changed' | 'conflict' | 'operational-failure';
+export type ReconciliationApplyStatus =
+  | 'no-op'
+  | 'changed'
+  | 'conflict'
+  | 'same-database'
+  | 'preimage-changed'
+  | 'lock-timeout'
+  | 'rolled-back'
+  | 'expected-postimage'
+  | 'partial-commit'
+  | 'unexpected-intervening-write'
+  | 'uncertain';
+export type ReconciliationApplyPhase =
+  | 'plan-validation'
+  | 'advisory-lock'
+  | 'sqlite-lock'
+  | 'revalidation'
+  | 'locked'
+  | 'mutation'
+  | 'foreign-key-check'
+  | 'integrity-check'
+  | 'logical-postimage-check'
+  | 'commit'
+  | 'rollback'
+  | 'observation';
+export type ReconciliationApplyFailureCode =
+  | ReconciliationErrorCode
+  | 'invalid-plan'
+  | 'advisory-lock-timeout'
+  | 'sqlite-lock-timeout'
+  | 'apply-failed'
+  | 'postimage-mismatch'
+  | 'commit-failed'
+  | 'rollback-failed'
+  | 'observation-failed'
+  | 'unexpected-failure';
+export type ReconciliationTargetObservation =
+  | 'not-observed'
+  | 'expected-preimage'
+  | 'expected-postimage'
+  | 'unexpected';
 export type ReconciliationInputRole = 'left' | 'right' | 'source' | 'destination';
 export type ReconciliationTargetRole = 'left' | 'right' | 'destination';
 export type KeyedTableName = 'boards' | 'tasks' | 'wish_groups' | 'hire_roster' | 'meta';
@@ -235,6 +293,58 @@ export interface ReconciliationPlan {
   readonly historyLimitation: typeof IDENTICAL_HISTORY_ADDITION_LIMITATION;
 }
 
+export interface ReconciliationApplyTargetReport {
+  readonly role: ReconciliationTargetRole;
+  readonly preimageDigest: string;
+  readonly postimageDigest: string | null;
+  readonly observedDigest: string | null;
+  readonly observation: ReconciliationTargetObservation;
+  readonly committed: boolean;
+}
+
+export interface ReconciliationApplyFailure {
+  readonly code: ReconciliationApplyFailureCode;
+  readonly phase: ReconciliationApplyPhase;
+  readonly role?: ReconciliationInputRole | ReconciliationTargetRole;
+}
+
+export interface ReconciliationApplyReport {
+  readonly reportVersion: typeof REPORT_VERSION;
+  readonly dryRun: false;
+  readonly mode: ReconciliationMode;
+  readonly status: ReconciliationApplyStatus;
+  readonly converged: boolean;
+  readonly targets: readonly ReconciliationApplyTargetReport[];
+  readonly failure: ReconciliationApplyFailure | null;
+}
+
+export type ReconciliationApplyEvent =
+  | { readonly phase: 'locked' }
+  | {
+      readonly phase: 'mutation' | 'foreign-key-check' | 'integrity-check' | 'logical-postimage-check' | 'commit';
+      readonly role: ReconciliationTargetRole;
+      readonly state: 'before' | 'after';
+    };
+
+export interface ReconciliationLockedInput {
+  readonly role: ReconciliationInputRole;
+  readonly canonicalPath: string;
+  readonly target: boolean;
+  serialize(): Uint8Array;
+}
+
+export interface ReconciliationApplyOptions {
+  /** Shared total wait bound for all advisory and SQLite lock acquisition. */
+  readonly busyTimeoutMs?: number;
+  /**
+   * Runs after every input has been revalidated while all SQLite write locks
+   * remain held. Group 3 uses the read-only serializers to publish snapshots.
+   */
+  readonly onLocked?: (inputs: readonly ReconciliationLockedInput[]) => void;
+  /** Bounded lifecycle observation and deterministic failure injection for tests. */
+  readonly onEvent?: (event: ReconciliationApplyEvent) => void;
+}
+
 type SqliteScalar = string | bigint | number | Uint8Array | null;
 type CanonicalScalar = readonly ['null'] | readonly ['string', string] | readonly ['integer', string];
 
@@ -312,6 +422,34 @@ interface DatabaseImage {
   readonly schemaFingerprint: string;
   readonly logicalDigest: string;
   readonly state: LogicalState;
+}
+
+interface AdvisoryLock {
+  readonly path: string;
+  readonly token: string;
+}
+
+interface LockedDatabase {
+  readonly input: PhysicalInput;
+  readonly roles: readonly ReconciliationInputRole[];
+  readonly db: Database;
+  transactionOpen: boolean;
+}
+
+interface ApplyFailureContext {
+  readonly code: ReconciliationApplyFailureCode;
+  readonly phase: ReconciliationApplyPhase;
+  readonly role?: ReconciliationInputRole | ReconciliationTargetRole;
+}
+
+class ApplyBoundaryError extends Error {
+  readonly context: ApplyFailureContext;
+
+  constructor(context: ApplyFailureContext, cause?: unknown) {
+    super(cause instanceof Error ? cause.message : context.code);
+    this.name = 'ApplyBoundaryError';
+    this.context = context;
+  }
 }
 
 const NORMAL_OPEN_GUIDANCE =
@@ -593,6 +731,126 @@ function samePhysicalInput(left: PhysicalInput, right: PhysicalInput): boolean {
     throw error('invalid-data', 'Hardlink aliases with path-specific SQLite sidecars are ambiguous.');
   }
   return true;
+}
+
+const SLEEP_SIGNAL = new Int32Array(new SharedArrayBuffer(4));
+
+function sleepMs(ms: number): void {
+  Atomics.wait(SLEEP_SIGNAL, 0, 0, ms);
+}
+
+function errnoCode(caught: unknown): string | undefined {
+  if (!(caught instanceof Error)) return undefined;
+  const code = (caught as NodeJS.ErrnoException).code;
+  return typeof code === 'string' ? code : undefined;
+}
+
+function advisoryLockPath(canonicalPath: string): string {
+  return `${canonicalPath}.genie-reconciliation.lock`;
+}
+
+function advisoryOwner(pid: number, token: string): string {
+  return JSON.stringify({ pid, token });
+}
+
+function parseAdvisoryOwner(path: string): { pid: number; token: string } | null {
+  try {
+    const value: unknown = JSON.parse(readFileSync(path, 'utf8'));
+    if (
+      typeof value !== 'object' ||
+      value === null ||
+      !('pid' in value) ||
+      !('token' in value) ||
+      !Number.isSafeInteger(value.pid) ||
+      (value.pid as number) <= 0 ||
+      typeof value.token !== 'string'
+    ) {
+      return null;
+    }
+    return { pid: value.pid as number, token: value.token };
+  } catch {
+    return null;
+  }
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (caught) {
+    return errnoCode(caught) !== 'ESRCH';
+  }
+}
+
+function removeStaleAdvisoryLock(path: string): boolean {
+  const owner = parseAdvisoryOwner(path);
+  if (owner === null || processIsAlive(owner.pid)) return false;
+  const stalePath = `${path}.${randomUUID()}.stale`;
+  try {
+    renameSync(path, stalePath);
+  } catch (caught) {
+    if (errnoCode(caught) === 'ENOENT') return true;
+    return false;
+  }
+  try {
+    unlinkSync(stalePath);
+  } catch {
+    // The stable name is already free. A stranded uniquely named stale inode
+    // does not grant authority and cannot block another reconciler.
+  }
+  return true;
+}
+
+function acquireAdvisoryLock(canonicalPath: string, timeoutMs: number): AdvisoryLock {
+  const path = advisoryLockPath(canonicalPath);
+  const token = randomUUID();
+  const candidatePath = join(dirname(path), `.${basename(path)}.${process.pid}.${token}.candidate`);
+  const descriptor = openSync(candidatePath, 'wx', 0o600);
+  try {
+    writeFileSync(descriptor, advisoryOwner(process.pid, token));
+  } finally {
+    closeSync(descriptor);
+  }
+
+  const deadline = Date.now() + timeoutMs;
+  try {
+    for (;;) {
+      try {
+        linkSync(candidatePath, path);
+        return { path, token };
+      } catch (caught) {
+        if (errnoCode(caught) !== 'EEXIST') {
+          throw new ApplyBoundaryError({ code: 'unexpected-failure', phase: 'advisory-lock' }, caught);
+        }
+        if (removeStaleAdvisoryLock(path)) continue;
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) {
+          throw new ApplyBoundaryError({ code: 'advisory-lock-timeout', phase: 'advisory-lock' }, caught);
+        }
+        sleepMs(Math.min(ADVISORY_RETRY_MS, remaining));
+      }
+    }
+  } finally {
+    try {
+      unlinkSync(candidatePath);
+    } catch {
+      // The stable hard link, not this unique candidate name, owns exclusion.
+    }
+  }
+}
+
+function releaseAdvisoryLock(lock: AdvisoryLock): void {
+  const owner = parseAdvisoryOwner(lock.path);
+  if (owner === null) {
+    if (!existsSync(lock.path)) return;
+    throw new Error('Advisory lock ownership became unreadable.');
+  }
+  if (owner.pid !== process.pid || owner.token !== lock.token) {
+    throw new Error('Advisory lock ownership changed before release.');
+  }
+  const releasePath = `${lock.path}.${lock.token}.release`;
+  renameSync(lock.path, releasePath);
+  unlinkSync(releasePath);
 }
 
 function readInventory(db: Database): Array<{ type: string; name: string; tableName: string; sql: string | null }> {
@@ -950,14 +1208,22 @@ function readSchemaFingerprint(db: Database): SchemaFingerprint {
   return { userVersion: CURRENT_SCHEMA_VERSION, tables };
 }
 
-function checkIntegrity(db: Database): void {
+function checkSqliteIntegrity(db: Database): void {
   const integrity = db.query('PRAGMA integrity_check(1)').get() as Record<string, SqliteScalar> | null;
   const result = integrity === null ? null : Object.values(integrity)[0];
   if (result !== 'ok') throw error('integrity-failed', 'A reconciliation input failed SQLite integrity validation.');
+}
+
+function checkForeignKeys(db: Database): void {
   const foreignKeyFailure = db.query('PRAGMA foreign_key_check').get();
   if (foreignKeyFailure !== null) {
     throw error('integrity-failed', 'A reconciliation input failed SQLite foreign-key validation.');
   }
+}
+
+function checkIntegrity(db: Database): void {
+  checkSqliteIntegrity(db);
+  checkForeignKeys(db);
 }
 
 function boundedTableRows(
@@ -1237,7 +1503,19 @@ function readLogicalState(db: Database): LogicalState {
   return state;
 }
 
-function loadDatabaseImage(input: PhysicalInput): DatabaseImage {
+function readDatabaseImage(db: Database): DatabaseImage {
+  const schema = readSchemaFingerprint(db);
+  // Integrity is intentionally after the closed inventory: a guest trigger or
+  // virtual object is rejected before any logical data receives authority.
+  checkIntegrity(db);
+  preflightRowCounts(db);
+  const state = readLogicalState(db);
+  const schemaFingerprint = digestCanonical(['genie-schema-v1', schema]);
+  const logicalDigest = logicalStateDigest(schemaFingerprint, state);
+  return { schemaFingerprint, logicalDigest, state };
+}
+
+function loadDatabaseImage(input: PhysicalInput, busyTimeoutMs = READ_BUSY_TIMEOUT_MS): DatabaseImage {
   let db: Database;
   try {
     db = new Database(input.canonicalPath, { readonly: true, strict: true, safeIntegers: true });
@@ -1246,23 +1524,16 @@ function loadDatabaseImage(input: PhysicalInput): DatabaseImage {
   }
   let transactionOpen = false;
   try {
-    db.exec(`PRAGMA busy_timeout = ${READ_BUSY_TIMEOUT_MS}`);
+    db.exec(`PRAGMA busy_timeout = ${busyTimeoutMs}`);
     db.exec('PRAGMA query_only = ON');
     db.exec('PRAGMA trusted_schema = OFF');
     db.exec('PRAGMA foreign_keys = ON');
     db.exec('BEGIN');
     transactionOpen = true;
-    const schema = readSchemaFingerprint(db);
-    // Integrity is intentionally after the closed inventory: a guest trigger or
-    // virtual object is rejected before any logical data receives authority.
-    checkIntegrity(db);
-    preflightRowCounts(db);
-    const state = readLogicalState(db);
-    const schemaFingerprint = digestCanonical(['genie-schema-v1', schema]);
-    const logicalDigest = logicalStateDigest(schemaFingerprint, state);
+    const image = readDatabaseImage(db);
     db.exec('COMMIT');
     transactionOpen = false;
-    return { schemaFingerprint, logicalDigest, state };
+    return image;
   } catch (caught) {
     if (transactionOpen) {
       try {
@@ -1954,4 +2225,804 @@ export function dryRunDatabaseReconciliation(request: ReconciliationRequest): Re
         : { code: 'unexpected-failure' as const };
     return deepFreeze(makeReport(request.mode, 'operational-failure', false, null, [], [], failure));
   }
+}
+
+function validateBusyTimeout(value: number | undefined): number {
+  const timeout = value ?? BUSY_TIMEOUT_MS;
+  if (!Number.isSafeInteger(timeout) || timeout < 0 || timeout > MAX_BUSY_TIMEOUT_MS) {
+    throw new ApplyBoundaryError({ code: 'invalid-plan', phase: 'plan-validation' });
+  }
+  return timeout;
+}
+
+function inputForTarget(plan: ReconciliationPlan, role: ReconciliationTargetRole): ReconciliationPlanInput | undefined {
+  const inputRole: ReconciliationInputRole = role === 'destination' ? 'destination' : role;
+  return plan.inputs.find((input) => input.role === inputRole);
+}
+
+function expectedRoles(mode: ReconciliationMode): {
+  readonly inputs: readonly ReconciliationInputRole[];
+  readonly targets: readonly ReconciliationTargetRole[];
+} {
+  return mode === 'bidirectional'
+    ? { inputs: ['left', 'right'], targets: ['left', 'right'] }
+    : { inputs: ['source', 'destination'], targets: ['destination'] };
+}
+
+function validateApplicablePlan(plan: ReconciliationPlan): void {
+  if (plan.planVersion !== PLAN_VERSION || (plan.mode !== 'bidirectional' && plan.mode !== 'directional')) {
+    throw new ApplyBoundaryError({ code: 'invalid-plan', phase: 'plan-validation' });
+  }
+  const expected = expectedRoles(plan.mode);
+  if (
+    plan.inputs.length !== expected.inputs.length ||
+    plan.targets.length !== expected.targets.length ||
+    plan.inputs.some((input, index) => input.role !== expected.inputs[index]) ||
+    plan.targets.some((target, index) => target.role !== expected.targets[index])
+  ) {
+    throw new ApplyBoundaryError({ code: 'invalid-plan', phase: 'plan-validation' });
+  }
+  for (const target of plan.targets) {
+    const input = inputForTarget(plan, target.role);
+    if (
+      input === undefined ||
+      input.canonicalPath !== target.canonicalPath ||
+      input.logicalDigest !== target.preimageDigest ||
+      (plan.status === 'conflict') !== (target.postimageDigest === null)
+    ) {
+      throw new ApplyBoundaryError({ code: 'invalid-plan', phase: 'plan-validation', role: target.role });
+    }
+  }
+  const conflict = plan.conflicts.length > 0;
+  const invalidSameDatabaseStatus =
+    plan.status === 'conflict' ? false : plan.sameDatabase !== (plan.status === 'same-database');
+  if (conflict !== (plan.status === 'conflict') || invalidSameDatabaseStatus) {
+    throw new ApplyBoundaryError({ code: 'invalid-plan', phase: 'plan-validation' });
+  }
+}
+
+function initialApplyTargets(plan: ReconciliationPlan): ReconciliationApplyTargetReport[] {
+  return plan.targets.map((target) => ({
+    role: target.role,
+    preimageDigest: target.preimageDigest,
+    postimageDigest: target.postimageDigest,
+    observedDigest: null,
+    observation: 'not-observed',
+    committed: false,
+  }));
+}
+
+function makeApplyReport(
+  plan: ReconciliationPlan,
+  status: ReconciliationApplyStatus,
+  converged: boolean,
+  targets: readonly ReconciliationApplyTargetReport[],
+  failure: ReconciliationApplyFailure | null,
+): ReconciliationApplyReport {
+  return deepFreeze({
+    reportVersion: REPORT_VERSION,
+    dryRun: false,
+    mode: plan.mode,
+    status,
+    converged,
+    targets,
+    failure,
+  });
+}
+
+function failureFrom(caught: unknown, fallback: ApplyFailureContext): ReconciliationApplyFailure {
+  if (caught instanceof ApplyBoundaryError) return caught.context;
+  if (caught instanceof ReconciliationError) {
+    return {
+      code: caught.code,
+      phase: fallback.phase,
+      ...(fallback.role === undefined ? {} : { role: fallback.role }),
+    };
+  }
+  return {
+    ...fallback,
+    code: fallback.code === 'unexpected-failure' ? fallback.code : 'unexpected-failure',
+  };
+}
+
+function emitApplyEvent(options: ReconciliationApplyOptions, event: ReconciliationApplyEvent): void {
+  try {
+    options.onEvent?.(event);
+  } catch (caught) {
+    const role = 'role' in event ? event.role : undefined;
+    throw new ApplyBoundaryError(
+      {
+        code: event.phase === 'commit' ? 'commit-failed' : 'apply-failed',
+        phase: event.phase,
+        ...(role === undefined ? {} : { role }),
+      },
+      caught,
+    );
+  }
+}
+
+function resolvePlannedInputs(plan: ReconciliationPlan): Array<{
+  readonly planned: ReconciliationPlanInput;
+  readonly physical: PhysicalInput;
+}> {
+  const resolved = plan.inputs.map((planned) => {
+    let physical: PhysicalInput;
+    try {
+      physical = resolvePhysicalInput(planned.canonicalPath);
+    } catch (caught) {
+      throw new ApplyBoundaryError(
+        {
+          code: caught instanceof ReconciliationError ? caught.code : 'input-changed',
+          phase: 'revalidation',
+          role: planned.role,
+        },
+        caught,
+      );
+    }
+    if (physical.canonicalPath !== planned.canonicalPath) {
+      throw new ApplyBoundaryError({ code: 'input-changed', phase: 'revalidation', role: planned.role });
+    }
+    return { planned, physical };
+  });
+  let sameNow: boolean;
+  try {
+    sameNow = samePhysicalInput(resolved[0].physical, resolved[1].physical);
+  } catch (caught) {
+    throw new ApplyBoundaryError(
+      {
+        code: caught instanceof ReconciliationError ? caught.code : 'input-changed',
+        phase: 'revalidation',
+      },
+      caught,
+    );
+  }
+  if (sameNow !== plan.sameDatabase) {
+    throw new ApplyBoundaryError({ code: 'input-changed', phase: 'revalidation' });
+  }
+  return resolved;
+}
+
+function acquirePlannedAdvisoryLocks(
+  inputs: readonly { readonly physical: PhysicalInput }[],
+  deadline: number,
+): AdvisoryLock[] {
+  const locks: AdvisoryLock[] = [];
+  const paths = [...new Set(inputs.map((input) => input.physical.canonicalPath))].sort(compareCanonical);
+  try {
+    for (const path of paths) locks.push(acquireAdvisoryLock(path, remainingLockWait(deadline)));
+    return locks;
+  } catch (caught) {
+    for (const lock of locks.reverse()) {
+      try {
+        releaseAdvisoryLock(lock);
+      } catch {
+        // The acquisition failure remains authoritative.
+      }
+    }
+    throw caught;
+  }
+}
+
+function remainingLockWait(deadline: number): number {
+  return Math.max(0, deadline - Date.now());
+}
+
+function physicalIdentity(input: PhysicalInput): string {
+  return `${input.device}:${input.inode}`;
+}
+
+function revalidateApplyInput(input: PhysicalInput, role: ReconciliationInputRole): void {
+  try {
+    revalidatePhysicalInput(input);
+  } catch (caught) {
+    throw new ApplyBoundaryError({ code: 'input-changed', phase: 'revalidation', role }, caught);
+  }
+}
+
+function openLockedDatabases(
+  inputs: readonly { readonly planned: ReconciliationPlanInput; readonly physical: PhysicalInput }[],
+  deadline: number,
+): LockedDatabase[] {
+  for (const input of inputs) revalidateApplyInput(input.physical, input.planned.role);
+  const grouped = new Map<string, { input: PhysicalInput; roles: ReconciliationInputRole[]; paths: PhysicalInput[] }>();
+  for (const { planned, physical } of inputs) {
+    const key = physicalIdentity(physical);
+    const existing = grouped.get(key);
+    if (existing === undefined) {
+      grouped.set(key, { input: physical, roles: [planned.role], paths: [physical] });
+    } else {
+      existing.roles.push(planned.role);
+      existing.paths.push(physical);
+      if (compareCanonical(physical.canonicalPath, existing.input.canonicalPath) < 0) {
+        existing.input = physical;
+      }
+    }
+  }
+
+  const locked: LockedDatabase[] = [];
+  const ordered = [...grouped.values()].sort((left, right) =>
+    compareCanonical(left.input.canonicalPath, right.input.canonicalPath),
+  );
+  try {
+    for (const group of ordered) {
+      let db: Database | null = null;
+      try {
+        db = new Database(group.input.canonicalPath, {
+          readwrite: true,
+          create: false,
+          strict: true,
+          safeIntegers: true,
+        });
+        db.exec(`PRAGMA busy_timeout = ${remainingLockWait(deadline)}`);
+        db.exec('PRAGMA trusted_schema = OFF');
+        db.exec('PRAGMA foreign_keys = ON');
+        db.exec('BEGIN IMMEDIATE');
+      } catch (caught) {
+        db?.close();
+        throw new ApplyBoundaryError(
+          {
+            code: isBusyError(caught) ? 'sqlite-lock-timeout' : 'input-changed',
+            phase: isBusyError(caught) ? 'sqlite-lock' : 'revalidation',
+            role: group.roles[0],
+          },
+          caught,
+        );
+      }
+      locked.push({ input: group.input, roles: group.roles, db, transactionOpen: true });
+      for (const path of group.paths) revalidateApplyInput(path, group.roles[0]);
+    }
+    return locked;
+  } catch (caught) {
+    rollbackOpenTransactions(locked);
+    closeLockedDatabases(locked);
+    throw caught;
+  }
+}
+
+function lockedDatabaseForRole(
+  locked: readonly LockedDatabase[],
+  role: ReconciliationInputRole | ReconciliationTargetRole,
+): LockedDatabase {
+  const inputRole: ReconciliationInputRole = role === 'destination' ? 'destination' : role;
+  const found = locked.find((item) => item.roles.includes(inputRole));
+  if (found === undefined) {
+    throw new ApplyBoundaryError({ code: 'invalid-plan', phase: 'plan-validation', role });
+  }
+  return found;
+}
+
+function rollbackOpenTransactions(locked: readonly LockedDatabase[]): boolean {
+  let complete = true;
+  for (const item of [...locked].reverse()) {
+    if (!item.transactionOpen) continue;
+    try {
+      item.db.exec('ROLLBACK');
+      item.transactionOpen = false;
+    } catch {
+      complete = false;
+    }
+  }
+  return complete;
+}
+
+function closeLockedDatabases(locked: readonly LockedDatabase[]): void {
+  for (const item of [...locked].reverse()) {
+    try {
+      item.db.close();
+    } catch {
+      // Observation classifies the durable logical state after close failure.
+    }
+  }
+}
+
+function releaseAdvisoryLocks(locks: readonly AdvisoryLock[]): boolean {
+  let complete = true;
+  for (const lock of [...locks].reverse()) {
+    try {
+      releaseAdvisoryLock(lock);
+    } catch {
+      complete = false;
+    }
+  }
+  return complete;
+}
+
+function revalidateLockedPlan(
+  plan: ReconciliationPlan,
+  locked: readonly LockedDatabase[],
+): ReadonlyMap<ReconciliationInputRole, DatabaseImage> {
+  const images = new Map<ReconciliationInputRole, DatabaseImage>();
+  for (const item of locked) {
+    let image: DatabaseImage;
+    try {
+      image = readDatabaseImage(item.db);
+    } catch (caught) {
+      throw new ApplyBoundaryError(
+        {
+          code: caught instanceof ReconciliationError ? caught.code : 'input-changed',
+          phase: 'revalidation',
+          role: item.roles[0],
+        },
+        caught,
+      );
+    }
+    if (image.schemaFingerprint !== plan.schemaFingerprint) {
+      throw new ApplyBoundaryError({ code: 'input-changed', phase: 'revalidation', role: item.roles[0] });
+    }
+    for (const role of item.roles) {
+      const expected = plan.inputs.find((input) => input.role === role);
+      if (expected === undefined || image.logicalDigest !== expected.logicalDigest) {
+        throw new ApplyBoundaryError({ code: 'input-changed', phase: 'revalidation', role });
+      }
+      images.set(role, image);
+    }
+  }
+  return images;
+}
+
+function lockedInputsForHook(
+  plan: ReconciliationPlan,
+  locked: readonly LockedDatabase[],
+): readonly ReconciliationLockedInput[] {
+  return plan.inputs.map((input) => {
+    const item = lockedDatabaseForRole(locked, input.role);
+    const targetRole: ReconciliationTargetRole =
+      input.role === 'destination'
+        ? 'destination'
+        : input.role === 'left' || input.role === 'right'
+          ? input.role
+          : 'destination';
+    const target = plan.targets.some((candidate) => candidate.role === targetRole && input.role !== 'source');
+    return Object.freeze({
+      role: input.role,
+      canonicalPath: input.canonicalPath,
+      target,
+      serialize: () => new Uint8Array(item.db.serialize()),
+    });
+  });
+}
+
+function runLockedHook(
+  plan: ReconciliationPlan,
+  locked: readonly LockedDatabase[],
+  options: ReconciliationApplyOptions,
+): void {
+  emitApplyEvent(options, { phase: 'locked' });
+  try {
+    options.onLocked?.(lockedInputsForHook(plan, locked));
+  } catch (caught) {
+    throw new ApplyBoundaryError({ code: 'apply-failed', phase: 'locked' }, caught);
+  }
+}
+
+function temporaryBoardName(db: Database, nonce: string, index: number): string {
+  let attempt = 0;
+  for (;;) {
+    const value = `__genie_reconciliation_${nonce}_${index}_${attempt}`;
+    const found = db.query('SELECT 1 AS present FROM boards WHERE name = ?').get(value);
+    if (found === null) return value;
+    attempt++;
+  }
+}
+
+function applyBoards(db: Database, rows: readonly BoardReconciliationRow[]): void {
+  const changing: BoardReconciliationRow[] = [];
+  for (const row of rows) {
+    const current = db.query('SELECT name FROM boards WHERE id = ?').get(row.id) as Record<string, SqliteScalar> | null;
+    if (current !== null && rowString(current, 'name') !== row.name) changing.push(row);
+  }
+  const nonce = randomUUID().replaceAll('-', '');
+  const park = db.query('UPDATE boards SET name = ? WHERE id = ?');
+  for (const [index, row] of changing.entries()) {
+    park.run(temporaryBoardName(db, nonce, index), row.id);
+  }
+  const upsert = db.query(
+    `INSERT INTO boards (id, name, created_at, lanes)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       name = excluded.name,
+       created_at = excluded.created_at,
+       lanes = excluded.lanes`,
+  );
+  for (const row of rows) upsert.run(...boardValues(row));
+}
+
+function applyTasks(db: Database, rows: readonly TaskReconciliationRow[]): void {
+  const upsert = db.query(
+    `INSERT INTO tasks (
+       id, board_id, title, status, claimed_by, claimed_at, wish, group_name,
+       created_at, updated_at, lane, agent_kind, heartbeat_at, blocked_by, blocked_reason
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       board_id = excluded.board_id,
+       title = excluded.title,
+       status = excluded.status,
+       claimed_by = excluded.claimed_by,
+       claimed_at = excluded.claimed_at,
+       wish = excluded.wish,
+       group_name = excluded.group_name,
+       created_at = excluded.created_at,
+       updated_at = excluded.updated_at,
+       lane = excluded.lane,
+       agent_kind = excluded.agent_kind,
+       heartbeat_at = excluded.heartbeat_at,
+       blocked_by = excluded.blocked_by,
+       blocked_reason = excluded.blocked_reason`,
+  );
+  for (const row of rows) upsert.run(...taskValues(row));
+}
+
+function applyWishGroups(db: Database, rows: readonly WishGroupReconciliationRow[]): void {
+  const upsert = db.query(
+    `INSERT INTO wish_groups (
+       wish, name, status, depends_on, assignee, started_at, completed_at, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(wish, name) DO UPDATE SET
+       status = excluded.status,
+       depends_on = excluded.depends_on,
+       assignee = excluded.assignee,
+       started_at = excluded.started_at,
+       completed_at = excluded.completed_at,
+       created_at = excluded.created_at,
+       updated_at = excluded.updated_at`,
+  );
+  for (const row of rows) upsert.run(...wishGroupValues(row));
+}
+
+function applyHireRoster(db: Database, rows: readonly HireRosterReconciliationRow[]): void {
+  const upsert = db.query(
+    `INSERT INTO hire_roster (wish, agent_adapter_id, profile, worktree, hired_at, state)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(wish, agent_adapter_id) DO UPDATE SET
+       profile = excluded.profile,
+       worktree = excluded.worktree,
+       hired_at = excluded.hired_at,
+       state = excluded.state`,
+  );
+  for (const row of rows) upsert.run(...hireRosterValues(row));
+}
+
+function applyTaskDependencies(db: Database, rows: readonly TaskDependencyReconciliationRow[]): void {
+  const insert = db.query(
+    `INSERT INTO task_dependencies (task_id, depends_on_id)
+     VALUES (?, ?)
+     ON CONFLICT(task_id, depends_on_id) DO NOTHING`,
+  );
+  for (const row of rows) insert.run(...dependencyValues(row));
+}
+
+function applyStageLog(db: Database, additions: readonly HistoryAddition<StageLogReconciliationValue>[]): void {
+  const insert = db.query('INSERT INTO stage_log (task_id, stage, note, created_at) VALUES (?, ?, ?, ?)');
+  for (const addition of additions) {
+    for (let count = 0; count < addition.count; count++) insert.run(...stageValues(addition.value));
+  }
+}
+
+function applyTaskEvents(db: Database, additions: readonly HistoryAddition<TaskEventReconciliationValue>[]): void {
+  const insert = db.query(
+    'INSERT INTO task_events (task_id, kind, note, author_kind, author, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+  );
+  for (const addition of additions) {
+    for (let count = 0; count < addition.count; count++) insert.run(...eventValues(addition.value));
+  }
+}
+
+function applyMeta(db: Database, rows: readonly MetaReconciliationRow[]): void {
+  const upsert = db.query(
+    `INSERT INTO meta (key, value)
+     VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+  );
+  for (const row of rows) upsert.run(...metaValues(row));
+}
+
+function applyTargetChanges(db: Database, changes: ReconciliationTargetChanges): void {
+  // Parent rows precede dependents. The backfill marker is written last so its
+  // logical coverage invariant is never transiently asserted ahead of history.
+  applyBoards(db, changes.boards);
+  applyTasks(db, changes.tasks);
+  applyWishGroups(db, changes.wishGroups);
+  applyHireRoster(db, changes.hireRoster);
+  applyTaskDependencies(db, changes.taskDependencies);
+  applyStageLog(db, changes.stageLog);
+  applyTaskEvents(db, changes.taskEvents);
+  applyMeta(db, changes.meta);
+}
+
+function runPostimageCheck(
+  phase: 'foreign-key-check' | 'integrity-check' | 'logical-postimage-check',
+  role: ReconciliationTargetRole,
+  check: () => void,
+): void {
+  try {
+    check();
+  } catch (caught) {
+    if (caught instanceof ApplyBoundaryError) throw caught;
+    throw new ApplyBoundaryError(
+      {
+        code: caught instanceof ReconciliationError ? caught.code : 'postimage-mismatch',
+        phase,
+        role,
+      },
+      caught,
+    );
+  }
+}
+
+function validateTargetPostimage(
+  plan: ReconciliationPlan,
+  target: ReconciliationTargetPlan,
+  db: Database,
+  options: ReconciliationApplyOptions,
+): void {
+  let schemaFingerprint = '';
+  runPostimageCheck('logical-postimage-check', target.role, () => {
+    schemaFingerprint = digestCanonical(['genie-schema-v1', readSchemaFingerprint(db)]);
+    if (schemaFingerprint !== plan.schemaFingerprint) {
+      throw new ApplyBoundaryError({
+        code: 'postimage-mismatch',
+        phase: 'logical-postimage-check',
+        role: target.role,
+      });
+    }
+  });
+
+  emitApplyEvent(options, { phase: 'foreign-key-check', role: target.role, state: 'before' });
+  runPostimageCheck('foreign-key-check', target.role, () => checkForeignKeys(db));
+  emitApplyEvent(options, { phase: 'foreign-key-check', role: target.role, state: 'after' });
+
+  emitApplyEvent(options, { phase: 'integrity-check', role: target.role, state: 'before' });
+  runPostimageCheck('integrity-check', target.role, () => checkSqliteIntegrity(db));
+  emitApplyEvent(options, { phase: 'integrity-check', role: target.role, state: 'after' });
+
+  emitApplyEvent(options, { phase: 'logical-postimage-check', role: target.role, state: 'before' });
+  runPostimageCheck('logical-postimage-check', target.role, () => {
+    preflightRowCounts(db);
+    const state = readLogicalState(db);
+    const logicalDigest = logicalStateDigest(schemaFingerprint, state);
+    if (target.postimageDigest === null || logicalDigest !== target.postimageDigest) {
+      throw new ApplyBoundaryError({
+        code: 'postimage-mismatch',
+        phase: 'logical-postimage-check',
+        role: target.role,
+      });
+    }
+  });
+  emitApplyEvent(options, { phase: 'logical-postimage-check', role: target.role, state: 'after' });
+}
+
+function ensureDirectionalSourceUnchanged(plan: ReconciliationPlan, locked: readonly LockedDatabase[]): void {
+  if (plan.mode !== 'directional') return;
+  const source = plan.inputs.find((input) => input.role === 'source');
+  if (source === undefined) {
+    throw new ApplyBoundaryError({ code: 'invalid-plan', phase: 'plan-validation', role: 'source' });
+  }
+  let image: DatabaseImage;
+  try {
+    image = readDatabaseImage(lockedDatabaseForRole(locked, 'source').db);
+  } catch (caught) {
+    throw new ApplyBoundaryError(
+      {
+        code: caught instanceof ReconciliationError ? caught.code : 'input-changed',
+        phase: 'revalidation',
+        role: 'source',
+      },
+      caught,
+    );
+  }
+  if (image.schemaFingerprint !== plan.schemaFingerprint || image.logicalDigest !== source.logicalDigest) {
+    throw new ApplyBoundaryError({ code: 'input-changed', phase: 'revalidation', role: 'source' });
+  }
+}
+
+function orderedTargets(plan: ReconciliationPlan): ReconciliationTargetPlan[] {
+  return [...plan.targets].sort((left, right) => {
+    const pathOrder = compareCanonical(left.canonicalPath, right.canonicalPath);
+    return pathOrder === 0 ? compareCanonical(left.role, right.role) : pathOrder;
+  });
+}
+
+function commitTarget(
+  target: ReconciliationTargetPlan,
+  item: LockedDatabase,
+  options: ReconciliationApplyOptions,
+  committed: Set<ReconciliationTargetRole>,
+): void {
+  emitApplyEvent(options, { phase: 'commit', role: target.role, state: 'before' });
+  try {
+    item.db.exec('COMMIT');
+    item.transactionOpen = false;
+    committed.add(target.role);
+  } catch (caught) {
+    throw new ApplyBoundaryError({ code: 'commit-failed', phase: 'commit', role: target.role }, caught);
+  }
+  emitApplyEvent(options, { phase: 'commit', role: target.role, state: 'after' });
+}
+
+function commitNonTargetTransactions(
+  plan: ReconciliationPlan,
+  locked: readonly LockedDatabase[],
+  committed: Set<ReconciliationTargetRole>,
+): void {
+  for (const item of locked) {
+    if (!item.transactionOpen) continue;
+    try {
+      item.db.exec('COMMIT');
+      item.transactionOpen = false;
+    } catch (caught) {
+      throw new ApplyBoundaryError({ code: 'commit-failed', phase: 'commit', role: item.roles[0] }, caught);
+    }
+    for (const target of plan.targets) {
+      if (item.roles.includes(target.role === 'destination' ? 'destination' : target.role)) {
+        committed.add(target.role);
+      }
+    }
+  }
+}
+
+function mutateValidateAndCommit(
+  plan: ReconciliationPlan,
+  locked: readonly LockedDatabase[],
+  options: ReconciliationApplyOptions,
+  committed: Set<ReconciliationTargetRole>,
+): void {
+  if (plan.status === 'same-database') {
+    commitNonTargetTransactions(plan, locked, committed);
+    return;
+  }
+
+  const targets = orderedTargets(plan);
+  for (const target of targets) {
+    const item = lockedDatabaseForRole(locked, target.role);
+    emitApplyEvent(options, { phase: 'mutation', role: target.role, state: 'before' });
+    applyTargetChanges(item.db, target.changes);
+    emitApplyEvent(options, { phase: 'mutation', role: target.role, state: 'after' });
+  }
+  for (const target of targets) {
+    validateTargetPostimage(plan, target, lockedDatabaseForRole(locked, target.role).db, options);
+  }
+  ensureDirectionalSourceUnchanged(plan, locked);
+
+  for (const target of targets) {
+    commitTarget(target, lockedDatabaseForRole(locked, target.role), options, committed);
+  }
+  commitNonTargetTransactions(plan, locked, committed);
+}
+
+function observeTarget(
+  target: ReconciliationTargetPlan,
+  committed: ReadonlySet<ReconciliationTargetRole>,
+  timeoutMs: number,
+): ReconciliationApplyTargetReport {
+  let observedDigest: string | null = null;
+  try {
+    observedDigest = loadDatabaseImage(resolvePhysicalInput(target.canonicalPath), timeoutMs).logicalDigest;
+  } catch {
+    return {
+      role: target.role,
+      preimageDigest: target.preimageDigest,
+      postimageDigest: target.postimageDigest,
+      observedDigest: null,
+      observation: 'not-observed',
+      committed: committed.has(target.role),
+    };
+  }
+  const observation: ReconciliationTargetObservation =
+    target.postimageDigest !== null && observedDigest === target.postimageDigest
+      ? 'expected-postimage'
+      : observedDigest === target.preimageDigest
+        ? 'expected-preimage'
+        : 'unexpected';
+  return {
+    role: target.role,
+    preimageDigest: target.preimageDigest,
+    postimageDigest: target.postimageDigest,
+    observedDigest,
+    observation,
+    committed: committed.has(target.role),
+  };
+}
+
+function observeTargets(
+  plan: ReconciliationPlan,
+  committed: ReadonlySet<ReconciliationTargetRole>,
+  timeoutMs: number,
+): ReconciliationApplyTargetReport[] {
+  return plan.targets.map((target) => observeTarget(target, committed, timeoutMs));
+}
+
+function classifyApplyStatus(
+  plan: ReconciliationPlan,
+  targets: readonly ReconciliationApplyTargetReport[],
+  failure: ReconciliationApplyFailure | null,
+): { status: ReconciliationApplyStatus; converged: boolean } {
+  if (failure?.code === 'advisory-lock-timeout' || failure?.code === 'sqlite-lock-timeout') {
+    return { status: 'lock-timeout', converged: false };
+  }
+  if (failure?.phase === 'revalidation' || failure?.code === 'input-changed') {
+    return { status: 'preimage-changed', converged: false };
+  }
+  if (targets.some((target) => target.observation === 'unexpected')) {
+    return { status: 'unexpected-intervening-write', converged: false };
+  }
+  if (targets.some((target) => target.observation === 'not-observed')) {
+    return { status: 'uncertain', converged: false };
+  }
+  if (failure === null) {
+    if (plan.status === 'same-database') return { status: 'same-database', converged: true };
+    if (plan.status === 'no-op') return { status: 'no-op', converged: true };
+    if (targets.every((target) => target.observation === 'expected-postimage')) {
+      return { status: 'changed', converged: true };
+    }
+    return { status: 'uncertain', converged: false };
+  }
+  if (targets.every((target) => target.observation === 'expected-postimage')) {
+    return { status: 'expected-postimage', converged: false };
+  }
+  if (
+    targets.some((target) => target.observation === 'expected-postimage') &&
+    targets.every((target) => target.observation === 'expected-postimage' || target.observation === 'expected-preimage')
+  ) {
+    return { status: 'partial-commit', converged: false };
+  }
+  if (targets.every((target) => target.observation === 'expected-preimage')) {
+    return { status: 'rolled-back', converged: false };
+  }
+  return { status: 'uncertain', converged: false };
+}
+
+/**
+ * Apply an immutable plan through live SQLite handles only.
+ *
+ * Advisory locks coordinate reconciliation-aware writers. `BEGIN IMMEDIATE`
+ * on every input remains authoritative for older Genie writers that do not
+ * know those locks. All acquisition, rollback, commit, and post-failure
+ * observation paths return a bounded state report rather than claiming pair
+ * convergence after an ambiguous boundary.
+ */
+export function applyDatabaseReconciliation(
+  plan: ReconciliationPlan,
+  options: ReconciliationApplyOptions = {},
+): ReconciliationApplyReport {
+  let timeoutMs = BUSY_TIMEOUT_MS;
+  let failure: ReconciliationApplyFailure | null = null;
+  let advisoryLocks: AdvisoryLock[] = [];
+  let locked: LockedDatabase[] = [];
+  const committed = new Set<ReconciliationTargetRole>();
+
+  try {
+    timeoutMs = validateBusyTimeout(options.busyTimeoutMs);
+    validateApplicablePlan(plan);
+  } catch (caught) {
+    failure = failureFrom(caught, { code: 'invalid-plan', phase: 'plan-validation' });
+    return makeApplyReport(plan, 'uncertain', false, initialApplyTargets(plan), failure);
+  }
+
+  if (plan.status === 'conflict') {
+    return makeApplyReport(plan, 'conflict', false, initialApplyTargets(plan), null);
+  }
+
+  try {
+    const inputs = resolvePlannedInputs(plan);
+    const lockDeadline = Date.now() + timeoutMs;
+    advisoryLocks = acquirePlannedAdvisoryLocks(inputs, lockDeadline);
+    locked = openLockedDatabases(inputs, lockDeadline);
+    revalidateLockedPlan(plan, locked);
+    runLockedHook(plan, locked, options);
+    mutateValidateAndCommit(plan, locked, options, committed);
+  } catch (caught) {
+    failure = failureFrom(caught, { code: 'apply-failed', phase: 'mutation' });
+    if (!rollbackOpenTransactions(locked)) {
+      failure = { code: 'rollback-failed', phase: 'rollback' };
+    }
+  } finally {
+    closeLockedDatabases(locked);
+  }
+
+  const targets = advisoryLocks.length > 0 ? observeTargets(plan, committed, timeoutMs) : initialApplyTargets(plan);
+  if (!releaseAdvisoryLocks(advisoryLocks)) {
+    failure = failure ?? { code: 'unexpected-failure', phase: 'advisory-lock' };
+  }
+  const classified = classifyApplyStatus(plan, targets, failure);
+  return makeApplyReport(plan, classified.status, classified.converged, targets, failure);
 }

@@ -6,17 +6,21 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   truncateSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   IDENTICAL_HISTORY_ADDITION_LIMITATION,
+  type ReconciliationApplyEvent,
   ReconciliationError,
   type ReconciliationRequest,
   type TaskEventReconciliationValue,
+  applyDatabaseReconciliation,
   dryRunDatabaseReconciliation,
   planDatabaseReconciliation,
 } from './db-reconciliation.js';
@@ -143,10 +147,76 @@ function bidirectional(leftPath: string, rightPath: string): ReconciliationReque
   return { mode: 'bidirectional', leftPath, rightPath };
 }
 
+function directional(sourcePath: string, destinationPath: string): ReconciliationRequest {
+  return { mode: 'directional', sourcePath, destinationPath };
+}
+
 function target(plan: ReturnType<typeof planDatabaseReconciliation>, role: 'left' | 'right' | 'destination') {
   const found = plan.targets.find((candidate) => candidate.role === role);
   if (found === undefined) throw new Error(`missing ${role} target`);
   return found;
+}
+
+function scalarCount(path: string, table: string): number {
+  const db = new Database(path, { readonly: true });
+  try {
+    const row = db.query(`SELECT count(*) AS count FROM ${table}`).get() as { count: number };
+    return row.count;
+  } finally {
+    db.close();
+  }
+}
+
+function metaValue(path: string, key: string): string | null {
+  const db = new Database(path, { readonly: true });
+  try {
+    const row = db.query('SELECT value FROM meta WHERE key = ?').get(key) as { value: string } | null;
+    return row?.value ?? null;
+  } finally {
+    db.close();
+  }
+}
+
+function taskTitle(path: string, id: string): string | null {
+  const db = new Database(path, { readonly: true });
+  try {
+    const row = db.query('SELECT title FROM tasks WHERE id = ?').get(id) as { title: string } | null;
+    return row?.title ?? null;
+  } finally {
+    db.close();
+  }
+}
+
+function seedBidirectionalApplyPair(): { left: string; right: string } {
+  const left = currentDb('apply-left', null);
+  const right = currentDb('apply-right', null);
+  for (const [path, side] of [
+    [left, 'left'],
+    [right, 'right'],
+  ] as const) {
+    mutate(path, (db) => {
+      insertBoard(db, { id: `board-${side}`, name: `Board ${side}` });
+      insertTask(db, { id: `task-${side}`, boardId: `board-${side}` });
+      insertTask(db, { id: `dependency-${side}` });
+      db.query('INSERT INTO task_dependencies (task_id, depends_on_id) VALUES (?, ?)').run(
+        `task-${side}`,
+        `dependency-${side}`,
+      );
+      db.query(
+        `INSERT INTO wish_groups
+           (wish, name, status, depends_on, assignee, started_at, completed_at, created_at, updated_at)
+         VALUES (?, ?, 'ready', '[]', NULL, NULL, NULL, 1, 1)`,
+      ).run(`wish-${side}`, 'group');
+      db.query(
+        `INSERT INTO hire_roster (wish, agent_adapter_id, profile, worktree, hired_at, state)
+         VALUES (?, 'adapter', NULL, ?, 1, 'hired')`,
+      ).run(`wish-${side}`, `/worktree/${side}`);
+      db.query('INSERT INTO meta (key, value) VALUES (?, ?)').run(`meta-${side}`, side);
+      insertStage(db, 1, { taskId: `task-${side}`, stage: 'report', note: side, createdAt: 1 });
+      insertEvent(db, 1, { taskId: `task-${side}`, kind: 'report', note: side, createdAt: 1 });
+    });
+  }
+  return { left, right };
 }
 
 function seedPreLanes(path: string): void {
@@ -1193,5 +1263,386 @@ describe('same-file, idempotency, and bounded failures', () => {
         message: expect.stringContaining('diagnostic'),
       }),
     );
+  });
+});
+
+describe('canonical locking and transactional apply', () => {
+  test('applies every logical table through live handles and repeats as a no-op', () => {
+    const { left, right } = seedBidirectionalApplyPair();
+    const beforeInodes = [statSync(left).ino, statSync(right).ino];
+    const plan = planDatabaseReconciliation(bidirectional(left, right));
+
+    const report = applyDatabaseReconciliation(plan);
+
+    expect(report).toMatchObject({ status: 'changed', converged: true, failure: null });
+    expect(report.targets.every((item) => item.observation === 'expected-postimage')).toBe(true);
+    for (const path of [left, right]) {
+      expect(scalarCount(path, 'boards')).toBe(2);
+      expect(scalarCount(path, 'tasks')).toBe(4);
+      expect(scalarCount(path, 'wish_groups')).toBe(2);
+      expect(scalarCount(path, 'hire_roster')).toBe(2);
+      expect(scalarCount(path, 'meta')).toBe(2);
+      expect(scalarCount(path, 'task_dependencies')).toBe(2);
+      expect(scalarCount(path, 'stage_log')).toBe(2);
+      expect(scalarCount(path, 'task_events')).toBe(2);
+    }
+    expect([statSync(left).ino, statSync(right).ino]).toEqual(beforeInodes);
+
+    const repeatedPlan = planDatabaseReconciliation(bidirectional(right, left));
+    const repeated = applyDatabaseReconciliation(repeatedPlan);
+    expect(repeated).toMatchObject({ status: 'no-op', converged: true, failure: null });
+  });
+
+  test('directional apply keeps the locked source unchanged and preserves destination-only rows', () => {
+    const source = currentDb('directional-source', null);
+    const destination = currentDb('directional-destination', null);
+    mutate(source, (db) => {
+      insertTask(db, { id: 'shared', title: 'source authority' });
+      insertTask(db, { id: 'source-only' });
+    });
+    mutate(destination, (db) => {
+      insertTask(db, { id: 'shared', title: 'destination old' });
+      insertTask(db, { id: 'destination-only' });
+    });
+    const plan = planDatabaseReconciliation(directional(source, destination));
+    const sourcePreimage = plan.inputs.find((input) => input.role === 'source')?.logicalDigest;
+
+    const report = applyDatabaseReconciliation(plan);
+    const after = planDatabaseReconciliation(directional(source, destination));
+
+    expect(report).toMatchObject({ status: 'changed', converged: true, failure: null });
+    expect(after.inputs.find((input) => input.role === 'source')?.logicalDigest).toBe(sourcePreimage);
+    expect(taskTitle(source, 'shared')).toBe('source authority');
+    expect(taskTitle(source, 'destination-only')).toBeNull();
+    expect(taskTitle(destination, 'shared')).toBe('source authority');
+    expect(taskTitle(destination, 'source-only')).toBe('source-only');
+    expect(taskTitle(destination, 'destination-only')).toBe('destination-only');
+  });
+
+  test('an older write after planning is preserved and aborts locked preimage revalidation', () => {
+    const source = currentDb('source', null);
+    const destination = currentDb('destination', null);
+    mutate(source, (db) => db.query("INSERT INTO meta (key, value) VALUES ('planned', 'source')").run());
+    const plan = planDatabaseReconciliation(directional(source, destination));
+    mutate(destination, (db) => db.query("INSERT INTO meta (key, value) VALUES ('older', 'writer')").run());
+
+    const report = applyDatabaseReconciliation(plan);
+
+    expect(report).toMatchObject({
+      status: 'preimage-changed',
+      converged: false,
+      failure: { code: 'input-changed', phase: 'revalidation' },
+    });
+    expect(metaValue(destination, 'older')).toBe('writer');
+    expect(metaValue(destination, 'planned')).toBeNull();
+  });
+
+  test('a schema change after planning is rejected under locks before a guest trigger can execute', () => {
+    const source = currentDb('source', null);
+    const destination = currentDb('destination', null);
+    mutate(source, (db) => db.query("INSERT INTO meta (key, value) VALUES ('planned', 'source')").run());
+    const plan = planDatabaseReconciliation(directional(source, destination));
+    mutate(destination, (db) => {
+      db.exec(`
+        CREATE TRIGGER intervening_trigger AFTER INSERT ON meta
+        BEGIN
+          INSERT INTO meta (key, value) VALUES ('trigger-fired', 'yes');
+        END
+      `);
+    });
+
+    const report = applyDatabaseReconciliation(plan);
+
+    expect(report).toMatchObject({
+      status: 'preimage-changed',
+      converged: false,
+      failure: { code: 'unsupported-schema', phase: 'revalidation', role: 'destination' },
+    });
+    expect(metaValue(destination, 'planned')).toBeNull();
+    expect(metaValue(destination, 'trigger-fired')).toBeNull();
+  });
+
+  test('SQLite contention is bounded and rolls back earlier canonical locks without mutation', () => {
+    const { left, right } = seedBidirectionalApplyPair();
+    const plan = planDatabaseReconciliation(bidirectional(right, left));
+    const heldPath = [left, right].sort()[0];
+    const holder = new Database(heldPath);
+    holder.exec('BEGIN IMMEDIATE');
+    const startedAt = Date.now();
+    try {
+      const report = applyDatabaseReconciliation(plan, { busyTimeoutMs: 25 });
+      expect(report).toMatchObject({
+        status: 'lock-timeout',
+        converged: false,
+        failure: { code: 'sqlite-lock-timeout', phase: 'sqlite-lock' },
+      });
+      expect(Date.now() - startedAt).toBeLessThan(1_000);
+      expect(scalarCount(left, 'boards')).toBe(1);
+      expect(scalarCount(right, 'boards')).toBe(1);
+    } finally {
+      holder.exec('ROLLBACK');
+      holder.close();
+    }
+  });
+
+  test('reversed arguments stop on the first canonical advisory lock without taking the second', () => {
+    const { left, right } = seedBidirectionalApplyPair();
+    const plan = planDatabaseReconciliation(bidirectional(right, left));
+    const [first, second] = [left, right].sort();
+    const firstLock = `${first}.genie-reconciliation.lock`;
+    const secondLock = `${second}.genie-reconciliation.lock`;
+    writeFileSync(firstLock, JSON.stringify({ pid: process.pid, token: 'test-holder' }));
+    try {
+      const report = applyDatabaseReconciliation(plan, { busyTimeoutMs: 20 });
+      expect(report).toMatchObject({
+        status: 'lock-timeout',
+        failure: { code: 'advisory-lock-timeout', phase: 'advisory-lock' },
+      });
+      expect(existsSync(secondLock)).toBe(false);
+    } finally {
+      unlinkSync(firstLock);
+    }
+  });
+
+  test('opposite-order lock-aware reconcilers serialize without deadlock or overwrite', async () => {
+    const { left, right } = seedBidirectionalApplyPair();
+    const moduleUrl = new URL('./db-reconciliation.ts', import.meta.url).href;
+    const go = join(fixtureRoot, 'concurrent-go');
+    const readyA = join(fixtureRoot, 'concurrent-ready-a');
+    const readyB = join(fixtureRoot, 'concurrent-ready-b');
+    const childCode = `
+        import { existsSync, writeFileSync } from 'node:fs';
+        const api = await import(Bun.argv[1]);
+        const request = Bun.argv[6] === 'reverse'
+          ? { mode: 'bidirectional', leftPath: Bun.argv[3], rightPath: Bun.argv[2] }
+          : { mode: 'bidirectional', leftPath: Bun.argv[2], rightPath: Bun.argv[3] };
+        const plan = api.planDatabaseReconciliation(request);
+        writeFileSync(Bun.argv[4], 'ready');
+        while (!existsSync(Bun.argv[5])) await Bun.sleep(5);
+        const report = api.applyDatabaseReconciliation(plan, { busyTimeoutMs: 1_000 });
+        process.stdout.write(JSON.stringify({ status: report.status, converged: report.converged }));
+      `;
+    const spawn = (ready: string, order: 'forward' | 'reverse') =>
+      Bun.spawn({
+        cmd: [process.execPath, '-e', childCode, moduleUrl, left, right, ready, go, order],
+        stderr: 'pipe',
+        stdout: 'pipe',
+      });
+    const childA = spawn(readyA, 'forward');
+    const childB = spawn(readyB, 'reverse');
+    for (let attempt = 0; attempt < 400 && (!existsSync(readyA) || !existsSync(readyB)); attempt++) {
+      await Bun.sleep(5);
+    }
+    expect(existsSync(readyA)).toBe(true);
+    expect(existsSync(readyB)).toBe(true);
+    writeFileSync(go, 'go');
+
+    const [exitA, exitB, stdoutA, stdoutB] = await Promise.all([
+      childA.exited,
+      childB.exited,
+      new Response(childA.stdout).text(),
+      new Response(childB.stdout).text(),
+    ]);
+    expect([exitA, exitB]).toEqual([0, 0]);
+    const statuses = [JSON.parse(stdoutA).status, JSON.parse(stdoutB).status].sort();
+    expect(statuses).toEqual(['changed', 'preimage-changed']);
+    expect(planDatabaseReconciliation(bidirectional(left, right)).status).toBe('no-op');
+  }, 5_000);
+
+  test('an older writer racing held SQLite locks receives bounded busy and cannot be overwritten', () => {
+    const source = currentDb('source', null);
+    const destination = currentDb('destination', null);
+    mutate(source, (db) => db.query("INSERT INTO meta (key, value) VALUES ('planned', 'source')").run());
+    const plan = planDatabaseReconciliation(directional(source, destination));
+    const olderExitCodes: number[] = [];
+
+    const report = applyDatabaseReconciliation(plan, {
+      busyTimeoutMs: 100,
+      onLocked: () => {
+        for (const path of [source, destination]) {
+          const child = Bun.spawnSync({
+            cmd: [
+              process.execPath,
+              '-e',
+              `import { Database } from 'bun:sqlite';
+               const db = new Database(Bun.argv[1], { readwrite: true, create: false });
+               db.exec('PRAGMA busy_timeout = 25');
+               try {
+                 db.exec('BEGIN IMMEDIATE');
+                 db.query("INSERT INTO meta (key, value) VALUES ('older', 'writer')").run();
+                 db.exec('COMMIT');
+                 process.exit(0);
+               } catch {
+                 process.exit(7);
+               } finally {
+                 db.close();
+               }`,
+              path,
+            ],
+            stderr: 'pipe',
+            stdout: 'pipe',
+          });
+          olderExitCodes.push(child.exitCode);
+        }
+      },
+    });
+
+    expect(olderExitCodes).toEqual([7, 7]);
+    expect(report).toMatchObject({ status: 'changed', converged: true });
+    expect(metaValue(destination, 'planned')).toBe('source');
+    expect(metaValue(destination, 'older')).toBeNull();
+  });
+
+  test('foreign-key, integrity, and logical postimage checks all finish before commit', () => {
+    const source = currentDb('source', null);
+    const destination = currentDb('destination', null);
+    mutate(source, (db) => {
+      insertTask(db, { id: 'source-task' });
+      insertEvent(db, 1, { taskId: 'source-task', kind: 'report', note: 'ready', createdAt: 1 });
+    });
+    const events: string[] = [];
+
+    const report = applyDatabaseReconciliation(planDatabaseReconciliation(directional(source, destination)), {
+      onEvent: (event: ReconciliationApplyEvent) => {
+        if ('role' in event && event.role === 'destination') {
+          events.push(`${event.phase}:${event.state}`);
+        }
+      },
+    });
+
+    expect(report.status).toBe('changed');
+    expect(events).toEqual([
+      'mutation:before',
+      'mutation:after',
+      'foreign-key-check:before',
+      'foreign-key-check:after',
+      'integrity-check:before',
+      'integrity-check:after',
+      'logical-postimage-check:before',
+      'logical-postimage-check:after',
+      'commit:before',
+      'commit:after',
+    ]);
+  });
+
+  test('a precommit failure rolls both live transactions back to their planned preimages', () => {
+    const { left, right } = seedBidirectionalApplyPair();
+    const plan = planDatabaseReconciliation(bidirectional(left, right));
+
+    const report = applyDatabaseReconciliation(plan, {
+      onEvent: (event) => {
+        if (event.phase === 'commit' && event.state === 'before') throw new Error('injected before commit');
+      },
+    });
+
+    expect(report).toMatchObject({ status: 'rolled-back', converged: false });
+    expect(report.targets.every((item) => item.observation === 'expected-preimage')).toBe(true);
+    expect(report.targets.every((item) => item.committed === false)).toBe(true);
+    expect(scalarCount(left, 'boards')).toBe(1);
+    expect(scalarCount(right, 'boards')).toBe(1);
+  });
+
+  test('a failure after the first destination commit reports a known partial commit', () => {
+    const { left, right } = seedBidirectionalApplyPair();
+    const plan = planDatabaseReconciliation(bidirectional(left, right));
+    let completedCommits = 0;
+
+    const report = applyDatabaseReconciliation(plan, {
+      onEvent: (event) => {
+        if (event.phase === 'commit' && event.state === 'after' && ++completedCommits === 1) {
+          throw new Error('injected after first commit');
+        }
+      },
+    });
+
+    expect(report).toMatchObject({ status: 'partial-commit', converged: false });
+    expect(report.targets.filter((item) => item.observation === 'expected-postimage')).toHaveLength(1);
+    expect(report.targets.filter((item) => item.observation === 'expected-preimage')).toHaveLength(1);
+    expect(report.targets.filter((item) => item.committed)).toHaveLength(1);
+  });
+
+  test('an error after all commits reports expected postimages without claiming convergence', () => {
+    const { left, right } = seedBidirectionalApplyPair();
+    const plan = planDatabaseReconciliation(bidirectional(left, right));
+    let completedCommits = 0;
+
+    const report = applyDatabaseReconciliation(plan, {
+      onEvent: (event) => {
+        if (event.phase === 'commit' && event.state === 'after' && ++completedCommits === 2) {
+          throw new Error('injected after second commit');
+        }
+      },
+    });
+
+    expect(report).toMatchObject({ status: 'expected-postimage', converged: false });
+    expect(report.targets.every((item) => item.observation === 'expected-postimage')).toBe(true);
+    expect(planDatabaseReconciliation(bidirectional(left, right)).status).toBe('no-op');
+  });
+
+  test('an older write after one commit is reported as unexpected and is never overwritten', () => {
+    const { left, right } = seedBidirectionalApplyPair();
+    const plan = planDatabaseReconciliation(bidirectional(left, right));
+    const paths = { left, right };
+    let injected = false;
+
+    const report = applyDatabaseReconciliation(plan, {
+      onEvent: (event) => {
+        if (event.phase !== 'commit' || event.state !== 'after' || injected) return;
+        injected = true;
+        mutate(paths[event.role as 'left' | 'right'], (db) => {
+          db.query("INSERT INTO meta (key, value) VALUES ('intervening', 'older-writer')").run();
+        });
+        throw new Error('stop after intervening write');
+      },
+    });
+
+    expect(report).toMatchObject({ status: 'unexpected-intervening-write', converged: false });
+    const unexpected = report.targets.find((item) => item.observation === 'unexpected');
+    expect(unexpected).toBeDefined();
+    expect(metaValue(paths[unexpected?.role as 'left' | 'right'], 'intervening')).toBe('older-writer');
+  });
+
+  test('an unclassifiable postcommit schema intervention is reported as uncertain', () => {
+    const { left, right } = seedBidirectionalApplyPair();
+    const plan = planDatabaseReconciliation(bidirectional(left, right));
+    const paths = { left, right };
+    let injected = false;
+
+    const report = applyDatabaseReconciliation(plan, {
+      onEvent: (event) => {
+        if (event.phase !== 'commit' || event.state !== 'after' || injected) return;
+        injected = true;
+        mutate(paths[event.role as 'left' | 'right'], (db) => {
+          db.exec('CREATE TABLE intervening_schema (id TEXT PRIMARY KEY)');
+        });
+        throw new Error('stop after unclassifiable intervention');
+      },
+    });
+
+    expect(report).toMatchObject({ status: 'uncertain', converged: false });
+    expect(report.targets.some((item) => item.observation === 'not-observed')).toBe(true);
+  });
+
+  test('directional board-name swaps use a transaction-local parking order', () => {
+    const source = currentDb('swap-source', null);
+    const destination = currentDb('swap-destination', null);
+    mutate(source, (db) => {
+      insertBoard(db, { id: 'a', name: 'A' });
+      insertBoard(db, { id: 'b', name: 'B' });
+    });
+    mutate(destination, (db) => {
+      insertBoard(db, { id: 'a', name: 'B' });
+      insertBoard(db, { id: 'b', name: 'A' });
+    });
+
+    const report = applyDatabaseReconciliation(planDatabaseReconciliation(directional(source, destination)));
+
+    expect(report).toMatchObject({ status: 'changed', converged: true });
+    const db = new Database(destination, { readonly: true });
+    expect(db.query('SELECT id, name FROM boards ORDER BY id').all()).toEqual([
+      { id: 'a', name: 'A' },
+      { id: 'b', name: 'B' },
+    ]);
+    db.close();
   });
 });
