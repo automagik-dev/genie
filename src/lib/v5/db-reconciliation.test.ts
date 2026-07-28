@@ -487,7 +487,7 @@ describe('keyed, edge-set, and history-multiset planning', () => {
       });
     });
     mutate(right, (db) => {
-      db.query('INSERT INTO task_dependencies (task_id, depends_on_id) VALUES (?, ?)').run('prerequisite', 'shared');
+      db.query('INSERT INTO task_dependencies (task_id, depends_on_id) VALUES (?, ?)').run('populated', 'shared');
       // IDs collide with left but are intentionally local and excluded from identity.
       insertStage(db, 1, { taskId: 'shared', stage: 'planned', note: 'same', createdAt: 10 });
       insertStage(db, 2, { taskId: 'shared', stage: 'right-only', note: null, createdAt: 11 });
@@ -506,7 +506,7 @@ describe('keyed, edge-set, and history-multiset planning', () => {
       wishGroups: [{ wish: 'wish-right' }],
       hireRoster: [{ wish: 'wish-right' }],
       meta: [{ key: 'meta-right' }],
-      taskDependencies: [{ taskId: 'prerequisite', dependsOnId: 'shared' }],
+      taskDependencies: [{ taskId: 'populated', dependsOnId: 'shared' }],
       stageLog: [{ count: 1, value: { stage: 'right-only' } }],
       taskEvents: [{ count: 1, value: { note: null } }],
     });
@@ -524,6 +524,54 @@ describe('keyed, edge-set, and history-multiset planning', () => {
     expect(Object.isFrozen(first)).toBe(true);
     expect(Object.isFrozen(first.targets)).toBe(true);
     expect(Object.isFrozen(first.targets[0].changes.stageLog)).toBe(true);
+  });
+
+  test('pre-existing self-dependencies and cycles are rejected as invalid input graphs', () => {
+    const peer = currentDb('peer');
+    for (const kind of ['self', 'cycle'] as const) {
+      const invalid = currentDb(kind);
+      mutate(invalid, (db) => {
+        insertTask(db, { id: 'x' });
+        if (kind === 'self') {
+          db.query('INSERT INTO task_dependencies (task_id, depends_on_id) VALUES (?, ?)').run('x', 'x');
+          return;
+        }
+        insertTask(db, { id: 'y' });
+        db.query('INSERT INTO task_dependencies (task_id, depends_on_id) VALUES (?, ?)').run('x', 'y');
+        db.query('INSERT INTO task_dependencies (task_id, depends_on_id) VALUES (?, ?)').run('y', 'x');
+      });
+
+      expect(() => planDatabaseReconciliation(bidirectional(invalid, peer))).toThrow(
+        expect.objectContaining({ code: 'invalid-data' }),
+      );
+    }
+  });
+
+  test('a cycle formed only by the cross-endpoint dependency union conflicts before planning changes', () => {
+    const left = currentDb('left');
+    const right = currentDb('right');
+    for (const path of [left, right]) {
+      mutate(path, (db) => {
+        insertTask(db, { id: 'x' });
+        insertTask(db, { id: 'y' });
+      });
+    }
+    mutate(left, (db) => {
+      db.query('INSERT INTO task_dependencies (task_id, depends_on_id) VALUES (?, ?)').run('x', 'y');
+    });
+    mutate(right, (db) => {
+      db.query('INSERT INTO task_dependencies (task_id, depends_on_id) VALUES (?, ?)').run('y', 'x');
+    });
+
+    const plan = planDatabaseReconciliation(bidirectional(left, right));
+
+    expect(plan.status).toBe('conflict');
+    expect(plan.conflicts).toEqual([
+      expect.objectContaining({ table: 'task_dependencies', reason: 'planned-integrity-failed', side: 'left' }),
+      expect.objectContaining({ table: 'task_dependencies', reason: 'planned-integrity-failed', side: 'right' }),
+    ]);
+    expect(target(plan, 'left').changes.taskDependencies).toEqual([]);
+    expect(target(plan, 'right').changes.taskDependencies).toEqual([]);
   });
 
   test('bidirectional same-key differences conflict without exposing hostile payloads', () => {
@@ -747,6 +795,30 @@ describe('stage_log_backfill_v1 marker semantics', () => {
     expect(target(plan, 'left').changes.meta).toEqual([{ key: 'stage_log_backfill_v1', value: '100' }]);
     expect(target(plan, 'right').changes.meta).toEqual([]);
     expect(target(plan, 'left').postimageDigest).toBe(target(plan, 'right').postimageDigest);
+  });
+
+  test('directional reconciliation uses the valid source marker whenever it is present', () => {
+    const fixtures = [
+      { name: 'greater', source: '200', destination: '100', expected: '200' },
+      { name: 'smaller', source: '100', destination: '200', expected: '100' },
+      { name: 'destination-missing', source: '200', destination: null, expected: '200' },
+      { name: 'source-missing', source: null, destination: '100', expected: null },
+    ] as const;
+
+    for (const fixture of fixtures) {
+      const source = currentDb(`${fixture.name}-source`, fixture.source);
+      const destination = currentDb(`${fixture.name}-destination`, fixture.destination);
+
+      const plan = planDatabaseReconciliation({
+        mode: 'directional',
+        sourcePath: source,
+        destinationPath: destination,
+      });
+
+      expect(target(plan, 'destination').changes.meta).toEqual(
+        fixture.expected === null ? [] : [{ key: 'stage_log_backfill_v1', value: fixture.expected }],
+      );
+    }
   });
 
   test('invalid marker and invariant failure become deterministic conflicts', () => {
