@@ -21,6 +21,7 @@ import type { Command } from 'commander';
 import { color, formatTimestamp, padRight, truncate } from '../lib/term-format.js';
 import { livenessBadge } from '../lib/v5/card-render.js';
 import { openDb, resolveRoadmapPath } from '../lib/v5/genie-db.js';
+import { autoSyncBeforeCommand, recordSyncBaseline, syncRoadmap } from '../lib/v5/roadmap-sync.js';
 import {
   type EventAuthor,
   type TaskCardRow,
@@ -430,6 +431,9 @@ function handleExport(opts: ExportOptions): void {
       if (opts.write) {
         const target = typeof opts.write === 'string' ? opts.write : resolveRoadmapPath();
         writeFileSync(target, json);
+        // Writing the canonical snapshot declares "this pair is intentional" —
+        // it is the keep-the-local-board resolution for a diverged sync.
+        if (target === resolveRoadmapPath()) recordSyncBaseline(db);
         out(`Wrote board snapshot to ${target}.`);
         return;
       }
@@ -442,6 +446,19 @@ function handleExport(opts: ExportOptions): void {
 
 interface ImportOptions {
   replace?: boolean;
+}
+
+function handleSync(): void {
+  run(() => {
+    const db = openDb();
+    try {
+      const result = syncRoadmap(db);
+      out(result.message ?? `Board and snapshot are in sync (${result.action}).`);
+      if (result.action === 'diverged') process.exit(1);
+    } finally {
+      db.close();
+    }
+  });
 }
 
 function handleImport(file: string | undefined, opts: ImportOptions): void {
@@ -459,6 +476,7 @@ function handleImport(file: string | undefined, opts: ImportOptions): void {
     const db = openDb();
     try {
       const summary = importState(db, snapshot, { replace: opts.replace });
+      if (source === resolveRoadmapPath()) recordSyncBaseline(db);
       out(
         `Imported ${summary.tasks} tasks, ${summary.boards} boards, ${summary.dependencies} dependencies, ${summary.events} events, ${summary.wishGroups} wish groups, ${summary.hires} hires from ${source}.`,
       );
@@ -472,8 +490,17 @@ function handleImport(file: string | undefined, opts: ImportOptions): void {
 // Registration
 // ============================================================================
 
+/** Subcommands that ARE the sync surface — auto-syncing first would tangle them. */
+const AUTO_SYNC_EXEMPT = new Set(['import', 'export', 'sync']);
+
 export function registerV5TaskCommands(v5: Command): void {
   const task = v5.command('task').description('task state (SQLite, zero-daemon)');
+
+  // roadmap.json is canonical: reconcile before every ordinary task verb so a
+  // pulled snapshot materializes and local mutations publish (fail-open).
+  task.hook('preAction', (_thisCommand, actionCommand) => {
+    if (!AUTO_SYNC_EXEMPT.has(actionCommand.name())) autoSyncBeforeCommand();
+  });
 
   task
     .command('create')
@@ -557,4 +584,9 @@ export function registerV5TaskCommands(v5: Command): void {
     .description('Restore database state from an export snapshot (default: .genie/roadmap.json)')
     .option('--replace', 'Overwrite existing state instead of refusing a non-empty database')
     .action((file: string | undefined, opts: ImportOptions) => handleImport(file, opts));
+
+  task
+    .command('sync')
+    .description('Reconcile genie.db with the canonical .genie/roadmap.json (imports, exports, or warns on divergence)')
+    .action(() => handleSync());
 }

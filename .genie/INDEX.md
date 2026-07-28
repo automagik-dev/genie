@@ -1,6 +1,6 @@
 # Plans Index
 
-> **Board snapshot:** the genie.db task/board state (the roadmap behind `genie board`) is committed as [roadmap.json](roadmap.json) so it survives clones and publishes with the repo. On a fresh machine: `genie task import` rebuilds `.genie/genie.db` from it. After board changes: `genie task export --write`, then commit the refreshed snapshot.
+> **Board snapshot (canonical):** [roadmap.json](roadmap.json) is the canonical roadmap board (`genie board`); the local `.genie/genie.db` is a materialization of it. Every `genie board`/`genie task` command auto-syncs three-way: a pulled snapshot imports into genie.db, local board mutations export back (and the pre-commit hook commits the refresh), and if BOTH moved since the last sync genie touches nothing and warns — resolve with `genie task import --replace` (take the snapshot) or `genie task export --write` (keep the local board). Fresh clone: just run `genie board`.
 
 ## Raw
 
