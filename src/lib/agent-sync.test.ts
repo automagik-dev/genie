@@ -1646,8 +1646,10 @@ describe('claude skills mirror suppression', () => {
     expect(existsSync(join(fixture.claudeDir, 'skills', 'beta'))).toBe(false);
     expect(readFileSync(join(report.backupsDir as string, 'claude', 'beta', 'SKILL.md'), 'utf8')).toBe('# beta\n');
     expect(extraAction(claude, 'skills-mirror')).toBe('suppressed');
-    // Non-skill deliveries are untouched by the suppression.
-    expect(existsSync(join(fixture.claudeDir, 'agents', 'reviewer.md'))).toBe(true);
+    // The role-agent fan-out is suppressed by the same switch; the council
+    // stamp is not a duplicated surface and stays delivered.
+    expect(extraAction(claude, 'agents-mirror')).toBe('suppressed');
+    expect(existsSync(join(fixture.claudeDir, 'agents', 'reviewer.md'))).toBe(false);
     expect(existsSync(join(fixture.claudeDir, 'workflows', 'council.js'))).toBe(true);
   });
 
@@ -1660,8 +1662,9 @@ describe('claude skills mirror suppression', () => {
     expect(existsSync(join(fixture.claudeDir, 'skills', 'alpha'))).toBe(false);
     expect(existsSync(join(fixture.claudeDir, 'skills', 'beta'))).toBe(false);
     expect(extraAction(claude, 'skills-mirror')).toBe('suppressed');
-    // Agents fan-out and the council stamp are independent of the skills mirror.
-    expect(agentFileAction(claude, 'reviewer')).toBe('created');
+    // The agent fan-out is suppressed too; only the council stamp is written.
+    expect(agentFileAction(claude, 'reviewer')).toBeUndefined();
+    expect(existsSync(join(fixture.claudeDir, 'agents', 'reviewer.md'))).toBe(false);
     expect(extraAction(claude, 'stamp')).toBe('written');
   });
 
@@ -1730,6 +1733,45 @@ describe('claude skills mirror suppression', () => {
     expect(existsSync(join(fixture.claudeDir, 'skills', 'council'))).toBe(false);
   });
 
+  test('enabling the plugin prunes a previously fanned role agent, backing the bytes up first', () => {
+    present(fixture.claudeDir);
+    run(); // seed reviewer.md as a managed fan-out
+    expect(existsSync(join(fixture.claudeDir, 'agents', 'reviewer.md'))).toBe(true);
+    writeClaudeSettings(true);
+
+    const report = run();
+    const claude = agentReport(report, 'claude');
+    expect(agentFileAction(claude, 'reviewer')).toBe('removed');
+    expect(existsSync(join(fixture.claudeDir, 'agents', 'reviewer.md'))).toBe(false);
+    expect(extraAction(claude, 'agents-mirror')).toBe('suppressed');
+    // Retirement is backup-first: the bytes survive under the backups root.
+    expect(existsSync(join(report.backupsDir as string, 'claude', 'agents', 'reviewer.md'))).toBe(true);
+  });
+
+  test('a hand-edited role agent survives suppression instead of being pruned', () => {
+    present(fixture.claudeDir);
+    run();
+    writeFile(join(fixture.claudeDir, 'agents', 'reviewer.md'), '# reviewer hand-edited\n');
+    writeClaudeSettings(true);
+
+    const claude = agentReport(run(), 'claude');
+    expect(readFileSync(join(fixture.claudeDir, 'agents', 'reviewer.md'), 'utf8')).toBe('# reviewer hand-edited\n');
+    expect(agentFileAction(claude, 'reviewer')).not.toBe('removed');
+  });
+
+  test('re-disabling the plugin brings the role-agent fan-out back', () => {
+    present(fixture.claudeDir);
+    run();
+    writeClaudeSettings(true);
+    expect(agentFileAction(agentReport(run(), 'claude'), 'reviewer')).toBe('removed');
+    writeClaudeSettings(false);
+
+    const claude = agentReport(run(), 'claude');
+    expect(agentFileAction(claude, 'reviewer')).toBe('created');
+    expect(existsSync(join(fixture.claudeDir, 'agents', 'reviewer.md'))).toBe(true);
+    expect(extraAction(claude, 'agents-mirror')).toBeUndefined();
+  });
+
   test('GENIE_FORCE_CLAUDE_SKILLS_MIRROR=1 kill-switch forces the mirror despite an enabled plugin', () => {
     present(fixture.claudeDir);
     writeClaudeSettings(true);
@@ -1740,6 +1782,9 @@ describe('claude skills mirror suppression', () => {
       expect(skillAction(claude, 'alpha')).toBe('created');
       expect(skillAction(claude, 'beta')).toBe('created');
       expect(extraAction(claude, 'skills-mirror')).toBeUndefined();
+      // The one switch restores BOTH suppressed surfaces.
+      expect(agentFileAction(claude, 'reviewer')).toBe('created');
+      expect(extraAction(claude, 'agents-mirror')).toBeUndefined();
     } finally {
       if (prior === undefined) {
         // biome-ignore lint/performance/noDelete: process.env assignment coerces undefined→"undefined"; delete is the only correct unset

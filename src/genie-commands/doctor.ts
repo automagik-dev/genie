@@ -1100,8 +1100,17 @@ function classifyRoleAgentFile(
 }
 
 /** Classify every source role agent (and any managed manifest entry) under `<claudeDir>/agents`. */
-function classifyRoleAgents(pluginRoot: string, agentsDir: string): Omit<RoleAgentDelivery, 'duplicateSurface'> {
-  const sourceState = sourceAgentDigests(pluginRoot);
+function classifyRoleAgents(
+  pluginRoot: string,
+  agentsDir: string,
+  suppressed = false,
+): Omit<RoleAgentDelivery, 'duplicateSurface'> {
+  // Plugin enabled → sync suppresses the WHOLE bare-name role-agent fan-out
+  // (agents load as genie:* from the plugin), so the expected source set is
+  // empty and any surviving managed file is prunable leftover state. Without
+  // this, every suppressed agent reads as missing-from-target and doctor
+  // advises `genie update` forever — the same trap the skills check avoids.
+  const sourceState = suppressed ? { digests: new Map<string, string>(), issues: [] } : sourceAgentDigests(pluginRoot);
   const source = sourceState.digests;
   const manifest = readAgentFilesManifestState(agentsDir);
   const entries = manifest.kind === 'managed' ? manifest.files : {};
@@ -1120,7 +1129,10 @@ function classifyRoleAgents(pluginRoot: string, agentsDir: string): Omit<RoleAge
 }
 
 /** Human-facing summary + a stale flag (any non-current state, or an unusable manifest, warns). */
-function roleAgentSummary(delivery: Omit<RoleAgentDelivery, 'duplicateSurface'>): { detail: string; stale: boolean } {
+function roleAgentSummary(
+  delivery: Omit<RoleAgentDelivery, 'duplicateSurface'>,
+  suppressed = false,
+): { detail: string; stale: boolean } {
   const sourceProblem =
     delivery.sourceIssues.length === 0 ? null : `source inventory unavailable (${delivery.sourceIssues.join('; ')})`;
   if (delivery.manifestStatus === 'unsafe') {
@@ -1130,9 +1142,11 @@ function roleAgentSummary(delivery: Omit<RoleAgentDelivery, 'duplicateSurface'>)
     };
   }
   if (delivery.files.length === 0) {
+    const empty = suppressed
+      ? 'role-agent mirror suppressed (genie@automagik plugin enabled)'
+      : 'no genie role agents detected';
     return {
-      detail:
-        sourceProblem === null ? 'no genie role agents detected' : `${sourceProblem}; no genie role agents detected`,
+      detail: sourceProblem === null ? empty : `${sourceProblem}; ${empty}`,
       stale: sourceProblem !== null,
     };
   }
@@ -1152,16 +1166,6 @@ function roleAgentSummary(delivery: Omit<RoleAgentDelivery, 'duplicateSurface'>)
   return { detail, stale };
 }
 
-/** `enabledPlugins["genie@automagik"] === true` in Claude Code's settings.json (unreadable → false). */
-function roleAgentDuplicateSurface(settingsPath: string): boolean {
-  try {
-    const settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as { enabledPlugins?: Record<string, boolean> };
-    return settings.enabledPlugins?.['genie@automagik'] === true;
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Per-file role-agent delivery check + the duplicate-surface warning. The
  * structured {@link RoleAgentDelivery} rides `--json` as `checks[].roleAgents`
@@ -1169,9 +1173,12 @@ function roleAgentDuplicateSurface(settingsPath: string): boolean {
  * duplicate warning is emitted as its own line ONLY when the plugin is enabled.
  */
 function checkRoleAgents(pluginRoot: string, claudeDir: string, settingsPath: string): CheckResult[] {
-  const classification = classifyRoleAgents(pluginRoot, join(claudeDir, 'agents'));
-  const duplicateSurface = roleAgentDuplicateSurface(settingsPath);
-  const { detail, stale } = roleAgentSummary(classification);
+  const pluginEnabled = claudeGeniePluginEnabled(settingsPath);
+  const classification = classifyRoleAgents(pluginRoot, join(claudeDir, 'agents'), pluginEnabled);
+  // Once the fan-out is pruned there is nothing left to double-list, so the
+  // duplicate warning tracks surviving bare-name files, not merely the plugin.
+  const duplicateSurface = pluginEnabled && classification.files.length > 0;
+  const { detail, stale } = roleAgentSummary(classification, pluginEnabled);
   const results: CheckResult[] = [
     {
       name: 'agent sync: claude role agents',
@@ -1186,9 +1193,8 @@ function checkRoleAgents(pluginRoot: string, claudeDir: string, settingsPath: st
       name: 'agent sync: duplicate role-agent surface',
       status: 'warn',
       detail:
-        'genie@automagik plugin enabled — plugin `genie:*` agents and fanned bare-named agents both surface (duplicate listings)',
-      suggestion:
-        'Keep the genie plugin disabled (bare-named agents are fanned by `genie update`), or expect duplicates.',
+        'genie@automagik plugin enabled — plugin `genie:*` agents and leftover bare-named agents both surface (duplicate listings)',
+      suggestion: SYNC_SUGGESTION,
     });
   }
   return results;
