@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED |
+| **Status** | IN_PROGRESS |
 | **Slug** | `genie-official-roadmap` |
 | **Date** | 2026-07-28 |
 | **Author** | Felipe + orchestrator (Fable 5) |
@@ -189,6 +189,26 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - **Loop 2 → SHIP (22:58:35Z):** gate executed on both branches — broken simulated post-move tree: `unresolved: 20` (exactly the specified inventory: 17+1+2), chain exit 1; rewritten tree: `unresolved: 0`, chain exit 0. `mkdir -p` in-chain; evidence file self-describing. All prior verifications re-confirmed (8/8 DESIGN criteria carried, LOW-A/LOW-B honored, `task block` executable on the ready pointer, wishes-lint OK). Informational, no action: the `#`-fragment `.split` is inert under the current regex; corpus has zero fragment links.
 
 **Execution amendment (orchestrator, post-approval):** plan approval landed before execution, so this wish's OWN card seeds in the **Wish** lane (not Brainstorm) and its INDEX entry sits in **Poured** (skill rule: plan SHIP → Poured; Poured↔Wish joins `ok`). The `ok>=18` threshold is unaffected. All other enumeration placements unchanged.
+
+### Execution review — Wave 1: G1 + G2 — SHIP (2026-07-28T23:23:47Z, workflow wf_a7433dcc-56c, opus engineers + two reviewer lenses per group)
+
+- **G1 Archive move + link rewrites — SHIP** (acceptance + integrity lenses, zero MEDIUM/HIGH gaps). 29 dirs moved, staged as pure renames (75 R100 entries; `git log --follow` verified on spot-checks); exactly 20 link edits matching the inventory (17 brainstorms-depth across 14 files, 1 genie-ui→genie-ui-dash, 2 pr-2545 `.claude`-depth); `wishes:lint` OK (68 files); independent reviewer re-run of the resolver: `unresolved: 0`. Orchestrator re-ran the full validation chain post-review: exit 0. LOW notes for commit time: the 16 link-edited files were unstaged at review (must be `git add`ed before the G3 commit) and `qa/link-sweep.txt` is untracked evidence (staged at commit).
+- **G2 Board seed — SHIP** (acceptance + integrity lenses, zero MEDIUM/HIGH gaps). Board `b_ms5a2wmb89bc2c91` with exactly 19 carded lanes — Work 4 / Review 3 / Wish 2 / Brainstorm 4 / Idea 6 (Wish-lane amendment honored); 18 cards carry their wish slug; ritual-QA card comment enumerates all 6 rituals; pointer `t_ms58w0yqa195fbf8` blocked "superseded by roadmap-board card" (checkout gate proven at `task-state.ts` `blocked_by IS NULL`). Programmatic baseline diff: all 33 baseline ids present, 29 historical rows zero-drift, exempt rows changed only in expected fields. Orchestrator re-ran validation: exit 0. LOW note: `roadmap.json` (0 boards) diverges from genie.db (1 board / 52 tasks) by design until the single G3 commit materializes it via pre-commit sync.
+- Orchestrator marked `t_ms58y58z0b45759f` and `t_ms58y5bc8853df95` done after clean review + passing validation.
+
+### Execution review — Wave 2: G3 — SHIP after 1 fix loop (2026-07-29T00:0xZ, workflow wf_0a416b72-09c + fixer + re-reviewer, opus)
+
+- **Loop 0:** engineer delivered all three artifacts (INDEX rewrite with Shipped 29 + lifecycle placements + Umbrellas section; `public-roadmap-polish` DRAFT; final sweep). Acceptance lens → SHIP (all 9 criteria pass; doctor 18 ok / 0 drift / 1 unlinked — the linkless khal RELOCATED bullet; current stable pinned **v5.260728.8**, first stable v5.260727.5 confirmed non-prerelease). Editorial lens → FIX-FIRST: HIGH (ritual-QA card — the 19th, slugless card — narrated nowhere; council-workflow Shipped bullet dropped its "live-QA pending post-stable-release" caveat), MEDIUM (seven open-action caveats silently dropped from Shipped bullets), LOW (sweep evidence not self-describing) + acceptance LOW (cited `gh release list` procedure surfaces only prereleases).
+- **Loop 1 → SHIP:** fixer restored all caveats (each verified grounded in old INDEX/archived WISH text, none invented), added the **Open rituals** paragraph enumerating the ritual-QA card's six items (paragraph form deliberately invisible to the lane lint — entry count stays 19), regenerated `qa/link-sweep.txt` self-describing (scope, resolver semantics, branch, UTC timestamp, `unresolved: 0`), and switched the procedure citation to `--exclude-pre-releases`. Independent re-reviewer confirmed every gap closed with zero regression (doctor still 18 ok / 0 drift; Shipped still 29 exact vs `ls archive`; 1 RELOCATED; first-link discipline 0 violations; resolver 0; prose voice held). Informational: the council caveat's "pending post-stable-release" now reads as *actionable* since v5.260727.5 shipped — tracked by ritual item (1), no defect.
+- **`bun run check` gate — red leg is pre-existing, proven empirically:** the suite fails 14/2950, all in Codex-delivery/update-boundary/digest-parity suites. Orchestrator ran the full suite on a clean worktree of dev HEAD `5a7412391` (no wish changes): 15 failures, a strict superset of the branch's 14 (the extra being a hook-bundle byte-determinism flake). The branch's tracked source tree is byte-identical to HEAD outside `.genie/`. Diagnosis: pre-existing on dev / environmental, not caused by this wish; no fix loop spent. Wish-controlled legs all green: typecheck 0, lint 0, wishes:lint OK (68 files), doctor gate `ok=18 drift=0` exit 0.
+- Orchestrator marked `t_ms58y5e19f6e9757` done after clean review + passing wish-controlled validation. Post-commit `task sync`/roadmap.json evidence recorded below the commit.
+
+### Post-commit evidence (orchestrator, commit 6245e8d4f)
+
+- `roadmap.json` committed via pre-commit sync (+605 lines): 1 board, 19 cards, all lanes non-null; programmatic diff vs the execution-start baseline (0 boards / 33 boardless rows): 29 historical rows present, 0 missing, 0 disturbed (board_id/title/status).
+- `task sync` post-commit: "Board and snapshot are in sync (none)", exit 0. (Run via `bun run src/genie.ts` — the installed binary predates the `task sync` subcommand; the pre-commit hook uses the repo source.)
+- Fresh-clone ritual: `git clone` of the wish branch → `task sync` → "Board refreshed from roadmap.json" → `board --board roadmap` renders Idea 6 / Brainstorm 4 / Wish 2 / Work 4 / Review 3 / Done 0.
+- Remaining QA: Felipe eyeball of INDEX.md as the single roadmap of record; wish stays IN_PROGRESS until the authorized merge + QA transitions it to SHIPPED.
 
 ---
 

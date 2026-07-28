@@ -1,0 +1,20 @@
+Relative-link resolution sweep — genie-official-roadmap G3
+==========================================================
+
+Scope swept : every *.md under .genie/wishes (recursive, including
+              .genie/wishes/archive/), PLUS .genie/INDEX.md.
+Resolver    : matches every markdown inline link `](target)`, strips any
+              `#fragment`, skips absolute/scheme links (`^[a-z]+:` — http:,
+              https:, mailto:), and resolves the remainder relative to the
+              containing file's directory via existsSync(). Each unresolved
+              target prints as `<file>: <target>`; the run ends with a total.
+              An empty body above `unresolved: 0` therefore means every
+              relative link in the swept tree points at a real path — the
+              invariant the 29-wish archive link-rewrite had to preserve.
+Command     : bun -e 'import{readFileSync,existsSync,readdirSync,statSync}from"node:fs";import{dirname,resolve}from"node:path";const files=[];const walk=d=>{for(const e of readdirSync(d)){const p=`${d}/${e}`;statSync(p).isDirectory()?walk(p):e.endsWith(".md")&&files.push(p)}};walk(".genie/wishes");files.push(".genie/INDEX.md");let bad=0;for(const f of files){for(const m of readFileSync(f,"utf8").matchAll(/\]\(([^)#\s]+)\)/g)){const t=m[1].split("#")[0];if(!t||/^[a-z]+:/.test(t))continue;if(!existsSync(resolve(dirname(f),t))){console.log(`${f}: ${t}`);bad++}}}console.log(`unresolved: ${bad}`)'
+Run from    : repository root
+Branch      : wish/genie-official-roadmap
+Timestamp   : 2026-07-28T23:46:25Z (UTC, `date -u`)
+
+--- resolver output ---
+unresolved: 0
