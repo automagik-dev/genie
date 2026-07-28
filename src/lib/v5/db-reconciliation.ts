@@ -947,6 +947,32 @@ function keyedValues<T>(values: readonly T[], key: (value: T) => string): Map<st
   return result;
 }
 
+function dependencyGraphIsAcyclic(dependencies: ReadonlyMap<string, TaskDependencyReconciliationRow>): boolean {
+  const outgoing = new Map<string, string[]>();
+  const incomingCount = new Map<string, number>();
+  for (const dependency of dependencies.values()) {
+    if (dependency.taskId === dependency.dependsOnId) return false;
+    const outgoingEdges = outgoing.get(dependency.taskId);
+    if (outgoingEdges === undefined) outgoing.set(dependency.taskId, [dependency.dependsOnId]);
+    else outgoingEdges.push(dependency.dependsOnId);
+    incomingCount.set(dependency.taskId, incomingCount.get(dependency.taskId) ?? 0);
+    incomingCount.set(dependency.dependsOnId, (incomingCount.get(dependency.dependsOnId) ?? 0) + 1);
+  }
+
+  const ready = [...incomingCount].filter(([, count]) => count === 0).map(([taskId]) => taskId);
+  let visited = 0;
+  while (ready.length > 0) {
+    const taskId = ready.pop() as string;
+    visited++;
+    for (const dependsOnId of outgoing.get(taskId) ?? []) {
+      const nextCount = (incomingCount.get(dependsOnId) as number) - 1;
+      incomingCount.set(dependsOnId, nextCount);
+      if (nextCount === 0) ready.push(dependsOnId);
+    }
+  }
+  return visited === incomingCount.size;
+}
+
 function readLogicalState(db: Database): LogicalState {
   const boards = boundedTableRows(db, 'boards', 'SELECT id, name, created_at, lanes FROM boards').map(
     (row): BoardReconciliationRow => ({
@@ -1069,7 +1095,7 @@ function readLogicalState(db: Database): LogicalState {
     throw error('invalid-data', 'A reconciliation input exceeds the bounded total row-count limit.');
   }
 
-  return {
+  const state = {
     boards: keyedValues(boards, boardKey),
     tasks: keyedValues(tasks, taskKey),
     wishGroups: keyedValues(wishGroups, wishGroupKey),
@@ -1079,6 +1105,10 @@ function readLogicalState(db: Database): LogicalState {
     stageLog: countValues(stages, stageLogKey),
     taskEvents: countValues(events, taskEventKey),
   };
+  if (!dependencyGraphIsAcyclic(state.taskDependencies)) {
+    throw error('invalid-data', 'A reconciliation input contains an invalid task dependency graph.');
+  }
+  return state;
 }
 
 function loadDatabaseImage(input: PhysicalInput): DatabaseImage {
@@ -1404,6 +1434,7 @@ function validateExistingMarker(
   }
   if (!markerInvariant(state)) {
     addConflict(conflicts, 'meta', 'marker-invariant-failed', canonicalTuple([BACKFILL_MARKER]), side);
+    return null;
   }
   return parsed;
 }
@@ -1422,11 +1453,19 @@ function reconcileMarker(
   const rightValue = validateExistingMarker(rightInput, rightRole, conflicts);
   if (leftValue === null || rightValue === null) return;
 
-  const values = [leftValue, rightValue].filter((value): value is bigint => value !== undefined);
-  if (values.length === 0) return;
-  const selected = values.reduce((smallest, value) => (value < smallest ? value : smallest)).toString();
+  let selected: bigint | undefined;
+  if (mode === 'directional') {
+    selected = leftValue ?? rightValue;
+  } else {
+    const values = [leftValue, rightValue].filter((value): value is bigint => value !== undefined);
+    selected = values.reduce<bigint | undefined>(
+      (smallest, value) => (smallest === undefined || value < smallest ? value : smallest),
+      undefined,
+    );
+  }
+  if (selected === undefined) return;
   const key = canonicalTuple([BACKFILL_MARKER]);
-  const row = { key: BACKFILL_MARKER, value: selected };
+  const row = { key: BACKFILL_MARKER, value: selected.toString() };
   if (mode === 'bidirectional') {
     leftTarget.meta.set(key, row);
     rightTarget.meta.set(key, row);
@@ -1473,6 +1512,9 @@ function validatePlannedTargetIntegrity(
     ) {
       addConflict(conflicts, 'task_dependencies', 'planned-integrity-failed', key, side);
     }
+  }
+  if (!dependencyGraphIsAcyclic(state.taskDependencies)) {
+    addConflict(conflicts, 'task_dependencies', 'planned-integrity-failed', canonicalTuple(['dependency-cycle']), side);
   }
   for (const [key, stage] of state.stageLog) {
     if (!state.tasks.has(canonicalTuple([stage.value.taskId]))) {
