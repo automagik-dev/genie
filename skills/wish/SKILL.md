@@ -64,8 +64,9 @@ node "<wish-skill-dir>/references/design-review-evidence.mjs" verify ".genie/bra
    or content-contract checks; runtime groups use focused behavior tests and add type, lint, or build checks only for
    boundaries they reach. Escalate shared runtime/core behavior, dependency or lockfile, generated executable or runtime
    artifact, configuration or schema, CI or release, broad-refactor, or uncertain-impact groups to the repository full
-   gate plus affected build or end-to-end checks. State why the command scope fits; do not prescribe an unexplained full
-   suite. Preserve any repository-defined aggregate integration or release gate separately from per-group validation.
+   gate plus affected build or end-to-end checks. State why the command scope fits; a repository-documented
+   gate is by itself sufficient justification for its scope. Preserve any repository-defined aggregate integration or
+   release gate separately from per-group validation.
 8. **Declare dependencies:** use the wish-level `## Dependencies` keys
    `**depends-on:** <comma-separated slugs or none>` and
    `**blocks:** <comma-separated slugs or none>` for cross-wish edges. Keep

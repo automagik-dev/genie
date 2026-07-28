@@ -34,8 +34,10 @@ When you are spawned as a subagent for a group, your dispatch prompt carries the
    relevant format, link, example, generator, parity, or content-contract checks; runtime changes use focused behavior
    tests and add type, lint, or build checks for boundaries reached. Shared runtime/core behavior, dependency or lockfile,
    generated executable or runtime artifact, configuration or schema, CI or release, broad-refactor, or uncertain-impact
-   changes require the repository full gate plus affected build or end-to-end checks. Validation may never be zero, and
-   an unexplained full-suite run is not acceptable evidence. Preserve required aggregate integration and release gates.
+   changes require the repository full gate plus affected build or end-to-end checks. Validation may never be zero. A
+   passing full-suite run is always valid evidence — record why that scope was chosen; a missing scope rationale is a
+   gap in the write-up, not in the validation. A repository-documented gate is by itself sufficient justification for
+   its scope. Preserve required aggregate integration and release gates.
 8. **Group done** — only after clean review AND passing validation:
    ```bash
    genie task done <task-id>
@@ -80,7 +82,7 @@ Extract the group's context from WISH.md and paste it into the dispatch prompt �
 1. **Goal** — one sentence
 2. **Deliverables** — the numbered list of concrete outputs
 3. **Acceptance criteria** — the checkboxes to satisfy
-4. **Validation command** — the exact command proving the work (e.g. `bun run check`)
+4. **Validation command** — the exact command proving the work, with its scope rationale (e.g. `bun run check` because the group touches shared runtime behavior)
 5. **Depends-on** — what the engineer may assume already exists
 6. **File scope** — the group's explicit file scope (the paths it owns), so disjoint ownership is legible to the engineer rather than inferred
 7. **Stop conditions** — claim the task first; report blocked instead of expanding scope; end with an outcome word (see Session close)
