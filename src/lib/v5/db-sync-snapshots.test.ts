@@ -2,6 +2,7 @@ import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import {
+  chmodSync,
   existsSync,
   linkSync,
   mkdirSync,
@@ -115,6 +116,16 @@ function generationDirectories(root: string): string[] {
 
 function nativePosixDirectory(): SnapshotPosixDirectoryApi {
   const api = resolveSnapshotPosixDirectory();
+  expect(api).not.toBeNull();
+  return api as SnapshotPosixDirectoryApi;
+}
+
+function nativePosixWithReaddirError(at: number, list?: number): SnapshotPosixDirectoryApi {
+  const api = resolveSnapshotPosixDirectory({
+    platform: process.platform,
+    architecture: process.arch,
+    readdirError: { at, errno: 5, list },
+  });
   expect(api).not.toBeNull();
   return api as SnapshotPosixDirectoryApi;
 }
@@ -371,6 +382,103 @@ describe('database sync snapshots', () => {
     }
   });
 
+  test('bootstrap walks and binds every absolute root component before it can authorize publication', () => {
+    for (const boundary of ['bootstrap', 'one', 'two']) {
+      const left = currentDb(`bootstrap-open-${boundary}-left`);
+      const right = currentDb(`bootstrap-open-${boundary}-right`);
+      insertBoard(right, 'planned');
+      const base = join(fixtureRoot, `bootstrap-open-${boundary}`);
+      const root = join(base, 'bootstrap', 'one', 'two');
+      const boundaryPath = join(
+        base,
+        ...['bootstrap', 'one', 'two'].slice(0, ['bootstrap', 'one', 'two'].indexOf(boundary) + 1),
+      );
+      const moved = `${boundaryPath}.bound`;
+      let swapped = false;
+      const native = nativePosixDirectory();
+      const api = delegatePosix(native, {
+        openAt: (descriptor, name, flags, mode) => {
+          const opened = native.openAt(descriptor, name, flags, mode);
+          if (!swapped && name === boundary && existsSync(boundaryPath)) {
+            swapped = true;
+            renameSync(boundaryPath, moved);
+            mkdirSync(boundaryPath, { mode: 0o700 });
+            writeFileSync(join(boundaryPath, 'sentinel'), 'replacement');
+          }
+          return opened;
+        },
+      });
+      const report = applyDatabaseReconciliationWithSnapshots(
+        planDatabaseReconciliation({ mode: 'bidirectional', leftPath: left, rightPath: right }),
+        { snapshotRoot: root, posixDirectory: { api } },
+      );
+      expect(swapped).toBe(true);
+      expect(['rolled-back', 'operational-failure']).toContain(report.status);
+      expect(readFileSync(join(boundaryPath, 'sentinel'), 'utf8')).toBe('replacement');
+      expect(boardNames(left)).toEqual([]);
+      expect(boardNames(right)).toEqual(['planned']);
+    }
+  });
+
+  test('bootstrap rejects replacement immediately after each missing-component creation', () => {
+    for (const boundary of ['bootstrap', 'one', 'two']) {
+      const left = currentDb(`bootstrap-create-${boundary}-left`);
+      const right = currentDb(`bootstrap-create-${boundary}-right`);
+      insertBoard(right, 'planned');
+      const base = join(fixtureRoot, `bootstrap-create-${boundary}`);
+      const parts = ['bootstrap', 'one', 'two'];
+      const root = join(base, ...parts);
+      const boundaryPath = join(base, ...parts.slice(0, parts.indexOf(boundary) + 1));
+      let swapped = false;
+      const native = nativePosixDirectory();
+      const api = delegatePosix(native, {
+        mkdirAt: (descriptor, name, mode) => {
+          native.mkdirAt(descriptor, name, mode);
+          if (!swapped && name === boundary) {
+            swapped = true;
+            renameSync(boundaryPath, `${boundaryPath}.bound`);
+            mkdirSync(boundaryPath, { mode: 0o755 });
+            chmodSync(boundaryPath, 0o755);
+            writeFileSync(join(boundaryPath, 'sentinel'), 'replacement');
+          }
+        },
+      });
+      const report = applyDatabaseReconciliationWithSnapshots(
+        planDatabaseReconciliation({ mode: 'bidirectional', leftPath: left, rightPath: right }),
+        { snapshotRoot: root, posixDirectory: { api } },
+      );
+      expect(swapped).toBe(true);
+      expect(['rolled-back', 'operational-failure']).toContain(report.status);
+      expect(readFileSync(join(boundaryPath, 'sentinel'), 'utf8')).toBe('replacement');
+      expect(boardNames(left)).toEqual([]);
+      expect(boardNames(right)).toEqual(['planned']);
+    }
+  });
+
+  test('bootstrap creates nested physical roots and rejects non-directories and dot-dot roots', () => {
+    const left = currentDb('bootstrap-shapes-left');
+    const right = currentDb('bootstrap-shapes-right');
+    insertBoard(right, 'planned');
+    const request = { mode: 'bidirectional' as const, leftPath: left, rightPath: right };
+    const nested = join(fixtureRoot, 'nested', 'snapshot', 'root');
+    expect(
+      applyDatabaseReconciliationWithSnapshots(planDatabaseReconciliation(request), { snapshotRoot: nested }).status,
+    ).toBe('changed');
+    expect(statSync(nested).isDirectory()).toBe(true);
+
+    const anotherRight = currentDb('bootstrap-file-right');
+    insertBoard(anotherRight, 'planned');
+    const fileAncestor = join(fixtureRoot, 'not-a-directory');
+    writeFileSync(fileAncestor, 'file');
+    const invalid = applyDatabaseReconciliationWithSnapshots(
+      planDatabaseReconciliation({ mode: 'bidirectional', leftPath: left, rightPath: anotherRight }),
+      { snapshotRoot: join(fileAncestor, 'root') },
+    );
+    expect(invalid.status).toBe('operational-failure');
+    expect(boardNames(anotherRight)).toEqual(['planned']);
+    expect(() => databaseSyncSnapshotIdentity(request, `${fixtureRoot}/nested/../escape`)).toThrow(SnapshotError);
+  });
+
   test('publishes normalized complete payloads in the durable order and finalizes both-post as converged', () => {
     const left = currentDb('publish-left');
     const right = currentDb('publish-right');
@@ -555,6 +663,119 @@ describe('database sync snapshots', () => {
       expect(plan.status).toBe('same-database');
       const report = applyDatabaseReconciliationWithSnapshots(plan);
       expect(report).toMatchObject({ status: 'converged', apply: null, recovery: { status: 'converged' } });
+    }
+  });
+
+  test('first-read and mid-stream readdir failures block newest-generation discovery without descriptor leaks', () => {
+    {
+      const left = currentDb('readdir-first-left');
+      const right = currentDb('readdir-first-right');
+      insertBoard(right, 'planned');
+      const request = { mode: 'bidirectional' as const, leftPath: left, rightPath: right };
+      const root = databaseSyncSnapshotIdentity(request).root;
+      mkdirSync(root, { recursive: true, mode: 0o700 });
+      chmodSync(root, 0o700);
+      const api = nativePosixWithReaddirError(0);
+      Bun.gc(true);
+      const before = descriptorCount();
+      const report = applyDatabaseReconciliationWithSnapshots(planDatabaseReconciliation(request), {
+        posixDirectory: { api },
+      });
+      expect(report).toMatchObject({ status: 'operational-failure', apply: null });
+      expect(boardNames(left)).toEqual([]);
+      expect(boardNames(right)).toEqual(['planned']);
+      Bun.gc(true);
+      expect(descriptorCount()).toBeLessThanOrEqual(before + 1);
+      expect(applyDatabaseReconciliationWithSnapshots(planDatabaseReconciliation(request)).status).toBe('changed');
+    }
+
+    {
+      const left = currentDb('readdir-mid-left');
+      const right = currentDb('readdir-mid-right');
+      const complete = leaveCompleteGeneration(left, right);
+      mkdirSync(join(complete.root, 'aaa'), { mode: 0o700 });
+      mkdirSync(join(complete.root, 'bbb'), { mode: 0o700 });
+      const api = nativePosixWithReaddirError(3);
+      Bun.gc(true);
+      const before = descriptorCount();
+      const report = recoverDatabaseReconciliation(
+        { mode: 'bidirectional', leftPath: left, rightPath: right },
+        { posixDirectory: { api } },
+      );
+      expect(report.status).toBe('operational-failure');
+      expect(boardNames(left)).toEqual(['planned']);
+      expect(boardNames(right)).toEqual(['planned']);
+      Bun.gc(true);
+      expect(descriptorCount()).toBeLessThanOrEqual(before + 1);
+      expect(recoverDatabaseReconciliation({ mode: 'bidirectional', leftPath: left, rightPath: right }).status).toBe(
+        'converged',
+      );
+    }
+  });
+
+  test('readdir failures during staging cleanup and pruning are reported without leaks or unsafe removal', () => {
+    {
+      const left = currentDb('readdir-cleanup-left');
+      const right = currentDb('readdir-cleanup-right');
+      insertBoard(right, 'planned');
+      const request = { mode: 'bidirectional' as const, leftPath: left, rightPath: right };
+      const root = databaseSyncSnapshotIdentity(request).root;
+      const stale = join(root, '.staging-stale');
+      const native = nativePosixDirectory();
+      const faulty = nativePosixWithReaddirError(0);
+      let cleanupArmed = false;
+      const api = delegatePosix(native, {
+        list: (descriptor) => (cleanupArmed ? faulty.list(descriptor) : native.list(descriptor)),
+      });
+      Bun.gc(true);
+      const before = descriptorCount();
+      const report = applyDatabaseReconciliationWithSnapshots(planDatabaseReconciliation(request), {
+        posixDirectory: { api },
+        onEvent: (event) => {
+          if (event.phase === 'recovery-classify' && event.state === 'before' && !existsSync(stale)) {
+            mkdirSync(stale, { mode: 0o700 });
+            writeFileSync(join(stale, 'sentinel'), 'keep');
+            cleanupArmed = true;
+          }
+        },
+      });
+      expect(report.status).toBe('changed');
+      expect(report.cleanupFailures).toContain('snapshot-cleanup-failed');
+      expect(readFileSync(join(stale, 'sentinel'), 'utf8')).toBe('keep');
+      Bun.gc(true);
+      expect(descriptorCount()).toBeLessThanOrEqual(before + 1);
+    }
+
+    {
+      const left = currentDb('readdir-prune-left');
+      const right = currentDb('readdir-prune-right');
+      const request = { mode: 'bidirectional' as const, leftPath: left, rightPath: right };
+      for (let index = 0; index < 4; index++) {
+        insertBoard(right, `generation-${index}`);
+        expect(
+          applyDatabaseReconciliationWithSnapshots(planDatabaseReconciliation(request), {
+            keepSnapshots: 10,
+          }).status,
+        ).toBe('changed');
+      }
+      insertBoard(right, 'generation-final');
+      const native = nativePosixDirectory();
+      const faulty = nativePosixWithReaddirError(3);
+      let listCalls = 0;
+      const api = delegatePosix(native, {
+        list: (descriptor) => (listCalls++ === 5 ? faulty.list(descriptor) : native.list(descriptor)),
+      });
+      Bun.gc(true);
+      const before = descriptorCount();
+      const report = applyDatabaseReconciliationWithSnapshots(planDatabaseReconciliation(request), {
+        keepSnapshots: 1,
+        posixDirectory: { api },
+      });
+      expect(report.status).toBe('changed');
+      expect(report.cleanupFailures).toContain('snapshot-cleanup-failed');
+      expect(generationDirectories(databaseSyncSnapshotIdentity(request).root).length).toBeGreaterThan(1);
+      Bun.gc(true);
+      expect(descriptorCount()).toBeLessThanOrEqual(before + 1);
     }
   });
 
@@ -994,6 +1215,34 @@ describe('database sync snapshots', () => {
     expect(recoverDatabaseReconciliation(request).status).toBe('recovered');
     expect(boardNames(left)).toEqual(['left-only']);
     expect(boardNames(right)).toEqual(['right-only']);
+  });
+
+  test('classification hook failure closes validated snapshots and leaves recovery retryable', () => {
+    const left = currentDb('classification-close-left');
+    const right = currentDb('classification-close-right');
+    leaveCompleteGeneration(left, right);
+    const before = descriptorCount();
+    let injected = false;
+    const failed = recoverDatabaseReconciliation(
+      { mode: 'bidirectional', leftPath: left, rightPath: right },
+      {
+        onEvent: (event) => {
+          if (!injected && event.phase === 'recovery-classify' && event.state === 'before') {
+            injected = true;
+            throw new Error('classification failed');
+          }
+        },
+      },
+    );
+    expect(injected).toBe(true);
+    expect(failed.status).toBe('operational-failure');
+    Bun.gc(true);
+    expect(descriptorCount()).toBeLessThanOrEqual(before + 1);
+    expect(boardNames(left)).toEqual(['planned']);
+    expect(boardNames(right)).toEqual(['planned']);
+    expect(recoverDatabaseReconciliation({ mode: 'bidirectional', leftPath: left, rightPath: right }).status).toBe(
+      'converged',
+    );
   });
 
   test('explicit rollback snapshots arbitrary current state before restoring the selected preimages', () => {
