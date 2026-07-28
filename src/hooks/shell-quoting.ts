@@ -15,8 +15,15 @@
  * that doesn't generalize.
  *
  * Scope: handles single-quotes (no escapes), double-quotes with `\X` escapes,
- * and unterminated quotes (mask to end of string — safer than the alternative
- * of leaving a runaway region unmasked). Backtick command substitution and
+ * unquoted `\X` escapes (a literal X — notably `\"`, which does *not* open a
+ * quote region), and unterminated quotes (mask to end of string — safer than
+ * the alternative of leaving a runaway region unmasked).
+ *
+ * The unquoted-escape case is load-bearing, not cosmetic: reading `\"` as a
+ * quote opener made `git commit -m \"fix\" && git checkout main` mask from the
+ * first `\"` to end of string — the closing `\"` was swallowed by the
+ * double-quoted `\X` rule — so the guards saw no `&& git checkout main` and
+ * allowed a command bash runs in full. Backtick command substitution and
  * heredocs are intentionally not parsed — they're rare in agent-issued
  * commands and falling back to fully unmasked treatment is fail-closed for
  * the original policy, which matches the hook's overall posture.
@@ -30,8 +37,9 @@ interface MaskStep {
   consumed: number;
 }
 
-/** Unquoted char: pass through, or open a quote region. */
-function stepUnquoted(ch: string): MaskStep {
+/** Unquoted char: pass through, or open a quote region. `\X` is a literal X, not a quote opener. */
+function stepUnquoted(ch: string, next: string | undefined): MaskStep {
+  if (ch === '\\' && next !== undefined) return { out: ch + next, next: 'none', consumed: 2 };
   if (ch === "'") return { out: ' ', next: 'single', consumed: 1 };
   if (ch === '"') return { out: ' ', next: 'double', consumed: 1 };
   return { out: ch, next: 'none', consumed: 1 };
@@ -58,7 +66,7 @@ export function maskQuotedRegions(cmd: string): string {
         ? stepDoubleQuoted(cmd[i], i + 1 < cmd.length)
         : state === 'single'
           ? stepSingleQuoted(cmd[i])
-          : stepUnquoted(cmd[i]);
+          : stepUnquoted(cmd[i], cmd[i + 1]);
     out += step.out;
     state = step.next;
     i += step.consumed;

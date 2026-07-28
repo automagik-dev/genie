@@ -421,6 +421,17 @@ describe('branch-guard', () => {
       expect(result!.reason).toContain('--base');
     });
 
+    // Regression: PR #2722 review (CodeRabbit 3662114937, Codex 3661572682).
+    // An *unquoted* `\"` opened a phantom quote region whose closing `\"` was
+    // eaten by the double-quote escape rule, masking to end of string — so the
+    // real `git push` after the message was invisible to every pattern here
+    // while bash still executed it.
+    test('still blocks a push to main hidden behind a shell-escaped message', async () => {
+      const result = await branchGuard(makePayload('git commit -m \\"x\\" && git push --force origin main'));
+      expect(result).toBeDefined();
+      expect(result!.decision).toBe('deny');
+    });
+
     test('still blocks real gh pr merge targeting main (quoted args do not shield the actual command)', async () => {
       const result = await branchGuard(makePayload('gh pr merge 123 --squash --body "some note"'), mockDeps('main'));
       expect(result).toBeDefined();

@@ -328,6 +328,25 @@ describe('git-freeze-guard', () => {
     }
   });
 
+  // Regression: PR #2722 review (CodeRabbit 3662114937, Codex 3661572682).
+  // The masker read an *unquoted* `\"` as a quote opener, and the closing `\"`
+  // was then swallowed by the double-quoted `\X` rule — so the phantom region
+  // masked to end of string and everything after the message vanished. bash
+  // runs the whole line; the guard only ever saw its head.
+  describe('shell-escaped quotes do not hide the rest of the command', () => {
+    const blocked = ['git commit -m \\"fix\\" && git checkout main', 'echo \\" ; git switch dev'];
+
+    for (const cmd of blocked) {
+      test(`denies: ${cmd}`, async () => {
+        expect((await run(subagent(cmd)))?.decision).toBe('deny');
+      });
+    }
+
+    test('but an escaped-quote message with nothing frozen after it still passes', async () => {
+      expect(await run(subagent('git commit -m \\"fix\\" && git status'))).toBeUndefined();
+    });
+  });
+
   // =========================================================================
   // Fail-open boundaries
   // =========================================================================
