@@ -9,3 +9,8 @@ terminal:
 
 security:
   redact_secrets: true
+
+plugins:
+  enabled:
+    - genie
+  disabled: []
