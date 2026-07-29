@@ -1596,6 +1596,76 @@ describe('database sync snapshots', () => {
     });
   });
 
+  test('zero retention removes finalized persistent generations after apply and explicit rollback', () => {
+    const applyLeft = currentDb('private-prune-apply-left');
+    const applyRight = currentDb('private-prune-apply-right');
+    const applyRequest = {
+      mode: 'bidirectional' as const,
+      leftPath: applyLeft,
+      rightPath: applyRight,
+    };
+    insertBoard(applyRight, 'retained');
+    expect(
+      applyDatabaseReconciliationWithSnapshots(planDatabaseReconciliation(applyRequest), {
+        keepSnapshots: 3,
+      }).status,
+    ).toBe('changed');
+    insertBoard(applyRight, 'private');
+    const applied = applyDatabaseReconciliationWithSnapshots(planDatabaseReconciliation(applyRequest), {
+      keepSnapshots: 0,
+    });
+    expect(applied).toMatchObject({ status: 'changed', cleanupFailures: [] });
+    expect(generationDirectories(databaseSyncSnapshotIdentity(applyRequest).root)).toEqual([]);
+
+    const rollbackLeft = currentDb('private-prune-rollback-left');
+    const rollbackRight = currentDb('private-prune-rollback-right');
+    const rollbackRequest = {
+      mode: 'bidirectional' as const,
+      leftPath: rollbackLeft,
+      rightPath: rollbackRight,
+    };
+    insertBoard(rollbackRight, 'retained');
+    const retained = applyDatabaseReconciliationWithSnapshots(planDatabaseReconciliation(rollbackRequest), {
+      keepSnapshots: 3,
+    });
+    const rolledBack = rollbackDatabaseReconciliation(rollbackRequest, retained.generationId ?? '', {
+      keepSnapshots: 0,
+    });
+    expect(rolledBack).toMatchObject({ status: 'rolled-back', cleanupFailures: [] });
+    expect(generationDirectories(databaseSyncSnapshotIdentity(rollbackRequest).root)).toEqual([]);
+  });
+
+  test('zero-retention persistent prune failures are reported without leaking private state', () => {
+    const left = currentDb('private-prune-failure-left');
+    const right = currentDb('private-prune-failure-right');
+    const request = { mode: 'bidirectional' as const, leftPath: left, rightPath: right };
+    insertBoard(right, 'retained');
+    expect(
+      applyDatabaseReconciliationWithSnapshots(planDatabaseReconciliation(request), {
+        keepSnapshots: 3,
+      }).status,
+    ).toBe('changed');
+    const privateBefore = privateSnapshotDirectories();
+    insertBoard(right, 'private');
+    let injected = false;
+    const report = applyDatabaseReconciliationWithSnapshots(planDatabaseReconciliation(request), {
+      keepSnapshots: 0,
+      onEvent: (event) => {
+        if (!injected && event.phase === 'prune' && event.state === 'before') {
+          injected = true;
+          throw new Error('persistent prune denied');
+        }
+      },
+    });
+    expect(injected).toBe(true);
+    expect(report).toMatchObject({
+      status: 'changed',
+      cleanupFailures: ['snapshot-cleanup-failed'],
+    });
+    expect(privateSnapshotDirectories()).toEqual(privateBefore);
+    expect(generationDirectories(databaseSyncSnapshotIdentity(request).root)).toHaveLength(1);
+  });
+
   test('zero-retention cleanup failure is reported and leaked private state is never discoverable', () => {
     const left = currentDb('private-failure-left');
     const right = currentDb('private-failure-right');
