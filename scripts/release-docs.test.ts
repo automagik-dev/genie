@@ -990,6 +990,7 @@ describe('Group E release and documentation contracts', () => {
     expect(lifecycle).toContain('Security-sensitive changes do not bypass by default');
     expect(lifecycle).toContain('Related existing work always resumes through its persisted state');
     expect(metadata).toContain('otherwise bypass it with a one-line notice');
+    expect(metadata).toContain('Security-sensitive work does not bypass by default.');
   });
 
   test('wizard discloses init MCP writes and owner-qualified lifecycle order', () => {

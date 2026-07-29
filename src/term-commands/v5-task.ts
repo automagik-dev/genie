@@ -18,6 +18,7 @@
 
 import type { Database } from 'bun:sqlite';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import type { Command } from 'commander';
 import { color, formatTimestamp, padRight, truncate } from '../lib/term-format.js';
 import { livenessBadge } from '../lib/v5/card-render.js';
@@ -428,16 +429,18 @@ function handleExport(opts: ExportOptions): void {
   run(() => {
     const db = openDb();
     try {
-      // --write publishes the roadmap slice (no hire_roster — machine-local
-      // worktree paths); the plain stdout dump stays the complete database.
-      const state = opts.write ? roadmapSnapshot(db) : exportState(db);
+      // Only the canonical roadmap.json gets the roadmap slice (no hire_roster —
+      // machine-local worktree paths). Custom-file writes and the plain stdout
+      // dump stay the complete database, so a backup file round-trips lossless.
+      const target = opts.write ? (typeof opts.write === 'string' ? resolve(opts.write) : resolveRoadmapPath()) : null;
+      const canonical = target === resolveRoadmapPath();
+      const state = canonical ? roadmapSnapshot(db) : exportState(db);
       const json = `${JSON.stringify(state, null, 2)}\n`;
-      if (opts.write) {
-        const target = typeof opts.write === 'string' ? opts.write : resolveRoadmapPath();
+      if (target) {
         writeFileSync(target, json);
         // Writing the canonical snapshot declares "this pair is intentional" —
         // it is the keep-the-local-board resolution for a diverged sync.
-        if (target === resolveRoadmapPath()) recordSyncBaseline(db);
+        if (canonical) recordSyncBaseline(db);
         out(`Wrote board snapshot to ${target}.`);
         return;
       }
@@ -467,7 +470,9 @@ function handleSync(): void {
 
 function handleImport(file: string | undefined, opts: ImportOptions): void {
   run(() => {
-    const source = file ?? resolveRoadmapPath();
+    // Normalize before the canonical comparison: an explicit relative spelling
+    // of the roadmap path must behave exactly like omitting it.
+    const source = file ? resolve(file) : resolveRoadmapPath();
     if (!existsSync(source)) {
       fail(`Snapshot not found: ${source}. Generate one with \`genie task export --write\` and commit it.`);
     }
