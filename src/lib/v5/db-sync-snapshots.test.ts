@@ -1584,6 +1584,7 @@ describe('database sync snapshots', () => {
         }
       },
     });
+    expect(report.cleanupFailures).toEqual([]);
     expect(report.recovery.status).toBe('converged');
     expect(existsSync(identity.root)).toBe(false);
     expect(privateRoot).toBeDefined();
@@ -1615,7 +1616,7 @@ describe('database sync snapshots', () => {
         throw new Error('cleanup denied');
       },
     });
-    expect(report.cleanupFailures).toContain('snapshot-cleanup-failed');
+    expect(report.cleanupFailures).toEqual(['snapshot-cleanup-failed']);
     expect(leakedRoot).toBeDefined();
     expect(leakedRoot === undefined ? false : existsSync(leakedRoot)).toBe(true);
     expect(recoverDatabaseReconciliation(request)).toMatchObject({ status: 'none', generationId: null });

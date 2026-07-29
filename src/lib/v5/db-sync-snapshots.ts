@@ -1830,6 +1830,7 @@ function recoverValidatedGeneration(
   inputs: readonly ReconciliationLockedDatabaseInput[],
   options: DatabaseSyncSnapshotOptions,
   retention: number,
+  cleanupPersistentStore = true,
 ): { value: RecoveryDecision; afterCommit: () => void } {
   if (generation.manifest.state === 'uncertain') {
     closeBoundDirectory(generation.binding);
@@ -1912,8 +1913,10 @@ function recoverValidatedGeneration(
       const rebound = reopenGeneration(generation, options);
       try {
         rewriteManifestState(rebound, status === 'uncertain' ? 'uncertain' : status, options);
-        cleanupStaging(identity.root, options, cleanupFailures);
-        if (status !== 'uncertain') pruneGenerations(identity, retention, options, cleanupFailures);
+        if (cleanupPersistentStore) {
+          cleanupStaging(identity.root, options, cleanupFailures);
+          if (status !== 'uncertain') pruneGenerations(identity, retention, options, cleanupFailures);
+        }
       } finally {
         closeBoundDirectory(rebound.binding);
       }
@@ -2079,7 +2082,7 @@ function recoverPrivateGeneration(
       (inputs) => {
         const generation = readPublishedGeneration(published, options);
         try {
-          return recoverValidatedGeneration(identity, generation, inputs, options, 0);
+          return recoverValidatedGeneration(identity, generation, inputs, options, 0, false);
         } catch (caught) {
           closeBoundDirectory(generation.binding);
           throw caught;
