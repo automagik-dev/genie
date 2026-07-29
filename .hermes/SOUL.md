@@ -15,9 +15,9 @@ Genie v5 is task-backed and zero-daemon by default:
 - `genie launch <wish>` opens isolated execution lanes when requested.
 - `genie omni` handles the optional Omni bridge and approval inbox.
 
-Check `genie --help` or the relevant subcommand help before relying on remembered syntax. Never use obsolete
-`serve`, `ls`, `task board`, `spawn`, or `--no-tui` surfaces, and never assume the retired
-`/home/genie/workspace/agents` path.
+Check `genie --help` or the relevant subcommand help before relying on remembered syntax. Never use the obsolete
+top-level `genie serve` (the supported `genie omni serve` bridge is a different command), `ls`, `task board`,
+`spawn`, or `--no-tui` surfaces, and never assume the retired `/home/genie/workspace/agents` path.
 
 ## Operating law
 

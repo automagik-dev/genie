@@ -1572,11 +1572,13 @@ export function importState(db: Database, snapshot: unknown, opts: ImportOptions
   const state = validateSnapshot(db, snapshot);
   const hires = opts.preserveHireRoster ? [] : state.hire_roster;
   const apply = db.transaction(() => {
-    if (hasOperationalState(db)) {
-      if (!opts.replace) throw new NonEmptyImportError();
-      // Children before parents so FK cascades never fire mid-wipe. Meta is
-      // wiped too: replace means EXACT snapshot state, and stale local
-      // wish_sig/backfill markers would misdescribe the imported rows.
+    if (hasOperationalState(db) && !opts.replace) throw new NonEmptyImportError();
+    if (opts.replace) {
+      // Wipe unconditionally under replace — a db with only meta rows (e.g. the
+      // backfill marker a fresh open stamps) must not merge stale keys into the
+      // snapshot's meta: replace means EXACT snapshot state, and a retained
+      // wish_sig marker would misdescribe the imported rows as drifted.
+      // Children before parents so FK cascades never fire mid-wipe.
       const wipe = ['task_events', 'stage_log', 'task_dependencies', 'tasks', 'wish_groups', 'boards', 'meta'];
       if (!opts.preserveHireRoster) wipe.splice(4, 0, 'hire_roster');
       for (const table of wipe) {
@@ -1585,7 +1587,17 @@ export function importState(db: Database, snapshot: unknown, opts: ImportOptions
     }
     insertSnapshotRows(db, { ...state, hire_roster: hires });
   });
-  apply();
+  try {
+    apply();
+  } catch (err) {
+    if (err instanceof SnapshotFormatError || err instanceof NonEmptyImportError) throw err;
+    // A malformed row that passed shape validation (roadmap.json survives git
+    // merges) surfaces as an opaque SQLite bind error — rethrow it in the same
+    // actionable class as the structural checks. The transaction rolled back.
+    throw new SnapshotFormatError(
+      `Snapshot rows could not be imported: ${err instanceof Error ? err.message : String(err)}. The database was left unchanged; re-export the snapshot or repair the malformed rows.`,
+    );
+  }
   return {
     boards: state.boards.length,
     tasks: state.tasks.length,

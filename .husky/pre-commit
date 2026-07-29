@@ -21,8 +21,14 @@ fi
 git_dir=$(git rev-parse --path-format=absolute --git-dir 2>/dev/null)
 git_common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
 if [ "$git_dir" = "$git_common" ] && [ -f src/genie.ts ]; then
+  # Stage roadmap.json only when the sync itself rewrote it (export) — never
+  # absorb pre-existing unstaged edits into an unrelated commit.
+  roadmap_before=$( [ -f .genie/roadmap.json ] && git hash-object .genie/roadmap.json || echo absent )
   if bun src/genie.ts task sync; then
-    [ -f .genie/roadmap.json ] && git add .genie/roadmap.json
+    roadmap_after=$( [ -f .genie/roadmap.json ] && git hash-object .genie/roadmap.json || echo absent )
+    if [ "$roadmap_after" != "$roadmap_before" ] && [ "$roadmap_after" != "absent" ]; then
+      git add .genie/roadmap.json
+    fi
   else
     echo "warn: board snapshot not refreshed (see message above) — committing without it" >&2
   fi
