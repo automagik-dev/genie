@@ -54,7 +54,7 @@ Re-run `genie board` any time for a current snapshot of task state on the kanban
 - **Skills** carry the methodology — `brainstorm → design review → wish → plan review → work → implementation review`, authored once for native Claude and Codex surfaces.
 - **Documents in git.** Wishes, designs, and brainstorms are plain markdown under `.genie/wishes/<slug>/` and `.genie/brainstorms/<slug>/`; you diff, review, and version them like any other code.
 - **One file of state.** Tasks, boards, dependency edges, and wish-group execution state live in a single per-repo SQLite file (`.genie/genie.db`), on Bun's built-in engine.
-- **Small.** 14 CLI commands, 4 runtime dependencies (`@inquirer/prompts`, `commander`, `zod`, `nats`) — `nats` initializes only when the omni runner starts. A ~0.9 MB single-file bundle. Bun-powered.
+- **Small.** 15 CLI commands, 4 runtime dependencies (`@inquirer/prompts`, `commander`, `zod`, `nats`) — `nats` initializes only when the omni runner starts. A ~0.9 MB single-file bundle. Bun-powered.
 - **Warp cockpit (optional).** `genie launch <slug>` turns a wish's ready groups into a Warp window — one pane per group, each in its own git worktree running that group's agent on a kickoff prompt. Emitting the launch config works on any platform; opening it needs Warp (macOS/Linux). Everywhere else the config is still written for you to open by hand.
 - **Zero daemons, no Postgres.** Nothing runs in the background between invocations.
 
@@ -70,6 +70,7 @@ genie --help
 | `genie launch` | Open a Warp cockpit for a wish — one pane per ready group, each in its own worktree |
 | `genie board` | Kanban view of task state, derived live by query |
 | `genie task` | Inspect and drive task state (SQLite, zero-daemon) |
+| `genie db sync` | Reconcile two exact-current Genie databases with snapshots and rollback |
 | `genie install` | Finish a verified install and deliver selected integrations; Codex activation is deferred to setup |
 | `genie mcp` | Serve read-only Genie task/board state over stdio MCP |
 | `genie omni` | Bridge agents to WhatsApp via Omni — remote approvals + inbound one-shots (`serve`, `status`, `inbox`, `handshake`) |
@@ -162,6 +163,151 @@ loaded catalog contains genie:wish/genie:work and no managed bare duplicates
 Documents live in git; operational state lives in one SQLite file. `work` fans agents out through the active client's native subagents — each gets a task claim, with state changes serialized through `genie.db` rather than a coordinator. Review runs as a separate subagent from the one that wrote the code (reviewer ≠ engineer), so the verdict is independent evidence against the wish criteria.
 
 All linked worktrees of a repository share one `genie.db`, resolved from the git common directory, so a task created in one worktree is immediately visible in another with no sync step.
+
+### Database reconciliation
+
+Use `genie db sync` when two separate Genie repositories or copied
+`.genie/genie.db` files have diverged. The command is noninteractive and takes
+explicit database paths. It never discovers or connects a live shared database.
+
+Choose exactly one mode:
+
+```bash
+# Conservative bidirectional reconciliation
+genie db sync /path/to/left.db /path/to/right.db
+
+# Directional reconciliation with explicit source authority
+genie db sync \
+  --source /path/to/source.db \
+  --destination /path/to/destination.db
+```
+
+Bidirectional mode unions additions. It reports a conflict when the same
+mutable key differs because the databases do not carry ancestry that could
+prove which row is newer. Directional mode makes the source authoritative for
+shared mutable task, board, wish-group, hire-roster, and unknown metadata
+keys. It writes only the destination. Both modes preserve destination-only
+rows: absence never means deletion, and every report fixes the deletion count
+at zero.
+
+Dependency edges are unioned. Task events and legacy stage-log entries preserve
+the maximum occurrence count observed on either applicable side. Independent
+byte-identical history additions are indistinguishable without ancestry, so
+they can be undercounted rather than guessed or duplicated.
+
+Preview the complete schema validation, conflict detection, and logical plan
+without write locks, snapshots, or database writes:
+
+```bash
+genie db sync /path/to/left.db /path/to/right.db --dry-run --json
+```
+
+Dry-run rejects snapshot, retention, rollback, and busy-timeout options because
+they have no read-only effect. Ambiguous positional and directional forms also
+fail before opening either database for mutation. Run
+`genie db sync --help` for the two accepted forms and all options.
+
+#### Schema compatibility
+
+Reconciliation accepts the complete current Genie schema only. It compares all
+eight user tables, their named columns, foreign keys, indexes, uniqueness,
+checks, and `user_version`; the version number alone is not enough. It creates
+no table, column, index, trigger, or migration.
+
+An older supported additive shape can still have the current `user_version`.
+Open that database once through a normal current Genie command, such as
+`genie board`, to add the supported current columns and tables. Then retry
+reconciliation. Unknown or extra schema objects remain unsupported and are not
+normalized.
+
+#### Snapshots, recovery, and rollback
+
+Every mutating run serializes and validates each destination preimage before it
+writes. The generation manifest records its format and operation versions,
+generation ID, canonical database identities and roles, preimage and planned
+postimage digests, payload hashes, creation time, and recovery state. Snapshot
+payloads are recovery inputs; Genie restores their logical rows through live
+SQLite transactions and never replaces a live database, WAL, or SHM file.
+
+Bidirectional runs derive a stable pair identity from the sorted canonical
+paths. Their default root is:
+
+```text
+<directory-of-first-canonical-db>/sync-snapshots/<pair-id>
+```
+
+Directional runs are role-sensitive. Their default root is:
+
+```text
+<directory-of-canonical-destination>/sync-snapshots
+```
+
+Use `--snapshot-root /normalized/absolute/path` to override either default.
+Incomplete staging directories are not rollback points. Only a fully published
+generation with a complete manifest can be recovered or selected.
+
+Before a new mutation, Genie classifies the newest unresolved generation:
+
+- `converged` means every database already has its recorded postimage.
+- `recovered` means every database is back at its preimage, including a
+  transactionally restored mixed preimage/postimage pair.
+- `uncertain` means at least one database matches neither recorded image. Genie
+  overwrites nothing and requires manual inspection.
+- `operational-failure` means recovery could not complete or be classified.
+
+When an apply reports `converged` or `recovered` for a prior generation, rerun
+the same command. That invocation performed recovery instead of starting the
+new requested mutation.
+
+Rollback is explicit source authority over history. Pass the same database
+pair and mode used by the generation:
+
+```bash
+genie db sync /path/to/left.db /path/to/right.db \
+  --rollback <generation-id>
+```
+
+Genie validates the manifest and canonical targets, snapshots the arbitrary
+current state into a new safety generation, then restores the selected older
+logical images. Rollback is reported as `rolled-back`, never as automatic crash
+recovery.
+
+The default `--keep-snapshots` value is `3`. Any nonnegative integer is valid.
+With `--keep-snapshots 0`, Genie uses a private mode-`0700` OS temporary
+directory only for same-process recovery and removes it best-effort on exit.
+No generation is published to the normal snapshot root, and finalized
+persistent generations for that operation are pruned after success. A later
+process therefore cannot recover or roll back the zero-retention operation. A
+cleanup failure is reported and returns a nonzero exit even when the logical
+apply succeeded.
+
+`--busy-timeout-ms N` bounds the total wait for advisory and SQLite write locks.
+`N` must be between `0` and `2147483647`. A timeout returns a bounded
+operational report; the command does not wait indefinitely.
+
+#### Automation report and exit codes
+
+`--json` emits report version `1`. The stable envelope identifies the operation,
+mode, status, hashed database identities, logical and schema digests, per-table
+change counts, conflict counts, generation IDs, recovery state, bounded failure
+codes, and cleanup failures. It never includes task titles, notes, or other row
+content. Human output uses the same statuses and abbreviated identities.
+
+| Exit | Meaning |
+|------|---------|
+| `0` | The requested dry-run, apply, no-op, same-database check, or rollback completed |
+| `1` | Commander rejected command syntax or an unknown option |
+| `2` | The mode or option combination is invalid; no mutation started |
+| `3` | Conservative reconciliation found conflicts; no mutation started |
+| `4` | An operational, lock, rollback, observation, or cleanup failure occurred |
+| `5` | Recovery or commit state is uncertain; manual inspection is required |
+| `6` | A prior generation was recovered or classified converged; rerun the request |
+
+Crashes can leave a complete unresolved manifest. Automatic recovery changes
+data only when every current digest matches that manifest's recorded preimage
+or postimage. It never guesses after an unrelated write. A crash before a
+complete manifest is published leaves no recovery point, and retention zero
+cannot support recovery after process loss.
 
 ## Omni (WhatsApp bridge)
 

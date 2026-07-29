@@ -72,11 +72,12 @@ skills/                         Skill prompt files (brainstorm, wish, work, revi
 
 ## CLI Commands
 
-Fourteen top-level commands (run `genie <command> --help` for detail):
+Fifteen top-level commands (run `genie <command> --help` for detail):
 
 | Command | Purpose |
 |---------|---------|
 | `board` | Kanban view derived by query (no stored view state); `--board`, `--wish`, `--json` |
+| `db` | Standalone database reconciliation (`genie db sync`) with snapshots, recovery, and rollback |
 | `doctor` | Diagnostic checks on the genie installation |
 | `hook` | Hook middleware for Claude Code (`genie hook dispatch` runs in-process) |
 | `init` | Scaffold per-repo state and reconcile `.mcp.json`, `.warp/.mcp.json`, plus the marker-owned `.codex/config.toml` stable-facade route |
