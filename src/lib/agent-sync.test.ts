@@ -2858,6 +2858,9 @@ describe('stampWorkflow parity with council-stamp.cjs', () => {
       const nextTarget = readFileSync(join(targetDir, TARGET_NAME));
       const nextManifest = readFileSync(join(targetDir, WORKFLOW_MANIFEST_NAME));
       const transaction = join(targetDir, `.council.genie-txn-cross-${name}`);
+      for (const directory of [transaction, join(transaction, 'before'), join(transaction, 'staged')]) {
+        mkdirSync(directory, { recursive: true, mode: 0o755 });
+      }
       writeFile(join(transaction, 'before', TARGET_NAME), oldTarget.toString());
       writeFile(join(transaction, 'before', WORKFLOW_MANIFEST_NAME), oldManifest.toString());
       writeFile(join(transaction, 'staged', TARGET_NAME), nextTarget.toString());
@@ -2874,6 +2877,15 @@ describe('stampWorkflow parity with council-stamp.cjs', () => {
           beforeManifestDigest: createHash('sha256').update(oldManifest).digest('hex'),
         })}\n`,
       );
+      for (const file of [
+        join(transaction, 'before', TARGET_NAME),
+        join(transaction, 'before', WORKFLOW_MANIFEST_NAME),
+        join(transaction, 'staged', TARGET_NAME),
+        join(transaction, 'staged', WORKFLOW_MANIFEST_NAME),
+        join(transaction, 'journal.json'),
+      ]) {
+        chmodSync(file, 0o644);
+      }
 
       recover(targetDir);
 
@@ -4270,13 +4282,25 @@ function frozenHistoricalSkillsRoot(name: string): string {
   return join(release.payloadRoot, 'skills');
 }
 
+function copyFrozenHistoricalSkill(source: string, destination: string): void {
+  cpSync(source, destination, { recursive: true });
+  const directories = [destination];
+  while (directories.length > 0) {
+    const directory = directories.pop() as string;
+    chmodSync(directory, 0o755);
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (entry.isDirectory()) directories.push(join(directory, entry.name));
+    }
+  }
+}
+
 describe('Codex fallback ownership planning', () => {
   test('accepts all 23 committed historical name/version/physical tuples', () => {
     const fallback = join(fixture.root, 'historical-fallbacks');
     const shippedSkills = frozenHistoricalSkillsRoot('verified-release-all');
     for (const tuple of historicalCodexFallbackAllowlist) {
       const destination = join(fallback, tuple.skillName);
-      cpSync(join(shippedSkills, tuple.skillName), destination, { recursive: true });
+      copyFrozenHistoricalSkill(join(shippedSkills, tuple.skillName), destination);
       expect(stampFallback(destination, tuple.markerVersion)).toBe(tuple.physicalDigest);
     }
 
@@ -4295,7 +4319,7 @@ describe('Codex fallback ownership planning', () => {
     const tuple = historicalCodexFallbackAllowlist[0];
     if (tuple === undefined) throw new Error('missing historical tuple');
     const destination = join(fallback, tuple.skillName);
-    cpSync(join(shippedSkills, tuple.skillName), destination, { recursive: true });
+    copyFrozenHistoricalSkill(join(shippedSkills, tuple.skillName), destination);
     stampFallback(destination, tuple.markerVersion);
     const marker = JSON.parse(readFileSync(join(destination, MANIFEST_NAME), 'utf8')) as Record<string, unknown>;
     marker.syncedAt = 'not-authenticated-provenance';
@@ -4316,7 +4340,7 @@ describe('Codex fallback ownership planning', () => {
     const tuple = historicalCodexFallbackAllowlist[0];
     if (tuple === undefined) throw new Error('missing historical tuple');
     const destination = join(fallback, tuple.skillName);
-    cpSync(join(shippedSkills, tuple.skillName), destination, { recursive: true });
+    copyFrozenHistoricalSkill(join(shippedSkills, tuple.skillName), destination);
     expect(stampFallback(destination, '5.260713.1')).toBe(tuple.physicalDigest);
     expect(tuple.markerVersion).not.toBe('5.260713.1');
 

@@ -46,15 +46,15 @@ function buildReleasePayload(
 } {
   const payload = join(root, 'payload');
   for (const directory of ['.agents', '.claude-plugin', 'plugins/genie', 'skills/review', 'templates']) {
-    mkdirSync(join(payload, directory), { recursive: true });
+    mkdirSync(join(payload, directory), { recursive: true, mode: 0o755 });
   }
-  writeFileSync(join(payload, '.agents', 'plugin.json'), '{}\n');
-  writeFileSync(join(payload, '.claude-plugin', 'marketplace.json'), '{}\n');
-  writeFileSync(join(payload, 'LICENSE'), 'test fixture\n');
-  writeFileSync(join(payload, 'VERSION'), `${version}\n`);
-  writeFileSync(join(payload, 'plugins', 'genie', 'plugin.txt'), 'authenticated plugin payload\n');
-  writeFileSync(join(payload, 'skills', 'review', 'SKILL.md'), '# Review\n');
-  writeFileSync(join(payload, 'templates', 'template.txt'), 'template\n');
+  writeFileSync(join(payload, '.agents', 'plugin.json'), '{}\n', { mode: 0o644 });
+  writeFileSync(join(payload, '.claude-plugin', 'marketplace.json'), '{}\n', { mode: 0o644 });
+  writeFileSync(join(payload, 'LICENSE'), 'test fixture\n', { mode: 0o644 });
+  writeFileSync(join(payload, 'VERSION'), `${version}\n`, { mode: 0o644 });
+  writeFileSync(join(payload, 'plugins', 'genie', 'plugin.txt'), 'authenticated plugin payload\n', { mode: 0o644 });
+  writeFileSync(join(payload, 'skills', 'review', 'SKILL.md'), '# Review\n', { mode: 0o644 });
+  writeFileSync(join(payload, 'templates', 'template.txt'), 'template\n', { mode: 0o644 });
   writeExecutable(
     join(payload, 'genie'),
     `#!/bin/sh\nif [ "\${1:-}" = "--version" ]; then printf 'genie ${version}\\n'; exit 0; fi\nexit 0\n`,
@@ -77,7 +77,7 @@ describe('updateCommand publication boundary', () => {
     const bin = join(genieHome, 'bin');
     const fakeBin = join(root, 'fake-bin');
     const fixture = join(root, 'fixture');
-    mkdirSync(bin, { recursive: true });
+    mkdirSync(bin, { recursive: true, mode: 0o755 });
     mkdirSync(fakeBin);
     mkdirSync(fixture);
 

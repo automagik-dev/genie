@@ -231,7 +231,7 @@ function isolatedDogfoodEnv(root: string, overrides: Record<string, string> = {}
   const codexHome = join(root, 'codex-home');
   const bin = join(root, 'bin');
   for (const path of [home, temp, xdgConfig, xdgCache, xdgData, xdgState, genieHome, codexHome, bin]) {
-    mkdirSync(path, { recursive: true });
+    mkdirSync(path, { recursive: true, mode: 0o755 });
   }
   const env: Record<string, string> = {
     PATH: `${bin}:${process.env.PATH ?? '/usr/bin:/bin'}`,
@@ -268,7 +268,7 @@ export async function runDogfoodEntry(
   const input = normalizeInput(rawInput);
   const ownsRoot = dependencies.root === undefined;
   const root = dependencies.root ?? mkdtempSync(join(tmpdir(), 'genie-dogfood-entry-'));
-  mkdirSync(root, { recursive: true });
+  mkdirSync(root, { recursive: true, mode: 0o755 });
   try {
     const previous = verifyGeneration(
       'previous',
