@@ -1,7 +1,8 @@
 import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { openDb, resolveDbPath } from '../lib/v5/genie-db.js';
@@ -117,6 +118,70 @@ function taskTitles(path: string): string[] {
   }
 }
 
+function logicalInventory(path: string): string[] {
+  const db = new Database(path, { readonly: true });
+  try {
+    const tables = (
+      db
+        .query("SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+        .all() as Array<{ name: string }>
+    ).map((row) => row.name);
+    return tables.map(
+      (table) => `${table}:${JSON.stringify(db.query(`SELECT * FROM "${table}" ORDER BY rowid`).all())}`,
+    );
+  } finally {
+    db.close();
+  }
+}
+
+function sqliteFileInventory(path: string): Record<string, string | null> {
+  return Object.fromEntries(
+    ['', '-wal', '-shm'].map((suffix) => {
+      const file = `${path}${suffix}`;
+      return [
+        suffix === '' ? 'database' : suffix.slice(1),
+        existsSync(file) ? createHash('sha256').update(readFileSync(file)).digest('hex') : null,
+      ];
+    }),
+  );
+}
+
+function databaseInventory(path: string): { logical: string[]; files: Record<string, string | null> } {
+  return { logical: logicalInventory(path), files: sqliteFileInventory(path) };
+}
+
+function rewriteGenerationState(snapshotRoot: string, generationId: string, state: string): void {
+  const manifestPath = join(snapshotRoot, generationId, 'manifest.json');
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
+  manifest.state = state;
+  writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`);
+}
+
+async function syncWithInjectedReport(report: unknown, ...args: string[]): Promise<CliResult> {
+  const harness = join(root, 'db-sync-runner.ts');
+  const commandUrl = new URL('./v5-db-sync.ts', import.meta.url).href;
+  writeFileSync(
+    harness,
+    [
+      "import { Command } from 'commander';",
+      `import { registerV5DatabaseSyncCommand } from ${JSON.stringify(commandUrl)};`,
+      `const report = ${JSON.stringify(report)};`,
+      "const program = new Command().name('genie');",
+      'registerV5DatabaseSyncCommand(program, { execute: () => report });',
+      "await program.parseAsync(['node', 'genie', 'db', 'sync', ...process.argv.slice(2)]);",
+    ].join('\n'),
+  );
+  const proc = Bun.spawn([process.execPath, harness, ...args], {
+    cwd: root,
+    stdout: 'pipe',
+    stderr: 'pipe',
+    env: { ...process.env, NO_COLOR: '1' },
+  });
+  const stdout = await new Response(proc.stdout).text();
+  const stderr = await new Response(proc.stderr).text();
+  return { stdout, stderr, code: await proc.exited };
+}
+
 /** Exact pre-lanes, pre-runtime user_version=1 shape accepted by normal current open. */
 function seedPriorDatabase(path: string): void {
   mkdirSync(dirname(path), { recursive: true });
@@ -230,9 +295,12 @@ describe('database sync CLI contract', () => {
     const left = createRepo('left');
     const right = createRepo('right');
     insertTask(left.database, 't_left', 'left');
-    const beforeLeft = readFileSync(left.database);
-    const beforeRight = readFileSync(right.database);
+    const beforeLeft = databaseInventory(left.database);
+    const beforeRight = databaseInventory(right.database);
     const snapshotRoot = join(root, 'snapshots');
+    const otherSnapshotRoot = join(root, 'other-snapshots');
+    const generationA = `${'a'.repeat(64)}--0000000000000001--00000000-0000-4000-8000-000000000001`;
+    const generationB = `${'b'.repeat(64)}--0000000000000002--00000000-0000-4000-8000-000000000002`;
     const cases = [
       [left.database, '--snapshot-root', snapshotRoot],
       ['--source', left.database, '--snapshot-root', snapshotRoot],
@@ -251,17 +319,114 @@ describe('database sync CLI contract', () => {
       [left.database, right.database, '--busy-timeout-ms', '2147483648', '--snapshot-root', snapshotRoot],
       [left.database, right.database, '--snapshot-root', 'relative'],
       [left.database, right.database, '--rollback', 'not-a-generation', '--snapshot-root', snapshotRoot],
+      ['--source', left.database, '--source', right.database, '--destination', right.database],
+      ['--source', left.database, '--destination', right.database, '--destination', left.database],
+      [left.database, right.database, '--snapshot-root', snapshotRoot, '--snapshot-root', otherSnapshotRoot],
+      [left.database, right.database, '--rollback', generationA, '--rollback', generationB],
+      [left.database, right.database, '--keep-snapshots', '1', '--keep-snapshots', '2'],
+      [left.database, right.database, '--busy-timeout-ms', '0', '--busy-timeout-ms', '1'],
+      [left.database, right.database, '--dry-run', '--dry-run'],
+      [left.database, right.database, '--json', '--json'],
     ];
 
-    for (const args of cases) {
+    for (const [index, args] of cases.entries()) {
       const result = await sync(...args);
       expect(result.code).toBe(DATABASE_SYNC_EXIT_CODES.usage);
       expect(result.stdout).toBe('');
       expect(result.stderr).toContain('genie db sync --help');
+      if (index >= 8) expect(result.stderr).toContain('may be specified only once');
     }
-    expect(readFileSync(left.database)).toEqual(beforeLeft);
-    expect(readFileSync(right.database)).toEqual(beforeRight);
+    expect(databaseInventory(left.database)).toEqual(beforeLeft);
+    expect(databaseInventory(right.database)).toEqual(beforeRight);
     expect(existsSync(snapshotRoot)).toBe(false);
+    expect(existsSync(otherSnapshotRoot)).toBe(false);
+  });
+
+  test('Commander syntax errors retain parser exit 1', async () => {
+    const result = await sync('--unknown-option');
+    expect(result.code).toBe(DATABASE_SYNC_EXIT_CODES.parserError);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain("unknown option '--unknown-option'");
+  });
+
+  test('human output and same-database success remain stable and path-free', async () => {
+    const database = createRepo('same').database;
+    insertTask(database, 't_hostile', 'HOSTILE SAME-DATABASE TITLE');
+
+    const result = await sync(database, database, '--dry-run');
+
+    expect(result.code).toBe(DATABASE_SYNC_EXIT_CODES.success);
+    expect(result.stderr).toBe('');
+    expect(result.stdout).toContain('Database reconciliation dry-run: no-op');
+    expect(result.stdout).toContain('Mode: bidirectional');
+    expect(result.stdout).toContain('Plan: no-op; conflicts=0');
+    expect(result.stdout).not.toContain(database);
+    expect(result.stdout).not.toContain('HOSTILE SAME-DATABASE TITLE');
+  });
+
+  test('persistent recovery maps converged to exit 6 and hostile uncertain state to exit 5', async () => {
+    const left = createRepo('recovery-left');
+    const right = createRepo('recovery-right');
+    insertTask(left.database, 't_left', 'left');
+    insertTask(right.database, 't_right', 'right');
+    const snapshotRoot = join(root, 'recovery-snapshots');
+
+    const applied = await sync(left.database, right.database, '--snapshot-root', snapshotRoot, '--json');
+    const generationId = parseJson(applied).apply?.generationId;
+    if (generationId == null) throw new Error('Expected a durable generation.');
+    rewriteGenerationState(snapshotRoot, generationId, 'complete');
+
+    const converged = await sync(left.database, right.database, '--snapshot-root', snapshotRoot, '--json');
+    expect(converged.code).toBe(DATABASE_SYNC_EXIT_CODES.recoveryHandled);
+    expect(parseJson(converged).status).toBe('converged');
+
+    rewriteGenerationState(snapshotRoot, generationId, 'complete');
+    insertTask(left.database, 't_hostile', 'HOSTILE RECOVERY CONTENT\nMUST NOT LEAK');
+    const beforeLeft = databaseInventory(left.database);
+    const beforeRight = databaseInventory(right.database);
+
+    const uncertain = await sync(left.database, right.database, '--snapshot-root', snapshotRoot, '--json');
+    expect(uncertain.code).toBe(DATABASE_SYNC_EXIT_CODES.uncertain);
+    expect(uncertain.stderr).toBe('');
+    expect(uncertain.stdout).not.toContain('HOSTILE RECOVERY CONTENT');
+    expect(uncertain.stdout.length).toBeLessThan(8_000);
+    expect(parseJson(uncertain).status).toBe('uncertain');
+    expect(databaseInventory(left.database)).toEqual(beforeLeft);
+    expect(databaseInventory(right.database)).toEqual(beforeRight);
+  });
+
+  test('cleanup failures map an otherwise successful subprocess report to exit 4', async () => {
+    const report = {
+      reportVersion: 1,
+      command: 'database-sync',
+      operation: 'apply',
+      mode: 'bidirectional',
+      status: 'changed',
+      inputs: [],
+      plan: null,
+      apply: {
+        status: 'changed',
+        generationId: null,
+        recovery: {
+          status: 'none',
+          generationId: null,
+          restoredDatabaseIdentities: [],
+          failure: null,
+          cleanupFailures: [],
+        },
+        apply: null,
+        failure: null,
+        cleanupFailures: ['snapshot-cleanup-failed'],
+      },
+      rollback: null,
+    };
+
+    const result = await syncWithInjectedReport(report, '/unused/left.db', '/unused/right.db');
+
+    expect(result.code).toBe(DATABASE_SYNC_EXIT_CODES.operationalFailure);
+    expect(result.stderr).toBe('');
+    expect(result.stdout).toContain('Database reconciliation apply: changed');
+    expect(result.stdout).toContain('Cleanup failures: 1');
   });
 
   test('directional dry-run reports bounded identities and counts without row content or writes', async () => {
@@ -297,6 +462,20 @@ describe('database sync CLI contract', () => {
     expect(readFileSync(source.database)).toEqual(beforeSource);
     expect(readFileSync(destination.database)).toEqual(beforeDestination);
     expect(existsSync(join(destination.repo, '.genie', 'sync-snapshots'))).toBe(false);
+  });
+
+  test('operational reports omit hostile input paths and remain bounded', async () => {
+    const destination = createRepo('operational-destination');
+    const hostile = join(root, 'HOSTILE PATH\nMUST NOT LEAK.db');
+
+    const result = await sync('--source', hostile, '--destination', destination.database, '--dry-run', '--json');
+
+    expect(result.code).toBe(DATABASE_SYNC_EXIT_CODES.operationalFailure);
+    expect(result.stderr).toBe('');
+    expect(result.stdout).not.toContain('HOSTILE PATH');
+    expect(result.stdout).not.toContain(hostile);
+    expect(result.stdout.length).toBeLessThan(8_000);
+    expect(parseJson(result).plan?.operationalFailure?.code).toBe('input-unavailable');
   });
 
   test('bidirectional apply converges disjoint additions, never deletes, and reports a durable generation', async () => {

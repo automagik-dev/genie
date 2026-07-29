@@ -119,7 +119,36 @@ interface DatabaseSyncCliReport {
   rollback: RollbackReport | null;
 }
 
+interface DatabaseSyncCommandDependencies {
+  readonly execute?: typeof execute;
+}
+
 class DatabaseSyncUsageError extends Error {}
+
+const SINGLETON_OPTIONS = new Set([
+  '--source',
+  '--destination',
+  '--dry-run',
+  '--rollback',
+  '--snapshot-root',
+  '--keep-snapshots',
+  '--busy-timeout-ms',
+  '--json',
+]);
+
+function rejectRepeatedOptions(args: readonly string[]): void {
+  const counts = new Map<string, number>();
+  for (const argument of args) {
+    if (argument === '--') break;
+    const name = argument.split('=', 1)[0];
+    if (!SINGLETON_OPTIONS.has(name)) continue;
+    const count = (counts.get(name) ?? 0) + 1;
+    counts.set(name, count);
+    if (count > 1) {
+      throw new DatabaseSyncUsageError(`${name} may be specified only once.`);
+    }
+  }
+}
 
 function databaseIdentity(path: string): string {
   const absolute = resolve(path);
@@ -453,14 +482,20 @@ function failUsage(message: string): never {
   process.exit(DATABASE_SYNC_EXIT_CODES.usage);
 }
 
-function handleSync(databaseA: string | undefined, databaseB: string | undefined, options: DatabaseSyncOptions): void {
+function handleSync(
+  databaseA: string | undefined,
+  databaseB: string | undefined,
+  options: DatabaseSyncOptions,
+  dependencies: DatabaseSyncCommandDependencies,
+): void {
   try {
+    rejectRepeatedOptions(process.argv.slice(2));
     const request = parseRequest(databaseA, databaseB, options);
     const operation = parseOperation(options);
     const snapshotRoot = parseSnapshotRoot(options.snapshotRoot);
     const keepSnapshots = parseNonnegativeInteger('--keep-snapshots', options.keepSnapshots);
     const busyTimeoutMs = parseNonnegativeInteger('--busy-timeout-ms', options.busyTimeoutMs, MAX_BUSY_TIMEOUT_MS);
-    const report = execute(request, operation, {
+    const report = (dependencies.execute ?? execute)(request, operation, {
       snapshotRoot,
       keepSnapshots,
       busyTimeoutMs,
@@ -486,7 +521,10 @@ function handleSync(databaseA: string | undefined, databaseB: string | undefined
   }
 }
 
-export function registerV5DatabaseSyncCommand(program: Command): void {
+export function registerV5DatabaseSyncCommand(
+  program: Command,
+  dependencies: DatabaseSyncCommandDependencies = {},
+): void {
   const db = program.command('db').description('Standalone Genie database operations');
   db.command('sync [database-a] [database-b]')
     .description('Reconcile two exact-current Genie databases')
@@ -507,6 +545,6 @@ export function registerV5DatabaseSyncCommand(program: Command): void {
         '4 operational failure, 5 uncertain/manual, 6 recovery handled (rerun).\n',
     )
     .action((databaseA: string | undefined, databaseB: string | undefined, options: DatabaseSyncOptions) =>
-      handleSync(databaseA, databaseB, options),
+      handleSync(databaseA, databaseB, options, dependencies),
     );
 }

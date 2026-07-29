@@ -168,7 +168,8 @@ All linked worktrees of a repository share one `genie.db`, resolved from the git
 
 Use `genie db sync` when two separate Genie repositories or copied
 `.genie/genie.db` files have diverged. The command is noninteractive and takes
-explicit database paths. It never discovers or connects a live shared database.
+explicit database paths; it does not silently discover databases. An explicit
+path may name a database that active Genie processes also use.
 
 Choose exactly one mode:
 
@@ -204,7 +205,9 @@ genie db sync /path/to/left.db /path/to/right.db --dry-run --json
 
 Dry-run rejects snapshot, retention, rollback, and busy-timeout options because
 they have no read-only effect. Ambiguous positional and directional forms also
-fail before opening either database for mutation. Run
+fail before opening either database for mutation. Every named option is a
+singleton: repeating one is an actionable usage error rather than
+last-value-wins behavior. Run
 `genie db sync --help` for the two accepted forms and all options.
 
 #### Schema compatibility
@@ -281,9 +284,12 @@ process therefore cannot recover or roll back the zero-retention operation. A
 cleanup failure is reported and returns a nonzero exit even when the logical
 apply succeeded.
 
-`--busy-timeout-ms N` bounds the total wait for advisory and SQLite write locks.
-`N` must be between `0` and `2147483647`. A timeout returns a bounded
-operational report; the command does not wait indefinitely.
+Mutating runs take canonical-path advisory locks for reconciliation-aware
+writers, then SQLite write locks for the databases themselves. These locks let
+explicit paths safely name active databases without claiming that unrelated
+writers are discovered or refused. `--busy-timeout-ms N` bounds the combined
+wait for both lock layers. `N` must be between `0` and `2147483647`. A timeout
+returns a bounded operational report; the command does not wait indefinitely.
 
 #### Automation report and exit codes
 
