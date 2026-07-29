@@ -1766,7 +1766,8 @@ function pruneGenerations(
   let rootBinding: BoundDirectory;
   try {
     rootBinding = openBoundDirectory(identity.root, false, options);
-  } catch {
+  } catch (caught) {
+    if (filesystemCode(caught) === 'ENOENT') return;
     cleanupFailures.push('snapshot-cleanup-failed');
     return;
   }
@@ -1830,7 +1831,7 @@ function recoverValidatedGeneration(
   inputs: readonly ReconciliationLockedDatabaseInput[],
   options: DatabaseSyncSnapshotOptions,
   retention: number,
-  cleanupPersistentStore = true,
+  cleanupPersistentStaging = true,
 ): { value: RecoveryDecision; afterCommit: () => void } {
   if (generation.manifest.state === 'uncertain') {
     closeBoundDirectory(generation.binding);
@@ -1913,10 +1914,8 @@ function recoverValidatedGeneration(
       const rebound = reopenGeneration(generation, options);
       try {
         rewriteManifestState(rebound, status === 'uncertain' ? 'uncertain' : status, options);
-        if (cleanupPersistentStore) {
-          cleanupStaging(identity.root, options, cleanupFailures);
-          if (status !== 'uncertain') pruneGenerations(identity, retention, options, cleanupFailures);
-        }
+        if (cleanupPersistentStaging) cleanupStaging(identity.root, options, cleanupFailures);
+        if (status !== 'uncertain') pruneGenerations(identity, retention, options, cleanupFailures);
       } finally {
         closeBoundDirectory(rebound.binding);
       }
@@ -2332,10 +2331,8 @@ export function rollbackDatabaseReconciliation(
               } finally {
                 closeBoundDirectory(generation.binding);
               }
-              if (retention > 0) {
-                cleanupStaging(identity.root, options, cleanupFailures);
-                pruneGenerations(identity, retention, options, cleanupFailures);
-              }
+              if (retention > 0) cleanupStaging(identity.root, options, cleanupFailures);
+              pruneGenerations(identity, retention, options, cleanupFailures);
             },
           };
         } finally {
