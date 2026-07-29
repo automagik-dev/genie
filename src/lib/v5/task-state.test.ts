@@ -43,6 +43,7 @@ import {
   getTaskLane,
   getWishGroups,
   hireAgent,
+  importState,
   listBoards,
   listHires,
   listTasks,
@@ -749,6 +750,39 @@ try {
     expect(snapshot.tasks.length).toBe(N / 2);
     expect(snapshot.hire_roster.every((h) => h.wish === 'race')).toBe(true);
   }, 30_000);
+});
+
+describe('importState — replace is a full wipe even without operational rows', () => {
+  test('stale meta keys do not survive a --replace into a metadata-only db', () => {
+    // Source db: one task, then export. Its meta carries the backfill marker.
+    const source = openDb({ path: join(dir, 'source.db') });
+    createTask(source, { title: 'canonical card' });
+    const snapshot = exportState(source);
+    source.close();
+
+    // Destination db: NO operational rows, but a stale meta key (e.g. a
+    // wish_sig left behind after its rows were cleared elsewhere).
+    db.query('INSERT INTO meta (key, value) VALUES (?, ?)').run('wish_sig:ghost', 'deadbeef');
+
+    importState(db, snapshot, { replace: true });
+
+    const keys = (db.query('SELECT key FROM meta ORDER BY key').all() as Array<{ key: string }>).map((r) => r.key);
+    expect(keys).toEqual(snapshot.meta.map((m) => m.key).sort());
+    expect(keys).not.toContain('wish_sig:ghost');
+    // The export is now the exact snapshot — lossless replacement.
+    expect(exportState(db)).toEqual(snapshot);
+  });
+
+  test('a malformed row that passes shape validation fails as SnapshotFormatError and rolls back', () => {
+    const before = exportState(db);
+    const bad = {
+      ...before,
+      // title NOT NULL in schema — null must not surface as a raw SQLite error.
+      tasks: [{ id: 't_bad', title: null, status: 'ready', created_at: 1, updated_at: 1 }],
+    };
+    expect(() => importState(db, bad as unknown, { replace: true })).toThrow(/Snapshot rows could not be imported/);
+    expect(exportState(db)).toEqual(before); // transaction rolled back
+  });
 });
 
 // ---------------------------------------------------------------------------

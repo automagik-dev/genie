@@ -443,6 +443,41 @@ describe('roadmap.json canonical sync', () => {
     expect(hires).toEqual([{ wish: 'w', worktree: '/tmp/wt' }]);
   });
 
+  test('explicit relative canonical path behaves like the default; custom-file exports stay lossless', async () => {
+    const db = openDb({ cwd: repo });
+    createTask(db, { title: 'card' });
+    hireAgent(db, { wish: 'w', agentAdapterId: 'claude', worktree: '/tmp/wt' });
+    db.close();
+
+    // Custom-file --write carries the COMPLETE state (hire_roster included), so
+    // a backup.json → import --replace round-trip cannot silently drop hires.
+    const backup = await cli(repo, 'export', '--write', 'backup.json');
+    expect(backup.code).toBe(0);
+    const backupState = JSON.parse(readFileSync(join(repo, 'backup.json'), 'utf-8')) as StateExport;
+    expect(backupState.hire_roster).toHaveLength(1);
+
+    // The canonical path spelled explicitly (relative) still emits the roadmap
+    // slice and still counts as canonical on import: local hires preserved.
+    const w = await cli(repo, 'export', '--write', '.genie/roadmap.json');
+    expect(w.code).toBe(0);
+    const snap = JSON.parse(snapshotOf(repo)) as StateExport;
+    expect(snap.hire_roster).toEqual([]);
+
+    const r = await cli(repo, 'import', '.genie/roadmap.json', '--replace');
+    expect(r.code).toBe(0);
+    const db2 = openDb({ cwd: repo });
+    const hires = db2.query('SELECT wish, worktree FROM hire_roster').all() as Array<{
+      wish: string;
+      worktree: string;
+    }>;
+    db2.close();
+    expect(hires).toEqual([{ wish: 'w', worktree: '/tmp/wt' }]);
+
+    // The explicit spelling also recorded the sync baseline: no divergence.
+    const settled = await cli(repo, 'sync');
+    expect(settled.code).toBe(0);
+  });
+
   test('pulled snapshot imports on sync; local mutation exports; divergence is refused then resolvable', async () => {
     // Machine A (repo): publish F1, then F2 with one more card.
     const db = openDb({ cwd: repo });

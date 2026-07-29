@@ -107,6 +107,17 @@ export function recordSyncBaseline(db: Database, cwd?: string): void {
  * on pull (post-merge / post-rewrite) and before commit (pre-commit).
  */
 export function syncRoadmap(db: Database, cwd?: string): SyncResult {
+  // BEGIN IMMEDIATE for the whole compare-and-act sequence: the db-side hash
+  // must not go stale between comparison and a replace-import, or a task write
+  // committed in that window would be silently destroyed. Holding the write
+  // lock up front also serializes two concurrent syncs (git hook vs interactive
+  // command) through busy_timeout, so their file read-decide-write sequences
+  // cannot interleave. importState's inner transaction nests as a savepoint.
+  const locked = db.transaction(() => syncRoadmapLocked(db, cwd));
+  return locked.immediate() as SyncResult;
+}
+
+function syncRoadmapLocked(db: Database, cwd?: string): SyncResult {
   const filePath = resolveRoadmapPath(cwd);
   const markerPath = resolveSyncMarkerPath(cwd);
   const dbState = roadmapSnapshot(db);
