@@ -1390,7 +1390,7 @@ describe('database sync snapshots', () => {
     const right = currentDb('retain-right');
     const request = { mode: 'bidirectional' as const, leftPath: left, rightPath: right };
     const identity = databaseSyncSnapshotIdentity(request);
-    mkdirSync(join(identity.root, '.staging-abandoned'), { recursive: true });
+    mkdirSync(join(identity.root, '.staging-abandoned'), { recursive: true, mode: 0o700 });
     writeFileSync(join(identity.root, '.staging-abandoned', 'partial'), 'incomplete');
     for (let index = 0; index < 4; index++) {
       insertBoard(right, `board-${index}`);
@@ -1466,9 +1466,9 @@ describe('database sync snapshots', () => {
       const root = databaseSyncSnapshotIdentity(request).root;
       const staging = join(root, '.staging-owned');
       const victim = join(fixtureRoot, 'cleanup-victim');
-      mkdirSync(staging, { recursive: true });
+      mkdirSync(staging, { recursive: true, mode: 0o700 });
       writeFileSync(join(staging, 'owned'), 'owned');
-      mkdirSync(victim);
+      mkdirSync(victim, { mode: 0o700 });
       writeFileSync(join(victim, 'sentinel'), 'victim');
       let raced = false;
       const recovery = recoverDatabaseReconciliation(request, {
@@ -1494,7 +1494,7 @@ describe('database sync snapshots', () => {
         ).toBe('changed');
       }
       const victim = join(fixtureRoot, 'prune-victim');
-      mkdirSync(victim);
+      mkdirSync(victim, { mode: 0o700 });
       writeFileSync(join(victim, 'sentinel'), 'victim');
       insertBoard(right, 'three');
       let replacement: string | null = null;
@@ -1535,7 +1535,7 @@ describe('database sync snapshots', () => {
     const right = currentDb('darwin-cleanup-right');
     const request = { mode: 'bidirectional' as const, leftPath: left, rightPath: right };
     const root = databaseSyncSnapshotIdentity(request).root;
-    mkdirSync(join(root, '.staging-darwin'), { recursive: true });
+    mkdirSync(join(root, '.staging-darwin'), { recursive: true, mode: 0o700 });
     writeFileSync(join(root, '.staging-darwin', 'partial'), 'partial');
 
     for (const id of ['first', 'second']) {

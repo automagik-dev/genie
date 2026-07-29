@@ -113,7 +113,7 @@ function isolatedEnv(root: string, overrides: Record<string, string> = {}): Reco
   const genieHome = join(root, 'genie-home');
   const codexHome = join(root, 'codex-home');
   const temp = join(root, 'tmp');
-  for (const path of [home, genieHome, codexHome, temp]) mkdirSync(path, { recursive: true });
+  for (const path of [home, genieHome, codexHome, temp]) mkdirSync(path, { recursive: true, mode: 0o700 });
   return {
     ...env,
     HOME: home,
