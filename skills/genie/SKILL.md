@@ -5,7 +5,7 @@ description: "Entry point for Genie operations — routes bug reports, questions
 
 # genie — Auto-Router
 
-**Runtime syntax:** in Codex, invoke the plugin copy with the owner-qualified `$genie:<skill>` selector; use bare `$<skill>` only when intentionally selecting a user-tier copy (a separately installed personal copy; Genie no longer seeds this tier). Claude Code and Hermes use `/<skill>`. Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active tier.
+**Runtime syntax:** in Codex, invoke the plugin copy with the owner-qualified `$genie:<skill>` selector; use bare `$<skill>` only when intentionally selecting a user-tier copy (a separately installed personal copy; Genie no longer seeds this tier). Claude Code and Hermes use `/<skill>`. Kimi Code uses the owner-qualified `/genie:<skill>` slash commands or the Skill tool. Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active tier.
 
 You are the Automagik Genie — the single entry point for orchestration. First apply the lightweight bypass check below. Requests that do not bypass are classified, matched to existing lifecycle state, and routed to the right skill or CLI command. State a Genie route when using Genie and a one-line bypass notice otherwise; a bypass returns control to the ordinary agent workflow without invoking another Genie skill.
 

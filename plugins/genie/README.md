@@ -77,6 +77,19 @@ One release-dogfood update exposed why that boundary matters. A `5.260710.13` pr
 
 Containment recovered all 22 adapted directories from Genie's automatic backup, quarantined both recreated `review` copies, removed the old hook trust, and verified the 36 personal-skill digests plus 14 custom-agent TOMLs against the pre-incident baseline. The current contract preserves user-owned collisions and separates signed update delivery from setup-owned activation and convergence. This note intentionally contains no machine-specific paths, process ids, or credentials.
 
+## What Kimi gets
+
+| Surface | Delivery | Contract |
+|---------|----------|----------|
+| Product skills | `.kimi-plugin/plugin.json` declares `skills: "./skills/"` — the same 23 physical in-root skill directories | Loaded as plugin-tier Skills; invoke with the Skill tool or `/skill:<name>` |
+| Slash commands | `.kimi-plugin/plugin.json` declares `commands: "./commands/"` — thin wrappers for the core lifecycle skills | `/genie:wish`, `/genie:work`, `/genie:review`, `/genie:brainstorm`, `/genie:fix`, `/genie:trace`, `/genie:report`, `/genie:docs`, `/genie:council`, `/genie:refine`, `/genie:pm` (the auto-router loads at session start, so no `/genie:genie` command) |
+| Session start | `sessionStart.skill: "genie"` in the manifest | Loads the auto-router skill into the main Agent at session start — the Kimi-native replacement for rule injection |
+| Hooks | Inline `hooks` array in `.kimi-plugin/plugin.json` | Same scripts as Claude (`session-context.cjs`, `dispatch-runtime.cjs claude`, `validate-wish.cjs`, `validate-completion.cjs`); Kimi's hook protocol is wire-compatible. Note: Kimi `SessionStart` is observation-only, so wish-state context there is best-effort |
+| MCP | `mcpServers.genie` in the manifest runs `./scripts/mcp-launcher.cjs` | Same canonical `$GENIE_HOME/bin/genie mcp` facade as Claude; the launcher file ships executable |
+| Role agents | The seven `agents/*.md` profiles are Kimi-loadable as-is (Claude-style frontmatter is tolerated) | Plugin manifests cannot install agents. Optional manual step: copy `agents/*.md` into `~/.kimi-code/agents/` (or add the managed plugin's `agents/` dir to `extra_agent_dirs` in `config.toml`) |
+
+Kimi has no plugin surface for Claude's `settings.json` permissions, `scripts/statusline.sh`, or the stamped `workflows/council.js`; those remain Claude-only. Install with `/plugins install <path-to-this-directory>` in the Kimi TUI, then `/reload`.
+
 ## Skills and orchestration
 
 The lifecycle is shared across clients:
