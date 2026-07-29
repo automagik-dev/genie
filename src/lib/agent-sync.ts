@@ -94,6 +94,8 @@ export const CLAUDE_EXCLUDED_SKILLS = new Set(['council']);
  * value, all return false — sync must never abort or change behavior on a
  * broken settings file. GENIE_FORCE_CLAUDE_SKILLS_MIRROR=1 is the ops
  * kill-switch: forces pre-hotfix behavior (mirror + doctor expects mirror).
+ * It governs BOTH suppressed surfaces — the bare-name skills mirror and the
+ * bare-name role-agent fan-out — despite the historical `SKILLS` in its name.
  */
 export function claudeGeniePluginEnabled(settingsPath: string): boolean {
   if (process.env.GENIE_FORCE_CLAUDE_SKILLS_MIRROR === '1') return false;
@@ -4555,8 +4557,13 @@ function unpublishFlatAgent(ctx: FlatAgentTxnCtx, state: FlatAgentOpState, targe
  * every unrelated sibling in `~/.claude/agents` remains invisible. All ops run
  * in ONE transaction with a single ownership commit.
  */
-function syncClaudeAgentFiles(ctx: RunContext, claudeDir: string, report: AgentReport): void {
-  const sourceAgents = enumerateSourceAgentFiles(ctx.pluginRoot);
+function syncClaudeAgentFiles(ctx: RunContext, claudeDir: string, report: AgentReport, pluginEnabled = false): void {
+  // Plugin enabled → Claude Code already serves every role agent as genie:*;
+  // the bare-name fan-out double-lists them. An empty source set sends every
+  // manifest-owned file down planAgentOrphan, which backs the bytes up before
+  // retiring them and preserves user-edited files as kept-modified-orphan —
+  // the same suppression contract the skills mirror uses above.
+  const sourceAgents = pluginEnabled ? [] : enumerateSourceAgentFiles(ctx.pluginRoot);
   const targetDir = join(claudeDir, 'agents');
   const initialState = inspectAgentFilesManifest(targetDir);
   if (initialState.kind === 'unsafe') {
@@ -5664,7 +5671,15 @@ function syncClaude(ctx: RunContext, report: AgentReport): void {
       detail: 'genie@automagik plugin enabled — bare-name skills mirror pruned; skills load as genie:* from the plugin',
     });
   }
-  syncClaudeAgentFiles(ctx, claudeDir, report);
+  syncClaudeAgentFiles(ctx, claudeDir, report, pluginEnabled);
+  if (pluginEnabled) {
+    report.extras.push({
+      kind: 'agents-mirror',
+      action: 'suppressed',
+      detail:
+        'genie@automagik plugin enabled — bare-name role-agent fan-out pruned; agents load as genie:* from the plugin',
+    });
+  }
   stampClaudeWorkflow(ctx, claudeDir, report);
 }
 
