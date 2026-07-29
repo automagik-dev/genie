@@ -65,8 +65,9 @@ Complexity scoring rubric: score each group independently and record the total p
 Route the total in **Model** by portable role and reasoning effort: **0–1** →
 `engineer-trivial` / low; **2–3** → `engineer-standard` / medium or high;
 **4–6** → `engineer-complex` / high; **7+** → `engineer-complex` plus an
-independent `final-gate` at the highest justified effort. Codex maps these to
-the `genie_*` profiles; other runtimes use their matching native roles. Keep
+independent `final-gate` at the highest justified effort. Each runtime maps
+these to its matching native roles (such as the `genie_*` profiles where
+installed). Keep
 model and effort in runtime session/agent configuration, never skill frontmatter.
 
 ## Execution Groups

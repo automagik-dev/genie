@@ -62,7 +62,6 @@ verdict that was not persisted does not advance the lifecycle.
 | `docs` | Audit, generate, and validate documentation against code | Docs stale or missing |
 | `dream` | Batch-execute SHIP-ready wishes overnight | Multiple wishes ready |
 | `pm` | Backlog triage, prioritization, tracking, reporting | Managing a stream of work |
-| `wizard` | First-run onboarding: scaffold, identity, first wish | New project setup |
 | `omni` | Wire a Genie agent to an Omni channel | Channel wiring |
 | `genie-hacks` | Browse community patterns and hacks | Looking for prior art |
 

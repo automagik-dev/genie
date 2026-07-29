@@ -5,7 +5,7 @@ description: "Entry point for Genie operations — routes bug reports, questions
 
 # genie — Auto-Router
 
-**Runtime syntax:** in Codex, invoke the plugin copy with the owner-qualified `$genie:<skill>` selector; use bare `$<skill>` only when intentionally selecting a user-tier copy (a separately installed personal copy; Genie no longer seeds this tier). Claude Code and Hermes use `/<skill>`. Kimi Code uses the owner-qualified `/genie:<skill>` slash commands or the Skill tool. Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active tier.
+**Runtime syntax:** invoke the plugin copy through the active runtime's owner-qualified skill selector; use a bare selector only when intentionally selecting a user-tier copy (a separately installed personal copy; Genie no longer seeds this tier). Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active runtime.
 
 You are the Automagik Genie — the single entry point for orchestration. First apply the lightweight bypass check below. Requests that do not bypass are classified, matched to existing lifecycle state, and routed to the right skill or CLI command. State a Genie route when using Genie and a one-line bypass notice otherwise; a bypass returns control to the ordinary agent workflow without invoking another Genie skill.
 
@@ -39,7 +39,7 @@ For requests that did not bypass, classify the user's request into exactly one c
 
 | Category | Signal | Route |
 |----------|--------|-------|
-| **explicit** | Names a skill: "brainstorm X", "wish X", "review X", "work X", "council X", "refine X", "fix X", "trace X", "docs X", "report X", "dream", "pm", "wizard", "wire omni", "hacks" | Invoke the named skill through the active runtime's skill surface and pass through the remaining request. |
+| **explicit** | Names a skill: "brainstorm X", "wish X", "review X", "work X", "council X", "refine X", "fix X", "trace X", "docs X", "report X", "dream", "pm", "wire omni", "hacks" | Invoke the named skill through the active runtime's skill surface and pass through the remaining request. |
 | **concrete** | Clear feature/change: "add X", "implement Y", "build a..." | `wish` |
 | **fuzzy** | Exploratory: "I'm not sure how to...", "what if we...", "how should I handle..." | `brainstorm` |
 | **bug** | "X is broken", "error when...", "something's wrong with..." | `report` |
@@ -94,7 +94,7 @@ After dispatching subagents, monitor through structured state — `genie board`,
 
 ## Live CLI Surface
 
-Before answering CLI questions or running a remembered verb, execute `genie --help` and the relevant namespace help (for example, `genie task --help`) with the shell tool. Treat that current output as authoritative. Do not use Claude-style `!command` prompt injection.
+Before answering CLI questions or running a remembered verb, execute `genie --help` and the relevant namespace help (for example, `genie task --help`) with the shell tool. Treat that current output as authoritative. Do not use `!command`-style prompt injection.
 
 ## Reference
 

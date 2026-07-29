@@ -55,7 +55,6 @@ export const SHIPPED_SKILL_NAMES = [
   'supply-chain',
   'trace',
   'wish',
-  'wizard',
   'work',
 ] as const;
 
