@@ -187,9 +187,17 @@ Bidirectional mode unions additions. It reports a conflict when the same
 mutable key differs because the databases do not carry ancestry that could
 prove which row is newer. Directional mode makes the source authoritative for
 shared mutable task, board, wish-group, hire-roster, and unknown metadata
-keys. It writes only the destination. Both modes preserve destination-only
-rows: absence never means deletion, and every report fixes the deletion count
-at zero.
+keys. It writes only the destination. Both modes preserve destination-only rows:
+ordinary absence never means deletion.
+
+An explicit roster unhire (the `roster_unhire` UI-bridge operation) is the
+exception. It records a versioned tombstone in the existing metadata table, so
+a later sync removes the matching hire-roster row instead of resurrecting it.
+This changes neither the SQLite schema nor its `user_version`; reconciliation
+reports the explicit removal in its deletion count. Tombstones are durable and
+deletion wins while any replica retains one. Re-hiring the same agent clears
+the local tombstone, but an offline replica with the old tombstone can reassert
+the deletion when it returns.
 
 Dependency edges are unioned. Task events and legacy stage-log entries preserve
 the maximum occurrence count observed on either applicable side. Independent

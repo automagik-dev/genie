@@ -156,7 +156,7 @@ export function buildRosterTools(getWriteDb: () => import('bun:sqlite').Database
     },
     {
       name: 'roster_unhire',
-      description: 'Remove an agent adapter from a wish (idempotent; removed=false when absent).',
+      description: 'Remove an agent adapter and retain a sync tombstone (idempotent; removed=false when absent).',
       inputSchema: {
         type: 'object',
         properties: {

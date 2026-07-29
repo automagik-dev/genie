@@ -32,6 +32,8 @@ import {
   withLockedReconciliationDatabases,
 } from './db-reconciliation.js';
 import { openDb } from './genie-db.js';
+import { RECONCILIATION_TOMBSTONE_PREFIX, reconciliationTombstoneMeta } from './reconciliation-tombstone.js';
+import { unhireAgent } from './task-state.js';
 
 let fixtureRoot: string;
 
@@ -838,6 +840,66 @@ describe('keyed, edge-set, and history-multiset planning', () => {
     expect(changes.meta).toEqual([{ key: 'unknown', value: 'source' }]);
     expect(changes.boards.some((row) => row.id === 'destination-only')).toBe(false);
     expect(plan.report.targets[0].changes.deletions).toBe(0);
+  });
+
+  test('a roster tombstone propagates a guest deletion instead of resurrecting the live host row', () => {
+    const host = currentDb('host');
+    const guest = currentDb('guest');
+    for (const path of [host, guest]) {
+      mutate(path, (db) => {
+        db.query(
+          `INSERT INTO hire_roster
+             (wish, agent_adapter_id, profile, worktree, hired_at, state)
+           VALUES ('w', 'agent', 'worker', '/wt/agent', 1, 'hired')`,
+        ).run();
+      });
+    }
+    mutate(guest, (db) => expect(unhireAgent(db, 'w', 'agent')).toBe(true));
+
+    const plan = planDatabaseReconciliation(bidirectional(host, guest));
+
+    expect(plan.status).toBe('changed');
+    expect(target(plan, 'left').changes.deletions).toEqual([
+      { table: 'hire_roster', wish: 'w', agentAdapterId: 'agent' },
+    ]);
+    expect(target(plan, 'right').changes.deletions).toEqual([]);
+    expect(plan.report.targets.map(({ changes }) => changes.deletions)).toEqual([1, 0]);
+    expect(applyDatabaseReconciliation(plan)).toMatchObject({ status: 'changed', converged: true });
+    for (const path of [host, guest]) {
+      mutate(path, (db) => {
+        expect(db.query('SELECT * FROM hire_roster').all()).toEqual([]);
+        expect(
+          db.query('SELECT count(*) AS count FROM meta WHERE key LIKE ?').get(`${RECONCILIATION_TOMBSTONE_PREFIX}%`),
+        ).toEqual({ count: 1 });
+      });
+    }
+    expect(planDatabaseReconciliation(bidirectional(host, guest)).status).toBe('no-op');
+  });
+
+  test('malformed tombstones and a live-row contradiction fail closed before planning', () => {
+    const peer = currentDb('peer');
+    const malformed = currentDb('malformed-tombstone');
+    mutate(malformed, (db) => {
+      db.query('INSERT INTO meta (key, value) VALUES (?, ?)').run(
+        `${RECONCILIATION_TOMBSTONE_PREFIX}hire_roster:not-canonical-base64`,
+        'deleted',
+      );
+    });
+    expect(dryRunDatabaseReconciliation(bidirectional(malformed, peer)).operationalFailure?.code).toBe('invalid-data');
+
+    const contradictory = currentDb('contradictory-tombstone');
+    mutate(contradictory, (db) => {
+      db.query(
+        `INSERT INTO hire_roster
+           (wish, agent_adapter_id, profile, worktree, hired_at, state)
+         VALUES ('w', 'agent', NULL, '/wt/agent', 1, 'hired')`,
+      ).run();
+      const tombstone = reconciliationTombstoneMeta({ table: 'hire_roster', wish: 'w', agentAdapterId: 'agent' });
+      db.query('INSERT INTO meta (key, value) VALUES (?, ?)').run(tombstone.key, tombstone.value);
+    });
+    expect(dryRunDatabaseReconciliation(bidirectional(contradictory, peer)).operationalFailure?.code).toBe(
+      'invalid-data',
+    );
   });
 
   test('a cross-image uniqueness collision conflicts instead of planning an invalid target', () => {
