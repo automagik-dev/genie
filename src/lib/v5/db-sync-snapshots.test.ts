@@ -9,6 +9,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -1619,6 +1620,167 @@ describe('database sync snapshots', () => {
     expect(leakedRoot === undefined ? false : existsSync(leakedRoot)).toBe(true);
     expect(recoverDatabaseReconciliation(request)).toMatchObject({ status: 'none', generationId: null });
     if (leakedRoot !== undefined) rmSync(leakedRoot, { recursive: true, force: true });
+  });
+
+  test('zero retention canonicalizes a symlink-aliased temp parent and deletes its private root', () => {
+    const physicalTemp = join(fixtureRoot, 'physical-temp-success');
+    const aliasedTemp = join(fixtureRoot, 'aliased-temp-success');
+    mkdirSync(physicalTemp, { mode: 0o700 });
+    symlinkSync(physicalTemp, aliasedTemp);
+    const left = currentDb('aliased-private-left');
+    const right = currentDb('aliased-private-right');
+    insertBoard(right, 'private');
+    const request = { mode: 'bidirectional' as const, leftPath: left, rightPath: right };
+    const identity = databaseSyncSnapshotIdentity(request);
+    let privateRoot: string | undefined;
+    const report = applyDatabaseReconciliationWithSnapshots(planDatabaseReconciliation(request), {
+      keepSnapshots: 0,
+      privateRoot: { temporaryDirectory: aliasedTemp },
+      onEvent: (event) => {
+        if (event.phase === 'payload-write' && privateRoot === undefined) {
+          privateRoot = readdirSync(physicalTemp)
+            .filter((name) => name.startsWith('genie-db-sync-private-'))
+            .map((name) => join(physicalTemp, name))
+            .find((path) => statSync(path).isDirectory());
+        }
+      },
+    });
+    expect(report.status).toBe('changed');
+    expect(report.recovery.status).toBe('converged');
+    expect(privateRoot).toBeDefined();
+    expect(privateRoot === undefined ? true : existsSync(privateRoot)).toBe(false);
+    expect(existsSync(identity.root)).toBe(false);
+    expect(recoverDatabaseReconciliation(request)).toMatchObject({ status: 'none', generationId: null });
+  });
+
+  test('private-root canonicalization failure removes the exact newly owned directory', () => {
+    const physicalTemp = join(fixtureRoot, 'physical-temp-canonical-failure');
+    const aliasedTemp = join(fixtureRoot, 'aliased-temp-canonical-failure');
+    mkdirSync(physicalTemp, { mode: 0o700 });
+    symlinkSync(physicalTemp, aliasedTemp);
+    const left = currentDb('canonical-failure-left');
+    const right = currentDb('canonical-failure-right');
+    insertBoard(right, 'private');
+    let created = false;
+    const report = applyDatabaseReconciliationWithSnapshots(
+      planDatabaseReconciliation({ mode: 'bidirectional', leftPath: left, rightPath: right }),
+      {
+        keepSnapshots: 0,
+        privateRoot: {
+          temporaryDirectory: aliasedTemp,
+          canonicalize: () => {
+            created = true;
+            throw new Error('canonicalization failed');
+          },
+        },
+      },
+    );
+    expect(created).toBe(true);
+    expect(report.status).toBe('operational-failure');
+    expect(report.cleanupFailures).toEqual([]);
+    expect(readdirSync(physicalTemp)).toEqual([]);
+    expect(boardNames(left)).toEqual([]);
+    expect(boardNames(right)).toEqual(['private']);
+  });
+
+  test('private-root binding failure removes the exact newly owned directory', () => {
+    const physicalTemp = join(fixtureRoot, 'physical-temp-binding-failure');
+    const aliasedTemp = join(fixtureRoot, 'aliased-temp-binding-failure');
+    mkdirSync(physicalTemp, { mode: 0o700 });
+    symlinkSync(physicalTemp, aliasedTemp);
+    const left = currentDb('binding-failure-left');
+    const right = currentDb('binding-failure-right');
+    insertBoard(right, 'private');
+    const native = nativePosixDirectory();
+    let injected = false;
+    const api = delegatePosix(native, {
+      openAt: (descriptor, name, flags, mode) => {
+        if (!injected && name.startsWith('genie-db-sync-private-')) {
+          injected = true;
+          throw new Error('private bind failed');
+        }
+        return native.openAt(descriptor, name, flags, mode);
+      },
+    });
+    const report = applyDatabaseReconciliationWithSnapshots(
+      planDatabaseReconciliation({ mode: 'bidirectional', leftPath: left, rightPath: right }),
+      {
+        keepSnapshots: 0,
+        privateRoot: { temporaryDirectory: aliasedTemp },
+        posixDirectory: { api },
+      },
+    );
+    expect(injected).toBe(true);
+    expect(report.status).toBe('operational-failure');
+    expect(report.cleanupFailures).toEqual([]);
+    expect(readdirSync(physicalTemp)).toEqual([]);
+    expect(boardNames(left)).toEqual([]);
+    expect(boardNames(right)).toEqual(['private']);
+  });
+
+  test('private-root setup cleanup failure is reported and remains undiscoverable', () => {
+    const physicalTemp = join(fixtureRoot, 'physical-temp-cleanup-failure');
+    const aliasedTemp = join(fixtureRoot, 'aliased-temp-cleanup-failure');
+    mkdirSync(physicalTemp, { mode: 0o700 });
+    symlinkSync(physicalTemp, aliasedTemp);
+    const left = currentDb('setup-cleanup-failure-left');
+    const right = currentDb('setup-cleanup-failure-right');
+    insertBoard(right, 'private');
+    const request = { mode: 'bidirectional' as const, leftPath: left, rightPath: right };
+    const report = applyDatabaseReconciliationWithSnapshots(planDatabaseReconciliation(request), {
+      keepSnapshots: 0,
+      privateRoot: {
+        temporaryDirectory: aliasedTemp,
+        canonicalize: () => {
+          throw new Error('canonicalization failed');
+        },
+      },
+      removeTree: () => {
+        throw new Error('cleanup denied');
+      },
+    });
+    expect(report.status).toBe('operational-failure');
+    expect(report.cleanupFailures).toContain('snapshot-cleanup-failed');
+    expect(readdirSync(physicalTemp)).toHaveLength(1);
+    expect(existsSync(databaseSyncSnapshotIdentity(request).root)).toBe(false);
+    expect(recoverDatabaseReconciliation(request)).toMatchObject({ status: 'none', generationId: null });
+    rmSync(join(physicalTemp, readdirSync(physicalTemp)[0]), { recursive: true });
+  });
+
+  test('private-root substitution never deletes or authorizes the replacement victim', () => {
+    const physicalTemp = join(fixtureRoot, 'physical-temp-substitution');
+    const aliasedTemp = join(fixtureRoot, 'aliased-temp-substitution');
+    mkdirSync(physicalTemp, { mode: 0o700 });
+    symlinkSync(physicalTemp, aliasedTemp);
+    const left = currentDb('private-substitution-left');
+    const right = currentDb('private-substitution-right');
+    insertBoard(right, 'private');
+    let victim: string | undefined;
+    let moved: string | undefined;
+    const report = applyDatabaseReconciliationWithSnapshots(
+      planDatabaseReconciliation({ mode: 'bidirectional', leftPath: left, rightPath: right }),
+      {
+        keepSnapshots: 0,
+        privateRoot: {
+          temporaryDirectory: aliasedTemp,
+          canonicalize: (lexicalRoot) => {
+            moved = `${lexicalRoot}.owned`;
+            victim = lexicalRoot;
+            renameSync(lexicalRoot, moved);
+            mkdirSync(victim, { mode: 0o700 });
+            writeFileSync(join(victim, 'sentinel'), 'victim');
+            return realpathSync(victim);
+          },
+        },
+      },
+    );
+    expect(report.status).toBe('operational-failure');
+    expect(report.cleanupFailures).toContain('snapshot-cleanup-failed');
+    expect(victim === undefined ? '' : readFileSync(join(victim, 'sentinel'), 'utf8')).toBe('victim');
+    expect(boardNames(left)).toEqual([]);
+    expect(boardNames(right)).toEqual(['private']);
+    if (victim !== undefined) rmSync(victim, { recursive: true });
+    if (moved !== undefined) rmSync(moved, { recursive: true });
   });
 
   test('POSIX resolution falls through Linux libc candidates and selects Darwin libSystem lazily', () => {

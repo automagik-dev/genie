@@ -13,8 +13,6 @@ import {
   openSync,
   readSync,
   realpathSync,
-  rmdirSync,
-  statSync,
   writeFileSync,
   writeSync,
 } from 'node:fs';
@@ -205,6 +203,11 @@ export interface DatabaseSyncSnapshotOptions {
   readonly now?: () => Date;
   readonly randomId?: () => string;
   readonly removeTree?: (path: string) => void;
+  /** Private N=0 root seams for aliased-temp and canonicalization fault tests. */
+  readonly privateRoot?: {
+    readonly temporaryDirectory?: string;
+    readonly canonicalize?: (path: string) => string;
+  };
   /** Lazy native descriptor-relative filesystem resolution seam for portability and fault tests. */
   readonly posixDirectory?: SnapshotPosixDirectoryDependencies;
   readonly applyOptions?: Omit<ReconciliationApplyOptions, 'busyTimeoutMs' | 'onEvent' | 'onLocked'>;
@@ -998,24 +1001,79 @@ function makeManifest(
   };
 }
 
+function cleanupFailedPrivateRoot(
+  lexicalPath: string,
+  physicalParent: string,
+  name: string,
+  identity: FileIdentity,
+  options: DatabaseSyncSnapshotOptions,
+): SnapshotFailureCode[] {
+  try {
+    options.removeTree?.(lexicalPath);
+    const parent = openBoundDirectory(physicalParent, false, options, false, true);
+    try {
+      removeBoundTreeAt(parent, name, join(physicalParent, name), identity, options);
+    } finally {
+      closeBoundDirectory(parent);
+    }
+    return [];
+  } catch {
+    return ['snapshot-cleanup-failed'];
+  }
+}
+
+function privateRootFailure(caught: unknown, cleanupFailures: readonly SnapshotFailureCode[]): SnapshotError {
+  if (caught instanceof SnapshotError) {
+    return new SnapshotError(caught.code, caught.message, [...caught.cleanupFailures, ...cleanupFailures]);
+  }
+  return new SnapshotError(
+    'snapshot-publication-failed',
+    caught instanceof Error ? caught.message : 'Private snapshot root setup failed.',
+    cleanupFailures,
+  );
+}
+
 function createPrivateRoot(options: DatabaseSyncSnapshotOptions): {
   readonly path: string;
   readonly identity: FileIdentity;
 } {
-  const root = mkdtempSync(join(tmpdir(), 'genie-db-sync-private-'));
-  const mode = statSync(root).mode & 0o777;
-  if (mode !== 0o700) {
-    rmdirSync(root);
-    throw new SnapshotError(
-      'snapshot-publication-failed',
-      'Private snapshot directory was not created with mode 0700.',
-    );
-  }
-  const binding = openBoundDirectory(root, false, options, true);
+  const temporaryDirectory = options.privateRoot?.temporaryDirectory ?? tmpdir();
+  const physicalParent = realpathSync(temporaryDirectory);
+  const lexicalRoot = mkdtempSync(join(temporaryDirectory, 'genie-db-sync-private-'));
+  const initial = lstatSync(lexicalRoot);
+  const identity = fileIdentity(initial);
+  const name = basename(lexicalRoot);
+  let cleanupParent = physicalParent;
   try {
-    return { path: root, identity: binding.identity };
-  } finally {
-    closeBoundDirectory(binding);
+    const currentUid = typeof process.getuid === 'function' ? process.getuid() : initial.uid;
+    if (
+      !initial.isDirectory() ||
+      initial.isSymbolicLink() ||
+      initial.uid !== currentUid ||
+      (initial.mode & 0o777) !== 0o700
+    ) {
+      throw new SnapshotError(
+        'snapshot-publication-failed',
+        'Private snapshot directory was not created with mode 0700.',
+      );
+    }
+    const canonicalize = options.privateRoot?.canonicalize ?? realpathSync;
+    const physicalRoot = canonicalize(lexicalRoot);
+    if (!isAbsolute(physicalRoot) || resolve(physicalRoot) !== physicalRoot || basename(physicalRoot) !== name) {
+      throw new SnapshotError('snapshot-publication-failed', 'Private snapshot directory canonical identity changed.');
+    }
+    cleanupParent = dirname(physicalRoot);
+    const binding = openBoundDirectory(physicalRoot, false, options, true);
+    try {
+      if (!sameFileIdentity(identity, binding.identity)) {
+        throw new SnapshotError('snapshot-publication-failed', 'Private snapshot directory identity changed.');
+      }
+      return { path: physicalRoot, identity };
+    } finally {
+      closeBoundDirectory(binding);
+    }
+  } catch (caught) {
+    throw privateRootFailure(caught, cleanupFailedPrivateRoot(lexicalRoot, cleanupParent, name, identity, options));
   }
 }
 
