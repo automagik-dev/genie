@@ -32,6 +32,7 @@ import { registerMcpCommand } from './term-commands/mcp.js';
 import { registerOmniCommands } from './term-commands/omni.js';
 import { registerUiBridgeCommand } from './term-commands/ui-bridge.js';
 import { registerV5BoardCommands } from './term-commands/v5-board.js';
+import { registerV5DatabaseSyncCommand } from './term-commands/v5-db-sync.js';
 import { registerV5TaskCommands } from './term-commands/v5-task.js';
 
 const program = new Command();
@@ -191,6 +192,7 @@ registerMcpCommand(program);
 registerUiBridgeCommand(program);
 registerV5TaskCommands(program);
 registerV5BoardCommands(program);
+registerV5DatabaseSyncCommand(program);
 registerIdeaCommand(program);
 registerOmniCommands(program);
 
@@ -198,6 +200,10 @@ registerOmniCommands(program);
 // Universal workspace check — ensures workspace exists before commands that need it
 // ============================================================================
 
-installWorkspaceCheck(program);
+// `db` takes explicit database paths and must validate them before any legacy
+// workspace prompt can create state. It is therefore standalone like task and
+// board, without broadening the legacy middleware's shared exemption list.
+const requestedRootCommand = process.argv.slice(2).find((argument) => !argument.startsWith('-'));
+if (requestedRootCommand !== 'db') installWorkspaceCheck(program);
 
 await program.parseAsync(process.argv);

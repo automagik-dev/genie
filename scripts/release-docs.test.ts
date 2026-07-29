@@ -818,9 +818,10 @@ describe('Group E release and documentation contracts', () => {
     ).toContain('legacy workspace-write grants are forbidden');
   });
 
-  test('README and contributor command inventories match the 14-command source surface', () => {
+  test('README and contributor command inventories match the 15-command source surface', () => {
     const expected = [
       'board',
+      'db',
       'doctor',
       'help',
       'hook',
@@ -837,8 +838,8 @@ describe('Group E release and documentation contracts', () => {
     ];
     const readme = read('README.md');
     const contributor = read('CLAUDE.md');
-    expect(readme).toContain('14 CLI commands');
-    expect(contributor).toContain('Fourteen top-level commands');
+    expect(readme).toContain('15 CLI commands');
+    expect(contributor).toContain('Fifteen top-level commands');
     const readmeCommands = [...readme.matchAll(/^\| `genie ([a-z-]+)/gm)].map((match) => match[1]).sort();
     const contributorCommands = [...contributor.matchAll(/^\| `([a-z-]+)/gm)].map((match) => match[1]).sort();
     expect(readmeCommands).toEqual(expected);
