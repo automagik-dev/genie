@@ -27,6 +27,7 @@ import { tmpdir } from 'node:os';
 import { join, normalize } from 'node:path';
 import { linuxLibcCandidates } from '../install-transaction.js';
 import { CURRENT_SCHEMA_VERSION } from './genie-db.js';
+import { type ReconciliationTombstone, parseReconciliationTombstoneMeta } from './reconciliation-tombstone.js';
 import { BUSY_TIMEOUT_MS, isBusyError } from './sqlite-open.js';
 
 const PLAN_VERSION = 1 as const;
@@ -225,6 +226,7 @@ export interface ReconciliationTargetChanges {
   readonly taskDependencies: readonly TaskDependencyReconciliationRow[];
   readonly stageLog: readonly HistoryAddition<StageLogReconciliationValue>[];
   readonly taskEvents: readonly HistoryAddition<TaskEventReconciliationValue>[];
+  readonly deletions: readonly ReconciliationTombstone[];
 }
 
 export interface ReconciliationConflict {
@@ -262,7 +264,7 @@ export interface ReconciliationChangeCounts {
   readonly taskDependencies: number;
   readonly stageLog: number;
   readonly taskEvents: number;
-  readonly deletions: 0;
+  readonly deletions: number;
 }
 
 export interface ReconciliationTargetReport {
@@ -1629,6 +1631,7 @@ function readLogicalState(db: Database): LogicalState {
     stageLog: countValues(stages, stageLogKey),
     taskEvents: countValues(events, taskEventKey),
   };
+  validateInputTombstones(state);
   if (!dependencyGraphIsAcyclic(state.taskDependencies)) {
     throw error('invalid-data', 'A reconciliation input contains an invalid task dependency graph.');
   }
@@ -1730,6 +1733,39 @@ function stageLogKey(row: StageLogReconciliationValue): string {
 
 function taskEventKey(row: TaskEventReconciliationValue): string {
   return canonicalTuple([row.taskId, row.kind, row.note, row.authorKind, row.author, row.createdAt]);
+}
+
+function reconciliationTombstones(state: LogicalState): ReconciliationTombstone[] {
+  const tombstones: ReconciliationTombstone[] = [];
+  try {
+    for (const row of state.meta.values()) {
+      const tombstone = parseReconciliationTombstoneMeta(row.key, row.value);
+      if (tombstone !== null) tombstones.push(tombstone);
+    }
+  } catch {
+    throw error('invalid-data', 'A reconciliation input contains invalid tombstone metadata.');
+  }
+  return tombstones.sort((left, right) => compareCanonical(JSON.stringify(left), JSON.stringify(right)));
+}
+
+function tombstoneKey(tombstone: ReconciliationTombstone): string {
+  return canonicalTuple([tombstone.wish, tombstone.agentAdapterId]);
+}
+
+function tombstoneHasLiveRow(state: LogicalState, tombstone: ReconciliationTombstone): boolean {
+  return state.hireRoster.has(tombstoneKey(tombstone));
+}
+
+function validateInputTombstones(state: LogicalState): void {
+  if (reconciliationTombstones(state).some((tombstone) => tombstoneHasLiveRow(state, tombstone))) {
+    throw error('invalid-data', 'A reconciliation input contains both a tombstone and its live row.');
+  }
+}
+
+function applyTombstonesToState(state: LogicalState): void {
+  for (const tombstone of reconciliationTombstones(state)) {
+    state.hireRoster.delete(tombstoneKey(tombstone));
+  }
 }
 
 function boardValues(row: BoardReconciliationRow): readonly (string | bigint | null)[] {
@@ -2143,6 +2179,8 @@ function reconcileStates(
   }
 
   if (conflicts.length === 0) {
+    applyTombstonesToState(left);
+    applyTombstonesToState(right);
     if (mode === 'bidirectional') validatePlannedTargetIntegrity(left, 'left', conflicts);
     validatePlannedTargetIntegrity(right, mode === 'bidirectional' ? 'right' : 'destination', conflicts);
   }
@@ -2181,6 +2219,12 @@ function historyAdditions<T>(
     .map(({ value, count }) => ({ value, count }));
 }
 
+function targetDeletions(current: LogicalState, target: LogicalState): ReconciliationTombstone[] {
+  return reconciliationTombstones(target).filter(
+    (tombstone) => tombstoneHasLiveRow(current, tombstone) && !tombstoneHasLiveRow(target, tombstone),
+  );
+}
+
 function targetChanges(current: LogicalState, target: LogicalState): ReconciliationTargetChanges {
   return {
     boards: changedRows(current.boards, target.boards, boardValues),
@@ -2191,6 +2235,7 @@ function targetChanges(current: LogicalState, target: LogicalState): Reconciliat
     taskDependencies: addedSetRows(current.taskDependencies, target.taskDependencies),
     stageLog: historyAdditions(current.stageLog, target.stageLog),
     taskEvents: historyAdditions(current.taskEvents, target.taskEvents),
+    deletions: targetDeletions(current, target),
   };
 }
 
@@ -2204,6 +2249,7 @@ function emptyChanges(): ReconciliationTargetChanges {
     taskDependencies: [],
     stageLog: [],
     taskEvents: [],
+    deletions: [],
   };
 }
 
@@ -2217,12 +2263,12 @@ function changeCounts(changes: ReconciliationTargetChanges): ReconciliationChang
     taskDependencies: changes.taskDependencies.length,
     stageLog: changes.stageLog.reduce((total, addition) => total + addition.count, 0),
     taskEvents: changes.taskEvents.reduce((total, addition) => total + addition.count, 0),
-    deletions: 0,
+    deletions: changes.deletions.length,
   };
 }
 
 function hasChanges(changes: ReconciliationTargetChanges): boolean {
-  return Object.entries(changeCounts(changes)).some(([name, count]) => name !== 'deletions' && count > 0);
+  return Object.values(changeCounts(changes)).some((count) => count > 0);
 }
 
 function deepFreeze<T>(value: T): T {
@@ -2912,9 +2958,18 @@ function applyMeta(db: Database, rows: readonly MetaReconciliationRow[]): void {
   for (const row of rows) upsert.run(...metaValues(row));
 }
 
+function applyDeletions(db: Database, tombstones: readonly ReconciliationTombstone[]): void {
+  const deleteHire = db.query('DELETE FROM hire_roster WHERE wish = ? AND agent_adapter_id = ?');
+  for (const tombstone of tombstones) {
+    deleteHire.run(tombstone.wish, tombstone.agentAdapterId);
+  }
+}
+
 function applyTargetChanges(db: Database, changes: ReconciliationTargetChanges): void {
-  // Parent rows precede dependents. The backfill marker is written last so its
-  // logical coverage invariant is never transiently asserted ahead of history.
+  // Tombstoned independent rows are removed before upserts. Parent rows then
+  // precede dependents. The backfill marker is written last so its logical
+  // coverage invariant is never transiently asserted ahead of history.
+  applyDeletions(db, changes.deletions);
   applyBoards(db, changes.boards);
   applyTasks(db, changes.tasks);
   applyWishGroups(db, changes.wishGroups);
@@ -2935,6 +2990,7 @@ function completeStateChanges(state: LogicalState): ReconciliationTargetChanges 
     taskDependencies: [...state.taskDependencies.values()],
     stageLog: [...state.stageLog.values()].map(({ value, count }) => ({ value, count })),
     taskEvents: [...state.taskEvents.values()].map(({ value, count }) => ({ value, count })),
+    deletions: [],
   };
 }
 

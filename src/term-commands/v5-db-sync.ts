@@ -433,7 +433,7 @@ function changesLine(target: ReconciliationTargetReport): string {
   const changed = Object.entries(target.changes)
     .filter(([name, count]) => name !== 'deletions' && count > 0)
     .map(([name, count]) => `${name}=${count}`);
-  return `  ${target.role}: ${changed.length === 0 ? 'no changes' : changed.join(', ')}; deletions=0`;
+  return `  ${target.role}: ${changed.length === 0 ? 'no changes' : changed.join(', ')}; deletions=${target.changes.deletions}`;
 }
 
 function humanLines(report: DatabaseSyncCliReport): string[] {

@@ -13,6 +13,7 @@
 
 import type { Database } from 'bun:sqlite';
 import { createHash, randomBytes } from 'node:crypto';
+import { reconciliationTombstoneMeta } from './reconciliation-tombstone.js';
 
 // ============================================================================
 // Type boundaries
@@ -1294,31 +1295,43 @@ function mapHire(row: RawHire): HireRosterRow {
  * `(wish, agent_adapter_id)`: a re-hire refreshes profile/worktree/state but
  * preserves the original `hired_at` by OMITTING `hired_at` from the `ON CONFLICT
  * DO UPDATE SET` list — an unset column keeps its stored value, so the first
- * hire's timestamp survives every re-hire and the call converges on one row. A
- * single statement is atomic on its own; the WAL + busy_timeout the handle
- * carries (see sqlite-open.ts) serializes it against concurrent writers.
+ * hire's timestamp survives every re-hire and the call converges on one row.
+ * The transaction also clears this replica's reconciliation tombstone.
  */
 export function hireAgent(db: Database, input: HireAgentInput): HireRosterRow {
   const now = Date.now();
   const state = input.state ?? 'hired';
-  db.query(
-    `INSERT INTO hire_roster (wish, agent_adapter_id, profile, worktree, hired_at, state)
-     VALUES (?, ?, ?, ?, ?, ?)
-     ON CONFLICT(wish, agent_adapter_id) DO UPDATE SET
-       profile  = excluded.profile,
-       worktree = excluded.worktree,
-       state    = excluded.state`,
-  ).run(input.wish, input.agentAdapterId, input.profile ?? null, input.worktree, now, state);
+  const tombstone = reconciliationTombstoneMeta({
+    table: 'hire_roster',
+    wish: input.wish,
+    agentAdapterId: input.agentAdapterId,
+  });
+  db.transaction(() => {
+    db.query('DELETE FROM meta WHERE key = ?').run(tombstone.key);
+    db.query(
+      `INSERT INTO hire_roster (wish, agent_adapter_id, profile, worktree, hired_at, state)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(wish, agent_adapter_id) DO UPDATE SET
+         profile  = excluded.profile,
+         worktree = excluded.worktree,
+         state    = excluded.state`,
+    ).run(input.wish, input.agentAdapterId, input.profile ?? null, input.worktree, now, state);
+  })();
   return getHire(db, input.wish, input.agentAdapterId) as HireRosterRow;
 }
 
 /**
- * Unhire an agent adapter from a wish. Idempotent single-row delete: removing an
- * absent hire is a no-op that returns false; a real removal returns true.
+ * Unhire an agent adapter from a wish. The transaction records a durable
+ * reconciliation tombstone even when the live row is already absent. The
+ * boolean reports whether this call removed a live local row.
  */
 export function unhireAgent(db: Database, wish: string, agentAdapterId: string): boolean {
-  const res = db.query('DELETE FROM hire_roster WHERE wish = ? AND agent_adapter_id = ?').run(wish, agentAdapterId);
-  return res.changes > 0;
+  const tombstone = reconciliationTombstoneMeta({ table: 'hire_roster', wish, agentAdapterId });
+  return db.transaction(() => {
+    const res = db.query('DELETE FROM hire_roster WHERE wish = ? AND agent_adapter_id = ?').run(wish, agentAdapterId);
+    db.query('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run(tombstone.key, tombstone.value);
+    return res.changes > 0;
+  })();
 }
 
 export function getHire(db: Database, wish: string, agentAdapterId: string): HireRosterRow | null {

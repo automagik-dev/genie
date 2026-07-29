@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { openDb, resolveDbPath } from '../lib/v5/genie-db.js';
-import { createTask, getTask, listTasks } from '../lib/v5/task-state.js';
+import { createTask, getTask, hireAgent, listHires, listTasks, unhireAgent } from '../lib/v5/task-state.js';
 import { DATABASE_SYNC_EXIT_CODES } from './v5-db-sync.js';
 
 const GENIE = join(import.meta.dir, '..', 'genie.ts');
@@ -499,6 +499,32 @@ describe('database sync CLI contract', () => {
     const noOp = await sync(right.database, left.database, '--json');
     expect(noOp.code).toBe(DATABASE_SYNC_EXIT_CODES.success);
     expect(parseJson(noOp).status).toBe('no-op');
+  });
+
+  test('bidirectional apply propagates an explicit roster tombstone without a schema migration', async () => {
+    const host = createRepo('tombstone-host');
+    const guest = createRepo('tombstone-guest');
+    const hostDb = openDb({ path: host.database });
+    hireAgent(hostDb, { wish: 'w', agentAdapterId: 'agent', worktree: '/wt/host' });
+    hostDb.close();
+    const guestDb = openDb({ path: guest.database });
+    expect(unhireAgent(guestDb, 'w', 'agent')).toBe(false);
+    guestDb.close();
+
+    const preview = await sync(host.database, guest.database, '--dry-run');
+    expect(preview.code).toBe(DATABASE_SYNC_EXIT_CODES.success);
+    expect(preview.stdout).toContain('left: meta=1; deletions=1');
+
+    const result = await sync(host.database, guest.database, '--json');
+
+    expect(result.code).toBe(DATABASE_SYNC_EXIT_CODES.success);
+    expect(parseJson(result).plan?.targets.map((target) => target.changes.deletions)).toEqual([1, 0]);
+    for (const path of [host.database, guest.database]) {
+      const db = openDb({ path });
+      expect(listHires(db, 'w')).toEqual([]);
+      expect((db.query('PRAGMA user_version').get() as { user_version: number }).user_version).toBeGreaterThan(0);
+      db.close();
+    }
   });
 
   test('bidirectional mutable conflicts use exit 3, bounded digests/counts, and zero mutation', async () => {
