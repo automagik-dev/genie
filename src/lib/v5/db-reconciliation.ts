@@ -24,7 +24,7 @@ import {
   statSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, normalize } from 'node:path';
+import { isAbsolute, join, normalize } from 'node:path';
 import { linuxLibcCandidates } from '../install-transaction.js';
 import { CURRENT_SCHEMA_VERSION } from './genie-db.js';
 import { type ReconciliationTombstone, parseReconciliationTombstoneMeta } from './reconciliation-tombstone.js';
@@ -370,11 +370,18 @@ export interface ReconciliationLockedOperationOptions {
   readonly advisoryFlock?: ReconciliationAdvisoryFlockDependencies;
   readonly onAdvisoryDescriptorOpened?: (descriptor: number) => void;
   readonly advisoryUnlock?: (descriptor: number) => number;
+  /** Canonical paths whose advisory identities must be reserved without opening them as SQLite inputs. */
+  readonly advisoryOnlyPaths?: readonly string[];
 }
 
 export interface ReconciliationLockedOperationResult<T> {
   readonly value: T;
   readonly afterCommit?: () => void;
+}
+
+export interface ReconciliationLockedOperationContext {
+  /** Remaining milliseconds in the one total advisory + SQLite acquisition budget. */
+  remainingWaitMs(): number;
 }
 
 export class ReconciliationLockedOperationError extends Error {
@@ -2585,9 +2592,12 @@ function acquirePlannedAdvisoryLocks(
   inputs: readonly { readonly physical: PhysicalInput }[],
   deadline: number,
   options: ReconciliationApplyOptions,
+  advisoryOnlyPaths: readonly string[] = [],
 ): AdvisoryLock[] {
   const locks: AdvisoryLock[] = [];
-  const paths = [...new Set(inputs.map((input) => input.physical.canonicalPath))].sort(compareCanonical);
+  const paths = [...new Set([...inputs.map((input) => input.physical.canonicalPath), ...advisoryOnlyPaths])].sort(
+    compareCanonical,
+  );
   try {
     for (const path of paths) locks.push(acquireAdvisoryLock(path, remainingLockWait(deadline), options));
     return locks;
@@ -3409,7 +3419,10 @@ function emitLockedOperationEvent(
  */
 export function withLockedReconciliationDatabases<T>(
   request: ReconciliationRequest,
-  operation: (inputs: readonly ReconciliationLockedDatabaseInput[]) => ReconciliationLockedOperationResult<T>,
+  operation: (
+    inputs: readonly ReconciliationLockedDatabaseInput[],
+    context: ReconciliationLockedOperationContext,
+  ) => ReconciliationLockedOperationResult<T>,
   options: ReconciliationLockedOperationOptions = {},
 ): T {
   let advisoryLocks: AdvisoryLock[] = [];
@@ -3443,13 +3456,25 @@ export function withLockedReconciliationDatabases<T>(
         physical,
       };
     });
+    const advisoryOnlyPaths = options.advisoryOnlyPaths ?? [];
+    if (
+      advisoryOnlyPaths.length > 8 ||
+      advisoryOnlyPaths.some((path) => !isAbsolute(path) || normalize(path) !== path || path.includes('\0'))
+    ) {
+      throw new ApplyBoundaryError({ code: 'invalid-plan', phase: 'plan-validation' });
+    }
     const deadline = Date.now() + timeoutMs;
-    advisoryLocks = acquirePlannedAdvisoryLocks(requested, deadline, lockOptions);
+    advisoryLocks = acquirePlannedAdvisoryLocks(requested, deadline, lockOptions, advisoryOnlyPaths);
     locked = openLockedDatabases(requested, deadline, lockOptions);
     const inputs = lockedOperationInputs(requested, locked);
     const initial = inputs.map((input) => input.observe());
     if (initial[0].schemaFingerprint !== initial[1].schemaFingerprint) unsupportedSchema();
-    result = operation(inputs);
+    result = operation(
+      inputs,
+      Object.freeze({
+        remainingWaitMs: () => remainingLockWait(deadline),
+      }),
+    );
     const final = inputs.map((input) => input.observe());
     if (final.some((image) => image.schemaFingerprint !== initial[0].schemaFingerprint)) unsupportedSchema();
     for (const item of locked) {

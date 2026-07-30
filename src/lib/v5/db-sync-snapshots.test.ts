@@ -3,12 +3,15 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import {
   chmodSync,
+  closeSync,
   existsSync,
+  fstatSync,
   linkSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
+  readlinkSync,
   realpathSync,
   renameSync,
   rmSync,
@@ -23,14 +26,19 @@ import {
   MAX_RECONCILIATION_DATABASE_BYTES,
   applyDatabaseReconciliation,
   planDatabaseReconciliation,
+  reconciliationAdvisoryLockPath,
 } from './db-reconciliation.js';
 import {
   SnapshotError,
   type SnapshotPosixDirectoryApi,
   applyDatabaseReconciliationWithSnapshots,
+  applyDatabaseSyncExecution,
+  applyMissingDatabaseBootstrap,
   databaseSyncSnapshotIdentity,
   deserializeSnapshotBytes,
   normalizeSerializedSqliteForDeserialize,
+  planDatabaseSyncExecution,
+  planMissingDatabaseBootstrap,
   recoverDatabaseReconciliation,
   resolveSnapshotPosixDirectory,
   rollbackDatabaseReconciliation,
@@ -138,6 +146,9 @@ function delegatePosix(
   return {
     openAt: overrides.openAt ?? ((...args) => api.openAt(...args)),
     mkdirAt: overrides.mkdirAt ?? ((...args) => api.mkdirAt(...args)),
+    linkAt:
+      overrides.linkAt ??
+      (api.linkAt === undefined ? undefined : (...args) => (api.linkAt as NonNullable<typeof api.linkAt>)(...args)),
     renameAt: overrides.renameAt ?? ((...args) => api.renameAt(...args)),
     unlinkAt: overrides.unlinkAt ?? ((...args) => api.unlinkAt(...args)),
     list: overrides.list ?? ((...args) => api.list(...args)),
@@ -241,6 +252,439 @@ describe('database sync snapshots', () => {
     expect(logicalRows(restored)).toEqual(before);
     expect(restored.query('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' });
     restored.close();
+  });
+
+  test('missing-side bootstrap publishes the validated complete WAL-backed logical image and is idempotent', () => {
+    const source = currentDb('bootstrap-source');
+    const target = join(fixtureRoot, 'bootstrap-target.db');
+    const writer = new Database(source);
+    writer.exec('PRAGMA journal_mode = WAL');
+    writer.exec('PRAGMA wal_autocheckpoint = 0');
+    writer.query("INSERT INTO boards (id, name, created_at, lanes) VALUES ('wal', 'WAL', 1, NULL)").run();
+    expect(existsSync(`${source}-wal`)).toBe(true);
+    expect(statSync(`${source}-wal`).size).toBeGreaterThan(0);
+
+    const request = { mode: 'bidirectional' as const, leftPath: source, rightPath: target };
+    const bootstrap = planMissingDatabaseBootstrap(request);
+    expect(bootstrap).toMatchObject({ existingRole: 'left', missingRole: 'right' });
+    if (bootstrap === null) throw new Error('expected bootstrap plan');
+    const report = applyMissingDatabaseBootstrap(bootstrap);
+
+    expect(report).toMatchObject({ status: 'changed', failure: null, cleanupFailures: [] });
+    expect(boardNames(target)).toEqual(['WAL']);
+    const repeated = planDatabaseReconciliation(request);
+    expect(repeated.status).toBe('no-op');
+    expect(repeated.inputs[0].logicalDigest).toBe(repeated.inputs[1].logicalDigest);
+    expect(readdirSync(fixtureRoot).filter((name) => name.startsWith('.genie-db-bootstrap-'))).toEqual([]);
+    writer.close();
+  });
+
+  test('missing-side bootstrap shares one sorted advisory wait deadline', () => {
+    const source = currentDb('bootstrap-budget-a-source');
+    const target = join(fixtureRoot, 'bootstrap-budget-z-target.db');
+    const bootstrap = planMissingDatabaseBootstrap({
+      mode: 'bidirectional',
+      leftPath: source,
+      rightPath: target,
+    });
+    if (bootstrap === null) throw new Error('expected bootstrap plan');
+    const descriptors: number[] = [];
+    const openedPaths: string[] = [];
+    const firstAttempt = new Map<number, number>();
+    const startedAt = Date.now();
+    const fakeFlock = (descriptor: number, operation: number): number => {
+      if (operation === 8) return 0;
+      const index = descriptors.indexOf(descriptor);
+      const attemptedAt = firstAttempt.get(descriptor) ?? Date.now();
+      firstAttempt.set(descriptor, attemptedAt);
+      const waitFor = index === 0 ? 30 : 200;
+      return Date.now() - attemptedAt >= waitFor ? 0 : -1;
+    };
+
+    const report = applyMissingDatabaseBootstrap(bootstrap, {
+      busyTimeoutMs: 80,
+      applyOptions: {
+        advisoryFlock:
+          process.platform === 'darwin'
+            ? { platform: 'darwin', darwinOpener: () => fakeFlock }
+            : {
+                platform: 'linux',
+                architecture: process.arch,
+                linuxCandidates: ['injected'],
+                linuxOpener: () => fakeFlock,
+              },
+        onAdvisoryDescriptorOpened: (descriptor) => {
+          descriptors.push(descriptor);
+          const descriptorRoot = process.platform === 'darwin' ? '/dev/fd' : '/proc/self/fd';
+          openedPaths.push(readlinkSync(`${descriptorRoot}/${descriptor}`));
+        },
+      },
+    });
+    const elapsed = Date.now() - startedAt;
+
+    expect(report).toMatchObject({
+      status: 'operational-failure',
+      failure: 'locked-operation-failed',
+      cleanupFailures: [],
+    });
+    expect(existsSync(target)).toBe(false);
+    expect(openedPaths).toEqual([reconciliationAdvisoryLockPath(source), reconciliationAdvisoryLockPath(target)]);
+    expect(elapsed).toBeGreaterThanOrEqual(60);
+    expect(elapsed).toBeLessThan(300);
+  });
+
+  test('missing-side bootstrap gives target SQLite only the advisory deadline remainder', async () => {
+    const source = currentDb('bootstrap-sqlite-budget-a-source');
+    const target = join(fixtureRoot, 'bootstrap-sqlite-budget-z-target.db');
+    const ready = join(fixtureRoot, 'bootstrap-sqlite-budget.ready');
+    const bootstrap = planMissingDatabaseBootstrap({
+      mode: 'bidirectional',
+      leftPath: source,
+      rightPath: target,
+    });
+    if (bootstrap === null) throw new Error('expected bootstrap plan');
+    const descriptors: number[] = [];
+    const openedPaths: string[] = [];
+    const firstAttempt = new Map<number, number>();
+    const busyTimeoutMs = 400;
+    const advisoryDelayMs = 250;
+    const targetHoldMs = 220;
+    let blocker: ReturnType<typeof Bun.spawn> | null = null;
+    let blockerReadyAt = 0;
+    const fakeFlock = (descriptor: number, operation: number): number => {
+      if (operation === 8) return 0;
+      if (descriptors.indexOf(descriptor) !== 0) return 0;
+      const attemptedAt = firstAttempt.get(descriptor) ?? Date.now();
+      firstAttempt.set(descriptor, attemptedAt);
+      return Date.now() - attemptedAt >= advisoryDelayMs ? 0 : -1;
+    };
+
+    const report = applyMissingDatabaseBootstrap(bootstrap, {
+      busyTimeoutMs,
+      onEvent: (event) => {
+        if (event.phase !== 'bootstrap-publish' || event.state !== 'after') return;
+        const code = `
+          import { Database } from 'bun:sqlite';
+          const db = new Database(Bun.argv[1]);
+          db.exec('PRAGMA busy_timeout = 0');
+          db.exec('BEGIN IMMEDIATE');
+          await Bun.write(Bun.argv[2], 'ready');
+          await Bun.sleep(Number(Bun.argv[3]));
+          db.exec('ROLLBACK');
+          db.close();
+        `;
+        blocker = Bun.spawn({
+          cmd: [process.execPath, '-e', code, target, ready, String(targetHoldMs)],
+          stdout: 'ignore',
+          stderr: 'ignore',
+        });
+        const readyDeadline = Date.now() + 5_000;
+        while (!existsSync(ready) && Date.now() < readyDeadline) Bun.sleepSync(5);
+        if (!existsSync(ready)) throw new Error('target SQLite blocker did not acquire its transaction');
+        blockerReadyAt = Date.now();
+      },
+      applyOptions: {
+        advisoryFlock:
+          process.platform === 'darwin'
+            ? { platform: 'darwin', darwinOpener: () => fakeFlock }
+            : {
+                platform: 'linux',
+                architecture: process.arch,
+                linuxCandidates: ['injected'],
+                linuxOpener: () => fakeFlock,
+              },
+        onAdvisoryDescriptorOpened: (descriptor) => {
+          descriptors.push(descriptor);
+          const descriptorRoot = process.platform === 'darwin' ? '/dev/fd' : '/proc/self/fd';
+          openedPaths.push(readlinkSync(`${descriptorRoot}/${descriptor}`));
+        },
+      },
+    });
+    const applyFinishedAt = Date.now();
+    const blockerProcess = blocker as ReturnType<typeof Bun.spawn> | null;
+    if (blockerProcess === null) throw new Error('target SQLite blocker was not started');
+    const blockerExit = await blockerProcess.exited;
+
+    expect(blockerExit).toBe(0);
+    expect(report).toMatchObject({
+      status: 'operational-failure',
+      failure: 'snapshot-publication-failed',
+      cleanupFailures: [],
+    });
+    expect(openedPaths).toEqual([reconciliationAdvisoryLockPath(source), reconciliationAdvisoryLockPath(target)]);
+    expect(blockerReadyAt).toBeGreaterThan(0);
+    expect(applyFinishedAt - blockerReadyAt).toBeLessThan(targetHoldMs);
+  });
+
+  test('missing-side bootstrap never clobbers a target that appears at the publication boundary', () => {
+    const source = currentDb('bootstrap-race-source');
+    const target = join(fixtureRoot, 'bootstrap-race-target.db');
+    const request = { mode: 'bidirectional' as const, leftPath: source, rightPath: target };
+    const bootstrap = planMissingDatabaseBootstrap(request);
+    if (bootstrap === null) throw new Error('expected bootstrap plan');
+    const foreign = Buffer.from('foreign target bytes');
+
+    const report = applyMissingDatabaseBootstrap(bootstrap, {
+      onEvent: (event) => {
+        if (event.phase === 'bootstrap-publish' && event.state === 'before') {
+          writeFileSync(target, foreign, { mode: 0o600 });
+        }
+      },
+    });
+
+    expect(report.status).toBe('operational-failure');
+    expect(readFileSync(target)).toEqual(foreign);
+    expect(readdirSync(fixtureRoot).filter((name) => name.startsWith('.genie-db-bootstrap-'))).toEqual([]);
+  });
+
+  test('missing-side bootstrap rejects a named-target substitution after final target validation', () => {
+    const source = currentDb('bootstrap-final-target-source');
+    const parent = join(fixtureRoot, 'bootstrap-final-target-parent');
+    const target = join(parent, 'target.db');
+    const retained = join(parent, 'retained-owned-target.db');
+    const foreign = Buffer.from('foreign replacement must remain undamaged');
+    mkdirSync(parent, { mode: 0o775 });
+    chmodSync(parent, 0o775);
+    const bootstrap = planMissingDatabaseBootstrap({
+      mode: 'bidirectional',
+      leftPath: source,
+      rightPath: target,
+    });
+    if (bootstrap === null) throw new Error('expected bootstrap plan');
+
+    const report = applyMissingDatabaseBootstrap(bootstrap, {
+      onEvent: (event) => {
+        if (event.phase === 'bootstrap-target-validate' && event.state === 'after') {
+          renameSync(target, retained);
+          writeFileSync(target, foreign, { mode: 0o600 });
+        }
+      },
+    });
+
+    expect(report).toMatchObject({
+      status: 'operational-failure',
+      converged: false,
+      failure: 'snapshot-image-mismatch',
+      cleanupFailures: ['locked-operation-failed'],
+    });
+    expect(readFileSync(target)).toEqual(foreign);
+    expect(existsSync(retained)).toBe(true);
+  });
+
+  test('missing-side bootstrap rejects target-parent identity substitution before publication', () => {
+    const source = currentDb('bootstrap-parent-source');
+    const parent = join(fixtureRoot, 'bootstrap-parent');
+    const target = join(parent, 'target.db');
+    mkdirSync(parent, { mode: 0o700 });
+    const request = { mode: 'directional' as const, sourcePath: source, destinationPath: target };
+    const bootstrap = planMissingDatabaseBootstrap(request);
+    if (bootstrap === null) throw new Error('expected bootstrap plan');
+
+    const report = applyMissingDatabaseBootstrap(bootstrap, {
+      onEvent: (event) => {
+        if (event.phase === 'bootstrap-publish' && event.state === 'before') {
+          renameSync(parent, `${parent}.original`);
+          mkdirSync(parent, { mode: 0o700 });
+        }
+      },
+    });
+
+    expect(report.status).toBe('operational-failure');
+    expect(existsSync(target)).toBe(false);
+    expect(existsSync(join(`${parent}.original`, 'target.db'))).toBe(false);
+  });
+
+  test('missing-side bootstrap cleans its exact stage after a pre-validation failure', () => {
+    const source = currentDb('bootstrap-stage-source');
+    const target = join(fixtureRoot, 'bootstrap-stage-target.db');
+    const bootstrap = planMissingDatabaseBootstrap({
+      mode: 'bidirectional',
+      leftPath: source,
+      rightPath: target,
+    });
+    if (bootstrap === null) throw new Error('expected bootstrap plan');
+
+    const report = applyMissingDatabaseBootstrap(bootstrap, {
+      onEvent: (event) => {
+        if (event.phase === 'bootstrap-stage-validate' && event.state === 'before') {
+          throw new Error('injected pre-validation failure');
+        }
+      },
+    });
+
+    expect(report).toMatchObject({
+      operation: 'bootstrap',
+      status: 'operational-failure',
+      converged: false,
+      cleanupFailures: [],
+    });
+    expect(existsSync(target)).toBe(false);
+    expect(readdirSync(fixtureRoot).filter((name) => name.startsWith('.genie-db-bootstrap-'))).toEqual([]);
+  });
+
+  test('missing-side bootstrap reacquires exact stage ownership after first-fstat failure', () => {
+    const source = currentDb('bootstrap-first-fstat-source');
+    const target = join(fixtureRoot, 'bootstrap-first-fstat-target.db');
+    const bootstrap = planMissingDatabaseBootstrap({
+      mode: 'bidirectional',
+      leftPath: source,
+      rightPath: target,
+    });
+    if (bootstrap === null) throw new Error('expected bootstrap plan');
+    let calls = 0;
+
+    const report = applyMissingDatabaseBootstrap(bootstrap, {
+      bootstrapStageFstat: (descriptor) => {
+        if (calls++ === 0) throw new Error('injected first fstat failure');
+        return fstatSync(descriptor);
+      },
+    });
+
+    expect(report).toMatchObject({
+      status: 'operational-failure',
+      converged: false,
+      cleanupFailures: [],
+    });
+    expect(existsSync(target)).toBe(false);
+    expect(readdirSync(fixtureRoot).filter((name) => name.startsWith('.genie-db-bootstrap-'))).toEqual([]);
+  });
+
+  test('missing-side bootstrap rolls target back when parent close finalization fails', () => {
+    const source = currentDb('bootstrap-parent-close-source');
+    const target = join(fixtureRoot, 'bootstrap-parent-close-target.db');
+    const bootstrap = planMissingDatabaseBootstrap({
+      mode: 'bidirectional',
+      leftPath: source,
+      rightPath: target,
+    });
+    if (bootstrap === null) throw new Error('expected bootstrap plan');
+
+    const report = applyMissingDatabaseBootstrap(bootstrap, {
+      bootstrapCloseDirectory: (descriptor) => {
+        closeSync(descriptor);
+        throw new Error('injected parent close failure');
+      },
+    });
+
+    expect(report).toMatchObject({
+      status: 'operational-failure',
+      converged: false,
+      cleanupFailures: ['locked-close-failed'],
+    });
+    const writer = new Database(target);
+    writer.exec('PRAGMA busy_timeout = 0');
+    writer.exec('BEGIN IMMEDIATE');
+    writer.exec('ROLLBACK');
+    writer.close();
+  });
+
+  test('missing-side bootstrap reports a real stage unlink failure without false success', () => {
+    const source = currentDb('bootstrap-unlink-source');
+    const target = join(fixtureRoot, 'bootstrap-unlink-target.db');
+    const bootstrap = planMissingDatabaseBootstrap({
+      mode: 'bidirectional',
+      leftPath: source,
+      rightPath: target,
+    });
+    if (bootstrap === null) throw new Error('expected bootstrap plan');
+    const native = nativePosixDirectory();
+    const api = delegatePosix(native, {
+      unlinkAt: (descriptor, name, directory) => {
+        if (name.startsWith('.genie-db-bootstrap-')) throw new Error('injected unlink failure');
+        native.unlinkAt(descriptor, name, directory);
+      },
+    });
+
+    const report = applyMissingDatabaseBootstrap(bootstrap, { posixDirectory: { api } });
+
+    expect(report).toMatchObject({
+      status: 'operational-failure',
+      converged: false,
+      failure: 'snapshot-cleanup-failed',
+      cleanupFailures: ['snapshot-cleanup-failed'],
+    });
+    expect(readdirSync(fixtureRoot).filter((name) => name.startsWith('.genie-db-bootstrap-'))).toHaveLength(1);
+  });
+
+  test('library-owned bootstrap convergence rejects a writer mutation after publication', () => {
+    const source = currentDb('bootstrap-postimage-source');
+    const target = join(fixtureRoot, 'bootstrap-postimage-target.db');
+    const request = { mode: 'bidirectional' as const, leftPath: source, rightPath: target };
+    const execution = planDatabaseSyncExecution(request);
+    expect(execution.kind).toBe('bootstrap');
+
+    const result = applyDatabaseSyncExecution(execution, {
+      onEvent: (event) => {
+        if (event.phase === 'bootstrap-publish' && event.state === 'after') {
+          const writer = new Database(target);
+          writer.query("INSERT INTO boards (id, name, created_at, lanes) VALUES ('racer', 'racer', 1, NULL)").run();
+          writer.close();
+        }
+      },
+    });
+
+    expect(result.kind).toBe('bootstrap');
+    if (result.kind !== 'bootstrap') throw new Error('expected bootstrap result');
+    expect(result.report).toMatchObject({
+      operation: 'bootstrap',
+      status: 'operational-failure',
+      converged: false,
+      failure: 'snapshot-image-mismatch',
+    });
+    expect(result.report.inputs.find((input) => input.role === 'right')?.logicalDigest).toBeNull();
+    expect(boardNames(target)).toEqual(['racer']);
+  });
+
+  test('missing-side bootstrap grants no authority through symlinks, non-files, or unsafe parents', () => {
+    const source = currentDb('bootstrap-unsafe-source');
+    const sourceAlias = join(fixtureRoot, 'bootstrap-source-alias.db');
+    symlinkSync(source, sourceAlias);
+    expect(
+      planMissingDatabaseBootstrap({
+        mode: 'bidirectional',
+        leftPath: sourceAlias,
+        rightPath: join(fixtureRoot, 'missing-from-alias.db'),
+      }),
+    ).toBeNull();
+
+    const dangling = join(fixtureRoot, 'bootstrap-dangling.db');
+    symlinkSync(join(fixtureRoot, 'absent-target.db'), dangling);
+    expect(planMissingDatabaseBootstrap({ mode: 'bidirectional', leftPath: source, rightPath: dangling })).toBeNull();
+
+    const directory = join(fixtureRoot, 'bootstrap-directory.db');
+    mkdirSync(directory, { mode: 0o700 });
+    expect(planMissingDatabaseBootstrap({ mode: 'bidirectional', leftPath: source, rightPath: directory })).toBeNull();
+
+    const unsafeParent = join(fixtureRoot, 'bootstrap-unsafe-parent');
+    mkdirSync(unsafeParent, { mode: 0o777 });
+    chmodSync(unsafeParent, 0o777);
+    expect(
+      planMissingDatabaseBootstrap({
+        mode: 'directional',
+        sourcePath: source,
+        destinationPath: join(unsafeParent, 'missing.db'),
+      }),
+    ).toBeNull();
+  });
+
+  test('missing-side bootstrap rejects a non-owner 0775 target parent', () => {
+    const source = currentDb('bootstrap-non-owner-source');
+    const parent = join(fixtureRoot, 'bootstrap-non-owner-parent');
+    mkdirSync(parent, { mode: 0o775 });
+    chmodSync(parent, 0o775);
+    const ownerUid = statSync(parent).uid;
+    expect(statSync(parent).mode & 0o777).toBe(0o775);
+
+    const bootstrap = planMissingDatabaseBootstrap(
+      {
+        mode: 'directional',
+        sourcePath: source,
+        destinationPath: join(parent, 'missing.db'),
+      },
+      { bootstrapCurrentUid: () => (ownerUid === 0 ? 1 : 0) },
+    );
+
+    expect(bootstrap).toBeNull();
   });
 
   test('serialized snapshot normalization rejects short, non-SQLite, and inconsistent format headers', () => {

@@ -190,6 +190,12 @@ shared mutable task, board, wish-group, hire-roster, and unknown metadata
 keys. It writes only the destination. Both modes preserve destination-only rows:
 ordinary absence never means deletion.
 
+When exactly one named database is absent and the other is an exact-current
+Genie database, sync bootstraps the absent side from the complete logical image
+of the existing side, including committed WAL content. Dry-run reports that
+intent without creating the file or sidecars; apply uses the same bounded locks
+and refuses unsafe parents, path substitution, or a target that appears first.
+
 An explicit roster unhire (the `roster_unhire` UI-bridge operation) is the
 exception. It records a versioned tombstone in the existing metadata table, so
 a later sync removes the matching hire-roster row instead of resurrecting it.
