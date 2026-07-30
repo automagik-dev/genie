@@ -2,7 +2,7 @@ import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { openDb, resolveDbPath } from '../lib/v5/genie-db.js';
@@ -27,6 +27,7 @@ interface JsonReport {
     status: string;
     schemaFingerprint: string | null;
     targets: Array<{ role: string; changes: Record<string, number> }>;
+    bootstrap?: { sourceRole: string; targetRole: string };
     conflicts: { total: number; byTable: Record<string, number> };
     operationalFailure: { code: string; guidance?: string } | null;
   } | null;
@@ -136,7 +137,7 @@ function logicalInventory(path: string): string[] {
 
 function sqliteFileInventory(path: string): Record<string, string | null> {
   return Object.fromEntries(
-    ['', '-wal', '-shm'].map((suffix) => {
+    ['', '-wal', '-shm', '-journal'].map((suffix) => {
       const file = `${path}${suffix}`;
       return [
         suffix === '' ? 'database' : suffix.slice(1),
@@ -364,6 +365,174 @@ describe('database sync CLI contract', () => {
     expect(result.stdout).not.toContain('HOSTILE SAME-DATABASE TITLE');
   });
 
+  test('bidirectional apply bootstraps either absent side, then repeats as a matching no-op', async () => {
+    for (const missingFirst of [false, true]) {
+      const existing = createRepo(`bootstrap-existing-${missingFirst}`);
+      insertTask(existing.database, `task-${missingFirst}`, `bootstrap-${missingFirst}`);
+      const missing = join(root, `bootstrap-missing-${missingFirst}.db`);
+      const args = missingFirst ? [missing, existing.database] : [existing.database, missing];
+      const beforeLeft = sqliteFileInventory(args[0]);
+      const beforeRight = sqliteFileInventory(args[1]);
+
+      const preview = await sync(...args, '--dry-run', '--json');
+      expect(preview.code).toBe(DATABASE_SYNC_EXIT_CODES.success);
+      expect(existsSync(missing)).toBe(false);
+      expect(sqliteFileInventory(args[0])).toEqual(beforeLeft);
+      expect(sqliteFileInventory(args[1])).toEqual(beforeRight);
+      expect(parseJson(preview).plan?.bootstrap).toEqual({
+        sourceRole: missingFirst ? 'right' : 'left',
+        targetRole: missingFirst ? 'left' : 'right',
+      });
+
+      const applied = await sync(...args, '--json');
+      const appliedReport = parseJson(applied);
+      expect(applied.code).toBe(DATABASE_SYNC_EXIT_CODES.success);
+      expect(appliedReport.status).toBe('changed');
+      expect(taskTitles(missing)).toEqual([`bootstrap-${missingFirst}`]);
+      expect(appliedReport.inputs[0].logicalDigest).toBe(appliedReport.inputs[1].logicalDigest);
+
+      const repeated = await sync(...args, '--dry-run', '--json');
+      const repeatedReport = parseJson(repeated);
+      expect(repeated.code).toBe(DATABASE_SYNC_EXIT_CODES.success);
+      expect(repeatedReport.status).toBe('no-op');
+      expect(repeatedReport.inputs[0].logicalDigest).toBe(repeatedReport.inputs[1].logicalDigest);
+    }
+  });
+
+  test('bootstrap accepts a user-owned group-writable repository database directory', async () => {
+    const existing = createRepo('bootstrap-0775-existing');
+    insertTask(existing.database, 'bootstrap-0775-task', 'bootstrap-0775');
+    const missingRepo = createRepo('bootstrap-0775-missing', false);
+    const missingParent = dirname(missingRepo.database);
+    mkdirSync(missingParent, { mode: 0o775 });
+    chmodSync(missingParent, 0o775);
+    expect(statSync(missingParent).mode & 0o777).toBe(0o775);
+    const beforeExisting = sqliteFileInventory(existing.database);
+    const beforeMissing = sqliteFileInventory(missingRepo.database);
+
+    const preview = await sync(existing.database, missingRepo.database, '--dry-run', '--json');
+
+    expect(preview.code).toBe(DATABASE_SYNC_EXIT_CODES.success);
+    expect(parseJson(preview).plan?.bootstrap).toEqual({ sourceRole: 'left', targetRole: 'right' });
+    expect(sqliteFileInventory(existing.database)).toEqual(beforeExisting);
+    expect(sqliteFileInventory(missingRepo.database)).toEqual(beforeMissing);
+
+    const applied = await sync(existing.database, missingRepo.database, '--json');
+
+    expect(applied.code).toBe(DATABASE_SYNC_EXIT_CODES.success);
+    expect(parseJson(applied).status).toBe('changed');
+    expect(taskTitles(missingRepo.database)).toEqual(['bootstrap-0775']);
+  });
+
+  test('directional bootstrap copies the sole existing side in both role orientations', async () => {
+    for (const existingRole of ['source', 'destination'] as const) {
+      const existing = createRepo(`directional-bootstrap-${existingRole}`);
+      const writer = new Database(existing.database);
+      writer.exec('PRAGMA journal_mode = WAL');
+      writer.exec('PRAGMA wal_autocheckpoint = 0');
+      writer
+        .query('INSERT INTO tasks (id, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
+        .run(`task-${existingRole}`, `from-${existingRole}`, 'ready', 1, 1);
+      expect(existsSync(`${existing.database}-wal`)).toBe(true);
+      expect(statSync(`${existing.database}-wal`).size).toBeGreaterThan(0);
+      const missing = join(root, `directional-missing-${existingRole}.db`);
+      const source = existingRole === 'source' ? existing.database : missing;
+      const destination = existingRole === 'destination' ? existing.database : missing;
+      const beforeSource = sqliteFileInventory(source);
+      const beforeDestination = sqliteFileInventory(destination);
+
+      const preview = await sync('--source', source, '--destination', destination, '--dry-run', '--json');
+      const previewReport = parseJson(preview);
+      expect(preview.code).toBe(DATABASE_SYNC_EXIT_CODES.success);
+      expect(previewReport.status).toBe('changed');
+      expect(previewReport.plan?.bootstrap).toEqual({
+        sourceRole: existingRole,
+        targetRole: existingRole === 'source' ? 'destination' : 'source',
+      });
+      expect(existsSync(missing)).toBe(false);
+      expect(sqliteFileInventory(source)).toEqual(beforeSource);
+      expect(sqliteFileInventory(destination)).toEqual(beforeDestination);
+
+      const applied = await sync('--source', source, '--destination', destination, '--json');
+      const report = parseJson(applied);
+
+      expect(applied.code).toBe(DATABASE_SYNC_EXIT_CODES.success);
+      expect(report.plan?.bootstrap).toEqual({
+        sourceRole: existingRole,
+        targetRole: existingRole === 'source' ? 'destination' : 'source',
+      });
+      expect(taskTitles(missing)).toEqual([`from-${existingRole}`]);
+      const repeated = parseJson(await sync('--source', source, '--destination', destination, '--dry-run', '--json'));
+      expect(repeated.status).toBe('no-op');
+      expect(repeated.inputs[0].logicalDigest).toBe(repeated.inputs[1].logicalDigest);
+      writer.close();
+    }
+  });
+
+  test('both absent inputs remain a bounded non-mutating operational failure', async () => {
+    const left = join(root, 'both-missing-left.db');
+    const right = join(root, 'both-missing-right.db');
+
+    for (const args of [
+      [left, right, '--json'],
+      [left, right, '--dry-run', '--json'],
+      [right, left, '--dry-run', '--json'],
+      ['--source', left, '--destination', right, '--json'],
+      ['--source', left, '--destination', right, '--dry-run', '--json'],
+      ['--source', right, '--destination', left, '--dry-run', '--json'],
+    ]) {
+      const beforeLeft = sqliteFileInventory(left);
+      const beforeRight = sqliteFileInventory(right);
+      const result = await sync(...args);
+      const report = parseJson(result);
+      expect(result.code).toBe(DATABASE_SYNC_EXIT_CODES.operationalFailure);
+      expect(report.plan?.operationalFailure?.code).toBe('input-unavailable');
+      expect(sqliteFileInventory(left)).toEqual(beforeLeft);
+      expect(sqliteFileInventory(right)).toEqual(beforeRight);
+    }
+  });
+
+  test('safe-parent bootstrap reports stay bounded and omit hostile paths and row content', async () => {
+    const existing = createRepo('hostile-bootstrap-existing');
+    const hostileTitle = 'HOSTILE BOOTSTRAP ROW\nMUST NOT LEAK';
+    insertTask(existing.database, 'hostile-bootstrap-task', hostileTitle);
+    const parent = join(root, 'hostile-bootstrap-parent');
+    mkdirSync(parent, { mode: 0o700 });
+    const missing = join(parent, 'HOSTILE BOOTSTRAP PATH\nMUST NOT LEAK.db');
+
+    const result = await sync('--source', missing, '--destination', existing.database, '--json');
+
+    expect(result.code).toBe(DATABASE_SYNC_EXIT_CODES.success);
+    expect(result.stderr).toBe('');
+    expect(result.stdout).not.toContain('HOSTILE BOOTSTRAP');
+    expect(result.stdout).not.toContain(missing);
+    expect(result.stdout.length).toBeLessThan(8_000);
+    expect(parseJson(result)).toMatchObject({
+      status: 'changed',
+      plan: { bootstrap: { sourceRole: 'destination', targetRole: 'source' } },
+    });
+    expect(taskTitles(missing)).toEqual([hostileTitle]);
+  });
+
+  test('missing-side bootstrap preserves committed WAL-only logical content', async () => {
+    const existing = createRepo('bootstrap-wal-existing');
+    const missing = join(root, 'bootstrap-wal-missing.db');
+    const writer = new Database(existing.database);
+    writer.exec('PRAGMA journal_mode = WAL');
+    writer.exec('PRAGMA wal_autocheckpoint = 0');
+    writer
+      .query('INSERT INTO tasks (id, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
+      .run('wal-task', 'WAL bootstrap', 'ready', 1, 1);
+    expect(existsSync(`${existing.database}-wal`)).toBe(true);
+    expect(statSync(`${existing.database}-wal`).size).toBeGreaterThan(0);
+
+    const result = await sync(existing.database, missing, '--json');
+
+    expect(result.code).toBe(DATABASE_SYNC_EXIT_CODES.success);
+    expect(taskTitles(missing)).toEqual(['WAL bootstrap']);
+    writer.close();
+  });
+
   test('persistent recovery maps converged to exit 6 and hostile uncertain state to exit 5', async () => {
     const left = createRepo('recovery-left');
     const right = createRepo('recovery-right');
@@ -466,7 +635,7 @@ describe('database sync CLI contract', () => {
 
   test('operational reports omit hostile input paths and remain bounded', async () => {
     const destination = createRepo('operational-destination');
-    const hostile = join(root, 'HOSTILE PATH\nMUST NOT LEAK.db');
+    const hostile = join(root, 'missing-parent', 'HOSTILE PATH\nMUST NOT LEAK.db');
 
     const result = await sync('--source', hostile, '--destination', destination.database, '--dry-run', '--json');
 

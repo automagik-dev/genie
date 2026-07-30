@@ -1,9 +1,10 @@
 import { CString, FFIType, dlopen, toArrayBuffer } from 'bun:ffi';
 import type { Pointer } from 'bun:ffi';
-import { Database } from 'bun:sqlite';
+import { Database, constants as sqliteConstants } from 'bun:sqlite';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   closeSync,
+  existsSync,
   constants as fsConstants,
   fstatSync,
   fsyncSync,
@@ -13,6 +14,7 @@ import {
   openSync,
   readSync,
   realpathSync,
+  rmSync,
   writeFileSync,
   writeSync,
 } from 'node:fs';
@@ -27,6 +29,7 @@ import {
   type ReconciliationApplyOptions,
   type ReconciliationApplyReport,
   type ReconciliationDatabaseObservation,
+  ReconciliationError,
   type ReconciliationInputRole,
   type ReconciliationLockedDatabaseInput,
   ReconciliationLockedOperationError,
@@ -36,8 +39,10 @@ import {
   type ReconciliationTargetRole,
   applyDatabaseReconciliation,
   inspectReconciliationDatabase,
+  planDatabaseReconciliation,
   withLockedReconciliationDatabases,
 } from './db-reconciliation.js';
+import { isBusyError } from './sqlite-open.js';
 
 const SQLITE_HEADER_BYTES = new TextEncoder().encode('SQLite format 3\0');
 const SQLITE_MINIMUM_HEADER_BYTES = 100;
@@ -183,7 +188,10 @@ export type SnapshotLifecyclePhase =
   | 'recovery-restore'
   | 'rollback-restore'
   | 'staging-cleanup'
-  | 'prune';
+  | 'prune'
+  | 'bootstrap-publish'
+  | 'bootstrap-stage-validate'
+  | 'bootstrap-target-validate';
 
 export interface SnapshotLifecycleEvent {
   readonly phase: SnapshotLifecyclePhase;
@@ -210,12 +218,24 @@ export interface DatabaseSyncSnapshotOptions {
   };
   /** Lazy native descriptor-relative filesystem resolution seam for portability and fault tests. */
   readonly posixDirectory?: SnapshotPosixDirectoryDependencies;
+  /** Private bootstrap-only close fault seam. */
+  readonly bootstrapCloseDirectory?: (descriptor: number) => void;
+  /** Private bootstrap-only first-fstat fault seam. */
+  readonly bootstrapStageFstat?: (descriptor: number) => Stats;
+  /** Private bootstrap-only effective UID seam for owner-rejection tests. */
+  readonly bootstrapCurrentUid?: () => number;
   readonly applyOptions?: Omit<ReconciliationApplyOptions, 'busyTimeoutMs' | 'onEvent' | 'onLocked'>;
 }
 
 export interface SnapshotPosixDirectoryApi {
   openAt(directoryDescriptor: number, name: string, flags: number, mode?: number): number;
   mkdirAt(directoryDescriptor: number, name: string, mode: number): void;
+  linkAt?(
+    sourceDirectoryDescriptor: number,
+    sourceName: string,
+    destinationDirectoryDescriptor: number,
+    destinationName: string,
+  ): void;
   renameAt(
     sourceDirectoryDescriptor: number,
     sourceName: string,
@@ -319,6 +339,58 @@ interface FileIdentity {
   readonly ino: number;
 }
 
+export interface MissingDatabaseBootstrapPlan {
+  readonly request: ReconciliationRequest;
+  readonly existingRole: ReconciliationInputRole;
+  readonly missingRole: ReconciliationInputRole;
+  readonly existingCanonicalPath: string;
+  readonly missingPath: string;
+  readonly missingParentPath: string;
+  readonly missingParentIdentity: FileIdentity;
+  readonly schemaFingerprint: string;
+  readonly logicalDigest: string;
+}
+
+export type DatabaseSyncExecutionPlan =
+  | {
+      readonly kind: 'reconciliation';
+      readonly request: ReconciliationRequest;
+      readonly reconciliation: ReconciliationPlan;
+    }
+  | {
+      readonly kind: 'bootstrap';
+      readonly request: ReconciliationRequest;
+      readonly bootstrap: MissingDatabaseBootstrapPlan;
+    };
+
+export interface MissingDatabaseBootstrapInputReport {
+  readonly role: ReconciliationInputRole;
+  readonly canonicalPath: string;
+  readonly logicalDigest: string | null;
+}
+
+export interface MissingDatabaseBootstrapApplyReport {
+  readonly reportVersion: typeof SNAPSHOT_REPORT_VERSION;
+  readonly operation: 'bootstrap';
+  readonly status: 'changed' | 'operational-failure';
+  readonly converged: boolean;
+  readonly inputs: readonly MissingDatabaseBootstrapInputReport[];
+  readonly failure: SnapshotFailureCode | null;
+  readonly cleanupFailures: readonly SnapshotFailureCode[];
+}
+
+export type DatabaseSyncExecutionResult =
+  | {
+      readonly kind: 'reconciliation';
+      readonly plan: ReconciliationPlan;
+      readonly report: SnapshotApplyReport;
+    }
+  | {
+      readonly kind: 'bootstrap';
+      readonly plan: MissingDatabaseBootstrapPlan;
+      readonly report: MissingDatabaseBootstrapApplyReport;
+    };
+
 interface BoundDirectory {
   readonly path: string;
   readonly descriptor: number;
@@ -333,6 +405,10 @@ const POSIX_DIRECTORY_SYMBOLS = {
   },
   mkdirat: {
     args: [FFIType.i32, FFIType.cstring, FFIType.u32],
+    returns: FFIType.i32,
+  },
+  linkat: {
+    args: [FFIType.i32, FFIType.cstring, FFIType.i32, FFIType.cstring, FFIType.i32],
     returns: FFIType.i32,
   },
   renameat: {
@@ -369,6 +445,13 @@ let defaultPosixDirectoryApi: SnapshotPosixDirectoryApi | null | undefined;
 interface NativeDirectorySymbols {
   openat(directoryDescriptor: number, name: Uint8Array, flags: number, mode: number): number;
   mkdirat(directoryDescriptor: number, name: Uint8Array, mode: number): number;
+  linkat(
+    sourceDirectoryDescriptor: number,
+    sourceName: Uint8Array,
+    destinationDirectoryDescriptor: number,
+    destinationName: Uint8Array,
+    flags: number,
+  ): number;
   renameat(
     sourceDirectoryDescriptor: number,
     sourceName: Uint8Array,
@@ -386,6 +469,7 @@ function nativeError(operation: string, errno: number): Error & { code?: string;
   const error = new Error(`${operation} failed with errno ${errno}`) as Error & { code?: string; errno: number };
   error.errno = errno;
   if (errno === 2) error.code = 'ENOENT';
+  if (errno === 17) error.code = 'EEXIST';
   return error;
 }
 
@@ -455,6 +539,19 @@ function openPosixDirectoryApi(
       mkdirAt(directoryDescriptor, name, mode) {
         if (symbols.mkdirat(directoryDescriptor, componentBytes(name), mode) !== 0) {
           throw nativeError('mkdirat', errno[0]);
+        }
+      },
+      linkAt(sourceDirectoryDescriptor, sourceName, destinationDirectoryDescriptor, destinationName) {
+        if (
+          symbols.linkat(
+            sourceDirectoryDescriptor,
+            componentBytes(sourceName),
+            destinationDirectoryDescriptor,
+            componentBytes(destinationName),
+            0,
+          ) !== 0
+        ) {
+          throw nativeError('linkat', errno[0]);
         }
       },
       renameAt(sourceDirectoryDescriptor, sourceName, destinationDirectoryDescriptor, destinationName) {
@@ -630,6 +727,242 @@ export function databaseSyncSnapshotIdentity(
   return identityFromCanonical(request.mode, canonical, snapshotRoot);
 }
 
+function requestInputs(
+  request: ReconciliationRequest,
+): readonly { readonly role: ReconciliationInputRole; readonly path: string }[] {
+  return request.mode === 'bidirectional'
+    ? [
+        { role: 'left', path: request.leftPath },
+        { role: 'right', path: request.rightPath },
+      ]
+    : [
+        { role: 'source', path: request.sourcePath },
+        { role: 'destination', path: request.destinationPath },
+      ];
+}
+
+function physicalRegularFileState(path: string): 'regular' | 'missing' | 'unsafe' {
+  try {
+    const stats = lstatSync(path);
+    return !stats.isSymbolicLink() && stats.isFile() ? 'regular' : 'unsafe';
+  } catch (caught) {
+    return filesystemCode(caught) === 'ENOENT' ? 'missing' : 'unsafe';
+  }
+}
+
+function entryIsAbsentAt(directory: BoundDirectory, name: string, options: DatabaseSyncSnapshotOptions): boolean {
+  let descriptor: number;
+  try {
+    descriptor = posixDirectory(options).openAt(
+      directory.descriptor,
+      name,
+      fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | (fsConstants.O_NONBLOCK ?? 0) | POSIX_CLOSE_ON_EXEC,
+    );
+  } catch (caught) {
+    return filesystemCode(caught) === 'ENOENT';
+  }
+  closeSync(descriptor);
+  return false;
+}
+
+interface BootstrapExistingObservation {
+  readonly canonicalPath: string;
+  readonly schemaFingerprint: string;
+  readonly logicalDigest: string;
+}
+
+function inspectBootstrapMainFile(path: string): BootstrapExistingObservation {
+  const readMainFile = (): { readonly bytes: Uint8Array; readonly identity: FileIdentity } => {
+    const descriptor = openSync(
+      path,
+      fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | (fsConstants.O_NONBLOCK ?? 0) | POSIX_CLOSE_ON_EXEC,
+    );
+    try {
+      return readBoundedRegularDescriptor(descriptor, MAX_RECONCILIATION_DATABASE_BYTES);
+    } finally {
+      closeSync(descriptor);
+    }
+  };
+  const sidecars = [`${path}-wal`, `${path}-journal`];
+  if (sidecars.some((sidecar) => existsSync(sidecar))) {
+    throw new ReconciliationError('input-changed', 'Bootstrap source sidecars changed while it was being read.');
+  }
+  const first = readMainFile();
+  const second = readMainFile();
+  if (
+    !sameFileIdentity(first.identity, second.identity) ||
+    sha256(first.bytes) !== sha256(second.bytes) ||
+    sidecars.some((sidecar) => existsSync(sidecar))
+  ) {
+    throw new ReconciliationError('input-changed', 'Bootstrap source changed while it was being read.');
+  }
+  let db: Database;
+  try {
+    db = deserializeSnapshotBytes(second.bytes);
+  } catch {
+    throw new ReconciliationError('malformed-database', 'Bootstrap source is not a valid SQLite database.');
+  }
+  try {
+    const image = inspectReconciliationDatabase(db);
+    const canonicalPath = realpathSync(path);
+    if (canonicalPath !== path) {
+      throw new ReconciliationError('input-changed', 'Bootstrap source changed while it was being read.');
+    }
+    return {
+      canonicalPath,
+      schemaFingerprint: image.schemaFingerprint,
+      logicalDigest: image.logicalDigest,
+    };
+  } finally {
+    db.close();
+  }
+}
+
+function inspectBootstrapWalFiles(path: string): BootstrapExistingObservation {
+  const readPhysicalFile = (physicalPath: string) => {
+    const descriptor = openSync(
+      physicalPath,
+      fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | (fsConstants.O_NONBLOCK ?? 0) | POSIX_CLOSE_ON_EXEC,
+    );
+    try {
+      return readBoundedRegularDescriptor(descriptor, MAX_RECONCILIATION_DATABASE_BYTES);
+    } finally {
+      closeSync(descriptor);
+    }
+  };
+  const walPath = `${path}-wal`;
+  if (existsSync(`${path}-journal`)) {
+    throw new ReconciliationError('input-changed', 'Bootstrap source journal changed while it was being read.');
+  }
+  const firstMain = readPhysicalFile(path);
+  const firstWal = readPhysicalFile(walPath);
+  const secondMain = readPhysicalFile(path);
+  const secondWal = readPhysicalFile(walPath);
+  if (
+    firstMain.bytes.byteLength + firstWal.bytes.byteLength > MAX_RECONCILIATION_DATABASE_BYTES ||
+    !sameFileIdentity(firstMain.identity, secondMain.identity) ||
+    !sameFileIdentity(firstWal.identity, secondWal.identity) ||
+    sha256(firstMain.bytes) !== sha256(secondMain.bytes) ||
+    sha256(firstWal.bytes) !== sha256(secondWal.bytes)
+  ) {
+    throw new ReconciliationError('input-changed', 'Bootstrap source changed while it was being read.');
+  }
+
+  const temporaryRoot = mkdtempSync(join(tmpdir(), 'genie-db-bootstrap-plan-'));
+  const temporaryDatabase = join(temporaryRoot, 'source.db');
+  let db: Database | null = null;
+  try {
+    writeFileSync(temporaryDatabase, secondMain.bytes, { mode: 0o600 });
+    writeFileSync(`${temporaryDatabase}-wal`, secondWal.bytes, { mode: 0o600 });
+    db = new Database(temporaryDatabase, { readonly: true, strict: true, safeIntegers: true });
+    const image = inspectReconciliationDatabase(db);
+    const finalMain = readPhysicalFile(path);
+    const finalWal = readPhysicalFile(walPath);
+    if (
+      !sameFileIdentity(secondMain.identity, finalMain.identity) ||
+      !sameFileIdentity(secondWal.identity, finalWal.identity) ||
+      sha256(secondMain.bytes) !== sha256(finalMain.bytes) ||
+      sha256(secondWal.bytes) !== sha256(finalWal.bytes) ||
+      existsSync(`${path}-journal`) ||
+      realpathSync(path) !== path
+    ) {
+      throw new ReconciliationError('input-changed', 'Bootstrap source changed while it was being read.');
+    }
+    return {
+      canonicalPath: path,
+      schemaFingerprint: image.schemaFingerprint,
+      logicalDigest: image.logicalDigest,
+    };
+  } catch (caught) {
+    if (caught instanceof ReconciliationError) throw caught;
+    throw new ReconciliationError('malformed-database', 'Bootstrap source WAL image is not a valid database.');
+  } finally {
+    try {
+      db?.close();
+    } finally {
+      rmSync(temporaryRoot, { recursive: true, force: true });
+    }
+  }
+}
+
+function inspectBootstrapExisting(path: string): BootstrapExistingObservation {
+  return existsSync(`${path}-wal`) ? inspectBootstrapWalFiles(path) : inspectBootstrapMainFile(path);
+}
+
+/**
+ * Recognize the one-missing-input bootstrap case without creating anything.
+ *
+ * The present side must be a physical exact-current Genie database. The
+ * absent side must have a stable, user-owned physical parent;
+ * symlinks and unsafe or missing ancestors are not bootstrap authority.
+ */
+export function planMissingDatabaseBootstrap(
+  request: ReconciliationRequest,
+  options: DatabaseSyncSnapshotOptions = {},
+): MissingDatabaseBootstrapPlan | null {
+  const inputs = requestInputs(request).map((input) => ({
+    ...input,
+    absolutePath: resolve(input.path),
+    state: physicalRegularFileState(resolve(input.path)),
+  }));
+  const existing = inputs.filter((input) => input.state === 'regular');
+  const missing = inputs.filter((input) => input.state === 'missing');
+  if (existing.length !== 1 || missing.length !== 1) return null;
+
+  const existingInput = inspectBootstrapExisting(existing[0].absolutePath);
+  if (existingInput.canonicalPath !== existing[0].absolutePath) return null;
+
+  const missingPath = missing[0].absolutePath;
+  const missingParentPath = dirname(missingPath);
+  let missingParent: BoundDirectory;
+  try {
+    missingParent = openBoundDirectory(missingParentPath, false, options, false, 'owned-group-writable');
+  } catch {
+    return null;
+  }
+  try {
+    if (!entryIsAbsentAt(missingParent, basename(missingPath), options)) return null;
+    return Object.freeze({
+      request,
+      existingRole: existing[0].role,
+      missingRole: missing[0].role,
+      existingCanonicalPath: existingInput.canonicalPath,
+      missingPath,
+      missingParentPath,
+      missingParentIdentity: missingParent.identity,
+      schemaFingerprint: existingInput.schemaFingerprint,
+      logicalDigest: existingInput.logicalDigest,
+    });
+  } finally {
+    closeBoundDirectory(missingParent);
+  }
+}
+
+/**
+ * Select the complete library-owned database-sync plan.
+ *
+ * Missing-side recognition is deliberately reached only through the normal
+ * planner's bounded input-unavailable classification. Callers never need to
+ * reproduce that fallback or infer a postimage after apply.
+ */
+export function planDatabaseSyncExecution(
+  request: ReconciliationRequest,
+  options: DatabaseSyncSnapshotOptions = {},
+): DatabaseSyncExecutionPlan {
+  try {
+    return Object.freeze({
+      kind: 'reconciliation',
+      request,
+      reconciliation: planDatabaseReconciliation(request),
+    });
+  } catch (caught) {
+    if (!(caught instanceof ReconciliationError) || caught.code !== 'input-unavailable') throw caught;
+    const bootstrap = planMissingDatabaseBootstrap(request, options);
+    if (bootstrap === null) throw caught;
+    return Object.freeze({ kind: 'bootstrap', request, bootstrap });
+  }
+}
+
 function requestFromPlan(plan: ReconciliationPlan): ReconciliationRequest {
   const input = (role: ReconciliationInputRole): string => {
     const found = plan.inputs.find((candidate) => candidate.role === role);
@@ -735,7 +1068,7 @@ function openBoundDirectory(
   create: boolean,
   options: DatabaseSyncSnapshotOptions,
   requirePrivate = false,
-  allowShared = false,
+  allowShared: boolean | 'owned-group-writable' = false,
 ): BoundDirectory {
   const api = posixDirectory(options);
   const components = rootComponents(path);
@@ -756,12 +1089,22 @@ function openBoundDirectory(
       descriptor = child.descriptor;
     }
     const stats = fstatSync(descriptor);
-    const currentUid = typeof process.getuid === 'function' ? process.getuid() : stats.uid;
+    const currentUid =
+      allowShared === 'owned-group-writable' && options.bootstrapCurrentUid !== undefined
+        ? options.bootstrapCurrentUid()
+        : typeof process.getuid === 'function'
+          ? process.getuid()
+          : stats.uid;
     const mode = stats.mode & 0o777;
-    if (
-      !stats.isDirectory() ||
-      (!allowShared && (stats.uid !== currentUid || (requirePrivate ? mode !== 0o700 : (mode & 0o022) !== 0)))
-    ) {
+    const ownerIsSafe = allowShared === true || stats.uid === currentUid;
+    const modeIsSafe =
+      allowShared === true ||
+      (allowShared === 'owned-group-writable'
+        ? (mode & 0o002) === 0
+        : requirePrivate
+          ? mode === 0o700
+          : (mode & 0o022) === 0);
+    if (!stats.isDirectory() || !ownerIsSafe || !modeIsSafe) {
       throw new SnapshotError('manifest-invalid', 'Snapshot root must be a private directory owned by this user.');
     }
     return { path, descriptor, identity: fileIdentity(stats) };
@@ -901,8 +1244,12 @@ function assertBoundDirectory(directory: BoundDirectory): void {
   }
 }
 
-function assertBoundRoot(directory: BoundDirectory, options: DatabaseSyncSnapshotOptions): void {
-  const reopened = openBoundDirectory(directory.path, false, options);
+function assertBoundRoot(
+  directory: BoundDirectory,
+  options: DatabaseSyncSnapshotOptions,
+  allowShared: boolean | 'owned-group-writable' = false,
+): void {
+  const reopened = openBoundDirectory(directory.path, false, options, false, allowShared);
   try {
     if (!sameFileIdentity(directory.identity, reopened.identity)) {
       throw new SnapshotError('manifest-invalid', 'Snapshot root identity changed during the operation.');
@@ -969,6 +1316,433 @@ function validateCapturedImage(
     db.close();
   }
   return { normalizedBytes, sha256: sha256(normalizedBytes) };
+}
+
+function writeBytesDescriptor(descriptor: number, bytes: Uint8Array): void {
+  let offset = 0;
+  while (offset < bytes.byteLength) {
+    const written = writeSync(descriptor, bytes, offset, bytes.byteLength - offset, offset);
+    if (written <= 0)
+      throw new SnapshotError('snapshot-publication-failed', 'Bootstrap snapshot write was incomplete.');
+    offset += written;
+  }
+}
+
+function sameBootstrapPlan(left: MissingDatabaseBootstrapPlan, right: MissingDatabaseBootstrapPlan): boolean {
+  return (
+    left.existingRole === right.existingRole &&
+    left.missingRole === right.missingRole &&
+    left.existingCanonicalPath === right.existingCanonicalPath &&
+    left.missingPath === right.missingPath &&
+    left.missingParentPath === right.missingParentPath &&
+    sameFileIdentity(left.missingParentIdentity, right.missingParentIdentity) &&
+    left.schemaFingerprint === right.schemaFingerprint &&
+    left.logicalDigest === right.logicalDigest
+  );
+}
+
+function publicationError(caught: unknown, cleanupFailures: readonly SnapshotFailureCode[]): SnapshotError {
+  if (caught instanceof SnapshotError) {
+    return new SnapshotError(caught.code, caught.message, [...caught.cleanupFailures, ...cleanupFailures]);
+  }
+  return new SnapshotError(
+    'snapshot-publication-failed',
+    'Missing database bootstrap publication failed.',
+    cleanupFailures,
+  );
+}
+
+interface LockedBootstrapTarget {
+  readonly db: Database;
+  readonly parentPath: string;
+  readonly parentIdentity: FileIdentity;
+  readonly targetName: string;
+  readonly expectedIdentity: FileIdentity;
+  transactionOpen: boolean;
+}
+
+function bootstrapHandleMatchesPath(db: Pick<Database, 'fileControl'>): boolean {
+  const moved = new Int32Array(1);
+  try {
+    return db.fileControl(sqliteConstants.SQLITE_FCNTL_HAS_MOVED, moved) === 0 && moved[0] === 0;
+  } catch {
+    return false;
+  }
+}
+
+function requireBootstrapHandleMatchesPath(db: Pick<Database, 'fileControl'>): void {
+  if (!bootstrapHandleMatchesPath(db)) {
+    throw new SnapshotError('snapshot-image-mismatch', 'The published bootstrap database changed identity.');
+  }
+}
+
+function lockAndValidateBootstrapTarget(
+  plan: MissingDatabaseBootstrapPlan,
+  expectedIdentity: FileIdentity,
+  source: ReconciliationLockedDatabaseInput,
+  remainingWaitMs: () => number,
+  options: DatabaseSyncSnapshotOptions,
+): LockedBootstrapTarget {
+  const parent = openBoundDirectory(plan.missingParentPath, false, options, false, 'owned-group-writable');
+  let db: Database | null = null;
+  let transactionOpen = false;
+  let target: LockedBootstrapTarget | null = null;
+  let operationFailure: unknown = null;
+  let parentCloseFailed = false;
+  const cleanupFailures: SnapshotFailureCode[] = [];
+  try {
+    emit(options, { phase: 'bootstrap-target-validate', state: 'before', path: plan.missingPath });
+    assertBoundRoot(parent, options, 'owned-group-writable');
+    assertEntryIdentityAt(parent, basename(plan.missingPath), expectedIdentity, 'file', options);
+    const databaseOptions = {
+      readwrite: true,
+      create: false,
+      strict: true,
+      safeIntegers: true,
+    } as const;
+    db =
+      options.applyOptions?.openDatabase?.(plan.missingPath, databaseOptions) ??
+      new Database(plan.missingPath, databaseOptions);
+    requireBootstrapHandleMatchesPath(db);
+    db.exec('PRAGMA trusted_schema = OFF');
+    db.exec('PRAGMA foreign_keys = ON');
+    db.exec(`PRAGMA busy_timeout = ${remainingWaitMs()}`);
+    db.exec('BEGIN IMMEDIATE');
+    transactionOpen = true;
+    requireBootstrapHandleMatchesPath(db);
+    assertBoundRoot(parent, options, 'owned-group-writable');
+    assertEntryIdentityAt(parent, basename(plan.missingPath), expectedIdentity, 'file', options);
+    const targetImage = inspectReconciliationDatabase(db);
+    const sourceImage = source.observe();
+    if (
+      targetImage.schemaFingerprint !== plan.schemaFingerprint ||
+      targetImage.logicalDigest !== plan.logicalDigest ||
+      sourceImage.schemaFingerprint !== plan.schemaFingerprint ||
+      sourceImage.logicalDigest !== plan.logicalDigest
+    ) {
+      throw new SnapshotError(
+        'snapshot-image-mismatch',
+        'The bootstrap databases did not converge to the expected logical image.',
+      );
+    }
+    requireBootstrapHandleMatchesPath(db);
+    assertEntryIdentityAt(parent, basename(plan.missingPath), expectedIdentity, 'file', options);
+    emit(options, { phase: 'bootstrap-target-validate', state: 'after', path: plan.missingPath });
+    target = {
+      db,
+      parentPath: plan.missingParentPath,
+      parentIdentity: parent.identity,
+      targetName: basename(plan.missingPath),
+      expectedIdentity,
+      transactionOpen,
+    };
+    db = null;
+    transactionOpen = false;
+  } catch (caught) {
+    operationFailure = caught;
+  }
+  try {
+    if (options.bootstrapCloseDirectory === undefined) closeBoundDirectory(parent);
+    else options.bootstrapCloseDirectory(parent.descriptor);
+  } catch {
+    parentCloseFailed = true;
+    cleanupFailures.push('locked-close-failed');
+  }
+  if (operationFailure !== null || parentCloseFailed) {
+    if (target !== null) {
+      cleanupFailures.push(...rollbackAndCloseBootstrapTarget(target));
+      target = null;
+    }
+    if (transactionOpen) {
+      try {
+        db?.exec('ROLLBACK');
+      } catch {
+        cleanupFailures.push('locked-rollback-failed');
+      }
+    }
+    try {
+      db?.close();
+    } catch {
+      cleanupFailures.push('locked-close-failed');
+    }
+    if (operationFailure !== null && isBusyError(operationFailure)) {
+      throw new SnapshotError(
+        'snapshot-publication-failed',
+        'The published bootstrap database could not be locked within the wait bound.',
+        cleanupFailures,
+      );
+    }
+    if (operationFailure !== null) throw publicationError(operationFailure, cleanupFailures);
+    throw new SnapshotError(
+      'snapshot-publication-failed',
+      'The published bootstrap parent could not be closed safely.',
+      cleanupFailures,
+    );
+  }
+  if (target === null) {
+    throw new SnapshotError('snapshot-publication-failed', 'The published bootstrap target lock was not retained.');
+  }
+  return target;
+}
+
+function requireRetainedBootstrapTarget(
+  target: LockedBootstrapTarget,
+  parent: BoundDirectory,
+  options: DatabaseSyncSnapshotOptions,
+): void {
+  if (!sameFileIdentity(target.parentIdentity, parent.identity)) {
+    throw new SnapshotError('snapshot-image-mismatch', 'The published bootstrap parent changed identity.');
+  }
+  requireBootstrapHandleMatchesPath(target.db);
+  assertBoundRoot(parent, options, 'owned-group-writable');
+  assertEntryIdentityAt(parent, target.targetName, target.expectedIdentity, 'file', options);
+}
+
+function commitAndCloseBootstrapTarget(
+  target: LockedBootstrapTarget,
+  options: DatabaseSyncSnapshotOptions,
+): SnapshotFailureCode[] {
+  const cleanupFailures: SnapshotFailureCode[] = [];
+  let parent: BoundDirectory | null = null;
+  let validatedForClose = false;
+  try {
+    parent = openBoundDirectory(target.parentPath, false, options, false, 'owned-group-writable');
+    requireRetainedBootstrapTarget(target, parent, options);
+    if (target.transactionOpen) {
+      target.db.exec('COMMIT');
+      target.transactionOpen = false;
+    }
+    requireRetainedBootstrapTarget(target, parent, options);
+    validatedForClose = true;
+  } catch {
+    cleanupFailures.push('locked-operation-failed');
+    if (target.transactionOpen) {
+      try {
+        target.db.exec('ROLLBACK');
+        target.transactionOpen = false;
+      } catch {
+        cleanupFailures.push('locked-rollback-failed');
+      }
+    }
+  }
+  try {
+    target.db.close();
+  } catch {
+    cleanupFailures.push('locked-close-failed');
+  }
+  if (validatedForClose && parent !== null) {
+    try {
+      assertBoundRoot(parent, options, 'owned-group-writable');
+      assertEntryIdentityAt(parent, target.targetName, target.expectedIdentity, 'file', options);
+    } catch {
+      cleanupFailures.push('locked-operation-failed');
+    }
+  }
+  if (parent !== null) {
+    try {
+      closeBoundDirectory(parent);
+    } catch {
+      cleanupFailures.push('locked-close-failed');
+    }
+  }
+  return cleanupFailures;
+}
+
+function rollbackAndCloseBootstrapTarget(target: LockedBootstrapTarget): SnapshotFailureCode[] {
+  const cleanupFailures: SnapshotFailureCode[] = [];
+  if (target.transactionOpen) {
+    try {
+      target.db.exec('ROLLBACK');
+      target.transactionOpen = false;
+    } catch {
+      cleanupFailures.push('locked-rollback-failed');
+    }
+  }
+  try {
+    target.db.close();
+  } catch {
+    cleanupFailures.push('locked-close-failed');
+  }
+  return cleanupFailures;
+}
+
+function bootstrapInputReports(
+  plan: MissingDatabaseBootstrapPlan,
+  converged: boolean,
+): MissingDatabaseBootstrapInputReport[] {
+  return requestInputs(plan.request).map((input) => ({
+    role: input.role,
+    canonicalPath: input.role === plan.existingRole ? plan.existingCanonicalPath : plan.missingPath,
+    logicalDigest: converged || input.role === plan.existingRole ? plan.logicalDigest : null,
+  }));
+}
+
+interface BootstrapStageState {
+  created: boolean;
+  descriptor: number | null;
+  identity: FileIdentity | null;
+}
+
+function prepareBootstrapStage(
+  stage: BootstrapStageState,
+  parent: BoundDirectory,
+  stageName: string,
+  targetPath: string,
+  capture: { readonly normalizedBytes: Uint8Array },
+  options: DatabaseSyncSnapshotOptions,
+): void {
+  stage.descriptor = openRegularFileAt(
+    parent,
+    stageName,
+    fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL,
+    options,
+    0o600,
+  );
+  stage.created = true;
+  const createdStage = (options.bootstrapStageFstat ?? fstatSync)(stage.descriptor);
+  stage.identity = fileIdentity(createdStage);
+  assertEntryIdentityAt(parent, stageName, stage.identity, 'file', options);
+  emit(options, { phase: 'bootstrap-stage-validate', state: 'before', path: targetPath });
+  if (!createdStage.isFile() || (createdStage.mode & 0o777) !== 0o600 || createdStage.nlink !== 1) {
+    throw new SnapshotError('snapshot-publication-failed', 'Bootstrap staging file is not a private regular file.');
+  }
+  writeBytesDescriptor(stage.descriptor, capture.normalizedBytes);
+  fsyncSync(stage.descriptor);
+  const stageStats = (options.bootstrapStageFstat ?? fstatSync)(stage.descriptor);
+  if (
+    !stageStats.isFile() ||
+    (stageStats.mode & 0o777) !== 0o600 ||
+    stageStats.nlink !== 1 ||
+    !sameFileIdentity(stage.identity, stageStats)
+  ) {
+    throw new SnapshotError('snapshot-publication-failed', 'Bootstrap staging file is not a private regular file.');
+  }
+  assertEntryIdentityAt(parent, stageName, stage.identity, 'file', options);
+  emit(options, { phase: 'bootstrap-stage-validate', state: 'after', path: targetPath });
+  closeSync(stage.descriptor);
+  stage.descriptor = null;
+}
+
+function cleanupBootstrapStage(
+  stage: BootstrapStageState,
+  parent: BoundDirectory,
+  stageName: string,
+  options: DatabaseSyncSnapshotOptions,
+): SnapshotFailureCode[] {
+  const cleanupFailures: SnapshotFailureCode[] = [];
+  if (stage.created && stage.identity === null && stage.descriptor !== null) {
+    try {
+      const cleanupStats = fstatSync(stage.descriptor);
+      if (cleanupStats.isFile()) stage.identity = fileIdentity(cleanupStats);
+      else cleanupFailures.push('snapshot-cleanup-failed');
+    } catch {
+      cleanupFailures.push('snapshot-cleanup-failed');
+    }
+  }
+  if (stage.descriptor !== null) {
+    try {
+      closeSync(stage.descriptor);
+      stage.descriptor = null;
+    } catch {
+      cleanupFailures.push('locked-close-failed');
+    }
+  }
+  if (stage.identity !== null) {
+    try {
+      assertEntryIdentityAt(parent, stageName, stage.identity, 'file', options);
+      posixDirectory(options).unlinkAt(parent.descriptor, stageName, false);
+      fsyncSync(parent.descriptor);
+    } catch {
+      cleanupFailures.push('snapshot-cleanup-failed');
+    }
+  }
+  if (stage.created && stage.identity === null && !cleanupFailures.includes('snapshot-cleanup-failed')) {
+    cleanupFailures.push('snapshot-cleanup-failed');
+  }
+  return cleanupFailures;
+}
+
+function publishMissingDatabase(
+  plan: MissingDatabaseBootstrapPlan,
+  source: ReconciliationLockedDatabaseInput,
+  options: DatabaseSyncSnapshotOptions,
+): FileIdentity {
+  const current = planMissingDatabaseBootstrap(plan.request, options);
+  if (current === null || !sameBootstrapPlan(plan, current)) {
+    throw new SnapshotError('snapshot-publication-failed', 'Missing database bootstrap inputs changed before locking.');
+  }
+  const observed = source.observe();
+  if (observed.schemaFingerprint !== plan.schemaFingerprint || observed.logicalDigest !== plan.logicalDigest) {
+    throw new SnapshotError('snapshot-image-mismatch', 'Bootstrap source changed before serialization.');
+  }
+  const capture = validateCapturedImage(source.serialize(), plan.schemaFingerprint, plan.logicalDigest);
+  const parent = openBoundDirectory(plan.missingParentPath, false, options, false, 'owned-group-writable');
+  const targetName = basename(plan.missingPath);
+  const stageName = `.genie-db-bootstrap-${randomUUID()}`;
+  const stage: BootstrapStageState = { created: false, descriptor: null, identity: null };
+  let operationFailure: unknown = null;
+  const cleanupFailures: SnapshotFailureCode[] = [];
+  try {
+    if (
+      !sameFileIdentity(plan.missingParentIdentity, parent.identity) ||
+      !entryIsAbsentAt(parent, targetName, options)
+    ) {
+      throw new SnapshotError(
+        'snapshot-publication-failed',
+        'Missing database bootstrap target changed before publication.',
+      );
+    }
+    prepareBootstrapStage(stage, parent, stageName, plan.missingPath, capture, options);
+    const stageIdentity = stage.identity;
+    if (stageIdentity === null) {
+      throw new SnapshotError('snapshot-publication-failed', 'Bootstrap staging identity was not captured.');
+    }
+    const staged = readBoundedRegularFileAt(parent, stageName, MAX_RECONCILIATION_DATABASE_BYTES, options);
+    if (!sameFileIdentity(stageIdentity, staged.identity) || sha256(staged.bytes) !== capture.sha256) {
+      throw new SnapshotError('snapshot-image-mismatch', 'Bootstrap staging image changed before publication.');
+    }
+
+    emit(options, { phase: 'bootstrap-publish', state: 'before', path: plan.missingPath });
+    assertBoundRoot(parent, options, 'owned-group-writable');
+    const api = posixDirectory(options);
+    if (api.linkAt === undefined) {
+      throw new SnapshotError(
+        'snapshot-publication-failed',
+        'Descriptor-relative no-clobber bootstrap publication is unavailable.',
+      );
+    }
+    api.linkAt(parent.descriptor, stageName, parent.descriptor, targetName);
+    const published = readBoundedRegularFileAt(parent, targetName, MAX_RECONCILIATION_DATABASE_BYTES, options);
+    if (!sameFileIdentity(stageIdentity, published.identity) || sha256(published.bytes) !== capture.sha256) {
+      throw new SnapshotError(
+        'snapshot-image-mismatch',
+        'Published bootstrap image does not match its staged identity.',
+      );
+    }
+    assertBoundRoot(parent, options, 'owned-group-writable');
+    assertEntryIdentityAt(parent, targetName, stageIdentity, 'file', options);
+    fsyncSync(parent.descriptor);
+    assertBoundRoot(parent, options, 'owned-group-writable');
+    assertEntryIdentityAt(parent, targetName, stageIdentity, 'file', options);
+    emit(options, { phase: 'bootstrap-publish', state: 'after', path: plan.missingPath });
+  } catch (caught) {
+    operationFailure = caught;
+  } finally {
+    cleanupFailures.push(...cleanupBootstrapStage(stage, parent, stageName, options));
+    try {
+      closeBoundDirectory(parent);
+    } catch {
+      cleanupFailures.push('locked-close-failed');
+    }
+  }
+  if (operationFailure !== null) throw publicationError(operationFailure, cleanupFailures);
+  if (cleanupFailures.length > 0) {
+    throw new SnapshotError('snapshot-cleanup-failed', 'Bootstrap staging cleanup failed.', cleanupFailures);
+  }
+  if (stage.identity === null) {
+    throw new SnapshotError('snapshot-publication-failed', 'Bootstrap staging identity was not captured.');
+  }
+  return stage.identity;
 }
 
 function makeManifest(
@@ -1956,22 +2730,24 @@ function snapshotCleanupFailures(caught: unknown): SnapshotFailureCode[] {
   return [];
 }
 
+function snapshotFailureCode(caught: unknown): SnapshotFailureCode {
+  return caught instanceof SnapshotError
+    ? caught.code
+    : caught instanceof ReconciliationLockedOperationError
+      ? caught.operationCause instanceof SnapshotError
+        ? caught.operationCause.code
+        : 'locked-operation-failed'
+      : 'locked-operation-failed';
+}
+
 function failedRecovery(caught: unknown): SnapshotRecoveryReport {
-  const failure =
-    caught instanceof SnapshotError
-      ? caught.code
-      : caught instanceof ReconciliationLockedOperationError
-        ? caught.operationCause instanceof SnapshotError
-          ? caught.operationCause.code
-          : 'locked-operation-failed'
-        : 'locked-operation-failed';
   return {
     reportVersion: SNAPSHOT_REPORT_VERSION,
     operation: 'recovery',
     status: 'operational-failure',
     generationId: null,
     restoredPaths: [],
-    failure,
+    failure: snapshotFailureCode(caught),
     cleanupFailures: snapshotCleanupFailures(caught),
   };
 }
@@ -2097,6 +2873,106 @@ function recoverPrivateGeneration(
   } catch (caught) {
     return failedRecovery(caught);
   }
+}
+
+export function applyMissingDatabaseBootstrap(
+  plan: MissingDatabaseBootstrapPlan,
+  options: DatabaseSyncSnapshotOptions = {},
+): MissingDatabaseBootstrapApplyReport {
+  let target: LockedBootstrapTarget | null = null;
+  let operationFailure: unknown = null;
+  const cleanupFailures: SnapshotFailureCode[] = [];
+  try {
+    const lockRequest: ReconciliationRequest = {
+      mode: 'bidirectional',
+      leftPath: plan.existingCanonicalPath,
+      rightPath: plan.existingCanonicalPath,
+    };
+    withLockedReconciliationDatabases(
+      lockRequest,
+      (inputs, lockContext) => {
+        const source = inputs[0];
+        if (source === undefined) {
+          throw new SnapshotError('snapshot-publication-failed', 'Bootstrap source lock was not available.');
+        }
+        const publishedIdentity = publishMissingDatabase(plan, source, options);
+        target = lockAndValidateBootstrapTarget(plan, publishedIdentity, source, lockContext.remainingWaitMs, options);
+        return {
+          value: undefined,
+          afterCommit: () => {
+            const lockedTarget = target;
+            if (lockedTarget === null) {
+              throw new SnapshotError('snapshot-image-mismatch', 'Bootstrap target lock was lost before commit.');
+            }
+            const targetCleanup = commitAndCloseBootstrapTarget(lockedTarget, options);
+            target = null;
+            if (targetCleanup.length > 0) {
+              throw new SnapshotError(
+                'snapshot-image-mismatch',
+                'Bootstrap target commit or cleanup failed.',
+                targetCleanup,
+              );
+            }
+          },
+        };
+      },
+      {
+        busyTimeoutMs: options.busyTimeoutMs,
+        onEvent: options.onLockedOperationEvent,
+        advisoryOnlyPaths: [plan.missingPath],
+        ...options.applyOptions,
+      },
+    );
+  } catch (caught) {
+    operationFailure = caught;
+  } finally {
+    if (target !== null) {
+      cleanupFailures.push(...rollbackAndCloseBootstrapTarget(target));
+      target = null;
+    }
+  }
+
+  const inputReports = bootstrapInputReports(plan, operationFailure === null && cleanupFailures.length === 0);
+  if (operationFailure !== null || cleanupFailures.length > 0) {
+    return {
+      reportVersion: SNAPSHOT_REPORT_VERSION,
+      operation: 'bootstrap',
+      status: 'operational-failure',
+      converged: false,
+      inputs: inputReports,
+      failure: operationFailure === null ? 'snapshot-cleanup-failed' : snapshotFailureCode(operationFailure),
+      cleanupFailures: [
+        ...(operationFailure === null ? [] : snapshotCleanupFailures(operationFailure)),
+        ...cleanupFailures,
+      ],
+    };
+  }
+  return {
+    reportVersion: SNAPSHOT_REPORT_VERSION,
+    operation: 'bootstrap',
+    status: 'changed',
+    converged: true,
+    inputs: inputReports,
+    failure: null,
+    cleanupFailures: [],
+  };
+}
+
+export function applyDatabaseSyncExecution(
+  execution: DatabaseSyncExecutionPlan,
+  options: DatabaseSyncSnapshotOptions = {},
+): DatabaseSyncExecutionResult {
+  return execution.kind === 'reconciliation'
+    ? {
+        kind: 'reconciliation',
+        plan: execution.reconciliation,
+        report: applyDatabaseReconciliationWithSnapshots(execution.reconciliation, options),
+      }
+    : {
+        kind: 'bootstrap',
+        plan: execution.bootstrap,
+        report: applyMissingDatabaseBootstrap(execution.bootstrap, options),
+      };
 }
 
 export function applyDatabaseReconciliationWithSnapshots(

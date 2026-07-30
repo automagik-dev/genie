@@ -17,16 +17,20 @@ import {
   type ReconciliationConflict,
   ReconciliationError,
   type ReconciliationInputRole,
+  type ReconciliationPlan,
   type ReconciliationRequest,
   type ReconciliationTableName,
   type ReconciliationTargetReport,
-  planDatabaseReconciliation,
 } from '../lib/v5/db-reconciliation.js';
 import {
+  type DatabaseSyncExecutionPlan,
+  type MissingDatabaseBootstrapApplyReport,
+  type MissingDatabaseBootstrapPlan,
   type SnapshotApplyReport,
   type SnapshotRecoveryReport,
   type SnapshotRollbackReport,
-  applyDatabaseReconciliationWithSnapshots,
+  applyDatabaseSyncExecution,
+  planDatabaseSyncExecution,
   rollbackDatabaseReconciliation,
 } from '../lib/v5/db-sync-snapshots.js';
 
@@ -74,6 +78,10 @@ interface PlanReport {
   sameDatabase: boolean;
   schemaFingerprint: string | null;
   targets: readonly ReconciliationTargetReport[];
+  bootstrap?: {
+    sourceRole: ReconciliationInputRole;
+    targetRole: ReconciliationInputRole;
+  };
   conflicts: ConflictCountReport;
   operationalFailure: {
     code: string;
@@ -259,7 +267,7 @@ function conflictCounts(conflicts: readonly ReconciliationConflict[]): ConflictC
   return { total: conflicts.length, byTable };
 }
 
-function summarizePlan(plan: ReturnType<typeof planDatabaseReconciliation>): PlanReport {
+function summarizePlan(plan: ReconciliationPlan): PlanReport {
   return {
     status: plan.report.status,
     sameDatabase: plan.report.sameDatabase,
@@ -269,6 +277,27 @@ function summarizePlan(plan: ReturnType<typeof planDatabaseReconciliation>): Pla
     operationalFailure: null,
     historyLimitation: plan.report.historyLimitation,
   };
+}
+
+function summarizeBootstrapPlan(plan: MissingDatabaseBootstrapPlan): PlanReport {
+  return {
+    status: 'changed',
+    sameDatabase: false,
+    schemaFingerprint: plan.schemaFingerprint,
+    targets: [],
+    bootstrap: { sourceRole: plan.existingRole, targetRole: plan.missingRole },
+    conflicts: { total: 0, byTable: emptyConflictCounts() },
+    operationalFailure: null,
+    historyLimitation: IDENTICAL_HISTORY_ADDITION_LIMITATION,
+  };
+}
+
+function bootstrapInputs(plan: MissingDatabaseBootstrapPlan): DatabaseIdentityReport[] {
+  return requestInputs(plan.request).map((input) => ({
+    role: input.role,
+    databaseIdentity: databaseIdentity(input.path),
+    logicalDigest: input.role === plan.existingRole ? plan.logicalDigest : null,
+  }));
 }
 
 function planningFailure(caught: unknown): PlanReport {
@@ -287,7 +316,7 @@ function planningFailure(caught: unknown): PlanReport {
   };
 }
 
-function resolvedInputs(plan: ReturnType<typeof planDatabaseReconciliation>): DatabaseIdentityReport[] {
+function resolvedInputs(plan: ReconciliationPlan): DatabaseIdentityReport[] {
   return plan.inputs.map((input) => ({
     role: input.role,
     databaseIdentity: databaseIdentity(input.canonicalPath),
@@ -314,6 +343,31 @@ function summarizeApply(report: SnapshotApplyReport): ApplyReport {
     failure: report.failure,
     cleanupFailures: report.cleanupFailures,
   };
+}
+
+function summarizeBootstrapApply(report: MissingDatabaseBootstrapApplyReport): ApplyReport {
+  return {
+    status: report.status,
+    generationId: null,
+    recovery: {
+      status: report.status === 'changed' ? 'none' : 'operational-failure',
+      generationId: null,
+      restoredDatabaseIdentities: [],
+      failure: report.failure,
+      cleanupFailures: report.cleanupFailures,
+    },
+    apply: null,
+    failure: report.failure,
+    cleanupFailures: report.cleanupFailures,
+  };
+}
+
+function bootstrapAppliedInputs(report: MissingDatabaseBootstrapApplyReport): DatabaseIdentityReport[] {
+  return report.inputs.map((input) => ({
+    role: input.role,
+    databaseIdentity: databaseIdentity(input.canonicalPath),
+    logicalDigest: input.logicalDigest,
+  }));
 }
 
 function summarizeRollback(report: SnapshotRollbackReport): RollbackReport {
@@ -364,13 +418,16 @@ function execute(
     };
   }
 
-  let plan: ReturnType<typeof planDatabaseReconciliation>;
+  let execution: DatabaseSyncExecutionPlan;
   try {
-    plan = planDatabaseReconciliation(request);
+    execution = planDatabaseSyncExecution(request, options);
   } catch (caught) {
     return reportForPlanningFailure(request, operation, caught);
   }
-  const planReport = summarizePlan(plan);
+  const planReport =
+    execution.kind === 'reconciliation'
+      ? summarizePlan(execution.reconciliation)
+      : summarizeBootstrapPlan(execution.bootstrap);
   if (operation === 'dry-run') {
     return {
       reportVersion: CLI_REPORT_VERSION,
@@ -378,23 +435,26 @@ function execute(
       operation,
       mode: request.mode,
       status: planReport.status,
-      inputs: resolvedInputs(plan),
+      inputs:
+        execution.kind === 'reconciliation'
+          ? resolvedInputs(execution.reconciliation)
+          : bootstrapInputs(execution.bootstrap),
       plan: planReport,
       apply: null,
       rollback: null,
     };
   }
 
-  const result = applyDatabaseReconciliationWithSnapshots(plan, options);
+  const result = applyDatabaseSyncExecution(execution, options);
   return {
     reportVersion: CLI_REPORT_VERSION,
     command: 'database-sync',
     operation,
     mode: request.mode,
-    status: result.status,
-    inputs: resolvedInputs(plan),
+    status: result.report.status,
+    inputs: result.kind === 'reconciliation' ? resolvedInputs(result.plan) : bootstrapAppliedInputs(result.report),
     plan: planReport,
-    apply: summarizeApply(result),
+    apply: result.kind === 'reconciliation' ? summarizeApply(result.report) : summarizeBootstrapApply(result.report),
     rollback: null,
   };
 }
@@ -448,6 +508,9 @@ function humanLines(report: DatabaseSyncCliReport): string[] {
   ];
   if (report.plan !== null) {
     lines.push(`Plan: ${report.plan.status}; conflicts=${report.plan.conflicts.total}`);
+    if (report.plan.bootstrap !== undefined) {
+      lines.push(`Bootstrap: ${report.plan.bootstrap.sourceRole} -> ${report.plan.bootstrap.targetRole}`);
+    }
     lines.push(...report.plan.targets.map(changesLine));
     if (report.plan.operationalFailure !== null) {
       lines.push(`Failure: ${report.plan.operationalFailure.code}`);
