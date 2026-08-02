@@ -1,22 +1,23 @@
 import { Buffer } from 'node:buffer';
 
 export const RECONCILIATION_TOMBSTONE_PREFIX = 'genie:reconciliation-tombstone:v1:';
-export const RECONCILIATION_TOMBSTONE_VALUE = 'deleted';
 
 const MAX_ENCODED_KEY_BYTES = 4_096;
+const MAX_SQLITE_INTEGER = 9_223_372_036_854_775_807n;
 
 export interface ReconciliationTombstone {
   readonly table: 'hire_roster';
   readonly wish: string;
   readonly agentAdapterId: string;
+  readonly deletedAt: bigint;
 }
 
 export interface ReconciliationTombstoneMeta {
   readonly key: string;
-  readonly value: typeof RECONCILIATION_TOMBSTONE_VALUE;
+  readonly value: string;
 }
 
-function tombstoneParts(tombstone: ReconciliationTombstone): readonly string[] {
+function tombstoneParts(tombstone: Pick<ReconciliationTombstone, 'wish' | 'agentAdapterId'>): readonly string[] {
   return [tombstone.wish, tombstone.agentAdapterId];
 }
 
@@ -26,10 +27,14 @@ function encodedParts(parts: readonly string[]): string {
   return encoded;
 }
 
-export function reconciliationTombstoneMeta(tombstone: ReconciliationTombstone): ReconciliationTombstoneMeta {
+export function reconciliationTombstoneMeta(
+  tombstone: Omit<ReconciliationTombstone, 'deletedAt'> & { readonly deletedAt: number | bigint },
+): ReconciliationTombstoneMeta {
+  const deletedAt = BigInt(tombstone.deletedAt);
+  if (deletedAt < 0n || deletedAt > MAX_SQLITE_INTEGER) invalidTombstone();
   return {
     key: `${RECONCILIATION_TOMBSTONE_PREFIX}${tombstone.table}:${encodedParts(tombstoneParts(tombstone))}`,
-    value: RECONCILIATION_TOMBSTONE_VALUE,
+    value: deletedAt.toString(),
   };
 }
 
@@ -55,12 +60,14 @@ function decodedParts(encoded: string): readonly [string, string] {
 
 export function parseReconciliationTombstoneMeta(key: string, value: string): ReconciliationTombstone | null {
   if (!key.startsWith(RECONCILIATION_TOMBSTONE_PREFIX)) return null;
-  if (value !== RECONCILIATION_TOMBSTONE_VALUE) invalidTombstone();
+  if (!/^(0|[1-9][0-9]*)$/.test(value)) invalidTombstone();
+  const deletedAt = BigInt(value);
+  if (deletedAt > MAX_SQLITE_INTEGER) invalidTombstone();
   const suffix = key.slice(RECONCILIATION_TOMBSTONE_PREFIX.length);
   const separator = suffix.indexOf(':');
   if (separator < 1) invalidTombstone();
   const table = suffix.slice(0, separator);
   const [first, second] = decodedParts(suffix.slice(separator + 1));
-  if (table === 'hire_roster') return { table, wish: first, agentAdapterId: second };
+  if (table === 'hire_roster') return { table, wish: first, agentAdapterId: second, deletedAt };
   return invalidTombstone();
 }

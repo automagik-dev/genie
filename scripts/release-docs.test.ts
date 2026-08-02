@@ -751,11 +751,11 @@ describe('Group E release and documentation contracts', () => {
   });
 
   test('database reconciliation docs describe explicit live paths and both bounded lock layers', () => {
-    const readme = read('README.md');
-    expect(readme).toContain('An explicit\npath may name a database that active Genie processes also use.');
+    const readme = read('README.md').replace(/\s+/g, ' ');
+    expect(readme).toContain('An explicit path may name a database that active Genie processes also use.');
     expect(readme).toContain('canonical-path advisory locks');
     expect(readme).toContain('SQLite write locks');
-    expect(readme).toContain('bounds the combined\nwait for both lock layers');
+    expect(readme).toContain('bounds the combined wait for both lock layers');
     expect(readme).toContain('repeating one is an actionable usage error');
     expect(readme).not.toContain('It never discovers or connects a live shared database.');
   });

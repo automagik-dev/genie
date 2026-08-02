@@ -33,7 +33,7 @@ import {
 } from './db-reconciliation.js';
 import { openDb } from './genie-db.js';
 import { RECONCILIATION_TOMBSTONE_PREFIX, reconciliationTombstoneMeta } from './reconciliation-tombstone.js';
-import { unhireAgent } from './task-state.js';
+import { hireAgent, unhireAgent } from './task-state.js';
 
 let fixtureRoot: string;
 
@@ -90,7 +90,9 @@ async function spawnFlockHolder(lockPath: string, holdMs: number): Promise<Retur
       lockPath,
       readyPath,
       String(holdMs),
-      JSON.stringify(linuxLibcCandidates(process.arch)),
+      JSON.stringify(
+        process.platform === 'darwin' ? ['/usr/lib/libSystem.B.dylib'] : linuxLibcCandidates(process.arch),
+      ),
     ],
     stderr: 'pipe',
     stdout: 'pipe',
@@ -1016,7 +1018,7 @@ describe('keyed, edge-set, and history-multiset planning', () => {
     expect(plan.report.targets[0].changes.deletions).toBe(0);
   });
 
-  test('a roster tombstone propagates a guest deletion instead of resurrecting the live host row', () => {
+  test('versioned roster tombstones support delete, later re-hire, and later delete', () => {
     const host = currentDb('host');
     const guest = currentDb('guest');
     for (const path of [host, guest]) {
@@ -1034,7 +1036,7 @@ describe('keyed, edge-set, and history-multiset planning', () => {
 
     expect(plan.status).toBe('changed');
     expect(target(plan, 'left').changes.deletions).toEqual([
-      { table: 'hire_roster', wish: 'w', agentAdapterId: 'agent' },
+      expect.objectContaining({ table: 'hire_roster', wish: 'w', agentAdapterId: 'agent' }),
     ]);
     expect(target(plan, 'right').changes.deletions).toEqual([]);
     expect(plan.report.targets.map(({ changes }) => changes.deletions)).toEqual([1, 0]);
@@ -1048,6 +1050,30 @@ describe('keyed, edge-set, and history-multiset planning', () => {
       });
     }
     expect(planDatabaseReconciliation(bidirectional(host, guest)).status).toBe('no-op');
+
+    mutate(host, (db) => {
+      const rehired = hireAgent(db, { wish: 'w', agentAdapterId: 'agent', worktree: '/wt/re-hired' });
+      expect(rehired.hiredAt).toBeGreaterThan(1);
+    });
+    const resurrection = planDatabaseReconciliation(bidirectional(host, guest));
+    expect(resurrection.status).toBe('changed');
+    expect(resurrection.targets.every((item) => item.changes.deletions.length === 0)).toBe(true);
+    expect(applyDatabaseReconciliation(resurrection)).toMatchObject({ status: 'changed', converged: true });
+    for (const path of [host, guest]) {
+      mutate(path, (db) => {
+        expect(db.query('SELECT worktree FROM hire_roster').all()).toEqual([{ worktree: '/wt/re-hired' }]);
+      });
+    }
+    expect(planDatabaseReconciliation(bidirectional(host, guest)).status).toBe('no-op');
+
+    mutate(guest, (db) => expect(unhireAgent(db, 'w', 'agent')).toBe(true));
+    const secondDeletion = planDatabaseReconciliation(bidirectional(host, guest));
+    expect(secondDeletion.status).toBe('changed');
+    expect(target(secondDeletion, 'left').changes.deletions).toHaveLength(1);
+    expect(applyDatabaseReconciliation(secondDeletion)).toMatchObject({ status: 'changed', converged: true });
+    for (const path of [host, guest]) {
+      mutate(path, (db) => expect(db.query('SELECT * FROM hire_roster').all()).toEqual([]));
+    }
   });
 
   test('malformed tombstones and a live-row contradiction fail closed before planning', () => {
@@ -1068,7 +1094,12 @@ describe('keyed, edge-set, and history-multiset planning', () => {
            (wish, agent_adapter_id, profile, worktree, hired_at, state)
          VALUES ('w', 'agent', NULL, '/wt/agent', 1, 'hired')`,
       ).run();
-      const tombstone = reconciliationTombstoneMeta({ table: 'hire_roster', wish: 'w', agentAdapterId: 'agent' });
+      const tombstone = reconciliationTombstoneMeta({
+        table: 'hire_roster',
+        wish: 'w',
+        agentAdapterId: 'agent',
+        deletedAt: 1,
+      });
       db.query('INSERT INTO meta (key, value) VALUES (?, ?)').run(tombstone.key, tombstone.value);
     });
     expect(dryRunDatabaseReconciliation(bidirectional(contradictory, peer)).operationalFailure?.code).toBe(
@@ -1379,6 +1410,25 @@ describe('same-file, idempotency, and bounded failures', () => {
     expect(plan.conflicts).toHaveLength(2);
     expect(plan.conflicts.every((conflict) => conflict.reason === failure)).toBe(true);
     expect(plan.targets.every((item) => !Object.values(item.changes).some((rows) => rows.length > 0))).toBe(true);
+  });
+
+  test('hardlink aliases remain same-database no-ops with inert SQLite sidecar pathnames', () => {
+    const path = currentDb('inert-sidecar-alias');
+    const alias = join(fixtureRoot, 'inert-sidecar-hardlink.db');
+    linkSync(path, alias);
+    writeFileSync(`${path}-wal`, '');
+    writeFileSync(`${path}-shm`, '');
+
+    for (const request of [
+      bidirectional(path, alias),
+      bidirectional(alias, path),
+      { mode: 'directional' as const, sourcePath: path, destinationPath: alias },
+      { mode: 'directional' as const, sourcePath: alias, destinationPath: path },
+    ]) {
+      const plan = planDatabaseReconciliation(request);
+      expect(plan.status).toBe('same-database');
+      expect(plan.sameDatabase).toBe(true);
+    }
   });
 
   test('hardlink aliases with a committed path-specific WAL are rejected independent of order and mode', () => {

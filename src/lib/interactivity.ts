@@ -67,6 +67,8 @@ const WORKSPACE_EXEMPT = new Set([
   // behavior.
   'task',
   'board',
+  // `db` operates only on explicit database paths and owns their validation.
+  'db',
   // `idea` is the one-verb quick-capture (roadmap board's Idea lane). Same v5
   // sqlite-backed self-resolving DB as `task`/`board`; it must work in a fresh
   // repo with no workspace.json (QA: `genie idea` on a fresh repo).

@@ -563,7 +563,7 @@ function openPosixDirectoryApi(
             componentBytes(destinationName),
           ) !== 0
         ) {
-          throw new Error('renameat failed');
+          throw nativeError('renameat', errno[0]);
         }
       },
       unlinkAt(directoryDescriptor, name, directory) {

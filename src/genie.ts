@@ -200,10 +200,6 @@ registerOmniCommands(program);
 // Universal workspace check — ensures workspace exists before commands that need it
 // ============================================================================
 
-// `db` takes explicit database paths and must validate them before any legacy
-// workspace prompt can create state. It is therefore standalone like task and
-// board, without broadening the legacy middleware's shared exemption list.
-const requestedRootCommand = process.argv.slice(2).find((argument) => !argument.startsWith('-'));
-if (requestedRootCommand !== 'db') installWorkspaceCheck(program);
+installWorkspaceCheck(program);
 
 await program.parseAsync(process.argv);

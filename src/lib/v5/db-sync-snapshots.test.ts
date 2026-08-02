@@ -9,6 +9,7 @@ import {
   linkSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   readdirSync,
   readlinkSync,
@@ -160,8 +161,8 @@ function descriptorCount(): number {
   return readdirSync(directory).length;
 }
 
-function privateSnapshotDirectories(): string[] {
-  return readdirSync(tmpdir()).filter((name) => name.startsWith('genie-db-sync-private-'));
+function privateSnapshotDirectories(directory: string): string[] {
+  return readdirSync(directory).filter((name) => name.startsWith('genie-db-sync-private-'));
 }
 
 function leaveCompleteGeneration(left: string, right: string): { root: string; directory: string } {
@@ -1994,15 +1995,18 @@ describe('database sync snapshots', () => {
     expect(existsSync(join(root, '.staging-darwin'))).toBe(false);
     expect(generationDirectories(root)).toHaveLength(1);
 
-    const privateBefore = privateSnapshotDirectories();
+    const privateTemporaryDirectory = join(fixtureRoot, 'darwin-private-temp');
+    mkdirSync(privateTemporaryDirectory, { mode: 0o700 });
+    const privateBefore = privateSnapshotDirectories(privateTemporaryDirectory);
     insertBoard(right, 'private');
     expect(
       applyDatabaseReconciliationWithSnapshots(planDatabaseReconciliation(request), {
         keepSnapshots: 0,
         posixDirectory: darwin,
+        privateRoot: { temporaryDirectory: privateTemporaryDirectory },
       }).status,
     ).toBe('changed');
-    expect(privateSnapshotDirectories()).toEqual(privateBefore);
+    expect(privateSnapshotDirectories(privateTemporaryDirectory)).toEqual(privateBefore);
     expect(directoryRemovals).toBeGreaterThanOrEqual(3);
     expect(candidates).toContain('darwin:/usr/lib/libSystem.B.dylib');
   });
@@ -2013,16 +2017,19 @@ describe('database sync snapshots', () => {
     insertBoard(right, 'private');
     const request = { mode: 'bidirectional' as const, leftPath: left, rightPath: right };
     const identity = databaseSyncSnapshotIdentity(request);
+    const privateTemporaryDirectory = join(fixtureRoot, 'private-success-temp');
+    mkdirSync(privateTemporaryDirectory, { mode: 0o700 });
     let privateRoot: string | undefined;
     let privateMode: number | undefined;
     const report = applyDatabaseReconciliationWithSnapshots(planDatabaseReconciliation(request), {
       keepSnapshots: 0,
+      privateRoot: { temporaryDirectory: privateTemporaryDirectory },
       onEvent: (event) => {
         if (event.phase === 'payload-write' && event.path === undefined && privateRoot === undefined) {
           // The generation ID is intentionally not sufficient to discover the OS-private root.
-          privateRoot = readdirSync(tmpdir())
+          privateRoot = readdirSync(privateTemporaryDirectory)
             .filter((name) => name.startsWith('genie-db-sync-private-'))
-            .map((name) => join(tmpdir(), name))
+            .map((name) => join(privateTemporaryDirectory, name))
             .find((path) => statSync(path).isDirectory());
           privateMode = privateRoot === undefined ? undefined : statSync(privateRoot).mode & 0o777;
         }
@@ -2089,11 +2096,14 @@ describe('database sync snapshots', () => {
         keepSnapshots: 3,
       }).status,
     ).toBe('changed');
-    const privateBefore = privateSnapshotDirectories();
+    const privateTemporaryDirectory = join(fixtureRoot, 'private-prune-failure-temp');
+    mkdirSync(privateTemporaryDirectory, { mode: 0o700 });
+    const privateBefore = privateSnapshotDirectories(privateTemporaryDirectory);
     insertBoard(right, 'private');
     let injected = false;
     const report = applyDatabaseReconciliationWithSnapshots(planDatabaseReconciliation(request), {
       keepSnapshots: 0,
+      privateRoot: { temporaryDirectory: privateTemporaryDirectory },
       onEvent: (event) => {
         if (!injected && event.phase === 'prune' && event.state === 'before') {
           injected = true;
@@ -2106,7 +2116,7 @@ describe('database sync snapshots', () => {
       status: 'changed',
       cleanupFailures: ['snapshot-cleanup-failed'],
     });
-    expect(privateSnapshotDirectories()).toEqual(privateBefore);
+    expect(privateSnapshotDirectories(privateTemporaryDirectory)).toEqual(privateBefore);
     expect(generationDirectories(databaseSyncSnapshotIdentity(request).root)).toHaveLength(1);
   });
 
@@ -2115,14 +2125,17 @@ describe('database sync snapshots', () => {
     const right = currentDb('private-failure-right');
     insertBoard(right, 'private');
     const request = { mode: 'bidirectional' as const, leftPath: left, rightPath: right };
+    const privateTemporaryDirectory = join(fixtureRoot, 'private-cleanup-failure-temp');
+    mkdirSync(privateTemporaryDirectory, { mode: 0o700 });
     let leakedRoot: string | undefined;
     const report = applyDatabaseReconciliationWithSnapshots(planDatabaseReconciliation(request), {
       keepSnapshots: 0,
+      privateRoot: { temporaryDirectory: privateTemporaryDirectory },
       onEvent: (event) => {
         if (event.phase === 'payload-write' && leakedRoot === undefined) {
-          leakedRoot = readdirSync(tmpdir())
+          leakedRoot = readdirSync(privateTemporaryDirectory)
             .filter((name) => name.startsWith('genie-db-sync-private-'))
-            .map((name) => join(tmpdir(), name))
+            .map((name) => join(privateTemporaryDirectory, name))
             .find((path) => statSync(path).isDirectory());
         }
       },
@@ -2327,6 +2340,19 @@ describe('database sync snapshots', () => {
     ).toBe(native);
     expect(darwinAttempts).toEqual(['darwin:/usr/lib/libSystem.B.dylib']);
     expect(resolveSnapshotPosixDirectory({ platform: 'win32', architecture: 'x64' })).toBeNull();
+  });
+
+  test('native POSIX directory listing reads names from the dirent name offset', () => {
+    const directory = join(fixtureRoot, 'dirent-name-offset');
+    mkdirSync(directory);
+    writeFileSync(join(directory, 'alpha-generation'), 'alpha');
+    writeFileSync(join(directory, 'beta-generation'), 'beta');
+    const descriptor = openSync(directory, 'r');
+    try {
+      expect([...nativePosixDirectory().list(descriptor)].sort()).toEqual(['alpha-generation', 'beta-generation']);
+    } finally {
+      closeSync(descriptor);
+    }
   });
 
   test('root and child descriptors close on invalid options, staging faults, and reacquisition', () => {

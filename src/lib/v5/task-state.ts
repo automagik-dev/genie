@@ -13,7 +13,7 @@
 
 import type { Database } from 'bun:sqlite';
 import { createHash, randomBytes } from 'node:crypto';
-import { reconciliationTombstoneMeta } from './reconciliation-tombstone.js';
+import { parseReconciliationTombstoneMeta, reconciliationTombstoneMeta } from './reconciliation-tombstone.js';
 
 // ============================================================================
 // Type boundaries
@@ -1290,6 +1290,10 @@ function mapHire(row: RawHire): HireRosterRow {
   };
 }
 
+function maxBigInt(left: bigint, right: bigint): bigint {
+  return left > right ? left : right;
+}
+
 /**
  * Hire an agent adapter into a wish. Idempotent single-row upsert keyed on
  * `(wish, agent_adapter_id)`: a re-hire refreshes profile/worktree/state but
@@ -1299,15 +1303,22 @@ function mapHire(row: RawHire): HireRosterRow {
  * The transaction also clears this replica's reconciliation tombstone.
  */
 export function hireAgent(db: Database, input: HireAgentInput): HireRosterRow {
-  const now = Date.now();
   const state = input.state ?? 'hired';
-  const tombstone = reconciliationTombstoneMeta({
+  const tombstoneKey = reconciliationTombstoneMeta({
     table: 'hire_roster',
     wish: input.wish,
     agentAdapterId: input.agentAdapterId,
-  });
+    deletedAt: 0,
+  }).key;
   db.transaction(() => {
-    db.query('DELETE FROM meta WHERE key = ?').run(tombstone.key);
+    const priorMarker = db.query('SELECT value FROM meta WHERE key = ?').get(tombstoneKey) as { value: string } | null;
+    const priorDeletion =
+      priorMarker === null ? null : parseReconciliationTombstoneMeta(tombstoneKey, priorMarker.value);
+    const now = Number(
+      priorDeletion === null ? BigInt(Date.now()) : maxBigInt(BigInt(Date.now()), priorDeletion.deletedAt + 1n),
+    );
+    if (!Number.isSafeInteger(now)) throw new Error('Roster reconciliation version exceeds the safe timestamp range.');
+    db.query('DELETE FROM meta WHERE key = ?').run(tombstoneKey);
     db.query(
       `INSERT INTO hire_roster (wish, agent_adapter_id, profile, worktree, hired_at, state)
        VALUES (?, ?, ?, ?, ?, ?)
@@ -1316,7 +1327,7 @@ export function hireAgent(db: Database, input: HireAgentInput): HireRosterRow {
          worktree = excluded.worktree,
          state    = excluded.state`,
     ).run(input.wish, input.agentAdapterId, input.profile ?? null, input.worktree, now, state);
-  })();
+  }).immediate();
   return getHire(db, input.wish, input.agentAdapterId) as HireRosterRow;
 }
 
@@ -1326,12 +1337,26 @@ export function hireAgent(db: Database, input: HireAgentInput): HireRosterRow {
  * boolean reports whether this call removed a live local row.
  */
 export function unhireAgent(db: Database, wish: string, agentAdapterId: string): boolean {
-  const tombstone = reconciliationTombstoneMeta({ table: 'hire_roster', wish, agentAdapterId });
-  return db.transaction(() => {
-    const res = db.query('DELETE FROM hire_roster WHERE wish = ? AND agent_adapter_id = ?').run(wish, agentAdapterId);
-    db.query('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run(tombstone.key, tombstone.value);
-    return res.changes > 0;
-  })();
+  const tombstoneKey = reconciliationTombstoneMeta({ table: 'hire_roster', wish, agentAdapterId, deletedAt: 0 }).key;
+  return db
+    .transaction(() => {
+      const live = db
+        .query('SELECT hired_at FROM hire_roster WHERE wish = ? AND agent_adapter_id = ?')
+        .get(wish, agentAdapterId) as { hired_at: number } | null;
+      const priorMarker = db.query('SELECT value FROM meta WHERE key = ?').get(tombstoneKey) as {
+        value: string;
+      } | null;
+      const priorDeletion =
+        priorMarker === null ? null : parseReconciliationTombstoneMeta(tombstoneKey, priorMarker.value);
+      let deletedAt = BigInt(Date.now());
+      if (live !== null) deletedAt = maxBigInt(deletedAt, BigInt(live.hired_at) + 1n);
+      if (priorDeletion !== null) deletedAt = maxBigInt(deletedAt, priorDeletion.deletedAt + 1n);
+      const tombstone = reconciliationTombstoneMeta({ table: 'hire_roster', wish, agentAdapterId, deletedAt });
+      const res = db.query('DELETE FROM hire_roster WHERE wish = ? AND agent_adapter_id = ?').run(wish, agentAdapterId);
+      db.query('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run(tombstone.key, tombstone.value);
+      return res.changes > 0;
+    })
+    .immediate();
 }
 
 export function getHire(db: Database, wish: string, agentAdapterId: string): HireRosterRow | null {
