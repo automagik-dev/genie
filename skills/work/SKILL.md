@@ -28,7 +28,7 @@ When you are spawned as a subagent for a group, your dispatch prompt carries the
 4. **Await completion — never poll:** background subagents notify you when they finish. Inspect `genie board --wish <slug>` on demand; completion is push, not poll.
 5. **Local review:** per finished group, dispatch a reviewer subagent (reviewer ≠ engineer) to run `review` against that group's acceptance criteria. The orchestrator appends each returned evidence block under `## Review Results`; the reviewer never edits it. Diagnose before fixing: `overdesigned-plan` returns to wish/design review without consuming a fix attempt; other FIX-FIRST gaps may use at most 2 fix loops.
 6. **Quality review:** dispatch a reviewer for a quality pass (security, maintainability, perf). On FIX-FIRST, one fix loop.
-7. **Validate:** run the group's validation command yourself (Bash); record the output and the scope rationale as
+7. **Validate:** run the group's validation command yourself through the active runtime's shell surface; record the output and the scope rationale as
    evidence. Confirm it remains proportional to the actual diff, widening it when implementation reached beyond the
    plan: documentation-only changes, including deterministic generated documentation or plugin skill mirrors, use
    relevant format, link, example, generator, parity, or content-contract checks; runtime changes use focused behavior
@@ -60,7 +60,7 @@ Use the active runtime's named roles. In Codex, use the matching `genie_*` custo
 | Fix | `fixer` (`genie_fixer`; separate from the reviewer) |
 | Final plan or execution gate | `final-gate` (`genie_final_gate`) |
 | Bounded read-only discovery | `scout` (`genie_scout`) |
-| Quick validation | Bash directly — no subagent |
+| Quick validation | The active runtime's shell directly — no subagent |
 | Follow-up to a running subagent | **native follow-up messaging** (keeps its context) |
 
 Reviewer ≠ engineer is a hard rule — an agent never reviews its own work.
