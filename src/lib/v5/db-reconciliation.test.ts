@@ -128,7 +128,7 @@ function insertTask(
     wish?: string | null;
     groupName?: string | null;
     createdAt?: number;
-    updatedAt?: number;
+    updatedAt?: number | bigint;
     lane?: string | null;
     agentKind?: string | null;
     heartbeatAt?: number | null;
@@ -783,21 +783,190 @@ describe('keyed, edge-set, and history-multiset planning', () => {
     expect(planDatabaseReconciliation(bidirectional(valid, peer)).status).toBe('changed');
   });
 
-  test('bidirectional same-key differences conflict without exposing hostile payloads', () => {
+  test('bidirectional versioned rows use the later bigint updated_at independent of argument order', () => {
+    const left = currentDb('version-left');
+    const right = currentDb('version-right');
+    const earlier = 9_007_199_254_740_992n;
+    const later = earlier + 1n;
+    for (const path of [left, right]) {
+      mutate(path, (db) => {
+        insertBoard(db, { id: 'board', name: 'shared board' });
+        insertTask(db, { id: 'blocker', title: 'shared blocker' });
+      });
+    }
+    mutate(left, (db) => {
+      insertTask(db, {
+        id: 'left-newer',
+        boardId: 'board',
+        title: 'complete left task',
+        status: 'in_progress',
+        claimedBy: 'left-worker',
+        claimedAt: 101,
+        wish: 'left-wish',
+        groupName: 'group',
+        createdAt: 11,
+        updatedAt: later,
+        lane: 'active',
+        agentKind: 'codex',
+        heartbeatAt: 102,
+        blockedBy: 'blocker',
+        blockedReason: 'waiting',
+      });
+      insertTask(db, { id: 'right-newer', title: 'stale left copy', status: 'ready', updatedAt: earlier });
+      db.query(
+        `INSERT INTO wish_groups
+           (wish, name, status, depends_on, assignee, started_at, completed_at, created_at, updated_at)
+         VALUES ('wish', 'group', 'done', '[]', 'left-worker', 201, 202, 12, ?)`,
+      ).run(later);
+    });
+    mutate(right, (db) => {
+      insertTask(db, { id: 'left-newer', title: 'stale right copy', status: 'ready', updatedAt: earlier });
+      insertTask(db, {
+        id: 'right-newer',
+        boardId: 'board',
+        title: 'complete right task',
+        status: 'blocked',
+        claimedBy: 'right-worker',
+        claimedAt: 301,
+        wish: 'right-wish',
+        groupName: 'group',
+        createdAt: 13,
+        updatedAt: later,
+        lane: 'blocked',
+        agentKind: 'claude',
+        heartbeatAt: 302,
+        blockedBy: 'blocker',
+        blockedReason: 'dependency',
+      });
+      db.query(
+        `INSERT INTO wish_groups
+           (wish, name, status, depends_on, assignee, started_at, completed_at, created_at, updated_at)
+         VALUES ('wish', 'group', 'ready', '[]', NULL, NULL, NULL, 1, ?)`,
+      ).run(earlier);
+    });
+
+    const forward = planDatabaseReconciliation(bidirectional(left, right));
+    const reverse = planDatabaseReconciliation(bidirectional(right, left));
+    const leftWinner = {
+      id: 'left-newer',
+      boardId: 'board',
+      title: 'complete left task',
+      status: 'in_progress',
+      claimedBy: 'left-worker',
+      claimedAt: 101n,
+      wish: 'left-wish',
+      groupName: 'group',
+      createdAt: 11n,
+      updatedAt: later,
+      lane: 'active',
+      agentKind: 'codex',
+      heartbeatAt: 102n,
+      blockedBy: 'blocker',
+      blockedReason: 'waiting',
+    };
+    const rightWinner = {
+      id: 'right-newer',
+      boardId: 'board',
+      title: 'complete right task',
+      status: 'blocked',
+      claimedBy: 'right-worker',
+      claimedAt: 301n,
+      wish: 'right-wish',
+      groupName: 'group',
+      createdAt: 13n,
+      updatedAt: later,
+      lane: 'blocked',
+      agentKind: 'claude',
+      heartbeatAt: 302n,
+      blockedBy: 'blocker',
+      blockedReason: 'dependency',
+    };
+
+    expect(forward.status).toBe('changed');
+    expect(reverse.status).toBe('changed');
+    expect(target(forward, 'left').changes.tasks).toEqual([rightWinner]);
+    expect(target(forward, 'right').changes.tasks).toEqual([leftWinner]);
+    expect(target(reverse, 'left').changes.tasks).toEqual([leftWinner]);
+    expect(target(reverse, 'right').changes.tasks).toEqual([rightWinner]);
+    expect(target(forward, 'right').changes.wishGroups).toEqual([
+      {
+        wish: 'wish',
+        name: 'group',
+        status: 'done',
+        dependsOn: '[]',
+        assignee: 'left-worker',
+        startedAt: 201n,
+        completedAt: 202n,
+        createdAt: 12n,
+        updatedAt: later,
+      },
+    ]);
+    expect(target(reverse, 'left').changes.wishGroups).toEqual(target(forward, 'right').changes.wishGroups);
+    expect(new Set(forward.targets.map((item) => item.postimageDigest)).size).toBe(1);
+    expect(new Set(reverse.targets.map((item) => item.postimageDigest)).size).toBe(1);
+    expect(target(forward, 'left').postimageDigest).toBe(target(reverse, 'right').postimageDigest);
+  });
+
+  test('bidirectional equal-version row differences remain conflicts', () => {
+    const left = currentDb('equal-version-left');
+    const right = currentDb('equal-version-right');
+    for (const [path, side] of [
+      [left, 'left'],
+      [right, 'right'],
+    ] as const) {
+      mutate(path, (db) => {
+        insertTask(db, { id: 'task', title: `${side} task`, updatedAt: 7 });
+        db.query(
+          `INSERT INTO wish_groups
+             (wish, name, status, depends_on, assignee, created_at, updated_at)
+           VALUES ('wish', 'group', 'ready', '[]', ?, 1, 9)`,
+        ).run(side);
+      });
+    }
+
+    const plan = planDatabaseReconciliation(bidirectional(left, right));
+
+    expect(plan.status).toBe('conflict');
+    expect(plan.conflicts).toEqual([
+      expect.objectContaining({ table: 'tasks', reason: 'same-key-difference' }),
+      expect.objectContaining({ table: 'wish_groups', reason: 'same-key-difference' }),
+    ]);
+  });
+
+  test('bidirectional unversioned same-key differences conflict without exposing hostile payloads', () => {
     const left = currentDb('left');
     const right = currentDb('right');
-    mutate(left, (db) => insertBoard(db, { id: 'same', name: '<left-title>' }));
-    mutate(right, (db) => insertBoard(db, { id: 'same', name: '<hostile-title> right' }));
+    mutate(left, (db) => {
+      insertBoard(db, { id: 'same', name: '<left-title>' });
+      db.query(
+        `INSERT INTO hire_roster (wish, agent_adapter_id, profile, worktree, hired_at, state)
+         VALUES ('wish', 'agent', NULL, '/left', 1, 'hired')`,
+      ).run();
+      db.query("INSERT INTO meta (key, value) VALUES ('unknown', '<left-meta>')").run();
+    });
+    mutate(right, (db) => {
+      insertBoard(db, { id: 'same', name: '<hostile-title> right' });
+      db.query(
+        `INSERT INTO hire_roster (wish, agent_adapter_id, profile, worktree, hired_at, state)
+         VALUES ('wish', 'agent', NULL, '/right', 1, 'hired')`,
+      ).run();
+      db.query("INSERT INTO meta (key, value) VALUES ('unknown', '<hostile-meta>')").run();
+    });
 
     const plan = planDatabaseReconciliation(bidirectional(left, right));
     const reportJson = JSON.stringify(plan.report);
 
     expect(plan.status).toBe('conflict');
-    expect(plan.conflicts).toHaveLength(1);
-    expect(plan.conflicts[0]).toMatchObject({ table: 'boards', reason: 'same-key-difference' });
+    expect(plan.conflicts).toEqual([
+      expect.objectContaining({ table: 'boards', reason: 'same-key-difference' }),
+      expect.objectContaining({ table: 'hire_roster', reason: 'same-key-difference' }),
+      expect.objectContaining({ table: 'meta', reason: 'same-key-difference' }),
+    ]);
     expect(plan.targets.every((item) => item.postimageDigest === null)).toBe(true);
     expect(reportJson).not.toContain('hostile-title');
     expect(reportJson).not.toContain('left-title');
+    expect(reportJson).not.toContain('hostile-meta');
+    expect(reportJson).not.toContain('left-meta');
   });
 
   test('directional source wins shared keyed rows and unknown meta while destination-only rows are preserved', () => {
@@ -809,12 +978,17 @@ describe('keyed, edge-set, and history-multiset planning', () => {
     ] as const) {
       mutate(path, (db) => {
         insertBoard(db, { id: 'shared-board', name: `board-${suffix}` });
-        insertTask(db, { id: 'shared-task', boardId: 'shared-board', title: `task-${suffix}` });
+        insertTask(db, {
+          id: 'shared-task',
+          boardId: 'shared-board',
+          title: `task-${suffix}`,
+          updatedAt: suffix === 'source' ? 1 : 999,
+        });
         db.query(
           `INSERT INTO wish_groups
              (wish, name, status, depends_on, assignee, started_at, completed_at, created_at, updated_at)
-           VALUES ('w', 'g', 'ready', '[]', ?, NULL, NULL, 1, 1)`,
-        ).run(suffix);
+           VALUES ('w', 'g', 'ready', '[]', ?, NULL, NULL, 1, ?)`,
+        ).run(suffix, suffix === 'source' ? 1 : 999);
         db.query(
           `INSERT INTO hire_roster
              (wish, agent_adapter_id, profile, worktree, hired_at, state)

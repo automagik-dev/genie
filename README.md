@@ -183,12 +183,15 @@ genie db sync \
   --destination /path/to/destination.db
 ```
 
-Bidirectional mode unions additions. It reports a conflict when the same
-mutable key differs because the databases do not carry ancestry that could
-prove which row is newer. Directional mode makes the source authoritative for
-shared mutable task, board, wish-group, hire-roster, and unknown metadata
-keys. It writes only the destination. Both modes preserve destination-only rows:
-ordinary absence never means deletion.
+Bidirectional mode unions additions. When the same task or wish-group key
+differs, the row with the higher `updated_at` value wins and is copied exactly
+to both databases. Equal `updated_at` values with unequal row content remain a
+conflict. Boards, hire-roster entries, and unknown metadata have no trustworthy
+update version, so differing rows at the same key also remain conflicts.
+Directional mode makes the source authoritative for shared mutable task,
+board, wish-group, hire-roster, and unknown metadata keys. It writes only the
+destination. Both modes preserve destination-only rows: ordinary absence never
+means deletion.
 
 When exactly one named database is absent and the other is an exact-current
 Genie database, sync bootstraps the absent side from the complete logical image
