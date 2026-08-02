@@ -28,7 +28,16 @@ When you are spawned as a subagent for a group, your dispatch prompt carries the
 4. **Await completion — never poll:** background subagents notify you when they finish. Inspect `genie board --wish <slug>` on demand; completion is push, not poll.
 5. **Local review:** per finished group, dispatch a reviewer subagent (reviewer ≠ engineer) to run `review` against that group's acceptance criteria. The orchestrator appends each returned evidence block under `## Review Results`; the reviewer never edits it. Diagnose before fixing: `overdesigned-plan` returns to wish/design review without consuming a fix attempt; other FIX-FIRST gaps may use at most 2 fix loops.
 6. **Quality review:** dispatch a reviewer for a quality pass (security, maintainability, perf). On FIX-FIRST, one fix loop.
-7. **Validate:** run the group's validation command yourself (Bash); record the output as evidence.
+7. **Validate:** run the group's validation command yourself through the active runtime's shell surface; record the output and the scope rationale as
+   evidence. Confirm it remains proportional to the actual diff, widening it when implementation reached beyond the
+   plan: documentation-only changes, including deterministic generated documentation or plugin skill mirrors, use
+   relevant format, link, example, generator, parity, or content-contract checks; runtime changes use focused behavior
+   tests and add type, lint, or build checks for boundaries reached. Shared runtime/core behavior, dependency or lockfile,
+   generated executable or runtime artifact, configuration or schema, CI or release, broad-refactor, or uncertain-impact
+   changes require the repository full gate plus affected build or end-to-end checks. Validation may never be zero. A
+   passing full-suite run is always valid evidence — record why that scope was chosen; a missing scope rationale is a
+   gap in the write-up, not in the validation. A repository-documented gate is by itself sufficient justification for
+   its scope. Preserve required aggregate integration and release gates.
 8. **Group done** — only after clean review AND passing validation:
    ```bash
    genie task done <task-id>
@@ -51,7 +60,7 @@ Use the active runtime's named roles. In Codex, use the matching `genie_*` custo
 | Fix | `fixer` (`genie_fixer`; separate from the reviewer) |
 | Final plan or execution gate | `final-gate` (`genie_final_gate`) |
 | Bounded read-only discovery | `scout` (`genie_scout`) |
-| Quick validation | Bash directly — no subagent |
+| Quick validation | The active runtime's shell directly — no subagent |
 | Follow-up to a running subagent | **native follow-up messaging** (keeps its context) |
 
 Reviewer ≠ engineer is a hard rule — an agent never reviews its own work.
@@ -73,7 +82,7 @@ Extract the group's context from WISH.md and paste it into the dispatch prompt �
 1. **Goal** — one sentence
 2. **Deliverables** — the numbered list of concrete outputs
 3. **Acceptance criteria** — the checkboxes to satisfy
-4. **Validation command** — the exact command proving the work (e.g. `bun run check`)
+4. **Validation command** — the exact command proving the work, with its scope rationale (e.g. `bun run check` because the group touches shared runtime behavior)
 5. **Depends-on** — what the engineer may assume already exists
 6. **File scope** — the group's explicit file scope (the paths it owns), so disjoint ownership is legible to the engineer rather than inferred
 7. **Stop conditions** — claim the task first; report blocked instead of expanding scope; end with an outcome word (see Session close)
@@ -115,7 +124,8 @@ A user-approved simplification invalidates the superseded plan/review evidence a
 
 ## Rules
 - Never execute group work directly — always dispatch via the native delegation surface.
-- Never expand scope during execution; never skip validation commands.
+- Never expand scope during execution; never skip validation commands or substitute unexplained over-validation for a
+  risk-based choice.
 - Never spend fix loops preserving optional complexity; route an `overdesigned-plan` diagnosis back through wish/design review.
 - Never overwrite WISH.md from subagent output — curated prompts are runtime context; the WISH.md in git is the source of truth.
 - Reviewer ≠ engineer, always.

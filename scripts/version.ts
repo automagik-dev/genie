@@ -199,6 +199,7 @@ export async function synchronizeVersionFiles(rootDir: string, version: string):
     join(rootDir, 'plugins/genie/.claude-plugin/plugin.json'),
     join(rootDir, 'plugins/genie/.codex-plugin/plugin.json'),
     join(rootDir, 'plugins/genie/package.json'),
+    join(rootDir, 'plugins/pi-genie/package.json'),
   ];
   const marketplacePath = join(rootDir, '.claude-plugin/marketplace.json');
   const yamlPaths = [join(rootDir, 'plugins/hermes-genie/plugin.yaml')];

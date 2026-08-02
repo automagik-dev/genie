@@ -11,16 +11,28 @@
  *   task status <id>
  *   task done <id>
  *   task checkout <id> [--worker <name>]
- *   task export
+ *   task export [--write [file]]
+ *   task import [file] [--replace]
+ *   task sync
  */
 
 import type { Database } from 'bun:sqlite';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
 import type { Command } from 'commander';
 import { color, formatTimestamp, padRight, truncate } from '../lib/term-format.js';
 import { livenessBadge } from '../lib/v5/card-render.js';
-import { openDb } from '../lib/v5/genie-db.js';
+import { openDb, resolveRoadmapPath } from '../lib/v5/genie-db.js';
+import {
+  recordExportBaseline,
+  recordImportBaseline,
+  roadmapSnapshot,
+  syncRoadmap,
+  writeSnapshotFile,
+} from '../lib/v5/roadmap-sync.js';
 import {
   type EventAuthor,
+  type ImportSummary,
   type TaskCardRow,
   type TaskFilter,
   type TaskRow,
@@ -37,6 +49,7 @@ import {
   getTask,
   getTaskCard,
   getTaskEvents,
+  importState,
   listTasks,
   moveTask,
   recordHeartbeat,
@@ -415,11 +428,127 @@ function handleHeartbeat(id: string): void {
   });
 }
 
-function handleExport(): void {
+interface ExportOptions {
+  write?: string | boolean;
+}
+
+/**
+ * Realpath-normalized form for path IDENTITY comparison. A raw string compare is
+ * wrong twice over: `--write <relative>` resolves against process.cwd() while
+ * `resolveRoadmapPath()` resolves against the git COMMON root, and macOS spells
+ * the same directory two ways (`/var/...` vs `/private/var/...`). The target file
+ * itself may not exist yet, so normalize the existing parent + basename.
+ */
+function normalizedPath(path: string): string {
+  try {
+    return join(realpathSync(dirname(path)), basename(path));
+  } catch {
+    return path;
+  }
+}
+
+function samePath(a: string, b: string): boolean {
+  return normalizedPath(a) === normalizedPath(b);
+}
+
+/**
+ * True for ANY target spelled `<dir>/.genie/roadmap.json`, not just this repo's
+ * canonical file — a subdirectory or linked-worktree spelling resolves elsewhere
+ * yet is still a git-trackable file under the canonical name. Such a file gets
+ * the roadmap slice so full-state `hire_roster` rows (machine-local worktree
+ * paths) can never travel in it. Custom-file writes and the plain stdout dump
+ * stay the complete database, so a backup file round-trips lossless.
+ */
+function isRoadmapSlicePath(path: string): boolean {
+  const normalized = normalizedPath(path);
+  return basename(normalized) === 'roadmap.json' && basename(dirname(normalized)) === '.genie';
+}
+
+function handleExport(opts: ExportOptions): void {
   run(() => {
     const db = openDb();
     try {
-      out(JSON.stringify(exportState(db), null, 2));
+      const target = opts.write ? (typeof opts.write === 'string' ? resolve(opts.write) : resolveRoadmapPath()) : null;
+      if (target === null) {
+        process.stdout.write(`${JSON.stringify(exportState(db), null, 2)}\n`);
+        return;
+      }
+      const sliced = isRoadmapSlicePath(target);
+      const canonical = sliced && samePath(target, resolveRoadmapPath());
+      // ONE immediate transaction over snapshot → file write → baseline. genie.db
+      // is shared across worktrees, so a writer landing mid-sequence would
+      // otherwise yield a torn snapshot (dependency rows whose tasks were missed)
+      // or a baseline dbHash describing a NEWER db than the published file — the
+      // next `task sync` then reads as in-sync and silently drops that change.
+      const publish = db.transaction(() => {
+        const state = sliced ? roadmapSnapshot(db) : exportState(db);
+        // Atomic (temp + rename) so a torn write can never leave the canonical
+        // board — or a custom backup — truncated mid-command.
+        writeSnapshotFile(target, state);
+        // Writing the canonical snapshot declares "this pair is intentional" —
+        // it is the keep-the-local-board resolution for a diverged sync. Only the
+        // true canonical path may stamp it; a same-named file elsewhere must not.
+        if (canonical) recordExportBaseline(state);
+      });
+      publish.immediate();
+      out(`Wrote board snapshot to ${target}.`);
+    } finally {
+      db.close();
+    }
+  });
+}
+
+interface ImportOptions {
+  replace?: boolean;
+}
+
+function handleSync(): void {
+  run(() => {
+    const db = openDb();
+    try {
+      const result = syncRoadmap(db);
+      out(result.message ?? `Board and snapshot are in sync (${result.action}).`);
+      if (result.action === 'diverged') process.exit(1);
+    } finally {
+      db.close();
+    }
+  });
+}
+
+function handleImport(file: string | undefined, opts: ImportOptions): void {
+  run(() => {
+    // Normalize before the canonical comparison: an explicit relative spelling
+    // of the roadmap path must behave exactly like omitting it.
+    const source = file ? resolve(file) : resolveRoadmapPath();
+    if (!existsSync(source)) {
+      fail(`Snapshot not found: ${source}. Generate one with \`genie task export --write\` and commit it.`);
+    }
+    let snapshot: unknown;
+    try {
+      snapshot = JSON.parse(readFileSync(source, 'utf-8'));
+    } catch (err) {
+      fail(`Snapshot at ${source} is not valid JSON: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    const db = openDb();
+    try {
+      // A roadmap-sliced snapshot carries no hires, so local hires stay untouched;
+      // only the true canonical file may stamp the sync baseline.
+      const sliced = isRoadmapSlicePath(source);
+      const canonical = sliced && samePath(source, resolveRoadmapPath());
+      // ONE immediate transaction over import → baseline (importState's own
+      // transaction nests as a savepoint): the baseline's post-import db
+      // re-snapshot must not see another worktree's write, or the marker would
+      // claim a db state the file never described and the next `task sync` would
+      // report in-sync while that change stayed unpublished.
+      const apply = db.transaction(() => {
+        const result = importState(db, snapshot, { replace: opts.replace, preserveHireRoster: sliced });
+        if (canonical) recordImportBaseline(db, snapshot);
+        return result;
+      });
+      const summary = apply.immediate() as ImportSummary;
+      out(
+        `Imported ${summary.tasks} tasks, ${summary.boards} boards, ${summary.dependencies} dependencies, ${summary.events} events, ${summary.wishGroups} wish groups, ${summary.hires} hires from ${source}.`,
+      );
     } finally {
       db.close();
     }
@@ -507,5 +636,17 @@ export function registerV5TaskCommands(v5: Command): void {
   task
     .command('export')
     .description('Emit the complete database state as JSON')
-    .action(() => handleExport());
+    .option('--write [file]', 'Write the snapshot to a file instead of stdout (default: .genie/roadmap.json)')
+    .action((opts: ExportOptions) => handleExport(opts));
+
+  task
+    .command('import [file]')
+    .description('Restore database state from an export snapshot (default: .genie/roadmap.json)')
+    .option('--replace', 'Overwrite existing state instead of refusing a non-empty database')
+    .action((file: string | undefined, opts: ImportOptions) => handleImport(file, opts));
+
+  task
+    .command('sync')
+    .description('Reconcile genie.db with the canonical .genie/roadmap.json (imports, exports, or warns on divergence)')
+    .action(() => handleSync());
 }

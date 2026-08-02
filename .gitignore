@@ -51,6 +51,14 @@ yarn-error.log*
 # Misc
 .cache/
 .temp/
+.dev/
+
+# Repository-local Hermes profile: keep the portable contract in git and
+# exclude plans, sessions, memories, credentials, logs, and other runtime state.
+.hermes/*
+!.hermes/config.yaml
+!.hermes/profile.yaml
+!.hermes/SOUL.md
 
 # Legacy worktrees (now default to ~/.genie/worktrees/)
 .worktrees/
@@ -71,6 +79,9 @@ yarn-error.log*
 .genie/genie.db
 .genie/genie.db-wal
 .genie/genie.db-shm
+
+# Machine-local roadmap sync baseline (pairs genie.db with roadmap.json)
+.genie/roadmap-sync
 
 # Per-worktree kickoff prompts emitted by `genie launch`
 .genie/launch/
@@ -114,3 +125,7 @@ core
 # particular can hold live session tokens (e.g. BW_SESSION).
 .codex/
 .dash/
+.empryo
+.mcp.json
+.rlmx/
+.warp/

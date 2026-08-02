@@ -11,5 +11,28 @@ if [ -n "$branch" ] && [ "${SKIP_CI_CHECK:-}" != "1" ] && command -v gh >/dev/nu
   fi
 fi
 
+# Reconcile the committed board snapshot (.genie/roadmap.json — canonical) with
+# the local genie.db via three-way sync: `task sync` imports when the snapshot
+# moved, exports when only the local board moved, and refuses to touch anything
+# on divergence — so a stale local db can never clobber the roadmap. Fail-open:
+# sync trouble warns but never blocks a commit. Skipped in linked worktrees
+# (the snapshot lives in the main checkout). post-merge/post-rewrite run the
+# same sync after pulls.
+git_dir=$(git rev-parse --path-format=absolute --git-dir 2>/dev/null)
+git_common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+if [ "$git_dir" = "$git_common" ] && [ -f src/genie.ts ]; then
+  # Stage roadmap.json only when the sync itself rewrote it (export) — never
+  # absorb pre-existing unstaged edits into an unrelated commit.
+  roadmap_before=$( [ -f .genie/roadmap.json ] && git hash-object .genie/roadmap.json || echo absent )
+  if bun src/genie.ts task sync; then
+    roadmap_after=$( [ -f .genie/roadmap.json ] && git hash-object .genie/roadmap.json || echo absent )
+    if [ "$roadmap_after" != "$roadmap_before" ] && [ "$roadmap_after" != "absent" ]; then
+      git add .genie/roadmap.json
+    fi
+  else
+    echo "warn: board snapshot not refreshed (see message above) — committing without it" >&2
+  fi
+fi
+
 # Lint staged files
 bunx biome check --staged --no-errors-on-unmatched

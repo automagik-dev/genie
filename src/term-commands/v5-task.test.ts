@@ -6,7 +6,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -23,6 +23,7 @@ import {
   getTaskCard,
   getTaskEvents,
   getTaskLane,
+  hireAgent,
 } from '../lib/v5/task-state.js';
 
 const GENIE = join(import.meta.dir, '..', 'genie.ts');
@@ -279,6 +280,327 @@ describe('task export round-trip', () => {
     const rootRow = state.tasks.find((x) => x.id === a.id);
     expect(rootRow?.wish).toBe('demo');
     expect(rootRow?.group_name).toBe('g1');
+  });
+});
+
+describe('task import', () => {
+  /** Seed a representative slice of every table into `repo`'s db. */
+  function seedState(): { rootId: string; depId: string } {
+    const db = openDb({ cwd: repo });
+    const board = createBoard(db, 'main-board');
+    const a = createTask(db, { title: 'root', boardId: board.id, wish: 'demo', group: 'g1' });
+    const b = createTask(db, { title: 'dependent', dependsOn: [a.id] });
+    appendStage(db, a.id, 'planned', 'kickoff');
+    appendTaskEvent(db, a.id, { kind: 'comment', note: 'hello', author: 'tester', authorKind: 'human' });
+    createWishGroups(db, 'demo', [{ name: 'g1' }, { name: 'g2', dependsOn: ['g1'] }]);
+    db.close();
+    return { rootId: a.id, depId: b.id };
+  }
+
+  /** A second throwaway git repo simulating the other machine's fresh clone. */
+  function makeCloneRepo(): string {
+    const clone = mkdtempSync(join(tmpdir(), 'genie-v5-import-'));
+    git(clone, 'init', '-b', 'main');
+    git(clone, 'commit', '--allow-empty', '-m', 'init');
+    return clone;
+  }
+
+  test('export --write then import on a fresh repo is a lossless round-trip', async () => {
+    seedState();
+    const w = await cli(repo, 'export', '--write');
+    expect(w.code).toBe(0);
+    expect(w.stderr).toBe('');
+    const snapshotPath = join(repo, '.genie', 'roadmap.json');
+    expect(w.stdout).toContain(snapshotPath);
+
+    const clone = makeCloneRepo();
+    try {
+      await mkdir(join(clone, '.genie'), { recursive: true });
+      const snapshot = readFileSync(snapshotPath, 'utf-8');
+      writeFileSync(join(clone, '.genie', 'roadmap.json'), snapshot);
+
+      const r = await cli(clone, 'import');
+      expect(r.code).toBe(0);
+      expect(r.stderr).toBe('');
+      expect(r.stdout).toMatch(/Imported 2 tasks, 1 boards, 1 dependencies/);
+
+      // Byte-identical state: re-exporting the clone reproduces the snapshot.
+      const reExport = await cli(clone, 'export');
+      expect(reExport.code).toBe(0);
+      expect(JSON.parse(reExport.stdout)).toEqual(JSON.parse(snapshot));
+    } finally {
+      rmSync(clone, { recursive: true, force: true });
+    }
+  });
+
+  test('refuses a database that already holds state, and --replace overwrites it', async () => {
+    seedState();
+    const w = await cli(repo, 'export', '--write');
+    expect(w.code).toBe(0);
+
+    // Same repo, same db: state exists, plain import must refuse.
+    const refused = await cli(repo, 'import');
+    expect(refused.code).toBe(1);
+    expect(refused.stderr).toContain('--replace');
+
+    // Diverge the local db, then restore the snapshot wholesale.
+    const db = openDb({ cwd: repo });
+    createTask(db, { title: 'local-only drift' });
+    db.close();
+    const replaced = await cli(repo, 'import', '--replace');
+    expect(replaced.code).toBe(0);
+    expect(replaced.stdout).toMatch(/Imported 2 tasks/);
+    const after = openDb({ cwd: repo });
+    const titles = (after.query('SELECT title FROM tasks ORDER BY title').all() as Array<{ title: string }>).map(
+      (t) => t.title,
+    );
+    after.close();
+    expect(titles).toEqual(['dependent', 'root']);
+  });
+
+  test('missing snapshot and schemaVersion mismatch both fail with clear stderr', async () => {
+    const missing = await cli(repo, 'import');
+    expect(missing.code).toBe(1);
+    expect(missing.stderr).toContain('Snapshot not found');
+    expect(missing.stderr).toContain('export --write');
+
+    await mkdir(join(repo, '.genie'), { recursive: true });
+    const empty: StateExport = {
+      schemaVersion: 999,
+      meta: [],
+      boards: [],
+      tasks: [],
+      task_dependencies: [],
+      stage_log: [],
+      task_events: [],
+      wish_groups: [],
+      hire_roster: [],
+    };
+    writeFileSync(join(repo, '.genie', 'roadmap.json'), JSON.stringify(empty));
+    const mismatch = await cli(repo, 'import');
+    expect(mismatch.code).toBe(1);
+    expect(mismatch.stderr).toContain('schemaVersion 999');
+  });
+});
+
+describe('roadmap.json canonical sync', () => {
+  function snapshotOf(dir: string): string {
+    return readFileSync(join(dir, '.genie', 'roadmap.json'), 'utf-8');
+  }
+
+  async function plantSnapshot(dir: string, snapshot: string): Promise<void> {
+    await mkdir(join(dir, '.genie'), { recursive: true });
+    writeFileSync(join(dir, '.genie', 'roadmap.json'), snapshot);
+  }
+
+  test('fresh clone: one `task sync` materializes the board from the snapshot', async () => {
+    const db = openDb({ cwd: repo });
+    createTask(db, { title: 'canonical card' });
+    db.close();
+    const published = await cli(repo, 'sync');
+    expect(published.code).toBe(0);
+    expect(published.stdout).toContain('Published board snapshot');
+
+    const clone = mkdtempSync(join(tmpdir(), 'genie-v5-sync-'));
+    try {
+      git(clone, 'init', '-b', 'main');
+      git(clone, 'commit', '--allow-empty', '-m', 'init');
+      await plantSnapshot(clone, snapshotOf(repo));
+
+      // No genie.db exists in the clone yet: sync must bootstrap it.
+      const synced = await cli(clone, 'sync');
+      expect(synced.code).toBe(0);
+      expect(synced.stdout).toContain('Board refreshed');
+      const r = await cli(clone, 'list');
+      expect(r.code).toBe(0);
+      expect(r.stderr).toBe('');
+      expect(r.stdout).toContain('canonical card');
+    } finally {
+      rmSync(clone, { recursive: true, force: true });
+    }
+  });
+
+  test('snapshot excludes hire_roster; canonical import preserves local hires', async () => {
+    const db = openDb({ cwd: repo });
+    createTask(db, { title: 'card' });
+    hireAgent(db, { wish: 'w', agentAdapterId: 'claude', worktree: '/tmp/wt' });
+    db.close();
+
+    const w = await cli(repo, 'export', '--write');
+    expect(w.code).toBe(0);
+    const snap = JSON.parse(snapshotOf(repo)) as StateExport;
+    expect(snap.hire_roster).toEqual([]);
+    expect(snap.tasks).toHaveLength(1);
+
+    const r = await cli(repo, 'import', '--replace');
+    expect(r.code).toBe(0);
+    const db2 = openDb({ cwd: repo });
+    const hires = db2.query('SELECT wish, worktree FROM hire_roster').all() as Array<{
+      wish: string;
+      worktree: string;
+    }>;
+    db2.close();
+    expect(hires).toEqual([{ wish: 'w', worktree: '/tmp/wt' }]);
+  });
+
+  test('a hire before the first sync does not wedge a fresh clone into diverged', async () => {
+    const db = openDb({ cwd: repo });
+    createTask(db, { title: 'canonical card' });
+    db.close();
+    const published = await cli(repo, 'sync');
+    expect(published.code).toBe(0);
+    expect(published.stdout).toContain('Published board snapshot');
+
+    const clone = mkdtempSync(join(tmpdir(), 'genie-v5-sync-'));
+    try {
+      git(clone, 'init', '-b', 'main');
+      git(clone, 'commit', '--allow-empty', '-m', 'init');
+      await plantSnapshot(clone, snapshotOf(repo));
+
+      // Local hire BEFORE any baseline sync: hires are machine-local and never
+      // travel, so they must not count as unpublished board state — the board
+      // still materializes instead of reporting divergence.
+      const cloneDb = openDb({ cwd: clone });
+      hireAgent(cloneDb, { wish: 'w', agentAdapterId: 'claude', worktree: '/tmp/wt' });
+      cloneDb.close();
+
+      const synced = await cli(clone, 'sync');
+      expect(synced.code).toBe(0);
+      expect(synced.stdout).toContain('Board refreshed');
+      const r = await cli(clone, 'list');
+      expect(r.stdout).toContain('canonical card');
+      // And the local hire survived the canonical import untouched.
+      const db2 = openDb({ cwd: clone });
+      const hires = db2.query('SELECT wish, worktree FROM hire_roster').all() as Array<{
+        wish: string;
+        worktree: string;
+      }>;
+      db2.close();
+      expect(hires).toEqual([{ wish: 'w', worktree: '/tmp/wt' }]);
+    } finally {
+      rmSync(clone, { recursive: true, force: true });
+    }
+  });
+
+  test('explicit relative canonical path behaves like the default; custom-file exports stay lossless', async () => {
+    const db = openDb({ cwd: repo });
+    createTask(db, { title: 'card' });
+    hireAgent(db, { wish: 'w', agentAdapterId: 'claude', worktree: '/tmp/wt' });
+    db.close();
+
+    // Custom-file --write carries the COMPLETE state (hire_roster included), so
+    // a backup.json → import --replace round-trip cannot silently drop hires.
+    const backup = await cli(repo, 'export', '--write', 'backup.json');
+    expect(backup.code).toBe(0);
+    const backupState = JSON.parse(readFileSync(join(repo, 'backup.json'), 'utf-8')) as StateExport;
+    expect(backupState.hire_roster).toHaveLength(1);
+
+    // The canonical path spelled explicitly (relative) still emits the roadmap
+    // slice and still counts as canonical on import: local hires preserved.
+    const w = await cli(repo, 'export', '--write', '.genie/roadmap.json');
+    expect(w.code).toBe(0);
+    const snap = JSON.parse(snapshotOf(repo)) as StateExport;
+    expect(snap.hire_roster).toEqual([]);
+
+    const r = await cli(repo, 'import', '.genie/roadmap.json', '--replace');
+    expect(r.code).toBe(0);
+    const db2 = openDb({ cwd: repo });
+    const hires = db2.query('SELECT wish, worktree FROM hire_roster').all() as Array<{
+      wish: string;
+      worktree: string;
+    }>;
+    db2.close();
+    expect(hires).toEqual([{ wish: 'w', worktree: '/tmp/wt' }]);
+
+    // The explicit spelling also recorded the sync baseline: no divergence.
+    const settled = await cli(repo, 'sync');
+    expect(settled.code).toBe(0);
+  });
+
+  test('a subdirectory spelling of roadmap.json is roadmap-sliced, and is not the canonical baseline', async () => {
+    const db = openDb({ cwd: repo });
+    createTask(db, { title: 'card' });
+    hireAgent(db, { wish: 'w', agentAdapterId: 'claude', worktree: '/tmp/machine-local-wt' });
+    db.close();
+    await mkdir(join(repo, 'src', '.genie'), { recursive: true });
+
+    // Same relative spelling, different cwd: it resolves to src/.genie/roadmap.json,
+    // NOT the canonical repo-root file. It is still a git-trackable file named
+    // roadmap.json, so the machine-local hire_roster must not travel in it.
+    const w = await cli(join(repo, 'src'), 'export', '--write', '.genie/roadmap.json');
+    expect(w.code).toBe(0);
+    expect(w.stderr).toBe('');
+    const written = readFileSync(join(repo, 'src', '.genie', 'roadmap.json'), 'utf-8');
+    expect(written).not.toContain('/tmp/machine-local-wt');
+    expect((JSON.parse(written) as StateExport).hire_roster).toEqual([]);
+
+    // And it did not stamp the sync baseline: the canonical file is still
+    // unpublished, so sync publishes it instead of reporting an in-sync pair.
+    const synced = await cli(repo, 'sync');
+    expect(synced.code).toBe(0);
+    expect(synced.stdout).toContain('Published board snapshot');
+    expect((JSON.parse(snapshotOf(repo)) as StateExport).tasks).toHaveLength(1);
+  });
+
+  test('pulled snapshot imports on sync; local mutation exports; divergence is refused then resolvable', async () => {
+    // Machine A (repo): publish F1, then F2 with one more card.
+    const db = openDb({ cwd: repo });
+    createTask(db, { title: 'first card' });
+    db.close();
+    await cli(repo, 'sync');
+    const f1 = snapshotOf(repo);
+    const db2 = openDb({ cwd: repo });
+    createTask(db2, { title: 'second card' });
+    db2.close();
+    await cli(repo, 'sync');
+    const f2 = snapshotOf(repo);
+
+    // Machine B (clone): start from F1.
+    const clone = mkdtempSync(join(tmpdir(), 'genie-v5-sync-'));
+    try {
+      git(clone, 'init', '-b', 'main');
+      git(clone, 'commit', '--allow-empty', '-m', 'init');
+      await plantSnapshot(clone, f1);
+      await cli(clone, 'sync'); // materialize + baseline
+
+      // Simulated pull: F2 arrives while B's db is untouched → sync imports
+      // (post-merge/post-rewrite run this after real pulls).
+      writeFileSync(join(clone, '.genie', 'roadmap.json'), f2);
+      const pulled = await cli(clone, 'sync');
+      expect(pulled.code).toBe(0);
+      expect(pulled.stdout).toContain('Board refreshed');
+      const listed2 = await cli(clone, 'list');
+      expect(listed2.stdout).toContain('second card');
+
+      // Local mutation on B → db ahead → sync exports.
+      const created = await cli(clone, 'create', '--title', 'b-only card');
+      expect(created.code).toBe(0);
+      const exported = await cli(clone, 'sync');
+      expect(exported.code).toBe(0);
+      expect(snapshotOf(clone)).toContain('b-only card');
+
+      // Divergence: local db mutates AND a foreign snapshot lands → refuse both ways.
+      await cli(clone, 'create', '--title', 'b-diverging card');
+      writeFileSync(join(clone, '.genie', 'roadmap.json'), f2);
+      const diverged = await cli(clone, 'sync');
+      expect(diverged.code).toBe(1);
+      expect(diverged.stdout).toContain('Nothing was overwritten');
+      expect(snapshotOf(clone)).toBe(f2); // snapshot untouched
+      const listed = await cli(clone, 'list');
+      expect(listed.stdout).toContain('b-diverging card'); // local state kept
+
+      // Resolution: take the snapshot wholesale.
+      const resolved = await cli(clone, 'import', '--replace');
+      expect(resolved.code).toBe(0);
+      const settled = await cli(clone, 'sync');
+      expect(settled.code).toBe(0);
+      const after = await cli(clone, 'list');
+      expect(after.stderr).toBe('');
+      expect(after.stdout).not.toContain('b-diverging card');
+      expect(after.stdout).toContain('second card');
+    } finally {
+      rmSync(clone, { recursive: true, force: true });
+    }
   });
 });
 

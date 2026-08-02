@@ -1,5 +1,7 @@
 # Plans Index
 
+> **Board snapshot (canonical):** [roadmap.json](roadmap.json) is the canonical roadmap board (`genie board`); the local `.genie/genie.db` materializes from it. Git hooks keep them reconciled via three-way `genie task sync`: post-merge/post-rewrite import a pulled snapshot, pre-commit exports local board changes into the commit, and if BOTH moved since the last sync nothing is touched and the hook warns — resolve with `genie task import --replace` (take the snapshot) or `genie task export --write` (keep the local board). Fresh clone: run `genie task sync` once. Scope: roadmap content only (tasks, dependencies, wish groups, boards, timelines) — `hire_roster` worktree state stays machine-local.
+
 ## Raw
 
 - [control-plane-contract](brainstorms/control-plane-contract/DRAFT.md) — **re-scoped 2026-07-21:** narrow to dispatch routing + work/review policy tiers; agent-sync (#2541) already solved global↔repo skill convergence orthogonally (umbrella G2+G3)
@@ -32,6 +34,8 @@
 - [WISH: warp-integration](wishes/warp-integration/WISH.md) — **DONE** (all 4 groups SHIP-reviewed 2026-07-02; pane-render checklist awaiting Felipe): genie init, Warp launch-config emitter, genie launch, /work multi-session opt-in
 
 ## Poured
+
+- [WISH: genie-official-roadmap](wishes/genie-official-roadmap/WISH.md) — **APPROVED 2026-07-28** ([DESIGN](brainstorms/genie-official-roadmap/DESIGN.md) SHIP after 1 fix loop, digest `36097b0d…`; plan SHIP after 2 fix loops, all findings execution-verified by the reviewer): triage of all 36 wishes (3-scout evidence audit) into the official roadmap — archive 29 DONE-verified wishes with full link-rewrite inventory, cold-seed the `roadmap` board with 19 lifecycle cards (Work order: dogfood-remediation → v4-residue → release-ops → proportional-validation, Felipe-ratified), rewrite INDEX with a Shipped section, draft `public-roadmap-polish`. 3 groups: archive+links ∥ board-seed → INDEX rewrite; single commit in G3.
 
 - khal-native-theme — **APPROVED 2026-07-23, RELOCATED same day** to `khal-os/genie-desktop:.genie/` (branch `wish/khal-native-theme`, commit `484c243`; Felipe: desktop context lives in the desktop repo — the fork's own genie.db carries the 6 seeded group tasks and its WISH adds the live-visual-checkpoint protocol CP-1..6). Design SHIP digest `bdd54325…`, plan SHIP after 1 fix loop, 3-lens ledger verify 0 must-fix. This repo's 7 stale task rows are hard-blocked with a relocation reason. First of Theme→Identity→SSH
 - [WISH: codex-plugin-dogfood-remediation](wishes/codex-plugin-dogfood-remediation/WISH.md) — **IN_PROGRESS** (2026-07-22, large appetite; 21/24 criteria as of 2026-07-23): exact task CWD + trustworthy Codex delivery evidence; the three open criteria concern MCP marker ownership and the evidence validator (added to INDEX 2026-07-26 — the most active wish in the repo had no INDEX entry, invisible to the jar↔INDEX drift lint)

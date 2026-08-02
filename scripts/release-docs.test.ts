@@ -63,6 +63,7 @@ describe('Group E release and documentation contracts', () => {
       'plugins/genie/.claude-plugin/plugin.json',
       'plugins/genie/.codex-plugin/plugin.json',
       'plugins/genie/package.json',
+      'plugins/pi-genie/package.json',
       '.claude-plugin/marketplace.json',
       'plugins/hermes-genie/plugin.yaml',
     ]) {
@@ -971,6 +972,38 @@ describe('Group E release and documentation contracts', () => {
     for (const lifecycleSkill of [review, fix, work]) expect(lifecycleSkill).toContain('`overdesigned-plan`');
     expect(fix).toContain('up to 2 loops');
     expect(work).toContain('A user-approved simplification invalidates the superseded plan/review evidence');
+  });
+
+  test('router pays Genie lifecycle cost only when it adds value', () => {
+    const router = read('skills/genie/SKILL.md');
+    const lifecycle = read('skills/genie/reference/lifecycle.md');
+    const metadata = read('skills/genie/agents/openai.yaml');
+
+    expect(router).toContain('## Lightweight Bypass Check');
+    expect(router).toContain('Honor explicit Genie intent');
+    expect(router).toContain('Route cheap categories normally');
+    expect(router).toContain('Check for related lifecycle work');
+    expect(router).toContain('Test whether the lifecycle adds value');
+    expect(router).toContain('Announce the bypass in one line');
+    expect(router).toContain('Security-sensitive changes do not bypass by default');
+    expect(router).toContain('must not create or update `.genie` artifacts');
+    // The bypass gate must run FIRST, before classification or state detection:
+    // a section that moved below the routing logic would silently reorder the
+    // router's decision flow while these phrase checks still pass.
+    const bypass = router.indexOf('## Lightweight Bypass Check');
+    expect(bypass).toBeGreaterThan(-1);
+    expect(bypass).toBeLessThan(router.indexOf('## Intent Classification'));
+    expect(bypass).toBeLessThan(router.indexOf('## State Detection'));
+    expect(lifecycle).toContain('Ordinary requests unrelated to an existing wish or brainstorm bypass this lifecycle');
+    expect(lifecycle).toContain('Security-sensitive changes do not bypass by default');
+    expect(lifecycle).toContain('Related existing work always resumes through its persisted state');
+    // The metadata prompt must keep the mandatory non-bypass categories: bug
+    // reports, operational commands, and Genie questions always route normally.
+    expect(metadata).toContain('bug reports');
+    expect(metadata).toContain('operational commands');
+    expect(metadata).toContain('Genie questions');
+    expect(metadata).toContain('otherwise bypass it with a one-line notice');
+    expect(metadata).toContain('Security-sensitive work does not bypass by default.');
   });
 
   test('wizard discloses init MCP writes and owner-qualified lifecycle order', () => {

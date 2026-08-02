@@ -457,9 +457,24 @@ describe('ui-bridge lifetime', () => {
       client.send(INIT_OK);
       await client.waitFor((m) => m.id === 1);
       const pid = client.proc.pid;
-      const listening = execFileSync('ss', ['-H', '-tlnp'], { encoding: 'utf-8' });
-      const owned = listening.split('\n').filter((l) => new RegExp(`pid=${pid}\\b`).test(l));
-      expect(owned).toEqual([]);
+      // `ss` is Linux-only (iproute2); macOS ships lsof instead, which filters
+      // by pid directly and exits 1 — with no output — when nothing is listening.
+      const owned =
+        process.platform === 'darwin'
+          ? (() => {
+              try {
+                return execFileSync('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN', '-a', '-p', String(pid)], {
+                  encoding: 'utf-8',
+                });
+              } catch {
+                return '';
+              }
+            })()
+          : execFileSync('ss', ['-H', '-tlnp'], { encoding: 'utf-8' })
+              .split('\n')
+              .filter((l) => new RegExp(`pid=${pid}\\b`).test(l))
+              .join('\n');
+      expect(owned).toBe('');
     } finally {
       client.kill();
     }

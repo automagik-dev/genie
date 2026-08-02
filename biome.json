@@ -48,6 +48,8 @@
       "node_modules",
       "dist",
       "*.min.js",
+      ".dev",
+      ".hermes",
       ".genie",
       ".worktrees",
       ".claude",

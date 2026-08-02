@@ -1,0 +1,12 @@
+# Reconcile the local genie.db with the canonical board snapshot
+# (.genie/roadmap.json) after a branch checkout swapped the snapshot —
+# post-merge/post-rewrite do not fire here, so without this hook the shared db
+# keeps exposing the previous branch's board until the next sync. Same
+# three-way `task sync` contract: fail-open, refuses on divergence, skipped in
+# linked worktrees and for file (non-branch) checkouts ($3 = 0).
+[ "$3" = "1" ] || exit 0
+git_dir=$(git rev-parse --path-format=absolute --git-dir 2>/dev/null)
+git_common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+if [ "$git_dir" = "$git_common" ] && [ -f src/genie.ts ] && [ -f .genie/roadmap.json ]; then
+  bun src/genie.ts task sync || true
+fi

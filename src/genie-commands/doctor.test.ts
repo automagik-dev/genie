@@ -1593,6 +1593,65 @@ describe('checkAgentSync — claude role agents', () => {
     expect(find(results, ROLE_CHECK)?.roleAgents?.duplicateSurface).toBe(true);
   });
 
+  test('plugin enabled → a surviving fan-out reads as prunable stale, not current', () => {
+    writeSourceAgent('scout', '# scout\n');
+    writeTargetAgent('scout', '# scout\n');
+    writeAgentManifest({ 'scout.md': { digest: computeFileDigest(join(agentsDir, 'scout.md')) } });
+    writeSettings({ enabledPlugins: { 'genie@automagik': true } });
+
+    const check = find(checkAgentSync(paths()), ROLE_CHECK);
+    // Byte-identical to source, but the expected source set is empty while the
+    // plugin serves genie:* — so it is leftover state, not a current delivery.
+    expect(stateMap(check)['scout.md']).toBe('genie-managed-stale');
+    expect(check?.status).toBe('warn');
+  });
+
+  test('plugin enabled + kept orphan whose manifest entry was relinquished still warns as a duplicate', () => {
+    // agent-sync's kept-modified-orphan aftermath: the user edited the bare agent,
+    // so sync left the FILE on disk and only dropped its manifest entry. Claude
+    // Code still lists bare `reviewer` next to plugin `genie:reviewer`, so neither
+    // the classification nor the duplicate warning may go blind to it.
+    writeSourceAgent('reviewer', '# reviewer\n');
+    writeTargetAgent('reviewer', '# reviewer, hand-edited\n');
+    writeSettings({ enabledPlugins: { 'genie@automagik': true } });
+
+    const results = checkAgentSync(paths());
+    const check = find(results, ROLE_CHECK);
+    expect(stateMap(check)['reviewer.md']).toBe('present-unmanaged');
+    expect(check?.status).toBe('warn');
+    expect(check?.roleAgents?.duplicateSurface).toBe(true);
+    expect(find(results, DUP_CHECK)?.status).toBe('warn');
+  });
+
+  test('plugin enabled + manifest-only leftover (file gone) → stale warn but no duplicate warning', () => {
+    writeSourceAgent('scout', '# scout\n');
+    // Manifest entry survives but the file was deleted: stale ownership
+    // metadata, yet nothing actually double-lists in the picker.
+    writeAgentManifest({ 'scout.md': { digest: 'f'.repeat(64) } });
+    writeSettings({ enabledPlugins: { 'genie@automagik': true } });
+
+    const results = checkAgentSync(paths());
+    const check = find(results, ROLE_CHECK);
+    expect(stateMap(check)['scout.md']).toBe('missing-from-target');
+    expect(check?.status).toBe('warn');
+    expect(find(results, DUP_CHECK)).toBeUndefined();
+    expect(check?.roleAgents?.duplicateSurface).toBe(false);
+  });
+
+  test('plugin enabled + fan-out already pruned → passes with no duplicate warning', () => {
+    writeSourceAgent('scout', '# scout\n');
+    writeSettings({ enabledPlugins: { 'genie@automagik': true } });
+
+    const results = checkAgentSync(paths());
+    const check = find(results, ROLE_CHECK);
+    // Without this, every suppressed agent reads as missing-from-target and
+    // doctor advises `genie update` forever.
+    expect(check?.status).toBe('pass');
+    expect(check?.detail).toContain('role-agent mirror suppressed');
+    expect(find(results, DUP_CHECK)).toBeUndefined();
+    expect(check?.roleAgents?.duplicateSurface).toBe(false);
+  });
+
   test('plugin disabled or absent → no duplicate warning, duplicateSurface flag false', () => {
     writeSourceAgent('scout', '# scout\n');
     writeTargetAgent('scout', '# scout\n');

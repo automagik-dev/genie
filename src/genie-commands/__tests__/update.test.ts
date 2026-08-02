@@ -2455,6 +2455,9 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
     const result = runManualUpdateConvergence({
       expectedVersion: '5.260711.3',
       bundleRoot: '/tmp/verified-bundle',
+      // Explicit selection: the default reads the host's persisted integration
+      // consent, so omitting it makes the test depend on machine state (#2732).
+      selection: 'all',
       runSync: () => calls.push('parent-safe-sync'),
       refreshPlugins: (options) => {
         calls.push(`parent-plugin-refresh:${options.expectedVersion}:${options.selection}`);

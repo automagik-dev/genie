@@ -1401,3 +1401,253 @@ export function exportState(db: Database): StateExport {
     hire_roster: db.query('SELECT * FROM hire_roster ORDER BY wish, agent_adapter_id').all() as RawHire[],
   };
 }
+
+// ============================================================================
+// Full-state import (the other half of exportState — cross-machine resume)
+// ============================================================================
+
+/** A snapshot's structure or schemaVersion cannot be imported by this build. */
+export class SnapshotFormatError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SnapshotFormatError';
+  }
+}
+
+/** Import refused because the database already holds state (use replace). */
+export class NonEmptyImportError extends Error {
+  constructor() {
+    super(
+      'Database already contains state. Re-run with --replace to overwrite it with the snapshot, or export the local state first if it must be kept.',
+    );
+    this.name = 'NonEmptyImportError';
+  }
+}
+
+export interface ImportSummary {
+  boards: number;
+  tasks: number;
+  dependencies: number;
+  events: number;
+  wishGroups: number;
+  hires: number;
+}
+
+const SNAPSHOT_TABLE_KEYS = [
+  'meta',
+  'boards',
+  'tasks',
+  'task_dependencies',
+  'stage_log',
+  'task_events',
+  'wish_groups',
+  'hire_roster',
+] as const;
+
+/** Shape-validate an untrusted parsed snapshot; returns it typed or throws. */
+function validateSnapshot(db: Database, snapshot: unknown): StateExport {
+  if (typeof snapshot !== 'object' || snapshot === null || Array.isArray(snapshot)) {
+    throw new SnapshotFormatError('Snapshot is not a JSON object.');
+  }
+  const candidate = snapshot as Record<string, unknown>;
+  if (typeof candidate.schemaVersion !== 'number') {
+    throw new SnapshotFormatError('Snapshot is missing a numeric schemaVersion.');
+  }
+  for (const key of SNAPSHOT_TABLE_KEYS) {
+    if (!Array.isArray(candidate[key])) {
+      throw new SnapshotFormatError(`Snapshot is missing the "${key}" table array.`);
+    }
+  }
+  const current = (db.query('PRAGMA user_version').get() as { user_version: number }).user_version;
+  if (candidate.schemaVersion !== current) {
+    throw new SnapshotFormatError(
+      `Snapshot schemaVersion ${candidate.schemaVersion} does not match this database (${current}). Re-export the snapshot with a matching genie version.`,
+    );
+  }
+  return candidate as unknown as StateExport;
+}
+
+/**
+ * True when any operational table holds rows (meta alone does not count). By
+ * default `hire_roster` counts; pass `includeHireRoster: false` for
+ * roadmap-scoped decisions, where hires must never gate (their rows are
+ * machine-local and excluded from the snapshot).
+ */
+export function hasOperationalState(db: Database, opts: { includeHireRoster?: boolean } = {}): boolean {
+  const tables = ['boards', 'tasks', 'task_events', 'stage_log', 'wish_groups'];
+  if (opts.includeHireRoster !== false) tables.push('hire_roster');
+  for (const table of tables) {
+    const row = db.query(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number };
+    if (row.n > 0) return true;
+  }
+  return false;
+}
+
+function insertSnapshotRows(db: Database, state: StateExport): void {
+  const meta = db.query('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)');
+  for (const m of state.meta) meta.run(m.key, m.value);
+
+  const board = db.query('INSERT INTO boards (id, name, lanes, created_at) VALUES (?, ?, ?, ?)');
+  for (const b of state.boards) board.run(b.id, b.name, b.lanes ?? null, b.created_at);
+
+  // Nullable-with-?? throughout: additive columns (lane, agent_kind, …) backfill
+  // without a user_version bump, so a same-version snapshot from an older build
+  // may legitimately omit them.
+  const task = db.query(
+    `INSERT INTO tasks (id, board_id, title, status, claimed_by, claimed_at, wish, group_name,
+                        lane, agent_kind, heartbeat_at, blocked_by, blocked_reason, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  for (const t of state.tasks) {
+    task.run(
+      t.id,
+      t.board_id ?? null,
+      t.title,
+      t.status,
+      t.claimed_by ?? null,
+      t.claimed_at ?? null,
+      t.wish ?? null,
+      t.group_name ?? null,
+      t.lane ?? null,
+      t.agent_kind ?? null,
+      t.heartbeat_at ?? null,
+      t.blocked_by ?? null,
+      t.blocked_reason ?? null,
+      t.created_at,
+      t.updated_at,
+    );
+  }
+
+  const dep = db.query('INSERT INTO task_dependencies (task_id, depends_on_id) VALUES (?, ?)');
+  for (const d of state.task_dependencies) dep.run(d.task_id, d.depends_on_id);
+
+  const stage = db.query('INSERT INTO stage_log (id, task_id, stage, note, created_at) VALUES (?, ?, ?, ?, ?)');
+  for (const s of state.stage_log) stage.run(s.id, s.task_id, s.stage, s.note ?? null, s.created_at);
+
+  const event = db.query(
+    'INSERT INTO task_events (id, task_id, kind, note, author_kind, author, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+  );
+  for (const e of state.task_events) {
+    event.run(e.id, e.task_id, e.kind, e.note ?? null, e.author_kind ?? null, e.author ?? null, e.created_at);
+  }
+
+  const group = db.query(
+    `INSERT INTO wish_groups (wish, name, status, depends_on, assignee, started_at, completed_at, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  for (const g of state.wish_groups) {
+    group.run(
+      g.wish,
+      g.name,
+      g.status,
+      g.depends_on ?? '[]',
+      g.assignee ?? null,
+      g.started_at ?? null,
+      g.completed_at ?? null,
+      g.created_at,
+      g.updated_at,
+    );
+  }
+
+  const hire = db.query(
+    'INSERT INTO hire_roster (wish, agent_adapter_id, profile, worktree, hired_at, state) VALUES (?, ?, ?, ?, ?, ?)',
+  );
+  for (const h of state.hire_roster) {
+    hire.run(h.wish, h.agent_adapter_id, h.profile ?? null, h.worktree, h.hired_at, h.state);
+  }
+}
+
+/** True when the failure is a row-schema problem (constraint, NOT NULL, datatype). */
+function isRowSchemaError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const code = (err as { code?: string }).code;
+  return typeof code === 'string' && (code.startsWith('SQLITE_CONSTRAINT') || code === 'SQLITE_MISMATCH');
+}
+
+/**
+ * Clear every table under replace so the db becomes EXACT snapshot state. A db
+ * with only meta rows (e.g. the backfill marker a fresh open stamps) must not
+ * merge stale keys into the snapshot's meta — a retained wish_sig marker would
+ * misdescribe the imported rows as drifted. Children before parents so FK
+ * cascades never fire mid-wipe; hire_roster sits with its parent tables, only
+ * when it is not preserved.
+ */
+function wipeAllTables(db: Database, preserveHireRoster: boolean): void {
+  const wipe = [
+    'task_events',
+    'stage_log',
+    'task_dependencies',
+    'tasks',
+    ...(preserveHireRoster ? [] : ['hire_roster']),
+    'wish_groups',
+    'boards',
+    'meta',
+  ];
+  for (const table of wipe) {
+    db.query(`DELETE FROM ${table}`).run();
+  }
+}
+
+/**
+ * Reclassify an apply() failure: structural and row-schema problems become
+ * {@link SnapshotFormatError}; transient SQLITE_BUSY / LOCKED / IOERR and
+ * unrelated failures propagate unchanged, so a healthy snapshot owner is never
+ * told to "repair the malformed rows" over a lock contention.
+ */
+function rethrowImportFailure(err: unknown): never {
+  if (err instanceof SnapshotFormatError || err instanceof NonEmptyImportError) throw err;
+  if (!isRowSchemaError(err)) throw err;
+  throw new SnapshotFormatError(
+    `Snapshot rows could not be imported: ${err instanceof Error ? err.message : String(err)}. The database was left unchanged; re-export the snapshot or repair the malformed rows.`,
+  );
+}
+
+/** Options controlling snapshot import. */
+export interface ImportOptions {
+  replace?: boolean;
+  /**
+   * Leave the local hire_roster untouched (neither wiped nor inserted). Set for
+   * roadmap-scoped snapshots: hires carry machine-local worktree paths that
+   * must never travel between machines.
+   */
+  preserveHireRoster?: boolean;
+}
+
+/**
+ * Restore a full {@link exportState} snapshot into this database — the resume
+ * path for a fresh clone on another machine (`genie task import`). Refuses a
+ * database that already holds operational state unless `replace` is set, in
+ * which case every table is cleared and rebuilt from the snapshot inside one
+ * transaction. Row ids (including event/stage autoincrement ids) are preserved
+ * exactly, so an export → import round-trip is lossless. The emptiness guard
+ * skips `hire_roster` when it is preserved, since rows the import never touches
+ * cannot justify a refusal.
+ */
+export function importState(db: Database, snapshot: unknown, opts: ImportOptions = {}): ImportSummary {
+  const state = validateSnapshot(db, snapshot);
+  const hires = opts.preserveHireRoster ? [] : state.hire_roster;
+  const apply = db.transaction(() => {
+    if (hasOperationalState(db, { includeHireRoster: !opts.preserveHireRoster }) && !opts.replace) {
+      throw new NonEmptyImportError();
+    }
+    if (opts.replace) wipeAllTables(db, opts.preserveHireRoster ?? false);
+    insertSnapshotRows(db, { ...state, hire_roster: hires });
+  });
+  try {
+    apply();
+  } catch (err) {
+    // A malformed row that passed shape validation (roadmap.json survives git
+    // merges) surfaces as a raw SQLite constraint error — rethrow it in the
+    // same actionable class as the structural checks. The transaction rolled
+    // back; the error classifier keeps unrelated failures untouched.
+    rethrowImportFailure(err);
+  }
+  return {
+    boards: state.boards.length,
+    tasks: state.tasks.length,
+    dependencies: state.task_dependencies.length,
+    events: state.task_events.length,
+    wishGroups: state.wish_groups.length,
+    hires: hires.length,
+  };
+}

@@ -1076,31 +1076,52 @@ function safeFileDigest(path: string): string | null {
  * "current" mirrors the skills contract (on-disk == manifest == source). Returns
  * null for a name genie does not speak for (a user-authored agent absent from
  * both source and the manifest is never reported).
+ *
+ * `suppressed` (plugin enabled → the bare-name fan-out is not expected to exist)
+ * changes only what an ABSENT file means: nothing is owed to the target, so a
+ * source name with no file and no manifest entry is not `missing-from-target`,
+ * and a surviving file can never be `genie-managed-current` — it is prunable
+ * leftover state. Files that DO exist are still classified, because Claude Code
+ * still lists them next to the plugin's `genie:*` agents.
  */
 function classifyRoleAgentFile(
   agentsDir: string,
   name: string,
   source: Map<string, string>,
   entries: Record<string, AgentFileManifestEntry>,
+  suppressed = false,
 ): RoleAgentFileState | null {
   const present = isRegularFile(join(agentsDir, name));
   const entry = entries[name];
   const inSource = source.has(name);
   if (entry === undefined) {
     if (present) return inSource ? 'present-unmanaged' : null;
-    return inSource ? 'missing-from-target' : null;
+    return inSource && !suppressed ? 'missing-from-target' : null;
   }
   // A manifest entry is durable ownership evidence even after both the source
   // and live file disappear. Report it as missing so doctor never hides stale
   // ownership metadata behind a healthy empty inventory.
   if (!present) return 'missing-from-target';
   const onDisk = safeFileDigest(join(agentsDir, name));
-  const current = inSource && onDisk !== null && onDisk === entry.digest && entry.digest === source.get(name);
+  const current =
+    !suppressed && inSource && onDisk !== null && onDisk === entry.digest && entry.digest === source.get(name);
   return current ? 'genie-managed-current' : 'genie-managed-stale';
 }
 
 /** Classify every source role agent (and any managed manifest entry) under `<claudeDir>/agents`. */
-function classifyRoleAgents(pluginRoot: string, agentsDir: string): Omit<RoleAgentDelivery, 'duplicateSurface'> {
+function classifyRoleAgents(
+  pluginRoot: string,
+  agentsDir: string,
+  suppressed = false,
+): Omit<RoleAgentDelivery, 'duplicateSurface'> {
+  // Plugin enabled → sync suppresses the WHOLE bare-name role-agent fan-out
+  // (agents load as genie:* from the plugin), so nothing is owed to the target
+  // and any surviving file is prunable leftover state. That suppression flows
+  // into the per-file classifier, NOT into an emptied source inventory: the
+  // source names are what make a surviving bare-name file inspectable at all,
+  // and dropping them would hide a user-edited orphan that agent-sync
+  // deliberately KEPT on disk while relinquishing its manifest entry — exactly
+  // the duplicate listing this check exists to report.
   const sourceState = sourceAgentDigests(pluginRoot);
   const source = sourceState.digests;
   const manifest = readAgentFilesManifestState(agentsDir);
@@ -1108,19 +1129,25 @@ function classifyRoleAgents(pluginRoot: string, agentsDir: string): Omit<RoleAge
   const names = new Set<string>([...source.keys(), ...Object.keys(entries)]);
   const files: RoleAgentDelivery['files'] = [];
   for (const name of [...names].sort()) {
-    const state = classifyRoleAgentFile(agentsDir, name, source, entries);
+    const state = classifyRoleAgentFile(agentsDir, name, source, entries, suppressed);
     if (state !== null) files.push({ name, state });
   }
   return {
     manifestStatus: manifest.kind,
     manifestReason: manifest.kind === 'unsafe' ? manifest.reason : undefined,
-    sourceIssues: sourceState.issues,
+    // Under suppression the mirror is not expected to exist, so source-inventory
+    // problems are not mirror defects — reporting them would advise `genie update`
+    // forever over a fan-out genie is deliberately not delivering.
+    sourceIssues: suppressed ? [] : sourceState.issues,
     files,
   };
 }
 
 /** Human-facing summary + a stale flag (any non-current state, or an unusable manifest, warns). */
-function roleAgentSummary(delivery: Omit<RoleAgentDelivery, 'duplicateSurface'>): { detail: string; stale: boolean } {
+function roleAgentSummary(
+  delivery: Omit<RoleAgentDelivery, 'duplicateSurface'>,
+  suppressed = false,
+): { detail: string; stale: boolean } {
   const sourceProblem =
     delivery.sourceIssues.length === 0 ? null : `source inventory unavailable (${delivery.sourceIssues.join('; ')})`;
   if (delivery.manifestStatus === 'unsafe') {
@@ -1130,9 +1157,11 @@ function roleAgentSummary(delivery: Omit<RoleAgentDelivery, 'duplicateSurface'>)
     };
   }
   if (delivery.files.length === 0) {
+    const empty = suppressed
+      ? 'role-agent mirror suppressed (genie@automagik plugin enabled)'
+      : 'no genie role agents detected';
     return {
-      detail:
-        sourceProblem === null ? 'no genie role agents detected' : `${sourceProblem}; no genie role agents detected`,
+      detail: sourceProblem === null ? empty : `${sourceProblem}; ${empty}`,
       stale: sourceProblem !== null,
     };
   }
@@ -1152,16 +1181,6 @@ function roleAgentSummary(delivery: Omit<RoleAgentDelivery, 'duplicateSurface'>)
   return { detail, stale };
 }
 
-/** `enabledPlugins["genie@automagik"] === true` in Claude Code's settings.json (unreadable → false). */
-function roleAgentDuplicateSurface(settingsPath: string): boolean {
-  try {
-    const settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as { enabledPlugins?: Record<string, boolean> };
-    return settings.enabledPlugins?.['genie@automagik'] === true;
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Per-file role-agent delivery check + the duplicate-surface warning. The
  * structured {@link RoleAgentDelivery} rides `--json` as `checks[].roleAgents`
@@ -1169,9 +1188,14 @@ function roleAgentDuplicateSurface(settingsPath: string): boolean {
  * duplicate warning is emitted as its own line ONLY when the plugin is enabled.
  */
 function checkRoleAgents(pluginRoot: string, claudeDir: string, settingsPath: string): CheckResult[] {
-  const classification = classifyRoleAgents(pluginRoot, join(claudeDir, 'agents'));
-  const duplicateSurface = roleAgentDuplicateSurface(settingsPath);
-  const { detail, stale } = roleAgentSummary(classification);
+  const pluginEnabled = claudeGeniePluginEnabled(settingsPath);
+  const classification = classifyRoleAgents(pluginRoot, join(claudeDir, 'agents'), pluginEnabled);
+  // Once the fan-out is pruned there is nothing left to double-list, so the
+  // duplicate warning tracks surviving bare-name files, not merely the plugin.
+  // missing-from-target is stale ownership metadata, not a file in the picker —
+  // the main check already warns about it; nothing actually double-lists.
+  const duplicateSurface = pluginEnabled && classification.files.some((f) => f.state !== 'missing-from-target');
+  const { detail, stale } = roleAgentSummary(classification, pluginEnabled);
   const results: CheckResult[] = [
     {
       name: 'agent sync: claude role agents',
@@ -1186,9 +1210,8 @@ function checkRoleAgents(pluginRoot: string, claudeDir: string, settingsPath: st
       name: 'agent sync: duplicate role-agent surface',
       status: 'warn',
       detail:
-        'genie@automagik plugin enabled — plugin `genie:*` agents and fanned bare-named agents both surface (duplicate listings)',
-      suggestion:
-        'Keep the genie plugin disabled (bare-named agents are fanned by `genie update`), or expect duplicates.',
+        'genie@automagik plugin enabled — plugin `genie:*` agents and leftover bare-named agents both surface (duplicate listings)',
+      suggestion: SYNC_SUGGESTION,
     });
   }
   return results;

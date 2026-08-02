@@ -34,6 +34,7 @@ describe('synchronizeVersionFiles CI staging', () => {
       'plugins/genie/.claude-plugin/plugin.json',
       'plugins/genie/.codex-plugin/plugin.json',
       'plugins/genie/package.json',
+      'plugins/pi-genie/package.json',
     ]) {
       writeJson(path, { name: 'genie', version: '5.000000.0' });
     }
@@ -68,6 +69,7 @@ describe('synchronizeVersionFiles CI staging', () => {
 
     const staged = stagedPaths(root);
     expect(staged).toContain('plugins/hermes-genie/plugin.yaml');
+    expect(staged).toContain('plugins/pi-genie/package.json');
     expect(staged).toContain('package.json');
     expect(staged).toContain('.claude-plugin/marketplace.json');
     // The rewritten value is actually on disk (staging did not mask a no-op).
