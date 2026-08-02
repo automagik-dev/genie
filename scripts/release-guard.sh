@@ -153,6 +153,7 @@ version_child_matches_parent() {
     'plugins/genie/.claude-plugin/plugin.json' \
     'plugins/genie/.codex-plugin/plugin.json' \
     'plugins/genie/package.json' \
+    'plugins/pi-genie/package.json' \
     'plugins/hermes-genie/plugin.yaml' | LC_ALL=C sort)"
   changed="$(git diff --name-only "$parent_sha" "$child_sha" -- | LC_ALL=C sort)" || return 1
   [[ "$changed" == "$expected" ]] || return 1
@@ -161,7 +162,8 @@ version_child_matches_parent() {
   for path in package.json \
     plugins/genie/.claude-plugin/plugin.json \
     plugins/genie/.codex-plugin/plugin.json \
-    plugins/genie/package.json; do
+    plugins/genie/package.json \
+    plugins/pi-genie/package.json; do
     git show "${child_sha}:${path}" |
       jq -e --arg version "$version" '.version == $version' >/dev/null || return 1
     cmp -s \
