@@ -70,11 +70,15 @@ export function resolveGenieBinary(): string | null {
   }
 }
 
-export const GENIE_BIN = resolveGenieBinary();
-
 // ---------------------------------------------------------------------------
 // argv-only subprocess bridge
 // ---------------------------------------------------------------------------
+
+// The binary path is re-resolved on every call rather than cached at module
+// scope: the realpath/symlink check exists to refuse spawning whatever was
+// swapped into `$GENIE_HOME/bin` after load, so the check must run as close to
+// each spawn as possible — a long-lived pi session would otherwise trust a
+// verification that happened at import time only.
 
 export interface GenieResult {
   success: boolean;
@@ -87,7 +91,8 @@ export interface GenieResult {
 }
 
 export function runGenie(args: string[], cwd: string, timeoutMs = TOOL_TIMEOUT_MS): Promise<GenieResult> {
-  if (!GENIE_BIN) {
+  const genieBin = resolveGenieBinary();
+  if (!genieBin) {
     return Promise.resolve({
       success: false,
       mutation: 'none',
@@ -99,7 +104,7 @@ export function runGenie(args: string[], cwd: string, timeoutMs = TOOL_TIMEOUT_M
     });
   }
   return new Promise((resolvePromise) => {
-    const child = spawn(GENIE_BIN, args, {
+    const child = spawn(genieBin, args, {
       cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
       shell: false,
@@ -177,6 +182,23 @@ export function runGenie(args: string[], cwd: string, timeoutMs = TOOL_TIMEOUT_M
 
 export function validRef(text: string): boolean {
   return REF_PATTERN.test(text) && !text.includes('..');
+}
+
+/** Rejection payload for a malformed wish slug / task id / board ref. */
+function invalidRefResult(kind: string, value: string, cwd: string) {
+  return toolResult(
+    {
+      success: false,
+      mutation: 'none',
+      cwd,
+      command: [],
+      data: null,
+      parsed: false,
+      error: `invalid ${kind}: ${value}`,
+    },
+    `invalid ${kind}: ${value}`,
+    true,
+  );
 }
 
 export function toolResult(result: GenieResult, text: string, isError = !result.success) {
@@ -262,7 +284,12 @@ export async function readBoardSnapshot(cwd: string, run: typeof runGenie = runG
   let text = [CONTEXT_HEADER, ...lines].join('\n');
   const encoded = Buffer.from(text, 'utf8');
   if (encoded.byteLength > MAX_CONTEXT_BYTES) {
-    text = encoded.subarray(0, MAX_CONTEXT_BYTES).toString('utf8');
+    // Never split a multi-byte UTF-8 sequence at the byte cut: back up to the
+    // lead byte so the trailing bytes of an incomplete character are not
+    // decoded as a replacement glyph.
+    let cut = MAX_CONTEXT_BYTES;
+    while (cut > 0 && (encoded[cut] & 0b11000000) === 0b10000000) cut -= 1;
+    text = encoded.subarray(0, cut).toString('utf8');
   }
   return text;
 }
@@ -340,19 +367,7 @@ export default function genieExtension(pi: any): void {
       ctx: { cwd: string },
     ) {
       if (params.wish !== undefined && !validRef(params.wish)) {
-        return toolResult(
-          {
-            success: false,
-            mutation: 'none',
-            cwd: ctx.cwd,
-            command: [],
-            data: null,
-            parsed: false,
-            error: `invalid wish slug: ${params.wish}`,
-          },
-          `invalid wish slug: ${params.wish}`,
-          true,
-        );
+        return invalidRefResult('wish slug', params.wish, ctx.cwd);
       }
       const args = ['board', '--json'];
       if (params.wish) args.push('--wish', params.wish);
@@ -375,19 +390,7 @@ export default function genieExtension(pi: any): void {
       ctx: { cwd: string },
     ) {
       if (!validRef(params.wish)) {
-        return toolResult(
-          {
-            success: false,
-            mutation: 'none',
-            cwd: ctx.cwd,
-            command: [],
-            data: null,
-            parsed: false,
-            error: `invalid wish slug: ${params.wish}`,
-          },
-          `invalid wish slug: ${params.wish}`,
-          true,
-        );
+        return invalidRefResult('wish slug', params.wish, ctx.cwd);
       }
       const board = await runGenie(['board', '--json', '--wish', params.wish], ctx.cwd);
       const tasks = await runGenie(['task', 'list', '--json', '--wish', params.wish], ctx.cwd);
@@ -420,19 +423,7 @@ export default function genieExtension(pi: any): void {
       const args = ['task', 'list', '--json'];
       if (params.wish) {
         if (!validRef(params.wish)) {
-          return toolResult(
-            {
-              success: false,
-              mutation: 'none',
-              cwd: ctx.cwd,
-              command: [],
-              data: null,
-              parsed: false,
-              error: `invalid wish slug: ${params.wish}`,
-            },
-            `invalid wish slug: ${params.wish}`,
-            true,
-          );
+          return invalidRefResult('wish slug', params.wish, ctx.cwd);
         }
         args.push('--wish', params.wish);
       }
@@ -456,19 +447,7 @@ export default function genieExtension(pi: any): void {
       ctx: { cwd: string },
     ) {
       if (!validRef(params.id)) {
-        return toolResult(
-          {
-            success: false,
-            mutation: 'none',
-            cwd: ctx.cwd,
-            command: [],
-            data: null,
-            parsed: false,
-            error: `invalid task id: ${params.id}`,
-          },
-          `invalid task id: ${params.id}`,
-          true,
-        );
+        return invalidRefResult('task id', params.id, ctx.cwd);
       }
       const result = await runGenie(['task', 'status', params.id], ctx.cwd);
       return toolResult(result, JSON.stringify(result.data, null, 2), !result.success);
@@ -495,24 +474,12 @@ export default function genieExtension(pi: any): void {
       ctx: { cwd: string },
     ) {
       if (!validRef(params.wish)) {
-        return toolResult(
-          {
-            success: false,
-            mutation: 'none',
-            cwd: ctx.cwd,
-            command: [],
-            data: null,
-            parsed: false,
-            error: `invalid wish slug: ${params.wish}`,
-          },
-          `invalid wish slug: ${params.wish}`,
-          true,
-        );
+        return invalidRefResult('wish slug', params.wish, ctx.cwd);
       }
       const args = ['launch', params.wish, '--dry-run'];
       if (params.groups) args.push('--groups', params.groups);
       const result = await runGenie(args, ctx.cwd);
-      const data = result.parsed ? result.data : ((result.data as { stdout?: string }).stdout ?? result.data);
+      const data = result.parsed ? result.data : ((result.data as { stdout?: string } | null)?.stdout ?? result.data);
       return toolResult(result, JSON.stringify(data, null, 2), !result.success);
     },
   });
@@ -531,19 +498,7 @@ export default function genieExtension(pi: any): void {
       ctx: { cwd: string },
     ) {
       if (!validRef(params.wish)) {
-        return toolResult(
-          {
-            success: false,
-            mutation: 'none',
-            cwd: ctx.cwd,
-            command: [],
-            data: null,
-            parsed: false,
-            error: `invalid wish slug: ${params.wish}`,
-          },
-          `invalid wish slug: ${params.wish}`,
-          true,
-        );
+        return invalidRefResult('wish slug', params.wish, ctx.cwd);
       }
       const board = await runGenie(['board', '--json', '--wish', params.wish], ctx.cwd);
       const tasks = await runGenie(['task', 'list', '--json', '--wish', params.wish], ctx.cwd);

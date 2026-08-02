@@ -34,7 +34,6 @@ real_pi="$(cd "$HOME/.pi" 2>/dev/null && pwd -P || printf '%s' "$HOME/.pi")"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 plugin_dir="$(cd "$script_dir/.." && pwd)"
 target="$PI_HOME/agent/extensions/genie"
-ext="$plugin_dir/extension.ts"
 manifest="$plugin_dir/package.json"
 
 printf '== genie<->pi smoke ==\n'
@@ -110,9 +109,9 @@ fi
 # 6) pure helper unit tests
 # ---------------------------------------------------------------------------
 if command -v bun >/dev/null 2>&1; then
-  test_out="$(cd "$plugin_dir" && bun test tests/ 2>&1)"
+  test_out="$(cd "$plugin_dir" && bun test extension.test.ts 2>&1)"
   if printf '%s\n' "$test_out" | grep -Eq '^[[:space:]]*0 fail'; then
-    pass "unit tests (bun test tests/)"
+    pass "unit tests (bun test extension.test.ts)"
   else
     fail "unit tests failed"
     printf '%s\n' "$test_out" | tail -20 | sed 's/^/          /'
