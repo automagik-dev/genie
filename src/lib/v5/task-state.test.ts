@@ -661,12 +661,16 @@ describe('hire roster (single-row upsert / delete)', () => {
         .query("SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
         .all() as Array<{ name: string }>
     ).map(({ name }) => name);
-    const tombstone = reconciliationTombstoneMeta({ table: 'hire_roster', wish: 'w', agentAdapterId: 'a' });
+    const tombstone = reconciliationTombstoneMeta({
+      table: 'hire_roster',
+      wish: 'w',
+      agentAdapterId: 'a',
+      deletedAt: 0,
+    });
 
     expect(unhireAgent(db, 'w', 'a')).toBe(false);
-    expect(db.query('SELECT value FROM meta WHERE key = ?').get(tombstone.key)).toEqual({
-      value: tombstone.value,
-    });
+    const stored = db.query('SELECT value FROM meta WHERE key = ?').get(tombstone.key) as { value: string };
+    expect(stored.value).toMatch(/^[1-9][0-9]*$/);
     expect(db.query('PRAGMA user_version').get()).toEqual(schemaVersion);
     expect(
       (
@@ -676,9 +680,10 @@ describe('hire roster (single-row upsert / delete)', () => {
       ).map(({ name }) => name),
     ).toEqual(tableNames);
 
-    hireAgent(db, { wish: 'w', agentAdapterId: 'a', worktree: '/wt/re-hired' });
+    const rehired = hireAgent(db, { wish: 'w', agentAdapterId: 'a', worktree: '/wt/re-hired' });
     expect(db.query('SELECT value FROM meta WHERE key = ?').get(tombstone.key)).toBeNull();
     expect(getHire(db, 'w', 'a')?.worktree).toBe('/wt/re-hired');
+    expect(BigInt(rehired.hiredAt)).toBeGreaterThan(BigInt(stored.value));
   });
 
   test('listHires scopes by wish and orders stably', () => {

@@ -186,8 +186,10 @@ genie db sync \
 Bidirectional mode unions additions. When the same task or wish-group key
 differs, the row with the higher `updated_at` value wins and is copied exactly
 to both databases. Equal `updated_at` values with unequal row content remain a
-conflict. Boards, hire-roster entries, and unknown metadata have no trustworthy
-update version, so differing rows at the same key also remain conflicts.
+conflict. Hire-roster rows and their deletion tombstones resolve by their
+`hired_at` or deletion timestamp, so a later explicit re-hire can supersede a
+replicated deletion. Boards and unknown metadata have no trustworthy update
+version, so differing rows at the same key remain conflicts.
 Directional mode makes the source authoritative for shared mutable task,
 board, wish-group, hire-roster, and unknown metadata keys. It writes only the
 destination. Both modes preserve destination-only rows: ordinary absence never
@@ -203,10 +205,9 @@ An explicit roster unhire (the `roster_unhire` UI-bridge operation) is the
 exception. It records a versioned tombstone in the existing metadata table, so
 a later sync removes the matching hire-roster row instead of resurrecting it.
 This changes neither the SQLite schema nor its `user_version`; reconciliation
-reports the explicit removal in its deletion count. Tombstones are durable and
-deletion wins while any replica retains one. Re-hiring the same agent clears
-the local tombstone, but an offline replica with the old tombstone can reassert
-the deletion when it returns.
+reports the explicit removal in its deletion count. Tombstones are durable, but
+their timestamp participates in reconciliation: a later re-hire wins over an
+older deletion, and a later unhire wins over the replicated live row.
 
 Dependency edges are unioned. Task events and legacy stage-log entries preserve
 the maximum occurrence count observed on either applicable side. Independent

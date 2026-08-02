@@ -80,6 +80,7 @@ async function cli(cwd: string, ...args: string[]): Promise<CliResult> {
     env: {
       ...process.env,
       NO_COLOR: '1',
+      GENIE_HOME: join(root, 'genie-home'),
       GENIE_TEST_SKIP_PGSERVE: '1',
     },
   });
@@ -176,7 +177,7 @@ async function syncWithInjectedReport(report: unknown, ...args: string[]): Promi
     cwd: root,
     stdout: 'pipe',
     stderr: 'pipe',
-    env: { ...process.env, NO_COLOR: '1' },
+    env: { ...process.env, NO_COLOR: '1', GENIE_HOME: join(root, 'runner-genie-home') },
   });
   const stdout = await new Response(proc.stdout).text();
   const stderr = await new Response(proc.stderr).text();
@@ -302,40 +303,61 @@ describe('database sync CLI contract', () => {
     const otherSnapshotRoot = join(root, 'other-snapshots');
     const generationA = `${'a'.repeat(64)}--0000000000000001--00000000-0000-4000-8000-000000000001`;
     const generationB = `${'b'.repeat(64)}--0000000000000002--00000000-0000-4000-8000-000000000002`;
-    const cases = [
-      [left.database, '--snapshot-root', snapshotRoot],
-      ['--source', left.database, '--snapshot-root', snapshotRoot],
-      [
-        left.database,
-        right.database,
-        '--source',
-        left.database,
-        '--destination',
-        right.database,
-        '--snapshot-root',
-        snapshotRoot,
-      ],
-      [left.database, right.database, '--dry-run', '--keep-snapshots', '3'],
-      [left.database, right.database, '--keep-snapshots', '-1', '--snapshot-root', snapshotRoot],
-      [left.database, right.database, '--busy-timeout-ms', '2147483648', '--snapshot-root', snapshotRoot],
-      [left.database, right.database, '--snapshot-root', 'relative'],
-      [left.database, right.database, '--rollback', 'not-a-generation', '--snapshot-root', snapshotRoot],
-      ['--source', left.database, '--source', right.database, '--destination', right.database],
-      ['--source', left.database, '--destination', right.database, '--destination', left.database],
-      [left.database, right.database, '--snapshot-root', snapshotRoot, '--snapshot-root', otherSnapshotRoot],
-      [left.database, right.database, '--rollback', generationA, '--rollback', generationB],
-      [left.database, right.database, '--keep-snapshots', '1', '--keep-snapshots', '2'],
-      [left.database, right.database, '--busy-timeout-ms', '0', '--busy-timeout-ms', '1'],
-      [left.database, right.database, '--dry-run', '--dry-run'],
-      [left.database, right.database, '--json', '--json'],
+    const duplicate = 'may be specified only once';
+    const cases: Array<{ args: string[]; expectedStderr?: string }> = [
+      { args: [left.database, '--snapshot-root', snapshotRoot] },
+      { args: ['--source', left.database, '--snapshot-root', snapshotRoot] },
+      {
+        args: [
+          left.database,
+          right.database,
+          '--source',
+          left.database,
+          '--destination',
+          right.database,
+          '--snapshot-root',
+          snapshotRoot,
+        ],
+      },
+      { args: [left.database, right.database, '--dry-run', '--keep-snapshots', '3'] },
+      { args: [left.database, right.database, '--keep-snapshots', '-1', '--snapshot-root', snapshotRoot] },
+      { args: [left.database, right.database, '--busy-timeout-ms', '2147483648', '--snapshot-root', snapshotRoot] },
+      { args: [left.database, right.database, '--snapshot-root', 'relative'] },
+      { args: [left.database, right.database, '--rollback', 'not-a-generation', '--snapshot-root', snapshotRoot] },
+      {
+        args: ['--source', left.database, '--source', right.database, '--destination', right.database],
+        expectedStderr: duplicate,
+      },
+      {
+        args: ['--source', left.database, '--destination', right.database, '--destination', left.database],
+        expectedStderr: duplicate,
+      },
+      {
+        args: [left.database, right.database, '--snapshot-root', snapshotRoot, '--snapshot-root', otherSnapshotRoot],
+        expectedStderr: duplicate,
+      },
+      {
+        args: [left.database, right.database, '--rollback', generationA, '--rollback', generationB],
+        expectedStderr: duplicate,
+      },
+      {
+        args: [left.database, right.database, '--keep-snapshots', '1', '--keep-snapshots', '2'],
+        expectedStderr: duplicate,
+      },
+      {
+        args: [left.database, right.database, '--busy-timeout-ms', '0', '--busy-timeout-ms', '1'],
+        expectedStderr: duplicate,
+      },
+      { args: [left.database, right.database, '--dry-run', '--dry-run'], expectedStderr: duplicate },
+      { args: [left.database, right.database, '--json', '--json'], expectedStderr: duplicate },
     ];
 
-    for (const [index, args] of cases.entries()) {
+    for (const { args, expectedStderr } of cases) {
       const result = await sync(...args);
       expect(result.code).toBe(DATABASE_SYNC_EXIT_CODES.usage);
       expect(result.stdout).toBe('');
       expect(result.stderr).toContain('genie db sync --help');
-      if (index >= 8) expect(result.stderr).toContain('may be specified only once');
+      if (expectedStderr !== undefined) expect(result.stderr).toContain(expectedStderr);
     }
     expect(databaseInventory(left.database)).toEqual(beforeLeft);
     expect(databaseInventory(right.database)).toEqual(beforeRight);
@@ -564,7 +586,7 @@ describe('database sync CLI contract', () => {
     expect(databaseInventory(right.database)).toEqual(beforeRight);
   });
 
-  test('cleanup failures map an otherwise successful subprocess report to exit 4', async () => {
+  test('recovery cleanup failures map an otherwise successful subprocess report to exit 4', async () => {
     const report = {
       reportVersion: 1,
       command: 'database-sync',
@@ -581,11 +603,11 @@ describe('database sync CLI contract', () => {
           generationId: null,
           restoredDatabaseIdentities: [],
           failure: null,
-          cleanupFailures: [],
+          cleanupFailures: ['snapshot-cleanup-failed'],
         },
         apply: null,
         failure: null,
-        cleanupFailures: ['snapshot-cleanup-failed'],
+        cleanupFailures: [],
       },
       rollback: null,
     };
@@ -596,6 +618,24 @@ describe('database sync CLI contract', () => {
     expect(result.stderr).toBe('');
     expect(result.stdout).toContain('Database reconciliation apply: changed');
     expect(result.stdout).toContain('Cleanup failures: 1');
+  });
+
+  test('unknown runtime report statuses fail closed with exit 4', async () => {
+    const report = {
+      reportVersion: 1,
+      command: 'database-sync',
+      operation: 'apply',
+      mode: 'bidirectional',
+      status: 'future-status',
+      inputs: [],
+      plan: null,
+      apply: null,
+      rollback: null,
+    };
+
+    const result = await syncWithInjectedReport(report, '/unused/left.db', '/unused/right.db');
+
+    expect(result.code).toBe(DATABASE_SYNC_EXIT_CODES.operationalFailure);
   });
 
   test('directional dry-run reports bounded identities and counts without row content or writes', async () => {

@@ -440,7 +440,7 @@ interface PhysicalInput {
   readonly canonicalPath: string;
   readonly device: string;
   readonly inode: string;
-  readonly hasSidecars: boolean;
+  readonly hasWalContent: boolean;
 }
 
 interface ColumnFingerprint {
@@ -794,7 +794,9 @@ function resolvePhysicalInput(path: string): PhysicalInput {
       canonicalPath,
       device: String(stats.dev),
       inode: String(stats.ino),
-      hasSidecars: hasWal || hasShm,
+      // SQLite and Bun may leave empty WAL/SHM pathnames after all handles
+      // close. Only WAL bytes can carry path-specific database state.
+      hasWalContent: walBytes > 0,
     };
   } catch (caught) {
     if (caught instanceof ReconciliationError) throw caught;
@@ -821,7 +823,7 @@ function revalidatePhysicalInput(input: PhysicalInput): void {
 function samePhysicalInput(left: PhysicalInput, right: PhysicalInput): boolean {
   if (left.canonicalPath === right.canonicalPath) return true;
   if (left.device !== right.device || left.inode !== right.inode) return false;
-  if (left.hasSidecars || right.hasSidecars) {
+  if (left.hasWalContent || right.hasWalContent) {
     throw error('invalid-data', 'Hardlink aliases with path-specific SQLite sidecars are ambiguous.');
   }
   return true;
@@ -1752,7 +1754,12 @@ function reconciliationTombstones(state: LogicalState): ReconciliationTombstone[
   } catch {
     throw error('invalid-data', 'A reconciliation input contains invalid tombstone metadata.');
   }
-  return tombstones.sort((left, right) => compareCanonical(JSON.stringify(left), JSON.stringify(right)));
+  return tombstones.sort((left, right) =>
+    compareCanonical(
+      canonicalTuple([left.wish, left.agentAdapterId, left.deletedAt]),
+      canonicalTuple([right.wish, right.agentAdapterId, right.deletedAt]),
+    ),
+  );
 }
 
 function tombstoneKey(tombstone: ReconciliationTombstone): string {
@@ -1764,15 +1771,30 @@ function tombstoneHasLiveRow(state: LogicalState, tombstone: ReconciliationTombs
 }
 
 function validateInputTombstones(state: LogicalState): void {
-  if (reconciliationTombstones(state).some((tombstone) => tombstoneHasLiveRow(state, tombstone))) {
-    throw error('invalid-data', 'A reconciliation input contains both a tombstone and its live row.');
+  for (const tombstone of reconciliationTombstones(state)) {
+    const live = state.hireRoster.get(tombstoneKey(tombstone));
+    if (live !== undefined && live.hiredAt <= tombstone.deletedAt) {
+      throw error('invalid-data', 'A reconciliation input contains a live row no newer than its tombstone.');
+    }
   }
 }
 
-function applyTombstonesToState(state: LogicalState): void {
+function applyTombstonesToState(state: LogicalState, conflicts?: ReconciliationConflict[]): void {
   for (const tombstone of reconciliationTombstones(state)) {
-    state.hireRoster.delete(tombstoneKey(tombstone));
+    const key = tombstoneKey(tombstone);
+    const live = state.hireRoster.get(key);
+    if (live === undefined) continue;
+    if (live.hiredAt > tombstone.deletedAt) continue;
+    if (live.hiredAt === tombstone.deletedAt) {
+      if (conflicts !== undefined) addConflict(conflicts, 'hire_roster', 'same-key-difference', key);
+      continue;
+    }
+    state.hireRoster.delete(key);
   }
+}
+
+function metaVersion(row: MetaReconciliationRow): bigint | null {
+  return parseReconciliationTombstoneMeta(row.key, row.value)?.deletedAt ?? null;
 }
 
 function boardValues(row: BoardReconciliationRow): readonly (string | bigint | null)[] {
@@ -1914,7 +1936,7 @@ function reconcileBidirectionalKeyed<T>(
   values: (row: T) => readonly (string | bigint | null)[],
   conflicts: ReconciliationConflict[],
   excludedKey?: string,
-  version?: (row: T) => bigint,
+  version?: (row: T) => bigint | null,
 ): void {
   const keys = new Set([...left.keys(), ...right.keys()]);
   for (const key of [...keys].sort(compareCanonical)) {
@@ -1924,10 +1946,12 @@ function reconcileBidirectionalKeyed<T>(
     if (leftRow === undefined && rightRow !== undefined) left.set(key, rightRow);
     else if (rightRow === undefined && leftRow !== undefined) right.set(key, leftRow);
     else if (leftRow !== undefined && rightRow !== undefined && !rowEqual(leftRow, rightRow, values)) {
-      if (version === undefined || version(leftRow) === version(rightRow)) {
+      const leftVersion = version?.(leftRow) ?? null;
+      const rightVersion = version?.(rightRow) ?? null;
+      if (leftVersion === null || rightVersion === null || leftVersion === rightVersion) {
         addConflict(conflicts, table, 'same-key-difference', key);
       } else {
-        const winner = version(leftRow) > version(rightRow) ? leftRow : rightRow;
+        const winner = leftVersion > rightVersion ? leftRow : rightRow;
         left.set(key, winner);
         right.set(key, winner);
       }
@@ -2190,8 +2214,16 @@ function reconcileStates(
       undefined,
       (row) => row.updatedAt,
     );
-    reconcileBidirectionalKeyed('hire_roster', left.hireRoster, right.hireRoster, hireRosterValues, conflicts);
-    reconcileBidirectionalKeyed('meta', left.meta, right.meta, metaValues, conflicts, markerKey);
+    reconcileBidirectionalKeyed(
+      'hire_roster',
+      left.hireRoster,
+      right.hireRoster,
+      hireRosterValues,
+      conflicts,
+      undefined,
+      (row) => row.hiredAt,
+    );
+    reconcileBidirectionalKeyed('meta', left.meta, right.meta, metaValues, conflicts, markerKey, metaVersion);
     reconcileBidirectionalSet(left.taskDependencies, right.taskDependencies);
     reconcileBidirectionalCounts(left.stageLog, right.stageLog);
     reconcileBidirectionalCounts(left.taskEvents, right.taskEvents);
@@ -2209,8 +2241,15 @@ function reconcileStates(
   }
 
   if (conflicts.length === 0) {
-    applyTombstonesToState(left);
-    applyTombstonesToState(right);
+    if (mode === 'bidirectional') {
+      applyTombstonesToState(left, conflicts);
+      applyTombstonesToState(right);
+    } else {
+      applyTombstonesToState(left);
+      applyTombstonesToState(right, conflicts);
+    }
+  }
+  if (conflicts.length === 0) {
     if (mode === 'bidirectional') validatePlannedTargetIntegrity(left, 'left', conflicts);
     validatePlannedTargetIntegrity(right, mode === 'bidirectional' ? 'right' : 'destination', conflicts);
   }

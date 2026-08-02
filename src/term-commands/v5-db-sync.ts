@@ -115,12 +115,14 @@ interface RollbackReport {
   cleanupFailures: SnapshotRollbackReport['cleanupFailures'];
 }
 
+type DatabaseSyncCliStatus = PlanReport['status'] | ApplyReport['status'] | RollbackReport['status'];
+
 interface DatabaseSyncCliReport {
   reportVersion: typeof CLI_REPORT_VERSION;
   command: 'database-sync';
   operation: DatabaseSyncOperation;
   mode: ReconciliationRequest['mode'];
-  status: string;
+  status: DatabaseSyncCliStatus;
   inputs: readonly DatabaseIdentityReport[];
   plan: PlanReport | null;
   apply: ApplyReport | null;
@@ -460,29 +462,40 @@ function execute(
 }
 
 function cleanupFailureCount(report: DatabaseSyncCliReport): number {
-  if (report.apply !== null) return report.apply.cleanupFailures.length;
+  if (report.apply !== null) {
+    return report.apply.cleanupFailures.length + report.apply.recovery.cleanupFailures.length;
+  }
   return report.rollback?.cleanupFailures.length ?? 0;
 }
 
 function exitCode(report: DatabaseSyncCliReport): DatabaseSyncExitCode {
-  if (report.status === 'conflict') return DATABASE_SYNC_EXIT_CODES.conflict;
-  if (report.status === 'uncertain') return DATABASE_SYNC_EXIT_CODES.uncertain;
-  if (report.status === 'converged' || report.status === 'recovered') {
-    return DATABASE_SYNC_EXIT_CODES.recoveryHandled;
+  if (cleanupFailureCount(report) > 0) return DATABASE_SYNC_EXIT_CODES.operationalFailure;
+  switch (report.status) {
+    case 'no-op':
+    case 'changed':
+    case 'same-database':
+      return DATABASE_SYNC_EXIT_CODES.success;
+    case 'rolled-back':
+      return report.operation === 'rollback'
+        ? DATABASE_SYNC_EXIT_CODES.success
+        : DATABASE_SYNC_EXIT_CODES.operationalFailure;
+    case 'conflict':
+      return DATABASE_SYNC_EXIT_CODES.conflict;
+    case 'uncertain':
+      return DATABASE_SYNC_EXIT_CODES.uncertain;
+    case 'converged':
+    case 'recovered':
+      return DATABASE_SYNC_EXIT_CODES.recoveryHandled;
+    case 'operational-failure':
+    case 'lock-timeout':
+    case 'preimage-changed':
+    case 'expected-postimage':
+    case 'partial-commit':
+    case 'unexpected-intervening-write':
+      return DATABASE_SYNC_EXIT_CODES.operationalFailure;
+    default:
+      return DATABASE_SYNC_EXIT_CODES.operationalFailure;
   }
-  if (
-    report.status === 'operational-failure' ||
-    report.status === 'lock-timeout' ||
-    report.status === 'preimage-changed' ||
-    (report.status === 'rolled-back' && report.operation !== 'rollback') ||
-    report.status === 'expected-postimage' ||
-    report.status === 'partial-commit' ||
-    report.status === 'unexpected-intervening-write' ||
-    cleanupFailureCount(report) > 0
-  ) {
-    return DATABASE_SYNC_EXIT_CODES.operationalFailure;
-  }
-  return DATABASE_SYNC_EXIT_CODES.success;
 }
 
 function shortDigest(value: string | null): string {
@@ -549,10 +562,11 @@ function handleSync(
   databaseA: string | undefined,
   databaseB: string | undefined,
   options: DatabaseSyncOptions,
+  rawArguments: readonly string[],
   dependencies: DatabaseSyncCommandDependencies,
 ): void {
   try {
-    rejectRepeatedOptions(process.argv.slice(2));
+    rejectRepeatedOptions(rawArguments);
     const request = parseRequest(databaseA, databaseB, options);
     const operation = parseOperation(options);
     const snapshotRoot = parseSnapshotRoot(options.snapshotRoot);
@@ -607,7 +621,17 @@ export function registerV5DatabaseSyncCommand(
         'Exit codes: 0 success, 1 parser error, 2 usage, 3 conflict, ' +
         '4 operational failure, 5 uncertain/manual, 6 recovery handled (rerun).\n',
     )
-    .action((databaseA: string | undefined, databaseB: string | undefined, options: DatabaseSyncOptions) =>
-      handleSync(databaseA, databaseB, options, dependencies),
+    .action(
+      (
+        databaseA: string | undefined,
+        databaseB: string | undefined,
+        options: DatabaseSyncOptions,
+        command: Command,
+      ) => {
+        let root = command;
+        while (root.parent !== null) root = root.parent;
+        const rawArguments = (root as Command & { readonly rawArgs?: readonly string[] }).rawArgs ?? [];
+        handleSync(databaseA, databaseB, options, rawArguments.slice(2), dependencies);
+      },
     );
 }

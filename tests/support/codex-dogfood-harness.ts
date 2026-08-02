@@ -268,7 +268,7 @@ export async function runDogfoodEntry(
   const input = normalizeInput(rawInput);
   const ownsRoot = dependencies.root === undefined;
   const root = dependencies.root ?? mkdtempSync(join(tmpdir(), 'genie-dogfood-entry-'));
-  mkdirSync(root, { recursive: true, mode: 0o755 });
+  if (!ownsRoot) mkdirSync(root, { recursive: true, mode: 0o755 });
   try {
     const previous = verifyGeneration(
       'previous',
