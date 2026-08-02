@@ -1467,9 +1467,16 @@ function validateSnapshot(db: Database, snapshot: unknown): StateExport {
   return candidate as unknown as StateExport;
 }
 
-/** True when any operational table holds rows (meta alone does not count). */
-export function hasOperationalState(db: Database): boolean {
-  for (const table of ['boards', 'tasks', 'task_events', 'stage_log', 'wish_groups', 'hire_roster']) {
+/**
+ * True when any operational table holds rows (meta alone does not count). By
+ * default `hire_roster` counts; pass `includeHireRoster: false` for
+ * roadmap-scoped decisions, where hires must never gate (their rows are
+ * machine-local and excluded from the snapshot).
+ */
+export function hasOperationalState(db: Database, opts: { includeHireRoster?: boolean } = {}): boolean {
+  const tables = ['boards', 'tasks', 'task_events', 'stage_log', 'wish_groups'];
+  if (opts.includeHireRoster !== false) tables.push('hire_roster');
+  for (const table of tables) {
     const row = db.query(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number };
     if (row.n > 0) return true;
   }
@@ -1550,14 +1557,52 @@ function insertSnapshotRows(db: Database, state: StateExport): void {
   }
 }
 
+/** True when the failure is a row-schema problem (constraint, NOT NULL, datatype). */
+function isRowSchemaError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const code = (err as { code?: string }).code;
+  return typeof code === 'string' && (code.startsWith('SQLITE_CONSTRAINT') || code === 'SQLITE_MISMATCH');
+}
+
 /**
- * Restore a full {@link exportState} snapshot into this database — the resume
- * path for a fresh clone on another machine (`genie task import`). Refuses a
- * database that already holds operational state unless `replace` is set, in
- * which case every table is cleared and rebuilt from the snapshot inside one
- * transaction. Row ids (including event/stage autoincrement ids) are preserved
- * exactly, so an export → import round-trip is lossless.
+ * Clear every table under replace so the db becomes EXACT snapshot state. A db
+ * with only meta rows (e.g. the backfill marker a fresh open stamps) must not
+ * merge stale keys into the snapshot's meta — a retained wish_sig marker would
+ * misdescribe the imported rows as drifted. Children before parents so FK
+ * cascades never fire mid-wipe; hire_roster sits with its parent tables, only
+ * when it is not preserved.
  */
+function wipeAllTables(db: Database, preserveHireRoster: boolean): void {
+  const wipe = [
+    'task_events',
+    'stage_log',
+    'task_dependencies',
+    'tasks',
+    ...(preserveHireRoster ? [] : ['hire_roster']),
+    'wish_groups',
+    'boards',
+    'meta',
+  ];
+  for (const table of wipe) {
+    db.query(`DELETE FROM ${table}`).run();
+  }
+}
+
+/**
+ * Reclassify an apply() failure: structural and row-schema problems become
+ * {@link SnapshotFormatError}; transient SQLITE_BUSY / LOCKED / IOERR and
+ * unrelated failures propagate unchanged, so a healthy snapshot owner is never
+ * told to "repair the malformed rows" over a lock contention.
+ */
+function rethrowImportFailure(err: unknown): never {
+  if (err instanceof SnapshotFormatError || err instanceof NonEmptyImportError) throw err;
+  if (!isRowSchemaError(err)) throw err;
+  throw new SnapshotFormatError(
+    `Snapshot rows could not be imported: ${err instanceof Error ? err.message : String(err)}. The database was left unchanged; re-export the snapshot or repair the malformed rows.`,
+  );
+}
+
+/** Options controlling snapshot import. */
 export interface ImportOptions {
   replace?: boolean;
   /**
@@ -1568,35 +1613,34 @@ export interface ImportOptions {
   preserveHireRoster?: boolean;
 }
 
+/**
+ * Restore a full {@link exportState} snapshot into this database — the resume
+ * path for a fresh clone on another machine (`genie task import`). Refuses a
+ * database that already holds operational state unless `replace` is set, in
+ * which case every table is cleared and rebuilt from the snapshot inside one
+ * transaction. Row ids (including event/stage autoincrement ids) are preserved
+ * exactly, so an export → import round-trip is lossless. The emptiness guard
+ * skips `hire_roster` when it is preserved, since rows the import never touches
+ * cannot justify a refusal.
+ */
 export function importState(db: Database, snapshot: unknown, opts: ImportOptions = {}): ImportSummary {
   const state = validateSnapshot(db, snapshot);
   const hires = opts.preserveHireRoster ? [] : state.hire_roster;
   const apply = db.transaction(() => {
-    if (hasOperationalState(db) && !opts.replace) throw new NonEmptyImportError();
-    if (opts.replace) {
-      // Wipe unconditionally under replace — a db with only meta rows (e.g. the
-      // backfill marker a fresh open stamps) must not merge stale keys into the
-      // snapshot's meta: replace means EXACT snapshot state, and a retained
-      // wish_sig marker would misdescribe the imported rows as drifted.
-      // Children before parents so FK cascades never fire mid-wipe.
-      const wipe = ['task_events', 'stage_log', 'task_dependencies', 'tasks', 'wish_groups', 'boards', 'meta'];
-      if (!opts.preserveHireRoster) wipe.splice(4, 0, 'hire_roster');
-      for (const table of wipe) {
-        db.query(`DELETE FROM ${table}`).run();
-      }
+    if (hasOperationalState(db, { includeHireRoster: !opts.preserveHireRoster }) && !opts.replace) {
+      throw new NonEmptyImportError();
     }
+    if (opts.replace) wipeAllTables(db, opts.preserveHireRoster ?? false);
     insertSnapshotRows(db, { ...state, hire_roster: hires });
   });
   try {
     apply();
   } catch (err) {
-    if (err instanceof SnapshotFormatError || err instanceof NonEmptyImportError) throw err;
     // A malformed row that passed shape validation (roadmap.json survives git
-    // merges) surfaces as an opaque SQLite bind error — rethrow it in the same
-    // actionable class as the structural checks. The transaction rolled back.
-    throw new SnapshotFormatError(
-      `Snapshot rows could not be imported: ${err instanceof Error ? err.message : String(err)}. The database was left unchanged; re-export the snapshot or repair the malformed rows.`,
-    );
+    // merges) surfaces as a raw SQLite constraint error — rethrow it in the
+    // same actionable class as the structural checks. The transaction rolled
+    // back; the error classifier keeps unrelated failures untouched.
+    rethrowImportFailure(err);
   }
   return {
     boards: state.boards.length,

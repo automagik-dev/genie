@@ -17,13 +17,19 @@
  */
 
 import type { Database } from 'bun:sqlite';
-import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import type { Command } from 'commander';
 import { color, formatTimestamp, padRight, truncate } from '../lib/term-format.js';
 import { livenessBadge } from '../lib/v5/card-render.js';
 import { openDb, resolveRoadmapPath } from '../lib/v5/genie-db.js';
-import { recordExportBaseline, recordImportBaseline, roadmapSnapshot, syncRoadmap } from '../lib/v5/roadmap-sync.js';
+import {
+  recordExportBaseline,
+  recordImportBaseline,
+  roadmapSnapshot,
+  syncRoadmap,
+  writeSnapshotFile,
+} from '../lib/v5/roadmap-sync.js';
 import {
   type EventAuthor,
   type ImportSummary,
@@ -476,7 +482,9 @@ function handleExport(opts: ExportOptions): void {
       // next `task sync` then reads as in-sync and silently drops that change.
       const publish = db.transaction(() => {
         const state = sliced ? roadmapSnapshot(db) : exportState(db);
-        writeFileSync(target, `${JSON.stringify(state, null, 2)}\n`);
+        // Atomic (temp + rename) so a torn write can never leave the canonical
+        // board — or a custom backup — truncated mid-command.
+        writeSnapshotFile(target, state);
         // Writing the canonical snapshot declares "this pair is intentional" —
         // it is the keep-the-local-board resolution for a diverged sync. Only the
         // true canonical path may stamp it; a same-named file elsewhere must not.

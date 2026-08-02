@@ -21,10 +21,10 @@
 
 import type { Database } from 'bun:sqlite';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveRepoRoot, resolveRoadmapPath } from './genie-db.js';
-import { type StateExport, exportState, hasOperationalState, importState } from './task-state.js';
+import { SnapshotFormatError, type StateExport, exportState, hasOperationalState, importState } from './task-state.js';
 
 export type SyncAction = 'none' | 'imported' | 'exported' | 'diverged';
 
@@ -78,6 +78,17 @@ function writeMarker(path: string, marker: SyncMarker): void {
 
 function serializeSnapshot(state: unknown): string {
   return `${JSON.stringify(state, null, 2)}\n`;
+}
+
+/**
+ * Write a snapshot to disk atomically (temp file + rename), so an interruption
+ * or a full disk can never leave the canonical roadmap.json truncated — a torn
+ * canonical board would otherwise read as invalid JSON on the next sync.
+ */
+export function writeSnapshotFile(target: string, state: unknown): void {
+  const tmp = `${target}.${process.pid}.tmp`;
+  writeFileSync(tmp, serializeSnapshot(state));
+  renameSync(tmp, target);
 }
 
 /**
@@ -135,8 +146,10 @@ function syncRoadmapLocked(db: Database, cwd?: string): SyncResult {
   const dbHash = canonicalHash(dbState);
 
   if (!existsSync(filePath)) {
-    if (!hasOperationalState(db)) return { action: 'none' };
-    writeFileSync(filePath, serializeSnapshot(dbState));
+    // Roadmap-scoped: hires are machine-local and never publish, so a hire-only
+    // db has nothing to publish and must not create an empty snapshot.
+    if (!hasOperationalState(db, { includeHireRoster: false })) return { action: 'none' };
+    writeSnapshotFile(filePath, dbState);
     writeMarker(markerPath, { fileHash: dbHash, dbHash });
     return { action: 'exported', message: `Published board snapshot to ${filePath}.` };
   }
@@ -160,19 +173,35 @@ function syncRoadmapLocked(db: Database, cwd?: string): SyncResult {
   const marker = readMarker(markerPath);
   const fileChanged = marker === null || fileHash !== marker.fileHash;
   const dbChanged = marker === null || dbHash !== marker.dbHash;
+  const resolution =
+    'Resolve with `genie task import --replace` (take the snapshot) or `genie task export --write` (keep the local board).';
 
-  if (fileChanged && (!dbChanged || !hasOperationalState(db))) {
-    importState(db, parsed, { replace: true, preserveHireRoster: true });
+  // Roadmap-scoped decision: hires never travel in the snapshot, so a local
+  // hire alone must not count as unpublished board state — otherwise a fresh
+  // clone that hired an agent before its first sync would read as "both moved"
+  // and wedge permanently into diverged.
+  if (fileChanged && (!dbChanged || !hasOperationalState(db, { includeHireRoster: false }))) {
+    try {
+      importState(db, parsed, { replace: true, preserveHireRoster: true });
+    } catch (err) {
+      // Schema skew (or a structurally unimportable snapshot) is exactly the
+      // "I cannot reconcile these two" class this function must surface as a
+      // diverged verdict with actionable text — never as a throw that the git
+      // hooks swallow via `|| true`.
+      if (!(err instanceof SnapshotFormatError)) throw err;
+      return {
+        action: 'diverged',
+        message: `${filePath} could not be imported: ${err.message} ${resolution}`,
+      };
+    }
     writeMarker(markerPath, { fileHash, dbHash: canonicalHash(roadmapSnapshot(db)) });
     return { action: 'imported', message: `Board refreshed from ${filePath}.` };
   }
   if (dbChanged && !fileChanged) {
-    writeFileSync(filePath, serializeSnapshot(dbState));
+    writeSnapshotFile(filePath, dbState);
     writeMarker(markerPath, { fileHash: dbHash, dbHash });
     return { action: 'exported', message: `Board snapshot ${filePath} refreshed from the local database.` };
   }
-  const resolution =
-    'Resolve with `genie task import --replace` (take the snapshot) or `genie task export --write` (keep the local board).';
   return {
     action: 'diverged',
     message: `Both the local board (genie.db) and ${filePath} changed since the last sync. Nothing was overwritten. ${resolution}`,

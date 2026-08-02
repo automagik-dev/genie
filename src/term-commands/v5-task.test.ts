@@ -443,6 +443,45 @@ describe('roadmap.json canonical sync', () => {
     expect(hires).toEqual([{ wish: 'w', worktree: '/tmp/wt' }]);
   });
 
+  test('a hire before the first sync does not wedge a fresh clone into diverged', async () => {
+    const db = openDb({ cwd: repo });
+    createTask(db, { title: 'canonical card' });
+    db.close();
+    const published = await cli(repo, 'sync');
+    expect(published.code).toBe(0);
+    expect(published.stdout).toContain('Published board snapshot');
+
+    const clone = mkdtempSync(join(tmpdir(), 'genie-v5-sync-'));
+    try {
+      git(clone, 'init', '-b', 'main');
+      git(clone, 'commit', '--allow-empty', '-m', 'init');
+      await plantSnapshot(clone, snapshotOf(repo));
+
+      // Local hire BEFORE any baseline sync: hires are machine-local and never
+      // travel, so they must not count as unpublished board state — the board
+      // still materializes instead of reporting divergence.
+      const cloneDb = openDb({ cwd: clone });
+      hireAgent(cloneDb, { wish: 'w', agentAdapterId: 'claude', worktree: '/tmp/wt' });
+      cloneDb.close();
+
+      const synced = await cli(clone, 'sync');
+      expect(synced.code).toBe(0);
+      expect(synced.stdout).toContain('Board refreshed');
+      const r = await cli(clone, 'list');
+      expect(r.stdout).toContain('canonical card');
+      // And the local hire survived the canonical import untouched.
+      const db2 = openDb({ cwd: clone });
+      const hires = db2.query('SELECT wish, worktree FROM hire_roster').all() as Array<{
+        wish: string;
+        worktree: string;
+      }>;
+      db2.close();
+      expect(hires).toEqual([{ wish: 'w', worktree: '/tmp/wt' }]);
+    } finally {
+      rmSync(clone, { recursive: true, force: true });
+    }
+  });
+
   test('explicit relative canonical path behaves like the default; custom-file exports stay lossless', async () => {
     const db = openDb({ cwd: repo });
     createTask(db, { title: 'card' });
