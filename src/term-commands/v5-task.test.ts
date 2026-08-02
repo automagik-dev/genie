@@ -478,6 +478,31 @@ describe('roadmap.json canonical sync', () => {
     expect(settled.code).toBe(0);
   });
 
+  test('a subdirectory spelling of roadmap.json is roadmap-sliced, and is not the canonical baseline', async () => {
+    const db = openDb({ cwd: repo });
+    createTask(db, { title: 'card' });
+    hireAgent(db, { wish: 'w', agentAdapterId: 'claude', worktree: '/tmp/machine-local-wt' });
+    db.close();
+    await mkdir(join(repo, 'src', '.genie'), { recursive: true });
+
+    // Same relative spelling, different cwd: it resolves to src/.genie/roadmap.json,
+    // NOT the canonical repo-root file. It is still a git-trackable file named
+    // roadmap.json, so the machine-local hire_roster must not travel in it.
+    const w = await cli(join(repo, 'src'), 'export', '--write', '.genie/roadmap.json');
+    expect(w.code).toBe(0);
+    expect(w.stderr).toBe('');
+    const written = readFileSync(join(repo, 'src', '.genie', 'roadmap.json'), 'utf-8');
+    expect(written).not.toContain('/tmp/machine-local-wt');
+    expect((JSON.parse(written) as StateExport).hire_roster).toEqual([]);
+
+    // And it did not stamp the sync baseline: the canonical file is still
+    // unpublished, so sync publishes it instead of reporting an in-sync pair.
+    const synced = await cli(repo, 'sync');
+    expect(synced.code).toBe(0);
+    expect(synced.stdout).toContain('Published board snapshot');
+    expect((JSON.parse(snapshotOf(repo)) as StateExport).tasks).toHaveLength(1);
+  });
+
   test('pulled snapshot imports on sync; local mutation exports; divergence is refused then resolvable', async () => {
     // Machine A (repo): publish F1, then F2 with one more card.
     const db = openDb({ cwd: repo });

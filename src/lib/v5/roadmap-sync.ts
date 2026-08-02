@@ -81,23 +81,34 @@ function serializeSnapshot(state: unknown): string {
 }
 
 /**
- * Stamp the CURRENT (roadmap.json, genie.db) pair as the sync baseline.
- * Called after an explicit `task import`/`task export --write` succeeds: the
- * operator has just declared this pair intentional, so future syncs measure
- * drift from here.
+ * Baseline the pair an explicit `task export --write` just published, where
+ * `state` is the snapshot whose bytes were written to roadmap.json. Both hashes
+ * come from that ONE snapshot: re-snapshotting the db here (or re-reading the
+ * file) could pick up a concurrent worktree's write and stamp a baseline
+ * describing state the published file never held — the next `task sync` would
+ * then read as in-sync and that mid-window change would never be exported.
+ * Callers must therefore run this inside the same immediate transaction that
+ * produced `state` and wrote the file.
  */
-export function recordSyncBaseline(db: Database, cwd?: string): void {
-  const filePath = resolveRoadmapPath(cwd);
-  const dbHash = canonicalHash(roadmapSnapshot(db));
-  let fileHash = dbHash;
-  if (existsSync(filePath)) {
-    try {
-      fileHash = canonicalHash(JSON.parse(readFileSync(filePath, 'utf-8')));
-    } catch {
-      // Unreadable file: baseline the db side only; next sync will flag it.
-    }
-  }
-  writeMarker(resolveSyncMarkerPath(cwd), { fileHash, dbHash });
+export function recordExportBaseline(state: StateExport, cwd?: string): void {
+  // The file holds exactly `serializeSnapshot(state)`, and sync hashes the
+  // PARSED file — structurally identical to `state`, so one hash covers both.
+  const hash = canonicalHash(state);
+  writeMarker(resolveSyncMarkerPath(cwd), { fileHash: hash, dbHash: hash });
+}
+
+/**
+ * Baseline the pair an explicit `task import` just settled: `snapshot` is the
+ * parsed roadmap.json that was applied, and the db side is re-measured because
+ * a merge import (no `--replace`) leaves a db that is a superset of the file.
+ * Same locking contract as {@link recordExportBaseline} — the re-snapshot must
+ * happen under the caller's immediate transaction, alongside the import itself.
+ */
+export function recordImportBaseline(db: Database, snapshot: unknown, cwd?: string): void {
+  writeMarker(resolveSyncMarkerPath(cwd), {
+    fileHash: canonicalHash(snapshot),
+    dbHash: canonicalHash(roadmapSnapshot(db)),
+  });
 }
 
 /**
