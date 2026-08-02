@@ -262,6 +262,7 @@ function writeVersionTree(root: string, version: string, packageScript?: string)
     ['plugins/genie/.claude-plugin/plugin.json', { name: 'genie', version }],
     ['plugins/genie/.codex-plugin/plugin.json', { name: 'genie', version }],
     ['plugins/genie/package.json', { name: 'genie-plugin', version }],
+    ['plugins/pi-genie/package.json', { name: 'genie-pi-plugin', version }],
   ];
   for (const [path, value] of jsonFiles) {
     mkdirSync(join(root, path, '..'), { recursive: true });
