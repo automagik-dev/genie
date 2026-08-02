@@ -1914,6 +1914,7 @@ function reconcileBidirectionalKeyed<T>(
   values: (row: T) => readonly (string | bigint | null)[],
   conflicts: ReconciliationConflict[],
   excludedKey?: string,
+  version?: (row: T) => bigint,
 ): void {
   const keys = new Set([...left.keys(), ...right.keys()]);
   for (const key of [...keys].sort(compareCanonical)) {
@@ -1923,7 +1924,13 @@ function reconcileBidirectionalKeyed<T>(
     if (leftRow === undefined && rightRow !== undefined) left.set(key, rightRow);
     else if (rightRow === undefined && leftRow !== undefined) right.set(key, leftRow);
     else if (leftRow !== undefined && rightRow !== undefined && !rowEqual(leftRow, rightRow, values)) {
-      addConflict(conflicts, table, 'same-key-difference', key);
+      if (version === undefined || version(leftRow) === version(rightRow)) {
+        addConflict(conflicts, table, 'same-key-difference', key);
+      } else {
+        const winner = version(leftRow) > version(rightRow) ? leftRow : rightRow;
+        left.set(key, winner);
+        right.set(key, winner);
+      }
     }
   }
 }
@@ -2165,8 +2172,24 @@ function reconcileStates(
 
   if (mode === 'bidirectional') {
     reconcileBidirectionalKeyed('boards', left.boards, right.boards, boardValues, conflicts);
-    reconcileBidirectionalKeyed('tasks', left.tasks, right.tasks, taskValues, conflicts);
-    reconcileBidirectionalKeyed('wish_groups', left.wishGroups, right.wishGroups, wishGroupValues, conflicts);
+    reconcileBidirectionalKeyed(
+      'tasks',
+      left.tasks,
+      right.tasks,
+      taskValues,
+      conflicts,
+      undefined,
+      (row) => row.updatedAt,
+    );
+    reconcileBidirectionalKeyed(
+      'wish_groups',
+      left.wishGroups,
+      right.wishGroups,
+      wishGroupValues,
+      conflicts,
+      undefined,
+      (row) => row.updatedAt,
+    );
     reconcileBidirectionalKeyed('hire_roster', left.hireRoster, right.hireRoster, hireRosterValues, conflicts);
     reconcileBidirectionalKeyed('meta', left.meta, right.meta, metaValues, conflicts, markerKey);
     reconcileBidirectionalSet(left.taskDependencies, right.taskDependencies);

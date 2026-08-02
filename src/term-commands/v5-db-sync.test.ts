@@ -96,14 +96,14 @@ function parseJson(result: CliResult): JsonReport {
   return JSON.parse(result.stdout) as JsonReport;
 }
 
-function insertTask(path: string, id: string, title: string): void {
+function insertTask(path: string, id: string, title: string, updatedAt: number | bigint = 1): void {
   const db = openDb({ path });
   db.query('INSERT INTO tasks (id, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)').run(
     id,
     title,
     'ready',
     1,
-    1,
+    updatedAt,
   );
   db.close();
 }
@@ -670,6 +670,28 @@ describe('database sync CLI contract', () => {
     expect(parseJson(noOp).status).toBe('no-op');
   });
 
+  test('bidirectional apply converges both left-newer and right-newer tasks independent of argument order', async () => {
+    const left = createRepo('version-left');
+    const right = createRepo('version-right');
+    const earlier = 9_007_199_254_740_992n;
+    const later = earlier + 1n;
+    insertTask(left.database, 'left-newer', 'left wins', later);
+    insertTask(right.database, 'left-newer', 'stale right', earlier);
+    insertTask(left.database, 'right-newer', 'stale left', earlier);
+    insertTask(right.database, 'right-newer', 'right wins', later);
+
+    const result = await sync(left.database, right.database, '--json');
+
+    expect(result.code).toBe(DATABASE_SYNC_EXIT_CODES.success);
+    expect(parseJson(result).status).toBe('changed');
+    expect(taskTitles(left.database)).toEqual(['left wins', 'right wins']);
+    expect(taskTitles(right.database)).toEqual(['left wins', 'right wins']);
+
+    const reversed = await sync(right.database, left.database, '--json');
+    expect(reversed.code).toBe(DATABASE_SYNC_EXIT_CODES.success);
+    expect(parseJson(reversed).status).toBe('no-op');
+  });
+
   test('bidirectional apply propagates an explicit roster tombstone without a schema migration', async () => {
     const host = createRepo('tombstone-host');
     const guest = createRepo('tombstone-guest');
@@ -696,7 +718,7 @@ describe('database sync CLI contract', () => {
     }
   });
 
-  test('bidirectional mutable conflicts use exit 3, bounded digests/counts, and zero mutation', async () => {
+  test('bidirectional equal-version mutable conflicts use exit 3, bounded digests/counts, and zero mutation', async () => {
     const left = createRepo('left');
     const right = createRepo('right');
     insertTask(left.database, 't_shared', 'LEFT SECRET');
