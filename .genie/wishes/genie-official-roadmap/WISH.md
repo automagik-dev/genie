@@ -20,8 +20,8 @@ Turn the audited wish jar (36 wishes; 3-scout evidence audit 2026-07-28) into th
 ### IN
 
 - `git mv` 29 DONE-verified wishes to `.genie/wishes/archive/<slug>/` with the full link-rewrite inventory from DESIGN Scope (17 intra-wish design links `../../`→`../../../`; genie-ui→genie-ui-dash split-endpoint link; pr-2545 repo-escaping `.claude` links).
-- Cold-seed the `roadmap` board (6 lifecycle lanes) with exactly 19 cards, each create+move to its enumerated lane (Work 4 / Review 3 / Wish 1 / Brainstorm 5 / Idea 6 per DESIGN D7).
-- Rewrite `.genie/INDEX.md`: new Shipped section (29 lines, archive links), lifecycle sections reconciled to the card set — including the reviewer-mandated relocations: `genie-official-roadmap` Raw→Simmering, `v4-home-residue-doctor` + `release-ops-hardening` Ready→Poured; remove duplicated khal-native-theme bullet; correct codex-plugin-update-handoff entry; stable-release facts (first stable v5.260727.5 fixed history; current stable pinned fresh at execution).
+- Cold-seed the `roadmap` board (6 lifecycle lanes) with exactly 19 cards, each create+move to its enumerated lane (Work 4 / Review 3 / Wish 2 / Brainstorm 4 / Idea 6 — DESIGN D7 with this wish's own card in Wish per the execution amendment).
+- Rewrite `.genie/INDEX.md`: new Shipped section (29 lines, archive links), lifecycle sections reconciled to the card set — including the reviewer-mandated relocations (`v4-home-residue-doctor` + `release-ops-hardening` Ready→Poured) and the execution-amendment placement of `genie-official-roadmap` in Poured; remove duplicated khal-native-theme bullet; correct codex-plugin-update-handoff entry; stable-release facts (first stable v5.260727.5 fixed history; current stable pinned fresh at execution).
 - Draft `public-roadmap-polish` brainstorm (DRAFT.md + INDEX Raw entry + Idea card).
 - One-off link-resolution sweep over moved files and INDEX.md, output recorded as evidence.
 
@@ -115,9 +115,9 @@ bun run wishes:lint && ls .genie/wishes/archive | wc -l | grep -qx 29 && ls .gen
 
 **Deliverables:**
 1. `genie board create roadmap` (default 6 lifecycle lanes)
-2. 19 × `genie task create --board roadmap --title …` (with `--wish <slug>` where a slug exists) followed by `genie task move <id> --to <lane>` per DESIGN enumeration — Work: codex-plugin-dogfood-remediation, v4-home-residue-doctor, release-ops-hardening, proportional-validation-policy · Review: genie-ui-dash, live-dev-loop, ritual-QA checklist · Wish: khal-rebrand · Brainstorm: genie-boards-ui, intent-to-wish-compiler, brainstorm-domain-map, cross-agent-delegate, genie-official-roadmap · Idea: control-plane-contract, skill-absorbs, always-on-genie, genie-spend, dream-replatform, public-roadmap-polish
+2. 19 × `genie task create --board roadmap --title …` (with `--wish <slug>` where a slug exists) followed by `genie task move <id> --to <lane>` per DESIGN enumeration — Work: codex-plugin-dogfood-remediation, v4-home-residue-doctor, release-ops-hardening, proportional-validation-policy · Review: genie-ui-dash, live-dev-loop, ritual-QA checklist · Wish: khal-rebrand, genie-official-roadmap · Brainstorm: genie-boards-ui, intent-to-wish-compiler, brainstorm-domain-map, cross-agent-delegate · Idea: control-plane-contract, skill-absorbs, always-on-genie, genie-spend, dream-replatform, public-roadmap-polish
 3. `genie task comment` on the ritual-QA card enumerating all 6 rituals (council live run, genie-mcp Warp QA, warp pane checklist, agent-sync convergence, update-handoff homolog dogfood, taxonomy PATH export)
-4. Create a FRESH Brainstorm-lane card for genie-official-roadmap, then `genie task block t_ms58w0yqa195fbf8 --reason "superseded by roadmap-board card"` — the boardless pointer cannot be adopted (no code path mutates `board_id` after creation; `task move` throws LaneError on boardless tasks)
+4. Create a FRESH Wish-lane card for genie-official-roadmap (execution amendment), then `genie task block t_ms58w0yqa195fbf8 --reason "superseded by roadmap-board card"` — the boardless pointer cannot be adopted (no code path mutates `board_id` after creation; `task move` throws LaneError on boardless tasks)
 
 **Acceptance Criteria:**
 - [ ] `genie task export`: board `roadmap` exists; exactly 19 tasks with `board_id` = roadmap board; every one `lane` non-null and matching the enumeration
@@ -126,6 +126,7 @@ bun run wishes:lint && ls .genie/wishes/archive | wc -l | grep -qx 29 && ls .gen
 
 **Validation:**
 ```bash
+set -o pipefail
 genie board --board roadmap && genie task export | bun -e 'const s=JSON.parse(await Bun.stdin.text());const b=s.boards.find(x=>x.name==="roadmap");if(!b)process.exit(1);const c=s.tasks.filter(t=>t.board_id===b.id);if(c.length!==19||c.some(t=>!t.lane))process.exit(1)'
 ```
 
@@ -138,7 +139,7 @@ genie board --board roadmap && genie task export | bun -e 'const s=JSON.parse(aw
 **Goal:** Reconcile INDEX.md with the archive and the seeded board, and draft the public-roadmap-polish brainstorm.
 
 **Deliverables:**
-1. INDEX.md rewrite: Shipped section (29 entries, `wishes/archive/<slug>/WISH.md` links); lifecycle sections matching cards incl. reviewer LOW-A relocations (genie-official-roadmap Raw→Simmering; v4-home-residue-doctor + release-ops-hardening Ready→Poured); duplicate khal bullet removed; codex-plugin-update-handoff entry corrected (PR #2617 merged 2026-07-22, A–E shipped); stable-release facts (first v5.260727.5; current pinned via `gh release list` at execution); Work-lane priority order stated in prose (D4); no lifecycle entry with archive path as first link
+1. INDEX.md rewrite: Shipped section (29 entries, `wishes/archive/<slug>/WISH.md` links); lifecycle sections matching cards incl. reviewer LOW-A relocations (v4-home-residue-doctor + release-ops-hardening Ready→Poured) and the amendment's Poured placement for genie-official-roadmap; duplicate khal bullet removed; codex-plugin-update-handoff entry corrected (PR #2617 merged 2026-07-22, A–E shipped); stable-release facts (first v5.260727.5; current pinned via `gh release list` at execution); Work-lane priority order stated in prose (D4); no lifecycle entry with archive path as first link
 2. `.genie/brainstorms/public-roadmap-polish/DRAFT.md` (publish roadmap outward + docs/onboarding sweep; seeded from this wish's D6) + INDEX Raw entry
 3. Re-run link sweep over INDEX.md + full tree → 0 unresolved; final `qa/link-sweep.txt`
 4. Commit (pre-commit sync publishes board to roadmap.json); verify post-commit `genie task sync` in-sync
@@ -151,6 +152,7 @@ genie board --board roadmap && genie task export | bun -e 'const s=JSON.parse(aw
 
 **Validation:**
 ```bash
+set -o pipefail
 bun run check && genie doctor --json | bun -e 'const d=JSON.parse(await Bun.stdin.text());const il=(d.checks||[]).find(c=>c.indexLane);if(!il)process.exit(1);const e=il.indexLane.entries;const ok=e.filter(x=>x.state==="ok").length;const drift=e.filter(x=>x.state==="drift").length;if(ok<18||drift>0)process.exit(1)' && genie task sync
 ```
 (Positive assertion required: `unlinked` never counts as drift, so a drift-only check passes vacuously on an unreconciled INDEX. 18 of the 19 cards carry wish slugs; each must resolve a lifecycle entry to `ok`.)
