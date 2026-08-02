@@ -1,4 +1,4 @@
 interface:
   display_name: "Genie Router"
   short_description: "Route work that warrants the Genie lifecycle"
-  default_prompt: "Use Genie when explicitly requested, related to existing lifecycle work, or warranted by durable planning or coordination needs; otherwise bypass it with a one-line notice. Security-sensitive work does not bypass by default."
+  default_prompt: "Use Genie for explicit requests, bug reports, operational commands, Genie questions, related existing lifecycle work, or durable planning and coordination needs; otherwise bypass it with a one-line notice. Security-sensitive work does not bypass by default."

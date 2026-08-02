@@ -987,9 +987,21 @@ describe('Group E release and documentation contracts', () => {
     expect(router).toContain('Announce the bypass in one line');
     expect(router).toContain('Security-sensitive changes do not bypass by default');
     expect(router).toContain('must not create or update `.genie` artifacts');
+    // The bypass gate must run FIRST, before classification or state detection:
+    // a section that moved below the routing logic would silently reorder the
+    // router's decision flow while these phrase checks still pass.
+    const bypass = router.indexOf('## Lightweight Bypass Check');
+    expect(bypass).toBeGreaterThan(-1);
+    expect(bypass).toBeLessThan(router.indexOf('## Intent Classification'));
+    expect(bypass).toBeLessThan(router.indexOf('## State Detection'));
     expect(lifecycle).toContain('Ordinary requests unrelated to an existing wish or brainstorm bypass this lifecycle');
     expect(lifecycle).toContain('Security-sensitive changes do not bypass by default');
     expect(lifecycle).toContain('Related existing work always resumes through its persisted state');
+    // The metadata prompt must keep the mandatory non-bypass categories: bug
+    // reports, operational commands, and Genie questions always route normally.
+    expect(metadata).toContain('bug reports');
+    expect(metadata).toContain('operational commands');
+    expect(metadata).toContain('Genie questions');
     expect(metadata).toContain('otherwise bypass it with a one-line notice');
     expect(metadata).toContain('Security-sensitive work does not bypass by default.');
   });
