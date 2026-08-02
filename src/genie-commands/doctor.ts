@@ -1076,26 +1076,35 @@ function safeFileDigest(path: string): string | null {
  * "current" mirrors the skills contract (on-disk == manifest == source). Returns
  * null for a name genie does not speak for (a user-authored agent absent from
  * both source and the manifest is never reported).
+ *
+ * `suppressed` (plugin enabled → the bare-name fan-out is not expected to exist)
+ * changes only what an ABSENT file means: nothing is owed to the target, so a
+ * source name with no file and no manifest entry is not `missing-from-target`,
+ * and a surviving file can never be `genie-managed-current` — it is prunable
+ * leftover state. Files that DO exist are still classified, because Claude Code
+ * still lists them next to the plugin's `genie:*` agents.
  */
 function classifyRoleAgentFile(
   agentsDir: string,
   name: string,
   source: Map<string, string>,
   entries: Record<string, AgentFileManifestEntry>,
+  suppressed = false,
 ): RoleAgentFileState | null {
   const present = isRegularFile(join(agentsDir, name));
   const entry = entries[name];
   const inSource = source.has(name);
   if (entry === undefined) {
     if (present) return inSource ? 'present-unmanaged' : null;
-    return inSource ? 'missing-from-target' : null;
+    return inSource && !suppressed ? 'missing-from-target' : null;
   }
   // A manifest entry is durable ownership evidence even after both the source
   // and live file disappear. Report it as missing so doctor never hides stale
   // ownership metadata behind a healthy empty inventory.
   if (!present) return 'missing-from-target';
   const onDisk = safeFileDigest(join(agentsDir, name));
-  const current = inSource && onDisk !== null && onDisk === entry.digest && entry.digest === source.get(name);
+  const current =
+    !suppressed && inSource && onDisk !== null && onDisk === entry.digest && entry.digest === source.get(name);
   return current ? 'genie-managed-current' : 'genie-managed-stale';
 }
 
@@ -1106,24 +1115,30 @@ function classifyRoleAgents(
   suppressed = false,
 ): Omit<RoleAgentDelivery, 'duplicateSurface'> {
   // Plugin enabled → sync suppresses the WHOLE bare-name role-agent fan-out
-  // (agents load as genie:* from the plugin), so the expected source set is
-  // empty and any surviving managed file is prunable leftover state. Without
-  // this, every suppressed agent reads as missing-from-target and doctor
-  // advises `genie update` forever — the same trap the skills check avoids.
-  const sourceState = suppressed ? { digests: new Map<string, string>(), issues: [] } : sourceAgentDigests(pluginRoot);
+  // (agents load as genie:* from the plugin), so nothing is owed to the target
+  // and any surviving file is prunable leftover state. That suppression flows
+  // into the per-file classifier, NOT into an emptied source inventory: the
+  // source names are what make a surviving bare-name file inspectable at all,
+  // and dropping them would hide a user-edited orphan that agent-sync
+  // deliberately KEPT on disk while relinquishing its manifest entry — exactly
+  // the duplicate listing this check exists to report.
+  const sourceState = sourceAgentDigests(pluginRoot);
   const source = sourceState.digests;
   const manifest = readAgentFilesManifestState(agentsDir);
   const entries = manifest.kind === 'managed' ? manifest.files : {};
   const names = new Set<string>([...source.keys(), ...Object.keys(entries)]);
   const files: RoleAgentDelivery['files'] = [];
   for (const name of [...names].sort()) {
-    const state = classifyRoleAgentFile(agentsDir, name, source, entries);
+    const state = classifyRoleAgentFile(agentsDir, name, source, entries, suppressed);
     if (state !== null) files.push({ name, state });
   }
   return {
     manifestStatus: manifest.kind,
     manifestReason: manifest.kind === 'unsafe' ? manifest.reason : undefined,
-    sourceIssues: sourceState.issues,
+    // Under suppression the mirror is not expected to exist, so source-inventory
+    // problems are not mirror defects — reporting them would advise `genie update`
+    // forever over a fan-out genie is deliberately not delivering.
+    sourceIssues: suppressed ? [] : sourceState.issues,
     files,
   };
 }

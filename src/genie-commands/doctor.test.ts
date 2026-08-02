@@ -1606,6 +1606,23 @@ describe('checkAgentSync — claude role agents', () => {
     expect(check?.status).toBe('warn');
   });
 
+  test('plugin enabled + kept orphan whose manifest entry was relinquished still warns as a duplicate', () => {
+    // agent-sync's kept-modified-orphan aftermath: the user edited the bare agent,
+    // so sync left the FILE on disk and only dropped its manifest entry. Claude
+    // Code still lists bare `reviewer` next to plugin `genie:reviewer`, so neither
+    // the classification nor the duplicate warning may go blind to it.
+    writeSourceAgent('reviewer', '# reviewer\n');
+    writeTargetAgent('reviewer', '# reviewer, hand-edited\n');
+    writeSettings({ enabledPlugins: { 'genie@automagik': true } });
+
+    const results = checkAgentSync(paths());
+    const check = find(results, ROLE_CHECK);
+    expect(stateMap(check)['reviewer.md']).toBe('present-unmanaged');
+    expect(check?.status).toBe('warn');
+    expect(check?.roleAgents?.duplicateSurface).toBe(true);
+    expect(find(results, DUP_CHECK)?.status).toBe('warn');
+  });
+
   test('plugin enabled + manifest-only leftover (file gone) → stale warn but no duplicate warning', () => {
     writeSourceAgent('scout', '# scout\n');
     // Manifest entry survives but the file was deleted: stale ownership

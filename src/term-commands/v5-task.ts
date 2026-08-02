@@ -17,15 +17,16 @@
  */
 
 import type { Database } from 'bun:sqlite';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
 import type { Command } from 'commander';
 import { color, formatTimestamp, padRight, truncate } from '../lib/term-format.js';
 import { livenessBadge } from '../lib/v5/card-render.js';
 import { openDb, resolveRoadmapPath } from '../lib/v5/genie-db.js';
-import { recordSyncBaseline, roadmapSnapshot, syncRoadmap } from '../lib/v5/roadmap-sync.js';
+import { recordExportBaseline, recordImportBaseline, roadmapSnapshot, syncRoadmap } from '../lib/v5/roadmap-sync.js';
 import {
   type EventAuthor,
+  type ImportSummary,
   type TaskCardRow,
   type TaskFilter,
   type TaskRow,
@@ -425,26 +426,64 @@ interface ExportOptions {
   write?: string | boolean;
 }
 
+/**
+ * Realpath-normalized form for path IDENTITY comparison. A raw string compare is
+ * wrong twice over: `--write <relative>` resolves against process.cwd() while
+ * `resolveRoadmapPath()` resolves against the git COMMON root, and macOS spells
+ * the same directory two ways (`/var/...` vs `/private/var/...`). The target file
+ * itself may not exist yet, so normalize the existing parent + basename.
+ */
+function normalizedPath(path: string): string {
+  try {
+    return join(realpathSync(dirname(path)), basename(path));
+  } catch {
+    return path;
+  }
+}
+
+function samePath(a: string, b: string): boolean {
+  return normalizedPath(a) === normalizedPath(b);
+}
+
+/**
+ * True for ANY target spelled `<dir>/.genie/roadmap.json`, not just this repo's
+ * canonical file — a subdirectory or linked-worktree spelling resolves elsewhere
+ * yet is still a git-trackable file under the canonical name. Such a file gets
+ * the roadmap slice so full-state `hire_roster` rows (machine-local worktree
+ * paths) can never travel in it. Custom-file writes and the plain stdout dump
+ * stay the complete database, so a backup file round-trips lossless.
+ */
+function isRoadmapSlicePath(path: string): boolean {
+  const normalized = normalizedPath(path);
+  return basename(normalized) === 'roadmap.json' && basename(dirname(normalized)) === '.genie';
+}
+
 function handleExport(opts: ExportOptions): void {
   run(() => {
     const db = openDb();
     try {
-      // Only the canonical roadmap.json gets the roadmap slice (no hire_roster —
-      // machine-local worktree paths). Custom-file writes and the plain stdout
-      // dump stay the complete database, so a backup file round-trips lossless.
       const target = opts.write ? (typeof opts.write === 'string' ? resolve(opts.write) : resolveRoadmapPath()) : null;
-      const canonical = target === resolveRoadmapPath();
-      const state = canonical ? roadmapSnapshot(db) : exportState(db);
-      const json = `${JSON.stringify(state, null, 2)}\n`;
-      if (target) {
-        writeFileSync(target, json);
-        // Writing the canonical snapshot declares "this pair is intentional" —
-        // it is the keep-the-local-board resolution for a diverged sync.
-        if (canonical) recordSyncBaseline(db);
-        out(`Wrote board snapshot to ${target}.`);
+      if (target === null) {
+        process.stdout.write(`${JSON.stringify(exportState(db), null, 2)}\n`);
         return;
       }
-      process.stdout.write(json);
+      const sliced = isRoadmapSlicePath(target);
+      const canonical = sliced && samePath(target, resolveRoadmapPath());
+      // ONE immediate transaction over snapshot → file write → baseline. genie.db
+      // is shared across worktrees, so a writer landing mid-sequence would
+      // otherwise yield a torn snapshot (dependency rows whose tasks were missed)
+      // or a baseline dbHash describing a NEWER db than the published file — the
+      // next `task sync` then reads as in-sync and silently drops that change.
+      const publish = db.transaction(() => {
+        const state = sliced ? roadmapSnapshot(db) : exportState(db);
+        writeFileSync(target, `${JSON.stringify(state, null, 2)}\n`);
+        // Writing the canonical snapshot declares "this pair is intentional" —
+        // it is the keep-the-local-board resolution for a diverged sync. Only the
+        // true canonical path may stamp it; a same-named file elsewhere must not.
+        if (canonical) recordExportBaseline(state);
+      });
+      publish.immediate();
+      out(`Wrote board snapshot to ${target}.`);
     } finally {
       db.close();
     }
@@ -484,10 +523,21 @@ function handleImport(file: string | undefined, opts: ImportOptions): void {
     }
     const db = openDb();
     try {
-      // The canonical snapshot is roadmap-scoped: local hires stay untouched.
-      const canonical = source === resolveRoadmapPath();
-      const summary = importState(db, snapshot, { replace: opts.replace, preserveHireRoster: canonical });
-      if (canonical) recordSyncBaseline(db);
+      // A roadmap-sliced snapshot carries no hires, so local hires stay untouched;
+      // only the true canonical file may stamp the sync baseline.
+      const sliced = isRoadmapSlicePath(source);
+      const canonical = sliced && samePath(source, resolveRoadmapPath());
+      // ONE immediate transaction over import → baseline (importState's own
+      // transaction nests as a savepoint): the baseline's post-import db
+      // re-snapshot must not see another worktree's write, or the marker would
+      // claim a db state the file never described and the next `task sync` would
+      // report in-sync while that change stayed unpublished.
+      const apply = db.transaction(() => {
+        const result = importState(db, snapshot, { replace: opts.replace, preserveHireRoster: sliced });
+        if (canonical) recordImportBaseline(db, snapshot);
+        return result;
+      });
+      const summary = apply.immediate() as ImportSummary;
       out(
         `Imported ${summary.tasks} tasks, ${summary.boards} boards, ${summary.dependencies} dependencies, ${summary.events} events, ${summary.wishGroups} wish groups, ${summary.hires} hires from ${source}.`,
       );
