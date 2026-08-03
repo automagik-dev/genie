@@ -60,4 +60,16 @@ describe('resolvePiExtensionsDir', () => {
       join(homedir(), 'relocated', 'agent', 'extensions'),
     );
   });
+
+  test('empty or whitespace-only $PI_CODING_AGENT_DIR falls back to <piHome>/agent', () => {
+    expect(resolvePiExtensionsDir({ PI_CODING_AGENT_DIR: '' } as NodeJS.ProcessEnv, join('/home/test', '.pi'))).toBe(
+      join('/home/test', '.pi', 'agent', 'extensions'),
+    );
+    expect(resolvePiExtensionsDir({ PI_CODING_AGENT_DIR: '   ' } as NodeJS.ProcessEnv, join('/home/test', '.pi'))).toBe(
+      join('/home/test', '.pi', 'agent', 'extensions'),
+    );
+    expect(resolvePiExtensionsDir({ PI_CODING_AGENT_DIR: '  ', PI_HOME: '/custom/pi' } as NodeJS.ProcessEnv)).toBe(
+      join('/custom/pi', 'agent', 'extensions'),
+    );
+  });
 });

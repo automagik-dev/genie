@@ -53,7 +53,9 @@ export function resolvePiHome(env: NodeJS.ProcessEnv = process.env, home = homed
  * own variable, so a relocated pi is always converged where pi actually reads.
  */
 export function resolvePiExtensionsDir(env: NodeJS.ProcessEnv = process.env, home?: string): string {
-  const agentDir = env.PI_CODING_AGENT_DIR ?? join(home ?? resolvePiHome(env), 'agent');
+  const override = env.PI_CODING_AGENT_DIR;
+  const agentDir =
+    typeof override === 'string' && override.trim().length > 0 ? override : join(home ?? resolvePiHome(env), 'agent');
   return join(expandTilde(agentDir), 'extensions');
 }
 
