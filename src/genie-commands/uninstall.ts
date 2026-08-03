@@ -76,10 +76,17 @@ import {
   acquireLifecycleLease as acquireCodexLifecycleLease,
 } from '../lib/codex-lifecycle-lease.js';
 import { contractPath, getGenieDir } from '../lib/genie-config.js';
-import { resolveClaudeDir, resolveCodexDir, resolveGenieHome, resolveHermesHome } from '../lib/genie-home.js';
+import {
+  resolveClaudeDir,
+  resolveCodexDir,
+  resolveGenieHome,
+  resolveHermesHome,
+  resolvePiExtensionsDir,
+} from '../lib/genie-home.js';
 import {
   type HeldOrderedLifecycleLeases,
   acquireOrderedLifecycleLeases,
+  lifecycleBusyMessage,
   releaseOrderedLifecycleLeases,
 } from '../lib/ordered-lifecycle-leases.js';
 import {
@@ -506,6 +513,7 @@ function assertUninstallBatchLocation(genieHome: string, journalPath: string): v
     codexLegacyCuratedDir(resolveCodexDir()),
     join(resolveCodexDir(), 'agents'),
     join(resolveHermesHome(), 'plugins'),
+    resolvePiExtensionsDir(),
     LOCAL_BIN,
     join(recoveryRoot, 'uninstall-v4'),
   ];
@@ -1089,6 +1097,8 @@ export interface AgentSyncRemovalTargets {
   /** Shared `~/.agents/skills` tier codex skills are synced into (detection root stays `codexDir`). */
   agentsSkillsDir?: string;
   hermesHome?: string;
+  /** pi's extension discovery dir — parent of the auto-synced `extensions/genie` link. */
+  piExtensionsDir?: string;
   genieHome?: string;
   /** Injectable clock for deterministic state-backup and kept-aside paths in tests. */
   now?: () => Date;
@@ -1123,6 +1133,7 @@ function retainedRemovalQuarantines(targets: AgentSyncRemovalTargets = {}): stri
     LOCAL_BIN,
     join(claudeDir, 'rules'),
     join(hermesHome, 'plugins'),
+    targets.piExtensionsDir ?? resolvePiExtensionsDir(),
     dirname(uninstallBatchJournalPath(genieHome)),
     genieCaptureParent,
   ]);
@@ -1266,7 +1277,7 @@ export function recoverUninstallTransactions(targets: AgentSyncRemovalTargets = 
 const LEGACY_KEPT_MARKER = '.genie-kept';
 
 interface AgentSyncAsset {
-  agent: 'claude' | 'codex' | 'hermes';
+  agent: 'claude' | 'codex' | 'hermes' | 'pi';
   kind: 'skill' | 'agent' | 'workflow' | 'link';
   path: string;
   /** True when content diverged or ownership metadata is corrupt; uninstall preserves it. */
@@ -1432,10 +1443,15 @@ function collectManagedCouncil(claudeDir: string, out: AgentSyncAsset[], restric
   });
 }
 
-/** The hermes plugin link is ours only when the symlink resolves into the genie home. */
-function collectHermesLinkPath(
+/**
+ * A synced plugin link (hermes `plugins/genie`, pi `extensions/genie`) is ours
+ * only when the symlink resolves into the genie home. A user's own link pointing
+ * at a dev checkout, and any real dir/file at the same path, are never collected.
+ */
+function collectPluginLinkPath(
   linkPath: string,
   genieHome: string,
+  agent: AgentSyncAsset['agent'],
   out: AgentSyncAsset[],
   restrictToPaths?: ReadonlySet<string>,
 ): void {
@@ -1459,7 +1475,7 @@ function collectHermesLinkPath(
     // pointer before unlinking a symlink the user may have repointed since.
     if (isSameOrContainedPath(home, resolved)) {
       out.push({
-        agent: 'hermes',
+        agent,
         kind: 'link',
         path: linkPath,
         identity: { kind: 'link', target, identity: physicalRootIdentity(after) },
@@ -1476,7 +1492,7 @@ function collectHermesLinks(
   out: AgentSyncAsset[],
   restrictToPaths?: ReadonlySet<string>,
 ): void {
-  collectHermesLinkPath(join(hermesHome, 'plugins', 'genie'), genieHome, out, restrictToPaths);
+  collectPluginLinkPath(join(hermesHome, 'plugins', 'genie'), genieHome, 'hermes', out, restrictToPaths);
   const profilesRoot = join(hermesHome, 'profiles');
   let entries: Dirent[];
   try {
@@ -1489,12 +1505,12 @@ function collectHermesLinks(
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(entry.name) || entry.name === '.' || entry.name === '..') continue;
     const profileRoot = resolve(profilesRoot, entry.name);
     if (!isSameOrContainedPath(profilesRoot, profileRoot)) continue;
-    collectHermesLinkPath(join(profileRoot, 'plugins', 'genie'), genieHome, out, restrictToPaths);
+    collectPluginLinkPath(join(profileRoot, 'plugins', 'genie'), genieHome, 'hermes', out, restrictToPaths);
   }
 }
 
 /**
- * Read-only scan for genie-managed agent assets (skills, stamped council.js, hermes link).
+ * Read-only scan for genie-managed agent assets (skills, stamped council.js, hermes/pi links).
  * `restrictToPaths` (resolved paths) bounds the scan to those exact objects, so a
  * batch removing N members re-inspects only each planned path instead of digesting
  * every managed dir once per member. Classification of each returned path is
@@ -1532,11 +1548,23 @@ export function inspectAgentSyncAssets(
   collectManagedSkillDirs(codexLegacyCuratedDir(codexDir), 'codex', out, restrictToPaths);
   collectManagedCouncil(claudeDir, out, restrictToPaths);
   collectHermesLinks(hermesHome, genieHome, out, restrictToPaths);
+  // The agent-sync `pi` lane auto-creates `<pi agent dir>/extensions/genie` →
+  // `$GENIE_HOME/plugins/pi-genie`. Uninstall removes GENIE_HOME, so the link
+  // must be collected here or every auto-installed pi user keeps a dangling
+  // symlink. Identity-checked exactly like the hermes link: only a symlink that
+  // resolves INTO the genie home is ours.
+  collectPluginLinkPath(
+    join(targets.piExtensionsDir ?? resolvePiExtensionsDir(), 'genie'),
+    genieHome,
+    'pi',
+    out,
+    restrictToPaths,
+  );
   return { assets: out, claudeAgentManifest };
 }
 
 export interface AgentSyncRemovalResult {
-  /** Assets deleted outright (digest-clean skills, stamped council.js, hermes link). */
+  /** Assets deleted outright (digest-clean skills, stamped council.js, hermes/pi links). */
   removed: string[];
   /** User-modified/corrupt-metadata/identity-mismatched assets preserved byte-identically at their paths. */
   kept: string[];
@@ -1553,7 +1581,7 @@ export interface AgentSyncRemovalResult {
 export interface AgentSyncRemovalOptions {
   beforeManagedDirRemoval?: (destDir: string, stage: 'before-park' | 'before-delete') => void;
   beforeWorkflowRemoval?: (stage: 'before-park' | 'before-delete') => void;
-  /** Deterministic boundary after a Hermes link is proven and before atomic capture. */
+  /** Deterministic boundary after a plugin link (hermes/pi) is proven and before atomic capture. */
   beforeManagedLinkCapture?: (path: string) => void;
   /**
    * Durable uninstall-batch allowlist with the recorded identity per planned path.
@@ -1664,7 +1692,7 @@ function recordAgentAssetDisposition(
   if (disposition === 'kept-identity-mismatch') result.identityMismatch.push(path);
 }
 
-/** Atomically capture and remove only the exact recorded Hermes link inode. */
+/** Atomically capture and remove only the exact recorded plugin-link (hermes/pi) inode. */
 function removeManagedLink(
   linkPath: string,
   expected: Extract<AgentAssetIdentity, { kind: 'link' }> | undefined,
@@ -1699,13 +1727,13 @@ function removeManagedLink(
   const capture = captureExpectedRemovalPath(
     linkPath,
     expected?.identity ?? liveIdentity,
-    'hermes-link',
+    'plugin-link',
     beforeCapture,
   );
   const capturedStat = lstatSync(capture.capturedPath);
   const capturedTarget = capturedStat.isSymbolicLink() ? readlinkSync(capture.capturedPath) : null;
   if (!capturedStat.isSymbolicLink() || capturedTarget !== (expected?.target ?? liveTarget)) {
-    restoreCapturedNoClobber(capture, `captured Hermes link content changed: ${linkPath}`);
+    restoreCapturedNoClobber(capture, `captured plugin link content changed: ${linkPath}`);
   }
   deleteCapturedRemovalPath(capture);
   result.removed.push(linkPath);
@@ -3493,9 +3521,7 @@ function acquireUninstallLifecycleLeasesOrProject(
     // An agent-sync holder is NOT `codex-lifecycle-busy`: no machine trailer is
     // emitted here, because install.sh parses that code and would be misled
     // about which subsystem is holding the lease. One stderr line, exit 2.
-    console.error(
-      `Another Genie lifecycle command is active: ${acquired.detail}. No files were removed; retry once it completes.`,
-    );
+    console.error(lifecycleBusyMessage(acquired.detail, '. No files were removed; retry once it completes.'));
     process.exitCode = 2;
     return null;
   }
@@ -3557,7 +3583,7 @@ export async function uninstallCommand(
   const removableAssets = agentAssets.length - keptAssets.length;
   if (removableAssets > 0)
     console.log(
-      `  \x1b[31m-\x1b[0m Synced agent assets: ${removableAssets} managed skill dir(s)/agent file(s)/council.js/hermes link across claude/codex/hermes`,
+      `  \x1b[31m-\x1b[0m Synced agent assets: ${removableAssets} managed skill dir(s)/agent file(s)/council.js/plugin link(s) across claude/codex/hermes/pi`,
     );
   if (keptAssets.length > 0) {
     console.log(

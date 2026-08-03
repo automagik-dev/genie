@@ -1406,16 +1406,18 @@ interface PiCheckInput {
 
 /**
  * pi health: the `~/.pi/agent/extensions/genie` symlink converging on the
- * shipped `pi-genie` source. Pass when pi is undetected (no extensions dir and
+ * shipped `pi-genie` source. Pass when pi is undetected (no agent dir and
  * no pi CLI) or the source is absent — the link check only runs when both
  * sides exist. The detection gate matches the agent-sync `pi` lane exactly
- * (`syncPi`): extensions dir present OR pi CLI on PATH. Link-only: pi has no
- * enable command or config legs to converge.
+ * (`syncPi`): pi AGENT dir present OR pi CLI on PATH — pi only creates
+ * `<agentDir>/extensions` when it installs a package resource, so gating on
+ * `extensions` here would report "not detected" for real installs the sync lane
+ * converges. Link-only: pi has no enable command or config legs to converge.
  */
 function checkPiSync(input: PiCheckInput): CheckResult[] {
   const { piRoot, piHome } = input;
   const extensionsDir = resolvePiExtensionsDir(process.env, piHome);
-  if (!existsSync(extensionsDir) && input.binary === null) {
+  if (!existsSync(dirname(extensionsDir)) && input.binary === null) {
     return [{ name: 'agent sync: pi', status: 'pass', detail: 'not detected' }];
   }
   if (piRoot === null) {

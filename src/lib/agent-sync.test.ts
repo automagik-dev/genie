@@ -310,6 +310,22 @@ describe('fresh create', () => {
     expect(extraAction(report, 'enable')).toBeUndefined();
   });
 
+  // Regression (PR #2743 review): pi only creates `<agentDir>/extensions` when it
+  // installs a package resource, so a real pi install that never installed one has
+  // the agent dir and NO extensions dir. Detection roots at the agent dir, so this
+  // first-run install is still converged with the pi CLI absent from PATH — the
+  // extensions dir is created and pi discovers the link on its next run.
+  test('pi: agent dir present without an extensions dir still creates the link (no pi on PATH)', () => {
+    present(join(fixture.piHome, 'agent'));
+    const report = agentReport(run(), 'pi');
+
+    expect(report.detected).toBe(true);
+    const link = join(fixture.piHome, 'agent', 'extensions', 'genie');
+    expect(lstatSync(link).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(link)).toBe(fixture.piSource);
+    expect(extraAction(report, 'symlink')).toBe('created');
+  });
+
   test('report carries the resolved source metadata', () => {
     present(fixture.claudeDir);
     const report = run();

@@ -507,6 +507,71 @@ describe('omni hook-timeout guardrail', () => {
   });
 });
 
+describe('doctorCommand — pi extension link (user-facing CLI surface)', () => {
+  /**
+   * Pin pi's own relocation override at the isolated home so no real `~/.pi` is
+   * read (Bun resolves `homedir()` independently of the `HOME` override).
+   * `await`s inside the window — restoring before the async doctor run would
+   * hand the real pi home back to the check.
+   */
+  async function withIsolatedPiAgentDir<T>(agentDir: string, run: () => Promise<T>): Promise<T> {
+    const prior = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    try {
+      return await run();
+    } finally {
+      if (prior === undefined) Reflect.deleteProperty(process.env, 'PI_CODING_AGENT_DIR');
+      else process.env.PI_CODING_AGENT_DIR = prior;
+    }
+  }
+
+  afterEach(() => {
+    process.exitCode = 0;
+  });
+
+  test('a detected pi install with no genie link warns non-fatally with the sync suggestion', async () => {
+    const genieHome = join(isolatedHome, 'genie');
+    mkdirSync(join(genieHome, 'plugins', 'genie', 'skills'), { recursive: true });
+    mkdirSync(join(genieHome, 'plugins', 'pi-genie'), { recursive: true });
+    writeFileSync(join(genieHome, 'VERSION'), '5.0.0\n', 'utf8');
+    const agentDir = join(isolatedHome, '.pi', 'agent');
+    mkdirSync(join(agentDir, 'extensions'), { recursive: true });
+
+    const { output, exitCode } = await withIsolatedPiAgentDir(agentDir, () =>
+      captureDoctor(() => doctorCommand({}, isolatedDoctorDeps())),
+    );
+
+    // Human-readable surface: the warn glyph, the check name, the actionable
+    // detail and the suggestion — and a warning never fails the command.
+    expect(output).toContain('agent sync: pi');
+    expect(output).toContain('extensions/genie link absent');
+    expect(output).toContain('genie update');
+    expect(output).toMatch(/!.*agent sync: pi/);
+    expect(exitCode).toBe(0);
+  });
+
+  test('a correct pi extension link passes and prints no pi warning', async () => {
+    const genieHome = join(isolatedHome, 'genie');
+    const piSource = join(genieHome, 'plugins', 'pi-genie');
+    mkdirSync(join(genieHome, 'plugins', 'genie', 'skills'), { recursive: true });
+    mkdirSync(piSource, { recursive: true });
+    writeFileSync(join(genieHome, 'VERSION'), '5.0.0\n', 'utf8');
+    const agentDir = join(isolatedHome, '.pi', 'agent');
+    mkdirSync(join(agentDir, 'extensions'), { recursive: true });
+    symlinkSync(piSource, join(agentDir, 'extensions', 'genie'));
+
+    const { output, exitCode } = await withIsolatedPiAgentDir(agentDir, () =>
+      captureDoctor(() => doctorCommand({ json: true }, isolatedDoctorDeps())),
+    );
+    const json = JSON.parse(output) as { checks: Array<{ name: string; status: string; detail?: string }> };
+    const pi = json.checks.find((check) => check.name === 'agent sync: pi');
+
+    expect(pi?.status).toBe('pass');
+    expect(pi?.detail).toContain('linked');
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe('doctorCommand — genie.db check branches', () => {
   // The db check resolves its path from the current repo root (git rev-parse),
   // so we drive doctorCommand inside a throwaway git repo to exercise the
@@ -1025,6 +1090,22 @@ describe('checkAgentSync', () => {
     const pi = find(checkAgentSync(paths()), 'agent sync: pi');
     expect(pi?.status).toBe('warn');
     expect(pi?.suggestion).toBeDefined();
+  });
+
+  // The detection gate is the pi AGENT dir (what pi always creates), not the
+  // `extensions` child (which pi only creates when installing a package) — and it
+  // must stay byte-identical to `syncPi`, so every warning here is repairable by
+  // the suggested sync. The pi home alone is still "not detected".
+  test('pi: agent dir without an extensions dir → warn (same gate as the sync lane)', () => {
+    mkdirSync(join(piHome, 'agent'), { recursive: true });
+    const pi = find(checkAgentSync(paths()), 'agent sync: pi');
+    expect(pi?.status).toBe('warn');
+    expect(pi?.suggestion).toBeDefined();
+  });
+
+  test('pi: pi home without an agent dir → not detected', () => {
+    mkdirSync(piHome, { recursive: true });
+    expect(find(checkAgentSync(paths()), 'agent sync: pi')?.detail).toBe('not detected');
   });
 
   // Codex Genie skills are plugin-only (R5): an EMPTY user tier is the healthy

@@ -647,8 +647,10 @@ describe('updateCommand wiring', () => {
     const logSpy = spyOn(console, 'log').mockImplementation((...args: unknown[]) => stdout.push(args.join(' ')));
     const errorSpy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => stderr.push(args.join(' ')));
     process.exitCode = undefined;
-    // Millisecond-scale so the bounded poll is exercised, not endured.
-    process.env.GENIE_LIFECYCLE_LEASE_WAIT_MS = '60';
+    // Millisecond-scale so the bounded poll is exercised, not endured. 500ms
+    // (not 60ms) so a GC/scheduler pause cannot collapse the 25ms poll loop to
+    // a single attempt and flake the `attempts > 1` assertion.
+    process.env.GENIE_LIFECYCLE_LEASE_WAIT_MS = '500';
     let attempts = 0;
     let thrown: unknown;
     try {
