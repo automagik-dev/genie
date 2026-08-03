@@ -5940,8 +5940,9 @@ function detectHermesBinary(opts: AgentSyncOptions): string | null {
  * discovery dir) onto the shipped `plugins/pi-genie` source. pi has no plugin
  * enable command — the extension auto-loads from the linked dir on next pi
  * start — so the lane is link-only, mirroring the hermes link leg without the
- * enable/config legs. Detection: pi home present OR `pi` CLI on PATH; a link
- * is created only when the `pi-genie` source ships next to `plugins/genie`.
+ * enable/config legs. Detection: the pi extensions dir present OR `pi` CLI on
+ * PATH; a link is created only when the `pi-genie` source ships next to
+ * `plugins/genie`.
  */
 function syncPi(ctx: RunContext, opts: AgentSyncOptions, report: AgentReport): void {
   const extensionsDir = ctx.targets.pi;

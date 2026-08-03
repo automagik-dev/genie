@@ -18,13 +18,17 @@ the pi extension **automatically**:
   finishing `genie install` aux-layout normalization), and
 - the agent-sync **`pi` lane** — run by `genie install` and every `genie update`
   — symlinks `~/.pi/agent/extensions/genie` → `$GENIE_HOME/plugins/pi-genie`
-  whenever pi is detected (pi CLI on PATH or `~/.pi/agent` present).
+  whenever pi is detected (pi CLI on PATH or the pi extensions dir present).
+  A relocated pi agent dir is honored: the lane targets `$PI_CODING_AGENT_DIR`
+  when set (pi's real override, tilde-expanded), falling back to
+  `~/.pi/agent`. The legacy `$PI_HOME` alias is still accepted.
 
 `genie doctor` reports the link as `agent sync: pi`. No manual step needed on
 fresh installs or updates.
 
 For a dev checkout (edits are live) or a detached, release-style copy, the
-local installer remains available:
+local installer remains available (it resolves the same way: `$PI_CODING_AGENT_DIR`
+when set, else `~/.pi/agent`):
 
 ```bash
 # default: symlink ~/.pi/agent/extensions/genie -> this checkout (edits are live)

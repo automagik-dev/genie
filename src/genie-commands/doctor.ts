@@ -186,8 +186,17 @@ const GLYPH: Record<CheckStatus, string> = {
 };
 
 function whichBinary(name: string): string | null {
+  if (typeof Bun !== 'undefined') {
+    try {
+      return Bun.which(name);
+    } catch {
+      return null;
+    }
+  }
+  // Node fallback — same policy as detectPiBinary/detectHermesBinary in agent-sync.
   try {
-    return Bun.which(name);
+    const found = execFileSync('which', [name], { encoding: 'utf8' }).trim();
+    return found === '' ? null : found;
   } catch {
     return null;
   }
@@ -892,7 +901,7 @@ async function checkOmniHookTimeout(): Promise<CheckResult[]> {
 const SYNC_MANIFEST_NAME = MANIFEST_NAME;
 const SYNC_MANAGED_BY = MANAGED_BY;
 const COUNCIL_WORKFLOW_FILE = TARGET_NAME;
-const SYNC_SUGGESTION = 'Run `genie update` to converge detected Claude and Hermes integrations.';
+const SYNC_SUGGESTION = 'Run `genie update` to converge detected Claude, Hermes and pi integrations.';
 const HERMES_INLINE_SUGGESTION =
   'Rewrite the inline top-level key as a block mapping so genie can merge without deleting your entries, then run `genie update`.';
 
@@ -1397,14 +1406,16 @@ interface PiCheckInput {
 
 /**
  * pi health: the `~/.pi/agent/extensions/genie` symlink converging on the
- * shipped `pi-genie` source. Pass when pi is undetected (no pi home and no pi
- * CLI) or the source is absent — the link check only runs when both sides
- * exist. Link-only: pi has no enable command or config legs to converge.
+ * shipped `pi-genie` source. Pass when pi is undetected (no extensions dir and
+ * no pi CLI) or the source is absent — the link check only runs when both
+ * sides exist. The detection gate matches the agent-sync `pi` lane exactly
+ * (`syncPi`): extensions dir present OR pi CLI on PATH. Link-only: pi has no
+ * enable command or config legs to converge.
  */
 function checkPiSync(input: PiCheckInput): CheckResult[] {
   const { piRoot, piHome } = input;
-  const extensionsDir = resolvePiExtensionsDir(piHome);
-  if (!existsSync(piHome) && input.binary === null) {
+  const extensionsDir = resolvePiExtensionsDir(process.env, piHome);
+  if (!existsSync(extensionsDir) && input.binary === null) {
     return [{ name: 'agent sync: pi', status: 'pass', detail: 'not detected' }];
   }
   if (piRoot === null) {
