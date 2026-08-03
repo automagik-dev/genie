@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | IN_PROGRESS |
+| **Status** | SHIPPED |
 | **Slug** | `lifecycle-lease-busy-grace` |
 | **Date** | 2026-08-02 |
 | **Author** | Felipe Rosa + Genie |
@@ -144,7 +144,7 @@ bun run check
 - [x] Functional: live holder → `update --sync-only` (dev-tip binary f7c4314b9, isolated GENIE_HOME sandbox, 2026-08-03) exited 2 with one clean line naming the real lock path, no stack trace, no false phrase.
 - [x] Functional: SIGKILLed holder with fresh-mtime lock → same sandbox run stole the lock in ~100ms (lock file gone) and the command completed exit 0 — the 2026-08-02 incident scenario, fixed.
 - [x] Integration: uncontended sandbox run exited 0 with normal sync output, no busy line.
-- [ ] Regression: `--post-delivery-converge` child still borrows the parent lease correctly (one end-to-end dev-build update).
+- [x] Regression: real host `genie update -y` (2026-08-03) delivered 5.260803.1 → 5.260803.3 end-to-end — verified release promotion, borrowed-lease converge, integration refresh — exit 0.
 
 ---
 
