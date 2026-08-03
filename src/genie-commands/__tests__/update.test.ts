@@ -2295,7 +2295,7 @@ describe('runV4CleanupSafe', () => {
 describe('runAgentSyncSafe (agent-sync phase)', () => {
   function makeReport(): AgentSyncReport {
     return {
-      source: { pluginRoot: '/home/.genie/plugins/genie', hermesRoot: null, version: '5.0.0' },
+      source: { pluginRoot: '/home/.genie/plugins/genie', hermesRoot: null, piRoot: null, version: '5.0.0' },
       agents: [
         {
           agent: 'claude',

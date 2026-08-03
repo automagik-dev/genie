@@ -123,6 +123,8 @@ interface Fixture {
   agentsSkillsDir: string;
   hermesHome: string;
   hermesSource: string;
+  piHome: string;
+  piSource: string;
 }
 
 let fixture: Fixture;
@@ -158,6 +160,7 @@ function setup(opts: SetupOptions = {}): Fixture {
   const pluginsBase = opts.binLayout ? join(genieHome, 'bin', 'plugins') : join(genieHome, 'plugins');
   const pluginRoot = join(pluginsBase, 'genie');
   const hermesSource = join(pluginsBase, 'hermes-genie');
+  const piSource = join(pluginsBase, 'pi-genie');
 
   const skills = opts.skills ?? {
     alpha: { 'SKILL.md': '# alpha\n', 'references/a.md': 'alpha ref\n' },
@@ -170,6 +173,7 @@ function setup(opts: SetupOptions = {}): Fixture {
 
   if (opts.withTemplate ?? true) writeFile(join(pluginRoot, 'workflows', 'council.js'), TEMPLATE_BODY);
   writeFile(join(hermesSource, 'plugin.json'), '{"name":"hermes-genie"}\n');
+  writeFile(join(piSource, 'package.json'), '{"name":"genie-pi-plugin"}\n');
 
   const version = opts.version === undefined ? '9.9.9' : opts.version;
   if (version !== null) writeFile(join(genieHome, 'VERSION'), `${version}\n`);
@@ -183,6 +187,8 @@ function setup(opts: SetupOptions = {}): Fixture {
     agentsSkillsDir: join(root, 'agents', 'skills'),
     hermesHome: join(root, 'hermes'),
     hermesSource,
+    piHome: join(root, 'pi'),
+    piSource,
   };
 }
 
@@ -198,9 +204,11 @@ function run(extra: Partial<AgentSyncOptions> = {}): AgentSyncReport {
       claude: fixture.claudeDir,
       codex: fixture.codexDir,
       hermes: fixture.hermesHome,
+      pi: join(fixture.piHome, 'agent', 'extensions'),
       agentsSkills: fixture.agentsSkillsDir,
     },
     hermesBinary: null,
+    piBinary: null,
     now: FIXED_NOW,
     log: () => undefined,
     ...extra,
@@ -286,11 +294,25 @@ describe('fresh create', () => {
     expect(extraAction(report, 'enable')).toBe('ran');
   });
 
+  test('pi: extensions link created when pi home present, no enable command', () => {
+    present(join(fixture.piHome, 'agent', 'extensions'));
+    const report = agentReport(run(), 'pi');
+
+    expect(report.detected).toBe(true);
+    const link = join(fixture.piHome, 'agent', 'extensions', 'genie');
+    expect(lstatSync(link).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(link)).toBe(fixture.piSource);
+    expect(extraAction(report, 'symlink')).toBe('created');
+    // pi has no plugin enable command — the link alone loads the extension.
+    expect(extraAction(report, 'enable')).toBeUndefined();
+  });
+
   test('report carries the resolved source metadata', () => {
     present(fixture.claudeDir);
     const report = run();
     expect(report.source.pluginRoot).toBe(fixture.pluginRoot);
     expect(report.source.hermesRoot).toBe(fixture.hermesSource);
+    expect(report.source.piRoot).toBe(fixture.piSource);
     expect(report.source.version).toBe('9.9.9');
   });
 });
@@ -1332,6 +1354,7 @@ describe('idempotent re-run', () => {
     present(fixture.claudeDir);
     present(fixture.codexDir);
     present(fixture.hermesHome);
+    present(join(fixture.piHome, 'agent', 'extensions'));
     const enableCalls: string[][] = [];
     const opts: Partial<AgentSyncOptions> = {
       hermesBinary: '/fake/bin/hermes',
@@ -1348,6 +1371,9 @@ describe('idempotent re-run', () => {
 
     const hermes = agentReport(second, 'hermes');
     expect(extraAction(hermes, 'symlink')).toBe('unchanged');
+
+    const pi = agentReport(second, 'pi');
+    expect(extraAction(pi, 'symlink')).toBe('unchanged');
 
     expect(enableCalls).toHaveLength(1); // fired on the first run only
     expect(second.backupsDir).toBeNull();
@@ -1802,7 +1828,7 @@ describe('undetected agents', () => {
   test('a missing agent dir yields detected:false and zero writes', () => {
     // no target dirs created at all
     const report = run();
-    for (const agent of ['claude', 'hermes'] as const) {
+    for (const agent of ['claude', 'hermes', 'pi'] as const) {
       expect(agentReport(report, agent).detected).toBe(false);
     }
     // codex never appears in the report at all — runAgentSync has no codex arm.
@@ -1810,6 +1836,7 @@ describe('undetected agents', () => {
     expect(existsSync(fixture.claudeDir)).toBe(false);
     expect(existsSync(fixture.codexDir)).toBe(false);
     expect(existsSync(join(fixture.hermesHome, 'plugins'))).toBe(false);
+    expect(existsSync(join(fixture.piHome, 'agent'))).toBe(false);
     expect(report.backupsDir).toBeNull();
   });
 
@@ -1828,13 +1855,15 @@ describe('explicit client selection', () => {
     present(fixture.claudeDir);
     present(fixture.codexDir);
     present(fixture.hermesHome);
+    present(join(fixture.piHome, 'agent', 'extensions'));
     writeFile(join(fixture.agentsSkillsDir, 'alpha', 'SKILL.md'), '# seeded, pre-existing\n');
     const report = run({ selection: 'codex' });
     // runAgentSync has no `codex` arm at all: `selection: 'codex'` matches
-    // none of the claude/hermes gates either, so nothing runs.
+    // none of the claude/hermes/pi gates either, so nothing runs.
     expect(report.agents).toEqual([]);
     expect(existsSync(join(fixture.claudeDir, 'skills'))).toBe(false);
     expect(existsSync(join(fixture.hermesHome, 'plugins', 'genie'))).toBe(false);
+    expect(existsSync(join(fixture.piHome, 'agent', 'extensions', 'genie'))).toBe(false);
     expect(readFileSync(join(fixture.agentsSkillsDir, 'alpha', 'SKILL.md'), 'utf8')).toBe('# seeded, pre-existing\n');
   });
 
@@ -1842,11 +1871,13 @@ describe('explicit client selection', () => {
     present(fixture.claudeDir);
     present(fixture.codexDir);
     present(fixture.hermesHome);
+    present(join(fixture.piHome, 'agent', 'extensions'));
     const report = run({ selection: 'none' });
     expect(report.agents).toEqual([]);
     expect(existsSync(join(fixture.claudeDir, 'skills'))).toBe(false);
     expect(existsSync(join(fixture.agentsSkillsDir, 'alpha'))).toBe(false);
     expect(existsSync(join(fixture.hermesHome, 'plugins', 'genie'))).toBe(false);
+    expect(existsSync(join(fixture.piHome, 'agent', 'extensions', 'genie'))).toBe(false);
   });
 
   // Regression (restore-hermes-sync-leg): a prior release narrowed every
@@ -1856,16 +1887,18 @@ describe('explicit client selection', () => {
   // This is the R2/A1 + hermes-restoration contract pinned at the engine
   // level: 'auto' must converge BOTH claude and hermes, and must NEVER touch
   // the shared ~/.agents/skills tier (there is no codex arm to do so).
-  test('auto selection converges claude AND hermes, and never touches a seeded ~/.agents/skills fixture', () => {
+  test('auto selection converges claude, hermes AND pi, and never touches a seeded ~/.agents/skills fixture', () => {
     present(fixture.claudeDir);
     present(fixture.hermesHome);
+    present(join(fixture.piHome, 'agent', 'extensions'));
     writeFile(join(fixture.agentsSkillsDir, 'alpha', 'SKILL.md'), '# seeded, pre-existing\n');
 
     const report = run({ selection: 'auto' });
 
-    expect(report.agents.map((agent) => agent.agent).sort()).toEqual(['claude', 'hermes']);
+    expect(report.agents.map((agent) => agent.agent).sort()).toEqual(['claude', 'hermes', 'pi']);
     expect(skillAction(agentReport(report, 'claude'), 'alpha')).toBe('created');
     expect(extraAction(agentReport(report, 'hermes'), 'symlink')).toBe('created');
+    expect(extraAction(agentReport(report, 'pi'), 'symlink')).toBe('created');
     // R2/A1: the seeded ~/.agents/skills fixture is byte-identical — no codex
     // arm exists to have written or removed anything there.
     expect(readFileSync(join(fixture.agentsSkillsDir, 'alpha', 'SKILL.md'), 'utf8')).toBe('# seeded, pre-existing\n');
@@ -2481,6 +2514,7 @@ describe('resolveGenieSource', () => {
     const report = run();
     expect(report.source.pluginRoot).toBe(fixture.pluginRoot);
     expect(report.source.pluginRoot).toContain(join('bin', 'plugins', 'genie'));
+    expect(report.source.piRoot).toContain(join('bin', 'plugins', 'pi-genie'));
     expect(skillAction(agentReport(report, 'claude'), 'alpha')).toBe('created');
   });
 
@@ -3820,7 +3854,7 @@ describe('shared lifecycle lease', () => {
 describe('runAgentSyncSafe codex role-agent refresh wiring', () => {
   function fakeReport(overrides: Partial<AgentSyncReport> = {}, codexDetected = true): AgentSyncReport {
     return {
-      source: { pluginRoot: '/home/.genie/plugins/genie', hermesRoot: null, version: '5.0.0' },
+      source: { pluginRoot: '/home/.genie/plugins/genie', hermesRoot: null, piRoot: null, version: '5.0.0' },
       agents: [
         { agent: 'claude', detected: true, skills: [], extras: [], advisories: [] },
         { agent: 'codex', detected: codexDetected, skills: [], extras: [], advisories: [] },

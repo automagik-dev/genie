@@ -12,7 +12,8 @@ tool is read-only; every payload reports `mutation: "none"`.
 | Session hook | `session_start` hint in Genie workspaces | `pi.on('session_start')` |
 | Context hook | Bounded board snapshot before each turn | `pi.on('before_agent_start')` (system-prompt append) |
 | Skills | pi-native discovery of `~/.agents/skills` / `.agents/skills`; opt-in canonical mirror via `GENIE_PI_CANONICAL_SKILLS=1` | `pi.on('resources_discover')` |
-| Install | `scripts/install-local.sh` (symlink default, `--copy` detached) | `~/.pi/agent/extensions/genie` |
+| Agent sync | Auto-install: symlink `~/.pi/agent/extensions/genie` → `$GENIE_HOME/plugins/pi-genie`; doctor `agent sync: pi` | `runAgentSync` `pi` lane (`genie install` / `genie update` / `--sync-only`) |
+| Install | Dev fallback: `scripts/install-local.sh` (symlink default, `--copy` detached) | `~/.pi/agent/extensions/genie` |
 | Version | `plugins/pi-genie/package.json` synced by release machinery | `scripts/version.ts` |
 
 ## Tool-to-CLI mapping (argv-only, never a shell string)
