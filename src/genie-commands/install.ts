@@ -30,7 +30,11 @@ import {
 } from '../lib/codex-lifecycle-lease.js';
 import { genieConfigExists, getGenieConfigPath } from '../lib/genie-config.js';
 import { retireInstallVersionMarker } from '../lib/install-version-marker.js';
-import { acquireOrderedLifecycleLeases, releaseOrderedLifecycleLeases } from '../lib/ordered-lifecycle-leases.js';
+import {
+  acquireOrderedLifecycleLeases,
+  lifecycleBusyMessage,
+  releaseOrderedLifecycleLeases,
+} from '../lib/ordered-lifecycle-leases.js';
 import {
   type InstallIntegrationsOptions,
   type IntegrationResult,
@@ -411,7 +415,7 @@ export async function installCommand(
       // install.sh parses those machine trailers, and reporting
       // `codex-lifecycle-busy` for an agent-sync holder would be a lie. One
       // human-readable stderr line plus exit 2 is the whole contract here.
-      console.error(`Another Genie lifecycle command is active: ${acquired.detail}`);
+      console.error(lifecycleBusyMessage(acquired.detail));
       process.exitCode = 2;
       return;
     }

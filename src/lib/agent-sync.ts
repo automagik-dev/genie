@@ -5940,14 +5940,24 @@ function detectHermesBinary(opts: AgentSyncOptions): string | null {
  * discovery dir) onto the shipped `plugins/pi-genie` source. pi has no plugin
  * enable command — the extension auto-loads from the linked dir on next pi
  * start — so the lane is link-only, mirroring the hermes link leg without the
- * enable/config legs. Detection: the pi extensions dir present OR `pi` CLI on
- * PATH; a link is created only when the `pi-genie` source ships next to
- * `plugins/genie`.
+ * enable/config legs. Detection: the pi AGENT dir present OR `pi` CLI on PATH.
+ *
+ * Detection deliberately roots at the agent dir (`dirname` of the extensions
+ * target), not at `extensions` itself: pi only ever creates `<agentDir>/extensions`
+ * when it installs a package resource, so a real pi install that never installed
+ * one has `<agentDir>` (auth.json, sessions, settings.json) and no `extensions`.
+ * Gating on `extensions` would silently skip those installs whenever pi is also
+ * absent from this process's PATH (GUI/hook launches with a truncated PATH).
+ * Creating the dir is safe: pi tolerates a missing extensions dir and discovers
+ * the symlinked extension inside it on its next run. `genie doctor`'s
+ * `checkPiSync` gate must stay identical so every warning is repairable by sync.
+ *
+ * A link is created only when the `pi-genie` source ships next to `plugins/genie`.
  */
 function syncPi(ctx: RunContext, opts: AgentSyncOptions, report: AgentReport): void {
   const extensionsDir = ctx.targets.pi;
   const binary = detectPiBinary(opts);
-  if (!existsSync(extensionsDir) && binary === null) return;
+  if (!existsSync(dirname(extensionsDir)) && binary === null) return;
   report.detected = true;
   if (ctx.piRoot === null) {
     report.advisories.push('pi source (pi-genie) not found next to plugins/genie; skipping link');

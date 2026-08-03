@@ -18,13 +18,24 @@ the pi extension **automatically**:
   finishing `genie install` aux-layout normalization), and
 - the agent-sync **`pi` lane** — run by `genie install` and every `genie update`
   — symlinks `~/.pi/agent/extensions/genie` → `$GENIE_HOME/plugins/pi-genie`
-  whenever pi is detected (pi CLI on PATH or the pi extensions dir present).
-  A relocated pi agent dir is honored: the lane targets `$PI_CODING_AGENT_DIR`
-  when set (pi's real override, tilde-expanded), falling back to
-  `~/.pi/agent`. The legacy `$PI_HOME` alias is still accepted.
+  whenever pi is detected (pi CLI on PATH or the pi **agent dir** present — pi
+  only creates `extensions/` when it installs a package, so detection roots one
+  level up; the lane creates `extensions/` when needed and pi discovers the link
+  on its next run). A relocated pi agent dir is honored: the lane targets
+  `$PI_CODING_AGENT_DIR` when set (pi's real override, tilde-expanded), falling
+  back to `~/.pi/agent`. The legacy `$PI_HOME` alias is still accepted.
 
-`genie doctor` reports the link as `agent sync: pi`. No manual step needed on
-fresh installs or updates.
+`genie doctor` reports the link as `agent sync: pi`. Auto-sync needs no manual
+step when `extensions/genie` is absent or already points at
+`$GENIE_HOME/plugins/pi-genie` (a real directory there is backed up and adopted).
+It never repoints a `genie` symlink aimed somewhere else — e.g. a dev checkout
+installed by `install-local.sh`. That case is preserved as-is and reported by
+`genie doctor` as an `agent sync: pi` warning; remediation is manual (remove or
+repoint your own link, then run `genie update`).
+
+`genie uninstall` removes the link the lane created — identity-checked, so a
+`genie` entry pointing at your own checkout (or a real directory) is left in
+place.
 
 For a dev checkout (edits are live) or a detached, release-style copy, the
 local installer remains available (it resolves the same way: `$PI_CODING_AGENT_DIR`

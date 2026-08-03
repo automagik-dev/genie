@@ -1194,8 +1194,10 @@ describe('installCommand — a busy agent-sync lifecycle lease (2026-08-02 incid
 
   beforeEach(() => {
     process.exitCode = 0;
-    // Millisecond-scale: the bounded poll is exercised, not endured.
-    process.env.GENIE_LIFECYCLE_LEASE_WAIT_MS = '60';
+    // Millisecond-scale: the bounded poll is exercised, not endured. 500ms
+    // (not 60ms) so a GC/scheduler pause cannot collapse the 25ms poll loop to
+    // a single attempt and flake the `attempts > 1` assertion.
+    process.env.GENIE_LIFECYCLE_LEASE_WAIT_MS = '500';
     logs = [];
     errors = [];
     logSpy = spyOn(console, 'log').mockImplementation((...a: unknown[]) => {

@@ -62,6 +62,7 @@ import { retireInstallVersionMarker } from '../lib/install-version-marker.js';
 import {
   type HeldOrderedLifecycleLeases,
   acquireOrderedLifecycleLeases,
+  lifecycleBusyMessage,
   releaseOrderedLifecycleLeases,
 } from '../lib/ordered-lifecycle-leases.js';
 import {
@@ -1657,17 +1658,6 @@ function resolveUpdatePlatformOrExit(): string {
     error(err instanceof Error ? err.message : String(err));
     process.exit(1);
   }
-}
-
-/**
- * The one busy sentence every update path prints for an agent-sync holder. It
- * carries the acquirer's own (path-naming) detail forward and is deliberately
- * NOT a Codex refusal: no `codex-lifecycle-busy` code and no machine trailer,
- * because install.sh parses those and would be told a falsehood about which
- * subsystem is busy.
- */
-function lifecycleBusyMessage(detail: string): string {
-  return `Another Genie lifecycle command is active: ${detail}`;
 }
 
 /**
