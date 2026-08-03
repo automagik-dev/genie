@@ -16,7 +16,12 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { type LifecycleLease, acquireLifecycleLease } from '../lib/agent-sync.js';
+import {
+  type LifecycleLease,
+  type LifecycleLeaseSkip,
+  acquireLifecycleLease,
+  acquireLifecycleLeaseWithWait,
+} from '../lib/agent-sync.js';
 import type { DeliveryEvidenceChannel } from '../lib/codex-delivery-evidence.js';
 import {
   type HeldLifecycleLease,
@@ -80,7 +85,7 @@ type V4CleanupRunner = typeof cleanupV4;
 type NormalizeAuxLayoutFn = (genieHome: string) => AuxiliaryTreeOutcome[] | undefined;
 type AgentSyncRunner = (selection: IntegrationSelection) => void;
 type IntegrationRunner = (options?: InstallIntegrationsOptions) => ReturnType<typeof installRuntimeIntegrations>;
-type LifecycleLeaseAcquirer = () => LifecycleLease | { skipped: string };
+type LifecycleLeaseAcquirer = () => LifecycleLease | LifecycleLeaseSkip;
 type CodexLifecycleLeaseAcquirer = () => LifecycleLeaseResult;
 type ConsentWriter = (selection: IntegrationSelection) => void;
 
@@ -396,10 +401,19 @@ export async function installCommand(
   // stable and a malformed internal handoff cannot mutate anything.
   const deliveryChannel = resolveDeliveryChannelForInstall();
   const selection = resolveIntegrationSelection(options);
-  const acquired = acquireOrderedLifecycleLeases(acquireLease, acquireCodexLease);
+  // The bounded wait wraps the acquirer actually in play (injected seam
+  // included), so production and tests share one retry policy.
+  const acquired = acquireOrderedLifecycleLeases(() => acquireLifecycleLeaseWithWait(acquireLease), acquireCodexLease);
   if (!acquired.ok) {
     if (acquired.busy === 'agent-sync') {
-      throw new Error(`Another Genie lifecycle command is active: ${acquired.detail}`);
+      // Deliberately NOT a Codex refusal: no CodexLifecycleBusyError message and
+      // no CODEX_LIFECYCLE_BUSY_TRAILER / INSTALL_ACTION_REQUIRED trailer.
+      // install.sh parses those machine trailers, and reporting
+      // `codex-lifecycle-busy` for an agent-sync holder would be a lie. One
+      // human-readable stderr line plus exit 2 is the whole contract here.
+      console.error(`Another Genie lifecycle command is active: ${acquired.detail}`);
+      process.exitCode = 2;
+      return;
     }
     console.log(new CodexLifecycleBusyError(acquired.refusal.holderKind).message);
     console.log(CODEX_LIFECYCLE_BUSY_TRAILER);
