@@ -568,6 +568,40 @@
       "heartbeat_at": null,
       "blocked_by": null,
       "blocked_reason": null
+    },
+    {
+      "id": "t_mscebl889535b59e",
+      "board_id": null,
+      "title": "Bounded wait + graceful busy projection",
+      "status": "done",
+      "claimed_by": "engineer-group1",
+      "claimed_at": 1785712701024,
+      "wish": "lifecycle-lease-busy-grace",
+      "group_name": "group-1",
+      "created_at": 1785711164984,
+      "updated_at": 1785714161658,
+      "lane": null,
+      "agent_kind": null,
+      "heartbeat_at": null,
+      "blocked_by": null,
+      "blocked_reason": null
+    },
+    {
+      "id": "t_mscebla86e45ab77",
+      "board_id": null,
+      "title": "Busy-path regression tests",
+      "status": "done",
+      "claimed_by": "engineer-group2",
+      "claimed_at": 1785714210396,
+      "wish": "lifecycle-lease-busy-grace",
+      "group_name": "group-2",
+      "created_at": 1785711165056,
+      "updated_at": 1785716639547,
+      "lane": null,
+      "agent_kind": null,
+      "heartbeat_at": null,
+      "blocked_by": null,
+      "blocked_reason": null
     }
   ],
   "task_dependencies": [],
@@ -635,6 +669,42 @@
       "author_kind": "claude-code",
       "author": null,
       "created_at": 1784827974557
+    },
+    {
+      "id": 38,
+      "task_id": "t_mscebl889535b59e",
+      "kind": "claim",
+      "note": "claimed by engineer-group1",
+      "author_kind": "claude-code",
+      "author": null,
+      "created_at": 1785712701025
+    },
+    {
+      "id": 39,
+      "task_id": "t_mscebl889535b59e",
+      "kind": "release",
+      "note": "completed",
+      "author_kind": "claude-code",
+      "author": null,
+      "created_at": 1785714161658
+    },
+    {
+      "id": 40,
+      "task_id": "t_mscebla86e45ab77",
+      "kind": "claim",
+      "note": "claimed by engineer-group2",
+      "author_kind": "claude-code",
+      "author": null,
+      "created_at": 1785714210396
+    },
+    {
+      "id": 41,
+      "task_id": "t_mscebla86e45ab77",
+      "kind": "release",
+      "note": "completed",
+      "author_kind": "claude-code",
+      "author": null,
+      "created_at": 1785716639548
     }
   ],
   "wish_groups": [],

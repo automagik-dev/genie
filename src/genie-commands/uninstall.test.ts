@@ -2597,6 +2597,64 @@ describe('uninstallCommand — warning, lifecycle lease, isolation (Group D)', (
     expect(existsSync(join(process.env.GENIE_HOME as string, 'config.json'))).toBe(true);
   });
 
+  test('a busy agent-sync lifecycle lease exits 2 on one stderr line, no Codex trailer, zero removal', async () => {
+    // The 2026-08-02 incident: this branch used to `throw new Error(...)`, so an
+    // operator whose other lifecycle command held the lease got a stack trace
+    // instead of an explanation — and no assurance that nothing was removed.
+    const priorWait = process.env.GENIE_LIFECYCLE_LEASE_WAIT_MS;
+    process.env.GENIE_LIFECYCLE_LEASE_WAIT_MS = '60'; // millisecond-scale bounded poll
+    const lockPath = '/fixture/home/.genie-lifecycle-0123456789abcdef.lock';
+    let attempts = 0;
+    let thrown: unknown;
+    try {
+      const { out, err, exitCode } = await capture(async () => {
+        await uninstallCommand(
+          {},
+          {
+            confirm: (async () => true) as unknown as UninstallDeps['confirm'],
+            acquireLease: () => {
+              attempts += 1;
+              return {
+                skipped: `another Genie process holds the lock at ${lockPath}; retry shortly, or remove the file if its owner has crashed`,
+                cause: 'held',
+              };
+            },
+            acquireCodexLifecycleLease: () => {
+              throw new Error('the Codex lease must never be reached behind a busy agent-sync lease');
+            },
+          },
+        ).catch((error: unknown) => {
+          thrown = error;
+        });
+      });
+
+      expect(thrown).toBeUndefined();
+      expect(exitCode).toBe(2);
+      expect(attempts).toBeGreaterThan(1); // the bounded wait polled before giving up
+
+      // Exactly one human-readable stderr line, and it promises zero removal.
+      const errLines = err.split('\n').filter((line) => line.length > 0);
+      expect(errLines).toHaveLength(1);
+      expect(errLines[0]).toContain('Another Genie lifecycle command is active');
+      expect(errLines[0]).toContain(`holds the lock at ${lockPath}`);
+      expect(errLines[0]).toContain('No files were removed');
+
+      // No machine trailer: an agent-sync holder is not `codex-lifecycle-busy`.
+      const output = `${out}\n${err}`;
+      expect(output).not.toContain('codex-lifecycle-busy');
+      expect(output).not.toContain('schemaVersion');
+      expect(output).not.toContain('deliveryComplete');
+      expect(output).not.toContain('the holder converges the same targets');
+      expect(output).not.toMatch(/\n\s+at /);
+
+      // Zero mutation: executeConfirmedUninstall never ran.
+      expect(existsSync(join(process.env.GENIE_HOME as string, 'config.json'))).toBe(true);
+    } finally {
+      if (priorWait === undefined) Reflect.deleteProperty(process.env, 'GENIE_LIFECYCLE_LEASE_WAIT_MS');
+      else process.env.GENIE_LIFECYCLE_LEASE_WAIT_MS = priorWait;
+    }
+  });
+
   test('uninstall never mints or accepts an activation assertion/permit', () => {
     const source = readFileSyncForSource(join(import.meta.dir, 'uninstall.ts'), 'utf8');
     for (const forbidden of [

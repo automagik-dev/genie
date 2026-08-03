@@ -42,10 +42,13 @@ import {
   type FlatAgentOp,
   type FlatAgentOutcome,
   KEPT_SUFFIX,
+  type LifecycleLease,
+  type LifecycleLeaseSkip,
   MANIFEST_NAME,
   TARGET_NAME,
   acquireAgentSyncLock,
   acquireLifecycleLease,
+  acquireLifecycleLeaseWithWait,
   allocateExclusiveBackupRoot,
   captureAgentPathSnapshot,
   codexLegacyCuratedDir,
@@ -3450,6 +3453,12 @@ export interface UninstallDeps {
    * so a busy holder makes uninstall a `codex-lifecycle-busy` loser.
    */
   acquireCodexLifecycleLease?: (kind: LifecycleLeaseKind, options?: AcquireLeaseOptions) => LifecycleLeaseResult;
+  /**
+   * Outer agent-sync lifecycle-lease seam, mirroring install's `acquireLease`.
+   * Tests can drive a busy/held holder without a real lock file, and the bounded
+   * wait wraps whatever is injected here.
+   */
+  acquireLease?: () => LifecycleLease | LifecycleLeaseSkip;
 }
 
 /**
@@ -3474,13 +3483,21 @@ function acquireUninstallLifecycleLeasesOrProject(
   genieDir: string,
   deps: UninstallDeps,
 ): HeldOrderedLifecycleLeases | null {
+  const acquireAgentSync = deps.acquireLease ?? (() => acquireLifecycleLease(genieDir));
   const acquired = acquireOrderedLifecycleLeases(
-    () => acquireLifecycleLease(genieDir),
+    () => acquireLifecycleLeaseWithWait(acquireAgentSync),
     () => (deps.acquireCodexLifecycleLease ?? acquireCodexLifecycleLease)('uninstall'),
   );
   if (acquired.ok) return acquired;
   if (acquired.busy === 'agent-sync') {
-    throw new Error(`Another Genie lifecycle command is active: ${acquired.detail}`);
+    // An agent-sync holder is NOT `codex-lifecycle-busy`: no machine trailer is
+    // emitted here, because install.sh parses that code and would be misled
+    // about which subsystem is holding the lease. One stderr line, exit 2.
+    console.error(
+      `Another Genie lifecycle command is active: ${acquired.detail}. No files were removed; retry once it completes.`,
+    );
+    process.exitCode = 2;
+    return null;
   }
   process.stdout.write(`${codexLifecycleBusyTrailer(acquired.refusal.holderKind)}\n`);
   console.error(

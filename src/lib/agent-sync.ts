@@ -129,6 +129,14 @@ const RETIREMENT_LOCK_NAME = '.retirement.lock';
 const RETIREMENT_EVIDENCE_DIR = 'evidence';
 /** Bounded blocking wait before the retirement lock wrapper fails closed. Test-overridable via env for fast reentry proofs. */
 const RETIREMENT_LOCK_WAIT_MS = 30_000;
+/**
+ * Bounded blocking wait before a lifecycle command gives up on a LIVE lease
+ * holder. A dead same-host holder is stolen immediately and never waited on, so
+ * this window only ever covers a genuinely concurrent lifecycle command.
+ * Override with `GENIE_LIFECYCLE_LEASE_WAIT_MS`; `0` restores the historical
+ * single-attempt fail-fast.
+ */
+const LIFECYCLE_LEASE_WAIT_MS = 15_000;
 /** Feature-detected glibc/musl sonames for the Linux renameat2 no-clobber fast path (x86_64). */
 const LINUX_LIBC_CANDIDATES = ['libc.so.6', 'ld-musl-x86_64.so.1', 'libc.musl-x86_64.so.1'] as const;
 /** Borrowed lifecycle-lease path passed from a shell owner to its child process. */
@@ -5906,26 +5914,62 @@ function detectHermesBinary(opts: AgentSyncOptions): string | null {
 /**
  * Acquire the per-GENIE_HOME sync lock via O_EXCL create. Returns a release
  * handle or a fail-closed skip reason.
- * A lock whose mtime is older than {@link LOCK_STALE_MS}, or implausibly more
- * than that far in the future, is stealable only when its recorded PID is not
- * live. Stealing is serialized by another token-owned lock. Any other lock I/O
- * failure fails closed; a destructive sync never runs without ownership.
+ *
+ * Two stealing rules, in this order:
+ *   1. DEATH-PROVEN (no staleness wait): the record names THIS host and its
+ *      process is provably gone. A lifecycle command that crashed one second ago
+ *      leaves a FRESH-mtime lock, so gating that case on {@link LOCK_STALE_MS}
+ *      turns a dead holder into ten minutes of downtime for every subsequent
+ *      `genie update`/`install`/`setup`/`uninstall`. Death is the proof;
+ *      age adds nothing to it.
+ *   2. STALE (unchanged legacy rule): every other record — live, unprovable
+ *      (EPERM), cross-host, host-less, unparsable, or a lock created but not yet
+ *      written — is stealable only once its mtime is outside the ± staleness
+ *      window AND its recorded PID is not live.
+ *
+ * Both rules re-verify under the token-owned `.steal` guard before unlinking.
+ * Any other lock I/O failure fails closed; a destructive sync never runs
+ * without ownership.
  */
-function acquireFileLock(lockPath: string): { release: () => void } | { skipped: string } {
+function acquireFileLock(lockPath: string): { release: () => void } | LifecycleLeaseSkip {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const created = tryInitializeFileLock(lockPath);
     if (created.status === 'acquired') return created.lock;
-    if (created.status === 'failed') return { skipped: created.reason };
+    if (created.status === 'failed') return { skipped: created.reason, cause: 'io' };
     const stat = statSafe(lockPath);
     if (stat === null) continue; // holder released between open and stat — retry
-    if (!isStaleOrInvalidLockTime(stat.mtimeMs)) return heldLockSkip();
+    const deathProvenRecord = sameHostDeadOwnerRecord(lockPath);
+    if (deathProvenRecord !== null) {
+      if (stealStaleFileLock(lockPath, deathProvenRecord) === 'contended') return heldLockSkip(lockPath);
+      continue; // proven-dead debris cleared — retry the exclusive create
+    }
+    if (!isStaleOrInvalidLockTime(stat.mtimeMs)) return heldLockSkip(lockPath);
     // Age alone never proves abandonment. A slow or clock-skewed live owner
     // retains the lock regardless of whether its timestamp is old or future.
-    if (lockHasLiveOwner(lockPath)) return heldLockSkip();
-    if (stealStaleFileLock(lockPath) === 'contended') return heldLockSkip();
+    if (lockHasLiveOwner(lockPath)) return heldLockSkip(lockPath);
+    if (stealStaleFileLock(lockPath) === 'contended') return heldLockSkip(lockPath);
     // stale debris cleared — loop and retry the exclusive create
   }
-  return { skipped: 'agent-sync lock remained contended after retries; skipped safely' };
+  return { skipped: 'agent-sync lock remained contended after retries; skipped safely', cause: 'contended' };
+}
+
+/**
+ * The exact on-disk record of a lock whose owner is PROVABLY dead on THIS host,
+ * or null when no such proof exists. The positive host match is load-bearing:
+ * a host-less legacy/shell record, a cross-host record, an unparsable record,
+ * and a lock created but not yet written (which parses to null) all return null
+ * and keep the conservative staleness rule. PID reuse is rejected inside
+ * {@link lockOwnerIsLive} through the process-start identity, and an unprovable
+ * liveness probe (EPERM) counts as alive. The returned record is the value the
+ * steal guard re-compares against, mirroring the shell's `current == observed`
+ * re-read in `recover_stale_lifecycle_lock`.
+ */
+function sameHostDeadOwnerRecord(lockPath: string): string | null {
+  const record = readTrimmed(lockPath);
+  const owner = parseLockOwner(record);
+  if (record === null || owner === null) return null;
+  if (owner.host === null || owner.host !== currentSyncLockHostId()) return null;
+  return lockOwnerIsLive(owner) ? null : record;
 }
 
 type LockCreateAttempt =
@@ -5973,8 +6017,20 @@ function tryInitializeFileLock(lockPath: string): LockCreateAttempt {
   return { status: 'failed', reason: `could not initialize agent-sync lock (${code}); skipped safely` };
 }
 
-function heldLockSkip(): { skipped: string } {
-  return { skipped: 'another agent-sync run holds the lock; skipped (the holder converges the same targets)' };
+/**
+ * The lock is held by someone we may not displace: a live owner, a cross-host
+ * owner, or a record whose liveness could not be disproved. The message names
+ * the exact file so an operator can inspect or remove it. The previous wording
+ * reassured the reader that the holder was converging the same targets — true
+ * for the agent-sync report skip (which keeps its own literal), FALSE for this
+ * lease, where the holder may be an unrelated update/install/setup/uninstall.
+ * It also gave the reader nothing actionable.
+ */
+function heldLockSkip(lockPath: string): LifecycleLeaseSkip {
+  return {
+    skipped: `another Genie process holds the lock at ${lockPath}; retry shortly, or remove the file if its owner has crashed`,
+    cause: 'held',
+  };
 }
 
 /** Old locks and far-future timestamps cannot suppress synchronization indefinitely. */
@@ -6125,6 +6181,26 @@ export interface LifecycleLease {
   release: () => void;
 }
 
+/**
+ * Why a lease was refused. Only `held` and `contended` describe a condition
+ * that can clear on its own, so only those authorize the bounded wait in
+ * {@link acquireLifecycleLeaseWithWait}. `borrow-mismatch` (a child's borrowed
+ * lease does not match the live owner) and `io` (the lock file could not be
+ * created or written) are permanent for this invocation and must fail fast.
+ */
+type LifecycleLeaseSkipCause = 'borrow-mismatch' | 'held' | 'io' | 'contended';
+
+/**
+ * A refused lease. `cause` is DELIBERATELY optional: hand-built fixtures and
+ * pre-existing callers construct a bare `{ skipped }`, and a missing cause is
+ * treated as "not retryable" so no caller silently gains a wait it never asked
+ * for.
+ */
+export interface LifecycleLeaseSkip {
+  skipped: string;
+  cause?: LifecycleLeaseSkipCause;
+}
+
 const ACTIVE_LIFECYCLE_LEASES = new Map<string, { count: number; releaseUnderlying: () => void }>();
 
 /** Stable sibling-of-GENIE_HOME lease shared by lifecycle commands. */
@@ -6134,7 +6210,7 @@ export function lifecycleLockPath(genieHome = resolveGenieHome()): string {
   return join(dirname(canonical), `.genie-lifecycle-${suffix}.lock`);
 }
 
-export function acquireLifecycleLease(genieHome = resolveGenieHome()): LifecycleLease | { skipped: string } {
+export function acquireLifecycleLease(genieHome = resolveGenieHome()): LifecycleLease | LifecycleLeaseSkip {
   const path = lifecycleLockPath(genieHome);
   const borrowedPath = process.env[LIFECYCLE_LEASE_PATH_ENV];
   const borrowedOwner = process.env[LIFECYCLE_LEASE_OWNER_ENV];
@@ -6147,7 +6223,10 @@ export function acquireLifecycleLease(genieHome = resolveGenieHome()): Lifecycle
       borrowedOwner.includes('\r') ||
       readTrimmed(path) !== borrowedOwner
     ) {
-      return { skipped: 'borrowed lifecycle lease did not exactly match the expected live owner; skipped safely' };
+      return {
+        skipped: 'borrowed lifecycle lease did not exactly match the expected live owner; skipped safely',
+        cause: 'borrow-mismatch',
+      };
     }
     // The shell parent remains the sole owner. A child must neither register
     // an exit handler nor unlink/decrement the parent lease when it finishes.
@@ -6197,16 +6276,62 @@ export function acquireLifecycleLease(genieHome = resolveGenieHome()): Lifecycle
   };
 }
 
+function lifecycleLeaseWaitMs(): number {
+  const override = process.env.GENIE_LIFECYCLE_LEASE_WAIT_MS;
+  const parsed = override === undefined ? Number.NaN : Number(override);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : LIFECYCLE_LEASE_WAIT_MS;
+}
+
+/**
+ * Bounded-blocking wrapper over ANY lifecycle-lease acquirer (the default one,
+ * or a DI-injected seam), mirroring {@link acquireRetirementLock}'s sleep-poll.
+ *
+ * The wait is deliberately narrow: only a `held`/`contended` refusal describes a
+ * holder that can go away on its own, so only those are retried. A
+ * `borrow-mismatch` or `io` refusal — and any fixture-built skip with NO cause —
+ * returns on the first attempt without a single sleep. `deadlineMs` of 0 makes
+ * exactly one attempt, restoring the historical fail-fast for operators and
+ * tests via `GENIE_LIFECYCLE_LEASE_WAIT_MS=0`.
+ *
+ * A dead same-host holder never reaches this loop: {@link acquireFileLock}
+ * steals it on the first attempt. This window covers only a genuinely live
+ * concurrent lifecycle command.
+ */
+export function acquireLifecycleLeaseWithWait(
+  acquirer: () => LifecycleLease | LifecycleLeaseSkip,
+  deadlineMs: number = lifecycleLeaseWaitMs(),
+): LifecycleLease | LifecycleLeaseSkip {
+  const deadline = Date.now() + deadlineMs;
+  for (;;) {
+    const result = acquirer();
+    if (!('skipped' in result)) return result;
+    if (result.cause !== 'held' && result.cause !== 'contended') return result;
+    if (Date.now() >= deadline) return result;
+    sleepSyncMs(25);
+  }
+}
+
 /**
  * Clear a stale lock safely under a `.steal` guard file. The previous
  * unlink-then-retry steal let two processes both "win": between one stealer's
  * unlink and its re-create, a second stealer's unlink silently removed the
  * first's FRESH lock (observed as two concurrent writers in the regression
  * test). The guard closes that hole with two properties: (a) the O_EXCL guard
- * admits exactly one stealer at a time, and (b) the lock's staleness is
- * RE-verified while holding the guard, so a fresh lock created after the
- * caller's first observation is never removed. A guard left by a crashed
+ * admits exactly one stealer at a time, and (b) the caller's grounds for
+ * stealing are RE-verified while holding the guard, so a lock that changed after
+ * the caller's first observation is never removed. A guard left by a crashed
  * stealer ages out via {@link LOCK_STALE_MS} like the lock itself.
+ *
+ * `deathProvenRecord` selects WHICH re-verification runs; the guard and the
+ * `lockHasLiveOwner` re-check below are common to both and must never be
+ * dropped:
+ *   - undefined (staleness mode): re-verify the mtime is still outside the
+ *     staleness window.
+ *   - a record string (death-proven mode): re-verify the record on disk is
+ *     BYTE-IDENTICAL to what the caller proved dead and still names this host —
+ *     the same `current == observed` re-read the shell performs at
+ *     install.sh:267-269. mtime is deliberately NOT consulted, because the whole
+ *     point of this mode is a fresh-mtime lock whose owner is already gone.
  *
  * ONE protocol, two acquirers — this function and the shell installer
  * (recover_stale_lifecycle_lock in install.sh) must stay byte-compatible:
@@ -6231,8 +6356,24 @@ export function acquireLifecycleLease(genieHome = resolveGenieHome()): Lifecycle
  *     across BOTH the guard read→rm window and the lock read→rm window can
  *     still let two acquirers proceed as concurrent owners. This is pre-existing
  *     in the TS path; the shell matches it at parity rather than widening it.
+ *   - DIVERGENCE (deliberate, one-sided): TS additionally steals a FRESH
+ *     same-host lock whose owner is provably dead
+ *     ({@link sameHostDeadOwnerRecord}); the shell's
+ *     recover_stale_lifecycle_lock stays staleness-gated and still waits out
+ *     {@link LOCK_STALE_MS} on the same debris. Safe in one direction only: TS
+ *     steals a strict SUBSET of "abandoned" (dead ⊂ dead-or-stale), never a lock
+ *     the shell would consider live, and the shell keeps refusing locks TS would
+ *     take — the worst outcome is the shell waiting, never two writers. Do NOT
+ *     "fix" the asymmetry by teaching install.sh to steal fresh locks: bash
+ *     cannot reject PID reuse (it has no process-start identity), so a death
+ *     proof there would be strictly weaker than the one made here.
+ *   - {@link acquireRetirementLock} inherits the early steal through
+ *     {@link acquireFileLock}. Benign and desirable: a retirement lock is TS-only
+ *     and always carries a host field, so a crashed retirement no longer blocks
+ *     the next one for ten minutes, while the cross-host refusal is unchanged (a
+ *     cross-host record never yields a death proof).
  */
-function stealStaleFileLock(lockPath: string): 'cleared' | 'contended' {
+function stealStaleFileLock(lockPath: string, deathProvenRecord?: string): 'cleared' | 'contended' {
   const guardPath = `${lockPath}.steal`;
   const guardAttempt = tryInitializeFileLock(guardPath);
   if (guardAttempt.status !== 'acquired') {
@@ -6247,17 +6388,32 @@ function stealStaleFileLock(lockPath: string): 'cleared' | 'contended' {
   }
   try {
     const stat = statSafe(lockPath);
-    if (stat !== null && !isStaleOrInvalidLockTime(stat.mtimeMs)) return 'contended'; // refreshed under us — live
+    if (stat !== null && !stealGroundsStillHold(lockPath, stat, deathProvenRecord)) return 'contended';
     if (stat !== null && lockHasLiveOwner(lockPath)) return 'contended';
     // Same fail-closed refusal for the lock: never unlink through a symlink or
     // other non-regular node (a symlinked lock is not ours to steal).
     const lockStat = lstatSafe(lockPath);
     if (lockStat !== null && !lockStat.isFile()) return 'contended';
-    rmSyncSafe(lockPath); // re-verified stale (or already gone) under the guard
+    rmSyncSafe(lockPath); // re-verified stealable (or already gone) under the guard
     return 'cleared';
   } finally {
     guardAttempt.lock.release();
   }
+}
+
+/**
+ * The under-guard half of the steal re-verification. Staleness mode re-reads the
+ * mtime; death-proven mode re-reads the RECORD and requires it byte-identical to
+ * the one the caller proved dead and still same-host. Either way a lock that was
+ * replaced between the caller's observation and the guard is refused — that is
+ * the property closing the double-writer hole.
+ */
+function stealGroundsStillHold(lockPath: string, stat: Stats, deathProvenRecord?: string): boolean {
+  if (deathProvenRecord === undefined) return isStaleOrInvalidLockTime(stat.mtimeMs); // refreshed under us — live
+  const current = readTrimmed(lockPath);
+  if (current !== deathProvenRecord) return false; // a different owner published under us
+  const owner = parseLockOwner(current);
+  return owner !== null && owner.host !== null && owner.host === currentSyncLockHostId();
 }
 
 // ============================================================================

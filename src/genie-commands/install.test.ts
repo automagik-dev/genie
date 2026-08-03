@@ -1183,6 +1183,103 @@ describe('transactional auxiliary-tree convergence', () => {
   });
 });
 
+describe('installCommand — a busy agent-sync lifecycle lease (2026-08-02 incident)', () => {
+  const savedExit = process.exitCode;
+  const savedWait = process.env.GENIE_LIFECYCLE_LEASE_WAIT_MS;
+  const BUSY_LOCK_PATH = '/fixture/home/.genie-lifecycle-0123456789abcdef.lock';
+  let logs: string[];
+  let errors: string[];
+  let logSpy: ReturnType<typeof spyOn>;
+  let errorSpy: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    process.exitCode = 0;
+    // Millisecond-scale: the bounded poll is exercised, not endured.
+    process.env.GENIE_LIFECYCLE_LEASE_WAIT_MS = '60';
+    logs = [];
+    errors = [];
+    logSpy = spyOn(console, 'log').mockImplementation((...a: unknown[]) => {
+      logs.push(a.map(String).join(' '));
+    });
+    errorSpy = spyOn(console, 'error').mockImplementation((...a: unknown[]) => {
+      errors.push(a.map(String).join(' '));
+    });
+  });
+  afterEach(() => {
+    logSpy.mockRestore();
+    errorSpy.mockRestore();
+    process.exitCode = savedExit;
+    if (savedWait === undefined) Reflect.deleteProperty(process.env, 'GENIE_LIFECYCLE_LEASE_WAIT_MS');
+    else process.env.GENIE_LIFECYCLE_LEASE_WAIT_MS = savedWait;
+  });
+
+  test('exits 2 on one plain stderr line, with no Codex trailer and no finisher', async () => {
+    const events: string[] = [];
+    let attempts = 0;
+    let thrown: unknown;
+
+    await installCommand(
+      { integrations: 'all' },
+      (() => {
+        events.push('MUTATION:cleanup');
+        return makeCleanupSpy().runner();
+      }) as typeof cleanupV4,
+      () => {
+        events.push('MUTATION:normalize');
+        return undefined;
+      },
+      () => events.push('MUTATION:sync'),
+      () => {
+        events.push('MUTATION:integrations');
+        return [];
+      },
+      () => {
+        attempts += 1;
+        return {
+          skipped: `another Genie process holds the lock at ${BUSY_LOCK_PATH}; retry shortly, or remove the file if its owner has crashed`,
+          cause: 'held',
+        };
+      },
+      () => {
+        events.push('MUTATION:codex-lease');
+        throw new Error('the Codex lease must never be reached behind a busy agent-sync lease');
+      },
+      () => events.push('MUTATION:consent'),
+      () => null,
+      async () => {
+        events.push('MUTATION:repair');
+        return { action: 'proceed-current' };
+      },
+      () => events.push('MUTATION:retire-marker'),
+    ).catch((error: unknown) => {
+      thrown = error;
+    });
+
+    // A graceful exit-2 projection replaced the raw throw; nothing ran.
+    expect(thrown).toBeUndefined();
+    expect(events).toEqual([]);
+    expect(process.exitCode).toBe(2);
+    // The bounded wait actually polled the holder before giving up.
+    expect(attempts).toBeGreaterThan(1);
+
+    // Exactly one human-readable stderr line, and nothing on stdout.
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('Another Genie lifecycle command is active');
+    expect(errors[0]).toContain(`holds the lock at ${BUSY_LOCK_PATH}`);
+    expect(logs).toEqual([]);
+
+    // install.sh parses machine trailers off this stream: an agent-sync holder
+    // must never be relabelled as a Codex refusal or an action-required result.
+    const output = [...logs, ...errors].join('\n');
+    expect(output).not.toContain('codex-lifecycle-busy');
+    expect(output).not.toContain('schemaVersion');
+    expect(output).not.toContain('deliveryComplete');
+    expect(output).not.toContain('action-required');
+    expect(output).not.toContain('the holder converges the same targets');
+    expect(output).not.toMatch(/\n\s+at /);
+  });
+});
+
 describe('installCommand — Group C install gate (item 2)', () => {
   let logs: string[];
   let logSpy: ReturnType<typeof spyOn>;
