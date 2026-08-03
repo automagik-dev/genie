@@ -1020,8 +1020,8 @@ describe('checkAgentSync', () => {
     expect(pi?.detail).toContain('points elsewhere');
   });
 
-  test('pi: pi home present but no link → warn with sync suggestion', () => {
-    mkdirSync(piHome, { recursive: true });
+  test('pi: extensions dir present but no link → warn with sync suggestion', () => {
+    mkdirSync(join(piHome, 'agent', 'extensions'), { recursive: true });
     const pi = find(checkAgentSync(paths()), 'agent sync: pi');
     expect(pi?.status).toBe('warn');
     expect(pi?.suggestion).toBeDefined();

@@ -2,7 +2,7 @@
  * Genie home + agent directory resolution.
  *
  * Every path the agent-sync engine reads or writes is derived from one of these
- * four roots. Each honors its conventional environment override so tests can
+ * roots. Each honors its conventional environment override so tests can
  * redirect ALL state into a tmpdir and never touch the real `$HOME`, and so
  * operators can relocate any one agent's config without moving the others.
  */
@@ -37,12 +37,28 @@ export function resolveHermesHome(): string {
   return process.env.HERMES_HOME || join(homedir(), '.hermes');
 }
 
-/** Pi agent config root — `$PI_HOME` or `~/.pi`. */
-export function resolvePiHome(): string {
-  return process.env.PI_HOME || join(homedir(), '.pi');
+/** Pi agent config root — `$PI_HOME` (legacy genie alias) or `~/.pi`. */
+export function resolvePiHome(env: NodeJS.ProcessEnv = process.env, home = homedir()): string {
+  const override = env.PI_HOME;
+  return typeof override === 'string' && override.trim().length > 0 ? override : join(home, '.pi');
 }
 
-/** Pi extension discovery dir — `<piHome>/agent/extensions`. */
-export function resolvePiExtensionsDir(home: string = resolvePiHome()): string {
-  return join(home, 'agent', 'extensions');
+/**
+ * Pi extension discovery dir — `<agentDir>/extensions`.
+ *
+ * The agent dir honors `$PI_CODING_AGENT_DIR` (pi's real relocation override,
+ * tilde-expanded exactly as pi expands it) before falling back to
+ * `<piHome>/agent`; `piHome` defaults to {@link resolvePiHome}. The legacy
+ * `$PI_HOME` alias stays accepted for genie tooling but never overrides pi's
+ * own variable, so a relocated pi is always converged where pi actually reads.
+ */
+export function resolvePiExtensionsDir(env: NodeJS.ProcessEnv = process.env, home?: string): string {
+  const agentDir = env.PI_CODING_AGENT_DIR ?? join(home ?? resolvePiHome(env), 'agent');
+  return join(expandTilde(agentDir), 'extensions');
+}
+
+function expandTilde(path: string, home = homedir()): string {
+  if (path === '~') return home;
+  if (path.startsWith('~/')) return join(home, path.slice(2));
+  return path;
 }
