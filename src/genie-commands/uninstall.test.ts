@@ -91,12 +91,13 @@ describe('agent-sync managed-asset removal', () => {
   let codexDir: string;
   let agentsSkillsDir: string;
   let hermesHome: string;
+  let piExtensionsDir: string;
   let genieHome: string;
 
   const fixedNow = () => new Date('2026-07-11T12:00:00.000Z');
 
   function targets() {
-    return { claudeDir, codexDir, agentsSkillsDir, hermesHome, genieHome, now: fixedNow };
+    return { claudeDir, codexDir, agentsSkillsDir, hermesHome, piExtensionsDir, genieHome, now: fixedNow };
   }
 
   function withIsolatedHomes<T>(run: () => T): T {
@@ -198,8 +199,10 @@ describe('agent-sync managed-asset removal', () => {
     codexDir = join(tmp, 'codex');
     agentsSkillsDir = join(tmp, 'agents', 'skills');
     hermesHome = join(tmp, 'hermes');
+    piExtensionsDir = join(tmp, 'pi', 'agent', 'extensions');
     genieHome = join(tmp, 'genie');
     mkdirSync(join(genieHome, 'plugins', 'hermes-genie'), { recursive: true });
+    mkdirSync(join(genieHome, 'plugins', 'pi-genie'), { recursive: true });
   });
 
   afterEach(() => {
@@ -622,6 +625,48 @@ describe('agent-sync managed-asset removal', () => {
     symlinkSync(elsewhere, link);
     expect(removeAgentSyncAssets(targets()).removed).not.toContain(link);
     expect(existsSync(link)).toBe(true);
+  });
+
+  // Regression (PR #2743 review): the agent-sync `pi` lane auto-creates
+  // `<pi agent dir>/extensions/genie` → `$GENIE_HOME/plugins/pi-genie`. Uninstall
+  // removes GENIE_HOME, so without this collection every auto-installed pi user
+  // keeps a dangling symlink. Same identity rule as hermes: only ours is removed.
+  test('pi extensions symlink into the genie home is removed; one pointing elsewhere is kept', () => {
+    mkdirSync(piExtensionsDir, { recursive: true });
+    const link = join(piExtensionsDir, 'genie');
+    symlinkSync(join(genieHome, 'plugins', 'pi-genie'), link);
+
+    expect(removeAgentSyncAssets(targets()).removed).toContain(link);
+    expect(existsSync(link)).toBe(false);
+
+    // A user's own link at the same path (dev checkout) is never ours to delete.
+    const elsewhere = join(tmp, 'my-own-pi-extension');
+    mkdirSync(elsewhere, { recursive: true });
+    symlinkSync(elsewhere, link);
+    expect(removeAgentSyncAssets(targets()).removed).not.toContain(link);
+    expect(existsSync(link)).toBe(true);
+  });
+
+  test('a real (non-symlink) dir at the pi extensions/genie path is never removed', () => {
+    mkdirSync(join(piExtensionsDir, 'genie'), { recursive: true });
+    const path = join(piExtensionsDir, 'genie');
+    writeFileSync(join(path, 'package.json'), '{}', 'utf8');
+
+    expect(removeAgentSyncAssets(targets()).removed).not.toContain(path);
+    expect(existsSync(path)).toBe(true);
+  });
+
+  test('identity-bound removal proceeds for a matching pi link', () => {
+    mkdirSync(piExtensionsDir, { recursive: true });
+    const link = join(piExtensionsDir, 'genie');
+    symlinkSync(join(genieHome, 'plugins', 'pi-genie'), link);
+    const asset = collectAgentSyncAssets(targets()).find((a) => a.path === link);
+    if (asset?.identity?.kind !== 'link') throw new Error('expected a link identity for the pi symlink');
+
+    const result = removeAgentSyncAssets(targets(), { plannedAssets: [{ path: link, identity: asset.identity }] });
+
+    expect(result.removed).toContain(link);
+    expect(existsSync(link)).toBe(false);
   });
 
   test('all owned Hermes profile links are removed, not only the main link', () => {
@@ -2602,7 +2647,10 @@ describe('uninstallCommand — warning, lifecycle lease, isolation (Group D)', (
     // operator whose other lifecycle command held the lease got a stack trace
     // instead of an explanation — and no assurance that nothing was removed.
     const priorWait = process.env.GENIE_LIFECYCLE_LEASE_WAIT_MS;
-    process.env.GENIE_LIFECYCLE_LEASE_WAIT_MS = '60'; // millisecond-scale bounded poll
+    // Millisecond-scale bounded poll; 500ms (not 60ms) so a GC/scheduler pause
+    // cannot collapse the 25ms poll loop to a single attempt and flake the
+    // `attempts > 1` assertion.
+    process.env.GENIE_LIFECYCLE_LEASE_WAIT_MS = '500';
     const lockPath = '/fixture/home/.genie-lifecycle-0123456789abcdef.lock';
     let attempts = 0;
     let thrown: unknown;

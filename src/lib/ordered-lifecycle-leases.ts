@@ -25,6 +25,22 @@ export type OrderedLifecycleLeaseAcquisition =
 export type HeldOrderedLifecycleLeases = Extract<OrderedLifecycleLeaseAcquisition, { ok: true }>;
 
 /**
+ * The one busy sentence every lifecycle path prints for an agent-sync holder.
+ * It carries the acquirer's own (path-naming) detail forward and is deliberately
+ * NOT a Codex refusal: no `codex-lifecycle-busy` code and no machine trailer,
+ * because install.sh parses those and would be told a falsehood about which
+ * subsystem is busy.
+ *
+ * Three consumers: `update.ts` (no suffix), `install.ts` (no suffix), and
+ * `uninstall.ts` (suffix ` No files were removed; retry once it completes.`).
+ * Tests in `__tests__/update.test.ts`, `install.test.ts`, and `uninstall.test.ts`
+ * assert this exact prefix — keep the output byte-identical.
+ */
+export function lifecycleBusyMessage(detail: string, suffix?: string): string {
+  return `Another Genie lifecycle command is active: ${detail}${suffix ?? ''}`;
+}
+
+/**
  * Acquire the process-wide agent-sync lease before the Codex lifecycle lease.
  * A Codex loser releases the already-held outer lease before returning busy.
  */

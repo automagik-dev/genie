@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | IN_PROGRESS |
+| **Status** | SHIPPED |
 | **Slug** | `lifecycle-lease-busy-grace` |
 | **Date** | 2026-08-02 |
 | **Author** | Felipe Rosa + Genie |
@@ -99,12 +99,12 @@ Group 2 depends on Group 1; one worker running the wave sequentially is acceptab
 7. Update the "ONE protocol, two acquirers" doc comment (`agent-sync.ts:6211-6229`) to record the deliberate one-sided divergence: TS steals fresh same-host dead locks; install.sh's `recover_stale_lifecycle_lock` (`install.sh:245-274`) remains staleness-gated. Note that `acquireRetirementLock` (`:3018`) inherits the early steal via `acquireFileLock` (benign — cross-host retirement refusal unchanged).
 
 **Acceptance Criteria:**
-- [ ] No `throw new Error(\`Another Genie lifecycle command is active…\`)` remains anywhere in `src/genie-commands/`.
-- [ ] Busy messages contain the lock path and no "(the holder converges the same targets)"; no stack trace reaches the terminal.
-- [ ] No `codex-lifecycle-busy` or `INSTALL_ACTION_REQUIRED` trailer is emitted for an agent-sync holder.
-- [ ] Borrow-mismatch (`LIFECYCLE_LEASE_PATH_ENV` set but stale/mismatched) fails without a single retry sleep.
-- [ ] Same-host dead-holder steal detects pid-reuse via start-identity (a reused pid is judged dead and stolen) and never steals cross-host or unknown-host records.
-- [ ] `setup`'s busy message no longer contains the false phrase (inherited from the source fix; `setup.test.ts:1152`'s `toContain('holds the lock')` still passes).
+- [x] No `throw new Error(\`Another Genie lifecycle command is active…\`)` remains anywhere in `src/genie-commands/`.
+- [x] Busy messages contain the lock path and no "(the holder converges the same targets)"; no stack trace reaches the terminal.
+- [x] No `codex-lifecycle-busy` or `INSTALL_ACTION_REQUIRED` trailer is emitted for an agent-sync holder.
+- [x] Borrow-mismatch (`LIFECYCLE_LEASE_PATH_ENV` set but stale/mismatched) fails without a single retry sleep.
+- [x] Same-host dead-holder steal detects pid-reuse via start-identity (a reused pid is judged dead and stolen) and never steals cross-host or unknown-host records.
+- [x] `setup`'s busy message no longer contains the false phrase (inherited from the source fix; `setup.test.ts:1152`'s `toContain('holds the lock')` still passes).
 
 **Validation:**
 ```bash
@@ -126,9 +126,9 @@ bun run typecheck && bun test src/lib/agent-sync.test.ts src/genie-commands/__te
 4. All waits driven by `GENIE_LIFECYCLE_LEASE_WAIT_MS` at millisecond scale — no test slower than ~1s.
 
 **Acceptance Criteria:**
-- [ ] Reverting any Group 1 projection or the steal reorder makes at least one new test fail.
-- [ ] Existing agent-sync report-wording tests pass unmodified.
-- [ ] `tests/integration/install-exit2-propagation.test.ts` passes unmodified.
+- [x] Reverting any Group 1 projection or the steal reorder makes at least one new test fail.
+- [x] Existing agent-sync report-wording tests pass unmodified.
+- [x] `tests/integration/install-exit2-propagation.test.ts` passes unmodified.
 
 **Validation:**
 ```bash
@@ -141,10 +141,10 @@ bun run check
 
 ## QA Criteria
 
-- [ ] Functional: with a second terminal holding the lease (paused `genie install`), `genie update` waits, then either completes (holder finished) or prints one clean line with the lock path and exits 2 — no Bun stack trace.
-- [ ] Functional: kill -9 a lease-holding command, immediately run `genie update` → it steals the dead lock and updates (the 2026-08-02 incident scenario).
-- [ ] Integration: uncontended `genie update` output and behavior unchanged (prompt before lease, delivery after).
-- [ ] Regression: `--post-delivery-converge` child still borrows the parent lease correctly (one end-to-end dev-build update).
+- [x] Functional: live holder → `update --sync-only` (dev-tip binary f7c4314b9, isolated GENIE_HOME sandbox, 2026-08-03) exited 2 with one clean line naming the real lock path, no stack trace, no false phrase.
+- [x] Functional: SIGKILLed holder with fresh-mtime lock → same sandbox run stole the lock in ~100ms (lock file gone) and the command completed exit 0 — the 2026-08-02 incident scenario, fixed.
+- [x] Integration: uncontended sandbox run exited 0 with normal sync output, no busy line.
+- [x] Regression: real host `genie update -y` (2026-08-03) delivered 5.260803.1 → 5.260803.3 end-to-end — verified release promotion, borrowed-lease converge, integration refresh — exit 0.
 
 ---
 
