@@ -12,6 +12,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   chmodSync,
@@ -29,7 +30,13 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { type AgentSyncReport, acquireLifecycleLease, runAgentSync } from '../../lib/agent-sync';
+import {
+  type AgentSyncReport,
+  acquireLifecycleLease,
+  currentSyncLockHostId,
+  lifecycleLockPath,
+  runAgentSync,
+} from '../../lib/agent-sync';
 import { observeCodexActivation, openCodexActivationStore } from '../../lib/codex-activation';
 import type { DeliveryEvidencePlatformId } from '../../lib/codex-delivery-evidence';
 import { mintTestDeliveryEvidence } from '../../lib/codex-delivery-evidence.test-support';
@@ -613,6 +620,154 @@ describe('updateCommand wiring', () => {
       logSpy.mockRestore();
       errorSpy.mockRestore();
       process.exitCode = priorExitCode;
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Lifecycle-lease busy grace (2026-08-02 incident): a live agent-sync holder
+  // used to surface as a raw `throw new Error(...)` — an unhandled stack trace
+  // in the operator's terminal — and the message reassured them that "the
+  // holder converges the same targets", which is false for an unrelated
+  // update/install/setup/uninstall.
+  // -------------------------------------------------------------------------
+
+  /** The exact refusal the production acquirer now produces for a live holder. */
+  const BUSY_LOCK_PATH = '/fixture/home/.genie-lifecycle-0123456789abcdef.lock';
+  const busyLeaseSkip = {
+    skipped: `another Genie process holds the lock at ${BUSY_LOCK_PATH}; retry shortly, or remove the file if its owner has crashed`,
+    cause: 'held' as const,
+  };
+
+  test('a live agent-sync holder past the wait deadline exits 2 with an actionable line and no thrown error', async () => {
+    const priorExitCode = process.exitCode;
+    const priorWait = process.env.GENIE_LIFECYCLE_LEASE_WAIT_MS;
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const events: string[] = [];
+    const logSpy = spyOn(console, 'log').mockImplementation((...args: unknown[]) => stdout.push(args.join(' ')));
+    const errorSpy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => stderr.push(args.join(' ')));
+    process.exitCode = undefined;
+    // Millisecond-scale so the bounded poll is exercised, not endured.
+    process.env.GENIE_LIFECYCLE_LEASE_WAIT_MS = '60';
+    let attempts = 0;
+    let thrown: unknown;
+    try {
+      await updateCommand(
+        { yes: true, stable: true },
+        {
+          fetchManifest: async () => commandManifest,
+          readInstalledVersion: () => '5.260700.1',
+          resolvePlatform: () => 'darwin-arm64',
+          acquireLease: () => {
+            attempts += 1;
+            return busyLeaseSkip;
+          },
+          acquireCodexLease: () => {
+            events.push('MUTATION:codex-lease');
+            throw new Error('the Codex lease must never be reached behind a busy agent-sync lease');
+          },
+          recoverPendingState: () => events.push('MUTATION:recovery'),
+          persistSelectedChannel: async () => {
+            events.push('MUTATION:channel');
+          },
+          requireCanonicalInstall: () => events.push('MUTATION:canonical'),
+          deliverSelectedManifest: async () => {
+            events.push('MUTATION:delivery');
+            return [];
+          },
+          finalizeSelectedDelivery: async () => {
+            events.push('MUTATION:finalize');
+            return true;
+          },
+        },
+      ).catch((error: unknown) => {
+        thrown = error;
+      });
+
+      // Graceful projection, not an escaping throw or a hard process.exit.
+      expect(thrown).toBeUndefined();
+      expect(Number(process.exitCode)).toBe(2);
+      expect(events).toEqual([]);
+      // The refusal was polled, not answered on the first look.
+      expect(attempts).toBeGreaterThan(1);
+
+      const output = [...stdout, ...stderr].join('\n');
+      expect(output).toContain('Another Genie lifecycle command is active');
+      expect(output).toContain('holds the lock');
+      expect(output).toContain(BUSY_LOCK_PATH);
+      // The misleading reassurance is gone, and an agent-sync holder is never
+      // relabelled as a Codex refusal (install.sh parses that machine code).
+      expect(output).not.toContain('the holder converges the same targets');
+      expect(output).not.toContain('codex-lifecycle-busy');
+      expect(output).not.toContain('schemaVersion');
+      // No stack trace reached the terminal.
+      expect(output).not.toContain('DeferredUpdateTerminal');
+      expect(output).not.toMatch(/\n\s+at /);
+    } finally {
+      logSpy.mockRestore();
+      errorSpy.mockRestore();
+      process.exitCode = priorExitCode;
+      if (priorWait === undefined) Reflect.deleteProperty(process.env, 'GENIE_LIFECYCLE_LEASE_WAIT_MS');
+      else process.env.GENIE_LIFECYCLE_LEASE_WAIT_MS = priorWait;
+    }
+  });
+
+  test('an agent-sync holder that releases mid-wait lets update proceed past acquisition', async () => {
+    const priorExitCode = process.exitCode;
+    const priorWait = process.env.GENIE_LIFECYCLE_LEASE_WAIT_MS;
+    const events: string[] = [];
+    const logSpy = spyOn(console, 'log').mockImplementation(() => undefined);
+    const errorSpy = spyOn(console, 'error').mockImplementation(() => undefined);
+    process.exitCode = undefined;
+    process.env.GENIE_LIFECYCLE_LEASE_WAIT_MS = '5000';
+    let attempts = 0;
+    try {
+      await updateCommand(
+        { yes: true, stable: true },
+        {
+          fetchManifest: async () => commandManifest,
+          readInstalledVersion: () => '5.260700.1',
+          resolvePlatform: () => 'darwin-arm64',
+          acquireLease: () => {
+            attempts += 1;
+            events.push(`agent-attempt-${attempts}`);
+            if (attempts < 3) return busyLeaseSkip;
+            return { path: BUSY_LOCK_PATH, release: () => events.push('agent-release') };
+          },
+          // Acquisition succeeded, so the run reaches the first fencing
+          // observation — which is the proof it got past the busy branch.
+          acquireCodexLease: () => ({
+            ok: true,
+            operationId: 'f'.repeat(32),
+            kind: 'update-delivery',
+            assertOperation: () => {
+              events.push('codex-assert');
+              throw new Error('stale lifecycle authority');
+            },
+            release: () => events.push('codex-release'),
+          }),
+          recoverPendingState: () => events.push('MUTATION:recovery'),
+        },
+      );
+
+      expect(attempts).toBe(3);
+      expect(events).toEqual([
+        'agent-attempt-1',
+        'agent-attempt-2',
+        'agent-attempt-3',
+        'codex-assert',
+        'codex-release',
+        'agent-release',
+      ]);
+      // Exit 1 is the fencing terminal, NOT the exit-2 busy projection: the
+      // command never treated the transient holder as a refusal.
+      expect(Number(process.exitCode)).toBe(1);
+    } finally {
+      logSpy.mockRestore();
+      errorSpy.mockRestore();
+      process.exitCode = priorExitCode;
+      if (priorWait === undefined) Reflect.deleteProperty(process.env, 'GENIE_LIFECYCLE_LEASE_WAIT_MS');
+      else process.env.GENIE_LIFECYCLE_LEASE_WAIT_MS = priorWait;
     }
   });
 
@@ -2295,7 +2450,7 @@ describe('runV4CleanupSafe', () => {
 describe('runAgentSyncSafe (agent-sync phase)', () => {
   function makeReport(): AgentSyncReport {
     return {
-      source: { pluginRoot: '/home/.genie/plugins/genie', hermesRoot: null, version: '5.0.0' },
+      source: { pluginRoot: '/home/.genie/plugins/genie', hermesRoot: null, piRoot: null, version: '5.0.0' },
       agents: [
         {
           agent: 'claude',
@@ -3280,6 +3435,73 @@ describe('--sync-only is agent-sync only (D2 — wish decision 3)', () => {
     expect(body).not.toContain('plugin');
     expect(body).not.toContain('probe');
     expect(body).not.toContain('inspect');
+  });
+});
+
+// ============================================================================
+// Explicit update modes (--sync-only / --rollback / --post-delivery-converge)
+// resolve the lease through `acquireRequiredLifecycleLease`, whose GENIE_HOME
+// is captured at module import time — so this exercises the REAL acquirer in a
+// child process with an isolated GENIE_HOME rather than the injected seam. Its
+// old raw throw reached the terminal as an unhandled stack trace (exit 1),
+// which is exactly what this pins away.
+// ============================================================================
+
+describe('--sync-only behind a live lifecycle lease (executed)', () => {
+  let work: string;
+  let genieHome: string;
+  let lockPath: string;
+  let runner: string;
+
+  beforeEach(() => {
+    work = mkdtempSync(join(tmpdir(), 'genie-sync-only-busy-'));
+    genieHome = join(work, '.genie');
+    mkdirSync(genieHome, { recursive: true });
+    lockPath = lifecycleLockPath(genieHome);
+    runner = join(work, 'run-sync-only.ts');
+    const updateModule = join(import.meta.dir, '..', 'update.ts');
+    writeFileSync(
+      runner,
+      [
+        `import { updateCommand } from ${JSON.stringify(updateModule)};`,
+        'await updateCommand({ syncOnly: true });',
+        '',
+      ].join('\n'),
+    );
+  });
+
+  afterEach(() => rmSync(work, { recursive: true, force: true }));
+
+  test('projects exit 2 with the actionable busy line and no stack trace', () => {
+    // A live, same-host, fresh-mtime holder: this test process itself. It can
+    // be neither stolen (alive) nor aged out (fresh), so the child must wait
+    // out the bounded window and then give up gracefully.
+    writeFileSync(lockPath, `${process.pid}:abcdef0123456789abcdef0123456789:unknown:${currentSyncLockHostId()}\n`);
+
+    const result = spawnSync(process.execPath, ['run', runner], {
+      encoding: 'utf8',
+      env: {
+        HOME: work,
+        GENIE_HOME: genieHome,
+        GENIE_LIFECYCLE_LEASE_WAIT_MS: '40',
+        PATH: process.env.PATH ?? '/usr/bin:/bin',
+      },
+    });
+    const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
+
+    expect(result.status).toBe(2);
+    expect(output).toContain('Another Genie lifecycle command is active');
+    expect(output).toContain(`holds the lock at ${lockPath}`);
+    expect(output).toContain('retry shortly, or remove the file if its owner has crashed');
+    // Not a raw throw: no stack frames, no unhandled-error banner.
+    expect(output).not.toMatch(/\n\s+at /);
+    expect(output).not.toContain('error: Another Genie lifecycle command');
+    // Not a Codex refusal, and no machine trailer install.sh could misparse.
+    expect(output).not.toContain('codex-lifecycle-busy');
+    expect(output).not.toContain('schemaVersion');
+    // The live holder's record is untouched, and no steal guard was left.
+    expect(readFileSync(lockPath, 'utf8')).toContain(`${process.pid}:`);
+    expect(existsSync(`${lockPath}.steal`)).toBe(false);
   });
 });
 

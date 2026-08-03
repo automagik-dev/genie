@@ -797,6 +797,7 @@ describe('checkAgentSync', () => {
   let codexDir: string;
   let agentsSkillsDir: string;
   let hermesHome: string;
+  let piHome: string;
 
   function writeSourceSkill(name: string, body: string): void {
     mkdirSync(join(pluginRoot, 'skills', name), { recursive: true });
@@ -845,6 +846,9 @@ describe('checkAgentSync', () => {
       // Disable the best-effort `hermes plugins list` enable probe by default so no
       // test ever spawns a real process; probe-specific tests inject a reader.
       hermesBinary: null as string | null,
+      // Same for the pi CLI probe — the link check keys off the pi home alone.
+      piBinary: null as string | null,
+      piHome,
       settingsPath: join(claudeDir, 'settings.json'),
     };
   }
@@ -859,8 +863,10 @@ describe('checkAgentSync', () => {
     codexDir = join(tmp, 'codex');
     agentsSkillsDir = join(tmp, 'agents', 'skills');
     hermesHome = join(tmp, 'hermes');
+    piHome = join(tmp, 'pi');
     mkdirSync(join(pluginRoot, 'skills'), { recursive: true });
     mkdirSync(join(genieHome, 'plugins', 'hermes-genie'), { recursive: true });
+    mkdirSync(join(genieHome, 'plugins', 'pi-genie'), { recursive: true });
     writeFileSync(join(genieHome, 'VERSION'), '5.0.0\n', 'utf8');
     writeSourceSkill('wish', '# wish\n');
     writeSourceSkill('review', '# review\n');
@@ -882,6 +888,7 @@ describe('checkAgentSync', () => {
     expect(find(results, 'agent sync: claude')?.detail).toBe('not detected');
     expect(find(results, 'agent sync: codex')?.detail).toBe('not detected');
     expect(find(results, 'agent sync: hermes')?.detail).toBe('not detected');
+    expect(find(results, 'agent sync: pi')?.detail).toBe('not detected');
     expect(results.every((r) => r.status !== 'fail')).toBe(true);
   });
 
@@ -995,6 +1002,29 @@ describe('checkAgentSync', () => {
     const hermes = find(checkAgentSync(paths()), 'agent sync: hermes');
     expect(hermes?.status).toBe('warn');
     expect(hermes?.detail).toContain('points elsewhere');
+  });
+
+  test('pi: correct extensions link → pass', () => {
+    mkdirSync(join(piHome, 'agent', 'extensions'), { recursive: true });
+    symlinkSync(join(genieHome, 'plugins', 'pi-genie'), join(piHome, 'agent', 'extensions', 'genie'));
+    const pi = find(checkAgentSync(paths()), 'agent sync: pi');
+    expect(pi?.status).toBe('pass');
+    expect(pi?.detail).toContain('linked');
+  });
+
+  test('pi: extensions link pointing elsewhere → warn', () => {
+    mkdirSync(join(piHome, 'agent', 'extensions'), { recursive: true });
+    symlinkSync(join(tmp, 'somewhere-else'), join(piHome, 'agent', 'extensions', 'genie'));
+    const pi = find(checkAgentSync(paths()), 'agent sync: pi');
+    expect(pi?.status).toBe('warn');
+    expect(pi?.detail).toContain('points elsewhere');
+  });
+
+  test('pi: extensions dir present but no link → warn with sync suggestion', () => {
+    mkdirSync(join(piHome, 'agent', 'extensions'), { recursive: true });
+    const pi = find(checkAgentSync(paths()), 'agent sync: pi');
+    expect(pi?.status).toBe('warn');
+    expect(pi?.suggestion).toBeDefined();
   });
 
   // Codex Genie skills are plugin-only (R5): an EMPTY user tier is the healthy

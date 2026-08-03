@@ -71,6 +71,8 @@ import {
   resolveCodexDir,
   resolveGenieHome as resolveGlobalGenieHome,
   resolveHermesHome,
+  resolvePiExtensionsDir,
+  resolvePiHome,
 } from '../lib/genie-home.js';
 import { hasDuplicateMcpGenieKeys } from '../lib/hermes-mcp-config.js';
 import { hasDuplicateSkillsExternalDirsKeys, resolveProductSkillsRoot } from '../lib/hermes-skills-config.js';
@@ -184,8 +186,17 @@ const GLYPH: Record<CheckStatus, string> = {
 };
 
 function whichBinary(name: string): string | null {
+  if (typeof Bun !== 'undefined') {
+    try {
+      return Bun.which(name);
+    } catch {
+      return null;
+    }
+  }
+  // Node fallback — same policy as detectPiBinary/detectHermesBinary in agent-sync.
   try {
-    return Bun.which(name);
+    const found = execFileSync('which', [name], { encoding: 'utf8' }).trim();
+    return found === '' ? null : found;
   } catch {
     return null;
   }
@@ -890,7 +901,7 @@ async function checkOmniHookTimeout(): Promise<CheckResult[]> {
 const SYNC_MANIFEST_NAME = MANIFEST_NAME;
 const SYNC_MANAGED_BY = MANAGED_BY;
 const COUNCIL_WORKFLOW_FILE = TARGET_NAME;
-const SYNC_SUGGESTION = 'Run `genie update` to converge detected Claude and Hermes integrations.';
+const SYNC_SUGGESTION = 'Run `genie update` to converge detected Claude, Hermes and pi integrations.';
 const HERMES_INLINE_SUGGESTION =
   'Rewrite the inline top-level key as a block mapping so genie can merge without deleting your entries, then run `genie update`.';
 
@@ -901,6 +912,12 @@ interface AgentSyncPaths {
   /** Shared `~/.agents/skills` tier codex skills are synced into (detection root stays `codexDir`). */
   agentsSkillsDir?: string;
   hermesHome?: string;
+  /**
+   * Pi CLI detection override for the link check. `undefined` probes PATH;
+   * `null` explicitly skips the probe (pi CLI absent → silent).
+   */
+  piBinary?: string | null;
+  piHome?: string;
   /**
    * Hermes CLI detection override for the best-effort enable probe. `undefined`
    * probes PATH; `null` explicitly skips the probe (hermes CLI absent → silent).
@@ -1380,6 +1397,41 @@ function checkHermesSync(input: HermesCheckInput): CheckResult[] {
   return results;
 }
 
+interface PiCheckInput {
+  piRoot: string | null;
+  piHome: string;
+  /** `undefined` probes PATH; `null` skips the probe. */
+  binary?: string | null;
+}
+
+/**
+ * pi health: the `~/.pi/agent/extensions/genie` symlink converging on the
+ * shipped `pi-genie` source. Pass when pi is undetected (no extensions dir and
+ * no pi CLI) or the source is absent — the link check only runs when both
+ * sides exist. The detection gate matches the agent-sync `pi` lane exactly
+ * (`syncPi`): extensions dir present OR pi CLI on PATH. Link-only: pi has no
+ * enable command or config legs to converge.
+ */
+function checkPiSync(input: PiCheckInput): CheckResult[] {
+  const { piRoot, piHome } = input;
+  const extensionsDir = resolvePiExtensionsDir(process.env, piHome);
+  if (!existsSync(extensionsDir) && input.binary === null) {
+    return [{ name: 'agent sync: pi', status: 'pass', detail: 'not detected' }];
+  }
+  if (piRoot === null) {
+    return [{ name: 'agent sync: pi', status: 'pass', detail: 'pi-genie source absent — link check skipped' }];
+  }
+  const link = hermesLinkState(join(extensionsDir, 'genie'), piRoot, 'extensions/genie');
+  return [
+    {
+      name: 'agent sync: pi',
+      status: link.ok ? 'pass' : 'warn',
+      detail: link.detail,
+      suggestion: link.ok ? undefined : SYNC_SUGGESTION,
+    },
+  ];
+}
+
 /** `mcp_servers.genie.command` must be an absolute path to an existing, executable file. */
 function checkHermesMcp(configText: string | null, configPath: string): CheckResult {
   const name = 'agent sync: hermes mcp';
@@ -1578,21 +1630,25 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function hermesLinkState(linkPath: string, hermesRoot: string): { ok: boolean; detail: string } {
+function hermesLinkState(
+  linkPath: string,
+  hermesRoot: string,
+  label = 'plugins/genie',
+): { ok: boolean; detail: string } {
   let stat: ReturnType<typeof lstatSync>;
   try {
     stat = lstatSync(linkPath);
   } catch {
-    return { ok: false, detail: 'plugins/genie link absent' };
+    return { ok: false, detail: `${label} link absent` };
   }
-  if (!stat.isSymbolicLink()) return { ok: false, detail: 'plugins/genie present but not a symlink' };
+  if (!stat.isSymbolicLink()) return { ok: false, detail: `${label} present but not a symlink` };
   try {
     const target = readlinkSync(linkPath);
     if (resolve(dirname(linkPath), target) === resolve(hermesRoot))
       return { ok: true, detail: `linked → ${hermesRoot}` };
     return { ok: false, detail: `points elsewhere (${target})` };
   } catch {
-    return { ok: false, detail: 'plugins/genie symlink unreadable' };
+    return { ok: false, detail: `${label} symlink unreadable` };
   }
 }
 
@@ -1647,6 +1703,7 @@ export function checkAgentSync(paths: AgentSyncPaths = {}): CheckResult[] {
   const codexDir = paths.codexDir ?? resolveCodexDir();
   const agentsSkillsDir = paths.agentsSkillsDir ?? resolveAgentsSkillsDir();
   const hermesHome = paths.hermesHome ?? resolveHermesHome();
+  const piHome = paths.piHome ?? resolvePiHome();
   const settingsPath = paths.settingsPath ?? join(claudeDir, 'settings.json');
   const source = resolveGenieSource(genieHome);
   if (source.pluginRoot === null) {
@@ -1671,6 +1728,13 @@ export function checkAgentSync(paths: AgentSyncPaths = {}): CheckResult[] {
         pluginRoot,
         binary: hermesBinary,
         pluginsList: paths.hermesPluginsList,
+      }),
+    ),
+    ...safeAgentChecks('pi', () =>
+      checkPiSync({
+        piRoot: source.piRoot,
+        piHome,
+        binary: paths.piBinary !== undefined ? paths.piBinary : whichBinary('pi'),
       }),
     ),
     ...safeAgentChecks('marketplace', () => checkMarketplacePlugin(settingsPath)),

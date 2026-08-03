@@ -26,7 +26,9 @@ import {
   LIFECYCLE_LEASE_OWNER_ENV,
   LIFECYCLE_LEASE_PATH_ENV,
   type LifecycleLease,
+  type LifecycleLeaseSkip,
   acquireLifecycleLease,
+  acquireLifecycleLeaseWithWait,
   runAgentSync,
 } from '../lib/agent-sync.js';
 import { observeCodexActivation, openCodexActivationStore } from '../lib/codex-activation-executor.js';
@@ -1657,12 +1659,35 @@ function resolveUpdatePlatformOrExit(): string {
   }
 }
 
+/**
+ * The one busy sentence every update path prints for an agent-sync holder. It
+ * carries the acquirer's own (path-naming) detail forward and is deliberately
+ * NOT a Codex refusal: no `codex-lifecycle-busy` code and no machine trailer,
+ * because install.sh parses those and would be told a falsehood about which
+ * subsystem is busy.
+ */
+function lifecycleBusyMessage(detail: string): string {
+  return `Another Genie lifecycle command is active: ${detail}`;
+}
+
+/**
+ * Acquire the lease for an explicit mode (`--rollback`, `--sync-only`,
+ * `--post-delivery-converge`), waiting out a live holder. A busy lease is a
+ * clean exit-2 projection here rather than a thrown Error: the explicit modes
+ * have no outer capture, so a throw reached the terminal as a raw stack trace
+ * (the 2026-08-02 incident).
+ *
+ * The wait wraps the acquirer OUTSIDE the seam — same as the other three
+ * lifecycle call sites — so an injected acquirer and the production one share
+ * exactly one retry policy instead of the seam silently opting out of it.
+ */
 function acquireRequiredLifecycleLease(
-  acquire: () => LifecycleLease | { skipped: string } = () => acquireLifecycleLease(GENIE_HOME),
-): LifecycleLease {
-  const lease = acquire();
+  acquire: () => LifecycleLease | LifecycleLeaseSkip = () => acquireLifecycleLease(GENIE_HOME),
+): LifecycleLease | null {
+  const lease = acquireLifecycleLeaseWithWait(acquire);
   if ('skipped' in lease) {
-    throw new Error(`Another Genie lifecycle command is active: ${lease.skipped}`);
+    projectDeferredUpdateTerminal(new DeferredUpdateTerminal(2, lifecycleBusyMessage(lease.skipped)));
+    return null;
   }
   return lease;
 }
@@ -1837,6 +1862,7 @@ async function runExplicitUpdateMode(
   mode: Exclude<UpdateExecutionMode, 'normal' | 'publish-local-delivery'>,
 ): Promise<void> {
   const lifecycleLease = acquireRequiredLifecycleLease();
+  if (lifecycleLease === null) return; // busy lease already projected as exit 2
   let terminal: DeferredUpdateTerminal | null = null;
   try {
     if (mode === 'rollback') terminal = await runRollback();
@@ -2430,7 +2456,7 @@ export interface UpdateCommandDependencies {
   /** Canonical-install guard seam for command-boundary tests. */
   requireCanonicalInstall?: () => void;
   /** Outer delivery lock seam; production acquires the shared agent-sync lifecycle lease. */
-  acquireLease?: () => LifecycleLease | { skipped: string };
+  acquireLease?: () => LifecycleLease | LifecycleLeaseSkip;
   /** Inner delivery lock seam; production acquires one Codex lease for the whole mutation phase. */
   acquireCodexLease?: () => LifecycleLeaseResult;
 }
@@ -2464,13 +2490,17 @@ function projectDeferredUpdateTerminal(terminal: DeferredUpdateTerminal): void {
 function acquireUpdateLifecycleLeasesOrProject(
   dependencies: UpdateCommandDependencies,
 ): HeldOrderedLifecycleLeases | null {
+  // The wait wraps whichever acquirer is in play — the injected seam included —
+  // so a test seam and production share one retry policy.
+  const acquireAgentSync = dependencies.acquireLease ?? (() => acquireLifecycleLease(GENIE_HOME));
   const acquired = acquireOrderedLifecycleLeases(
-    dependencies.acquireLease ?? (() => acquireLifecycleLease(GENIE_HOME)),
+    () => acquireLifecycleLeaseWithWait(acquireAgentSync),
     dependencies.acquireCodexLease ?? (() => acquireCodexLifecycleLease('update-delivery', { genieHome: GENIE_HOME })),
   );
   if (acquired.ok) return acquired;
   if (acquired.busy === 'agent-sync') {
-    throw new Error(`Another Genie lifecycle command is active: ${acquired.detail}`);
+    projectDeferredUpdateTerminal(new DeferredUpdateTerminal(2, lifecycleBusyMessage(acquired.detail)));
+    return null;
   }
   projectDeferredUpdateTerminal(
     new DeferredUpdateTerminal(

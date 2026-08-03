@@ -29,6 +29,7 @@ import {
   realpathSync,
   renameSync,
   rmSync,
+  statSync,
   symlinkSync,
   utimesSync,
   writeFileSync,
@@ -54,10 +55,12 @@ import {
   type FsyncPathDeps,
   LIFECYCLE_LEASE_OWNER_ENV,
   LIFECYCLE_LEASE_PATH_ENV,
+  type LifecycleLeaseSkip,
   TARGET_NAME,
   WORKFLOW_MANIFEST_NAME,
   acquireAgentSyncLock,
   acquireLifecycleLease,
+  acquireLifecycleLeaseWithWait,
   applyCodexFallbackRetirement,
   atomicRenameDirectoryNoClobber,
   computeDirDigest,
@@ -123,6 +126,8 @@ interface Fixture {
   agentsSkillsDir: string;
   hermesHome: string;
   hermesSource: string;
+  piHome: string;
+  piSource: string;
 }
 
 let fixture: Fixture;
@@ -158,6 +163,7 @@ function setup(opts: SetupOptions = {}): Fixture {
   const pluginsBase = opts.binLayout ? join(genieHome, 'bin', 'plugins') : join(genieHome, 'plugins');
   const pluginRoot = join(pluginsBase, 'genie');
   const hermesSource = join(pluginsBase, 'hermes-genie');
+  const piSource = join(pluginsBase, 'pi-genie');
 
   const skills = opts.skills ?? {
     alpha: { 'SKILL.md': '# alpha\n', 'references/a.md': 'alpha ref\n' },
@@ -170,6 +176,7 @@ function setup(opts: SetupOptions = {}): Fixture {
 
   if (opts.withTemplate ?? true) writeFile(join(pluginRoot, 'workflows', 'council.js'), TEMPLATE_BODY);
   writeFile(join(hermesSource, 'plugin.json'), '{"name":"hermes-genie"}\n');
+  writeFile(join(piSource, 'package.json'), '{"name":"genie-pi-plugin"}\n');
 
   const version = opts.version === undefined ? '9.9.9' : opts.version;
   if (version !== null) writeFile(join(genieHome, 'VERSION'), `${version}\n`);
@@ -183,6 +190,8 @@ function setup(opts: SetupOptions = {}): Fixture {
     agentsSkillsDir: join(root, 'agents', 'skills'),
     hermesHome: join(root, 'hermes'),
     hermesSource,
+    piHome: join(root, 'pi'),
+    piSource,
   };
 }
 
@@ -198,9 +207,11 @@ function run(extra: Partial<AgentSyncOptions> = {}): AgentSyncReport {
       claude: fixture.claudeDir,
       codex: fixture.codexDir,
       hermes: fixture.hermesHome,
+      pi: join(fixture.piHome, 'agent', 'extensions'),
       agentsSkills: fixture.agentsSkillsDir,
     },
     hermesBinary: null,
+    piBinary: null,
     now: FIXED_NOW,
     log: () => undefined,
     ...extra,
@@ -286,11 +297,25 @@ describe('fresh create', () => {
     expect(extraAction(report, 'enable')).toBe('ran');
   });
 
+  test('pi: extensions link created when pi home present, no enable command', () => {
+    present(join(fixture.piHome, 'agent', 'extensions'));
+    const report = agentReport(run(), 'pi');
+
+    expect(report.detected).toBe(true);
+    const link = join(fixture.piHome, 'agent', 'extensions', 'genie');
+    expect(lstatSync(link).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(link)).toBe(fixture.piSource);
+    expect(extraAction(report, 'symlink')).toBe('created');
+    // pi has no plugin enable command — the link alone loads the extension.
+    expect(extraAction(report, 'enable')).toBeUndefined();
+  });
+
   test('report carries the resolved source metadata', () => {
     present(fixture.claudeDir);
     const report = run();
     expect(report.source.pluginRoot).toBe(fixture.pluginRoot);
     expect(report.source.hermesRoot).toBe(fixture.hermesSource);
+    expect(report.source.piRoot).toBe(fixture.piSource);
     expect(report.source.version).toBe('9.9.9');
   });
 });
@@ -1332,6 +1357,7 @@ describe('idempotent re-run', () => {
     present(fixture.claudeDir);
     present(fixture.codexDir);
     present(fixture.hermesHome);
+    present(join(fixture.piHome, 'agent', 'extensions'));
     const enableCalls: string[][] = [];
     const opts: Partial<AgentSyncOptions> = {
       hermesBinary: '/fake/bin/hermes',
@@ -1348,6 +1374,9 @@ describe('idempotent re-run', () => {
 
     const hermes = agentReport(second, 'hermes');
     expect(extraAction(hermes, 'symlink')).toBe('unchanged');
+
+    const pi = agentReport(second, 'pi');
+    expect(extraAction(pi, 'symlink')).toBe('unchanged');
 
     expect(enableCalls).toHaveLength(1); // fired on the first run only
     expect(second.backupsDir).toBeNull();
@@ -1802,7 +1831,7 @@ describe('undetected agents', () => {
   test('a missing agent dir yields detected:false and zero writes', () => {
     // no target dirs created at all
     const report = run();
-    for (const agent of ['claude', 'hermes'] as const) {
+    for (const agent of ['claude', 'hermes', 'pi'] as const) {
       expect(agentReport(report, agent).detected).toBe(false);
     }
     // codex never appears in the report at all — runAgentSync has no codex arm.
@@ -1810,6 +1839,7 @@ describe('undetected agents', () => {
     expect(existsSync(fixture.claudeDir)).toBe(false);
     expect(existsSync(fixture.codexDir)).toBe(false);
     expect(existsSync(join(fixture.hermesHome, 'plugins'))).toBe(false);
+    expect(existsSync(join(fixture.piHome, 'agent'))).toBe(false);
     expect(report.backupsDir).toBeNull();
   });
 
@@ -1828,13 +1858,15 @@ describe('explicit client selection', () => {
     present(fixture.claudeDir);
     present(fixture.codexDir);
     present(fixture.hermesHome);
+    present(join(fixture.piHome, 'agent', 'extensions'));
     writeFile(join(fixture.agentsSkillsDir, 'alpha', 'SKILL.md'), '# seeded, pre-existing\n');
     const report = run({ selection: 'codex' });
     // runAgentSync has no `codex` arm at all: `selection: 'codex'` matches
-    // none of the claude/hermes gates either, so nothing runs.
+    // none of the claude/hermes/pi gates either, so nothing runs.
     expect(report.agents).toEqual([]);
     expect(existsSync(join(fixture.claudeDir, 'skills'))).toBe(false);
     expect(existsSync(join(fixture.hermesHome, 'plugins', 'genie'))).toBe(false);
+    expect(existsSync(join(fixture.piHome, 'agent', 'extensions', 'genie'))).toBe(false);
     expect(readFileSync(join(fixture.agentsSkillsDir, 'alpha', 'SKILL.md'), 'utf8')).toBe('# seeded, pre-existing\n');
   });
 
@@ -1842,11 +1874,13 @@ describe('explicit client selection', () => {
     present(fixture.claudeDir);
     present(fixture.codexDir);
     present(fixture.hermesHome);
+    present(join(fixture.piHome, 'agent', 'extensions'));
     const report = run({ selection: 'none' });
     expect(report.agents).toEqual([]);
     expect(existsSync(join(fixture.claudeDir, 'skills'))).toBe(false);
     expect(existsSync(join(fixture.agentsSkillsDir, 'alpha'))).toBe(false);
     expect(existsSync(join(fixture.hermesHome, 'plugins', 'genie'))).toBe(false);
+    expect(existsSync(join(fixture.piHome, 'agent', 'extensions', 'genie'))).toBe(false);
   });
 
   // Regression (restore-hermes-sync-leg): a prior release narrowed every
@@ -1856,16 +1890,18 @@ describe('explicit client selection', () => {
   // This is the R2/A1 + hermes-restoration contract pinned at the engine
   // level: 'auto' must converge BOTH claude and hermes, and must NEVER touch
   // the shared ~/.agents/skills tier (there is no codex arm to do so).
-  test('auto selection converges claude AND hermes, and never touches a seeded ~/.agents/skills fixture', () => {
+  test('auto selection converges claude, hermes AND pi, and never touches a seeded ~/.agents/skills fixture', () => {
     present(fixture.claudeDir);
     present(fixture.hermesHome);
+    present(join(fixture.piHome, 'agent', 'extensions'));
     writeFile(join(fixture.agentsSkillsDir, 'alpha', 'SKILL.md'), '# seeded, pre-existing\n');
 
     const report = run({ selection: 'auto' });
 
-    expect(report.agents.map((agent) => agent.agent).sort()).toEqual(['claude', 'hermes']);
+    expect(report.agents.map((agent) => agent.agent).sort()).toEqual(['claude', 'hermes', 'pi']);
     expect(skillAction(agentReport(report, 'claude'), 'alpha')).toBe('created');
     expect(extraAction(agentReport(report, 'hermes'), 'symlink')).toBe('created');
+    expect(extraAction(agentReport(report, 'pi'), 'symlink')).toBe('created');
     // R2/A1: the seeded ~/.agents/skills fixture is byte-identical — no codex
     // arm exists to have written or removed anything there.
     expect(readFileSync(join(fixture.agentsSkillsDir, 'alpha', 'SKILL.md'), 'utf8')).toBe('# seeded, pre-existing\n');
@@ -2481,6 +2517,7 @@ describe('resolveGenieSource', () => {
     const report = run();
     expect(report.source.pluginRoot).toBe(fixture.pluginRoot);
     expect(report.source.pluginRoot).toContain(join('bin', 'plugins', 'genie'));
+    expect(report.source.piRoot).toContain(join('bin', 'plugins', 'pi-genie'));
     expect(skillAction(agentReport(report, 'claude'), 'alpha')).toBe('created');
   });
 
@@ -3812,6 +3849,234 @@ describe('shared lifecycle lease', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Lifecycle-lease busy grace: the same-host dead-holder early steal and the
+// bounded wait that replaced the ten-minute staleness hang. Every lock forged
+// here has a FRESH mtime — that is the whole point: before this change a
+// lifecycle command that crashed one second ago blocked every subsequent
+// update/install/setup/uninstall for LOCK_STALE_MS.
+// ---------------------------------------------------------------------------
+
+describe('lifecycle lease same-host dead-holder steal', () => {
+  const HOST = currentSyncLockHostId();
+  const TOKEN = 'abcdef0123456789abcdef0123456789';
+  /** Above every plausible live pid on Linux/macOS, so `kill -0` reports ESRCH. */
+  const DEAD_PID = 2147483647;
+  const STALE_MS = 10 * 60 * 1000;
+
+  /** Write a hand-built owner record at the lifecycle lock path with a fresh mtime. */
+  function forge(record: string): string {
+    const path = lifecycleLockPath(fixture.genieHome);
+    writeFile(path, record);
+    // Pin the premise: nothing below is reachable through the staleness rule.
+    expect(Date.now() - statSync(path).mtimeMs).toBeLessThan(STALE_MS);
+    return path;
+  }
+
+  /**
+   * The process-start identity THIS process stamps into its own lock records,
+   * read back from a real acquisition at an unrelated path. `unknown` means the
+   * platform could not resolve one, in which case PID reuse is unprovable.
+   */
+  function selfLockIdentity(): string {
+    const probeHome = join(fixture.root, 'identity-probe', 'genie');
+    mkdirSync(dirname(probeHome), { recursive: true });
+    const lease = acquireLifecycleLease(probeHome);
+    if ('skipped' in lease) throw new Error(lease.skipped);
+    const record = readFileSync(lifecycleLockPath(probeHome), 'utf8').trim();
+    lease.release();
+    return record.split(':')[2] as string;
+  }
+
+  function expectRefused(result: ReturnType<typeof acquireLifecycleLease>, path: string): LifecycleLeaseSkip {
+    if (!('skipped' in result)) {
+      result.release();
+      throw new Error('lease was acquired but the holder must never have been displaced');
+    }
+    expect(result.skipped).toContain(`holds the lock at ${path}`);
+    expect(result.cause).toBe('held');
+    return result;
+  }
+
+  test('a FRESH same-host lock whose owner is provably dead is stolen on the first attempt', () => {
+    // Identity is irrelevant to a death proof: the shell installer's
+    // `unknown` form and a full 64-hex identity are both stolen.
+    for (const identity of ['unknown', 'a'.repeat(64)]) {
+      const path = forge(`${DEAD_PID}:${TOKEN}:${identity}:${HOST}\n`);
+      const lease = acquireLifecycleLease(fixture.genieHome);
+      if ('skipped' in lease) throw new Error(`fresh dead holder was not stolen: ${lease.skipped}`);
+      // The lock now carries OUR record, and no steal guard was left behind.
+      expect(readFileSync(path, 'utf8').startsWith(`${process.pid}:`)).toBe(true);
+      expect(existsSync(`${path}.steal`)).toBe(false);
+      lease.release();
+      expect(existsSync(path)).toBe(false);
+    }
+  });
+
+  test('a FRESH same-host lock whose live pid no longer matches its start identity is stolen (pid reuse)', () => {
+    const self = selfLockIdentity();
+    const mismatched = self === 'b'.repeat(64) ? 'c'.repeat(64) : 'b'.repeat(64);
+    const path = forge(`${process.pid}:${TOKEN}:${mismatched}:${HOST}\n`);
+
+    const lease = acquireLifecycleLease(fixture.genieHome);
+
+    if ('skipped' in lease) {
+      // Only legitimate on a platform that cannot resolve a start identity at
+      // all: PID reuse is then unprovable and the record must be kept.
+      expect(self).toBe('unknown');
+      expectRefused(lease, path);
+      return;
+    }
+    expect(self).not.toBe('unknown');
+    expect(readFileSync(path, 'utf8').startsWith(`${process.pid}:`)).toBe(true);
+    lease.release();
+  });
+
+  test('a FRESH same-host lock held by this very live process is never stolen', () => {
+    const record = `${process.pid}:${TOKEN}:${selfLockIdentity()}:${HOST}\n`;
+    const path = forge(record);
+
+    const refusal = expectRefused(acquireLifecycleLease(fixture.genieHome), path);
+
+    // The wording an operator actually reads: actionable, and no longer the
+    // agent-sync report's reassurance (false for an unrelated lifecycle holder).
+    expect(refusal.skipped).toContain('retry shortly, or remove the file if its owner has crashed');
+    expect(refusal.skipped).not.toContain('the holder converges the same targets');
+    expect(readFileSync(path, 'utf8')).toBe(record); // untouched
+  });
+
+  test('a FRESH cross-host record with a locally-dead pid is never stolen', () => {
+    const record = `${DEAD_PID}:${TOKEN}:unknown:${'f'.repeat(64)}\n`;
+    const path = forge(record);
+
+    expectRefused(acquireLifecycleLease(fixture.genieHome), path);
+
+    expect(readFileSync(path, 'utf8')).toBe(record); // a peer host's lock is not ours
+  });
+
+  test('a FRESH unparsable or empty record yields no death proof and is never stolen', () => {
+    for (const record of ['', 'not-a-lock-record\n', `${DEAD_PID}:garbage:${HOST}\n`]) {
+      const path = forge(record);
+      expectRefused(acquireLifecycleLease(fixture.genieHome), path);
+      expect(readFileSync(path, 'utf8')).toBe(record);
+      rmSync(path, { force: true });
+    }
+  });
+
+  /**
+   * Drive the exact interleaving the under-guard re-verification exists to
+   * close: the observed record is replaced AFTER the caller proved it dead but
+   * BEFORE the `.steal` guard is taken. Made deterministic by hooking the death
+   * probe itself — `kill -0` on the observed pid is the last thing the acquirer
+   * does with that record before it reaches the guard.
+   */
+  function acquireWithRecordReplacedUnderUs(path: string, replacement: string): LifecycleLeaseSkip {
+    const realKill = process.kill.bind(process);
+    let publishedUnderUs = false;
+    process.kill = ((pid: number, signal?: string | number) => {
+      if (!publishedUnderUs) {
+        publishedUnderUs = true;
+        writeFileSync(path, replacement);
+      }
+      return realKill(pid, signal as never);
+    }) as typeof process.kill;
+    try {
+      const refusal = expectRefused(acquireLifecycleLease(fixture.genieHome), path);
+      expect(publishedUnderUs).toBe(true);
+      return refusal;
+    } finally {
+      process.kill = realKill;
+    }
+  }
+
+  test('a dead record replaced before the guarded steal survives byte-for-byte, live or dead', () => {
+    const deadRecord = `${DEAD_PID}:${TOKEN}:unknown:${HOST}\n`;
+    const replacements = [
+      // A new LIVE owner published under us.
+      `${process.pid}:${TOKEN}:${selfLockIdentity()}:${HOST}\n`,
+      // A DIFFERENT same-host dead owner: only the byte-identical record
+      // re-read can refuse this one — a liveness re-probe alone would clear it.
+      `${DEAD_PID - 1}:${TOKEN}:unknown:${HOST}\n`,
+    ];
+
+    for (const replacement of replacements) {
+      const path = forge(deadRecord);
+
+      acquireWithRecordReplacedUnderUs(path, replacement);
+
+      expect(readFileSync(path, 'utf8')).toBe(replacement); // the new record survives intact
+      expect(existsSync(`${path}.steal`)).toBe(false); // the guard was released
+      rmSync(path, { force: true });
+    }
+  });
+});
+
+describe('acquireLifecycleLeaseWithWait', () => {
+  const fakeLease = () => ({ path: '/fixture/lifecycle.lock', release: () => undefined });
+
+  test('a refusal that cannot clear on its own makes exactly one attempt and never sleeps', () => {
+    // `borrow-mismatch` and `io` are permanent for this invocation; a
+    // cause-less skip (hand-built fixtures, pre-existing callers) is treated as
+    // non-retryable so nobody silently inherits a wait they never asked for.
+    for (const cause of ['borrow-mismatch', 'io', undefined] as const) {
+      let attempts = 0;
+      const startedAt = Date.now();
+      const result = acquireLifecycleLeaseWithWait(() => {
+        attempts += 1;
+        return { skipped: 'permanent refusal', cause };
+      }, 5_000);
+
+      expect(attempts).toBe(1);
+      expect(Date.now() - startedAt).toBeLessThan(200);
+      expect('skipped' in result && result.skipped).toBe('permanent refusal');
+    }
+  });
+
+  test('GENIE_LIFECYCLE_LEASE_WAIT_MS=0 restores the historical single-attempt fail-fast', () => {
+    const prior = process.env.GENIE_LIFECYCLE_LEASE_WAIT_MS;
+    process.env.GENIE_LIFECYCLE_LEASE_WAIT_MS = '0';
+    try {
+      let attempts = 0;
+      const result = acquireLifecycleLeaseWithWait(() => {
+        attempts += 1;
+        return { skipped: 'held', cause: 'held' };
+      });
+
+      expect(attempts).toBe(1);
+      expect('skipped' in result).toBe(true);
+    } finally {
+      if (prior === undefined) Reflect.deleteProperty(process.env, 'GENIE_LIFECYCLE_LEASE_WAIT_MS');
+      else process.env.GENIE_LIFECYCLE_LEASE_WAIT_MS = prior;
+    }
+  });
+
+  test('a held or contended holder is polled until the deadline, then the skip is returned', () => {
+    for (const cause of ['held', 'contended'] as const) {
+      let attempts = 0;
+      const startedAt = Date.now();
+      const result = acquireLifecycleLeaseWithWait(() => {
+        attempts += 1;
+        return { skipped: 'still busy', cause };
+      }, 120);
+
+      expect(attempts).toBeGreaterThan(1);
+      expect(Date.now() - startedAt).toBeGreaterThanOrEqual(120);
+      expect('skipped' in result && result.skipped).toBe('still busy');
+    }
+  });
+
+  test('a holder that releases mid-wait yields the lease instead of a refusal', () => {
+    let attempts = 0;
+    const result = acquireLifecycleLeaseWithWait(() => {
+      attempts += 1;
+      return attempts < 3 ? { skipped: 'held', cause: 'held' as const } : fakeLease();
+    }, 5_000);
+
+    expect(attempts).toBe(3);
+    expect('skipped' in result).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Codex role-agent TOML refresh wiring (update.ts runAgentSyncSafe). Lives
 // here rather than __tests__/update.test.ts only because that file is owned by
 // a concurrent lane — the integrator may relocate this block verbatim.
@@ -3820,7 +4085,7 @@ describe('shared lifecycle lease', () => {
 describe('runAgentSyncSafe codex role-agent refresh wiring', () => {
   function fakeReport(overrides: Partial<AgentSyncReport> = {}, codexDetected = true): AgentSyncReport {
     return {
-      source: { pluginRoot: '/home/.genie/plugins/genie', hermesRoot: null, version: '5.0.0' },
+      source: { pluginRoot: '/home/.genie/plugins/genie', hermesRoot: null, piRoot: null, version: '5.0.0' },
       agents: [
         { agent: 'claude', detected: true, skills: [], extras: [], advisories: [] },
         { agent: 'codex', detected: codexDetected, skills: [], extras: [], advisories: [] },

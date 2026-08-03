@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Install the Genie pi plugin as $PI_HOME/agent/extensions/genie.
+# Install the Genie pi plugin as $PI_CODING_AGENT_DIR/extensions/genie
+# (or $PI_HOME/agent/extensions/genie via the legacy genie alias).
 #
 # Default mode symlinks the repo checkout (edits are live — tight dev loop);
 # --copy makes a detached, release-style copy instead. A previous install (a
@@ -11,13 +12,13 @@ usage() {
   cat <<'EOF'
 Usage: install-local.sh [--copy] [--force]
 
-Installs plugins/pi-genie as $PI_HOME/agent/extensions/genie.
+Installs plugins/pi-genie into the pi extensions dir:
+  $PI_CODING_AGENT_DIR/extensions   (pi's real relocation override)
+  $PI_HOME/agent/extensions         (legacy genie alias; PI_HOME defaults to $HOME/.pi)
 
   (default)  symlink the repo checkout — edits are live
   --copy     copy the plugin files — detached, release-style install
   --force    replace a standalone ~/.pi/agent/extensions/genie.ts file
-
-PI_HOME defaults to $HOME/.pi (pi's agent dir is $PI_HOME/agent).
 EOF
 }
 
@@ -43,8 +44,19 @@ done
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 plugin_src="$(cd "$script_dir/.." && pwd)"
 
-pi_home="${PI_HOME:-$HOME/.pi}"
-extensions_dir="$pi_home/agent/extensions"
+# Resolve the pi agent dir the same way pi does: $PI_CODING_AGENT_DIR (real
+# relocation override, tilde-expanded) or $PI_HOME/agent (legacy alias).
+if [ -n "${PI_CODING_AGENT_DIR:-}" ]; then
+  agent_dir="$PI_CODING_AGENT_DIR"
+  case "$agent_dir" in
+    "~") agent_dir="$HOME" ;;
+    "~/"*) agent_dir="$HOME/${agent_dir#\~/}" ;;
+  esac
+else
+  pi_home="${PI_HOME:-$HOME/.pi}"
+  agent_dir="$pi_home/agent"
+fi
+extensions_dir="$agent_dir/extensions"
 target="$extensions_dir/genie"
 stale_file="$extensions_dir/genie.ts"
 
