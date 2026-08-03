@@ -63,14 +63,14 @@
 
 ## Success Criteria
 
-- [ ] Reproduction of the incident state (lock record whose host matches this host, `lockOwnerIsLive(owner) === false` — e.g. dead pid — and mtime < 10 min old): `genie update` steals the lock and proceeds normally.
-- [ ] With the lease held by a **live** process past the wait deadline: `genie update` exits code 2 with a single human-readable stderr line naming the lock path — no stack trace, no minified frames, no "the holder converges the same targets".
-- [ ] With the lease held and released within the wait window: `genie update` proceeds without any busy message.
-- [ ] `genie update --sync-only` (and the other `acquireRequiredLifecycleLease` modes) present the same graceful busy behavior — no raw throw.
-- [ ] Direct `genie install` and `genie uninstall` busy paths behave the same way, and **neither emits a `codex-lifecycle-busy` or action-required machine trailer for an agent-sync holder** (`tests/integration/install-exit2-propagation.test.ts` semantics preserved).
-- [ ] `GENIE_LIFECYCLE_LEASE_WAIT_MS=0` restores single-attempt fail-fast; a borrow-mismatch fails immediately at any wait setting.
-- [ ] Agent-sync's own lock-held skip report is unchanged (`bun test src/lib/agent-sync.test.ts` passes with report-wording tests untouched).
-- [ ] `bun run check` passes.
+- [x] Reproduction of the incident state (lock record whose host matches this host, `lockOwnerIsLive(owner) === false` — e.g. dead pid — and mtime < 10 min old): `genie update` steals the lock and proceeds normally. _(Evidenced at the lock layer by the fresh-dead steal tests + command harness; final gate confirmed updateCommand's default acquirer flows through `acquireFileLock`.)_
+- [x] With the lease held by a **live** process past the wait deadline: `genie update` exits code 2 with a single human-readable line naming the lock path — no stack trace, no minified frames, no "the holder converges the same targets". _(Pinned by new update busy-path tests.)_
+- [x] With the lease held and released within the wait window: `genie update` proceeds without any busy message. _(Pinned by the mid-wait-release test, which asserts progress past the busy branch.)_
+- [x] `genie update --sync-only` (and the other `acquireRequiredLifecycleLease` modes) present the same graceful busy behavior — no raw throw. _(Pinned by the spawned isolated-GENIE_HOME subprocess test.)_
+- [x] Direct `genie install` and `genie uninstall` busy paths behave the same way, and **neither emits a `codex-lifecycle-busy` or action-required machine trailer for an agent-sync holder** (`tests/integration/install-exit2-propagation.test.ts` semantics preserved — 10/10 unmodified). _(Pinned by new install/uninstall busy tests with the load-bearing `schemaVersion` negative assertion.)_
+- [x] `GENIE_LIFECYCLE_LEASE_WAIT_MS=0` restores single-attempt fail-fast; a borrow-mismatch fails immediately at any wait setting. _(Pinned by wait-loop unit tests.)_
+- [x] Agent-sync's own lock-held skip report is unchanged (`bun test src/lib/agent-sync.test.ts` passes with report-wording tests untouched — zero existing tests modified across the PR).
+- [x] `bun run check` passes. _(All non-test gates pass locally; the 14 local bun-test failures reproduce byte-identically at pristine HEAD (env-conditioned). PR CI fully green: Unit, Quality Gate, E2E v5 lifecycle, Codex plugin smoke, all 4 platform builds.)_
 
 ## Execution Strategy
 
@@ -156,6 +156,7 @@ bun run check
 | Start-identity false "dead" verdict for a live but unreadable process | Low | Reuse the existing `lockHasLiveOwner` probe semantics (already trusted for stale-window stealing); when liveness is unprovable, do not steal. |
 | Waiting delays the borrowed-lease child handoff | Low | Borrow path returns before any file lock is touched (`agent-sync.ts:6141-6155`) and `cause: 'borrow-mismatch'` is never retried — pinned by Group 1 AC. |
 | Install/uninstall projection conventions are Codex-flavored and machine-parsed | Medium | Decision 3 forbids reusing Codex trailers for agent-sync holders; integration test pins `install.sh` classification behavior. |
+| Dead parent, live borrowed-lease child (final-gate residual): if the update parent is SIGKILLed mid-converge, the on-disk record names the dead parent and a third lifecycle command death-steals immediately, where staleness previously shielded ~10 min | Low | Window is seconds and requires killing exactly the parent; the agent mutation lock and Codex lifecycle lease record the child's own live pid and still refuse contention. Accepted at final gate (MINOR, doc-only). |
 
 ---
 
@@ -222,6 +223,18 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - Reviewer independently reproduced three of the engineer's five negative controls in a scratch worktree (early-steal disabled → 3 steal tests fail; record re-read dropped → race test fails; update raw throws restored → 2 update tests fail).
 - Spawned `--sync-only` test's env isolation confirmed complete (replaced env, tmpdir HOME/GENIE_HOME, no borrow vars; lock path assertion proves the child used the isolated home). The `schemaVersion` negative assertion is load-bearing: every machine trailer flows through `serializeActivationResultTrailer`, which always emits it.
 - Gates: typecheck clean; focused four-file run 626 pass / 4 fail with all four matching the HEAD baseline by name; lint 3 pre-existing warnings; complexity budget intact; knip clean (new exports consumed); `install-exit2-propagation` unmodified 10/10.
+
+### Final gate — PR #2745 — 2026-08-02 (reviewer: genie:final-gate, aggregate risk after all ordinary reviews)
+
+**Verdict: SHIP** — no BLOCKER/MAJOR; one MINOR (doc-only) and three INFO notes.
+
+- Q1 cross-implementation protocol safety: TS death-steal and shell stale-steal cannot double-fire — shell locks are host-less 3-field records that `sameHostDeadOwnerRecord` refuses; both stealers serialize on the same `.steal` guard (TS O_EXCL, shell `ln`); byte-identical record re-verification refuses any replacement; Bun spawns (not forks) so the reentrant lease map never diverges from disk.
+- Q2 non-interactive contexts: exactly four `acquireLifecycleLeaseWithWait` call sites (grep-verified); setup/hooks/MCP/runtime-integrations/install-promote keep fail-fast; both programmatic invocation paths (install.sh, converge child) ride the borrow short-circuit which returns before any file lock; no retained hook dispatches these commands.
+- Q3 old/new binary concurrency during self-update: death proof requires a dead pid, so a live old-binary holder is never stolen in either direction; `processStartIdentity` format untouched and stable since 2026-07-14, so no false pid-reuse verdicts across coexisting versions (≥ 5.260711.6).
+- Q4 success criteria: all eight evidenced (criteria ticked above); reviewer independently re-ran agent-sync tests on branch vs detached `dev` worktree — same 4 pre-existing failure names, all 10 new agent-sync tests green; PR CI fully green closes criterion 8.
+- Q5 scope: PR diff is exactly the 10 expected files; roadmap.json delta is only the two wish task cards; no strays.
+- MINOR-1 (accepted, doc-only): dead-parent/live-borrowed-child residual window — recorded in the Assumptions/Risks table above.
+- INFO-2 (recorded): a converge-child lease refusal exits 2, which the parent maps to 'action-required' without install.sh's trailer disambiguation — unreachable in practice since both steal grounds now require a dead pid and the parent is alive by definition.
 
 **Orchestrator validation (Group 2 gate = repo full `bun run check`):** all non-test steps pass (typecheck, biome, knip, skills/wishes lint, complexity budget, council-workflow, hook-bundles, hook-content, plugin-executables). Full `bun test`: 2977 pass / 14 fail; the orchestrator independently re-ran the seven failing files in a pristine detached worktree at HEAD `e0d37b8f1` — the 14 failure names reproduce **byte-for-byte identically**, all pre-existing env-conditioned failures on this host. Zero regressions from this wish. Both tasks (`t_mscebl889535b59e`, `t_mscebla86e45ab77`) marked done.
 
