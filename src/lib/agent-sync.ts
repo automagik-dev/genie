@@ -54,7 +54,13 @@ import {
 import { homedir, hostname } from 'node:os';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import historicalCodexFallbackAllowlist from '../fixtures/codex-fallback-allowlist.json';
-import { resolveClaudeDir, resolveCodexDir, resolveGenieHome, resolveHermesHome } from './genie-home.js';
+import {
+  resolveClaudeDir,
+  resolveCodexDir,
+  resolveGenieHome,
+  resolveHermesHome,
+  resolvePiExtensionsDir,
+} from './genie-home.js';
 import { HermesConfigError, mergeMcpServersGenie } from './hermes-mcp-config.js';
 import { mergeSkillsExternalDir } from './hermes-skills-config.js';
 
@@ -178,12 +184,17 @@ export interface AgentSyncOptions {
    * is the shared `~/.agents/skills` tier codex skills are synced INTO;
    * `codex` (`~/.codex`) stays the detection root + legacy-lane parent.
    */
-  targets?: { claude?: string; codex?: string; hermes?: string; agentsSkills?: string };
+  targets?: { claude?: string; codex?: string; hermes?: string; pi?: string; agentsSkills?: string };
   /**
    * Hermes binary override for enable-exec detection. A non-null string forces
    * "detected"; `null` explicitly skips exec; `undefined` probes PATH.
    */
   hermesBinary?: string | null;
+  /**
+   * Pi binary override for extension-dir detection. A non-null string forces
+   * "detected"; `null` explicitly skips exec; `undefined` probes PATH.
+   */
+  piBinary?: string | null;
   /** Injectable exec seam for `hermes plugins enable genie` (default execFileSync). */
   execHermesEnable?: (args: string[]) => void;
   /** Structured log sink (no console in src). */
@@ -303,7 +314,7 @@ export type SkillAction =
   | 'kept-modified-orphan';
 
 export interface AgentReport {
-  agent: 'claude' | 'codex' | 'hermes';
+  agent: 'claude' | 'codex' | 'hermes' | 'pi';
   detected: boolean;
   skills: Array<{ name: string; action: SkillAction; detail?: string }>;
   /** Non-skill outcomes: stamp / symlink / enable lines. */
@@ -327,6 +338,7 @@ export interface AgentSyncReport {
 export interface GenieSource {
   pluginRoot: string | null;
   hermesRoot: string | null;
+  piRoot: string | null;
   version: string | null;
 }
 
@@ -378,7 +390,9 @@ interface RunContext {
   hermesRoot: string | null;
   version: string | null;
   now: () => Date;
-  targets: { claude: string; codex: string; hermes: string; agentsSkills: string };
+  targets: { claude: string; codex: string; hermes: string; pi: string; agentsSkills: string };
+  /** Canonical pi plugin source (first existing of `plugins/pi-genie`, `bin/plugins/pi-genie`). */
+  piRoot: string | null;
   /** Copy `existingDir` into the run's backup root and return the backup path. */
   backupInto: (agent: string, name: string, existingDir: string) => string;
   /**
@@ -437,8 +451,9 @@ export function resolveGenieSource(genieHome: string): GenieSource {
     join(genieHome, 'plugins', 'hermes-genie'),
     join(genieHome, 'bin', 'plugins', 'hermes-genie'),
   ]);
+  const piRoot = firstExisting([join(genieHome, 'plugins', 'pi-genie'), join(genieHome, 'bin', 'plugins', 'pi-genie')]);
   const version = readTrimmed(join(genieHome, 'VERSION')) || null;
-  return { pluginRoot, hermesRoot, version };
+  return { pluginRoot, hermesRoot, piRoot, version };
 }
 
 function firstExisting(paths: string[]): string | null {
@@ -3251,7 +3266,7 @@ export function removeManagedSkillTree(
   const ctx = createRunContext(
     genieHome,
     '',
-    { pluginRoot: null, hermesRoot: null, version: null },
+    { pluginRoot: null, hermesRoot: null, piRoot: null, version: null },
     {
       genieHome,
       renameManagedDir: options.renameManagedDir,
@@ -5722,7 +5737,14 @@ function syncHermes(ctx: RunContext, opts: AgentSyncOptions, report: AgentReport
     return;
   }
   const hermesRoot = ctx.hermesRoot;
-  const mainAction = ensureHermesLink(ctx, join(hermesHome, 'plugins', 'genie'), hermesRoot, 'plugins-genie', report);
+  const mainAction = ensurePluginLink(
+    ctx,
+    join(hermesHome, 'plugins', 'genie'),
+    hermesRoot,
+    'hermes',
+    'plugins-genie',
+    report,
+  );
   ensureStickyProfileLink(ctx, hermesHome, hermesRoot, report);
   // A freshly linked main plugin — created OR adopted from a real dir — is newly
   // enabled; fire enable exactly once. Never gated on the sticky-profile link.
@@ -5817,36 +5839,42 @@ function convergeHermesLeg(
  *   other symlink  → leave it (dev checkout) + advise,
  *   real dir/file  → back up, then replace with the symlink.
  */
-function ensureHermesLink(
+function ensurePluginLink(
   ctx: RunContext,
   linkPath: string,
-  hermesRoot: string,
+  sourceRoot: string,
+  agent: 'hermes' | 'pi',
   backupName: string,
   report: AgentReport,
 ): LinkAction {
   mkdirSync(dirname(linkPath), { recursive: true });
   const stat = lstatSafe(linkPath);
   if (stat === null) {
-    symlinkSync(hermesRoot, linkPath);
-    report.extras.push({ kind: 'symlink', action: 'created', detail: `${linkPath} -> ${hermesRoot}` });
+    symlinkSync(sourceRoot, linkPath);
+    report.extras.push({ kind: 'symlink', action: 'created', detail: `${linkPath} -> ${sourceRoot}` });
     return 'created';
   }
-  if (stat.isSymbolicLink()) return reconcileExistingSymlink(linkPath, hermesRoot, report);
-  const backup = ctx.backupInto('hermes', backupName, linkPath);
+  if (stat.isSymbolicLink()) return reconcileExistingSymlink(linkPath, sourceRoot, agent, report);
+  const backup = ctx.backupInto(agent, backupName, linkPath);
   rmSync(linkPath, { recursive: true, force: true });
-  symlinkSync(hermesRoot, linkPath);
+  symlinkSync(sourceRoot, linkPath);
   report.extras.push({ kind: 'symlink', action: 'adopted', detail: `real dir backed up to ${backup}` });
   return 'adopted';
 }
 
-function reconcileExistingSymlink(linkPath: string, hermesRoot: string, report: AgentReport): LinkAction {
+function reconcileExistingSymlink(
+  linkPath: string,
+  sourceRoot: string,
+  agent: string,
+  report: AgentReport,
+): LinkAction {
   const current = readlinkSync(linkPath);
-  if (resolve(dirname(linkPath), current) === resolve(hermesRoot)) {
+  if (resolve(dirname(linkPath), current) === resolve(sourceRoot)) {
     report.extras.push({ kind: 'symlink', action: 'unchanged', detail: linkPath });
     return 'unchanged';
   }
   report.extras.push({ kind: 'symlink', action: 'skipped-unmanaged-kept', detail: current });
-  report.advisories.push(`hermes link ${linkPath} points elsewhere (${current}); left as-is`);
+  report.advisories.push(`${agent} link ${linkPath} points elsewhere (${current}); left as-is`);
   return 'skipped-unmanaged-kept';
 }
 
@@ -5867,7 +5895,7 @@ function ensureStickyProfileLink(ctx: RunContext, hermesHome: string, hermesRoot
     return;
   }
   const linkPath = join(profileRoot, 'plugins', 'genie');
-  ensureHermesLink(ctx, linkPath, hermesRoot, `profiles-${active}-plugins-genie`, report);
+  ensurePluginLink(ctx, linkPath, hermesRoot, 'hermes', `profiles-${active}-plugins-genie`, report);
 }
 
 function runHermesEnable(opts: AgentSyncOptions, binary: string, report: AgentReport): void {
@@ -5893,6 +5921,38 @@ function detectHermesBinary(opts: AgentSyncOptions): string | null {
   if (typeof Bun !== 'undefined') return Bun.which('hermes');
   try {
     const found = execFileSync('which', ['hermes'], { encoding: 'utf8' }).trim();
+    return found === '' ? null : found;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The pi lane: converge `~/.pi/agent/extensions/genie` (pi's global extension
+ * discovery dir) onto the shipped `plugins/pi-genie` source. pi has no plugin
+ * enable command — the extension auto-loads from the linked dir on next pi
+ * start — so the lane is link-only, mirroring the hermes link leg without the
+ * enable/config legs. Detection: pi home present OR `pi` CLI on PATH; a link
+ * is created only when the `pi-genie` source ships next to `plugins/genie`.
+ */
+function syncPi(ctx: RunContext, opts: AgentSyncOptions, report: AgentReport): void {
+  const extensionsDir = ctx.targets.pi;
+  const binary = detectPiBinary(opts);
+  if (!existsSync(extensionsDir) && binary === null) return;
+  report.detected = true;
+  if (ctx.piRoot === null) {
+    report.advisories.push('pi source (pi-genie) not found next to plugins/genie; skipping link');
+    return;
+  }
+  const linkPath = join(extensionsDir, 'genie');
+  ensurePluginLink(ctx, linkPath, ctx.piRoot, 'pi', 'extensions-genie', report);
+}
+
+function detectPiBinary(opts: AgentSyncOptions): string | null {
+  if (opts.piBinary !== undefined) return opts.piBinary;
+  if (typeof Bun !== 'undefined') return Bun.which('pi');
+  try {
+    const found = execFileSync('which', ['pi'], { encoding: 'utf8' }).trim();
     return found === '' ? null : found;
   } catch {
     return null;
@@ -6969,6 +7029,7 @@ export function runAgentSync(opts: AgentSyncOptions = {}): AgentSyncReport {
     }
     if (selection === 'auto' || selection === 'all') {
       agents.push(runAgentSafe('hermes', (report) => syncHermes(ctx, opts, report)));
+      agents.push(runAgentSafe('pi', (report) => syncPi(ctx, opts, report)));
     }
     return { source, agents, backupsDir: ctx.backupsDirIfCreated() };
   } finally {
@@ -6987,6 +7048,7 @@ function createRunContext(
     claude: opts.targets?.claude ?? resolveClaudeDir(),
     codex: opts.targets?.codex ?? resolveCodexDir(),
     hermes: opts.targets?.hermes ?? resolveHermesHome(),
+    pi: opts.targets?.pi ?? resolvePiExtensionsDir(),
     agentsSkills: opts.targets?.agentsSkills ?? resolveAgentsSkillsDir(),
   };
   const stamp = now().toISOString().replace(/[:.]/g, '-');
@@ -7018,6 +7080,7 @@ function createRunContext(
     genieHome,
     pluginRoot,
     hermesRoot: source.hermesRoot,
+    piRoot: source.piRoot,
     version: source.version,
     now,
     targets,

@@ -36,3 +36,13 @@ export function resolveCodexDir(env: NodeJS.ProcessEnv = process.env, home = hom
 export function resolveHermesHome(): string {
   return process.env.HERMES_HOME || join(homedir(), '.hermes');
 }
+
+/** Pi agent config root — `$PI_HOME` or `~/.pi`. */
+export function resolvePiHome(): string {
+  return process.env.PI_HOME || join(homedir(), '.pi');
+}
+
+/** Pi extension discovery dir — `<piHome>/agent/extensions`. */
+export function resolvePiExtensionsDir(home: string = resolvePiHome()): string {
+  return join(home, 'agent', 'extensions');
+}

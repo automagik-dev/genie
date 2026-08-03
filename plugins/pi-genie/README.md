@@ -11,6 +11,21 @@ loader with zero npm installs.
 
 ## Install
 
+From the release that ships `plugins/pi-genie` in the payload, genie installs
+the pi extension **automatically**:
+
+- `install.sh` extracts the payload into `$GENIE_HOME/plugins/pi-genie` (via the
+  finishing `genie install` aux-layout normalization), and
+- the agent-sync **`pi` lane** — run by `genie install` and every `genie update`
+  — symlinks `~/.pi/agent/extensions/genie` → `$GENIE_HOME/plugins/pi-genie`
+  whenever pi is detected (pi CLI on PATH or `~/.pi/agent` present).
+
+`genie doctor` reports the link as `agent sync: pi`. No manual step needed on
+fresh installs or updates.
+
+For a dev checkout (edits are live) or a detached, release-style copy, the
+local installer remains available:
+
 ```bash
 # default: symlink ~/.pi/agent/extensions/genie -> this checkout (edits are live)
 plugins/pi-genie/scripts/install-local.sh
