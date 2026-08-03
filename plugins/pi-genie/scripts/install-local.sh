@@ -46,14 +46,22 @@ plugin_src="$(cd "$script_dir/.." && pwd)"
 
 # Resolve the pi agent dir the same way pi does: $PI_CODING_AGENT_DIR (real
 # relocation override, tilde-expanded) or $PI_HOME/agent (legacy alias).
-if [ -n "${PI_CODING_AGENT_DIR:-}" ]; then
+# An empty or whitespace-only override is treated as unset: it would otherwise
+# resolve to a cwd-relative "extensions" path and mutate the wrong directory.
+pi_agent_dir_trimmed="$(printf '%s' "${PI_CODING_AGENT_DIR:-}" | tr -d '[:space:]')"
+pi_home_trimmed="$(printf '%s' "${PI_HOME:-}" | tr -d '[:space:]')"
+if [ -n "$pi_agent_dir_trimmed" ]; then
   agent_dir="$PI_CODING_AGENT_DIR"
   case "$agent_dir" in
     "~") agent_dir="$HOME" ;;
     "~/"*) agent_dir="$HOME/${agent_dir#\~/}" ;;
   esac
 else
-  pi_home="${PI_HOME:-$HOME/.pi}"
+  if [ -n "$pi_home_trimmed" ]; then
+    pi_home="$PI_HOME"
+  else
+    pi_home="$HOME/.pi"
+  fi
   agent_dir="$pi_home/agent"
 fi
 extensions_dir="$agent_dir/extensions"
