@@ -972,6 +972,9 @@ describe('Group E release and documentation contracts', () => {
     expect(review).toContain('a HIGH gap');
     for (const lifecycleSkill of [review, fix, work]) expect(lifecycleSkill).toContain('`overdesigned-plan`');
     expect(fix).toContain('up to 2 loops');
+    expect(fix).toContain('higher-priority user or workspace instruction');
+    expect(review).toContain('resolved fix-loop budget');
+    expect(work).toContain('resolved fix-loop budget');
     expect(work).toContain('A user-approved simplification invalidates the superseded plan/review evidence');
   });
 
