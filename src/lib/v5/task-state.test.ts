@@ -610,6 +610,26 @@ describe('stage_log → task_events one-time backfill (idempotent)', () => {
     ensureSchema(db);
     expect(getTaskEvents(db, a.id).length).toBe(count);
   });
+
+  test('importing a legacy snapshot (stage_log, no task_events) is mirrored into the timeline on the next open', () => {
+    const a = createTask(db, { title: 'a' });
+    appendStage(db, a.id, 'planned', 'kickoff');
+    const legacy = { ...exportState(db), task_events: [] };
+
+    const path = join(dir, 'legacy-import.db');
+    const fresh = openDb({ path });
+    const summary = importState(fresh, legacy);
+    fresh.close();
+    expect(summary.events).toBe(0);
+
+    // The import clears the backfill marker, so the production open path
+    // (schemaIsCurrent lockstep) re-runs the one-time migration.
+    const reopened = openDb({ path });
+    const events = getTaskEvents(reopened, a.id);
+    reopened.close();
+    expect(events.map((e) => e.kind)).toEqual(['comment']);
+    expect(events[0]?.note).toBe('planned: kickoff');
+  });
 });
 
 describe('hire roster (single-row upsert / delete)', () => {

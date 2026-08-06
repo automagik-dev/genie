@@ -13,6 +13,7 @@
 
 import type { Database } from 'bun:sqlite';
 import { createHash, randomBytes } from 'node:crypto';
+import { STAGE_LOG_BACKFILL_KEY } from './genie-db.js';
 
 // ============================================================================
 // Type boundaries
@@ -1632,6 +1633,16 @@ export function importState(db: Database, snapshot: unknown, opts: ImportOptions
     }
     if (opts.replace) wipeAllTables(db, opts.preserveHireRoster ?? false);
     insertSnapshotRows(db, { ...state, hire_roster: hires });
+    // A legacy snapshot predates the task_events timeline: it carries
+    // stage_log history and no events. The fresh open already stamped the
+    // backfill marker, so the one-time migration would never mirror these
+    // rows; clear the guard (--replace already wiped it via wipeAllTables) so
+    // the next schema pass re-runs backfillStageLog and lands the imported
+    // history in the timeline. Stage rows whose events are already in the
+    // snapshot (task_events non-empty) are left alone — no duplication.
+    if (state.stage_log.length > 0 && state.task_events.length === 0) {
+      db.query('DELETE FROM meta WHERE key = ?').run(STAGE_LOG_BACKFILL_KEY);
+    }
   });
   try {
     apply();

@@ -474,6 +474,14 @@ function schemaIsCurrent(db: Database): boolean {
       if (!columns.has(column)) return false;
     }
   }
+  // The one-time stage_log → task_events backfill is part of ensureSchema, so a
+  // full-schema DB whose meta guard is missing (a pre-backfill DB, or a legacy
+  // snapshot imported onto a marker-stamped DB) is NOT current. Without this
+  // check the fast path would skip ensureSchema and the documented migration
+  // would silently never run — the lockstep failure the contract above warns
+  // about. One pure read; only markerless DBs pay the ensureSchema write lock,
+  // once, until the backfill re-stamps the marker.
+  if (!db.query('SELECT 1 FROM meta WHERE key = ?').get(STAGE_LOG_BACKFILL_KEY)) return false;
   return true;
 }
 
@@ -598,7 +606,7 @@ function ensureTaskColumns(db: Database): void {
 }
 
 /** Meta key marking the one-time stage_log → task_events backfill as complete. */
-const STAGE_LOG_BACKFILL_KEY = 'stage_log_backfill_v1';
+export const STAGE_LOG_BACKFILL_KEY = 'stage_log_backfill_v1';
 
 /** task_events kinds a legacy stage label maps to directly; anything else → comment. */
 const BACKFILLABLE_EVENT_KINDS = ['comment', 'move', 'claim', 'release', 'block', 'unblock', 'report'] as const;
