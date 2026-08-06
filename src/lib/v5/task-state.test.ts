@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ensureSchema, openDb } from './genie-db.js';
+import { reconciliationTombstoneMeta } from './reconciliation-tombstone.js';
 import {
   CheckoutConflictError,
   CycleError,
@@ -652,6 +653,38 @@ describe('hire roster (single-row upsert / delete)', () => {
     expect(getHire(db, 'w', 'a')).toBeNull();
     // Deleting an absent hire is a no-op returning false, never an error.
     expect(unhireAgent(db, 'w', 'a')).toBe(false);
+  });
+
+  test('unhire records a schema-neutral tombstone and explicit re-hire clears it', () => {
+    const schemaVersion = db.query('PRAGMA user_version').get() as { user_version: number };
+    const tableNames = (
+      db
+        .query("SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+        .all() as Array<{ name: string }>
+    ).map(({ name }) => name);
+    const tombstone = reconciliationTombstoneMeta({
+      table: 'hire_roster',
+      wish: 'w',
+      agentAdapterId: 'a',
+      deletedAt: 0,
+    });
+
+    expect(unhireAgent(db, 'w', 'a')).toBe(false);
+    const stored = db.query('SELECT value FROM meta WHERE key = ?').get(tombstone.key) as { value: string };
+    expect(stored.value).toMatch(/^[1-9][0-9]*$/);
+    expect(db.query('PRAGMA user_version').get()).toEqual(schemaVersion);
+    expect(
+      (
+        db
+          .query("SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+          .all() as Array<{ name: string }>
+      ).map(({ name }) => name),
+    ).toEqual(tableNames);
+
+    const rehired = hireAgent(db, { wish: 'w', agentAdapterId: 'a', worktree: '/wt/re-hired' });
+    expect(db.query('SELECT value FROM meta WHERE key = ?').get(tombstone.key)).toBeNull();
+    expect(getHire(db, 'w', 'a')?.worktree).toBe('/wt/re-hired');
+    expect(BigInt(rehired.hiredAt)).toBeGreaterThan(BigInt(stored.value));
   });
 
   test('listHires scopes by wish and orders stably', () => {

@@ -750,6 +750,16 @@ describe('Group E release and documentation contracts', () => {
     expect(archiveSmoke).toBeGreaterThan(extract);
   });
 
+  test('database reconciliation docs describe explicit live paths and both bounded lock layers', () => {
+    const readme = read('README.md').replace(/\s+/g, ' ');
+    expect(readme).toContain('An explicit path may name a database that active Genie processes also use.');
+    expect(readme).toContain('canonical-path advisory locks');
+    expect(readme).toContain('SQLite write locks');
+    expect(readme).toContain('bounds the combined wait for both lock layers');
+    expect(readme).toContain('repeating one is an actionable usage error');
+    expect(readme).not.toContain('It never discovers or connects a live shared database.');
+  });
+
   test('shipped Codex integration doc carries the exit matrix, trailer, lease, and candidate-channel contract', () => {
     const doc = read('plugins/genie/references/codex-integration-map.md');
     // Exit matrix (per-command 0/1/2) with the busy code.
@@ -818,9 +828,10 @@ describe('Group E release and documentation contracts', () => {
     ).toContain('legacy workspace-write grants are forbidden');
   });
 
-  test('README and contributor command inventories match the 14-command source surface', () => {
+  test('README and contributor command inventories match the 15-command source surface', () => {
     const expected = [
       'board',
+      'db',
       'doctor',
       'help',
       'hook',
@@ -837,8 +848,8 @@ describe('Group E release and documentation contracts', () => {
     ];
     const readme = read('README.md');
     const contributor = read('CLAUDE.md');
-    expect(readme).toContain('14 CLI commands');
-    expect(contributor).toContain('Fourteen top-level commands');
+    expect(readme).toContain('15 CLI commands');
+    expect(contributor).toContain('Fifteen top-level commands');
     const readmeCommands = [...readme.matchAll(/^\| `genie ([a-z-]+)/gm)].map((match) => match[1]).sort();
     const contributorCommands = [...contributor.matchAll(/^\| `([a-z-]+)/gm)].map((match) => match[1]).sort();
     expect(readmeCommands).toEqual(expected);
