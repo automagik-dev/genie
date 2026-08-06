@@ -145,18 +145,8 @@ function seed(cwd: string): { taskId: string } {
   return { taskId: t.id };
 }
 
-function sqliteContentHash(dbPath: string): string {
-  const hash = createHash('sha256');
-  for (const path of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
-    hash.update(path.slice(dbPath.length));
-    if (existsSync(path)) {
-      hash.update('present');
-      hash.update(readFileSync(path));
-    } else {
-      hash.update('absent');
-    }
-  }
-  return hash.digest('hex');
+function fileContentHash(path: string): string {
+  return createHash('sha256').update(readFileSync(path)).digest('hex');
 }
 
 // ============================================================================
@@ -240,58 +230,79 @@ describe('mcp tools/call', () => {
     mkdirSync(wishDir, { recursive: true });
     writeFileSync(join(wishDir, 'WISH.md'), '| **Status** | DONE |\n');
 
-    const db = openDb({ cwd: repo });
-    const roadmap = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
-    const task = createTask(db, {
-      title: 'divergent sync-owned card',
-      boardId: roadmap.id,
-      lane: 'Idea',
-      wish: 'mcp-read-only',
-    });
-    expect(getTaskLane(db, task.id)).toBe('Idea');
-    expect(getTaskEvents(db, task.id)).toHaveLength(0);
-    db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
-    db.close();
-
     const dbPath = resolveDbPath(repo);
     const sqlitePaths = [dbPath, `${dbPath}-wal`, `${dbPath}-shm`];
-    const beforeHash = sqliteContentHash(dbPath);
-    for (const path of sqlitePaths) {
-      if (existsSync(path)) {
+    const stateDir = dirname(dbPath);
+    const db = openDb({ cwd: repo });
+    const originalModes = new Map<string, number>();
+    const mutatedModes = new Set<string>();
+    const beforeHashes = new Map<string, string>();
+    const cleanupErrors: unknown[] = [];
+    let testError: unknown;
+
+    try {
+      const roadmap = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+      const task = createTask(db, {
+        title: 'divergent sync-owned card',
+        boardId: roadmap.id,
+        lane: 'Idea',
+        wish: 'mcp-read-only',
+      });
+      expect(getTaskLane(db, task.id)).toBe('Idea');
+      expect(getTaskEvents(db, task.id)).toHaveLength(0);
+
+      for (const path of sqlitePaths) {
+        expect(existsSync(path)).toBe(true);
+        beforeHashes.set(path, fileContentHash(path));
+        originalModes.set(path, statSync(path).mode & 0o777);
+        mutatedModes.add(path);
         chmodSync(path, 0o444);
         expect(statSync(path).mode & 0o777).toBe(0o444);
       }
-    }
-    const stateDir = dirname(dbPath);
-    chmodSync(stateDir, 0o555);
-    expect(statSync(stateDir).mode & 0o777).toBe(0o555);
+      originalModes.set(stateDir, statSync(stateDir).mode & 0o777);
+      mutatedModes.add(stateDir);
+      chmodSync(stateDir, 0o555);
+      expect(statSync(stateDir).mode & 0o777).toBe(0o555);
 
-    let responses: RpcResponse[] = [];
-    let afterHash = '';
-    try {
-      responses = await driveMcp(repo, [
+      const responses = await driveMcp(repo, [
         INIT,
         INITIALIZED,
         { jsonrpc: '2.0', id: 31, method: 'tools/call', params: { name: 'genie_board', arguments: {} } },
       ]);
-      afterHash = sqliteContentHash(dbPath);
-    } finally {
-      chmodSync(stateDir, 0o755);
+
+      const response = responses.find((entry) => entry.id === 31);
+      expect(response?.result?.isError).toBe(false);
+      const payload = toolPayload<{ tasks: Array<{ id: string; wish: string }> }>(response!);
+      expect(payload.tasks).toContainEqual(expect.objectContaining({ id: task.id, wish: 'mcp-read-only' }));
+      expect(getTaskLane(db, task.id)).toBe('Idea');
+      expect(getTaskEvents(db, task.id)).toHaveLength(0);
+
       for (const path of sqlitePaths) {
-        if (existsSync(path)) chmodSync(path, 0o644);
+        expect(existsSync(path)).toBe(true);
+        expect(fileContentHash(path)).toBe(beforeHashes.get(path)!);
+      }
+    } catch (error) {
+      testError = error;
+    } finally {
+      for (const path of [stateDir, ...sqlitePaths]) {
+        if (!mutatedModes.has(path)) continue;
+        try {
+          chmodSync(path, originalModes.get(path)!);
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+      }
+      try {
+        db.close();
+      } catch (error) {
+        cleanupErrors.push(error);
       }
     }
-
-    const response = responses.find((entry) => entry.id === 31);
-    expect(response?.result?.isError).toBe(false);
-    const payload = toolPayload<{ tasks: Array<{ id: string; wish: string }> }>(response!);
-    expect(payload.tasks).toContainEqual(expect.objectContaining({ id: task.id, wish: 'mcp-read-only' }));
-    expect(afterHash).toBe(beforeHash);
-
-    const observed = openDb({ cwd: repo });
-    expect(getTaskLane(observed, task.id)).toBe('Idea');
-    expect(getTaskEvents(observed, task.id)).toHaveLength(0);
-    observed.close();
+    if (testError !== undefined && cleanupErrors.length > 0) {
+      throw new AggregateError([testError, ...cleanupErrors], 'MCP proof failed and fixture cleanup was incomplete');
+    }
+    if (testError !== undefined) throw testError;
+    if (cleanupErrors.length > 0) throw new AggregateError(cleanupErrors, 'Failed to restore immutable SQLite fixture');
   });
 
   test('genie_wish_status returns the group DAG and tasks', async () => {
