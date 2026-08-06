@@ -827,6 +827,28 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 
 _The read-only reviewer returns evidence; the invoking orchestrator appends a timestamped block here after plan, execution, and PR reviews._
 
+### Execution re-review — SHIP (fix round 1, 2026-08-06)
+
+Independent re-review at `21350f7f6` (docs-only above `40ad3d050`; code verdict
+from round 1 stands). All eight FIX-FIRST gaps verified closed: the ledger
+amendment and Fix record resolve both CRITICALs — the process gate closed "by
+the strongest available route: reversal rather than retroactive consent"; the
+reviewer confirmed the blanket fix directive was not laundered into approval
+of the promote, and a fresh explicit user order remains required before any
+future promote. The committed WISH.md is byte-identical to the working tree;
+PR #2751 (OPEN, MERGEABLE, base `dev`) carries the disclosures.
+
+Residuals carried forward, none blocking: (1) Group 1 AC1/AC2 and Success
+Criteria 1–2 are **deferred, not satisfied** — the lane-divergence oracle and
+`zz-sync-probe` walk must run against the shipped binary post-release and need
+an owner (tracked as a follow-up task card on this wish); (2) the merge
+advances dev's `.well-known` manifests to main's values — net-nil, declared,
+worth a merger's glance; (3) local gate exits 1 on bun 1.3.9 (< engines
+requirement) — CI on bun 1.3.11 is the authority (3017/0/11 skips).
+
+**Verdict:** SHIP · **Reviewer:** independent genie execution reviewer ·
+**Reviewed at:** 2026-08-06T22:15Z
+
 ### Fix record — 2026-08-06 (resolving the FIX-FIRST below, per user directive "fix everything")
 
 Decisions taken by the orchestrator on the user's blanket fix authorization,
