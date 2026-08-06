@@ -505,6 +505,33 @@ export function createTask(db: Database, input: CreateTaskInput): TaskRow {
   return getTask(db, id) as TaskRow;
 }
 
+/**
+ * Link an existing card to a wish and, optionally, one of its groups.
+ *
+ * The association is metadata-only: the card's identity, lifecycle/runtime
+ * state, lane, and append-only timeline are deliberately outside this UPDATE.
+ * An omitted group clears any prior group association. The wish does not need
+ * to exist on disk; callers may intentionally create an orphan association.
+ */
+export function linkTaskToWish(
+  db: Database,
+  taskId: string,
+  wish: string,
+  group?: string,
+  now: number = Date.now(),
+): TaskRow {
+  const normalizedGroup = group ?? null;
+  const link = db.transaction(() => {
+    requireTask(db, taskId);
+    db.query(
+      `UPDATE tasks SET wish = ?, group_name = ?, updated_at = ?
+       WHERE id = ? AND (wish IS NOT ? OR group_name IS NOT ?)`,
+    ).run(wish, normalizedGroup, now, taskId, wish, normalizedGroup);
+  });
+  link.immediate();
+  return getTask(db, taskId) as TaskRow;
+}
+
 export function getTask(db: Database, id: string): TaskRow | null {
   const row = db.query('SELECT * FROM tasks WHERE id = ?').get(id) as RawTask | null;
   return row ? mapTask(row) : null;

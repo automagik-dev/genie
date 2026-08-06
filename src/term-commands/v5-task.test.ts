@@ -6,7 +6,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -107,6 +107,109 @@ describe('task create', () => {
     const r = await cli(repo, 'create', '--title', 'on board', '--board', board.id);
     expect(r.code).toBe(0);
     expect(r.stderr).toBe('');
+  });
+});
+
+describe('task link', () => {
+  test('links an existing card without creating the absent wish and preserves all other state', async () => {
+    const db = openDb({ cwd: repo });
+    const board = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    const task = createTask(db, { title: 'existing card', boardId: board.id, lane: 'Idea' });
+    db.query(
+      `UPDATE tasks
+       SET status = 'in_progress', claimed_by = 'worker-1', claimed_at = 1000,
+           agent_kind = 'codex', heartbeat_at = 2000,
+           blocked_by = 'operator', blocked_reason = 'hold'
+       WHERE id = ?`,
+    ).run(task.id);
+    appendTaskEvent(db, task.id, {
+      kind: 'comment',
+      note: 'exact timeline bytes: → ç',
+      author: 'operator',
+      authorKind: 'human',
+    });
+    const beforeRow = db.query('SELECT * FROM tasks WHERE id = ?').get(task.id) as Record<string, unknown>;
+    const beforeEvents = JSON.stringify(getTaskEvents(db, task.id));
+    db.close();
+
+    const r = await cli(repo, 'link', task.id, '--wish', 'absent-wish', '--group', 'group-2');
+    expect(r.code).toBe(0);
+    expect(r.stderr).toBe('');
+    expect(r.stdout).toBe(`Linked task ${task.id} to wish absent-wish#group-2.\n`);
+    expect(existsSync(join(repo, '.genie', 'wishes', 'absent-wish', 'WISH.md'))).toBe(false);
+
+    const linkedDb = openDb({ cwd: repo });
+    const afterRow = linkedDb.query('SELECT * FROM tasks WHERE id = ?').get(task.id) as Record<string, unknown>;
+    expect(afterRow.wish).toBe('absent-wish');
+    expect(afterRow.group_name).toBe('group-2');
+    for (const key of Object.keys(beforeRow)) {
+      if (key === 'wish' || key === 'group_name' || key === 'updated_at') continue;
+      expect(afterRow[key]).toEqual(beforeRow[key]);
+    }
+    expect(JSON.stringify(getTaskEvents(linkedDb, task.id))).toBe(beforeEvents);
+    linkedDb.close();
+  });
+
+  test('repeating an identical link is a true no-op', async () => {
+    const db = openDb({ cwd: repo });
+    const task = createTask(db, { title: 'idempotent link' });
+    db.close();
+
+    const first = await cli(repo, 'link', task.id, '--wish', 'same-wish', '--group', 'same-group');
+    expect(first.code).toBe(0);
+    expect(first.stderr).toBe('');
+
+    const sentinelDb = openDb({ cwd: repo });
+    sentinelDb.query('UPDATE tasks SET updated_at = 1234 WHERE id = ?').run(task.id);
+    const beforeEvents = JSON.stringify(getTaskEvents(sentinelDb, task.id));
+    sentinelDb.close();
+
+    const repeated = await cli(repo, 'link', task.id, '--wish', 'same-wish', '--group', 'same-group');
+    expect(repeated.code).toBe(0);
+    expect(repeated.stderr).toBe('');
+    expect(repeated.stdout).toBe(`Linked task ${task.id} to wish same-wish#same-group.\n`);
+
+    const linkedDb = openDb({ cwd: repo });
+    expect(getTask(linkedDb, task.id)?.updatedAt).toBe(1_234);
+    expect(JSON.stringify(getTaskEvents(linkedDb, task.id))).toBe(beforeEvents);
+    linkedDb.close();
+  });
+
+  test('omitting --group clears a prior group association', async () => {
+    const db = openDb({ cwd: repo });
+    const task = createTask(db, { title: 'relink me', wish: 'old-wish', group: 'old-group' });
+    db.close();
+
+    const r = await cli(repo, 'link', task.id, '--wish', 'new-wish');
+    expect(r.code).toBe(0);
+    expect(r.stderr).toBe('');
+
+    const linkedDb = openDb({ cwd: repo });
+    expect(getTask(linkedDb, task.id)?.wish).toBe('new-wish');
+    expect(getTask(linkedDb, task.id)?.group).toBeNull();
+    linkedDb.close();
+  });
+
+  test('rejects a missing task and invalid wish/group arguments', async () => {
+    const missing = await cli(repo, 'link', 't_missing', '--wish', 'demo');
+    expect(missing.code).toBe(1);
+    expect(missing.stdout).toBe('');
+    expect(missing.stderr).toContain('Task not found: t_missing');
+
+    const noWish = await cli(repo, 'link', 't_missing');
+    expect(noWish.code).toBe(1);
+    expect(noWish.stdout).toBe('');
+    expect(noWish.stderr).toContain("required option '--wish <slug>' not specified");
+
+    const emptyWish = await cli(repo, 'link', 't_missing', '--wish', '   ');
+    expect(emptyWish.code).toBe(1);
+    expect(emptyWish.stdout).toBe('');
+    expect(emptyWish.stderr).toContain('--wish is required and must not be empty');
+
+    const emptyGroup = await cli(repo, 'link', 't_missing', '--wish', 'demo', '--group', '   ');
+    expect(emptyGroup.code).toBe(1);
+    expect(emptyGroup.stdout).toBe('');
+    expect(emptyGroup.stderr).toContain('--group must not be empty');
   });
 });
 
