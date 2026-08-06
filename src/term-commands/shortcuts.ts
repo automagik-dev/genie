@@ -90,24 +90,54 @@ Termux Extra Keys (F1-F3):
   F3 → Horizontal split
 
 Commands:
-  genie shortcuts --tmux     Output tmux.conf snippet
-  genie shortcuts --termux   Output termux.properties snippet
-  genie shortcuts --install  Install to config files
+  genie shortcuts show       Show available shortcuts and installation status
+  genie shortcuts install    Install to config files (~/.tmux.conf, shell rc)
+  genie shortcuts uninstall  Remove installed shortcuts
 `);
 }
 
-// Helper to prompt user
-async function prompt(question: string): Promise<string> {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
+// One readline interface per process with a persistent `line` listener.
+// Piped answers must never be lost (a one-shot question listener drops lines
+// that arrive before the next prompt is asked) and a closed stdin must not
+// hang the installer: EOF declines any pending prompt.
+let promptRl: readline.Interface | null = null;
+let promptEof = false;
+const queuedAnswers: string[] = [];
+let pendingPrompt: ((answer: string) => void) | null = null;
 
+function ensurePromptRl(): readline.Interface {
+  if (promptRl) return promptRl;
+  promptRl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  promptRl.on('line', (line) => {
+    const answer = line.trim().toLowerCase();
+    if (pendingPrompt) {
+      const resolve = pendingPrompt;
+      pendingPrompt = null;
+      resolve(answer);
+    } else {
+      queuedAnswers.push(answer);
+    }
+  });
+  promptRl.on('close', () => {
+    promptEof = true;
+    if (pendingPrompt) {
+      const resolve = pendingPrompt;
+      pendingPrompt = null;
+      resolve('n');
+    }
+  });
+  return promptRl;
+}
+
+// Helper to prompt user.
+async function prompt(question: string): Promise<string> {
+  ensurePromptRl();
+  process.stdout.write(question);
+  if (promptEof) return 'n';
+  const queued = queuedAnswers.shift();
+  if (queued !== undefined) return queued;
   return new Promise((resolve) => {
-    rl.question(question, (answer) => {
-      rl.close();
-      resolve(answer.trim().toLowerCase());
-    });
+    pendingPrompt = resolve;
   });
 }
 
@@ -182,117 +212,85 @@ export function isShortcutsInstalled(filePath: string): boolean {
   return contentExists(filePath, marker);
 }
 
-const GENIE_CONTENT_MARKERS = [
-  'genie',
-  'Ctrl+',
-  'split-window',
-  'new-window',
-  'stty -ixon',
-  'Warp-like',
-  'bind-key -n',
-  'extra-keys',
-  'F1=',
-  'bind -x',
-];
-
 /**
- * Check if a line is part of genie-generated config content.
+ * The exact line sequence `install` appends for this file's snippet, or null
+ * for files genie never installs to. Uninstall removes exactly these lines —
+ * never a heuristic superset — so user-owned lines that merely contain words
+ * like `genie` or `stty -ixon` are never touched.
  */
-function isGenieContentLine(line: string, prevLine?: string): boolean {
-  if (GENIE_CONTENT_MARKERS.some((m) => line.includes(m))) return true;
-  return line.startsWith('#') && prevLine !== undefined && prevLine.includes('genie');
+export function expectedSnippetLines(filePath: string): string[] | null {
+  const base = filePath.split(/[\\/]/).pop() ?? '';
+  if (base === '.tmux.conf') return generateTmuxConfig().split('\n');
+  if (base === 'termux.properties') return generateTermuxConfig().split('\n');
+  if (base === '.zshrc' || base === '.bashrc') return generateShellFunctions().split('\n');
+  return null;
 }
 
 /**
- * Check if this line ends a genie marked block.
- * Returns true if the line is the end boundary (blank line before non-genie content).
+ * Remove the installed snippet from a file. Returns:
+ *  - `'removed'` — the exact installed block was found and removed,
+ *  - `'absent'` — no marker, or not a genie-managed file,
+ *  - `'modified'` — the block differs from what `install` wrote (edited since),
+ *    so nothing is deleted; the user removes it manually.
  */
-function isBlockEndBoundary(line: string, nextLine: string | undefined): boolean {
-  return line.trim() === '' && nextLine !== undefined && !nextLine.includes('genie');
-}
+export function removeMarkedContent(filePath: string, marker: string): 'removed' | 'absent' | 'modified' {
+  if (!existsSync(filePath)) return 'absent';
+  const content = readFileSync(filePath, 'utf-8');
+  if (!content.includes(marker)) return 'absent';
+  const expected = expectedSnippetLines(filePath);
+  if (expected === null) return 'absent';
 
-/**
- * Process a single line inside a genie content block.
- * Returns 'skip' to continue skipping, 'end-skip' to end block without keeping line,
- * or 'end-keep' to end block and keep the line.
- */
-function processBlockLine(
-  line: string,
-  prevLine: string | undefined,
-  nextLine: string | undefined,
-): 'skip' | 'end-skip' | 'end-keep' {
-  if (isBlockEndBoundary(line, nextLine)) return 'end-skip';
-  if (!isGenieContentLine(line, prevLine) && line.trim() !== '') return 'end-keep';
-  return 'skip';
-}
+  const lines = content.split('\n');
+  const markerIdx = lines.findIndex((line) => line.includes(marker));
+  if (markerIdx === -1) return 'absent';
 
-/**
- * Strip trailing blank lines from an array in-place.
- */
-function stripTrailingBlanks(arr: string[]): void {
-  while (arr.length > 0 && arr[arr.length - 1].trim() === '') arr.pop();
-}
+  // The snippet ends with a newline, so `split('\n')` yields a trailing ''
+  // element; the file only shows that '' when the block is the file's last
+  // content. Drop it so user content directly after the block still matches.
+  if (expected[expected.length - 1] === '') expected.pop();
 
-/**
- * Filter lines by removing genie-generated content blocks delimited by markers.
- */
-function filterMarkedLines(lines: string[], marker: string): string[] {
-  const result: string[] = [];
-  let inBlock = false;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (!inBlock && line.includes(marker)) {
-      inBlock = true;
-      stripTrailingBlanks(result);
-      continue;
-    }
-    if (!inBlock) {
-      result.push(line);
-      continue;
-    }
-    const action = processBlockLine(line, lines[i - 1], lines[i + 1]);
-    if (action === 'end-keep') {
-      inBlock = false;
-      result.push(line);
-    } else if (action === 'end-skip') {
-      inBlock = false;
-    }
+  const block = lines.slice(markerIdx, markerIdx + expected.length);
+  if (block.length !== expected.length || block.some((line, i) => line !== expected[i])) {
+    return 'modified';
   }
 
-  stripTrailingBlanks(result);
-  return result;
-}
+  // `install` appends `\n${snippet}`; the prepended blank line belongs to the
+  // block, not the user — drop it when the file had content before the block.
+  let start = markerIdx;
+  if (lines[start - 1] === '') start -= 1;
 
-// Remove content between markers from a file
-function removeMarkedContent(filePath: string, marker: string): boolean {
-  if (!existsSync(filePath)) return false;
-  const content = readFileSync(filePath, 'utf-8');
-  if (!content.includes(marker)) return false;
-
-  const filtered = filterMarkedLines(content.split('\n'), marker);
-  const newContent = filtered.length > 0 ? `${filtered.join('\n')}\n` : '';
+  const kept = [...lines.slice(0, start), ...lines.slice(markerIdx + expected.length)];
+  while (kept.length > 0 && kept[kept.length - 1] === '') kept.pop();
+  const newContent = kept.length > 0 ? `${kept.join('\n')}\n` : '';
   writeFileSync(filePath, newContent);
-  return true;
+  return 'removed';
 }
 
 /**
- * Prompt to uninstall config content from a file. Skips if marker not present.
+ * Prompt to uninstall config content from a file. Returns true when a block
+ * was found but left in place (edited since install).
  */
-async function promptUninstallFrom(filePath: string, marker: string, label: string): Promise<void> {
-  if (!existsSync(filePath)) return;
+async function promptUninstallFrom(filePath: string, marker: string, label: string): Promise<boolean> {
+  if (!existsSync(filePath)) return false;
   if (!contentExists(filePath, marker)) {
     console.log(`✓ ${label} has no genie shortcuts`);
-    return;
+    return false;
   }
   const answer = await prompt(`Remove shortcuts from ${filePath}? [Y/n] `);
   if (answer === 'n') {
     console.log(`⏭️ Skipped ${label}`);
-    return;
+    return false;
   }
-  if (removeMarkedContent(filePath, marker)) {
+  const result = removeMarkedContent(filePath, marker);
+  if (result === 'removed') {
     console.log(`✅ Removed from ${filePath}`);
+    return false;
   }
+  if (result === 'modified') {
+    console.log(`⚠️ ${label} block was edited after install — left untouched, remove it manually`);
+    return true;
+  }
+  return false;
 }
 
 // Uninstall shortcuts from config files
@@ -302,10 +300,11 @@ export async function uninstallShortcuts(): Promise<void> {
 
   console.log('Uninstalling Warp-like shortcuts...\n');
 
-  await promptUninstallFrom(join(home, '.tmux.conf'), marker, 'tmux.conf');
+  let leftUntouched = false;
+  leftUntouched = (await promptUninstallFrom(join(home, '.tmux.conf'), marker, 'tmux.conf')) || leftUntouched;
 
   for (const shellRc of [join(home, '.zshrc'), join(home, '.bashrc')]) {
-    await promptUninstallFrom(shellRc, marker, shellRc);
+    leftUntouched = (await promptUninstallFrom(shellRc, marker, shellRc)) || leftUntouched;
   }
 
   const termuxDir = join(home, '.termux');
@@ -313,13 +312,17 @@ export async function uninstallShortcuts(): Promise<void> {
 
   if (isTermux) {
     const termuxProps = join(termuxDir, 'termux.properties');
-    await promptUninstallFrom(termuxProps, marker, 'termux.properties');
+    leftUntouched = (await promptUninstallFrom(termuxProps, marker, 'termux.properties')) || leftUntouched;
     if (!contentExists(termuxProps, marker)) {
       console.log('   Run: termux-reload-settings');
     }
   }
 
-  console.log('\n✅ Uninstallation complete!');
+  console.log(
+    leftUntouched
+      ? '\n⚠️ Uninstallation incomplete — edited blocks were left in place.'
+      : '\n✅ Uninstallation complete!',
+  );
   console.log('\nNext steps:');
   console.log('  1. Reload tmux: tmux source ~/.tmux.conf');
   console.log('  2. Restart your shell or run: source ~/.bashrc');
