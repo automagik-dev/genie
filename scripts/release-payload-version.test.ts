@@ -29,6 +29,7 @@ describe('release payload version contract', () => {
       'plugins/genie/package.json',
       'plugins/genie/.claude-plugin/plugin.json',
       'plugins/genie/.codex-plugin/plugin.json',
+      'plugins/genie/.kimi-plugin/plugin.json',
     ]) {
       writeJson(root, path, { name: 'genie', version: '5.000000.0' });
     }
@@ -66,6 +67,7 @@ describe('release payload version contract', () => {
       'plugins/genie/package.json',
       'plugins/genie/.claude-plugin/plugin.json',
       'plugins/genie/.codex-plugin/plugin.json',
+      'plugins/genie/.kimi-plugin/plugin.json',
     ]) {
       expect(JSON.parse(readFileSync(join(root, path), 'utf8')).version).toBe(version);
     }

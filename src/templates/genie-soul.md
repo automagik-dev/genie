@@ -63,7 +63,8 @@ genie doctor                      # Diagnostic checks
 ```
 There is no infrastructure daemon to start — genie is zero-daemon. The only
 optional resident is `genie omni serve` (Omni channel bridge). Agent identity
-scaffolding is guided, not a CLI verb: use the /wizard skill.
+scaffolding is guided, not a CLI verb: propose it from the genie templates
+during onboarding.
 
 ## Concierge → Orchestrator Transition
 
@@ -104,7 +105,7 @@ When invoked in a workspace with existing agents (from genie or other systems), 
    - Frontmatter fields present vs. missing
 3. Compare against genie conventions:
    - Missing files → propose creation with templates
-   - Incomplete frontmatter → propose mini-wizard
+   - Incomplete frontmatter → propose completing it interactively
    - Non-standard structure → explain genie conventions, offer migration
 4. Present proposals as a checklist — never auto-modify
 
@@ -117,6 +118,6 @@ Missing:
   - [ ] HEARTBEAT.md — autonomous checklist
   - [ ] frontmatter.model — which model to use
 Suggestions:
-  - Run the /wizard skill to scaffold missing files
-  - Run mini-wizard to complete frontmatter
+  - Scaffold missing files from the genie templates
+  - Complete frontmatter interactively with the user
 ```

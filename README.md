@@ -101,13 +101,13 @@ These five inventories are intentionally separate:
 
 | Surface | What ships | Ownership |
 |---------|------------|-----------|
-| Codex plugin | 23 physical, in-root product skills with `agents/openai.yaml`; three untrusted hooks; no Codex-owned MCP declaration | Versioned release payload; the **sole** Genie-managed skill provider — nothing is copied into the user tier |
+| Codex plugin | 22 physical, in-root product skills with `agents/openai.yaml`; three untrusted hooks; no Codex-owned MCP declaration | Versioned release payload; the **sole** Genie-managed skill provider — nothing is copied into the user tier |
 | Fallback retirement | Hidden `~/.agents/skills/.genie-codex-fallback-retirement/` quarantine transaction | Not written on fresh setup. After authenticated activation, setup moves only provably clean historical copies here after one health proof; evidence is retained for recovery |
 | CLI integration | Seven optional `genie_*` role-agent TOMLs under `~/.codex/agents/` | Installed/repaired only by successful `genie setup --codex`, after authenticated-root revalidation and fallback retirement |
 | Personal skills | This maintainer currently has 36 separately adapted skills under `~/.agents/skills` | User-owned; not bundled with Genie and never implied by plugin installation; preserved byte-for-byte even on same-name collision |
 | Project MCP route | Marker-owned `.codex/config.toml` entry for `genie mcp` | Points at the stable absolute `$GENIE_HOME/bin/genie` facade with no `cwd` override; the plugin declares no Codex MCP route |
 
-The plugin's 23 skills and a user's personal 36-skill library are separate inventories even when names overlap. Genie never seeds the user tier and preserves unmanaged, modified, malformed-marker, and symlinked user copies instead of adopting them; use `$genie:<skill>` when the plugin copy is intended.
+The plugin's 22 skills and a user's personal 36-skill library are separate inventories even when names overlap. Genie never seeds the user tier and preserves unmanaged, modified, malformed-marker, and symlinked user copies instead of adopting them; use `$genie:<skill>` when the plugin copy is intended.
 
 ### Codex hooks: three reviewed behaviors
 

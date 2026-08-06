@@ -5,7 +5,7 @@ description: "Execute an approved wish plan — orchestrate subagents per task g
 
 # work — Execute Wish Plan
 
-**Runtime syntax:** in Codex, invoke the plugin copy with the owner-qualified `$genie:<skill>` selector; use bare `$<skill>` only when intentionally selecting a user-tier copy (a separately installed personal copy; Genie no longer seeds this tier). Claude Code and Hermes use `/<skill>`. Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active tier.
+**Runtime syntax:** invoke the plugin copy through the active runtime's owner-qualified skill selector; use a bare selector only when intentionally selecting a user-tier copy (a separately installed personal copy; Genie no longer seeds this tier). Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active runtime.
 
 The orchestrator's skill: execute an approved wish from `.genie/wishes/<slug>/WISH.md` by dispatching native subagents per execution group, in waves. The orchestrator never executes group work directly. Per-group execution state lives in the state DB via `genie task`; documents (WISH.md, review notes) stay in git. Map coordination to the active client with `references/native-surfaces.md`, resolved relative to the directory containing this loaded `SKILL.md`.
 
@@ -49,9 +49,9 @@ When you are spawned as a subagent for a group, your dispatch prompt carries the
 
 Spawn subagents with the **native delegation surface**; never execute group work directly. Dispatch a wave together so independent groups can run concurrently. Subagents notify you on completion. Every dispatch selects one named role below; implicit or unnamed roles are forbidden.
 
-Use the active runtime's named roles. In Codex, use the matching `genie_*` custom-agent profile when installed; Claude and Hermes use their native named-role surfaces. Parallel writers must have disjoint file ownership or dedicated worktrees; otherwise sequence them. Shared-workspace subagents never mutate repo-level git state (no `checkout`/`switch`/`reset`/`stash`/`rebase`) — **only the orchestrator moves HEAD**; work needing repo-level mutation gets a worktree via `genie launch` or gets sequenced. `git worktree add/remove/prune` on snapshot/lane paths is orchestrator-side plumbing and permitted. Reviewers and scouts stay read-only. Wait for completion notifications, steer a running thread with native follow-up messaging, and interrupt drift rather than spawning a duplicate worker.
+Use the active runtime's named roles: the matching `genie_*` custom-agent profile when the runtime has one installed, otherwise the runtime's native named-role surface. Parallel writers must have disjoint file ownership or dedicated worktrees; otherwise sequence them. Shared-workspace subagents never mutate repo-level git state (no `checkout`/`switch`/`reset`/`stash`/`rebase`) — **only the orchestrator moves HEAD**; work needing repo-level mutation gets a worktree via `genie launch` or gets sequenced. `git worktree add/remove/prune` on snapshot/lane paths is orchestrator-side plumbing and permitted. Reviewers and scouts stay read-only. Wait for completion notifications, steer a running thread with native follow-up messaging, and interrupt drift rather than spawning a duplicate worker.
 
-| Need | Portable role (Codex profile) |
+| Need | Portable role (runtime profile) |
 |------|----------------------------|
 | Deterministic implementation, complexity 0-1 | `engineer-trivial` (`genie_engineer_trivial`) |
 | Moderately coupled implementation, complexity 2-3 | `engineer-standard` (`genie_engineer_standard`) |

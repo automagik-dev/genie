@@ -22,9 +22,9 @@
  * FINDING to fix (fail with a `codex plugin list --json` dump), never a reason
  * to mock.
  *
- * Why only 20 of 23 installed skills surface as `genie:*` providers (review
+ * Why only 20 of 22 installed skills surface as `genie:*` providers (review
  * carryover): codex's implicit-invocation catalog lists ONLY skills that permit
- * implicit invocation. Three Genie skills (`dream`, `omni`, `wizard`) deliberately
+ * implicit invocation. Two Genie skills (`dream`, `omni`) deliberately
  * declare `policy.allow_implicit_invocation: false` in `agents/openai.yaml` — they
  * are heavy orchestration/setup flows that must never auto-trigger. Their omission
  * is intended codex behavior driven by our own policy, NOT a payload/frontmatter
