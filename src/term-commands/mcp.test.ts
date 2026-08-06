@@ -11,11 +11,29 @@
 import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { openDb } from '../lib/v5/genie-db.js';
-import { createBoard, createTask, createWishGroups } from '../lib/v5/task-state.js';
+import { openDb, resolveDbPath } from '../lib/v5/genie-db.js';
+import {
+  DEFAULT_LIFECYCLE_LANES,
+  createBoard,
+  createTask,
+  createWishGroups,
+  getTaskEvents,
+  getTaskLane,
+} from '../lib/v5/task-state.js';
 
 const GENIE = join(import.meta.dir, '..', 'genie.ts');
 const SRC_ROOT = resolve(import.meta.dir, '..');
@@ -127,6 +145,20 @@ function seed(cwd: string): { taskId: string } {
   return { taskId: t.id };
 }
 
+function sqliteContentHash(dbPath: string): string {
+  const hash = createHash('sha256');
+  for (const path of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
+    hash.update(path.slice(dbPath.length));
+    if (existsSync(path)) {
+      hash.update('present');
+      hash.update(readFileSync(path));
+    } else {
+      hash.update('absent');
+    }
+  }
+  return hash.digest('hex');
+}
+
 // ============================================================================
 // Handshake
 // ============================================================================
@@ -201,6 +233,65 @@ describe('mcp tools/call', () => {
     expect(payload.counts.total).toBe(2);
     expect(payload.counts.ready).toBe(2);
     expect(payload.tasks.some((t) => t.wish === 'genie-mcp')).toBe(true);
+  });
+
+  test('genie_board stays read-only with a divergent sync-owned card in an immutable database', async () => {
+    const wishDir = join(repo, '.genie', 'wishes', 'mcp-read-only');
+    mkdirSync(wishDir, { recursive: true });
+    writeFileSync(join(wishDir, 'WISH.md'), '| **Status** | DONE |\n');
+
+    const db = openDb({ cwd: repo });
+    const roadmap = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    const task = createTask(db, {
+      title: 'divergent sync-owned card',
+      boardId: roadmap.id,
+      lane: 'Idea',
+      wish: 'mcp-read-only',
+    });
+    expect(getTaskLane(db, task.id)).toBe('Idea');
+    expect(getTaskEvents(db, task.id)).toHaveLength(0);
+    db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    db.close();
+
+    const dbPath = resolveDbPath(repo);
+    const sqlitePaths = [dbPath, `${dbPath}-wal`, `${dbPath}-shm`];
+    const beforeHash = sqliteContentHash(dbPath);
+    for (const path of sqlitePaths) {
+      if (existsSync(path)) {
+        chmodSync(path, 0o444);
+        expect(statSync(path).mode & 0o777).toBe(0o444);
+      }
+    }
+    const stateDir = dirname(dbPath);
+    chmodSync(stateDir, 0o555);
+    expect(statSync(stateDir).mode & 0o777).toBe(0o555);
+
+    let responses: RpcResponse[] = [];
+    let afterHash = '';
+    try {
+      responses = await driveMcp(repo, [
+        INIT,
+        INITIALIZED,
+        { jsonrpc: '2.0', id: 31, method: 'tools/call', params: { name: 'genie_board', arguments: {} } },
+      ]);
+      afterHash = sqliteContentHash(dbPath);
+    } finally {
+      chmodSync(stateDir, 0o755);
+      for (const path of sqlitePaths) {
+        if (existsSync(path)) chmodSync(path, 0o644);
+      }
+    }
+
+    const response = responses.find((entry) => entry.id === 31);
+    expect(response?.result?.isError).toBe(false);
+    const payload = toolPayload<{ tasks: Array<{ id: string; wish: string }> }>(response!);
+    expect(payload.tasks).toContainEqual(expect.objectContaining({ id: task.id, wish: 'mcp-read-only' }));
+    expect(afterHash).toBe(beforeHash);
+
+    const observed = openDb({ cwd: repo });
+    expect(getTaskLane(observed, task.id)).toBe('Idea');
+    expect(getTaskEvents(observed, task.id)).toHaveLength(0);
+    observed.close();
   });
 
   test('genie_wish_status returns the group DAG and tasks', async () => {
