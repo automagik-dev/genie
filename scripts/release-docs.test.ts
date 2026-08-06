@@ -991,8 +991,22 @@ describe('Group E release and documentation contracts', () => {
     expect(review).toContain('default 2 unless a higher-priority instruction overrides it');
     expect(work).toContain('default 2 unless a higher-priority instruction overrides it');
     expect(dream).toContain('default 2 unless a higher-priority instruction overrides it');
-    expect(pm).toContain('resolved budget, default 2');
+    // pm states the budget in two table cells; both must say two, and the trailing comma keeps
+    // `default 20` from satisfying the assertion.
+    expect(pm.match(/resolved budget, default 2,/g)).toHaveLength(2);
     expect(lifecycle).toContain('default 2; higher-priority instructions may override it');
+
+    // Negative sweep: every default stated in fix-loop-budget context must be two. The context
+    // window scopes it to budget prose, so lifecycle.md's unrelated stale-horizon default
+    // (`default 15 minutes`) is not a false hit.
+    for (const [skillName, text] of Object.entries({ fix, review, work, dream, pm, lifecycle })) {
+      const flat = flatten(text);
+      for (const match of flat.matchAll(/\bdefault (\d+)\b/g)) {
+        const at = match.index ?? 0;
+        if (!flat.slice(Math.max(0, at - 80), at + 80).includes('budget')) continue;
+        expect(`${skillName} states default ${match[1]}`).toBe(`${skillName} states default 2`);
+      }
+    }
 
     // The frontmatter summary must state the same contract as the body — the pre-review text
     // hard-coded "after 2 loops" while the body resolved a budget.
@@ -1003,7 +1017,7 @@ describe('Group E release and documentation contracts', () => {
     // Only an explicit higher-priority instruction moves the cap, only up to 5, and only from
     // the operator's own session or workspace — never from the branch under review.
     expect(flatFix).toContain(
-      'higher-priority user or workspace instruction may set another positive integer no greater than 5',
+      'higher-priority user or workspace instruction may set another positive integer no greater than 5;',
     );
     expect(flatFix).toContain('A budget above 5 requires an explicit human decision recorded with the wish/group');
     expect(flatFix).toContain("Only the operator's own session or workspace configuration sets `B`");
@@ -1020,7 +1034,7 @@ describe('Group E release and documentation contracts', () => {
     expect(flatFix).toContain(
       'The effort-escalation cap of 2 is separate and is never overridable by a budget instruction.',
     );
-    expect(fix).toContain('effort_escalations=<used>/2');
+    expect(fix).toContain('effort_escalations=<used>/2\n');
   });
 
   test('router pays Genie lifecycle cost only when it adds value', () => {
