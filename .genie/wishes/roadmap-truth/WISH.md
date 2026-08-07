@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | REVIEWED |
+| **Status** | SHIPPED |
 | **Slug** | `roadmap-truth` |
 | **Date** | 2026-08-04 |
 | **Author** | Felipe (namastex888) |
@@ -12,9 +12,16 @@
 | **Design** | [DESIGN.md](../../brainstorms/roadmap-truth/DESIGN.md) |
 
 > **Design evidence.** SHIP, reviewed-content sha
-> `7e35c1bda10db9230287ccadc1dda7c4bc7a45a19f74d0e3b1d80635d6308cf4`, four
-> review rounds (FIX-FIRST ×3, each shrinking scope). Verified with
-> `design-review-evidence.mjs verify` at wish time.
+> `40106843a8d88b70d85ea8d0394c4968dc97987d523d044b946944f377919fc8` — the
+> round-4 digest (`7e35c1bd…`) covered the pre-citation-fix DESIGN.md; the
+> docs-only delta above `40ad3d050` was independently re-reviewed
+> (2026-08-06T22:15Z) and the evidence block re-stamped with that review's
+> digest. Verified with `design-review-evidence.mjs verify`.
+>
+> **Lifecycle.** Merged to `dev` via PR #2751 (`17dd60e15`); status advanced
+> REVIEWED → SHIPPED. The post-release live oracles (lane-divergence comparison
+> + `zz-sync-probe` walk against the shipped binary) are tracked as a follow-up
+> task card on this wish.
 
 > **Citation note.** Line citations are pinned to **`main` = `fd32117`**
 > ("release 0.2.17 (#23)"), and live genie state measured 2026-08-04. The
@@ -141,7 +148,7 @@ keeps them honest without anyone remembering to run `genie task move`.
 ## Dependencies
 
 **depends-on:** none
-**blocks:** wish-scope
+**blocks:** remotty/wish-scope
 
 > **Cross-repo, not cross-wish.** Groups 0-3 land in `genie` (`~/prod/genie`),
 > which has no wish slug here, so it cannot be a `depends-on` value. It is
