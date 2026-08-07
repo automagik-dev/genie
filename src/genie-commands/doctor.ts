@@ -26,7 +26,7 @@ import {
   statSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import {
   type AgentFileManifestEntry,
   CLAUDE_EXCLUDED_SKILLS,
@@ -185,18 +185,26 @@ const GLYPH: Record<CheckStatus, string> = {
   fail: '\x1b[31m✖\x1b[0m',
 };
 
+/** How many `unlinked` INDEX entries `renderCheckLines` names before summarizing the rest. */
+const MAX_UNLINKED_LINES = 5;
+
 /**
  * The human lines for one check: its status line, its suggestion, and — for
  * `jar: index-lane drift` — the INDEX entries an operator must open by name,
- * since a `broken`/`unlinked` count alone cannot be acted on.
+ * since a `broken`/`unlinked` count alone cannot be acted on. Every `broken`
+ * entry is named; `unlinked` is the benign majority (a fresh clone has no
+ * roadmap cards at all), so it is capped and the remainder counted.
  */
 function renderCheckLines(r: CheckResult): string[] {
   const suffix = r.detail ? ` — ${r.detail}` : '';
   const lines = [`  ${GLYPH[r.status]} ${r.name}${suffix}`];
   if (r.suggestion) lines.push(`      ↳ ${r.suggestion}`);
+  let unlinked = 0;
   for (const e of r.indexLane?.entries ?? []) {
-    if (e.state === 'broken' || e.state === 'unlinked') lines.push(`      · ${e.state}: ${e.entry}`);
+    if (e.state === 'broken') lines.push(`      · broken: ${e.entry}`);
+    else if (e.state === 'unlinked' && unlinked++ < MAX_UNLINKED_LINES) lines.push(`      · unlinked: ${e.entry}`);
   }
+  if (unlinked > MAX_UNLINKED_LINES) lines.push(`      · …and ${unlinked - MAX_UNLINKED_LINES} more unlinked`);
   return lines;
 }
 
@@ -1818,16 +1826,16 @@ function truncateIndexEntry(text: string): string {
  * Parse INDEX.md into per-entry lane verdicts. Pure: the caller supplies
  * `laneForSlug`, which returns the resolving roadmap card's lane or null, and
  * `targetExists`, which answers whether a `.genie`-relative link target is on
- * disk (defaults to "always exists", which keeps the two-argument lane-only
- * calling convention). This function performs no filesystem IO of its own. Only
- * the four lifecycle sections are inspected; any other heading is ignored (its
- * bullets are skipped). Every `- ` bullet under a lifecycle section — including
- * indented sub-bullets — is one entry.
+ * disk. Both are required: a defaulted resolver would silently fail open and
+ * report every dangling link as filed. This function performs no filesystem IO
+ * of its own. Only the four lifecycle sections are inspected; any other heading
+ * is ignored (its bullets are skipped). Every `- ` bullet under a lifecycle
+ * section — including indented sub-bullets — is one entry.
  */
 export function evaluateIndexLaneDrift(
   indexText: string,
   laneForSlug: (slug: string) => string | null,
-  targetExists: (relativePath: string) => boolean = () => true,
+  targetExists: (relativePath: string) => boolean,
 ): IndexLaneEntry[] {
   const entries: IndexLaneEntry[] = [];
   let section: string | null = null;
@@ -1891,11 +1899,17 @@ function roadmapLanesByWish(dbPath: string): Map<string, string> {
  * stripped (the anchor lives inside the document, not on disk) and a trailing
  * slash is tolerated, so a bare `wishes/<slug>/` link resolves against the
  * directory itself. The only filesystem IO in this check's link handling.
+ * A target that resolves outside `.genie/` is `broken` without touching disk,
+ * so `../` traversal in a link cannot turn `doctor --json` into an oracle for
+ * paths elsewhere on the machine.
  */
 function indexTargetExists(genieDir: string, relativePath: string): boolean {
   const withoutAnchor = relativePath.split('#')[0].replace(/\/+$/, '');
   if (withoutAnchor.length === 0) return false;
-  return existsSync(join(genieDir, withoutAnchor));
+  const full = resolve(genieDir, withoutAnchor);
+  const rootDir = resolve(genieDir);
+  if (full !== rootDir && !full.startsWith(rootDir + sep)) return false;
+  return existsSync(full);
 }
 
 /**
