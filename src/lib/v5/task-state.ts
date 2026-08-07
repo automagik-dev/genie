@@ -327,6 +327,25 @@ export class TaskReleaseError extends Error {
   }
 }
 
+/**
+ * A completion was refused because the card is not the caller's to finish —
+ * the CAS fence in {@link completeTask} matched no row: the card is already
+ * `done`, or it is claimed by a different worker. The status is carried so the
+ * CLI can tell the operator why. Completion analogue of
+ * {@link TaskReleaseError} (release-side refusals).
+ */
+export class TaskCompleteError extends Error {
+  readonly taskId: string;
+  readonly status: TaskStatus;
+  constructor(taskId: string, status: TaskStatus) {
+    const detail = status === 'done' ? 'it is already done' : `it is ${status}, not yours to complete`;
+    super(`Cannot complete task ${taskId}: ${detail}`);
+    this.name = 'TaskCompleteError';
+    this.taskId = taskId;
+    this.status = status;
+  }
+}
+
 /** An invalid wish-group transition was attempted. */
 export class WishGroupStateError extends Error {
   constructor(message: string) {
@@ -770,18 +789,46 @@ export function completeTask(db: Database, taskId: string, author?: EventAuthor)
   // and in_progress remain completable (direct completion + the checkout path).
   if (task.status === 'blocked') throw new TaskNotReadyError(taskId);
   const now = Date.now();
-  const done = db.transaction(() => {
-    db.query("UPDATE tasks SET status = 'done', updated_at = ? WHERE id = ?").run(now, taskId);
-    appendTaskEvent(db, taskId, {
-      kind: 'release',
-      note: 'completed',
-      authorKind: author?.authorKind ?? undefined,
-      author: author?.author ?? undefined,
-    });
-    recomputeReady(db);
+  // CAS fence on claimed_by, mirroring releaseTask's state-check-in-SQL idiom:
+  // only the claimant (or an unclaimed card) can complete. A concurrent re-claim
+  // between decision and write can never be clobbered — the conditional UPDATE
+  // affects zero rows and we refuse with a typed {@link TaskCompleteError}. SQL
+  // null semantics (`claimed_by = NULL` never matches) mean an identity-less
+  // caller only ever completes an UNCLAIMED card via the `claimed_by IS NULL`
+  // arm. The `release` event + recompute run ONLY inside the winning transaction.
+  const complete = db.transaction(() => {
+    const res = db
+      .query(
+        `UPDATE tasks
+         SET status = 'done', updated_at = ?
+         WHERE id = ?
+           AND status IN ('ready', 'in_progress')
+           AND (claimed_by IS NULL OR claimed_by = ?)`,
+      )
+      .run(now, taskId, author?.author ?? null);
+    if (res.changes === 1) {
+      appendTaskEvent(db, taskId, {
+        kind: 'release',
+        note: 'completed',
+        authorKind: author?.authorKind ?? undefined,
+        author: author?.author ?? undefined,
+      });
+      recomputeReady(db);
+    }
+    return res.changes;
   });
-  done();
+  if (complete.immediate() !== 1) completeFailure(db, taskId);
   return getTask(db, taskId) as TaskRow;
+}
+
+/** Translate a refused completion (CAS matched no completable, claim-owned row) into a typed error. */
+function completeFailure(db: Database, taskId: string): never {
+  const task = getTask(db, taskId);
+  if (!task) throw new UnknownTaskError(taskId);
+  // A block landing between the pre-check and the UPDATE still surfaces the
+  // dependency-gate error, never a generic completion refusal.
+  if (task.status === 'blocked') throw new TaskNotReadyError(taskId);
+  throw new TaskCompleteError(taskId, task.status);
 }
 
 /** Translate a refused release (CAS matched no `in_progress` row) into a typed error. */

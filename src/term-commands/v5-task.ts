@@ -275,13 +275,30 @@ function resolveAuthorKind(): string {
 }
 
 /**
- * Resolve the acting author for a card event from the environment: identity from
- * `GENIE_AGENT_NAME`/`GENIE_AGENT_ID`, kind via {@link resolveAuthorKind}. The
+ * Resolve the worker identity from the environment: `GENIE_AGENT_NAME`, then
+ * `GENIE_AGENT_ID`, flooring at 'cli'. The ONE identity resolver shared by the
+ * claim side (`handleCheckout`'s worker → `claimed_by`) and the complete side
+ * (`resolveEventAuthor().author` → event attribution), so a task claimed and
+ * completed by the same runtime always matches the completion fence. Previously
+ * the two chains diverged — the claim chain ignored GENIE_AGENT_ID and floored
+ * at 'cli', the complete chain preferred NAME then ID and floored at null — so a
+ * GENIE_AGENT_ID-only runtime claimed as 'cli' but completed as the ID and would
+ * now be refused. Migration for such in-flight claims: release (releaseTask
+ * stays identity-free) then re-claim under the new identity.
+ */
+function resolveWorkerIdentity(): string {
+  return process.env.GENIE_AGENT_NAME ?? process.env.GENIE_AGENT_ID ?? 'cli';
+}
+
+/**
+ * Resolve the acting author for a card event from the environment: identity via
+ * {@link resolveWorkerIdentity} (so a no-env CLI writes 'cli', matching what
+ * checkout wrote to `claimed_by`), kind via {@link resolveAuthorKind}. The
  * single author resolver shared by every authored verb and `moveTask`.
  */
 function resolveEventAuthor(): EventAuthor {
   return {
-    author: process.env.GENIE_AGENT_NAME ?? process.env.GENIE_AGENT_ID ?? null,
+    author: resolveWorkerIdentity(),
     authorKind: resolveAuthorKind(),
   };
 }
@@ -315,7 +332,7 @@ function printTimelineBriefing(events: TaskEvent[]): void {
 }
 
 function handleCheckout(id: string, opts: CheckoutOptions): void {
-  const worker = opts.worker ?? process.env.GENIE_AGENT_NAME ?? 'cli';
+  const worker = opts.worker ?? resolveWorkerIdentity();
   run(() => {
     const db = openDb();
     try {

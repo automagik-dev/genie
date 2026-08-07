@@ -63,6 +63,29 @@ async function cli(cwd: string, ...args: string[]): Promise<CliResult> {
   return { stdout, stderr, code };
 }
 
+/**
+ * Like cli() but with a fully controlled identity env: strips every GENIE_AGENT_*
+ * var from the inherited environment, then applies `env` overrides. Required to
+ * exercise the default no-env flow (claimed_by 'cli' → author 'cli') and to
+ * simulate a claimed-by-other refusal without ambient CI env leaking in.
+ */
+async function cliIdentity(cwd: string, env: Record<string, string>, ...args: string[]): Promise<CliResult> {
+  const base: Record<string, string | undefined> = { ...process.env, NO_COLOR: '1', GENIE_TEST_SKIP_PGSERVE: '1' };
+  for (const key of Object.keys(base)) {
+    if (key.startsWith('GENIE_AGENT_')) delete base[key];
+  }
+  const proc = Bun.spawn(['bun', GENIE, 'task', ...args], {
+    cwd,
+    stdout: 'pipe',
+    stderr: 'pipe',
+    env: { ...base, ...env },
+  });
+  const stdout = await new Response(proc.stdout).text();
+  const stderr = await new Response(proc.stderr).text();
+  const code = await proc.exited;
+  return { stdout, stderr, code };
+}
+
 beforeEach(() => {
   repo = mkdtempSync(join(tmpdir(), 'genie-v5-task-'));
   git(repo, 'init', '-b', 'main');
@@ -175,6 +198,41 @@ describe('task status / done / checkout', () => {
     const bad = await cli(repo, 'done', 't_missing');
     expect(bad.code).toBe(1);
     expect(bad.stderr).toContain('Task not found: t_missing');
+  });
+
+  test('default CLI flow: no-env checkout claims as cli and no-env done completes it', async () => {
+    const id = await seedTask('cli default flow');
+    const claimed = await cliIdentity(repo, {}, 'checkout', id);
+    expect(claimed.code).toBe(0);
+    expect(claimed.stdout).toContain('in_progress');
+
+    // The unified resolver floors at 'cli' with no env — claimed_by matches the
+    // identity the done side resolves, so the fence lets the claim owner through.
+    const db = openDb({ cwd: repo });
+    const card = getTaskCard(db, id);
+    db.close();
+    expect(card?.claimedBy).toBe('cli');
+
+    const done = await cliIdentity(repo, {}, 'done', id);
+    expect(done.code).toBe(0);
+    expect(done.stdout).toContain('marked done');
+  });
+
+  test('done by a different identity than the claimant surfaces the typed refusal', async () => {
+    const id = await seedTask('foreign claim');
+    const claimed = await cliIdentity(repo, { GENIE_AGENT_NAME: 'w1' }, 'checkout', id);
+    expect(claimed.code).toBe(0);
+
+    const refused = await cliIdentity(repo, { GENIE_AGENT_NAME: 'w2' }, 'done', id);
+    expect(refused.code).toBe(1);
+    expect(refused.stderr).toContain('Cannot complete task');
+
+    // The card is untouched — still claimed by w1, in_progress.
+    const db = openDb({ cwd: repo });
+    const card = getTaskCard(db, id);
+    db.close();
+    expect(card?.claimedBy).toBe('w1');
+    expect(card?.status).toBe('in_progress');
   });
 });
 
