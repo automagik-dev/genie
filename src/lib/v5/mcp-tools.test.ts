@@ -17,9 +17,11 @@ import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import {
+  accessSync,
   chmodSync,
   copyFileSync,
   existsSync,
+  constants as fsConstants,
   linkSync,
   mkdirSync,
   mkdtempSync,
@@ -500,13 +502,41 @@ describe('openReadonlyDbHealingStaleSchema', () => {
     chmodSync(path, 0o444);
     chmodSync(genieDir, 0o555);
     try {
+      // Root (some CI containers) ignores file modes, so the heal write would
+      // succeed and this test would assert the wrong branch — the degrade
+      // path is only expressible where chmod actually revokes write access.
+      try {
+        accessSync(path, fsConstants.W_OK);
+        return; // still writable (running as root) — skip
+      } catch {
+        // write access revoked as intended — proceed
+      }
       const served = openReadonlyDbHealingStaleSchema(repo);
-      expect(served).not.toBeNull();
+      if (served === null) {
+        // Null is only acceptable when this platform's SQLite cannot read a
+        // write-protected WAL database AT ALL (read-only WAL support varies
+        // by VFS state — ubuntu CI hits this). Probe a plain readonly open +
+        // query: if that works, the degrade fallback should have served the
+        // handle and returning null is a real regression.
+        const probe = openReadonlyDb(repo);
+        let readable = false;
+        try {
+          if (probe !== null) {
+            probe.query('SELECT 1 FROM meta').get();
+            readable = true;
+          }
+        } catch {
+          // unreadable — the scenario is inexpressible in this environment
+        }
+        probe?.close();
+        expect(readable).toBe(false);
+        return;
+      }
       // Still not strictly current (marker pending) — but readable and served.
-      expect(isCurrentGenieDb(served as Database)).toBe(false);
-      const row = (served as Database).query('SELECT title FROM tasks').get() as { title: string };
+      expect(isCurrentGenieDb(served)).toBe(false);
+      const row = served.query('SELECT title FROM tasks').get() as { title: string };
       expect(row.title).toBe('seed');
-      served?.close();
+      served.close();
     } finally {
       chmodSync(genieDir, 0o755);
       chmodSync(path, 0o644);

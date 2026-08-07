@@ -12,6 +12,8 @@ import {
   MalformedDbError,
   STAGE_LOG_BACKFILL_KEY,
   isBusyError,
+  isCurrentGenieDb,
+  isReadableGenieDb,
   openDb,
   resolveDbPath,
   resolveRepoRoot,
@@ -126,6 +128,22 @@ describe('openDb schema init', () => {
     const mirrored = db2.query('SELECT COUNT(*) AS n FROM task_events').get() as { n: number };
     db2.close();
     expect(mirrored.n).toBe(1);
+  });
+
+  test('isReadableGenieDb accepts a marker-only-stale DB and refuses a shape-stale one', () => {
+    const path = join(dir, 'genie.db');
+    const db = openDb({ path });
+    // Current shape, pending data-only migration marker: NOT strictly current
+    // (write paths must still run ensureSchema) but perfectly readable — the
+    // readonly MCP degrade path serves exactly this shape when the heal write
+    // is impossible.
+    db.query('DELETE FROM meta WHERE key = ?').run(STAGE_LOG_BACKFILL_KEY);
+    expect(isCurrentGenieDb(db)).toBe(false);
+    expect(isReadableGenieDb(db)).toBe(true);
+    // Shape staleness (a column this build queries is missing) refuses reads too.
+    db.exec('ALTER TABLE tasks DROP COLUMN agent_kind');
+    expect(isReadableGenieDb(db)).toBe(false);
+    db.close();
   });
 });
 
