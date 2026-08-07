@@ -162,7 +162,7 @@ export async function freshness(payload: HookPayload, deps: FreshnessDeps = {}):
   if (diskAge === null || diskAge >= STALENESS_THRESHOLD_SECS) return;
 
   // File was recently modified on disk — check if by another agent via git
-  const commitInfo = gitCommand ? getLastCommitInfo(filePath, cwd, gitCommand, exec) : null;
+  const commitInfo = getLastCommitInfo(filePath, cwd, gitCommand, exec);
 
   if (commitInfo && commitInfo.age < STALENESS_THRESHOLD_SECS) {
     // Skip warning if the current agent made the change. Match by either
