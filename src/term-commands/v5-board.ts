@@ -199,8 +199,11 @@ function groupByLane<T extends LaneTaskRow>(lanes: Lane[], tasks: T[]): Map<stri
 }
 
 function renderLaneBoard(db: Database, lanes: Lane[], filter: TaskFilter, scopeLabel: string, json: boolean): void {
-  // `--json` keeps the additive lane shape with lane-only cards (no runtime
-  // fields), matching the frozen laneless `--json`'s runtime-free contract.
+  // `--json` keeps the additive lane shape. Its cards carry exactly one runtime
+  // field beyond the frozen TaskRow — `enforcedBlock` (null when unblocked), so a
+  // lane consumer can tell a parked card from a live one. Identity, heartbeat,
+  // and block provenance stay off this path, and the frozen laneless `--json`
+  // remains runtime-free.
   if (json) {
     const byLane = groupByLane(lanes, listTasksWithLane(db, filter));
     const laneGroups = lanes.map((l) => ({

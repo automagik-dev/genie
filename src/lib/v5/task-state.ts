@@ -86,6 +86,21 @@ export const DEFAULT_LIFECYCLE_LANES: Lane[] = [
 export const ROADMAP_BOARD = 'roadmap';
 
 /**
+ * Why a card carries an enforced block. `work` — the default — means something
+ * is wrong and must be resolved before the card moves. `hold` means the card is
+ * deliberately parked: nothing is broken, it simply must not be picked up yet.
+ * Both refuse checkout identically; the kind exists so a reader can tell the two
+ * apart without parsing the reason prose.
+ */
+export type BlockKind = 'work' | 'hold';
+
+/** An enforced block as the lane projection exposes it. */
+export interface EnforcedBlock {
+  reason: string;
+  kind: BlockKind;
+}
+
+/**
  * A task row plus its lane placement. Kept SEPARATE from {@link TaskRow} so the
  * frozen TaskRow contract — and the byte-identical laneless board `--json`,
  * MCP, and `task export` shapes that serialize it — never gains a `lane` field.
@@ -93,6 +108,14 @@ export const ROADMAP_BOARD = 'roadmap';
  */
 export interface LaneTaskRow extends TaskRow {
   lane: string | null;
+  /**
+   * The card's enforced block, or null when it carries none. The ONE deliberate
+   * runtime field on this projection: a lane-board consumer must be able to tell
+   * a parked card from a live one, which the lane grouping alone cannot express.
+   * The frozen surfaces — {@link TaskRow}, the laneless board `--json`, MCP, and
+   * `task export` — deliberately do NOT carry it.
+   */
+  enforcedBlock: EnforcedBlock | null;
 }
 
 /**
@@ -372,6 +395,7 @@ interface RawTask {
   heartbeat_at: number | null;
   blocked_by: string | null;
   blocked_reason: string | null;
+  block_kind: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -389,6 +413,27 @@ function mapTask(row: RawTask): TaskRow {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+/**
+ * Stored kinds are untrusted TEXT — the column is additive and nullable, and a
+ * hand-merged roadmap.json reaches this mapper unvalidated — so anything that is
+ * not exactly `hold` reads as the `work` default.
+ */
+function blockKindOf(raw: string | null): BlockKind {
+  return raw === 'hold' ? 'hold' : 'work';
+}
+
+/**
+ * Project a row's enforced block. Presence is keyed on `blocked_by` — the column
+ * the checkout gate reads — so the serialized field can never disagree with
+ * whether checkout is actually refused. A row blocked without a stored reason
+ * (possible from an older snapshot) projects an empty reason rather than
+ * dropping the block.
+ */
+function mapEnforcedBlock(row: RawTask): EnforcedBlock | null {
+  if (row.blocked_by == null) return null;
+  return { reason: row.blocked_reason ?? '', kind: blockKindOf(row.block_kind) };
 }
 
 // ============================================================================
@@ -543,15 +588,14 @@ export function listTasks(db: Database, filter: TaskFilter = {}): TaskRow[] {
 
 /**
  * Lane-aware task listing — the same rows as {@link listTasks} plus each card's
- * `lane`. Consumed ONLY by the additive lane-grouped board render; the frozen
- * {@link TaskRow} path (board `--json`, MCP, export) stays byte-identical.
+ * `lane` and {@link LaneTaskRow.enforcedBlock}. Consumed ONLY by the additive
+ * lane-grouped board render; the frozen {@link TaskRow} path (board `--json`,
+ * MCP, export) stays byte-identical.
  */
 export function listTasksWithLane(db: Database, filter: TaskFilter = {}): LaneTaskRow[] {
   const { where, params } = buildTaskWhere(filter);
-  const rows = db.query(`SELECT * FROM tasks${where} ORDER BY created_at`).all(...params) as Array<
-    RawTask & { lane: string | null }
-  >;
-  return rows.map((r) => ({ ...mapTask(r), lane: r.lane ?? null }));
+  const rows = db.query(`SELECT * FROM tasks${where} ORDER BY created_at`).all(...params) as RawTask[];
+  return rows.map((r) => ({ ...mapTask(r), lane: r.lane ?? null, enforcedBlock: mapEnforcedBlock(r) }));
 }
 
 /** The card's current lane, or null when unplaced. */
@@ -564,6 +608,7 @@ function mapTaskCard(row: RawTask): TaskCardRow {
   return {
     ...mapTask(row),
     lane: row.lane ?? null,
+    enforcedBlock: mapEnforcedBlock(row),
     agentKind: row.agent_kind ?? null,
     heartbeatAt: row.heartbeat_at ?? null,
     blockedBy: row.blocked_by ?? null,
@@ -830,18 +875,27 @@ export function releaseTask(db: Database, taskId: string, author: EventAuthor): 
 
 /**
  * Place an enforced block on a card: stores `blocked_by` (the acting runtime's
- * identity, which drives the checkout refusal) and `blocked_reason`, and appends
- * a `block` event. `blocked_by` is always non-null so the checkout gate can never
- * be defeated by a missing identity — an anonymous human falls back to its kind.
+ * identity, which drives the checkout refusal), `blocked_reason`, and the
+ * {@link BlockKind}, and appends a `block` event. `blocked_by` is always non-null
+ * so the checkout gate can never be defeated by a missing identity — an anonymous
+ * human falls back to its kind. The block kind is descriptive only: a `hold`
+ * refuses checkout exactly as a `work` block does.
  */
-export function blockTask(db: Database, taskId: string, reason: string, author: EventAuthor): TaskRow {
+export function blockTask(
+  db: Database,
+  taskId: string,
+  reason: string,
+  author: EventAuthor,
+  kind: BlockKind = 'work',
+): TaskRow {
   requireTask(db, taskId);
   const blockedBy = author.author ?? author.authorKind ?? 'unknown';
   const now = Date.now();
   const tx = db.transaction(() => {
-    db.query('UPDATE tasks SET blocked_by = ?, blocked_reason = ?, updated_at = ? WHERE id = ?').run(
+    db.query('UPDATE tasks SET blocked_by = ?, blocked_reason = ?, block_kind = ?, updated_at = ? WHERE id = ?').run(
       blockedBy,
       reason,
+      kind,
       now,
       taskId,
     );
@@ -856,12 +910,14 @@ export function blockTask(db: Database, taskId: string, reason: string, author: 
   return getTask(db, taskId) as TaskRow;
 }
 
-/** Clear an enforced block and append an `unblock` event. */
+/** Clear an enforced block — provenance, reason, and kind together — and append an `unblock` event. */
 export function unblockTask(db: Database, taskId: string, author: EventAuthor): TaskRow {
   requireTask(db, taskId);
   const now = Date.now();
   const tx = db.transaction(() => {
-    db.query('UPDATE tasks SET blocked_by = NULL, blocked_reason = NULL, updated_at = ? WHERE id = ?').run(now, taskId);
+    db.query(
+      'UPDATE tasks SET blocked_by = NULL, blocked_reason = NULL, block_kind = NULL, updated_at = ? WHERE id = ?',
+    ).run(now, taskId);
     appendTaskEvent(db, taskId, {
       kind: 'unblock',
       authorKind: author.authorKind ?? undefined,
@@ -1496,8 +1552,8 @@ function insertSnapshotRows(db: Database, state: StateExport): void {
   // may legitimately omit them.
   const task = db.query(
     `INSERT INTO tasks (id, board_id, title, status, claimed_by, claimed_at, wish, group_name,
-                        lane, agent_kind, heartbeat_at, blocked_by, blocked_reason, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                        lane, agent_kind, heartbeat_at, blocked_by, blocked_reason, block_kind, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   for (const t of state.tasks) {
     task.run(
@@ -1514,6 +1570,7 @@ function insertSnapshotRows(db: Database, state: StateExport): void {
       t.heartbeat_at ?? null,
       t.blocked_by ?? null,
       t.blocked_reason ?? null,
+      t.block_kind ?? null,
       t.created_at,
       t.updated_at,
     );

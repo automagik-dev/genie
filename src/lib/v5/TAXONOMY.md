@@ -92,6 +92,28 @@ Generic unit of work with checkout-claim + ready-set semantics.
 | `created_at` | INTEGER NOT NULL | |
 | `updated_at` | INTEGER NOT NULL | |
 
+Plus the **runtime layer** — additive, all nullable, backfilled in place by
+`ensureTaskColumns` so they stay within `user_version = 1`:
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `lane` | TEXT | lifecycle lane on a lane-defining board, or NULL |
+| `agent_kind` | TEXT | authored runtime identity, or NULL |
+| `heartbeat_at` | INTEGER | last liveness pulse, or NULL |
+| `blocked_by` | TEXT | who placed the enforced block — NULL means unblocked |
+| `blocked_reason` | TEXT | why, free prose |
+| `block_kind` | TEXT | `work` \| `hold`; NULL/absent/unrecognized ⇒ `work` |
+
+**`block_kind` distinguishes a broken card from a parked one.** `work` (the
+default) means something must be resolved; `hold` means the work is fine and is
+deliberately not to be picked up yet. The kind is **descriptive only** — a `hold`
+refuses `task checkout` exactly as a `work` block does, because the carved
+checkout exception reads `blocked_by`, never the kind. `genie task block --hold`
+records a hold; plain `block` records `work`; `unblock` clears provenance,
+reason, and kind together. Stored kinds are untrusted TEXT (a hand-merged
+`roadmap.json` reaches the mapper unvalidated), so anything but exactly `hold`
+normalizes to `work` at read time rather than at the column.
+
 **`tasks.wish` is the lifecycle slug a card tracks — broadened semantic.** It is
 no longer "the WISH.md slug once a wish exists"; it is the single stable slug
 for a line of work, **valid from the moment the `.genie/brainstorms/<slug>/`
@@ -176,3 +198,32 @@ throws `WishGroupDriftError`.
   (fresh/uninitialized) nor `1` (ours), or an unversioned file that already
   holds foreign tables, raises `ForeignDbError`. The engine never mutates a
   database it does not recognize.
+
+## Row projections — which shapes carry the runtime layer
+
+The runtime columns above exist in one table but are exposed by three deliberately
+different projections. Which one a caller maps through IS the contract:
+
+| Projection | Adds | Serialized by |
+|------------|------|---------------|
+| `TaskRow` | — (frozen) | laneless board `--json`, MCP tools, `task export` tasks |
+| `LaneTaskRow` | `lane`, `enforcedBlock` | lane-grouped board `--json` |
+| `TaskCardRow` | `agentKind`, `heartbeatAt`, `blockedBy`, `blockedReason` | nothing — human render + `task status` only |
+
+`TaskRow` is **frozen**: its key set is asserted byte-for-byte by test, and no
+runtime field may ever be added to it. `TaskCardRow` is the widest projection but
+is never serialized — it feeds badge rendering, so widening it is safe.
+
+`LaneTaskRow.enforcedBlock` is the one deliberate runtime field on a serialized
+additive shape: `null` when the card is unblocked, otherwise
+`{ reason: string, kind: 'work' | 'hold' }`. A lane-board consumer must be able to
+tell a parked card from a live one, which the lane grouping alone cannot express;
+block *provenance*, identity, and heartbeat stay off that path. Presence is keyed
+on `blocked_by` — the same column the checkout gate reads — so the serialized
+field can never disagree with whether checkout is actually refused; a row blocked
+without a stored reason projects an empty reason rather than dropping the block.
+
+`block_kind` travels in `task export` / `import` / `sync` within
+`schemaVersion: 1`. Because the column is additive and nullable, a same-version
+snapshot written by an older build may omit the key entirely; the import inserts
+NULL for it and the row reads back as a `work` block.

@@ -743,6 +743,54 @@ describe('enforced blocks — the carved checkout exception', () => {
     expect(co.stdout).toContain('in_progress');
   });
 
+  test('block without --hold records a work block; status renders the kind', async () => {
+    const id = await seed('work block');
+    const r = await cli(repo, 'block', id, '--reason', 'awaiting a decision');
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('work');
+
+    const st = await cli(repo, 'status', id);
+    expect(st.code).toBe(0);
+    expect(st.stdout).toContain('Blocked by:');
+    expect(st.stdout).toContain('(work)');
+    expect(st.stdout).toContain('awaiting a decision');
+
+    const db = openDb({ cwd: repo });
+    expect(getTaskCard(db, id)?.enforcedBlock).toEqual({ reason: 'awaiting a decision', kind: 'work' });
+    db.close();
+  });
+
+  test('block --hold records a hold, renders it on status, and still refuses checkout', async () => {
+    const id = await seed('held card');
+    const r = await cli(repo, 'block', id, '--reason', 'parked until Q3', '--hold');
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('hold');
+
+    const st = await cli(repo, 'status', id);
+    expect(st.stdout).toContain('(hold)');
+
+    // A hold refuses checkout exactly like a work block — same exit code, same reason.
+    const co = await cli(repo, 'checkout', id, '--worker', 'w1');
+    expect(co.code).toBe(1);
+    expect(co.stdout).toBe('');
+    expect(co.stderr).toContain('parked until Q3');
+
+    const db = openDb({ cwd: repo });
+    expect(getTaskCard(db, id)?.enforcedBlock).toEqual({ reason: 'parked until Q3', kind: 'hold' });
+    expect(getTask(db, id)?.status).toBe('ready'); // the block never moved the lifecycle status
+    db.close();
+  });
+
+  test('unblock clears the kind along with the block', async () => {
+    const id = await seed('kind cleared');
+    await cli(repo, 'block', id, '--reason', 'parked', '--hold');
+    expect((await cli(repo, 'unblock', id)).code).toBe(0);
+
+    const db = openDb({ cwd: repo });
+    expect(getTaskCard(db, id)?.enforcedBlock).toBeNull();
+    db.close();
+  });
+
   test('release returns a claimed card to ready', async () => {
     const id = await seed('release me');
     await cli(repo, 'checkout', id, '--worker', 'w1');
