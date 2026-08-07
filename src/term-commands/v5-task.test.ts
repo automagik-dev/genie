@@ -308,8 +308,8 @@ describe('task status / done / checkout', () => {
     expect(claimed.code).toBe(0);
     expect(claimed.stdout).toContain('in_progress');
 
-    // The unified resolver floors at 'cli' with no env — claimed_by matches the
-    // identity the done side resolves, so the fence lets the claim owner through.
+    // The unified resolver floors at 'cli' with no env — the claim records that
+    // identity, and the no-env done completes it.
     const db = openDb({ cwd: repo });
     const card = getTaskCard(db, id);
     db.close();
@@ -320,21 +320,21 @@ describe('task status / done / checkout', () => {
     expect(done.stdout).toContain('marked done');
   });
 
-  test('done by a different identity than the claimant surfaces the typed refusal', async () => {
-    const id = await seedTask('foreign claim');
+  test('done by a different identity than the claimant succeeds (orchestrator flow)', async () => {
+    const id = await seedTask('worker claim, orchestrator completion');
     const claimed = await cliIdentity(repo, { GENIE_AGENT_NAME: 'w1' }, 'checkout', id);
     expect(claimed.code).toBe(0);
 
-    const refused = await cliIdentity(repo, { GENIE_AGENT_NAME: 'w2' }, 'done', id);
-    expect(refused.code).toBe(1);
-    expect(refused.stderr).toContain('Cannot complete task');
+    // The documented two-actor flow: the worker claims via checkout, the
+    // orchestrator (a different identity) marks reviewed work done.
+    const done = await cliIdentity(repo, { GENIE_AGENT_NAME: 'orchestrator' }, 'done', id);
+    expect(done.code).toBe(0);
+    expect(done.stdout).toContain('marked done');
 
-    // The card is untouched — still claimed by w1, in_progress.
     const db = openDb({ cwd: repo });
     const card = getTaskCard(db, id);
     db.close();
-    expect(card?.claimedBy).toBe('w1');
-    expect(card?.status).toBe('in_progress');
+    expect(card?.status).toBe('done');
   });
 });
 
