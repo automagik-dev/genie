@@ -7,6 +7,7 @@
  *
  * Subcommands:
  *   task create --title <t> [--board <ref>] [--wish <slug>] [--group <name>]
+ *   task link <id> --wish <slug> [--group <name>]
  *   task list [--status <s>] [--board <ref>] [--wish <slug>] [--json]
  *   task status <id>
  *   task done <id>
@@ -50,6 +51,7 @@ import {
   getTaskCard,
   getTaskEvents,
   importState,
+  linkTaskToWish,
   listTasks,
   moveTask,
   recordHeartbeat,
@@ -197,6 +199,29 @@ function handleCreate(opts: CreateOptions): void {
       const boardId = opts.board ? resolveBoard(db, opts.board).id : undefined;
       const task = createTask(db, { title, boardId, wish: opts.wish, group: opts.group });
       out(`Created task ${task.id} "${task.title}" (${task.status}).`);
+    } finally {
+      db.close();
+    }
+  });
+}
+
+interface LinkOptions {
+  wish: string;
+  group?: string;
+}
+
+function handleLink(id: string, opts: LinkOptions): void {
+  const wish = opts.wish?.trim();
+  if (!wish) fail('--wish is required and must not be empty.');
+  const group = opts.group?.trim();
+  if (opts.group !== undefined && !group) fail('--group must not be empty.');
+
+  run(() => {
+    const db = openDb();
+    try {
+      const task = linkTaskToWish(db, id, wish, group);
+      const association = task.group ? `${task.wish}#${task.group}` : task.wish;
+      out(`Linked task ${task.id} to wish ${association}.`);
     } finally {
       db.close();
     }
@@ -587,6 +612,13 @@ export function registerV5TaskCommands(v5: Command): void {
     .option('--wish <slug>', 'Wish slug this task belongs to')
     .option('--group <name>', 'Wish-group name (requires --wish)')
     .action((opts: CreateOptions) => handleCreate(opts));
+
+  task
+    .command('link <id>')
+    .description('Link an existing task to a wish')
+    .requiredOption('--wish <slug>', 'Wish slug this task belongs to')
+    .option('--group <name>', 'Optional wish-group name')
+    .action((id: string, opts: LinkOptions) => handleLink(id, opts));
 
   task
     .command('list')

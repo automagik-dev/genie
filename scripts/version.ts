@@ -198,6 +198,7 @@ export async function synchronizeVersionFiles(rootDir: string, version: string):
     join(rootDir, 'package.json'),
     join(rootDir, 'plugins/genie/.claude-plugin/plugin.json'),
     join(rootDir, 'plugins/genie/.codex-plugin/plugin.json'),
+    join(rootDir, 'plugins/genie/.kimi-plugin/plugin.json'),
     join(rootDir, 'plugins/genie/package.json'),
     join(rootDir, 'plugins/pi-genie/package.json'),
   ];

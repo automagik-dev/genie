@@ -8,10 +8,12 @@
  */
 
 import type { Database } from 'bun:sqlite';
+import { closeSync, constants as fsConstants, fstatSync, lstatSync, openSync, readSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Command } from 'commander';
 import { color, padRight, truncate } from '../lib/term-format.js';
 import { cardBadges } from '../lib/v5/card-render.js';
-import { openDb } from '../lib/v5/genie-db.js';
+import { openDb, resolveRepoRoot } from '../lib/v5/genie-db.js';
 import {
   type BoardRow,
   DEFAULT_LIFECYCLE_LANES,
@@ -28,6 +30,7 @@ import {
   listTaskCards,
   listTasks,
   listTasksWithLane,
+  moveTask,
   resolveBoard,
 } from '../lib/v5/task-state.js';
 
@@ -119,6 +122,130 @@ interface BoardOptions {
   json?: boolean;
 }
 
+type WishLane = 'Idea' | 'Wish' | 'Work' | 'Review' | 'Done';
+
+const WISH_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const MAX_WISH_BYTES = 256 * 1_024;
+
+function physicalDirectory(path: string): boolean {
+  try {
+    const stats = lstatSync(path);
+    return stats.isDirectory() && !stats.isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Rename Remotty's ordered Wish.StatusCategory prefixes to Genie lanes.
+ * Ordering is semantic: past-tense EXECUTED precedes active EXECUT, specific
+ * PLAN-REVIEWED precedes ready PLAN-, and SHIP- precedes the done SHIP prefix.
+ * An unrecognised status has no implied lane and must preserve its card.
+ */
+function laneForWishStatus(status: string): WishLane | null {
+  const key = status.toUpperCase();
+  if (key.startsWith('DRAFT') || key.startsWith('ROADMAP')) return 'Idea';
+  if (key.startsWith('BLOCK') || key.startsWith('ON-HOLD')) return 'Work';
+  if (key.startsWith('EXECUTED') || key.startsWith('REVIEWED') || key.startsWith('PLAN-REVIEWED')) return 'Review';
+  if (key.startsWith('IN') || key.startsWith('EXECUT') || key.startsWith('WAVE')) return 'Work';
+  if (
+    key.startsWith('READY') ||
+    key.startsWith('APPROVED') ||
+    key.startsWith('PLAN-') ||
+    key.startsWith('SHIP-') ||
+    key.startsWith('STAGED')
+  ) {
+    return 'Wish';
+  }
+  if (
+    key.startsWith('DONE') ||
+    key.startsWith('SHIP') ||
+    key.startsWith('MERGED') ||
+    key.startsWith('COMPLET') ||
+    key.startsWith('DELIVER') ||
+    key.startsWith('PUBLISH') ||
+    key.startsWith('CONCLU')
+  ) {
+    return 'Done';
+  }
+  return null;
+}
+
+/** Read the first markdown-table Status field for one direct wish directory. */
+function readWishStatus(repoRoot: string, wish: string): string | null {
+  // `wish` is persisted user input. Admit only a bounded, direct physical
+  // `.genie/wishes/<slug>/WISH.md`; unsafe inputs stay hand-owned.
+  if (!WISH_SLUG_PATTERN.test(wish)) return null;
+  const genieDir = join(repoRoot, '.genie');
+  const wishesDir = join(genieDir, 'wishes');
+  if (!physicalDirectory(genieDir) || !physicalDirectory(wishesDir)) return null;
+  const wishDir = join(wishesDir, wish);
+  const wishFile = join(wishDir, 'WISH.md');
+  let descriptor: number | null = null;
+  try {
+    const directoryStats = lstatSync(wishDir);
+    if (!directoryStats.isDirectory() || directoryStats.isSymbolicLink()) return null;
+    const pathStats = lstatSync(wishFile);
+    if (!pathStats.isFile() || pathStats.isSymbolicLink() || pathStats.size > MAX_WISH_BYTES) return null;
+
+    descriptor = openSync(wishFile, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK);
+    const fileStats = fstatSync(descriptor);
+    if (!fileStats.isFile() || fileStats.size > MAX_WISH_BYTES) return null;
+
+    const bytes = Buffer.alloc(fileStats.size);
+    let offset = 0;
+    while (offset < bytes.byteLength) {
+      const count = readSync(descriptor, bytes, offset, bytes.byteLength - offset, offset);
+      if (count === 0) break;
+      offset += count;
+    }
+    const body = bytes.subarray(0, offset).toString('utf8');
+    return body.match(/^\|\s*\*\*Status\*\*\s*\|\s*(.*?)\s*\|\s*$/m)?.[1]?.trim() || null;
+  } catch {
+    // Missing/orphaned and unreadable wishes are hand-owned for this read.
+    return null;
+  } finally {
+    if (descriptor !== null) {
+      try {
+        closeSync(descriptor);
+      } catch {
+        // The read remains best-effort even if descriptor cleanup reports I/O.
+      }
+    }
+  }
+}
+
+/**
+ * Reconcile the JSON read's selected cards, one lane-defining board at a time.
+ * A card's rendered lane is its stored lane, falling back to the board's first
+ * (enclosing) lane when NULL. Per-card failures preserve the stored projection:
+ * one bad wish or concurrent lane change must never suppress the board read.
+ */
+function reconcileWishLanes(db: Database, filter: TaskFilter, selectedBoard: BoardRow | null): void {
+  const repoRoot = resolveRepoRoot();
+  const boards = selectedBoard ? [selectedBoard] : listBoards(db);
+  for (const board of boards) {
+    const lanes = board.lanes;
+    if (!lanes || lanes.length === 0) continue;
+    const laneNames = new Set(lanes.map((lane) => lane.name));
+    const enclosingLane = lanes[0].name;
+    const boardFilter: TaskFilter = { ...filter, boardId: board.id };
+    for (const task of listTasksWithLane(db, boardFilter)) {
+      if (!task.wish) continue;
+      const status = readWishStatus(repoRoot, task.wish);
+      const destination = status ? laneForWishStatus(status) : null;
+      if (!destination || !laneNames.has(destination)) continue;
+      const currentLane = task.lane ?? enclosingLane;
+      if (currentLane === destination) continue;
+      try {
+        moveTask(db, task.id, destination, { author: 'wish-status-sync', authorKind: 'genie' });
+      } catch {
+        // Best-effort reconciliation: render the durable lane that remains.
+      }
+    }
+  }
+}
+
 function handleBoard(opts: BoardOptions): void {
   const db = openDb();
   try {
@@ -134,6 +261,10 @@ function handleBoard(opts: BoardOptions): void {
       filter.wish = opts.wish;
       scopeLabel = opts.board ? `${scopeLabel}, wish "${opts.wish}"` : `wish "${opts.wish}"`;
     }
+
+    // Deliberately CLI-only. MCP queries call their shared read projection and
+    // never enter this verb handler, so they remain read-only.
+    if (opts.json) reconcileWishLanes(db, filter, board);
 
     // A scoped board that defines lanes renders on the lifecycle axis. Every
     // other scope (no board, or a laneless board) falls through to the frozen

@@ -38,6 +38,7 @@ import {
   getTaskLane,
   hireAgent,
   importState,
+  linkTaskToWish,
   listBoards,
   listHires,
   listTasks,
@@ -94,6 +95,52 @@ describe('task CRUD', () => {
 
   test('getTask returns null for unknown id', () => {
     expect(getTask(db, 't_missing')).toBeNull();
+  });
+
+  test('linkTaskToWish changes only wish metadata and updated_at', () => {
+    const board = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    const task = createTask(db, { title: 'existing card', boardId: board.id, lane: 'Idea' });
+    claimTask(db, task.id, 'worker-1', { now: 1_000, author: { author: 'worker-1', authorKind: 'codex' } });
+    recordHeartbeat(db, task.id, 2_000);
+    blockTask(db, task.id, 'hold exactly', { author: 'operator', authorKind: 'human' });
+    appendTaskEvent(db, task.id, {
+      kind: 'comment',
+      note: 'preserve this byte-for-byte: → ç',
+      author: 'operator',
+      authorKind: 'human',
+    });
+
+    const beforeRow = db.query('SELECT * FROM tasks WHERE id = ?').get(task.id) as Record<string, unknown>;
+    const beforeEvents = JSON.stringify(getTaskEvents(db, task.id));
+    const linked = linkTaskToWish(db, task.id, 'missing-wish', 'group-2', 3_000);
+    const afterRow = db.query('SELECT * FROM tasks WHERE id = ?').get(task.id) as Record<string, unknown>;
+
+    expect(linked.wish).toBe('missing-wish');
+    expect(linked.group).toBe('group-2');
+    expect(afterRow.wish).toBe('missing-wish');
+    expect(afterRow.group_name).toBe('group-2');
+    expect(afterRow.updated_at).toBe(3_000);
+    for (const key of Object.keys(beforeRow)) {
+      if (key === 'wish' || key === 'group_name' || key === 'updated_at') continue;
+      expect(afterRow[key]).toEqual(beforeRow[key]);
+    }
+    expect(JSON.stringify(getTaskEvents(db, task.id))).toBe(beforeEvents);
+
+    const linkedRow = db.query('SELECT * FROM tasks WHERE id = ?').get(task.id) as Record<string, unknown>;
+    const repeated = linkTaskToWish(db, task.id, 'missing-wish', 'group-2', 4_000);
+    const repeatedRow = db.query('SELECT * FROM tasks WHERE id = ?').get(task.id) as Record<string, unknown>;
+    expect(repeated.updatedAt).toBe(3_000);
+    expect(repeatedRow).toEqual(linkedRow);
+    expect(JSON.stringify(getTaskEvents(db, task.id))).toBe(beforeEvents);
+  });
+
+  test('linkTaskToWish omits the group by storing null and rejects an unknown task', () => {
+    const task = createTask(db, { title: 'ungrouped link', wish: 'old', group: 'old-group' });
+    const linked = linkTaskToWish(db, task.id, 'old', undefined, 4_000);
+    expect(linked.wish).toBe('old');
+    expect(linked.group).toBeNull();
+    expect(linked.updatedAt).toBe(4_000);
+    expect(() => linkTaskToWish(db, 't_missing', 'new-wish')).toThrow(UnknownTaskError);
   });
 });
 

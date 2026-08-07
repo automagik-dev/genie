@@ -185,7 +185,7 @@ jobs:
       # SECURITY: every command in this step is trusted workflow control loaded
       # from main. Do not run package scripts, dependency installers, hooks, or
       # any executable from the dev checkout in this write-capable workflow.
-      - name: Synchronize the exact six version fields
+      - name: Synchronize the exact seven version fields
         if: steps.context.outputs.should_bump == 'true'
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -195,6 +195,7 @@ jobs:
             package.json
             plugins/genie/.claude-plugin/plugin.json
             plugins/genie/.codex-plugin/plugin.json
+            plugins/genie/.kimi-plugin/plugin.json
             plugins/genie/package.json
             plugins/pi-genie/package.json
           )
@@ -267,7 +268,7 @@ jobs:
           EXPECTED="$(printf '%s\n' "${VERSION_PATHS[@]}" | LC_ALL=C sort)"
           ACTUAL="$(git diff --cached --name-only -- | LC_ALL=C sort)"
           if [[ "$ACTUAL" != "$EXPECTED" ]]; then
-            echo "::error ::release-version.delta_untrusted expected exactly seven version files"
+            echo "::error ::release-version.delta_untrusted expected exactly eight version files"
             printf 'expected:\n%s\nactual:\n%s\n' "$EXPECTED" "$ACTUAL" >&2
             exit 1
           fi

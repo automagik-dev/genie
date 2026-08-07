@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { statSync } from 'node:fs';
 import { join } from 'node:path';
 
 const CHECK_SCRIPT = join(import.meta.dir, 'plugin-executables-check.ts');
@@ -15,8 +16,15 @@ function runCheck(args: string[] = []): { code: number; output: string } {
 describe('plugin executable static gate', () => {
   test('strict-checks every shipped source', () => {
     const result = runCheck();
-    expect(result.output).toContain('8 strict checked sources, 8 shipped scripts');
+    expect(result.output).toContain('8 strict checked sources, 1 exec-bit asserted, 8 shipped scripts');
     expect(result.code).toBe(0);
+  });
+
+  // Kimi's manifest execs mcp-launcher.cjs through its own shebang, so the
+  // committed mode is a runtime contract, not a cosmetic file attribute.
+  test('asserts the shebang-exec launcher keeps its committed executable bit', () => {
+    const mode = statSync(join(import.meta.dir, '..', 'plugins', 'genie', 'scripts', 'mcp-launcher.cjs')).mode;
+    expect(mode & 0o111).toBe(0o111);
   });
 
   test('rejects an implicit-any negative fixture', () => {

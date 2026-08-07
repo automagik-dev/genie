@@ -5,7 +5,7 @@ description: "Dispatch trace subagent to investigate unknown issues — reproduc
 
 # trace — Investigation and Root Cause Analysis
 
-**Runtime syntax:** in Codex, invoke the plugin copy with the owner-qualified `$genie:<skill>` selector; use bare `$<skill>` only when intentionally selecting a user-tier copy (a separately installed personal copy; Genie no longer seeds this tier). Claude Code and Hermes use `/<skill>`. Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active tier.
+**Runtime syntax:** invoke the plugin copy through the active runtime's owner-qualified skill selector; use a bare selector only when intentionally selecting a user-tier copy (a separately installed personal copy; Genie no longer seeds this tier). Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active runtime.
 
 Investigate unknown failures: dispatch a trace subagent to reproduce, trace, and isolate root cause, then hand the report to `fix`. The deliverable is findings only — report and stop; never apply fixes, however obvious.
 
@@ -37,7 +37,7 @@ Include file paths and line numbers in every root-cause claim so `fix` can act w
 
 ## Dispatch
 
-Trace runs through a fresh read-only scout/explorer role on the active runtime (Codex profile `genie_scout` when installed). It may search files and run non-mutating diagnostic commands, but it must not edit, stage, commit, or publish. Use native follow-up messaging to keep the same investigation context.
+Trace runs through a fresh read-only scout/explorer role on the active runtime (runtime profile `genie_scout` when installed). It may search files and run non-mutating diagnostic commands, but it must not edit, stage, commit, or publish. Use native follow-up messaging to keep the same investigation context.
 
 ## Rules
 - Report findings and stop — investigation only. `fix` applies the correction; never combine the two.

@@ -19,6 +19,13 @@ const CHECK_JS_TARGETS = [
   'src/validate-wish.ts',
 ].map((path) => join(SCRIPTS, path));
 
+/**
+ * Scripts a runtime execs directly through their shebang rather than via
+ * `node <path>`. Kimi's manifest runs `mcpServers.genie.command` as the
+ * program itself, so a lost executable bit is a silent MCP outage.
+ */
+const REQUIRED_EXECUTABLES = ['mcp-launcher.cjs'].map((path) => join(SCRIPTS, path));
+
 function strictFixtureTargets(argv: string[]): string[] {
   const targets: string[] = [];
   for (let index = 0; index < argv.length; index++) {
@@ -65,11 +72,20 @@ run(process.execPath, [
   ...typecheckTargets,
 ]);
 
+for (const path of REQUIRED_EXECUTABLES) {
+  const mode = lstatSync(path).mode & 0o777;
+  if ((mode & 0o111) !== 0o111) {
+    throw new Error(
+      `plugin executable must be committed with the executable bit (100755): ${path} is ${mode.toString(8).padStart(4, '0')}`,
+    );
+  }
+}
+
 const nodeExecutables = readdirSync(SCRIPTS)
   .filter((name) => name.endsWith('.cjs') || name === 'smart-install.js')
   .sort();
 for (const name of nodeExecutables) run('node', ['--check', join(SCRIPTS, name)]);
 
 process.stdout.write(
-  `plugin-executables-check: OK (${CHECK_JS_TARGETS.length} strict checked sources, ${nodeExecutables.length} shipped scripts)\n`,
+  `plugin-executables-check: OK (${CHECK_JS_TARGETS.length} strict checked sources, ${REQUIRED_EXECUTABLES.length} exec-bit asserted, ${nodeExecutables.length} shipped scripts)\n`,
 );

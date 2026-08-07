@@ -33,6 +33,7 @@ describe('synchronizeVersionFiles CI staging', () => {
       'package.json',
       'plugins/genie/.claude-plugin/plugin.json',
       'plugins/genie/.codex-plugin/plugin.json',
+      'plugins/genie/.kimi-plugin/plugin.json',
       'plugins/genie/package.json',
       'plugins/pi-genie/package.json',
     ]) {
