@@ -1837,7 +1837,7 @@ describe('evaluateIndexLaneDrift (pure section↔lane parser)', () => {
   const laneForSlug = (slug: string): string | null => lanes.get(slug) ?? null;
 
   test('agreeing lane → ok; contradicting lane → drift', () => {
-    const entries = evaluateIndexLaneDrift(INDEX, laneForSlug);
+    const entries = evaluateIndexLaneDrift(INDEX, laneForSlug, () => true);
     const byEntry = Object.fromEntries(entries.map((e) => [e.entry, e]));
     expect(byEntry.alpha.state).toBe('ok');
     expect(byEntry.alpha.lane).toBe('Idea');
@@ -1846,14 +1846,14 @@ describe('evaluateIndexLaneDrift (pure section↔lane parser)', () => {
   });
 
   test('the FIRST brainstorms/wishes link decides the slug', () => {
-    const entries = evaluateIndexLaneDrift(INDEX, laneForSlug);
+    const entries = evaluateIndexLaneDrift(INDEX, laneForSlug, () => true);
     const delta = entries.find((e) => e.entry === 'delta');
     expect(delta?.slug).toBe('delta');
     expect(delta?.state).toBe('ok');
   });
 
   test('linkless entries and laneless cards are unlinked, never drift', () => {
-    const entries = evaluateIndexLaneDrift(INDEX, laneForSlug);
+    const entries = evaluateIndexLaneDrift(INDEX, laneForSlug, () => true);
     const linkless = entries.find((e) => e.slug === null);
     expect(linkless?.state).toBe('unlinked');
     expect(linkless?.section).toBe('Raw');
@@ -1865,14 +1865,14 @@ describe('evaluateIndexLaneDrift (pure section↔lane parser)', () => {
   });
 
   test('bullets under non-lifecycle headings are excluded', () => {
-    const entries = evaluateIndexLaneDrift(INDEX, laneForSlug);
+    const entries = evaluateIndexLaneDrift(INDEX, laneForSlug, () => true);
     expect(entries.some((e) => e.slug === 'zeta')).toBe(false);
     // Raw(2) + Simmering(1) + Ready(1) + Poured(2) = 6 entries.
     expect(entries).toHaveLength(6);
   });
 
   test('order is stable (INDEX document order)', () => {
-    const slugs = evaluateIndexLaneDrift(INDEX, laneForSlug).map((e) => e.slug);
+    const slugs = evaluateIndexLaneDrift(INDEX, laneForSlug, () => true).map((e) => e.slug);
     expect(slugs).toEqual(['alpha', null, 'beta', 'gamma', 'delta', 'epsilon']);
   });
 
@@ -2101,6 +2101,19 @@ describe('checkIndexLaneDrift (DB-backed, warning-level)', () => {
     expect(result.detail).toContain('0 drift, 1 broken');
   });
 
+  test('a link that traverses outside .genie is broken even when the outside path exists', () => {
+    // `..` is a legal slug for the link regex, so the target must be contained,
+    // not merely stat-ed — otherwise doctor --json reports whether any path on
+    // the machine exists.
+    const outside = join(dir, 'outside.md');
+    writeFileSync(outside, '# outside\n');
+    expect(existsSync(outside)).toBe(true);
+    writeIndex('# Plans Index\n## Poured\n- [escape](wishes/../../outside.md)\n');
+    const [result] = checkIndexLaneDrift(dir, dir);
+    expect(result.indexLane?.entries[0].state).toBe('broken');
+    expect(result.detail).toContain('1 broken');
+  });
+
   test('a linkless entry is still unlinked and does not warn', () => {
     writeIndex('# Plans Index\n## Raw\n- a linkless note\n');
     const [result] = checkIndexLaneDrift(dir, dir);
@@ -2136,6 +2149,21 @@ describe('doctorCommand — index-lane human output and ok invariance', () => {
     expect(output).toContain('0 ok, 0 drift, 1 broken, 2 unlinked');
     expect(output).toContain('· broken: deleted wish');
     expect(output).toContain('· unlinked: a linkless note');
+  });
+
+  test('unlinked lines are capped at five while every broken entry is named', async () => {
+    const root = join(isolatedHome, 'repo');
+    mkdirSync(join(root, '.genie'), { recursive: true });
+    const bullets = Array.from({ length: 8 }, (_, i) => `- a linkless note ${i}`);
+    // Two dangling links: broken must survive the cap that trims unlinked.
+    bullets.push('- [gone one](wishes/gone-one/WISH.md)', '- [gone two](wishes/gone-two/WISH.md)');
+    writeFileSync(join(root, '.genie', 'INDEX.md'), ['# Plans Index', '## Raw', ...bullets].join('\n'));
+    const { output } = await captureDoctor(() => doctorCommand({}, isolatedDoctorDeps()));
+    expect(output).toContain('· unlinked: a linkless note 4');
+    expect(output).not.toContain('· unlinked: a linkless note 5');
+    expect(output).toContain('· …and 3 more unlinked');
+    expect(output).toContain('· broken: gone one');
+    expect(output).toContain('· broken: gone two');
   });
 
   test('broken and unlinked entries never flip doctor ok', async () => {
