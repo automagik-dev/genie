@@ -10,6 +10,7 @@
  *   task link <id> --wish <slug> [--group <name>]
  *   task list [--status <s>] [--board <ref>] [--wish <slug>] [--json]
  *   task status <id>
+ *   task set-wish <id> (--wish <slug> [--group <name>] | --clear)
  *   task done <id>
  *   task checkout <id> [--worker <name>]
  *   task export [--write [file]]
@@ -46,6 +47,7 @@ import {
   completeTask,
   createTask,
   exportState,
+  formatWishRef,
   getDependencies,
   getStageLog,
   getTask,
@@ -58,6 +60,7 @@ import {
   recordHeartbeat,
   releaseTask,
   resolveBoard,
+  setTaskWish,
   unblockTask,
 } from '../lib/v5/task-state.js';
 
@@ -267,6 +270,36 @@ function handleStatus(id: string): void {
       const task = getTaskCard(db, id);
       if (!task) throw new UnknownTaskError(id);
       printTaskDetail(db, task);
+    } finally {
+      db.close();
+    }
+  });
+}
+
+interface SetWishOptions {
+  wish?: string;
+  group?: string;
+  clear?: boolean;
+}
+
+/**
+ * Re-point an existing card's lifecycle identity. `--group requires --wish.` is
+ * the same guard (and the same message) `create` enforces, so the two verbs
+ * accept identical wish arguments; slugs stay unvalidated on both.
+ */
+function handleSetWish(id: string, opts: SetWishOptions): void {
+  const wish = opts.wish?.trim();
+  const group = opts.group?.trim();
+  if (group && !wish) fail('--group requires --wish.');
+  if (opts.clear && wish) fail('--clear cannot be combined with --wish.');
+  if (!opts.clear && !wish) fail('--wish <slug> or --clear is required.');
+
+  run(() => {
+    const db = openDb();
+    try {
+      const to = { wish: wish ?? null, group: group ?? null };
+      const result = setTaskWish(db, id, to, resolveEventAuthor());
+      out(`Task ${result.task.id} wish: ${formatWishRef(result.from)} → ${formatWishRef(result.to)}.`);
     } finally {
       db.close();
     }
@@ -637,6 +670,14 @@ export function registerV5TaskCommands(v5: Command): void {
     .command('status <id>')
     .description('Show task detail, dependencies, and stage log')
     .action((id: string) => handleStatus(id));
+
+  task
+    .command('set-wish <id>')
+    .description('Attach, re-point, or clear the wish identity on a card (appends a wish event)')
+    .option('--wish <slug>', 'Wish slug to attach the card to')
+    .option('--group <name>', 'Wish-group name (requires --wish)')
+    .option('--clear', 'Remove the wish and group from the card')
+    .action((id: string, opts: SetWishOptions) => handleSetWish(id, opts));
 
   task
     .command('done <id>')

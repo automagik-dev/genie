@@ -125,6 +125,20 @@ slug` and lint-checks the card's lane against the INDEX section. A card may
 carry a `wish` slug while still sitting in an early lane; the slug is an
 identity, not a claim that a wish document exists yet.
 
+**The identity is mutable in place.** `genie task set-wish <id> --wish <slug>
+[--group <name>]` attaches or re-points a card's slug, and `--clear` sheds it;
+`setTaskWish` writes only `wish`, `group_name`, and `updated_at`, so `id`,
+`created_at`, and any live checkout claim survive untouched — a card that
+outgrows its original framing is never deleted and recreated (which would break
+every reference to its id and lose its timeline). Slugs are unvalidated TEXT,
+exactly as `createTask` treats them; `--group` requires `--wish` in both verbs.
+A group name only means something under the wish it was declared in, so the new
+identity is taken whole: a wish change carries only the group given with it, and
+clearing the wish clears the group too. Each change appends a `wish` event
+(`old→new`, rendered as `slug#group`, `slug`, or `(none)`) to the card timeline
+that `task status` prints, and the columns ride `task export` / `import` /
+`sync` like any other task field.
+
 ### `task_dependencies`
 Directed edges: `task_id` depends on `depends_on_id`.
 
