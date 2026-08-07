@@ -10,6 +10,7 @@
  *   task list [--status <s>] [--board <ref>] [--wish <slug>] [--json]
  *   task status <id>
  *   task set-wish <id> (--wish <slug> [--group <name>] | --clear)
+ *   task delete <id>
  *   task done <id>
  *   task checkout <id> [--worker <name>]
  *   task export [--write [file]]
@@ -45,6 +46,7 @@ import {
   claimTask,
   completeTask,
   createTask,
+  deleteTask,
   exportState,
   formatWishRef,
   getDependencies,
@@ -275,6 +277,26 @@ function handleSetWish(id: string, opts: SetWishOptions): void {
       const to = { wish: wish ?? null, group: group ?? null };
       const result = setTaskWish(db, id, to, resolveEventAuthor());
       out(`Task ${result.task.id} wish: ${formatWishRef(result.from)} → ${formatWishRef(result.to)}.`);
+    } finally {
+      db.close();
+    }
+  });
+}
+
+/**
+ * Remove a mistakenly created card outright. The verb is deliberately flagless:
+ * a hard delete with no archive, refused while anything depends on the card, and
+ * published by the next `task sync` like any other board mutation.
+ */
+function handleDelete(id: string): void {
+  run(() => {
+    const db = openDb();
+    try {
+      const { task, dependencies, events } = deleteTask(db, id);
+      out(
+        `Deleted task ${task.id} "${task.title}" (${dependencies} dependency edge${dependencies === 1 ? '' : 's'}, ${events} timeline event${events === 1 ? '' : 's'}).`,
+      );
+      out('Run `genie task sync` (or commit) to publish the removal to .genie/roadmap.json.');
     } finally {
       db.close();
     }
@@ -629,6 +651,34 @@ export function registerV5TaskCommands(v5: Command): void {
     .option('--group <name>', 'Wish-group name (requires --wish)')
     .option('--clear', 'Remove the wish and group from the card')
     .action((id: string, opts: SetWishOptions) => handleSetWish(id, opts));
+
+  task
+    .command('delete <id>')
+    .description('Permanently delete a card, its edges, and its timeline (refused while other cards depend on it)')
+    .addHelpText(
+      'after',
+      `
+Hard delete, no archive and no undo: the card, its dependency edges, its
+timeline, and its stage log are removed outright. The card's history survives
+only in whatever .genie/roadmap.json revisions git already holds. Any status is
+deletable, claimed or not.
+
+Refused while another card depends on this one, naming the dependents. The edge
+table cascades on delete, so removing a depended-on card would erase the edge
+instead of failing — the dependent would stay "blocked" with nothing blocking
+it, and the next ready-set recompute (which any \`task done\` triggers) would
+silently promote it to "ready". Re-point or delete the dependents first.
+
+The removal reaches .genie/roadmap.json through the ordinary \`task sync\`
+export, with two caveats:
+  * Plain \`task import\` (no --replace) merges as a superset, so importing an
+    older snapshot resurrects the deleted card. Use \`task import --replace\`.
+  * Deleting the LAST card can hand the next sync to the import branch instead
+    of the export branch — it takes that path only when no board or wish-group
+    rows remain either. Publish with \`task export --write\` when emptying the
+    board completely.`,
+    )
+    .action((id: string) => handleDelete(id));
 
   task
     .command('done <id>')

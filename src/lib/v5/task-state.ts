@@ -350,6 +350,26 @@ export class TaskReleaseError extends Error {
   }
 }
 
+/**
+ * A delete was refused because other cards still `depends-on` the target. The
+ * dependent ids are carried so the operator learns what to re-point first.
+ */
+export class TaskHasDependentsError extends Error {
+  readonly taskId: string;
+  readonly dependents: string[];
+  constructor(taskId: string, dependents: string[]) {
+    const shown = dependents.slice(0, 3).join(', ');
+    const rest = dependents.length > 3 ? ` +${dependents.length - 3} more` : '';
+    const one = dependents.length === 1;
+    super(
+      `Cannot delete task ${taskId}: ${dependents.length} task${one ? ' depends' : 's depend'} on it (${shown}${rest}). Delete or re-point ${one ? 'it' : 'them'} first.`,
+    );
+    this.name = 'TaskHasDependentsError';
+    this.taskId = taskId;
+    this.dependents = dependents;
+  }
+}
+
 /** An invalid wish-group transition was attempted. */
 export class WishGroupStateError extends Error {
   constructor(message: string) {
@@ -632,6 +652,73 @@ export function listTaskCards(db: Database, filter: TaskFilter = {}): TaskCardRo
 export function getTaskCard(db: Database, id: string): TaskCardRow | null {
   const row = db.query('SELECT * FROM tasks WHERE id = ?').get(id) as RawTask | null;
   return row ? mapTaskCard(row) : null;
+}
+
+// ============================================================================
+// Deletion — the only removal path (hard, unarchived, dependency-refused)
+// ============================================================================
+
+/** What a {@link deleteTask} removed, for the CLI to report back. */
+export interface DeleteTaskResult {
+  /** The card as it stood immediately before removal. */
+  task: TaskRow;
+  /** Outgoing `depends-on` edges removed with it. */
+  dependencies: number;
+  /** Timeline events removed with it. */
+  events: number;
+  /** Deprecated stage_log rows removed with it. */
+  stages: number;
+}
+
+/**
+ * Permanently remove one card, its dependency edges, and its timeline. There is
+ * no archive and no undo — the roadmap snapshot in git is the only history a
+ * deleted card leaves behind.
+ *
+ * **Refused while any other card depends on it**, and that refusal is the whole
+ * safety story. `task_dependencies` declares both columns
+ * `REFERENCES tasks(id) ON DELETE CASCADE`, so deleting a depended-on card would
+ * silently erase the edge rather than fail: the dependent keeps `status =
+ * 'blocked'` with nothing left to block it, and the next {@link recomputeReady}
+ * — which `task done` runs on any unrelated card — finds no unmet dependency and
+ * promotes it to `ready`. That delayed, unattributable unblock is exactly what a
+ * dependent-refusal prevents. Re-point or delete the dependents first.
+ *
+ * Deletion is allowed in any status, claimed or not: a mistakenly created card
+ * must be removable without first releasing whoever picked it up.
+ *
+ * No ready-set recompute is needed. Only the target's OUTGOING edges disappear
+ * (incoming ones are what the refusal guarantees do not exist), and those gate
+ * nothing but the card being removed.
+ */
+export function deleteTask(db: Database, taskId: string): DeleteTaskResult {
+  const remove = db.transaction(() => {
+    const task = getTask(db, taskId);
+    if (!task) throw new UnknownTaskError(taskId);
+
+    const dependentRows = db
+      .query('SELECT task_id FROM task_dependencies WHERE depends_on_id = ? ORDER BY task_id')
+      .all(taskId) as Array<{ task_id: string }>;
+    if (dependentRows.length > 0) {
+      throw new TaskHasDependentsError(
+        taskId,
+        dependentRows.map((r) => r.task_id),
+      );
+    }
+
+    // Explicit child deletes rather than leaning on ON DELETE CASCADE: the
+    // removal is then total whether or not `PRAGMA foreign_keys` is on for this
+    // connection, and each statement reports what it actually removed.
+    const dependencies = db.query('DELETE FROM task_dependencies WHERE task_id = ?').run(taskId).changes;
+    const events = db.query('DELETE FROM task_events WHERE task_id = ?').run(taskId).changes;
+    const stages = db.query('DELETE FROM stage_log WHERE task_id = ?').run(taskId).changes;
+    db.query('DELETE FROM tasks WHERE id = ?').run(taskId);
+    return { task, dependencies, events, stages };
+  });
+  // BEGIN IMMEDIATE: the dependent check and the delete must not interleave with
+  // a concurrent worktree adding an edge into this card, which would otherwise
+  // land between the read and the write and be cascaded away unseen.
+  return remove.immediate() as DeleteTaskResult;
 }
 
 // ============================================================================
