@@ -17,6 +17,7 @@ import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import {
+  chmodSync,
   copyFileSync,
   existsSync,
   linkSync,
@@ -29,7 +30,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import { isCurrentGenieDb, openDb } from './genie-db.js';
+import { STAGE_LOG_BACKFILL_KEY, isCurrentGenieDb, openDb } from './genie-db.js';
 import {
   MCP_TOOLS,
   openReadonlyDb,
@@ -479,6 +480,37 @@ describe('openReadonlyDbHealingStaleSchema', () => {
     const untouched = openReadonlyDb(repo);
     expect(isCurrentGenieDb(untouched as Database)).toBe(false);
     untouched?.close();
+  });
+
+  test('serves a marker-only-stale database readonly when the heal write is impossible', () => {
+    const repo = initRepo(join(base, 'repo'));
+    seedDb(repo);
+    const path = join(repo, '.genie', 'genie.db');
+    const stale = new Database(path);
+    // Shape is fully current; only the data-only backfill marker is pending —
+    // the one staleness a read never depends on.
+    stale.query('DELETE FROM meta WHERE key = ?').run(STAGE_LOG_BACKFILL_KEY);
+    stale.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    stale.close();
+
+    // Write-protect the database and its directory: the sandboxed/CI shape
+    // where the consumer can read .genie/genie.db but never write it, so the
+    // write-path heal is impossible.
+    const genieDir = join(repo, '.genie');
+    chmodSync(path, 0o444);
+    chmodSync(genieDir, 0o555);
+    try {
+      const served = openReadonlyDbHealingStaleSchema(repo);
+      expect(served).not.toBeNull();
+      // Still not strictly current (marker pending) — but readable and served.
+      expect(isCurrentGenieDb(served as Database)).toBe(false);
+      const row = (served as Database).query('SELECT title FROM tasks').get() as { title: string };
+      expect(row.title).toBe('seed');
+      served?.close();
+    } finally {
+      chmodSync(genieDir, 0o755);
+      chmodSync(path, 0o644);
+    }
   });
 
   test('fails closed on a future user_version instead of healing it', () => {

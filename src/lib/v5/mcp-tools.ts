@@ -19,6 +19,7 @@ import {
   type ProjectContext,
   type ProjectDatabaseBinding,
   isCurrentGenieDb,
+  isReadableGenieDb,
   openDb,
   resolveDbPath,
   resolveProjectDatabaseBinding,
@@ -139,7 +140,10 @@ export function openReadonlyDb(
  * An ABSENT database never reaches the write open (`openReadonlyDb` returns
  * null first), preserving this module's no-create contract. A foreign, future
  * (`user_version` ≠ current), or malformed database is refused by `openDb`'s
- * typed guards, so everything that is not additive lag still fails closed.
+ * typed guards, so everything that is not additive lag still fails closed —
+ * with one carve-out: when the heal WRITE itself is impossible (read-only
+ * filesystem) but the schema shape is already current, the database is served
+ * readonly anyway via {@link isReadableGenieDb}.
  */
 export function openReadonlyDbHealingStaleSchema(target?: string | ProjectDatabaseBinding): Database | null {
   const db = openReadonlyDb(target);
@@ -167,9 +171,28 @@ export function openReadonlyDbHealingStaleSchema(target?: string | ProjectDataba
       openDb({ path: resolveDbPath(target) }).close();
     }
   } catch {
-    return null;
+    // The write-path heal itself failed — read-only mount, a sandboxed process
+    // with read-but-not-write access to .genie/genie.db, a CI checkout. When
+    // the database's SHAPE is already current and only a data-only migration
+    // marker is pending, every read still works: degrade to serving it instead
+    // of failing closed on state no read depends on. A shape-stale database
+    // (missing columns this build queries) stays refused.
+    return reopenReadableDespiteFailedHeal(target);
   }
   return openReadonlyDb(target);
+}
+
+/** Post-heal-failure fallback: serve the database readonly iff its shape is current. */
+function reopenReadableDespiteFailedHeal(target?: string | ProjectDatabaseBinding): Database | null {
+  const db = openReadonlyDb(target);
+  if (db === null) return null;
+  try {
+    if (isReadableGenieDb(db)) return db;
+  } catch {
+    // malformed while inspecting — fall through to the close below
+  }
+  closeReadonlyDb(db);
+  return null;
 }
 
 // ============================================================================
