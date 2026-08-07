@@ -35,7 +35,6 @@ import {
   type WishGroupRow,
   getBoardByName,
   getTask,
-  getWishGroups,
   listTasks,
   listWishSlugs,
 } from './task-state.js';
@@ -230,28 +229,22 @@ function currentBranch(cwd: string): string | null {
  * group may contain hyphens, so a raw last-dash split is ambiguous
  * (`wish/genie-mcp` is the `genie-mcp` wish with no group, NOT a `genie` wish
  * with an `mcp` group). Disambiguate against the db, most-authoritative first:
- *   1. a `<slug>-<group>` where BOTH the slug is known AND `<group>` is a real
- *      group of it → a launch worktree (beats a same-named top-level slug);
- *   2. exact known slug → top-level branch, group = null;
- *   3. longest known slug that is a prefix + `-<group>` (group unverified);
- *   4. no known wish (brand-new branch) → last-dash heuristic, else whole rest.
+ *   1. exact known slug → top-level branch, group = null;
+ *   2. longest known slug that is a prefix + `-<group>` (group unverified);
+ *   3. no known wish (brand-new branch) → last-dash heuristic, else whole rest.
  * Returns `null` only when the branch is not a `wish/…` branch.
+ *
+ * There is no verified-launch-worktree step: wish-group rows are production-dead
+ * (no writer), so a `<slug>-<group>` branch can never be confirmed against a
+ * live group — the group is taken at face value from the branch name.
  */
 function resolveWishBranch(db: Database | null, branch: string): { wish: string; group: string | null } | null {
   const rest = branch.startsWith('wish/') ? branch.slice('wish/'.length) : null;
   if (!rest) return null;
   const known = db ? listWishSlugs(db) : []; // longest-first
-  // 1. Verified launch worktree: the group actually exists on the prefix wish.
-  if (db) {
-    for (const slug of known) {
-      if (!rest.startsWith(`${slug}-`)) continue;
-      const group = rest.slice(slug.length + 1);
-      if (group && getWishGroups(db, slug).some((g) => g.name === group)) return { wish: slug, group };
-    }
-  }
-  // 2. Exact known slug → top-level branch (no group).
+  // 1. Exact known slug → top-level branch (no group).
   if (known.includes(rest)) return { wish: rest, group: null };
-  // 3. Longest known slug that is a prefix (group unverified) → best guess.
+  // 2. Longest known slug that is a prefix (group unverified) → best guess.
   for (const slug of known) {
     if (rest.startsWith(`${slug}-`)) {
       const group = rest.slice(slug.length + 1);
@@ -334,7 +327,7 @@ interface WishStatusPayload {
 function genieWishStatus(ctx: ToolContext, args: Record<string, unknown>): WishStatusPayload {
   const wish = argString(args, 'wish') ?? '';
   if (!ctx.db) return { wish, groups: [], tasks: [] };
-  const groups = getWishGroups(ctx.db, wish).map(({ wish: _w, ...rest }) => rest);
+  const groups: WishStatusPayload['groups'] = []; // wish-group machinery is production-dead — literal empty
   const tasks = listTasks(ctx.db, { wish });
   return { wish, groups, tasks: tasks.map(toSummary) };
 }

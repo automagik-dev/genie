@@ -137,8 +137,9 @@ describe('board render', () => {
     expect(r.stdout).toContain('@w1');
 
     // in_progress → done via complete. Same board command, no persisted view.
+    // The claimed_by fence requires the claimant's identity — pass w1 (the checkout above).
     const db2 = openDb({ cwd: repo });
-    completeTask(db2, t.id);
+    completeTask(db2, t.id, { author: 'w1', authorKind: 'human' });
     db2.close();
     r = await board(repo);
     expect(r.stdout).toContain('Done: 1');

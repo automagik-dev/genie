@@ -14,25 +14,20 @@ import {
   LIVENESS_STALE_MS,
   LaneError,
   TaskBlockedError,
+  TaskCompleteError,
   TaskNotReadyError,
   TaskReleaseError,
   UnknownTaskError,
-  WishGroupDriftError,
-  WishGroupStateError,
   addDependency,
   appendStage,
   appendTaskEvent,
-  assertWishSignature,
   blockTask,
   claimTask,
   commentCounts,
   completeTask,
-  completeWishGroup,
-  computeGroupsSignature,
   countBoardTasks,
   createBoard,
   createTask,
-  createWishGroups,
   exportState,
   getBoardByName,
   getHire,
@@ -41,7 +36,6 @@ import {
   getTaskCard,
   getTaskEvents,
   getTaskLane,
-  getWishGroups,
   hireAgent,
   importState,
   linkTaskToWish,
@@ -54,7 +48,6 @@ import {
   recomputeReady,
   recordHeartbeat,
   releaseTask,
-  startWishGroup,
   unblockTask,
   unhireAgent,
 } from './task-state.js';
@@ -515,7 +508,9 @@ describe('runtime layer — claim / release timeline events', () => {
   test('releaseTask REFUSES a done card — never resurrects it, emits no release event', () => {
     const a = createTask(db, { title: 'a' });
     claimTask(db, a.id, 'w1');
-    completeTask(db, a.id); // in_progress → done (+ one 'release' event, note 'completed')
+    // The fence refuses identity-less completion of a claimed card — the setup
+    // must pass the matching claimant identity to reach the done state.
+    completeTask(db, a.id, { author: 'w1', authorKind: 'human' }); // in_progress → done (+ one 'release' event, note 'completed')
     const releaseEventsBefore = getTaskEvents(db, a.id).filter((e) => e.kind === 'release').length;
 
     expect(() => releaseTask(db, a.id, HUMAN)).toThrow(TaskReleaseError);
@@ -544,6 +539,54 @@ describe('runtime layer — claim / release timeline events', () => {
   });
 });
 
+describe('completeTask fence on claimed_by (CAS)', () => {
+  const WORKER_A = { author: 'worker-a', authorKind: 'claude-code' };
+  const WORKER_B = { author: 'worker-b', authorKind: 'claude-code' };
+
+  test('racing identities: worker B is refused, the claimant worker A wins', () => {
+    const a = createTask(db, { title: 'a' });
+    claimTask(db, a.id, 'worker-a', { author: WORKER_A });
+
+    // Worker B completes with a mismatched identity → typed refusal, no side effects.
+    expect(() => completeTask(db, a.id, WORKER_B)).toThrow(TaskCompleteError);
+    expect(getTask(db, a.id)!.status).toBe('in_progress');
+    expect(getTaskEvents(db, a.id).some((e) => e.kind === 'release')).toBe(false);
+
+    // Worker A (the claimant) completes normally.
+    const done = completeTask(db, a.id, WORKER_A);
+    expect(done.status).toBe('done');
+    expect(getTaskEvents(db, a.id).at(-1)?.kind).toBe('release');
+  });
+
+  test('a non-claimant is refused on a claimed card', () => {
+    const a = createTask(db, { title: 'a' });
+    claimTask(db, a.id, 'w1');
+    expect(() => completeTask(db, a.id, { author: 'someone-else', authorKind: 'human' })).toThrow(TaskCompleteError);
+    expect(getTask(db, a.id)!.status).toBe('in_progress');
+  });
+
+  test('identity-less completion is refused on a claimed card', () => {
+    const a = createTask(db, { title: 'a' });
+    claimTask(db, a.id, 'w1');
+    expect(() => completeTask(db, a.id)).toThrow(TaskCompleteError);
+    expect(getTask(db, a.id)!.status).toBe('in_progress');
+    // No phantom release event from the refused completion.
+    expect(getTaskEvents(db, a.id).some((e) => e.kind === 'release')).toBe(false);
+  });
+
+  test('identity-less completion of an UNCLAIMED ready card still succeeds', () => {
+    const a = createTask(db, { title: 'a' });
+    expect(completeTask(db, a.id).status).toBe('done');
+  });
+
+  test('completing an already-done card throws the typed error (status guard)', () => {
+    const a = createTask(db, { title: 'a' });
+    completeTask(db, a.id, HUMAN); // ready + unclaimed → succeeds
+    expect(() => completeTask(db, a.id, HUMAN)).toThrow(TaskCompleteError);
+    expect(getTask(db, a.id)!.status).toBe('done');
+  });
+});
+
 describe('append-only stage log', () => {
   test('appends entries in order and reads them back', () => {
     const a = createTask(db, { title: 'a' });
@@ -557,58 +600,6 @@ describe('append-only stage log', () => {
 
   test('rejects a stage on an unknown task', () => {
     expect(() => appendStage(db, 't_nope', 'planned')).toThrow(UnknownTaskError);
-  });
-});
-
-describe('wish-group state machine', () => {
-  const groups = [{ name: 'g1' }, { name: 'g2', dependsOn: ['g1'] }, { name: 'g3', dependsOn: ['g1'] }];
-
-  test('createWishGroups seeds ready/blocked from deps', () => {
-    const created = createWishGroups(db, 'demo', groups);
-    const byName = Object.fromEntries(created.map((g) => [g.name, g.status]));
-    expect(byName).toEqual({ g1: 'ready', g2: 'blocked', g3: 'blocked' });
-  });
-
-  test('start requires deps done; complete promotes dependents', () => {
-    createWishGroups(db, 'demo', groups);
-    expect(() => startWishGroup(db, 'demo', 'g2', 'eng')).toThrow(WishGroupStateError);
-
-    startWishGroup(db, 'demo', 'g1', 'eng');
-    completeWishGroup(db, 'demo', 'g1');
-
-    const byName = Object.fromEntries(getWishGroups(db, 'demo').map((g) => [g.name, g.status]));
-    expect(byName.g2).toBe('ready');
-    expect(byName.g3).toBe('ready');
-  });
-
-  test('complete is idempotent on a done group', () => {
-    createWishGroups(db, 'demo', groups);
-    startWishGroup(db, 'demo', 'g1', 'eng');
-    completeWishGroup(db, 'demo', 'g1');
-    expect(() => completeWishGroup(db, 'demo', 'g1')).not.toThrow();
-    expect(completeWishGroup(db, 'demo', 'g1').status).toBe('done');
-  });
-
-  test('rejects a group graph with a cycle', () => {
-    expect(() =>
-      createWishGroups(db, 'bad', [
-        { name: 'a', dependsOn: ['b'] },
-        { name: 'b', dependsOn: ['a'] },
-      ]),
-    ).toThrow(CycleError);
-  });
-
-  test('signature is stable across ordering and flags drift', () => {
-    const sigA = computeGroupsSignature(groups);
-    const reordered = [{ name: 'g3', dependsOn: ['g1'] }, { name: 'g1' }, { name: 'g2', dependsOn: ['g1'] }];
-    expect(computeGroupsSignature(reordered)).toBe(sigA);
-
-    createWishGroups(db, 'demo', groups);
-    // Same structure (reordered) → no drift.
-    expect(() => assertWishSignature(db, 'demo', reordered)).not.toThrow();
-    // Structural change (new dep) → drift.
-    const drifted = [{ name: 'g1' }, { name: 'g2', dependsOn: ['g1'] }, { name: 'g3', dependsOn: ['g1', 'g2'] }];
-    expect(() => assertWishSignature(db, 'demo', drifted)).toThrow(WishGroupDriftError);
   });
 });
 
@@ -656,6 +647,26 @@ describe('stage_log → task_events one-time backfill (idempotent)', () => {
     const count = events.length;
     ensureSchema(db);
     expect(getTaskEvents(db, a.id).length).toBe(count);
+  });
+
+  test('importing a legacy snapshot (stage_log, no task_events) is mirrored into the timeline on the next open', () => {
+    const a = createTask(db, { title: 'a' });
+    appendStage(db, a.id, 'planned', 'kickoff');
+    const legacy = { ...exportState(db), task_events: [] };
+
+    const path = join(dir, 'legacy-import.db');
+    const fresh = openDb({ path });
+    const summary = importState(fresh, legacy);
+    fresh.close();
+    expect(summary.events).toBe(0);
+
+    // The import clears the backfill marker, so the production open path
+    // (schemaIsCurrent lockstep) re-runs the one-time migration.
+    const reopened = openDb({ path });
+    const events = getTaskEvents(reopened, a.id);
+    reopened.close();
+    expect(events.map((e) => e.kind)).toEqual(['comment']);
+    expect(events[0]?.note).toBe('planned: kickoff');
   });
 });
 

@@ -15,15 +15,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb } from '../lib/v5/genie-db.js';
-import {
-  claimTask,
-  createBoard,
-  createTask,
-  createWishGroups,
-  exportState,
-  getHire,
-  listHires,
-} from '../lib/v5/task-state.js';
+import { claimTask, createBoard, createTask, exportState, getHire, listHires } from '../lib/v5/task-state.js';
 
 const GENIE = join(import.meta.dir, '..', 'genie.ts');
 
@@ -192,7 +184,6 @@ function seed(cwd: string): { taskIds: string[]; boardName: string } {
     dependsOn: [t1.id],
   });
   const t3 = createTask(db, { title: 'loose', boardId: board.id });
-  createWishGroups(db, 'w-alpha', [{ name: 'g1' }, { name: 'g2', dependsOn: ['g1'] }]);
   claimTask(db, t1.id, 'worker-1'); // t1 → in_progress
   db.close();
   return { taskIds: [t1.id, t2.id, t3.id], boardName: 'repo' };
@@ -290,17 +281,13 @@ describe('ui-bridge read parity', () => {
     expect(namedBoard.board).toBe(boardName);
     expect(namedBoard.tasks.length).toBe(exp.tasks.filter((t) => t.board_id === boardRow?.id).length);
 
-    // Wish groups: same names, statuses, dependsOn as the exported wish_groups.
+    // Wish groups: genie_wish_status is a hardcoded [] (wish-group machinery is
+    // production-dead); exportState carries the field, also empty. No seeding,
+    // no cross-comparison — the MCP side never reads the table anymore.
     const wish = toolPayload<{ groups: Array<{ name: string; status: string; dependsOn: string[] }> }>(
       responses.find((r) => r.id === 5)!,
     );
-    const expGroups = exp.wish_groups.filter((g) => g.wish === 'w-alpha');
-    expect(wish.groups.map((g) => g.name).sort()).toEqual(expGroups.map((g) => g.name).sort());
-    for (const eg of expGroups) {
-      const bg = wish.groups.find((g) => g.name === eg.name);
-      expect(bg?.status).toBe(eg.status);
-      expect(bg?.dependsOn).toEqual(JSON.parse(eg.depends_on));
-    }
+    expect(wish.groups).toEqual([]);
 
     // Active projection: exactly the in_progress rows from the export.
     const active = toolPayload<{ tasks: Array<{ id: string }> }>(responses.find((r) => r.id === 6)!);

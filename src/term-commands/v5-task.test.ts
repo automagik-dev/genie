@@ -18,7 +18,6 @@ import {
   appendTaskEvent,
   createBoard,
   createTask,
-  createWishGroups,
   getTask,
   getTaskCard,
   getTaskEvents,
@@ -56,6 +55,29 @@ async function cli(cwd: string, ...args: string[]): Promise<CliResult> {
     stdout: 'pipe',
     stderr: 'pipe',
     env: { ...process.env, NO_COLOR: '1', GENIE_TEST_SKIP_PGSERVE: '1' },
+  });
+  const stdout = await new Response(proc.stdout).text();
+  const stderr = await new Response(proc.stderr).text();
+  const code = await proc.exited;
+  return { stdout, stderr, code };
+}
+
+/**
+ * Like cli() but with a fully controlled identity env: strips every GENIE_AGENT_*
+ * var from the inherited environment, then applies `env` overrides. Required to
+ * exercise the default no-env flow (claimed_by 'cli' → author 'cli') and to
+ * simulate a claimed-by-other refusal without ambient CI env leaking in.
+ */
+async function cliIdentity(cwd: string, env: Record<string, string>, ...args: string[]): Promise<CliResult> {
+  const base: Record<string, string | undefined> = { ...process.env, NO_COLOR: '1', GENIE_TEST_SKIP_PGSERVE: '1' };
+  for (const key of Object.keys(base)) {
+    if (key.startsWith('GENIE_AGENT_')) delete base[key];
+  }
+  const proc = Bun.spawn(['bun', GENIE, 'task', ...args], {
+    cwd,
+    stdout: 'pipe',
+    stderr: 'pipe',
+    env: { ...base, ...env },
   });
   const stdout = await new Response(proc.stdout).text();
   const stderr = await new Response(proc.stderr).text();
@@ -279,6 +301,41 @@ describe('task status / done / checkout', () => {
     expect(bad.code).toBe(1);
     expect(bad.stderr).toContain('Task not found: t_missing');
   });
+
+  test('default CLI flow: no-env checkout claims as cli and no-env done completes it', async () => {
+    const id = await seedTask('cli default flow');
+    const claimed = await cliIdentity(repo, {}, 'checkout', id);
+    expect(claimed.code).toBe(0);
+    expect(claimed.stdout).toContain('in_progress');
+
+    // The unified resolver floors at 'cli' with no env — claimed_by matches the
+    // identity the done side resolves, so the fence lets the claim owner through.
+    const db = openDb({ cwd: repo });
+    const card = getTaskCard(db, id);
+    db.close();
+    expect(card?.claimedBy).toBe('cli');
+
+    const done = await cliIdentity(repo, {}, 'done', id);
+    expect(done.code).toBe(0);
+    expect(done.stdout).toContain('marked done');
+  });
+
+  test('done by a different identity than the claimant surfaces the typed refusal', async () => {
+    const id = await seedTask('foreign claim');
+    const claimed = await cliIdentity(repo, { GENIE_AGENT_NAME: 'w1' }, 'checkout', id);
+    expect(claimed.code).toBe(0);
+
+    const refused = await cliIdentity(repo, { GENIE_AGENT_NAME: 'w2' }, 'done', id);
+    expect(refused.code).toBe(1);
+    expect(refused.stderr).toContain('Cannot complete task');
+
+    // The card is untouched — still claimed by w1, in_progress.
+    const db = openDb({ cwd: repo });
+    const card = getTaskCard(db, id);
+    db.close();
+    expect(card?.claimedBy).toBe('w1');
+    expect(card?.status).toBe('in_progress');
+  });
 });
 
 describe('task move', () => {
@@ -362,7 +419,6 @@ describe('task export round-trip', () => {
     const a = createTask(db, { title: 'root', boardId: board.id, wish: 'demo', group: 'g1' });
     const b = createTask(db, { title: 'dependent', dependsOn: [a.id] }); // → task_dependencies
     appendStage(db, a.id, 'planned', 'kickoff'); // → stage_log
-    createWishGroups(db, 'demo', [{ name: 'g1' }, { name: 'g2', dependsOn: ['g1'] }]); // → wish_groups + meta
     db.close();
 
     const r = await cli(repo, 'export');
@@ -376,8 +432,9 @@ describe('task export round-trip', () => {
     expect(state.tasks.map((x) => x.id).sort()).toEqual([a.id, b.id].sort());
     expect(state.task_dependencies).toEqual([{ task_id: b.id, depends_on_id: a.id }]);
     expect(state.stage_log.map((x) => x.stage)).toContain('planned');
-    expect(state.wish_groups.map((x) => x.name).sort()).toEqual(['g1', 'g2']);
-    expect(state.meta.some((m) => m.key === 'wish_sig:demo')).toBe(true);
+    // Wish-group machinery is production-dead: export keeps the field, empty.
+    expect(state.wish_groups).toEqual([]);
+    expect(state.meta.some((m) => m.key.startsWith('wish_sig:'))).toBe(false);
 
     // The wish/group columns survive the round-trip on the seeded task.
     const rootRow = state.tasks.find((x) => x.id === a.id);
@@ -395,7 +452,6 @@ describe('task import', () => {
     const b = createTask(db, { title: 'dependent', dependsOn: [a.id] });
     appendStage(db, a.id, 'planned', 'kickoff');
     appendTaskEvent(db, a.id, { kind: 'comment', note: 'hello', author: 'tester', authorKind: 'human' });
-    createWishGroups(db, 'demo', [{ name: 'g1' }, { name: 'g2', dependsOn: ['g1'] }]);
     db.close();
     return { rootId: a.id, depId: b.id };
   }

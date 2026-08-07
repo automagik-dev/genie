@@ -256,7 +256,8 @@ BOARD_JSON="$(cli board --wish "$SLUG" --json)"
 # ============================================================================
 step "claim + complete"
 cli task checkout "$T1" --worker "$WORKER"
-cli task done "$T1"
+# The claimed_by CAS fence requires the claimant identity on completion.
+GENIE_AGENT_NAME="$WORKER" cli task done "$T1"
 cli task checkout "$T2" --worker "$WORKER"
 
 assert t1-done
