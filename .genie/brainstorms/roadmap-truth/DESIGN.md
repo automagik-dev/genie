@@ -461,7 +461,7 @@ in the project view. `depends-on: roadmap-truth`.
 ## Design Review Evidence
 
 - **Verdict:** SHIP
-- **Reviewed content SHA-256:** `7e35c1bda10db9230287ccadc1dda7c4bc7a45a19f74d0e3b1d80635d6308cf4`
-- **Reviewer:** genie:reviewer (Opus 5, round-4 thread, agentId a93a197dc85039c53)
-- **Reviewed at:** 2026-08-04T21:03:09.000Z
+- **Reviewed content SHA-256:** `40106843a8d88b70d85ea8d0394c4968dc97987d523d044b946944f377919fc8`
+- **Reviewer:** independent genie execution reviewer (docs-only re-review above 40ad3d050)
+- **Reviewed at:** 2026-08-06T22:15:00.000Z
 <!-- genie-design-review:end -->
