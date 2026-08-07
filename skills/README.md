@@ -1,6 +1,6 @@
 # Genie Skills
 
-`skills/` is the canonical, runtime-neutral source for Genie's 23 product skills. Each directory contains a
+`skills/` is the canonical, runtime-neutral source for Genie's 22 product skills. Each directory contains a
 `SKILL.md`, optional bundled resources, and `agents/openai.yaml` for Codex UI metadata.
 
 Shared skill bodies name semantic routes without a host-specific prefix. Invoke them through the active owner tier:
@@ -58,7 +58,7 @@ separately installed personal skills remain user-owned and are never adopted by 
 | Area | Skills |
 |------|--------|
 | Lifecycle | `brainstorm`, `wish`, `review`, `work`, `fix`, `trace` |
-| Orchestration | `genie`, `pm`, `dream`, `wizard`, `council`, `omni` |
+| Orchestration | `genie`, `pm`, `dream`, `council`, `omni` |
 | Quality lanes | `architecture`, `code-quality`, `dx-docs`, `perf`, `qa`, `repo-hygiene`, `supply-chain` |
 | Supporting workflows | `docs`, `refine`, `report`, `genie-hacks` |
 

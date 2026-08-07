@@ -6,7 +6,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb } from '../lib/v5/genie-db.js';
@@ -20,6 +20,8 @@ import {
   completeTask,
   createBoard,
   createTask,
+  getTaskEvents,
+  getTaskLane,
   moveTask,
   recordHeartbeat,
 } from '../lib/v5/task-state.js';
@@ -59,6 +61,31 @@ async function board(cwd: string, ...args: string[]): Promise<CliResult> {
   const stderr = await new Response(proc.stderr).text();
   const code = await proc.exited;
   return { stdout, stderr, code };
+}
+
+async function manualTask(cwd: string, ...args: string[]): Promise<CliResult> {
+  const proc = Bun.spawn(['bun', GENIE, 'task', ...args], {
+    cwd,
+    stdout: 'pipe',
+    stderr: 'pipe',
+    env: {
+      ...process.env,
+      NO_COLOR: '1',
+      GENIE_TEST_SKIP_PGSERVE: '1',
+      GENIE_AGENT_NAME: 'manual-operator',
+      GENIE_AGENT_KIND: 'human',
+    },
+  });
+  const stdout = await new Response(proc.stdout).text();
+  const stderr = await new Response(proc.stderr).text();
+  const code = await proc.exited;
+  return { stdout, stderr, code };
+}
+
+function writeWish(slug: string, status: string): void {
+  const dir = join(repo, '.genie', 'wishes', slug);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'WISH.md'), `# Wish: ${slug}\n\n| Field | Value |\n|---|---|\n| **Status** | ${status} |\n`);
 }
 
 beforeEach(() => {
@@ -110,8 +137,9 @@ describe('board render', () => {
     expect(r.stdout).toContain('@w1');
 
     // in_progress → done via complete. Same board command, no persisted view.
+    // The claimed_by fence requires the claimant's identity — pass w1 (the checkout above).
     const db2 = openDb({ cwd: repo });
-    completeTask(db2, t.id);
+    completeTask(db2, t.id, { author: 'w1', authorKind: 'human' });
     db2.close();
     r = await board(repo);
     expect(r.stdout).toContain('Done: 1');
@@ -277,6 +305,327 @@ describe('lane-grouped render', () => {
     expect(idea?.cards[0].title).toBe('idea card');
     expect(payload.lanes.map((l) => l.name)).toEqual(['Idea', 'Brainstorm', 'Wish', 'Work', 'Review', 'Done']);
   });
+
+  test('--json carries enforcedBlock on every lane card and nothing else from the runtime layer', async () => {
+    const db = openDb({ cwd: repo });
+    const road = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    createTask(db, { title: 'open card', boardId: road.id, lane: 'Idea' });
+    const held = createTask(db, { title: 'held card', boardId: road.id, lane: 'Idea' });
+    const broken = createTask(db, { title: 'broken card', boardId: road.id, lane: 'Idea' });
+    blockTask(db, held.id, 'parked until Q3', { author: 'felipe', authorKind: 'human' }, 'hold');
+    blockTask(db, broken.id, 'awaiting a decision', { author: 'felipe', authorKind: 'human' });
+    recordHeartbeat(db, held.id); // a runtime field that must NOT reach this shape
+    db.close();
+
+    const r = await board(repo, '--board', 'roadmap', '--json');
+    expect(r.code).toBe(0);
+    const payload = JSON.parse(r.stdout) as {
+      lanes: Array<{ name: string; cards: Array<Record<string, unknown>> }>;
+    };
+    const cards = new Map(
+      (payload.lanes.find((l) => l.name === 'Idea')?.cards ?? []).map((c) => [c.title as string, c]),
+    );
+    expect(cards.get('open card')?.enforcedBlock).toBeNull();
+    expect(cards.get('held card')?.enforcedBlock).toEqual({ reason: 'parked until Q3', kind: 'hold' });
+    expect(cards.get('broken card')?.enforcedBlock).toEqual({ reason: 'awaiting a decision', kind: 'work' });
+
+    // The lane shape gains exactly one runtime field — its provenance, identity,
+    // and heartbeat siblings stay off this path.
+    for (const leaked of ['agentKind', 'heartbeatAt', 'blockedBy', 'blockedReason']) {
+      expect(leaked in (cards.get('held card') as Record<string, unknown>)).toBe(false);
+    }
+    expect(Object.keys(cards.get('held card') as Record<string, unknown>).sort()).toEqual([
+      'boardId',
+      'claimedAt',
+      'claimedBy',
+      'createdAt',
+      'enforcedBlock',
+      'group',
+      'id',
+      'lane',
+      'status',
+      'title',
+      'updatedAt',
+      'wish',
+    ]);
+  });
+});
+
+describe('wish-status lane reconciliation on CLI JSON reads', () => {
+  test('maps every ordered status prefix and leaves other untouched', async () => {
+    const cases: Array<[status: string, destination: string]> = [
+      ['DRAFT', 'Idea'],
+      ['ROADMAP', 'Idea'],
+      ['BLOCKED', 'Work'],
+      ['ON-HOLD', 'Work'],
+      ['EXECUTED', 'Review'],
+      ['REVIEWED', 'Review'],
+      ['PLAN-REVIEWED', 'Review'],
+      ['IN_PROGRESS', 'Work'],
+      ['EXECUTING', 'Work'],
+      ['WAVE 2', 'Work'],
+      ['READY', 'Wish'],
+      ['APPROVED', 'Wish'],
+      ['PLAN-READY', 'Wish'],
+      ['SHIP-READY', 'Wish'],
+      ['STAGED', 'Wish'],
+      ['DONE', 'Done'],
+      ['SHIPPED', 'Done'],
+      ['MERGED — QA pending', 'Done'],
+      ['COMPLETED', 'Done'],
+      ['DELIVERED', 'Done'],
+      ['PUBLISHED', 'Done'],
+      ['CONCLUÍDO', 'Done'],
+    ];
+    const db = openDb({ cwd: repo });
+    const roadmap = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    const ids = new Map<string, string>();
+    for (const [index, [status]] of cases.entries()) {
+      const slug = `mapped-${index}`;
+      writeWish(slug, status);
+      const task = createTask(db, { title: status, boardId: roadmap.id, lane: 'Brainstorm', wish: slug });
+      ids.set(status, task.id);
+    }
+    writeWish('unrecognised', 'G');
+    const other = createTask(db, {
+      title: 'unrecognised',
+      boardId: roadmap.id,
+      lane: 'Brainstorm',
+      wish: 'unrecognised',
+    });
+    db.close();
+
+    const result = await board(repo, '--board', 'roadmap', '--json');
+    expect(result.code).toBe(0);
+    expect(result.stderr).toBe('');
+
+    const observed = openDb({ cwd: repo });
+    for (const [status, destination] of cases)
+      expect(getTaskLane(observed, ids.get(status) as string)).toBe(destination);
+    expect(getTaskLane(observed, other.id)).toBe('Brainstorm');
+    observed.close();
+  });
+
+  test('moves only sync-owned cards with a WISH.md, preserving hand-owned and orphan cards', async () => {
+    writeWish('sync-owned', 'DONE');
+    const db = openDb({ cwd: repo });
+    const roadmap = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    const syncOwned = createTask(db, { title: 'sync', boardId: roadmap.id, lane: 'Idea', wish: 'sync-owned' });
+    const handOwned = createTask(db, { title: 'hand', boardId: roadmap.id, lane: 'Idea' });
+    const orphan = createTask(db, { title: 'orphan', boardId: roadmap.id, lane: 'Idea', wish: 'missing-wish' });
+    db.close();
+
+    const result = await board(repo, '--board', 'roadmap', '--json');
+    expect(result.code).toBe(0);
+    const observed = openDb({ cwd: repo });
+    expect(getTaskLane(observed, syncOwned.id)).toBe('Done');
+    expect(getTaskLane(observed, handOwned.id)).toBe('Idea');
+    expect(getTaskLane(observed, orphan.id)).toBe('Idea');
+    observed.close();
+  });
+
+  test('reverts a manual CLI move with one durable sync event and stays idempotent', async () => {
+    writeWish('manual-revert', 'DONE');
+    const db = openDb({ cwd: repo });
+    const roadmap = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    const task = createTask(db, {
+      title: 'sync-owned manual move',
+      boardId: roadmap.id,
+      lane: 'Done',
+      wish: 'manual-revert',
+    });
+    db.close();
+
+    const manual = await manualTask(repo, 'move', task.id, '--to', 'Idea');
+    expect(manual.code).toBe(0);
+    expect(manual.stderr).toBe('');
+    expect(manual.stdout).toContain('Done → Idea');
+
+    let observed = openDb({ cwd: repo });
+    expect(getTaskLane(observed, task.id)).toBe('Idea');
+    expect(getTaskEvents(observed, task.id)).toEqual([
+      expect.objectContaining({
+        kind: 'move',
+        note: 'Done→Idea',
+        author: 'manual-operator',
+        authorKind: 'human',
+      }),
+    ]);
+    observed.close();
+
+    const firstRead = await board(repo, '--board', 'roadmap', '--json');
+    expect(firstRead.code).toBe(0);
+    expect(firstRead.stderr).toBe('');
+    const payload = JSON.parse(firstRead.stdout) as {
+      lanes: Array<{ name: string; cards: Array<{ id: string }> }>;
+    };
+    expect(payload.lanes.find((lane) => lane.name === 'Done')?.cards.map((card) => card.id)).toContain(task.id);
+
+    observed = openDb({ cwd: repo });
+    expect(getTaskLane(observed, task.id)).toBe('Done');
+    const afterReconcile = getTaskEvents(observed, task.id);
+    expect(afterReconcile).toHaveLength(2);
+    expect(afterReconcile.filter((event) => event.author === 'manual-operator')).toHaveLength(1);
+    expect(afterReconcile.filter((event) => event.author === 'wish-status-sync')).toEqual([
+      expect.objectContaining({
+        kind: 'move',
+        note: 'Idea→Done',
+        authorKind: 'genie',
+      }),
+    ]);
+    observed.close();
+
+    const secondRead = await board(repo, '--board', 'roadmap', '--json');
+    expect(secondRead.code).toBe(0);
+    expect(secondRead.stderr).toBe('');
+    observed = openDb({ cwd: repo });
+    expect(getTaskLane(observed, task.id)).toBe('Done');
+    expect(getTaskEvents(observed, task.id)).toEqual(afterReconcile);
+    observed.close();
+  });
+
+  test('leaves invalid, linked, non-regular, and oversized wish inputs untouched while JSON succeeds', async () => {
+    const wishesDir = join(repo, '.genie', 'wishes');
+    mkdirSync(wishesDir, { recursive: true });
+
+    writeWish('INVALID!', 'DONE');
+
+    const linkedDirectoryTarget = join(repo, 'linked-wish-target');
+    mkdirSync(linkedDirectoryTarget);
+    writeFileSync(join(linkedDirectoryTarget, 'WISH.md'), '| **Status** | DONE |\n');
+    symlinkSync(linkedDirectoryTarget, join(wishesDir, 'linked-directory'));
+
+    const linkedFileTarget = join(repo, 'linked-wish-file.md');
+    writeFileSync(linkedFileTarget, '| **Status** | DONE |\n');
+    mkdirSync(join(wishesDir, 'linked-file'));
+    symlinkSync(linkedFileTarget, join(wishesDir, 'linked-file', 'WISH.md'));
+
+    mkdirSync(join(wishesDir, 'non-regular-wish', 'WISH.md'), { recursive: true });
+
+    mkdirSync(join(wishesDir, 'oversized-wish'));
+    writeFileSync(join(wishesDir, 'oversized-wish', 'WISH.md'), `| **Status** | DONE |\n${'x'.repeat(256 * 1_024)}`);
+
+    const db = openDb({ cwd: repo });
+    const roadmap = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    const tasks = ['INVALID!', 'linked-directory', 'linked-file', 'non-regular-wish', 'oversized-wish'].map((wish) =>
+      createTask(db, { title: wish, boardId: roadmap.id, lane: 'Idea', wish }),
+    );
+    db.close();
+
+    const result = await board(repo, '--board', 'roadmap', '--json');
+    expect(result.code).toBe(0);
+    expect(result.stderr).toBe('');
+    expect(() => JSON.parse(result.stdout)).not.toThrow();
+
+    const observed = openDb({ cwd: repo });
+    for (const task of tasks) {
+      expect(getTaskLane(observed, task.id)).toBe('Idea');
+      expect(getTaskEvents(observed, task.id)).toHaveLength(0);
+    }
+    observed.close();
+  });
+
+  test('leaves a card untouched when the .genie ancestor is a symlink while JSON succeeds', async () => {
+    const db = openDb({ cwd: repo });
+    const roadmap = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    const task = createTask(db, { title: 'linked genie', boardId: roadmap.id, lane: 'Idea', wish: 'linked-genie' });
+    db.close();
+
+    const genieDir = join(repo, '.genie');
+    const linkedGenieTarget = join(repo, 'linked-genie-target');
+    renameSync(genieDir, linkedGenieTarget);
+    const wishDir = join(linkedGenieTarget, 'wishes', 'linked-genie');
+    mkdirSync(wishDir, { recursive: true });
+    writeFileSync(join(wishDir, 'WISH.md'), '| **Status** | DONE |\n');
+    symlinkSync(linkedGenieTarget, genieDir);
+
+    const result = await board(repo, '--board', 'roadmap', '--json');
+    expect(result.code).toBe(0);
+    expect(result.stderr).toBe('');
+    expect(() => JSON.parse(result.stdout)).not.toThrow();
+
+    const observed = openDb({ cwd: repo });
+    expect(getTaskLane(observed, task.id)).toBe('Idea');
+    expect(getTaskEvents(observed, task.id)).toHaveLength(0);
+    observed.close();
+  });
+
+  test('leaves a card untouched when the wishes ancestor is a symlink while JSON succeeds', async () => {
+    const db = openDb({ cwd: repo });
+    const roadmap = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    const task = createTask(db, { title: 'linked wishes', boardId: roadmap.id, lane: 'Idea', wish: 'linked-wishes' });
+    db.close();
+
+    const linkedWishesTarget = join(repo, 'linked-wishes-target');
+    const wishDir = join(linkedWishesTarget, 'linked-wishes');
+    mkdirSync(wishDir, { recursive: true });
+    writeFileSync(join(wishDir, 'WISH.md'), '| **Status** | DONE |\n');
+    symlinkSync(linkedWishesTarget, join(repo, '.genie', 'wishes'));
+
+    const result = await board(repo, '--board', 'roadmap', '--json');
+    expect(result.code).toBe(0);
+    expect(result.stderr).toBe('');
+    expect(() => JSON.parse(result.stdout)).not.toThrow();
+
+    const observed = openDb({ cwd: repo });
+    expect(getTaskLane(observed, task.id)).toBe('Idea');
+    expect(getTaskEvents(observed, task.id)).toHaveLength(0);
+    observed.close();
+  });
+
+  test('leaves a card untouched when its mapped destination lane does not exist', async () => {
+    writeWish('no-review-lane', 'REVIEWED');
+    const db = openDb({ cwd: repo });
+    const custom = createBoard(db, 'custom', [{ name: 'Idea' }, { name: 'Work' }]);
+    const task = createTask(db, { title: 'review', boardId: custom.id, lane: 'Work', wish: 'no-review-lane' });
+    db.close();
+
+    const result = await board(repo, '--board', 'custom', '--json');
+    expect(result.code).toBe(0);
+    const observed = openDb({ cwd: repo });
+    expect(getTaskLane(observed, task.id)).toBe('Work');
+    expect(getTaskEvents(observed, task.id)).toHaveLength(0);
+    observed.close();
+  });
+
+  test('uses the enclosing first lane for NULL-lane comparison', async () => {
+    writeWish('already-fallback', 'DRAFT');
+    writeWish('move-from-fallback', 'READY');
+    const db = openDb({ cwd: repo });
+    const roadmap = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    const already = createTask(db, { title: 'already', boardId: roadmap.id, wish: 'already-fallback' });
+    const moves = createTask(db, { title: 'moves', boardId: roadmap.id, wish: 'move-from-fallback' });
+    db.close();
+
+    const result = await board(repo, '--board', 'roadmap', '--json');
+    expect(result.code).toBe(0);
+    const observed = openDb({ cwd: repo });
+    expect(getTaskLane(observed, already.id)).toBeNull();
+    expect(getTaskEvents(observed, already.id)).toHaveLength(0);
+    expect(getTaskLane(observed, moves.id)).toBe('Wish');
+    expect(getTaskEvents(observed, moves.id).map((event) => event.kind)).toEqual(['move']);
+    observed.close();
+  });
+
+  test('does not reconcile a non-JSON human board read', async () => {
+    writeWish('json-only', 'DONE');
+    const db = openDb({ cwd: repo });
+    const roadmap = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    const task = createTask(db, { title: 'json only', boardId: roadmap.id, lane: 'Idea', wish: 'json-only' });
+    db.close();
+
+    const human = await board(repo, '--board', 'roadmap');
+    expect(human.code).toBe(0);
+    let observed = openDb({ cwd: repo });
+    expect(getTaskLane(observed, task.id)).toBe('Idea');
+    observed.close();
+
+    const json = await board(repo, '--json');
+    expect(json.code).toBe(0);
+    observed = openDb({ cwd: repo });
+    expect(getTaskLane(observed, task.id)).toBe('Done');
+    observed.close();
+  });
 });
 
 // A laneless board (no lanes column) must keep the EXACT four-status render and
@@ -314,6 +663,32 @@ describe('laneless board render is unchanged', () => {
       expect(leaked in card).toBe(false);
     }
     // The exact frozen key set, sorted — a byte-level guard against additions.
+    expect(Object.keys(card).sort()).toEqual([
+      'boardId',
+      'claimedAt',
+      'claimedBy',
+      'createdAt',
+      'group',
+      'id',
+      'status',
+      'title',
+      'updatedAt',
+      'wish',
+    ]);
+  });
+
+  test('an ENFORCED-BLOCKED card keeps the frozen laneless shape (enforcedBlock is lane-only)', async () => {
+    const db = openDb({ cwd: repo });
+    const plain = createBoard(db, 'plain');
+    const t = createTask(db, { title: 'plain task', boardId: plain.id });
+    blockTask(db, t.id, 'parked until Q3', { author: 'felipe', authorKind: 'human' }, 'hold');
+    db.close();
+
+    const r = await board(repo, '--board', 'plain', '--json');
+    expect(r.code).toBe(0);
+    const payload = JSON.parse(r.stdout) as { columns: Record<string, Array<Record<string, unknown>>> };
+    // The block does not move the lifecycle status, so the card is still `ready`.
+    const card = payload.columns.ready[0];
     expect(Object.keys(card).sort()).toEqual([
       'boardId',
       'claimedAt',

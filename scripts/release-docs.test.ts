@@ -62,6 +62,7 @@ describe('Group E release and documentation contracts', () => {
       'package.json',
       'plugins/genie/.claude-plugin/plugin.json',
       'plugins/genie/.codex-plugin/plugin.json',
+      'plugins/genie/.kimi-plugin/plugin.json',
       'plugins/genie/package.json',
       'plugins/pi-genie/package.json',
       '.claude-plugin/marketplace.json',
@@ -849,7 +850,7 @@ describe('Group E release and documentation contracts', () => {
     const docs = `${read('README.md')}\n${read('plugins/genie/README.md')}`;
     expect(read('README.md')).toContain('These five inventories are intentionally separate');
     for (const statement of [
-      '23 physical',
+      '22 physical',
       'Seven optional',
       '36 adapted skills',
       '.codex/config.toml',
@@ -889,7 +890,7 @@ describe('Group E release and documentation contracts', () => {
       .filter((entry) => entry.isDirectory() && existsSync(join(ROOT, 'skills', entry.name, 'agents', 'openai.yaml')))
       .map((entry) => entry.name)
       .sort();
-    expect(skillNames).toHaveLength(23);
+    expect(skillNames).toHaveLength(22);
     for (const name of skillNames) {
       const parsed = Bun.YAML.parse(read(`skills/${name}/agents/openai.yaml`)) as {
         interface?: { default_prompt?: unknown };
@@ -1004,16 +1005,6 @@ describe('Group E release and documentation contracts', () => {
     expect(metadata).toContain('Genie questions');
     expect(metadata).toContain('otherwise bypass it with a one-line notice');
     expect(metadata).toContain('Security-sensitive work does not bypass by default.');
-  });
-
-  test('wizard discloses init MCP writes and owner-qualified lifecycle order', () => {
-    const wizard = read('skills/wizard/SKILL.md');
-    for (const path of ['.mcp.json', '.warp/.mcp.json', '.codex/config.toml']) expect(wizard).toContain(path);
-    for (const skill of ['brainstorm', 'wish', 'review', 'work']) expect(wizard).toContain(`$genie:${skill}`);
-    expect(wizard.indexOf('$genie:review')).toBeLessThan(wizard.indexOf('$genie:work'));
-    expect(wizard).toContain('Phase 3 is a mandatory gate');
-    expect(wizard).toContain('Never enter Phase 4 until WISH status `APPROVED`');
-    expect(wizard).toContain('pending until the user trusts the workspace');
   });
 
   test('brainstorm routes every non-trivial design through design and plan review', () => {

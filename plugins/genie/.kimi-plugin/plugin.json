@@ -1,0 +1,62 @@
+{
+  "name": "genie",
+  "version": "5.260807.4",
+  "description": "Human-AI partnership for Kimi Code CLI. Share a terminal, orchestrate workers, evolve together. Brainstorm ideas, turn them into wishes, execute with /genie:work, validate with /genie:review, and ship as one team.",
+  "author": {
+    "name": "Namastex Labs",
+    "url": "https://github.com/automagik-dev"
+  },
+  "homepage": "https://github.com/automagik-dev/genie",
+  "repository": "https://github.com/automagik-dev/genie",
+  "license": "MIT",
+  "keywords": ["workflow", "orchestration", "collaboration", "kimi-code", "agents"],
+  "skills": "./skills/",
+  "sessionStart": {
+    "skill": "genie"
+  },
+  "commands": "./.kimi-plugin/commands/",
+  "mcpServers": {
+    "genie": {
+      "command": "./scripts/mcp-launcher.cjs"
+    }
+  },
+  "hooks": [
+    {
+      "event": "SessionStart",
+      "matcher": "startup|resume",
+      "command": "node \"$KIMI_PLUGIN_ROOT/scripts/session-context.cjs\"",
+      "timeout": 10
+    },
+    {
+      "event": "PreToolUse",
+      "matcher": "Bash|Read|Write|Edit|Agent|AgentSwarm",
+      "command": "node \"$KIMI_PLUGIN_ROOT/scripts/dispatch-runtime.cjs\" claude",
+      "timeout": 120
+    },
+    {
+      "event": "PreToolUse",
+      "matcher": "Write|Edit",
+      "command": "node \"$KIMI_PLUGIN_ROOT/scripts/validate-wish.cjs\"",
+      "timeout": 5
+    },
+    {
+      "event": "PostToolUse",
+      "matcher": "Write|Edit",
+      "command": "node \"$KIMI_PLUGIN_ROOT/scripts/validate-wish.cjs\"",
+      "timeout": 5
+    },
+    {
+      "event": "Stop",
+      "matcher": "*",
+      "command": "PLUGIN_ROOT=\"$KIMI_PLUGIN_ROOT\" node \"$KIMI_PLUGIN_ROOT/scripts/validate-completion.cjs\"",
+      "timeout": 10
+    }
+  ],
+  "interface": {
+    "displayName": "Genie",
+    "shortDescription": "Plan, execute, review, and ship with Genie",
+    "longDescription": "First-class Genie workflows for Kimi Code CLI, including shared skills, lifecycle hooks, and MCP task state. Role agents can be installed optionally by copying agents/*.md into ~/.kimi-code/agents/.",
+    "developerName": "Namastex Labs",
+    "websiteURL": "https://github.com/automagik-dev/genie"
+  }
+}

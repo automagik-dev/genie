@@ -10,7 +10,10 @@ import {
   ForeignDbError,
   GenieDbError,
   MalformedDbError,
+  STAGE_LOG_BACKFILL_KEY,
   isBusyError,
+  isCurrentGenieDb,
+  isReadableGenieDb,
   openDb,
   resolveDbPath,
   resolveRepoRoot,
@@ -105,6 +108,42 @@ describe('openDb schema init', () => {
     const mode = (db.query('PRAGMA journal_mode').get() as { journal_mode: string }).journal_mode;
     db.close();
     expect(mode.toLowerCase()).toBe('wal');
+  });
+
+  test('a full-schema DB missing the backfill marker is not current — re-open runs the migration', () => {
+    const path = join(dir, 'genie.db');
+    const db1 = openDb({ path });
+    db1
+      .query("INSERT INTO tasks (id, title, status, created_at, updated_at) VALUES ('t1', 'legacy', 'ready', 1, 1)")
+      .run();
+    db1.query("INSERT INTO stage_log (task_id, stage, note, created_at) VALUES ('t1', 'planned', 'kickoff', 1)").run();
+    // Simulate a pre-backfill DB: full current schema + real stage_log history
+    // + absent guard. The existing backfill test deletes the marker and calls
+    // ensureSchema directly; this goes through the PRODUCTION open path, which
+    // schemaIsCurrent must not short-circuit (lockstep contract).
+    db1.query('DELETE FROM meta WHERE key = ?').run(STAGE_LOG_BACKFILL_KEY);
+    db1.close();
+
+    const db2 = openDb({ path });
+    const mirrored = db2.query('SELECT COUNT(*) AS n FROM task_events').get() as { n: number };
+    db2.close();
+    expect(mirrored.n).toBe(1);
+  });
+
+  test('isReadableGenieDb accepts a marker-only-stale DB and refuses a shape-stale one', () => {
+    const path = join(dir, 'genie.db');
+    const db = openDb({ path });
+    // Current shape, pending data-only migration marker: NOT strictly current
+    // (write paths must still run ensureSchema) but perfectly readable — the
+    // readonly MCP degrade path serves exactly this shape when the heal write
+    // is impossible.
+    db.query('DELETE FROM meta WHERE key = ?').run(STAGE_LOG_BACKFILL_KEY);
+    expect(isCurrentGenieDb(db)).toBe(false);
+    expect(isReadableGenieDb(db)).toBe(true);
+    // Shape staleness (a column this build queries is missing) refuses reads too.
+    db.exec('ALTER TABLE tasks DROP COLUMN agent_kind');
+    expect(isReadableGenieDb(db)).toBe(false);
+    db.close();
   });
 });
 

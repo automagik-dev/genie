@@ -5,7 +5,7 @@ description: "Batch-execute SHIP-ready wishes overnight — pick wishes, orchest
 
 # dream — Overnight Batch Execution
 
-**Runtime syntax:** in Codex, invoke the plugin copy with the owner-qualified `$genie:<skill>` selector; use bare `$<skill>` only when intentionally selecting a user-tier copy (a separately installed personal copy; Genie no longer seeds this tier). Claude Code and Hermes use `/<skill>`. Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active tier.
+**Runtime syntax:** invoke the plugin copy through the active runtime's owner-qualified skill selector; use a bare selector only when intentionally selecting a user-tier copy (a separately installed personal copy; Genie no longer seeds this tier). Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active runtime.
 
 Pick SHIP-ready wishes, build a dependency-ordered plan, dispatch one worker subagent per wish, review PRs, merge to dev, run the QA loop, and write a wake-up report. The dream orchestrator dispatches — it never executes wish work directly.
 
@@ -46,7 +46,7 @@ For each `merge_order` layer, in order:
 ### Worker Contract
 
 Each worker, independently:
-1. Work in a dedicated branch and worktree for `feat/<slug>`, using Codex-managed or ordinary Git worktrees according to the active environment. The contract governing parallel writers and repo-level git state is stated once in AGENTS.md and the `work` skill's Dispatch section — follow it there.
+1. Work in a dedicated branch and worktree for `feat/<slug>`, using runtime-managed or ordinary Git worktrees according to the active environment. The contract governing parallel writers and repo-level git state is stated once in AGENTS.md and the `work` skill's Dispatch section — follow it there.
 2. Execute the wish per `work` (its dispatch, review-gate, and task-state rules govern): dispatched engineers claim via `genie task checkout`; the worker leaves task state `in_progress` and reports evidence. Only the dream PM/orchestrator runs `genie task done` after clean review and passing validation.
 3. Run `review` per group against acceptance criteria.
 4. Run CI; on failure fix and retry (max 3 attempts; poll CI status, never sleep-loop). After 3 failures → blocked.

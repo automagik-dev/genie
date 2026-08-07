@@ -12,7 +12,8 @@
  */
 
 import type { Database } from 'bun:sqlite';
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
+import { STAGE_LOG_BACKFILL_KEY, backfillStageLog } from './genie-db.js';
 
 // ============================================================================
 // Type boundaries
@@ -85,6 +86,21 @@ export const DEFAULT_LIFECYCLE_LANES: Lane[] = [
 export const ROADMAP_BOARD = 'roadmap';
 
 /**
+ * Why a card carries an enforced block. `work` — the default — means something
+ * is wrong and must be resolved before the card moves. `hold` means the card is
+ * deliberately parked: nothing is broken, it simply must not be picked up yet.
+ * Both refuse checkout identically; the kind exists so a reader can tell the two
+ * apart without parsing the reason prose.
+ */
+export type BlockKind = 'work' | 'hold';
+
+/** An enforced block as the lane projection exposes it. */
+export interface EnforcedBlock {
+  reason: string;
+  kind: BlockKind;
+}
+
+/**
  * A task row plus its lane placement. Kept SEPARATE from {@link TaskRow} so the
  * frozen TaskRow contract — and the byte-identical laneless board `--json`,
  * MCP, and `task export` shapes that serialize it — never gains a `lane` field.
@@ -92,6 +108,14 @@ export const ROADMAP_BOARD = 'roadmap';
  */
 export interface LaneTaskRow extends TaskRow {
   lane: string | null;
+  /**
+   * The card's enforced block, or null when it carries none. The ONE deliberate
+   * runtime field on this projection: a lane-board consumer must be able to tell
+   * a parked card from a live one, which the lane grouping alone cannot express.
+   * The frozen surfaces — {@link TaskRow}, the laneless board `--json`, MCP, and
+   * `task export` — deliberately do NOT carry it.
+   */
+  enforcedBlock: EnforcedBlock | null;
 }
 
 /**
@@ -181,11 +205,6 @@ export interface ClaimOptions {
 export const DEFAULT_STALE_MS = 15 * 60 * 1000;
 
 export type WishGroupStatus = 'blocked' | 'ready' | 'in_progress' | 'done';
-
-export interface WishGroupDef {
-  name: string;
-  dependsOn?: string[];
-}
 
 export interface WishGroupRow {
   wish: string;
@@ -326,21 +345,42 @@ export class TaskReleaseError extends Error {
   }
 }
 
-/** An invalid wish-group transition was attempted. */
-export class WishGroupStateError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'WishGroupStateError';
+/**
+ * A completion was refused because the status CAS in {@link completeTask}
+ * matched no row: the card is already `done` (or a concurrent transition moved
+ * it out of a completable status between decision and write). The status is
+ * carried so the CLI can tell the operator why. Completion analogue of
+ * {@link TaskReleaseError} (release-side refusals).
+ */
+export class TaskCompleteError extends Error {
+  readonly taskId: string;
+  readonly status: TaskStatus;
+  constructor(taskId: string, status: TaskStatus) {
+    const detail = status === 'done' ? 'it is already done' : `it is ${status}, not completable`;
+    super(`Cannot complete task ${taskId}: ${detail}`);
+    this.name = 'TaskCompleteError';
+    this.taskId = taskId;
+    this.status = status;
   }
 }
 
-/** The wish's group structure drifted from the signature stored at creation. */
-export class WishGroupDriftError extends Error {
-  readonly wish: string;
-  constructor(wish: string) {
-    super(`Wish "${wish}" group structure changed since state was created — re-create wish groups to proceed.`);
-    this.name = 'WishGroupDriftError';
-    this.wish = wish;
+/**
+ * A delete was refused because other cards still `depends-on` the target. The
+ * dependent ids are carried so the operator learns what to re-point first.
+ */
+export class TaskHasDependentsError extends Error {
+  readonly taskId: string;
+  readonly dependents: string[];
+  constructor(taskId: string, dependents: string[]) {
+    const shown = dependents.slice(0, 3).join(', ');
+    const rest = dependents.length > 3 ? ` +${dependents.length - 3} more` : '';
+    const one = dependents.length === 1;
+    super(
+      `Cannot delete task ${taskId}: ${dependents.length} task${one ? ' depends' : 's depend'} on it (${shown}${rest}). Delete or re-point ${one ? 'it' : 'them'} first.`,
+    );
+    this.name = 'TaskHasDependentsError';
+    this.taskId = taskId;
+    this.dependents = dependents;
   }
 }
 
@@ -371,6 +411,7 @@ interface RawTask {
   heartbeat_at: number | null;
   blocked_by: string | null;
   blocked_reason: string | null;
+  block_kind: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -388,6 +429,27 @@ function mapTask(row: RawTask): TaskRow {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+/**
+ * Stored kinds are untrusted TEXT — the column is additive and nullable, and a
+ * hand-merged roadmap.json reaches this mapper unvalidated — so anything that is
+ * not exactly `hold` reads as the `work` default.
+ */
+function blockKindOf(raw: string | null): BlockKind {
+  return raw === 'hold' ? 'hold' : 'work';
+}
+
+/**
+ * Project a row's enforced block. Presence is keyed on `blocked_by` — the column
+ * the checkout gate reads — so the serialized field can never disagree with
+ * whether checkout is actually refused. A row blocked without a stored reason
+ * (possible from an older snapshot) projects an empty reason rather than
+ * dropping the block.
+ */
+function mapEnforcedBlock(row: RawTask): EnforcedBlock | null {
+  if (row.blocked_by == null) return null;
+  return { reason: row.blocked_reason ?? '', kind: blockKindOf(row.block_kind) };
 }
 
 // ============================================================================
@@ -505,6 +567,33 @@ export function createTask(db: Database, input: CreateTaskInput): TaskRow {
   return getTask(db, id) as TaskRow;
 }
 
+/**
+ * Link an existing card to a wish and, optionally, one of its groups.
+ *
+ * The association is metadata-only: the card's identity, lifecycle/runtime
+ * state, lane, and append-only timeline are deliberately outside this UPDATE.
+ * An omitted group clears any prior group association. The wish does not need
+ * to exist on disk; callers may intentionally create an orphan association.
+ */
+export function linkTaskToWish(
+  db: Database,
+  taskId: string,
+  wish: string,
+  group?: string,
+  now: number = Date.now(),
+): TaskRow {
+  const normalizedGroup = group ?? null;
+  const link = db.transaction(() => {
+    requireTask(db, taskId);
+    db.query(
+      `UPDATE tasks SET wish = ?, group_name = ?, updated_at = ?
+       WHERE id = ? AND (wish IS NOT ? OR group_name IS NOT ?)`,
+    ).run(wish, normalizedGroup, now, taskId, wish, normalizedGroup);
+  });
+  link.immediate();
+  return getTask(db, taskId) as TaskRow;
+}
+
 export function getTask(db: Database, id: string): TaskRow | null {
   const row = db.query('SELECT * FROM tasks WHERE id = ?').get(id) as RawTask | null;
   return row ? mapTask(row) : null;
@@ -542,15 +631,14 @@ export function listTasks(db: Database, filter: TaskFilter = {}): TaskRow[] {
 
 /**
  * Lane-aware task listing — the same rows as {@link listTasks} plus each card's
- * `lane`. Consumed ONLY by the additive lane-grouped board render; the frozen
- * {@link TaskRow} path (board `--json`, MCP, export) stays byte-identical.
+ * `lane` and {@link LaneTaskRow.enforcedBlock}. Consumed ONLY by the additive
+ * lane-grouped board render; the frozen {@link TaskRow} path (board `--json`,
+ * MCP, export) stays byte-identical.
  */
 export function listTasksWithLane(db: Database, filter: TaskFilter = {}): LaneTaskRow[] {
   const { where, params } = buildTaskWhere(filter);
-  const rows = db.query(`SELECT * FROM tasks${where} ORDER BY created_at`).all(...params) as Array<
-    RawTask & { lane: string | null }
-  >;
-  return rows.map((r) => ({ ...mapTask(r), lane: r.lane ?? null }));
+  const rows = db.query(`SELECT * FROM tasks${where} ORDER BY created_at`).all(...params) as RawTask[];
+  return rows.map((r) => ({ ...mapTask(r), lane: r.lane ?? null, enforcedBlock: mapEnforcedBlock(r) }));
 }
 
 /** The card's current lane, or null when unplaced. */
@@ -563,6 +651,7 @@ function mapTaskCard(row: RawTask): TaskCardRow {
   return {
     ...mapTask(row),
     lane: row.lane ?? null,
+    enforcedBlock: mapEnforcedBlock(row),
     agentKind: row.agent_kind ?? null,
     heartbeatAt: row.heartbeat_at ?? null,
     blockedBy: row.blocked_by ?? null,
@@ -586,6 +675,73 @@ export function listTaskCards(db: Database, filter: TaskFilter = {}): TaskCardRo
 export function getTaskCard(db: Database, id: string): TaskCardRow | null {
   const row = db.query('SELECT * FROM tasks WHERE id = ?').get(id) as RawTask | null;
   return row ? mapTaskCard(row) : null;
+}
+
+// ============================================================================
+// Deletion — the only removal path (hard, unarchived, dependency-refused)
+// ============================================================================
+
+/** What a {@link deleteTask} removed, for the CLI to report back. */
+export interface DeleteTaskResult {
+  /** The card as it stood immediately before removal. */
+  task: TaskRow;
+  /** Outgoing `depends-on` edges removed with it. */
+  dependencies: number;
+  /** Timeline events removed with it. */
+  events: number;
+  /** Deprecated stage_log rows removed with it. */
+  stages: number;
+}
+
+/**
+ * Permanently remove one card, its dependency edges, and its timeline. There is
+ * no archive and no undo — the roadmap snapshot in git is the only history a
+ * deleted card leaves behind.
+ *
+ * **Refused while any other card depends on it**, and that refusal is the whole
+ * safety story. `task_dependencies` declares both columns
+ * `REFERENCES tasks(id) ON DELETE CASCADE`, so deleting a depended-on card would
+ * silently erase the edge rather than fail: the dependent keeps `status =
+ * 'blocked'` with nothing left to block it, and the next {@link recomputeReady}
+ * — which `task done` runs on any unrelated card — finds no unmet dependency and
+ * promotes it to `ready`. That delayed, unattributable unblock is exactly what a
+ * dependent-refusal prevents. Re-point or delete the dependents first.
+ *
+ * Deletion is allowed in any status, claimed or not: a mistakenly created card
+ * must be removable without first releasing whoever picked it up.
+ *
+ * No ready-set recompute is needed. Only the target's OUTGOING edges disappear
+ * (incoming ones are what the refusal guarantees do not exist), and those gate
+ * nothing but the card being removed.
+ */
+export function deleteTask(db: Database, taskId: string): DeleteTaskResult {
+  const remove = db.transaction(() => {
+    const task = getTask(db, taskId);
+    if (!task) throw new UnknownTaskError(taskId);
+
+    const dependentRows = db
+      .query('SELECT task_id FROM task_dependencies WHERE depends_on_id = ? ORDER BY task_id')
+      .all(taskId) as Array<{ task_id: string }>;
+    if (dependentRows.length > 0) {
+      throw new TaskHasDependentsError(
+        taskId,
+        dependentRows.map((r) => r.task_id),
+      );
+    }
+
+    // Explicit child deletes rather than leaning on ON DELETE CASCADE: the
+    // removal is then total whether or not `PRAGMA foreign_keys` is on for this
+    // connection, and each statement reports what it actually removed.
+    const dependencies = db.query('DELETE FROM task_dependencies WHERE task_id = ?').run(taskId).changes;
+    const events = db.query('DELETE FROM task_events WHERE task_id = ?').run(taskId).changes;
+    const stages = db.query('DELETE FROM stage_log WHERE task_id = ?').run(taskId).changes;
+    db.query('DELETE FROM tasks WHERE id = ?').run(taskId);
+    return { task, dependencies, events, stages };
+  });
+  // BEGIN IMMEDIATE: the dependent check and the delete must not interleave with
+  // a concurrent worktree adding an edge into this card, which would otherwise
+  // land between the read and the write and be cascaded away unseen.
+  return remove.immediate() as DeleteTaskResult;
 }
 
 // ============================================================================
@@ -769,18 +925,47 @@ export function completeTask(db: Database, taskId: string, author?: EventAuthor)
   // and in_progress remain completable (direct completion + the checkout path).
   if (task.status === 'blocked') throw new TaskNotReadyError(taskId);
   const now = Date.now();
-  const done = db.transaction(() => {
-    db.query("UPDATE tasks SET status = 'done', updated_at = ? WHERE id = ?").run(now, taskId);
-    appendTaskEvent(db, taskId, {
-      kind: 'release',
-      note: 'completed',
-      authorKind: author?.authorKind ?? undefined,
-      author: author?.author ?? undefined,
-    });
-    recomputeReady(db);
+  // Status CAS mirroring releaseTask's state-check-in-SQL idiom: a card that
+  // concurrently left the completable statuses (already `done`, or re-blocked)
+  // matches zero rows and we refuse with a typed {@link TaskCompleteError} — a
+  // done card is never clobbered. There is deliberately NO claimed_by fence:
+  // `task done` is the orchestrator's verb (mark REVIEWED work done), so the
+  // completing identity is routinely NOT the claimant — the worker claims via
+  // `checkout --worker w`, the orchestrator completes after review. The author
+  // param attributes the timeline event; it does not gate the write. The
+  // `release` event + recompute run ONLY inside the winning transaction.
+  const complete = db.transaction(() => {
+    const res = db
+      .query(
+        `UPDATE tasks
+         SET status = 'done', updated_at = ?
+         WHERE id = ?
+           AND status IN ('ready', 'in_progress')`,
+      )
+      .run(now, taskId);
+    if (res.changes === 1) {
+      appendTaskEvent(db, taskId, {
+        kind: 'release',
+        note: 'completed',
+        authorKind: author?.authorKind ?? undefined,
+        author: author?.author ?? undefined,
+      });
+      recomputeReady(db);
+    }
+    return res.changes;
   });
-  done();
+  if (complete.immediate() !== 1) completeFailure(db, taskId);
   return getTask(db, taskId) as TaskRow;
+}
+
+/** Translate a refused completion (status CAS matched no completable row) into a typed error. */
+function completeFailure(db: Database, taskId: string): never {
+  const task = getTask(db, taskId);
+  if (!task) throw new UnknownTaskError(taskId);
+  // A block landing between the pre-check and the UPDATE still surfaces the
+  // dependency-gate error, never a generic completion refusal.
+  if (task.status === 'blocked') throw new TaskNotReadyError(taskId);
+  throw new TaskCompleteError(taskId, task.status);
 }
 
 /** Translate a refused release (CAS matched no `in_progress` row) into a typed error. */
@@ -829,18 +1014,27 @@ export function releaseTask(db: Database, taskId: string, author: EventAuthor): 
 
 /**
  * Place an enforced block on a card: stores `blocked_by` (the acting runtime's
- * identity, which drives the checkout refusal) and `blocked_reason`, and appends
- * a `block` event. `blocked_by` is always non-null so the checkout gate can never
- * be defeated by a missing identity — an anonymous human falls back to its kind.
+ * identity, which drives the checkout refusal), `blocked_reason`, and the
+ * {@link BlockKind}, and appends a `block` event. `blocked_by` is always non-null
+ * so the checkout gate can never be defeated by a missing identity — an anonymous
+ * human falls back to its kind. The block kind is descriptive only: a `hold`
+ * refuses checkout exactly as a `work` block does.
  */
-export function blockTask(db: Database, taskId: string, reason: string, author: EventAuthor): TaskRow {
+export function blockTask(
+  db: Database,
+  taskId: string,
+  reason: string,
+  author: EventAuthor,
+  kind: BlockKind = 'work',
+): TaskRow {
   requireTask(db, taskId);
   const blockedBy = author.author ?? author.authorKind ?? 'unknown';
   const now = Date.now();
   const tx = db.transaction(() => {
-    db.query('UPDATE tasks SET blocked_by = ?, blocked_reason = ?, updated_at = ? WHERE id = ?').run(
+    db.query('UPDATE tasks SET blocked_by = ?, blocked_reason = ?, block_kind = ?, updated_at = ? WHERE id = ?').run(
       blockedBy,
       reason,
+      kind,
       now,
       taskId,
     );
@@ -855,12 +1049,14 @@ export function blockTask(db: Database, taskId: string, reason: string, author: 
   return getTask(db, taskId) as TaskRow;
 }
 
-/** Clear an enforced block and append an `unblock` event. */
+/** Clear an enforced block — provenance, reason, and kind together — and append an `unblock` event. */
 export function unblockTask(db: Database, taskId: string, author: EventAuthor): TaskRow {
   requireTask(db, taskId);
   const now = Date.now();
   const tx = db.transaction(() => {
-    db.query('UPDATE tasks SET blocked_by = NULL, blocked_reason = NULL, updated_at = ? WHERE id = ?').run(now, taskId);
+    db.query(
+      'UPDATE tasks SET blocked_by = NULL, blocked_reason = NULL, block_kind = NULL, updated_at = ? WHERE id = ?',
+    ).run(now, taskId);
     appendTaskEvent(db, taskId, {
       kind: 'unblock',
       authorKind: author.authorKind ?? undefined,
@@ -1022,135 +1218,67 @@ export function moveTask(db: Database, taskId: string, toLane: string, author: E
 }
 
 // ============================================================================
-// Wish-group graph validation (ported from wish-state.ts — NOT imported)
+// Wish-slug resolution (read-only; the wish_groups UNION keeps legacy slugs)
+// Wish identity
 // ============================================================================
 
+/** The lifecycle slug + wish-group a card carries. Both null ⇒ the card is wishless. */
+export interface WishIdentity {
+  wish: string | null;
+  group: string | null;
+}
+
+export interface SetWishResult {
+  task: TaskRow;
+  from: WishIdentity;
+  to: WishIdentity;
+}
+
+/** Render a wish identity for humans and timeline notes: `slug#group`, `slug`, or `(none)`. */
+export function formatWishRef(identity: WishIdentity): string {
+  if (!identity.wish) return '(none)';
+  return identity.group ? `${identity.wish}#${identity.group}` : identity.wish;
+}
+
 /**
- * Deterministic signature of a wish's group structure: group names + sorted
- * `dependsOn` per group. Group/dep ordering does not affect the result. Prose
- * changes to WISH.md leave it untouched; only structural drift flips it.
+ * Re-point a card's lifecycle identity — attach, re-slug, or clear its `wish`
+ * (and wish-group) — without delete-and-recreate. `id`, `created_at`, and the
+ * checkout claim are untouched; only `wish`, `group_name`, and `updated_at`
+ * move, recording a `wish` event on the card timeline.
  *
- * Ported (not imported) from `src/lib/wish-state.ts` — v5 must not import v4.
+ * A group name is only meaningful under the wish it was declared in, so the new
+ * identity is taken whole: nothing of the previous group survives a wish change,
+ * and clearing the wish clears the group with it. Slugs are unvalidated TEXT,
+ * exactly as {@link createTask} treats them. The write and the event append are
+ * one transaction, so a card can never carry an identity with no matching
+ * timeline entry.
  */
-export function computeGroupsSignature(groups: WishGroupDef[]): string {
-  const canonical = groups
-    .map((g) => ({ name: g.name, dependsOn: [...(g.dependsOn ?? [])].sort() }))
-    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  return createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
-}
-
-/** Reject self-deps and references to groups not in the set. */
-function validateGroupRefs(groups: WishGroupDef[]): void {
-  const names = new Set(groups.map((g) => g.name));
-  for (const group of groups) {
-    if (group.dependsOn?.includes(group.name)) {
-      throw new CycleError(`Group "${group.name}" depends on itself`);
-    }
-    for (const dep of group.dependsOn ?? []) {
-      if (!names.has(dep)) {
-        throw new WishGroupStateError(`Group "${group.name}" depends on non-existent group "${dep}"`);
-      }
-    }
-  }
-}
-
-/** Detect dependency cycles via Kahn's topological sort. */
-function detectGroupCycles(groups: WishGroupDef[]): void {
-  const inDegree: Record<string, number> = {};
-  const adjacency: Record<string, string[]> = {};
-  for (const group of groups) {
-    inDegree[group.name] = (group.dependsOn ?? []).length;
-    adjacency[group.name] = [];
-  }
-  for (const group of groups) {
-    for (const dep of group.dependsOn ?? []) adjacency[dep].push(group.name);
-  }
-  const queue = Object.entries(inDegree)
-    .filter(([, deg]) => deg === 0)
-    .map(([name]) => name);
-  let processed = 0;
-  while (queue.length > 0) {
-    const node = queue.shift() as string;
-    processed++;
-    for (const neighbor of adjacency[node]) {
-      inDegree[neighbor]--;
-      if (inDegree[neighbor] === 0) queue.push(neighbor);
-    }
-  }
-  if (processed !== groups.length) {
-    const remaining = Object.entries(inDegree)
-      .filter(([, deg]) => deg > 0)
-      .map(([name]) => name);
-    throw new CycleError(`Dependency cycle detected among groups: ${remaining.join(', ')}`);
-  }
-}
-
-function validateGroups(groups: WishGroupDef[]): void {
-  validateGroupRefs(groups);
-  detectGroupCycles(groups);
-}
-
-// ============================================================================
-// Wish-group state machine
-// ============================================================================
-
-function mapWishGroup(row: {
-  wish: string;
-  name: string;
-  status: WishGroupStatus;
-  depends_on: string;
-  assignee: string | null;
-  started_at: number | null;
-  completed_at: number | null;
-}): WishGroupRow {
-  return {
-    wish: row.wish,
-    name: row.name,
-    status: row.status,
-    dependsOn: JSON.parse(row.depends_on) as string[],
-    assignee: row.assignee,
-    startedAt: row.started_at,
-    completedAt: row.completed_at,
-  };
-}
-
-/**
- * (Re)create the group rows for a wish from definitions and stamp the drift
- * signature. Groups with no deps start `ready`, others `blocked`. Replaces any
- * prior state for the wish.
- */
-export function createWishGroups(db: Database, wish: string, groups: WishGroupDef[]): WishGroupRow[] {
-  validateGroups(groups);
+export function setTaskWish(db: Database, taskId: string, to: WishIdentity, author: EventAuthor): SetWishResult {
+  const task = getTask(db, taskId);
+  if (!task) throw new UnknownTaskError(taskId);
+  const from: WishIdentity = { wish: task.wish, group: task.group };
+  const next: WishIdentity = to.wish === null ? { wish: null, group: null } : to;
+  const note = `${formatWishRef(from)}→${formatWishRef(next)}`;
   const now = Date.now();
-  const signature = computeGroupsSignature(groups);
-
-  const tx = db.transaction(() => {
-    db.query('DELETE FROM wish_groups WHERE wish = ?').run(wish);
-    for (const group of groups) {
-      const deps = group.dependsOn ?? [];
-      const status: WishGroupStatus = deps.length === 0 ? 'ready' : 'blocked';
-      db.query(
-        `INSERT INTO wish_groups (wish, name, status, depends_on, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-      ).run(wish, group.name, status, JSON.stringify(deps), now, now);
-    }
-    db.query('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run(wishSigKey(wish), signature);
+  const apply = db.transaction(() => {
+    db.query('UPDATE tasks SET wish = ?, group_name = ?, updated_at = ? WHERE id = ?').run(
+      next.wish,
+      next.group,
+      now,
+      taskId,
+    );
+    appendTaskEvent(db, taskId, {
+      kind: 'wish',
+      note,
+      authorKind: author.authorKind ?? undefined,
+      author: author.author ?? undefined,
+    });
   });
-  tx();
-
-  return getWishGroups(db, wish);
+  apply();
+  return { task: getTask(db, taskId) as TaskRow, from, to: next };
 }
 
-function wishSigKey(wish: string): string {
-  return `wish_sig:${wish}`;
-}
-
-export function getWishGroups(db: Database, wish: string): WishGroupRow[] {
-  const rows = db.query('SELECT * FROM wish_groups WHERE wish = ? ORDER BY name').all(wish) as Array<
-    Parameters<typeof mapWishGroup>[0]
-  >;
-  return rows.map(mapWishGroup);
-}
+// ============================================================================
 
 /**
  * Distinct known wish slugs (from tasks + wish_groups), longest first. Used to
@@ -1168,101 +1296,6 @@ export function listWishSlugs(db: Database): string[] {
     )
     .all() as Array<{ wish: string }>;
   return rows.map((r) => r.wish);
-}
-
-function getWishGroup(db: Database, wish: string, name: string): WishGroupRow | null {
-  const row = db.query('SELECT * FROM wish_groups WHERE wish = ? AND name = ?').get(wish, name) as
-    | Parameters<typeof mapWishGroup>[0]
-    | null;
-  return row ? mapWishGroup(row) : null;
-}
-
-/**
- * Throw `WishGroupDriftError` if the supplied definitions no longer match the
- * signature stored at creation. No-op when no signature is stored yet.
- */
-export function assertWishSignature(db: Database, wish: string, groups: WishGroupDef[]): void {
-  const stored = db.query('SELECT value FROM meta WHERE key = ?').get(wishSigKey(wish)) as { value: string } | null;
-  if (!stored) return;
-  if (stored.value !== computeGroupsSignature(groups)) throw new WishGroupDriftError(wish);
-}
-
-/** Transition a group `ready` → `in_progress`, refusing unmet dependencies. */
-export function startWishGroup(db: Database, wish: string, name: string, assignee: string): WishGroupRow {
-  const group = getWishGroup(db, wish, name);
-  if (!group) throw new WishGroupStateError(`Group "${name}" not found in wish "${wish}"`);
-  if (group.status === 'in_progress') {
-    throw new WishGroupStateError(
-      `Group "${name}" is already in progress (assigned to ${group.assignee ?? 'unknown'})`,
-    );
-  }
-  if (group.status === 'done') throw new WishGroupStateError(`Group "${name}" is already done`);
-
-  const blockers = pendingDeps(db, wish, group.dependsOn);
-  if (blockers.length > 0) {
-    throw new WishGroupStateError(`Cannot start group "${name}": unmet dependencies: ${blockers.join(', ')}`);
-  }
-
-  const now = Date.now();
-  db.query(
-    `UPDATE wish_groups SET status = 'in_progress', assignee = ?, started_at = COALESCE(started_at, ?), updated_at = ?
-     WHERE wish = ? AND name = ?`,
-  ).run(assignee, now, now, wish, name);
-  return getWishGroup(db, wish, name) as WishGroupRow;
-}
-
-/** Names of a group's dependencies that are not yet `done`. */
-function pendingDeps(db: Database, wish: string, deps: string[]): string[] {
-  const pending: string[] = [];
-  for (const dep of deps) {
-    const row = getWishGroup(db, wish, dep);
-    if (!row || row.status !== 'done') pending.push(dep);
-  }
-  return pending;
-}
-
-/**
- * Transition a group `in_progress` → `done` and promote any dependent group
- * whose dependencies are now all `done` from `blocked` to `ready`. Idempotent
- * on an already-`done` group.
- */
-export function completeWishGroup(db: Database, wish: string, name: string): WishGroupRow {
-  const group = getWishGroup(db, wish, name);
-  if (!group) throw new WishGroupStateError(`Group "${name}" not found in wish "${wish}"`);
-  if (group.status === 'done') return group;
-  if (group.status !== 'in_progress') {
-    throw new WishGroupStateError(`Cannot complete group "${name}": must be in_progress (currently ${group.status})`);
-  }
-
-  const now = Date.now();
-  const tx = db.transaction(() => {
-    db.query('UPDATE wish_groups SET status = ?, completed_at = ?, updated_at = ? WHERE wish = ? AND name = ?').run(
-      'done',
-      now,
-      now,
-      wish,
-      name,
-    );
-    promoteReadyGroups(db, wish, now);
-  });
-  tx();
-  return getWishGroup(db, wish, name) as WishGroupRow;
-}
-
-/** Promote `blocked` groups whose dependencies are all `done` to `ready`. */
-function promoteReadyGroups(db: Database, wish: string, now: number): void {
-  const groups = getWishGroups(db, wish);
-  const doneNames = new Set(groups.filter((g) => g.status === 'done').map((g) => g.name));
-  for (const group of groups) {
-    if (group.status !== 'blocked') continue;
-    if (group.dependsOn.every((dep) => doneNames.has(dep))) {
-      db.query("UPDATE wish_groups SET status = 'ready', updated_at = ? WHERE wish = ? AND name = ?").run(
-        now,
-        wish,
-        group.name,
-      );
-    }
-  }
 }
 
 // ============================================================================
@@ -1495,8 +1528,8 @@ function insertSnapshotRows(db: Database, state: StateExport): void {
   // may legitimately omit them.
   const task = db.query(
     `INSERT INTO tasks (id, board_id, title, status, claimed_by, claimed_at, wish, group_name,
-                        lane, agent_kind, heartbeat_at, blocked_by, blocked_reason, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                        lane, agent_kind, heartbeat_at, blocked_by, blocked_reason, block_kind, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   for (const t of state.tasks) {
     task.run(
@@ -1513,6 +1546,7 @@ function insertSnapshotRows(db: Database, state: StateExport): void {
       t.heartbeat_at ?? null,
       t.blocked_by ?? null,
       t.blocked_reason ?? null,
+      t.block_kind ?? null,
       t.created_at,
       t.updated_at,
     );
@@ -1531,23 +1565,10 @@ function insertSnapshotRows(db: Database, state: StateExport): void {
     event.run(e.id, e.task_id, e.kind, e.note ?? null, e.author_kind ?? null, e.author ?? null, e.created_at);
   }
 
-  const group = db.query(
-    `INSERT INTO wish_groups (wish, name, status, depends_on, assignee, started_at, completed_at, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  );
-  for (const g of state.wish_groups) {
-    group.run(
-      g.wish,
-      g.name,
-      g.status,
-      g.depends_on ?? '[]',
-      g.assignee ?? null,
-      g.started_at ?? null,
-      g.completed_at ?? null,
-      g.created_at,
-      g.updated_at,
-    );
-  }
+  // wish_groups is tolerated-and-dropped: the machinery that wrote it is
+  // production-dead, so a legacy snapshot's rows are never re-inserted and
+  // the surviving table stays empty. validateSnapshot still requires the key
+  // (SNAPSHOT_TABLE_KEYS) so older binaries' snapshots import cleanly.
 
   const hire = db.query(
     'INSERT INTO hire_roster (wish, agent_adapter_id, profile, worktree, hired_at, state) VALUES (?, ?, ?, ?, ?, ?)',
@@ -1632,6 +1653,21 @@ export function importState(db: Database, snapshot: unknown, opts: ImportOptions
     }
     if (opts.replace) wipeAllTables(db, opts.preserveHireRoster ?? false);
     insertSnapshotRows(db, { ...state, hire_roster: hires });
+    // A legacy snapshot predates the task_events timeline: it carries
+    // stage_log history and no events. The fresh open already stamped the
+    // backfill marker, so the one-time migration would never mirror these
+    // rows; clear the guard (--replace already wiped it via wipeAllTables) and
+    // re-run the backfill HERE, inside the import transaction. Deferring it to
+    // the next openDb left this handle's timeline empty and let syncRoadmap
+    // record a pre-backfill baseline hash — the next `task sync` (run by the
+    // git hooks) then saw dbChanged && !fileChanged and rewrote the
+    // git-tracked roadmap.json purely because the migration fired between two
+    // unrelated commands. Stage rows whose events are already in the snapshot
+    // (task_events non-empty) are left alone — no duplication.
+    if (state.stage_log.length > 0 && state.task_events.length === 0) {
+      db.query('DELETE FROM meta WHERE key = ?').run(STAGE_LOG_BACKFILL_KEY);
+      backfillStageLog(db);
+    }
   });
   try {
     apply();
