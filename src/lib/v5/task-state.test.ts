@@ -907,51 +907,41 @@ describe('runtime layer — claim / release timeline events', () => {
   });
 });
 
-describe('completeTask fence on claimed_by (CAS)', () => {
+describe('completeTask is orchestrator-authoritative (status CAS only)', () => {
   const WORKER_A = { author: 'worker-a', authorKind: 'claude-code' };
-  const WORKER_B = { author: 'worker-b', authorKind: 'claude-code' };
+  const ORCHESTRATOR = { author: 'orchestrator', authorKind: 'claude-code' };
 
-  test('racing identities: worker B is refused, the claimant worker A wins', () => {
+  test('the documented two-actor flow: a worker claims, the orchestrator completes', () => {
     const a = createTask(db, { title: 'a' });
     claimTask(db, a.id, 'worker-a', { author: WORKER_A });
 
-    // Worker B completes with a mismatched identity → typed refusal, no side effects.
-    expect(() => completeTask(db, a.id, WORKER_B)).toThrow(TaskCompleteError);
-    expect(getTask(db, a.id)!.status).toBe('in_progress');
-    expect(getTaskEvents(db, a.id).some((e) => e.kind === 'release')).toBe(false);
-
-    // Worker A (the claimant) completes normally.
-    const done = completeTask(db, a.id, WORKER_A);
+    // `task done` is the orchestrator's verb — the completing identity is
+    // routinely NOT the claimant and must not be fenced out.
+    const done = completeTask(db, a.id, ORCHESTRATOR);
     expect(done.status).toBe('done');
-    expect(getTaskEvents(db, a.id).at(-1)?.kind).toBe('release');
+    const release = getTaskEvents(db, a.id).at(-1);
+    expect(release?.kind).toBe('release');
+    expect(release?.author).toBe('orchestrator');
   });
 
-  test('a non-claimant is refused on a claimed card', () => {
+  test('identity-less completion of a claimed card succeeds (bare `genie task done`)', () => {
     const a = createTask(db, { title: 'a' });
     claimTask(db, a.id, 'w1');
-    expect(() => completeTask(db, a.id, { author: 'someone-else', authorKind: 'human' })).toThrow(TaskCompleteError);
-    expect(getTask(db, a.id)!.status).toBe('in_progress');
+    expect(completeTask(db, a.id).status).toBe('done');
   });
 
-  test('identity-less completion is refused on a claimed card', () => {
-    const a = createTask(db, { title: 'a' });
-    claimTask(db, a.id, 'w1');
-    expect(() => completeTask(db, a.id)).toThrow(TaskCompleteError);
-    expect(getTask(db, a.id)!.status).toBe('in_progress');
-    // No phantom release event from the refused completion.
-    expect(getTaskEvents(db, a.id).some((e) => e.kind === 'release')).toBe(false);
-  });
-
-  test('identity-less completion of an UNCLAIMED ready card still succeeds', () => {
+  test('identity-less completion of an UNCLAIMED ready card succeeds', () => {
     const a = createTask(db, { title: 'a' });
     expect(completeTask(db, a.id).status).toBe('done');
   });
 
-  test('completing an already-done card throws the typed error (status guard)', () => {
+  test('completing an already-done card throws the typed error (status CAS)', () => {
     const a = createTask(db, { title: 'a' });
     completeTask(db, a.id, HUMAN); // ready + unclaimed → succeeds
     expect(() => completeTask(db, a.id, HUMAN)).toThrow(TaskCompleteError);
     expect(getTask(db, a.id)!.status).toBe('done');
+    // Exactly one release event — the refused completion added none.
+    expect(getTaskEvents(db, a.id).filter((e) => e.kind === 'release').length).toBe(1);
   });
 });
 
@@ -1017,7 +1007,7 @@ describe('stage_log → task_events one-time backfill (idempotent)', () => {
     expect(getTaskEvents(db, a.id).length).toBe(count);
   });
 
-  test('importing a legacy snapshot (stage_log, no task_events) is mirrored into the timeline on the next open', () => {
+  test('importing a legacy snapshot (stage_log, no task_events) mirrors the timeline on the SAME handle', () => {
     const a = createTask(db, { title: 'a' });
     appendStage(db, a.id, 'planned', 'kickoff');
     const legacy = { ...exportState(db), task_events: [] };
@@ -1025,16 +1015,23 @@ describe('stage_log → task_events one-time backfill (idempotent)', () => {
     const path = join(dir, 'legacy-import.db');
     const fresh = openDb({ path });
     const summary = importState(fresh, legacy);
-    fresh.close();
-    expect(summary.events).toBe(0);
+    expect(summary.events).toBe(0); // summary counts snapshot rows, not mirrored ones
 
-    // The import clears the backfill marker, so the production open path
-    // (schemaIsCurrent lockstep) re-runs the one-time migration.
+    // The backfill runs inside the import transaction, so the importing handle
+    // sees the mirrored timeline immediately — deferring it to the next openDb
+    // left this handle empty and let syncRoadmap record a pre-backfill baseline
+    // that the git-hook `task sync` answered with a spurious roadmap rewrite.
+    const sameHandle = getTaskEvents(fresh, a.id);
+    fresh.close();
+    expect(sameHandle.map((e) => e.kind)).toEqual(['comment']);
+    expect(sameHandle[0]?.note).toBe('planned: kickoff');
+
+    // Durable on disk, and the re-stamped marker makes the reopen a no-op —
+    // the migration never runs twice.
     const reopened = openDb({ path });
     const events = getTaskEvents(reopened, a.id);
     reopened.close();
     expect(events.map((e) => e.kind)).toEqual(['comment']);
-    expect(events[0]?.note).toBe('planned: kickoff');
   });
 });
 

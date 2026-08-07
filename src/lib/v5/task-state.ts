@@ -13,7 +13,7 @@
 
 import type { Database } from 'bun:sqlite';
 import { randomBytes } from 'node:crypto';
-import { STAGE_LOG_BACKFILL_KEY } from './genie-db.js';
+import { STAGE_LOG_BACKFILL_KEY, backfillStageLog } from './genie-db.js';
 
 // ============================================================================
 // Type boundaries
@@ -346,17 +346,17 @@ export class TaskReleaseError extends Error {
 }
 
 /**
- * A completion was refused because the card is not the caller's to finish —
- * the CAS fence in {@link completeTask} matched no row: the card is already
- * `done`, or it is claimed by a different worker. The status is carried so the
- * CLI can tell the operator why. Completion analogue of
+ * A completion was refused because the status CAS in {@link completeTask}
+ * matched no row: the card is already `done` (or a concurrent transition moved
+ * it out of a completable status between decision and write). The status is
+ * carried so the CLI can tell the operator why. Completion analogue of
  * {@link TaskReleaseError} (release-side refusals).
  */
 export class TaskCompleteError extends Error {
   readonly taskId: string;
   readonly status: TaskStatus;
   constructor(taskId: string, status: TaskStatus) {
-    const detail = status === 'done' ? 'it is already done' : `it is ${status}, not yours to complete`;
+    const detail = status === 'done' ? 'it is already done' : `it is ${status}, not completable`;
     super(`Cannot complete task ${taskId}: ${detail}`);
     this.name = 'TaskCompleteError';
     this.taskId = taskId;
@@ -925,23 +925,24 @@ export function completeTask(db: Database, taskId: string, author?: EventAuthor)
   // and in_progress remain completable (direct completion + the checkout path).
   if (task.status === 'blocked') throw new TaskNotReadyError(taskId);
   const now = Date.now();
-  // CAS fence on claimed_by, mirroring releaseTask's state-check-in-SQL idiom:
-  // only the claimant (or an unclaimed card) can complete. A concurrent re-claim
-  // between decision and write can never be clobbered — the conditional UPDATE
-  // affects zero rows and we refuse with a typed {@link TaskCompleteError}. SQL
-  // null semantics (`claimed_by = NULL` never matches) mean an identity-less
-  // caller only ever completes an UNCLAIMED card via the `claimed_by IS NULL`
-  // arm. The `release` event + recompute run ONLY inside the winning transaction.
+  // Status CAS mirroring releaseTask's state-check-in-SQL idiom: a card that
+  // concurrently left the completable statuses (already `done`, or re-blocked)
+  // matches zero rows and we refuse with a typed {@link TaskCompleteError} — a
+  // done card is never clobbered. There is deliberately NO claimed_by fence:
+  // `task done` is the orchestrator's verb (mark REVIEWED work done), so the
+  // completing identity is routinely NOT the claimant — the worker claims via
+  // `checkout --worker w`, the orchestrator completes after review. The author
+  // param attributes the timeline event; it does not gate the write. The
+  // `release` event + recompute run ONLY inside the winning transaction.
   const complete = db.transaction(() => {
     const res = db
       .query(
         `UPDATE tasks
          SET status = 'done', updated_at = ?
          WHERE id = ?
-           AND status IN ('ready', 'in_progress')
-           AND (claimed_by IS NULL OR claimed_by = ?)`,
+           AND status IN ('ready', 'in_progress')`,
       )
-      .run(now, taskId, author?.author ?? null);
+      .run(now, taskId);
     if (res.changes === 1) {
       appendTaskEvent(db, taskId, {
         kind: 'release',
@@ -957,7 +958,7 @@ export function completeTask(db: Database, taskId: string, author?: EventAuthor)
   return getTask(db, taskId) as TaskRow;
 }
 
-/** Translate a refused completion (CAS matched no completable, claim-owned row) into a typed error. */
+/** Translate a refused completion (status CAS matched no completable row) into a typed error. */
 function completeFailure(db: Database, taskId: string): never {
   const task = getTask(db, taskId);
   if (!task) throw new UnknownTaskError(taskId);
@@ -1655,12 +1656,17 @@ export function importState(db: Database, snapshot: unknown, opts: ImportOptions
     // A legacy snapshot predates the task_events timeline: it carries
     // stage_log history and no events. The fresh open already stamped the
     // backfill marker, so the one-time migration would never mirror these
-    // rows; clear the guard (--replace already wiped it via wipeAllTables) so
-    // the next schema pass re-runs backfillStageLog and lands the imported
-    // history in the timeline. Stage rows whose events are already in the
-    // snapshot (task_events non-empty) are left alone — no duplication.
+    // rows; clear the guard (--replace already wiped it via wipeAllTables) and
+    // re-run the backfill HERE, inside the import transaction. Deferring it to
+    // the next openDb left this handle's timeline empty and let syncRoadmap
+    // record a pre-backfill baseline hash — the next `task sync` (run by the
+    // git hooks) then saw dbChanged && !fileChanged and rewrote the
+    // git-tracked roadmap.json purely because the migration fired between two
+    // unrelated commands. Stage rows whose events are already in the snapshot
+    // (task_events non-empty) are left alone — no duplication.
     if (state.stage_log.length > 0 && state.task_events.length === 0) {
       db.query('DELETE FROM meta WHERE key = ?').run(STAGE_LOG_BACKFILL_KEY);
+      backfillStageLog(db);
     }
   });
   try {
