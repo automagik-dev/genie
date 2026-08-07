@@ -361,6 +361,10 @@ export class TaskCompleteError extends Error {
     this.name = 'TaskCompleteError';
     this.taskId = taskId;
     this.status = status;
+  }
+}
+
+/**
  * A delete was refused because other cards still `depends-on` the target. The
  * dependent ids are carried so the operator learns what to re-point first.
  */
@@ -377,8 +381,6 @@ export class TaskHasDependentsError extends Error {
     this.name = 'TaskHasDependentsError';
     this.taskId = taskId;
     this.dependents = dependents;
-  }
-}
   }
 }
 
@@ -1274,7 +1276,6 @@ export function setTaskWish(db: Database, taskId: string, to: WishIdentity, auth
   apply();
   return { task: getTask(db, taskId) as TaskRow, from, to: next };
 }
-
 
 // ============================================================================
 
