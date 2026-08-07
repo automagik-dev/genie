@@ -10,6 +10,8 @@
  *   task link <id> --wish <slug> [--group <name>]
  *   task list [--status <s>] [--board <ref>] [--wish <slug>] [--json]
  *   task status <id>
+ *   task set-wish <id> (--wish <slug> [--group <name>] | --clear)
+ *   task delete <id>
  *   task done <id>
  *   task checkout <id> [--worker <name>]
  *   task export [--write [file]]
@@ -32,6 +34,7 @@ import {
   writeSnapshotFile,
 } from '../lib/v5/roadmap-sync.js';
 import {
+  type BlockKind,
   type EventAuthor,
   type ImportSummary,
   type TaskCardRow,
@@ -44,7 +47,9 @@ import {
   claimTask,
   completeTask,
   createTask,
+  deleteTask,
   exportState,
+  formatWishRef,
   getDependencies,
   getStageLog,
   getTask,
@@ -57,6 +62,7 @@ import {
   recordHeartbeat,
   releaseTask,
   resolveBoard,
+  setTaskWish,
   unblockTask,
 } from '../lib/v5/task-state.js';
 
@@ -139,7 +145,8 @@ function printDetailHeader(task: TaskCardRow): void {
   }
   if (task.blockedBy != null) {
     const reason = task.blockedReason ? ` — ${task.blockedReason}` : '';
-    out(`  Blocked by: ${task.blockedBy}${reason}`);
+    const kind = task.enforcedBlock?.kind ?? 'work';
+    out(`  Blocked by: ${task.blockedBy} (${kind})${reason}`);
   }
   out(`  Created:    ${formatTimestamp(new Date(task.createdAt))}`);
   out(`  Updated:    ${formatTimestamp(new Date(task.updatedAt))}`);
@@ -265,6 +272,56 @@ function handleStatus(id: string): void {
       const task = getTaskCard(db, id);
       if (!task) throw new UnknownTaskError(id);
       printTaskDetail(db, task);
+    } finally {
+      db.close();
+    }
+  });
+}
+
+interface SetWishOptions {
+  wish?: string;
+  group?: string;
+  clear?: boolean;
+}
+
+/**
+ * Re-point an existing card's lifecycle identity. `--group requires --wish.` is
+ * the same guard (and the same message) `create` enforces, so the two verbs
+ * accept identical wish arguments; slugs stay unvalidated on both.
+ */
+function handleSetWish(id: string, opts: SetWishOptions): void {
+  const wish = opts.wish?.trim();
+  const group = opts.group?.trim();
+  if (group && !wish) fail('--group requires --wish.');
+  if (opts.clear && wish) fail('--clear cannot be combined with --wish.');
+  if (!opts.clear && !wish) fail('--wish <slug> or --clear is required.');
+
+  run(() => {
+    const db = openDb();
+    try {
+      const to = { wish: wish ?? null, group: group ?? null };
+      const result = setTaskWish(db, id, to, resolveEventAuthor());
+      out(`Task ${result.task.id} wish: ${formatWishRef(result.from)} → ${formatWishRef(result.to)}.`);
+    } finally {
+      db.close();
+    }
+  });
+}
+
+/**
+ * Remove a mistakenly created card outright. The verb is deliberately flagless:
+ * a hard delete with no archive, refused while anything depends on the card, and
+ * published by the next `task sync` like any other board mutation.
+ */
+function handleDelete(id: string): void {
+  run(() => {
+    const db = openDb();
+    try {
+      const { task, dependencies, events } = deleteTask(db, id);
+      out(
+        `Deleted task ${task.id} "${task.title}" (${dependencies} dependency edge${dependencies === 1 ? '' : 's'}, ${events} timeline event${events === 1 ? '' : 's'}).`,
+      );
+      out('Run `genie task sync` (or commit) to publish the removal to .genie/roadmap.json.');
     } finally {
       db.close();
     }
@@ -417,16 +474,18 @@ function handleReport(id: string, text: string): void {
 
 interface BlockOptions {
   reason?: string;
+  hold?: boolean;
 }
 
 function handleBlock(id: string, opts: BlockOptions): void {
   const reason = opts.reason?.trim();
   if (!reason) fail('--reason <text> is required.');
+  const kind: BlockKind = opts.hold ? 'hold' : 'work';
   run(() => {
     const db = openDb();
     try {
-      const task = blockTask(db, id, reason, resolveEventAuthor());
-      out(`Blocked task ${task.id} (${task.status}).`);
+      const task = blockTask(db, id, reason, resolveEventAuthor(), kind);
+      out(`Blocked task ${task.id} (${task.status}, ${kind}).`);
     } finally {
       db.close();
     }
@@ -635,6 +694,42 @@ export function registerV5TaskCommands(v5: Command): void {
     .action((id: string) => handleStatus(id));
 
   task
+    .command('set-wish <id>')
+    .description('Attach, re-point, or clear the wish identity on a card (appends a wish event)')
+    .option('--wish <slug>', 'Wish slug to attach the card to')
+    .option('--group <name>', 'Wish-group name (requires --wish)')
+    .option('--clear', 'Remove the wish and group from the card')
+    .action((id: string, opts: SetWishOptions) => handleSetWish(id, opts));
+
+  task
+    .command('delete <id>')
+    .description('Permanently delete a card, its edges, and its timeline (refused while other cards depend on it)')
+    .addHelpText(
+      'after',
+      `
+Hard delete, no archive and no undo: the card, its dependency edges, its
+timeline, and its stage log are removed outright. The card's history survives
+only in whatever .genie/roadmap.json revisions git already holds. Any status is
+deletable, claimed or not.
+
+Refused while another card depends on this one, naming the dependents. The edge
+table cascades on delete, so removing a depended-on card would erase the edge
+instead of failing — the dependent would stay "blocked" with nothing blocking
+it, and the next ready-set recompute (which any \`task done\` triggers) would
+silently promote it to "ready". Re-point or delete the dependents first.
+
+The removal reaches .genie/roadmap.json through the ordinary \`task sync\`
+export, with two caveats:
+  * Plain \`task import\` (no --replace) merges as a superset, so importing an
+    older snapshot resurrects the deleted card. Use \`task import --replace\`.
+  * Deleting the LAST card can hand the next sync to the import branch instead
+    of the export branch — it takes that path only when no board or wish-group
+    rows remain either. Publish with \`task export --write\` when emptying the
+    board completely.`,
+    )
+    .action((id: string) => handleDelete(id));
+
+  task
     .command('done <id>')
     .description('Mark a task done and recompute the ready set')
     .action((id: string) => handleDone(id));
@@ -665,6 +760,7 @@ export function registerV5TaskCommands(v5: Command): void {
     .command('block <id>')
     .description('Place an enforced block on a card (refuses checkout until cleared)')
     .requiredOption('--reason <text>', 'Why the card is blocked')
+    .option('--hold', 'Record the block as a deliberate hold (parked) rather than a work problem')
     .action((id: string, opts: BlockOptions) => handleBlock(id, opts));
 
   task

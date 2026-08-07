@@ -86,6 +86,21 @@ export const DEFAULT_LIFECYCLE_LANES: Lane[] = [
 export const ROADMAP_BOARD = 'roadmap';
 
 /**
+ * Why a card carries an enforced block. `work` — the default — means something
+ * is wrong and must be resolved before the card moves. `hold` means the card is
+ * deliberately parked: nothing is broken, it simply must not be picked up yet.
+ * Both refuse checkout identically; the kind exists so a reader can tell the two
+ * apart without parsing the reason prose.
+ */
+export type BlockKind = 'work' | 'hold';
+
+/** An enforced block as the lane projection exposes it. */
+export interface EnforcedBlock {
+  reason: string;
+  kind: BlockKind;
+}
+
+/**
  * A task row plus its lane placement. Kept SEPARATE from {@link TaskRow} so the
  * frozen TaskRow contract — and the byte-identical laneless board `--json`,
  * MCP, and `task export` shapes that serialize it — never gains a `lane` field.
@@ -93,6 +108,14 @@ export const ROADMAP_BOARD = 'roadmap';
  */
 export interface LaneTaskRow extends TaskRow {
   lane: string | null;
+  /**
+   * The card's enforced block, or null when it carries none. The ONE deliberate
+   * runtime field on this projection: a lane-board consumer must be able to tell
+   * a parked card from a live one, which the lane grouping alone cannot express.
+   * The frozen surfaces — {@link TaskRow}, the laneless board `--json`, MCP, and
+   * `task export` — deliberately do NOT carry it.
+   */
+  enforcedBlock: EnforcedBlock | null;
 }
 
 /**
@@ -341,6 +364,26 @@ export class TaskCompleteError extends Error {
   }
 }
 
+/**
+ * A delete was refused because other cards still `depends-on` the target. The
+ * dependent ids are carried so the operator learns what to re-point first.
+ */
+export class TaskHasDependentsError extends Error {
+  readonly taskId: string;
+  readonly dependents: string[];
+  constructor(taskId: string, dependents: string[]) {
+    const shown = dependents.slice(0, 3).join(', ');
+    const rest = dependents.length > 3 ? ` +${dependents.length - 3} more` : '';
+    const one = dependents.length === 1;
+    super(
+      `Cannot delete task ${taskId}: ${dependents.length} task${one ? ' depends' : 's depend'} on it (${shown}${rest}). Delete or re-point ${one ? 'it' : 'them'} first.`,
+    );
+    this.name = 'TaskHasDependentsError';
+    this.taskId = taskId;
+    this.dependents = dependents;
+  }
+}
+
 // ============================================================================
 // IDs
 // ============================================================================
@@ -368,6 +411,7 @@ interface RawTask {
   heartbeat_at: number | null;
   blocked_by: string | null;
   blocked_reason: string | null;
+  block_kind: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -385,6 +429,27 @@ function mapTask(row: RawTask): TaskRow {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+/**
+ * Stored kinds are untrusted TEXT — the column is additive and nullable, and a
+ * hand-merged roadmap.json reaches this mapper unvalidated — so anything that is
+ * not exactly `hold` reads as the `work` default.
+ */
+function blockKindOf(raw: string | null): BlockKind {
+  return raw === 'hold' ? 'hold' : 'work';
+}
+
+/**
+ * Project a row's enforced block. Presence is keyed on `blocked_by` — the column
+ * the checkout gate reads — so the serialized field can never disagree with
+ * whether checkout is actually refused. A row blocked without a stored reason
+ * (possible from an older snapshot) projects an empty reason rather than
+ * dropping the block.
+ */
+function mapEnforcedBlock(row: RawTask): EnforcedBlock | null {
+  if (row.blocked_by == null) return null;
+  return { reason: row.blocked_reason ?? '', kind: blockKindOf(row.block_kind) };
 }
 
 // ============================================================================
@@ -566,15 +631,14 @@ export function listTasks(db: Database, filter: TaskFilter = {}): TaskRow[] {
 
 /**
  * Lane-aware task listing — the same rows as {@link listTasks} plus each card's
- * `lane`. Consumed ONLY by the additive lane-grouped board render; the frozen
- * {@link TaskRow} path (board `--json`, MCP, export) stays byte-identical.
+ * `lane` and {@link LaneTaskRow.enforcedBlock}. Consumed ONLY by the additive
+ * lane-grouped board render; the frozen {@link TaskRow} path (board `--json`,
+ * MCP, export) stays byte-identical.
  */
 export function listTasksWithLane(db: Database, filter: TaskFilter = {}): LaneTaskRow[] {
   const { where, params } = buildTaskWhere(filter);
-  const rows = db.query(`SELECT * FROM tasks${where} ORDER BY created_at`).all(...params) as Array<
-    RawTask & { lane: string | null }
-  >;
-  return rows.map((r) => ({ ...mapTask(r), lane: r.lane ?? null }));
+  const rows = db.query(`SELECT * FROM tasks${where} ORDER BY created_at`).all(...params) as RawTask[];
+  return rows.map((r) => ({ ...mapTask(r), lane: r.lane ?? null, enforcedBlock: mapEnforcedBlock(r) }));
 }
 
 /** The card's current lane, or null when unplaced. */
@@ -587,6 +651,7 @@ function mapTaskCard(row: RawTask): TaskCardRow {
   return {
     ...mapTask(row),
     lane: row.lane ?? null,
+    enforcedBlock: mapEnforcedBlock(row),
     agentKind: row.agent_kind ?? null,
     heartbeatAt: row.heartbeat_at ?? null,
     blockedBy: row.blocked_by ?? null,
@@ -610,6 +675,73 @@ export function listTaskCards(db: Database, filter: TaskFilter = {}): TaskCardRo
 export function getTaskCard(db: Database, id: string): TaskCardRow | null {
   const row = db.query('SELECT * FROM tasks WHERE id = ?').get(id) as RawTask | null;
   return row ? mapTaskCard(row) : null;
+}
+
+// ============================================================================
+// Deletion — the only removal path (hard, unarchived, dependency-refused)
+// ============================================================================
+
+/** What a {@link deleteTask} removed, for the CLI to report back. */
+export interface DeleteTaskResult {
+  /** The card as it stood immediately before removal. */
+  task: TaskRow;
+  /** Outgoing `depends-on` edges removed with it. */
+  dependencies: number;
+  /** Timeline events removed with it. */
+  events: number;
+  /** Deprecated stage_log rows removed with it. */
+  stages: number;
+}
+
+/**
+ * Permanently remove one card, its dependency edges, and its timeline. There is
+ * no archive and no undo — the roadmap snapshot in git is the only history a
+ * deleted card leaves behind.
+ *
+ * **Refused while any other card depends on it**, and that refusal is the whole
+ * safety story. `task_dependencies` declares both columns
+ * `REFERENCES tasks(id) ON DELETE CASCADE`, so deleting a depended-on card would
+ * silently erase the edge rather than fail: the dependent keeps `status =
+ * 'blocked'` with nothing left to block it, and the next {@link recomputeReady}
+ * — which `task done` runs on any unrelated card — finds no unmet dependency and
+ * promotes it to `ready`. That delayed, unattributable unblock is exactly what a
+ * dependent-refusal prevents. Re-point or delete the dependents first.
+ *
+ * Deletion is allowed in any status, claimed or not: a mistakenly created card
+ * must be removable without first releasing whoever picked it up.
+ *
+ * No ready-set recompute is needed. Only the target's OUTGOING edges disappear
+ * (incoming ones are what the refusal guarantees do not exist), and those gate
+ * nothing but the card being removed.
+ */
+export function deleteTask(db: Database, taskId: string): DeleteTaskResult {
+  const remove = db.transaction(() => {
+    const task = getTask(db, taskId);
+    if (!task) throw new UnknownTaskError(taskId);
+
+    const dependentRows = db
+      .query('SELECT task_id FROM task_dependencies WHERE depends_on_id = ? ORDER BY task_id')
+      .all(taskId) as Array<{ task_id: string }>;
+    if (dependentRows.length > 0) {
+      throw new TaskHasDependentsError(
+        taskId,
+        dependentRows.map((r) => r.task_id),
+      );
+    }
+
+    // Explicit child deletes rather than leaning on ON DELETE CASCADE: the
+    // removal is then total whether or not `PRAGMA foreign_keys` is on for this
+    // connection, and each statement reports what it actually removed.
+    const dependencies = db.query('DELETE FROM task_dependencies WHERE task_id = ?').run(taskId).changes;
+    const events = db.query('DELETE FROM task_events WHERE task_id = ?').run(taskId).changes;
+    const stages = db.query('DELETE FROM stage_log WHERE task_id = ?').run(taskId).changes;
+    db.query('DELETE FROM tasks WHERE id = ?').run(taskId);
+    return { task, dependencies, events, stages };
+  });
+  // BEGIN IMMEDIATE: the dependent check and the delete must not interleave with
+  // a concurrent worktree adding an edge into this card, which would otherwise
+  // land between the read and the write and be cascaded away unseen.
+  return remove.immediate() as DeleteTaskResult;
 }
 
 // ============================================================================
@@ -881,18 +1013,27 @@ export function releaseTask(db: Database, taskId: string, author: EventAuthor): 
 
 /**
  * Place an enforced block on a card: stores `blocked_by` (the acting runtime's
- * identity, which drives the checkout refusal) and `blocked_reason`, and appends
- * a `block` event. `blocked_by` is always non-null so the checkout gate can never
- * be defeated by a missing identity — an anonymous human falls back to its kind.
+ * identity, which drives the checkout refusal), `blocked_reason`, and the
+ * {@link BlockKind}, and appends a `block` event. `blocked_by` is always non-null
+ * so the checkout gate can never be defeated by a missing identity — an anonymous
+ * human falls back to its kind. The block kind is descriptive only: a `hold`
+ * refuses checkout exactly as a `work` block does.
  */
-export function blockTask(db: Database, taskId: string, reason: string, author: EventAuthor): TaskRow {
+export function blockTask(
+  db: Database,
+  taskId: string,
+  reason: string,
+  author: EventAuthor,
+  kind: BlockKind = 'work',
+): TaskRow {
   requireTask(db, taskId);
   const blockedBy = author.author ?? author.authorKind ?? 'unknown';
   const now = Date.now();
   const tx = db.transaction(() => {
-    db.query('UPDATE tasks SET blocked_by = ?, blocked_reason = ?, updated_at = ? WHERE id = ?').run(
+    db.query('UPDATE tasks SET blocked_by = ?, blocked_reason = ?, block_kind = ?, updated_at = ? WHERE id = ?').run(
       blockedBy,
       reason,
+      kind,
       now,
       taskId,
     );
@@ -907,12 +1048,14 @@ export function blockTask(db: Database, taskId: string, reason: string, author: 
   return getTask(db, taskId) as TaskRow;
 }
 
-/** Clear an enforced block and append an `unblock` event. */
+/** Clear an enforced block — provenance, reason, and kind together — and append an `unblock` event. */
 export function unblockTask(db: Database, taskId: string, author: EventAuthor): TaskRow {
   requireTask(db, taskId);
   const now = Date.now();
   const tx = db.transaction(() => {
-    db.query('UPDATE tasks SET blocked_by = NULL, blocked_reason = NULL, updated_at = ? WHERE id = ?').run(now, taskId);
+    db.query(
+      'UPDATE tasks SET blocked_by = NULL, blocked_reason = NULL, block_kind = NULL, updated_at = ? WHERE id = ?',
+    ).run(now, taskId);
     appendTaskEvent(db, taskId, {
       kind: 'unblock',
       authorKind: author.authorKind ?? undefined,
@@ -1075,6 +1218,65 @@ export function moveTask(db: Database, taskId: string, toLane: string, author: E
 
 // ============================================================================
 // Wish-slug resolution (read-only; the wish_groups UNION keeps legacy slugs)
+// Wish identity
+// ============================================================================
+
+/** The lifecycle slug + wish-group a card carries. Both null ⇒ the card is wishless. */
+export interface WishIdentity {
+  wish: string | null;
+  group: string | null;
+}
+
+export interface SetWishResult {
+  task: TaskRow;
+  from: WishIdentity;
+  to: WishIdentity;
+}
+
+/** Render a wish identity for humans and timeline notes: `slug#group`, `slug`, or `(none)`. */
+export function formatWishRef(identity: WishIdentity): string {
+  if (!identity.wish) return '(none)';
+  return identity.group ? `${identity.wish}#${identity.group}` : identity.wish;
+}
+
+/**
+ * Re-point a card's lifecycle identity — attach, re-slug, or clear its `wish`
+ * (and wish-group) — without delete-and-recreate. `id`, `created_at`, and the
+ * checkout claim are untouched; only `wish`, `group_name`, and `updated_at`
+ * move, recording a `wish` event on the card timeline.
+ *
+ * A group name is only meaningful under the wish it was declared in, so the new
+ * identity is taken whole: nothing of the previous group survives a wish change,
+ * and clearing the wish clears the group with it. Slugs are unvalidated TEXT,
+ * exactly as {@link createTask} treats them. The write and the event append are
+ * one transaction, so a card can never carry an identity with no matching
+ * timeline entry.
+ */
+export function setTaskWish(db: Database, taskId: string, to: WishIdentity, author: EventAuthor): SetWishResult {
+  const task = getTask(db, taskId);
+  if (!task) throw new UnknownTaskError(taskId);
+  const from: WishIdentity = { wish: task.wish, group: task.group };
+  const next: WishIdentity = to.wish === null ? { wish: null, group: null } : to;
+  const note = `${formatWishRef(from)}→${formatWishRef(next)}`;
+  const now = Date.now();
+  const apply = db.transaction(() => {
+    db.query('UPDATE tasks SET wish = ?, group_name = ?, updated_at = ? WHERE id = ?').run(
+      next.wish,
+      next.group,
+      now,
+      taskId,
+    );
+    appendTaskEvent(db, taskId, {
+      kind: 'wish',
+      note,
+      authorKind: author.authorKind ?? undefined,
+      author: author.author ?? undefined,
+    });
+  });
+  apply();
+  return { task: getTask(db, taskId) as TaskRow, from, to: next };
+}
+
 // ============================================================================
 
 /**
@@ -1325,8 +1527,8 @@ function insertSnapshotRows(db: Database, state: StateExport): void {
   // may legitimately omit them.
   const task = db.query(
     `INSERT INTO tasks (id, board_id, title, status, claimed_by, claimed_at, wish, group_name,
-                        lane, agent_kind, heartbeat_at, blocked_by, blocked_reason, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                        lane, agent_kind, heartbeat_at, blocked_by, blocked_reason, block_kind, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   for (const t of state.tasks) {
     task.run(
@@ -1343,6 +1545,7 @@ function insertSnapshotRows(db: Database, state: StateExport): void {
       t.heartbeat_at ?? null,
       t.blocked_by ?? null,
       t.blocked_reason ?? null,
+      t.block_kind ?? null,
       t.created_at,
       t.updated_at,
     );

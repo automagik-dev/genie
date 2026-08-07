@@ -305,6 +305,50 @@ describe('lane-grouped render', () => {
     expect(idea?.cards[0].title).toBe('idea card');
     expect(payload.lanes.map((l) => l.name)).toEqual(['Idea', 'Brainstorm', 'Wish', 'Work', 'Review', 'Done']);
   });
+
+  test('--json carries enforcedBlock on every lane card and nothing else from the runtime layer', async () => {
+    const db = openDb({ cwd: repo });
+    const road = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    createTask(db, { title: 'open card', boardId: road.id, lane: 'Idea' });
+    const held = createTask(db, { title: 'held card', boardId: road.id, lane: 'Idea' });
+    const broken = createTask(db, { title: 'broken card', boardId: road.id, lane: 'Idea' });
+    blockTask(db, held.id, 'parked until Q3', { author: 'felipe', authorKind: 'human' }, 'hold');
+    blockTask(db, broken.id, 'awaiting a decision', { author: 'felipe', authorKind: 'human' });
+    recordHeartbeat(db, held.id); // a runtime field that must NOT reach this shape
+    db.close();
+
+    const r = await board(repo, '--board', 'roadmap', '--json');
+    expect(r.code).toBe(0);
+    const payload = JSON.parse(r.stdout) as {
+      lanes: Array<{ name: string; cards: Array<Record<string, unknown>> }>;
+    };
+    const cards = new Map(
+      (payload.lanes.find((l) => l.name === 'Idea')?.cards ?? []).map((c) => [c.title as string, c]),
+    );
+    expect(cards.get('open card')?.enforcedBlock).toBeNull();
+    expect(cards.get('held card')?.enforcedBlock).toEqual({ reason: 'parked until Q3', kind: 'hold' });
+    expect(cards.get('broken card')?.enforcedBlock).toEqual({ reason: 'awaiting a decision', kind: 'work' });
+
+    // The lane shape gains exactly one runtime field — its provenance, identity,
+    // and heartbeat siblings stay off this path.
+    for (const leaked of ['agentKind', 'heartbeatAt', 'blockedBy', 'blockedReason']) {
+      expect(leaked in (cards.get('held card') as Record<string, unknown>)).toBe(false);
+    }
+    expect(Object.keys(cards.get('held card') as Record<string, unknown>).sort()).toEqual([
+      'boardId',
+      'claimedAt',
+      'claimedBy',
+      'createdAt',
+      'enforcedBlock',
+      'group',
+      'id',
+      'lane',
+      'status',
+      'title',
+      'updatedAt',
+      'wish',
+    ]);
+  });
 });
 
 describe('wish-status lane reconciliation on CLI JSON reads', () => {
@@ -619,6 +663,32 @@ describe('laneless board render is unchanged', () => {
       expect(leaked in card).toBe(false);
     }
     // The exact frozen key set, sorted — a byte-level guard against additions.
+    expect(Object.keys(card).sort()).toEqual([
+      'boardId',
+      'claimedAt',
+      'claimedBy',
+      'createdAt',
+      'group',
+      'id',
+      'status',
+      'title',
+      'updatedAt',
+      'wish',
+    ]);
+  });
+
+  test('an ENFORCED-BLOCKED card keeps the frozen laneless shape (enforcedBlock is lane-only)', async () => {
+    const db = openDb({ cwd: repo });
+    const plain = createBoard(db, 'plain');
+    const t = createTask(db, { title: 'plain task', boardId: plain.id });
+    blockTask(db, t.id, 'parked until Q3', { author: 'felipe', authorKind: 'human' }, 'hold');
+    db.close();
+
+    const r = await board(repo, '--board', 'plain', '--json');
+    expect(r.code).toBe(0);
+    const payload = JSON.parse(r.stdout) as { columns: Record<string, Array<Record<string, unknown>>> };
+    // The block does not move the lifecycle status, so the card is still `ready`.
+    const card = payload.columns.ready[0];
     expect(Object.keys(card).sort()).toEqual([
       'boardId',
       'claimedAt',

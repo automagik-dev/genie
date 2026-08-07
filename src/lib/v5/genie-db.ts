@@ -434,6 +434,7 @@ const EXPECTED_SCHEMA = {
     'heartbeat_at',
     'blocked_by',
     'blocked_reason',
+    'block_kind',
   ],
   wish_groups: [
     'wish',
@@ -601,12 +602,15 @@ function ensureTaskColumns(db: Database): void {
   if (!cols.has('group_name')) db.exec('ALTER TABLE tasks ADD COLUMN group_name TEXT');
   if (!cols.has('lane')) db.exec('ALTER TABLE tasks ADD COLUMN lane TEXT');
   // Runtime layer: authored identity, heartbeat liveness, and the enforced block
-  // (blocked_by drives the single carved checkout exception). All nullable ⇒ no
-  // user_version bump; the card-projection render reads them, TaskRow stays frozen.
+  // (blocked_by drives the single carved checkout exception; block_kind says
+  // whether it is a work problem or a deliberate hold, NULL ⇒ 'work'). All
+  // nullable ⇒ no user_version bump; the card-projection render reads them,
+  // TaskRow stays frozen.
   if (!cols.has('agent_kind')) db.exec('ALTER TABLE tasks ADD COLUMN agent_kind TEXT');
   if (!cols.has('heartbeat_at')) db.exec('ALTER TABLE tasks ADD COLUMN heartbeat_at INTEGER');
   if (!cols.has('blocked_by')) db.exec('ALTER TABLE tasks ADD COLUMN blocked_by TEXT');
   if (!cols.has('blocked_reason')) db.exec('ALTER TABLE tasks ADD COLUMN blocked_reason TEXT');
+  if (!cols.has('block_kind')) db.exec('ALTER TABLE tasks ADD COLUMN block_kind TEXT');
 }
 
 /** Meta key marking the one-time stage_log → task_events backfill as complete. */

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ensureSchema, openDb } from './genie-db.js';
+import { ensureSchema, isCurrentGenieDb, openDb } from './genie-db.js';
 import {
   CheckoutConflictError,
   CycleError,
@@ -15,8 +15,10 @@ import {
   LaneError,
   TaskBlockedError,
   TaskCompleteError,
+  TaskHasDependentsError,
   TaskNotReadyError,
   TaskReleaseError,
+  type TaskRow,
   UnknownTaskError,
   addDependency,
   appendStage,
@@ -28,8 +30,11 @@ import {
   countBoardTasks,
   createBoard,
   createTask,
+  deleteTask,
   exportState,
+  formatWishRef,
   getBoardByName,
+  getDependencies,
   getHire,
   getStageLog,
   getTask,
@@ -42,12 +47,14 @@ import {
   listBoards,
   listHires,
   listTasks,
+  listTasksWithLane,
   livenessFromHeartbeat,
   moveTask,
   readyTasks,
   recomputeReady,
   recordHeartbeat,
   releaseTask,
+  setTaskWish,
   unblockTask,
   unhireAgent,
 } from './task-state.js';
@@ -262,6 +269,202 @@ describe('lane moves + task_events timeline', () => {
   });
 });
 
+describe('setTaskWish — card identity without delete-and-recreate', () => {
+  test('attaches a wish to a wishless card, preserving id/createdAt/claim', async () => {
+    const task = createTask(db, { title: 'orphan' });
+    claimTask(db, task.id, 'worker-1', { author: HUMAN });
+    const claimed = getTask(db, task.id) as TaskRow;
+    await Bun.sleep(2);
+
+    const result = setTaskWish(db, task.id, { wish: 'remotty-board-asks', group: 'task-wish-verb' }, HUMAN);
+    expect(result.from).toEqual({ wish: null, group: null });
+    expect(result.to).toEqual({ wish: 'remotty-board-asks', group: 'task-wish-verb' });
+
+    const after = result.task;
+    expect(after.id).toBe(task.id);
+    expect(after.createdAt).toBe(task.createdAt);
+    expect(after.status).toBe('in_progress');
+    expect(after.claimedBy).toBe('worker-1');
+    expect(after.claimedAt).toBe(claimed.claimedAt);
+    expect(after.wish).toBe('remotty-board-asks');
+    expect(after.group).toBe('task-wish-verb');
+    expect(after.updatedAt).toBeGreaterThan(claimed.updatedAt);
+
+    // The claim event, then the wish event — old → new on the timeline.
+    const events = getTaskEvents(db, task.id);
+    expect(events.map((e) => e.kind)).toEqual(['claim', 'wish']);
+    expect(events[1].note).toBe('(none)→remotty-board-asks#task-wish-verb');
+    expect(events[1].author).toBe('felipe');
+    expect(events[1].authorKind).toBe('human');
+  });
+
+  test('re-pointing to another wish drops the previous group unless a new one is given', () => {
+    const task = createTask(db, { title: 'moving', wish: 'old-wish', group: 'g1' });
+    const result = setTaskWish(db, task.id, { wish: 'new-wish', group: null }, HUMAN);
+    expect(result.from).toEqual({ wish: 'old-wish', group: 'g1' });
+    expect(result.task.wish).toBe('new-wish');
+    expect(result.task.group).toBeNull();
+    expect(getTaskEvents(db, task.id)[0].note).toBe('old-wish#g1→new-wish');
+  });
+
+  test('clearing removes wish and group together', () => {
+    const task = createTask(db, { title: 'detaching', wish: 'demo', group: 'g1' });
+    const result = setTaskWish(db, task.id, { wish: null, group: null }, HUMAN);
+    expect(result.to).toEqual({ wish: null, group: null });
+    expect(result.task.wish).toBeNull();
+    expect(result.task.group).toBeNull();
+    expect(getTaskEvents(db, task.id)[0].note).toBe('demo#g1→(none)');
+  });
+
+  test('a group passed alongside a null wish is dropped, never orphaned', () => {
+    const task = createTask(db, { title: 'orphan-guard', wish: 'demo', group: 'g1' });
+    const result = setTaskWish(db, task.id, { wish: null, group: 'g1' }, HUMAN);
+    expect(result.task.group).toBeNull();
+    expect(getTaskEvents(db, task.id)[0].note).toBe('demo#g1→(none)');
+  });
+
+  test('an attached card is findable by the wish filter', () => {
+    const task = createTask(db, { title: 'findable' });
+    expect(listTasks(db, { wish: 'demo' })).toHaveLength(0);
+    setTaskWish(db, task.id, { wish: 'demo', group: null }, HUMAN);
+    expect(listTasks(db, { wish: 'demo' }).map((t) => t.id)).toEqual([task.id]);
+  });
+
+  test('rejects an unknown task without touching the timeline', () => {
+    expect(() => setTaskWish(db, 't_nope', { wish: 'demo', group: null }, HUMAN)).toThrow(UnknownTaskError);
+  });
+
+  test('formatWishRef renders slug#group, bare slug, and the empty identity', () => {
+    expect(formatWishRef({ wish: 'demo', group: 'g1' })).toBe('demo#g1');
+    expect(formatWishRef({ wish: 'demo', group: null })).toBe('demo');
+    expect(formatWishRef({ wish: null, group: null })).toBe('(none)');
+  });
+
+  test('the new identity survives an export/import round-trip', () => {
+    const task = createTask(db, { title: 'round-trip' });
+    setTaskWish(db, task.id, { wish: 'demo', group: 'g1' }, HUMAN);
+    const snapshot = exportState(db);
+
+    const other = openDb({ path: join(dir, 'other.db') });
+    try {
+      importState(other, snapshot);
+      const restored = getTask(other, task.id) as TaskRow;
+      expect(restored.wish).toBe('demo');
+      expect(restored.group).toBe('g1');
+      expect(getTaskEvents(other, task.id).map((e) => e.kind)).toEqual(['wish']);
+    } finally {
+      other.close();
+    }
+  });
+});
+
+describe('deleteTask — hard removal with a dependency refusal', () => {
+  function edgeCount(): number {
+    return (db.query('SELECT COUNT(*) AS n FROM task_dependencies').get() as { n: number }).n;
+  }
+
+  test('removes a leaf card with its edges, timeline, and stage log', () => {
+    const dep = createTask(db, { title: 'upstream' });
+    const task = createTask(db, { title: 'doomed', dependsOn: [dep.id] });
+    appendTaskEvent(db, task.id, { kind: 'comment', note: 'created by mistake', ...HUMAN });
+    appendStage(db, task.id, 'planned');
+
+    const result = deleteTask(db, task.id);
+    expect(result.task.id).toBe(task.id);
+    expect(result.task.title).toBe('doomed');
+    expect(result.dependencies).toBe(1);
+    expect(result.events).toBe(1);
+    expect(result.stages).toBe(1);
+
+    expect(getTask(db, task.id)).toBeNull();
+    expect(getTaskEvents(db, task.id)).toEqual([]);
+    expect(getStageLog(db, task.id)).toEqual([]);
+    expect(edgeCount()).toBe(0);
+    // Only the target went: what it depended on is untouched.
+    expect(getTask(db, dep.id)?.status).toBe('ready');
+  });
+
+  test('refuses a card with dependents, naming them, and changes nothing', () => {
+    const target = createTask(db, { title: 'depended-on' });
+    const dependent = createTask(db, { title: 'downstream', dependsOn: [target.id] });
+    appendTaskEvent(db, target.id, { kind: 'comment', note: 'keep me', ...HUMAN });
+
+    expect(() => deleteTask(db, target.id)).toThrow(TaskHasDependentsError);
+    try {
+      deleteTask(db, target.id);
+    } catch (err) {
+      expect(err).toBeInstanceOf(TaskHasDependentsError);
+      expect((err as TaskHasDependentsError).dependents).toEqual([dependent.id]);
+      expect((err as Error).message).toContain(dependent.id);
+      expect((err as Error).message).toContain('1 task depends on it');
+    }
+
+    expect(getTask(db, target.id)?.title).toBe('depended-on');
+    expect(getTaskEvents(db, target.id)).toHaveLength(1);
+    expect(getDependencies(db, dependent.id)).toEqual([target.id]);
+    expect(getTask(db, dependent.id)?.status).toBe('blocked');
+  });
+
+  test('the refusal message names up to three dependents and counts the rest', () => {
+    const target = createTask(db, { title: 'popular' });
+    const ids = ['a', 'b', 'c', 'd'].map((t) => createTask(db, { title: t, dependsOn: [target.id] }).id);
+    try {
+      deleteTask(db, target.id);
+      throw new Error('expected a refusal');
+    } catch (err) {
+      expect(err).toBeInstanceOf(TaskHasDependentsError);
+      expect((err as TaskHasDependentsError).dependents.sort()).toEqual([...ids].sort());
+      expect((err as Error).message).toContain('4 tasks depend on it');
+      expect((err as Error).message).toContain('+1 more');
+    }
+  });
+
+  test('the refusal is what prevents a delayed silent unblock (the cascade is real)', () => {
+    const target = createTask(db, { title: 'blocker' });
+    const dependent = createTask(db, { title: 'waiting', dependsOn: [target.id] });
+    const unrelated = createTask(db, { title: 'unrelated' });
+    expect(getTask(db, dependent.id)?.status).toBe('blocked');
+
+    // Bypass deleteTask exactly as a hand-edited snapshot or a raw DELETE would:
+    // ON DELETE CASCADE erases the edge silently...
+    db.query('DELETE FROM tasks WHERE id = ?').run(target.id);
+    expect(edgeCount()).toBe(0);
+    expect(getTask(db, dependent.id)?.status).toBe('blocked');
+
+    // ...and the next recompute — which `task done` on ANY card runs — promotes
+    // the orphaned dependent to ready with nothing on its timeline saying why.
+    completeTask(db, unrelated.id);
+    expect(getTask(db, dependent.id)?.status).toBe('ready');
+  });
+
+  test('deletes a claimed, in-progress card without requiring a release first', () => {
+    const task = createTask(db, { title: 'claimed by mistake' });
+    claimTask(db, task.id, 'w1', { author: HUMAN });
+    expect(getTask(db, task.id)?.status).toBe('in_progress');
+
+    expect(deleteTask(db, task.id).task.claimedBy).toBe('w1');
+    expect(getTask(db, task.id)).toBeNull();
+  });
+
+  test('rejects an unknown id and removes nothing', () => {
+    const survivor = createTask(db, { title: 'survivor' });
+    expect(() => deleteTask(db, 't_nope')).toThrow(UnknownTaskError);
+    expect(listTasks(db)).toHaveLength(1);
+    expect(getTask(db, survivor.id)).not.toBeNull();
+  });
+
+  test('a deleted card is gone from export, so the snapshot never carries it', () => {
+    const keep = createTask(db, { title: 'keep' });
+    const drop = createTask(db, { title: 'drop' });
+    appendTaskEvent(db, drop.id, { kind: 'comment', note: 'oops', ...HUMAN });
+
+    deleteTask(db, drop.id);
+    const snapshot = exportState(db);
+    expect(snapshot.tasks.map((t) => t.id)).toEqual([keep.id]);
+    expect(snapshot.task_events.filter((e) => e.task_id === drop.id)).toEqual([]);
+  });
+});
+
 describe('dependency cycle rejection', () => {
   test('rejects self-dependency', () => {
     const a = createTask(db, { title: 'a' });
@@ -448,9 +651,174 @@ describe('runtime layer — enforced blocks + carved checkout exception', () => 
     const card = getTaskCard(db, a.id);
     expect(card?.blockedBy).toBeNull();
     expect(card?.blockedReason).toBeNull();
+    expect(card?.enforcedBlock).toBeNull();
     expect(getTaskEvents(db, a.id).at(-1)?.kind).toBe('unblock');
+    // The kind is cleared with the block, not left behind for the next one.
+    expect(rawBlockKind(db, a.id)).toBeNull();
     // Now claimable again.
     expect(claimTask(db, a.id, 'w1').status).toBe('in_progress');
+  });
+});
+
+/** The stored `block_kind` cell, read past the projection so defaults are visible. */
+function rawBlockKind(handle: Database, taskId: string): string | null {
+  const row = handle.query('SELECT block_kind FROM tasks WHERE id = ?').get(taskId) as { block_kind: string | null };
+  return row.block_kind;
+}
+
+describe('block kinds — work vs hold', () => {
+  test('an omitted kind stores and projects the work default', () => {
+    const a = createTask(db, { title: 'a' });
+    blockTask(db, a.id, 'needs a decision', HUMAN);
+    expect(rawBlockKind(db, a.id)).toBe('work');
+    expect(getTaskCard(db, a.id)?.enforcedBlock).toEqual({ reason: 'needs a decision', kind: 'work' });
+  });
+
+  test('an explicit hold is stored and projected as a hold', () => {
+    const a = createTask(db, { title: 'a' });
+    blockTask(db, a.id, 'parked until Q3', HUMAN, 'hold');
+    expect(rawBlockKind(db, a.id)).toBe('hold');
+    expect(getTaskCard(db, a.id)?.enforcedBlock).toEqual({ reason: 'parked until Q3', kind: 'hold' });
+  });
+
+  test('a hold refuses checkout exactly like a work block', () => {
+    const held = createTask(db, { title: 'held' });
+    const broken = createTask(db, { title: 'broken' });
+    blockTask(db, held.id, 'parked', HUMAN, 'hold');
+    blockTask(db, broken.id, 'parked', HUMAN, 'work');
+    for (const id of [held.id, broken.id]) {
+      expect(() => claimTask(db, id, 'w1')).toThrow(TaskBlockedError);
+      expect(getTask(db, id)?.claimedBy).toBeNull();
+    }
+  });
+
+  test('a block of either kind leaves the lifecycle status untouched', () => {
+    const a = createTask(db, { title: 'a' });
+    blockTask(db, a.id, 'parked', HUMAN, 'hold');
+    expect(getTask(db, a.id)?.status).toBe('ready');
+  });
+
+  test('a NULL or unrecognized stored kind normalizes to work (the column is untrusted TEXT)', () => {
+    const legacy = createTask(db, { title: 'legacy' });
+    const garbage = createTask(db, { title: 'garbage' });
+    // A row an older build blocked (no kind column) and a hand-merged roadmap.json.
+    db.query("UPDATE tasks SET blocked_by = 'felipe', blocked_reason = 'r' WHERE id = ?").run(legacy.id);
+    db.query("UPDATE tasks SET blocked_by = 'felipe', blocked_reason = 'r', block_kind = 'HOLD' WHERE id = ?").run(
+      garbage.id,
+    );
+    expect(getTaskCard(db, legacy.id)?.enforcedBlock).toEqual({ reason: 'r', kind: 'work' });
+    expect(getTaskCard(db, garbage.id)?.enforcedBlock).toEqual({ reason: 'r', kind: 'work' });
+  });
+
+  test('a block stored without a reason still projects a block (presence keys on blocked_by)', () => {
+    const a = createTask(db, { title: 'a' });
+    db.query("UPDATE tasks SET blocked_by = 'felipe' WHERE id = ?").run(a.id);
+    expect(getTaskCard(db, a.id)?.enforcedBlock).toEqual({ reason: '', kind: 'work' });
+  });
+});
+
+describe('lane projection carries enforcedBlock', () => {
+  test('blocked cards project reason + kind; unblocked cards project null', () => {
+    const road = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    const open = createTask(db, { title: 'open', boardId: road.id, lane: 'Idea' });
+    const held = createTask(db, { title: 'held', boardId: road.id, lane: 'Idea' });
+    blockTask(db, held.id, 'parked until Q3', HUMAN, 'hold');
+
+    const byId = new Map(listTasksWithLane(db, { boardId: road.id }).map((t) => [t.id, t]));
+    expect(byId.get(open.id)?.enforcedBlock).toBeNull();
+    expect(byId.get(held.id)?.enforcedBlock).toEqual({ reason: 'parked until Q3', kind: 'hold' });
+  });
+
+  test('the lane projection gains ONLY enforcedBlock — provenance and heartbeat stay off it', () => {
+    const a = createTask(db, { title: 'a' });
+    blockTask(db, a.id, 'r', HUMAN, 'hold');
+    recordHeartbeat(db, a.id);
+    const row = listTasksWithLane(db).find((t) => t.id === a.id) as unknown as Record<string, unknown>;
+    expect(Object.keys(row).sort()).toEqual([
+      'boardId',
+      'claimedAt',
+      'claimedBy',
+      'createdAt',
+      'enforcedBlock',
+      'group',
+      'id',
+      'lane',
+      'status',
+      'title',
+      'updatedAt',
+      'wish',
+    ]);
+  });
+
+  test('the frozen TaskRow path never gains enforcedBlock', () => {
+    const a = createTask(db, { title: 'a' });
+    blockTask(db, a.id, 'r', HUMAN, 'hold');
+    const frozen = listTasks(db).find((t) => t.id === a.id) as unknown as Record<string, unknown>;
+    expect('enforcedBlock' in frozen).toBe(false);
+    expect('lane' in frozen).toBe(false);
+  });
+});
+
+describe('block_kind is an additive v1 column', () => {
+  test('a v1 DB predating the column regains it on open, with no user_version change', () => {
+    const path = join(dir, 'pre-kind.db');
+    const seed = openDb({ path });
+    const a = createTask(seed, { title: 'a' });
+    blockTask(seed, a.id, 'r', HUMAN, 'hold');
+    // Roll the file back to a v1 DB written before the column existed.
+    seed.exec('ALTER TABLE tasks DROP COLUMN block_kind');
+    expect(isCurrentGenieDb(seed)).toBe(false); // schemaIsCurrent stays in lockstep
+    seed.close();
+
+    const reopened = openDb({ path });
+    const version = (reopened.query('PRAGMA user_version').get() as { user_version: number }).user_version;
+    const columns = (reopened.query('PRAGMA table_info(tasks)').all() as Array<{ name: string }>).map((c) => c.name);
+    // The backfilled column is NULL, so the pre-existing block reads as `work`.
+    const card = getTaskCard(reopened, a.id);
+    // A second open is a no-op — the backfill is idempotent.
+    ensureSchema(reopened);
+    const stillOnce = (reopened.query('PRAGMA table_info(tasks)').all() as Array<{ name: string }>).filter(
+      (c) => c.name === 'block_kind',
+    ).length;
+    reopened.close();
+
+    expect(version).toBe(1);
+    expect(columns).toContain('block_kind');
+    expect(card?.enforcedBlock).toEqual({ reason: 'r', kind: 'work' });
+    expect(stillOnce).toBe(1);
+  });
+
+  test('export carries block_kind and round-trips it through import', () => {
+    const a = createTask(db, { title: 'a' });
+    blockTask(db, a.id, 'parked', HUMAN, 'hold');
+    const snapshot = exportState(db);
+    expect(snapshot.tasks[0].block_kind).toBe('hold');
+
+    const path = join(dir, 'round-trip.db');
+    const fresh = openDb({ path });
+    importState(fresh, snapshot);
+    const card = getTaskCard(fresh, a.id);
+    fresh.close();
+    expect(card?.enforcedBlock).toEqual({ reason: 'parked', kind: 'hold' });
+  });
+
+  test('a same-version snapshot whose tasks omit block_kind imports cleanly as work', () => {
+    const a = createTask(db, { title: 'a' });
+    blockTask(db, a.id, 'r', HUMAN, 'hold');
+    const snapshot = exportState(db);
+    // An older build at the same schemaVersion never wrote the key at all.
+    const older = {
+      ...snapshot,
+      tasks: snapshot.tasks.map(({ block_kind: _dropped, ...rest }) => rest),
+    } as unknown as typeof snapshot;
+
+    const path = join(dir, 'older-snapshot.db');
+    const fresh = openDb({ path });
+    const summary = importState(fresh, older);
+    const card = getTaskCard(fresh, a.id);
+    fresh.close();
+    expect(summary.tasks).toBe(1);
+    expect(card?.enforcedBlock).toEqual({ reason: 'r', kind: 'work' });
   });
 });
 

@@ -338,6 +338,231 @@ describe('task status / done / checkout', () => {
   });
 });
 
+describe('task set-wish', () => {
+  async function seedTask(title: string, wish?: string, group?: string): Promise<string> {
+    const db = openDb({ cwd: repo });
+    const task = createTask(db, { title, wish, group });
+    db.close();
+    return task.id;
+  }
+
+  test('attaches a wish, preserving id/createdAt while advancing updatedAt', async () => {
+    const id = await seedTask('wishless');
+    const before = openDb({ cwd: repo });
+    const created = getTask(before, id);
+    before.close();
+
+    const r = await cli(repo, 'set-wish', id, '--wish', 'remotty-board-asks', '--group', 'task-wish-verb');
+    expect(r.code).toBe(0);
+    expect(r.stderr).toBe('');
+    expect(r.stdout).toContain('(none) → remotty-board-asks#task-wish-verb');
+
+    const db = openDb({ cwd: repo });
+    const after = getTask(db, id);
+    const events = getTaskEvents(db, id);
+    db.close();
+    expect(after?.id).toBe(id);
+    expect(after?.createdAt).toBe(created?.createdAt as number);
+    expect(after?.wish).toBe('remotty-board-asks');
+    expect(after?.group).toBe('task-wish-verb');
+    expect(after?.updatedAt).toBeGreaterThan(created?.updatedAt as number);
+    expect(events).toHaveLength(1);
+    expect(events[0].kind).toBe('wish');
+    expect(events[0].note).toBe('(none)→remotty-board-asks#task-wish-verb');
+  });
+
+  test('the wish event is visible in task status, and list --wish finds the card', async () => {
+    const id = await seedTask('findable');
+    await cli(repo, 'set-wish', id, '--wish', 'demo');
+
+    const status = await cli(repo, 'status', id);
+    expect(status.code).toBe(0);
+    expect(status.stdout).toContain('Timeline:');
+    expect(status.stdout).toContain('wish by');
+    expect(status.stdout).toContain('(none)→demo');
+
+    const list = await cli(repo, 'list', '--wish', 'demo');
+    expect(list.code).toBe(0);
+    expect(list.stdout).toContain(id);
+  });
+
+  test('--clear removes the wish and the group together', async () => {
+    const id = await seedTask('attached', 'demo', 'g1');
+    const r = await cli(repo, 'set-wish', id, '--clear');
+    expect(r.code).toBe(0);
+    expect(r.stderr).toBe('');
+    expect(r.stdout).toContain('demo#g1 → (none)');
+
+    const db = openDb({ cwd: repo });
+    const after = getTask(db, id);
+    db.close();
+    expect(after?.wish).toBeNull();
+    expect(after?.group).toBeNull();
+  });
+
+  test('a claimed card keeps its claim across the identity change', async () => {
+    const id = await seedTask('claimed');
+    await cli(repo, 'checkout', id, '--worker', 'w1');
+    const r = await cli(repo, 'set-wish', id, '--wish', 'demo');
+    expect(r.code).toBe(0);
+
+    const db = openDb({ cwd: repo });
+    const after = getTask(db, id);
+    db.close();
+    expect(after?.status).toBe('in_progress');
+    expect(after?.claimedBy).toBe('w1');
+  });
+
+  test('--group without --wish fails with the same message as create', async () => {
+    const id = await seedTask('guarded');
+    const r = await cli(repo, 'set-wish', id, '--group', 'g1');
+    expect(r.code).toBe(1);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toContain('--group requires --wish.');
+  });
+
+  test('neither --wish nor --clear fails; --clear with --wish is refused', async () => {
+    const id = await seedTask('ambiguous');
+    const bare = await cli(repo, 'set-wish', id);
+    expect(bare.code).toBe(1);
+    expect(bare.stderr).toContain('--wish <slug> or --clear is required.');
+
+    const both = await cli(repo, 'set-wish', id, '--clear', '--wish', 'demo');
+    expect(both.code).toBe(1);
+    expect(both.stderr).toContain('--clear cannot be combined with --wish.');
+  });
+
+  test('an unknown id fails with exit 1 and a typed error', async () => {
+    const r = await cli(repo, 'set-wish', 't_nope', '--wish', 'demo');
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain('Task not found: t_nope');
+  });
+
+  test('the attached identity survives export --write / import / sync', async () => {
+    const id = await seedTask('travels');
+    await cli(repo, 'set-wish', id, '--wish', 'demo', '--group', 'g1');
+
+    const w = await cli(repo, 'export', '--write');
+    expect(w.code).toBe(0);
+    const snapshotPath = join(repo, '.genie', 'roadmap.json');
+    const snapshot = readFileSync(snapshotPath, 'utf-8');
+    const state = JSON.parse(snapshot) as StateExport;
+    expect(state.tasks.find((t) => t.id === id)?.wish).toBe('demo');
+    expect(state.tasks.find((t) => t.id === id)?.group_name).toBe('g1');
+
+    // A fresh clone materializes the same identity from the committed snapshot.
+    const clone = mkdtempSync(join(tmpdir(), 'genie-v5-setwish-'));
+    try {
+      git(clone, 'init', '-b', 'main');
+      git(clone, 'commit', '--allow-empty', '-m', 'init');
+      await mkdir(join(clone, '.genie'), { recursive: true });
+      writeFileSync(join(clone, '.genie', 'roadmap.json'), snapshot);
+
+      const imported = await cli(clone, 'import');
+      expect(imported.code).toBe(0);
+      const db = openDb({ cwd: clone });
+      const restored = getTask(db, id);
+      const events = getTaskEvents(db, id);
+      db.close();
+      expect(restored?.wish).toBe('demo');
+      expect(restored?.group).toBe('g1');
+      expect(events.map((e) => e.kind)).toEqual(['wish']);
+
+      // sync sees the pair as already reconciled — no divergence from the change.
+      const synced = await cli(clone, 'sync');
+      expect(synced.code).toBe(0);
+    } finally {
+      rmSync(clone, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('task delete', () => {
+  async function seedTask(title: string, dependsOn?: string[]): Promise<string> {
+    const db = openDb({ cwd: repo });
+    const task = createTask(db, { title, dependsOn });
+    db.close();
+    return task.id;
+  }
+
+  test('deletes a leaf card; status on it then fails with not-found', async () => {
+    const upstream = await seedTask('upstream');
+    const id = await seedTask('mistake', [upstream]);
+
+    const r = await cli(repo, 'delete', id);
+    expect(r.code).toBe(0);
+    expect(r.stderr).toBe('');
+    expect(r.stdout).toContain(`Deleted task ${id} "mistake"`);
+    expect(r.stdout).toContain('1 dependency edge');
+    expect(r.stdout).toContain('genie task sync');
+
+    const gone = await cli(repo, 'status', id);
+    expect(gone.code).toBe(1);
+    expect(gone.stderr).toContain(`Task not found: ${id}`);
+
+    // The card it depended on survives, and the board no longer lists the card.
+    const list = await cli(repo, 'list');
+    expect(list.stdout).not.toContain(id);
+    expect(list.stdout).toContain('upstream');
+  });
+
+  test('a card with dependents is refused by name, and nothing changes', async () => {
+    const target = await seedTask('depended-on');
+    const dependent = await seedTask('downstream', [target]);
+
+    const r = await cli(repo, 'delete', target);
+    expect(r.code).toBe(1);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toContain(`Cannot delete task ${target}`);
+    expect(r.stderr).toContain(dependent);
+    expect(r.stderr).toContain('1 task depends on it');
+
+    // Both cards, and the edge between them, are untouched.
+    const still = await cli(repo, 'status', target);
+    expect(still.code).toBe(0);
+    const downstream = await cli(repo, 'status', dependent);
+    expect(downstream.code).toBe(0);
+    expect(downstream.stdout).toContain('Depends on:');
+    expect(downstream.stdout).toContain(target);
+  });
+
+  test('an unknown id fails with exit 1 and a typed error', async () => {
+    const r = await cli(repo, 'delete', 't_missing');
+    expect(r.code).toBe(1);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toContain('Task not found: t_missing');
+  });
+
+  test('the timeline goes with the card: a recreated card starts clean', async () => {
+    const id = await seedTask('typo');
+    await cli(repo, 'comment', id, 'wrong wish');
+    const db = openDb({ cwd: repo });
+    expect(getTaskEvents(db, id)).toHaveLength(1);
+    db.close();
+
+    expect((await cli(repo, 'delete', id)).code).toBe(0);
+    const after = openDb({ cwd: repo });
+    const orphanEvents = after.query('SELECT COUNT(*) AS n FROM task_events').get() as { n: number };
+    const orphanDeps = after.query('SELECT COUNT(*) AS n FROM task_dependencies').get() as { n: number };
+    after.close();
+    expect(orphanEvents.n).toBe(0);
+    expect(orphanDeps.n).toBe(0);
+  });
+
+  test('help documents the hard delete, the refusal, and the import caveats', async () => {
+    const listing = await cli(repo, '--help');
+    expect(listing.code).toBe(0);
+    expect(listing.stdout).toContain('delete');
+
+    const detail = await cli(repo, 'delete', '--help');
+    expect(detail.code).toBe(0);
+    expect(detail.stdout).toContain('no archive and no undo');
+    expect(detail.stdout).toContain('Refused while another card depends on this one');
+    expect(detail.stdout).toContain('task import --replace');
+    expect(detail.stdout).toContain('Deleting the LAST card');
+  });
+});
+
 describe('task move', () => {
   async function seedLaneCard(): Promise<string> {
     const db = openDb({ cwd: repo });
@@ -701,6 +926,43 @@ describe('roadmap.json canonical sync', () => {
     expect((JSON.parse(snapshotOf(repo)) as StateExport).tasks).toHaveLength(1);
   });
 
+  test('a deleted card is republished away by the EXISTING export branch and stays gone', async () => {
+    // Two cards so the db keeps operational state after the delete: the deletion
+    // then lands squarely on the `dbChanged && !fileChanged` export branch.
+    const keep = await cli(repo, 'create', '--title', 'keeper');
+    expect(keep.code).toBe(0);
+    const doomed = await cli(repo, 'create', '--title', 'created by mistake');
+    expect(doomed.code).toBe(0);
+    const doomedId = (doomed.stdout.match(/Created task (t_\w+)/) as RegExpMatchArray)[1];
+
+    const published = await cli(repo, 'sync');
+    expect(published.code).toBe(0);
+    expect(snapshotOf(repo)).toContain('created by mistake');
+
+    // Delete, then the ordinary sync (the same one the git hooks run) republishes
+    // roadmap.json without the row — no reconcile logic is involved.
+    const removed = await cli(repo, 'delete', doomedId);
+    expect(removed.code).toBe(0);
+    const exported = await cli(repo, 'sync');
+    expect(exported.code).toBe(0);
+    expect(exported.stdout).toContain('refreshed from the local database');
+
+    const snap = JSON.parse(snapshotOf(repo)) as StateExport;
+    expect(snap.tasks.map((t) => t.title)).toEqual(['keeper']);
+    expect(snap.tasks.some((t) => t.id === doomedId)).toBe(false);
+    expect(snap.task_events.some((e) => e.task_id === doomedId)).toBe(false);
+
+    // A later sync is a no-op and does NOT resurrect the card: the baseline now
+    // describes the post-delete pair, so neither side reads as changed.
+    const again = await cli(repo, 'sync');
+    expect(again.code).toBe(0);
+    expect(again.stdout).toContain('in sync (none)');
+    expect(snapshotOf(repo)).not.toContain('created by mistake');
+    const listed = await cli(repo, 'list');
+    expect(listed.stdout).not.toContain(doomedId);
+    expect(listed.stdout).toContain('keeper');
+  });
+
   test('pulled snapshot imports on sync; local mutation exports; divergence is refused then resolvable', async () => {
     // Machine A (repo): publish F1, then F2 with one more card.
     const db = openDb({ cwd: repo });
@@ -900,6 +1162,54 @@ describe('enforced blocks — the carved checkout exception', () => {
     const co = await cli(repo, 'checkout', id, '--worker', 'w1');
     expect(co.code).toBe(0);
     expect(co.stdout).toContain('in_progress');
+  });
+
+  test('block without --hold records a work block; status renders the kind', async () => {
+    const id = await seed('work block');
+    const r = await cli(repo, 'block', id, '--reason', 'awaiting a decision');
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('work');
+
+    const st = await cli(repo, 'status', id);
+    expect(st.code).toBe(0);
+    expect(st.stdout).toContain('Blocked by:');
+    expect(st.stdout).toContain('(work)');
+    expect(st.stdout).toContain('awaiting a decision');
+
+    const db = openDb({ cwd: repo });
+    expect(getTaskCard(db, id)?.enforcedBlock).toEqual({ reason: 'awaiting a decision', kind: 'work' });
+    db.close();
+  });
+
+  test('block --hold records a hold, renders it on status, and still refuses checkout', async () => {
+    const id = await seed('held card');
+    const r = await cli(repo, 'block', id, '--reason', 'parked until Q3', '--hold');
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('hold');
+
+    const st = await cli(repo, 'status', id);
+    expect(st.stdout).toContain('(hold)');
+
+    // A hold refuses checkout exactly like a work block — same exit code, same reason.
+    const co = await cli(repo, 'checkout', id, '--worker', 'w1');
+    expect(co.code).toBe(1);
+    expect(co.stdout).toBe('');
+    expect(co.stderr).toContain('parked until Q3');
+
+    const db = openDb({ cwd: repo });
+    expect(getTaskCard(db, id)?.enforcedBlock).toEqual({ reason: 'parked until Q3', kind: 'hold' });
+    expect(getTask(db, id)?.status).toBe('ready'); // the block never moved the lifecycle status
+    db.close();
+  });
+
+  test('unblock clears the kind along with the block', async () => {
+    const id = await seed('kind cleared');
+    await cli(repo, 'block', id, '--reason', 'parked', '--hold');
+    expect((await cli(repo, 'unblock', id)).code).toBe(0);
+
+    const db = openDb({ cwd: repo });
+    expect(getTaskCard(db, id)?.enforcedBlock).toBeNull();
+    db.close();
   });
 
   test('release returns a claimed card to ready', async () => {
