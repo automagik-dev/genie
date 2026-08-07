@@ -114,6 +114,29 @@ function assertFallbacksRetired(iso: IsolatedHome, seeded: readonly string[]): v
   }
 }
 
+/**
+ * Names of the skills the CURRENT payload ships. The retirement only retires a
+ * fallback whose skill the authenticated payload still ships (proven-ownership
+ * scoping in runtime-integrations.ts) — a fallback whose skill was dropped from
+ * the plugin (e.g. the `wizard` removal in b0e77cd15) is preserved, never
+ * retired. The pure-23/mixed steps derive their expected counts from this set
+ * instead of hardcoding the frozen fixture's 23.
+ */
+function payloadShippedSkills(iso: IsolatedHome): Set<string> {
+  const skillsRoot = join(activePluginRoot(iso, TARGET_VERSION), 'skills');
+  if (!existsSync(skillsRoot)) fail(`payload skills root absent: ${skillsRoot}`);
+  return new Set(readdirSync(skillsRoot));
+}
+
+/** Split seeded fallbacks into retirable (payload ships the skill) vs preserved (skill dropped). */
+function splitRetirable(iso: IsolatedHome, seeded: readonly string[]): { retirable: string[]; preserved: string[] } {
+  const shipped = payloadShippedSkills(iso);
+  return {
+    retirable: seeded.filter((name) => shipped.has(name)),
+    preserved: seeded.filter((name) => !shipped.has(name)),
+  };
+}
+
 function assertRoleAgents(iso: IsolatedHome, expected: number): void {
   const dir = join(iso.codexHome, 'agents');
   const tomls = existsSync(dir) ? readdirSync(dir).filter((name) => name.endsWith('.toml')) : [];
@@ -290,28 +313,41 @@ function stepUpgradePure23(notes: string[]): void {
     if (!beforeDetail.includes('23 clean managed fallback'))
       fail(`round-trip gate failed; doctor said: ${beforeDetail}`);
     // Authenticated setup activation proves the exact enabled plugin before
-    // retiring all 23, then converges managed roles.
+    // retiring every fallback the payload ships, then converges managed roles.
     publishDelivery(iso, '(pure-23)');
     setupCodex(iso, '(pure-23 activation)');
+    const { retirable, preserved } = splitRetirable(iso, seeded);
     const first = inspectRetirement(iso.skillsDir);
-    assertCommittedTransaction(first, 23);
-    assertFallbacksRetired(iso, seeded);
+    assertCommittedTransaction(first, retirable.length);
+    assertFallbacksRetired(iso, retirable);
+    for (const name of preserved) {
+      if (!existsSync(join(iso.skillsDir, name)))
+        fail(`dropped-skill fallback ${name} must be preserved (payload no longer ships it)`);
+    }
     assertPluginHealthy(iso, TARGET_VERSION);
     const txnId = first.txnIds[0];
     // Two further setup runs: still exactly one transaction, same id (A5, idempotent).
     for (let run = 1; run <= 2; run++) {
       setupCodex(iso, `(pure-23 idempotent setup ${run})`);
       const summary = inspectRetirement(iso.skillsDir);
-      assertCommittedTransaction(summary, 23);
+      assertCommittedTransaction(summary, retirable.length);
       if (summary.txnIds[0] !== txnId)
         fail(`idempotent setup ${run} created a second transaction: ${summary.txnIds.join(', ')}`);
-      assertFallbacksRetired(iso, seeded);
+      assertFallbacksRetired(iso, retirable);
     }
     const afterDetail = codexTierDetail(iso, '(post-upgrade)');
-    if (!afterDetail.includes('no managed') || !afterDetail.includes('1 retired quarantine')) {
-      fail(`post-upgrade doctor should report plugin-only + one quarantine txn, got: ${afterDetail}`);
+    const managedOk =
+      preserved.length === 0
+        ? afterDetail.includes('no managed')
+        : afterDetail.includes(`${preserved.length} clean managed fallback`);
+    if (!managedOk || !afterDetail.includes('1 retired quarantine')) {
+      fail(
+        `post-upgrade doctor should report ${preserved.length === 0 ? 'plugin-only' : `${preserved.length} preserved fallback`} + one quarantine txn, got: ${afterDetail}`,
+      );
     }
-    notes.push('pure-23: 23 retired → one committed txn, stable across activation + 2 setup reruns');
+    notes.push(
+      `pure-23: ${retirable.length} retired${preserved.length > 0 ? `, ${preserved.length} dropped-skill preserved` : ''} → one committed txn, stable across activation + 2 setup reruns`,
+    );
   });
 }
 
@@ -334,13 +370,22 @@ function stepMixedCollisions(notes: string[]): void {
     publishDelivery(iso, '(mixed)');
     setupCodex(iso, '(mixed activation)');
     assertProtectedUnchanged('mixed after first setup', captured);
-    assertCommittedTransaction(inspectRetirement(iso.skillsDir), 22);
-    assertFallbacksRetired(iso, seeded);
+    const { retirable, preserved } = splitRetirable(iso, seeded);
+    assertCommittedTransaction(inspectRetirement(iso.skillsDir), retirable.length);
+    assertFallbacksRetired(iso, retirable);
+    for (const name of preserved) {
+      if (!existsSync(join(iso.skillsDir, name)))
+        fail(`dropped-skill fallback ${name} must be preserved (payload no longer ships it)`);
+    }
     if (!existsSync(join(iso.skillsDir, personal.names.unmanaged))) fail('personal same-name `wish` was removed');
 
     const checks = readLifecycleDoctorChecks(iso);
     const codexDetail = req(findCheck(checks, 'agent sync: codex'), 'mixed missing codex check').detail;
-    if (!codexDetail.includes('no managed')) fail(`mixed post-setup codex tier not clean: ${codexDetail}`);
+    const mixedManagedOk =
+      preserved.length === 0
+        ? codexDetail.includes('no managed')
+        : codexDetail.includes(`${preserved.length} clean managed fallback`);
+    if (!mixedManagedOk) fail(`mixed post-setup codex tier not clean: ${codexDetail}`);
     const collisions = req(findCheck(checks, 'agent sync: codex collisions'), 'mixed missing codex collisions check');
     if (
       !collisions.detail.includes(personal.names.modifiedManaged) ||
@@ -370,7 +415,9 @@ function stepMixedCollisions(notes: string[]): void {
     setupCodex(iso, '(mixed idempotent setup)');
     assertProtectedUnchanged('mixed after second setup', captured);
     if (inspectRetirement(iso.skillsDir).txnIds[0] !== txnId) fail('mixed second setup created a second transaction');
-    notes.push('mixed: 22 retired, 4 personal classes + dangling symlink + Claude sentinel preserved, 7 role agents');
+    notes.push(
+      `mixed: ${retirable.length} retired, 4 personal classes + dangling symlink + Claude sentinel preserved, 7 role agents`,
+    );
   });
 }
 
@@ -641,9 +688,22 @@ function assertEvidencePathNested(rel: string, body: string): void {
 function stepDocContract(notes: string[]): void {
   // HIGH: no shipped/source skill card may still promise the retired
   // "CLI-managed fallback" user tier; each must carry the plugin-only phrasing.
+  // The mirrors (plugins/genie/skills + skills/) must stay in step with each
+  // other — a hardcoded card count rots whenever the skill set changes (the
+  // `wizard` drop in b0e77cd15 took it from 46 to 44), so parity + non-empty
+  // is asserted instead.
+  const mirrors = ['plugins/genie/skills', 'skills'].map((base) => ({
+    base,
+    names: readdirSync(join(REPO_ROOT, base)).sort(),
+  }));
+  if (mirrors[0].names.join('\n') !== mirrors[1].names.join('\n')) {
+    fail(
+      `skill mirrors diverged: plugins/genie/skills has ${mirrors[0].names.length} entries, skills/ has ${mirrors[1].names.length}`,
+    );
+  }
   let cards = 0;
-  for (const base of ['plugins/genie/skills', 'skills']) {
-    for (const name of readdirSync(join(REPO_ROOT, base))) {
+  for (const { base, names } of mirrors) {
+    for (const name of names) {
       const rel = `${base}/${name}/SKILL.md`;
       if (!existsSync(join(REPO_ROOT, rel))) continue;
       const body = readRepoFile(rel);
@@ -654,7 +714,7 @@ function stepDocContract(notes: string[]): void {
       cards += 1;
     }
   }
-  if (cards !== 46) fail(`expected 46 skill cards under both mirrors, checked ${cards}`);
+  if (cards === 0) fail('no plugin-only skill cards found under either mirror');
 
   // MEDIUM: the three contract docs must describe "source changed after planning"
   // as a pre-move abort (changed copy stays in place; nothing republished/archived),
@@ -689,7 +749,7 @@ function stepDocContract(notes: string[]): void {
     assertEvidencePathNested(rel, readRepoFile(rel));
   }
   notes.push(
-    'doc-contract: 46 skill cards plugin-only; 3 contract docs describe source-changed abort (no republish); 4 docs nest evidence/ under txn-<id>/',
+    `doc-contract: ${cards} skill cards plugin-only (mirrors in step); 3 contract docs describe source-changed abort (no republish); 4 docs nest evidence/ under txn-<id>/`,
   );
 }
 
