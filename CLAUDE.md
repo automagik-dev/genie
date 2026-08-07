@@ -98,6 +98,8 @@ genie task create --title 'x'         # Create a task
 genie task list                       # List tasks (with filters)
 genie task checkout <id> --worker w   # Atomically claim a ready task for a worker
 genie task status <id>                # Task detail, dependencies, stage log
+genie task set-wish <id> --wish w     # Attach/re-point wish identity on an existing card (--clear removes)
+genie task delete <id>                # Hard-delete a card (refused while other cards depend on it)
 genie task done <id>                  # Orchestrator only: mark reviewed work done + recompute ready set
 genie task export                     # Emit the complete DB state as JSON
 genie task export --write             # Write .genie/roadmap.json (diverged-sync resolution: keep local board)

@@ -29,11 +29,7 @@ import {
   countBoardTasks,
   createBoard,
   createTask,
-<<<<<<< HEAD
-=======
-  createWishGroups,
   deleteTask,
->>>>>>> 2c5960bf8 (feat(v5): scoped task delete with dependency refusal (remotty-board-asks#task-delete))
   exportState,
   formatWishRef,
   getBoardByName,
