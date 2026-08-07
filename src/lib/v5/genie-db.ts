@@ -547,6 +547,10 @@ CREATE TABLE IF NOT EXISTS task_events (
   created_at  INTEGER NOT NULL
 );
 
+-- VESTIGIAL, pending drop: the wish-group execution machinery is production-dead
+-- (no writer exists). The DDL stays inert for schema compatibility — older
+-- binaries' validateSnapshot expects the wish_groups key and exportState emits
+-- the empty array. Dropping the table is a live-DB migration OUT of scope.
 CREATE TABLE IF NOT EXISTS wish_groups (
   wish         TEXT NOT NULL,
   name         TEXT NOT NULL,

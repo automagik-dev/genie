@@ -23,7 +23,8 @@
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": null,
-      "blocked_reason": null
+      "blocked_reason": null,
+      "block_kind": null
     },
     {
       "id": "t_mrubw9bxa7f28dd8",
@@ -40,7 +41,8 @@
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": null,
-      "blocked_reason": null
+      "blocked_reason": null,
+      "block_kind": null
     },
     {
       "id": "t_mrubw9do9fc563c4",
@@ -57,7 +59,8 @@
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": null,
-      "blocked_reason": null
+      "blocked_reason": null,
+      "block_kind": null
     },
     {
       "id": "t_mrubw9ft4d20d980",
@@ -74,7 +77,8 @@
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": null,
-      "blocked_reason": null
+      "blocked_reason": null,
+      "block_kind": null
     },
     {
       "id": "t_mruxc5gvd0c00325",
@@ -91,7 +95,8 @@
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": null,
-      "blocked_reason": null
+      "blocked_reason": null,
+      "block_kind": null
     },
     {
       "id": "t_mruxc5iv51303ef4",
@@ -108,7 +113,8 @@
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": null,
-      "blocked_reason": null
+      "blocked_reason": null,
+      "block_kind": null
     },
     {
       "id": "t_mruxc5l659685893",
@@ -125,7 +131,8 @@
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": null,
-      "blocked_reason": null
+      "blocked_reason": null,
+      "block_kind": null
     },
     {
       "id": "t_mruxc5mz0a9ee3f5",
@@ -142,7 +149,8 @@
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": null,
-      "blocked_reason": null
+      "blocked_reason": null,
+      "block_kind": null
     },
     {
       "id": "t_mruxc5ora3add7b8",
@@ -159,7 +167,8 @@
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": null,
-      "blocked_reason": null
+      "blocked_reason": null,
+      "block_kind": null
     },
     {
       "id": "t_mruzpyww3e2a8b8b",
@@ -176,7 +185,8 @@
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": null,
-      "blocked_reason": null
+      "blocked_reason": null,
+      "block_kind": null
     },
     {
       "id": "t_mrv087jca37acdd9",
@@ -193,7 +203,8 @@
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": null,
-      "blocked_reason": null
+      "blocked_reason": null,
+      "block_kind": null
     },
     {
       "id": "t_mrv087ldf5bdb175",
@@ -210,7 +221,8 @@
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": null,
-      "blocked_reason": null
+      "blocked_reason": null,
+      "block_kind": null
     },
     {
       "id": "t_mrveq6oe95cb9141",
@@ -227,7 +239,8 @@
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": null,
-      "blocked_reason": null
+      "blocked_reason": null,
+      "block_kind": null
     },
     {
       "id": "t_mrvf2p7za43e792d",
@@ -244,7 +257,8 @@
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": null,
-      "blocked_reason": null
+      "blocked_reason": null,
+      "block_kind": null
     },
     {
       "id": "t_mrvf2pam274f1741",
@@ -261,7 +275,8 @@
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": null,
-      "blocked_reason": null
+      "blocked_reason": null,
+      "block_kind": null
     },
     {
       "id": "t_mrvf2pd39e9349c2",
@@ -278,7 +293,8 @@
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": null,
-      "blocked_reason": null
+      "blocked_reason": null,
+      "block_kind": null
     },
     {
       "id": "t_mrwwknwl195358a3",
@@ -295,7 +311,8 @@
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": null,
-      "blocked_reason": null
+      "blocked_reason": null,
+      "block_kind": null
     },
     {
       "id": "t_mrwwknz76a0d4a64",
@@ -312,7 +329,8 @@
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": null,
-      "blocked_reason": null
+      "blocked_reason": null,
+      "block_kind": null
     },
     {
       "id": "t_mrwwko1x1cae87af",
@@ -329,7 +347,8 @@
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": null,
-      "blocked_reason": null
+      "blocked_reason": null,
+      "block_kind": null
     },
     {
       "id": "t_mrwwko4i254384c6",
@@ -346,7 +365,8 @@
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": null,
-      "blocked_reason": null
+      "blocked_reason": null,
+      "block_kind": null
     },
     {
       "id": "t_mrwwko6w4d889a11",
@@ -363,7 +383,8 @@
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": null,
-      "blocked_reason": null
+      "blocked_reason": null,
+      "block_kind": null
     },
     {
       "id": "t_mrwwko9jc20398ca",
@@ -380,7 +401,8 @@
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": null,
-      "blocked_reason": null
+      "blocked_reason": null,
+      "block_kind": null
     },
     {
       "id": "t_mrxqzo6s8fbb27ec",
@@ -397,7 +419,8 @@
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": "claude-code",
-      "blocked_reason": "RELOCATED 2026-07-23: khal-native-theme ledger + tasks live in khal-os/genie-desktop .genie (Felipe: desktop context in the desktop repo). Do not checkout here."
+      "blocked_reason": "RELOCATED 2026-07-23: khal-native-theme ledger + tasks live in khal-os/genie-desktop .genie (Felipe: desktop context in the desktop repo). Do not checkout here.",
+      "block_kind": null
     },
     {
       "id": "t_mrxr9wzrda10d35b",
@@ -414,7 +437,8 @@
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": "claude-code",
-      "blocked_reason": "RELOCATED 2026-07-23: khal-native-theme ledger + tasks live in khal-os/genie-desktop .genie (Felipe: desktop context in the desktop repo). Do not checkout here."
+      "blocked_reason": "RELOCATED 2026-07-23: khal-native-theme ledger + tasks live in khal-os/genie-desktop .genie (Felipe: desktop context in the desktop repo). Do not checkout here.",
+      "block_kind": null
     },
     {
       "id": "t_mrxr9x1pbce3a16b",
@@ -431,7 +455,8 @@
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": "claude-code",
-      "blocked_reason": "RELOCATED 2026-07-23: khal-native-theme ledger + tasks live in khal-os/genie-desktop .genie (Felipe: desktop context in the desktop repo). Do not checkout here."
+      "blocked_reason": "RELOCATED 2026-07-23: khal-native-theme ledger + tasks live in khal-os/genie-desktop .genie (Felipe: desktop context in the desktop repo). Do not checkout here.",
+      "block_kind": null
     },
     {
       "id": "t_mrxr9x49eb19d0ad",
@@ -448,7 +473,8 @@
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": "claude-code",
-      "blocked_reason": "RELOCATED 2026-07-23: khal-native-theme ledger + tasks live in khal-os/genie-desktop .genie (Felipe: desktop context in the desktop repo). Do not checkout here."
+      "blocked_reason": "RELOCATED 2026-07-23: khal-native-theme ledger + tasks live in khal-os/genie-desktop .genie (Felipe: desktop context in the desktop repo). Do not checkout here.",
+      "block_kind": null
     },
     {
       "id": "t_mrxr9x6sb3dfb668",
@@ -465,7 +491,8 @@
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": "claude-code",
-      "blocked_reason": "RELOCATED 2026-07-23: khal-native-theme ledger + tasks live in khal-os/genie-desktop .genie (Felipe: desktop context in the desktop repo). Do not checkout here."
+      "blocked_reason": "RELOCATED 2026-07-23: khal-native-theme ledger + tasks live in khal-os/genie-desktop .genie (Felipe: desktop context in the desktop repo). Do not checkout here.",
+      "block_kind": null
     },
     {
       "id": "t_mrxr9x8t711ce43e",
@@ -482,7 +509,8 @@
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": "claude-code",
-      "blocked_reason": "RELOCATED 2026-07-23: khal-native-theme ledger + tasks live in khal-os/genie-desktop .genie (Felipe: desktop context in the desktop repo). Do not checkout here."
+      "blocked_reason": "RELOCATED 2026-07-23: khal-native-theme ledger + tasks live in khal-os/genie-desktop .genie (Felipe: desktop context in the desktop repo). Do not checkout here.",
+      "block_kind": null
     },
     {
       "id": "t_mrxr9xbb010c4f81",
@@ -499,7 +527,8 @@
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": "claude-code",
-      "blocked_reason": "RELOCATED 2026-07-23: khal-native-theme ledger + tasks live in khal-os/genie-desktop .genie (Felipe: desktop context in the desktop repo). Do not checkout here."
+      "blocked_reason": "RELOCATED 2026-07-23: khal-native-theme ledger + tasks live in khal-os/genie-desktop .genie (Felipe: desktop context in the desktop repo). Do not checkout here.",
+      "block_kind": null
     },
     {
       "id": "t_ms58w0yqa195fbf8",
@@ -516,7 +545,8 @@
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": null,
-      "blocked_reason": null
+      "blocked_reason": null,
+      "block_kind": null
     },
     {
       "id": "t_ms58y58z0b45759f",
@@ -533,7 +563,8 @@
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": null,
-      "blocked_reason": null
+      "blocked_reason": null,
+      "block_kind": null
     },
     {
       "id": "t_ms58y5bc8853df95",
@@ -550,7 +581,8 @@
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": null,
-      "blocked_reason": null
+      "blocked_reason": null,
+      "block_kind": null
     },
     {
       "id": "t_ms58y5e19f6e9757",
@@ -567,7 +599,8 @@
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": null,
-      "blocked_reason": null
+      "blocked_reason": null,
+      "block_kind": null
     },
     {
       "id": "t_mscebl889535b59e",
@@ -584,7 +617,8 @@
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": null,
-      "blocked_reason": null
+      "blocked_reason": null,
+      "block_kind": null
     },
     {
       "id": "t_mscebla86e45ab77",
@@ -601,7 +635,8 @@
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": null,
-      "blocked_reason": null
+      "blocked_reason": null,
+      "block_kind": null
     },
     {
       "id": "t_msi18po2a63fe11f",
@@ -618,7 +653,8 @@
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": null,
-      "blocked_reason": null
+      "blocked_reason": null,
+      "block_kind": null
     },
     {
       "id": "t_msi18prp35883ce7",
@@ -635,7 +671,8 @@
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": null,
-      "blocked_reason": null
+      "blocked_reason": null,
+      "block_kind": null
     },
     {
       "id": "t_msi18pv9b29465c2",
@@ -652,7 +689,8 @@
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": null,
-      "blocked_reason": null
+      "blocked_reason": null,
+      "block_kind": null
     },
     {
       "id": "t_msi2nv2gcf9c97af",
@@ -669,75 +707,80 @@
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": null,
-      "blocked_reason": null
+      "blocked_reason": null,
+      "block_kind": null
     },
     {
       "id": "t_msiyp3ua4e038e63",
       "board_id": null,
       "title": "block-model: block kind + board JSON blocked fields",
-      "status": "in_progress",
+      "status": "done",
       "claimed_by": "block-model-eng",
       "claimed_at": 1786118248009,
       "wish": "remotty-board-asks",
       "group_name": "block-model",
       "created_at": 1786108185010,
-      "updated_at": 1786118248009,
+      "updated_at": 1786120597563,
       "lane": null,
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": null,
-      "blocked_reason": null
+      "blocked_reason": null,
+      "block_kind": null
     },
     {
       "id": "t_msiyp3x10655eab9",
       "board_id": null,
       "title": "index-lane-links: resolve link targets, broken state",
-      "status": "in_progress",
+      "status": "done",
       "claimed_by": "index-lane-eng",
       "claimed_at": 1786118261192,
       "wish": "remotty-board-asks",
       "group_name": "index-lane-links",
       "created_at": 1786108185109,
-      "updated_at": 1786118261192,
+      "updated_at": 1786121037959,
       "lane": null,
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": null,
-      "blocked_reason": null
+      "blocked_reason": null,
+      "block_kind": null
     },
     {
       "id": "t_msiyp3zr6f65f0fc",
       "board_id": null,
       "title": "task-wish-verb: attach wish/group to existing card",
-      "status": "ready",
-      "claimed_by": null,
-      "claimed_at": null,
+      "status": "done",
+      "claimed_by": "set-wish-eng",
+      "claimed_at": 1786121077747,
       "wish": "remotty-board-asks",
       "group_name": "task-wish-verb",
       "created_at": 1786108185207,
-      "updated_at": 1786108185207,
+      "updated_at": 1786122063091,
       "lane": null,
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": null,
-      "blocked_reason": null
+      "blocked_reason": null,
+      "block_kind": null
     },
     {
       "id": "t_msiyp42ib277f60a",
       "board_id": null,
       "title": "task-delete: scoped delete with sync-safe removal",
-      "status": "ready",
-      "claimed_by": null,
-      "claimed_at": null,
+      "status": "done",
+      "claimed_by": "task-delete-eng",
+      "claimed_at": 1786121655148,
       "wish": "remotty-board-asks",
       "group_name": "task-delete",
       "created_at": 1786108185306,
-      "updated_at": 1786108185306,
+      "updated_at": 1786122699029,
       "lane": null,
       "agent_kind": null,
       "heartbeat_at": null,
       "blocked_by": null,
-      "blocked_reason": null
+      "blocked_reason": null,
+      "block_kind": null
     }
   ],
   "task_dependencies": [],
@@ -886,6 +929,69 @@
       "author_kind": "claude-code",
       "author": null,
       "created_at": 1786118261193
+    },
+    {
+      "id": 47,
+      "task_id": "t_msiyp3ua4e038e63",
+      "kind": "release",
+      "note": "completed",
+      "author_kind": "claude-code",
+      "author": null,
+      "created_at": 1786120597564
+    },
+    {
+      "id": 48,
+      "task_id": "t_msiyp3x10655eab9",
+      "kind": "release",
+      "note": "completed",
+      "author_kind": "claude-code",
+      "author": null,
+      "created_at": 1786121037960
+    },
+    {
+      "id": 49,
+      "task_id": "t_msiyp3zr6f65f0fc",
+      "kind": "claim",
+      "note": "claimed by set-wish-eng",
+      "author_kind": "claude-code",
+      "author": null,
+      "created_at": 1786121077747
+    },
+    {
+      "id": 50,
+      "task_id": "t_msiyp3zr6f65f0fc",
+      "kind": "report",
+      "note": "set-wish verb shipped as b5178937a: setTaskWish + formatWishRef in task-state.ts, task set-wish CLI, 16 new tests, TAXONOMY updated. Focused suites 139 pass / 0 fail; check:fast exit 0.",
+      "author_kind": "claude-code",
+      "author": "set-wish-eng",
+      "created_at": 1786121536059
+    },
+    {
+      "id": 51,
+      "task_id": "t_msiyp42ib277f60a",
+      "kind": "claim",
+      "note": "claimed by task-delete-eng",
+      "author_kind": "claude-code",
+      "author": null,
+      "created_at": 1786121655149
+    },
+    {
+      "id": 52,
+      "task_id": "t_msiyp3zr6f65f0fc",
+      "kind": "release",
+      "note": "completed",
+      "author_kind": "claude-code",
+      "author": null,
+      "created_at": 1786122063091
+    },
+    {
+      "id": 53,
+      "task_id": "t_msiyp42ib277f60a",
+      "kind": "release",
+      "note": "completed",
+      "author_kind": "claude-code",
+      "author": null,
+      "created_at": 1786122699030
     }
   ],
   "wish_groups": [],

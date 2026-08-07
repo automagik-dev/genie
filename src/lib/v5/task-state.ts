@@ -12,7 +12,7 @@
  */
 
 import type { Database } from 'bun:sqlite';
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { STAGE_LOG_BACKFILL_KEY } from './genie-db.js';
 
 // ============================================================================
@@ -183,11 +183,6 @@ export const DEFAULT_STALE_MS = 15 * 60 * 1000;
 
 export type WishGroupStatus = 'blocked' | 'ready' | 'in_progress' | 'done';
 
-export interface WishGroupDef {
-  name: string;
-  dependsOn?: string[];
-}
-
 export interface WishGroupRow {
   wish: string;
   name: string;
@@ -343,24 +338,6 @@ export class TaskCompleteError extends Error {
     this.name = 'TaskCompleteError';
     this.taskId = taskId;
     this.status = status;
-  }
-}
-
-/** An invalid wish-group transition was attempted. */
-export class WishGroupStateError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'WishGroupStateError';
-  }
-}
-
-/** The wish's group structure drifted from the signature stored at creation. */
-export class WishGroupDriftError extends Error {
-  readonly wish: string;
-  constructor(wish: string) {
-    super(`Wish "${wish}" group structure changed since state was created — re-create wish groups to proceed.`);
-    this.name = 'WishGroupDriftError';
-    this.wish = wish;
   }
 }
 
@@ -1070,135 +1047,8 @@ export function moveTask(db: Database, taskId: string, toLane: string, author: E
 }
 
 // ============================================================================
-// Wish-group graph validation (ported from wish-state.ts — NOT imported)
+// Wish-slug resolution (read-only; the wish_groups UNION keeps legacy slugs)
 // ============================================================================
-
-/**
- * Deterministic signature of a wish's group structure: group names + sorted
- * `dependsOn` per group. Group/dep ordering does not affect the result. Prose
- * changes to WISH.md leave it untouched; only structural drift flips it.
- *
- * Ported (not imported) from `src/lib/wish-state.ts` — v5 must not import v4.
- */
-export function computeGroupsSignature(groups: WishGroupDef[]): string {
-  const canonical = groups
-    .map((g) => ({ name: g.name, dependsOn: [...(g.dependsOn ?? [])].sort() }))
-    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  return createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
-}
-
-/** Reject self-deps and references to groups not in the set. */
-function validateGroupRefs(groups: WishGroupDef[]): void {
-  const names = new Set(groups.map((g) => g.name));
-  for (const group of groups) {
-    if (group.dependsOn?.includes(group.name)) {
-      throw new CycleError(`Group "${group.name}" depends on itself`);
-    }
-    for (const dep of group.dependsOn ?? []) {
-      if (!names.has(dep)) {
-        throw new WishGroupStateError(`Group "${group.name}" depends on non-existent group "${dep}"`);
-      }
-    }
-  }
-}
-
-/** Detect dependency cycles via Kahn's topological sort. */
-function detectGroupCycles(groups: WishGroupDef[]): void {
-  const inDegree: Record<string, number> = {};
-  const adjacency: Record<string, string[]> = {};
-  for (const group of groups) {
-    inDegree[group.name] = (group.dependsOn ?? []).length;
-    adjacency[group.name] = [];
-  }
-  for (const group of groups) {
-    for (const dep of group.dependsOn ?? []) adjacency[dep].push(group.name);
-  }
-  const queue = Object.entries(inDegree)
-    .filter(([, deg]) => deg === 0)
-    .map(([name]) => name);
-  let processed = 0;
-  while (queue.length > 0) {
-    const node = queue.shift() as string;
-    processed++;
-    for (const neighbor of adjacency[node]) {
-      inDegree[neighbor]--;
-      if (inDegree[neighbor] === 0) queue.push(neighbor);
-    }
-  }
-  if (processed !== groups.length) {
-    const remaining = Object.entries(inDegree)
-      .filter(([, deg]) => deg > 0)
-      .map(([name]) => name);
-    throw new CycleError(`Dependency cycle detected among groups: ${remaining.join(', ')}`);
-  }
-}
-
-function validateGroups(groups: WishGroupDef[]): void {
-  validateGroupRefs(groups);
-  detectGroupCycles(groups);
-}
-
-// ============================================================================
-// Wish-group state machine
-// ============================================================================
-
-function mapWishGroup(row: {
-  wish: string;
-  name: string;
-  status: WishGroupStatus;
-  depends_on: string;
-  assignee: string | null;
-  started_at: number | null;
-  completed_at: number | null;
-}): WishGroupRow {
-  return {
-    wish: row.wish,
-    name: row.name,
-    status: row.status,
-    dependsOn: JSON.parse(row.depends_on) as string[],
-    assignee: row.assignee,
-    startedAt: row.started_at,
-    completedAt: row.completed_at,
-  };
-}
-
-/**
- * (Re)create the group rows for a wish from definitions and stamp the drift
- * signature. Groups with no deps start `ready`, others `blocked`. Replaces any
- * prior state for the wish.
- */
-export function createWishGroups(db: Database, wish: string, groups: WishGroupDef[]): WishGroupRow[] {
-  validateGroups(groups);
-  const now = Date.now();
-  const signature = computeGroupsSignature(groups);
-
-  const tx = db.transaction(() => {
-    db.query('DELETE FROM wish_groups WHERE wish = ?').run(wish);
-    for (const group of groups) {
-      const deps = group.dependsOn ?? [];
-      const status: WishGroupStatus = deps.length === 0 ? 'ready' : 'blocked';
-      db.query(
-        `INSERT INTO wish_groups (wish, name, status, depends_on, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-      ).run(wish, group.name, status, JSON.stringify(deps), now, now);
-    }
-    db.query('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run(wishSigKey(wish), signature);
-  });
-  tx();
-
-  return getWishGroups(db, wish);
-}
-
-function wishSigKey(wish: string): string {
-  return `wish_sig:${wish}`;
-}
-
-export function getWishGroups(db: Database, wish: string): WishGroupRow[] {
-  const rows = db.query('SELECT * FROM wish_groups WHERE wish = ? ORDER BY name').all(wish) as Array<
-    Parameters<typeof mapWishGroup>[0]
-  >;
-  return rows.map(mapWishGroup);
-}
 
 /**
  * Distinct known wish slugs (from tasks + wish_groups), longest first. Used to
@@ -1216,101 +1066,6 @@ export function listWishSlugs(db: Database): string[] {
     )
     .all() as Array<{ wish: string }>;
   return rows.map((r) => r.wish);
-}
-
-function getWishGroup(db: Database, wish: string, name: string): WishGroupRow | null {
-  const row = db.query('SELECT * FROM wish_groups WHERE wish = ? AND name = ?').get(wish, name) as
-    | Parameters<typeof mapWishGroup>[0]
-    | null;
-  return row ? mapWishGroup(row) : null;
-}
-
-/**
- * Throw `WishGroupDriftError` if the supplied definitions no longer match the
- * signature stored at creation. No-op when no signature is stored yet.
- */
-export function assertWishSignature(db: Database, wish: string, groups: WishGroupDef[]): void {
-  const stored = db.query('SELECT value FROM meta WHERE key = ?').get(wishSigKey(wish)) as { value: string } | null;
-  if (!stored) return;
-  if (stored.value !== computeGroupsSignature(groups)) throw new WishGroupDriftError(wish);
-}
-
-/** Transition a group `ready` → `in_progress`, refusing unmet dependencies. */
-export function startWishGroup(db: Database, wish: string, name: string, assignee: string): WishGroupRow {
-  const group = getWishGroup(db, wish, name);
-  if (!group) throw new WishGroupStateError(`Group "${name}" not found in wish "${wish}"`);
-  if (group.status === 'in_progress') {
-    throw new WishGroupStateError(
-      `Group "${name}" is already in progress (assigned to ${group.assignee ?? 'unknown'})`,
-    );
-  }
-  if (group.status === 'done') throw new WishGroupStateError(`Group "${name}" is already done`);
-
-  const blockers = pendingDeps(db, wish, group.dependsOn);
-  if (blockers.length > 0) {
-    throw new WishGroupStateError(`Cannot start group "${name}": unmet dependencies: ${blockers.join(', ')}`);
-  }
-
-  const now = Date.now();
-  db.query(
-    `UPDATE wish_groups SET status = 'in_progress', assignee = ?, started_at = COALESCE(started_at, ?), updated_at = ?
-     WHERE wish = ? AND name = ?`,
-  ).run(assignee, now, now, wish, name);
-  return getWishGroup(db, wish, name) as WishGroupRow;
-}
-
-/** Names of a group's dependencies that are not yet `done`. */
-function pendingDeps(db: Database, wish: string, deps: string[]): string[] {
-  const pending: string[] = [];
-  for (const dep of deps) {
-    const row = getWishGroup(db, wish, dep);
-    if (!row || row.status !== 'done') pending.push(dep);
-  }
-  return pending;
-}
-
-/**
- * Transition a group `in_progress` → `done` and promote any dependent group
- * whose dependencies are now all `done` from `blocked` to `ready`. Idempotent
- * on an already-`done` group.
- */
-export function completeWishGroup(db: Database, wish: string, name: string): WishGroupRow {
-  const group = getWishGroup(db, wish, name);
-  if (!group) throw new WishGroupStateError(`Group "${name}" not found in wish "${wish}"`);
-  if (group.status === 'done') return group;
-  if (group.status !== 'in_progress') {
-    throw new WishGroupStateError(`Cannot complete group "${name}": must be in_progress (currently ${group.status})`);
-  }
-
-  const now = Date.now();
-  const tx = db.transaction(() => {
-    db.query('UPDATE wish_groups SET status = ?, completed_at = ?, updated_at = ? WHERE wish = ? AND name = ?').run(
-      'done',
-      now,
-      now,
-      wish,
-      name,
-    );
-    promoteReadyGroups(db, wish, now);
-  });
-  tx();
-  return getWishGroup(db, wish, name) as WishGroupRow;
-}
-
-/** Promote `blocked` groups whose dependencies are all `done` to `ready`. */
-function promoteReadyGroups(db: Database, wish: string, now: number): void {
-  const groups = getWishGroups(db, wish);
-  const doneNames = new Set(groups.filter((g) => g.status === 'done').map((g) => g.name));
-  for (const group of groups) {
-    if (group.status !== 'blocked') continue;
-    if (group.dependsOn.every((dep) => doneNames.has(dep))) {
-      db.query("UPDATE wish_groups SET status = 'ready', updated_at = ? WHERE wish = ? AND name = ?").run(
-        now,
-        wish,
-        group.name,
-      );
-    }
-  }
 }
 
 // ============================================================================
@@ -1579,23 +1334,10 @@ function insertSnapshotRows(db: Database, state: StateExport): void {
     event.run(e.id, e.task_id, e.kind, e.note ?? null, e.author_kind ?? null, e.author ?? null, e.created_at);
   }
 
-  const group = db.query(
-    `INSERT INTO wish_groups (wish, name, status, depends_on, assignee, started_at, completed_at, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  );
-  for (const g of state.wish_groups) {
-    group.run(
-      g.wish,
-      g.name,
-      g.status,
-      g.depends_on ?? '[]',
-      g.assignee ?? null,
-      g.started_at ?? null,
-      g.completed_at ?? null,
-      g.created_at,
-      g.updated_at,
-    );
-  }
+  // wish_groups is tolerated-and-dropped: the machinery that wrote it is
+  // production-dead, so a legacy snapshot's rows are never re-inserted and
+  // the surviving table stays empty. validateSnapshot still requires the key
+  // (SNAPSHOT_TABLE_KEYS) so older binaries' snapshots import cleanly.
 
   const hire = db.query(
     'INSERT INTO hire_roster (wish, agent_adapter_id, profile, worktree, hired_at, state) VALUES (?, ?, ?, ?, ?, ?)',

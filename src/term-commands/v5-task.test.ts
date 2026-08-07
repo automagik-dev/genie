@@ -18,7 +18,6 @@ import {
   appendTaskEvent,
   createBoard,
   createTask,
-  createWishGroups,
   getTask,
   getTaskCard,
   getTaskEvents,
@@ -317,7 +316,6 @@ describe('task export round-trip', () => {
     const a = createTask(db, { title: 'root', boardId: board.id, wish: 'demo', group: 'g1' });
     const b = createTask(db, { title: 'dependent', dependsOn: [a.id] }); // → task_dependencies
     appendStage(db, a.id, 'planned', 'kickoff'); // → stage_log
-    createWishGroups(db, 'demo', [{ name: 'g1' }, { name: 'g2', dependsOn: ['g1'] }]); // → wish_groups + meta
     db.close();
 
     const r = await cli(repo, 'export');
@@ -331,8 +329,9 @@ describe('task export round-trip', () => {
     expect(state.tasks.map((x) => x.id).sort()).toEqual([a.id, b.id].sort());
     expect(state.task_dependencies).toEqual([{ task_id: b.id, depends_on_id: a.id }]);
     expect(state.stage_log.map((x) => x.stage)).toContain('planned');
-    expect(state.wish_groups.map((x) => x.name).sort()).toEqual(['g1', 'g2']);
-    expect(state.meta.some((m) => m.key === 'wish_sig:demo')).toBe(true);
+    // Wish-group machinery is production-dead: export keeps the field, empty.
+    expect(state.wish_groups).toEqual([]);
+    expect(state.meta.some((m) => m.key.startsWith('wish_sig:'))).toBe(false);
 
     // The wish/group columns survive the round-trip on the seeded task.
     const rootRow = state.tasks.find((x) => x.id === a.id);
@@ -350,7 +349,6 @@ describe('task import', () => {
     const b = createTask(db, { title: 'dependent', dependsOn: [a.id] });
     appendStage(db, a.id, 'planned', 'kickoff');
     appendTaskEvent(db, a.id, { kind: 'comment', note: 'hello', author: 'tester', authorKind: 'human' });
-    createWishGroups(db, 'demo', [{ name: 'g1' }, { name: 'g2', dependsOn: ['g1'] }]);
     db.close();
     return { rootId: a.id, depId: b.id };
   }

@@ -128,7 +128,7 @@ Append-only audit trail of stage transitions per task.
 There is no update or delete API for this table — it only grows.
 
 ### `wish_groups`
-Execution state machine for a wish's groups. Natural key `(wish, name)`.
+Vestigial (pending drop): the wish-group execution machinery is production-dead — the table stays inert for schema compatibility, with no writer. Natural key `(wish, name)`.
 
 | Column | Type | Notes |
 |--------|------|-------|
@@ -142,11 +142,6 @@ Execution state machine for a wish's groups. Natural key `(wish, name)`.
 | `created_at` | INTEGER NOT NULL | |
 | `updated_at` | INTEGER NOT NULL | |
 | — | PRIMARY KEY (`wish`, `name`) | |
-
-The **drift-guard signature** for a wish is stored in `meta` under
-`wish_sig:<slug>` — a SHA-256 of the group names + sorted `dependsOn` per group
-(prose changes to WISH.md do not flip it). Re-running against a drifted plan
-throws `WishGroupDriftError`.
 
 ## Concurrency rules
 

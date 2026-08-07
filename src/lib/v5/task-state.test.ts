@@ -18,22 +18,16 @@ import {
   TaskNotReadyError,
   TaskReleaseError,
   UnknownTaskError,
-  WishGroupDriftError,
-  WishGroupStateError,
   addDependency,
   appendStage,
   appendTaskEvent,
-  assertWishSignature,
   blockTask,
   claimTask,
   commentCounts,
   completeTask,
-  completeWishGroup,
-  computeGroupsSignature,
   countBoardTasks,
   createBoard,
   createTask,
-  createWishGroups,
   exportState,
   getBoardByName,
   getHire,
@@ -42,7 +36,6 @@ import {
   getTaskCard,
   getTaskEvents,
   getTaskLane,
-  getWishGroups,
   hireAgent,
   importState,
   listBoards,
@@ -54,7 +47,6 @@ import {
   recomputeReady,
   recordHeartbeat,
   releaseTask,
-  startWishGroup,
   unblockTask,
   unhireAgent,
 } from './task-state.js';
@@ -561,58 +553,6 @@ describe('append-only stage log', () => {
 
   test('rejects a stage on an unknown task', () => {
     expect(() => appendStage(db, 't_nope', 'planned')).toThrow(UnknownTaskError);
-  });
-});
-
-describe('wish-group state machine', () => {
-  const groups = [{ name: 'g1' }, { name: 'g2', dependsOn: ['g1'] }, { name: 'g3', dependsOn: ['g1'] }];
-
-  test('createWishGroups seeds ready/blocked from deps', () => {
-    const created = createWishGroups(db, 'demo', groups);
-    const byName = Object.fromEntries(created.map((g) => [g.name, g.status]));
-    expect(byName).toEqual({ g1: 'ready', g2: 'blocked', g3: 'blocked' });
-  });
-
-  test('start requires deps done; complete promotes dependents', () => {
-    createWishGroups(db, 'demo', groups);
-    expect(() => startWishGroup(db, 'demo', 'g2', 'eng')).toThrow(WishGroupStateError);
-
-    startWishGroup(db, 'demo', 'g1', 'eng');
-    completeWishGroup(db, 'demo', 'g1');
-
-    const byName = Object.fromEntries(getWishGroups(db, 'demo').map((g) => [g.name, g.status]));
-    expect(byName.g2).toBe('ready');
-    expect(byName.g3).toBe('ready');
-  });
-
-  test('complete is idempotent on a done group', () => {
-    createWishGroups(db, 'demo', groups);
-    startWishGroup(db, 'demo', 'g1', 'eng');
-    completeWishGroup(db, 'demo', 'g1');
-    expect(() => completeWishGroup(db, 'demo', 'g1')).not.toThrow();
-    expect(completeWishGroup(db, 'demo', 'g1').status).toBe('done');
-  });
-
-  test('rejects a group graph with a cycle', () => {
-    expect(() =>
-      createWishGroups(db, 'bad', [
-        { name: 'a', dependsOn: ['b'] },
-        { name: 'b', dependsOn: ['a'] },
-      ]),
-    ).toThrow(CycleError);
-  });
-
-  test('signature is stable across ordering and flags drift', () => {
-    const sigA = computeGroupsSignature(groups);
-    const reordered = [{ name: 'g3', dependsOn: ['g1'] }, { name: 'g1' }, { name: 'g2', dependsOn: ['g1'] }];
-    expect(computeGroupsSignature(reordered)).toBe(sigA);
-
-    createWishGroups(db, 'demo', groups);
-    // Same structure (reordered) → no drift.
-    expect(() => assertWishSignature(db, 'demo', reordered)).not.toThrow();
-    // Structural change (new dep) → drift.
-    const drifted = [{ name: 'g1' }, { name: 'g2', dependsOn: ['g1'] }, { name: 'g3', dependsOn: ['g1', 'g2'] }];
-    expect(() => assertWishSignature(db, 'demo', drifted)).toThrow(WishGroupDriftError);
   });
 });
 
