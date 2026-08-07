@@ -477,6 +477,92 @@ describe('task set-wish', () => {
   });
 });
 
+describe('task delete', () => {
+  async function seedTask(title: string, dependsOn?: string[]): Promise<string> {
+    const db = openDb({ cwd: repo });
+    const task = createTask(db, { title, dependsOn });
+    db.close();
+    return task.id;
+  }
+
+  test('deletes a leaf card; status on it then fails with not-found', async () => {
+    const upstream = await seedTask('upstream');
+    const id = await seedTask('mistake', [upstream]);
+
+    const r = await cli(repo, 'delete', id);
+    expect(r.code).toBe(0);
+    expect(r.stderr).toBe('');
+    expect(r.stdout).toContain(`Deleted task ${id} "mistake"`);
+    expect(r.stdout).toContain('1 dependency edge');
+    expect(r.stdout).toContain('genie task sync');
+
+    const gone = await cli(repo, 'status', id);
+    expect(gone.code).toBe(1);
+    expect(gone.stderr).toContain(`Task not found: ${id}`);
+
+    // The card it depended on survives, and the board no longer lists the card.
+    const list = await cli(repo, 'list');
+    expect(list.stdout).not.toContain(id);
+    expect(list.stdout).toContain('upstream');
+  });
+
+  test('a card with dependents is refused by name, and nothing changes', async () => {
+    const target = await seedTask('depended-on');
+    const dependent = await seedTask('downstream', [target]);
+
+    const r = await cli(repo, 'delete', target);
+    expect(r.code).toBe(1);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toContain(`Cannot delete task ${target}`);
+    expect(r.stderr).toContain(dependent);
+    expect(r.stderr).toContain('1 task depends on it');
+
+    // Both cards, and the edge between them, are untouched.
+    const still = await cli(repo, 'status', target);
+    expect(still.code).toBe(0);
+    const downstream = await cli(repo, 'status', dependent);
+    expect(downstream.code).toBe(0);
+    expect(downstream.stdout).toContain('Depends on:');
+    expect(downstream.stdout).toContain(target);
+  });
+
+  test('an unknown id fails with exit 1 and a typed error', async () => {
+    const r = await cli(repo, 'delete', 't_missing');
+    expect(r.code).toBe(1);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toContain('Task not found: t_missing');
+  });
+
+  test('the timeline goes with the card: a recreated card starts clean', async () => {
+    const id = await seedTask('typo');
+    await cli(repo, 'comment', id, 'wrong wish');
+    const db = openDb({ cwd: repo });
+    expect(getTaskEvents(db, id)).toHaveLength(1);
+    db.close();
+
+    expect((await cli(repo, 'delete', id)).code).toBe(0);
+    const after = openDb({ cwd: repo });
+    const orphanEvents = after.query('SELECT COUNT(*) AS n FROM task_events').get() as { n: number };
+    const orphanDeps = after.query('SELECT COUNT(*) AS n FROM task_dependencies').get() as { n: number };
+    after.close();
+    expect(orphanEvents.n).toBe(0);
+    expect(orphanDeps.n).toBe(0);
+  });
+
+  test('help documents the hard delete, the refusal, and the import caveats', async () => {
+    const listing = await cli(repo, '--help');
+    expect(listing.code).toBe(0);
+    expect(listing.stdout).toContain('delete');
+
+    const detail = await cli(repo, 'delete', '--help');
+    expect(detail.code).toBe(0);
+    expect(detail.stdout).toContain('no archive and no undo');
+    expect(detail.stdout).toContain('Refused while another card depends on this one');
+    expect(detail.stdout).toContain('task import --replace');
+    expect(detail.stdout).toContain('Deleting the LAST card');
+  });
+});
+
 describe('task move', () => {
   async function seedLaneCard(): Promise<string> {
     const db = openDb({ cwd: repo });
@@ -838,6 +924,43 @@ describe('roadmap.json canonical sync', () => {
     expect(synced.code).toBe(0);
     expect(synced.stdout).toContain('Published board snapshot');
     expect((JSON.parse(snapshotOf(repo)) as StateExport).tasks).toHaveLength(1);
+  });
+
+  test('a deleted card is republished away by the EXISTING export branch and stays gone', async () => {
+    // Two cards so the db keeps operational state after the delete: the deletion
+    // then lands squarely on the `dbChanged && !fileChanged` export branch.
+    const keep = await cli(repo, 'create', '--title', 'keeper');
+    expect(keep.code).toBe(0);
+    const doomed = await cli(repo, 'create', '--title', 'created by mistake');
+    expect(doomed.code).toBe(0);
+    const doomedId = (doomed.stdout.match(/Created task (t_\w+)/) as RegExpMatchArray)[1];
+
+    const published = await cli(repo, 'sync');
+    expect(published.code).toBe(0);
+    expect(snapshotOf(repo)).toContain('created by mistake');
+
+    // Delete, then the ordinary sync (the same one the git hooks run) republishes
+    // roadmap.json without the row — no reconcile logic is involved.
+    const removed = await cli(repo, 'delete', doomedId);
+    expect(removed.code).toBe(0);
+    const exported = await cli(repo, 'sync');
+    expect(exported.code).toBe(0);
+    expect(exported.stdout).toContain('refreshed from the local database');
+
+    const snap = JSON.parse(snapshotOf(repo)) as StateExport;
+    expect(snap.tasks.map((t) => t.title)).toEqual(['keeper']);
+    expect(snap.tasks.some((t) => t.id === doomedId)).toBe(false);
+    expect(snap.task_events.some((e) => e.task_id === doomedId)).toBe(false);
+
+    // A later sync is a no-op and does NOT resurrect the card: the baseline now
+    // describes the post-delete pair, so neither side reads as changed.
+    const again = await cli(repo, 'sync');
+    expect(again.code).toBe(0);
+    expect(again.stdout).toContain('in sync (none)');
+    expect(snapshotOf(repo)).not.toContain('created by mistake');
+    const listed = await cli(repo, 'list');
+    expect(listed.stdout).not.toContain(doomedId);
+    expect(listed.stdout).toContain('keeper');
   });
 
   test('pulled snapshot imports on sync; local mutation exports; divergence is refused then resolvable', async () => {

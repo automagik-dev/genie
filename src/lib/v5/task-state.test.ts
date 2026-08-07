@@ -15,7 +15,7 @@ import {
   LaneError,
   TaskBlockedError,
   TaskCompleteError,
-  TaskNotReadyError,
+  TaskHasDependentsError,  TaskNotReadyError,
   TaskReleaseError,
   type TaskRow,
   UnknownTaskError,
@@ -29,9 +29,15 @@ import {
   countBoardTasks,
   createBoard,
   createTask,
+<<<<<<< HEAD
+=======
+  createWishGroups,
+  deleteTask,
+>>>>>>> 2c5960bf8 (feat(v5): scoped task delete with dependency refusal (remotty-board-asks#task-delete))
   exportState,
   formatWishRef,
   getBoardByName,
+  getDependencies,
   getHire,
   getStageLog,
   getTask,
@@ -352,6 +358,113 @@ describe('setTaskWish — card identity without delete-and-recreate', () => {
     } finally {
       other.close();
     }
+  });
+});
+
+describe('deleteTask — hard removal with a dependency refusal', () => {
+  function edgeCount(): number {
+    return (db.query('SELECT COUNT(*) AS n FROM task_dependencies').get() as { n: number }).n;
+  }
+
+  test('removes a leaf card with its edges, timeline, and stage log', () => {
+    const dep = createTask(db, { title: 'upstream' });
+    const task = createTask(db, { title: 'doomed', dependsOn: [dep.id] });
+    appendTaskEvent(db, task.id, { kind: 'comment', note: 'created by mistake', ...HUMAN });
+    appendStage(db, task.id, 'planned');
+
+    const result = deleteTask(db, task.id);
+    expect(result.task.id).toBe(task.id);
+    expect(result.task.title).toBe('doomed');
+    expect(result.dependencies).toBe(1);
+    expect(result.events).toBe(1);
+    expect(result.stages).toBe(1);
+
+    expect(getTask(db, task.id)).toBeNull();
+    expect(getTaskEvents(db, task.id)).toEqual([]);
+    expect(getStageLog(db, task.id)).toEqual([]);
+    expect(edgeCount()).toBe(0);
+    // Only the target went: what it depended on is untouched.
+    expect(getTask(db, dep.id)?.status).toBe('ready');
+  });
+
+  test('refuses a card with dependents, naming them, and changes nothing', () => {
+    const target = createTask(db, { title: 'depended-on' });
+    const dependent = createTask(db, { title: 'downstream', dependsOn: [target.id] });
+    appendTaskEvent(db, target.id, { kind: 'comment', note: 'keep me', ...HUMAN });
+
+    expect(() => deleteTask(db, target.id)).toThrow(TaskHasDependentsError);
+    try {
+      deleteTask(db, target.id);
+    } catch (err) {
+      expect(err).toBeInstanceOf(TaskHasDependentsError);
+      expect((err as TaskHasDependentsError).dependents).toEqual([dependent.id]);
+      expect((err as Error).message).toContain(dependent.id);
+      expect((err as Error).message).toContain('1 task depends on it');
+    }
+
+    expect(getTask(db, target.id)?.title).toBe('depended-on');
+    expect(getTaskEvents(db, target.id)).toHaveLength(1);
+    expect(getDependencies(db, dependent.id)).toEqual([target.id]);
+    expect(getTask(db, dependent.id)?.status).toBe('blocked');
+  });
+
+  test('the refusal message names up to three dependents and counts the rest', () => {
+    const target = createTask(db, { title: 'popular' });
+    const ids = ['a', 'b', 'c', 'd'].map((t) => createTask(db, { title: t, dependsOn: [target.id] }).id);
+    try {
+      deleteTask(db, target.id);
+      throw new Error('expected a refusal');
+    } catch (err) {
+      expect(err).toBeInstanceOf(TaskHasDependentsError);
+      expect((err as TaskHasDependentsError).dependents.sort()).toEqual([...ids].sort());
+      expect((err as Error).message).toContain('4 tasks depend on it');
+      expect((err as Error).message).toContain('+1 more');
+    }
+  });
+
+  test('the refusal is what prevents a delayed silent unblock (the cascade is real)', () => {
+    const target = createTask(db, { title: 'blocker' });
+    const dependent = createTask(db, { title: 'waiting', dependsOn: [target.id] });
+    const unrelated = createTask(db, { title: 'unrelated' });
+    expect(getTask(db, dependent.id)?.status).toBe('blocked');
+
+    // Bypass deleteTask exactly as a hand-edited snapshot or a raw DELETE would:
+    // ON DELETE CASCADE erases the edge silently...
+    db.query('DELETE FROM tasks WHERE id = ?').run(target.id);
+    expect(edgeCount()).toBe(0);
+    expect(getTask(db, dependent.id)?.status).toBe('blocked');
+
+    // ...and the next recompute — which `task done` on ANY card runs — promotes
+    // the orphaned dependent to ready with nothing on its timeline saying why.
+    completeTask(db, unrelated.id);
+    expect(getTask(db, dependent.id)?.status).toBe('ready');
+  });
+
+  test('deletes a claimed, in-progress card without requiring a release first', () => {
+    const task = createTask(db, { title: 'claimed by mistake' });
+    claimTask(db, task.id, 'w1', { author: HUMAN });
+    expect(getTask(db, task.id)?.status).toBe('in_progress');
+
+    expect(deleteTask(db, task.id).task.claimedBy).toBe('w1');
+    expect(getTask(db, task.id)).toBeNull();
+  });
+
+  test('rejects an unknown id and removes nothing', () => {
+    const survivor = createTask(db, { title: 'survivor' });
+    expect(() => deleteTask(db, 't_nope')).toThrow(UnknownTaskError);
+    expect(listTasks(db)).toHaveLength(1);
+    expect(getTask(db, survivor.id)).not.toBeNull();
+  });
+
+  test('a deleted card is gone from export, so the snapshot never carries it', () => {
+    const keep = createTask(db, { title: 'keep' });
+    const drop = createTask(db, { title: 'drop' });
+    appendTaskEvent(db, drop.id, { kind: 'comment', note: 'oops', ...HUMAN });
+
+    deleteTask(db, drop.id);
+    const snapshot = exportState(db);
+    expect(snapshot.tasks.map((t) => t.id)).toEqual([keep.id]);
+    expect(snapshot.task_events.filter((e) => e.task_id === drop.id)).toEqual([]);
   });
 });
 

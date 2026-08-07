@@ -139,6 +139,46 @@ clearing the wish clears the group too. Each change appends a `wish` event
 that `task status` prints, and the columns ride `task export` / `import` /
 `sync` like any other task field.
 
+**A card can also be removed outright.** `genie task delete <id>` (`deleteTask`)
+is a **hard delete with no archive and no undo**: the row, its dependency edges,
+its timeline events, and its stage_log rows all go. Nothing is tombstoned and no
+lane or status means "deleted" — a removed card's history survives only in
+whatever `.genie/roadmap.json` revisions git already holds. Any status is
+deletable, claimed or not, because a mistakenly created card must be removable
+without first tracking down whoever picked it up. Prefer `set-wish`, `block`, or
+a lane move whenever the card represents real work; delete is for cards that
+should never have existed.
+
+**Delete is refused while any other card depends on it**, naming the dependents,
+and that refusal is the entire safety story. Both `task_dependencies` columns are
+`REFERENCES tasks(id) ON DELETE CASCADE`, so deleting a depended-on card would
+*silently erase the edge* rather than fail. The dependent would keep
+`status = 'blocked'` with nothing left to block it, and the next ready-set
+recompute — which `task done` on any unrelated card triggers — would find no
+unmet dependency and promote it to `ready`. That unblock lands later, on an
+unrelated command, with nothing on any timeline explaining it; refusing the
+delete is what prevents it. Re-point or delete the dependents first. Only the
+target's *outgoing* edges are removed, and those gate nothing but the card being
+deleted, so no recompute follows a successful delete.
+
+**The removal publishes through ordinary sync, with two holes.** A delete is just
+another db-side mutation, so the `dbChanged && !fileChanged` branch of
+`syncRoadmap` re-exports `roadmap.json` without the row and a later sync is a
+no-op — the card does not come back. But:
+
+1. **Plain `task import` merges as a superset.** Without `--replace` an import
+   inserts the snapshot's rows on top of the current db, so importing a snapshot
+   taken *before* the delete resurrects the card. Use `task import --replace`.
+2. **Deleting the last card can be read as a fresh clone.** Both `roadmap-sync`
+   decisions that ask "does this db have anything to publish?" go through
+   `hasOperationalState(db, { includeHireRoster: false })` (`roadmap-sync.ts:151`
+   and `:183`), which counts boards, tasks, task_events, stage_log, and
+   wish_groups. Deleting the last task takes those emptied-db branches only when
+   no board or wish-group rows remain either; when it does, a sync with no usable
+   baseline imports the existing snapshot back instead of publishing the empty
+   board. Publish explicitly with `task export --write` when emptying the board
+   completely.
+
 ### `task_dependencies`
 Directed edges: `task_id` depends on `depends_on_id`.
 
@@ -148,7 +188,10 @@ Directed edges: `task_id` depends on `depends_on_id`.
 | `depends_on_id` | TEXT NOT NULL | FK → `tasks(id)` ON DELETE CASCADE |
 | — | PRIMARY KEY (`task_id`, `depends_on_id`) | |
 
-Cycles are rejected at **insertion** time (see Concurrency rules).
+Cycles are rejected at **insertion** time (see Concurrency rules). The cascade is
+why `deleteTask` refuses a card with dependents (see `tasks` above): it would
+erase the edge silently instead of failing, and the dependent would be promoted
+to `ready` by a later, unrelated recompute.
 
 ### `stage_log`
 Append-only audit trail of stage transitions per task.
@@ -161,7 +204,9 @@ Append-only audit trail of stage transitions per task.
 | `note` | TEXT | nullable |
 | `created_at` | INTEGER NOT NULL | |
 
-There is no update or delete API for this table — it only grows.
+There is no update API for this table and no way to remove a single entry — it
+only grows for as long as its task exists. Deleting the task takes its whole
+stage log with it (`deleteTask`, see `tasks`).
 
 ### `wish_groups`
 Vestigial (pending drop): the wish-group execution machinery is production-dead — the table stays inert for schema compatibility, with no writer. Natural key `(wish, name)`.
