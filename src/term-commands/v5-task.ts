@@ -32,6 +32,7 @@ import {
   writeSnapshotFile,
 } from '../lib/v5/roadmap-sync.js';
 import {
+  type BlockKind,
   type EventAuthor,
   type ImportSummary,
   type TaskCardRow,
@@ -139,7 +140,8 @@ function printDetailHeader(task: TaskCardRow): void {
   }
   if (task.blockedBy != null) {
     const reason = task.blockedReason ? ` — ${task.blockedReason}` : '';
-    out(`  Blocked by: ${task.blockedBy}${reason}`);
+    const kind = task.enforcedBlock?.kind ?? 'work';
+    out(`  Blocked by: ${task.blockedBy} (${kind})${reason}`);
   }
   out(`  Created:    ${formatTimestamp(new Date(task.createdAt))}`);
   out(`  Updated:    ${formatTimestamp(new Date(task.updatedAt))}`);
@@ -417,16 +419,18 @@ function handleReport(id: string, text: string): void {
 
 interface BlockOptions {
   reason?: string;
+  hold?: boolean;
 }
 
 function handleBlock(id: string, opts: BlockOptions): void {
   const reason = opts.reason?.trim();
   if (!reason) fail('--reason <text> is required.');
+  const kind: BlockKind = opts.hold ? 'hold' : 'work';
   run(() => {
     const db = openDb();
     try {
-      const task = blockTask(db, id, reason, resolveEventAuthor());
-      out(`Blocked task ${task.id} (${task.status}).`);
+      const task = blockTask(db, id, reason, resolveEventAuthor(), kind);
+      out(`Blocked task ${task.id} (${task.status}, ${kind}).`);
     } finally {
       db.close();
     }
@@ -665,6 +669,7 @@ export function registerV5TaskCommands(v5: Command): void {
     .command('block <id>')
     .description('Place an enforced block on a card (refuses checkout until cleared)')
     .requiredOption('--reason <text>', 'Why the card is blocked')
+    .option('--hold', 'Record the block as a deliberate hold (parked) rather than a work problem')
     .action((id: string, opts: BlockOptions) => handleBlock(id, opts));
 
   task

@@ -25,6 +25,7 @@ function card(over: Partial<TaskCardRow> = {}): TaskCardRow {
     createdAt: 0,
     updatedAt: 0,
     lane: null,
+    enforcedBlock: null,
     agentKind: null,
     heartbeatAt: null,
     blockedBy: null,

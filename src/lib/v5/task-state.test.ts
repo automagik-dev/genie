@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ensureSchema, openDb } from './genie-db.js';
+import { ensureSchema, isCurrentGenieDb, openDb } from './genie-db.js';
 import {
   CheckoutConflictError,
   CycleError,
@@ -42,6 +42,7 @@ import {
   listBoards,
   listHires,
   listTasks,
+  listTasksWithLane,
   livenessFromHeartbeat,
   moveTask,
   readyTasks,
@@ -448,9 +449,174 @@ describe('runtime layer — enforced blocks + carved checkout exception', () => 
     const card = getTaskCard(db, a.id);
     expect(card?.blockedBy).toBeNull();
     expect(card?.blockedReason).toBeNull();
+    expect(card?.enforcedBlock).toBeNull();
     expect(getTaskEvents(db, a.id).at(-1)?.kind).toBe('unblock');
+    // The kind is cleared with the block, not left behind for the next one.
+    expect(rawBlockKind(db, a.id)).toBeNull();
     // Now claimable again.
     expect(claimTask(db, a.id, 'w1').status).toBe('in_progress');
+  });
+});
+
+/** The stored `block_kind` cell, read past the projection so defaults are visible. */
+function rawBlockKind(handle: Database, taskId: string): string | null {
+  const row = handle.query('SELECT block_kind FROM tasks WHERE id = ?').get(taskId) as { block_kind: string | null };
+  return row.block_kind;
+}
+
+describe('block kinds — work vs hold', () => {
+  test('an omitted kind stores and projects the work default', () => {
+    const a = createTask(db, { title: 'a' });
+    blockTask(db, a.id, 'needs a decision', HUMAN);
+    expect(rawBlockKind(db, a.id)).toBe('work');
+    expect(getTaskCard(db, a.id)?.enforcedBlock).toEqual({ reason: 'needs a decision', kind: 'work' });
+  });
+
+  test('an explicit hold is stored and projected as a hold', () => {
+    const a = createTask(db, { title: 'a' });
+    blockTask(db, a.id, 'parked until Q3', HUMAN, 'hold');
+    expect(rawBlockKind(db, a.id)).toBe('hold');
+    expect(getTaskCard(db, a.id)?.enforcedBlock).toEqual({ reason: 'parked until Q3', kind: 'hold' });
+  });
+
+  test('a hold refuses checkout exactly like a work block', () => {
+    const held = createTask(db, { title: 'held' });
+    const broken = createTask(db, { title: 'broken' });
+    blockTask(db, held.id, 'parked', HUMAN, 'hold');
+    blockTask(db, broken.id, 'parked', HUMAN, 'work');
+    for (const id of [held.id, broken.id]) {
+      expect(() => claimTask(db, id, 'w1')).toThrow(TaskBlockedError);
+      expect(getTask(db, id)?.claimedBy).toBeNull();
+    }
+  });
+
+  test('a block of either kind leaves the lifecycle status untouched', () => {
+    const a = createTask(db, { title: 'a' });
+    blockTask(db, a.id, 'parked', HUMAN, 'hold');
+    expect(getTask(db, a.id)?.status).toBe('ready');
+  });
+
+  test('a NULL or unrecognized stored kind normalizes to work (the column is untrusted TEXT)', () => {
+    const legacy = createTask(db, { title: 'legacy' });
+    const garbage = createTask(db, { title: 'garbage' });
+    // A row an older build blocked (no kind column) and a hand-merged roadmap.json.
+    db.query("UPDATE tasks SET blocked_by = 'felipe', blocked_reason = 'r' WHERE id = ?").run(legacy.id);
+    db.query("UPDATE tasks SET blocked_by = 'felipe', blocked_reason = 'r', block_kind = 'HOLD' WHERE id = ?").run(
+      garbage.id,
+    );
+    expect(getTaskCard(db, legacy.id)?.enforcedBlock).toEqual({ reason: 'r', kind: 'work' });
+    expect(getTaskCard(db, garbage.id)?.enforcedBlock).toEqual({ reason: 'r', kind: 'work' });
+  });
+
+  test('a block stored without a reason still projects a block (presence keys on blocked_by)', () => {
+    const a = createTask(db, { title: 'a' });
+    db.query("UPDATE tasks SET blocked_by = 'felipe' WHERE id = ?").run(a.id);
+    expect(getTaskCard(db, a.id)?.enforcedBlock).toEqual({ reason: '', kind: 'work' });
+  });
+});
+
+describe('lane projection carries enforcedBlock', () => {
+  test('blocked cards project reason + kind; unblocked cards project null', () => {
+    const road = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    const open = createTask(db, { title: 'open', boardId: road.id, lane: 'Idea' });
+    const held = createTask(db, { title: 'held', boardId: road.id, lane: 'Idea' });
+    blockTask(db, held.id, 'parked until Q3', HUMAN, 'hold');
+
+    const byId = new Map(listTasksWithLane(db, { boardId: road.id }).map((t) => [t.id, t]));
+    expect(byId.get(open.id)?.enforcedBlock).toBeNull();
+    expect(byId.get(held.id)?.enforcedBlock).toEqual({ reason: 'parked until Q3', kind: 'hold' });
+  });
+
+  test('the lane projection gains ONLY enforcedBlock — provenance and heartbeat stay off it', () => {
+    const a = createTask(db, { title: 'a' });
+    blockTask(db, a.id, 'r', HUMAN, 'hold');
+    recordHeartbeat(db, a.id);
+    const row = listTasksWithLane(db).find((t) => t.id === a.id) as unknown as Record<string, unknown>;
+    expect(Object.keys(row).sort()).toEqual([
+      'boardId',
+      'claimedAt',
+      'claimedBy',
+      'createdAt',
+      'enforcedBlock',
+      'group',
+      'id',
+      'lane',
+      'status',
+      'title',
+      'updatedAt',
+      'wish',
+    ]);
+  });
+
+  test('the frozen TaskRow path never gains enforcedBlock', () => {
+    const a = createTask(db, { title: 'a' });
+    blockTask(db, a.id, 'r', HUMAN, 'hold');
+    const frozen = listTasks(db).find((t) => t.id === a.id) as unknown as Record<string, unknown>;
+    expect('enforcedBlock' in frozen).toBe(false);
+    expect('lane' in frozen).toBe(false);
+  });
+});
+
+describe('block_kind is an additive v1 column', () => {
+  test('a v1 DB predating the column regains it on open, with no user_version change', () => {
+    const path = join(dir, 'pre-kind.db');
+    const seed = openDb({ path });
+    const a = createTask(seed, { title: 'a' });
+    blockTask(seed, a.id, 'r', HUMAN, 'hold');
+    // Roll the file back to a v1 DB written before the column existed.
+    seed.exec('ALTER TABLE tasks DROP COLUMN block_kind');
+    expect(isCurrentGenieDb(seed)).toBe(false); // schemaIsCurrent stays in lockstep
+    seed.close();
+
+    const reopened = openDb({ path });
+    const version = (reopened.query('PRAGMA user_version').get() as { user_version: number }).user_version;
+    const columns = (reopened.query('PRAGMA table_info(tasks)').all() as Array<{ name: string }>).map((c) => c.name);
+    // The backfilled column is NULL, so the pre-existing block reads as `work`.
+    const card = getTaskCard(reopened, a.id);
+    // A second open is a no-op — the backfill is idempotent.
+    ensureSchema(reopened);
+    const stillOnce = (reopened.query('PRAGMA table_info(tasks)').all() as Array<{ name: string }>).filter(
+      (c) => c.name === 'block_kind',
+    ).length;
+    reopened.close();
+
+    expect(version).toBe(1);
+    expect(columns).toContain('block_kind');
+    expect(card?.enforcedBlock).toEqual({ reason: 'r', kind: 'work' });
+    expect(stillOnce).toBe(1);
+  });
+
+  test('export carries block_kind and round-trips it through import', () => {
+    const a = createTask(db, { title: 'a' });
+    blockTask(db, a.id, 'parked', HUMAN, 'hold');
+    const snapshot = exportState(db);
+    expect(snapshot.tasks[0].block_kind).toBe('hold');
+
+    const path = join(dir, 'round-trip.db');
+    const fresh = openDb({ path });
+    importState(fresh, snapshot);
+    const card = getTaskCard(fresh, a.id);
+    fresh.close();
+    expect(card?.enforcedBlock).toEqual({ reason: 'parked', kind: 'hold' });
+  });
+
+  test('a same-version snapshot whose tasks omit block_kind imports cleanly as work', () => {
+    const a = createTask(db, { title: 'a' });
+    blockTask(db, a.id, 'r', HUMAN, 'hold');
+    const snapshot = exportState(db);
+    // An older build at the same schemaVersion never wrote the key at all.
+    const older = {
+      ...snapshot,
+      tasks: snapshot.tasks.map(({ block_kind: _dropped, ...rest }) => rest),
+    } as unknown as typeof snapshot;
+
+    const path = join(dir, 'older-snapshot.db');
+    const fresh = openDb({ path });
+    const summary = importState(fresh, older);
+    const card = getTaskCard(fresh, a.id);
+    fresh.close();
+    expect(summary.tasks).toBe(1);
+    expect(card?.enforcedBlock).toEqual({ reason: 'r', kind: 'work' });
   });
 });
 
