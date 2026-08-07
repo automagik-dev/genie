@@ -16,6 +16,7 @@ import {
   TaskBlockedError,
   TaskNotReadyError,
   TaskReleaseError,
+  type TaskRow,
   UnknownTaskError,
   WishGroupDriftError,
   WishGroupStateError,
@@ -34,6 +35,7 @@ import {
   createTask,
   createWishGroups,
   exportState,
+  formatWishRef,
   getBoardByName,
   getHire,
   getStageLog,
@@ -54,6 +56,7 @@ import {
   recomputeReady,
   recordHeartbeat,
   releaseTask,
+  setTaskWish,
   startWishGroup,
   unblockTask,
   unhireAgent,
@@ -220,6 +223,95 @@ describe('lane moves + task_events timeline', () => {
 
   test('appendTaskEvent rejects an unknown task', () => {
     expect(() => appendTaskEvent(db, 't_nope', { kind: 'move' })).toThrow(UnknownTaskError);
+  });
+});
+
+describe('setTaskWish — card identity without delete-and-recreate', () => {
+  test('attaches a wish to a wishless card, preserving id/createdAt/claim', async () => {
+    const task = createTask(db, { title: 'orphan' });
+    claimTask(db, task.id, 'worker-1', { author: HUMAN });
+    const claimed = getTask(db, task.id) as TaskRow;
+    await Bun.sleep(2);
+
+    const result = setTaskWish(db, task.id, { wish: 'remotty-board-asks', group: 'task-wish-verb' }, HUMAN);
+    expect(result.from).toEqual({ wish: null, group: null });
+    expect(result.to).toEqual({ wish: 'remotty-board-asks', group: 'task-wish-verb' });
+
+    const after = result.task;
+    expect(after.id).toBe(task.id);
+    expect(after.createdAt).toBe(task.createdAt);
+    expect(after.status).toBe('in_progress');
+    expect(after.claimedBy).toBe('worker-1');
+    expect(after.claimedAt).toBe(claimed.claimedAt);
+    expect(after.wish).toBe('remotty-board-asks');
+    expect(after.group).toBe('task-wish-verb');
+    expect(after.updatedAt).toBeGreaterThan(claimed.updatedAt);
+
+    // The claim event, then the wish event — old → new on the timeline.
+    const events = getTaskEvents(db, task.id);
+    expect(events.map((e) => e.kind)).toEqual(['claim', 'wish']);
+    expect(events[1].note).toBe('(none)→remotty-board-asks#task-wish-verb');
+    expect(events[1].author).toBe('felipe');
+    expect(events[1].authorKind).toBe('human');
+  });
+
+  test('re-pointing to another wish drops the previous group unless a new one is given', () => {
+    const task = createTask(db, { title: 'moving', wish: 'old-wish', group: 'g1' });
+    const result = setTaskWish(db, task.id, { wish: 'new-wish', group: null }, HUMAN);
+    expect(result.from).toEqual({ wish: 'old-wish', group: 'g1' });
+    expect(result.task.wish).toBe('new-wish');
+    expect(result.task.group).toBeNull();
+    expect(getTaskEvents(db, task.id)[0].note).toBe('old-wish#g1→new-wish');
+  });
+
+  test('clearing removes wish and group together', () => {
+    const task = createTask(db, { title: 'detaching', wish: 'demo', group: 'g1' });
+    const result = setTaskWish(db, task.id, { wish: null, group: null }, HUMAN);
+    expect(result.to).toEqual({ wish: null, group: null });
+    expect(result.task.wish).toBeNull();
+    expect(result.task.group).toBeNull();
+    expect(getTaskEvents(db, task.id)[0].note).toBe('demo#g1→(none)');
+  });
+
+  test('a group passed alongside a null wish is dropped, never orphaned', () => {
+    const task = createTask(db, { title: 'orphan-guard', wish: 'demo', group: 'g1' });
+    const result = setTaskWish(db, task.id, { wish: null, group: 'g1' }, HUMAN);
+    expect(result.task.group).toBeNull();
+    expect(getTaskEvents(db, task.id)[0].note).toBe('demo#g1→(none)');
+  });
+
+  test('an attached card is findable by the wish filter', () => {
+    const task = createTask(db, { title: 'findable' });
+    expect(listTasks(db, { wish: 'demo' })).toHaveLength(0);
+    setTaskWish(db, task.id, { wish: 'demo', group: null }, HUMAN);
+    expect(listTasks(db, { wish: 'demo' }).map((t) => t.id)).toEqual([task.id]);
+  });
+
+  test('rejects an unknown task without touching the timeline', () => {
+    expect(() => setTaskWish(db, 't_nope', { wish: 'demo', group: null }, HUMAN)).toThrow(UnknownTaskError);
+  });
+
+  test('formatWishRef renders slug#group, bare slug, and the empty identity', () => {
+    expect(formatWishRef({ wish: 'demo', group: 'g1' })).toBe('demo#g1');
+    expect(formatWishRef({ wish: 'demo', group: null })).toBe('demo');
+    expect(formatWishRef({ wish: null, group: null })).toBe('(none)');
+  });
+
+  test('the new identity survives an export/import round-trip', () => {
+    const task = createTask(db, { title: 'round-trip' });
+    setTaskWish(db, task.id, { wish: 'demo', group: 'g1' }, HUMAN);
+    const snapshot = exportState(db);
+
+    const other = openDb({ path: join(dir, 'other.db') });
+    try {
+      importState(other, snapshot);
+      const restored = getTask(other, task.id) as TaskRow;
+      expect(restored.wish).toBe('demo');
+      expect(restored.group).toBe('g1');
+      expect(getTaskEvents(other, task.id).map((e) => e.kind)).toEqual(['wish']);
+    } finally {
+      other.close();
+    }
   });
 });
 

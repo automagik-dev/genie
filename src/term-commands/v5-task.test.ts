@@ -178,6 +178,145 @@ describe('task status / done / checkout', () => {
   });
 });
 
+describe('task set-wish', () => {
+  async function seedTask(title: string, wish?: string, group?: string): Promise<string> {
+    const db = openDb({ cwd: repo });
+    const task = createTask(db, { title, wish, group });
+    db.close();
+    return task.id;
+  }
+
+  test('attaches a wish, preserving id/createdAt while advancing updatedAt', async () => {
+    const id = await seedTask('wishless');
+    const before = openDb({ cwd: repo });
+    const created = getTask(before, id);
+    before.close();
+
+    const r = await cli(repo, 'set-wish', id, '--wish', 'remotty-board-asks', '--group', 'task-wish-verb');
+    expect(r.code).toBe(0);
+    expect(r.stderr).toBe('');
+    expect(r.stdout).toContain('(none) → remotty-board-asks#task-wish-verb');
+
+    const db = openDb({ cwd: repo });
+    const after = getTask(db, id);
+    const events = getTaskEvents(db, id);
+    db.close();
+    expect(after?.id).toBe(id);
+    expect(after?.createdAt).toBe(created?.createdAt as number);
+    expect(after?.wish).toBe('remotty-board-asks');
+    expect(after?.group).toBe('task-wish-verb');
+    expect(after?.updatedAt).toBeGreaterThan(created?.updatedAt as number);
+    expect(events).toHaveLength(1);
+    expect(events[0].kind).toBe('wish');
+    expect(events[0].note).toBe('(none)→remotty-board-asks#task-wish-verb');
+  });
+
+  test('the wish event is visible in task status, and list --wish finds the card', async () => {
+    const id = await seedTask('findable');
+    await cli(repo, 'set-wish', id, '--wish', 'demo');
+
+    const status = await cli(repo, 'status', id);
+    expect(status.code).toBe(0);
+    expect(status.stdout).toContain('Timeline:');
+    expect(status.stdout).toContain('wish by');
+    expect(status.stdout).toContain('(none)→demo');
+
+    const list = await cli(repo, 'list', '--wish', 'demo');
+    expect(list.code).toBe(0);
+    expect(list.stdout).toContain(id);
+  });
+
+  test('--clear removes the wish and the group together', async () => {
+    const id = await seedTask('attached', 'demo', 'g1');
+    const r = await cli(repo, 'set-wish', id, '--clear');
+    expect(r.code).toBe(0);
+    expect(r.stderr).toBe('');
+    expect(r.stdout).toContain('demo#g1 → (none)');
+
+    const db = openDb({ cwd: repo });
+    const after = getTask(db, id);
+    db.close();
+    expect(after?.wish).toBeNull();
+    expect(after?.group).toBeNull();
+  });
+
+  test('a claimed card keeps its claim across the identity change', async () => {
+    const id = await seedTask('claimed');
+    await cli(repo, 'checkout', id, '--worker', 'w1');
+    const r = await cli(repo, 'set-wish', id, '--wish', 'demo');
+    expect(r.code).toBe(0);
+
+    const db = openDb({ cwd: repo });
+    const after = getTask(db, id);
+    db.close();
+    expect(after?.status).toBe('in_progress');
+    expect(after?.claimedBy).toBe('w1');
+  });
+
+  test('--group without --wish fails with the same message as create', async () => {
+    const id = await seedTask('guarded');
+    const r = await cli(repo, 'set-wish', id, '--group', 'g1');
+    expect(r.code).toBe(1);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toContain('--group requires --wish.');
+  });
+
+  test('neither --wish nor --clear fails; --clear with --wish is refused', async () => {
+    const id = await seedTask('ambiguous');
+    const bare = await cli(repo, 'set-wish', id);
+    expect(bare.code).toBe(1);
+    expect(bare.stderr).toContain('--wish <slug> or --clear is required.');
+
+    const both = await cli(repo, 'set-wish', id, '--clear', '--wish', 'demo');
+    expect(both.code).toBe(1);
+    expect(both.stderr).toContain('--clear cannot be combined with --wish.');
+  });
+
+  test('an unknown id fails with exit 1 and a typed error', async () => {
+    const r = await cli(repo, 'set-wish', 't_nope', '--wish', 'demo');
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain('Task not found: t_nope');
+  });
+
+  test('the attached identity survives export --write / import / sync', async () => {
+    const id = await seedTask('travels');
+    await cli(repo, 'set-wish', id, '--wish', 'demo', '--group', 'g1');
+
+    const w = await cli(repo, 'export', '--write');
+    expect(w.code).toBe(0);
+    const snapshotPath = join(repo, '.genie', 'roadmap.json');
+    const snapshot = readFileSync(snapshotPath, 'utf-8');
+    const state = JSON.parse(snapshot) as StateExport;
+    expect(state.tasks.find((t) => t.id === id)?.wish).toBe('demo');
+    expect(state.tasks.find((t) => t.id === id)?.group_name).toBe('g1');
+
+    // A fresh clone materializes the same identity from the committed snapshot.
+    const clone = mkdtempSync(join(tmpdir(), 'genie-v5-setwish-'));
+    try {
+      git(clone, 'init', '-b', 'main');
+      git(clone, 'commit', '--allow-empty', '-m', 'init');
+      await mkdir(join(clone, '.genie'), { recursive: true });
+      writeFileSync(join(clone, '.genie', 'roadmap.json'), snapshot);
+
+      const imported = await cli(clone, 'import');
+      expect(imported.code).toBe(0);
+      const db = openDb({ cwd: clone });
+      const restored = getTask(db, id);
+      const events = getTaskEvents(db, id);
+      db.close();
+      expect(restored?.wish).toBe('demo');
+      expect(restored?.group).toBe('g1');
+      expect(events.map((e) => e.kind)).toEqual(['wish']);
+
+      // sync sees the pair as already reconciled — no divergence from the change.
+      const synced = await cli(clone, 'sync');
+      expect(synced.code).toBe(0);
+    } finally {
+      rmSync(clone, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('task move', () => {
   async function seedLaneCard(): Promise<string> {
     const db = openDb({ cwd: repo });

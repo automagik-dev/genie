@@ -1079,6 +1079,66 @@ export function moveTask(db: Database, taskId: string, toLane: string, author: E
 }
 
 // ============================================================================
+// Wish identity
+// ============================================================================
+
+/** The lifecycle slug + wish-group a card carries. Both null ⇒ the card is wishless. */
+export interface WishIdentity {
+  wish: string | null;
+  group: string | null;
+}
+
+export interface SetWishResult {
+  task: TaskRow;
+  from: WishIdentity;
+  to: WishIdentity;
+}
+
+/** Render a wish identity for humans and timeline notes: `slug#group`, `slug`, or `(none)`. */
+export function formatWishRef(identity: WishIdentity): string {
+  if (!identity.wish) return '(none)';
+  return identity.group ? `${identity.wish}#${identity.group}` : identity.wish;
+}
+
+/**
+ * Re-point a card's lifecycle identity — attach, re-slug, or clear its `wish`
+ * (and wish-group) — without delete-and-recreate. `id`, `created_at`, and the
+ * checkout claim are untouched; only `wish`, `group_name`, and `updated_at`
+ * move, recording a `wish` event on the card timeline.
+ *
+ * A group name is only meaningful under the wish it was declared in, so the new
+ * identity is taken whole: nothing of the previous group survives a wish change,
+ * and clearing the wish clears the group with it. Slugs are unvalidated TEXT,
+ * exactly as {@link createTask} treats them. The write and the event append are
+ * one transaction, so a card can never carry an identity with no matching
+ * timeline entry.
+ */
+export function setTaskWish(db: Database, taskId: string, to: WishIdentity, author: EventAuthor): SetWishResult {
+  const task = getTask(db, taskId);
+  if (!task) throw new UnknownTaskError(taskId);
+  const from: WishIdentity = { wish: task.wish, group: task.group };
+  const next: WishIdentity = to.wish === null ? { wish: null, group: null } : to;
+  const note = `${formatWishRef(from)}→${formatWishRef(next)}`;
+  const now = Date.now();
+  const apply = db.transaction(() => {
+    db.query('UPDATE tasks SET wish = ?, group_name = ?, updated_at = ? WHERE id = ?').run(
+      next.wish,
+      next.group,
+      now,
+      taskId,
+    );
+    appendTaskEvent(db, taskId, {
+      kind: 'wish',
+      note,
+      authorKind: author.authorKind ?? undefined,
+      author: author.author ?? undefined,
+    });
+  });
+  apply();
+  return { task: getTask(db, taskId) as TaskRow, from, to: next };
+}
+
+// ============================================================================
 // Wish-group graph validation (ported from wish-state.ts — NOT imported)
 // ============================================================================
 
