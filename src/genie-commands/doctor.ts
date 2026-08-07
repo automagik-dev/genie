@@ -26,7 +26,7 @@ import {
   statSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import {
   type AgentFileManifestEntry,
   CLAUDE_EXCLUDED_SKILLS,
@@ -184,6 +184,29 @@ const GLYPH: Record<CheckStatus, string> = {
   warn: '\x1b[33m!\x1b[0m',
   fail: '\x1b[31m✖\x1b[0m',
 };
+
+/** How many `unlinked` INDEX entries `renderCheckLines` names before summarizing the rest. */
+const MAX_UNLINKED_LINES = 5;
+
+/**
+ * The human lines for one check: its status line, its suggestion, and — for
+ * `jar: index-lane drift` — the INDEX entries an operator must open by name,
+ * since a `broken`/`unlinked` count alone cannot be acted on. Every `broken`
+ * entry is named; `unlinked` is the benign majority (a fresh clone has no
+ * roadmap cards at all), so it is capped and the remainder counted.
+ */
+function renderCheckLines(r: CheckResult): string[] {
+  const suffix = r.detail ? ` — ${r.detail}` : '';
+  const lines = [`  ${GLYPH[r.status]} ${r.name}${suffix}`];
+  if (r.suggestion) lines.push(`      ↳ ${r.suggestion}`);
+  let unlinked = 0;
+  for (const e of r.indexLane?.entries ?? []) {
+    if (e.state === 'broken') lines.push(`      · broken: ${e.entry}`);
+    else if (e.state === 'unlinked' && unlinked++ < MAX_UNLINKED_LINES) lines.push(`      · unlinked: ${e.entry}`);
+  }
+  if (unlinked > MAX_UNLINKED_LINES) lines.push(`      · …and ${unlinked - MAX_UNLINKED_LINES} more unlinked`);
+  return lines;
+}
 
 function whichBinary(name: string): string | null {
   if (typeof Bun !== 'undefined') {
@@ -1752,7 +1775,8 @@ export function checkAgentSync(paths: AgentSyncPaths = {}): CheckResult[] {
 // `tasks.wish = slug`, then verifies that card's lane against the section it sits
 // under. It never flips doctor `ok:false`. An entry with no such link, no
 // matching card, or a laneless card is 'unlinked' (NEVER 'drift') — drift is
-// reserved for a resolved card whose lane contradicts its INDEX section.
+// reserved for a resolved card whose lane contradicts its INDEX section. A link
+// whose target no longer exists is 'broken', decided BEFORE any lane comparison.
 // ============================================================================
 
 /**
@@ -1761,6 +1785,8 @@ export function checkAgentSync(paths: AgentSyncPaths = {}): CheckResult[] {
  * The four state names are the machine-readable contract:
  *   - ok       : the resolved roadmap card's lane agrees with the section.
  *   - drift    : the resolved card's lane contradicts the section.
+ *   - broken   : the link resolves to a path that does not exist — decided
+ *                before the lane comparison, so it outranks drift.
  *   - unlinked : no first brainstorms/wishes link, no matching roadmap card,
  *                or the card carries no lane — never counted as drift.
  */
@@ -1773,7 +1799,7 @@ export interface IndexLaneEntry {
   section: string;
   /** The roadmap card's lane, or null when nothing resolves. */
   lane: string | null;
-  state: 'ok' | 'drift' | 'unlinked';
+  state: 'ok' | 'drift' | 'broken' | 'unlinked';
 }
 
 /** Section → the set of roadmap lanes that AGREE with it (the group brief's contract). */
@@ -1784,8 +1810,12 @@ const INDEX_SECTION_LANES: Record<string, ReadonlySet<string>> = {
   Poured: new Set(['Wish', 'Work', 'Review', 'Done']),
 };
 
-/** First markdown link into `brainstorms/<slug>/…` or `wishes/<slug>/…`; slug is group 2. */
-const INDEX_ENTRY_LINK = /\[([^\]]*)\]\((?:\.\/)?(?:brainstorms|wishes)\/([^/)]+)\/[^)]*\)/;
+/**
+ * First markdown link into `brainstorms/<slug>/…` or `wishes/<slug>/…`.
+ * Groups: 1 label, 2 directory, 3 slug, 4 path remainder (possibly empty).
+ * Groups 2–4 rejoin as the `.genie`-relative target handed to the resolver.
+ */
+const INDEX_ENTRY_LINK = /\[([^\]]*)\]\((?:\.\/)?(brainstorms|wishes)\/([^/)]+)\/([^)]*)\)/;
 
 function truncateIndexEntry(text: string): string {
   const clean = text.replace(/\s+/g, ' ').trim();
@@ -1794,14 +1824,18 @@ function truncateIndexEntry(text: string): string {
 
 /**
  * Parse INDEX.md into per-entry lane verdicts. Pure: the caller supplies
- * `laneForSlug`, which returns the resolving roadmap card's lane or null. Only
- * the four lifecycle sections are inspected; any other heading is ignored (its
- * bullets are skipped). Every `- ` bullet under a lifecycle section — including
- * indented sub-bullets — is one entry.
+ * `laneForSlug`, which returns the resolving roadmap card's lane or null, and
+ * `targetExists`, which answers whether a `.genie`-relative link target is on
+ * disk. Both are required: a defaulted resolver would silently fail open and
+ * report every dangling link as filed. This function performs no filesystem IO
+ * of its own. Only the four lifecycle sections are inspected; any other heading
+ * is ignored (its bullets are skipped). Every `- ` bullet under a lifecycle
+ * section — including indented sub-bullets — is one entry.
  */
 export function evaluateIndexLaneDrift(
   indexText: string,
   laneForSlug: (slug: string) => string | null,
+  targetExists: (relativePath: string) => boolean,
 ): IndexLaneEntry[] {
   const entries: IndexLaneEntry[] = [];
   let section: string | null = null;
@@ -1818,11 +1852,17 @@ export function evaluateIndexLaneDrift(
       entries.push({ entry: truncateIndexEntry(content), slug: null, section, lane: null, state: 'unlinked' });
       continue;
     }
-    const label = link[1].trim();
-    const slug = link[2];
+    const [, rawLabel, dir, slug, remainder] = link;
+    const label = rawLabel.trim();
     const lane = laneForSlug(slug);
-    const state: IndexLaneEntry['state'] =
-      lane === null ? 'unlinked' : INDEX_SECTION_LANES[section].has(lane) ? 'ok' : 'drift';
+    // A dead target outranks every lane verdict: there is nothing to file.
+    const state: IndexLaneEntry['state'] = !targetExists(`${dir}/${slug}/${remainder}`)
+      ? 'broken'
+      : lane === null
+        ? 'unlinked'
+        : INDEX_SECTION_LANES[section].has(lane)
+          ? 'ok'
+          : 'drift';
     entries.push({ entry: label.length > 0 ? label : truncateIndexEntry(content), slug, section, lane, state });
   }
   return entries;
@@ -1855,9 +1895,28 @@ function roadmapLanesByWish(dbPath: string): Map<string, string> {
 }
 
 /**
+ * Does a `.genie`-relative INDEX link target exist? `#anchor` suffixes are
+ * stripped (the anchor lives inside the document, not on disk) and a trailing
+ * slash is tolerated, so a bare `wishes/<slug>/` link resolves against the
+ * directory itself. The only filesystem IO in this check's link handling.
+ * A target that resolves outside `.genie/` is `broken` without touching disk,
+ * so `../` traversal in a link cannot turn `doctor --json` into an oracle for
+ * paths elsewhere on the machine.
+ */
+function indexTargetExists(genieDir: string, relativePath: string): boolean {
+  const withoutAnchor = relativePath.split('#')[0].replace(/\/+$/, '');
+  if (withoutAnchor.length === 0) return false;
+  const full = resolve(genieDir, withoutAnchor);
+  const rootDir = resolve(genieDir);
+  if (full !== rootDir && !full.startsWith(rootDir + sep)) return false;
+  return existsSync(full);
+}
+
+/**
  * The `jar: index-lane drift` warning-level check. Absent INDEX.md → a single
- * pass line (nothing to lint). Otherwise one line summarizing ok/drift/unlinked
- * counts, WARN only when ≥1 entry drifts, plus the stable per-entry payload.
+ * pass line (nothing to lint). Otherwise one line summarizing
+ * ok/drift/broken/unlinked counts, WARN when ≥1 entry drifts or is broken, plus
+ * the stable per-entry payload.
  */
 export function checkIndexLaneDrift(root: string | null, databaseRoot: string | null): CheckResult[] {
   const name = 'jar: index-lane drift';
@@ -1874,19 +1933,31 @@ export function checkIndexLaneDrift(root: string | null, databaseRoot: string | 
   }
   const dbPath = join(databaseRoot ?? base, '.genie', 'genie.db');
   const lanes = roadmapLanesByWish(dbPath);
-  const entries = evaluateIndexLaneDrift(indexText, (slug) => lanes.get(slug) ?? null);
+  const genieDir = join(base, '.genie');
+  const entries = evaluateIndexLaneDrift(
+    indexText,
+    (slug) => lanes.get(slug) ?? null,
+    (relativePath) => indexTargetExists(genieDir, relativePath),
+  );
   const drift = entries.filter((e) => e.state === 'drift').length;
+  const broken = entries.filter((e) => e.state === 'broken').length;
   const unlinked = entries.filter((e) => e.state === 'unlinked').length;
   const ok = entries.filter((e) => e.state === 'ok').length;
+  const suggestions: string[] = [];
+  if (drift > 0) {
+    suggestions.push(
+      'An INDEX section disagrees with its roadmap card lane — move the card to the matching lane or the entry to the matching section.',
+    );
+  }
+  if (broken > 0) {
+    suggestions.push('An INDEX link points at a path that no longer exists — repoint or remove the entry.');
+  }
   return [
     {
       name,
-      status: drift > 0 ? 'warn' : 'pass',
-      detail: `${entries.length} INDEX entries: ${ok} ok, ${drift} drift, ${unlinked} unlinked`,
-      suggestion:
-        drift > 0
-          ? 'An INDEX section disagrees with its roadmap card lane — move the card to the matching lane or the entry to the matching section.'
-          : undefined,
+      status: drift > 0 || broken > 0 ? 'warn' : 'pass',
+      detail: `${entries.length} INDEX entries: ${ok} ok, ${drift} drift, ${broken} broken, ${unlinked} unlinked`,
+      suggestion: suggestions.length > 0 ? suggestions.join(' ') : undefined,
       indexLane: { entries },
     },
   ];
@@ -2089,11 +2160,7 @@ export async function doctorCommand(options?: { json?: boolean; fix?: boolean },
   } else {
     out('genie doctor');
     out('');
-    for (const r of results) {
-      const suffix = r.detail ? ` — ${r.detail}` : '';
-      out(`  ${GLYPH[r.status]} ${r.name}${suffix}`);
-      if (r.suggestion) out(`      ↳ ${r.suggestion}`);
-    }
+    for (const line of results.flatMap(renderCheckLines)) out(line);
     out('');
     out(failed.length === 0 ? '\x1b[32mAll checks passed.\x1b[0m' : `\x1b[31m${failed.length} check(s) failed.\x1b[0m`);
     // Broken Codex diagnostics go to stderr (no all-green footer); current/pending
