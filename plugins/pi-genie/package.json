@@ -1,6 +1,6 @@
 {
   "name": "genie-pi-plugin",
-  "version": "5.260807.2",
+  "version": "5.260807.3",
   "private": true,
   "description": "Pi extension manifest for the Genie pi plugin — the plugin payload is plugins/pi-genie/extension.ts",
   "license": "MIT",
