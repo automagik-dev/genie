@@ -148,8 +148,6 @@ export async function freshness(payload: HookPayload, deps: FreshnessDeps = {}):
 
   const cwd = payload.cwd ?? process.cwd();
   const exec = deps.exec ?? execFileSync;
-  const gitCommand = resolveTrustedGit(cwd, deps.resolveGit);
-  if (!gitCommand) return;
   // Prefer GENIE_AGENT_ID (UUID) when present, but keep the name as a
   // secondary self-identifier — git authors are usually human-readable, so
   // we check both against commitInfo.author below.
@@ -160,6 +158,12 @@ export async function freshness(payload: HookPayload, deps: FreshnessDeps = {}):
   // Check disk modification time first (catches uncommitted changes)
   const diskAge = getFileModAge(filePath);
   if (diskAge === null || diskAge >= STALENESS_THRESHOLD_SECS) return;
+
+  // Resolve git only AFTER the mtime gate: this handler fires on every Read
+  // tool call, and the dominant path (file untouched in the last 2 minutes)
+  // must stay one statSync — not a PATH scan + realpath walk per read.
+  const gitCommand = resolveTrustedGit(cwd, deps.resolveGit);
+  if (!gitCommand) return;
 
   // File was recently modified on disk — check if by another agent via git
   const commitInfo = getLastCommitInfo(filePath, cwd, gitCommand, exec);
