@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED |
+| **Status** | IN_PROGRESS |
 | **Slug** | `lane-sync-followups` |
 | **Date** | 2026-08-10 |
 | **Author** | Felipe (decisions) + Fable orchestrator |
@@ -309,6 +309,34 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 ## Review Results
 
 _The read-only reviewer returns evidence; the invoking orchestrator appends a timestamped block here after plan, execution, and PR reviews._
+
+### Group 4 (lane-source-doc) execution review — SHIP after 1 fix loop (2026-08-10)
+
+- **Engineer:** `lane-doc-eng` (engineer-trivial, worktree wish/lane-sync-followups); **Reviewer:** independent `genie:reviewer` subagent (g4-review)
+- **Verdict:** FIX-FIRST round (1 MEDIUM: the section named plain `genie board` as the command reading WISH.md, but the reconcile is `opts.json`-gated at v5-board.ts:277; 1 LOW: trigger unstated) → both fixed → **SHIP**.
+- **Evidence:** Verified the *Lane source* section (TAXONOMY.md, 30 added lines) against committed code: `readWishStatus` reads `<repoRoot>/.genie/wishes/<slug>/WISH.md` through the filesystem with every failure path returning null; `reconcileWishLanes` imports the same `resolveRepoRoot` (genie-db.ts:61-73) the database uses; the cited *Worktree sharing* cross-reference is accurate; MCP `genieBoard` (mcp-tools.ts) contains no reconcile call. Post-fix, the worktree sentence is command-free and the new trigger sentence ("runs only inside CLI `--json` board reads") is an upper bound that survives Wave-2's narrowing. Validation greps pass (`lane-source`, `git-common-dir`, `worktree`). One residual optional LOW recorded, not applied: "serve stored lanes" clause slightly implies MCP emits lanes (TaskSummary has no lane field).
+- **Validation (orchestrator-run):** all three content-contract greps exit 0. Task `t_msnmry4999f70843` marked done.
+
+### Group 1 (write-path) execution review — SHIP (2026-08-10)
+
+- **Engineer:** `write-path-eng` (engineer-standard); **Reviewer:** independent `genie:reviewer` subagent (g1-review); one orchestrator-authorized scope extension (`src/term-commands/v5-task.test.ts` — the wish's Files list omitted the CLI-level link test whose no-event assertion the criterion necessarily inverts).
+- **Verdict:** SHIP; 2 LOW fixed post-review (help-text parity on `task link`; dedicated `set-wish --clear` no-op regression test, verified to fail for the right reason by temporarily neutering the guard); 1 LOW recorded as follow-up, not fixed: the unified no-op check reads outside the `BEGIN IMMEDIATE` transaction, so two concurrent identical links can each append a wish event (duplicate audit history only, row state converges; window inherited from shipped `setTaskWish`).
+- **Evidence (reviewer-verified):** `linkTaskToWish` is a one-line delegation to `setTaskWish` (trailing injectable `now`, full-no-op early return skipping row write and event, `.immediate()` matching every other writer); `handleLink` threads `resolveEventAuthor()` so link and set-wish emit byte-identical rows and events; exactly one production caller repo-wide; `UnknownTaskError` and group-drop-on-re-point semantics survive; CLI test assertions are CI-safe (`cliIdentity` strips inherited `GENIE_AGENT_*`; `GENIE_AGENT_KIND` outranks all runtime probes; engineer verified under stripped and hostile-ambient envs). Focused suites 160 pass / 0 fail / 641 expects; typecheck, biome, complexity budget clean. remotty grep: zero timeline/`updated_at` consumers — its only genie surface is the 8-field `@@CARD` from `board --json`. Task `t_msnmrxwj2de66cc1` done.
+
+### Group 2 (wish-status) execution review — SHIP, hash-pinned (2026-08-10)
+
+- **Engineer:** `wish-status-eng` (engineer-standard); **Reviewer:** independent `genie:reviewer` subagent (g2-review). Three review rounds with real churn: an initial FIX-FIRST (reviewer's old-vs-new differential against the shipped bundle caught a zero-width-cell regression the engineer's 500k fuzz structurally could not emit — padded-only generator), a reviewer adjudication recommending accept-and-document that the orchestrator briefly adopted (countermand raced the engineer's completed faithful fix, causing an implement→revert→restore cycle the reviewer's BLOCKED verdict correctly halted), and a final SHIP on the frozen restored implementation.
+- **Final verdict:** SHIP, pinned to frozen hashes (bundle `eaf71f4c…` byte-identical to the reviewer's independently preserved verified artifact; all six file hashes re-verified by the orchestrator before commit).
+- **Evidence (reviewer's final block):** the shipped implementation captures the RAW inter-pipe/post-colon span with the historical `\s*` runs inside the capture group — stripping capture parens yields character-identical matching expressions, so only group boundaries moved — handing the untrimmed span to consumer-supplied accept predicates language-equivalent to the historical inline charsets (what keeps `||` and `|   |` distinguishable). The private scan resumes at match.index+1, load-bearing (3 of 6 probes regress under match-end resumption), no cost (256KB pathological input in 1–2ms). Zero divergences everywhere: 33-probe differential, reviewer's independent 500k adversarial fuzz (`lost=0 invented=0 changed=0`), engineer's corrected-generator 500k + 300k `\r` fuzz, 125-doc and 81-doc real-corpus sweeps; board byte-for-byte unchanged; the engineer's originally disclosed `\r` residual class is CLOSED — the module's contract is full parity with all three pre-consolidation parsers, pinned by a 29-probe corpus captured from the old shipped code. Gates: 102 pass / 0 fail / 294 expects, parity OK bytes+mode, cjs 755, typecheck/dead-code/biome/wishes-lint clean. The reviewer withdrew one mid-run harness artifact (apparent invented statuses — measured across a concurrent edit) and formally accepted the engineer's corrected rationale over its own disproven legacy-continuation counterexample.
+- **Process note (accountability):** the mid-group churn was orchestrator-caused — a countermand raced completed work; recorded as a lesson (consolidated end-state instructions on idle only). Both engineer iterations were faithful to instruction.
+- **Wave-1 full gate (orchestrator-run):** `bun run check` on the combined G1+G2+G4 tree — 3159 pass / 14 fail, and the 14 are name-for-name a subset of pristine dev's 16 pre-existing darwin failures (dev's 2 extras are scratchpad-ACL mode artifacts); zero new failures. Task `t_msnmrxz3cf89fe61` done.
+
+### Group 3 (reconcile-gate) execution review — SHIP (2026-08-10)
+
+- **Engineer:** `reconcile-eng` (engineer-standard); **Reviewer:** independent `genie:reviewer` subagent (the G2 reviewer, reused deliberately for the G2/G3 boundary check; reviewer ≠ engineer holds).
+- **Verdict:** SHIP; 1 pre-existing LOW recorded as follow-up (pi `genie_board` declares `mutation: "none"` while its `board` param makes it reconcile-capable — predates G3); 2 nits (shim git-path quoting; a cosmetic test-slug rename the brief missed).
+- **Evidence (reviewer-verified):** the gate is exact in source — reconcile fires iff `--json` on a scoped lane-defining board; the laneless `--json` path renders raw statuses with no lanes, so the removed unscoped reconcile had zero output effect and was a pure hidden write (hermes `session_context.py` triggered it every session start while claiming to write nothing — G3 makes that contract true). Signature narrowing + `listBoards` fallback removal sound and complete (single caller; fallback unreachable under the gate). Root threading preserves the worktree-shared-db invariant (`resolveRepoRoot` = git-common-dir parent ⇒ inlined path ≡ `resolveDbPath()`), halving git spawns 2→1, pinned by a CI-safe PATH-shim test that logs before delegating and asserts the reconciled end state. The shipped test inversion is in-diff proof (`toBe('Done')` → `toBe('Idea')`); seeded-divergence pins exactly one `wish-status-sync` move event; engineer provided watch-it-fail evidence for both new tests. G2 region byte-untouched (five G2 hashes still verify; `readWishStatus` byte-for-byte as shipped). Board suite 39/0, board+pi 54/0, typecheck/biome/complexity clean.
+- **Aggregate full gate (orchestrator-run, complete tree):** 3161 pass / 14 fail — failure parity held name-for-name against the pre-existing darwin set (itself a subset of pristine dev's). Zero new failures across the wish. Task `t_msnmry1o4568eb4a` done.
 
 ### Plan review — SHIP (2026-08-10T19:42:48Z)
 
