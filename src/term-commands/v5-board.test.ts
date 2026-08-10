@@ -6,7 +6,16 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb } from '../lib/v5/genie-db.js';
@@ -50,17 +59,21 @@ interface CliResult {
   code: number;
 }
 
-async function board(cwd: string, ...args: string[]): Promise<CliResult> {
+async function boardWithEnv(cwd: string, env: Record<string, string>, ...args: string[]): Promise<CliResult> {
   const proc = Bun.spawn(['bun', GENIE, 'board', ...args], {
     cwd,
     stdout: 'pipe',
     stderr: 'pipe',
-    env: { ...process.env, NO_COLOR: '1', GENIE_TEST_SKIP_PGSERVE: '1' },
+    env: { ...process.env, NO_COLOR: '1', GENIE_TEST_SKIP_PGSERVE: '1', ...env },
   });
   const stdout = await new Response(proc.stdout).text();
   const stderr = await new Response(proc.stderr).text();
   const code = await proc.exited;
   return { stdout, stderr, code };
+}
+
+async function board(cwd: string, ...args: string[]): Promise<CliResult> {
+  return boardWithEnv(cwd, {}, ...args);
 }
 
 async function manualTask(cwd: string, ...args: string[]): Promise<CliResult> {
@@ -607,11 +620,11 @@ describe('wish-status lane reconciliation on CLI JSON reads', () => {
     observed.close();
   });
 
-  test('does not reconcile a non-JSON human board read', async () => {
-    writeWish('json-only', 'DONE');
+  test('does not reconcile a non-JSON human board read nor an unscoped --json read', async () => {
+    writeWish('lane-json-only', 'DONE');
     const db = openDb({ cwd: repo });
     const roadmap = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
-    const task = createTask(db, { title: 'json only', boardId: roadmap.id, lane: 'Idea', wish: 'json-only' });
+    const task = createTask(db, { title: 'lane json only', boardId: roadmap.id, lane: 'Idea', wish: 'lane-json-only' });
     db.close();
 
     const human = await board(repo, '--board', 'roadmap');
@@ -620,11 +633,84 @@ describe('wish-status lane reconciliation on CLI JSON reads', () => {
     expect(getTaskLane(observed, task.id)).toBe('Idea');
     observed.close();
 
+    // Unscoped `--json` renders the frozen status shape, which shows no lanes —
+    // so it must not write one either.
     const json = await board(repo, '--json');
     expect(json.code).toBe(0);
     observed = openDb({ cwd: repo });
+    expect(getTaskLane(observed, task.id)).toBe('Idea');
+    observed.close();
+  });
+
+  test('a seeded lane divergence survives every laneless read and is reconciled only by the lane --json read', async () => {
+    writeWish('diverged', 'DONE');
+    const db = openDb({ cwd: repo });
+    const roadmap = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    // Seeded divergence: the stored lane disagrees with the wish's DONE status.
+    const task = createTask(db, { title: 'diverged card', boardId: roadmap.id, lane: 'Idea', wish: 'diverged' });
+    db.close();
+
+    const unscopedJson = await board(repo, '--json');
+    expect(unscopedJson.code).toBe(0);
+    expect(unscopedJson.stderr).toBe('');
+    let observed = openDb({ cwd: repo });
+    expect(getTaskLane(observed, task.id)).toBe('Idea');
+    expect(getTaskEvents(observed, task.id)).toHaveLength(0);
+    observed.close();
+
+    const laneHuman = await board(repo, '--board', 'roadmap');
+    expect(laneHuman.code).toBe(0);
+    observed = openDb({ cwd: repo });
+    expect(getTaskLane(observed, task.id)).toBe('Idea');
+    expect(getTaskEvents(observed, task.id)).toHaveLength(0);
+    observed.close();
+
+    const laneJson = await board(repo, '--board', 'roadmap', '--json');
+    expect(laneJson.code).toBe(0);
+    expect(laneJson.stderr).toBe('');
+    observed = openDb({ cwd: repo });
+    expect(getTaskLane(observed, task.id)).toBe('Done');
+    expect(getTaskEvents(observed, task.id)).toEqual([
+      expect.objectContaining({ kind: 'move', note: 'Idea→Done', author: 'wish-status-sync', authorKind: 'genie' }),
+    ]);
+    observed.close();
+  });
+
+  test('spawns git exactly once per board read, none of it from reconciliation', async () => {
+    writeWish('one-spawn', 'DONE');
+    const db = openDb({ cwd: repo });
+    const roadmap = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    const task = createTask(db, { title: 'one spawn', boardId: roadmap.id, lane: 'Idea', wish: 'one-spawn' });
+    db.close();
+
+    const shimDir = join(repo, 'git-shim');
+    const log = join(repo, 'git-invocations.log');
+    mkdirSync(shimDir);
+    const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf-8' }).trim();
+    writeFileSync(
+      join(shimDir, 'git'),
+      `#!/bin/sh\nprintf '%s\\n' "$*" >> ${JSON.stringify(log)}\nexec ${realGit} "$@"\n`,
+    );
+    chmodSync(join(shimDir, 'git'), 0o755);
+
+    const result = await boardWithEnv(
+      repo,
+      { PATH: `${shimDir}:${process.env.PATH ?? ''}` },
+      '--board',
+      'roadmap',
+      '--json',
+    );
+    expect(result.code).toBe(0);
+    expect(result.stderr).toBe('');
+
+    // The shim delegates to the real git, so the read still resolves its repo.
+    const observed = openDb({ cwd: repo });
     expect(getTaskLane(observed, task.id)).toBe('Done');
     observed.close();
+
+    const invocations = readFileSync(log, 'utf-8').split('\n').filter(Boolean);
+    expect(invocations.filter((line) => line.startsWith('rev-parse'))).toHaveLength(1);
+    expect(invocations).toHaveLength(1);
   });
 });
 

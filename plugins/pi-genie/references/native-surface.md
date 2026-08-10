@@ -1,7 +1,13 @@
 # Genie pi plugin — native surface
 
-This document is the authoritative layer map for the pi plugin payload. Every
-tool is read-only; every payload reports `mutation: "none"`.
+This document is the authoritative layer map for the pi plugin payload. No tool
+mutates tasks, wishes, or files, and every payload reports `mutation: "none"`.
+The single exception to "reads nothing but reads" is `genie_board` called with a
+lane-defining `board` ref: `genie board --json --board <ref>` reconciles
+sync-owned card lanes from WISH.md statuses before rendering, which writes lane
+moves to `genie.db`. Every other invocation — wish-scoped, unscoped, or a
+laneless board — is a pure read, because the CLI reconciles only when the read's
+own output renders lanes.
 
 ## Layer map
 
@@ -21,8 +27,8 @@ tool is read-only; every payload reports `mutation: "none"`.
 | Tool | CLI invocation | Notes |
 |------|----------------|-------|
 | `genie_status` | `genie doctor --json` | plus `.genie/` presence check |
-| `genie_board` | `genie board --json [--wish <slug>] [--board <ref>]` | |
-| `genie_wish_status` | `genie board --json --wish <slug>` + `genie task list --json --wish <slug>` | plus WISH.md criteria |
+| `genie_board` | `genie board --json [--wish <slug>] [--board <ref>]` | reconciles lanes only with a lane-defining `--board` |
+| `genie_wish_status` | `genie board --json --wish <slug>` + `genie task list --json --wish <slug>` | plus WISH.md criteria; pure read (no `--board`) |
 | `genie_task_list` | `genie task list --json [--wish <slug>] [--status <s>] [--board <ref>]` | |
 | `genie_task_status` | `genie task status <id>` | raw capture; parsed when JSON |
 | `genie_work_plan` | `genie launch <slug> --dry-run [--groups <csv>]` | raw YAML-ish text |
@@ -54,7 +60,8 @@ matching the Hermes gap-tool rationale.
 ## Bounding (context hook)
 
 - Resolves the turn cwd; no `.genie/` directory → no injection.
-- `genie board --json` with a ≤5 s subprocess timeout.
+- `genie board --json` with a ≤5 s subprocess timeout — unscoped, so it defines
+  no lanes and never reconciles; the hook is a pure read on every turn.
 - At most 8 task rows and 2 KiB of injected text.
 - Rows are compact `- <id> [<status>] wish=<slug>` tokens — id/status/wish only,
   never free-form titles, so hostile board rows cannot inject directives.

@@ -8,7 +8,7 @@
  */
 
 import type { Database } from 'bun:sqlite';
-import { closeSync, constants as fsConstants, fstatSync, lstatSync, openSync, readSync } from 'node:fs';
+import { lstatSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Command } from 'commander';
 import { color, padRight, truncate } from '../lib/term-format.js';
@@ -33,6 +33,7 @@ import {
   moveTask,
   resolveBoard,
 } from '../lib/v5/task-state.js';
+import { WISH_SLUG_PATTERN, extractStatusCell, readBoundedWishFile } from '../lib/wish-status.js';
 
 // ============================================================================
 // Output helpers (process.stdout/stderr — no console.* in v5 source)
@@ -124,7 +125,6 @@ interface BoardOptions {
 
 type WishLane = 'Idea' | 'Wish' | 'Work' | 'Review' | 'Done';
 
-const WISH_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const MAX_WISH_BYTES = 256 * 1_024;
 
 function physicalDirectory(path: string): boolean {
@@ -171,7 +171,12 @@ function laneForWishStatus(status: string): WishLane | null {
   return null;
 }
 
-/** Read the first markdown-table Status field for one direct wish directory. */
+/**
+ * Read the first markdown-table Status field for one direct wish directory.
+ * Discovery (slug shape + physical-directory ladder) is the board's own; the
+ * bounded read and the `row-end` cell extraction are shared mechanics. The
+ * legacy `**Status:**` form is deliberately NOT recognised here.
+ */
 function readWishStatus(repoRoot: string, wish: string): string | null {
   // `wish` is persisted user input. Admit only a bounded, direct physical
   // `.genie/wishes/<slug>/WISH.md`; unsafe inputs stay hand-owned.
@@ -180,53 +185,26 @@ function readWishStatus(repoRoot: string, wish: string): string | null {
   const wishesDir = join(genieDir, 'wishes');
   if (!physicalDirectory(genieDir) || !physicalDirectory(wishesDir)) return null;
   const wishDir = join(wishesDir, wish);
-  const wishFile = join(wishDir, 'WISH.md');
-  let descriptor: number | null = null;
-  try {
-    const directoryStats = lstatSync(wishDir);
-    if (!directoryStats.isDirectory() || directoryStats.isSymbolicLink()) return null;
-    const pathStats = lstatSync(wishFile);
-    if (!pathStats.isFile() || pathStats.isSymbolicLink() || pathStats.size > MAX_WISH_BYTES) return null;
-
-    descriptor = openSync(wishFile, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK);
-    const fileStats = fstatSync(descriptor);
-    if (!fileStats.isFile() || fileStats.size > MAX_WISH_BYTES) return null;
-
-    const bytes = Buffer.alloc(fileStats.size);
-    let offset = 0;
-    while (offset < bytes.byteLength) {
-      const count = readSync(descriptor, bytes, offset, bytes.byteLength - offset, offset);
-      if (count === 0) break;
-      offset += count;
-    }
-    const body = bytes.subarray(0, offset).toString('utf8');
-    return body.match(/^\|\s*\*\*Status\*\*\s*\|\s*(.*?)\s*\|\s*$/m)?.[1]?.trim() || null;
-  } catch {
-    // Missing/orphaned and unreadable wishes are hand-owned for this read.
-    return null;
-  } finally {
-    if (descriptor !== null) {
-      try {
-        closeSync(descriptor);
-      } catch {
-        // The read remains best-effort even if descriptor cleanup reports I/O.
-      }
-    }
-  }
+  if (!physicalDirectory(wishDir)) return null;
+  const body = readBoundedWishFile(join(wishDir, 'WISH.md'), MAX_WISH_BYTES);
+  if (body === null) return null;
+  return extractStatusCell(body, 'row-end') || null;
 }
 
 /**
- * Reconcile the JSON read's selected cards, one lane-defining board at a time.
- * A card's rendered lane is its stored lane, falling back to the board's first
- * (enclosing) lane when NULL. Per-card failures preserve the stored projection:
- * one bad wish or concurrent lane change must never suppress the board read.
+ * Reconcile the cards of ONE lane-defining board — only ever called for a read
+ * whose own output renders lanes. A card's rendered lane is its stored lane,
+ * falling back to the board's first (enclosing) lane when NULL. Per-card
+ * failures preserve the stored projection: one bad wish or concurrent lane
+ * change must never suppress the board read. `repoRoot` is resolved by the
+ * caller so a board invocation spawns `git rev-parse` exactly once.
  */
-function reconcileWishLanes(db: Database, filter: TaskFilter, selectedBoard: BoardRow | null): void {
-  const repoRoot = resolveRepoRoot();
-  const boards = selectedBoard ? [selectedBoard] : listBoards(db);
+function reconcileWishLanes(db: Database, filter: TaskFilter, board: BoardRow, repoRoot: string): void {
+  const lanes = board.lanes;
+  if (!lanes || lanes.length === 0) return;
   // One WISH.md read per distinct wish per invocation: a wish's group cards all
-  // carry the same slug, and the same slug recurs across boards in the unscoped
-  // loop — without this cache every card pays a redundant open/read/regex pass.
+  // carry the same slug, so without this cache every card of a multi-group wish
+  // pays a redundant open/read/regex pass.
   const laneByWish = new Map<string, WishLane | null>();
   const wishLaneFor = (wish: string): WishLane | null => {
     if (laneByWish.has(wish)) return laneByWish.get(wish) ?? null;
@@ -235,29 +213,28 @@ function reconcileWishLanes(db: Database, filter: TaskFilter, selectedBoard: Boa
     laneByWish.set(wish, lane);
     return lane;
   };
-  for (const board of boards) {
-    const lanes = board.lanes;
-    if (!lanes || lanes.length === 0) continue;
-    const laneNames = new Set(lanes.map((lane) => lane.name));
-    const enclosingLane = lanes[0].name;
-    const boardFilter: TaskFilter = { ...filter, boardId: board.id };
-    for (const task of listTasksWithLane(db, boardFilter)) {
-      if (!task.wish) continue;
-      const destination = wishLaneFor(task.wish);
-      if (!destination || !laneNames.has(destination)) continue;
-      const currentLane = task.lane ?? enclosingLane;
-      if (currentLane === destination) continue;
-      try {
-        moveTask(db, task.id, destination, { author: 'wish-status-sync', authorKind: 'genie' });
-      } catch {
-        // Best-effort reconciliation: render the durable lane that remains.
-      }
+  const laneNames = new Set(lanes.map((lane) => lane.name));
+  const enclosingLane = lanes[0].name;
+  const boardFilter: TaskFilter = { ...filter, boardId: board.id };
+  for (const task of listTasksWithLane(db, boardFilter)) {
+    if (!task.wish) continue;
+    const destination = wishLaneFor(task.wish);
+    if (!destination || !laneNames.has(destination)) continue;
+    const currentLane = task.lane ?? enclosingLane;
+    if (currentLane === destination) continue;
+    try {
+      moveTask(db, task.id, destination, { author: 'wish-status-sync', authorKind: 'genie' });
+    } catch {
+      // Best-effort reconciliation: render the durable lane that remains.
     }
   }
 }
 
 function handleBoard(opts: BoardOptions): void {
-  const db = openDb();
+  // Resolved once and threaded to both the DB path and the reconciler, so one
+  // board invocation costs exactly one `git rev-parse` child process.
+  const repoRoot = resolveRepoRoot();
+  const db = openDb({ path: join(repoRoot, '.genie', 'genie.db') });
   try {
     const filter: TaskFilter = {};
     let scopeLabel = 'all tasks';
@@ -272,14 +249,16 @@ function handleBoard(opts: BoardOptions): void {
       scopeLabel = opts.board ? `${scopeLabel}, wish "${opts.wish}"` : `wish "${opts.wish}"`;
     }
 
-    // Deliberately CLI-only. MCP queries call their shared read projection and
-    // never enter this verb handler, so they remain read-only.
-    if (opts.json) reconcileWishLanes(db, filter, board);
-
     // A scoped board that defines lanes renders on the lifecycle axis. Every
     // other scope (no board, or a laneless board) falls through to the frozen
     // status render below — kept byte-identical (Group B owns any rework).
     if (board?.lanes && board.lanes.length > 0) {
+      // The only write a board read may perform, and only when this read's own
+      // output renders lanes: `--json` on a lane-defining board. Deliberately
+      // CLI-only — MCP queries call their shared read projection and never
+      // enter this verb handler. The human lane render and every laneless read
+      // (including unscoped `--json`) stay pure reads.
+      if (opts.json) reconcileWishLanes(db, filter, board, repoRoot);
       renderLaneBoard(db, board.lanes, filter, scopeLabel, opts.json ?? false);
       return;
     }

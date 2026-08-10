@@ -351,7 +351,7 @@ export default function genieExtension(pi: any): void {
     name: 'genie_board',
     label: 'Genie Board',
     description:
-      'Return the Genie planning board (genie board --json), optionally scoped to one wish slug or board ref. The read may first reconcile sync-owned card lanes from WISH.md statuses (a genie.db write); it never mutates tasks, wishes, or files.',
+      'Return the Genie planning board (genie board --json), optionally scoped to one wish slug or board ref. With a lane-defining board ref the read first reconciles sync-owned card lanes from WISH.md statuses (a genie.db write); every other scope is a pure read. It never mutates tasks, wishes, or files.',
     parameters: {
       type: 'object',
       properties: {
@@ -381,7 +381,7 @@ export default function genieExtension(pi: any): void {
     name: 'genie_wish_status',
     label: 'Genie Wish Status',
     description:
-      'Composite wish status: the board slice plus the task list for one wish slug. The board read may first reconcile sync-owned card lanes from WISH.md statuses (a genie.db write); it never mutates tasks, wishes, or files.',
+      'Composite wish status: the board slice plus the task list for one wish slug. Read-only — the wish-scoped board read defines no lanes, so it never reconciles or writes.',
     parameters: { type: 'object', properties: { wish: stringProp('Wish slug') } },
     async execute(
       _toolCallId: string,
