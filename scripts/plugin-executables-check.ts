@@ -74,7 +74,10 @@ run(process.execPath, [
 
 for (const path of REQUIRED_EXECUTABLES) {
   const mode = lstatSync(path).mode & 0o777;
-  if ((mode & 0o111) !== 0o111) {
+  // Owner bit only: git records just the 100755/100644 class and materializes
+  // it as 0777 & ~umask, so a clean checkout under umask 077 is 0700 — the
+  // group/other bits are checkout-environment noise, not the committed mode.
+  if ((mode & 0o100) !== 0o100) {
     throw new Error(
       `plugin executable must be committed with the executable bit (100755): ${path} is ${mode.toString(8).padStart(4, '0')}`,
     );
