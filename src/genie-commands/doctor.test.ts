@@ -1837,7 +1837,7 @@ describe('evaluateIndexLaneDrift (pure section↔lane parser)', () => {
   const laneForSlug = (slug: string): string | null => lanes.get(slug) ?? null;
 
   test('agreeing lane → ok; contradicting lane → drift', () => {
-    const entries = evaluateIndexLaneDrift(INDEX, laneForSlug);
+    const entries = evaluateIndexLaneDrift(INDEX, laneForSlug, () => true);
     const byEntry = Object.fromEntries(entries.map((e) => [e.entry, e]));
     expect(byEntry.alpha.state).toBe('ok');
     expect(byEntry.alpha.lane).toBe('Idea');
@@ -1846,14 +1846,14 @@ describe('evaluateIndexLaneDrift (pure section↔lane parser)', () => {
   });
 
   test('the FIRST brainstorms/wishes link decides the slug', () => {
-    const entries = evaluateIndexLaneDrift(INDEX, laneForSlug);
+    const entries = evaluateIndexLaneDrift(INDEX, laneForSlug, () => true);
     const delta = entries.find((e) => e.entry === 'delta');
     expect(delta?.slug).toBe('delta');
     expect(delta?.state).toBe('ok');
   });
 
   test('linkless entries and laneless cards are unlinked, never drift', () => {
-    const entries = evaluateIndexLaneDrift(INDEX, laneForSlug);
+    const entries = evaluateIndexLaneDrift(INDEX, laneForSlug, () => true);
     const linkless = entries.find((e) => e.slug === null);
     expect(linkless?.state).toBe('unlinked');
     expect(linkless?.section).toBe('Raw');
@@ -1865,15 +1865,46 @@ describe('evaluateIndexLaneDrift (pure section↔lane parser)', () => {
   });
 
   test('bullets under non-lifecycle headings are excluded', () => {
-    const entries = evaluateIndexLaneDrift(INDEX, laneForSlug);
+    const entries = evaluateIndexLaneDrift(INDEX, laneForSlug, () => true);
     expect(entries.some((e) => e.slug === 'zeta')).toBe(false);
     // Raw(2) + Simmering(1) + Ready(1) + Poured(2) = 6 entries.
     expect(entries).toHaveLength(6);
   });
 
   test('order is stable (INDEX document order)', () => {
-    const slugs = evaluateIndexLaneDrift(INDEX, laneForSlug).map((e) => e.slug);
+    const slugs = evaluateIndexLaneDrift(INDEX, laneForSlug, () => true).map((e) => e.slug);
     expect(slugs).toEqual(['alpha', null, 'beta', 'gamma', 'delta', 'epsilon']);
+  });
+
+  test('the resolver receives the reconstructed <dir>/<slug>/<remainder> target', () => {
+    const seen: string[] = [];
+    evaluateIndexLaneDrift(INDEX, laneForSlug, (target) => {
+      seen.push(target);
+      return true;
+    });
+    expect(seen).toEqual([
+      'brainstorms/alpha/DRAFT.md',
+      'brainstorms/beta/DRAFT.md',
+      'wishes/gamma/WISH.md',
+      'brainstorms/delta/DESIGN.md',
+      'wishes/epsilon/WISH.md',
+    ]);
+  });
+
+  test('a missing target is broken, and broken outranks drift', () => {
+    // beta would be drift (Simmering allows only Brainstorm, card says Wish).
+    const entries = evaluateIndexLaneDrift(INDEX, laneForSlug, (target) => target !== 'brainstorms/beta/DRAFT.md');
+    const byEntry = Object.fromEntries(entries.map((e) => [e.entry, e]));
+    expect(byEntry.beta.state).toBe('broken');
+    expect(byEntry.beta.lane).toBe('Wish'); // lane still reported for context
+    expect(byEntry.alpha.state).toBe('ok');
+  });
+
+  test('broken also outranks unlinked, and linkless entries never reach the resolver', () => {
+    const entries = evaluateIndexLaneDrift(INDEX, laneForSlug, () => false);
+    const byState = entries.map((e) => e.state);
+    // Only the one linkless bullet stays unlinked; every linked entry is broken.
+    expect(byState).toEqual(['broken', 'unlinked', 'broken', 'broken', 'broken', 'broken']);
   });
 });
 
@@ -1912,6 +1943,17 @@ describe('checkIndexLaneDrift (DB-backed, warning-level)', () => {
     writeFileSync(join(dir, '.genie', 'INDEX.md'), text);
   }
 
+  /** Materialize a `.genie`-relative link target so the entry is not 'broken'. */
+  function writeTarget(relativePath: string): void {
+    const full = join(dir, '.genie', relativePath);
+    if (relativePath.endsWith('/')) {
+      mkdirSync(full, { recursive: true });
+      return;
+    }
+    mkdirSync(dirname(full), { recursive: true });
+    writeFileSync(full, '# target\n');
+  }
+
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'genie-jar-'));
   });
@@ -1921,6 +1963,7 @@ describe('checkIndexLaneDrift (DB-backed, warning-level)', () => {
 
   test('a resolved card whose lane agrees passes with a per-entry ok state', () => {
     writeIndex('# Plans Index\n## Poured\n- [WISH: boards](wishes/boards-first-class/WISH.md) — shipped\n');
+    writeTarget('wishes/boards-first-class/WISH.md');
     seedDb([{ title: 'Boards first-class', wish: 'boards-first-class', lane: 'Wish' }]);
     const [result] = checkIndexLaneDrift(dir, dir);
     expect(result.name).toBe('jar: index-lane drift');
@@ -1934,6 +1977,7 @@ describe('checkIndexLaneDrift (DB-backed, warning-level)', () => {
   test('a contradicting lane warns (never flips ok:false) and reports drift', () => {
     // Card sits in the Idea lane but the INDEX files it under Poured → drift.
     writeIndex('# Plans Index\n## Poured\n- [WISH: boards](wishes/boards-first-class/WISH.md)\n');
+    writeTarget('wishes/boards-first-class/WISH.md');
     seedDb([{ title: 'Boards first-class', wish: 'boards-first-class', lane: 'Idea' }]);
     const [result] = checkIndexLaneDrift(dir, dir);
     expect(result.status).toBe('warn'); // warn, not fail
@@ -1944,6 +1988,7 @@ describe('checkIndexLaneDrift (DB-backed, warning-level)', () => {
 
   test('a laneless card is unlinked, not drift', () => {
     writeIndex('# Plans Index\n## Raw\n- [alpha](brainstorms/alpha/DRAFT.md)\n');
+    writeTarget('brainstorms/alpha/DRAFT.md');
     seedDb([{ title: 'Alpha', wish: 'alpha', lane: null }]);
     const [result] = checkIndexLaneDrift(dir, dir);
     expect(result.status).toBe('pass');
@@ -1960,6 +2005,7 @@ describe('checkIndexLaneDrift (DB-backed, warning-level)', () => {
 
   test('absent DB degrades every linked entry to unlinked (never throws, never drift)', () => {
     writeIndex('# Plans Index\n## Raw\n- [alpha](brainstorms/alpha/DRAFT.md)\n');
+    writeTarget('brainstorms/alpha/DRAFT.md');
     const [result] = checkIndexLaneDrift(dir, dir); // no seedDb → no genie.db
     expect(result.status).toBe('pass');
     expect(result.indexLane?.entries[0].state).toBe('unlinked');
@@ -1976,13 +2022,14 @@ describe('checkIndexLaneDrift (DB-backed, warning-level)', () => {
         '- [orphan](wishes/orphan/WISH.md)', // no card → unlinked
       ].join('\n'),
     );
+    for (const t of ['brainstorms/alpha/DRAFT.md', 'wishes/beta/WISH.md', 'wishes/orphan/WISH.md']) writeTarget(t);
     seedDb([
       { title: 'Alpha', wish: 'alpha', lane: 'Idea' },
       { title: 'Beta', wish: 'beta', lane: 'Idea' },
     ]);
     const [result] = checkIndexLaneDrift(dir, dir);
     expect(result.status).toBe('warn');
-    expect(result.detail).toBe('3 INDEX entries: 1 ok, 1 drift, 1 unlinked');
+    expect(result.detail).toBe('3 INDEX entries: 1 ok, 1 drift, 0 broken, 1 unlinked');
     const states = Object.fromEntries((result.indexLane?.entries ?? []).map((e) => [e.slug, e.state]));
     expect(states.alpha).toBe('ok');
     expect(states.beta).toBe('drift');
@@ -1991,6 +2038,7 @@ describe('checkIndexLaneDrift (DB-backed, warning-level)', () => {
 
   test('--json rider is present under the stable name with per-entry states', () => {
     writeIndex('# Plans Index\n## Poured\n- [WISH: boards](wishes/boards-first-class/WISH.md)\n');
+    writeTarget('wishes/boards-first-class/WISH.md');
     seedDb([{ title: 'Boards first-class', wish: 'boards-first-class', lane: 'Wish' }]);
     const results = checkIndexLaneDrift(dir, dir);
     // Serialize exactly as doctorCommand does and re-parse — the rider must survive.
@@ -2010,6 +2058,126 @@ describe('checkIndexLaneDrift (DB-backed, warning-level)', () => {
       lane: 'Wish',
       state: 'ok',
     });
+  });
+
+  test('a deleted WISH.md is broken, not ok, and warns', () => {
+    // Lane agrees with the section — only the dead target separates this from ok.
+    writeIndex('# Plans Index\n## Poured\n- [WISH: boards](wishes/boards-first-class/WISH.md)\n');
+    seedDb([{ title: 'Boards first-class', wish: 'boards-first-class', lane: 'Wish' }]);
+    const [result] = checkIndexLaneDrift(dir, dir); // no writeTarget → target absent
+    expect(result.status).toBe('warn');
+    expect(result.detail).toBe('1 INDEX entries: 0 ok, 0 drift, 1 broken, 0 unlinked');
+    expect(result.indexLane?.entries[0].state).toBe('broken');
+    expect(result.suggestion).toContain('no longer exists');
+  });
+
+  test('an #anchor suffix resolves against the file, and a directory link against the directory', () => {
+    writeIndex(
+      [
+        '# Plans Index',
+        '## Poured',
+        '- [anchored](wishes/anchored/WISH.md#acceptance-criteria)',
+        '## Simmering',
+        '- [dirlink](brainstorms/dirlink/)',
+      ].join('\n'),
+    );
+    writeTarget('wishes/anchored/WISH.md');
+    writeTarget('brainstorms/dirlink/');
+    seedDb([
+      { title: 'Anchored', wish: 'anchored', lane: 'Wish' }, // Poured allows Wish → ok
+      { title: 'Dirlink', wish: 'dirlink', lane: 'Wish' }, // Simmering allows only Brainstorm → drift
+    ]);
+    const [result] = checkIndexLaneDrift(dir, dir);
+    const states = Object.fromEntries((result.indexLane?.entries ?? []).map((e) => [e.slug, e.state]));
+    expect(states.anchored).toBe('ok');
+    expect(states.dirlink).toBe('drift'); // resolved target → still lane-checked, never broken
+  });
+
+  test('an entry that is both dangling and lane-mismatched reports broken', () => {
+    writeIndex('# Plans Index\n## Poured\n- [gone](wishes/gone/WISH.md)\n');
+    seedDb([{ title: 'Gone', wish: 'gone', lane: 'Idea' }]); // Poured excludes Idea → would be drift
+    const [result] = checkIndexLaneDrift(dir, dir);
+    expect(result.indexLane?.entries[0].state).toBe('broken');
+    expect(result.detail).toContain('0 drift, 1 broken');
+  });
+
+  test('a link that traverses outside .genie is broken even when the outside path exists', () => {
+    // `..` is a legal slug for the link regex, so the target must be contained,
+    // not merely stat-ed — otherwise doctor --json reports whether any path on
+    // the machine exists.
+    const outside = join(dir, 'outside.md');
+    writeFileSync(outside, '# outside\n');
+    expect(existsSync(outside)).toBe(true);
+    writeIndex('# Plans Index\n## Poured\n- [escape](wishes/../../outside.md)\n');
+    const [result] = checkIndexLaneDrift(dir, dir);
+    expect(result.indexLane?.entries[0].state).toBe('broken');
+    expect(result.detail).toContain('1 broken');
+  });
+
+  test('a linkless entry is still unlinked and does not warn', () => {
+    writeIndex('# Plans Index\n## Raw\n- a linkless note\n');
+    const [result] = checkIndexLaneDrift(dir, dir);
+    expect(result.status).toBe('pass');
+    expect(result.indexLane?.entries[0].state).toBe('unlinked');
+    expect(result.suggestion).toBeUndefined();
+  });
+});
+
+describe('doctorCommand — index-lane human output and ok invariance', () => {
+  function seedIndexFixture(): string {
+    const root = join(isolatedHome, 'repo');
+    mkdirSync(join(root, '.genie', 'brainstorms', 'live'), { recursive: true });
+    writeFileSync(join(root, '.genie', 'brainstorms', 'live', 'DRAFT.md'), '# live\n');
+    writeFileSync(
+      join(root, '.genie', 'INDEX.md'),
+      [
+        '# Plans Index',
+        '## Raw',
+        '- [live](brainstorms/live/DRAFT.md)',
+        '- [deleted wish](wishes/deleted/WISH.md)',
+        '- a linkless note',
+      ].join('\n'),
+    );
+    return root;
+  }
+
+  test('human output names the broken and unlinked entries', async () => {
+    seedIndexFixture();
+    const { output } = await captureDoctor(() => doctorCommand({}, isolatedDoctorDeps()));
+    expect(output).toContain('jar: index-lane drift');
+    // No genie.db in the fixture, so the resolving entry is unlinked, not ok.
+    expect(output).toContain('0 ok, 0 drift, 1 broken, 2 unlinked');
+    expect(output).toContain('· broken: deleted wish');
+    expect(output).toContain('· unlinked: a linkless note');
+  });
+
+  test('unlinked lines are capped at five while every broken entry is named', async () => {
+    const root = join(isolatedHome, 'repo');
+    mkdirSync(join(root, '.genie'), { recursive: true });
+    const bullets = Array.from({ length: 8 }, (_, i) => `- a linkless note ${i}`);
+    // Two dangling links: broken must survive the cap that trims unlinked.
+    bullets.push('- [gone one](wishes/gone-one/WISH.md)', '- [gone two](wishes/gone-two/WISH.md)');
+    writeFileSync(join(root, '.genie', 'INDEX.md'), ['# Plans Index', '## Raw', ...bullets].join('\n'));
+    const { output } = await captureDoctor(() => doctorCommand({}, isolatedDoctorDeps()));
+    expect(output).toContain('· unlinked: a linkless note 4');
+    expect(output).not.toContain('· unlinked: a linkless note 5');
+    expect(output).toContain('· …and 3 more unlinked');
+    expect(output).toContain('· broken: gone one');
+    expect(output).toContain('· broken: gone two');
+  });
+
+  test('broken and unlinked entries never flip doctor ok', async () => {
+    seedIndexFixture();
+    const { output } = await captureDoctor(() => doctorCommand({ json: true }, isolatedDoctorDeps()));
+    const doc = JSON.parse(output) as {
+      ok: boolean;
+      checks: Array<{ name: string; status: string; indexLane?: { entries: Array<{ state: string }> } }>;
+    };
+    const check = doc.checks.find((c) => c.name === 'jar: index-lane drift');
+    expect(check?.status).toBe('warn');
+    expect(check?.indexLane?.entries.map((e) => e.state)).toEqual(['unlinked', 'broken', 'unlinked']);
+    expect(doc.checks.some((c) => c.status === 'fail')).toBe(false);
+    expect(doc.ok).toBe(true);
   });
 });
 

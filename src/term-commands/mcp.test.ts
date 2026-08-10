@@ -11,11 +11,22 @@
 import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { openDb } from '../lib/v5/genie-db.js';
-import { createBoard, createTask, createWishGroups } from '../lib/v5/task-state.js';
+import { openDb, resolveDbPath } from '../lib/v5/genie-db.js';
+import { DEFAULT_LIFECYCLE_LANES, createBoard, createTask, getTaskEvents, getTaskLane } from '../lib/v5/task-state.js';
 
 const GENIE = join(import.meta.dir, '..', 'genie.ts');
 const SRC_ROOT = resolve(import.meta.dir, '..');
@@ -118,13 +129,16 @@ function seed(cwd: string): { taskId: string } {
   const board = createBoard(db, 'repo');
   const t = createTask(db, { title: 'seed task', boardId: board.id, wish: 'genie-mcp', group: 'g2' });
   createTask(db, { title: 'other', boardId: board.id });
-  createWishGroups(db, 'genie-mcp', [{ name: 'g1' }, { name: 'g2', dependsOn: ['g1'] }]);
   // Fold pending WAL frames into the main db before the reader subprocess opens,
   // so the readonly `genie mcp` server isn't racing an open WAL writer under
   // cross-file test contention ("database is locked").
   db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
   db.close();
   return { taskId: t.id };
+}
+
+function fileContentHash(path: string): string {
+  return createHash('sha256').update(readFileSync(path)).digest('hex');
 }
 
 // ============================================================================
@@ -203,7 +217,87 @@ describe('mcp tools/call', () => {
     expect(payload.tasks.some((t) => t.wish === 'genie-mcp')).toBe(true);
   });
 
-  test('genie_wish_status returns the group DAG and tasks', async () => {
+  test('genie_board stays read-only with a divergent sync-owned card in an immutable database', async () => {
+    const wishDir = join(repo, '.genie', 'wishes', 'mcp-read-only');
+    mkdirSync(wishDir, { recursive: true });
+    writeFileSync(join(wishDir, 'WISH.md'), '| **Status** | DONE |\n');
+
+    const dbPath = resolveDbPath(repo);
+    const sqlitePaths = [dbPath, `${dbPath}-wal`, `${dbPath}-shm`];
+    const stateDir = dirname(dbPath);
+    const db = openDb({ cwd: repo });
+    const originalModes = new Map<string, number>();
+    const mutatedModes = new Set<string>();
+    const beforeHashes = new Map<string, string>();
+    const cleanupErrors: unknown[] = [];
+    let testError: unknown;
+
+    try {
+      const roadmap = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+      const task = createTask(db, {
+        title: 'divergent sync-owned card',
+        boardId: roadmap.id,
+        lane: 'Idea',
+        wish: 'mcp-read-only',
+      });
+      expect(getTaskLane(db, task.id)).toBe('Idea');
+      expect(getTaskEvents(db, task.id)).toHaveLength(0);
+
+      for (const path of sqlitePaths) {
+        expect(existsSync(path)).toBe(true);
+        beforeHashes.set(path, fileContentHash(path));
+        originalModes.set(path, statSync(path).mode & 0o777);
+        mutatedModes.add(path);
+        chmodSync(path, 0o444);
+        expect(statSync(path).mode & 0o777).toBe(0o444);
+      }
+      originalModes.set(stateDir, statSync(stateDir).mode & 0o777);
+      mutatedModes.add(stateDir);
+      chmodSync(stateDir, 0o555);
+      expect(statSync(stateDir).mode & 0o777).toBe(0o555);
+
+      const responses = await driveMcp(repo, [
+        INIT,
+        INITIALIZED,
+        { jsonrpc: '2.0', id: 31, method: 'tools/call', params: { name: 'genie_board', arguments: {} } },
+      ]);
+
+      const response = responses.find((entry) => entry.id === 31);
+      expect(response?.result?.isError).toBe(false);
+      const payload = toolPayload<{ tasks: Array<{ id: string; wish: string }> }>(response!);
+      expect(payload.tasks).toContainEqual(expect.objectContaining({ id: task.id, wish: 'mcp-read-only' }));
+      expect(getTaskLane(db, task.id)).toBe('Idea');
+      expect(getTaskEvents(db, task.id)).toHaveLength(0);
+
+      for (const path of sqlitePaths) {
+        expect(existsSync(path)).toBe(true);
+        expect(fileContentHash(path)).toBe(beforeHashes.get(path)!);
+      }
+    } catch (error) {
+      testError = error;
+    } finally {
+      for (const path of [stateDir, ...sqlitePaths]) {
+        if (!mutatedModes.has(path)) continue;
+        try {
+          chmodSync(path, originalModes.get(path)!);
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+      }
+      try {
+        db.close();
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    }
+    if (testError !== undefined && cleanupErrors.length > 0) {
+      throw new AggregateError([testError, ...cleanupErrors], 'MCP proof failed and fixture cleanup was incomplete');
+    }
+    if (testError !== undefined) throw testError;
+    if (cleanupErrors.length > 0) throw new AggregateError(cleanupErrors, 'Failed to restore immutable SQLite fixture');
+  });
+
+  test('genie_wish_status returns a literal empty groups array plus the wish tasks', async () => {
     seed(repo);
     const responses = await driveMcp(repo, [
       INIT,
@@ -219,10 +313,8 @@ describe('mcp tools/call', () => {
       responses.find((r) => r.id === 4)!,
     );
     expect(payload.wish).toBe('genie-mcp');
-    expect(payload.groups.map((g) => g.name).sort()).toEqual(['g1', 'g2']);
-    const g2 = payload.groups.find((g) => g.name === 'g2');
-    expect(g2?.dependsOn).toEqual(['g1']);
-    expect(g2?.status).toBe('blocked');
+    // Wish-group machinery is production-dead — groups is a hardcoded [].
+    expect(payload.groups).toEqual([]);
   });
 
   test('genie_task returns full detail by id, or not_found', async () => {
@@ -611,16 +703,14 @@ describe('mcp worktree branch resolution', () => {
     expect(grpP.group).toBe('g2');
   });
 
-  test('a launch group branch beats a same-named top-level wish slug', async () => {
-    // Ambiguous collision: a `genie` wish WITH a real `mcp` group, AND a separate
-    // `genie-mcp` wish. `wish/genie-mcp` must resolve to the verified launch
-    // worktree (genie / mcp), not the exact-slug top-level `genie-mcp` wish.
+  test('an exact known slug wins when no live wish_groups can verify a launch worktree', async () => {
+    // No wish-group rows exist (the machinery is production-dead), so a `genie`
+    // wish with an `mcp` group AND a separate `genie-mcp` wish collide on
+    // `wish/genie-mcp` — the exact known slug wins, group unverifiable (null).
     const db = openDb({ cwd: repo });
     const board = createBoard(db, 'repo');
     createTask(db, { title: 'a', boardId: board.id, wish: 'genie', group: 'mcp' });
-    createWishGroups(db, 'genie', [{ name: 'mcp' }]);
     createTask(db, { title: 'b', boardId: board.id, wish: 'genie-mcp', group: 'g1' });
-    createWishGroups(db, 'genie-mcp', [{ name: 'g1' }]);
     db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
     db.close();
     const res = await driveMcp(repo, [
@@ -634,8 +724,8 @@ describe('mcp worktree branch resolution', () => {
       },
     ]);
     const p = toolPayload<{ wish: string; group: string | null }>(res.find((r) => r.id === 32)!);
-    expect(p.wish).toBe('genie');
-    expect(p.group).toBe('mcp');
+    expect(p.wish).toBe('genie-mcp');
+    expect(p.group).toBeNull();
   });
 });
 

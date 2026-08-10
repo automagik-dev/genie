@@ -5,7 +5,7 @@ description: "Dispatch docs subagent to audit, generate, and validate documentat
 
 # docs — Documentation Generation
 
-**Runtime syntax:** in Codex, invoke the plugin copy with the owner-qualified `$genie:<skill>` selector; use bare `$<skill>` only when intentionally selecting a user-tier copy (a separately installed personal copy; Genie no longer seeds this tier). Claude Code and Hermes use `/<skill>`. Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active tier.
+**Runtime syntax:** invoke the plugin copy through the active runtime's owner-qualified skill selector; use a bare selector only when intentionally selecting a user-tier copy (a separately installed personal copy; Genie no longer seeds this tier). Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active runtime.
 
 Audit existing documentation, fill gaps, and validate every claim against actual code. Standalone or as part of `work`.
 
@@ -19,13 +19,13 @@ Audit existing documentation, fill gaps, and validate every claim against actual
 | Type | Location | Purpose |
 |------|----------|---------|
 | README | `README.md`, `*/README.md` | Overview, setup, usage |
-| AGENTS.md | `AGENTS.md`, `*/AGENTS.md` | Codex conventions, constraints, commands, verification |
+| AGENTS.md | `AGENTS.md`, `*/AGENTS.md` | Agent conventions, constraints, commands, verification |
 | CLAUDE.md | `CLAUDE.md`, `*/CLAUDE.md` | Conventions, commands, gotchas for agents |
 | API docs | `docs/api/`, inline JSDoc/TSDoc | Contracts, request/response schemas |
 | Architecture | `docs/architecture.md`, `ARCHITECTURE.md` | System design, data flow |
 | Inline | JSDoc, TSDoc, docstrings | Function/class/module docs |
 
-`AGENTS.md` is the governing Codex instruction surface. `CLAUDE.md` remains evidence of repository intent when present; keep both current when the project supports both clients.
+`AGENTS.md` is the governing agent instruction surface. `CLAUDE.md` remains evidence of repository intent when present; keep both current when the project has both files.
 
 ## Flow
 1. **Audit** — map what exists across the surfaces above.

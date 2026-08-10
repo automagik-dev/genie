@@ -17,8 +17,11 @@ import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import {
+  accessSync,
+  chmodSync,
   copyFileSync,
   existsSync,
+  constants as fsConstants,
   linkSync,
   mkdirSync,
   mkdtempSync,
@@ -29,7 +32,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import { isCurrentGenieDb, openDb } from './genie-db.js';
+import { STAGE_LOG_BACKFILL_KEY, isCurrentGenieDb, openDb } from './genie-db.js';
 import {
   MCP_TOOLS,
   openReadonlyDb,
@@ -479,6 +482,65 @@ describe('openReadonlyDbHealingStaleSchema', () => {
     const untouched = openReadonlyDb(repo);
     expect(isCurrentGenieDb(untouched as Database)).toBe(false);
     untouched?.close();
+  });
+
+  test('serves a marker-only-stale database readonly when the heal write is impossible', () => {
+    const repo = initRepo(join(base, 'repo'));
+    seedDb(repo);
+    const path = join(repo, '.genie', 'genie.db');
+    const stale = new Database(path);
+    // Shape is fully current; only the data-only backfill marker is pending —
+    // the one staleness a read never depends on.
+    stale.query('DELETE FROM meta WHERE key = ?').run(STAGE_LOG_BACKFILL_KEY);
+    stale.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    stale.close();
+
+    // Write-protect the database and its directory: the sandboxed/CI shape
+    // where the consumer can read .genie/genie.db but never write it, so the
+    // write-path heal is impossible.
+    const genieDir = join(repo, '.genie');
+    chmodSync(path, 0o444);
+    chmodSync(genieDir, 0o555);
+    try {
+      // Root (some CI containers) ignores file modes, so the heal write would
+      // succeed and this test would assert the wrong branch — the degrade
+      // path is only expressible where chmod actually revokes write access.
+      try {
+        accessSync(path, fsConstants.W_OK);
+        return; // still writable (running as root) — skip
+      } catch {
+        // write access revoked as intended — proceed
+      }
+      const served = openReadonlyDbHealingStaleSchema(repo);
+      if (served === null) {
+        // Null is only acceptable when this platform's SQLite cannot read a
+        // write-protected WAL database AT ALL (read-only WAL support varies
+        // by VFS state — ubuntu CI hits this). Probe a plain readonly open +
+        // query: if that works, the degrade fallback should have served the
+        // handle and returning null is a real regression.
+        const probe = openReadonlyDb(repo);
+        let readable = false;
+        try {
+          if (probe !== null) {
+            probe.query('SELECT 1 FROM meta').get();
+            readable = true;
+          }
+        } catch {
+          // unreadable — the scenario is inexpressible in this environment
+        }
+        probe?.close();
+        expect(readable).toBe(false);
+        return;
+      }
+      // Still not strictly current (marker pending) — but readable and served.
+      expect(isCurrentGenieDb(served)).toBe(false);
+      const row = served.query('SELECT title FROM tasks').get() as { title: string };
+      expect(row.title).toBe('seed');
+      served.close();
+    } finally {
+      chmodSync(genieDir, 0o755);
+      chmodSync(path, 0o644);
+    }
   });
 
   test('fails closed on a future user_version instead of healing it', () => {

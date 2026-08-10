@@ -1,12 +1,12 @@
 # Genie plugin surfaces
 
-This directory is the shared release payload for Claude Code and Codex. The two clients load different manifests, but the 23 product skills have one canonical source (`/skills`) and one committed, byte-checked plugin mirror (`plugins/genie/skills`).
+This directory is the shared release payload for Claude Code and Codex. The two clients load different manifests, but the 22 product skills have one canonical source (`/skills`) and one committed, byte-checked plugin mirror (`plugins/genie/skills`).
 
 ## What Codex gets
 
 | Surface | Delivery | Contract |
 |---------|----------|----------|
-| Product skills | The plugin contains 23 physical in-root skill directories, each with `SKILL.md` and `agents/openai.yaml` | The **sole** Genie-managed skill provider; no escaping symlink and no user-tier copy — nothing is written to `~/.agents/skills` |
+| Product skills | The plugin contains 22 physical in-root skill directories, each with `SKILL.md` and `agents/openai.yaml` | The **sole** Genie-managed skill provider; no escaping symlink and no user-tier copy — nothing is written to `~/.agents/skills` |
 | Fallback retirement | Hidden `~/.agents/skills/.genie-codex-fallback-retirement/` quarantine transaction | Never written on fresh setup. Authenticated setup moves only provably clean, digest-owned historical copies here after one plugin health proof; `txn-<id>/evidence/` archives retain changed trees for recovery |
 | Hooks | `.codex-plugin/plugin.json` points to `hooks/codex-hooks.json` | Three untrusted definitions only: H3 SessionStart context, H4 local PreToolUse guardrails, H6 PermissionRequest approval |
 | MCP | Marker-owned project `.codex/config.toml` | Codex launches the stable absolute `$GENIE_HOME/bin/genie mcp` facade with no `cwd` override; the plugin declares no Codex MCP route |
@@ -77,6 +77,19 @@ One release-dogfood update exposed why that boundary matters. A `5.260710.13` pr
 
 Containment recovered all 22 adapted directories from Genie's automatic backup, quarantined both recreated `review` copies, removed the old hook trust, and verified the 36 personal-skill digests plus 14 custom-agent TOMLs against the pre-incident baseline. The current contract preserves user-owned collisions and separates signed update delivery from setup-owned activation and convergence. This note intentionally contains no machine-specific paths, process ids, or credentials.
 
+## What Kimi gets
+
+| Surface | Delivery | Contract |
+|---------|----------|----------|
+| Product skills | `.kimi-plugin/plugin.json` declares `skills: "./skills/"` — the same 22 physical in-root skill directories | Loaded as plugin-tier Skills; invoke with the Skill tool or `/skill:<name>` |
+| Slash commands | `.kimi-plugin/plugin.json` declares `commands: "./.kimi-plugin/commands/"` — thin wrappers for the core lifecycle skills, kept inside `.kimi-plugin/` so Claude Code's root-level `commands/` auto-discovery never loads them | `/genie:wish`, `/genie:work`, `/genie:review`, `/genie:brainstorm`, `/genie:fix`, `/genie:trace`, `/genie:report`, `/genie:docs`, `/genie:council`, `/genie:refine`, `/genie:pm` (the auto-router loads at session start, so no `/genie:genie` command) |
+| Session start | `sessionStart.skill: "genie"` in the manifest | Loads the auto-router skill into the main Agent at session start — the Kimi-native replacement for rule injection |
+| Hooks | Inline `hooks` array in `.kimi-plugin/plugin.json` | Same scripts as Claude (`session-context.cjs`, `dispatch-runtime.cjs claude`, `validate-wish.cjs`, `validate-completion.cjs`); Kimi's hook protocol is wire-compatible. Each command addresses its script as `"$KIMI_PLUGIN_ROOT/scripts/<name>.cjs"` rather than `./scripts/...`, so a hook can never resolve against the session cwd of a cloned repository. Note: Kimi `SessionStart` is observation-only, so wish-state context there is best-effort |
+| MCP | `mcpServers.genie` in the manifest runs `./scripts/mcp-launcher.cjs` | Same canonical `$GENIE_HOME/bin/genie mcp` facade as Claude; the launcher file ships executable. Kimi spawns this command directly rather than through a shell, and documents no manifest-level environment interpolation, so it stays `./`-relative and relies on Kimi's documented contract that an stdio `command` starting with `./` resolves inside the plugin root (a server whose `command` or `cwd` escapes that root is ignored) |
+| Role agents | The seven `agents/*.md` profiles are Kimi-loadable as-is (Claude-style frontmatter is tolerated) | Plugin manifests cannot install agents. Optional manual step: copy `agents/*.md` into `~/.kimi-code/agents/` (or add the managed plugin's `agents/` dir to `extra_agent_dirs` in `config.toml`) |
+
+Kimi has no plugin surface for Claude's `settings.json` permissions, `scripts/statusline.sh`, or the stamped `workflows/council.js`; those remain Claude-only. Install with `/plugins install <path-to-this-directory>` in the Kimi TUI, then `/reload`.
+
 ## Skills and orchestration
 
 The lifecycle is shared across clients:
@@ -108,7 +121,7 @@ bun run skills:lint
 bun scripts/fresh-install-smoke.ts
 ```
 
-Release tarballs contain the compiled `genie` executable, the complete `plugins/` tree (including hooks, MCP launcher, role-agent staging, and the 23-skill mirror), root `skills/`, `templates/`, both runtime marketplace manifests, and `VERSION`. Build/version paths verify source-to-plugin parity, required component inventory, generated-hook parity, and version equality before packaging, then extract the finished archive and repeat the inventory/mode/resource/version checks against the extracted payload.
+Release tarballs contain the compiled `genie` executable, the complete `plugins/` tree (including hooks, MCP launcher, role-agent staging, and the 22-skill mirror), root `skills/`, `templates/`, both runtime marketplace manifests, and `VERSION`. Build/version paths verify source-to-plugin parity, required component inventory, generated-hook parity, and version equality before packaging, then extract the finished archive and repeat the inventory/mode/resource/version checks against the extracted payload.
 
 ## Claude Code and Hermes
 

@@ -16,7 +16,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb } from '../../src/lib/v5/genie-db.js';
-import { createBoard, createTask, createWishGroups } from '../../src/lib/v5/task-state.js';
+import { createBoard, createTask } from '../../src/lib/v5/task-state.js';
 
 const GENIE = join(import.meta.dir, '..', '..', 'src', 'genie.ts');
 
@@ -61,7 +61,7 @@ function seedSentinel(repo: string, sentinel: string): void {
   const db = openDb({ cwd: repo });
   const board = createBoard(db, 'repo');
   createTask(db, { title: `task-${sentinel}`, boardId: board.id, wish: sentinel, group: 'g' });
-  createWishGroups(db, sentinel, [{ name: 'g' }]);
+  // (wish-group machinery is production-dead — no wish_groups rows are seeded)
   // Fold pending WAL frames into the main db and close before any reader (the
   // `genie mcp` subprocess) opens, so the readonly reader isn't racing an open
   // WAL writer under cross-file contention ("database is locked").

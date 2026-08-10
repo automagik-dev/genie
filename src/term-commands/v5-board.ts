@@ -8,10 +8,12 @@
  */
 
 import type { Database } from 'bun:sqlite';
+import { lstatSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Command } from 'commander';
 import { color, padRight, truncate } from '../lib/term-format.js';
 import { cardBadges } from '../lib/v5/card-render.js';
-import { openDb } from '../lib/v5/genie-db.js';
+import { openDb, resolveRepoRoot } from '../lib/v5/genie-db.js';
 import {
   type BoardRow,
   DEFAULT_LIFECYCLE_LANES,
@@ -28,8 +30,10 @@ import {
   listTaskCards,
   listTasks,
   listTasksWithLane,
+  moveTask,
   resolveBoard,
 } from '../lib/v5/task-state.js';
+import { WISH_SLUG_PATTERN, extractStatusCell, readBoundedWishFile } from '../lib/wish-status.js';
 
 // ============================================================================
 // Output helpers (process.stdout/stderr — no console.* in v5 source)
@@ -119,8 +123,118 @@ interface BoardOptions {
   json?: boolean;
 }
 
+type WishLane = 'Idea' | 'Wish' | 'Work' | 'Review' | 'Done';
+
+const MAX_WISH_BYTES = 256 * 1_024;
+
+function physicalDirectory(path: string): boolean {
+  try {
+    const stats = lstatSync(path);
+    return stats.isDirectory() && !stats.isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Rename Remotty's ordered Wish.StatusCategory prefixes to Genie lanes.
+ * Ordering is semantic: past-tense EXECUTED precedes active EXECUT, specific
+ * PLAN-REVIEWED precedes ready PLAN-, and SHIP- precedes the done SHIP prefix.
+ * An unrecognised status has no implied lane and must preserve its card.
+ */
+function laneForWishStatus(status: string): WishLane | null {
+  const key = status.toUpperCase();
+  if (key.startsWith('DRAFT') || key.startsWith('ROADMAP')) return 'Idea';
+  if (key.startsWith('BLOCK') || key.startsWith('ON-HOLD')) return 'Work';
+  if (key.startsWith('EXECUTED') || key.startsWith('REVIEWED') || key.startsWith('PLAN-REVIEWED')) return 'Review';
+  if (key.startsWith('IN') || key.startsWith('EXECUT') || key.startsWith('WAVE')) return 'Work';
+  if (
+    key.startsWith('READY') ||
+    key.startsWith('APPROVED') ||
+    key.startsWith('PLAN-') ||
+    key.startsWith('SHIP-') ||
+    key.startsWith('STAGED')
+  ) {
+    return 'Wish';
+  }
+  if (
+    key.startsWith('DONE') ||
+    key.startsWith('SHIP') ||
+    key.startsWith('MERGED') ||
+    key.startsWith('COMPLET') ||
+    key.startsWith('DELIVER') ||
+    key.startsWith('PUBLISH') ||
+    key.startsWith('CONCLU')
+  ) {
+    return 'Done';
+  }
+  return null;
+}
+
+/**
+ * Read the first markdown-table Status field for one direct wish directory.
+ * Discovery (slug shape + physical-directory ladder) is the board's own; the
+ * bounded read and the `row-end` cell extraction are shared mechanics. The
+ * legacy `**Status:**` form is deliberately NOT recognised here.
+ */
+function readWishStatus(repoRoot: string, wish: string): string | null {
+  // `wish` is persisted user input. Admit only a bounded, direct physical
+  // `.genie/wishes/<slug>/WISH.md`; unsafe inputs stay hand-owned.
+  if (!WISH_SLUG_PATTERN.test(wish)) return null;
+  const genieDir = join(repoRoot, '.genie');
+  const wishesDir = join(genieDir, 'wishes');
+  if (!physicalDirectory(genieDir) || !physicalDirectory(wishesDir)) return null;
+  const wishDir = join(wishesDir, wish);
+  if (!physicalDirectory(wishDir)) return null;
+  const body = readBoundedWishFile(join(wishDir, 'WISH.md'), MAX_WISH_BYTES);
+  if (body === null) return null;
+  return extractStatusCell(body, 'row-end') || null;
+}
+
+/**
+ * Reconcile the cards of ONE lane-defining board — only ever called for a read
+ * whose own output renders lanes. A card's rendered lane is its stored lane,
+ * falling back to the board's first (enclosing) lane when NULL. Per-card
+ * failures preserve the stored projection: one bad wish or concurrent lane
+ * change must never suppress the board read. `repoRoot` is resolved by the
+ * caller so a board invocation spawns `git rev-parse` exactly once.
+ */
+function reconcileWishLanes(db: Database, filter: TaskFilter, board: BoardRow, repoRoot: string): void {
+  const lanes = board.lanes;
+  if (!lanes || lanes.length === 0) return;
+  // One WISH.md read per distinct wish per invocation: a wish's group cards all
+  // carry the same slug, so without this cache every card of a multi-group wish
+  // pays a redundant open/read/regex pass.
+  const laneByWish = new Map<string, WishLane | null>();
+  const wishLaneFor = (wish: string): WishLane | null => {
+    if (laneByWish.has(wish)) return laneByWish.get(wish) ?? null;
+    const status = readWishStatus(repoRoot, wish);
+    const lane = status ? laneForWishStatus(status) : null;
+    laneByWish.set(wish, lane);
+    return lane;
+  };
+  const laneNames = new Set(lanes.map((lane) => lane.name));
+  const enclosingLane = lanes[0].name;
+  const boardFilter: TaskFilter = { ...filter, boardId: board.id };
+  for (const task of listTasksWithLane(db, boardFilter)) {
+    if (!task.wish) continue;
+    const destination = wishLaneFor(task.wish);
+    if (!destination || !laneNames.has(destination)) continue;
+    const currentLane = task.lane ?? enclosingLane;
+    if (currentLane === destination) continue;
+    try {
+      moveTask(db, task.id, destination, { author: 'wish-status-sync', authorKind: 'genie' });
+    } catch {
+      // Best-effort reconciliation: render the durable lane that remains.
+    }
+  }
+}
+
 function handleBoard(opts: BoardOptions): void {
-  const db = openDb();
+  // Resolved once and threaded to both the DB path and the reconciler, so one
+  // board invocation costs exactly one `git rev-parse` child process.
+  const repoRoot = resolveRepoRoot();
+  const db = openDb({ path: join(repoRoot, '.genie', 'genie.db') });
   try {
     const filter: TaskFilter = {};
     let scopeLabel = 'all tasks';
@@ -139,6 +253,12 @@ function handleBoard(opts: BoardOptions): void {
     // other scope (no board, or a laneless board) falls through to the frozen
     // status render below — kept byte-identical (Group B owns any rework).
     if (board?.lanes && board.lanes.length > 0) {
+      // The only write a board read may perform, and only when this read's own
+      // output renders lanes: `--json` on a lane-defining board. Deliberately
+      // CLI-only — MCP queries call their shared read projection and never
+      // enter this verb handler. The human lane render and every laneless read
+      // (including unscoped `--json`) stay pure reads.
+      if (opts.json) reconcileWishLanes(db, filter, board, repoRoot);
       renderLaneBoard(db, board.lanes, filter, scopeLabel, opts.json ?? false);
       return;
     }
@@ -199,8 +319,11 @@ function groupByLane<T extends LaneTaskRow>(lanes: Lane[], tasks: T[]): Map<stri
 }
 
 function renderLaneBoard(db: Database, lanes: Lane[], filter: TaskFilter, scopeLabel: string, json: boolean): void {
-  // `--json` keeps the additive lane shape with lane-only cards (no runtime
-  // fields), matching the frozen laneless `--json`'s runtime-free contract.
+  // `--json` keeps the additive lane shape. Its cards carry exactly one runtime
+  // field beyond the frozen TaskRow — `enforcedBlock` (null when unblocked), so a
+  // lane consumer can tell a parked card from a live one. Identity, heartbeat,
+  // and block provenance stay off this path, and the frozen laneless `--json`
+  // remains runtime-free.
   if (json) {
     const byLane = groupByLane(lanes, listTasksWithLane(db, filter));
     const laneGroups = lanes.map((l) => ({

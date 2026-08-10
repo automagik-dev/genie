@@ -434,6 +434,7 @@ const EXPECTED_SCHEMA = {
     'heartbeat_at',
     'blocked_by',
     'blocked_reason',
+    'block_kind',
   ],
   wish_groups: [
     'wish',
@@ -458,6 +459,20 @@ const EXPECTED_SCHEMA = {
  * already-initialized DB short-circuit past the backfill.
  */
 function schemaIsCurrent(db: Database): boolean {
+  if (!schemaShapeIsCurrent(db)) return false;
+  // The one-time stage_log → task_events backfill is part of ensureSchema, so a
+  // full-schema DB whose meta guard is missing (a pre-backfill DB, or a legacy
+  // snapshot imported onto a marker-stamped DB) is NOT current. Without this
+  // check the fast path would skip ensureSchema and the documented migration
+  // would silently never run — the lockstep failure the contract above warns
+  // about. One pure read; only markerless DBs pay the ensureSchema write lock,
+  // once, until the backfill re-stamps the marker.
+  if (!db.query('SELECT 1 FROM meta WHERE key = ?').get(STAGE_LOG_BACKFILL_KEY)) return false;
+  return true;
+}
+
+/** Shape half of {@link schemaIsCurrent}: every expected table and column exists. */
+function schemaShapeIsCurrent(db: Database): boolean {
   const tables = new Set(
     (
       db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all() as Array<{
@@ -488,6 +503,21 @@ function schemaIsCurrent(db: Database): boolean {
 export function isCurrentGenieDb(db: Database): boolean {
   const row = db.query('PRAGMA user_version').get() as { user_version: number } | null;
   return row?.user_version === CURRENT_SCHEMA_VERSION && schemaIsCurrent(db);
+}
+
+/**
+ * Weaker read-side validation: this build's version stamp plus the complete
+ * schema SHAPE, ignoring pending data-only migration markers (the stage_log
+ * backfill guard). Every table and column a read can touch exists, so a
+ * read-only consumer that CANNOT run the write-path heal (read-only mount,
+ * sandboxed process, CI checkout) may still serve the database rather than
+ * fail closed — the only degradation is legacy stage_log history not yet
+ * mirrored into the timeline. Write paths must keep using the strict
+ * {@link isCurrentGenieDb} / ensureSchema lockstep.
+ */
+export function isReadableGenieDb(db: Database): boolean {
+  const row = db.query('PRAGMA user_version').get() as { user_version: number } | null;
+  return row?.user_version === CURRENT_SCHEMA_VERSION && schemaShapeIsCurrent(db);
 }
 
 const SCHEMA_SQL = `
@@ -539,6 +569,10 @@ CREATE TABLE IF NOT EXISTS task_events (
   created_at  INTEGER NOT NULL
 );
 
+-- VESTIGIAL, pending drop: the wish-group execution machinery is production-dead
+-- (no writer exists). The DDL stays inert for schema compatibility — older
+-- binaries' validateSnapshot expects the wish_groups key and exportState emits
+-- the empty array. Dropping the table is a live-DB migration OUT of scope.
 CREATE TABLE IF NOT EXISTS wish_groups (
   wish         TEXT NOT NULL,
   name         TEXT NOT NULL,
@@ -589,16 +623,19 @@ function ensureTaskColumns(db: Database): void {
   if (!cols.has('group_name')) db.exec('ALTER TABLE tasks ADD COLUMN group_name TEXT');
   if (!cols.has('lane')) db.exec('ALTER TABLE tasks ADD COLUMN lane TEXT');
   // Runtime layer: authored identity, heartbeat liveness, and the enforced block
-  // (blocked_by drives the single carved checkout exception). All nullable ⇒ no
-  // user_version bump; the card-projection render reads them, TaskRow stays frozen.
+  // (blocked_by drives the single carved checkout exception; block_kind says
+  // whether it is a work problem or a deliberate hold, NULL ⇒ 'work'). All
+  // nullable ⇒ no user_version bump; the card-projection render reads them,
+  // TaskRow stays frozen.
   if (!cols.has('agent_kind')) db.exec('ALTER TABLE tasks ADD COLUMN agent_kind TEXT');
   if (!cols.has('heartbeat_at')) db.exec('ALTER TABLE tasks ADD COLUMN heartbeat_at INTEGER');
   if (!cols.has('blocked_by')) db.exec('ALTER TABLE tasks ADD COLUMN blocked_by TEXT');
   if (!cols.has('blocked_reason')) db.exec('ALTER TABLE tasks ADD COLUMN blocked_reason TEXT');
+  if (!cols.has('block_kind')) db.exec('ALTER TABLE tasks ADD COLUMN block_kind TEXT');
 }
 
 /** Meta key marking the one-time stage_log → task_events backfill as complete. */
-const STAGE_LOG_BACKFILL_KEY = 'stage_log_backfill_v1';
+export const STAGE_LOG_BACKFILL_KEY = 'stage_log_backfill_v1';
 
 /** task_events kinds a legacy stage label maps to directly; anything else → comment. */
 const BACKFILLABLE_EVENT_KINDS = ['comment', 'move', 'claim', 'release', 'block', 'unblock', 'report'] as const;
@@ -613,9 +650,11 @@ const BACKFILLABLE_EVENT_KINDS = ['comment', 'move', 'claim', 'release', 'block'
  * are null (historical rows predate authored attribution).
  *
  * Idempotent via a `meta` guard: a re-open (or a second worktree opening the same
- * DB) never duplicates rows. Runs inside {@link ensureSchema} under the write lock.
+ * DB) never duplicates rows. Runs inside {@link ensureSchema} under the write
+ * lock, and again from `importState` after a legacy snapshot lands, so the
+ * importing handle sees the mirrored timeline immediately.
  */
-function backfillStageLog(db: Database): void {
+export function backfillStageLog(db: Database): void {
   const done = db.query('SELECT 1 FROM meta WHERE key = ?').get(STAGE_LOG_BACKFILL_KEY);
   if (done) return;
   const kinds = BACKFILLABLE_EVENT_KINDS.map((k) => `'${k}'`).join(', ');

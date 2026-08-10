@@ -256,6 +256,7 @@ BOARD_JSON="$(cli board --wish "$SLUG" --json)"
 # ============================================================================
 step "claim + complete"
 cli task checkout "$T1" --worker "$WORKER"
+# `done` is the orchestrator's verb: completion needs no claimant identity.
 cli task done "$T1"
 cli task checkout "$T2" --worker "$WORKER"
 

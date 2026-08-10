@@ -76,7 +76,6 @@ export const CANONICAL_GENIE_SKILL_NAMES = [
   'supply-chain',
   'trace',
   'wish',
-  'wizard',
   'work',
 ] as const;
 
@@ -3042,7 +3041,7 @@ export interface ProveCodexPluginHealthOptions {
   /** Deterministic test seam; production launches the plugin MCP through its launcher. */
   runSession?: (options: BoundedCodexMcpSessionOptions) => McpSessionResult;
   sessionTimeoutMs?: number;
-  /** Exact expected inventory; defaults to the canonical 23 Genie product skills. */
+  /** Exact expected inventory; defaults to the canonical 22 Genie product skills. */
   skillInventory?: readonly string[];
   /** Node command that runs the plugin `.cjs` launcher; defaults to `node`. */
   nodePath?: string;

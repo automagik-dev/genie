@@ -10,6 +10,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { designReviewViolations } from '../skills/brainstorm/references/design-review-evidence.mjs';
+import { WISH_SLUG_PATTERN, WISH_SLUG_SOURCE } from '../src/lib/wish-status.js';
 
 const ROOT = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
 const DEFAULT_WISHES_DIR = join(ROOT, '.genie/wishes');
@@ -21,8 +22,8 @@ const CANONICAL_STATUSES = new Set(['DRAFT', 'FIX-FIRST', 'APPROVED', 'IN_PROGRE
 // Historical wishes predate the persisted lifecycle state machine. They remain
 // readable terminal records, but new/active documents must use canonical state.
 const LEGACY_TERMINAL_STATUSES = new Set(['DONE', 'EXECUTED']);
-const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
-const QUALIFIED_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}\/[a-z0-9][a-z0-9-]{0,63}$/;
+// `<owner-wish>/<slug>` — both halves are ordinary wish slugs.
+const QUALIFIED_SLUG_PATTERN = new RegExp(`^${WISH_SLUG_SOURCE}/${WISH_SLUG_SOURCE}$`);
 
 function walk(dir: string): string[] {
   const out: string[] = [];
@@ -286,7 +287,7 @@ function dependencyValues(
     if (raw.toLowerCase() === 'none') return [];
     const values = raw.split(',').map((value) => value.trim());
     for (const value of values) {
-      if (!SLUG_PATTERN.test(value) && !QUALIFIED_SLUG_PATTERN.test(value)) {
+      if (!WISH_SLUG_PATTERN.test(value) && !QUALIFIED_SLUG_PATTERN.test(value)) {
         issues.push({ file, line: matches[0].line, message: `invalid ${key} wish slug: ${JSON.stringify(value)}` });
       }
     }
