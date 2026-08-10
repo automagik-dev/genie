@@ -1842,7 +1842,10 @@ export function evaluateIndexLaneDrift(
   for (const line of indexText.split('\n')) {
     const heading = /^##\s+(.+?)\s*$/.exec(line);
     if (heading) {
-      section = heading[1] in INDEX_SECTION_LANES ? heading[1] : null;
+      // Object.hasOwn, not `in`: a hand-written heading like `## constructor`
+      // must not resolve to an Object.prototype member (whose `.has` call
+      // below would crash the whole doctor run).
+      section = Object.hasOwn(INDEX_SECTION_LANES, heading[1]) ? heading[1] : null;
       continue;
     }
     if (section === null || !/^\s*-\s+/.test(line)) continue;
