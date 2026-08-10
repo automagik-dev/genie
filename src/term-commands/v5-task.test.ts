@@ -133,7 +133,7 @@ describe('task create', () => {
 });
 
 describe('task link', () => {
-  test('links an existing card without creating the absent wish and preserves all other state', async () => {
+  test('links an existing card without creating the absent wish, preserving other state and appending one authored wish event', async () => {
     const db = openDb({ cwd: repo });
     const board = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
     const task = createTask(db, { title: 'existing card', boardId: board.id, lane: 'Idea' });
@@ -154,7 +154,16 @@ describe('task link', () => {
     const beforeEvents = JSON.stringify(getTaskEvents(db, task.id));
     db.close();
 
-    const r = await cli(repo, 'link', task.id, '--wish', 'absent-wish', '--group', 'group-2');
+    const r = await cliIdentity(
+      repo,
+      { GENIE_AGENT_NAME: 'linker', GENIE_AGENT_KIND: 'codex' },
+      'link',
+      task.id,
+      '--wish',
+      'absent-wish',
+      '--group',
+      'group-2',
+    );
     expect(r.code).toBe(0);
     expect(r.stderr).toBe('');
     expect(r.stdout).toBe(`Linked task ${task.id} to wish absent-wish#group-2.\n`);
@@ -168,7 +177,13 @@ describe('task link', () => {
       if (key === 'wish' || key === 'group_name' || key === 'updated_at') continue;
       expect(afterRow[key]).toEqual(beforeRow[key]);
     }
-    expect(JSON.stringify(getTaskEvents(linkedDb, task.id))).toBe(beforeEvents);
+    const afterEvents = getTaskEvents(linkedDb, task.id);
+    expect(JSON.stringify(afterEvents.slice(0, -1))).toBe(beforeEvents);
+    const linkEvent = afterEvents[afterEvents.length - 1];
+    expect(linkEvent.kind).toBe('wish');
+    expect(linkEvent.note).toBe('(none)→absent-wish#group-2');
+    expect(linkEvent.author).toBe('linker');
+    expect(linkEvent.authorKind).toBe('codex');
     linkedDb.close();
   });
 
@@ -398,6 +413,28 @@ describe('task set-wish', () => {
     db.close();
     expect(after?.wish).toBeNull();
     expect(after?.group).toBeNull();
+  });
+
+  test('--clear on an already-wishless card is a silent no-op', async () => {
+    const id = await seedTask('never attached');
+    const before = openDb({ cwd: repo });
+    const created = getTask(before, id);
+    before.close();
+
+    const r = await cli(repo, 'set-wish', id, '--clear');
+    expect(r.code).toBe(0);
+    expect(r.stderr).toBe('');
+
+    const db = openDb({ cwd: repo });
+    const after = getTask(db, id);
+    const events = getTaskEvents(db, id);
+    db.close();
+    expect(after?.wish).toBeNull();
+    expect(after?.updatedAt).toBe(created?.updatedAt as number);
+    expect(events).toHaveLength(0);
+
+    const status = await cli(repo, 'status', id);
+    expect(status.stdout).not.toContain('(none)→(none)');
   });
 
   test('a claimed card keeps its claim across the identity change', async () => {

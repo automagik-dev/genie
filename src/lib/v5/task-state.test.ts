@@ -104,7 +104,7 @@ describe('task CRUD', () => {
     expect(getTask(db, 't_missing')).toBeNull();
   });
 
-  test('linkTaskToWish changes only wish metadata and updated_at', () => {
+  test('linkTaskToWish changes only wish metadata and updated_at, appending one wish event', () => {
     const board = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
     const task = createTask(db, { title: 'existing card', boardId: board.id, lane: 'Idea' });
     claimTask(db, task.id, 'worker-1', { now: 1_000, author: { author: 'worker-1', authorKind: 'codex' } });
@@ -131,14 +131,20 @@ describe('task CRUD', () => {
       if (key === 'wish' || key === 'group_name' || key === 'updated_at') continue;
       expect(afterRow[key]).toEqual(beforeRow[key]);
     }
-    expect(JSON.stringify(getTaskEvents(db, task.id))).toBe(beforeEvents);
+    const afterEvents = getTaskEvents(db, task.id);
+    expect(JSON.stringify(afterEvents.slice(0, -1))).toBe(beforeEvents);
+    const linkEvent = afterEvents[afterEvents.length - 1];
+    expect(linkEvent.kind).toBe('wish');
+    expect(linkEvent.note).toBe('(none)→missing-wish#group-2');
+    expect(linkEvent.author).toBeNull();
+    expect(linkEvent.authorKind).toBeNull();
 
     const linkedRow = db.query('SELECT * FROM tasks WHERE id = ?').get(task.id) as Record<string, unknown>;
     const repeated = linkTaskToWish(db, task.id, 'missing-wish', 'group-2', 4_000);
     const repeatedRow = db.query('SELECT * FROM tasks WHERE id = ?').get(task.id) as Record<string, unknown>;
     expect(repeated.updatedAt).toBe(3_000);
     expect(repeatedRow).toEqual(linkedRow);
-    expect(JSON.stringify(getTaskEvents(db, task.id))).toBe(beforeEvents);
+    expect(JSON.stringify(getTaskEvents(db, task.id))).toBe(JSON.stringify(afterEvents));
   });
 
   test('linkTaskToWish omits the group by storing null and rejects an unknown task', () => {

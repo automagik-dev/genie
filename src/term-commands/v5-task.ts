@@ -226,7 +226,7 @@ function handleLink(id: string, opts: LinkOptions): void {
   run(() => {
     const db = openDb();
     try {
-      const task = linkTaskToWish(db, id, wish, group);
+      const task = linkTaskToWish(db, id, wish, group, Date.now(), resolveEventAuthor());
       out(`Linked task ${task.id} to wish ${formatWishRef(task)}.`);
     } finally {
       db.close();
@@ -676,7 +676,7 @@ export function registerV5TaskCommands(v5: Command): void {
 
   task
     .command('link <id>')
-    .description('Link an existing task to a wish')
+    .description('Link an existing task to a wish (appends a wish event)')
     .requiredOption('--wish <slug>', 'Wish slug this task belongs to')
     .option('--group <name>', 'Optional wish-group name')
     .action((id: string, opts: LinkOptions) => handleLink(id, opts));

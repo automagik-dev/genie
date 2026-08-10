@@ -567,33 +567,6 @@ export function createTask(db: Database, input: CreateTaskInput): TaskRow {
   return getTask(db, id) as TaskRow;
 }
 
-/**
- * Link an existing card to a wish and, optionally, one of its groups.
- *
- * The association is metadata-only: the card's identity, lifecycle/runtime
- * state, lane, and append-only timeline are deliberately outside this UPDATE.
- * An omitted group clears any prior group association. The wish does not need
- * to exist on disk; callers may intentionally create an orphan association.
- */
-export function linkTaskToWish(
-  db: Database,
-  taskId: string,
-  wish: string,
-  group?: string,
-  now: number = Date.now(),
-): TaskRow {
-  const normalizedGroup = group ?? null;
-  const link = db.transaction(() => {
-    requireTask(db, taskId);
-    db.query(
-      `UPDATE tasks SET wish = ?, group_name = ?, updated_at = ?
-       WHERE id = ? AND (wish IS NOT ? OR group_name IS NOT ?)`,
-    ).run(wish, normalizedGroup, now, taskId, wish, normalizedGroup);
-  });
-  link.immediate();
-  return getTask(db, taskId) as TaskRow;
-}
-
 export function getTask(db: Database, id: string): TaskRow | null {
   const row = db.query('SELECT * FROM tasks WHERE id = ?').get(id) as RawTask | null;
   return row ? mapTask(row) : null;
@@ -1252,14 +1225,23 @@ export function formatWishRef(identity: WishIdentity): string {
  * exactly as {@link createTask} treats them. The write and the event append are
  * one transaction, so a card can never carry an identity with no matching
  * timeline entry.
+ *
+ * Re-pointing a card at the identity it already carries is fully silent: no row
+ * write (so `updated_at` keeps its earlier value) and no timeline entry.
  */
-export function setTaskWish(db: Database, taskId: string, to: WishIdentity, author: EventAuthor): SetWishResult {
+export function setTaskWish(
+  db: Database,
+  taskId: string,
+  to: WishIdentity,
+  author: EventAuthor,
+  now: number = Date.now(),
+): SetWishResult {
   const task = getTask(db, taskId);
   if (!task) throw new UnknownTaskError(taskId);
   const from: WishIdentity = { wish: task.wish, group: task.group };
   const next: WishIdentity = to.wish === null ? { wish: null, group: null } : to;
+  if (from.wish === next.wish && from.group === next.group) return { task, from, to: next };
   const note = `${formatWishRef(from)}→${formatWishRef(next)}`;
-  const now = Date.now();
   const apply = db.transaction(() => {
     db.query('UPDATE tasks SET wish = ?, group_name = ?, updated_at = ? WHERE id = ?').run(
       next.wish,
@@ -1274,8 +1256,27 @@ export function setTaskWish(db: Database, taskId: string, to: WishIdentity, auth
       author: author.author ?? undefined,
     });
   });
-  apply();
+  apply.immediate();
   return { task: getTask(db, taskId) as TaskRow, from, to: next };
+}
+
+/**
+ * Link an existing card to a wish and, optionally, one of its groups — the
+ * attach-only face of {@link setTaskWish}, kept for callers that always name a
+ * wish. An omitted group clears any prior group association, and the wish does
+ * not need to exist on disk; callers may intentionally create an orphan
+ * association. Every mutation rule — the metadata-only UPDATE, the `wish`
+ * timeline event, the silent no-op — is the one shared write path's.
+ */
+export function linkTaskToWish(
+  db: Database,
+  taskId: string,
+  wish: string,
+  group?: string,
+  now: number = Date.now(),
+  author: EventAuthor = { author: null, authorKind: null },
+): TaskRow {
+  return setTaskWish(db, taskId, { wish, group: group ?? null }, author, now).task;
 }
 
 // ============================================================================

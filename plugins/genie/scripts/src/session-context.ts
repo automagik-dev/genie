@@ -10,8 +10,14 @@
  * or global synchronization.
  */
 
-import { existsSync, lstatSync, opendirSync, readFileSync, readSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, opendirSync, readSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
+import {
+  WISH_SLUG_PATTERN,
+  extractLegacyStatusValue,
+  extractStatusCell,
+  readBoundedWishFile,
+} from '../../../../src/lib/wish-status.js';
 
 const MAX_WISHES = 8;
 const MAX_CONTEXT_BYTES = 2_048;
@@ -19,8 +25,23 @@ const MAX_TOTAL_WISH_BYTES = 256 * 1_024;
 const MAX_CANDIDATE_ENTRIES = 64;
 const MAX_PARENT_LEVELS = 32;
 const MAX_HOOK_INPUT_BYTES = 64 * 1_024;
-const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const ACTIVE_STATUSES = new Set(['DRAFT', 'FIX-FIRST', 'APPROVED', 'IN_PROGRESS', 'BLOCKED']);
+/**
+ * Both predicates are read off the historical inline regexes, which encoded the
+ * charset INSIDE the match, and are applied to the untrimmed span.
+ *
+ * Table cell, from `\|\s*([A-Z_ -]+?)\s*\|`: whitespace, at least one charset
+ * character, whitespace. `''` fails (a character was required, so `||` was never
+ * a match), `'   '` passes (space is in both classes, which is what the old
+ * engine's backtracking found), `'\t'` fails (a tab is whitespace but not a
+ * charset character, and no charset character remains).
+ *
+ * Legacy line, from `\*\*Status:\*\*\s*([A-Z_ -]+)`: PREFIX semantics, so a
+ * trailing note does not void it and `DONE (2026-07-09) — …` still reads `DONE`.
+ */
+const STATUS_CELL_ADMISSIBLE = /^\s*[A-Z_ -]+\s*$/;
+const LEGACY_LINE_ADMISSIBLE = /^\s*[A-Z_ -]/;
+const LEGACY_STATUS_PREFIX = /^[A-Z_ -]+/;
 
 interface WishContext {
   slug: string;
@@ -65,9 +86,22 @@ function readHookInput(): HookInput {
   }
 }
 
+/**
+ * The shared extractors supply the raw span; the charset, the em-dash
+ * normalization, and the ACTIVE_STATUSES vocabulary are this hook's own reading
+ * of it. The charset rides along as the scan's admissibility test rather than as
+ * a post-filter, so a row it cannot read is skipped exactly as the historical
+ * inline regex skipped it.
+ *
+ * The `??` chain is equally load-bearing: an admissible row that the VOCABULARY
+ * later rejects still counts as a table hit, so it suppresses the legacy
+ * fallback. Only a file with no admissible row at all falls through.
+ */
 function extractStatus(content: string): string | null {
-  const table = content.match(/^\|\s*\*\*Status\*\*\s*\|\s*([A-Z_ -]+?)\s*\|/m)?.[1];
-  const legacy = content.match(/^\*\*Status:\*\*\s*([A-Z_ -]+)/m)?.[1];
+  const table = extractStatusCell(content, 'first-pipe', (cell) => STATUS_CELL_ADMISSIBLE.test(cell)) ?? undefined;
+  const legacy = extractLegacyStatusValue(content, (value) => LEGACY_LINE_ADMISSIBLE.test(value))?.match(
+    LEGACY_STATUS_PREFIX,
+  )?.[0];
   const status = (table ?? legacy)?.trim().split(/\s+[—-]\s+/)[0]?.trim();
   return status && ACTIVE_STATUSES.has(status) ? status : null;
 }
@@ -122,7 +156,7 @@ function scanWishes(baseDir: string): WishContext[] {
       for (let examined = 0; examined < MAX_CANDIDATE_ENTRIES; examined++) {
         const entry = directory.readSync();
         if (!entry) break;
-        if (entry.isDirectory() && !entry.isSymbolicLink() && SLUG_PATTERN.test(entry.name)) slugs.push(entry.name);
+        if (entry.isDirectory() && !entry.isSymbolicLink() && WISH_SLUG_PATTERN.test(entry.name)) slugs.push(entry.name);
       }
     } finally {
       try {
@@ -140,15 +174,10 @@ function scanWishes(baseDir: string): WishContext[] {
       const wishFile = existsSync(uppercase) ? uppercase : join(wishesDir, slug, 'wish.md');
       if (!existsSync(wishFile)) continue;
 
-      let content: string;
-      try {
-        const stats = lstatSync(wishFile);
-        if (!stats.isFile() || stats.isSymbolicLink() || stats.size > MAX_TOTAL_WISH_BYTES - totalWishBytes) continue;
-        content = readFileSync(wishFile, 'utf8');
-        totalWishBytes += stats.size;
-      } catch {
-        continue;
-      }
+      // The budget is CUMULATIVE across the scanned wishes, not per file.
+      const content = readBoundedWishFile(wishFile, MAX_TOTAL_WISH_BYTES - totalWishBytes);
+      if (content === null) continue;
+      totalWishBytes += Buffer.byteLength(content, 'utf8');
       const status = extractStatus(content);
       if (!status) continue;
       const criteria = content.match(/^-\s+\[[ xX]\]/gm) ?? [];
