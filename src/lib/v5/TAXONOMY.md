@@ -42,6 +42,36 @@ parent directory is the main repo root regardless of which worktree the CLI runs
 in. Task created in worktree A is immediately visible in worktree B with no
 daemon and no sync step — SQLite's single-file store is the shared medium.
 
+### Lane source
+
+A card's lane on a lane-defining board is reconciled from the `**Status**` field
+of its wish's `WISH.md`, and **the lane-source is the primary checkout's working
+tree**: the file as it sits on disk right now, on whatever branch that checkout
+has out, uncommitted edits included. `reconcileWishLanes` reads
+`<repoRoot>/.genie/wishes/<slug>/WISH.md` straight through the filesystem, never
+through git, so nothing has to be committed for a status edit to move a card.
+The pass is not a background job: it runs only inside CLI `--json` board reads,
+and MCP `genie_board` and the human render serve stored lanes untouched.
+
+The board imposes **no branch policy** — no `main` preference, no remote, no
+merge base — so a plain-checkout user gets live lanes for whatever branch they
+are on. Reconcile is best-effort: a wish that is missing, unreadable, or
+statusless leaves the card's stored lane untouched.
+
+**Linked worktrees inherit the primary checkout's view.** The lane read resolves
+its root with the same `resolveRepoRoot` the database uses — the parent of
+`git rev-parse --path-format=absolute --git-common-dir`, which maps every linked
+worktree back to the main checkout (see *Worktree sharing* above). A lane
+reconcile that runs *inside* a worktree therefore reads the primary checkout's
+`WISH.md`, not the copy sitting beside it in that worktree.
+
+The named consequence is the `genie launch` cockpit flow: a wish branch that
+updates its own `WISH.md` **Status** inside a worktree moves no card until that
+branch reaches the primary checkout's view — merged into the branch the main
+checkout has out, or checked out there directly. In-flight cockpit wishes read on
+the board as merged truth rather than as work in progress: a property of the
+one-shared-root design, not a reconcile bug.
+
 ## ID scheme
 
 | Entity | Prefix | Example | Generation |
