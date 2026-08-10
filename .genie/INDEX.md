@@ -21,7 +21,7 @@
 
 ## Ready
 
-
+- [lane-sync-followups](brainstorms/lane-sync-followups/DESIGN.md) — **DESIGN crystallized 2026-08-10** (WRS 100, from PR #2756 xhigh review; all four decisions Felipe-picked same day): unify link/set-wish write paths (no-op skips event), document the lane-source rule (primary checkout's current branch — reframed from the review's "main is canonical"), extract shared WISH.md read/extract into `src/lib/wish-status.ts` with per-consumer interpretation, gate reconcileWishLanes to lane-rendering reads + thread repo root; design review pending
 
 - [WISH: v4-home-residue-doctor](wishes/v4-home-residue-doctor/WISH.md) — **DRAFT** (2026-07-05, small appetite, never started; Felipe directive: "find and clean all stale genie v4 shit… genie doctor should do that"): v4 residue manifest + doctor check/fix + diagnostics age filter. Relevance raised 2026-07-26 by the backlog sweep: the only live-impact open product bug (#2450 — v4 pgserve PM2 entry crash-loops after upgrade) is v4 daemon/process residue that file-scoped `legacy-v4.ts` never touches; this wish is the natural vehicle (added to INDEX 2026-07-26 — entry was missing)
 - [WISH: release-ops-hardening](wishes/release-ops-hardening/WISH.md) — **DRAFT** (2026-07-26, small-medium appetite; needs Felipe approval + a plan gate before execution): enforce the outage-taught release rules mechanically — publish admit refuses re-dispatch of published versions (#2674), orphan-alert exempts pending stable candidates (structural false positive on every dev→main promotion, live example #2681), #2675 dead-default deletion + multi-attestation/CAS-loop test coverage + #2669 pin-checker quoting, and dogfood FIXTURE_N tracking real N. Sequenced after the first stable release
