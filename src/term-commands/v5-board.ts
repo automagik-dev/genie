@@ -224,6 +224,17 @@ function readWishStatus(repoRoot: string, wish: string): string | null {
 function reconcileWishLanes(db: Database, filter: TaskFilter, selectedBoard: BoardRow | null): void {
   const repoRoot = resolveRepoRoot();
   const boards = selectedBoard ? [selectedBoard] : listBoards(db);
+  // One WISH.md read per distinct wish per invocation: a wish's group cards all
+  // carry the same slug, and the same slug recurs across boards in the unscoped
+  // loop — without this cache every card pays a redundant open/read/regex pass.
+  const laneByWish = new Map<string, WishLane | null>();
+  const wishLaneFor = (wish: string): WishLane | null => {
+    if (laneByWish.has(wish)) return laneByWish.get(wish) ?? null;
+    const status = readWishStatus(repoRoot, wish);
+    const lane = status ? laneForWishStatus(status) : null;
+    laneByWish.set(wish, lane);
+    return lane;
+  };
   for (const board of boards) {
     const lanes = board.lanes;
     if (!lanes || lanes.length === 0) continue;
@@ -232,8 +243,7 @@ function reconcileWishLanes(db: Database, filter: TaskFilter, selectedBoard: Boa
     const boardFilter: TaskFilter = { ...filter, boardId: board.id };
     for (const task of listTasksWithLane(db, boardFilter)) {
       if (!task.wish) continue;
-      const status = readWishStatus(repoRoot, task.wish);
-      const destination = status ? laneForWishStatus(status) : null;
+      const destination = wishLaneFor(task.wish);
       if (!destination || !laneNames.has(destination)) continue;
       const currentLane = task.lane ?? enclosingLane;
       if (currentLane === destination) continue;
