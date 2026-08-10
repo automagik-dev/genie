@@ -1667,6 +1667,14 @@ export function importState(db: Database, snapshot: unknown, opts: ImportOptions
     if (state.stage_log.length > 0 && state.task_events.length === 0) {
       db.query('DELETE FROM meta WHERE key = ?').run(STAGE_LOG_BACKFILL_KEY);
       backfillStageLog(db);
+    } else {
+      // Non-legacy snapshot: its timeline (if any) is already complete. Re-stamp
+      // the backfill marker in case `--replace` wiped meta and the snapshot's own
+      // meta rows lost the marker (e.g. a hand-merged roadmap.json). Without
+      // this, the next openDb would find the shape current but the marker
+      // absent and re-run backfillStageLog over stage rows whose events the
+      // snapshot already carried — duplicating every mirrored timeline row.
+      db.query('INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)').run(STAGE_LOG_BACKFILL_KEY, String(Date.now()));
     }
   });
   try {
@@ -1683,7 +1691,10 @@ export function importState(db: Database, snapshot: unknown, opts: ImportOptions
     tasks: state.tasks.length,
     dependencies: state.task_dependencies.length,
     events: state.task_events.length,
-    wishGroups: state.wish_groups.length,
+    // wish_groups rows are tolerated-and-dropped (see insertSnapshotRows), so
+    // the summary reports what was actually inserted — never the snapshot's
+    // discarded row count.
+    wishGroups: 0,
     hires: hires.length,
   };
 }
