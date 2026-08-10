@@ -227,8 +227,7 @@ function handleLink(id: string, opts: LinkOptions): void {
     const db = openDb();
     try {
       const task = linkTaskToWish(db, id, wish, group);
-      const association = task.group ? `${task.wish}#${task.group}` : task.wish;
-      out(`Linked task ${task.id} to wish ${association}.`);
+      out(`Linked task ${task.id} to wish ${formatWishRef(task)}.`);
     } finally {
       db.close();
     }
@@ -292,6 +291,7 @@ interface SetWishOptions {
 function handleSetWish(id: string, opts: SetWishOptions): void {
   const wish = opts.wish?.trim();
   const group = opts.group?.trim();
+  if (opts.group !== undefined && !group) fail('--group must not be empty.');
   if (group && !wish) fail('--group requires --wish.');
   if (opts.clear && wish) fail('--clear cannot be combined with --wish.');
   if (!opts.clear && !wish) fail('--wish <slug> or --clear is required.');
@@ -360,13 +360,15 @@ function resolveAuthorKind(): string {
  * Resolve the worker identity from the environment: `GENIE_AGENT_NAME`, then
  * `GENIE_AGENT_ID`, flooring at 'cli'. The ONE identity resolver shared by the
  * claim side (`handleCheckout`'s worker → `claimed_by`) and the complete side
- * (`resolveEventAuthor().author` → event attribution), so a task claimed and
- * completed by the same runtime always matches the completion fence. Previously
+ * (`resolveEventAuthor().author` → event attribution), so the two sides always
+ * record the same identity for the same runtime. NOTE: completion is NOT
+ * identity-fenced — completeTask deliberately has no claimed_by check (`task
+ * done` is the orchestrator's verb, routinely run by a non-claimant); a shared
+ * resolver only keeps claim rows and event attribution consistent. Previously
  * the two chains diverged — the claim chain ignored GENIE_AGENT_ID and floored
- * at 'cli', the complete chain preferred NAME then ID and floored at null — so a
- * GENIE_AGENT_ID-only runtime claimed as 'cli' but completed as the ID and would
- * now be refused. Migration for such in-flight claims: release (releaseTask
- * stays identity-free) then re-claim under the new identity.
+ * at 'cli', the complete chain preferred NAME then ID and floored at null — so
+ * a GENIE_AGENT_ID-only runtime claimed as 'cli' but attributed events as the
+ * ID.
  */
 function resolveWorkerIdentity(): string {
   return process.env.GENIE_AGENT_NAME ?? process.env.GENIE_AGENT_ID ?? 'cli';
@@ -720,8 +722,9 @@ silently promote it to "ready". Re-point or delete the dependents first.
 
 The removal reaches .genie/roadmap.json through the ordinary \`task sync\`
 export, with two caveats:
-  * Plain \`task import\` (no --replace) merges as a superset, so importing an
-    older snapshot resurrects the deleted card. Use \`task import --replace\`.
+  * \`task import --replace\` rebuilds the database as exact snapshot state, so
+    replaying an older snapshot resurrects the deleted card. (Plain \`task
+    import\` refuses a non-empty database outright.)
   * Deleting the LAST card can hand the next sync to the import branch instead
     of the export branch — it takes that path only when no board or wish-group
     rows remain either. Publish with \`task export --write\` when emptying the
