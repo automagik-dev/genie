@@ -65,13 +65,37 @@ function run(handler: () => void): void {
  * The `--json` grouping key is the raw four-status enum — FROZEN. Byte-freeze
  * (WISH Decision 7): the machine shape keeps all four keys and never gains a
  * runtime/lane field, even though the human render below collapses to three
- * columns. `groupByStatus` maps frozen {@link TaskRow}s (via {@link listTasks}),
- * so the serialized shape is byte-identical to the pre-runtime board.
+ * columns. `groupByStatus` maps the explicit {@link toLanelessJsonCard}
+ * projection of each TaskRow, so the serialized shape is byte-identical to the
+ * pre-assignment board — `assignedAgent`/`assignedReason` stay lane-path-only.
  */
-function groupByStatus(tasks: TaskRow[]): Record<TaskStatus, TaskRow[]> {
-  const groups: Record<TaskStatus, TaskRow[]> = { blocked: [], ready: [], in_progress: [], done: [] };
+function groupByStatus<T extends { status: TaskStatus }>(tasks: T[]): Record<TaskStatus, T[]> {
+  const groups: Record<TaskStatus, T[]> = { blocked: [], ready: [], in_progress: [], done: [] };
   for (const t of tasks) groups[t.status].push(t);
   return groups;
+}
+
+/**
+ * One card on the frozen laneless `--json` path — exactly the pre-assignment
+ * TaskRow key set, picked explicitly (toSummary-style) so a TaskRow field can
+ * never silently reach this byte-frozen shape. Only the additive lane path
+ * serializes the two declared-routing fields.
+ */
+type FrozenJsonCard = Omit<TaskRow, 'assignedAgent' | 'assignedReason'>;
+
+function toLanelessJsonCard(t: TaskRow): FrozenJsonCard {
+  return {
+    id: t.id,
+    boardId: t.boardId,
+    title: t.title,
+    status: t.status,
+    claimedBy: t.claimedBy,
+    claimedAt: t.claimedAt,
+    wish: t.wish,
+    group: t.group,
+    createdAt: t.createdAt,
+    updatedAt: t.updatedAt,
+  };
 }
 
 /**
@@ -263,9 +287,11 @@ function handleBoard(opts: BoardOptions): void {
       return;
     }
 
-    // `--json` FROZEN path: frozen TaskRows grouped by the four raw statuses.
+    // `--json` FROZEN path: pre-assignment TaskRows grouped by the four raw
+    // statuses. The explicit projection strips the two assignment fields A1
+    // added to TaskRow — the laneless payload stays byte-identical (Decision 7).
     if (opts.json) {
-      const grouped = groupByStatus(listTasks(db, filter));
+      const grouped = groupByStatus(listTasks(db, filter).map(toLanelessJsonCard));
       out(JSON.stringify({ scope: scopeLabel, columns: grouped }, null, 2));
       return;
     }
@@ -318,19 +344,47 @@ function groupByLane<T extends LaneTaskRow>(lanes: Lane[], tasks: T[]): Map<stri
   return byLane;
 }
 
+/**
+ * One card on the additive lane `--json` path — the frozen ten TaskRow keys
+ * plus the two declared-routing fields and `lane` + `enforcedBlock`, picked
+ * explicitly so the lane shape states exactly what it serializes. Key order
+ * matches the pre-assignment spread, so lane output changes by exactly the two
+ * added fields; the TaskCardRow runtime layer (identity, heartbeat, block
+ * provenance) stays off this path.
+ */
+function toLaneJsonCard(t: LaneTaskRow): LaneTaskRow {
+  return {
+    id: t.id,
+    boardId: t.boardId,
+    title: t.title,
+    status: t.status,
+    claimedBy: t.claimedBy,
+    claimedAt: t.claimedAt,
+    wish: t.wish,
+    group: t.group,
+    assignedAgent: t.assignedAgent,
+    assignedReason: t.assignedReason,
+    createdAt: t.createdAt,
+    updatedAt: t.updatedAt,
+    lane: t.lane,
+    enforcedBlock: t.enforcedBlock,
+  };
+}
+
 function renderLaneBoard(db: Database, lanes: Lane[], filter: TaskFilter, scopeLabel: string, json: boolean): void {
-  // `--json` keeps the additive lane shape. Its cards carry exactly one runtime
-  // field beyond the frozen TaskRow — `enforcedBlock` (null when unblocked), so a
-  // lane consumer can tell a parked card from a live one. Identity, heartbeat,
-  // and block provenance stay off this path, and the frozen laneless `--json`
-  // remains runtime-free.
+  // `--json` keeps the additive lane shape. Its cards carry the two declared-
+  // routing fields (`assignedAgent`/`assignedReason`) plus exactly one runtime
+  // field beyond the frozen TaskRow — `enforcedBlock` (null when unblocked), so
+  // a lane consumer can tell a parked card from a live one and read who it is
+  // routed to. Identity, heartbeat, and block provenance stay off this path,
+  // and the frozen laneless `--json` remains byte-identical.
   if (json) {
     const byLane = groupByLane(lanes, listTasksWithLane(db, filter));
     const laneGroups = lanes.map((l) => ({
       name: l.name,
       label: l.label ?? null,
       action: l.action ?? null,
-      cards: byLane.get(l.name) ?? [],
+      cards: (byLane.get(l.name) ?? []).map(toLaneJsonCard),
     }));
     out(JSON.stringify({ scope: scopeLabel, lanes: laneGroups }, null, 2));
     return;

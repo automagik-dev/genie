@@ -383,10 +383,37 @@ function genieWorktreeContext(ctx: ToolContext, args: Record<string, unknown>): 
 
 // --- genie_task ------------------------------------------------------------
 
-function genieTask(ctx: ToolContext, args: Record<string, unknown>): TaskRow | { error: 'not_found'; id: string } {
+/**
+ * The frozen `genie_task` payload — exactly the pre-assignment TaskRow key set.
+ * The two declared-routing fields live on TaskRow but stay off this byte-frozen
+ * MCP shape (WISH Decision 7); only the additive lane board `--json` carries
+ * them.
+ */
+type FrozenTaskRow = Omit<TaskRow, 'assignedAgent' | 'assignedReason'>;
+
+/** Explicit key-picking (toSummary-style) — strips the two assignment fields. */
+function toFrozenTaskRow(t: TaskRow): FrozenTaskRow {
+  return {
+    id: t.id,
+    boardId: t.boardId,
+    title: t.title,
+    status: t.status,
+    claimedBy: t.claimedBy,
+    claimedAt: t.claimedAt,
+    wish: t.wish,
+    group: t.group,
+    createdAt: t.createdAt,
+    updatedAt: t.updatedAt,
+  };
+}
+
+function genieTask(
+  ctx: ToolContext,
+  args: Record<string, unknown>,
+): FrozenTaskRow | { error: 'not_found'; id: string } {
   const id = argString(args, 'id') ?? '';
   const task = ctx.db ? getTask(ctx.db, id) : null;
-  return task ?? { error: 'not_found', id };
+  return task ? toFrozenTaskRow(task) : { error: 'not_found', id };
 }
 
 // --- genie_active ----------------------------------------------------------

@@ -319,12 +319,19 @@ describe('lane-grouped render', () => {
     expect(payload.lanes.map((l) => l.name)).toEqual(['Idea', 'Brainstorm', 'Wish', 'Work', 'Review', 'Done']);
   });
 
-  test('--json carries enforcedBlock on every lane card and nothing else from the runtime layer', async () => {
+  test('--json carries enforcedBlock and the declared routing on every lane card and nothing else from the runtime layer', async () => {
     const db = openDb({ cwd: repo });
     const road = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
     createTask(db, { title: 'open card', boardId: road.id, lane: 'Idea' });
     const held = createTask(db, { title: 'held card', boardId: road.id, lane: 'Idea' });
     const broken = createTask(db, { title: 'broken card', boardId: road.id, lane: 'Idea' });
+    createTask(db, {
+      title: 'assigned card',
+      boardId: road.id,
+      lane: 'Idea',
+      assignedAgent: 'codex',
+      assignedReason: 'declared routing',
+    });
     blockTask(db, held.id, 'parked until Q3', { author: 'felipe', authorKind: 'human' }, 'hold');
     blockTask(db, broken.id, 'awaiting a decision', { author: 'felipe', authorKind: 'human' });
     recordHeartbeat(db, held.id); // a runtime field that must NOT reach this shape
@@ -342,12 +349,21 @@ describe('lane-grouped render', () => {
     expect(cards.get('held card')?.enforcedBlock).toEqual({ reason: 'parked until Q3', kind: 'hold' });
     expect(cards.get('broken card')?.enforcedBlock).toEqual({ reason: 'awaiting a decision', kind: 'work' });
 
-    // The lane shape gains exactly one runtime field — its provenance, identity,
-    // and heartbeat siblings stay off this path.
+    // Null semantics: every lane card carries the assignment keys; unassigned
+    // cards read null, assigned cards carry the declared roster agent + reason.
+    expect(cards.get('open card')?.assignedAgent).toBeNull();
+    expect(cards.get('open card')?.assignedReason).toBeNull();
+    expect(cards.get('assigned card')?.assignedAgent).toBe('codex');
+    expect(cards.get('assigned card')?.assignedReason).toBe('declared routing');
+
+    // The lane shape carries the two declared-routing fields plus exactly one
+    // runtime field — provenance, identity, and heartbeat siblings stay off it.
     for (const leaked of ['agentKind', 'heartbeatAt', 'blockedBy', 'blockedReason']) {
       expect(leaked in (cards.get('held card') as Record<string, unknown>)).toBe(false);
     }
     expect(Object.keys(cards.get('held card') as Record<string, unknown>).sort()).toEqual([
+      'assignedAgent',
+      'assignedReason',
       'boardId',
       'claimedAt',
       'claimedBy',
@@ -742,10 +758,19 @@ describe('laneless board render is unchanged', () => {
     expect(r.code).toBe(0);
     const payload = JSON.parse(r.stdout) as { columns: Record<string, Array<Record<string, unknown>>> };
     expect(Object.keys(payload.columns).sort()).toEqual(['blocked', 'done', 'in_progress', 'ready']);
-    // The frozen TaskRow shape never gains a `lane` key NOR any runtime field on
-    // the laneless path — the byte-freeze survives the runtime layer (Decision 7).
+    // The frozen TaskRow shape never gains a `lane` key NOR any runtime or
+    // declared-routing field on the laneless path — the byte-freeze survives
+    // the runtime layer (Decision 7) and the assignment layer (W1).
     const card = payload.columns.ready[0];
-    for (const leaked of ['lane', 'agentKind', 'heartbeatAt', 'blockedBy', 'blockedReason']) {
+    for (const leaked of [
+      'lane',
+      'agentKind',
+      'heartbeatAt',
+      'blockedBy',
+      'blockedReason',
+      'assignedAgent',
+      'assignedReason',
+    ]) {
       expect(leaked in card).toBe(false);
     }
     // The exact frozen key set, sorted — a byte-level guard against additions.
@@ -775,6 +800,11 @@ describe('laneless board render is unchanged', () => {
     const payload = JSON.parse(r.stdout) as { columns: Record<string, Array<Record<string, unknown>>> };
     // The block does not move the lifecycle status, so the card is still `ready`.
     const card = payload.columns.ready[0];
+    // The two declared-routing fields must not escape onto the laneless path
+    // even when the row carries an enforced block (lane-only, Decision 7 + W1).
+    for (const leaked of ['assignedAgent', 'assignedReason', 'enforcedBlock']) {
+      expect(leaked in card).toBe(false);
+    }
     expect(Object.keys(card).sort()).toEqual([
       'boardId',
       'claimedAt',
@@ -787,6 +817,49 @@ describe('laneless board render is unchanged', () => {
       'updatedAt',
       'wish',
     ]);
+  });
+
+  test('--json laneless output is byte-identical to the pre-assignment shape even for an assigned card', async () => {
+    const db = openDb({ cwd: repo });
+    const plain = createBoard(db, 'plain');
+    const assigned = createTask(db, {
+      title: 'assigned card',
+      boardId: plain.id,
+      assignedAgent: 'codex',
+      assignedReason: 'declared routing',
+    });
+    db.close();
+
+    const r = await board(repo, '--board', 'plain', '--json');
+    expect(r.code).toBe(0);
+
+    // The pre-assignment byte shape, reconstructed independently of the
+    // serializer: exactly the TaskRow keys from before A1, in mapTask's
+    // insertion order, with the assignment values stripped. Any field added,
+    // removed, or reordered on the laneless path changes these bytes.
+    const expected = {
+      scope: 'board "plain"',
+      columns: {
+        blocked: [],
+        ready: [
+          {
+            id: assigned.id,
+            boardId: plain.id,
+            title: 'assigned card',
+            status: 'ready',
+            claimedBy: null,
+            claimedAt: null,
+            wish: null,
+            group: null,
+            createdAt: assigned.createdAt,
+            updatedAt: assigned.updatedAt,
+          },
+        ],
+        in_progress: [],
+        done: [],
+      },
+    };
+    expect(r.stdout).toBe(`${JSON.stringify(expected, null, 2)}\n`);
   });
 });
 
