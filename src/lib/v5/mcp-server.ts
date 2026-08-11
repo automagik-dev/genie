@@ -1,8 +1,8 @@
 /**
  * Genie v5 shared stdio MCP server loop — the newline-delimited JSON-RPC 2.0
  * transport extracted verbatim from `src/term-commands/mcp.ts` so that both
- * `genie mcp` (read-only) and `genie ui-bridge` (read + roster writes + push)
- * ride ONE transport with zero copy-paste drift.
+ * `genie mcp` (write-capable) and `genie ui-bridge` (read + roster writes +
+ * push) ride ONE transport with zero copy-paste drift.
  *
  * Transport: one JSON object per line on stdin/stdout — NOT LSP
  * `Content-Length` framing. Speaks MCP protocol `2024-11-05`.
@@ -11,8 +11,8 @@
  * design — not stray logging — so they satisfy biome's no-console rule.
  *
  * LAZY-LOAD contract: this module imports the read-tool types and `Database`
- * TYPE-ONLY (erased at compile time), and takes the runtime `openReadonlyDb` +
- * tool registry via {@link McpServerConfig}. It therefore pulls NEITHER
+ * TYPE-ONLY (erased at compile time), and takes the runtime `openDb` + tool
+ * registry via {@link McpServerConfig}. It therefore pulls NEITHER
  * `bun:sqlite` NOR `mcp-tools.ts` into any static import graph — callers
  * dynamic-import their heavy deps and inject them here. `mcp.test.ts`'s
  * import-graph probe locks that contract.
@@ -79,6 +79,39 @@ export function notify(method: string, params?: Record<string, unknown>): void {
 }
 
 // ============================================================================
+// Per-result error channel (opt-in)
+// ============================================================================
+
+const TOOL_ERROR_TAG: unique symbol = Symbol('genie.mcp.toolError');
+
+/**
+ * A tool-handler result tagged as an MCP `isError: true` result. The loop
+ * UNWRAPS the tag before serialization: `content[0].text` / `structuredContent`
+ * carry the inner `value` (wire shapes unchanged) and the envelope sets
+ * `isError: true`. Untagged handler results keep `isError: false` — an
+ * `error`-keyed payload (e.g. `genie_task` not-found, ui-bridge roster
+ * `invalid_arguments`) is DATA, never an implicit error channel.
+ */
+export interface ToolErrorResult<T = unknown> {
+  readonly [TOOL_ERROR_TAG]: T;
+}
+
+/** Tag a handler result as a typed MCP tool error (see {@link ToolErrorResult}). */
+export function toolError<T>(value: T): ToolErrorResult<T> {
+  return { [TOOL_ERROR_TAG]: value } as ToolErrorResult<T>;
+}
+
+/** True when the handler returned a tagged error result. */
+export function isToolError(result: unknown): result is ToolErrorResult {
+  return typeof result === 'object' && result !== null && TOOL_ERROR_TAG in result;
+}
+
+/** The inner payload of a tagged error result — what goes on the wire. */
+export function unwrapToolError(result: ToolErrorResult): unknown {
+  return result[TOOL_ERROR_TAG];
+}
+
+// ============================================================================
 // Server configuration
 // ============================================================================
 
@@ -89,16 +122,19 @@ export interface McpServerConfig {
   /** The tool registry surfaced by `tools/list` and dispatched by `tools/call`. */
   tools: McpTool[];
   /**
-   * Read-only DB open (net-new; returns `null` when the file is absent or cannot
-   * be opened). A fail-closed consumer with `resolveContext` turns null into
+   * DB open (net-new; returns `null` when the file is absent or cannot be
+   * opened). May be write-capable (`genie mcp`'s hardened write path) or
+   * read-only (`genie ui-bridge`) — the loop only READS through the handle it
+   * returns. A fail-closed consumer with `resolveContext` turns null into
    * `project-database-unavailable`; legacy consumers may still degrade to an
    * empty projection. Injected so this module never statically imports
    * `bun:sqlite` / `mcp-tools`.
    */
-  openReadonlyDb: (target: string | ProjectDatabaseBinding) => Database | null;
+  openDb: (target: string | ProjectDatabaseBinding) => Database | null;
   /**
-   * Optional pure read-only schema validator. The fail-closed MCP command
-   * supplies the per-repo Genie validator; legacy consumers may omit it.
+   * Optional pure-read schema validator applied to whichever handle `openDb`
+   * produced (writable or degraded-readonly). The fail-closed MCP command
+   * supplies the strict per-repo Genie validator; legacy consumers may omit it.
    */
   validateReadonlyDb?: (db: Database) => boolean;
   /**
@@ -124,22 +160,23 @@ export interface McpServerConfig {
 // ============================================================================
 
 /**
- * Drive the stdio MCP server until stdin closes. Opens a NET-NEW read-only db
- * handle and dispatches each newline-delimited JSON-RPC message per
- * {@link McpServerConfig}. With a project resolver, a null open fails closed.
+ * Drive the stdio MCP server until stdin closes. Opens a NET-NEW db handle via
+ * the injected {@link McpServerConfig.openDb} and dispatches each
+ * newline-delimited JSON-RPC message per {@link McpServerConfig}. With a
+ * project resolver, a null open fails closed.
  */
 export async function runMcpServerLoop(config: McpServerConfig): Promise<void> {
   const cwd = process.cwd();
   // Resolve the fail-closed context up front when a resolver is injected; only an
-  // `ok` context may hold a read handle. Without a resolver, keep the legacy open.
+  // `ok` context may hold a db handle. Without a resolver, keep the legacy open.
   const initialContext = config.resolveContext?.(cwd);
-  const openValidatedReadonlyDb = (context?: ProjectContext): Database | null => {
+  const openValidatedDb = (context?: ProjectContext): Database | null => {
     let target: string | ProjectDatabaseBinding = cwd;
     if (context !== undefined) {
       if (context.kind !== 'ok' || context.databaseBinding === undefined) return null;
       target = context.databaseBinding;
     }
-    const db = config.openReadonlyDb(target);
+    const db = config.openDb(target);
     if (db === null) return null;
     try {
       // Bun may construct a handle for malformed bytes and fail only on the
@@ -159,8 +196,8 @@ export async function runMcpServerLoop(config: McpServerConfig): Promise<void> {
       return null;
     }
   };
-  const openHandle = (context: ProjectContext | undefined): Database | null => openValidatedReadonlyDb(context);
-  // Single source of truth for the read handle: the per-call reopen below writes
+  const openHandle = (context: ProjectContext | undefined): Database | null => openValidatedDb(context);
+  // Single source of truth for the db handle: the per-call reopen below writes
   // back to ctx.db, and close() reads ctx.db — so a mid-session reopen is always
   // the one that gets closed (no stale/leaked handle).
   const ctx: ToolContext = { db: openHandle(initialContext), cwd, context: initialContext };
@@ -168,8 +205,8 @@ export async function runMcpServerLoop(config: McpServerConfig): Promise<void> {
 
   /**
    * Serialize a non-`ok` project context as a stable structured MCP error. This
-   * is the ONE place the read-only server refuses to serve an empty board when
-   * repository context or the genie.db is missing/unsupported.
+   * is the ONE place the fail-closed server refuses to serve an empty board
+   * when repository context or the genie.db is missing/unsupported.
    */
   function failClosed(id: number | string | null, context: ProjectContext): void {
     const payload = { error: context.kind, detail: (context as { detail?: string }).detail ?? context.kind };
@@ -204,14 +241,14 @@ export async function runMcpServerLoop(config: McpServerConfig): Promise<void> {
         return;
       }
     }
-    // The db may have been absent when the server started. Re-attempt the
-    // read-only open per call so a db created mid-session (e.g. a fresh
-    // `genie init` or a bridge write) is picked up.
-    if (!ctx.db) ctx.db = openValidatedReadonlyDb(ctx.context);
+    // The db may have been absent when the server started. Re-attempt the open
+    // per call so a db created mid-session (e.g. a fresh `genie init` or a
+    // bridge write) is picked up.
+    if (!ctx.db) ctx.db = openValidatedDb(ctx.context);
     // Existence is not openability: a directory, malformed file, unreadable
-    // path, or failed readonly open can still arrive with an `ok` path context.
+    // path, or failed open can still arrive with an `ok` path context.
     // Never dispatch a fail-closed MCP tool with a null handle, because every
-    // read tool interprets null as a healthy empty projection.
+    // tool interprets null as a healthy empty projection.
     if (config.resolveContext && !ctx.db && ctx.context?.kind === 'ok') {
       const unavailable: ProjectContext = {
         ...ctx.context,
@@ -224,11 +261,17 @@ export async function runMcpServerLoop(config: McpServerConfig): Promise<void> {
       failClosed(id, unavailable);
       return;
     }
-    const payload = tool.handler(ctx, args);
+    // Opt-in per-result error channel: a TAGGED handler result is unwrapped
+    // before serialization — the wire payload is the inner value (shapes
+    // unchanged) and the envelope flips isError. Every untagged result keeps
+    // isError: false, so `error`-keyed DATA payloads stay success results.
+    const raw = tool.handler(ctx, args);
+    const tagged = isToolError(raw);
+    const payload = tagged ? unwrapToolError(raw) : raw;
     ok(id, {
       content: [{ type: 'text', text: JSON.stringify(payload) }],
       structuredContent: payload,
-      isError: false,
+      isError: tagged,
     });
   }
 

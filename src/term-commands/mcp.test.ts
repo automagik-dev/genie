@@ -328,7 +328,10 @@ describe('mcp tools/call', () => {
     const found = toolPayload<{ id: string; title: string }>(responses.find((r) => r.id === 5)!);
     expect(found.id).toBe(taskId);
     expect(found.title).toBe('seed task');
-    const missing = toolPayload<{ error: string; id: string }>(responses.find((r) => r.id === 6)!);
+    const missingRes = responses.find((r) => r.id === 6)!;
+    // An `error`-keyed payload is DATA, not the error channel: stays isError false.
+    expect(missingRes.result?.isError).toBe(false);
+    const missing = toolPayload<{ error: string; id: string }>(missingRes);
     expect(missing).toEqual({ error: 'not_found', id: 't_nope' });
   });
 
@@ -664,6 +667,100 @@ describe('mcp missing-database fail-closed', () => {
     expect(res?.result?.isError).toBe(false);
     const payload = toolPayload<{ counts: { total: number } }>(res!);
     expect(payload.counts.total).toBeGreaterThan(0); // saw the db created mid-session
+  });
+});
+
+// ============================================================================
+// Write-capable open (Group 1 of wish mcp-write-tools): the server now serves
+// against the hardened write path; the no-create and degrade guarantees hold.
+// ============================================================================
+
+describe('mcp write-capable open', () => {
+  test('outside a git repo, tool calls fail closed and create neither .genie/ nor genie.db', async () => {
+    const plain = mkdtempSync(join(tmpdir(), 'genie-mcp-nonrepo-'));
+    try {
+      const responses = await driveMcp(plain, [
+        INIT,
+        INITIALIZED,
+        { jsonrpc: '2.0', id: 19, method: 'tools/call', params: { name: 'genie_board', arguments: {} } },
+      ]);
+      const res = responses.find((r) => r.id === 19);
+      expect(res?.error).toBeUndefined();
+      expect(res?.result?.isError).toBe(true);
+      const payload = toolPayload<{ error: string }>(res!);
+      expect(payload.error).toBe('project-context-unavailable');
+      // Resolver ordering (Decision 5): a non-ok context never reaches the
+      // write open, so no file or directory is created.
+      expect(existsSync(join(plain, '.genie'))).toBe(false);
+      expect(existsSync(join(plain, 'genie.db'))).toBe(false);
+    } finally {
+      rmSync(plain, { recursive: true, force: true });
+    }
+  });
+
+  test('on a write-protected fully-current db, all 5 read tools serve (strict validator intact)', async () => {
+    const { taskId } = seed(repo);
+    const dbPath = resolveDbPath(repo);
+    const sqlitePaths = [dbPath, `${dbPath}-wal`, `${dbPath}-shm`];
+    const stateDir = dirname(dbPath);
+    const originalModes = new Map<string, number>();
+    const mutatedModes = new Set<string>();
+    const cleanupErrors: unknown[] = [];
+    let testError: unknown;
+
+    try {
+      for (const path of sqlitePaths) {
+        if (!existsSync(path)) continue;
+        originalModes.set(path, statSync(path).mode & 0o777);
+        mutatedModes.add(path);
+        chmodSync(path, 0o444);
+      }
+      originalModes.set(stateDir, statSync(stateDir).mode & 0o777);
+      mutatedModes.add(stateDir);
+      chmodSync(stateDir, 0o555);
+
+      const calls = [
+        { id: 21, name: 'genie_board', arguments: {} },
+        { id: 22, name: 'genie_wish_status', arguments: { wish: 'genie-mcp' } },
+        { id: 23, name: 'genie_worktree_context', arguments: { branch: 'main' } },
+        { id: 24, name: 'genie_task', arguments: { id: taskId } },
+        { id: 25, name: 'genie_active', arguments: {} },
+      ];
+      const responses = await driveMcp(repo, [
+        INIT,
+        INITIALIZED,
+        ...calls.map((c) => ({
+          jsonrpc: '2.0',
+          id: c.id,
+          method: 'tools/call',
+          params: { name: c.name, arguments: c.arguments },
+        })),
+      ]);
+      for (const c of calls) {
+        const res = responses.find((r) => r.id === c.id);
+        expect(res?.error).toBeUndefined();
+        expect(res?.result?.isError).toBe(false);
+        expect(toolPayload<Record<string, unknown>>(res!)).not.toHaveProperty('error');
+      }
+      const board = toolPayload<{ counts: { total: number } }>(responses.find((r) => r.id === 21)!);
+      expect(board.counts.total).toBe(2); // the fully-current db's real state
+    } catch (error) {
+      testError = error;
+    } finally {
+      for (const path of [stateDir, ...sqlitePaths]) {
+        if (!mutatedModes.has(path)) continue;
+        try {
+          chmodSync(path, originalModes.get(path)!);
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+      }
+    }
+    if (testError !== undefined && cleanupErrors.length > 0) {
+      throw new AggregateError([testError, ...cleanupErrors], 'MCP write-capable proof failed and cleanup incomplete');
+    }
+    if (testError !== undefined) throw testError;
+    if (cleanupErrors.length > 0) throw new AggregateError(cleanupErrors, 'Failed to restore write-protected fixture');
   });
 });
 

@@ -15,6 +15,7 @@
 
 import { constants, Database } from 'bun:sqlite';
 import { execFileSync } from 'node:child_process';
+import { accessSync, constants as fsConstants, readFileSync, rmSync, statSync } from 'node:fs';
 import {
   type ProjectContext,
   type ProjectDatabaseBinding,
@@ -193,6 +194,149 @@ function reopenReadableDespiteFailedHeal(target?: string | ProjectDatabaseBindin
   }
   closeReadonlyDb(db);
   return null;
+}
+
+// ============================================================================
+// Write-capable DB open (hardened write path + read-only-degrade fallback)
+// ============================================================================
+
+/**
+ * Handles served by the read-only-degrade fallback inside {@link openWriteableDb}.
+ * Membership is DERIVED FROM WHICH OPEN PRODUCED THE HANDLE — never a latched
+ * session flag: a handle added here was produced by the readonly healing open
+ * after the write path failed, so writes through it would raise SQLITE_READONLY.
+ * The operative write tools (Group 2) consult {@link isDegradedReadonlyDb} to
+ * return a typed `read_only_database` error instead of a protocol failure. The
+ * per-open derivation means a repaired filesystem restores writes on the next
+ * successful write open (fresh handle, no membership) and a later failure
+ * re-degrades (fresh handle, membership again).
+ */
+const degradedReadonlyHandles = new WeakSet<Database>();
+
+/** True when `db` was produced by the read-only-degrade fallback (writes would fail). */
+export function isDegradedReadonlyDb(db: Database | null | undefined): boolean {
+  return db !== null && db !== undefined && degradedReadonlyHandles.has(db);
+}
+
+/**
+ * Open the repo's shared `.genie/genie.db` WRITE-CAPABLE through the standard
+ * hardened CLI path, degrading to the readonly healing open when the write is
+ * impossible. This is the open `genie mcp` injects into the shared loop.
+ *
+ * 1. WRITE PATH — revalidate the exact `resolveProjectDatabaseBinding` binding
+ *    (Decision 4: writes into a substituted/symlinked db are strictly worse
+ *    than reads), refuse up front when the file is not writable (bun:sqlite
+ *    silently opens a READONLY connection on some platforms instead of
+ *    throwing — a pre-check keeps degrade deterministic everywhere), then
+ *    `openDb` (WAL + `busy_timeout` + idempotent schema — the exact primitive
+ *    every CLI command uses). EVERY throw (`MalformedDbError`, `ForeignDbError`,
+ *    `BusyDbError`, anything) is caught and translated to the loop's `null`
+ *    contract: the injected open never lets an exception escape (the loop calls
+ *    it outside any `try`). The post-open binding + VFS-handle revalidation
+ *    mirrors the readonly path, so `openDb`'s DDL never runs against a file
+ *    substituted mid-open.
+ * 2. STALE-READONLY-SIDECAR RECOVERY — when the write open fails and the
+ *    leftover `-shm` carries SQLite's deliberate read-only WAL-index header
+ *    (page-size + db-size fields zeroed — written when a DEGRADED readonly
+ *    connection closed while the file was write-protected) and the `-wal` is
+ *    empty (no un-checkpointed frames to lose), remove both sidecars and retry
+ *    the write open once. This is what lets a repaired filesystem restore
+ *    writes on the next open — without it, the stale header would keep every
+ *    later writer failing closed on macOS/bun.
+ * 3. READ-ONLY-DEGRADE FALLBACK — when the write path still fails
+ *    (write-protected file/filesystem, malformed, foreign, busy), fall back to
+ *    the readonly healing open. The loop's strict `validateReadonlyDb:
+ *    isCurrentGenieDb` adjudicates the fallback handle: exactly the
+ *    fully-current database is served, unchanged from today's behavior. The
+ *    degraded handle is marked in {@link isDegradedReadonlyDb}; the state is
+ *    recomputed per open, never latched.
+ *
+ * The no-create guarantee rests on resolver ordering (Decision 5): a non-`ok`
+ * project context never reaches this open, so `openDb`'s mkdir/create side
+ * effects are unreachable outside a healthy genie repo — MCP never creates
+ * `.genie/` or `genie.db`.
+ */
+export function openWriteableDb(target?: string | ProjectDatabaseBinding): Database | null {
+  const initial =
+    typeof target === 'object'
+      ? resolveProjectDatabaseBinding(target.logicalPath, target)
+      : resolveProjectDatabaseBinding(resolveDbPath(target));
+  let db: Database | null = null;
+  if (initial.ok) {
+    const binding = initial.binding;
+    db = tryWriteOpen(binding);
+    if (db === null && hasStaleReadonlyWalIndex(binding) && walSidecarsEmpty(binding)) {
+      // A prior degraded session left SQLite's read-only WAL-index header in
+      // -shm; both sidecars must be rebuilt before any writer can proceed.
+      try {
+        rmSync(`${binding.physicalPath}-shm`, { force: true });
+        rmSync(`${binding.physicalPath}-wal`, { force: true });
+      } catch {
+        // Sidecar removal is best-effort; the fallback below still adjudicates.
+      }
+      db = tryWriteOpen(binding);
+    }
+  }
+  if (db !== null) return db;
+  const degraded = openReadonlyDbHealingStaleSchema(target);
+  if (degraded !== null) degradedReadonlyHandles.add(degraded);
+  return degraded;
+}
+
+/** True when the db file itself is writable (bun:sqlite would open it read-write). */
+function isFileWritable(path: string): boolean {
+  try {
+    accessSync(path, fsConstants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * True when the `-shm` holds SQLite's deliberate read-only WAL-index header:
+ * the page-size and db-size header fields are zeroed (a live index always has
+ * both nonzero). This is the exact state a degraded readonly connection leaves
+ * behind when it closes while the database file is write-protected — the one
+ * state that would otherwise keep every later writer failing.
+ */
+function hasStaleReadonlyWalIndex(binding: ProjectDatabaseBinding): boolean {
+  try {
+    const shm = readFileSync(`${binding.physicalPath}-shm`);
+    if (shm.length < 24) return false;
+    return shm.readUInt32BE(8) === 0 && shm.readUInt32BE(20) === 0;
+  } catch {
+    return false;
+  }
+}
+
+/** True when the `-wal` is absent or empty — removing the sidecars loses no frames. */
+function walSidecarsEmpty(binding: ProjectDatabaseBinding): boolean {
+  try {
+    const wal = statSync(`${binding.physicalPath}-wal`);
+    return wal.size === 0;
+  } catch {
+    return false;
+  }
+}
+
+/** One write-path attempt: writability gate → openDb → post-open revalidation. */
+function tryWriteOpen(binding: ProjectDatabaseBinding): Database | null {
+  if (!isFileWritable(binding.physicalPath)) return null;
+  let db: Database | null = null;
+  try {
+    db = openDb({ path: binding.physicalPath });
+    // Post-open revalidation: the binding AND the opened VFS handle must still
+    // name the validated file before any tool can observe or mutate it.
+    if (!resolveProjectDatabaseBinding(binding.logicalPath, binding).ok || !readonlyDatabaseHandleMatchesPath(db)) {
+      closeReadonlyDb(db);
+      return null;
+    }
+    return db;
+  } catch {
+    closeReadonlyDb(db);
+    return null;
+  }
 }
 
 // ============================================================================
