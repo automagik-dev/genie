@@ -418,10 +418,11 @@ describe('mcp tools/call', () => {
 describe('mcp runtime-layer backward compatibility', () => {
   test('genie_task keeps the frozen TaskRow shape — no runtime/lane fields leak', async () => {
     const { taskId } = seed(repo);
-    // Add runtime state (block + claim) so a leak would actually surface if any.
+    // Add runtime state (block + claim) and a declared routing so a leak would
+    // actually surface if any.
     const db = openDb({ cwd: repo });
     db.query(
-      "UPDATE tasks SET blocked_by='x', blocked_reason='r', heartbeat_at=1, agent_kind='codex', lane='Idea' WHERE id=?",
+      "UPDATE tasks SET blocked_by='x', blocked_reason='r', heartbeat_at=1, agent_kind='codex', lane='Idea', assigned_agent='codex', assigned_reason='routed' WHERE id=?",
     ).run(taskId);
     db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
     db.close();
@@ -432,7 +433,7 @@ describe('mcp runtime-layer backward compatibility', () => {
       { jsonrpc: '2.0', id: 40, method: 'tools/call', params: { name: 'genie_task', arguments: { id: taskId } } },
     ]);
     const task = toolPayload<Record<string, unknown>>(responses.find((r) => r.id === 40)!);
-    // The projection is byte-frozen: exactly the pre-runtime TaskRow keys.
+    // The projection is byte-frozen: exactly the pre-assignment TaskRow keys.
     expect(Object.keys(task).sort()).toEqual([
       'boardId',
       'claimedAt',
@@ -445,7 +446,15 @@ describe('mcp runtime-layer backward compatibility', () => {
       'updatedAt',
       'wish',
     ]);
-    for (const leaked of ['lane', 'agentKind', 'heartbeatAt', 'blockedBy', 'blockedReason']) {
+    for (const leaked of [
+      'lane',
+      'agentKind',
+      'heartbeatAt',
+      'blockedBy',
+      'blockedReason',
+      'assignedAgent',
+      'assignedReason',
+    ]) {
       expect(leaked in task).toBe(false);
     }
   });

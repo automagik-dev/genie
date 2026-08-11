@@ -31,6 +31,7 @@ import { BUSY_TIMEOUT_MS } from './sqlite-open.js';
 // the readonly bun:sqlite open out of the eager genie.ts import graph.
 export { isCurrentGenieDb, type ProjectContext, resolveProjectContext } from './genie-db.js';
 import {
+  type FrozenTaskRow,
   type TaskFilter,
   type TaskRow,
   type WishGroupRow,
@@ -38,6 +39,7 @@ import {
   getTask,
   listTasks,
   listWishSlugs,
+  toFrozenTaskRow,
 } from './task-state.js';
 
 // ============================================================================
@@ -383,10 +385,17 @@ function genieWorktreeContext(ctx: ToolContext, args: Record<string, unknown>): 
 
 // --- genie_task ------------------------------------------------------------
 
-function genieTask(ctx: ToolContext, args: Record<string, unknown>): TaskRow | { error: 'not_found'; id: string } {
+// The frozen `genie_task` payload is exactly the pre-assignment TaskRow key
+// set (WISH Decision 7) — the shared projection lives in task-state.ts next
+// to TaskRow, so `task list --json` and this MCP shape cannot drift apart.
+
+function genieTask(
+  ctx: ToolContext,
+  args: Record<string, unknown>,
+): FrozenTaskRow | { error: 'not_found'; id: string } {
   const id = argString(args, 'id') ?? '';
   const task = ctx.db ? getTask(ctx.db, id) : null;
-  return task ?? { error: 'not_found', id };
+  return task ? toFrozenTaskRow(task) : { error: 'not_found', id };
 }
 
 // --- genie_active ----------------------------------------------------------

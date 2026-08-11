@@ -17,8 +17,6 @@
 - [genie-boards-ui](brainstorms/genie-boards-ui/DRAFT.md) — WRS 70; genie desktop boards module: ABSORB of the G4 kanban decided by Felipe; tab + split-toggle layout tentatively locked ("that looks good", confirm at crystallize); archive section + per-project .genie-commit checkboxes added to scope; roadmap shape (per-project board + groom-with-agent task) recommended, awaiting Felipe; depends on ui-bridge board-payload extension (protocol 1.1) + genie-ui-dash G5 (2026-07-21)
 - [intent-to-wish-compiler](brainstorms/intent-to-wish-compiler/DRAFT.md) — **LIVE (re-verified 2026-07-21):** WRS 92; Demand→Patch/Standard/Program router + circuit-breaker (flex cuts autonomous, payout cuts human-only); invisible routing compiled from intent — program-scale, splits at pour time
 - [brainstorm-domain-map](brainstorms/brainstorm-domain-map/DRAFT.md) — **LIVE (re-verified 2026-07-21):** WRS 80; executable spec compiler (intent → requirement-ID → oracle-class → execution → proof-packet); deterministic gates, residual-risk review only; subjective-truth ownership still open (umbrella G8)
-- [cross-agent-delegate](brainstorms/cross-agent-delegate/DRAFT.md) — **re-scoped 2026-07-21:** Codex skill-distribution prerequisite solved by agent-sync (#2541); remaining live: delegate skill (Codex+Hermes), wish companion sessions, refine style cards, auto plan-gate counter-read (umbrella G6)
-
 ## Ready
 
 
@@ -34,6 +32,8 @@
 - [WISH: warp-integration](wishes/warp-integration/WISH.md) — **DONE** (all 4 groups SHIP-reviewed 2026-07-02; pane-render checklist awaiting Felipe): genie init, Warp launch-config emitter, genie launch, /work multi-session opt-in
 
 ## Poured
+
+- [cross-agent-delegate — DESIGN](brainstorms/cross-agent-delegate/DESIGN.md) → [WISH](wishes/cross-agent-delegate/WISH.md) — **APPROVED 2026-08-11** (design SHIP digest `c15d6a9e…` after 2 fix loops; plan SHIP with all 7 findings applied in-document, incl. the A1/A2 gate split; re-opened orca-inspired 2026-08-10, umbrella G6): W1 declared-routing wish — `assigned_agent`+`assigned_reason` on the card (default = current agent), roster allowlist (claude/codex/pi/hermes/prime), `create --agent/--why` + `task assign --clear`, lane-path-only `board --json` (laneless stays byte-frozen), roadmap-sync lockstep; 4 groups A1 → A2 ∥ B ∥ C, 5 board cards. Follow-on `delegate-bridge` (W2 turn-per-launch remotty bridge + W3 fan-out) pours after the 5 logged residuals are applied to the design and the remotty `headless-turn-open` wish exists; unblocks remotty's `assigned_agent` rendering ask
 
 - [WISH: genie-official-roadmap](wishes/genie-official-roadmap/WISH.md) — **APPROVED 2026-07-28** ([DESIGN](brainstorms/genie-official-roadmap/DESIGN.md) SHIP after 1 fix loop, digest `36097b0d…`; plan SHIP after 2 fix loops, all findings execution-verified by the reviewer): triage of all 36 wishes (3-scout evidence audit) into the official roadmap — archive 29 DONE-verified wishes with full link-rewrite inventory, cold-seed the `roadmap` board with 19 lifecycle cards (Work order: dogfood-remediation → v4-residue → release-ops → proportional-validation, Felipe-ratified), rewrite INDEX with a Shipped section, draft `public-roadmap-polish`. 3 groups: archive+links ∥ board-seed → INDEX rewrite; single commit in G3.
 
