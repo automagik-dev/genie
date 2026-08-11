@@ -36,17 +36,19 @@ const PROTOCOL_VERSION = '2024-11-05';
  * reply and the five read tools — byte-for-byte the pre-extraction behavior.
  */
 export async function runMcpServer(): Promise<void> {
-  // Lazy: the read-only bun:sqlite open + tools load here, not at genie startup.
+  // Lazy: the write-capable bun:sqlite open + tools load here, not at genie startup.
   const mcpTools = await import('../lib/v5/mcp-tools.js');
-  const { isCurrentGenieDb, MCP_TOOLS, openReadonlyDbHealingStaleSchema, resolveProjectContext } = mcpTools;
+  const { isCurrentGenieDb, MCP_TOOLS, openWriteableDb, resolveProjectContext } = mcpTools;
   const { runMcpServerLoop } = await import('../lib/v5/mcp-server.js');
   await runMcpServerLoop({
     tools: MCP_TOOLS,
-    // Heals an additive-lag schema (older build's DB, same user_version) via the
-    // standard idempotent write-path open before the readonly validator can
-    // fail-close it — the post-update Codex plugin's first contact with a repo
-    // is this server, so no CLI command has had a chance to run the backfill.
-    openReadonlyDb: openReadonlyDbHealingStaleSchema,
+    // Write-capable open through the standard hardened CLI write path
+    // (binding revalidation → openDb): the server now mutates .genie/genie.db
+    // exactly like `genie task`. Every throw is translated to the loop's null
+    // contract; when the write is impossible (write-protected file/filesystem),
+    // openWriteableDb degrades to the readonly healing open and the strict
+    // validator below adjudicates — a fully-current db keeps serving reads.
+    openDb: openWriteableDb,
     validateReadonlyDb: isCurrentGenieDb,
     // Fail-closed: missing repository context / genie.db / unsupported layouts
     // surface as a typed MCP error instead of a healthy-looking empty board.

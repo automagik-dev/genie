@@ -269,7 +269,7 @@ export async function runUiBridge(): Promise<void> {
 
   await runMcpServerLoop({
     tools: [...MCP_TOOLS, ...buildRosterTools(getWriteDb)],
-    openReadonlyDb,
+    openDb: openReadonlyDb,
     initialize: bridgeInitialize,
     onClose: () => shutdown(false),
   });

@@ -29,14 +29,17 @@ import {
   renameSync,
   rmSync,
   symlinkSync,
+  writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { STAGE_LOG_BACKFILL_KEY, isCurrentGenieDb, openDb } from './genie-db.js';
 import {
   MCP_TOOLS,
+  isDegradedReadonlyDb,
   openReadonlyDb,
   openReadonlyDbHealingStaleSchema,
+  openWriteableDb,
   readonlyDatabaseHandleMatchesPath,
   resolveProjectContext,
 } from './mcp-tools.js';
@@ -556,5 +559,165 @@ describe('openReadonlyDbHealingStaleSchema', () => {
     const check = new Database(path, { readonly: true });
     expect((check.query('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(99);
     check.close();
+  });
+});
+
+// ============================================================================
+// openWriteableDb — hardened write path + read-only-degrade fallback (Group 1
+// of wish mcp-write-tools: `genie mcp` now serves against a WRITABLE handle)
+// ============================================================================
+
+describe('openWriteableDb', () => {
+  /** Probe whether a handle can take the write lock (BEGIN IMMEDIATE), then roll back. */
+  function expectWritable(db: Database | null): void {
+    expect(db).not.toBeNull();
+    // A readonly/degraded handle raises SQLITE_READONLY here; a writable handle
+    // takes the write lock and rolls back, leaving no side effect.
+    (db as Database).exec('BEGIN IMMEDIATE');
+    (db as Database).exec('ROLLBACK');
+  }
+
+  test('opens a WRITABLE handle through the standard CLI path in a healthy repo', () => {
+    const repo = initRepo(join(base, 'repo'));
+    seedDb(repo);
+    const context = resolveProjectContext(repo);
+    if (context.kind !== 'ok' || context.databaseBinding === undefined) throw new Error('expected bound database');
+    const db = openWriteableDb(context.databaseBinding);
+    expectWritable(db);
+    expect(isDegradedReadonlyDb(db)).toBe(false);
+    // The seeded task is served through the writable handle.
+    const row = (db as Database).query('SELECT title FROM tasks').get() as { title: string };
+    expect(row.title).toBe('seed');
+    (db as Database).close();
+  });
+
+  test('degrades to a readable-but-degraded readonly handle on a write-protected fully-current db', () => {
+    const repo = initRepo(join(base, 'repo'));
+    seedDb(repo);
+    const context = resolveProjectContext(repo);
+    if (context.kind !== 'ok' || context.databaseBinding === undefined) throw new Error('expected bound database');
+    const path = context.databaseBinding.physicalPath;
+    const genieDir = dirname(path);
+    chmodSync(path, 0o444);
+    chmodSync(genieDir, 0o555);
+    try {
+      // Root (some CI containers) ignores file modes, so the write open would
+      // succeed and this test would assert the wrong branch — the degrade path
+      // is only expressible where chmod actually revokes write access.
+      try {
+        accessSync(path, fsConstants.W_OK);
+        return; // still writable (running as root) — skip
+      } catch {
+        // write access revoked as intended — proceed
+      }
+      const served = openWriteableDb(context.databaseBinding);
+      if (served === null) {
+        // Null is only acceptable when this platform's SQLite cannot read a
+        // write-protected WAL database AT ALL (read-only WAL support varies by
+        // VFS state). Probe a plain readonly open + query: if that works, the
+        // degrade fallback should have served the handle and null is a regression.
+        const probe = openReadonlyDb(context.databaseBinding);
+        let readable = false;
+        try {
+          if (probe !== null) {
+            probe.query('SELECT 1 FROM meta').get();
+            readable = true;
+          }
+        } catch {
+          // unreadable — the scenario is inexpressible in this environment
+        }
+        probe?.close();
+        expect(readable).toBe(false);
+        return;
+      }
+      // The fully-current db's reads still serve through the degraded handle...
+      const row = served.query('SELECT title FROM tasks').get() as { title: string };
+      expect(row.title).toBe('seed');
+      // ...and the handle is observable as degraded (a write through it fails).
+      expect(isDegradedReadonlyDb(served)).toBe(true);
+      served.close();
+    } finally {
+      chmodSync(genieDir, 0o755);
+      chmodSync(path, 0o644);
+    }
+  });
+
+  test('a subsequent write open on a repaired filesystem yields a fresh NON-degraded handle (never latched)', () => {
+    const repo = initRepo(join(base, 'repo'));
+    seedDb(repo);
+    const context = resolveProjectContext(repo);
+    if (context.kind !== 'ok' || context.databaseBinding === undefined) throw new Error('expected bound database');
+    const path = context.databaseBinding.physicalPath;
+    const genieDir = dirname(path);
+    chmodSync(path, 0o444);
+    chmodSync(genieDir, 0o555);
+    try {
+      try {
+        accessSync(path, fsConstants.W_OK);
+        return; // root — the degrade branch is inexpressible, skip
+      } catch {
+        // proceed
+      }
+      const degraded = openWriteableDb(context.databaseBinding);
+      if (degraded === null) {
+        // Inexpressible on this platform (same probe as the degrade test).
+        const probe = openReadonlyDb(context.databaseBinding);
+        let readable = false;
+        try {
+          if (probe !== null) {
+            probe.query('SELECT 1 FROM meta').get();
+            readable = true;
+          }
+        } catch {
+          // unreadable
+        }
+        probe?.close();
+        if (!readable) return;
+      }
+      expect(isDegradedReadonlyDb(degraded)).toBe(true);
+      degraded?.close();
+    } finally {
+      chmodSync(genieDir, 0o755);
+      chmodSync(path, 0o644);
+    }
+    // Repaired filesystem: the NEXT open goes through the write path and the
+    // fresh handle is NOT degraded — the degraded state was derived from the
+    // per-open outcome, never latched across opens.
+    const restored = openWriteableDb(context.databaseBinding);
+    expectWritable(restored);
+    expect(isDegradedReadonlyDb(restored)).toBe(false);
+    (restored as Database).close();
+  });
+
+  test('never creates an absent database (resolver ordering: a non-ok context never reaches the open)', () => {
+    const repo = initRepo(join(base, 'repo'));
+    expect(openWriteableDb(repo)).toBeNull();
+    expect(existsSync(join(repo, '.genie', 'genie.db'))).toBe(false);
+  });
+
+  test('fails closed (null) on foreign, unversioned-foreign, and malformed databases', () => {
+    const repo = initRepo(join(base, 'repo'));
+    const dbPath = join(repo, '.genie', 'genie.db');
+    mkdirSync(dirname(dbPath), { recursive: true });
+
+    // Foreign: user_version = 99 with a lookalike tasks table.
+    const foreign = new Database(dbPath);
+    foreign.exec(
+      'CREATE TABLE tasks (id TEXT PRIMARY KEY, title TEXT NOT NULL, status TEXT NOT NULL); PRAGMA user_version = 99',
+    );
+    foreign.close();
+    expect(openWriteableDb(repo)).toBeNull();
+
+    // Unversioned foreign: user_version = 0 with existing foreign tables.
+    rmSync(dbPath);
+    const v0 = new Database(dbPath);
+    v0.exec('CREATE TABLE inventory (id TEXT PRIMARY KEY)');
+    v0.close();
+    expect(openWriteableDb(repo)).toBeNull();
+
+    // Malformed: not a SQLite database at all.
+    rmSync(dbPath);
+    writeFileSync(dbPath, 'not a sqlite database');
+    expect(openWriteableDb(repo)).toBeNull();
   });
 });
