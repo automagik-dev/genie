@@ -33,15 +33,18 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import { STAGE_LOG_BACKFILL_KEY, isCurrentGenieDb, openDb } from './genie-db.js';
+import type { ProjectDatabaseBinding } from './genie-db.js';
+import { BusyDbError, STAGE_LOG_BACKFILL_KEY, isCurrentGenieDb, openDb } from './genie-db.js';
 import {
   MCP_TOOLS,
+  hasStaleReadonlyWalIndex,
   isDegradedReadonlyDb,
   openReadonlyDb,
   openReadonlyDbHealingStaleSchema,
   openWriteableDb,
   readonlyDatabaseHandleMatchesPath,
   resolveProjectContext,
+  walSidecarsEmpty,
 } from './mcp-tools.js';
 import { createBoard, createTask } from './task-state.js';
 
@@ -563,6 +566,85 @@ describe('openReadonlyDbHealingStaleSchema', () => {
 });
 
 // ============================================================================
+// Stale-readonly sidecar predicates (Group 1 recovery: hasStaleReadonlyWalIndex
+// + walSidecarsEmpty). The poison is NOT reproducible through the real openDb
+// on this machine (bun self-heals a crafted zeroed-header -shm and opens
+// writable), so the predicates are tested directly with crafted headers and the
+// recovery branch through the injected open seam below.
+// ============================================================================
+
+/**
+ * The exact read-only WAL-index header macOS/bun leaves in `-shm` when a
+ * DEGRADED readonly connection closes while the db file is write-protected:
+ * iVersion + isInit still set, iChange (offset 8) and nPage (offset 20) zeroed.
+ * Observed live on macOS (bun 1.x): a write-protected db opened without the
+ * readonly flag silently opens READONLY, writes fail with "attempt to write a
+ * readonly database", and the close leaves this header.
+ */
+function poisonShmHeader(): Buffer {
+  const header = Buffer.alloc(32768);
+  header.writeUInt32LE(0x002de218, 0); // iVersion (matches the observed value)
+  header.writeUInt32LE(1, 12); // isInit
+  return header;
+}
+
+/** A live header: same shape, but iChange and nPage nonzero. */
+function liveShmHeader(): Buffer {
+  const header = poisonShmHeader();
+  header.writeUInt32LE(2, 8); // iChange
+  header.writeUInt32LE(2, 20); // nPage
+  return header;
+}
+
+describe('stale-readonly sidecar predicates', () => {
+  function seededBinding(): ProjectDatabaseBinding {
+    const repo = initRepo(join(base, 'repo'));
+    seedDb(repo);
+    const context = resolveProjectContext(repo);
+    if (context.kind !== 'ok' || context.databaseBinding === undefined) throw new Error('expected bound database');
+    return context.databaseBinding;
+  }
+
+  test('hasStaleReadonlyWalIndex: true only for the zeroed read-only header', () => {
+    const binding = seededBinding();
+    const shmPath = `${binding.physicalPath}-shm`;
+
+    // No -shm at all: nothing stale to recover.
+    rmSync(shmPath, { force: true });
+    expect(hasStaleReadonlyWalIndex(binding)).toBe(false);
+
+    // Crafted poison (zeroed iChange @8 / nPage @20): the degraded-readonly state.
+    writeFileSync(shmPath, poisonShmHeader());
+    expect(hasStaleReadonlyWalIndex(binding)).toBe(true);
+
+    // A live index header (both fields nonzero): never treated as stale.
+    writeFileSync(shmPath, liveShmHeader());
+    expect(hasStaleReadonlyWalIndex(binding)).toBe(false);
+
+    // A header too short to carry both fields: conservative false.
+    writeFileSync(shmPath, Buffer.alloc(16));
+    expect(hasStaleReadonlyWalIndex(binding)).toBe(false);
+  });
+
+  test('walSidecarsEmpty: true when the -wal is absent (ENOENT) or empty, false when it holds frames', () => {
+    const binding = seededBinding();
+    const walPath = `${binding.physicalPath}-wal`;
+
+    // Absent — the state a fully-checkpointed db leaves (recovery must run).
+    rmSync(walPath, { force: true });
+    expect(walSidecarsEmpty(binding)).toBe(true);
+
+    // Present but empty — equally safe to remove.
+    writeFileSync(walPath, '');
+    expect(walSidecarsEmpty(binding)).toBe(true);
+
+    // Non-empty (un-checkpointed frames): removal would lose data.
+    writeFileSync(walPath, 'not-a-wal');
+    expect(walSidecarsEmpty(binding)).toBe(false);
+  });
+});
+
+// ============================================================================
 // openWriteableDb — hardened write path + read-only-degrade fallback (Group 1
 // of wish mcp-write-tools: `genie mcp` now serves against a WRITABLE handle)
 // ============================================================================
@@ -719,5 +801,66 @@ describe('openWriteableDb', () => {
     rmSync(dbPath);
     writeFileSync(dbPath, 'not a sqlite database');
     expect(openWriteableDb(repo)).toBeNull();
+  });
+
+  test('sidecar recovery: a poisoned -shm with an empty -wal is removed and the retried write open succeeds', () => {
+    const repo = initRepo(join(base, 'repo'));
+    seedDb(repo);
+    const context = resolveProjectContext(repo);
+    if (context.kind !== 'ok' || context.databaseBinding === undefined) throw new Error('expected bound database');
+    const binding = context.databaseBinding;
+    const shmPath = `${binding.physicalPath}-shm`;
+    const walPath = `${binding.physicalPath}-wal`;
+
+    // Craft the degraded-readonly state: poisoned -shm header + empty -wal.
+    // (The real openDb self-heals this on the current machine — see the
+    // predicates describe — so the first attempt is made to fail through the
+    // injected seam, which is also how the retry is observed.)
+    rmSync(shmPath, { force: true });
+    rmSync(walPath, { force: true });
+    writeFileSync(shmPath, poisonShmHeader());
+    writeFileSync(walPath, '');
+
+    let attempts = 0;
+    let retrySawPoisonedShm = true; // pessimistic: set inside the retry
+    const db = openWriteableDb(binding, {
+      openDatabase: (path) => {
+        attempts += 1;
+        if (attempts === 1) throw new Error('poisoned-sidecar write open fails');
+        // Recovery must have removed the poisoned -shm before the retry ran.
+        retrySawPoisonedShm = hasStaleReadonlyWalIndex(binding);
+        return new Database(path, { create: true });
+      },
+    });
+    expect(attempts).toBe(2); // exactly one recovery retry
+    expect(retrySawPoisonedShm).toBe(false); // both sidecars were removed first
+    expectWritable(db);
+    expect(isDegradedReadonlyDb(db)).toBe(false);
+    (db as Database).close();
+  });
+
+  test('a BusyDbError write open returns null WITHOUT the readonly degrade fallback or sidecar recovery', () => {
+    const repo = initRepo(join(base, 'repo'));
+    seedDb(repo);
+    const context = resolveProjectContext(repo);
+    if (context.kind !== 'ok' || context.databaseBinding === undefined) throw new Error('expected bound database');
+    const binding = context.databaseBinding;
+    const shmPath = `${binding.physicalPath}-shm`;
+
+    // Even with a poisoned -shm present, a busy open must NOT run sidecar
+    // recovery (the sidecars belong to a live writer) and must NOT degrade to
+    // readonly: the loop's per-call reopen retries the write open next call.
+    rmSync(shmPath, { force: true });
+    writeFileSync(shmPath, poisonShmHeader());
+
+    const db = openWriteableDb(binding, {
+      openDatabase: () => {
+        throw new BusyDbError(binding.physicalPath, new Error('write lock held by another process'));
+      },
+    });
+    expect(db).toBeNull();
+    expect(isDegradedReadonlyDb(db)).toBe(false); // not mislabeled read-only
+    // The poisoned -shm was left untouched — recovery never ran for a busy db.
+    expect(hasStaleReadonlyWalIndex(binding)).toBe(true);
   });
 });
