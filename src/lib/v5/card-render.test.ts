@@ -30,6 +30,8 @@ function card(over: Partial<TaskCardRow> = {}): TaskCardRow {
     heartbeatAt: null,
     blockedBy: null,
     blockedReason: null,
+    assignedAgent: null,
+    assignedReason: null,
     ...over,
   };
 }

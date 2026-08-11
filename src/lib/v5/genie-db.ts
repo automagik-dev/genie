@@ -435,6 +435,8 @@ const EXPECTED_SCHEMA = {
     'blocked_by',
     'blocked_reason',
     'block_kind',
+    'assigned_agent',
+    'assigned_reason',
   ],
   wish_groups: [
     'wish',
@@ -451,8 +453,9 @@ const EXPECTED_SCHEMA = {
 
 /**
  * True when the DB is already at the current schema — every expected table plus
- * the additive lane/wish columns backfilled by {@link ensureTaskColumns} and
- * {@link ensureBoardColumns}. Pure reads (no write lock), so a known-current DB
+ * the additive lane/wish/assignment columns backfilled by
+ * {@link ensureTaskColumns} and {@link ensureBoardColumns}. Pure reads (no
+ * write lock), so a known-current DB
  * opens without contending on the schema lock. A pre-column v1 DB (missing any
  * of these) returns false → ensureSchema runs and backfills. This MUST stay in
  * lockstep with the ensure* helpers: an added column absent here would let an
@@ -533,16 +536,18 @@ CREATE TABLE IF NOT EXISTS boards (
 );
 
 CREATE TABLE IF NOT EXISTS tasks (
-  id         TEXT PRIMARY KEY,
-  board_id   TEXT REFERENCES boards(id) ON DELETE SET NULL,
-  title      TEXT NOT NULL,
-  status     TEXT NOT NULL CHECK (status IN ('blocked', 'ready', 'in_progress', 'done')),
-  claimed_by TEXT,
-  claimed_at INTEGER,
-  wish       TEXT,
-  group_name TEXT,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
+  id               TEXT PRIMARY KEY,
+  board_id         TEXT REFERENCES boards(id) ON DELETE SET NULL,
+  title            TEXT NOT NULL,
+  status           TEXT NOT NULL CHECK (status IN ('blocked', 'ready', 'in_progress', 'done')),
+  claimed_by       TEXT,
+  claimed_at       INTEGER,
+  wish             TEXT,
+  group_name       TEXT,
+  assigned_agent   TEXT,
+  assigned_reason  TEXT,
+  created_at       INTEGER NOT NULL,
+  updated_at       INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS task_dependencies (
@@ -632,6 +637,11 @@ function ensureTaskColumns(db: Database): void {
   if (!cols.has('blocked_by')) db.exec('ALTER TABLE tasks ADD COLUMN blocked_by TEXT');
   if (!cols.has('blocked_reason')) db.exec('ALTER TABLE tasks ADD COLUMN blocked_reason TEXT');
   if (!cols.has('block_kind')) db.exec('ALTER TABLE tasks ADD COLUMN block_kind TEXT');
+  // Declared routing (cross-agent-delegate W1): which roster agent works the
+  // card and why. Nullable ⇒ no user_version bump; both halves travel together
+  // (an assignment without its reason is rejected at the state API).
+  if (!cols.has('assigned_agent')) db.exec('ALTER TABLE tasks ADD COLUMN assigned_agent TEXT');
+  if (!cols.has('assigned_reason')) db.exec('ALTER TABLE tasks ADD COLUMN assigned_reason TEXT');
 }
 
 /** Meta key marking the one-time stage_log → task_events backfill as complete. */
