@@ -31,6 +31,7 @@ import { BUSY_TIMEOUT_MS } from './sqlite-open.js';
 // the readonly bun:sqlite open out of the eager genie.ts import graph.
 export { isCurrentGenieDb, type ProjectContext, resolveProjectContext } from './genie-db.js';
 import {
+  type FrozenTaskRow,
   type TaskFilter,
   type TaskRow,
   type WishGroupRow,
@@ -38,6 +39,7 @@ import {
   getTask,
   listTasks,
   listWishSlugs,
+  toFrozenTaskRow,
 } from './task-state.js';
 
 // ============================================================================
@@ -383,29 +385,9 @@ function genieWorktreeContext(ctx: ToolContext, args: Record<string, unknown>): 
 
 // --- genie_task ------------------------------------------------------------
 
-/**
- * The frozen `genie_task` payload — exactly the pre-assignment TaskRow key set.
- * The two declared-routing fields live on TaskRow but stay off this byte-frozen
- * MCP shape (WISH Decision 7); only the additive lane board `--json` carries
- * them.
- */
-type FrozenTaskRow = Omit<TaskRow, 'assignedAgent' | 'assignedReason'>;
-
-/** Explicit key-picking (toSummary-style) — strips the two assignment fields. */
-function toFrozenTaskRow(t: TaskRow): FrozenTaskRow {
-  return {
-    id: t.id,
-    boardId: t.boardId,
-    title: t.title,
-    status: t.status,
-    claimedBy: t.claimedBy,
-    claimedAt: t.claimedAt,
-    wish: t.wish,
-    group: t.group,
-    createdAt: t.createdAt,
-    updatedAt: t.updatedAt,
-  };
-}
+// The frozen `genie_task` payload is exactly the pre-assignment TaskRow key
+// set (WISH Decision 7) — the shared projection lives in task-state.ts next
+// to TaskRow, so `task list --json` and this MCP shape cannot drift apart.
 
 function genieTask(
   ctx: ToolContext,

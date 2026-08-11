@@ -40,6 +40,30 @@ export interface TaskRow {
   updatedAt: number;
 }
 
+/**
+ * The frozen pre-assignment TaskRow key set. The two declared-routing fields
+ * live on TaskRow but serialize on the additive lane board `--json` path only
+ * (WISH decision: lane-path-only); every other machine-readable task payload
+ * ships this projection.
+ */
+export type FrozenTaskRow = Omit<TaskRow, 'assignedAgent' | 'assignedReason'>;
+
+/** Explicit key-picking — strips the two assignment fields. */
+export function toFrozenTaskRow(t: TaskRow): FrozenTaskRow {
+  return {
+    id: t.id,
+    boardId: t.boardId,
+    title: t.title,
+    status: t.status,
+    claimedBy: t.claimedBy,
+    claimedAt: t.claimedAt,
+    wish: t.wish,
+    group: t.group,
+    createdAt: t.createdAt,
+    updatedAt: t.updatedAt,
+  };
+}
+
 export interface CreateTaskInput {
   title: string;
   boardId?: string;

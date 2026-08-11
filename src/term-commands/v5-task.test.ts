@@ -318,6 +318,29 @@ describe('task list', () => {
     expect(rows[0].title).toBe('a');
     expect(rows[0].wish).toBe('demo');
   });
+
+  test('--json stays on the frozen pre-assignment shape even for an assigned card', async () => {
+    await cli(repo, 'create', '--title', 'routed', '--agent', 'codex', '--why', 'dissent on parser');
+    const r = await cli(repo, 'list', '--json');
+    expect(r.code).toBe(0);
+    const rows = JSON.parse(r.stdout) as Array<Record<string, unknown>>;
+    expect(rows).toHaveLength(1);
+    expect(Object.keys(rows[0]).sort()).toEqual([
+      'boardId',
+      'claimedAt',
+      'claimedBy',
+      'createdAt',
+      'group',
+      'id',
+      'status',
+      'title',
+      'updatedAt',
+      'wish',
+    ]);
+    for (const leaked of ['assignedAgent', 'assignedReason']) {
+      expect(leaked in rows[0]).toBe(false);
+    }
+  });
 });
 
 describe('task status / done / checkout', () => {

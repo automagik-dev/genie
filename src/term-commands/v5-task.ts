@@ -66,6 +66,7 @@ import {
   releaseTask,
   resolveBoard,
   setTaskWish,
+  toFrozenTaskRow,
   unblockTask,
 } from '../lib/v5/task-state.js';
 
@@ -273,7 +274,9 @@ function handleList(opts: ListOptions): void {
       if (opts.wish) filter.wish = opts.wish;
       const tasks = listTasks(db, filter);
       if (opts.json) {
-        out(JSON.stringify(tasks, null, 2));
+        // Assignment serializes on the lane board `--json` path only; this
+        // machine-readable payload stays on the frozen pre-assignment shape.
+        out(JSON.stringify(tasks.map(toFrozenTaskRow), null, 2));
         return;
       }
       printTaskTable(tasks);
