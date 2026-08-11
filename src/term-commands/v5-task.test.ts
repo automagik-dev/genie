@@ -23,6 +23,7 @@ import {
   getTaskEvents,
   getTaskLane,
   hireAgent,
+  listTasks,
 } from '../lib/v5/task-state.js';
 
 const GENIE = join(import.meta.dir, '..', 'genie.ts');
@@ -129,6 +130,50 @@ describe('task create', () => {
     const r = await cli(repo, 'create', '--title', 'on board', '--board', board.id);
     expect(r.code).toBe(0);
     expect(r.stderr).toBe('');
+  });
+
+  test('creates a task with a declared assignment and persists both halves', async () => {
+    const r = await cli(repo, 'create', '--title', 'routed', '--agent', 'claude', '--why', 'owns the parser');
+    expect(r.code).toBe(0);
+    expect(r.stderr).toBe('');
+    expect(r.stdout).toMatch(/Created task t_\w+ "routed" \(ready\)\./);
+    const id = /Created task (t_\w+)/.exec(r.stdout)?.[1] as string;
+
+    const db = openDb({ cwd: repo });
+    const task = getTask(db, id);
+    db.close();
+    expect(task?.assignedAgent).toBe('claude');
+    expect(task?.assignedReason).toBe('owns the parser');
+
+    const status = await cli(repo, 'status', id);
+    expect(status.code).toBe(0);
+    expect(status.stdout).toContain('Assigned to: claude — owns the parser');
+  });
+
+  test('rejects a non-roster agent, naming the allowed roster in stderr', async () => {
+    const r = await cli(repo, 'create', '--title', 'rogue', '--agent', 'kimi', '--why', 'wants in');
+    expect(r.code).toBe(1);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toContain('Unknown agent "kimi"');
+    expect(r.stderr).toContain('not in the roster');
+    expect(r.stderr).toContain('claude, codex, pi, hermes, prime');
+  });
+
+  test('rejects a half-written assignment either way round (Decision 3 pair invariant)', async () => {
+    const agentOnly = await cli(repo, 'create', '--title', 'half', '--agent', 'claude');
+    expect(agentOnly.code).toBe(1);
+    expect(agentOnly.stdout).toBe('');
+    expect(agentOnly.stderr).toContain('Assignment requires both halves');
+
+    const whyOnly = await cli(repo, 'create', '--title', 'half', '--why', 'no agent');
+    expect(whyOnly.code).toBe(1);
+    expect(whyOnly.stdout).toBe('');
+    expect(whyOnly.stderr).toContain('Assignment requires both halves');
+
+    // Nothing was written by the rejected attempts.
+    const db = openDb({ cwd: repo });
+    expect(listTasks(db)).toEqual([]);
+    db.close();
   });
 });
 
@@ -511,6 +556,215 @@ describe('task set-wish', () => {
     } finally {
       rmSync(clone, { recursive: true, force: true });
     }
+  });
+});
+
+describe('task assign', () => {
+  async function seedTask(title: string, dependsOn?: string[]): Promise<string> {
+    const db = openDb({ cwd: repo });
+    const task = createTask(db, { title, dependsOn });
+    db.close();
+    return task.id;
+  }
+
+  test('declares an assignment, appends one assign event, and shows it in status', async () => {
+    const id = await seedTask('route me');
+    const r = await cli(repo, 'assign', id, '--agent', 'codex', '--why', 'dissent on the parser');
+    expect(r.code).toBe(0);
+    expect(r.stderr).toBe('');
+    expect(r.stdout).toBe(`Assigned task ${id} to codex: dissent on the parser.\n`);
+
+    const db = openDb({ cwd: repo });
+    const task = getTask(db, id);
+    const events = getTaskEvents(db, id);
+    db.close();
+    expect(task?.assignedAgent).toBe('codex');
+    expect(task?.assignedReason).toBe('dissent on the parser');
+    expect(events).toHaveLength(1);
+    expect(events[0].kind).toBe('assign');
+    expect(events[0].note).toBe('assigned to codex: dissent on the parser');
+
+    const status = await cli(repo, 'status', id);
+    expect(status.code).toBe(0);
+    expect(status.stdout).toContain('Assigned to: codex — dissent on the parser');
+    expect(status.stdout).toContain('Timeline:');
+    expect(status.stdout).toContain('assign by');
+    expect(status.stdout).toContain('assigned to codex: dissent on the parser');
+  });
+
+  test('overwrites a prior assignment, keeping both notes on the timeline', async () => {
+    const id = await seedTask('reassign me');
+    const first = await cli(repo, 'assign', id, '--agent', 'codex', '--why', 'first opinion');
+    expect(first.code).toBe(0);
+
+    const r = await cli(repo, 'assign', id, '--agent', 'hermes', '--why', 'second opinion');
+    expect(r.code).toBe(0);
+    expect(r.stdout).toBe(`Assigned task ${id} to hermes: second opinion.\n`);
+
+    const db = openDb({ cwd: repo });
+    const task = getTask(db, id);
+    const events = getTaskEvents(db, id);
+    db.close();
+    expect(task?.assignedAgent).toBe('hermes');
+    expect(task?.assignedReason).toBe('second opinion');
+    expect(events.map((e) => e.kind)).toEqual(['assign', 'assign']);
+    expect(events.map((e) => e.note)).toEqual([
+      'assigned to codex: first opinion',
+      'assigned to hermes: second opinion',
+    ]);
+  });
+
+  test('re-assigning the exact stored pair is a silent no-op (set-wish precedent)', async () => {
+    const id = await seedTask('idempotent assign');
+    await cli(repo, 'assign', id, '--agent', 'pi', '--why', 'cost arbitrage');
+
+    const sentinelDb = openDb({ cwd: repo });
+    sentinelDb.query('UPDATE tasks SET updated_at = 1234 WHERE id = ?').run(id);
+    const beforeEvents = JSON.stringify(getTaskEvents(sentinelDb, id));
+    sentinelDb.close();
+
+    const r = await cli(repo, 'assign', id, '--agent', 'pi', '--why', 'cost arbitrage');
+    expect(r.code).toBe(0);
+    expect(r.stderr).toBe('');
+
+    const db = openDb({ cwd: repo });
+    expect(getTask(db, id)?.updatedAt).toBe(1_234);
+    expect(JSON.stringify(getTaskEvents(db, id))).toBe(beforeEvents);
+    db.close();
+  });
+
+  test('--clear removes both halves and appends a clear event naming the prior pair', async () => {
+    const id = await seedTask('unroute me');
+    await cli(repo, 'assign', id, '--agent', 'codex', '--why', 'dissent on parser');
+
+    const r = await cli(repo, 'assign', id, '--clear');
+    expect(r.code).toBe(0);
+    expect(r.stderr).toBe('');
+    expect(r.stdout).toBe(`Cleared assignment on task ${id}.\n`);
+
+    const db = openDb({ cwd: repo });
+    const task = getTask(db, id);
+    const events = getTaskEvents(db, id);
+    db.close();
+    expect(task?.assignedAgent).toBeNull();
+    expect(task?.assignedReason).toBeNull();
+    expect(events.map((e) => e.kind)).toEqual(['assign', 'clear']);
+    expect(events[1].note).toBe('assignment cleared (was codex: dissent on parser)');
+
+    const status = await cli(repo, 'status', id);
+    expect(status.code).toBe(0);
+    expect(status.stdout).not.toContain('Assigned to:');
+    expect(status.stdout).toContain('clear by');
+    expect(status.stdout).toContain('assignment cleared (was codex: dissent on parser)');
+  });
+
+  test('--clear on an already-unassigned card is a silent no-op', async () => {
+    const id = await seedTask('never assigned');
+    const before = openDb({ cwd: repo });
+    const created = getTask(before, id);
+    before.close();
+
+    const r = await cli(repo, 'assign', id, '--clear');
+    expect(r.code).toBe(0);
+    expect(r.stderr).toBe('');
+
+    const db = openDb({ cwd: repo });
+    const after = getTask(db, id);
+    const events = getTaskEvents(db, id);
+    db.close();
+    expect(after?.assignedAgent).toBeNull();
+    expect(after?.updatedAt).toBe(created?.updatedAt as number);
+    expect(events).toHaveLength(0);
+  });
+
+  test('--clear combined with --agent or --why is refused', async () => {
+    const id = await seedTask('ambiguous assign');
+    const withAgent = await cli(repo, 'assign', id, '--clear', '--agent', 'claude');
+    expect(withAgent.code).toBe(1);
+    expect(withAgent.stdout).toBe('');
+    expect(withAgent.stderr).toContain('--clear cannot be combined with --agent or --why.');
+
+    const withWhy = await cli(repo, 'assign', id, '--clear', '--why', 'x');
+    expect(withWhy.code).toBe(1);
+    expect(withWhy.stderr).toContain('--clear cannot be combined with --agent or --why.');
+  });
+
+  test('works at any card status — claimed, done, and blocked (declaration only)', async () => {
+    const claimed = await seedTask('claimed card');
+    expect((await cli(repo, 'checkout', claimed, '--worker', 'w1')).code).toBe(0);
+    const claimedAssign = await cli(repo, 'assign', claimed, '--agent', 'claude', '--why', 'takes over the claim');
+    expect(claimedAssign.code).toBe(0);
+    const claimedDb = openDb({ cwd: repo });
+    expect(getTask(claimedDb, claimed)?.assignedAgent).toBe('claude');
+    expect(getTask(claimedDb, claimed)?.status).toBe('in_progress');
+    expect(getTask(claimedDb, claimed)?.claimedBy).toBe('w1');
+    claimedDb.close();
+
+    const done = await seedTask('done card');
+    expect((await cli(repo, 'done', done)).code).toBe(0);
+    const doneAssign = await cli(repo, 'assign', done, '--agent', 'prime', '--why', 'verify the merge');
+    expect(doneAssign.code).toBe(0);
+    const doneDb = openDb({ cwd: repo });
+    expect(getTask(doneDb, done)?.assignedAgent).toBe('prime');
+    expect(getTask(doneDb, done)?.status).toBe('done');
+    doneDb.close();
+
+    const upstream = await seedTask('upstream blocker');
+    const blocked = await seedTask('blocked card', [upstream]);
+    const blockedDb = openDb({ cwd: repo });
+    expect(getTask(blockedDb, blocked)?.status).toBe('blocked');
+    blockedDb.close();
+    const blockedAssign = await cli(repo, 'assign', blocked, '--agent', 'hermes', '--why', 'own the waiting');
+    expect(blockedAssign.code).toBe(0);
+    const blockedAfter = openDb({ cwd: repo });
+    expect(getTask(blockedAfter, blocked)?.assignedAgent).toBe('hermes');
+    expect(getTask(blockedAfter, blocked)?.status).toBe('blocked');
+    blockedAfter.close();
+  });
+
+  test('rejects a non-roster agent, naming the allowed roster in stderr', async () => {
+    const id = await seedTask('rogue assign');
+    const r = await cli(repo, 'assign', id, '--agent', 'gpt6', '--why', 'wants in');
+    expect(r.code).toBe(1);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toContain('Unknown agent "gpt6"');
+    expect(r.stderr).toContain('not in the roster');
+    expect(r.stderr).toContain('claude, codex, pi, hermes, prime');
+
+    // The failed attempt wrote nothing.
+    const db = openDb({ cwd: repo });
+    expect(getTask(db, id)?.assignedAgent).toBeNull();
+    db.close();
+  });
+
+  test('rejects --agent without --why, --why alone, and neither (Decision 3 pair invariant)', async () => {
+    const id = await seedTask('half assign');
+    const agentOnly = await cli(repo, 'assign', id, '--agent', 'claude');
+    expect(agentOnly.code).toBe(1);
+    expect(agentOnly.stdout).toBe('');
+    expect(agentOnly.stderr).toContain('Assignment requires both halves');
+
+    const whyOnly = await cli(repo, 'assign', id, '--why', 'no agent');
+    expect(whyOnly.code).toBe(1);
+    expect(whyOnly.stdout).toBe('');
+    expect(whyOnly.stderr).toContain('Assignment requires both halves');
+
+    const neither = await cli(repo, 'assign', id);
+    expect(neither.code).toBe(1);
+    expect(neither.stdout).toBe('');
+    expect(neither.stderr).toContain('Assignment requires both halves');
+
+    const db = openDb({ cwd: repo });
+    expect(getTask(db, id)?.assignedAgent).toBeNull();
+    expect(getTaskEvents(db, id)).toEqual([]);
+    db.close();
+  });
+
+  test('an unknown id fails with exit 1 and a typed error', async () => {
+    const r = await cli(repo, 'assign', 't_nope', '--agent', 'claude', '--why', 'x');
+    expect(r.code).toBe(1);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toContain('Task not found: t_nope');
   });
 });
 

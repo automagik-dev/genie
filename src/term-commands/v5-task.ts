@@ -6,11 +6,12 @@
  * no runtime registry — the database is the only shared medium.
  *
  * Subcommands:
- *   task create --title <t> [--board <ref>] [--wish <slug>] [--group <name>]
+ *   task create --title <t> [--board <ref>] [--wish <slug>] [--group <name>] [--agent <name> --why <reason>]
  *   task link <id> --wish <slug> [--group <name>]
  *   task list [--status <s>] [--board <ref>] [--wish <slug>] [--json]
  *   task status <id>
  *   task set-wish <id> (--wish <slug> [--group <name>] | --clear)
+ *   task assign <id> (--agent <name> --why <reason> | --clear)
  *   task delete <id>
  *   task done <id>
  *   task checkout <id> [--worker <name>]
@@ -43,8 +44,10 @@ import {
   type TaskStatus,
   UnknownTaskError,
   appendTaskEvent,
+  assignTask,
   blockTask,
   claimTask,
+  clearTaskAssignment,
   completeTask,
   createTask,
   deleteTask,
@@ -138,6 +141,10 @@ function printDetailHeader(task: TaskCardRow): void {
   out(`  Status:     ${statusLabel(task.status)}`);
   if (task.boardId) out(`  Board:      ${task.boardId}`);
   if (task.wish) out(`  Wish:       ${task.group ? `${task.wish}#${task.group}` : task.wish}`);
+  if (task.assignedAgent) {
+    const why = task.assignedReason ? ` — ${task.assignedReason}` : '';
+    out(`  Assigned to: ${task.assignedAgent}${why}`);
+  }
   if (task.claimedBy) {
     const badge = livenessBadge(task, Date.now());
     const liveness = badge ? ` ${badge}` : '';
@@ -193,6 +200,8 @@ interface CreateOptions {
   board?: string;
   wish?: string;
   group?: string;
+  agent?: string;
+  why?: string;
 }
 
 function handleCreate(opts: CreateOptions): void {
@@ -204,7 +213,17 @@ function handleCreate(opts: CreateOptions): void {
     const db = openDb();
     try {
       const boardId = opts.board ? resolveBoard(db, opts.board).id : undefined;
-      const task = createTask(db, { title, boardId, wish: opts.wish, group: opts.group });
+      // The assignment pair invariant (both halves or neither) and the roster
+      // allowlist are enforced by the state API — the typed errors surface here
+      // through run() with the roster named verbatim.
+      const task = createTask(db, {
+        title,
+        boardId,
+        wish: opts.wish,
+        group: opts.group,
+        assignedAgent: opts.agent,
+        assignedReason: opts.why,
+      });
       out(`Created task ${task.id} "${task.title}" (${task.status}).`);
     } finally {
       db.close();
@@ -302,6 +321,41 @@ function handleSetWish(id: string, opts: SetWishOptions): void {
       const to = { wish: wish ?? null, group: group ?? null };
       const result = setTaskWish(db, id, to, resolveEventAuthor());
       out(`Task ${result.task.id} wish: ${formatWishRef(result.from)} → ${formatWishRef(result.to)}.`);
+    } finally {
+      db.close();
+    }
+  });
+}
+
+interface AssignOptions {
+  agent?: string;
+  why?: string;
+  clear?: boolean;
+}
+
+/**
+ * Declare which roster agent works a card and why — or `--clear` the
+ * declaration. Mirrors the `set-wish`/`--clear` precedent: the pair invariant
+ * (both halves or neither) and the roster allowlist are enforced by the state
+ * API, which also appends the assign/clear timeline note inside its own
+ * transaction, so this verb only maps flags and prints the result.
+ */
+function handleAssign(id: string, opts: AssignOptions): void {
+  const agent = opts.agent?.trim();
+  const why = opts.why?.trim();
+  if (opts.clear && (agent || why)) fail('--clear cannot be combined with --agent or --why.');
+
+  run(() => {
+    const db = openDb();
+    try {
+      const task = opts.clear
+        ? clearTaskAssignment(db, id, resolveEventAuthor())
+        : assignTask(db, id, agent ?? '', why ?? '', resolveEventAuthor());
+      out(
+        opts.clear
+          ? `Cleared assignment on task ${task.id}.`
+          : `Assigned task ${task.id} to ${task.assignedAgent}: ${task.assignedReason}.`,
+      );
     } finally {
       db.close();
     }
@@ -672,6 +726,8 @@ export function registerV5TaskCommands(v5: Command): void {
     .option('--board <ref>', 'Board id or name')
     .option('--wish <slug>', 'Wish slug this task belongs to')
     .option('--group <name>', 'Wish-group name (requires --wish)')
+    .option('--agent <name>', 'Declared roster agent for this task (claude|codex|pi|hermes|prime; requires --why)')
+    .option('--why <reason>', 'Why the declared agent was assigned (requires --agent)')
     .action((opts: CreateOptions) => handleCreate(opts));
 
   task
@@ -702,6 +758,14 @@ export function registerV5TaskCommands(v5: Command): void {
     .option('--group <name>', 'Wish-group name (requires --wish)')
     .option('--clear', 'Remove the wish and group from the card')
     .action((id: string, opts: SetWishOptions) => handleSetWish(id, opts));
+
+  task
+    .command('assign <id>')
+    .description('Declare which roster agent works a card and why (appends an assign event; --clear removes)')
+    .option('--agent <name>', 'Roster agent to declare (claude|codex|pi|hermes|prime; requires --why)')
+    .option('--why <reason>', 'Why the agent was assigned (requires --agent)')
+    .option('--clear', 'Remove the assignment from the card')
+    .action((id: string, opts: AssignOptions) => handleAssign(id, opts));
 
   task
     .command('delete <id>')
