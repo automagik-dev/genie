@@ -1,9 +1,11 @@
 import type { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ensureSchema, isCurrentGenieDb, openDb } from './genie-db.js';
+import { roadmapSnapshot, syncRoadmap } from './roadmap-sync.js';
 import {
   AssignmentReasonRequiredError,
   CheckoutConflictError,
@@ -1054,6 +1056,85 @@ describe('declared routing — roster allowlist + assignment state API (W1)', ()
     const cleared = clearTaskAssignment(db, task.id, { author: 'felipe', authorKind: 'human' }, 5_000);
     expect(cleared.updatedAt).not.toBe(5_000);
     expect(getTaskEvents(db, task.id)).toEqual([]);
+  });
+});
+
+describe('declared routing — roadmap snapshot round-trip (roadmap-sync lockstep)', () => {
+  // Mirrors roadmap-sync's canonicalHash: sha256 over the parsed JSON form, so
+  // whitespace/formatting differences never count as content changes.
+  function canonicalHash(value: unknown): string {
+    return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+  }
+
+  test('export carries assigned_agent/assigned_reason (SELECT *) and round-trips them through import', () => {
+    const a = createTask(db, { title: 'a', assignedAgent: 'codex', assignedReason: 'dissent on parser' });
+    const snapshot = exportState(db);
+    // exportState is column-blind — the raw keys must travel with the row.
+    expect(snapshot.tasks[0].assigned_agent).toBe('codex');
+    expect(snapshot.tasks[0].assigned_reason).toBe('dissent on parser');
+
+    const path = join(dir, 'round-trip-assignment.db');
+    const fresh = openDb({ path });
+    importState(fresh, snapshot);
+    const card = getTask(fresh, a.id);
+    fresh.close();
+    expect(card?.assignedAgent).toBe('codex');
+    expect(card?.assignedReason).toBe('dissent on parser');
+  });
+
+  test('a same-version snapshot whose tasks omit the assignment keys imports cleanly as nulls', () => {
+    const a = createTask(db, { title: 'a', assignedAgent: 'hermes', assignedReason: 'second opinion' });
+    const snapshot = exportState(db);
+    // An older build at the same schemaVersion never wrote the keys at all.
+    const older = {
+      ...snapshot,
+      tasks: snapshot.tasks.map(({ assigned_agent: _droppedAgent, assigned_reason: _droppedReason, ...rest }) => rest),
+    } as unknown as typeof snapshot;
+
+    const path = join(dir, 'older-snapshot-assignment.db');
+    const fresh = openDb({ path });
+    const summary = importState(fresh, older);
+    const card = getTask(fresh, a.id);
+    fresh.close();
+    expect(summary.tasks).toBe(1);
+    expect(card?.assignedAgent).toBeNull();
+    expect(card?.assignedReason).toBeNull();
+  });
+
+  test('introducing the assignment columns does not flip an in-sync repo to diverged', () => {
+    // Repo state BEFORE the columns existed: roadmap.json without the keys and a
+    // baseline marker describing that exact (file, db) pair as in-sync.
+    const repo = join(dir, 'sync-upgrade');
+    mkdirSync(join(repo, '.genie'), { recursive: true });
+    const d = openDb({ path: join(repo, 'genie.db') });
+    const task = createTask(d, { title: 'assigned card', assignedAgent: 'codex', assignedReason: 'dissent' });
+    const current = roadmapSnapshot(d);
+    const preUpgrade = {
+      ...current,
+      tasks: current.tasks.map(({ assigned_agent: _droppedAgent, assigned_reason: _droppedReason, ...rest }) => rest),
+    } as unknown as typeof current;
+    const preUpgradeHash = canonicalHash(preUpgrade);
+    writeFileSync(join(repo, '.genie', 'roadmap.json'), `${JSON.stringify(preUpgrade, null, 2)}\n`);
+    writeFileSync(
+      join(repo, '.genie', 'roadmap-sync'),
+      `${JSON.stringify({ fileHash: preUpgradeHash, dbHash: preUpgradeHash }, null, 2)}\n`,
+    );
+
+    // First sync after the upgrade: the db side gained two null keys per card,
+    // the file did not move. That is a db-only change → export, never a
+    // divergence (precedent: lane/agent_kind/block_kind shipped identically).
+    const first = syncRoadmap(d, repo);
+    expect(first.action).not.toBe('diverged');
+    expect(first.action).toBe('exported');
+    const published = JSON.parse(readFileSync(join(repo, '.genie', 'roadmap.json'), 'utf-8'));
+    expect(published.tasks[0]?.assigned_agent).toBe('codex');
+    expect(published.tasks[0]?.assigned_reason).toBe('dissent');
+
+    // The one-time diff settles: the next sync is a no-op, pair intact.
+    const second = syncRoadmap(d, repo);
+    d.close();
+    expect(second.action).toBe('none');
+    expect(task.assignedAgent).toBe('codex'); // sanity: the seeded pair
   });
 });
 

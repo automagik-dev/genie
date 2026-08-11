@@ -1695,22 +1695,21 @@ export function hasOperationalState(db: Database, opts: { includeHireRoster?: bo
   return false;
 }
 
-function insertSnapshotRows(db: Database, state: StateExport): void {
-  const meta = db.query('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)');
-  for (const m of state.meta) meta.run(m.key, m.value);
-
-  const board = db.query('INSERT INTO boards (id, name, lanes, created_at) VALUES (?, ?, ?, ?)');
-  for (const b of state.boards) board.run(b.id, b.name, b.lanes ?? null, b.created_at);
-
-  // Nullable-with-?? throughout: additive columns (lane, agent_kind, …) backfill
-  // without a user_version bump, so a same-version snapshot from an older build
-  // may legitimately omit them.
+/**
+ * Insert the tasks slice of a snapshot. Column enumeration lives HERE — 18
+ * columns, the widest row the snapshot carries. Nullable-with-?? throughout:
+ * additive columns (lane, agent_kind, …, assigned_agent/assigned_reason)
+ * backfill without a user_version bump, so a same-version snapshot from an
+ * older build may legitimately omit them.
+ */
+function insertTaskRows(db: Database, tasks: StateExport['tasks']): void {
   const task = db.query(
     `INSERT INTO tasks (id, board_id, title, status, claimed_by, claimed_at, wish, group_name,
+                        assigned_agent, assigned_reason,
                         lane, agent_kind, heartbeat_at, blocked_by, blocked_reason, block_kind, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
-  for (const t of state.tasks) {
+  for (const t of tasks) {
     task.run(
       t.id,
       t.board_id ?? null,
@@ -1720,6 +1719,8 @@ function insertSnapshotRows(db: Database, state: StateExport): void {
       t.claimed_at ?? null,
       t.wish ?? null,
       t.group_name ?? null,
+      t.assigned_agent ?? null,
+      t.assigned_reason ?? null,
       t.lane ?? null,
       t.agent_kind ?? null,
       t.heartbeat_at ?? null,
@@ -1730,6 +1731,16 @@ function insertSnapshotRows(db: Database, state: StateExport): void {
       t.updated_at,
     );
   }
+}
+
+function insertSnapshotRows(db: Database, state: StateExport): void {
+  const meta = db.query('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)');
+  for (const m of state.meta) meta.run(m.key, m.value);
+
+  const board = db.query('INSERT INTO boards (id, name, lanes, created_at) VALUES (?, ?, ?, ?)');
+  for (const b of state.boards) board.run(b.id, b.name, b.lanes ?? null, b.created_at);
+
+  insertTaskRows(db, state.tasks);
 
   const dep = db.query('INSERT INTO task_dependencies (task_id, depends_on_id) VALUES (?, ?)');
   for (const d of state.task_dependencies) dep.run(d.task_id, d.depends_on_id);
