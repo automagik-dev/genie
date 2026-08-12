@@ -144,7 +144,7 @@ function printDetailHeader(task: TaskCardRow): void {
   if (task.wish) out(`  Wish:       ${task.group ? `${task.wish}#${task.group}` : task.wish}`);
   if (task.assignedAgent) {
     const why = task.assignedReason ? ` — ${task.assignedReason}` : '';
-    out(`  Assigned to: ${task.assignedAgent}${why}`);
+    out(`  Assigned to:${task.assignedAgent}${why}`);
   }
   if (task.claimedBy) {
     const badge = livenessBadge(task, Date.now());
