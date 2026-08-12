@@ -182,7 +182,7 @@ describe('mcp handshake', () => {
 // ============================================================================
 
 describe('mcp tools/list', () => {
-  test('lists exactly the 5 read-only tools with input schemas', async () => {
+  test('lists exactly the 5 read tools + 12 write tools with input schemas', async () => {
     const responses = await driveMcp(repo, [INIT, INITIALIZED, { jsonrpc: '2.0', id: 2, method: 'tools/list' }]);
     const list = responses.find((r) => r.id === 2);
     const tools = list?.result?.tools as Array<{ name: string; inputSchema: unknown }>;
@@ -190,6 +190,18 @@ describe('mcp tools/list', () => {
       'genie_active',
       'genie_board',
       'genie_task',
+      'genie_task_add_dependency',
+      'genie_task_block',
+      'genie_task_checkout',
+      'genie_task_comment',
+      'genie_task_create',
+      'genie_task_done',
+      'genie_task_heartbeat',
+      'genie_task_move',
+      'genie_task_release',
+      'genie_task_report',
+      'genie_task_set_wish',
+      'genie_task_unblock',
       'genie_wish_status',
       'genie_worktree_context',
     ]);

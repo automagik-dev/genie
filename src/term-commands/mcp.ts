@@ -30,18 +30,20 @@ const PROTOCOL_VERSION = '2024-11-05';
 // ============================================================================
 
 /**
- * Drive the read-only stdio MCP server until stdin closes. Loads the read-only
- * tools + shared transport loop lazily (keeping them out of the genie startup
- * import graph) and configures the loop with the fixed, read-only initialize
- * reply and the five read tools — byte-for-byte the pre-extraction behavior.
+ * Drive the stdio MCP server until stdin closes. Loads the tools + shared
+ * transport loop lazily (keeping them out of the genie startup import graph)
+ * and configures the loop with the fixed initialize reply and the five read +
+ * twelve write tools.
  */
 export async function runMcpServer(): Promise<void> {
   // Lazy: the write-capable bun:sqlite open + tools load here, not at genie startup.
   const mcpTools = await import('../lib/v5/mcp-tools.js');
-  const { isCurrentGenieDb, MCP_TOOLS, openWriteableDb, resolveProjectContext } = mcpTools;
+  const { isCurrentGenieDb, MCP_TOOLS, MCP_WRITE_TOOLS, openWriteableDb, resolveProjectContext } = mcpTools;
   const { runMcpServerLoop } = await import('../lib/v5/mcp-server.js');
   await runMcpServerLoop({
-    tools: MCP_TOOLS,
+    // MCP_TOOLS stays the read registry ui-bridge splices; the operative write
+    // tools are a separate export so the two surfaces never drift together.
+    tools: [...MCP_TOOLS, ...MCP_WRITE_TOOLS],
     // Write-capable open through the standard hardened CLI write path
     // (binding revalidation → openDb): the server now mutates .genie/genie.db
     // exactly like `genie task`. Every throw is translated to the loop's null
@@ -72,7 +74,7 @@ export async function runMcpServer(): Promise<void> {
 export function registerMcpCommand(program: Command): void {
   program
     .command('mcp')
-    .description('Run a read-only stdio MCP server exposing genie.db task/board state')
+    .description('Run a stdio MCP server exposing genie.db task/board state (read + write tools)')
     .action(async () => {
       await runMcpServer();
     });

@@ -26,6 +26,7 @@ import {
   resolveDbPath,
   resolveProjectDatabaseBinding,
 } from './genie-db.js';
+import { type ToolErrorResult, isToolError, toolError } from './mcp-server.js';
 import { BUSY_TIMEOUT_MS } from './sqlite-open.js';
 
 // Re-exported so `genie mcp` (mcp.ts) pulls the fail-closed context resolver in
@@ -34,14 +35,36 @@ import { BUSY_TIMEOUT_MS } from './sqlite-open.js';
 export { isCurrentGenieDb, type ProjectContext, resolveProjectContext } from './genie-db.js';
 import {
   type FrozenTaskRow,
+  type BlockKind,
+  CheckoutConflictError,
+  CycleError,
+  type EventAuthor,
+  LaneError,
+  TaskBlockedError,
+  TaskCompleteError,
   type TaskFilter,
+  TaskNotReadyError,
+  TaskReleaseError,
   type TaskRow,
+  UnknownTaskError,
   type WishGroupRow,
+  addDependency,
+  appendTaskEvent,
+  blockTask,
+  claimTask,
+  completeTask,
+  createTask,
   getBoardByName,
   getTask,
   listTasks,
   listWishSlugs,
   toFrozenTaskRow,
+  moveTask,
+  recordHeartbeat,
+  releaseTask,
+  resolveBoard,
+  setTaskWish,
+  unblockTask,
 } from './task-state.js';
 
 // ============================================================================
@@ -687,5 +710,520 @@ export const MCP_TOOLS: McpTool[] = [
     description: 'All in-progress tasks and who claimed each.',
     inputSchema: { type: 'object', properties: {}, required: [] },
     handler: (ctx) => genieActive(ctx),
+  },
+];
+
+// ============================================================================
+// Operative write tools (Group 2 of wish mcp-write-tools)
+// ============================================================================
+//
+// The 12 operative-core mutation verbs as thin wrappers over the EXACT
+// `task-state.ts` functions `genie task` uses (Decision 3: never reimplement
+// the mutation semantics). Each tool:
+//   1. refuses a null/degraded handle up front (typed `read_only_database`);
+//   2. dispatches to the same function + argument shapes as v5-task.ts;
+//   3. wraps the mutation in ONE catch boundary mapping the task-state domain
+//      error classes to typed `isError: true` payload codes.
+//
+// Error payload codes (documented per tool in `description`):
+//   claim_conflict    — CheckoutConflictError (lost the claim race)
+//   not_found         — UnknownTaskError
+//   invalid_lane      — LaneError
+//   dependency_cycle  — CycleError
+//   refused_transition— TaskBlockedError / TaskNotReadyError /
+//                       TaskCompleteError / TaskReleaseError (class name in `detail`)
+//   read_only_database— degraded readonly handle (checked first) OR a raw
+//                       SQLite readonly-class write failure past that check
+//   invalid_arguments — missing/malformed tool arguments
+//   database_unavailable — defensive null-handle guard (unreachable in the
+//                       fail-closed server, which refuses to dispatch on null)
+// Unexpected errors are NOT mapped — they propagate to the loop's `-32603`
+// backstop.
+
+/** A mapped write-tool error payload: `error` code plus per-code fields. */
+type WriteErrorPayload = Record<string, unknown> & { error: string };
+
+/**
+ * True for raw SQLite readonly-class write failures (`SQLITE_READONLY` and its
+ * extended variants) — the belt-and-suspenders backstop for a write that
+ * reaches a degraded readonly handle past the {@link isDegradedReadonlyDb}
+ * check. bun surfaces these as `SQLiteError` with `code: 'SQLITE_READONLY'`
+ * and `errno: 8` (the primary SQLite result code; extended codes keep it in
+ * the low byte).
+ */
+function isSqliteReadonlyError(err: Error): boolean {
+  const errno = (err as { errno?: unknown }).errno;
+  if (typeof errno === 'number' && (errno & 0xff) === 8) return true;
+  return /SQLITE_READONLY|readonly database/i.test(err.message);
+}
+
+/** Map a thrown task-state domain error to a typed payload, or null to rethrow. */
+function mapWriteError(err: unknown): WriteErrorPayload | null {
+  if (err instanceof CheckoutConflictError) {
+    return { error: 'claim_conflict', taskId: err.taskId, message: err.message };
+  }
+  if (err instanceof UnknownTaskError) {
+    return { error: 'not_found', id: err.id, message: err.message };
+  }
+  if (err instanceof LaneError) {
+    return { error: 'invalid_lane', message: err.message };
+  }
+  if (err instanceof CycleError) {
+    return { error: 'dependency_cycle', message: err.message };
+  }
+  if (
+    err instanceof TaskBlockedError ||
+    err instanceof TaskNotReadyError ||
+    err instanceof TaskCompleteError ||
+    err instanceof TaskReleaseError
+  ) {
+    return { error: 'refused_transition', detail: err.constructor.name, message: err.message };
+  }
+  if (err instanceof Error && isSqliteReadonlyError(err)) {
+    return { error: 'read_only_database', detail: err.message };
+  }
+  return null; // unexpected — propagate to the loop's -32603 backstop
+}
+
+/** ONE catch boundary per tool: run the mutation, mapping domain errors. */
+function runWrite<T>(mutation: () => T): T | ToolErrorResult<WriteErrorPayload> {
+  try {
+    return mutation();
+  } catch (err) {
+    const mapped = mapWriteError(err);
+    if (mapped !== null) return toolError(mapped);
+    throw err;
+  }
+}
+
+/**
+ * Shared write-tool guard: a null or degraded-readonly handle is a typed error,
+ * checked FIRST so no mutation reaches a handle that cannot write.
+ */
+function requireWriteHandle(ctx: ToolContext): Database | ToolErrorResult<WriteErrorPayload> {
+  if (!ctx.db) {
+    // Unreachable in the fail-closed server (the loop refuses to dispatch with
+    // a null handle) — defensive for any future legacy consumer.
+    return toolError({ error: 'database_unavailable', detail: 'no database handle' });
+  }
+  if (isDegradedReadonlyDb(ctx.db)) {
+    return toolError({
+      error: 'read_only_database',
+      detail: 'the database is served read-only (write path unavailable); restore write access and retry',
+    });
+  }
+  return ctx.db;
+}
+
+// ============================================================================
+// Identity (mirrors the CLI resolvers in term-commands/v5-task.ts — Decision 8)
+// ============================================================================
+
+/**
+ * Env identity fallback: `GENIE_AGENT_NAME`, then `GENIE_AGENT_ID`, flooring at
+ * 'cli' — byte-for-byte the CLI's `resolveWorkerIdentity`. Used ONLY when the
+ * per-call `worker`/`author` arg is absent, so multiple agents on one
+ * long-lived server attribute correctly.
+ */
+function resolveWorkerIdentity(): string {
+  return process.env.GENIE_AGENT_NAME ?? process.env.GENIE_AGENT_ID ?? 'cli';
+}
+
+/**
+ * Env runtime-kind fallback: `GENIE_AGENT_KIND`, then the coding-agent markers,
+ * flooring at 'human' — byte-for-byte the CLI's `resolveAuthorKind`.
+ */
+function resolveAuthorKind(): string {
+  const env = process.env;
+  if (env.GENIE_AGENT_KIND) return env.GENIE_AGENT_KIND;
+  if (env.CLAUDECODE || env.CLAUDE_CODE) return 'claude-code';
+  if (env.CODEX_THREAD_ID) return 'codex';
+  if (env.HERMES || env.HERMES_HOME) return 'hermes';
+  return 'human';
+}
+
+/** The server-process env identity, used ONLY when no per-call arg is given. */
+function resolveEventAuthor(): EventAuthor {
+  return { author: resolveWorkerIdentity(), authorKind: resolveAuthorKind() };
+}
+
+/** Per-call `author` arg wins; the env identity is the fallback (Decision 8). */
+function resolveAuthor(args: Record<string, unknown>): EventAuthor {
+  const explicit = argString(args, 'author');
+  return explicit === undefined ? resolveEventAuthor() : { author: explicit, authorKind: null };
+}
+
+/** Require a non-empty string arg, returning a typed error payload when absent. */
+function requireArg(args: Record<string, unknown>, key: string): string | ToolErrorResult<WriteErrorPayload> {
+  const value = argString(args, key);
+  return value === undefined ? toolError({ error: 'invalid_arguments', detail: `${key} is required.` }) : value;
+}
+
+// --- genie_task_create ------------------------------------------------------
+
+function genieTaskCreate(ctx: ToolContext, args: Record<string, unknown>): unknown {
+  const db = requireWriteHandle(ctx);
+  if (isToolError(db)) return db;
+  const title = argString(args, 'title')?.trim();
+  if (!title) return toolError({ error: 'invalid_arguments', detail: 'title is required and must not be empty.' });
+  const wish = argString(args, 'wish');
+  const group = argString(args, 'group');
+  if (group && !wish) return toolError({ error: 'invalid_arguments', detail: 'group requires wish.' });
+  const board = argString(args, 'board');
+  return runWrite(() => {
+    const boardId = board ? resolveBoard(db, board).id : undefined;
+    const task = createTask(db, { title, boardId, wish, group });
+    return { task: toSummary(task) };
+  });
+}
+
+// --- genie_task_checkout ----------------------------------------------------
+
+function genieTaskCheckout(ctx: ToolContext, args: Record<string, unknown>): unknown {
+  const db = requireWriteHandle(ctx);
+  if (isToolError(db)) return db;
+  const id = requireArg(args, 'id');
+  if (isToolError(id)) return id;
+  const worker = requireArg(args, 'worker');
+  if (isToolError(worker)) return worker;
+  return runWrite(() => {
+    const task = claimTask(db, id, worker, { author: resolveAuthor(args) });
+    return { task: toSummary(task) };
+  });
+}
+
+// --- genie_task_done --------------------------------------------------------
+
+function genieTaskDone(ctx: ToolContext, args: Record<string, unknown>): unknown {
+  const db = requireWriteHandle(ctx);
+  if (isToolError(db)) return db;
+  const id = requireArg(args, 'id');
+  if (isToolError(id)) return id;
+  return runWrite(() => {
+    // completeTask runs recomputeReady inside its winning transaction — the
+    // same ready-set recompute the CLI's `task done` triggers.
+    const task = completeTask(db, id, resolveAuthor(args));
+    return { task: toSummary(task) };
+  });
+}
+
+// --- genie_task_move --------------------------------------------------------
+
+function genieTaskMove(ctx: ToolContext, args: Record<string, unknown>): unknown {
+  const db = requireWriteHandle(ctx);
+  if (isToolError(db)) return db;
+  const id = requireArg(args, 'id');
+  if (isToolError(id)) return id;
+  const to = requireArg(args, 'to');
+  if (isToolError(to)) return to;
+  return runWrite(() => {
+    const result = moveTask(db, id, to, resolveAuthor(args));
+    return { task: toSummary(result.task), from: result.from, to: result.to };
+  });
+}
+
+// --- genie_task_block -------------------------------------------------------
+
+function genieTaskBlock(ctx: ToolContext, args: Record<string, unknown>): unknown {
+  const db = requireWriteHandle(ctx);
+  if (isToolError(db)) return db;
+  const id = requireArg(args, 'id');
+  if (isToolError(id)) return id;
+  const reason = argString(args, 'reason')?.trim();
+  if (!reason) return toolError({ error: 'invalid_arguments', detail: 'reason is required and must not be empty.' });
+  const kind: BlockKind = args.hold === true ? 'hold' : 'work';
+  return runWrite(() => {
+    const task = blockTask(db, id, reason, resolveAuthor(args), kind);
+    return { task: toSummary(task) };
+  });
+}
+
+// --- genie_task_unblock -----------------------------------------------------
+
+function genieTaskUnblock(ctx: ToolContext, args: Record<string, unknown>): unknown {
+  const db = requireWriteHandle(ctx);
+  if (isToolError(db)) return db;
+  const id = requireArg(args, 'id');
+  if (isToolError(id)) return id;
+  return runWrite(() => {
+    const task = unblockTask(db, id, resolveAuthor(args));
+    return { task: toSummary(task) };
+  });
+}
+
+// --- genie_task_release -----------------------------------------------------
+
+function genieTaskRelease(ctx: ToolContext, args: Record<string, unknown>): unknown {
+  const db = requireWriteHandle(ctx);
+  if (isToolError(db)) return db;
+  const id = requireArg(args, 'id');
+  if (isToolError(id)) return id;
+  return runWrite(() => {
+    const task = releaseTask(db, id, resolveAuthor(args));
+    return { task: toSummary(task) };
+  });
+}
+
+// --- genie_task_comment / genie_task_report ---------------------------------
+
+function appendNoteEvent(ctx: ToolContext, args: Record<string, unknown>, kind: 'comment' | 'report'): unknown {
+  const db = requireWriteHandle(ctx);
+  if (isToolError(db)) return db;
+  const id = requireArg(args, 'id');
+  if (isToolError(id)) return id;
+  const text = argString(args, 'text')?.trim();
+  if (!text) return toolError({ error: 'invalid_arguments', detail: 'text is required and must not be empty.' });
+  return runWrite(() => {
+    if (!getTask(db, id)) throw new UnknownTaskError(id);
+    const author = resolveAuthor(args);
+    const event = appendTaskEvent(db, id, {
+      kind,
+      note: text,
+      authorKind: author.authorKind ?? undefined,
+      author: author.author ?? undefined,
+    });
+    return { taskId: id, event };
+  });
+}
+
+function genieTaskComment(ctx: ToolContext, args: Record<string, unknown>): unknown {
+  return appendNoteEvent(ctx, args, 'comment');
+}
+
+function genieTaskReport(ctx: ToolContext, args: Record<string, unknown>): unknown {
+  return appendNoteEvent(ctx, args, 'report');
+}
+
+// --- genie_task_heartbeat ---------------------------------------------------
+
+function genieTaskHeartbeat(ctx: ToolContext, args: Record<string, unknown>): unknown {
+  const db = requireWriteHandle(ctx);
+  if (isToolError(db)) return db;
+  const id = requireArg(args, 'id');
+  if (isToolError(id)) return id;
+  return runWrite(() => {
+    if (!getTask(db, id)) throw new UnknownTaskError(id);
+    const heartbeatAt = recordHeartbeat(db, id);
+    return { taskId: id, heartbeatAt };
+  });
+}
+
+// --- genie_task_set_wish ----------------------------------------------------
+
+function genieTaskSetWish(ctx: ToolContext, args: Record<string, unknown>): unknown {
+  const db = requireWriteHandle(ctx);
+  if (isToolError(db)) return db;
+  const id = requireArg(args, 'id');
+  if (isToolError(id)) return id;
+  const wish = argString(args, 'wish')?.trim() || undefined;
+  const group = argString(args, 'group')?.trim() || undefined;
+  const clear = args.clear === true;
+  if (group && !wish) return toolError({ error: 'invalid_arguments', detail: 'group requires wish.' });
+  if (clear && wish) return toolError({ error: 'invalid_arguments', detail: 'clear cannot be combined with wish.' });
+  if (!clear && !wish) return toolError({ error: 'invalid_arguments', detail: 'wish <slug> or clear is required.' });
+  return runWrite(() => {
+    const to = { wish: wish ?? null, group: group ?? null };
+    const result = setTaskWish(db, id, to, resolveAuthor(args));
+    return { task: toSummary(result.task), from: result.from, to: result.to };
+  });
+}
+
+// --- genie_task_add_dependency ----------------------------------------------
+
+function genieTaskAddDependency(ctx: ToolContext, args: Record<string, unknown>): unknown {
+  const db = requireWriteHandle(ctx);
+  if (isToolError(db)) return db;
+  const id = requireArg(args, 'id');
+  if (isToolError(id)) return id;
+  const dependsOn = requireArg(args, 'depends_on');
+  if (isToolError(dependsOn)) return dependsOn;
+  return runWrite(() => {
+    addDependency(db, id, dependsOn);
+    return { taskId: id, dependsOnId: dependsOn };
+  });
+}
+
+// ============================================================================
+// The 12 operative write tools
+// ============================================================================
+
+export const MCP_WRITE_TOOLS: McpTool[] = [
+  {
+    name: 'genie_task_create',
+    description:
+      'Create a task. Errors: invalid_arguments (missing title, or group without wish), read_only_database (db served read-only), database_unavailable.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'task title (required, non-empty)' },
+        board: { type: 'string', description: 'board id or name; default repo board' },
+        wish: { type: 'string', description: 'wish slug this task belongs to' },
+        group: { type: 'string', description: 'wish-group name (requires wish)' },
+      },
+      required: ['title'],
+    },
+    handler: genieTaskCreate,
+  },
+  {
+    name: 'genie_task_checkout',
+    description:
+      "Atomically claim a ready task for a worker (the CLI's task checkout). Errors: claim_conflict (already claimed or not ready), refused_transition (enforced block), not_found (unknown id), invalid_arguments (missing id/worker), read_only_database, database_unavailable.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'task id, e.g. t_... (required)' },
+        worker: { type: 'string', description: 'worker identity recorded in claimed_by (required)' },
+        author: { type: 'string', description: 'event attribution; defaults to the server env identity' },
+      },
+      required: ['id', 'worker'],
+    },
+    handler: genieTaskCheckout,
+  },
+  {
+    name: 'genie_task_done',
+    description:
+      "Mark a task done and recompute the ready set (the CLI's task done). Errors: not_found (unknown id), refused_transition (blocked or already-done task), invalid_arguments (missing id), read_only_database, database_unavailable.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'task id, e.g. t_... (required)' },
+        author: { type: 'string', description: 'event attribution; defaults to the server env identity' },
+      },
+      required: ['id'],
+    },
+    handler: genieTaskDone,
+  },
+  {
+    name: 'genie_task_move',
+    description:
+      "Move a card to a lane defined by its board (the CLI's task move). Errors: not_found (unknown id), invalid_lane (no lanes or unknown target lane), invalid_arguments (missing id/to), read_only_database, database_unavailable.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'task id, e.g. t_... (required)' },
+        to: { type: 'string', description: 'target lane name (required)' },
+        author: { type: 'string', description: 'event attribution; defaults to the server env identity' },
+      },
+      required: ['id', 'to'],
+    },
+    handler: genieTaskMove,
+  },
+  {
+    name: 'genie_task_block',
+    description:
+      "Place an enforced block on a card, refusing checkout until cleared (the CLI's task block). Errors: not_found (unknown id), invalid_arguments (missing id/reason), read_only_database, database_unavailable.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'task id, e.g. t_... (required)' },
+        reason: { type: 'string', description: 'why the card is blocked (required, non-empty)' },
+        hold: { type: 'boolean', description: 'record as a deliberate hold (parked) rather than a work problem' },
+        author: { type: 'string', description: 'event attribution; defaults to the server env identity' },
+      },
+      required: ['id', 'reason'],
+    },
+    handler: genieTaskBlock,
+  },
+  {
+    name: 'genie_task_unblock',
+    description:
+      "Clear an enforced block from a card (the CLI's task unblock). Errors: not_found (unknown id), invalid_arguments (missing id), read_only_database, database_unavailable.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'task id, e.g. t_... (required)' },
+        author: { type: 'string', description: 'event attribution; defaults to the server env identity' },
+      },
+      required: ['id'],
+    },
+    handler: genieTaskUnblock,
+  },
+  {
+    name: 'genie_task_release',
+    description:
+      "Release a claim, returning an in-progress card to the ready queue (the CLI's task release). Errors: not_found (unknown id), refused_transition (not in_progress), invalid_arguments (missing id), read_only_database, database_unavailable.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'task id, e.g. t_... (required)' },
+        author: { type: 'string', description: 'event attribution; defaults to the server env identity' },
+      },
+      required: ['id'],
+    },
+    handler: genieTaskRelease,
+  },
+  {
+    name: 'genie_task_comment',
+    description:
+      "Append an authored comment to the card timeline (the CLI's task comment). Errors: not_found (unknown id), invalid_arguments (missing id/text), read_only_database, database_unavailable.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'task id, e.g. t_... (required)' },
+        text: { type: 'string', description: 'comment text (required, non-empty)' },
+        author: { type: 'string', description: 'event attribution; defaults to the server env identity' },
+      },
+      required: ['id', 'text'],
+    },
+    handler: genieTaskComment,
+  },
+  {
+    name: 'genie_task_report',
+    description:
+      "Append an authored worker report to the card timeline (the CLI's task report). Errors: not_found (unknown id), invalid_arguments (missing id/text), read_only_database, database_unavailable.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'task id, e.g. t_... (required)' },
+        text: { type: 'string', description: 'report text (required, non-empty)' },
+        author: { type: 'string', description: 'event attribution; defaults to the server env identity' },
+      },
+      required: ['id', 'text'],
+    },
+    handler: genieTaskReport,
+  },
+  {
+    name: 'genie_task_heartbeat',
+    description:
+      "Record a liveness heartbeat for a claimed card (the CLI's task heartbeat). Errors: not_found (unknown id), invalid_arguments (missing id), read_only_database, database_unavailable.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'task id, e.g. t_... (required)' },
+      },
+      required: ['id'],
+    },
+    handler: genieTaskHeartbeat,
+  },
+  {
+    name: 'genie_task_set_wish',
+    description:
+      "Attach, re-point, or clear the wish identity on a card (the CLI's task set-wish). Errors: not_found (unknown id), invalid_arguments (missing id, group without wish, clear with wish, or neither wish nor clear), read_only_database, database_unavailable.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'task id, e.g. t_... (required)' },
+        wish: { type: 'string', description: 'wish slug to attach the card to' },
+        group: { type: 'string', description: 'wish-group name (requires wish)' },
+        clear: { type: 'boolean', description: 'remove the wish and group from the card' },
+        author: { type: 'string', description: 'event attribution; defaults to the server env identity' },
+      },
+      required: ['id'],
+    },
+    handler: genieTaskSetWish,
+  },
+  {
+    name: 'genie_task_add_dependency',
+    description:
+      'Insert a dependency edge taskId depends_on dependsOnId, rejecting self-deps and cycles (the task-state addDependency the CLI uses at create). Errors: not_found (unknown task), dependency_cycle (self or transitive cycle), invalid_arguments (missing id/depends_on), read_only_database, database_unavailable.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'task id, e.g. t_... (required)' },
+        depends_on: { type: 'string', description: 'id of the task this task depends on (required)' },
+      },
+      required: ['id', 'depends_on'],
+    },
+    handler: genieTaskAddDependency,
   },
 ];
