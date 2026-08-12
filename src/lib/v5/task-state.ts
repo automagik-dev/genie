@@ -1190,9 +1190,15 @@ export function assignTask(
   requireTask(db, taskId);
   const pair = validateAssignmentPair(agent, reason);
   if (pair.agent == null) throw new AssignmentReasonRequiredError();
-  const current = getTask(db, taskId) as TaskRow;
-  if (current.assignedAgent === pair.agent && current.assignedReason === pair.reason) return current;
-  const apply = db.transaction(() => {
+  // The current-row read and no-op check run INSIDE the immediate transaction,
+  // so concurrent assign/clear/reassign writers each decide against the row
+  // state their own transaction serialized — never a read taken before another
+  // writer's commit (and a card deleted in the window throws UnknownTaskError,
+  // not an FK-constraint error from the event insert).
+  const apply = db.transaction((): TaskRow => {
+    const current = getTask(db, taskId);
+    if (!current) throw new UnknownTaskError(taskId);
+    if (current.assignedAgent === pair.agent && current.assignedReason === pair.reason) return current;
     db.query('UPDATE tasks SET assigned_agent = ?, assigned_reason = ?, updated_at = ? WHERE id = ?').run(
       pair.agent,
       pair.reason,
@@ -1205,9 +1211,9 @@ export function assignTask(
       authorKind: author.authorKind ?? undefined,
       author: author.author ?? undefined,
     });
+    return getTask(db, taskId) as TaskRow;
   });
-  apply.immediate();
-  return getTask(db, taskId) as TaskRow;
+  return apply.immediate() as TaskRow;
 }
 
 /**
@@ -1224,9 +1230,12 @@ export function clearTaskAssignment(
   now: number = Date.now(),
 ): TaskRow {
   requireTask(db, taskId);
-  const current = getTask(db, taskId) as TaskRow;
-  if (current.assignedAgent == null && current.assignedReason == null) return current;
-  const apply = db.transaction(() => {
+  // Read + no-op check inside the immediate transaction — the `was …` note must
+  // name the pair this transaction actually serialized against (see assignTask).
+  const apply = db.transaction((): TaskRow => {
+    const current = getTask(db, taskId);
+    if (!current) throw new UnknownTaskError(taskId);
+    if (current.assignedAgent == null && current.assignedReason == null) return current;
     db.query('UPDATE tasks SET assigned_agent = NULL, assigned_reason = NULL, updated_at = ? WHERE id = ?').run(
       now,
       taskId,
@@ -1237,9 +1246,9 @@ export function clearTaskAssignment(
       authorKind: author.authorKind ?? undefined,
       author: author.author ?? undefined,
     });
+    return getTask(db, taskId) as TaskRow;
   });
-  apply.immediate();
-  return getTask(db, taskId) as TaskRow;
+  return apply.immediate() as TaskRow;
 }
 
 /**
@@ -1424,9 +1433,11 @@ export function formatWishRef(identity: WishIdentity): string {
  * A group name is only meaningful under the wish it was declared in, so the new
  * identity is taken whole: nothing of the previous group survives a wish change,
  * and clearing the wish clears the group with it. Slugs are unvalidated TEXT,
- * exactly as {@link createTask} treats them. The write and the event append are
- * one transaction, so a card can never carry an identity with no matching
- * timeline entry.
+ * exactly as {@link createTask} treats them. The current-row read, no-op check,
+ * write, and event append all run inside one immediate transaction, so
+ * concurrent assign/clear/reassign writers each derive their `from` (and the
+ * timeline note) from the row state their transaction actually serialized
+ * against — never from a read taken before another writer's commit.
  *
  * Re-pointing a card at the identity it already carries is fully silent: no row
  * write (so `updated_at` keeps its earlier value) and no timeline entry.
@@ -1438,13 +1449,13 @@ export function setTaskWish(
   author: EventAuthor,
   now: number = Date.now(),
 ): SetWishResult {
-  const task = getTask(db, taskId);
-  if (!task) throw new UnknownTaskError(taskId);
-  const from: WishIdentity = { wish: task.wish, group: task.group };
   const next: WishIdentity = to.wish === null ? { wish: null, group: null } : to;
-  if (from.wish === next.wish && from.group === next.group) return { task, from, to: next };
-  const note = `${formatWishRef(from)}→${formatWishRef(next)}`;
-  const apply = db.transaction(() => {
+  const apply = db.transaction((): SetWishResult => {
+    const task = getTask(db, taskId);
+    if (!task) throw new UnknownTaskError(taskId);
+    const from: WishIdentity = { wish: task.wish, group: task.group };
+    if (from.wish === next.wish && from.group === next.group) return { task, from, to: next };
+    const note = `${formatWishRef(from)}→${formatWishRef(next)}`;
     db.query('UPDATE tasks SET wish = ?, group_name = ?, updated_at = ? WHERE id = ?').run(
       next.wish,
       next.group,
@@ -1457,9 +1468,9 @@ export function setTaskWish(
       authorKind: author.authorKind ?? undefined,
       author: author.author ?? undefined,
     });
+    return { task: getTask(db, taskId) as TaskRow, from, to: next };
   });
-  apply.immediate();
-  return { task: getTask(db, taskId) as TaskRow, from, to: next };
+  return apply.immediate() as SetWishResult;
 }
 
 /**
