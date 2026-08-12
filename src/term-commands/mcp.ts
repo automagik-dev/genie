@@ -1,20 +1,20 @@
 /**
  * genie mcp — a hand-rolled, zero-dependency stdio MCP server exposing the v5
- * `.genie/genie.db` state READ-ONLY.
+ * `.genie/genie.db` state with 5 read tools + 12 operative write tools.
  *
  * Transport (per SPIKE.md, verdict "hand-rolled"): newline-delimited JSON-RPC
  * 2.0 — one JSON object per line on stdin/stdout. NOT LSP `Content-Length`
  * framing. Speaks MCP protocol `2024-11-05`, confirmed against real Claude Code
  * and Warp's bundled schema. The transport loop itself now lives in the shared
  * `../lib/v5/mcp-server.js` (extracted so `genie ui-bridge` reuses it verbatim);
- * this command wires the read-only tools + the fixed initialize reply into it,
+ * this command wires the read + write tools + the fixed initialize reply into it,
  * unchanged on the wire.
  *
  * LAZY-LOAD contract: this module statically imports ONLY commander types and
- * the version string. The `bun:sqlite` read-only open, the tool implementations,
- * and the server loop are `await import`-ed inside the command action — so
- * `genie board`/`task`/`--help` never load them. `mcp.test.ts` locks this via an
- * import-graph probe.
+ * the version string. The write-capable `bun:sqlite` open, the tool
+ * implementations, and the server loop are `await import`-ed inside the command
+ * action — so `genie board`/`task`/`--help` never load them. `mcp.test.ts`
+ * locks this via an import-graph probe.
  *
  * The stdio protocol writes ARE the server's output by design — not stray
  * logging — so they satisfy biome's no-console rule.
@@ -55,8 +55,8 @@ export async function runMcpServer(): Promise<void> {
     // Fail-closed: missing repository context / genie.db / unsupported layouts
     // surface as a typed MCP error instead of a healthy-looking empty board.
     resolveContext: resolveProjectContext,
-    // Fixed reply that ignores the client's declared version — read-only `genie
-    // mcp` does NOT negotiate. Key order pinned for byte-identical output.
+    // Fixed reply that ignores the client's declared version — `genie mcp` does
+    // NOT negotiate. Key order pinned for byte-identical output.
     initialize: () => ({
       result: {
         protocolVersion: PROTOCOL_VERSION,

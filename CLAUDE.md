@@ -82,7 +82,7 @@ Fourteen top-level commands (run `genie <command> --help` for detail):
 | `init` | Scaffold per-repo state and reconcile `.mcp.json`, `.warp/.mcp.json`, plus the marker-owned `.codex/config.toml` stable-facade route |
 | `install` | Post-install finisher — authenticated delivery, v4 cleanup (`--skip-v4-cleanup`), and non-Codex convergence |
 | `launch <slug>` | Open a Warp cockpit for a wish: one pane per ready group, each in its own worktree |
-| `mcp` | Read-only stdio MCP server exposing genie.db task/board state |
+| `mcp` | Stdio MCP server exposing genie.db task/board state (read + write tools) |
 | `omni` | Omni integration — `serve`, `status`, `inbox`, `handshake` |
 | `setup` | Configure Genie; authenticated `setup --codex` owns Codex activation and managed convergence |
 | `shortcuts` | Manage tmux keyboard shortcuts |

@@ -4,8 +4,8 @@
  * against throwaway git-repo fixtures seeded via the real v5 state layer.
  *
  * Also asserts the LAZY-LOAD contract with a static import-graph probe: the
- * read-only `bun:sqlite` open in `mcp-tools.ts` must NOT be reachable from
- * `genie.ts` except through the dynamic `import()` inside the `mcp` action.
+ * `bun:sqlite` opens in `mcp-tools.ts` must NOT be reachable from `genie.ts`
+ * except through the dynamic `import()` inside the `mcp` action.
  */
 
 import { Database } from 'bun:sqlite';
@@ -661,7 +661,7 @@ describe('mcp missing-database fail-closed', () => {
     const decoder = new TextDecoder();
     let out = '';
     // Synchronize: wait for the initialize reply BEFORE seeding, which proves the
-    // server's startup read-only open already ran against an absent db (null) —
+    // server's startup open already ran against an absent db (null) —
     // otherwise the test could seed first and pass without exercising the reopen.
     proc.stdin.write(`${JSON.stringify(INIT)}\n`);
     while (!out.includes('"serverInfo"')) {
@@ -782,6 +782,159 @@ describe('mcp write-capable open', () => {
     }
     if (testError !== undefined) throw testError;
     if (cleanupErrors.length > 0) throw new AggregateError(cleanupErrors, 'Failed to restore write-protected fixture');
+  });
+});
+// ============================================================================
+// E2e stdio round-trip (Group 3 of wish mcp-write-tools): ONE spawned `genie
+// mcp` process serves a real client session — initialize → tools/list (5 read +
+// 12 write) → create → checkout → done — and genie_board reflects the terminal
+// state; a follow-up `genie task sync` publishes the card to the tracked
+// .genie/roadmap.json snapshot.
+// ============================================================================
+
+describe('mcp e2e round-trip', () => {
+  test('create → checkout → done lands on genie_board and task sync publishes the card', async () => {
+    // Seed a current, empty db so the server opens against a healthy repo
+    // (the round trip itself must create the card via the write tools).
+    const db = openDb({ cwd: repo });
+    db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    db.close();
+
+    const proc = Bun.spawn(['bun', GENIE, 'mcp'], {
+      cwd: repo,
+      stdin: 'pipe',
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: { ...process.env, NO_COLOR: '1', GENIE_TEST_SKIP_PGSERVE: '1' },
+    });
+    const reader = proc.stdout.getReader();
+    const decoder = new TextDecoder();
+    let out = '';
+    const completed = (): RpcResponse[] =>
+      out
+        .split('\n')
+        .filter((l) => l.trim().length > 0)
+        .map((l) => JSON.parse(l) as RpcResponse);
+
+    proc.stdin.write(`${JSON.stringify(INIT)}\n`);
+    proc.stdin.write(`${JSON.stringify(INITIALIZED)}\n`);
+    proc.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' })}\n`);
+    proc.stdin.write(
+      `${JSON.stringify({
+        jsonrpc: '2.0',
+        id: 71,
+        method: 'tools/call',
+        params: { name: 'genie_task_create', arguments: { title: 'e2e card', wish: 'mcp-e2e', group: 'g3' } },
+      })}\n`,
+    );
+    // Read until the create response arrives; the server stays alive because
+    // stdin is still open, so the rest of the round trip shares this session.
+    while (!completed().some((r) => r.id === 71)) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      out += decoder.decode(value, { stream: true });
+    }
+    const created = completed().find((r) => r.id === 71);
+    expect(created, 'genie_task_create response missing').toBeDefined();
+    expect(created!.result?.isError).toBe(false);
+    const taskId = toolPayload<{ task: { id: string; status: string } }>(created!).task.id;
+    expect(toolPayload<{ task: { status: string } }>(created!).task.status).toBe('ready');
+
+    // Same-session tools/list: 5 read + 12 write tools.
+    const list = completed().find((r) => r.id === 2);
+    expect(list, 'tools/list response missing').toBeDefined();
+    const names = (list!.result?.tools as Array<{ name: string }>).map((t) => t.name);
+    expect(names).toHaveLength(17);
+    const nameSet = new Set(names);
+    for (const read of ['genie_board', 'genie_wish_status', 'genie_worktree_context', 'genie_task', 'genie_active']) {
+      expect(nameSet.has(read)).toBe(true);
+    }
+    for (const write of [
+      'genie_task_create',
+      'genie_task_checkout',
+      'genie_task_done',
+      'genie_task_move',
+      'genie_task_block',
+      'genie_task_unblock',
+      'genie_task_release',
+      'genie_task_comment',
+      'genie_task_report',
+      'genie_task_heartbeat',
+      'genie_task_set_wish',
+      'genie_task_add_dependency',
+    ]) {
+      expect(nameSet.has(write)).toBe(true);
+    }
+
+    proc.stdin.write(
+      `${JSON.stringify({
+        jsonrpc: '2.0',
+        id: 72,
+        method: 'tools/call',
+        params: { name: 'genie_task_checkout', arguments: { id: taskId, worker: 'g3-worker' } },
+      })}\n`,
+    );
+    proc.stdin.write(
+      `${JSON.stringify({
+        jsonrpc: '2.0',
+        id: 73,
+        method: 'tools/call',
+        params: { name: 'genie_task_done', arguments: { id: taskId } },
+      })}\n`,
+    );
+    proc.stdin.write(
+      `${JSON.stringify({ jsonrpc: '2.0', id: 74, method: 'tools/call', params: { name: 'genie_board', arguments: {} } })}\n`,
+    );
+    await proc.stdin.end();
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      out += decoder.decode(value, { stream: true });
+    }
+    await proc.exited;
+
+    const checkout = completed().find((r) => r.id === 72)!;
+    expect(checkout.result?.isError).toBe(false);
+    expect(toolPayload<{ task: { status: string; claimedBy: string } }>(checkout).task).toMatchObject({
+      status: 'in_progress',
+      claimedBy: 'g3-worker',
+    });
+
+    const done = completed().find((r) => r.id === 73)!;
+    expect(done.result?.isError).toBe(false);
+    expect(toolPayload<{ task: { status: string } }>(done).task.status).toBe('done');
+
+    const board = completed().find((r) => r.id === 74)!;
+    expect(board.result?.isError).toBe(false);
+    const boardPayload = toolPayload<{
+      counts: Record<string, number>;
+      tasks: Array<{ id: string; title: string; status: string; wish: string }>;
+    }>(board);
+    expect(boardPayload.counts).toEqual({ blocked: 0, ready: 0, in_progress: 0, done: 1, total: 1 });
+    expect(boardPayload.tasks).toContainEqual(
+      expect.objectContaining({ id: taskId, title: 'e2e card', status: 'done', wish: 'mcp-e2e' }),
+    );
+
+    // Follow-up: the CLI's snapshot publication path (also the husky hook) now
+    // writes the card into the tracked .genie/roadmap.json.
+    const genieHome = mkdtempSync(join(tmpdir(), 'genie-mcp-ghome-'));
+    try {
+      const sync = Bun.spawnSync(['bun', GENIE, 'task', 'sync'], {
+        cwd: repo,
+        stdout: 'pipe',
+        stderr: 'pipe',
+        env: { ...process.env, NO_COLOR: '1', GENIE_TEST_SKIP_PGSERVE: '1', GENIE_HOME: genieHome },
+      });
+      expect(sync.exitCode, `task sync failed: ${sync.stderr.toString()}`).toBe(0);
+      const roadmapPath = join(repo, '.genie', 'roadmap.json');
+      expect(existsSync(roadmapPath)).toBe(true);
+      const snapshot = JSON.parse(readFileSync(roadmapPath, 'utf-8')) as {
+        tasks: Array<{ id: string; title: string; status: string }>;
+      };
+      expect(snapshot.tasks).toContainEqual(expect.objectContaining({ id: taskId, title: 'e2e card', status: 'done' }));
+    } finally {
+      rmSync(genieHome, { recursive: true, force: true });
+    }
   });
 });
 

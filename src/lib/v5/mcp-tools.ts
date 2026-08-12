@@ -1,16 +1,20 @@
 /**
- * Genie v5 MCP tools — the read-only projection of `.genie/genie.db` exposed
- * over the hand-rolled stdio MCP server (see `src/term-commands/mcp.ts`).
+ * Genie v5 MCP tools — the projection + dispatch surface of `.genie/genie.db`
+ * exposed over the hand-rolled stdio MCP server (see
+ * `src/term-commands/mcp.ts`): 5 read tools (`MCP_TOOLS`) + 12 operative write
+ * tools (`MCP_WRITE_TOOLS`).
  *
  * This module is intentionally LAZY-LOADED: `genie mcp` dynamic-imports it
  * inside the command body so that non-mcp code paths (`genie board`, `genie
- * task`, `genie --help`) never touch the read-only `bun:sqlite` open here. The
+ * task`, `genie --help`) never touch the `bun:sqlite` opens here. The
  * import-graph probe in `mcp.test.ts` locks that contract.
  *
- * The DB is opened NET-NEW and READ-ONLY (`new Database(path, {readonly:true})`)
- * — deliberately NOT `openSqlite()`/`openDb()`, which force-create the file and
- * run write pragmas. An absent db (readonly open throws) degrades to `null`, and
- * every tool renders an empty board rather than erroring.
+ * `genie mcp` opens through {@link openWriteableDb} — the standard hardened CLI
+ * write path (`openDb` + binding revalidation), degrading to the readonly
+ * healing open only when the write is impossible (see the degrade section
+ * below). The readonly open internals (`openReadonlyDb`, ...) stay in
+ * production for that fallback and for `genie ui-bridge`, which injects its own
+ * readonly open.
  */
 
 import { constants, Database } from 'bun:sqlite';
@@ -31,7 +35,7 @@ import { BUSY_TIMEOUT_MS } from './sqlite-open.js';
 
 // Re-exported so `genie mcp` (mcp.ts) pulls the fail-closed context resolver in
 // the SAME lazy dynamic import that already loads the tool registry — keeping
-// the readonly bun:sqlite open out of the eager genie.ts import graph.
+// the bun:sqlite opens out of the eager genie.ts import graph.
 export { isCurrentGenieDb, type ProjectContext, resolveProjectContext } from './genie-db.js';
 import {
   type FrozenTaskRow,
@@ -534,7 +538,7 @@ function resolveWishBranch(db: Database | null, branch: string): { wish: string;
 // ============================================================================
 
 export interface ToolContext {
-  /** Read-only handle, or `null` when the db is absent (degrade to empty). */
+  /** Database handle for this call (write-capable or degraded-readonly), or `null` when absent. */
   db: Database | null;
   /** Working directory for git branch resolution. Defaults to `process.cwd()`. */
   cwd: string;
@@ -577,7 +581,7 @@ function genieBoard(ctx: ToolContext, args: Record<string, unknown>): BoardPaylo
   let boardName: string | null = null;
   if (boardArg) {
     const board = getBoardByName(ctx.db, boardArg);
-    // Unknown board name → empty projection (read-only; never throws at caller).
+    // Unknown board name → empty projection (never throws at caller).
     if (!board) return { board: boardArg, counts: emptyCounts, tasks: [] };
     boardName = board.name;
     filter.boardId = board.id;
@@ -658,7 +662,7 @@ function genieActive(ctx: ToolContext): { tasks: ActiveTask[] } {
 }
 
 // ============================================================================
-// The 5 read-only tools
+// The 5 read tools (the read registry ui-bridge splices)
 // ============================================================================
 
 export const MCP_TOOLS: McpTool[] = [

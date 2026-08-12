@@ -125,10 +125,11 @@ export interface McpServerConfig {
    * DB open (net-new; returns `null` when the file is absent or cannot be
    * opened). MUST NOT THROW — return `null` for every failure; the loop calls
    * this outside any `try`. May be write-capable (`genie mcp`'s hardened write
-   * path) or read-only (`genie ui-bridge`) — the loop only READS through the
-   * handle it returns. A fail-closed consumer with `resolveContext` turns null
-   * into `project-database-unavailable`; legacy consumers may still degrade to
-   * an empty projection. Injected so this module never statically imports
+   * path) or read-only (`genie ui-bridge`) — the loop itself never writes
+   * through the handle; read tools read and write tools mutate through it. A
+   * fail-closed consumer with `resolveContext` turns null into
+   * `project-database-unavailable`; legacy consumers may still degrade to an
+   * empty projection. Injected so this module never statically imports
    * `bun:sqlite` / `mcp-tools`.
    */
   openDb: (target: string | ProjectDatabaseBinding) => Database | null;

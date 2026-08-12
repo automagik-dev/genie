@@ -71,7 +71,7 @@ genie --help
 | `genie board` | Kanban view of task state, derived live by query |
 | `genie task` | Inspect and drive task state (SQLite, zero-daemon) |
 | `genie install` | Finish a verified install and deliver selected integrations; Codex activation is deferred to setup |
-| `genie mcp` | Serve read-only Genie task/board state over stdio MCP |
+| `genie mcp` | Serve Genie task/board state over stdio MCP (read + write tools) |
 | `genie omni` | Bridge agents to WhatsApp via Omni — remote approvals + inbound one-shots (`serve`, `status`, `inbox`, `handshake`) |
 | `genie setup` | Configure Genie; `setup --codex` activates an authenticated delivery and converges Codex-owned surfaces |
 | `genie doctor` | Run diagnostic checks on the installation |
@@ -181,7 +181,7 @@ All linked worktrees of a repository share one `genie.db`, resolved from the git
 
 ## MCP server (Warp + Claude Code + Codex)
 
-`genie mcp` is a zero-dependency, read-only [MCP](https://modelcontextprotocol.io) server over stdio. Codex does not launch it from the versioned plugin cache. Instead, every trusted initialized repository owns one marker-managed `.codex/config.toml` route pointing at the stable absolute `$GENIE_HOME/bin/genie mcp` facade, with no `cwd` override. Missing, symlinked, or path-escaped executables fail closed.
+`genie mcp` is a zero-dependency [MCP](https://modelcontextprotocol.io) server over stdio exposing the operative task/board state: five read tools plus twelve `genie_task_*` write tools mirroring `genie task`. Codex does not launch it from the versioned plugin cache. Instead, every trusted initialized repository owns one marker-managed `.codex/config.toml` route pointing at the stable absolute `$GENIE_HOME/bin/genie mcp` facade, with no `cwd` override. Missing, symlinked, or path-escaped executables fail closed.
 
 **How it gets picked up.** `genie init` reconciles Claude, Warp, and Codex project configs and may change the three project files named below; review those project-scoped commands before trusting the workspace. The Codex route is plugin-independent and is created or repaired only when its marker proves Genie ownership. Unowned same-key routes, damaged markers, nested shadowing, and untrusted repositories are preserved and reported rather than overwritten. `genie launch` applies the same marker-owned policy to its worktrees:
 
@@ -191,7 +191,7 @@ All linked worktrees of a repository share one `genie.db`, resolved from the git
 
 The Claude and Warp JSON files use the identical `mcpServers` shape and are merged idempotently; the Codex TOML route uses marker-owned root-level dotted assignments so it cannot capture following keys. Re-running `genie init` preserves every other server and top-level key and rewrites byte-identical. A compiled Genie records the absolute executable plus `mcp`; an interpreted `bun src/genie.ts` or `bun dist/genie.js` run records the absolute Bun executable plus the absolute script and `mcp`. No route relies on bare `genie`, which is not reliably on PATH. Because `genie init`/`launch` run on the box that owns the repo, the recorded paths are correct even under Warp's SSH-remote feature, where Warp spawns the server on that same box.
 
-**What it exposes** — five read-only tools backed by the per-repo `.genie/genie.db`:
+**What it exposes** — five read tools backed by the per-repo `.genie/genie.db`, plus twelve operative write tools (`genie_task_create`, `genie_task_checkout`, `genie_task_done`, `genie_task_move`, `genie_task_block`, `genie_task_unblock`, `genie_task_release`, `genie_task_comment`, `genie_task_report`, `genie_task_heartbeat`, `genie_task_set_wish`, `genie_task_add_dependency`) that mirror the `genie task` CLI:
 
 - `genie_board` — board counts + tasks (optional wish filter)
 - `genie_wish_status` — a wish's group/DAG progress
