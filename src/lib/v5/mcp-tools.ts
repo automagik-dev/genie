@@ -339,6 +339,18 @@ function isFileWritable(path: string): boolean {
  * close writes the zeroed read-only header (iVersion + isInit still set) into
  * `-shm`; a fully-checkpointed db has no `-wal` frames, so the recovery only
  * ever discards empty sidecars.
+ *
+ * IMPORTANT (verified on this machine): the REAL poison is byte-for-byte
+ * identical to the virgin header bun writes when it freshly (re)creates the
+ * index on any healthy open — all 32768 bytes, no checksum/salt/copy-2
+ * difference. So this predicate alone CANNOT be used as a post-open test: a
+ * healthy fresh open also reports stale. The open itself also does NOT throw
+ * on the poison (bun opens silently READONLY, or a writable-looking handle
+ * whose writes fail with "disk I/O error"); only a real write distinguishes
+ * them. That is why {@link tryWriteOpen} re-checks this predicate after a
+ * successful open and, when stale, exercises the handle with a PASSIVE
+ * checkpoint (healthy: succeeds and self-heals the header; poison: throws)
+ * before routing the stale case into the remove-and-retry recovery below.
  */
 export function hasStaleReadonlyWalIndex(binding: ProjectDatabaseBinding): boolean {
   try {
@@ -378,6 +390,28 @@ function tryWriteOpen(binding: ProjectDatabaseBinding, dependencies: WriteableDb
     if (!resolveProjectDatabaseBinding(binding.logicalPath, binding).ok || !readonlyDatabaseHandleMatchesPath(db)) {
       closeReadonlyDb(db);
       return { db: null, busy: false };
+    }
+    // Post-open stale-sidecar re-check: a zeroed iChange/nPage header in -shm
+    // is AMBIGUOUS right after an open on this platform. bun writes a
+    // byte-identical virgin header when it (re)creates the index (HEALTHY —
+    // the first real write rebuilds it), and the degraded-readonly close
+    // writes the same bytes (POISON — every later write fails with a raw
+    // SQLITE_READONLY or "disk I/O error", reads still serve). We verified the
+    // files are byte-for-byte identical (all 32768 bytes), so no file-level
+    // predicate can tell them apart — the minimal additional state lives on
+    // the HANDLE: exercise the wal-index write path with a PASSIVE checkpoint.
+    // Healthy virgin: succeeds (and self-heals the header). Poison: throws.
+    // Busy (live writer): checkpoint returns a busy row without throwing, so
+    // a healthy-but-busy db is never mislabeled — and a BusyDbError from the
+    // open itself still short-circuits above with busy=true, no recovery, no
+    // degrade (F3 carve-out intact).
+    if (hasStaleReadonlyWalIndex(binding)) {
+      try {
+        db.query('PRAGMA wal_checkpoint(PASSIVE)').all();
+      } catch (probeErr) {
+        closeReadonlyDb(db);
+        return { db: null, busy: probeErr instanceof BusyDbError };
+      }
     }
     return { db, busy: false };
   } catch (err) {

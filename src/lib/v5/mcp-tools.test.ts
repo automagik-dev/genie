@@ -567,10 +567,16 @@ describe('openReadonlyDbHealingStaleSchema', () => {
 
 // ============================================================================
 // Stale-readonly sidecar predicates (Group 1 recovery: hasStaleReadonlyWalIndex
-// + walSidecarsEmpty). The poison is NOT reproducible through the real openDb
-// on this machine (bun self-heals a crafted zeroed-header -shm and opens
-// writable), so the predicates are tested directly with crafted headers and the
-// recovery branch through the injected open seam below.
+// + walSidecarsEmpty). The predicates are tested directly with crafted headers;
+// the recovery branch runs through the injected open seam below. NOTE: on this
+// machine the REAL poison (written by a degraded readonly close) is byte-for-
+// byte identical to the virgin header bun writes on any healthy fresh open —
+// so hasStaleReadonlyWalIndex is AMBIGUOUS right after an open, and the write
+// open does NOT throw on the poison (bun opens silently READONLY or a
+// writable-looking handle whose writes fail "disk I/O error"). tryWriteOpen
+// therefore disambiguates with a PASSIVE-checkpoint write probe on the opened
+// handle (healthy: succeeds and self-heals; poison: throws) before routing the
+// stale case into the remove-and-retry recovery.
 // ============================================================================
 
 /**
@@ -813,9 +819,9 @@ describe('openWriteableDb', () => {
     const walPath = `${binding.physicalPath}-wal`;
 
     // Craft the degraded-readonly state: poisoned -shm header + empty -wal.
-    // (The real openDb self-heals this on the current machine — see the
-    // predicates describe — so the first attempt is made to fail through the
-    // injected seam, which is also how the retry is observed.)
+    // The first attempt is made to FAIL through the injected seam (the sibling
+    // test below covers the successful-open/post-open-rejection path), and the
+    // seam is also how the retry is observed.
     rmSync(shmPath, { force: true });
     rmSync(walPath, { force: true });
     writeFileSync(shmPath, poisonShmHeader());
@@ -834,6 +840,84 @@ describe('openWriteableDb', () => {
     });
     expect(attempts).toBe(2); // exactly one recovery retry
     expect(retrySawPoisonedShm).toBe(false); // both sidecars were removed first
+    expectWritable(db);
+    expect(isDegradedReadonlyDb(db)).toBe(false);
+    (db as Database).close();
+  });
+
+  test('sidecar recovery: a poisoned -shm surviving a SUCCESSFUL write open is rejected post-open, removed, and the retried open yields a writable handle', () => {
+    const repo = initRepo(join(base, 'repo'));
+    seedDb(repo);
+    const context = resolveProjectContext(repo);
+    if (context.kind !== 'ok' || context.databaseBinding === undefined) throw new Error('expected bound database');
+    const binding = context.databaseBinding;
+    const path = binding.physicalPath;
+    const genieDir = dirname(path);
+
+    // Build the REAL poison in-process: the degraded readonly fallback's close
+    // writes the zeroed read-only wal-index header into -shm. The crafted
+    // header bytes canNOT stand in for this — bun self-heals those on the
+    // first write (the crafted fixture is byte-distinct: no salt/second copy),
+    // while the real poison is byte-identical to a healthy virgin header and
+    // only fails through the HANDLE (the post-open write probe), so the S1
+    // sequence must run here for the S2 seam to see the live failure shape.
+    chmodSync(path, 0o444);
+    chmodSync(genieDir, 0o555);
+    try {
+      try {
+        accessSync(path, fsConstants.W_OK);
+        return; // root — the degrade branch is inexpressible, skip
+      } catch {
+        // write access revoked as intended — proceed
+      }
+      const degraded = openWriteableDb(binding);
+      if (degraded === null) {
+        // Inexpressible on this platform (same probe as the degrade test).
+        const probe = openReadonlyDb(binding);
+        let readable = false;
+        try {
+          if (probe !== null) {
+            probe.query('SELECT 1 FROM meta').get();
+            readable = true;
+          }
+        } catch {
+          // unreadable — the scenario is inexpressible in this environment
+        }
+        probe?.close();
+        if (!readable) return;
+      }
+      expect(isDegradedReadonlyDb(degraded)).toBe(true);
+      degraded?.close(); // writes the REAL poison marker into -shm
+    } finally {
+      chmodSync(genieDir, 0o755);
+      chmodSync(path, 0o644);
+    }
+    expect(hasStaleReadonlyWalIndex(binding)).toBe(true); // real poison on disk
+
+    // Repaired filesystem: the FIRST write open "succeeds" (returns a real
+    // handle — the poison does not throw at open on this machine), and only
+    // the post-open PASSIVE-checkpoint write probe rejects it; recovery
+    // removes the sidecars; the retried open yields a writable, non-degraded
+    // handle.
+    let attempts = 0;
+    let firstAttemptOpenedHandle = false;
+    let retrySawCleanSidecars = false; // set at retry entry, before the open
+    const db = openWriteableDb(binding, {
+      openDatabase: (p) => {
+        attempts += 1;
+        if (attempts === 1) {
+          const handle = openDb({ path: p });
+          firstAttemptOpenedHandle = true;
+          return handle;
+        }
+        // Recovery must have removed both sidecars before the retry opened.
+        retrySawCleanSidecars = !hasStaleReadonlyWalIndex(binding) && walSidecarsEmpty(binding);
+        return openDb({ path: p });
+      },
+    });
+    expect(firstAttemptOpenedHandle).toBe(true); // the open itself never threw
+    expect(attempts).toBe(2); // exactly one recovery retry
+    expect(retrySawCleanSidecars).toBe(true); // both sidecars were removed first
     expectWritable(db);
     expect(isDegradedReadonlyDb(db)).toBe(false);
     (db as Database).close();
