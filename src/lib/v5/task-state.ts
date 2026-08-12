@@ -32,8 +32,36 @@ export interface TaskRow {
   wish: string | null;
   /** Wish-group name this task belongs to, or null. */
   group: string | null;
+  /** Declared roster agent that works this card, or null when the current orchestrating agent does (W1 routing). */
+  assignedAgent: string | null;
+  /** Why the declared agent was assigned; always present when assignedAgent is set. */
+  assignedReason: string | null;
   createdAt: number;
   updatedAt: number;
+}
+
+/**
+ * The frozen pre-assignment TaskRow key set. The two declared-routing fields
+ * live on TaskRow but serialize on the additive lane board `--json` path only
+ * (WISH decision: lane-path-only); every other machine-readable task payload
+ * ships this projection.
+ */
+export type FrozenTaskRow = Omit<TaskRow, 'assignedAgent' | 'assignedReason'>;
+
+/** Explicit key-picking — strips the two assignment fields. */
+export function toFrozenTaskRow(t: TaskRow): FrozenTaskRow {
+  return {
+    id: t.id,
+    boardId: t.boardId,
+    title: t.title,
+    status: t.status,
+    claimedBy: t.claimedBy,
+    claimedAt: t.claimedAt,
+    wish: t.wish,
+    group: t.group,
+    createdAt: t.createdAt,
+    updatedAt: t.updatedAt,
+  };
 }
 
 export interface CreateTaskInput {
@@ -47,6 +75,10 @@ export interface CreateTaskInput {
   lane?: string;
   /** IDs of existing tasks this task depends on. Non-empty ⇒ starts `blocked`. */
   dependsOn?: string[];
+  /** Declared roster agent that works this card; requires `assignedReason` (W1 routing). */
+  assignedAgent?: string;
+  /** Why `assignedAgent` was chosen; only valid together with `assignedAgent`. */
+  assignedReason?: string;
 }
 
 /**
@@ -241,6 +273,36 @@ export interface HireAgentInput {
 }
 
 // ============================================================================
+// Declared routing roster (cross-agent-delegate W1)
+// ============================================================================
+
+/**
+ * The allowlisted coding agents a card can be declared to. A typed in-code
+ * constant, NOT config (WISH Decision 2): `assigned_agent` text eventually
+ * reaches a shell and another agent's prompt, so every write path validates
+ * against this closed set. Extension is a one-line change.
+ */
+export const ROSTER = ['claude', 'codex', 'pi', 'hermes', 'prime'] as const;
+
+/** One member of the {@link ROSTER} allowlist. */
+export type RosterAgent = (typeof ROSTER)[number];
+
+/** True when `agent` names a member of the roster allowlist. */
+export function isRosterAgent(agent: string): agent is RosterAgent {
+  return (ROSTER as readonly string[]).includes(agent);
+}
+
+/**
+ * Validate an agent name against the roster allowlist, throwing
+ * {@link UnknownRosterAgentError} with the allowed names when it is not a
+ * member. The one funnel every assignment write path uses.
+ */
+export function requireRosterAgent(agent: string): RosterAgent {
+  if (!isRosterAgent(agent)) throw new UnknownRosterAgentError(agent);
+  return agent;
+}
+
+// ============================================================================
 // Typed errors
 // ============================================================================
 
@@ -279,6 +341,37 @@ export class DuplicateBoardError extends Error {
     super(`Board "${name}" already exists`);
     this.name = 'DuplicateBoardError';
     this.boardName = name;
+  }
+}
+
+/**
+ * An assignment write named an agent outside the {@link ROSTER} allowlist (WISH
+ * Decision 2). `assigned_agent` text reaches a shell and another agent's prompt
+ * in W2, so the closed roster is enforced at every write path and the allowed
+ * names ride the error so the CLI can surface them verbatim.
+ */
+export class UnknownRosterAgentError extends Error {
+  readonly agent: string;
+  constructor(agent: string) {
+    super(
+      `Unknown agent "${agent}" — not in the roster (${ROSTER.join(', ')}). Assignment requires an allowlisted agent.`,
+    );
+    this.name = 'UnknownRosterAgentError';
+    this.agent = agent;
+  }
+}
+
+/**
+ * An assignment write omitted half of the required pair (WISH Decision 3: an
+ * assignment carries its rationale — `--agent` requires `--why`, and `--why`
+ * alone is equally rejected). Thrown for both a declared agent with no reason
+ * and a reason with no declared agent: a half-written assignment is exactly the
+ * invisible routing this wish exists to kill.
+ */
+export class AssignmentReasonRequiredError extends Error {
+  constructor() {
+    super('Assignment requires both halves: a declared agent AND the reason it was assigned (--agent requires --why).');
+    this.name = 'AssignmentReasonRequiredError';
   }
 }
 
@@ -412,6 +505,8 @@ interface RawTask {
   blocked_by: string | null;
   blocked_reason: string | null;
   block_kind: string | null;
+  assigned_agent: string | null;
+  assigned_reason: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -426,6 +521,8 @@ function mapTask(row: RawTask): TaskRow {
     claimedAt: row.claimed_at,
     wish: row.wish,
     group: row.group_name,
+    assignedAgent: row.assigned_agent,
+    assignedReason: row.assigned_reason,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -537,6 +634,11 @@ export function createTask(db: Database, input: CreateTaskInput): TaskRow {
   const now = Date.now();
   const status: TaskStatus = deps.length === 0 ? 'ready' : 'blocked';
 
+  // Assignment invariants enforced at the API boundary (WISH Decisions 2-3):
+  // agent allowlisted, both halves or neither. Pure validation, so it runs
+  // before any DB read.
+  const assignment = validateAssignmentPair(input.assignedAgent ?? null, input.assignedReason ?? null);
+
   // Validate the board up front so a missing reference surfaces as a typed
   // UnknownBoardError rather than a raw foreign-key SqliteError from the insert.
   if (input.boardId != null && !getBoard(db, input.boardId)) {
@@ -545,8 +647,9 @@ export function createTask(db: Database, input: CreateTaskInput): TaskRow {
 
   const insert = db.transaction(() => {
     db.query(
-      `INSERT INTO tasks (id, board_id, title, status, wish, group_name, lane, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO tasks (id, board_id, title, status, wish, group_name, lane,
+                          assigned_agent, assigned_reason, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       id,
       input.boardId ?? null,
@@ -555,6 +658,8 @@ export function createTask(db: Database, input: CreateTaskInput): TaskRow {
       input.wish ?? null,
       input.group ?? null,
       input.lane ?? null,
+      assignment.agent,
+      assignment.reason,
       now,
       now,
     );
@@ -1040,6 +1145,112 @@ export function unblockTask(db: Database, taskId: string, author: EventAuthor): 
   return getTask(db, taskId) as TaskRow;
 }
 
+// ============================================================================
+// Declared routing (cross-agent-delegate W1)
+// ============================================================================
+
+/**
+ * Validate one assignment pair against the W1 invariants — agent allowlisted
+ * (WISH Decision 2) and both halves or neither (Decision 3) — returning the
+ * normalized pair (reason trimmed). `null`/blank on both sides is the valid
+ * "no assignment" state; exactly one blank half is rejected; a non-blank agent
+ * must be a roster member. The single funnel every assignment write path uses.
+ */
+function validateAssignmentPair(
+  agent: string | null,
+  reason: string | null,
+): { agent: RosterAgent | null; reason: string | null } {
+  const agentValue = agent?.trim() || null;
+  const reasonValue = reason?.trim() || null;
+  if (agentValue == null && reasonValue == null) return { agent: null, reason: null };
+  if (agentValue == null || reasonValue == null) throw new AssignmentReasonRequiredError();
+  return { agent: requireRosterAgent(agentValue), reason: reasonValue };
+}
+
+/**
+ * Declare which roster agent works a card and why — the W1 routing substrate
+ * (assignment is declaration-only: no checkout gating, WISH Scope OUT). Works
+ * at any card status; only the assignment columns and `updated_at` move, and an
+ * `assign` event records the routing on the card timeline so the history rides
+ * the thread. The write and the event are one transaction, so a card can never
+ * carry an assignment with no matching timeline entry.
+ *
+ * Re-assigning the exact stored pair is fully silent: no row write (so
+ * `updated_at` keeps its earlier value) and no timeline entry — the
+ * set-wish/--clear precedent.
+ */
+export function assignTask(
+  db: Database,
+  taskId: string,
+  agent: string,
+  reason: string,
+  author: EventAuthor = { author: null, authorKind: null },
+  now: number = Date.now(),
+): TaskRow {
+  requireTask(db, taskId);
+  const pair = validateAssignmentPair(agent, reason);
+  if (pair.agent == null) throw new AssignmentReasonRequiredError();
+  // The current-row read and no-op check run INSIDE the immediate transaction,
+  // so concurrent assign/clear/reassign writers each decide against the row
+  // state their own transaction serialized — never a read taken before another
+  // writer's commit (and a card deleted in the window throws UnknownTaskError,
+  // not an FK-constraint error from the event insert).
+  const apply = db.transaction((): TaskRow => {
+    const current = getTask(db, taskId);
+    if (!current) throw new UnknownTaskError(taskId);
+    if (current.assignedAgent === pair.agent && current.assignedReason === pair.reason) return current;
+    db.query('UPDATE tasks SET assigned_agent = ?, assigned_reason = ?, updated_at = ? WHERE id = ?').run(
+      pair.agent,
+      pair.reason,
+      now,
+      taskId,
+    );
+    appendTaskEvent(db, taskId, {
+      kind: 'assign',
+      note: `assigned to ${pair.agent}: ${pair.reason}`,
+      authorKind: author.authorKind ?? undefined,
+      author: author.author ?? undefined,
+    });
+    return getTask(db, taskId) as TaskRow;
+  });
+  return apply.immediate() as TaskRow;
+}
+
+/**
+ * Remove a card's declared routing — both halves together — and append a
+ * `clear` event that names what was removed, so the routing history stays a
+ * self-contained thread. Declaration-only like {@link assignTask}: no status
+ * gate, and clearing an already-unassigned card is a silent no-op (the
+ * set-wish/--clear precedent: no row write, no timeline entry).
+ */
+export function clearTaskAssignment(
+  db: Database,
+  taskId: string,
+  author: EventAuthor = { author: null, authorKind: null },
+  now: number = Date.now(),
+): TaskRow {
+  requireTask(db, taskId);
+  // Read + no-op check inside the immediate transaction — the `was …` note must
+  // name the pair this transaction actually serialized against (see assignTask).
+  const apply = db.transaction((): TaskRow => {
+    const current = getTask(db, taskId);
+    if (!current) throw new UnknownTaskError(taskId);
+    if (current.assignedAgent == null && current.assignedReason == null) return current;
+    db.query('UPDATE tasks SET assigned_agent = NULL, assigned_reason = NULL, updated_at = ? WHERE id = ?').run(
+      now,
+      taskId,
+    );
+    appendTaskEvent(db, taskId, {
+      kind: 'clear',
+      note: `assignment cleared (was ${current.assignedAgent}: ${current.assignedReason})`,
+      authorKind: author.authorKind ?? undefined,
+      author: author.author ?? undefined,
+    });
+    return getTask(db, taskId) as TaskRow;
+  });
+  return apply.immediate() as TaskRow;
+}
+
 /**
  * Record a liveness heartbeat for a claimed card — a bare `heartbeat_at` write,
  * NOT a timeline event (liveness is render-derived from this timestamp, never
@@ -1222,9 +1433,11 @@ export function formatWishRef(identity: WishIdentity): string {
  * A group name is only meaningful under the wish it was declared in, so the new
  * identity is taken whole: nothing of the previous group survives a wish change,
  * and clearing the wish clears the group with it. Slugs are unvalidated TEXT,
- * exactly as {@link createTask} treats them. The write and the event append are
- * one transaction, so a card can never carry an identity with no matching
- * timeline entry.
+ * exactly as {@link createTask} treats them. The current-row read, no-op check,
+ * write, and event append all run inside one immediate transaction, so
+ * concurrent assign/clear/reassign writers each derive their `from` (and the
+ * timeline note) from the row state their transaction actually serialized
+ * against — never from a read taken before another writer's commit.
  *
  * Re-pointing a card at the identity it already carries is fully silent: no row
  * write (so `updated_at` keeps its earlier value) and no timeline entry.
@@ -1236,13 +1449,13 @@ export function setTaskWish(
   author: EventAuthor,
   now: number = Date.now(),
 ): SetWishResult {
-  const task = getTask(db, taskId);
-  if (!task) throw new UnknownTaskError(taskId);
-  const from: WishIdentity = { wish: task.wish, group: task.group };
   const next: WishIdentity = to.wish === null ? { wish: null, group: null } : to;
-  if (from.wish === next.wish && from.group === next.group) return { task, from, to: next };
-  const note = `${formatWishRef(from)}→${formatWishRef(next)}`;
-  const apply = db.transaction(() => {
+  const apply = db.transaction((): SetWishResult => {
+    const task = getTask(db, taskId);
+    if (!task) throw new UnknownTaskError(taskId);
+    const from: WishIdentity = { wish: task.wish, group: task.group };
+    if (from.wish === next.wish && from.group === next.group) return { task, from, to: next };
+    const note = `${formatWishRef(from)}→${formatWishRef(next)}`;
     db.query('UPDATE tasks SET wish = ?, group_name = ?, updated_at = ? WHERE id = ?').run(
       next.wish,
       next.group,
@@ -1255,9 +1468,9 @@ export function setTaskWish(
       authorKind: author.authorKind ?? undefined,
       author: author.author ?? undefined,
     });
+    return { task: getTask(db, taskId) as TaskRow, from, to: next };
   });
-  apply.immediate();
-  return { task: getTask(db, taskId) as TaskRow, from, to: next };
+  return apply.immediate() as SetWishResult;
 }
 
 /**
@@ -1517,22 +1730,21 @@ export function hasOperationalState(db: Database, opts: { includeHireRoster?: bo
   return false;
 }
 
-function insertSnapshotRows(db: Database, state: StateExport): void {
-  const meta = db.query('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)');
-  for (const m of state.meta) meta.run(m.key, m.value);
-
-  const board = db.query('INSERT INTO boards (id, name, lanes, created_at) VALUES (?, ?, ?, ?)');
-  for (const b of state.boards) board.run(b.id, b.name, b.lanes ?? null, b.created_at);
-
-  // Nullable-with-?? throughout: additive columns (lane, agent_kind, …) backfill
-  // without a user_version bump, so a same-version snapshot from an older build
-  // may legitimately omit them.
+/**
+ * Insert the tasks slice of a snapshot. Column enumeration lives HERE — 18
+ * columns, the widest row the snapshot carries. Nullable-with-?? throughout:
+ * additive columns (lane, agent_kind, …, assigned_agent/assigned_reason)
+ * backfill without a user_version bump, so a same-version snapshot from an
+ * older build may legitimately omit them.
+ */
+function insertTaskRows(db: Database, tasks: StateExport['tasks']): void {
   const task = db.query(
     `INSERT INTO tasks (id, board_id, title, status, claimed_by, claimed_at, wish, group_name,
+                        assigned_agent, assigned_reason,
                         lane, agent_kind, heartbeat_at, blocked_by, blocked_reason, block_kind, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
-  for (const t of state.tasks) {
+  for (const t of tasks) {
     task.run(
       t.id,
       t.board_id ?? null,
@@ -1542,6 +1754,8 @@ function insertSnapshotRows(db: Database, state: StateExport): void {
       t.claimed_at ?? null,
       t.wish ?? null,
       t.group_name ?? null,
+      t.assigned_agent ?? null,
+      t.assigned_reason ?? null,
       t.lane ?? null,
       t.agent_kind ?? null,
       t.heartbeat_at ?? null,
@@ -1552,6 +1766,16 @@ function insertSnapshotRows(db: Database, state: StateExport): void {
       t.updated_at,
     );
   }
+}
+
+function insertSnapshotRows(db: Database, state: StateExport): void {
+  const meta = db.query('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)');
+  for (const m of state.meta) meta.run(m.key, m.value);
+
+  const board = db.query('INSERT INTO boards (id, name, lanes, created_at) VALUES (?, ?, ?, ?)');
+  for (const b of state.boards) board.run(b.id, b.name, b.lanes ?? null, b.created_at);
+
+  insertTaskRows(db, state.tasks);
 
   const dep = db.query('INSERT INTO task_dependencies (task_id, depends_on_id) VALUES (?, ?)');
   for (const d of state.task_dependencies) dep.run(d.task_id, d.depends_on_id);

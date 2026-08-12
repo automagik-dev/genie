@@ -278,6 +278,80 @@ describe('pre-lanes DB backfill (additive, no version bump)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Pre-assignment backfill (cross-agent-delegate W1): a DB initialized by a
+// build that predates tasks.assigned_agent/assigned_reason must be detected as
+// NOT current (EXPECTED_SCHEMA lockstep) so ensureSchema re-runs and backfills
+// additively — no user_version bump, no data loss. The documented trap is
+// omitting the columns from EXPECTED_SCHEMA: schemaIsCurrent would then return
+// true for the pre-upgrade shape and the backfill would be silently skipped.
+// ---------------------------------------------------------------------------
+describe('pre-assignment DB backfill (additive, no version bump)', () => {
+  test('a full-schema DB missing only the assignment columns is not current and heals on open', () => {
+    const path = join(dir, 'pre-assignment.db');
+    const db1 = openDb({ path });
+    // A card with real assignment data, plus an unassigned one — both must
+    // survive the drop/re-add cycle intact.
+    db1
+      .query(
+        "INSERT INTO tasks (id, title, status, created_at, updated_at, assigned_agent, assigned_reason) VALUES ('t_a', 'routed', 'ready', 1, 1, 'codex', 'dissent on parser')",
+      )
+      .run();
+    db1
+      .query("INSERT INTO tasks (id, title, status, created_at, updated_at) VALUES ('t_b', 'plain', 'ready', 1, 1)")
+      .run();
+    // Simulate a DB stamped by the previous build: drop ONLY the two new
+    // columns; everything else stays at the current shape.
+    db1.exec('ALTER TABLE tasks DROP COLUMN assigned_agent');
+    db1.exec('ALTER TABLE tasks DROP COLUMN assigned_reason');
+    // The lockstep contract: the pre-upgrade shape must NOT read as current —
+    // otherwise openDb's fast path would skip ensureSchema and the backfill
+    // would silently never run on already-initialized DBs.
+    expect(isCurrentGenieDb(db1)).toBe(false);
+    expect(isReadableGenieDb(db1)).toBe(false);
+    db1.close();
+
+    const db2 = openDb({ path });
+    // Additive migration — user_version unchanged.
+    expect((db2.query('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(
+      CURRENT_SCHEMA_VERSION,
+    );
+    // Both columns backfilled; every pre-existing row (and its assignment)
+    // survived.
+    const cols = new Set((db2.query('PRAGMA table_info(tasks)').all() as Array<{ name: string }>).map((c) => c.name));
+    expect(cols.has('assigned_agent')).toBe(true);
+    expect(cols.has('assigned_reason')).toBe(true);
+    // The pre-existing row survived the heal; the re-added columns read as NULL
+    // (a real pre-assignment DB never carried assignment data — SQLite DROP
+    // COLUMN discards values, so the fresh column starts null exactly as it
+    // would on a database that predates the feature).
+    const routed = db2.query('SELECT title, assigned_agent, assigned_reason FROM tasks WHERE id = ?').get('t_a') as {
+      title: string;
+      assigned_agent: string | null;
+      assigned_reason: string | null;
+    };
+    expect(routed).toEqual({ title: 'routed', assigned_agent: null, assigned_reason: null });
+    const plain = db2.query('SELECT assigned_agent, assigned_reason FROM tasks WHERE id = ?').get('t_b') as {
+      assigned_agent: string | null;
+      assigned_reason: string | null;
+    };
+    expect(plain).toEqual({ assigned_agent: null, assigned_reason: null });
+    // The healed DB is now current, and a re-open is a pure no-op.
+    expect(isCurrentGenieDb(db2)).toBe(true);
+    db2.close();
+    expect(isCurrentGenieDb(openDb({ path }))).toBe(true);
+  });
+
+  test('a fresh DB carries the assignment columns from CREATE TABLE', () => {
+    const path = join(dir, 'fresh.db');
+    const db = openDb({ path });
+    const cols = new Set((db.query('PRAGMA table_info(tasks)').all() as Array<{ name: string }>).map((c) => c.name));
+    db.close();
+    expect(cols.has('assigned_agent')).toBe(true);
+    expect(cols.has('assigned_reason')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Busy classification: a contended write lock is transient, not corruption. The
 // production bug was openDb wrapping SQLITE_BUSY into MalformedDbError under
 // multi-process contention. These lock the classifier and the typed error so a

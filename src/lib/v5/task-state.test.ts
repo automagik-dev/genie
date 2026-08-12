@@ -1,10 +1,13 @@
 import type { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ensureSchema, isCurrentGenieDb, openDb } from './genie-db.js';
+import { roadmapSnapshot, syncRoadmap } from './roadmap-sync.js';
 import {
+  AssignmentReasonRequiredError,
   CheckoutConflictError,
   CycleError,
   DEFAULT_LIFECYCLE_LANES,
@@ -13,18 +16,22 @@ import {
   LIVENESS_RUNNING_MS,
   LIVENESS_STALE_MS,
   LaneError,
+  ROSTER,
   TaskBlockedError,
   TaskCompleteError,
   TaskHasDependentsError,
   TaskNotReadyError,
   TaskReleaseError,
   type TaskRow,
+  UnknownRosterAgentError,
   UnknownTaskError,
   addDependency,
   appendStage,
   appendTaskEvent,
+  assignTask,
   blockTask,
   claimTask,
+  clearTaskAssignment,
   commentCounts,
   completeTask,
   countBoardTasks,
@@ -43,6 +50,7 @@ import {
   getTaskLane,
   hireAgent,
   importState,
+  isRosterAgent,
   linkTaskToWish,
   listBoards,
   listHires,
@@ -735,12 +743,17 @@ describe('lane projection carries enforcedBlock', () => {
     expect(byId.get(held.id)?.enforcedBlock).toEqual({ reason: 'parked until Q3', kind: 'hold' });
   });
 
-  test('the lane projection gains ONLY enforcedBlock — provenance and heartbeat stay off it', () => {
-    const a = createTask(db, { title: 'a' });
+  test('the lane projection gains ONLY enforcedBlock beyond TaskRow — provenance and heartbeat stay off it', () => {
+    const a = createTask(db, { title: 'a', assignedAgent: 'codex', assignedReason: 'dissent' });
     blockTask(db, a.id, 'r', HUMAN, 'hold');
     recordHeartbeat(db, a.id);
     const row = listTasksWithLane(db).find((t) => t.id === a.id) as unknown as Record<string, unknown>;
+    // LaneTaskRow = TaskRow (assignment fields included, per W1) + lane +
+    // enforcedBlock. The runtime layer (agentKind/heartbeatAt/blockedBy/
+    // blockedReason) stays off this projection.
     expect(Object.keys(row).sort()).toEqual([
+      'assignedAgent',
+      'assignedReason',
       'boardId',
       'claimedAt',
       'claimedBy',
@@ -754,6 +767,8 @@ describe('lane projection carries enforcedBlock', () => {
       'updatedAt',
       'wish',
     ]);
+    expect(row.assignedAgent).toBe('codex');
+    expect(row.assignedReason).toBe('dissent');
   });
 
   test('the frozen TaskRow path never gains enforcedBlock', () => {
@@ -910,6 +925,216 @@ describe('runtime layer — claim / release timeline events', () => {
     const counts = commentCounts(db);
     expect(counts.get(a.id)).toBe(2);
     expect(counts.has(b.id)).toBe(false);
+  });
+});
+
+describe('declared routing — roster allowlist + assignment state API (W1)', () => {
+  test('ROSTER is the typed five-agent allowlist', () => {
+    expect(ROSTER).toEqual(['claude', 'codex', 'pi', 'hermes', 'prime']);
+    expect(isRosterAgent('codex')).toBe(true);
+    expect(isRosterAgent('gpt6')).toBe(false);
+  });
+
+  test('createTask persists an assignment and round-trips through TaskRow', () => {
+    const task = createTask(db, {
+      title: 'dissent review',
+      assignedAgent: 'codex',
+      assignedReason: 'dissent on parser',
+    });
+    expect(task.assignedAgent).toBe('codex');
+    expect(task.assignedReason).toBe('dissent on parser');
+    const fetched = getTask(db, task.id);
+    expect(fetched).toEqual(task);
+    expect(listTasks(db)[0]?.assignedAgent).toBe('codex');
+    // Both columns on the raw row, both null when unassigned.
+    const row = db.query('SELECT assigned_agent, assigned_reason FROM tasks WHERE id = ?').get(task.id) as {
+      assigned_agent: string | null;
+      assigned_reason: string | null;
+    };
+    expect(row).toEqual({ assigned_agent: 'codex', assigned_reason: 'dissent on parser' });
+    const plain = createTask(db, { title: 'unassigned' });
+    expect(plain.assignedAgent).toBeNull();
+    expect(plain.assignedReason).toBeNull();
+  });
+
+  test('createTask rejects a non-roster agent with UnknownRosterAgentError naming the roster', () => {
+    expect(() => createTask(db, { title: 'x', assignedAgent: 'gpt6', assignedReason: 'why' })).toThrow(
+      UnknownRosterAgentError,
+    );
+    try {
+      createTask(db, { title: 'x', assignedAgent: 'gpt6', assignedReason: 'why' });
+      throw new Error('expected UnknownRosterAgentError');
+    } catch (err) {
+      if (err instanceof UnknownRosterAgentError) {
+        expect(err.agent).toBe('gpt6');
+        expect(err.message).toContain('claude');
+        expect(err.message).toContain('prime');
+      } else throw err;
+    }
+  });
+
+  test('createTask rejects a half-written assignment either way round (Decision 3)', () => {
+    // --agent without --why
+    expect(() => createTask(db, { title: 'x', assignedAgent: 'codex' })).toThrow(AssignmentReasonRequiredError);
+    // --why alone
+    expect(() => createTask(db, { title: 'x', assignedReason: 'why' })).toThrow(AssignmentReasonRequiredError);
+    // blank reason is not a reason
+    expect(() => createTask(db, { title: 'x', assignedAgent: 'codex', assignedReason: '   ' })).toThrow(
+      AssignmentReasonRequiredError,
+    );
+    // nothing was written by the rejected attempts
+    expect(listTasks(db)).toEqual([]);
+  });
+
+  test('assignTask sets the pair, bumps updated_at, and appends one assign event', () => {
+    const task = createTask(db, { title: 't' });
+    const assigned = assignTask(db, task.id, 'pi', 'cost arbitrage', { author: 'felipe', authorKind: 'human' }, 5_000);
+    expect(assigned.assignedAgent).toBe('pi');
+    expect(assigned.assignedReason).toBe('cost arbitrage');
+    expect(assigned.updatedAt).toBe(5_000);
+    expect(getTask(db, task.id)).toEqual(assigned);
+    const events = getTaskEvents(db, task.id);
+    expect(events.map((e) => e.kind)).toEqual(['assign']);
+    expect(events[0]?.note).toBe('assigned to pi: cost arbitrage');
+    expect(events[0]?.author).toBe('felipe');
+    expect(events[0]?.authorKind).toBe('human');
+  });
+
+  test('assignTask overwrites a prior assignment with a fresh event', () => {
+    const task = createTask(db, { title: 't', assignedAgent: 'codex', assignedReason: 'first opinion' });
+    const reassigned = assignTask(db, task.id, 'hermes', 'second opinion', { author: 'felipe', authorKind: 'human' });
+    expect(reassigned.assignedAgent).toBe('hermes');
+    expect(reassigned.assignedReason).toBe('second opinion');
+    expect(getTaskEvents(db, task.id).map((e) => e.note)).toEqual(['assigned to hermes: second opinion']);
+  });
+
+  test('re-assigning the exact stored pair is a silent no-op (set-wish precedent)', () => {
+    const task = createTask(db, { title: 't' });
+    assignTask(db, task.id, 'codex', 'dissent', { author: 'felipe', authorKind: 'human' }, 9_000);
+    const eventsAfterFirst = JSON.stringify(getTaskEvents(db, task.id));
+    const again = assignTask(db, task.id, 'codex', 'dissent', { author: 'felipe', authorKind: 'human' }, 10_000);
+    expect(again.updatedAt).toBe(9_000); // no row write
+    expect(JSON.stringify(getTaskEvents(db, task.id))).toBe(eventsAfterFirst); // no new event
+  });
+
+  test('assignTask enforces the allowlist + reason invariants at the API boundary', () => {
+    const task = createTask(db, { title: 't' });
+    expect(() => assignTask(db, task.id, 'gpt6', 'why')).toThrow(UnknownRosterAgentError);
+    expect(() => assignTask(db, task.id, 'codex', '   ')).toThrow(AssignmentReasonRequiredError);
+    expect(() => assignTask(db, task.id, '', 'why')).toThrow(AssignmentReasonRequiredError);
+    expect(getTask(db, task.id)?.assignedAgent).toBeNull();
+  });
+
+  test('assignTask works at any status — declaration only, no status gate', () => {
+    const task = createTask(db, { title: 't' });
+    claimTask(db, task.id, 'worker-1', { now: 1_000 });
+    completeTask(db, task.id); // done
+    const assigned = assignTask(db, task.id, 'claude', 'review the merge');
+    expect(assigned.assignedAgent).toBe('claude');
+    expect(assigned.status).toBe('done');
+  });
+
+  test('assignTask and clearTaskAssignment throw UnknownTaskError for unknown ids', () => {
+    expect(() => assignTask(db, 't_missing', 'codex', 'why')).toThrow(UnknownTaskError);
+    expect(() => clearTaskAssignment(db, 't_missing')).toThrow(UnknownTaskError);
+  });
+
+  test('clearTaskAssignment nulls both halves and appends a clear event naming the prior pair', () => {
+    const task = createTask(db, { title: 't', assignedAgent: 'codex', assignedReason: 'dissent on parser' });
+    const cleared = clearTaskAssignment(db, task.id, { author: 'felipe', authorKind: 'human' }, 7_000);
+    expect(cleared.assignedAgent).toBeNull();
+    expect(cleared.assignedReason).toBeNull();
+    expect(cleared.updatedAt).toBe(7_000);
+    const events = getTaskEvents(db, task.id);
+    expect(events.map((e) => e.kind)).toEqual(['clear']);
+    expect(events[0]?.note).toBe('assignment cleared (was codex: dissent on parser)');
+    expect(events[0]?.author).toBe('felipe');
+  });
+
+  test('clearing an already-unassigned card is a silent no-op', () => {
+    const task = createTask(db, { title: 't' });
+    const cleared = clearTaskAssignment(db, task.id, { author: 'felipe', authorKind: 'human' }, 5_000);
+    expect(cleared.updatedAt).not.toBe(5_000);
+    expect(getTaskEvents(db, task.id)).toEqual([]);
+  });
+});
+
+describe('declared routing — roadmap snapshot round-trip (roadmap-sync lockstep)', () => {
+  // Mirrors roadmap-sync's canonicalHash: sha256 over the parsed JSON form, so
+  // whitespace/formatting differences never count as content changes.
+  function canonicalHash(value: unknown): string {
+    return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+  }
+
+  test('export carries assigned_agent/assigned_reason (SELECT *) and round-trips them through import', () => {
+    const a = createTask(db, { title: 'a', assignedAgent: 'codex', assignedReason: 'dissent on parser' });
+    const snapshot = exportState(db);
+    // exportState is column-blind — the raw keys must travel with the row.
+    expect(snapshot.tasks[0].assigned_agent).toBe('codex');
+    expect(snapshot.tasks[0].assigned_reason).toBe('dissent on parser');
+
+    const path = join(dir, 'round-trip-assignment.db');
+    const fresh = openDb({ path });
+    importState(fresh, snapshot);
+    const card = getTask(fresh, a.id);
+    fresh.close();
+    expect(card?.assignedAgent).toBe('codex');
+    expect(card?.assignedReason).toBe('dissent on parser');
+  });
+
+  test('a same-version snapshot whose tasks omit the assignment keys imports cleanly as nulls', () => {
+    const a = createTask(db, { title: 'a', assignedAgent: 'hermes', assignedReason: 'second opinion' });
+    const snapshot = exportState(db);
+    // An older build at the same schemaVersion never wrote the keys at all.
+    const older = {
+      ...snapshot,
+      tasks: snapshot.tasks.map(({ assigned_agent: _droppedAgent, assigned_reason: _droppedReason, ...rest }) => rest),
+    } as unknown as typeof snapshot;
+
+    const path = join(dir, 'older-snapshot-assignment.db');
+    const fresh = openDb({ path });
+    const summary = importState(fresh, older);
+    const card = getTask(fresh, a.id);
+    fresh.close();
+    expect(summary.tasks).toBe(1);
+    expect(card?.assignedAgent).toBeNull();
+    expect(card?.assignedReason).toBeNull();
+  });
+
+  test('introducing the assignment columns does not flip an in-sync repo to diverged', () => {
+    // Repo state BEFORE the columns existed: roadmap.json without the keys and a
+    // baseline marker describing that exact (file, db) pair as in-sync.
+    const repo = join(dir, 'sync-upgrade');
+    mkdirSync(join(repo, '.genie'), { recursive: true });
+    const d = openDb({ path: join(repo, 'genie.db') });
+    const task = createTask(d, { title: 'assigned card', assignedAgent: 'codex', assignedReason: 'dissent' });
+    const current = roadmapSnapshot(d);
+    const preUpgrade = {
+      ...current,
+      tasks: current.tasks.map(({ assigned_agent: _droppedAgent, assigned_reason: _droppedReason, ...rest }) => rest),
+    } as unknown as typeof current;
+    const preUpgradeHash = canonicalHash(preUpgrade);
+    writeFileSync(join(repo, '.genie', 'roadmap.json'), `${JSON.stringify(preUpgrade, null, 2)}\n`);
+    writeFileSync(
+      join(repo, '.genie', 'roadmap-sync'),
+      `${JSON.stringify({ fileHash: preUpgradeHash, dbHash: preUpgradeHash }, null, 2)}\n`,
+    );
+
+    // First sync after the upgrade: the db side gained two null keys per card,
+    // the file did not move. That is a db-only change → export, never a
+    // divergence (precedent: lane/agent_kind/block_kind shipped identically).
+    const first = syncRoadmap(d, repo);
+    expect(first.action).not.toBe('diverged');
+    expect(first.action).toBe('exported');
+    const published = JSON.parse(readFileSync(join(repo, '.genie', 'roadmap.json'), 'utf-8'));
+    expect(published.tasks[0]?.assigned_agent).toBe('codex');
+    expect(published.tasks[0]?.assigned_reason).toBe('dissent');
+
+    // The one-time diff settles: the next sync is a no-op, pair intact.
+    const second = syncRoadmap(d, repo);
+    d.close();
+    expect(second.action).toBe('none');
+    expect(task.assignedAgent).toBe('codex'); // sanity: the seeded pair
   });
 });
 
@@ -1178,6 +1403,180 @@ try {
     expect(snapshot.hire_roster.length).toBe(N / 2);
     expect(snapshot.tasks.length).toBe(N / 2);
     expect(snapshot.hire_roster.every((h) => h.wish === 'race')).toBe(true);
+  }, 30_000);
+});
+
+// ---------------------------------------------------------------------------
+// Multi-PROCESS setTaskWish race: concurrent assign/clear/reassign writers on
+// one card. Each writer's `from` (and its timeline note) must come from the row
+// state its OWN immediate transaction serialized against — a stale pre-
+// transaction read would record a `from` that skips another writer's commit and
+// break the timeline chain. Every consecutive pair of wish events must link:
+// event[i].from === event[i-1].to, and the final row must equal the last
+// event's `to`.
+// ---------------------------------------------------------------------------
+describe('multi-process setTaskWish assign/clear/reassign concurrency', () => {
+  test('concurrent identity writers serialize into an unbroken from→to event chain', async () => {
+    const dbPath = join(dir, 'wish-race.db');
+    const seed = openDb({ path: dbPath });
+    const card = createTask(seed, { title: 'contested card' });
+    seed.close(); // checkpoint so child processes see a committed, current schema
+
+    const gdbPath = join(import.meta.dir, 'genie-db.ts');
+    const tsPath = join(import.meta.dir, 'task-state.ts');
+    const workerPath = join(dir, 'wish-worker.ts');
+    writeFileSync(
+      workerPath,
+      `
+import { openDb } from ${JSON.stringify(gdbPath)};
+import { setTaskWish } from ${JSON.stringify(tsPath)};
+const [dbPath, taskId, op, idx] = process.argv.slice(2);
+const db = openDb({ path: dbPath });
+try {
+  const to = op === 'clear' ? { wish: null, group: null } : { wish: 'w' + idx, group: op === 'assign' ? 'g' + idx : null };
+  setTaskWish(db, taskId, to, { author: 'racer-' + idx, authorKind: 'codex' });
+  process.stdout.write('OK');
+} catch (e) {
+  process.stdout.write('ERR:' + (e && e.message));
+  process.exitCode = 3;
+} finally {
+  db.close();
+}
+`,
+    );
+
+    const N = 9;
+    const ops = ['assign', 'reassign', 'clear'];
+    const runs = Array.from({ length: N }, (_, i) => {
+      const proc = Bun.spawn(['bun', 'run', workerPath, dbPath, card.id, ops[i % 3], String(i)], {
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+      return (async () => {
+        const out = await new Response(proc.stdout).text();
+        const err = await new Response(proc.stderr).text();
+        const code = await proc.exited;
+        return { out, err, code };
+      })();
+    });
+
+    const settled = await Promise.allSettled(runs);
+    const outcomes = settled.map((s) =>
+      s.status === 'fulfilled' ? `${s.value.out}(exit ${s.value.code})` : `REJECTED:${s.reason}`,
+    );
+    const ok = outcomes.filter((o) => o.startsWith('OK')).length;
+    if (ok !== N) console.error('wish-race outcomes:', JSON.stringify(outcomes));
+    // Every writer committed cleanly — no SQLITE_BUSY leak, no stale-read failure.
+    expect(ok).toBe(N);
+    expect(outcomes.some((o) => o.includes('SQLITE_BUSY'))).toBe(false);
+
+    const verify = openDb({ path: dbPath });
+    try {
+      const notes = getTaskEvents(verify, card.id)
+        .filter((e) => e.kind === 'wish')
+        .map((e) => (e.note ?? '').split('→'));
+      // Clears may silently no-op against an already-wishless row, but every
+      // distinct assign/reassign writes — the chain is never empty.
+      expect(notes.length).toBeGreaterThan(0);
+      expect(notes[0][0]).toBe('(none)');
+      for (let i = 1; i < notes.length; i++) expect(notes[i][0]).toBe(notes[i - 1][1]);
+      const final = getTask(verify, card.id) as TaskRow;
+      expect(formatWishRef({ wish: final.wish, group: final.group })).toBe(notes[notes.length - 1][1]);
+    } finally {
+      verify.close();
+    }
+  }, 30_000);
+});
+
+// ---------------------------------------------------------------------------
+// Multi-PROCESS assignTask/clearTaskAssignment race: concurrent routing writers
+// on one card. Each writer's no-op decision and each clear's `was …` note must
+// come from the row state its OWN immediate transaction serialized against — a
+// stale pre-transaction read would let a clear name a pair that was no longer
+// current (or double-clear an already-cleared card). Replaying the assign/clear
+// timeline must therefore reproduce the final row exactly, and every clear's
+// `was` must equal the pair the replay says was current.
+// ---------------------------------------------------------------------------
+describe('multi-process assignTask/clearTaskAssignment concurrency', () => {
+  test('concurrent routing writers serialize into a replayable assign/clear timeline', async () => {
+    const dbPath = join(dir, 'assign-race.db');
+    const seedDb = openDb({ path: dbPath });
+    const card = createTask(seedDb, { title: 'contested routing card' });
+    seedDb.close(); // checkpoint so child processes see a committed, current schema
+
+    const gdbPath = join(import.meta.dir, 'genie-db.ts');
+    const tsPath = join(import.meta.dir, 'task-state.ts');
+    const workerPath = join(dir, 'assign-worker.ts');
+    writeFileSync(
+      workerPath,
+      `
+import { openDb } from ${JSON.stringify(gdbPath)};
+import { ROSTER, assignTask, clearTaskAssignment } from ${JSON.stringify(tsPath)};
+const [dbPath, taskId, op, idx] = process.argv.slice(2);
+const db = openDb({ path: dbPath });
+try {
+  if (op === 'clear') clearTaskAssignment(db, taskId, { author: 'racer-' + idx, authorKind: 'codex' });
+  else assignTask(db, taskId, ROSTER[Number(idx) % ROSTER.length], 'race-reason-' + idx, { author: 'racer-' + idx, authorKind: 'codex' });
+  process.stdout.write('OK');
+} catch (e) {
+  process.stdout.write('ERR:' + (e && e.message));
+  process.exitCode = 3;
+} finally {
+  db.close();
+}
+`,
+    );
+
+    const N = 9;
+    const runs = Array.from({ length: N }, (_, i) => {
+      const proc = Bun.spawn(['bun', 'run', workerPath, dbPath, card.id, i % 3 === 2 ? 'clear' : 'assign', String(i)], {
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+      return (async () => {
+        const out = await new Response(proc.stdout).text();
+        const err = await new Response(proc.stderr).text();
+        const code = await proc.exited;
+        return { out, err, code };
+      })();
+    });
+
+    const settled = await Promise.allSettled(runs);
+    const outcomes = settled.map((s) =>
+      s.status === 'fulfilled' ? `${s.value.out}(exit ${s.value.code})` : `REJECTED:${s.reason}`,
+    );
+    const ok = outcomes.filter((o) => o.startsWith('OK')).length;
+    if (ok !== N) console.error('assign-race outcomes:', JSON.stringify(outcomes));
+    // Every writer committed cleanly — no SQLITE_BUSY leak, no stale-read failure.
+    expect(ok).toBe(N);
+    expect(outcomes.some((o) => o.includes('SQLITE_BUSY'))).toBe(false);
+
+    const verify = openDb({ path: dbPath });
+    try {
+      // Replay the routing timeline: assigns set the pair, clears must name
+      // exactly the pair that was current when their transaction ran.
+      let replayed: { agent: string; reason: string } | null = null;
+      for (const e of getTaskEvents(verify, card.id)) {
+        if (e.kind === 'assign') {
+          const m = (e.note ?? '').match(/^assigned to (\S+): (.*)$/);
+          expect(m).not.toBeNull();
+          replayed = { agent: m![1], reason: m![2] };
+        } else if (e.kind === 'clear') {
+          const m = (e.note ?? '').match(/^assignment cleared \(was (\S+): (.*)\)$/);
+          expect(m).not.toBeNull();
+          // A serialized clear never fires on an unassigned card, and its
+          // `was` names the pair the replay says was current.
+          expect(replayed).toEqual({ agent: m![1], reason: m![2] });
+          replayed = null;
+        }
+      }
+      const final = getTask(verify, card.id) as TaskRow;
+      expect({ agent: final.assignedAgent, reason: final.assignedReason }).toEqual(
+        replayed ?? { agent: null, reason: null },
+      );
+    } finally {
+      verify.close();
+    }
   }, 30_000);
 });
 
