@@ -46,6 +46,7 @@ import {
   TaskNotReadyError,
   TaskReleaseError,
   type TaskRow,
+  UnknownBoardError,
   UnknownTaskError,
   type WishGroupRow,
   addDependency,
@@ -727,7 +728,7 @@ export const MCP_TOOLS: McpTool[] = [
 //
 // Error payload codes (documented per tool in `description`):
 //   claim_conflict    — CheckoutConflictError (lost the claim race)
-//   not_found         — UnknownTaskError
+//   not_found         — UnknownTaskError / UnknownBoardError (board ref in `detail`)
 //   invalid_lane      — LaneError
 //   dependency_cycle  — CycleError
 //   refused_transition— TaskBlockedError / TaskNotReadyError /
@@ -764,6 +765,9 @@ function mapWriteError(err: unknown): WriteErrorPayload | null {
   }
   if (err instanceof UnknownTaskError) {
     return { error: 'not_found', id: err.id, message: err.message };
+  }
+  if (err instanceof UnknownBoardError) {
+    return { error: 'not_found', detail: err.ref, message: err.message };
   }
   if (err instanceof LaneError) {
     return { error: 'invalid_lane', message: err.message };
@@ -1051,7 +1055,7 @@ export const MCP_WRITE_TOOLS: McpTool[] = [
   {
     name: 'genie_task_create',
     description:
-      'Create a task. Errors: invalid_arguments (missing title, or group without wish), read_only_database (db served read-only), database_unavailable.',
+      'Create a task. Errors: invalid_arguments (missing title, or group without wish), not_found (unknown board), read_only_database (db served read-only), database_unavailable.',
     inputSchema: {
       type: 'object',
       properties: {

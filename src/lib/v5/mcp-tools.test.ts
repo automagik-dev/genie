@@ -1089,6 +1089,13 @@ describe('MCP_WRITE_TOOLS — the 12 operative write tools', () => {
     expect(getTask(db, 't_missing')).toBeNull();
   });
 
+  test('genie_task_create with an unknown board returns typed not_found, never -32603', () => {
+    const payload = expectError(call('genie_task_create', { title: 'x', board: 'no_such_board' }), 'not_found');
+    expect(payload.detail).toBe('no_such_board');
+    expect(String(payload.message)).toContain('Board not found');
+    expect(getTask(db, 't_missing')).toBeNull();
+  });
+
   // --- genie_task_checkout --------------------------------------------------
 
   test('genie_task_checkout claims atomically: two workers claim two claimed_by values on one server', () => {
