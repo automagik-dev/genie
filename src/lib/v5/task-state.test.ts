@@ -1488,6 +1488,98 @@ try {
   }, 30_000);
 });
 
+// ---------------------------------------------------------------------------
+// Multi-PROCESS assignTask/clearTaskAssignment race: concurrent routing writers
+// on one card. Each writer's no-op decision and each clear's `was …` note must
+// come from the row state its OWN immediate transaction serialized against — a
+// stale pre-transaction read would let a clear name a pair that was no longer
+// current (or double-clear an already-cleared card). Replaying the assign/clear
+// timeline must therefore reproduce the final row exactly, and every clear's
+// `was` must equal the pair the replay says was current.
+// ---------------------------------------------------------------------------
+describe('multi-process assignTask/clearTaskAssignment concurrency', () => {
+  test('concurrent routing writers serialize into a replayable assign/clear timeline', async () => {
+    const dbPath = join(dir, 'assign-race.db');
+    const seedDb = openDb({ path: dbPath });
+    const card = createTask(seedDb, { title: 'contested routing card' });
+    seedDb.close(); // checkpoint so child processes see a committed, current schema
+
+    const gdbPath = join(import.meta.dir, 'genie-db.ts');
+    const tsPath = join(import.meta.dir, 'task-state.ts');
+    const workerPath = join(dir, 'assign-worker.ts');
+    writeFileSync(
+      workerPath,
+      `
+import { openDb } from ${JSON.stringify(gdbPath)};
+import { ROSTER, assignTask, clearTaskAssignment } from ${JSON.stringify(tsPath)};
+const [dbPath, taskId, op, idx] = process.argv.slice(2);
+const db = openDb({ path: dbPath });
+try {
+  if (op === 'clear') clearTaskAssignment(db, taskId, { author: 'racer-' + idx, authorKind: 'codex' });
+  else assignTask(db, taskId, ROSTER[Number(idx) % ROSTER.length], 'race-reason-' + idx, { author: 'racer-' + idx, authorKind: 'codex' });
+  process.stdout.write('OK');
+} catch (e) {
+  process.stdout.write('ERR:' + (e && e.message));
+  process.exitCode = 3;
+} finally {
+  db.close();
+}
+`,
+    );
+
+    const N = 9;
+    const runs = Array.from({ length: N }, (_, i) => {
+      const proc = Bun.spawn(['bun', 'run', workerPath, dbPath, card.id, i % 3 === 2 ? 'clear' : 'assign', String(i)], {
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+      return (async () => {
+        const out = await new Response(proc.stdout).text();
+        const err = await new Response(proc.stderr).text();
+        const code = await proc.exited;
+        return { out, err, code };
+      })();
+    });
+
+    const settled = await Promise.allSettled(runs);
+    const outcomes = settled.map((s) =>
+      s.status === 'fulfilled' ? `${s.value.out}(exit ${s.value.code})` : `REJECTED:${s.reason}`,
+    );
+    const ok = outcomes.filter((o) => o.startsWith('OK')).length;
+    if (ok !== N) console.error('assign-race outcomes:', JSON.stringify(outcomes));
+    // Every writer committed cleanly — no SQLITE_BUSY leak, no stale-read failure.
+    expect(ok).toBe(N);
+    expect(outcomes.some((o) => o.includes('SQLITE_BUSY'))).toBe(false);
+
+    const verify = openDb({ path: dbPath });
+    try {
+      // Replay the routing timeline: assigns set the pair, clears must name
+      // exactly the pair that was current when their transaction ran.
+      let replayed: { agent: string; reason: string } | null = null;
+      for (const e of getTaskEvents(verify, card.id)) {
+        if (e.kind === 'assign') {
+          const m = (e.note ?? '').match(/^assigned to (\S+): (.*)$/);
+          expect(m).not.toBeNull();
+          replayed = { agent: m![1], reason: m![2] };
+        } else if (e.kind === 'clear') {
+          const m = (e.note ?? '').match(/^assignment cleared \(was (\S+): (.*)\)$/);
+          expect(m).not.toBeNull();
+          // A serialized clear never fires on an unassigned card, and its
+          // `was` names the pair the replay says was current.
+          expect(replayed).toEqual({ agent: m![1], reason: m![2] });
+          replayed = null;
+        }
+      }
+      const final = getTask(verify, card.id) as TaskRow;
+      expect({ agent: final.assignedAgent, reason: final.assignedReason }).toEqual(
+        replayed ?? { agent: null, reason: null },
+      );
+    } finally {
+      verify.close();
+    }
+  }, 30_000);
+});
+
 describe('importState — replace is a full wipe even without operational rows', () => {
   test('stale meta keys do not survive a --replace into a metadata-only db', () => {
     // Source db: one task, then export. Its meta carries the backfill marker.

@@ -1190,9 +1190,15 @@ export function assignTask(
   requireTask(db, taskId);
   const pair = validateAssignmentPair(agent, reason);
   if (pair.agent == null) throw new AssignmentReasonRequiredError();
-  const current = getTask(db, taskId) as TaskRow;
-  if (current.assignedAgent === pair.agent && current.assignedReason === pair.reason) return current;
-  const apply = db.transaction(() => {
+  // The current-row read and no-op check run INSIDE the immediate transaction,
+  // so concurrent assign/clear/reassign writers each decide against the row
+  // state their own transaction serialized — never a read taken before another
+  // writer's commit (and a card deleted in the window throws UnknownTaskError,
+  // not an FK-constraint error from the event insert).
+  const apply = db.transaction((): TaskRow => {
+    const current = getTask(db, taskId);
+    if (!current) throw new UnknownTaskError(taskId);
+    if (current.assignedAgent === pair.agent && current.assignedReason === pair.reason) return current;
     db.query('UPDATE tasks SET assigned_agent = ?, assigned_reason = ?, updated_at = ? WHERE id = ?').run(
       pair.agent,
       pair.reason,
@@ -1205,9 +1211,9 @@ export function assignTask(
       authorKind: author.authorKind ?? undefined,
       author: author.author ?? undefined,
     });
+    return getTask(db, taskId) as TaskRow;
   });
-  apply.immediate();
-  return getTask(db, taskId) as TaskRow;
+  return apply.immediate() as TaskRow;
 }
 
 /**
@@ -1224,9 +1230,12 @@ export function clearTaskAssignment(
   now: number = Date.now(),
 ): TaskRow {
   requireTask(db, taskId);
-  const current = getTask(db, taskId) as TaskRow;
-  if (current.assignedAgent == null && current.assignedReason == null) return current;
-  const apply = db.transaction(() => {
+  // Read + no-op check inside the immediate transaction — the `was …` note must
+  // name the pair this transaction actually serialized against (see assignTask).
+  const apply = db.transaction((): TaskRow => {
+    const current = getTask(db, taskId);
+    if (!current) throw new UnknownTaskError(taskId);
+    if (current.assignedAgent == null && current.assignedReason == null) return current;
     db.query('UPDATE tasks SET assigned_agent = NULL, assigned_reason = NULL, updated_at = ? WHERE id = ?').run(
       now,
       taskId,
@@ -1237,9 +1246,9 @@ export function clearTaskAssignment(
       authorKind: author.authorKind ?? undefined,
       author: author.author ?? undefined,
     });
+    return getTask(db, taskId) as TaskRow;
   });
-  apply.immediate();
-  return getTask(db, taskId) as TaskRow;
+  return apply.immediate() as TaskRow;
 }
 
 /**
