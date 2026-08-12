@@ -1222,9 +1222,11 @@ export function formatWishRef(identity: WishIdentity): string {
  * A group name is only meaningful under the wish it was declared in, so the new
  * identity is taken whole: nothing of the previous group survives a wish change,
  * and clearing the wish clears the group with it. Slugs are unvalidated TEXT,
- * exactly as {@link createTask} treats them. The write and the event append are
- * one transaction, so a card can never carry an identity with no matching
- * timeline entry.
+ * exactly as {@link createTask} treats them. The current-row read, no-op check,
+ * write, and event append all run inside one immediate transaction, so
+ * concurrent assign/clear/reassign writers each derive their `from` (and the
+ * timeline note) from the row state their transaction actually serialized
+ * against — never from a read taken before another writer's commit.
  *
  * Re-pointing a card at the identity it already carries is fully silent: no row
  * write (so `updated_at` keeps its earlier value) and no timeline entry.
@@ -1236,13 +1238,13 @@ export function setTaskWish(
   author: EventAuthor,
   now: number = Date.now(),
 ): SetWishResult {
-  const task = getTask(db, taskId);
-  if (!task) throw new UnknownTaskError(taskId);
-  const from: WishIdentity = { wish: task.wish, group: task.group };
   const next: WishIdentity = to.wish === null ? { wish: null, group: null } : to;
-  if (from.wish === next.wish && from.group === next.group) return { task, from, to: next };
-  const note = `${formatWishRef(from)}→${formatWishRef(next)}`;
-  const apply = db.transaction(() => {
+  const apply = db.transaction((): SetWishResult => {
+    const task = getTask(db, taskId);
+    if (!task) throw new UnknownTaskError(taskId);
+    const from: WishIdentity = { wish: task.wish, group: task.group };
+    if (from.wish === next.wish && from.group === next.group) return { task, from, to: next };
+    const note = `${formatWishRef(from)}→${formatWishRef(next)}`;
     db.query('UPDATE tasks SET wish = ?, group_name = ?, updated_at = ? WHERE id = ?').run(
       next.wish,
       next.group,
@@ -1255,9 +1257,9 @@ export function setTaskWish(
       authorKind: author.authorKind ?? undefined,
       author: author.author ?? undefined,
     });
+    return { task: getTask(db, taskId) as TaskRow, from, to: next };
   });
-  apply.immediate();
-  return { task: getTask(db, taskId) as TaskRow, from, to: next };
+  return apply.immediate() as SetWishResult;
 }
 
 /**

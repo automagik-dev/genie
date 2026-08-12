@@ -1181,6 +1181,88 @@ try {
   }, 30_000);
 });
 
+// ---------------------------------------------------------------------------
+// Multi-PROCESS setTaskWish race: concurrent assign/clear/reassign writers on
+// one card. Each writer's `from` (and its timeline note) must come from the row
+// state its OWN immediate transaction serialized against — a stale pre-
+// transaction read would record a `from` that skips another writer's commit and
+// break the timeline chain. Every consecutive pair of wish events must link:
+// event[i].from === event[i-1].to, and the final row must equal the last
+// event's `to`.
+// ---------------------------------------------------------------------------
+describe('multi-process setTaskWish assign/clear/reassign concurrency', () => {
+  test('concurrent identity writers serialize into an unbroken from→to event chain', async () => {
+    const dbPath = join(dir, 'wish-race.db');
+    const seed = openDb({ path: dbPath });
+    const card = createTask(seed, { title: 'contested card' });
+    seed.close(); // checkpoint so child processes see a committed, current schema
+
+    const gdbPath = join(import.meta.dir, 'genie-db.ts');
+    const tsPath = join(import.meta.dir, 'task-state.ts');
+    const workerPath = join(dir, 'wish-worker.ts');
+    writeFileSync(
+      workerPath,
+      `
+import { openDb } from ${JSON.stringify(gdbPath)};
+import { setTaskWish } from ${JSON.stringify(tsPath)};
+const [dbPath, taskId, op, idx] = process.argv.slice(2);
+const db = openDb({ path: dbPath });
+try {
+  const to = op === 'clear' ? { wish: null, group: null } : { wish: 'w' + idx, group: op === 'assign' ? 'g' + idx : null };
+  setTaskWish(db, taskId, to, { author: 'racer-' + idx, authorKind: 'codex' });
+  process.stdout.write('OK');
+} catch (e) {
+  process.stdout.write('ERR:' + (e && e.message));
+  process.exitCode = 3;
+} finally {
+  db.close();
+}
+`,
+    );
+
+    const N = 9;
+    const ops = ['assign', 'reassign', 'clear'];
+    const runs = Array.from({ length: N }, (_, i) => {
+      const proc = Bun.spawn(['bun', 'run', workerPath, dbPath, card.id, ops[i % 3], String(i)], {
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+      return (async () => {
+        const out = await new Response(proc.stdout).text();
+        const err = await new Response(proc.stderr).text();
+        const code = await proc.exited;
+        return { out, err, code };
+      })();
+    });
+
+    const settled = await Promise.allSettled(runs);
+    const outcomes = settled.map((s) =>
+      s.status === 'fulfilled' ? `${s.value.out}(exit ${s.value.code})` : `REJECTED:${s.reason}`,
+    );
+    const ok = outcomes.filter((o) => o.startsWith('OK')).length;
+    if (ok !== N) console.error('wish-race outcomes:', JSON.stringify(outcomes));
+    // Every writer committed cleanly — no SQLITE_BUSY leak, no stale-read failure.
+    expect(ok).toBe(N);
+    expect(outcomes.some((o) => o.includes('SQLITE_BUSY'))).toBe(false);
+
+    const verify = openDb({ path: dbPath });
+    try {
+      const notes = getTaskEvents(verify, card.id)
+        .filter((e) => e.kind === 'wish')
+        .map((e) => (e.note ?? '').split('→'));
+      // Clears may silently no-op against an already-wishless row, but every
+      // distinct assign/reassign writes — the chain is never empty.
+      expect(notes.length).toBeGreaterThan(0);
+      expect(notes[0][0]).toBe('(none)');
+      for (let i = 1; i < notes.length; i++) expect(notes[i][0]).toBe(notes[i - 1][1]);
+      const final = getTask(verify, card.id) as TaskRow;
+      expect(formatWishRef({ wish: final.wish, group: final.group })).toBe(notes[notes.length - 1][1]);
+    } finally {
+      verify.close();
+    }
+  }, 30_000);
+});
+
 describe('importState — replace is a full wipe even without operational rows', () => {
   test('stale meta keys do not survive a --replace into a metadata-only db', () => {
     // Source db: one task, then export. Its meta carries the backfill marker.
