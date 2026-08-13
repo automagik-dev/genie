@@ -1012,13 +1012,13 @@
       "id": "t_msoqsdde40b31ee9",
       "board_id": null,
       "title": "E2e proof + read-only wording sweep",
-      "status": "in_progress",
+      "status": "done",
       "claimed_by": "g3-e2e-sweep",
       "claimed_at": 1786568193561,
       "wish": "mcp-write-tools",
       "group_name": "group-3",
       "created_at": 1786457697458,
-      "updated_at": 1786568193561,
+      "updated_at": 1786628093499,
       "lane": null,
       "agent_kind": null,
       "heartbeat_at": null,
@@ -1596,6 +1596,15 @@
       "author_kind": "human",
       "author": "cli",
       "created_at": 1786568193562
+    },
+    {
+      "id": 84,
+      "task_id": "t_msoqsdde40b31ee9",
+      "kind": "release",
+      "note": "completed",
+      "author_kind": "human",
+      "author": "cli",
+      "created_at": 1786628093499
     }
   ],
   "wish_groups": [],

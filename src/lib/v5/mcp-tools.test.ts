@@ -1315,25 +1315,25 @@ describe('MCP_WRITE_TOOLS — the 12 operative write tools', () => {
 
   test('the server env identity is the fallback when author/worker args are absent (Decision 8)', () => {
     const t = readyTask('a');
-    const prev = {
-      name: process.env.GENIE_AGENT_NAME,
-      kind: process.env.GENIE_AGENT_KIND,
-      codex: process.env.CODEX_THREAD_ID,
-    };
+    const keys = ['GENIE_AGENT_NAME', 'GENIE_AGENT_KIND', 'CODEX_THREAD_ID'] as const;
+    const prev = keys.map((key) => [key, process.env[key]] as const);
     try {
       process.env.GENIE_AGENT_NAME = 'env-agent';
       process.env.GENIE_AGENT_KIND = 'codex';
-      process.env.CODEX_THREAD_ID = undefined;
+      Reflect.deleteProperty(process.env, 'CODEX_THREAD_ID');
       call('genie_task_checkout', { id: t, worker: 'w1' }); // no author arg
       const events = getTaskEvents(db, t);
       expect(events[0]?.author).toBe('env-agent');
       expect(events[0]?.authorKind).toBe('codex');
     } finally {
-      for (const [key, value] of Object.entries(prev)) {
-        if (value === undefined) delete process.env[key];
+      for (const [key, value] of prev) {
+        if (value === undefined) Reflect.deleteProperty(process.env, key);
         else process.env[key] = value;
       }
     }
+    // The identity env is process-global: a leak here would silently re-attribute
+    // every later test in this process.
+    for (const [key, value] of prev) expect(process.env[key]).toBe(value);
   });
 
   test('a write reaching a raw readonly handle maps to read_only_database, never -32603', () => {
