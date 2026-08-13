@@ -57,7 +57,7 @@ Wave 1 of the SHIP-reviewed cross-agent-delegation design: declare on the board 
 **depends-on:** none
 **blocks:** none
 
-Forward pointer (not yet a DAG edge — the wish linter requires existing slugs): `delegate-bridge`, the planned W2/W3 follow-on wish (design Decision 13), consumes these columns and must declare `depends-on: cross-agent-delegate` when poured; it is additionally blocked on the remotty `headless-turn-open` wish, recorded as a `task block` on its card per the design's cross-repo mechanism.
+Forward pointer (not yet a DAG edge — the wish linter requires existing slugs): `delegate-bridge`, the planned W2/W3 follow-on wish (design Decision 13), consumes these columns and must declare `depends-on: cross-agent-delegate` when poured; it is additionally blocked on the remotty `headless-turn-open` wish, recorded as a `task block` on its card per the design's cross-repo mechanism. **Amended 2026-08-13 (spawn-context-contract group reversals):** the delegate-bridge S–F turn transport re-bases from one-shot headless launches to live herdr sessions, and the block edge re-targets from `headless-turn-open` to the herdr 0.3 swap + remotty `engine-turn-verbs` (remotty board card `t_msqkkjt221792465`) — recorded on the umbrella card `t_msp4fp6ce714c8be` and each S–F group card in the board snapshot.
 
 ## Success Criteria
 
