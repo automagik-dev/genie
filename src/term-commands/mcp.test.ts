@@ -130,7 +130,7 @@ function seed(cwd: string): { taskId: string } {
   const t = createTask(db, { title: 'seed task', boardId: board.id, wish: 'genie-mcp', group: 'g2' });
   createTask(db, { title: 'other', boardId: board.id });
   // Fold pending WAL frames into the main db before the reader subprocess opens,
-  // so the readonly `genie mcp` server isn't racing an open WAL writer under
+  // so the `genie mcp` server isn't racing an open WAL writer under
   // cross-file test contention ("database is locked").
   db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
   db.close();
@@ -1001,7 +1001,7 @@ describe('mcp worktree branch resolution', () => {
 });
 
 // ============================================================================
-// Lazy-load probe — mcp-tools (the readonly bun:sqlite open) must NOT be in the
+// Lazy-load probe — mcp-tools (the write-capable bun:sqlite open) must NOT be in the
 // STATIC import graph reachable from genie.ts. It is only `await import`-ed
 // inside the `mcp` action, so non-mcp paths (board/task/--help) never load it.
 // ============================================================================
