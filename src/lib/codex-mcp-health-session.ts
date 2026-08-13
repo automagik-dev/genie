@@ -10,8 +10,9 @@
  * the otherwise synchronous integration state machines, and a hard `timeout`
  * bounds the whole session.
  *
- * The server opens `.genie/genie.db` READ-ONLY and only writes to stdout, so the
- * probe never mutates disk. Callers still hand it an isolated throwaway `cwd`
+ * The health probe issues only read-only requests (`initialize` → `tools/list`
+ * → `genie_wish_status`) and never calls a write tool, so it never mutates
+ * disk; the server itself is write-capable. Callers still hand it an isolated throwaway `cwd`
  * that is not a project: the fail-closed server returns a typed "no project
  * context" wish_status there rather than fabricating an empty board (never
  * creating -wal/-shm siblings in real home/state trees), and this probe treats
@@ -23,7 +24,7 @@ export const MCP_HEALTH_PROTOCOL_VERSION = '2024-11-05';
 export const DEFAULT_HEALTH_SESSION_TIMEOUT_MS = 10_000;
 
 /**
- * The fail-closed project-context error kinds the read-only `genie mcp` server
+ * The fail-closed project-context error kinds the `genie mcp` server
  * returns (structuredContent `{ error, detail }`, `isError: true`) instead of a
  * fabricated empty board when the cwd is not a resolvable project. Source of
  * truth: `ProjectContextKind` in `src/lib/v5/genie-db.ts`. The health probe runs

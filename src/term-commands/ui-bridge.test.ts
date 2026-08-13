@@ -489,15 +489,33 @@ describe('genie mcp regression (unchanged by extraction)', () => {
     expect(result.genieVersion).toBeUndefined();
   });
 
-  test('registers exactly the 5 read tools and ZERO write tools', async () => {
+  test('registers exactly the 17-tool surface (5 read + 12 write) and no roster tools', async () => {
     const responses = await driveOnce('mcp', repo, [
       { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} },
       { jsonrpc: '2.0', id: 2, method: 'tools/list' },
     ]);
     const tools = responses.find((r) => r.id === 2)?.result?.tools as Array<{ name: string }>;
     const names = tools.map((t) => t.name).sort();
-    expect(names).toEqual(['genie_active', 'genie_board', 'genie_task', 'genie_wish_status', 'genie_worktree_context']);
-    // No roster_* / write tool leaked into the read-only server.
+    expect(names).toEqual([
+      'genie_active',
+      'genie_board',
+      'genie_task',
+      'genie_task_add_dependency',
+      'genie_task_block',
+      'genie_task_checkout',
+      'genie_task_comment',
+      'genie_task_create',
+      'genie_task_done',
+      'genie_task_heartbeat',
+      'genie_task_move',
+      'genie_task_release',
+      'genie_task_report',
+      'genie_task_set_wish',
+      'genie_task_unblock',
+      'genie_wish_status',
+      'genie_worktree_context',
+    ]);
+    // No roster_* tool leaked into the genie mcp server (bridge-only surface).
     expect(names.some((n) => n.startsWith('roster_'))).toBe(false);
   });
 });

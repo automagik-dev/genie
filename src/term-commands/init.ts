@@ -4,7 +4,8 @@
  * Bootstraps the things a fresh repo needs before the genie lifecycle can run:
  * the plans jar (`.genie/INDEX.md`), the `.gitignore` rules that keep the
  * SQLite state files out of version control, and the MCP server registration
- * that lets Warp + Claude Code discover the read-only `genie mcp` server. Every
+ * that lets Warp + Claude Code discover the `genie mcp` server (read + write
+ * tools). Every
  * step is idempotent — re-running `genie init` on an already-scaffolded repo
  * produces zero diff.
  *
@@ -165,7 +166,7 @@ function printHumanReport(result: InitResult): void {
     out(`  ${mcpConfigLabel(cfg.path)}        ${actionLabel(cfg.action)}`);
   }
   out('');
-  out('Warp, Claude Code, and Codex will discover the read-only `genie mcp` server.');
+  out('Warp, Claude Code, and Codex will discover the `genie mcp` server (read + write tools).');
   out('');
   out('Next steps — Claude uses /<skill>; the Codex plugin uses owner-qualified $genie:<skill>:');
   out('  1. /brainstorm or $genie:brainstorm   Explore a fuzzy idea into a DESIGN.md');

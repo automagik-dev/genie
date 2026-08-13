@@ -6,8 +6,9 @@ reused from `genie mcp`, exactly two roster write tools, and change-push
 notifications from an in-child watcher. Genie stays zero-daemon — the child lives
 and dies with the UI and **never opens a socket or port**.
 
-> Sibling, not a fork. `genie mcp` remains strictly read-only; the write surface
-> exists only here. The two commands share one transport (`src/lib/v5/mcp-server.ts`).
+> Sibling, not a fork. `genie mcp` now serves the operative surface (5 read +
+> 12 write tools); the bridge's own write surface (roster) exists only here.
+> The two commands share one transport (`src/lib/v5/mcp-server.ts`).
 
 ## Versions
 
@@ -81,7 +82,7 @@ empty board when the db is absent. Every task/board/wish row they surface
 corresponds to the same underlying rows as `genie task export`
 (`exportState()`) — the projections differ, the data does not.
 
-### Write tools (bridge-only — the single write surface)
+### Write tools (bridge-owned — exactly the two roster tools)
 
 `roster_hire` and `roster_unhire` call genie's own `task-state.ts` roster ops
 (never raw SQL) over a WRITE-capable handle from the canonical `genie-db` →

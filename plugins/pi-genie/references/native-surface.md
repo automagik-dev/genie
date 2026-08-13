@@ -50,9 +50,12 @@ Error: No ready tasks for wish "..."`) instead of a raw capture.
 
 ## MCP parity
 
-The Claude/Codex MCP server (`genie mcp`) exposes five read-only tools
-(`genie_board`, `genie_wish_status`, `genie_worktree_context`, `genie_task`,
-`genie_active`). pi has no MCP client; this plugin reaches the same state
+The Claude/Codex MCP server (`genie mcp`) exposes five read tools plus twelve
+operative write tools (`genie_task_create`, `genie_task_checkout`,
+`genie_task_done`, `genie_task_move`, `genie_task_block`, `genie_task_unblock`,
+`genie_task_release`, `genie_task_comment`, `genie_task_report`,
+`genie_task_heartbeat`, `genie_task_set_wish`, `genie_task_add_dependency`).
+pi has no MCP client; this plugin reaches the same state
 through the CLI the MCP server wraps, plus the two review/planning tools that
 the MCP surface does not cover (`genie_work_plan`, `genie_review_plan`) —
 matching the Hermes gap-tool rationale.

@@ -27,6 +27,7 @@ import type { Command } from 'commander';
 import { color, formatTimestamp, padRight, truncate } from '../lib/term-format.js';
 import { livenessBadge } from '../lib/v5/card-render.js';
 import { openDb, resolveRoadmapPath } from '../lib/v5/genie-db.js';
+import { resolveEventAuthor, resolveWorkerIdentity } from '../lib/v5/identity.js';
 import {
   recordExportBaseline,
   recordImportBaseline,
@@ -36,7 +37,6 @@ import {
 } from '../lib/v5/roadmap-sync.js';
 import {
   type BlockKind,
-  type EventAuthor,
   type ImportSummary,
   type TaskCardRow,
   type TaskFilter,
@@ -395,53 +395,6 @@ function handleDone(id: string): void {
       db.close();
     }
   });
-}
-
-/**
- * Infer the acting runtime kind from the environment. An explicit
- * `GENIE_AGENT_KIND` always wins; otherwise the coding-agent markers are probed
- * in order (Claude Code, Codex, Hermes), falling back to 'human'. This is the
- * ONE place runtime kind is resolved — every verb and `moveTask`'s CLI caller
- * flow through {@link resolveEventAuthor}.
- */
-function resolveAuthorKind(): string {
-  const env = process.env;
-  if (env.GENIE_AGENT_KIND) return env.GENIE_AGENT_KIND;
-  if (env.CLAUDECODE || env.CLAUDE_CODE) return 'claude-code';
-  if (env.CODEX_THREAD_ID) return 'codex';
-  if (env.HERMES || env.HERMES_HOME) return 'hermes';
-  return 'human';
-}
-
-/**
- * Resolve the worker identity from the environment: `GENIE_AGENT_NAME`, then
- * `GENIE_AGENT_ID`, flooring at 'cli'. The ONE identity resolver shared by the
- * claim side (`handleCheckout`'s worker → `claimed_by`) and the complete side
- * (`resolveEventAuthor().author` → event attribution), so the two sides always
- * record the same identity for the same runtime. NOTE: completion is NOT
- * identity-fenced — completeTask deliberately has no claimed_by check (`task
- * done` is the orchestrator's verb, routinely run by a non-claimant); a shared
- * resolver only keeps claim rows and event attribution consistent. Previously
- * the two chains diverged — the claim chain ignored GENIE_AGENT_ID and floored
- * at 'cli', the complete chain preferred NAME then ID and floored at null — so
- * a GENIE_AGENT_ID-only runtime claimed as 'cli' but attributed events as the
- * ID.
- */
-function resolveWorkerIdentity(): string {
-  return process.env.GENIE_AGENT_NAME ?? process.env.GENIE_AGENT_ID ?? 'cli';
-}
-
-/**
- * Resolve the acting author for a card event from the environment: identity via
- * {@link resolveWorkerIdentity} (so a no-env CLI writes 'cli', matching what
- * checkout wrote to `claimed_by`), kind via {@link resolveAuthorKind}. The
- * single author resolver shared by every authored verb and `moveTask`.
- */
-function resolveEventAuthor(): EventAuthor {
-  return {
-    author: resolveWorkerIdentity(),
-    authorKind: resolveAuthorKind(),
-  };
 }
 
 interface MoveOptions {

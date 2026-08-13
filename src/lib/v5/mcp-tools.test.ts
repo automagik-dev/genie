@@ -29,18 +29,34 @@ import {
   renameSync,
   rmSync,
   symlinkSync,
+  writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import { STAGE_LOG_BACKFILL_KEY, isCurrentGenieDb, openDb } from './genie-db.js';
+import { BusyDbError, STAGE_LOG_BACKFILL_KEY, isCurrentGenieDb, openDb } from './genie-db.js';
+import { type ToolErrorResult, isToolError, unwrapToolError } from './mcp-server.js';
 import {
   MCP_TOOLS,
+  MCP_WRITE_TOOLS,
+  type TaskSummary,
+  type ToolContext,
+  isDegradedReadonlyDb,
   openReadonlyDb,
   openReadonlyDbHealingStaleSchema,
+  openWriteableDb,
   readonlyDatabaseHandleMatchesPath,
   resolveProjectContext,
 } from './mcp-tools.js';
-import { createBoard, createTask } from './task-state.js';
+import { hasStaleReadonlyWalIndex } from './sqlite-open.js';
+import {
+  blockTask,
+  createBoard,
+  createTask,
+  getDependencies,
+  getTask,
+  getTaskEvents,
+  getTaskLane,
+} from './task-state.js';
 
 let base: string;
 
@@ -558,3 +574,773 @@ describe('openReadonlyDbHealingStaleSchema', () => {
     check.close();
   });
 });
+
+// ============================================================================
+// Poisoned-WAL-index fixtures. The MCP write open is the ONE caller of the
+// recovery (`openWithWalIndexRecovery`, whose mechanics are tested directly in
+// sqlite-open.test.ts) because it is the one path that CREATES the poison: its
+// degrade fallback hands out a read-only handle whose close writes the header.
+// The shared `openSqlite` deliberately does not heal — genie-db.test.ts pins
+// that. What is asserted HERE is the whole rescoped scenario end to end
+// (degrade → poison → repaired filesystem → write open heals → writes succeed)
+// and that the busy carve-out above it is intact. NOTE: on this machine the
+// REAL poison is byte-for-byte identical to the virgin header bun writes on any
+// healthy fresh open, and the write open does NOT throw on it (bun hands back a
+// writable-looking handle whose writes fail "disk I/O error") — only the
+// post-open write probe sees it.
+// ============================================================================
+
+/**
+ * The exact read-only WAL-index header macOS/bun leaves in `-shm` when a
+ * DEGRADED readonly connection closes while the db file is write-protected:
+ * iVersion + isInit still set, iChange (offset 8) and nPage (offset 20) zeroed.
+ * Observed live on macOS (bun 1.x): a write-protected db opened without the
+ * readonly flag silently opens READONLY, writes fail with "attempt to write a
+ * readonly database", and the close leaves this header.
+ */
+function poisonShmHeader(): Buffer {
+  const header = Buffer.alloc(32768);
+  header.writeUInt32LE(0x002de218, 0); // iVersion (matches the observed value)
+  header.writeUInt32LE(1, 12); // isInit
+  return header;
+}
+
+// ============================================================================
+// openWriteableDb — hardened write path + read-only-degrade fallback (Group 1
+// of wish mcp-write-tools: `genie mcp` now serves against a WRITABLE handle)
+// ============================================================================
+
+describe('openWriteableDb', () => {
+  /** Probe whether a handle can take the write lock (BEGIN IMMEDIATE), then roll back. */
+  function expectWritable(db: Database | null): void {
+    expect(db).not.toBeNull();
+    // A readonly/degraded handle raises SQLITE_READONLY here; a writable handle
+    // takes the write lock and rolls back, leaving no side effect.
+    (db as Database).exec('BEGIN IMMEDIATE');
+    (db as Database).exec('ROLLBACK');
+  }
+
+  test('opens a WRITABLE handle through the standard CLI path in a healthy repo', () => {
+    const repo = initRepo(join(base, 'repo'));
+    seedDb(repo);
+    const context = resolveProjectContext(repo);
+    if (context.kind !== 'ok' || context.databaseBinding === undefined) throw new Error('expected bound database');
+    const db = openWriteableDb(context.databaseBinding);
+    expectWritable(db);
+    expect(isDegradedReadonlyDb(db)).toBe(false);
+    // The seeded task is served through the writable handle.
+    const row = (db as Database).query('SELECT title FROM tasks').get() as { title: string };
+    expect(row.title).toBe('seed');
+    (db as Database).close();
+  });
+
+  test('degrades to a readable-but-degraded readonly handle on a write-protected fully-current db', () => {
+    const repo = initRepo(join(base, 'repo'));
+    seedDb(repo);
+    const context = resolveProjectContext(repo);
+    if (context.kind !== 'ok' || context.databaseBinding === undefined) throw new Error('expected bound database');
+    const path = context.databaseBinding.physicalPath;
+    const genieDir = dirname(path);
+    chmodSync(path, 0o444);
+    chmodSync(genieDir, 0o555);
+    try {
+      // Root (some CI containers) ignores file modes, so the write open would
+      // succeed and this test would assert the wrong branch — the degrade path
+      // is only expressible where chmod actually revokes write access.
+      try {
+        accessSync(path, fsConstants.W_OK);
+        return; // still writable (running as root) — skip
+      } catch {
+        // write access revoked as intended — proceed
+      }
+      const served = openWriteableDb(context.databaseBinding);
+      if (served === null) {
+        // Null is only acceptable when this platform's SQLite cannot read a
+        // write-protected WAL database AT ALL (read-only WAL support varies by
+        // VFS state). Probe a plain readonly open + query: if that works, the
+        // degrade fallback should have served the handle and null is a regression.
+        const probe = openReadonlyDb(context.databaseBinding);
+        let readable = false;
+        try {
+          if (probe !== null) {
+            probe.query('SELECT 1 FROM meta').get();
+            readable = true;
+          }
+        } catch {
+          // unreadable — the scenario is inexpressible in this environment
+        }
+        probe?.close();
+        expect(readable).toBe(false);
+        return;
+      }
+      // The fully-current db's reads still serve through the degraded handle...
+      const row = served.query('SELECT title FROM tasks').get() as { title: string };
+      expect(row.title).toBe('seed');
+      // ...and the handle is observable as degraded (a write through it fails).
+      expect(isDegradedReadonlyDb(served)).toBe(true);
+      served.close();
+    } finally {
+      chmodSync(genieDir, 0o755);
+      chmodSync(path, 0o644);
+    }
+  });
+
+  test('a subsequent write open on a repaired filesystem yields a fresh NON-degraded handle (never latched)', () => {
+    const repo = initRepo(join(base, 'repo'));
+    seedDb(repo);
+    const context = resolveProjectContext(repo);
+    if (context.kind !== 'ok' || context.databaseBinding === undefined) throw new Error('expected bound database');
+    const path = context.databaseBinding.physicalPath;
+    const genieDir = dirname(path);
+    chmodSync(path, 0o444);
+    chmodSync(genieDir, 0o555);
+    try {
+      try {
+        accessSync(path, fsConstants.W_OK);
+        return; // root — the degrade branch is inexpressible, skip
+      } catch {
+        // proceed
+      }
+      const degraded = openWriteableDb(context.databaseBinding);
+      if (degraded === null) {
+        // Inexpressible on this platform (same probe as the degrade test).
+        const probe = openReadonlyDb(context.databaseBinding);
+        let readable = false;
+        try {
+          if (probe !== null) {
+            probe.query('SELECT 1 FROM meta').get();
+            readable = true;
+          }
+        } catch {
+          // unreadable
+        }
+        probe?.close();
+        if (!readable) return;
+      }
+      expect(isDegradedReadonlyDb(degraded)).toBe(true);
+      degraded?.close();
+    } finally {
+      chmodSync(genieDir, 0o755);
+      chmodSync(path, 0o644);
+    }
+    // Repaired filesystem: the NEXT open goes through the write path and the
+    // fresh handle is NOT degraded — the degraded state was derived from the
+    // per-open outcome, never latched across opens.
+    const restored = openWriteableDb(context.databaseBinding);
+    expectWritable(restored);
+    expect(isDegradedReadonlyDb(restored)).toBe(false);
+    (restored as Database).close();
+  });
+
+  test('never creates an absent database (resolver ordering: a non-ok context never reaches the open)', () => {
+    const repo = initRepo(join(base, 'repo'));
+    expect(openWriteableDb(repo)).toBeNull();
+    expect(existsSync(join(repo, '.genie', 'genie.db'))).toBe(false);
+  });
+
+  test('fails closed (null) on foreign, unversioned-foreign, and malformed databases', () => {
+    const repo = initRepo(join(base, 'repo'));
+    const dbPath = join(repo, '.genie', 'genie.db');
+    mkdirSync(dirname(dbPath), { recursive: true });
+
+    // Foreign: user_version = 99 with a lookalike tasks table.
+    const foreign = new Database(dbPath);
+    foreign.exec(
+      'CREATE TABLE tasks (id TEXT PRIMARY KEY, title TEXT NOT NULL, status TEXT NOT NULL); PRAGMA user_version = 99',
+    );
+    foreign.close();
+    expect(openWriteableDb(repo)).toBeNull();
+
+    // Unversioned foreign: user_version = 0 with existing foreign tables.
+    rmSync(dbPath);
+    const v0 = new Database(dbPath);
+    v0.exec('CREATE TABLE inventory (id TEXT PRIMARY KEY)');
+    v0.close();
+    expect(openWriteableDb(repo)).toBeNull();
+
+    // Malformed: not a SQLite database at all.
+    rmSync(dbPath);
+    writeFileSync(dbPath, 'not a sqlite database');
+    expect(openWriteableDb(repo)).toBeNull();
+  });
+
+  test('the REAL poison a degraded session leaves behind heals on the next write open (no seam)', () => {
+    const repo = initRepo(join(base, 'repo'));
+    seedDb(repo);
+    const context = resolveProjectContext(repo);
+    if (context.kind !== 'ok' || context.databaseBinding === undefined) throw new Error('expected bound database');
+    const binding = context.databaseBinding;
+    const path = binding.physicalPath;
+    const genieDir = dirname(path);
+
+    // Build the REAL poison in-process: the degraded readonly fallback's close
+    // writes the zeroed read-only wal-index header into -shm. Crafted header
+    // bytes canNOT stand in for it — the real poison is byte-identical to a
+    // healthy virgin header and only fails through the HANDLE.
+    chmodSync(path, 0o444);
+    chmodSync(genieDir, 0o555);
+    try {
+      try {
+        accessSync(path, fsConstants.W_OK);
+        return; // root — the degrade branch is inexpressible, skip
+      } catch {
+        // write access revoked as intended — proceed
+      }
+      const degraded = openWriteableDb(binding);
+      if (degraded === null) {
+        // Inexpressible on this platform (same probe as the degrade test).
+        const probe = openReadonlyDb(binding);
+        let readable = false;
+        try {
+          if (probe !== null) {
+            probe.query('SELECT 1 FROM meta').get();
+            readable = true;
+          }
+        } catch {
+          // unreadable — the scenario is inexpressible in this environment
+        }
+        probe?.close();
+        if (!readable) return;
+      }
+      expect(isDegradedReadonlyDb(degraded)).toBe(true);
+      degraded?.close(); // writes the REAL poison marker into -shm
+    } finally {
+      chmodSync(genieDir, 0o755);
+      chmodSync(path, 0o644);
+    }
+    if (!hasStaleReadonlyWalIndex(binding.physicalPath)) return; // no poison produced here
+
+    // Repaired filesystem: the write open runs the MCP-scoped recovery — the
+    // open itself succeeds, its post-open probe rejects the poison, the
+    // sidecars are rebuilt, and the handle served is writable and NOT degraded.
+    const db = openWriteableDb(binding);
+    expectWritable(db);
+    expect(isDegradedReadonlyDb(db)).toBe(false);
+    // A real write lands (the probe alone would not prove the heal), and the
+    // poisoned header is gone.
+    (db as Database).exec("INSERT INTO meta (key, value) VALUES ('after-poison', '1')");
+    expect(
+      ((db as Database).query("SELECT value FROM meta WHERE key = 'after-poison'").get() as { value: string }).value,
+    ).toBe('1');
+    (db as Database).close();
+    expect(hasStaleReadonlyWalIndex(binding.physicalPath)).toBe(false);
+  });
+
+  test('a BusyDbError write open returns null WITHOUT the readonly degrade fallback or sidecar recovery', () => {
+    const repo = initRepo(join(base, 'repo'));
+    seedDb(repo);
+    const context = resolveProjectContext(repo);
+    if (context.kind !== 'ok' || context.databaseBinding === undefined) throw new Error('expected bound database');
+    const binding = context.databaseBinding;
+    const shmPath = `${binding.physicalPath}-shm`;
+
+    // Even with a poisoned -shm present, a busy open must NOT run sidecar
+    // recovery (the sidecars belong to a live writer) and must NOT degrade to
+    // readonly: the loop's per-call reopen retries the write open next call.
+    rmSync(shmPath, { force: true });
+    writeFileSync(shmPath, poisonShmHeader());
+
+    const db = openWriteableDb(binding, {
+      openDatabase: () => {
+        throw new BusyDbError(binding.physicalPath, new Error('write lock held by another process'));
+      },
+    });
+    expect(db).toBeNull();
+    expect(isDegradedReadonlyDb(db)).toBe(false); // not mislabeled read-only
+    // The poisoned -shm was left untouched — recovery never ran for a busy db.
+    expect(hasStaleReadonlyWalIndex(binding.physicalPath)).toBe(true);
+  });
+});
+// ============================================================================
+// MCP_WRITE_TOOLS — the 12 operative write tools (Group 2)
+// ============================================================================
+//
+// Every verb is driven through the same in-process registry `genie mcp`
+// serves, then its observable db effect is read back via `task-state.ts`
+// queries — the parity assertion that each write equals its CLI counterpart.
+
+interface RpcResponse {
+  jsonrpc: '2.0';
+  id: number | string | null;
+  result?: { isError?: boolean; content?: Array<{ type: string; text: string }> };
+  error?: { code: number; message: string };
+}
+
+/** Spawn a real `genie mcp` server subprocess (as an MCP client would). */
+async function spawnMcpServer(cwd: string, requests: Record<string, unknown>[]): Promise<RpcResponse[]> {
+  const proc = Bun.spawn(['bun', join(import.meta.dir, '..', '..', 'genie.ts'), 'mcp'], {
+    cwd,
+    stdin: 'pipe',
+    stdout: 'pipe',
+    stderr: 'pipe',
+    env: { ...process.env, NO_COLOR: '1', GENIE_TEST_SKIP_PGSERVE: '1' },
+  });
+  proc.stdin.write(`${requests.map((r) => JSON.stringify(r)).join('\n')}\n`);
+  await proc.stdin.end();
+  const stdout = await new Response(proc.stdout).text();
+  await proc.exited;
+  return stdout
+    .split('\n')
+    .filter((l) => l.trim().length > 0)
+    .map((l) => JSON.parse(l) as RpcResponse);
+}
+
+const MCP_INIT = {
+  jsonrpc: '2.0',
+  id: 1,
+  method: 'initialize',
+  params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 't', version: '0' } },
+};
+const MCP_INITIALIZED = { jsonrpc: '2.0', method: 'notifications/initialized' };
+
+describe('MCP_WRITE_TOOLS — the 12 operative write tools', () => {
+  let repo: string;
+  let db: Database;
+  let ctx: ToolContext;
+
+  beforeEach(() => {
+    repo = initRepo(join(base, 'write-repo'));
+    db = openDb({ cwd: repo });
+    ctx = { db, cwd: repo };
+  });
+
+  afterEach(() => {
+    db?.close();
+  });
+
+  function call(name: string, args: Record<string, unknown>): unknown {
+    const tool = MCP_WRITE_TOOLS.find((t) => t.name === name);
+    if (!tool) throw new Error(`no write tool ${name}`);
+    return tool.handler(ctx, args);
+  }
+
+  function expectOk<T = Record<string, unknown>>(result: unknown): T {
+    expect(isToolError(result)).toBe(false);
+    return result as T;
+  }
+
+  function expectError(result: unknown, code: string): Record<string, unknown> {
+    expect(isToolError(result)).toBe(true);
+    const payload = unwrapToolError(result as ToolResult) as Record<string, unknown>;
+    expect(payload.error).toBe(code);
+    return payload;
+  }
+
+  function readyTask(title: string): string {
+    return createTask(db, { title }).id;
+  }
+
+  test('MCP_TOOLS stays the 5 read tools — ui-bridge splice untouched', () => {
+    expect(MCP_TOOLS.map((t) => t.name).sort()).toEqual([
+      'genie_active',
+      'genie_board',
+      'genie_task',
+      'genie_wish_status',
+      'genie_worktree_context',
+    ]);
+  });
+
+  test('MCP_WRITE_TOOLS exposes exactly the 12 operative-core verbs', () => {
+    expect(MCP_WRITE_TOOLS.map((t) => t.name).sort()).toEqual([
+      'genie_task_add_dependency',
+      'genie_task_block',
+      'genie_task_checkout',
+      'genie_task_comment',
+      'genie_task_create',
+      'genie_task_done',
+      'genie_task_heartbeat',
+      'genie_task_move',
+      'genie_task_release',
+      'genie_task_report',
+      'genie_task_set_wish',
+      'genie_task_unblock',
+    ]);
+  });
+
+  // --- genie_task_create ----------------------------------------------------
+
+  test('genie_task_create mirrors task create: the row lands with CLI-identical fields', () => {
+    const board = createBoard(db, 'repo');
+    const result = expectOk<{ task: TaskSummary }>(
+      call('genie_task_create', { title: 'new card', board: 'repo', wish: 'mcp-write-tools', group: 'g2' }),
+    );
+    expect(result.task.title).toBe('new card');
+    const row = getTask(db, result.task.id);
+    expect(row).not.toBeNull();
+    expect(row?.status).toBe('ready');
+    expect(row?.wish).toBe('mcp-write-tools');
+    expect(row?.group).toBe('g2');
+    expect(row?.boardId).toBe(board.id);
+    expect(row?.claimedBy).toBeNull();
+  });
+
+  test('genie_task_create rejects missing title and group-without-wish as invalid_arguments', () => {
+    expectError(call('genie_task_create', {}), 'invalid_arguments');
+    expectError(call('genie_task_create', { title: 'x', group: 'g2' }), 'invalid_arguments');
+    expect(getTask(db, 't_missing')).toBeNull();
+  });
+
+  test('genie_task_create with an unknown board returns typed not_found, never -32603', () => {
+    const payload = expectError(call('genie_task_create', { title: 'x', board: 'no_such_board' }), 'not_found');
+    expect(payload.detail).toBe('no_such_board');
+    expect(String(payload.message)).toContain('Board not found');
+    expect(getTask(db, 't_missing')).toBeNull();
+  });
+
+  // --- genie_task_checkout --------------------------------------------------
+
+  test('genie_task_checkout claims atomically: two workers claim two claimed_by values on one server', () => {
+    const a = readyTask('a');
+    const b = readyTask('b');
+    const ra = expectOk<{ task: TaskSummary }>(call('genie_task_checkout', { id: a, worker: 'w1' }));
+    const rb = expectOk<{ task: TaskSummary }>(call('genie_task_checkout', { id: b, worker: 'w2' }));
+    expect(ra.task.claimedBy).toBe('w1');
+    expect(rb.task.claimedBy).toBe('w2');
+    expect(getTask(db, a)?.status).toBe('in_progress');
+    expect(getTask(db, b)?.status).toBe('in_progress');
+    // the claim event attributes the env fallback (no author arg given)
+    expect(getTaskEvents(db, a)[0]?.kind).toBe('claim');
+  });
+
+  test('genie_task_checkout on an already-claimed card → typed claim_conflict', () => {
+    const t = readyTask('a');
+    call('genie_task_checkout', { id: t, worker: 'w1' });
+    const payload = expectError(call('genie_task_checkout', { id: t, worker: 'w2' }), 'claim_conflict');
+    expect(payload.taskId).toBe(t);
+    expect(getTask(db, t)?.claimedBy).toBe('w1');
+  });
+
+  test('genie_task_checkout on an enforced-blocked card → refused_transition (TaskBlockedError)', () => {
+    const t = readyTask('a');
+    blockTask(db, t, 'waiting on design', { author: 'orch', authorKind: 'human' });
+    const payload = expectError(call('genie_task_checkout', { id: t, worker: 'w1' }), 'refused_transition');
+    expect(payload.detail).toBe('TaskBlockedError');
+  });
+
+  test('genie_task_checkout rejects unknown ids and missing worker', () => {
+    expectError(call('genie_task_checkout', { id: 't_missing', worker: 'w1' }), 'not_found');
+    const t = readyTask('a');
+    expectError(call('genie_task_checkout', { id: t }), 'invalid_arguments');
+  });
+
+  // --- genie_task_done ------------------------------------------------------
+
+  test('genie_task_done completes a card and recomputes the ready set (dependent flips to ready)', () => {
+    const parent = readyTask('parent');
+    const child = createTask(db, { title: 'child', dependsOn: [parent] }).id;
+    expect(getTask(db, child)?.status).toBe('blocked');
+    call('genie_task_checkout', { id: parent, worker: 'w1' });
+    const result = expectOk<{ task: TaskSummary }>(call('genie_task_done', { id: parent, author: 'orch' }));
+    expect(result.task.status).toBe('done');
+    // recomputeReady ran inside completeTask — the dependent is ready now
+    expect(getTask(db, child)?.status).toBe('ready');
+    // the release event carries the explicit author
+    const events = getTaskEvents(db, parent);
+    expect(events.some((e) => e.kind === 'release' && e.author === 'orch')).toBe(true);
+  });
+
+  test('genie_task_done refuses blocked and already-done cards → refused_transition with the class name', () => {
+    const parent = readyTask('parent');
+    const child = createTask(db, { title: 'child', dependsOn: [parent] }).id;
+    const blocked = expectError(call('genie_task_done', { id: child }), 'refused_transition');
+    expect(blocked.detail).toBe('TaskNotReadyError');
+    call('genie_task_done', { id: parent });
+    const alreadyDone = expectError(call('genie_task_done', { id: parent }), 'refused_transition');
+    expect(alreadyDone.detail).toBe('TaskCompleteError');
+    expectError(call('genie_task_done', { id: 't_missing' }), 'not_found');
+  });
+
+  // --- genie_task_move ------------------------------------------------------
+
+  test('genie_task_move moves a card to a defined lane, mirroring task move', () => {
+    const board = createBoard(db, 'kanban', [{ name: 'Idea' }, { name: 'Doing' }, { name: 'Done' }]);
+    const t = createTask(db, { title: 'a', boardId: board.id }).id;
+    const result = expectOk<{ task: TaskSummary; from: string | null; to: string }>(
+      call('genie_task_move', { id: t, to: 'Doing', author: 'w1' }),
+    );
+    expect(result.to).toBe('Doing');
+    expect(result.from).toBeNull();
+    expect(getTaskLane(db, t)).toBe('Doing');
+    expect(getTaskEvents(db, t).some((e) => e.kind === 'move' && e.author === 'w1')).toBe(true);
+  });
+
+  test('genie_task_move rejects undefined and no-lane targets → invalid_lane', () => {
+    const board = createBoard(db, 'kanban', [{ name: 'Idea' }, { name: 'Done' }]);
+    const t = createTask(db, { title: 'a', boardId: board.id }).id;
+    const unknown = expectError(call('genie_task_move', { id: t, to: 'Nope' }), 'invalid_lane');
+    expect(String(unknown.message)).toContain('Idea');
+    const noLanes = createTask(db, { title: 'b', boardId: createBoard(db, 'repo').id }).id;
+    expectError(call('genie_task_move', { id: noLanes, to: 'Doing' }), 'invalid_lane');
+    expectError(call('genie_task_move', { id: 't_missing', to: 'Doing' }), 'not_found');
+  });
+
+  // --- genie_task_block / genie_task_unblock --------------------------------
+
+  test('genie_task_block places an enforced block (checkout refused) and unblock clears it', () => {
+    const t = readyTask('a');
+    const blocked = expectOk<{ task: TaskSummary }>(
+      call('genie_task_block', { id: t, reason: 'waiting', author: 'orch' }),
+    );
+    expect(blocked.task.status).toBe('ready'); // a block does not change status
+    expect(getTaskEvents(db, t).some((e) => e.kind === 'block' && e.note === 'waiting' && e.author === 'orch')).toBe(
+      true,
+    );
+    expectError(call('genie_task_checkout', { id: t, worker: 'w1' }), 'refused_transition');
+    expectOk(call('genie_task_unblock', { id: t, author: 'orch' }));
+    expectOk(call('genie_task_checkout', { id: t, worker: 'w1' })); // claimable again
+  });
+
+  test('genie_task_block records a hold kind and both verbs reject unknown ids', () => {
+    const t = readyTask('a');
+    call('genie_task_block', { id: t, reason: 'parked', hold: true });
+    expectError(call('genie_task_checkout', { id: t, worker: 'w1' }), 'refused_transition');
+    expectError(call('genie_task_block', { id: 't_missing', reason: 'x' }), 'not_found');
+    expectError(call('genie_task_unblock', { id: 't_missing' }), 'not_found');
+    expectError(call('genie_task_block', { id: t }), 'invalid_arguments');
+  });
+
+  // --- genie_task_release ---------------------------------------------------
+
+  test('genie_task_release returns a claimed card to the ready queue', () => {
+    const t = readyTask('a');
+    call('genie_task_checkout', { id: t, worker: 'w1' });
+    const result = expectOk<{ task: TaskSummary }>(call('genie_task_release', { id: t, author: 'w1' }));
+    expect(result.task.status).toBe('ready');
+    expect(result.task.claimedBy).toBeNull();
+    expect(getTask(db, t)?.claimedBy).toBeNull();
+    expect(getTaskEvents(db, t).some((e) => e.kind === 'release' && e.note === 'released')).toBe(true);
+  });
+
+  test('genie_task_release on an unclaimed ready card → refused_transition (TaskReleaseError)', () => {
+    const t = readyTask('a');
+    const payload = expectError(call('genie_task_release', { id: t }), 'refused_transition');
+    expect(payload.detail).toBe('TaskReleaseError');
+    expectError(call('genie_task_release', { id: 't_missing' }), 'not_found');
+  });
+
+  // --- genie_task_comment / genie_task_report -------------------------------
+
+  test('genie_task_comment and genie_task_report append authored timeline events', () => {
+    const t = readyTask('a');
+    const comment = expectOk<{ taskId: string; event: { kind: string; note: string; author: string | null } }>(
+      call('genie_task_comment', { id: t, text: 'look at this', author: 'w1' }),
+    );
+    expect(comment.event.kind).toBe('comment');
+    expect(comment.event.note).toBe('look at this');
+    const report = expectOk<{ taskId: string; event: { kind: string; note: string; author: string | null } }>(
+      call('genie_task_report', { id: t, text: 'blocked on review', author: 'w1' }),
+    );
+    expect(report.event.kind).toBe('report');
+    const events = getTaskEvents(db, t);
+    expect(events.map((e) => e.kind)).toEqual(['comment', 'report']);
+    expect(events.every((e) => e.author === 'w1')).toBe(true);
+  });
+
+  test('genie_task_comment / genie_task_report reject unknown ids and empty text', () => {
+    expectError(call('genie_task_comment', { id: 't_missing', text: 'x' }), 'not_found');
+    expectError(call('genie_task_report', { id: 't_missing', text: 'x' }), 'not_found');
+    const t = readyTask('a');
+    expectError(call('genie_task_comment', { id: t, text: '  ' }), 'invalid_arguments');
+    expectError(call('genie_task_report', { id: t }), 'invalid_arguments');
+  });
+
+  // --- genie_task_heartbeat -------------------------------------------------
+
+  test('genie_task_heartbeat records heartbeat_at as a bare timestamp write, not an event', () => {
+    const t = readyTask('a');
+    call('genie_task_checkout', { id: t, worker: 'w1' });
+    const result = expectOk<{ taskId: string; heartbeatAt: number }>(call('genie_task_heartbeat', { id: t }));
+    expect(result.heartbeatAt).toBeGreaterThan(0);
+    expect(getTaskEvents(db, t)).toHaveLength(1); // only the claim event
+    expectError(call('genie_task_heartbeat', { id: 't_missing' }), 'not_found');
+  });
+
+  // --- genie_task_set_wish --------------------------------------------------
+
+  test('genie_task_set_wish attaches, re-points, and clears the wish identity', () => {
+    const t = readyTask('a');
+    const attach = expectOk<{
+      task: TaskSummary;
+      from: { wish: string | null; group: string | null };
+      to: { wish: string | null; group: string | null };
+    }>(call('genie_task_set_wish', { id: t, wish: 'alpha', author: 'orch' }));
+    expect(attach.from).toEqual({ wish: null, group: null });
+    expect(attach.to).toEqual({ wish: 'alpha', group: null });
+    expect(getTask(db, t)?.wish).toBe('alpha');
+    expect(getTaskEvents(db, t).some((e) => e.kind === 'wish' && e.author === 'orch')).toBe(true);
+
+    expectOk(call('genie_task_set_wish', { id: t, wish: 'beta', group: 'g2' }));
+    expect(getTask(db, t)?.wish).toBe('beta');
+    expect(getTask(db, t)?.group).toBe('g2');
+
+    expectOk(call('genie_task_set_wish', { id: t, clear: true }));
+    expect(getTask(db, t)?.wish).toBeNull();
+    expect(getTask(db, t)?.group).toBeNull();
+  });
+
+  test('genie_task_set_wish enforces the CLI arg guards and unknown ids', () => {
+    const t = readyTask('a');
+    expectError(call('genie_task_set_wish', { id: t, group: 'g2' }), 'invalid_arguments');
+    expectError(call('genie_task_set_wish', { id: t, wish: 'x', clear: true }), 'invalid_arguments');
+    expectError(call('genie_task_set_wish', { id: t }), 'invalid_arguments');
+    expectError(call('genie_task_set_wish', { id: 't_missing', wish: 'x' }), 'not_found');
+  });
+
+  test('genie_task_set_wish rejects a supplied-but-empty group instead of dropping it (CLI parity)', () => {
+    const t = readyTask('a');
+    // `task set-wish --group ''` fails with "--group must not be empty."; the
+    // tool must not silently attach the wish with no group and report success.
+    for (const group of ['', '   ', 42]) {
+      const payload = expectError(call('genie_task_set_wish', { id: t, wish: 'w1', group }), 'invalid_arguments');
+      expect(String(payload.detail)).toContain('group must not be empty');
+    }
+    expect(getTask(db, t)?.wish).toBeNull();
+    // An omitted group stays optional: the wish attaches with a null group.
+    expectOk(call('genie_task_set_wish', { id: t, wish: 'w1' }));
+    expect(getTask(db, t)?.wish).toBe('w1');
+    expect(getTask(db, t)?.group).toBeNull();
+  });
+
+  // --- genie_task_add_dependency --------------------------------------------
+
+  test('genie_task_add_dependency inserts the edge and rejects cycles and unknown tasks', () => {
+    const a = readyTask('a');
+    const b = readyTask('b');
+    const result = expectOk<{ taskId: string; dependsOnId: string }>(
+      call('genie_task_add_dependency', { id: b, depends_on: a }),
+    );
+    expect(result).toEqual({ taskId: b, dependsOnId: a });
+    expect(getDependencies(db, b)).toEqual([a]);
+    expectError(call('genie_task_add_dependency', { id: a, depends_on: a }), 'dependency_cycle'); // self
+    expectError(call('genie_task_add_dependency', { id: a, depends_on: b }), 'dependency_cycle'); // transitive
+    expectError(call('genie_task_add_dependency', { id: 't_missing', depends_on: a }), 'not_found');
+    expectError(call('genie_task_add_dependency', { id: a }), 'invalid_arguments');
+  });
+
+  // --- identity / error-channel contracts -----------------------------------
+
+  test('the server env identity is the fallback when author/worker args are absent (Decision 8)', () => {
+    const t = readyTask('a');
+    const keys = ['GENIE_AGENT_NAME', 'GENIE_AGENT_KIND', 'CODEX_THREAD_ID'] as const;
+    const prev = keys.map((key) => [key, process.env[key]] as const);
+    try {
+      process.env.GENIE_AGENT_NAME = 'env-agent';
+      process.env.GENIE_AGENT_KIND = 'codex';
+      Reflect.deleteProperty(process.env, 'CODEX_THREAD_ID');
+      call('genie_task_checkout', { id: t, worker: 'w1' }); // no author arg
+      const events = getTaskEvents(db, t);
+      expect(events[0]?.author).toBe('env-agent');
+      expect(events[0]?.authorKind).toBe('codex');
+    } finally {
+      for (const [key, value] of prev) {
+        if (value === undefined) Reflect.deleteProperty(process.env, key);
+        else process.env[key] = value;
+      }
+    }
+    // The identity env is process-global: a leak here would silently re-attribute
+    // every later test in this process.
+    for (const [key, value] of prev) expect(process.env[key]).toBe(value);
+  });
+
+  test('a write reaching a raw readonly handle maps to read_only_database, never -32603', () => {
+    const t = readyTask('a');
+    db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    db.close();
+    const readonly = new Database(join(repo, '.genie', 'genie.db'), { readonly: true });
+    const roCtx: ToolContext = { db: readonly, cwd: repo };
+    try {
+      const result = callOn(roCtx, 'genie_task_comment', { id: t, text: 'x' });
+      const payload = expectError(result, 'read_only_database');
+      expect(String(payload.detail)).toMatch(/readonly/i);
+    } finally {
+      readonly.close();
+    }
+  });
+
+  test('on a write-protected fully-current db, write tools return read_only_database while reads still serve', () => {
+    const roRepo = initRepo(join(base, 'ro-repo'));
+    seedDb(roRepo);
+    const path = join(roRepo, '.genie', 'genie.db');
+    const genieDir = join(roRepo, '.genie');
+    chmodSync(path, 0o444);
+    chmodSync(genieDir, 0o555);
+    try {
+      try {
+        accessSync(path, fsConstants.W_OK);
+        return; // running as root — the degrade scenario is inexpressible here
+      } catch {
+        // write access revoked as intended — proceed
+      }
+      const handle = openWriteableDb(roRepo);
+      if (handle === null) {
+        // This platform cannot even read a write-protected WAL db — inexpressible.
+        return;
+      }
+      expect(isDegradedReadonlyDb(handle)).toBe(true);
+      const roCtx: ToolContext = { db: handle, cwd: roRepo };
+      const payload = expectError(callOn(roCtx, 'genie_task_create', { title: 'x' }), 'read_only_database');
+      expect(String(payload.detail)).toContain('read-only');
+      // the degraded handle still serves reads (strict validator intact)
+      const board = MCP_TOOLS.find((x) => x.name === 'genie_board')!.handler(roCtx, {});
+      expect((board as { counts: { total: number } }).counts.total).toBe(1);
+      handle.close();
+    } finally {
+      chmodSync(genieDir, 0o755);
+      chmodSync(path, 0o644);
+    }
+  });
+
+  test('cross-process claim contention: two spawned servers — exactly one winner, loser gets typed claim_conflict', async () => {
+    const race = initRepo(join(base, 'race-repo'));
+    const seed = openDb({ cwd: race });
+    createBoard(seed, 'repo');
+    const task = createTask(seed, { title: 'race' });
+    seed.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    seed.close();
+
+    const drive = (worker: string) =>
+      spawnMcpServer(race, [
+        MCP_INIT,
+        MCP_INITIALIZED,
+        {
+          jsonrpc: '2.0',
+          id: 2,
+          method: 'tools/call',
+          params: { name: 'genie_task_checkout', arguments: { id: task.id, worker } },
+        },
+      ]);
+
+    const [a, b] = await Promise.all([drive('w1'), drive('w2')]);
+    const aRes = a.find((r) => r.id === 2);
+    const bRes = b.find((r) => r.id === 2);
+    expect(aRes).toBeDefined();
+    expect(bRes).toBeDefined();
+    expect(aRes?.error).toBeUndefined(); // no JSON-RPC error, no -32603
+    expect(bRes?.error).toBeUndefined();
+    const outcomes = [aRes!, bRes!];
+    const winners = outcomes.filter((r) => r.result?.isError === false);
+    const losers = outcomes.filter((r) => r.result?.isError === true);
+    expect(winners).toHaveLength(1);
+    expect(losers).toHaveLength(1);
+    const loserPayload = JSON.parse((losers[0].result?.content as Array<{ type: string; text: string }>)[0].text) as {
+      error: string;
+    };
+    expect(loserPayload.error).toBe('claim_conflict');
+    const check = openDb({ cwd: race });
+    try {
+      const claimedBy = getTask(check, task.id)?.claimedBy ?? null;
+      if (claimedBy === null) throw new Error('no claim persisted');
+      expect(['w1', 'w2']).toContain(claimedBy); // exactly one claim persisted
+    } finally {
+      check.close();
+    }
+  });
+});
+
+function callOn(ctx: ToolContext, name: string, args: Record<string, unknown>): unknown {
+  const tool = MCP_WRITE_TOOLS.find((t) => t.name === name);
+  if (!tool) throw new Error(`no write tool ${name}`);
+  return tool.handler(ctx, args);
+}
+
+type ToolResult = ToolErrorResult<Record<string, unknown>>;

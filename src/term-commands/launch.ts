@@ -607,8 +607,9 @@ function materialize(plan: LaunchPlan, deps: LaunchDeps, write: (line: string) =
     const action = ensureWorktree(plan.repoRoot, group, write);
     mkdirSync(dirname(group.promptPath), { recursive: true });
     writeFileSync(group.promptPath, group.prompt, 'utf-8');
-    // Register the read-only `genie mcp` server in this worktree so the pane's
-    // agent (Warp/Claude Code) can query board + wish state. Idempotent + merges.
+    // Register the `genie mcp` server (read + write tools) in this worktree so
+    // the pane's agent (Warp/Claude Code) can query board + wish state and
+    // drive task state. Idempotent + merges.
     registerProjectMcpConfigs(group.worktree, { pluginProbe });
     write(`  ${group.name}  →  ${group.worktree}  [${action}]`);
   }

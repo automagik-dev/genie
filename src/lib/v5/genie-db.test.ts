@@ -1,7 +1,7 @@
 import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -18,6 +18,7 @@ import {
   resolveDbPath,
   resolveRepoRoot,
 } from './genie-db.js';
+import { hasStaleReadonlyWalIndex } from './sqlite-open.js';
 
 let dir: string;
 
@@ -369,6 +370,18 @@ describe('busy classification', () => {
     expect(isBusyError(new Error('database table is locked'))).toBe(true);
   });
 
+  test('SQLITE_PROTOCOL is transient contention, never corruption', () => {
+    // "locking protocol" is what SQLite raises when a writer loses the WAL-index
+    // lock race repeatedly under heavy multi-process contention. The database is
+    // HEALTHY; classifying it down the corruption path made a contended open
+    // claim "Refusing malformed database".
+    expect(isBusyError(Object.assign(new Error('locking protocol'), { code: 'SQLITE_PROTOCOL', errno: 15 }))).toBe(
+      true,
+    );
+    expect(isBusyError(Object.assign(new Error('locking protocol'), { errno: 15 }))).toBe(true);
+    expect(isBusyError(new Error('SQLITE_PROTOCOL: locking protocol'))).toBe(true);
+  });
+
   test('isBusyError rejects unrelated and non-error inputs', () => {
     expect(isBusyError(new Error('file is not a database'))).toBe(false);
     expect(isBusyError(Object.assign(new Error('x'), { code: 'SQLITE_CORRUPT' }))).toBe(false);
@@ -417,6 +430,70 @@ describe('busy classification', () => {
       holder.close();
     }
   }, 60_000);
+});
+
+// ---------------------------------------------------------------------------
+// Poisoned WAL index vs. the SHARED open path. A database that was briefly
+// write-protected keeps a read-only wal-index header in `-shm`, and every write
+// through the next handle fails. Recovering it is NOT `openDb`'s job: the
+// poison header is byte-identical to the virgin header of a healthy fresh
+// index, so probing for it fleet-wide fires on healthy contended databases and
+// the journal-mode churn that follows crashed bun's Linux shm handling under a
+// live multi-process fleet. `openDb` therefore stays exactly what it was before
+// the heal: open, pragma, ensure schema. The heal is scoped to the component
+// that CREATES the poison — see "the REAL poison a degraded session leaves
+// behind heals on the next write open" in mcp-tools.test.ts.
+//
+// This test fails the moment the heal is re-wired into the shared primitive.
+// ---------------------------------------------------------------------------
+describe('poisoned WAL index through openDb (the shared path never heals)', () => {
+  test('openDb serves the poisoned database untouched: no probe, no rebuild, no journal-mode churn', () => {
+    const path = join(dir, 'genie.db');
+    const seed = openDb({ path });
+    seed.exec("INSERT INTO meta (key, value) VALUES ('probe', '1')");
+    seed.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    seed.close();
+
+    // Produce the REAL poison: a readonly connection closing while the file is
+    // write-protected writes SQLite's zeroed read-only wal-index header.
+    chmodSync(path, 0o444);
+    chmodSync(dir, 0o555);
+    try {
+      // Platforms differ: where SQLite refuses a readonly open of a
+      // write-protected WAL database outright (SQLITE_READONLY_CANTINIT on
+      // Linux), no poison is produced and the line below skips the scenario.
+      try {
+        const degraded = new Database(path, { readonly: true });
+        try {
+          degraded.query('SELECT count(*) AS n FROM meta').get();
+        } finally {
+          degraded.close();
+        }
+      } catch {
+        // this platform cannot express the degraded readonly session
+      }
+    } finally {
+      chmodSync(dir, 0o755);
+      chmodSync(path, 0o644);
+    }
+    if (!hasStaleReadonlyWalIndex(path)) return; // platform never produces the poison
+
+    // The open itself succeeds (the poison lives on the handle, not the file),
+    // and the write fails raw — the pre-heal behavior, restored deliberately.
+    const db = openDb({ path });
+    try {
+      expect(() => db.exec("INSERT INTO meta (key, value) VALUES ('after-poison', '1')")).toThrow();
+      // ...and the shared path left the database in WAL: no DELETE conversion
+      // was attempted on it. That churn under a live fleet is the whole reason
+      // the heal does not belong here.
+      expect(
+        String((db.query('PRAGMA journal_mode').get() as { journal_mode: string }).journal_mode).toLowerCase(),
+      ).toBe('wal');
+    } finally {
+      db.close();
+    }
+    expect(hasStaleReadonlyWalIndex(path)).toBe(true); // the sidecars were never rebuilt
+  });
 });
 
 // ---------------------------------------------------------------------------

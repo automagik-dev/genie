@@ -21,7 +21,7 @@
  */
 
 import { Database } from 'bun:sqlite';
-import { mkdirSync } from 'node:fs';
+import { closeSync, mkdirSync, openSync, readSync, statSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 /**
@@ -39,8 +39,24 @@ export const BUSY_TIMEOUT_MS = 5_000;
  */
 const BUSY_RETRY_DELAYS_MS = [25, 50, 100, 200, 400] as const;
 
-/** SQLite result codes that mean "the write lock was contended", not corruption. */
-const BUSY_CODES = new Set(['SQLITE_BUSY', 'SQLITE_BUSY_SNAPSHOT', 'SQLITE_LOCKED']);
+/**
+ * SQLite PRIMARY result codes that mean "the write lock was contended", not
+ * corruption: SQLITE_BUSY (5), SQLITE_LOCKED (6) and SQLITE_PROTOCOL (15).
+ * Every extended code in those families (SQLITE_BUSY_RECOVERY, _SNAPSHOT,
+ * _TIMEOUT, SQLITE_LOCKED_*) keeps its primary code in the low byte, so matching
+ * the low byte covers the whole family — including the extended codes a raw
+ * `db.query(...)` surfaces that a fixed name list would miss.
+ *
+ * SQLITE_PROTOCOL ("locking protocol") belongs here: SQLite raises it when a
+ * writer loses the WAL-index lock race too many times in a row under heavy
+ * multi-process contention. It is transient lock contention on a HEALTHY
+ * database, so it must surface as {@link BusyDbError} (safe to retry), never as
+ * a corruption claim.
+ */
+const BUSY_PRIMARY_CODES = new Set([5, 6, 15]);
+
+/** `code` name prefixes covering the same contended-lock families. */
+const BUSY_CODE_PREFIXES = ['SQLITE_BUSY', 'SQLITE_LOCKED', 'SQLITE_PROTOCOL'] as const;
 
 // ============================================================================
 // Typed errors
@@ -81,6 +97,22 @@ export class BusyDbError extends GenieDbError {
   }
 }
 
+/**
+ * The database's WAL index (`-shm`) is poisoned — every write through the opened
+ * handle fails — and it could not be rebuilt because the `-wal` still holds
+ * un-checkpointed frames that removing the sidecars would destroy. Reads still
+ * work, so a read-only consumer may serve the database; a writer must not.
+ */
+export class WalIndexPoisonError extends GenieDbError {
+  readonly path: string;
+  constructor(path: string, cause?: unknown) {
+    const detail = cause instanceof Error ? cause.message : cause != null ? String(cause) : 'unknown';
+    super(`Database at ${path} has a poisoned WAL index that cannot be rebuilt (-wal holds frames): ${detail}`);
+    this.name = 'WalIndexPoisonError';
+    this.path = path;
+  }
+}
+
 /** The file is a valid SQLite DB but was not created by genie v5. */
 export class ForeignDbError extends GenieDbError {
   readonly path: string;
@@ -97,14 +129,18 @@ export class ForeignDbError extends GenieDbError {
 
 /**
  * True when `err` is a contended-lock failure (transient, retryable) rather than
- * a corrupt/foreign database. Matches bun:sqlite's `code` field and the raw
- * "database is locked" text SQLite emits when busy_timeout is exhausted.
+ * a corrupt/foreign database. Matches bun:sqlite's numeric `errno` (primary code
+ * in the low byte — the only field that covers every extended busy code), its
+ * `code` name, and the raw "database is locked" text SQLite emits when
+ * busy_timeout is exhausted.
  */
 export function isBusyError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
+  const errno = (err as { errno?: unknown }).errno;
+  if (typeof errno === 'number' && BUSY_PRIMARY_CODES.has(errno & 0xff)) return true;
   const code = (err as { code?: unknown }).code;
-  if (typeof code === 'string' && BUSY_CODES.has(code)) return true;
-  return /database (?:table )?is locked/i.test(err.message);
+  if (typeof code === 'string' && BUSY_CODE_PREFIXES.some((prefix) => code.startsWith(prefix))) return true;
+  return /database (?:table )?is locked|locking protocol/i.test(err.message);
 }
 
 // ============================================================================
@@ -130,11 +166,22 @@ export interface OpenSqliteOptions {
  * Open (creating if absent) a genie sqlite DB, apply concurrency pragmas, and
  * ensure the schema. Refuses malformed or foreign databases with typed errors.
  * Idempotent: safe to call on every CLI invocation.
+ *
+ * This is the FLEET hot path — every `genie task`, `task sync`, git-hook sync,
+ * omni-queue writer and MCP read opens through it — so it does exactly one
+ * thing: open, pragma, ensure schema. No probing, no journal-mode churn. WAL
+ * index recovery is deliberately NOT wired in here; it is opt-in and scoped to
+ * the component that creates the poison (see {@link openWithWalIndexRecovery}).
  */
 export function openSqlite(opts: OpenSqliteOptions): Database {
   const { path } = opts;
   if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
+  return openInitialized(opts);
+}
 
+/** One open attempt: construct the handle, apply pragmas, ensure the schema. */
+function openInitialized(opts: OpenSqliteOptions): Database {
+  const { path } = opts;
   let db: Database;
   try {
     db = new Database(path, { create: true });
@@ -150,6 +197,192 @@ export function openSqlite(opts: OpenSqliteOptions): Database {
     if (err instanceof GenieDbError) throw err;
     throw new MalformedDbError(path, err);
   }
+}
+
+// ============================================================================
+// Poisoned WAL-index recovery (OPT-IN — never the ordinary open path)
+// ============================================================================
+//
+// On macOS/bun a write-protected database opens silently READONLY, and closing
+// that degraded connection writes SQLite's read-only WAL-index header into
+// `-shm` (iChange + nPage zeroed). The header outlives the write protection: the
+// next writer opens without throwing and then fails EVERY write with a raw
+// SQLITE_IOERR_WRITE / SQLITE_READONLY.
+//
+// SCOPING — this is a helper `openSqlite` deliberately does NOT call. The poison
+// header is byte-for-byte identical to the VIRGIN header SQLite writes whenever
+// it freshly (re)creates a healthy index, so the gate below cannot tell the two
+// apart and fires on healthy, contended databases as readily as on poisoned
+// ones. What follows the gate is journal-mode churn (WAL → DELETE → WAL) that a
+// plain WAL open/close never performs; run from every process of a live fleet
+// (`genie task` workers, omni-queue resolvers, git-hook sync) it drove bun's
+// Linux shm handling into SIGBUS. Recovery therefore belongs to the ONE
+// component that CREATES the poison: the MCP server's degraded read-only
+// session, whose close writes the header (`openWriteableDb` in mcp-tools.ts,
+// re-opened by `promoteDegradedHandle` in mcp-server.ts). That path is
+// single-owner and low-concurrency — the fleet never runs the probe.
+
+/** Bytes of the `-shm` WAL-index header this module inspects (iChange @8, nPage @20). */
+const WAL_INDEX_HEADER_BYTES = 24;
+
+/**
+ * True when the `-shm` holds SQLite's deliberate read-only WAL-index header: the
+ * change counter (iChange, offset 8) and the db-size-in-pages (nPage, offset 20)
+ * are both zeroed — the state a degraded readonly connection leaves behind when
+ * it closes while the database file is write-protected.
+ *
+ * IMPORTANT: the poison is byte-for-byte identical to the virgin header bun
+ * writes when it freshly (re)creates the index on a HEALTHY open, so this
+ * predicate alone can never condemn a database. It is only ever a cheap gate in
+ * front of the write probe below, which is what actually distinguishes the two.
+ * Only the header is read (never the whole 32KB index): the predicate runs on
+ * every open.
+ */
+export function hasStaleReadonlyWalIndex(path: string): boolean {
+  let fd: number | undefined;
+  try {
+    fd = openSync(`${path}-shm`, 'r');
+    const header = Buffer.alloc(WAL_INDEX_HEADER_BYTES);
+    if (readSync(fd, header, 0, WAL_INDEX_HEADER_BYTES, 0) < WAL_INDEX_HEADER_BYTES) return false;
+    return header.readUInt32BE(8) === 0 && header.readUInt32BE(20) === 0;
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) closeWalIndexFd(fd);
+  }
+}
+
+function closeWalIndexFd(fd: number): void {
+  try {
+    closeSync(fd);
+  } catch {
+    // A descriptor that cannot be closed must not turn a boolean into a throw.
+  }
+}
+
+/**
+ * True when the `-wal` is absent or empty — rebuilding the sidecars loses no
+ * frames. ENOENT is the common case (a fully-checkpointed db has no `-wal`);
+ * any other stat failure stays conservative (false).
+ */
+export function walSidecarsEmpty(path: string): boolean {
+  try {
+    return statSync(`${path}-wal`).size === 0;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'ENOENT';
+  }
+}
+
+/** What the write probe learned about the opened handle's WAL index. */
+type WalIndexProbe = { state: 'ok' | 'busy' } | { state: 'poisoned'; cause: unknown };
+
+/**
+ * Exercise the wal-index write path with a PASSIVE checkpoint, the minimal write
+ * that distinguishes a healthy virgin header from the poison:
+ *   - healthy: the checkpoint succeeds and self-heals the header;
+ *   - busy: another process holds the index live-mmapped, which PROVES the index
+ *     is not poisoned — a merely-contended database is served, never recovered
+ *     (removing sidecars a live writer is using would split the brain);
+ *   - poisoned: the checkpoint throws a non-busy error (SQLITE_IOERR_WRITE /
+ *     SQLITE_READONLY), the same failure every later write would hit.
+ */
+function probeWalIndex(db: Database, path: string): WalIndexProbe {
+  if (!hasStaleReadonlyWalIndex(path)) return { state: 'ok' };
+  try {
+    db.query('PRAGMA wal_checkpoint(PASSIVE)').all();
+    return { state: 'ok' };
+  } catch (err) {
+    return isBusyError(err) ? { state: 'busy' } : { state: 'poisoned', cause: err };
+  }
+}
+
+/**
+ * Rebuild the WAL sidecars, and ONLY under SQLite-proven exclusive access.
+ *
+ * `PRAGMA journal_mode = DELETE` is the proof: SQLite takes the exclusive
+ * WAL-index lock, checkpoints every `-wal` frame into the main file and drops
+ * the wal-index — and with `busy_timeout = 0` it fails INSTANTLY with
+ * SQLITE_BUSY when any peer connection is live. That is the whole point: a
+ * blind `rmSync` of `-shm`/`-wal` cannot tell a poisoned index from a healthy
+ * one another process holds mmapped, and unlinking under a live mmap SIGBUSes
+ * that peer and cascades SQLITE_PROTOCOL to the rest of the fleet. The header
+ * predicate can never make that call (see {@link hasStaleReadonlyWalIndex}), so
+ * SQLite itself makes it.
+ *
+ * SQLite performs the whole rebuild itself, under its own locks: the conversion
+ * checkpoints and unlinks the `-wal` and discards the wal-index. THIS MODULE
+ * NEVER TOUCHES A SIDECAR FILE — no unlink, ever, and least of all after the
+ * exclusivity handle closes. That ordering is the second half of the same
+ * regression: `journal_mode = DELETE` proves exclusivity only while the handle
+ * holds its locks, and `db.close()` releases them. A peer that opens in that
+ * window immediately re-enters WAL and mmaps a FRESH `-shm`; unlinking it then
+ * SIGBUSes the peer on its next page touch exactly as a blind pre-proof unlink
+ * would. Verified on macOS/bun: after the conversion the `-wal` is gone and the
+ * lingering `-shm` is harmless — the retried open re-enters WAL and
+ * reinitializes that index in place, clearing the poisoned header.
+ *
+ * WAL is deliberately NOT restored here — going back would immediately recreate
+ * the virgin index this heal exists to discard; the retried open's
+ * `applyPragmas` restores it.
+ *
+ * Returns false (heal skipped, caller propagates the ORIGINAL error) whenever a
+ * peer is live, the throwaway handle cannot be opened, or the `-wal` still holds
+ * un-checkpointed frames.
+ */
+function rebuildSidecarsExclusively(path: string): boolean {
+  if (!walSidecarsEmpty(path)) return false;
+  let db: Database;
+  try {
+    db = new Database(path);
+  } catch {
+    return false; // cannot even get a handle — the heal is not possible here
+  }
+  try {
+    db.exec('PRAGMA busy_timeout = 0');
+    const row = db.query('PRAGMA journal_mode = DELETE').get() as { journal_mode?: string } | null;
+    return String(row?.journal_mode ?? '').toLowerCase() === 'delete';
+  } catch {
+    return false; // SQLITE_BUSY / SQLITE_PROTOCOL — live peers own the sidecars
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Run `open`, healing a poisoned WAL index around it. The poison is detected two
+ * ways because platforms differ in where it surfaces: the open may throw, or it
+ * may hand back a handle whose every write fails — caught by the post-open
+ * probe. Either way the sidecars are rebuilt and the open is retried EXACTLY
+ * ONCE.
+ *
+ * CALLERS: the MCP write path only (`tryWriteOpen` in mcp-tools.ts). See the
+ * section header above for why this must never wrap the fleet-wide
+ * {@link openSqlite}.
+ *
+ * Never runs for a contended database. Two independent guards enforce that: a
+ * busy failure (from the open or the probe) short-circuits, and the rebuild
+ * itself only proceeds under SQLite-proven exclusive access (see
+ * {@link rebuildSidecarsExclusively}). The header predicate is never more than a
+ * cheap gate — the failure evidence (a non-busy open throw, or a poisoned write
+ * probe) plus SQLite's own exclusivity proof are what condemn the index. When
+ * the rebuild is skipped the ORIGINAL error propagates and both sidecars survive.
+ */
+export function openWithWalIndexRecovery(path: string, open: () => Database): Database {
+  let db: Database;
+  try {
+    db = open();
+  } catch (err) {
+    if (isBusyError(err) || err instanceof BusyDbError) throw err;
+    if (!hasStaleReadonlyWalIndex(path) || !rebuildSidecarsExclusively(path)) throw err;
+    return open();
+  }
+  const probe = probeWalIndex(db, path);
+  if (probe.state !== 'poisoned') return db;
+  // Release the handle's mmap of `-shm` before the sidecars are rebuilt: our own
+  // live connection would otherwise be the peer that blocks the exclusive proof.
+  db.close();
+  if (!rebuildSidecarsExclusively(path)) throw new WalIndexPoisonError(path, probe.cause);
+  return open();
 }
 
 /** Block the current thread for `ms` without spinning — used only for open retries. */

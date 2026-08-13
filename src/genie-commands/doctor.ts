@@ -555,7 +555,7 @@ function codexProjectRouteCheck(root: string | null, probe: CodexPluginProbe, cw
 
 /**
  * Group E: report what a Codex MCP child launched in this repository would
- * resolve — the SAME `resolveProjectContext` the read-only MCP server uses, so
+ * resolve — the SAME `resolveProjectContext` the MCP server uses, so
  * doctor and the server can never disagree about project context. An absent
  * database mirrors the `genie.db` check's "created on first use" stance as a
  * warn (the MCP returns a typed error, never a healthy empty board); a
