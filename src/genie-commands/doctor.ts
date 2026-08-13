@@ -91,6 +91,7 @@ import {
   resolveProjectContext,
 } from '../lib/v5/genie-db.js';
 import { VERSION } from '../lib/version.js';
+import { checkWorktreeModes, repairWorktreeModes } from './doctor-modes.js';
 import { checkLaunchWorktrees, cleanupLaunchWorktrees } from './doctor-worktrees.js';
 import {
   cleanupV4,
@@ -2194,6 +2195,11 @@ export async function doctorCommand(options?: { json?: boolean; fix?: boolean },
   if (options?.fix) {
     cleanupV4(cleanupOptions);
     cleanupLaunchWorktrees(root, cleanupOptions);
+    // Mode repair runs AFTER worktree removal: the removal scan decides on the
+    // pre-repair state, so a worktree whose only dirt is mode drift is never
+    // removed in the same run that tightens it (removal stays fail-closed on
+    // the state the user last saw; the next --fix may reclaim it).
+    repairWorktreeModes(root, cleanupOptions);
   }
 
   // Group E: ONE bounded host observation feeds the probe, the advisory, and
@@ -2223,6 +2229,7 @@ export async function doctorCommand(options?: { json?: boolean; fix?: boolean },
     ),
     ...checkV4Residue(),
     ...checkLaunchWorktrees(root),
+    ...checkWorktreeModes(root),
     ...checkAgentSync(),
     ...(await checkOmniHookTimeout()),
     ...(await checkOmniBridgeHealth()),

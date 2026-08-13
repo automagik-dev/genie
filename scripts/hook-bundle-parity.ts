@@ -49,8 +49,16 @@ export async function assertHookBundleParity(target: HookBundleTarget): Promise<
   }
   const mode = statSync(target.bundle).mode & 0o777;
   if (mode !== 0o755) {
+    // Tighten-only doctor semantics: `genie doctor --fix` repairs only
+    // group/world-writable (wider-than-755) drift. A bundle that LOST its
+    // executable bits (e.g. 644) is stricter than the index, and the doctor
+    // deliberately never widens it — regeneration is that repair.
+    const widerThan755 = (mode & ~0o755) !== 0;
+    const missingBits = (0o755 & ~mode) !== 0;
+    const advice =
+      widerThan755 && !missingBits ? 'run `genie doctor --fix`' : 'run `bun scripts/hook-bundle-parity.ts --write`';
     throw new Error(
-      `Hook bundle drift: plugins/genie/scripts/${target.name}.cjs must have mode 755 (found ${mode.toString(8)}); run \`genie doctor --fix\``,
+      `Hook bundle drift: plugins/genie/scripts/${target.name}.cjs must have mode 755 (found ${mode.toString(8)}); ${advice}`,
     );
   }
 }
