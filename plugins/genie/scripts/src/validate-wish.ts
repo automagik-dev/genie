@@ -26,8 +26,14 @@
  *
  * Exit codes:
  *   0  Validation passed (or not a wish file, or a new wish being created)
- *   1  Validation failed (missing template structure, symlink/size violation)
- *   2  Invalid arguments
+ *   1  --file mode: validation failed (template structure violated, or a
+ *      symlink/size-cap refusal) — the documented CLI contract
+ *   2  Hook mode (stdin JSON): validation failed. Claude Code only treats
+ *      command-hook exit 2 as a BLOCKING failure (dispatch-runtime.cjs
+ *      "Claude Code only treats command-hook exit 2 as a blocking failure"),
+ *      so hook-driven paths exit 2 — this is what keeps the write check
+ *      blocking. PostToolUse exit 2 is correct: its stderr feeds back to the
+ *      agent after the write already happened.
  */
 
 /// <reference path="./wish-template-text.d.ts" />
@@ -305,8 +311,13 @@ export function readWishFile(path: string): WishFileRead {
   try {
     // lstat (not stat) so a symlink is seen as itself and rejected.
     stats = lstatSync(path);
-  } catch {
-    return { kind: 'missing' };
+  } catch (error) {
+    // Only a genuinely absent path is "missing" (a new wish being created).
+    // Every other stat failure — EACCES, ELOOP, I/O errors — is a refusal, so
+    // the blocking check cannot fail open on an unreadable wish path.
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') return { kind: 'missing' };
+    return { kind: 'error', reason: `unable to stat wish file (${code ?? 'unknown error'})` };
   }
   if (stats.isSymbolicLink()) {
     return { kind: 'error', reason: 'refusing to read a wish file that is a symbolic link' };
@@ -417,8 +428,8 @@ Options:
 
 Exit codes:
   0  Validation passed (or not a wish file, or a new wish being created)
-  1  Validation failed (template structure violated, symlink or size cap)
-  2  Invalid arguments
+  1  --file mode: validation failed (template structure violated, symlink or size cap)
+  2  Hook mode (stdin JSON): validation failed — command-hook exit 2 is the blocking failure
 `);
 }
 
@@ -426,7 +437,7 @@ function isWishPath(filePath: string): boolean {
   return filePath.includes('.genie/wishes/') && filePath.endsWith('.md');
 }
 
-function report(result: WishValidationResult): number {
+function report(result: WishValidationResult, failureExit: number): number {
   if (result.passed) {
     console.error('\u2713 Wish document validation passed');
     return 0;
@@ -435,7 +446,7 @@ function report(result: WishValidationResult): number {
   for (const issue of result.issues) {
     console.error(`  - line ${issue.line}: ${issue.message}`);
   }
-  return 1;
+  return failureExit;
 }
 
 function main(): number {
@@ -460,6 +471,10 @@ function main(): number {
   if (!filePath) return 0; // Not a Write/Edit hook event; pass.
   if (!isWishPath(filePath)) return 0;
 
+  // Hook runners block on exit 2; the --file CLI contract is exit 1.
+  const hookDriven = hook !== null;
+  const failureExit = hookDriven ? 2 : 1;
+
   const read = readWishFile(filePath);
   if (read.kind === 'missing') {
     // A wish being created (or deleted) — nothing to validate.
@@ -468,7 +483,7 @@ function main(): number {
   }
   if (read.kind === 'error') {
     console.error(`\u26A0 ${read.reason}: ${filePath}`);
-    return 1;
+    return failureExit;
   }
 
   let content = read.content;
@@ -476,7 +491,7 @@ function main(): number {
     const proposed = proposedWishContent(read.content, hook);
     if (proposed !== null) content = proposed;
   }
-  return report(validateWish(content));
+  return report(validateWish(content), failureExit);
 }
 
 // The .cjs bundle is required by tests and by the lint; only run the CLI when

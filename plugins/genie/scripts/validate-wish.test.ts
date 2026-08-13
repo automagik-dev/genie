@@ -230,6 +230,22 @@ describe('symlink reject and size cap', () => {
     const read = validator.readWishFile(join(root, '.genie', 'wishes', 'fixture', 'WISH.md'));
     expect(read.kind).toBe('missing');
   });
+
+  test('a stat failure other than ENOENT is a named refusal, not a skip', () => {
+    const dir = join(root, '.genie', 'wishes', 'fixture');
+    mkdirSync(dir, { recursive: true });
+    const path = join(dir, 'WISH.md');
+    writeFileSync(path, templateDoc());
+    const { chmodSync } = require('node:fs') as typeof import('node:fs');
+    chmodSync(dir, 0o000);
+    try {
+      const read = validator.readWishFile(path);
+      expect(read.kind).toBe('error');
+      expect(read.reason).toContain('unable to stat wish file');
+    } finally {
+      chmodSync(dir, 0o755);
+    }
+  });
 });
 
 describe('corpus: every current genie wish passes', () => {
@@ -285,11 +301,11 @@ describe('CLI', () => {
     expect(result.code).toBe(0);
   });
 
-  test('PreToolUse Write blocks when the proposed content is broken', () => {
+  test('PreToolUse Write exits 2 and names the violation when the proposed content is broken', () => {
     const path = writeWish(templateDoc());
     const broken = templateDoc().replace(/^## Scope\s*$/m, '');
     const result = runCli([], hookEvent('PreToolUse', { file_path: path, content: broken }));
-    expect(result.code).toBe(1);
+    expect(result.code).toBe(2);
     expect(result.stderr).toContain('## Scope');
   });
 
@@ -313,10 +329,20 @@ describe('CLI', () => {
     expect(result.code).toBe(0);
   });
 
-  test('PostToolUse reports the written state', () => {
+  test('PostToolUse exits 2 with the violations on stderr (fed back to the agent)', () => {
     const path = writeWish(templateDoc().replace(/^## Decisions\s*$/m, ''));
     const result = runCli([], hookEvent('PostToolUse', { file_path: path }));
-    expect(result.code).toBe(1);
+    expect(result.code).toBe(2);
     expect(result.stderr).toContain('## Decisions');
+  });
+
+  test('hook-driven symlink refusal exits 2 while the --file symlink refusal keeps exit 1', () => {
+    const target = join(root, 'real-wish.md');
+    writeFileSync(target, templateDoc());
+    const link = writeWish('ignored');
+    rmSync(link);
+    symlinkSync(target, link);
+    expect(runCli([], hookEvent('PreToolUse', { file_path: link })).code).toBe(2);
+    expect(runCli(['--file', link]).code).toBe(1);
   });
 });
