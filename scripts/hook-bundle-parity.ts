@@ -30,6 +30,9 @@ export async function renderHookBundle(source: string): Promise<string> {
     logLevel: 'silent',
     write: false,
     external: ['bun', 'bun:*'],
+    // validate-wish embeds the canonical wish template fixture as text; the
+    // bundled .cjs must track the template byte for byte.
+    loader: { '.md': 'text' },
     define: {
       __GENIE_VERSION__: '"parity-check"',
     },
