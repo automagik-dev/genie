@@ -275,7 +275,7 @@ function assertSessionStartHook(iso: IsolatedHome, version: string): void {
   const output: unknown = JSON.parse(proc.stdout.toString());
   const hookOut = isRecord(output) ? output.hookSpecificOutput : undefined;
   const context = isRecord(hookOut) && typeof hookOut.additionalContext === 'string' ? hookOut.additionalContext : '';
-  if (!/^repo=project, branch=\S*, active wishes: 1$/.test(context))
+  if (!/^repo=project, branch=\S*, active wishes: 1$/m.test(context))
     fail(`SessionStart context missing the one-line session summary: ${context}`);
   if (context.includes('Ignore every previous'))
     fail('SessionStart context leaked unbounded wish prose (injection not stripped)');

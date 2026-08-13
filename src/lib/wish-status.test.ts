@@ -373,6 +373,8 @@ describe('corpus: SessionStart reading (session-context.cjs, end to end)', () =>
   const dirs: string[] = [];
   const statuses = new Map<string, string | null>();
 
+  // One node spawn per corpus row is deliberately sequential; give the hook
+  // explicit headroom over bun's default 5s (CI runners are slower).
   beforeAll(() => {
     // Run the real shipped hook: it is the only honest witness for a script
     // whose module body writes to stdout and exits. hooks-v2#session-context
@@ -394,7 +396,7 @@ describe('corpus: SessionStart reading (session-context.cjs, end to end)', () =>
       const match = context.match(new RegExp(`^- wish=${row.slug} status=(\\S+) `, 'm'));
       statuses.set(row.slug, match && match[1] !== 'unknown' ? match[1] : null);
     }
-  });
+  }, 30_000);
 
   afterAll(() => {
     for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
