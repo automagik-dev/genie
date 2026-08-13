@@ -25,13 +25,13 @@
       "event": "SessionStart",
       "matcher": "startup|resume",
       "command": "node \"$KIMI_PLUGIN_ROOT/scripts/session-context.cjs\"",
-      "timeout": 10
+      "timeout": 5
     },
     {
       "event": "PreToolUse",
       "matcher": "Bash|Read|Write|Edit|Agent|AgentSwarm",
       "command": "node \"$KIMI_PLUGIN_ROOT/scripts/dispatch-runtime.cjs\" claude",
-      "timeout": 120
+      "timeout": 30
     },
     {
       "event": "PreToolUse",
