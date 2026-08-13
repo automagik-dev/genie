@@ -13,7 +13,7 @@
 
 ## Summary
 
-W2+W3 of the cross-agent-delegation design: the turn-per-launch bridge that turns a routed card (W1, shipped PR #2766) into actual agent turns on an isolated worktree — spike-proven seam, `genie task delegate` for single delegation, adapter cards for all five roster agents, fail-open degradation, and `genie task fan` fan-out with ratified merges. Blocked on the remotty `headless-turn-open` verb (task block on this wish's card `t_msp4fp6ce714c8be`); the docs group is deliberately unblocked.
+W2+W3 of the cross-agent-delegation design: the turn-per-launch bridge that turns a routed card (W1, shipped PR #2766) into actual agent turns on an isolated worktree — spike-proven seam, `genie task delegate` for single delegation, adapter cards for all five roster agents, fail-open degradation, and `genie task fan` fan-out with ratified merges. Blocked on the remotty `headless-turn-open` verb (task block on this wish's card `t_msp4fp6ce714c8be`); the docs group is deliberately unblocked. **Recorded amendment 2026-08-13 (spawn-context-contract group reversals):** the S–F turn transport re-bases from one-shot headless launches to live herdr sessions, and the S–F block re-targets from `headless-turn-open` to the herdr 0.3 swap + `engine-turn-verbs` (see Recorded amendments under Dependencies).
 
 ## Scope
 
@@ -61,6 +61,8 @@ W2+W3 of the cross-agent-delegation design: the turn-per-launch bridge that turn
 
 Cross-repo: the remotty `headless-turn-open` wish gates groups S–F; recorded as a task block on card `t_msp4fp6ce714c8be` (design M2: cross-DB depends-on is inexpressible — the block makes the stall a visible board edge). The same-repo `depends-on: cross-agent-delegate` edge is declared above but deliberately not materialized as a `task_dependencies` row: the parent card is already `done`, so the edge is satisfied on creation and would change no ready-set computation.
 
+**Recorded amendments (2026-08-13, spawn-context-contract group reversals):** the S–F turn transport re-bases from one-shot detached headless launches to live herdr sessions — genie's delegation runtime drives `herdr agent start` → `agent prompt --wait --until` → `agent read` → report/release per turn instead of `worktree open --headless` turn-per-launch argv. The S–F block re-targets from `headless-turn-open` to the herdr 0.3 swap + remotty `engine-turn-verbs` (remotty board card `t_msqkkjt221792465`), recorded on the umbrella card `t_msp4fp6ce714c8be` and each S–F group card in the board snapshot. The genie-lane design (adapter cards, brief writer, `task delegate`/`fan`, fail-open degradation, ratification) stands verbatim — only the turn transport re-bases. Group A (W1 handoffs) is unaffected.
+
 ## Success Criteria
 
 - [ ] **Spike transcript:** `qa/spike-<date>.md` shows headless opening turn (brief pickup from `$GENIE_HOME`) → `task comment` hand-back → continue-form second turn on the same worktree; `genie task status <scratch-card>` shows the `{session, worktreePath, branch}` timeline events.
@@ -80,7 +82,7 @@ Cross-repo: the remotty `headless-turn-open` wish gates groups S–F; recorded a
 |-------|-------|------------|-------|-------------|
 | A | engineer | 1 — two deterministic doc/CLI-polish edits (+1 no new test surface beyond existing suites) | `engineer-trivial` / low | `TaskRow` untrusted-import doc line + `task status` alignment fix |
 
-### Wave 1 (sequential gate — blocked on remotty `headless-turn-open`)
+### Wave 1 (sequential gate — blocked on remotty `headless-turn-open`; re-targeted 2026-08-13 to herdr-swap + engine-turn-verbs — see Recorded amendments)
 
 | Group | Agent | Complexity | Model | Description |
 |-------|-------|------------|-------|-------------|
@@ -132,7 +134,7 @@ Scope: doc comment + presentation-only edit, fully covered by the two owning sui
 
 ### Group S: Seam spike (gate for B–F)
 
-**Goal:** The remotty `headless-turn-open` contract is proven live before any bridge code lands.
+**Goal:** The remotty `headless-turn-open` contract is proven live before any bridge code lands. **Superseded 2026-08-13:** the seam spike now proves the live-herdr turn seam (agent start / prompt --wait --until / read) instead — see Recorded amendments.
 
 **Deliverables:**
 1. `qa/spike-<date>.md` in this wish dir: full transcript of headless opening turn (brief written under `$GENIE_HOME/briefs/`, picked up by the agent) → `task comment` hand-back → second turn via the same verb + continue form on the same worktree.
