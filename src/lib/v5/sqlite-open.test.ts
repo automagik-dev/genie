@@ -1,12 +1,14 @@
 /**
- * sqlite-open — the shared open primitive's busy classification and its
- * poisoned-WAL-index recovery.
+ * sqlite-open — the shared open primitive's busy classification, plus the
+ * poisoned-WAL-index recovery helper it deliberately does NOT call.
  *
- * The recovery lives here (not in the MCP write path) so EVERY writer converges
- * on it: `genie task`, `task sync`, the git-hook sync, `genie mcp`, and the
- * global omni database. These tests drive it two ways: the predicates and the
- * retry contract directly, and the real end-to-end poison through `openDb` in
- * genie-db.test.ts / mcp-tools.test.ts.
+ * `openSqlite` is the fleet hot path (`genie task`, `task sync`, the git-hook
+ * sync, the global omni database, MCP reads) and stays churn-free; the recovery
+ * is opt-in and wired only into the MCP write open, the path that creates the
+ * poison. These tests drive the helper directly — predicates, retry contract,
+ * and the live-peer skips that keep it from touching a contended database. The
+ * real end-to-end poison is exercised where it is scoped, in mcp-tools.test.ts;
+ * genie-db.test.ts pins that the shared path does not heal it.
  */
 
 import { Database } from 'bun:sqlite';

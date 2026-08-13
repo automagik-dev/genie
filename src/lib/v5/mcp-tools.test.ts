@@ -576,14 +576,18 @@ describe('openReadonlyDbHealingStaleSchema', () => {
 });
 
 // ============================================================================
-// Poisoned-WAL-index fixtures. The recovery itself now lives in the shared open
-// primitive (sqlite-open.ts, tested in sqlite-open.test.ts) so every writer
-// heals identically; what is asserted HERE is that `genie mcp`'s write open
-// inherits it, and that the busy carve-out above it is intact. NOTE: on this
-// machine the REAL poison (written by a degraded readonly close) is byte-for-
-// byte identical to the virgin header bun writes on any healthy fresh open, and
-// the write open does NOT throw on it (bun hands back a writable-looking handle
-// whose writes fail "disk I/O error") — only the post-open write probe sees it.
+// Poisoned-WAL-index fixtures. The MCP write open is the ONE caller of the
+// recovery (`openWithWalIndexRecovery`, whose mechanics are tested directly in
+// sqlite-open.test.ts) because it is the one path that CREATES the poison: its
+// degrade fallback hands out a read-only handle whose close writes the header.
+// The shared `openSqlite` deliberately does not heal — genie-db.test.ts pins
+// that. What is asserted HERE is the whole rescoped scenario end to end
+// (degrade → poison → repaired filesystem → write open heals → writes succeed)
+// and that the busy carve-out above it is intact. NOTE: on this machine the
+// REAL poison is byte-for-byte identical to the virgin header bun writes on any
+// healthy fresh open, and the write open does NOT throw on it (bun hands back a
+// writable-looking handle whose writes fail "disk I/O error") — only the
+// post-open write probe sees it.
 // ============================================================================
 
 /**
@@ -806,13 +810,20 @@ describe('openWriteableDb', () => {
     }
     if (!hasStaleReadonlyWalIndex(binding.physicalPath)) return; // no poison produced here
 
-    // Repaired filesystem: the write open inherits the shared recovery — the
+    // Repaired filesystem: the write open runs the MCP-scoped recovery — the
     // open itself succeeds, its post-open probe rejects the poison, the
     // sidecars are rebuilt, and the handle served is writable and NOT degraded.
     const db = openWriteableDb(binding);
     expectWritable(db);
     expect(isDegradedReadonlyDb(db)).toBe(false);
+    // A real write lands (the probe alone would not prove the heal), and the
+    // poisoned header is gone.
+    (db as Database).exec("INSERT INTO meta (key, value) VALUES ('after-poison', '1')");
+    expect(
+      ((db as Database).query("SELECT value FROM meta WHERE key = 'after-poison'").get() as { value: string }).value,
+    ).toBe('1');
     (db as Database).close();
+    expect(hasStaleReadonlyWalIndex(binding.physicalPath)).toBe(false);
   });
 
   test('a BusyDbError write open returns null WITHOUT the readonly degrade fallback or sidecar recovery', () => {

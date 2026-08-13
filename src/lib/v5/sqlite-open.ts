@@ -164,16 +164,19 @@ export interface OpenSqliteOptions {
 
 /**
  * Open (creating if absent) a genie sqlite DB, apply concurrency pragmas, and
- * ensure the schema. Refuses malformed or foreign databases with typed errors,
- * and heals a poisoned WAL index (see {@link openWithWalIndexRecovery}) so a
- * repaired filesystem restores writes on the next open. Idempotent: safe to call
- * on every CLI invocation.
+ * ensure the schema. Refuses malformed or foreign databases with typed errors.
+ * Idempotent: safe to call on every CLI invocation.
+ *
+ * This is the FLEET hot path — every `genie task`, `task sync`, git-hook sync,
+ * omni-queue writer and MCP read opens through it — so it does exactly one
+ * thing: open, pragma, ensure schema. No probing, no journal-mode churn. WAL
+ * index recovery is deliberately NOT wired in here; it is opt-in and scoped to
+ * the component that creates the poison (see {@link openWithWalIndexRecovery}).
  */
 export function openSqlite(opts: OpenSqliteOptions): Database {
   const { path } = opts;
-  if (path === ':memory:') return openInitialized(opts);
-  mkdirSync(dirname(path), { recursive: true });
-  return openWithWalIndexRecovery(path, () => openInitialized(opts));
+  if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
+  return openInitialized(opts);
 }
 
 /** One open attempt: construct the handle, apply pragmas, ensure the schema. */
@@ -197,17 +200,27 @@ function openInitialized(opts: OpenSqliteOptions): Database {
 }
 
 // ============================================================================
-// Poisoned WAL-index recovery (shared by EVERY writer)
+// Poisoned WAL-index recovery (OPT-IN — never the ordinary open path)
 // ============================================================================
 //
 // On macOS/bun a write-protected database opens silently READONLY, and closing
 // that degraded connection writes SQLite's read-only WAL-index header into
 // `-shm` (iChange + nPage zeroed). The header outlives the write protection: the
 // next writer opens without throwing and then fails EVERY write with a raw
-// SQLITE_IOERR_WRITE / SQLITE_READONLY. Recovery lives here, above the raw
-// `new Database`, so `genie task`, `task sync`, the git-hook sync, the MCP
-// server, and the global omni DB all converge on ONE heal — a database that was
-// briefly read-only takes writes again on the next open, everywhere.
+// SQLITE_IOERR_WRITE / SQLITE_READONLY.
+//
+// SCOPING — this is a helper `openSqlite` deliberately does NOT call. The poison
+// header is byte-for-byte identical to the VIRGIN header SQLite writes whenever
+// it freshly (re)creates a healthy index, so the gate below cannot tell the two
+// apart and fires on healthy, contended databases as readily as on poisoned
+// ones. What follows the gate is journal-mode churn (WAL → DELETE → WAL) that a
+// plain WAL open/close never performs; run from every process of a live fleet
+// (`genie task` workers, omni-queue resolvers, git-hook sync) it drove bun's
+// Linux shm handling into SIGBUS. Recovery therefore belongs to the ONE
+// component that CREATES the poison: the MCP server's degraded read-only
+// session, whose close writes the header (`openWriteableDb` in mcp-tools.ts,
+// re-opened by `promoteDegradedHandle` in mcp-server.ts). That path is
+// single-owner and low-concurrency — the fleet never runs the probe.
 
 /** Bytes of the `-shm` WAL-index header this module inspects (iChange @8, nPage @20). */
 const WAL_INDEX_HEADER_BYTES = 24;
@@ -341,6 +354,10 @@ function rebuildSidecarsExclusively(path: string): boolean {
  * may hand back a handle whose every write fails — caught by the post-open
  * probe. Either way the sidecars are rebuilt and the open is retried EXACTLY
  * ONCE.
+ *
+ * CALLERS: the MCP write path only (`tryWriteOpen` in mcp-tools.ts). See the
+ * section header above for why this must never wrap the fleet-wide
+ * {@link openSqlite}.
  *
  * Never runs for a contended database. Two independent guards enforce that: a
  * busy failure (from the open or the probe) short-circuits, and the rebuild

@@ -433,14 +433,21 @@ describe('busy classification', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Poisoned WAL index: a database that was briefly write-protected keeps a
-// read-only wal-index header in `-shm`. The CLI write path used to open through
-// it happily and then fail EVERY write with SQLITE_IOERR_WRITE — the recovery
-// existed only above the MCP open. It now lives in the shared primitive, so
-// `genie task`, `task sync`, and the git-hook sync all heal on the next open.
+// Poisoned WAL index vs. the SHARED open path. A database that was briefly
+// write-protected keeps a read-only wal-index header in `-shm`, and every write
+// through the next handle fails. Recovering it is NOT `openDb`'s job: the
+// poison header is byte-identical to the virgin header of a healthy fresh
+// index, so probing for it fleet-wide fires on healthy contended databases and
+// the journal-mode churn that follows crashed bun's Linux shm handling under a
+// live multi-process fleet. `openDb` therefore stays exactly what it was before
+// the heal: open, pragma, ensure schema. The heal is scoped to the component
+// that CREATES the poison — see "the REAL poison a degraded session leaves
+// behind heals on the next write open" in mcp-tools.test.ts.
+//
+// This test fails the moment the heal is re-wired into the shared primitive.
 // ---------------------------------------------------------------------------
-describe('poisoned WAL index recovery through openDb', () => {
-  test('a database poisoned by a degraded readonly session takes writes again on the next openDb', () => {
+describe('poisoned WAL index through openDb (the shared path never heals)', () => {
+  test('openDb serves the poisoned database untouched: no probe, no rebuild, no journal-mode churn', () => {
     const path = join(dir, 'genie.db');
     const seed = openDb({ path });
     seed.exec("INSERT INTO meta (key, value) VALUES ('probe', '1')");
@@ -471,17 +478,21 @@ describe('poisoned WAL index recovery through openDb', () => {
     }
     if (!hasStaleReadonlyWalIndex(path)) return; // platform never produces the poison
 
-    // The repaired filesystem must take writes on the very next CLI open.
+    // The open itself succeeds (the poison lives on the handle, not the file),
+    // and the write fails raw — the pre-heal behavior, restored deliberately.
     const db = openDb({ path });
     try {
-      db.exec("INSERT INTO meta (key, value) VALUES ('after-poison', '1')");
-      expect((db.query("SELECT value FROM meta WHERE key = 'after-poison'").get() as { value: string }).value).toBe(
-        '1',
-      );
+      expect(() => db.exec("INSERT INTO meta (key, value) VALUES ('after-poison', '1')")).toThrow();
+      // ...and the shared path left the database in WAL: no DELETE conversion
+      // was attempted on it. That churn under a live fleet is the whole reason
+      // the heal does not belong here.
+      expect(
+        String((db.query('PRAGMA journal_mode').get() as { journal_mode: string }).journal_mode).toLowerCase(),
+      ).toBe('wal');
     } finally {
       db.close();
     }
-    expect(hasStaleReadonlyWalIndex(path)).toBe(false); // the index was rebuilt
+    expect(hasStaleReadonlyWalIndex(path)).toBe(true); // the sidecars were never rebuilt
   });
 });
 

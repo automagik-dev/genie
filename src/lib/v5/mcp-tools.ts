@@ -32,7 +32,7 @@ import {
 } from './genie-db.js';
 import { resolveEventAuthor } from './identity.js';
 import { type ToolErrorResult, isToolError, toolError } from './mcp-server.js';
-import { BUSY_TIMEOUT_MS, isBusyError } from './sqlite-open.js';
+import { BUSY_TIMEOUT_MS, isBusyError, openWithWalIndexRecovery } from './sqlite-open.js';
 
 // Re-exported so `genie mcp` (mcp.ts) pulls the fail-closed context resolver in
 // the SAME lazy dynamic import that already loads the tool registry — keeping
@@ -272,10 +272,13 @@ export function isDegradedReadonlyDb(db: Database | null | undefined): boolean {
  *    mismatched handle is discarded before any tool can observe or mutate it
  *    (the same residual as the readonly healing path).
  * 2. STALE-READONLY-SIDECAR RECOVERY — a poisoned WAL index (the read-only
- *    header a degraded readonly close leaves in `-shm`) is healed INSIDE the
- *    shared open primitive (`openWithWalIndexRecovery` in sqlite-open.ts), so
- *    `genie mcp` and every CLI writer recover identically. Nothing about the
- *    recovery lives here.
+ *    header the degrade fallback's own close leaves in `-shm`) is healed around
+ *    the write open by `openWithWalIndexRecovery` (see {@link tryWriteOpen}).
+ *    The heal is scoped to THIS path — never the fleet-wide `openSqlite` — for
+ *    the reason spelled out in sqlite-open.ts: only here is the poison created,
+ *    and only here is the concurrency low enough for the probe to be safe. A
+ *    poison the heal cannot repair (un-checkpointed frames, or a live peer)
+ *    surfaces as a typed `WalIndexPoisonError` and falls through to (4).
  * 3. BUSY CARVE-OUT — when the write-open failure is a `BusyDbError` (the
  *    write lock was contended past `busy_timeout` + backoff — the db is
  *    healthy, another process is writing), return `null` WITHOUT the
@@ -338,12 +341,27 @@ function isFileWritable(path: string): boolean {
   }
 }
 
-/** One write-path attempt: writability gate → openDb → post-open revalidation. */
+/**
+ * One write-path attempt: writability gate → open (under WAL-index recovery) →
+ * post-open revalidation.
+ *
+ * This is the ONE place `openWithWalIndexRecovery` is wired in, because this is
+ * the one place that CREATES the poison it heals: the degrade fallback below
+ * hands out a read-only handle, and closing that handle (the loop's
+ * `promoteDegradedHandle`) is what writes the read-only WAL-index header into
+ * `-shm`. Scoping the heal here keeps the probe's journal-mode churn out of the
+ * fleet-wide `openSqlite` hot path, where the virgin-vs-poison header ambiguity
+ * would fire it on healthy contended databases (see the recovery section in
+ * sqlite-open.ts). A single-owner MCP session is exactly the low-concurrency
+ * context the heal is safe in.
+ */
 function tryWriteOpen(binding: ProjectDatabaseBinding, dependencies: WriteableDbOpenDependencies): WriteOpenAttempt {
   if (!isFileWritable(binding.physicalPath)) return { db: null, busy: false };
+  const open = (): Database =>
+    dependencies.openDatabase?.(binding.physicalPath) ?? openDb({ path: binding.physicalPath });
   let db: Database | null = null;
   try {
-    db = dependencies.openDatabase?.(binding.physicalPath) ?? openDb({ path: binding.physicalPath });
+    db = openWithWalIndexRecovery(binding.physicalPath, open);
     // Post-open revalidation: the binding AND the opened VFS handle must still
     // name the validated file before any tool can observe or mutate it. This
     // bounds a mid-open substitution to the open itself — DDL that already ran
