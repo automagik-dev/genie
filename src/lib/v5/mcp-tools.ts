@@ -30,6 +30,7 @@ import {
   resolveDbPath,
   resolveProjectDatabaseBinding,
 } from './genie-db.js';
+import { resolveEventAuthor } from './identity.js';
 import { type ToolErrorResult, isToolError, toolError } from './mcp-server.js';
 import { BUSY_TIMEOUT_MS } from './sqlite-open.js';
 
@@ -824,38 +825,14 @@ function requireWriteHandle(ctx: ToolContext): Database | ToolErrorResult<WriteE
 }
 
 // ============================================================================
-// Identity (mirrors the CLI resolvers in term-commands/v5-task.ts — Decision 8)
+// Identity (the shared resolvers in identity.ts — Decision 8)
 // ============================================================================
 
 /**
- * Env identity fallback: `GENIE_AGENT_NAME`, then `GENIE_AGENT_ID`, flooring at
- * 'cli' — byte-for-byte the CLI's `resolveWorkerIdentity`. Used ONLY when the
- * per-call `worker`/`author` arg is absent, so multiple agents on one
- * long-lived server attribute correctly.
+ * Per-call `author` arg wins; the server-process env identity resolved by the
+ * shared {@link resolveEventAuthor} is the fallback (Decision 8), so multiple
+ * agents on one long-lived server attribute correctly.
  */
-function resolveWorkerIdentity(): string {
-  return process.env.GENIE_AGENT_NAME ?? process.env.GENIE_AGENT_ID ?? 'cli';
-}
-
-/**
- * Env runtime-kind fallback: `GENIE_AGENT_KIND`, then the coding-agent markers,
- * flooring at 'human' — byte-for-byte the CLI's `resolveAuthorKind`.
- */
-function resolveAuthorKind(): string {
-  const env = process.env;
-  if (env.GENIE_AGENT_KIND) return env.GENIE_AGENT_KIND;
-  if (env.CLAUDECODE || env.CLAUDE_CODE) return 'claude-code';
-  if (env.CODEX_THREAD_ID) return 'codex';
-  if (env.HERMES || env.HERMES_HOME) return 'hermes';
-  return 'human';
-}
-
-/** The server-process env identity, used ONLY when no per-call arg is given. */
-function resolveEventAuthor(): EventAuthor {
-  return { author: resolveWorkerIdentity(), authorKind: resolveAuthorKind() };
-}
-
-/** Per-call `author` arg wins; the env identity is the fallback (Decision 8). */
 function resolveAuthor(args: Record<string, unknown>): EventAuthor {
   const explicit = argString(args, 'author');
   return explicit === undefined ? resolveEventAuthor() : { author: explicit, authorKind: null };
