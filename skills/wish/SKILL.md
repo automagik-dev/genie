@@ -80,6 +80,7 @@ node "<wish-skill-dir>/references/design-review-evidence.mjs" verify ".genie/bra
    Tasks carry the `--wish`/`--group` linkage; the dependency DAG stays in the WISH.md document, not in task rows. If creation fails (no `.genie/genie.db` yet, CLI unavailable), warn and continue — WISH.md in git is the source of truth and must remain usable by `work` without task rows.
 10. **Handoff:** run the wish linter — inside the genie repo, `grep -q '"wishes:lint"' package.json 2>/dev/null && bun run wishes:lint`. If it reports any error, surface it and stop — never hand a structurally broken wish onward. Only after lint passes, auto-invoke `review` (plan review) on the WISH.md. Never suggest `work` directly — the review gate comes first.
 11. **Persist the verdict:** the reviewer only returns evidence. The invoking orchestrator appends that evidence under `## Review Results` and sets the WISH status to `APPROVED` on SHIP, `FIX-FIRST` on FIX-FIRST, or `BLOCKED` on BLOCKED. Do not route to `work` until the `APPROVED` status is on disk.
+12. **Record the wave base (APPROVED only):** once the status on disk is `APPROVED`, run `genie context --wish <slug>` from the repository root. This non-`--plan` resolution pins the integration base SHA as the wish's wave base — every group spawn cuts its worktree from that one SHA. A later run returns the recorded SHA; `genie context --wish <slug> --re-resolve` refreshes it. Never use `--plan` for this step: the preview writes nothing, so it cannot record the base. If the command fails (genie CLI or state DB unavailable — an empty ready-task set is NOT a failure; the base is still recorded and returned), warn and continue — the first non-plan resolution or the first `spawn --wish` records the base instead.
 
 ## Wish Document Sections
 
@@ -103,6 +104,7 @@ node "<wish-skill-dir>/references/design-review-evidence.mjs" verify ".genie/bra
 - Never emit a bracket-link to a non-existent brainstorm — use the `_No brainstorm — direct wish_` stub.
 - Never consume a linked design whose persisted review evidence is missing, non-SHIP, or stale; the wish linter independently enforces this for new wishes.
 - No implementation during `wish` — planning only.
+- On APPROVED, record the wave base with the non-`--plan` `genie context --wish <slug>` (warn and continue on failure; never `--plan`).
 - No speculative optimization: caches, deltas, sharding, background coordination, and configuration surfaces require a current criterion or measurement in the Simplicity Case.
 - Every group testable, bite-sized, and independently shippable; no vague tasks ("improve everything").
 - Every group has non-zero, risk-proportional validation with its scope explained; aggregate integration and release

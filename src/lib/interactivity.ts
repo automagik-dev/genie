@@ -67,6 +67,10 @@ const WORKSPACE_EXEMPT = new Set([
   // behavior.
   'task',
   'board',
+  // `context` is the read-only spawn-context contract verb. Like `task`/
+  // `board` it self-resolves from the git common-dir and must work in a fresh
+  // repo with no workspace.json.
+  'context',
   // `idea` is the one-verb quick-capture (roadmap board's Idea lane). Same v5
   // sqlite-backed self-resolving DB as `task`/`board`; it must work in a fresh
   // repo with no workspace.json (QA: `genie idea` on a fresh repo).

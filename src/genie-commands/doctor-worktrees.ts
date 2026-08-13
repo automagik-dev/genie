@@ -28,6 +28,7 @@
 import { spawnSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { basename, sep } from 'node:path';
+import { type IntegrationBranch, resolveIntegration } from '../lib/v5/base-state.js';
 import { resolveWorktreesBase } from '../term-commands/launch.js';
 import type { CheckResult } from './doctor.js';
 import { sizeOfPathTree } from './legacy-v4.js';
@@ -194,40 +195,11 @@ export function parseWorktreePorcelain(text: string): WorktreeRecord[] {
 }
 
 /**
- * The integration branch in its two non-interchangeable shapes. Every git probe
- * takes `ref`; only human output takes `name`. See {@link resolveIntegration}
- * for why the distinction is load-bearing.
- */
-export interface IntegrationBranch {
-  /** Short form, e.g. `dev` or `origin/main`. Display only — never a git argument. */
-  name: string;
-  /** Fully-qualified ref, e.g. `refs/heads/dev`. The only form a probe may use. */
-  ref: string;
-}
-
-/**
  * The branch a launch branch must already be contained in before anything is
- * deleted. Stated here in code with NO config surface, in order:
- *   1. a local `dev` branch — this repo's integration line;
- *   2. else the remote default branch (`refs/remotes/origin/HEAD`);
- *   3. else null — nothing is provably merged, so `--fix` removes NOTHING.
- *
- * Both candidates are carried as fully-qualified refs because a SHORT name is
- * ambiguous: per gitrevisions a bare `dev` resolves `refs/tags/dev` before
- * `refs/heads/dev`, so a tag sitting on a launch branch tip would satisfy the
- * ancestry proof that the real `dev` fails.
+ * deleted. Resolved through the shared policy in `src/lib/v5/base-state.ts`
+ * (local `dev` → remote default → null; config-free) — the single policy
+ * point the `genie context` verb consumes too.
  */
-function resolveIntegration(root: string): IntegrationBranch | null {
-  if (git(root, ['show-ref', '--verify', '--quiet', 'refs/heads/dev']).ok) {
-    return { name: 'dev', ref: 'refs/heads/dev' };
-  }
-  const head = git(root, ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD']);
-  if (!head.ok) return null;
-  const ref = head.stdout.trim();
-  return ref.startsWith('refs/remotes/') ? { name: ref.slice('refs/remotes/'.length), ref } : null;
-}
-
-/** Display name of the integration branch, or null when none resolves. */
 export function resolveIntegrationBranch(root: string): string | null {
   return resolveIntegration(root)?.name ?? null;
 }
