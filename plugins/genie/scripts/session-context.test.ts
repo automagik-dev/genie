@@ -13,6 +13,17 @@ const SESSION_CONTEXT = join(import.meta.dir, 'session-context.cjs');
 const AGENT_ID = '11111111-2222-3333-4444-555555555555';
 const AGENT_NAME = 'dream-worker-seven';
 
+// The db-backed expectations need a node:sqlite-capable node (≥22.13, the
+// minimum the manifest doc table declares). CI's stock runner node can be
+// older; on those runners the driver-dependent tests are recorded as skipped —
+// the first-class no-driver degradation they would hit stays covered by the
+// simulated-driver tests below, which pass on ANY node.
+const NODE_HAS_SQLITE = (() => {
+  const probe = Bun.spawnSync(['node', '-e', "require('node:sqlite');"]);
+  return probe.exitCode === 0;
+})();
+const dbTest = NODE_HAS_SQLITE ? test : test.skip;
+
 interface SeedTask {
   id: string;
   title: string;
@@ -133,7 +144,7 @@ function blockSqlitePreload(): string {
 }
 
 describe('session-context.cjs — db-backed context-aware SessionStart', () => {
-  test('each of five active wish branches surfaces its own wish and no others', async () => {
+  dbTest('each of five active wish branches surfaces its own wish and no others', async () => {
     const slugs = ['headless-turn-open', 'herdr-swap', 'hooks-v2', 'spawn-context-contract', 'agent-svg-icons'];
     const statuses = ['APPROVED', 'APPROVED', 'APPROVED', 'APPROVED', 'DRAFT'];
     const tasks = slugs.flatMap((slug, index) => [
@@ -164,7 +175,7 @@ describe('session-context.cjs — db-backed context-aware SessionStart', () => {
     }
   });
 
-  test('a group branch scopes tasks to exactly that group', async () => {
+  dbTest('a group branch scopes tasks to exactly that group', async () => {
     writeWish('hooks-v2');
     writeGit('wish/hooks-v2-session-context');
     seedDb([
@@ -181,7 +192,7 @@ describe('session-context.cjs — db-backed context-aware SessionStart', () => {
     expect(run.context).toContain('- base=0 ready=0');
   });
 
-  test('claimed tasks surface for GENIE_AGENT_ID; other claims never leak', async () => {
+  dbTest('claimed tasks surface for GENIE_AGENT_ID; other claims never leak', async () => {
     writeGit('dev');
     seedDb([
       { id: 't_mine', title: 'my in-progress card', status: 'in_progress', claimedBy: AGENT_ID },
@@ -198,7 +209,7 @@ describe('session-context.cjs — db-backed context-aware SessionStart', () => {
     expect(run.context).not.toContain('t_done');
   });
 
-  test('claims recorded under the worker name surface when only the name is exported', async () => {
+  dbTest('claims recorded under the worker name surface when only the name is exported', async () => {
     writeGit('dev');
     seedDb([{ id: 't_name', title: 'claimed as a name', status: 'in_progress', claimedBy: AGENT_NAME }]);
     const run = await runHook(root, { env: { GENIE_AGENT_NAME: AGENT_NAME } });
@@ -207,7 +218,7 @@ describe('session-context.cjs — db-backed context-aware SessionStart', () => {
     expect(run.context).toContain('t_name claimed as a name');
   });
 
-  test('both identities match both claim spellings, id preferred in the header', async () => {
+  dbTest('both identities match both claim spellings, id preferred in the header', async () => {
     writeGit('dev');
     seedDb([
       { id: 't_id', title: 'claimed by id', status: 'in_progress', claimedBy: AGENT_ID },
@@ -236,7 +247,7 @@ describe('session-context.cjs — db-backed context-aware SessionStart', () => {
     expect(run.context).not.toContain('t_two');
   });
 
-  test('a wish known only to the file scan (no db rows) still gets its context', async () => {
+  dbTest('a wish known only to the file scan (no db rows) still gets its context', async () => {
     writeGit('wish/file-only-wish');
     writeWish('file-only-wish', 'IN_PROGRESS');
     seedDb([{ id: 't_other', title: 'some other card', status: 'ready', wish: 'other-wish' }]);
@@ -288,7 +299,7 @@ describe('session-context.cjs — db-backed context-aware SessionStart', () => {
     expect(run.stderr).not.toContain('genie.db absent');
   });
 
-  test('a garbage genie.db degrades to the file scan and logs the unreadable cause', async () => {
+  dbTest('a garbage genie.db degrades to the file scan and logs the unreadable cause', async () => {
     writeGit('wish/hooks-v2');
     writeWish('hooks-v2');
     mkdirSync(join(root, '.genie'), { recursive: true });
@@ -300,7 +311,7 @@ describe('session-context.cjs — db-backed context-aware SessionStart', () => {
     expect(run.stderr).toContain('[session-context] genie.db unreadable at');
   });
 
-  test('a linked worktree reads its own branch and the shared db at the common dir', async () => {
+  dbTest('a linked worktree reads its own branch and the shared db at the common dir', async () => {
     const main = join(root, 'main');
     const mainWish = join(main, '.genie', 'wishes', 'hooks-v2');
     mkdirSync(mainWish, { recursive: true });
@@ -350,7 +361,7 @@ describe('session-context.cjs — db-backed context-aware SessionStart', () => {
     expect(run.stderr).toContain('genie.db unavailable (external/separate git-dir layout)');
   });
 
-  test('hostile task titles are sanitized and the whole context stays within 2KB', async () => {
+  dbTest('hostile task titles are sanitized and the whole context stays within 2KB', async () => {
     writeGit('wish/hooks-v2');
     writeWish('hooks-v2');
     const hostile = `ev\u0001il\u0002 title ${'x'.repeat(4_000)}`;

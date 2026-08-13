@@ -265,19 +265,17 @@ function assertSessionStartHook(iso: IsolatedHome, version: string): void {
   if (proc.exitCode !== 0) {
     fail(`SessionStart hook failed (exit ${proc.exitCode}): ${proc.stderr.toString().trim()}`);
   }
-  // hooks-v2#session-context: the isolated project has no repository root, so
-  // the first-class degradation log is the exact stderr the new contract
-  // promises — anything else is noise or a crash.
+  // hooks-v2#session-context: a fixture without a populated genie.db degrades
+  // first-class and logs exactly one degradation line (the exact cause varies
+  // with whether the fixture has a repository root). Anything else on stderr
+  // is noise or a crash and fails the smoke.
   const stderr = proc.stderr.toString();
-  const tolerated =
-    /^\[session-context\] genie\.db unavailable \(no repository root\) — falling back to wish-file scan\n$/.test(
-      stderr,
-    );
+  const tolerated = /^\[session-context\] .+ — falling back to wish-file scan\n$/.test(stderr);
   if (stderr.trim() !== '' && !tolerated) fail(`SessionStart hook wrote unexpected stderr: ${stderr.trim()}`);
   const output: unknown = JSON.parse(proc.stdout.toString());
   const hookOut = isRecord(output) ? output.hookSpecificOutput : undefined;
   const context = isRecord(hookOut) && typeof hookOut.additionalContext === 'string' ? hookOut.additionalContext : '';
-  if (!context.includes('repo=project, branch=<none>, active wishes: 1'))
+  if (!/^repo=project, branch=\S*, active wishes: 1$/.test(context))
     fail(`SessionStart context missing the one-line session summary: ${context}`);
   if (context.includes('Ignore every previous'))
     fail('SessionStart context leaked unbounded wish prose (injection not stripped)');
