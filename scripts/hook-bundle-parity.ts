@@ -54,7 +54,7 @@ export async function assertHookBundleParity(target: HookBundleTarget): Promise<
   const mode = statSync(target.bundle).mode & 0o777;
   if (mode !== 0o755) {
     throw new Error(
-      `Hook bundle drift: plugins/genie/scripts/${target.name}.cjs must have mode 755 (found ${mode.toString(8)})`,
+      `Hook bundle drift: plugins/genie/scripts/${target.name}.cjs must have mode 755 (found ${mode.toString(8)}); run \`genie doctor --fix\``,
     );
   }
 }
