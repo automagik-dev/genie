@@ -1295,6 +1295,21 @@ describe('MCP_WRITE_TOOLS — the 12 operative write tools', () => {
     expectError(call('genie_task_set_wish', { id: 't_missing', wish: 'x' }), 'not_found');
   });
 
+  test('genie_task_set_wish rejects a supplied-but-empty group instead of dropping it (CLI parity)', () => {
+    const t = readyTask('a');
+    // `task set-wish --group ''` fails with "--group must not be empty."; the
+    // tool must not silently attach the wish with no group and report success.
+    for (const group of ['', '   ', 42]) {
+      const payload = expectError(call('genie_task_set_wish', { id: t, wish: 'w1', group }), 'invalid_arguments');
+      expect(String(payload.detail)).toContain('group must not be empty');
+    }
+    expect(getTask(db, t)?.wish).toBeNull();
+    // An omitted group stays optional: the wish attaches with a null group.
+    expectOk(call('genie_task_set_wish', { id: t, wish: 'w1' }));
+    expect(getTask(db, t)?.wish).toBe('w1');
+    expect(getTask(db, t)?.group).toBeNull();
+  });
+
   // --- genie_task_add_dependency --------------------------------------------
 
   test('genie_task_add_dependency inserts the edge and rejects cycles and unknown tasks', () => {

@@ -1026,6 +1026,12 @@ function genieTaskSetWish(ctx: ToolContext, args: Record<string, unknown>): unkn
   const wish = argString(args, 'wish')?.trim() || undefined;
   const group = argString(args, 'group')?.trim() || undefined;
   const clear = args.clear === true;
+  // A SUPPLIED but empty/blank group fails loudly, exactly as `task set-wish
+  // --group ''` does — silently dropping it would attach the card to the wish
+  // with no group and report success (CLI parity, v5-task.ts handleSetWish).
+  if (args.group !== undefined && !group) {
+    return toolError({ error: 'invalid_arguments', detail: 'group must not be empty.' });
+  }
   if (group && !wish) return toolError({ error: 'invalid_arguments', detail: 'group requires wish.' });
   if (clear && wish) return toolError({ error: 'invalid_arguments', detail: 'clear cannot be combined with wish.' });
   if (!clear && !wish) return toolError({ error: 'invalid_arguments', detail: 'wish <slug> or clear is required.' });
@@ -1206,7 +1212,7 @@ export const MCP_WRITE_TOOLS: McpTool[] = [
   {
     name: 'genie_task_set_wish',
     description:
-      "Attach, re-point, or clear the wish identity on a card (the CLI's task set-wish). Errors: not_found (unknown id), invalid_arguments (missing id, group without wish, clear with wish, or neither wish nor clear), read_only_database, database_unavailable.",
+      "Attach, re-point, or clear the wish identity on a card (the CLI's task set-wish). Errors: not_found (unknown id), invalid_arguments (missing id, empty group, group without wish, clear with wish, or neither wish nor clear), read_only_database, database_unavailable.",
     inputSchema: {
       type: 'object',
       properties: {
