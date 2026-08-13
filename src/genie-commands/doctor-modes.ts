@@ -23,17 +23,21 @@
  *     named drift shapes 0775/0777 to 0755. A stricter-than-index mode (0600
  *     files, 0700 dirs) is reported as informational and never widened; a
  *     mode with both extra and missing bits is reported and never edited; a
- *     probe that fails or is refused (symlink planted on disk, vanished
+ *     file carrying setuid/setgid/sticky bits is reported and never stripped;
+ *     a probe that fails or is refused (symlink planted on disk, vanished
  *     directory) keeps the item with the reason. Every refusal is surfaced.
  *
  *  3. Symlinks are never followed. Every probe uses lstat; index entries of
  *     kind 120000/160000 are skipped outright, and a symlink occupying the
- *     path of a tracked file — or of a directory that tracked files live
- *     under — refuses the item instead of operating through the link.
+ *     path of a tracked file — or of a directory that tracked files OR
+ *     directories live under — refuses the item instead of operating through
+ *     the link. The single mutation site re-proves the path with
+ *     open(O_NOFOLLOW) + fchmod on the descriptor, so a swap between scan and
+ *     repair can never be chmod'd through either.
  */
 
 import { spawnSync } from 'node:child_process';
-import { type Stats, chmodSync, lstatSync } from 'node:fs';
+import { constants, type Stats, closeSync, fchmodSync, fstatSync, lstatSync, openSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { parseWorktreePorcelain } from './doctor-worktrees.js';
 import type { CheckResult } from './doctor.js';
@@ -79,6 +83,12 @@ export interface ModeDriftScan {
 export interface ModeRepairDeps {
   /** Line sink for `--fix` chatter. Defaults to stdout. */
   logSink?: (line: string) => void;
+  /**
+   * Pre-computed scan (test seam for the scan→repair window): when omitted the
+   * repair re-scans on entry, exactly like production. A stale injected scan
+   * must still be fail-closed — the mutation site re-proves the path type.
+   */
+  scan?: ModeDriftScan;
 }
 
 /** git's canonical directory permission shape: tree dirs are 0755, always. */
@@ -207,7 +217,10 @@ function probeDir(path: string): DirProbe {
  * the item keeps or is tightened. `dir` narrows the repairable set to the
  * named drift shapes: a wider directory outside {0775, 0777} (e.g. setgid
  * 2775) is refused rather than edited, because its extra bits may be
- * intentional.
+ * intentional. Files get the same carve-out for the privilege bits: setuid/
+ * setgid/sticky are reported and NEVER stripped — the only mutation a chmod
+ * to the index mode could make on them is a privilege-semantics change, not
+ * drift hygiene.
  */
 export function classifyModeDrift(
   diskMode: number,
@@ -217,6 +230,9 @@ export function classifyModeDrift(
   const disk = diskMode & 0o7777;
   const index = indexMode & 0o777;
   if (disk === index) return null;
+  if (kind === 'file' && (disk & 0o7000) !== 0) {
+    return { disposition: 'refused', reason: 'setuid/setgid/sticky bits present on a file — never stripped' };
+  }
   const wider = (disk & ~index) !== 0;
   const stricter = (index & ~disk) !== 0;
   if (wider && !stricter) {
@@ -295,27 +311,90 @@ function probeFile(path: string): FileProbe {
   }
 }
 
-/** Mode drift inside ONE worktree. A git probe failure refuses the whole tree. */
-function scanWorktree(worktree: string): ModeDriftEntry[] {
-  // A registration whose directory is gone can never be probed: refuse it
-  // before spawning git, which would only fail with a cryptic spawn error.
+/**
+ * Verdict for one tracked path's directory slot. A blocked dir (an ancestor is
+ * a symlink on disk) is refused WITHOUT probing it: lstatSync follows
+ * intermediate components, so probing `a/b` under a symlinked `a` would stat a
+ * path OUTSIDE the worktree — and could classify, then repair, someone else's
+ * directory. The dir list is sorted root-down, so the blocking ancestor is
+ * always already in `probes` when a deeper dir is reached.
+ */
+function probeTreeDir(worktree: string, dir: string, probes: Map<string, DirVerdict>): DirVerdict {
+  const blocked = blockingAncestor(dir, probes);
+  if (blocked !== null) {
+    return {
+      entry: {
+        worktree,
+        relPath: dir,
+        kind: 'dir',
+        indexMode: octal(CANONICAL_DIR_MODE),
+        diskMode: null,
+        disposition: 'refused',
+        reason: `${blocked}`,
+      },
+      blocksDescendants: null,
+    };
+  }
+  return classifyDir(worktree, dir, probeDir(join(worktree, dir)));
+}
+
+/** Verdict for one tracked file, or null when it is clean or missing on disk. */
+function classifyFile(worktree: string, file: IndexEntry, probes: Map<string, DirVerdict>): ModeDriftEntry | null {
+  const base = { worktree, relPath: file.path, kind: 'file' as const, indexMode: octal(file.mode & 0o777) };
+  const blocked = blockingAncestor(file.path, probes);
+  if (blocked !== null) return { ...base, diskMode: null, disposition: 'refused', reason: `${blocked}` };
+  const probe = probeFile(join(worktree, file.path));
+  if (probe.kind === 'missing') return null; // content dirt, not mode drift
+  if (probe.kind === 'error') {
+    return { ...base, diskMode: null, disposition: 'refused', reason: `lstat failed: ${probe.reason}` };
+  }
+  const stat = probe.stat;
+  if (stat.isSymbolicLink()) {
+    return {
+      ...base,
+      diskMode: null,
+      disposition: 'refused',
+      reason: 'on-disk is a symlink where the index records a regular file — never followed',
+    };
+  }
+  if (!stat.isFile()) {
+    return {
+      ...base,
+      diskMode: null,
+      disposition: 'refused',
+      reason: 'on-disk is a non-file where the index records a regular file — never edited',
+    };
+  }
+  const verdict = classifyModeDrift(stat.mode, file.mode, 'file');
+  return verdict === null ? null : { ...base, diskMode: octal(stat.mode & 0o7777), ...verdict };
+}
+
+/** Whole-worktree refusal for a registration whose directory no longer exists. */
+function vanishedWorktreeRefusal(worktree: string): ModeDriftEntry | null {
   try {
     lstatSync(worktree);
   } catch (error) {
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
-      return [
-        {
-          worktree,
-          relPath: null,
-          kind: 'worktree',
-          indexMode: null,
-          diskMode: null,
-          disposition: 'refused',
-          reason: 'worktree directory no longer exists',
-        },
-      ];
+      return {
+        worktree,
+        relPath: null,
+        kind: 'worktree',
+        indexMode: null,
+        diskMode: null,
+        disposition: 'refused',
+        reason: 'worktree directory no longer exists',
+      };
     }
   }
+  return null;
+}
+
+/** Mode drift inside ONE worktree. A git probe failure refuses the whole tree. */
+function scanWorktree(worktree: string): ModeDriftEntry[] {
+  // A registration whose directory is gone can never be probed: refuse it
+  // before spawning git, which would only fail with a cryptic spawn error.
+  const vanished = vanishedWorktreeRefusal(worktree);
+  if (vanished !== null) return [vanished];
   const listing = git(worktree, ['ls-files', '-s', '-z']);
   if (!listing.ok) {
     return [
@@ -335,7 +414,7 @@ function scanWorktree(worktree: string): ModeDriftEntry[] {
   const probes = new Map<string, DirVerdict>();
   const entries: ModeDriftEntry[] = [];
   for (const dir of dirs) {
-    const verdict = classifyDir(worktree, dir, probeDir(join(worktree, dir)));
+    const verdict = probeTreeDir(worktree, dir, probes);
     probes.set(dir, verdict);
     if (verdict.entry !== null) entries.push(verdict.entry);
   }
@@ -343,69 +422,8 @@ function scanWorktree(worktree: string): ModeDriftEntry[] {
   for (const file of index) {
     if (SKIP_INDEX_MODES.has(file.mode) || seen.has(file.path)) continue;
     seen.add(file.path);
-    const blocked = blockingAncestor(file.path, probes);
-    if (blocked !== null) {
-      entries.push({
-        worktree,
-        relPath: file.path,
-        kind: 'file',
-        indexMode: octal(file.mode & 0o777),
-        diskMode: null,
-        disposition: 'refused',
-        reason: `${blocked}`,
-      });
-      continue;
-    }
-    const probe = probeFile(join(worktree, file.path));
-    if (probe.kind === 'missing') continue; // content dirt, not mode drift
-    if (probe.kind === 'error') {
-      entries.push({
-        worktree,
-        relPath: file.path,
-        kind: 'file',
-        indexMode: octal(file.mode & 0o777),
-        diskMode: null,
-        disposition: 'refused',
-        reason: `lstat failed: ${probe.reason}`,
-      });
-      continue;
-    }
-    const stat = probe.stat;
-    if (stat.isSymbolicLink()) {
-      entries.push({
-        worktree,
-        relPath: file.path,
-        kind: 'file',
-        indexMode: octal(file.mode & 0o777),
-        diskMode: null,
-        disposition: 'refused',
-        reason: 'on-disk is a symlink where the index records a regular file — never followed',
-      });
-      continue;
-    }
-    if (!stat.isFile()) {
-      entries.push({
-        worktree,
-        relPath: file.path,
-        kind: 'file',
-        indexMode: octal(file.mode & 0o777),
-        diskMode: null,
-        disposition: 'refused',
-        reason: 'on-disk is a non-file where the index records a regular file — never edited',
-      });
-      continue;
-    }
-    const verdict = classifyModeDrift(stat.mode, file.mode, 'file');
-    if (verdict !== null) {
-      entries.push({
-        worktree,
-        relPath: file.path,
-        kind: 'file',
-        indexMode: octal(file.mode & 0o777),
-        diskMode: octal(stat.mode & 0o7777),
-        ...verdict,
-      });
-    }
+    const entry = classifyFile(worktree, file, probes);
+    if (entry !== null) entries.push(entry);
   }
   return entries;
 }
@@ -468,9 +486,19 @@ function summarizeScan(scan: ModeDriftScan): CheckResult {
   const across = `${parts.join(', ')} drift item(s) across ${worktrees} worktree(s)`;
   const vanished = scan.entries.some((entry) => entry.kind === 'worktree');
   if (wider === 0) {
-    return vanished
-      ? { name: CHECK_NAME, status: 'warn', detail: `${across} — nothing to fix`, suggestion: PRUNE_ADVICE }
-      : { name: CHECK_NAME, status: 'pass', detail: `${across} — nothing to fix` };
+    // Fail-closed reads fail-closed: refusals (probe errors, planted symlinks)
+    // and unfixable mixed drift escalate the headline to warn even though
+    // nothing is repairable. Stricter items alone stay an informational pass —
+    // they are deliberate hardening, not damage.
+    if (refused > 0 || mixed > 0 || vanished) {
+      return {
+        name: CHECK_NAME,
+        status: 'warn',
+        detail: `${across} — nothing to fix`,
+        suggestion: vanished ? PRUNE_ADVICE : undefined,
+      };
+    }
+    return { name: CHECK_NAME, status: 'pass', detail: `${across} — nothing to fix` };
   }
   const suggestion = [FIX_ADVICE, vanished ? PRUNE_ADVICE : ''].filter((part) => part !== '').join(' ');
   return { name: CHECK_NAME, status: 'warn', detail: across, suggestion };
@@ -484,6 +512,18 @@ function describeEntry(entry: ModeDriftEntry): CheckResult {
     case 'wider':
       return { name, status: 'warn', detail: `${modes} — --fix tightens to ${entry.indexMode}` };
     case 'stricter':
+      // A stricter FILE on a tracked-100755 path (e.g. a bundle that lost its
+      // executable bit) names the one repair that restores it: a manual chmod.
+      // That is a widening, so it is a user decision — never a --fix action.
+      if (entry.kind === 'file' && entry.indexMode === '755') {
+        return {
+          name,
+          status: 'pass',
+          detail: `kept (${entry.reason}; ${modes}) — never widened`,
+          suggestion:
+            'Restoring the executable bit is a widening: run `chmod 755 <path>` yourself if the index mode is intended — --fix never widens.',
+        };
+      }
       return { name, status: 'pass', detail: `kept (${entry.reason}; ${modes}) — never widened` };
     case 'mixed':
       return { name, status: 'warn', detail: `kept (${entry.reason}; ${modes}) — never edited` };
@@ -514,15 +554,51 @@ export function checkWorktreeModes(root: string | null): CheckResult[] {
 }
 
 /**
+ * The single mutation site. The path was classified from an lstat taken
+ * during a scan that may be arbitrarily stale, so it is re-proven here:
+ * `open(O_NOFOLLOW)` refuses when the final component has been swapped for a
+ * symlink (ELOOP), `O_NONBLOCK` keeps a planted FIFO from wedging the open,
+ * the opened descriptor is type-checked (regular file or directory only), and
+ * the chmod acts on the descriptor — never on the path — so nothing between
+ * open and fchmod can redirect it. A re-lstat alone is not sufficient: the
+ * swap could land between the lstat and the chmod.
+ */
+function tightenNoFollow(path: string, mode: number): string | null {
+  let fd: number;
+  try {
+    fd = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
+  } catch (error) {
+    return `open(O_NOFOLLOW) refused: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile() && !stat.isDirectory()) {
+      return 'opened descriptor is not a regular file or directory — never edited';
+    }
+    fchmodSync(fd, mode);
+    return null;
+  } catch (error) {
+    return `fchmod refused: ${error instanceof Error ? error.message : String(error)}`;
+  } finally {
+    try {
+      closeSync(fd);
+    } catch {
+      /* descriptor cleanup is best-effort; the mutation already succeeded or refused */
+    }
+  }
+}
+
+/**
  * `--fix` half: tighten every item the scan proved wider than its index mode —
  * files to their exact index permissions, 0775/0777 dirs to 0755. Idempotent:
- * a repo with no wider item is a strict no-op. A per-item chmod failure is
- * reported and skipped; it never escalates and never touches a non-wider item.
+ * a repo with no wider item is a strict no-op. A per-item open/fchmod failure
+ * is reported and skipped; it never escalates and never touches a non-wider
+ * item.
  */
 export function repairWorktreeModes(root: string | null, deps: ModeRepairDeps = {}): void {
   if (root === null) return;
   const emit = deps.logSink ?? ((line: string) => process.stdout.write(`${line}\n`));
-  const scan = scanWorktreeModes(root);
+  const scan = deps.scan ?? scanWorktreeModes(root);
   if (scan.enumerationError !== null) {
     emit(`  \x1b[33m!\x1b[0m mode repair skipped: enumeration failed (${scan.enumerationError})`);
     return;
@@ -532,13 +608,18 @@ export function repairWorktreeModes(root: string | null, deps: ModeRepairDeps = 
   emit(`\x1b[2mTightening ${wider.length} wider-than-index mode(s)...\x1b[0m`);
   for (const entry of wider) {
     const path = entry.relPath === null ? entry.worktree : join(entry.worktree, entry.relPath);
-    try {
-      // A `wider` entry implies the on-disk mode is a strict superset of the
-      // index mode, so setting the index mode exactly only ever removes bits.
-      chmodSync(path, Number.parseInt(entry.indexMode ?? '', 8));
-      emit(`  \x1b[32m✔\x1b[0m tightened ${path} (${entry.diskMode} → ${entry.indexMode})`);
-    } catch (error) {
-      emit(`  \x1b[33m!\x1b[0m kept ${path}: chmod failed: ${error instanceof Error ? error.message : String(error)}`);
+    // Guarded parse: a wider entry whose index mode fails to parse is kept
+    // with the reason — chmodding garbage would be neither tightening nor
+    // fail-closed.
+    const target = entry.indexMode === null ? Number.NaN : Number.parseInt(entry.indexMode, 8);
+    if (!Number.isInteger(target) || target < 0 || target > 0o7777) {
+      emit(`  \x1b[33m!\x1b[0m kept ${path}: unparseable index mode '${entry.indexMode}' — --fix will not touch it`);
+      continue;
     }
+    // A `wider` entry implies the on-disk mode is a strict superset of the
+    // index mode, so setting the index mode exactly only ever removes bits.
+    const failure = tightenNoFollow(path, target);
+    if (failure === null) emit(`  \x1b[32m✔\x1b[0m tightened ${path} (${entry.diskMode} → ${entry.indexMode})`);
+    else emit(`  \x1b[33m!\x1b[0m kept ${path}: ${failure}`);
   }
 }

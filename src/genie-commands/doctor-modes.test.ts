@@ -4,8 +4,9 @@
  * Every fixture is a REAL git repo with REAL `git worktree add` worktrees
  * under the system temp dir — the scanner's whole job is reading git truth and
  * lstat truth, so a mocked git would test nothing. Nothing outside
- * `mkdtempSync` roots is ever touched, and every fixture sets its modes
- * explicitly so no ambient umask can leak into an assertion.
+ * `mkdtempSync` roots is ever touched, and every fixture materializes its git
+ * content under an explicit umask 022 so NO ambient umask (the suite is run
+ * green under both `umask 022` and `umask 000`) can leak into an assertion.
  */
 
 import { afterEach, describe, expect, test } from 'bun:test';
@@ -45,7 +46,23 @@ interface Fixture {
   base: string;
 }
 
-/** Seeded repo with tracked files at a.txt (644), sub/b.txt (644), bin/run.sh (755). */
+/** Run `fn` under an explicit umask, restoring the ambient one afterwards. */
+function withUmask<T>(mask: number, fn: () => T): T {
+  const prior = process.umask(mask);
+  try {
+    return fn();
+  } finally {
+    process.umask(prior);
+  }
+}
+
+/**
+ * Seeded repo with tracked files at a.txt (644), sub/b.txt (644),
+ * bin/run.sh (755), and a nested a/b/c.txt (644) for the non-deepest planted
+ * symlink case. Everything is materialized under umask 022 so the seed — and
+ * every `git worktree add` checkout of it — carries sane modes regardless of
+ * the ambient umask the suite runs under.
+ */
 function makeFixture(): Fixture {
   const dir = mkdtempSync(join(tmpdir(), 'genie-doctor-modes-'));
   scratchRoots.push(dir);
@@ -54,30 +71,42 @@ function makeFixture(): Fixture {
   mkdirSync(root);
   mkdirSync(base);
   chmodSync(root, 0o755);
-  git(root, 'init', '-q');
-  git(root, 'config', 'user.email', 'test@example.com');
-  git(root, 'config', 'user.name', 'Test');
-  git(root, 'config', 'commit.gpgsign', 'false');
-  writeFileSync(join(root, 'a.txt'), 'alpha\n');
-  chmodSync(join(root, 'a.txt'), 0o644);
-  mkdirSync(join(root, 'sub'));
-  chmodSync(join(root, 'sub'), 0o755);
-  writeFileSync(join(root, 'sub', 'b.txt'), 'beta\n');
-  chmodSync(join(root, 'sub', 'b.txt'), 0o644);
-  mkdirSync(join(root, 'bin'));
-  chmodSync(join(root, 'bin'), 0o755);
-  writeFileSync(join(root, 'bin', 'run.sh'), '#!/bin/sh\necho hi\n');
-  chmodSync(join(root, 'bin', 'run.sh'), 0o755);
-  git(root, 'add', '-A');
-  git(root, 'commit', '-q', '-m', 'seed');
-  git(root, 'branch', 'dev');
+  withUmask(0o022, () => {
+    git(root, 'init', '-q');
+    git(root, 'config', 'user.email', 'test@example.com');
+    git(root, 'config', 'user.name', 'Test');
+    git(root, 'config', 'commit.gpgsign', 'false');
+    writeFileSync(join(root, 'a.txt'), 'alpha\n');
+    chmodSync(join(root, 'a.txt'), 0o644);
+    mkdirSync(join(root, 'sub'));
+    chmodSync(join(root, 'sub'), 0o755);
+    writeFileSync(join(root, 'sub', 'b.txt'), 'beta\n');
+    chmodSync(join(root, 'sub', 'b.txt'), 0o644);
+    mkdirSync(join(root, 'bin'));
+    chmodSync(join(root, 'bin'), 0o755);
+    writeFileSync(join(root, 'bin', 'run.sh'), '#!/bin/sh\necho hi\n');
+    chmodSync(join(root, 'bin', 'run.sh'), 0o755);
+    mkdirSync(join(root, 'a', 'b'), { recursive: true });
+    chmodSync(join(root, 'a'), 0o755);
+    chmodSync(join(root, 'a', 'b'), 0o755);
+    writeFileSync(join(root, 'a', 'b', 'c.txt'), 'gamma\n');
+    chmodSync(join(root, 'a', 'b', 'c.txt'), 0o644);
+    git(root, 'add', '-A');
+    git(root, 'commit', '-q', '-m', 'seed');
+    git(root, 'branch', 'dev');
+  });
   return { dir, root, base };
 }
 
 /** Materialize a worktree under the base on a fresh branch, with explicit modes. */
 function addWorktree(fixture: Fixture, branch: string): string {
   const path = join(fixture.base, branch.split('/').pop() ?? branch);
-  git(fixture.root, 'worktree', 'add', '-q', '-b', branch, path);
+  // Materialize under umask 022: `git worktree add` checks out every tracked
+  // file with modes derived from the ambient umask, and a 000 ambient would
+  // turn the whole fresh tree into wider-than-index drift (failing every
+  // "1 wider" assertion). The explicit root chmod stays as a second line of
+  // defense for the worktree root itself.
+  withUmask(0o022, () => git(fixture.root, 'worktree', 'add', '-q', '-b', branch, path));
   chmodSync(path, 0o755);
   return path;
 }
@@ -123,6 +152,10 @@ describe('mode drift classification (pure)', () => {
     expect(classifyModeDrift(0o770, 0o755, 'dir')).toMatchObject({ disposition: 'mixed' });
     // Wider than 0755 but outside the named set: setgid is plausibly intentional.
     expect(classifyModeDrift(0o2775, 0o755, 'dir')).toMatchObject({ disposition: 'refused' });
+    // Setuid/setgid bits on a file: reported, never stripped — even when the
+    // permission bits themselves agree with the index.
+    expect(classifyModeDrift(0o4755, 0o755, 'file')).toMatchObject({ disposition: 'refused' });
+    expect(classifyModeDrift(0o4755, 0o644, 'file')).toMatchObject({ disposition: 'refused' });
   });
 });
 
@@ -202,6 +235,20 @@ describe('tighten-only: stricter modes survive --fix untouched', () => {
     expect(entry).toMatchObject({ kind: 'dir', disposition: 'stricter', indexMode: '755', diskMode: '700' });
     runRepair(fixture);
     expect(modeOf(join(wt, 'sub'))).toBe(0o700);
+  });
+
+  test('a setuid/setgid file is reported and never stripped', () => {
+    const fixture = makeFixture();
+    const wt = addWorktree(fixture, 'wish/demo-alpha');
+    // bun's chmodSync drops the setuid bit on macOS, so plant it via the
+    // system chmod — the on-disk mode is what the scanner must classify.
+    execFileSync('chmod', ['4755', join(wt, 'a.txt')], { stdio: 'ignore' }); // perms wider than index 644 AND setuid
+
+    const entry = entriesFor(scanWorktreeModes(fixture.root), wt, 'a.txt')[0];
+    expect(entry).toMatchObject({ disposition: 'refused' });
+    expect(entry.reason).toContain('setuid');
+    runRepair(fixture);
+    expect(modeOf(join(wt, 'a.txt'))).toBe(0o4755); // never stripped
   });
 
   test('a mixed mode (0660 file, 0770 dir) is kept and never edited', () => {
@@ -286,6 +333,36 @@ describe('planted symlinks are never followed', () => {
     expect(modeOf(outdir)).toBe(0o777);
   });
 
+  test("a tracked dir BENEATH a planted symlink is refused, never probed or chmod'd through", () => {
+    // PoC regression: tracked a/b/c.txt, and repo/a swapped for a symlink to
+    // an OUTSIDE tree that happens to contain a 0777 dir named 'b'. lstatSync
+    // follows intermediate components, so probing a/b stats outside/b — the
+    // dir loop must refuse a/b from its blocking ancestor instead.
+    const fixture = makeFixture();
+    const wt = addWorktree(fixture, 'wish/demo-alpha');
+    const outside = join(fixture.dir, 'outside');
+    mkdirSync(join(outside, 'b'), { recursive: true });
+    writeFileSync(join(outside, 'b', 'c.txt'), 'victim\n');
+    chmodSync(join(outside, 'b', 'c.txt'), 0o600);
+    chmodSync(join(outside, 'b'), 0o777);
+    chmodSync(outside, 0o755);
+    rmSync(join(wt, 'a'), { recursive: true });
+    symlinkSync(outside, join(wt, 'a'));
+
+    const scan = scanWorktreeModes(fixture.root);
+    const aEntry = entriesFor(scan, wt, 'a')[0];
+    expect(aEntry).toMatchObject({ kind: 'dir', disposition: 'refused' });
+    const bEntry = entriesFor(scan, wt, 'a/b')[0];
+    expect(bEntry).toMatchObject({ kind: 'dir', disposition: 'refused' });
+    expect(bEntry.reason).toContain('never followed');
+
+    const lines = runRepair(fixture).join('\n');
+    expect(lines).not.toContain('a/b'); // the outside dir is never repaired
+    expect(modeOf(join(outside, 'b'))).toBe(0o777); // outside tree untouched
+    expect(modeOf(join(outside, 'b', 'c.txt'))).toBe(0o600);
+    expect(lstatSync(join(wt, 'a')).isSymbolicLink()).toBe(true);
+  });
+
   test('tracked symlink (120000) and gitlink (160000) index entries are skipped outright', () => {
     const fixture = makeFixture();
     const wt = addWorktree(fixture, 'wish/demo-gamma');
@@ -299,6 +376,35 @@ describe('planted symlinks are never followed', () => {
     expect(scan.entries.some((entry) => entry.relPath === 'submod')).toBe(false);
     expect(runRepair(fixture)).toEqual([]);
     expect(lstatSync(join(wt, 'link.txt')).isSymbolicLink()).toBe(true);
+  });
+});
+
+describe("scan→repair window: a swapped-in symlink is never chmod'd through", () => {
+  test('a path classified wider then swapped for a symlink is refused at the mutation site', () => {
+    const fixture = makeFixture();
+    const wt = addWorktree(fixture, 'wish/demo-alpha');
+    chmodSync(join(wt, 'a.txt'), 0o666);
+
+    // The scan classifies a.txt as wider (666 → 644) — then, inside the
+    // scan→repair window, the file is swapped for a symlink to a 0600 victim.
+    const scan = scanWorktreeModes(fixture.root);
+    expect(entriesFor(scan, wt, 'a.txt')[0]).toMatchObject({ disposition: 'wider' });
+    const victim = join(fixture.dir, 'victim.txt');
+    writeFileSync(victim, 'secret\n');
+    chmodSync(victim, 0o600);
+    rmSync(join(wt, 'a.txt'));
+    symlinkSync(victim, join(wt, 'a.txt'));
+
+    // Repair must re-prove the path (O_NOFOLLOW open) and refuse it: the
+    // victim's stricter mode is never widened, the link is never followed.
+    const lines: string[] = [];
+    repairWorktreeModes(fixture.root, { logSink: (line) => lines.push(line), scan });
+    const chatter = lines.join('\n');
+    expect(chatter).toContain('kept');
+    expect(chatter).toContain('O_NOFOLLOW');
+    expect(chatter).not.toContain('✔');
+    expect(modeOf(victim)).toBe(0o600);
+    expect(lstatSync(join(wt, 'a.txt')).isSymbolicLink()).toBe(true);
   });
 });
 
@@ -321,6 +427,21 @@ describe('probe errors keep the item with a reason', () => {
     expect(report).toContain('Run `git worktree prune`');
 
     expect(runRepair(fixture)).toEqual([]);
+  });
+
+  test('an unparseable index mode refuses the item instead of chmodding garbage', () => {
+    const fixture = makeFixture();
+    const wt = addWorktree(fixture, 'wish/demo-alpha');
+    chmodSync(join(wt, 'a.txt'), 0o666);
+    const scan = scanWorktreeModes(fixture.root);
+    const entry = entriesFor(scan, wt, 'a.txt')[0];
+    entry.indexMode = 'not-octal'; // corrupt the entry inside the scan→repair seam
+
+    const lines: string[] = [];
+    repairWorktreeModes(fixture.root, { logSink: (line) => lines.push(line), scan });
+    expect(lines.join('\n')).toContain('unparseable index mode');
+    expect(lines.join('\n')).toContain('kept');
+    expect(modeOf(join(wt, 'a.txt'))).toBe(0o666); // untouched
   });
 
   test('outside a git repository: enumeration failure is surfaced; null root emits nothing', () => {
