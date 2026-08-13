@@ -150,22 +150,54 @@ describe('openWithWalIndexRecovery', () => {
     writeFileSync(`${path}-wal`, '');
   }
 
-  test('a poisoned index that makes the OPEN throw is rebuilt and the open retried exactly once', () => {
+  /**
+   * The retried open, as the real `applyPragmas` performs it: re-entering WAL is
+   * what reinitializes the wal-index in place and clears the poisoned header.
+   * The module itself never unlinks a sidecar (see rebuildSidecarsExclusively).
+   */
+  function reopenLikeTheRealOpen(path: string): Database {
+    const handle = new Database(path);
+    handle.exec('PRAGMA busy_timeout = 5000');
+    handle.exec('PRAGMA journal_mode = WAL');
+    return handle;
+  }
+
+  /** The journal mode a fresh handle reports, without disturbing it. */
+  function journalMode(path: string): string {
+    const probe = new Database(path);
+    try {
+      const row = probe.query('PRAGMA journal_mode').get() as { journal_mode?: string } | null;
+      return String(row?.journal_mode ?? '').toLowerCase();
+    } finally {
+      probe.close();
+    }
+  }
+
+  test('a poisoned index that makes the OPEN throw is healed by SQLite and the open retried exactly once', () => {
     const path = seeded(join(base, 'db.sqlite'));
     poison(path);
 
     let attempts = 0;
-    let retrySawCleanSidecars = false;
+    let retrySawCheckpointedWal = false;
+    let retrySawRollbackMode = false;
     const db = openWithWalIndexRecovery(path, () => {
       attempts += 1;
       if (attempts === 1) throw sqliteError('disk I/O error', 'SQLITE_IOERR_WRITE', 778);
-      retrySawCleanSidecars = !hasStaleReadonlyWalIndex(path) && walSidecarsEmpty(path);
-      return new Database(path);
+      // SQLite's OWN `journal_mode = DELETE` conversion checkpointed the frames
+      // and unlinked the `-wal` under its exclusive locks. Nothing in this
+      // module removed it — and nothing removes anything after that handle
+      // closes, which is what used to SIGBUS a peer that opened in the gap.
+      retrySawCheckpointedWal = walSidecarsEmpty(path) && !existsSync(`${path}-wal`);
+      retrySawRollbackMode = journalMode(path) === 'delete';
+      return reopenLikeTheRealOpen(path);
     });
 
     expect(attempts).toBe(2);
-    expect(retrySawCleanSidecars).toBe(true);
+    expect(retrySawCheckpointedWal).toBe(true);
+    expect(retrySawRollbackMode).toBe(true);
+    db.exec('INSERT INTO t (id) VALUES (3)'); // the healed database takes writes
     db.close();
+    expect(hasStaleReadonlyWalIndex(path)).toBe(false); // the index was reinitialized
   });
 
   test('a poisoned index that survives a SUCCESSFUL open is caught by the write probe, rebuilt, and retried', () => {
@@ -175,20 +207,22 @@ describe('openWithWalIndexRecovery', () => {
     let attempts = 0;
     const db = openWithWalIndexRecovery(path, () => {
       attempts += 1;
-      const handle = new Database(path);
       if (attempts === 1) {
         // Stand in for the platform poison: the open succeeds, the wal-index
         // write path fails. The probe is the only thing that can see this.
+        const handle = new Database(path);
         handle.query = () => {
           throw sqliteError('disk I/O error', 'SQLITE_IOERR_WRITE', 778);
         };
+        return handle;
       }
-      return handle;
+      return reopenLikeTheRealOpen(path);
     });
 
     expect(attempts).toBe(2);
-    expect(hasStaleReadonlyWalIndex(path)).toBe(false);
+    db.exec('INSERT INTO t (id) VALUES (3)'); // the healed database takes writes
     db.close();
+    expect(hasStaleReadonlyWalIndex(path)).toBe(false);
   });
 
   test('a BUSY probe is served, never recovered: the sidecars belong to a live writer', () => {

@@ -21,7 +21,7 @@
  */
 
 import { Database } from 'bun:sqlite';
-import { closeSync, mkdirSync, openSync, readSync, rmSync, statSync } from 'node:fs';
+import { closeSync, mkdirSync, openSync, readSync, statSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 /**
@@ -296,11 +296,21 @@ function probeWalIndex(db: Database, path: string): WalIndexProbe {
  * predicate can never make that call (see {@link hasStaleReadonlyWalIndex}), so
  * SQLite itself makes it.
  *
- * Once the mode change lands the database is a rollback-journal database: no
- * connection can be holding a wal-index for it, so the orphaned sidecar files
- * left on disk are removable with nothing mapping them. WAL is deliberately NOT
- * restored here — going back would immediately recreate the virgin index this
- * heal exists to discard; the retried open's `applyPragmas` restores it.
+ * SQLite performs the whole rebuild itself, under its own locks: the conversion
+ * checkpoints and unlinks the `-wal` and discards the wal-index. THIS MODULE
+ * NEVER TOUCHES A SIDECAR FILE — no unlink, ever, and least of all after the
+ * exclusivity handle closes. That ordering is the second half of the same
+ * regression: `journal_mode = DELETE` proves exclusivity only while the handle
+ * holds its locks, and `db.close()` releases them. A peer that opens in that
+ * window immediately re-enters WAL and mmaps a FRESH `-shm`; unlinking it then
+ * SIGBUSes the peer on its next page touch exactly as a blind pre-proof unlink
+ * would. Verified on macOS/bun: after the conversion the `-wal` is gone and the
+ * lingering `-shm` is harmless — the retried open re-enters WAL and
+ * reinitializes that index in place, clearing the poisoned header.
+ *
+ * WAL is deliberately NOT restored here — going back would immediately recreate
+ * the virgin index this heal exists to discard; the retried open's
+ * `applyPragmas` restores it.
  *
  * Returns false (heal skipped, caller propagates the ORIGINAL error) whenever a
  * peer is live, the throwaway handle cannot be opened, or the `-wal` still holds
@@ -317,18 +327,11 @@ function rebuildSidecarsExclusively(path: string): boolean {
   try {
     db.exec('PRAGMA busy_timeout = 0');
     const row = db.query('PRAGMA journal_mode = DELETE').get() as { journal_mode?: string } | null;
-    if (String(row?.journal_mode ?? '').toLowerCase() !== 'delete') return false;
+    return String(row?.journal_mode ?? '').toLowerCase() === 'delete';
   } catch {
     return false; // SQLITE_BUSY / SQLITE_PROTOCOL — live peers own the sidecars
   } finally {
     db.close();
-  }
-  try {
-    rmSync(`${path}-shm`, { force: true });
-    rmSync(`${path}-wal`, { force: true });
-    return true;
-  } catch {
-    return false;
   }
 }
 
