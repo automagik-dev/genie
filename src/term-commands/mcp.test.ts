@@ -13,8 +13,10 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
+  accessSync,
   chmodSync,
   existsSync,
+  constants as fsConstants,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -89,6 +91,55 @@ async function driveMcp(cwd: string, requests: Record<string, unknown>[]): Promi
     .split('\n')
     .filter((l) => l.trim().length > 0)
     .map((l) => JSON.parse(l) as RpcResponse);
+}
+
+/**
+ * Drive ONE live `genie mcp` session in two stages, running `between` after the
+ * first batch's responses have landed. Sending everything up front (driveMcp)
+ * cannot express a filesystem that changes MID-session, which is exactly what a
+ * degraded-then-repaired server has to survive.
+ */
+async function driveMcpStaged(
+  cwd: string,
+  first: Record<string, unknown>[],
+  expectedFirstLines: number,
+  between: () => void,
+  second: Record<string, unknown>[],
+): Promise<RpcResponse[]> {
+  const proc = Bun.spawn(['bun', GENIE, 'mcp'], {
+    cwd,
+    stdin: 'pipe',
+    stdout: 'pipe',
+    stderr: 'pipe',
+    env: { ...process.env, NO_COLOR: '1', GENIE_TEST_SKIP_PGSERVE: '1' },
+  });
+  const reader = proc.stdout.getReader();
+  const decoder = new TextDecoder();
+  let buffered = '';
+  // Only COMPLETE lines count: a half-arrived line is not a response yet.
+  const complete = (): string[] =>
+    buffered
+      .split('\n')
+      .slice(0, -1)
+      .filter((l) => l.trim().length > 0);
+
+  proc.stdin.write(`${first.map((r) => JSON.stringify(r)).join('\n')}\n`);
+  proc.stdin.flush();
+  while (complete().length < expectedFirstLines) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffered += decoder.decode(value, { stream: true });
+  }
+  between();
+  proc.stdin.write(`${second.map((r) => JSON.stringify(r)).join('\n')}\n`);
+  await proc.stdin.end();
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffered += decoder.decode(value, { stream: true });
+  }
+  await proc.exited;
+  return complete().map((l) => JSON.parse(l) as RpcResponse);
 }
 
 /** Like driveMcp but sends raw (already-serialized) lines — for malformed input. */
@@ -782,6 +833,61 @@ describe('mcp write-capable open', () => {
     }
     if (testError !== undefined) throw testError;
     if (cleanupErrors.length > 0) throw new AggregateError(cleanupErrors, 'Failed to restore write-protected fixture');
+  });
+
+  test('a session whose first write open failed recovers writes as soon as the filesystem is repaired', async () => {
+    const { taskId } = seed(repo);
+    const dbPath = resolveDbPath(repo);
+    const sqlitePaths = [dbPath, `${dbPath}-wal`, `${dbPath}-shm`].filter((p) => existsSync(p));
+    const stateDir = dirname(dbPath);
+    const originalModes = new Map<string, number>([
+      ...sqlitePaths.map((p) => [p, statSync(p).mode & 0o777] as const),
+      [stateDir, statSync(stateDir).mode & 0o777],
+    ]);
+    let repaired = false;
+    const repair = (): void => {
+      if (repaired) return;
+      repaired = true;
+      chmodSync(stateDir, originalModes.get(stateDir)!);
+      for (const path of sqlitePaths) chmodSync(path, originalModes.get(path)!);
+    };
+
+    for (const path of sqlitePaths) chmodSync(path, 0o444);
+    chmodSync(stateDir, 0o555);
+    try {
+      try {
+        accessSync(dbPath, fsConstants.W_OK);
+        return; // running as root — the degrade is inexpressible here
+      } catch {
+        // write access revoked as intended — proceed
+      }
+      const comment = (id: number) => ({
+        jsonrpc: '2.0',
+        id,
+        method: 'tools/call',
+        params: { name: 'genie_task_comment', arguments: { id: taskId, text: `note ${id}` } },
+      });
+      // Two writes on ONE server: the first while the db cannot be written, the
+      // second after the modes are restored between them.
+      const responses = await driveMcpStaged(repo, [INIT, INITIALIZED, comment(41)], 2, repair, [comment(42)]);
+
+      // The first write fails typed — read_only_database where the degraded
+      // handle still serves reads, project-database-unavailable on platforms
+      // that cannot open a write-protected WAL db at all.
+      const before = responses.find((r) => r.id === 41);
+      expect(before?.error).toBeUndefined();
+      expect(before?.result?.isError).toBe(true);
+      expect(['read_only_database', 'project-database-unavailable']).toContain(
+        toolPayload<{ error: string }>(before!).error,
+      );
+      // The second write succeeds on the SAME server: nothing latched.
+      const after = responses.find((r) => r.id === 42);
+      expect(after?.error).toBeUndefined();
+      expect(after?.result?.isError).toBe(false);
+      expect(toolPayload<{ taskId: string }>(after!).taskId).toBe(taskId);
+    } finally {
+      repair();
+    }
   });
 });
 // ============================================================================

@@ -52,6 +52,43 @@ await runMcpServerLoop({
   );
 }
 
+/**
+ * Write a stub server whose injected open serves DEGRADED (read-only) handles
+ * for the first `degradedOpens` opens and a write-capable one after that — the
+ * "filesystem repaired mid-session" shape. The `probe` tool reports what the
+ * loop is currently holding.
+ */
+function writeDegradeHarness(degradedOpens: number): void {
+  writeFileSync(
+    harness,
+    `import { runMcpServerLoop } from ${JSON.stringify(join(import.meta.dir, 'mcp-server.ts'))};
+const degraded = new WeakSet();
+let opens = 0;
+let closes = 0;
+await runMcpServerLoop({
+  tools: [
+    {
+      name: 'probe',
+      description: 'd',
+      inputSchema: {},
+      handler: (ctx) => ({ degraded: degraded.has(ctx.db), opens, closes }),
+    },
+  ],
+  openDb: () => {
+    opens += 1;
+    const db = { query: () => ({ get: () => ({ user_version: 1 }) }), close: () => { closes += 1; } };
+    if (opens <= ${degradedOpens}) degraded.add(db);
+    return db;
+  },
+  isDegradedHandle: (db) => degraded.has(db),
+  initialize: () => ({
+    result: { protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 't', version: '0' } },
+  }),
+});
+`,
+  );
+}
+
 interface RpcMessage {
   id?: number | string | null;
   result?: { content?: Array<{ type: string; text: string }>; isError?: boolean; structuredContent?: unknown };
@@ -114,6 +151,27 @@ describe('runMcpServerLoop seam', () => {
     // The wire payload is the INNER value — no tag key leaks, shapes unchanged.
     expect(toolPayload<Record<string, unknown>>(res!)).toEqual({ error: 'typed_failure', detail: 'x' });
     expect(res?.result?.structuredContent).toEqual({ error: 'typed_failure', detail: 'x' });
+  });
+
+  test('a degraded read-only handle is retried per call and promoted the moment the write open succeeds', async () => {
+    // Opens 1 (session start) and 2 (the first retry) are degraded; open 3 is
+    // write-capable — the filesystem was repaired between the two tool calls.
+    writeDegradeHarness(2);
+    const probe = (id: number) => ({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'probe' } });
+    const responses = await drive([INIT, probe(2), probe(3)]);
+
+    // Call 1: the retry is still degraded, so one degraded handle replaces
+    // another (closed first, so it cannot hold the WAL index read-only) and
+    // reads keep serving.
+    const first = toolPayload<{ degraded: boolean; opens: number; closes: number }>(responses.find((r) => r.id === 2)!);
+    expect(first).toEqual({ degraded: true, opens: 2, closes: 1 });
+
+    // Call 2: the write open finally succeeds. The degrade never latched, and
+    // the handle it replaced was closed (no leak).
+    const second = toolPayload<{ degraded: boolean; opens: number; closes: number }>(
+      responses.find((r) => r.id === 3)!,
+    );
+    expect(second).toEqual({ degraded: false, opens: 3, closes: 2 });
   });
 
   test('an untagged error-keyed handler result stays isError false', async () => {

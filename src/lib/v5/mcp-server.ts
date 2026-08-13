@@ -140,6 +140,15 @@ export interface McpServerConfig {
    */
   validateReadonlyDb?: (db: Database) => boolean;
   /**
+   * Optional predicate identifying a handle `openDb` served READ-ONLY because
+   * its write path was impossible. When supplied, the loop re-attempts the open
+   * on every `tools/call` while the held handle is degraded and promotes on
+   * success — so a repaired filesystem restores writes without restarting the
+   * server, matching the per-open (never latched) derivation the write open
+   * itself uses. Consumers whose open is read-only by design omit it.
+   */
+  isDegradedHandle?: (db: Database) => boolean;
+  /**
    * OPT-IN fail-closed resolver (net-new). When provided, the loop resolves the
    * project context once per `tools/call` and, on any non-`ok` kind, returns a
    * typed structured error (`{ error, detail }`, `isError: true`) instead of
@@ -215,6 +224,24 @@ export async function runMcpServerLoop(config: McpServerConfig): Promise<void> {
     ok(id, { content: [{ type: 'text', text: JSON.stringify(payload) }], structuredContent: payload, isError: true });
   }
 
+  /**
+   * Swap a degraded (read-only) handle for a write-capable one as soon as the
+   * open can produce it. Without this, ONE transient write-open failure at
+   * session start would serve `read_only_database` for every write tool until
+   * the client restarts the server — a latched session state the write open
+   * deliberately does not have. A retry that is still degraded (or fails
+   * outright) is discarded and the current handle keeps serving reads.
+   */
+  function promoteDegradedHandle(): void {
+    if (!ctx.db || !config.isDegradedHandle?.(ctx.db)) return;
+    // Release the read-only connection BEFORE re-opening: while it holds the WAL
+    // index mapped read-only, a fresh handle inherits that index and its writes
+    // fail with an instant "database is locked". A retry that is still degraded
+    // just replaces one degraded handle with another — reads keep serving.
+    ctx.db.close();
+    ctx.db = openValidatedDb(ctx.context);
+  }
+
   function handleToolsCall(id: number | string | null, params: Record<string, unknown> | undefined): void {
     const name = typeof params?.name === 'string' ? params.name : '';
     const args = (params?.arguments as Record<string, unknown> | undefined) ?? {};
@@ -247,6 +274,7 @@ export async function runMcpServerLoop(config: McpServerConfig): Promise<void> {
     // per call so a db created mid-session (e.g. a fresh `genie init` or a
     // bridge write) is picked up.
     if (!ctx.db) ctx.db = openValidatedDb(ctx.context);
+    else promoteDegradedHandle();
     // Existence is not openability: a directory, malformed file, unreadable
     // path, or failed open can still arrive with an `ok` path context.
     // Never dispatch a fail-closed MCP tool with a null handle, because every

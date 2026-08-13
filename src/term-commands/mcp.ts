@@ -38,7 +38,8 @@ const PROTOCOL_VERSION = '2024-11-05';
 export async function runMcpServer(): Promise<void> {
   // Lazy: the write-capable bun:sqlite open + tools load here, not at genie startup.
   const mcpTools = await import('../lib/v5/mcp-tools.js');
-  const { isCurrentGenieDb, MCP_TOOLS, MCP_WRITE_TOOLS, openWriteableDb, resolveProjectContext } = mcpTools;
+  const { isCurrentGenieDb, isDegradedReadonlyDb, MCP_TOOLS, MCP_WRITE_TOOLS, openWriteableDb, resolveProjectContext } =
+    mcpTools;
   const { runMcpServerLoop } = await import('../lib/v5/mcp-server.js');
   await runMcpServerLoop({
     // MCP_TOOLS stays the read registry ui-bridge splices; the operative write
@@ -52,6 +53,11 @@ export async function runMcpServer(): Promise<void> {
     // validator below adjudicates — a fully-current db keeps serving reads.
     openDb: openWriteableDb,
     validateReadonlyDb: isCurrentGenieDb,
+    // A degrade must not outlive the condition that caused it: while the held
+    // handle is read-only the loop retries the write open per call and promotes
+    // the moment it succeeds, so repairing the filesystem restores the write
+    // tools without restarting the server.
+    isDegradedHandle: isDegradedReadonlyDb,
     // Fail-closed: missing repository context / genie.db / unsupported layouts
     // surface as a typed MCP error instead of a healthy-looking empty board.
     resolveContext: resolveProjectContext,

@@ -241,7 +241,9 @@ function reopenReadableDespiteFailedHeal(target?: string | ProjectDatabaseBindin
  * return a typed `read_only_database` error instead of a protocol failure. The
  * per-open derivation means a repaired filesystem restores writes on the next
  * successful write open (fresh handle, no membership) and a later failure
- * re-degrades (fresh handle, membership again).
+ * re-degrades (fresh handle, membership again) — and the server loop re-opens
+ * per call while its handle is degraded (`isDegradedHandle`), so that recovery
+ * lands inside a live session instead of waiting for a client restart.
  */
 const degradedReadonlyHandles = new WeakSet<Database>();
 
