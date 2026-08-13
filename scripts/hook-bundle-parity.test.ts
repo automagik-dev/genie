@@ -31,7 +31,7 @@ describe('committed hook bundle parity', () => {
 
         writeFileSync(bundle, await renderHookBundle(target.source));
         chmodSync(bundle, 0o744);
-        await expect(assertHookBundleParity(fixture)).rejects.toThrow('must have mode 755');
+        await expect(assertHookBundleParity(fixture)).rejects.toThrow(/must have mode 755.*genie doctor --fix/);
       }
     } finally {
       rmSync(root, { recursive: true, force: true });
