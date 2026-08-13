@@ -41,13 +41,22 @@ const BUSY_RETRY_DELAYS_MS = [25, 50, 100, 200, 400] as const;
 
 /**
  * SQLite PRIMARY result codes that mean "the write lock was contended", not
- * corruption: SQLITE_BUSY (5) and SQLITE_LOCKED (6). Every extended code in
- * those families (SQLITE_BUSY_RECOVERY, _SNAPSHOT, _TIMEOUT, SQLITE_LOCKED_*)
- * keeps its primary code in the low byte, so matching the low byte covers the
- * whole family — including the extended codes a raw `db.query(...)` surfaces
- * that a fixed name list would miss.
+ * corruption: SQLITE_BUSY (5), SQLITE_LOCKED (6) and SQLITE_PROTOCOL (15).
+ * Every extended code in those families (SQLITE_BUSY_RECOVERY, _SNAPSHOT,
+ * _TIMEOUT, SQLITE_LOCKED_*) keeps its primary code in the low byte, so matching
+ * the low byte covers the whole family — including the extended codes a raw
+ * `db.query(...)` surfaces that a fixed name list would miss.
+ *
+ * SQLITE_PROTOCOL ("locking protocol") belongs here: SQLite raises it when a
+ * writer loses the WAL-index lock race too many times in a row under heavy
+ * multi-process contention. It is transient lock contention on a HEALTHY
+ * database, so it must surface as {@link BusyDbError} (safe to retry), never as
+ * a corruption claim.
  */
-const BUSY_PRIMARY_CODES = new Set([5, 6]);
+const BUSY_PRIMARY_CODES = new Set([5, 6, 15]);
+
+/** `code` name prefixes covering the same contended-lock families. */
+const BUSY_CODE_PREFIXES = ['SQLITE_BUSY', 'SQLITE_LOCKED', 'SQLITE_PROTOCOL'] as const;
 
 // ============================================================================
 // Typed errors
@@ -130,8 +139,8 @@ export function isBusyError(err: unknown): boolean {
   const errno = (err as { errno?: unknown }).errno;
   if (typeof errno === 'number' && BUSY_PRIMARY_CODES.has(errno & 0xff)) return true;
   const code = (err as { code?: unknown }).code;
-  if (typeof code === 'string' && (code.startsWith('SQLITE_BUSY') || code.startsWith('SQLITE_LOCKED'))) return true;
-  return /database (?:table )?is locked/i.test(err.message);
+  if (typeof code === 'string' && BUSY_CODE_PREFIXES.some((prefix) => code.startsWith(prefix))) return true;
+  return /database (?:table )?is locked|locking protocol/i.test(err.message);
 }
 
 // ============================================================================
@@ -274,9 +283,46 @@ function probeWalIndex(db: Database, path: string): WalIndexProbe {
   }
 }
 
-/** Remove both sidecars when — and only when — no frames would be lost. */
-function removePoisonedSidecars(path: string): boolean {
+/**
+ * Rebuild the WAL sidecars, and ONLY under SQLite-proven exclusive access.
+ *
+ * `PRAGMA journal_mode = DELETE` is the proof: SQLite takes the exclusive
+ * WAL-index lock, checkpoints every `-wal` frame into the main file and drops
+ * the wal-index — and with `busy_timeout = 0` it fails INSTANTLY with
+ * SQLITE_BUSY when any peer connection is live. That is the whole point: a
+ * blind `rmSync` of `-shm`/`-wal` cannot tell a poisoned index from a healthy
+ * one another process holds mmapped, and unlinking under a live mmap SIGBUSes
+ * that peer and cascades SQLITE_PROTOCOL to the rest of the fleet. The header
+ * predicate can never make that call (see {@link hasStaleReadonlyWalIndex}), so
+ * SQLite itself makes it.
+ *
+ * Once the mode change lands the database is a rollback-journal database: no
+ * connection can be holding a wal-index for it, so the orphaned sidecar files
+ * left on disk are removable with nothing mapping them. WAL is deliberately NOT
+ * restored here — going back would immediately recreate the virgin index this
+ * heal exists to discard; the retried open's `applyPragmas` restores it.
+ *
+ * Returns false (heal skipped, caller propagates the ORIGINAL error) whenever a
+ * peer is live, the throwaway handle cannot be opened, or the `-wal` still holds
+ * un-checkpointed frames.
+ */
+function rebuildSidecarsExclusively(path: string): boolean {
   if (!walSidecarsEmpty(path)) return false;
+  let db: Database;
+  try {
+    db = new Database(path);
+  } catch {
+    return false; // cannot even get a handle — the heal is not possible here
+  }
+  try {
+    db.exec('PRAGMA busy_timeout = 0');
+    const row = db.query('PRAGMA journal_mode = DELETE').get() as { journal_mode?: string } | null;
+    if (String(row?.journal_mode ?? '').toLowerCase() !== 'delete') return false;
+  } catch {
+    return false; // SQLITE_BUSY / SQLITE_PROTOCOL — live peers own the sidecars
+  } finally {
+    db.close();
+  }
   try {
     rmSync(`${path}-shm`, { force: true });
     rmSync(`${path}-wal`, { force: true });
@@ -293,8 +339,13 @@ function removePoisonedSidecars(path: string): boolean {
  * probe. Either way the sidecars are rebuilt and the open is retried EXACTLY
  * ONCE.
  *
- * Never runs for a contended database: a busy failure (from the open or the
- * probe) means a live writer owns the sidecars, so they are left untouched.
+ * Never runs for a contended database. Two independent guards enforce that: a
+ * busy failure (from the open or the probe) short-circuits, and the rebuild
+ * itself only proceeds under SQLite-proven exclusive access (see
+ * {@link rebuildSidecarsExclusively}). The header predicate is never more than a
+ * cheap gate — the failure evidence (a non-busy open throw, or a poisoned write
+ * probe) plus SQLite's own exclusivity proof are what condemn the index. When
+ * the rebuild is skipped the ORIGINAL error propagates and both sidecars survive.
  */
 export function openWithWalIndexRecovery(path: string, open: () => Database): Database {
   let db: Database;
@@ -302,14 +353,15 @@ export function openWithWalIndexRecovery(path: string, open: () => Database): Da
     db = open();
   } catch (err) {
     if (isBusyError(err) || err instanceof BusyDbError) throw err;
-    if (!hasStaleReadonlyWalIndex(path) || !removePoisonedSidecars(path)) throw err;
+    if (!hasStaleReadonlyWalIndex(path) || !rebuildSidecarsExclusively(path)) throw err;
     return open();
   }
   const probe = probeWalIndex(db, path);
   if (probe.state !== 'poisoned') return db;
-  // Release the handle's mmap of `-shm` before the sidecars are rebuilt.
+  // Release the handle's mmap of `-shm` before the sidecars are rebuilt: our own
+  // live connection would otherwise be the peer that blocks the exclusive proof.
   db.close();
-  if (!removePoisonedSidecars(path)) throw new WalIndexPoisonError(path, probe.cause);
+  if (!rebuildSidecarsExclusively(path)) throw new WalIndexPoisonError(path, probe.cause);
   return open();
 }
 

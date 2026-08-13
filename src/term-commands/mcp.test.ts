@@ -748,6 +748,36 @@ describe('mcp missing-database fail-closed', () => {
 // ============================================================================
 
 describe('mcp write-capable open', () => {
+  /**
+   * True when THIS environment can express "a write-protected, fully-current WAL
+   * database still serves reads". Two ways it cannot:
+   *   - running as root (some CI containers), where chmod never revokes write
+   *     access, so the write-protected branch is not the one under test;
+   *   - platforms whose SQLite refuses to open a write-protected WAL database
+   *     read-only at all (Linux: SQLITE_READONLY_CANTINIT), where the asserted
+   *     state simply does not exist.
+   * Mirrors the unit-level escape hatch in mcp-tools.test.ts.
+   */
+  function writeProtectedReadsAreExpressible(dbPath: string): boolean {
+    try {
+      accessSync(dbPath, fsConstants.W_OK);
+      return false; // still writable (running as root)
+    } catch {
+      // write access revoked as intended — proceed to the readability probe
+    }
+    try {
+      const probe = new Database(dbPath, { readonly: true });
+      try {
+        probe.query('SELECT 1 FROM tasks').get();
+        return true;
+      } finally {
+        probe.close();
+      }
+    } catch {
+      return false; // unreadable here — the scenario is inexpressible
+    }
+  }
+
   test('outside a git repo, tool calls fail closed and create neither .genie/ nor genie.db', async () => {
     const plain = mkdtempSync(join(tmpdir(), 'genie-mcp-nonrepo-'));
     try {
@@ -790,6 +820,8 @@ describe('mcp write-capable open', () => {
       originalModes.set(stateDir, statSync(stateDir).mode & 0o777);
       mutatedModes.add(stateDir);
       chmodSync(stateDir, 0o555);
+
+      if (!writeProtectedReadsAreExpressible(dbPath)) return; // see the helper
 
       const calls = [
         { id: 21, name: 'genie_board', arguments: {} },

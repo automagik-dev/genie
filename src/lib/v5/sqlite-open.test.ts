@@ -11,7 +11,7 @@
 
 import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -95,6 +95,11 @@ describe('isBusyError', () => {
       true,
     );
     expect(isBusyError(new BusyDbError('/tmp/x.db', new Error('database is locked')))).toBe(true);
+    // SQLITE_PROTOCOL (15) is a lost WAL-index lock race under heavy contention,
+    // not corruption — it must retry, never surface as "malformed".
+    expect(isBusyError(Object.assign(new Error('locking protocol'), { code: 'SQLITE_PROTOCOL', errno: 15 }))).toBe(
+      true,
+    );
     // The poison's own failure shape must NOT be classified busy — that is what
     // routes it into recovery instead of the busy carve-out.
     expect(isBusyError(Object.assign(new Error('disk I/O error'), { code: 'SQLITE_IOERR_WRITE', errno: 778 }))).toBe(
@@ -238,6 +243,58 @@ describe('openWithWalIndexRecovery', () => {
     // Both sidecars survive: the frames are still recoverable by SQLite itself.
     expect(statSync(`${path}-wal`).size).toBeGreaterThan(0);
     expect(hasStaleReadonlyWalIndex(path)).toBe(true);
+  });
+
+  test('a LIVE PEER blocks the rebuild: the original error propagates and both sidecars survive', () => {
+    // The regression this locks: the header predicate and an empty `-wal` are
+    // BOTH true for a healthy, fully-current database whose live peers simply
+    // have not written yet. Unlinking the sidecars there SIGBUSes every peer
+    // holding `-shm` mmapped and cascades SQLITE_PROTOCOL to the rest. Only
+    // SQLite can prove exclusivity, so a live peer must skip the heal entirely.
+    const path = seeded(join(base, 'db.sqlite'));
+    poison(path);
+    const peer = new Database(path);
+    peer.query('SELECT count(*) AS n FROM t').get(); // maps `-shm`
+
+    let attempts = 0;
+    try {
+      expect(() =>
+        openWithWalIndexRecovery(path, () => {
+          attempts += 1;
+          throw sqliteError('disk I/O error', 'SQLITE_IOERR_WRITE', 778);
+        }),
+      ).toThrow('disk I/O error'); // the ORIGINAL error, not a heal-and-retry
+      expect(attempts).toBe(1);
+      expect(existsSync(`${path}-shm`)).toBe(true);
+      expect(existsSync(`${path}-wal`)).toBe(true);
+      expect(hasStaleReadonlyWalIndex(path)).toBe(true); // sidecars untouched
+    } finally {
+      peer.close();
+    }
+  });
+
+  test('a LIVE PEER blocks the probe-path rebuild too: typed poison error, sidecars intact', () => {
+    const path = seeded(join(base, 'db.sqlite'));
+    poison(path);
+    const peer = new Database(path);
+    peer.query('SELECT count(*) AS n FROM t').get(); // maps `-shm`
+
+    try {
+      expect(() =>
+        openWithWalIndexRecovery(path, () => {
+          const handle = new Database(path);
+          handle.query = () => {
+            throw sqliteError('disk I/O error', 'SQLITE_IOERR_WRITE', 778);
+          };
+          return handle;
+        }),
+      ).toThrow(WalIndexPoisonError);
+      expect(existsSync(`${path}-shm`)).toBe(true);
+      expect(existsSync(`${path}-wal`)).toBe(true);
+      expect(hasStaleReadonlyWalIndex(path)).toBe(true);
+    } finally {
+      peer.close();
+    }
   });
 
   test('a healthy open is returned as-is (the virgin header self-heals through the probe)', () => {

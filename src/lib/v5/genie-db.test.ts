@@ -370,6 +370,18 @@ describe('busy classification', () => {
     expect(isBusyError(new Error('database table is locked'))).toBe(true);
   });
 
+  test('SQLITE_PROTOCOL is transient contention, never corruption', () => {
+    // "locking protocol" is what SQLite raises when a writer loses the WAL-index
+    // lock race repeatedly under heavy multi-process contention. The database is
+    // HEALTHY; classifying it down the corruption path made a contended open
+    // claim "Refusing malformed database".
+    expect(isBusyError(Object.assign(new Error('locking protocol'), { code: 'SQLITE_PROTOCOL', errno: 15 }))).toBe(
+      true,
+    );
+    expect(isBusyError(Object.assign(new Error('locking protocol'), { errno: 15 }))).toBe(true);
+    expect(isBusyError(new Error('SQLITE_PROTOCOL: locking protocol'))).toBe(true);
+  });
+
   test('isBusyError rejects unrelated and non-error inputs', () => {
     expect(isBusyError(new Error('file is not a database'))).toBe(false);
     expect(isBusyError(Object.assign(new Error('x'), { code: 'SQLITE_CORRUPT' }))).toBe(false);
@@ -440,9 +452,19 @@ describe('poisoned WAL index recovery through openDb', () => {
     chmodSync(path, 0o444);
     chmodSync(dir, 0o555);
     try {
-      const degraded = new Database(path, { readonly: true });
-      degraded.query('SELECT count(*) AS n FROM meta').get();
-      degraded.close();
+      // Platforms differ: where SQLite refuses a readonly open of a
+      // write-protected WAL database outright (SQLITE_READONLY_CANTINIT on
+      // Linux), no poison is produced and the line below skips the scenario.
+      try {
+        const degraded = new Database(path, { readonly: true });
+        try {
+          degraded.query('SELECT count(*) AS n FROM meta').get();
+        } finally {
+          degraded.close();
+        }
+      } catch {
+        // this platform cannot express the degraded readonly session
+      }
     } finally {
       chmodSync(dir, 0o755);
       chmodSync(path, 0o644);
