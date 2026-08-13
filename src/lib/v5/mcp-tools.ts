@@ -19,7 +19,7 @@
 
 import { constants, Database } from 'bun:sqlite';
 import { execFileSync } from 'node:child_process';
-import { accessSync, constants as fsConstants, readFileSync, rmSync, statSync } from 'node:fs';
+import { accessSync, constants as fsConstants } from 'node:fs';
 import {
   BusyDbError,
   type ProjectContext,
@@ -32,7 +32,7 @@ import {
 } from './genie-db.js';
 import { resolveEventAuthor } from './identity.js';
 import { type ToolErrorResult, isToolError, toolError } from './mcp-server.js';
-import { BUSY_TIMEOUT_MS } from './sqlite-open.js';
+import { BUSY_TIMEOUT_MS, isBusyError } from './sqlite-open.js';
 
 // Re-exported so `genie mcp` (mcp.ts) pulls the fail-closed context resolver in
 // the SAME lazy dynamic import that already loads the tool registry — keeping
@@ -269,21 +269,18 @@ export function isDegradedReadonlyDb(db: Database | null | undefined): boolean {
  *    DDL that already ran against a substituted file cannot be undone, but the
  *    mismatched handle is discarded before any tool can observe or mutate it
  *    (the same residual as the readonly healing path).
- * 2. STALE-READONLY-SIDECAR RECOVERY — when the write open fails and the
- *    leftover `-shm` carries SQLite's deliberate read-only WAL-index header
- *    (iChange + nPage zeroed — written when a DEGRADED readonly connection
- *    closed while the file was write-protected) and the `-wal` is absent or
- *    empty (no un-checkpointed frames to lose), remove both sidecars and retry
- *    the write open once. This is what lets a repaired filesystem restore
- *    writes on the next open — without it, the stale header would keep every
- *    later writer failing closed on the affected platforms.
+ * 2. STALE-READONLY-SIDECAR RECOVERY — a poisoned WAL index (the read-only
+ *    header a degraded readonly close leaves in `-shm`) is healed INSIDE the
+ *    shared open primitive (`openWithWalIndexRecovery` in sqlite-open.ts), so
+ *    `genie mcp` and every CLI writer recover identically. Nothing about the
+ *    recovery lives here.
  * 3. BUSY CARVE-OUT — when the write-open failure is a `BusyDbError` (the
  *    write lock was contended past `busy_timeout` + backoff — the db is
- *    healthy, another process is writing), return `null` WITHOUT sidecar
- *    recovery and WITHOUT the read-only-degrade fallback: a fully-writable db
- *    that merely lost a lock race must not be marked degraded for the session
- *    (write tools would otherwise report `read_only_database` for a merely-busy
- *    db). The loop's per-call reopen retries the write open on the next call.
+ *    healthy, another process is writing), return `null` WITHOUT the
+ *    read-only-degrade fallback: a fully-writable db that merely lost a lock
+ *    race must not be marked degraded for the session (write tools would
+ *    otherwise report `read_only_database` for a merely-busy db). The loop's
+ *    per-call reopen retries the write open on the next call.
  * 4. READ-ONLY-DEGRADE FALLBACK — when the write path still fails
  *    (write-protected file/filesystem, malformed, foreign), fall back to the
  *    readonly healing open. The loop's strict `validateReadonlyDb:
@@ -319,27 +316,9 @@ export function openWriteableDb(
       : resolveProjectDatabaseBinding(resolveDbPath(target));
   let db: Database | null = null;
   if (initial.ok) {
-    const binding = initial.binding;
-    const first = tryWriteOpen(binding, dependencies);
-    if (first.busy) return null; // contended write lock — never degrade a healthy-but-busy db
-    db = first.db;
-    if (db === null && hasStaleReadonlyWalIndex(binding) && walSidecarsEmpty(binding)) {
-      // A prior degraded session left SQLite's read-only WAL-index header in
-      // -shm; both sidecars must be rebuilt before any writer can proceed.
-      // Re-check the header immediately before removal: a concurrent writer may
-      // have rebuilt live sidecars since the check above (TOCTOU window).
-      if (hasStaleReadonlyWalIndex(binding) && walSidecarsEmpty(binding)) {
-        try {
-          rmSync(`${binding.physicalPath}-shm`, { force: true });
-          rmSync(`${binding.physicalPath}-wal`, { force: true });
-        } catch {
-          // Sidecar removal is best-effort; the fallback below still adjudicates.
-        }
-      }
-      const retried = tryWriteOpen(binding, dependencies);
-      if (retried.busy) return null;
-      db = retried.db;
-    }
+    const attempt = tryWriteOpen(initial.binding, dependencies);
+    if (attempt.busy) return null; // contended write lock — never degrade a healthy-but-busy db
+    db = attempt.db;
   }
   if (db !== null) return db;
   const degraded = openReadonlyDbHealingStaleSchema(target);
@@ -354,54 +333,6 @@ function isFileWritable(path: string): boolean {
     return true;
   } catch {
     return false;
-  }
-}
-
-/**
- * True when the `-shm` holds SQLite's deliberate read-only WAL-index header:
- * the change counter (iChange, offset 8) and the db-size-in-pages (nPage,
- * offset 20) header fields are zeroed (a live index always has both nonzero).
- * This is the exact state a degraded readonly connection leaves behind when it
- * closes while the database file is write-protected — the one state that would
- * otherwise keep every later writer failing. Reproduced on macOS/bun, where
- * `new Database(path)` silently opens a write-protected db as READONLY and the
- * close writes the zeroed read-only header (iVersion + isInit still set) into
- * `-shm`; a fully-checkpointed db has no `-wal` frames, so the recovery only
- * ever discards empty sidecars.
- *
- * IMPORTANT (verified on this machine): the REAL poison is byte-for-byte
- * identical to the virgin header bun writes when it freshly (re)creates the
- * index on any healthy open — all 32768 bytes, no checksum/salt/copy-2
- * difference. So this predicate alone CANNOT be used as a post-open test: a
- * healthy fresh open also reports stale. The open itself also does NOT throw
- * on the poison (bun opens silently READONLY, or a writable-looking handle
- * whose writes fail with "disk I/O error"); only a real write distinguishes
- * them. That is why {@link tryWriteOpen} re-checks this predicate after a
- * successful open and, when stale, exercises the handle with a PASSIVE
- * checkpoint (healthy: succeeds and self-heals the header; poison: throws)
- * before routing the stale case into the remove-and-retry recovery below.
- */
-export function hasStaleReadonlyWalIndex(binding: ProjectDatabaseBinding): boolean {
-  try {
-    const shm = readFileSync(`${binding.physicalPath}-shm`);
-    if (shm.length < 24) return false;
-    return shm.readUInt32BE(8) === 0 && shm.readUInt32BE(20) === 0;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * True when the `-wal` is absent or empty — removing the sidecars loses no
- * frames. ENOENT is the common case (a fully-checkpointed db has no `-wal`);
- * only a stat failure other than absence stays conservative (false).
- */
-export function walSidecarsEmpty(binding: ProjectDatabaseBinding): boolean {
-  try {
-    const wal = statSync(`${binding.physicalPath}-wal`);
-    return wal.size === 0;
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code === 'ENOENT';
   }
 }
 
@@ -420,32 +351,12 @@ function tryWriteOpen(binding: ProjectDatabaseBinding, dependencies: WriteableDb
       closeReadonlyDb(db);
       return { db: null, busy: false };
     }
-    // Post-open stale-sidecar re-check: a zeroed iChange/nPage header in -shm
-    // is AMBIGUOUS right after an open on this platform. bun writes a
-    // byte-identical virgin header when it (re)creates the index (HEALTHY —
-    // the first real write rebuilds it), and the degraded-readonly close
-    // writes the same bytes (POISON — every later write fails with a raw
-    // SQLITE_READONLY or "disk I/O error", reads still serve). We verified the
-    // files are byte-for-byte identical (all 32768 bytes), so no file-level
-    // predicate can tell them apart — the minimal additional state lives on
-    // the HANDLE: exercise the wal-index write path with a PASSIVE checkpoint.
-    // Healthy virgin: succeeds (and self-heals the header). Poison: throws.
-    // Busy (live writer): checkpoint returns a busy row without throwing, so
-    // a healthy-but-busy db is never mislabeled — and a BusyDbError from the
-    // open itself still short-circuits above with busy=true, no recovery, no
-    // degrade (F3 carve-out intact).
-    if (hasStaleReadonlyWalIndex(binding)) {
-      try {
-        db.query('PRAGMA wal_checkpoint(PASSIVE)').all();
-      } catch (probeErr) {
-        closeReadonlyDb(db);
-        return { db: null, busy: probeErr instanceof BusyDbError };
-      }
-    }
     return { db, busy: false };
   } catch (err) {
+    // A contended lock (typed by the shared open, or raw from an injected one)
+    // is transient: the caller must not degrade the session for it.
     closeReadonlyDb(db);
-    return { db: null, busy: err instanceof BusyDbError };
+    return { db: null, busy: err instanceof BusyDbError || isBusyError(err) };
   }
 }
 

@@ -1,7 +1,7 @@
 import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -18,6 +18,7 @@ import {
   resolveDbPath,
   resolveRepoRoot,
 } from './genie-db.js';
+import { hasStaleReadonlyWalIndex } from './sqlite-open.js';
 
 let dir: string;
 
@@ -417,6 +418,49 @@ describe('busy classification', () => {
       holder.close();
     }
   }, 60_000);
+});
+
+// ---------------------------------------------------------------------------
+// Poisoned WAL index: a database that was briefly write-protected keeps a
+// read-only wal-index header in `-shm`. The CLI write path used to open through
+// it happily and then fail EVERY write with SQLITE_IOERR_WRITE — the recovery
+// existed only above the MCP open. It now lives in the shared primitive, so
+// `genie task`, `task sync`, and the git-hook sync all heal on the next open.
+// ---------------------------------------------------------------------------
+describe('poisoned WAL index recovery through openDb', () => {
+  test('a database poisoned by a degraded readonly session takes writes again on the next openDb', () => {
+    const path = join(dir, 'genie.db');
+    const seed = openDb({ path });
+    seed.exec("INSERT INTO meta (key, value) VALUES ('probe', '1')");
+    seed.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    seed.close();
+
+    // Produce the REAL poison: a readonly connection closing while the file is
+    // write-protected writes SQLite's zeroed read-only wal-index header.
+    chmodSync(path, 0o444);
+    chmodSync(dir, 0o555);
+    try {
+      const degraded = new Database(path, { readonly: true });
+      degraded.query('SELECT count(*) AS n FROM meta').get();
+      degraded.close();
+    } finally {
+      chmodSync(dir, 0o755);
+      chmodSync(path, 0o644);
+    }
+    if (!hasStaleReadonlyWalIndex(path)) return; // platform never produces the poison
+
+    // The repaired filesystem must take writes on the very next CLI open.
+    const db = openDb({ path });
+    try {
+      db.exec("INSERT INTO meta (key, value) VALUES ('after-poison', '1')");
+      expect((db.query("SELECT value FROM meta WHERE key = 'after-poison'").get() as { value: string }).value).toBe(
+        '1',
+      );
+    } finally {
+      db.close();
+    }
+    expect(hasStaleReadonlyWalIndex(path)).toBe(false); // the index was rebuilt
+  });
 });
 
 // ---------------------------------------------------------------------------
