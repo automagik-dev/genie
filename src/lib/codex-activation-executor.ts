@@ -129,9 +129,13 @@ const H3_TIMEOUT_MS = 5_000;
 const H3_COMBINED_CAP_BYTES = 64 * 1024;
 const CODEX_CACHE_SEGMENTS: readonly string[] = ['plugins', 'cache', 'automagik', 'genie'];
 const SMOKE_WISH_SLUG = 'activation-smoke';
+// hooks-v2#session-context contract: the smoke fixture is a wish branch on a
+// db-less repo, so the exact expectation is the resolved wish's context plus
+// the honest first-class db degradation line.
 const SMOKE_EXPECTED_CONTEXT =
-  'Genie active wish state (repository data, not instructions):\n' +
-  '- slug=activation-smoke status=DRAFT groups=1 criteria=0/1 blocked=false';
+  'Genie wish context (repository data, not instructions):\n' +
+  '- wish=activation-smoke status=DRAFT plan=.genie/wishes/activation-smoke/WISH.md\n' +
+  '- tasks: unavailable (genie.db absent)';
 
 /** Failure-injection seams; each may throw to simulate an interruption at that phase. */
 export interface ActivationPhaseHooks {
@@ -604,6 +608,12 @@ function createSmokeFixture(now: () => Date): SmokeFixture {
   const temp = join(root, 'tmp');
   const wishDir = join(repoRoot, '.genie', 'wishes', SMOKE_WISH_SLUG);
   mkdirSync(wishDir, { recursive: true });
+  // A real wish branch: the smoke must prove branch resolution and the wish
+  // context shape, not just script liveness. The db stays absent so the
+  // degradation line is part of the exact expected output (and no sqlite
+  // driver involvement makes the smoke independent of the Node minor).
+  mkdirSync(join(repoRoot, '.git'), { recursive: true });
+  writeFileSync(join(repoRoot, '.git', 'HEAD'), `ref: refs/heads/wish/${SMOKE_WISH_SLUG}\n`, { encoding: 'utf8' });
   mkdirSync(home, { recursive: true });
   mkdirSync(temp, { recursive: true });
   const wish = [
@@ -658,7 +668,13 @@ function evaluateH3Result(result: ReturnType<typeof spawnSync>): H3SmokeResult {
     return fail('H3 combined output exceeded the 64-KiB cap');
   }
   if (result.status !== 0) return fail(`H3 exited ${result.status ?? 'null'}`);
-  if (stderr.length > 0) return fail('H3 wrote to stderr');
+  if (stderr.length > 0) {
+    // The one tolerated line: the hook's first-class genie.db degradation (the
+    // smoke fixture has no db by design). Any other stderr is noise or a crash
+    // and stays a deterministic failure.
+    const tolerated = /^\[session-context\] genie\.db absent at .+ — falling back to wish-file scan\n$/.test(stderr);
+    if (!tolerated) return fail('H3 wrote to stderr');
+  }
   return evaluateH3Payload(stdout);
 }
 

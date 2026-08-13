@@ -262,14 +262,23 @@ function assertSessionStartHook(iso: IsolatedHome, version: string): void {
     stdout: 'pipe',
     stderr: 'pipe',
   });
-  if (proc.exitCode !== 0 || proc.stderr.toString().trim() !== '') {
+  if (proc.exitCode !== 0) {
     fail(`SessionStart hook failed (exit ${proc.exitCode}): ${proc.stderr.toString().trim()}`);
   }
+  // hooks-v2#session-context: the isolated project has no repository root, so
+  // the first-class degradation log is the exact stderr the new contract
+  // promises — anything else is noise or a crash.
+  const stderr = proc.stderr.toString();
+  const tolerated =
+    /^\[session-context\] genie\.db unavailable \(no repository root\) — falling back to wish-file scan\n$/.test(
+      stderr,
+    );
+  if (stderr.trim() !== '' && !tolerated) fail(`SessionStart hook wrote unexpected stderr: ${stderr.trim()}`);
   const output: unknown = JSON.parse(proc.stdout.toString());
   const hookOut = isRecord(output) ? output.hookSpecificOutput : undefined;
   const context = isRecord(hookOut) && typeof hookOut.additionalContext === 'string' ? hookOut.additionalContext : '';
-  if (!context.includes('slug=c8-smoke-wish status=IN_PROGRESS'))
-    fail(`SessionStart context missing bounded wish state: ${context}`);
+  if (!context.includes('repo=project, branch=<none>, active wishes: 1'))
+    fail(`SessionStart context missing the one-line session summary: ${context}`);
   if (context.includes('Ignore every previous'))
     fail('SessionStart context leaked unbounded wish prose (injection not stripped)');
 }

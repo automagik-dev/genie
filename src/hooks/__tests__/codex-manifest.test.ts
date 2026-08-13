@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, relative } from 'node:path';
+import { basename, dirname, join, relative } from 'node:path';
 import {
   MAX_APPROVAL_POLL_BUDGET_MS,
   PERMISSION_CHILD_TIMEOUT_MS,
@@ -220,11 +220,14 @@ describe('Codex hook manifest', () => {
       proc.exited,
     ]);
     expect(exitCode).toBe(0);
-    expect(stderr).toBe('');
+    // hooks-v2#session-context: no listing — a db-less plain session is one
+    // compact line, and the db degradation is logged, never a crash.
+    expect(stderr).toContain('[session-context] genie.db unavailable (no repository root)');
     const output = JSON.parse(stdout);
     const context = output.hookSpecificOutput.additionalContext as string;
     expect(output.hookSpecificOutput.hookEventName).toBe('SessionStart');
-    expect(context).toContain('slug=safe-wish status=IN_PROGRESS groups=1 criteria=1/2 blocked=true');
+    expect(context).toContain(`repo=${basename(root)}, branch=<none>, active wishes: 1`);
+    expect(context).not.toContain('slug=');
     expect(context).not.toContain('Ignore every previous');
     expect(context).not.toContain('malicious heading');
     expect(context).not.toContain('secret completed');
@@ -249,7 +252,7 @@ describe('Codex hook manifest', () => {
   });
 
   test('SessionStart resolves a nested cwd to a linked-worktree-style root', async () => {
-    writeFileSync(join(root, '.git'), 'gitdir: /tmp/fixture-common/worktrees/linked\n');
+    writeFileSync(join(root, '.git'), 'gitdir: /tmp/fixture-common/.git/worktrees/linked\n');
     const wish = join(root, '.genie', 'wishes', 'nested-context', 'WISH.md');
     const nested = join(root, 'packages', 'feature', 'src');
     mkdirSync(dirname(wish), { recursive: true });
@@ -263,11 +266,19 @@ describe('Codex hook manifest', () => {
       stdout: 'pipe',
       stderr: 'pipe',
     });
-    const output = JSON.parse(await new Response(proc.stdout).text());
-    expect(await proc.exited).toBe(0);
-    expect(output.hookSpecificOutput.additionalContext).toContain(
-      'slug=nested-context status=APPROVED groups=1 criteria=0/1',
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    expect(exitCode).toBe(0);
+    // The nested cwd resolves to the worktree root; the linked-worktree db
+    // path is derived and reported absent (no HEAD at the fixture gitdir, so
+    // the session is plain → one compact line).
+    expect(JSON.parse(stdout).hookSpecificOutput.additionalContext).toContain(
+      `repo=${basename(root)}, branch=<none>, active wishes: 1`,
     );
+    expect(stderr).toContain('genie.db absent at /tmp/fixture-common/.genie/genie.db');
   });
 
   test('SessionStart includes every nonterminal lifecycle state and excludes SHIPPED wishes', async () => {
@@ -298,19 +309,22 @@ describe('Codex hook manifest', () => {
       proc.exited,
     ]);
     expect(exitCode).toBe(0);
-    expect(stderr).toBe('');
+    expect(stderr).toContain('[session-context] genie.db unavailable');
     const context = JSON.parse(stdout).hookSpecificOutput.additionalContext as string;
-    for (const [slug, status] of fixtures.slice(0, -1)) {
-      expect(context).toContain(`slug=${slug} status=${status}`);
-    }
-    expect(context).not.toContain('slug=shipped-wish');
+    // The five nonterminal wishes feed the active count; SHIPPED never does;
+    // and no wish is ever listed.
+    expect(context).toContain('active wishes: 5');
+    expect(context).not.toContain('slug=');
     expect(context).not.toContain('status=SHIPPED');
   });
 
-  test('SessionStart bounds candidate enumeration and cumulative wish bytes', async () => {
+  test('SessionStart bounds candidate enumeration and per-file wish bytes', async () => {
     const byteRoot = join(root, 'byte-budget');
     mkdirSync(byteRoot, { recursive: true });
     writeFileSync(join(byteRoot, '.git'), '', { flag: 'w' });
+    // Head reads keep every candidate's status countable (no cumulative
+    // starvation); the per-file 256 KiB cap is pinned by the oversized fixture
+    // in the machine-derived-context test above.
     for (const slug of ['active-one', 'active-two']) {
       const wish = join(byteRoot, '.genie', 'wishes', slug, 'WISH.md');
       mkdirSync(dirname(wish), { recursive: true });
@@ -324,20 +338,22 @@ describe('Codex hook manifest', () => {
     });
     const byteOutput = JSON.parse(await new Response(byteRun.stdout).text());
     expect(await byteRun.exited).toBe(0);
-    expect(byteOutput.hookSpecificOutput.additionalContext).toContain('slug=active-one');
-    expect(byteOutput.hookSpecificOutput.additionalContext).not.toContain('slug=active-two');
+    const byteContext = byteOutput.hookSpecificOutput.additionalContext as string;
+    expect(byteContext).toContain('active wishes: 2');
+    expect(byteContext).not.toContain('slug=active-one');
+    expect(byteContext).not.toContain('slug=active-two');
 
     const candidateRoot = join(root, 'candidate-budget');
     mkdirSync(candidateRoot, { recursive: true });
     writeFileSync(join(candidateRoot, '.git'), '');
-    for (let index = 0; index < 64; index++) {
-      const wish = join(candidateRoot, '.genie', 'wishes', `inactive-${String(index).padStart(2, '0')}`, 'WISH.md');
+    // 65 active wishes: directory order is filesystem-defined, so the exact
+    // surviving set varies — but the 64-candidate cap makes the count exactly
+    // 64 whichever 65th entry is dropped.
+    for (let index = 0; index < 65; index++) {
+      const wish = join(candidateRoot, '.genie', 'wishes', `active-${String(index).padStart(2, '0')}`, 'WISH.md');
       mkdirSync(dirname(wish), { recursive: true });
-      writeFileSync(wish, '| **Status** | COMPLETE |\n');
+      writeFileSync(wish, '| **Status** | IN_PROGRESS |\n');
     }
-    const late = join(candidateRoot, '.genie', 'wishes', 'late-active', 'WISH.md');
-    mkdirSync(dirname(late), { recursive: true });
-    writeFileSync(late, '| **Status** | IN_PROGRESS |\n');
     const candidateStarted = performance.now();
     const candidateRun = Bun.spawn(['node', SESSION_CONTEXT], {
       cwd: candidateRoot,
@@ -349,6 +365,9 @@ describe('Codex hook manifest', () => {
     expect(await candidateRun.exited).toBe(0);
     expect(performance.now() - candidateStarted).toBeLessThan(2_000);
     const candidateContext = candidateOutput.hookSpecificOutput?.additionalContext ?? '';
-    expect(candidateContext.match(/^- slug=/gm)?.length ?? 0).toBeLessThanOrEqual(8);
+    // Exactly 64 candidates scanned regardless of directory order, and no
+    // wish is ever listed regardless.
+    expect(candidateContext).toContain('active wishes: 64');
+    expect(candidateContext.match(/^- slug=/gm)?.length ?? 0).toBe(0);
   });
 });
