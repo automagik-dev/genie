@@ -196,6 +196,20 @@ describe('wishes-lint Execution Strategy routing fields', () => {
     expect(runLint().code).toBe(0);
   });
 
+  test('the template validator gate rejects post-contract docs missing template sections', () => {
+    const broken = wish('2026-08-13', 'No table required.').replace('## Summary', '');
+    writeWish(broken);
+    const result = runLint();
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain('wish template violation');
+    expect(result.stderr).toContain('## Summary');
+  });
+
+  test('the template validator gate accepts historical legacy formats', () => {
+    writeWish('| **Status** | DONE — historical |\n| **Date** | 2026-07-01 |\n');
+    expect(runLint().code).toBe(0);
+  });
+
   test('rejects missing local references and dependency cycles', () => {
     writeWish(wish('2026-07-08', 'No table required.').replace('**depends-on:** none', '**depends-on:** missing'));
     let result = runLint();
