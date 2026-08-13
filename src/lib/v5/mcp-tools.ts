@@ -38,11 +38,11 @@ import { BUSY_TIMEOUT_MS } from './sqlite-open.js';
 // the bun:sqlite opens out of the eager genie.ts import graph.
 export { isCurrentGenieDb, type ProjectContext, resolveProjectContext } from './genie-db.js';
 import {
-  type FrozenTaskRow,
   type BlockKind,
   CheckoutConflictError,
   CycleError,
   type EventAuthor,
+  type FrozenTaskRow,
   LaneError,
   TaskBlockedError,
   TaskCompleteError,
@@ -63,12 +63,12 @@ import {
   getTask,
   listTasks,
   listWishSlugs,
-  toFrozenTaskRow,
   moveTask,
   recordHeartbeat,
   releaseTask,
   resolveBoard,
   setTaskWish,
+  toFrozenTaskRow,
   unblockTask,
 } from './task-state.js';
 
