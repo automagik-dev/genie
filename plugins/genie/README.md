@@ -48,7 +48,7 @@ H4 and H6 definitions carry the literal SHA-256 of `scripts/dispatch-runtime.cjs
 | ID | Event | Exact behavior | Allowed side effect |
 |----|-------|----------------|---------------------|
 | H3 | `SessionStart` | Inspects at most 64 candidate directories/256 KiB, then emits at most eight validated wish records and 2 KiB | Read-only filesystem access |
-| H4 | `PreToolUse` | Verifies the definition-bound launcher, then runs branch/orchestration checks for Bash and audit-context for Write/Edit/apply_patch | Deterministic local repository/Git reads only; no Codex network lookup, freshness/identity handler, Omni, install, update, global sync, or scaffolding |
+| H4 | `PreToolUse` | Verifies the definition-bound launcher, then runs branch/git-freeze checks for Bash and audit-context for Write/Edit/apply_patch | Deterministic local repository/Git reads only; no Codex network lookup, freshness/identity handler, Omni, install, update, global sync, or scaffolding |
 | H6 | `PermissionRequest` | Verifies the definition-bound launcher, applies the configured tool matcher, and invokes Omni once only when approvals are explicitly enabled | Bounded/redacted approval-queue state; timeout, interruption, malformed output, binding drift, and transport failure deny |
 
 PreToolUse is a guardrail, not complete interception. Sandbox policy and server-side branch protection remain the hard controls. The six removed Codex commands performed startup install/sync, wrote `AGENTS.md`, validated wishes before/after writes, reinjected context on every prompt, or emitted an inert completion response; none belongs in the retained lifecycle.
@@ -84,11 +84,20 @@ Containment recovered all 22 adapted directories from Genie's automatic backup, 
 | Product skills | `.kimi-plugin/plugin.json` declares `skills: "./skills/"` — the same 22 physical in-root skill directories | Loaded as plugin-tier Skills; invoke with the Skill tool or `/skill:<name>` |
 | Slash commands | `.kimi-plugin/plugin.json` declares `commands: "./.kimi-plugin/commands/"` — thin wrappers for the core lifecycle skills, kept inside `.kimi-plugin/` so Claude Code's root-level `commands/` auto-discovery never loads them | `/genie:wish`, `/genie:work`, `/genie:review`, `/genie:brainstorm`, `/genie:fix`, `/genie:trace`, `/genie:report`, `/genie:docs`, `/genie:council`, `/genie:refine`, `/genie:pm` (the auto-router loads at session start, so no `/genie:genie` command) |
 | Session start | `sessionStart.skill: "genie"` in the manifest | Loads the auto-router skill into the main Agent at session start — the Kimi-native replacement for rule injection |
-| Hooks | Inline `hooks` array in `.kimi-plugin/plugin.json` | Same scripts as Claude (`session-context.cjs`, `dispatch-runtime.cjs claude`, `validate-wish.cjs`, `validate-completion.cjs`); Kimi's hook protocol is wire-compatible. Each command addresses its script as `"$KIMI_PLUGIN_ROOT/scripts/<name>.cjs"` rather than `./scripts/...`, so a hook can never resolve against the session cwd of a cloned repository. Note: Kimi `SessionStart` is observation-only, so wish-state context there is best-effort |
+| Hooks | Inline `hooks` array in `.kimi-plugin/plugin.json` | Same scripts as Claude (`session-context.cjs`, `dispatch-runtime.cjs claude`, `validate-wish.cjs`); the Stop-hook `validate-completion.cjs` was retired (see Retired hook surfaces below). Kimi's hook protocol is wire-compatible. Each command addresses its script as `"$KIMI_PLUGIN_ROOT/scripts/<name>.cjs"` rather than `./scripts/...`, so a hook can never resolve against the session cwd of a cloned repository. Note: Kimi `SessionStart` is observation-only, so wish-state context there is best-effort |
 | MCP | `mcpServers.genie` in the manifest runs `./scripts/mcp-launcher.cjs` | Same canonical `$GENIE_HOME/bin/genie mcp` facade as Claude; the launcher file ships executable. Kimi spawns this command directly rather than through a shell, and documents no manifest-level environment interpolation, so it stays `./`-relative and relies on Kimi's documented contract that an stdio `command` starting with `./` resolves inside the plugin root (a server whose `command` or `cwd` escapes that root is ignored) |
 | Role agents | The seven `agents/*.md` profiles are Kimi-loadable as-is (Claude-style frontmatter is tolerated) | Plugin manifests cannot install agents. Optional manual step: copy `agents/*.md` into `~/.kimi-code/agents/` (or add the managed plugin's `agents/` dir to `extra_agent_dirs` in `config.toml`) |
 
 Kimi has no plugin surface for Claude's `settings.json` permissions, `scripts/statusline.sh`, or the stamped `workflows/council.js`; those remain Claude-only. Install with `/plugins install <path-to-this-directory>` in the Kimi TUI, then `/reload`.
+
+## Retired hook surfaces
+
+hooks-v2#retire removed the dead and speculative hook surfaces without breaking stale cached manifests:
+
+- **orchestration-guard** — the builtin PreToolUse nudge handler was removed from the dispatch registry in `src/hooks/index.ts`. It was a builtin, not a script: no `scripts/orchestration-guard.cjs` path ever existed, so no stub is needed.
+- **validate-completion** — the Stop-hook completion checker was removed from the Claude (`hooks/hooks.json`) and Kimi manifests, and its TypeScript source was deleted. `plugins/genie/scripts/validate-completion.cjs` remains as a hand-written compatibility stub that always exits 0, so a stale cached manifest that still names the path is harmless. Stop telemetry replaces it in Wave 2.
+- **genie hook trust** — the trust CLI and its loader scaffolding are quarantined (design parked) in `src/hooks/trust.ts` and `src/term-commands/hook/trust.ts`; the `genie hook trust` command is no longer registered. Re-entry conditions: sha256 verify before import, and no non-TTY auto-trust.
+- **omni SessionStart health hook** — the omni plugin's 300s SessionStart health hook was removed from the omni repository; the probe moved to `genie doctor` as the `omni bridge health` check.
 
 ## Skills and orchestration
 

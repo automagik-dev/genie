@@ -11,11 +11,7 @@ import {
 
 describe('committed hook bundle parity', () => {
   test('all three build outputs are byte-deterministic and mode 755', async () => {
-    expect(HOOK_BUNDLES.map((target) => target.name)).toEqual([
-      'validate-wish',
-      'validate-completion',
-      'session-context',
-    ]);
+    expect(HOOK_BUNDLES.map((target) => target.name)).toEqual(['validate-wish', 'session-context']);
     await expect(assertHookBundlesParity()).resolves.toBeUndefined();
   });
 

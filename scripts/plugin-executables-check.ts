@@ -10,12 +10,14 @@ const ROOT = join(import.meta.dir, '..');
 const SCRIPTS = join(ROOT, 'plugins', 'genie', 'scripts');
 const CHECK_JS_TARGETS = [
   'first-run-check.cjs',
+  // hooks-v2#retire: hand-written retirement stub, not a bundle output — kept
+  // in the strict checked set so stale-manifest compatibility stays honest.
+  'validate-completion.cjs',
   'council-stamp.cjs',
   'dispatch-runtime.cjs',
   'mcp-launcher.cjs',
   'smart-install.js',
   'src/session-context.ts',
-  'src/validate-completion.ts',
   'src/validate-wish.ts',
 ].map((path) => join(SCRIPTS, path));
 

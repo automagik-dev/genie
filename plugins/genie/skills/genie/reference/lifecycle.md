@@ -97,7 +97,7 @@ genie task list --status in_progress   # active claims
 genie mcp                              # stdio MCP server over the task DB (read + write tools)
 ```
 
-No terminal scraping, no sleep-polling — subagents notify on completion, and the orchestration-guard hook flags scraping patterns.
+No terminal scraping, no sleep-polling — subagents notify on completion, and a retired orchestration-guard hook used to flag scraping patterns.
 
 ### Resident processes
 

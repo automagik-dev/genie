@@ -1,4 +1,18 @@
 /**
+ * QUARANTINED — hooks-v2#retire (2026-08-13). `genie hook trust` is no longer
+ * registered (see src/hooks/dispatch-command.ts); this CLI + its loader
+ * (src/hooks/trust.ts) are parked with the design. Retained as reference
+ * scaffolding only.
+ *
+ * Re-entry conditions (ALL required before this command is re-registered):
+ *   1. sha256 verify before import — the loader must verify a hook file's
+ *      bytes against its `trusted.json` entry BEFORE dynamic-import()ing it.
+ *   2. No non-TTY auto-trust — a non-interactive run must never add a trust
+ *      entry. NOTE: `confirmTrustOrAbort` below currently returns early when
+ *      stdin is not a TTY (silent trust); re-entry must invert that so a
+ *      non-TTY run aborts unless the operator provides an explicit
+ *      confirmation mechanism.
+ *
  * `genie hook trust [path]` — add a hook file to the trust allowlist.
  *
  * Without a path, prints the current trust file. With a path, computes the

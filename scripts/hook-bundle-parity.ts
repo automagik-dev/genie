@@ -13,11 +13,7 @@ export interface HookBundleTarget {
   bundle: string;
 }
 
-export const HOOK_BUNDLES: readonly HookBundleTarget[] = [
-  'validate-wish',
-  'validate-completion',
-  'session-context',
-].map((name) => ({
+export const HOOK_BUNDLES: readonly HookBundleTarget[] = ['validate-wish', 'session-context'].map((name) => ({
   name,
   source: join(ROOT, 'plugins', 'genie', 'scripts', 'src', `${name}.ts`),
   bundle: join(ROOT, 'plugins', 'genie', 'scripts', `${name}.cjs`),

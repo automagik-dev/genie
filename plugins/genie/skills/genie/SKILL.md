@@ -90,7 +90,7 @@ v5 is zero-daemon: documents live in git, per-group execution state lives in `.g
 
 ## Post-Dispatch
 
-After dispatching subagents, monitor through structured state — `genie board`, `genie task status <id>` — and wait for completion notifications. No terminal scraping or sleep-polling (the orchestration-guard hook flags it); completion is push, not poll.
+After dispatching subagents, monitor through structured state — `genie board`, `genie task status <id>` — and wait for completion notifications. No terminal scraping or sleep-polling (a retired orchestration-guard hook used to flag it); completion is push, not poll.
 
 ## Live CLI Surface
 
