@@ -40,18 +40,6 @@
           { "type": "command", "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/validate-wish.cjs", "timeout": 5 }
         ]
       }
-    ],
-    "Stop": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/validate-completion.cjs",
-            "timeout": 10
-          }
-        ]
-      }
     ]
   }
 }

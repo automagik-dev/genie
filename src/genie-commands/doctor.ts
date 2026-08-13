@@ -915,6 +915,92 @@ async function checkOmniHookTimeout(): Promise<CheckResult[]> {
 }
 
 // ============================================================================
+// Omni bridge health probe
+// ============================================================================
+
+/** omni CLI's own fallback API URL (packages/cli/src/commands/status.ts). */
+export const OMNI_BRIDGE_DEFAULT_URL = 'http://localhost:8882';
+/** Bounded probe budget — doctor is interactive; the bridge answers locally. */
+export const OMNI_BRIDGE_PROBE_TIMEOUT_MS = 3_000;
+
+/**
+ * Evaluate the omni bridge health probe. Returns null when omni is not
+ * configured (no check emitted). The probe moved here from the retired omni
+ * plugin SessionStart health hook (hooks-v2#retire): `genie doctor` replaces
+ * the hook's per-session health scan with an on-demand diagnostic — no
+ * auto-install, no auto-recovery. Pure + exported for testing.
+ */
+export function evaluateOmniBridgeHealth(params: {
+  configured: boolean;
+  apiStatus: string | null;
+  version?: string;
+  error?: string;
+}): CheckResult | null {
+  if (!params.configured) return null;
+  const name = 'omni bridge health';
+  const versionSuffix = params.version ? ` (v${params.version})` : '';
+  if (params.apiStatus === 'healthy') {
+    return { name, status: 'pass', detail: `omni bridge healthy${versionSuffix}` };
+  }
+  if (params.apiStatus !== null) {
+    return {
+      name,
+      status: 'warn',
+      detail: `omni bridge reports status "${params.apiStatus}"${versionSuffix}`,
+      suggestion: 'Inspect the bridge with `omni status`; `omni start` brings it up.',
+    };
+  }
+  return {
+    name,
+    status: 'warn',
+    detail: `omni bridge unreachable${params.error ? ` (${params.error})` : ''}`,
+    suggestion: 'Start the bridge with `omni start` (or `genie omni serve`), then re-run `genie doctor`.',
+  };
+}
+
+interface OmniBridgeHealthProbe {
+  status: string | null;
+  version?: string;
+  error?: string;
+}
+
+/** One bounded GET to the bridge's health endpoint; never throws. */
+async function fetchOmniBridgeHealth(apiUrl: string, fetchImpl: typeof fetch): Promise<OmniBridgeHealthProbe> {
+  try {
+    const response = await fetchImpl(`${apiUrl.replace(/\/+$/, '')}/api/v2/health`, {
+      headers: { 'Accept-Encoding': 'identity' },
+      signal: AbortSignal.timeout(OMNI_BRIDGE_PROBE_TIMEOUT_MS),
+    });
+    const health = (await response.json()) as { status?: unknown; version?: unknown };
+    return {
+      status: typeof health.status === 'string' ? health.status : 'unknown',
+      version: typeof health.version === 'string' ? health.version : undefined,
+    };
+  } catch (err) {
+    return { status: null, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * Probe the configured omni bridge. Silent when omni is not configured
+ * (no `apiUrl`/`apiKey` in genie config or env) so a machine that never uses
+ * omni carries no probe noise. `fetchImpl` is a test seam; production uses
+ * the global fetch.
+ */
+export async function checkOmniBridgeHealth(fetchImpl: typeof fetch = fetch): Promise<CheckResult[]> {
+  const rt = await resolveOmniRuntimeConfig();
+  if (rt.apiUrl === undefined && rt.apiKey === undefined) return []; // omni off → stay silent
+  const probe = await fetchOmniBridgeHealth(rt.apiUrl ?? OMNI_BRIDGE_DEFAULT_URL, fetchImpl);
+  const result = evaluateOmniBridgeHealth({
+    configured: true,
+    apiStatus: probe.status,
+    version: probe.version,
+    error: probe.error,
+  });
+  return result ? [result] : [];
+}
+
+// ============================================================================
 // agent-sync freshness (READ-ONLY — never writes; converging is `genie update`'s job)
 // ============================================================================
 
@@ -2139,6 +2225,7 @@ export async function doctorCommand(options?: { json?: boolean; fix?: boolean },
     ...checkLaunchWorktrees(root),
     ...checkAgentSync(),
     ...(await checkOmniHookTimeout()),
+    ...(await checkOmniBridgeHealth()),
     ...checkIndexLaneDrift(root, databaseRoot),
   ];
 

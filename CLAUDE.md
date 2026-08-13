@@ -64,7 +64,7 @@ src/lib/v5/                     v5 state engine — SQLite, zero-daemon ("lightw
 src/hooks/                      Provider-neutral Claude/Codex hook dispatch and wire adapters
   index.ts                      Handler chain + fail-closed envelope (buildFailClosedResponse)
   dispatch-command.ts           CLI entry: genie hook dispatch
-  handlers/                     branch-guard, freshness, identity-inject, omni-approval, orchestration-guard, audit-context
+  handlers/                     branch-guard, freshness, identity-inject, omni-approval, git-freeze-guard, audit-context
 src/term-commands/              CLI command handlers (board, init, launch, omni, shortcuts, task, ...)
 skills/                         Skill prompt files (brainstorm, wish, work, review, etc.)
 .genie/                         Per-repo state: git-tracked wishes/brainstorms/INDEX.md + genie.db (gitignored)

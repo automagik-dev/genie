@@ -67,8 +67,8 @@
  * and the deny is raised for the first that lands in the shared checkout, so a
  * legitimate lead invocation cannot shield a frozen one behind it.
  *
- * Priority: 2 (a deny-guard — runs with branch-guard/orchestration-guard,
- * before omni-approval (5) and the context handlers (8)).
+ * Priority: 2 (a deny-guard — runs with branch-guard, before omni-approval
+ * (5) and the context handlers (8)).
  */
 
 import { execFileSync } from 'node:child_process';

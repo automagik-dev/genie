@@ -13,7 +13,6 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { orchestrationGuard } from '../handlers/orchestration-guard.js';
 import {
   buildOmniRegistry,
   compileOmniToolMatcher,
@@ -396,12 +395,13 @@ describe('byte-identical dispatcher output when omni disabled', () => {
   });
 
   test('context handler carrying BOTH additionalContext AND permissionDecision:"allow" (the real builtin shape) does NOT leak permissionDecision', async () => {
-    // Faithful stand-in for orchestration-guard / audit-context / freshness:
-    // they attach a default `permissionDecision: 'allow'` next to their
-    // `additionalContext`. Pre-Group-3 the dispatcher dropped that allow and
-    // surfaced only the context. The strawman above (context-only, no allow)
-    // MISSED this because it never carried the incidental allow. This is the
-    // regression the MEDIUM was about: the incidental allow must stay dropped.
+    // Faithful stand-in for the context-carrying builtins (audit-context,
+    // freshness): they attach a default `permissionDecision: 'allow'` next to
+    // their `additionalContext`. Pre-Group-3 the dispatcher dropped that allow
+    // and surfaced only the context. The strawman above (context-only, no
+    // allow) MISSED this because it never carried the incidental allow. This
+    // is the regression the MEDIUM was about: the incidental allow must stay
+    // dropped.
     setRegistry([
       handler('ctx-allow', 5, async () => ({
         hookSpecificOutput: {
@@ -414,25 +414,6 @@ describe('byte-identical dispatcher output when omni disabled', () => {
     const out = await dispatch(JSON.stringify(BASH_PAYLOAD));
     const parsed = JSON.parse(out);
     expect(parsed.hookSpecificOutput.additionalContext).toBe('note');
-    expect(parsed.hookSpecificOutput.permissionDecision).toBeUndefined();
-  });
-
-  test('the REAL orchestration-guard (allow + tmux nudge) surfaces context but NOT permissionDecision', async () => {
-    // Exercise the actual builtin handler, not a fabricated shape: on a tmux
-    // capture-pane command it returns permissionDecision:'allow' + a nudge.
-    // The disabled-omni dispatcher must surface the nudge with NO
-    // permissionDecision — otherwise it silently auto-allows the matched Bash.
-    setRegistry([{ ...BASE, name: 'orchestration-guard', priority: 2, fn: orchestrationGuard } as Handler]);
-    const out = await dispatch(
-      JSON.stringify({
-        hook_event_name: 'PreToolUse',
-        tool_name: 'Bash',
-        tool_input: { command: 'tmux capture-pane -p' },
-        cwd: '/tmp/x',
-      }),
-    );
-    const parsed = JSON.parse(out);
-    expect(parsed.hookSpecificOutput.additionalContext).toContain('[orchestration-guard]');
     expect(parsed.hookSpecificOutput.permissionDecision).toBeUndefined();
   });
 

@@ -44,12 +44,6 @@
       "matcher": "Write|Edit",
       "command": "node \"$KIMI_PLUGIN_ROOT/scripts/validate-wish.cjs\"",
       "timeout": 5
-    },
-    {
-      "event": "Stop",
-      "matcher": "*",
-      "command": "PLUGIN_ROOT=\"$KIMI_PLUGIN_ROOT\" node \"$KIMI_PLUGIN_ROOT/scripts/validate-completion.cjs\"",
-      "timeout": 10
     }
   ],
   "interface": {

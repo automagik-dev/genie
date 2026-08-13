@@ -16,9 +16,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.join(__dirname, '..');
 
 const TARGETS = [
-  // Hook scripts (pure Node.js - no bun dependency)
+  // Hook scripts (pure Node.js - no bun dependency). hooks-v2#retire:
+  // validate-completion.cjs is now a committed hand-written retirement stub,
+  // not a bundle output — nothing here may regenerate it.
   { name: 'validate-wish', source: 'plugins/genie/scripts/src/validate-wish.ts', runtime: 'node' },
-  { name: 'validate-completion', source: 'plugins/genie/scripts/src/validate-completion.ts', runtime: 'node' },
   { name: 'session-context', source: 'plugins/genie/scripts/src/session-context.ts', runtime: 'node' },
 ];
 

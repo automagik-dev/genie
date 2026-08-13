@@ -1,4 +1,18 @@
 /**
+ * QUARANTINED — hooks-v2#retire (2026-08-13). The external-hook trust design is
+ * parked, not shipped: `genie hook trust` was unregistered (see
+ * src/hooks/dispatch-command.ts) and nothing imports this module at runtime.
+ * Retained as reference scaffolding only.
+ *
+ * Re-entry conditions (ALL required before this file is wired back):
+ *   1. sha256 verify before import — a hook file's bytes must match its
+ *      `trusted.json` entry BEFORE the loader dynamic-import()s it (that is the
+ *      `verifyTrust` contract below; re-assert it against the current loader).
+ *   2. No non-TTY auto-trust — trust writes may only happen on an interactive
+ *      terminal with explicit confirmation; a headless run must never silently
+ *      add an entry (the companion CLI's `confirmTrustOrAbort` encodes this;
+ *      keep it).
+ *
  * Trust allowlist — the security boundary of the .genie/hooks/ loader.
  *
  * Filesystem-presence is NOT consent. Every external `.ts` hook file (per-team,
