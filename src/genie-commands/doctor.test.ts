@@ -477,6 +477,47 @@ describe('omni hook-timeout guardrail', () => {
     expect(findDispatchHookTimeoutSec({})).toBeNull();
   });
 
+  test('finds the smallest dispatch timeout across settings and injected plugin manifests', () => {
+    const settings = { hooks: { PreToolUse: [{ hooks: [{ command: DISPATCH, timeout: 30 }] }] } };
+    const claudeManifest = {
+      hooks: {
+        PreToolUse: [
+          {
+            matcher: 'Bash|Read|Write|Edit|NotebookEdit|SendMessage',
+            hooks: [{ command: 'node "${CLAUDE_PLUGIN_ROOT}/scripts/dispatch-runtime.cjs" claude', timeout: 125 }],
+          },
+        ],
+      },
+    };
+    const kimiManifest = {
+      hooks: [
+        { event: 'PreToolUse', command: 'node "$KIMI_PLUGIN_ROOT/scripts/dispatch-runtime.cjs" claude', timeout: 120 },
+      ],
+    };
+    expect(findDispatchHookTimeoutSec(settings, { claudeManifest, kimiManifest })).toBe(30);
+    expect(findDispatchHookTimeoutSec({}, { claudeManifest, kimiManifest })).toBe(120);
+    expect(findDispatchHookTimeoutSec({}, { claudeManifest })).toBe(125);
+  });
+
+  test('ignores non-dispatch manifest entries (SessionStart, validate-wish, PostToolUse)', () => {
+    const claudeManifest = {
+      hooks: {
+        SessionStart: [
+          { hooks: [{ command: 'node "${CLAUDE_PLUGIN_ROOT}/scripts/session-context.cjs"', timeout: 5 }] },
+        ],
+        PreToolUse: [{ hooks: [{ command: 'node ${CLAUDE_PLUGIN_ROOT}/scripts/validate-wish.cjs', timeout: 5 }] }],
+        PostToolUse: [{ hooks: [{ command: 'node ${CLAUDE_PLUGIN_ROOT}/scripts/validate-wish.cjs', timeout: 3 }] }],
+      },
+    };
+    const kimiManifest = {
+      hooks: [
+        { event: 'PostToolUse', command: 'node "$KIMI_PLUGIN_ROOT/scripts/dispatch-runtime.cjs" claude', timeout: 2 },
+        { event: 'PreToolUse', command: 'node "$KIMI_PLUGIN_ROOT/scripts/validate-wish.cjs"', timeout: 4 },
+      ],
+    };
+    expect(findDispatchHookTimeoutSec({}, { claudeManifest, kimiManifest })).toBeNull();
+  });
+
   test('warns when the hook timeout is below pollBudgetMs', () => {
     const res = evaluateOmniHookTimeout({ enabled: true, pollBudgetMs: 110_000, timeoutSec: 5 });
     expect(res?.status).toBe('warn');
@@ -495,7 +536,7 @@ describe('omni hook-timeout guardrail', () => {
   test('warns when approvals are enabled but no dispatch timeout is found', () => {
     const res = evaluateOmniHookTimeout({ enabled: true, pollBudgetMs: 110_000, timeoutSec: null });
     expect(res?.status).toBe('warn');
-    expect(res?.detail).toContain('no `genie hook dispatch`');
+    expect(res?.detail).toContain('no genie dispatch PreToolUse timeout found (settings or plugin manifests)');
   });
 
   test('passes when the hook timeout strictly exceeds pollBudgetMs', () => {

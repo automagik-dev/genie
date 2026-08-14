@@ -51,6 +51,10 @@ H4 and H6 definitions carry the literal SHA-256 of `scripts/dispatch-runtime.cjs
 | H4 | `PreToolUse` | Verifies the definition-bound launcher, then runs branch/git-freeze checks for Bash and audit-context for Write/Edit/apply_patch | Deterministic local repository/Git reads only; no Codex network lookup, freshness/identity handler, Omni, install, update, global sync, or scaffolding |
 | H6 | `PermissionRequest` | Verifies the definition-bound launcher, applies the configured tool matcher, and invokes Omni once only when approvals are explicitly enabled | Bounded/redacted approval-queue state; timeout, interruption, malformed output, binding drift, and transport failure deny |
 
+### Hook timeout budgets
+
+Every shipped manifest timeout sits inside its class ceiling, enforced by `bun run lint:hook-budgets` (the script-name → class table lives in `scripts/hook-budgets-lint.ts`): guard ≤ 30s, context ≤ 5s, telemetry ≤ 2s. The exceptions are the three rungs of the Omni approval ladder (110s poll budget → 115s launcher child → 125s host manifest, constants in `src/lib/omni-config.ts`), all `dispatch-runtime.cjs` at the 125s host rung: Codex `PermissionRequest` (H6), Claude `PreToolUse`, and Kimi `PreToolUse`. The Claude/Kimi entries carry the rung because the omni-approval handler registers on `PreToolUse` for the Claude runtime and polls up to 110s; a guard-ceiling timeout would let CC kill the hook mid-poll and silently vanish the approval gate. The lint re-derives every rung from the ladder constants so none can drift silently, and `genie doctor` warns whenever an enabled Omni poll budget reaches a dispatch hook timeout (settings.json or plugin manifests).
+
 PreToolUse is a guardrail, not complete interception. Sandbox policy and server-side branch protection remain the hard controls. The six removed Codex commands performed startup install/sync, wrote `AGENTS.md`, validated wishes before/after writes, reinjected context on every prompt, or emitted an inert completion response; none belongs in the retained lifecycle.
 
 ## Explicit install and update paths
