@@ -4,7 +4,7 @@
  * Bootstraps the things a fresh repo needs before the genie lifecycle can run:
  * the plans jar (`.genie/INDEX.md`), the `.gitignore` rules that keep the
  * SQLite state files out of version control, and the MCP server registration
- * that lets Warp + Claude Code discover the `genie mcp` server (read + write
+ * that lets Claude Code discover the `genie mcp` server (read + write
  * tools). Every
  * step is idempotent — re-running `genie init` on an already-scaffolded repo
  * produces zero diff.
@@ -74,7 +74,11 @@ const INDEX_SKELETON = `# Plans Index
 ## Poured
 `;
 
-/** Operational artifacts that must never be committed. */
+/**
+ * Operational artifacts that must never be committed. The `.genie/launch/`
+ * rule is legacy residue protection — nothing writes there since the launch
+ * command was removed, but existing kickoff prompts stay ignored.
+ */
 const GITIGNORE_RULES = ['.genie/genie.db', '.genie/genie.db-wal', '.genie/genie.db-shm', '.genie/launch/'];
 
 // ============================================================================
@@ -130,10 +134,9 @@ function scaffoldGitignore(root: string): { action: ArtifactAction; added: strin
 }
 
 /**
- * Register the `genie mcp` server into both project-scope config files under
- * `root`: `<root>/.mcp.json` (Claude Code) and `<root>/.warp/.mcp.json` (Warp).
- * Both get the identical entry; the merge is idempotent and preserves existing
- * servers. Exported so `genie launch` can register the same server per worktree.
+ * Register the `genie mcp` server into the project-scope `<root>/.mcp.json`
+ * config (Claude Code). The merge is idempotent and preserves existing
+ * servers.
  */
 export function registerMcpConfigs(root: string, options: RegisterProjectMcpOptions = {}): McpConfigResult[] {
   return registerProjectMcpConfigs(root, options);
@@ -147,10 +150,10 @@ function actionLabel(action: ArtifactAction): string {
   return action === 'skipped' ? 'already present' : action;
 }
 
-/** Short, repo-relative label for an MCP config path (`.mcp.json`, `.warp/.mcp.json`). */
+/** Short, repo-relative label for an MCP config path (`.mcp.json` or `.codex/config.toml`). */
 function mcpConfigLabel(configPath: string): string {
   if (configPath.endsWith(join('.codex', 'config.toml'))) return '.codex/config.toml';
-  return configPath.endsWith(join('.warp', '.mcp.json')) ? '.warp/.mcp.json' : '.mcp.json';
+  return '.mcp.json';
 }
 
 function printHumanReport(result: InitResult): void {
@@ -166,7 +169,7 @@ function printHumanReport(result: InitResult): void {
     out(`  ${mcpConfigLabel(cfg.path)}        ${actionLabel(cfg.action)}`);
   }
   out('');
-  out('Warp, Claude Code, and Codex will discover the `genie mcp` server (read + write tools).');
+  out('Claude Code and Codex will discover the `genie mcp` server (read + write tools).');
   out('');
   out('Next steps — Claude uses /<skill>; the Codex plugin uses owner-qualified $genie:<skill>:');
   out('  1. /brainstorm or $genie:brainstorm   Explore a fuzzy idea into a DESIGN.md');
@@ -221,7 +224,7 @@ export function registerInitCommand(program: Command): void {
   program
     .command('init')
     .description(
-      'Initialize Genie state and reconcile project MCP routing (.mcp.json, .warp/.mcp.json, optional .codex/config.toml)',
+      'Initialize Genie state and reconcile project MCP routing (.mcp.json and the marker-owned .codex/config.toml)',
     )
     .option('--json', 'Emit the created/skipped result as JSON')
     .action((opts: InitOptions) => handleInit(opts));

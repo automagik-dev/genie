@@ -31,7 +31,7 @@ own output renders lanes.
 | `genie_wish_status` | `genie board --json --wish <slug>` + `genie task list --json --wish <slug>` | plus WISH.md criteria; pure read (no `--board`) |
 | `genie_task_list` | `genie task list --json [--wish <slug>] [--status <s>] [--board <ref>]` | |
 | `genie_task_status` | `genie task status <id>` | raw capture; parsed when JSON |
-| `genie_work_plan` | `genie launch <slug> --dry-run [--groups <csv>]` | raw YAML-ish text |
+| `genie_work_plan` | `genie context --wish <slug> --plan [--group <g>]` | raw versioned JSON |
 | `genie_review_plan` | `genie board --json --wish <slug>` + `genie task list --json --wish <slug>` + WISH.md Success/QA sections | |
 
 ## Payload contract
@@ -45,8 +45,8 @@ Every tool result carries the Hermes-style envelope:
 }
 ```
 
-Failures surface the actual genie stderr text (e.g. `genie launch <slug> --dry-run failed:
-Error: No ready tasks for wish "..."`) instead of a raw capture.
+Failures surface the actual genie stderr text (e.g. `genie context --wish <slug> --plan failed:
+{"error": "...", "reason": "..."}`) instead of a raw capture.
 
 ## MCP parity
 

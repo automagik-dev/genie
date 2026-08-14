@@ -67,7 +67,7 @@ describe('genie CLI registration', () => {
 
     expect(proc.exitCode).toBe(0);
     const stdout = proc.stdout.toString();
-    for (const path of ['.mcp.json', '.warp/.mcp.json', '.codex/config.toml']) expect(stdout).toContain(path);
+    for (const path of ['.mcp.json', '.codex/config.toml']) expect(stdout).toContain(path);
   });
 
   test('update rejects an unknown flag with a nonzero exit (pre-contract binaries error, not update)', () => {

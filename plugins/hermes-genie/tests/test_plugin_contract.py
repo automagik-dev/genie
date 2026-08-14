@@ -202,7 +202,7 @@ def test_work_plan_rejects_unsafe_group_items(tmp_path):
     module = load_plugin_module()
     ctx = FakeCtx()
     module.register(ctx)
-    data = _invoke(ctx, "genie_work_plan", {"cwd": str(tmp_path), "slug": "some-wish", "groups": ["ok", "bad;rm"]})
+    data = _invoke(ctx, "genie_work_plan", {"cwd": str(tmp_path), "slug": "some-wish", "group": "bad;rm"})
     assert data["success"] is False
     assert "invalid" in data["error"].lower()
     assert "bad;rm" in data["error"]
@@ -247,7 +247,7 @@ def test_remaining_tools_reject_invalid_refs(tmp_path, monkeypatch):
         ("genie_board", {"wish": "../../x"}),
         ("genie_task_list", {"wish": "a/b"}),
         ("genie_task_list", {"status": "--help"}),
-        ("genie_work_plan", {"slug": "ok-wish", "groups": ["--help"]}),
+        ("genie_work_plan", {"slug": "ok-wish", "group": "--help"}),
     ]
     for name, extra in cases:
         data = _invoke(ctx, name, {"cwd": str(tmp_path), **extra})

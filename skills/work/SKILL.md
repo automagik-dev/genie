@@ -49,7 +49,7 @@ When you are spawned as a subagent for a group, your dispatch prompt carries the
 
 Spawn subagents with the **native delegation surface**; never execute group work directly. Dispatch a wave together so independent groups can run concurrently. Subagents notify you on completion. Every dispatch selects one named role below; implicit or unnamed roles are forbidden.
 
-Use the active runtime's named roles: the matching `genie_*` custom-agent profile when the runtime has one installed, otherwise the runtime's native named-role surface. Parallel writers must have disjoint file ownership or dedicated worktrees; otherwise sequence them. Shared-workspace subagents never mutate repo-level git state (no `checkout`/`switch`/`reset`/`stash`/`rebase`) — **only the orchestrator moves HEAD**; work needing repo-level mutation gets a worktree via `genie launch` or gets sequenced. `git worktree add/remove/prune` on snapshot/lane paths is orchestrator-side plumbing and permitted. Reviewers and scouts stay read-only. Wait for completion notifications, steer a running thread with native follow-up messaging, and interrupt drift rather than spawning a duplicate worker.
+Use the active runtime's named roles: the matching `genie_*` custom-agent profile when the runtime has one installed, otherwise the runtime's native named-role surface. Parallel writers must have disjoint file ownership or dedicated worktrees; otherwise sequence them. Shared-workspace subagents never mutate repo-level git state (no `checkout`/`switch`/`reset`/`stash`/`rebase`) — **only the orchestrator moves HEAD**; work needing repo-level mutation gets an isolated worktree arranged by the orchestrator (client-provided worktrees or explicit `git worktree add` plumbing) or gets sequenced. `git worktree add/remove/prune` on snapshot/lane paths is orchestrator-side plumbing and permitted. Reviewers and scouts stay read-only. Wait for completion notifications, steer a running thread with native follow-up messaging, and interrupt drift rather than spawning a duplicate worker.
 
 | Need | Portable role (runtime profile) |
 |------|----------------------------|
@@ -65,15 +65,22 @@ Use the active runtime's named roles: the matching `genie_*` custom-agent profil
 
 Reviewer ≠ engineer is a hard rule — an agent never reviews its own work.
 
-### Multi-session dispatch (Warp)
+### Multi-session dispatch — retired (recorded amendment)
 
-Native subagent dispatch is the default. When the user wants parallel Warp sessions they can supervise interactively — typically a large wave — hand the wave to Warp after its tasks exist:
+Native subagent dispatch is the ONLY dispatch mode. The opt-in Warp
+multi-session mode is retired with the spawn-context-contract launch removal
+(recorded amendment: the context verb's `--plan` doubles as the spawn plan
+preview, and supervised parallel sessions are arranged from the spawn side, not
+from a genie verb). Everything governing correctness is unchanged: engineers
+still claim with `genie task checkout` against the shared `genie.db`, reviewer ≠
+engineer holds, the orchestrator still validates and marks groups done, and
+waves still come from the Execution Strategy.
+
+Preview the wave plan without side effects:
 
 ```bash
-genie launch <slug> [--groups <csv>]
+genie context --wish <slug> --plan
 ```
-
-One pane per ready group, each in its own git worktree, running that group's agent on a kickoff prompt. Everything governing correctness is identical: engineers still claim with `genie task checkout` against the shared `genie.db`, reviewer ≠ engineer holds, the orchestrator still validates and marks groups done, and waves still come from the Execution Strategy. The one limit: pane sessions cannot be awaited — Warp mode is human-in-the-loop. For hands-off, awaitable dispatch, use native subagents.
 
 ## Context Curation
 
@@ -89,7 +96,7 @@ Extract the group's context from WISH.md and paste it into the dispatch prompt �
 
 When the wave shares one workspace, every brief carries the file scope from item 6 **and** the freeze rule verbatim:
 
-> You share this workspace with concurrent engineers on disjoint files. Shared-workspace subagents never mutate repo-level git state (no `checkout`/`switch`/`reset`/`stash`/`rebase`) — **only the orchestrator moves HEAD**. Work needing repo-level mutation gets a worktree via `genie launch` or gets sequenced. Leave your changes in the working tree; do not commit.
+> You share this workspace with concurrent engineers on disjoint files. Shared-workspace subagents never mutate repo-level git state (no `checkout`/`switch`/`reset`/`stash`/`rebase`) — **only the orchestrator moves HEAD**. Work needing repo-level mutation gets an isolated worktree arranged by the orchestrator (client-provided worktrees or explicit `git worktree add` plumbing) or gets sequenced. Leave your changes in the working tree; do not commit.
 
 ## State Management
 

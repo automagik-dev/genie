@@ -65,12 +65,14 @@ worktree back to the main checkout (see *Worktree sharing* above). A lane
 reconcile that runs *inside* a worktree therefore reads the primary checkout's
 `WISH.md`, not the copy sitting beside it in that worktree.
 
-The named consequence is the `genie launch` cockpit flow: a wish branch that
-updates its own `WISH.md` **Status** inside a worktree moves no card until that
-branch reaches the primary checkout's view — merged into the branch the main
-checkout has out, or checked out there directly. In-flight cockpit wishes read on
-the board as merged truth rather than as work in progress: a property of the
-one-shared-root design, not a reconcile bug.
+The named consequence is the wish-scoped worktree flow (historically the
+`genie launch` cockpit, now remotty materializes the worktree from the
+`genie context` payload): a wish branch that updates its own `WISH.md`
+**Status** inside a worktree moves no card until that branch reaches the
+primary checkout's view — merged into the branch the main checkout has out, or
+checked out there directly. In-flight wish worktrees read on the board as
+merged truth rather than as work in progress: a property of the one-shared-root
+design, not a reconcile bug.
 
 ## ID scheme
 

@@ -56,7 +56,7 @@ Default chain: engineer → reviewer → qa → fix. Augment when the work calls
 
 ## Dispatch
 
-All implementation goes to subagents via the **native delegation surface** (native runtime). Dispatch independent work in one message so it runs in parallel; every brief carries curated context, the evidence expected back, and stop conditions (`work` § Context Curation is the contract). Background subagents notify you on completion — never sleep-poll. Follow-ups to a running subagent go through **native follow-up messaging**. When the user wants parallel Warp sessions they can supervise, hand the wave to `genie launch <slug> [--groups <csv>]` instead (human-in-the-loop; see `work` § Multi-session dispatch).
+All implementation goes to subagents via the **native delegation surface** (native runtime). Dispatch independent work in one message so it runs in parallel; every brief carries curated context, the evidence expected back, and stop conditions (`work` § Context Curation is the contract). Background subagents notify you on completion — never sleep-poll. Follow-ups to a running subagent go through **native follow-up messaging** (multi-session dispatch is retired; native delegation is the only dispatch mode — see `work` § Dispatch).
 
 ## Board Operations
 

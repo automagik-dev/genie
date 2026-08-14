@@ -44,7 +44,7 @@ a tool is either an MCP tool or a native Hermes tool, never both.
 | MCP (shared) | `genie_active` | active wishes/tasks snapshot | **current** — provided by `genie mcp` |
 | MCP (shared) | `genie_worktree_context` | resolved worktree/branch/cwd context | **current** — provided by `genie mcp` |
 | Native Hermes | `genie_status` | `genie doctor --json` + `.genie/` presence | **current** — remains native |
-| Native Hermes | `genie_work_plan` | `genie launch <slug> --dry-run` | **current** — remains native |
+| Native Hermes | `genie_work_plan` | `genie context --wish <slug> --plan` | **current** — remains native |
 | Native Hermes | `genie_review_plan` | board/tasks + Success/QA criteria from WISH.md | **current** — remains native |
 
 **Retired natives** (present in the pre-wish `plugin.yaml`, removed once the MCP tools shipped to
@@ -110,7 +110,7 @@ Guardrails (inherited from the Codex convergence discipline):
 
 The entire Hermes surface is read-only: every tool, command, hook, and skill reports
 `mutation: "none"` and performs no writes under `.genie/`. Mutation-capable operations
-(`genie_task_checkout`, `genie_task_done`, executing a real `genie launch`, spawn/send) are
+(`genie_task_checkout`, `genie_task_done`, spawn/send) are
 deferred and each individual invocation requires an explicit human-gate packet.
 
 Full rules, the deferred-capability table, the human-gate packet contract, and the four

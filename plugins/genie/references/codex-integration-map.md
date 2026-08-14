@@ -120,7 +120,7 @@ After any route, plugin, or hook change, review `/hooks` and start a new task be
 
 ## Native orchestration
 
-The active client supplies its native spawn/follow-up/wait/interrupt tools; shared skills do not name undocumented functions. Codex uses installed `genie_*` profiles when available, but native subagents share the caller's workspace unless the runtime explicitly provides isolation; for guaranteed per-group Git isolation, use `genie launch`/worktrees. What a shared workspace permits is governed by rule 3 of `dispatch-contract.md` (and AGENTS.md upstream of it), not restated here.
+The active client supplies its native spawn/follow-up/wait/interrupt tools; shared skills do not name undocumented functions. Codex uses installed `genie_*` profiles when available, but native subagents share the caller's workspace unless the runtime explicitly provides isolation; per-group Git isolation is orchestrator-arranged (client-provided worktrees or explicit `git worktree add` plumbing). What a shared workspace permits is governed by rule 3 of `dispatch-contract.md` (and AGENTS.md upstream of it), not restated here.
 
 Each engineer claims with `genie task checkout <task-id> --worker <name>`, reports completion, and remains `in_progress`. An independent reviewer validates the group. Only the orchestrator calls `genie task done` after SHIP and passing evidence.
 

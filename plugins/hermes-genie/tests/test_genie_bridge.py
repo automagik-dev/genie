@@ -105,7 +105,7 @@ def test_run_genie_raw_capture_when_stdout_not_json(tmp_path, monkeypatch):
     stub.write_text("#!/bin/sh\necho 'plain text plan output'\n", encoding="utf-8")
     stub.chmod(0o755)
     monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ.get('PATH', '')}")
-    result = bridge.run_genie(["launch", "some-wish", "--dry-run"], cwd=str(tmp_path))
+    result = bridge.run_genie(["context", "--wish", "some-wish", "--plan"], cwd=str(tmp_path))
     assert result["success"] is True
     assert result["parsed"] is False
     assert result["data"]["stdout"].strip() == "plain text plan output"

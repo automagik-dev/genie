@@ -5,7 +5,7 @@
  *
  * Surviving surface after the v4 runtime demolition:
  *   Utilities:  setup, doctor, update, install, uninstall, shortcuts
- *   Lifecycle:  init (scaffold), launch (Warp cockpit)
+ *   Lifecycle:  init (scaffold), context (spawn plan)
  *   State:      task, board  (SQLite-backed, .genie/genie.db)
  *   Hooks:      hook namespace + git hook dispatch
  */
@@ -28,7 +28,6 @@ import { VERSION } from './lib/version.js';
 import { registerContextCommand } from './term-commands/context.js';
 import { registerIdeaCommand } from './term-commands/idea.js';
 import { registerInitCommand } from './term-commands/init.js';
-import { registerLaunchCommand } from './term-commands/launch.js';
 import { registerMcpCommand } from './term-commands/mcp.js';
 import { registerOmniCommands } from './term-commands/omni.js';
 import { registerUiBridgeCommand } from './term-commands/ui-bridge.js';
@@ -187,7 +186,6 @@ registerHookNamespace(program);
 // ============================================================================
 
 registerInitCommand(program);
-registerLaunchCommand(program);
 registerMcpCommand(program);
 registerUiBridgeCommand(program);
 registerV5TaskCommands(program);

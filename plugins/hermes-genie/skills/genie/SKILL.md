@@ -20,7 +20,7 @@ as canonical over anything scraped from a terminal.
 - Read board and task state through the genie MCP tools (`genie_board`,
   `genie_wish_status`, `genie_task`) rather than terminal scraping. The native
   Hermes surface only adds the gap tools MCP does not cover: `genie_status`
-  (doctor plus `.genie` presence), `genie_work_plan` (dry-run launch plan), and
+  (doctor plus `.genie` presence), `genie_work_plan` (`context --plan` spawn preview), and
   `genie_review_plan` (wish status plus acceptance criteria).
 - Never poll panes with `tmux capture-pane` or `sleep` loops to infer worker
   progress. The structured tools return the same truth with provenance.
@@ -28,7 +28,7 @@ as canonical over anything scraped from a terminal.
 ## Human gates on mutation
 
 - Every tool in this plugin is read-only (`mutation: "none"`).
-- Mutations — `genie spawn`, `genie launch` without `--dry-run`, `genie task
+- Mutations — `genie spawn`, a non-plan `genie context` resolution, `genie task
   done` — require explicit human approval before they run, every time.
 
 ## Report outcome-first

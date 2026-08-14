@@ -92,7 +92,7 @@ All seven tools are read-only — every payload carries `mutation: "none"`.
 | `genie_wish_status` | Composite wish status: board slice plus task list for one slug | none |
 | `genie_task_list` | Task list with optional wish, status, and board filters | none |
 | `genie_task_status` | One task's detail, dependencies, and stage log (raw capture) | none |
-| `genie_work_plan` | Execution-plan preview via `genie launch <slug> --dry-run` | none |
+| `genie_work_plan` | Spawn-plan preview via `genie context --wish <slug> --plan` | none |
 | `genie_review_plan` | Board/tasks plus Success and QA Criteria extracted from the wish's WISH.md | none |
 
 The full layer map (tools, command, hooks, skills, MCP parity) lives in

@@ -103,7 +103,7 @@ describe('git-freeze-guard', () => {
     const reason = result?.reason ?? '';
     expect(reason).toContain('AGENTS.md');
     expect(reason).toContain('only the orchestrator moves HEAD');
-    expect(reason).toContain('genie launch');
+    expect(reason).toContain('Whole execution group needs isolation?');
     expect(reason).toContain('git worktree add');
     expect(reason).toContain('sequence the work');
     expect(reason).toContain(SHARED);
