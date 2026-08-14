@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-/** Bind trusted Codex hook definitions to the exact launcher bytes they run. */
+/** Bind trusted hook definitions to the exact launcher bytes they run. */
 
 import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync, writeFileSync } from 'node:fs';
@@ -8,8 +8,14 @@ import { join } from 'node:path';
 
 const ROOT = join(import.meta.dir, '..');
 export const CODEX_HOOK_MANIFEST = join(ROOT, 'plugins', 'genie', 'hooks', 'codex-hooks.json');
+export const CLAUDE_HOOK_MANIFEST = join(ROOT, 'plugins', 'genie', 'hooks', 'hooks.json');
+export const KIMI_HOOK_MANIFEST = join(ROOT, 'plugins', 'genie', '.kimi-plugin', 'plugin.json');
 export const CODEX_HOOK_LAUNCHER = join(ROOT, 'plugins', 'genie', 'scripts', 'dispatch-runtime.cjs');
 export const CODEX_LAUNCHER_CONTRACT = 'genie-codex-dispatch-v1';
+/** The Claude + Kimi invocations run the same shared launcher as `claude`;
+ *  the contract identifier is distinct so a Codex/Claude definition swap
+ *  cannot satisfy the pin. */
+export const CLAUDE_LAUNCHER_CONTRACT = 'genie-claude-dispatch-v1';
 
 interface CommandHook {
   command?: unknown;
@@ -24,13 +30,31 @@ interface HookManifest {
   hooks?: Record<string, unknown>;
 }
 
-const COMMAND_PATTERN =
+interface KimiHookEntry {
+  event?: unknown;
+  command?: unknown;
+}
+
+interface KimiManifest {
+  hooks?: unknown;
+}
+
+const CODEX_COMMAND_PATTERN =
   /^(node .+dispatch-runtime\.cjs" codex (PreToolUse|PermissionRequest))(?: --launcher-contract ([^\s]+) --launcher-sha256 ([a-f0-9]{64}))?$/;
+
+/**
+ * The Claude dispatch invocation carries no event-name argument (`codex` is
+ * followed by the event; `claude` reads the event from the payload). The
+ * whole-command pattern accepts the pinned suffix when present and rejects
+ * any other trailing argument shape.
+ */
+const CLAUDE_COMMAND_PATTERN =
+  /^node .+dispatch-runtime\.cjs" claude(?: --launcher-contract [^\s]+ --launcher-sha256 [a-f0-9]{64})?$/;
 
 export function launcherSha256(launcherPath = CODEX_HOOK_LAUNCHER): string {
   const stat = lstatSync(launcherPath);
   if (!stat.isFile() || stat.isSymbolicLink()) {
-    throw new Error(`Codex hook launcher must be a physical file: ${launcherPath}`);
+    throw new Error(`hook launcher must be a physical file: ${launcherPath}`);
   }
   return createHash('sha256').update(readFileSync(launcherPath)).digest('hex');
 }
@@ -54,21 +78,56 @@ function commandHooks(manifest: HookManifest): Array<{ event: string; hook: Comm
   return found;
 }
 
+function kimiCommandHooks(manifest: KimiManifest): Array<{ event: string; hook: CommandHook }> {
+  const found: Array<{ event: string; hook: CommandHook }> = [];
+  if (!Array.isArray(manifest.hooks)) return found;
+  for (const entry of manifest.hooks as KimiHookEntry[]) {
+    if (typeof entry.command === 'string' && entry.command.includes('dispatch-runtime.cjs')) {
+      found.push({
+        event: typeof entry.event === 'string' ? entry.event : '<missing-event>',
+        hook: { command: entry.command },
+      });
+    }
+  }
+  return found;
+}
+
 function parseManifest(path: string): HookManifest {
   const value: unknown = JSON.parse(readFileSync(path, 'utf8'));
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error(`Codex hook manifest must be a JSON object: ${path}`);
+    throw new Error(`hook manifest must be a JSON object: ${path}`);
   }
   return value as HookManifest;
 }
 
-function boundCommand(command: string, digest: string, expectedEvent: string): string {
-  const match = command.match(COMMAND_PATTERN);
+function boundCodexCommand(command: string, digest: string, expectedEvent: string): string {
+  const match = command.match(CODEX_COMMAND_PATTERN);
   if (!match || match[2] !== expectedEvent) {
     throw new Error(`unexpected Codex dispatch command for ${expectedEvent}: ${command}`);
   }
   return `${match[1]} --launcher-contract ${CODEX_LAUNCHER_CONTRACT} --launcher-sha256 ${digest}`;
 }
+
+function boundClaudeCommand(command: string, digest: string): string {
+  if (!CLAUDE_COMMAND_PATTERN.test(command)) {
+    throw new Error(`unexpected Claude dispatch command: ${command}`);
+  }
+  const base = command.replace(/\s+--launcher-contract\s+\S+\s+--launcher-sha256\s+[a-f0-9]{64}$/, '');
+  return `${base} --launcher-contract ${CLAUDE_LAUNCHER_CONTRACT} --launcher-sha256 ${digest}`;
+}
+
+function assertSingleDispatchLauncher(
+  hooks: Array<{ event: string; hook: CommandHook }>,
+  label: string,
+): { event: string; hook: CommandHook } {
+  if (hooks.length !== 1 || hooks[0].event !== 'PreToolUse') {
+    throw new Error(`${label} must contain exactly one dispatch launcher (PreToolUse)`);
+  }
+  return hooks[0];
+}
+
+const DRIFT_HINT =
+  'run `bun scripts/hook-content-binding.ts --write`, then review the changed hook definitions with `/hooks`.';
 
 export function renderBoundManifest(manifestPath = CODEX_HOOK_MANIFEST, launcherPath = CODEX_HOOK_LAUNCHER): string {
   const manifest = parseManifest(manifestPath);
@@ -87,8 +146,8 @@ export function renderBoundManifest(manifestPath = CODEX_HOOK_MANIFEST, launcher
     if (typeof hook.command !== 'string' || typeof hook.commandWindows !== 'string') {
       throw new Error(`${event} dispatch launcher must define command and commandWindows`);
     }
-    hook.command = boundCommand(hook.command, digest, event);
-    hook.commandWindows = boundCommand(hook.commandWindows, digest, event);
+    hook.command = boundCodexCommand(hook.command, digest, event);
+    hook.commandWindows = boundCodexCommand(hook.commandWindows, digest, event);
   }
   return `${JSON.stringify(manifest, null, 2)}\n`;
 }
@@ -97,10 +156,80 @@ export function assertHookContentBinding(manifestPath = CODEX_HOOK_MANIFEST, lau
   const actual = readFileSync(manifestPath, 'utf8');
   const expected = renderBoundManifest(manifestPath, launcherPath);
   if (actual !== expected) {
-    throw new Error(
-      'Codex hook launcher binding drift: run `bun scripts/hook-content-binding.ts --write`, then review the changed hook definitions with `/hooks`.',
-    );
+    throw new Error(`Codex hook launcher binding drift: ${DRIFT_HINT}`);
   }
+}
+
+export function assertClaudeHookContentBinding(
+  manifestPath = CLAUDE_HOOK_MANIFEST,
+  launcherPath = CODEX_HOOK_LAUNCHER,
+): void {
+  const manifest = parseManifest(manifestPath);
+  const digest = launcherSha256(launcherPath);
+  const { hook } = assertSingleDispatchLauncher(commandHooks(manifest), 'Claude hook manifest');
+  if (typeof hook.command !== 'string' || typeof hook.commandWindows !== 'string') {
+    throw new Error('Claude PreToolUse dispatch launcher must define command and commandWindows');
+  }
+  if (
+    hook.command !== boundClaudeCommand(hook.command, digest) ||
+    hook.commandWindows !== boundClaudeCommand(hook.commandWindows, digest)
+  ) {
+    throw new Error(`Claude hook launcher binding drift: ${DRIFT_HINT}`);
+  }
+}
+
+export function assertKimiHookContentBinding(
+  manifestPath = KIMI_HOOK_MANIFEST,
+  launcherPath = CODEX_HOOK_LAUNCHER,
+): void {
+  const manifest = parseManifest(manifestPath);
+  const digest = launcherSha256(launcherPath);
+  const { hook } = assertSingleDispatchLauncher(kimiCommandHooks(manifest), 'Kimi plugin manifest');
+  if (typeof hook.command !== 'string') {
+    throw new Error('Kimi PreToolUse dispatch launcher must define a command');
+  }
+  if (hook.command !== boundClaudeCommand(hook.command, digest)) {
+    throw new Error(`Kimi hook launcher binding drift: ${DRIFT_HINT}`);
+  }
+}
+
+/**
+ * Rebind the claude-runtime dispatch commands in place (surgical textual
+ * replacement of the JSON-escaped values) so the manifests' hand-tuned
+ * formatting survives — neither the Claude hooks.json nor the Kimi
+ * plugin.json is canonical `JSON.stringify` output. Returns whether the
+ * file changed.
+ */
+function writeClaudeBinding(manifestPath = CLAUDE_HOOK_MANIFEST, launcherPath = CODEX_HOOK_LAUNCHER): boolean {
+  const manifest = parseManifest(manifestPath);
+  const digest = launcherSha256(launcherPath);
+  const { hook } = assertSingleDispatchLauncher(commandHooks(manifest), 'Claude hook manifest');
+  if (typeof hook.command !== 'string' || typeof hook.commandWindows !== 'string') {
+    throw new Error('Claude PreToolUse dispatch launcher must define command and commandWindows');
+  }
+  const next = boundClaudeCommand(hook.command, digest);
+  const nextWindows = boundClaudeCommand(hook.commandWindows, digest);
+  if (hook.command === next && hook.commandWindows === nextWindows) return false;
+  let raw = readFileSync(manifestPath, 'utf8');
+  raw = raw.replace(JSON.stringify(hook.command), JSON.stringify(next));
+  raw = raw.replace(JSON.stringify(hook.commandWindows), JSON.stringify(nextWindows));
+  writeFileSync(manifestPath, raw);
+  return true;
+}
+
+function writeKimiBinding(manifestPath = KIMI_HOOK_MANIFEST, launcherPath = CODEX_HOOK_LAUNCHER): boolean {
+  const manifest = parseManifest(manifestPath);
+  const digest = launcherSha256(launcherPath);
+  const { hook } = assertSingleDispatchLauncher(kimiCommandHooks(manifest), 'Kimi plugin manifest');
+  if (typeof hook.command !== 'string') {
+    throw new Error('Kimi PreToolUse dispatch launcher must define a command');
+  }
+  const next = boundClaudeCommand(hook.command, digest);
+  if (hook.command === next) return false;
+  let raw = readFileSync(manifestPath, 'utf8');
+  raw = raw.replace(JSON.stringify(hook.command), JSON.stringify(next));
+  writeFileSync(manifestPath, raw);
+  return true;
 }
 
 async function main(): Promise<void> {
@@ -110,10 +239,15 @@ async function main(): Promise<void> {
   }
   if (args[0] === '--write') {
     writeFileSync(CODEX_HOOK_MANIFEST, renderBoundManifest());
-    console.log('hook-content-binding: updated Codex H4/H6 launcher digests');
+    const updated = ['Codex H4/H6 launcher digests'];
+    if (writeClaudeBinding()) updated.push('Claude dispatch binding');
+    if (writeKimiBinding()) updated.push('Kimi dispatch binding');
+    console.log(`hook-content-binding: updated ${updated.join(' + ')}`);
     return;
   }
   assertHookContentBinding();
+  assertClaudeHookContentBinding();
+  assertKimiHookContentBinding();
   console.log('hook-content-binding: OK');
 }
 
