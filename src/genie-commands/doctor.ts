@@ -2289,6 +2289,7 @@ export async function doctorCommand(options?: { json?: boolean; fix?: boolean },
   ];
 
   const failed = results.filter((r) => r.status === 'fail');
+  const warnings = results.filter((r) => r.status === 'warn');
 
   // One bounded activation observation feeds the additive integration summary.
   // It is purely additive: `{ ok, checks }` meanings are unchanged, and a pending
@@ -2311,7 +2312,9 @@ export async function doctorCommand(options?: { json?: boolean; fix?: boolean },
     out('');
     for (const line of results.flatMap(renderCheckLines)) out(line);
     out('');
-    out(failed.length === 0 ? '\x1b[32mAll checks passed.\x1b[0m' : `\x1b[31m${failed.length} check(s) failed.\x1b[0m`);
+    if (failed.length > 0) out(`\x1b[31m${failed.length} check(s) failed.\x1b[0m`);
+    else if (warnings.length > 0) out(`\x1b[33m${warnings.length} warning(s) need attention.\x1b[0m`);
+    else out('\x1b[32mAll checks passed.\x1b[0m');
     // Broken Codex diagnostics go to stderr (no all-green footer); current/pending
     // status goes to stdout — the same stream split the setup/JSON projections use.
     if (integration) {

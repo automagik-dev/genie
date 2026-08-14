@@ -275,13 +275,13 @@ function resolveWishBase(
   reResolve: boolean | undefined,
 ): ResolvedBase {
   const record = db === null ? null : readWishBase(db, slug);
-  if (record === 'corrupt') {
+  if (record === 'corrupt' && reResolve !== true) {
     failClosed(
       'corrupt-base-record',
       `Recorded base for wish ${JSON.stringify(slug)} is malformed; re-run with --re-resolve to replace it.`,
     );
   }
-  if (record !== null && reResolve !== true) {
+  if (record !== null && record !== 'corrupt' && reResolve !== true) {
     if (peelCommit(root, record.base) === null) {
       failClosed(
         'recorded-base-missing',

@@ -10,7 +10,7 @@ export default {
     // These have a PR number suffix and nested conventional commits in the body.
     // Already linted individually on dev before merge.
     (message: string) =>
-      /\(#\d+\)/.test(message.split('\n')[0]) &&
+      /\(#\d+\)$/.test(message.split('\n')[0]) &&
       !/^(feat|fix|chore|refactor|docs|style|test|perf|ci|build|revert)/.test(message),
     // Historical exception: one `wip:` commit landed on dev via #1065 before
     // pre-commit hooks caught it (commit 2b226b3b). Ignoring it here unblocks
@@ -39,6 +39,18 @@ export default {
     // promotion PR. Do NOT reuse this exact subject — keep new headers ≤100
     // accounting for GitHub's `(#NNN)` suffix on squash-merge.
     (message: string) => message.startsWith('docs(sec): apply reviewer round-2 fixes — deprecation mechanism'),
+    // Historical one-off squash subjects landed on dev before the GitHub-added
+    // PR suffix was accounted for in the 100-character gate. Rewriting shared
+    // dev history is off the table. These are exact full-subject matches pinned
+    // to their commits; do not reuse them, and do not broaden this exception.
+    (message: string) =>
+      [
+        'feat(doctor): spawn-context-contract#drain — drain legacy wish/* residue, retarget the launch-residue check (#2793)',
+        'feat: retire genie launch atomically with its consumers (spawn-context-contract#launch-removal) (#2789)',
+        'feat(hooks): security hardening - trusted gh spawn + claude/kimi launcher pin (hooks-v2#security) (#2788)',
+        'spawn-context-contract#doctor-modes: mode-drift check + tighten-only --fix across all worktrees (#2779)',
+        'feat(hooks): retire orchestration-guard, validate-completion, and hook trust (hooks-v2#retire) (#2780)',
+      ].includes(message.split('\n')[0]),
     // Historical exception: four `wish:`-prefixed wish-evolution commits on
     // the release-pipeline-collapse PR branch pre-date the engineering work.
     // They captured the wish-document drafts (council pivot, reviewer

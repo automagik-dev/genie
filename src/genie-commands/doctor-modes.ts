@@ -181,8 +181,8 @@ function ancestorDirs(paths: string[]): Set<string> {
 }
 
 type DirProbe =
-  /** A real directory: carry its lstat mode for the 0755 comparison. */
-  | { kind: 'dir'; mode: number }
+  /** A real directory: carry its lstat identity and mode for repair proof. */
+  | { kind: 'dir'; stat: Stats }
   /** A symlink on disk where a directory belongs — descendants are never followed. */
   | { kind: 'symlink' }
   /** A non-directory non-symlink (file, fifo, socket) occupies the slot. */
@@ -206,7 +206,22 @@ function probeDir(path: string): DirProbe {
   }
   if (stat.isSymbolicLink()) return { kind: 'symlink' };
   if (!stat.isDirectory()) return { kind: 'not-dir' };
-  return { kind: 'dir', mode: stat.mode };
+  return { kind: 'dir', stat };
+}
+
+interface ScanIdentity {
+  dev: number;
+  ino: number;
+  kind: 'file' | 'dir';
+  mode: number;
+}
+
+/** Repair-only proof kept out of doctor JSON and the public drift report. */
+const scanIdentities = new WeakMap<ModeDriftEntry, ScanIdentity>();
+
+function rememberIdentity(entry: ModeDriftEntry, stat: Stats, kind: 'file' | 'dir'): ModeDriftEntry {
+  scanIdentities.set(entry, { dev: stat.dev, ino: stat.ino, kind, mode: stat.mode & 0o7777 });
+  return entry;
 }
 
 /**
@@ -276,9 +291,12 @@ function classifyDir(worktree: string, relDir: string, probe: DirProbe): DirVerd
       blocksDescendants: null,
     };
   }
-  const verdict = classifyModeDrift(probe.mode, CANONICAL_DIR_MODE, 'dir');
+  const verdict = classifyModeDrift(probe.stat.mode, CANONICAL_DIR_MODE, 'dir');
   return {
-    entry: verdict === null ? null : { ...base, diskMode: octal(probe.mode & 0o7777), ...verdict },
+    entry:
+      verdict === null
+        ? null
+        : rememberIdentity({ ...base, diskMode: octal(probe.stat.mode & 0o7777), ...verdict }, probe.stat, 'dir'),
     blocksDescendants: null,
   };
 }
@@ -366,7 +384,9 @@ function classifyFile(worktree: string, file: IndexEntry, probes: Map<string, Di
     };
   }
   const verdict = classifyModeDrift(stat.mode, file.mode, 'file');
-  return verdict === null ? null : { ...base, diskMode: octal(stat.mode & 0o7777), ...verdict };
+  return verdict === null
+    ? null
+    : rememberIdentity({ ...base, diskMode: octal(stat.mode & 0o7777), ...verdict }, stat, 'file');
 }
 
 /** Whole-worktree refusal for a registration whose directory no longer exists. */
@@ -563,7 +583,9 @@ export function checkWorktreeModes(root: string | null): CheckResult[] {
  * open and fchmod can redirect it. A re-lstat alone is not sufficient: the
  * swap could land between the lstat and the chmod.
  */
-function tightenNoFollow(path: string, mode: number): string | null {
+function tightenNoFollow(path: string, mode: number, entry: ModeDriftEntry): string | null {
+  const expected = scanIdentities.get(entry);
+  if (expected === undefined) return 'scan identity unavailable — never edited';
   let fd: number;
   try {
     fd = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
@@ -572,8 +594,22 @@ function tightenNoFollow(path: string, mode: number): string | null {
   }
   try {
     const stat = fstatSync(fd);
-    if (!stat.isFile() && !stat.isDirectory()) {
+    const currentKind = stat.isFile() ? 'file' : stat.isDirectory() ? 'dir' : null;
+    if (currentKind === null) {
       return 'opened descriptor is not a regular file or directory — never edited';
+    }
+    if (entry.kind !== expected.kind || currentKind !== expected.kind) {
+      return `opened descriptor kind changed from ${expected.kind} to ${currentKind} — never edited`;
+    }
+    if (stat.dev !== expected.dev || stat.ino !== expected.ino) {
+      return 'opened descriptor replaced since scan — never edited';
+    }
+    const verdict = classifyModeDrift(stat.mode, mode, currentKind);
+    if (verdict?.disposition !== 'wider') {
+      return `current mode ${octal(stat.mode & 0o7777)} is no longer safely wider — never edited`;
+    }
+    if ((stat.mode & 0o7777) !== expected.mode) {
+      return `current mode changed since scan (${octal(expected.mode)} → ${octal(stat.mode & 0o7777)}) — never edited`;
     }
     fchmodSync(fd, mode);
     return null;
@@ -618,7 +654,7 @@ export function repairWorktreeModes(root: string | null, deps: ModeRepairDeps = 
     }
     // A `wider` entry implies the on-disk mode is a strict superset of the
     // index mode, so setting the index mode exactly only ever removes bits.
-    const failure = tightenNoFollow(path, target);
+    const failure = tightenNoFollow(path, target, entry);
     if (failure === null) emit(`  \x1b[32m✔\x1b[0m tightened ${path} (${entry.diskMode} → ${entry.indexMode})`);
     else emit(`  \x1b[33m!\x1b[0m kept ${path}: ${failure}`);
   }

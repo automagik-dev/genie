@@ -160,10 +160,11 @@ describe('doctorCommand', () => {
     expect(exitCode).toBe(0);
   });
 
-  test('human output renders a header and a summary line', async () => {
+  test('human output renders a header and an honest warning summary', async () => {
     const { output } = await captureDoctor(() => doctorCommand({}, isolatedDoctorDeps()));
     expect(output).toContain('genie doctor');
-    expect(output).toContain('All checks passed.');
+    expect(output).toContain('warning(s) need attention.');
+    expect(output).not.toContain('All checks passed.');
   });
 });
 

@@ -304,6 +304,21 @@ describe('wish context', () => {
     expect((JSON.parse(metaRow(fx, 'wish_base:demo') ?? 'null') as { base: string }).base).toBe(advanced);
   });
 
+  test('--re-resolve replaces a corrupt base record with a valid fresh record', async () => {
+    const fx = makeFixture();
+    seedTasks(fx, 'demo', ['alpha']);
+    const db = openDb({ cwd: fx.root });
+    db.query('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run('wish_base:demo', '{not json');
+    db.close();
+
+    const payload = payloadOf(await cli(fx.root, '--wish', 'demo', '--group', 'alpha', '--re-resolve'));
+    expect(payload.base).toBe(devSha(fx));
+    expect(JSON.parse(metaRow(fx, 'wish_base:demo') ?? 'null')).toMatchObject({
+      branch: 'wish/demo',
+      base: devSha(fx),
+    });
+  });
+
   test('--plan never writes the wave pin, not even when no base is recorded', async () => {
     const fx = makeFixture();
     seedTasks(fx, 'demo', ['alpha']);
@@ -363,6 +378,19 @@ describe('wish context', () => {
     expect(str(planned.base)).toBe(advanced);
     expect(dbBytes(fx).equals(before)).toBe(true);
     expect((JSON.parse(metaRow(fx, 'wish_base:demo') ?? 'null') as { base: string }).base).not.toBe(advanced);
+  });
+
+  test('--plan --re-resolve previews recovery from a corrupt record without replacing it', async () => {
+    const fx = makeFixture();
+    seedTasks(fx, 'demo', ['alpha']);
+    const corrupt = '{not json';
+    const db = openDb({ cwd: fx.root });
+    db.query('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run('wish_base:demo', corrupt);
+    db.close();
+
+    const payload = payloadOf(await cli(fx.root, '--wish', 'demo', '--group', 'alpha', '--plan', '--re-resolve'));
+    expect(payload.base).toBe(devSha(fx));
+    expect(metaRow(fx, 'wish_base:demo')).toBe(corrupt);
   });
 
   test('--plan on a repo with no genie.db still returns branch+base (empty tasks) and creates nothing', async () => {

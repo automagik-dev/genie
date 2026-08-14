@@ -178,9 +178,63 @@ function extractPrNumber(cmd: string): string | null {
  * Returns `null` when no explicit repo is present; callers fall back to the
  * subprocess's default resolution (git remote of cwd).
  */
-function extractRepoFlag(cmd: string): string | null {
-  const match = cmd.match(/(?:--repo|-R)(?:\s+|=)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\b/);
-  return match ? match[1] : null;
+type RepoFlag = { kind: 'absent' } | { kind: 'valid'; repo: string } | { kind: 'invalid' };
+
+function shellTokens(cmd: string): string[] {
+  const tokens: string[] = [];
+  let token = '';
+  let quote: "'" | '"' | null = null;
+  let active = false;
+  for (let index = 0; index < cmd.length; index++) {
+    const char = cmd[index];
+    if (quote !== null) {
+      if (char === quote) quote = null;
+      else if (char === '\\' && quote === '"' && index + 1 < cmd.length) token += cmd[++index];
+      else token += char;
+      active = true;
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      active = true;
+    } else if (char === '\\' && index + 1 < cmd.length) {
+      token += cmd[++index];
+      active = true;
+    } else if (/\s/.test(char)) {
+      if (active) tokens.push(token);
+      token = '';
+      active = false;
+    } else if (';&|'.includes(char)) {
+      if (active) tokens.push(token);
+      tokens.push(char);
+      token = '';
+      active = false;
+    } else {
+      token += char;
+      active = true;
+    }
+  }
+  if (active) tokens.push(token);
+  return tokens;
+}
+
+function extractRepoFlag(cmd: string): RepoFlag {
+  const tokens = shellTokens(cmd);
+  const merge = tokens.findIndex(
+    (token, index) => token === 'gh' && tokens[index + 1] === 'pr' && tokens[index + 2] === 'merge',
+  );
+  if (merge < 0) return { kind: 'absent' };
+  const repoPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+  for (let index = merge + 3; index < tokens.length && ![';', '&', '|'].includes(tokens[index]); index++) {
+    const token = tokens[index];
+    if (token === '--repo' || token === '-R') {
+      const repo = tokens[index + 1];
+      return repo !== undefined && repoPattern.test(repo) ? { kind: 'valid', repo } : { kind: 'invalid' };
+    }
+    const equal = /^(?:--repo|-R)=(.*)$/.exec(token);
+    if (equal) return repoPattern.test(equal[1]) ? { kind: 'valid', repo: equal[1] } : { kind: 'invalid' };
+  }
+  return { kind: 'absent' };
 }
 
 export async function branchGuard(payload: HookPayload, deps: BranchGuardDeps = defaultDeps): Promise<HandlerResult> {
@@ -229,7 +283,15 @@ export async function branchGuard(payload: HookPayload, deps: BranchGuardDeps = 
           'BLOCKED: `gh pr merge` requires an explicit PR number so the target base branch can be verified. §19 (v2): agents merge PRs targeting `dev` only; main/master is humans-only via GitHub UI.',
       };
     }
-    const repo = extractRepoFlag(matchTarget) ?? undefined;
+    const repoFlag = extractRepoFlag(command);
+    if (repoFlag.kind === 'invalid') {
+      return {
+        decision: 'deny',
+        reason:
+          'BLOCKED: `gh pr merge --repo` must name an exact `OWNER/NAME` repository so the target can be verified.',
+      };
+    }
+    const repo = repoFlag.kind === 'valid' ? repoFlag.repo : undefined;
     // Trust roots derive from the agent's working directory — the surface a
     // repository-local shim is planted in. Older/odd clients that omit the
     // field fall back to the hook process cwd.

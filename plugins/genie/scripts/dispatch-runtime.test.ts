@@ -34,6 +34,7 @@ interface ResolverFs {
 }
 
 const launcher = require('./dispatch-runtime.cjs') as {
+  CLAUDE_LAUNCHER_CONTRACT: string;
   CODEX_LAUNCHER_CONTRACT: string;
   childTimeoutMs: (event: string, runtime: 'codex' | 'claude', env?: NodeJS.ProcessEnv) => number;
   launch: (
@@ -66,6 +67,12 @@ function codexMainArgs(event: 'PreToolUse' | 'PermissionRequest'): string[] {
     '--launcher-sha256',
     hashed.digest,
   ];
+}
+
+function claudeMainArgs(contract = launcher.CLAUDE_LAUNCHER_CONTRACT, digest?: string): string[] {
+  const hashed = launcher.launcherSha256();
+  if ('error' in hashed) throw new Error(hashed.error);
+  return ['claude', '--launcher-contract', contract, '--launcher-sha256', digest ?? hashed.digest];
 }
 
 let root: string;
@@ -268,6 +275,40 @@ describe('dispatch-runtime launcher', () => {
       'launcher bytes do not match the reviewed hook definition',
     );
     expect(existsSync(unexpected)).toBe(false);
+  });
+
+  test('executable Claude verifies its contract and digest before child spawn', async () => {
+    const log = join(root, 'claude-spawn.json');
+    process.env.FAKE_LOG = log;
+    fakeGenie("fs.writeFileSync(process.env.FAKE_LOG, 'spawned');");
+
+    const correct = Bun.spawn(['node', LAUNCHER_PATH, ...claudeMainArgs()], {
+      env: process.env,
+      stdin: Buffer.from(payload()),
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    expect(await correct.exited).toBe(0);
+    expect(existsSync(log)).toBe(true);
+    rmSync(log);
+
+    const invalid: Array<[string, string[]]> = [
+      ['missing binding', ['claude']],
+      ['wrong contract', claudeMainArgs('genie-codex-dispatch-v1')],
+      ['wrong digest', claudeMainArgs(undefined, '0'.repeat(64))],
+    ];
+    for (const [label, args] of invalid) {
+      const proc = Bun.spawn(['node', LAUNCHER_PATH, ...args], {
+        env: process.env,
+        stdin: Buffer.from(payload()),
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+      const stderr = await new Response(proc.stderr).text();
+      expect(await proc.exited, label).toBe(2);
+      expect(stderr, label).toContain('genie hook launcher:');
+      expect(existsSync(log), label).toBe(false);
+    }
   });
 
   test('launcher contract version is checked independently of the content digest', () => {

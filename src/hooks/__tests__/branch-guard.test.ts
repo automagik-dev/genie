@@ -331,6 +331,9 @@ describe('branch-guard', () => {
       ['long flag, equals-separated', 'gh pr merge 1270 --repo=automagik-dev/genie --squash'],
       ['short flag, space-separated', 'gh pr merge 1270 --squash -R automagik-dev/genie'],
       ['short flag, equals-separated', 'gh pr merge 1270 -R=automagik-dev/genie'],
+      ['quoted long value', 'gh pr merge 1270 --repo "automagik-dev/genie"'],
+      ['quoted long equals value', "gh pr merge 1270 --repo='automagik-dev/genie'"],
+      ['quoted short value', "gh pr merge 1270 -R 'automagik-dev/genie'"],
       ['repo before pr num still parsed', 'gh pr merge 1270 --repo automagik-dev/genie --auto --delete-branch'],
       ['slug with dots and hyphens', 'gh pr merge 42 --repo my-org/my.repo-name'],
       ['slug with underscores', 'gh pr merge 7 --repo owner_x/name_y'],
@@ -356,10 +359,22 @@ describe('branch-guard', () => {
       expect(calls[0].repo).toBeUndefined();
     });
 
-    test('malformed repo arg (no slash) is ignored — repo stays undefined', async () => {
+    test('malformed explicit repo arg fails closed without lookup', async () => {
       const { deps, calls } = spyDeps('dev');
-      await branchGuard(makePayload('gh pr merge 1270 --repo justowner'), deps);
-      expect(calls[0].repo).toBeUndefined();
+      const result = await branchGuard(makePayload('gh pr merge 1270 --repo justowner'), deps);
+      expect(result?.decision).toBe('deny');
+      expect(result?.reason).toContain('exact `OWNER/NAME`');
+      expect(calls).toHaveLength(0);
+    });
+
+    test('the same PR number is verified against each exact quoted repository', async () => {
+      const { deps, calls } = spyDeps('dev');
+      await branchGuard(makePayload('gh pr merge 1270 --repo "owner-a/project"'), deps);
+      await branchGuard(makePayload("gh pr merge 1270 -R='owner-b/project'"), deps);
+      expect(calls).toEqual([
+        { prNum: '1270', repo: 'owner-a/project' },
+        { prNum: '1270', repo: 'owner-b/project' },
+      ]);
     });
 
     test('--repo inside a quoted body is stripped before extraction (no accidental forwarding)', async () => {

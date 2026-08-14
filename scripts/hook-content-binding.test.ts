@@ -150,4 +150,33 @@ describe('Claude + Kimi hook launcher content binding', () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  test('bindings require the exact runtime root and launcher path on every platform variant', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-hook-binding-roots-'));
+    try {
+      const launcher = join(root, 'dispatch-runtime.cjs');
+      copyFileSync(CODEX_HOOK_LAUNCHER, launcher);
+      const claude = JSON.parse(readFileSync(CLAUDE_HOOK_MANIFEST, 'utf8'));
+      const claudeHook = claude.hooks.PreToolUse[0].hooks.find((hook: { command: string }) =>
+        hook.command.includes('dispatch-runtime.cjs'),
+      );
+      for (const field of ['command', 'commandWindows'] as const) {
+        const manifest = join(root, `claude-${field}.json`);
+        const original = claudeHook[field];
+        claudeHook[field] = original.replace('CLAUDE_PLUGIN_ROOT', 'OTHER_ROOT');
+        writeFileSync(manifest, `${JSON.stringify(claude, null, 2)}\n`);
+        expect(() => assertClaudeHookContentBinding(manifest, launcher)).toThrow('unexpected');
+        claudeHook[field] = original;
+      }
+
+      const kimi = JSON.parse(readFileSync(KIMI_HOOK_MANIFEST, 'utf8'));
+      const kimiHook = kimi.hooks.find((entry: { command: string }) => entry.command.includes('dispatch-runtime.cjs'));
+      kimiHook.command = kimiHook.command.replace('KIMI_PLUGIN_ROOT', 'OTHER_ROOT');
+      const kimiManifest = join(root, 'kimi.json');
+      writeFileSync(kimiManifest, `${JSON.stringify(kimi, null, 2)}\n`);
+      expect(() => assertKimiHookContentBinding(kimiManifest, launcher)).toThrow('unexpected');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

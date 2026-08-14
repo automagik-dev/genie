@@ -38,8 +38,15 @@ const PROTOCOL_VERSION = '2024-11-05';
 export async function runMcpServer(): Promise<void> {
   // Lazy: the write-capable bun:sqlite open + tools load here, not at genie startup.
   const mcpTools = await import('../lib/v5/mcp-tools.js');
-  const { isCurrentGenieDb, isDegradedReadonlyDb, MCP_TOOLS, MCP_WRITE_TOOLS, openWriteableDb, resolveProjectContext } =
-    mcpTools;
+  const {
+    isCurrentGenieDb,
+    isDegradedReadonlyDb,
+    MCP_TOOLS,
+    MCP_WRITE_TOOLS,
+    openDegradedReadonlyDb,
+    openWriteableDb,
+    resolveProjectContext,
+  } = mcpTools;
   const { runMcpServerLoop } = await import('../lib/v5/mcp-server.js');
   await runMcpServerLoop({
     // MCP_TOOLS stays the read registry ui-bridge splices; the operative write
@@ -52,6 +59,7 @@ export async function runMcpServer(): Promise<void> {
     // openWriteableDb degrades to the readonly healing open and the strict
     // validator below adjudicates — a fully-current db keeps serving reads.
     openDb: openWriteableDb,
+    openReadonlyDb: openDegradedReadonlyDb,
     validateReadonlyDb: isCurrentGenieDb,
     // A degrade must not outlive the condition that caused it: while the held
     // handle is read-only the loop retries the write open per call and promotes

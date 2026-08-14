@@ -20,8 +20,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/dispatch-runtime.cjs\" claude --launcher-contract genie-claude-dispatch-v1 --launcher-sha256 48ea38c7d8e715b209553be825cb0b448e35402381c5b717d6466fe12943b214",
-            "commandWindows": "node \"%CLAUDE_PLUGIN_ROOT%\\scripts\\dispatch-runtime.cjs\" claude --launcher-contract genie-claude-dispatch-v1 --launcher-sha256 48ea38c7d8e715b209553be825cb0b448e35402381c5b717d6466fe12943b214",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/dispatch-runtime.cjs\" claude --launcher-contract genie-claude-dispatch-v1 --launcher-sha256 34446855b3e4857ac8b655151e0e4e7addc56b62d1d70cc3725d00f809d48270",
+            "commandWindows": "node \"%CLAUDE_PLUGIN_ROOT%\\scripts\\dispatch-runtime.cjs\" claude --launcher-contract genie-claude-dispatch-v1 --launcher-sha256 34446855b3e4857ac8b655151e0e4e7addc56b62d1d70cc3725d00f809d48270",
             "timeout": 125
           }
         ]

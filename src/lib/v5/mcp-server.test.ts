@@ -89,8 +89,54 @@ await runMcpServerLoop({
   );
 }
 
+/** Null/busy promotion attempts reopen degraded read fallbacks, then promote. */
+function writeInterruptedPromotionHarness(): void {
+  writeFileSync(
+    harness,
+    `import { notify, runMcpServerLoop } from ${JSON.stringify(join(import.meta.dir, 'mcp-server.ts'))};
+const degraded = new WeakSet();
+const closed = [];
+let writeOpens = 0;
+let readonlyOpens = 0;
+await runMcpServerLoop({
+  tools: [{
+    name: 'probe', description: 'd', inputSchema: {},
+    handler: (ctx) => ({ handle: ctx.db?.id ?? null, degraded: ctx.db ? degraded.has(ctx.db) : false, writeOpens, readonlyOpens, closed: [...closed] }),
+  }],
+  openDb: () => {
+    writeOpens += 1;
+    if (writeOpens === 2 || writeOpens === 3) return null;
+    const id = writeOpens;
+    const db = {
+      id,
+      query: () => ({ get: () => ({ user_version: 1 }) }),
+      close: () => { closed.push(id); notify('test/closed', { id }); },
+    };
+    if (writeOpens === 1) degraded.add(db);
+    return db;
+  },
+  openReadonlyDb: () => {
+    readonlyOpens += 1;
+    const id = readonlyOpens + 1;
+    const db = {
+      id,
+      query: () => ({ get: () => ({ user_version: 1 }) }),
+      close: () => { closed.push(id); notify('test/closed', { id }); },
+    };
+    degraded.add(db);
+    return db;
+  },
+  isDegradedHandle: (db) => degraded.has(db),
+  initialize: () => ({ result: {} }),
+});
+`,
+  );
+}
+
 interface RpcMessage {
   id?: number | string | null;
+  method?: string;
+  params?: { id?: number };
   result?: { content?: Array<{ type: string; text: string }>; isError?: boolean; structuredContent?: unknown };
   error?: { code: number };
 }
@@ -160,9 +206,8 @@ describe('runMcpServerLoop seam', () => {
     const probe = (id: number) => ({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'probe' } });
     const responses = await drive([INIT, probe(2), probe(3)]);
 
-    // Call 1: the retry is still degraded, so one degraded handle replaces
-    // another (closed first, so it cannot hold the WAL index read-only) and
-    // reads keep serving.
+    // Call 1: the retry is still degraded, so the replacement keeps serving
+    // reads after the incumbent releases its WAL mapping.
     const first = toolPayload<{ degraded: boolean; opens: number; closes: number }>(responses.find((r) => r.id === 2)!);
     expect(first).toEqual({ degraded: true, opens: 2, closes: 1 });
 
@@ -172,6 +217,42 @@ describe('runMcpServerLoop seam', () => {
       responses.find((r) => r.id === 3)!,
     );
     expect(second).toEqual({ degraded: false, opens: 3, closes: 2 });
+  });
+
+  test('degraded reads survive null/busy retries, then promote without leaking handles', async () => {
+    writeInterruptedPromotionHarness();
+    const probe = (id: number) => ({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'probe' } });
+    const responses = await drive([INIT, probe(2), probe(3), probe(4)]);
+    type ProbePayload = {
+      handle: number;
+      degraded: boolean;
+      writeOpens: number;
+      readonlyOpens: number;
+      closed: number[];
+    };
+
+    expect(toolPayload<ProbePayload>(responses.find((r) => r.id === 2)!)).toEqual({
+      handle: 2,
+      degraded: true,
+      writeOpens: 2,
+      readonlyOpens: 1,
+      closed: [1],
+    });
+    expect(toolPayload<ProbePayload>(responses.find((r) => r.id === 3)!)).toEqual({
+      handle: 3,
+      degraded: true,
+      writeOpens: 3,
+      readonlyOpens: 2,
+      closed: [1, 2],
+    });
+    expect(toolPayload<ProbePayload>(responses.find((r) => r.id === 4)!)).toEqual({
+      handle: 4,
+      degraded: false,
+      writeOpens: 4,
+      readonlyOpens: 2,
+      closed: [1, 2, 3],
+    });
+    expect(responses.filter((r) => r.method === 'test/closed').map((r) => r.params?.id)).toEqual([1, 2, 3, 4]);
   });
 
   test('an untagged error-keyed handler result stays isError false', async () => {

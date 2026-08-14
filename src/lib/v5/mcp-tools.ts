@@ -253,6 +253,13 @@ export function isDegradedReadonlyDb(db: Database | null | undefined): boolean {
   return db !== null && db !== undefined && degradedReadonlyHandles.has(db);
 }
 
+/** Open a readonly fallback and mark it so writes stay typed and promotion keeps retrying. */
+export function openDegradedReadonlyDb(target?: string | ProjectDatabaseBinding): Database | null {
+  const degraded = openReadonlyDbHealingStaleSchema(target);
+  if (degraded !== null) degradedReadonlyHandles.add(degraded);
+  return degraded;
+}
+
 /**
  * Open the repo's shared `.genie/genie.db` WRITE-CAPABLE through the standard
  * hardened CLI path, degrading to the readonly healing open when the write is
@@ -327,9 +334,7 @@ export function openWriteableDb(
     db = attempt.db;
   }
   if (db !== null) return db;
-  const degraded = openReadonlyDbHealingStaleSchema(target);
-  if (degraded !== null) degradedReadonlyHandles.add(degraded);
-  return degraded;
+  return openDegradedReadonlyDb(target);
 }
 
 /** True when the db file itself is writable (bun:sqlite would open it read-write). */

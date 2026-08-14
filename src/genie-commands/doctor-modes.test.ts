@@ -17,6 +17,7 @@ import {
   mkdirSync,
   mkdtempSync,
   realpathSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -405,6 +406,70 @@ describe("scan→repair window: a swapped-in symlink is never chmod'd through", 
     expect(chatter).not.toContain('✔');
     expect(modeOf(victim)).toBe(0o600);
     expect(lstatSync(join(wt, 'a.txt')).isSymbolicLink()).toBe(true);
+  });
+});
+
+describe('scan→repair window: replacements and kind changes are never chmodded', () => {
+  test('a regular-file replacement with a stricter mode is kept, including repeated stale repair', () => {
+    const fixture = makeFixture();
+    const wt = addWorktree(fixture, 'wish/demo-alpha');
+    const path = join(wt, 'a.txt');
+    chmodSync(path, 0o666);
+    const scan = scanWorktreeModes(fixture.root);
+    renameSync(path, join(wt, 'a.original'));
+    writeFileSync(path, 'replacement\n');
+    chmodSync(path, 0o600);
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const lines: string[] = [];
+      repairWorktreeModes(fixture.root, { scan, logSink: (line) => lines.push(line) });
+      expect(lines.join('\n')).toContain('replaced since scan');
+      expect(lines.join('\n')).not.toContain('✔');
+      expect(modeOf(path)).toBe(0o600);
+    }
+  });
+
+  test('a directory replacement is kept even when its replacement is still wider', () => {
+    const fixture = makeFixture();
+    const wt = addWorktree(fixture, 'wish/demo-beta');
+    const path = join(wt, 'sub');
+    chmodSync(path, 0o777);
+    const scan = scanWorktreeModes(fixture.root);
+    renameSync(path, join(wt, 'sub.original'));
+    mkdirSync(path);
+    chmodSync(path, 0o777);
+
+    const lines: string[] = [];
+    repairWorktreeModes(fixture.root, { scan, logSink: (line) => lines.push(line) });
+    expect(lines.join('\n')).toContain('replaced since scan');
+    expect(lines.join('\n')).not.toContain('✔');
+    expect(modeOf(path)).toBe(0o777);
+  });
+
+  test('file-to-directory and directory-to-file swaps are both refused', () => {
+    const fixture = makeFixture();
+    const wt = addWorktree(fixture, 'wish/demo-gamma');
+    const filePath = join(wt, 'a.txt');
+    const dirPath = join(wt, 'sub');
+    chmodSync(filePath, 0o666);
+    chmodSync(dirPath, 0o777);
+    const scan = scanWorktreeModes(fixture.root);
+
+    renameSync(filePath, join(wt, 'a.original'));
+    mkdirSync(filePath);
+    chmodSync(filePath, 0o777);
+    renameSync(dirPath, join(wt, 'sub.original'));
+    writeFileSync(dirPath, 'replacement\n');
+    chmodSync(dirPath, 0o666);
+
+    const lines: string[] = [];
+    repairWorktreeModes(fixture.root, { scan, logSink: (line) => lines.push(line) });
+    const chatter = lines.join('\n');
+    expect(chatter).toContain('kind changed from file to dir');
+    expect(chatter).toContain('kind changed from dir to file');
+    expect(chatter).not.toContain('✔');
+    expect(modeOf(filePath)).toBe(0o777);
+    expect(modeOf(dirPath)).toBe(0o666);
   });
 });
 

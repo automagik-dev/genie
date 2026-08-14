@@ -133,6 +133,8 @@ export interface McpServerConfig {
    * `bun:sqlite` / `mcp-tools`.
    */
   openDb: (target: string | ProjectDatabaseBinding) => Database | null;
+  /** Must-not-throw readonly restore after a close-first promotion returns null/busy. */
+  openReadonlyDb?: (target: string | ProjectDatabaseBinding) => Database | null;
   /**
    * Optional pure-read schema validator applied to whichever handle `openDb`
    * produced (writable or degraded-readonly). The fail-closed MCP command
@@ -181,13 +183,16 @@ export async function runMcpServerLoop(config: McpServerConfig): Promise<void> {
   // Resolve the fail-closed context up front when a resolver is injected; only an
   // `ok` context may hold a db handle. Without a resolver, keep the legacy open.
   const initialContext = config.resolveContext?.(cwd);
-  const openValidatedDb = (context?: ProjectContext): Database | null => {
+  const openValidatedWith = (
+    opener: (target: string | ProjectDatabaseBinding) => Database | null,
+    context?: ProjectContext,
+  ): Database | null => {
     let target: string | ProjectDatabaseBinding = cwd;
     if (context !== undefined) {
       if (context.kind !== 'ok' || context.databaseBinding === undefined) return null;
       target = context.databaseBinding;
     }
-    const db = config.openDb(target);
+    const db = opener(target);
     if (db === null) return null;
     try {
       // Bun may construct a handle for malformed bytes and fail only on the
@@ -207,6 +212,7 @@ export async function runMcpServerLoop(config: McpServerConfig): Promise<void> {
       return null;
     }
   };
+  const openValidatedDb = (context?: ProjectContext): Database | null => openValidatedWith(config.openDb, context);
   const openHandle = (context: ProjectContext | undefined): Database | null => openValidatedDb(context);
   // Single source of truth for the db handle: the per-call reopen below writes
   // back to ctx.db, and close() reads ctx.db — so a mid-session reopen is always
@@ -229,17 +235,24 @@ export async function runMcpServerLoop(config: McpServerConfig): Promise<void> {
    * open can produce it. Without this, ONE transient write-open failure at
    * session start would serve `read_only_database` for every write tool until
    * the client restarts the server — a latched session state the write open
-   * deliberately does not have. A retry that is still degraded (or fails
-   * outright) is discarded and the current handle keeps serving reads.
+   * deliberately does not have. A retry that is still degraded replaces the
+   * incumbent; a null/busy retry restores a separately opened readable handle.
    */
   function promoteDegradedHandle(): void {
     if (!ctx.db || !config.isDegradedHandle?.(ctx.db)) return;
-    // Release the read-only connection BEFORE re-opening: while it holds the WAL
-    // index mapped read-only, a fresh handle inherits that index and its writes
-    // fail with an instant "database is locked". A retry that is still degraded
-    // just replaces one degraded handle with another — reads keep serving.
-    ctx.db.close();
-    ctx.db = openValidatedDb(ctx.context);
+    const degraded = ctx.db;
+    // The degraded connection must release its read-only WAL mapping before a
+    // write open: a candidate opened beside it can pass read validation yet
+    // fail its first write with "database is locked". If that close-first open
+    // reports busy/null, immediately reopen a fallback so reads keep serving
+    // while a later call retries promotion.
+    degraded.close();
+    const replacement = openValidatedDb(ctx.context);
+    if (replacement === null) {
+      ctx.db = config.openReadonlyDb ? openValidatedWith(config.openReadonlyDb, ctx.context) : null;
+      return;
+    }
+    ctx.db = replacement;
   }
 
   function handleToolsCall(id: number | string | null, params: Record<string, unknown> | undefined): void {

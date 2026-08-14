@@ -39,8 +39,13 @@ interface KimiManifest {
   hooks?: unknown;
 }
 
-const CODEX_COMMAND_PATTERN =
-  /^(node .+dispatch-runtime\.cjs" codex (PreToolUse|PermissionRequest))(?: --launcher-contract ([^\s]+) --launcher-sha256 ([a-f0-9]{64}))?$/;
+const BINDING_SUFFIX = '(?: --launcher-contract [^\\s]+ --launcher-sha256 [a-f0-9]{64})?';
+const CODEX_POSIX_COMMAND_PATTERN = new RegExp(
+  `^(node "\\$\\{PLUGIN_ROOT\\}/scripts/dispatch-runtime\\.cjs" codex (PreToolUse|PermissionRequest))${BINDING_SUFFIX}$`,
+);
+const CODEX_WINDOWS_COMMAND_PATTERN = new RegExp(
+  `^(node "%PLUGIN_ROOT%\\\\scripts\\\\dispatch-runtime\\.cjs" codex (PreToolUse|PermissionRequest))${BINDING_SUFFIX}$`,
+);
 
 /**
  * The Claude dispatch invocation carries no event-name argument (`codex` is
@@ -48,8 +53,15 @@ const CODEX_COMMAND_PATTERN =
  * whole-command pattern accepts the pinned suffix when present and rejects
  * any other trailing argument shape.
  */
-const CLAUDE_COMMAND_PATTERN =
-  /^node .+dispatch-runtime\.cjs" claude(?: --launcher-contract [^\s]+ --launcher-sha256 [a-f0-9]{64})?$/;
+const CLAUDE_POSIX_COMMAND_PATTERN = new RegExp(
+  `^node "\\$\\{CLAUDE_PLUGIN_ROOT\\}/scripts/dispatch-runtime\\.cjs" claude${BINDING_SUFFIX}$`,
+);
+const CLAUDE_WINDOWS_COMMAND_PATTERN = new RegExp(
+  `^node "%CLAUDE_PLUGIN_ROOT%\\\\scripts\\\\dispatch-runtime\\.cjs" claude${BINDING_SUFFIX}$`,
+);
+const KIMI_COMMAND_PATTERN = new RegExp(
+  `^node "\\$KIMI_PLUGIN_ROOT/scripts/dispatch-runtime\\.cjs" claude${BINDING_SUFFIX}$`,
+);
 
 export function launcherSha256(launcherPath = CODEX_HOOK_LAUNCHER): string {
   const stat = lstatSync(launcherPath);
@@ -100,16 +112,16 @@ function parseManifest(path: string): HookManifest {
   return value as HookManifest;
 }
 
-function boundCodexCommand(command: string, digest: string, expectedEvent: string): string {
-  const match = command.match(CODEX_COMMAND_PATTERN);
+function boundCodexCommand(command: string, digest: string, expectedEvent: string, windows = false): string {
+  const match = command.match(windows ? CODEX_WINDOWS_COMMAND_PATTERN : CODEX_POSIX_COMMAND_PATTERN);
   if (!match || match[2] !== expectedEvent) {
     throw new Error(`unexpected Codex dispatch command for ${expectedEvent}: ${command}`);
   }
   return `${match[1]} --launcher-contract ${CODEX_LAUNCHER_CONTRACT} --launcher-sha256 ${digest}`;
 }
 
-function boundClaudeCommand(command: string, digest: string): string {
-  if (!CLAUDE_COMMAND_PATTERN.test(command)) {
+function boundClaudeCommand(command: string, digest: string, pattern: RegExp): string {
+  if (!pattern.test(command)) {
     throw new Error(`unexpected Claude dispatch command: ${command}`);
   }
   const base = command.replace(/\s+--launcher-contract\s+\S+\s+--launcher-sha256\s+[a-f0-9]{64}$/, '');
@@ -147,7 +159,7 @@ export function renderBoundManifest(manifestPath = CODEX_HOOK_MANIFEST, launcher
       throw new Error(`${event} dispatch launcher must define command and commandWindows`);
     }
     hook.command = boundCodexCommand(hook.command, digest, event);
-    hook.commandWindows = boundCodexCommand(hook.commandWindows, digest, event);
+    hook.commandWindows = boundCodexCommand(hook.commandWindows, digest, event, true);
   }
   return `${JSON.stringify(manifest, null, 2)}\n`;
 }
@@ -171,8 +183,8 @@ export function assertClaudeHookContentBinding(
     throw new Error('Claude PreToolUse dispatch launcher must define command and commandWindows');
   }
   if (
-    hook.command !== boundClaudeCommand(hook.command, digest) ||
-    hook.commandWindows !== boundClaudeCommand(hook.commandWindows, digest)
+    hook.command !== boundClaudeCommand(hook.command, digest, CLAUDE_POSIX_COMMAND_PATTERN) ||
+    hook.commandWindows !== boundClaudeCommand(hook.commandWindows, digest, CLAUDE_WINDOWS_COMMAND_PATTERN)
   ) {
     throw new Error(`Claude hook launcher binding drift: ${DRIFT_HINT}`);
   }
@@ -188,7 +200,7 @@ export function assertKimiHookContentBinding(
   if (typeof hook.command !== 'string') {
     throw new Error('Kimi PreToolUse dispatch launcher must define a command');
   }
-  if (hook.command !== boundClaudeCommand(hook.command, digest)) {
+  if (hook.command !== boundClaudeCommand(hook.command, digest, KIMI_COMMAND_PATTERN)) {
     throw new Error(`Kimi hook launcher binding drift: ${DRIFT_HINT}`);
   }
 }
@@ -207,8 +219,8 @@ function writeClaudeBinding(manifestPath = CLAUDE_HOOK_MANIFEST, launcherPath = 
   if (typeof hook.command !== 'string' || typeof hook.commandWindows !== 'string') {
     throw new Error('Claude PreToolUse dispatch launcher must define command and commandWindows');
   }
-  const next = boundClaudeCommand(hook.command, digest);
-  const nextWindows = boundClaudeCommand(hook.commandWindows, digest);
+  const next = boundClaudeCommand(hook.command, digest, CLAUDE_POSIX_COMMAND_PATTERN);
+  const nextWindows = boundClaudeCommand(hook.commandWindows, digest, CLAUDE_WINDOWS_COMMAND_PATTERN);
   if (hook.command === next && hook.commandWindows === nextWindows) return false;
   let raw = readFileSync(manifestPath, 'utf8');
   raw = raw.replace(JSON.stringify(hook.command), JSON.stringify(next));
@@ -224,7 +236,7 @@ function writeKimiBinding(manifestPath = KIMI_HOOK_MANIFEST, launcherPath = CODE
   if (typeof hook.command !== 'string') {
     throw new Error('Kimi PreToolUse dispatch launcher must define a command');
   }
-  const next = boundClaudeCommand(hook.command, digest);
+  const next = boundClaudeCommand(hook.command, digest, KIMI_COMMAND_PATTERN);
   if (hook.command === next) return false;
   let raw = readFileSync(manifestPath, 'utf8');
   raw = raw.replace(JSON.stringify(hook.command), JSON.stringify(next));

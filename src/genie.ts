@@ -85,7 +85,7 @@ program
   .option('--json', 'Emit JSON instead of human output')
   .option(
     '--fix',
-    'Remove detected residue: v4 leftovers (backup-first) and merged, clean `genie launch` worktrees (idempotent)',
+    'Backup/remove proven v4 residue and merged clean `genie launch` worktrees; tighten registered-worktree files only from wider modes to their index modes and dirs only from 0775/0777 to 0755; refuse replacements, symlinks, and non-wider or ambiguous modes (idempotent)',
   )
   .action(doctorCommand);
 
