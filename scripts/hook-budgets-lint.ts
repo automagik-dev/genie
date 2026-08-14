@@ -17,12 +17,19 @@
  * - telemetry ≤ 2s  — out-of-band reporting must drop its sample rather
  *   than stall the agent.
  *
- * Sole shipped exception: the Codex PermissionRequest dispatch hook carries
- * 125s — the host rung of the Omni approval ladder (110s poll budget →
- * 115s launcher child timeout → 125s host manifest timeout; the constants
- * live in src/lib/omni-config.ts). Approval is interactive by design and
- * may wait on a human. The lint re-derives the exception from those
- * constants so it cannot drift silently, and genie doctor independently
+ * Shipped exceptions: the three Omni ladder rungs, all `dispatch-runtime.cjs`
+ * at 125s — the host rung of the 110s poll budget → 115s launcher child →
+ * 125s host manifest ladder (constants in src/lib/omni-config.ts):
+ * - plugins/genie/hooks/hooks.json PreToolUse (Claude),
+ * - plugins/genie/.kimi-plugin/plugin.json PreToolUse (Kimi),
+ * - plugins/genie/hooks/codex-hooks.json PermissionRequest (Codex).
+ * Why PreToolUse carries the rung on the Claude runtime: the omni-approval
+ * handler registers on PreToolUse for Claude (src/hooks/index.ts) and polls
+ * approvals.pollBudgetMs (default 110s), and dispatch-runtime.cjs grants
+ * runtime === 'claude' the 115s child rung. Capping those two entries at
+ * the guard ceiling would let CC kill the hook mid-poll and silently vanish
+ * the approval gate. The lint re-derives every rung from the ladder
+ * constants so none can drift silently, and genie doctor independently
  * warns whenever an enabled Omni poll budget reaches its hook timeout
  * (timeout > pollBudget).
  */
@@ -82,6 +89,8 @@ export interface HookBudgetEntry {
   script: string;
   /** Whole seconds; null when missing or not a finite number. */
   timeout: number | null;
+  /** Script named by `commandWindows`; null when the hook has no Windows variant. */
+  windowsScript?: string | null;
 }
 
 /** A script-file token inside a hook command: `node ".../scripts/name.cjs" [args]`. */
@@ -93,6 +102,7 @@ export function scriptFromCommand(command: string): string {
 
 interface ClaudeStyleHook {
   command?: string;
+  commandWindows?: string;
   timeout?: number;
 }
 
@@ -110,9 +120,19 @@ interface KimiStyleManifest {
   hooks?: KimiStyleHook[];
 }
 
-function entryFromHook(manifest: string, event: string, hook: { command?: string; timeout?: number }): HookBudgetEntry {
+function entryFromHook(
+  manifest: string,
+  event: string,
+  hook: { command?: string; commandWindows?: string; timeout?: number },
+): HookBudgetEntry {
   const timeout = typeof hook.timeout === 'number' && Number.isFinite(hook.timeout) ? hook.timeout : null;
-  return { manifest, event, script: hook.command === undefined ? '' : scriptFromCommand(hook.command), timeout };
+  return {
+    manifest,
+    event,
+    script: hook.command === undefined ? '' : scriptFromCommand(hook.command),
+    timeout,
+    windowsScript: hook.commandWindows === undefined ? null : scriptFromCommand(hook.commandWindows),
+  };
 }
 
 export function parseClaudeStyleManifest(manifest: string, raw: string): HookBudgetEntry[] {
@@ -141,19 +161,19 @@ export function parseHookManifest(manifest: HookBudgetManifest): HookBudgetEntry
 }
 
 /**
- * The sole shipped budget exception: Codex `PermissionRequest` →
- * `dispatch-runtime.cjs` at 125s. Justification: interactive Omni approval
- * may wait on a human; 125s is the host rung of the 110s poll budget →
- * 115s launcher child → 125s host manifest ladder in src/lib/omni-config.ts.
- * The ladder margins are re-asserted mechanically so the exception cannot
- * drift away from the constants that justify it, and genie doctor keeps its
- * independent timeout > pollBudget warning for enabled Omni installs.
+ * The shipped budget exceptions: the three Omni ladder rungs. Interactive
+ * Omni approval may wait on a human, and the Claude runtime registers the
+ * approval handler on PreToolUse (not PermissionRequest), so the Claude and
+ * Kimi PreToolUse dispatch entries must carry the host rung too — full
+ * justification and ladder constants in the header comment. The same script
+ * in any other manifest/event position stays guard-class (≤ 30s).
  */
 export function isOmniLadderEntry(entry: HookBudgetEntry): boolean {
   return (
-    entry.manifest === 'plugins/genie/hooks/codex-hooks.json' &&
-    entry.event === 'PermissionRequest' &&
-    entry.script === 'dispatch-runtime.cjs'
+    entry.script === 'dispatch-runtime.cjs' &&
+    ((entry.manifest === 'plugins/genie/hooks/hooks.json' && entry.event === 'PreToolUse') ||
+      (entry.manifest === 'plugins/genie/.kimi-plugin/plugin.json' && entry.event === 'PreToolUse') ||
+      (entry.manifest === 'plugins/genie/hooks/codex-hooks.json' && entry.event === 'PermissionRequest'))
   );
 }
 
@@ -186,8 +206,19 @@ export function collectHookBudgetViolations(entries: HookBudgetEntry[]): string[
   const violations: string[] = [];
   for (const entry of entries) {
     const label = `${entry.manifest} ${entry.event} ${entry.script || '<unnamed-script>'}`;
+    const windowsScript = entry.windowsScript ?? null;
     if (entry.script === '') {
       violations.push(`${label}: command names no hook script — unable to classify`);
+      continue;
+    }
+    if (windowsScript === '') {
+      violations.push(`${label}: commandWindows names no hook script — unable to classify`);
+      continue;
+    }
+    if (windowsScript !== null && windowsScript !== entry.script) {
+      violations.push(
+        `${label}: commandWindows names a different script (${windowsScript}) — platform variants must run the same hook script`,
+      );
       continue;
     }
     if (entry.timeout === null) {

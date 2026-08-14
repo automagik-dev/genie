@@ -31,7 +31,7 @@
       "event": "PreToolUse",
       "matcher": "Bash|Read|Write|Edit|Agent|AgentSwarm",
       "command": "node \"$KIMI_PLUGIN_ROOT/scripts/dispatch-runtime.cjs\" claude",
-      "timeout": 30
+      "timeout": 125
     },
     {
       "event": "PreToolUse",

@@ -22,7 +22,7 @@
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/dispatch-runtime.cjs\" claude",
             "commandWindows": "node \"%CLAUDE_PLUGIN_ROOT%\\scripts\\dispatch-runtime.cjs\" claude",
-            "timeout": 30
+            "timeout": 125
           }
         ]
       },

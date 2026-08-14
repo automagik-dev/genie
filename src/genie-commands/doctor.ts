@@ -835,25 +835,69 @@ interface CcSettings {
   hooks?: { PreToolUse?: unknown };
 }
 
-/**
- * Smallest `timeout` (SECONDS) among PreToolUse hooks that run `genie hook
- * dispatch` in a Claude Code settings object — that is the ceiling the omni
- * approval handler polls under. null when no such hook is installed. Pure +
- * exported so the guardrail is unit-tested without a settings file on disk.
- */
-export function findDispatchHookTimeoutSec(settings: CcSettings): number | null {
-  const pre = settings.hooks?.PreToolUse;
-  if (!Array.isArray(pre)) return null;
+/** Parsed plugin-manifest documents consulted alongside the settings object. */
+export interface DispatchManifestDocs {
+  /** plugins/genie/hooks/hooks.json — Claude manifest, settings-shaped. */
+  claudeManifest?: unknown;
+  /** plugins/genie/.kimi-plugin/plugin.json — flat `hooks` array. */
+  kimiManifest?: unknown;
+}
+
+/** Smallest timeout among settings-shaped PreToolUse entries matching the predicate. */
+function minMatchingTimeout(entries: unknown, matches: (command: string) => boolean): number | null {
+  if (!Array.isArray(entries)) return null;
   let min: number | null = null;
-  for (const entry of pre as HookMatcher[]) {
+  for (const entry of entries as HookMatcher[]) {
     if (!Array.isArray(entry?.hooks)) continue;
     for (const h of entry.hooks as HookCommand[]) {
-      if (typeof h?.command === 'string' && h.command.includes('hook dispatch') && typeof h.timeout === 'number') {
+      if (typeof h?.command === 'string' && matches(h.command) && typeof h.timeout === 'number') {
         min = min === null ? h.timeout : Math.min(min, h.timeout);
       }
     }
   }
   return min;
+}
+
+/** Smallest timeout among the Kimi flat-hook PreToolUse dispatch entries. */
+function minKimiDispatchTimeout(manifest: unknown): number | null {
+  const hooks = (manifest as { hooks?: unknown } | undefined)?.hooks;
+  if (!Array.isArray(hooks)) return null;
+  let min: number | null = null;
+  for (const hook of hooks as Array<{ event?: unknown; command?: unknown; timeout?: unknown }>) {
+    if (
+      hook?.event === 'PreToolUse' &&
+      typeof hook.command === 'string' &&
+      hook.command.includes('dispatch-runtime.cjs') &&
+      typeof hook.timeout === 'number'
+    ) {
+      min = min === null ? hook.timeout : Math.min(min, hook.timeout);
+    }
+  }
+  return min;
+}
+
+function minOf(current: number | null, next: number | null): number | null {
+  if (next === null) return current;
+  return current === null ? next : Math.min(current, next);
+}
+
+/**
+ * Smallest `timeout` (SECONDS) among PreToolUse hooks that reach the omni
+ * approval handler: `genie hook dispatch` entries in a Claude Code settings
+ * object, plus `dispatch-runtime.cjs` entries in the shipped Claude and Kimi
+ * plugin manifests. That minimum is the ceiling the approval handler polls
+ * under. null when no such hook is installed. Pure + exported so the
+ * guardrail is unit-tested without files on disk.
+ */
+export function findDispatchHookTimeoutSec(settings: CcSettings, manifests: DispatchManifestDocs = {}): number | null {
+  let min = minMatchingTimeout(settings.hooks?.PreToolUse, (command) => command.includes('hook dispatch'));
+  min = minOf(
+    min,
+    minMatchingTimeout((manifests.claudeManifest as CcSettings | undefined)?.hooks?.PreToolUse, (command) =>
+      command.includes('dispatch-runtime.cjs'),
+    ),
+  );
+  return minOf(min, minKimiDispatchTimeout(manifests.kimiManifest));
 }
 
 /**
@@ -876,7 +920,7 @@ export function evaluateOmniHookTimeout(params: {
     return {
       name,
       status: 'warn',
-      detail: 'omni approvals enabled but no `genie hook dispatch` PreToolUse timeout found',
+      detail: 'omni approvals enabled but no genie dispatch PreToolUse timeout found (settings or plugin manifests)',
       suggestion: `Install the genie PreToolUse hook with a timeout ≥ ${needSec}s so approvals can resolve.`,
     };
   }
@@ -901,14 +945,22 @@ export function evaluateOmniHookTimeout(params: {
 async function checkOmniHookTimeout(): Promise<CheckResult[]> {
   const rt = await resolveOmniRuntimeConfig();
   if (!rt.approvals.enabled) return []; // omni off → stay silent
-  const settingsPath = join(homedir(), '.claude', 'settings.json');
   let timeoutSec: number | null = null;
   try {
-    if (existsSync(settingsPath)) {
-      timeoutSec = findDispatchHookTimeoutSec(JSON.parse(readFileSync(settingsPath, 'utf8')) as CcSettings);
+    const settings = existsSync(join(homedir(), '.claude', 'settings.json'))
+      ? (JSON.parse(readFileSync(join(homedir(), '.claude', 'settings.json'), 'utf8')) as CcSettings)
+      : {};
+    const manifests: DispatchManifestDocs = {};
+    const pluginRoot = resolveGenieSource(resolveGenieHome()).pluginRoot;
+    if (pluginRoot !== null) {
+      const claudePath = join(pluginRoot, 'hooks', 'hooks.json');
+      if (existsSync(claudePath)) manifests.claudeManifest = JSON.parse(readFileSync(claudePath, 'utf8'));
+      const kimiPath = join(pluginRoot, '.kimi-plugin', 'plugin.json');
+      if (existsSync(kimiPath)) manifests.kimiManifest = JSON.parse(readFileSync(kimiPath, 'utf8'));
     }
+    timeoutSec = findDispatchHookTimeoutSec(settings, manifests);
   } catch {
-    timeoutSec = null; // unreadable/malformed settings → treated as "not found"
+    timeoutSec = null; // unreadable/malformed settings or manifests → treated as "not found"
   }
   const result = evaluateOmniHookTimeout({ enabled: true, pollBudgetMs: rt.approvals.pollBudgetMs, timeoutSec });
   return result ? [result] : [];
