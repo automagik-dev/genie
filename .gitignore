@@ -83,7 +83,8 @@ yarn-error.log*
 # Machine-local roadmap sync baseline (pairs genie.db with roadmap.json)
 .genie/roadmap-sync
 
-# Per-worktree kickoff prompts emitted by `genie launch`
+# Legacy residue protection: kickoff prompts emitted by `genie launch` before
+# its removal stay ignored (nothing writes here anymore)
 .genie/launch/
 
 # Local genie state (not part of the package)

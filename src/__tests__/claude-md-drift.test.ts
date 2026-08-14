@@ -17,6 +17,7 @@ const AGENTS_MD = join(import.meta.dir, '..', '..', 'AGENTS.md');
 // Substrings that MUST NOT appear anywhere in CLAUDE.md. Each is a v4 fossil:
 // a demolished subsystem, a deleted env var, or a retired command namespace.
 const RETIRED_FOSSILS: ReadonlyArray<string> = [
+  'genie launch',
   'pgserve',
   'PostgreSQL',
   'GENIE_OTEL',
