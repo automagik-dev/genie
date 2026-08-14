@@ -10,10 +10,15 @@
  * that by resolving the PR's `baseRefName` at check time and denying on any
  * non-dev base. Fall-closed policy: if the base cannot be resolved, deny.
  *
+ * The verification lookup spawns `gh` only after it passes the
+ * trusted-executable gate (hooks-v2#security): a repository-local `gh` shim
+ * on PATH is refused outright, so it can never forge the merge-gate answer.
+ *
  * Priority: 1 (runs FIRST, before all other handlers)
  */
 
 import { spawnSync } from 'node:child_process';
+import { resolveTrustedExecutable } from '../../lib/trusted-executable.js';
 import { maskQuotedRegions } from '../shell-quoting.js';
 import type { HandlerResult, HookPayload } from '../types.js';
 
@@ -82,7 +87,7 @@ export interface BranchGuardDeps {
    * wrong repo and returns GraphQL "no such PR" → fall-closed deny on a
    * perfectly legitimate merge.
    */
-  resolvePrBase: (prNum: string, repo?: string) => Promise<ResolvePrBaseResult>;
+  resolvePrBase: (prNum: string, repo?: string, cwd?: string) => Promise<ResolvePrBaseResult>;
 }
 
 /** Maximum stderr bytes we surface in a deny reason. Protects against gh
@@ -90,7 +95,25 @@ export interface BranchGuardDeps {
 const STDERR_SURFACE_CAP = 500;
 
 const defaultDeps: BranchGuardDeps = {
-  async resolvePrBase(prNum, repo) {
+  async resolvePrBase(prNum, repo, cwd) {
+    // The `gh` binary is resolved through the trusted-executable gate before
+    // spawning: a repository-local `gh` shim planted on PATH must never
+    // answer the merge-gate lookup, because its forged `dev` output would
+    // turn the hook's fall-closed deny into an allow. Resolution failure is
+    // a `reason` (deny), exactly like every other lookup failure shape.
+    const resolveCwd = cwd ?? process.cwd();
+    let gh: string;
+    try {
+      // Explicit `which` reading the live PATH (the sibling handlers inject
+      // `which` the same way). The default Bun.which form caches its answer
+      // per process, which would make a PATH-injected shim unobservable in
+      // tests; production behavior is identical because the hook's PATH is
+      // fixed at launch.
+      gh = resolveTrustedExecutable('gh', resolveCwd, (command) => Bun.which(command, { PATH: process.env.PATH }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { reason: `trusted gh resolution failed: ${message.slice(0, STDERR_SURFACE_CAP)}` };
+    }
     // spawnSync (not execSync) so we can inspect exit code AND stderr
     // independently. The previous `stdio: ['ignore','pipe','ignore']` routed
     // stderr to /dev/null, making every fall-closed deny undiagnosable.
@@ -105,7 +128,8 @@ const defaultDeps: BranchGuardDeps = {
     if (repo) args.push('--repo', repo);
     let result: ReturnType<typeof spawnSync>;
     try {
-      result = spawnSync('gh', args, {
+      result = spawnSync(gh, args, {
+        cwd: resolveCwd,
         encoding: 'utf8',
         timeout: 10_000,
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -206,7 +230,11 @@ export async function branchGuard(payload: HookPayload, deps: BranchGuardDeps = 
       };
     }
     const repo = extractRepoFlag(matchTarget) ?? undefined;
-    const resolved = await deps.resolvePrBase(prNum, repo);
+    // Trust roots derive from the agent's working directory — the surface a
+    // repository-local shim is planted in. Older/odd clients that omit the
+    // field fall back to the hook process cwd.
+    const cwd = typeof payload.cwd === 'string' ? payload.cwd : process.cwd();
+    const resolved = await deps.resolvePrBase(prNum, repo, cwd);
     if ('reason' in resolved) {
       return {
         decision: 'deny',
